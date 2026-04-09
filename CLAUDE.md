@@ -114,8 +114,7 @@ For optional config fields with non-zero defaults, use pointer types (`*int`, `*
 - Use table-driven tests following Go conventions
 - Never hardcode `/` or `\` in path assertions — use `filepath.Join` for OS paths and forward slashes for nib `Path` fields
 - For manual CLI testing: `mise nibs` compiles and runs the CLI
-- For read-only testing, use this project's own `.nibs/` directory
-- For write operations, create a separate test directory and use `--nibs-path`
+- For manual CLI testing, `mise demo` serves the web UI with a temporary copy of the sample-project fixture (safe to mutate), and `mise demo:tui` does the same for the TUI
 - **Test fixture dataset**: `testdata/fixtures/sample-project/` has 87 curated nibs (prefix `tnib-`) covering all types, statuses, priorities, hierarchies, and relationships. Use `fixtures.CopySampleProject(t)` from `testdata/fixtures/` to get a temporary copy for write tests. Regenerate with `bash testdata/fixtures/gen-sample-project.sh`.
 - Web UI tests: `cd web && npm install && npx vitest run --reporter=agent` (Vitest + jsdom + @testing-library/svelte). Run `npm install` first — node_modules can go stale after branch switches.
 - Web test commands require `web/` as the working directory. If cwd has drifted, `cd` to the project root's `web/` directory first.
