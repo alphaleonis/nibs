@@ -52,10 +52,10 @@ jobs:
       - name: Extract release notes
         run: |
           if [[ "${{ steps.version.outputs.prerelease }}" == "true" ]]; then
-            echo "Pre-release build from $(git rev-parse --short HEAD)." > release-notes.md
+            echo "Pre-release build from $(git rev-parse --short HEAD)." > ${{ runner.temp }}/release-notes.md
           else
-            awk '/^## ${{ inputs.version }}/{found=1; next} /^## /{if(found) exit} found' CHANGELOG.md > release-notes.md
-            if [[ ! -s release-notes.md ]]; then
+            awk '/^## ${{ inputs.version }}/{found=1; next} /^## /{if(found) exit} found' CHANGELOG.md > ${{ runner.temp }}/release-notes.md
+            if [[ ! -s ${{ runner.temp }}/release-notes.md ]]; then
               echo "::error::Release notes for ${{ inputs.version }} are empty"
               exit 1
             fi
@@ -80,7 +80,7 @@ jobs:
       - uses: goreleaser/goreleaser-action@v6.3.0
         with:
           version: "~> v2"
-          args: release --clean --release-notes=release-notes.md
+          args: release --clean --release-notes=${{ runner.temp }}/release-notes.md
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
