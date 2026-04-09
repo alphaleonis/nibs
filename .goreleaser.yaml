@@ -3,7 +3,7 @@ version: 2
 before:
   hooks:
     - go generate ./...
-    - cd web && npm ci && npm run build
+    - bash -c "cd web && npm ci && npm run build"
     - go-licenses save ./... --save_path=./third_party_licenses --force --ignore github.com/alphaleonis/nibs
     - bash -c "go-licenses report ./... --ignore github.com/alphaleonis/nibs > ./third_party_licenses/NOTICES.csv 2>/dev/null"
 
