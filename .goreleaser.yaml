@@ -1,0 +1,40 @@
+version: 2
+
+before:
+  hooks:
+    - go generate ./...
+    - cd web && npm ci && npm run build
+    - go-licenses save ./... --save_path=./third_party_licenses --force --ignore github.com/alphaleonis/nibs
+    - bash -c "go-licenses report ./... --ignore github.com/alphaleonis/nibs > ./third_party_licenses/NOTICES.csv 2>/dev/null"
+
+builds:
+  - env:
+      - CGO_ENABLED=0
+    goos:
+      - linux
+      - darwin
+      - windows
+    goarch:
+      - amd64
+      - arm64
+    ldflags:
+      - -s -w -X github.com/alphaleonis/nibs/cmd.version={{ .Tag }}
+
+archives:
+  - formats:
+      - tar.gz
+    format_overrides:
+      - goos: windows
+        formats:
+          - zip
+    files:
+      - LICENSE.md
+      - src: ./third_party_licenses/**/*
+        dst: .
+        strip_parent: false
+
+release:
+  draft: true
+
+changelog:
+  disable: true

@@ -1,0 +1,105 @@
+[tools]
+go = "latest"
+svu = "latest"
+
+[tasks.codegen]
+run = "go generate ./..."
+
+[tasks.test]
+depends = ["codegen", "web:build"]
+run = """
+go test ./...
+cd web && npx vitest run --reporter=agent
+"""
+
+[tasks."web:build"]
+depends = ["codegen"]
+run = "cd web && npm ci && npm run build"
+
+[tasks.build]
+depends = ["codegen", "web:build"]
+run = """
+VERSION=$(git describe --tags --always --dirty 2>/dev/null || echo dev)
+COMMIT=$(git rev-parse --short HEAD 2>/dev/null || echo unknown)
+DATE=$(date -u +%Y-%m-%dT%H:%M:%SZ)
+go build -ldflags "-X github.com/alphaleonis/nibs/cmd.version=$VERSION -X github.com/alphaleonis/nibs/cmd.commit=$COMMIT -X github.com/alphaleonis/nibs/cmd.date=$DATE" .
+"""
+
+[tasks.nibs]
+description = "Build and run the nibs CLI"
+depends = "web:build"
+run = "go run ."
+
+[tasks.install]
+depends = "build"
+run = "cp nibs ~/.local/bin/nibs"
+
+[tasks.playwright]
+description = "Run Playwright e2e tests (requires built binary)"
+depends = ["build"]
+run = "cd web && npx playwright test"
+
+[tasks.demo]
+description = "Serve the web UI with the sample project fixture (temporary copy)"
+run = """
+TMP=$(mktemp -d)
+cp -r testdata/fixtures/sample-project/.nibs testdata/fixtures/sample-project/.nibs.yml "$TMP/"
+cleanup() { rm -rf "$TMP"; }
+trap cleanup EXIT
+trap 'cleanup; exit 0' INT TERM
+echo "Using temporary copy at $TMP"
+go run . serve --nibs-path "$TMP/.nibs" "$@"
+"""
+
+[tasks."demo:tui"]
+description = "Run the TUI with the sample project fixture (temporary copy)"
+run = """
+TMP=$(mktemp -d)
+cp -r testdata/fixtures/sample-project/.nibs testdata/fixtures/sample-project/.nibs.yml "$TMP/"
+cleanup() { rm -rf "$TMP"; }
+trap cleanup EXIT
+trap 'cleanup; exit 0' INT TERM
+echo "Using temporary copy at $TMP"
+go run . tui --nibs-path "$TMP/.nibs"
+"""
+
+[tasks.lint]
+description = "Run golangci-lint"
+run = "golangci-lint run ./..."
+
+[tasks.licenses]
+description = "Collect third-party dependency licenses"
+run = """
+go-licenses save ./... --save_path=./third_party_licenses --force --ignore github.com/alphaleonis/nibs
+go-licenses report ./... --ignore github.com/alphaleonis/nibs > ./third_party_licenses/NOTICES.csv 2>/dev/null
+"""
+
+[tasks."release:patch"]
+description = "Create a patch version tag (e.g., v0.1.4 → v0.1.5)"
+run = """
+set -e
+NEW_VERSION=$(svu patch)
+git tag "$NEW_VERSION"
+echo "Created tag: $NEW_VERSION"
+echo "To release, run: git push && git push --tags"
+"""
+
+[tasks."release:minor"]
+description = "Create a minor version tag (e.g., v0.1.4 → v0.2.0)"
+run = """
+set -e
+NEW_VERSION=$(svu minor)
+git tag "$NEW_VERSION"
+echo "Created tag: $NEW_VERSION"
+echo "To release, run: git push && git push --tags"
+"""
+
+[tasks."release:major"]
+description = "Create a major version tag (e.g., v0.1.4 → v1.0.0)"
+run = """
+set -e
+NEW_VERSION=$(svu major)
+git tag "$NEW_VERSION"
+echo "Created tag: $NEW_VERSION"
+echo "To release, run: git push && git push --tags"
+"""

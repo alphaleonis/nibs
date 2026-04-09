@@ -1,0 +1,316 @@
+package ui
+
+import (
+	"strings"
+	"testing"
+
+	"github.com/charmbracelet/lipgloss"
+	"github.com/charmbracelet/x/ansi"
+)
+
+// titleDisplayColumn returns the display column where the title text starts,
+// accounting for multi-byte UTF-8 characters that occupy 1 display cell.
+func titleDisplayColumn(rendered, title string) int {
+	stripped := ansi.Strip(rendered)
+	idx := strings.Index(stripped, title)
+	if idx < 0 {
+		return -1
+	}
+	prefix := stripped[:idx]
+	return lipgloss.Width(prefix)
+}
+
+func TestRenderNibRow_IndicatorsDontShiftTitle(t *testing.T) {
+	// All rows should have the title at the same horizontal position,
+	// regardless of which indicators (blocked, blocking, priority) are present.
+	baseCfg := NibRowConfig{
+		MaxTitleWidth: 60,
+		StatusColor:   "green",
+		TypeColor:     "blue",
+	}
+
+	// Render a baseline row with no indicators
+	baseRow := RenderNibRow("abc123", "todo", "task", "My Title", baseCfg)
+	basePos := titleDisplayColumn(baseRow, "My Title")
+	if basePos < 0 {
+		t.Fatal("title not found in baseline row")
+	}
+
+	tests := []struct {
+		name string
+		cfg  NibRowConfig
+	}{
+		{"blocked", NibRowConfig{IsBlocked: true}},
+		{"blocking", NibRowConfig{IsBlocking: true}},
+		{"priority high", NibRowConfig{Priority: "high", PriorityColor: "red"}},
+		{"priority critical", NibRowConfig{Priority: "critical", PriorityColor: "red"}},
+		{"priority low", NibRowConfig{Priority: "low", PriorityColor: "blue"}},
+		{"priority deferred", NibRowConfig{Priority: "deferred", PriorityColor: "blue"}},
+		{"blocked + priority", NibRowConfig{IsBlocked: true, Priority: "high", PriorityColor: "red"}},
+		{"blocking + priority", NibRowConfig{IsBlocking: true, Priority: "critical", PriorityColor: "red"}},
+		{"dimmed", NibRowConfig{Dimmed: true}},
+		{"dimmed blocked", NibRowConfig{Dimmed: true, IsBlocked: true}},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			cfg := baseCfg
+			cfg.IsBlocked = tt.cfg.IsBlocked
+			cfg.IsBlocking = tt.cfg.IsBlocking
+			cfg.Priority = tt.cfg.Priority
+			cfg.PriorityColor = tt.cfg.PriorityColor
+			cfg.Dimmed = tt.cfg.Dimmed
+
+			row := RenderNibRow("abc123", "todo", "task", "My Title", cfg)
+			pos := titleDisplayColumn(row, "My Title")
+			if pos < 0 {
+				t.Fatal("title not found in rendered row")
+			}
+			if pos != basePos {
+				t.Errorf("title at column %d, want %d (same as baseline)\n  baseline: %q\n  got:      %q",
+					pos, basePos, ansi.Strip(baseRow), ansi.Strip(row))
+			}
+		})
+	}
+}
+
+func TestRenderNibRow_IndicatorsRightAligned(t *testing.T) {
+	// Indicators should be right-aligned within the fixed-width column,
+	// so a single symbol sits adjacent to the title text.
+	// Expected layouts (4-cell column, | marks column boundary):
+	//   no indicators:  "    |Title"
+	//   priority only:  "  ↓ |Title"  (right-aligned, slot 2)
+	//   blocked only:   "  ● |Title"  (right-aligned, slot 2)
+	//   both:           "◆ ↓ |Title"  (fills both slots)
+	baseCfg := NibRowConfig{
+		MaxTitleWidth: 60,
+		StatusColor:   "green",
+		TypeColor:     "blue",
+	}
+
+	// Helper: extract the 4 display cells before the title.
+	// We work in runes (not bytes) since indicator symbols are multi-byte.
+	indicatorColumn := func(row, title string) string {
+		stripped := ansi.Strip(row)
+		runes := []rune(stripped)
+		titleRunes := []rune(title)
+		// Find title start in rune slice
+		for i := range runes {
+			if i+len(titleRunes) <= len(runes) {
+				match := true
+				for j, tr := range titleRunes {
+					if runes[i+j] != tr {
+						match = false
+						break
+					}
+				}
+				if match && i >= 4 {
+					return string(runes[i-4 : i])
+				}
+			}
+		}
+		return ""
+	}
+
+	tests := []struct {
+		name      string
+		cfg       NibRowConfig
+		wantCol   string // expected 4-rune indicator column
+	}{
+		{"no indicators", NibRowConfig{}, "    "},
+		{"priority only", NibRowConfig{Priority: "low", PriorityColor: "blue"}, "  ↓ "},
+		{"blocked only", NibRowConfig{IsBlocked: true}, "  ● "},
+		{"blocking only", NibRowConfig{IsBlocking: true}, "  ◆ "},
+		{"blocking + priority", NibRowConfig{IsBlocking: true, Priority: "low", PriorityColor: "blue"}, "◆ ↓ "},
+		{"blocked + priority", NibRowConfig{IsBlocked: true, Priority: "high", PriorityColor: "red"}, "● ! "},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			cfg := baseCfg
+			cfg.IsBlocked = tt.cfg.IsBlocked
+			cfg.IsBlocking = tt.cfg.IsBlocking
+			cfg.Priority = tt.cfg.Priority
+			cfg.PriorityColor = tt.cfg.PriorityColor
+
+			row := RenderNibRow("abc123", "todo", "task", "My Title", cfg)
+			got := indicatorColumn(row, "My Title")
+			if got != tt.wantCol {
+				t.Errorf("indicator column = %q, want %q\n  row: %q", got, tt.wantCol, ansi.Strip(row))
+			}
+		})
+	}
+}
+
+func TestRenderNibRow_NarrowWidth(t *testing.T) {
+	// Test that RenderNibRow doesn't panic with very small MaxTitleWidth values
+	// This was a bug where MaxTitleWidth < 4 caused a slice bounds panic
+
+	tests := []struct {
+		name          string
+		maxTitleWidth int
+		title         string
+	}{
+		{"zero width", 0, "Test Title"},
+		{"width 1", 1, "Test Title"},
+		{"width 2", 2, "Test Title"},
+		{"width 3", 3, "Test Title"},
+		{"width 4", 4, "Test Title"},
+		{"width 5", 5, "Test Title"},
+		{"short title fits", 10, "Hi"},
+		{"exact fit", 10, "0123456789"},
+		{"needs truncation", 10, "This is a longer title"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			// Should not panic
+			defer func() {
+				if r := recover(); r != nil {
+					t.Errorf("RenderNibRow panicked with MaxTitleWidth=%d: %v", tt.maxTitleWidth, r)
+				}
+			}()
+
+			cfg := NibRowConfig{
+				MaxTitleWidth: tt.maxTitleWidth,
+				StatusColor:   "green",
+				TypeColor:     "blue",
+			}
+
+			result := RenderNibRow("abc123", "todo", "task", tt.title, cfg)
+			if result == "" {
+				t.Error("expected non-empty result")
+			}
+		})
+	}
+}
+
+func TestRenderNibRow_NarrowWidthWithPriority(t *testing.T) {
+	// Priority symbol takes 2 extra chars, which reduces available title width
+	// This tests that the adjustment doesn't cause negative slice bounds
+
+	tests := []struct {
+		name          string
+		maxTitleWidth int
+		priority      string
+	}{
+		{"width 1 with priority", 1, "high"},
+		{"width 2 with priority", 2, "high"},
+		{"width 3 with priority", 3, "critical"},
+		{"width 4 with priority", 4, "high"},
+		{"width 5 with priority", 5, "low"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			defer func() {
+				if r := recover(); r != nil {
+					t.Errorf("RenderNibRow panicked with MaxTitleWidth=%d and priority=%s: %v",
+						tt.maxTitleWidth, tt.priority, r)
+				}
+			}()
+
+			cfg := NibRowConfig{
+				MaxTitleWidth: tt.maxTitleWidth,
+				Priority:      tt.priority,
+				PriorityColor: "red",
+				StatusColor:   "green",
+				TypeColor:     "blue",
+			}
+
+			result := RenderNibRow("abc123", "todo", "task", "Long title that needs truncation", cfg)
+			if result == "" {
+				t.Error("expected non-empty result")
+			}
+		})
+	}
+}
+
+func TestRenderNibRow_NarrowWidthWithBlocked(t *testing.T) {
+	// Blocked indicator takes 2 extra chars, which reduces available title width.
+	// Combined with priority symbol, that's 4 chars less for the title.
+
+	tests := []struct {
+		name          string
+		maxTitleWidth int
+		priority      string
+	}{
+		{"width 1 blocked", 1, ""},
+		{"width 2 blocked", 2, ""},
+		{"width 3 blocked with priority", 3, "high"},
+		{"width 4 blocked with priority", 4, "critical"},
+		{"width 5 blocked", 5, ""},
+		{"width 10 blocked with priority", 10, "high"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			defer func() {
+				if r := recover(); r != nil {
+					t.Errorf("RenderNibRow panicked with MaxTitleWidth=%d, blocked=true, priority=%s: %v",
+						tt.maxTitleWidth, tt.priority, r)
+				}
+			}()
+
+			cfg := NibRowConfig{
+				MaxTitleWidth: tt.maxTitleWidth,
+				Priority:      tt.priority,
+				PriorityColor: "red",
+				StatusColor:   "green",
+				TypeColor:     "blue",
+				IsBlocked:     true,
+			}
+
+			result := RenderNibRow("abc123", "todo", "task", "Long title that needs truncation", cfg)
+			if result == "" {
+				t.Error("expected non-empty result")
+			}
+		})
+	}
+}
+
+func TestShortType(t *testing.T) {
+	tests := []struct {
+		input    string
+		expected string
+	}{
+		{"milestone", "M"},
+		{"epic", "E"},
+		{"bug", "B"},
+		{"feature", "F"},
+		{"task", "T"},
+		{"unknown", "?"},
+		{"", "?"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.input, func(t *testing.T) {
+			result := ShortType(tt.input)
+			if result != tt.expected {
+				t.Errorf("ShortType(%q) = %q, want %q", tt.input, result, tt.expected)
+			}
+		})
+	}
+}
+
+func TestShortStatus(t *testing.T) {
+	tests := []struct {
+		input    string
+		expected string
+	}{
+		{"draft", "D"},
+		{"todo", "T"},
+		{"in-progress", "I"},
+		{"completed", "C"},
+		{"scrapped", "S"},
+		{"unknown", "?"},
+		{"", "?"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.input, func(t *testing.T) {
+			result := ShortStatus(tt.input)
+			if result != tt.expected {
+				t.Errorf("ShortStatus(%q) = %q, want %q", tt.input, result, tt.expected)
+			}
+		})
+	}
+}

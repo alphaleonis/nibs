@@ -1,0 +1,88 @@
+name: Release
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "Release version (e.g., v0.1.0 or v0.1.0-alpha.1)"
+        required: true
+        type: string
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Validate version format
+        id: version
+        run: |
+          VERSION="${{ inputs.version }}"
+          if [[ ! "$VERSION" =~ ^v[0-9]+\.[0-9]+\.[0-9]+(-.+)?$ ]]; then
+            echo "::error::Version must match vX.Y.Z or vX.Y.Z-suffix format (got: $VERSION)"
+            exit 1
+          fi
+          if [[ "$VERSION" == *-* ]]; then
+            echo "prerelease=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "prerelease=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+
+      - name: Check tag does not exist
+        run: |
+          if git rev-parse "${{ inputs.version }}" >/dev/null 2>&1; then
+            echo "::error::Tag ${{ inputs.version }} already exists"
+            exit 1
+          fi
+
+      - name: Verify changelog entry
+        if: steps.version.outputs.prerelease == 'false'
+        run: |
+          if ! grep -q "^## ${{ inputs.version }}" CHANGELOG.md; then
+            echo "::error::CHANGELOG.md has no entry for ${{ inputs.version }}"
+            exit 1
+          fi
+
+      - name: Extract release notes
+        run: |
+          if [[ "${{ steps.version.outputs.prerelease }}" == "true" ]]; then
+            echo "Pre-release build from $(git rev-parse --short HEAD)." > release-notes.md
+          else
+            awk '/^## ${{ inputs.version }}/{found=1; next} /^## /{if(found) exit} found' CHANGELOG.md > release-notes.md
+            if [[ ! -s release-notes.md ]]; then
+              echo "::error::Release notes for ${{ inputs.version }} are empty"
+              exit 1
+            fi
+          fi
+
+      - name: Create and push tag
+        run: |
+          git tag "${{ inputs.version }}"
+          git push origin "${{ inputs.version }}"
+
+      - uses: actions/setup-go@v6
+        with:
+          go-version: stable
+
+      - uses: actions/setup-node@v6
+        with:
+          node-version: "22"
+
+      - name: Install go-licenses
+        run: go install github.com/google/go-licenses@latest
+
+      - uses: goreleaser/goreleaser-action@v6.3.0
+        with:
+          version: "~> v2"
+          args: release --clean --release-notes=release-notes.md
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Delete tag on failure
+        if: failure()
+        run: git push origin --delete "${{ inputs.version }}" || true

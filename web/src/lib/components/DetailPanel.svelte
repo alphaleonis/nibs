@@ -1,0 +1,554 @@
+<script lang="ts">
+  import { onDestroy } from "svelte";
+  import { X, FileText, Trash2, Archive } from "@lucide/svelte";
+  import { getContextClient, queryStore, subscriptionStore } from "@urql/svelte";
+  import { NIB_DETAIL_QUERY, NIB_CHANGED_SUBSCRIPTION } from "../queries";
+  import { renderMarkdown } from "../markdown";
+  import StatusDot from "./StatusDot.svelte";
+  import StatusSelect from "./StatusSelect.svelte";
+  import TypeSelect from "./TypeSelect.svelte";
+  import PrioritySelect from "./PrioritySelect.svelte";
+  import EstimateSelect from "./EstimateSelect.svelte";
+  import TagEditor from "./TagEditor.svelte";
+  import RelatedNibGroup from "./RelatedNibGroup.svelte";
+  import { Button } from "$lib/components/ui/button/index.js";
+  import { getMutationStore } from "$lib/mutations";
+  import { useConfirmDialog } from "$lib/contexts";
+  import { updateNib as updateNibCmd, deleteNib as deleteNibCmd, archiveNib as archiveNibCmd } from "$lib/mutations/commands";
+  import type { UpdateNibInput } from "$lib/mutations/types";
+
+  interface Props {
+    nibId: string;
+    onclose: () => void;
+    onnibselect?: (nibId: string) => void;
+    onedit?: (nibId: string) => void;
+    onaddchild?: (parentId: string, parentType: string) => void;
+  }
+
+  let { nibId, onclose, onnibselect, onedit, onaddchild }: Props = $props();
+
+  const client = getContextClient();
+  const mutations = getMutationStore();
+  const confirmDialog = useConfirmDialog();
+
+  let editTitle: string = $state("");
+  let deleted: boolean = $state(false);
+  let highlighted: boolean = $state(false);
+
+  const result = $derived(
+    queryStore({
+      client,
+      query: NIB_DETAIL_QUERY,
+      variables: { id: nibId },
+    })
+  );
+
+  let nib = $derived($result.data?.nib ?? null);
+  let fetching = $derived($result.fetching);
+  let bodyHtml = $derived(renderMarkdown(nib?.body ?? ""));
+  let actionPending = $derived(mutations.isMutating(nibId));
+
+  // Sync editTitle when nib data changes
+  let lastSyncedId: string | null = $state(null);
+  let lastSyncedEtag: string | null = $state(null);
+
+  $effect(() => {
+    if (nib && (nib.id !== lastSyncedId || nib.etag !== lastSyncedEtag)) {
+      editTitle = nib.title;
+      lastSyncedId = nib.id;
+      lastSyncedEtag = nib.etag;
+    }
+  });
+
+  // Subscribe to real-time changes for the viewed nib
+  const subscription = $derived(
+    subscriptionStore({
+      client,
+      query: NIB_CHANGED_SUBSCRIPTION,
+      variables: { id: nibId },
+    })
+  );
+
+  // Handle subscription events — use plain variables (not $state) to avoid proxy identity issues
+  let lastSubNibId: string | null = null;
+  let lastSubData: unknown = null;
+  let highlightTimeout: ReturnType<typeof setTimeout> | null = null;
+  $effect(() => {
+    // Reset deleted state when nibId changes
+    if (nibId !== lastSubNibId) {
+      deleted = false;
+      lastSubNibId = nibId;
+      lastSubData = null;
+    }
+
+    const data = $subscription.data;
+    if (data && data !== lastSubData) {
+      lastSubData = data;
+      const event = data.nibChanged;
+      if (event?.type === "deleted") {
+        deleted = true;
+      } else if (event?.type === "updated" || event?.type === "created") {
+        if (highlightTimeout) clearTimeout(highlightTimeout);
+        highlighted = true;
+        highlightTimeout = setTimeout(() => { highlighted = false; }, 1000);
+      }
+    }
+  });
+
+  onDestroy(() => { if (highlightTimeout) clearTimeout(highlightTimeout); });
+
+  $effect(() => {
+    if ($subscription.error) {
+      console.warn("Detail panel subscription error:", $subscription.error);
+    }
+  });
+
+  async function doUpdateNib(input: UpdateNibInput) {
+    if (deleted) return false;
+    const result = await mutations.execute(updateNibCmd(nibId, input, nib?.etag));
+    return result.ok;
+  }
+
+  async function handleTitleBlur() {
+    if (!nib || editTitle === nib.title) return;
+    const ok = await doUpdateNib({ title: editTitle });
+    if (!ok && nib) {
+      editTitle = nib.title;
+    }
+  }
+
+  function handleTitleKeydown(e: KeyboardEvent) {
+    if (e.key === "Enter") {
+      (e.target as HTMLInputElement).blur();
+    }
+  }
+
+  async function handleStatusChange(value: string) {
+    await doUpdateNib({ status: value });
+  }
+
+  async function handleTypeChange(value: string) {
+    await doUpdateNib({ type: value });
+  }
+
+  async function handlePriorityChange(value: string) {
+    await doUpdateNib({ priority: value || null });
+  }
+
+  async function handleEstimateChange(value: string) {
+    await doUpdateNib({ estimate: value || null });
+  }
+
+  async function handleAddTag(tag: string) {
+    // Duplicate-tag validation is handled by TagEditor before calling onadd
+    await doUpdateNib({ addTags: [tag] });
+  }
+
+  async function handleRemoveTag(tag: string) {
+    await doUpdateNib({ removeTags: [tag] });
+  }
+
+  function handleDeleteNib() {
+    confirmDialog.showConfirm({
+      title: "Delete nib?",
+      message: `This will permanently delete ${nibId}. This action cannot be undone.`,
+      label: "Delete",
+      variant: "danger",
+      action: async () => {
+        confirmDialog.close();
+        const result = await mutations.execute(deleteNibCmd(nibId));
+        if (result.ok) {
+          onclose();
+        }
+      },
+    });
+  }
+
+  function handleArchiveNib() {
+    confirmDialog.showConfirm({
+      title: "Archive nib?",
+      message: `This will move ${nibId} to the archive.`,
+      label: "Archive",
+      variant: "warning",
+      action: async () => {
+        confirmDialog.close();
+        const result = await mutations.execute(archiveNibCmd(nibId));
+        if (result.ok) {
+          onclose();
+        }
+      },
+    });
+  }
+</script>
+
+<div data-testid="detail-panel" class="detail-panel" role="complementary" aria-label="Nib detail">
+  <div class="detail-header">
+    <span class="detail-nib-id">{nibId}</span>
+    <button data-testid="detail-close" class="detail-close" onclick={onclose} title="Close" aria-label="Close detail panel">
+      <X size={16} />
+    </button>
+  </div>
+
+  {#if fetching && !nib}
+    <div data-testid="detail-loading" class="detail-loading">Loading...</div>
+  {:else if $result.error}
+    <div data-testid="detail-not-found" class="detail-loading">Error loading nib</div>
+  {:else if nib}
+    {#if deleted}
+      <div data-testid="detail-deleted-notice" class="detail-deleted-notice">This nib was deleted</div>
+    {/if}
+    <div class="detail-body" data-testid="detail-body-container" class:nib-detail-highlighted={highlighted}>
+      <input
+        data-testid="detail-title"
+        type="text"
+        class="detail-title-input"
+        aria-label="Title"
+        bind:value={editTitle}
+        onblur={handleTitleBlur}
+        onkeydown={handleTitleKeydown}
+        disabled={deleted}
+      />
+
+      <div class="detail-grid">
+        <span class="detail-label">Status</span>
+        <div class="detail-field">
+          <StatusDot status={nib.status} />
+          <StatusSelect value={nib.status} onchange={handleStatusChange} testId="detail-status" disabled={deleted} />
+        </div>
+
+        <span class="detail-label">Type</span>
+        <div class="detail-field">
+          <TypeSelect value={nib.type} onchange={handleTypeChange} testId="detail-type" disabled={deleted} />
+        </div>
+
+        <span class="detail-label">Priority</span>
+        <div class="detail-field">
+          <PrioritySelect value={nib.priority || ""} onchange={handlePriorityChange} testId="detail-priority" disabled={deleted} />
+        </div>
+
+        <span class="detail-label">Estimate</span>
+        <div class="detail-field">
+          <EstimateSelect value={nib.estimate || ""} onchange={handleEstimateChange} testId="detail-estimate" disabled={deleted} />
+        </div>
+      </div>
+
+      <div class="detail-tags-section">
+        <span class="detail-label">Tags</span>
+        <TagEditor
+          tags={nib.tags}
+          onadd={handleAddTag}
+          onremove={handleRemoveTag}
+          chipTestId="detail-tag"
+          removeTestId="detail-tag-remove"
+          inputTestId="detail-tag-input"
+          disabled={deleted}
+        />
+      </div>
+
+      {#if nib.body}
+        <div class="detail-body-section" data-testid="detail-body-section">
+          <div class="detail-body-section-header">
+            <span class="detail-label">Description</span>
+            <button
+              class="detail-edit-button"
+              class:enabled={!!onedit}
+              data-testid="detail-body-edit"
+              disabled={!onedit || deleted}
+              title={onedit ? "Edit in full-screen editor" : "Edit description (coming soon)"}
+              onclick={() => onedit?.(nibId)}
+            >
+              Edit
+            </button>
+          </div>
+          <div class="prose-nib" data-testid="detail-body-prose">
+            {@html bodyHtml}
+          </div>
+        </div>
+      {/if}
+
+      {#if nib.documents && nib.documents.length > 0}
+        <div class="detail-documents-section" data-testid="detail-documents-section">
+          <span class="detail-label">Documents</span>
+          <ul class="detail-documents-list">
+            {#each nib.documents as doc}
+              <li class="detail-document-item" data-testid="detail-document">
+                <FileText size={14} />
+                <span class="detail-document-path" title={doc}>{doc}</span>
+              </li>
+            {/each}
+          </ul>
+        </div>
+      {/if}
+
+      {#if nib.parent || nib.children?.length > 0 || nib.blockedBy?.length > 0 || nib.blocking?.length > 0}
+        {#key nibId}
+        <div class="detail-related-section" data-testid="detail-related-section">
+          {#if nib.parent}
+            <RelatedNibGroup
+              label="Parent"
+              items={[{ id: nib.parent.id, title: nib.parent.title, status: nib.parent.status }]}
+              onnibselect={onnibselect}
+              testId="detail-related-parent"
+            />
+          {/if}
+
+          {#if nib.children?.length > 0}
+            <RelatedNibGroup
+              label="Children"
+              items={nib.children.map((c) => ({ id: c.id, title: c.title, status: c.status }))}
+              onnibselect={onnibselect}
+              onaction={onaddchild ? () => onaddchild(nibId, nib.type) : undefined}
+              actionLabel="Add child nib"
+              testId="detail-related-children"
+            />
+          {/if}
+
+          {#if nib.blockedBy?.length > 0}
+            <RelatedNibGroup
+              label="Blocked by"
+              items={nib.blockedBy.map((b) => ({ id: b.id, title: b.title, status: b.status }))}
+              onnibselect={onnibselect}
+              testId="detail-related-blocked-by"
+            />
+          {/if}
+
+          {#if nib.blocking?.length > 0}
+            <RelatedNibGroup
+              label="Blocking"
+              items={nib.blocking.map((b) => ({ id: b.id, title: b.title, status: b.status }))}
+              onnibselect={onnibselect}
+              testId="detail-related-blocking"
+            />
+          {/if}
+        </div>
+        {/key}
+      {/if}
+
+      <div class="detail-actions-section" data-testid="detail-actions">
+        <Button
+          variant="ghost"
+          size="sm"
+          class="text-[var(--archive)] border border-[var(--archive-border)] hover:bg-[var(--archive-bg-hover)]"
+          data-testid="detail-archive-button"
+          disabled={actionPending || deleted}
+          onclick={handleArchiveNib}
+        >
+          <Archive size={14} />
+          Archive
+        </Button>
+        <Button
+          variant="ghost"
+          size="sm"
+          class="text-[var(--delete)] border border-[var(--delete-border)] hover:bg-[var(--delete-bg-hover)]"
+          data-testid="detail-delete-button"
+          disabled={actionPending || deleted}
+          onclick={handleDeleteNib}
+        >
+          <Trash2 size={14} />
+          Delete
+        </Button>
+      </div>
+    </div>
+  {:else}
+    <div data-testid="detail-not-found" class="detail-loading">Nib not found</div>
+  {/if}
+</div>
+
+<style>
+  .detail-panel {
+    border-left: 1px solid var(--border);
+    height: 100%;
+    overflow-y: auto;
+    padding: 1rem;
+    min-width: 300px;
+  }
+
+  .detail-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    margin-bottom: 1rem;
+  }
+
+  .detail-nib-id {
+    font-size: 0.875rem;
+    color: var(--muted-foreground);
+  }
+
+  .detail-close {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    padding: 0.25rem;
+    color: var(--muted-foreground);
+    background: none;
+    border: none;
+    cursor: pointer;
+    border-radius: 0.25rem;
+  }
+
+  .detail-close:hover {
+    color: var(--foreground);
+    background-color: var(--accent);
+  }
+
+  .detail-loading {
+    color: var(--muted-foreground);
+    font-size: 0.875rem;
+    padding: 1rem 0;
+  }
+
+  .detail-body {
+    display: flex;
+    flex-direction: column;
+    gap: 1rem;
+  }
+
+  .detail-title-input {
+    width: 100%;
+    background: transparent;
+    border: 1px solid transparent;
+    border-radius: 0.375rem;
+    padding: 0.375rem 0.5rem;
+    color: var(--foreground);
+    font-size: 1rem;
+    font-weight: 600;
+    outline: none;
+    box-sizing: border-box;
+  }
+
+  .detail-title-input:hover {
+    border-color: var(--border);
+  }
+
+  .detail-title-input:focus {
+    border-color: var(--ring);
+    background-color: var(--accent);
+  }
+
+  .detail-grid {
+    display: grid;
+    grid-template-columns: auto 1fr;
+    gap: 0.5rem 0.75rem;
+    align-items: center;
+  }
+
+  .detail-label {
+    font-size: 0.8125rem;
+    color: var(--muted-foreground);
+    white-space: nowrap;
+  }
+
+  .detail-field {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+  }
+
+  .detail-tags-section {
+    display: flex;
+    flex-direction: column;
+    gap: 0.5rem;
+  }
+
+  .detail-body-section {
+    display: flex;
+    flex-direction: column;
+    gap: 0.5rem;
+  }
+
+  .detail-body-section-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+  }
+
+  .detail-edit-button {
+    font-size: 0.75rem;
+    color: var(--muted-foreground);
+    background: none;
+    border: 1px solid var(--border);
+    border-radius: 0.375rem;
+    padding: 0.125rem 0.5rem;
+    cursor: not-allowed;
+    opacity: 0.5;
+  }
+
+  .detail-edit-button.enabled {
+    cursor: pointer;
+    opacity: 1;
+  }
+
+  .detail-edit-button.enabled:hover {
+    color: var(--foreground);
+    background-color: var(--accent);
+  }
+
+  .detail-documents-section {
+    display: flex;
+    flex-direction: column;
+    gap: 0.5rem;
+  }
+
+  .detail-documents-list {
+    list-style: none;
+    margin: 0;
+    padding: 0;
+    display: flex;
+    flex-direction: column;
+    gap: 0.25rem;
+  }
+
+  .detail-document-item {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    color: var(--link);
+    font-size: 0.8125rem;
+    padding: 0.25rem 0.5rem;
+    border-radius: 0.375rem;
+    cursor: default;
+  }
+
+  .detail-document-item:hover {
+    background-color: var(--accent);
+  }
+
+  .detail-document-path {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  .detail-related-section {
+    display: flex;
+    flex-direction: column;
+    gap: 0.5rem;
+  }
+
+  .detail-actions-section {
+    display: flex;
+    gap: 0.5rem;
+    padding-top: 1rem;
+    border-top: 1px solid var(--border);
+  }
+
+  .detail-body.nib-detail-highlighted {
+    animation: nib-detail-highlight-pulse 1s ease-out;
+  }
+
+  @keyframes nib-detail-highlight-pulse {
+    0% { background-color: oklch(from var(--primary) l c h / 0.25); }
+    100% { background-color: transparent; }
+  }
+
+  .detail-deleted-notice {
+    padding: 0.5rem 0.75rem;
+    background-color: var(--destructive);
+    color: var(--destructive-foreground);
+    border-radius: 0.375rem;
+    font-size: 0.875rem;
+    font-weight: 500;
+  }
+
+</style>

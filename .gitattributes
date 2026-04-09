@@ -1,0 +1,22 @@
+# Auto detect text files and ensure LF line endings
+* text=auto eol=lf
+
+# Go source files
+*.go text eol=lf
+*.mod text eol=lf
+*.sum text eol=lf
+
+# Web/config files
+*.json text eol=lf
+*.yml text eol=lf
+*.yaml text eol=lf
+*.toml text eol=lf
+*.graphqls text eol=lf
+
+# Templates and docs
+*.md text eol=lf
+*.tmpl text eol=lf
+
+# Git config
+.gitattributes text eol=lf
+.gitignore text eol=lf

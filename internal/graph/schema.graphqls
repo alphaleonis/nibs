@@ -1,0 +1,357 @@
+# Nibs GraphQL Schema
+
+scalar Time
+
+type Config {
+  "Project name derived from the config file directory"
+  projectName: String!
+}
+
+type Query {
+  """
+  Get a single nib by ID. Accepts either the full ID (e.g., "nibs-abc1") or the short ID without prefix (e.g., "abc1").
+  """
+  nib(id: ID!): Nib
+
+  """
+  List nibs with optional filtering and sorting.
+  When sort is provided, it overrides any implicit ordering (including search relevance).
+  """
+  nibs(filter: NibFilter, sort: NibSort): [Nib!]!
+
+  "Get project configuration"
+  config: Config!
+}
+
+type Mutation {
+  """
+  Create a new nib
+  """
+  createNib(input: CreateNibInput!): Nib!
+
+  """
+  Update an existing nib
+  """
+  updateNib(id: ID!, input: UpdateNibInput!): Nib!
+
+  """
+  Delete a nib by ID (automatically removes incoming links)
+  """
+  deleteNib(id: ID!): Boolean!
+
+  """
+  Archive a nib by ID (moves to archive directory)
+  """
+  archiveNib(id: ID!): Boolean!
+
+  """
+  Set or clear the parent of a nib (validates type hierarchy)
+  """
+  setParent(id: ID!, parentId: String, ifMatch: String): Nib!
+
+  """
+  Add a nib to the blocking list (modifies the target nib's blockedBy field)
+  """
+  addBlocking(id: ID!, targetId: ID!): Nib!
+
+  """
+  Remove a nib from the blocking list (modifies the target nib's blockedBy field)
+  """
+  removeBlocking(id: ID!, targetId: ID!): Nib!
+
+  """
+  Add a nib to the blocked-by list (this nib is blocked by targetId)
+  """
+  addBlockedBy(id: ID!, targetId: ID!, ifMatch: String): Nib!
+
+  """
+  Remove a nib from the blocked-by list
+  """
+  removeBlockedBy(id: ID!, targetId: ID!, ifMatch: String): Nib!
+
+  """
+  Reorder a nib among its siblings. Exactly one positioning flag required.
+  Optional parentId reparents the nib before reordering (atomic cross-parent move).
+  """
+  reorderNib(id: ID!, afterId: ID, beforeId: ID, first: Boolean, parentId: String, ifMatch: String): Nib!
+}
+
+"""
+Input for creating a new nib
+"""
+input CreateNibInput {
+  "Nib title (required)"
+  title: String!
+  "Nib type (defaults to 'task')"
+  type: String
+  "Status (defaults to 'todo')"
+  status: String
+  "Priority level (defaults to 'normal')"
+  priority: String
+  "Estimate size (s, m, l, xl)"
+  estimate: String
+  "Tags for categorization"
+  tags: [String!]
+  "Markdown body content"
+  body: String
+  "Parent nib ID (validated against type hierarchy)"
+  parent: String
+  "Nib IDs this nib is blocking"
+  blocking: [String!]
+  "Nib IDs that are blocking this nib"
+  blockedBy: [String!]
+  "Linked document paths (repo-root-relative)"
+  documents: [String!]
+  "Custom ID prefix (overrides config prefix for this nib)"
+  prefix: String
+  "Insert after this sibling nib ID (mutually exclusive with beforeId, first)"
+  afterId: String
+  "Insert before this sibling nib ID (mutually exclusive with afterId, first)"
+  beforeId: String
+  "Insert before all siblings (mutually exclusive with afterId, beforeId)"
+  first: Boolean
+}
+
+"""
+Input for updating an existing nib
+"""
+input UpdateNibInput {
+  "New title"
+  title: String
+  "New status"
+  status: String
+  "New type"
+  type: String
+  "New priority"
+  priority: String
+  "New estimate size (s, m, l, xl, or null to clear)"
+  estimate: String
+  "Replace all tags (nil preserves existing, mutually exclusive with addTags/removeTags)"
+  tags: [String!]
+  "Add tags to existing list"
+  addTags: [String!]
+  "Remove tags from existing list"
+  removeTags: [String!]
+  "New body content (full replacement, mutually exclusive with bodyMod)"
+  body: String
+  "Structured body modifications (mutually exclusive with body)"
+  bodyMod: BodyModification
+  
+  "Set parent nib ID (null/empty to clear, validates type hierarchy)"
+  parent: String
+  "Add nibs to blocking list (validates cycles and existence)"
+  addBlocking: [String!]
+  "Remove nibs from blocking list"
+  removeBlocking: [String!]
+  "Add nibs to blocked-by list (validates cycles and existence)"
+  addBlockedBy: [String!]
+  "Remove nibs from blocked-by list"
+  removeBlockedBy: [String!]
+
+  "Replace all documents (nil preserves existing, mutually exclusive with addDocuments/removeDocuments)"
+  documents: [String!]
+  "Add document paths to existing list"
+  addDocuments: [String!]
+  "Remove document paths from existing list"
+  removeDocuments: [String!]
+
+  "ETag for optimistic concurrency control (optional)"
+  ifMatch: String
+}
+
+"""
+Structured body modifications applied atomically.
+Operations are applied in order: all replacements sequentially, then append.
+If any operation fails, the entire mutation fails (transactional).
+"""
+input BodyModification {
+  """
+  Text replacements applied sequentially in array order.
+  Each old text must match exactly once at the time it's applied.
+  """
+  replace: [ReplaceOperation!]
+  """
+  Text to append after all replacements.
+  Appended with blank line separator.
+  """
+  append: String
+}
+
+"""
+A single text replacement operation.
+"""
+input ReplaceOperation {
+  "Text to find (must occur exactly once, cannot be empty)"
+  old: String!
+  "Replacement text (can be empty to delete the matched text)"
+  new: String!
+}
+
+"""
+A nib represents an issue/task in the nibs tracker
+"""
+type Nib {
+  "Unique identifier (NanoID)"
+  id: ID!
+  "Human-readable slug from filename"
+  slug: String
+  "Relative path from .nibs/ directory"
+  path: String!
+  "File format version (0 = legacy)"
+  version: Int!
+  "Nib title"
+  title: String!
+  "Current status (draft, todo, in-progress, completed, scrapped)"
+  status: String!
+  "Nib type (milestone, epic, bug, feature, task)"
+  type: String!
+  "Priority level (critical, high, normal, low, deferred)"
+  priority: String!
+  "Estimate size (s, m, l, xl, or empty)"
+  estimate: String!
+  "Tags for categorization"
+  tags: [String!]!
+  "Creation timestamp"
+  createdAt: Time!
+  "Last update timestamp"
+  updatedAt: Time!
+  "Markdown body content"
+  body: String!
+  "Content hash for optimistic concurrency control"
+  etag: String!
+  "Linked document paths (repo-root-relative)"
+  documents: [String!]!
+  "Order key for sorting among siblings (fractional index)"
+  order: String!
+
+  # Direct link fields
+  "Parent nib ID (optional, type-restricted)"
+  parentId: String
+  "IDs of nibs this nib is blocking"
+  blockingIds: [String!]!
+  "IDs of nibs that are blocking this nib (direct field)"
+  blockedByIds: [String!]!
+
+  # Computed relationship fields
+  "Nibs that block this one (incoming blocking links)"
+  blockedBy(filter: NibFilter): [Nib!]!
+  "Nibs this one is blocking (resolved from blockingIds)"
+  blocking(filter: NibFilter): [Nib!]!
+  "Parent nib (resolved from parentId)"
+  parent: Nib
+  "Child nibs (nibs with this as parent, default sorted by order)"
+  children(filter: NibFilter, sort: NibSort): [Nib!]!
+}
+
+"""
+Filter options for querying nibs
+"""
+input NibFilter {
+  """
+  Full-text search across slug, title, and body using Bleve query syntax.
+
+  Examples:
+  - "login" - exact term match
+  - "login~" - fuzzy match (1 edit distance)
+  - "login~2" - fuzzy match (2 edit distance)
+  - "log*" - wildcard prefix
+  - "\"user login\"" - exact phrase
+  - "user AND login" - both terms required
+  - "user OR login" - either term
+  - "slug:auth" - search only slug field
+  - "title:login" - search only title field
+  - "body:auth" - search only body field
+  """
+  search: String
+  "Include only nibs with these statuses (OR logic)"
+  status: [String!]
+  "Exclude nibs with these statuses"
+  excludeStatus: [String!]
+  "Include only nibs with these types (OR logic)"
+  type: [String!]
+  "Exclude nibs with these types"
+  excludeType: [String!]
+  "Include only nibs with these priorities (OR logic)"
+  priority: [String!]
+  "Exclude nibs with these priorities"
+  excludePriority: [String!]
+  "Include only nibs with these estimates (OR logic)"
+  estimate: [String!]
+  "Exclude nibs with these estimates"
+  excludeEstimate: [String!]
+  "Include only nibs with any of these tags (OR logic)"
+  tags: [String!]
+  "Exclude nibs with any of these tags"
+  excludeTags: [String!]
+  "Include only nibs with a parent"
+  hasParent: Boolean
+  "Include only nibs with this specific parent ID"
+  parentId: String
+  "Include only nibs that are blocking other nibs"
+  hasBlocking: Boolean
+  "Include only nibs that are blocking this specific nib ID"
+  blockingId: String
+  "Include only nibs that are blocked by others (via incoming blocking links or blocked_by field)"
+  isBlocked: Boolean
+  "Include only nibs that have explicit blocked-by entries"
+  hasBlockedBy: Boolean
+  "Include only nibs blocked by this specific nib ID (via blocked_by field)"
+  blockedById: String
+  "Exclude nibs that have a parent"
+  noParent: Boolean
+  "Exclude nibs that are blocking other nibs"
+  noBlocking: Boolean
+  "Exclude nibs that have explicit blocked-by entries"
+  noBlockedBy: Boolean
+}
+
+"""
+Sort field for nib queries
+"""
+enum NibSortField {
+  ORDER
+  CREATED_AT
+  UPDATED_AT
+  TITLE
+  PRIORITY
+  ID
+  STATUS
+  STATUS_PRIORITY
+}
+
+"""
+Sort direction
+"""
+enum SortDirection {
+  ASC
+  DESC
+}
+
+"""
+Sort options for nib queries
+"""
+input NibSort {
+  "Field to sort by"
+  field: NibSortField!
+  "Sort direction (defaults to ASC)"
+  direction: SortDirection = ASC
+}
+
+type Subscription {
+  """
+  Subscribe to nib change events. Optionally filter by nib ID.
+  """
+  nibChanged(id: ID): NibChangeEvent!
+}
+
+"""
+A change event emitted when a nib is created, updated, or deleted.
+"""
+type NibChangeEvent {
+  "The type of change: created, updated, or deleted"
+  type: String!
+  "The ID of the affected nib (always present, even for deletes)"
+  nibId: ID!
+  "The nib after the change (null for deleted events)"
+  nib: Nib
+}

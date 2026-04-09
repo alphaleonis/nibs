@@ -1,0 +1,51 @@
+{{- define "nibLine" -}}
+- {{typeBadge .}} {{.Title}} {{nibRef .}}
+{{end -}}
+
+{{- define "epicGroup" -}}
+### Epic: {{.Epic.Title}} {{nibRef .Epic}}
+{{with firstParagraph .Epic.Body}}
+> {{.}}
+{{end}}
+
+{{range .Items -}}
+{{template "nibLine" .}}
+{{- end}}
+{{- end -}}
+
+# Roadmap
+{{range .Milestones}}
+## Milestone: {{.Milestone.Title}} {{nibRef .Milestone}}
+{{with firstParagraph .Milestone.Body}}
+> {{.}}
+{{end}}
+{{range .Epics -}}
+{{template "epicGroup" .}}
+{{- end}}
+{{- if .Other}}
+{{- if len .Epics}}
+### Miscellaneous
+{{end}}
+
+{{range .Other -}}
+{{template "nibLine" .}}
+{{- end}}
+{{- end}}
+{{- end}}
+{{- if .Unscheduled}}
+{{- if len $.Milestones}}
+## No Milestone
+{{end}}
+{{- range .Unscheduled.Epics -}}
+{{template "epicGroup" .}}
+{{- end}}
+{{- if .Unscheduled.Other}}
+{{- if len .Unscheduled.Epics}}
+### Miscellaneous
+{{end}}
+
+{{range .Unscheduled.Other -}}
+{{template "nibLine" .}}
+{{- end}}
+{{- end}}
+{{- end}}

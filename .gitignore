@@ -1,0 +1,19 @@
+/nibs
+.nibs/
+third_party_licenses/
+.fastembed_cache
+/.vscode/settings.json
+/.worktrees/
+# Added by goreleaser init:
+/dist/
+node_modules/
+web/dist/
+/.docs.local
+/.code-reviews/
+/.architecture-improvements/
+/.grill-me/
+/.playwright-mcp/
+/web/test-results/
+/web/playwright-report/
+/nibs.exe
+

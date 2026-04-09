@@ -1,0 +1,529 @@
+package cmd
+
+import (
+	"context"
+	"encoding/json"
+	"fmt"
+	"net"
+	"net/http"
+	"net/http/httptest"
+	"os"
+	"path/filepath"
+	"strings"
+	"testing"
+	"time"
+
+	"github.com/gorilla/websocket"
+
+	"github.com/alphaleonis/nibs/internal/config"
+	"github.com/alphaleonis/nibs/internal/nib"
+	"github.com/alphaleonis/nibs/internal/nibcore"
+)
+
+const maxBodySize = 1 << 20 // 1 MB — mirrors gqlgen's default POST limit for test assertions
+
+func setupServeTestApp(t *testing.T) *App {
+	t.Helper()
+	tmpDir := t.TempDir()
+	nibsDir := filepath.Join(tmpDir, ".nibs")
+	if err := os.MkdirAll(nibsDir, 0755); err != nil {
+		t.Fatalf("failed to create test .nibs dir: %v", err)
+	}
+
+	cfg := config.Default()
+	testCore := nibcore.New(nibsDir, cfg)
+	if err := testCore.Load(); err != nil {
+		t.Fatalf("failed to load core: %v", err)
+	}
+
+	t.Cleanup(func() { _ = testCore.Close() })
+	return &App{Core: testCore}
+}
+
+func TestHealthEndpoint(t *testing.T) {
+	app := setupServeTestApp(t)
+	handler := newServeMux(app, nil)
+
+	req := httptest.NewRequest(http.MethodGet, "/health", nil)
+	rec := httptest.NewRecorder()
+	handler.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected status 200, got %d", rec.Code)
+	}
+
+	var body struct {
+		Status string `json:"status"`
+	}
+	if err := json.NewDecoder(rec.Body).Decode(&body); err != nil {
+		t.Fatalf("failed to decode response: %v", err)
+	}
+	if body.Status != "ok" {
+		t.Errorf("expected status 'ok', got %q", body.Status)
+	}
+}
+
+func TestGraphQLEndpoint(t *testing.T) {
+	app := setupServeTestApp(t)
+
+	// Create a test nib
+	b := &nib.Nib{
+		ID:     "test-1",
+		Slug:   "test-nib",
+		Title:  "Test Nib",
+		Status: "todo",
+	}
+	if err := app.Core.Create(b); err != nil {
+		t.Fatalf("failed to create test nib: %v", err)
+	}
+
+	handler := newServeMux(app, nil)
+
+	t.Run("POST with variables", func(t *testing.T) {
+		body := `{"query":"query GetNib($id: ID!) { nib(id: $id) { id title } }","variables":{"id":"test-1"},"operationName":"GetNib"}`
+		req := httptest.NewRequest(http.MethodPost, "/graphql", strings.NewReader(body))
+		req.Header.Set("Content-Type", "application/json")
+		rec := httptest.NewRecorder()
+		handler.ServeHTTP(rec, req)
+
+		if rec.Code != http.StatusOK {
+			t.Fatalf("expected status 200, got %d", rec.Code)
+		}
+
+		var resp struct {
+			Data struct {
+				Nib struct {
+					ID    string `json:"id"`
+					Title string `json:"title"`
+				} `json:"nib"`
+			} `json:"data"`
+		}
+		if err := json.NewDecoder(rec.Body).Decode(&resp); err != nil {
+			t.Fatalf("failed to decode response: %v", err)
+		}
+		if resp.Data.Nib.ID != "test-1" {
+			t.Errorf("expected id 'test-1', got %q", resp.Data.Nib.ID)
+		}
+		if resp.Data.Nib.Title != "Test Nib" {
+			t.Errorf("expected title 'Test Nib', got %q", resp.Data.Nib.Title)
+		}
+	})
+
+	t.Run("POST with valid query returns data", func(t *testing.T) {
+		body := `{"query":"{ nibs { id title } }"}`
+		req := httptest.NewRequest(http.MethodPost, "/graphql", strings.NewReader(body))
+		req.Header.Set("Content-Type", "application/json")
+		rec := httptest.NewRecorder()
+		handler.ServeHTTP(rec, req)
+
+		if rec.Code != http.StatusOK {
+			t.Fatalf("expected status 200, got %d", rec.Code)
+		}
+
+		var resp struct {
+			Data struct {
+				Nibs []struct {
+					ID    string `json:"id"`
+					Title string `json:"title"`
+				} `json:"nibs"`
+			} `json:"data"`
+		}
+		if err := json.NewDecoder(rec.Body).Decode(&resp); err != nil {
+			t.Fatalf("failed to decode response: %v", err)
+		}
+		if len(resp.Data.Nibs) != 1 {
+			t.Fatalf("expected 1 nib, got %d", len(resp.Data.Nibs))
+		}
+		if resp.Data.Nibs[0].ID != "test-1" {
+			t.Errorf("expected id 'test-1', got %q", resp.Data.Nibs[0].ID)
+		}
+	})
+
+	t.Run("GET returns 200 with query param", func(t *testing.T) {
+		req := httptest.NewRequest(http.MethodGet, `/graphql?query={nibs{id}}`, nil)
+		rec := httptest.NewRecorder()
+		handler.ServeHTTP(rec, req)
+
+		if rec.Code != http.StatusOK {
+			t.Errorf("expected status 200, got %d", rec.Code)
+		}
+	})
+
+	t.Run("CORS headers on POST response", func(t *testing.T) {
+		body := `{"query":"{ nibs { id } }"}`
+		req := httptest.NewRequest(http.MethodPost, "/graphql", strings.NewReader(body))
+		req.Header.Set("Content-Type", "application/json")
+		req.Header.Set("Origin", "http://localhost:5173")
+		rec := httptest.NewRecorder()
+		handler.ServeHTTP(rec, req)
+
+		if v := rec.Header().Get("Access-Control-Allow-Origin"); v != "http://localhost:5173" {
+			t.Errorf("expected Access-Control-Allow-Origin 'http://localhost:5173', got %q", v)
+		}
+	})
+
+	t.Run("CORS rejects non-localhost origin", func(t *testing.T) {
+		body := `{"query":"{ nibs { id } }"}`
+		req := httptest.NewRequest(http.MethodPost, "/graphql", strings.NewReader(body))
+		req.Header.Set("Content-Type", "application/json")
+		req.Header.Set("Origin", "http://evil.com")
+		rec := httptest.NewRecorder()
+		handler.ServeHTTP(rec, req)
+
+		if v := rec.Header().Get("Access-Control-Allow-Origin"); v != "" {
+			t.Errorf("expected no Access-Control-Allow-Origin for non-localhost origin, got %q", v)
+		}
+		if v := rec.Header().Get("Access-Control-Allow-Methods"); v != "" {
+			t.Errorf("expected no Access-Control-Allow-Methods for non-localhost origin, got %q", v)
+		}
+		if v := rec.Header().Get("Vary"); v != "Origin" {
+			t.Errorf("expected Vary: Origin even for rejected origins, got %q", v)
+		}
+	})
+
+	t.Run("CORS allows 127.0.0.1 origin", func(t *testing.T) {
+		body := `{"query":"{ nibs { id } }"}`
+		req := httptest.NewRequest(http.MethodPost, "/graphql", strings.NewReader(body))
+		req.Header.Set("Content-Type", "application/json")
+		req.Header.Set("Origin", "http://127.0.0.1:3000")
+		rec := httptest.NewRecorder()
+		handler.ServeHTTP(rec, req)
+
+		if v := rec.Header().Get("Access-Control-Allow-Origin"); v != "http://127.0.0.1:3000" {
+			t.Errorf("expected Access-Control-Allow-Origin 'http://127.0.0.1:3000', got %q", v)
+		}
+	})
+
+	t.Run("CORS preflight returns 204", func(t *testing.T) {
+		req := httptest.NewRequest(http.MethodOptions, "/graphql", nil)
+		req.Header.Set("Origin", "http://localhost:5173")
+		req.Header.Set("Access-Control-Request-Method", "POST")
+		rec := httptest.NewRecorder()
+		handler.ServeHTTP(rec, req)
+
+		if rec.Code != http.StatusNoContent {
+			t.Errorf("expected status 204, got %d", rec.Code)
+		}
+		if v := rec.Header().Get("Access-Control-Allow-Origin"); v != "http://localhost:5173" {
+			t.Errorf("expected Access-Control-Allow-Origin 'http://localhost:5173', got %q", v)
+		}
+		if v := rec.Header().Get("Access-Control-Allow-Methods"); !strings.Contains(v, "POST") {
+			t.Errorf("expected Access-Control-Allow-Methods to contain 'POST', got %q", v)
+		}
+		if v := rec.Header().Get("Access-Control-Allow-Headers"); !strings.Contains(v, "Content-Type") {
+			t.Errorf("expected Access-Control-Allow-Headers to contain 'Content-Type', got %q", v)
+		}
+	})
+
+	t.Run("invalid query returns errors in body with 422", func(t *testing.T) {
+		body := `{"query":"{ invalid { field } }"}`
+		req := httptest.NewRequest(http.MethodPost, "/graphql", strings.NewReader(body))
+		req.Header.Set("Content-Type", "application/json")
+		rec := httptest.NewRecorder()
+		handler.ServeHTTP(rec, req)
+
+		if rec.Code != http.StatusUnprocessableEntity {
+			t.Fatalf("expected status 422, got %d", rec.Code)
+		}
+
+		var resp struct {
+			Errors []struct {
+				Message string `json:"message"`
+			} `json:"errors"`
+		}
+		if err := json.NewDecoder(rec.Body).Decode(&resp); err != nil {
+			t.Fatalf("failed to decode response: %v", err)
+		}
+		if len(resp.Errors) == 0 {
+			t.Fatal("expected errors in response body")
+		}
+	})
+
+	t.Run("oversized body returns 400", func(t *testing.T) {
+		bigBody := strings.NewReader(strings.Repeat("x", maxBodySize+1))
+		req := httptest.NewRequest(http.MethodPost, "/graphql", bigBody)
+		req.Header.Set("Content-Type", "application/json")
+		rec := httptest.NewRecorder()
+		handler.ServeHTTP(rec, req)
+
+		if rec.Code != http.StatusBadRequest {
+			t.Errorf("expected status 400 for oversized body, got %d", rec.Code)
+		}
+	})
+}
+
+func TestGraphQLWebSocketUpgrade(t *testing.T) {
+	app := setupServeTestApp(t)
+	handler := newServeMux(app, nil)
+	server := httptest.NewServer(handler)
+	defer server.Close()
+
+	// Convert http:// to ws://
+	wsURL := "ws" + strings.TrimPrefix(server.URL, "http") + "/graphql"
+
+	// Attempt WebSocket upgrade with graphql-transport-ws subprotocol
+	dialer := &websocket.Dialer{}
+	header := http.Header{}
+	header.Set("Sec-WebSocket-Protocol", "graphql-transport-ws")
+
+	conn, resp, err := dialer.Dial(wsURL, header)
+	if err != nil {
+		t.Fatalf("WebSocket dial failed: %v", err)
+	}
+	defer func() { _ = conn.Close() }()
+
+	if resp.Header.Get("Sec-WebSocket-Protocol") != "graphql-transport-ws" {
+		t.Errorf("expected subprotocol 'graphql-transport-ws', got %q", resp.Header.Get("Sec-WebSocket-Protocol"))
+	}
+
+	// Send connection_init message
+	initMsg := map[string]any{"type": "connection_init"}
+	if err := conn.WriteJSON(initMsg); err != nil {
+		t.Fatalf("failed to send connection_init: %v", err)
+	}
+
+	// Expect connection_ack
+	var ackMsg map[string]any
+	if err := conn.SetReadDeadline(time.Now().Add(2 * time.Second)); err != nil {
+		t.Fatal(err)
+	}
+	if err := conn.ReadJSON(&ackMsg); err != nil {
+		t.Fatalf("failed to read connection_ack: %v", err)
+	}
+	if ackMsg["type"] != "connection_ack" {
+		t.Errorf("expected 'connection_ack', got %v", ackMsg["type"])
+	}
+}
+
+func TestResolveServeOptions(t *testing.T) {
+	t.Run("config port used when flag not set", func(t *testing.T) {
+		cfg := config.Default()
+		port := 4000
+		cfg.Nibs.Server.Port = &port
+
+		opts := resolveServeOptions(cfg, 0, false, false, false)
+		if opts.port != 4000 {
+			t.Errorf("port = %d, want 4000 (from config)", opts.port)
+		}
+	})
+
+	t.Run("flag overrides config port", func(t *testing.T) {
+		cfg := config.Default()
+		port := 4000
+		cfg.Nibs.Server.Port = &port
+
+		opts := resolveServeOptions(cfg, 8080, true, false, false)
+		if opts.port != 8080 {
+			t.Errorf("port = %d, want 8080 (from flag)", opts.port)
+		}
+	})
+
+	t.Run("default port when neither flag nor config set", func(t *testing.T) {
+		cfg := config.Default() // no server.port set
+
+		opts := resolveServeOptions(cfg, 0, false, false, false)
+		if opts.port != 3000 {
+			t.Errorf("port = %d, want 3000 (default)", opts.port)
+		}
+	})
+
+	t.Run("config open_browser used when no flag set", func(t *testing.T) {
+		cfg := config.Default() // open_browser defaults to true
+
+		opts := resolveServeOptions(cfg, 0, false, false, false)
+		if !opts.open {
+			t.Error("open = false, want true (from config default)")
+		}
+	})
+
+	t.Run("config open_browser=false respected", func(t *testing.T) {
+		cfg := config.Default()
+		openBrowser := false
+		cfg.Nibs.Server.OpenBrowser = &openBrowser
+
+		opts := resolveServeOptions(cfg, 0, false, false, false)
+		if opts.open {
+			t.Error("open = true, want false (from config)")
+		}
+	})
+
+	t.Run("--no-open overrides config open_browser=true", func(t *testing.T) {
+		cfg := config.Default() // defaults to true
+
+		// flagOpenSet=true, flagOpenValue=false (--no-open)
+		opts := resolveServeOptions(cfg, 0, false, true, false)
+		if opts.open {
+			t.Error("open = true, want false (--no-open overrides config)")
+		}
+	})
+
+	t.Run("--open overrides config open_browser=false", func(t *testing.T) {
+		cfg := config.Default()
+		openBrowser := false
+		cfg.Nibs.Server.OpenBrowser = &openBrowser
+
+		// flagOpenSet=true, flagOpenValue=true (--open)
+		opts := resolveServeOptions(cfg, 0, false, true, true)
+		if !opts.open {
+			t.Error("open = false, want true (--open overrides config)")
+		}
+	})
+}
+
+func TestStartServerShutdown(t *testing.T) {
+	app := setupServeTestApp(t)
+
+	// Pick a free port
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("failed to get free port: %v", err)
+	}
+	port := ln.Addr().(*net.TCPAddr).Port
+	_ = ln.Close()
+
+	ctx, cancel := context.WithCancel(context.Background())
+
+	errCh := make(chan error, 1)
+	go func() {
+		errCh <- startServer(ctx, app, "127.0.0.1", port, false, nil)
+	}()
+
+	// Wait for server to be ready
+	ready := false
+	deadline := time.Now().Add(2 * time.Second)
+	for time.Now().Before(deadline) {
+		conn, err := net.Dial("tcp", fmt.Sprintf("127.0.0.1:%d", port))
+		if err == nil {
+			_ = conn.Close()
+			ready = true
+			break
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	if !ready {
+		t.Fatal("server did not become ready within 2s")
+	}
+
+	// Cancel context to trigger shutdown
+	cancel()
+
+	// Server should return without error
+	select {
+	case err := <-errCh:
+		if err != nil {
+			t.Fatalf("expected nil error from shutdown, got %v", err)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("server did not shut down within timeout")
+	}
+}
+
+func TestStartServerRejectsAfterShutdown(t *testing.T) {
+	app := setupServeTestApp(t)
+
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("failed to get free port: %v", err)
+	}
+	port := ln.Addr().(*net.TCPAddr).Port
+	_ = ln.Close()
+
+	ctx, cancel := context.WithCancel(context.Background())
+
+	errCh := make(chan error, 1)
+	go func() {
+		errCh <- startServer(ctx, app, "127.0.0.1", port, false, nil)
+	}()
+
+	// Wait for server to be ready
+	addr := fmt.Sprintf("127.0.0.1:%d", port)
+	ready := false
+	deadline := time.Now().Add(2 * time.Second)
+	for time.Now().Before(deadline) {
+		conn, err := net.Dial("tcp", addr)
+		if err == nil {
+			_ = conn.Close()
+			ready = true
+			break
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	if !ready {
+		t.Fatal("server did not become ready within 2s")
+	}
+
+	// Cancel context to trigger shutdown
+	cancel()
+
+	// Wait for server to finish
+	select {
+	case err := <-errCh:
+		if err != nil {
+			t.Fatalf("expected nil error from shutdown, got %v", err)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("server did not shut down within timeout")
+	}
+
+	// After shutdown, new connections should be refused
+	_, err = net.DialTimeout("tcp", addr, 1*time.Second)
+	if err == nil {
+		t.Fatal("expected connection refused after shutdown, but connection succeeded")
+	}
+}
+
+func TestServeOpenBrowser(t *testing.T) {
+	app := setupServeTestApp(t)
+
+	// Pick a free port
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("failed to get free port: %v", err)
+	}
+	port := ln.Addr().(*net.TCPAddr).Port
+	_ = ln.Close()
+
+	var openedURL string
+	opener := func(url string) error {
+		openedURL = url
+		return nil
+	}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	// Start server in background
+	errCh := make(chan error, 1)
+	go func() {
+		errCh <- startServer(ctx, app, "127.0.0.1", port, true, opener)
+	}()
+
+	// Wait for server to be ready
+	ready := false
+	deadline := time.Now().Add(2 * time.Second)
+	for time.Now().Before(deadline) {
+		conn, err := net.Dial("tcp", fmt.Sprintf("127.0.0.1:%d", port))
+		if err == nil {
+			_ = conn.Close()
+			ready = true
+			break
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	if !ready {
+		t.Fatal("server did not become ready within 2s")
+	}
+
+	expected := fmt.Sprintf("http://127.0.0.1:%d", port)
+	if openedURL != expected {
+		t.Errorf("expected browser opened with %q, got %q", expected, openedURL)
+	}
+
+	// Clean shutdown — no goroutine leak
+	cancel()
+	select {
+	case <-errCh:
+	case <-time.After(5 * time.Second):
+		t.Fatal("server did not shut down")
+	}
+}
