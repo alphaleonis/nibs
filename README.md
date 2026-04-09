@@ -23,17 +23,37 @@ Nibs provides three ways to interact with your issues:
 
 ## Installation
 
-### From GitHub Releases
+### Linux / macOS
 
-Download a prebuilt binary for your platform from the [Releases](https://github.com/alphaleonis/nibs/releases) page. Builds are available for Linux, macOS, and Windows on both amd64 and arm64.
+```bash
+curl -sSfL https://raw.githubusercontent.com/alphaleonis/nibs/main/install.sh | sh
+```
+
+Installs to `~/.local/bin` by default. Use `-b DIR` to change the install directory:
+
+```bash
+curl -sSfL https://raw.githubusercontent.com/alphaleonis/nibs/main/install.sh | sh -s -- -b /usr/local/bin
+```
+
+### Windows (PowerShell)
+
+```powershell
+irm https://raw.githubusercontent.com/alphaleonis/nibs/main/install.ps1 | iex
+```
+
+Installs to `~/.local/bin` by default.
 
 ### From Source
 
-Requires Go 1.24+ and Node.js (for the web UI):
+Requires Go 1.24+, Node.js, and [mise](https://mise.jdx.dev/):
 
 ```bash
-go install github.com/alphaleonis/nibs@latest
+git clone https://github.com/alphaleonis/nibs.git
+cd nibs
+mise build
 ```
+
+Prebuilt binaries are also available on the [Releases](https://github.com/alphaleonis/nibs/releases) page.
 
 ## Quick Start
 
