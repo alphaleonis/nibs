@@ -62,12 +62,16 @@ try {
 
     Write-Host "Checksum verified" -ForegroundColor Green
 
-    # Extract
-    Expand-Archive -Path (Join-Path $TmpDir $Archive) -DestinationPath $TmpDir -Force
+    # Extract to a dedicated subdirectory so the archive and destination
+    # aren't the same folder — that combination trips Expand-Archive in pwsh.
+    $ArchivePath = Join-Path $TmpDir $Archive
+    $ExtractDir  = Join-Path $TmpDir "extracted"
+    New-Item -ItemType Directory -Path $ExtractDir -Force | Out-Null
+    Expand-Archive -LiteralPath $ArchivePath -DestinationPath $ExtractDir -Force
 
     # Install
     New-Item -ItemType Directory -Path $InstallDir -Force | Out-Null
-    Copy-Item (Join-Path $TmpDir "$Binary.exe") (Join-Path $InstallDir "$Binary.exe") -Force
+    Copy-Item (Join-Path $ExtractDir "$Binary.exe") (Join-Path $InstallDir "$Binary.exe") -Force
 
     Write-Host "Installed $(Join-Path $InstallDir "$Binary.exe")" -ForegroundColor Green
 
