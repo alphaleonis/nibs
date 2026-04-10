@@ -62,12 +62,15 @@ try {
 
     Write-Host "Checksum verified" -ForegroundColor Green
 
-    # Extract to a dedicated subdirectory so the archive and destination
-    # aren't the same folder — that combination trips Expand-Archive in pwsh.
+    # Extract via the .NET API rather than Expand-Archive. Third-party modules
+    # (e.g. Pscx) can register their own Expand-Archive cmdlet with a different
+    # parameter set and shadow the built-in via PSModulePath auto-discovery,
+    # which breaks -DestinationPath. ZipFile sidesteps cmdlet resolution.
     $ArchivePath = Join-Path $TmpDir $Archive
     $ExtractDir  = Join-Path $TmpDir "extracted"
     New-Item -ItemType Directory -Path $ExtractDir -Force | Out-Null
-    Expand-Archive -LiteralPath $ArchivePath -DestinationPath $ExtractDir -Force
+    Add-Type -AssemblyName System.IO.Compression.FileSystem
+    [System.IO.Compression.ZipFile]::ExtractToDirectory($ArchivePath, $ExtractDir)
 
     # Install
     New-Item -ItemType Directory -Path $InstallDir -Force | Out-Null
