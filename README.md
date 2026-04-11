@@ -45,12 +45,13 @@ Installs to `~/.local/bin` by default.
 
 ### From Source
 
-Requires Go 1.24+, Node.js, and [mise](https://mise.jdx.dev/):
+Requires Node.js and [mise](https://mise.jdx.dev/) (mise installs Go, Task, and golangci-lint automatically from `mise.toml`):
 
 ```bash
 git clone https://github.com/alphaleonis/nibs.git
 cd nibs
-mise build
+mise install      # installs pinned Go, Task, golangci-lint
+task build
 ```
 
 Prebuilt binaries are also available on the [Releases](https://github.com/alphaleonis/nibs/releases) page.

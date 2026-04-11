@@ -8,23 +8,24 @@ Nibs is a file-based issue tracker for AI-first workflows. Issues ("nibs") are s
 
 ## Build & Dev Commands
 
-All commands use [mise](https://mise.jdx.dev/) as the task runner:
+All commands use [Task](https://taskfile.dev/) (`go-task/task`) as the task runner. Tool version pinning (Go, golangci-lint, Task itself) is handled by [mise](https://mise.jdx.dev/) via `mise.toml`, so the only thing contributors need to install manually is mise.
 
-- `mise build` - Build the `./nibs` executable (runs codegen first)
-- `mise test` - Run all tests: Go + web (runs codegen and web:build first)
-- `mise codegen` - Regenerate GraphQL code (`go generate ./...`)
-- `mise nibs` - Build and run the CLI in one step (`go run .`)
+- `task build` - Build the `./nibs` executable (runs codegen first)
+- `task test` - Run all tests: Go + web (runs codegen and web:build first)
+- `task codegen` - Regenerate GraphQL code (`go generate ./...`)
+- `task nibs` - Build and run the CLI in one step (`go run .`)
 - `go test ./internal/nib/` - Run tests for a specific package
 - `cd web && npx vitest run --reporter=agent` - Run web tests only
-- `mise demo` - Serve the web UI with the sample-project fixture (temporary copy, safe to mutate)
-- `mise demo:tui` - Run the TUI with the sample-project fixture
+- `task demo` - Serve the web UI with the sample-project fixture (temporary copy, safe to mutate)
+- `task demo:tui` - Run the TUI with the sample-project fixture
+- `task --list` - List all available tasks
 
 ## GraphQL Schema Changes
 
 When modifying the GraphQL schema (`internal/graph/schema.graphqls`):
 
 1. Edit the schema file
-2. Run `mise codegen` to regenerate `internal/graph/generated.go` and `internal/graph/model/models_gen.go`
+2. Run `task codegen` to regenerate `internal/graph/generated.go` and `internal/graph/model/models_gen.go`
 3. Implement any new resolvers in `internal/graph/schema.resolvers.go`
 
 The code generation is configured in `gqlgen.yml`. The `nib.Nib` struct is autobound so the GraphQL `Nib` type maps directly to it.
@@ -66,7 +67,7 @@ The GraphQL engine runs in-process for CLI commands (`cmd/graphql.go` executes q
 - **Use shadcn tokens for all UI colors** — never use hardcoded Tailwind color classes (`gray-700`, `blue-500`, etc.) in components. Use semantic tokens: `bg-popover`, `text-muted-foreground`, `border-border`, `bg-accent`, `text-foreground`, etc. Domain-specific tokens (`bg-warning`, `text-link`, `border-tag-border`) are also registered as Tailwind utilities.
 - **When migrating to shadcn components**, replace both the container AND the internal items/styling. Don't wrap old hand-rolled markup in shadcn containers — use shadcn's item components (e.g., `DropdownMenu.CheckboxItem` instead of raw `<label><input checkbox>`), which provide consistent padding, hover states, and ARIA roles.
 - **Bits UI portals in jsdom**: shadcn components render content via portals to `document.body`. `test-setup.ts` has polyfills (ResizeObserver, MutationObserver visibility fix) that make portaled content queryable. Tests use `screen.*` queries which search the full document. DropdownMenu items use roles like `menuitemcheckbox`, `menuitemradio`, `menuitem`.
-- `web/dist/` is gitignored — run `mise build` (or `cd web && npm ci && npm run build`) to generate it before `go build`.
+- `web/dist/` is gitignored — run `task build` (or `cd web && npm ci && npm run build`) to generate it before `go build`.
 - Preferences (filter, view level, column widths, panel width) are persisted to localStorage via `web/src/lib/storage.ts`
 - The table uses `table-layout: fixed` with an explicit computed width — column widths are enforced regardless of content
 
@@ -104,22 +105,22 @@ For optional config fields with non-zero defaults, use pointer types (`*int`, `*
 - Include relevant nib ID(s) in commit messages (e.g. `Refs: nib-xxxx`)
 - Mark breaking changes with `!` notation (e.g. `feat!: ...`)
 - Description should be a concise bullet point list of changes
-- **Never commit with failing tests**, even if the failures appear unrelated to your changes. Run `mise test` before every commit — but if tests already passed since the last code change and no code has been modified since, skip the redundant run. If tests fail: either fix them in the same commit, or stash your changes (`git stash`), fix the tests and commit the fix separately, then reapply your stash and commit your work. Do not ignore or skip failing tests.
-- **Never commit with build warnings.** Run `mise build` and check for warnings (deprecation notices, unused imports, etc.) before deeming a work item complete. Treat warnings as errors — fix them before committing.
-- **Never commit with lint failures.** Run `mise lint` (golangci-lint) before committing. Fix all lint issues before committing.
+- **Never commit with failing tests**, even if the failures appear unrelated to your changes. Run `task test` before every commit — but if tests already passed since the last code change and no code has been modified since, skip the redundant run. If tests fail: either fix them in the same commit, or stash your changes (`git stash`), fix the tests and commit the fix separately, then reapply your stash and commit your work. Do not ignore or skip failing tests.
+- **Never commit with build warnings.** Run `task build` and check for warnings (deprecation notices, unused imports, etc.) before deeming a work item complete. Treat warnings as errors — fix them before committing.
+- **Never commit with lint failures.** Run `task lint` (golangci-lint) before committing. Fix all lint issues before committing.
 
 ## Testing
 
 - Always write or update tests for changes
 - Use table-driven tests following Go conventions
 - Never hardcode `/` or `\` in path assertions — use `filepath.Join` for OS paths and forward slashes for nib `Path` fields
-- For manual CLI testing: `mise nibs` compiles and runs the CLI
-- For manual CLI testing, `mise demo` serves the web UI with a temporary copy of the sample-project fixture (safe to mutate), and `mise demo:tui` does the same for the TUI
+- For manual CLI testing: `task nibs` compiles and runs the CLI
+- For manual CLI testing, `task demo` serves the web UI with a temporary copy of the sample-project fixture (safe to mutate), and `task demo:tui` does the same for the TUI
 - **Test fixture dataset**: `testdata/fixtures/sample-project/` has 87 curated nibs (prefix `tnib-`) covering all types, statuses, priorities, hierarchies, and relationships. Use `fixtures.CopySampleProject(t)` from `testdata/fixtures/` to get a temporary copy for write tests. Regenerate with `bash testdata/fixtures/gen-sample-project.sh`.
 - Web UI tests: `cd web && npm install && npx vitest run --reporter=agent` (Vitest + jsdom + @testing-library/svelte). Run `npm install` first — node_modules can go stale after branch switches.
 - Web test commands require `web/` as the working directory. If cwd has drifted, `cd` to the project root's `web/` directory first.
 - **Always use `--reporter=agent`** when running vitest — it keeps output concise. Never pipe vitest through grep; read the output once.
-- `mise test` runs both Go and web tests. No need to run them separately unless debugging a specific failure.
+- `task test` runs both Go and web tests. No need to run them separately unless debugging a specific failure.
 - **bits-ui timer flush**: `test-setup.ts` has an `afterAll` that waits 50ms so bits-ui's body-scroll-lock deferred cleanup (24ms setTimeout) fires while jsdom still exists. Without this, the timer fires after jsdom teardown causing a spurious "document is not defined" error.
 
 ## Architecture Reviews

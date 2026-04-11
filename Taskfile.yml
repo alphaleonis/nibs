@@ -1,0 +1,117 @@
+version: '3'
+
+# Task (https://taskfile.dev) replaces mise's task runner for this project.
+# mise is still used for tool version management via mise.toml ([tools]).
+#
+# Task uses an embedded POSIX shell (mvdan/sh) that runs identically on
+# Windows, macOS, and Linux — no Git Bash / cmd.exe divergence.
+#
+# Common usage:
+#   task           → list tasks (same as task --list)
+#   task build     → build ./nibs (or ./nibs.exe on Windows)
+#   task test      → run all tests (Go + web)
+#   task demo      → serve the web UI against the sample fixture
+#   task --list    → show all tasks with descriptions
+
+tasks:
+  default:
+    desc: List all tasks
+    cmds:
+      - task --list
+    silent: true
+
+  codegen:
+    desc: Regenerate GraphQL code
+    cmds:
+      - go generate ./...
+
+  web:build:
+    desc: Build the web UI (Svelte + Vite)
+    deps: [codegen]
+    dir: web
+    cmds:
+      - npm ci
+      - npm run build
+
+  build:
+    desc: Build the nibs CLI executable
+    deps: [codegen, web:build]
+    vars:
+      VERSION:
+        sh: git describe --tags --always --dirty 2>/dev/null || echo dev
+      COMMIT:
+        sh: git rev-parse --short HEAD 2>/dev/null || echo unknown
+      # DATE is computed via Task's template engine (sprig) instead of
+      # shelling out to `date`, which isn't on PATH on Windows without
+      # Git Bash. RFC3339 in UTC, matching the previous bash output.
+      DATE: '{{now | date "2006-01-02T15:04:05Z"}}'
+    cmds:
+      - >-
+        go build
+        -ldflags "-X github.com/alphaleonis/nibs/cmd.version={{.VERSION}}
+        -X github.com/alphaleonis/nibs/cmd.commit={{.COMMIT}}
+        -X github.com/alphaleonis/nibs/cmd.date={{.DATE}}"
+        .
+
+  test:
+    desc: Run all tests (Go + web)
+    deps: [codegen, web:build]
+    cmds:
+      - go test ./...
+      - cd web && npx vitest run --reporter=agent
+
+  nibs:
+    desc: Build and run the nibs CLI (pass args after `--`, e.g. `task nibs -- list --json`)
+    deps: [web:build]
+    cmds:
+      - go run . {{.CLI_ARGS}}
+
+  install:
+    desc: Install nibs to ~/.local/bin
+    deps: [build]
+    cmds:
+      - cp nibs ~/.local/bin/nibs
+
+  playwright:
+    desc: Run Playwright e2e tests (requires built binary)
+    deps: [build]
+    dir: web
+    cmds:
+      - npx playwright test
+
+  demo:
+    desc: Serve the web UI with the sample project fixture (temporary copy)
+    # Task's built-in u-root mktemp defaults to /tmp (which doesn't exist on
+    # Windows), so we pass -p with the platform temp dir explicitly. The
+    # TMP var is captured once and cleaned up via Task's defer, which is
+    # cross-platform by design (no bash trap / SIGINT handling needed).
+    vars:
+      TMP:
+        sh: mktemp -d -p "{{env "TEMP" | default "/tmp"}}"
+    cmds:
+      - defer: rm -rf "{{.TMP}}"
+      - cp -r testdata/fixtures/sample-project/.nibs testdata/fixtures/sample-project/.nibs.yml "{{.TMP}}/"
+      - echo "Using temporary copy at {{.TMP}}"
+      - go run . serve --nibs-path "{{.TMP}}/.nibs" {{.CLI_ARGS}}
+
+  demo:tui:
+    desc: Run the TUI with the sample project fixture (temporary copy)
+    vars:
+      TMP:
+        sh: mktemp -d -p "{{env "TEMP" | default "/tmp"}}"
+    cmds:
+      - defer: rm -rf "{{.TMP}}"
+      - cp -r testdata/fixtures/sample-project/.nibs testdata/fixtures/sample-project/.nibs.yml "{{.TMP}}/"
+      - echo "Using temporary copy at {{.TMP}}"
+      - go run . tui --nibs-path "{{.TMP}}/.nibs"
+
+  lint:
+    desc: Run golangci-lint
+    cmds:
+      - golangci-lint run ./...
+
+  licenses:
+    desc: Collect third-party dependency licenses
+    cmds:
+      - go-licenses save ./... --save_path=./third_party_licenses --force --ignore github.com/alphaleonis/nibs
+      - go-licenses report ./... --ignore github.com/alphaleonis/nibs > ./third_party_licenses/NOTICES.csv 2>/dev/null
