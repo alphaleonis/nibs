@@ -1,7 +1,8 @@
 import { render, screen, waitFor } from "@testing-library/svelte";
 import { userEvent } from "@testing-library/user-event";
 import { describe, it, expect, vi, beforeEach } from "vitest";
-import { readable } from "svelte/store";
+import { readable, writable } from "svelte/store";
+import { tick } from "svelte";
 import TreeTable from "./TreeTable.svelte";
 import type { TreeTableNib, ViewLevel, ColumnKey } from "../types";
 import { SelectionState } from "../selection.svelte";
@@ -242,6 +243,49 @@ describe("TreeTable", () => {
     renderTreeTable({ filter: {} });
 
     expect(screen.getByText(/network error/i)).toBeInTheDocument();
+  });
+
+  // Regression: urql's subscription store emits a fresh wrapper object on
+  // every reactive cycle. Reference-based dedup inside the TreeTable
+  // subscription effect used to fail, causing an infinite effect loop that
+  // Svelte halts with `effect_update_depth_exceeded` — leaving the UI stuck
+  // on "Loading..." until a manual refresh. The fix deduplicates by event
+  // content and wraps side effects in untrack().
+  it("deduplicates repeated subscription emissions with the same event payload", async () => {
+    const nibs: TreeTableNib[] = [
+      makeTreeTableNib({ id: "nibs-m1", title: "Milestone", type: "milestone" }),
+    ];
+
+    const reexecute = vi.fn();
+    mockQueryStore.mockReturnValue({
+      ...readable({ fetching: false, error: undefined, data: { nibs }, stale: false }),
+      reexecute,
+    } as any);
+
+    // Writable subscription store lets us push multiple "emissions" that
+    // have different wrapper identity but the same inner event payload.
+    const subStore = writable<any>({ fetching: true, error: undefined, data: undefined, stale: false });
+    mockSubscriptionStore.mockReturnValue(subStore as any);
+
+    renderTreeTable({ filter: {} });
+    await tick();
+
+    // Same logical event (same type + nibId) emitted via three fresh
+    // wrapper objects with three fresh inner data objects. Reference
+    // comparison would flag all three as "new".
+    const evt = { type: "created", nibId: "nibs-new" };
+    for (let i = 0; i < 20; i++) {
+      subStore.set({
+        fetching: true,
+        error: undefined,
+        data: { nibChanged: { ...evt } },
+        stale: false,
+      });
+      await tick();
+    }
+
+    // All 20 wrapper emissions should coalesce into a single refetch.
+    expect(reexecute).toHaveBeenCalledTimes(1);
   });
 
   it("milestones view shows only milestone subtrees", () => {

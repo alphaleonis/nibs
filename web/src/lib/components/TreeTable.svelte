@@ -15,7 +15,7 @@
   import { useTreeDrag } from "../composables/useTreeDrag.svelte";
   import { useKeyboardNav } from "../composables/useKeyboardNav.svelte";
   import { NibChangeTracker } from "../changeTracker.svelte";
-  import { onDestroy } from "svelte";
+  import { onDestroy, untrack } from "svelte";
 
   interface Props {
     prefs?: Preferences;
@@ -93,8 +93,11 @@
     query: NIB_CHANGED_SUBSCRIPTION,
   });
 
-  // Track the last-seen subscription data to detect new events
-  let lastSubData: unknown = $state(undefined);
+  // Track the last-seen event via a stable content key. urql's
+  // subscription store emits a fresh wrapper object on every reactive
+  // cycle, so reference comparison is unreliable — compare by content
+  // instead. Plain let (not $state) so writes do not re-trigger the effect.
+  let lastEventKey = "";
 
   $effect(() => {
     if ($subscription.error) {
@@ -104,20 +107,27 @@
 
   $effect(() => {
     const data = $subscription.data;
-    if (!data?.nibChanged || data === lastSubData) return;
-    lastSubData = data;
-
+    if (!data?.nibChanged) return;
     const event = data.nibChanged as { type: string; nibId: string };
-    changeTracker.handleEvent(event);
+    const key = `${event.type}:${event.nibId}`;
 
-    if (event.type === "deleted") {
-      // Delay refetch until fade animation completes
-      setTimeout(() => {
+    // All side-effects (changeTracker writes, query reexecute) must run
+    // untracked so they do not feed back into this effect and cause a
+    // reactive loop.
+    untrack(() => {
+      if (key === lastEventKey) return;
+      lastEventKey = key;
+
+      changeTracker.handleEvent(event);
+
+      if (event.type === "deleted") {
+        setTimeout(() => {
+          result.reexecute({ requestPolicy: "network-only" });
+        }, changeTracker.fadeDurationMs);
+      } else {
         result.reexecute({ requestPolicy: "network-only" });
-      }, changeTracker.fadeDurationMs);
-    } else {
-      result.reexecute({ requestPolicy: "network-only" });
-    }
+      }
+    });
   });
 
   let collapsedIds: Set<string> = $state(new Set());

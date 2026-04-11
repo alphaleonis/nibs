@@ -527,3 +527,95 @@ func TestServeOpenBrowser(t *testing.T) {
 		t.Fatal("server did not shut down")
 	}
 }
+
+// TestStartServerReflectsExternalFileEdits is a regression test for the bug
+// where the web UI showed stale data after an external process (another CLI
+// invocation, text editor, etc.) modified a nib file on disk. The running
+// server must pick up filesystem changes without requiring a restart.
+func TestStartServerReflectsExternalFileEdits(t *testing.T) {
+	app := setupServeTestApp(t)
+
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("failed to get free port: %v", err)
+	}
+	port := ln.Addr().(*net.TCPAddr).Port
+	_ = ln.Close()
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	errCh := make(chan error, 1)
+	go func() {
+		errCh <- startServer(ctx, app, "127.0.0.1", port, false, nil)
+	}()
+
+	baseURL := fmt.Sprintf("http://127.0.0.1:%d", port)
+	waitForHTTPReady(t, baseURL+"/health", 2*time.Second)
+
+	// Write a new nib directly to the filesystem, bypassing the Core API.
+	// This simulates an external edit — the running server's only way to
+	// learn about this is through filesystem watching.
+	root := app.Core.Root()
+	externalFile := filepath.Join(root, "ext-1--external.md")
+	content := "---\ntitle: External Nib\nstatus: todo\ntype: task\n---\n\nBody.\n"
+	if err := os.WriteFile(externalFile, []byte(content), 0644); err != nil {
+		t.Fatalf("failed to write external nib file: %v", err)
+	}
+
+	// Poll the GraphQL endpoint until the server reports the new nib. The
+	// watcher has a debounce delay (100ms) plus fsnotify propagation, so we
+	// allow a generous window before declaring failure.
+	deadline := time.Now().Add(3 * time.Second)
+	queryBody := `{"query":"query { nib(id: \"ext-1\") { id title } }"}`
+	found := false
+	for time.Now().Before(deadline) {
+		resp, err := http.Post(baseURL+"/graphql", "application/json", strings.NewReader(queryBody))
+		if err != nil {
+			time.Sleep(50 * time.Millisecond)
+			continue
+		}
+		var body struct {
+			Data struct {
+				Nib *struct {
+					ID    string `json:"id"`
+					Title string `json:"title"`
+				} `json:"nib"`
+			} `json:"data"`
+		}
+		_ = json.NewDecoder(resp.Body).Decode(&body)
+		_ = resp.Body.Close()
+		if body.Data.Nib != nil && body.Data.Nib.ID == "ext-1" {
+			found = true
+			break
+		}
+		time.Sleep(50 * time.Millisecond)
+	}
+	if !found {
+		t.Fatal("server did not pick up externally-created nib file — filesystem watcher is not active")
+	}
+
+	cancel()
+	select {
+	case <-errCh:
+	case <-time.After(5 * time.Second):
+		t.Fatal("server did not shut down")
+	}
+}
+
+// waitForHTTPReady polls the given URL until it returns 200 OK or the deadline passes.
+func waitForHTTPReady(t *testing.T, url string, timeout time.Duration) {
+	t.Helper()
+	deadline := time.Now().Add(timeout)
+	for time.Now().Before(deadline) {
+		resp, err := http.Get(url)
+		if err == nil {
+			_ = resp.Body.Close()
+			if resp.StatusCode == http.StatusOK {
+				return
+			}
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	t.Fatalf("server not ready at %s within %s", url, timeout)
+}

@@ -94,6 +94,12 @@ const shutdownTimeout = 5 * time.Second
 // gracefully shuts down, draining in-flight requests. The opener function is
 // called with the URL after the listener is bound, allowing tests to inject a fake.
 func startServer(ctx context.Context, app *App, host string, port int, open bool, opener func(string) error) error {
+	// Start filesystem watching so external edits (CLI, text editor, another
+	// process) are reflected in the web UI without requiring a server restart.
+	if err := app.Core.StartWatching(); err != nil {
+		fmt.Fprintf(os.Stderr, "Warning: failed to start filesystem watcher: %v\n", err)
+	}
+
 	mux := newServeMux(app, WebDistFS)
 	addr := fmt.Sprintf("%s:%d", host, port)
 
