@@ -395,6 +395,41 @@ func TestSetPrefix_AutoAppendsDash(t *testing.T) {
 	}
 }
 
+// TestSetPrefix_UppercaseExplicitRejected locks in the rule that an
+// explicit uppercase prefix passed to `config set-prefix` is NEVER silently
+// lowercased — it must be rejected by the validator. Mirrors
+// TestInit_ExplicitPrefix_UppercaseRejected to keep the init and set-prefix
+// code paths aligned.
+func TestSetPrefix_UppercaseExplicitRejected(t *testing.T) {
+	_, nibsDir, cfgPath := setupSetPrefixTest(t, "tnib-",
+		testNibSpec{filename: "tnib-aaa--only.md", id: "tnib-aaa"},
+	)
+
+	err := runSetPrefixCmd(t, cfgPath, nibsDir, "BGT-", "--json")
+	if err == nil {
+		t.Fatal("expected error for uppercase explicit prefix, got nil")
+	}
+	msg := err.Error()
+	if !strings.Contains(msg, "BGT-") {
+		t.Errorf("error message %q should contain failing prefix %q", msg, "BGT-")
+	}
+	if !strings.Contains(msg, "invalid prefix") {
+		t.Errorf("error message %q should contain phrase %q", msg, "invalid prefix")
+	}
+
+	// Original file must be unchanged (not renamed to BGT-aaa--only.md or
+	// any other form).
+	if _, statErr := os.Stat(filepath.Join(nibsDir, "tnib-aaa--only.md")); statErr != nil {
+		t.Errorf("expected original file to remain, stat err=%v", statErr)
+	}
+
+	// Config must be unchanged.
+	cfg := loadCfg(t, cfgPath)
+	if cfg.Nibs.Prefix != "tnib-" {
+		t.Errorf("cfg prefix = %q, want unchanged %q", cfg.Nibs.Prefix, "tnib-")
+	}
+}
+
 // TestSetPrefix_GrandfatheredOldPrefix verifies the command accepts a project
 // whose existing prefix doesn't match the strict rules applied to new
 // prefixes — e.g. a project initialized in a directory named "boardGameTracker"
