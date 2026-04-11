@@ -182,24 +182,48 @@ func TestBuildPlan_InvalidNewPrefix(t *testing.T) {
 	}
 }
 
-func TestBuildPlan_InvalidOldPrefix(t *testing.T) {
+func TestBuildPlan_EmptyOldPrefixRejected(t *testing.T) {
+	// Empty old prefix is the one case we MUST reject: strings.CutPrefix
+	// against "" always succeeds, so every ID would get double-prefixed.
 	snapshot := []NibSnapshot{{ID: "nibs-aaa", Path: "nibs-aaa.md"}}
+	_, err := BuildPlan(snapshot, "", "new-", stubExists)
+	if err == nil {
+		t.Fatal("BuildPlan(oldPrefix=\"\") returned nil, want error")
+	}
+	if !strings.Contains(err.Error(), "old prefix") {
+		t.Errorf("error should identify the old prefix as the culprit, got: %v", err)
+	}
+}
+
+func TestBuildPlan_GrandfatheredOldPrefix(t *testing.T) {
+	// Old prefixes may not match the strict validation rules applied to
+	// NEW prefixes — projects initialized via `nibs init` end up with
+	// whatever `{dirname}-` produces, including uppercase, long names, etc.
+	// The command's whole purpose is to let users migrate away from such
+	// prefixes, so it must accept them as input. The structural correctness
+	// check (every nib ID starts with oldPrefix) remains in force.
 	cases := []struct {
 		name      string
 		oldPrefix string
+		nibID     string
 	}{
-		{"empty", ""},
-		{"no trailing dash", "nibs"},
-		{"uppercase", "NIBS-"},
+		{"uppercase", "NIBS-", "NIBS-aaa"},
+		{"long (17 chars)", "boardGameTracker-", "boardGameTracker-aaa"},
+		{"no trailing dash", "nibs", "nibsaaa"},
+		{"underscore", "my_proj-", "my_proj-aaa"},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			_, err := BuildPlan(snapshot, tc.oldPrefix, "new-", stubExists)
-			if err == nil {
-				t.Fatalf("BuildPlan(oldPrefix=%q) returned nil, want error", tc.oldPrefix)
+			snapshot := []NibSnapshot{{ID: tc.nibID, Path: tc.nibID + ".md"}}
+			plan, err := BuildPlan(snapshot, tc.oldPrefix, "new-", stubExists)
+			if err != nil {
+				t.Fatalf("BuildPlan(oldPrefix=%q) returned error: %v", tc.oldPrefix, err)
 			}
-			if !strings.Contains(err.Error(), "old prefix") {
-				t.Errorf("error should identify the old prefix as the culprit, got: %v", err)
+			if len(plan.Files) != 1 {
+				t.Fatalf("expected 1 file plan, got %d", len(plan.Files))
+			}
+			if plan.Files[0].OldID != tc.nibID {
+				t.Errorf("OldID = %q, want %q", plan.Files[0].OldID, tc.nibID)
 			}
 		})
 	}

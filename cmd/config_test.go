@@ -360,3 +360,62 @@ func TestSetPrefix_GitCheckError_Surfaces(t *testing.T) {
 		t.Errorf("original file clobbered: %v", err)
 	}
 }
+
+// TestSetPrefix_AutoAppendsDash ensures users can type "bgt" or "bgt-"
+// interchangeably — `nibs init` silently appends a dash, and set-prefix
+// should match that behavior so the two forms produce identical results.
+func TestSetPrefix_AutoAppendsDash(t *testing.T) {
+	cases := []struct {
+		name  string
+		input string
+	}{
+		{"without dash", "new"},
+		{"with dash", "new-"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			_, nibsDir, cfgPath := setupSetPrefixTest(t, "tnib-",
+				testNibSpec{filename: "tnib-aaa--only.md", id: "tnib-aaa"},
+			)
+			if err := runSetPrefixCmd(t, cfgPath, nibsDir, tc.input, "--json"); err != nil {
+				t.Fatalf("set-prefix %q failed: %v", tc.input, err)
+			}
+			// Same expected file regardless of which input form was used.
+			if _, err := os.Stat(filepath.Join(nibsDir, "new-aaa--only.md")); err != nil {
+				t.Errorf("expected new-aaa--only.md to exist: %v", err)
+			}
+			if _, err := os.Stat(filepath.Join(nibsDir, "tnib-aaa--only.md")); !os.IsNotExist(err) {
+				t.Errorf("expected old file gone, got err=%v", err)
+			}
+			cfg := loadCfg(t, cfgPath)
+			if cfg.Nibs.Prefix != "new-" {
+				t.Errorf("cfg prefix = %q, want %q", cfg.Nibs.Prefix, "new-")
+			}
+		})
+	}
+}
+
+// TestSetPrefix_GrandfatheredOldPrefix verifies the command accepts a project
+// whose existing prefix doesn't match the strict rules applied to new
+// prefixes — e.g. a project initialized in a directory named "boardGameTracker"
+// ends up with "boardGameTracker-" (17 chars, uppercase), which `nibs init`
+// doesn't validate. This command's entire purpose is to let such projects
+// escape their old prefix, so it must accept one as input.
+func TestSetPrefix_GrandfatheredOldPrefix(t *testing.T) {
+	_, nibsDir, cfgPath := setupSetPrefixTest(t, "boardGameTracker-",
+		testNibSpec{filename: "boardGameTracker-aaa--only.md", id: "boardGameTracker-aaa"},
+	)
+	if err := runSetPrefixCmd(t, cfgPath, nibsDir, "bgt", "--json"); err != nil {
+		t.Fatalf("set-prefix from grandfathered prefix failed: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(nibsDir, "bgt-aaa--only.md")); err != nil {
+		t.Errorf("expected bgt-aaa--only.md to exist: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(nibsDir, "boardGameTracker-aaa--only.md")); !os.IsNotExist(err) {
+		t.Errorf("expected old file gone, got err=%v", err)
+	}
+	cfg := loadCfg(t, cfgPath)
+	if cfg.Nibs.Prefix != "bgt-" {
+		t.Errorf("cfg prefix = %q, want %q", cfg.Nibs.Prefix, "bgt-")
+	}
+}

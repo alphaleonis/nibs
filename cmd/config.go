@@ -6,6 +6,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strings"
 
 	"github.com/alphaleonis/nibs/internal/config"
 	"github.com/alphaleonis/nibs/internal/nib"
@@ -61,6 +62,12 @@ func init() {
 func runSetPrefix(cmd *cobra.Command, args []string) error {
 	app := getApp(cmd)
 	newPrefix := args[0]
+	// Match nibs init's convention: prefixes end with a separator dash.
+	// Accept both "bgt" and "bgt-" as equivalent input so users don't have
+	// to remember the trailing dash.
+	if !strings.HasSuffix(newPrefix, "-") {
+		newPrefix += "-"
+	}
 	cfg := app.Config()
 	oldPrefix := cfg.Nibs.Prefix
 	root := app.Core.Root()

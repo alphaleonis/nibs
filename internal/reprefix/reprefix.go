@@ -100,8 +100,15 @@ func (fp FilePlan) HasReferenceUpdates() bool {
 // snapshot. The targetExists callback must be non-nil; pass a stub that always
 // returns false if collision detection is not relevant to the caller.
 func BuildPlan(snapshot []NibSnapshot, oldPrefix, newPrefix string, targetExists TargetExistsFunc) (*RenamePlan, error) {
-	if err := ValidatePrefix(oldPrefix); err != nil {
-		return nil, fmt.Errorf("old prefix: %w", err)
+	// The old prefix is whatever a past `nibs init` produced for this
+	// project. It may not match the strict rules we apply to new prefixes
+	// (e.g. projects initialized from a dir named "boardGameTracker" end
+	// up with "boardGameTracker-" — 17 chars, uppercase). Accepting such
+	// prefixes is the entire point of this command. We only reject the
+	// empty case, which would otherwise cause `strings.CutPrefix(id, "")`
+	// to succeed on every ID and double-prefix every file.
+	if oldPrefix == "" {
+		return nil, fmt.Errorf("old prefix: must not be empty")
 	}
 	if err := ValidatePrefix(newPrefix); err != nil {
 		return nil, fmt.Errorf("new prefix: %w", err)
