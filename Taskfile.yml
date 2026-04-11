@@ -35,7 +35,7 @@ tasks:
 
   build:
     desc: Build the nibs CLI executable
-    deps: [codegen, web:build]
+    deps: [web:build]
     vars:
       VERSION:
         sh: git describe --tags --always --dirty 2>/dev/null || echo dev
@@ -55,7 +55,7 @@ tasks:
 
   test:
     desc: Run all tests (Go + web)
-    deps: [codegen, web:build]
+    deps: [web:build]
     cmds:
       - go test ./...
       - cd web && npx vitest run --reporter=agent
