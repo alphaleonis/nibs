@@ -8,8 +8,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 ## v0.2.1 - 2026-04-11
 
 ### Fixed
-- Web UI now reflects external nib changes (from the CLI, a text editor, or another process) without requiring a server restart. `nibs serve` now starts the filesystem watcher on startup, so the in-memory store stays in sync with the `.nibs/` directory.
-- Web UI no longer gets stuck on a "Loading..." indicator after an external nib change. The TreeTable subscription effect was entering an infinite loop (`effect_update_depth_exceeded`) because urql's subscription store emits a fresh wrapper object on every reactive cycle, making reference-based deduplication unreliable. Fixed by deduplicating on event content and wrapping side effects in `untrack()`.
+- Web UI now updates live when nibs are changed outside the browser (via the CLI, a text editor, or another process). Previously a server restart was required.
+- Web UI no longer gets stuck on a "Loading..." indicator after an external nib change.
 
 ## v0.2.0 - 2026-04-11
 
