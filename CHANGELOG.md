@@ -9,7 +9,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ### Fixed
 - Web UI now updates live when nibs are changed outside the browser (via the CLI, a text editor, or another process). Previously a server restart was required.
-- Web UI no longer gets stuck on a "Loading..." indicator after an external nib change.
 
 ## v0.2.0 - 2026-04-11
 
