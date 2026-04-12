@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## v0.2.2 - 2026-04-12
+
 ### Changed
 - Detail panel font sizes now match the list view (inherit base 1rem instead of custom 0.8125rem overrides).
 - Detail panel title is now larger (1.25rem) for better visual hierarchy.
@@ -17,6 +19,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 - Toolbar and filter bar merged into a single row: "New" button is now blue with text, keyword search is always visible, filter dropdowns are inline, and view controls are separated by a divider on the right.
 
 ### Fixed
+- Keyword search now shows matching child nibs in their full tree hierarchy. Previously, searching in Milestones view would miss matching tasks/features because their parent milestones weren't included in the results.
 - Dragging the detail panel resize handle below minimum size no longer freezes the UI. The resize handle stays in the DOM (hidden via CSS) so PaneForge can complete its drag cleanup, and the collapse callback is deferred with `requestAnimationFrame`.
 - Pressing ESC in the editor modal with unsaved changes no longer closes the modal before the confirm dialog appears. Canceling the dialog now correctly keeps the editor open.
 - `task build` no longer runs `go generate ./...` twice. `codegen` was listed as a direct dep of both `build` and `web:build`, and Task does not deduplicate deps that resolve in parallel branches of the DAG.
