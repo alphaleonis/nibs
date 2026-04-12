@@ -5,7 +5,7 @@
   import { Preferences } from "./lib/preferences.svelte";
   import { DEFAULT_DETAIL_PANEL_WIDTH, MAX_DETAIL_PANEL_PERCENT } from "./lib/types";
   import Toolbar from "./lib/components/Toolbar.svelte";
-  import FilterBar from "./lib/components/FilterBar.svelte";
+
   import TreeTable from "./lib/components/TreeTable.svelte";
   import DetailPanel from "./lib/components/DetailPanel.svelte";
   import EditorModal from "./lib/components/EditorModal.svelte";
@@ -53,17 +53,11 @@
   provideConfirmDialog(confirmDialog);
   const editor = createEditorOrchestration({ client, selection });
   provideEditorOrchestration(editor);
-  let filtersOpen = $state(false);
-
   // Collect unique tags from the query results via TreeTable callback
   let availableTags: string[] = $state([]);
 
   function handleTagsChange(tags: string[]) {
     availableTags = tags;
-  }
-
-  function handleToggleFilters() {
-    filtersOpen = !filtersOpen;
   }
 
   // --- Drag-and-drop handlers ---
@@ -213,16 +207,9 @@
     <div class="mb-4 flex flex-col gap-2">
       <Toolbar
         {prefs}
-        ontogglefilters={handleToggleFilters}
-        {filtersOpen}
+        {availableTags}
         oncreatenew={(type) => editor.handleCreateNew(type)}
       />
-      {#if filtersOpen}
-        <FilterBar
-          {prefs}
-          {availableTags}
-        />
-      {/if}
     </div>
     <Resizable.PaneGroup
       direction="horizontal"

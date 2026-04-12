@@ -13,20 +13,18 @@ const defaultToolbarProps = {
   onchange: vi.fn(),
   viewLevel: "milestones" as ViewLevel,
   onviewlevelchange: vi.fn(),
-  ontogglefilters: vi.fn(),
   visibleColumns: [...ALL_COLUMN_KEYS] as ColumnKey[],
   oncolumnschange: vi.fn(),
   oncreatenew: vi.fn(),
 };
 
 describe("Toolbar", () => {
-  it("renders icon buttons (no search input)", () => {
+  it("renders New button, keyword input, filter dropdowns, and view controls", () => {
     render(Toolbar, { ...defaultToolbarProps });
 
-    // Search input has moved to FilterBar
-    expect(screen.queryByPlaceholderText(/search/i)).not.toBeInTheDocument();
     expect(screen.getByTitle("New item")).toBeInTheDocument();
-    expect(screen.getByTitle("Filters")).toBeInTheDocument();
+    expect(screen.getByTitle("New item")).toHaveTextContent("New");
+    expect(screen.getByTestId("filter-keyword")).toBeInTheDocument();
     expect(screen.getByTitle("Options")).toBeInTheDocument();
     expect(screen.getByTitle("Columns")).toBeInTheDocument();
   });
@@ -208,33 +206,16 @@ describe("Toolbar", () => {
     });
   });
 
-  it("calls ontogglefilters when Filters button is clicked", async () => {
-    const ontogglefilters = vi.fn();
-    render(Toolbar, { ...defaultToolbarProps, ontogglefilters });
+  it("keyword input emits filter with search value", async () => {
+    const onchange = vi.fn();
+    render(Toolbar, { ...defaultToolbarProps, onchange });
 
-    await user.click(screen.getByTitle("Filters"));
+    const input = screen.getByTestId("filter-keyword");
+    await user.type(input, "auth");
 
-    expect(ontogglefilters).toHaveBeenCalledOnce();
-  });
-
-  it("shows active state on Filter button when filtersOpen is true", () => {
-    render(Toolbar, {
-      ...defaultToolbarProps,
-      filtersOpen: true,
-    });
-
-    const filtersBtn = screen.getByTitle("Filters");
-    expect(filtersBtn).toHaveAttribute("aria-pressed", "true");
-  });
-
-  it("shows blue dot on Filter button when advanced filters are active", () => {
-    render(Toolbar, {
-      ...defaultToolbarProps,
-      filter: { type: ["bug"] },
-    });
-
-    const filtersBtn = screen.getByTitle("Filters");
-    expect(filtersBtn.querySelector("span")).toBeInTheDocument();
+    expect(onchange).toHaveBeenCalled();
+    const lastCall = onchange.mock.calls[onchange.mock.calls.length - 1];
+    expect(lastCall[0]).toMatchObject({ search: "auth" });
   });
 
   // Columns dropdown tests

@@ -14,6 +14,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 - Detail panel metadata fields (Status, Type, Priority, Estimate) are laid out horizontally with wrapping instead of a vertical grid, with small labels above each select.
 - Editor modal metadata fields use the same stacked-label layout.
 - Detail panel max width increased from a fixed 800px to 75% of the container width.
+- Toolbar and filter bar merged into a single row: "New" button is now blue with text, keyword search is always visible, filter dropdowns are inline, and view controls are separated by a divider on the right.
 
 ### Fixed
 - Dragging the detail panel resize handle below minimum size no longer freezes the UI. The resize handle stays in the DOM (hidden via CSS) so PaneForge can complete its drag cleanup, and the collapse callback is deferred with `requestAnimationFrame`.

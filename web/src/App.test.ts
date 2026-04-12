@@ -86,15 +86,15 @@ describe("App", () => {
     // Dark theme shell: has the app title with project name
     expect(screen.getByText("Nibs - test-project")).toBeInTheDocument();
 
-    // Toolbar is rendered with icon buttons (search has moved to FilterBar)
+    // Toolbar is rendered with controls
     expect(screen.getByTitle("Options")).toBeInTheDocument();
-    expect(screen.getByTitle("Filters")).toBeInTheDocument();
+    expect(screen.getByTestId("filter-keyword")).toBeInTheDocument();
 
     // TreeTable renders data
     expect(screen.getByText("Test nib")).toBeInTheDocument();
   });
 
-  it("wires filter state between Toolbar, FilterBar, and TreeTable", async () => {
+  it("wires filter state between Toolbar and TreeTable", async () => {
     const user = userEvent.setup({ pointerEventsCheck: 0 });
     render(App);
 
@@ -102,11 +102,8 @@ describe("App", () => {
     expect(mockQueryStore).toHaveBeenCalled();
     const initialCallCount = mockQueryStore.mock.calls.length;
 
-    // Open FilterBar by clicking Filters button
-    await user.click(screen.getByTitle("Filters"));
-
-    // Type in keyword search in FilterBar
-    const searchInput = screen.getByPlaceholderText(/keyword/i);
+    // Type in keyword search (always visible in toolbar)
+    const searchInput = screen.getByTestId("filter-keyword");
     await user.type(searchInput, "bug");
     expect(searchInput).toHaveValue("bug");
 
@@ -215,7 +212,7 @@ describe("App", () => {
     expect(detailPane).toBeInTheDocument();
   });
 
-  it("Escape closes only the FilterBar dropdown when both dropdown and detail panel are open", async () => {
+  it("Escape closes only the filter dropdown when both dropdown and detail panel are open", async () => {
     const user = userEvent.setup();
     render(App);
 
@@ -224,10 +221,7 @@ describe("App", () => {
     await user.click(titleTexts[0]);
     expect(screen.getByTestId("detail-panel")).toBeInTheDocument();
 
-    // Open the FilterBar
-    await user.click(screen.getByTitle("Filters"));
-
-    // Open the Type dropdown in FilterBar
+    // Open the Type dropdown in toolbar
     await user.click(screen.getByRole("button", { name: /type/i }));
     expect(screen.getByRole("menuitemcheckbox", { name: "bug" })).toBeInTheDocument();
 
@@ -429,7 +423,6 @@ describe("App", () => {
 
     expect(screen.getByTitle("New item")).toBeInTheDocument();
     expect(screen.getByTitle("Select view")).toBeInTheDocument();
-    expect(screen.getByTitle("Filters")).toBeInTheDocument();
     expect(screen.getByTitle("Options")).toBeInTheDocument();
     expect(screen.getByTitle("Columns")).toBeInTheDocument();
 
