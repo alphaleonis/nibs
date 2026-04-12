@@ -1,6 +1,7 @@
 package graph
 
 import (
+	"sort"
 	"testing"
 
 	"github.com/alphaleonis/nibs/internal/nib"
@@ -183,6 +184,76 @@ func TestFilterByFieldWithDefault(t *testing.T) {
 		got := filterByFieldWithDefault(nibs, nil, "normal", getPriority)
 		if len(got) != len(nibs) {
 			t.Errorf("got %d nibs, want %d (no-op)", len(got), len(nibs))
+		}
+	})
+}
+
+func TestIncludeAncestors(t *testing.T) {
+	// Build a hierarchy: milestone -> epic -> task
+	milestone := &nib.Nib{ID: "m1", Title: "Release", Type: "milestone"}
+	epic := &nib.Nib{ID: "e1", Title: "Auth", Type: "epic", Parent: "m1"}
+	task := &nib.Nib{ID: "t1", Title: "Login page", Type: "task", Parent: "e1"}
+	unrelated := &nib.Nib{ID: "u1", Title: "Unrelated", Type: "task"}
+
+	reader := &stubReader{
+		nibs: map[string]*nib.Nib{
+			"m1": milestone,
+			"e1": epic,
+			"t1": task,
+			"u1": unrelated,
+		},
+	}
+
+	t.Run("adds missing ancestors", func(t *testing.T) {
+		input := []*nib.Nib{task}
+		got := includeAncestors(input, reader)
+
+		ids := make([]string, len(got))
+		for i, b := range got {
+			ids[i] = b.ID
+		}
+		sort.Strings(ids)
+
+		want := []string{"e1", "m1", "t1"}
+		if len(ids) != len(want) {
+			t.Fatalf("got %v, want %v", ids, want)
+		}
+		for i, id := range ids {
+			if id != want[i] {
+				t.Errorf("ids[%d] = %q, want %q", i, id, want[i])
+			}
+		}
+	})
+
+	t.Run("does not duplicate already-present ancestors", func(t *testing.T) {
+		input := []*nib.Nib{epic, task}
+		got := includeAncestors(input, reader)
+
+		ids := make([]string, len(got))
+		for i, b := range got {
+			ids[i] = b.ID
+		}
+		sort.Strings(ids)
+
+		want := []string{"e1", "m1", "t1"}
+		if len(ids) != len(want) {
+			t.Fatalf("got %v, want %v", ids, want)
+		}
+	})
+
+	t.Run("no-op when all ancestors present", func(t *testing.T) {
+		input := []*nib.Nib{milestone, epic, task}
+		got := includeAncestors(input, reader)
+		if len(got) != 3 {
+			t.Errorf("got %d nibs, want 3 (no extras)", len(got))
+		}
+	})
+
+	t.Run("no-op for root nibs", func(t *testing.T) {
+		input := []*nib.Nib{unrelated}
+		got := includeAncestors(input, reader)
+		if len(got) != 1 {
+			t.Errorf("got %d nibs, want 1", len(got))
 		}
 	})
 }

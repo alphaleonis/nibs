@@ -198,6 +198,35 @@ func filterByFieldWithDefault(nibs []*nib.Nib, values []string, defaultVal strin
 	return result
 }
 
+// includeAncestors walks the parent chain for every nib in the result and adds
+// any missing ancestor nibs.  This ensures the client can always build a
+// complete tree hierarchy even when search or filters matched only leaves.
+func includeAncestors(nibs []*nib.Nib, reader NibReader) []*nib.Nib {
+	present := make(map[string]bool, len(nibs))
+	for _, b := range nibs {
+		present[b.ID] = true
+	}
+
+	var extras []*nib.Nib
+	for _, b := range nibs {
+		parentID := b.Parent
+		for parentID != "" && !present[parentID] {
+			present[parentID] = true
+			parent, err := reader.Get(parentID)
+			if err != nil {
+				break
+			}
+			extras = append(extras, parent)
+			parentID = parent.Parent
+		}
+	}
+
+	if len(extras) == 0 {
+		return nibs
+	}
+	return append(nibs, extras...)
+}
+
 // filterByBlockingID filters nibs that are blocking a specific nib ID.
 // Computed: checks if targetID has this nib in its blockedBy.
 func filterByBlockingID(nibs []*nib.Nib, targetID string, reader NibReader) []*nib.Nib {

@@ -695,6 +695,14 @@ func (r *queryResolver) Nibs(ctx context.Context, filter *model.NibFilter, sort 
 	}
 
 	result := ApplyFilter(nibs, filter, r.Reader, r.Blocking)
+
+	// When search is active, include ancestors of matched nibs so the
+	// client can build complete tree hierarchies even when only leaf
+	// nodes match the search query.
+	if filter != nil && filter.Search != nil && *filter.Search != "" {
+		result = includeAncestors(result, r.Reader)
+	}
+
 	ApplySorting(result, sort, r.Reader.Config())
 	return result, nil
 }
