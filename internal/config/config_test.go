@@ -114,6 +114,7 @@ func TestGetStatus(t *testing.T) {
 		s := cfg.GetStatus("todo")
 		if s == nil {
 			t.Fatal("GetStatus(\"todo\") = nil, want non-nil")
+			return
 		}
 		if s.Name != "todo" {
 			t.Errorf("Name = %q, want \"todo\"", s.Name)
@@ -356,6 +357,7 @@ func TestGetType(t *testing.T) {
 		typ := cfg.GetType("bug")
 		if typ == nil {
 			t.Fatal("GetType(\"bug\") = nil, want non-nil")
+			return
 		}
 		if typ.Name != "bug" {
 			t.Errorf("Name = %q, want \"bug\"", typ.Name)
@@ -807,6 +809,7 @@ func TestGetPriority(t *testing.T) {
 		p := cfg.GetPriority("high")
 		if p == nil {
 			t.Fatal("GetPriority(\"high\") = nil, want non-nil")
+			return
 		}
 		if p.Name != "high" {
 			t.Errorf("Name = %q, want \"high\"", p.Name)
@@ -958,6 +961,7 @@ func TestGetEstimate(t *testing.T) {
 		e := cfg.GetEstimate("m")
 		if e == nil {
 			t.Fatal("GetEstimate(\"m\") = nil, want non-nil")
+			return
 		}
 		if e.Name != "m" {
 			t.Errorf("Name = %q, want \"m\"", e.Name)

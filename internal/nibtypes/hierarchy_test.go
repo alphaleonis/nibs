@@ -28,24 +28,24 @@ func TestValidParentTypes(t *testing.T) {
 			want:    map[string]bool{"milestone": true, "epic": true},
 		},
 		{
-			name:    "task can have milestone, epic, or feature parent",
+			name:    "task can have milestone, epic, feature, or bug parent",
 			nibType: "task",
-			want:    map[string]bool{"milestone": true, "epic": true, "feature": true},
+			want:    map[string]bool{"milestone": true, "epic": true, "feature": true, "bug": true},
 		},
 		{
-			name:    "bug can have milestone, epic, or feature parent",
+			name:    "bug can have milestone or epic parent",
 			nibType: "bug",
-			want:    map[string]bool{"milestone": true, "epic": true, "feature": true},
+			want:    map[string]bool{"milestone": true, "epic": true},
 		},
 		{
-			name:    "research can have milestone, epic, or feature parent",
+			name:    "research can have milestone, epic, feature, or bug parent",
 			nibType: "research",
-			want:    map[string]bool{"milestone": true, "epic": true, "feature": true},
+			want:    map[string]bool{"milestone": true, "epic": true, "feature": true, "bug": true},
 		},
 		{
-			name:    "unknown type defaults to milestone, epic, feature",
+			name:    "unknown type defaults to milestone, epic, feature, bug",
 			nibType: "unknown",
-			want:    map[string]bool{"milestone": true, "epic": true, "feature": true},
+			want:    map[string]bool{"milestone": true, "epic": true, "feature": true, "bug": true},
 		},
 	}
 
@@ -94,9 +94,14 @@ func TestValidChildTypes(t *testing.T) {
 			want:       map[string]bool{"feature": true, "task": true, "bug": true, "research": true},
 		},
 		{
-			name:       "feature children include task, bug, research",
+			name:       "feature children include task, research",
 			parentType: "feature",
-			want:       map[string]bool{"task": true, "bug": true, "research": true},
+			want:       map[string]bool{"task": true, "research": true},
+		},
+		{
+			name:       "bug children include task, research",
+			parentType: "bug",
+			want:       map[string]bool{"task": true, "research": true},
 		},
 		{
 			name:       "no parent means all types valid",
@@ -139,7 +144,6 @@ func TestValidateParentType(t *testing.T) {
 		{"task", "feature", false, ""},
 		{"task", "milestone", false, ""},
 		{"bug", "epic", false, ""},
-		{"bug", "feature", false, ""},
 		{"bug", "milestone", false, ""},
 		{"research", "epic", false, ""},
 		{"research", "feature", false, ""},
@@ -148,14 +152,21 @@ func TestValidateParentType(t *testing.T) {
 		{"feature", "milestone", false, ""},
 		{"epic", "milestone", false, ""},
 
+		// task can now have bug as parent
+		{"task", "bug", false, ""},
+		{"research", "bug", false, ""},
+
 		// Invalid: wrong parent type
-		{"task", "task", true, "milestone, epic, or feature"},
-		{"task", "bug", true, "milestone, epic, or feature"},
+		{"task", "task", true, "milestone, epic, feature, or bug"},
+		{"task", "research", true, "milestone, epic, feature, or bug"},
 		{"epic", "task", true, "milestone"},
 		{"epic", "epic", true, "milestone"},
 		{"epic", "feature", true, "milestone"},
 		{"feature", "task", true, "milestone or epic"},
 		{"feature", "feature", true, "milestone or epic"},
+		{"bug", "feature", true, "milestone or epic"},
+		{"bug", "bug", true, "milestone or epic"},
+		{"bug", "task", true, "milestone or epic"},
 
 		// Invalid: milestone can never have a parent
 		{"milestone", "epic", true, "cannot have a parent"},
@@ -224,9 +235,9 @@ func TestValidParentTypesForChildren(t *testing.T) {
 			want:       map[string]bool{"milestone": true, "epic": true, "feature": true, "task": true, "bug": true, "research": true},
 		},
 		{
-			name:       "task children constrain to milestone, epic, feature",
+			name:       "task children constrain to milestone, epic, feature, bug",
 			childTypes: []string{"task"},
-			want:       map[string]bool{"milestone": true, "epic": true, "feature": true},
+			want:       map[string]bool{"milestone": true, "epic": true, "feature": true, "bug": true},
 		},
 		{
 			name:       "feature children constrain to milestone, epic",

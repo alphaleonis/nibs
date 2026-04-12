@@ -37,6 +37,7 @@ func TestCreateModalHeaderTypeIsColored(t *testing.T) {
 	tc := cfg.GetType("bug")
 	if tc == nil {
 		t.Fatal("expected 'bug' to be a known type in default config")
+		return
 	}
 	styledType := ui.RenderTypeText("bug", tc.Color)
 	if !strings.Contains(view, styledType) {

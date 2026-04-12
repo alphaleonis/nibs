@@ -1433,6 +1433,7 @@ func TestGetFromArchive(t *testing.T) {
 		}
 		if b == nil {
 			t.Fatal("GetFromArchive() returned nil")
+			return
 		}
 		if b.ID != "gfa1" {
 			t.Errorf("ID = %q, want %q", b.ID, "gfa1")
@@ -1503,6 +1504,7 @@ func TestLoadAndUnarchive(t *testing.T) {
 	}
 	if unarchived == nil {
 		t.Fatal("LoadAndUnarchive() returned nil")
+		return
 	}
 	if unarchived.ID != b.ID {
 		t.Errorf("LoadAndUnarchive returned different nib: got %q, want %q", unarchived.ID, b.ID)

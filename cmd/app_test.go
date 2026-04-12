@@ -33,6 +33,7 @@ func TestGetApp(t *testing.T) {
 	got := getApp(cmd)
 	if got == nil {
 		t.Fatal("getApp returned nil")
+		return
 	}
 	if got.Core != testCore {
 		t.Error("getApp returned App with wrong Core")
@@ -98,6 +99,7 @@ func TestAppNewResolver(t *testing.T) {
 
 	if resolver == nil {
 		t.Fatal("newResolver returned nil")
+		return
 	}
 	if resolver.Reader != testCore {
 		t.Error("resolver.Reader should be Core")

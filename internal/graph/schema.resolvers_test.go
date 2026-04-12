@@ -69,6 +69,7 @@ func TestQueryNib(t *testing.T) {
 		}
 		if got == nil {
 			t.Fatal("Nib() returned nil")
+			return
 		}
 		if got.ID != "test-1" {
 			t.Errorf("Nib().ID = %q, want %q", got.ID, "test-1")
@@ -357,6 +358,7 @@ func TestNibRelationships(t *testing.T) {
 		}
 		if got == nil {
 			t.Fatal("Parent() returned nil")
+			return
 		}
 		if got.ID != "parent-1" {
 			t.Errorf("Parent().ID = %q, want %q", got.ID, "parent-1")
@@ -772,6 +774,7 @@ func TestMutationCreateNib(t *testing.T) {
 		}
 		if got == nil {
 			t.Fatal("CreateNib() returned nil")
+			return
 		}
 		if got.Title != "New Nib" {
 			t.Errorf("CreateNib().Title = %q, want %q", got.Title, "New Nib")
@@ -868,6 +871,7 @@ func TestMutationCreateNibWithCustomPrefix(t *testing.T) {
 		}
 		if got == nil {
 			t.Fatal("CreateNib() returned nil")
+			return
 		}
 		// ID should start with the custom prefix
 		if !strings.HasPrefix(got.ID, "SYNC-TASK-") {
@@ -1225,6 +1229,7 @@ func TestMutationDeleteNib(t *testing.T) {
 		updated, _ := qr.Nib(ctx, "dependent-nib")
 		if updated == nil {
 			t.Fatal("Dependent nib was deleted unexpectedly")
+			return
 		}
 		if len(updated.BlockedBy) != 0 {
 			t.Errorf("Dependent still has %d blocked_by, want 0", len(updated.BlockedBy))

@@ -58,6 +58,7 @@ func TestNibChangedSubscription(t *testing.T) {
 		case evt := <-ch:
 			if evt == nil {
 				t.Fatal("got nil event")
+				return
 			}
 			if evt.Type != "created" {
 				t.Errorf("type = %q, want %q", evt.Type, "created")

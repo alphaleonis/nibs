@@ -53,12 +53,12 @@ func ValidParentTypes(nibType string) []string {
 		return nil // milestones cannot have parents
 	case "epic":
 		return []string{"milestone"}
-	case "feature":
+	case "feature", "bug":
 		return []string{"milestone", "epic"}
-	case "task", "bug", "research":
-		return []string{"milestone", "epic", "feature"}
+	case "task", "research":
+		return []string{"milestone", "epic", "feature", "bug"}
 	default:
-		return []string{"milestone", "epic", "feature"} // default for unknown types
+		return []string{"milestone", "epic", "feature", "bug"} // default for unknown types
 	}
 }
 

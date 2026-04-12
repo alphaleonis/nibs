@@ -42,6 +42,7 @@ func TestBuildTree(t *testing.T) {
 		}
 		if milestoneNode == nil {
 			t.Fatal("milestone node not found")
+			return
 		}
 		if !milestoneNode.Matched {
 			t.Error("milestone should be marked as matched")

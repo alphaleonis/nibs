@@ -236,6 +236,7 @@ func TestBuildPlan_EmptySnapshot(t *testing.T) {
 	}
 	if plan == nil {
 		t.Fatal("BuildPlan(nil) returned nil plan")
+		return
 	}
 	if len(plan.Files) != 0 {
 		t.Errorf("expected zero file plans, got %d", len(plan.Files))
@@ -365,6 +366,7 @@ func TestBuildPlan_TracerBullet_ThreeNibHierarchy(t *testing.T) {
 	}
 	if plan == nil {
 		t.Fatal("BuildPlan returned nil plan")
+		return
 	}
 	if len(plan.Collisions) != 0 {
 		t.Errorf("expected no collisions, got %v", plan.Collisions)

@@ -402,6 +402,7 @@ func TestExecute_SampleProjectEndToEnd(t *testing.T) {
 	}
 	if spot == nil {
 		t.Fatal("expected at least one nib with a parent in the sample-project fixture")
+		return
 	}
 	bSpot := readNib(t, nibsPath, spot.NewPath)
 	if !strings.HasPrefix(bSpot.Parent, "demo-") {
