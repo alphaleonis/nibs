@@ -7,6 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## v0.2.3 - 2026-04-12
+
+### Changed
+- Bug nibs are now at the same hierarchy level as features. Bugs can have task and research children, and their valid parents are milestone and epic (no longer feature). This allows breaking down bug fixes into subtasks.
+
+### Fixed
+- Resolved all SA5011 staticcheck warnings across the test suite by adding explicit `return` after `t.Fatal` nil guards.
+
 ## v0.2.2 - 2026-04-12
 
 ### Changed
