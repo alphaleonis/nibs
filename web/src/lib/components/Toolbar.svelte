@@ -2,7 +2,7 @@
   import { VIEW_LEVELS, DEFAULT_COLUMNS, ALL_COLUMN_KEYS } from "../types";
   import type { NibFilter, ViewLevel, ColumnKey, RowDensity } from "../types";
   import type { Preferences } from "../preferences.svelte";
-  import { hasClientFilters, clearClientFilters, resolveStatusConflicts } from "../filter";
+  import { resolveStatusConflicts } from "../filter";
   import { TERMINAL_STATUSES, TYPES, STATUSES, PRIORITIES, ESTIMATES, ESTIMATE_LABELS } from "../constants";
   import {
     Plus,
@@ -66,7 +66,6 @@
   let viewLevelOpen = $state(false);
   let optionsOpen = $state(false);
   let columnsOpen = $state(false);
-  let filtersActive = $derived(hasClientFilters(resolvedFilter));
   let viewLevelIconInfo = $derived(VIEW_LEVEL_ICON_INFO[resolvedViewLevel]);
 
   // Filter columns shown in the checklist: hide "parent" for milestones view
@@ -210,9 +209,6 @@
     return resolvedFilter[field]?.length ?? 0;
   }
 
-  function handleClearAll() {
-    emitFilter(clearClientFilters(resolvedFilter));
-  }
 </script>
 
 <div class="flex items-center gap-2 rounded-lg border border-border bg-card px-3 py-2">
@@ -300,19 +296,8 @@
     </DropdownMenu.Root>
   {/each}
 
-  <!-- Clear all filters -->
-  <button
-    type="button"
-    onclick={handleClearAll}
-    class="rounded p-1 transition-colors shrink-0 {filtersActive ? 'text-muted-foreground hover:bg-accent hover:text-accent-foreground cursor-pointer' : 'text-muted-foreground/30 cursor-default'}"
-    aria-label="Clear all filters"
-    disabled={!filtersActive}
-  >
-    <X size={16} />
-  </button>
-
   <!-- Separator -->
-  <div class="h-5 w-px bg-border shrink-0"></div>
+  <div class="mx-2 h-5 w-px bg-border shrink-0"></div>
 
   <!-- View controls -->
   <div class="flex items-center gap-1 shrink-0">
