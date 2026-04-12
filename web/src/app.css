@@ -210,7 +210,6 @@
 
 /* Shared markdown prose styles for nib body rendering */
 .prose-nib {
-  font-size: 0.8125rem;
   line-height: 1.6;
   color: var(--foreground);
   overflow-wrap: break-word;

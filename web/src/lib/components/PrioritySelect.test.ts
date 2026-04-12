@@ -26,15 +26,9 @@ describe("PrioritySelect", () => {
 
     await user.click(screen.getByTestId("priority-select"));
 
-    // Should have None option first, plus all priorities
+    // Should have None option first, plus all priorities (with indicator symbols)
     const options = screen.getAllByRole("option");
-    const labels = options.map((o) => o.textContent?.trim());
-    expect(labels).toContain("None");
-    expect(labels).toContain("critical");
-    expect(labels).toContain("high");
-    expect(labels).toContain("normal");
-    expect(labels).toContain("low");
-    expect(labels).toContain("deferred");
+    expect(options).toHaveLength(6); // None + 5 priorities
 
     await user.click(screen.getByRole("option", { name: "None" }));
     expect(onchange).toHaveBeenCalledWith("");
@@ -45,7 +39,12 @@ describe("PrioritySelect", () => {
     render(PrioritySelect, { value: "", onchange });
 
     await user.click(screen.getByTestId("priority-select"));
-    await user.click(screen.getByRole("option", { name: "critical" }));
+    // "critical" has the ‼ indicator, so accessible name includes it
+    const criticalOption = screen.getAllByRole("option").find(
+      (o) => o.getAttribute("data-value") === "critical",
+    );
+    expect(criticalOption).toBeTruthy();
+    await user.click(criticalOption!);
     expect(onchange).toHaveBeenCalledWith("critical");
   });
 });

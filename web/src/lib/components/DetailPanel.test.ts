@@ -125,13 +125,15 @@ function mockFetchingQuery() {
 /**
  * Helper: open a shadcn Select dropdown and click an option.
  * The trigger is a button; clicking it opens the listbox. Then we find the
- * option by its text and click it.
+ * option by its data-value attribute and click it.
  */
-async function selectOption(testId: string, optionText: string) {
+async function selectOption(testId: string, optionValue: string) {
   const trigger = screen.getByTestId(testId);
   await user.click(trigger);
-  // shadcn Select items have role="option"
-  const option = screen.getByRole("option", { name: optionText });
+  // shadcn Select items have role="option" with data-value attributes
+  const options = screen.getAllByRole("option");
+  const option = options.find((o) => o.getAttribute("data-value") === optionValue);
+  if (!option) throw new Error(`Option with data-value="${optionValue}" not found`);
   await user.click(option);
 }
 
@@ -312,7 +314,7 @@ describe("DetailPanel", () => {
 
     renderPanel({ nibId: "nibs-abc1", onclose: vi.fn() });
 
-    await selectOption("detail-priority", "None");
+    await selectOption("detail-priority", "__none__");
 
     expect(mockExecute).toHaveBeenCalledWith(
       expect.objectContaining({
@@ -329,7 +331,7 @@ describe("DetailPanel", () => {
 
     renderPanel({ nibId: "nibs-abc1", onclose: vi.fn() });
 
-    await selectOption("detail-estimate", "Extra Large");
+    await selectOption("detail-estimate", "xl");
 
     expect(mockExecute).toHaveBeenCalledWith(
       expect.objectContaining({
@@ -429,10 +431,10 @@ describe("DetailPanel", () => {
     const options = screen.getAllByRole("option");
     const labels = options.map(o => o.textContent?.trim());
     expect(labels).toContain("None");
-    expect(labels).toContain("Small");
-    expect(labels).toContain("Medium");
-    expect(labels).toContain("Large");
-    expect(labels).toContain("Extra Large");
+    expect(labels?.some(t => t?.includes("Small"))).toBe(true);
+    expect(labels?.some(t => t?.includes("Medium"))).toBe(true);
+    expect(labels?.some(t => t?.includes("Large"))).toBe(true);
+    expect(labels?.some(t => t?.includes("Extra Large"))).toBe(true);
   });
 
   it("shows not-found state when nib is null after fetching", () => {

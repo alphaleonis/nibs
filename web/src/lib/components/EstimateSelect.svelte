@@ -14,12 +14,18 @@
 
 <Select.Root type="single" value={value || "__none__"} {disabled} onValueChange={(v) => { if (v) onchange(v === "__none__" ? "" : v); }}>
   <Select.Trigger data-testid={testId} size="sm" class="flex-1">
+    {#if value}
+      <span class="inline-block w-3.5 text-center text-xs font-semibold text-muted-foreground">{value.toUpperCase()}</span>
+    {/if}
     {value ? (ESTIMATE_LABELS[value] ?? value) : "None"}
   </Select.Trigger>
   <Select.Content>
     <Select.Item value="__none__">None</Select.Item>
     {#each ESTIMATES as e}
-      <Select.Item value={e}>{ESTIMATE_LABELS[e]}</Select.Item>
+      <Select.Item value={e}>
+        <span class="inline-block w-3.5 text-center text-xs font-semibold text-muted-foreground">{e.toUpperCase()}</span>
+        {ESTIMATE_LABELS[e]}
+      </Select.Item>
     {/each}
   </Select.Content>
 </Select.Root>

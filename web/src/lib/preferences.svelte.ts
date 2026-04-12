@@ -1,6 +1,6 @@
 import { untrack } from "svelte";
 import { loadPreferences, savePreferences } from "./storage";
-import { ALL_COLUMN_KEYS, DEFAULT_COLUMN_WIDTHS, DEFAULT_DETAIL_PANEL_WIDTH, MIN_DETAIL_PANEL_WIDTH, MAX_DETAIL_PANEL_WIDTH } from "./types";
+import { ALL_COLUMN_KEYS, DEFAULT_COLUMN_WIDTHS, DEFAULT_DETAIL_PANEL_WIDTH, MIN_DETAIL_PANEL_WIDTH } from "./types";
 import type { NibFilter, ViewLevel, ColumnKey, RowDensity } from "./types";
 
 export class Preferences {
@@ -59,7 +59,7 @@ export class Preferences {
 
   setDetailPanelWidth(width: number): void {
     if (!isFinite(width) || width <= 0) return;
-    this.#detailPanelWidth = Math.max(MIN_DETAIL_PANEL_WIDTH, Math.min(MAX_DETAIL_PANEL_WIDTH, width));
+    this.#detailPanelWidth = Math.max(MIN_DETAIL_PANEL_WIDTH, width);
   }
 
   setColumnWidth(key: ColumnKey, width: number): void {

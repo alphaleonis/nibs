@@ -561,7 +561,8 @@ describe("EditorModal", () => {
       // Set priority to "high"
       const priorityTrigger = screen.getByTestId("editor-priority");
       await user.click(priorityTrigger);
-      await user.click(screen.getByRole("option", { name: "high" }));
+      const highOption = screen.getAllByRole("option").find(o => o.getAttribute("data-value") === "high");
+      await user.click(highOption!);
       await waitFor(() => {
         expect(screen.getByTestId("editor-priority")).toHaveTextContent("high");
       });
@@ -569,7 +570,8 @@ describe("EditorModal", () => {
       // Set estimate to "Large"
       const estimateTrigger = screen.getByTestId("editor-estimate");
       await user.click(estimateTrigger);
-      await user.click(screen.getByRole("option", { name: "Large" }));
+      const largeOption = screen.getAllByRole("option").find(o => o.getAttribute("data-value") === "l");
+      await user.click(largeOption!);
       await waitFor(() => {
         expect(screen.getByTestId("editor-estimate")).toHaveTextContent("Large");
       });

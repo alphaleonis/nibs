@@ -336,6 +336,11 @@
       e.preventDefault();
       handleSave();
     }
+    if (e.key === "Escape") {
+      e.preventDefault();
+      e.stopPropagation();
+      handleClose();
+    }
   }
 </script>
 
@@ -346,6 +351,8 @@
       class="inset-4 sm:inset-8 translate-x-0 translate-y-0 max-w-none sm:max-w-none p-0 h-auto w-auto"
       showCloseButton={false}
       onkeydown={handleDialogKeydown}
+      escapeKeydownBehavior="ignore"
+      onInteractOutside={(e) => { e.preventDefault(); handleClose(); }}
     >
       <div class="editor-modal-layout">
         <!-- Header -->
@@ -590,8 +597,8 @@
 
   .editor-meta-field {
     display: flex;
-    align-items: center;
-    gap: 0.375rem;
+    flex-direction: column;
+    gap: 0.125rem;
   }
 
   .editor-meta-label {
@@ -602,8 +609,8 @@
 
   .editor-tags-field {
     display: flex;
-    align-items: center;
-    gap: 0.375rem;
+    flex-direction: column;
+    gap: 0.125rem;
     flex-wrap: wrap;
   }
 

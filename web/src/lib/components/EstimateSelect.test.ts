@@ -20,18 +20,21 @@ describe("EstimateSelect", () => {
     expect(trigger).toHaveTextContent("None");
   });
 
-  it("renders None option and all estimate labels", async () => {
+  it("renders None option and all estimate options", async () => {
     render(EstimateSelect, { value: "m", onchange: vi.fn() });
 
     await user.click(screen.getByTestId("estimate-select"));
 
     const options = screen.getAllByRole("option");
-    const labels = options.map((o) => o.textContent?.trim());
-    expect(labels).toContain("None");
-    expect(labels).toContain("Small");
-    expect(labels).toContain("Medium");
-    expect(labels).toContain("Large");
-    expect(labels).toContain("Extra Large");
+    expect(options).toHaveLength(5); // None + 4 estimates
+
+    // Each estimate option includes the abbreviation and label
+    const texts = options.map((o) => o.textContent?.trim());
+    expect(texts).toContain("None");
+    expect(texts?.some((t) => t?.includes("Small"))).toBe(true);
+    expect(texts?.some((t) => t?.includes("Medium"))).toBe(true);
+    expect(texts?.some((t) => t?.includes("Large"))).toBe(true);
+    expect(texts?.some((t) => t?.includes("Extra Large"))).toBe(true);
   });
 
   it("fires onchange with estimate key when selected", async () => {
@@ -39,7 +42,11 @@ describe("EstimateSelect", () => {
     render(EstimateSelect, { value: "m", onchange });
 
     await user.click(screen.getByTestId("estimate-select"));
-    await user.click(screen.getByRole("option", { name: "Large" }));
+    const largeOption = screen.getAllByRole("option").find(
+      (o) => o.getAttribute("data-value") === "l",
+    );
+    expect(largeOption).toBeTruthy();
+    await user.click(largeOption!);
     expect(onchange).toHaveBeenCalledWith("l");
   });
 

@@ -1,6 +1,6 @@
 import { describe, it, expect, beforeEach, vi } from "vitest";
 import { savePreferences, loadPreferences } from "./storage";
-import { MIN_DETAIL_PANEL_WIDTH, MAX_DETAIL_PANEL_WIDTH } from "./types";
+import { MIN_DETAIL_PANEL_WIDTH } from "./types";
 
 const store: Record<string, string> = {};
 const mockStorage = {
@@ -176,7 +176,7 @@ describe("storage", () => {
       viewLevel: "milestones",
       detailPanelWidth: 9999,
     });
-    expect(loadPreferences().detailPanelWidth).toBe(MAX_DETAIL_PANEL_WIDTH);
+    expect(loadPreferences().detailPanelWidth).toBe(9999);
   });
 
   it("strips invalid detailPanelWidth values", () => {

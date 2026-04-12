@@ -184,8 +184,8 @@ describe("App", () => {
     // PaneGroup is always present (tree-table is always in a pane)
     expect(container.querySelector("[data-pane-group]")).toBeInTheDocument();
 
-    // No resize handle when panel is closed
-    expect(screen.queryByTestId("resize-handle")).not.toBeInTheDocument();
+    // Resize handle is hidden when panel is closed
+    expect(screen.getByTestId("resize-handle")).toHaveClass("hidden");
 
     // Detail pane should be collapsed
     const detailPane = container.querySelector("[data-testid='detail-pane']");
@@ -245,16 +245,16 @@ describe("App", () => {
     const user = userEvent.setup();
     render(App);
 
-    // Resize handle should NOT be present when panel is closed
-    expect(screen.queryByTestId("resize-handle")).not.toBeInTheDocument();
+    // Resize handle is hidden when panel is closed
+    expect(screen.getByTestId("resize-handle")).toHaveClass("hidden");
 
     // Open the panel
     const titleTexts = screen.getAllByTestId("title-text");
     await user.click(titleTexts[0]);
 
-    // Resize handle should now be present (PaneForge resizer with our data-testid)
+    // Resize handle should now be visible (PaneForge resizer with our data-testid)
     const resizeHandle = screen.getByTestId("resize-handle");
-    expect(resizeHandle).toBeInTheDocument();
+    expect(resizeHandle).not.toHaveClass("hidden");
     expect(resizeHandle).toHaveAttribute("data-pane-resizer");
   });
 
@@ -531,20 +531,20 @@ describe("App", () => {
     const user = userEvent.setup();
     render(App);
 
-    // Initially no resize handle
-    expect(screen.queryByTestId("resize-handle")).not.toBeInTheDocument();
+    // Initially resize handle is hidden
+    expect(screen.getByTestId("resize-handle")).toHaveClass("hidden");
 
     // Open the panel
     const titleTexts = screen.getAllByTestId("title-text");
     await user.click(titleTexts[0]);
 
     // Resize handle should now be visible
-    expect(screen.getByTestId("resize-handle")).toBeInTheDocument();
+    expect(screen.getByTestId("resize-handle")).not.toHaveClass("hidden");
 
     // Close the panel
     await user.click(screen.getByTestId("detail-close"));
 
     // Resize handle should be hidden again
-    expect(screen.queryByTestId("resize-handle")).not.toBeInTheDocument();
+    expect(screen.getByTestId("resize-handle")).toHaveClass("hidden");
   });
 });

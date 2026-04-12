@@ -7,7 +7,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Changed
+- Detail panel font sizes now match the list view (inherit base 1rem instead of custom 0.8125rem overrides).
+- Detail panel title is now larger (1.25rem) for better visual hierarchy.
+- Status, Type, Priority, and Estimate selects now show icons (status dot, type icon, priority indicator, estimate abbreviation) in both the trigger and dropdown items, matching the filter bar style.
+- Detail panel metadata fields (Status, Type, Priority, Estimate) are laid out horizontally with wrapping instead of a vertical grid, with small labels above each select.
+- Editor modal metadata fields use the same stacked-label layout.
+- Detail panel max width increased from a fixed 800px to 75% of the container width.
+
 ### Fixed
+- Dragging the detail panel resize handle below minimum size no longer freezes the UI. The resize handle stays in the DOM (hidden via CSS) so PaneForge can complete its drag cleanup, and the collapse callback is deferred with `requestAnimationFrame`.
+- Pressing ESC in the editor modal with unsaved changes no longer closes the modal before the confirm dialog appears. Canceling the dialog now correctly keeps the editor open.
 - `task build` no longer runs `go generate ./...` twice. `codegen` was listed as a direct dep of both `build` and `web:build`, and Task does not deduplicate deps that resolve in parallel branches of the DAG.
 
 ### Security

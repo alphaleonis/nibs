@@ -10,7 +10,7 @@ const mockStorage = {
 Object.defineProperty(globalThis, "localStorage", { value: mockStorage, writable: true });
 
 import { Preferences } from "./preferences.svelte";
-import { ALL_COLUMN_KEYS, DEFAULT_COLUMN_WIDTHS, DEFAULT_DETAIL_PANEL_WIDTH, MIN_DETAIL_PANEL_WIDTH, MAX_DETAIL_PANEL_WIDTH } from "./types";
+import { ALL_COLUMN_KEYS, DEFAULT_COLUMN_WIDTHS, DEFAULT_DETAIL_PANEL_WIDTH, MIN_DETAIL_PANEL_WIDTH } from "./types";
 
 describe("Preferences", () => {
   beforeEach(() => {
@@ -141,7 +141,7 @@ describe("Preferences", () => {
     expect(prefs.detailPanelWidth).toBe(MIN_DETAIL_PANEL_WIDTH);
 
     prefs.setDetailPanelWidth(9999);
-    expect(prefs.detailPanelWidth).toBe(MAX_DETAIL_PANEL_WIDTH);
+    expect(prefs.detailPanelWidth).toBe(9999);
   });
 
   it("setDetailPanelWidth ignores invalid values", () => {

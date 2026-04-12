@@ -1,4 +1,4 @@
-import { VIEW_LEVELS, ALL_COLUMN_KEYS, DEFAULT_COLUMNS, MIN_DETAIL_PANEL_WIDTH, MAX_DETAIL_PANEL_WIDTH } from "./types";
+import { VIEW_LEVELS, ALL_COLUMN_KEYS, DEFAULT_COLUMNS, MIN_DETAIL_PANEL_WIDTH } from "./types";
 import type { ColumnKey, FilterPreferences, RowDensity, ViewLevel } from "./types";
 
 const ALWAYS_VISIBLE_KEYS = new Set<ColumnKey>(
@@ -65,7 +65,7 @@ function parseColumnWidths(
 
 function parseDetailPanelWidth(raw: unknown): number | undefined {
   if (typeof raw !== "number" || !isFinite(raw) || raw <= 0) return undefined;
-  return Math.max(MIN_DETAIL_PANEL_WIDTH, Math.min(MAX_DETAIL_PANEL_WIDTH, raw));
+  return Math.max(MIN_DETAIL_PANEL_WIDTH, raw);
 }
 
 const VALID_ROW_DENSITIES = new Set<string>(["compact", "comfortable"]);

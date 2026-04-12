@@ -82,7 +82,7 @@ export const DEFAULT_COLUMN_WIDTHS: Record<ColumnKey, number> = {
 
 export const DEFAULT_DETAIL_PANEL_WIDTH = 400;
 export const MIN_DETAIL_PANEL_WIDTH = 200;
-export const MAX_DETAIL_PANEL_WIDTH = 800;
+export const MAX_DETAIL_PANEL_PERCENT = 75;
 
 export type RowDensity = "compact" | "comfortable";
 

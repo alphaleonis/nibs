@@ -3,7 +3,7 @@
   import { createClient } from "./lib/graphql";
   import { CONFIG_QUERY } from "./lib/queries";
   import { Preferences } from "./lib/preferences.svelte";
-  import { DEFAULT_DETAIL_PANEL_WIDTH } from "./lib/types";
+  import { DEFAULT_DETAIL_PANEL_WIDTH, MAX_DETAIL_PANEL_PERCENT } from "./lib/types";
   import Toolbar from "./lib/components/Toolbar.svelte";
   import FilterBar from "./lib/components/FilterBar.svelte";
   import TreeTable from "./lib/components/TreeTable.svelte";
@@ -161,7 +161,7 @@
 
   // Computed min/max as percentages (recalculated when container changes)
   let minSizePercent = $derived(pixelToPercent(200));
-  let maxSizePercent = $derived(pixelToPercent(800));
+  let maxSizePercent = MAX_DETAIL_PANEL_PERCENT;
   let defaultSizePercent = $derived(pixelToPercent(prefs.detailPanelWidth));
 
   function handleDetailPaneResize(size: number) {
@@ -239,13 +239,12 @@
           ondrop={handleDrop}
         />
       </Resizable.Pane>
-      {#if selection.panelOpen}
-        <Resizable.Handle
-          data-testid="resize-handle"
-          ondblclick={handleResizeHandleDblClick}
-          onDraggingChange={handleDraggingChange}
-        />
-      {/if}
+      <Resizable.Handle
+        data-testid="resize-handle"
+        class={selection.panelOpen ? "" : "hidden"}
+        ondblclick={handleResizeHandleDblClick}
+        onDraggingChange={handleDraggingChange}
+      />
       <Resizable.Pane
         defaultSize={selection.panelOpen ? defaultSizePercent : 0}
         minSize={selection.panelOpen ? minSizePercent : 0}
@@ -253,7 +252,7 @@
         collapsible={true}
         collapsedSize={0}
         onResize={handleDetailPaneResize}
-        onCollapse={() => { if (selection.panelOpen) selection.close(); }}
+        onCollapse={() => { if (selection.panelOpen) requestAnimationFrame(() => selection.close()); }}
         bind:this={detailPaneComponent}
         data-testid="detail-pane"
       >

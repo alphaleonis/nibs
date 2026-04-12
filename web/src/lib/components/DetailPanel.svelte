@@ -4,7 +4,7 @@
   import { getContextClient, queryStore, subscriptionStore } from "@urql/svelte";
   import { NIB_DETAIL_QUERY, NIB_CHANGED_SUBSCRIPTION } from "../queries";
   import { renderMarkdown } from "../markdown";
-  import StatusDot from "./StatusDot.svelte";
+
   import StatusSelect from "./StatusSelect.svelte";
   import TypeSelect from "./TypeSelect.svelte";
   import PrioritySelect from "./PrioritySelect.svelte";
@@ -209,25 +209,21 @@
         disabled={deleted}
       />
 
-      <div class="detail-grid">
-        <span class="detail-label">Status</span>
-        <div class="detail-field">
-          <StatusDot status={nib.status} />
+      <div class="detail-fields">
+        <div class="detail-field-group">
+          <span class="detail-field-label">Status</span>
           <StatusSelect value={nib.status} onchange={handleStatusChange} testId="detail-status" disabled={deleted} />
         </div>
-
-        <span class="detail-label">Type</span>
-        <div class="detail-field">
+        <div class="detail-field-group">
+          <span class="detail-field-label">Type</span>
           <TypeSelect value={nib.type} onchange={handleTypeChange} testId="detail-type" disabled={deleted} />
         </div>
-
-        <span class="detail-label">Priority</span>
-        <div class="detail-field">
+        <div class="detail-field-group">
+          <span class="detail-field-label">Priority</span>
           <PrioritySelect value={nib.priority || ""} onchange={handlePriorityChange} testId="detail-priority" disabled={deleted} />
         </div>
-
-        <span class="detail-label">Estimate</span>
-        <div class="detail-field">
+        <div class="detail-field-group">
+          <span class="detail-field-label">Estimate</span>
           <EstimateSelect value={nib.estimate || ""} onchange={handleEstimateChange} testId="detail-estimate" disabled={deleted} />
         </div>
       </div>
@@ -411,7 +407,7 @@
     border-radius: 0.375rem;
     padding: 0.375rem 0.5rem;
     color: var(--foreground);
-    font-size: 1rem;
+    font-size: 1.25rem;
     font-weight: 600;
     outline: none;
     box-sizing: border-box;
@@ -426,23 +422,26 @@
     background-color: var(--accent);
   }
 
-  .detail-grid {
-    display: grid;
-    grid-template-columns: auto 1fr;
-    gap: 0.5rem 0.75rem;
-    align-items: center;
+  .detail-fields {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.5rem;
+  }
+
+  .detail-field-group {
+    display: flex;
+    flex-direction: column;
+    gap: 0.125rem;
+  }
+
+  .detail-field-label {
+    font-size: 0.75rem;
+    color: var(--muted-foreground);
   }
 
   .detail-label {
-    font-size: 0.8125rem;
     color: var(--muted-foreground);
     white-space: nowrap;
-  }
-
-  .detail-field {
-    display: flex;
-    align-items: center;
-    gap: 0.5rem;
   }
 
   .detail-tags-section {
@@ -504,7 +503,6 @@
     align-items: center;
     gap: 0.5rem;
     color: var(--link);
-    font-size: 0.8125rem;
     padding: 0.25rem 0.5rem;
     border-radius: 0.375rem;
     cursor: default;

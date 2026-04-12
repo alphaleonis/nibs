@@ -118,7 +118,6 @@
   }
 
   .detail-label {
-    font-size: 0.8125rem;
     color: var(--muted-foreground);
     white-space: nowrap;
   }
@@ -137,7 +136,6 @@
     background: none;
     border: none;
     color: var(--link);
-    font-size: 0.8125rem;
     padding: 0.25rem 0.5rem;
     border-radius: 0.375rem;
     cursor: pointer;
