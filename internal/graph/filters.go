@@ -6,17 +6,26 @@ import (
 )
 
 // resolveFilterID normalizes a single-ID filter argument via the reader's
-// NormalizeID method. It returns the full ID and true on success, or
-// ("", false) when the target does not resolve. All four filter.*ID
-// branches of ApplyFilter use this helper so they share one contract:
-// an unknown target short-circuits to nil (see the filter.*ID branches
-// below) rather than silently no-matching or panicking.
+// NormalizeID method. It returns exactly what NibReader.NormalizeID returns
+// — (fullID, true) on success; (echoed input id, false) on miss — so the
+// two helpers agree on the miss convention and callers can use either
+// interchangeably without surprise.
+//
+// Why this wrapper exists despite being a straight passthrough today:
+//   - Semantic naming at call sites: inside ApplyFilter, `resolveFilterID`
+//     reads as "resolve a filter ID" rather than "normalize a generic ID",
+//     making intent explicit.
+//   - Future extension point: this is the single place where all four
+//     filter.*ID branches can gain shared behaviour — e.g. the 128-char
+//     input-length cap tracked in nibs-puq1 — without touching each
+//     branch individually.
+//
+// Every filter.*ID branch in ApplyFilter pairs this call with an explicit
+// `if !ok { return nil }` so an unknown target short-circuits the whole
+// filter chain to nil. The pattern is repeated by design: four branches
+// keep it grep-findable and the set is stable.
 func resolveFilterID(reader NibReader, id string) (string, bool) {
-	fullID, ok := reader.NormalizeID(id)
-	if !ok {
-		return "", false
-	}
-	return fullID, true
+	return reader.NormalizeID(id)
 }
 
 // ApplyFilter applies NibFilter to a slice of nibs and returns filtered results.

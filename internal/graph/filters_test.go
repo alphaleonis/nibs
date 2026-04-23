@@ -29,13 +29,16 @@ func TestResolveFilterID(t *testing.T) {
 		}
 	})
 
-	t.Run("returns empty and false for unknown target", func(t *testing.T) {
+	t.Run("returns echoed id and false for unknown target (matches NibReader.NormalizeID)", func(t *testing.T) {
 		fullID, ok := resolveFilterID(reader, "nonexistent")
 		if ok {
 			t.Errorf("expected ok=false for unknown target, got ok=true (fullID=%q)", fullID)
 		}
-		if fullID != "" {
-			t.Errorf("fullID = %q, want empty string on miss", fullID)
+		// resolveFilterID is a pass-through to NormalizeID; on miss, NormalizeID
+		// echoes the input id (Core convention). Callers gate on ok, not on the
+		// string, so the echoed value is informational only.
+		if fullID != "nonexistent" {
+			t.Errorf("fullID = %q, want echoed input %q on miss", fullID, "nonexistent")
 		}
 	})
 }

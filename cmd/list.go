@@ -98,8 +98,9 @@ Search Syntax (--search/-S):
 			filter.NoBlocking = &listNoBlocking
 		}
 		// MentionsID / MentionedByID accept short or full IDs; the GraphQL
-		// filter layer (internal/graph/filters.go:filterByMentionsID) normalises
-		// via NibReader.NormalizeID. Do not normalise at the CLI layer.
+		// filter layer normalises via NibReader.NormalizeID in ApplyFilter
+		// (internal/graph/filters.go:resolveFilterID). Do not normalise at
+		// the CLI layer.
 		if listMentions != "" {
 			filter.MentionsID = &listMentions
 		}
