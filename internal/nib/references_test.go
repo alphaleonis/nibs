@@ -112,8 +112,28 @@ func TestExtractMentionTokens(t *testing.T) {
 			want: []string{"1234"},
 		},
 		{
-			name: "token is trimmed at word boundary",
+			name: "right-side terminator is any non-id char (comma)",
 			body: "Ref #gx0f, then end.",
+			want: []string{"gx0f"},
+		},
+		{
+			name: "right-side terminator: period",
+			body: "See #gx0f.",
+			want: []string{"gx0f"},
+		},
+		{
+			name: "right-side terminator: closing paren",
+			body: "(see #gx0f)",
+			want: []string{"gx0f"},
+		},
+		{
+			name: "right-side terminator: space",
+			body: "We noted #gx0f today.",
+			want: []string{"gx0f"},
+		},
+		{
+			name: "right-side terminator: newline",
+			body: "Ref #gx0f\nnext line",
 			want: []string{"gx0f"},
 		},
 		{
@@ -132,9 +152,95 @@ func TestExtractMentionTokens(t *testing.T) {
 			want: []string{"gx0f"},
 		},
 		{
-			name: "backtick inside word is not a code fence",
+			name: "inline code span inside prose is stripped; mentions outside preserved",
 			body: "We use `backticks` for #gx0f refs.",
 			want: []string{"gx0f"},
+		},
+		{
+			name: "unpaired backtick in prose does not swallow the mention",
+			body: "We use backtick ` for #gx0f refs.",
+			want: []string{"gx0f"},
+		},
+		// Finding #22 — load-bearing invariants that used to be unpinned.
+		{
+			name: "uppercase ID does not match",
+			body: "See #ABCD here",
+			want: nil,
+		},
+		{
+			name: "trailing hyphen is stripped from the captured token",
+			body: "ref #abc-",
+			want: []string{"abc"},
+		},
+		{
+			name: "CRLF line endings preserved across line breaks",
+			body: "See #gx0f,\r\nand #nibs-abc.",
+			want: []string{"gx0f", "nibs-abc"},
+		},
+		// Finding #1 — multi-backtick code spans must not leak mentions.
+		{
+			name: "multi-backtick code span strips its contents",
+			body: "We use ``#gx0f`` in a sentence",
+			want: nil,
+		},
+		// Finding #2 — ATX heading text is walked, mentions inside it count.
+		{
+			name: "mentions inside heading text are extracted",
+			body: "## Related: #abc1 and #def2",
+			want: []string{"abc1", "def2"},
+		},
+		{
+			name: "heading mention followed by body mentions deduplicates",
+			body: "# Release notes for #nibs-def\n\nBody body #nibs-def and #other",
+			want: []string{"nibs-def", "other"},
+		},
+		// Finding #10 — pin `##gx0f` behavior. Goldmark parses this as a
+		// level-2 heading whose text is "gx0f body text", so `gx0f` surfaces
+		// as a mention. The leading `##` is the heading marker itself and
+		// never reaches the mention scanner.
+		{
+			name: "##gx0f without trailing space: heading text is scanned for mentions",
+			body: "##gx0f body text",
+			want: []string{"gx0f"},
+		},
+		// Finding #11 — indented (4-space/tab) code blocks are skipped by
+		// goldmark, so mentions inside them do not leak.
+		{
+			name: "four-space indented code block is skipped",
+			body: "Intro.\n\n    code line #gx0f\n\nOutro #abc",
+			want: []string{"abc"},
+		},
+		// Finding #12 — pin goldmark behavior for tab-indented fences.
+		// A tab-indented triple-backtick line is parsed as an indented code
+		// block (so the fence opener itself is in code), and the line after
+		// the code block terminates the block; `#inside` lands in a
+		// following paragraph and *is* scanned. Pin this behavior.
+		{
+			name: "tab-indented fence marker is not a fence (pinned goldmark behavior)",
+			body: "outside #gx0f\n\n\t```\n#inside\n\t```\n",
+			want: []string{"gx0f", "inside"},
+		},
+		{
+			name: "tab-indented heading line is parsed as indented code",
+			body: "\t# Title\n\nbody with #abc",
+			want: []string{"abc"},
+		},
+		// Finding #13 — reference-link definitions are not walked as text.
+		{
+			name: "reference-link definition URL does not produce a mention",
+			body: "[foo]: #anchor\n\nBody text with #real.",
+			want: []string{"real"},
+		},
+		// Inline link text and image alt text are inside skipped node types.
+		{
+			name: "inline link text is skipped",
+			body: "[click #gx0f](https://example.com)",
+			want: nil,
+		},
+		{
+			name: "markdown image alt text is skipped",
+			body: "![alt #gx0f](img.png)",
+			want: nil,
 		},
 	}
 

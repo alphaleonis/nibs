@@ -21,6 +21,7 @@ require (
 	github.com/spf13/pflag v1.0.10
 	github.com/tidwall/pretty v1.2.1
 	github.com/vektah/gqlparser/v2 v2.5.31
+	github.com/yuin/goldmark v1.7.13
 	golang.org/x/term v0.38.0
 	gopkg.in/yaml.v3 v3.0.1
 )
@@ -84,7 +85,6 @@ require (
 	github.com/sosodev/duration v1.3.1 // indirect
 	github.com/urfave/cli/v3 v3.6.1 // indirect
 	github.com/xo/terminfo v0.0.0-20220910002029-abceb7e1c41e // indirect
-	github.com/yuin/goldmark v1.7.13 // indirect
 	github.com/yuin/goldmark-emoji v1.0.6 // indirect
 	go.etcd.io/bbolt v1.4.3 // indirect
 	golang.org/x/mod v0.30.0 // indirect
