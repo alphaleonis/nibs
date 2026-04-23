@@ -670,6 +670,40 @@ func (r *nibResolver) Children(ctx context.Context, obj *nib.Nib, filter *model.
 	return result, nil
 }
 
+// MentionIds is the resolver for the mentionIds field.
+// Returns the IDs of nibs mentioned via `#<id>` in this nib's body.
+func (r *nibResolver) MentionIds(ctx context.Context, obj *nib.Nib) ([]string, error) {
+	mentions := r.Reader.FindMentions(obj.ID)
+	ids := make([]string, 0, len(mentions))
+	for _, m := range mentions {
+		ids = append(ids, m.ID)
+	}
+	return ids, nil
+}
+
+// MentionedByIds is the resolver for the mentionedByIds field.
+// Returns the IDs of nibs whose bodies mention this nib via `#<id>`.
+func (r *nibResolver) MentionedByIds(ctx context.Context, obj *nib.Nib) ([]string, error) {
+	inbound := r.Reader.FindMentionedBy(obj.ID)
+	ids := make([]string, 0, len(inbound))
+	for _, m := range inbound {
+		ids = append(ids, m.ID)
+	}
+	return ids, nil
+}
+
+// Mentions is the resolver for the mentions field.
+func (r *nibResolver) Mentions(ctx context.Context, obj *nib.Nib, filter *model.NibFilter) ([]*nib.Nib, error) {
+	result := r.Reader.FindMentions(obj.ID)
+	return ApplyFilter(result, filter, r.Reader, r.Resolver.Blocking), nil
+}
+
+// MentionedBy is the resolver for the mentionedBy field.
+func (r *nibResolver) MentionedBy(ctx context.Context, obj *nib.Nib, filter *model.NibFilter) ([]*nib.Nib, error) {
+	result := r.Reader.FindMentionedBy(obj.ID)
+	return ApplyFilter(result, filter, r.Reader, r.Resolver.Blocking), nil
+}
+
 // Nib is the resolver for the nib field.
 func (r *queryResolver) Nib(ctx context.Context, id string) (*nib.Nib, error) {
 	b, err := r.Reader.Get(id)

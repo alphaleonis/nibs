@@ -13,6 +13,8 @@ type NibReader interface {
 	Search(query string) ([]*nib.Nib, error)
 	NormalizeID(id string) (string, bool)
 	FindIncomingLinks(targetID string) []nib.IncomingLink
+	FindMentions(fromID string) []*nib.Nib
+	FindMentionedBy(targetID string) []*nib.Nib
 	Config() *config.Config
 }
 

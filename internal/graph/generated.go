@@ -69,29 +69,33 @@ type ComplexityRoot struct {
 	}
 
 	Nib struct {
-		BlockedBy    func(childComplexity int, filter *model.NibFilter) int
-		BlockedByIds func(childComplexity int) int
-		Blocking     func(childComplexity int, filter *model.NibFilter) int
-		BlockingIds  func(childComplexity int) int
-		Body         func(childComplexity int) int
-		Children     func(childComplexity int, filter *model.NibFilter, sort *model.NibSort) int
-		CreatedAt    func(childComplexity int) int
-		Documents    func(childComplexity int) int
-		ETag         func(childComplexity int) int
-		Estimate     func(childComplexity int) int
-		ID           func(childComplexity int) int
-		Order        func(childComplexity int) int
-		Parent       func(childComplexity int) int
-		ParentID     func(childComplexity int) int
-		Path         func(childComplexity int) int
-		Priority     func(childComplexity int) int
-		Slug         func(childComplexity int) int
-		Status       func(childComplexity int) int
-		Tags         func(childComplexity int) int
-		Title        func(childComplexity int) int
-		Type         func(childComplexity int) int
-		UpdatedAt    func(childComplexity int) int
-		Version      func(childComplexity int) int
+		BlockedBy      func(childComplexity int, filter *model.NibFilter) int
+		BlockedByIds   func(childComplexity int) int
+		Blocking       func(childComplexity int, filter *model.NibFilter) int
+		BlockingIds    func(childComplexity int) int
+		Body           func(childComplexity int) int
+		Children       func(childComplexity int, filter *model.NibFilter, sort *model.NibSort) int
+		CreatedAt      func(childComplexity int) int
+		Documents      func(childComplexity int) int
+		ETag           func(childComplexity int) int
+		Estimate       func(childComplexity int) int
+		ID             func(childComplexity int) int
+		MentionIds     func(childComplexity int) int
+		MentionedBy    func(childComplexity int, filter *model.NibFilter) int
+		MentionedByIds func(childComplexity int) int
+		Mentions       func(childComplexity int, filter *model.NibFilter) int
+		Order          func(childComplexity int) int
+		Parent         func(childComplexity int) int
+		ParentID       func(childComplexity int) int
+		Path           func(childComplexity int) int
+		Priority       func(childComplexity int) int
+		Slug           func(childComplexity int) int
+		Status         func(childComplexity int) int
+		Tags           func(childComplexity int) int
+		Title          func(childComplexity int) int
+		Type           func(childComplexity int) int
+		UpdatedAt      func(childComplexity int) int
+		Version        func(childComplexity int) int
 	}
 
 	NibChangeEvent struct {
@@ -131,6 +135,10 @@ type NibResolver interface {
 	Blocking(ctx context.Context, obj *nib.Nib, filter *model.NibFilter) ([]*nib.Nib, error)
 	Parent(ctx context.Context, obj *nib.Nib) (*nib.Nib, error)
 	Children(ctx context.Context, obj *nib.Nib, filter *model.NibFilter, sort *model.NibSort) ([]*nib.Nib, error)
+	MentionIds(ctx context.Context, obj *nib.Nib) ([]string, error)
+	MentionedByIds(ctx context.Context, obj *nib.Nib) ([]string, error)
+	Mentions(ctx context.Context, obj *nib.Nib, filter *model.NibFilter) ([]*nib.Nib, error)
+	MentionedBy(ctx context.Context, obj *nib.Nib, filter *model.NibFilter) ([]*nib.Nib, error)
 }
 type QueryResolver interface {
 	Nib(ctx context.Context, id string) (*nib.Nib, error)
@@ -359,6 +367,40 @@ func (e *executableSchema) Complexity(ctx context.Context, typeName, field strin
 		}
 
 		return e.complexity.Nib.ID(childComplexity), true
+	case "Nib.mentionIds":
+		if e.complexity.Nib.MentionIds == nil {
+			break
+		}
+
+		return e.complexity.Nib.MentionIds(childComplexity), true
+	case "Nib.mentionedBy":
+		if e.complexity.Nib.MentionedBy == nil {
+			break
+		}
+
+		args, err := ec.field_Nib_mentionedBy_args(ctx, rawArgs)
+		if err != nil {
+			return 0, false
+		}
+
+		return e.complexity.Nib.MentionedBy(childComplexity, args["filter"].(*model.NibFilter)), true
+	case "Nib.mentionedByIds":
+		if e.complexity.Nib.MentionedByIds == nil {
+			break
+		}
+
+		return e.complexity.Nib.MentionedByIds(childComplexity), true
+	case "Nib.mentions":
+		if e.complexity.Nib.Mentions == nil {
+			break
+		}
+
+		args, err := ec.field_Nib_mentions_args(ctx, rawArgs)
+		if err != nil {
+			return 0, false
+		}
+
+		return e.complexity.Nib.Mentions(childComplexity, args["filter"].(*model.NibFilter)), true
 	case "Nib.order":
 		if e.complexity.Nib.Order == nil {
 			break
@@ -857,6 +899,28 @@ func (ec *executionContext) field_Nib_children_args(ctx context.Context, rawArgs
 	return args, nil
 }
 
+func (ec *executionContext) field_Nib_mentionedBy_args(ctx context.Context, rawArgs map[string]any) (map[string]any, error) {
+	var err error
+	args := map[string]any{}
+	arg0, err := graphql.ProcessArgField(ctx, rawArgs, "filter", ec.unmarshalONibFilter2ᚖgithubᚗcomᚋalphaleonisᚋnibsᚋinternalᚋgraphᚋmodelᚐNibFilter)
+	if err != nil {
+		return nil, err
+	}
+	args["filter"] = arg0
+	return args, nil
+}
+
+func (ec *executionContext) field_Nib_mentions_args(ctx context.Context, rawArgs map[string]any) (map[string]any, error) {
+	var err error
+	args := map[string]any{}
+	arg0, err := graphql.ProcessArgField(ctx, rawArgs, "filter", ec.unmarshalONibFilter2ᚖgithubᚗcomᚋalphaleonisᚋnibsᚋinternalᚋgraphᚋmodelᚐNibFilter)
+	if err != nil {
+		return nil, err
+	}
+	args["filter"] = arg0
+	return args, nil
+}
+
 func (ec *executionContext) field_Query___type_args(ctx context.Context, rawArgs map[string]any) (map[string]any, error) {
 	var err error
 	args := map[string]any{}
@@ -1058,6 +1122,14 @@ func (ec *executionContext) fieldContext_Mutation_createNib(ctx context.Context,
 				return ec.fieldContext_Nib_parent(ctx, field)
 			case "children":
 				return ec.fieldContext_Nib_children(ctx, field)
+			case "mentionIds":
+				return ec.fieldContext_Nib_mentionIds(ctx, field)
+			case "mentionedByIds":
+				return ec.fieldContext_Nib_mentionedByIds(ctx, field)
+			case "mentions":
+				return ec.fieldContext_Nib_mentions(ctx, field)
+			case "mentionedBy":
+				return ec.fieldContext_Nib_mentionedBy(ctx, field)
 			}
 			return nil, fmt.Errorf("no field named %q was found under type Nib", field.Name)
 		},
@@ -1147,6 +1219,14 @@ func (ec *executionContext) fieldContext_Mutation_updateNib(ctx context.Context,
 				return ec.fieldContext_Nib_parent(ctx, field)
 			case "children":
 				return ec.fieldContext_Nib_children(ctx, field)
+			case "mentionIds":
+				return ec.fieldContext_Nib_mentionIds(ctx, field)
+			case "mentionedByIds":
+				return ec.fieldContext_Nib_mentionedByIds(ctx, field)
+			case "mentions":
+				return ec.fieldContext_Nib_mentions(ctx, field)
+			case "mentionedBy":
+				return ec.fieldContext_Nib_mentionedBy(ctx, field)
 			}
 			return nil, fmt.Errorf("no field named %q was found under type Nib", field.Name)
 		},
@@ -1318,6 +1398,14 @@ func (ec *executionContext) fieldContext_Mutation_setParent(ctx context.Context,
 				return ec.fieldContext_Nib_parent(ctx, field)
 			case "children":
 				return ec.fieldContext_Nib_children(ctx, field)
+			case "mentionIds":
+				return ec.fieldContext_Nib_mentionIds(ctx, field)
+			case "mentionedByIds":
+				return ec.fieldContext_Nib_mentionedByIds(ctx, field)
+			case "mentions":
+				return ec.fieldContext_Nib_mentions(ctx, field)
+			case "mentionedBy":
+				return ec.fieldContext_Nib_mentionedBy(ctx, field)
 			}
 			return nil, fmt.Errorf("no field named %q was found under type Nib", field.Name)
 		},
@@ -1407,6 +1495,14 @@ func (ec *executionContext) fieldContext_Mutation_addBlocking(ctx context.Contex
 				return ec.fieldContext_Nib_parent(ctx, field)
 			case "children":
 				return ec.fieldContext_Nib_children(ctx, field)
+			case "mentionIds":
+				return ec.fieldContext_Nib_mentionIds(ctx, field)
+			case "mentionedByIds":
+				return ec.fieldContext_Nib_mentionedByIds(ctx, field)
+			case "mentions":
+				return ec.fieldContext_Nib_mentions(ctx, field)
+			case "mentionedBy":
+				return ec.fieldContext_Nib_mentionedBy(ctx, field)
 			}
 			return nil, fmt.Errorf("no field named %q was found under type Nib", field.Name)
 		},
@@ -1496,6 +1592,14 @@ func (ec *executionContext) fieldContext_Mutation_removeBlocking(ctx context.Con
 				return ec.fieldContext_Nib_parent(ctx, field)
 			case "children":
 				return ec.fieldContext_Nib_children(ctx, field)
+			case "mentionIds":
+				return ec.fieldContext_Nib_mentionIds(ctx, field)
+			case "mentionedByIds":
+				return ec.fieldContext_Nib_mentionedByIds(ctx, field)
+			case "mentions":
+				return ec.fieldContext_Nib_mentions(ctx, field)
+			case "mentionedBy":
+				return ec.fieldContext_Nib_mentionedBy(ctx, field)
 			}
 			return nil, fmt.Errorf("no field named %q was found under type Nib", field.Name)
 		},
@@ -1585,6 +1689,14 @@ func (ec *executionContext) fieldContext_Mutation_addBlockedBy(ctx context.Conte
 				return ec.fieldContext_Nib_parent(ctx, field)
 			case "children":
 				return ec.fieldContext_Nib_children(ctx, field)
+			case "mentionIds":
+				return ec.fieldContext_Nib_mentionIds(ctx, field)
+			case "mentionedByIds":
+				return ec.fieldContext_Nib_mentionedByIds(ctx, field)
+			case "mentions":
+				return ec.fieldContext_Nib_mentions(ctx, field)
+			case "mentionedBy":
+				return ec.fieldContext_Nib_mentionedBy(ctx, field)
 			}
 			return nil, fmt.Errorf("no field named %q was found under type Nib", field.Name)
 		},
@@ -1674,6 +1786,14 @@ func (ec *executionContext) fieldContext_Mutation_removeBlockedBy(ctx context.Co
 				return ec.fieldContext_Nib_parent(ctx, field)
 			case "children":
 				return ec.fieldContext_Nib_children(ctx, field)
+			case "mentionIds":
+				return ec.fieldContext_Nib_mentionIds(ctx, field)
+			case "mentionedByIds":
+				return ec.fieldContext_Nib_mentionedByIds(ctx, field)
+			case "mentions":
+				return ec.fieldContext_Nib_mentions(ctx, field)
+			case "mentionedBy":
+				return ec.fieldContext_Nib_mentionedBy(ctx, field)
 			}
 			return nil, fmt.Errorf("no field named %q was found under type Nib", field.Name)
 		},
@@ -1763,6 +1883,14 @@ func (ec *executionContext) fieldContext_Mutation_reorderNib(ctx context.Context
 				return ec.fieldContext_Nib_parent(ctx, field)
 			case "children":
 				return ec.fieldContext_Nib_children(ctx, field)
+			case "mentionIds":
+				return ec.fieldContext_Nib_mentionIds(ctx, field)
+			case "mentionedByIds":
+				return ec.fieldContext_Nib_mentionedByIds(ctx, field)
+			case "mentions":
+				return ec.fieldContext_Nib_mentions(ctx, field)
+			case "mentionedBy":
+				return ec.fieldContext_Nib_mentionedBy(ctx, field)
 			}
 			return nil, fmt.Errorf("no field named %q was found under type Nib", field.Name)
 		},
@@ -2403,6 +2531,14 @@ func (ec *executionContext) fieldContext_Nib_blockedBy(ctx context.Context, fiel
 				return ec.fieldContext_Nib_parent(ctx, field)
 			case "children":
 				return ec.fieldContext_Nib_children(ctx, field)
+			case "mentionIds":
+				return ec.fieldContext_Nib_mentionIds(ctx, field)
+			case "mentionedByIds":
+				return ec.fieldContext_Nib_mentionedByIds(ctx, field)
+			case "mentions":
+				return ec.fieldContext_Nib_mentions(ctx, field)
+			case "mentionedBy":
+				return ec.fieldContext_Nib_mentionedBy(ctx, field)
 			}
 			return nil, fmt.Errorf("no field named %q was found under type Nib", field.Name)
 		},
@@ -2492,6 +2628,14 @@ func (ec *executionContext) fieldContext_Nib_blocking(ctx context.Context, field
 				return ec.fieldContext_Nib_parent(ctx, field)
 			case "children":
 				return ec.fieldContext_Nib_children(ctx, field)
+			case "mentionIds":
+				return ec.fieldContext_Nib_mentionIds(ctx, field)
+			case "mentionedByIds":
+				return ec.fieldContext_Nib_mentionedByIds(ctx, field)
+			case "mentions":
+				return ec.fieldContext_Nib_mentions(ctx, field)
+			case "mentionedBy":
+				return ec.fieldContext_Nib_mentionedBy(ctx, field)
 			}
 			return nil, fmt.Errorf("no field named %q was found under type Nib", field.Name)
 		},
@@ -2580,6 +2724,14 @@ func (ec *executionContext) fieldContext_Nib_parent(_ context.Context, field gra
 				return ec.fieldContext_Nib_parent(ctx, field)
 			case "children":
 				return ec.fieldContext_Nib_children(ctx, field)
+			case "mentionIds":
+				return ec.fieldContext_Nib_mentionIds(ctx, field)
+			case "mentionedByIds":
+				return ec.fieldContext_Nib_mentionedByIds(ctx, field)
+			case "mentions":
+				return ec.fieldContext_Nib_mentions(ctx, field)
+			case "mentionedBy":
+				return ec.fieldContext_Nib_mentionedBy(ctx, field)
 			}
 			return nil, fmt.Errorf("no field named %q was found under type Nib", field.Name)
 		},
@@ -2658,6 +2810,14 @@ func (ec *executionContext) fieldContext_Nib_children(ctx context.Context, field
 				return ec.fieldContext_Nib_parent(ctx, field)
 			case "children":
 				return ec.fieldContext_Nib_children(ctx, field)
+			case "mentionIds":
+				return ec.fieldContext_Nib_mentionIds(ctx, field)
+			case "mentionedByIds":
+				return ec.fieldContext_Nib_mentionedByIds(ctx, field)
+			case "mentions":
+				return ec.fieldContext_Nib_mentions(ctx, field)
+			case "mentionedBy":
+				return ec.fieldContext_Nib_mentionedBy(ctx, field)
 			}
 			return nil, fmt.Errorf("no field named %q was found under type Nib", field.Name)
 		},
@@ -2670,6 +2830,258 @@ func (ec *executionContext) fieldContext_Nib_children(ctx context.Context, field
 	}()
 	ctx = graphql.WithFieldContext(ctx, fc)
 	if fc.Args, err = ec.field_Nib_children_args(ctx, field.ArgumentMap(ec.Variables)); err != nil {
+		ec.Error(ctx, err)
+		return fc, err
+	}
+	return fc, nil
+}
+
+func (ec *executionContext) _Nib_mentionIds(ctx context.Context, field graphql.CollectedField, obj *nib.Nib) (ret graphql.Marshaler) {
+	return graphql.ResolveField(
+		ctx,
+		ec.OperationContext,
+		field,
+		ec.fieldContext_Nib_mentionIds,
+		func(ctx context.Context) (any, error) {
+			return ec.resolvers.Nib().MentionIds(ctx, obj)
+		},
+		nil,
+		ec.marshalNString2ᚕstringᚄ,
+		true,
+		true,
+	)
+}
+
+func (ec *executionContext) fieldContext_Nib_mentionIds(_ context.Context, field graphql.CollectedField) (fc *graphql.FieldContext, err error) {
+	fc = &graphql.FieldContext{
+		Object:     "Nib",
+		Field:      field,
+		IsMethod:   true,
+		IsResolver: true,
+		Child: func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+			return nil, errors.New("field of type String does not have child fields")
+		},
+	}
+	return fc, nil
+}
+
+func (ec *executionContext) _Nib_mentionedByIds(ctx context.Context, field graphql.CollectedField, obj *nib.Nib) (ret graphql.Marshaler) {
+	return graphql.ResolveField(
+		ctx,
+		ec.OperationContext,
+		field,
+		ec.fieldContext_Nib_mentionedByIds,
+		func(ctx context.Context) (any, error) {
+			return ec.resolvers.Nib().MentionedByIds(ctx, obj)
+		},
+		nil,
+		ec.marshalNString2ᚕstringᚄ,
+		true,
+		true,
+	)
+}
+
+func (ec *executionContext) fieldContext_Nib_mentionedByIds(_ context.Context, field graphql.CollectedField) (fc *graphql.FieldContext, err error) {
+	fc = &graphql.FieldContext{
+		Object:     "Nib",
+		Field:      field,
+		IsMethod:   true,
+		IsResolver: true,
+		Child: func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+			return nil, errors.New("field of type String does not have child fields")
+		},
+	}
+	return fc, nil
+}
+
+func (ec *executionContext) _Nib_mentions(ctx context.Context, field graphql.CollectedField, obj *nib.Nib) (ret graphql.Marshaler) {
+	return graphql.ResolveField(
+		ctx,
+		ec.OperationContext,
+		field,
+		ec.fieldContext_Nib_mentions,
+		func(ctx context.Context) (any, error) {
+			fc := graphql.GetFieldContext(ctx)
+			return ec.resolvers.Nib().Mentions(ctx, obj, fc.Args["filter"].(*model.NibFilter))
+		},
+		nil,
+		ec.marshalNNib2ᚕᚖgithubᚗcomᚋalphaleonisᚋnibsᚋinternalᚋnibᚐNibᚄ,
+		true,
+		true,
+	)
+}
+
+func (ec *executionContext) fieldContext_Nib_mentions(ctx context.Context, field graphql.CollectedField) (fc *graphql.FieldContext, err error) {
+	fc = &graphql.FieldContext{
+		Object:     "Nib",
+		Field:      field,
+		IsMethod:   true,
+		IsResolver: true,
+		Child: func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+			switch field.Name {
+			case "id":
+				return ec.fieldContext_Nib_id(ctx, field)
+			case "slug":
+				return ec.fieldContext_Nib_slug(ctx, field)
+			case "path":
+				return ec.fieldContext_Nib_path(ctx, field)
+			case "version":
+				return ec.fieldContext_Nib_version(ctx, field)
+			case "title":
+				return ec.fieldContext_Nib_title(ctx, field)
+			case "status":
+				return ec.fieldContext_Nib_status(ctx, field)
+			case "type":
+				return ec.fieldContext_Nib_type(ctx, field)
+			case "priority":
+				return ec.fieldContext_Nib_priority(ctx, field)
+			case "estimate":
+				return ec.fieldContext_Nib_estimate(ctx, field)
+			case "tags":
+				return ec.fieldContext_Nib_tags(ctx, field)
+			case "createdAt":
+				return ec.fieldContext_Nib_createdAt(ctx, field)
+			case "updatedAt":
+				return ec.fieldContext_Nib_updatedAt(ctx, field)
+			case "body":
+				return ec.fieldContext_Nib_body(ctx, field)
+			case "etag":
+				return ec.fieldContext_Nib_etag(ctx, field)
+			case "documents":
+				return ec.fieldContext_Nib_documents(ctx, field)
+			case "order":
+				return ec.fieldContext_Nib_order(ctx, field)
+			case "parentId":
+				return ec.fieldContext_Nib_parentId(ctx, field)
+			case "blockingIds":
+				return ec.fieldContext_Nib_blockingIds(ctx, field)
+			case "blockedByIds":
+				return ec.fieldContext_Nib_blockedByIds(ctx, field)
+			case "blockedBy":
+				return ec.fieldContext_Nib_blockedBy(ctx, field)
+			case "blocking":
+				return ec.fieldContext_Nib_blocking(ctx, field)
+			case "parent":
+				return ec.fieldContext_Nib_parent(ctx, field)
+			case "children":
+				return ec.fieldContext_Nib_children(ctx, field)
+			case "mentionIds":
+				return ec.fieldContext_Nib_mentionIds(ctx, field)
+			case "mentionedByIds":
+				return ec.fieldContext_Nib_mentionedByIds(ctx, field)
+			case "mentions":
+				return ec.fieldContext_Nib_mentions(ctx, field)
+			case "mentionedBy":
+				return ec.fieldContext_Nib_mentionedBy(ctx, field)
+			}
+			return nil, fmt.Errorf("no field named %q was found under type Nib", field.Name)
+		},
+	}
+	defer func() {
+		if r := recover(); r != nil {
+			err = ec.Recover(ctx, r)
+			ec.Error(ctx, err)
+		}
+	}()
+	ctx = graphql.WithFieldContext(ctx, fc)
+	if fc.Args, err = ec.field_Nib_mentions_args(ctx, field.ArgumentMap(ec.Variables)); err != nil {
+		ec.Error(ctx, err)
+		return fc, err
+	}
+	return fc, nil
+}
+
+func (ec *executionContext) _Nib_mentionedBy(ctx context.Context, field graphql.CollectedField, obj *nib.Nib) (ret graphql.Marshaler) {
+	return graphql.ResolveField(
+		ctx,
+		ec.OperationContext,
+		field,
+		ec.fieldContext_Nib_mentionedBy,
+		func(ctx context.Context) (any, error) {
+			fc := graphql.GetFieldContext(ctx)
+			return ec.resolvers.Nib().MentionedBy(ctx, obj, fc.Args["filter"].(*model.NibFilter))
+		},
+		nil,
+		ec.marshalNNib2ᚕᚖgithubᚗcomᚋalphaleonisᚋnibsᚋinternalᚋnibᚐNibᚄ,
+		true,
+		true,
+	)
+}
+
+func (ec *executionContext) fieldContext_Nib_mentionedBy(ctx context.Context, field graphql.CollectedField) (fc *graphql.FieldContext, err error) {
+	fc = &graphql.FieldContext{
+		Object:     "Nib",
+		Field:      field,
+		IsMethod:   true,
+		IsResolver: true,
+		Child: func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+			switch field.Name {
+			case "id":
+				return ec.fieldContext_Nib_id(ctx, field)
+			case "slug":
+				return ec.fieldContext_Nib_slug(ctx, field)
+			case "path":
+				return ec.fieldContext_Nib_path(ctx, field)
+			case "version":
+				return ec.fieldContext_Nib_version(ctx, field)
+			case "title":
+				return ec.fieldContext_Nib_title(ctx, field)
+			case "status":
+				return ec.fieldContext_Nib_status(ctx, field)
+			case "type":
+				return ec.fieldContext_Nib_type(ctx, field)
+			case "priority":
+				return ec.fieldContext_Nib_priority(ctx, field)
+			case "estimate":
+				return ec.fieldContext_Nib_estimate(ctx, field)
+			case "tags":
+				return ec.fieldContext_Nib_tags(ctx, field)
+			case "createdAt":
+				return ec.fieldContext_Nib_createdAt(ctx, field)
+			case "updatedAt":
+				return ec.fieldContext_Nib_updatedAt(ctx, field)
+			case "body":
+				return ec.fieldContext_Nib_body(ctx, field)
+			case "etag":
+				return ec.fieldContext_Nib_etag(ctx, field)
+			case "documents":
+				return ec.fieldContext_Nib_documents(ctx, field)
+			case "order":
+				return ec.fieldContext_Nib_order(ctx, field)
+			case "parentId":
+				return ec.fieldContext_Nib_parentId(ctx, field)
+			case "blockingIds":
+				return ec.fieldContext_Nib_blockingIds(ctx, field)
+			case "blockedByIds":
+				return ec.fieldContext_Nib_blockedByIds(ctx, field)
+			case "blockedBy":
+				return ec.fieldContext_Nib_blockedBy(ctx, field)
+			case "blocking":
+				return ec.fieldContext_Nib_blocking(ctx, field)
+			case "parent":
+				return ec.fieldContext_Nib_parent(ctx, field)
+			case "children":
+				return ec.fieldContext_Nib_children(ctx, field)
+			case "mentionIds":
+				return ec.fieldContext_Nib_mentionIds(ctx, field)
+			case "mentionedByIds":
+				return ec.fieldContext_Nib_mentionedByIds(ctx, field)
+			case "mentions":
+				return ec.fieldContext_Nib_mentions(ctx, field)
+			case "mentionedBy":
+				return ec.fieldContext_Nib_mentionedBy(ctx, field)
+			}
+			return nil, fmt.Errorf("no field named %q was found under type Nib", field.Name)
+		},
+	}
+	defer func() {
+		if r := recover(); r != nil {
+			err = ec.Recover(ctx, r)
+			ec.Error(ctx, err)
+		}
+	}()
+	ctx = graphql.WithFieldContext(ctx, fc)
+	if fc.Args, err = ec.field_Nib_mentionedBy_args(ctx, field.ArgumentMap(ec.Variables)); err != nil {
 		ec.Error(ctx, err)
 		return fc, err
 	}
@@ -2804,6 +3216,14 @@ func (ec *executionContext) fieldContext_NibChangeEvent_nib(_ context.Context, f
 				return ec.fieldContext_Nib_parent(ctx, field)
 			case "children":
 				return ec.fieldContext_Nib_children(ctx, field)
+			case "mentionIds":
+				return ec.fieldContext_Nib_mentionIds(ctx, field)
+			case "mentionedByIds":
+				return ec.fieldContext_Nib_mentionedByIds(ctx, field)
+			case "mentions":
+				return ec.fieldContext_Nib_mentions(ctx, field)
+			case "mentionedBy":
+				return ec.fieldContext_Nib_mentionedBy(ctx, field)
 			}
 			return nil, fmt.Errorf("no field named %q was found under type Nib", field.Name)
 		},
@@ -2882,6 +3302,14 @@ func (ec *executionContext) fieldContext_Query_nib(ctx context.Context, field gr
 				return ec.fieldContext_Nib_parent(ctx, field)
 			case "children":
 				return ec.fieldContext_Nib_children(ctx, field)
+			case "mentionIds":
+				return ec.fieldContext_Nib_mentionIds(ctx, field)
+			case "mentionedByIds":
+				return ec.fieldContext_Nib_mentionedByIds(ctx, field)
+			case "mentions":
+				return ec.fieldContext_Nib_mentions(ctx, field)
+			case "mentionedBy":
+				return ec.fieldContext_Nib_mentionedBy(ctx, field)
 			}
 			return nil, fmt.Errorf("no field named %q was found under type Nib", field.Name)
 		},
@@ -2971,6 +3399,14 @@ func (ec *executionContext) fieldContext_Query_nibs(ctx context.Context, field g
 				return ec.fieldContext_Nib_parent(ctx, field)
 			case "children":
 				return ec.fieldContext_Nib_children(ctx, field)
+			case "mentionIds":
+				return ec.fieldContext_Nib_mentionIds(ctx, field)
+			case "mentionedByIds":
+				return ec.fieldContext_Nib_mentionedByIds(ctx, field)
+			case "mentions":
+				return ec.fieldContext_Nib_mentions(ctx, field)
+			case "mentionedBy":
+				return ec.fieldContext_Nib_mentionedBy(ctx, field)
 			}
 			return nil, fmt.Errorf("no field named %q was found under type Nib", field.Name)
 		},
@@ -4791,7 +5227,7 @@ func (ec *executionContext) unmarshalInputNibFilter(ctx context.Context, obj any
 		asMap[k] = v
 	}
 
-	fieldsInOrder := [...]string{"search", "status", "excludeStatus", "type", "excludeType", "priority", "excludePriority", "estimate", "excludeEstimate", "tags", "excludeTags", "hasParent", "parentId", "hasBlocking", "blockingId", "isBlocked", "hasBlockedBy", "blockedById", "noParent", "noBlocking", "noBlockedBy"}
+	fieldsInOrder := [...]string{"search", "status", "excludeStatus", "type", "excludeType", "priority", "excludePriority", "estimate", "excludeEstimate", "tags", "excludeTags", "hasParent", "parentId", "hasBlocking", "blockingId", "isBlocked", "hasBlockedBy", "blockedById", "noParent", "noBlocking", "noBlockedBy", "mentionsId", "mentionedById"}
 	for _, k := range fieldsInOrder {
 		v, ok := asMap[k]
 		if !ok {
@@ -4945,6 +5381,20 @@ func (ec *executionContext) unmarshalInputNibFilter(ctx context.Context, obj any
 				return it, err
 			}
 			it.NoBlockedBy = data
+		case "mentionsId":
+			ctx := graphql.WithPathContext(ctx, graphql.NewPathWithField("mentionsId"))
+			data, err := ec.unmarshalOString2ᚖstring(ctx, v)
+			if err != nil {
+				return it, err
+			}
+			it.MentionsID = data
+		case "mentionedById":
+			ctx := graphql.WithPathContext(ctx, graphql.NewPathWithField("mentionedById"))
+			data, err := ec.unmarshalOString2ᚖstring(ctx, v)
+			if err != nil {
+				return it, err
+			}
+			it.MentionedByID = data
 		}
 	}
 
@@ -5643,6 +6093,150 @@ func (ec *executionContext) _Nib(ctx context.Context, sel ast.SelectionSet, obj 
 					}
 				}()
 				res = ec._Nib_children(ctx, field, obj)
+				if res == graphql.Null {
+					atomic.AddUint32(&fs.Invalids, 1)
+				}
+				return res
+			}
+
+			if field.Deferrable != nil {
+				dfs, ok := deferred[field.Deferrable.Label]
+				di := 0
+				if ok {
+					dfs.AddField(field)
+					di = len(dfs.Values) - 1
+				} else {
+					dfs = graphql.NewFieldSet([]graphql.CollectedField{field})
+					deferred[field.Deferrable.Label] = dfs
+				}
+				dfs.Concurrently(di, func(ctx context.Context) graphql.Marshaler {
+					return innerFunc(ctx, dfs)
+				})
+
+				// don't run the out.Concurrently() call below
+				out.Values[i] = graphql.Null
+				continue
+			}
+
+			out.Concurrently(i, func(ctx context.Context) graphql.Marshaler { return innerFunc(ctx, out) })
+		case "mentionIds":
+			field := field
+
+			innerFunc := func(ctx context.Context, fs *graphql.FieldSet) (res graphql.Marshaler) {
+				defer func() {
+					if r := recover(); r != nil {
+						ec.Error(ctx, ec.Recover(ctx, r))
+					}
+				}()
+				res = ec._Nib_mentionIds(ctx, field, obj)
+				if res == graphql.Null {
+					atomic.AddUint32(&fs.Invalids, 1)
+				}
+				return res
+			}
+
+			if field.Deferrable != nil {
+				dfs, ok := deferred[field.Deferrable.Label]
+				di := 0
+				if ok {
+					dfs.AddField(field)
+					di = len(dfs.Values) - 1
+				} else {
+					dfs = graphql.NewFieldSet([]graphql.CollectedField{field})
+					deferred[field.Deferrable.Label] = dfs
+				}
+				dfs.Concurrently(di, func(ctx context.Context) graphql.Marshaler {
+					return innerFunc(ctx, dfs)
+				})
+
+				// don't run the out.Concurrently() call below
+				out.Values[i] = graphql.Null
+				continue
+			}
+
+			out.Concurrently(i, func(ctx context.Context) graphql.Marshaler { return innerFunc(ctx, out) })
+		case "mentionedByIds":
+			field := field
+
+			innerFunc := func(ctx context.Context, fs *graphql.FieldSet) (res graphql.Marshaler) {
+				defer func() {
+					if r := recover(); r != nil {
+						ec.Error(ctx, ec.Recover(ctx, r))
+					}
+				}()
+				res = ec._Nib_mentionedByIds(ctx, field, obj)
+				if res == graphql.Null {
+					atomic.AddUint32(&fs.Invalids, 1)
+				}
+				return res
+			}
+
+			if field.Deferrable != nil {
+				dfs, ok := deferred[field.Deferrable.Label]
+				di := 0
+				if ok {
+					dfs.AddField(field)
+					di = len(dfs.Values) - 1
+				} else {
+					dfs = graphql.NewFieldSet([]graphql.CollectedField{field})
+					deferred[field.Deferrable.Label] = dfs
+				}
+				dfs.Concurrently(di, func(ctx context.Context) graphql.Marshaler {
+					return innerFunc(ctx, dfs)
+				})
+
+				// don't run the out.Concurrently() call below
+				out.Values[i] = graphql.Null
+				continue
+			}
+
+			out.Concurrently(i, func(ctx context.Context) graphql.Marshaler { return innerFunc(ctx, out) })
+		case "mentions":
+			field := field
+
+			innerFunc := func(ctx context.Context, fs *graphql.FieldSet) (res graphql.Marshaler) {
+				defer func() {
+					if r := recover(); r != nil {
+						ec.Error(ctx, ec.Recover(ctx, r))
+					}
+				}()
+				res = ec._Nib_mentions(ctx, field, obj)
+				if res == graphql.Null {
+					atomic.AddUint32(&fs.Invalids, 1)
+				}
+				return res
+			}
+
+			if field.Deferrable != nil {
+				dfs, ok := deferred[field.Deferrable.Label]
+				di := 0
+				if ok {
+					dfs.AddField(field)
+					di = len(dfs.Values) - 1
+				} else {
+					dfs = graphql.NewFieldSet([]graphql.CollectedField{field})
+					deferred[field.Deferrable.Label] = dfs
+				}
+				dfs.Concurrently(di, func(ctx context.Context) graphql.Marshaler {
+					return innerFunc(ctx, dfs)
+				})
+
+				// don't run the out.Concurrently() call below
+				out.Values[i] = graphql.Null
+				continue
+			}
+
+			out.Concurrently(i, func(ctx context.Context) graphql.Marshaler { return innerFunc(ctx, out) })
+		case "mentionedBy":
+			field := field
+
+			innerFunc := func(ctx context.Context, fs *graphql.FieldSet) (res graphql.Marshaler) {
+				defer func() {
+					if r := recover(); r != nil {
+						ec.Error(ctx, ec.Recover(ctx, r))
+					}
+				}()
+				res = ec._Nib_mentionedBy(ctx, field, obj)
 				if res == graphql.Null {
 					atomic.AddUint32(&fs.Invalids, 1)
 				}

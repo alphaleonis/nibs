@@ -44,6 +44,14 @@ func (s *stubReader) FindIncomingLinks(targetID string) []nib.IncomingLink {
 	return nil
 }
 
+func (s *stubReader) FindMentions(fromID string) []*nib.Nib {
+	return nil
+}
+
+func (s *stubReader) FindMentionedBy(targetID string) []*nib.Nib {
+	return nil
+}
+
 func (s *stubReader) Config() *config.Config {
 	if s.cfg != nil {
 		return s.cfg

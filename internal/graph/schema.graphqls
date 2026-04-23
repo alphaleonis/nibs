@@ -241,6 +241,16 @@ type Nib {
   parent: Nib
   "Child nibs (nibs with this as parent, default sorted by order)"
   children(filter: NibFilter, sort: NibSort): [Nib!]!
+
+  # Mention fields — body-derived references via the `#<id>` sigil convention.
+  "IDs of nibs mentioned in this nib's body via `#<id>`"
+  mentionIds: [String!]!
+  "IDs of nibs whose bodies mention this nib via `#<id>`"
+  mentionedByIds: [String!]!
+  "Nibs mentioned in this nib's body (outbound, resolved from mentionIds)"
+  mentions(filter: NibFilter): [Nib!]!
+  "Nibs whose bodies mention this one (inbound, resolved from mentionedByIds)"
+  mentionedBy(filter: NibFilter): [Nib!]!
 }
 
 """
@@ -303,6 +313,10 @@ input NibFilter {
   noBlocking: Boolean
   "Exclude nibs that have explicit blocked-by entries"
   noBlockedBy: Boolean
+  "Include only nibs that mention this specific nib ID in their body"
+  mentionsId: String
+  "Include only nibs mentioned in the given nib's body"
+  mentionedById: String
 }
 
 """

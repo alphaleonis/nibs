@@ -131,6 +131,10 @@ type NibFilter struct {
 	NoBlocking *bool `json:"noBlocking,omitempty"`
 	// Exclude nibs that have explicit blocked-by entries
 	NoBlockedBy *bool `json:"noBlockedBy,omitempty"`
+	// Include only nibs that mention this specific nib ID in their body
+	MentionsID *string `json:"mentionsId,omitempty"`
+	// Include only nibs mentioned in the given nib's body
+	MentionedByID *string `json:"mentionedById,omitempty"`
 }
 
 // Sort options for nib queries

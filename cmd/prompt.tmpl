@@ -88,6 +88,10 @@ nibs close --json <id> --summary "Done" --force   # Close even with incomplete c
 
 # Archive completed/scrapped nibs (only when user requests)
 nibs archive
+
+# Show body references (#<id> mentions) — outbound by default, --inbound for reverse
+nibs refs --json <id>
+nibs refs --json <id> --inbound
 ```
 
 Use `nibs <command> --help` for full options. Use `--json` for machine-readable output.
@@ -97,6 +101,7 @@ Use `nibs <command> --help` for full options. Use `--json` for machine-readable 
 - **Parent**: Hierarchy (milestone → epic → feature → task/bug/research). Set with `--parent <id>`.
 - **Blocking**: Use `--blocking <id>` when THIS nib blocks another (the other nib can't proceed until this is done).
 - **Blocked-by**: Use `--blocked-by <id>` when THIS nib is blocked by another (this nib can't proceed until the other is done). **Prefer this when creating dependent work.**
+- **Mentions (`#<id>` in body)**: Weak informational references embedded in prose. When you write a nib body that refers to another nib by ID, use `#<short-id>` (e.g. `#gx0f`) or `#<full-id>` (e.g. `#nibs-gx0f`). **A bare ID without the `#` sigil is NOT recognized** — only `#`-prefixed tokens count as mentions. References inside fenced code blocks or inline code are ignored. Use `nibs refs <id>` to see outbound mentions and `nibs refs <id> --inbound` for inbound. Mentions are informational only; use `--blocked-by` for real workflow dependencies.
 
 ## Issue Types
 

@@ -61,6 +61,55 @@ func ApplyFilter(nibs []*nib.Nib, filter *model.NibFilter, reader NibReader, blo
 		result = filterBySliceField(result, []string{*filter.BlockedByID}, func(b *nib.Nib) []string { return b.BlockedBy })
 	}
 
+	// Mention filters (computed via FindMentions/FindMentionedBy on the reader)
+	if filter.MentionsID != nil && *filter.MentionsID != "" {
+		result = filterByMentionsID(result, *filter.MentionsID, reader)
+	}
+	if filter.MentionedByID != nil && *filter.MentionedByID != "" {
+		result = filterByMentionedByID(result, *filter.MentionedByID, reader)
+	}
+
+	return result
+}
+
+// filterByMentionsID keeps nibs that mention the given target in their body.
+// Resolves the target via NormalizeID and checks each candidate's outbound mentions.
+func filterByMentionsID(nibs []*nib.Nib, targetID string, reader NibReader) []*nib.Nib {
+	fullID, ok := reader.NormalizeID(targetID)
+	if !ok {
+		return nil
+	}
+	inbound := reader.FindMentionedBy(fullID)
+	inboundSet := make(map[string]bool, len(inbound))
+	for _, b := range inbound {
+		inboundSet[b.ID] = true
+	}
+	var result []*nib.Nib
+	for _, b := range nibs {
+		if inboundSet[b.ID] {
+			result = append(result, b)
+		}
+	}
+	return result
+}
+
+// filterByMentionedByID keeps nibs that are mentioned in the given source's body.
+func filterByMentionedByID(nibs []*nib.Nib, sourceID string, reader NibReader) []*nib.Nib {
+	fullID, ok := reader.NormalizeID(sourceID)
+	if !ok {
+		return nil
+	}
+	outbound := reader.FindMentions(fullID)
+	outboundSet := make(map[string]bool, len(outbound))
+	for _, b := range outbound {
+		outboundSet[b.ID] = true
+	}
+	var result []*nib.Nib
+	for _, b := range nibs {
+		if outboundSet[b.ID] {
+			result = append(result, b)
+		}
+	}
 	return result
 }
 
