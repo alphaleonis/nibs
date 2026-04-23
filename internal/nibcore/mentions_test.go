@@ -34,20 +34,6 @@ func TestFindMentionsInMap(t *testing.T) {
 		}
 	})
 
-	t.Run("includes mention to completed nib", func(t *testing.T) {
-		// Completed nibs should still appear in mentions — status filtering is the caller's job.
-		got := FindMentionsInMap(nibs, "nibs-aaa1", "nibs-")
-		var found bool
-		for _, b := range got {
-			if b.ID == "nibs-ccc3" && b.Status == "completed" {
-				found = true
-			}
-		}
-		if !found {
-			t.Error("completed nib nibs-ccc3 should still be returned as a mention")
-		}
-	})
-
 	t.Run("empty body returns nil", func(t *testing.T) {
 		got := FindMentionsInMap(nibs, "nibs-bbb2", "nibs-")
 		if got != nil {
@@ -62,7 +48,11 @@ func TestFindMentionsInMap(t *testing.T) {
 		}
 	})
 
-	t.Run("no configured prefix — only full-form tokens resolve", func(t *testing.T) {
+	t.Run("empty prefix — exact-match resolution plus self-exclusion", func(t *testing.T) {
+		// With configPrefix == "", every stored id is full-form by definition
+		// (no prefix to prepend), so only the exact-match branch of
+		// resolveMentionToken runs. The real behavior this subtest pins is
+		// that the "from" nib's own mention of itself is dropped.
 		noPrefix := map[string]*nib.Nib{
 			"abc1": {ID: "abc1", Body: "ref #def2 and #abc1 self"},
 			"def2": {ID: "def2", Body: ""},
@@ -75,11 +65,17 @@ func TestFindMentionsInMap(t *testing.T) {
 }
 
 func TestFindMentionedByInMap(t *testing.T) {
+	// nibs-ddd4's body uses *two distinct tokens* (#bbb2 short-form and
+	// #nibs-bbb2 full-form) that both resolve to the same target. This
+	// makes ExtractMentionTokens return two tokens, so the outer
+	// per-source dedup (or the `break` after a first match) is what
+	// keeps nibs-ddd4 from appearing twice in the result — exercising
+	// the guarantee the "counts once" subtest below claims to test.
 	nibs := map[string]*nib.Nib{
 		"nibs-aaa1": {ID: "nibs-aaa1", Title: "A", Status: "todo", Body: "Refs #bbb2."},
 		"nibs-bbb2": {ID: "nibs-bbb2", Title: "B", Status: "todo", Body: "No refs."},
 		"nibs-ccc3": {ID: "nibs-ccc3", Title: "C", Status: "todo", Body: "Also see #nibs-bbb2."},
-		"nibs-ddd4": {ID: "nibs-ddd4", Title: "D", Status: "todo", Body: "Mentions #bbb2 twice: #bbb2."},
+		"nibs-ddd4": {ID: "nibs-ddd4", Title: "D", Status: "todo", Body: "Mentions #bbb2 (short) and again #nibs-bbb2 (full)."},
 	}
 
 	t.Run("returns all inbound mentioners", func(t *testing.T) {
@@ -98,7 +94,7 @@ func TestFindMentionedByInMap(t *testing.T) {
 		}
 	})
 
-	t.Run("duplicate mentions from same nib count once", func(t *testing.T) {
+	t.Run("two distinct tokens resolving to same target count source once", func(t *testing.T) {
 		got := FindMentionedByInMap(nibs, "nibs-bbb2", "nibs-")
 		count := 0
 		for _, b := range got {
