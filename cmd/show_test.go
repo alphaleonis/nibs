@@ -27,12 +27,51 @@ func resetShowFlags() {
 	})
 }
 
+// TestResetShowFlagsClearsAllState mirrors TestResetCloseFlagsClearsAllState
+// — set every package-level flag var non-zero, call the reset helper, and
+// verify all are back to their zero values AND Cobra's Changed state was
+// cleared. If a new flag is added to showCmd without a matching reset
+// line, this test fires.
+func TestResetShowFlagsClearsAllState(t *testing.T) {
+	t.Cleanup(resetShowFlags)
+	showJSON = true
+	showRaw = true
+	showBodyOnly = true
+	showETagOnly = true
+	// Simulate Cobra having seen flags via a prior Execute so the
+	// Changed-state clearing is exercised. Using Set() (rather than
+	// mutating f.Changed directly) is the only way to add a flag to the
+	// FlagSet's `actual` map, which is what Visit walks.
+	if err := showCmd.Flags().Set("json", "true"); err != nil {
+		t.Fatalf("pre-populate --json: %v", err)
+	}
+
+	resetShowFlags()
+
+	if showJSON {
+		t.Error("showJSON not reset")
+	}
+	if showRaw {
+		t.Error("showRaw not reset")
+	}
+	if showBodyOnly {
+		t.Error("showBodyOnly not reset")
+	}
+	if showETagOnly {
+		t.Error("showETagOnly not reset")
+	}
+	if f := showCmd.Flags().Lookup("json"); f != nil && f.Changed {
+		t.Error("showCmd --json Changed state not cleared")
+	}
+}
+
 // setupShowCobraTest writes nib files and returns the .nibs directory so
 // `rootCmd.SetArgs(["--nibs-path", dir, "show", ...])` can drive the full
 // Cobra pipeline.
 func setupShowCobraTest(t *testing.T, files map[string]string) string {
 	t.Helper()
 	t.Cleanup(resetShowFlags)
+	t.Cleanup(func() { rootCmd.SetArgs(nil) })
 	resetShowFlags()
 
 	tmpDir := t.TempDir()
@@ -127,9 +166,24 @@ func TestShowCommand_HumanOutput_BothInboundAndOutbound(t *testing.T) {
 	if !strings.Contains(out, "mentioned by") {
 		t.Errorf("expected 'mentioned by' in output, got:\n%s", out)
 	}
-	for _, id := range []string{"b2", "c3", "d4"} {
-		if !strings.Contains(out, id) {
-			t.Errorf("expected id %q in output, got:\n%s", id, out)
+	// Slice the output at section labels and assert IDs appear in the
+	// correct section — guards against a regression that swaps the two
+	// lists. "mentions:" appears first, "mentioned by" second.
+	iOut := strings.Index(out, "mentions:")
+	iIn := strings.Index(out, "mentioned by")
+	if iOut < 0 || iIn < 0 || iOut > iIn {
+		t.Fatalf("expected 'mentions:' before 'mentioned by'; got:\n%s", out)
+	}
+	outSection := out[iOut:iIn]
+	inSection := out[iIn:]
+	for _, id := range []string{"b2", "c3"} {
+		if !strings.Contains(outSection, id) {
+			t.Errorf("outbound 'mentions:' section missing %q; got:\n%s", id, outSection)
+		}
+	}
+	for _, id := range []string{"c3", "d4"} {
+		if !strings.Contains(inSection, id) {
+			t.Errorf("inbound 'mentioned by' section missing %q; got:\n%s", id, inSection)
 		}
 	}
 }
@@ -242,9 +296,12 @@ func TestShowCommand_BodyOnly_Unchanged(t *testing.T) {
 	if !strings.Contains(out, "#b2") {
 		t.Errorf("expected raw body with '#b2' intact, got:\n%s", out)
 	}
-	// No frontmatter markers.
+	// No frontmatter markers and no injected relationship lines.
 	if strings.Contains(out, "mentions:") {
 		t.Errorf("--body-only should not include the mentions relationship line, got:\n%s", out)
+	}
+	if strings.Contains(out, "mentioned by") {
+		t.Errorf("--body-only should not include the 'mentioned by' relationship line, got:\n%s", out)
 	}
 }
 
@@ -259,8 +316,9 @@ func TestShowCommand_ETagOnly_Unchanged(t *testing.T) {
 	})
 	// ETag is 16 hex chars.
 	trimmed := strings.TrimSpace(out)
-	if len(trimmed) != 16 {
-		t.Errorf("expected 16-char etag, got %q (len=%d)", trimmed, len(trimmed))
+	matched, _ := regexp.MatchString(`^[0-9a-f]{16}$`, trimmed)
+	if !matched {
+		t.Errorf("expected 16-char hex etag, got %q (len=%d)", trimmed, len(trimmed))
 	}
 }
 

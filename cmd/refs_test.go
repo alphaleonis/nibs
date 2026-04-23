@@ -9,6 +9,7 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/alphaleonis/nibs/internal/config"
 	"github.com/alphaleonis/nibs/internal/nib"
@@ -53,6 +54,63 @@ func resetRefsFlags() {
 	})
 }
 
+// TestResetRefsFlagsClearsAllState mirrors TestResetCloseFlagsClearsAllState
+// — set every package-level flag var non-zero, call the reset helper, and
+// verify all are back to their zero values AND Cobra's Changed state was
+// cleared. If a new flag is added to refsCmd without a matching reset
+// line, this test fires.
+func TestResetRefsFlagsClearsAllState(t *testing.T) {
+	t.Cleanup(resetRefsFlags)
+	refsInbound = true
+	refsBoth = true
+	refsJSON = true
+	refsStatus = []string{"x"}
+	refsNoStatus = []string{"x"}
+	refsType = []string{"x"}
+	refsNoType = []string{"x"}
+	refsPriority = []string{"x"}
+	refsActive = true
+	// Simulate Cobra having seen flags via a prior Execute. Set() (not
+	// direct f.Changed mutation) is the only way to add a flag to the
+	// FlagSet's `actual` map, which Visit walks.
+	if err := refsCmd.Flags().Set("json", "true"); err != nil {
+		t.Fatalf("pre-populate --json: %v", err)
+	}
+
+	resetRefsFlags()
+
+	if refsInbound {
+		t.Error("refsInbound not reset")
+	}
+	if refsBoth {
+		t.Error("refsBoth not reset")
+	}
+	if refsJSON {
+		t.Error("refsJSON not reset")
+	}
+	if refsStatus != nil {
+		t.Errorf("refsStatus not reset: %v", refsStatus)
+	}
+	if refsNoStatus != nil {
+		t.Errorf("refsNoStatus not reset: %v", refsNoStatus)
+	}
+	if refsType != nil {
+		t.Errorf("refsType not reset: %v", refsType)
+	}
+	if refsNoType != nil {
+		t.Errorf("refsNoType not reset: %v", refsNoType)
+	}
+	if refsPriority != nil {
+		t.Errorf("refsPriority not reset: %v", refsPriority)
+	}
+	if refsActive {
+		t.Error("refsActive not reset")
+	}
+	if f := refsCmd.Flags().Lookup("json"); f != nil && f.Changed {
+		t.Error("refsCmd --json Changed state not cleared")
+	}
+}
+
 // stdoutMu serializes global os.Stdout mutations across tests that need to
 // observe writes from the output package (which bypasses Cobra's writers).
 // The mutex neutralises the race if anyone later adds t.Parallel() to a
@@ -65,6 +123,11 @@ var stdoutMu sync.Mutex
 // NOT safe under t.Parallel() — the package-level mutex guards against
 // concurrent swaps within the same process, but stdout itself is still
 // global.
+//
+// The os.Stdout restore and writer close are deferred so a panic inside
+// fn() cannot leave stdout redirected for subsequent tests. The final
+// read is wrapped in a timeout so a hung pipe fails fast per-test rather
+// than ticking over to the suite-level timeout with no diagnostic.
 func captureStdout(t *testing.T, fn func()) string {
 	t.Helper()
 	stdoutMu.Lock()
@@ -75,6 +138,7 @@ func captureStdout(t *testing.T, fn func()) string {
 		t.Fatalf("pipe: %v", err)
 	}
 	os.Stdout = w
+	defer func() { os.Stdout = orig }()
 
 	done := make(chan string, 1)
 	go func() {
@@ -83,11 +147,17 @@ func captureStdout(t *testing.T, fn func()) string {
 		done <- buf.String()
 	}()
 
+	defer func() { _ = w.Close() }()
 	fn()
-
 	_ = w.Close()
-	os.Stdout = orig
-	return <-done
+
+	select {
+	case s := <-done:
+		return s
+	case <-time.After(5 * time.Second):
+		t.Fatal("captureStdout timed out waiting for goroutine (pipe deadlocked?)")
+		return ""
+	}
 }
 
 func TestMentionsGraphQLEndToEnd(t *testing.T) {
@@ -299,6 +369,7 @@ func TestRefsCommandFindsMentions(t *testing.T) {
 func setupRefsCobraTest(t *testing.T, files map[string]string) string {
 	t.Helper()
 	t.Cleanup(resetRefsFlags)
+	t.Cleanup(func() { rootCmd.SetArgs(nil) })
 	resetRefsFlags()
 
 	tmpDir := t.TempDir()
@@ -534,6 +605,9 @@ func TestRefsCommand_NoStatusFilter(t *testing.T) {
 	if err := json.Unmarshal([]byte(out), &nibs); err != nil {
 		t.Fatalf("unmarshal: %v\nraw: %s", err, out)
 	}
+	if len(nibs) != 2 {
+		t.Fatalf("got %d, want 2 (b2, d4 after --no-status completed)\nraw: %s", len(nibs), out)
+	}
 	ids := map[string]bool{}
 	for _, n := range nibs {
 		ids[n.ID] = true
@@ -582,6 +656,9 @@ func TestRefsCommand_NoTypeFilter(t *testing.T) {
 	var nibs []*nib.Nib
 	if err := json.Unmarshal([]byte(out), &nibs); err != nil {
 		t.Fatalf("unmarshal: %v\nraw: %s", err, out)
+	}
+	if len(nibs) != 2 {
+		t.Fatalf("got %d, want 2 (b2, c3 after --no-type bug)\nraw: %s", len(nibs), out)
 	}
 	ids := map[string]bool{}
 	for _, n := range nibs {
@@ -689,10 +766,24 @@ func TestRefsCommand_BothMode_HumanOutput(t *testing.T) {
 	if !strings.Contains(out, "Inbound") {
 		t.Errorf("expected 'Inbound' section label, got:\n%s", out)
 	}
-	// Outbound should list b2, c3, d4; Inbound should list e5, f6.
-	for _, id := range []string{"b2", "c3", "d4", "e5", "f6"} {
-		if !strings.Contains(out, id) {
-			t.Errorf("expected id %q in --both output, got:\n%s", id, out)
+	// Slice the output at section labels and verify IDs appear in the
+	// correct section — guards against a regression that swaps the two
+	// lists.
+	iOut := strings.Index(out, "Outbound")
+	iIn := strings.Index(out, "Inbound")
+	if iOut < 0 || iIn < 0 || iOut > iIn {
+		t.Fatalf("expected Outbound before Inbound; got:\n%s", out)
+	}
+	outSection := out[iOut:iIn]
+	inSection := out[iIn:]
+	for _, id := range []string{"b2", "c3", "d4"} {
+		if !strings.Contains(outSection, id) {
+			t.Errorf("outbound section missing %q; got:\n%s", id, outSection)
+		}
+	}
+	for _, id := range []string{"e5", "f6"} {
+		if !strings.Contains(inSection, id) {
+			t.Errorf("inbound section missing %q; got:\n%s", id, inSection)
 		}
 	}
 }

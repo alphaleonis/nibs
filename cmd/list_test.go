@@ -71,6 +71,15 @@ func TestListReadyFlagMutualExclusion(t *testing.T) {
 
 // resetListFlags clears the package-level flag vars used by listCmd so tests
 // don't pollute each other via rootCmd's singleton state.
+//
+// NOTE: Unlike resetRefsFlags/resetShowFlags we do NOT clear Cobra's
+// Changed state — listCmd's --ready/--is-blocked mutex is implemented
+// manually in list.go:107. If you add MarkFlagsMutuallyExclusive to
+// listCmd in future, add
+//
+//	listCmd.Flags().Visit(func(f *pflag.Flag) { f.Changed = false })
+//
+// here to prevent order-dependent test pollution.
 func resetListFlags() {
 	listJSON = false
 	listSearch = ""
@@ -98,12 +107,81 @@ func resetListFlags() {
 	listFull = false
 }
 
+// TestResetListFlagsClearsAllState mirrors TestResetCloseFlagsClearsAllState
+// — set every package-level flag var non-zero, call the reset helper, and
+// verify all are back to their zero values. If a new flag is added to
+// listCmd without a matching reset line, this test fires.
+func TestResetListFlagsClearsAllState(t *testing.T) {
+	listJSON = true
+	listSearch = "dirty"
+	listStatus = []string{"x"}
+	listNoStatus = []string{"x"}
+	listType = []string{"x"}
+	listNoType = []string{"x"}
+	listPriority = []string{"x"}
+	listNoPriority = []string{"x"}
+	listEstimate = []string{"x"}
+	listNoEstimate = []string{"x"}
+	listTag = []string{"x"}
+	listNoTag = []string{"x"}
+	listHasParent = true
+	listNoParent = true
+	listParentID = "dirty"
+	listHasBlocking = true
+	listNoBlocking = true
+	listIsBlocked = true
+	listMentions = "dirty"
+	listMentionedBy = "dirty"
+	listReady = true
+	listQuiet = true
+	listSort = "dirty"
+	listFull = true
+
+	resetListFlags()
+
+	checks := []struct {
+		name string
+		zero bool
+	}{
+		{"listJSON", !listJSON},
+		{"listSearch", listSearch == ""},
+		{"listStatus", listStatus == nil},
+		{"listNoStatus", listNoStatus == nil},
+		{"listType", listType == nil},
+		{"listNoType", listNoType == nil},
+		{"listPriority", listPriority == nil},
+		{"listNoPriority", listNoPriority == nil},
+		{"listEstimate", listEstimate == nil},
+		{"listNoEstimate", listNoEstimate == nil},
+		{"listTag", listTag == nil},
+		{"listNoTag", listNoTag == nil},
+		{"listHasParent", !listHasParent},
+		{"listNoParent", !listNoParent},
+		{"listParentID", listParentID == ""},
+		{"listHasBlocking", !listHasBlocking},
+		{"listNoBlocking", !listNoBlocking},
+		{"listIsBlocked", !listIsBlocked},
+		{"listMentions", listMentions == ""},
+		{"listMentionedBy", listMentionedBy == ""},
+		{"listReady", !listReady},
+		{"listQuiet", !listQuiet},
+		{"listSort", listSort == ""},
+		{"listFull", !listFull},
+	}
+	for _, c := range checks {
+		if !c.zero {
+			t.Errorf("%s not reset to zero value", c.name)
+		}
+	}
+}
+
 // setupListCobraTest writes nib files and returns the .nibs directory so
 // `rootCmd.SetArgs(["--nibs-path", dir, "list", ...])` can drive the full
 // Cobra pipeline.
 func setupListCobraTest(t *testing.T, files map[string]string) string {
 	t.Helper()
 	t.Cleanup(resetListFlags)
+	t.Cleanup(func() { rootCmd.SetArgs(nil) })
 	resetListFlags()
 
 	tmpDir := t.TempDir()
