@@ -110,6 +110,9 @@ func Execute() {
 // filterResolvedBlockers returns shallow copies of the given nibs with
 // completed/scrapped IDs removed from BlockedBy for display purposes.
 // The original in-memory nibs from Core are not mutated.
+//
+// See filterOutResolvedNibs in cmd/show.go for the sibling helper that
+// applies the same resolved-status convention to mention slices.
 func filterResolvedBlockers(nibs []*nib.Nib, reader graph.NibReader) []*nib.Nib {
 	result := make([]*nib.Nib, len(nibs))
 	for i, b := range nibs {
