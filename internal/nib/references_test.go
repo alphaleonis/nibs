@@ -242,6 +242,45 @@ func TestExtractMentionTokens(t *testing.T) {
 			body: "![alt #gx0f](img.png)",
 			want: nil,
 		},
+		// Finding #1 (iteration 2) — word-boundary must survive AST
+		// segment splits. goldmark splits inline text at emphasis and other
+		// delimiters, so a `#` at position 0 of a follow-up segment must
+		// still see the previous segment's last char as the word boundary.
+		{
+			name: "word_char + underscore + hash is not a mention (name_#bar)",
+			body: "name_#bar",
+			want: nil,
+		},
+		{
+			name: "emphasis underscore into hash (foo_#xyz)",
+			body: "foo_#xyz",
+			want: nil,
+		},
+		{
+			name: "emphasis wrapping word, then #: word-boundary preserved",
+			body: "_abc_#xyz",
+			want: nil,
+		},
+		{
+			name: "bold then #: `*` is not word-like so mention matches",
+			body: "**word**#xyz",
+			want: []string{"xyz"},
+		},
+		{
+			name: "code span breaks word-boundary (` followed by #)",
+			body: "foo`bar`#xyz",
+			want: []string{"xyz"},
+		},
+		{
+			name: "mention at start of paragraph still matches",
+			body: "#abc is a real mention",
+			want: []string{"abc"},
+		},
+		{
+			name: "mention at start of heading text still matches",
+			body: "## #abc in heading",
+			want: []string{"abc"},
+		},
 	}
 
 	for _, tt := range tests {

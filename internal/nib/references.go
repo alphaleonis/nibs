@@ -42,7 +42,11 @@ var mentionPattern = regexp.MustCompile(`#([a-z0-9](?:[a-z0-9-]*[a-z0-9])?)`)
 //     do not match. A leading/trailing hyphen is not part of the token
 //     (e.g. `#abc-` yields `abc`).
 //   - `#` preceded by a word-like byte (letters of either case, digits, or
-//     `_`) is rejected, so `email#foo` and `name_#bar` do not match.
+//     `_`) is rejected, so `email#foo` and `name_#bar` do not match. This
+//     rule is enforced against the absolute source offset, not the
+//     segment-local offset — goldmark can split inline text at emphasis
+//     delimiters (e.g. `_`) such that the `#` ends up at index 0 of a
+//     new text segment while the previous source byte is still word-like.
 //   - Tokens are deduplicated across the whole body.
 //
 // The function does not verify that the returned tokens resolve to real nibs;
@@ -81,26 +85,34 @@ func ExtractMentionTokens(body string) []string {
 			return ast.WalkContinue, nil
 		}
 
-		segment := t.Segment.Value(source)
-		scanMentions(segment, &out, seen)
+		scanMentions(source, t.Segment.Start, t.Segment.Stop, &out, seen)
 		return ast.WalkContinue, nil
 	})
 
 	return out
 }
 
-// scanMentions runs the mention regex over a single chunk of text and appends
-// unique tokens to out. It enforces the left-side word-boundary rule: a `#`
-// preceded by a word-like byte (see isWordChar) is ignored.
-func scanMentions(chunk []byte, out *[]string, seen map[string]struct{}) {
+// scanMentions runs the mention regex over a text segment of source (bounded
+// by [segStart, segStop)) and appends unique tokens to out.
+//
+// It enforces the left-side word-boundary rule: a `#` preceded by a word-like
+// byte (see isWordChar) is ignored. Because goldmark splits inline text at
+// emphasis and other delimiters, a `#` may sit at index 0 of a segment while
+// the previous byte in the underlying source is still word-like (e.g.
+// `name_#bar` splits so the `#bar` segment starts at the `#`). The peek must
+// be against the absolute source offset, not the segment-local index.
+func scanMentions(source []byte, segStart, segStop int, out *[]string, seen map[string]struct{}) {
+	chunk := source[segStart:segStop]
 	for _, match := range mentionPattern.FindAllSubmatchIndex(chunk, -1) {
-		// match[0] is start of full match (the `#`), match[1] is end.
-		// match[2]/match[3] are start/end of the captured id.
-		sigilStart := match[0]
-		if sigilStart > 0 {
-			prev := chunk[sigilStart-1]
+		// match[0] is start of full match (the `#`) within chunk,
+		// match[1] is end. match[2]/match[3] are start/end of the
+		// captured id within chunk.
+		absSigil := segStart + match[0]
+		if absSigil > 0 {
+			prev := source[absSigil-1]
 			// Reject if `#` is preceded by an alphanumeric/underscore byte
-			// (i.e. the `#` is inside a word like `email#foo`).
+			// (i.e. the `#` is inside a word like `email#foo` or
+			// `name_#bar`).
 			if isWordChar(prev) {
 				continue
 			}
