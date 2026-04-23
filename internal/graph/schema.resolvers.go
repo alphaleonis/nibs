@@ -672,6 +672,11 @@ func (r *nibResolver) Children(ctx context.Context, obj *nib.Nib, filter *model.
 
 // MentionIds is the resolver for the mentionIds field.
 // Returns the IDs of nibs mentioned via `#<id>` in this nib's body.
+//
+// Unlike BlockedBy/Blocking, mentions are informational and include nibs in
+// all statuses (archived, scrapped, completed). Callers who want active-only
+// should request the `mentions` field with a filter instead, e.g.
+// `mentions(filter: { excludeStatus: ["completed", "scrapped"] }) { id }`.
 func (r *nibResolver) MentionIds(ctx context.Context, obj *nib.Nib) ([]string, error) {
 	mentions := r.Reader.FindMentions(obj.ID)
 	ids := make([]string, 0, len(mentions))
@@ -683,6 +688,11 @@ func (r *nibResolver) MentionIds(ctx context.Context, obj *nib.Nib) ([]string, e
 
 // MentionedByIds is the resolver for the mentionedByIds field.
 // Returns the IDs of nibs whose bodies mention this nib via `#<id>`.
+//
+// Unlike BlockedBy/Blocking, mentions are informational and include nibs in
+// all statuses (archived, scrapped, completed). Callers who want active-only
+// should request the `mentionedBy` field with a filter, e.g.
+// `mentionedBy(filter: { excludeStatus: ["completed", "scrapped"] }) { id }`.
 func (r *nibResolver) MentionedByIds(ctx context.Context, obj *nib.Nib) ([]string, error) {
 	inbound := r.Reader.FindMentionedBy(obj.ID)
 	ids := make([]string, 0, len(inbound))
@@ -693,12 +703,20 @@ func (r *nibResolver) MentionedByIds(ctx context.Context, obj *nib.Nib) ([]strin
 }
 
 // Mentions is the resolver for the mentions field.
+//
+// Unlike BlockedBy/Blocking, mentions are informational and include nibs in
+// all statuses (archived, scrapped, completed). Callers who want active-only
+// should pass `filter: { excludeStatus: ["completed", "scrapped"] }`.
 func (r *nibResolver) Mentions(ctx context.Context, obj *nib.Nib, filter *model.NibFilter) ([]*nib.Nib, error) {
 	result := r.Reader.FindMentions(obj.ID)
 	return ApplyFilter(result, filter, r.Reader, r.Resolver.Blocking), nil
 }
 
 // MentionedBy is the resolver for the mentionedBy field.
+//
+// Unlike BlockedBy/Blocking, mentions are informational and include nibs in
+// all statuses (archived, scrapped, completed). Callers who want active-only
+// should pass `filter: { excludeStatus: ["completed", "scrapped"] }`.
 func (r *nibResolver) MentionedBy(ctx context.Context, obj *nib.Nib, filter *model.NibFilter) ([]*nib.Nib, error) {
 	result := r.Reader.FindMentionedBy(obj.ID)
 	return ApplyFilter(result, filter, r.Reader, r.Resolver.Blocking), nil

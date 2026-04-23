@@ -247,9 +247,21 @@ type Nib {
   mentionIds: [String!]!
   "IDs of nibs whose bodies mention this nib via `#<id>`"
   mentionedByIds: [String!]!
-  "Nibs mentioned in this nib's body (outbound, resolved from mentionIds)"
+  """
+  Nibs mentioned in this nib's body (outbound, resolved from mentionIds).
+
+  Unlike blockedBy/blocking, mentions are informational and include nibs in
+  all statuses (archived, scrapped, completed). Pass
+  `filter: { excludeStatus: ["completed", "scrapped"] }` for active-only.
+  """
   mentions(filter: NibFilter): [Nib!]!
-  "Nibs whose bodies mention this one (inbound, resolved from mentionedByIds)"
+  """
+  Nibs whose bodies mention this one (inbound, resolved from mentionedByIds).
+
+  Unlike blockedBy/blocking, mentions are informational and include nibs in
+  all statuses (archived, scrapped, completed). Pass
+  `filter: { excludeStatus: ["completed", "scrapped"] }` for active-only.
+  """
   mentionedBy(filter: NibFilter): [Nib!]!
 }
 

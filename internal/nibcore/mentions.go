@@ -1,5 +1,11 @@
 package nibcore
 
+// Mention lookups currently recompute from live bodies on every call, so no
+// explicit invalidation hook is needed. If a cache/index is added, wire it
+// into Core.Create/Update/Delete and watcher.handleChanges. See
+// search_index.go for the indexed pattern, link_queries.go for the O(N)
+// field-based pattern. Tracking nib: nibs-rckp.
+
 import (
 	"sort"
 	"strings"
@@ -7,10 +13,15 @@ import (
 	"github.com/alphaleonis/nibs/internal/nib"
 )
 
-// resolveMentionToken resolves a token (short or full ID form) against the nib
-// map. Returns the full ID and true if the token resolves to a known nib.
-// Tries exact match first, then prefix-prepended match if the configured
-// prefix is non-empty and not already present.
+// resolveMentionToken resolves a token (short or full form) against the nib
+// map. Returns the full ID and true if the token resolves.
+//
+// Resolution order: exact match → prefix-prepended match, mirroring
+// Core.NormalizeID so `#<id>` behaves identically to explicit ID lookups.
+// nib.NewID always prepends the configured prefix today, so a bare token
+// and its prefixed form cannot both exist in the map — if that invariant
+// is ever broken (e.g. importing externally generated nibs), this tiebreak
+// becomes user-visible and needs revisiting.
 func resolveMentionToken(nibs map[string]*nib.Nib, token, configPrefix string) (string, bool) {
 	if _, ok := nibs[token]; ok {
 		return token, true
@@ -29,7 +40,9 @@ func resolveMentionToken(nibs map[string]*nib.Nib, token, configPrefix string) (
 // and exclude unresolved tokens. Nibs are returned in order of first appearance
 // in the body.
 //
-// Pure function operating on the given map without locking.
+// Pure function operating on the given map without locking. Callers passing a
+// Core.nibs map must hold Core.mu.RLock for the duration of the call and any
+// subsequent use of returned *nib.Nib pointers.
 func FindMentionsInMap(nibs map[string]*nib.Nib, fromID, configPrefix string) []*nib.Nib {
 	from, ok := nibs[fromID]
 	if !ok {
@@ -58,9 +71,12 @@ func FindMentionsInMap(nibs map[string]*nib.Nib, fromID, configPrefix string) []
 
 // FindMentionedByInMap returns the nibs whose bodies contain a `#<id>` mention
 // resolving to targetID. Results are deduplicated (a nib is returned once even
-// if it mentions the target multiple times) and exclude self-references.
+// if it mentions the target multiple times) and exclude self-references. The
+// returned slice is sorted by ID for deterministic ordering across calls.
 //
-// Pure function operating on the given map without locking.
+// Pure function operating on the given map without locking. Callers passing a
+// Core.nibs map must hold Core.mu.RLock for the duration of the call and any
+// subsequent use of returned *nib.Nib pointers.
 func FindMentionedByInMap(nibs map[string]*nib.Nib, targetID, configPrefix string) []*nib.Nib {
 	if _, ok := nibs[targetID]; !ok {
 		return nil
