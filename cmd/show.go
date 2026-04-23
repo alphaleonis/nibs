@@ -118,11 +118,7 @@ body-reference lists. Two flags adjust how those lists are computed:
 				fmt.Println(ui.Muted.Render(strings.Repeat("═", 60)))
 				fmt.Println()
 			}
-			var mentions, mentionedBy []string
-			if !showNoMentions {
-				mentions = mentionIDs(b, app.Core, showActive)
-				mentionedBy = mentionedByIDs(b, app.Core, showActive)
-			}
+			mentions, mentionedBy := computeMentionIDs(b, app.Core, showActive, !showNoMentions)
 			showStyledNib(b,
 				computeBlockingIDs(b, app.Core),
 				mentions,
@@ -218,24 +214,33 @@ func (e showJSONEnvelope) MarshalJSON() ([]byte, error) {
 // lists. IDs mirror the `blocked_by` shape — callers wanting the full
 // resolved objects should use `nibs refs`.
 //
-// When includeMentions is false (e.g. `--no-mentions`), the mention slices
-// are returned as empty (and marshal to `[]`), preserving the
-// always-present shape contract for agent consumers. When activeOnly is
-// true (e.g. `--active`), completed/scrapped nibs are dropped from both
-// directions before ID extraction.
+// Mention-list population is delegated to computeMentionIDs so the JSON
+// path and the human path share one gating decision for --no-mentions /
+// --active.
 func buildShowJSONEnvelope(b *nib.Nib, reader graph.NibReader, activeOnly, includeMentions bool) showJSONEnvelope {
-	if !includeMentions {
-		return showJSONEnvelope{
-			Nib:         b,
-			Mentions:    []string{},
-			MentionedBy: []string{},
-		}
-	}
+	outbound, inbound := computeMentionIDs(b, reader, activeOnly, includeMentions)
 	return showJSONEnvelope{
 		Nib:         b,
-		Mentions:    mentionIDs(b, reader, activeOnly),
-		MentionedBy: mentionedByIDs(b, reader, activeOnly),
+		Mentions:    outbound,
+		MentionedBy: inbound,
 	}
+}
+
+// computeMentionIDs resolves outbound and inbound mention ID lists for b.
+// When includeMentions is false (e.g. --no-mentions), returns two empty
+// non-nil slices without calling Find*, preserving the always-present
+// shape contract for agent consumers. When activeOnly is true
+// (e.g. --active), completed/scrapped nibs are dropped from both
+// directions before ID extraction.
+//
+// This is the single gating decision point for --no-mentions and
+// --active across every show output mode. A future mode (TUI, stream)
+// picks up the same semantics by calling this helper.
+func computeMentionIDs(b *nib.Nib, reader graph.NibReader, activeOnly, includeMentions bool) (outbound, inbound []string) {
+	if !includeMentions {
+		return []string{}, []string{}
+	}
+	return mentionIDs(b, reader, activeOnly), mentionedByIDs(b, reader, activeOnly)
 }
 
 // mentionIDs returns the IDs of nibs that this nib's body mentions.
