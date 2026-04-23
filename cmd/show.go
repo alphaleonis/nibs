@@ -204,25 +204,21 @@ func buildShowJSONEnvelope(b *nib.Nib, reader graph.NibReader) showJSONEnvelope 
 // (e.g. `nibs refs <id> --status todo`) goes through the GraphQL resolver
 // path (`resolver.Nib().Mentions(ctx, b, filter)`). See cmd/refs.go for
 // the resolver-path pattern.
+//
+// The ID-extraction step is delegated to graph.MentionIDList so this layer
+// and the MentionIds/MentionedByIds GraphQL resolvers share a single
+// implementation — if one ever gains a filtering step (e.g. dropping
+// archived mentions), the other picks it up for free.
 func mentionIDs(b *nib.Nib, reader graph.NibReader) []string {
-	mentions := reader.FindMentions(b.ID)
-	ids := make([]string, 0, len(mentions))
-	for _, m := range mentions {
-		ids = append(ids, m.ID)
-	}
-	return ids
+	return graph.MentionIDList(reader.FindMentions(b.ID))
 }
 
 // mentionedByIDs returns the IDs of nibs whose bodies mention this nib.
 // See the convention note on mentionIDs — this uses the Core-direct path
-// (graph.NibReader.FindMentionedBy) rather than the resolver.
+// (graph.NibReader.FindMentionedBy) rather than the resolver, and shares
+// the graph.MentionIDList extraction helper with the resolver siblings.
 func mentionedByIDs(b *nib.Nib, reader graph.NibReader) []string {
-	inbound := reader.FindMentionedBy(b.ID)
-	ids := make([]string, 0, len(inbound))
-	for _, m := range inbound {
-		ids = append(ids, m.ID)
-	}
-	return ids
+	return graph.MentionIDList(reader.FindMentionedBy(b.ID))
 }
 
 // computeBlockingIDs returns the IDs of active nibs that this nib is blocking,

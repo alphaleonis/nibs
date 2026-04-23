@@ -678,12 +678,7 @@ func (r *nibResolver) Children(ctx context.Context, obj *nib.Nib, filter *model.
 // should request the `mentions` field with a filter instead, e.g.
 // `mentions(filter: { excludeStatus: ["completed", "scrapped"] }) { id }`.
 func (r *nibResolver) MentionIds(ctx context.Context, obj *nib.Nib) ([]string, error) {
-	mentions := r.Reader.FindMentions(obj.ID)
-	ids := make([]string, 0, len(mentions))
-	for _, m := range mentions {
-		ids = append(ids, m.ID)
-	}
-	return ids, nil
+	return MentionIDList(r.Reader.FindMentions(obj.ID)), nil
 }
 
 // MentionedByIds is the resolver for the mentionedByIds field.
@@ -694,12 +689,7 @@ func (r *nibResolver) MentionIds(ctx context.Context, obj *nib.Nib) ([]string, e
 // should request the `mentionedBy` field with a filter, e.g.
 // `mentionedBy(filter: { excludeStatus: ["completed", "scrapped"] }) { id }`.
 func (r *nibResolver) MentionedByIds(ctx context.Context, obj *nib.Nib) ([]string, error) {
-	inbound := r.Reader.FindMentionedBy(obj.ID)
-	ids := make([]string, 0, len(inbound))
-	for _, m := range inbound {
-		ids = append(ids, m.ID)
-	}
-	return ids, nil
+	return MentionIDList(r.Reader.FindMentionedBy(obj.ID)), nil
 }
 
 // Mentions is the resolver for the mentions field.
