@@ -956,6 +956,54 @@ func TestRefsCommand_BothAndInbound_JSONError(t *testing.T) {
 	}
 }
 
+func TestRefsCommand_ActiveWithConflictingStatus_HumanError(t *testing.T) {
+	// --active excludes completed/scrapped; asking for --status completed on
+	// top always yields empty results — reject the combo to surface the
+	// intent instead of silently returning no mentions.
+	nibsDir := setupRefsCobraTest(t, refsFilterFixture())
+
+	rootCmd.SetArgs([]string{"--nibs-path", nibsDir, "refs", "a1", "--active", "--status", "completed"})
+	var stdout bytes.Buffer
+	rootCmd.SetOut(&stdout)
+	rootCmd.SetErr(&stdout)
+	defer rootCmd.SetOut(nil)
+	defer rootCmd.SetErr(nil)
+
+	err := rootCmd.Execute()
+	if err == nil {
+		t.Fatal("expected error for --active --status completed, got nil")
+	}
+	if !strings.Contains(err.Error(), "--active") || !strings.Contains(err.Error(), "completed") {
+		t.Errorf("expected error to mention --active and completed, got: %v", err)
+	}
+}
+
+func TestRefsCommand_ActiveWithConflictingStatus_JSONError(t *testing.T) {
+	nibsDir := setupRefsCobraTest(t, refsFilterFixture())
+	rootCmd.SetArgs([]string{"--nibs-path", nibsDir, "refs", "a1", "--active", "--status", "scrapped", "--json"})
+
+	var execErr error
+	out := captureStdout(t, func() {
+		execErr = rootCmd.Execute()
+	})
+	if execErr == nil {
+		t.Fatal("expected error for --active --status scrapped, got nil")
+	}
+	var env struct {
+		Success bool   `json:"success"`
+		Code    string `json:"code"`
+	}
+	if err := json.Unmarshal([]byte(out), &env); err != nil {
+		t.Fatalf("unmarshal envelope: %v\nraw: %s", err, out)
+	}
+	if env.Success {
+		t.Errorf("envelope.Success = true, want false")
+	}
+	if env.Code != "VALIDATION_ERROR" {
+		t.Errorf("envelope.Code = %q, want VALIDATION_ERROR", env.Code)
+	}
+}
+
 func TestRefsCommand_InboundWithStatusFilter(t *testing.T) {
 	// Compose filter flag with --inbound (no --both).
 	nibsDir := setupRefsCobraTest(t, refsFilterFixture())

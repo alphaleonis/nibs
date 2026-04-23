@@ -95,7 +95,13 @@ Rules the parser applies:
 			return fmt.Errorf("nib not found: %s", args[0])
 		}
 
-		filter := buildRefsFilter()
+		filter, err := buildRefsFilter()
+		if err != nil {
+			if refsJSON {
+				return output.Error(output.ErrValidation, err.Error())
+			}
+			return err
+		}
 
 		if refsBoth {
 			outbound, err := resolver.Nib().Mentions(ctx, b, filter)
@@ -161,17 +167,28 @@ Rules the parser applies:
 // buildRefsFilter translates the refs CLI filter flags into a NibFilter that
 // can be passed to the mentions / mentionedBy resolvers. Returns nil when
 // no flags are set so the resolver short-circuits the filter step.
-func buildRefsFilter() *model.NibFilter {
+//
+// Returns an error when the flag combination is self-contradictory so the
+// caller can surface the mistake immediately rather than silently returning
+// empty results. Mirrors the `--both + --inbound` mutex pattern.
+func buildRefsFilter() (*model.NibFilter, error) {
+	if refsActive {
+		for _, s := range refsStatus {
+			if s == "completed" || s == "scrapped" {
+				return nil, fmt.Errorf("--active excludes completed and scrapped; combining with --status %s always yields empty results", s)
+			}
+		}
+	}
 	if len(refsStatus) == 0 && len(refsNoStatus) == 0 &&
 		len(refsType) == 0 && len(refsNoType) == 0 &&
 		len(refsPriority) == 0 && !refsActive {
-		return nil
+		return nil, nil
 	}
 	excludeStatus := append([]string(nil), refsNoStatus...)
 	if refsActive {
-		// Match the semantic used by `plan --active` / `list --ready`:
-		// drop completed/scrapped. Archived nibs are stored separately
-		// and are already excluded from the main nib list.
+		// Match `plan --active`: drop completed/scrapped.
+		// Not to be confused with `list --ready`, which is narrower —
+		// it also excludes in-progress/draft and requires not-blocked.
 		excludeStatus = append(excludeStatus, "completed", "scrapped")
 	}
 	return &model.NibFilter{
@@ -180,7 +197,7 @@ func buildRefsFilter() *model.NibFilter {
 		Type:          refsType,
 		ExcludeType:   refsNoType,
 		Priority:      refsPriority,
-	}
+	}, nil
 }
 
 // renderRefsSection prints a labelled refs section with the given rows;
