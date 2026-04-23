@@ -27,12 +27,14 @@ var (
 	listNoEstimate []string
 	listTag        []string
 	listNoTag      []string
-	listHasParent   bool
-	listNoParent    bool
-	listParentID    string
-	listHasBlocking bool
-	listNoBlocking  bool
-	listIsBlocked   bool
+	listHasParent     bool
+	listNoParent      bool
+	listParentID      string
+	listHasBlocking   bool
+	listNoBlocking    bool
+	listIsBlocked     bool
+	listMentions      string
+	listMentionedBy   string
 	listReady      bool
 	listQuiet      bool
 	listSort       string
@@ -94,6 +96,12 @@ Search Syntax (--search/-S):
 		}
 		if listNoBlocking {
 			filter.NoBlocking = &listNoBlocking
+		}
+		if listMentions != "" {
+			filter.MentionsID = &listMentions
+		}
+		if listMentionedBy != "" {
+			filter.MentionedByID = &listMentionedBy
 		}
 		// --ready and --is-blocked are mutually exclusive
 		if listReady && listIsBlocked {
@@ -238,6 +246,8 @@ func init() {
 	listCmd.Flags().BoolVar(&listHasBlocking, "has-blocking", false, "Filter nibs that are blocking others")
 	listCmd.Flags().BoolVar(&listNoBlocking, "no-blocking", false, "Filter nibs that aren't blocking others")
 	listCmd.Flags().BoolVar(&listIsBlocked, "is-blocked", false, "Filter nibs that are blocked by others")
+	listCmd.Flags().StringVar(&listMentions, "mentions", "", "Filter nibs whose bodies mention this ID (short or full)")
+	listCmd.Flags().StringVar(&listMentionedBy, "mentioned-by", "", "Filter nibs mentioned in the given ID's body (short or full)")
 	listCmd.Flags().BoolVar(&listReady, "ready", false, "Filter nibs available to start (not blocked, excludes in-progress/completed/scrapped/draft)")
 	listCmd.Flags().BoolVarP(&listQuiet, "quiet", "q", false, "Only output IDs (one per line)")
 	listCmd.Flags().StringVar(&listSort, "sort", "", "Sort by: created, updated, status, priority, status-priority, id (default: order key)")
