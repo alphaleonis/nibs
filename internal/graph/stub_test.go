@@ -2,6 +2,7 @@ package graph
 
 import (
 	"context"
+	"strings"
 	"testing"
 
 	"github.com/alphaleonis/nibs/internal/config"
@@ -14,6 +15,10 @@ type stubReader struct {
 	nibs    map[string]*nib.Nib
 	allNibs []*nib.Nib
 	cfg     *config.Config
+	// prefix, when set, makes NormalizeID resolve short IDs by prepending the
+	// prefix — mirroring nibcore.Core.NormalizeID's exact-first, then
+	// prefix-prepended behaviour.
+	prefix string
 }
 
 func (s *stubReader) Get(id string) (*nib.Nib, error) {
@@ -31,11 +36,20 @@ func (s *stubReader) Search(query string) ([]*nib.Nib, error) {
 	return nil, nil
 }
 
-// NormalizeID does exact-match lookup only. Unlike nibcore.Core.NormalizeID,
-// it does not resolve prefix-matched short IDs.
+// NormalizeID resolves an id to its full form. It mirrors
+// nibcore.Core.NormalizeID: exact match first, then — if a prefix is
+// configured and the input does not already carry it — try the
+// prefix-prepended form. On miss, it echoes the original id back with
+// ok=false (matching Core.NormalizeID's "echo on miss" convention).
 func (s *stubReader) NormalizeID(id string) (string, bool) {
 	if _, ok := s.nibs[id]; ok {
 		return id, true
+	}
+	if s.prefix != "" && !strings.HasPrefix(id, s.prefix) {
+		full := s.prefix + id
+		if _, ok := s.nibs[full]; ok {
+			return full, true
+		}
 	}
 	return id, false
 }
