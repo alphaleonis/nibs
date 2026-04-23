@@ -2,6 +2,7 @@ package cmd
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"strings"
 
@@ -50,13 +51,20 @@ var showCmd = &cobra.Command{
 			nibs = append(nibs, b)
 		}
 
-		// JSON output
+		// JSON output — extend the standard nib shape with resolved
+		// outbound/inbound mentions so `show --json` is a one-shot
+		// "tell me everything about this nib" call (matching the
+		// parent/blocking surfacing philosophy).
 		if showJSON {
 			filtered := filterResolvedBlockers(nibs, app.Core)
-			if len(filtered) == 1 {
-				return output.SuccessSingle(filtered[0])
+			envelopes := make([]showJSONEnvelope, len(filtered))
+			for i, b := range filtered {
+				envelopes[i] = buildShowJSONEnvelope(b, app.Core)
 			}
-			return output.SuccessMultiple(filtered)
+			if len(envelopes) == 1 {
+				return output.JSONRaw(envelopes[0])
+			}
+			return output.JSONRaw(envelopes)
 		}
 
 		// Raw markdown output (frontmatter + body)
@@ -103,11 +111,90 @@ var showCmd = &cobra.Command{
 				fmt.Println(ui.Muted.Render(strings.Repeat("═", 60)))
 				fmt.Println()
 			}
-			showStyledNib(b, computeBlockingIDs(b, app.Core), app.Config())
+			showStyledNib(b,
+				computeBlockingIDs(b, app.Core),
+				mentionIDs(b, app.Core),
+				mentionedByIDs(b, app.Core),
+				app.Config())
 		}
 
 		return nil
 	},
+}
+
+// showJSONEnvelope wraps a Nib with its resolved mention lists for --json
+// output. We want agents to get the mention graph in one call rather than
+// chasing a separate `nibs refs` query — same philosophy as parent/blocking
+// already being carried on the nib JSON.
+//
+// We cannot simply embed `*nib.Nib` because it carries a custom MarshalJSON
+// method; that method would be promoted to the envelope and drop our
+// mentions fields. Instead we marshal the Nib to raw JSON first, then
+// re-decode into a map so we can inject the mention arrays. A dedicated
+// MarshalJSON handles the merge.
+type showJSONEnvelope struct {
+	Nib         *nib.Nib
+	Mentions    []*nib.Nib
+	MentionedBy []*nib.Nib
+}
+
+// MarshalJSON merges the nib's own JSON shape with the mention arrays.
+func (e showJSONEnvelope) MarshalJSON() ([]byte, error) {
+	// Serialize the nib (uses the Nib's own MarshalJSON which injects etag).
+	nibBytes, err := json.Marshal(e.Nib)
+	if err != nil {
+		return nil, err
+	}
+	// Decode into an ordered map so we can add mention fields to the envelope.
+	var merged map[string]json.RawMessage
+	if err := json.Unmarshal(nibBytes, &merged); err != nil {
+		return nil, err
+	}
+	// Only include non-empty mention arrays (match human output behaviour).
+	if len(e.Mentions) > 0 {
+		raw, err := json.Marshal(e.Mentions)
+		if err != nil {
+			return nil, err
+		}
+		merged["mentions"] = raw
+	}
+	if len(e.MentionedBy) > 0 {
+		raw, err := json.Marshal(e.MentionedBy)
+		if err != nil {
+			return nil, err
+		}
+		merged["mentioned_by"] = raw
+	}
+	return json.Marshal(merged)
+}
+
+// buildShowJSONEnvelope wraps a Nib with its outbound/inbound mention lists.
+func buildShowJSONEnvelope(b *nib.Nib, reader graph.NibReader) showJSONEnvelope {
+	return showJSONEnvelope{
+		Nib:         b,
+		Mentions:    reader.FindMentions(b.ID),
+		MentionedBy: reader.FindMentionedBy(b.ID),
+	}
+}
+
+// mentionIDs returns the IDs of nibs that this nib's body mentions.
+func mentionIDs(b *nib.Nib, reader graph.NibReader) []string {
+	mentions := reader.FindMentions(b.ID)
+	ids := make([]string, 0, len(mentions))
+	for _, m := range mentions {
+		ids = append(ids, m.ID)
+	}
+	return ids
+}
+
+// mentionedByIDs returns the IDs of nibs whose bodies mention this nib.
+func mentionedByIDs(b *nib.Nib, reader graph.NibReader) []string {
+	inbound := reader.FindMentionedBy(b.ID)
+	ids := make([]string, 0, len(inbound))
+	for _, m := range inbound {
+		ids = append(ids, m.ID)
+	}
+	return ids
 }
 
 // computeBlockingIDs returns the IDs of active nibs that this nib is blocking,
@@ -129,7 +216,7 @@ func computeBlockingIDs(b *nib.Nib, reader graph.NibReader) []string {
 }
 
 // showStyledNib displays a single nib with styled output.
-func showStyledNib(b *nib.Nib, blockingIDs []string, cfg *config.Config) {
+func showStyledNib(b *nib.Nib, blockingIDs []string, mentions []string, mentionedBy []string, cfg *config.Config) {
 	statusCfg := cfg.GetStatus(b.Status)
 	statusColor := "gray"
 	if statusCfg != nil {
@@ -178,12 +265,13 @@ func showStyledNib(b *nib.Nib, blockingIDs []string, cfg *config.Config) {
 	header.WriteString("\n")
 	header.WriteString(ui.Title.Render(b.Title))
 
-	// Display relationships
-	if b.Parent != "" || len(blockingIDs) > 0 {
+	// Display relationships (parent, blocking, mentions — any combination
+	// of these present triggers the relationships block).
+	if b.Parent != "" || len(blockingIDs) > 0 || len(mentions) > 0 || len(mentionedBy) > 0 {
 		header.WriteString("\n")
 		header.WriteString(ui.Muted.Render(strings.Repeat("─", 50)))
 		header.WriteString("\n")
-		header.WriteString(formatRelationships(b, blockingIDs))
+		header.WriteString(formatRelationships(b, blockingIDs, mentions, mentionedBy))
 	}
 
 	header.WriteString("\n")
@@ -216,9 +304,12 @@ func showStyledNib(b *nib.Nib, blockingIDs []string, cfg *config.Config) {
 	}
 }
 
-// formatRelationships formats parent and blocking relationships for display.
-// blockingIDs are computed from other nibs' blockedBy fields.
-func formatRelationships(b *nib.Nib, blockingIDs []string) string {
+// formatRelationships formats parent, blocking, and mention relationships for
+// display. blockingIDs are computed from other nibs' blockedBy fields;
+// mentions/mentionedBy are body-derived references via the `#<id>` sigil.
+// Empty mention slices are omitted, matching existing blocking/blocked-by
+// behaviour.
+func formatRelationships(b *nib.Nib, blockingIDs []string, mentions []string, mentionedBy []string) string {
 	var parts []string
 
 	// Display parent
@@ -234,7 +325,32 @@ func formatRelationships(b *nib.Nib, blockingIDs []string) string {
 			ui.Muted.Render("blocking:"),
 			ui.ID.Render(target)))
 	}
+
+	// Display outbound mentions as a single joined line; non-empty only.
+	if len(mentions) > 0 {
+		parts = append(parts, fmt.Sprintf("%s %s",
+			ui.Muted.Render("mentions:"),
+			renderIDList(mentions)))
+	}
+
+	// Display inbound mentions as a single joined line; non-empty only.
+	if len(mentionedBy) > 0 {
+		parts = append(parts, fmt.Sprintf("%s %s",
+			ui.Muted.Render("mentioned by:"),
+			renderIDList(mentionedBy)))
+	}
+
 	return strings.Join(parts, "\n")
+}
+
+// renderIDList renders a slice of nib IDs as a comma-separated list, each id
+// wrapped with the ui.ID style.
+func renderIDList(ids []string) string {
+	rendered := make([]string, len(ids))
+	for i, id := range ids {
+		rendered[i] = ui.ID.Render(id)
+	}
+	return strings.Join(rendered, ", ")
 }
 
 func init() {
