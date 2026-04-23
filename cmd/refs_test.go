@@ -145,6 +145,14 @@ func captureStdout(t *testing.T, fn func()) string {
 	// the guard a stray second Close() would hit an already-closed fd
 	// and, under concurrent OS fd reuse, could race with whichever file
 	// has inherited the fd slot.
+	//
+	// Goroutine-leak invariant: the draining goroutine above exits when
+	// io.Copy returns, which happens on pipe EOF — and the pipe reaches
+	// EOF as soon as its write end is closed. The guard ensures exactly
+	// one close happens on every exit path (normal, panic, timeout), so
+	// the goroutine cannot leak. If you refactor this (e.g. remove the
+	// deferred close, or swap the pipe for a bounded buffer), preserve
+	// the "exactly one close on every exit path" contract.
 	closed := false
 	defer func() {
 		if !closed {
@@ -1006,6 +1014,34 @@ func TestRefsCommand_ActiveWithConflictingStatus_JSONError(t *testing.T) {
 	}
 	if env.Code != "VALIDATION_ERROR" {
 		t.Errorf("envelope.Code = %q, want VALIDATION_ERROR", env.Code)
+	}
+}
+
+func TestRefsCommand_FlagValidationRunsBeforeNibLookup(t *testing.T) {
+	// Pins the ordering: flag-only validation happens before the resolver
+	// loads the target nib. Invoking `refs <bogus-id> --active --status
+	// completed` must surface the flag-combo error, not "nib not found".
+	// If a future refactor re-orders buildRefsFilter() to run after the
+	// nib lookup (as show.go does), this test flips observably.
+	nibsDir := setupRefsCobraTest(t, refsFilterFixture())
+
+	rootCmd.SetArgs([]string{"--nibs-path", nibsDir, "refs", "does-not-exist", "--active", "--status", "completed"})
+	var stdout bytes.Buffer
+	rootCmd.SetOut(&stdout)
+	rootCmd.SetErr(&stdout)
+	defer rootCmd.SetOut(nil)
+	defer rootCmd.SetErr(nil)
+
+	err := rootCmd.Execute()
+	if err == nil {
+		t.Fatal("expected error for --active --status completed with bogus id, got nil")
+	}
+	msg := err.Error()
+	if !strings.Contains(msg, "--active") || !strings.Contains(msg, "completed") {
+		t.Errorf("expected flag-validation error to win (must mention --active and completed), got: %v", err)
+	}
+	if strings.Contains(msg, "not found") {
+		t.Errorf("flag validation should run before nib lookup — got nib-not-found error instead: %v", err)
 	}
 }
 
