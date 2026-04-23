@@ -130,6 +130,14 @@ func scanMentions(source []byte, segStart, segStop int, out *[]string, seen map[
 // We reject `#` preceded by any word-like char (upper/lower letters, digits,
 // underscore) so patterns like "Foo#bar" or "name_#bar" do not produce mentions,
 // even though the id body only accepts lowercase alphanumerics. Keep this asymmetry.
+//
+// The guard is deliberately byte-level and ASCII-only: non-ASCII runes
+// (e.g. `é`, CJK, emoji) are not treated as word-like, so `é#gx0f` produces
+// a mention. This is acceptable because the id alphabet is ASCII — prose
+// in any other script adjacent to a `#` is not strongly "word-like" for
+// the purpose of distinguishing a sigil from an identifier. Tracked this
+// way intentionally; do not widen to `unicode.IsLetter` without a test
+// to pin the new behaviour.
 func isWordChar(b byte) bool {
 	return (b >= 'a' && b <= 'z') ||
 		(b >= 'A' && b <= 'Z') ||

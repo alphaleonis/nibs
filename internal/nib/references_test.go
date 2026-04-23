@@ -142,6 +142,16 @@ func TestExtractMentionTokens(t *testing.T) {
 			want: nil,
 		},
 		{
+			// Pins the byte-level ASCII-only scope of isWordChar: the `#`
+			// sigils here are directly preceded by the trailing continuation
+			// byte of a non-ASCII rune (é, è), which is not treated as
+			// word-like, so the mentions are accepted. Do not widen the
+			// guard to unicode.IsLetter without updating this test.
+			name: "non-ascii rune directly before hash is not word-like",
+			body: "café#gx0f and déjà#abc",
+			want: []string{"gx0f", "abc"},
+		},
+		{
 			name: "multiple mentions separated by newlines",
 			body: "First: #a1b2\nSecond: #c3d4\nThird: #e5f6",
 			want: []string{"a1b2", "c3d4", "e5f6"},

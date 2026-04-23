@@ -15,12 +15,14 @@ import (
 
 // normalizeIDInMap is the single source of truth for the exact-match →
 // prefix-prepended ID resolution rule shared by Core.NormalizeID,
-// Core.normalizeIDForLookupLocked, and resolveMentionToken.
+// Core.normalizeIDForLookupLocked, and the mention-resolution call sites in
+// FindMentionsInMap / FindMentionedByInMap.
 //
 // Returns the full ID and true if the id resolves via either an exact map
-// key or by prepending configPrefix; otherwise ("", false). Pure — no
-// locking; callers are responsible for holding any required Core mutex
-// while the input map is read.
+// key or by prepending configPrefix; otherwise ("", false).
+//
+// Pure function operating on the given map without locking. Callers passing
+// a Core.nibs map must hold Core.mu.RLock for the duration of the call.
 //
 // nib.NewID always prepends the configured prefix today, so a bare token
 // and its prefixed form cannot both exist in the map — if that invariant
@@ -38,14 +40,6 @@ func normalizeIDInMap(nibs map[string]*nib.Nib, id, configPrefix string) (string
 		}
 	}
 	return "", false
-}
-
-// resolveMentionToken resolves a token (short or full form) against the nib
-// map. Thin wrapper around normalizeIDInMap — kept as a named entry point
-// for the mention-resolution call sites so the intent at the call site is
-// obvious.
-func resolveMentionToken(nibs map[string]*nib.Nib, token, configPrefix string) (string, bool) {
-	return normalizeIDInMap(nibs, token, configPrefix)
 }
 
 // FindMentionsInMap returns the nibs whose IDs are referenced via `#<id>`
@@ -69,7 +63,7 @@ func FindMentionsInMap(nibs map[string]*nib.Nib, fromID, configPrefix string) []
 	seen := make(map[string]struct{}, len(tokens))
 	var out []*nib.Nib
 	for _, tok := range tokens {
-		fullID, ok := resolveMentionToken(nibs, tok, configPrefix)
+		fullID, ok := normalizeIDInMap(nibs, tok, configPrefix)
 		if !ok || fullID == fromID {
 			continue
 		}
@@ -102,7 +96,7 @@ func FindMentionedByInMap(nibs map[string]*nib.Nib, targetID, configPrefix strin
 		}
 		tokens := nib.ExtractMentionTokens(b.Body)
 		for _, tok := range tokens {
-			fullID, ok := resolveMentionToken(nibs, tok, configPrefix)
+			fullID, ok := normalizeIDInMap(nibs, tok, configPrefix)
 			if !ok {
 				continue
 			}
