@@ -122,7 +122,7 @@ var showCmd = &cobra.Command{
 	},
 }
 
-// showJSONEnvelope wraps a Nib with its resolved mention lists for --json
+// showJSONEnvelope wraps a Nib with its resolved mention ID lists for --json
 // output. We want agents to get the mention graph in one call rather than
 // chasing a separate `nibs refs` query — same philosophy as parent/blocking
 // already being carried on the nib JSON.
@@ -132,13 +132,24 @@ var showCmd = &cobra.Command{
 // mentions fields. Instead we marshal the Nib to raw JSON first, then
 // re-decode into a map so we can inject the mention arrays. A dedicated
 // MarshalJSON handles the merge.
+//
+// JSON keys use snake_case (`mentioned_by`, not `mentionedBy`) to match the
+// existing nib JSON convention — see internal/nib/nib.go (`blocked_by`,
+// `created_at`, `updated_at`). If this envelope is ever refactored to use
+// struct tags, use `json:"mentioned_by,omitempty"`.
+//
+// The mention arrays hold IDs (parallel to `blocked_by`), not full nib
+// objects, so agents get a uniform shape for relationship fields. Use
+// `nibs refs` if the full resolved objects are needed.
 type showJSONEnvelope struct {
 	Nib         *nib.Nib
-	Mentions    []*nib.Nib
-	MentionedBy []*nib.Nib
+	Mentions    []string
+	MentionedBy []string
 }
 
 // MarshalJSON merges the nib's own JSON shape with the mention arrays.
+// `mentions` and `mentioned_by` are ALWAYS emitted — empty arrays (not
+// null, not absent) when the nib has no outbound/inbound references.
 func (e showJSONEnvelope) MarshalJSON() ([]byte, error) {
 	// Serialize the nib (uses the Nib's own MarshalJSON which injects etag).
 	nibBytes, err := json.Marshal(e.Nib)
@@ -148,36 +159,55 @@ func (e showJSONEnvelope) MarshalJSON() ([]byte, error) {
 	// Decode into an ordered map so we can add mention fields to the envelope.
 	var merged map[string]json.RawMessage
 	if err := json.Unmarshal(nibBytes, &merged); err != nil {
+		return nil, fmt.Errorf("decoding nib JSON for envelope merge (expected object): %w", err)
+	}
+	// Guard against a future Nib field colliding with our injected keys.
+	for _, reserved := range []string{"mentions", "mentioned_by"} {
+		if _, exists := merged[reserved]; exists {
+			return nil, fmt.Errorf("nib JSON unexpectedly contains reserved key %q — field name collision", reserved)
+		}
+	}
+	// Always emit both keys as arrays (never null, never absent) so `jq
+	// '.mentions | length'` works uniformly for agent consumers.
+	mentions := e.Mentions
+	if mentions == nil {
+		mentions = []string{}
+	}
+	mentionedBy := e.MentionedBy
+	if mentionedBy == nil {
+		mentionedBy = []string{}
+	}
+	mentionsRaw, err := json.Marshal(mentions)
+	if err != nil {
 		return nil, err
 	}
-	// Only include non-empty mention arrays (match human output behaviour).
-	if len(e.Mentions) > 0 {
-		raw, err := json.Marshal(e.Mentions)
-		if err != nil {
-			return nil, err
-		}
-		merged["mentions"] = raw
+	merged["mentions"] = mentionsRaw
+	mentionedByRaw, err := json.Marshal(mentionedBy)
+	if err != nil {
+		return nil, err
 	}
-	if len(e.MentionedBy) > 0 {
-		raw, err := json.Marshal(e.MentionedBy)
-		if err != nil {
-			return nil, err
-		}
-		merged["mentioned_by"] = raw
-	}
+	merged["mentioned_by"] = mentionedByRaw
 	return json.Marshal(merged)
 }
 
-// buildShowJSONEnvelope wraps a Nib with its outbound/inbound mention lists.
+// buildShowJSONEnvelope wraps a Nib with its outbound/inbound mention ID
+// lists. IDs mirror the `blocked_by` shape — callers wanting the full
+// resolved objects should use `nibs refs`.
 func buildShowJSONEnvelope(b *nib.Nib, reader graph.NibReader) showJSONEnvelope {
 	return showJSONEnvelope{
 		Nib:         b,
-		Mentions:    reader.FindMentions(b.ID),
-		MentionedBy: reader.FindMentionedBy(b.ID),
+		Mentions:    mentionIDs(b, reader),
+		MentionedBy: mentionedByIDs(b, reader),
 	}
 }
 
 // mentionIDs returns the IDs of nibs that this nib's body mentions.
+//
+// Convention: lightweight read-only relationship rendering in `show` goes
+// through graph.NibReader (Core-direct). Filterable relationship listing
+// (e.g. `nibs refs <id> --status todo`) goes through the GraphQL resolver
+// path (`resolver.Nib().Mentions(ctx, b, filter)`). See cmd/refs.go for
+// the resolver-path pattern.
 func mentionIDs(b *nib.Nib, reader graph.NibReader) []string {
 	mentions := reader.FindMentions(b.ID)
 	ids := make([]string, 0, len(mentions))
@@ -188,6 +218,8 @@ func mentionIDs(b *nib.Nib, reader graph.NibReader) []string {
 }
 
 // mentionedByIDs returns the IDs of nibs whose bodies mention this nib.
+// See the convention note on mentionIDs — this uses the Core-direct path
+// (graph.NibReader.FindMentionedBy) rather than the resolver.
 func mentionedByIDs(b *nib.Nib, reader graph.NibReader) []string {
 	inbound := reader.FindMentionedBy(b.ID)
 	ids := make([]string, 0, len(inbound))

@@ -97,6 +97,9 @@ Search Syntax (--search/-S):
 		if listNoBlocking {
 			filter.NoBlocking = &listNoBlocking
 		}
+		// MentionsID / MentionedByID accept short or full IDs; the GraphQL
+		// filter layer (internal/graph/filters.go:filterByMentionsID) normalises
+		// via NibReader.NormalizeID. Do not normalise at the CLI layer.
 		if listMentions != "" {
 			filter.MentionsID = &listMentions
 		}
@@ -136,6 +139,11 @@ Search Syntax (--search/-S):
 					clone.Body = ""
 					filtered[i] = &clone
 				}
+			}
+			// Always emit `[]` for empty list fields so agent consumers can
+			// rely on `jq '.[]'` without special-casing null.
+			if filtered == nil {
+				filtered = []*nib.Nib{}
 			}
 			return output.SuccessMultiple(filtered)
 		}

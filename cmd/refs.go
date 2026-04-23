@@ -27,10 +27,11 @@ var (
 )
 
 // refsBothResult is the JSON shape emitted by `nibs refs --both --json`.
-// Outbound and inbound lists are both always present (may be empty) so the
-// shape is stable for consumers.
+// Outbound and inbound lists are both always present (may be empty `[]`,
+// never `null`) so the shape is stable for consumers. The envelope is a
+// bare `{outbound, inbound}` payload — matching `plan --json`'s convention;
+// no `success` wrapper, which is reserved for mutation responses.
 type refsBothResult struct {
-	Success  bool       `json:"success"`
 	Outbound []*nib.Nib `json:"outbound"`
 	Inbound  []*nib.Nib `json:"inbound"`
 }
@@ -112,7 +113,7 @@ Rules the parser applies:
 				if inbound == nil {
 					inbound = []*nib.Nib{}
 				}
-				return output.JSONRaw(refsBothResult{Success: true, Outbound: outbound, Inbound: inbound})
+				return output.JSONRaw(refsBothResult{Outbound: outbound, Inbound: inbound})
 			}
 			cfg := app.Config()
 			out := cmd.OutOrStdout()

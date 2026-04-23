@@ -4,10 +4,10 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"testing"
 
-	"github.com/alphaleonis/nibs/internal/nib"
 	"github.com/spf13/pflag"
 )
 
@@ -164,11 +164,14 @@ func TestShowCommand_JSONOutput_IncludesMentions(t *testing.T) {
 		t.Fatalf("show --json failed: %v", execErr)
 	}
 
+	// mentions/mentioned_by are emitted as ID arrays (parallel to
+	// blocked_by), not full nib objects.
 	var envelope struct {
-		ID          string     `json:"id"`
-		Title       string     `json:"title"`
-		Mentions    []*nib.Nib `json:"mentions"`
-		MentionedBy []*nib.Nib `json:"mentioned_by"`
+		ID          string   `json:"id"`
+		Title       string   `json:"title"`
+		ETag        string   `json:"etag"`
+		Mentions    []string `json:"mentions"`
+		MentionedBy []string `json:"mentioned_by"`
 	}
 	if err := json.Unmarshal([]byte(out), &envelope); err != nil {
 		t.Fatalf("unmarshal: %v\nraw: %s", err, out)
@@ -177,13 +180,28 @@ func TestShowCommand_JSONOutput_IncludesMentions(t *testing.T) {
 	if envelope.ID != "a1" {
 		t.Errorf("envelope.ID = %q, want a1", envelope.ID)
 	}
+	// Etag must be a 16-char hex string. If someone "simplifies" the
+	// MarshalJSON chain and drops the Nib's own MarshalJSON, the etag
+	// field vanishes and this assertion fires. The error message is
+	// intentionally verbose to teach the future maintainer why the
+	// merge-through-map approach exists.
+	matched, _ := regexp.MatchString(`^[0-9a-f]{16}$`, envelope.ETag)
+	if !matched {
+		t.Errorf("expected 16-char hex etag in show --json envelope, got %q (len=%d) — did the MarshalJSON chain get simplified and drop the Nib's own MarshalJSON?", envelope.ETag, len(envelope.ETag))
+	}
 	// a1 mentions b2, c3.
-	gotOut := idSet(envelope.Mentions)
+	gotOut := map[string]bool{}
+	for _, id := range envelope.Mentions {
+		gotOut[id] = true
+	}
 	if !gotOut["b2"] || !gotOut["c3"] || len(gotOut) != 2 {
 		t.Errorf("mentions = %v, want {b2, c3}", gotOut)
 	}
 	// a1 is mentioned by c3, d4.
-	gotIn := idSet(envelope.MentionedBy)
+	gotIn := map[string]bool{}
+	for _, id := range envelope.MentionedBy {
+		gotIn[id] = true
+	}
 	if !gotIn["c3"] || !gotIn["d4"] || len(gotIn) != 2 {
 		t.Errorf("mentioned_by = %v, want {c3, d4}", gotIn)
 	}
@@ -202,14 +220,13 @@ func TestShowCommand_JSONOutput_EmptyMentions(t *testing.T) {
 		t.Fatalf("show --json failed: %v", execErr)
 	}
 
-	// Empty mention slices must be omitted from JSON (omitempty). Verify by
-	// confirming the raw output doesn't carry "mentions": or "mentioned_by":
-	// entries.
-	if strings.Contains(out, `"mentions":`) {
-		t.Errorf("expected 'mentions' field omitted for empty mentions, got:\n%s", out)
+	// mentions/mentioned_by are ALWAYS emitted — empty arrays (never
+	// null, never absent) so agent consumers get a stable shape.
+	if !strings.Contains(out, `"mentions": []`) {
+		t.Errorf("expected `\"mentions\": []` for a nib with no outbound refs, got:\n%s", out)
 	}
-	if strings.Contains(out, `"mentioned_by":`) {
-		t.Errorf("expected 'mentioned_by' field omitted for empty inbound, got:\n%s", out)
+	if !strings.Contains(out, `"mentioned_by": []`) {
+		t.Errorf("expected `\"mentioned_by\": []` for a nib with no inbound refs, got:\n%s", out)
 	}
 }
 
@@ -268,11 +285,3 @@ func TestShowCommand_Raw_Unchanged(t *testing.T) {
 	}
 }
 
-// idSet collapses a nib slice to a set of IDs for order-agnostic comparison.
-func idSet(ns []*nib.Nib) map[string]bool {
-	s := map[string]bool{}
-	for _, n := range ns {
-		s[n.ID] = true
-	}
-	return s
-}

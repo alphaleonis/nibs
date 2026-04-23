@@ -274,6 +274,9 @@ func TestListCommand_MentionsFlag_ShortIDNormalisation(t *testing.T) {
 
 func TestListCommand_MentionsFlag_UnknownID(t *testing.T) {
 	// Unknown target should yield empty results, not an error.
+	// Assert `[]` only; list --json must never emit null for a list field
+	// (stable JSON for agent consumers — folds into the empty-array
+	// convention shared by refs --both and show --json).
 	nibsDir := setupListCobraTest(t, mentionsFixture())
 
 	rootCmd.SetArgs([]string{"--nibs-path", nibsDir, "list", "--mentions", "nope", "--json"})
@@ -286,9 +289,8 @@ func TestListCommand_MentionsFlag_UnknownID(t *testing.T) {
 		t.Fatalf("list --mentions <unknown> failed: %v", execErr)
 	}
 	trimmed := strings.TrimSpace(out)
-	// An empty slice encodes as "null" (since we pass a nil slice) or "[]".
-	if trimmed != "null" && trimmed != "[]" {
-		t.Errorf("got %q, want null or []", trimmed)
+	if trimmed != "[]" {
+		t.Errorf("got %q, want `[]` exclusively (list --json must not emit null for empty results)", trimmed)
 	}
 }
 

@@ -709,16 +709,18 @@ func TestRefsCommand_BothMode_JSONShape(t *testing.T) {
 		t.Fatalf("refs --both --json failed: %v", execErr)
 	}
 
+	// The envelope is a bare `{outbound, inbound}` payload — no `success`
+	// wrapper. Matches `plan --json` convention; the mutation-style
+	// `{success, ...}` envelope is reserved for mutations.
+	if strings.Contains(out, `"success"`) {
+		t.Errorf("expected NO 'success' key in refs --both --json output, got:\n%s", out)
+	}
 	var envelope struct {
-		Success  bool       `json:"success"`
 		Outbound []*nib.Nib `json:"outbound"`
 		Inbound  []*nib.Nib `json:"inbound"`
 	}
 	if err := json.Unmarshal([]byte(out), &envelope); err != nil {
 		t.Fatalf("unmarshal: %v\nraw: %s", err, out)
-	}
-	if !envelope.Success {
-		t.Errorf("envelope.Success = false, want true")
 	}
 	if len(envelope.Outbound) != 3 {
 		t.Errorf("outbound len = %d, want 3 (b2, c3, d4)", len(envelope.Outbound))
@@ -748,11 +750,44 @@ func TestRefsCommand_BothMode_EmptySections(t *testing.T) {
 	if !strings.Contains(out, "Outbound") || !strings.Contains(out, "Inbound") {
 		t.Errorf("expected both section labels, got:\n%s", out)
 	}
+	// Assert Outbound appears before Inbound so a section swap would be
+	// caught rather than silently passing.
+	iOut := strings.Index(out, "Outbound")
+	iIn := strings.Index(out, "Inbound")
+	if iOut < 0 || iIn < 0 || iOut > iIn {
+		t.Fatalf("expected Outbound before Inbound; got:\n%s", out)
+	}
 	if !strings.Contains(out, "No outbound mentions") {
 		t.Errorf("expected 'No outbound mentions', got:\n%s", out)
 	}
 	if !strings.Contains(out, "No inbound mentions") {
 		t.Errorf("expected 'No inbound mentions', got:\n%s", out)
+	}
+}
+
+func TestRefsCommand_BothMode_EmptySections_JSONAlwaysArrays(t *testing.T) {
+	// --both --json for a nib with no mentions must emit `"outbound":[]`
+	// and `"inbound":[]` (never null, never absent) so agent consumers can
+	// rely on a stable shape.
+	nibsDir := setupRefsCobraTest(t, map[string]string{
+		"solo--solo.md": "---\ntitle: Solo\nstatus: todo\ntype: task\n---\n\nNo refs.\n",
+	})
+	rootCmd.SetArgs([]string{"--nibs-path", nibsDir, "refs", "solo", "--both", "--json"})
+	var execErr error
+	out := captureStdout(t, func() {
+		execErr = rootCmd.Execute()
+	})
+	if execErr != nil {
+		t.Fatalf("refs --both --json (empty) failed: %v", execErr)
+	}
+	if !strings.Contains(out, `"outbound": []`) {
+		t.Errorf("expected `\"outbound\": []` in empty --both --json output, got:\n%s", out)
+	}
+	if !strings.Contains(out, `"inbound": []`) {
+		t.Errorf("expected `\"inbound\": []` in empty --both --json output, got:\n%s", out)
+	}
+	if strings.Contains(out, `"success"`) {
+		t.Errorf("expected NO 'success' key in bare envelope, got:\n%s", out)
 	}
 }
 
@@ -771,7 +806,6 @@ func TestRefsCommand_BothMode_WithFilterFlags(t *testing.T) {
 		t.Fatalf("refs --both --active failed: %v", execErr)
 	}
 	var envelope struct {
-		Success  bool       `json:"success"`
 		Outbound []*nib.Nib `json:"outbound"`
 		Inbound  []*nib.Nib `json:"inbound"`
 	}

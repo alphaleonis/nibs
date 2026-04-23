@@ -55,7 +55,7 @@ nibs list --json -S "authentication"  # Full-text search
 nibs list --help                      # Full options
 
 # View nibs (supports multiple IDs)
-nibs show --json <id> [id...]
+nibs show --json <id> [id...]           # Body + frontmatter + mentions/mentioned_by ID arrays (one-shot)
 
 # Create a nib (always specify -t type)
 nibs create --json "Title" -t task -d "Description..." -s todo
@@ -92,7 +92,7 @@ nibs archive
 # Show body references (#<id> mentions) — outbound by default, --inbound for reverse
 nibs refs --json <id>
 nibs refs --json <id> --inbound
-nibs refs --json <id> --both                     # outbound + inbound in one call; JSON shape: { success, outbound: [...], inbound: [...] }
+nibs refs --json <id> --both                     # outbound + inbound in one call; JSON shape: { outbound: [...], inbound: [...] }
 nibs refs --json <id> --status todo --type bug   # compose status/type/priority/--active filters (apply to both directions under --both)
 nibs refs --json <id> --active                   # shorthand: exclude completed/scrapped from the mention list
 ```
