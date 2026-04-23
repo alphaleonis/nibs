@@ -46,11 +46,17 @@ Use --inbound to list the reverse: nibs whose bodies mention <id>.
 Use --both to fetch outbound AND inbound in one call; --both cannot be
 combined with --inbound.
 
-Filter flags apply to the mention list (to both directions under --both):
+Filter flags apply to the direction being listed — outbound by default,
+inbound under --inbound, or both directions under --both:
   --status / --no-status      (repeatable) filter by status
   --type   / --no-type        (repeatable) filter by type
   --priority                  (repeatable) filter by priority
   --active                    shorthand: exclude completed/scrapped
+
+Note: refs supports --status/--type/--priority/--active filters. For
+richer filter composition (--estimate, --tag, --no-priority, etc.) use
+` + "`nibs list --mentioned-by <id>`" + ` or ` + "`nibs list --mentions <id>`" + ` which
+expose the full NibFilter surface.
 
 Body references use the #<id> syntax — either the short form (#gx0f)
 or the full form (#nibs-gx0f). Bare IDs without the # sigil are not
@@ -237,6 +243,6 @@ func init() {
 	refsCmd.Flags().StringArrayVarP(&refsType, "type", "t", nil, "Filter mentions by type (repeatable)")
 	refsCmd.Flags().StringArrayVar(&refsNoType, "no-type", nil, "Exclude mentions by type (repeatable)")
 	refsCmd.Flags().StringArrayVarP(&refsPriority, "priority", "p", nil, "Filter mentions by priority (repeatable)")
-	refsCmd.Flags().BoolVar(&refsActive, "active", false, "Exclude completed/scrapped mentions (shorthand for --no-status completed --no-status scrapped)")
+	refsCmd.Flags().BoolVar(&refsActive, "active", false, "Exclude completed/scrapped mentions. Archived nibs are already excluded separately from the active nib set.")
 	rootCmd.AddCommand(refsCmd)
 }
