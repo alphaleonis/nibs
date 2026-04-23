@@ -116,10 +116,10 @@ func TestApplyFilterIDBranchesKnownAndUnknown(t *testing.T) {
 	blocking := &stubBlockingChecker{}
 
 	tests := []struct {
-		name     string
-		filter   *model.NibFilter
-		wantNil  bool     // true → short-circuited to nil
-		wantIDs  []string // expected nib IDs in the result (when wantNil=false)
+		name    string
+		filter  *model.NibFilter
+		wantNil bool     // true → short-circuited to nil
+		wantIDs []string // expected nib IDs in the result (when wantNil=false)
 	}{
 		// BlockingID — "nibs blocking the target"; target's blocked_by lists them.
 		{"BlockingID known — returns target's blockers", &model.NibFilter{BlockingID: strPtr("a")}, false, []string{"nibs-b"}},
@@ -313,7 +313,7 @@ func TestFilterByEstimate(t *testing.T) {
 func TestFilterByFieldWithDefault(t *testing.T) {
 	nibs := []*nib.Nib{
 		{ID: "a", Priority: "high"},
-		{ID: "b", Priority: ""},     // should be treated as "normal"
+		{ID: "b", Priority: ""}, // should be treated as "normal"
 		{ID: "c", Priority: "low"},
 		{ID: "d", Priority: "normal"},
 	}

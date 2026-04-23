@@ -292,14 +292,17 @@ func TestCreateNibWithStub(t *testing.T) {
 }
 
 // TestStubReaderNormalizeIDMirrorsCoreContract pins the stub's NormalizeID
-// implementation against the real nibcore.Core.NormalizeID. The stub
-// duplicates Core's "exact-first, then prefix-prepended" resolution rule;
-// if Core ever gains a new branch (case-insensitive fallback, UUID lookup,
-// archive resolution, etc.), this test fires and the stub can't silently
-// drift while stub-based tests elsewhere keep passing.
+// against the real nibcore.Core.NormalizeID over a representative input
+// table. The stub duplicates Core's "exact-first, then prefix-prepended"
+// resolution rule; this test fires if the two diverge on any of the
+// inputs below — covering the short/full/unknown/empty/prefix-only shapes.
 //
-// Addresses the recurring knowledge-preservation concern that the prefix-
-// prepend rule is implemented in multiple places without a guard.
+// Scope: the guarantee is "no drift on the patterns this table exercises."
+// If Core ever gains a branch that fires only on a genuinely new input
+// shape (e.g. case-insensitive fallback on mixed-case IDs, UUID lookup on
+// UUID-formatted IDs, archive resolution on archived-nib IDs), the input
+// list here must be extended to detect it. Treat this as a representative
+// contract test, not an exhaustive one.
 func TestStubReaderNormalizeIDMirrorsCoreContract(t *testing.T) {
 	tmpDir := t.TempDir()
 	cfg := config.DefaultWithPrefix("test-")
@@ -322,14 +325,14 @@ func TestStubReaderNormalizeIDMirrorsCoreContract(t *testing.T) {
 	stub := &stubReader{nibs: nibMap, prefix: "test-"}
 
 	inputs := []string{
-		"abc",          // short form → resolves to test-abc
-		"test-abc",     // exact full form
-		"def",          // short form → resolves to test-def
-		"test-def",     // exact full form
-		"nope",         // unknown short
-		"test-nope",    // unknown full
-		"",             // empty
-		"test-",        // prefix-only, no id body
+		"abc",           // short form → resolves to test-abc
+		"test-abc",      // exact full form
+		"def",           // short form → resolves to test-def
+		"test-def",      // exact full form
+		"nope",          // unknown short
+		"test-nope",     // unknown full
+		"",              // empty
+		"test-",         // prefix-only, no id body
 		"test-test-abc", // double-prefixed, not in map
 	}
 
