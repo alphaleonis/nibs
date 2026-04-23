@@ -73,14 +73,19 @@ Rules the parser applies:
   the body for typos or unresolved IDs.`,
 	Args: cobra.ExactArgs(1),
 	RunE: func(cmd *cobra.Command, args []string) error {
+		// Validate flag combinations BEFORE loading the nib so malformed
+		// invocations fail fast without paying for a filesystem resolve
+		// they don't need. Mirrors the "flag-only validation first"
+		// convention used by other commands.
 		if refsBoth && refsInbound {
 			// --both always fetches both directions in one envelope;
 			// --inbound fetches only inbound. Combining them is ambiguous.
-			err := fmt.Errorf("--both and --inbound are mutually exclusive")
-			if refsJSON {
-				return output.Error(output.ErrValidation, err.Error())
-			}
-			return err
+			return reportErr(refsJSON, output.ErrValidation,
+				fmt.Errorf("--both and --inbound are mutually exclusive"))
+		}
+		filter, err := buildRefsFilter()
+		if err != nil {
+			return reportErr(refsJSON, output.ErrValidation, err)
 		}
 
 		app := getApp(cmd)
@@ -89,34 +94,24 @@ Rules the parser applies:
 
 		b, err := resolver.Query().Nib(ctx, args[0])
 		if err != nil {
-			if refsJSON {
-				return output.Error(output.ErrNotFound, err.Error())
-			}
-			return fmt.Errorf("failed to find nib: %w", err)
+			return reportErr(refsJSON, output.ErrNotFound,
+				fmt.Errorf("failed to find nib: %w", err))
 		}
 		if b == nil {
-			if refsJSON {
-				return output.Error(output.ErrNotFound, fmt.Sprintf("nib not found: %s", args[0]))
-			}
-			return fmt.Errorf("nib not found: %s", args[0])
-		}
-
-		filter, err := buildRefsFilter()
-		if err != nil {
-			if refsJSON {
-				return output.Error(output.ErrValidation, err.Error())
-			}
-			return err
+			return reportErr(refsJSON, output.ErrNotFound,
+				fmt.Errorf("nib not found: %s", args[0]))
 		}
 
 		if refsBoth {
 			outbound, err := resolver.Nib().Mentions(ctx, b, filter)
 			if err != nil {
-				return fmt.Errorf("resolving outbound mentions: %w", err)
+				return reportErr(refsJSON, output.ErrValidation,
+					fmt.Errorf("failed to fetch outbound mentions: %w", err))
 			}
 			inbound, err := resolver.Nib().MentionedBy(ctx, b, filter)
 			if err != nil {
-				return fmt.Errorf("resolving inbound mentions: %w", err)
+				return reportErr(refsJSON, output.ErrValidation,
+					fmt.Errorf("failed to fetch inbound mentions: %w", err))
 			}
 			if refsJSON {
 				if outbound == nil {
@@ -142,7 +137,8 @@ Rules the parser applies:
 			results, err = resolver.Nib().Mentions(ctx, b, filter)
 		}
 		if err != nil {
-			return fmt.Errorf("resolving mentions: %w", err)
+			return reportErr(refsJSON, output.ErrValidation,
+				fmt.Errorf("resolving mentions: %w", err))
 		}
 
 		if refsJSON {

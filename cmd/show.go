@@ -37,16 +37,12 @@ var showCmd = &cobra.Command{
 		for _, id := range args {
 			b, err := resolver.Query().Nib(context.Background(), id)
 			if err != nil {
-				if showJSON {
-					return output.Error(output.ErrNotFound, err.Error())
-				}
-				return fmt.Errorf("failed to find nib: %w", err)
+				return reportErr(showJSON, output.ErrNotFound,
+					fmt.Errorf("failed to find nib: %w", err))
 			}
 			if b == nil {
-				if showJSON {
-					return output.Error(output.ErrNotFound, fmt.Sprintf("nib not found: %s", id))
-				}
-				return fmt.Errorf("nib not found: %s", id)
+				return reportErr(showJSON, output.ErrNotFound,
+					fmt.Errorf("nib not found: %s", id))
 			}
 			nibs = append(nibs, b)
 		}
