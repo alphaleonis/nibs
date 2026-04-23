@@ -4,8 +4,108 @@ import (
 	"sort"
 	"testing"
 
+	"github.com/alphaleonis/nibs/internal/graph/model"
 	"github.com/alphaleonis/nibs/internal/nib"
 )
+
+// TestResolveFilterID exercises the shared helper used by all four
+// filter.*ID branches in ApplyFilter. It must return the full ID for a
+// known short form and ("", false) for an unknown target.
+func TestResolveFilterID(t *testing.T) {
+	target := &nib.Nib{ID: "nibs-target", Title: "Target"}
+	reader := &stubReader{
+		nibs:    map[string]*nib.Nib{"nibs-target": target},
+		allNibs: []*nib.Nib{target},
+		prefix:  "nibs-",
+	}
+
+	t.Run("returns full ID for known short form", func(t *testing.T) {
+		fullID, ok := resolveFilterID(reader, "target")
+		if !ok {
+			t.Fatalf("expected ok=true for known short form")
+		}
+		if fullID != "nibs-target" {
+			t.Errorf("fullID = %q, want %q", fullID, "nibs-target")
+		}
+	})
+
+	t.Run("returns empty and false for unknown target", func(t *testing.T) {
+		fullID, ok := resolveFilterID(reader, "nonexistent")
+		if ok {
+			t.Errorf("expected ok=false for unknown target, got ok=true (fullID=%q)", fullID)
+		}
+		if fullID != "" {
+			t.Errorf("fullID = %q, want empty string on miss", fullID)
+		}
+	})
+}
+
+// TestApplyFilterBlockedByIDShortForm is the tracer bullet: a filter with
+// a short `BlockedByID` must match nibs whose `blocked_by` contains the
+// full (prefixed) ID. Prior to the fix, filter.BlockedByID was passed raw
+// to filterBySliceField with no normalisation, so short IDs silently
+// matched nothing.
+func TestApplyFilterBlockedByIDShortForm(t *testing.T) {
+	target := &nib.Nib{ID: "nibs-target", Title: "Target"}
+	blocked := &nib.Nib{ID: "nibs-blocked", Title: "Blocked", BlockedBy: []string{"nibs-target"}}
+	unrelated := &nib.Nib{ID: "nibs-other", Title: "Other"}
+
+	reader := &stubReader{
+		nibs: map[string]*nib.Nib{
+			"nibs-target":  target,
+			"nibs-blocked": blocked,
+			"nibs-other":   unrelated,
+		},
+		allNibs: []*nib.Nib{target, blocked, unrelated},
+		prefix:  "nibs-",
+	}
+	blocking := &stubBlockingChecker{}
+
+	filter := &model.NibFilter{BlockedByID: strPtr("target")}
+	got := ApplyFilter(reader.allNibs, filter, reader, blocking)
+
+	if len(got) != 1 {
+		t.Fatalf("got %d nibs, want 1 (nibs-blocked)", len(got))
+	}
+	if got[0].ID != "nibs-blocked" {
+		t.Errorf("got %q, want %q", got[0].ID, "nibs-blocked")
+	}
+}
+
+// TestApplyFilterUnknownIDReturnsNil verifies the "unknown target -> nil"
+// contract across all four single-ID filter branches. Previously these
+// branches disagreed: BlockingID via reader.Get returned nil, Mentions(ed)ByID
+// via NormalizeID returned nil, but BlockedByID silently passed the raw ID
+// through and returned empty. All four now route through resolveFilterID
+// and short-circuit to nil on miss.
+func TestApplyFilterUnknownIDReturnsNil(t *testing.T) {
+	existing := &nib.Nib{ID: "nibs-a", Title: "A"}
+	reader := &stubReader{
+		nibs:    map[string]*nib.Nib{"nibs-a": existing},
+		allNibs: []*nib.Nib{existing},
+		prefix:  "nibs-",
+	}
+	blocking := &stubBlockingChecker{}
+
+	tests := []struct {
+		name   string
+		filter *model.NibFilter
+	}{
+		{"BlockedByID unknown", &model.NibFilter{BlockedByID: strPtr("nonexistent")}},
+		{"BlockingID unknown", &model.NibFilter{BlockingID: strPtr("nonexistent")}},
+		{"MentionsID unknown", &model.NibFilter{MentionsID: strPtr("nonexistent")}},
+		{"MentionedByID unknown", &model.NibFilter{MentionedByID: strPtr("nonexistent")}},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := ApplyFilter(reader.allNibs, tt.filter, reader, blocking)
+			if got != nil {
+				t.Errorf("got %d nibs, want nil (unknown target)", len(got))
+			}
+		})
+	}
+}
 
 func TestFilterByPredicate(t *testing.T) {
 	nibs := []*nib.Nib{

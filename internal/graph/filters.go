@@ -5,6 +5,20 @@ import (
 	"github.com/alphaleonis/nibs/internal/graph/model"
 )
 
+// resolveFilterID normalizes a single-ID filter argument via the reader's
+// NormalizeID method. It returns the full ID and true on success, or
+// ("", false) when the target does not resolve. All four filter.*ID
+// branches of ApplyFilter use this helper so they share one contract:
+// an unknown target short-circuits to nil (see the filter.*ID branches
+// below) rather than silently no-matching or panicking.
+func resolveFilterID(reader NibReader, id string) (string, bool) {
+	fullID, ok := reader.NormalizeID(id)
+	if !ok {
+		return "", false
+	}
+	return fullID, true
+}
+
 // ApplyFilter applies NibFilter to a slice of nibs and returns filtered results.
 // This is used by both the top-level nibs query and relationship field resolvers.
 func ApplyFilter(nibs []*nib.Nib, filter *model.NibFilter, reader NibReader, blocking BlockingChecker) []*nib.Nib {
@@ -49,37 +63,51 @@ func ApplyFilter(nibs []*nib.Nib, filter *model.NibFilter, reader NibReader, blo
 	result = filterByPredicate(result, filter.NoBlocking, func(b *nib.Nib) bool { return !blocking.IsBlocking(b.ID) })
 	result = filterByPredicate(result, filter.IsBlocked, func(b *nib.Nib) bool { return blocking.IsBlocked(b.ID) })
 
-	// BlockingID (special: needs reader to look up target nib)
+	// BlockingID (special: needs reader to look up target nib).
+	// Unknown target short-circuits to nil (shared contract for all *ID filters).
 	if filter.BlockingID != nil && *filter.BlockingID != "" {
-		result = filterByBlockingID(result, *filter.BlockingID, reader)
+		fullID, ok := resolveFilterID(reader, *filter.BlockingID)
+		if !ok {
+			return nil
+		}
+		result = filterByBlockingID(result, fullID, reader)
 	}
 
 	// Blocked-by filters (from direct blocked_by field)
 	result = filterByPredicate(result, filter.HasBlockedBy, func(b *nib.Nib) bool { return len(b.BlockedBy) > 0 })
 	result = filterByPredicate(result, filter.NoBlockedBy, func(b *nib.Nib) bool { return len(b.BlockedBy) == 0 })
 	if filter.BlockedByID != nil && *filter.BlockedByID != "" {
-		result = filterBySliceField(result, []string{*filter.BlockedByID}, func(b *nib.Nib) []string { return b.BlockedBy })
+		fullID, ok := resolveFilterID(reader, *filter.BlockedByID)
+		if !ok {
+			return nil
+		}
+		result = filterBySliceField(result, []string{fullID}, func(b *nib.Nib) []string { return b.BlockedBy })
 	}
 
 	// Mention filters (computed via FindMentions/FindMentionedBy on the reader)
 	if filter.MentionsID != nil && *filter.MentionsID != "" {
-		result = filterByMentionsID(result, *filter.MentionsID, reader)
+		fullID, ok := resolveFilterID(reader, *filter.MentionsID)
+		if !ok {
+			return nil
+		}
+		result = filterByMentionsID(result, fullID, reader)
 	}
 	if filter.MentionedByID != nil && *filter.MentionedByID != "" {
-		result = filterByMentionedByID(result, *filter.MentionedByID, reader)
+		fullID, ok := resolveFilterID(reader, *filter.MentionedByID)
+		if !ok {
+			return nil
+		}
+		result = filterByMentionedByID(result, fullID, reader)
 	}
 
 	return result
 }
 
 // filterByMentionsID keeps nibs that mention the given target in their body.
-// Resolves the target via NormalizeID and checks each candidate's outbound mentions.
+// targetID must already be a full (normalised) ID — callers resolve via
+// resolveFilterID before invoking.
 func filterByMentionsID(nibs []*nib.Nib, targetID string, reader NibReader) []*nib.Nib {
-	fullID, ok := reader.NormalizeID(targetID)
-	if !ok {
-		return nil
-	}
-	inbound := reader.FindMentionedBy(fullID)
+	inbound := reader.FindMentionedBy(targetID)
 	inboundSet := make(map[string]bool, len(inbound))
 	for _, b := range inbound {
 		inboundSet[b.ID] = true
@@ -94,12 +122,10 @@ func filterByMentionsID(nibs []*nib.Nib, targetID string, reader NibReader) []*n
 }
 
 // filterByMentionedByID keeps nibs that are mentioned in the given source's body.
+// sourceID must already be a full (normalised) ID — callers resolve via
+// resolveFilterID before invoking.
 func filterByMentionedByID(nibs []*nib.Nib, sourceID string, reader NibReader) []*nib.Nib {
-	fullID, ok := reader.NormalizeID(sourceID)
-	if !ok {
-		return nil
-	}
-	outbound := reader.FindMentions(fullID)
+	outbound := reader.FindMentions(sourceID)
 	outboundSet := make(map[string]bool, len(outbound))
 	for _, b := range outbound {
 		outboundSet[b.ID] = true
@@ -278,6 +304,10 @@ func includeAncestors(nibs []*nib.Nib, reader NibReader) []*nib.Nib {
 
 // filterByBlockingID filters nibs that are blocking a specific nib ID.
 // Computed: checks if targetID has this nib in its blockedBy.
+// targetID must already be a full (normalised) ID — callers resolve via
+// resolveFilterID before invoking. Returns nil if the target nib cannot
+// be fetched (defensive: the caller already proved the ID resolves, but
+// Get may still fail on a concurrent delete).
 func filterByBlockingID(nibs []*nib.Nib, targetID string, reader NibReader) []*nib.Nib {
 	targetNib, err := reader.Get(targetID)
 	if err != nil {
