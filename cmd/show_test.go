@@ -536,17 +536,20 @@ func TestShowCommand_ActiveHuman_DropsResolvedRows(t *testing.T) {
 	// Slice the output by section labels — same pattern as the
 	// BothInboundAndOutbound test — so we can assert each ID appears in
 	// the section it belongs to (and resolved IDs are absent from both).
-	// Restrict both sections to the single label line (body content
-	// below the header also contains `#c3`/`#d4` tokens that would
-	// otherwise produce false-positive matches).
+	// Restrict BOTH sections to their single label line (body content
+	// below the header, as well as any future parent / blocking rows
+	// between the two labels, would otherwise produce false-positive
+	// matches for IDs that legitimately appear there).
 	iOut := strings.Index(out, "mentions:")
 	iIn := strings.Index(out, "mentioned by")
 	if iOut < 0 || iIn < 0 || iOut > iIn {
 		t.Fatalf("expected 'mentions:' before 'mentioned by'; got:\n%s", out)
 	}
-	outSection := out[iOut:iIn]
-	// Trim inSection at the next newline so we only look at the label
-	// line, not the body that follows.
+	outTail := out[iOut:iIn]
+	if nl := strings.Index(outTail, "\n"); nl >= 0 {
+		outTail = outTail[:nl]
+	}
+	outSection := outTail
 	inTail := out[iIn:]
 	if nl := strings.Index(inTail, "\n"); nl >= 0 {
 		inTail = inTail[:nl]

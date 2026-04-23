@@ -255,7 +255,7 @@ func buildShowJSONEnvelope(b *nib.Nib, reader graph.NibReader, activeOnly, inclu
 func mentionIDs(b *nib.Nib, reader graph.NibReader, activeOnly bool) []string {
 	found := reader.FindMentions(b.ID)
 	if activeOnly {
-		found = filterActiveNibs(found)
+		found = filterOutResolvedNibs(found)
 	}
 	return graph.MentionIDList(found)
 }
@@ -268,16 +268,18 @@ func mentionIDs(b *nib.Nib, reader graph.NibReader, activeOnly bool) []string {
 func mentionedByIDs(b *nib.Nib, reader graph.NibReader, activeOnly bool) []string {
 	found := reader.FindMentionedBy(b.ID)
 	if activeOnly {
-		found = filterActiveNibs(found)
+		found = filterOutResolvedNibs(found)
 	}
 	return graph.MentionIDList(found)
 }
 
-// filterActiveNibs drops completed/scrapped nibs (IsResolvedStatus) from the
-// slice. Used by mentionIDs / mentionedByIDs when --active is set so the
+// filterOutResolvedNibs drops completed/scrapped nibs (IsResolvedStatus) from
+// the slice. Used by mentionIDs / mentionedByIDs when --active is set so the
 // mention sections apply the same resolved-filtering already used by
-// computeBlockingIDs.
-func filterActiveNibs(nibs []*nib.Nib) []*nib.Nib {
+// computeBlockingIDs. Named after what it removes (like filterResolvedBlockers
+// in cmd/root.go) rather than what it keeps, so grep for "Resolved" surfaces
+// both sibling helpers.
+func filterOutResolvedNibs(nibs []*nib.Nib) []*nib.Nib {
 	result := make([]*nib.Nib, 0, len(nibs))
 	for _, n := range nibs {
 		if !nib.IsResolvedStatus(n.Status) {
@@ -451,7 +453,7 @@ func init() {
 	showCmd.Flags().BoolVar(&showActive, "active", false,
 		"Exclude completed/scrapped nibs from mention sections")
 	showCmd.Flags().BoolVar(&showNoMentions, "no-mentions", false,
-		"Skip the inbound mention scan; mention sections become empty")
+		"Skip the mention scan entirely; mention sections become empty")
 	showCmd.MarkFlagsMutuallyExclusive("json", "raw", "body-only", "etag-only")
 	rootCmd.AddCommand(showCmd)
 }
