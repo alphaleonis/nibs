@@ -8,6 +8,7 @@ import (
 	"github.com/alphaleonis/nibs/internal/config"
 	"github.com/alphaleonis/nibs/internal/graph/model"
 	"github.com/alphaleonis/nibs/internal/nib"
+	"github.com/alphaleonis/nibs/internal/nibcore"
 )
 
 // stubReader implements NibReader for testing.
@@ -19,6 +20,13 @@ type stubReader struct {
 	// prefix — mirroring nibcore.Core.NormalizeID's exact-first, then
 	// prefix-prepended behaviour.
 	prefix string
+	// mentionsOut, when populated, is returned by FindMentions keyed on the
+	// source (from) nib ID. Tests that need the mention filter paths to
+	// return meaningful data seed this directly.
+	mentionsOut map[string][]*nib.Nib
+	// mentionsIn, when populated, is returned by FindMentionedBy keyed on the
+	// target nib ID.
+	mentionsIn map[string][]*nib.Nib
 }
 
 func (s *stubReader) Get(id string) (*nib.Nib, error) {
@@ -59,11 +67,11 @@ func (s *stubReader) FindIncomingLinks(targetID string) []nib.IncomingLink {
 }
 
 func (s *stubReader) FindMentions(fromID string) []*nib.Nib {
-	return nil
+	return s.mentionsOut[fromID]
 }
 
 func (s *stubReader) FindMentionedBy(targetID string) []*nib.Nib {
-	return nil
+	return s.mentionsIn[targetID]
 }
 
 func (s *stubReader) Config() *config.Config {
@@ -281,4 +289,58 @@ func TestCreateNibWithStub(t *testing.T) {
 			t.Fatalf("expected 1 create call, got %d", len(writer.created))
 		}
 	})
+}
+
+// TestStubReaderNormalizeIDMirrorsCoreContract pins the stub's NormalizeID
+// implementation against the real nibcore.Core.NormalizeID. The stub
+// duplicates Core's "exact-first, then prefix-prepended" resolution rule;
+// if Core ever gains a new branch (case-insensitive fallback, UUID lookup,
+// archive resolution, etc.), this test fires and the stub can't silently
+// drift while stub-based tests elsewhere keep passing.
+//
+// Addresses the recurring knowledge-preservation concern that the prefix-
+// prepend rule is implemented in multiple places without a guard.
+func TestStubReaderNormalizeIDMirrorsCoreContract(t *testing.T) {
+	tmpDir := t.TempDir()
+	cfg := config.DefaultWithPrefix("test-")
+	core := nibcore.New(tmpDir, cfg)
+	if err := core.Load(); err != nil {
+		t.Fatalf("core.Load: %v", err)
+	}
+	// Seed a couple of nibs so the maps have content to resolve against.
+	for _, id := range []string{"test-abc", "test-def"} {
+		if err := core.Create(&nib.Nib{ID: id, Title: id, Status: "todo"}); err != nil {
+			t.Fatalf("core.Create(%q): %v", id, err)
+		}
+	}
+	// Mirror Core's nib set into the stub.
+	allNibs := core.All()
+	nibMap := make(map[string]*nib.Nib, len(allNibs))
+	for _, b := range allNibs {
+		nibMap[b.ID] = b
+	}
+	stub := &stubReader{nibs: nibMap, prefix: "test-"}
+
+	inputs := []string{
+		"abc",          // short form → resolves to test-abc
+		"test-abc",     // exact full form
+		"def",          // short form → resolves to test-def
+		"test-def",     // exact full form
+		"nope",         // unknown short
+		"test-nope",    // unknown full
+		"",             // empty
+		"test-",        // prefix-only, no id body
+		"test-test-abc", // double-prefixed, not in map
+	}
+
+	for _, input := range inputs {
+		t.Run("input="+input, func(t *testing.T) {
+			coreID, coreOk := core.NormalizeID(input)
+			stubID, stubOk := stub.NormalizeID(input)
+			if coreID != stubID || coreOk != stubOk {
+				t.Errorf("NormalizeID(%q) drift: core=(%q,%t), stub=(%q,%t) — update stubReader.NormalizeID to match Core",
+					input, coreID, coreOk, stubID, stubOk)
+			}
+		})
+	}
 }

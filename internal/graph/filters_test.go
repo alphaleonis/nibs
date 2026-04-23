@@ -1,6 +1,7 @@
 package graph
 
 import (
+	"reflect"
 	"sort"
 	"testing"
 
@@ -81,30 +82,83 @@ func TestApplyFilterBlockedByIDShortForm(t *testing.T) {
 // via NormalizeID returned nil, but BlockedByID silently passed the raw ID
 // through and returned empty. All four now route through resolveFilterID
 // and short-circuit to nil on miss.
-func TestApplyFilterUnknownIDReturnsNil(t *testing.T) {
-	existing := &nib.Nib{ID: "nibs-a", Title: "A"}
+//
+// The table pairs a negative case (unknown → nil) with a positive control
+// (known → non-nil with a specific ID in the result). Without the positive
+// rows, a regression that short-circuited to nil unconditionally would
+// pass the unknown-only suite silently.
+func TestApplyFilterIDBranchesKnownAndUnknown(t *testing.T) {
+	// Fixture: four nibs wired so every *ID filter has a non-trivial
+	// positive case.
+	//   - nibs-a: target of blocking queries (blocked_by: [nibs-b]) and
+	//     source of an outbound mention to nibs-c
+	//   - nibs-b: blocker of nibs-a; also blocks via blocked_by
+	//   - nibs-c: mentioned by nibs-a (outbound set)
+	//   - nibs-d: mentions nibs-a (inbound mentioner)
+	nibA := &nib.Nib{ID: "nibs-a", Title: "A", BlockedBy: []string{"nibs-b"}}
+	nibB := &nib.Nib{ID: "nibs-b", Title: "B", BlockedBy: []string{"nibs-a"}}
+	nibC := &nib.Nib{ID: "nibs-c", Title: "C"}
+	nibD := &nib.Nib{ID: "nibs-d", Title: "D"}
+
 	reader := &stubReader{
-		nibs:    map[string]*nib.Nib{"nibs-a": existing},
-		allNibs: []*nib.Nib{existing},
+		nibs: map[string]*nib.Nib{
+			"nibs-a": nibA, "nibs-b": nibB, "nibs-c": nibC, "nibs-d": nibD,
+		},
+		allNibs: []*nib.Nib{nibA, nibB, nibC, nibD},
 		prefix:  "nibs-",
+		// MentionsID filter: "nibs that mention target". Seed so nibs-d
+		// shows up as an inbound mentioner of nibs-a.
+		mentionsIn: map[string][]*nib.Nib{"nibs-a": {nibD}},
+		// MentionedByID filter: "nibs the source mentions". Seed so nibs-c
+		// shows up in nibs-a's outbound set.
+		mentionsOut: map[string][]*nib.Nib{"nibs-a": {nibC}},
 	}
 	blocking := &stubBlockingChecker{}
 
 	tests := []struct {
-		name   string
-		filter *model.NibFilter
+		name     string
+		filter   *model.NibFilter
+		wantNil  bool     // true → short-circuited to nil
+		wantIDs  []string // expected nib IDs in the result (when wantNil=false)
 	}{
-		{"BlockedByID unknown", &model.NibFilter{BlockedByID: strPtr("nonexistent")}},
-		{"BlockingID unknown", &model.NibFilter{BlockingID: strPtr("nonexistent")}},
-		{"MentionsID unknown", &model.NibFilter{MentionsID: strPtr("nonexistent")}},
-		{"MentionedByID unknown", &model.NibFilter{MentionedByID: strPtr("nonexistent")}},
+		// BlockingID — "nibs blocking the target"; target's blocked_by lists them.
+		{"BlockingID known — returns target's blockers", &model.NibFilter{BlockingID: strPtr("a")}, false, []string{"nibs-b"}},
+		{"BlockingID unknown — short-circuits to nil", &model.NibFilter{BlockingID: strPtr("nonexistent")}, true, nil},
+
+		// BlockedByID — "nibs whose blocked_by contains target".
+		{"BlockedByID known — returns nibs blocked by target", &model.NibFilter{BlockedByID: strPtr("a")}, false, []string{"nibs-b"}},
+		{"BlockedByID unknown — short-circuits to nil", &model.NibFilter{BlockedByID: strPtr("nonexistent")}, true, nil},
+
+		// MentionsID — "nibs that mention the target in their body".
+		{"MentionsID known — returns inbound mentioners", &model.NibFilter{MentionsID: strPtr("a")}, false, []string{"nibs-d"}},
+		{"MentionsID unknown — short-circuits to nil", &model.NibFilter{MentionsID: strPtr("nonexistent")}, true, nil},
+
+		// MentionedByID — "nibs mentioned in the source's body".
+		{"MentionedByID known — returns source's outbound mentions", &model.NibFilter{MentionedByID: strPtr("a")}, false, []string{"nibs-c"}},
+		{"MentionedByID unknown — short-circuits to nil", &model.NibFilter{MentionedByID: strPtr("nonexistent")}, true, nil},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			got := ApplyFilter(reader.allNibs, tt.filter, reader, blocking)
-			if got != nil {
-				t.Errorf("got %d nibs, want nil (unknown target)", len(got))
+			if tt.wantNil {
+				if got != nil {
+					t.Errorf("got %d nibs, want nil (unknown target short-circuit)", len(got))
+				}
+				return
+			}
+			if got == nil {
+				t.Fatalf("got nil, want non-nil result with %v", tt.wantIDs)
+			}
+			gotIDs := make([]string, 0, len(got))
+			for _, b := range got {
+				gotIDs = append(gotIDs, b.ID)
+			}
+			sort.Strings(gotIDs)
+			want := append([]string(nil), tt.wantIDs...)
+			sort.Strings(want)
+			if !reflect.DeepEqual(gotIDs, want) {
+				t.Errorf("got IDs %v, want %v", gotIDs, want)
 			}
 		})
 	}
