@@ -1,6 +1,7 @@
 package nibcore
 
 import (
+	"sort"
 	"strings"
 
 	"github.com/alphaleonis/nibs/internal/nib"
@@ -82,6 +83,9 @@ func FindMentionedByInMap(nibs map[string]*nib.Nib, targetID, configPrefix strin
 			}
 		}
 	}
+	// Map iteration order is randomized — sort by ID so callers see a
+	// stable, deterministic result across repeated invocations.
+	sort.Slice(out, func(i, j int) bool { return out[i].ID < out[j].ID })
 	return out
 }
 

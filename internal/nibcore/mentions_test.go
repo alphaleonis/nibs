@@ -133,6 +133,48 @@ func TestFindMentionedByInMap(t *testing.T) {
 	})
 }
 
+func TestFindMentionedByInMap_DeterministicOrder(t *testing.T) {
+	// Five distinct mentioners each reference the same target via a
+	// unique token. Map iteration in Go is randomized per-call, so if the
+	// function does not sort its result the order will vary across calls.
+	nibs := map[string]*nib.Nib{
+		"nibs-target": {ID: "nibs-target", Title: "Target", Body: "No refs."},
+		"nibs-m1":     {ID: "nibs-m1", Title: "M1", Body: "Refs #target (alpha)."},
+		"nibs-m2":     {ID: "nibs-m2", Title: "M2", Body: "See #nibs-target as well."},
+		"nibs-m3":     {ID: "nibs-m3", Title: "M3", Body: "Also #target."},
+		"nibs-m4":     {ID: "nibs-m4", Title: "M4", Body: "And #nibs-target."},
+		"nibs-m5":     {ID: "nibs-m5", Title: "M5", Body: "Plus #target again."},
+	}
+
+	first := FindMentionedByInMap(nibs, "nibs-target", "nibs-")
+	if len(first) != 5 {
+		t.Fatalf("expected 5 inbound mentioners, got %d", len(first))
+	}
+
+	firstIDs := make([]string, len(first))
+	for i, b := range first {
+		firstIDs[i] = b.ID
+	}
+
+	for i := 0; i < 10; i++ {
+		got := FindMentionedByInMap(nibs, "nibs-target", "nibs-")
+		if len(got) != len(first) {
+			t.Fatalf("iter %d: len = %d, want %d", i, len(got), len(first))
+		}
+		gotIDs := make([]string, len(got))
+		for j, b := range got {
+			gotIDs[j] = b.ID
+		}
+		for j := range gotIDs {
+			if gotIDs[j] != firstIDs[j] {
+				t.Errorf("iter %d: order drifted at index %d: got %s, want %s\nfull: %v\nfirst: %v",
+					i, j, gotIDs[j], firstIDs[j], gotIDs, firstIDs)
+				break
+			}
+		}
+	}
+}
+
 func TestCoreFindMentions(t *testing.T) {
 	core, _ := setupTestCore(t)
 
