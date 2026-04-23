@@ -13,6 +13,7 @@ import (
 	"github.com/alphaleonis/nibs/internal/config"
 	"github.com/alphaleonis/nibs/internal/nib"
 	"github.com/alphaleonis/nibs/internal/nibcore"
+	"github.com/spf13/pflag"
 )
 
 // setupRefsTestApp builds an App with the given prefix so mention tests can
@@ -33,10 +34,23 @@ func setupRefsTestApp(t *testing.T, prefix string) *App {
 }
 
 // resetRefsFlags clears the package-level flag vars used by refsCmd so
-// tests don't pollute each other via rootCmd's singleton state.
+// tests don't pollute each other via rootCmd's singleton state. Also
+// clears Cobra's "Changed" tracking so MarkFlagsMutuallyExclusive (and
+// similar per-invocation checks) don't see stale state from a prior
+// Execute.
 func resetRefsFlags() {
 	refsInbound = false
+	refsBoth = false
 	refsJSON = false
+	refsStatus = nil
+	refsNoStatus = nil
+	refsType = nil
+	refsNoType = nil
+	refsPriority = nil
+	refsActive = false
+	refsCmd.Flags().Visit(func(f *pflag.Flag) {
+		f.Changed = false
+	})
 }
 
 // stdoutMu serializes global os.Stdout mutations across tests that need to
@@ -459,5 +473,382 @@ func TestRefsCommand_UnknownIDHumanError(t *testing.T) {
 	}
 	if !strings.Contains(err.Error(), "does-not-exist") && !strings.Contains(err.Error(), "not found") {
 		t.Errorf("expected error to mention the missing id or 'not found', got: %v", err)
+	}
+}
+
+// refsFilterFixture returns a nib-file map used by the refs filter-flag tests.
+//   - a1 mentions b2 (todo/task), c3 (completed/task), d4 (todo/bug).
+//   - e5 mentions a1 (inbound).
+//   - f6 mentions a1 (inbound, scrapped).
+// The mix of statuses and types lets tests exercise each filter flag and
+// compose them with --inbound and --both.
+func refsFilterFixture() map[string]string {
+	return map[string]string{
+		"a1--alpha.md": "---\ntitle: Alpha\nstatus: todo\ntype: task\n---\n\nSee #b2 and #c3 and #d4.\n",
+		"b2--beta.md":  "---\ntitle: Beta\nstatus: todo\ntype: task\npriority: high\n---\n\nNo refs.\n",
+		"c3--gamma.md": "---\ntitle: Gamma\nstatus: completed\ntype: task\npriority: low\n---\n\nNo refs.\n",
+		"d4--delta.md": "---\ntitle: Delta\nstatus: todo\ntype: bug\npriority: high\n---\n\nNo refs.\n",
+		"e5--epsilon.md": "---\ntitle: Epsilon\nstatus: todo\ntype: task\n---\n\nRefs #a1.\n",
+		"f6--zeta.md":    "---\ntitle: Zeta\nstatus: scrapped\ntype: task\n---\n\nRefs #a1.\n",
+	}
+}
+
+func TestRefsCommand_StatusFilter(t *testing.T) {
+	nibsDir := setupRefsCobraTest(t, refsFilterFixture())
+
+	// a1's outbound mentions with --status todo → b2 and d4 only.
+	rootCmd.SetArgs([]string{"--nibs-path", nibsDir, "refs", "a1", "--status", "todo", "--json"})
+	var execErr error
+	out := captureStdout(t, func() {
+		execErr = rootCmd.Execute()
+	})
+	if execErr != nil {
+		t.Fatalf("refs --status failed: %v", execErr)
+	}
+	var nibs []*nib.Nib
+	if err := json.Unmarshal([]byte(out), &nibs); err != nil {
+		t.Fatalf("unmarshal: %v\nraw: %s", err, out)
+	}
+	if len(nibs) != 2 {
+		t.Fatalf("got %d, want 2 (b2, d4)\nraw: %s", len(nibs), out)
+	}
+	ids := map[string]bool{nibs[0].ID: true, nibs[1].ID: true}
+	if !ids["b2"] || !ids["d4"] {
+		t.Errorf("got %v, want {b2, d4}", ids)
+	}
+}
+
+func TestRefsCommand_NoStatusFilter(t *testing.T) {
+	nibsDir := setupRefsCobraTest(t, refsFilterFixture())
+
+	// a1's outbound with --no-status completed → excludes c3, leaves b2, d4.
+	rootCmd.SetArgs([]string{"--nibs-path", nibsDir, "refs", "a1", "--no-status", "completed", "--json"})
+	var execErr error
+	out := captureStdout(t, func() {
+		execErr = rootCmd.Execute()
+	})
+	if execErr != nil {
+		t.Fatalf("refs --no-status failed: %v", execErr)
+	}
+	var nibs []*nib.Nib
+	if err := json.Unmarshal([]byte(out), &nibs); err != nil {
+		t.Fatalf("unmarshal: %v\nraw: %s", err, out)
+	}
+	ids := map[string]bool{}
+	for _, n := range nibs {
+		ids[n.ID] = true
+	}
+	if ids["c3"] {
+		t.Errorf("completed c3 should have been excluded; got %v", ids)
+	}
+	if !ids["b2"] || !ids["d4"] {
+		t.Errorf("got %v, want b2 and d4 present", ids)
+	}
+}
+
+func TestRefsCommand_TypeFilter(t *testing.T) {
+	nibsDir := setupRefsCobraTest(t, refsFilterFixture())
+
+	// a1's outbound with --type bug → d4 only.
+	rootCmd.SetArgs([]string{"--nibs-path", nibsDir, "refs", "a1", "--type", "bug", "--json"})
+	var execErr error
+	out := captureStdout(t, func() {
+		execErr = rootCmd.Execute()
+	})
+	if execErr != nil {
+		t.Fatalf("refs --type failed: %v", execErr)
+	}
+	var nibs []*nib.Nib
+	if err := json.Unmarshal([]byte(out), &nibs); err != nil {
+		t.Fatalf("unmarshal: %v\nraw: %s", err, out)
+	}
+	if len(nibs) != 1 || nibs[0].ID != "d4" {
+		t.Errorf("got %+v, want exactly [d4]", nibs)
+	}
+}
+
+func TestRefsCommand_NoTypeFilter(t *testing.T) {
+	nibsDir := setupRefsCobraTest(t, refsFilterFixture())
+
+	// --no-type bug → excludes d4, leaves b2, c3.
+	rootCmd.SetArgs([]string{"--nibs-path", nibsDir, "refs", "a1", "--no-type", "bug", "--json"})
+	var execErr error
+	out := captureStdout(t, func() {
+		execErr = rootCmd.Execute()
+	})
+	if execErr != nil {
+		t.Fatalf("refs --no-type failed: %v", execErr)
+	}
+	var nibs []*nib.Nib
+	if err := json.Unmarshal([]byte(out), &nibs); err != nil {
+		t.Fatalf("unmarshal: %v\nraw: %s", err, out)
+	}
+	ids := map[string]bool{}
+	for _, n := range nibs {
+		ids[n.ID] = true
+	}
+	if ids["d4"] {
+		t.Errorf("d4 (bug) should have been excluded; got %v", ids)
+	}
+	if !ids["b2"] || !ids["c3"] {
+		t.Errorf("got %v, want b2 and c3 present", ids)
+	}
+}
+
+func TestRefsCommand_PriorityFilter(t *testing.T) {
+	nibsDir := setupRefsCobraTest(t, refsFilterFixture())
+
+	// --priority high → b2 and d4.
+	rootCmd.SetArgs([]string{"--nibs-path", nibsDir, "refs", "a1", "--priority", "high", "--json"})
+	var execErr error
+	out := captureStdout(t, func() {
+		execErr = rootCmd.Execute()
+	})
+	if execErr != nil {
+		t.Fatalf("refs --priority failed: %v", execErr)
+	}
+	var nibs []*nib.Nib
+	if err := json.Unmarshal([]byte(out), &nibs); err != nil {
+		t.Fatalf("unmarshal: %v\nraw: %s", err, out)
+	}
+	if len(nibs) != 2 {
+		t.Fatalf("got %d, want 2 (b2, d4)\nraw: %s", len(nibs), out)
+	}
+	ids := map[string]bool{nibs[0].ID: true, nibs[1].ID: true}
+	if !ids["b2"] || !ids["d4"] {
+		t.Errorf("got %v, want {b2, d4}", ids)
+	}
+}
+
+func TestRefsCommand_ActiveFlag(t *testing.T) {
+	nibsDir := setupRefsCobraTest(t, refsFilterFixture())
+
+	// --active → excludes completed (c3) and scrapped. Outbound = b2, d4.
+	rootCmd.SetArgs([]string{"--nibs-path", nibsDir, "refs", "a1", "--active", "--json"})
+	var execErr error
+	out := captureStdout(t, func() {
+		execErr = rootCmd.Execute()
+	})
+	if execErr != nil {
+		t.Fatalf("refs --active failed: %v", execErr)
+	}
+	var nibs []*nib.Nib
+	if err := json.Unmarshal([]byte(out), &nibs); err != nil {
+		t.Fatalf("unmarshal: %v\nraw: %s", err, out)
+	}
+	ids := map[string]bool{}
+	for _, n := range nibs {
+		ids[n.ID] = true
+	}
+	if ids["c3"] {
+		t.Errorf("c3 (completed) should have been excluded by --active; got %v", ids)
+	}
+	if !ids["b2"] || !ids["d4"] {
+		t.Errorf("got %v, want b2 and d4 present", ids)
+	}
+}
+
+func TestRefsCommand_ActiveFlag_Inbound(t *testing.T) {
+	nibsDir := setupRefsCobraTest(t, refsFilterFixture())
+
+	// --inbound --active on a1 → mentioners excluding scrapped = e5 only.
+	rootCmd.SetArgs([]string{"--nibs-path", nibsDir, "refs", "a1", "--inbound", "--active", "--json"})
+	var execErr error
+	out := captureStdout(t, func() {
+		execErr = rootCmd.Execute()
+	})
+	if execErr != nil {
+		t.Fatalf("refs --inbound --active failed: %v", execErr)
+	}
+	var nibs []*nib.Nib
+	if err := json.Unmarshal([]byte(out), &nibs); err != nil {
+		t.Fatalf("unmarshal: %v\nraw: %s", err, out)
+	}
+	if len(nibs) != 1 || nibs[0].ID != "e5" {
+		t.Errorf("got %+v, want exactly [e5]", nibs)
+	}
+}
+
+func TestRefsCommand_BothMode_HumanOutput(t *testing.T) {
+	nibsDir := setupRefsCobraTest(t, refsFilterFixture())
+
+	rootCmd.SetArgs([]string{"--nibs-path", nibsDir, "refs", "a1", "--both"})
+	var stdout bytes.Buffer
+	rootCmd.SetOut(&stdout)
+	rootCmd.SetErr(&stdout)
+	defer rootCmd.SetOut(nil)
+	defer rootCmd.SetErr(nil)
+
+	if err := rootCmd.Execute(); err != nil {
+		t.Fatalf("refs --both failed: %v", err)
+	}
+	out := stdout.String()
+	if !strings.Contains(out, "Outbound") {
+		t.Errorf("expected 'Outbound' section label, got:\n%s", out)
+	}
+	if !strings.Contains(out, "Inbound") {
+		t.Errorf("expected 'Inbound' section label, got:\n%s", out)
+	}
+	// Outbound should list b2, c3, d4; Inbound should list e5, f6.
+	for _, id := range []string{"b2", "c3", "d4", "e5", "f6"} {
+		if !strings.Contains(out, id) {
+			t.Errorf("expected id %q in --both output, got:\n%s", id, out)
+		}
+	}
+}
+
+func TestRefsCommand_BothMode_JSONShape(t *testing.T) {
+	nibsDir := setupRefsCobraTest(t, refsFilterFixture())
+
+	rootCmd.SetArgs([]string{"--nibs-path", nibsDir, "refs", "a1", "--both", "--json"})
+	var execErr error
+	out := captureStdout(t, func() {
+		execErr = rootCmd.Execute()
+	})
+	if execErr != nil {
+		t.Fatalf("refs --both --json failed: %v", execErr)
+	}
+
+	var envelope struct {
+		Success  bool       `json:"success"`
+		Outbound []*nib.Nib `json:"outbound"`
+		Inbound  []*nib.Nib `json:"inbound"`
+	}
+	if err := json.Unmarshal([]byte(out), &envelope); err != nil {
+		t.Fatalf("unmarshal: %v\nraw: %s", err, out)
+	}
+	if !envelope.Success {
+		t.Errorf("envelope.Success = false, want true")
+	}
+	if len(envelope.Outbound) != 3 {
+		t.Errorf("outbound len = %d, want 3 (b2, c3, d4)", len(envelope.Outbound))
+	}
+	if len(envelope.Inbound) != 2 {
+		t.Errorf("inbound len = %d, want 2 (e5, f6)", len(envelope.Inbound))
+	}
+}
+
+func TestRefsCommand_BothMode_EmptySections(t *testing.T) {
+	// A nib with neither outbound nor inbound mentions — --both human output
+	// should still show both labels with the muted "No ... mentions." line.
+	nibsDir := setupRefsCobraTest(t, map[string]string{
+		"solo--solo.md": "---\ntitle: Solo\nstatus: todo\ntype: task\n---\n\nNo refs.\n",
+	})
+	rootCmd.SetArgs([]string{"--nibs-path", nibsDir, "refs", "solo", "--both"})
+	var stdout bytes.Buffer
+	rootCmd.SetOut(&stdout)
+	rootCmd.SetErr(&stdout)
+	defer rootCmd.SetOut(nil)
+	defer rootCmd.SetErr(nil)
+
+	if err := rootCmd.Execute(); err != nil {
+		t.Fatalf("refs --both (empty) failed: %v", err)
+	}
+	out := stdout.String()
+	if !strings.Contains(out, "Outbound") || !strings.Contains(out, "Inbound") {
+		t.Errorf("expected both section labels, got:\n%s", out)
+	}
+	if !strings.Contains(out, "No outbound mentions") {
+		t.Errorf("expected 'No outbound mentions', got:\n%s", out)
+	}
+	if !strings.Contains(out, "No inbound mentions") {
+		t.Errorf("expected 'No inbound mentions', got:\n%s", out)
+	}
+}
+
+func TestRefsCommand_BothMode_WithFilterFlags(t *testing.T) {
+	// Filter flags must compose with --both and apply to both directions.
+	// --both --active on a1:
+	//   outbound = b2, d4 (c3 is completed → dropped).
+	//   inbound  = e5     (f6 is scrapped  → dropped).
+	nibsDir := setupRefsCobraTest(t, refsFilterFixture())
+	rootCmd.SetArgs([]string{"--nibs-path", nibsDir, "refs", "a1", "--both", "--active", "--json"})
+	var execErr error
+	out := captureStdout(t, func() {
+		execErr = rootCmd.Execute()
+	})
+	if execErr != nil {
+		t.Fatalf("refs --both --active failed: %v", execErr)
+	}
+	var envelope struct {
+		Success  bool       `json:"success"`
+		Outbound []*nib.Nib `json:"outbound"`
+		Inbound  []*nib.Nib `json:"inbound"`
+	}
+	if err := json.Unmarshal([]byte(out), &envelope); err != nil {
+		t.Fatalf("unmarshal: %v\nraw: %s", err, out)
+	}
+	if len(envelope.Outbound) != 2 {
+		t.Errorf("outbound len = %d, want 2 (b2, d4 after --active)", len(envelope.Outbound))
+	}
+	if len(envelope.Inbound) != 1 || envelope.Inbound[0].ID != "e5" {
+		t.Errorf("inbound = %+v, want exactly [e5]", envelope.Inbound)
+	}
+}
+
+func TestRefsCommand_BothAndInbound_Rejected(t *testing.T) {
+	nibsDir := setupRefsCobraTest(t, refsFilterFixture())
+
+	rootCmd.SetArgs([]string{"--nibs-path", nibsDir, "refs", "a1", "--both", "--inbound"})
+	var stdout bytes.Buffer
+	rootCmd.SetOut(&stdout)
+	rootCmd.SetErr(&stdout)
+	defer rootCmd.SetOut(nil)
+	defer rootCmd.SetErr(nil)
+
+	err := rootCmd.Execute()
+	if err == nil {
+		t.Fatal("expected error for --both --inbound combo, got nil")
+	}
+	if !strings.Contains(err.Error(), "mutually exclusive") {
+		t.Errorf("expected 'mutually exclusive' in error, got: %v", err)
+	}
+}
+
+func TestRefsCommand_BothAndInbound_JSONError(t *testing.T) {
+	nibsDir := setupRefsCobraTest(t, refsFilterFixture())
+	rootCmd.SetArgs([]string{"--nibs-path", nibsDir, "refs", "a1", "--both", "--inbound", "--json"})
+
+	var execErr error
+	out := captureStdout(t, func() {
+		execErr = rootCmd.Execute()
+	})
+	if execErr == nil {
+		t.Fatal("expected error for --both --inbound, got nil")
+	}
+	var env struct {
+		Success bool   `json:"success"`
+		Code    string `json:"code"`
+	}
+	if err := json.Unmarshal([]byte(out), &env); err != nil {
+		t.Fatalf("unmarshal envelope: %v\nraw: %s", err, out)
+	}
+	if env.Success {
+		t.Errorf("envelope.Success = true, want false")
+	}
+	if env.Code != "VALIDATION_ERROR" {
+		t.Errorf("envelope.Code = %q, want VALIDATION_ERROR", env.Code)
+	}
+}
+
+func TestRefsCommand_InboundWithStatusFilter(t *testing.T) {
+	// Compose filter flag with --inbound (no --both).
+	nibsDir := setupRefsCobraTest(t, refsFilterFixture())
+
+	// a1's inbound = e5 (todo), f6 (scrapped). --status todo → e5 only.
+	rootCmd.SetArgs([]string{"--nibs-path", nibsDir, "refs", "a1", "--inbound", "--status", "todo", "--json"})
+	var execErr error
+	out := captureStdout(t, func() {
+		execErr = rootCmd.Execute()
+	})
+	if execErr != nil {
+		t.Fatalf("refs --inbound --status failed: %v", execErr)
+	}
+	var nibs []*nib.Nib
+	if err := json.Unmarshal([]byte(out), &nibs); err != nil {
+		t.Fatalf("unmarshal: %v\nraw: %s", err, out)
+	}
+	if len(nibs) != 1 || nibs[0].ID != "e5" {
+		t.Errorf("got %+v, want exactly [e5]", nibs)
 	}
 }
