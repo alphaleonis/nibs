@@ -17,17 +17,28 @@ import (
 )
 
 var (
-	showJSON     bool
-	showRaw      bool
-	showBodyOnly bool
-	showETagOnly bool
+	showJSON       bool
+	showRaw        bool
+	showBodyOnly   bool
+	showETagOnly   bool
+	showActive     bool
+	showNoMentions bool
 )
 
 var showCmd = &cobra.Command{
 	Use:   "show <id> [id...]",
 	Short: "Show a nib's contents",
-	Long:  `Displays the full contents of one or more nibs, including front matter and body.`,
-	Args:  cobra.MinimumNArgs(1),
+	Long: `Displays the full contents of one or more nibs, including front matter and body.
+
+Human and --json output include outbound (mentions) and inbound (mentioned_by)
+body-reference lists. Two flags adjust how those lists are computed:
+
+  --active       Drop completed/scrapped entries from both mention sections,
+                 matching the resolved-status filter used by 'nibs refs --active'.
+  --no-mentions  Skip the mention scan entirely. Mention sections are omitted
+                 from human output; --json emits empty arrays for both fields.
+                 --no-mentions dominates --active when both are set.`,
+	Args: cobra.MinimumNArgs(1),
 	RunE: func(cmd *cobra.Command, args []string) error {
 		app := getApp(cmd)
 		resolver := app.newResolver()
@@ -55,7 +66,7 @@ var showCmd = &cobra.Command{
 			filtered := filterResolvedBlockers(nibs, app.Core)
 			envelopes := make([]showJSONEnvelope, len(filtered))
 			for i, b := range filtered {
-				envelopes[i] = buildShowJSONEnvelope(b, app.Core)
+				envelopes[i] = buildShowJSONEnvelope(b, app.Core, showActive, !showNoMentions)
 			}
 			if len(envelopes) == 1 {
 				return output.JSONRaw(envelopes[0])
@@ -107,10 +118,15 @@ var showCmd = &cobra.Command{
 				fmt.Println(ui.Muted.Render(strings.Repeat("═", 60)))
 				fmt.Println()
 			}
+			var mentions, mentionedBy []string
+			if !showNoMentions {
+				mentions = mentionIDs(b, app.Core, showActive)
+				mentionedBy = mentionedByIDs(b, app.Core, showActive)
+			}
 			showStyledNib(b,
 				computeBlockingIDs(b, app.Core),
-				mentionIDs(b, app.Core),
-				mentionedByIDs(b, app.Core),
+				mentions,
+				mentionedBy,
 				app.Config())
 		}
 
@@ -201,15 +217,30 @@ func (e showJSONEnvelope) MarshalJSON() ([]byte, error) {
 // buildShowJSONEnvelope wraps a Nib with its outbound/inbound mention ID
 // lists. IDs mirror the `blocked_by` shape — callers wanting the full
 // resolved objects should use `nibs refs`.
-func buildShowJSONEnvelope(b *nib.Nib, reader graph.NibReader) showJSONEnvelope {
+//
+// When includeMentions is false (e.g. `--no-mentions`), the mention slices
+// are returned as empty (and marshal to `[]`), preserving the
+// always-present shape contract for agent consumers. When activeOnly is
+// true (e.g. `--active`), completed/scrapped nibs are dropped from both
+// directions before ID extraction.
+func buildShowJSONEnvelope(b *nib.Nib, reader graph.NibReader, activeOnly, includeMentions bool) showJSONEnvelope {
+	if !includeMentions {
+		return showJSONEnvelope{
+			Nib:         b,
+			Mentions:    []string{},
+			MentionedBy: []string{},
+		}
+	}
 	return showJSONEnvelope{
 		Nib:         b,
-		Mentions:    mentionIDs(b, reader),
-		MentionedBy: mentionedByIDs(b, reader),
+		Mentions:    mentionIDs(b, reader, activeOnly),
+		MentionedBy: mentionedByIDs(b, reader, activeOnly),
 	}
 }
 
 // mentionIDs returns the IDs of nibs that this nib's body mentions.
+// When activeOnly is true, completed/scrapped targets are filtered out
+// (same resolved-status convention used by computeBlockingIDs).
 //
 // Convention: lightweight read-only relationship rendering in `show` goes
 // through graph.NibReader (Core-direct). Filterable relationship listing
@@ -221,16 +252,39 @@ func buildShowJSONEnvelope(b *nib.Nib, reader graph.NibReader) showJSONEnvelope 
 // and the MentionIds/MentionedByIds GraphQL resolvers share a single
 // implementation — if one ever gains a filtering step (e.g. dropping
 // archived mentions), the other picks it up for free.
-func mentionIDs(b *nib.Nib, reader graph.NibReader) []string {
-	return graph.MentionIDList(reader.FindMentions(b.ID))
+func mentionIDs(b *nib.Nib, reader graph.NibReader, activeOnly bool) []string {
+	found := reader.FindMentions(b.ID)
+	if activeOnly {
+		found = filterActiveNibs(found)
+	}
+	return graph.MentionIDList(found)
 }
 
 // mentionedByIDs returns the IDs of nibs whose bodies mention this nib.
+// When activeOnly is true, completed/scrapped mentioners are filtered out.
 // See the convention note on mentionIDs — this uses the Core-direct path
 // (graph.NibReader.FindMentionedBy) rather than the resolver, and shares
 // the graph.MentionIDList extraction helper with the resolver siblings.
-func mentionedByIDs(b *nib.Nib, reader graph.NibReader) []string {
-	return graph.MentionIDList(reader.FindMentionedBy(b.ID))
+func mentionedByIDs(b *nib.Nib, reader graph.NibReader, activeOnly bool) []string {
+	found := reader.FindMentionedBy(b.ID)
+	if activeOnly {
+		found = filterActiveNibs(found)
+	}
+	return graph.MentionIDList(found)
+}
+
+// filterActiveNibs drops completed/scrapped nibs (IsResolvedStatus) from the
+// slice. Used by mentionIDs / mentionedByIDs when --active is set so the
+// mention sections apply the same resolved-filtering already used by
+// computeBlockingIDs.
+func filterActiveNibs(nibs []*nib.Nib) []*nib.Nib {
+	result := make([]*nib.Nib, 0, len(nibs))
+	for _, n := range nibs {
+		if !nib.IsResolvedStatus(n.Status) {
+			result = append(result, n)
+		}
+	}
+	return result
 }
 
 // computeBlockingIDs returns the IDs of active nibs that this nib is blocking,
@@ -394,6 +448,10 @@ func init() {
 	showCmd.Flags().BoolVar(&showRaw, "raw", false, "Output raw markdown without styling")
 	showCmd.Flags().BoolVar(&showBodyOnly, "body-only", false, "Output only the body content")
 	showCmd.Flags().BoolVar(&showETagOnly, "etag-only", false, "Output only the etag")
+	showCmd.Flags().BoolVar(&showActive, "active", false,
+		"Exclude completed/scrapped nibs from mention sections")
+	showCmd.Flags().BoolVar(&showNoMentions, "no-mentions", false,
+		"Skip the inbound mention scan; mention sections become empty")
 	showCmd.MarkFlagsMutuallyExclusive("json", "raw", "body-only", "etag-only")
 	rootCmd.AddCommand(showCmd)
 }
