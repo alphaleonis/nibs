@@ -13,26 +13,39 @@ import (
 	"github.com/alphaleonis/nibs/internal/nib"
 )
 
-// resolveMentionToken resolves a token (short or full form) against the nib
-// map. Returns the full ID and true if the token resolves.
+// normalizeIDInMap is the single source of truth for the exact-match →
+// prefix-prepended ID resolution rule shared by Core.NormalizeID,
+// Core.normalizeIDForLookupLocked, and resolveMentionToken.
 //
-// Resolution order: exact match → prefix-prepended match, mirroring
-// Core.NormalizeID so `#<id>` behaves identically to explicit ID lookups.
+// Returns the full ID and true if the id resolves via either an exact map
+// key or by prepending configPrefix; otherwise ("", false). Pure — no
+// locking; callers are responsible for holding any required Core mutex
+// while the input map is read.
+//
 // nib.NewID always prepends the configured prefix today, so a bare token
 // and its prefixed form cannot both exist in the map — if that invariant
-// is ever broken (e.g. importing externally generated nibs), this tiebreak
-// becomes user-visible and needs revisiting.
-func resolveMentionToken(nibs map[string]*nib.Nib, token, configPrefix string) (string, bool) {
-	if _, ok := nibs[token]; ok {
-		return token, true
+// is ever broken (e.g. importing externally generated nibs), the ordering
+// here (exact-first, prefix-prepended-second) becomes user-visible and
+// needs revisiting.
+func normalizeIDInMap(nibs map[string]*nib.Nib, id, configPrefix string) (string, bool) {
+	if _, ok := nibs[id]; ok {
+		return id, true
 	}
-	if configPrefix != "" && !strings.HasPrefix(token, configPrefix) {
-		full := configPrefix + token
+	if configPrefix != "" && !strings.HasPrefix(id, configPrefix) {
+		full := configPrefix + id
 		if _, ok := nibs[full]; ok {
 			return full, true
 		}
 	}
 	return "", false
+}
+
+// resolveMentionToken resolves a token (short or full form) against the nib
+// map. Thin wrapper around normalizeIDInMap — kept as a named entry point
+// for the mention-resolution call sites so the intent at the call site is
+// obvious.
+func resolveMentionToken(nibs map[string]*nib.Nib, token, configPrefix string) (string, bool) {
+	return normalizeIDInMap(nibs, token, configPrefix)
 }
 
 // FindMentionsInMap returns the nibs whose IDs are referenced via `#<id>`
@@ -133,19 +146,10 @@ func (c *Core) FindMentionedBy(targetID string) []*nib.Nib {
 
 // normalizeIDForLookupLocked mirrors Core.NormalizeID but assumes the caller
 // already holds c.mu. Returns (fullID, true) if the ID resolves via exact
-// match or prefix prepending, otherwise ("", false).
+// match or prefix prepending, otherwise ("", false). Delegates to the
+// shared normalizeIDInMap helper so resolution logic stays in one place.
 func (c *Core) normalizeIDForLookupLocked(id string) (string, bool) {
-	if _, ok := c.nibs[id]; ok {
-		return id, true
-	}
-	prefix := c.configPrefix()
-	if prefix != "" && !strings.HasPrefix(id, prefix) {
-		full := prefix + id
-		if _, ok := c.nibs[full]; ok {
-			return full, true
-		}
-	}
-	return "", false
+	return normalizeIDInMap(c.nibs, id, c.configPrefix())
 }
 
 func (c *Core) configPrefix() string {

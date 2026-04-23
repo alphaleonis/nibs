@@ -324,24 +324,19 @@ func (c *Core) Get(id string) (*nib.Nib, error) {
 // NormalizeID resolves a potentially short ID to its full form.
 // If a prefix is configured and the query doesn't include it, the prefix is automatically prepended.
 // Returns the full ID and true if found, or the original ID and false if not found.
+//
+// Shares resolution logic with Core.normalizeIDForLookupLocked and
+// resolveMentionToken via normalizeIDInMap — behaviour changes must be
+// made in the shared helper so all three stay in lockstep.
 func (c *Core) NormalizeID(id string) (string, bool) {
 	c.mu.RLock()
 	defer c.mu.RUnlock()
 
-	// Try exact match
-	if _, ok := c.nibs[id]; ok {
-		return id, true
+	if full, ok := normalizeIDInMap(c.nibs, id, c.configPrefix()); ok {
+		return full, true
 	}
-
-	// If not found and we have a configured prefix that isn't already in the query,
-	// try with the prefix prepended (allows short IDs like "abc" to match "nibs-abc")
-	if c.config != nil && c.config.Nibs.Prefix != "" && !strings.HasPrefix(id, c.config.Nibs.Prefix) {
-		fullID := c.config.Nibs.Prefix + id
-		if _, ok := c.nibs[fullID]; ok {
-			return fullID, true
-		}
-	}
-
+	// Preserve the "echo the original id back" convention that existing
+	// callers rely on when the id doesn't resolve.
 	return id, false
 }
 
