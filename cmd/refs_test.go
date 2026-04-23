@@ -139,9 +139,21 @@ func captureStdout(t *testing.T, fn func()) string {
 		done <- buf.String()
 	}()
 
-	defer func() { _ = w.Close() }()
+	// Double-close guard: the deferred close runs after a panic inside
+	// fn() (where the explicit close below never reached). On the normal
+	// path the flag is flipped and the defer becomes a no-op. Without
+	// the guard a stray second Close() would hit an already-closed fd
+	// and, under concurrent OS fd reuse, could race with whichever file
+	// has inherited the fd slot.
+	closed := false
+	defer func() {
+		if !closed {
+			_ = w.Close()
+		}
+	}()
 	fn()
 	_ = w.Close()
+	closed = true
 
 	select {
 	case s := <-done:

@@ -137,6 +137,13 @@ var showCmd = &cobra.Command{
 // The mention arrays hold IDs (parallel to `blocked_by`), not full nib
 // objects, so agents get a uniform shape for relationship fields. Use
 // `nibs refs` if the full resolved objects are needed.
+//
+// Shape contract: `mentions` and `mentioned_by` are ALWAYS emitted (as
+// `[]` when empty). The Nib struct's own `blocked_by` / `parent` fields,
+// by contrast, remain `omitempty` and are absent when empty — aligning
+// them would be a broader breaking change out of scope. Agents writing
+// jq pipelines against `show --json` output should defensive-check
+// potentially-absent fields: `(.blocked_by // []) | length`.
 type showJSONEnvelope struct {
 	Nib         *nib.Nib
 	Mentions    []string
@@ -157,7 +164,12 @@ func (e showJSONEnvelope) MarshalJSON() ([]byte, error) {
 	if err := json.Unmarshal(nibBytes, &merged); err != nil {
 		return nil, fmt.Errorf("decoding nib JSON for envelope merge (expected object): %w", err)
 	}
-	// Guard against a future Nib field colliding with our injected keys.
+	// Guard against a future Nib field whose JSON tag collides with our
+	// injected keys at the TOP LEVEL. Nested collisions at any depth are
+	// not detected because json.Unmarshal into map[string]json.RawMessage
+	// flattens only the top layer. That's acceptable: the Nib schema is
+	// unlikely to use "mentions" or "mentioned_by" except as a top-level
+	// field.
 	for _, reserved := range []string{"mentions", "mentioned_by"} {
 		if _, exists := merged[reserved]; exists {
 			return nil, fmt.Errorf("nib JSON unexpectedly contains reserved key %q — field name collision", reserved)
