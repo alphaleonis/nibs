@@ -25,8 +25,17 @@ Use --inbound to list the reverse: nibs whose bodies mention <id>.
 
 Body references use the #<id> syntax — either the short form (#gx0f)
 or the full form (#nibs-gx0f). Bare IDs without the # sigil are not
-recognised as mentions. References inside fenced code blocks or inline
-code spans are ignored.`,
+recognised as mentions.
+
+Rules the parser applies:
+- Only lowercase ASCII letters/digits plus internal hyphens are accepted
+  in the id body; uppercase IDs (#ABCD) are ignored.
+- ` + "`#`" + ` adjacent to a word-like char (email#foo, name_#bar) is ignored.
+- Content inside fenced or indented code blocks, inline code spans,
+  links, images, and raw HTML is skipped entirely.
+- Self-references and tokens that do not resolve to a known nib drop
+  silently — if ` + "`nibs refs`" + ` shows fewer results than expected, check
+  the body for typos or unresolved IDs.`,
 	Args: cobra.ExactArgs(1),
 	RunE: func(cmd *cobra.Command, args []string) error {
 		app := getApp(cmd)
@@ -61,12 +70,13 @@ code spans are ignored.`,
 			return output.SuccessMultiple(results)
 		}
 
+		out := cmd.OutOrStdout()
 		if len(results) == 0 {
 			direction := "outbound"
 			if refsInbound {
 				direction = "inbound"
 			}
-			fmt.Println(ui.Muted.Render(fmt.Sprintf("No %s mentions for %s.", direction, b.ID)))
+			_, _ = fmt.Fprintln(out, ui.Muted.Render(fmt.Sprintf("No %s mentions for %s.", direction, b.ID)))
 			return nil
 		}
 
@@ -78,7 +88,7 @@ code spans are ignored.`,
 				statusColor = statusCfg.Color
 			}
 			isArchive := cfg.IsArchiveStatus(r.Status)
-			fmt.Printf("%s  %s  %s\n",
+			_, _ = fmt.Fprintf(out, "%s  %s  %s\n",
 				ui.ID.Render(r.ID),
 				ui.RenderStatusWithColor(r.Status, statusColor, isArchive),
 				r.Title,
