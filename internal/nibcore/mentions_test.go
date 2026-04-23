@@ -107,6 +107,23 @@ func TestFindMentionedByInMap(t *testing.T) {
 		}
 	})
 
+	// Per-source uniqueness invariant: FindMentionedByInMap returns at
+	// most one entry per source ID, regardless of how many tokens that
+	// source used to mention the target. Testing the invariant directly
+	// is more durable than testing the mechanism — `break`, an outer
+	// slice-level dedup, a map-based collector, or any future refactor
+	// must all preserve this.
+	t.Run("per-source uniqueness invariant (at most one entry per source ID)", func(t *testing.T) {
+		got := FindMentionedByInMap(nibs, "nibs-bbb2", "nibs-")
+		seen := make(map[string]bool)
+		for _, b := range got {
+			if seen[b.ID] {
+				t.Errorf("source %q appears more than once in inbound result", b.ID)
+			}
+			seen[b.ID] = true
+		}
+	})
+
 	t.Run("target with no inbound mentions", func(t *testing.T) {
 		got := FindMentionedByInMap(nibs, "nibs-aaa1", "nibs-")
 		if got != nil {
@@ -155,6 +172,20 @@ func TestFindMentionedByInMap_DeterministicOrder(t *testing.T) {
 		firstIDs[i] = b.ID
 	}
 
+	// Pin the contract: result is sorted by ID ascending. Without this
+	// assertion, a refactor that sorted by title, insertion time, or any
+	// other stable-but-non-ID key would still pass the 10-call
+	// determinism check below.
+	for i := 1; i < len(first); i++ {
+		if firstIDs[i-1] >= firstIDs[i] {
+			t.Errorf("expected sort by ID asc; got[%d].ID=%q >= got[%d].ID=%q",
+				i-1, firstIDs[i-1], i, firstIDs[i])
+		}
+	}
+
+	// Defence-in-depth: 10 subsequent calls must all produce the same
+	// order. Catches a future regression where the sort is dropped and
+	// Go's randomized map iteration surfaces through.
 	for i := 0; i < 10; i++ {
 		got := FindMentionedByInMap(nibs, "nibs-target", "nibs-")
 		if len(got) != len(first) {

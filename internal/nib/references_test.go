@@ -233,8 +233,18 @@ func TestExtractMentionTokens(t *testing.T) {
 		},
 		// Inline link text and image alt text are inside skipped node types.
 		{
-			name: "inline link text is skipped",
+			name: "inline link text without mention produces nothing",
+			body: "[click here](https://example.com)",
+			want: nil,
+		},
+		{
+			name: "inline link text with mention inside is skipped",
 			body: "[click #gx0f](https://example.com)",
+			want: nil,
+		},
+		{
+			name: "inline link URL fragment is skipped",
+			body: "[click](#realref)",
 			want: nil,
 		},
 		{

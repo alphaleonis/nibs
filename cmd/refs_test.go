@@ -7,6 +7,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
 
 	"github.com/alphaleonis/nibs/internal/config"
@@ -38,10 +39,22 @@ func resetRefsFlags() {
 	refsJSON = false
 }
 
+// stdoutMu serializes global os.Stdout mutations across tests that need to
+// observe writes from the output package (which bypasses Cobra's writers).
+// The mutex neutralises the race if anyone later adds t.Parallel() to a
+// test in this package — stdout itself is process-global, so concurrent
+// swaps would silently steal each other's output without this guard.
+var stdoutMu sync.Mutex
+
 // captureStdout captures writes made directly to os.Stdout while fn runs
 // (used for output.Success*/Error which bypass Cobra's configured writers).
+// NOT safe under t.Parallel() — the package-level mutex guards against
+// concurrent swaps within the same process, but stdout itself is still
+// global.
 func captureStdout(t *testing.T, fn func()) string {
 	t.Helper()
+	stdoutMu.Lock()
+	defer stdoutMu.Unlock()
 	orig := os.Stdout
 	r, w, err := os.Pipe()
 	if err != nil {
