@@ -15,15 +15,15 @@ import (
 )
 
 var (
-	refsInbound    bool
-	refsBoth       bool
-	refsJSON       bool
-	refsStatus     []string
-	refsNoStatus   []string
-	refsType       []string
-	refsNoType     []string
-	refsPriority   []string
-	refsActive     bool
+	refsInbound  bool
+	refsBoth     bool
+	refsJSON     bool
+	refsStatus   []string
+	refsNoStatus []string
+	refsType     []string
+	refsNoType   []string
+	refsPriority []string
+	refsActive   bool
 )
 
 // refsBothResult is the JSON shape emitted by `nibs refs --both --json`.

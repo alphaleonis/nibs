@@ -9,6 +9,7 @@ import (
 
 	"github.com/alphaleonis/nibs/internal/graph/model"
 	"github.com/alphaleonis/nibs/internal/nib"
+	"github.com/spf13/pflag"
 )
 
 func TestBuildNibSort(t *testing.T) {
@@ -69,17 +70,12 @@ func TestListReadyFlagMutualExclusion(t *testing.T) {
 	}
 }
 
-// resetListFlags clears the package-level flag vars used by listCmd so tests
-// don't pollute each other via rootCmd's singleton state.
-//
-// NOTE: Unlike resetRefsFlags/resetShowFlags we do NOT clear Cobra's
-// Changed state — listCmd's --ready/--is-blocked mutex is implemented
-// manually in list.go:107. If you add MarkFlagsMutuallyExclusive to
-// listCmd in future, add
-//
-//	listCmd.Flags().Visit(func(f *pflag.Flag) { f.Changed = false })
-//
-// here to prevent order-dependent test pollution.
+// resetListFlags clears the package-level flag vars used by listCmd AND
+// Cobra's Changed-state tracking so tests don't pollute each other via
+// rootCmd's singleton state. Clearing Changed state future-proofs the
+// helper: listCmd's current --ready/--is-blocked mutex is implemented
+// manually in list.go, but if MarkFlagsMutuallyExclusive is ever adopted
+// it will read the Changed flag and would misbehave with stale state.
 func resetListFlags() {
 	listJSON = false
 	listSearch = ""
@@ -105,74 +101,68 @@ func resetListFlags() {
 	listQuiet = false
 	listSort = ""
 	listFull = false
+	listCmd.Flags().Visit(func(f *pflag.Flag) {
+		f.Changed = false
+	})
 }
 
-// TestResetListFlagsClearsAllState mirrors TestResetCloseFlagsClearsAllState
-// — set every package-level flag var non-zero, call the reset helper, and
-// verify all are back to their zero values. If a new flag is added to
-// listCmd without a matching reset line, this test fires.
+// TestResetListFlagsClearsAllState walks listCmd's Cobra FlagSet and verifies
+// that every registered flag is at its documented default after resetListFlags
+// runs. Unlike a hand-enumerated check, this catches additive drift: if a new
+// flag is registered on listCmd but resetListFlags doesn't clear its backing
+// var, the post-reset value will diverge from DefValue and this test fires.
+// Also verifies Cobra's Changed state is cleared — see resetListFlags for the
+// rationale.
 func TestResetListFlagsClearsAllState(t *testing.T) {
-	listJSON = true
-	listSearch = "dirty"
-	listStatus = []string{"x"}
-	listNoStatus = []string{"x"}
-	listType = []string{"x"}
-	listNoType = []string{"x"}
-	listPriority = []string{"x"}
-	listNoPriority = []string{"x"}
-	listEstimate = []string{"x"}
-	listNoEstimate = []string{"x"}
-	listTag = []string{"x"}
-	listNoTag = []string{"x"}
-	listHasParent = true
-	listNoParent = true
-	listParentID = "dirty"
-	listHasBlocking = true
-	listNoBlocking = true
-	listIsBlocked = true
-	listMentions = "dirty"
-	listMentionedBy = "dirty"
-	listReady = true
-	listQuiet = true
-	listSort = "dirty"
-	listFull = true
+	t.Cleanup(resetListFlags)
+
+	// Dirty every flag via the real FlagSet so Cobra's `actual` map is
+	// populated — Set() is the only public way to do this. Each value
+	// chosen is a representative non-default (bool → "true", string →
+	// a sentinel, stringArray → one element).
+	dirty := map[string]string{
+		"json":         "true",
+		"search":       "dirty",
+		"status":       "todo",
+		"no-status":    "draft",
+		"type":         "task",
+		"no-type":      "bug",
+		"priority":     "high",
+		"no-priority":  "low",
+		"estimate":     "m",
+		"no-estimate":  "xl",
+		"tag":          "idea",
+		"no-tag":       "wontdo",
+		"has-parent":   "true",
+		"no-parent":    "true",
+		"parent":       "dirty",
+		"has-blocking": "true",
+		"no-blocking":  "true",
+		"is-blocked":   "true",
+		"mentions":     "dirty",
+		"mentioned-by": "dirty",
+		"ready":        "true",
+		"quiet":        "true",
+		"sort":         "created",
+		"full":         "true",
+	}
+	for name, val := range dirty {
+		if err := listCmd.Flags().Set(name, val); err != nil {
+			t.Fatalf("pre-populate --%s: %v", name, err)
+		}
+	}
 
 	resetListFlags()
 
-	checks := []struct {
-		name string
-		zero bool
-	}{
-		{"listJSON", !listJSON},
-		{"listSearch", listSearch == ""},
-		{"listStatus", listStatus == nil},
-		{"listNoStatus", listNoStatus == nil},
-		{"listType", listType == nil},
-		{"listNoType", listNoType == nil},
-		{"listPriority", listPriority == nil},
-		{"listNoPriority", listNoPriority == nil},
-		{"listEstimate", listEstimate == nil},
-		{"listNoEstimate", listNoEstimate == nil},
-		{"listTag", listTag == nil},
-		{"listNoTag", listNoTag == nil},
-		{"listHasParent", !listHasParent},
-		{"listNoParent", !listNoParent},
-		{"listParentID", listParentID == ""},
-		{"listHasBlocking", !listHasBlocking},
-		{"listNoBlocking", !listNoBlocking},
-		{"listIsBlocked", !listIsBlocked},
-		{"listMentions", listMentions == ""},
-		{"listMentionedBy", listMentionedBy == ""},
-		{"listReady", !listReady},
-		{"listQuiet", !listQuiet},
-		{"listSort", listSort == ""},
-		{"listFull", !listFull},
-	}
-	for _, c := range checks {
-		if !c.zero {
-			t.Errorf("%s not reset to zero value", c.name)
+	listCmd.Flags().VisitAll(func(f *pflag.Flag) {
+		if f.Value.String() != f.DefValue {
+			t.Errorf("flag %q = %q after reset, want default %q",
+				f.Name, f.Value.String(), f.DefValue)
 		}
-	}
+		if f.Changed {
+			t.Errorf("flag %q Changed = true after reset, want false", f.Name)
+		}
+	})
 }
 
 // setupListCobraTest writes nib files and returns the .nibs directory so
@@ -395,4 +385,3 @@ func TestTruncate(t *testing.T) {
 		})
 	}
 }
-

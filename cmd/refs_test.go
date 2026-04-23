@@ -54,61 +54,53 @@ func resetRefsFlags() {
 	})
 }
 
-// TestResetRefsFlagsClearsAllState mirrors TestResetCloseFlagsClearsAllState
-// — set every package-level flag var non-zero, call the reset helper, and
-// verify all are back to their zero values AND Cobra's Changed state was
-// cleared. If a new flag is added to refsCmd without a matching reset
-// line, this test fires.
+// TestResetRefsFlagsClearsAllState walks refsCmd's Cobra FlagSet and verifies
+// that every registered flag is at its documented default after resetRefsFlags
+// runs. Unlike a hand-enumerated check, this catches additive drift: if a new
+// flag is registered on refsCmd but resetRefsFlags doesn't clear its backing
+// var, the post-reset value will diverge from DefValue and this test fires.
+// Also verifies Cobra's Changed state is cleared so MarkFlagsMutuallyExclusive
+// (and similar per-invocation checks) don't see stale state from a prior
+// Execute.
 func TestResetRefsFlagsClearsAllState(t *testing.T) {
 	t.Cleanup(resetRefsFlags)
-	refsInbound = true
-	refsBoth = true
-	refsJSON = true
-	refsStatus = []string{"x"}
-	refsNoStatus = []string{"x"}
-	refsType = []string{"x"}
-	refsNoType = []string{"x"}
-	refsPriority = []string{"x"}
-	refsActive = true
-	// Simulate Cobra having seen flags via a prior Execute. Set() (not
-	// direct f.Changed mutation) is the only way to add a flag to the
-	// FlagSet's `actual` map, which Visit walks.
-	if err := refsCmd.Flags().Set("json", "true"); err != nil {
-		t.Fatalf("pre-populate --json: %v", err)
+
+	// Dirty every flag via the real FlagSet so Cobra's `actual` map is
+	// populated (Set() is the only public way to do this) — this
+	// exercises Changed-state clearing as well as value clearing.
+	dirty := map[string]string{
+		"inbound":   "true",
+		"both":      "true",
+		"json":      "true",
+		"status":    "todo",
+		"no-status": "draft",
+		"type":      "task",
+		"no-type":   "bug",
+		"priority":  "high",
+		"active":    "true",
+	}
+	for name, val := range dirty {
+		if err := refsCmd.Flags().Set(name, val); err != nil {
+			t.Fatalf("pre-populate --%s: %v", name, err)
+		}
 	}
 
 	resetRefsFlags()
 
-	if refsInbound {
-		t.Error("refsInbound not reset")
-	}
-	if refsBoth {
-		t.Error("refsBoth not reset")
-	}
-	if refsJSON {
-		t.Error("refsJSON not reset")
-	}
-	if refsStatus != nil {
-		t.Errorf("refsStatus not reset: %v", refsStatus)
-	}
-	if refsNoStatus != nil {
-		t.Errorf("refsNoStatus not reset: %v", refsNoStatus)
-	}
-	if refsType != nil {
-		t.Errorf("refsType not reset: %v", refsType)
-	}
-	if refsNoType != nil {
-		t.Errorf("refsNoType not reset: %v", refsNoType)
-	}
-	if refsPriority != nil {
-		t.Errorf("refsPriority not reset: %v", refsPriority)
-	}
-	if refsActive {
-		t.Error("refsActive not reset")
-	}
-	if f := refsCmd.Flags().Lookup("json"); f != nil && f.Changed {
-		t.Error("refsCmd --json Changed state not cleared")
-	}
+	// Walk the FlagSet and assert every flag is back to its registered
+	// default. DefValue is a stringified form of the default registered
+	// at pflag.*Var time; Value.String() is the same form of the current
+	// value, so comparing them works uniformly across bool/string/
+	// stringArray without per-type branching.
+	refsCmd.Flags().VisitAll(func(f *pflag.Flag) {
+		if f.Value.String() != f.DefValue {
+			t.Errorf("flag %q = %q after reset, want default %q",
+				f.Name, f.Value.String(), f.DefValue)
+		}
+		if f.Changed {
+			t.Errorf("flag %q Changed = true after reset, want false", f.Name)
+		}
+	})
 }
 
 // stdoutMu serializes global os.Stdout mutations across tests that need to
@@ -551,14 +543,15 @@ func TestRefsCommand_UnknownIDHumanError(t *testing.T) {
 //   - a1 mentions b2 (todo/task), c3 (completed/task), d4 (todo/bug).
 //   - e5 mentions a1 (inbound).
 //   - f6 mentions a1 (inbound, scrapped).
+//
 // The mix of statuses and types lets tests exercise each filter flag and
 // compose them with --inbound and --both.
 func refsFilterFixture() map[string]string {
 	return map[string]string{
-		"a1--alpha.md": "---\ntitle: Alpha\nstatus: todo\ntype: task\n---\n\nSee #b2 and #c3 and #d4.\n",
-		"b2--beta.md":  "---\ntitle: Beta\nstatus: todo\ntype: task\npriority: high\n---\n\nNo refs.\n",
-		"c3--gamma.md": "---\ntitle: Gamma\nstatus: completed\ntype: task\npriority: low\n---\n\nNo refs.\n",
-		"d4--delta.md": "---\ntitle: Delta\nstatus: todo\ntype: bug\npriority: high\n---\n\nNo refs.\n",
+		"a1--alpha.md":   "---\ntitle: Alpha\nstatus: todo\ntype: task\n---\n\nSee #b2 and #c3 and #d4.\n",
+		"b2--beta.md":    "---\ntitle: Beta\nstatus: todo\ntype: task\npriority: high\n---\n\nNo refs.\n",
+		"c3--gamma.md":   "---\ntitle: Gamma\nstatus: completed\ntype: task\npriority: low\n---\n\nNo refs.\n",
+		"d4--delta.md":   "---\ntitle: Delta\nstatus: todo\ntype: bug\npriority: high\n---\n\nNo refs.\n",
 		"e5--epsilon.md": "---\ntitle: Epsilon\nstatus: todo\ntype: task\n---\n\nRefs #a1.\n",
 		"f6--zeta.md":    "---\ntitle: Zeta\nstatus: scrapped\ntype: task\n---\n\nRefs #a1.\n",
 	}

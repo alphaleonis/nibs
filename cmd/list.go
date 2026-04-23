@@ -15,30 +15,30 @@ import (
 )
 
 var (
-	listJSON       bool
-	listSearch     string
-	listStatus     []string
-	listNoStatus   []string
-	listType       []string
-	listNoType     []string
-	listPriority   []string
-	listNoPriority []string
-	listEstimate   []string
-	listNoEstimate []string
-	listTag        []string
-	listNoTag      []string
-	listHasParent     bool
-	listNoParent      bool
-	listParentID      string
-	listHasBlocking   bool
-	listNoBlocking    bool
-	listIsBlocked     bool
-	listMentions      string
-	listMentionedBy   string
-	listReady      bool
-	listQuiet      bool
-	listSort       string
-	listFull       bool
+	listJSON        bool
+	listSearch      string
+	listStatus      []string
+	listNoStatus    []string
+	listType        []string
+	listNoType      []string
+	listPriority    []string
+	listNoPriority  []string
+	listEstimate    []string
+	listNoEstimate  []string
+	listTag         []string
+	listNoTag       []string
+	listHasParent   bool
+	listNoParent    bool
+	listParentID    string
+	listHasBlocking bool
+	listNoBlocking  bool
+	listIsBlocked   bool
+	listMentions    string
+	listMentionedBy string
+	listReady       bool
+	listQuiet       bool
+	listSort        string
+	listFull        bool
 )
 
 var listCmd = &cobra.Command{

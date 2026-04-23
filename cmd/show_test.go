@@ -27,42 +27,45 @@ func resetShowFlags() {
 	})
 }
 
-// TestResetShowFlagsClearsAllState mirrors TestResetCloseFlagsClearsAllState
-// — set every package-level flag var non-zero, call the reset helper, and
-// verify all are back to their zero values AND Cobra's Changed state was
-// cleared. If a new flag is added to showCmd without a matching reset
-// line, this test fires.
+// TestResetShowFlagsClearsAllState walks showCmd's Cobra FlagSet and verifies
+// that every registered flag is at its documented default after resetShowFlags
+// runs. Unlike a hand-enumerated check, this catches additive drift: if a new
+// flag is registered on showCmd but resetShowFlags doesn't clear its backing
+// var, the post-reset value will diverge from DefValue and this test fires.
+// Also verifies Cobra's Changed state is cleared — MarkFlagsMutuallyExclusive
+// relies on it, and stale Changed state across tests would silently break the
+// mutex check.
 func TestResetShowFlagsClearsAllState(t *testing.T) {
 	t.Cleanup(resetShowFlags)
-	showJSON = true
-	showRaw = true
-	showBodyOnly = true
-	showETagOnly = true
-	// Simulate Cobra having seen flags via a prior Execute so the
-	// Changed-state clearing is exercised. Using Set() (rather than
-	// mutating f.Changed directly) is the only way to add a flag to the
-	// FlagSet's `actual` map, which is what Visit walks.
-	if err := showCmd.Flags().Set("json", "true"); err != nil {
-		t.Fatalf("pre-populate --json: %v", err)
+
+	// Dirty every flag via the real FlagSet so Cobra's `actual` map is
+	// populated — Set() is the only way to do this, and it also
+	// exercises the MarkFlagsMutuallyExclusive Changed-tracking path.
+	// These four are mutually exclusive at Execute() time but not at
+	// Set() time, so this is safe.
+	dirty := map[string]string{
+		"json":      "true",
+		"raw":       "true",
+		"body-only": "true",
+		"etag-only": "true",
+	}
+	for name, val := range dirty {
+		if err := showCmd.Flags().Set(name, val); err != nil {
+			t.Fatalf("pre-populate --%s: %v", name, err)
+		}
 	}
 
 	resetShowFlags()
 
-	if showJSON {
-		t.Error("showJSON not reset")
-	}
-	if showRaw {
-		t.Error("showRaw not reset")
-	}
-	if showBodyOnly {
-		t.Error("showBodyOnly not reset")
-	}
-	if showETagOnly {
-		t.Error("showETagOnly not reset")
-	}
-	if f := showCmd.Flags().Lookup("json"); f != nil && f.Changed {
-		t.Error("showCmd --json Changed state not cleared")
-	}
+	showCmd.Flags().VisitAll(func(f *pflag.Flag) {
+		if f.Value.String() != f.DefValue {
+			t.Errorf("flag %q = %q after reset, want default %q",
+				f.Name, f.Value.String(), f.DefValue)
+		}
+		if f.Changed {
+			t.Errorf("flag %q Changed = true after reset, want false", f.Name)
+		}
+	})
 }
 
 // setupShowCobraTest writes nib files and returns the .nibs directory so
@@ -95,10 +98,10 @@ func setupShowCobraTest(t *testing.T, files map[string]string) string {
 //   - solo has neither outbound nor inbound mentions.
 func showMentionsFixture() map[string]string {
 	return map[string]string{
-		"a1--alpha.md": "---\ntitle: Alpha\nstatus: todo\ntype: task\n---\n\nSee #b2 and #c3.\n",
-		"b2--beta.md":  "---\ntitle: Beta\nstatus: todo\ntype: task\n---\n\nNo refs.\n",
-		"c3--gamma.md": "---\ntitle: Gamma\nstatus: todo\ntype: task\n---\n\nBackref to #a1.\n",
-		"d4--delta.md": "---\ntitle: Delta\nstatus: todo\ntype: task\n---\n\nAlso mentions #a1.\n",
+		"a1--alpha.md":  "---\ntitle: Alpha\nstatus: todo\ntype: task\n---\n\nSee #b2 and #c3.\n",
+		"b2--beta.md":   "---\ntitle: Beta\nstatus: todo\ntype: task\n---\n\nNo refs.\n",
+		"c3--gamma.md":  "---\ntitle: Gamma\nstatus: todo\ntype: task\n---\n\nBackref to #a1.\n",
+		"d4--delta.md":  "---\ntitle: Delta\nstatus: todo\ntype: task\n---\n\nAlso mentions #a1.\n",
 		"solo--solo.md": "---\ntitle: Solo\nstatus: todo\ntype: task\n---\n\nNo refs here.\n",
 	}
 }
@@ -342,4 +345,3 @@ func TestShowCommand_Raw_Unchanged(t *testing.T) {
 		t.Errorf("--raw should NOT inject mention relationship line, got:\n%s", out)
 	}
 }
-
