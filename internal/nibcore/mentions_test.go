@@ -1,8 +1,11 @@
 package nibcore
 
 import (
+	"os"
+	"path/filepath"
 	"testing"
 
+	"github.com/alphaleonis/nibs/internal/config"
 	"github.com/alphaleonis/nibs/internal/nib"
 )
 
@@ -197,6 +200,54 @@ func TestCoreFindMentions(t *testing.T) {
 		got := core.FindMentionedBy("bbb2")
 		if len(got) != 1 || got[0].ID != "aaa1" {
 			t.Errorf("got %v, want [aaa1]", got)
+		}
+	})
+}
+
+// TestCoreFindMentions_ShortIDNormalization verifies that short IDs
+// (without the configured prefix) resolve to the same result as full IDs —
+// matching the contract established by Core.Get / Core.NormalizeID.
+func TestCoreFindMentions_ShortIDNormalization(t *testing.T) {
+	tmpDir := t.TempDir()
+	nibsDir := filepath.Join(tmpDir, NibsDir)
+	if err := os.MkdirAll(nibsDir, 0755); err != nil {
+		t.Fatalf("mkdir: %v", err)
+	}
+	cfg := config.DefaultWithPrefix("nibs-")
+	core := New(nibsDir, cfg)
+	core.SetWarnWriter(nil)
+	if err := core.Load(); err != nil {
+		t.Fatalf("load: %v", err)
+	}
+
+	nibA := &nib.Nib{ID: "nibs-aa1", Title: "A", Status: "todo", Body: "See #bb2."}
+	nibB := &nib.Nib{ID: "nibs-bb2", Title: "B", Status: "todo"}
+	for _, b := range []*nib.Nib{nibA, nibB} {
+		if err := core.Create(b); err != nil {
+			t.Fatalf("create: %v", err)
+		}
+	}
+
+	t.Run("FindMentions accepts short ID", func(t *testing.T) {
+		got := core.FindMentions("aa1")
+		if len(got) != 1 || got[0].ID != "nibs-bb2" {
+			t.Errorf("short-ID FindMentions = %v, want [nibs-bb2]", got)
+		}
+	})
+
+	t.Run("FindMentionedBy accepts short ID", func(t *testing.T) {
+		got := core.FindMentionedBy("bb2")
+		if len(got) != 1 || got[0].ID != "nibs-aa1" {
+			t.Errorf("short-ID FindMentionedBy = %v, want [nibs-aa1]", got)
+		}
+	})
+
+	t.Run("unknown ID returns nil on both", func(t *testing.T) {
+		if got := core.FindMentions("nope"); got != nil {
+			t.Errorf("FindMentions(nope) = %v, want nil", got)
+		}
+		if got := core.FindMentionedBy("nope"); got != nil {
+			t.Errorf("FindMentionedBy(nope) = %v, want nil", got)
 		}
 	})
 }

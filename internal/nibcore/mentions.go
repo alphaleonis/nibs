@@ -90,18 +90,46 @@ func FindMentionedByInMap(nibs map[string]*nib.Nib, targetID, configPrefix strin
 }
 
 // FindMentions is the thread-safe wrapper around FindMentionsInMap using the
-// Core's nib map and configured prefix.
+// Core's nib map and configured prefix. Short IDs are normalized via the
+// same exact-match-then-prefix-prepended rule as Core.Get / Core.NormalizeID,
+// so callers can pass either form consistently.
 func (c *Core) FindMentions(fromID string) []*nib.Nib {
 	c.mu.RLock()
 	defer c.mu.RUnlock()
-	return FindMentionsInMap(c.nibs, fromID, c.configPrefix())
+	fullID, ok := c.normalizeIDForLookupLocked(fromID)
+	if !ok {
+		return nil
+	}
+	return FindMentionsInMap(c.nibs, fullID, c.configPrefix())
 }
 
 // FindMentionedBy is the thread-safe wrapper around FindMentionedByInMap.
+// Short IDs are normalized, matching Core.Get / Core.NormalizeID.
 func (c *Core) FindMentionedBy(targetID string) []*nib.Nib {
 	c.mu.RLock()
 	defer c.mu.RUnlock()
-	return FindMentionedByInMap(c.nibs, targetID, c.configPrefix())
+	fullID, ok := c.normalizeIDForLookupLocked(targetID)
+	if !ok {
+		return nil
+	}
+	return FindMentionedByInMap(c.nibs, fullID, c.configPrefix())
+}
+
+// normalizeIDForLookupLocked mirrors Core.NormalizeID but assumes the caller
+// already holds c.mu. Returns (fullID, true) if the ID resolves via exact
+// match or prefix prepending, otherwise ("", false).
+func (c *Core) normalizeIDForLookupLocked(id string) (string, bool) {
+	if _, ok := c.nibs[id]; ok {
+		return id, true
+	}
+	prefix := c.configPrefix()
+	if prefix != "" && !strings.HasPrefix(id, prefix) {
+		full := prefix + id
+		if _, ok := c.nibs[full]; ok {
+			return full, true
+		}
+	}
+	return "", false
 }
 
 func (c *Core) configPrefix() string {
