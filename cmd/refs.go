@@ -105,12 +105,12 @@ Rules the parser applies:
 		if refsBoth {
 			outbound, err := resolver.Nib().Mentions(ctx, b, filter)
 			if err != nil {
-				return reportErr(refsJSON, output.ErrValidation,
+				return reportErr(refsJSON, output.ErrFileError,
 					fmt.Errorf("failed to fetch outbound mentions: %w", err))
 			}
 			inbound, err := resolver.Nib().MentionedBy(ctx, b, filter)
 			if err != nil {
-				return reportErr(refsJSON, output.ErrValidation,
+				return reportErr(refsJSON, output.ErrFileError,
 					fmt.Errorf("failed to fetch inbound mentions: %w", err))
 			}
 			if refsJSON {
@@ -137,7 +137,7 @@ Rules the parser applies:
 			results, err = resolver.Nib().Mentions(ctx, b, filter)
 		}
 		if err != nil {
-			return reportErr(refsJSON, output.ErrValidation,
+			return reportErr(refsJSON, output.ErrFileError,
 				fmt.Errorf("resolving mentions: %w", err))
 		}
 
