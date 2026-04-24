@@ -7,6 +7,34 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## v0.3.0 - 2026-04-24
+
+### Added
+- **Body-reference mentions** — `#<id>` tokens in nib bodies are now first-class relationships. Mentions use a `#` sigil followed by a nib ID in short form (`#gx0f`) or full form (`#nibs-gx0f`). Parsing uses the goldmark AST, so mentions inside fenced code blocks, inline code spans, links, images, and raw HTML are skipped; heading text mentions are extracted. Self-references and unresolved tokens drop silently.
+- **`nibs links <id>`** — unified relationship-graph query command that replaces the retired `refs` and `deps`. Closed-set relation enum: `mentions-out`, `mentions-in`, `parent`, `children`, `siblings`, `blocking`, `blocked-by`, `ancestors`, `descendants`, `blockers-transitive`, `blocks-transitive`, `mentions-out-transitive`, `mentions-in-transitive`, `neighbours` (expands to the 7 direct rels), and `neighbours-active` (direct rels excluding completed/scrapped). Supports `--depth N|all`, `--order topo` (reusing the toposort engine from deps), `--flat` to collapse multi-rel output, `--json`, and the full list-style filter surface. Filters that don't apply to the requested rel fail with a clear error rather than being silently ignored. Stable envelope shape: `{id, depth?, relations: {<rel>: {nibs: [...]}}}`, the same for single-rel and multi-rel queries.
+- **`nibs show --body-chars N` / `--summary`** — truncate body previews when surveying many nibs at once. Rune-aware (multi-byte safe); appends `…` when cut. Applies to default styled / `--json` / `--body-only` output; `--raw` and `--etag-only` stay byte-faithful. JSON emits `body_truncated: true` only when truncation occurred.
+- **`nibs show --active` / `--no-mentions`** — filter mention sections in the show view. `--active` drops completed/scrapped entries from both outbound and inbound mentions; `--no-mentions` skips the mention scan entirely.
+- **`nibs list --mentions <id>` / `--mentioned-by <id>`** — filter flags for body-reference relationships, mirroring `--blocked-by`.
+- **GraphQL `mentions(filter)`, `mentionedBy(filter)`, `mentionIds`, `mentionedByIds`** on `Nib`, plus `mentionsId` / `mentionedById` filter fields on `NibFilter`.
+- **GraphQL `Config.prefix`** exposes the configured nib ID prefix to the web UI, enabling correct short-form mention resolution for projects that use non-default prefixes.
+- **Web UI: clickable `#<id>` mentions** — mentions in the detail panel body are rewritten into clickable anchors that navigate via the existing `onnibselect` flow. New Mentions and Mentioned-by sections in the detail panel alongside Parent / Children / Blocking.
+- **TUI: block move** — when one or more rows are SPACE-selected, Ctrl-Up / Ctrl-Down move them as a contiguous block. Silent no-op when the selection isn't block-movable (non-contiguous, multi-parent, or at the boundary). Single-item selection still moves that item. Selected parent pulls its whole subtree along; descendants of a selected parent are treated as "along for the ride" and never move independently.
+- **Reverse-mention index** in Core plus per-request resolver memoization so mention queries serve from a pre-built index instead of re-parsing bodies on every call. Materially faster on large nib graphs.
+- Fuzz target and adversarial benchmark for `ExtractMentionTokens`.
+
+### Changed
+- **BREAKING: JSON output shapes consolidated** across `list`, `show`, and the retired `refs --both`. Mutation responses wrap their payload in a `success` / `error` envelope; read responses emit bare payloads. Mention, `blocked_by`, and similar relationship arrays are always present as `[]` when empty — never `null` — so `jq` pipelines can iterate unconditionally.
+- **Filter ID normalization unified** — passing a short ID to `--blocked-by` now resolves identically to `--mentions` and peers. Fixes a miss where `BlockedByID` short-form lookups silently returned empty.
+- Reverse-mention lookup ordering is now deterministic (sorted by ID across all callers).
+
+### Removed
+- **BREAKING: `nibs refs`** — retired. Use `nibs links <id> --rel mentions-out` (outbound), `--rel mentions-in` (inbound), or `--rel neighbours` for the full direct-relationship set. The JSON envelope changes from ad-hoc per-direction keys to the unified `{id, relations: {...}}` shape.
+- **BREAKING: `nibs deps`** — retired. Use `nibs links <parent> --rel children --order topo` for the topologically ordered child set. `--cycles`, `--graph`, and the deps-specific output flags are not carried over; use `links --json` plus external tooling for graph visualization.
+
+### Fixed
+- `ExtractMentionTokens` preserves word-boundary rules across AST text segments — the goldmark tokenizer can split a run of prose across multiple text nodes, and the adjacency check now consults the original source position rather than the local node string.
+- `--active` combined with `--status completed` (or `--status scrapped`) now errors at the CLI layer with a clear "filter always yields empty" validation message, instead of silently returning an empty set.
+
 ## v0.2.3 - 2026-04-12
 
 ### Changed
