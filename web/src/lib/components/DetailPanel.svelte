@@ -45,8 +45,48 @@
 
   let nib = $derived($result.data?.nib ?? null);
   let fetching = $derived($result.fetching);
-  let bodyHtml = $derived(renderMarkdown(nib?.body ?? ""));
+  // Set of full mention IDs from the nib's resolved mentions. Used by the
+  // resolver below to decide which `#<id>` tokens to rewrite as anchors.
+  // NOTE: project nib ID prefix is currently hardcoded as `nibs-` because the
+  // web UI's config surface doesn't expose the configured prefix. If/when the
+  // prefix becomes configurable in the web UI, this needs to read from config.
+  let mentionIdSet = $derived(new Set<string>((nib?.mentions ?? []).map((m: { id: string }) => m.id)));
+  // Use `$derived.by` with an explicit reactive read of `mentionIdSet` inside
+  // the body of the derivation. If we closed over `mentionIdSet` via a plain
+  // function passed to `renderMarkdown`, the derivation would not re-run when
+  // `mentionIdSet` changes while `nib.body` stays constant.
+  let bodyHtml = $derived.by(() => {
+    const ids = mentionIdSet; // explicit reactive read
+    const resolve = (token: string): string | null => {
+      // User may write either `#gx0f` (short) or `#nibs-gx0f` (full). Since
+      // nib.mentions returns full IDs, the first branch only matches when the
+      // token is already a full ID; the second branch handles the short form.
+      if (ids.has(token)) return token; // full form: #nibs-gx0f
+      const full = `nibs-${token}`;
+      if (ids.has(full)) return full; // short form: #gx0f
+      return null;
+    };
+    return renderMarkdown(nib?.body ?? "", resolve);
+  });
   let actionPending = $derived(mutations.isMutating(nibId));
+
+  // Delegated handler on the .prose-nib container for mention anchors. Non-
+  // mention anchors (`<a href="https://...">`) are NOT intercepted — normal
+  // browser navigation proceeds for those.
+  //
+  // Enter-key activation on a focused `<a href>` is handled by the browser: it
+  // synthesizes a click event, which this handler receives. No separate keydown
+  // handler is needed — adding one would double-fire onnibselect because
+  // preventDefault on keydown does not suppress the subsequent synthetic click.
+  function handleProseClick(event: MouseEvent) {
+    const target = event.target as HTMLElement | null;
+    if (!target) return;
+    const anchor = target.closest("a[data-nib-id]") as HTMLAnchorElement | null;
+    if (!anchor) return;
+    event.preventDefault();
+    const id = anchor.dataset.nibId;
+    if (id) onnibselect?.(id);
+  }
 
   // Sync editTitle when nib data changes
   let lastSyncedId: string | null = $state(null);
@@ -256,7 +296,13 @@
               Edit
             </button>
           </div>
-          <div class="prose-nib" data-testid="detail-body-prose">
+          <!-- svelte-ignore a11y_click_events_have_key_events -->
+          <!-- svelte-ignore a11y_no_static_element_interactions -->
+          <div
+            class="prose-nib"
+            data-testid="detail-body-prose"
+            onclick={handleProseClick}
+          >
             {@html bodyHtml}
           </div>
         </div>
@@ -276,7 +322,7 @@
         </div>
       {/if}
 
-      {#if nib.parent || nib.children?.length > 0 || nib.blockedBy?.length > 0 || nib.blocking?.length > 0}
+      {#if nib.parent || nib.children?.length > 0 || nib.blockedBy?.length > 0 || nib.blocking?.length > 0 || nib.mentions?.length > 0 || nib.mentionedBy?.length > 0}
         {#key nibId}
         <div class="detail-related-section" data-testid="detail-related-section">
           {#if nib.parent}
@@ -314,6 +360,24 @@
               items={nib.blocking.map((b) => ({ id: b.id, title: b.title, status: b.status }))}
               onnibselect={onnibselect}
               testId="detail-related-blocking"
+            />
+          {/if}
+
+          {#if nib.mentions?.length > 0}
+            <RelatedNibGroup
+              label="Mentions"
+              items={nib.mentions.map((m) => ({ id: m.id, title: m.title, status: m.status }))}
+              onnibselect={onnibselect}
+              testId="detail-related-mentions"
+            />
+          {/if}
+
+          {#if nib.mentionedBy?.length > 0}
+            <RelatedNibGroup
+              label="Mentioned by"
+              items={nib.mentionedBy.map((m) => ({ id: m.id, title: m.title, status: m.status }))}
+              onnibselect={onnibselect}
+              testId="detail-related-mentioned-by"
             />
           {/if}
         </div>

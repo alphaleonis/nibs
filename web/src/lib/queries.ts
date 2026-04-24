@@ -45,6 +45,18 @@ export const NIB_DETAIL_QUERY = gql`
         type
         status
       }
+      mentions {
+        id
+        title
+        type
+        status
+      }
+      mentionedBy {
+        id
+        title
+        type
+        status
+      }
     }
   }
 `;

@@ -105,6 +105,8 @@ function makeNibData(overrides: Record<string, unknown> = {}) {
     children: [],
     blocking: [],
     blockedBy: [],
+    mentions: [],
+    mentionedBy: [],
     ...overrides,
   };
 }
@@ -761,11 +763,168 @@ describe("DetailPanel", () => {
       children: [],
       blocking: [],
       blockedBy: [],
+      mentions: [],
+      mentionedBy: [],
     }));
 
     renderPanel({ nibId: "nibs-abc1", onclose: vi.fn() });
 
     expect(screen.queryByTestId("detail-related-section")).not.toBeInTheDocument();
+  });
+
+  it("renders mentions group with clickable items", async () => {
+    mockNibQuery(makeNibData({
+      mentions: [
+        { id: "nibs-mentioned1", title: "Mentioned Nib", type: "feature", status: "todo" },
+      ],
+    }));
+
+    const nibSelectHandler = vi.fn();
+    renderPanel({ nibId: "nibs-abc1", onclose: vi.fn(), onnibselect: nibSelectHandler });
+
+    const group = screen.getByTestId("detail-related-mentions");
+    expect(group).toBeInTheDocument();
+
+    const link = group.querySelector('[data-testid="detail-related-link"]') as HTMLElement;
+    expect(link).toHaveTextContent("Mentioned Nib");
+
+    await user.click(link);
+    expect(nibSelectHandler).toHaveBeenCalledTimes(1);
+    expect(nibSelectHandler).toHaveBeenCalledWith("nibs-mentioned1");
+  });
+
+  it("renders mentioned-by group with clickable items", async () => {
+    mockNibQuery(makeNibData({
+      mentionedBy: [
+        { id: "nibs-mentor1", title: "Referring Nib", type: "task", status: "in-progress" },
+      ],
+    }));
+
+    const nibSelectHandler = vi.fn();
+    renderPanel({ nibId: "nibs-abc1", onclose: vi.fn(), onnibselect: nibSelectHandler });
+
+    const group = screen.getByTestId("detail-related-mentioned-by");
+    expect(group).toBeInTheDocument();
+
+    const link = group.querySelector('[data-testid="detail-related-link"]') as HTMLElement;
+    expect(link).toHaveTextContent("Referring Nib");
+
+    await user.click(link);
+    expect(nibSelectHandler).toHaveBeenCalledTimes(1);
+    expect(nibSelectHandler).toHaveBeenCalledWith("nibs-mentor1");
+  });
+
+  it("renders related section when only mentions are present", () => {
+    mockNibQuery(makeNibData({
+      parent: null,
+      children: [],
+      blocking: [],
+      blockedBy: [],
+      mentions: [
+        { id: "nibs-mentioned1", title: "Only Mention", type: "feature", status: "todo" },
+      ],
+      mentionedBy: [],
+    }));
+
+    renderPanel({ nibId: "nibs-abc1", onclose: vi.fn() });
+
+    expect(screen.getByTestId("detail-related-section")).toBeInTheDocument();
+    expect(screen.getByTestId("detail-related-mentions")).toBeInTheDocument();
+    expect(screen.queryByTestId("detail-related-mentioned-by")).not.toBeInTheDocument();
+  });
+
+  it("renders body mentions as clickable links and invokes onnibselect on click", async () => {
+    mockNibQuery(makeNibData({
+      body: "see #gx0f for details",
+      mentions: [
+        { id: "nibs-gx0f", title: "Mentioned Nib", type: "feature", status: "todo" },
+      ],
+    }));
+
+    const nibSelectHandler = vi.fn();
+    renderPanel({ nibId: "nibs-abc1", onclose: vi.fn(), onnibselect: nibSelectHandler });
+
+    const prose = screen.getByTestId("detail-body-prose");
+    const anchor = prose.querySelector('a[data-nib-id="nibs-gx0f"]') as HTMLAnchorElement;
+    expect(anchor).toBeInTheDocument();
+    expect(anchor).toHaveTextContent("#gx0f");
+
+    await user.click(anchor);
+    expect(nibSelectHandler).toHaveBeenCalledTimes(1);
+    expect(nibSelectHandler).toHaveBeenCalledWith("nibs-gx0f");
+  });
+
+  it("resolves both short-form and full-form mentions against nib.mentions", async () => {
+    mockNibQuery(makeNibData({
+      body: "short #gx0f and full #nibs-gx0f",
+      mentions: [
+        { id: "nibs-gx0f", title: "Mentioned Nib", type: "feature", status: "todo" },
+      ],
+    }));
+
+    renderPanel({ nibId: "nibs-abc1", onclose: vi.fn() });
+
+    const prose = screen.getByTestId("detail-body-prose");
+    const anchors = prose.querySelectorAll('a[data-nib-id="nibs-gx0f"]');
+    expect(anchors.length).toBe(2);
+  });
+
+  it("Enter key on a focused mention link invokes onnibselect", async () => {
+    mockNibQuery(makeNibData({
+      body: "see #gx0f",
+      mentions: [
+        { id: "nibs-gx0f", title: "Mentioned Nib", type: "feature", status: "todo" },
+      ],
+    }));
+
+    const nibSelectHandler = vi.fn();
+    renderPanel({ nibId: "nibs-abc1", onclose: vi.fn(), onnibselect: nibSelectHandler });
+
+    const prose = screen.getByTestId("detail-body-prose");
+    const anchor = prose.querySelector('a[data-nib-id="nibs-gx0f"]') as HTMLAnchorElement;
+    anchor.focus();
+    await user.keyboard("{Enter}");
+    expect(nibSelectHandler).toHaveBeenCalledTimes(1);
+    expect(nibSelectHandler).toHaveBeenCalledWith("nibs-gx0f");
+  });
+
+  it("does not intercept clicks on non-mention anchors", async () => {
+    mockNibQuery(makeNibData({
+      body: "[external](https://example.com) link",
+      mentions: [],
+    }));
+
+    const nibSelectHandler = vi.fn();
+    renderPanel({ nibId: "nibs-abc1", onclose: vi.fn(), onnibselect: nibSelectHandler });
+
+    const prose = screen.getByTestId("detail-body-prose");
+    const link = prose.querySelector('a[href="https://example.com"]') as HTMLAnchorElement;
+    expect(link).toBeInTheDocument();
+    expect(link.hasAttribute("data-nib-id")).toBe(false);
+
+    // Prevent jsdom navigation warning by adding default-preventing handler on document
+    const noop = (e: Event) => e.preventDefault();
+    document.addEventListener("click", noop, true);
+    try {
+      await user.click(link);
+    } finally {
+      document.removeEventListener("click", noop, true);
+    }
+    // Handler should NOT be called for non-mention anchors
+    expect(nibSelectHandler).toHaveBeenCalledTimes(0);
+  });
+
+  it("hides mentions and mentioned-by groups when both are empty", () => {
+    mockNibQuery(makeNibData({
+      parent: { id: "nibs-parent1", title: "Parent", type: "epic", status: "todo" },
+      mentions: [],
+      mentionedBy: [],
+    }));
+
+    renderPanel({ nibId: "nibs-abc1", onclose: vi.fn() });
+
+    expect(screen.queryByTestId("detail-related-mentions")).not.toBeInTheDocument();
+    expect(screen.queryByTestId("detail-related-mentioned-by")).not.toBeInTheDocument();
   });
 
   it("resets collapsed groups when nibId changes", async () => {
