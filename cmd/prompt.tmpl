@@ -84,6 +84,12 @@ nibs context --json <nib-id>          # Detail: summary for any nib's subtree
 nibs plan --json <parent-id>            # Full plan view
 nibs plan --json <parent-id> --active   # Only active items (exclude completed/scrapped)
 
+# Dependency-aware ordering of a parent's children (edges from #<id> mentions)
+nibs deps --json <parent-id>            # Topologically ordered children with depends_on + external_deps
+nibs deps --json <parent-id> --active   # Exclude completed/scrapped before computing the sort
+nibs deps --json <parent-id> --cycles   # Report cycles in a separate section instead of erroring
+nibs deps <parent-id> --graph mermaid   # Emit Mermaid graph (also: --graph dot) — mutually exclusive with --json
+
 # Close a nib (mark completed with summary, update parent milestone)
 nibs close --json <id> --summary "What was accomplished"
 nibs close --json <id> --summary "Done" --force   # Close even with incomplete children
@@ -167,6 +173,21 @@ nibs plan --json <parent-id> --active   # Exclude completed/scrapped items
 ```
 
 This is useful for checking progress on an epic or milestone before closing it.
+
+## Deciding What Order to Tackle Children
+
+Use `nibs deps` when some children depend on others finishing first. It reads `#<id>` mentions from each child's body to build a dependency graph and topologically sorts the subtree:
+
+```bash
+nibs deps --json <parent-id>             # Topologically ordered children with depends_on + external_deps
+nibs deps --json <parent-id> --active    # Exclude completed/scrapped children before computing the sort
+nibs deps --json <parent-id> --cycles    # Report cyclic groups in a separate section instead of erroring
+nibs deps <parent-id> --graph mermaid    # Emit a Mermaid diagram (also: --graph dot)
+```
+
+Edges come from `#<id>` mentions in child bodies: if child B's body mentions `#a` (where A is a sibling of B), then A must come before B. Mentions of nibs outside the subtree land in `external_deps` and do NOT affect the internal order. Self-mentions are ignored. By default a cycle is a hard error so agents don't silently plan against an unsatisfiable order — use `--cycles` to list the cyclic groups for manual resolution.
+
+`--json` and `--graph` are mutually exclusive — JSON is the structured output and `--graph` is a rendering mode.
 
 ## Closing Nibs
 
