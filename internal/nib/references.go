@@ -8,10 +8,16 @@ import (
 	"github.com/yuin/goldmark/text"
 )
 
+// MentionIDPattern is the raw token-grammar fragment shared between the
+// scanner's sigil-anchored regex and the test-side shape invariant, so a
+// widening of the grammar automatically flows to the fuzz/table invariants
+// without requiring a second literal update.
+const MentionIDPattern = `[a-z0-9](?:[a-z0-9-]*[a-z0-9])?`
+
 // mentionPattern matches a `#` sigil followed by a nib ID token.
 // The token is alphanumeric-with-hyphens, starting and ending with alphanumeric.
 // Captured group 1 is the id (short or full form), without the leading `#`.
-var mentionPattern = regexp.MustCompile(`#([a-z0-9](?:[a-z0-9-]*[a-z0-9])?)`)
+var mentionPattern = regexp.MustCompile(`#(` + MentionIDPattern + `)`)
 
 // ExtractMentionTokens scans a nib body and returns the list of mention tokens
 // referenced via the `#<id>` sigil convention. Tokens are returned in the order
@@ -51,6 +57,10 @@ var mentionPattern = regexp.MustCompile(`#([a-z0-9](?:[a-z0-9-]*[a-z0-9])?)`)
 //
 // The function does not verify that the returned tokens resolve to real nibs;
 // callers perform that check against the nib map.
+//
+// Complexity is O(n) in body length: a single goldmark AST walk plus one
+// regex scan per text leaf. Callers may pass arbitrarily large bodies
+// without quadratic blowup.
 func ExtractMentionTokens(body string) []string {
 	if body == "" {
 		return nil
