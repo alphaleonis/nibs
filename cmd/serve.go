@@ -205,6 +205,12 @@ func handleHealth(w http.ResponseWriter, r *http.Request) {
 }
 
 // newGraphQLHandler creates a gqlgen HTTP handler with GET, POST, and WebSocket transports.
+// The returned handler is wrapped in requestCacheMiddleware so every incoming
+// HTTP request gets its own graph.RequestCache in context — resolver helpers
+// (cachedMentions / cachedMentionedBy) use it to memoise per-request mention
+// lookups. The in-process CLI executor (cmd/graphql.go) does NOT route
+// through this middleware and intentionally runs without a cache: a single
+// CLI invocation issues one query, so there's nothing to dedup.
 func newGraphQLHandler(app *App) http.Handler {
 	es := graph.NewExecutableSchema(graph.Config{
 		Resolvers: app.newResolver(),
@@ -218,5 +224,18 @@ func newGraphQLHandler(app *App) http.Handler {
 		KeepAlivePingInterval: 10 * time.Second,
 	})
 
-	return srv
+	return requestCacheMiddleware(srv)
+}
+
+// requestCacheMiddleware installs a fresh graph.RequestCache on each
+// incoming HTTP request's context. Downstream resolvers read it via
+// graph.RequestCacheFrom to coalesce duplicate mention lookups within the
+// request. A new cache per request is essential — sharing across requests
+// would serve stale data after a mutation, since the cache holds direct
+// *nib.Nib slice references.
+func requestCacheMiddleware(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		ctx := graph.WithRequestCache(r.Context(), graph.NewRequestCache())
+		next.ServeHTTP(w, r.WithContext(ctx))
+	})
 }

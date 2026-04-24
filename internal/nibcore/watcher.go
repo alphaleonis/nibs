@@ -267,6 +267,11 @@ func (c *Core) handleChanges(changes map[string]fsnotify.Op) {
 
 	for path, op := range changes {
 		filename := filepath.Base(path)
+		// Intentionally ignore the parse error: an unparseable filename yields
+		// id="", which no-ops every downstream c.nibs[id] / c.mentionIdx.Remove(id)
+		// lookup — the malformed path simply falls out of the handler as a silent
+		// skip. Widening this to surface the error would require a scheme for
+		// reporting watcher-level errors that today's callers don't expect.
 		id, _ := nib.ParseFilename(filename)
 
 		// Handle removes/renames (file is gone)
@@ -276,6 +281,9 @@ func (c *Core) handleChanges(changes map[string]fsnotify.Op) {
 				// Only delete if it was in our map and file is actually gone
 				if !c.fileExists(path) {
 					delete(c.nibs, id)
+
+					// Drop from reverse-mention index.
+					c.mentionIdx.Remove(id)
 
 					// Update search index
 					if c.searchIndex != nil {
@@ -304,6 +312,9 @@ func (c *Core) handleChanges(changes map[string]fsnotify.Op) {
 
 			_, existed := c.nibs[newNib.ID]
 			c.nibs[newNib.ID] = newNib
+
+			// Refresh reverse-mention index with the new body's edges.
+			c.mentionIdx.Replace(newNib.ID, newNib.Body)
 
 			// Update search index
 			if c.searchIndex != nil {

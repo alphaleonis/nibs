@@ -1,10 +1,10 @@
 package nibcore
 
-// Mention lookups currently recompute from live bodies on every call, so no
-// explicit invalidation hook is needed. If a cache/index is added, wire it
-// into Core.Create/Update/Delete and watcher.handleChanges. See
-// search_index.go for the indexed pattern, link_queries.go for the O(N)
-// field-based pattern. Tracking nib: nibs-rckp.
+// The token-keyed reverse-mention index that backs Core.FindMentions /
+// Core.FindMentionedBy lives in mention_index.go. The pure functions
+// FindMentionsInMap / FindMentionedByInMap below remain as oracles — they
+// operate on a map without any index, so they can be used to differentially
+// verify the indexed Core methods in tests.
 
 import (
 	"sort"
@@ -112,10 +112,14 @@ func FindMentionedByInMap(nibs map[string]*nib.Nib, targetID, configPrefix strin
 	return out
 }
 
-// FindMentions is the thread-safe wrapper around FindMentionsInMap using the
-// Core's nib map and configured prefix. Short IDs are normalized via the
-// same exact-match-then-prefix-prepended rule as Core.Get / Core.NormalizeID,
-// so callers can pass either form consistently.
+// FindMentions returns the nibs mentioned via `#<id>` in fromID's body.
+// Results are deduplicated, exclude self-references and unresolved tokens,
+// and preserve first-appearance order. Short IDs are normalized via the
+// same exact-match-then-prefix-prepended rule as Core.Get / Core.NormalizeID.
+//
+// The outbound list of raw mention tokens is served from the reverse-mention
+// index (populated at Load and maintained by Create/Update/Delete + the
+// watcher), so no body re-parse happens here.
 func (c *Core) FindMentions(fromID string) []*nib.Nib {
 	c.mu.RLock()
 	defer c.mu.RUnlock()
@@ -123,11 +127,35 @@ func (c *Core) FindMentions(fromID string) []*nib.Nib {
 	if !ok {
 		return nil
 	}
-	return FindMentionsInMap(c.nibs, fullID, c.configPrefix())
+	tokens := c.mentionIdx.OutboundTokens(fullID)
+	if len(tokens) == 0 {
+		return nil
+	}
+	prefix := c.configPrefix()
+	seen := make(map[string]struct{}, len(tokens))
+	var out []*nib.Nib
+	for _, tok := range tokens {
+		resolvedID, ok := normalizeIDInMap(c.nibs, tok, prefix)
+		if !ok || resolvedID == fullID {
+			continue
+		}
+		if _, dup := seen[resolvedID]; dup {
+			continue
+		}
+		seen[resolvedID] = struct{}{}
+		out = append(out, c.nibs[resolvedID])
+	}
+	return out
 }
 
-// FindMentionedBy is the thread-safe wrapper around FindMentionedByInMap.
-// Short IDs are normalized, matching Core.Get / Core.NormalizeID.
+// FindMentionedBy returns the nibs whose bodies contain a `#<id>` mention
+// resolving to targetID. Results are deduplicated, exclude self-references,
+// and are returned sorted by ID for deterministic ordering.
+//
+// Served from the reverse-mention index: for each token form that can
+// resolve to the target (full ID; plus the short form if the full ID
+// carries the configured prefix), we union the inbound source sets instead
+// of re-parsing every body in the store.
 func (c *Core) FindMentionedBy(targetID string) []*nib.Nib {
 	c.mu.RLock()
 	defer c.mu.RUnlock()
@@ -135,7 +163,43 @@ func (c *Core) FindMentionedBy(targetID string) []*nib.Nib {
 	if !ok {
 		return nil
 	}
-	return FindMentionedByInMap(c.nibs, fullID, c.configPrefix())
+	// A source's body might carry either the full-form token ("nibs-abc")
+	// or the short-form token ("abc") — both resolve to the same target,
+	// so the inbound lookup must union both sets.
+	tokens := []string{fullID}
+	prefix := c.configPrefix()
+	if prefix != "" && strings.HasPrefix(fullID, prefix) {
+		if short := strings.TrimPrefix(fullID, prefix); short != "" && short != fullID {
+			tokens = append(tokens, short)
+		}
+	}
+
+	seen := make(map[string]struct{})
+	for _, tok := range tokens {
+		for _, srcID := range c.mentionIdx.InboundSources(tok) {
+			if srcID == fullID {
+				continue
+			}
+			seen[srcID] = struct{}{}
+		}
+	}
+	if len(seen) == 0 {
+		return nil
+	}
+
+	ids := make([]string, 0, len(seen))
+	for id := range seen {
+		ids = append(ids, id)
+	}
+	sort.Strings(ids)
+
+	out := make([]*nib.Nib, 0, len(ids))
+	for _, id := range ids {
+		if b, ok := c.nibs[id]; ok {
+			out = append(out, b)
+		}
+	}
+	return out
 }
 
 // normalizeIDForLookupLocked mirrors Core.NormalizeID but assumes the caller

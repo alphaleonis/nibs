@@ -1,6 +1,7 @@
 package graph
 
 import (
+	"context"
 	"reflect"
 	"sort"
 	"testing"
@@ -66,7 +67,7 @@ func TestApplyFilterBlockedByIDShortForm(t *testing.T) {
 	blocking := &stubBlockingChecker{}
 
 	filter := &model.NibFilter{BlockedByID: strPtr("target")}
-	got := ApplyFilter(reader.allNibs, filter, reader, blocking)
+	got := ApplyFilter(context.Background(), reader.allNibs, filter, reader, blocking)
 
 	if len(got) != 1 {
 		t.Fatalf("got %d nibs, want 1 (nibs-blocked)", len(got))
@@ -140,7 +141,7 @@ func TestApplyFilterIDBranchesKnownAndUnknown(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			got := ApplyFilter(reader.allNibs, tt.filter, reader, blocking)
+			got := ApplyFilter(context.Background(), reader.allNibs, tt.filter, reader, blocking)
 			if tt.wantNil {
 				if got != nil {
 					t.Errorf("got %d nibs, want nil (unknown target short-circuit)", len(got))

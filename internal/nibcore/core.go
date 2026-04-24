@@ -51,6 +51,12 @@ type Core struct {
 	mu    sync.RWMutex
 	nibs map[string]*nib.Nib // ID -> Nib
 
+	// Reverse-mention index: maintained alongside c.nibs so FindMentionedBy /
+	// FindMentions avoid O(N × body) re-parsing on every call. Guarded by c.mu
+	// (writers under Lock, readers under RLock) — mentionIndex itself is not
+	// internally synchronised.
+	mentionIdx *mentionIndex
+
 	// Search index (optional, lazy-initialized)
 	searchIndex SearchIndex
 
@@ -74,6 +80,7 @@ func New(root string, cfg *config.Config) *Core {
 		root:        root,
 		config:      cfg,
 		nibs:       make(map[string]*nib.Nib),
+		mentionIdx:  newMentionIndex(),
 		subscribers: make(map[uint64]*subscription),
 		warnWriter:  os.Stderr,
 	}
@@ -150,6 +157,10 @@ func (c *Core) loadFromDisk() error {
 	if err := c.migrateV0ToV1(); err != nil {
 		return fmt.Errorf("migration v0→v1: %w", err)
 	}
+
+	// Rebuild the reverse-mention index from the loaded bodies. Must run
+	// after migration so the index sees the final body state.
+	c.mentionIdx.Rebuild(c.nibs)
 
 	// Re-populate search index if it was active (best-effort, don't fail load).
 	// We upsert all current nibs rather than closing and recreating the index,
@@ -371,6 +382,9 @@ func (c *Core) Create(b *nib.Nib) error {
 	// Add to in-memory map
 	c.nibs[b.ID] = b
 
+	// Update reverse-mention index with this source's outbound edges.
+	c.mentionIdx.Add(b.ID, b.Body)
+
 	// Update search index if active (best-effort, don't fail create)
 	if c.searchIndex != nil {
 		if err := c.searchIndex.IndexNib(b); err != nil {
@@ -445,6 +459,9 @@ func (c *Core) Update(b *nib.Nib, ifMatch *string) error {
 	// Update in-memory map
 	c.nibs[b.ID] = b
 
+	// Refresh the reverse-mention index to reflect the new body.
+	c.mentionIdx.Replace(b.ID, b.Body)
+
 	// Update search index if active (best-effort, don't fail update)
 	if c.searchIndex != nil {
 		if err := c.searchIndex.IndexNib(b); err != nil {
@@ -518,6 +535,9 @@ func (c *Core) Delete(id string) error {
 
 	// Remove from in-memory map
 	delete(c.nibs, targetID)
+
+	// Drop the source from the reverse-mention index.
+	c.mentionIdx.Remove(targetID)
 
 	// Update search index if active (best-effort, don't fail delete)
 	if c.searchIndex != nil {

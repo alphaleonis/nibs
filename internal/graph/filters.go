@@ -1,6 +1,8 @@
 package graph
 
 import (
+	"context"
+
 	"github.com/alphaleonis/nibs/internal/nib"
 	"github.com/alphaleonis/nibs/internal/graph/model"
 )
@@ -30,7 +32,24 @@ func resolveFilterID(reader NibReader, id string) (string, bool) {
 
 // ApplyFilter applies NibFilter to a slice of nibs and returns filtered results.
 // This is used by both the top-level nibs query and relationship field resolvers.
-func ApplyFilter(nibs []*nib.Nib, filter *model.NibFilter, reader NibReader, blocking BlockingChecker) []*nib.Nib {
+//
+// ctx carries an optional per-request RequestCache (see request_cache.go); the
+// mention filter branches route through it so duplicate mention lookups
+// within a single GraphQL operation hit the cache instead of the reader.
+// CLI callers or pure unit tests may pass context.Background(); the cache is
+// keyed on ctx values only.
+//
+// ctx is currently consulted only by the mention-filter branches (for
+// RequestCache lookup). ApplyFilter does not check cancellation or honour
+// deadlines — passing a cancelled ctx will not short-circuit; every filter
+// branch runs to completion.
+//
+// Callers threading filter.MentionsID / filter.MentionedByID must let
+// ApplyFilter handle ID resolution via resolveFilterID. Pre-normalising in
+// the caller is not required for correctness, but mixing short and full
+// forms across resolvers within the same request will desync the cache
+// keys (keyed on the full normalised ID) and silently degrade memoisation.
+func ApplyFilter(ctx context.Context, nibs []*nib.Nib, filter *model.NibFilter, reader NibReader, blocking BlockingChecker) []*nib.Nib {
 	if filter == nil {
 		return nibs
 	}
@@ -93,20 +112,22 @@ func ApplyFilter(nibs []*nib.Nib, filter *model.NibFilter, reader NibReader, blo
 		result = filterBySliceField(result, []string{fullID}, func(b *nib.Nib) []string { return b.BlockedBy })
 	}
 
-	// Mention filters (computed via FindMentions/FindMentionedBy on the reader)
+	// Mention filters (computed via FindMentions/FindMentionedBy on the reader,
+	// routed through the per-request cache so repeated lookups within one
+	// GraphQL operation don't re-run the reader).
 	if filter.MentionsID != nil && *filter.MentionsID != "" {
 		fullID, ok := resolveFilterID(reader, *filter.MentionsID)
 		if !ok {
 			return nil
 		}
-		result = filterByMentionsID(result, fullID, reader)
+		result = filterByMentionsID(ctx, result, fullID, reader)
 	}
 	if filter.MentionedByID != nil && *filter.MentionedByID != "" {
 		fullID, ok := resolveFilterID(reader, *filter.MentionedByID)
 		if !ok {
 			return nil
 		}
-		result = filterByMentionedByID(result, fullID, reader)
+		result = filterByMentionedByID(ctx, result, fullID, reader)
 	}
 
 	return result
@@ -114,9 +135,10 @@ func ApplyFilter(nibs []*nib.Nib, filter *model.NibFilter, reader NibReader, blo
 
 // filterByMentionsID keeps nibs that mention the given target in their body.
 // targetID must already be a full (normalised) ID — callers resolve via
-// resolveFilterID before invoking.
-func filterByMentionsID(nibs []*nib.Nib, targetID string, reader NibReader) []*nib.Nib {
-	inbound := reader.FindMentionedBy(targetID)
+// resolveFilterID before invoking. Routes through the per-request mention
+// cache attached to ctx (if any).
+func filterByMentionsID(ctx context.Context, nibs []*nib.Nib, targetID string, reader NibReader) []*nib.Nib {
+	inbound := cachedMentionedBy(ctx, reader, targetID)
 	inboundSet := make(map[string]bool, len(inbound))
 	for _, b := range inbound {
 		inboundSet[b.ID] = true
@@ -132,9 +154,10 @@ func filterByMentionsID(nibs []*nib.Nib, targetID string, reader NibReader) []*n
 
 // filterByMentionedByID keeps nibs that are mentioned in the given source's body.
 // sourceID must already be a full (normalised) ID — callers resolve via
-// resolveFilterID before invoking.
-func filterByMentionedByID(nibs []*nib.Nib, sourceID string, reader NibReader) []*nib.Nib {
-	outbound := reader.FindMentions(sourceID)
+// resolveFilterID before invoking. Routes through the per-request mention
+// cache attached to ctx (if any).
+func filterByMentionedByID(ctx context.Context, nibs []*nib.Nib, sourceID string, reader NibReader) []*nib.Nib {
+	outbound := cachedMentions(ctx, reader, sourceID)
 	outboundSet := make(map[string]bool, len(outbound))
 	for _, b := range outbound {
 		outboundSet[b.ID] = true

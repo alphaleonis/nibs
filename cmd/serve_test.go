@@ -16,9 +16,54 @@ import (
 	"github.com/gorilla/websocket"
 
 	"github.com/alphaleonis/nibs/internal/config"
+	"github.com/alphaleonis/nibs/internal/graph"
 	"github.com/alphaleonis/nibs/internal/nib"
 	"github.com/alphaleonis/nibs/internal/nibcore"
 )
+
+// TestRequestCacheMiddleware_FreshCachePerRequest pins Behavior 15: each
+// HTTP request receives its own graph.RequestCache in context. Two requests
+// must see two *distinct* caches. The middleware is transport-agnostic, so
+// the test wraps it around a tiny handler that captures the cache pointer
+// from r.Context() — no gqlgen plumbing involved.
+func TestRequestCacheMiddleware_FreshCachePerRequest(t *testing.T) {
+	var caches []*graph.RequestCache
+	inner := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		caches = append(caches, graph.RequestCacheFrom(r.Context()))
+		w.WriteHeader(http.StatusOK)
+	})
+	h := requestCacheMiddleware(inner)
+
+	for i := 0; i < 2; i++ {
+		req := httptest.NewRequest(http.MethodGet, "/graphql", nil)
+		rec := httptest.NewRecorder()
+		h.ServeHTTP(rec, req)
+		if rec.Code != http.StatusOK {
+			t.Fatalf("request %d: unexpected status %d", i, rec.Code)
+		}
+	}
+
+	if len(caches) != 2 {
+		t.Fatalf("recorded %d caches, want 2", len(caches))
+	}
+	for i, c := range caches {
+		if c == nil {
+			t.Errorf("request %d: cache is nil", i)
+		}
+	}
+	if caches[0] == caches[1] {
+		t.Errorf("both requests got the same cache pointer; want per-request isolation")
+	}
+}
+
+// The intra-request dedup pin (originally named
+// TestRequestCacheMiddleware_DedupsWithinOneRequest) lives in the graph
+// package — see TestRequestCacheMiddleware_DedupsWithinOneRequest in
+// internal/graph/request_cache_test.go. It has to be there because the
+// cachedMentions helper the middleware threads through is unexported;
+// proving the middleware dedups end-to-end requires direct access to it.
+// Here in cmd we only own the `graph.WithRequestCache` wiring, which
+// TestRequestCacheMiddleware_FreshCachePerRequest above already pins.
 
 const maxBodySize = 1 << 20 // 1 MB — mirrors gqlgen's default POST limit for test assertions
 
