@@ -7,7 +7,9 @@ import (
 	"regexp"
 	"strings"
 	"testing"
+	"unicode/utf8"
 
+	"github.com/alphaleonis/nibs/internal/nib"
 	"github.com/spf13/pflag"
 )
 
@@ -24,6 +26,8 @@ func resetShowFlags() {
 	showETagOnly = false
 	showActive = false
 	showNoMentions = false
+	showBodyChars = 0
+	showSummary = false
 	showCmd.Flags().Visit(func(f *pflag.Flag) {
 		f.Changed = false
 	})
@@ -53,6 +57,8 @@ func TestResetShowFlagsClearsAllState(t *testing.T) {
 		"etag-only":   "true",
 		"active":      "true",
 		"no-mentions": "true",
+		"body-chars":  "42",
+		"summary":     "true",
 	}
 	for name, val := range dirty {
 		if err := showCmd.Flags().Set(name, val); err != nil {
@@ -600,6 +606,377 @@ func TestShowCommand_NoMentionsHuman_SectionsAbsent(t *testing.T) {
 	}
 	if strings.Contains(out, "mentioned by") {
 		t.Errorf("--no-mentions must suppress inbound 'mentioned by' section, got:\n%s", out)
+	}
+}
+
+func TestTruncateBody(t *testing.T) {
+	tests := []struct {
+		name          string
+		body          string
+		maxRunes      int
+		wantBody      string
+		wantTruncated bool
+	}{
+		// Behavior 1 — TRACER: ASCII truncation appends ellipsis.
+		{"tracer_ascii", "hello world", 5, "hello…", true},
+		// Behavior 2: maxRunes=0 → unchanged.
+		{"zero_max_unchanged", "hello world", 0, "hello world", false},
+		// Behavior 3: maxRunes<0 → unchanged.
+		{"negative_max_unchanged", "hello world", -1, "hello world", false},
+		// Behavior 4: exact equality → no ellipsis.
+		{"equal_length_no_ellipsis", "hello", 5, "hello", false},
+		// Behavior 4 (>=): greater limit → unchanged.
+		{"greater_limit_unchanged", "hello", 100, "hello", false},
+		// Behavior 5: rune-counted, preserves UTF-8 sequences intact.
+		{"utf8_runes", "héllo wörld", 5, "héllo…", true},
+		// Behavior 6: empty body short-circuits regardless of N.
+		{"empty_positive", "", 10, "", false},
+		{"empty_zero", "", 0, "", false},
+		{"empty_negative", "", -3, "", false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got, truncated := truncateBody(tt.body, tt.maxRunes)
+			if got != tt.wantBody {
+				t.Errorf("truncateBody(%q, %d) body = %q, want %q",
+					tt.body, tt.maxRunes, got, tt.wantBody)
+			}
+			if truncated != tt.wantTruncated {
+				t.Errorf("truncateBody(%q, %d) truncated = %v, want %v",
+					tt.body, tt.maxRunes, truncated, tt.wantTruncated)
+			}
+			// UTF-8 safety: result must be valid UTF-8.
+			if !utf8.ValidString(got) {
+				t.Errorf("truncateBody(%q, %d) produced invalid UTF-8: %q",
+					tt.body, tt.maxRunes, got)
+			}
+		})
+	}
+}
+
+// envelopeFixture returns a showJSONEnvelope around a minimal Nib with a
+// caller-supplied body. The envelope is built manually (bypassing
+// buildShowJSONEnvelope) so these tests exercise MarshalJSON in isolation
+// from the CLI/resolver path.
+func envelopeFixture(body string, bodyChars int) showJSONEnvelope {
+	return showJSONEnvelope{
+		Nib: &nib.Nib{
+			ID:     "x1",
+			Title:  "Test",
+			Status: "todo",
+			Type:   "task",
+			Body:   body,
+		},
+		BodyChars: bodyChars,
+	}
+}
+
+func TestShowJSONEnvelope_MarshalJSON_TruncatesLongBody(t *testing.T) {
+	// Behavior 7: body longer than BodyChars → truncated in JSON output
+	// AND body_truncated:true emitted.
+	body := strings.Repeat("a", 50)
+	env := envelopeFixture(body, 10)
+
+	raw, err := json.Marshal(env)
+	if err != nil {
+		t.Fatalf("marshal: %v", err)
+	}
+
+	var parsed map[string]json.RawMessage
+	if err := json.Unmarshal(raw, &parsed); err != nil {
+		t.Fatalf("unmarshal: %v\nraw: %s", err, raw)
+	}
+
+	var gotBody string
+	if err := json.Unmarshal(parsed["body"], &gotBody); err != nil {
+		t.Fatalf("body unmarshal: %v", err)
+	}
+	wantBody := strings.Repeat("a", 10) + "…"
+	if gotBody != wantBody {
+		t.Errorf("body = %q, want %q", gotBody, wantBody)
+	}
+	if utf8.RuneCountInString(gotBody) != 11 { // 10 + ellipsis
+		t.Errorf("body rune count = %d, want 11", utf8.RuneCountInString(gotBody))
+	}
+
+	truncRaw, exists := parsed["body_truncated"]
+	if !exists {
+		t.Fatalf("body_truncated key missing from JSON: %s", raw)
+	}
+	var truncVal bool
+	if err := json.Unmarshal(truncRaw, &truncVal); err != nil {
+		t.Fatalf("body_truncated unmarshal: %v", err)
+	}
+	if !truncVal {
+		t.Errorf("body_truncated = false, want true")
+	}
+}
+
+func TestShowJSONEnvelope_MarshalJSON_ShortBodyNoTruncateFlag(t *testing.T) {
+	// Behavior 8: body shorter than BodyChars → body unchanged and
+	// body_truncated MUST be absent (never emit `false`).
+	body := "short body"
+	env := envelopeFixture(body, 100)
+
+	raw, err := json.Marshal(env)
+	if err != nil {
+		t.Fatalf("marshal: %v", err)
+	}
+
+	var parsed map[string]json.RawMessage
+	if err := json.Unmarshal(raw, &parsed); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	var gotBody string
+	if err := json.Unmarshal(parsed["body"], &gotBody); err != nil {
+		t.Fatalf("body unmarshal: %v", err)
+	}
+	if gotBody != body {
+		t.Errorf("body = %q, want %q", gotBody, body)
+	}
+	if _, exists := parsed["body_truncated"]; exists {
+		t.Errorf("body_truncated must be absent when nothing truncated; raw:\n%s", raw)
+	}
+}
+
+func TestShowJSONEnvelope_MarshalJSON_BodyCharsZero(t *testing.T) {
+	// Behavior 9: BodyChars=0 → full body, body_truncated absent.
+	body := strings.Repeat("x", 200)
+	env := envelopeFixture(body, 0)
+
+	raw, err := json.Marshal(env)
+	if err != nil {
+		t.Fatalf("marshal: %v", err)
+	}
+
+	var parsed map[string]json.RawMessage
+	if err := json.Unmarshal(raw, &parsed); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	var gotBody string
+	if err := json.Unmarshal(parsed["body"], &gotBody); err != nil {
+		t.Fatalf("body unmarshal: %v", err)
+	}
+	if gotBody != body {
+		t.Errorf("body length = %d, want %d (full body)", len(gotBody), len(body))
+	}
+	if _, exists := parsed["body_truncated"]; exists {
+		t.Errorf("body_truncated must be absent when BodyChars=0; raw:\n%s", raw)
+	}
+}
+
+// showLongBodyFixture builds a nib whose body is `leadLen` repetitions of
+// 'x' followed by the sentinel. The lead length lets each test put the
+// sentinel beyond whatever truncation boundary it cares about, making tail
+// absence / presence a robust substring assertion.
+const tailSentinel = "TAIL_MARKER_UNIQUE"
+
+func buildShowLongBodyFixture(id string, leadLen int) string {
+	body := strings.Repeat("x", leadLen) + " " + tailSentinel
+	return "---\ntitle: " + id + "\nstatus: todo\ntype: task\n---\n\n" + body + "\n"
+}
+
+func TestShowCommand_JSON_BodyCharsFlag_TruncatesMultipleNibs(t *testing.T) {
+	// Behavior 10: --body-chars 10 with two nibs both get truncated.
+	files := map[string]string{
+		"id1--one.md": buildShowLongBodyFixture("one", 50),
+		"id2--two.md": buildShowLongBodyFixture("two", 50),
+	}
+	nibsDir := setupShowCobraTest(t, files)
+
+	rootCmd.SetArgs([]string{"--nibs-path", nibsDir, "show", "--json", "--body-chars", "10", "id1", "id2"})
+	var execErr error
+	out := captureStdout(t, func() {
+		execErr = rootCmd.Execute()
+	})
+	if execErr != nil {
+		t.Fatalf("show --json --body-chars 10 failed: %v", execErr)
+	}
+
+	var envelopes []map[string]json.RawMessage
+	if err := json.Unmarshal([]byte(out), &envelopes); err != nil {
+		t.Fatalf("unmarshal: %v\nraw: %s", err, out)
+	}
+	if len(envelopes) != 2 {
+		t.Fatalf("envelopes = %d, want 2", len(envelopes))
+	}
+	for i, env := range envelopes {
+		var body string
+		if err := json.Unmarshal(env["body"], &body); err != nil {
+			t.Fatalf("env[%d] body unmarshal: %v", i, err)
+		}
+		if utf8.RuneCountInString(body) != 11 { // 10 + ellipsis
+			t.Errorf("env[%d] body rune count = %d, want 11 (10 + …); body=%q",
+				i, utf8.RuneCountInString(body), body)
+		}
+		if !strings.HasSuffix(body, "…") {
+			t.Errorf("env[%d] body should end with '…'; got %q", i, body)
+		}
+		trunc, exists := env["body_truncated"]
+		if !exists {
+			t.Errorf("env[%d] body_truncated missing", i)
+			continue
+		}
+		if string(trunc) != "true" {
+			t.Errorf("env[%d] body_truncated = %s, want true", i, string(trunc))
+		}
+	}
+}
+
+func TestShowCommand_JSON_SummaryFlag(t *testing.T) {
+	// Behavior 11: --summary uses 300-rune default. Long body truncates,
+	// short body doesn't.
+	longFiles := map[string]string{
+		"longa--long.md": buildShowLongBodyFixture("long", 400),
+	}
+	longDir := setupShowCobraTest(t, longFiles)
+	rootCmd.SetArgs([]string{"--nibs-path", longDir, "show", "--json", "--summary", "longa"})
+	var execErr error
+	outLong := captureStdout(t, func() {
+		execErr = rootCmd.Execute()
+	})
+	if execErr != nil {
+		t.Fatalf("show --json --summary longa failed: %v", execErr)
+	}
+	var longEnv map[string]json.RawMessage
+	if err := json.Unmarshal([]byte(outLong), &longEnv); err != nil {
+		t.Fatalf("long unmarshal: %v\nraw: %s", err, outLong)
+	}
+	var longBody string
+	if err := json.Unmarshal(longEnv["body"], &longBody); err != nil {
+		t.Fatalf("long body unmarshal: %v", err)
+	}
+	if utf8.RuneCountInString(longBody) != showSummaryDefaultChars+1 { // +1 for ellipsis
+		t.Errorf("long body rune count = %d, want %d",
+			utf8.RuneCountInString(longBody), showSummaryDefaultChars+1)
+	}
+	if _, exists := longEnv["body_truncated"]; !exists {
+		t.Errorf("long envelope missing body_truncated")
+	}
+	if strings.Contains(longBody, tailSentinel) {
+		t.Errorf("long body should not contain sentinel; got %q", longBody)
+	}
+
+	shortFiles := map[string]string{
+		"shorta--short.md": buildShowLongBodyFixture("short", 50),
+	}
+	shortDir := setupShowCobraTest(t, shortFiles)
+	rootCmd.SetArgs([]string{"--nibs-path", shortDir, "show", "--json", "--summary", "shorta"})
+	outShort := captureStdout(t, func() {
+		execErr = rootCmd.Execute()
+	})
+	if execErr != nil {
+		t.Fatalf("show --json --summary shorta failed: %v", execErr)
+	}
+	var shortEnv map[string]json.RawMessage
+	if err := json.Unmarshal([]byte(outShort), &shortEnv); err != nil {
+		t.Fatalf("short unmarshal: %v\nraw: %s", err, outShort)
+	}
+	if _, exists := shortEnv["body_truncated"]; exists {
+		t.Errorf("short body must not have body_truncated (body fits in %d runes); raw:\n%s",
+			showSummaryDefaultChars, outShort)
+	}
+}
+
+func TestShowCommand_BodyCharsAndSummary_MutuallyExclusive(t *testing.T) {
+	// Behavior 12: --body-chars and --summary cannot be combined.
+	nibsDir := setupShowCobraTest(t, showMentionsFixture())
+	rootCmd.SetArgs([]string{"--nibs-path", nibsDir, "show", "--body-chars", "20", "--summary", "a1"})
+	// Suppress expected Cobra error printing to keep test output clean.
+	_ = captureStdout(t, func() {
+		err := rootCmd.Execute()
+		if err == nil {
+			t.Fatal("expected mutex error, got nil")
+		}
+		// Cobra's mutex error message contains both flag names.
+		msg := err.Error()
+		if !strings.Contains(msg, "body-chars") || !strings.Contains(msg, "summary") {
+			t.Errorf("expected error to mention both --body-chars and --summary; got: %v", err)
+		}
+	})
+}
+
+func TestShowCommand_BodyCharsInvalidValue(t *testing.T) {
+	// Behavior 13: --body-chars 0 and -5 must be rejected.
+	nibsDir := setupShowCobraTest(t, showMentionsFixture())
+
+	cases := []string{"0", "-5"}
+	for _, val := range cases {
+		t.Run("val="+val, func(t *testing.T) {
+			resetShowFlags()
+			rootCmd.SetArgs([]string{"--nibs-path", nibsDir, "show", "--body-chars", val, "a1"})
+			var execErr error
+			_ = captureStdout(t, func() {
+				execErr = rootCmd.Execute()
+			})
+			if execErr == nil {
+				t.Fatalf("expected error for --body-chars %s, got nil", val)
+			}
+			if !strings.Contains(strings.ToLower(execErr.Error()), "body-chars must be > 0") {
+				t.Errorf("expected 'body-chars must be > 0' in error; got: %v", execErr)
+			}
+		})
+	}
+}
+
+func TestShowCommand_BodyOnly_Summary_TruncatesPlainText(t *testing.T) {
+	// Behavior 14: --body-only --summary truncates plain-text output.
+	files := map[string]string{
+		"lo--long.md": buildShowLongBodyFixture("long", 400),
+	}
+	nibsDir := setupShowCobraTest(t, files)
+	rootCmd.SetArgs([]string{"--nibs-path", nibsDir, "show", "--body-only", "--summary", "lo"})
+	out := captureStdout(t, func() {
+		if err := rootCmd.Execute(); err != nil {
+			t.Fatalf("show --body-only --summary failed: %v", err)
+		}
+	})
+	if !strings.Contains(out, "…") {
+		t.Errorf("expected '…' in truncated --body-only output; got:\n%s", out)
+	}
+	if strings.Contains(out, tailSentinel) {
+		t.Errorf("expected sentinel %q absent from truncated output; got:\n%s", tailSentinel, out)
+	}
+}
+
+func TestShowCommand_StyledDefault_BodyChars_TruncatesOutput(t *testing.T) {
+	// Behavior 15: default styled output with --body-chars truncates before
+	// Glamour renders. Assert '…' is present and sentinel is absent.
+	files := map[string]string{
+		"st--styled.md": buildShowLongBodyFixture("styled", 400),
+	}
+	nibsDir := setupShowCobraTest(t, files)
+	rootCmd.SetArgs([]string{"--nibs-path", nibsDir, "show", "--body-chars", "20", "st"})
+	out := captureStdout(t, func() {
+		if err := rootCmd.Execute(); err != nil {
+			t.Fatalf("show --body-chars 20 failed: %v", err)
+		}
+	})
+	if !strings.Contains(out, "…") {
+		t.Errorf("expected '…' in styled output; got:\n%s", out)
+	}
+	if strings.Contains(out, tailSentinel) {
+		t.Errorf("sentinel %q must NOT appear in truncated styled output; got:\n%s", tailSentinel, out)
+	}
+}
+
+func TestShowCommand_Raw_Summary_ByteFaithful(t *testing.T) {
+	// Behavior 16: --raw is never truncated. Sentinel present, '…' absent.
+	files := map[string]string{
+		"rw--raw.md": buildShowLongBodyFixture("raw", 400),
+	}
+	nibsDir := setupShowCobraTest(t, files)
+	rootCmd.SetArgs([]string{"--nibs-path", nibsDir, "show", "--raw", "--summary", "rw"})
+	out := captureStdout(t, func() {
+		if err := rootCmd.Execute(); err != nil {
+			t.Fatalf("show --raw --summary failed: %v", err)
+		}
+	})
+	if !strings.Contains(out, tailSentinel) {
+		t.Errorf("--raw must preserve sentinel %q in output; got:\n%s", tailSentinel, out)
+	}
+	if strings.Contains(out, "…") {
+		t.Errorf("--raw must NOT inject '…'; got:\n%s", out)
 	}
 }
 

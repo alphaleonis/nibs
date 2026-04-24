@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"strings"
+	"unicode/utf8"
 
 	"github.com/alphaleonis/nibs/internal/config"
 	"github.com/alphaleonis/nibs/internal/graph"
@@ -16,6 +17,22 @@ import (
 	"github.com/spf13/cobra"
 )
 
+// truncateBody cuts body to at most maxRunes runes, appending "…" (U+2026)
+// when a cut occurred. maxRunes <= 0 returns (body, false) unchanged. An
+// empty body short-circuits. Counts RUNES (not bytes) so multi-byte UTF-8
+// characters are preserved intact. Equality (len==maxRunes) does NOT
+// truncate — the ellipsis is only added when something was actually cut.
+func truncateBody(body string, maxRunes int) (string, bool) {
+	if body == "" || maxRunes <= 0 {
+		return body, false
+	}
+	if utf8.RuneCountInString(body) <= maxRunes {
+		return body, false
+	}
+	runes := []rune(body)
+	return string(runes[:maxRunes]) + "…", true
+}
+
 var (
 	showJSON       bool
 	showRaw        bool
@@ -23,7 +40,20 @@ var (
 	showETagOnly   bool
 	showActive     bool
 	showNoMentions bool
+	// showBodyChars truncates body previews at N runes when > 0. Applied
+	// to default styled, --json, and --body-only output paths; --raw and
+	// --etag-only are untouched (byte-faithful / metadata-only).
+	showBodyChars int
+	// showSummary is shorthand for --body-chars showSummaryDefaultChars.
+	// Mutually exclusive with --body-chars.
+	showSummary bool
 )
+
+// showSummaryDefaultChars is the rune budget applied when --summary is set.
+// 300 runes was chosen as a balance between "enough to tell what a nib is
+// about" and "cheap enough that agents can survey 20+ nibs without
+// flooding context" — the motivating use case in nibs-lmwm.
+const showSummaryDefaultChars = 300
 
 var showCmd = &cobra.Command{
 	Use:   "show <id> [id...]",
@@ -40,6 +70,21 @@ body-reference lists. Two flags adjust how those lists are computed:
                  --no-mentions dominates --active when both are set.`,
 	Args: cobra.MinimumNArgs(1),
 	RunE: func(cmd *cobra.Command, args []string) error {
+		// Reject --body-chars values <= 0 before any work. 0 as default
+		// (unset) is fine; explicit 0 or negative is an error.
+		if cmd.Flags().Changed("body-chars") && showBodyChars <= 0 {
+			return reportErr(showJSON, output.ErrValidation,
+				fmt.Errorf("--body-chars must be > 0"))
+		}
+
+		// Resolve effective body-chars budget: --summary implies the
+		// default 300, --body-chars overrides. Mutex between the two is
+		// enforced by Cobra's MarkFlagsMutuallyExclusive in init().
+		bodyChars := showBodyChars
+		if showSummary {
+			bodyChars = showSummaryDefaultChars
+		}
+
 		app := getApp(cmd)
 		resolver := app.newResolver()
 
@@ -66,7 +111,7 @@ body-reference lists. Two flags adjust how those lists are computed:
 			filtered := filterResolvedBlockers(nibs, app.Core)
 			envelopes := make([]showJSONEnvelope, len(filtered))
 			for i, b := range filtered {
-				envelopes[i] = buildShowJSONEnvelope(b, app.Core, showActive, !showNoMentions)
+				envelopes[i] = buildShowJSONEnvelope(b, app.Core, showActive, !showNoMentions, bodyChars)
 			}
 			if len(envelopes) == 1 {
 				return output.JSONRaw(envelopes[0])
@@ -74,7 +119,8 @@ body-reference lists. Two flags adjust how those lists are computed:
 			return output.JSONRaw(envelopes)
 		}
 
-		// Raw markdown output (frontmatter + body)
+		// Raw markdown output (frontmatter + body) — byte-faithful,
+		// never truncated.
 		if showRaw {
 			for i, b := range nibs {
 				if i > 0 {
@@ -89,18 +135,20 @@ body-reference lists. Two flags adjust how those lists are computed:
 			return nil
 		}
 
-		// Body only (no header, no styling)
+		// Body only (no header, no styling). Truncates when bodyChars > 0.
 		if showBodyOnly {
 			for i, b := range nibs {
 				if i > 0 {
 					fmt.Print("\n---\n\n")
 				}
-				fmt.Print(b.Body)
+				body, _ := truncateBody(b.Body, bodyChars)
+				fmt.Print(body)
 			}
 			return nil
 		}
 
-		// ETag only (for easy extraction in scripts)
+		// ETag only (for easy extraction in scripts) — metadata only,
+		// truncation doesn't apply.
 		if showETagOnly {
 			for i, b := range nibs {
 				if i > 0 {
@@ -111,7 +159,9 @@ body-reference lists. Two flags adjust how those lists are computed:
 			return nil
 		}
 
-		// Default: styled human-friendly output
+		// Default: styled human-friendly output. Pre-truncate the body
+		// on a shallow copy so Glamour renders the shortened text —
+		// never mutate the shared *nib.Nib from Core.
 		for i, b := range nibs {
 			if i > 0 {
 				fmt.Println()
@@ -119,7 +169,16 @@ body-reference lists. Two flags adjust how those lists are computed:
 				fmt.Println()
 			}
 			mentions, mentionedBy := computeMentionIDs(b, app.Core, showActive, !showNoMentions)
-			showStyledNib(b,
+			rendered := b
+			if bodyChars > 0 {
+				truncated, didTruncate := truncateBody(b.Body, bodyChars)
+				if didTruncate {
+					shallow := *b
+					shallow.Body = truncated
+					rendered = &shallow
+				}
+			}
+			showStyledNib(rendered,
 				computeBlockingIDs(b, app.Core),
 				mentions,
 				mentionedBy,
@@ -160,6 +219,10 @@ type showJSONEnvelope struct {
 	Nib         *nib.Nib
 	Mentions    []string
 	MentionedBy []string
+	// BodyChars truncates the merged "body" key at this many runes when >0.
+	// 0 disables truncation. When truncation occurs, MarshalJSON also
+	// injects `body_truncated: true`; it never emits the field as false.
+	BodyChars int
 }
 
 // MarshalJSON merges the nib's own JSON shape with the mention arrays.
@@ -207,6 +270,30 @@ func (e showJSONEnvelope) MarshalJSON() ([]byte, error) {
 		return nil, err
 	}
 	merged["mentioned_by"] = mentionedByRaw
+
+	// Body truncation: when BodyChars > 0, cut merged["body"] at that rune
+	// count and inject `body_truncated: true` only if something was cut.
+	// We decode the existing value to a string, run truncateBody, then
+	// re-encode. `body_truncated: false` is intentionally never emitted —
+	// absence is the default signal.
+	if e.BodyChars > 0 {
+		if bodyRaw, exists := merged["body"]; exists {
+			var bodyStr string
+			if err := json.Unmarshal(bodyRaw, &bodyStr); err != nil {
+				return nil, fmt.Errorf("decoding body for truncation: %w", err)
+			}
+			truncated, didTruncate := truncateBody(bodyStr, e.BodyChars)
+			if didTruncate {
+				newBodyRaw, err := json.Marshal(truncated)
+				if err != nil {
+					return nil, err
+				}
+				merged["body"] = newBodyRaw
+				merged["body_truncated"] = json.RawMessage("true")
+			}
+		}
+	}
+
 	return json.Marshal(merged)
 }
 
@@ -217,12 +304,13 @@ func (e showJSONEnvelope) MarshalJSON() ([]byte, error) {
 // Mention-list population is delegated to computeMentionIDs so the JSON
 // path and the human path share one gating decision for --no-mentions /
 // --active.
-func buildShowJSONEnvelope(b *nib.Nib, reader graph.NibReader, activeOnly, includeMentions bool) showJSONEnvelope {
+func buildShowJSONEnvelope(b *nib.Nib, reader graph.NibReader, activeOnly, includeMentions bool, bodyChars int) showJSONEnvelope {
 	outbound, inbound := computeMentionIDs(b, reader, activeOnly, includeMentions)
 	return showJSONEnvelope{
 		Nib:         b,
 		Mentions:    outbound,
 		MentionedBy: inbound,
+		BodyChars:   bodyChars,
 	}
 }
 
@@ -459,6 +547,11 @@ func init() {
 		"Exclude completed/scrapped nibs from mention sections")
 	showCmd.Flags().BoolVar(&showNoMentions, "no-mentions", false,
 		"Skip the mention scan entirely; mention sections become empty")
+	showCmd.Flags().IntVar(&showBodyChars, "body-chars", 0,
+		"Truncate body preview at N runes (appends '…'); 0 disables")
+	showCmd.Flags().BoolVar(&showSummary, "summary", false,
+		"Shorthand for --body-chars 300; surveys many nibs cheaply")
 	showCmd.MarkFlagsMutuallyExclusive("json", "raw", "body-only", "etag-only")
+	showCmd.MarkFlagsMutuallyExclusive("body-chars", "summary")
 	rootCmd.AddCommand(showCmd)
 }
