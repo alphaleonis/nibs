@@ -87,6 +87,7 @@ vi.mock("svelte-sonner", async () => {
 });
 
 import { queryStore } from "@urql/svelte";
+import { CONFIG_QUERY, NIB_DETAIL_QUERY } from "$lib/queries";
 const mockQueryStore = vi.mocked(queryStore);
 
 function makeNibData(overrides: Record<string, unknown> = {}) {
@@ -111,17 +112,53 @@ function makeNibData(overrides: Record<string, unknown> = {}) {
   };
 }
 
+// Dispatch queryStore calls to the correct mock based on the query document.
+// DetailPanel subscribes to both NIB_DETAIL_QUERY and CONFIG_QUERY.
+function setupQueryDispatch(opts: {
+  nib?: ReturnType<typeof makeNibData> | null;
+  fetching?: boolean;
+  error?: { message: string };
+  prefix?: string;
+  projectName?: string;
+}) {
+  const nibState = opts.fetching
+    ? { fetching: true, error: undefined, data: undefined, stale: false }
+    : opts.error
+      ? { fetching: false, error: opts.error, data: undefined, stale: false }
+      : {
+          fetching: false,
+          error: undefined,
+          data: opts.nib !== undefined ? { nib: opts.nib } : { nib: null },
+          stale: false,
+        };
+  const configState = {
+    fetching: false,
+    error: undefined,
+    data: {
+      config: {
+        projectName: opts.projectName ?? "nibs",
+        prefix: opts.prefix ?? "nibs-",
+      },
+    },
+    stale: false,
+  };
+  mockQueryStore.mockImplementation((args: any) => {
+    if (args?.query === CONFIG_QUERY) {
+      return readable(configState) as any;
+    }
+    if (args?.query === NIB_DETAIL_QUERY) {
+      return readable(nibState) as any;
+    }
+    return readable({ fetching: false, error: undefined, data: undefined, stale: false }) as any;
+  });
+}
+
 function mockNibQuery(nibData: ReturnType<typeof makeNibData> | null = null) {
-  const data = nibData ? { nib: nibData } : { nib: null };
-  mockQueryStore.mockReturnValue(
-    readable({ fetching: false, error: undefined, data, stale: false }) as any
-  );
+  setupQueryDispatch({ nib: nibData });
 }
 
 function mockFetchingQuery() {
-  mockQueryStore.mockReturnValue(
-    readable({ fetching: true, error: undefined, data: undefined, stale: false }) as any
-  );
+  setupQueryDispatch({ fetching: true });
 }
 
 /**
@@ -450,14 +487,7 @@ describe("DetailPanel", () => {
   });
 
   it("shows error state when query returns an error", () => {
-    mockQueryStore.mockReturnValue(
-      readable({
-        fetching: false,
-        error: { message: "Network error" },
-        data: undefined,
-        stale: false,
-      }) as any
-    );
+    setupQueryDispatch({ error: { message: "Network error" } });
 
     renderPanel({ nibId: "nibs-abc1", onclose: vi.fn() });
 
@@ -867,6 +897,26 @@ describe("DetailPanel", () => {
     const prose = screen.getByTestId("detail-body-prose");
     const anchors = prose.querySelectorAll('a[data-nib-id="nibs-gx0f"]');
     expect(anchors.length).toBe(2);
+  });
+
+  it("resolves short-form mentions using the configured prefix", () => {
+    setupQueryDispatch({
+      nib: makeNibData({
+        body: "see #gx0f",
+        mentions: [
+          { id: "myproj-gx0f", title: "Target", type: "task", status: "todo" },
+        ],
+      }),
+      prefix: "myproj-",
+      projectName: "Test",
+    });
+
+    renderPanel({ nibId: "nibs-abc1", onclose: vi.fn() });
+
+    const prose = screen.getByTestId("detail-body-prose");
+    const anchor = prose.querySelector('a[data-nib-id="myproj-gx0f"]') as HTMLAnchorElement;
+    expect(anchor).toBeInTheDocument();
+    expect(anchor).toHaveTextContent("#gx0f");
   });
 
   it("Enter key on a focused mention link invokes onnibselect", async () => {

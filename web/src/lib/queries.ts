@@ -4,6 +4,7 @@ export const CONFIG_QUERY = gql`
   query Config {
     config {
       projectName
+      prefix
     }
   }
 `;

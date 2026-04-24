@@ -752,7 +752,10 @@ func (r *queryResolver) Nibs(ctx context.Context, filter *model.NibFilter, sort 
 // Config is the resolver for the config field.
 func (r *queryResolver) Config(ctx context.Context) (*model.Config, error) {
 	cfg := r.Reader.Config()
-	return &model.Config{ProjectName: cfg.GetProjectName()}, nil
+	return &model.Config{
+		ProjectName: cfg.GetProjectName(),
+		Prefix:      cfg.Nibs.Prefix,
+	}, nil
 }
 
 // NibChanged is the resolver for the nibChanged field.

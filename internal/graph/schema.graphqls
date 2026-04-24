@@ -5,6 +5,8 @@ scalar Time
 type Config {
   "Project name derived from the config file directory"
   projectName: String!
+  "Configured nib ID prefix (e.g., 'nibs-', 'myproj-'). Empty if unset."
+  prefix: String!
 }
 
 type Query {

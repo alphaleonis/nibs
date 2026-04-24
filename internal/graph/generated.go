@@ -52,6 +52,7 @@ type DirectiveRoot struct {
 
 type ComplexityRoot struct {
 	Config struct {
+		Prefix      func(childComplexity int) int
 		ProjectName func(childComplexity int) int
 	}
 
@@ -168,6 +169,12 @@ func (e *executableSchema) Complexity(ctx context.Context, typeName, field strin
 	_ = ec
 	switch typeName + "." + field {
 
+	case "Config.prefix":
+		if e.complexity.Config.Prefix == nil {
+			break
+		}
+
+		return e.complexity.Config.Prefix(childComplexity), true
 	case "Config.projectName":
 		if e.complexity.Config.ProjectName == nil {
 			break
@@ -1039,6 +1046,35 @@ func (ec *executionContext) _Config_projectName(ctx context.Context, field graph
 }
 
 func (ec *executionContext) fieldContext_Config_projectName(_ context.Context, field graphql.CollectedField) (fc *graphql.FieldContext, err error) {
+	fc = &graphql.FieldContext{
+		Object:     "Config",
+		Field:      field,
+		IsMethod:   false,
+		IsResolver: false,
+		Child: func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+			return nil, errors.New("field of type String does not have child fields")
+		},
+	}
+	return fc, nil
+}
+
+func (ec *executionContext) _Config_prefix(ctx context.Context, field graphql.CollectedField, obj *model.Config) (ret graphql.Marshaler) {
+	return graphql.ResolveField(
+		ctx,
+		ec.OperationContext,
+		field,
+		ec.fieldContext_Config_prefix,
+		func(ctx context.Context) (any, error) {
+			return obj.Prefix, nil
+		},
+		nil,
+		ec.marshalNString2string,
+		true,
+		true,
+	)
+}
+
+func (ec *executionContext) fieldContext_Config_prefix(_ context.Context, field graphql.CollectedField) (fc *graphql.FieldContext, err error) {
 	fc = &graphql.FieldContext{
 		Object:     "Config",
 		Field:      field,
@@ -3451,6 +3487,8 @@ func (ec *executionContext) fieldContext_Query_config(_ context.Context, field g
 			switch field.Name {
 			case "projectName":
 				return ec.fieldContext_Config_projectName(ctx, field)
+			case "prefix":
+				return ec.fieldContext_Config_prefix(ctx, field)
 			}
 			return nil, fmt.Errorf("no field named %q was found under type Config", field.Name)
 		},
@@ -5647,6 +5685,11 @@ func (ec *executionContext) _Config(ctx context.Context, sel ast.SelectionSet, o
 			out.Values[i] = graphql.MarshalString("Config")
 		case "projectName":
 			out.Values[i] = ec._Config_projectName(ctx, field, obj)
+			if out.Values[i] == graphql.Null {
+				out.Invalids++
+			}
+		case "prefix":
+			out.Values[i] = ec._Config_prefix(ctx, field, obj)
 			if out.Values[i] == graphql.Null {
 				out.Invalids++
 			}

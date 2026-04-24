@@ -26,6 +26,8 @@ type BodyModification struct {
 type Config struct {
 	// Project name derived from the config file directory
 	ProjectName string `json:"projectName"`
+	// Configured nib ID prefix (e.g., 'nibs-', 'myproj-'). Empty if unset.
+	Prefix string `json:"prefix"`
 }
 
 // Input for creating a new nib

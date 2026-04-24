@@ -2,7 +2,7 @@
   import { onDestroy } from "svelte";
   import { X, FileText, Trash2, Archive } from "@lucide/svelte";
   import { getContextClient, queryStore, subscriptionStore } from "@urql/svelte";
-  import { NIB_DETAIL_QUERY, NIB_CHANGED_SUBSCRIPTION } from "../queries";
+  import { NIB_DETAIL_QUERY, NIB_CHANGED_SUBSCRIPTION, CONFIG_QUERY } from "../queries";
   import { renderMarkdown } from "../markdown";
 
   import StatusSelect from "./StatusSelect.svelte";
@@ -43,13 +43,21 @@
     })
   );
 
+  // Subscribe to CONFIG_QUERY to read the configured nib ID prefix for
+  // resolving short-form mentions. Urql's cache-first default dedupes this
+  // against App.svelte's subscription.
+  const configResult = $derived(
+    queryStore({
+      client,
+      query: CONFIG_QUERY,
+    })
+  );
+
   let nib = $derived($result.data?.nib ?? null);
   let fetching = $derived($result.fetching);
+  let prefix = $derived($configResult.data?.config?.prefix ?? "");
   // Set of full mention IDs from the nib's resolved mentions. Used by the
   // resolver below to decide which `#<id>` tokens to rewrite as anchors.
-  // NOTE: project nib ID prefix is currently hardcoded as `nibs-` because the
-  // web UI's config surface doesn't expose the configured prefix. If/when the
-  // prefix becomes configurable in the web UI, this needs to read from config.
   let mentionIdSet = $derived(new Set<string>((nib?.mentions ?? []).map((m: { id: string }) => m.id)));
   // Use `$derived.by` with an explicit reactive read of `mentionIdSet` inside
   // the body of the derivation. If we closed over `mentionIdSet` via a plain
@@ -57,13 +65,16 @@
   // `mentionIdSet` changes while `nib.body` stays constant.
   let bodyHtml = $derived.by(() => {
     const ids = mentionIdSet; // explicit reactive read
+    const pfx = prefix; // explicit reactive read
     const resolve = (token: string): string | null => {
       // User may write either `#gx0f` (short) or `#nibs-gx0f` (full). Since
       // nib.mentions returns full IDs, the first branch only matches when the
-      // token is already a full ID; the second branch handles the short form.
-      if (ids.has(token)) return token; // full form: #nibs-gx0f
-      const full = `nibs-${token}`;
-      if (ids.has(full)) return full; // short form: #gx0f
+      // token is already a full ID; the second branch handles the short form
+      // with the configured prefix.
+      if (ids.has(token)) return token; // full form: e.g. #nibs-gx0f
+      if (!pfx) return null; // no prefix configured, short form is meaningless
+      const full = `${pfx}${token}`;
+      if (ids.has(full)) return full; // short form: e.g. #gx0f
       return null;
     };
     return renderMarkdown(nib?.body ?? "", resolve);
