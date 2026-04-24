@@ -12,7 +12,7 @@ import (
 //
 // Always returns a non-nil slice so agent consumers (and downstream JSON
 // marshalling) get `[]` instead of `null` for empty mention lists — matches
-// the empty-array contract used by show --json and refs --both --json.
+// the empty-array contract used by show --json and links --json.
 func MentionIDList(nibs []*nib.Nib) []string {
 	ids := make([]string, 0, len(nibs))
 	for _, m := range nibs {

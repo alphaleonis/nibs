@@ -84,12 +84,6 @@ nibs context --json <nib-id>          # Detail: summary for any nib's subtree
 nibs plan --json <parent-id>            # Full plan view
 nibs plan --json <parent-id> --active   # Only active items (exclude completed/scrapped)
 
-# Dependency-aware ordering of a parent's children (edges from #<id> mentions)
-nibs deps --json <parent-id>            # Topologically ordered children with depends_on + external_deps
-nibs deps --json <parent-id> --active   # Exclude completed/scrapped before computing the sort
-nibs deps --json <parent-id> --cycles   # Report cycles in a separate section instead of erroring
-nibs deps <parent-id> --graph mermaid   # Emit Mermaid graph (also: --graph dot) — mutually exclusive with --json
-
 # Close a nib (mark completed with summary, update parent milestone)
 nibs close --json <id> --summary "What was accomplished"
 nibs close --json <id> --summary "Done" --force   # Close even with incomplete children
@@ -97,12 +91,15 @@ nibs close --json <id> --summary "Done" --force   # Close even with incomplete c
 # Archive completed/scrapped nibs (only when user requests)
 nibs archive
 
-# Show body references (#<id> mentions) — outbound by default, --inbound for reverse
-nibs refs --json <id>
-nibs refs --json <id> --inbound
-nibs refs --json <id> --both                     # outbound + inbound in one call; JSON shape: { outbound: [...], inbound: [...] }
-nibs refs --json <id> --status todo --type bug   # compose status/type/priority/--active filters (apply to both directions under --both)
-nibs refs --json <id> --active                   # shorthand: exclude completed/scrapped from the mention list
+# Query any relationship for a nib under one unified envelope
+nibs links --json <id> --rel mentions-out                       # outbound #<id> mentions
+nibs links --json <id> --rel mentions-in                        # inbound mentions (nibs whose bodies mention <id>)
+nibs links --json <id> --rel children --order topo              # children topologically sorted by body-reference dependencies
+nibs links --json <id> --rel blocked-by --active                # active (not-completed/scrapped) blockers
+nibs links --json <id> --rel neighbours-active                  # all 7 direct rels, excluding completed/scrapped
+nibs links --json <id> --rel descendants --depth all            # full descendant tree (transitive)
+nibs links --json <id> --rel blockers-transitive --depth all    # full blocker closure
+nibs links --json <id> --rel children,siblings --flat           # deduped flat list across rels
 ```
 
 Use `nibs <command> --help` for full options. Use `--json` for machine-readable output.
@@ -112,9 +109,9 @@ Use `nibs <command> --help` for full options. Use `--json` for machine-readable 
 - **Parent**: Hierarchy (milestone → epic → feature → task/bug/research). Set with `--parent <id>`.
 - **Blocking**: Use `--blocking <id>` when THIS nib blocks another (the other nib can't proceed until this is done).
 - **Blocked-by**: Use `--blocked-by <id>` when THIS nib is blocked by another (this nib can't proceed until the other is done). **Prefer this when creating dependent work.**
-- **Mentions (`#<id>` in body)**: Weak informational references embedded in prose. When you write a nib body that refers to another nib by ID, use `#<short-id>` (e.g. `#gx0f`) or `#<full-id>` (e.g. `#nibs-gx0f`). **A bare ID without the `#` sigil is NOT recognized** — only `#`-prefixed tokens count as mentions. IDs must be lowercase ASCII letters/digits with optional internal hyphens; uppercase (`#ABCD`) and leading/trailing hyphens do not match. `#` adjacent to a word character (e.g. `email#foo`) is also ignored. Mentions inside fenced code blocks, indented code blocks, inline code spans, links, images, and raw HTML are skipped; mentions inside heading text ARE extracted. Self-references and tokens that do not resolve to a known nib drop silently — if `nibs refs` shows fewer results than expected, check for typos or unresolved IDs. `nibs show --json <id>` surfaces the full outbound/inbound mention lists in one call; use `nibs refs` only when you need filter flags or the bidirectional envelope. Use `nibs refs <id>` for outbound, `nibs refs <id> --inbound` for inbound, and `nibs refs <id> --both` to fetch both directions (composes with `--status`, `--type`, `--priority`, `--active`). Use `nibs list --mentions <id>` to find nibs that mention a given target; `--mentioned-by <id>` for the reverse. Mentions are informational only; use `--blocked-by` for real workflow dependencies.
+- **Mentions (`#<id>` in body)**: Weak informational references embedded in prose. When you write a nib body that refers to another nib by ID, use `#<short-id>` (e.g. `#gx0f`) or `#<full-id>` (e.g. `#nibs-gx0f`). **A bare ID without the `#` sigil is NOT recognized** — only `#`-prefixed tokens count as mentions. IDs must be lowercase ASCII letters/digits with optional internal hyphens; uppercase (`#ABCD`) and leading/trailing hyphens do not match. `#` adjacent to a word character (e.g. `email#foo`) is also ignored. Mentions inside fenced code blocks, indented code blocks, inline code spans, links, images, and raw HTML are skipped; mentions inside heading text ARE extracted. Self-references and tokens that do not resolve to a known nib drop silently — if `nibs links` shows fewer results than expected, check for typos or unresolved IDs. `nibs show --json <id>` surfaces the full outbound/inbound mention lists in one call; use `nibs links` when you need relationship filter flags, alternate relations, transitive traversal, or topological ordering. Use `nibs list --mentions <id>` / `--mentioned-by <id>` to filter a *list* by mention relation. Mentions are informational only; use `--blocked-by` for real workflow dependencies.
   - **Field shape**: `mentions` / `mentioned_by` are always present in `show --json` output (as `[]` when empty). `blocked_by` / `parent` are omitted when empty — defensive-check in jq pipelines, e.g. `(.blocked_by // []) | length`.
-  - **`show` mention filtering**: `nibs show <id> --active` drops completed/scrapped entries from both mention sections (same semantics as `nibs refs --active`). `nibs show <id> --no-mentions` skips the mention scan entirely — useful when you only want the nib body and don't care about references. `--no-mentions` dominates `--active` when both are set; mentions stay `[]` regardless.
+  - **`show` mention filtering**: `nibs show <id> --active` drops completed/scrapped entries from both mention sections (same semantics as `nibs links --rel mentions-out --active` / `--rel mentions-in --active`). `nibs show <id> --no-mentions` skips the mention scan entirely — useful when you only want the nib body and don't care about references. `--no-mentions` dominates `--active` when both are set; mentions stay `[]` regardless.
 
 ## Issue Types
 
@@ -176,18 +173,14 @@ This is useful for checking progress on an epic or milestone before closing it.
 
 ## Deciding What Order to Tackle Children
 
-Use `nibs deps` when some children depend on others finishing first. It reads `#<id>` mentions from each child's body to build a dependency graph and topologically sorts the subtree:
+Use `nibs links --rel children --order topo` when some children depend on others finishing first. It reads `#<id>` mentions from each child's body to build a dependency graph and topologically sorts the subtree:
 
 ```bash
-nibs deps --json <parent-id>             # Topologically ordered children with depends_on + external_deps
-nibs deps --json <parent-id> --active    # Exclude completed/scrapped children before computing the sort
-nibs deps --json <parent-id> --cycles    # Report cyclic groups in a separate section instead of erroring
-nibs deps <parent-id> --graph mermaid    # Emit a Mermaid diagram (also: --graph dot)
+nibs links --json <parent-id> --rel children --order topo             # Topologically ordered children
+nibs links --json <parent-id> --rel children --order topo --active    # Exclude completed/scrapped before sorting
 ```
 
-Edges come from `#<id>` mentions in child bodies: if child B's body mentions `#a` (where A is a sibling of B), then A must come before B. Mentions of nibs outside the subtree land in `external_deps` and do NOT affect the internal order. Self-mentions are ignored. By default a cycle is a hard error so agents don't silently plan against an unsatisfiable order — use `--cycles` to list the cyclic groups for manual resolution.
-
-`--json` and `--graph` are mutually exclusive — JSON is the structured output and `--graph` is a rendering mode.
+Edges come from `#<id>` mentions in child bodies: if child B's body mentions `#a` (where A is a sibling of B), then A must come before B. Mentions of nibs outside the subtree are silently dropped (they don't affect internal order). Self-mentions are ignored. Cycles raise an error naming the participating nibs so you don't silently plan against an unsatisfiable order.
 
 ## Closing Nibs
 

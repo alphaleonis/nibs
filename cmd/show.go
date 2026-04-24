@@ -64,7 +64,8 @@ Human and --json output include outbound (mentions) and inbound (mentioned_by)
 body-reference lists. Two flags adjust how those lists are computed:
 
   --active       Drop completed/scrapped entries from both mention sections,
-                 matching the resolved-status filter used by 'nibs refs --active'.
+                 matching the resolved-status filter used by
+                 'nibs links --rel mentions-out --active' / --rel mentions-in --active.
   --no-mentions  Skip the mention scan entirely. Mention sections are omitted
                  from human output; --json emits empty arrays for both fields.
                  --no-mentions dominates --active when both are set.`,
@@ -191,8 +192,8 @@ body-reference lists. Two flags adjust how those lists are computed:
 
 // showJSONEnvelope wraps a Nib with its resolved mention ID lists for --json
 // output. We want agents to get the mention graph in one call rather than
-// chasing a separate `nibs refs` query — same philosophy as parent/blocking
-// already being carried on the nib JSON.
+// chasing a separate `nibs links --rel mentions-out/--rel mentions-in` query
+// — same philosophy as parent/blocking already being carried on the nib JSON.
 //
 // We cannot simply embed `*nib.Nib` because it carries a custom MarshalJSON
 // method; that method would be promoted to the envelope and drop our
@@ -207,7 +208,8 @@ body-reference lists. Two flags adjust how those lists are computed:
 //
 // The mention arrays hold IDs (parallel to `blocked_by`), not full nib
 // objects, so agents get a uniform shape for relationship fields. Use
-// `nibs refs` if the full resolved objects are needed.
+// `nibs links --rel mentions-out` / `--rel mentions-in` if the full
+// resolved objects are needed.
 //
 // Shape contract: `mentions` and `mentioned_by` are ALWAYS emitted (as
 // `[]` when empty). The Nib struct's own `blocked_by` / `parent` fields,
@@ -299,7 +301,7 @@ func (e showJSONEnvelope) MarshalJSON() ([]byte, error) {
 
 // buildShowJSONEnvelope wraps a Nib with its outbound/inbound mention ID
 // lists. IDs mirror the `blocked_by` shape — callers wanting the full
-// resolved objects should use `nibs refs`.
+// resolved objects should use `nibs links --rel mentions-out` / `--rel mentions-in`.
 //
 // Mention-list population is delegated to computeMentionIDs so the JSON
 // path and the human path share one gating decision for --no-mentions /
@@ -337,9 +339,9 @@ func computeMentionIDs(b *nib.Nib, reader graph.NibReader, activeOnly, includeMe
 //
 // Convention: lightweight read-only relationship rendering in `show` goes
 // through graph.NibReader (Core-direct). Filterable relationship listing
-// (e.g. `nibs refs <id> --status todo`) goes through the GraphQL resolver
-// path (`resolver.Nib().Mentions(ctx, b, filter)`). See cmd/refs.go for
-// the resolver-path pattern.
+// (e.g. `nibs links <id> --rel mentions-out --status todo`) goes through
+// the GraphQL resolver path (`resolver.Nib().Mentions(ctx, b, filter)`).
+// See cmd/links.go for the resolver-path pattern.
 //
 // The ID-extraction step is delegated to graph.MentionIDList so this layer
 // and the MentionIds/MentionedByIds GraphQL resolvers share a single
