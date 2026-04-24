@@ -4,13 +4,15 @@ import "github.com/charmbracelet/bubbles/key"
 
 // KeyMap defines the key bindings for the TUI
 type KeyMap struct {
-	Up     key.Binding
-	Down   key.Binding
-	Enter  key.Binding
-	Back   key.Binding
-	Quit   key.Binding
-	Help   key.Binding
-	Filter key.Binding
+	Up       key.Binding
+	Down     key.Binding
+	MoveUp   key.Binding
+	MoveDown key.Binding
+	Enter    key.Binding
+	Back     key.Binding
+	Quit     key.Binding
+	Help     key.Binding
+	Filter   key.Binding
 }
 
 // DefaultKeyMap returns the default key bindings
@@ -23,6 +25,14 @@ func DefaultKeyMap() KeyMap {
 		Down: key.NewBinding(
 			key.WithKeys("down", "j"),
 			key.WithHelp("↓/j", "down"),
+		),
+		MoveUp: key.NewBinding(
+			key.WithKeys("ctrl+up"),
+			key.WithHelp("ctrl+↑", "move up (block if multi-selected)"),
+		),
+		MoveDown: key.NewBinding(
+			key.WithKeys("ctrl+down"),
+			key.WithHelp("ctrl+↓", "move down (block if multi-selected)"),
 		),
 		Enter: key.NewBinding(
 			key.WithKeys("enter"),
@@ -56,6 +66,7 @@ func (k KeyMap) ShortHelp() []key.Binding {
 func (k KeyMap) FullHelp() [][]key.Binding {
 	return [][]key.Binding{
 		{k.Up, k.Down, k.Enter},
+		{k.MoveUp, k.MoveDown},
 		{k.Filter, k.Quit, k.Help},
 	}
 }

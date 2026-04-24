@@ -86,6 +86,18 @@ type reorderNibMsg struct {
 	first    *bool
 }
 
+// reorderBlockMsg requests a block-move: swap a single "displaced" sibling
+// past a contiguous block of selected siblings using one backend ReorderNib
+// call. Move-up sets afterID (the last item of the block); move-down sets
+// beforeID (the first item of the block). focusID is the list row to re-
+// select after the reload.
+type reorderBlockMsg struct {
+	displacedID string
+	afterID     *string
+	beforeID    *string
+	focusID     string
+}
+
 // openEditorMsg requests opening the editor for a nib
 type openEditorMsg struct {
 	nibID   string
@@ -536,6 +548,19 @@ func (a *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if result != nil {
 			a.list.selectByID = result.ID
 		}
+		return a, a.list.loadNibs
+
+	case reorderBlockMsg:
+		// Block move: move the single displaced sibling past the selected block
+		// in one ReorderNib call. Preserves the block's internal order
+		// automatically.
+		_, err := a.backend.ReorderNib(context.Background(), msg.displacedID, msg.afterID, msg.beforeID, nil)
+		if err != nil {
+			a.list.statusMessage = fmt.Sprintf("Reorder failed: %v", err)
+			return a, nil
+		}
+		// Preserve focus on the originally-focused row (not the displaced sibling).
+		a.list.selectByID = msg.focusID
 		return a, a.list.loadNibs
 
 	case openConfirmMsg:

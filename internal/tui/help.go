@@ -34,7 +34,7 @@ func listHelpEntries() []helpEntry {
 		{"\u2190/\u2192", "collapse/expand"},
 		{"shift+tab", "collapse all"},
 		{"]", "expand all"},
-		{"ctrl+\u2191/\u2193", "reorder"},
+		{"ctrl+\u2191/\u2193", "reorder (block if multi-selected)"},
 		{"/", "filter"},
 		{"g t", "filter by tag"},
 		{"A", "archive"},

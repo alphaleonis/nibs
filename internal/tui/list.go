@@ -608,27 +608,9 @@ func (m listModel) Update(msg tea.Msg) (listModel, tea.Cmd) {
 				}
 				return m, nil
 			case "ctrl+up":
-				// Move selected nib up among siblings (before previous sibling)
-				if item, ok := m.list.SelectedItem().(nibItem); ok {
-					if prevSib := m.findPreviousSibling(item.nib); prevSib != nil {
-						beforeID := prevSib.ID
-						return m, func() tea.Msg {
-							return reorderNibMsg{nibID: item.nib.ID, beforeID: &beforeID}
-						}
-					}
-				}
-				return m, nil
+				return m, m.dispatchBlockMove(true)
 			case "ctrl+down":
-				// Move selected nib down among siblings (after next sibling)
-				if item, ok := m.list.SelectedItem().(nibItem); ok {
-					if nextSib := m.findNextSibling(item.nib); nextSib != nil {
-						afterID := nextSib.ID
-						return m, func() tea.Msg {
-							return reorderNibMsg{nibID: item.nib.ID, afterID: &afterID}
-						}
-					}
-				}
-				return m, nil
+				return m, m.dispatchBlockMove(false)
 			case "shift+tab":
 				// Collapse all parent nodes
 				if m.tree != nil {
@@ -1135,21 +1117,113 @@ func (m *listModel) findSiblings(n *nib.Nib) []*nib.Nib {
 	if m.tree == nil {
 		return nil
 	}
-	if n.Parent == "" {
-		// Root-level: siblings are the top-level tree nodes
-		siblings := make([]*nib.Nib, len(m.tree))
-		for i, node := range m.tree {
-			siblings[i] = node.Nib
+	return siblingsFromTree(m.tree, n.Parent)
+}
+
+// dispatchBlockMove selects the correct reorder strategy based on the
+// effective multi-selection:
+//
+//   - 0 effective items: fall back to the legacy focused-row reorder.
+//   - 1 effective item: single-item reorder sourced from the selection.
+//   - ≥2 contiguous, same-parent items: block move via reorderBlockMsg.
+//   - ≥2 with gaps or multiple parents: silent no-op.
+//
+// up=true means Ctrl-Up (toward previous sibling); up=false means Ctrl-Down.
+func (m listModel) dispatchBlockMove(up bool) tea.Cmd {
+	focused, _ := m.list.SelectedItem().(nibItem)
+
+	effective := effectiveSelection(m.selectedNibs, m.tree)
+
+	// Case 1: no multi-selection → today's focused-row behavior.
+	if len(effective) == 0 {
+		if focused.nib == nil {
+			return nil
 		}
-		return siblings
+		return singleReorderCmd(focused.nib, m.findSiblings(focused.nib), up)
 	}
-	node := ui.FindNode(m.tree, n.Parent)
-	if node == nil {
+
+	// Case 2: exactly one effective item → single-item reorder sourced from
+	// the selection rather than the focus.
+	if len(effective) == 1 {
+		target := effective[0]
+		return singleReorderCmd(target, m.findSiblings(target), up)
+	}
+
+	// Case 3+: 2 or more effective items — block move if valid.
+	siblings, startIdx, endIdx, ok := blockMovable(effective, m.tree)
+	if !ok {
+		return nil // silent no-op
+	}
+
+	if up {
+		if startIdx == 0 {
+			return nil // at top, no room
+		}
+		displaced := siblings[startIdx-1]
+		after := siblings[endIdx].ID
+		focusID := ""
+		if focused.nib != nil {
+			focusID = focused.nib.ID
+		}
+		return func() tea.Msg {
+			return reorderBlockMsg{
+				displacedID: displaced.ID,
+				afterID:     &after,
+				focusID:     focusID,
+			}
+		}
+	}
+
+	if endIdx == len(siblings)-1 {
+		return nil // at bottom, no room
+	}
+	displaced := siblings[endIdx+1]
+	before := siblings[startIdx].ID
+	focusID := ""
+	if focused.nib != nil {
+		focusID = focused.nib.ID
+	}
+	return func() tea.Msg {
+		return reorderBlockMsg{
+			displacedID: displaced.ID,
+			beforeID:    &before,
+			focusID:     focusID,
+		}
+	}
+}
+
+// singleReorderCmd emits a reorderNibMsg for a single nib, moving it up or
+// down among its siblings. Returns nil if the target is already at the
+// boundary in that direction.
+func singleReorderCmd(target *nib.Nib, siblings []*nib.Nib, up bool) tea.Cmd {
+	if target == nil {
 		return nil
 	}
-	siblings := make([]*nib.Nib, len(node.Children))
-	for i, child := range node.Children {
-		siblings[i] = child.Nib
+	// Locate target in siblings.
+	idx := -1
+	for i, s := range siblings {
+		if s.ID == target.ID {
+			idx = i
+			break
+		}
 	}
-	return siblings
+	if idx < 0 {
+		return nil
+	}
+	if up {
+		if idx == 0 {
+			return nil
+		}
+		before := siblings[idx-1].ID
+		return func() tea.Msg {
+			return reorderNibMsg{nibID: target.ID, beforeID: &before}
+		}
+	}
+	if idx == len(siblings)-1 {
+		return nil
+	}
+	after := siblings[idx+1].ID
+	return func() tea.Msg {
+		return reorderNibMsg{nibID: target.ID, afterID: &after}
+	}
 }
