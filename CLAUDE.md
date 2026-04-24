@@ -99,6 +99,16 @@ For optional config fields with non-zero defaults, use pointer types (`*int`, `*
 - We are not using pull requests currently — merge feature branches directly into `main` and push
 - Create feature branches for non-trivial work, merge when done
 
+## The `.nibs/` Directory Is a Separate Git Repository
+
+`.nibs/` is gitignored in the main repo and is itself an independent git repository with its own remote (`https://github.com/alphaleonis/nibs-nibs.git`).
+
+- **Everything in `.nibs/` goes to `main`** — no feature branches for nib changes, no PRs. Commit and push directly.
+- **Fetch, commit, and push `.nibs/` separately** from the main repo. `git status` at the project root will never show changes inside `.nibs/`.
+- To operate on it, `cd .nibs` first, or use `git -C .nibs ...`. Do not try to add `.nibs/...` paths from the outer repo — they are ignored.
+- When a code change and a nib update belong together conceptually, they still become **two commits in two repos**: one in the outer repo for code, one in `.nibs/` for the nib. Reference the nib ID in the outer commit (`Refs: nibs-xxxx`) as usual; the `.nibs/` commit is typically a short `chore:` message describing the nib change.
+- Before starting work, consider `git -C .nibs fetch && git -C .nibs pull` so you see the latest nib state (nibs may have been updated from another machine or by a teammate).
+
 ## Commits
 
 - Use conventional commit messages ("feat", "fix", "chore", etc.)
