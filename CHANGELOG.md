@@ -7,6 +7,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## v0.3.1 - 2026-04-27
+
+### Fixed
+- `nibs context` now counts `research` nibs as leaf work. Previously `isLeafType` only matched `task`, `bug`, and `feature`, so research nibs were silently dropped from `ActiveTasks`, `NextTasks`, the summary `Progress`, and per-milestone `ContainerSummary.Progress` — an in-progress research nib under an active milestone was invisible to the context view.
+
 ## v0.3.0 - 2026-04-24
 
 ### Added

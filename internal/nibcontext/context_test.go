@@ -89,6 +89,17 @@ func TestCalcProgress(t *testing.T) {
 			wantTotal:      8,
 			wantPercentage: 37.5,
 		},
+		{
+			name: "research counts as leaf work",
+			nibs: []*nib.Nib{
+				{ID: "a", Status: "completed", Estimate: "m", Type: "task"},     // 3
+				{ID: "b", Status: "completed", Estimate: "l", Type: "research"}, // 5
+				{ID: "c", Status: "todo", Estimate: "s", Type: "research"},      // 1
+			},
+			wantCompleted:  8,
+			wantTotal:      9,
+			wantPercentage: 88.88888888888889,
+		},
 	}
 
 	for _, tt := range tests {
@@ -227,6 +238,63 @@ func TestBuildSummary(t *testing.T) {
 			t.Errorf("Containers[0].ID = %q, want %q", sum.Containers[0].ID, "m1")
 		}
 	})
+}
+
+func TestBuildSummary_ResearchIsLeafWork(t *testing.T) {
+	// milestone (m1)
+	//   epic (e1) - in-progress  <-- active phase
+	//     research-r1 (in-progress) <-- should be active
+	//     research-r2 (todo)        <-- should be next
+	//     task-t1 (todo)            <-- should be next
+	allNibs := []*nib.Nib{
+		makeNib("m1", "milestone", "in-progress", "", ""),
+		makeNib("e1", "epic", "in-progress", "", "m1"),
+		makeNib("r1", "research", "in-progress", "m", "e1"),
+		makeNib("r2", "research", "todo", "s", "e1"),
+		makeNib("t1", "task", "todo", "s", "e1"),
+	}
+
+	sum := BuildSummary(allNibs, "m1")
+
+	// Progress: r1(3) + r2(1) + t1(1) = 5 total, 0 completed
+	if sum.Progress.TotalWeight != 5 {
+		t.Errorf("TotalWeight = %d, want 5 (research must count toward total)", sum.Progress.TotalWeight)
+	}
+
+	// Active tasks must include r1 (in-progress research)
+	activeIDs := nibRefIDs(sum.ActiveTasks)
+	foundR1 := false
+	for _, id := range activeIDs {
+		if id == "r1" {
+			foundR1 = true
+		}
+	}
+	if !foundR1 {
+		t.Errorf("ActiveTasks = %v, want to include r1 (in-progress research)", activeIDs)
+	}
+
+	// Next tasks must include r2 (todo research) and t1 (todo task)
+	nextIDs := nibRefIDs(sum.NextTasks)
+	nextSet := map[string]bool{}
+	for _, id := range nextIDs {
+		nextSet[id] = true
+	}
+	if !nextSet["r2"] {
+		t.Errorf("NextTasks = %v, want to include r2 (todo research)", nextIDs)
+	}
+	if !nextSet["t1"] {
+		t.Errorf("NextTasks = %v, want to include t1", nextIDs)
+	}
+
+	// Container progress (overview mode) must also include research weight
+	overview := BuildSummary(allNibs, "")
+	if len(overview.Containers) != 1 {
+		t.Fatalf("Containers count = %d, want 1", len(overview.Containers))
+	}
+	if overview.Containers[0].Progress.TotalWeight != 5 {
+		t.Errorf("Container TotalWeight = %d, want 5 (research must count toward container progress)",
+			overview.Containers[0].Progress.TotalWeight)
+	}
 }
 
 func TestExtractDecisions(t *testing.T) {

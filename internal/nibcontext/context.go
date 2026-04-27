@@ -258,8 +258,10 @@ func collectDescendants(allNibs []*nib.Nib, rootID string, byID map[string]*nib.
 }
 
 // isLeafType returns true for work types that count toward progress.
+// Mirrors the leaf-type set in internal/nibtypes/hierarchy.go — keep in sync
+// when new leaf types are added to DefaultTypes.
 func isLeafType(typ string) bool {
-	return typ == "task" || typ == "bug" || typ == "feature"
+	return typ == "task" || typ == "bug" || typ == "feature" || typ == "research"
 }
 
 // filterByStatusAndLeaf returns leaf-type nibs matching the given status.
