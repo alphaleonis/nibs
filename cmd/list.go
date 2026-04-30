@@ -47,6 +47,12 @@ var listCmd = &cobra.Command{
 	Short:   "List all nibs",
 	Long: `Lists all nibs in the .nibs directory.
 
+Position column (#):
+  The leftmost # column shows each nib's natural-order position among its
+  siblings (per-parent, 1-based). It is independent of --sort, so under
+  --sort priority the numbers will appear non-monotonic — that's by design,
+  letting you reference "move from 2 to 5" regardless of the current sort.
+
 Search Syntax (--search/-S):
   The search flag supports Bleve query string syntax:
 
@@ -201,7 +207,10 @@ Search Syntax (--search/-S):
 			termWidth = w
 		}
 
-		fmt.Print(ui.RenderTree(tree, app.Config(), maxIDWidth, hasTags, termWidth))
+		// Per-parent natural-order position map (independent of --sort).
+		positions := nib.PositionMap(allNibs)
+
+		fmt.Print(ui.RenderTree(tree, app.Config(), maxIDWidth, hasTags, termWidth, positions))
 		return nil
 	},
 }

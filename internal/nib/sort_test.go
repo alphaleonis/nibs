@@ -110,6 +110,79 @@ func TestSortByOrderDeterminism(t *testing.T) {
 	})
 }
 
+func TestPositionMap(t *testing.T) {
+	t.Run("per-parent 1-based numbering", func(t *testing.T) {
+		nibs := []*Nib{
+			// Roots
+			{ID: "r1", Order: "a0"},
+			{ID: "r2", Order: "b0"},
+			{ID: "r3", Order: "c0"},
+			// Children of r1
+			{ID: "c1a", Parent: "r1", Order: "a0"},
+			{ID: "c1b", Parent: "r1", Order: "b0"},
+			// Children of r2
+			{ID: "c2a", Parent: "r2", Order: "a0"},
+		}
+
+		positions := PositionMap(nibs)
+
+		want := map[string]int{
+			"r1": 1, "r2": 2, "r3": 3,
+			"c1a": 1, "c1b": 2,
+			"c2a": 1,
+		}
+		for id, expected := range want {
+			if got := positions[id]; got != expected {
+				t.Errorf("positions[%q] = %d, want %d", id, got, expected)
+			}
+		}
+		if len(positions) != len(want) {
+			t.Errorf("got %d entries, want %d", len(positions), len(want))
+		}
+	})
+
+	t.Run("position reflects natural order, ignoring input order", func(t *testing.T) {
+		// Pass nibs in scrambled order; positions should follow Order key.
+		nibs := []*Nib{
+			{ID: "third", Order: "c0"},
+			{ID: "first", Order: "a0"},
+			{ID: "second", Order: "b0"},
+		}
+
+		positions := PositionMap(nibs)
+
+		if positions["first"] != 1 || positions["second"] != 2 || positions["third"] != 3 {
+			t.Errorf("got first=%d second=%d third=%d, want 1,2,3",
+				positions["first"], positions["second"], positions["third"])
+		}
+	})
+
+	t.Run("nibs without an order key sort after ordered ones", func(t *testing.T) {
+		// SortByOrder places unordered nibs after ordered ones (sorted by title).
+		// PositionMap should reflect that.
+		nibs := []*Nib{
+			{ID: "noord", Title: "ZZZ"},
+			{ID: "ord", Title: "AAA", Order: "a0"},
+		}
+
+		positions := PositionMap(nibs)
+
+		if positions["ord"] != 1 {
+			t.Errorf("ordered nib should be position 1, got %d", positions["ord"])
+		}
+		if positions["noord"] != 2 {
+			t.Errorf("unordered nib should be position 2, got %d", positions["noord"])
+		}
+	})
+
+	t.Run("empty input returns empty map", func(t *testing.T) {
+		positions := PositionMap(nil)
+		if len(positions) != 0 {
+			t.Errorf("got %d entries, want 0", len(positions))
+		}
+	})
+}
+
 func TestSortByStatusPriorityAndType(t *testing.T) {
 	statusNames := []string{"draft", "todo", "in-progress", "completed"}
 	ranker := &testRanker{names: []string{"critical", "high", "normal", "low", "deferred"}}

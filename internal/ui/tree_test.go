@@ -4,6 +4,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/alphaleonis/nibs/internal/config"
 	"github.com/alphaleonis/nibs/internal/nib"
 )
 
@@ -420,4 +421,103 @@ func TestCollectParentIDs(t *testing.T) {
 	if ids["t2"] {
 		t.Error("t2 should not be a parent")
 	}
+}
+
+// stripANSI removes SGR escape sequences (ESC [ … letter) from styled
+// lipgloss output so render assertions can be made against plain text.
+// Sufficient for this codebase's color use; would not handle OSC/DCS forms.
+func stripANSI(s string) string {
+	var sb strings.Builder
+	inEsc := false
+	for _, r := range s {
+		if inEsc {
+			if (r >= 'a' && r <= 'z') || (r >= 'A' && r <= 'Z') {
+				inEsc = false
+			}
+			continue
+		}
+		if r == 0x1b {
+			inEsc = true
+			continue
+		}
+		sb.WriteRune(r)
+	}
+	return sb.String()
+}
+
+func TestRenderTreePositionColumn(t *testing.T) {
+	cfg := config.Default()
+
+	root1 := &nib.Nib{ID: "r1", Title: "First", Status: "todo", Type: "task", Order: "a0"}
+	root2 := &nib.Nib{ID: "r2", Title: "Second", Status: "todo", Type: "task", Order: "b0"}
+	child1 := &nib.Nib{ID: "c1", Title: "Child A", Status: "todo", Type: "task", Parent: "r1", Order: "a0"}
+	child2 := &nib.Nib{ID: "c2", Title: "Child B", Status: "todo", Type: "task", Parent: "r1", Order: "b0"}
+	allNibs := []*nib.Nib{root1, root2, child1, child2}
+
+	tree := BuildTree(allNibs, allNibs, nib.SortByOrder)
+	positions := nib.PositionMap(allNibs)
+
+	t.Run("renders # header and per-parent positions", func(t *testing.T) {
+		out := stripANSI(RenderTree(tree, cfg, 4, false, 100, positions))
+		lines := strings.Split(out, "\n")
+		if len(lines) < 5 {
+			t.Fatalf("expected at least 5 lines, got %d:\n%s", len(lines), out)
+		}
+
+		// Header has the # column at the start (right-aligned to single digit).
+		header := lines[0]
+		if !strings.HasPrefix(header, "# ID") {
+			t.Errorf("header should start with '# ID', got %q", header)
+		}
+
+		// First data row should be position 1 for r1.
+		// Lines: [0]=header, [1]=divider, [2]=r1, [3]=c1, [4]=c2, [5]=r2
+		if !strings.HasPrefix(lines[2], "1 r1") {
+			t.Errorf("row 2 should start with '1 r1', got %q", lines[2])
+		}
+		// Children of r1 reset numbering: c1=1, c2=2
+		if !strings.Contains(lines[3], "1 ├─ c1") {
+			t.Errorf("row 3 should contain '1 ├─ c1', got %q", lines[3])
+		}
+		if !strings.Contains(lines[4], "2 └─ c2") {
+			t.Errorf("row 4 should contain '2 └─ c2', got %q", lines[4])
+		}
+		// Second root continues root numbering at 2.
+		if !strings.HasPrefix(lines[5], "2 r2") {
+			t.Errorf("row 5 should start with '2 r2', got %q", lines[5])
+		}
+	})
+
+	t.Run("nil positions omits column entirely", func(t *testing.T) {
+		out := stripANSI(RenderTree(tree, cfg, 4, false, 100, nil))
+		header := strings.Split(out, "\n")[0]
+		if strings.Contains(header, "#") {
+			t.Errorf("header should not contain '#' when positions is nil, got %q", header)
+		}
+		if !strings.HasPrefix(header, "ID") {
+			t.Errorf("header should start with 'ID' when positions is nil, got %q", header)
+		}
+	})
+
+	t.Run("column width grows for double-digit positions", func(t *testing.T) {
+		// 12 root nibs → max position 12 → column width 2.
+		var roots []*nib.Nib
+		orders := []string{"a0", "b0", "c0", "d0", "e0", "f0", "g0", "h0", "i0", "j0", "k0", "l0"}
+		for i, ord := range orders {
+			roots = append(roots, &nib.Nib{
+				ID:    "n" + string(rune('a'+i)),
+				Title: "Nib",
+				Order: ord,
+			})
+		}
+		tree := BuildTree(roots, roots, nib.SortByOrder)
+		positions := nib.PositionMap(roots)
+
+		out := stripANSI(RenderTree(tree, cfg, 3, false, 100, positions))
+		header := strings.Split(out, "\n")[0]
+		// Width 2 means " #" prefix (right-aligned).
+		if !strings.HasPrefix(header, " # ID") {
+			t.Errorf("header should start with ' # ID' for width-2 column, got %q", header)
+		}
+	})
 }

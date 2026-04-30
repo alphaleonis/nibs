@@ -1,6 +1,7 @@
 package ui
 
 import (
+	"fmt"
 	"strings"
 
 	"github.com/charmbracelet/lipgloss"
@@ -170,7 +171,10 @@ func calculateMaxDepth(nodes []*TreeNode) int {
 
 // RenderTree renders the tree as an ASCII tree with styled columns.
 // termWidth is used to calculate responsive column widths.
-func RenderTree(nodes []*TreeNode, cfg *config.Config, maxIDWidth int, hasTags bool, termWidth int) string {
+// positions maps nib.ID -> 1-based natural position among siblings (see
+// nib.PositionMap). Pass nil to omit the position column. Nibs in the tree
+// without an entry in the map render as a blank in the column.
+func RenderTree(nodes []*TreeNode, cfg *config.Config, maxIDWidth int, hasTags bool, termWidth int, positions map[string]int) string {
 	var sb strings.Builder
 
 	// Calculate max depth to determine ID column width
@@ -185,14 +189,34 @@ func RenderTree(nodes []*TreeNode, cfg *config.Config, maxIDWidth int, hasTags b
 		treeColWidth = maxIDWidth + maxDepth*treeIndent
 	}
 
+	// Position column: width is digits in the largest visible position.
+	// 0 means "do not render column" — both when positions is nil and when
+	// no visible node has a position entry.
+	posColWidth := 0
+	if positions != nil {
+		maxPos := maxVisiblePosition(nodes, positions)
+		if maxPos > 0 {
+			posColWidth = len(fmt.Sprintf("%d", maxPos))
+		}
+	}
+	// Total cells the position column occupies on each row, including the
+	// trailing space separating it from the ID column.
+	posColTotal := 0
+	if posColWidth > 0 {
+		posColTotal = posColWidth + 1
+	}
+
 	// Calculate responsive columns based on terminal width
 	// Adjust for tree column width vs default ID column width
-	adjustedWidth := termWidth - treeColWidth + ColWidthID
+	adjustedWidth := termWidth - treeColWidth + ColWidthID - posColTotal
 	cols := CalculateResponsiveColumns(adjustedWidth, hasTags)
 
-	// Calculate title width from remaining space
-	// Account for: tree/ID col, type col, status col, priority symbol (2), space before tags (1)
-	titleWidth := termWidth - treeColWidth - ColWidthType - ColWidthStatus - 3
+	// Calculate title width from remaining space.
+	// Approximate near the responsive thresholds: posColTotal is subtracted
+	// directly here AND influenced cols.Tags via adjustedWidth above, so the
+	// title may be 2-4 cells off when crossing the tags-shown/hidden boundary.
+	// Clamped to 20 below so layout stays sane.
+	titleWidth := termWidth - posColTotal - treeColWidth - ColWidthType - ColWidthStatus - 3
 	if cols.ShowTags {
 		titleWidth -= cols.Tags
 	}
@@ -202,11 +226,16 @@ func RenderTree(nodes []*TreeNode, cfg *config.Config, maxIDWidth int, hasTags b
 
 	// Header with manual padding (lipgloss Width doesn't handle styled strings well)
 	headerCol := lipgloss.NewStyle().Foreground(ColorMuted)
+	var posHeader string
+	if posColWidth > 0 {
+		// Right-align "#" within the position column so it sits over the digits.
+		posHeader = strings.Repeat(" ", posColWidth-1) + headerCol.Render("#") + " "
+	}
 	idHeader := headerCol.Render("ID") + strings.Repeat(" ", treeColWidth-2)
 	typeHeader := headerCol.Render("T") + strings.Repeat(" ", ColWidthType-1)
 	statusHeader := headerCol.Render("S") + strings.Repeat(" ", ColWidthStatus-1)
 
-	header := idHeader + typeHeader + statusHeader + headerCol.Render("TITLE")
+	header := posHeader + idHeader + typeHeader + statusHeader + headerCol.Render("TITLE")
 	if cols.ShowTags && titleWidth > 5 {
 		header += strings.Repeat(" ", titleWidth-5+3) + headerCol.Render("TAGS") // +3 for priority/spacing
 	}
@@ -221,6 +250,8 @@ func RenderTree(nodes []*TreeNode, cfg *config.Config, maxIDWidth int, hasTags b
 		treeColWidth: treeColWidth,
 		titleWidth:   titleWidth,
 		cols:         cols,
+		positions:    positions,
+		posColWidth:  posColWidth,
 	}
 
 	// Render nodes (depth 0 = root level, no ancestry yet)
@@ -229,11 +260,28 @@ func RenderTree(nodes []*TreeNode, cfg *config.Config, maxIDWidth int, hasTags b
 	return sb.String()
 }
 
+// maxVisiblePosition returns the largest position value among nibs visible in
+// the tree (recursing through children). Returns 0 if none have positions.
+func maxVisiblePosition(nodes []*TreeNode, positions map[string]int) int {
+	highest := 0
+	for _, node := range nodes {
+		if pos, ok := positions[node.Nib.ID]; ok && pos > highest {
+			highest = pos
+		}
+		if childMax := maxVisiblePosition(node.Children, positions); childMax > highest {
+			highest = childMax
+		}
+	}
+	return highest
+}
+
 // treeRenderConfig holds computed rendering configuration for tree output
 type treeRenderConfig struct {
 	treeColWidth int
 	titleWidth   int
 	cols         ResponsiveColumns
+	positions    map[string]int // nib ID -> 1-based natural position; nil = no column
+	posColWidth  int            // 0 = column hidden
 }
 
 // renderNodes recursively renders tree nodes with proper indentation.
@@ -259,6 +307,18 @@ func renderNodes(sb *strings.Builder, nodes []*TreeNode, depth int, ancestry []b
 // ancestry tracks whether each parent level was a last child (true = last, no continuation line needed)
 func renderNode(sb *strings.Builder, node *TreeNode, depth int, isLast bool, ancestry []bool, cfg *config.Config, renderCfg treeRenderConfig) {
 	b := node.Nib
+
+	// Position column (right-aligned numeric, blank when this nib has no entry)
+	if renderCfg.posColWidth > 0 {
+		var cell string
+		if pos, ok := renderCfg.positions[b.ID]; ok {
+			cell = fmt.Sprintf("%*d", renderCfg.posColWidth, pos)
+		} else {
+			cell = strings.Repeat(" ", renderCfg.posColWidth)
+		}
+		sb.WriteString(Muted.Render(cell))
+		sb.WriteString(" ")
+	}
 
 	// Build tree prefix from ancestry
 	var prefix string

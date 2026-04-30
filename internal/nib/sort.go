@@ -7,6 +7,28 @@ import (
 	"strings"
 )
 
+// PositionMap returns a map of nib.ID -> 1-based natural position among its
+// siblings (sorted by Order). Positions are per-parent: root-level nibs are
+// siblings of each other, children of the same parent are siblings, etc.
+//
+// Used by list rendering to surface a stable, human-friendly position number
+// independent of the current --sort flag (so an agent can reference "move
+// from 2 to 5" and have it survive sort changes).
+func PositionMap(nibs []*Nib) map[string]int {
+	byParent := make(map[string][]*Nib)
+	for _, b := range nibs {
+		byParent[b.Parent] = append(byParent[b.Parent], b)
+	}
+	positions := make(map[string]int, len(nibs))
+	for _, group := range byParent {
+		SortByOrder(group)
+		for i, b := range group {
+			positions[b.ID] = i + 1
+		}
+	}
+	return positions
+}
+
 // SortByOrder sorts nibs by their Order field lexicographically.
 // Nibs with an order key come first; nibs without one are appended sorted by title.
 func SortByOrder(nibs []*Nib) {
