@@ -1,14 +1,31 @@
 package cmd
 
 import (
+	"encoding/hex"
 	"encoding/json"
+	"hash/fnv"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/alphaleonis/nibs/internal/nib"
 	"github.com/spf13/pflag"
 )
+
+// onDiskETag computes the FNV-64a hex etag of the nib file at <nibsDir>/<id>.md.
+// Mirrors nibcore.Core.computeStoredETag's hashing behaviour so CLI tests can
+// build valid --child-if-match arguments without spinning up a resolver.
+func onDiskETag(t *testing.T, nibsDir, id string) string {
+	t.Helper()
+	content, err := os.ReadFile(filepath.Join(nibsDir, id+".md"))
+	if err != nil {
+		t.Fatalf("read nib %s: %v", id, err)
+	}
+	h := fnv.New64a()
+	h.Write(content)
+	return hex.EncodeToString(h.Sum(nil))
+}
 
 // resetReorderFlags clears the package-level flag vars used by reorderCmd AND
 // Cobra's Changed-state tracking so tests don't pollute each other via
@@ -20,6 +37,7 @@ func resetReorderFlags() {
 	reorderIfMatch = ""
 	reorderJSON = false
 	reorderChildrenOf = ""
+	reorderChildIfMatch = nil
 	reorderCmd.Flags().Visit(func(f *pflag.Flag) {
 		f.Changed = false
 	})
@@ -269,8 +287,9 @@ func TestReorderCommand_MutexEnforced(t *testing.T) {
 }
 
 // TestReorderCommand_IfMatchRejectedInModeA pins the Cobra mutex between
-// --children-of and --if-match. --if-match isn't propagated through bulk
-// modes (deferred to nibs-n3zb); silently ignoring it would mislead callers.
+// --children-of and --if-match. --if-match has no canonical owner in a
+// multi-nib reorder; the bulk-mode equivalent is --child-if-match (per-id
+// etags). Silently ignoring --if-match would mislead callers.
 func TestReorderCommand_IfMatchRejectedInModeA(t *testing.T) {
 	nibsDir := setupReorderCobraTest(t, reorderFixture())
 
@@ -294,6 +313,9 @@ func TestReorderCommand_IfMatchRejectedInModeA(t *testing.T) {
 // TestReorderCommand_IfMatchRejectedInModeB exercises the runtime guard in
 // the Mode B branch (block move). Mode B has no flag that flips it on, so
 // the Cobra mutex pattern doesn't apply — runtime check is the right shape.
+// --if-match has no canonical owner in a multi-nib reorder; the bulk-mode
+// equivalent is --child-if-match (per-id etags). Silently ignoring
+// --if-match would mislead callers.
 func TestReorderCommand_IfMatchRejectedInModeB(t *testing.T) {
 	nibsDir := setupReorderCobraTest(t, reorderFixture())
 
@@ -311,5 +333,123 @@ func TestReorderCommand_IfMatchRejectedInModeB(t *testing.T) {
 	})
 	if execErr == nil {
 		t.Fatal("expected error when bulk-mode reorder is given --if-match")
+	}
+}
+
+// Behavior #12: CLI Mode A end-to-end with `--child-if-match`. Compute
+// each child's on-disk etag, pass them through, and verify the reorder
+// applies cleanly.
+func TestReorderCommand_ChildIfMatch(t *testing.T) {
+	nibsDir := setupReorderCobraTest(t, reorderFixture())
+
+	// Compute the on-disk etag for each child before the reorder.
+	etagA := onDiskETag(t, nibsDir, "a")
+	etagB := onDiskETag(t, nibsDir, "b")
+	etagC := onDiskETag(t, nibsDir, "c")
+
+	rootCmd.SetArgs([]string{
+		"--nibs-path", nibsDir,
+		"reorder",
+		"--children-of", "epic1",
+		"--child-if-match", "a=" + etagA,
+		"--child-if-match", "b=" + etagB,
+		"--child-if-match", "c=" + etagC,
+		"c", "a", "b",
+	})
+
+	var execErr error
+	captureStdout(t, func() {
+		execErr = rootCmd.Execute()
+	})
+	if execErr != nil {
+		t.Fatalf("reorder --children-of with --child-if-match failed: %v", execErr)
+	}
+
+	got := listChildrenOrder(t, nibsDir, "epic1")
+	wantIDs := []string{"c", "a", "b"}
+	for i, b := range got {
+		if b.ID != wantIDs[i] {
+			t.Errorf("got[%d].ID = %q, want %q", i, b.ID, wantIDs[i])
+		}
+	}
+}
+
+// Behavior #13: malformed --child-if-match values are rejected at parse
+// time. Three sub-cases: no '=', empty id, empty etag.
+func TestReorderCommand_ChildIfMatch_MalformedRejected(t *testing.T) {
+	cases := []struct {
+		name string
+		val  string
+	}{
+		{"no equals", "abc"},
+		{"empty id", "=etag"},
+		{"empty etag", "id="},
+	}
+	for _, tc := range cases {
+		tc := tc
+		t.Run(tc.name, func(t *testing.T) {
+			nibsDir := setupReorderCobraTest(t, reorderFixture())
+			rootCmd.SetArgs([]string{
+				"--nibs-path", nibsDir,
+				"reorder",
+				"--children-of", "epic1",
+				"--child-if-match", tc.val,
+				"c", "a", "b",
+			})
+			var execErr error
+			captureStdout(t, func() {
+				execErr = rootCmd.Execute()
+			})
+			if execErr == nil {
+				t.Fatalf("expected parse error for malformed --child-if-match %q", tc.val)
+			}
+		})
+	}
+}
+
+// Behavior #14: --child-if-match in single-nib mode is a runtime error
+// redirecting to --if-match.
+func TestReorderCommand_ChildIfMatchRejectedInSingleNib(t *testing.T) {
+	nibsDir := setupReorderCobraTest(t, reorderFixture())
+
+	rootCmd.SetArgs([]string{
+		"--nibs-path", nibsDir,
+		"reorder",
+		"a",
+		"--first",
+		"--child-if-match", "a=abc123",
+	})
+	var execErr error
+	out := captureStdout(t, func() {
+		execErr = rootCmd.Execute()
+	})
+	if execErr == nil {
+		t.Fatal("expected error when --child-if-match is used in single-nib mode")
+	}
+	combined := execErr.Error() + out
+	if !strings.Contains(combined, "--if-match") {
+		t.Errorf("error should redirect user to --if-match; got: %v / out=%s", execErr, out)
+	}
+}
+
+// Behavior #15: --if-match and --child-if-match together is a Cobra
+// mutex error.
+func TestReorderCommand_IfMatchAndChildIfMatchMutex(t *testing.T) {
+	nibsDir := setupReorderCobraTest(t, reorderFixture())
+
+	rootCmd.SetArgs([]string{
+		"--nibs-path", nibsDir,
+		"reorder",
+		"--children-of", "epic1",
+		"--if-match", "abc",
+		"--child-if-match", "a=xyz",
+		"c", "a", "b",
+	})
+	var execErr error
+	captureStdout(t, func() {
+		execErr = rootCmd.Execute()
+	})
+	if execErr == nil {
+		t.Fatal("expected mutex error when --if-match and --child-if-match are both set")
 	}
 }

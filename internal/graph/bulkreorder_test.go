@@ -2,9 +2,11 @@ package graph
 
 import (
 	"context"
+	"errors"
 	"strings"
 	"testing"
 
+	"github.com/alphaleonis/nibs/internal/graph/model"
 	"github.com/alphaleonis/nibs/internal/nib"
 	"github.com/alphaleonis/nibs/internal/nibcore"
 )
@@ -33,7 +35,7 @@ func TestReorderChildren_MissingIDs(t *testing.T) {
 	ctx := context.Background()
 	resolver, _, parentID := setupBulkReorderFixture(t)
 
-	_, err := resolver.Mutation().ReorderChildren(ctx, parentID, []string{"a", "b"})
+	_, err := resolver.Mutation().ReorderChildren(ctx, parentID, []string{"a", "b"}, nil)
 	if err == nil {
 		t.Fatal("expected error for missing children")
 	}
@@ -46,7 +48,7 @@ func TestReorderChildren_NonExistentID(t *testing.T) {
 	ctx := context.Background()
 	resolver, _, parentID := setupBulkReorderFixture(t)
 
-	_, err := resolver.Mutation().ReorderChildren(ctx, parentID, []string{"a", "b", "x"})
+	_, err := resolver.Mutation().ReorderChildren(ctx, parentID, []string{"a", "b", "x"}, nil)
 	if err == nil {
 		t.Fatal("expected error for non-existent child")
 	}
@@ -68,7 +70,7 @@ func TestReorderChildren_WrongParent(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	_, err := resolver.Mutation().ReorderChildren(ctx, parentID, []string{"a", "b", "c", "x1"})
+	_, err := resolver.Mutation().ReorderChildren(ctx, parentID, []string{"a", "b", "c", "x1"}, nil)
 	if err == nil {
 		t.Fatal("expected error for child of different parent")
 	}
@@ -81,7 +83,7 @@ func TestReorderChildren_DuplicateID(t *testing.T) {
 	ctx := context.Background()
 	resolver, _, parentID := setupBulkReorderFixture(t)
 
-	_, err := resolver.Mutation().ReorderChildren(ctx, parentID, []string{"a", "b", "b"})
+	_, err := resolver.Mutation().ReorderChildren(ctx, parentID, []string{"a", "b", "b"}, nil)
 	if err == nil {
 		t.Fatal("expected error for duplicate id")
 	}
@@ -106,7 +108,7 @@ func TestReorderChildren_RootParent(t *testing.T) {
 		}
 	}
 
-	got, err := resolver.Mutation().ReorderChildren(ctx, "", []string{"r3", "r1", "r2"})
+	got, err := resolver.Mutation().ReorderChildren(ctx, "", []string{"r3", "r1", "r2"}, nil)
 	if err != nil {
 		t.Fatalf("ReorderChildren error: %v", err)
 	}
@@ -139,7 +141,7 @@ func TestReorderChildren_SingleChild(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	got, err := resolver.Mutation().ReorderChildren(ctx, "epic1", []string{"a"})
+	got, err := resolver.Mutation().ReorderChildren(ctx, "epic1", []string{"a"}, nil)
 	if err != nil {
 		t.Fatalf("ReorderChildren error: %v", err)
 	}
@@ -173,7 +175,7 @@ func TestReorderSiblings_AfterIdTracer(t *testing.T) {
 	ctx := context.Background()
 	resolver, _, parentID := setupBlockMoveFixture(t)
 
-	got, err := resolver.Mutation().ReorderSiblings(ctx, []string{"c", "e"}, strPtr("a"), nil, nil)
+	got, err := resolver.Mutation().ReorderSiblings(ctx, []string{"c", "e"}, strPtr("a"), nil, nil, nil)
 	if err != nil {
 		t.Fatalf("ReorderSiblings error: %v", err)
 	}
@@ -204,7 +206,7 @@ func TestReorderSiblings_BeforeId(t *testing.T) {
 	ctx := context.Background()
 	resolver, _, parentID := setupBlockMoveFixture(t)
 
-	got, err := resolver.Mutation().ReorderSiblings(ctx, []string{"c", "e"}, nil, strPtr("a"), nil)
+	got, err := resolver.Mutation().ReorderSiblings(ctx, []string{"c", "e"}, nil, strPtr("a"), nil, nil)
 	if err != nil {
 		t.Fatalf("ReorderSiblings error: %v", err)
 	}
@@ -229,7 +231,7 @@ func TestReorderSiblings_First(t *testing.T) {
 	ctx := context.Background()
 	resolver, _, parentID := setupBlockMoveFixture(t)
 
-	got, err := resolver.Mutation().ReorderSiblings(ctx, []string{"c", "e"}, nil, nil, boolPtr(true))
+	got, err := resolver.Mutation().ReorderSiblings(ctx, []string{"c", "e"}, nil, nil, boolPtr(true), nil)
 	if err != nil {
 		t.Fatalf("ReorderSiblings error: %v", err)
 	}
@@ -254,7 +256,7 @@ func TestReorderSiblings_AnchorInBlock(t *testing.T) {
 	ctx := context.Background()
 	resolver, _, _ := setupBlockMoveFixture(t)
 
-	_, err := resolver.Mutation().ReorderSiblings(ctx, []string{"a", "c"}, strPtr("a"), nil, nil)
+	_, err := resolver.Mutation().ReorderSiblings(ctx, []string{"a", "c"}, strPtr("a"), nil, nil, nil)
 	if err == nil {
 		t.Fatal("expected error when anchor appears in siblingIds")
 	}
@@ -276,7 +278,7 @@ func TestReorderSiblings_MixedParents(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	_, err := resolver.Mutation().ReorderSiblings(ctx, []string{"a", "x1"}, strPtr("b"), nil, nil)
+	_, err := resolver.Mutation().ReorderSiblings(ctx, []string{"a", "x1"}, strPtr("b"), nil, nil, nil)
 	if err == nil {
 		t.Fatal("expected error for siblings with different parents")
 	}
@@ -289,7 +291,7 @@ func TestReorderSiblings_NonExistentSiblingID(t *testing.T) {
 	ctx := context.Background()
 	resolver, _, _ := setupBlockMoveFixture(t)
 
-	_, err := resolver.Mutation().ReorderSiblings(ctx, []string{"c", "missing-z"}, strPtr("a"), nil, nil)
+	_, err := resolver.Mutation().ReorderSiblings(ctx, []string{"c", "missing-z"}, strPtr("a"), nil, nil, nil)
 	if err == nil {
 		t.Fatal("expected error for non-existent sibling")
 	}
@@ -303,35 +305,35 @@ func TestReorderSiblings_ModeMutex(t *testing.T) {
 	resolver, _, _ := setupBlockMoveFixture(t)
 
 	t.Run("none specified", func(t *testing.T) {
-		_, err := resolver.Mutation().ReorderSiblings(ctx, []string{"c", "e"}, nil, nil, nil)
+		_, err := resolver.Mutation().ReorderSiblings(ctx, []string{"c", "e"}, nil, nil, nil, nil)
 		if err == nil {
 			t.Fatal("expected error when no positioning flag is specified")
 		}
 	})
 
 	t.Run("after and before", func(t *testing.T) {
-		_, err := resolver.Mutation().ReorderSiblings(ctx, []string{"c", "e"}, strPtr("a"), strPtr("b"), nil)
+		_, err := resolver.Mutation().ReorderSiblings(ctx, []string{"c", "e"}, strPtr("a"), strPtr("b"), nil, nil)
 		if err == nil {
 			t.Fatal("expected error when both afterId and beforeId are specified")
 		}
 	})
 
 	t.Run("after and first", func(t *testing.T) {
-		_, err := resolver.Mutation().ReorderSiblings(ctx, []string{"c", "e"}, strPtr("a"), nil, boolPtr(true))
+		_, err := resolver.Mutation().ReorderSiblings(ctx, []string{"c", "e"}, strPtr("a"), nil, boolPtr(true), nil)
 		if err == nil {
 			t.Fatal("expected error when both afterId and first are specified")
 		}
 	})
 
 	t.Run("before and first", func(t *testing.T) {
-		_, err := resolver.Mutation().ReorderSiblings(ctx, []string{"c", "e"}, nil, strPtr("a"), boolPtr(true))
+		_, err := resolver.Mutation().ReorderSiblings(ctx, []string{"c", "e"}, nil, strPtr("a"), boolPtr(true), nil)
 		if err == nil {
 			t.Fatal("expected error when both beforeId and first are specified")
 		}
 	})
 
 	t.Run("all three", func(t *testing.T) {
-		_, err := resolver.Mutation().ReorderSiblings(ctx, []string{"c", "e"}, strPtr("a"), strPtr("b"), boolPtr(true))
+		_, err := resolver.Mutation().ReorderSiblings(ctx, []string{"c", "e"}, strPtr("a"), strPtr("b"), boolPtr(true), nil)
 		if err == nil {
 			t.Fatal("expected error when all three positioning flags are specified")
 		}
@@ -384,7 +386,7 @@ func TestReorderChildren_DuplicateAcrossForms(t *testing.T) {
 	// Pass the same nib twice — once short, once full — under a configured
 	// prefix. Without canonical-ID dedup, both forms slip through and the
 	// completeness check passes but persistence is silently broken.
-	_, err := resolver.Mutation().ReorderChildren(ctx, parentID, []string{"a", "nibs-a", "b", "c"})
+	_, err := resolver.Mutation().ReorderChildren(ctx, parentID, []string{"a", "nibs-a", "b", "c"}, nil)
 	if err == nil {
 		t.Fatal("expected error for duplicate id in cross-form input")
 	}
@@ -401,7 +403,7 @@ func TestReorderSiblings_DuplicateAcrossForms(t *testing.T) {
 	resolver, _, _ := setupBlockMoveFixturePrefixed(t)
 
 	// Same nib in two surface forms inside the block to move.
-	_, err := resolver.Mutation().ReorderSiblings(ctx, []string{"c", "nibs-c"}, strPtr("a"), nil, nil)
+	_, err := resolver.Mutation().ReorderSiblings(ctx, []string{"c", "nibs-c"}, strPtr("a"), nil, nil, nil)
 	if err == nil {
 		t.Fatal("expected error for duplicate id in cross-form sibling list")
 	}
@@ -419,7 +421,7 @@ func TestReorderChildren_ShortIDsResolveCorrectly(t *testing.T) {
 
 	// Pass short IDs (without prefix). Reorder should succeed and return
 	// canonical (full-prefix) IDs in the requested order.
-	got, err := resolver.Mutation().ReorderChildren(ctx, parentID, []string{"c", "a", "b"})
+	got, err := resolver.Mutation().ReorderChildren(ctx, parentID, []string{"c", "a", "b"}, nil)
 	if err != nil {
 		t.Fatalf("ReorderChildren error: %v", err)
 	}
@@ -446,7 +448,7 @@ func TestReorderChildren_BogusParentEmptyChildren(t *testing.T) {
 
 	// A non-empty bogus parent with empty childIDs would previously be a
 	// silent no-op success. Now it errors with "parent nib not found".
-	_, err := resolver.Mutation().ReorderChildren(ctx, "ghost-parent", []string{})
+	_, err := resolver.Mutation().ReorderChildren(ctx, "ghost-parent", []string{}, nil)
 	if err == nil {
 		t.Fatal("expected error for non-existent parent")
 	}
@@ -458,6 +460,141 @@ func TestReorderChildren_BogusParentEmptyChildren(t *testing.T) {
 	}
 }
 
+// Behavior #10: Mode B with a stale etag aborts before any on-disk
+// mutations. Sibling order remains in its pre-call state.
+func TestReorderSiblings_IfMatch_StaleEtagAtomic(t *testing.T) {
+	ctx := context.Background()
+	resolver, _, parentID := setupBlockMoveFixture(t)
+
+	ifMatch := childEtags(t, resolver, "c", "e")
+	// Corrupt the etag for "e" to simulate a concurrent modification.
+	for _, e := range ifMatch {
+		if e.ID == "e" {
+			e.Etag = "deadbeefdeadbeef"
+		}
+	}
+
+	_, err := resolver.Mutation().ReorderSiblings(ctx, []string{"c", "e"}, strPtr("a"), nil, nil, ifMatch)
+	if err == nil {
+		t.Fatal("expected error for stale etag")
+	}
+	if !strings.Contains(err.Error(), "e") {
+		t.Errorf("error should mention stale sibling 'e'; got: %v", err)
+	}
+
+	// Atomicity — order unchanged.
+	siblings := resolver.Orderer.GetSortedSiblings(parentID)
+	want := []string{"a", "b", "c", "d", "e"}
+	if len(siblings) != len(want) {
+		t.Fatalf("got %d siblings, want %d", len(siblings), len(want))
+	}
+	for i, b := range siblings {
+		if b.ID != want[i] {
+			t.Errorf("siblings[%d].ID = %q, want %q (order should be unchanged)", i, b.ID, want[i])
+		}
+	}
+}
+
+// Behavior #9: Mode B `reorderSiblings([c, e], afterId=a, ifMatch=[c,e])`
+// with valid etags succeeds and writes the requested order.
+func TestReorderSiblings_IfMatch_Tracer(t *testing.T) {
+	ctx := context.Background()
+	resolver, _, parentID := setupBlockMoveFixture(t)
+
+	ifMatch := childEtags(t, resolver, "c", "e")
+	got, err := resolver.Mutation().ReorderSiblings(ctx, []string{"c", "e"}, strPtr("a"), nil, nil, ifMatch)
+	if err != nil {
+		t.Fatalf("ReorderSiblings error: %v", err)
+	}
+	if len(got) != 2 || got[0].ID != "c" || got[1].ID != "e" {
+		t.Errorf("got %+v, want block [c, e]", got)
+	}
+
+	// Re-read siblings — order should be [a, c, e, b, d]
+	siblings := resolver.Orderer.GetSortedSiblings(parentID)
+	want := []string{"a", "c", "e", "b", "d"}
+	if len(siblings) != len(want) {
+		t.Fatalf("got %d siblings, want %d", len(siblings), len(want))
+	}
+	for i, b := range siblings {
+		if b.ID != want[i] {
+			t.Errorf("siblings[%d].ID = %q, want %q", i, b.ID, want[i])
+		}
+	}
+}
+
+// Behavior #8: Mode A rejects ifMatch entries that reference the same nib
+// twice (canonicalised), even when the surface forms differ. Without dedup
+// the second value would silently shadow the first.
+func TestReorderChildren_IfMatch_Duplicate(t *testing.T) {
+	ctx := context.Background()
+	resolver, _, parentID := setupBulkReorderFixture(t)
+
+	etagA, err := resolver.Reader.CurrentETag("a")
+	if err != nil {
+		t.Fatal(err)
+	}
+	ifMatch := []*model.ChildEtag{
+		{ID: "a", Etag: etagA},
+		{ID: "a", Etag: "deadbeefdeadbeef"}, // same id, different etag
+	}
+
+	_, err = resolver.Mutation().ReorderChildren(ctx, parentID, []string{"c", "a", "b"}, ifMatch)
+	if err == nil {
+		t.Fatal("expected error for duplicate id in ifMatch")
+	}
+	if !strings.Contains(err.Error(), "duplicate") {
+		t.Errorf("error should mention 'duplicate'; got: %v", err)
+	}
+	if !strings.Contains(err.Error(), "a") {
+		t.Errorf("error should mention duplicated id 'a'; got: %v", err)
+	}
+}
+
+// Behavior #7: Under require_if_match: true, a partial ifMatch is rejected
+// up front with the missing canonical ids listed in the error.
+func TestReorderChildren_RequireIfMatch_PartialRejected(t *testing.T) {
+	ctx := context.Background()
+	resolver, core := setupTestResolverWithRequireIfMatch(t)
+	parent := &nib.Nib{ID: "epic1", Title: "Epic", Status: "todo", Type: "epic", Version: 1}
+	if err := core.Create(parent); err != nil {
+		t.Fatal(err)
+	}
+	for _, c := range []struct{ id, order string }{
+		{"a", "a0"}, {"b", "b0"}, {"c", "c0"},
+	} {
+		child := &nib.Nib{ID: c.id, Title: c.id, Status: "todo", Type: "task", Parent: "epic1", Order: c.order, Version: 1}
+		if err := core.Create(child); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	// Cover only "a" — leave "b" and "c" unmapped.
+	ifMatch := childEtags(t, resolver, "a")
+	_, err := resolver.Mutation().ReorderChildren(ctx, "epic1", []string{"c", "a", "b"}, ifMatch)
+	if err == nil {
+		t.Fatal("expected error for partial ifMatch under require_if_match: true")
+	}
+	if !strings.Contains(err.Error(), "require_if_match") {
+		t.Errorf("error should mention require_if_match; got: %v", err)
+	}
+	if !strings.Contains(err.Error(), "b") || !strings.Contains(err.Error(), "c") {
+		t.Errorf("error should list missing ids 'b' and 'c'; got: %v", err)
+	}
+
+	// Atomicity — order unchanged after rejection.
+	siblings := resolver.Orderer.GetSortedSiblings("epic1")
+	want := []string{"a", "b", "c"}
+	for i, b := range siblings {
+		if b.ID != want[i] {
+			t.Errorf("siblings[%d].ID = %q, want %q (order should be unchanged)", i, b.ID, want[i])
+		}
+	}
+}
+
+// Behavior #6: Under require_if_match: true, a complete valid ifMatch lets
+// the bulk reorder succeed. Without ifMatch the call is rejected (covered
+// by TestReorderChildren_RequireIfMatch_MissingIfMatch in behavior #7).
 func TestReorderChildren_RequireIfMatch(t *testing.T) {
 	ctx := context.Background()
 	resolver, core := setupTestResolverWithRequireIfMatch(t)
@@ -465,23 +602,34 @@ func TestReorderChildren_RequireIfMatch(t *testing.T) {
 	if err := core.Create(parent); err != nil {
 		t.Fatal(err)
 	}
-	child := &nib.Nib{ID: "a", Title: "A", Status: "todo", Type: "task", Parent: "epic1", Order: "a0", Version: 1}
-	if err := core.Create(child); err != nil {
-		t.Fatal(err)
+	for _, c := range []struct{ id, order string }{
+		{"a", "a0"}, {"b", "b0"}, {"c", "c0"},
+	} {
+		child := &nib.Nib{ID: c.id, Title: c.id, Status: "todo", Type: "task", Parent: "epic1", Order: c.order, Version: 1}
+		if err := core.Create(child); err != nil {
+			t.Fatal(err)
+		}
 	}
 
-	_, err := resolver.Mutation().ReorderChildren(ctx, "epic1", []string{"a"})
-	if err == nil {
-		t.Fatal("expected error under require_if_match: true")
+	ifMatch := childEtags(t, resolver, "a", "b", "c")
+	got, err := resolver.Mutation().ReorderChildren(ctx, "epic1", []string{"c", "a", "b"}, ifMatch)
+	if err != nil {
+		t.Fatalf("ReorderChildren error under require_if_match with complete ifMatch: %v", err)
 	}
-	if !strings.Contains(err.Error(), "require_if_match") {
-		t.Errorf("error should mention require_if_match; got: %v", err)
+	wantIDs := []string{"c", "a", "b"}
+	if len(got) != len(wantIDs) {
+		t.Fatalf("got %d nibs, want %d", len(got), len(wantIDs))
 	}
-	if !strings.Contains(err.Error(), "nibs-n3zb") {
-		t.Errorf("error should reference deferral nib nibs-n3zb; got: %v", err)
+	for i, b := range got {
+		if b.ID != wantIDs[i] {
+			t.Errorf("got[%d].ID = %q, want %q", i, b.ID, wantIDs[i])
+		}
 	}
 }
 
+// Behavior #11: Mode B under require_if_match: true with a complete valid
+// ifMatch succeeds; without ifMatch the call is rejected with the missing
+// canonical ids listed in the error.
 func TestReorderSiblings_RequireIfMatch(t *testing.T) {
 	ctx := context.Background()
 	resolver, core := setupTestResolverWithRequireIfMatch(t)
@@ -498,16 +646,40 @@ func TestReorderSiblings_RequireIfMatch(t *testing.T) {
 		}
 	}
 
-	_, err := resolver.Mutation().ReorderSiblings(ctx, []string{"c"}, strPtr("a"), nil, nil)
-	if err == nil {
-		t.Fatal("expected error under require_if_match: true")
-	}
-	if !strings.Contains(err.Error(), "require_if_match") {
-		t.Errorf("error should mention require_if_match; got: %v", err)
-	}
-	if !strings.Contains(err.Error(), "nibs-n3zb") {
-		t.Errorf("error should reference deferral nib nibs-n3zb; got: %v", err)
-	}
+	t.Run("missing ifMatch is rejected", func(t *testing.T) {
+		_, err := resolver.Mutation().ReorderSiblings(ctx, []string{"c"}, strPtr("a"), nil, nil, nil)
+		if err == nil {
+			t.Fatal("expected error under require_if_match: true with no ifMatch")
+		}
+		if !strings.Contains(err.Error(), "require_if_match") {
+			t.Errorf("error should mention require_if_match; got: %v", err)
+		}
+		if !strings.Contains(err.Error(), "no ifMatch provided") {
+			t.Errorf("error should call out missing ifMatch; got: %v", err)
+		}
+	})
+
+	t.Run("complete valid ifMatch succeeds", func(t *testing.T) {
+		ifMatch := childEtags(t, resolver, "c")
+		got, err := resolver.Mutation().ReorderSiblings(ctx, []string{"c"}, strPtr("a"), nil, nil, ifMatch)
+		if err != nil {
+			t.Fatalf("ReorderSiblings error under require_if_match with complete ifMatch: %v", err)
+		}
+		if len(got) != 1 || got[0].ID != "c" {
+			t.Errorf("got %+v, want [c]", got)
+		}
+
+		siblings := resolver.Orderer.GetSortedSiblings("epic1")
+		want := []string{"a", "c", "b"}
+		if len(siblings) != len(want) {
+			t.Fatalf("got %d siblings, want %d", len(siblings), len(want))
+		}
+		for i, b := range siblings {
+			if b.ID != want[i] {
+				t.Errorf("siblings[%d].ID = %q, want %q", i, b.ID, want[i])
+			}
+		}
+	})
 }
 
 func TestReorderSiblings_AnchorInBlock_CrossForm(t *testing.T) {
@@ -517,7 +689,7 @@ func TestReorderSiblings_AnchorInBlock_CrossForm(t *testing.T) {
 	// Pass the anchor in one form (full) and have the same nib appear in
 	// siblingIds in another form (short). Resolved IDs catch the collision;
 	// the error should reference both surface forms (or the canonical).
-	_, err := resolver.Mutation().ReorderSiblings(ctx, []string{"a", "c"}, strPtr("nibs-a"), nil, nil)
+	_, err := resolver.Mutation().ReorderSiblings(ctx, []string{"a", "c"}, strPtr("nibs-a"), nil, nil, nil)
 	if err == nil {
 		t.Fatal("expected error when anchor (cross-form) appears in siblingIds")
 	}
@@ -533,7 +705,7 @@ func TestReorderChildren_Tracer(t *testing.T) {
 	ctx := context.Background()
 	resolver, _, parentID := setupBulkReorderFixture(t)
 
-	got, err := resolver.Mutation().ReorderChildren(ctx, parentID, []string{"c", "a", "b"})
+	got, err := resolver.Mutation().ReorderChildren(ctx, parentID, []string{"c", "a", "b"}, nil)
 	if err != nil {
 		t.Fatalf("ReorderChildren error: %v", err)
 	}
@@ -565,6 +737,188 @@ func TestReorderChildren_Tracer(t *testing.T) {
 	for i, b := range siblings {
 		if b.ID != wantIDs[i] {
 			t.Errorf("siblings[%d].ID = %q, want %q", i, b.ID, wantIDs[i])
+		}
+	}
+}
+
+// TestNibReader_CurrentETag_NotFound pins the error contract of the new
+// CurrentETag interface method for unknown ids — childEtags() t.Fatalf's
+// on errors, so the happy-path tests don't exercise this branch.
+func TestNibReader_CurrentETag_NotFound(t *testing.T) {
+	resolver, _, _ := setupBulkReorderFixture(t)
+	_, err := resolver.Reader.CurrentETag("does-not-exist")
+	if err == nil {
+		t.Fatal("expected error for unknown id")
+	}
+	if !errors.Is(err, nibcore.ErrNotFound) {
+		t.Errorf("expected nibcore.ErrNotFound, got %v", err)
+	}
+}
+
+// childEtags reads the current on-disk etag for each id and packs the
+// results into a slice of *model.ChildEtag — the shape resolvers expect.
+func childEtags(t *testing.T, resolver *Resolver, ids ...string) []*model.ChildEtag {
+	t.Helper()
+	out := make([]*model.ChildEtag, 0, len(ids))
+	for _, id := range ids {
+		etag, err := resolver.Reader.CurrentETag(id)
+		if err != nil {
+			t.Fatalf("CurrentETag(%q): %v", id, err)
+		}
+		out = append(out, &model.ChildEtag{ID: id, Etag: etag})
+	}
+	return out
+}
+
+// Behavior #5: Mode A with ifMatch=nil and require_if_match: false — the
+// new code path must remain a strict superset of pre-ifMatch behavior. No
+// validation, no on-disk reads, just reorder.
+func TestReorderChildren_IfMatch_NilWithoutRequire(t *testing.T) {
+	ctx := context.Background()
+	resolver, _, parentID := setupBulkReorderFixture(t)
+
+	got, err := resolver.Mutation().ReorderChildren(ctx, parentID, []string{"c", "a", "b"}, nil)
+	if err != nil {
+		t.Fatalf("ReorderChildren error: %v", err)
+	}
+	wantIDs := []string{"c", "a", "b"}
+	for i, b := range got {
+		if b.ID != wantIDs[i] {
+			t.Errorf("got[%d].ID = %q, want %q", i, b.ID, wantIDs[i])
+		}
+	}
+}
+
+// Behavior #4: Mode A with a partial ifMatch (covers some children) and
+// require_if_match: false — unchecked children skip validation; checked
+// ones are validated; reorder succeeds.
+func TestReorderChildren_IfMatch_PartialCoverage(t *testing.T) {
+	ctx := context.Background()
+	resolver, _, parentID := setupBulkReorderFixture(t)
+
+	// Provide ifMatch only for "b". The other two children skip validation.
+	ifMatch := childEtags(t, resolver, "b")
+
+	got, err := resolver.Mutation().ReorderChildren(ctx, parentID, []string{"c", "a", "b"}, ifMatch)
+	if err != nil {
+		t.Fatalf("ReorderChildren error: %v", err)
+	}
+	wantIDs := []string{"c", "a", "b"}
+	for i, b := range got {
+		if b.ID != wantIDs[i] {
+			t.Errorf("got[%d].ID = %q, want %q", i, b.ID, wantIDs[i])
+		}
+	}
+
+	siblings := resolver.Orderer.GetSortedSiblings(parentID)
+	for i, b := range siblings {
+		if b.ID != wantIDs[i] {
+			t.Errorf("siblings[%d].ID = %q, want %q (order=%q)", i, b.ID, wantIDs[i], b.Order)
+		}
+	}
+}
+
+// Behavior #3: Mode A errors when ifMatch references an id that is not in
+// the listed childIds — the operation is ambiguous, so reject up front.
+func TestReorderChildren_IfMatch_UnknownEntry(t *testing.T) {
+	ctx := context.Background()
+	resolver, core, parentID := setupBulkReorderFixture(t)
+
+	// Create a stranger nib under a different parent so the reorder of
+	// [a, b, c] under parentID is still complete.
+	otherParent := &nib.Nib{ID: "epic2", Title: "Epic 2", Status: "todo", Type: "epic", Version: 1}
+	if err := core.Create(otherParent); err != nil {
+		t.Fatal(err)
+	}
+	stranger := &nib.Nib{ID: "stranger", Title: "Stranger", Status: "todo", Type: "task", Parent: "epic2", Order: "z0", Version: 1}
+	if err := core.Create(stranger); err != nil {
+		t.Fatal(err)
+	}
+
+	ifMatch := childEtags(t, resolver, "a", "b", "c", "stranger")
+	_, err := resolver.Mutation().ReorderChildren(ctx, parentID, []string{"c", "a", "b"}, ifMatch)
+	if err == nil {
+		t.Fatal("expected error when ifMatch contains a nib outside the reorder list")
+	}
+	if !strings.Contains(err.Error(), "stranger") {
+		t.Errorf("error should mention 'stranger'; got: %v", err)
+	}
+}
+
+// Behavior #2: Mode A with a stale etag for one child errors and writes
+// nothing. The error mentions the offending canonical id; on-disk siblings
+// remain in their pre-call order.
+func TestReorderChildren_IfMatch_StaleEtagAtomic(t *testing.T) {
+	ctx := context.Background()
+	resolver, _, parentID := setupBulkReorderFixture(t)
+
+	ifMatch := childEtags(t, resolver, "a", "b", "c")
+	// Corrupt the etag for "b" to simulate a concurrent modification.
+	for _, e := range ifMatch {
+		if e.ID == "b" {
+			e.Etag = "deadbeefdeadbeef"
+		}
+	}
+
+	_, err := resolver.Mutation().ReorderChildren(ctx, parentID, []string{"c", "a", "b"}, ifMatch)
+	if err == nil {
+		t.Fatal("expected error for stale etag")
+	}
+	if !strings.Contains(err.Error(), "b") {
+		t.Errorf("error should mention stale child 'b'; got: %v", err)
+	}
+	if !strings.Contains(err.Error(), "etag mismatch") {
+		t.Errorf("error should mention etag mismatch; got: %v", err)
+	}
+
+	// Atomicity: order must be unchanged.
+	siblings := resolver.Orderer.GetSortedSiblings(parentID)
+	want := []string{"a", "b", "c"}
+	if len(siblings) != len(want) {
+		t.Fatalf("got %d siblings, want %d", len(siblings), len(want))
+	}
+	for i, b := range siblings {
+		if b.ID != want[i] {
+			t.Errorf("siblings[%d].ID = %q, want %q (order should be unchanged after failed call)", i, b.ID, want[i])
+		}
+	}
+}
+
+// Behavior #1 (Tracer): Mode A with a complete, valid ifMatch reorders the
+// children in the requested order and writes new strictly-increasing keys.
+func TestReorderChildren_IfMatch_Tracer(t *testing.T) {
+	ctx := context.Background()
+	resolver, _, parentID := setupBulkReorderFixture(t)
+
+	ifMatch := childEtags(t, resolver, "a", "b", "c")
+
+	got, err := resolver.Mutation().ReorderChildren(ctx, parentID, []string{"c", "a", "b"}, ifMatch)
+	if err != nil {
+		t.Fatalf("ReorderChildren error: %v", err)
+	}
+	wantIDs := []string{"c", "a", "b"}
+	if len(got) != len(wantIDs) {
+		t.Fatalf("got %d nibs, want %d", len(got), len(wantIDs))
+	}
+	for i, b := range got {
+		if b.ID != wantIDs[i] {
+			t.Errorf("got[%d].ID = %q, want %q", i, b.ID, wantIDs[i])
+		}
+	}
+	for i := 1; i < len(got); i++ {
+		if got[i-1].Order >= got[i].Order {
+			t.Errorf("order keys not strictly increasing: got[%d]=%q >= got[%d]=%q",
+				i-1, got[i-1].Order, i, got[i].Order)
+		}
+	}
+
+	siblings := resolver.Orderer.GetSortedSiblings(parentID)
+	if len(siblings) != 3 {
+		t.Fatalf("got %d siblings, want 3", len(siblings))
+	}
+	for i, b := range siblings {
+		if b.ID != wantIDs[i] {
+			t.Errorf("siblings[%d].ID = %q, want %q (order=%q)", i, b.ID, wantIDs[i], b.Order)
 		}
 	}
 }

@@ -3,20 +3,54 @@ package cmd
 import (
 	"context"
 	"fmt"
+	"strings"
 
+	"github.com/alphaleonis/nibs/internal/graph/model"
 	"github.com/alphaleonis/nibs/internal/output"
 	"github.com/alphaleonis/nibs/internal/ui"
 	"github.com/spf13/cobra"
 )
 
 var (
-	reorderAfter      string
-	reorderBefore     string
-	reorderFirst      bool
-	reorderIfMatch    string
-	reorderJSON       bool
-	reorderChildrenOf string
+	reorderAfter        string
+	reorderBefore       string
+	reorderFirst        bool
+	reorderIfMatch      string
+	reorderJSON         bool
+	reorderChildrenOf   string
+	reorderChildIfMatch []string
 )
+
+// parseChildIfMatch turns the repeatable `--child-if-match <id>=<etag>`
+// values into a []*model.ChildEtag. Empty input yields nil. Each entry
+// must contain a single `=` with non-empty id and etag; malformed values
+// surface a parse error pointing at the offending input.
+//
+// Etags are FNV-64a hex (16 chars over [0-9a-f]) and therefore cannot
+// contain '='. We split on the first '=' for that reason — if a future
+// etag scheme allows '=' in the etag portion this parser must be revisited.
+func parseChildIfMatch(values []string) ([]*model.ChildEtag, error) {
+	if len(values) == 0 {
+		return nil, nil
+	}
+	out := make([]*model.ChildEtag, 0, len(values))
+	for _, v := range values {
+		idx := strings.Index(v, "=")
+		if idx < 0 {
+			return nil, fmt.Errorf("--child-if-match %q: expected <id>=<etag>", v)
+		}
+		id := strings.TrimSpace(v[:idx])
+		etag := strings.TrimSpace(v[idx+1:])
+		if id == "" {
+			return nil, fmt.Errorf("--child-if-match %q: empty id", v)
+		}
+		if etag == "" {
+			return nil, fmt.Errorf("--child-if-match %q: empty etag", v)
+		}
+		out = append(out, &model.ChildEtag{ID: id, Etag: etag})
+	}
+	return out, nil
+}
 
 var reorderCmd = &cobra.Command{
 	Use:   "reorder <id> [<id>...]",
@@ -52,13 +86,17 @@ Use --children-of "" to reorder root-level (no-parent) siblings.`,
 		hasFirst := reorderFirst
 		hasPosition := hasAfter || hasBefore || hasFirst
 
+		childIfMatch, err := parseChildIfMatch(reorderChildIfMatch)
+		if err != nil {
+			return cmdError(reorderJSON, output.ErrValidation, "%v", err)
+		}
+
 		// Mode A: --children-of <parent> <id1> <id2> ...
 		if childrenOfSet {
 			// --if-match in Mode A is caught by the Cobra mutex below; this
-			// path is unreachable when --if-match is set. Mode B has no flag
-			// that flips it on, so the same check there is a runtime guard
-			// (see below).
-			results, err := resolver.Mutation().ReorderChildren(ctx, reorderChildrenOf, args)
+			// path is unreachable when --if-match is set. --child-if-match
+			// is the right flag for Mode A: it carries per-id etags.
+			results, err := resolver.Mutation().ReorderChildren(ctx, reorderChildrenOf, args, childIfMatch)
 			if err != nil {
 				return cmdError(reorderJSON, output.ErrFileError, "failed to reorder children: %v", err)
 			}
@@ -76,10 +114,10 @@ Use --children-of "" to reorder root-level (no-parent) siblings.`,
 					"multiple ids given without --children-of, --after, --before, or --first")
 			}
 			if reorderIfMatch != "" {
-				// Bulk modes don't propagate per-nib etags yet (tracked in nibs-n3zb).
-				// Catch this here rather than letting it silently no-op.
+				// Bulk modes use --child-if-match (per-id etags), not --if-match.
+				// --if-match has no canonical owner in a multi-nib reorder.
 				return cmdError(reorderJSON, output.ErrValidation,
-					"--if-match is only supported in single-nib reorder mode (tracked in nibs-n3zb)")
+					"--if-match is only supported in single-nib reorder mode; use --child-if-match <id>=<etag> for bulk modes")
 			}
 			var afterID, beforeID *string
 			var first *bool
@@ -93,7 +131,7 @@ Use --children-of "" to reorder root-level (no-parent) siblings.`,
 				f := true
 				first = &f
 			}
-			results, err := resolver.Mutation().ReorderSiblings(ctx, args, afterID, beforeID, first)
+			results, err := resolver.Mutation().ReorderSiblings(ctx, args, afterID, beforeID, first, childIfMatch)
 			if err != nil {
 				return cmdError(reorderJSON, output.ErrFileError, "failed to reorder siblings: %v", err)
 			}
@@ -105,6 +143,10 @@ Use --children-of "" to reorder root-level (no-parent) siblings.`,
 		}
 
 		// Single-nib (existing) — exactly 1 positional arg.
+		if len(reorderChildIfMatch) > 0 {
+			return cmdError(reorderJSON, output.ErrValidation,
+				"--child-if-match is only valid in bulk modes; use --if-match for single-nib reorder")
+		}
 		if !hasPosition {
 			return cmdError(reorderJSON, output.ErrValidation,
 				"at least one positioning flag (--after, --before, --first) is required")
@@ -148,10 +190,12 @@ func init() {
 	reorderCmd.Flags().StringVar(&reorderIfMatch, "if-match", "", "ETag for optimistic concurrency (single-nib mode only)")
 	reorderCmd.Flags().BoolVar(&reorderJSON, "json", false, "Output as JSON")
 	reorderCmd.Flags().StringVar(&reorderChildrenOf, "children-of", "", `Replace ordering of all children under this parent (Mode A). Use "" for root.`)
+	reorderCmd.Flags().StringArrayVar(&reorderChildIfMatch, "child-if-match", nil, `Per-child ETag in <id>=<etag> form (bulk modes; repeatable)`)
 	reorderCmd.MarkFlagsMutuallyExclusive("after", "before", "first")
 	reorderCmd.MarkFlagsMutuallyExclusive("children-of", "after")
 	reorderCmd.MarkFlagsMutuallyExclusive("children-of", "before")
 	reorderCmd.MarkFlagsMutuallyExclusive("children-of", "first")
 	reorderCmd.MarkFlagsMutuallyExclusive("children-of", "if-match")
+	reorderCmd.MarkFlagsMutuallyExclusive("if-match", "child-if-match")
 	rootCmd.AddCommand(reorderCmd)
 }

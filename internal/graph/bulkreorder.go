@@ -2,19 +2,24 @@ package graph
 
 import (
 	"fmt"
+	"sort"
+	"strings"
 
+	"github.com/alphaleonis/nibs/internal/graph/model"
 	"github.com/alphaleonis/nibs/internal/nib"
 )
 
 // reorderChildrenImpl is the shared core of ReorderChildren: validate inputs,
-// assign fresh evenly-spaced order keys to each listed child, persist them,
-// and return the children in the requested order.
-func (r *mutationResolver) reorderChildrenImpl(parentID string, childIDs []string) ([]*nib.Nib, error) {
-	if err := r.checkBulkReorderSupported(); err != nil {
+// optionally pre-check per-child ETags, assign fresh evenly-spaced order keys
+// to each listed child, persist them, and return the children in the
+// requested order.
+func (r *mutationResolver) reorderChildrenImpl(parentID string, childIDs []string, ifMatch []*model.ChildEtag) ([]*nib.Nib, error) {
+	ordered, err := r.validateBulkChildren(parentID, childIDs)
+	if err != nil {
 		return nil, err
 	}
 
-	ordered, err := r.validateBulkChildren(parentID, childIDs)
+	etagByID, err := r.validateIfMatchETags(ordered, ifMatch, r.requireIfMatch())
 	if err != nil {
 		return nil, err
 	}
@@ -22,10 +27,7 @@ func (r *mutationResolver) reorderChildrenImpl(parentID string, childIDs []strin
 	keys := nib.OrderKeyN(len(ordered))
 	for i, b := range ordered {
 		b.Order = keys[i]
-		// Bulk reorder skips ifMatch in v1 (deferred to nibs-n3zb). Under
-		// require_if_match: true, all bulk writes would fail; the entry-point
-		// validates this via checkBulkReorderSupported before issuing writes.
-		if err := r.Writer.Update(b, nil); err != nil {
+		if err := r.Writer.Update(b, ifMatchPtr(etagByID, b.ID)); err != nil {
 			return nil, err
 		}
 	}
@@ -33,14 +35,16 @@ func (r *mutationResolver) reorderChildrenImpl(parentID string, childIDs []strin
 }
 
 // reorderSiblingsImpl is the shared core of ReorderSiblings: validate inputs,
-// compute the destination order keys (based on the anchor and direction), and
-// persist the block in its requested order.
-func (r *mutationResolver) reorderSiblingsImpl(siblingIDs []string, afterID *string, beforeID *string, first *bool) ([]*nib.Nib, error) {
-	if err := r.checkBulkReorderSupported(); err != nil {
+// optionally pre-check per-sibling ETags, compute the destination order keys
+// (based on the anchor and direction), and persist the block in its requested
+// order.
+func (r *mutationResolver) reorderSiblingsImpl(siblingIDs []string, afterID *string, beforeID *string, first *bool, ifMatch []*model.ChildEtag) ([]*nib.Nib, error) {
+	block, anchor, parentID, err := r.validateBulkSiblings(siblingIDs, afterID, beforeID, first)
+	if err != nil {
 		return nil, err
 	}
 
-	block, anchor, parentID, err := r.validateBulkSiblings(siblingIDs, afterID, beforeID, first)
+	etagByID, err := r.validateIfMatchETags(block, ifMatch, r.requireIfMatch())
 	if err != nil {
 		return nil, err
 	}
@@ -99,15 +103,32 @@ func (r *mutationResolver) reorderSiblingsImpl(siblingIDs []string, afterID *str
 	for _, b := range block {
 		newKey := nib.OrderBetween(prev, upper)
 		b.Order = newKey
-		// Bulk reorder skips ifMatch in v1 (deferred to nibs-n3zb). Under
-		// require_if_match: true, all bulk writes would fail; the entry-point
-		// validates this via checkBulkReorderSupported before issuing writes.
-		if err := r.Writer.Update(b, nil); err != nil {
+		if err := r.Writer.Update(b, ifMatchPtr(etagByID, b.ID)); err != nil {
 			return nil, err
 		}
 		prev = newKey
 	}
 	return block, nil
+}
+
+// ifMatchPtr returns a pointer to the pre-validated etag for id, or nil
+// when id isn't covered by ifMatch. The helper exists because:
+//  1. Under require_if_match: true, nibcore.Update rejects nil — so a
+//     nil ifMatch from validateIfMatchETags would fail the per-nib write
+//     even after we've already verified the etag is current.
+//  2. Threading the pre-validated etag avoids a second on-disk read
+//     inside Update (which would re-hash the file we just hashed).
+//
+// Removing this helper would either re-introduce that redundant read or
+// break the require_if_match: true bulk path.
+func ifMatchPtr(etagByID map[string]string, id string) *string {
+	if etagByID == nil {
+		return nil
+	}
+	if e, ok := etagByID[id]; ok {
+		return &e
+	}
+	return nil
 }
 
 // validateBulkSiblings resolves and validates a Mode B request. Returns the
@@ -255,15 +276,91 @@ func notFoundDetail(raw, canonical string) string {
 	return fmt.Sprintf("%s (resolved to %s)", raw, canonical)
 }
 
-// checkBulkReorderSupported returns a directed error when the project is
-// configured with require_if_match: true. Bulk reorder does not yet propagate
-// per-nib etags through the GraphQL surface (deferred to nibs-n3zb); without
-// this guard the first Writer.Update would fail with a generic "if-match etag
-// is required" error that gives the user no path forward.
-func (r *mutationResolver) checkBulkReorderSupported() error {
+// requireIfMatch reports whether the project config requires ifMatch on
+// every write. When true, bulk reorder must receive an ifMatch entry for
+// every listed nib.
+func (r *mutationResolver) requireIfMatch() bool {
 	cfg := r.Reader.Config()
-	if cfg != nil && cfg.Nibs.RequireIfMatch {
-		return fmt.Errorf("bulk reorder does not yet support require_if_match: true (tracked in nibs-n3zb); use single-nib `nibs reorder <id> --if-match <etag>` per nib in the meantime")
+	return cfg != nil && cfg.Nibs.RequireIfMatch
+}
+
+// validateIfMatchETags checks the supplied per-child ETag entries against the
+// listed nibs. Validation order:
+//  1. duplicate-id check (canonicalised) — first duplicate aborts.
+//  2. unknown-id check — every ifMatch entry must reference one of `listed`.
+//  3. completeness check (when requireIfMatch is true) — every listed nib
+//     must appear in the ifMatch map.
+//  4. per-entry etag mismatch check — first mismatch aborts before any write.
+//
+// listed is the set of nibs that will be written. ifMatch is optional when
+// requireIfMatch is false: nibs without entries skip step 4 entirely. No
+// writes occur from this method — callers run it before Writer.Update.
+//
+// Returns a canonical-id -> etag map so the caller can thread the
+// pre-validated etag through to Writer.Update; under require_if_match: true
+// Writer.Update would otherwise reject the call for a missing etag.
+func (r *mutationResolver) validateIfMatchETags(listed []*nib.Nib, ifMatch []*model.ChildEtag, requireIfMatch bool) (map[string]string, error) {
+	if len(ifMatch) == 0 && !requireIfMatch {
+		return nil, nil
 	}
-	return nil
+
+	// Build a canonical-id -> etag map. The id in the entry may be a short
+	// form under a configured prefix; normalise both sides so cross-form
+	// duplicates and unknown ids surface correctly.
+	etags := make(map[string]string, len(ifMatch))
+	for _, e := range ifMatch {
+		if e == nil {
+			continue
+		}
+		canonical, _ := r.Reader.NormalizeID(e.ID)
+		if _, dup := etags[canonical]; dup {
+			return nil, fmt.Errorf("duplicate id in ifMatch: %s (resolved to %s)", e.ID, canonical)
+		}
+		etags[canonical] = e.Etag
+	}
+
+	listedSet := make(map[string]*nib.Nib, len(listed))
+	for _, b := range listed {
+		listedSet[b.ID] = b
+	}
+
+	// Reject any ifMatch entry that doesn't correspond to a listed nib.
+	for canonical := range etags {
+		if _, ok := listedSet[canonical]; !ok {
+			return nil, fmt.Errorf("ifMatch references nib not in this reorder: %s", canonical)
+		}
+	}
+
+	if requireIfMatch {
+		if len(etags) == 0 {
+			return nil, fmt.Errorf("require_if_match: true but no ifMatch provided; supply an entry for each listed nib")
+		}
+		var missing []string
+		for _, b := range listed {
+			if _, ok := etags[b.ID]; !ok {
+				missing = append(missing, b.ID)
+			}
+		}
+		if len(missing) > 0 {
+			sort.Strings(missing)
+			return nil, fmt.Errorf("require_if_match: true but ifMatch is missing entries for: %s", strings.Join(missing, ", "))
+		}
+	}
+
+	// Pre-validate etags against on-disk content. First mismatch aborts; no
+	// writes have happened yet so the operation is atomic.
+	for _, b := range listed {
+		want, ok := etags[b.ID]
+		if !ok {
+			continue
+		}
+		current, err := r.Reader.CurrentETag(b.ID)
+		if err != nil {
+			return nil, fmt.Errorf("failed to read current etag for %s: %w", b.ID, err)
+		}
+		if current != want {
+			return nil, fmt.Errorf("etag mismatch for %s: provided %s, current is %s", b.ID, want, current)
+		}
+	}
+	return etags, nil
 }

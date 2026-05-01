@@ -90,8 +90,17 @@ type Mutation {
   needs to distinguish "no parent" (root-level reorder) from "caller forgot
   to specify" at call time, since the field is required. reorderSiblings
   takes no parentId at all — the parent is inferred from the listed siblings.
+
+  Optional ifMatch carries per-child ETags for optimistic concurrency. Each
+  entry's ETag is pre-checked against the on-disk content of the corresponding
+  nib before any writes; a pre-validation mismatch aborts the operation
+  atomically. Per-child writes are then issued sequentially; a concurrent
+  modification between pre-validation and the per-child write surfaces as
+  ETagMismatchError for that nib, leaving prior writes in this batch
+  persisted (matching single-nib reorderNib semantics). Under
+  require_if_match: true, every listed child must appear in ifMatch.
   """
-  reorderChildren(parentId: String!, childIds: [ID!]!): [Nib!]!
+  reorderChildren(parentId: String!, childIds: [ID!]!, ifMatch: [ChildEtag!]): [Nib!]!
 
   """
   Move a contiguous block of siblings to a new position relative to an anchor
@@ -99,8 +108,31 @@ type Mutation {
   nibs). Anchor must be a sibling and must NOT appear in siblingIds. Exactly
   one of afterId, beforeId, first must be specified. Listed siblings become a
   contiguous block at the requested position, preserving their listed order.
+
+  Optional ifMatch carries per-sibling ETags for optimistic concurrency. Each
+  entry's ETag is pre-checked against the on-disk content of the corresponding
+  nib before any writes; a pre-validation mismatch aborts the operation
+  atomically. Per-sibling writes are then issued sequentially; a concurrent
+  modification between pre-validation and the per-sibling write surfaces as
+  ETagMismatchError for that nib, leaving prior writes in this batch
+  persisted (matching single-nib reorderNib semantics). Under
+  require_if_match: true, every listed sibling must appear in ifMatch.
   """
-  reorderSiblings(siblingIds: [ID!]!, afterId: ID, beforeId: ID, first: Boolean): [Nib!]!
+  reorderSiblings(siblingIds: [ID!]!, afterId: ID, beforeId: ID, first: Boolean, ifMatch: [ChildEtag!]): [Nib!]!
+}
+
+"""
+A per-child ETag pair for optimistic concurrency in bulk reorder mutations.
+Each entry's `etag` is pre-checked against the on-disk content of `id`
+before any writes; a pre-validation mismatch aborts the operation
+atomically. Per-nib writes are then issued sequentially; a concurrent
+modification between pre-validation and the per-nib write surfaces as
+ETagMismatchError for that nib, leaving prior writes in this batch
+persisted (matching single-nib reorderNib semantics).
+"""
+input ChildEtag {
+  id: ID!
+  etag: String!
 }
 
 """

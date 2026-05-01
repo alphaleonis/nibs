@@ -81,6 +81,21 @@ func (s *stubReader) Config() *config.Config {
 	return config.Default()
 }
 
+// CurrentETag returns the in-memory etag for the requested nib so resolver
+// tests that don't exercise on-disk content still compile against the
+// extended NibReader interface.
+func (s *stubReader) CurrentETag(id string) (string, error) {
+	if b, ok := s.nibs[id]; ok {
+		return b.ETag(), nil
+	}
+	if s.prefix != "" && !strings.HasPrefix(id, s.prefix) {
+		if b, ok := s.nibs[s.prefix+id]; ok {
+			return b.ETag(), nil
+		}
+	}
+	return "", nib.ErrNotFound
+}
+
 // stubWriter implements NibWriter for testing.
 type stubWriter struct {
 	created []*nib.Nib

@@ -16,6 +16,10 @@ type NibReader interface {
 	FindMentions(fromID string) []*nib.Nib
 	FindMentionedBy(targetID string) []*nib.Nib
 	Config() *config.Config
+	// CurrentETag returns the canonical FNV-64a hex ETag of the on-disk content
+	// of the given nib. Used by bulk-reorder pre-validation. Returns the same
+	// errors as Get (notably ErrNotFound) when the nib is missing.
+	CurrentETag(id string) (string, error)
 }
 
 // NibWriter provides mutating operations on the nib store.

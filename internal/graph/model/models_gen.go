@@ -23,6 +23,18 @@ type BodyModification struct {
 	Append *string `json:"append,omitempty"`
 }
 
+// A per-child ETag pair for optimistic concurrency in bulk reorder mutations.
+// Each entry's `etag` is pre-checked against the on-disk content of `id`
+// before any writes; a pre-validation mismatch aborts the operation
+// atomically. Per-nib writes are then issued sequentially; a concurrent
+// modification between pre-validation and the per-nib write surfaces as
+// ETagMismatchError for that nib, leaving prior writes in this batch
+// persisted (matching single-nib reorderNib semantics).
+type ChildEtag struct {
+	ID   string `json:"id"`
+	Etag string `json:"etag"`
+}
+
 type Config struct {
 	// Project name derived from the config file directory
 	ProjectName string `json:"projectName"`

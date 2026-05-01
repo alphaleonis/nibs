@@ -395,6 +395,48 @@ func (c *Core) Create(b *nib.Nib) error {
 	return nil
 }
 
+// CurrentETag returns the canonical FNV-64a hex ETag for the nib's on-disk
+// content. Used by bulk-reorder pre-validation to check optimistic
+// concurrency without a write. Returns ErrNotFound when the id does not
+// resolve. Falls back to the in-memory etag when no on-disk file exists yet
+// (e.g. a freshly created nib that hasn't been flushed) — this matches the
+// fallback semantics inside Update.
+func (c *Core) CurrentETag(id string) (string, error) {
+	c.mu.RLock()
+	defer c.mu.RUnlock()
+
+	storedNib, ok := c.nibs[id]
+	if !ok {
+		// Honour prefix-resolution like Get does, so callers can pass either
+		// short or canonical ids and receive consistent behaviour.
+		if c.config != nil && c.config.Nibs.Prefix != "" && !strings.HasPrefix(id, c.config.Nibs.Prefix) {
+			storedNib, ok = c.nibs[c.config.Nibs.Prefix+id]
+		}
+		if !ok {
+			return "", ErrNotFound
+		}
+	}
+	return c.computeStoredETag(storedNib), nil
+}
+
+// computeStoredETag returns the canonical etag for a stored nib by reading
+// the current on-disk content and FNV-64a hashing it. If the on-disk file is
+// missing (e.g. freshly created in memory but not yet flushed), it falls back
+// to the in-memory nib's ETag. Caller must hold c.mu (read or write lock).
+func (c *Core) computeStoredETag(storedNib *nib.Nib) string {
+	if storedNib.Path == "" {
+		return storedNib.ETag()
+	}
+	diskPath := filepath.Join(c.root, storedNib.Path)
+	content, err := os.ReadFile(diskPath)
+	if err != nil {
+		return storedNib.ETag()
+	}
+	h := fnv.New64a()
+	h.Write(content)
+	return hex.EncodeToString(h.Sum(nil))
+}
+
 // Update modifies an existing nib and writes it to disk.
 // If ifMatch is provided, validates the current on-disk version's etag matches before updating.
 // This provides optimistic concurrency control to prevent lost updates.
@@ -416,29 +458,7 @@ func (c *Core) Update(b *nib.Nib, ifMatch *string) error {
 	}
 
 	if ifMatch != nil && *ifMatch != "" {
-		// Calculate etag from the on-disk version by reading the stored nib's path
-		// This is necessary because the in-memory nib may have already been modified
-		// (Go uses pointers, so modifying the nib passed to Update also modifies c.nibs[id])
-		var currentETag string
-		if storedNib.Path != "" {
-			// Read current file from disk to calculate etag
-			diskPath := filepath.Join(c.root, storedNib.Path)
-			content, err := os.ReadFile(diskPath)
-			if err != nil {
-				// If file doesn't exist yet, fall back to stored nib's etag
-				// This can happen for nibs created but not yet persisted
-				currentETag = storedNib.ETag()
-			} else {
-				// Calculate etag from on-disk content
-				h := fnv.New64a()
-				h.Write(content)
-				currentETag = hex.EncodeToString(h.Sum(nil))
-			}
-		} else {
-			// No path yet, use in-memory etag
-			currentETag = storedNib.ETag()
-		}
-
+		currentETag := c.computeStoredETag(storedNib)
 		if currentETag != *ifMatch {
 			return &ETagMismatchError{
 				Provided: *ifMatch,

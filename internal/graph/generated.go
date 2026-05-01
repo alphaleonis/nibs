@@ -64,9 +64,9 @@ type ComplexityRoot struct {
 		DeleteNib       func(childComplexity int, id string) int
 		RemoveBlockedBy func(childComplexity int, id string, targetID string, ifMatch *string) int
 		RemoveBlocking  func(childComplexity int, id string, targetID string) int
-		ReorderChildren func(childComplexity int, parentID string, childIds []string) int
+		ReorderChildren func(childComplexity int, parentID string, childIds []string, ifMatch []*model.ChildEtag) int
 		ReorderNib      func(childComplexity int, id string, afterID *string, beforeID *string, first *bool, parentID *string, ifMatch *string) int
-		ReorderSiblings func(childComplexity int, siblingIds []string, afterID *string, beforeID *string, first *bool) int
+		ReorderSiblings func(childComplexity int, siblingIds []string, afterID *string, beforeID *string, first *bool, ifMatch []*model.ChildEtag) int
 		SetParent       func(childComplexity int, id string, parentID *string, ifMatch *string) int
 		UpdateNib       func(childComplexity int, id string, input model.UpdateNibInput) int
 	}
@@ -129,8 +129,8 @@ type MutationResolver interface {
 	AddBlockedBy(ctx context.Context, id string, targetID string, ifMatch *string) (*nib.Nib, error)
 	RemoveBlockedBy(ctx context.Context, id string, targetID string, ifMatch *string) (*nib.Nib, error)
 	ReorderNib(ctx context.Context, id string, afterID *string, beforeID *string, first *bool, parentID *string, ifMatch *string) (*nib.Nib, error)
-	ReorderChildren(ctx context.Context, parentID string, childIds []string) ([]*nib.Nib, error)
-	ReorderSiblings(ctx context.Context, siblingIds []string, afterID *string, beforeID *string, first *bool) ([]*nib.Nib, error)
+	ReorderChildren(ctx context.Context, parentID string, childIds []string, ifMatch []*model.ChildEtag) ([]*nib.Nib, error)
+	ReorderSiblings(ctx context.Context, siblingIds []string, afterID *string, beforeID *string, first *bool, ifMatch []*model.ChildEtag) ([]*nib.Nib, error)
 }
 type NibResolver interface {
 	ParentID(ctx context.Context, obj *nib.Nib) (*string, error)
@@ -273,7 +273,7 @@ func (e *executableSchema) Complexity(ctx context.Context, typeName, field strin
 			return 0, false
 		}
 
-		return e.complexity.Mutation.ReorderChildren(childComplexity, args["parentId"].(string), args["childIds"].([]string)), true
+		return e.complexity.Mutation.ReorderChildren(childComplexity, args["parentId"].(string), args["childIds"].([]string), args["ifMatch"].([]*model.ChildEtag)), true
 	case "Mutation.reorderNib":
 		if e.complexity.Mutation.ReorderNib == nil {
 			break
@@ -295,7 +295,7 @@ func (e *executableSchema) Complexity(ctx context.Context, typeName, field strin
 			return 0, false
 		}
 
-		return e.complexity.Mutation.ReorderSiblings(childComplexity, args["siblingIds"].([]string), args["afterId"].(*string), args["beforeId"].(*string), args["first"].(*bool)), true
+		return e.complexity.Mutation.ReorderSiblings(childComplexity, args["siblingIds"].([]string), args["afterId"].(*string), args["beforeId"].(*string), args["first"].(*bool), args["ifMatch"].([]*model.ChildEtag)), true
 	case "Mutation.setParent":
 		if e.complexity.Mutation.SetParent == nil {
 			break
@@ -576,6 +576,7 @@ func (e *executableSchema) Exec(ctx context.Context) graphql.ResponseHandler {
 	ec := executionContext{opCtx, e, 0, 0, make(chan graphql.DeferredResult)}
 	inputUnmarshalMap := graphql.BuildUnmarshalerMap(
 		ec.unmarshalInputBodyModification,
+		ec.unmarshalInputChildEtag,
 		ec.unmarshalInputCreateNibInput,
 		ec.unmarshalInputNibFilter,
 		ec.unmarshalInputNibSort,
@@ -834,6 +835,11 @@ func (ec *executionContext) field_Mutation_reorderChildren_args(ctx context.Cont
 		return nil, err
 	}
 	args["childIds"] = arg1
+	arg2, err := graphql.ProcessArgField(ctx, rawArgs, "ifMatch", ec.unmarshalOChildEtag2ᚕᚖgithubᚗcomᚋalphaleonisᚋnibsᚋinternalᚋgraphᚋmodelᚐChildEtagᚄ)
+	if err != nil {
+		return nil, err
+	}
+	args["ifMatch"] = arg2
 	return args, nil
 }
 
@@ -896,6 +902,11 @@ func (ec *executionContext) field_Mutation_reorderSiblings_args(ctx context.Cont
 		return nil, err
 	}
 	args["first"] = arg3
+	arg4, err := graphql.ProcessArgField(ctx, rawArgs, "ifMatch", ec.unmarshalOChildEtag2ᚕᚖgithubᚗcomᚋalphaleonisᚋnibsᚋinternalᚋgraphᚋmodelᚐChildEtagᚄ)
+	if err != nil {
+		return nil, err
+	}
+	args["ifMatch"] = arg4
 	return args, nil
 }
 
@@ -2021,7 +2032,7 @@ func (ec *executionContext) _Mutation_reorderChildren(ctx context.Context, field
 		ec.fieldContext_Mutation_reorderChildren,
 		func(ctx context.Context) (any, error) {
 			fc := graphql.GetFieldContext(ctx)
-			return ec.resolvers.Mutation().ReorderChildren(ctx, fc.Args["parentId"].(string), fc.Args["childIds"].([]string))
+			return ec.resolvers.Mutation().ReorderChildren(ctx, fc.Args["parentId"].(string), fc.Args["childIds"].([]string), fc.Args["ifMatch"].([]*model.ChildEtag))
 		},
 		nil,
 		ec.marshalNNib2ᚕᚖgithubᚗcomᚋalphaleonisᚋnibsᚋinternalᚋnibᚐNibᚄ,
@@ -2118,7 +2129,7 @@ func (ec *executionContext) _Mutation_reorderSiblings(ctx context.Context, field
 		ec.fieldContext_Mutation_reorderSiblings,
 		func(ctx context.Context) (any, error) {
 			fc := graphql.GetFieldContext(ctx)
-			return ec.resolvers.Mutation().ReorderSiblings(ctx, fc.Args["siblingIds"].([]string), fc.Args["afterId"].(*string), fc.Args["beforeId"].(*string), fc.Args["first"].(*bool))
+			return ec.resolvers.Mutation().ReorderSiblings(ctx, fc.Args["siblingIds"].([]string), fc.Args["afterId"].(*string), fc.Args["beforeId"].(*string), fc.Args["first"].(*bool), fc.Args["ifMatch"].([]*model.ChildEtag))
 		},
 		nil,
 		ec.marshalNNib2ᚕᚖgithubᚗcomᚋalphaleonisᚋnibsᚋinternalᚋnibᚐNibᚄ,
@@ -5395,6 +5406,40 @@ func (ec *executionContext) unmarshalInputBodyModification(ctx context.Context, 
 	return it, nil
 }
 
+func (ec *executionContext) unmarshalInputChildEtag(ctx context.Context, obj any) (model.ChildEtag, error) {
+	var it model.ChildEtag
+	asMap := map[string]any{}
+	for k, v := range obj.(map[string]any) {
+		asMap[k] = v
+	}
+
+	fieldsInOrder := [...]string{"id", "etag"}
+	for _, k := range fieldsInOrder {
+		v, ok := asMap[k]
+		if !ok {
+			continue
+		}
+		switch k {
+		case "id":
+			ctx := graphql.WithPathContext(ctx, graphql.NewPathWithField("id"))
+			data, err := ec.unmarshalNID2string(ctx, v)
+			if err != nil {
+				return it, err
+			}
+			it.ID = data
+		case "etag":
+			ctx := graphql.WithPathContext(ctx, graphql.NewPathWithField("etag"))
+			data, err := ec.unmarshalNString2string(ctx, v)
+			if err != nil {
+				return it, err
+			}
+			it.Etag = data
+		}
+	}
+
+	return it, nil
+}
+
 func (ec *executionContext) unmarshalInputCreateNibInput(ctx context.Context, obj any) (model.CreateNibInput, error) {
 	var it model.CreateNibInput
 	asMap := map[string]any{}
@@ -7135,6 +7180,11 @@ func (ec *executionContext) marshalNBoolean2bool(ctx context.Context, sel ast.Se
 	return res
 }
 
+func (ec *executionContext) unmarshalNChildEtag2ᚖgithubᚗcomᚋalphaleonisᚋnibsᚋinternalᚋgraphᚋmodelᚐChildEtag(ctx context.Context, v any) (*model.ChildEtag, error) {
+	res, err := ec.unmarshalInputChildEtag(ctx, v)
+	return &res, graphql.ErrorOnPath(ctx, err)
+}
+
 func (ec *executionContext) marshalNConfig2githubᚗcomᚋalphaleonisᚋnibsᚋinternalᚋgraphᚋmodelᚐConfig(ctx context.Context, sel ast.SelectionSet, v model.Config) graphql.Marshaler {
 	return ec._Config(ctx, sel, &v)
 }
@@ -7665,6 +7715,24 @@ func (ec *executionContext) marshalOBoolean2ᚖbool(ctx context.Context, sel ast
 	_ = ctx
 	res := graphql.MarshalBoolean(*v)
 	return res
+}
+
+func (ec *executionContext) unmarshalOChildEtag2ᚕᚖgithubᚗcomᚋalphaleonisᚋnibsᚋinternalᚋgraphᚋmodelᚐChildEtagᚄ(ctx context.Context, v any) ([]*model.ChildEtag, error) {
+	if v == nil {
+		return nil, nil
+	}
+	var vSlice []any
+	vSlice = graphql.CoerceList(v)
+	var err error
+	res := make([]*model.ChildEtag, len(vSlice))
+	for i := range vSlice {
+		ctx := graphql.WithPathContext(ctx, graphql.NewPathWithIndex(i))
+		res[i], err = ec.unmarshalNChildEtag2ᚖgithubᚗcomᚋalphaleonisᚋnibsᚋinternalᚋgraphᚋmodelᚐChildEtag(ctx, vSlice[i])
+		if err != nil {
+			return nil, err
+		}
+	}
+	return res, nil
 }
 
 func (ec *executionContext) unmarshalOID2ᚖstring(ctx context.Context, v any) (*string, error) {
