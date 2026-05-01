@@ -73,6 +73,7 @@ a full view of your project.`,
 func init() {
 	rootCmd.PersistentFlags().StringVar(&nibsPath, "nibs-path", "", "Path to data directory (overrides config and NIBS_PATH env var)")
 	rootCmd.PersistentFlags().StringVar(&configPath, "config", "", "Path to config file (default: searches upward for .nibs.yml)")
+	installFlagSuggestions(rootCmd)
 }
 
 // resolveNibsPath determines the nibs data directory path.

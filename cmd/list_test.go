@@ -154,7 +154,14 @@ func TestResetListFlagsClearsAllState(t *testing.T) {
 
 	resetListFlags()
 
-	listCmd.Flags().VisitAll(func(f *pflag.Flag) {
+	// Walk LocalFlags (list-specific) rather than Flags (which includes
+	// inherited persistent flags from rootCmd once Cobra has merged them
+	// for this command). The intent of this test is "resetListFlags is
+	// complete for list's own flags" — persistent-flag hygiene is rootCmd's
+	// concern and is leaked by other test setups (setupLinksCobraTest etc.)
+	// that don't restore --nibs-path's Value after use. Tracked separately
+	// as nibs-p55x; this test should not be the one to catch it.
+	listCmd.LocalFlags().VisitAll(func(f *pflag.Flag) {
 		if f.Value.String() != f.DefValue {
 			t.Errorf("flag %q = %q after reset, want default %q",
 				f.Name, f.Value.String(), f.DefValue)
