@@ -2,6 +2,7 @@ package ui
 
 import (
 	"fmt"
+	"strconv"
 	"strings"
 
 	"github.com/charmbracelet/lipgloss"
@@ -157,16 +158,26 @@ const (
 	treeIndent     = 3     // width of connector
 )
 
-// calculateMaxDepth returns the maximum depth of the tree.
-func calculateMaxDepth(nodes []*TreeNode) int {
-	maxDepth := 0
+// treeMetrics returns the maximum depth of the tree and the largest visible
+// position value sourced from positions (0 when positions is nil or no node
+// has an entry). Single traversal — replaces the previous separate
+// calculateMaxDepth + maxVisiblePosition walks.
+func treeMetrics(nodes []*TreeNode, positions map[string]int) (depth, maxPos int) {
 	for _, node := range nodes {
-		depth := 1 + calculateMaxDepth(node.Children)
-		if depth > maxDepth {
-			maxDepth = depth
+		if positions != nil {
+			if pos, ok := positions[node.Nib.ID]; ok && pos > maxPos {
+				maxPos = pos
+			}
+		}
+		childDepth, childMaxPos := treeMetrics(node.Children, positions)
+		if 1+childDepth > depth {
+			depth = 1 + childDepth
+		}
+		if childMaxPos > maxPos {
+			maxPos = childMaxPos
 		}
 	}
-	return maxDepth
+	return depth, maxPos
 }
 
 // RenderTree renders the tree as an ASCII tree with styled columns.
@@ -177,8 +188,9 @@ func calculateMaxDepth(nodes []*TreeNode) int {
 func RenderTree(nodes []*TreeNode, cfg *config.Config, maxIDWidth int, hasTags bool, termWidth int, positions map[string]int) string {
 	var sb strings.Builder
 
-	// Calculate max depth to determine ID column width
-	maxDepth := calculateMaxDepth(nodes)
+	// One walk gives both: tree depth (for ID column width) and the largest
+	// visible position (for the # column width).
+	maxDepth, maxPos := treeMetrics(nodes, positions)
 	// ID column needs: indent (3 chars per level beyond depth 1) + connector (3 chars) + ID width
 	// depth 0: 0 extra chars
 	// depth 1: 3 chars (connector only)
@@ -190,14 +202,11 @@ func RenderTree(nodes []*TreeNode, cfg *config.Config, maxIDWidth int, hasTags b
 	}
 
 	// Position column: width is digits in the largest visible position.
-	// 0 means "do not render column" — both when positions is nil and when
-	// no visible node has a position entry.
+	// 0 means "do not render column" — covers both nil positions and the
+	// "no visible node has a position entry" case (treeMetrics returns 0).
 	posColWidth := 0
-	if positions != nil {
-		maxPos := maxVisiblePosition(nodes, positions)
-		if maxPos > 0 {
-			posColWidth = len(fmt.Sprintf("%d", maxPos))
-		}
+	if maxPos > 0 {
+		posColWidth = len(strconv.Itoa(maxPos))
 	}
 	// Total cells the position column occupies on each row, including the
 	// trailing space separating it from the ID column.
@@ -258,21 +267,6 @@ func RenderTree(nodes []*TreeNode, cfg *config.Config, maxIDWidth int, hasTags b
 	renderNodes(&sb, nodes, 0, nil, cfg, renderCfg)
 
 	return sb.String()
-}
-
-// maxVisiblePosition returns the largest position value among nibs visible in
-// the tree (recursing through children). Returns 0 if none have positions.
-func maxVisiblePosition(nodes []*TreeNode, positions map[string]int) int {
-	highest := 0
-	for _, node := range nodes {
-		if pos, ok := positions[node.Nib.ID]; ok && pos > highest {
-			highest = pos
-		}
-		if childMax := maxVisiblePosition(node.Children, positions); childMax > highest {
-			highest = childMax
-		}
-	}
-	return highest
 }
 
 // treeRenderConfig holds computed rendering configuration for tree output
