@@ -7,6 +7,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## v0.4.0 - 2026-05-01
+
+### Added
+- **Bulk reorder of multiple sibling nibs in one command** — `reorderChildren` GraphQL mutation accepts a declarative full-list (Mode A) and reorders every direct child of `parentId` in the given order (use `parentId: ""` for root-level siblings); requires strict completeness. `reorderSiblings` GraphQL mutation moves a contiguous block of listed siblings as a unit (Mode B), with the parent inferred from the listed nibs and a destination expressed as `--after`, `--before`, or `--first`. CLI: `nibs reorder --children-of <parent>` for Mode A; `nibs reorder <id1> <id2> ... --after <anchor>` (or `--before` / `--first`) for Mode B. Existing single-nib `nibs reorder <id> --after ...` behavior is unchanged.
+- **Per-child ifMatch for bulk reorder** — `reorderChildren` and `reorderSiblings` accept `ifMatch: [ChildEtag!]`, threaded from CLI as repeatable `--child-if-match <id>=<etag>`. Pre-validation runs before any writes: a stale or unknown etag aborts the whole operation atomically. Under `require_if_match: true` every listed nib must have an entry; under `false` partial coverage is permitted. `--child-if-match` is mutually exclusive with `--if-match` (which remains the form for single-nib reorder).
+- **Flag suggestions for typos** — unknown long flags now surface `Did you mean --foo?` via Cobra's `SetFlagErrorFunc`. Levenshtein-based with maxDist 2 and a skip-on-tie rule (no suggestion when two candidates tie at the minimum distance). Inherits to subcommands through Cobra's parent-walk in `FlagErrorFunc()` — works for local subcommand flags, persistent root flags, and late-registered subcommands.
+- **Natural-order position column in `nibs list` tree view** — new leftmost `#` column showing each nib's 1-based position among its siblings (sort-independent, sourced from `Order` keys), so reorder references survive `--sort` changes. Auto-sized width; hidden when not applicable.
+
+### Changed
+- `internal/ui/tree.RenderTree` folds the previous `calculateMaxDepth` + `maxVisiblePosition` into a single `treeMetrics` walk; replaces `len(fmt.Sprintf("%d", n))` with `len(strconv.Itoa(n))`. No behavior change.
+
+### Fixed
+- `nibs list` short-form now renders `research` type as `R` instead of `?`. `ShortType` and `ShortStatus` are now driven from `config.DefaultTypes` / `config.DefaultStatuses` (first letter uppercased) so future types automatically get a short code; uniqueness invariant is guarded by tests.
+- Priority symbols, blocked/blocking indicators, the selection cursor, tree connectors, the divider, and collapse/section cursors fall back to ASCII variants when the terminal cannot display UTF-8 — fixes mojibake (`Γåô` etc.) on Windows consoles using cp1252 or other non-UTF-8 codepages. Platform detection caches once via `sync.Once` (Windows: `GetConsoleOutputCP`); a `term.IsTerminal` precheck keeps redirected stdout on UTF-8 since pipes and files are UTF-8-friendly.
+- Test setup helpers in `cmd/` no longer leak `rootCmd` persistent-flag state (`--nibs-path`, `--config`) across tests. New shared `resetRootPersistentFlags` helper is wired into every Cobra-driving setup helper and direct `rootCmd.Execute()` call site, so a leftover `t.TempDir()` path can no longer carry forward into a subsequent test.
+
 ## v0.3.1 - 2026-04-27
 
 ### Fixed
