@@ -32,17 +32,16 @@ type testNibSpec struct {
 func setupSetPrefixTest(t *testing.T, prefix string, nibs ...testNibSpec) (string, string, string) {
 	t.Helper()
 
-	// Reset flag state and gitIsDirtyFn on cleanup. Also reset the root
-	// command's configPath/nibsPath globals — Cobra's flag parser writes to
-	// them when runSetPrefixCmd passes --config/--nibs-path, and without a
-	// reset the values leak to subsequent tests in the cmd package.
+	// Reset flag state and gitIsDirtyFn on cleanup. Persistent-flag reset
+	// (--config/--nibs-path) is delegated to resetRootPersistentFlags so the
+	// pflag Value and Changed bits are also cleared, not just the bound
+	// package-level vars.
+	t.Cleanup(resetRootPersistentFlags)
 	t.Cleanup(func() {
 		setPrefixDryRun = false
 		setPrefixForce = false
 		setPrefixJSON = false
 		gitIsDirtyFn = realGitIsDirty
-		configPath = ""
-		nibsPath = ""
 	})
 	setPrefixDryRun = false
 	setPrefixForce = false

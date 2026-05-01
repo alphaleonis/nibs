@@ -154,13 +154,11 @@ func TestResetListFlagsClearsAllState(t *testing.T) {
 
 	resetListFlags()
 
-	// Walk LocalFlags (list-specific) rather than Flags (which includes
-	// inherited persistent flags from rootCmd once Cobra has merged them
-	// for this command). The intent of this test is "resetListFlags is
-	// complete for list's own flags" — persistent-flag hygiene is rootCmd's
-	// concern and is leaked by other test setups (setupLinksCobraTest etc.)
-	// that don't restore --nibs-path's Value after use. Tracked separately
-	// as nibs-p55x; this test should not be the one to catch it.
+	// Walk LocalFlags() (not Flags()) — this test's responsibility is
+	// resetListFlags hygiene only. Persistent-flag cleanup is exercised
+	// independently by TestResetRootPersistentFlagsClearsAllState; mixing
+	// the two would couple unrelated contracts and force this test to
+	// also reset rootCmd's persistent flags.
 	listCmd.LocalFlags().VisitAll(func(f *pflag.Flag) {
 		if f.Value.String() != f.DefValue {
 			t.Errorf("flag %q = %q after reset, want default %q",
@@ -177,6 +175,7 @@ func TestResetListFlagsClearsAllState(t *testing.T) {
 // Cobra pipeline.
 func setupListCobraTest(t *testing.T, files map[string]string) string {
 	t.Helper()
+	t.Cleanup(resetRootPersistentFlags)
 	t.Cleanup(resetListFlags)
 	t.Cleanup(func() { rootCmd.SetArgs(nil) })
 	resetListFlags()

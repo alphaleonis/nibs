@@ -38,6 +38,7 @@ func TestResetCloseFlagsClearsAllState(t *testing.T) {
 
 func setupCloseTest(t *testing.T, files map[string]string) string {
 	t.Helper()
+	t.Cleanup(resetRootPersistentFlags)
 	t.Cleanup(func() { resetCloseFlags() })
 	resetCloseFlags()
 

@@ -99,6 +99,7 @@ func TestResetCreateFlagsClearsAllState(t *testing.T) {
 
 func setupCreateTest(t *testing.T) string {
 	t.Helper()
+	t.Cleanup(resetRootPersistentFlags)
 	t.Cleanup(func() { resetCreateFlags() })
 	resetCreateFlags()
 

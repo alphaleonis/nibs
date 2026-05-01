@@ -84,6 +84,7 @@ func TestResetShowFlagsClearsAllState(t *testing.T) {
 // Cobra pipeline.
 func setupShowCobraTest(t *testing.T, files map[string]string) string {
 	t.Helper()
+	t.Cleanup(resetRootPersistentFlags)
 	t.Cleanup(resetShowFlags)
 	t.Cleanup(func() { rootCmd.SetArgs(nil) })
 	resetShowFlags()

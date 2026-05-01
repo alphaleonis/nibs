@@ -18,6 +18,7 @@ import (
 // can exercise the links command. Mirrors setupRefsCobraTest.
 func setupLinksCobraTest(t *testing.T, files map[string]string) string {
 	t.Helper()
+	t.Cleanup(resetRootPersistentFlags)
 	t.Cleanup(resetLinksFlags)
 	t.Cleanup(func() { rootCmd.SetArgs(nil) })
 	resetLinksFlags()

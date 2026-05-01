@@ -14,6 +14,8 @@ import (
 // Cobra's StringArrayVar appends to slices across Execute() calls on the
 // singleton rootCmd, so every global must be zeroed between tests.
 // Also resets Cobra's "Changed" tracking on all flags to prevent stale state.
+// Persistent-flag reset (--config, --nibs-path, plus their pflag Value/Changed
+// bits) is delegated to the shared resetRootPersistentFlags helper.
 // These tests must NOT use t.Parallel() — they share the rootCmd singleton.
 func resetUpdateFlags() {
 	updateStatus = ""
@@ -45,6 +47,7 @@ func resetUpdateFlags() {
 	updateCmd.Flags().Visit(func(f *pflag.Flag) {
 		f.Changed = false
 	})
+	resetRootPersistentFlags()
 }
 
 func TestResetUpdateFlagsClearsAllState(t *testing.T) {

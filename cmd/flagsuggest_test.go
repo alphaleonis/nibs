@@ -107,6 +107,7 @@ func TestFlagSuggestion_Integration(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			origSilenceUsage := rootCmd.SilenceUsage
 			origSilenceErrors := rootCmd.SilenceErrors
+			t.Cleanup(resetRootPersistentFlags)
 			t.Cleanup(func() {
 				rootCmd.SetArgs(nil)
 				rootCmd.SilenceUsage = origSilenceUsage

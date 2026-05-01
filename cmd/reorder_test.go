@@ -47,6 +47,7 @@ func resetReorderFlags() {
 // `rootCmd.SetArgs([...])` can drive the full Cobra pipeline.
 func setupReorderCobraTest(t *testing.T, files map[string]string) string {
 	t.Helper()
+	t.Cleanup(resetRootPersistentFlags)
 	t.Cleanup(resetReorderFlags)
 	t.Cleanup(func() { rootCmd.SetArgs(nil) })
 	resetReorderFlags()
@@ -79,6 +80,7 @@ func reorderFixture() map[string]string {
 // resulting children in disk order.
 func listChildrenOrder(t *testing.T, nibsDir, parentID string) []*nib.Nib {
 	t.Helper()
+	t.Cleanup(resetRootPersistentFlags)
 	t.Cleanup(resetListFlags)
 	resetListFlags()
 	rootCmd.SetArgs([]string{"--nibs-path", nibsDir, "list", "--parent", parentID, "--json"})
@@ -210,6 +212,7 @@ func TestReorderCommand_ChildrenOf_RootEmptyString(t *testing.T) {
 // listRootOrder runs `nibs list --no-parent --json` to list root-level nibs.
 func listRootOrder(t *testing.T, nibsDir string) []*nib.Nib {
 	t.Helper()
+	t.Cleanup(resetRootPersistentFlags)
 	t.Cleanup(resetListFlags)
 	resetListFlags()
 	rootCmd.SetArgs([]string{"--nibs-path", nibsDir, "list", "--no-parent", "--json"})

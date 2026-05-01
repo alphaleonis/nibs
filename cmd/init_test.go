@@ -12,12 +12,13 @@ import (
 // resetInitFlags restores all package-level flag globals touched by the init
 // command so subsequent tests start from a clean state. Cobra binds --json,
 // --prefix, --config, and --nibs-path to package-level vars and does not
-// reset them between Execute() calls.
+// reset them between Execute() calls. Persistent-flag reset (--config,
+// --nibs-path, plus their pflag Value/Changed bits) is delegated to the
+// shared resetRootPersistentFlags helper.
 func resetInitFlags() {
 	initJSON = false
 	initPrefix = ""
-	configPath = ""
-	nibsPath = ""
+	resetRootPersistentFlags()
 }
 
 // setupInitTest prepares a temp project with a controlled basename and

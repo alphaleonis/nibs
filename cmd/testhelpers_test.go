@@ -7,7 +7,82 @@ import (
 	"sync"
 	"testing"
 	"time"
+
+	"github.com/spf13/pflag"
 )
+
+// resetRootPersistentFlags restores rootCmd's persistent flag state
+// (--nibs-path, --config) to defaults so tests don't leak each other.
+// Call via t.Cleanup() from any helper that runs rootCmd.Execute() with
+// persistent flags set.
+//
+// This is an explicit two-flag reset — adding a third persistent flag to
+// rootCmd requires touching the name list below. The companion regression
+// test TestResetRootPersistentFlagsClearsAllState walks
+// rootCmd.PersistentFlags().VisitAll to assert every persistent flag is
+// at its default after the reset, so a fourth flag added without being
+// included here will trip that test.
+//
+// What this resets that per-command reset*Flags() helpers miss:
+//   - The package-level `nibsPath` and `configPath` string vars.
+//   - The pflag Value backing each persistent flag (Cobra's flag parser
+//     writes to Value separately from the bound var, so clearing only
+//     the bound var leaves Value populated).
+//   - The pflag Changed bit (matters for MarkFlagsMutuallyExclusive
+//     and any future code that consults Visit).
+//
+// Tracked by nibs-p55x.
+func resetRootPersistentFlags() {
+	nibsPath = ""
+	configPath = ""
+	for _, name := range []string{"nibs-path", "config"} {
+		f := rootCmd.PersistentFlags().Lookup(name)
+		if f == nil {
+			continue
+		}
+		// Set(DefValue) is infallible for these StringVar flags — pflag's
+		// stringValue.Set never returns a non-nil error. Swallowing the
+		// error is provably safe given the explicit, known-string flag
+		// list above; if a future persistent flag has a Set that can
+		// fail, this swallow needs revisiting.
+		_ = f.Value.Set(f.DefValue)
+		f.Changed = false
+	}
+}
+
+// TestResetRootPersistentFlagsClearsAllState pins the contract of
+// resetRootPersistentFlags: after dirtying both --nibs-path and --config
+// via rootCmd.PersistentFlags().Set (the path the real flag parser
+// uses), every observable bit of state must be back to default.
+func TestResetRootPersistentFlagsClearsAllState(t *testing.T) {
+	t.Cleanup(resetRootPersistentFlags)
+
+	// Dirty via the real FlagSet so Cobra's `actual` map is populated.
+	if err := rootCmd.PersistentFlags().Set("nibs-path", "/tmp/leaked"); err != nil {
+		t.Fatalf("pre-populate --nibs-path: %v", err)
+	}
+	if err := rootCmd.PersistentFlags().Set("config", "/tmp/leaked.yml"); err != nil {
+		t.Fatalf("pre-populate --config: %v", err)
+	}
+
+	resetRootPersistentFlags()
+
+	if nibsPath != "" {
+		t.Errorf("nibsPath = %q after reset, want empty", nibsPath)
+	}
+	if configPath != "" {
+		t.Errorf("configPath = %q after reset, want empty", configPath)
+	}
+	rootCmd.PersistentFlags().VisitAll(func(f *pflag.Flag) {
+		if f.Value.String() != f.DefValue {
+			t.Errorf("persistent flag %q = %q after reset, want default %q",
+				f.Name, f.Value.String(), f.DefValue)
+		}
+		if f.Changed {
+			t.Errorf("persistent flag %q Changed = true after reset, want false", f.Name)
+		}
+	})
+}
 
 // stdoutMu serializes global os.Stdout mutations across tests that need to
 // observe writes from the output package (which bypasses Cobra's writers).
