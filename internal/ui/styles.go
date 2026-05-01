@@ -5,6 +5,8 @@ import (
 	"strings"
 
 	"github.com/charmbracelet/lipgloss"
+
+	"github.com/alphaleonis/nibs/internal/config"
 )
 
 // Color palette
@@ -302,53 +304,48 @@ func RenderPriorityText(priority, color string) string {
 }
 
 // ShortType returns a single-character code for the nib type.
+// Derived from the first letter of each entry in config.DefaultTypes,
+// uppercased. Returns "?" for unknown or empty values.
 func ShortType(t string) string {
-	switch t {
-	case "milestone":
-		return "M"
-	case "epic":
-		return "E"
-	case "bug":
-		return "B"
-	case "feature":
-		return "F"
-	case "task":
-		return "T"
-	default:
+	if t == "" {
 		return "?"
 	}
+	for _, def := range config.DefaultTypes {
+		if def.Name == t {
+			return strings.ToUpper(def.Name[:1])
+		}
+	}
+	return "?"
 }
 
 // ShortStatus returns a single-character code for the nib status.
+// Derived from the first letter of each entry in config.DefaultStatuses,
+// uppercased. Returns "?" for unknown or empty values.
 func ShortStatus(s string) string {
-	switch s {
-	case "draft":
-		return "D"
-	case "todo":
-		return "T"
-	case "in-progress":
-		return "I"
-	case "completed":
-		return "C"
-	case "scrapped":
-		return "S"
-	default:
+	if s == "" {
 		return "?"
 	}
+	for _, def := range config.DefaultStatuses {
+		if def.Name == s {
+			return strings.ToUpper(def.Name[:1])
+		}
+	}
+	return "?"
 }
 
 // GetPrioritySymbol returns the raw symbol for a priority without styling.
-// Returns empty string for normal/empty priority.
+// Returns empty string for normal/empty priority. Uses ASCII fallbacks when
+// the terminal cannot display UTF-8 (see glyphs.go).
 func GetPrioritySymbol(priority string) string {
 	switch priority {
 	case "critical":
-		return "‼"
+		return glyphCritical()
 	case "high":
-		return "!"
+		return glyphHigh()
 	case "low":
-		return "↓"
+		return glyphLow()
 	case "deferred":
-		return "→"
+		return glyphDeferred()
 	default:
 		return ""
 	}
@@ -567,28 +564,46 @@ func RenderNibRow(id, status, typeName, title string, cfg NibRowConfig) string {
 	}
 
 	// Fixed-width indicator column (always indicatorColWidth display cells).
-	// Slot 1 (2 cells): blocked ● or blocking ◆ (mutually exclusive; blocked wins)
-	// Slot 2 (2 cells): priority symbol (!, ‼, ↓, →)
-	// When an indicator is absent, its slot is filled with spaces.
+	// Slot 1 (2 cells): blocked or blocking (mutually exclusive; blocked wins)
+	// Slot 2 (2 cells): priority symbol
+	// Each slot is filled with either <glyph><space> for 1-cell glyphs, or
+	// <glyph> alone for glyphs that already occupy 2 cells (e.g. ASCII "!!").
+	// Empty slots are 2 spaces.
 	const indicatorColWidth = 4
-	var indicatorCol string
-	indicatorWidth := 0
+
+	// padSlot returns rendered text padded with a trailing space so the slot
+	// always occupies 2 display cells.
+	padSlot := func(rendered, raw string) string {
+		if lipgloss.Width(raw) >= 2 {
+			return rendered
+		}
+		return rendered + " "
+	}
+
+	var slot1, slot2 string
+	slot1Width := 0
+	slot2Width := 0
 
 	if !cfg.Dimmed && cfg.IsBlocked {
-		indicatorCol += lipgloss.NewStyle().Foreground(ColorDanger).Bold(true).Render("●") + " "
-		indicatorWidth += 2
+		raw := glyphBlocked()
+		slot1 = padSlot(lipgloss.NewStyle().Foreground(ColorDanger).Bold(true).Render(raw), raw)
+		slot1Width = 2
 	} else if !cfg.Dimmed && cfg.IsBlocking {
-		indicatorCol += lipgloss.NewStyle().Foreground(ColorWarning).Bold(true).Render("◆") + " "
-		indicatorWidth += 2
+		raw := glyphBlocking()
+		slot1 = padSlot(lipgloss.NewStyle().Foreground(ColorWarning).Bold(true).Render(raw), raw)
+		slot1Width = 2
 	}
 
 	if !cfg.Dimmed {
-		ps := RenderPrioritySymbol(cfg.Priority, cfg.PriorityColor)
-		if ps != "" {
-			indicatorCol += ps + " "
-			indicatorWidth += 2
+		raw := GetPrioritySymbol(cfg.Priority)
+		if raw != "" {
+			slot2 = padSlot(RenderPrioritySymbol(cfg.Priority, cfg.PriorityColor), raw)
+			slot2Width = 2
 		}
 	}
+
+	indicatorCol := slot1 + slot2
+	indicatorWidth := slot1Width + slot2Width
 
 	// Right-align indicators: pad on the left so symbols sit adjacent to the title
 	if indicatorWidth < indicatorColWidth {
@@ -613,7 +628,7 @@ func RenderNibRow(id, status, typeName, title string, cfg NibRowConfig) string {
 	var titleStyled string
 	if cfg.ShowCursor {
 		if cfg.IsSelected {
-			cursor = lipgloss.NewStyle().Foreground(ColorPrimary).Bold(true).Render("▌")
+			cursor = lipgloss.NewStyle().Foreground(ColorPrimary).Bold(true).Render(glyphCursor())
 			titleStyled = lipgloss.NewStyle().Bold(true).Foreground(ColorPrimary).Render(displayTitle)
 		} else {
 			cursor = " "

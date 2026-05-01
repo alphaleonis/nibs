@@ -83,7 +83,7 @@ func (d linkDelegate) Render(w io.Writer, m list.Model, index int, listItem list
 	// Cursor indicator
 	cursor := "  "
 	if index == m.Index() {
-		cursor = ui.Primary.Render("▸ ")
+		cursor = ui.Primary.Render(ui.GlyphSectionCursor())
 	}
 
 	// Format the link type label

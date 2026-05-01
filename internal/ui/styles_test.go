@@ -4,6 +4,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/alphaleonis/nibs/internal/config"
 	"github.com/charmbracelet/lipgloss"
 	"github.com/charmbracelet/x/ansi"
 )
@@ -123,6 +124,76 @@ func TestRenderNibRow_IndicatorsRightAligned(t *testing.T) {
 		{"blocking only", NibRowConfig{IsBlocking: true}, "  ◆ "},
 		{"blocking + priority", NibRowConfig{IsBlocking: true, Priority: "low", PriorityColor: "blue"}, "◆ ↓ "},
 		{"blocked + priority", NibRowConfig{IsBlocked: true, Priority: "high", PriorityColor: "red"}, "● ! "},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			cfg := baseCfg
+			cfg.IsBlocked = tt.cfg.IsBlocked
+			cfg.IsBlocking = tt.cfg.IsBlocking
+			cfg.Priority = tt.cfg.Priority
+			cfg.PriorityColor = tt.cfg.PriorityColor
+
+			row := RenderNibRow("abc123", "todo", "task", "My Title", cfg)
+			got := indicatorColumn(row, "My Title")
+			if got != tt.wantCol {
+				t.Errorf("indicator column = %q, want %q\n  row: %q", got, tt.wantCol, ansi.Strip(row))
+			}
+		})
+	}
+}
+
+func TestRenderNibRow_IndicatorsRightAligned_ASCII(t *testing.T) {
+	// Same alignment contract as the UTF-8 variant, but with ASCII fallbacks
+	// forced via the test hook. Each indicator slot is 2 cells wide:
+	//   no indicators:        "    |Title"
+	//   priority low only:    "  v |Title"
+	//   blocked only:         "  * |Title"
+	//   blocking only:        "  # |Title"
+	//   blocking + priority:  "# v |Title"
+	//   blocked + crit:       "* !!|Title"   ("!!" fills slot 2)
+	//   blocked + high:       "* ! |Title"
+	withASCIIGlyphs(t, true)
+
+	baseCfg := NibRowConfig{
+		MaxTitleWidth: 60,
+		StatusColor:   "green",
+		TypeColor:     "blue",
+	}
+
+	indicatorColumn := func(row, title string) string {
+		stripped := ansi.Strip(row)
+		runes := []rune(stripped)
+		titleRunes := []rune(title)
+		for i := range runes {
+			if i+len(titleRunes) <= len(runes) {
+				match := true
+				for j, tr := range titleRunes {
+					if runes[i+j] != tr {
+						match = false
+						break
+					}
+				}
+				if match && i >= 4 {
+					return string(runes[i-4 : i])
+				}
+			}
+		}
+		return ""
+	}
+
+	tests := []struct {
+		name    string
+		cfg     NibRowConfig
+		wantCol string
+	}{
+		{"no indicators", NibRowConfig{}, "    "},
+		{"priority low only", NibRowConfig{Priority: "low", PriorityColor: "blue"}, "  v "},
+		{"blocked only", NibRowConfig{IsBlocked: true}, "  * "},
+		{"blocking only", NibRowConfig{IsBlocking: true}, "  # "},
+		{"blocking + priority low", NibRowConfig{IsBlocking: true, Priority: "low", PriorityColor: "blue"}, "# v "},
+		{"blocked + high", NibRowConfig{IsBlocked: true, Priority: "high", PriorityColor: "red"}, "* ! "},
+		{"blocked + critical", NibRowConfig{IsBlocked: true, Priority: "critical", PriorityColor: "red"}, "* !!"},
 	}
 
 	for _, tt := range tests {
@@ -279,6 +350,7 @@ func TestShortType(t *testing.T) {
 		{"bug", "B"},
 		{"feature", "F"},
 		{"task", "T"},
+		{"research", "R"},
 		{"unknown", "?"},
 		{"", "?"},
 	}
@@ -312,5 +384,38 @@ func TestShortStatus(t *testing.T) {
 				t.Errorf("ShortStatus(%q) = %q, want %q", tt.input, result, tt.expected)
 			}
 		})
+	}
+}
+
+// TestShortType_NoCollisions guards the implicit invariant that every entry in
+// config.DefaultTypes has a unique first letter. ShortType derives its
+// single-character abbreviation from def.Name[:1] — if a future type addition
+// collides on the first letter (e.g. adding "fix" alongside "feature"), the
+// list view would render two rows with the same code and no visual
+// distinction. This test fails loudly at PR time so the regression is
+// caught before merge.
+func TestShortType_NoCollisions(t *testing.T) {
+	seen := map[string]string{}
+	for _, def := range config.DefaultTypes {
+		s := strings.ToUpper(def.Name[:1])
+		if existing, ok := seen[s]; ok {
+			t.Fatalf("ShortType collision: %q and %q both abbreviate to %q",
+				existing, def.Name, s)
+		}
+		seen[s] = def.Name
+	}
+}
+
+// TestShortStatus_NoCollisions is the status counterpart of
+// TestShortType_NoCollisions — see that test for rationale.
+func TestShortStatus_NoCollisions(t *testing.T) {
+	seen := map[string]string{}
+	for _, def := range config.DefaultStatuses {
+		s := strings.ToUpper(def.Name[:1])
+		if existing, ok := seen[s]; ok {
+			t.Fatalf("ShortStatus collision: %q and %q both abbreviate to %q",
+				existing, def.Name, s)
+		}
+		seen[s] = def.Name
 	}
 }

@@ -149,14 +149,17 @@ func buildNodes(nibs []*nib.Nib, children map[string][]*nib.Nib, matchedSet map[
 	return nodes
 }
 
-// Tree rendering constants
-const (
-	treeBranch     = "├─ "
-	treeLastBranch = "└─ "
-	treePipe       = "│  " // vertical line for ongoing branches
-	treeSpace      = "   " // empty space for completed branches
-	treeIndent     = 3     // width of connector
-)
+// Tree rendering connector width (cells per indentation level). The actual
+// glyphs are returned by the glyph accessors in glyphs.go so they can switch
+// to ASCII fallbacks when the terminal cannot display UTF-8.
+const treeIndent = 3
+
+// Tree connectors. Each accessor returns the appropriate variant (UTF-8 or
+// ASCII) at call time based on the current detection state.
+func treeBranch() string     { return glyphTreeBranch() }
+func treeLastBranch() string { return glyphTreeLastBranch() }
+func treePipe() string       { return glyphTreePipe() }
+func treeSpace() string      { return glyphTreeSpace() }
 
 // treeMetrics returns the maximum depth of the tree and the largest visible
 // position value sourced from positions (0 when positions is nil or no node
@@ -251,7 +254,7 @@ func RenderTree(nodes []*TreeNode, cfg *config.Config, maxIDWidth int, hasTags b
 	dividerWidth := termWidth - 1 // -1 to avoid wrapping on exact terminal width
 	sb.WriteString(header)
 	sb.WriteString("\n")
-	sb.WriteString(Muted.Render(strings.Repeat("─", dividerWidth)))
+	sb.WriteString(Muted.Render(strings.Repeat(glyphHRule(), dividerWidth)))
 	sb.WriteString("\n")
 
 	// Build render config from responsive columns
@@ -319,15 +322,15 @@ func renderNode(sb *strings.Builder, node *TreeNode, depth int, isLast bool, anc
 	if depth > 0 {
 		for _, wasLast := range ancestry {
 			if wasLast {
-				prefix += treeSpace
+				prefix += treeSpace()
 			} else {
-				prefix += treePipe
+				prefix += treePipe()
 			}
 		}
 		if isLast {
-			prefix += treeLastBranch
+			prefix += treeLastBranch()
 		} else {
-			prefix += treeBranch
+			prefix += treeBranch()
 		}
 	}
 
@@ -388,16 +391,16 @@ func flattenNodes(nodes []*TreeNode, depth int, ancestry []bool, items *[]FlatIt
 			// Build prefix from ancestry - each level adds either │ or space
 			for _, wasLast := range ancestry {
 				if wasLast {
-					prefix += treeSpace // parent was last child, no continuation line
+					prefix += treeSpace() // parent was last child, no continuation line
 				} else {
-					prefix += treePipe // parent has more siblings, show continuation line
+					prefix += treePipe() // parent has more siblings, show continuation line
 				}
 			}
 			// Add connector for this node
 			if isLast {
-				prefix += treeLastBranch
+				prefix += treeLastBranch()
 			} else {
-				prefix += treeBranch
+				prefix += treeBranch()
 			}
 		}
 
@@ -433,12 +436,13 @@ func MaxTreeDepth(items []FlatItem) int {
 	return maxDepth
 }
 
-// Collapse/expand indicator constants
-const (
-	CollapseIndicatorCollapsed = "▸ " // collapsed node with children
-	CollapseIndicatorExpanded  = "▾ " // expanded node with children
-	CollapseIndicatorLeaf      = "  " // leaf node (no children) - keeps columns aligned
-)
+// Collapse/expand indicator accessors. The collapsed/expanded glyphs degrade
+// to ASCII fallbacks on terminals that cannot display UTF-8 (see glyphs.go).
+// The leaf indicator is purely whitespace and identical in both modes.
+const CollapseIndicatorLeaf = "  " // leaf node (no children) - keeps columns aligned
+
+func CollapseIndicatorCollapsed() string { return glyphCollapseCollapsed() }
+func CollapseIndicatorExpanded() string  { return glyphCollapseExpanded() }
 
 // FlattenTreeFiltered converts a tree into a flat slice, skipping children of collapsed nodes.
 // collapsedIDs is the set of node IDs whose children should be hidden.
@@ -460,23 +464,23 @@ func flattenNodesFiltered(nodes []*TreeNode, depth int, ancestry []bool, collaps
 		if depth > 0 {
 			for _, wasLast := range ancestry {
 				if wasLast {
-					prefix += treeSpace
+					prefix += treeSpace()
 				} else {
-					prefix += treePipe
+					prefix += treePipe()
 				}
 			}
 			if isLast {
-				prefix += treeLastBranch
+				prefix += treeLastBranch()
 			} else {
-				prefix += treeBranch
+				prefix += treeBranch()
 			}
 		}
 
 		// Append collapse indicator
 		if isCollapsed {
-			prefix += CollapseIndicatorCollapsed
+			prefix += CollapseIndicatorCollapsed()
 		} else if hasChildren {
-			prefix += CollapseIndicatorExpanded
+			prefix += CollapseIndicatorExpanded()
 		} else {
 			prefix += CollapseIndicatorLeaf
 		}

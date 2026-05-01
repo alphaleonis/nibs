@@ -327,12 +327,12 @@ func TestFlattenTreeFiltered(t *testing.T) {
 		items := FlattenTreeFiltered(tree, collapsed)
 
 		// m1 (root, has children, expanded) - prefix should end with expanded indicator
-		if !strings.HasSuffix(items[0].TreePrefix, CollapseIndicatorExpanded) {
+		if !strings.HasSuffix(items[0].TreePrefix, CollapseIndicatorExpanded()) {
 			t.Errorf("m1 prefix should end with expanded indicator, got %q", items[0].TreePrefix)
 		}
 
 		// e1 (nested, has children, collapsed) - prefix should end with collapsed indicator
-		if !strings.HasSuffix(items[1].TreePrefix, CollapseIndicatorCollapsed) {
+		if !strings.HasSuffix(items[1].TreePrefix, CollapseIndicatorCollapsed()) {
 			t.Errorf("e1 prefix should end with collapsed indicator, got %q", items[1].TreePrefix)
 		}
 
@@ -443,6 +443,37 @@ func stripANSI(s string) string {
 		sb.WriteRune(r)
 	}
 	return sb.String()
+}
+
+func TestRenderTree_ASCIIConnectors(t *testing.T) {
+	// With ASCII glyphs forced, the tree connectors should be the ASCII
+	// fallbacks rather than the Unicode box-drawing characters. We assert on
+	// the first child connector (├─ → +-) and the last child connector
+	// (└─ → \-).
+	withASCIIGlyphs(t, true)
+
+	cfg := config.Default()
+	root := &nib.Nib{ID: "r1", Title: "Root", Status: "todo", Type: "task", Order: "a0"}
+	c1 := &nib.Nib{ID: "c1", Title: "Child A", Status: "todo", Type: "task", Parent: "r1", Order: "a0"}
+	c2 := &nib.Nib{ID: "c2", Title: "Child B", Status: "todo", Type: "task", Parent: "r1", Order: "b0"}
+	all := []*nib.Nib{root, c1, c2}
+
+	tree := BuildTree(all, all, nib.SortByOrder)
+	out := stripANSI(RenderTree(tree, cfg, 4, false, 100, nil))
+
+	// No UTF-8 box-drawing characters should appear anywhere in the output.
+	for _, bad := range []string{"├", "└", "│", "─"} {
+		if strings.Contains(out, bad) {
+			t.Errorf("tree output should not contain %q under ASCII mode\n%s", bad, out)
+		}
+	}
+	// First child uses "+- ", last uses "\- " (single backslash).
+	if !strings.Contains(out, "+- c1") {
+		t.Errorf("expected ASCII branch '+- c1' in output:\n%s", out)
+	}
+	if !strings.Contains(out, "\\- c2") {
+		t.Errorf("expected ASCII last-branch '\\- c2' in output:\n%s", out)
+	}
 }
 
 func TestRenderTreePositionColumn(t *testing.T) {
