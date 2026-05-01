@@ -76,6 +76,31 @@ type Mutation {
   Optional parentId reparents the nib before reordering (atomic cross-parent move).
   """
   reorderNib(id: ID!, afterId: ID, beforeId: ID, first: Boolean, parentId: String, ifMatch: String): Nib!
+
+  """
+  Reorder the full set of children under a parent. childIds must list exactly
+  all children of parentId, in the desired new order. Returns affected nibs in
+  the requested new order. Use parentId="" for root-level (no-parent) siblings.
+  Errors if childIds is missing children, contains non-existent IDs, contains
+  nibs whose parent != parentId, or contains duplicates.
+
+  Note on parentId convention: parentId is required (non-null) and uses the
+  empty string ("") as the root-level sentinel. This differs from reorderNib's
+  nullable parentId convention. The asymmetry is intentional: reorderChildren
+  needs to distinguish "no parent" (root-level reorder) from "caller forgot
+  to specify" at call time, since the field is required. reorderSiblings
+  takes no parentId at all — the parent is inferred from the listed siblings.
+  """
+  reorderChildren(parentId: String!, childIds: [ID!]!): [Nib!]!
+
+  """
+  Move a contiguous block of siblings to a new position relative to an anchor
+  sibling. All siblingIds must share the same parent (inferred from the listed
+  nibs). Anchor must be a sibling and must NOT appear in siblingIds. Exactly
+  one of afterId, beforeId, first must be specified. Listed siblings become a
+  contiguous block at the requested position, preserving their listed order.
+  """
+  reorderSiblings(siblingIds: [ID!]!, afterId: ID, beforeId: ID, first: Boolean): [Nib!]!
 }
 
 """

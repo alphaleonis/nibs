@@ -64,7 +64,9 @@ type ComplexityRoot struct {
 		DeleteNib       func(childComplexity int, id string) int
 		RemoveBlockedBy func(childComplexity int, id string, targetID string, ifMatch *string) int
 		RemoveBlocking  func(childComplexity int, id string, targetID string) int
+		ReorderChildren func(childComplexity int, parentID string, childIds []string) int
 		ReorderNib      func(childComplexity int, id string, afterID *string, beforeID *string, first *bool, parentID *string, ifMatch *string) int
+		ReorderSiblings func(childComplexity int, siblingIds []string, afterID *string, beforeID *string, first *bool) int
 		SetParent       func(childComplexity int, id string, parentID *string, ifMatch *string) int
 		UpdateNib       func(childComplexity int, id string, input model.UpdateNibInput) int
 	}
@@ -127,6 +129,8 @@ type MutationResolver interface {
 	AddBlockedBy(ctx context.Context, id string, targetID string, ifMatch *string) (*nib.Nib, error)
 	RemoveBlockedBy(ctx context.Context, id string, targetID string, ifMatch *string) (*nib.Nib, error)
 	ReorderNib(ctx context.Context, id string, afterID *string, beforeID *string, first *bool, parentID *string, ifMatch *string) (*nib.Nib, error)
+	ReorderChildren(ctx context.Context, parentID string, childIds []string) ([]*nib.Nib, error)
+	ReorderSiblings(ctx context.Context, siblingIds []string, afterID *string, beforeID *string, first *bool) ([]*nib.Nib, error)
 }
 type NibResolver interface {
 	ParentID(ctx context.Context, obj *nib.Nib) (*string, error)
@@ -259,6 +263,17 @@ func (e *executableSchema) Complexity(ctx context.Context, typeName, field strin
 		}
 
 		return e.complexity.Mutation.RemoveBlocking(childComplexity, args["id"].(string), args["targetId"].(string)), true
+	case "Mutation.reorderChildren":
+		if e.complexity.Mutation.ReorderChildren == nil {
+			break
+		}
+
+		args, err := ec.field_Mutation_reorderChildren_args(ctx, rawArgs)
+		if err != nil {
+			return 0, false
+		}
+
+		return e.complexity.Mutation.ReorderChildren(childComplexity, args["parentId"].(string), args["childIds"].([]string)), true
 	case "Mutation.reorderNib":
 		if e.complexity.Mutation.ReorderNib == nil {
 			break
@@ -270,6 +285,17 @@ func (e *executableSchema) Complexity(ctx context.Context, typeName, field strin
 		}
 
 		return e.complexity.Mutation.ReorderNib(childComplexity, args["id"].(string), args["afterId"].(*string), args["beforeId"].(*string), args["first"].(*bool), args["parentId"].(*string), args["ifMatch"].(*string)), true
+	case "Mutation.reorderSiblings":
+		if e.complexity.Mutation.ReorderSiblings == nil {
+			break
+		}
+
+		args, err := ec.field_Mutation_reorderSiblings_args(ctx, rawArgs)
+		if err != nil {
+			return 0, false
+		}
+
+		return e.complexity.Mutation.ReorderSiblings(childComplexity, args["siblingIds"].([]string), args["afterId"].(*string), args["beforeId"].(*string), args["first"].(*bool)), true
 	case "Mutation.setParent":
 		if e.complexity.Mutation.SetParent == nil {
 			break
@@ -795,6 +821,22 @@ func (ec *executionContext) field_Mutation_removeBlocking_args(ctx context.Conte
 	return args, nil
 }
 
+func (ec *executionContext) field_Mutation_reorderChildren_args(ctx context.Context, rawArgs map[string]any) (map[string]any, error) {
+	var err error
+	args := map[string]any{}
+	arg0, err := graphql.ProcessArgField(ctx, rawArgs, "parentId", ec.unmarshalNString2string)
+	if err != nil {
+		return nil, err
+	}
+	args["parentId"] = arg0
+	arg1, err := graphql.ProcessArgField(ctx, rawArgs, "childIds", ec.unmarshalNID2ᚕstringᚄ)
+	if err != nil {
+		return nil, err
+	}
+	args["childIds"] = arg1
+	return args, nil
+}
+
 func (ec *executionContext) field_Mutation_reorderNib_args(ctx context.Context, rawArgs map[string]any) (map[string]any, error) {
 	var err error
 	args := map[string]any{}
@@ -828,6 +870,32 @@ func (ec *executionContext) field_Mutation_reorderNib_args(ctx context.Context, 
 		return nil, err
 	}
 	args["ifMatch"] = arg5
+	return args, nil
+}
+
+func (ec *executionContext) field_Mutation_reorderSiblings_args(ctx context.Context, rawArgs map[string]any) (map[string]any, error) {
+	var err error
+	args := map[string]any{}
+	arg0, err := graphql.ProcessArgField(ctx, rawArgs, "siblingIds", ec.unmarshalNID2ᚕstringᚄ)
+	if err != nil {
+		return nil, err
+	}
+	args["siblingIds"] = arg0
+	arg1, err := graphql.ProcessArgField(ctx, rawArgs, "afterId", ec.unmarshalOID2ᚖstring)
+	if err != nil {
+		return nil, err
+	}
+	args["afterId"] = arg1
+	arg2, err := graphql.ProcessArgField(ctx, rawArgs, "beforeId", ec.unmarshalOID2ᚖstring)
+	if err != nil {
+		return nil, err
+	}
+	args["beforeId"] = arg2
+	arg3, err := graphql.ProcessArgField(ctx, rawArgs, "first", ec.unmarshalOBoolean2ᚖbool)
+	if err != nil {
+		return nil, err
+	}
+	args["first"] = arg3
 	return args, nil
 }
 
@@ -1939,6 +2007,200 @@ func (ec *executionContext) fieldContext_Mutation_reorderNib(ctx context.Context
 	}()
 	ctx = graphql.WithFieldContext(ctx, fc)
 	if fc.Args, err = ec.field_Mutation_reorderNib_args(ctx, field.ArgumentMap(ec.Variables)); err != nil {
+		ec.Error(ctx, err)
+		return fc, err
+	}
+	return fc, nil
+}
+
+func (ec *executionContext) _Mutation_reorderChildren(ctx context.Context, field graphql.CollectedField) (ret graphql.Marshaler) {
+	return graphql.ResolveField(
+		ctx,
+		ec.OperationContext,
+		field,
+		ec.fieldContext_Mutation_reorderChildren,
+		func(ctx context.Context) (any, error) {
+			fc := graphql.GetFieldContext(ctx)
+			return ec.resolvers.Mutation().ReorderChildren(ctx, fc.Args["parentId"].(string), fc.Args["childIds"].([]string))
+		},
+		nil,
+		ec.marshalNNib2ᚕᚖgithubᚗcomᚋalphaleonisᚋnibsᚋinternalᚋnibᚐNibᚄ,
+		true,
+		true,
+	)
+}
+
+func (ec *executionContext) fieldContext_Mutation_reorderChildren(ctx context.Context, field graphql.CollectedField) (fc *graphql.FieldContext, err error) {
+	fc = &graphql.FieldContext{
+		Object:     "Mutation",
+		Field:      field,
+		IsMethod:   true,
+		IsResolver: true,
+		Child: func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+			switch field.Name {
+			case "id":
+				return ec.fieldContext_Nib_id(ctx, field)
+			case "slug":
+				return ec.fieldContext_Nib_slug(ctx, field)
+			case "path":
+				return ec.fieldContext_Nib_path(ctx, field)
+			case "version":
+				return ec.fieldContext_Nib_version(ctx, field)
+			case "title":
+				return ec.fieldContext_Nib_title(ctx, field)
+			case "status":
+				return ec.fieldContext_Nib_status(ctx, field)
+			case "type":
+				return ec.fieldContext_Nib_type(ctx, field)
+			case "priority":
+				return ec.fieldContext_Nib_priority(ctx, field)
+			case "estimate":
+				return ec.fieldContext_Nib_estimate(ctx, field)
+			case "tags":
+				return ec.fieldContext_Nib_tags(ctx, field)
+			case "createdAt":
+				return ec.fieldContext_Nib_createdAt(ctx, field)
+			case "updatedAt":
+				return ec.fieldContext_Nib_updatedAt(ctx, field)
+			case "body":
+				return ec.fieldContext_Nib_body(ctx, field)
+			case "etag":
+				return ec.fieldContext_Nib_etag(ctx, field)
+			case "documents":
+				return ec.fieldContext_Nib_documents(ctx, field)
+			case "order":
+				return ec.fieldContext_Nib_order(ctx, field)
+			case "parentId":
+				return ec.fieldContext_Nib_parentId(ctx, field)
+			case "blockingIds":
+				return ec.fieldContext_Nib_blockingIds(ctx, field)
+			case "blockedByIds":
+				return ec.fieldContext_Nib_blockedByIds(ctx, field)
+			case "blockedBy":
+				return ec.fieldContext_Nib_blockedBy(ctx, field)
+			case "blocking":
+				return ec.fieldContext_Nib_blocking(ctx, field)
+			case "parent":
+				return ec.fieldContext_Nib_parent(ctx, field)
+			case "children":
+				return ec.fieldContext_Nib_children(ctx, field)
+			case "mentionIds":
+				return ec.fieldContext_Nib_mentionIds(ctx, field)
+			case "mentionedByIds":
+				return ec.fieldContext_Nib_mentionedByIds(ctx, field)
+			case "mentions":
+				return ec.fieldContext_Nib_mentions(ctx, field)
+			case "mentionedBy":
+				return ec.fieldContext_Nib_mentionedBy(ctx, field)
+			}
+			return nil, fmt.Errorf("no field named %q was found under type Nib", field.Name)
+		},
+	}
+	defer func() {
+		if r := recover(); r != nil {
+			err = ec.Recover(ctx, r)
+			ec.Error(ctx, err)
+		}
+	}()
+	ctx = graphql.WithFieldContext(ctx, fc)
+	if fc.Args, err = ec.field_Mutation_reorderChildren_args(ctx, field.ArgumentMap(ec.Variables)); err != nil {
+		ec.Error(ctx, err)
+		return fc, err
+	}
+	return fc, nil
+}
+
+func (ec *executionContext) _Mutation_reorderSiblings(ctx context.Context, field graphql.CollectedField) (ret graphql.Marshaler) {
+	return graphql.ResolveField(
+		ctx,
+		ec.OperationContext,
+		field,
+		ec.fieldContext_Mutation_reorderSiblings,
+		func(ctx context.Context) (any, error) {
+			fc := graphql.GetFieldContext(ctx)
+			return ec.resolvers.Mutation().ReorderSiblings(ctx, fc.Args["siblingIds"].([]string), fc.Args["afterId"].(*string), fc.Args["beforeId"].(*string), fc.Args["first"].(*bool))
+		},
+		nil,
+		ec.marshalNNib2ᚕᚖgithubᚗcomᚋalphaleonisᚋnibsᚋinternalᚋnibᚐNibᚄ,
+		true,
+		true,
+	)
+}
+
+func (ec *executionContext) fieldContext_Mutation_reorderSiblings(ctx context.Context, field graphql.CollectedField) (fc *graphql.FieldContext, err error) {
+	fc = &graphql.FieldContext{
+		Object:     "Mutation",
+		Field:      field,
+		IsMethod:   true,
+		IsResolver: true,
+		Child: func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+			switch field.Name {
+			case "id":
+				return ec.fieldContext_Nib_id(ctx, field)
+			case "slug":
+				return ec.fieldContext_Nib_slug(ctx, field)
+			case "path":
+				return ec.fieldContext_Nib_path(ctx, field)
+			case "version":
+				return ec.fieldContext_Nib_version(ctx, field)
+			case "title":
+				return ec.fieldContext_Nib_title(ctx, field)
+			case "status":
+				return ec.fieldContext_Nib_status(ctx, field)
+			case "type":
+				return ec.fieldContext_Nib_type(ctx, field)
+			case "priority":
+				return ec.fieldContext_Nib_priority(ctx, field)
+			case "estimate":
+				return ec.fieldContext_Nib_estimate(ctx, field)
+			case "tags":
+				return ec.fieldContext_Nib_tags(ctx, field)
+			case "createdAt":
+				return ec.fieldContext_Nib_createdAt(ctx, field)
+			case "updatedAt":
+				return ec.fieldContext_Nib_updatedAt(ctx, field)
+			case "body":
+				return ec.fieldContext_Nib_body(ctx, field)
+			case "etag":
+				return ec.fieldContext_Nib_etag(ctx, field)
+			case "documents":
+				return ec.fieldContext_Nib_documents(ctx, field)
+			case "order":
+				return ec.fieldContext_Nib_order(ctx, field)
+			case "parentId":
+				return ec.fieldContext_Nib_parentId(ctx, field)
+			case "blockingIds":
+				return ec.fieldContext_Nib_blockingIds(ctx, field)
+			case "blockedByIds":
+				return ec.fieldContext_Nib_blockedByIds(ctx, field)
+			case "blockedBy":
+				return ec.fieldContext_Nib_blockedBy(ctx, field)
+			case "blocking":
+				return ec.fieldContext_Nib_blocking(ctx, field)
+			case "parent":
+				return ec.fieldContext_Nib_parent(ctx, field)
+			case "children":
+				return ec.fieldContext_Nib_children(ctx, field)
+			case "mentionIds":
+				return ec.fieldContext_Nib_mentionIds(ctx, field)
+			case "mentionedByIds":
+				return ec.fieldContext_Nib_mentionedByIds(ctx, field)
+			case "mentions":
+				return ec.fieldContext_Nib_mentions(ctx, field)
+			case "mentionedBy":
+				return ec.fieldContext_Nib_mentionedBy(ctx, field)
+			}
+			return nil, fmt.Errorf("no field named %q was found under type Nib", field.Name)
+		},
+	}
+	defer func() {
+		if r := recover(); r != nil {
+			err = ec.Recover(ctx, r)
+			ec.Error(ctx, err)
+		}
+	}()
+	ctx = graphql.WithFieldContext(ctx, fc)
+	if fc.Args, err = ec.field_Mutation_reorderSiblings_args(ctx, field.ArgumentMap(ec.Variables)); err != nil {
 		ec.Error(ctx, err)
 		return fc, err
 	}
@@ -5805,6 +6067,20 @@ func (ec *executionContext) _Mutation(ctx context.Context, sel ast.SelectionSet)
 			if out.Values[i] == graphql.Null {
 				out.Invalids++
 			}
+		case "reorderChildren":
+			out.Values[i] = ec.OperationContext.RootResolverMiddleware(innerCtx, func(ctx context.Context) (res graphql.Marshaler) {
+				return ec._Mutation_reorderChildren(ctx, field)
+			})
+			if out.Values[i] == graphql.Null {
+				out.Invalids++
+			}
+		case "reorderSiblings":
+			out.Values[i] = ec.OperationContext.RootResolverMiddleware(innerCtx, func(ctx context.Context) (res graphql.Marshaler) {
+				return ec._Mutation_reorderSiblings(ctx, field)
+			})
+			if out.Values[i] == graphql.Null {
+				out.Invalids++
+			}
 		default:
 			panic("unknown field " + strconv.Quote(field.Name))
 		}
@@ -6892,6 +7168,36 @@ func (ec *executionContext) marshalNID2string(ctx context.Context, sel ast.Selec
 		}
 	}
 	return res
+}
+
+func (ec *executionContext) unmarshalNID2ᚕstringᚄ(ctx context.Context, v any) ([]string, error) {
+	var vSlice []any
+	vSlice = graphql.CoerceList(v)
+	var err error
+	res := make([]string, len(vSlice))
+	for i := range vSlice {
+		ctx := graphql.WithPathContext(ctx, graphql.NewPathWithIndex(i))
+		res[i], err = ec.unmarshalNID2string(ctx, vSlice[i])
+		if err != nil {
+			return nil, err
+		}
+	}
+	return res, nil
+}
+
+func (ec *executionContext) marshalNID2ᚕstringᚄ(ctx context.Context, sel ast.SelectionSet, v []string) graphql.Marshaler {
+	ret := make(graphql.Array, len(v))
+	for i := range v {
+		ret[i] = ec.marshalNID2string(ctx, sel, v[i])
+	}
+
+	for _, e := range ret {
+		if e == graphql.Null {
+			return graphql.Null
+		}
+	}
+
+	return ret
 }
 
 func (ec *executionContext) unmarshalNInt2int(ctx context.Context, v any) (int, error) {

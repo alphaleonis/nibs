@@ -571,6 +571,16 @@ func (r *mutationResolver) ReorderNib(ctx context.Context, id string, afterID *s
 	return b, nil
 }
 
+// ReorderChildren is the resolver for the reorderChildren field.
+func (r *mutationResolver) ReorderChildren(ctx context.Context, parentID string, childIds []string) ([]*nib.Nib, error) {
+	return r.reorderChildrenImpl(parentID, childIds)
+}
+
+// ReorderSiblings is the resolver for the reorderSiblings field.
+func (r *mutationResolver) ReorderSiblings(ctx context.Context, siblingIds []string, afterID *string, beforeID *string, first *bool) ([]*nib.Nib, error) {
+	return r.reorderSiblingsImpl(siblingIds, afterID, beforeID, first)
+}
+
 // ParentID is the resolver for the parentId field.
 func (r *nibResolver) ParentID(ctx context.Context, obj *nib.Nib) (*string, error) {
 	if obj.Parent == "" {
