@@ -182,6 +182,39 @@ nibs links --json <parent-id> --rel children --order topo --active    # Exclude 
 
 Edges come from `#<id>` mentions in child bodies: if child B's body mentions `#a` (where A is a sibling of B), then A must come before B. Mentions of nibs outside the subtree are silently dropped (they don't affect internal order). Self-mentions are ignored. Cycles raise an error naming the participating nibs so you don't silently plan against an unsatisfiable order.
 
+## Reordering Nibs
+
+Use `nibs reorder` to change a nib's position among its siblings, or to move multiple siblings at once.
+
+**Single nib** — reposition one nib relative to a sibling or to the front:
+
+```bash
+nibs reorder --json <id> --after <sibling-id>
+nibs reorder --json <id> --before <sibling-id>
+nibs reorder --json <id> --first
+```
+
+Equivalent to `nibs update <id> --after/--before/--first`; either form works.
+
+**Mode A: declarative children list** — set the entire order under a parent. Every direct child of `<parent-id>` must be listed exactly once (strict completeness):
+
+```bash
+nibs reorder --json --children-of <parent-id> <child1> <child2> <child3>
+nibs reorder --json --children-of "" <root1> <root2> <root3>     # root-level siblings
+```
+
+Use this when you want to define the order definitively (e.g. after planning out a phase). Omitting or duplicating a child errors before any write.
+
+**Mode B: block move** — move a contiguous run of siblings as a unit. Parent is inferred from the listed nibs (they must share one); the anchor must be a sibling not in the moving block:
+
+```bash
+nibs reorder --json <id1> <id2> <id3> --after <anchor>
+nibs reorder --json <id1> <id2> <id3> --before <anchor>
+nibs reorder --json <id1> <id2> --first
+```
+
+Use this when you want to slide a few related nibs to a new position without touching the rest of the order.
+
 ## Closing Nibs
 
 Use `nibs close` to finish a phase or plan item. It marks the nib completed, appends a summary, and updates the parent milestone:
@@ -269,6 +302,8 @@ nibs update <id> --if-match "$ETAG" ...
 ```
 
 On conflict, returns an error with the current etag.
+
+For bulk reorder operations (`nibs reorder --children-of` and the multi-nib block move), use `--child-if-match <id>=<etag>` (repeatable) to validate multiple etags at once. Pre-validation is atomic: a stale or unknown etag aborts the whole operation before any writes. `--child-if-match` is mutually exclusive with `--if-match`.
 
 ## GraphQL Queries
 
