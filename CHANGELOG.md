@@ -7,6 +7,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## v0.4.1 - 2026-05-04
+
+### Changed
+- `nibs prime` now emits a slim ~1 KB prompt with mandatory workflow rules and a directive for the agent to load the full reference on demand. Pass `--full` to emit the complete CLI guide (commands, flags, body section conventions, GraphQL examples). The previous default — a ~17 KB single blob — was being truncated to a 2 KB inline preview by some agent harnesses, causing agents to silently miss command syntax (e.g., `nibs update --after` for reordering). The full reference (`prompt-full.tmpl`) is unchanged from the previous default.
+
 ## v0.4.0 - 2026-05-01
 
 ### Added

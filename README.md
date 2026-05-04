@@ -75,7 +75,7 @@ nibs web                        # open the web UI in your browser
 
 ## Agent Integration
 
-Nibs is designed to be used by coding agents like Claude Code, Cursor, Windsurf, and others. The `nibs prime` command outputs a prompt that teaches the agent how to use nibs — what commands are available, how to create and update issues, and the workflow to follow.
+Nibs is designed to be used by coding agents like Claude Code, Cursor, Windsurf, and others. The `nibs prime` command outputs a slim prompt with mandatory workflow rules and a directive for the agent to load the full reference (`nibs prime --full`) before using any nibs commands. The slim default is what you want wired to a session-start hook; the full reference is fetched on demand.
 
 ### Claude Code
 
@@ -123,7 +123,7 @@ Or, if your agent framework supports startup hooks, wire `nibs prime` to run at 
 | `nibs check` | Validate configuration and data integrity |
 | `nibs web` | Start the web UI server |
 | `nibs tui` | Open the terminal UI |
-| `nibs prime` | Output the agent integration prompt |
+| `nibs prime` | Output the agent integration prompt (slim default; pass `--full` for the complete reference) |
 | `nibs archive` | Move completed/scrapped nibs to the archive |
 
 Run `nibs <command> --help` for full usage details.
