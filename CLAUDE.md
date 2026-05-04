@@ -99,6 +99,10 @@ For optional config fields with non-zero defaults, use pointer types (`*int`, `*
 - We are not using pull requests currently — merge feature branches directly into `main` and push
 - Create feature branches for non-trivial work, merge when done
 
+### Sync before starting work
+
+Before starting any new work, run `git fetch` (and `git -C .nibs fetch`) and check whether the local branch is behind its remote. If behind: when the worktree is clean, `git pull --ff-only` (`git -C .nibs pull --rebase` for `.nibs/`); when the worktree is dirty, **stop and ask** — do not auto-stash, auto-rebase, or carry on against a stale base. Skipping this check has burned us: building on top of a stale `main` produced a CHANGELOG entry that collided with an already-released version, plus rework to rebase the change onto the real tip.
+
 ## The `.nibs/` Directory Is a Separate Git Repository
 
 `.nibs/` is gitignored in the main repo and is itself an independent git repository with its own remote (`https://github.com/alphaleonis/nibs-nibs.git`).
