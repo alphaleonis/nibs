@@ -1,12 +1,16 @@
 package cmd
 
 import (
+	"bytes"
+	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
 
 	"github.com/alphaleonis/nibs/internal/config"
+	"github.com/alphaleonis/nibs/internal/output"
 )
 
 func TestResolveNibsPath(t *testing.T) {
@@ -128,4 +132,67 @@ func TestResolveNibsPath(t *testing.T) {
 			t.Errorf("expected 'does not exist' error, got %q", err.Error())
 		}
 	})
+}
+
+// TestReportExitError pins the CLI error boundary's contract:
+//   - nil err → exit 0, no stderr
+//   - plain err → exit 1, stderr is "Error: <msg>\n"
+//   - err wrapping output.ErrAlreadyReported → exit 1, no stderr
+//     (the JSON envelope on stdout is the user-visible report; stderr would
+//     only add a redundant "Error:" line that corrupts `2>&1 | jq` callers)
+//
+// The `err` field is a thunk so the test can construct the error inside
+// captureStdout — output.Error writes a JSON envelope on construction,
+// and we don't want that envelope leaking into the test's stdout.
+func TestReportExitError(t *testing.T) {
+	tests := []struct {
+		name       string
+		err        func() error
+		wantCode   int
+		wantStderr string
+	}{
+		{
+			name:       "nil error returns 0 with empty stderr",
+			err:        func() error { return nil },
+			wantCode:   0,
+			wantStderr: "",
+		},
+		{
+			name:       "plain error returns 1 with Error: prefix",
+			err:        func() error { return errors.New("boom") },
+			wantCode:   1,
+			wantStderr: "Error: boom\n",
+		},
+		{
+			name:       "already-reported error returns 1 with empty stderr",
+			err:        func() error { return output.Error(output.ErrValidation, "bad") },
+			wantCode:   1,
+			wantStderr: "",
+		},
+		{
+			name: "wrapped already-reported error returns 1 with empty stderr",
+			err: func() error {
+				return fmt.Errorf("context: %w", output.Error(output.ErrValidation, "bad"))
+			},
+			wantCode:   1,
+			wantStderr: "",
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			var stderr bytes.Buffer
+			// captureStdout absorbs the JSON envelope output.Error writes
+			// on construction. The boundary itself only writes to the
+			// stderr Writer passed in.
+			_ = captureStdout(t, func() {
+				code := reportExitError(&stderr, tt.err())
+				if code != tt.wantCode {
+					t.Errorf("exit code = %d, want %d", code, tt.wantCode)
+				}
+			})
+			if got := stderr.String(); got != tt.wantStderr {
+				t.Errorf("stderr = %q, want %q", got, tt.wantStderr)
+			}
+		})
+	}
 }

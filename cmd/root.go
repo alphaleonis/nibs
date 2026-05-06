@@ -1,13 +1,16 @@
 package cmd
 
 import (
+	"errors"
 	"fmt"
+	"io"
 	"os"
 
+	"github.com/alphaleonis/nibs/internal/config"
 	"github.com/alphaleonis/nibs/internal/graph"
 	"github.com/alphaleonis/nibs/internal/nib"
 	"github.com/alphaleonis/nibs/internal/nibcore"
-	"github.com/alphaleonis/nibs/internal/config"
+	"github.com/alphaleonis/nibs/internal/output"
 	"github.com/spf13/cobra"
 )
 
@@ -71,6 +74,15 @@ a full view of your project.`,
 }
 
 func init() {
+	// Cobra defaults print the command's usage block AND a duplicate
+	// "Error: <msg>" line whenever a RunE returns an error. That mixes
+	// human-readable text into --json's JSON-only stdout/stderr contract,
+	// and adds noise even in text mode where the usage belongs to --help.
+	// Silence both at the root and own all error reporting in the boundary
+	// (see reportExitError). The flag propagates to every subcommand.
+	rootCmd.SilenceUsage = true
+	rootCmd.SilenceErrors = true
+
 	rootCmd.PersistentFlags().StringVar(&nibsPath, "nibs-path", "", "Path to data directory (overrides config and NIBS_PATH env var)")
 	rootCmd.PersistentFlags().StringVar(&configPath, "config", "", "Path to config file (default: searches upward for .nibs.yml)")
 	installFlagSuggestions(rootCmd)
@@ -102,9 +114,31 @@ func resolveNibsPath(flagPath string, c *config.Config) (string, error) {
 	return root, nil
 }
 
+// reportExitError is the testable error boundary for the CLI.
+//
+//   - nil err: returns 0, writes nothing.
+//   - err satisfying errors.Is(err, output.ErrAlreadyReported): the
+//     underlying RunE already wrote a JSON envelope to stdout. Returning
+//     a duplicate "Error: ..." line on stderr would corrupt callers that
+//     pipe `2>&1 | jq`. Suppress the print; just signal exit code 1.
+//   - any other err: print "Error: <err>\n" to stderr (text mode) and
+//     return 1. This replaces Cobra's auto-print, which was silenced via
+//     rootCmd.SilenceErrors so the boundary owns it in one place.
+func reportExitError(stderr io.Writer, err error) int {
+	if err == nil {
+		return 0
+	}
+	if !errors.Is(err, output.ErrAlreadyReported) {
+		// Best-effort write to stderr; if the writer is broken we still
+		// want to exit with code 1 so the shell sees the failure.
+		_, _ = fmt.Fprintf(stderr, "Error: %s\n", err.Error())
+	}
+	return 1
+}
+
 func Execute() {
-	if err := rootCmd.Execute(); err != nil {
-		os.Exit(1)
+	if code := reportExitError(os.Stderr, rootCmd.Execute()); code != 0 {
+		os.Exit(code)
 	}
 }
 

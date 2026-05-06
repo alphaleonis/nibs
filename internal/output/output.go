@@ -2,11 +2,26 @@ package output
 
 import (
 	"encoding/json"
-	"fmt"
+	"errors"
 	"os"
 
 	"github.com/alphaleonis/nibs/internal/nib"
 )
+
+// ErrAlreadyReported is the sentinel the CLI boundary uses to detect that
+// an error has already been reported as a JSON envelope on stdout. When
+// Execute() sees errors.Is(err, ErrAlreadyReported) it suppresses the
+// duplicate "Error: <msg>" stderr print so callers piping `2>&1 | jq`
+// receive a single parseable JSON document.
+var ErrAlreadyReported = errors.New("already reported as JSON envelope")
+
+// reportedError carries the original user-visible message AND satisfies
+// errors.Is(err, ErrAlreadyReported). The sentinel name itself never
+// surfaces in .Error() output — only the original message does.
+type reportedError struct{ msg string }
+
+func (e *reportedError) Error() string        { return e.msg }
+func (e *reportedError) Is(target error) bool { return target == ErrAlreadyReported }
 
 // Error codes for JSON responses
 const (
@@ -91,13 +106,24 @@ func SuccessInit(path string) error {
 }
 
 // Error outputs an error response and returns an error for command handling.
+//
+// The CLI boundary (reportExitError in cmd/root.go) recognises the returned
+// error via errors.Is(err, ErrAlreadyReported) and suppresses its own
+// "Error: <msg>\n" stderr print, so callers piping `2>&1 | jq` see exactly
+// one parseable JSON document. Wrap freely with fmt.Errorf("…: %w", err) —
+// the sentinel survives errors.Is's unwrap chain.
+//
+// The returned error:
+//   - has Error() == message (no sentinel leakage in user-visible text)
+//   - satisfies errors.Is(err, ErrAlreadyReported) so the Cobra boundary
+//     can suppress the duplicate stderr "Error: ..." line.
 func Error(code string, message string) error {
 	_ = JSON(Response{
 		Success: false,
 		Error:   message,
 		Code:    code,
 	})
-	return fmt.Errorf("%s", message)
+	return &reportedError{msg: message}
 }
 
 // JSONRaw outputs any value as pretty-printed JSON to stdout.

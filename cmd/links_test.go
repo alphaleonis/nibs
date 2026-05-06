@@ -10,6 +10,7 @@ import (
 	"testing"
 
 	"github.com/alphaleonis/nibs/internal/nib"
+	"github.com/alphaleonis/nibs/internal/output"
 	"github.com/spf13/pflag"
 )
 
@@ -1114,5 +1115,108 @@ func TestLinksCommand_Siblings_NoParent_JSON(t *testing.T) {
 	}
 	if ids["child"] {
 		t.Errorf("siblings should only include root-level nibs; got child too: %v", ids)
+	}
+}
+
+// TestLinksCommand_JSONMode_FailingCommand_NoUsageNoAutoError pins the
+// end-to-end contract for nib nibs-382a:
+//
+//   - In --json mode, a failing RunE returns an error that satisfies
+//     errors.Is(err, output.ErrAlreadyReported) so Execute() suppresses
+//     the duplicate stderr "Error: ..." line.
+//   - Stdout contains exactly one parseable JSON document with success=false
+//     (the JSON envelope written by output.Error).
+//   - Neither cmd.OutOrStdout() nor cmd.OutOrStderr() contains a "Usage:"
+//     block (Cobra's SilenceUsage=true) or an auto "Error:" line
+//     (Cobra's SilenceErrors=true). The boundary owns error printing.
+func TestLinksCommand_JSONMode_FailingCommand_NoUsageNoAutoError(t *testing.T) {
+	nibsDir := setupLinksCobraTest(t, linksFixture)
+
+	var cobraStdout, cobraStderr bytes.Buffer
+	rootCmd.SetOut(&cobraStdout)
+	rootCmd.SetErr(&cobraStderr)
+	t.Cleanup(func() { rootCmd.SetOut(nil); rootCmd.SetErr(nil) })
+
+	rootCmd.SetArgs([]string{"--nibs-path", nibsDir, "links", "bogus-id", "--rel", "children", "--json"})
+
+	var execErr error
+	stdout := captureStdout(t, func() {
+		execErr = rootCmd.Execute()
+	})
+
+	if execErr == nil {
+		t.Fatal("expected execErr from failing JSON command, got nil")
+	}
+	if !errors.Is(execErr, output.ErrAlreadyReported) {
+		t.Errorf("errors.Is(execErr, output.ErrAlreadyReported) = false, want true; err = %v", execErr)
+	}
+
+	// Captured os.Stdout must contain exactly one parseable JSON document
+	// with success=false.
+	var env struct {
+		Success bool   `json:"success"`
+		Code    string `json:"code"`
+		Error   string `json:"error"`
+	}
+	if err := json.Unmarshal([]byte(stdout), &env); err != nil {
+		t.Fatalf("stdout is not a single parseable JSON document: %v\nraw: %s", err, stdout)
+	}
+	if env.Success {
+		t.Errorf("env.Success = true, want false; raw: %s", stdout)
+	}
+	if env.Code != "NOT_FOUND" {
+		t.Errorf("env.Code = %q, want NOT_FOUND; raw: %s", env.Code, stdout)
+	}
+
+	// Cobra's writers must contain neither a Usage: block nor an auto Error: line.
+	if got := cobraStdout.String(); strings.Contains(got, "Usage:") || strings.Contains(got, "Error:") {
+		t.Errorf("rootCmd OutOrStdout contains Usage:/Error:; got:\n%s", got)
+	}
+	if got := cobraStderr.String(); strings.Contains(got, "Usage:") || strings.Contains(got, "Error:") {
+		t.Errorf("rootCmd OutOrStderr contains Usage:/Error:; got:\n%s", got)
+	}
+}
+
+// TestLinksCommand_TextMode_FailingCommand_NoUsageNoAutoError pins the
+// text-mode side of the same contract: usage is for --help, not RunE
+// errors. The error returned by Execute() does NOT satisfy
+// errors.Is(err, output.ErrAlreadyReported) — the CLI boundary will print
+// "Error: ..." to its own os.Stderr (tested separately in
+// TestReportExitError); here we only assert that Cobra's auto-print is
+// silenced and no Usage: block leaks.
+func TestLinksCommand_TextMode_FailingCommand_NoUsageNoAutoError(t *testing.T) {
+	nibsDir := setupLinksCobraTest(t, linksFixture)
+
+	var cobraStdout, cobraStderr bytes.Buffer
+	rootCmd.SetOut(&cobraStdout)
+	rootCmd.SetErr(&cobraStderr)
+	t.Cleanup(func() { rootCmd.SetOut(nil); rootCmd.SetErr(nil) })
+
+	rootCmd.SetArgs([]string{"--nibs-path", nibsDir, "links", "bogus-id", "--rel", "children"})
+
+	var execErr error
+	stdout := captureStdout(t, func() {
+		execErr = rootCmd.Execute()
+	})
+
+	if execErr == nil {
+		t.Fatal("expected execErr from failing text-mode command, got nil")
+	}
+	if errors.Is(execErr, output.ErrAlreadyReported) {
+		t.Errorf("text-mode err should NOT satisfy ErrAlreadyReported; got: %v", execErr)
+	}
+
+	// No JSON envelope was written; stdout should be empty.
+	if strings.Contains(stdout, "Usage:") {
+		t.Errorf("captured stdout contains Usage: block; got:\n%s", stdout)
+	}
+
+	// Cobra's writers must contain neither a Usage: block nor an auto
+	// "Error:" line.
+	if got := cobraStdout.String(); strings.Contains(got, "Usage:") || strings.Contains(got, "Error:") {
+		t.Errorf("rootCmd OutOrStdout contains Usage:/Error: in text mode; got:\n%s", got)
+	}
+	if got := cobraStderr.String(); strings.Contains(got, "Usage:") || strings.Contains(got, "Error:") {
+		t.Errorf("rootCmd OutOrStderr contains Usage:/Error: in text mode; got:\n%s", got)
 	}
 }
