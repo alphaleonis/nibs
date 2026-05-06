@@ -21,6 +21,12 @@ func setupLinksCobraTest(t *testing.T, files map[string]string) string {
 	t.Cleanup(resetRootPersistentFlags)
 	t.Cleanup(resetLinksFlags)
 	t.Cleanup(func() { rootCmd.SetArgs(nil) })
+	// Belt-and-braces: reset rootCmd's writers in case a sibling test set
+	// them via rootCmd.SetOut/SetErr and forgot to defer the reset.
+	// Passing nil restores Cobra's default (os.Stdout / os.Stderr), so
+	// captureStdout-based assertions in subsequent tests aren't silently
+	// drained into a stale buffer.
+	t.Cleanup(func() { rootCmd.SetOut(nil); rootCmd.SetErr(nil) })
 	resetLinksFlags()
 
 	tmpDir := t.TempDir()
@@ -44,6 +50,7 @@ func resetLinksFlags() {
 	linksOrder = ""
 	linksFlat = false
 	linksJSON = false
+	linksColumns = ""
 	linksStatus = nil
 	linksNoStatus = nil
 	linksType = nil
@@ -559,6 +566,65 @@ func TestLinksCommand_HumanOutput_PerRelSections(t *testing.T) {
 	iS := strings.Index(out, "siblings:")
 	if iP > iS {
 		t.Errorf("parent section should come before siblings; got:\n%s", out)
+	}
+}
+
+// TestLinksCommand_Columns_Children covers `nibs links <id> --rel children
+// --columns id,title`. Output must be flat (one row per linked nib, no
+// per-rel section headers) so callers can split-on-tab cleanly across the
+// whole stream.
+func TestLinksCommand_Columns_Children(t *testing.T) {
+	files := map[string]string{
+		"p--p.md":   "---\ntitle: Parent\nstatus: in-progress\ntype: epic\n---\n",
+		"c1--c1.md": "---\ntitle: Child One\nstatus: todo\ntype: task\nparent: p\norder: a0\n---\n",
+		"c2--c2.md": "---\ntitle: Child Two\nstatus: todo\ntype: task\nparent: p\norder: a1\n---\n",
+	}
+	nibsDir := setupLinksCobraTest(t, files)
+	rootCmd.SetArgs([]string{"--nibs-path", nibsDir, "links", "p", "--rel", "children", "--columns", "id,title"})
+	var stdout bytes.Buffer
+	rootCmd.SetOut(&stdout)
+	rootCmd.SetErr(&stdout)
+	defer rootCmd.SetOut(nil)
+	defer rootCmd.SetErr(nil)
+	defer resetLinksFlags()
+	defer func() { rootCmd.SetArgs(nil) }()
+
+	if err := rootCmd.Execute(); err != nil {
+		t.Fatalf("links --columns failed: %v\nout: %s", err, stdout.String())
+	}
+	out := stdout.String()
+
+	// Flat semantics: NO "children:" section header, NO indentation.
+	if strings.Contains(out, "children:") {
+		t.Errorf("--columns must not emit per-rel section header; got:\n%s", out)
+	}
+	want := "c1\tChild One\nc2\tChild Two\n"
+	if out != want {
+		t.Errorf("links --columns = %q\n              want %q", out, want)
+	}
+}
+
+// TestLinksCommand_Columns_MutuallyExclusiveWithJSON rejects --columns
+// combined with --json (links has no --quiet so only --json is checked).
+func TestLinksCommand_Columns_MutuallyExclusiveWithJSON(t *testing.T) {
+	files := map[string]string{
+		"p--p.md":   "---\ntitle: Parent\nstatus: in-progress\n---\n",
+		"c1--c1.md": "---\ntitle: Child\nstatus: todo\nparent: p\n---\n",
+	}
+	nibsDir := setupLinksCobraTest(t, files)
+	rootCmd.SetArgs([]string{"--nibs-path", nibsDir, "links", "p", "--rel", "children", "--columns", "id,title", "--json"})
+
+	var execErr error
+	_ = captureStdout(t, func() {
+		execErr = rootCmd.Execute()
+	})
+	t.Cleanup(resetLinksFlags)
+
+	if execErr == nil {
+		t.Fatal("links --columns --json should have failed")
+	}
+	if !strings.Contains(execErr.Error(), "--columns") || !strings.Contains(execErr.Error(), "--json") {
+		t.Errorf("error %q does not mention both --columns and --json", execErr.Error())
 	}
 }
 

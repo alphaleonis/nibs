@@ -52,6 +52,7 @@ nibs list --json                      # All nibs
 nibs list --json --ready              # Nibs ready to start (not blocked, excludes in-progress/completed/scrapped/draft)
 nibs list --json -t bug -s todo       # Filter by type and status
 nibs list --json -S "authentication"  # Full-text search
+nibs list --columns id,status,title   # Tab-separated tabular output (flat); selectable columns from: id, slug, title, status, type, priority, estimate, order, parent, tags, created_at, updated_at. Mutually exclusive with --json and --quiet.
 nibs list --help                      # Full options
 
 # View nibs (supports multiple IDs)
@@ -100,6 +101,7 @@ nibs links --json <id> --rel neighbours-active                  # all 7 direct r
 nibs links --json <id> --rel descendants --depth all            # full descendant tree (transitive)
 nibs links --json <id> --rel blockers-transitive --depth all    # full blocker closure
 nibs links --json <id> --rel children,siblings --flat           # deduped flat list across rels
+nibs links <id> --rel children --columns id,status,title        # tab-separated tabular output; implies flat (one deduped row list across rels). Mutually exclusive with --json.
 ```
 
 Use `nibs <command> --help` for full options. Use `--json` for machine-readable output.

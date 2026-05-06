@@ -45,6 +45,7 @@ var (
 	linksOrder      string // "" | "topo"
 	linksFlat       bool
 	linksJSON       bool
+	linksColumns    string
 	linksStatus     []string
 	linksNoStatus   []string
 	linksType       []string
@@ -674,6 +675,24 @@ blocking, blocked-by) and are silently dropped for the singular constituent
 filter-on-singular validation error does not fire here.`,
 	Args: cobra.ExactArgs(1),
 	RunE: func(cmd *cobra.Command, args []string) error {
+		// --columns is mutually exclusive with --json. Validate up-front
+		// so a structured error envelope is emitted before any nib lookups.
+		columnsRequested := cmd.Flags().Changed("columns")
+		if columnsRequested && linksJSON {
+			return reportErr(linksJSON, output.ErrValidation,
+				fmt.Errorf("--columns and --json are mutually exclusive"))
+		}
+		// Parse columns once, before any traversal, so an unknown column
+		// or empty spec fails fast (no wasted graph work).
+		var cols []output.Column
+		if columnsRequested {
+			parsed, perr := output.ParseColumns(linksColumns)
+			if perr != nil {
+				return reportErr(linksJSON, output.ErrValidation, perr)
+			}
+			cols = parsed
+		}
+
 		rels, err := parseRels(linksRel)
 		if err != nil {
 			return reportErr(linksJSON, output.ErrValidation, err)
@@ -809,6 +828,16 @@ filter-on-singular validation error does not fire here.`,
 			return output.JSONRaw(result)
 		}
 
+		// --columns implies flat semantics: one deduped row list spanning
+		// all requested rels, no per-rel section headers. This matches the
+		// agent-friendly contract: callers can split-on-tab cleanly across
+		// the whole output. Reuses linksToFlat for dedup ordering.
+		if columnsRequested {
+			flat := linksToFlat(result)
+			_, _ = fmt.Fprint(cmd.OutOrStdout(), output.FormatColumns(flat.Nibs, cols))
+			return nil
+		}
+
 		return renderLinksHuman(cmd, result)
 	},
 }
@@ -879,6 +908,7 @@ func init() {
 	linksCmd.Flags().StringVar(&linksOrder, "order", "", "Order the results (supports: topo)")
 	linksCmd.Flags().BoolVar(&linksFlat, "flat", false, "Collapse multi-rel output to a single deduped list")
 	linksCmd.Flags().BoolVar(&linksJSON, "json", false, "Output as JSON")
+	linksCmd.Flags().StringVar(&linksColumns, "columns", "", "Tab-separated tabular output (implies flat). Comma-separated column names. Available: "+output.AvailableColumnsString())
 	linksCmd.Flags().StringArrayVarP(&linksStatus, "status", "s", nil, "Filter by status (repeatable)")
 	linksCmd.Flags().StringArrayVar(&linksNoStatus, "no-status", nil, "Exclude by status (repeatable)")
 	linksCmd.Flags().StringArrayVarP(&linksType, "type", "t", nil, "Filter by type (repeatable)")

@@ -5,6 +5,8 @@ Use nibs (not TodoWrite or todo lists) for all work tracking in this project.
 
 **Before using any `nibs` command, run `nibs prime --full` to load the full reference.** That command emits the complete CLI guide (commands, flags, body section conventions, GraphQL schema). Do not guess syntax — read the full reference first.
 
+Tip: `nibs list --columns id,status,title` (and `nibs links --columns ...`) emits tab-separated rows for easy parsing — see `--full` for the full column set.
+
 ## Workflow
 
 - BEFORE a task: find or create a nib (`nibs list --ready`, `nibs create "Title" -t <type>`), set status `in-progress`.

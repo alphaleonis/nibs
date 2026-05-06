@@ -101,6 +101,7 @@ func resetListFlags() {
 	listQuiet = false
 	listSort = ""
 	listFull = false
+	listColumns = ""
 	listCmd.Flags().Visit(func(f *pflag.Flag) {
 		f.Changed = false
 	})
@@ -145,6 +146,7 @@ func TestResetListFlagsClearsAllState(t *testing.T) {
 		"quiet":        "true",
 		"sort":         "created",
 		"full":         "true",
+		"columns":      "id,title",
 	}
 	for name, val := range dirty {
 		if err := listCmd.Flags().Set(name, val); err != nil {
@@ -178,6 +180,12 @@ func setupListCobraTest(t *testing.T, files map[string]string) string {
 	t.Cleanup(resetRootPersistentFlags)
 	t.Cleanup(resetListFlags)
 	t.Cleanup(func() { rootCmd.SetArgs(nil) })
+	// Belt-and-braces: reset rootCmd's writers in case a sibling test set
+	// them via rootCmd.SetOut/SetErr and forgot to defer the reset.
+	// Passing nil restores Cobra's default (os.Stdout / os.Stderr), so
+	// captureStdout-based assertions in subsequent tests aren't silently
+	// drained into a stale buffer.
+	t.Cleanup(func() { rootCmd.SetOut(nil); rootCmd.SetErr(nil) })
 	resetListFlags()
 
 	tmpDir := t.TempDir()
@@ -365,6 +373,164 @@ func TestListCommand_MentionsFlag_UnknownID(t *testing.T) {
 	trimmed := strings.TrimSpace(out)
 	if trimmed != "[]" {
 		t.Errorf("got %q, want `[]` exclusively (list --json must not emit null for empty results)", trimmed)
+	}
+}
+
+// TestListCommand_Columns_HappyPath drives the full Cobra pipeline with
+// --columns and checks the tab-separated rows match the visible nibs in
+// natural-order (the default sort).
+func TestListCommand_Columns_HappyPath(t *testing.T) {
+	files := map[string]string{
+		"a1--alpha.md": "---\ntitle: Alpha\nstatus: todo\n---\n",
+		"b2--beta.md":  "---\ntitle: Beta\nstatus: in-progress\n---\n",
+	}
+	nibsDir := setupListCobraTest(t, files)
+
+	rootCmd.SetArgs([]string{"--nibs-path", nibsDir, "list", "--columns", "id,title"})
+
+	var execErr error
+	out := captureStdout(t, func() {
+		execErr = rootCmd.Execute()
+	})
+	if execErr != nil {
+		t.Fatalf("list --columns failed: %v\nout: %s", execErr, out)
+	}
+
+	// Output is tab-separated rows, one per nib. Order follows the
+	// default sort (order-key); both nibs lack an explicit order, so we
+	// just verify both rows are present and shape is right.
+	lines := strings.Split(strings.TrimRight(out, "\n"), "\n")
+	if len(lines) != 2 {
+		t.Fatalf("got %d lines, want 2\nraw: %q", len(lines), out)
+	}
+	for _, line := range lines {
+		fields := strings.Split(line, "\t")
+		if len(fields) != 2 {
+			t.Errorf("row %q has %d tab-fields, want 2", line, len(fields))
+		}
+	}
+	// And the IDs/titles must both appear.
+	for _, expect := range []string{"a1\tAlpha", "b2\tBeta"} {
+		if !strings.Contains(out, expect) {
+			t.Errorf("output missing %q\nraw: %q", expect, out)
+		}
+	}
+}
+
+// TestListCommand_Columns_UnknownColumn rejects an unknown column with a
+// validation error message that lists the available set. In non-JSON mode
+// the error flows back to Cobra (rendered to stderr) and stdout stays clean
+// — no JSON envelope leaks.
+func TestListCommand_Columns_UnknownColumn(t *testing.T) {
+	files := map[string]string{
+		"a1--alpha.md": "---\ntitle: Alpha\nstatus: todo\n---\n",
+	}
+	nibsDir := setupListCobraTest(t, files)
+
+	rootCmd.SetArgs([]string{"--nibs-path", nibsDir, "list", "--columns", "bogus"})
+
+	var execErr error
+	out := captureStdout(t, func() {
+		execErr = rootCmd.Execute()
+	})
+	if execErr == nil {
+		t.Fatalf("list --columns bogus should have failed; out: %q", out)
+	}
+	if !strings.Contains(execErr.Error(), "bogus") {
+		t.Errorf("error %q does not name the unknown column", execErr.Error())
+	}
+	// The available column set must appear in the error message so callers
+	// can recover.
+	for _, c := range []string{"id", "title", "status"} {
+		if !strings.Contains(execErr.Error(), c) {
+			t.Errorf("error %q missing available column %q", execErr.Error(), c)
+		}
+	}
+	// Non-JSON mode must NOT leak a JSON envelope onto stdout.
+	if strings.Contains(out, "\"success\"") || strings.Contains(out, "\"code\"") {
+		t.Errorf("non-JSON mode leaked JSON envelope to stdout: %q", out)
+	}
+}
+
+// TestListCommand_Columns_UnknownColumn_JSON exercises the JSON-mode error
+// path: a structured error envelope is emitted on stdout AND an error is
+// returned. Mirrors cmd/links_test.go style for the dual-path convention.
+//
+// Note: --columns and --json are mutually exclusive, so this test passes
+// --json with a valid (but pointless) --columns to trigger the
+// mutual-exclusivity validation in JSON mode and assert the envelope.
+func TestListCommand_Columns_MutuallyExclusiveWithJSON_EnvelopeShape(t *testing.T) {
+	files := map[string]string{
+		"a1--alpha.md": "---\ntitle: Alpha\nstatus: todo\n---\n",
+	}
+	nibsDir := setupListCobraTest(t, files)
+
+	rootCmd.SetArgs([]string{"--nibs-path", nibsDir, "list", "--columns", "id,title", "--json"})
+
+	var execErr error
+	out := captureStdout(t, func() {
+		execErr = rootCmd.Execute()
+	})
+	if execErr == nil {
+		t.Fatalf("list --columns --json should have failed; out: %q", out)
+	}
+	// JSON mode emits a structured envelope on stdout.
+	var env struct {
+		Success bool   `json:"success"`
+		Error   string `json:"error"`
+		Code    string `json:"code"`
+	}
+	if err := json.Unmarshal([]byte(out), &env); err != nil {
+		t.Fatalf("stdout is not a JSON envelope: %v\nraw: %s", err, out)
+	}
+	if env.Success {
+		t.Errorf("envelope success=true, want false")
+	}
+	if env.Code != "VALIDATION_ERROR" {
+		t.Errorf("envelope code=%q, want VALIDATION_ERROR", env.Code)
+	}
+	if !strings.Contains(env.Error, "--columns") || !strings.Contains(env.Error, "--json") {
+		t.Errorf("envelope error %q does not mention both --columns and --json", env.Error)
+	}
+}
+
+// TestListCommand_Columns_MutuallyExclusive rejects --columns combined
+// with --json or --quiet up-front (before any nib lookups). The message
+// must clearly state which two flags conflicted so the operator can fix
+// the invocation.
+func TestListCommand_Columns_MutuallyExclusive(t *testing.T) {
+	files := map[string]string{
+		"a1--alpha.md": "---\ntitle: Alpha\nstatus: todo\n---\n",
+	}
+	tests := []struct {
+		name     string
+		extra    []string
+		mustHave string
+	}{
+		{"with --json", []string{"--json"}, "--json"},
+		{"with --quiet", []string{"--quiet"}, "--quiet"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			nibsDir := setupListCobraTest(t, files)
+			args := []string{"--nibs-path", nibsDir, "list", "--columns", "id,title"}
+			args = append(args, tt.extra...)
+			rootCmd.SetArgs(args)
+
+			var execErr error
+			_ = captureStdout(t, func() {
+				execErr = rootCmd.Execute()
+			})
+			if execErr == nil {
+				t.Fatalf("list --columns %v should have failed", tt.extra)
+			}
+			if !strings.Contains(execErr.Error(), tt.mustHave) {
+				t.Errorf("error %q does not mention %q", execErr.Error(), tt.mustHave)
+			}
+			if !strings.Contains(execErr.Error(), "--columns") {
+				t.Errorf("error %q does not mention --columns", execErr.Error())
+			}
+		})
 	}
 }
 

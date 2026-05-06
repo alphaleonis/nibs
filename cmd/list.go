@@ -39,6 +39,7 @@ var (
 	listQuiet       bool
 	listSort        string
 	listFull        bool
+	listColumns     string
 )
 
 var listCmd = &cobra.Command{
@@ -129,6 +130,29 @@ Search Syntax (--search/-S):
 			filter.ExcludeStatus = append(filter.ExcludeStatus, "in-progress", "completed", "scrapped", "draft")
 		}
 
+		// --columns is mutually exclusive with --json and --quiet. Validate
+		// up-front (and parse the column spec) so callers get a clean error
+		// before any nib lookups run. The dual-path convention via reportErr
+		// matches cmd/links.go: text mode → Cobra renders the error to stderr;
+		// JSON mode → structured envelope on stdout AND a non-zero exit.
+		columnsRequested := cmd.Flags().Changed("columns")
+		var cols []output.Column
+		if columnsRequested {
+			if listJSON {
+				return reportErr(listJSON, output.ErrValidation,
+					fmt.Errorf("--columns and --json are mutually exclusive"))
+			}
+			if listQuiet {
+				return reportErr(listJSON, output.ErrValidation,
+					fmt.Errorf("--columns and --quiet are mutually exclusive"))
+			}
+			parsed, perr := output.ParseColumns(listColumns)
+			if perr != nil {
+				return reportErr(listJSON, output.ErrValidation, perr)
+			}
+			cols = parsed
+		}
+
 		// Execute query via GraphQL resolver with sort
 		nibSort := buildNibSort(listSort)
 		resolver := app.newResolver()
@@ -153,6 +177,14 @@ Search Syntax (--search/-S):
 				filtered = []*nib.Nib{}
 			}
 			return output.SuccessMultiple(filtered)
+		}
+
+		// --columns: tab-separated tabular output (flat, like --quiet but
+		// with selectable fields). Spec was already parsed up-front so the
+		// dispatch is unconditional here.
+		if columnsRequested {
+			_, _ = fmt.Fprint(cmd.OutOrStdout(), output.FormatColumns(nibs, cols))
+			return nil
 		}
 
 		// Quiet mode: just IDs (flat)
@@ -270,5 +302,6 @@ func init() {
 	listCmd.Flags().BoolVarP(&listQuiet, "quiet", "q", false, "Only output IDs (one per line)")
 	listCmd.Flags().StringVar(&listSort, "sort", "", "Sort by: created, updated, status, priority, status-priority, id (default: order key)")
 	listCmd.Flags().BoolVar(&listFull, "full", false, "Include nib body in JSON output")
+	listCmd.Flags().StringVar(&listColumns, "columns", "", "Tab-separated tabular output. Comma-separated column names. Available: "+output.AvailableColumnsString())
 	rootCmd.AddCommand(listCmd)
 }
