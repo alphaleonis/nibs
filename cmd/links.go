@@ -586,10 +586,13 @@ func bfsTraverse(ctx context.Context, resolver *graph.Resolver, start *nib.Nib, 
 	return out, nil
 }
 
-// topoSortNibs reorders `candidates` using mention edges among the set.
-// Mention edges pointing outside the candidate set are dropped. Self-mentions
-// are ignored. Returns an error when a cycle is present (naming the members).
-func topoSortNibs(ctx context.Context, resolver *graph.Resolver, candidates []*nib.Nib) ([]*nib.Nib, error) {
+// topoSortNibs reorders `candidates` using `blocked_by` edges among the set.
+// Edges pointing outside the candidate set are dropped. Self-edges are
+// ignored. Returns an error when a cycle is present (naming the members).
+//
+// Only `blocked_by` declarations contribute edges. `#<id>` body mentions are
+// informational and never affect topo order — see nib nibs-q4pi.
+func topoSortNibs(candidates []*nib.Nib) ([]*nib.Nib, error) {
 	byID := make(map[string]*nib.Nib, len(candidates))
 	ids := make([]string, 0, len(candidates))
 	for _, c := range candidates {
@@ -599,26 +602,14 @@ func topoSortNibs(ctx context.Context, resolver *graph.Resolver, candidates []*n
 	var edges [][2]string
 	seenEdge := map[[2]string]struct{}{}
 	for _, c := range candidates {
-		// The nil filter here is load-bearing: edges must be computed
-		// against the unfiltered mention graph so that a filtered-out
-		// intermediate node doesn't silently collapse the topo graph
-		// into a false edge. After resolving mentions unfiltered, the
-		// byID gate below drops any target not in the already-filtered
-		// candidate set — so an edge c→(filtered_out)→a is correctly
-		// dropped rather than flattened into c→a. See
-		// TestLinksCommand_Children_OrderTopo_SkipsFilteredSibling.
-		mentions, err := resolver.Nib().Mentions(ctx, c, nil)
-		if err != nil {
-			return nil, fmt.Errorf("resolving mentions for %s: %w", c.ID, err)
-		}
-		for _, m := range mentions {
-			if m.ID == c.ID {
-				continue
+		for _, blockerID := range c.BlockedBy {
+			if blockerID == c.ID {
+				continue // defensive: self-block is meaningless
 			}
-			if _, in := byID[m.ID]; !in {
-				continue
+			if _, in := byID[blockerID]; !in {
+				continue // blocker outside candidate set — drop edge
 			}
-			key := [2]string{m.ID, c.ID}
+			key := [2]string{blockerID, c.ID}
 			if _, dup := seenEdge[key]; dup {
 				continue
 			}
@@ -807,7 +798,7 @@ filter-on-singular validation error does not fire here.`,
 				got = []*nib.Nib{}
 			}
 			if linksOrder == "topo" && relTable[fetchKind].AllowsOrder {
-				ordered, oerr := topoSortNibs(ctx, resolver, got)
+				ordered, oerr := topoSortNibs(got)
 				if oerr != nil {
 					code := output.ErrFileError
 					if errors.Is(oerr, errLinksCycle) {

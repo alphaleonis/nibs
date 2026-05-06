@@ -473,31 +473,10 @@ func TestLinksCommand_NibNotFound_JSON(t *testing.T) {
 	}
 }
 
-func TestLinksCommand_Children_OrderTopo_SelfMentionIgnored(t *testing.T) {
-	// A child mentions itself and a real dep. Self-mention must be ignored;
-	// no cycle is reported.
-	files := map[string]string{
-		"p--p.md": "---\ntitle: P\nstatus: in-progress\ntype: epic\n---\n",
-		"a--a.md": "---\ntitle: A\nstatus: todo\ntype: task\nparent: p\norder: a0\n---\n\nRefs self #a and #b.\n",
-		"b--b.md": "---\ntitle: B\nstatus: todo\ntype: task\nparent: p\norder: a1\n---\n",
-	}
-	nibsDir := setupLinksCobraTest(t, files)
-	// a mentions b → b must come before a in topo order.
-	// Self-reference on a must be dropped without triggering cycle.
-	out := runLinksJSON(t, "--nibs-path", nibsDir, "links", "p", "--rel", "children", "--order", "topo", "--json")
-	env := decodeLinksEnvelope(t, out)
-	body := env.Relations["children"]
-	if len(body.Nibs) != 2 {
-		t.Fatalf("got %d items, want 2 (a, b)\nraw: %s", len(body.Nibs), out)
-	}
-	pos := map[string]int{}
-	for i, n := range body.Nibs {
-		pos[n.ID] = i
-	}
-	if pos["b"] >= pos["a"] {
-		t.Errorf("topo order: b@%d, a@%d (want b before a)", pos["b"], pos["a"])
-	}
-}
+// Note: the prior TestLinksCommand_Children_OrderTopo_SelfMentionIgnored
+// has been replaced by TestLinksCommand_Children_OrderTopo_SelfBlockedByIgnored
+// (defined further below). Mentions no longer affect topo order — only
+// `blocked_by` does — so the self-mention property is no longer relevant.
 
 // --- Slice F: --flat + text output ---
 
@@ -660,11 +639,12 @@ func TestLinksCommand_Flat_Human_SingleList(t *testing.T) {
 // --- Slice E: --order topo ---
 
 func TestLinksCommand_Children_OrderTopo(t *testing.T) {
-	// Same semantics as nibs deps: child B mentions #A → A comes before B.
-	// Input order: y (a0), x (a1), z (a2). y mentions x. So topo: x, y, z.
+	// Edges come from `blocked_by` declarations only — mentions in body
+	// prose are informational and do NOT contribute edges.
+	// Input order: y (a0), x (a1), z (a2). y.blocked_by=[x]. So topo: x, y, z.
 	files := map[string]string{
 		"p--p.md": "---\ntitle: P\nstatus: in-progress\ntype: epic\n---\n",
-		"y--y.md": "---\ntitle: Y\nstatus: todo\ntype: task\nparent: p\norder: a0\n---\n\nDepends on #x.\n",
+		"y--y.md": "---\ntitle: Y\nstatus: todo\ntype: task\nparent: p\norder: a0\nblocked_by:\n  - x\n---\n",
 		"x--x.md": "---\ntitle: X\nstatus: todo\ntype: task\nparent: p\norder: a1\n---\n",
 		"z--z.md": "---\ntitle: Z\nstatus: todo\ntype: task\nparent: p\norder: a2\n---\n",
 	}
@@ -675,7 +655,7 @@ func TestLinksCommand_Children_OrderTopo(t *testing.T) {
 	if len(body.Nibs) != 3 {
 		t.Fatalf("topo got %d items, want 3\nraw: %s", len(body.Nibs), out)
 	}
-	// x must come before y (y depends on x).
+	// x must come before y (y is blocked by x).
 	pos := map[string]int{}
 	for i, n := range body.Nibs {
 		pos[n.ID] = i
@@ -685,50 +665,31 @@ func TestLinksCommand_Children_OrderTopo(t *testing.T) {
 	}
 }
 
-func TestLinksCommand_Children_OrderTopo_Cycle_Errors(t *testing.T) {
-	// a mentions b, b mentions a → cycle.
-	files := map[string]string{
-		"p--p.md": "---\ntitle: P\nstatus: in-progress\ntype: epic\n---\n",
-		"a--a.md": "---\ntitle: A\nstatus: todo\ntype: task\nparent: p\norder: a0\n---\n\nRefs #b.\n",
-		"b--b.md": "---\ntitle: B\nstatus: todo\ntype: task\nparent: p\norder: a1\n---\n\nRefs #a.\n",
-	}
-	nibsDir := setupLinksCobraTest(t, files)
-	_, err := runLinksJSONExpectError(t, "--nibs-path", nibsDir, "links", "p", "--rel", "children", "--order", "topo")
-	if err == nil {
-		t.Fatal("expected cycle error, got nil")
-	}
-	if !errors.Is(err, errLinksCycle) {
-		t.Errorf("expected errLinksCycle, got: %v", err)
-	}
-	// Bracketed cycle-member list proves the cycle names are emitted,
-	// without coupling to single-letter substrings that could match anywhere.
-	msg := err.Error()
-	if !strings.Contains(msg, "[a, b]") && !strings.Contains(msg, "[b, a]") {
-		t.Errorf("expected bracketed cycle members ([a, b] or [b, a]); got: %v", err)
-	}
-}
+// Note: the prior TestLinksCommand_Children_OrderTopo_Cycle_Errors has been
+// replaced by TestLinksCommand_Children_OrderTopo_BlockedByCycle_Errors
+// (defined further below). The cycle is now driven by mutual `blocked_by`
+// edges, not by mutual `#<id>` mentions (which no longer contribute edges).
 
-// TestLinksCommand_Children_OrderTopo_SkipsFilteredSibling pins the
-// semantics of nil-filter mention resolution in topoSortNibs:
-// filtered-out intermediate nodes drop out of the topo graph entirely
-// — their incoming/outgoing mention edges are NOT collapsed into the
-// remaining candidates.
+// TestLinksCommand_Children_OrderTopo_SkipsFilteredSibling pins that an
+// edge whose source is filtered out of the candidate set is dropped
+// (the byID gate in topoSortNibs). It is NOT collapsed into a synthetic
+// edge between the remaining nibs.
 //
 // Fixture: three siblings a/b/c under parent p.
-//   - b is completed, mentions #a
-//   - c mentions #b
-//   - a has no mentions
+//   - a: todo, no blocked_by
+//   - b: completed, no blocked_by (excluded by --active)
+//   - c: todo, blocked_by: [b]
 //
 // With --active, b is filtered out of the candidate set before topo.
 // c's edge to b is then dropped by the byID gate. Result: a and c
-// survive with NO topo edge between them (the b-edge is correctly NOT
-// collapsed into c→a). Order falls back to stable insertion order.
+// survive with NO topo edge between them — order falls back to stable
+// insertion order, and there is no synthetic c→a constraint.
 func TestLinksCommand_Children_OrderTopo_SkipsFilteredSibling(t *testing.T) {
 	files := map[string]string{
 		"p--p.md": "---\ntitle: P\nstatus: in-progress\ntype: epic\n---\n",
 		"a--a.md": "---\ntitle: A\nstatus: todo\ntype: task\nparent: p\norder: a0\n---\n",
-		"b--b.md": "---\ntitle: B\nstatus: completed\ntype: task\nparent: p\norder: a1\n---\n\nRefs #a.\n",
-		"c--c.md": "---\ntitle: C\nstatus: todo\ntype: task\nparent: p\norder: a2\n---\n\nRefs #b.\n",
+		"b--b.md": "---\ntitle: B\nstatus: completed\ntype: task\nparent: p\norder: a1\n---\n",
+		"c--c.md": "---\ntitle: C\nstatus: todo\ntype: task\nparent: p\norder: a2\nblocked_by:\n  - b\n---\n",
 	}
 	nibsDir := setupLinksCobraTest(t, files)
 	out := runLinksJSON(t, "--nibs-path", nibsDir, "links", "p", "--rel", "children", "--order", "topo", "--active", "--json")
@@ -747,18 +708,146 @@ func TestLinksCommand_Children_OrderTopo_SkipsFilteredSibling(t *testing.T) {
 	if !ids["a"] || !ids["c"] {
 		t.Errorf("expected a and c present; got %v", ids)
 	}
-	// The invariant: there is no collapsed c→a edge. If the edge had
-	// been collapsed, a would be forced before c; but with no edge
-	// between them, order is stable insertion order — which for a (a0)
-	// and c (a2) under children-order preserves the fetch order [a, c].
-	// Accept either order — the load-bearing property is that b's role
-	// as an intermediate did NOT become a synthetic edge.
-	// (Pinning the "no synthetic edge" would require a cycle probe; the
-	// count-and-membership checks above suffice because the test doc
-	// explains the invariant and a future regression that collapsed the
-	// edge would manifest as a cycle or a forced order when additional
-	// edges are added.)
-	_ = body
+	// Invariant: c.blocked_by=[b] is dropped because b is not in the
+	// candidate set, so there is no synthetic edge between a and c.
+	// Order falls back to stable insertion order [a, c].
+	if body.Nibs[0].ID != "a" || body.Nibs[1].ID != "c" {
+		t.Errorf("topo order = [%s, %s], want [a, c] (stable insertion order; "+
+			"any other order implies a synthetic edge from filtered-out b)",
+			body.Nibs[0].ID, body.Nibs[1].ID)
+	}
+}
+
+// TestLinksCommand_Children_OrderTopo_BlockedByEdges pins the post-q4pi
+// contract: `blocked_by` declarations DO produce topo edges. If sibling
+// B has `blocked_by: [a]`, A must come before B regardless of insertion
+// order.
+func TestLinksCommand_Children_OrderTopo_BlockedByEdges(t *testing.T) {
+	files := map[string]string{
+		"p--p.md": "---\ntitle: P\nstatus: in-progress\ntype: epic\n---\n",
+		// b is listed first (a0) but is blocked by a (a1) — topo must reorder.
+		"b--b.md": "---\ntitle: B\nstatus: todo\ntype: task\nparent: p\norder: a0\nblocked_by:\n  - a\n---\n",
+		"a--a.md": "---\ntitle: A\nstatus: todo\ntype: task\nparent: p\norder: a1\n---\n",
+	}
+	nibsDir := setupLinksCobraTest(t, files)
+	out := runLinksJSON(t, "--nibs-path", nibsDir, "links", "p", "--rel", "children", "--order", "topo", "--json")
+	env := decodeLinksEnvelope(t, out)
+	body := env.Relations["children"]
+	if len(body.Nibs) != 2 {
+		t.Fatalf("got %d items, want 2 (a, b)\nraw: %s", len(body.Nibs), out)
+	}
+	pos := map[string]int{}
+	for i, n := range body.Nibs {
+		pos[n.ID] = i
+	}
+	if pos["a"] >= pos["b"] {
+		t.Errorf("topo order: a@%d, b@%d (want a before b — b.blocked_by=[a])",
+			pos["a"], pos["b"])
+	}
+}
+
+// TestLinksCommand_Children_OrderTopo_CrossMentionsAreNotACycle pins the
+// post-q4pi contract: `#<id>` body mentions are NOT topo edges. Two
+// siblings that cross-reference each other in prose (no `blocked_by`)
+// must NOT trigger a cycle error, and `--order topo` returns them in
+// the natural insertion order.
+func TestLinksCommand_Children_OrderTopo_CrossMentionsAreNotACycle(t *testing.T) {
+	files := map[string]string{
+		"p--p.md": "---\ntitle: P\nstatus: in-progress\ntype: epic\n---\n",
+		"a--a.md": "---\ntitle: A\nstatus: todo\ntype: task\nparent: p\norder: a0\n---\n\nSee #b for context.\n",
+		"b--b.md": "---\ntitle: B\nstatus: todo\ntype: task\nparent: p\norder: a1\n---\n\nSee #a for context.\n",
+	}
+	nibsDir := setupLinksCobraTest(t, files)
+	out := runLinksJSON(t, "--nibs-path", nibsDir, "links", "p", "--rel", "children", "--order", "topo", "--json")
+	env := decodeLinksEnvelope(t, out)
+	body := env.Relations["children"]
+	if len(body.Nibs) != 2 {
+		t.Fatalf("got %d items, want 2 (a, b)\nraw: %s", len(body.Nibs), out)
+	}
+	// No edges → stable insertion order = [a, b].
+	if body.Nibs[0].ID != "a" || body.Nibs[1].ID != "b" {
+		t.Errorf("topo order = [%s, %s], want [a, b]",
+			body.Nibs[0].ID, body.Nibs[1].ID)
+	}
+}
+
+// TestLinksCommand_Children_OrderTopo_BlockedByCycle_Errors pins that a
+// real mutual `blocked_by` cycle still produces errLinksCycle with the
+// cycle members named in the message.
+func TestLinksCommand_Children_OrderTopo_BlockedByCycle_Errors(t *testing.T) {
+	files := map[string]string{
+		"p--p.md": "---\ntitle: P\nstatus: in-progress\ntype: epic\n---\n",
+		"a--a.md": "---\ntitle: A\nstatus: todo\ntype: task\nparent: p\norder: a0\nblocked_by:\n  - b\n---\n",
+		"b--b.md": "---\ntitle: B\nstatus: todo\ntype: task\nparent: p\norder: a1\nblocked_by:\n  - a\n---\n",
+	}
+	nibsDir := setupLinksCobraTest(t, files)
+	_, err := runLinksJSONExpectError(t, "--nibs-path", nibsDir, "links", "p", "--rel", "children", "--order", "topo")
+	if err == nil {
+		t.Fatal("expected cycle error, got nil")
+	}
+	if !errors.Is(err, errLinksCycle) {
+		t.Errorf("expected errLinksCycle, got: %v", err)
+	}
+	msg := err.Error()
+	if !strings.Contains(msg, "[a, b]") && !strings.Contains(msg, "[b, a]") {
+		t.Errorf("expected bracketed cycle members ([a, b] or [b, a]); got: %v", err)
+	}
+}
+
+// TestLinksCommand_Children_OrderTopo_ExternalBlockedByDropped pins that a
+// `blocked_by` reference to a nib that is NOT in the candidate set is
+// silently dropped — no error, no false constraint, the nib is included.
+func TestLinksCommand_Children_OrderTopo_ExternalBlockedByDropped(t *testing.T) {
+	files := map[string]string{
+		"p--p.md": "---\ntitle: P\nstatus: in-progress\ntype: epic\n---\n",
+		// 'z' is not a sibling under p — must be dropped from edge set.
+		"a--a.md": "---\ntitle: A\nstatus: todo\ntype: task\nparent: p\norder: a0\n---\n",
+		"b--b.md": "---\ntitle: B\nstatus: todo\ntype: task\nparent: p\norder: a1\nblocked_by:\n  - z\n---\n",
+		// 'z' exists but is unrelated (not a child of p).
+		"z--z.md": "---\ntitle: Z\nstatus: todo\ntype: task\n---\n",
+	}
+	nibsDir := setupLinksCobraTest(t, files)
+	out := runLinksJSON(t, "--nibs-path", nibsDir, "links", "p", "--rel", "children", "--order", "topo", "--json")
+	env := decodeLinksEnvelope(t, out)
+	body := env.Relations["children"]
+	if len(body.Nibs) != 2 {
+		t.Fatalf("got %d items, want 2 (a, b)\nraw: %s", len(body.Nibs), out)
+	}
+	ids := map[string]bool{}
+	for _, n := range body.Nibs {
+		ids[n.ID] = true
+	}
+	if !ids["a"] || !ids["b"] {
+		t.Errorf("expected both a and b present; got %v", ids)
+	}
+}
+
+// TestLinksCommand_Children_OrderTopo_SelfBlockedByIgnored pins that a
+// defensive self-reference in `blocked_by` is silently dropped, the
+// nib is still included, and no cycle is reported.
+func TestLinksCommand_Children_OrderTopo_SelfBlockedByIgnored(t *testing.T) {
+	files := map[string]string{
+		"p--p.md": "---\ntitle: P\nstatus: in-progress\ntype: epic\n---\n",
+		// a lists itself plus a real dep b.
+		"a--a.md": "---\ntitle: A\nstatus: todo\ntype: task\nparent: p\norder: a0\nblocked_by:\n  - a\n  - b\n---\n",
+		"b--b.md": "---\ntitle: B\nstatus: todo\ntype: task\nparent: p\norder: a1\n---\n",
+	}
+	nibsDir := setupLinksCobraTest(t, files)
+	out := runLinksJSON(t, "--nibs-path", nibsDir, "links", "p", "--rel", "children", "--order", "topo", "--json")
+	env := decodeLinksEnvelope(t, out)
+	body := env.Relations["children"]
+	if len(body.Nibs) != 2 {
+		t.Fatalf("got %d items, want 2 (a, b)\nraw: %s", len(body.Nibs), out)
+	}
+	pos := map[string]int{}
+	for i, n := range body.Nibs {
+		pos[n.ID] = i
+	}
+	// b must come before a (a.blocked_by=[a (self, dropped), b])
+	if pos["b"] >= pos["a"] {
+		t.Errorf("topo order: b@%d, a@%d (want b before a — self-edge on a dropped, real dep on b kept)",
+			pos["b"], pos["a"])
+	}
 }
 
 func TestLinksCommand_Parent_OrderTopo_Errors(t *testing.T) {

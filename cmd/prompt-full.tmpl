@@ -95,7 +95,7 @@ nibs archive
 # Query any relationship for a nib under one unified envelope
 nibs links --json <id> --rel mentions-out                       # outbound #<id> mentions
 nibs links --json <id> --rel mentions-in                        # inbound mentions (nibs whose bodies mention <id>)
-nibs links --json <id> --rel children --order topo              # children topologically sorted by body-reference dependencies
+nibs links --json <id> --rel children --order topo              # children topologically sorted by blocked_by dependencies
 nibs links --json <id> --rel blocked-by --active                # active (not-completed/scrapped) blockers
 nibs links --json <id> --rel neighbours-active                  # all 7 direct rels, excluding completed/scrapped
 nibs links --json <id> --rel descendants --depth all            # full descendant tree (transitive)
@@ -175,14 +175,14 @@ This is useful for checking progress on an epic or milestone before closing it.
 
 ## Deciding What Order to Tackle Children
 
-Use `nibs links --rel children --order topo` when some children depend on others finishing first. It reads `#<id>` mentions from each child's body to build a dependency graph and topologically sorts the subtree:
+Use `nibs links --rel children --order topo` when some children depend on others finishing first. It reads each child's `blocked_by` declarations to build a dependency graph and topologically sorts the subtree:
 
 ```bash
 nibs links --json <parent-id> --rel children --order topo             # Topologically ordered children
 nibs links --json <parent-id> --rel children --order topo --active    # Exclude completed/scrapped before sorting
 ```
 
-Edges come from `#<id>` mentions in child bodies: if child B's body mentions `#a` (where A is a sibling of B), then A must come before B. Mentions of nibs outside the subtree are silently dropped (they don't affect internal order). Self-mentions are ignored. Cycles raise an error naming the participating nibs so you don't silently plan against an unsatisfiable order.
+Edges come from `blocked_by` declarations only: if child B has `blocked_by: [a]` (where A is a sibling of B), then A must come before B. `blocked_by` entries pointing to nibs outside the subtree are silently dropped (they don't affect internal order). Self-references in `blocked_by` are ignored. Cycles raise an error naming the participating nibs so you don't silently plan against an unsatisfiable order. **`#<id>` mentions in body prose are informational only and do NOT contribute edges** — to express a real ordering dependency, set the dependee's `blocked_by` field.
 
 ## Reordering Nibs
 
