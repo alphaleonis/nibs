@@ -1,6 +1,7 @@
 package graph
 
 import (
+	"strings"
 	"testing"
 
 	"github.com/alphaleonis/nibs/internal/nib"
@@ -184,27 +185,98 @@ func TestOrderer_ApplyPositioning(t *testing.T) {
 		}
 	})
 
-	t.Run("root nib rejects positioning flags", func(t *testing.T) {
-		newNib := &nib.Nib{ID: "r-1", Title: "New"}
-		reader := newOrdererReader()
+	t.Run("root nib with afterId places between existing roots", func(t *testing.T) {
+		r1 := &nib.Nib{ID: "r-1", Title: "First", Order: "a0"}
+		r2 := &nib.Nib{ID: "r-2", Title: "Second", Order: "a1"}
+
+		reader := newOrdererReader(r1, r2)
 		orderer := NewOrderer(reader, &stubWriter{})
 
-		afterID := "some-id"
+		newNib := &nib.Nib{ID: "r-3", Title: "Inserted"}
+		afterID := "r-1"
+		err := orderer.ApplyPositioning(newNib, &afterID, nil, nil)
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if newNib.Order <= r1.Order {
+			t.Errorf("order %q should be after r1 %q", newNib.Order, r1.Order)
+		}
+		if newNib.Order >= r2.Order {
+			t.Errorf("order %q should be before r2 %q", newNib.Order, r2.Order)
+		}
+	})
+
+	t.Run("root nib with beforeId places between existing roots", func(t *testing.T) {
+		r1 := &nib.Nib{ID: "r-1", Title: "First", Order: "a0"}
+		r2 := &nib.Nib{ID: "r-2", Title: "Second", Order: "a1"}
+
+		reader := newOrdererReader(r1, r2)
+		orderer := NewOrderer(reader, &stubWriter{})
+
+		newNib := &nib.Nib{ID: "r-3", Title: "Inserted"}
+		beforeID := "r-2"
+		err := orderer.ApplyPositioning(newNib, nil, &beforeID, nil)
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if newNib.Order <= r1.Order {
+			t.Errorf("order %q should be after r1 %q", newNib.Order, r1.Order)
+		}
+		if newNib.Order >= r2.Order {
+			t.Errorf("order %q should be before r2 %q", newNib.Order, r2.Order)
+		}
+	})
+
+	t.Run("root nib with first flag places before all roots", func(t *testing.T) {
+		r1 := &nib.Nib{ID: "r-1", Title: "First", Order: "a0"}
+		r2 := &nib.Nib{ID: "r-2", Title: "Second", Order: "a1"}
+
+		reader := newOrdererReader(r1, r2)
+		orderer := NewOrderer(reader, &stubWriter{})
+
+		newNib := &nib.Nib{ID: "r-3", Title: "New First"}
+		first := true
+		err := orderer.ApplyPositioning(newNib, nil, nil, &first)
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if newNib.Order >= r1.Order {
+			t.Errorf("order %q should be before r1 %q", newNib.Order, r1.Order)
+		}
+	})
+
+	t.Run("root nib with afterId returns error for unknown anchor", func(t *testing.T) {
+		r1 := &nib.Nib{ID: "r-1", Title: "First", Order: "a0"}
+
+		reader := newOrdererReader(r1)
+		orderer := NewOrderer(reader, &stubWriter{})
+
+		newNib := &nib.Nib{ID: "r-2", Title: "New"}
+		afterID := "does-not-exist"
 		err := orderer.ApplyPositioning(newNib, &afterID, nil, nil)
 		if err == nil {
-			t.Error("expected error when positioning root nib with afterId")
+			t.Fatal("expected error for unknown anchor")
 		}
-
-		beforeID := "some-id"
-		err = orderer.ApplyPositioning(newNib, nil, &beforeID, nil)
-		if err == nil {
-			t.Error("expected error when positioning root nib with beforeId")
+		if !strings.Contains(err.Error(), "sibling nib not found") {
+			t.Errorf("error %q should contain %q", err.Error(), "sibling nib not found")
 		}
+	})
 
-		first := true
-		err = orderer.ApplyPositioning(newNib, nil, nil, &first)
+	t.Run("root nib with afterId pointing at child returns not-a-sibling error", func(t *testing.T) {
+		parent := &nib.Nib{ID: "p-1", Title: "Parent", Order: "a0"}
+		child := &nib.Nib{ID: "c-1", Title: "Child", Parent: "p-1", Order: "a0"}
+
+		reader := newOrdererReader(parent, child)
+		orderer := NewOrderer(reader, &stubWriter{})
+
+		newNib := &nib.Nib{ID: "r-1", Title: "New Root"}
+		afterID := "c-1"
+		err := orderer.ApplyPositioning(newNib, &afterID, nil, nil)
 		if err == nil {
-			t.Error("expected error when positioning root nib with first")
+			t.Fatal("expected error for non-sibling anchor (anchor has a parent)")
+		}
+		if !strings.Contains(err.Error(), "not a sibling") {
+			t.Errorf("error %q should contain %q", err.Error(), "not a sibling")
 		}
 	})
 

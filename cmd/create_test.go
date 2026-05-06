@@ -6,6 +6,8 @@ import (
 	"runtime"
 	"strings"
 	"testing"
+
+	"github.com/alphaleonis/nibs/internal/nib"
 )
 
 func resetCreateFlags() {
@@ -236,6 +238,152 @@ func TestCreateBodyFlagSkipsEditor(t *testing.T) {
 	if strings.Contains(body, "## Description") {
 		t.Errorf("template should not be used when --body is provided, got:\n%s", body)
 	}
+}
+
+// readNibByID scans a nibs directory and returns the nib whose filename parses
+// to exactly the given ID. Used by the positioning tests below.
+func readNibByID(t *testing.T, nibsDir, idPrefix string) *nib.Nib {
+	t.Helper()
+	entries, err := os.ReadDir(nibsDir)
+	if err != nil {
+		t.Fatalf("reading nibs dir: %v", err)
+	}
+	for _, e := range entries {
+		if e.IsDir() {
+			continue
+		}
+		id, _ := nib.ParseFilename(e.Name())
+		if id != idPrefix {
+			continue
+		}
+		f, err := os.Open(filepath.Join(nibsDir, e.Name()))
+		if err != nil {
+			t.Fatalf("opening %s: %v", e.Name(), err)
+		}
+		b, err := nib.Parse(f)
+		_ = f.Close()
+		if err != nil {
+			t.Fatalf("parsing %s: %v", e.Name(), err)
+		}
+		b.ID = id
+		return b
+	}
+	t.Fatalf("no nib file found with id %q in %s", idPrefix, nibsDir)
+	return nil
+}
+
+// firstCreatedID returns the ID of the (single) nib file in the directory.
+// Useful when the just-created nib's ID was generated and is not known up-front.
+func firstCreatedID(t *testing.T, nibsDir string) string {
+	t.Helper()
+	entries, err := os.ReadDir(nibsDir)
+	if err != nil {
+		t.Fatalf("reading nibs dir: %v", err)
+	}
+	for _, e := range entries {
+		if e.IsDir() {
+			continue
+		}
+		id, _ := nib.ParseFilename(e.Name())
+		if id != "" {
+			return id
+		}
+	}
+	t.Fatal("no nib files found")
+	return ""
+}
+
+// TestCreateAfterRootSibling verifies that `nibs create --after <root-id>`
+// successfully positions the new nib between the anchor and the next root,
+// not merely appended at the end. Three roots are needed to distinguish
+// "insert between" from "always append last". Regression test for nibs-d44y.
+func TestCreateAfterRootSibling(t *testing.T) {
+	nibsDir := setupCreateTest(t)
+	t.Setenv("EDITOR", "")
+	t.Setenv("VISUAL", "")
+
+	// Create root A.
+	rootCmd.SetArgs([]string{
+		"--nibs-path", nibsDir,
+		"create", "Root A", "-t", "bug", "-d", "body-a", "--json",
+	})
+	if err := rootCmd.Execute(); err != nil {
+		t.Fatalf("create A failed: %v", err)
+	}
+	idA := firstCreatedID(t, nibsDir)
+	resetCreateFlags()
+
+	// Create root B.
+	rootCmd.SetArgs([]string{
+		"--nibs-path", nibsDir,
+		"create", "Root B", "-t", "bug", "-d", "body-b", "--json",
+	})
+	if err := rootCmd.Execute(); err != nil {
+		t.Fatalf("create B failed: %v", err)
+	}
+	// Find B by elimination (the new id that isn't A).
+	idB := otherID(t, nibsDir, map[string]bool{idA: true})
+	resetCreateFlags()
+
+	// Create root C with --after A. C should land between A and B,
+	// NOT after B.
+	rootCmd.SetArgs([]string{
+		"--nibs-path", nibsDir,
+		"create", "Root C", "-t", "bug", "-d", "body-c",
+		"--after", idA, "--json",
+	})
+	if err := rootCmd.Execute(); err != nil {
+		t.Fatalf("create C with --after %q failed: %v", idA, err)
+	}
+	idC := otherID(t, nibsDir, map[string]bool{idA: true, idB: true})
+
+	a := readNibByID(t, nibsDir, idA)
+	b := readNibByID(t, nibsDir, idB)
+	c := readNibByID(t, nibsDir, idC)
+
+	if c.Parent != "" {
+		t.Errorf("new nib should be root, got parent %q", c.Parent)
+	}
+	if a.Order == "" || b.Order == "" {
+		t.Fatalf("anchors missing order keys (a=%q b=%q)", a.Order, b.Order)
+	}
+	// C must sort after A.
+	if c.Order <= a.Order {
+		t.Errorf("new order %q should sort after A %q", c.Order, a.Order)
+	}
+	// C must sort BEFORE B — this is what distinguishes "insert between"
+	// from a regression to "always append last".
+	if c.Order >= b.Order {
+		t.Errorf("new order %q should sort before B %q (would indicate regression to always-append)", c.Order, b.Order)
+	}
+}
+
+// otherID returns the ID of the nib in the directory whose ID is not in the
+// given excluded set. Fails the test if zero or more than one such nib exists.
+func otherID(t *testing.T, nibsDir string, excluded map[string]bool) string {
+	t.Helper()
+	entries, err := os.ReadDir(nibsDir)
+	if err != nil {
+		t.Fatalf("reading nibs dir: %v", err)
+	}
+	var found string
+	for _, e := range entries {
+		if e.IsDir() {
+			continue
+		}
+		id, _ := nib.ParseFilename(e.Name())
+		if id == "" || excluded[id] {
+			continue
+		}
+		if found != "" {
+			t.Fatalf("expected exactly one new nib in %s, found multiple (%q and %q)", nibsDir, found, id)
+		}
+		found = id
+	}
+	if found == "" {
+		t.Fatalf("no new nib found in %s (excluded=%v)", nibsDir, excluded)
+	}
+	return found
 }
 
 func TestCreateVisualTakesPrecedence(t *testing.T) {

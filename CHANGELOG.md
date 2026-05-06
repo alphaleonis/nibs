@@ -13,6 +13,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 ### Changed
 - `nibs links --rel children --order topo` now derives edges from each nib's `blocked_by` front-matter field only. Previously it also treated `#<id>` mentions in bodies as ordering edges, which contradicted the documented "mentions are informational only" contract and created spurious cycles when siblings cross-referenced each other for context. (Refs: nibs-q4pi, decision in nibs-t36b.)
 
+### Fixed
+- `nibs create --after`/`--before`/`--first` now work for root-level nibs. Previously they errored with `"positioning requires a parent"`. (Refs: nibs-d44y.)
+
 ## v0.4.1 - 2026-05-04
 
 ### Changed

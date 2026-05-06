@@ -3363,18 +3363,30 @@ func TestCreateNibPositioning(t *testing.T) {
 		}
 	})
 
-	t.Run("positioning without parent is error", func(t *testing.T) {
+	t.Run("first flag on root inserts before existing roots", func(t *testing.T) {
+		// `epic1` from the fixture above is an existing root nib. A new root
+		// created with --first should land before it. This is the inverse of
+		// the previous bug-pinning subtest which asserted that positioning
+		// without a parent was rejected — see nibs-d44y.
+		existingRootID := "epic1"
+		existing, err := resolver.Query().Nib(ctx, existingRootID)
+		if err != nil || existing == nil {
+			t.Fatalf("missing fixture root %q: %v", existingRootID, err)
+		}
 		firstFlag := true
-		_, err := resolver.Mutation().CreateNib(ctx, model.CreateNibInput{
-			Title: "No Parent",
+		created, err := resolver.Mutation().CreateNib(ctx, model.CreateNibInput{
+			Title: "Root First",
 			Type:  &taskType,
 			First: &firstFlag,
 		})
-		if err == nil {
-			t.Fatal("expected error for positioning without parent")
+		if err != nil {
+			t.Fatalf("CreateNib with --first on root failed: %v", err)
 		}
-		if !strings.Contains(err.Error(), "requires a parent") {
-			t.Errorf("unexpected error: %v", err)
+		if created.Parent != "" {
+			t.Errorf("created root should have no parent, got %q", created.Parent)
+		}
+		if created.Order >= existing.Order {
+			t.Errorf("order %q should be < existing root order %q", created.Order, existing.Order)
 		}
 	})
 

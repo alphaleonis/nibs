@@ -48,11 +48,11 @@ func (o *Orderer) GetSortedSiblings(parentID string) []*nib.Nib {
 }
 
 // ApplyPositioning computes an order key for a new nib based on positioning flags.
-// At most one of afterID, beforeID, first may be specified.
-// For child nibs: if none specified, inserts last among siblings of same priority.
-// For root nibs: always appends last among other root-level nibs. Explicit positioning
-// flags (afterId/beforeId/first) are not supported on create — use ReorderNib to
-// reposition root nibs after creation.
+// At most one of afterID, beforeID, first may be specified. The flags work for
+// both root-level and child nibs (siblings are looked up among other roots when
+// b.Parent is empty, otherwise among children of b.Parent).
+// When no flag is given: child nibs are inserted last among siblings of the same
+// priority; root nibs are appended last (no priority-aware positioning).
 func (o *Orderer) ApplyPositioning(b *nib.Nib, afterID, beforeID *string, first *bool) error {
 	hasAfter := afterID != nil && *afterID != ""
 	hasBefore := beforeID != nil && *beforeID != ""
@@ -73,22 +73,13 @@ func (o *Orderer) ApplyPositioning(b *nib.Nib, afterID, beforeID *string, first 
 		return fmt.Errorf("at most one of afterId, beforeId, first may be specified")
 	}
 
-	// Root-level nibs: compute position among other root-level nibs
+	// Look up siblings uniformly: roots when b has no parent, else children of b.Parent.
+	var siblings []*nib.Nib
 	if b.Parent == "" {
-		if count > 0 {
-			return fmt.Errorf("positioning requires a parent")
-		}
-		rootSiblings := o.getRootSiblings()
-		if len(rootSiblings) == 0 {
-			b.Order = nib.OrderInitial()
-		} else {
-			b.Order = nib.OrderLast(rootSiblings[len(rootSiblings)-1].Order)
-		}
-		return nil
+		siblings = o.getRootSiblings()
+	} else {
+		siblings = o.GetSortedSiblings(b.Parent)
 	}
-
-	// Get sorted siblings
-	siblings := o.GetSortedSiblings(b.Parent)
 
 	if len(siblings) == 0 {
 		b.Order = nib.OrderInitial()
@@ -106,7 +97,13 @@ func (o *Orderer) ApplyPositioning(b *nib.Nib, afterID, beforeID *string, first 
 		return nil
 	}
 
-	// Default: insert last among siblings of same priority
+	// Default — no positioning flag.
+	// Root nibs: append last (no priority-aware positioning, matching RecalculateOrder).
+	// Child nibs: insert last among siblings of the same priority.
+	if b.Parent == "" {
+		b.Order = nib.OrderLast(siblings[len(siblings)-1].Order)
+		return nil
+	}
 	return o.positionDefaultByPriority(b, siblings)
 }
 
@@ -165,6 +162,9 @@ func (o *Orderer) positionAfter(b *nib.Nib, targetID string, siblings []*nib.Nib
 	targetID = normalizedID
 	for i, s := range siblings {
 		if s.ID == targetID {
+			// Defensive: every production caller passes a sibling slice already
+			// filtered by parent (getRootSiblings or GetSortedSiblings). This guard
+			// fires only for direct unit tests that hand-build a mixed list.
 			if s.Parent != b.Parent {
 				return fmt.Errorf("nib %s is not a sibling (different parent)", targetID)
 			}
@@ -182,6 +182,11 @@ func (o *Orderer) positionAfter(b *nib.Nib, targetID string, siblings []*nib.Nib
 			return nil
 		}
 	}
+	// Target was resolved (exists) but not in the sibling list — that means
+	// it has a different parent. Surface a clearer error than "not found".
+	if t, err := o.reader.Get(targetID); err == nil && t.Parent != b.Parent {
+		return fmt.Errorf("nib %s is not a sibling (different parent)", targetID)
+	}
 	return fmt.Errorf("sibling nib not found: %s", targetID)
 }
 
@@ -194,6 +199,9 @@ func (o *Orderer) positionBefore(b *nib.Nib, targetID string, siblings []*nib.Ni
 	targetID = normalizedID
 	for i, s := range siblings {
 		if s.ID == targetID {
+			// Defensive: every production caller passes a sibling slice already
+			// filtered by parent (getRootSiblings or GetSortedSiblings). This guard
+			// fires only for direct unit tests that hand-build a mixed list.
 			if s.Parent != b.Parent {
 				return fmt.Errorf("nib %s is not a sibling (different parent)", targetID)
 			}
@@ -210,6 +218,11 @@ func (o *Orderer) positionBefore(b *nib.Nib, targetID string, siblings []*nib.Ni
 			b.Order = nib.OrderBetween(prevKey, s.Order)
 			return nil
 		}
+	}
+	// Target was resolved (exists) but not in the sibling list — that means
+	// it has a different parent. Surface a clearer error than "not found".
+	if t, err := o.reader.Get(targetID); err == nil && t.Parent != b.Parent {
+		return fmt.Errorf("nib %s is not a sibling (different parent)", targetID)
 	}
 	return fmt.Errorf("sibling nib not found: %s", targetID)
 }
