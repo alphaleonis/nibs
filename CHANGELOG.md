@@ -7,14 +7,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## v0.5.0 - 2026-05-06
+
 ### Added
-- **`--columns` flag on `nibs list` and `nibs links`** — tab-separated tabular output with selectable fields. Comma-separated column names from a closed set: `id, slug, title, status, type, priority, estimate, order, parent, tags, created_at, updated_at`. Output is flat (one row per nib, no per-rel section headers — `links` implies `--flat` semantics: a single deduped row list across all requested rels). Mutually exclusive with `--json`; `nibs list --columns` is also mutually exclusive with `--quiet`. Empty fields render as the empty string; multi-value tag fields are comma-joined; time fields render as RFC3339 (or empty for nil).
+- **`--columns` flag on `nibs list` and `nibs links`** — tab-separated tabular output with selectable fields. Comma-separated column names from a closed set: `id, slug, title, status, type, priority, estimate, order, parent, tags, created_at, updated_at`. Output is flat (one row per nib, no per-rel section headers — `links` implies `--flat` semantics: a single deduped row list across all requested rels). Mutually exclusive with `--json`; `nibs list --columns` is also mutually exclusive with `--quiet`. Empty fields render as the empty string; multi-value tag fields are comma-joined; time fields render as RFC3339 (or empty for nil). (Refs: nibs-632y.)
 - `nibs plan --with-order` flag to display child order keys; `order` field now always present in `nibs plan --json` output. (Refs: nibs-s5sg.)
 
 ### Changed
-- `nibs links --rel children --order topo` now derives edges from each nib's `blocked_by` front-matter field only. Previously it also treated `#<id>` mentions in bodies as ordering edges, which contradicted the documented "mentions are informational only" contract and created spurious cycles when siblings cross-referenced each other for context. (Refs: nibs-q4pi, decision in nibs-t36b.)
+- **BREAKING:** `nibs links --rel children --order topo` now derives edges from each nib's `blocked_by` front-matter field only. Previously it also treated `#<id>` mentions in bodies as ordering edges, which contradicted the documented "mentions are informational only" contract and created spurious cycles when siblings cross-referenced each other for context. Callers that relied on `#<id>` mentions implicitly producing topo ordering must now declare those dependencies via `blocked_by`. (Refs: nibs-q4pi, decision in nibs-t36b.)
 
 ### Fixed
+- `nibs --json <cmd>` now produces a single parseable JSON document on stdout for both success and error paths. Cobra's usage block is suppressed on every RunE error (text mode too — usage was meant for `--help` only); in JSON mode the duplicate stderr `Error:` line is also suppressed via a sentinel error. Previously, merged `2>&1 | jq` consumers saw broken JSON, and `nibs <cmd>` errors printed the full flag listing to stderr. (Refs: nibs-382a.)
 - `nibs create --after`/`--before`/`--first` now work for root-level nibs. Previously they errored with `"positioning requires a parent"`. (Refs: nibs-d44y.)
 
 ## v0.4.1 - 2026-05-04
