@@ -13,17 +13,27 @@ import (
 )
 
 var (
-	planJSON   bool
-	planActive bool
+	planJSON      bool
+	planActive    bool
+	planWithOrder bool
 )
 
 // PlanItem represents a single child in a plan view.
 type PlanItem struct {
-	Position           int    `json:"position"`
-	ID                 string `json:"id"`
-	Status             string `json:"status"`
-	Type               string `json:"type,omitempty"`
-	Title              string `json:"title"`
+	Position int    `json:"position"`
+	ID       string `json:"id"`
+	Status   string `json:"status"`
+	Type     string `json:"type,omitempty"`
+	Title    string `json:"title"`
+	// Order is the fractional-index sort key for this item among its siblings.
+	// Unlike nib.Nib.Order (which uses json:"order,omitempty"), PlanItem.Order
+	// is ALWAYS included in JSON output — agent consumers of `nibs plan --json`
+	// rely on every item carrying an order key without having to remember a
+	// flag. In practice the value is always non-empty because the resolver's
+	// Orderer backfills missing keys before this struct is built. The human
+	// renderer (renderPlanHuman) suppresses this column unless --with-order
+	// is given.
+	Order              string `json:"order"`
 	AcceptanceCriteria string `json:"acceptance_criteria,omitempty"`
 }
 
@@ -44,8 +54,8 @@ type Plan struct {
 // buildPlan fetches a parent nib and its ordered children, returning a Plan.
 // Uses the GraphQL resolver for parent lookup and child ordering, consistent
 // with the documented data flow (cmd -> graph -> nibcore -> nib).
-func buildPlan(resolver *graph.Resolver, parentID string, activeOnly bool) (*Plan, error) {
-	parent, err := resolver.Query().Nib(context.Background(), parentID)
+func buildPlan(ctx context.Context, resolver *graph.Resolver, parentID string, activeOnly bool) (*Plan, error) {
+	parent, err := resolver.Query().Nib(ctx, parentID)
 	if err != nil {
 		return nil, fmt.Errorf("failed to find nib: %w", err)
 	}
@@ -80,6 +90,7 @@ func buildPlan(resolver *graph.Resolver, parentID string, activeOnly bool) (*Pla
 			Status:   child.Status,
 			Type:     child.Type,
 			Title:    child.Title,
+			Order:    child.Order,
 		}
 		if ac, found := mdsection.Find(child.Body, "Acceptance Criteria"); found {
 			item.AcceptanceCriteria = strings.TrimSpace(ac)
@@ -110,7 +121,18 @@ var planCmd = &cobra.Command{
 		app := getApp(cmd)
 		resolver := app.newResolver()
 
-		plan, err := buildPlan(resolver, args[0], planActive)
+		// Thread cmd.Context() into buildPlan so this command becomes
+		// cancellable once root-level signal wiring lands (cmd.Execute
+		// currently calls rootCmd.Execute(), not ExecuteContext, so
+		// cmd.Context() is nil today — in both production and tests).
+		// Guard against nil so the change is safe to land ahead of the
+		// root-level wiring.
+		ctx := cmd.Context()
+		if ctx == nil {
+			ctx = context.Background()
+		}
+
+		plan, err := buildPlan(ctx, resolver, args[0], planActive)
 		if err != nil {
 			if planJSON {
 				return output.Error(output.ErrNotFound, err.Error())
@@ -136,7 +158,13 @@ func renderPlanHuman(plan *Plan) error {
 	}
 
 	for _, item := range plan.Items {
-		fmt.Printf("  %d. [%s] %s (%s)\n", item.Position, item.Status, item.Title, item.ID)
+		// item.Order is always non-empty here: GetSortedSiblings backfills missing
+		// keys via Orderer.backfillOrderKeys before items are built.
+		if planWithOrder {
+			fmt.Printf("  %d. [%s] %s (%s) order=%s\n", item.Position, item.Status, item.Title, item.ID, item.Order)
+		} else {
+			fmt.Printf("  %d. [%s] %s (%s)\n", item.Position, item.Status, item.Title, item.ID)
+		}
 	}
 
 	return nil
@@ -145,5 +173,6 @@ func renderPlanHuman(plan *Plan) error {
 func init() {
 	planCmd.Flags().BoolVar(&planJSON, "json", false, "Output as JSON")
 	planCmd.Flags().BoolVar(&planActive, "active", false, "Show only active items (exclude completed/scrapped)")
+	planCmd.Flags().BoolVar(&planWithOrder, "with-order", false, "Show each item's order key in the default (non-JSON) output (JSON always includes order)")
 	rootCmd.AddCommand(planCmd)
 }

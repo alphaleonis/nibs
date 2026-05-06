@@ -9,6 +9,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ### Added
 - **`--columns` flag on `nibs list` and `nibs links`** — tab-separated tabular output with selectable fields. Comma-separated column names from a closed set: `id, slug, title, status, type, priority, estimate, order, parent, tags, created_at, updated_at`. Output is flat (one row per nib, no per-rel section headers — `links` implies `--flat` semantics: a single deduped row list across all requested rels). Mutually exclusive with `--json`; `nibs list --columns` is also mutually exclusive with `--quiet`. Empty fields render as the empty string; multi-value tag fields are comma-joined; time fields render as RFC3339 (or empty for nil).
+- `nibs plan --with-order` flag to display child order keys; `order` field now always present in `nibs plan --json` output. (Refs: nibs-s5sg.)
 
 ### Changed
 - `nibs links --rel children --order topo` now derives edges from each nib's `blocked_by` front-matter field only. Previously it also treated `#<id>` mentions in bodies as ordering edges, which contradicted the documented "mentions are informational only" contract and created spurious cycles when siblings cross-referenced each other for context. (Refs: nibs-q4pi, decision in nibs-t36b.)
