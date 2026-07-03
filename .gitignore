@@ -17,3 +17,4 @@ web/dist/
 /web/playwright-report/
 /nibs.exe
 
+/web/screenshots/output/

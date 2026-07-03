@@ -18,6 +18,7 @@ All commands use [Task](https://taskfile.dev/) (`go-task/task`) as the task runn
 - `cd web && npx vitest run --reporter=agent` - Run web tests only
 - `task demo` - Serve the web UI with the sample-project fixture (temporary copy, safe to mutate)
 - `task demo:tui` - Run the TUI with the sample-project fixture
+- `task screenshots` - Capture web UI screenshots to `web/screenshots/output/` for visual verification
 - `task --list` - List all available tasks
 
 ## GraphQL Schema Changes
@@ -135,6 +136,7 @@ Before starting any new work, run `git fetch` (and `git -C .nibs fetch`) and che
 - Web test commands require `web/` as the working directory. If cwd has drifted, `cd` to the project root's `web/` directory first.
 - **Always use `--reporter=agent`** when running vitest — it keeps output concise. Never pipe vitest through grep; read the output once.
 - `task test` runs both Go and web tests. No need to run them separately unless debugging a specific failure.
+- **Visual verification of the web UI**: `task screenshots` captures PNGs of the key UI states (table at each view level, detail panel, editor modal, context menu) into `web/screenshots/output/` (gitignored), served from a temp copy of the sample fixture. Read the PNGs to *see* rendered changes — jsdom tests can't verify pixels. One-time setup: `cd web && npx playwright install chromium` (plain `install`, not `--with-deps` — that flag is apt-only and fails on Fedora). Extend `web/screenshots/capture.spec.ts` when new views or themes land.
 - **bits-ui timer flush**: `test-setup.ts` has an `afterAll` that waits 50ms so bits-ui's body-scroll-lock deferred cleanup (24ms setTimeout) fires while jsdom still exists. Without this, the timer fires after jsdom teardown causing a spurious "document is not defined" error.
 
 ## Architecture Reviews
