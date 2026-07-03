@@ -66,7 +66,13 @@ Search Syntax (--search/-S):
   user OR login  Either term matches
   slug:auth      Search only in slug field
   title:login    Search only in title field
-  body:auth      Search only in body field`,
+  body:auth      Search only in body field
+
+  Single-token queries that look like a nib ID or ID fragment (e.g. 5a8k,
+  nibs-5a) also match directly by ID: a substring of the short ID (min 2
+  characters), a prefix of the full ID (starting with the configured
+  prefix), or an exact full ID, case-insensitive. ID matches are
+  interleaved with full-text hits by the list's sort order.`,
 	RunE: func(cmd *cobra.Command, args []string) error {
 		app := getApp(cmd)
 		// Build GraphQL filter from CLI flags
@@ -279,7 +285,7 @@ func truncate(s string, maxLen int) string {
 
 func init() {
 	listCmd.Flags().BoolVar(&listJSON, "json", false, "Output as JSON")
-	listCmd.Flags().StringVarP(&listSearch, "search", "S", "", "Full-text search in title and body")
+	listCmd.Flags().StringVarP(&listSearch, "search", "S", "", "Full-text search in title and body (nib IDs and ID fragments match directly)")
 	listCmd.Flags().StringArrayVarP(&listStatus, "status", "s", nil, "Filter by status (can be repeated)")
 	listCmd.Flags().StringArrayVar(&listNoStatus, "no-status", nil, "Exclude by status (can be repeated)")
 	listCmd.Flags().StringArrayVarP(&listType, "type", "t", nil, "Filter by type (can be repeated)")
