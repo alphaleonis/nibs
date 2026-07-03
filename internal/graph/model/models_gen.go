@@ -93,6 +93,14 @@ type NibChangeEvent struct {
 type NibFilter struct {
 	// Full-text search across slug, title, and body using Bleve query syntax.
 	//
+	// Single-token queries that look like a nib ID or ID fragment also match
+	// directly by ID: a substring of the short ID (at least 2 characters), a
+	// prefix of the full ID (starting with the configured prefix), or an exact
+	// full ID, case-insensitive, surrounding whitespace trimmed.
+	// When no sort is given, ID matches are returned first, followed by
+	// full-text hits in relevance order; an explicit sort overrides this
+	// ordering.
+	//
 	// Examples:
 	// - "login" - exact term match
 	// - "login~" - fuzzy match (1 edit distance)
@@ -104,6 +112,7 @@ type NibFilter struct {
 	// - "slug:auth" - search only slug field
 	// - "title:login" - search only title field
 	// - "body:auth" - search only body field
+	// - "5a8k" - also matches nibs whose ID contains "5a8k"
 	Search *string `json:"search,omitempty"`
 	// Include only nibs with these statuses (OR logic)
 	Status []string `json:"status,omitempty"`

@@ -9,6 +9,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 	"sync"
 	"time"
@@ -94,6 +95,8 @@ func (c *Core) SetWarnWriter(w io.Writer) {
 
 // SetSearchIndex sets a custom search index implementation.
 // When set, Core uses this instead of lazily initializing a Bleve index.
+// It controls only the full-text leg of Search: Core unions direct ID
+// matches (computed from the in-memory nib map) on top of index results.
 // It must be called before Load or any concurrent operations (not safe for concurrent use).
 func (c *Core) SetSearchIndex(idx SearchIndex) {
 	c.searchIndex = idx
@@ -265,8 +268,10 @@ func (c *Core) ensureSearchIndexLocked() error {
 	return nil
 }
 
-// Search performs full-text search and returns matching nibs.
-// The search index is lazily initialized on first use.
+// Search returns nibs matching the query: direct ID matches first (sorted by
+// ID), followed by full-text hits in relevance order. A nib matching both
+// appears once, in the ID-match position. Each leg is independently capped
+// at DefaultSearchLimit. The search index is lazily initialized on first use.
 func (c *Core) Search(query string) ([]*nib.Nib, error) {
 	// Ensure index is initialized (needs write lock for lazy init)
 	c.mu.Lock()
@@ -288,13 +293,146 @@ func (c *Core) Search(query string) ([]*nib.Nib, error) {
 	c.mu.RLock()
 	defer c.mu.RUnlock()
 
-	result := make([]*nib.Nib, 0, len(ids))
+	idMatches := c.idMatchesLocked(query)
+	seen := make(map[string]bool, len(idMatches))
+	for _, b := range idMatches {
+		seen[b.ID] = true
+	}
+
+	result := make([]*nib.Nib, 0, len(idMatches)+len(ids))
+	result = append(result, idMatches...)
 	for _, id := range ids {
+		if seen[id] {
+			continue
+		}
 		if b, ok := c.nibs[id]; ok {
 			result = append(result, b)
 		}
 	}
 	return result, nil
+}
+
+// idMatchesLocked returns nibs whose IDs match the query, sorted by ID and
+// capped at DefaultSearchLimit.
+// This complements the full-text index: the Bleve `id` field is a keyword
+// (unanalyzed) field, so query-string terms never match it there.
+// Must be called with at least a read lock held.
+func (c *Core) idMatchesLocked(query string) []*nib.Nib {
+	m := prepareIDQuery(query, c.configPrefix())
+	var matches []*nib.Nib
+	for id, b := range c.nibs {
+		if m.matches(id) {
+			matches = append(matches, b)
+		}
+	}
+	sort.Slice(matches, func(i, j int) bool { return matches[i].ID < matches[j].ID })
+	// Cap after sorting so the kept set is deterministic, mirroring the
+	// full-text leg's limit.
+	if len(matches) > DefaultSearchLimit {
+		matches = matches[:DefaultSearchLimit]
+	}
+	return matches
+}
+
+// minIDFragmentLen is the minimum query length for the short-ID substring
+// branch of (idQueryMatcher).matches. A 1-char query matches ~10% of all short IDs,
+// flooding results on the first keystroke of an interactive search.
+// Quoted in user-facing docs: schema.graphqls (NibFilter.search — regenerate
+// after editing) and cmd/list.go --search help; update those when changing
+// this value.
+const minIDFragmentLen = 2
+
+// normalizeSearchQuery prepares a search query for ID matching: surrounding
+// whitespace trimmed (pasted IDs commonly carry a trailing space) and
+// lowercased for case-insensitive comparison.
+func normalizeSearchQuery(query string) string {
+	return strings.ToLower(strings.TrimSpace(query))
+}
+
+// isIDFragment reports whether a normalized query consists solely of
+// short-ID characters: [0-9a-z], the generator alphabet (nib.idAlphabet in
+// internal/nib/id.go). Hyphens are deliberately excluded — they belong to
+// prefixes (reprefix.prefixPattern / ValidatePrefix), not short IDs, and
+// admitting them would let Bleve operator queries like `-42` (negation)
+// substring-match legacy or foreign-prefix IDs, which come from filenames
+// unvalidated and may keep a hyphen in their short form (e.g. `task-42`
+// under prefix `nibs-`). Queries bearing the configured prefix take the
+// prefix branch of (idQueryMatcher).matches before this gate applies; other
+// full IDs match via its exact-equality escape, so hyphenated foreign IDs
+// are otherwise findable only by charset-clean fragments.
+func isIDFragment(query string) bool {
+	for i := 0; i < len(query); i++ {
+		c := query[i]
+		if (c < '0' || c > '9') && (c < 'a' || c > 'z') {
+			return false
+		}
+	}
+	return true
+}
+
+// matchesIDQuery reports whether a search query matches a nib ID,
+// case-insensitively (via normalizeSearchQuery). A query equal to the full
+// ID or the short ID always matches; a query starting with the configured
+// prefix (with a non-empty remainder) must be a prefix of the full ID; any
+// other query of at least minIDFragmentLen characters matches as a
+// substring of the short ID (the full ID minus the prefix).
+//
+// Queries with internal whitespace or Bleve operators can't match: the
+// substring branch requires a pure ID fragment (isIDFragment), and the
+// prefix and equality branches require the query to literally match a real
+// ID. This is intentional — do not tokenize the query here.
+//
+// Test-only seam with no production callers: a pure single-shot entry that
+// delegates through prepareIDQuery, so table tests exercise the same logic
+// idMatchesLocked runs per nib (cf. the oracle convention in mentions.go).
+func matchesIDQuery(query, id, prefix string) bool {
+	return prepareIDQuery(query, prefix).matches(id)
+}
+
+// idQueryMatcher carries the query-only parts of ID matching, precomputed
+// by prepareIDQuery so idMatchesLocked doesn't redo them for every nib.
+type idQueryMatcher struct {
+	// query is the normalized (trimmed, lowercased) search query.
+	query string
+	// prefix is the lowercased configured prefix (never trimmed).
+	prefix string
+	// prefixed: query bears the configured prefix with a non-empty
+	// remainder, so it must literally prefix the full ID.
+	prefixed bool
+	// fragment: query is a charset-clean fragment (isIDFragment) of at
+	// least minIDFragmentLen characters, eligible for substring matching.
+	fragment bool
+}
+
+// prepareIDQuery normalizes the raw query and prefix and evaluates the
+// query-only checks once. Match per-ID with (idQueryMatcher).matches.
+func prepareIDQuery(query, prefix string) idQueryMatcher {
+	query = normalizeSearchQuery(query)
+	prefix = strings.ToLower(prefix)
+	return idQueryMatcher{
+		query:    query,
+		prefix:   prefix,
+		prefixed: prefix != "" && strings.HasPrefix(query, prefix) && len(query) > len(prefix),
+		fragment: len(query) >= minIDFragmentLen && isIDFragment(query),
+	}
+}
+
+// matches applies the prepared query to one nib ID. See matchesIDQuery for
+// the matching rules.
+func (m idQueryMatcher) matches(id string) bool {
+	id = strings.ToLower(id)
+	shortID := strings.TrimPrefix(id, m.prefix)
+
+	// Exact equality bypasses the fragment charset gate below, so legacy or
+	// foreign-prefix IDs whose short form keeps a hyphen (e.g. task-42 under
+	// prefix nibs-) stay findable by their own full ID.
+	if m.query == id || m.query == shortID {
+		return true
+	}
+	if m.prefixed {
+		return strings.HasPrefix(id, m.query)
+	}
+	return m.fragment && strings.Contains(shortID, m.query)
 }
 
 // All returns a slice of all nibs.

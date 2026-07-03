@@ -14,6 +14,10 @@ import (
 // prefixPattern is the regex a valid nib prefix must match: lowercase
 // alphanumerics followed by zero or more lowercase alphanumerics or dashes,
 // ending in a trailing dash.
+// nibcore's search ID-match gate (isIDFragment in internal/nibcore/core.go)
+// mirrors the short-ID charset [0-9a-z] this pattern builds on: foreign or
+// legacy hyphenated IDs match only by exact equality or by charset-clean
+// fragments — revisit that gate if this pattern loosens.
 var prefixPattern = regexp.MustCompile(`^[a-z0-9][a-z0-9-]*-$`)
 
 const (

@@ -2,11 +2,15 @@ package nibcore
 
 import "github.com/alphaleonis/nibs/internal/nib"
 
-// DefaultSearchLimit is the default maximum number of search results.
+// DefaultSearchLimit caps each leg of Core.Search independently: the
+// full-text index query and the direct ID match are each limited to this
+// many results, so a combined result may hold up to twice this many nibs.
 const DefaultSearchLimit = 1000
 
 // SearchIndex abstracts full-text search so that nibcore.Core can work with
 // pluggable implementations (real Bleve index, no-op for tests, etc.).
+// Implementations control only the full-text leg of Core.Search: Core unions
+// direct ID matches on top of whatever the index returns.
 //
 // Implementations must be safe for concurrent use after construction.
 // Core calls IndexNib/IndexNibs/DeleteNib under its own mutex, but calls
@@ -26,7 +30,9 @@ type SearchIndex interface {
 }
 
 // NoOpSearchIndex is a search index that does nothing. Useful for tests
-// that exercise Core logic but don't need search functionality.
+// that exercise Core logic but don't need search functionality. Injecting
+// it silences only the full-text leg of Core.Search: direct ID matching
+// runs against the in-memory nib map regardless of the index.
 type NoOpSearchIndex struct{}
 
 func (NoOpSearchIndex) IndexNib(*nib.Nib) error              { return nil }

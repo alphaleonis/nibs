@@ -398,8 +398,9 @@ func TestSearch_WithInjectedNoOpIndex(t *testing.T) {
 		t.Fatalf("Create() error = %v", err)
 	}
 
-	// Search should return empty results (no-op)
-	results, err := core.Search("NoOp")
+	// Search should return empty results (no-op). The query must not
+	// resemble the nib ID: Core-level ID matching works even without an index.
+	results, err := core.Search("Bleve")
 	if err != nil {
 		t.Fatalf("Search() error = %v", err)
 	}

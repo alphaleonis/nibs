@@ -51,7 +51,7 @@ nibs show --json <id> [id...]
 nibs list --json                      # All nibs
 nibs list --json --ready              # Nibs ready to start (not blocked, excludes in-progress/completed/scrapped/draft)
 nibs list --json -t bug -s todo       # Filter by type and status
-nibs list --json -S "authentication"  # Full-text search
+nibs list --json -S "authentication"  # Full-text search; an ID or ID fragment (e.g. "5a8k") also matches nibs directly by ID
 nibs list --columns id,status,title   # Tab-separated tabular output (flat); selectable columns from: id, slug, title, status, type, priority, estimate, order, parent, tags, created_at, updated_at. Mutually exclusive with --json and --quiet.
 nibs list --help                      # Full options
 
@@ -328,6 +328,6 @@ nibs query --json '{ nib(id: "nib-abc") { title body parent { title } children {
 # Find high-priority bugs
 nibs query --json '{ nibs(filter: { type: ["bug"], priority: ["critical", "high"] }) { id title } }'
 
-# Search with text
+# Search with text (an ID or ID fragment like "5a8k" also matches nibs directly by ID, returned first)
 nibs query --json '{ nibs(filter: { search: "authentication" }) { id title body } }'
 ```
