@@ -79,6 +79,13 @@ tasks:
     cmds:
       - npx playwright test
 
+  screenshots:
+    desc: Capture web UI screenshots for visual verification (web/screenshots/output)
+    deps: [web:build]
+    dir: web
+    cmds:
+      - npx playwright test --config=playwright.screenshots.config.ts
+
   demo:
     desc: Serve the web UI with the sample project fixture (temporary copy)
     # Task's built-in u-root mktemp defaults to /tmp (which doesn't exist on
