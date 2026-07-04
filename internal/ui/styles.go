@@ -320,7 +320,9 @@ func ShortType(t string) string {
 
 // ShortStatus returns a single-character code for the nib status.
 // Derived from the first letter of each entry in config.DefaultStatuses,
-// uppercased. Returns "?" for unknown or empty values.
+// uppercased — with one exception: "deferred" maps to "F" (not "D") so it does
+// not collide with "draft", which keeps "D". Returns "?" for unknown or empty
+// values.
 func ShortStatus(s string) string {
 	if s == "" {
 		return "?"

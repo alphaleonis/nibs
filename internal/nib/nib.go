@@ -182,6 +182,20 @@ type Nib struct {
 
 	// Order is a fractional index string for sorting among siblings.
 	Order string `yaml:"order,omitempty" json:"order,omitempty"`
+
+	// priorityMigrated is a transient flag (never serialized) set by Parse when
+	// a legacy `priority: deferred` value was normalized to `low`. The loader
+	// reads it via PriorityMigrated() to persist the normalization so that the
+	// on-disk value converges with memory at load time.
+	priorityMigrated bool
+}
+
+// PriorityMigrated reports whether Parse normalized a legacy `priority: deferred`
+// value to `low` for this nib. The loader persists such nibs so the on-disk
+// value converges with the in-memory value (avoiding an etag divergence that
+// would break if-match updates). See the migration note in Parse.
+func (b *Nib) PriorityMigrated() bool {
+	return b.priorityMigrated
 }
 
 // frontMatter is the subset of Nib that gets serialized to YAML front matter.
@@ -226,28 +240,41 @@ func Parse(r io.Reader) (*Nib, error) {
 
 	// Migration: "deferred" was removed as a priority and reintroduced as a
 	// status. Files written before the change may still carry
-	// `priority: deferred`. Normalize it to "low" in memory so such files load
-	// without error and sort sanely; the normalized value persists on next write.
+	// `priority: deferred`. Priority was never validated at parse time, so such
+	// a file already loaded; the point of this normalization is to produce a
+	// valid, sanely-sortable value on the current (deferred-free) priority axis.
+	// We target "low" because "deferred" was the *lowest* priority — ranked
+	// below "low" in the old enum — so mapping it to "low" preserves its
+	// relative rank. (Do not "tidy" this to "normal": that would silently
+	// re-rank legacy nibs upward.) The value is normalized in memory here so it
+	// is always valid even without a Core; when loaded through a Core, the
+	// loader persists it (see Core.migrateDeferredPriority) so disk and memory
+	// agree immediately — otherwise the read etag (hash of Render() → "low")
+	// diverges from the write-side etag (hash of raw disk bytes → "deferred")
+	// and if-match updates fail.
+	priorityMigrated := false
 	if fm.Priority == "deferred" {
 		fm.Priority = "low"
+		priorityMigrated = true
 	}
 
 	return &Nib{
-		Version:   fm.Version,
-		Title:     fm.Title,
-		Status:    fm.Status,
-		Type:      fm.Type,
-		Priority:  fm.Priority,
-		Estimate:  fm.Estimate,
-		Tags:      fm.Tags,
-		CreatedAt: fm.CreatedAt,
-		UpdatedAt: fm.UpdatedAt,
-		Body:      bodyStr,
-		Parent:    fm.Parent,
-		Blocking:  fm.Blocking,
-		BlockedBy: fm.BlockedBy,
-		Documents: fm.Documents,
-		Order:     fm.Order,
+		Version:          fm.Version,
+		Title:            fm.Title,
+		Status:           fm.Status,
+		Type:             fm.Type,
+		Priority:         fm.Priority,
+		Estimate:         fm.Estimate,
+		Tags:             fm.Tags,
+		CreatedAt:        fm.CreatedAt,
+		UpdatedAt:        fm.UpdatedAt,
+		Body:             bodyStr,
+		Parent:           fm.Parent,
+		Blocking:         fm.Blocking,
+		BlockedBy:        fm.BlockedBy,
+		Documents:        fm.Documents,
+		Order:            fm.Order,
+		priorityMigrated: priorityMigrated,
 	}, nil
 }
 

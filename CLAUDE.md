@@ -52,7 +52,7 @@ The GraphQL engine runs in-process for CLI commands (`cmd/graphql.go` executes q
 - **`internal/nib/`** - Core `Nib` struct, Markdown+YAML parsing/rendering, ID generation, sorting
 - **`internal/nibcore/`** - `Core` type: thread-safe in-memory nib store with filesystem persistence, file watching (fsnotify), search (Bleve), and archive management
 - **`internal/graph/`** - gqlgen GraphQL layer. `schema.graphqls` is the schema, `schema.resolvers.go` has resolver implementations, `resolver.go` has shared validation logic (parent hierarchy, cycle detection, etag validation)
-- **`internal/config/`** - Configuration from `.nibs.yml`. Hardcoded enums: statuses (draft/todo/in-progress/completed/scrapped), types (milestone/epic/bug/feature/task), priorities (critical/high/normal/low/deferred)
+- **`internal/config/`** - Configuration from `.nibs.yml`. Hardcoded enums: statuses (draft/todo/in-progress/deferred/completed/scrapped), types (milestone/epic/bug/feature/task), priorities (critical/high/normal/low)
 - **`internal/tui/`** - Bubbletea TUI app. Uses the GraphQL resolver internally for all mutations
 - **`internal/search/`** - Bleve full-text search index (lazy-initialized, in-memory)
 - **`internal/ui/`** - Shared UI utilities (styles, tree rendering)

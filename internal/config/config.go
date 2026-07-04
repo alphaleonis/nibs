@@ -19,7 +19,9 @@ const (
 
 // DefaultStatuses defines the hardcoded status configuration.
 // Statuses are not configurable - they are hardcoded like types.
-// Order determines sort priority: in-progress first (active work), then todo, draft, and done states last.
+// Order determines sort priority: in-progress first (active work), then todo
+// and draft, then deferred (parked, non-terminal), and the archived terminal
+// states (completed, scrapped) last.
 var DefaultStatuses = []StatusConfig{
 	{Name: "in-progress", Color: "yellow", Description: "Currently being worked on"},
 	{Name: "todo", Color: "green", Description: "Ready to be worked on"},

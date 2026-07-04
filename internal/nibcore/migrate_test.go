@@ -1,6 +1,7 @@
 package nibcore
 
 import (
+	"errors"
 	"os"
 	"path/filepath"
 	"strings"
@@ -76,6 +77,71 @@ func TestCheckBrokenDocuments(t *testing.T) {
 		}
 		if len(updated.Documents) > 0 && updated.Documents[0] != "existing.md" {
 			t.Errorf("Documents = %v, want [existing.md]", updated.Documents)
+		}
+	})
+}
+
+func TestMigrateDeferredPriority(t *testing.T) {
+	t.Run("persists deferred->low at load and converges if-match etag", func(t *testing.T) {
+		tmpDir := t.TempDir()
+		nibsDir := filepath.Join(tmpDir, NibsDir)
+		if err := os.MkdirAll(nibsDir, 0755); err != nil {
+			t.Fatal(err)
+		}
+
+		// A canonically-formatted v1 nib carrying the removed `priority: deferred`.
+		const filename = "def1--legacy.md"
+		writeNibFile(t, nibsDir, filename, `---
+version: 1
+title: Legacy Deferred
+status: todo
+priority: deferred
+---
+`)
+
+		cfg := config.Default()
+		core := New(nibsDir, cfg)
+		core.SetWarnWriter(nil)
+		if err := core.Load(); err != nil {
+			t.Fatalf("Load() error: %v", err)
+		}
+
+		// In memory: normalized to "low".
+		b, err := core.Get("def1")
+		if err != nil {
+			t.Fatalf("Get() error: %v", err)
+		}
+		if b.Priority != "low" {
+			t.Errorf("in-memory Priority = %q, want %q", b.Priority, "low")
+		}
+
+		// On disk: the normalization must be persisted at load (not deferred to
+		// the next write), so disk == memory immediately.
+		diskBytes, err := os.ReadFile(filepath.Join(nibsDir, filename))
+		if err != nil {
+			t.Fatalf("reading migrated file: %v", err)
+		}
+		disk := string(diskBytes)
+		if strings.Contains(disk, "deferred") {
+			t.Errorf("on-disk file still contains 'deferred':\n%s", disk)
+		}
+		if !strings.Contains(disk, "priority: low") {
+			t.Errorf("on-disk file missing 'priority: low':\n%s", disk)
+		}
+
+		// Read etag → if-match Update round-trip must succeed (no ETagMismatchError).
+		// The read path exposes the in-memory nib's ETag(); the write path validates
+		// against the on-disk etag. Persisting at load makes them agree.
+		readETag := b.ETag()
+		updated := b.Clone()
+		updated.Title = "Legacy Deferred (edited)"
+		if err := core.Update(updated, &readETag); err != nil {
+			var mismatch *ETagMismatchError
+			if errors.As(err, &mismatch) {
+				t.Fatalf("if-match Update returned ETagMismatchError (etag divergence not fixed): provided=%s current=%s",
+					mismatch.Provided, mismatch.Current)
+			}
+			t.Fatalf("if-match Update failed: %v", err)
 		}
 	})
 }

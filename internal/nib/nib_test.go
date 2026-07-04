@@ -207,6 +207,18 @@ priority: deferred
 ---`,
 			expectedPriority: "low",
 		},
+		{
+			// Pins the migration to the single literal "deferred": any other
+			// (even invalid) priority must pass through Parse unmodified, so a
+			// future edit can't silently widen the normalization.
+			name: "non-deferred invalid priority passes through unchanged",
+			input: `---
+title: Odd Task
+status: todo
+priority: urgent
+---`,
+			expectedPriority: "urgent",
+		},
 	}
 
 	for _, tt := range tests {

@@ -7,6 +7,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Changed
+- **BREAKING:** `deferred` is now a nib *status* (parked; non-terminal; excluded from `--ready`) instead of a priority. The priority axis is now `critical / high / normal / low`, and `--priority deferred` is no longer accepted. Existing nibs with `priority: deferred` are normalized to `priority: low` on load — its lowest-rank equivalent — and the normalization is persisted immediately so on-disk and in-memory values agree. (Refs: nibs-0m5d.)
+
 ### Fixed
 - Keyword search (web keyword box, `nibs list -S`, GraphQL `search:`) now matches nib IDs and ID fragments directly: a substring of the short ID (very short fragments excluded), a prefix of the full ID, or an exact full ID, case-insensitive, surrounding whitespace trimmed. In queries without an explicit sort (e.g. `nibs query`), ID matches come first (sorted by ID, capped at the search limit), followed by full-text hits in relevance order; sorted surfaces (`nibs list`, the web view) interleave them per their sort. A nib matching both appears once. Previously an ID query returned nothing because the index stores `id` as an unanalyzed keyword field. (Refs: nibs-sn96.)
 

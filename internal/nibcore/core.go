@@ -161,6 +161,13 @@ func (c *Core) loadFromDisk() error {
 		return fmt.Errorf("migration v0→v1: %w", err)
 	}
 
+	// Persist the legacy `priority: deferred` → `low` normalization so that the
+	// on-disk value matches the in-memory one (avoids an etag divergence that
+	// breaks if-match updates).
+	if err := c.migrateDeferredPriority(); err != nil {
+		return fmt.Errorf("migration deferred-priority: %w", err)
+	}
+
 	// Rebuild the reverse-mention index from the loaded bodies. Must run
 	// after migration so the index sees the final body state.
 	c.mentionIdx.Rebuild(c.nibs)

@@ -122,7 +122,7 @@ func TestNibsSortByPriority(t *testing.T) {
 		t.Fatalf("got %d nibs, want 4", len(got))
 	}
 
-	// Config order: critical, high, normal, low, deferred
+	// Config order: critical, high, normal, low
 	wantOrder := []string{"sort-2", "sort-4", "sort-3", "sort-1"}
 	for i, want := range wantOrder {
 		if got[i].ID != want {

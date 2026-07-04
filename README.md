@@ -133,8 +133,8 @@ Run `nibs <command> --help` for full usage details.
 Each nib has:
 
 - **Type**: milestone, epic, feature, task, or bug
-- **Status**: draft, todo, in-progress, completed, or scrapped
-- **Priority** (optional): critical, high, normal, low, or deferred
+- **Status**: draft, todo, in-progress, deferred, completed, or scrapped
+- **Priority** (optional): critical, high, normal, or low
 - **Estimate** (optional): s, m, l, or xl (t-shirt sizes)
 - **Tags**: freeform labels for categorization
 - **Relationships**: parent/child hierarchy, blocking/blocked-by dependencies, document links
