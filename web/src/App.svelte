@@ -24,6 +24,7 @@
   import * as Resizable from "./lib/components/ui/resizable";
   import type ResizablePane from "./lib/components/ui/resizable/resizable-pane.svelte";
   import { Toaster } from "./lib/components/ui/sonner";
+  import { toast } from "svelte-sonner";
   import { initMutationStore } from "./lib/mutations";
   import {
     reparentBatch,
@@ -77,6 +78,18 @@
   provideEditorOrchestration(editor);
   // Collect unique tags from the query results via TreeTable callback
   let availableTags: string[] = $state([]);
+
+  // The open nib resolved to nothing (deleted / archived / stale link): close the
+  // panel, heal the stale ?nib= URL, and tell the user why it vanished. Deferred
+  // to a microtask so we don't mutate selection during DetailPanel's own effect
+  // flush (nibs-etk3).
+  function handleMissingNib(id: string) {
+    queueMicrotask(() => {
+      selection.close();
+      nav.replaceClosed();
+      toast.error(`Nib ${id} no longer exists`);
+    });
+  }
 
   function handleTagsChange(tags: string[]) {
     availableTags = tags;
@@ -280,6 +293,7 @@
             nibId={selection.selectedNibId}
             onclose={() => nav.closePanel()}
             onnibselect={(nibId) => nav.navigateToNib(nibId)}
+            onmissing={handleMissingNib}
             onedit={editor.handleEditNib}
             onaddchild={editor.handleAddChild}
           />

@@ -495,6 +495,34 @@ describe("DetailPanel", () => {
     expect(screen.getByText("Error loading nib")).toBeInTheDocument();
   });
 
+  it("fires onmissing(nibId) once when the nib is not found (nibs-etk3)", async () => {
+    mockNibQuery(null); // settled, no error, nib === null
+
+    const onmissing = vi.fn();
+    renderPanel({ nibId: "nibs-gone", onclose: vi.fn(), onmissing });
+
+    await waitFor(() => expect(onmissing).toHaveBeenCalledWith("nibs-gone"));
+    expect(onmissing).toHaveBeenCalledTimes(1);
+  });
+
+  it("does NOT fire onmissing while the nib is loaded (nibs-etk3)", () => {
+    mockNibQuery(makeNibData());
+
+    const onmissing = vi.fn();
+    renderPanel({ nibId: "nibs-abc1", onclose: vi.fn(), onmissing });
+
+    expect(onmissing).not.toHaveBeenCalled();
+  });
+
+  it("does NOT fire onmissing on a query error — could be transient, don't clear the URL (nibs-etk3)", () => {
+    setupQueryDispatch({ error: { message: "Network error" } });
+
+    const onmissing = vi.fn();
+    renderPanel({ nibId: "nibs-abc1", onclose: vi.fn(), onmissing });
+
+    expect(onmissing).not.toHaveBeenCalled();
+  });
+
   it("tag input rejects duplicate tags", async () => {
     mockNibQuery(makeNibData({ tags: ["existing-tag"] }));
 

@@ -2,7 +2,7 @@ import { render, screen } from "@testing-library/svelte";
 import { userEvent } from "@testing-library/user-event";
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import App from "./App.svelte";
-import { CONFIG_QUERY } from "./lib/queries";
+import { CONFIG_QUERY, NIB_DETAIL_QUERY } from "./lib/queries";
 
 vi.mock("@urql/svelte", async () => {
   const { readable } = await import("svelte/store");
@@ -58,6 +58,35 @@ vi.mock("@urql/svelte", async () => {
     stale: false,
   });
 
+  // DetailPanel runs NIB_DETAIL_QUERY; it must resolve to a real nib or the panel
+  // now treats it as not-found and self-closes (nibs-etk3). Layout tests only need
+  // the panel to render, so a single static nib suffices.
+  const nibDetailData = readable({
+    fetching: false,
+    error: undefined,
+    data: {
+      nib: {
+        id: "nibs-m1",
+        title: "Test milestone",
+        status: "in-progress",
+        type: "milestone",
+        priority: "normal",
+        estimate: "",
+        tags: [],
+        body: "",
+        documents: [],
+        etag: "etag-m1",
+        parent: null,
+        children: [],
+        blocking: [],
+        blockedBy: [],
+        mentions: [],
+        mentionedBy: [],
+      },
+    },
+    stale: false,
+  });
+
   return {
     ...actual,
     getContextClient: vi.fn(),
@@ -65,6 +94,9 @@ vi.mock("@urql/svelte", async () => {
     queryStore: vi.fn().mockImplementation((opts: { query: unknown }) => {
       if (opts.query === CONFIG_QUERY) {
         return configData;
+      }
+      if (opts.query === NIB_DETAIL_QUERY) {
+        return nibDetailData;
       }
       return nibsData;
     }),
