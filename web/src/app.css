@@ -249,6 +249,11 @@
 
 /* Shared markdown prose styles for nib body rendering */
 .prose-nib {
+  /* Explicit base size so rendered prose is identical regardless of ancestor
+     context: the full-screen editor renders inside a shadcn Dialog (which carries
+     `text-sm`) while the detail panel inherits the app default (16px) — without
+     this the same markdown rendered 14px in the editor and 16px in the panel. */
+  font-size: 0.875rem;
   line-height: 1.6;
   color: var(--foreground);
   overflow-wrap: break-word;
