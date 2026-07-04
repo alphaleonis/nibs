@@ -5,6 +5,43 @@ import (
 	"testing"
 )
 
+func TestIsIDChar(t *testing.T) {
+	// Every byte in the generator alphabet must be accepted: this is the
+	// equivalence pin that keeps derived charset gates (e.g. nibcore's
+	// isIDFragment) aligned with idAlphabet as the single source of truth.
+	for i := 0; i < len(idAlphabet); i++ {
+		c := idAlphabet[i]
+		if !IsIDChar(c) {
+			t.Errorf("IsIDChar(%q) = false, want true (byte is in idAlphabet)", c)
+		}
+	}
+
+	rejects := []struct {
+		name string
+		c    byte
+	}{
+		{"uppercase A", 'A'},
+		{"uppercase Z", 'Z'},
+		{"dash", '-'},
+		{"space", ' '},
+		{"dot", '.'},
+		{"underscore", '_'},
+		{"slash", '/'},
+		{"digit boundary below zero", '/'}, // '/' is '0'-1
+		{"alpha boundary below a", '`'},     // '`' is 'a'-1
+		{"alpha boundary above z", '{'},     // '{' is 'z'+1
+		{"high-bit non-ASCII", 0xE9},        // 'é' in latin-1
+		{"NUL", 0x00},
+	}
+	for _, tt := range rejects {
+		t.Run(tt.name, func(t *testing.T) {
+			if IsIDChar(tt.c) {
+				t.Errorf("IsIDChar(%q / 0x%02x) = true, want false", tt.c, tt.c)
+			}
+		})
+	}
+}
+
 func TestSlugify(t *testing.T) {
 	tests := []struct {
 		name     string

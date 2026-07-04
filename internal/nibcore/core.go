@@ -421,8 +421,9 @@ func normalizeSearchQuery(query string) string {
 }
 
 // isIDFragment reports whether a normalized query consists solely of
-// short-ID characters: [0-9a-z], the generator alphabet (nib.idAlphabet in
-// internal/nib/id.go). Hyphens are deliberately excluded — they belong to
+// short-ID characters: [0-9a-z], as gated by nib.IsIDChar (derived from
+// nib.idAlphabet, the single source of truth for the short-ID charset).
+// Hyphens are deliberately excluded — they belong to
 // prefixes (reprefix.prefixPattern / ValidatePrefix), not short IDs, and
 // admitting them would let Bleve operator queries like `-42` (negation)
 // substring-match legacy or foreign-prefix IDs, which come from filenames
@@ -433,8 +434,7 @@ func normalizeSearchQuery(query string) string {
 // are otherwise findable only by charset-clean fragments.
 func isIDFragment(query string) bool {
 	for i := 0; i < len(query); i++ {
-		c := query[i]
-		if (c < '0' || c > '9') && (c < 'a' || c > 'z') {
+		if !nib.IsIDChar(query[i]) {
 			return false
 		}
 	}

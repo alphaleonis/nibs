@@ -10,6 +10,14 @@ import (
 
 const idAlphabet = "0123456789abcdefghijklmnopqrstuvwxyz"
 
+// IsIDChar reports whether c is a valid short-ID character, i.e. a member of
+// idAlphabet ([0-9a-z]). This is THE charset gate other packages must reuse
+// instead of hand-rolling byte-range checks — idAlphabet is the single source
+// of truth for the nib short-ID charset, and this predicate is derived from it.
+func IsIDChar(c byte) bool {
+	return strings.IndexByte(idAlphabet, c) >= 0
+}
+
 // NewID generates a new NanoID for a nib with an optional prefix and configurable length.
 func NewID(prefix string, length int) string {
 	id, err := gonanoid.Generate(idAlphabet, length)
