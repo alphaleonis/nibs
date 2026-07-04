@@ -39,6 +39,7 @@ describe("useKeyboardNav", () => {
     collapsedIds?: Set<string>;
     toggleNode?: (id: string) => void;
     onDragKeyDown?: (e: KeyboardEvent) => void;
+    navigateToNib?: (id: string) => void;
   } = {}) {
     const selection = overrides.selection ?? new SelectionState();
     const rows = overrides.rows ?? [];
@@ -46,6 +47,7 @@ describe("useKeyboardNav", () => {
     const collapsedIds = overrides.collapsedIds ?? new Set<string>();
     const toggleNode = overrides.toggleNode ?? vi.fn();
     const onDragKeyDown = overrides.onDragKeyDown ?? vi.fn();
+    const navigateToNib = overrides.navigateToNib ?? vi.fn((id: string) => selection.select(id));
     const scrollContainer = document.createElement("div");
 
     const result = useKeyboardNav({
@@ -56,9 +58,10 @@ describe("useKeyboardNav", () => {
       toggleNode,
       getScrollContainer: () => scrollContainer,
       onDragKeyDown,
+      navigateToNib,
     });
 
-    return { ...result, selection, toggleNode, onDragKeyDown };
+    return { ...result, selection, toggleNode, onDragKeyDown, navigateToNib };
   }
 
   function keydown(key: string, opts: KeyboardEventInit = {}): KeyboardEvent {
@@ -168,11 +171,15 @@ describe("useKeyboardNav", () => {
     const nib1 = makeNib({ id: "nibs-001" });
     const nib2 = makeNib({ id: "nibs-002" });
     const rows = [makeRow(nib1), makeRow(nib2)];
-    const { handleKeydown } = setup({ selection, rows });
+    const { handleKeydown, navigateToNib } = setup({ selection, rows });
 
     handleKeydown(keydown("Enter"));
 
     expect(selection.selectedNibId).toBe("nibs-002");
+    // Enter must route through the injected navigateToNib (browser-history push /
+    // URL sync), not call selection.select directly — a regression back to the latter
+    // would still pass the assertion above but silently drop history. nibs-58c3.
+    expect(navigateToNib).toHaveBeenCalledWith("nibs-002");
   });
 
   it("Space toggles focused row selection", () => {

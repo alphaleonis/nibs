@@ -78,6 +78,10 @@ const mockQueryStore = vi.mocked(queryStore);
 describe("App", () => {
   beforeEach(() => {
     mockQueryStore.mockClear();
+    // App now syncs selection from the URL on mount, and clicks push history.
+    // jsdom shares window.history/location across tests in a file, so reset to a
+    // clean URL before each test to mirror a fresh page load.
+    window.history.replaceState(null, "", "/");
   });
 
   it("renders with dark theme shell containing Toolbar and TreeTable", () => {

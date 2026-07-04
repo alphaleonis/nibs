@@ -10,7 +10,7 @@
   import TreeTableRow from "./TreeTableRow.svelte";
   import { Plus, Minus } from "@lucide/svelte";
   import type { DropZone } from "../drag.svelte";
-  import { useSelection, useDrag } from "../contexts";
+  import { useSelection, useDrag, useHistoryNav } from "../contexts";
   import { useColumnResize } from "../composables/useColumnResize.svelte";
   import { useTreeDrag } from "../composables/useTreeDrag.svelte";
   import { useKeyboardNav } from "../composables/useKeyboardNav.svelte";
@@ -49,6 +49,7 @@
 
   const selection = useSelection();
   const drag = useDrag();
+  const nav = useHistoryNav();
 
   // Resolve values: prefs takes precedence over individual props
   let resolvedFilter = $derived(resolveFilter(prefs, filter));
@@ -141,6 +142,15 @@
   let parentIds = $derived(tableData.parentIds);
   let visibleRowIds = $derived(rows.map(r => r.nib.id));
 
+  // Structural equality for two string sets (size + membership).
+  function sameSet(a: Set<string>, b: Set<string>): boolean {
+    if (a.size !== b.size) return false;
+    for (const x of a) {
+      if (!b.has(x)) return false;
+    }
+    return true;
+  }
+
   // --- Ensure-visible: expand collapsed ancestors and scroll into view ---
   $effect(() => {
     const nibId = selection.pendingEnsureVisibleId;
@@ -152,25 +162,44 @@
       nibMap.set(nib.id, nib);
     }
 
-    // If the nib doesn't exist in the dataset, clear and bail
+    // The nib isn't in the dataset. Two distinct cases must NOT be conflated:
+    //   - Query still loading (cold deep-link fires syncFromUrl before the
+    //     GraphQL result lands, so allNibs is []): keep the pending request so
+    //     the expand/scroll runs once data arrives (nibs-58c3 AC3). Reading
+    //     $result.fetching also subscribes the effect to re-run on settle.
+    //   - Query settled and the nib is genuinely absent (archived/bad URL):
+    //     clear and bail — there is nothing to scroll to.
     if (!nibMap.has(nibId)) {
-      selection.clearEnsureVisible();
+      if (!$result.fetching) {
+        selection.clearEnsureVisible();
+      }
       return;
     }
 
-    // If the nib is not currently visible, expand collapsed ancestors
+    // The nib is in the dataset but not currently visible. Try to expand its
+    // collapsed ancestors so it becomes reachable.
     if (!visibleRowIds.includes(nibId)) {
       const next = new Set(collapsedIds);
       let current = nibMap.get(nibId);
       while (current?.parentId) {
-        if (next.has(current.parentId)) {
-          next.delete(current.parentId);
-        }
+        next.delete(current.parentId);
         current = nibMap.get(current.parentId);
       }
+      // If expansion changes nothing yet the nib is still not visible, it is in
+      // the dataset but excluded from the visible rows — by an active client
+      // filter OR the current view level (e.g. viewLevel='milestones' drops a
+      // top-level epic via buildViewTree), regardless of collapse state.
+      // Ancestor-expansion can never reveal it, so clear and bail — otherwise
+      // reassigning `collapsedIds` to a new Set every pass would loop forever
+      // (effect_update_depth_exceeded).
+      if (sameSet(next, collapsedIds)) {
+        selection.clearEnsureVisible();
+        return;
+      }
+      // Ancestors were collapsed — expand them and let the effect re-run once
+      // visibleRowIds updates (either the nib appears, or the next pass hits
+      // the filtered-out guard above and clears).
       collapsedIds = next;
-      // After expanding, the nib will appear in the next reactive cycle.
-      // We return here and let the effect re-run once visibleRowIds updates.
       return;
     }
 
@@ -258,6 +287,7 @@
     toggleNode,
     getScrollContainer: () => scrollContainerEl ?? null,
     onDragKeyDown: treeDrag.onDragKeyDown,
+    navigateToNib: nav.navigateToNib,
   });
 
   // --- Event delegation helpers ---
@@ -296,7 +326,7 @@
     }
 
     if (action === "title") {
-      selection.select(nibId);
+      nav.navigateToNib(nibId);
       return; // Title click selects, not row click
     }
 
@@ -306,13 +336,20 @@
       return; // Don't fire row click for add-child
     }
 
-    // Default: row click with modifier handling
+    // Default: row click with modifier handling.
+    // Shift/Ctrl-Cmd are bulk-selection gestures — intentionally NOT routed
+    // through nav, so they record no Back/Forward history entry. Note that a
+    // collapse-to-exactly-one still opens the single-nib panel (and collapse-to-
+    // zero closes it) without a history push, so URL/history can lag selection
+    // after these gestures; that's accepted because multi-select is a bulk
+    // gesture, not detail-panel navigation (nibs-58c3).
+    // Only a plain click is treated as navigation.
     if (e.shiftKey) {
       selection.rangeSelect(nibId, visibleRowIds);
     } else if (e.ctrlKey || e.metaKey) {
       selection.toggleSelect(nibId);
     } else {
-      selection.select(nibId);
+      nav.navigateToNib(nibId);
     }
   }
 
@@ -322,7 +359,7 @@
     const nibId = getNibIdFromEvent(e);
     if (!nibId) return;
 
-    selection.select(nibId);
+    nav.navigateToNib(nibId);
   }
 
   function handleDelegatedContextMenu(e: MouseEvent) {

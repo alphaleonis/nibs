@@ -9,6 +9,7 @@ export function useKeyboardNav(opts: {
   toggleNode: (id: string) => void;
   getScrollContainer: () => HTMLElement | null;
   onDragKeyDown: (e: KeyboardEvent) => void;
+  navigateToNib: (id: string) => void;
 }): {
   handleKeydown: (e: KeyboardEvent) => void;
 } {
@@ -106,7 +107,7 @@ export function useKeyboardNav(opts: {
       case "Enter": {
         event.preventDefault();
         if (focusedIndex >= 0) {
-          selection.select(currentRows[focusedIndex].nib.id);
+          opts.navigateToNib(currentRows[focusedIndex].nib.id);
         }
         break;
       }

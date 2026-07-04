@@ -8,6 +8,7 @@
 
 import { bindGlobalShortcuts } from "../keyboard";
 import type { SelectionState } from "../selection.svelte";
+import type { HistoryNav } from "./useHistoryNav.svelte";
 import type { ConfirmDialogState } from "./useConfirmDialog.svelte";
 import type { EditorOrchestrationState } from "./useEditorOrchestration.svelte";
 import type { MutationStore } from "../mutations/store.svelte";
@@ -27,6 +28,7 @@ function isInputFocused(): boolean {
  * initialization so that the $effect is registered.
  *
  * @param opts.selection - Selection state (from context)
+ * @param opts.nav - History navigation controller (from context)
  * @param opts.editor - Editor orchestration state (from context)
  * @param opts.confirmDialog - Confirm dialog state (from context)
  * @param opts.mutations - Mutation store (from context)
@@ -34,12 +36,13 @@ function isInputFocused(): boolean {
  */
 export function useKeyboardShortcuts(opts: {
   selection: SelectionState;
+  nav: HistoryNav;
   editor: EditorOrchestrationState;
   confirmDialog: ConfirmDialogState;
   mutations: MutationStore;
   getContextMenuNibId: () => string | null;
 }): void {
-  const { selection, editor, confirmDialog, mutations } = opts;
+  const { selection, nav, editor, confirmDialog, mutations } = opts;
 
   /** Resolves which nib IDs an action should target, checking multi-select,
    *  focused row, then context menu in priority order. */
@@ -82,7 +85,8 @@ export function useKeyboardShortcuts(opts: {
           if (editor.editorOpen) return; // Editor has its own Escape handling
           if (selection.panelOpen) {
             e.preventDefault();
-            selection.close();
+            // Route through nav so the URL/history stay in sync (nibs-58c3).
+            nav.closePanel();
             return;
           }
           if (selection.hasMultiSelect || selection.selectedIds.size > 0) {
