@@ -23,6 +23,7 @@ describe("StatusSelect", () => {
     expect(labels).toContain("draft");
     expect(labels).toContain("todo");
     expect(labels).toContain("in-progress");
+    expect(labels).toContain("deferred");
     expect(labels).toContain("completed");
     expect(labels).toContain("scrapped");
 

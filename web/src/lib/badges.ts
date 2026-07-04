@@ -6,13 +6,13 @@ export const priorityIndicators: Record<string, { symbol: string; color: string 
   "high": { symbol: "!", color: "var(--priority-high)" },
   "normal": null,
   "low": { symbol: "\u2193", color: "var(--priority-low)" },
-  "deferred": { symbol: "\u21CA", color: "var(--priority-deferred)" },
 };
 
 export const statusDotColors: Record<string, string> = {
   "draft": "var(--status-draft-text)",
   "todo": "var(--status-todo-text)",
   "in-progress": "var(--status-in-progress-text)",
+  "deferred": "var(--status-deferred-text)",
   "completed": "var(--status-completed-text)",
   "scrapped": "var(--status-scrapped-text)",
 };

@@ -40,6 +40,8 @@
   --color-status-todo-text: var(--status-todo-text);
   --color-status-in-progress-bg: var(--status-in-progress-bg);
   --color-status-in-progress-text: var(--status-in-progress-text);
+  --color-status-deferred-bg: var(--status-deferred-bg);
+  --color-status-deferred-text: var(--status-deferred-text);
   --color-status-completed-bg: var(--status-completed-bg);
   --color-status-completed-text: var(--status-completed-text);
   --color-status-scrapped-bg: var(--status-scrapped-bg);
@@ -48,7 +50,6 @@
   --color-priority-high: var(--priority-high);
   --color-priority-normal: var(--priority-normal);
   --color-priority-low: var(--priority-low);
-  --color-priority-deferred: var(--priority-deferred);
   --color-blocked: var(--blocked);
   --color-blocking: var(--blocking);
   --color-link: var(--link);
@@ -121,6 +122,11 @@
   --status-todo-text: oklch(0.765 0.177 163.223);   /* emerald-400 */
   --status-in-progress-bg: oklch(0.27 0.05 84);     /* amber tint */
   --status-in-progress-text: oklch(0.828 0.189 84.429); /* amber-400 */
+  /* deferred = "parked" (non-terminal): a muted slate-violet, deliberately
+     tinted (chroma ~0.06) so it reads as distinct from the near-neutral grays
+     of completed/scrapped; dimmed lightness signals paused rather than active. */
+  --status-deferred-bg: oklch(0.27 0.04 286);       /* muted slate-violet tint */
+  --status-deferred-text: oklch(0.65 0.06 286);     /* muted slate-violet */
   --status-completed-bg: oklch(0.27 0.01 261);      /* neutral gray tint */
   --status-completed-text: oklch(0.707 0.022 261.325); /* gray-400 */
   --status-scrapped-bg: oklch(0.205 0.01 264);      /* gray-800 */
@@ -131,7 +137,6 @@
   --priority-high: oklch(0.795 0.184 86);      /* yellow-500 */
   --priority-normal: oklch(0.706 0.015 264);   /* gray-400 */
   --priority-low: oklch(0.551 0.02 264);       /* gray-500 */
-  --priority-deferred: oklch(0.551 0.02 264);  /* gray-500 */
 
   /* Blocking/blocked indicator colors */
   --blocked: oklch(0.577 0.245 27);       /* red-500 */

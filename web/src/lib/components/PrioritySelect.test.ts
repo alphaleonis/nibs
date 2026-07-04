@@ -28,7 +28,7 @@ describe("PrioritySelect", () => {
 
     // Should have None option first, plus all priorities (with indicator symbols)
     const options = screen.getAllByRole("option");
-    expect(options).toHaveLength(6); // None + 5 priorities
+    expect(options).toHaveLength(5); // None + 4 priorities
 
     await user.click(screen.getByRole("option", { name: "None" }));
     expect(onchange).toHaveBeenCalledWith("");

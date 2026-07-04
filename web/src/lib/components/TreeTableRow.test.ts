@@ -169,15 +169,17 @@ describe("TreeTableRow", () => {
     expect(screen.getByText("\u2193")).toBeInTheDocument();
   });
 
-  it("renders priority icon for deferred priority", () => {
-    renderRow({
-      nib: makeTreeTableNib({ priority: "deferred" }),
+  it("renders deferred as a status with text and a colored dot", () => {
+    const { container } = renderRow({
+      nib: makeTreeTableNib({ status: "deferred" }),
       depth: 0,
       hasChildren: false,
       dimmed: false,
     });
 
-    expect(screen.getByText("\u21CA")).toBeInTheDocument();
+    const stateCell = container.querySelector("[data-testid='nib-state']") as HTMLElement;
+    expect(stateCell.textContent).toContain("deferred");
+    expect(stateCell.querySelector("[data-testid='status-dot']")).toBeInTheDocument();
   });
 
   it("shows blocked icon with tooltip when blockedByIds is non-empty", () => {
