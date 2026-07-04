@@ -185,7 +185,7 @@ func TestPositionMap(t *testing.T) {
 
 func TestSortByStatusPriorityAndType(t *testing.T) {
 	statusNames := []string{"draft", "todo", "in-progress", "completed"}
-	ranker := &testRanker{names: []string{"critical", "high", "normal", "low", "deferred"}}
+	ranker := &testRanker{names: []string{"critical", "high", "normal", "low"}}
 	typeNames := []string{"bug", "feature", "task"}
 
 	t.Run("sorts by status first", func(t *testing.T) {
@@ -219,7 +219,7 @@ func TestSortByStatusPriorityAndType(t *testing.T) {
 
 		SortByStatusPriorityAndType(nibs, statusNames, typeNames, ranker)
 
-		// Order by priority: critical, high, normal (and empty), low, deferred
+		// Order by priority: critical, high, normal (and empty), low
 		// Within same priority, order by title alphabetically
 		expectedOrder := []string{"A Critical", "B High", "C Normal", "D No Priority", "E Low"}
 		for i, expected := range expectedOrder {

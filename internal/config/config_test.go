@@ -32,8 +32,8 @@ func TestDefault(t *testing.T) {
 	if len(DefaultTypes) != 6 {
 		t.Errorf("len(DefaultTypes) = %d, want 6", len(DefaultTypes))
 	}
-	if len(DefaultStatuses) != 5 {
-		t.Errorf("len(DefaultStatuses) = %d, want 5", len(DefaultStatuses))
+	if len(DefaultStatuses) != 6 {
+		t.Errorf("len(DefaultStatuses) = %d, want 6", len(DefaultStatuses))
 	}
 }
 
@@ -59,6 +59,7 @@ func TestIsValidStatus(t *testing.T) {
 		{"draft", true},
 		{"todo", true},
 		{"in-progress", true},
+		{"deferred", true},
 		{"completed", true},
 		{"scrapped", true},
 		{"invalid", false},
@@ -85,7 +86,7 @@ func TestIsValidStatus(t *testing.T) {
 func TestStatusList(t *testing.T) {
 	cfg := Default()
 	got := cfg.StatusList()
-	want := "in-progress, todo, draft, completed, scrapped"
+	want := "in-progress, todo, draft, deferred, completed, scrapped"
 
 	if got != want {
 		t.Errorf("StatusList() = %q, want %q", got, want)
@@ -96,10 +97,10 @@ func TestStatusNames(t *testing.T) {
 	cfg := Default()
 	got := cfg.StatusNames()
 
-	if len(got) != 5 {
-		t.Fatalf("len(StatusNames()) = %d, want 5", len(got))
+	if len(got) != 6 {
+		t.Fatalf("len(StatusNames()) = %d, want 6", len(got))
 	}
-	expected := []string{"in-progress", "todo", "draft", "completed", "scrapped"}
+	expected := []string{"in-progress", "todo", "draft", "deferred", "completed", "scrapped"}
 	for i, name := range expected {
 		if got[i] != name {
 			t.Errorf("StatusNames()[%d] = %q, want %q", i, got[i], name)
@@ -177,6 +178,7 @@ func TestIsArchiveStatus(t *testing.T) {
 		{"draft", false},
 		{"todo", false},
 		{"in-progress", false},
+		{"deferred", false}, // non-terminal: parked, not archived
 		{"invalid", false},
 	}
 
@@ -246,8 +248,8 @@ func TestLoadAndSave(t *testing.T) {
 		t.Errorf("DefaultType = %q, want \"bug\"", loaded.Nibs.DefaultType)
 	}
 	// Statuses are hardcoded, not stored in config
-	if len(loaded.StatusNames()) != 5 {
-		t.Errorf("len(StatusNames()) = %d, want 5", len(loaded.StatusNames()))
+	if len(loaded.StatusNames()) != 6 {
+		t.Errorf("len(StatusNames()) = %d, want 6", len(loaded.StatusNames()))
 	}
 }
 
@@ -274,9 +276,9 @@ func TestLoadAppliesDefaults(t *testing.T) {
 	if cfg.Nibs.IDLength != 4 {
 		t.Errorf("IDLength default not applied: got %d, want 4", cfg.Nibs.IDLength)
 	}
-	// Statuses are hardcoded, always 5
-	if len(cfg.StatusNames()) != 5 {
-		t.Errorf("Hardcoded statuses: got %d, want 5", len(cfg.StatusNames()))
+	// Statuses are hardcoded, always 6
+	if len(cfg.StatusNames()) != 6 {
+		t.Errorf("Hardcoded statuses: got %d, want 6", len(cfg.StatusNames()))
 	}
 	// DefaultStatus is always "todo"
 	if cfg.GetDefaultStatus() != "todo" {
@@ -294,7 +296,7 @@ func TestStatusesAreHardcoded(t *testing.T) {
 	cfg := Default()
 
 	// All hardcoded statuses should be valid
-	hardcodedStatuses := []string{"draft", "todo", "in-progress", "completed", "scrapped"}
+	hardcodedStatuses := []string{"draft", "todo", "in-progress", "deferred", "completed", "scrapped"}
 	for _, status := range hardcodedStatuses {
 		if !cfg.IsValidStatus(status) {
 			t.Errorf("IsValidStatus(%q) = false, want true", status)
@@ -427,8 +429,8 @@ func TestTypesAreHardcoded(t *testing.T) {
 	}
 
 	// Statuses should also be hardcoded
-	if len(loaded.StatusNames()) != 5 {
-		t.Errorf("len(StatusNames()) = %d, want 5", len(loaded.StatusNames()))
+	if len(loaded.StatusNames()) != 6 {
+		t.Errorf("len(StatusNames()) = %d, want 6", len(loaded.StatusNames()))
 	}
 }
 
@@ -505,6 +507,7 @@ func TestStatusDescriptions(t *testing.T) {
 			"draft":       "Needs refinement before it can be worked on",
 			"todo":        "Ready to be worked on",
 			"in-progress": "Currently being worked on",
+			"deferred":    "Parked — not actionable now, but not abandoned (scrapped) or merely unrefined (draft)",
 			"completed":   "Finished successfully",
 			"scrapped":    "Will not be done",
 		}
@@ -760,8 +763,8 @@ func TestIsValidPriority(t *testing.T) {
 		{"high", true},
 		{"normal", true},
 		{"low", true},
-		{"deferred", true},
-		{"", true}, // empty is valid (means no priority)
+		{"deferred", false}, // removed as a priority (now a status)
+		{"", true},          // empty is valid (means no priority)
 		{"invalid", false},
 		{"CRITICAL", false}, // case sensitive
 		{"medium", false},   // not a valid priority
@@ -780,7 +783,7 @@ func TestIsValidPriority(t *testing.T) {
 func TestPriorityList(t *testing.T) {
 	cfg := Default()
 	got := cfg.PriorityList()
-	want := "critical, high, normal, low, deferred"
+	want := "critical, high, normal, low"
 
 	if got != want {
 		t.Errorf("PriorityList() = %q, want %q", got, want)
@@ -791,10 +794,10 @@ func TestPriorityNames(t *testing.T) {
 	cfg := Default()
 	got := cfg.PriorityNames()
 
-	if len(got) != 5 {
-		t.Fatalf("len(PriorityNames()) = %d, want 5", len(got))
+	if len(got) != 4 {
+		t.Fatalf("len(PriorityNames()) = %d, want 4", len(got))
 	}
-	expected := []string{"critical", "high", "normal", "low", "deferred"}
+	expected := []string{"critical", "high", "normal", "low"}
 	for i, name := range expected {
 		if got[i] != name {
 			t.Errorf("PriorityNames()[%d] = %q, want %q", i, got[i], name)
@@ -842,7 +845,6 @@ func TestPriorityDescriptions(t *testing.T) {
 		"high":     "Important, should be done before normal work",
 		"normal":   "Standard priority",
 		"low":      "Less important, can be delayed",
-		"deferred": "Explicitly pushed back, avoid doing unless necessary",
 	}
 
 	for priorityName, expectedDesc := range expectedDescriptions {
@@ -870,10 +872,10 @@ func TestPriorityRank(t *testing.T) {
 		{"high", "high", 1},
 		{"normal", "normal", 2},
 		{"low", "low", 3},
-		{"deferred", "deferred", 4},
 		// Empty string treated as normal
 		{"empty is normal", "", 2},
-		// Unknown priority sorts last
+		// Unknown priority sorts last ("deferred" is no longer a priority)
+		{"deferred is unknown", "deferred", len(DefaultPriorities)},
 		{"unknown sorts last", "bogus", len(DefaultPriorities)},
 		{"case sensitive", "CRITICAL", len(DefaultPriorities)},
 	}
@@ -889,8 +891,8 @@ func TestPriorityRank(t *testing.T) {
 }
 
 func TestDefaultPrioritiesCount(t *testing.T) {
-	if len(DefaultPriorities) != 5 {
-		t.Errorf("len(DefaultPriorities) = %d, want 5", len(DefaultPriorities))
+	if len(DefaultPriorities) != 4 {
+		t.Errorf("len(DefaultPriorities) = %d, want 4", len(DefaultPriorities))
 	}
 }
 

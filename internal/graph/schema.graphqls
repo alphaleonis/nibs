@@ -261,11 +261,11 @@ type Nib {
   version: Int!
   "Nib title"
   title: String!
-  "Current status (draft, todo, in-progress, completed, scrapped)"
+  "Current status (draft, todo, in-progress, deferred, completed, scrapped)"
   status: String!
   "Nib type (milestone, epic, bug, feature, task)"
   type: String!
-  "Priority level (critical, high, normal, low, deferred)"
+  "Priority level (critical, high, normal, low)"
   priority: String!
   "Estimate size (s, m, l, xl, or empty)"
   estimate: String!

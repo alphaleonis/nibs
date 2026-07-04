@@ -196,13 +196,16 @@ priority: high
 			expectedPriority: "high",
 		},
 		{
-			name: "with deferred priority",
+			// Migration: "deferred" was removed as a priority (it is now a
+			// status). A legacy file carrying priority: deferred must load
+			// without error, normalized to "low".
+			name: "deferred priority migrates to low",
 			input: `---
 title: Later Task
 status: draft
 priority: deferred
 ---`,
-			expectedPriority: "deferred",
+			expectedPriority: "low",
 		},
 	}
 
@@ -275,7 +278,7 @@ func TestRenderWithPriority(t *testing.T) {
 }
 
 func TestPriorityRoundtrip(t *testing.T) {
-	priorities := []string{"critical", "high", "normal", "low", "deferred", ""}
+	priorities := []string{"critical", "high", "normal", "low", ""}
 
 	for _, priority := range priorities {
 		t.Run(priority, func(t *testing.T) {

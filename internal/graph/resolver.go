@@ -188,7 +188,9 @@ func (r *Resolver) removeBlockedByRelationships(b *nib.Nib, targetIDs []string) 
 
 // activateParentChain walks up the parent chain, setting any todo/draft
 // parents to in-progress. Stops when it reaches a parent that is already
-// in-progress, completed, or scrapped (or has no parent).
+// in-progress, deferred, completed, or scrapped (or has no parent). A deferred
+// parent is parked, so it is left untouched — a child going in-progress does
+// not un-park it.
 // Best-effort: warns on stderr and stops on any error (same pattern as close).
 func (r *Resolver) activateParentChain(childID, parentID string) {
 	for parentID != "" {

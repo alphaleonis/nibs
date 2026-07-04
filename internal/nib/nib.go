@@ -224,6 +224,14 @@ func Parse(r io.Reader) (*Nib, error) {
 		return nil, fmt.Errorf("invalid order key: %w", err)
 	}
 
+	// Migration: "deferred" was removed as a priority and reintroduced as a
+	// status. Files written before the change may still carry
+	// `priority: deferred`. Normalize it to "low" in memory so such files load
+	// without error and sort sanely; the normalized value persists on next write.
+	if fm.Priority == "deferred" {
+		fm.Priority = "low"
+	}
+
 	return &Nib{
 		Version:   fm.Version,
 		Title:     fm.Title,

@@ -1070,16 +1070,16 @@ func TestLinksCommand_Siblings_ActiveAndType(t *testing.T) {
 }
 
 func TestLinksCommand_MentionsOut_NoPriorityExclusion(t *testing.T) {
-	// a1 mentions: b2 (high), c3 (low), d4 (high, deferred).
+	// a1 mentions: b2 (high), c3 (normal), d4 (low).
 	files := map[string]string{
 		"a1--alpha.md": "---\ntitle: Alpha\nstatus: todo\ntype: task\n---\n\nSee #b2 and #c3 and #d4.\n",
 		"b2--beta.md":  "---\ntitle: Beta\nstatus: todo\ntype: task\npriority: high\n---\n",
-		"c3--gamma.md": "---\ntitle: Gamma\nstatus: todo\ntype: task\npriority: low\n---\n",
-		"d4--delta.md": "---\ntitle: Delta\nstatus: todo\ntype: task\npriority: deferred\n---\n",
+		"c3--gamma.md": "---\ntitle: Gamma\nstatus: todo\ntype: task\npriority: normal\n---\n",
+		"d4--delta.md": "---\ntitle: Delta\nstatus: todo\ntype: task\npriority: low\n---\n",
 	}
 	nibsDir := setupLinksCobraTest(t, files)
-	// --no-priority deferred → excludes d4; b2 and c3 remain.
-	out := runLinksJSON(t, "--nibs-path", nibsDir, "links", "a1", "--rel", "mentions-out", "--no-priority", "deferred", "--json")
+	// --no-priority low → excludes d4; b2 and c3 remain.
+	out := runLinksJSON(t, "--nibs-path", nibsDir, "links", "a1", "--rel", "mentions-out", "--no-priority", "low", "--json")
 	env := decodeLinksEnvelope(t, out)
 	body := env.Relations["mentions-out"]
 	ids := map[string]bool{}
@@ -1087,7 +1087,7 @@ func TestLinksCommand_MentionsOut_NoPriorityExclusion(t *testing.T) {
 		ids[n.ID] = true
 	}
 	if ids["d4"] {
-		t.Errorf("d4 (deferred) should be excluded; got %v", ids)
+		t.Errorf("d4 (low) should be excluded; got %v", ids)
 	}
 	if !ids["b2"] || !ids["c3"] {
 		t.Errorf("expected b2 and c3 present; got %v", ids)

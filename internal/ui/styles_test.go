@@ -372,6 +372,7 @@ func TestShortStatus(t *testing.T) {
 		{"draft", "D"},
 		{"todo", "T"},
 		{"in-progress", "I"},
+		{"deferred", "F"},
 		{"completed", "C"},
 		{"scrapped", "S"},
 		{"unknown", "?"},
@@ -407,11 +408,14 @@ func TestShortType_NoCollisions(t *testing.T) {
 }
 
 // TestShortStatus_NoCollisions is the status counterpart of
-// TestShortType_NoCollisions — see that test for rationale.
+// TestShortType_NoCollisions — see that test for rationale. It validates the
+// actual ShortStatus output (not the raw first letter) because some statuses
+// (e.g. "deferred" vs "draft") share a first letter and are disambiguated
+// inside ShortStatus.
 func TestShortStatus_NoCollisions(t *testing.T) {
 	seen := map[string]string{}
 	for _, def := range config.DefaultStatuses {
-		s := strings.ToUpper(def.Name[:1])
+		s := ShortStatus(def.Name)
 		if existing, ok := seen[s]; ok {
 			t.Fatalf("ShortStatus collision: %q and %q both abbreviate to %q",
 				existing, def.Name, s)

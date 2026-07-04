@@ -24,6 +24,7 @@ var DefaultStatuses = []StatusConfig{
 	{Name: "in-progress", Color: "yellow", Description: "Currently being worked on"},
 	{Name: "todo", Color: "green", Description: "Ready to be worked on"},
 	{Name: "draft", Color: "blue", Description: "Needs refinement before it can be worked on"},
+	{Name: "deferred", Color: "gray", Description: "Parked — not actionable now, but not abandoned (scrapped) or merely unrefined (draft)"},
 	{Name: "completed", Color: "gray", Archive: true, Description: "Finished successfully"},
 	{Name: "scrapped", Color: "gray", Archive: true, Description: "Will not be done"},
 }
@@ -45,7 +46,6 @@ var DefaultPriorities = []PriorityConfig{
 	{Name: "high", Color: "yellow", Description: "Important, should be done before normal work"},
 	{Name: "normal", Color: "white", Description: "Standard priority"},
 	{Name: "low", Color: "gray", Description: "Less important, can be delayed"},
-	{Name: "deferred", Color: "gray", Description: "Explicitly pushed back, avoid doing unless necessary"},
 }
 
 // DefaultEstimates defines the hardcoded estimate configuration.

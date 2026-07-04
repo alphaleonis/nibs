@@ -4,7 +4,7 @@ version: 1
 title: Push notifications not requesting permission on mobile
 status: draft
 type: bug
-priority: deferred
+priority: low
 estimate: s
 created_at: 2026-03-14T09:00:00Z
 updated_at: 2026-03-18T09:00:00Z

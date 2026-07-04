@@ -4030,6 +4030,44 @@ func TestAutoActivationPropagatesInProgress(t *testing.T) {
 	}
 }
 
+// TestAutoActivationSkipsDeferredParent locks in that a deferred parent stays
+// parked: activateParentChain only promotes todo/draft parents, so a child
+// going in-progress must not un-park a deferred ancestor.
+func TestAutoActivationSkipsDeferredParent(t *testing.T) {
+	resolver, core := setupTestResolverWithAutoActivation(t)
+	ctx := context.Background()
+
+	// Parent epic is deferred (parked); child task is todo.
+	parent := createTestNib(t, core, "epic-def", "Deferred Epic", "deferred")
+	parent.Type = "epic"
+	if err := core.Update(parent, nil); err != nil {
+		t.Fatalf("setup: %v", err)
+	}
+
+	child := createTestNib(t, core, "task-def", "Child Task", "todo")
+	child.Type = "task"
+	child.Parent = "epic-def"
+	if err := core.Update(child, nil); err != nil {
+		t.Fatalf("setup: %v", err)
+	}
+
+	// Set child to in-progress.
+	inProgress := "in-progress"
+	input := model.UpdateNibInput{Status: &inProgress}
+	if _, err := resolver.Mutation().UpdateNib(ctx, "task-def", input); err != nil {
+		t.Fatalf("UpdateNib failed: %v", err)
+	}
+
+	// Parent must remain deferred (parked), not auto-activated.
+	updatedParent, err := resolver.Query().Nib(ctx, "epic-def")
+	if err != nil {
+		t.Fatalf("Query parent failed: %v", err)
+	}
+	if updatedParent.Status != "deferred" {
+		t.Errorf("expected parent status 'deferred' (parked), got %q", updatedParent.Status)
+	}
+}
+
 func TestAutoActivationDisabledByDefault(t *testing.T) {
 	resolver, core := setupTestResolver(t) // default config, no auto_activation
 	ctx := context.Background()

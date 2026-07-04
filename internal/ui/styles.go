@@ -325,6 +325,13 @@ func ShortStatus(s string) string {
 	if s == "" {
 		return "?"
 	}
+	// "deferred" and "draft" share a first letter. Draft keeps "D" (established);
+	// deferred is disambiguated to "F" (from "deFerred") so the single-char status
+	// column stays unambiguous. The final glyph/label is a TUI-slice concern; this
+	// only guarantees uniqueness (see TestShortStatus_NoCollisions).
+	if s == "deferred" {
+		return "F"
+	}
 	for _, def := range config.DefaultStatuses {
 		if def.Name == s {
 			return strings.ToUpper(def.Name[:1])
