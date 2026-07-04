@@ -1,11 +1,13 @@
 package nibcore
 
 import (
+	"bytes"
 	"errors"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/alphaleonis/nibs/internal/config"
 	"github.com/alphaleonis/nibs/internal/nib"
@@ -81,6 +83,53 @@ func TestCheckBrokenDocuments(t *testing.T) {
 	})
 }
 
+// assertDeferredConverged checks that the nib loaded under id has been
+// normalized to priority "low" both in memory and on disk (file at
+// nibsDir/filename), and that a read-etag → if-match Update round-trips without
+// an ETagMismatchError. The on-disk and etag checks are the real
+// regression-catchers: the in-memory check alone passes even with the
+// persistence reverted, since nib.Parse normalizes in memory regardless.
+func assertDeferredConverged(t *testing.T, core *Core, id, nibsDir, filename string) {
+	t.Helper()
+
+	b, err := core.Get(id)
+	if err != nil {
+		t.Fatalf("Get(%q) error: %v", id, err)
+	}
+	if b.Priority != "low" {
+		t.Errorf("in-memory Priority = %q, want %q", b.Priority, "low")
+	}
+
+	// On disk: the normalization must be persisted (not deferred to the next
+	// write), so disk == memory immediately.
+	diskBytes, err := os.ReadFile(filepath.Join(nibsDir, filename))
+	if err != nil {
+		t.Fatalf("reading migrated file: %v", err)
+	}
+	disk := string(diskBytes)
+	if strings.Contains(disk, "deferred") {
+		t.Errorf("on-disk file still contains 'deferred':\n%s", disk)
+	}
+	if !strings.Contains(disk, "priority: low") {
+		t.Errorf("on-disk file missing 'priority: low':\n%s", disk)
+	}
+
+	// Read etag → if-match Update round-trip must succeed (no ETagMismatchError).
+	// The read path exposes the in-memory nib's ETag(); the write path validates
+	// against the on-disk etag. Persisting the normalization makes them agree.
+	readETag := b.ETag()
+	updated := b.Clone()
+	updated.Title = b.Title + " (edited)"
+	if err := core.Update(updated, &readETag); err != nil {
+		var mismatch *ETagMismatchError
+		if errors.As(err, &mismatch) {
+			t.Fatalf("if-match Update returned ETagMismatchError (etag divergence not fixed): provided=%s current=%s",
+				mismatch.Provided, mismatch.Current)
+		}
+		t.Fatalf("if-match Update failed: %v", err)
+	}
+}
+
 func TestMigrateDeferredPriority(t *testing.T) {
 	t.Run("persists deferred->low at load and converges if-match etag", func(t *testing.T) {
 		tmpDir := t.TempDir()
@@ -99,6 +148,24 @@ priority: deferred
 ---
 `)
 
+		// A control sibling with a valid priority: the load-time persistence must
+		// rewrite ONLY the migrated nib. Capture its exact bytes now — if the
+		// PriorityMigrated() guard were dropped/inverted (rewrite every nib on
+		// load), loading would re-render this file (adding the `# sib2` id line),
+		// changing its bytes and failing the assertion below.
+		const siblingFile = "sib2--control.md"
+		writeNibFile(t, nibsDir, siblingFile, `---
+version: 1
+title: Control Sibling
+status: todo
+priority: normal
+---
+`)
+		siblingBefore, err := os.ReadFile(filepath.Join(nibsDir, siblingFile))
+		if err != nil {
+			t.Fatalf("reading sibling file: %v", err)
+		}
+
 		cfg := config.Default()
 		core := New(nibsDir, cfg)
 		core.SetWarnWriter(nil)
@@ -106,43 +173,66 @@ priority: deferred
 			t.Fatalf("Load() error: %v", err)
 		}
 
-		// In memory: normalized to "low".
-		b, err := core.Get("def1")
+		assertDeferredConverged(t, core, "def1", nibsDir, filename)
+
+		// The control sibling must be byte-for-byte untouched on disk.
+		siblingAfter, err := os.ReadFile(filepath.Join(nibsDir, siblingFile))
 		if err != nil {
-			t.Fatalf("Get() error: %v", err)
+			t.Fatalf("re-reading sibling file: %v", err)
 		}
-		if b.Priority != "low" {
-			t.Errorf("in-memory Priority = %q, want %q", b.Priority, "low")
+		if !bytes.Equal(siblingBefore, siblingAfter) {
+			t.Errorf("control sibling was rewritten at load (only migrated nibs should be persisted)\nbefore:\n%s\nafter:\n%s",
+				siblingBefore, siblingAfter)
+		}
+		if sib, err := core.Get("sib2"); err != nil {
+			t.Fatalf("Get(sib2) error: %v", err)
+		} else if sib.Priority != "normal" {
+			t.Errorf("control sibling Priority = %q, want %q", sib.Priority, "normal")
+		}
+	})
+
+	t.Run("persists deferred->low on the incremental watcher path", func(t *testing.T) {
+		core, nibsDir := setupTestCore(t)
+
+		if err := core.StartWatching(); err != nil {
+			t.Fatalf("StartWatching() error: %v", err)
+		}
+		defer func() { _ = core.Unwatch() }()
+
+		ch, unsub := core.Subscribe()
+		defer unsub()
+
+		// Give the watcher time to start.
+		time.Sleep(50 * time.Millisecond)
+
+		// A legacy `priority: deferred` file that first appears AFTER the initial
+		// Load (e.g. a git pull in the separate .nibs repo). This never goes
+		// through loadFromDisk, only through handleChanges.
+		const filename = "wdf1--watched.md"
+		writeNibFile(t, nibsDir, filename, `---
+version: 1
+title: Watched Deferred
+status: todo
+priority: deferred
+---
+`)
+
+		// Wait for the watcher to ingest the file.
+		select {
+		case <-ch:
+		case <-time.After(2 * time.Second):
+			t.Fatal("timeout waiting for watcher event")
 		}
 
-		// On disk: the normalization must be persisted at load (not deferred to
-		// the next write), so disk == memory immediately.
-		diskBytes, err := os.ReadFile(filepath.Join(nibsDir, filename))
-		if err != nil {
-			t.Fatalf("reading migrated file: %v", err)
-		}
-		disk := string(diskBytes)
-		if strings.Contains(disk, "deferred") {
-			t.Errorf("on-disk file still contains 'deferred':\n%s", disk)
-		}
-		if !strings.Contains(disk, "priority: low") {
-			t.Errorf("on-disk file missing 'priority: low':\n%s", disk)
+		// Stop watching so the round-trip Update below isn't racing further
+		// re-ingestions of our own writes.
+		if err := core.Unwatch(); err != nil {
+			t.Fatalf("Unwatch() error: %v", err)
 		}
 
-		// Read etag → if-match Update round-trip must succeed (no ETagMismatchError).
-		// The read path exposes the in-memory nib's ETag(); the write path validates
-		// against the on-disk etag. Persisting at load makes them agree.
-		readETag := b.ETag()
-		updated := b.Clone()
-		updated.Title = "Legacy Deferred (edited)"
-		if err := core.Update(updated, &readETag); err != nil {
-			var mismatch *ETagMismatchError
-			if errors.As(err, &mismatch) {
-				t.Fatalf("if-match Update returned ETagMismatchError (etag divergence not fixed): provided=%s current=%s",
-					mismatch.Provided, mismatch.Current)
-			}
-			t.Fatalf("if-match Update failed: %v", err)
-		}
+		// handleChanges must have persisted the normalization on disk (per #2),
+		// converging the etag so an if-match Update round-trips.
+		assertDeferredConverged(t, core, "wdf1", nibsDir, filename)
 	})
 }
 

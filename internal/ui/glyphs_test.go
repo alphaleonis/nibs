@@ -27,7 +27,6 @@ func TestGetPrioritySymbol_ASCII(t *testing.T) {
 		{"critical", "!!"},
 		{"high", "!"},
 		{"low", "v"},
-		{"deferred", ">"},
 		{"normal", ""},
 		{"", ""},
 	}
@@ -50,8 +49,7 @@ func TestGetPrioritySymbol_UTF8(t *testing.T) {
 	}{
 		{"critical", "‼"}, // ‼
 		{"high", "!"},
-		{"low", "↓"},      // ↓
-		{"deferred", "→"}, // →
+		{"low", "↓"}, // ↓
 		{"normal", ""},
 		{"", ""},
 	}

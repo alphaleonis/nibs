@@ -144,7 +144,7 @@ func (c *Core) loadFromDisk() error {
 			return nil
 		}
 
-		b, loadErr := c.loadNib(path)
+		b, loadErr := c.loadNibReconciled(path)
 		if loadErr != nil {
 			return fmt.Errorf("loading %s: %w", path, loadErr)
 		}
@@ -156,16 +156,12 @@ func (c *Core) loadFromDisk() error {
 		return err
 	}
 
-	// Migrate v0 nibs to v1 (single-side blocking)
+	// Migrate v0 nibs to v1 (single-side blocking). This runs after the walk so
+	// every blocking target is already in c.nibs; it also persists the
+	// `priority: deferred` → `low` normalization for v0 nibs (loadNibReconciled
+	// deliberately leaves those to this pass — see its doc comment).
 	if err := c.migrateV0ToV1(); err != nil {
 		return fmt.Errorf("migration v0→v1: %w", err)
-	}
-
-	// Persist the legacy `priority: deferred` → `low` normalization so that the
-	// on-disk value matches the in-memory one (avoids an etag divergence that
-	// breaks if-match updates).
-	if err := c.migrateDeferredPriority(); err != nil {
-		return fmt.Errorf("migration deferred-priority: %w", err)
 	}
 
 	// Rebuild the reverse-mention index from the loaded bodies. Must run
@@ -246,6 +242,44 @@ func (c *Core) loadNib(path string) (*nib.Nib, error) {
 		b.UpdatedAt = b.CreatedAt
 	}
 
+	return b, nil
+}
+
+// loadNibReconciled loads and parses a single nib file (via loadNib) and
+// persists any load-time normalization back to disk so the on-disk bytes
+// converge with the in-memory value immediately. Both the bulk load
+// (loadFromDisk) and the incremental watcher path (handleChanges) funnel
+// through here, so neither can leave disk and memory disagreeing — a divergence
+// that breaks if-match updates.
+//
+// Today the only such normalization is the legacy `priority: deferred` → `low`
+// migration: nib.Parse rewrites the value in memory and flags the nib via
+// PriorityMigrated(). Without the write-back the read etag (hash of Render() →
+// "low") diverges from the write-side etag (hash of the raw disk bytes →
+// "deferred"), so an if-match Update always mismatches.
+//
+// The write is gated on Version >= 1 because Render is lossy for legacy v0 nibs
+// (it drops the v0-only `blocking` field). v0 nibs are converged instead by
+// migrateV0ToV1, which reads their in-memory Blocking before persisting; the
+// bulk path always runs that pass after the walk, and the watcher path never
+// migrates v0 nibs at all. Reconciling only current-format nibs here avoids
+// both data loss and a redundant double-write of v0+deferred nibs.
+//
+// Persistence is best-effort: on a write failure (read-only mount, disk full,
+// restricted permissions) it logs and continues, leaving the nib correct in
+// memory — on-disk convergence then waits for the next successful write. This
+// mirrors the "don't fail load" posture of the search-index re-population in
+// loadFromDisk. Must be called with c.mu held (it may saveToDisk).
+func (c *Core) loadNibReconciled(path string) (*nib.Nib, error) {
+	b, err := c.loadNib(path)
+	if err != nil {
+		return nil, err
+	}
+	if b.PriorityMigrated() && b.Version >= 1 {
+		if err := c.saveToDisk(b); err != nil {
+			c.logWarn("could not persist priority migration for %s: %v", b.ID, err)
+		}
+	}
 	return b, nil
 }
 

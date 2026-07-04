@@ -183,10 +183,13 @@ type Nib struct {
 	// Order is a fractional index string for sorting among siblings.
 	Order string `yaml:"order,omitempty" json:"order,omitempty"`
 
-	// priorityMigrated is a transient flag (never serialized) set by Parse when
-	// a legacy `priority: deferred` value was normalized to `low`. The loader
-	// reads it via PriorityMigrated() to persist the normalization so that the
-	// on-disk value converges with memory at load time.
+	// priorityMigrated is a transient, load-boundary-only flag (never
+	// serialized) set by Parse when a legacy `priority: deferred` value was
+	// normalized to `low`. The loader reads it via PriorityMigrated()
+	// immediately after Parse to persist the normalization so the on-disk value
+	// converges with memory at load time. It is not general-purpose "was this
+	// nib ever migrated" state: Clone() clears it, so it is meaningful only on a
+	// freshly-parsed nib.
 	priorityMigrated bool
 }
 
@@ -248,10 +251,10 @@ func Parse(r io.Reader) (*Nib, error) {
 	// relative rank. (Do not "tidy" this to "normal": that would silently
 	// re-rank legacy nibs upward.) The value is normalized in memory here so it
 	// is always valid even without a Core; when loaded through a Core, the
-	// loader persists it (see Core.migrateDeferredPriority) so disk and memory
-	// agree immediately — otherwise the read etag (hash of Render() → "low")
-	// diverges from the write-side etag (hash of raw disk bytes → "deferred")
-	// and if-match updates fail.
+	// loader persists it (see Core.loadNibReconciled) so disk and memory agree
+	// immediately — otherwise the read etag (hash of Render() → "low") diverges
+	// from the write-side etag (hash of raw disk bytes → "deferred") and
+	// if-match updates fail.
 	priorityMigrated := false
 	if fm.Priority == "deferred" {
 		fm.Priority = "low"
@@ -351,6 +354,12 @@ func (b *Nib) Render() ([]byte, error) {
 // so that mutating the clone does not affect the original.
 func (b *Nib) Clone() *Nib {
 	clone := *b // shallow copy of all value fields
+
+	// priorityMigrated is a load-boundary-only signal (consumed by the loader
+	// right after Parse). A clone is a working copy for mutation/update, never a
+	// freshly-parsed nib, so clear it here rather than let a stale `true` ride
+	// along through every Clone/Update cycle.
+	clone.priorityMigrated = false
 
 	// Deep-copy slice fields
 	if b.Tags != nil {

@@ -304,7 +304,12 @@ func (c *Core) handleChanges(changes map[string]fsnotify.Op) {
 
 		// Handle creates/writes (file exists or was created)
 		if op&fsnotify.Create != 0 || op&fsnotify.Write != 0 {
-			newNib, err := c.loadNib(path)
+			// loadNibReconciled (not loadNib) so a legacy `priority: deferred`
+			// file that first appears post-startup (e.g. a git pull in the
+			// separate .nibs repo) has its normalization persisted here too,
+			// keeping disk and memory converged. We hold c.mu, so the
+			// best-effort saveToDisk inside is safe.
+			newNib, err := c.loadNibReconciled(path)
 			if err != nil {
 				c.logWarn("failed to load nib from %s: %v", path, err)
 				continue

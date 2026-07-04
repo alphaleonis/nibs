@@ -47,31 +47,3 @@ func (c *Core) migrateV0ToV1() error {
 
 	return nil
 }
-
-// migrateDeferredPriority persists the in-memory normalization of the legacy
-// `priority: deferred` value (removed as a priority, reintroduced as a status)
-// to `low`. nib.Parse performs the normalization in memory and flags the
-// affected nibs via PriorityMigrated(); here we write them back so disk and
-// memory agree immediately after load. Without this, a nib's read etag (hashed
-// from Render() → "low") diverges from its write-side etag (hashed from the raw
-// on-disk bytes → "deferred"), so an if-match update always mismatches and
-// cannot self-converge under require_if_match.
-// Must be called with c.mu held and after all nibs are loaded.
-func (c *Core) migrateDeferredPriority() error {
-	var migratedCount int
-	for _, b := range c.nibs {
-		if !b.PriorityMigrated() {
-			continue
-		}
-		if err := c.saveToDisk(b); err != nil {
-			return err
-		}
-		migratedCount++
-	}
-
-	if migratedCount > 0 {
-		c.logWarn("migrated %d nib(s): priority 'deferred' -> 'low'", migratedCount)
-	}
-
-	return nil
-}

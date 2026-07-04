@@ -353,8 +353,6 @@ func GetPrioritySymbol(priority string) string {
 		return glyphHigh()
 	case "low":
 		return glyphLow()
-	case "deferred":
-		return glyphDeferred()
 	default:
 		return ""
 	}
@@ -381,7 +379,7 @@ type NibRowConfig struct {
 	StatusColor   string
 	TypeColor     string
 	PriorityColor string
-	Priority      string // Priority value (critical, high, normal, low, deferred)
+	Priority      string // Priority value (critical, high, normal, low)
 	IsArchive     bool
 	MaxTitleWidth int  // 0 means no truncation
 	ShowCursor    bool // Show selection cursor
