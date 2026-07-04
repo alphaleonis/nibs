@@ -1174,6 +1174,74 @@ describe("TreeTable", () => {
         expect(sel.pendingEnsureVisibleId).toBeNull();
       });
     });
+
+    // Regression (nibs-58c3, review #1): ensureVisible for a nib that is in the
+    // dataset but excluded by an active client filter used to spin the effect
+    // forever — every pass reassigned collapsedIds to a fresh Set that could
+    // never make the filtered-out nib visible (effect_update_depth_exceeded).
+    // The effect must now detect that expansion changes nothing and clear.
+    it("settles (does not loop) when ensureVisible targets a filtered-out nib", async () => {
+      const sel = new SelectionState();
+      const nibs: TreeTableNib[] = [
+        makeTreeTableNib({ id: "nibs-m1", title: "Milestone", type: "milestone" }),
+        makeTreeTableNib({ id: "nibs-e1", title: "Epic", type: "epic", parentId: "nibs-m1" }),
+        makeTreeTableNib({ id: "nibs-bug1", title: "Matching Bug", type: "bug", parentId: "nibs-e1" }),
+        makeTreeTableNib({ id: "nibs-task1", title: "Filtered Task", type: "task", parentId: "nibs-e1" }),
+      ];
+
+      // Active client filter (type: bug) drops the task from `rows` while it
+      // stays in `allNibs`. Expanding ancestors can never reveal it.
+      setupWithNibs(nibs, { filter: { type: ["bug"] } }, { selection: sel });
+
+      expect(screen.getByText("Matching Bug")).toBeInTheDocument();
+      expect(screen.queryByText("Filtered Task")).not.toBeInTheDocument();
+
+      sel.ensureVisible("nibs-task1");
+
+      // Must terminate by clearing, not loop forever reassigning collapsedIds.
+      await waitFor(() => {
+        expect(sel.pendingEnsureVisibleId).toBeNull();
+      });
+
+      // Still filtered out — expansion did not (and cannot) reveal it.
+      expect(screen.queryByText("Filtered Task")).not.toBeInTheDocument();
+    });
+
+    // Regression (nibs-58c3, review #3): a cold deep-link runs syncFromUrl on
+    // mount before the GraphQL query resolves (allNibs === []). The effect must
+    // NOT clear the pending request as "absent" while the query is still
+    // fetching — it must wait for data, then expand/scroll.
+    it("keeps the pending request while the query is fetching, then resolves it once data arrives", async () => {
+      const sel = new SelectionState();
+      const nibs: TreeTableNib[] = [
+        makeTreeTableNib({ id: "nibs-m1", title: "Milestone", type: "milestone" }),
+        makeTreeTableNib({ id: "nibs-t1", title: "Deferred Task", type: "task", parentId: "nibs-m1" }),
+      ];
+
+      // Query in-flight, no data yet.
+      const store = writable<any>({ fetching: true, error: undefined, data: undefined, stale: false });
+      mockQueryStore.mockReturnValue(store as any);
+
+      // Deep-link request for a nib not yet in the (empty) dataset.
+      sel.ensureVisible("nibs-t1");
+
+      renderTreeTable(
+        { filter: {}, viewLevel: "milestones" as ViewLevel },
+        { selection: sel },
+      );
+      await tick();
+
+      // Still fetching → preserve the request (do NOT clear as absent).
+      expect(sel.pendingEnsureVisibleId).toBe("nibs-t1");
+
+      // Data arrives.
+      store.set({ fetching: false, error: undefined, data: { nibs }, stale: false });
+
+      // Now present and visible → effect clears after scrolling.
+      await waitFor(() => {
+        expect(sel.pendingEnsureVisibleId).toBeNull();
+      });
+    });
   });
 
   describe("reactive filter re-query", () => {

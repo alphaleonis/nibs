@@ -11,7 +11,7 @@ import { toast } from "svelte-sonner";
 import { NIB_DETAIL_QUERY } from "../queries";
 import { getValidChildTypes } from "../typeHierarchy";
 import type { NibData } from "../components/EditorModal.svelte";
-import type { SelectionState } from "../selection.svelte";
+import type { HistoryNav } from "./useHistoryNav.svelte";
 
 export interface EditorOrchestrationState {
   readonly editorOpen: boolean;
@@ -34,9 +34,9 @@ export interface EditorOrchestrationState {
 
 export function createEditorOrchestration(opts: {
   client: Client;
-  selection: SelectionState;
+  nav: HistoryNav;
 }): EditorOrchestrationState {
-  const { client, selection } = opts;
+  const { client, nav } = opts;
 
   // Editor modal state
   let editorOpen = $state(false);
@@ -126,7 +126,10 @@ export function createEditorOrchestration(opts: {
   }
 
   function handleEditorSave(nibId: string) {
-    selection.select(nibId);
+    // Route through nav so the URL/history stay in sync (nibs-58c3). This
+    // intentionally records a Back-stop: creating/opening a nib after save is
+    // a navigation, per "all open paths flow through nav".
+    nav.navigateToNib(nibId);
   }
 
   function closeTypePicker() {

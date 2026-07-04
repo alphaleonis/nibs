@@ -15,7 +15,8 @@
   import { SelectionState } from "./lib/selection.svelte";
   import { DragState } from "./lib/drag.svelte";
   import type { DropZone } from "./lib/drag.svelte";
-  import { provideSelection, provideDrag, provideConfirmDialog, provideEditorOrchestration } from "./lib/contexts";
+  import { provideSelection, provideDrag, provideConfirmDialog, provideEditorOrchestration, provideHistoryNav } from "./lib/contexts";
+  import { createHistoryNav } from "./lib/composables/useHistoryNav.svelte";
   import { createConfirmDialog } from "./lib/composables/useConfirmDialog.svelte";
   import { createEditorOrchestration } from "./lib/composables/useEditorOrchestration.svelte";
   import { useKeyboardShortcuts } from "./lib/composables/useKeyboardShortcuts.svelte";
@@ -47,11 +48,32 @@
   const prefs = new Preferences();
   const selection = new SelectionState();
   const drag = new DragState();
+  // isBlocked reads editor/confirmDialog, created below — the closure is only
+  // invoked at popstate time, by which point both exist. While a blocking overlay
+  // is open, Back/Forward must not navigate the panel behind it (nibs-g1fy).
+  const nav = createHistoryNav({
+    selection,
+    isBlocked: () => editor.editorOpen || editor.typePickerOpen || confirmDialog.open,
+  });
   provideSelection(selection);
   provideDrag(drag);
+  provideHistoryNav(nav);
+
+  // Wire browser history: sync selection from the initial URL, then let
+  // Back/Forward drive selection via popstate. syncFromUrl reads/writes only
+  // non-reactive deps (window.location/history), so this effect runs once
+  // (no reactive reads). handlePopState is only registered as a listener
+  // here, never invoked in the effect body.
+  $effect(() => {
+    nav.syncFromUrl();
+    window.addEventListener("popstate", nav.handlePopState);
+    return () => window.removeEventListener("popstate", nav.handlePopState);
+  });
   const confirmDialog = createConfirmDialog();
   provideConfirmDialog(confirmDialog);
-  const editor = createEditorOrchestration({ client, selection });
+  // Pass `nav` so editor-save auto-select records a Back-stop (creating/opening
+  // a nib after save routes through history, per nibs-58c3 "all open paths").
+  const editor = createEditorOrchestration({ client, nav });
   provideEditorOrchestration(editor);
   // Collect unique tags from the query results via TreeTable callback
   let availableTags: string[] = $state([]);
@@ -101,9 +123,10 @@
   let contextMenuNib: TreeTableNib | null = $state(null);
 
   function handleRowContextMenu(nibId: string, event: MouseEvent, nib: TreeTableNib) {
-    // If the right-clicked nib is not in the selection, select it first
+    // If the right-clicked nib is not in the selection, select it first —
+    // route through nav so the URL/history stay in sync (nibs-58c3).
     if (!selection.isSelected(nibId)) {
-      selection.select(nibId);
+      nav.navigateToNib(nibId);
     }
     contextMenuNibId = nibId;
     contextMenuNib = nib;
@@ -114,6 +137,7 @@
   // --- Global keyboard shortcuts ---
   useKeyboardShortcuts({
     selection,
+    nav,
     editor,
     confirmDialog,
     mutations,
@@ -239,15 +263,23 @@
         collapsible={true}
         collapsedSize={0}
         onResize={handleDetailPaneResize}
-        onCollapse={() => { if (selection.panelOpen) requestAnimationFrame(() => selection.close()); }}
+        onCollapse={() => {
+          if (!selection.panelOpen) return;
+          // Capture the open nib at schedule time; only close if it's still the one
+          // showing when the frame fires. A different nib opened during the rAF window
+          // (near-impossible resize-drag race) must not be closed / push a spurious
+          // {nibId:null}. nibs-58c3.
+          const openedId = selection.selectedNibId;
+          requestAnimationFrame(() => { if (selection.selectedNibId === openedId) nav.closePanel(); });
+        }}
         bind:this={detailPaneComponent}
         data-testid="detail-pane"
       >
         {#if selection.panelOpen && selection.selectedNibId}
           <DetailPanel
             nibId={selection.selectedNibId}
-            onclose={() => selection.close()}
-            onnibselect={(nibId) => selection.select(nibId)}
+            onclose={() => nav.closePanel()}
+            onnibselect={(nibId) => nav.navigateToNib(nibId)}
             onedit={editor.handleEditNib}
             onaddchild={editor.handleAddChild}
           />

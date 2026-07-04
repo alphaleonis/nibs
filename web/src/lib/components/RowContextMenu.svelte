@@ -3,7 +3,7 @@
   import { STATUSES, PRIORITIES } from "../constants";
   import { canHaveChildren } from "../typeHierarchy";
   import * as DropdownMenu from "$lib/components/ui/dropdown-menu/index.js";
-  import { useSelection, useConfirmDialog, useEditorOrchestration } from "$lib/contexts";
+  import { useSelection, useConfirmDialog, useEditorOrchestration, useHistoryNav } from "$lib/contexts";
   import { getMutationStore } from "$lib/mutations";
   import {
     setStatusBatch,
@@ -30,6 +30,7 @@
   const selection = useSelection();
   const confirmDialog = useConfirmDialog();
   const editor = useEditorOrchestration();
+  const nav = useHistoryNav();
   const mutations = getMutationStore();
 
   let isBulk = $derived(selectedCount > 1);
@@ -51,7 +52,8 @@
 
   function handleOpen() {
     if (nib) {
-      selection.select(nib.id);
+      // Route through nav so the URL/history stay in sync (nibs-58c3).
+      nav.navigateToNib(nib.id);
     }
   }
 
