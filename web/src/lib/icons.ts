@@ -1,4 +1,4 @@
-import { Flag, Layers, Bug, Sparkles, SquareCheck } from "@lucide/svelte";
+import { Flag, Layers, Bug, Sparkles, SquareCheck, FlaskConical } from "@lucide/svelte";
 import type { Component } from "svelte";
 
 export interface TypeIconInfo {
@@ -12,4 +12,5 @@ export const typeIcons: Record<string, TypeIconInfo> = {
   bug: { icon: Bug, color: "var(--type-bug)" },
   feature: { icon: Sparkles, color: "var(--type-feature)" },
   task: { icon: SquareCheck, color: "var(--type-task)" },
+  research: { icon: FlaskConical, color: "var(--type-research)" },
 };
