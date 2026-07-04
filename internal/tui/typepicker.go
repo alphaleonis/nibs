@@ -69,7 +69,6 @@ type typePickerModel struct {
 	nibIDs      []string
 	nibTitle    string
 	currentType string
-	maxDescLen  int // longest description length for stable sizing
 	width       int
 	height      int
 }
@@ -88,7 +87,6 @@ func newTypePickerModel(nibIDs []string, nibTitle, currentType string, validType
 
 	items := make([]typeItem, 0, len(types))
 	cursor := 0
-	maxDescLen := 0
 
 	for _, t := range types {
 		if validSet != nil && !validSet[t.Name] {
@@ -97,9 +95,6 @@ func newTypePickerModel(nibIDs []string, nibTitle, currentType string, validType
 		isCurrent := t.Name == currentType
 		if isCurrent {
 			cursor = len(items)
-		}
-		if len(t.Description) > maxDescLen {
-			maxDescLen = len(t.Description)
 		}
 		items = append(items, typeItem{
 			name:        t.Name,
@@ -115,7 +110,6 @@ func newTypePickerModel(nibIDs []string, nibTitle, currentType string, validType
 		nibIDs:      nibIDs,
 		nibTitle:    nibTitle,
 		currentType: currentType,
-		maxDescLen:  maxDescLen,
 		width:       width,
 		height:      height,
 	}

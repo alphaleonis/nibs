@@ -107,8 +107,8 @@ func newStatusPickerModel(nibIDs []string, nibTitle, currentStatus string, cfg *
 	}
 
 	// Calculate modal dimensions
-	modalWidth := max(40, min(60, width*50/100))
-	modalHeight := max(10, min(16, height*50/100))
+	modalWidth := pickerModalWidth(width, 0, 0)
+	modalHeight := pickerModalHeight(height, 0, 0)
 	listWidth := modalWidth - 6
 	listHeight := modalHeight - 7
 
@@ -149,8 +149,8 @@ func (m statusPickerModel) Update(msg tea.Msg) (statusPickerModel, tea.Cmd) {
 	case tea.WindowSizeMsg:
 		m.width = msg.Width
 		m.height = msg.Height
-		modalWidth := max(40, min(60, msg.Width*50/100))
-		modalHeight := max(10, min(16, msg.Height*50/100))
+		modalWidth := pickerModalWidth(msg.Width, 0, 0)
+		modalHeight := pickerModalHeight(msg.Height, 0, 0)
 		listWidth := modalWidth - 6
 		listHeight := modalHeight - 7
 		m.list.SetSize(listWidth, listHeight)

@@ -4,6 +4,7 @@ import (
 	"testing"
 
 	tea "github.com/charmbracelet/bubbletea"
+	"github.com/charmbracelet/lipgloss"
 
 	"github.com/alphaleonis/nibs/internal/config"
 	"github.com/alphaleonis/nibs/internal/nib"
@@ -51,6 +52,34 @@ func TestEstimatePickerModel(t *testing.T) {
 			}
 			if item.description != est.Description {
 				t.Errorf("item %d: got description %q, want %q", i, item.description, est.Description)
+			}
+		}
+	})
+
+	// Regression test for the picker "jump" bug (mirrors statuspicker_test.go):
+	// the modal must render at a constant height no matter which estimate is
+	// selected. The stabilizing logic lives in the shared reservePickerDescription
+	// helper, so this guards the estimate picker's wiring into it.
+	t.Run("modal height is constant across all estimate selections", func(t *testing.T) {
+		const w, h = 80, 24
+
+		heightByEstimate := make(map[string]int, len(config.DefaultEstimates))
+		for _, e := range config.DefaultEstimates {
+			m := newEstimatePickerModel(
+				[]string{"nib-1"}, "Test Nib", e.Name,
+				cfg, w, h,
+			)
+			view := m.View()
+			if view == "Loading..." {
+				t.Fatalf("estimate %q: View() returned Loading...; width was not applied", e.Name)
+			}
+			heightByEstimate[e.Name] = lipgloss.Height(view)
+		}
+
+		want := heightByEstimate[config.DefaultEstimates[0].Name]
+		for _, e := range config.DefaultEstimates {
+			if got := heightByEstimate[e.Name]; got != want {
+				t.Errorf("estimate %q: modal height = %d, want %d (height must be constant across selections)", e.Name, got, want)
 			}
 		}
 	})

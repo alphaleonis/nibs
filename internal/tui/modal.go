@@ -34,6 +34,21 @@ func pickerModalWidth(screenWidth, widthPct, maxWidth int) int {
 	return max(40, min(maxWidth, screenWidth*widthPct/100))
 }
 
+// pickerModalHeight computes a picker modal's outer height from the screen
+// height, honoring the height-percentage / max-height settings (0 selects the
+// defaults of 50% / 16 rows, floored at 10). List-based pickers use it to size
+// the embedded bubbles/list so the whole modal stays within the screen. It is
+// the height sibling of pickerModalWidth — keep the two in step.
+func pickerModalHeight(screenHeight, heightPct, maxHeight int) int {
+	if heightPct == 0 {
+		heightPct = 50
+	}
+	if maxHeight == 0 {
+		maxHeight = 16
+	}
+	return max(10, min(maxHeight, screenHeight*heightPct/100))
+}
+
 // reservePickerDescription wraps the selected description to the modal's content
 // width and pads it with blank lines to the tallest wrapped height among all the
 // picker's descriptions. This keeps a picker modal's total height constant no
@@ -44,7 +59,11 @@ func pickerModalWidth(screenWidth, widthPct, maxWidth int) int {
 func reservePickerDescription(selected string, all []string, modalWidth int) string {
 	// modalWidth-6 matches the list's content width (border + padding + a small
 	// right margin), so the description aligns under the list items and the
-	// pre-wrapped block fits inside the modal without being re-wrapped.
+	// pre-wrapped block fits inside the modal without being re-wrapped. The -6
+	// must stay within renderPickerModal's chrome budget (its Border + Padding(0,1)
+	// on Width(modalWidth)) — if that padding/border ever widens, this must track
+	// it or the pre-wrapped block gets re-wrapped and the height-jump bug returns.
+	// See the matching note at renderPickerModal's border block.
 	descWidth := modalWidth - 6
 	style := lipgloss.NewStyle().Width(descWidth)
 
@@ -94,7 +113,10 @@ func renderPickerModal(cfg pickerModalConfig) string {
 	}
 	help += helpKeyStyle.Render("esc") + " " + helpStyle.Render("cancel")
 
-	// Border style
+	// Border style. The Border + Padding(0,1) here is the chrome budget that
+	// reservePickerDescription's descWidth (modalWidth-6) is measured against;
+	// keep the two in sync so pre-wrapped descriptions aren't re-wrapped inside
+	// the border (which would reintroduce the picker height-jump bug).
 	border := lipgloss.NewStyle().
 		Border(lipgloss.RoundedBorder()).
 		BorderForeground(ui.ColorPrimary).
