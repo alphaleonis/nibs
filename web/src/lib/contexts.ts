@@ -65,6 +65,7 @@ export function makeTestContext(
   m.set(HISTORY_NAV_KEY, opts?.historyNav ?? {
     navigateToNib: (id: string) => selection.select(id),
     closePanel: () => selection.close(),
+    replaceClosed: () => {},
     handlePopState: () => {},
     syncFromUrl: () => {},
   } satisfies HistoryNav);

@@ -116,6 +116,23 @@ describe("useHistoryNav", () => {
     expect(selection.selectedNibId).toBeNull();
   });
 
+  it("replaceClosed heals the URL in place (replaceState to clean path), leaving selection to the caller (nibs-etk3)", () => {
+    // Used after deleting/archiving the open nib, or when landing on a nib that
+    // no longer exists: heal the current entry in place (replace, no Back-stop),
+    // so a stale ?nib=<gone> doesn't survive reload/Back. Selection is the
+    // caller's responsibility (clearAll / close), so replaceClosed must not touch it.
+    const selection = new SelectionState();
+    selection.select("gone");
+    const { nav, history } = setup({ selection, location: { search: "?nib=gone", pathname: "/" } });
+
+    nav.replaceClosed();
+
+    expect(history.calls).toEqual([
+      { kind: "replace", state: { nibId: null }, url: "/" },
+    ]);
+    expect(selection.selectedNibId).toBe("gone");
+  });
+
   it("handlePopState with {nibId:'b'} selects b + ensureVisible, no history writes", () => {
     const { nav, selection, history } = setup();
 

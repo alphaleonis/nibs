@@ -8,6 +8,11 @@ export interface HistoryLike {
 export interface HistoryNav {
   navigateToNib(id: string): void;
   closePanel(): void;
+  /** Heal the current history entry in place to the clean no-nib URL
+   *  (replaceState, no Back-stop). Caller owns the selection state. Used when a
+   *  stale `?nib=<gone>` must be normalized: deleting/archiving the open nib, or
+   *  landing on a nib that no longer exists (nibs-etk3). */
+  replaceClosed(): void;
   handlePopState(e: { state: unknown }): void;
   syncFromUrl(): void;
 }
@@ -67,6 +72,10 @@ export function createHistoryNav(opts: {
     selection.close();
   }
 
+  function replaceClosed() {
+    history.replaceState({ nibId: null }, "", closeUrl());
+  }
+
   function handlePopState(e: { state: unknown }) {
     // A blocking overlay (editor modal / type picker / confirm dialog) is open:
     // don't navigate the panel behind it. Re-anchor history on the currently
@@ -108,6 +117,7 @@ export function createHistoryNav(opts: {
   return {
     navigateToNib,
     closePanel,
+    replaceClosed,
     handlePopState,
     syncFromUrl,
   };

@@ -107,6 +107,7 @@
         const result = await mutations.execute(deleteBatch(ids));
         if (result.ok) {
           selection.clearAll();
+          nav.replaceClosed(); // heal a stale ?nib=<deleted> URL (nibs-etk3)
         }
       },
     });
@@ -129,6 +130,7 @@
         const result = await mutations.execute(archiveBatch(ids));
         if (result.ok) {
           selection.clearAll();
+          nav.replaceClosed(); // heal a stale ?nib=<archived> URL (nibs-etk3)
         }
       },
     });

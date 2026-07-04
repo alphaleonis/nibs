@@ -23,9 +23,13 @@
     onnibselect?: (nibId: string) => void;
     onedit?: (nibId: string) => void;
     onaddchild?: (parentId: string, parentType: string) => void;
+    /** Fired once when this nibId resolves to a nonexistent nib (deleted /
+     *  archived / bad link). Lets the app heal the stale ?nib= URL + close
+     *  the panel (nibs-etk3). Not fired for the "deleted-while-viewing" notice. */
+    onmissing?: (nibId: string) => void;
   }
 
-  let { nibId, onclose, onnibselect, onedit, onaddchild }: Props = $props();
+  let { nibId, onclose, onnibselect, onedit, onaddchild, onmissing }: Props = $props();
 
   const client = getContextClient();
   const mutations = getMutationStore();
@@ -55,6 +59,20 @@
 
   let nib = $derived($result.data?.nib ?? null);
   let fetching = $derived($result.fetching);
+
+  // When the detail query settles with no nib (and no error), this nibId no
+  // longer exists (deleted / archived / stale link). Fire onmissing ONCE per id
+  // so the app can heal the stale ?nib= URL and close the panel (nibs-etk3).
+  // A query *error* is NOT treated as missing (it may be transient). This is
+  // distinct from the "deleted-while-viewing" notice, where `nib` stays non-null
+  // (cached) and the panel deliberately stays open.
+  let reportedMissingFor: string | null = null;
+  $effect(() => {
+    if (!fetching && !$result.error && nib === null && reportedMissingFor !== nibId) {
+      reportedMissingFor = nibId;
+      onmissing?.(nibId);
+    }
+  });
   let prefix = $derived($configResult.data?.config?.prefix ?? "");
   // Set of full mention IDs from the nib's resolved mentions. Used by the
   // resolver below to decide which `#<id>` tokens to rewrite as anchors.

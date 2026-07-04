@@ -71,6 +71,7 @@ export function useKeyboardShortcuts(opts: {
         const result = await mutations.execute(deleteBatch(ids));
         if (result.ok) {
           selection.clearAll();
+          nav.replaceClosed(); // heal a stale ?nib=<deleted> URL (nibs-etk3)
         }
       },
     });
