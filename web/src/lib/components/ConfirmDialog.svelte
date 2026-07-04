@@ -42,7 +42,7 @@
         <AlertDialog.Action
           data-testid={`${testId}-confirm`}
           variant={variant === "danger" ? "destructive" : "default"}
-          class={variant === "warning" ? "bg-[var(--warning)] text-white border-[var(--warning)] hover:bg-[var(--warning-hover)]" : ""}
+          class={variant === "warning" ? "bg-warning text-[var(--warning-foreground,white)] border-warning hover:bg-warning-hover" : ""}
           disabled={confirmDisabled}
           onclick={onconfirm}
         >

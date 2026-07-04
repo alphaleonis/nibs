@@ -305,7 +305,7 @@
 
 {#if drag.isDragging && drag.draggedIds.length > 1}
   <div
-    class="fixed pointer-events-none rounded-full px-2 py-0.5 text-xs font-medium"
+    class="fixed pointer-events-none rounded-full px-2 py-0.5 text-label"
     style="
       left: {drag.cursorX + 12}px;
       top: {drag.cursorY - 12}px;

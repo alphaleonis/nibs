@@ -16,6 +16,8 @@
   import type { TypeIconInfo } from "../icons";
   import { resolveFilter, resolveViewLevel, resolveVisibleColumns, emitFilter as emitFilterHelper } from "../resolvePrefs";
   import * as DropdownMenu from "$lib/components/ui/dropdown-menu/index.js";
+  import { buttonVariants } from "$lib/components/ui/button/index.js";
+  import { Input } from "$lib/components/ui/input/index.js";
   import StatusDot from "./StatusDot.svelte";
   import TypeIcon from "./TypeIcon.svelte";
 
@@ -125,13 +127,6 @@
     }
   }
 
-  const iconBtnBase =
-    "inline-flex items-center justify-center rounded-md border p-1.5 text-sm h-8 transition-colors";
-  const iconBtnDefault =
-    "border-border bg-popover text-muted-foreground hover:text-foreground";
-  const iconBtnActive =
-    "border-primary bg-primary/10 text-primary";
-
   // --- Filter bar logic ---
   type FilterField = "type" | "priority" | "status" | "estimate" | "tags";
   type DropdownId = "type" | "priority" | "state" | "effort" | "tags";
@@ -217,7 +212,7 @@
     <DropdownMenu.Trigger
       title="New item"
       data-testid="toolbar-add"
-      class="inline-flex items-center gap-1.5 rounded-md border border-primary bg-primary px-3 py-1 text-sm font-medium text-primary-foreground transition-colors hover:bg-primary/90 h-8"
+      class={buttonVariants({ variant: "default", size: "default" })}
     >
       <Plus size={16} />
       New
@@ -240,13 +235,13 @@
   </DropdownMenu.Root>
 
   <!-- Keyword search -->
-  <input
+  <Input
     type="text"
     placeholder="Filter by keyword"
     value={resolvedFilter.search ?? ""}
     oninput={handleKeyword}
     data-testid="filter-keyword"
-    class="min-w-0 flex-1 rounded-md border border-input bg-popover px-3 py-1 text-sm text-foreground placeholder-muted-foreground focus:border-ring focus:outline-none h-8"
+    class="min-w-0 flex-1"
   />
 
   <!-- Filter dropdowns -->
@@ -254,10 +249,10 @@
     {@const count = getCount(dd.field)}
     <DropdownMenu.Root open={filterOpenStates[dd.id]} onOpenChange={(open) => handleFilterOpenChange(dd.id, open)}>
       <DropdownMenu.Trigger
-        class="inline-flex items-center gap-1 rounded-md border border-input bg-popover px-2.5 py-1 text-sm text-muted-foreground transition-colors hover:border-border hover:bg-accent hover:text-accent-foreground h-8 shrink-0"
+        class="{buttonVariants({ variant: 'outline', size: 'default' })} shrink-0 text-muted-foreground"
       >
         {dd.label}
-        <span class="ml-0.5 inline-flex h-4.5 min-w-4.5 items-center justify-center rounded-full px-1 text-xs font-medium {count ? 'bg-primary text-primary-foreground' : 'invisible'}">{count || 0}</span>
+        <span class="ml-0.5 inline-flex h-4.5 min-w-4.5 items-center justify-center rounded-full px-1 text-label {count ? 'bg-primary text-primary-foreground' : 'invisible'}">{count || 0}</span>
         <ChevronDown size={14} class="text-muted-foreground" />
       </DropdownMenu.Trigger>
       <DropdownMenu.Content align="start">
@@ -305,7 +300,7 @@
     <DropdownMenu.Root bind:open={viewLevelOpen}>
       <DropdownMenu.Trigger
         title="Select view"
-        class="flex items-center gap-1 {iconBtnBase} {viewLevelOpen ? iconBtnActive : iconBtnDefault} px-2 text-sm"
+        class={buttonVariants({ variant: "outline", size: "default" })}
       >
         <ViewLevelIcon size={14} style="color: {viewLevelIconInfo.color};" />
         {VIEW_LEVEL_LABELS[resolvedViewLevel]}
@@ -331,7 +326,7 @@
       <DropdownMenu.Trigger
         title="Options"
         aria-expanded={optionsOpen}
-        class="{iconBtnBase} {optionsOpen ? iconBtnActive : iconBtnDefault}"
+        class={buttonVariants({ variant: "ghost", size: "icon" })}
       >
         <Settings2 size={16} />
       </DropdownMenu.Trigger>
@@ -345,7 +340,7 @@
           Include completed
         </DropdownMenu.CheckboxItem>
         <DropdownMenu.Separator />
-        <DropdownMenu.Label class="text-xs text-muted-foreground px-2 py-1">Row density</DropdownMenu.Label>
+        <DropdownMenu.Label class="text-caption text-muted-foreground px-2 py-1">Row density</DropdownMenu.Label>
         <DropdownMenu.RadioGroup value={resolvedDensity} onValueChange={(v) => { if (v) handleSetDensity(v as RowDensity); }}>
           <DropdownMenu.RadioItem value="compact" class="flex items-center gap-2 text-sm">
             Compact
@@ -362,7 +357,7 @@
       <DropdownMenu.Trigger
         title="Columns"
         aria-expanded={columnsOpen}
-        class="{iconBtnBase} {columnsOpen ? iconBtnActive : iconBtnDefault}"
+        class={buttonVariants({ variant: "ghost", size: "icon" })}
       >
         <Columns3 size={16} />
       </DropdownMenu.Trigger>

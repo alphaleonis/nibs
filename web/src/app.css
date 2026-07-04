@@ -161,6 +161,45 @@
   --z-dropdown: 10;
   --z-sticky: 20;
   --z-modal: 100;
+
+  /* ── Semantic type scale ────────────────────────────────────────
+     Theme-INVARIANT typography tokens. Do NOT override these in any
+     [data-theme]/.dark block — only color tokens vary per theme, type
+     stays constant. Consumed by the @utility classes below. */
+  --text-label-size: 0.75rem;    /* 12px */
+  --text-label-weight: 500;
+  --text-label-leading: 1rem;    /* 16px — tight */
+  --text-body-size: 0.875rem;    /* 14px */
+  --text-body-weight: 400;
+  --text-body-leading: 1.25rem;  /* 20px */
+  --text-caption-size: 0.75rem;  /* 12px */
+  --text-caption-weight: 400;
+  --text-caption-leading: 1rem;  /* 16px */
+}
+
+/* ── Semantic type-scale utilities ──────────────────────────────────
+   Bundled font-size + weight + line-height per semantic role. Prefer
+   these over ad-hoc `text-xs/sm` + `font-*` combinations. */
+
+/* Control labels, table headers, meta labels — 12px / 500 / tight */
+@utility text-label {
+  font-size: var(--text-label-size);
+  font-weight: var(--text-label-weight);
+  line-height: var(--text-label-leading);
+}
+
+/* Default body text — 14px / 400 */
+@utility text-body {
+  font-size: var(--text-body-size);
+  font-weight: var(--text-body-weight);
+  line-height: var(--text-body-leading);
+}
+
+/* Secondary / muted captions — 12px / 400 */
+@utility text-caption {
+  font-size: var(--text-caption-size);
+  font-weight: var(--text-caption-weight);
+  line-height: var(--text-caption-leading);
 }
 
 
@@ -236,7 +275,7 @@
 
 .prose-nib code {
   background-color: var(--muted);
-  border-radius: 0.25rem;
+  border-radius: var(--radius-sm);
   padding: 0.125rem 0.375rem;
   font-size: 0.75rem;
   font-family: ui-monospace, monospace;
@@ -245,7 +284,7 @@
 .prose-nib pre {
   background-color: var(--card);
   border: 1px solid var(--border);
-  border-radius: 0.375rem;
+  border-radius: var(--radius-md);
   padding: 0.75rem;
   overflow-x: auto;
   margin: 0.5rem 0;

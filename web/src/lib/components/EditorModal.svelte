@@ -365,15 +365,16 @@
             placeholder="Nib title..."
             bind:value={title}
           />
-          <button
+          <Button
+            variant="ghost"
+            size="icon"
             data-testid="editor-close"
-            class="editor-close-btn"
             onclick={handleClose}
             title="Close"
             aria-label="Close editor"
           >
             <X size={20} />
-          </button>
+          </Button>
         </div>
 
         <!-- Conflict banner -->
@@ -427,6 +428,8 @@
         <!-- Main editor area -->
         <div class="editor-main">
           <!-- Tab bar for narrow screens -->
+          <!-- Raw buttons: segmented tab controls with a bottom-border active
+               indicator — no equivalent variant in the shared Button primitive. -->
           <div class="editor-tab-bar">
             <button
               class="editor-tab"
@@ -548,7 +551,7 @@
     flex: 1;
     background: transparent;
     border: 1px solid transparent;
-    border-radius: 0.375rem;
+    border-radius: var(--radius-md);
     padding: 0.375rem 0.5rem;
     color: var(--foreground);
     font-size: 1.125rem;
@@ -567,23 +570,6 @@
 
   .editor-title-input::placeholder {
     color: var(--muted-foreground);
-  }
-
-  .editor-close-btn {
-    display: inline-flex;
-    align-items: center;
-    justify-content: center;
-    padding: 0.375rem;
-    color: var(--muted-foreground);
-    background: none;
-    border: none;
-    cursor: pointer;
-    border-radius: 0.375rem;
-  }
-
-  .editor-close-btn:hover {
-    color: var(--foreground);
-    background-color: var(--accent);
   }
 
   .editor-metadata {
@@ -664,7 +650,7 @@
     min-width: 0;
     overflow: auto;
     border: 1px solid var(--border);
-    border-radius: 0.5rem;
+    border-radius: var(--radius-lg);
   }
 
   .editor-preview-container {
@@ -673,7 +659,7 @@
     overflow: auto;
     padding: 1rem;
     border: 1px solid var(--border);
-    border-radius: 0.5rem;
+    border-radius: var(--radius-lg);
   }
 
   @media (max-width: 767px) {

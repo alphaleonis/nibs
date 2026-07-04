@@ -35,6 +35,8 @@
     <div class="type-picker-header">Select child type</div>
     <div class="type-picker-list">
       {#each validTypes as childType}
+        <!-- Raw button: popover menu item styled to match DropdownMenu items,
+             not a standalone Button primitive. -->
         <button
           class="type-picker-item"
           data-testid="type-picker-item"
@@ -84,7 +86,7 @@
     color: var(--foreground);
     background: none;
     border: none;
-    border-radius: 0.25rem;
+    border-radius: var(--radius-sm);
     cursor: pointer;
     text-align: left;
     text-transform: capitalize;

@@ -23,6 +23,8 @@
 </script>
 
 {#snippet toggleButton()}
+  <!-- Raw button: collapsible group header (chevron + label) with bespoke
+       layout; no matching shared Button variant. -->
   <button
     class="detail-related-group-header"
     data-testid="detail-group-toggle"
@@ -43,6 +45,8 @@
   {#if onaction}
     <div class="detail-related-group-header-row">
       {@render toggleButton()}
+      <!-- Raw button: reveal-style icon action tied to the group header row;
+           kept raw for layout parity with the toggle above. -->
       <button
         class="detail-related-add-child"
         data-testid="detail-related-add-child"
@@ -58,6 +62,8 @@
   {#if !collapsed}
     <div class="detail-related-group-items">
       {#each items as item}
+        <!-- Raw button: full-width link-style list row (status dot + title);
+             behaves as a navigation link, not a standalone Button. -->
         <button
           class="detail-related-link"
           data-testid="detail-related-link"
@@ -107,7 +113,7 @@
     color: var(--muted-foreground);
     background: none;
     border: none;
-    border-radius: 0.25rem;
+    border-radius: var(--radius-sm);
     cursor: pointer;
     opacity: 1;
   }
@@ -137,7 +143,7 @@
     border: none;
     color: var(--link);
     padding: 0.25rem 0.5rem;
-    border-radius: 0.375rem;
+    border-radius: var(--radius-md);
     cursor: pointer;
     text-align: left;
     width: 100%;

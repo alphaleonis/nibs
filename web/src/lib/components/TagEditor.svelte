@@ -50,6 +50,8 @@
       <span class="tag-chip" data-testid={chipTestId}>
         {tag}
         {#if !disabled}
+          <!-- Raw button: tiny circular remove control nested inside a tag pill,
+               smaller than the Button primitive's minimum icon size. -->
           <button
             class="tag-remove"
             data-testid={removeTestId}
@@ -121,7 +123,7 @@
   .tag-input {
     background: transparent;
     border: 1px solid var(--border);
-    border-radius: 0.375rem;
+    border-radius: var(--radius-md);
     padding: 0.25rem 0.5rem;
     color: var(--foreground);
     font-size: 0.8125rem;

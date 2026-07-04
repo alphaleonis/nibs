@@ -389,15 +389,15 @@
 
 <div data-testid="tree-table" class="h-full">
 {#if $result.fetching}
-  <div class="flex items-center justify-center py-12 text-muted-foreground">
+  <div class="flex items-center justify-center py-12 text-body text-muted-foreground">
     <span>Loading...</span>
   </div>
 {:else if $result.error}
-  <div class="rounded-lg bg-destructive/10 px-4 py-3 text-destructive">
+  <div class="rounded-lg bg-destructive/10 px-4 py-3 text-body text-destructive">
     Error: {$result.error.message}
   </div>
 {:else if rows.length === 0}
-  <div class="flex items-center justify-center py-12 text-muted-foreground">
+  <div class="flex items-center justify-center py-12 text-body text-muted-foreground">
     <span>No nibs found</span>
   </div>
 {:else}
@@ -407,59 +407,61 @@
     <thead class="sticky top-0" style="z-index: var(--z-sticky);">
       <tr>
         <th class="w-8 bg-background" style="width: 32px;">
+          <!-- Raw buttons: two 12px icon controls must fit inside the 32px-wide
+               actions column; smaller than the Button primitive's minimum size. -->
           <div class="flex items-center">
-            <button data-testid="expand-all" class="p-0.5 text-muted-foreground hover:text-foreground" onclick={expandAll} title="Expand all">
+            <button data-testid="expand-all" class="rounded-sm p-0.5 text-muted-foreground hover:text-foreground" onclick={expandAll} title="Expand all">
               <Plus size={12} />
             </button>
-            <button data-testid="collapse-all" class="p-0.5 text-muted-foreground hover:text-foreground" onclick={collapseAll} title="Collapse all">
+            <button data-testid="collapse-all" class="rounded-sm p-0.5 text-muted-foreground hover:text-foreground" onclick={collapseAll} title="Collapse all">
               <Minus size={12} />
             </button>
           </div>
         </th>
         {#if showColumn("id")}
-          <th class="text-left text-sm font-medium text-muted-foreground px-3 py-2 relative bg-background" style="width: {resolvedColumnWidths.id}px;">
+          <th class="text-left text-label text-muted-foreground px-3 py-2 relative bg-background" style="width: {resolvedColumnWidths.id}px;">
             ID
             <!-- svelte-ignore a11y_no_static_element_interactions -->
             <div class="resize-handle" onpointerdown={(e) => columnResize.onPointerDown(e, "id")} onpointermove={columnResize.onPointerMove} onpointerup={columnResize.onPointerUp} ondblclick={() => columnResize.onDblClick("id", showColumn)}></div>
           </th>
         {/if}
         {#if showColumn("parent")}
-          <th class="text-left text-sm font-medium text-muted-foreground px-3 py-2 relative bg-background" style="width: {resolvedColumnWidths.parent}px;">
+          <th class="text-left text-label text-muted-foreground px-3 py-2 relative bg-background" style="width: {resolvedColumnWidths.parent}px;">
             Parent
             <!-- svelte-ignore a11y_no_static_element_interactions -->
             <div class="resize-handle" onpointerdown={(e) => columnResize.onPointerDown(e, "parent")} onpointermove={columnResize.onPointerMove} onpointerup={columnResize.onPointerUp} ondblclick={() => columnResize.onDblClick("parent", showColumn)}></div>
           </th>
         {/if}
         {#if showColumn("type")}
-          <th class="text-left text-sm font-medium text-muted-foreground px-3 py-2 relative bg-background" style="width: {resolvedColumnWidths.type}px;">
+          <th class="text-left text-label text-muted-foreground px-3 py-2 relative bg-background" style="width: {resolvedColumnWidths.type}px;">
             Type
             <!-- svelte-ignore a11y_no_static_element_interactions -->
             <div class="resize-handle" onpointerdown={(e) => columnResize.onPointerDown(e, "type")} onpointermove={columnResize.onPointerMove} onpointerup={columnResize.onPointerUp} ondblclick={() => columnResize.onDblClick("type", showColumn)}></div>
           </th>
         {/if}
         {#if showColumn("title")}
-          <th class="text-left text-sm font-medium text-muted-foreground px-3 py-2 relative bg-background" style="width: {resolvedColumnWidths.title}px;">
+          <th class="text-left text-label text-muted-foreground px-3 py-2 relative bg-background" style="width: {resolvedColumnWidths.title}px;">
             Title
             <!-- svelte-ignore a11y_no_static_element_interactions -->
             <div class="resize-handle" onpointerdown={(e) => columnResize.onPointerDown(e, "title")} onpointermove={columnResize.onPointerMove} onpointerup={columnResize.onPointerUp} ondblclick={() => columnResize.onDblClick("title", showColumn)}></div>
           </th>
         {/if}
         {#if showColumn("state")}
-          <th class="text-left text-sm font-medium text-muted-foreground px-3 py-2 relative bg-background" style="width: {resolvedColumnWidths.state}px;">
+          <th class="text-left text-label text-muted-foreground px-3 py-2 relative bg-background" style="width: {resolvedColumnWidths.state}px;">
             State
             <!-- svelte-ignore a11y_no_static_element_interactions -->
             <div class="resize-handle" onpointerdown={(e) => columnResize.onPointerDown(e, "state")} onpointermove={columnResize.onPointerMove} onpointerup={columnResize.onPointerUp} ondblclick={() => columnResize.onDblClick("state", showColumn)}></div>
           </th>
         {/if}
         {#if showColumn("effort")}
-          <th class="text-left text-sm font-medium text-muted-foreground px-3 py-2 relative bg-background" style="width: {resolvedColumnWidths.effort}px;">
+          <th class="text-left text-label text-muted-foreground px-3 py-2 relative bg-background" style="width: {resolvedColumnWidths.effort}px;">
             Effort
             <!-- svelte-ignore a11y_no_static_element_interactions -->
             <div class="resize-handle" onpointerdown={(e) => columnResize.onPointerDown(e, "effort")} onpointermove={columnResize.onPointerMove} onpointerup={columnResize.onPointerUp} ondblclick={() => columnResize.onDblClick("effort", showColumn)}></div>
           </th>
         {/if}
         {#if showColumn("tags")}
-          <th class="text-left text-sm font-medium text-muted-foreground px-3 py-2 relative bg-background" style="width: {resolvedColumnWidths.tags}px;">
+          <th class="text-left text-label text-muted-foreground px-3 py-2 relative bg-background" style="width: {resolvedColumnWidths.tags}px;">
             Tags
             <!-- svelte-ignore a11y_no_static_element_interactions -->
             <div class="resize-handle" onpointerdown={(e) => columnResize.onPointerDown(e, "tags")} onpointermove={columnResize.onPointerMove} onpointerup={columnResize.onPointerUp} ondblclick={() => columnResize.onDblClick("tags", showColumn)}></div>

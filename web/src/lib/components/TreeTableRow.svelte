@@ -80,6 +80,9 @@
   <td class="actions-cell row-cell">
     <div class="actions-cell-inner">
       {#if canHaveChildren(nib.type)}
+        <!-- Raw button: pure-render delegated control (data-action) whose
+             reveal-on-row-hover is driven by scoped CSS; routing it through the
+             Button component would break event delegation (see CLAUDE.md). -->
         <button
           data-testid="row-add-child"
           data-action="add-child"
@@ -95,12 +98,12 @@
 
   <!-- ID column -->
   {#if visibleColumns.includes("id")}
-    <td data-testid="nib-id" class="text-sm px-3 cell-truncate row-cell" style="color: var(--muted-foreground);">{nib.id === "__unparented__" ? "" : shortId}</td>
+    <td data-testid="nib-id" class="text-body px-3 cell-truncate row-cell" style="color: var(--muted-foreground);">{nib.id === "__unparented__" ? "" : shortId}</td>
   {/if}
 
   <!-- Parent column -->
   {#if !hideParent && visibleColumns.includes("parent")}
-    <td data-testid="nib-parent" class="text-sm px-3 cell-truncate row-cell" style="color: var(--text-secondary);" title={parentNib ? parentNib.id : undefined}>
+    <td data-testid="nib-parent" class="text-body px-3 cell-truncate row-cell" style="color: var(--text-secondary);" title={parentNib ? parentNib.id : undefined}>
       {#if parentNib}
         <TypeIcon type={parentNib.type} size={14} />
         {parentNib.title}
@@ -110,7 +113,7 @@
 
   <!-- Type column -->
   {#if visibleColumns.includes("type")}
-    <td data-testid="nib-type" class="text-sm px-3 cell-truncate row-cell" style="color: var(--text-secondary);">{nib.type}</td>
+    <td data-testid="nib-type" class="text-body px-3 cell-truncate row-cell" style="color: var(--text-secondary);">{nib.type}</td>
   {/if}
 
   <!-- Title column -->
@@ -118,10 +121,12 @@
     <td data-testid="nib-title" class="cell-truncate row-cell" style="padding-left: {depth * 24}px;">
       <div class="title-content">
         {#if hasChildren}
+          <!-- Raw button: delegated expand/collapse control (data-action);
+               kept raw to preserve TreeTable's event delegation. -->
           <button
             data-testid="toggle"
             data-action="toggle"
-            class="shrink-0 w-5 h-5 inline-flex items-center justify-center text-muted-foreground hover:text-foreground"
+            class="shrink-0 w-5 h-5 inline-flex items-center justify-center rounded-sm text-muted-foreground hover:text-foreground"
           >
             {#if collapsed}<ChevronRight size={14} />{:else}<ChevronDown size={14} />{/if}
           </button>
@@ -136,6 +141,9 @@
             style="color: {priorityIndicator.color};"
           >{priorityIndicator.symbol}</span>
         {/if}
+        <!-- Raw button: delegated title control (data-action) rendered as inline
+             ellipsis-truncating text; the Button primitive's flex/height layout
+             doesn't fit, and delegation must be preserved. -->
         <button
           data-testid="title-text"
           data-action="title"
@@ -163,7 +171,7 @@
 
   <!-- State column -->
   {#if visibleColumns.includes("state")}
-    <td data-testid="nib-state" class="text-sm px-3 cell-truncate row-cell">
+    <td data-testid="nib-state" class="text-body px-3 cell-truncate row-cell">
       <StatusDot status={nib.status} class="mr-1.5" />
       <span style="color: {statusDotColor};">{nib.status}</span>
     </td>
@@ -171,7 +179,7 @@
 
   <!-- Effort column -->
   {#if visibleColumns.includes("effort")}
-    <td data-testid="nib-effort" class="text-sm px-3 cell-truncate row-cell">
+    <td data-testid="nib-effort" class="text-body px-3 cell-truncate row-cell">
       {#if nib.estimate?.trim()}
         {nib.estimate.toUpperCase()}
       {/if}
@@ -184,7 +192,7 @@
       {#each nib.tags as tag}
         <span
           data-testid="tag"
-          class="inline-flex rounded px-1.5 py-0.5 text-xs"
+          class="inline-flex rounded-sm px-1.5 py-0.5 text-caption"
           style="background-color: var(--popover); color: var(--muted-foreground);"
         >{tag}</span>
       {/each}
@@ -299,7 +307,7 @@
     color: var(--muted-foreground);
     background: none;
     border: none;
-    border-radius: 0.25rem;
+    border-radius: var(--radius-sm);
     cursor: pointer;
     opacity: 0;
     transition: opacity 0.1s;

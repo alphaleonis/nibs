@@ -83,7 +83,7 @@
 
   .markdown-editor :global(.cm-editor) {
     height: 100%;
-    border-radius: 0.5rem;
+    border-radius: var(--radius-lg);
   }
 
   .markdown-editor :global(.cm-scroller) {

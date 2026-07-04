@@ -253,9 +253,9 @@
 <div data-testid="detail-panel" class="detail-panel" role="complementary" aria-label="Nib detail">
   <div class="detail-header">
     <span class="detail-nib-id">{nibId}</span>
-    <button data-testid="detail-close" class="detail-close" onclick={onclose} title="Close" aria-label="Close detail panel">
+    <Button variant="ghost" size="icon-sm" data-testid="detail-close" onclick={onclose} title="Close" aria-label="Close detail panel">
       <X size={16} />
-    </button>
+    </Button>
   </div>
 
   {#if fetching && !nib}
@@ -314,16 +314,16 @@
         <div class="detail-body-section" data-testid="detail-body-section">
           <div class="detail-body-section-header">
             <span class="detail-label">Description</span>
-            <button
-              class="detail-edit-button"
-              class:enabled={!!onedit}
+            <Button
+              variant="outline"
+              size="xs"
               data-testid="detail-body-edit"
               disabled={!onedit || deleted}
               title={onedit ? "Edit in full-screen editor" : "Edit description (coming soon)"}
               onclick={() => onedit?.(nibId)}
             >
               Edit
-            </button>
+            </Button>
           </div>
           <!-- svelte-ignore a11y_click_events_have_key_events -->
           <!-- svelte-ignore a11y_no_static_element_interactions -->
@@ -417,7 +417,7 @@
         <Button
           variant="ghost"
           size="sm"
-          class="text-[var(--archive)] border border-[var(--archive-border)] hover:bg-[var(--archive-bg-hover)]"
+          class="text-archive border border-archive-border hover:bg-archive-bg-hover"
           data-testid="detail-archive-button"
           disabled={actionPending || deleted}
           onclick={handleArchiveNib}
@@ -428,7 +428,7 @@
         <Button
           variant="ghost"
           size="sm"
-          class="text-[var(--delete)] border border-[var(--delete-border)] hover:bg-[var(--delete-bg-hover)]"
+          class="text-delete border border-delete-border hover:bg-delete-bg-hover"
           data-testid="detail-delete-button"
           disabled={actionPending || deleted}
           onclick={handleDeleteNib}
@@ -464,23 +464,6 @@
     color: var(--muted-foreground);
   }
 
-  .detail-close {
-    display: inline-flex;
-    align-items: center;
-    justify-content: center;
-    padding: 0.25rem;
-    color: var(--muted-foreground);
-    background: none;
-    border: none;
-    cursor: pointer;
-    border-radius: 0.25rem;
-  }
-
-  .detail-close:hover {
-    color: var(--foreground);
-    background-color: var(--accent);
-  }
-
   .detail-loading {
     color: var(--muted-foreground);
     font-size: 0.875rem;
@@ -497,7 +480,7 @@
     width: 100%;
     background: transparent;
     border: 1px solid transparent;
-    border-radius: 0.375rem;
+    border-radius: var(--radius-md);
     padding: 0.375rem 0.5rem;
     color: var(--foreground);
     font-size: 1.25rem;
@@ -555,27 +538,6 @@
     justify-content: space-between;
   }
 
-  .detail-edit-button {
-    font-size: 0.75rem;
-    color: var(--muted-foreground);
-    background: none;
-    border: 1px solid var(--border);
-    border-radius: 0.375rem;
-    padding: 0.125rem 0.5rem;
-    cursor: not-allowed;
-    opacity: 0.5;
-  }
-
-  .detail-edit-button.enabled {
-    cursor: pointer;
-    opacity: 1;
-  }
-
-  .detail-edit-button.enabled:hover {
-    color: var(--foreground);
-    background-color: var(--accent);
-  }
-
   .detail-documents-section {
     display: flex;
     flex-direction: column;
@@ -597,7 +559,7 @@
     gap: 0.5rem;
     color: var(--link);
     padding: 0.25rem 0.5rem;
-    border-radius: 0.375rem;
+    border-radius: var(--radius-md);
     cursor: default;
   }
 
@@ -637,7 +599,7 @@
     padding: 0.5rem 0.75rem;
     background-color: var(--destructive);
     color: var(--destructive-foreground);
-    border-radius: 0.375rem;
+    border-radius: var(--radius-md);
     font-size: 0.875rem;
     font-weight: 500;
   }
