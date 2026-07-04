@@ -174,10 +174,19 @@ func (m estimatePickerModel) View() string {
 		return "Loading..."
 	}
 
-	var description string
-	if item, ok := m.list.SelectedItem().(estimateItem); ok && item.description != "" {
-		description = item.description
+	// Reserve a fixed description-area height so the modal keeps a constant
+	// height regardless of which estimate is selected.
+	var selected string
+	var allDescs []string
+	for _, li := range m.list.Items() {
+		if item, ok := li.(estimateItem); ok {
+			allDescs = append(allDescs, item.description)
+		}
 	}
+	if item, ok := m.list.SelectedItem().(estimateItem); ok {
+		selected = item.description
+	}
+	description := reservePickerDescription(selected, allDescs, pickerModalWidth(m.width, 0, 0))
 
 	var nibID string
 	if len(m.nibIDs) == 1 {

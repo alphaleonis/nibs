@@ -20,19 +20,57 @@ type pickerModalConfig struct {
 	MaxWidth    int         // max modal width (default 60)
 }
 
-// renderPickerModal renders a standard picker modal with consistent styling
-func renderPickerModal(cfg pickerModalConfig) string {
-	// Default values
-	widthPct := cfg.WidthPct
+// pickerModalWidth computes a picker modal's outer width from the screen width,
+// honoring the width-percentage / max-width settings (0 selects the defaults of
+// 50% / 60 columns). Pickers use it so their description-reservation math is
+// measured against the width the modal is actually rendered at.
+func pickerModalWidth(screenWidth, widthPct, maxWidth int) int {
 	if widthPct == 0 {
 		widthPct = 50
 	}
-	maxWidth := cfg.MaxWidth
 	if maxWidth == 0 {
 		maxWidth = 60
 	}
+	return max(40, min(maxWidth, screenWidth*widthPct/100))
+}
 
-	modalWidth := max(40, min(maxWidth, cfg.Width*widthPct/100))
+// reservePickerDescription wraps the selected description to the modal's content
+// width and pads it with blank lines to the tallest wrapped height among all the
+// picker's descriptions. This keeps a picker modal's total height constant no
+// matter which item is selected — otherwise landing on an item with a longer
+// (more-wrapped) description grows the modal and makes the list items jump. The
+// returned block is unstyled so callers can apply their own styling. Returns ""
+// when there are no non-empty descriptions.
+func reservePickerDescription(selected string, all []string, modalWidth int) string {
+	// modalWidth-6 matches the list's content width (border + padding + a small
+	// right margin), so the description aligns under the list items and the
+	// pre-wrapped block fits inside the modal without being re-wrapped.
+	descWidth := modalWidth - 6
+	style := lipgloss.NewStyle().Width(descWidth)
+
+	maxLines := 0
+	for _, d := range all {
+		if d == "" {
+			continue
+		}
+		if h := lipgloss.Height(style.Render(d)); h > maxLines {
+			maxLines = h
+		}
+	}
+	if maxLines == 0 {
+		return ""
+	}
+
+	rendered := style.Render(selected)
+	for h := lipgloss.Height(rendered); h < maxLines; h++ {
+		rendered += "\n"
+	}
+	return rendered
+}
+
+// renderPickerModal renders a standard picker modal with consistent styling
+func renderPickerModal(cfg pickerModalConfig) string {
+	modalWidth := pickerModalWidth(cfg.Width, cfg.WidthPct, cfg.MaxWidth)
 
 	// Header with nib title (or modal title as fallback)
 	titleWidth := modalWidth - 4

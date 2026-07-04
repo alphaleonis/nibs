@@ -181,11 +181,20 @@ func (m statusPickerModel) View() string {
 		return "Loading..."
 	}
 
-	// Get description of currently selected status
-	var description string
-	if item, ok := m.list.SelectedItem().(statusItem); ok && item.description != "" {
-		description = item.description
+	// Reserve a fixed description-area height so the modal keeps a constant
+	// height regardless of which status is selected (longer descriptions like
+	// "deferred" would otherwise wrap to more lines and make items jump).
+	var selected string
+	var allDescs []string
+	for _, li := range m.list.Items() {
+		if item, ok := li.(statusItem); ok {
+			allDescs = append(allDescs, item.description)
+		}
 	}
+	if item, ok := m.list.SelectedItem().(statusItem); ok {
+		selected = item.description
+	}
+	description := reservePickerDescription(selected, allDescs, pickerModalWidth(m.width, 0, 0))
 
 	// For multi-select, don't show individual nib ID
 	var nibID string

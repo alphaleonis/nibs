@@ -180,11 +180,19 @@ func (m priorityPickerModel) View() string {
 		return "Loading..."
 	}
 
-	// Get description of currently selected priority
-	var description string
-	if item, ok := m.list.SelectedItem().(priorityItem); ok && item.description != "" {
-		description = item.description
+	// Reserve a fixed description-area height so the modal keeps a constant
+	// height regardless of which priority is selected.
+	var selected string
+	var allDescs []string
+	for _, li := range m.list.Items() {
+		if item, ok := li.(priorityItem); ok {
+			allDescs = append(allDescs, item.description)
+		}
 	}
+	if item, ok := m.list.SelectedItem().(priorityItem); ok {
+		selected = item.description
+	}
+	description := reservePickerDescription(selected, allDescs, pickerModalWidth(m.width, 0, 0))
 
 	// For multi-select, don't show individual nib ID
 	var nibID string

@@ -207,29 +207,17 @@ func (m typePickerModel) View() string {
 
 	// Description of selected item, padded to a fixed number of lines so the
 	// dialog never changes height when moving between items.
-	modalWidth := max(40, min(60, m.width*50/100))
-	descWidth := modalWidth - 6 // account for border + padding
-	descStyle := lipgloss.NewStyle().Width(descWidth)
-
-	// Render all descriptions at target width and find the tallest
-	maxLines := 0
-	for _, item := range m.items {
-		rendered := descStyle.Render(item.description)
-		n := strings.Count(rendered, "\n") + 1
-		if n > maxLines {
-			maxLines = n
-		}
+	allDescs := make([]string, len(m.items))
+	for i, item := range m.items {
+		allDescs[i] = item.description
 	}
-
-	description := ""
-	if m.cursor < len(m.items) {
-		rendered := descStyle.Render(m.items[m.cursor].description)
-		actual := strings.Count(rendered, "\n") + 1
-		for i := actual; i < maxLines; i++ {
-			rendered += "\n"
-		}
-		description = ui.Muted.Render(rendered)
+	var selected string
+	if item, ok := m.SelectedItem(); ok {
+		selected = item.description
 	}
+	description := ui.Muted.Render(
+		reservePickerDescription(selected, allDescs, pickerModalWidth(m.width, 0, 0)),
+	)
 
 	var nibID string
 	if len(m.nibIDs) == 1 {

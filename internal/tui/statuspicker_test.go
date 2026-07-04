@@ -4,6 +4,7 @@ import (
 	"testing"
 
 	tea "github.com/charmbracelet/bubbletea"
+	"github.com/charmbracelet/lipgloss"
 
 	"github.com/alphaleonis/nibs/internal/config"
 )
@@ -81,6 +82,43 @@ func TestStatusPickerModel(t *testing.T) {
 		}
 		if !selected.isCurrent {
 			t.Error("selected item should have isCurrent=true")
+		}
+	})
+
+	// Regression test for the picker "jump" bug: the modal must render at a
+	// constant height no matter which status is selected. Previously the modal
+	// appended the selected status's raw description with no reserved height, so
+	// landing on a status with a longer, more-wrapped description (e.g.
+	// "deferred") grew the box and made list items jump. We assert equal
+	// lipgloss height across every status, and call out todo vs deferred
+	// (shortest vs longest description) explicitly.
+	t.Run("modal height is constant across all status selections", func(t *testing.T) {
+		const w, h = 80, 24
+
+		heightByStatus := make(map[string]int, len(config.DefaultStatuses))
+		for _, s := range config.DefaultStatuses {
+			m := newStatusPickerModel(
+				[]string{"nib-1"}, "Test Nib", s.Name,
+				cfg, w, h,
+			)
+			view := m.View()
+			if view == "Loading..." {
+				t.Fatalf("status %q: View() returned Loading...; width was not applied", s.Name)
+			}
+			heightByStatus[s.Name] = lipgloss.Height(view)
+		}
+
+		// Every selection must yield the same modal height.
+		want := heightByStatus[config.DefaultStatuses[0].Name]
+		for _, s := range config.DefaultStatuses {
+			if got := heightByStatus[s.Name]; got != want {
+				t.Errorf("status %q: modal height = %d, want %d (height must be constant across selections)", s.Name, got, want)
+			}
+		}
+
+		// Explicit shortest-vs-longest check named in the bug report.
+		if heightByStatus["todo"] != heightByStatus["deferred"] {
+			t.Errorf("modal height jumps: todo = %d, deferred = %d (must be equal)", heightByStatus["todo"], heightByStatus["deferred"])
 		}
 	})
 
