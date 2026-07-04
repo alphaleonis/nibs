@@ -9,7 +9,7 @@ Tip: `nibs list --columns id,status,title` (and `nibs links --columns ...`) emit
 
 ## Workflow
 
-- BEFORE a task: find or create a nib (`nibs list --ready`, `nibs create "Title" -t <type>`), set status `in-progress`.
+- BEFORE a task: find or create a nib (`nibs list --ready`, `nibs create "Title" -t <type>`), set status `in-progress`. (`--ready` excludes blocked, in-progress, completed, scrapped, draft, and `deferred`/parked nibs — see `--full` for status semantics.)
 - DURING: keep todo items current (`- [ ]` → `- [x]`) as work happens.
 - AFTER: mark `completed` only when no unchecked todos remain. Append `## Summary of Changes` (or `## Reasons for Scrapping`).
 - COMMITS: include both code and nib files.

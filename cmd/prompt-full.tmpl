@@ -36,7 +36,7 @@ WHEN DELEGATING to subagents (auto-tdd, auto-dev, feature-dev, etc.):
 When the user asks what to work on next:
 
 ```bash
-# Find nibs ready to start (not blocked, excludes in-progress/completed/scrapped/draft)
+# Find nibs ready to start (not blocked, excludes in-progress/completed/scrapped/draft/deferred)
 nibs list --json --ready
 
 # View full details of specific nibs (supports multiple IDs)
@@ -49,7 +49,7 @@ nibs show --json <id> [id...]
 ```bash
 # List nibs
 nibs list --json                      # All nibs
-nibs list --json --ready              # Nibs ready to start (not blocked, excludes in-progress/completed/scrapped/draft)
+nibs list --json --ready              # Nibs ready to start (not blocked, excludes in-progress/completed/scrapped/draft/deferred)
 nibs list --json -t bug -s todo       # Filter by type and status
 nibs list --json -S "authentication"  # Full-text search; an ID or ID fragment (e.g. "5a8k") also matches nibs directly by ID
 nibs list --columns id,status,title   # Tab-separated tabular output (flat); selectable columns from: id, slug, title, status, type, priority, estimate, order, parent, tags, created_at, updated_at. Mutually exclusive with --json and --quiet.
@@ -128,6 +128,16 @@ This project has the following statuses configured:
 {{range .Statuses}}
 - **{{.Name}}**{{if .Description}}: {{.Description}}{{end}}
 {{- end}}
+
+**`deferred` = parked**: intentionally not-now but *not abandoned*. It is **non-terminal and not archived** — the nib stays live and visible in normal listings — but it is **excluded from `nibs list --ready`** (parked work is not actionable now).
+
+Choosing among the "not-active" states:
+
+- **draft** — needs refinement before it *can* be worked on (not yet ready).
+- **deferred** — ready enough, but deliberately parked for later; excluded from `--ready`; revisit when it becomes relevant.
+- **scrapped** — will not be done (terminal, archived).
+
+Note: `deferred` is a status, not a priority. The legacy `deferred` priority was removed — a nib carrying `priority: deferred` normalizes to `low` on load.
 
 ## Priorities
 
