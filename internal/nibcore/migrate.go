@@ -3,8 +3,9 @@ package nibcore
 // migrateV0ToV1 migrates all v0 nibs to v1 format.
 // v0→v1: converts dual-side blocking to single-side (blockedBy only).
 // For each v0 nib with blocking entries, adds this nib's ID to each target's blockedBy.
-// Then clears the blocking field, bumps version to 1, and saves to disk.
-// Must be called with c.mu held and after all nibs are loaded.
+// Then clears the blocking field, bumps version to 1, and best-effort saves to
+// disk (a persistence failure is logged and skipped, not returned — see the save
+// loop). Must be called with c.mu held and after all nibs are loaded.
 func (c *Core) migrateV0ToV1() error {
 	// Track which nibs need saving (either migrated or had blockedBy modified)
 	dirty := make(map[string]bool)
@@ -32,11 +33,16 @@ func (c *Core) migrateV0ToV1() error {
 		dirty[b.ID] = true
 	}
 
-	// Save all dirty nibs
+	// Save all dirty nibs (best-effort). A load-time persistence failure
+	// (read-only mount, disk full, restricted permissions) must NOT abort Load:
+	// the migration is already applied in memory, so nibs are correct for reads
+	// and mutations, and on-disk convergence waits for the next successful write.
+	// This mirrors loadNibReconciledLocked's "don't fail load" posture for the
+	// priority migration. (Update/Delete still surface write errors to callers.)
 	for id := range dirty {
 		if b, ok := c.nibs[id]; ok {
 			if err := c.saveToDisk(b); err != nil {
-				return err
+				c.logWarn("could not persist v0→v1 migration for %s: %v", id, err)
 			}
 		}
 	}

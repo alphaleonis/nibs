@@ -475,6 +475,78 @@ status: todo
 		}
 	})
 
+	t.Run("best-effort persistence: Load succeeds when the migration cannot be written", func(t *testing.T) {
+		// Forcing the write failure: the loaded file is chmod'd read-only so
+		// saveToDisk's write (O_WRONLY|O_TRUNC) fails while loadNib's read
+		// (O_RDONLY) still succeeds. This is deterministic and root-independent
+		// on the CI matrix: Linux non-root honours the 0444 mode, and Windows
+		// honours the read-only attribute (os.Geteuid() returns -1 there, so the
+		// root guard below never fires on Windows).
+		if os.Geteuid() == 0 {
+			t.Skip("running as root bypasses file-mode write protection, so the saveToDisk failure can't be forced")
+		}
+
+		tmpDir := t.TempDir()
+		nibsDir := filepath.Join(tmpDir, NibsDir)
+		if err := os.MkdirAll(nibsDir, 0755); err != nil {
+			t.Fatal(err)
+		}
+
+		// A legacy v0 nib (no `version:` field). Loading migrates it to v1 in
+		// memory and marks it dirty for persistence.
+		const filename = "leg1--legacy.md"
+		const raw = `---
+title: Legacy V0
+status: todo
+---
+`
+		writeNibFile(t, nibsDir, filename, raw)
+		path := filepath.Join(nibsDir, filename)
+
+		if err := os.Chmod(path, 0444); err != nil {
+			t.Fatal(err)
+		}
+		// Restore write permission so TempDir cleanup (and Windows deletion of a
+		// read-only file) succeeds.
+		t.Cleanup(func() { _ = os.Chmod(path, 0644) })
+
+		var warnings strings.Builder
+		cfg := config.Default()
+		core := New(nibsDir, cfg)
+		core.SetWarnWriter(&warnings)
+
+		// Load must SUCCEED even though the migration cannot be persisted: a
+		// legacy nib on a read-only/full/permission-restricted .nibs must not
+		// brick every command.
+		if err := core.Load(); err != nil {
+			t.Fatalf("Load() returned error on unwritable .nibs; load-time migration persistence must be best-effort: %v", err)
+		}
+
+		// In memory: migrated to v1 regardless of the persistence failure.
+		b, err := core.Get("leg1")
+		if err != nil {
+			t.Fatalf("Get(leg1) error: %v", err)
+		}
+		if b.Version != 1 {
+			t.Errorf("in-memory Version = %d, want 1", b.Version)
+		}
+
+		// On disk: UNCHANGED. The write failed, so the original v0 bytes remain;
+		// on-disk convergence waits for the next successful write.
+		diskBytes, err := os.ReadFile(path)
+		if err != nil {
+			t.Fatalf("reading nib file: %v", err)
+		}
+		if string(diskBytes) != raw {
+			t.Errorf("on-disk file changed despite an unwritable target:\n got:\n%s\nwant:\n%s", diskBytes, raw)
+		}
+
+		// A warning about the failed persistence should have been logged.
+		if !strings.Contains(warnings.String(), "leg1") {
+			t.Errorf("expected a warning mentioning the un-persisted nib, got %q", warnings.String())
+		}
+	})
+
 	t.Run("mixed v0 and v1 directory", func(t *testing.T) {
 		tmpDir := t.TempDir()
 		nibsDir := filepath.Join(tmpDir, NibsDir)
