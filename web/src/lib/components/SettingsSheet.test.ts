@@ -1,9 +1,11 @@
-import { render, screen, waitFor } from "@testing-library/svelte";
+import { render, screen, waitFor, fireEvent } from "@testing-library/svelte";
 import { userEvent } from "@testing-library/user-event";
 import { describe, it, expect, vi } from "vitest";
 import SettingsSheet from "./SettingsSheet.svelte";
+import { tick } from "svelte";
 
-// bits-ui scroll lock sets pointer-events: none on <body>, so disable the check
+// The panel is non-modal (no scroll lock / pointer-events:none on <body>), but
+// keep the check disabled for parity with other portaled-content suites.
 const user = userEvent.setup({ pointerEventsCheck: 0 });
 
 // Factory (not a shared object) so each test gets a fresh `ondensitychange`
@@ -14,25 +16,187 @@ const defaultProps = () => ({
 });
 
 describe("SettingsSheet", () => {
-  it("opens a right-side sheet with Settings title and Appearance section, no dimming overlay, closes on Escape", async () => {
+  it("opens a non-modal panel with Settings title + Appearance section; closed initially; no overlay", async () => {
     render(SettingsSheet, { ...defaultProps() });
 
     // Closed initially
     expect(screen.queryByText("Appearance")).not.toBeInTheDocument();
 
-    // Gear button opens the sheet
+    // Gear button opens the panel
     await user.click(screen.getByTitle("Settings"));
 
     // Title + Appearance section visible
     expect(screen.getByText("Settings")).toBeInTheDocument();
     expect(screen.getByText("Appearance")).toBeInTheDocument();
 
-    // Non-modal: no dimming overlay rendered
-    expect(document.querySelector('[data-slot="sheet-overlay"]')).toBeNull();
+    // Non-modal contract: the panel pins to one edge (`fixed inset-y-0 right-0`)
+    // and must NOT render a full-screen dimming backdrop — so no element covers
+    // the whole viewport via `fixed inset-0`.
+    expect(document.querySelector(".fixed.inset-0")).toBeNull();
+  });
 
-    // Escape closes it (the single Escape-close assertion in this file)
+  it("exposes the panel as a NON-MODAL dialog (aria-modal=false) named Settings", async () => {
+    render(SettingsSheet, { ...defaultProps() });
+
+    await user.click(screen.getByTitle("Settings"));
+
+    // The p07b fix: role=dialog with aria-modal="false" (was "true" under bits-ui Dialog).
+    const dialog = screen.getByRole("dialog", { name: "Settings" });
+    expect(dialog).toBeInTheDocument();
+    expect(dialog).toHaveAttribute("aria-modal", "false");
+  });
+
+  it("does not lock body scroll: body pointer-events stay interactive while open", async () => {
+    render(SettingsSheet, { ...defaultProps() });
+
+    await user.click(screen.getByTitle("Settings"));
+    expect(screen.getByText("Appearance")).toBeInTheDocument();
+
+    // Real non-modal contract: the background stays interactive, so <body> must
+    // not have pointer-events disabled while the panel is open.
+    expect(document.body.style.pointerEvents).not.toBe("none");
+    // Regression trip-wires: a modal bits-ui Dialog would stamp these on <body>.
+    // The hand-wired non-modal <aside> must never reintroduce a modal primitive.
+    expect(document.body.hasAttribute("data-scroll-locked")).toBe(false);
+    expect(document.body.hasAttribute("inert")).toBe(false);
+  });
+
+  it("closes on Escape", async () => {
+    render(SettingsSheet, { ...defaultProps() });
+    await user.click(screen.getByTitle("Settings"));
+    expect(screen.getByText("Appearance")).toBeInTheDocument();
+
     await user.keyboard("{Escape}");
-    expect(screen.queryByText("Appearance")).not.toBeInTheDocument();
+
+    // Fly-out transition delays unmount, so assert via waitFor.
+    await waitFor(() =>
+      expect(screen.queryByText("Appearance")).not.toBeInTheDocument(),
+    );
+  });
+
+  it("closes on Escape even when focus has moved to a background element", async () => {
+    render(SettingsSheet, { ...defaultProps() });
+    await user.click(screen.getByTitle("Settings"));
+    expect(screen.getByText("Appearance")).toBeInTheDocument();
+
+    // Non-modal panels don't trap focus: the user may Tab into the (still
+    // interactive) background. Simulate that with a real outside element that
+    // holds focus, then press Escape. A keydown handler bound to the portaled
+    // <aside> would never see this event — the Escape listener must be at the
+    // document level for the panel to dismiss.
+    const outside = document.createElement("button");
+    document.body.appendChild(outside);
+    try {
+      outside.focus();
+      expect(document.activeElement).toBe(outside);
+
+      await user.keyboard("{Escape}");
+
+      await waitFor(() =>
+        expect(screen.queryByText("Appearance")).not.toBeInTheDocument(),
+      );
+    } finally {
+      // Remove even if an assertion throws — otherwise the stray <button> leaks
+      // into the shared per-file document exactly when this regression breaks.
+      outside.remove();
+    }
+  });
+
+  it("closes when clicking outside the panel", async () => {
+    render(SettingsSheet, { ...defaultProps() });
+    await user.click(screen.getByTitle("Settings"));
+    expect(screen.getByText("Appearance")).toBeInTheDocument();
+
+    // clickOutside listens for a real pointerdown on document; a pointerdown on
+    // <body> lands outside the panel (and outside the trigger) and dismisses it.
+    fireEvent.pointerDown(document.body);
+
+    await waitFor(() =>
+      expect(screen.queryByText("Appearance")).not.toBeInTheDocument(),
+    );
+  });
+
+  it("does not close on a pointerdown inside the panel content", async () => {
+    render(SettingsSheet, { ...defaultProps() });
+    await user.click(screen.getByTitle("Settings"));
+    expect(screen.getByText("Appearance")).toBeInTheDocument();
+
+    // The clickOutside `node.contains` branch: a pointerdown on real panel
+    // content (through the bind:this + Portal wiring) must NOT dismiss.
+    fireEvent.pointerDown(screen.getByText("Appearance"));
+
+    // Flush pending effects: an erroneous dismissal would set open=false and
+    // unmount the panel, so a surviving panel proves no dismissal occurred.
+    await tick();
+    expect(screen.getByText("Appearance")).toBeInTheDocument();
+  });
+
+  it("does not close on a pointerdown on the gear trigger (ignore path)", async () => {
+    render(SettingsSheet, { ...defaultProps() });
+    const trigger = screen.getByTitle("Settings");
+    await user.click(trigger);
+    expect(screen.getByText("Appearance")).toBeInTheDocument();
+
+    // The clickOutside `ignore` branch: a pointerdown on the trigger must NOT
+    // dismiss (so the trigger's own click toggles cleanly without a double-fire).
+    fireEvent.pointerDown(trigger);
+
+    await tick();
+    expect(screen.getByText("Appearance")).toBeInTheDocument();
+  });
+
+  it("re-opens and refocuses the panel after a close (wasOpen cycle)", async () => {
+    render(SettingsSheet, { ...defaultProps() });
+    const trigger = screen.getByTitle("Settings");
+
+    // First open/close cycle.
+    await user.click(trigger);
+    await waitFor(() =>
+      expect(
+        screen.getByRole("dialog", { name: "Settings" }).contains(document.activeElement),
+      ).toBe(true),
+    );
+    await user.keyboard("{Escape}");
+    await waitFor(() =>
+      expect(screen.queryByText("Appearance")).not.toBeInTheDocument(),
+    );
+
+    // Second open must refocus into the panel again — guards the `wasOpen`
+    // transition guard from getting stuck after the first cycle.
+    await user.click(trigger);
+    await waitFor(() =>
+      expect(
+        screen.getByRole("dialog", { name: "Settings" }).contains(document.activeElement),
+      ).toBe(true),
+    );
+  });
+
+  it("closes via the visible close (X) button", async () => {
+    render(SettingsSheet, { ...defaultProps() });
+    await user.click(screen.getByTitle("Settings"));
+    expect(screen.getByText("Appearance")).toBeInTheDocument();
+
+    await user.click(screen.getByRole("button", { name: /close/i }));
+
+    await waitFor(() =>
+      expect(screen.queryByText("Appearance")).not.toBeInTheDocument(),
+    );
+  });
+
+  it("moves focus into the panel on open and returns focus to the gear on close", async () => {
+    render(SettingsSheet, { ...defaultProps() });
+    const trigger = screen.getByTitle("Settings");
+
+    await user.click(trigger);
+
+    const dialog = screen.getByRole("dialog", { name: "Settings" });
+    // Focus moves into the panel (the panel itself is focusable, tabindex=-1).
+    await waitFor(() => expect(dialog.contains(document.activeElement)).toBe(true));
+
+    await user.keyboard("{Escape}");
+
+    // On close, focus returns to the gear trigger.
+    await waitFor(() => expect(trigger).toHaveFocus());
   });
 
   it("shows a Row density radiogroup with Compact and Comfortable options", async () => {
@@ -90,78 +254,5 @@ describe("SettingsSheet", () => {
     await user.keyboard("{ArrowRight}");
 
     expect(ondensitychange).toHaveBeenCalledWith("comfortable");
-  });
-
-  it("exposes the sheet as a dialog whose accessible name is Settings", async () => {
-    render(SettingsSheet, { ...defaultProps() });
-
-    await user.click(screen.getByTitle("Settings"));
-
-    // Accessible name resolves via Sheet.Title / aria-labelledby
-    expect(screen.getByRole("dialog", { name: "Settings" })).toBeInTheDocument();
-  });
-
-  it("does not trap focus (trapFocus={false}): focus can settle outside the sheet", async () => {
-    // A focusable element outside the portaled sheet. A modal (trapFocus) scope
-    // installs a capturing focusin handler that yanks focus back inside; a
-    // non-modal one does not — so this element must be able to hold focus.
-    const outside = document.createElement("button");
-    outside.textContent = "outside";
-    document.body.appendChild(outside);
-
-    try {
-      render(SettingsSheet, { ...defaultProps() });
-      await user.click(screen.getByTitle("Settings"));
-      expect(screen.getByText("Appearance")).toBeInTheDocument();
-
-      outside.focus();
-      // If trapFocus were reverted to its modal default, focus would be pulled
-      // back into the sheet and this assertion would fail.
-      expect(outside).toHaveFocus();
-    } finally {
-      outside.remove();
-    }
-  });
-
-  it("does not lock body scroll (preventScroll={false}): body pointer-events stay interactive", async () => {
-    render(SettingsSheet, { ...defaultProps() });
-
-    await user.click(screen.getByTitle("Settings"));
-    expect(screen.getByText("Appearance")).toBeInTheDocument();
-
-    // bits-ui's scroll lock (preventScroll default) sets pointer-events:none on
-    // <body>; with preventScroll={false} the background stays interactive.
-    expect(document.body.style.pointerEvents).not.toBe("none");
-  });
-
-  it("dismisses when clicking outside the sheet (interact-outside close)", async () => {
-    render(SettingsSheet, { ...defaultProps() });
-    await user.click(screen.getByTitle("Settings"));
-    expect(screen.getByText("Appearance")).toBeInTheDocument();
-
-    // bits-ui's interact-outside geometrically checks the pointer landed beyond the
-    // content rect (isClickTrulyOutside). jsdom's getBoundingClientRect is all-zero
-    // and user-event clicks at (0,0), so a plain click reads as "inside". Dispatch a
-    // pointerdown with coords past the rect to represent a genuine outside click; the
-    // handler is debounced (~10ms), so assert via waitFor.
-    await user.pointer({
-      keys: "[MouseLeft]",
-      target: document.body,
-      coords: { clientX: 9999, clientY: 9999 },
-    });
-
-    await waitFor(() =>
-      expect(screen.queryByText("Appearance")).not.toBeInTheDocument(),
-    );
-  });
-
-  it("dismisses via the visible close (X) button", async () => {
-    render(SettingsSheet, { ...defaultProps() });
-
-    await user.click(screen.getByTitle("Settings"));
-    expect(screen.getByText("Appearance")).toBeInTheDocument();
-
-    await user.click(screen.getByRole("button", { name: /close/i }));
-    expect(screen.queryByText("Appearance")).not.toBeInTheDocument();
   });
 });
