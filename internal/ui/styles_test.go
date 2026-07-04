@@ -422,3 +422,60 @@ func TestShortStatus_NoCollisions(t *testing.T) {
 		seen[s] = def.Name
 	}
 }
+
+// TestRenderNibRow_DeferredStatusCell locks in that a "deferred" nib renders a
+// visible, config-coloured status cell — never blank, never the "?" unknown
+// marker, and never dimmed like an archived nib. "deferred" was added to config
+// in a prior slice; this guards the full TUI render chain
+// (GetNibColors -> ShortStatus -> RenderStatusTextWithColor) against a
+// regression that would drop the status glyph.
+func TestRenderNibRow_DeferredStatusCell(t *testing.T) {
+	cfg := config.Default()
+	nc := cfg.GetNibColors("deferred", "task", "")
+
+	// Config drives the render inputs: deferred is a real (non-fallback) colour
+	// and, crucially, is NOT an archive status (so the row is not dimmed).
+	if nc.IsArchive {
+		t.Fatal("deferred must be non-archive so its row is not dimmed")
+	}
+	if nc.StatusColor != "gray" {
+		t.Errorf("deferred status colour = %q, want %q", nc.StatusColor, "gray")
+	}
+	if ResolveColor(nc.StatusColor) == ColorMuted {
+		t.Error("deferred status colour resolved to the unknown-colour fallback (ColorMuted)")
+	}
+
+	// Title intentionally contains no "F" so the only "F" in the row is the
+	// ShortStatus glyph for deferred.
+	const title = "Parked work"
+
+	t.Run("single-char status column", func(t *testing.T) {
+		row := RenderNibRow("tnib-1", "deferred", "task", title, NibRowConfig{
+			MaxTitleWidth: 60,
+			StatusColor:   nc.StatusColor,
+			TypeColor:     nc.TypeColor,
+			IsArchive:     nc.IsArchive,
+		})
+		stripped := ansi.Strip(row)
+		if !strings.Contains(stripped, "F") {
+			t.Errorf("status cell missing 'F' glyph for deferred; row: %q", stripped)
+		}
+		if strings.Contains(stripped, "?") {
+			t.Errorf("deferred rendered as unknown status '?'; row: %q", stripped)
+		}
+	})
+
+	t.Run("full-name status column", func(t *testing.T) {
+		row := RenderNibRow("tnib-1", "deferred", "task", title, NibRowConfig{
+			MaxTitleWidth: 60,
+			StatusColor:   nc.StatusColor,
+			TypeColor:     nc.TypeColor,
+			IsArchive:     nc.IsArchive,
+			UseFullNames:  true,
+		})
+		stripped := ansi.Strip(row)
+		if !strings.Contains(stripped, "deferred") {
+			t.Errorf("full-name status cell missing 'deferred'; row: %q", stripped)
+		}
+	})
+}
