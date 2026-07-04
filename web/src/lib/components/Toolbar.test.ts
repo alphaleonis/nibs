@@ -25,7 +25,8 @@ describe("Toolbar", () => {
     expect(screen.getByTitle("New item")).toBeInTheDocument();
     expect(screen.getByTitle("New item")).toHaveTextContent("New");
     expect(screen.getByTestId("filter-keyword")).toBeInTheDocument();
-    expect(screen.getByTitle("Options")).toBeInTheDocument();
+    expect(screen.getByTitle("Settings")).toBeInTheDocument();
+    expect(screen.queryByTitle("Options")).not.toBeInTheDocument();
     expect(screen.getByTitle("Columns")).toBeInTheDocument();
   });
 
@@ -114,96 +115,36 @@ describe("Toolbar", () => {
     expect(screen.getByTitle("Columns")).not.toBeDisabled();
   });
 
-  it("opens Options dropdown when Options button is clicked", async () => {
+  it("gear button opens the Settings sheet revealing Appearance and Row density", async () => {
     render(Toolbar, { ...defaultToolbarProps });
 
-    const optionsBtn = screen.getByTitle("Options");
-    await user.click(optionsBtn);
+    // Old Options dropdown is retired
+    expect(screen.queryByTitle("Options")).not.toBeInTheDocument();
 
-    expect(screen.getByText("Include completed")).toBeInTheDocument();
-    expect(screen.getByRole("menuitemcheckbox")).toBeInTheDocument();
+    await user.click(screen.getByTitle("Settings"));
+
+    expect(screen.getByText("Appearance")).toBeInTheDocument();
+    expect(screen.getByRole("radiogroup", { name: /row density/i })).toBeInTheDocument();
+    expect(screen.getByRole("radio", { name: /compact/i })).toBeInTheDocument();
+    expect(screen.getByRole("radio", { name: /comfortable/i })).toBeInTheDocument();
   });
 
-  it("closes Options dropdown on second click", async () => {
+  it("density controls are not part of the toolbar's own controls until the sheet opens", () => {
     render(Toolbar, { ...defaultToolbarProps });
 
-    const optionsBtn = screen.getByTitle("Options");
-    await user.click(optionsBtn);
-    expect(screen.getByRole("menuitemcheckbox")).toBeInTheDocument();
-
-    await user.click(optionsBtn);
-    expect(screen.queryByRole("menuitemcheckbox")).not.toBeInTheDocument();
+    // Nothing density-related is rendered before the sheet is opened
+    expect(screen.queryByRole("radiogroup", { name: /row density/i })).not.toBeInTheDocument();
+    expect(screen.queryByRole("radio", { name: /comfortable/i })).not.toBeInTheDocument();
   });
 
-  it("Include Completed checkbox is checked by default (no excludeStatus)", async () => {
-    render(Toolbar, { ...defaultToolbarProps });
+  it("clicking a density option in the sheet calls ondensitychange (wired via handleSetDensity)", async () => {
+    const ondensitychange = vi.fn();
+    render(Toolbar, { ...defaultToolbarProps, rowDensity: "compact", ondensitychange });
 
-    const optionsBtn = screen.getByTitle("Options");
-    await user.click(optionsBtn);
+    await user.click(screen.getByTitle("Settings"));
+    await user.click(screen.getByRole("radio", { name: /comfortable/i }));
 
-    const toggle = screen.getByRole("menuitemcheckbox");
-    expect(toggle).toHaveAttribute("data-state", "checked");
-  });
-
-  it("Include Completed checkbox is unchecked when excludeStatus is set", async () => {
-    render(Toolbar, {
-      ...defaultToolbarProps,
-      filter: { excludeStatus: ["completed", "scrapped"] },
-    });
-
-    const optionsBtn = screen.getByTitle("Options");
-    await user.click(optionsBtn);
-
-    const toggle = screen.getByRole("menuitemcheckbox");
-    expect(toggle).toHaveAttribute("data-state", "unchecked");
-  });
-
-  it("emits excludeStatus when Include Completed is unchecked", async () => {
-    const onchange = vi.fn();
-    render(Toolbar, { ...defaultToolbarProps, onchange });
-
-    // Open options
-    await user.click(screen.getByTitle("Options"));
-    // Toggle off "Include completed" (currently checked)
-    await user.click(screen.getByRole("menuitemcheckbox"));
-
-    const lastCall = onchange.mock.calls[onchange.mock.calls.length - 1];
-    expect(lastCall[0]).toMatchObject({
-      excludeStatus: ["completed", "scrapped"],
-    });
-  });
-
-  it("removes excludeStatus when Include Completed is checked", async () => {
-    const onchange = vi.fn();
-    render(Toolbar, {
-      ...defaultToolbarProps,
-      filter: { excludeStatus: ["completed", "scrapped"] },
-      onchange,
-    });
-
-    await user.click(screen.getByTitle("Options"));
-    await user.click(screen.getByRole("menuitemcheckbox"));
-
-    const lastCall = onchange.mock.calls[onchange.mock.calls.length - 1];
-    expect(lastCall[0].excludeStatus).toBeUndefined();
-  });
-
-  it("preserves existing filter fields when Include Completed is toggled", async () => {
-    const onchange = vi.fn();
-    render(Toolbar, {
-      ...defaultToolbarProps,
-      filter: { search: "auth" },
-      onchange,
-    });
-
-    await user.click(screen.getByTitle("Options"));
-    await user.click(screen.getByRole("menuitemcheckbox"));
-
-    const lastCall = onchange.mock.calls[onchange.mock.calls.length - 1];
-    expect(lastCall[0]).toMatchObject({
-      search: "auth",
-      excludeStatus: ["completed", "scrapped"],
-    });
+    expect(ondensitychange).toHaveBeenCalledWith("comfortable");
   });
 
   it("keyword input emits filter with search value", async () => {
@@ -216,6 +157,67 @@ describe("Toolbar", () => {
     expect(onchange).toHaveBeenCalled();
     const lastCall = onchange.mock.calls[onchange.mock.calls.length - 1];
     expect(lastCall[0]).toMatchObject({ search: "auth" });
+  });
+
+  // Standalone "Include completed" toggle (view filter that stays in the toolbar
+  // after the Options dropdown was retired). Coverage migrated from the deleted
+  // Options-based Include-completed tests.
+  it("renders the standalone Include completed toggle", () => {
+    render(Toolbar, { ...defaultToolbarProps });
+
+    expect(screen.getByTestId("toolbar-include-completed")).toBeInTheDocument();
+  });
+
+  it("Include completed toggle is pressed by default (no excludeStatus)", () => {
+    render(Toolbar, { ...defaultToolbarProps });
+
+    expect(screen.getByTestId("toolbar-include-completed")).toHaveAttribute("aria-pressed", "true");
+  });
+
+  it("Include completed toggle is not pressed when excludeStatus is set", () => {
+    render(Toolbar, {
+      ...defaultToolbarProps,
+      filter: { excludeStatus: ["completed", "scrapped"] },
+    });
+
+    expect(screen.getByTestId("toolbar-include-completed")).toHaveAttribute("aria-pressed", "false");
+  });
+
+  it("clicking the toggle when included emits excludeStatus", async () => {
+    const onchange = vi.fn();
+    render(Toolbar, { ...defaultToolbarProps, onchange });
+
+    await user.click(screen.getByTestId("toolbar-include-completed"));
+
+    const lastCall = onchange.mock.calls[onchange.mock.calls.length - 1];
+    expect(lastCall[0]).toMatchObject({ excludeStatus: ["completed", "scrapped"] });
+  });
+
+  it("clicking the toggle preserves other filter fields", async () => {
+    const onchange = vi.fn();
+    render(Toolbar, { ...defaultToolbarProps, filter: { search: "auth" }, onchange });
+
+    await user.click(screen.getByTestId("toolbar-include-completed"));
+
+    const lastCall = onchange.mock.calls[onchange.mock.calls.length - 1];
+    expect(lastCall[0]).toMatchObject({
+      search: "auth",
+      excludeStatus: ["completed", "scrapped"],
+    });
+  });
+
+  it("clicking the toggle when excluded clears excludeStatus", async () => {
+    const onchange = vi.fn();
+    render(Toolbar, {
+      ...defaultToolbarProps,
+      filter: { excludeStatus: ["completed", "scrapped"] },
+      onchange,
+    });
+
+    await user.click(screen.getByTestId("toolbar-include-completed"));
+
+    const lastCall = onchange.mock.calls[onchange.mock.calls.length - 1];
+    expect(lastCall[0].excludeStatus).toBeUndefined();
   });
 
   // Columns dropdown tests
@@ -305,87 +307,10 @@ describe("Toolbar", () => {
     expect(labels).toContain("Parent");
   });
 
-  it("shows row density radio items in Options dropdown", async () => {
-    render(Toolbar, { ...defaultToolbarProps });
-
-    await user.click(screen.getByTitle("Options"));
-
-    const radioItems = screen.getAllByRole("menuitemradio");
-    expect(radioItems).toHaveLength(2);
-    expect(screen.getByRole("menuitemradio", { name: /Compact/i })).toBeInTheDocument();
-    expect(screen.getByRole("menuitemradio", { name: /Comfortable/i })).toBeInTheDocument();
-  });
-
-  it("Compact radio item is checked when rowDensity is compact", async () => {
-    render(Toolbar, { ...defaultToolbarProps, rowDensity: "compact" });
-
-    await user.click(screen.getByTitle("Options"));
-
-    expect(screen.getByRole("menuitemradio", { name: /Compact/i })).toHaveAttribute("data-state", "checked");
-    expect(screen.getByRole("menuitemradio", { name: /Comfortable/i })).toHaveAttribute("data-state", "unchecked");
-  });
-
-  it("Comfortable radio item is checked when rowDensity is comfortable", async () => {
-    render(Toolbar, { ...defaultToolbarProps, rowDensity: "comfortable" });
-
-    await user.click(screen.getByTitle("Options"));
-
-    expect(screen.getByRole("menuitemradio", { name: /Comfortable/i })).toHaveAttribute("data-state", "checked");
-    expect(screen.getByRole("menuitemradio", { name: /Compact/i })).toHaveAttribute("data-state", "unchecked");
-  });
-
-  it("clicking Comfortable calls ondensitychange when compact is active", async () => {
-    const ondensitychange = vi.fn();
-    render(Toolbar, { ...defaultToolbarProps, rowDensity: "compact", ondensitychange });
-
-    await user.click(screen.getByTitle("Options"));
-    await user.click(screen.getByRole("menuitemradio", { name: /Comfortable/i }));
-
-    expect(ondensitychange).toHaveBeenCalledWith("comfortable");
-  });
-
-  it("clicking Compact calls ondensitychange when comfortable is active", async () => {
-    const ondensitychange = vi.fn();
-    render(Toolbar, { ...defaultToolbarProps, rowDensity: "comfortable", ondensitychange });
-
-    await user.click(screen.getByTitle("Options"));
-    await user.click(screen.getByRole("menuitemradio", { name: /Compact/i }));
-
-    expect(ondensitychange).toHaveBeenCalledWith("compact");
-  });
-
   it("does not render standalone density toggle button", () => {
     render(Toolbar, { ...defaultToolbarProps });
 
     expect(screen.queryByTestId("toolbar-density")).not.toBeInTheDocument();
-  });
-
-  it("Options dropdown shows both Include completed checkbox and density radio items", async () => {
-    render(Toolbar, { ...defaultToolbarProps });
-
-    await user.click(screen.getByTitle("Options"));
-
-    // Checkbox for Include completed
-    const checkbox = screen.getByRole("menuitemcheckbox");
-    expect(checkbox).toBeInTheDocument();
-    expect(checkbox).toHaveTextContent("Include completed");
-
-    // Radio items for density
-    const radioItems = screen.getAllByRole("menuitemradio");
-    expect(radioItems).toHaveLength(2);
-  });
-
-  it("toggling Include completed still emits filter after density items added", async () => {
-    const onchange = vi.fn();
-    render(Toolbar, { ...defaultToolbarProps, onchange });
-
-    await user.click(screen.getByTitle("Options"));
-    await user.click(screen.getByRole("menuitemcheckbox"));
-
-    const lastCall = onchange.mock.calls[onchange.mock.calls.length - 1];
-    expect(lastCall[0]).toMatchObject({
-      excludeStatus: ["completed", "scrapped"],
-    });
   });
 
   it("maintains canonical column order when toggling a column back on", async () => {

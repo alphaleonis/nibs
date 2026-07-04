@@ -123,7 +123,7 @@ describe("App", () => {
     expect(screen.getByText("Nibs - test-project")).toBeInTheDocument();
 
     // Toolbar is rendered with controls
-    expect(screen.getByTitle("Options")).toBeInTheDocument();
+    expect(screen.getByTitle("Settings")).toBeInTheDocument();
     expect(screen.getByTestId("filter-keyword")).toBeInTheDocument();
 
     // TreeTable renders data
@@ -143,9 +143,8 @@ describe("App", () => {
     await user.type(searchInput, "bug");
     expect(searchInput).toHaveValue("bug");
 
-    // Open Options dropdown and toggle "Include completed" off
-    await user.click(screen.getByTitle("Options"));
-    await user.click(screen.getByRole("menuitemcheckbox"));
+    // Toggle "Include completed" off via the standalone toolbar toggle
+    await user.click(screen.getByTestId("toolbar-include-completed"));
 
     // With $derived(queryStore(...)), filter changes should trigger new queryStore calls
     expect(mockQueryStore.mock.calls.length).toBeGreaterThan(initialCallCount);
@@ -459,7 +458,7 @@ describe("App", () => {
 
     expect(screen.getByTitle("New item")).toBeInTheDocument();
     expect(screen.getByTitle("Select view")).toBeInTheDocument();
-    expect(screen.getByTitle("Options")).toBeInTheDocument();
+    expect(screen.getByTitle("Settings")).toBeInTheDocument();
     expect(screen.getByTitle("Columns")).toBeInTheDocument();
 
     // View selector should show "Milestones" (default viewLevel)

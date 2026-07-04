@@ -8,8 +8,9 @@
     Plus,
     ChevronDown,
     X,
-    Settings2,
     Columns3,
+    Eye,
+    EyeOff,
   } from "@lucide/svelte";
   import { typeIcons } from "../icons";
   import { priorityIndicators } from "../badges";
@@ -20,6 +21,7 @@
   import { Input } from "$lib/components/ui/input/index.js";
   import StatusDot from "./StatusDot.svelte";
   import TypeIcon from "./TypeIcon.svelte";
+  import SettingsSheet from "./SettingsSheet.svelte";
 
   let {
     prefs = undefined as Preferences | undefined,
@@ -66,7 +68,6 @@
   let includeCompleted = $derived(!resolvedFilter.excludeStatus?.length);
   let addMenuOpen = $state(false);
   let viewLevelOpen = $state(false);
-  let optionsOpen = $state(false);
   let columnsOpen = $state(false);
   let viewLevelIconInfo = $derived(VIEW_LEVEL_ICON_INFO[resolvedViewLevel]);
 
@@ -296,6 +297,23 @@
 
   <!-- View controls -->
   <div class="flex items-center gap-1 shrink-0">
+    <!-- Include completed toggle -->
+    <button
+      type="button"
+      title="Include completed"
+      aria-label="Include completed"
+      aria-pressed={includeCompleted}
+      data-testid="toolbar-include-completed"
+      class={buttonVariants({ variant: "ghost", size: "icon" })}
+      onclick={() => handleToggleIncludeCompleted(!includeCompleted)}
+    >
+      {#if includeCompleted}
+        <Eye size={16} />
+      {:else}
+        <EyeOff size={16} />
+      {/if}
+    </button>
+
     <!-- View selector -->
     <DropdownMenu.Root bind:open={viewLevelOpen}>
       <DropdownMenu.Trigger
@@ -321,36 +339,8 @@
       </DropdownMenu.Content>
     </DropdownMenu.Root>
 
-    <!-- Options dropdown -->
-    <DropdownMenu.Root bind:open={optionsOpen}>
-      <DropdownMenu.Trigger
-        title="Options"
-        aria-expanded={optionsOpen}
-        class={buttonVariants({ variant: "ghost", size: "icon" })}
-      >
-        <Settings2 size={16} />
-      </DropdownMenu.Trigger>
-
-      <DropdownMenu.Content align="end" class="w-52 p-3">
-        <DropdownMenu.CheckboxItem
-          checked={includeCompleted}
-          onCheckedChange={handleToggleIncludeCompleted}
-          class="flex items-center justify-between text-sm"
-        >
-          Include completed
-        </DropdownMenu.CheckboxItem>
-        <DropdownMenu.Separator />
-        <DropdownMenu.Label class="text-caption text-muted-foreground px-2 py-1">Row density</DropdownMenu.Label>
-        <DropdownMenu.RadioGroup value={resolvedDensity} onValueChange={(v) => { if (v) handleSetDensity(v as RowDensity); }}>
-          <DropdownMenu.RadioItem value="compact" class="flex items-center gap-2 text-sm">
-            Compact
-          </DropdownMenu.RadioItem>
-          <DropdownMenu.RadioItem value="comfortable" class="flex items-center gap-2 text-sm">
-            Comfortable
-          </DropdownMenu.RadioItem>
-        </DropdownMenu.RadioGroup>
-      </DropdownMenu.Content>
-    </DropdownMenu.Root>
+    <!-- Settings sheet -->
+    <SettingsSheet rowDensity={resolvedDensity} ondensitychange={handleSetDensity} />
 
     <!-- Columns dropdown -->
     <DropdownMenu.Root bind:open={columnsOpen}>
