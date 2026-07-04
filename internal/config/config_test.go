@@ -108,6 +108,36 @@ func TestStatusNames(t *testing.T) {
 	}
 }
 
+func TestArchiveStatusNames(t *testing.T) {
+	cfg := Default()
+	got := cfg.ArchiveStatusNames()
+
+	// Today the archive set is exactly {completed, scrapped}.
+	want := []string{"completed", "scrapped"}
+	if len(got) != len(want) {
+		t.Fatalf("len(ArchiveStatusNames()) = %d, want %d (%v)", len(got), len(want), got)
+	}
+	for i, name := range want {
+		if got[i] != name {
+			t.Errorf("ArchiveStatusNames()[%d] = %q, want %q", i, got[i], name)
+		}
+	}
+
+	// Every returned name must satisfy the canonical archive predicate.
+	for _, name := range got {
+		if !cfg.IsArchiveStatus(name) {
+			t.Errorf("ArchiveStatusNames() returned %q which is not IsArchiveStatus", name)
+		}
+	}
+
+	// "deferred" is terminal-adjacent but NOT archived; it must be excluded.
+	for _, name := range got {
+		if name == "deferred" {
+			t.Errorf("ArchiveStatusNames() must not include %q", name)
+		}
+	}
+}
+
 func TestGetStatus(t *testing.T) {
 	cfg := Default()
 

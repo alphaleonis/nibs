@@ -13,6 +13,8 @@ import (
 
 	"github.com/adrg/frontmatter"
 	"gopkg.in/yaml.v3"
+
+	"github.com/alphaleonis/nibs/internal/config"
 )
 
 // tagPattern matches valid tags: lowercase letters, numbers, and hyphens.
@@ -224,6 +226,21 @@ type frontMatter struct {
 // by all packages for filtering resolved blockers and blocking relationships.
 func IsResolvedStatus(status string) bool {
 	return status == "completed" || status == "scrapped"
+}
+
+// ResolvedStatusNames returns the names of all statuses considered "resolved"
+// (done), derived by filtering the known status set (config.DefaultStatuses)
+// through IsResolvedStatus — the canonical predicate. This keeps a single
+// source of truth: the returned list is exactly what IsResolvedStatus accepts,
+// enumerated over the real statuses. Today this is {completed, scrapped}.
+func ResolvedStatusNames() []string {
+	var names []string
+	for _, s := range config.DefaultStatuses {
+		if IsResolvedStatus(s.Name) {
+			names = append(names, s.Name)
+		}
+	}
+	return names
 }
 
 // Parse reads a nib from a reader (markdown with YAML front matter).

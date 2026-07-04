@@ -351,6 +351,20 @@ func (c *Config) IsArchiveStatus(name string) bool {
 	return false
 }
 
+// ArchiveStatusNames returns the names of all statuses marked for archiving,
+// derived from DefaultStatuses (the single source of truth). Every returned
+// name satisfies IsArchiveStatus. Today this is {completed, scrapped}; deriving
+// it here keeps the set correct if the Archive flags ever change.
+func (c *Config) ArchiveStatusNames() []string {
+	var names []string
+	for _, s := range DefaultStatuses {
+		if s.Archive {
+			names = append(names, s.Name)
+		}
+	}
+	return names
+}
+
 // GetType returns the TypeConfig for a given type name, or nil if not found.
 // Types are hardcoded and not configurable.
 func (c *Config) GetType(name string) *TypeConfig {

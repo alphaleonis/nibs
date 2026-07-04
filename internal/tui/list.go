@@ -198,7 +198,9 @@ func (m listModel) loadNibs() tea.Msg {
 			filter.Tags = []string{m.tagFilter}
 		}
 		if m.hideCompleted {
-			filter.ExcludeStatus = []string{"completed", "scrapped"}
+			// The hide-completed toggle is the *archive* set — derive it from
+			// the canonical archive predicate so it tracks config, not a literal.
+			filter.ExcludeStatus = m.config.ArchiveStatusNames()
 		}
 	}
 

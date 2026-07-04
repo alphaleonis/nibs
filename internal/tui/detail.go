@@ -603,9 +603,11 @@ func (m detailModel) resolveAllLinks() []resolvedLink {
 	var links []resolvedLink
 	ctx := context.Background()
 
-	// Filter out resolved nibs (completed/scrapped) from blocking relationships
+	// Filter out resolved nibs (completed/scrapped) from blocking relationships.
+	// This is the *resolved/terminal* set — derive it from the canonical
+	// resolved predicate so it tracks nib semantics, not a literal.
 	activeOnly := &model.NibFilter{
-		ExcludeStatus: []string{"completed", "scrapped"},
+		ExcludeStatus: nib.ResolvedStatusNames(),
 	}
 
 	// Resolve outgoing links via backend
