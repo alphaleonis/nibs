@@ -46,7 +46,6 @@ func TestRenderNibRow_IndicatorsDontShiftTitle(t *testing.T) {
 		{"priority high", NibRowConfig{Priority: "high", PriorityColor: "red"}},
 		{"priority critical", NibRowConfig{Priority: "critical", PriorityColor: "red"}},
 		{"priority low", NibRowConfig{Priority: "low", PriorityColor: "blue"}},
-		{"priority deferred", NibRowConfig{Priority: "deferred", PriorityColor: "blue"}},
 		{"blocked + priority", NibRowConfig{IsBlocked: true, Priority: "high", PriorityColor: "red"}},
 		{"blocking + priority", NibRowConfig{IsBlocking: true, Priority: "critical", PriorityColor: "red"}},
 		{"dimmed", NibRowConfig{Dimmed: true}},

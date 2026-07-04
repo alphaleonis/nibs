@@ -130,7 +130,7 @@ func assertDeferredConverged(t *testing.T, core *Core, id, nibsDir, filename str
 	}
 }
 
-func TestMigrateDeferredPriority(t *testing.T) {
+func TestDeferredPriorityReconcile(t *testing.T) {
 	t.Run("persists deferred->low at load and converges if-match etag", func(t *testing.T) {
 		tmpDir := t.TempDir()
 		nibsDir := filepath.Join(tmpDir, NibsDir)
@@ -191,7 +191,7 @@ priority: normal
 		}
 	})
 
-	t.Run("persists deferred->low on the incremental watcher path", func(t *testing.T) {
+	t.Run("normalizes deferred->low in memory on the watcher path without persisting", func(t *testing.T) {
 		core, nibsDir := setupTestCore(t)
 
 		if err := core.StartWatching(); err != nil {
@@ -207,32 +207,65 @@ priority: normal
 
 		// A legacy `priority: deferred` file that first appears AFTER the initial
 		// Load (e.g. a git pull in the separate .nibs repo). This never goes
-		// through loadFromDisk, only through handleChanges.
+		// through loadFromDisk, only through handleChanges — which reconciles in
+		// memory only and must NOT write to disk (an unguarded self-write would
+		// clobber external writes, dirty the separate .nibs git tree, and emit a
+		// spurious content-free event).
 		const filename = "wdf1--watched.md"
-		writeNibFile(t, nibsDir, filename, `---
+		const raw = `---
 version: 1
 title: Watched Deferred
 status: todo
 priority: deferred
 ---
-`)
+`
+		writeNibFile(t, nibsDir, filename, raw)
 
-		// Wait for the watcher to ingest the file.
+		// Wait for the watcher to ingest the file (exactly one batch: a Created
+		// event carrying the in-memory-normalized nib).
+		var batch []NibEvent
 		select {
-		case <-ch:
+		case batch = <-ch:
 		case <-time.After(2 * time.Second):
 			t.Fatal("timeout waiting for watcher event")
 		}
-
-		// Stop watching so the round-trip Update below isn't racing further
-		// re-ingestions of our own writes.
-		if err := core.Unwatch(); err != nil {
-			t.Fatalf("Unwatch() error: %v", err)
+		if len(batch) != 1 {
+			t.Fatalf("first event batch has %d events, want 1: %+v", len(batch), batch)
+		}
+		if batch[0].Type != EventCreated {
+			t.Errorf("event type = %v, want EventCreated", batch[0].Type)
+		}
+		if batch[0].Nib == nil || batch[0].Nib.Priority != "low" {
+			t.Errorf("event nib priority = %+v, want in-memory normalization to low", batch[0].Nib)
 		}
 
-		// handleChanges must have persisted the normalization on disk (per #2),
-		// converging the etag so an if-match Update round-trips.
-		assertDeferredConverged(t, core, "wdf1", nibsDir, filename)
+		// No SECOND batch: a self-write (persisting the migration) would fire a
+		// spurious content-free Updated event. Assert none arrives within a
+		// debounce window plus margin.
+		select {
+		case extra := <-ch:
+			t.Fatalf("unexpected second event batch (watcher self-write?): %+v", extra)
+		case <-time.After(300 * time.Millisecond):
+		}
+
+		// In memory: normalized to low.
+		b, err := core.Get("wdf1")
+		if err != nil {
+			t.Fatalf("Get(wdf1) error: %v", err)
+		}
+		if b.Priority != "low" {
+			t.Errorf("in-memory Priority = %q, want %q", b.Priority, "low")
+		}
+
+		// On disk: UNCHANGED. The watcher path does not persist, so the raw
+		// `deferred` bytes remain until the next explicit Update/Load.
+		diskBytes, err := os.ReadFile(filepath.Join(nibsDir, filename))
+		if err != nil {
+			t.Fatalf("reading watched file: %v", err)
+		}
+		if string(diskBytes) != raw {
+			t.Errorf("on-disk file was rewritten by the watcher path; want unchanged bytes.\n got:\n%s\nwant:\n%s", diskBytes, raw)
+		}
 	})
 }
 

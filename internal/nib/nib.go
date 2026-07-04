@@ -250,11 +250,11 @@ func Parse(r io.Reader) (*Nib, error) {
 	// below "low" in the old enum — so mapping it to "low" preserves its
 	// relative rank. (Do not "tidy" this to "normal": that would silently
 	// re-rank legacy nibs upward.) The value is normalized in memory here so it
-	// is always valid even without a Core; when loaded through a Core, the
-	// loader persists it (see Core.loadNibReconciled) so disk and memory agree
-	// immediately — otherwise the read etag (hash of Render() → "low") diverges
-	// from the write-side etag (hash of raw disk bytes → "deferred") and
-	// if-match updates fail.
+	// is always valid even without a Core; when loaded through a Core's bulk
+	// Load, the loader persists it (see Core.loadNibReconciledLocked) so disk and
+	// memory agree immediately — otherwise the read etag (hash of Render() →
+	// "low") diverges from the write-side etag (hash of raw disk bytes →
+	// "deferred") and if-match updates fail.
 	priorityMigrated := false
 	if fm.Priority == "deferred" {
 		fm.Priority = "low"

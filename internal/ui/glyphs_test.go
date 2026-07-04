@@ -28,6 +28,7 @@ func TestGetPrioritySymbol_ASCII(t *testing.T) {
 		{"high", "!"},
 		{"low", "v"},
 		{"normal", ""},
+		{"deferred", ""}, // removed priority value falls through to the empty default
 		{"", ""},
 	}
 	for _, tt := range tests {
@@ -51,6 +52,7 @@ func TestGetPrioritySymbol_UTF8(t *testing.T) {
 		{"high", "!"},
 		{"low", "↓"}, // ↓
 		{"normal", ""},
+		{"deferred", ""}, // removed priority value falls through to the empty default
 		{"", ""},
 	}
 	for _, tt := range tests {

@@ -2238,4 +2238,33 @@ func TestNibClone(t *testing.T) {
 			t.Errorf("original.UpdatedAt was modified")
 		}
 	})
+
+	t.Run("clone clears the priorityMigrated flag", func(t *testing.T) {
+		// Parsing a legacy `priority: deferred` nib normalizes it to `low` and
+		// sets the load-boundary-only priorityMigrated flag. Clone() must clear
+		// that flag so a stale `true` never rides along through Update cycles
+		// (it is meaningful only on a freshly-parsed nib, consumed by the loader).
+		parsed, err := Parse(strings.NewReader(`---
+version: 1
+title: Legacy Deferred
+status: todo
+priority: deferred
+---
+`))
+		if err != nil {
+			t.Fatalf("Parse() error: %v", err)
+		}
+		if !parsed.PriorityMigrated() {
+			t.Fatal("parsed.PriorityMigrated() = false, want true after parsing priority: deferred")
+		}
+
+		cloned := parsed.Clone()
+		if cloned.PriorityMigrated() {
+			t.Error("cloned.PriorityMigrated() = true, want false (Clone must clear the flag)")
+		}
+		// The normalized value itself must survive the clone.
+		if cloned.Priority != "low" {
+			t.Errorf("cloned.Priority = %q, want %q", cloned.Priority, "low")
+		}
+	})
 }
