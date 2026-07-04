@@ -131,7 +131,7 @@ Before starting any new work, run `git fetch` (and `git -C .nibs fetch`) and che
 - Never hardcode `/` or `\` in path assertions — use `filepath.Join` for OS paths and forward slashes for nib `Path` fields
 - For manual CLI testing: `task nibs` compiles and runs the CLI
 - For manual CLI testing, `task demo` serves the web UI with a temporary copy of the sample-project fixture (safe to mutate), and `task demo:tui` does the same for the TUI
-- **Test fixture dataset**: `testdata/fixtures/sample-project/` has 87 curated nibs (prefix `tnib-`) covering all types, statuses, priorities, hierarchies, and relationships. Use `fixtures.CopySampleProject(t)` from `testdata/fixtures/` to get a temporary copy for write tests. Regenerate with `bash testdata/fixtures/gen-sample-project.sh`.
+- **Test fixture dataset**: `testdata/fixtures/sample-project/` has 89 curated nibs (prefix `tnib-`) covering all types, statuses, priorities, hierarchies, and relationships. Use `fixtures.CopySampleProject(t)` from `testdata/fixtures/` to get a temporary copy for write tests. Regenerate with `bash testdata/fixtures/gen-sample-project.sh`.
 - Web UI tests: `cd web && npm install && npx vitest run --reporter=agent` (Vitest + jsdom + @testing-library/svelte). Run `npm install` first — node_modules can go stale after branch switches.
 - Web test commands require `web/` as the working directory. If cwd has drifted, `cd` to the project root's `web/` directory first.
 - **Always use `--reporter=agent`** when running vitest — it keeps output concise. Never pipe vitest through grep; read the output once.
