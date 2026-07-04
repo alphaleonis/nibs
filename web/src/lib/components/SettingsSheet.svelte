@@ -1,7 +1,7 @@
 <script lang="ts">
   import type { RowDensity } from "../types";
   import * as Sheet from "$lib/components/ui/sheet/index.js";
-  import * as RadioGroup from "$lib/components/ui/radio-group/index.js";
+  import SegmentedControl from "./SegmentedControl.svelte";
   import { buttonVariants } from "$lib/components/ui/button/index.js";
   import { Settings2 } from "@lucide/svelte";
 
@@ -57,19 +57,12 @@
 
         <div class="flex items-center justify-between gap-3">
           <span class="text-sm text-foreground">Row density</span>
-          <RadioGroup.Root
+          <SegmentedControl
             value={rowDensity}
-            onValueChange={(v) => v && ondensitychange(v as RowDensity)}
-            orientation="horizontal"
-            aria-label="Row density"
-            class="inline-flex items-center gap-0.5 rounded-md bg-muted p-0.5"
-          >
-            {#each densityOptions as option}
-              <RadioGroup.Item value={option.value}>
-                {option.label}
-              </RadioGroup.Item>
-            {/each}
-          </RadioGroup.Root>
+            options={densityOptions}
+            ariaLabel="Row density"
+            onchange={(v) => ondensitychange(v as RowDensity)}
+          />
         </div>
       </section>
     </div>
