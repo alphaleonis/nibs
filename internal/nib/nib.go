@@ -13,8 +13,6 @@ import (
 
 	"github.com/adrg/frontmatter"
 	"gopkg.in/yaml.v3"
-
-	"github.com/alphaleonis/nibs/internal/config"
 )
 
 // tagPattern matches valid tags: lowercase letters, numbers, and hyphens.
@@ -221,25 +219,29 @@ type frontMatter struct {
 	Order     string     `yaml:"order,omitempty"`
 }
 
+// resolvedStatuses is the single source of truth for the "resolved" (done)
+// status set — statuses that mean the nib is finished. Both IsResolvedStatus
+// and ResolvedStatusNames derive from it, so the set has exactly one definition.
+var resolvedStatuses = []string{"completed", "scrapped"}
+
 // IsResolvedStatus returns true if the status means the nib is "done"
 // (either completed or scrapped). This is the canonical definition used
 // by all packages for filtering resolved blockers and blocking relationships.
 func IsResolvedStatus(status string) bool {
-	return status == "completed" || status == "scrapped"
+	for _, s := range resolvedStatuses {
+		if status == s {
+			return true
+		}
+	}
+	return false
 }
 
 // ResolvedStatusNames returns the names of all statuses considered "resolved"
-// (done), derived by filtering the known status set (config.DefaultStatuses)
-// through IsResolvedStatus — the canonical predicate. This keeps a single
-// source of truth: the returned list is exactly what IsResolvedStatus accepts,
-// enumerated over the real statuses. Today this is {completed, scrapped}.
+// (done) — a defensive copy of the canonical resolvedStatuses set, so callers
+// cannot mutate the source. Today this is {completed, scrapped}.
 func ResolvedStatusNames() []string {
-	var names []string
-	for _, s := range config.DefaultStatuses {
-		if IsResolvedStatus(s.Name) {
-			names = append(names, s.Name)
-		}
-	}
+	names := make([]string, len(resolvedStatuses))
+	copy(names, resolvedStatuses)
 	return names
 }
 
