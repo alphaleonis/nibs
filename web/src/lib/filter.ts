@@ -80,15 +80,6 @@ export function prepareFilter(filter: NibFilter): PreparedFilter {
 }
 
 /**
- * Returns a new filter with all client-side fields removed,
- * preserving only server-side fields (search, excludeStatus, etc.).
- */
-export function clearClientFilters(filter: NibFilter): NibFilter {
-  const { type, priority, estimate, tags, status, ...rest } = filter;
-  return rest;
-}
-
-/**
  * Returns an array of status values that appear in both filter.status and filter.excludeStatus.
  * Returns empty array if there's no conflict.
  */

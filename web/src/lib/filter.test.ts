@@ -3,7 +3,6 @@ import {
   matchesFilter,
   hasClientFilters,
   prepareFilter,
-  clearClientFilters,
   getStatusConflicts,
   resolveStatusConflicts,
   isDragAllowed,
@@ -204,42 +203,6 @@ describe("prepareFilter", () => {
     expect(result.clientFiltersActive).toBe(false);
     expect(result.serverFilter).toEqual({ excludeStatus: ["completed", "scrapped"], search: "test" });
     expect(result.matchesClient(makeNib())).toBe(true);
-  });
-});
-
-describe("clearClientFilters", () => {
-  it("removes client-side fields and preserves server-side fields", () => {
-    const filter: NibFilter = {
-      search: "test",
-      type: ["bug"],
-      priority: ["high"],
-      status: ["todo"],
-      estimate: ["m"],
-      tags: ["frontend"],
-      excludeStatus: ["scrapped"],
-      hasParent: true,
-      parentId: "nibs-010",
-    };
-    const result = clearClientFilters(filter);
-
-    expect(result).toEqual({
-      search: "test",
-      excludeStatus: ["scrapped"],
-      hasParent: true,
-      parentId: "nibs-010",
-    });
-    expect(result).not.toHaveProperty("type");
-    expect(result).not.toHaveProperty("priority");
-    expect(result).not.toHaveProperty("status");
-    expect(result).not.toHaveProperty("estimate");
-    expect(result).not.toHaveProperty("tags");
-  });
-
-  it("returns filter unchanged when no client filters are present", () => {
-    const filter: NibFilter = { search: "hello", excludeStatus: ["completed"] };
-    const result = clearClientFilters(filter);
-
-    expect(result).toEqual(filter);
   });
 });
 

@@ -412,3 +412,223 @@ describe("Toolbar", () => {
     expect(callArg).toEqual(["id", "parent", "type", "title", "state", "effort", "tags"]);
   });
 });
+
+// Filter-dropdown coverage ported from the deleted FilterBar.test.ts (nibs-oqr8).
+// The filter-toggle logic (toggleArrayValue/handleToggle, mutual exclusion,
+// per-category Clear, status conflict resolution, count badges) was moved verbatim
+// from FilterBar into Toolbar during the nibs-5a8k design-system refactor, but its
+// only test coverage lived in FilterBar.test.ts, which was deleted with the component.
+describe("Toolbar — filter dropdowns", () => {
+  it("opens the Type dropdown with all 5 type checkboxes when its trigger is clicked", async () => {
+    render(Toolbar, { ...defaultToolbarProps });
+
+    // No type checkboxes visible initially
+    expect(screen.queryByRole("menuitemcheckbox", { name: "bug" })).not.toBeInTheDocument();
+
+    await user.click(screen.getByRole("button", { name: /type/i }));
+
+    expect(screen.getByRole("menuitemcheckbox", { name: "bug" })).toBeInTheDocument();
+    expect(screen.getByRole("menuitemcheckbox", { name: "feature" })).toBeInTheDocument();
+    expect(screen.getByRole("menuitemcheckbox", { name: "task" })).toBeInTheDocument();
+    expect(screen.getByRole("menuitemcheckbox", { name: "milestone" })).toBeInTheDocument();
+    expect(screen.getByRole("menuitemcheckbox", { name: "epic" })).toBeInTheDocument();
+  });
+
+  it("checking a type checkbox emits filter with that type", async () => {
+    const onchange = vi.fn();
+    render(Toolbar, { ...defaultToolbarProps, onchange });
+
+    await user.click(screen.getByRole("button", { name: /type/i }));
+    await user.click(screen.getByRole("menuitemcheckbox", { name: "bug" }));
+
+    const lastCall = onchange.mock.calls[onchange.mock.calls.length - 1];
+    expect(lastCall[0]).toMatchObject({ type: ["bug"] });
+  });
+
+  it("checking a priority checkbox emits filter with that priority", async () => {
+    const onchange = vi.fn();
+    render(Toolbar, { ...defaultToolbarProps, onchange });
+
+    await user.click(screen.getByRole("button", { name: /priority/i }));
+    await user.click(screen.getByRole("menuitemcheckbox", { name: "high" }));
+
+    const lastCall = onchange.mock.calls[onchange.mock.calls.length - 1];
+    expect(lastCall[0]).toMatchObject({ priority: ["high"] });
+  });
+
+  it("checking a state checkbox emits filter with that status", async () => {
+    const onchange = vi.fn();
+    render(Toolbar, { ...defaultToolbarProps, onchange });
+
+    await user.click(screen.getByRole("button", { name: /state/i }));
+    await user.click(screen.getByRole("menuitemcheckbox", { name: "in-progress" }));
+
+    const lastCall = onchange.mock.calls[onchange.mock.calls.length - 1];
+    expect(lastCall[0]).toMatchObject({ status: ["in-progress"] });
+  });
+
+  it("checking an effort checkbox emits filter with that estimate", async () => {
+    const onchange = vi.fn();
+    render(Toolbar, { ...defaultToolbarProps, onchange });
+
+    await user.click(screen.getByRole("button", { name: /effort/i }));
+    await user.click(screen.getByRole("menuitemcheckbox", { name: "l" }));
+
+    const lastCall = onchange.mock.calls[onchange.mock.calls.length - 1];
+    expect(lastCall[0]).toMatchObject({ estimate: ["l"] });
+  });
+
+  it("unchecking the last value in a category removes the filter field", async () => {
+    const onchange = vi.fn();
+    render(Toolbar, { ...defaultToolbarProps, filter: { type: ["bug"] }, onchange });
+
+    await user.click(screen.getByRole("button", { name: /type/i }));
+    await user.click(screen.getByRole("menuitemcheckbox", { name: "bug" }));
+
+    const lastCall = onchange.mock.calls[onchange.mock.calls.length - 1];
+    expect(lastCall[0].type).toBeUndefined();
+  });
+
+  it("closes an open filter dropdown when its own trigger is clicked again", async () => {
+    render(Toolbar, { ...defaultToolbarProps });
+
+    const typeBtn = screen.getByRole("button", { name: /type/i });
+    await user.click(typeBtn);
+    expect(screen.getByRole("menuitemcheckbox", { name: "bug" })).toBeInTheDocument();
+
+    await user.click(typeBtn);
+    expect(screen.queryByRole("menuitemcheckbox", { name: "bug" })).not.toBeInTheDocument();
+  });
+
+  it("closes an open filter dropdown when another filter trigger is opened (mutual exclusion)", async () => {
+    render(Toolbar, { ...defaultToolbarProps });
+
+    await user.click(screen.getByRole("button", { name: /type/i }));
+    expect(screen.getByRole("menuitemcheckbox", { name: "bug" })).toBeInTheDocument();
+
+    await user.click(screen.getByRole("button", { name: /priority/i }));
+    expect(screen.queryByRole("menuitemcheckbox", { name: "bug" })).not.toBeInTheDocument();
+    expect(screen.getByRole("menuitemcheckbox", { name: "high" })).toBeInTheDocument();
+  });
+
+  it("closes an open filter dropdown when Escape is pressed", async () => {
+    render(Toolbar, { ...defaultToolbarProps });
+
+    await user.click(screen.getByRole("button", { name: /type/i }));
+    expect(screen.getByRole("menuitemcheckbox", { name: "bug" })).toBeInTheDocument();
+
+    await user.keyboard("{Escape}");
+    expect(screen.queryByRole("menuitemcheckbox", { name: "bug" })).not.toBeInTheDocument();
+  });
+
+  it("clears search to undefined when the keyword input is emptied", async () => {
+    const onchange = vi.fn();
+    render(Toolbar, { ...defaultToolbarProps, filter: { search: "old" }, onchange });
+
+    const input = screen.getByTestId("filter-keyword");
+    await user.clear(input);
+
+    const lastCall = onchange.mock.calls[onchange.mock.calls.length - 1];
+    expect(lastCall[0].search).toBeUndefined();
+  });
+
+  it("does not render the Tags trigger when availableTags is empty", () => {
+    render(Toolbar, { ...defaultToolbarProps, availableTags: [] });
+    expect(screen.queryByRole("button", { name: /tags/i })).not.toBeInTheDocument();
+  });
+
+  it("renders the Tags dropdown with checkboxes when availableTags has items", async () => {
+    const onchange = vi.fn();
+    render(Toolbar, {
+      ...defaultToolbarProps,
+      onchange,
+      availableTags: ["frontend", "backend"],
+    });
+
+    const tagsBtn = screen.getByRole("button", { name: /tags/i });
+    expect(tagsBtn).toBeInTheDocument();
+
+    await user.click(tagsBtn);
+    expect(screen.getByRole("menuitemcheckbox", { name: "frontend" })).toBeInTheDocument();
+    expect(screen.getByRole("menuitemcheckbox", { name: "backend" })).toBeInTheDocument();
+
+    await user.click(screen.getByRole("menuitemcheckbox", { name: "frontend" }));
+    const lastCall = onchange.mock.calls[onchange.mock.calls.length - 1];
+    expect(lastCall[0]).toMatchObject({ tags: ["frontend"] });
+  });
+
+  it("per-category Clear menu item clears the category when selections exist", async () => {
+    const onchange = vi.fn();
+    render(Toolbar, { ...defaultToolbarProps, filter: { type: ["bug", "feature"] }, onchange });
+
+    await user.click(screen.getByRole("button", { name: /type/i }));
+
+    const clearItem = screen.getByRole("menuitem", { name: /clear/i });
+    expect(clearItem).toBeInTheDocument();
+
+    await user.click(clearItem);
+    const lastCall = onchange.mock.calls[onchange.mock.calls.length - 1];
+    expect(lastCall[0].type).toBeUndefined();
+  });
+
+  it("per-category Clear menu item is disabled when the category has no selections", async () => {
+    render(Toolbar, { ...defaultToolbarProps, filter: {} });
+
+    await user.click(screen.getByRole("button", { name: /type/i }));
+
+    const clearItem = screen.getByRole("menuitem", { name: /clear/i });
+    expect(clearItem).toBeInTheDocument();
+    expect(clearItem).toHaveAttribute("data-disabled", "");
+  });
+
+  it("resolves a conflicting status away when checked (resolveStatusConflicts)", async () => {
+    const onchange = vi.fn();
+    render(Toolbar, {
+      ...defaultToolbarProps,
+      filter: { excludeStatus: ["completed", "scrapped"] },
+      onchange,
+    });
+
+    await user.click(screen.getByRole("button", { name: /state/i }));
+    // "completed" is in excludeStatus, so checking it must be resolved away
+    await user.click(screen.getByRole("menuitemcheckbox", { name: "completed" }));
+
+    const lastCall = onchange.mock.calls[onchange.mock.calls.length - 1];
+    expect(lastCall[0].status).toBeUndefined();
+    expect(lastCall[0].excludeStatus).toEqual(["completed", "scrapped"]);
+  });
+
+  it("emits a non-conflicting status and preserves excludeStatus", async () => {
+    const onchange = vi.fn();
+    render(Toolbar, {
+      ...defaultToolbarProps,
+      filter: { excludeStatus: ["completed", "scrapped"] },
+      onchange,
+    });
+
+    await user.click(screen.getByRole("button", { name: /state/i }));
+    await user.click(screen.getByRole("menuitemcheckbox", { name: "todo" }));
+
+    const lastCall = onchange.mock.calls[onchange.mock.calls.length - 1];
+    expect(lastCall[0].status).toEqual(["todo"]);
+    expect(lastCall[0].excludeStatus).toEqual(["completed", "scrapped"]);
+  });
+
+  it("shows an active-count badge on triggers whose category has selections", () => {
+    render(Toolbar, {
+      ...defaultToolbarProps,
+      filter: { type: ["bug", "feature"], priority: ["high"] },
+    });
+
+    // Type trigger shows count 2, Priority trigger shows count 1
+    expect(screen.getByRole("button", { name: /type/i })).toHaveTextContent("2");
+    expect(screen.getByRole("button", { name: /priority/i })).toHaveTextContent("1");
+
+    // State and Effort badges are present but invisible (no active selections)
+    const stateBadge = screen.getByRole("button", { name: /state/i }).querySelector("span");
+    expect(stateBadge?.classList.contains("invisible")).toBe(true);
+
+    const effortBadge = screen.getByRole("button", { name: /effort/i }).querySelector("span");
+    expect(effortBadge?.classList.contains("invisible")).toBe(true);
+  });
+});
