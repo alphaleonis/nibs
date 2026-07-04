@@ -41,6 +41,18 @@ With a nib ID, shows a detailed summary for that nib's subtree
 		var rootID string
 		if len(args) > 0 {
 			rootID = args[0]
+			// Resolve short/bare ids (e.g. "din3") to their full form
+			// ("nibs-din3") before building the summary, using the same
+			// single-id resolution path show/links use (Core.Get via the
+			// Nib resolver). BuildSummary keys on full ids only, so an
+			// unresolved short id would spuriously report "nib not found".
+			// On an unknown id the resolver returns nil; we leave rootID as
+			// the raw arg so BuildSummary still emits the not-found warning.
+			if resolved, rerr := resolver.Query().Nib(context.Background(), rootID); rerr != nil {
+				return cmdError(contextJSON, output.ErrFileError, "failed to resolve nib %q: %v", rootID, rerr)
+			} else if resolved != nil {
+				rootID = resolved.ID
+			}
 		}
 
 		sum := nibcontext.BuildSummary(allNibs, rootID)
