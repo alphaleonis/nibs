@@ -116,9 +116,9 @@ func renderField(n *nib.Nib, c Column) string {
 	case ColumnStatus:
 		return n.Status
 	case ColumnType:
-		return n.Type
+		return n.EffectiveType()
 	case ColumnPriority:
-		return n.Priority
+		return n.EffectivePriority()
 	case ColumnEstimate:
 		return n.Estimate
 	case ColumnOrder:

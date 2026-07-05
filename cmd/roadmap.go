@@ -111,6 +111,7 @@ func buildRoadmap(allNibs []*nib.Nib, includeDone bool, statusFilter, noStatusFi
 	// Find milestones, applying status filters
 	var milestones []*nib.Nib
 	for _, b := range allNibs {
+		// Classification check — exempt: empty type is never milestone/epic.
 		if b.Type != "milestone" {
 			continue
 		}
@@ -156,6 +157,7 @@ func buildRoadmap(allNibs []*nib.Nib, includeDone bool, statusFilter, noStatusFi
 	// Find unscheduled epics (epics not under a milestone)
 	var unscheduledEpics []epicGroup
 	for _, b := range allNibs {
+		// Classification check — exempt: empty type is never milestone/epic.
 		if b.Type != "epic" {
 			continue
 		}
@@ -178,7 +180,8 @@ func buildRoadmap(allNibs []*nib.Nib, includeDone bool, statusFilter, noStatusFi
 	// Find orphan items (not milestone, not epic, no parent or parent is not milestone/epic)
 	var orphanItems []*nib.Nib
 	for _, b := range allNibs {
-		// Skip milestones and epics
+		// Skip milestones and epics.
+		// Classification check — exempt: empty type is never milestone/epic.
 		if b.Type == "milestone" || b.Type == "epic" {
 			continue
 		}
@@ -323,8 +326,9 @@ func sortByTypeThenStatus(nibs []*nib.Nib, cfg interface {
 	}
 
 	sort.Slice(nibs, func(i, j int) bool {
-		// First by type
-		ti, tj := typeOrder[nibs[i].Type], typeOrder[nibs[j].Type]
+		// First by type (EffectiveType so a type-less nib sorts as "task", not at
+		// the zero-value/first slot).
+		ti, tj := typeOrder[nibs[i].EffectiveType()], typeOrder[nibs[j].EffectiveType()]
 		if ti != tj {
 			return ti < tj
 		}
@@ -372,11 +376,11 @@ func renderNibRef(b *nib.Nib, asLink bool, linkPrefix string) string {
 	return fmt.Sprintf("([%s](%s%s))", b.ID, linkPrefix, b.Path)
 }
 
-// typeBadge returns a shields.io badge markdown for the nib type.
+// typeBadge returns a shields.io badge markdown for the nib type. Uses
+// EffectiveType so a type-less nib still renders its "task" badge (matching the
+// pre-nibs-7d3o behavior where loadNib synthesized the default).
 func typeBadge(b *nib.Nib) string {
-	if b.Type == "" {
-		return ""
-	}
+	typeName := b.EffectiveType()
 	// Map types to colors
 	colors := map[string]string{
 		"bug":       "d73a4a",
@@ -385,11 +389,11 @@ func typeBadge(b *nib.Nib) string {
 		"epic":      "5319e7",
 		"milestone": "fbca04",
 	}
-	color := colors[b.Type]
+	color := colors[typeName]
 	if color == "" {
 		color = "gray"
 	}
-	return fmt.Sprintf("![%s](https://img.shields.io/badge/%s-%s?style=flat-square)", b.Type, b.Type, color)
+	return fmt.Sprintf("![%s](https://img.shields.io/badge/%s-%s?style=flat-square)", typeName, typeName, color)
 }
 
 // defaultLinkPrefix returns the relative path from cwd to the .nibs directory.

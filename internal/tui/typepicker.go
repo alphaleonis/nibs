@@ -18,8 +18,8 @@ func validTypesForNib(n *nib.Nib, backend Backend) []string {
 	// Constraint from parent
 	parentType := ""
 	if n.Parent != "" {
-		if p, err := backend.GetNib(context.Background(), n.Parent); err == nil {
-			parentType = p.Type
+		if p, err := backend.GetNib(context.Background(), n.Parent); err == nil && p != nil {
+			parentType = p.EffectiveType()
 		}
 	}
 	validFromParent := nibtypes.ValidChildTypes(parentType)
@@ -28,7 +28,7 @@ func validTypesForNib(n *nib.Nib, backend Backend) []string {
 	children, _ := backend.GetChildren(context.Background(), n, nil)
 	var childTypes []string
 	for _, c := range children {
-		childTypes = append(childTypes, c.Type)
+		childTypes = append(childTypes, c.EffectiveType())
 	}
 	validFromChildren := nibtypes.ValidParentTypesForChildren(childTypes)
 

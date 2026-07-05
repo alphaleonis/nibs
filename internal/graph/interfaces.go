@@ -18,11 +18,14 @@ type NibReader interface {
 	Config() *config.Config
 	// CurrentETag returns the canonical ETag of the on-disk content of the given
 	// nib (a hash of the parsed file's canonical render, so it agrees with the
-	// in-memory nib.ETag() across benign formatting drift). It does not reproduce
-	// loadNib's synthesized presentation defaults, so a nib loaded from a file
-	// that omits a defaulted field (priority/type/timestamps) can diverge from
-	// its in-memory nib.ETag() (see nibcore.computeStoredETag and follow-up
-	// nibs-7d3o). Falls back to the in-memory etag only when no on-disk file
+	// in-memory nib.ETag() across benign formatting drift). loadNib keeps Type and
+	// Priority empty when the file omits them (the "task"/"normal" presentation
+	// defaults are applied only at the consumption boundary via
+	// nib.EffectiveType()/EffectivePriority()), so priority/type-less files no
+	// longer diverge from their in-memory nib.ETag() (nibs-7d3o). The sole residual
+	// divergence is the created_at/updated_at mtime fallback loadNib synthesizes for
+	// hand-authored files missing those timestamps, which computeStoredETag does not
+	// reproduce (see nibcore.computeStoredETag). Falls back to the in-memory etag only when no on-disk file
 	// exists yet (not-flushed / externally removed); an existing file that cannot
 	// be read or parsed fails CLOSED. Used by bulk-reorder pre-validation. Returns
 	// the same errors as Get (notably ErrNotFound) when the nib is missing.

@@ -177,7 +177,7 @@ func (r *mutationResolver) UpdateNib(ctx context.Context, id string, input model
 		// Validate that existing children are still valid under the new type.
 		for _, link := range r.Reader.FindIncomingLinks(b.ID) {
 			if link.LinkType == "parent" {
-				if err := nibtypes.ValidateParentType(link.FromNib.Type, b.Type); err != nil {
+				if err := nibtypes.ValidateParentType(link.FromNib.EffectiveType(), b.EffectiveType()); err != nil {
 					return nil, fmt.Errorf("type change would invalidate child %s: %w", link.FromNib.ID, err)
 				}
 			}
@@ -579,6 +579,21 @@ func (r *mutationResolver) ReorderChildren(ctx context.Context, parentID string,
 // ReorderSiblings is the resolver for the reorderSiblings field.
 func (r *mutationResolver) ReorderSiblings(ctx context.Context, siblingIds []string, afterID *string, beforeID *string, first *bool, ifMatch []*model.ChildEtag) ([]*nib.Nib, error) {
 	return r.reorderSiblingsImpl(siblingIds, afterID, beforeID, first, ifMatch)
+}
+
+// Type is the resolver for the type field. The stored Nib keeps Type empty when
+// the file omits it (so the etag witnesses the on-disk bytes); this resolver
+// applies the presentation default so the non-nullable field always resolves a
+// value ("task"). See nib.DefaultType and nibs-7d3o.
+func (r *nibResolver) Type(ctx context.Context, obj *nib.Nib) (string, error) {
+	return obj.EffectiveType(), nil
+}
+
+// Priority is the resolver for the priority field. Mirrors Type: the stored Nib
+// keeps Priority empty when the file omits it; this resolver applies the "normal"
+// presentation default for the non-nullable field. See nib.DefaultPriority.
+func (r *nibResolver) Priority(ctx context.Context, obj *nib.Nib) (string, error) {
+	return obj.EffectivePriority(), nil
 }
 
 // ParentID is the resolver for the parentId field.

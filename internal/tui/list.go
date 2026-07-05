@@ -51,8 +51,13 @@ func (d itemDelegate) Render(w io.Writer, m list.Model, index int, listItem list
 		return
 	}
 
-	// Get colors from config
-	colors := d.cfg.GetNibColors(item.nib.Status, item.nib.Type, item.nib.Priority)
+	// Get colors from config. EffectiveType so a type-less nib keeps its "task"
+	// badge/color. Raw Priority is safe here despite the missing default: GetNibColors
+	// -> GetPriority yields a DIFFERENT PriorityColor for "" (none) vs "normal"
+	// ("white"), but that color is only ever consumed by RenderPrioritySymbol, which
+	// returns "" (discarding the color) whenever GetPrioritySymbol is empty — and the
+	// symbol is empty for both "" and "normal", so the rendered result is identical.
+	colors := d.cfg.GetNibColors(item.nib.Status, item.nib.EffectiveType(), item.nib.Priority)
 
 	// Calculate max title width using responsive columns
 	idWidth := d.cols.ID
@@ -74,7 +79,7 @@ func (d itemDelegate) Render(w io.Writer, m list.Model, index int, listItem list
 	str := ui.RenderNibRow(
 		item.nib.ID,
 		item.nib.Status,
-		item.nib.Type,
+		item.nib.EffectiveType(),
 		item.nib.Title,
 		ui.NibRowConfig{
 			StatusColor:   colors.StatusColor,
@@ -373,7 +378,7 @@ func (m listModel) Update(msg tea.Msg) (listModel, tea.Cmd) {
 						// Find the nib to get its type
 						for _, item := range m.list.Items() {
 							if bi, ok := item.(nibItem); ok && bi.nib.ID == id {
-								types = append(types, bi.nib.Type)
+								types = append(types, bi.nib.EffectiveType())
 								break
 							}
 						}
@@ -390,7 +395,7 @@ func (m listModel) Update(msg tea.Msg) (listModel, tea.Cmd) {
 						return openParentPickerMsg{
 							nibIDs:       []string{item.nib.ID},
 							nibTitle:     item.nib.Title,
-							nibTypes:     []string{item.nib.Type},
+							nibTypes:     []string{item.nib.EffectiveType()},
 							currentParent: item.nib.Parent,
 						}
 					}
@@ -427,7 +432,7 @@ func (m listModel) Update(msg tea.Msg) (listModel, tea.Cmd) {
 					first := true
 					for id := range m.selectedNibs {
 						ids = append(ids, id)
-						if n, err := m.backend.GetNib(context.Background(), id); err == nil {
+						if n, err := m.backend.GetNib(context.Background(), id); err == nil && n != nil {
 							nibValid := validTypesForNib(n, m.backend)
 							if first {
 								validTypes = nibValid
@@ -450,7 +455,7 @@ func (m listModel) Update(msg tea.Msg) (listModel, tea.Cmd) {
 						return openTypePickerMsg{
 							nibIDs:      []string{item.nib.ID},
 							nibTitle:    item.nib.Title,
-							currentType: item.nib.Type,
+							currentType: item.nib.EffectiveType(),
 							validTypes:  validTypes,
 						}
 					}
@@ -474,7 +479,7 @@ func (m listModel) Update(msg tea.Msg) (listModel, tea.Cmd) {
 						return openPriorityPickerMsg{
 							nibIDs:         []string{item.nib.ID},
 							nibTitle:       item.nib.Title,
-							currentPriority: item.nib.Priority,
+							currentPriority: item.nib.EffectivePriority(),
 						}
 					}
 				}
@@ -516,7 +521,7 @@ func (m listModel) Update(msg tea.Msg) (listModel, tea.Cmd) {
 				// Open type picker for create flow with smart default
 				selectedType := ""
 				if item, ok := m.list.SelectedItem().(nibItem); ok {
-					selectedType = item.nib.Type
+					selectedType = item.nib.EffectiveType()
 				}
 				smartDefault := defaultTypeForContext(selectedType)
 				return m, func() tea.Msg {

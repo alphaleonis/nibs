@@ -142,13 +142,19 @@ func TestFormatColumns_TagsColumn_JoinedByComma(t *testing.T) {
 // TestFormatColumns_EmptyFields_RenderAsEmptyString locks in that missing
 // fields render as the empty string (not "<nil>", not "0001-01-01...", not
 // "0"). Important for agent consumers that split lines on tab.
+//
+// The type and priority columns are the exception: they carry the presentation
+// default ("task"/"normal") via nib.EffectiveType()/EffectivePriority(), matching
+// what every loaded nib rendered before loadNib stopped synthesizing those
+// defaults (nibs-7d3o). Those are legitimate values, not the garbage this test
+// guards against; the remaining string columns still render empty.
 func TestFormatColumns_EmptyFields_RenderAsEmptyString(t *testing.T) {
 	b := &nib.Nib{ID: "only-id"}
 	got := FormatColumns(
 		[]*nib.Nib{b},
 		[]Column{"id", "slug", "title", "status", "type", "priority", "estimate", "order", "parent", "tags"},
 	)
-	want := "only-id\t\t\t\t\t\t\t\t\t\n"
+	want := "only-id\t\t\t\ttask\tnormal\t\t\t\t\n"
 	if got != want {
 		t.Errorf("FormatColumns of empty nib = %q\n                       want %q", got, want)
 	}

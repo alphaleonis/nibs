@@ -211,10 +211,13 @@ func (r *Resolver) activateParentChain(childID, parentID string) {
 		// ETagMismatchError) leaves the in-memory nib untouched, rather than
 		// corrupting the store to show in-progress while disk was never written.
 		//
-		// Caveat: parent.ETag() can false-conflict for a reloaded nib that omits
-		// a defaulted field on disk (e.g. no priority: line -> in-memory
-		// Priority="normal"), spuriously dropping activation (tracked by
-		// nibs-7d3o). Do NOT substitute CurrentETag here — that reintroduces the
+		// Caveat: parent.ETag() can still false-conflict for a reloaded nib whose
+		// on-disk file omits created_at/updated_at (loadNib synthesizes those from
+		// the file's mtime while the stored etag bare-parses), spuriously dropping
+		// activation for such hand-authored files. The priority/type axis of this
+		// false-conflict is fixed (nibs-7d3o: loadNib keeps a default-omitting nib's
+		// Type/Priority empty, so a missing priority:/type: line no longer diverges).
+		// Do NOT substitute CurrentETag here — that reintroduces the
 		// reverted lost-update/data-loss regression (see nibs-znt8/nibs-7d3o,
 		// guarded by TestActivateParentChainGenuineDivergenceIsRefused).
 		parentETag := parent.ETag()

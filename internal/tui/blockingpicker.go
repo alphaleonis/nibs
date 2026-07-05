@@ -92,11 +92,16 @@ func (d blockingItemDelegate) Render(w io.Writer, m list.Model, index int, listI
 		blockingIndicator = lipgloss.NewStyle().Foreground(ui.ColorMuted).Render("○ ") // Empty circle for not blocking
 	}
 
-	// Get colors from config
-	colors := d.cfg.GetNibColors(item.nib.Status, item.nib.Type, item.nib.Priority)
+	// Get colors from config. EffectiveType so a type-less nib keeps its "task"
+	// badge. Raw Priority is safe here despite the missing default: GetNibColors ->
+	// GetPriority yields a different PriorityColor for "" (none) vs "normal" ("white"),
+	// but that color is only ever consumed by RenderPrioritySymbol, which returns ""
+	// (discarding the color) whenever GetPrioritySymbol is empty — and the symbol is
+	// empty for both "" and "normal", so the rendered result is identical.
+	colors := d.cfg.GetNibColors(item.nib.Status, item.nib.EffectiveType(), item.nib.Priority)
 
 	// Format: [indicator] [type] title (id)
-	typeBadge := ui.RenderTypeText(item.nib.Type, colors.TypeColor)
+	typeBadge := ui.RenderTypeText(item.nib.EffectiveType(), colors.TypeColor)
 	title := item.nib.Title
 	if colors.IsArchive {
 		title = ui.Muted.Render(title)
@@ -145,7 +150,7 @@ func newBlockingPickerModel(nibID, nibTitle string, currentBlocking []string, ba
 		typeOrder[t] = i
 	}
 	sort.Slice(eligibleNibs, func(i, j int) bool {
-		ti, tj := typeOrder[eligibleNibs[i].Type], typeOrder[eligibleNibs[j].Type]
+		ti, tj := typeOrder[eligibleNibs[i].EffectiveType()], typeOrder[eligibleNibs[j].EffectiveType()]
 		if ti != tj {
 			return ti < tj
 		}

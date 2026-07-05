@@ -25,6 +25,15 @@ models:
   # Use existing Nib type from nib package
   Nib:
     model: github.com/alphaleonis/nibs/internal/nib.Nib
+    fields:
+      # The stored Nib keeps Type/Priority empty when the file omits them (so the
+      # etag witnesses the on-disk bytes — see nib.DefaultType). These field
+      # resolvers apply the "task"/"normal" presentation defaults so the
+      # non-nullable GraphQL fields always resolve a value (nibs-7d3o).
+      type:
+        resolver: true
+      priority:
+        resolver: true
   # Map ID scalar to string
   ID:
     model:

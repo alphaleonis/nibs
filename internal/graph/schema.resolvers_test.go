@@ -53,6 +53,70 @@ func createTestNib(t *testing.T, core *nibcore.Core, id, title, status string) *
 	return b
 }
 
+// TestNibFieldResolversApplyPresentationDefaults pins the behavior-preservation
+// contract for nibs-7d3o: the stored Nib keeps Type/Priority EMPTY when the file
+// omits them (so the etag witnesses the on-disk bytes), but the non-nullable
+// GraphQL fields must still resolve the "task"/"normal" presentation defaults —
+// exactly what a client saw before loadNib stopped synthesizing them. Uses a
+// fresh Core.Load to exercise the reload path where the false-conflict bug lived.
+func TestNibFieldResolversApplyPresentationDefaults(t *testing.T) {
+	tmpDir := t.TempDir()
+	nibsDir := filepath.Join(tmpDir, ".nibs")
+	if err := os.MkdirAll(nibsDir, 0755); err != nil {
+		t.Fatalf("mkdir: %v", err)
+	}
+	write := func(name, content string) {
+		if err := os.WriteFile(filepath.Join(nibsDir, name), []byte(content), 0644); err != nil {
+			t.Fatalf("write %s: %v", name, err)
+		}
+	}
+	// Omits `priority:` (what CreateNib writes without a priority); `type:` present.
+	write("nopri1--x.md", "---\nversion: 1\ntitle: No Priority\nstatus: todo\ntype: bug\ncreated_at: 2026-01-02T03:04:05Z\nupdated_at: 2026-01-02T03:04:05Z\n---\n\nBody.\n")
+	// Omits `type:` (hand-authored); explicit priority preserved.
+	write("notype1--y.md", "---\nversion: 1\ntitle: No Type\nstatus: todo\npriority: high\ncreated_at: 2026-01-02T03:04:05Z\nupdated_at: 2026-01-02T03:04:05Z\n---\n\nBody.\n")
+
+	core := nibcore.New(nibsDir, config.Default())
+	core.SetWarnWriter(nil)
+	if err := core.Load(); err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	resolver := &Resolver{Reader: core, Writer: core, Validator: core, Blocking: core, Orderer: NewOrderer(core, core)}
+	ctx := context.Background()
+	nr := resolver.Nib()
+
+	t.Run("priority-less nib: stored empty, resolver returns normal", func(t *testing.T) {
+		b, err := resolver.Query().Nib(ctx, "nopri1")
+		if err != nil {
+			t.Fatalf("Nib(): %v", err)
+		}
+		if b.Priority != "" {
+			t.Errorf("stored Priority = %q, want empty (must not be synthesized onto the struct)", b.Priority)
+		}
+		if got, err := nr.Priority(ctx, b); err != nil || got != "normal" {
+			t.Errorf("Priority resolver = %q, %v; want \"normal\", nil", got, err)
+		}
+		if got, err := nr.Type(ctx, b); err != nil || got != "bug" {
+			t.Errorf("Type resolver = %q, %v; want \"bug\" (explicit), nil", got, err)
+		}
+	})
+
+	t.Run("type-less nib: stored empty, resolver returns task", func(t *testing.T) {
+		b, err := resolver.Query().Nib(ctx, "notype1")
+		if err != nil {
+			t.Fatalf("Nib(): %v", err)
+		}
+		if b.Type != "" {
+			t.Errorf("stored Type = %q, want empty (must not be synthesized onto the struct)", b.Type)
+		}
+		if got, err := nr.Type(ctx, b); err != nil || got != "task" {
+			t.Errorf("Type resolver = %q, %v; want \"task\", nil", got, err)
+		}
+		if got, err := nr.Priority(ctx, b); err != nil || got != "high" {
+			t.Errorf("Priority resolver = %q, %v; want \"high\" (explicit), nil", got, err)
+		}
+	})
+}
+
 func TestQueryNib(t *testing.T) {
 	resolver, core := setupTestResolver(t)
 	ctx := context.Background()

@@ -260,6 +260,50 @@ type frontMatter struct {
 	Extra map[string]any `yaml:",inline"`
 }
 
+// DefaultType and DefaultPriority are the single source of truth for the
+// PRESENTATION defaults applied when a nib file omits the corresponding front
+// matter key. They are consumed via EffectiveType/EffectivePriority.
+//
+// The stored Nib keeps Type/Priority EMPTY when the file omits them: Render
+// carries `omitempty` on both, so the canonical render — and thus the etag —
+// stays a faithful witness of the on-disk bytes. If loadNib synthesized these
+// in memory (as it once did), a bare-parse of the same file would render no
+// such key while the in-memory ETag() would render the default, diverging with
+// no on-disk change and false-conflicting an if-match Update (nibs-7d3o). The
+// defaults are therefore applied only at the consumption boundary (GraphQL
+// field resolvers, sort/filter, TUI/CLI display, the JSON projection).
+//
+// They live in the nib package (not config) to avoid the nib->config layering
+// edge removed alongside resolvedStatuses; the values intentionally match
+// config's default type ("task") and priority ("normal"). config's DefaultTypes
+// and DefaultPriorities remain the source for the full enum and colors — these
+// two constants only name the fallback member of each, and a guard test in the
+// config package pins them equal so the two definitions cannot drift.
+const (
+	DefaultType     = "task"
+	DefaultPriority = "normal"
+)
+
+// EffectiveType returns the nib's type, or DefaultType when the file omitted it.
+// Use this at every consumption boundary (display, sort, filter, GraphQL/JSON)
+// that must treat a type-less nib as the default; never mutate b.Type to the
+// default, or the etag will diverge from the on-disk bytes (see DefaultType).
+func (b *Nib) EffectiveType() string {
+	if b.Type == "" {
+		return DefaultType
+	}
+	return b.Type
+}
+
+// EffectivePriority returns the nib's priority, or DefaultPriority when omitted.
+// See EffectiveType for why the stored Priority is never mutated to the default.
+func (b *Nib) EffectivePriority() string {
+	if b.Priority == "" {
+		return DefaultPriority
+	}
+	return b.Priority
+}
+
 // resolvedStatuses is the single source of truth for the "resolved" (done)
 // status set — statuses that mean the nib is finished. Both IsResolvedStatus
 // and ResolvedStatusNames derive from it, so the set has exactly one definition.
@@ -554,14 +598,25 @@ func (b *Nib) ETag() string {
 	return hex.EncodeToString(h.Sum(nil))
 }
 
-// MarshalJSON implements json.Marshaler to include computed etag field.
+// MarshalJSON implements json.Marshaler to include the computed etag field and
+// to project the PRESENTATION defaults for Type/Priority.
+//
+// The stored Nib keeps Type/Priority empty when the file omits them (so the etag
+// witnesses the on-disk bytes — see DefaultType). The JSON surface, however, must
+// present the effective value ("task"/"normal") so it agrees with the GraphQL
+// field resolvers and with the pre-nibs-7d3o behavior (loadNib used to synthesize
+// these). We marshal a value COPY with the effective values applied, leaving the
+// receiver — and thus b.ETag(), computed from the raw Render() — untouched.
 func (b *Nib) MarshalJSON() ([]byte, error) {
 	type NibAlias Nib // Avoid infinite recursion
+	alias := NibAlias(*b)
+	alias.Type = b.EffectiveType()
+	alias.Priority = b.EffectivePriority()
 	return json.Marshal(&struct {
 		*NibAlias
 		ETag string `json:"etag"`
 	}{
-		NibAlias: (*NibAlias)(b),
-		ETag:      b.ETag(),
+		NibAlias: &alias,
+		ETag:     b.ETag(),
 	})
 }

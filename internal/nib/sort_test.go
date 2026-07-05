@@ -284,6 +284,28 @@ func TestSortByStatusPriorityAndType(t *testing.T) {
 		}
 	})
 
+	t.Run("empty type treated as task (default), not sorted last", func(t *testing.T) {
+		// A type-less nib must sort at the "task" position, exactly as it did when
+		// loadNib synthesized Type="task". This distinguishes the fix from a naive
+		// "unknown type sorts last": task is NOT last in this order, so an empty
+		// type ranked as "task" sorts BEFORE "research", whereas ranked as unknown
+		// it would sort AFTER it (nibs-7d3o behavior preservation).
+		typeNamesFull := []string{"milestone", "epic", "bug", "feature", "task", "research"}
+		nibs := []*Nib{
+			{ID: "research1", Title: "A Research", Status: "todo", Priority: "normal", Type: "research"},
+			{ID: "notype1", Title: "B No Type", Status: "todo", Priority: "normal", Type: ""},
+		}
+
+		SortByStatusPriorityAndType(nibs, statusNames, typeNamesFull, ranker)
+
+		if nibs[0].ID != "notype1" {
+			t.Errorf("nibs[0].ID = %q, want notype1 (empty type must rank as task, before research)", nibs[0].ID)
+		}
+		if nibs[1].ID != "research1" {
+			t.Errorf("nibs[1].ID = %q, want research1", nibs[1].ID)
+		}
+	})
+
 	t.Run("sorts by title after type", func(t *testing.T) {
 		nibs := []*Nib{
 			{ID: "1", Title: "Zebra", Status: "todo", Priority: "high", Type: "bug"},

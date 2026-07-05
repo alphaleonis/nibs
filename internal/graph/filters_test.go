@@ -311,39 +311,56 @@ func TestFilterByEstimate(t *testing.T) {
 	})
 }
 
-func TestFilterByFieldWithDefault(t *testing.T) {
-	nibs := []*nib.Nib{
-		{ID: "a", Priority: "high"},
-		{ID: "b", Priority: ""}, // should be treated as "normal"
-		{ID: "c", Priority: "low"},
-		{ID: "d", Priority: "normal"},
+// TestApplyFilterDefaultAwarePriorityAndType is the direct coverage for
+// ApplyFilter's default-aware Type/Priority filtering (the EffectiveType()/
+// EffectivePriority() routing that replaced the deleted filterByFieldWithDefault
+// helper in nibs-7d3o). A default-omitting nib (empty Priority/Type) must filter
+// as though the "normal"/"task" presentation defaults were on disk: including it
+// under Priority=["normal"] / Type=["task"], and excluding it under the symmetric
+// ExcludePriority / ExcludeType. Each exclude row keeps a non-default control nib
+// so a regression that dropped everything would not pass silently.
+func TestApplyFilterDefaultAwarePriorityAndType(t *testing.T) {
+	// defaulted omits both priority: and type: (empty fields); explicit carries
+	// non-default values so each case has a surviving control.
+	defaulted := &nib.Nib{ID: "nibs-defaulted", Title: "Defaulted"}
+	explicit := &nib.Nib{ID: "nibs-explicit", Title: "Explicit", Priority: "high", Type: "bug"}
+
+	reader := &stubReader{
+		nibs: map[string]*nib.Nib{
+			"nibs-defaulted": defaulted,
+			"nibs-explicit":  explicit,
+		},
+		allNibs: []*nib.Nib{defaulted, explicit},
+		prefix:  "nibs-",
+	}
+	blocking := &stubBlockingChecker{}
+
+	tests := []struct {
+		name    string
+		filter  *model.NibFilter
+		wantIDs []string
+	}{
+		{"Priority normal includes default-omitting nib", &model.NibFilter{Priority: []string{"normal"}}, []string{"nibs-defaulted"}},
+		{"ExcludePriority normal excludes default-omitting nib", &model.NibFilter{ExcludePriority: []string{"normal"}}, []string{"nibs-explicit"}},
+		{"Type task includes default-omitting nib", &model.NibFilter{Type: []string{"task"}}, []string{"nibs-defaulted"}},
+		{"ExcludeType task excludes default-omitting nib", &model.NibFilter{ExcludeType: []string{"task"}}, []string{"nibs-explicit"}},
 	}
 
-	getPriority := func(b *nib.Nib) string { return b.Priority }
-
-	t.Run("matches explicit and defaulted", func(t *testing.T) {
-		got := filterByFieldWithDefault(nibs, []string{"normal"}, "normal", getPriority)
-		if len(got) != 2 {
-			t.Fatalf("got %d nibs, want 2", len(got))
-		}
-		if got[0].ID != "b" || got[1].ID != "d" {
-			t.Errorf("got IDs %s, %s, want b, d", got[0].ID, got[1].ID)
-		}
-	})
-
-	t.Run("matches non-default values", func(t *testing.T) {
-		got := filterByFieldWithDefault(nibs, []string{"high"}, "normal", getPriority)
-		if len(got) != 1 || got[0].ID != "a" {
-			t.Errorf("got %v, want [a]", got)
-		}
-	})
-
-	t.Run("nil values is no-op", func(t *testing.T) {
-		got := filterByFieldWithDefault(nibs, nil, "normal", getPriority)
-		if len(got) != len(nibs) {
-			t.Errorf("got %d nibs, want %d (no-op)", len(got), len(nibs))
-		}
-	})
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := ApplyFilter(context.Background(), reader.allNibs, tt.filter, reader, blocking)
+			gotIDs := make([]string, 0, len(got))
+			for _, b := range got {
+				gotIDs = append(gotIDs, b.ID)
+			}
+			sort.Strings(gotIDs)
+			want := append([]string(nil), tt.wantIDs...)
+			sort.Strings(want)
+			if !reflect.DeepEqual(gotIDs, want) {
+				t.Errorf("got IDs %v, want %v", gotIDs, want)
+			}
+		})
+	}
 }
 
 func TestIncludeAncestors(t *testing.T) {

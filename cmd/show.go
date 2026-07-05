@@ -416,26 +416,28 @@ func showStyledNib(b *nib.Nib, blockingIDs []string, mentions []string, mentione
 	header.WriteString(" ")
 	header.WriteString(ui.RenderStatusWithColor(b.Status, statusColor, isArchive))
 
-	// Display type
-	if b.Type != "" {
-		typeCfg := cfg.GetType(b.Type)
-		typeColor := "gray"
-		if typeCfg != nil {
-			typeColor = typeCfg.Color
-		}
-		header.WriteString(" ")
-		header.WriteString(ui.RenderTypeWithColor(b.Type, typeColor))
+	// Display type and priority using the effective (default-applied) values, so a
+	// nib whose file omits `type:`/`priority:` shows "task"/"normal" as it did when
+	// loadNib synthesized them (the stored Nib now keeps them empty — see
+	// nib.DefaultType). EffectiveType/EffectivePriority never return "", so both are
+	// always shown.
+	effectiveType := b.EffectiveType()
+	typeCfg := cfg.GetType(effectiveType)
+	typeColor := "gray"
+	if typeCfg != nil {
+		typeColor = typeCfg.Color
 	}
+	header.WriteString(" ")
+	header.WriteString(ui.RenderTypeWithColor(effectiveType, typeColor))
 
-	if b.Priority != "" {
-		priorityCfg := cfg.GetPriority(b.Priority)
-		priorityColor := "gray"
-		if priorityCfg != nil {
-			priorityColor = priorityCfg.Color
-		}
-		header.WriteString(" ")
-		header.WriteString(ui.RenderPriorityWithColor(b.Priority, priorityColor))
+	effectivePriority := b.EffectivePriority()
+	priorityCfg := cfg.GetPriority(effectivePriority)
+	priorityColor := "gray"
+	if priorityCfg != nil {
+		priorityColor = priorityCfg.Color
 	}
+	header.WriteString(" ")
+	header.WriteString(ui.RenderPriorityWithColor(effectivePriority, priorityColor))
 	if b.Estimate != "" {
 		estimateCfg := cfg.GetEstimate(b.Estimate)
 		estimateColor := "gray"

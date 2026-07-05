@@ -2116,6 +2116,19 @@ func TestMarshalJSONIncludesETag(t *testing.T) {
 	if etag != b.ETag() {
 		t.Errorf("JSON etag = %s, want %s", etag, b.ETag())
 	}
+
+	// MarshalJSON must project the PRESENTATION defaults: this fixture leaves
+	// Type/Priority empty, so the JSON surface must serialize "task"/"normal"
+	// (matching EffectiveType()/EffectivePriority() and the GraphQL field
+	// resolvers). Guards the effective-value projection against a revert to a raw
+	// (*NibAlias)(b) marshal that would re-emit empty type/priority in `nibs show
+	// --json`.
+	if got, _ := result["type"].(string); got != "task" {
+		t.Errorf("JSON type = %q, want %q (effective default for empty Type)", got, "task")
+	}
+	if got, _ := result["priority"].(string); got != "normal" {
+		t.Errorf("JSON priority = %q, want %q (effective default for empty Priority)", got, "normal")
+	}
 }
 
 func TestETagChangesAfterModification(t *testing.T) {

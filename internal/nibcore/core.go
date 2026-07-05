@@ -223,13 +223,19 @@ func (c *Core) loadNib(path string) (*nib.Nib, error) {
 	filename := filepath.Base(path)
 	b.ID, b.Slug = nib.ParseFilename(filename)
 
-	// Apply defaults for GraphQL non-nullable fields
-	if b.Type == "" {
-		b.Type = "task"
-	}
-	if b.Priority == "" {
-		b.Priority = "normal"
-	}
+	// Type and Priority are DELIBERATELY not defaulted here. Synthesizing them
+	// in memory (Type""→"task", Priority""→"normal") while computeStoredETag
+	// bare-parses the file diverges the in-memory ETag() from the stored etag for
+	// a file that omits the key, false-conflicting a valid if-match Update with no
+	// on-disk change (nibs-7d3o). The stored Nib keeps them EMPTY so Render (which
+	// carries omitempty on both) matches the on-disk bytes; the "task"/"normal"
+	// presentation defaults are applied at the consumption boundary via
+	// nib.EffectiveType()/EffectivePriority() (GraphQL field resolvers, sort,
+	// filter, TUI/CLI display, the JSON projection).
+	//
+	// The empty-slice defaults below are kept: they satisfy GraphQL's non-null
+	// list fields and are etag-safe (Render's omitempty treats a nil and an empty
+	// slice identically, so neither changes the canonical render).
 	if b.Tags == nil {
 		b.Tags = []string{}
 	}
@@ -239,6 +245,20 @@ func (c *Core) loadNib(path string) (*nib.Nib, error) {
 	if b.Documents == nil {
 		b.Documents = []string{}
 	}
+	// created_at/updated_at fallbacks are also kept. Unlike Type/Priority these
+	// cannot be expressed as a pure Effective* accessor — the mtime fallback needs
+	// the file's stat, unavailable at the consumption boundary — so moving them
+	// would balloon scope for no real-world gain: every app-written nib always
+	// carries both timestamps (Create sets them, Render emits them), so the only
+	// files this synthesis touches are hand-authored ones missing EITHER timestamp
+	// (created_at is synthesized from updated_at or the file mtime below, then
+	// updated_at is defaulted to created_at). Such a file retains a residual etag
+	// divergence (in-memory carries the synthesized timestamp; the bare-parse stored
+	// etag does not), and because every Get returns the same synthesized pointer the
+	// divergence never clears — an if-match Update on such a file permanently
+	// false-conflicts. This is pre-existing, orthogonal to the priority/type fix,
+	// deliberately accepted (not fixed here), and not exercised by any real or
+	// app-created nib.
 	if b.CreatedAt == nil {
 		if b.UpdatedAt != nil {
 			b.CreatedAt = b.UpdatedAt
@@ -614,11 +634,14 @@ func (c *Core) Create(b *nib.Nib) error {
 // CurrentETag returns the canonical ETag for the nib's on-disk content — a hash
 // of the parsed file's canonical Render() (see computeStoredETag), so it agrees
 // with the in-memory nib.ETag() across benign formatting drift (reordered YAML
-// keys, whitespace, the `deferred`->`low` priority normalization). It does NOT
-// reproduce loadNib's synthesized presentation defaults, so for a nib loaded
-// from a file that omits a defaulted field (priority/type/timestamps) this can
-// diverge from that nib's in-memory nib.ETag() with no concurrent write (see
-// computeStoredETag and follow-up nibs-7d3o). Used by bulk-reorder pre-validation
+// keys, whitespace, the `deferred`->`low` priority normalization). loadNib keeps
+// the stored Nib's Type/Priority empty when the file omits them (the "task"/
+// "normal" defaults are applied only at the consumption boundary via
+// nib.EffectiveType()/EffectivePriority()), so a priority/type-less file no longer
+// diverges from its in-memory nib.ETag() (nibs-7d3o). The one remaining residual
+// is loadNib's created_at/updated_at mtime fallback for hand-authored files that
+// omit those timestamps — not reproduced here — which no app-created nib ever
+// hits (Render always emits both). Used by bulk-reorder pre-validation
 // to check optimistic concurrency without a write. Returns ErrNotFound when the
 // id does not resolve. Falls back to the in-memory etag only when no on-disk
 // file exists yet (empty Path, or os.IsNotExist — a freshly created nib not yet
@@ -658,18 +681,21 @@ func (c *Core) CurrentETag(id string) (string, error) {
 // Parsing is done with the bare nib.Parse (which already normalizes the legacy
 // `deferred` priority to `low`) and only the ID is copied over from the stored
 // nib so the rendered `# <id>` header line matches. It deliberately does NOT go
-// through loadNib: loadNib applies presentation defaults (Type="task",
-// Priority="normal", empty slices) and a created-at modtime fallback that are
-// synthesized in memory and NOT part of the persisted bytes. This is a
-// deliberate scoping decision, NOT a full reconciliation: it means a nib LOADED
-// from a file that omits a defaulted field (notably `priority:`, but also
-// `type:`/timestamps) has an in-memory nib.ETag() that renders the synthesized
-// default while this stored etag renders the bare file, so the two can diverge
-// with no concurrent write and an if-match Update can false-conflict. Folding
-// loadNib's defaults in here would instead break the just-created path — the
-// CreateNib resolver never sets a Priority, so its stored nib renders without a
-// priority line while loadNib would inject `priority: normal`. Reconciling the
-// two in-memory shapes is tracked as follow-up nibs-7d3o; see that nib.
+// through loadNib, but the two now agree on Type/Priority: loadNib keeps them
+// empty when the file omits them (the "task"/"normal" presentation defaults are
+// applied at the consumption boundary via nib.EffectiveType()/EffectivePriority(),
+// never mutated onto the stored Nib), so a bare-parse render and the in-memory
+// nib.ETag() render the same key set. That is what fixed nibs-7d3o: a priority-
+// or type-less file — including every nib the CreateNib resolver writes without a
+// priority — no longer false-conflicts on an if-match Update, and the just-created
+// (never-Loaded) path still round-trips because its stored nib is likewise empty.
+//
+// loadNib's empty-slice defaults are etag-safe (Render's omitempty renders a nil
+// and an empty slice identically). The lone divergence loadNib can still
+// introduce is its created_at/updated_at mtime fallback, not reproduced here — but
+// that only touches HAND-AUTHORED files missing those timestamps; every app-
+// created nib carries both (Create sets them, Render emits them), so no real or
+// app-created nib hits it.
 //
 // Fallback discipline when the canonical render cannot be computed from disk.
 // The etag exists to certify the current on-disk bytes, so each branch is chosen

@@ -56,20 +56,16 @@ func ApplyFilter(ctx context.Context, nibs []*nib.Nib, filter *model.NibFilter, 
 
 	result := nibs
 
-	// String field filters
+	// String field filters. Type and Priority use the effective value so a
+	// default-omitting nib filters as though the "task"/"normal" default were on
+	// disk (matching the stored Nib's presentation defaults — see nib.DefaultType).
 	result = filterByField(result, filter.Status, func(b *nib.Nib) string { return b.Status })
 	result = excludeByField(result, filter.ExcludeStatus, func(b *nib.Nib) string { return b.Status })
-	result = filterByField(result, filter.Type, func(b *nib.Nib) string { return b.Type })
-	result = excludeByField(result, filter.ExcludeType, func(b *nib.Nib) string { return b.Type })
+	result = filterByField(result, filter.Type, func(b *nib.Nib) string { return b.EffectiveType() })
+	result = excludeByField(result, filter.ExcludeType, func(b *nib.Nib) string { return b.EffectiveType() })
 
-	// Priority with default (empty → "normal")
-	result = filterByFieldWithDefault(result, filter.Priority, "normal", func(b *nib.Nib) string { return b.Priority })
-	result = excludeByField(result, filter.ExcludePriority, func(b *nib.Nib) string {
-		if b.Priority == "" {
-			return "normal"
-		}
-		return b.Priority
-	})
+	result = filterByField(result, filter.Priority, func(b *nib.Nib) string { return b.EffectivePriority() })
+	result = excludeByField(result, filter.ExcludePriority, func(b *nib.Nib) string { return b.EffectivePriority() })
 
 	// Estimate filters
 	result = filterByField(result, filter.Estimate, func(b *nib.Nib) string { return b.Estimate })
@@ -275,32 +271,6 @@ outer:
 			}
 		}
 		result = append(result, b)
-	}
-	return result
-}
-
-// filterByFieldWithDefault works like filterByField but applies a default
-// value when the getter returns empty string.
-// Returns input unchanged if values is empty.
-func filterByFieldWithDefault(nibs []*nib.Nib, values []string, defaultVal string, getter func(*nib.Nib) string) []*nib.Nib {
-	if len(values) == 0 {
-		return nibs
-	}
-
-	valueSet := make(map[string]bool, len(values))
-	for _, v := range values {
-		valueSet[v] = true
-	}
-
-	var result []*nib.Nib
-	for _, b := range nibs {
-		val := getter(b)
-		if val == "" {
-			val = defaultVal
-		}
-		if valueSet[val] {
-			result = append(result, b)
-		}
 	}
 	return result
 }

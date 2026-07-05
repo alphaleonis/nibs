@@ -50,7 +50,7 @@ func (m previewModel) renderNib() string {
 
 	// Metadata: Status, Type, Priority
 	metaStyle := lipgloss.NewStyle().Foreground(ui.ColorMuted)
-	meta := metaStyle.Render("Status: " + m.nib.Status + "  Type: " + m.nib.Type)
+	meta := metaStyle.Render("Status: " + m.nib.Status + "  Type: " + m.nib.EffectiveType())
 	if m.nib.Priority != "" && m.nib.Priority != "normal" {
 		meta += metaStyle.Render("  Priority: " + m.nib.Priority)
 	}

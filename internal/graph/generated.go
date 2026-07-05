@@ -133,6 +133,9 @@ type MutationResolver interface {
 	ReorderSiblings(ctx context.Context, siblingIds []string, afterID *string, beforeID *string, first *bool, ifMatch []*model.ChildEtag) ([]*nib.Nib, error)
 }
 type NibResolver interface {
+	Type(ctx context.Context, obj *nib.Nib) (string, error)
+	Priority(ctx context.Context, obj *nib.Nib) (string, error)
+
 	ParentID(ctx context.Context, obj *nib.Nib) (*string, error)
 	BlockingIds(ctx context.Context, obj *nib.Nib) ([]string, error)
 	BlockedByIds(ctx context.Context, obj *nib.Nib) ([]string, error)
@@ -2399,7 +2402,7 @@ func (ec *executionContext) _Nib_type(ctx context.Context, field graphql.Collect
 		field,
 		ec.fieldContext_Nib_type,
 		func(ctx context.Context) (any, error) {
-			return obj.Type, nil
+			return ec.resolvers.Nib().Type(ctx, obj)
 		},
 		nil,
 		ec.marshalNString2string,
@@ -2412,8 +2415,8 @@ func (ec *executionContext) fieldContext_Nib_type(_ context.Context, field graph
 	fc = &graphql.FieldContext{
 		Object:     "Nib",
 		Field:      field,
-		IsMethod:   false,
-		IsResolver: false,
+		IsMethod:   true,
+		IsResolver: true,
 		Child: func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
 			return nil, errors.New("field of type String does not have child fields")
 		},
@@ -2428,7 +2431,7 @@ func (ec *executionContext) _Nib_priority(ctx context.Context, field graphql.Col
 		field,
 		ec.fieldContext_Nib_priority,
 		func(ctx context.Context) (any, error) {
-			return obj.Priority, nil
+			return ec.resolvers.Nib().Priority(ctx, obj)
 		},
 		nil,
 		ec.marshalNString2string,
@@ -2441,8 +2444,8 @@ func (ec *executionContext) fieldContext_Nib_priority(_ context.Context, field g
 	fc = &graphql.FieldContext{
 		Object:     "Nib",
 		Field:      field,
-		IsMethod:   false,
-		IsResolver: false,
+		IsMethod:   true,
+		IsResolver: true,
 		Child: func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
 			return nil, errors.New("field of type String does not have child fields")
 		},
@@ -6188,15 +6191,77 @@ func (ec *executionContext) _Nib(ctx context.Context, sel ast.SelectionSet, obj 
 				atomic.AddUint32(&out.Invalids, 1)
 			}
 		case "type":
-			out.Values[i] = ec._Nib_type(ctx, field, obj)
-			if out.Values[i] == graphql.Null {
-				atomic.AddUint32(&out.Invalids, 1)
+			field := field
+
+			innerFunc := func(ctx context.Context, fs *graphql.FieldSet) (res graphql.Marshaler) {
+				defer func() {
+					if r := recover(); r != nil {
+						ec.Error(ctx, ec.Recover(ctx, r))
+					}
+				}()
+				res = ec._Nib_type(ctx, field, obj)
+				if res == graphql.Null {
+					atomic.AddUint32(&fs.Invalids, 1)
+				}
+				return res
 			}
+
+			if field.Deferrable != nil {
+				dfs, ok := deferred[field.Deferrable.Label]
+				di := 0
+				if ok {
+					dfs.AddField(field)
+					di = len(dfs.Values) - 1
+				} else {
+					dfs = graphql.NewFieldSet([]graphql.CollectedField{field})
+					deferred[field.Deferrable.Label] = dfs
+				}
+				dfs.Concurrently(di, func(ctx context.Context) graphql.Marshaler {
+					return innerFunc(ctx, dfs)
+				})
+
+				// don't run the out.Concurrently() call below
+				out.Values[i] = graphql.Null
+				continue
+			}
+
+			out.Concurrently(i, func(ctx context.Context) graphql.Marshaler { return innerFunc(ctx, out) })
 		case "priority":
-			out.Values[i] = ec._Nib_priority(ctx, field, obj)
-			if out.Values[i] == graphql.Null {
-				atomic.AddUint32(&out.Invalids, 1)
+			field := field
+
+			innerFunc := func(ctx context.Context, fs *graphql.FieldSet) (res graphql.Marshaler) {
+				defer func() {
+					if r := recover(); r != nil {
+						ec.Error(ctx, ec.Recover(ctx, r))
+					}
+				}()
+				res = ec._Nib_priority(ctx, field, obj)
+				if res == graphql.Null {
+					atomic.AddUint32(&fs.Invalids, 1)
+				}
+				return res
 			}
+
+			if field.Deferrable != nil {
+				dfs, ok := deferred[field.Deferrable.Label]
+				di := 0
+				if ok {
+					dfs.AddField(field)
+					di = len(dfs.Values) - 1
+				} else {
+					dfs = graphql.NewFieldSet([]graphql.CollectedField{field})
+					deferred[field.Deferrable.Label] = dfs
+				}
+				dfs.Concurrently(di, func(ctx context.Context) graphql.Marshaler {
+					return innerFunc(ctx, dfs)
+				})
+
+				// don't run the out.Concurrently() call below
+				out.Values[i] = graphql.Null
+				continue
+			}
+
+			out.Concurrently(i, func(ctx context.Context) graphql.Marshaler { return innerFunc(ctx, out) })
 		case "estimate":
 			out.Values[i] = ec._Nib_estimate(ctx, field, obj)
 			if out.Values[i] == graphql.Null {

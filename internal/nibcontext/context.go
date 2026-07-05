@@ -68,6 +68,7 @@ func BuildSummary(allNibs []*nib.Nib, rootID string) Summary {
 		// Build per-milestone container summaries for active milestones
 		var milestones []*nib.Nib
 		for _, n := range allNibs {
+			// Classification check — exempt: empty type is never milestone/epic.
 			if n.Type == "milestone" && !nib.IsResolvedStatus(n.Status) {
 				milestones = append(milestones, n)
 			}
@@ -84,6 +85,7 @@ func BuildSummary(allNibs []*nib.Nib, rootID string) Summary {
 			// Active phase: first in-progress epic child
 			var phaseCandidates []*nib.Nib
 			for _, n := range descendants {
+				// Classification check — exempt: empty type is never milestone/epic.
 				if n.Type == "epic" && n.Status == "in-progress" && n.Parent == ms.ID {
 					phaseCandidates = append(phaseCandidates, n)
 				}
@@ -114,6 +116,7 @@ func BuildSummary(allNibs []*nib.Nib, rootID string) Summary {
 	// Sort candidates by Order so the selection is deterministic.
 	var phaseCandidates []*nib.Nib
 	for _, n := range descendants {
+		// Classification check — exempt: empty type is never milestone/epic.
 		if n.Type == "epic" && n.Status == "in-progress" && n.Parent == rootID {
 			phaseCandidates = append(phaseCandidates, n)
 		}
@@ -155,7 +158,7 @@ func BuildSummary(allNibs []*nib.Nib, rootID string) Summary {
 func CalcProgress(nibs []*nib.Nib) Progress {
 	var completed, total int
 	for _, n := range nibs {
-		if !isLeafType(n.Type) {
+		if !isLeafType(n.EffectiveType()) {
 			continue
 		}
 		if n.Status == "scrapped" {
@@ -204,7 +207,7 @@ func newNibRef(n *nib.Nib) *NibRef {
 		ID:       n.ID,
 		Title:    n.Title,
 		Status:   n.Status,
-		Type:     n.Type,
+		Type:     n.EffectiveType(),
 		Estimate: n.Estimate,
 	}
 }
@@ -268,7 +271,7 @@ func isLeafType(typ string) bool {
 func filterByStatusAndLeaf(nibs []*nib.Nib, status string) []*nib.Nib {
 	result := []*nib.Nib{}
 	for _, n := range nibs {
-		if isLeafType(n.Type) && n.Status == status {
+		if isLeafType(n.EffectiveType()) && n.Status == status {
 			result = append(result, n)
 		}
 	}
@@ -279,7 +282,7 @@ func filterByStatusAndLeaf(nibs []*nib.Nib, status string) []*nib.Nib {
 func filterLeafWork(nibs []*nib.Nib) []*nib.Nib {
 	var result []*nib.Nib
 	for _, n := range nibs {
-		if isLeafType(n.Type) {
+		if isLeafType(n.EffectiveType()) {
 			result = append(result, n)
 		}
 	}

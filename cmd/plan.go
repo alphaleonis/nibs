@@ -68,7 +68,7 @@ func buildPlan(ctx context.Context, resolver *graph.Resolver, parentID string, a
 			ID:     parent.ID,
 			Title:  parent.Title,
 			Status: parent.Status,
-			Type:   parent.Type,
+			Type:   parent.EffectiveType(),
 		},
 		Items: []PlanItem{},
 	}
@@ -88,7 +88,7 @@ func buildPlan(ctx context.Context, resolver *graph.Resolver, parentID string, a
 			Position: i + 1,
 			ID:       child.ID,
 			Status:   child.Status,
-			Type:     child.Type,
+			Type:     child.EffectiveType(),
 			Title:    child.Title,
 			Order:    child.Order,
 		}
