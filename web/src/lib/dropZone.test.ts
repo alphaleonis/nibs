@@ -26,7 +26,10 @@ function makeNib(overrides: Partial<TreeTableNib> = {}): TreeTableNib {
   };
 }
 
-function makeRow(overrides: Partial<RowData> & { nib?: Partial<TreeTableNib> } = {}): RowData {
+// Omit `nib` from the base Partial<RowData> before re-adding it: intersecting
+// `Partial<RowData>` (nib: TreeTableNib) with `{ nib?: Partial<TreeTableNib> }`
+// would AND the two nib types, forcing callers to pass a full TreeTableNib.
+function makeRow(overrides: Partial<Omit<RowData, "nib">> & { nib?: Partial<TreeTableNib> } = {}): RowData {
   const { nib: nibOverrides, ...rowOverrides } = overrides;
   return {
     nib: makeNib(nibOverrides),

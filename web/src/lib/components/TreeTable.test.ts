@@ -467,7 +467,7 @@ describe("TreeTable", () => {
     // The serverFilter passed to queryStore should NOT contain status,
     // just like type/priority/estimate/tags are stripped out.
     const lastCall = mockQueryStore.mock.calls[mockQueryStore.mock.calls.length - 1];
-    const variables = lastCall[0].variables;
+    const variables = lastCall[0].variables!;
     expect(variables.filter).not.toHaveProperty("status");
   });
 
@@ -1269,7 +1269,7 @@ describe("TreeTable", () => {
 
       // The latest call should include excludeStatus in the server filter
       const latestCall = mockQueryStore.mock.calls[mockQueryStore.mock.calls.length - 1];
-      expect(latestCall[0].variables.filter).toEqual(
+      expect(latestCall[0].variables!.filter).toEqual(
         expect.objectContaining({
           excludeStatus: ["completed", "scrapped"],
         })

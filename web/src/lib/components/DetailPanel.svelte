@@ -36,6 +36,10 @@
   const mutations = getMutationStore();
   const confirmDialog = useConfirmDialog();
 
+  // The detail query result (`nib`) is untyped urql data, so relation entries
+  // come through as `any`. This is the minimal shape RelatedNibGroup consumes.
+  type NibRef = { id: string; title: string; status: string };
+
   let editTitle: string = $state("");
   let deleted: boolean = $state(false);
   let highlighted: boolean = $state(false);
@@ -380,7 +384,7 @@
           {#if nib.children?.length > 0}
             <RelatedNibGroup
               label="Children"
-              items={nib.children.map((c) => ({ id: c.id, title: c.title, status: c.status }))}
+              items={nib.children.map((c: NibRef) => ({ id: c.id, title: c.title, status: c.status }))}
               onnibselect={onnibselect}
               onaction={onaddchild ? () => onaddchild(nibId, nib.type) : undefined}
               actionLabel="Add child nib"
@@ -391,7 +395,7 @@
           {#if nib.blockedBy?.length > 0}
             <RelatedNibGroup
               label="Blocked by"
-              items={nib.blockedBy.map((b) => ({ id: b.id, title: b.title, status: b.status }))}
+              items={nib.blockedBy.map((b: NibRef) => ({ id: b.id, title: b.title, status: b.status }))}
               onnibselect={onnibselect}
               testId="detail-related-blocked-by"
             />
@@ -400,7 +404,7 @@
           {#if nib.blocking?.length > 0}
             <RelatedNibGroup
               label="Blocking"
-              items={nib.blocking.map((b) => ({ id: b.id, title: b.title, status: b.status }))}
+              items={nib.blocking.map((b: NibRef) => ({ id: b.id, title: b.title, status: b.status }))}
               onnibselect={onnibselect}
               testId="detail-related-blocking"
             />
@@ -409,7 +413,7 @@
           {#if nib.mentions?.length > 0}
             <RelatedNibGroup
               label="Mentions"
-              items={nib.mentions.map((m) => ({ id: m.id, title: m.title, status: m.status }))}
+              items={nib.mentions.map((m: NibRef) => ({ id: m.id, title: m.title, status: m.status }))}
               onnibselect={onnibselect}
               testId="detail-related-mentions"
             />
@@ -418,7 +422,7 @@
           {#if nib.mentionedBy?.length > 0}
             <RelatedNibGroup
               label="Mentioned by"
-              items={nib.mentionedBy.map((m) => ({ id: m.id, title: m.title, status: m.status }))}
+              items={nib.mentionedBy.map((m: NibRef) => ({ id: m.id, title: m.title, status: m.status }))}
               onnibselect={onnibselect}
               testId="detail-related-mentioned-by"
             />

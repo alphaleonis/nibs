@@ -71,6 +71,7 @@ function makeMockEditorOrchestration(): EditorOrchestrationState {
     typePickerOpen: false,
     typePickerParentId: "",
     typePickerParentType: "",
+    handleCreateNew: vi.fn(),
     handleEditNib: vi.fn(),
     handleAddChild: vi.fn(),
     handleTypePickerSelect: vi.fn(),

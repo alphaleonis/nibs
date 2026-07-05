@@ -41,4 +41,5 @@ jobs:
           node-version: "22"
       - run: go generate ./...
       - run: cd web && npm ci && npm run build
+      - run: cd web && npm run check
       - uses: golangci/golangci-lint-action@v9

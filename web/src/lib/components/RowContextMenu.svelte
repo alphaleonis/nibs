@@ -134,6 +134,44 @@
 </script>
 
 {#if open && nib}
+  <!-- Declared here (a child of the {#if} block, not of DropdownMenu.Content)
+       so it is a local snippet in lexical scope for the {@render} calls below,
+       rather than being interpreted as an unknown prop of Content. -->
+  {#snippet metadataSubmenu(label: string, values: readonly string[], currentValue: string,
+      onchange: (v: string) => void, testId: string)}
+    <DropdownMenu.Sub>
+      <DropdownMenu.SubTrigger data-testid="ctx-{testId}-trigger">
+        {label}
+      </DropdownMenu.SubTrigger>
+      <DropdownMenu.SubContent>
+        {#if isBulk}
+          {#each values as v}
+            <DropdownMenu.Item
+              data-testid="ctx-{testId}-{v}"
+              onclick={() => { open = false; onchange(v); }}
+            >
+              {v}
+            </DropdownMenu.Item>
+          {/each}
+        {:else}
+          <DropdownMenu.RadioGroup
+            value={currentValue}
+            onValueChange={(v) => { if (v) { open = false; onchange(v); } }}
+          >
+            {#each values as v}
+              <DropdownMenu.RadioItem
+                data-testid="ctx-{testId}-{v}"
+                value={v}
+              >
+                {v}
+              </DropdownMenu.RadioItem>
+            {/each}
+          </DropdownMenu.RadioGroup>
+        {/if}
+      </DropdownMenu.SubContent>
+    </DropdownMenu.Sub>
+  {/snippet}
+
   <DropdownMenu.Root open={true} onOpenChange={handleOpenChange}>
     <!-- Hidden trigger positioned at cursor -->
     <DropdownMenu.Trigger
@@ -172,41 +210,6 @@
         </DropdownMenu.Item>
         <DropdownMenu.Separator />
       {/if}
-
-      {#snippet metadataSubmenu(label: string, values: string[], currentValue: string,
-          onchange: (v: string) => void, testId: string)}
-        <DropdownMenu.Sub>
-          <DropdownMenu.SubTrigger data-testid="ctx-{testId}-trigger">
-            {label}
-          </DropdownMenu.SubTrigger>
-          <DropdownMenu.SubContent>
-            {#if isBulk}
-              {#each values as v}
-                <DropdownMenu.Item
-                  data-testid="ctx-{testId}-{v}"
-                  onclick={() => { open = false; onchange(v); }}
-                >
-                  {v}
-                </DropdownMenu.Item>
-              {/each}
-            {:else}
-              <DropdownMenu.RadioGroup
-                value={currentValue}
-                onValueChange={(v) => { if (v) { open = false; onchange(v); } }}
-              >
-                {#each values as v}
-                  <DropdownMenu.RadioItem
-                    data-testid="ctx-{testId}-{v}"
-                    value={v}
-                  >
-                    {v}
-                  </DropdownMenu.RadioItem>
-                {/each}
-              </DropdownMenu.RadioGroup>
-            {/if}
-          </DropdownMenu.SubContent>
-        </DropdownMenu.Sub>
-      {/snippet}
 
       {@render metadataSubmenu("Status", STATUSES, nib.status, handleStatusChange, "status")}
 

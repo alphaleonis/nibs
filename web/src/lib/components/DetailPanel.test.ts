@@ -1,6 +1,7 @@
 import { render, screen, waitFor } from "@testing-library/svelte";
 import { userEvent } from "@testing-library/user-event";
 import { describe, it, expect, vi, beforeEach } from "vitest";
+import type { ComponentProps } from "svelte";
 import { readable, writable } from "svelte/store";
 import DetailPanel from "./DetailPanel.svelte";
 import { CONFIRM_DIALOG_KEY } from "$lib/contexts";
@@ -192,7 +193,7 @@ describe("DetailPanel", () => {
     mockConfirmDialog = makeMockConfirmDialog();
   });
 
-  function renderPanel(props: Record<string, unknown>) {
+  function renderPanel(props: ComponentProps<typeof DetailPanel>) {
     return render(DetailPanel, {
       props,
       context: makeContext(mockConfirmDialog),

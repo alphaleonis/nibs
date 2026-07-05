@@ -155,7 +155,8 @@ describe("App", () => {
       (call) => call[0].variables?.filter !== undefined
     );
     expect(nibsCalls.length).toBeGreaterThan(0);
-    const latestVars = nibsCalls[nibsCalls.length - 1][0].variables;
+    // Filtered above to calls whose variables.filter is defined, so variables exists.
+    const latestVars = nibsCalls[nibsCalls.length - 1][0].variables!;
     expect(latestVars.filter).toEqual(
       expect.objectContaining({
         search: "bug",

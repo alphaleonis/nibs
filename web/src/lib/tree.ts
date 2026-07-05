@@ -72,9 +72,13 @@ export function buildViewTree<T extends TreeNib>(nibs: T[], viewLevel: ViewLevel
     collectBacklogRoots(fullTree);
 
     if (orphanTasks.length > 0) {
-      // NOTE: This virtual nib must include all fields that T may require.
-      // When T is TreeTableNib, blockingIds/blockedByIds are needed by TreeTableRow.
-      // If T gains new required fields, they must be added here too.
+      // This is a synthetic sentinel node, not a real member of the input set,
+      // so TypeScript cannot verify it against the open generic `T` (a caller
+      // could instantiate `T` with a subtype requiring extra fields). We cast
+      // through `unknown` deliberately. The literal below must therefore carry
+      // every field any concrete `T` is expected to need: it currently covers
+      // all of TreeTableNib (blockingIds/blockedByIds are read by TreeTableRow).
+      // If `T` gains new required fields, add them here too.
       const virtualNib = {
         id: "__unparented__",
         title: "Unparented",
@@ -87,7 +91,7 @@ export function buildViewTree<T extends TreeNib>(nibs: T[], viewLevel: ViewLevel
         parentId: null,
         blockingIds: [],
         blockedByIds: [],
-      } as T;
+      } as unknown as T;
 
       roots.push({
         nib: virtualNib,

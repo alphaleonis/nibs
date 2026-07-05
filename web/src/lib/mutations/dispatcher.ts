@@ -74,6 +74,9 @@ export class MutationDispatcher {
   async execute(cmd: LeafCommand): Promise<CommandResult>;
   async execute(cmd: BatchCommand): Promise<BatchResult>;
   async execute(cmd: SequenceCommand): Promise<SequenceResult>;
+  // Union overload so callers holding an un-narrowed AnyCommand (e.g. the
+  // MutationStore pass-through) can dispatch without picking a concrete kind.
+  async execute(cmd: AnyCommand): Promise<AnyResult>;
   async execute(cmd: AnyCommand): Promise<AnyResult> {
     switch (cmd.kind) {
       case "batch":

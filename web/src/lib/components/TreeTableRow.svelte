@@ -237,9 +237,8 @@
     box-shadow: inset 0 0 0 1px var(--ring);
   }
 
-  .tree-row.drop-invalid {
-    /* No visual indicator for invalid targets — just no highlight */
-  }
+  /* .tree-row.drop-invalid intentionally has no styling — invalid drop targets
+     get no highlight. The class exists for drop-zone logic, not for CSS. */
 
   /* Real-time change highlight — brief accent background pulse */
   .tree-row.nib-highlighted {

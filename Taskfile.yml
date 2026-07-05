@@ -37,8 +37,7 @@ tasks:
     desc: Type-check the web UI (svelte-check)
     # No codegen dep: svelte-check only reads web/ TS+Svelte sources and
     # node_modules — nothing under web/src imports Go-generated GraphQL code.
-    # Local-only: intentionally NOT wired into `test`/`web:build` while
-    # pre-existing type errors remain (see follow-up nib).
+    # Wired into the `test` gate (svelte-check is clean; see nibs-pg6i).
     dir: web
     cmds:
       - npm run check
@@ -68,6 +67,7 @@ tasks:
     deps: [web:build]
     cmds:
       - go test ./...
+      - cd web && npm run check
       - cd web && npx vitest run --reporter=agent
 
   nibs:
