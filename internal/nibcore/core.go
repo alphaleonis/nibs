@@ -3,6 +3,7 @@
 package nibcore
 
 import (
+	"bytes"
 	"encoding/hex"
 	"fmt"
 	"hash/fnv"
@@ -281,16 +282,22 @@ func (c *Core) loadNib(path string) (*nib.Nib, error) {
 //
 // Today the only such normalization is the legacy `priority: deferred` → `low`
 // migration: nib.Parse rewrites the value in memory and flags the nib via
-// PriorityMigrated(). Without the write-back the read etag (hash of Render() →
-// "low") diverges from the write-side etag (hash of the raw disk bytes →
-// "deferred"), so an if-match Update always mismatches.
+// PriorityMigrated(). The etag layer no longer depends on this write-back:
+// computeStoredETag parses the on-disk file and hashes its canonical Render(),
+// so a legacy `deferred` file yields the same etag as the in-memory `low` value
+// and an if-match Update matches either way. The write-back is retained purely
+// to converge the raw on-disk bytes with the in-memory value, so external
+// consumers (git diffs, editors, other tooling) see the migrated `low` promptly
+// rather than only after the next explicit Update.
 //
-// The write is gated on Version >= 1 because Render is lossy for legacy v0 nibs
-// (it drops the v0-only `blocking` field). v0 nibs are converged instead by
-// migrateV0ToV1, which reads their in-memory Blocking before persisting; the
-// bulk path always runs that pass after the walk. Reconciling only
-// current-format nibs here avoids both data loss and a redundant double-write of
-// v0+deferred nibs.
+// The write is gated on Version >= 1 to leave legacy v0 nibs to migrateV0ToV1,
+// which performs the COMPLETE v0->v1 conversion (blocking -> blocked_by on
+// targets, clear blocking, bump version) and persists it; the bulk path always
+// runs that pass after the walk. Persisting a v0 nib here would write a
+// half-migrated file (priority normalized but still version 0 with `blocking:`
+// intact — nib.Render now preserves that field rather than dropping it) and then
+// migrateV0ToV1 would rewrite it again: a redundant double-write of a transiently
+// inconsistent shape. Gating on Version >= 1 avoids both.
 //
 // Persistence is best-effort: on a write failure (read-only mount, disk full,
 // restricted permissions) it logs, returns migrated=false, and continues,
@@ -604,12 +611,20 @@ func (c *Core) Create(b *nib.Nib) error {
 	return nil
 }
 
-// CurrentETag returns the canonical FNV-64a hex ETag for the nib's on-disk
-// content. Used by bulk-reorder pre-validation to check optimistic
-// concurrency without a write. Returns ErrNotFound when the id does not
-// resolve. Falls back to the in-memory etag when no on-disk file exists yet
-// (e.g. a freshly created nib that hasn't been flushed) — this matches the
-// fallback semantics inside Update.
+// CurrentETag returns the canonical ETag for the nib's on-disk content — a hash
+// of the parsed file's canonical Render() (see computeStoredETag), so it agrees
+// with the in-memory nib.ETag() across benign formatting drift (reordered YAML
+// keys, whitespace, the `deferred`->`low` priority normalization). It does NOT
+// reproduce loadNib's synthesized presentation defaults, so for a nib loaded
+// from a file that omits a defaulted field (priority/type/timestamps) this can
+// diverge from that nib's in-memory nib.ETag() with no concurrent write (see
+// computeStoredETag and follow-up nibs-7d3o). Used by bulk-reorder pre-validation
+// to check optimistic concurrency without a write. Returns ErrNotFound when the
+// id does not resolve. Falls back to the in-memory etag only when no on-disk
+// file exists yet (empty Path, or os.IsNotExist — a freshly created nib not yet
+// flushed, or an externally removed file), matching the fallback semantics inside
+// Update; an existing file that cannot be read or parsed fails CLOSED instead
+// (see computeStoredETag's fail-open/fail-closed matrix).
 func (c *Core) CurrentETag(id string) (string, error) {
 	c.mu.RLock()
 	defer c.mu.RUnlock()
@@ -628,21 +643,114 @@ func (c *Core) CurrentETag(id string) (string, error) {
 	return c.computeStoredETag(storedNib), nil
 }
 
-// computeStoredETag returns the canonical etag for a stored nib by reading
-// the current on-disk content and FNV-64a hashing it. If the on-disk file is
-// missing (e.g. freshly created in memory but not yet flushed), it falls back
-// to the in-memory nib's ETag. Caller must hold c.mu (read or write lock).
+// computeStoredETag returns the canonical etag for a stored nib by reading AND
+// PARSING the current on-disk file and returning the parsed nib's ETag (a hash
+// of its canonical Render()) — not a hash of the raw disk bytes. Hashing the
+// canonical render (rather than the bytes) makes the stored etag equal the
+// in-memory nib.ETag() whenever the on-disk content is canonically equivalent,
+// so an ETag()-derived if-match (a) survives benign round-trip/formatting drift
+// (reordered YAML keys, whitespace, the `deferred`->`low` priority
+// normalization) yet (b) still fails with ETagMismatchError on genuine content
+// divergence — including divergence in content outside Render()'s modeled fields
+// (unknown/extra YAML keys, a legacy v0 `blocking:` line), which nib.Render now
+// preserves. Caller must hold c.mu (read or write lock).
+//
+// Parsing is done with the bare nib.Parse (which already normalizes the legacy
+// `deferred` priority to `low`) and only the ID is copied over from the stored
+// nib so the rendered `# <id>` header line matches. It deliberately does NOT go
+// through loadNib: loadNib applies presentation defaults (Type="task",
+// Priority="normal", empty slices) and a created-at modtime fallback that are
+// synthesized in memory and NOT part of the persisted bytes. This is a
+// deliberate scoping decision, NOT a full reconciliation: it means a nib LOADED
+// from a file that omits a defaulted field (notably `priority:`, but also
+// `type:`/timestamps) has an in-memory nib.ETag() that renders the synthesized
+// default while this stored etag renders the bare file, so the two can diverge
+// with no concurrent write and an if-match Update can false-conflict. Folding
+// loadNib's defaults in here would instead break the just-created path — the
+// CreateNib resolver never sets a Priority, so its stored nib renders without a
+// priority line while loadNib would inject `priority: normal`. Reconciling the
+// two in-memory shapes is tracked as follow-up nibs-7d3o; see that nib.
+//
+// Fallback discipline when the canonical render cannot be computed from disk.
+// The etag exists to certify the current on-disk bytes, so each branch is chosen
+// deliberately as fail-OPEN (return the in-memory ETag, so a normal if-match
+// still matches) or fail-CLOSED (return a value that can NEVER equal a client's
+// canonical if-match, forcing ETagMismatchError so Update refuses the overwrite).
+// A client's if-match always originates from a canonical nib.ETag() (16 lowercase
+// hex chars) obtained via Get, so any non-canonical sentinel below fails closed:
+//
+//	condition                          verdict  returns             logged?
+//	---------------------------------  -------  ------------------  -------
+//	empty Path                         OPEN     in-memory ETag()    no  (not flushed yet)
+//	read err, os.IsNotExist            OPEN     in-memory ETag()    no  (not flushed / P2 delete-race)
+//	read err, other (perms, torn I/O)  CLOSED   unreadableETag      yes (exists, uncertifiable)
+//	parse err (corrupt/conflict/typo)  CLOSED   rawBytesETag(raw)   yes (present, unparseable)
+//	parsed OK                          --       canonical b.ETag()  --
+//
+// The two OPEN branches are intentionally SILENT: "not flushed yet" is the normal
+// freshly-created path, and an externally-deleted file (P2) is an accepted race
+// (resurrection). The two CLOSED branches are always logged. Caller must hold
+// c.mu (read or write lock).
 func (c *Core) computeStoredETag(storedNib *nib.Nib) string {
 	if storedNib.Path == "" {
 		return storedNib.ETag()
 	}
 	diskPath := filepath.Join(c.root, storedNib.Path)
-	content, err := os.ReadFile(diskPath)
+	raw, err := os.ReadFile(diskPath)
 	if err != nil {
-		return storedNib.ETag()
+		if os.IsNotExist(err) {
+			// Legitimately "in memory but not flushed yet" (freshly created) or
+			// externally removed (accepted delete-race, P2): fall back to the
+			// in-memory etag, matching Update's own not-flushed semantics. Silent
+			// by design — this is the normal path, not an anomaly.
+			return storedNib.ETag()
+		}
+		// File EXISTS but its bytes cannot be READ (permission-denied, transient
+		// or torn I/O). Fail CLOSED: the current on-disk content cannot be
+		// certified, so return a sentinel that can never equal a client's
+		// canonical if-match, forcing an ETagMismatchError rather than
+		// overwriting a file whose current bytes are uncertifiable.
+		c.logWarn("cannot read on-disk nib file %s (%v); failing closed to refuse an uncertifiable overwrite", storedNib.Path, err)
+		return unreadableETag
 	}
+
+	b, err := nib.Parse(bytes.NewReader(raw))
+	if err != nil {
+		// File EXISTS but is unparseable (torn/partial write, git merge-conflict
+		// markers, hand-edit YAML typo). Fail CLOSED: hash the raw bytes so the
+		// etag can never equal a canonical in-memory ETag(), forcing an
+		// ETagMismatchError (overwrite refused) rather than silently clobbering
+		// the divergent/corrupt file. This restores the pre-canonicalization
+		// fail-safe for this path.
+		c.logWarn("cannot parse on-disk nib file %s (%v); hashing raw bytes to fail closed", storedNib.Path, err)
+		return rawBytesETag(raw)
+	}
+	// The rendered form includes the `# <id>` header, which is derived from the
+	// filename (not the front matter). Use the stored id so the render — and thus
+	// the etag — matches what the caller computed from the same stored nib.
+	b.ID = storedNib.ID
+	return b.ETag()
+}
+
+// unreadableETag is the fail-CLOSED sentinel computeStoredETag returns when an
+// existing on-disk file cannot be READ (a non-IsNotExist error: permission
+// denied, transient or torn I/O). A client's if-match always originates from a
+// canonical nib.ETag() — 16 lowercase hex chars — obtained via Get; this
+// sentinel is deliberately NOT of that form (nor a rawBytesETag hex value), so it
+// can never equal a client's if-match. Update therefore always returns
+// ETagMismatchError, refusing to overwrite a file whose current bytes could not
+// be certified.
+const unreadableETag = "unreadable-file"
+
+// rawBytesETag hashes raw file bytes with the same FNV-64a/hex scheme as
+// nib.ETag so the value shares that key space but, being a hash of raw
+// (unparseable) bytes rather than a canonical render, in practice will not
+// collide with any valid nib's canonical etag (a 64-bit FNV hash still has a
+// ~2⁻⁶⁴ theoretical collision chance). Used as the fail-closed fallback for a
+// present but unparseable on-disk file.
+func rawBytesETag(raw []byte) string {
 	h := fnv.New64a()
-	h.Write(content)
+	h.Write(raw)
 	return hex.EncodeToString(h.Sum(nil))
 }
 

@@ -1,9 +1,7 @@
 package cmd
 
 import (
-	"encoding/hex"
 	"encoding/json"
-	"hash/fnv"
 	"os"
 	"path/filepath"
 	"strings"
@@ -13,18 +11,23 @@ import (
 	"github.com/spf13/pflag"
 )
 
-// onDiskETag computes the FNV-64a hex etag of the nib file at <nibsDir>/<id>.md.
-// Mirrors nibcore.Core.computeStoredETag's hashing behaviour so CLI tests can
-// build valid --child-if-match arguments without spinning up a resolver.
+// onDiskETag computes the canonical etag of the nib file at <nibsDir>/<id>.md by
+// parsing it and hashing its canonical render (with the id derived from the
+// filename). Mirrors nibcore.Core.computeStoredETag so CLI tests can build valid
+// --child-if-match arguments without spinning up a resolver.
 func onDiskETag(t *testing.T, nibsDir, id string) string {
 	t.Helper()
-	content, err := os.ReadFile(filepath.Join(nibsDir, id+".md"))
+	f, err := os.Open(filepath.Join(nibsDir, id+".md"))
 	if err != nil {
 		t.Fatalf("read nib %s: %v", id, err)
 	}
-	h := fnv.New64a()
-	h.Write(content)
-	return hex.EncodeToString(h.Sum(nil))
+	defer func() { _ = f.Close() }()
+	b, err := nib.Parse(f)
+	if err != nil {
+		t.Fatalf("parse nib %s: %v", id, err)
+	}
+	b.ID = id
+	return b.ETag()
 }
 
 // resetReorderFlags clears the package-level flag vars used by reorderCmd AND

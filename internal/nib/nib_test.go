@@ -1,7 +1,9 @@
 package nib
 
 import (
+	"bytes"
 	"encoding/json"
+	"reflect"
 	"strings"
 	"testing"
 	"time"
@@ -768,20 +770,24 @@ func TestRenderWithParentAndBlocking(t *testing.T) {
 			},
 		},
 		{
-			name: "blocking field not rendered (single-side storage)",
+			// The legacy v0 blocking field IS now rendered (omitempty) so a v0
+			// file's on-disk `blocking:` content round-trips and stays visible to
+			// the canonical etag. v1+ nibs never set Blocking, so it stays absent
+			// for them (see TestRenderNoChurnWithoutExtraOrBlocking).
+			name: "legacy blocking field rendered when set",
 			nib: &Nib{
 				Title:    "Test Nib",
 				Status:   "todo",
 				Blocking: []string{"abc123", "def456"},
 			},
-			notContains: []string{
+			contains: []string{
 				"blocking:",
 				"abc123",
 				"def456",
 			},
 		},
 		{
-			name: "parent rendered but blocking not rendered",
+			name: "parent and legacy blocking both rendered when set",
 			nib: &Nib{
 				Title:    "Test Nib",
 				Status:   "todo",
@@ -790,9 +796,8 @@ func TestRenderWithParentAndBlocking(t *testing.T) {
 			},
 			contains: []string{
 				"parent: xyz789",
-			},
-			notContains: []string{
 				"blocking:",
+				"abc123",
 			},
 		},
 		{
@@ -868,9 +873,14 @@ func TestParentRoundtrip(t *testing.T) {
 	}
 }
 
-func TestBlockingNotRoundtripped(t *testing.T) {
-	// Blocking field is not persisted to YAML, so it should not survive a round-trip.
-	// This is by design: blocking is computed at query time from other nibs' blockedBy.
+func TestBlockingRoundtrip(t *testing.T) {
+	// The legacy v0 `blocking:` field now survives a Render->Parse round-trip
+	// (emitted with omitempty). This keeps the canonical render — and thus the
+	// stored etag (nibcore.computeStoredETag) — a faithful witness of a v0 file's
+	// on-disk `blocking:` content instead of silently stripping it. Normal v1+
+	// nibs never set Blocking (it is computed at query time from other nibs'
+	// blockedBy), so omitempty keeps it absent for them; see the "no churn"
+	// coverage in TestRenderNoChurnWithoutExtraOrBlocking.
 	original := &Nib{
 		Title:    "Test",
 		Status:   "todo",
@@ -881,14 +891,301 @@ func TestBlockingNotRoundtripped(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Render error: %v", err)
 	}
+	if !strings.Contains(string(rendered), "blocking:") {
+		t.Errorf("Render should emit the blocking field, got:\n%s", rendered)
+	}
 
 	parsed, err := Parse(strings.NewReader(string(rendered)))
 	if err != nil {
 		t.Fatalf("Parse error: %v", err)
 	}
 
-	if len(parsed.Blocking) != 0 {
-		t.Errorf("Blocking should not survive round-trip, got %v", parsed.Blocking)
+	if len(parsed.Blocking) != 2 || parsed.Blocking[0] != "abc123" || parsed.Blocking[1] != "def456" {
+		t.Errorf("Blocking should survive round-trip, got %v", parsed.Blocking)
+	}
+}
+
+// TestUnknownKeysRoundtrip verifies that front-matter keys not modeled by any
+// named field survive a Parse->Render->Parse cycle (finding #2), so an external
+// edit confined to such a key is visible to the canonical etag rather than being
+// silently stripped.
+func TestUnknownKeysRoundtrip(t *testing.T) {
+	const input = `---
+version: 1
+title: With Extras
+status: todo
+type: task
+priority: normal
+assignee: bob
+sprint: 2026-Q1
+---
+
+Body text.
+`
+	parsed, err := Parse(strings.NewReader(input))
+	if err != nil {
+		t.Fatalf("Parse error: %v", err)
+	}
+	if got := parsed.Extra["assignee"]; got != "bob" {
+		t.Errorf("Extra[assignee] = %v, want bob", got)
+	}
+	if _, ok := parsed.Extra["sprint"]; !ok {
+		t.Errorf("Extra missing 'sprint' key: %v", parsed.Extra)
+	}
+
+	rendered, err := parsed.Render()
+	if err != nil {
+		t.Fatalf("Render error: %v", err)
+	}
+	if !strings.Contains(string(rendered), "assignee: bob") {
+		t.Errorf("Render dropped unknown key 'assignee':\n%s", rendered)
+	}
+
+	reparsed, err := Parse(strings.NewReader(string(rendered)))
+	if err != nil {
+		t.Fatalf("re-Parse error: %v", err)
+	}
+	if reparsed.Extra["assignee"] != "bob" {
+		t.Errorf("unknown key lost on re-parse: %v", reparsed.Extra)
+	}
+}
+
+// TestExtraBoolLikeScalarCoercionBoundary DOCUMENTS the known round-trip fidelity
+// boundary for Extra (finding #3): a YAML-1.1 bool-like unknown scalar (`y`) is
+// type-inferred to a Go bool on Parse (yaml.v2) and re-emitted as `true` on
+// Render (yaml.v3). This is the "Norway problem" coercion — a known, accepted
+// boundary tracked in nibs-r3y1, NOT behavior this test endorses. If nibs-r3y1
+// makes Extra string-preserving, this test's assertions must be updated.
+func TestExtraBoolLikeScalarCoercionBoundary(t *testing.T) {
+	const input = `---
+version: 1
+title: Norway
+status: todo
+reviewed: y
+---
+`
+	parsed, err := Parse(strings.NewReader(input))
+	if err != nil {
+		t.Fatalf("Parse error: %v", err)
+	}
+	// Current behavior: the bare `y` is coerced to a Go bool, not kept as "y".
+	if got := parsed.Extra["reviewed"]; got != true {
+		t.Fatalf("Extra[reviewed] = %#v (%T), want bool true (known nibs-r3y1 coercion boundary)", got, got)
+	}
+
+	rendered, err := parsed.Render()
+	if err != nil {
+		t.Fatalf("Render error: %v", err)
+	}
+	if !strings.Contains(string(rendered), "reviewed: true") {
+		t.Errorf("expected `reviewed: y` to render as `reviewed: true` (known coercion), got:\n%s", rendered)
+	}
+}
+
+// TestFrontMatterRenderProjectionSymmetry enforces the load-bearing invariant
+// that frontMatter (parse) and renderFrontMatter (render) model the identical
+// yaml-key set. If they drift (a key modeled on one side but not the other), a
+// pre-existing on-disk file can parse that key into Extra and then collide with
+// the modeled render field — historically a yaml.v3 panic. Pinning the two key
+// sets here makes a one-sided struct edit fail CI with a clear message.
+func TestFrontMatterRenderProjectionSymmetry(t *testing.T) {
+	parse := yamlKeyNames(reflect.TypeOf(frontMatter{}))
+	render := yamlKeyNames(reflect.TypeOf(renderFrontMatter{}))
+
+	for name := range parse {
+		if _, ok := render[name]; !ok {
+			t.Errorf("yaml key %q is modeled by frontMatter (parse) but not renderFrontMatter (render); the projections must stay symmetric", name)
+		}
+	}
+	for name := range render {
+		if _, ok := parse[name]; !ok {
+			t.Errorf("yaml key %q is modeled by renderFrontMatter (render) but not frontMatter (parse); the projections must stay symmetric", name)
+		}
+	}
+
+	// modeledRenderTags (used by Render's collision drop) must match the render
+	// struct's named keys exactly — the inline Extra key ("") is excluded.
+	delete(render, "")
+	if !reflect.DeepEqual(render, modeledRenderTags) {
+		t.Errorf("modeledRenderTags = %v, want the named render keys %v", modeledRenderTags, render)
+	}
+}
+
+// yamlKeyNames returns the set of yaml key names (the part before the first
+// comma) for every field of a struct type, including the empty name of a
+// ,inline catch-all field.
+func yamlKeyNames(t reflect.Type) map[string]struct{} {
+	names := make(map[string]struct{}, t.NumField())
+	for i := 0; i < t.NumField(); i++ {
+		name, _, _ := strings.Cut(t.Field(i).Tag.Get("yaml"), ",")
+		names[name] = struct{}{}
+	}
+	return names
+}
+
+// TestRenderExtraKeyCollisionDoesNotPanic covers finding #2: an Extra key that
+// collides with a modeled field name (reachable via the "promote an unknown key
+// to a modeled field" evolution path) must NOT panic Render/ETag. Render drops
+// the colliding Extra key (the modeled field wins) and honors its (,error)
+// contract, keeping ETag's "0000000000000000" sentinel reachable on real errors.
+func TestRenderExtraKeyCollisionDoesNotPanic(t *testing.T) {
+	b := &Nib{
+		Title:  "Collision",
+		Status: "todo",
+		Extra: map[string]any{
+			"status":   "SHOULD-BE-DROPPED", // collides with the modeled Status
+			"assignee": "bob",               // genuinely unknown, must survive
+		},
+	}
+
+	// Neither Render nor ETag may panic (the raw yaml.v3 inline-map panic used to
+	// escape both).
+	rendered, err := b.Render()
+	if err != nil {
+		t.Fatalf("Render() error: %v", err)
+	}
+	if etag := b.ETag(); etag == "0000000000000000" {
+		t.Errorf("ETag() returned the render-failure sentinel; Render should have succeeded")
+	}
+
+	out := string(rendered)
+	if !strings.Contains(out, "status: todo") {
+		t.Errorf("modeled Status did not win over the colliding Extra key:\n%s", out)
+	}
+	if strings.Contains(out, "SHOULD-BE-DROPPED") {
+		t.Errorf("colliding Extra key was not dropped:\n%s", out)
+	}
+	if !strings.Contains(out, "assignee: bob") {
+		t.Errorf("non-colliding Extra key was lost:\n%s", out)
+	}
+
+	// The colliding key must not have mutated the caller's Extra map.
+	if b.Extra["status"] != "SHOULD-BE-DROPPED" {
+		t.Errorf("Render mutated the caller's Extra map: %v", b.Extra)
+	}
+
+	parsed, err := Parse(strings.NewReader(out))
+	if err != nil {
+		t.Fatalf("re-Parse error: %v", err)
+	}
+	if parsed.Status != "todo" {
+		t.Errorf("re-parsed Status = %q, want todo", parsed.Status)
+	}
+}
+
+// TestRenderDeterministicWithExtra guards the etag against Go map-iteration
+// nondeterminism (finding #2): rendering the same nib repeatedly, and rendering
+// a fresh clone, must produce byte-identical output despite several unknown keys.
+func TestRenderDeterministicWithExtra(t *testing.T) {
+	b := &Nib{
+		Version:  1,
+		Title:    "Deterministic",
+		Status:   "todo",
+		Type:     "task",
+		Priority: "normal",
+		Extra: map[string]any{
+			"zeta":     "z",
+			"alpha":    "a",
+			"mike":     "m",
+			"bravo":    "b",
+			"assignee": "bob",
+		},
+	}
+	first, err := b.Render()
+	if err != nil {
+		t.Fatalf("Render error: %v", err)
+	}
+	for i := 0; i < 20; i++ {
+		again, err := b.Render()
+		if err != nil {
+			t.Fatalf("Render error on iteration %d: %v", i, err)
+		}
+		if !bytes.Equal(first, again) {
+			t.Fatalf("Render not deterministic across unknown keys:\niter %d:\n%s\nfirst:\n%s", i, again, first)
+		}
+		if b.ETag() == "" || b.Clone().ETag() != b.ETag() {
+			t.Fatalf("ETag not stable across Clone on iteration %d", i)
+		}
+	}
+}
+
+// TestRenderFixedPoint verifies parse->render->parse->render is a fixed point
+// for a nib carrying unknown keys and a legacy blocking field (finding #2), so
+// the etag settles rather than oscillating.
+func TestRenderFixedPoint(t *testing.T) {
+	const input = `---
+version: 1
+title: Fixed Point
+status: todo
+type: task
+priority: normal
+assignee: bob
+blocking:
+  - abc123
+custom: value
+---
+
+Body.
+`
+	p1, err := Parse(strings.NewReader(input))
+	if err != nil {
+		t.Fatalf("Parse error: %v", err)
+	}
+	r1, err := p1.Render()
+	if err != nil {
+		t.Fatalf("Render error: %v", err)
+	}
+	p2, err := Parse(strings.NewReader(string(r1)))
+	if err != nil {
+		t.Fatalf("re-Parse error: %v", err)
+	}
+	r2, err := p2.Render()
+	if err != nil {
+		t.Fatalf("re-Render error: %v", err)
+	}
+	if !bytes.Equal(r1, r2) {
+		t.Errorf("render is not a fixed point:\nr1:\n%s\nr2:\n%s", r1, r2)
+	}
+}
+
+// TestRenderNoChurnWithoutExtraOrBlocking pins the "no churn for normal nibs"
+// requirement (finding #2): a nib with no unknown keys and no legacy blocking
+// must render without any `blocking:` line or stray inline keys — i.e. the
+// passthrough machinery is invisible unless it carries content.
+func TestRenderNoChurnWithoutExtraOrBlocking(t *testing.T) {
+	ts := time.Date(2026, 1, 2, 3, 4, 5, 0, time.UTC)
+	b := &Nib{
+		Version:   1,
+		Title:     "Normal",
+		Status:    "todo",
+		Type:      "task",
+		Priority:  "normal",
+		CreatedAt: &ts,
+		UpdatedAt: &ts,
+		Body:      "Body paragraph.",
+	}
+	rendered, err := b.Render()
+	if err != nil {
+		t.Fatalf("Render error: %v", err)
+	}
+	got := string(rendered)
+	if strings.Contains(got, "blocking:") {
+		t.Errorf("normal nib rendered a 'blocking:' line:\n%s", got)
+	}
+	const want = `---
+version: 1
+title: Normal
+status: todo
+type: task
+priority: normal
+created_at: 2026-01-02T03:04:05Z
+updated_at: 2026-01-02T03:04:05Z
+---
+
+Body paragraph.
+`
+	if got != want {
+		t.Errorf("normal-nib render changed (churn):\n got:\n%s\nwant:\n%s", got, want)
 	}
 }
 
@@ -2014,13 +2311,18 @@ version: 0
 	}
 }
 
-func TestBlockingNotPersistedToYAML(t *testing.T) {
-	// Single-side blocking: the Blocking field should never be written to YAML.
-	// Only blockedBy is persisted; blocking is computed at query time.
+func TestBlockingNotPersistedForV1Nibs(t *testing.T) {
+	// Single-side blocking: a normal v1 nib never has the legacy Blocking field
+	// set (resolvers store the relationship on targets' blocked_by, and
+	// migrateV0ToV1 clears Blocking before persisting), so with omitempty it is
+	// absent from the render. (When Blocking IS explicitly set — only a legacy v0
+	// file parsed straight from disk — it now round-trips; see
+	// TestBlockingRoundtrip.)
 	b := &Nib{
-		Title:    "Test Nib",
-		Status:   "todo",
-		Blocking: []string{"target-1", "target-2"},
+		Version:   1,
+		Title:     "Test Nib",
+		Status:    "todo",
+		BlockedBy: []string{"blocker-1"},
 	}
 
 	output, err := b.Render()
@@ -2030,10 +2332,10 @@ func TestBlockingNotPersistedToYAML(t *testing.T) {
 
 	result := string(output)
 	if strings.Contains(result, "blocking:") {
-		t.Errorf("rendered YAML should not contain 'blocking:' field\ngot:\n%s", result)
+		t.Errorf("v1 nib with no Blocking set should not render 'blocking:'\ngot:\n%s", result)
 	}
-	if strings.Contains(result, "target-1") {
-		t.Errorf("rendered YAML should not contain blocking target IDs\ngot:\n%s", result)
+	if !strings.Contains(result, "blocked_by:") {
+		t.Errorf("expected single-side blocked_by to be persisted\ngot:\n%s", result)
 	}
 }
 
@@ -2265,6 +2567,40 @@ priority: deferred
 		// The normalized value itself must survive the clone.
 		if cloned.Priority != "low" {
 			t.Errorf("cloned.Priority = %q, want %q", cloned.Priority, "low")
+		}
+	})
+
+	t.Run("clone deep-copies the Extra map", func(t *testing.T) {
+		// Clone must deep-copy the unknown-key passthrough so a mutated clone can't
+		// alias (and corrupt) the original's Extra. Without the copy the clone would
+		// share the same underlying map and these mutations would leak.
+		orig := &Nib{
+			ID:     "extra-1",
+			Title:  "With Extra",
+			Status: "todo",
+			Extra:  map[string]any{"assignee": "bob", "sprint": "2026-Q1"},
+		}
+		cl := orig.Clone()
+
+		cl.Extra["assignee"] = "alice" // mutate an existing key
+		cl.Extra["reviewer"] = "carol" // add a new key
+		delete(cl.Extra, "sprint")     // remove a key
+
+		if orig.Extra["assignee"] != "bob" {
+			t.Errorf("original Extra[assignee] mutated via clone: %v", orig.Extra["assignee"])
+		}
+		if _, added := orig.Extra["reviewer"]; added {
+			t.Errorf("adding a key to the clone leaked into the original: %v", orig.Extra)
+		}
+		if _, present := orig.Extra["sprint"]; !present {
+			t.Errorf("deleting a key on the clone removed it from the original: %v", orig.Extra)
+		}
+	})
+
+	t.Run("clone preserves a nil Extra", func(t *testing.T) {
+		minimal := &Nib{ID: "min-extra", Title: "Minimal", Status: "todo"}
+		if minimal.Clone().Extra != nil {
+			t.Errorf("nil Extra should stay nil after Clone")
 		}
 	})
 }

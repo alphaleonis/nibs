@@ -16,9 +16,16 @@ type NibReader interface {
 	FindMentions(fromID string) []*nib.Nib
 	FindMentionedBy(targetID string) []*nib.Nib
 	Config() *config.Config
-	// CurrentETag returns the canonical FNV-64a hex ETag of the on-disk content
-	// of the given nib. Used by bulk-reorder pre-validation. Returns the same
-	// errors as Get (notably ErrNotFound) when the nib is missing.
+	// CurrentETag returns the canonical ETag of the on-disk content of the given
+	// nib (a hash of the parsed file's canonical render, so it agrees with the
+	// in-memory nib.ETag() across benign formatting drift). It does not reproduce
+	// loadNib's synthesized presentation defaults, so a nib loaded from a file
+	// that omits a defaulted field (priority/type/timestamps) can diverge from
+	// its in-memory nib.ETag() (see nibcore.computeStoredETag and follow-up
+	// nibs-7d3o). Falls back to the in-memory etag only when no on-disk file
+	// exists yet (not-flushed / externally removed); an existing file that cannot
+	// be read or parsed fails CLOSED. Used by bulk-reorder pre-validation. Returns
+	// the same errors as Get (notably ErrNotFound) when the nib is missing.
 	CurrentETag(id string) (string, error)
 }
 
