@@ -191,7 +191,9 @@ func (r *Resolver) removeBlockedByRelationships(b *nib.Nib, targetIDs []string) 
 // in-progress, deferred, completed, or scrapped (or has no parent). A deferred
 // parent is parked, so it is left untouched — a child going in-progress does
 // not un-park it.
-// Best-effort: warns on stderr and stops on any error (same pattern as close).
+// Best-effort: warns on stderr and stops on any error. Mutates a clone before
+// each Update (clone-before-mutate, as UpdateNib does with b := original.Clone())
+// so a refused write never corrupts the shared in-memory nib.
 func (r *Resolver) activateParentChain(childID, parentID string) {
 	for parentID != "" {
 		parent, err := r.Reader.Get(parentID)
@@ -202,9 +204,23 @@ func (r *Resolver) activateParentChain(childID, parentID string) {
 			return // already active or resolved, stop
 		}
 		nextParentID := parent.Parent
+		// Reader.Get returns the SHARED in-memory pointer (nibcore.Core.Get hands
+		// back c.nibs[id] directly, not a defensive copy). Compute the if-match
+		// from the parent's current etag, then mutate a CLONE — never the shared
+		// pointer — so a failed Update (genuine on-disk divergence ->
+		// ETagMismatchError) leaves the in-memory nib untouched, rather than
+		// corrupting the store to show in-progress while disk was never written.
+		//
+		// Caveat: parent.ETag() can false-conflict for a reloaded nib that omits
+		// a defaulted field on disk (e.g. no priority: line -> in-memory
+		// Priority="normal"), spuriously dropping activation (tracked by
+		// nibs-7d3o). Do NOT substitute CurrentETag here — that reintroduces the
+		// reverted lost-update/data-loss regression (see nibs-znt8/nibs-7d3o,
+		// guarded by TestActivateParentChainGenuineDivergenceIsRefused).
 		parentETag := parent.ETag()
-		parent.Status = "in-progress"
-		if err := r.Writer.Update(parent, &parentETag); err != nil {
+		updated := parent.Clone()
+		updated.Status = "in-progress"
+		if err := r.Writer.Update(updated, &parentETag); err != nil {
 			fmt.Fprintf(os.Stderr, "warning: failed to activate parent %s (from %s): %v\n", parentID, childID, err)
 			return
 		}
