@@ -13,7 +13,7 @@ import { extendTailwindMerge } from "tailwind-merge";
 // font-size / font-weight / line-height. This is intentionally one-directional:
 // a raw `font-bold` placed AFTER `text-body` must still win (partial override of
 // just the weight), so we do NOT make font-weight/size/leading drop the bundle.
-const twMerge = extendTailwindMerge({
+const twMerge = extendTailwindMerge<"text-scale">({
   extend: {
     classGroups: {
       "text-scale": [{ text: ["label", "body", "caption"] }],

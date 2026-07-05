@@ -33,6 +33,16 @@ tasks:
       - npm ci
       - npm run build
 
+  web:check:
+    desc: Type-check the web UI (svelte-check)
+    # No codegen dep: svelte-check only reads web/ TS+Svelte sources and
+    # node_modules — nothing under web/src imports Go-generated GraphQL code.
+    # Local-only: intentionally NOT wired into `test`/`web:build` while
+    # pre-existing type errors remain (see follow-up nib).
+    dir: web
+    cmds:
+      - npm run check
+
   build:
     desc: Build the nibs CLI executable
     deps: [web:build]
@@ -111,6 +121,10 @@ tasks:
       - cp -r testdata/fixtures/sample-project/.nibs testdata/fixtures/sample-project/.nibs.yml "{{.TMP}}/"
       - echo "Using temporary copy at {{.TMP}}"
       - go run . tui --nibs-path "{{.TMP}}/.nibs"
+
+  check:
+    desc: Type-check the web UI (svelte-check)
+    deps: [web:check]
 
   lint:
     desc: Run golangci-lint

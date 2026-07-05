@@ -59,6 +59,12 @@
     }
   }
 
+  const VIEW_LEVEL_ICON_INFO: Record<ViewLevel, TypeIconInfo> = {
+    milestones: typeIcons.milestone,
+    epics: typeIcons.epic,
+    backlog: typeIcons.feature,
+  };
+
   // Resolve values: prefs takes precedence over individual props
   let resolvedFilter = $derived(resolveFilter(prefs, filter));
   let resolvedViewLevel = $derived(resolveViewLevel(prefs, viewLevel));
@@ -80,12 +86,6 @@
     milestones: "Milestones",
     epics: "Epics",
     backlog: "Backlog Items",
-  };
-
-  const VIEW_LEVEL_ICON_INFO: Record<ViewLevel, TypeIconInfo> = {
-    milestones: typeIcons.milestone,
-    epics: typeIcons.epic,
-    backlog: typeIcons.feature,
   };
 
   function emitFilter(updated: NibFilter) {
