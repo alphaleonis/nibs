@@ -12,6 +12,7 @@
   import TagEditor from "./TagEditor.svelte";
   import RelatedNibGroup from "./RelatedNibGroup.svelte";
   import { Button } from "$lib/components/ui/button/index.js";
+  import { copyToClipboard } from "$lib/clipboard";
   import { getMutationStore } from "$lib/mutations";
   import { useConfirmDialog } from "$lib/contexts";
   import { updateNib as updateNibCmd, deleteNib as deleteNibCmd, archiveNib as archiveNibCmd } from "$lib/mutations/commands";
@@ -252,7 +253,20 @@
 
 <div data-testid="detail-panel" class="detail-panel" role="complementary" aria-label="Nib detail">
   <div class="detail-header">
-    <span class="detail-nib-id">{nibId}</span>
+    <!-- -ml-2.5 cancels the button's px-2.5 so the ID stays flush with the panel's
+         left edge, matching the prior static <span>. aria-label/title include the
+         visible ID so the accessible name contains it (WCAG 2.5.3 Label in Name). -->
+    <Button
+      variant="ghost"
+      size="sm"
+      class="-ml-2.5 cursor-pointer font-normal text-sm text-muted-foreground"
+      data-testid="detail-copy-id"
+      title={`Copy nib ID ${nibId}`}
+      aria-label={`Copy nib ID ${nibId}`}
+      onclick={() => copyToClipboard(nibId)}
+    >
+      {nibId}
+    </Button>
     <Button variant="ghost" size="icon-sm" data-testid="detail-close" onclick={onclose} title="Close" aria-label="Close detail panel">
       <X size={16} />
     </Button>
@@ -457,11 +471,6 @@
     align-items: center;
     justify-content: space-between;
     margin-bottom: 1rem;
-  }
-
-  .detail-nib-id {
-    font-size: 0.875rem;
-    color: var(--muted-foreground);
   }
 
   .detail-loading {

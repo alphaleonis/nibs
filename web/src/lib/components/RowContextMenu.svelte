@@ -11,7 +11,7 @@
     deleteBatch,
     archiveBatch,
   } from "$lib/mutations/commands";
-  import { toast } from "svelte-sonner";
+  import { copyToClipboard } from "$lib/clipboard";
 
   interface Props {
     open: boolean;
@@ -83,11 +83,7 @@
 
   function handleCopyId() {
     if (!nib) return;
-    const id = nib.id;
-    navigator.clipboard.writeText(id).then(
-      () => toast.success(`Copied "${id}" to clipboard`),
-      () => toast.error("Failed to copy to clipboard"),
-    );
+    copyToClipboard(nib.id);
   }
 
   function handleDelete() {

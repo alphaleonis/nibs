@@ -72,8 +72,8 @@ vi.mock("$lib/mutations", () => ({
 }));
 
 // Mock svelte-sonner toast (some tests still check for non-mutation toasts)
-const { mockToastError } = vi.hoisted(() => {
-  return { mockToastError: vi.fn() };
+const { mockToastError, mockToastSuccess } = vi.hoisted(() => {
+  return { mockToastError: vi.fn(), mockToastSuccess: vi.fn() };
 });
 vi.mock("svelte-sonner", async () => {
   const actual = await vi.importActual<typeof import("svelte-sonner")>("svelte-sonner");
@@ -82,6 +82,7 @@ vi.mock("svelte-sonner", async () => {
     toast: {
       ...actual.toast,
       error: mockToastError,
+      success: mockToastSuccess,
     },
   };
 });
@@ -187,6 +188,7 @@ describe("DetailPanel", () => {
     mockExecute.mockReset().mockResolvedValue({ ok: true, data: {} });
     mockIsMutating.mockReset().mockReturnValue(false);
     mockToastError.mockReset();
+    mockToastSuccess.mockReset();
     mockConfirmDialog = makeMockConfirmDialog();
   });
 
@@ -249,6 +251,25 @@ describe("DetailPanel", () => {
 
     await user.click(screen.getByTestId("detail-close"));
     expect(handler).toHaveBeenCalledOnce();
+  });
+
+  it("clicking the nib ID copies it to the clipboard and shows a success toast", async () => {
+    const writeText = vi.fn().mockResolvedValue(undefined);
+    Object.defineProperty(navigator, "clipboard", {
+      value: { writeText },
+      writable: true,
+      configurable: true,
+    });
+    mockNibQuery(makeNibData());
+
+    renderPanel({ nibId: "nibs-abc1", onclose: vi.fn() });
+
+    await user.click(screen.getByTestId("detail-copy-id"));
+
+    expect(writeText).toHaveBeenCalledWith("nibs-abc1");
+    await waitFor(() =>
+      expect(mockToastSuccess).toHaveBeenCalledWith('Copied "nibs-abc1" to clipboard'),
+    );
   });
 
   it("has ARIA landmark and labels for accessibility", () => {
