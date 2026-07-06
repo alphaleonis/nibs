@@ -2,7 +2,11 @@ package graph
 
 import (
 	"context"
+	"encoding/hex"
 	"errors"
+	"hash/fnv"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -752,6 +756,76 @@ func TestNibReader_CurrentETag_NotFound(t *testing.T) {
 	}
 	if !errors.Is(err, nibcore.ErrNotFound) {
 		t.Errorf("expected nibcore.ErrNotFound, got %v", err)
+	}
+}
+
+// TestReorderChildren_IfMatch_UnparseableFileNonReconcilable covers finding #5
+// for the bulk-reorder pre-validation path: when a listed child's on-disk file
+// is unparseable, ReorderChildren must abort with the distinct, NON-RECONCILABLE
+// *nibcore.OnDiskUnparseableError (carrying no reusable etag token), NOT a plain
+// reconcilable "etag mismatch". A client that retries with a fabricated etag
+// (e.g. a hash of the corrupt bytes — the scheme the old fail-closed sentinel
+// exposed) still cannot satisfy the guard, so the corrupt file survives.
+func TestReorderChildren_IfMatch_UnparseableFileNonReconcilable(t *testing.T) {
+	ctx := context.Background()
+	resolver, core, parentID := setupBulkReorderFixture(t)
+
+	// Capture valid etags for all three children while they are still parseable.
+	ifMatch := childEtags(t, resolver, "a", "b", "c")
+
+	// Corrupt child "b" on disk (git-merge-conflict markers → invalid YAML).
+	bNib, err := core.Get("b")
+	if err != nil {
+		t.Fatalf("Get(b): %v", err)
+	}
+	bPath := filepath.Join(core.Root(), bNib.Path)
+	const corrupt = `---
+title: Second
+status: todo
+<<<<<<< HEAD
+order: b0
+=======
+order: b9
+>>>>>>> other
+---
+
+Body under edit.
+`
+	if err := os.WriteFile(bPath, []byte(corrupt), 0o644); err != nil {
+		t.Fatalf("corrupting b: %v", err)
+	}
+
+	// Attempt 1: pre-validation must fail with the non-reconcilable error.
+	_, err = resolver.Mutation().ReorderChildren(ctx, parentID, []string{"c", "a", "b"}, ifMatch)
+	var unparseable *nibcore.OnDiskUnparseableError
+	if !errors.As(err, &unparseable) {
+		t.Fatalf("attempt 1: got %T: %v, want wrapped *nibcore.OnDiskUnparseableError", err, err)
+	}
+
+	// Attempt 2 hits the SAME branch as attempt 1 (validateIfMatchETags returns
+	// the wrapped OnDiskUnparseableError before the `current != want` comparison),
+	// so it adds no branch coverage — it just documents that an etag fabricated
+	// from the corrupt bytes still cannot reach the comparison, hence cannot clobber.
+	h := fnv.New64a()
+	h.Write([]byte(corrupt))
+	fabricated := hex.EncodeToString(h.Sum(nil))
+	retry := []*model.ChildEtag{
+		{ID: "a", Etag: ifMatch[0].Etag},
+		{ID: "b", Etag: fabricated},
+		{ID: "c", Etag: ifMatch[2].Etag},
+	}
+	_, err = resolver.Mutation().ReorderChildren(ctx, parentID, []string{"c", "a", "b"}, retry)
+	if !errors.As(err, &unparseable) {
+		t.Fatalf("attempt 2 (reconcile-retry): got %T: %v, want *nibcore.OnDiskUnparseableError (clobber must be impossible)", err, err)
+	}
+
+	// The corrupt bytes must survive both attempts (no reorder write clobbered it).
+	after, err := os.ReadFile(bPath)
+	if err != nil {
+		t.Fatalf("reading b after refused reorders: %v", err)
+	}
+	if string(after) != corrupt {
+		t.Errorf("a refused reorder overwrote the unparseable child file:\n got:\n%s\nwant:\n%s", after, corrupt)
 	}
 }
 

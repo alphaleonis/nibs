@@ -1,7 +1,9 @@
 package nibcore
 
 import (
+	"encoding/hex"
 	"errors"
+	"hash/fnv"
 	"os"
 	"path/filepath"
 	"strings"
@@ -303,12 +305,13 @@ Different body entirely.
 	})
 }
 
-// TestComputeStoredETagUnparseableFailsClosed covers finding #1: when the
-// on-disk file EXISTS but cannot be parsed (torn/partial write, git
-// merge-conflict markers, YAML typo), computeStoredETag must fail CLOSED —
-// never return the in-memory etag — so a stale-but-parseable in-memory nib is
-// refused with an ETagMismatchError rather than silently overwriting the
-// corrupt/divergent file.
+// TestComputeStoredETagUnparseableFailsClosed covers findings #1 and #5: when
+// the on-disk file EXISTS but cannot be parsed (torn/partial write, git
+// merge-conflict markers, YAML typo), an if-match Update must fail CLOSED with a
+// distinct, NON-RECONCILABLE error (OnDiskUnparseableError) — carrying no
+// reusable etag token — so a stale-but-parseable in-memory nib cannot overwrite
+// the corrupt file, AND a client that blindly retries "with the server's current
+// etag" still cannot clobber it (the single-shot #5 vulnerability).
 func TestComputeStoredETagUnparseableFailsClosed(t *testing.T) {
 	// A file that exists but nib.Parse cannot decode: git conflict markers
 	// injected into the YAML front matter produce invalid YAML.
@@ -329,30 +332,32 @@ updated_at: 2026-01-02T03:04:05Z
 Body under edit.
 `
 
-	t.Run("CurrentETag never equals in-memory etag for an unparseable file", func(t *testing.T) {
+	t.Run("CurrentETag returns a non-reconcilable error for an unparseable file", func(t *testing.T) {
 		nibsDir := setupNibsDir(t)
 		writeNibFile(t, nibsDir, canonEtagFile, canonEtagCanonical)
 		core := setupLoadedCore(t, nibsDir)
 
-		b, err := core.Get("etagcanon1")
-		if err != nil {
+		if _, err := core.Get("etagcanon1"); err != nil {
 			t.Fatalf("Get() error: %v", err)
 		}
-		inMemory := b.ETag()
 
 		// Corrupt the on-disk file after load.
 		writeNibFile(t, nibsDir, canonEtagFile, corrupt)
 
 		got, err := core.CurrentETag("etagcanon1")
-		if err != nil {
-			t.Fatalf("CurrentETag() error: %v", err)
+		var unparseable *OnDiskUnparseableError
+		if !errors.As(err, &unparseable) {
+			t.Fatalf("CurrentETag for an unparseable file: got (%q, %T:%v), want *OnDiskUnparseableError", got, err, err)
 		}
-		if got == inMemory {
-			t.Errorf("CurrentETag returned in-memory etag %s for an unparseable file (fail-open); it must fail closed", got)
+		if got != "" {
+			t.Errorf("CurrentETag returned a non-empty etag token %q alongside the uncertifiable error; it must carry none", got)
+		}
+		if unparseable.Reason != "unparseable" {
+			t.Errorf("Reason = %q, want %q", unparseable.Reason, "unparseable")
 		}
 	})
 
-	t.Run("stale if-match Update on an unparseable file is refused and disk survives", func(t *testing.T) {
+	t.Run("stale if-match Update is refused with OnDiskUnparseableError; retry cannot clobber", func(t *testing.T) {
 		nibsDir := setupNibsDir(t)
 		writeNibFile(t, nibsDir, canonEtagFile, canonEtagCanonical)
 		core := setupLoadedCore(t, nibsDir)
@@ -369,44 +374,72 @@ Body under edit.
 		clone := b.Clone()
 		clone.Title = "Stale Overwrite Attempt"
 		clone.Body = "This must NOT clobber the corrupt-on-disk content."
+
+		// Attempt 1: must be refused with the non-reconcilable error, NOT a
+		// reconcilable ETagMismatchError.
 		err = core.Update(clone, &ifMatch)
+		var unparseable *OnDiskUnparseableError
+		if !errors.As(err, &unparseable) {
+			t.Fatalf("attempt 1: got %T: %v, want *OnDiskUnparseableError", err, err)
+		}
 		var mismatch *ETagMismatchError
-		if !errors.As(err, &mismatch) {
-			t.Fatalf("expected *ETagMismatchError overwriting an unparseable file, got %T: %v", err, err)
+		if errors.As(err, &mismatch) {
+			t.Fatalf("attempt 1 returned a reconcilable ETagMismatchError (%v); an unparseable file must be non-reconcilable", mismatch)
 		}
 
-		// The corrupt bytes must survive — the update must be refused, not applied.
+		// Attempt 2 hits the SAME branch as attempt 1 (the guard returns the
+		// OnDiskUnparseableError before any etag comparison), so it adds no branch
+		// coverage — it just documents that a "reconcile" token fabricated from the
+		// corrupt bytes still cannot reach the comparison, hence cannot clobber.
+		disk, err := os.ReadFile(filepath.Join(nibsDir, canonEtagFile))
+		if err != nil {
+			t.Fatalf("reading file: %v", err)
+		}
+		reconstructed := rawBytesETagForTest(disk)
+		err = core.Update(clone, &reconstructed)
+		if !errors.As(err, &unparseable) {
+			t.Fatalf("attempt 2 (reconcile-retry): got %T: %v, want *OnDiskUnparseableError (clobber must be impossible)", err, err)
+		}
+
+		// The corrupt bytes must survive both attempts.
 		after, err := os.ReadFile(filepath.Join(nibsDir, canonEtagFile))
 		if err != nil {
-			t.Fatalf("reading file after refused update: %v", err)
+			t.Fatalf("reading file after refused updates: %v", err)
 		}
 		if string(after) != corrupt {
-			t.Errorf("refused update overwrote the unparseable disk content:\n got:\n%s\nwant:\n%s", after, corrupt)
+			t.Errorf("a refused update overwrote the unparseable disk content:\n got:\n%s\nwant:\n%s", after, corrupt)
 		}
 	})
 }
 
-// TestComputeStoredETagReadErrorFailsClosed covers finding #1 (and pre-existing
-// P1): when the on-disk file EXISTS but cannot be READ (permission-denied,
-// transient/torn I/O — a non-IsNotExist error), computeStoredETag must fail
-// CLOSED (return the unreadableETag sentinel, never the in-memory etag), so a
-// stale-but-parseable in-memory nib is refused with an ETagMismatchError rather
-// than silently overwriting a file whose current bytes could not be certified.
+// rawBytesETagForTest mirrors the FNV-64a/hex hashing an attacker/naive client
+// might apply to raw disk bytes to fabricate an if-match token. Used only to
+// prove such a token can never satisfy the OnDiskUnparseableError guard.
+func rawBytesETagForTest(raw []byte) string {
+	h := fnv.New64a()
+	h.Write(raw)
+	return hex.EncodeToString(h.Sum(nil))
+}
+
+// TestComputeStoredETagReadErrorFailsClosed covers findings #1/#5 for the read
+// path: when the on-disk file EXISTS but cannot be READ (permission-denied,
+// transient/torn I/O — a non-IsNotExist error), an if-match Update must fail
+// CLOSED with the non-reconcilable OnDiskUnparseableError (no reusable etag
+// token), never the in-memory etag, so the file cannot be overwritten and a
+// reconcile-retry cannot satisfy the guard.
 func TestComputeStoredETagReadErrorFailsClosed(t *testing.T) {
 	if os.Getuid() == 0 {
 		t.Skip("chmod 0 does not deny reads for root; run as non-root to exercise the read-error branch")
 	}
 
-	t.Run("CurrentETag fails closed (sentinel) for an unreadable file", func(t *testing.T) {
+	t.Run("CurrentETag returns a non-reconcilable error for an unreadable file", func(t *testing.T) {
 		nibsDir := setupNibsDir(t)
 		writeNibFile(t, nibsDir, canonEtagFile, canonEtagCanonical)
 		core := setupLoadedCore(t, nibsDir)
 
-		b, err := core.Get("etagcanon1")
-		if err != nil {
+		if _, err := core.Get("etagcanon1"); err != nil {
 			t.Fatalf("Get() error: %v", err)
 		}
-		inMemory := b.ETag()
 
 		path := filepath.Join(nibsDir, canonEtagFile)
 		if err := os.Chmod(path, 0); err != nil {
@@ -415,18 +448,19 @@ func TestComputeStoredETagReadErrorFailsClosed(t *testing.T) {
 		t.Cleanup(func() { _ = os.Chmod(path, 0o644) })
 
 		got, err := core.CurrentETag("etagcanon1")
-		if err != nil {
-			t.Fatalf("CurrentETag() error: %v", err)
+		var unreadable *OnDiskUnparseableError
+		if !errors.As(err, &unreadable) {
+			t.Fatalf("CurrentETag for an unreadable file: got (%q, %T:%v), want *OnDiskUnparseableError", got, err, err)
 		}
-		if got == inMemory {
-			t.Errorf("CurrentETag returned in-memory etag %s for an unreadable file (fail-open); it must fail closed", got)
+		if got != "" {
+			t.Errorf("CurrentETag returned a non-empty etag token %q alongside the uncertifiable error; it must carry none", got)
 		}
-		if got != unreadableETag {
-			t.Errorf("CurrentETag for an unreadable file = %q, want the fail-closed sentinel %q", got, unreadableETag)
+		if unreadable.Reason != "unreadable" {
+			t.Errorf("Reason = %q, want %q", unreadable.Reason, "unreadable")
 		}
 	})
 
-	t.Run("if-match Update on an unreadable file is refused and disk survives", func(t *testing.T) {
+	t.Run("if-match Update on an unreadable file is refused (non-reconcilable) and disk survives", func(t *testing.T) {
 		nibsDir := setupNibsDir(t)
 		writeNibFile(t, nibsDir, canonEtagFile, canonEtagCanonical)
 		core := setupLoadedCore(t, nibsDir)
@@ -446,9 +480,13 @@ func TestComputeStoredETagReadErrorFailsClosed(t *testing.T) {
 		clone := b.Clone()
 		clone.Title = "Overwrite Attempt"
 		err = core.Update(clone, &ifMatch)
+		var unparseable *OnDiskUnparseableError
+		if !errors.As(err, &unparseable) {
+			t.Fatalf("expected *OnDiskUnparseableError updating over an unreadable file, got %T: %v", err, err)
+		}
 		var mismatch *ETagMismatchError
-		if !errors.As(err, &mismatch) {
-			t.Fatalf("expected *ETagMismatchError updating over an unreadable file, got %T: %v", err, err)
+		if errors.As(err, &mismatch) {
+			t.Fatalf("an unreadable file must be non-reconcilable, got a reconcilable ETagMismatchError: %v", mismatch)
 		}
 
 		// Restore read access and confirm the original content survived untouched.
@@ -474,7 +512,11 @@ func TestComputeStoredETagFailsOpenWhenNotFlushed(t *testing.T) {
 		nibsDir := setupNibsDir(t)
 		core := New(nibsDir, config.Default())
 		n := &nib.Nib{ID: "notflushed1", Title: "Not Flushed", Status: "todo"}
-		if got := core.computeStoredETag(n); got != n.ETag() {
+		got, err := core.computeStoredETag(n)
+		if err != nil {
+			t.Fatalf("computeStoredETag for an empty-Path nib: unexpected error %v", err)
+		}
+		if got != n.ETag() {
 			t.Errorf("computeStoredETag for an empty-Path nib = %q, want in-memory etag %q", got, n.ETag())
 		}
 	})
@@ -643,4 +685,61 @@ Body.
 			t.Errorf("v0 blocking content stripped from disk by a refused update:\n%s", disk)
 		}
 	})
+}
+
+// TestUpdateUnknownKeyByteVerbatimRoundTrip verifies that YAML-1.1-ambiguous
+// unknown keys (`offset: -0.0` signed-zero, `reviewed: y` bool-like) survive a
+// real if-match Update byte-for-byte on disk.
+//
+// NOTE ON SCOPE: this test cannot exercise a self-conflict mechanism — a
+// pre-Update `stored == ifMatch` check would be tautological, since core.Get
+// (in-memory nib from Load) and core.CurrentETag (re-read + re-parse of disk)
+// both parse the SAME unchanged on-disk bytes with the SAME parser, so they
+// necessarily agree regardless of the parser version. Its value is the
+// byte-verbatim disk assertions after a genuine Update: they prove the raw
+// unknown-key text is neither coerced nor stripped when the nib is rewritten.
+func TestUpdateUnknownKeyByteVerbatimRoundTrip(t *testing.T) {
+	nibsDir := setupNibsDir(t)
+	const file = "ambig1--ambiguous.md"
+	const content = `---
+version: 1
+title: Ambiguous Scalars
+status: todo
+type: task
+priority: normal
+offset: -0.0
+reviewed: y
+created_at: 2026-01-02T03:04:05Z
+updated_at: 2026-01-02T03:04:05Z
+---
+
+Body.
+`
+	writeNibFile(t, nibsDir, file, content)
+	core := setupLoadedCore(t, nibsDir)
+
+	b, err := core.Get("ambig1")
+	if err != nil {
+		t.Fatalf("Get() error: %v", err)
+	}
+	ifMatch := b.ETag()
+
+	// A normal if-match Update (no concurrent writer) must succeed, not conflict.
+	clone := b.Clone()
+	clone.Body = "Edited body."
+	if err := core.Update(clone, &ifMatch); err != nil {
+		t.Fatalf("Update with own ETag if-match failed (self-inflicted conflict?): %T: %v", err, err)
+	}
+
+	// The unknown keys must survive the write verbatim.
+	disk, err := os.ReadFile(filepath.Join(nibsDir, file))
+	if err != nil {
+		t.Fatalf("reading file: %v", err)
+	}
+	if !strings.Contains(string(disk), "offset: -0.0") {
+		t.Errorf("signed-zero unknown key not preserved verbatim on disk:\n%s", disk)
+	}
+	if !strings.Contains(string(disk), "reviewed: y") {
+		t.Errorf("bool-like unknown key not preserved verbatim on disk:\n%s", disk)
+	}
 }

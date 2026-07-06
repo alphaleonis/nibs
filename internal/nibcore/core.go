@@ -4,9 +4,7 @@ package nibcore
 
 import (
 	"bytes"
-	"encoding/hex"
 	"fmt"
-	"hash/fnv"
 	"io"
 	"os"
 	"path/filepath"
@@ -15,8 +13,8 @@ import (
 	"sync"
 	"time"
 
-	"github.com/alphaleonis/nibs/internal/nib"
 	"github.com/alphaleonis/nibs/internal/config"
+	"github.com/alphaleonis/nibs/internal/nib"
 	"github.com/alphaleonis/nibs/internal/search"
 )
 
@@ -44,13 +42,43 @@ func (e *ETagRequiredError) Error() string {
 	return "if-match etag is required (set require_if_match: false in config to disable)"
 }
 
+// OnDiskUnparseableError is returned by an if-match Update (and by CurrentETag,
+// used in the bulk-reorder pre-validation) when the CURRENT on-disk state of a
+// nib cannot be certified: the file EXISTS but is unparseable (torn/partial
+// write, git merge-conflict markers, hand-edit YAML typo) or unreadable
+// (permission denied, transient/torn I/O — a non-IsNotExist read error).
+//
+// Unlike ETagMismatchError it deliberately carries NO reusable etag token. A
+// client following the textbook "409 → retry with the server's Current etag"
+// reconcile pattern therefore has nothing to echo back that could satisfy the
+// guard: every recomputation of an uncertifiable file yields this same
+// non-reconcilable error, so the corrupt/unreadable file can never be clobbered
+// by a blind retry. It must be repaired manually (or re-read once it is
+// parseable/readable again). This is a distinct error class from a genuine
+// concurrency conflict (ETagMismatchError), which IS reconcilable.
+type OnDiskUnparseableError struct {
+	ID     string // nib id whose on-disk file could not be certified
+	Path   string // repo-relative path of the uncertifiable file
+	Reason string // "unparseable" or "unreadable"
+	Err    error  // underlying parse/read error
+}
+
+func (e *OnDiskUnparseableError) Error() string {
+	return fmt.Sprintf(
+		"on-disk nib file %s is %s and its current state cannot be certified for an if-match update; repair the file (this conflict is not resolvable by retrying with a server etag): %v",
+		e.Path, e.Reason, e.Err,
+	)
+}
+
+func (e *OnDiskUnparseableError) Unwrap() error { return e.Err }
+
 // Core provides thread-safe in-memory storage for nibs with filesystem persistence.
 type Core struct {
 	root   string         // absolute path to .nibs directory
 	config *config.Config // project configuration
 
 	// In-memory state
-	mu    sync.RWMutex
+	mu   sync.RWMutex
 	nibs map[string]*nib.Nib // ID -> Nib
 
 	// Reverse-mention index: maintained alongside c.nibs so FindMentionedBy /
@@ -81,7 +109,7 @@ func New(root string, cfg *config.Config) *Core {
 	return &Core{
 		root:        root,
 		config:      cfg,
-		nibs:       make(map[string]*nib.Nib),
+		nibs:        make(map[string]*nib.Nib),
 		mentionIdx:  newMentionIndex(),
 		subscribers: make(map[uint64]*subscription),
 		warnWriter:  os.Stderr,
@@ -139,6 +167,13 @@ func (c *Core) loadFromDisk() error {
 	// the visibility the removed migrateDeferredPriority pass used to provide).
 	var deferredMigrated int
 
+	// IDs of files present on disk but skipped this load (unparseable/unreadable).
+	// The ID is derived from the filename (which parses regardless of content), so
+	// migrateV0ToV1 can tell "target's file was skipped this load" apart from
+	// "target genuinely does not exist" and DEFER a v0 nib's migration rather than
+	// erasing its `blocking:` edge to a skipped target (nibs-r3y1 review #2).
+	skipped := make(map[string]bool)
+
 	// Walk the entire .nibs directory tree, loading all .md files
 	err := filepath.WalkDir(c.root, func(path string, d os.DirEntry, err error) error {
 		if err != nil {
@@ -152,7 +187,19 @@ func (c *Core) loadFromDisk() error {
 
 		b, migrated, loadErr := c.loadNibReconciledLocked(path)
 		if loadErr != nil {
-			return fmt.Errorf("loading %s: %w", path, loadErr)
+			// Log-and-skip a single unparseable/unreadable file rather than
+			// aborting the whole walk: yaml.v3 hard-errors on a duplicate
+			// front-matter key (where yaml.v2 took last-wins), so one pre-existing
+			// malformed nib (bad merge, hand-edit, partial write) would otherwise
+			// make every nibs command fail to load ANY nib. Degrade to one missing
+			// nib instead of a dead store, matching the fsnotify watcher's per-file
+			// "log and continue" posture. The file's bytes are left untouched
+			// (skip = not loaded into memory; never delete/rewrite).
+			c.logWarn("skipping unparseable nib file %s: %v", path, loadErr)
+			if id, _ := nib.ParseFilename(filepath.Base(path)); id != "" {
+				skipped[id] = true
+			}
+			return nil
 		}
 		if migrated {
 			deferredMigrated++
@@ -173,7 +220,7 @@ func (c *Core) loadFromDisk() error {
 	// every blocking target is already in c.nibs. v0+deferred nibs are converged
 	// here rather than in loadNibReconciledLocked (which gates persistence on
 	// Version >= 1 to avoid the lossy v0 render — see its doc comment).
-	if err := c.migrateV0ToV1(); err != nil {
+	if err := c.migrateV0ToV1(skipped); err != nil {
 		return fmt.Errorf("migration v0→v1: %w", err)
 	}
 
@@ -663,7 +710,7 @@ func (c *Core) CurrentETag(id string) (string, error) {
 			return "", ErrNotFound
 		}
 	}
-	return c.computeStoredETag(storedNib), nil
+	return c.computeStoredETag(storedNib)
 }
 
 // computeStoredETag returns the canonical etag for a stored nib by reading AND
@@ -699,27 +746,29 @@ func (c *Core) CurrentETag(id string) (string, error) {
 //
 // Fallback discipline when the canonical render cannot be computed from disk.
 // The etag exists to certify the current on-disk bytes, so each branch is chosen
-// deliberately as fail-OPEN (return the in-memory ETag, so a normal if-match
-// still matches) or fail-CLOSED (return a value that can NEVER equal a client's
-// canonical if-match, forcing ETagMismatchError so Update refuses the overwrite).
-// A client's if-match always originates from a canonical nib.ETag() (16 lowercase
-// hex chars) obtained via Get, so any non-canonical sentinel below fails closed:
+// deliberately as fail-OPEN (return the in-memory ETag with a nil error, so a
+// normal if-match still matches) or fail-CLOSED (return a non-reconcilable
+// *OnDiskUnparseableError and NO etag token, so Update/CurrentETag refuse the
+// overwrite and no retry-with-Current can satisfy the guard — the finding #5
+// hardening). A client's if-match always originates from a canonical nib.ETag()
+// (16 lowercase hex chars) obtained via Get.
 //
-//	condition                          verdict  returns             logged?
-//	---------------------------------  -------  ------------------  -------
-//	empty Path                         OPEN     in-memory ETag()    no  (not flushed yet)
-//	read err, os.IsNotExist            OPEN     in-memory ETag()    no  (not flushed / P2 delete-race)
-//	read err, other (perms, torn I/O)  CLOSED   unreadableETag      yes (exists, uncertifiable)
-//	parse err (corrupt/conflict/typo)  CLOSED   rawBytesETag(raw)   yes (present, unparseable)
-//	parsed OK                          --       canonical b.ETag()  --
+//	condition                          verdict  returns                      logged?
+//	---------------------------------  -------  ---------------------------  -------
+//	empty Path                         OPEN     (in-memory ETag(), nil)      no  (not flushed yet)
+//	read err, os.IsNotExist            OPEN     (in-memory ETag(), nil)      no  (not flushed / P2 delete-race)
+//	read err, other (perms, torn I/O)  CLOSED   ("", OnDiskUnparseableError) yes (exists, uncertifiable)
+//	parse err (corrupt/conflict/typo)  CLOSED   ("", OnDiskUnparseableError) yes (present, unparseable)
+//	parsed OK                          --       (canonical b.ETag(), nil)    --
 //
 // The two OPEN branches are intentionally SILENT: "not flushed yet" is the normal
 // freshly-created path, and an externally-deleted file (P2) is an accepted race
-// (resurrection). The two CLOSED branches are always logged. Caller must hold
-// c.mu (read or write lock).
-func (c *Core) computeStoredETag(storedNib *nib.Nib) string {
+// (resurrection). The two CLOSED branches are always logged and return a distinct
+// non-reconcilable error rather than a sentinel etag a naive reconcile-retry
+// could echo back. Caller must hold c.mu (read or write lock).
+func (c *Core) computeStoredETag(storedNib *nib.Nib) (string, error) {
 	if storedNib.Path == "" {
-		return storedNib.ETag()
+		return storedNib.ETag(), nil
 	}
 	diskPath := filepath.Join(c.root, storedNib.Path)
 	raw, err := os.ReadFile(diskPath)
@@ -729,55 +778,31 @@ func (c *Core) computeStoredETag(storedNib *nib.Nib) string {
 			// externally removed (accepted delete-race, P2): fall back to the
 			// in-memory etag, matching Update's own not-flushed semantics. Silent
 			// by design — this is the normal path, not an anomaly.
-			return storedNib.ETag()
+			return storedNib.ETag(), nil
 		}
 		// File EXISTS but its bytes cannot be READ (permission-denied, transient
-		// or torn I/O). Fail CLOSED: the current on-disk content cannot be
-		// certified, so return a sentinel that can never equal a client's
-		// canonical if-match, forcing an ETagMismatchError rather than
-		// overwriting a file whose current bytes are uncertifiable.
+		// or torn I/O). Fail CLOSED with a non-reconcilable error carrying no etag
+		// token: the current on-disk content cannot be certified, so the overwrite
+		// is refused and no retry-with-Current can satisfy the guard.
 		c.logWarn("cannot read on-disk nib file %s (%v); failing closed to refuse an uncertifiable overwrite", storedNib.Path, err)
-		return unreadableETag
+		return "", &OnDiskUnparseableError{ID: storedNib.ID, Path: storedNib.Path, Reason: "unreadable", Err: err}
 	}
 
 	b, err := nib.Parse(bytes.NewReader(raw))
 	if err != nil {
 		// File EXISTS but is unparseable (torn/partial write, git merge-conflict
-		// markers, hand-edit YAML typo). Fail CLOSED: hash the raw bytes so the
-		// etag can never equal a canonical in-memory ETag(), forcing an
-		// ETagMismatchError (overwrite refused) rather than silently clobbering
-		// the divergent/corrupt file. This restores the pre-canonicalization
-		// fail-safe for this path.
-		c.logWarn("cannot parse on-disk nib file %s (%v); hashing raw bytes to fail closed", storedNib.Path, err)
-		return rawBytesETag(raw)
+		// markers, hand-edit YAML typo). Fail CLOSED with a non-reconcilable error
+		// so the divergent/corrupt file cannot be clobbered — not even by a naive
+		// client that retries with a fabricated/raw-bytes etag (the finding #5
+		// single-shot vulnerability).
+		c.logWarn("cannot parse on-disk nib file %s (%v); failing closed with a non-reconcilable error", storedNib.Path, err)
+		return "", &OnDiskUnparseableError{ID: storedNib.ID, Path: storedNib.Path, Reason: "unparseable", Err: err}
 	}
 	// The rendered form includes the `# <id>` header, which is derived from the
 	// filename (not the front matter). Use the stored id so the render — and thus
 	// the etag — matches what the caller computed from the same stored nib.
 	b.ID = storedNib.ID
-	return b.ETag()
-}
-
-// unreadableETag is the fail-CLOSED sentinel computeStoredETag returns when an
-// existing on-disk file cannot be READ (a non-IsNotExist error: permission
-// denied, transient or torn I/O). A client's if-match always originates from a
-// canonical nib.ETag() — 16 lowercase hex chars — obtained via Get; this
-// sentinel is deliberately NOT of that form (nor a rawBytesETag hex value), so it
-// can never equal a client's if-match. Update therefore always returns
-// ETagMismatchError, refusing to overwrite a file whose current bytes could not
-// be certified.
-const unreadableETag = "unreadable-file"
-
-// rawBytesETag hashes raw file bytes with the same FNV-64a/hex scheme as
-// nib.ETag so the value shares that key space but, being a hash of raw
-// (unparseable) bytes rather than a canonical render, in practice will not
-// collide with any valid nib's canonical etag (a 64-bit FNV hash still has a
-// ~2⁻⁶⁴ theoretical collision chance). Used as the fail-closed fallback for a
-// present but unparseable on-disk file.
-func rawBytesETag(raw []byte) string {
-	h := fnv.New64a()
-	h.Write(raw)
-	return hex.EncodeToString(h.Sum(nil))
+	return b.ETag(), nil
 }
 
 // Update modifies an existing nib and writes it to disk.
@@ -801,7 +826,15 @@ func (c *Core) Update(b *nib.Nib, ifMatch *string) error {
 	}
 
 	if ifMatch != nil && *ifMatch != "" {
-		currentETag := c.computeStoredETag(storedNib)
+		currentETag, err := c.computeStoredETag(storedNib)
+		if err != nil {
+			// The current on-disk state cannot be certified (unparseable or
+			// unreadable). Surface the distinct, non-reconcilable error rather than
+			// an ETagMismatchError: there is no server etag a retry could echo back
+			// to satisfy the guard, so the corrupt/unreadable file cannot be
+			// clobbered by a blind reconcile-retry (finding #5).
+			return err
+		}
 		if currentETag != *ifMatch {
 			return &ETagMismatchError{
 				Provided: *ifMatch,

@@ -27,7 +27,10 @@ type NibReader interface {
 	// hand-authored files missing those timestamps, which computeStoredETag does not
 	// reproduce (see nibcore.computeStoredETag). Falls back to the in-memory etag only when no on-disk file
 	// exists yet (not-flushed / externally removed); an existing file that cannot
-	// be read or parsed fails CLOSED. Used by bulk-reorder pre-validation. Returns
+	// be read or parsed fails CLOSED, returning a non-reconcilable
+	// *nibcore.OnDiskUnparseableError (empty etag string, no reusable token) so
+	// bulk-reorder pre-validation refuses the operation and no retry can clobber
+	// the file (finding #5). Used by bulk-reorder pre-validation. Returns
 	// the same errors as Get (notably ErrNotFound) when the nib is missing.
 	CurrentETag(id string) (string, error)
 }

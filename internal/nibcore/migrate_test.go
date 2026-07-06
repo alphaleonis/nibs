@@ -547,6 +547,250 @@ status: todo
 		}
 	})
 
+	t.Run("defers migration when a blocking target's file was skipped (no edge loss)", func(t *testing.T) {
+		// nibs-r3y1 review #2: a v0 nib A with blocking:[B] must NOT lose that edge
+		// when B's file is unparseable at load time. Pre-fix, loadFromDisk skipped B
+		// and migrateV0ToV1 still cleared+persisted A with `blocking:` erased —
+		// irrecoverable. A must instead stay v0 with Blocking intact (memory AND
+		// disk) so a later clean Load completes the migration.
+		tmpDir := t.TempDir()
+		nibsDir := filepath.Join(tmpDir, NibsDir)
+		if err := os.MkdirAll(nibsDir, 0755); err != nil {
+			t.Fatal(err)
+		}
+
+		const aRaw = `---
+title: Blocker A
+status: todo
+blocking:
+    - bbb2
+---
+
+Body A.
+`
+		writeNibFile(t, nibsDir, "aaa1--blocker.md", aRaw)
+		// B is present on disk but UNPARSEABLE (duplicate modeled key), so
+		// loadFromDisk skips it. Its ID (bbb2) is still derivable from the filename.
+		writeNibFile(t, nibsDir, "bbb2--blocked.md", `---
+title: First
+title: Second
+status: todo
+---
+
+Body B.
+`)
+
+		cfg := config.Default()
+		core := New(nibsDir, cfg)
+		core.SetWarnWriter(nil)
+		if err := core.Load(); err != nil {
+			t.Fatalf("Load() error: %v", err)
+		}
+
+		// A must remain UNMIGRATED: still v0 with its blocking edge intact in memory.
+		a, err := core.Get("aaa1")
+		if err != nil {
+			t.Fatalf("Get(aaa1) error: %v", err)
+		}
+		if a.Version != 0 {
+			t.Errorf("A.Version = %d, want 0 (migration must be deferred while target skipped)", a.Version)
+		}
+		if len(a.Blocking) != 1 || a.Blocking[0] != "bbb2" {
+			t.Errorf("A.Blocking = %v, want [bbb2] (edge must not be dropped)", a.Blocking)
+		}
+
+		// On disk: A's file must be byte-for-byte untouched (the `blocking:` line
+		// must NOT have been erased by a clear+persist).
+		aDisk, err := os.ReadFile(filepath.Join(nibsDir, "aaa1--blocker.md"))
+		if err != nil {
+			t.Fatalf("reading A file: %v", err)
+		}
+		if string(aDisk) != aRaw {
+			t.Errorf("A's file was rewritten (edge at risk); want unchanged bytes.\n got:\n%s\nwant:\n%s", aDisk, aRaw)
+		}
+
+		// Repair B, then a fresh Load must complete the deferred migration: the edge
+		// lands on B (B.blockedBy contains aaa1) and A becomes v1.
+		writeNibFile(t, nibsDir, "bbb2--blocked.md", `---
+title: Blocked B
+status: todo
+---
+
+Body B.
+`)
+		core2 := New(nibsDir, cfg)
+		core2.SetWarnWriter(nil)
+		if err := core2.Load(); err != nil {
+			t.Fatalf("second Load() error: %v", err)
+		}
+		a2, err := core2.Get("aaa1")
+		if err != nil {
+			t.Fatalf("Get(aaa1) after repair: %v", err)
+		}
+		if a2.Version != 1 {
+			t.Errorf("after repair A.Version = %d, want 1 (deferred migration must complete)", a2.Version)
+		}
+		if len(a2.Blocking) != 0 {
+			t.Errorf("after repair A.Blocking = %v, want cleared", a2.Blocking)
+		}
+		b2, err := core2.Get("bbb2")
+		if err != nil {
+			t.Fatalf("Get(bbb2) after repair: %v", err)
+		}
+		if !b2.IsBlockedBy("aaa1") {
+			t.Errorf("after repair B.BlockedBy = %v, want to contain aaa1 (edge landed)", b2.BlockedBy)
+		}
+	})
+
+	t.Run("chain A->B->C: deferred middle nib still receives sibling blockedBy transfer (lossless convergence)", func(t *testing.T) {
+		// nibs-r3y1 review #1 (FINAL pass): in a v0 chain A blocking:[B],
+		// B blocking:[C] where only C's file is skipped, B is deferred for its OWN
+		// edge (B→C) yet A's migration still transfers A→B onto B and re-persists
+		// B. This contradicts a naive "deferred nib's file is untouched" reading,
+		// but it is CORRECT and lossless: the A→B edge survives on disk, B's own
+		// blocking:[C] stays intact, and a later clean Load converges. This test
+		// pins that actual behavior so a future refactor of the dirty-tracking loop
+		// (e.g. "exclude deferred targets from dirty") that would silently drop the
+		// A→B edge fails CI.
+		tmpDir := t.TempDir()
+		nibsDir := filepath.Join(tmpDir, NibsDir)
+		if err := os.MkdirAll(nibsDir, 0755); err != nil {
+			t.Fatal(err)
+		}
+
+		// A --blocking--> B (bbb2)
+		writeNibFile(t, nibsDir, "aaa1--chain-a.md", `---
+title: Chain A
+status: todo
+blocking:
+    - bbb2
+---
+
+Body A.
+`)
+		// B --blocking--> C (ccc3)
+		const bRaw = `---
+title: Chain B
+status: todo
+blocking:
+    - ccc3
+---
+
+Body B.
+`
+		writeNibFile(t, nibsDir, "bbb2--chain-b.md", bRaw)
+		// C is present on disk but UNPARSEABLE (duplicate modeled key), so
+		// loadFromDisk skips it. Its ID (ccc3) is still derivable from the filename,
+		// so B's blocking:[ccc3] target is in the skipped set → B is deferred.
+		writeNibFile(t, nibsDir, "ccc3--chain-c.md", `---
+title: First
+title: Second
+status: todo
+---
+
+Body C.
+`)
+
+		cfg := config.Default()
+		core := New(nibsDir, cfg)
+		core.SetWarnWriter(nil)
+		if err := core.Load(); err != nil {
+			t.Fatalf("Load() error: %v", err)
+		}
+
+		// A migrated: v1, blocking cleared, and its edge landed on B.
+		a, err := core.Get("aaa1")
+		if err != nil {
+			t.Fatalf("Get(aaa1) error: %v", err)
+		}
+		if a.Version != 1 {
+			t.Errorf("A.Version = %d, want 1 (A's target B loaded fine, so A migrates)", a.Version)
+		}
+		if len(a.Blocking) != 0 {
+			t.Errorf("A.Blocking = %v, want cleared", a.Blocking)
+		}
+
+		// B deferred for its OWN edge: still v0 with blocking:[C] intact...
+		b, err := core.Get("bbb2")
+		if err != nil {
+			t.Fatalf("Get(bbb2) error: %v", err)
+		}
+		if b.Version != 0 {
+			t.Errorf("B.Version = %d, want 0 (B's target C skipped, so B's own migration is deferred)", b.Version)
+		}
+		if len(b.Blocking) != 1 || b.Blocking[0] != "ccc3" {
+			t.Errorf("B.Blocking = %v, want [ccc3] (deferred edge must stay intact)", b.Blocking)
+		}
+		// ...yet B carries the A->B transfer from A's completed migration.
+		if !b.IsBlockedBy("aaa1") {
+			t.Errorf("B.BlockedBy = %v, want to contain aaa1 (A's edge transfer)", b.BlockedBy)
+		}
+
+		// On disk, B was re-persisted by A's migration: version:0, blocking:[ccc3]
+		// intact, PLUS the new blocked_by:[aaa1]. This is the "extra persist" the
+		// method doc describes — lossless, and the thing that preserves A->B.
+		bDiskBytes, err := os.ReadFile(filepath.Join(nibsDir, "bbb2--chain-b.md"))
+		if err != nil {
+			t.Fatalf("reading B file: %v", err)
+		}
+		bDisk := string(bDiskBytes)
+		if !strings.Contains(bDisk, "blocked_by:") || !strings.Contains(bDisk, "aaa1") {
+			t.Errorf("B's on-disk file missing the transferred blocked_by:[aaa1] (A->B edge would be lost on restart):\n%s", bDisk)
+		}
+		if !strings.Contains(bDisk, "blocking:") || !strings.Contains(bDisk, "ccc3") {
+			t.Errorf("B's on-disk file lost its own blocking:[ccc3] edge:\n%s", bDisk)
+		}
+		if !strings.Contains(bDisk, "version: 0") {
+			t.Errorf("B's on-disk file should remain version: 0 (own migration deferred):\n%s", bDisk)
+		}
+
+		// Repair C, then a fresh Load must complete B's deferred migration WITHOUT
+		// losing A->B: B->v1 with blocking cleared, C.blockedBy gains B, and
+		// B.blockedBy still contains A throughout.
+		writeNibFile(t, nibsDir, "ccc3--chain-c.md", `---
+title: Chain C
+status: todo
+---
+
+Body C.
+`)
+		core2 := New(nibsDir, cfg)
+		core2.SetWarnWriter(nil)
+		if err := core2.Load(); err != nil {
+			t.Fatalf("second Load() error: %v", err)
+		}
+
+		a2, err := core2.Get("aaa1")
+		if err != nil {
+			t.Fatalf("Get(aaa1) after repair: %v", err)
+		}
+		if a2.Version != 1 {
+			t.Errorf("after repair A.Version = %d, want 1 (unchanged)", a2.Version)
+		}
+
+		b2, err := core2.Get("bbb2")
+		if err != nil {
+			t.Fatalf("Get(bbb2) after repair: %v", err)
+		}
+		if b2.Version != 1 {
+			t.Errorf("after repair B.Version = %d, want 1 (deferred migration completes)", b2.Version)
+		}
+		if len(b2.Blocking) != 0 {
+			t.Errorf("after repair B.Blocking = %v, want cleared", b2.Blocking)
+		}
+		if !b2.IsBlockedBy("aaa1") {
+			t.Errorf("after repair B.BlockedBy = %v, want to still contain aaa1 (A->B preserved throughout)", b2.BlockedBy)
+		}
+
+		c2, err := core2.Get("ccc3")
+		if err != nil {
+			t.Fatalf("Get(ccc3) after repair: %v", err)
+		}
+		if !c2.IsBlockedBy("bbb2") {
+			t.Errorf("after repair C.BlockedBy = %v, want to contain bbb2 (B->C edge landed)", c2.BlockedBy)
+		}
+	})
+
 	t.Run("mixed v0 and v1 directory", func(t *testing.T) {
 		tmpDir := t.TempDir()
 		nibsDir := filepath.Join(tmpDir, NibsDir)

@@ -164,7 +164,10 @@ func TestETagNoFalseConflictAcrossSampleFixture(t *testing.T) {
 	}
 
 	for _, b := range core.All() {
-		stored := core.computeStoredETag(b)
+		stored, err := core.computeStoredETag(b)
+		if err != nil {
+			t.Fatalf("computeStoredETag(%s) unexpected error: %v", b.ID, err)
+		}
 		if stored != b.ETag() {
 			t.Errorf("nib %s (path %s) false-conflicts: CurrentETag=%s != in-memory ETag=%s",
 				b.ID, b.Path, stored, b.ETag())

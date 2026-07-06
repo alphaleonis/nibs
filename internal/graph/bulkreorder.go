@@ -1,12 +1,14 @@
 package graph
 
 import (
+	"errors"
 	"fmt"
 	"sort"
 	"strings"
 
 	"github.com/alphaleonis/nibs/internal/graph/model"
 	"github.com/alphaleonis/nibs/internal/nib"
+	"github.com/alphaleonis/nibs/internal/nibcore"
 )
 
 // reorderChildrenImpl is the shared core of ReorderChildren: validate inputs,
@@ -356,6 +358,15 @@ func (r *mutationResolver) validateIfMatchETags(listed []*nib.Nib, ifMatch []*mo
 		}
 		current, err := r.Reader.CurrentETag(b.ID)
 		if err != nil {
+			// An uncertifiable on-disk file (unparseable/unreadable) surfaces the
+			// distinct, NON-RECONCILABLE OnDiskUnparseableError carrying no etag
+			// token — mirroring Update's fail-closed path (finding #5). Propagate it
+			// (wrapped, so errors.As still finds it) rather than collapsing it into a
+			// reconcilable "etag mismatch" the client could retry past.
+			var unparseable *nibcore.OnDiskUnparseableError
+			if errors.As(err, &unparseable) {
+				return nil, fmt.Errorf("failed to reorder %s: %w", b.ID, err)
+			}
 			return nil, fmt.Errorf("failed to read current etag for %s: %w", b.ID, err)
 		}
 		if current != want {

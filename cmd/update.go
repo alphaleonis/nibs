@@ -6,9 +6,9 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/alphaleonis/nibs/internal/nibcore"
 	"github.com/alphaleonis/nibs/internal/config"
 	"github.com/alphaleonis/nibs/internal/graph/model"
+	"github.com/alphaleonis/nibs/internal/nibcore"
 	"github.com/alphaleonis/nibs/internal/output"
 	"github.com/alphaleonis/nibs/internal/ui"
 	"github.com/spf13/cobra"
@@ -299,7 +299,12 @@ func hasFieldUpdates(input model.UpdateNibInput) bool {
 		input.Documents != nil || input.AddDocuments != nil || input.RemoveDocuments != nil
 }
 
-// isConflictError returns true if the error is an ETag-related conflict error.
+// isConflictError returns true if the error is a RECONCILABLE ETag conflict —
+// one a client can resolve by re-reading the current etag and retrying. An
+// OnDiskUnparseableError is deliberately NOT included: it is non-reconcilable
+// (the on-disk file must be repaired), so it must not be presented as a retryable
+// CONFLICT lest an agent following the "retry with the server etag" contract be
+// steered into clobbering the corrupt file.
 func isConflictError(err error) bool {
 	var mismatchErr *nibcore.ETagMismatchError
 	var requiredErr *nibcore.ETagRequiredError
@@ -308,6 +313,15 @@ func isConflictError(err error) bool {
 
 // mutationError returns a cmdError with the appropriate error code based on the error type.
 func mutationError(jsonOutput bool, err error) error {
+	var unparseableErr *nibcore.OnDiskUnparseableError
+	if errors.As(err, &unparseableErr) {
+		// The current on-disk file cannot be certified (corrupt/unreadable). This
+		// is a FILE_ERROR, not a retryable CONFLICT: the file must be repaired by
+		// hand — retrying cannot resolve it. The error message already spells this
+		// out; stopping (non-zero exit) is the correct behavior per the AI-agent
+		// "stop on error" contract.
+		return cmdError(jsonOutput, output.ErrFileError, "%s", err)
+	}
 	if isConflictError(err) {
 		return cmdError(jsonOutput, output.ErrConflict, "%s", err)
 	}

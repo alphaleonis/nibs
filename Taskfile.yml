@@ -66,7 +66,11 @@ tasks:
     desc: Run all tests (Go + web)
     deps: [web:build]
     cmds:
-      - go test ./...
+      # Go tests run memory-capped so a runaway test is OOM-killed inside its own
+      # cgroup instead of triggering a global OOM that takes down the WSL VM
+      # (nibs-mv0i). Falls back to plain `go test` where systemd --user scopes
+      # aren't available. Override the cap with GO_TEST_MEM_MAX (default 4G).
+      - bash scripts/go-test-capped.sh ./...
       - cd web && npm run check
       - cd web && npx vitest run --reporter=agent
 

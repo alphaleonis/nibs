@@ -7,7 +7,15 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"gopkg.in/yaml.v3"
 )
+
+// scalarExtraNode builds a plain-scalar yaml.Node for constructing Nib.Extra
+// values directly in tests (mirrors what Parse captures for an unknown key).
+func scalarExtraNode(value string) yaml.Node {
+	return yaml.Node{Kind: yaml.ScalarNode, Value: value}
+}
 
 func TestParse(t *testing.T) {
 	tests := []struct {
@@ -240,7 +248,7 @@ priority: urgent
 func TestRenderWithPriority(t *testing.T) {
 	tests := []struct {
 		name     string
-		nib     *Nib
+		nib      *Nib
 		contains []string
 	}{
 		{
@@ -459,7 +467,7 @@ func TestRender(t *testing.T) {
 
 	tests := []struct {
 		name     string
-		nib     *Nib
+		nib      *Nib
 		contains []string
 	}{
 		{
@@ -539,7 +547,7 @@ func TestParseRenderRoundtrip(t *testing.T) {
 
 	tests := []struct {
 		name string
-		nib *Nib
+		nib  *Nib
 	}{
 		{
 			name: "basic",
@@ -926,7 +934,7 @@ Body text.
 	if err != nil {
 		t.Fatalf("Parse error: %v", err)
 	}
-	if got := parsed.Extra["assignee"]; got != "bob" {
+	if got := parsed.Extra["assignee"].Value; got != "bob" {
 		t.Errorf("Extra[assignee] = %v, want bob", got)
 	}
 	if _, ok := parsed.Extra["sprint"]; !ok {
@@ -945,18 +953,17 @@ Body text.
 	if err != nil {
 		t.Fatalf("re-Parse error: %v", err)
 	}
-	if reparsed.Extra["assignee"] != "bob" {
+	if reparsed.Extra["assignee"].Value != "bob" {
 		t.Errorf("unknown key lost on re-parse: %v", reparsed.Extra)
 	}
 }
 
-// TestExtraBoolLikeScalarCoercionBoundary DOCUMENTS the known round-trip fidelity
-// boundary for Extra (finding #3): a YAML-1.1 bool-like unknown scalar (`y`) is
-// type-inferred to a Go bool on Parse (yaml.v2) and re-emitted as `true` on
-// Render (yaml.v3). This is the "Norway problem" coercion — a known, accepted
-// boundary tracked in nibs-r3y1, NOT behavior this test endorses. If nibs-r3y1
-// makes Extra string-preserving, this test's assertions must be updated.
-func TestExtraBoolLikeScalarCoercionBoundary(t *testing.T) {
+// TestExtraBoolLikeScalarPreserved verifies the nibs-r3y1 fix for finding #3: a
+// YAML-1.1 bool-like unknown scalar (`y` — the "Norway problem") is captured as a
+// raw yaml.v3 string node and re-emitted verbatim as `y`, NOT coerced to a Go
+// bool and re-rendered as `true`. yaml.v3 resolves `y` as a string under the YAML
+// 1.2 core schema, and the raw node preserves it exactly.
+func TestExtraBoolLikeScalarPreserved(t *testing.T) {
 	const input = `---
 version: 1
 title: Norway
@@ -968,17 +975,24 @@ reviewed: y
 	if err != nil {
 		t.Fatalf("Parse error: %v", err)
 	}
-	// Current behavior: the bare `y` is coerced to a Go bool, not kept as "y".
-	if got := parsed.Extra["reviewed"]; got != true {
-		t.Fatalf("Extra[reviewed] = %#v (%T), want bool true (known nibs-r3y1 coercion boundary)", got, got)
+	// The bare `y` is preserved as its original scalar text, not coerced.
+	node := parsed.Extra["reviewed"]
+	if node.Value != "y" {
+		t.Fatalf("Extra[reviewed].Value = %q, want %q (must not coerce)", node.Value, "y")
+	}
+	if node.Tag != "!!str" {
+		t.Errorf("Extra[reviewed].Tag = %q, want !!str (bool-like scalar must stay a string)", node.Tag)
 	}
 
 	rendered, err := parsed.Render()
 	if err != nil {
 		t.Fatalf("Render error: %v", err)
 	}
-	if !strings.Contains(string(rendered), "reviewed: true") {
-		t.Errorf("expected `reviewed: y` to render as `reviewed: true` (known coercion), got:\n%s", rendered)
+	if !strings.Contains(string(rendered), "reviewed: y") {
+		t.Errorf("expected `reviewed: y` to round-trip verbatim, got:\n%s", rendered)
+	}
+	if strings.Contains(string(rendered), "reviewed: true") {
+		t.Errorf("`reviewed: y` was coerced to `reviewed: true`:\n%s", rendered)
 	}
 }
 
@@ -1032,9 +1046,9 @@ func TestRenderExtraKeyCollisionDoesNotPanic(t *testing.T) {
 	b := &Nib{
 		Title:  "Collision",
 		Status: "todo",
-		Extra: map[string]any{
-			"status":   "SHOULD-BE-DROPPED", // collides with the modeled Status
-			"assignee": "bob",               // genuinely unknown, must survive
+		Extra: map[string]yaml.Node{
+			"status":   scalarExtraNode("SHOULD-BE-DROPPED"), // collides with modeled Status
+			"assignee": scalarExtraNode("bob"),               // genuinely unknown, must survive
 		},
 	}
 
@@ -1060,7 +1074,7 @@ func TestRenderExtraKeyCollisionDoesNotPanic(t *testing.T) {
 	}
 
 	// The colliding key must not have mutated the caller's Extra map.
-	if b.Extra["status"] != "SHOULD-BE-DROPPED" {
+	if b.Extra["status"].Value != "SHOULD-BE-DROPPED" {
 		t.Errorf("Render mutated the caller's Extra map: %v", b.Extra)
 	}
 
@@ -1083,12 +1097,12 @@ func TestRenderDeterministicWithExtra(t *testing.T) {
 		Status:   "todo",
 		Type:     "task",
 		Priority: "normal",
-		Extra: map[string]any{
-			"zeta":     "z",
-			"alpha":    "a",
-			"mike":     "m",
-			"bravo":    "b",
-			"assignee": "bob",
+		Extra: map[string]yaml.Node{
+			"zeta":     scalarExtraNode("z"),
+			"alpha":    scalarExtraNode("a"),
+			"mike":     scalarExtraNode("m"),
+			"bravo":    scalarExtraNode("b"),
+			"assignee": scalarExtraNode("bob"),
 		},
 	}
 	first, err := b.Render()
@@ -1148,6 +1162,207 @@ Body.
 	}
 }
 
+// TestExtraPassthroughFixedPoint verifies that arbitrary unknown front-matter
+// keys are a TRUE parse->render fixed point AND that their values are preserved
+// verbatim (not re-inferred) — closing the whole yaml-1.1<->1.2 scalar-coercion
+// class (nibs-r3y1 findings #3 bool-like coercion and #4 signed-zero
+// oscillation). Because Extra is captured as raw yaml.v3 nodes and re-emitted
+// verbatim, no scalar-type re-inference happens on either the parse or the
+// render side.
+func TestExtraPassthroughFixedPoint(t *testing.T) {
+	cases := []struct {
+		name string
+		// key/value lines injected into the front matter (already indented at col 0)
+		fm string
+		// substrings the FIRST render must contain (value preserved, not coerced)
+		wantContains []string
+		// substrings the render must NOT contain (evidence of coercion)
+		wantAbsent []string
+	}{
+		{
+			name:         "bool-like y stays a string (#3 Norway problem)",
+			fm:           "reviewed: y",
+			wantContains: []string{"reviewed: y"},
+			wantAbsent:   []string{"reviewed: true"},
+		},
+		{
+			name:         "bool-like no stays a string",
+			fm:           "approved: no",
+			wantContains: []string{"approved: no"},
+			wantAbsent:   []string{"approved: false"},
+		},
+		{
+			name:         "bool-like on stays a string",
+			fm:           "draft: on",
+			wantContains: []string{"draft: on"},
+			wantAbsent:   []string{"draft: true"},
+		},
+		{
+			name:         "signed-zero float stays -0.0 (#4 non-fixed-point)",
+			fm:           "offset: -0.0",
+			wantContains: []string{"offset: -0.0"},
+			wantAbsent:   []string{"offset: 0\n", "offset: -0\n"},
+		},
+		{
+			name:         "nested map preserved",
+			fm:           "meta:\n  a: 1\n  b: yes",
+			wantContains: []string{"b: yes"},
+			wantAbsent:   []string{"b: true"},
+		},
+		{
+			name:         "block sequence preserved",
+			fm:           "labels:\n  - x\n  - y",
+			wantContains: []string{"- y"},
+			wantAbsent:   []string{"- true"},
+		},
+		{
+			name:         "bool-like inside a flow sequence preserved",
+			fm:           "flags: [x, y]",
+			wantContains: []string{"flags: [x, y]"},
+			wantAbsent:   []string{"true"},
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			input := "---\nversion: 1\ntitle: Passthrough\nstatus: todo\n" + tc.fm + "\n---\n\nBody.\n"
+
+			p1, err := Parse(strings.NewReader(input))
+			if err != nil {
+				t.Fatalf("Parse error: %v", err)
+			}
+			r1, err := p1.Render()
+			if err != nil {
+				t.Fatalf("Render error: %v", err)
+			}
+			for _, want := range tc.wantContains {
+				if !strings.Contains(string(r1), want) {
+					t.Errorf("first render missing %q (value was coerced/lost):\n%s", want, r1)
+				}
+			}
+			for _, absent := range tc.wantAbsent {
+				if strings.Contains(string(r1), absent) {
+					t.Errorf("first render contains coerced form %q:\n%s", absent, r1)
+				}
+			}
+
+			// parse->render->parse->render must be a byte-stable fixed point.
+			p2, err := Parse(strings.NewReader(string(r1)))
+			if err != nil {
+				t.Fatalf("re-Parse error: %v", err)
+			}
+			r2, err := p2.Render()
+			if err != nil {
+				t.Fatalf("re-Render error: %v", err)
+			}
+			if !bytes.Equal(r1, r2) {
+				t.Errorf("not a fixed point:\nr1:\n%s\nr2:\n%s", r1, r2)
+			}
+
+			// The etag derived from Render() must be stable across the round-trip,
+			// so an ETag()-based if-match never self-conflicts with no writer.
+			if p1.ETag() != p2.ETag() {
+				t.Errorf("etag diverged across round-trip: %s != %s", p1.ETag(), p2.ETag())
+			}
+		})
+	}
+}
+
+// TestExtraAnchorAliasResolvedToFixedPoint covers nibs-r3y1 finding #2: a YAML
+// anchor on a MODELED field combined with an alias in an unmodeled (Extra) key
+// parses fine, but if the alias survives into Render, yaml.Marshal emits a
+// DANGLING alias (`*t`) — the modeled field decoded to a plain Go value dropped
+// its anchor — which is invalid YAML and permanently corrupts the file. The fix
+// resolves aliases to their concrete value at parse time, so Render emits valid
+// YAML, the output re-parses, and the round-trip is a fixed point.
+func TestExtraAnchorAliasResolvedToFixedPoint(t *testing.T) {
+	cases := []struct {
+		name string
+		// full front matter body (between the --- fences)
+		fm string
+		// the Extra key whose value is an alias
+		aliasKey string
+		// substrings the FIRST render must contain (alias resolved to concrete value)
+		wantContains []string
+		// substrings the render must NOT contain (evidence of a surviving alias/anchor)
+		wantAbsent []string
+	}{
+		{
+			name: "scalar anchor on modeled title, alias in Extra",
+			fm: `version: 1
+title: &t Something
+status: todo
+mirror: *t`,
+			aliasKey:     "mirror",
+			wantContains: []string{"mirror: Something"},
+			wantAbsent:   []string{"*t", "&t"},
+		},
+		{
+			name: "sequence anchor on modeled tags, alias in Extra",
+			fm: `version: 1
+title: Anchored Tags
+status: todo
+tags: &t [a, b]
+use: *t`,
+			aliasKey:     "use",
+			wantContains: []string{"a", "b"},
+			wantAbsent:   []string{"*t", "&t"},
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			input := "---\n" + tc.fm + "\n---\n\nBody.\n"
+
+			p1, err := Parse(strings.NewReader(input))
+			if err != nil {
+				t.Fatalf("Parse error: %v", err)
+			}
+
+			// The captured Extra node must carry no alias/anchor state after parse.
+			node := p1.Extra[tc.aliasKey]
+			if node.Kind == yaml.AliasNode {
+				t.Errorf("Extra[%q] is still an AliasNode after parse; alias must be resolved", tc.aliasKey)
+			}
+			if node.Anchor != "" {
+				t.Errorf("Extra[%q].Anchor = %q, want empty (anchors must be cleared)", tc.aliasKey, node.Anchor)
+			}
+
+			r1, err := p1.Render()
+			if err != nil {
+				t.Fatalf("Render error: %v", err)
+			}
+			for _, want := range tc.wantContains {
+				if !strings.Contains(string(r1), want) {
+					t.Errorf("render missing %q (alias not resolved):\n%s", want, r1)
+				}
+			}
+			for _, absent := range tc.wantAbsent {
+				if strings.Contains(string(r1), absent) {
+					t.Errorf("render still contains anchor/alias token %q (invalid/dangling YAML):\n%s", absent, r1)
+				}
+			}
+
+			// The render must be valid YAML that re-parses without a dangling-alias
+			// error.
+			p2, err := Parse(strings.NewReader(string(r1)))
+			if err != nil {
+				t.Fatalf("re-Parse of rendered output failed (invalid YAML — dangling alias?): %v", err)
+			}
+			r2, err := p2.Render()
+			if err != nil {
+				t.Fatalf("re-Render error: %v", err)
+			}
+			if !bytes.Equal(r1, r2) {
+				t.Errorf("render is not a fixed point:\nr1:\n%s\nr2:\n%s", r1, r2)
+			}
+			if p1.ETag() != p2.ETag() {
+				t.Errorf("etag diverged across round-trip: %s != %s", p1.ETag(), p2.ETag())
+			}
+		})
+	}
+}
+
 // TestRenderNoChurnWithoutExtraOrBlocking pins the "no churn for normal nibs"
 // requirement (finding #2): a nib with no unknown keys and no legacy blocking
 // must render without any `blocking:` line or stray inline keys — i.e. the
@@ -1191,8 +1406,8 @@ Body paragraph.
 
 func TestParseWithBlockedBy(t *testing.T) {
 	tests := []struct {
-		name            string
-		input           string
+		name              string
+		input             string
 		expectedBlockedBy []string
 	}{
 		{
@@ -1256,7 +1471,7 @@ blocked_by:
 func TestRenderWithBlockedBy(t *testing.T) {
 	tests := []struct {
 		name     string
-		nib     *Nib
+		nib      *Nib
 		contains []string
 	}{
 		{
@@ -1696,7 +1911,7 @@ status: todo
 func TestRenderWithTags(t *testing.T) {
 	tests := []struct {
 		name     string
-		nib     *Nib
+		nib      *Nib
 		contains []string
 	}{
 		{
@@ -1813,7 +2028,7 @@ func TestTagsRoundtrip(t *testing.T) {
 func TestRenderWithIDComment(t *testing.T) {
 	tests := []struct {
 		name          string
-		nib          *Nib
+		nib           *Nib
 		expectComment string
 	}{
 		{
@@ -1897,7 +2112,7 @@ func TestRenderWithIDCommentRoundtrip(t *testing.T) {
 func TestRenderTrailingNewline(t *testing.T) {
 	tests := []struct {
 		name string
-		nib *Nib
+		nib  *Nib
 	}{
 		{
 			name: "with body",
@@ -2591,15 +2806,15 @@ priority: deferred
 			ID:     "extra-1",
 			Title:  "With Extra",
 			Status: "todo",
-			Extra:  map[string]any{"assignee": "bob", "sprint": "2026-Q1"},
+			Extra:  map[string]yaml.Node{"assignee": scalarExtraNode("bob"), "sprint": scalarExtraNode("2026-Q1")},
 		}
 		cl := orig.Clone()
 
-		cl.Extra["assignee"] = "alice" // mutate an existing key
-		cl.Extra["reviewer"] = "carol" // add a new key
-		delete(cl.Extra, "sprint")     // remove a key
+		cl.Extra["assignee"] = scalarExtraNode("alice") // mutate an existing key
+		cl.Extra["reviewer"] = scalarExtraNode("carol") // add a new key
+		delete(cl.Extra, "sprint")                      // remove a key
 
-		if orig.Extra["assignee"] != "bob" {
+		if orig.Extra["assignee"].Value != "bob" {
 			t.Errorf("original Extra[assignee] mutated via clone: %v", orig.Extra["assignee"])
 		}
 		if _, added := orig.Extra["reviewer"]; added {
