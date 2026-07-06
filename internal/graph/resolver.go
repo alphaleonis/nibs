@@ -51,9 +51,35 @@ func isNilValue(v any) bool {
 	return false
 }
 
+// updateTargetClone persists a mutation to target — a nib obtained from
+// Reader.Get, which returns the SHARED c.nibs[id] pointer — by applying mutate to
+// a CLONE and writing the clone, never the shared pointer. A rejected
+// Writer.Update (genuine on-disk etag divergence, or a concurrent write to the
+// target between its Get and its Update) therefore leaves the shared in-memory
+// nib untouched instead of showing a phantom mutation (nibs-twvo; same corruption
+// class nibs-e9oz fixed for activateParentChain).
+//
+// The if-match is the target's PRE-mutation ETag, computed from the shared nib
+// before cloning — matching every blocking-side call site's existing optimistic-
+// concurrency convention (these sites key on the target's own current etag, not a
+// caller-supplied if-match). mutate returns false to signal "nothing changed"
+// (e.g. RemoveBlockedBy matched no id), in which case no write is attempted and
+// nil is returned.
+func (r *Resolver) updateTargetClone(target *nib.Nib, mutate func(*nib.Nib) bool) error {
+	ifMatch := target.ETag()
+	clone := target.Clone()
+	if !mutate(clone) {
+		return nil
+	}
+	return r.Writer.Update(clone, &ifMatch)
+}
+
 // validateAndSetParent validates and sets the parent relationship.
 // When the parent changes, the order key is recalculated to avoid collisions
 // with existing siblings in the new parent group.
+//
+// Caller must pass a nib it owns (a clone), not a shared Reader.Get pointer —
+// this mutates b (b.Parent and, via RecalculateOrder, b.Order) in place.
 func (r *Resolver) validateAndSetParent(b *nib.Nib, parentID string) error {
 	oldParent := b.Parent
 
@@ -93,10 +119,12 @@ func (r *Resolver) validateAndSetParent(b *nib.Nib, parentID string) error {
 // Two-phase approach: validate ALL targets first, then apply ALL mutations.
 // This ensures no targets are mutated if any validation fails.
 func (r *Resolver) validateAndAddBlocking(b *nib.Nib, targetIDs []string) error {
-	// Phase 1: validate all targets
+	// Phase 1: validate all targets, collecting their normalized IDs (not their
+	// pointers — see Phase 2) alongside the caller's RAW input so Phase-2 errors
+	// echo the same form the caller typed (matching Phase-1 wording below).
 	type validatedTarget struct {
-		id     string
-		target *nib.Nib
+		raw        string
+		normalized string
 	}
 	targets := make([]validatedTarget, 0, len(targetIDs))
 
@@ -110,8 +138,7 @@ func (r *Resolver) validateAndAddBlocking(b *nib.Nib, targetIDs []string) error 
 			return fmt.Errorf("nib cannot block itself")
 		}
 
-		target, err := r.Reader.Get(normalizedTargetID)
-		if err != nil {
+		if _, err := r.Reader.Get(normalizedTargetID); err != nil {
 			return fmt.Errorf("blocking target nib not found: %s", targetID)
 		}
 
@@ -120,14 +147,27 @@ func (r *Resolver) validateAndAddBlocking(b *nib.Nib, targetIDs []string) error 
 			return fmt.Errorf("adding blocking relationship would create cycle: %v", cycle)
 		}
 
-		targets = append(targets, validatedTarget{id: normalizedTargetID, target: target})
+		targets = append(targets, validatedTarget{raw: targetID, normalized: normalizedTargetID})
 	}
 
-	// Phase 2: apply all mutations (all targets validated successfully)
-	for _, vt := range targets {
-		targetETag := vt.target.ETag()
-		vt.target.AddBlockedBy(b.ID)
-		if err := r.Writer.Update(vt.target, &targetETag); err != nil {
+	// Phase 2: apply all mutations (all targets validated successfully).
+	// Re-fetch each target FRESH via Reader.Get at the point of mutation — never
+	// reuse a Phase-1 pointer. A successful Writer.Update installs the CLONE as
+	// the new c.nibs[id], orphaning any earlier pointer; with a duplicate target
+	// ID the second iteration would otherwise hold a stale pre-mutation pointer,
+	// compute a stale if-match, and spuriously fail with an ETagMismatchError
+	// after target 1 was already persisted (nibs-twvo). updateTargetClone
+	// then mutates a clone, so a genuinely refused write leaves the shared
+	// in-memory nib untouched.
+	for _, t := range targets {
+		target, err := r.Reader.Get(t.normalized)
+		if err != nil {
+			return fmt.Errorf("blocking target nib not found: %s", t.raw)
+		}
+		if err := r.updateTargetClone(target, func(c *nib.Nib) bool {
+			c.AddBlockedBy(b.ID)
+			return true
+		}); err != nil {
 			return err
 		}
 	}
@@ -140,11 +180,11 @@ func (r *Resolver) removeBlockingRelationships(b *nib.Nib, targetIDs []string) e
 	for _, targetID := range targetIDs {
 		normalizedTargetID, _ := r.Reader.NormalizeID(targetID)
 		if target, err := r.Reader.Get(normalizedTargetID); err == nil {
-			targetETag := target.ETag()
-			if target.RemoveBlockedBy(b.ID) {
-				if err := r.Writer.Update(target, &targetETag); err != nil {
-					return fmt.Errorf("failed to remove blocking from %s: %w", normalizedTargetID, err)
-				}
+			// Mutate a clone, never the shared Reader.Get pointer (nibs-twvo).
+			if err := r.updateTargetClone(target, func(c *nib.Nib) bool {
+				return c.RemoveBlockedBy(b.ID)
+			}); err != nil {
+				return fmt.Errorf("failed to remove blocking from %s: %w", normalizedTargetID, err)
 			}
 		}
 	}
@@ -153,6 +193,9 @@ func (r *Resolver) removeBlockingRelationships(b *nib.Nib, targetIDs []string) e
 
 // validateAndAddBlockedBy validates and adds blocked-by relationships.
 // Single-side storage: modifies b's blockedBy list directly.
+//
+// Caller must pass a nib it owns (a clone), not a shared Reader.Get pointer —
+// this mutates b in place.
 func (r *Resolver) validateAndAddBlockedBy(b *nib.Nib, targetIDs []string) error {
 	for _, targetID := range targetIDs {
 		normalizedTargetID, ok := r.Reader.NormalizeID(targetID)
@@ -179,6 +222,9 @@ func (r *Resolver) validateAndAddBlockedBy(b *nib.Nib, targetIDs []string) error
 
 // removeBlockedByRelationships removes blocked-by relationships.
 // Single-side storage: modifies b's blockedBy list directly.
+//
+// Caller must pass a nib it owns (a clone), not a shared Reader.Get pointer —
+// this mutates b in place.
 func (r *Resolver) removeBlockedByRelationships(b *nib.Nib, targetIDs []string) {
 	for _, targetID := range targetIDs {
 		normalizedTargetID, _ := r.Reader.NormalizeID(targetID)
@@ -194,6 +240,17 @@ func (r *Resolver) removeBlockedByRelationships(b *nib.Nib, targetIDs []string) 
 // Best-effort: warns on stderr and stops on any error. Mutates a clone before
 // each Update (clone-before-mutate, as UpdateNib does with b := original.Clone())
 // so a refused write never corrupts the shared in-memory nib.
+//
+// Stop-on-first-error is a deliberate atomicity choice (nibs-twvo), NOT laziness.
+// The walk does not skip a refused ancestor to activate the ones above it. The
+// invariant being maintained is "ancestors of an in-progress nib are active";
+// activating a grandparent while this parent is left todo/draft would violate that
+// invariant more visibly (an active nib sitting under a non-active one) than simply
+// stopping. A refused write is almost always a genuine on-disk divergence (stale
+// etag) or a transient write error, so leaving the remaining chain untouched keeps
+// the store self-consistent, and the next child-start re-triggers the walk from the
+// bottom — so a partial stop self-heals rather than corrupting. The warning names
+// the exact ancestor the walk stopped at so the omission is diagnosable.
 func (r *Resolver) activateParentChain(childID, parentID string) {
 	for parentID != "" {
 		parent, err := r.Reader.Get(parentID)
@@ -224,7 +281,7 @@ func (r *Resolver) activateParentChain(childID, parentID string) {
 		updated := parent.Clone()
 		updated.Status = "in-progress"
 		if err := r.Writer.Update(updated, &parentETag); err != nil {
-			fmt.Fprintf(os.Stderr, "warning: failed to activate parent %s (from %s): %v\n", parentID, childID, err)
+			fmt.Fprintf(os.Stderr, "warning: could not activate ancestor %s (from %s): %v — chain activation stops at this ancestor; it and any higher todo/draft ancestors stay unactivated until the next child-start re-triggers the walk\n", parentID, childID, err)
 			return
 		}
 		parentID = nextParentID

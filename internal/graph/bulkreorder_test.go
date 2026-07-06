@@ -829,6 +829,104 @@ Body under edit.
 	}
 }
 
+// failOnUpdateWriter wraps a NibWriter and fails Update for one target ID,
+// delegating every other call (including successful Updates) to the embedded
+// writer. It deterministically simulates a mid-loop write rejection — e.g. an
+// on-disk divergence between bulk-reorder's T0 pre-validation and a later
+// per-item write, or a transient disk error.
+type failOnUpdateWriter struct {
+	NibWriter
+	failID  string
+	failErr error
+	updated []string // IDs successfully persisted (in call order)
+}
+
+func (w *failOnUpdateWriter) Update(b *nib.Nib, ifMatch *string) error {
+	if b.ID == w.failID {
+		return w.failErr
+	}
+	if err := w.NibWriter.Update(b, ifMatch); err != nil {
+		return err
+	}
+	w.updated = append(w.updated, b.ID)
+	return nil
+}
+
+func sliceContains(s []string, v string) bool {
+	for _, x := range s {
+		if x == v {
+			return true
+		}
+	}
+	return false
+}
+
+// TestBulkReorderMidLoopFailureLeavesNoPhantomOrder guards the nibs-twvo
+// corruption class in the bulk-reorder loops the sweep extends to (nibs-twvo).
+// reorderChildrenImpl / reorderSiblingsImpl obtained each nib via Reader.Get (the
+// shared c.nibs[id] pointer) and assigned b.Order = newKey in place before a
+// per-item Writer.Update. A mid-loop Update rejection left earlier siblings
+// persisted AND the failing one showing a phantom order in memory only. The fix
+// mutates a CLONE per item and only swaps the returned pointer on success.
+//
+// A decorating writer forces the 2nd item in the block to fail. Each subtest
+// asserts the failing item's shared in-memory nib shows no phantom order, while an
+// earlier item IS persisted (proving the failure is genuinely mid-loop). RED
+// against the mutate-shared-pointer code, GREEN after.
+func TestBulkReorderMidLoopFailureLeavesNoPhantomOrder(t *testing.T) {
+	ctx := context.Background()
+
+	t.Run("ReorderChildren", func(t *testing.T) {
+		_, core, parentID := setupBulkReorderFixture(t) // children a,b,c ordered a0,b0,c0
+		fw := &failOnUpdateWriter{NibWriter: core, failID: "b", failErr: errors.New("simulated mid-loop write failure")}
+		r := &Resolver{Reader: core, Writer: fw, Validator: core, Blocking: core, Orderer: NewOrderer(core, fw)}
+
+		_, err := r.Mutation().ReorderChildren(ctx, parentID, []string{"a", "b", "c"}, nil)
+		if err == nil {
+			t.Fatal("expected mid-loop write failure, got nil error")
+		}
+
+		// The failing item's shared in-memory nib must show no phantom order.
+		gotB, err := core.Get("b")
+		if err != nil {
+			t.Fatalf("get b: %v", err)
+		}
+		if gotB.Order != "b0" {
+			t.Errorf("failing item 'b' left with phantom Order %q after refused write; want pre-call %q", gotB.Order, "b0")
+		}
+		// An earlier item was persisted before the failure — confirms this
+		// exercises a genuine mid-loop rejection (not a first-item failure).
+		if !sliceContains(fw.updated, "a") {
+			t.Errorf("earlier item 'a' was not persisted before the failure (updated=%v) — not a mid-loop failure", fw.updated)
+		}
+	})
+
+	t.Run("ReorderSiblings", func(t *testing.T) {
+		_, core, _ := setupBlockMoveFixture(t) // children a..e ordered a0..e0
+		fw := &failOnUpdateWriter{NibWriter: core, failID: "e", failErr: errors.New("simulated mid-loop write failure")}
+		r := &Resolver{Reader: core, Writer: fw, Validator: core, Blocking: core, Orderer: NewOrderer(core, fw)}
+
+		// Move block [c, e] after a; the loop writes c then e — e fails mid-loop.
+		_, err := r.Mutation().ReorderSiblings(ctx, []string{"c", "e"}, strPtr("a"), nil, nil, nil)
+		if err == nil {
+			t.Fatal("expected mid-loop write failure, got nil error")
+		}
+
+		gotE, err := core.Get("e")
+		if err != nil {
+			t.Fatalf("get e: %v", err)
+		}
+		if gotE.Order != "e0" {
+			t.Errorf("failing item 'e' left with phantom Order %q after refused write; want pre-call %q", gotE.Order, "e0")
+		}
+		// An earlier block item was persisted before the failure — confirms a
+		// genuine mid-loop rejection.
+		if !sliceContains(fw.updated, "c") {
+			t.Errorf("earlier item 'c' was not persisted before the failure (updated=%v) — not a mid-loop failure", fw.updated)
+		}
+	})
+}
+
 // childEtags reads the current on-disk etag for each id and packs the
 // results into a slice of *model.ChildEtag — the shape resolvers expect.
 func childEtags(t *testing.T, resolver *Resolver, ids ...string) []*model.ChildEtag {

@@ -167,7 +167,7 @@ func TestActivateParentChainBenignDriftActivates(t *testing.T) {
 		}
 	})
 
-	if strings.Contains(stderr, "failed to activate parent") {
+	if strings.Contains(stderr, "could not activate ancestor") {
 		t.Errorf("expected no activation warning on benign drift, got stderr: %q", stderr)
 	}
 
@@ -252,7 +252,7 @@ func TestActivateParentChainGenuineDivergenceIsRefused(t *testing.T) {
 
 	parentPath, stderr := divergeParentThenStartChild(t, resolver, core)
 
-	if !strings.Contains(stderr, "failed to activate parent") {
+	if !strings.Contains(stderr, "could not activate ancestor") {
 		t.Errorf("expected an activation warning on genuine divergence, got stderr: %q", stderr)
 	}
 
@@ -350,7 +350,7 @@ func TestActivateParentChainMultiLevelActivatesAllAncestors(t *testing.T) {
 		}
 	})
 
-	if strings.Contains(stderr, "failed to activate parent") {
+	if strings.Contains(stderr, "could not activate ancestor") {
 		t.Errorf("expected no activation warnings, got stderr: %q", stderr)
 	}
 

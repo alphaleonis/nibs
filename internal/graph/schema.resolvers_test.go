@@ -3433,8 +3433,7 @@ func TestCreateNibPositioning(t *testing.T) {
 		// the previous bug-pinning subtest which asserted that positioning
 		// without a parent was rejected — see nibs-d44y.
 		existingRootID := "epic1"
-		existing, err := resolver.Query().Nib(ctx, existingRootID)
-		if err != nil || existing == nil {
+		if _, err := resolver.Query().Nib(ctx, existingRootID); err != nil {
 			t.Fatalf("missing fixture root %q: %v", existingRootID, err)
 		}
 		firstFlag := true
@@ -3448,6 +3447,15 @@ func TestCreateNibPositioning(t *testing.T) {
 		}
 		if created.Parent != "" {
 			t.Errorf("created root should have no parent, got %q", created.Parent)
+		}
+		// Re-read the existing root AFTER the create: positioning backfilled it an
+		// order key, and under clone-before-mutate (nibs-twvo) that key lives on
+		// the nib's fresh store entry — a pointer captured before the call keeps its
+		// old (empty) order instead of being aliased-mutated in place. Query the
+		// current entry to observe the persisted order.
+		existing, err := resolver.Query().Nib(ctx, existingRootID)
+		if err != nil || existing == nil {
+			t.Fatalf("missing fixture root %q after create: %v", existingRootID, err)
 		}
 		if created.Order >= existing.Order {
 			t.Errorf("order %q should be < existing root order %q", created.Order, existing.Order)

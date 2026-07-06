@@ -121,12 +121,15 @@ func (r *mutationResolver) CreateNib(ctx context.Context, input model.CreateNibI
 		return nil, err
 	}
 
-	// Single-side: add new nib's ID to each blocking target's blockedBy
+	// Single-side: add new nib's ID to each blocking target's blockedBy.
+	// Mutate a clone of the target, never the shared Reader.Get pointer, so a
+	// refused write leaves the in-memory nib untouched (nibs-twvo).
 	for _, targetID := range blockingTargets {
 		if target, err := r.Reader.Get(targetID); err == nil {
-			targetETag := target.ETag()
-			target.AddBlockedBy(b.ID)
-			if err := r.Writer.Update(target, &targetETag); err != nil {
+			if err := r.updateTargetClone(target, func(c *nib.Nib) bool {
+				c.AddBlockedBy(b.ID)
+				return true
+			}); err != nil {
 				return nil, fmt.Errorf("created nib %s but failed to set blocking on %s: %w", b.ID, targetID, err)
 			}
 		}
@@ -356,10 +359,14 @@ func (r *mutationResolver) ArchiveNib(ctx context.Context, id string) (bool, err
 
 // SetParent is the resolver for the setParent field.
 func (r *mutationResolver) SetParent(ctx context.Context, id string, parentID *string, ifMatch *string) (*nib.Nib, error) {
-	b, err := r.Reader.Get(id)
+	original, err := r.Reader.Get(id)
 	if err != nil {
 		return nil, err
 	}
+	// Clone before mutating — validateAndSetParent and Writer.Update operate on the
+	// clone so a rejected write never leaves the shared in-memory nib (Reader.Get
+	// returns c.nibs[id]) showing a phantom parent/order change (nibs-twvo).
+	b := original.Clone()
 
 	newParent := ""
 	if parentID != nil {
@@ -408,11 +415,14 @@ func (r *mutationResolver) AddBlocking(ctx context.Context, id string, targetID 
 		return nil, fmt.Errorf("would create cycle: %v", cycle)
 	}
 
-	// Single-side: add blocker ID to target's blockedBy
-	// Compute ETag before modification for require_if_match compatibility
-	targetETag := target.ETag()
-	target.AddBlockedBy(b.ID)
-	if err := r.Writer.Update(target, &targetETag); err != nil {
+	// Single-side: add blocker ID to target's blockedBy. Mutate a clone, never the
+	// shared Reader.Get pointer, so a refused write leaves the in-memory nib
+	// untouched (nibs-twvo). updateTargetClone keys the if-match on the target's
+	// pre-mutation etag, preserving the require_if_match behavior.
+	if err := r.updateTargetClone(target, func(c *nib.Nib) bool {
+		c.AddBlockedBy(b.ID)
+		return true
+	}); err != nil {
 		return nil, err
 	}
 	return b, nil
@@ -430,13 +440,13 @@ func (r *mutationResolver) RemoveBlocking(ctx context.Context, id string, target
 	normalizedTargetID, _ := r.Reader.NormalizeID(targetID)
 	// RemoveBlocking is a no-op for non-existent targets (acceptable behavior)
 
-	// Single-side: remove blocker ID from target's blockedBy
+	// Single-side: remove blocker ID from target's blockedBy. Mutate a clone,
+	// never the shared Reader.Get pointer (nibs-twvo).
 	if target, err := r.Reader.Get(normalizedTargetID); err == nil {
-		targetETag := target.ETag()
-		if target.RemoveBlockedBy(b.ID) {
-			if err := r.Writer.Update(target, &targetETag); err != nil {
-				return nil, err
-			}
+		if err := r.updateTargetClone(target, func(c *nib.Nib) bool {
+			return c.RemoveBlockedBy(b.ID)
+		}); err != nil {
+			return nil, err
 		}
 	}
 
@@ -446,10 +456,13 @@ func (r *mutationResolver) RemoveBlocking(ctx context.Context, id string, target
 // AddBlockedBy is the resolver for the addBlockedBy field.
 // Single-side storage: only modifies this nib's blockedBy field.
 func (r *mutationResolver) AddBlockedBy(ctx context.Context, id string, targetID string, ifMatch *string) (*nib.Nib, error) {
-	b, err := r.Reader.Get(id)
+	original, err := r.Reader.Get(id)
 	if err != nil {
 		return nil, err
 	}
+	// Clone before mutating — a rejected Update never leaves the shared in-memory
+	// nib (Reader.Get returns c.nibs[id]) showing a phantom blockedBy (nibs-twvo).
+	b := original.Clone()
 
 	// Normalise short ID to full ID
 	normalizedTargetID, ok := r.Reader.NormalizeID(targetID)
@@ -481,10 +494,13 @@ func (r *mutationResolver) AddBlockedBy(ctx context.Context, id string, targetID
 // RemoveBlockedBy is the resolver for the removeBlockedBy field.
 // Single-side storage: only modifies this nib's blockedBy field.
 func (r *mutationResolver) RemoveBlockedBy(ctx context.Context, id string, targetID string, ifMatch *string) (*nib.Nib, error) {
-	b, err := r.Reader.Get(id)
+	original, err := r.Reader.Get(id)
 	if err != nil {
 		return nil, err
 	}
+	// Clone before mutating — a rejected Update never leaves the shared in-memory
+	// nib (Reader.Get returns c.nibs[id]) showing a phantom blockedBy (nibs-twvo).
+	b := original.Clone()
 
 	// Normalise short ID to full ID (no-op if target doesn't exist — just remove any matching ID)
 	normalizedTargetID, _ := r.Reader.NormalizeID(targetID)
@@ -499,10 +515,15 @@ func (r *mutationResolver) RemoveBlockedBy(ctx context.Context, id string, targe
 
 // ReorderNib is the resolver for the reorderNib field.
 func (r *mutationResolver) ReorderNib(ctx context.Context, id string, afterID *string, beforeID *string, first *bool, parentID *string, ifMatch *string) (*nib.Nib, error) {
-	b, err := r.Reader.Get(id)
+	original, err := r.Reader.Get(id)
 	if err != nil {
 		return nil, err
 	}
+	// Clone before mutating — validateAndSetParent/positionAfter/positionBefore and
+	// Writer.Update operate on the clone so a rejected write never leaves the shared
+	// in-memory nib (Reader.Get returns c.nibs[id]) showing a phantom order/parent
+	// change (nibs-twvo).
+	b := original.Clone()
 
 	hasAfter := afterID != nil && *afterID != ""
 	hasBefore := beforeID != nil && *beforeID != ""

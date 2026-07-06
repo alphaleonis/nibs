@@ -757,15 +757,21 @@ func (c *Core) CurrentETag(id string) (string, error) {
 //	---------------------------------  -------  ---------------------------  -------
 //	empty Path                         OPEN     (in-memory ETag(), nil)      no  (not flushed yet)
 //	read err, os.IsNotExist            OPEN     (in-memory ETag(), nil)      no  (not flushed / P2 delete-race)
-//	read err, other (perms, torn I/O)  CLOSED   ("", OnDiskUnparseableError) yes (exists, uncertifiable)
-//	parse err (corrupt/conflict/typo)  CLOSED   ("", OnDiskUnparseableError) yes (present, unparseable)
+//	read err, other (perms, torn I/O)  CLOSED   ("", OnDiskUnparseableError) no  (returned; caller surfaces)
+//	parse err (corrupt/conflict/typo)  CLOSED   ("", OnDiskUnparseableError) no  (returned; caller surfaces)
 //	parsed OK                          --       (canonical b.ETag(), nil)    --
 //
 // The two OPEN branches are intentionally SILENT: "not flushed yet" is the normal
 // freshly-created path, and an externally-deleted file (P2) is an accepted race
-// (resurrection). The two CLOSED branches are always logged and return a distinct
-// non-reconcilable error rather than a sentinel etag a naive reconcile-retry
-// could echo back. Caller must hold c.mu (read or write lock).
+// (resurrection). The two CLOSED branches do NOT log here either: they RETURN a
+// distinct non-reconcilable *OnDiskUnparseableError (no sentinel etag a naive
+// reconcile-retry could echo back), and it is the CALLER's job to surface it —
+// Update propagates it to the client (cmd/update.go → FILE_ERROR) and the
+// bulk-reorder pre-validation wraps it, while the best-effort backfill/activation
+// read paths deliberately swallow it. Logging here as well would double-handle the
+// error and flood stderr on the hot Children read path (orderer.go's
+// backfillOrderKeys re-attempts the Update once per read for a persistently
+// uncertifiable sibling). Caller must hold c.mu (read or write lock).
 func (c *Core) computeStoredETag(storedNib *nib.Nib) (string, error) {
 	if storedNib.Path == "" {
 		return storedNib.ETag(), nil
@@ -783,8 +789,10 @@ func (c *Core) computeStoredETag(storedNib *nib.Nib) (string, error) {
 		// File EXISTS but its bytes cannot be READ (permission-denied, transient
 		// or torn I/O). Fail CLOSED with a non-reconcilable error carrying no etag
 		// token: the current on-disk content cannot be certified, so the overwrite
-		// is refused and no retry-with-Current can satisfy the guard.
-		c.logWarn("cannot read on-disk nib file %s (%v); failing closed to refuse an uncertifiable overwrite", storedNib.Path, err)
+		// is refused and no retry-with-Current can satisfy the guard. We RETURN the
+		// error rather than logging it here — the caller surfaces it where it
+		// matters (see the matrix above); logging too would double-handle it and
+		// flood stderr on the hot Children read path (orderer.go backfillOrderKeys).
 		return "", &OnDiskUnparseableError{ID: storedNib.ID, Path: storedNib.Path, Reason: "unreadable", Err: err}
 	}
 
@@ -794,8 +802,10 @@ func (c *Core) computeStoredETag(storedNib *nib.Nib) (string, error) {
 		// markers, hand-edit YAML typo). Fail CLOSED with a non-reconcilable error
 		// so the divergent/corrupt file cannot be clobbered — not even by a naive
 		// client that retries with a fabricated/raw-bytes etag (the finding #5
-		// single-shot vulnerability).
-		c.logWarn("cannot parse on-disk nib file %s (%v); failing closed with a non-reconcilable error", storedNib.Path, err)
+		// single-shot vulnerability). RETURN the error (do not log it here) — the
+		// caller surfaces it where it matters; logging too would double-handle it
+		// and flood stderr on the hot Children read path (orderer.go
+		// backfillOrderKeys).
 		return "", &OnDiskUnparseableError{ID: storedNib.ID, Path: storedNib.Path, Reason: "unparseable", Err: err}
 	}
 	// The rendered form includes the `# <id>` header, which is derived from the
