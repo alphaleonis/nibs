@@ -122,11 +122,13 @@ func (r *mutationResolver) CreateNib(ctx context.Context, input model.CreateNibI
 	}
 
 	// Single-side: add new nib's ID to each blocking target's blockedBy.
-	// Mutate a clone of the target, never the shared Reader.Get pointer, so a
-	// refused write leaves the in-memory nib untouched (nibs-twvo).
+	// updateTargetClone mutates an owned clone of the target, never the shared
+	// pointer, so a refused write leaves the in-memory nib untouched (nibs-twvo).
+	// Guard existence first so a target that vanished stays a no-op rather than
+	// surfacing GetForUpdate's not-found error.
 	for _, targetID := range blockingTargets {
-		if target, err := r.Reader.Get(targetID); err == nil {
-			if err := r.updateTargetClone(target, func(c *nib.Nib) bool {
+		if _, err := r.Reader.Get(targetID); err == nil {
+			if err := r.updateTargetClone(targetID, func(c *nib.Nib) bool {
 				c.AddBlockedBy(b.ID)
 				return true
 			}); err != nil {
@@ -139,16 +141,19 @@ func (r *mutationResolver) CreateNib(ctx context.Context, input model.CreateNibI
 }
 
 // UpdateNib is the resolver for the updateNib field.
-// Clone-before-mutate: all mutations are applied to a clone of the in-memory nib.
-// The original pointer is only replaced via Writer.Update on success, so any
-// validation or persistence failure leaves the in-memory store untouched.
+// Clone-before-mutate: all mutations are applied to an owned clone of the
+// in-memory nib (obtained via GetForUpdate). The shared store pointer is only
+// replaced via Writer.Update on success, so any validation or persistence
+// failure leaves the in-memory store untouched.
 func (r *mutationResolver) UpdateNib(ctx context.Context, id string, input model.UpdateNibInput) (*nib.Nib, error) {
-	original, err := r.Reader.Get(id)
+	// GetForUpdate returns an owned clone; mutate b freely — the shared store nib
+	// stays pristine until Writer.Update installs b.
+	b, err := r.Reader.GetForUpdate(id)
 	if err != nil {
 		return nil, err
 	}
 
-	// Validate mutually exclusive field pairs (no mutation yet, safe before clone)
+	// Validate mutually exclusive field pairs (no mutation yet)
 	if err := checkMutualExclusion("body and bodyMod", input.Body, input.BodyMod); err != nil {
 		return nil, err
 	}
@@ -158,9 +163,6 @@ func (r *mutationResolver) UpdateNib(ctx context.Context, id string, input model
 	if err := checkMutualExclusion("documents and addDocuments/removeDocuments", input.Documents, input.AddDocuments, input.RemoveDocuments); err != nil {
 		return nil, err
 	}
-
-	// Clone before mutating — all changes go to b, original stays pristine
-	b := original.Clone()
 
 	// Update fields if provided
 	if input.Title != nil {
@@ -359,14 +361,13 @@ func (r *mutationResolver) ArchiveNib(ctx context.Context, id string) (bool, err
 
 // SetParent is the resolver for the setParent field.
 func (r *mutationResolver) SetParent(ctx context.Context, id string, parentID *string, ifMatch *string) (*nib.Nib, error) {
-	original, err := r.Reader.Get(id)
+	// GetForUpdate returns an owned clone — validateAndSetParent and Writer.Update
+	// operate on it, so a rejected write never leaves the shared in-memory nib
+	// showing a phantom parent/order change (nibs-twvo).
+	b, err := r.Reader.GetForUpdate(id)
 	if err != nil {
 		return nil, err
 	}
-	// Clone before mutating — validateAndSetParent and Writer.Update operate on the
-	// clone so a rejected write never leaves the shared in-memory nib (Reader.Get
-	// returns c.nibs[id]) showing a phantom parent/order change (nibs-twvo).
-	b := original.Clone()
 
 	newParent := ""
 	if parentID != nil {
@@ -405,8 +406,7 @@ func (r *mutationResolver) AddBlocking(ctx context.Context, id string, targetID 
 	}
 
 	// Check target exists
-	target, err := r.Reader.Get(normalizedTargetID)
-	if err != nil {
+	if _, err := r.Reader.Get(normalizedTargetID); err != nil {
 		return nil, fmt.Errorf("target nib not found: %s", targetID)
 	}
 
@@ -415,11 +415,11 @@ func (r *mutationResolver) AddBlocking(ctx context.Context, id string, targetID 
 		return nil, fmt.Errorf("would create cycle: %v", cycle)
 	}
 
-	// Single-side: add blocker ID to target's blockedBy. Mutate a clone, never the
-	// shared Reader.Get pointer, so a refused write leaves the in-memory nib
-	// untouched (nibs-twvo). updateTargetClone keys the if-match on the target's
-	// pre-mutation etag, preserving the require_if_match behavior.
-	if err := r.updateTargetClone(target, func(c *nib.Nib) bool {
+	// Single-side: add blocker ID to target's blockedBy. updateTargetClone mutates
+	// an owned clone (fetched via GetForUpdate), never the shared pointer, so a
+	// refused write leaves the in-memory nib untouched (nibs-twvo); it keys the
+	// if-match on the target's pre-mutation etag, preserving require_if_match.
+	if err := r.updateTargetClone(normalizedTargetID, func(c *nib.Nib) bool {
 		c.AddBlockedBy(b.ID)
 		return true
 	}); err != nil {
@@ -440,10 +440,11 @@ func (r *mutationResolver) RemoveBlocking(ctx context.Context, id string, target
 	normalizedTargetID, _ := r.Reader.NormalizeID(targetID)
 	// RemoveBlocking is a no-op for non-existent targets (acceptable behavior)
 
-	// Single-side: remove blocker ID from target's blockedBy. Mutate a clone,
-	// never the shared Reader.Get pointer (nibs-twvo).
-	if target, err := r.Reader.Get(normalizedTargetID); err == nil {
-		if err := r.updateTargetClone(target, func(c *nib.Nib) bool {
+	// Single-side: remove blocker ID from target's blockedBy. Guard existence
+	// first so a missing target stays a no-op; the write goes through an owned
+	// clone (via GetForUpdate), never the shared pointer (nibs-twvo).
+	if _, err := r.Reader.Get(normalizedTargetID); err == nil {
+		if err := r.updateTargetClone(normalizedTargetID, func(c *nib.Nib) bool {
 			return c.RemoveBlockedBy(b.ID)
 		}); err != nil {
 			return nil, err
@@ -456,13 +457,12 @@ func (r *mutationResolver) RemoveBlocking(ctx context.Context, id string, target
 // AddBlockedBy is the resolver for the addBlockedBy field.
 // Single-side storage: only modifies this nib's blockedBy field.
 func (r *mutationResolver) AddBlockedBy(ctx context.Context, id string, targetID string, ifMatch *string) (*nib.Nib, error) {
-	original, err := r.Reader.Get(id)
+	// GetForUpdate returns an owned clone — a rejected Update never leaves the
+	// shared in-memory nib showing a phantom blockedBy (nibs-twvo).
+	b, err := r.Reader.GetForUpdate(id)
 	if err != nil {
 		return nil, err
 	}
-	// Clone before mutating — a rejected Update never leaves the shared in-memory
-	// nib (Reader.Get returns c.nibs[id]) showing a phantom blockedBy (nibs-twvo).
-	b := original.Clone()
 
 	// Normalise short ID to full ID
 	normalizedTargetID, ok := r.Reader.NormalizeID(targetID)
@@ -494,13 +494,12 @@ func (r *mutationResolver) AddBlockedBy(ctx context.Context, id string, targetID
 // RemoveBlockedBy is the resolver for the removeBlockedBy field.
 // Single-side storage: only modifies this nib's blockedBy field.
 func (r *mutationResolver) RemoveBlockedBy(ctx context.Context, id string, targetID string, ifMatch *string) (*nib.Nib, error) {
-	original, err := r.Reader.Get(id)
+	// GetForUpdate returns an owned clone — a rejected Update never leaves the
+	// shared in-memory nib showing a phantom blockedBy (nibs-twvo).
+	b, err := r.Reader.GetForUpdate(id)
 	if err != nil {
 		return nil, err
 	}
-	// Clone before mutating — a rejected Update never leaves the shared in-memory
-	// nib (Reader.Get returns c.nibs[id]) showing a phantom blockedBy (nibs-twvo).
-	b := original.Clone()
 
 	// Normalise short ID to full ID (no-op if target doesn't exist — just remove any matching ID)
 	normalizedTargetID, _ := r.Reader.NormalizeID(targetID)
@@ -515,15 +514,14 @@ func (r *mutationResolver) RemoveBlockedBy(ctx context.Context, id string, targe
 
 // ReorderNib is the resolver for the reorderNib field.
 func (r *mutationResolver) ReorderNib(ctx context.Context, id string, afterID *string, beforeID *string, first *bool, parentID *string, ifMatch *string) (*nib.Nib, error) {
-	original, err := r.Reader.Get(id)
+	// GetForUpdate returns an owned clone — validateAndSetParent/positionAfter/
+	// positionBefore and Writer.Update operate on it, so a rejected write never
+	// leaves the shared in-memory nib showing a phantom order/parent change
+	// (nibs-twvo).
+	b, err := r.Reader.GetForUpdate(id)
 	if err != nil {
 		return nil, err
 	}
-	// Clone before mutating — validateAndSetParent/positionAfter/positionBefore and
-	// Writer.Update operate on the clone so a rejected write never leaves the shared
-	// in-memory nib (Reader.Get returns c.nibs[id]) showing a phantom order/parent
-	// change (nibs-twvo).
-	b := original.Clone()
 
 	hasAfter := afterID != nil && *afterID != ""
 	hasBefore := beforeID != nil && *beforeID != ""

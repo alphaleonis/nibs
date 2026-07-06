@@ -36,6 +36,17 @@ func (s *stubReader) Get(id string) (*nib.Nib, error) {
 	return nil, nib.ErrNotFound
 }
 
+// GetForUpdate mirrors nibcore.Core.GetForUpdate: return an owned Clone of the
+// shared nib (or the not-found error), so mutation sites under test never touch
+// the stub's shared pointers.
+func (s *stubReader) GetForUpdate(id string) (*nib.Nib, error) {
+	b, err := s.Get(id)
+	if err != nil {
+		return nil, err
+	}
+	return b.Clone(), nil
+}
+
 func (s *stubReader) All() []*nib.Nib {
 	return s.allNibs
 }

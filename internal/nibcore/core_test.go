@@ -230,6 +230,62 @@ func TestGetNotFound(t *testing.T) {
 	}
 }
 
+// TestGetForUpdate pins the accessor contract: GetForUpdate hands back an
+// OWNED, independent copy the caller may mutate freely, and mutating it never
+// leaks into the shared store nib that Get returns. This is the safe-by-
+// construction guarantee the mutation sites rely on (nibs-0vjp) — mutate then a
+// failed Update must not corrupt in-memory state.
+func TestGetForUpdate(t *testing.T) {
+	core, _ := setupTestCore(t)
+
+	original := createTestNib(t, core, "abc1", "First", "todo")
+	original.Tags = []string{"keep"}
+	if err := core.Update(original, nil); err != nil {
+		t.Fatalf("Update() error = %v", err)
+	}
+
+	t.Run("returns an independent copy", func(t *testing.T) {
+		owned, err := core.GetForUpdate("abc1")
+		if err != nil {
+			t.Fatalf("GetForUpdate() error = %v", err)
+		}
+
+		shared, err := core.Get("abc1")
+		if err != nil {
+			t.Fatalf("Get() error = %v", err)
+		}
+		if owned == shared {
+			t.Fatal("GetForUpdate returned the SHARED pointer, want an independent copy")
+		}
+
+		// Mutate the owned copy — including a slice field to prove the deep copy.
+		owned.Status = "in-progress"
+		owned.Title = "Mutated"
+		owned.Tags = append(owned.Tags, "leaked")
+
+		// The shared store nib must be untouched by the mutation above.
+		got, err := core.Get("abc1")
+		if err != nil {
+			t.Fatalf("Get() error = %v", err)
+		}
+		if got.Status != "todo" {
+			t.Errorf("shared Status = %q, want %q (mutation of owned copy leaked into the store)", got.Status, "todo")
+		}
+		if got.Title != "First" {
+			t.Errorf("shared Title = %q, want %q", got.Title, "First")
+		}
+		if len(got.Tags) != 1 || got.Tags[0] != "keep" {
+			t.Errorf("shared Tags = %v, want [keep] (slice mutation leaked)", got.Tags)
+		}
+	})
+
+	t.Run("missing id returns ErrNotFound", func(t *testing.T) {
+		if _, err := core.GetForUpdate("xyz"); err != ErrNotFound {
+			t.Errorf("GetForUpdate() error = %v, want ErrNotFound", err)
+		}
+	})
+}
+
 func TestGetShortID(t *testing.T) {
 	// Create a core with a configured prefix
 	tmpDir := t.TempDir()

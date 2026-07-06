@@ -151,11 +151,18 @@ func (o *Orderer) backfillOrderKeys(nibs []*nib.Nib) {
 		etag := b.ETag()
 		lastKey = newKey
 
-		// Mutate a CLONE, never the shared reader pointer (b is c.nibs[id]): a
-		// refused write must not leave the shared in-memory sibling showing a
-		// phantom Order that was never persisted (nibs-twvo, same class the
-		// blocking-side sweep fixed).
-		clone := b.Clone()
+		// Mutate an OWNED clone from GetForUpdate, never the shared reader pointer
+		// (b is c.nibs[id]): a refused write must not leave the shared in-memory
+		// sibling showing a phantom Order that was never persisted (nibs-twvo, same
+		// class the blocking-side sweep fixed).
+		// GetForUpdate fails only not-found: the sibling was deleted between the
+		// snapshot above and here (a concurrent external/`serve` delete). It's gone,
+		// so there is nothing to backfill — quietly skip it (not a write failure, and
+		// the nib no longer exists, so no warning is warranted).
+		clone, err := o.reader.GetForUpdate(b.ID)
+		if err != nil {
+			continue
+		}
 		clone.Order = newKey
 
 		// Best-effort persist: ordering falls back to title sort if this fails.

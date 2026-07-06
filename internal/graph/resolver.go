@@ -51,23 +51,36 @@ func isNilValue(v any) bool {
 	return false
 }
 
-// updateTargetClone persists a mutation to target — a nib obtained from
-// Reader.Get, which returns the SHARED c.nibs[id] pointer — by applying mutate to
-// a CLONE and writing the clone, never the shared pointer. A rejected
-// Writer.Update (genuine on-disk etag divergence, or a concurrent write to the
-// target between its Get and its Update) therefore leaves the shared in-memory
-// nib untouched instead of showing a phantom mutation (nibs-twvo; same corruption
-// class nibs-e9oz fixed for activateParentChain).
+// updateTargetClone is the one blessed target-side write path: it fetches an
+// OWNED clone of the target via Reader.GetForUpdate, applies mutate to that
+// clone, and writes it — the SHARED c.nibs[id] pointer is never mutated. A
+// rejected Writer.Update (genuine on-disk etag divergence, or a concurrent write
+// to the target between its fetch and its Update) therefore leaves the shared
+// in-memory nib untouched instead of showing a phantom mutation (nibs-twvo; same
+// corruption class nibs-e9oz fixed for activateParentChain).
 //
-// The if-match is the target's PRE-mutation ETag, computed from the shared nib
-// before cloning — matching every blocking-side call site's existing optimistic-
-// concurrency convention (these sites key on the target's own current etag, not a
-// caller-supplied if-match). mutate returns false to signal "nothing changed"
-// (e.g. RemoveBlockedBy matched no id), in which case no write is attempted and
-// nil is returned.
-func (r *Resolver) updateTargetClone(target *nib.Nib, mutate func(*nib.Nib) bool) error {
-	ifMatch := target.ETag()
-	clone := target.Clone()
+// Sourcing the clone from GetForUpdate makes the fetch FRESH per call: with a
+// duplicate target id, a second invocation re-reads the now-updated c.nibs[id]
+// (installed by the first Update) rather than reusing a stale pre-mutation
+// pointer, preserving the twvo fix inherently.
+//
+// The if-match is the target's PRE-mutation ETag, computed from the fresh clone
+// before mutate runs — equivalent to the shared nib's current etag since the
+// clone is a faithful copy — matching every blocking-side call site's existing
+// optimistic-concurrency convention (these sites key on the target's own current
+// etag, not a caller-supplied if-match). mutate returns false to signal "nothing
+// changed" (e.g. RemoveBlockedBy matched no id), in which case no write is
+// attempted and nil is returned. A missing target surfaces an id-bearing
+// not-found error, so callers that tolerate missing targets must guard existence
+// before calling.
+func (r *Resolver) updateTargetClone(id string, mutate func(*nib.Nib) bool) error {
+	clone, err := r.Reader.GetForUpdate(id)
+	if err != nil {
+		// GetForUpdate only fails not-found; name the id so the (concurrent-delete)
+		// error is diagnosable rather than a bare ErrNotFound.
+		return fmt.Errorf("target nib not found: %s: %w", id, err)
+	}
+	ifMatch := clone.ETag()
 	if !mutate(clone) {
 		return nil
 	}
@@ -120,13 +133,9 @@ func (r *Resolver) validateAndSetParent(b *nib.Nib, parentID string) error {
 // This ensures no targets are mutated if any validation fails.
 func (r *Resolver) validateAndAddBlocking(b *nib.Nib, targetIDs []string) error {
 	// Phase 1: validate all targets, collecting their normalized IDs (not their
-	// pointers — see Phase 2) alongside the caller's RAW input so Phase-2 errors
-	// echo the same form the caller typed (matching Phase-1 wording below).
-	type validatedTarget struct {
-		raw        string
-		normalized string
-	}
-	targets := make([]validatedTarget, 0, len(targetIDs))
+	// pointers — see Phase 2). updateTargetClone re-fetches each fresh by ID in
+	// Phase 2, so only the resolved ID is retained here.
+	targets := make([]string, 0, len(targetIDs))
 
 	for _, targetID := range targetIDs {
 		normalizedTargetID, ok := r.Reader.NormalizeID(targetID)
@@ -147,24 +156,20 @@ func (r *Resolver) validateAndAddBlocking(b *nib.Nib, targetIDs []string) error 
 			return fmt.Errorf("adding blocking relationship would create cycle: %v", cycle)
 		}
 
-		targets = append(targets, validatedTarget{raw: targetID, normalized: normalizedTargetID})
+		targets = append(targets, normalizedTargetID)
 	}
 
 	// Phase 2: apply all mutations (all targets validated successfully).
-	// Re-fetch each target FRESH via Reader.Get at the point of mutation — never
-	// reuse a Phase-1 pointer. A successful Writer.Update installs the CLONE as
-	// the new c.nibs[id], orphaning any earlier pointer; with a duplicate target
-	// ID the second iteration would otherwise hold a stale pre-mutation pointer,
-	// compute a stale if-match, and spuriously fail with an ETagMismatchError
-	// after target 1 was already persisted (nibs-twvo). updateTargetClone
-	// then mutates a clone, so a genuinely refused write leaves the shared
-	// in-memory nib untouched.
-	for _, t := range targets {
-		target, err := r.Reader.Get(t.normalized)
-		if err != nil {
-			return fmt.Errorf("blocking target nib not found: %s", t.raw)
-		}
-		if err := r.updateTargetClone(target, func(c *nib.Nib) bool {
+	// updateTargetClone re-fetches each target FRESH via Reader.GetForUpdate at
+	// the point of mutation — never reusing a Phase-1 pointer. A successful
+	// Writer.Update installs the CLONE as the new c.nibs[id], orphaning any
+	// earlier pointer; with a duplicate target ID the second iteration would
+	// otherwise hold a stale pre-mutation pointer, compute a stale if-match, and
+	// spuriously fail with an ETagMismatchError after target 1 was already
+	// persisted (nibs-twvo). The fetched clone is what mutate touches, so a
+	// genuinely refused write leaves the shared in-memory nib untouched.
+	for _, targetID := range targets {
+		if err := r.updateTargetClone(targetID, func(c *nib.Nib) bool {
 			c.AddBlockedBy(b.ID)
 			return true
 		}); err != nil {
@@ -179,9 +184,11 @@ func (r *Resolver) validateAndAddBlocking(b *nib.Nib, targetIDs []string) error 
 func (r *Resolver) removeBlockingRelationships(b *nib.Nib, targetIDs []string) error {
 	for _, targetID := range targetIDs {
 		normalizedTargetID, _ := r.Reader.NormalizeID(targetID)
-		if target, err := r.Reader.Get(normalizedTargetID); err == nil {
-			// Mutate a clone, never the shared Reader.Get pointer (nibs-twvo).
-			if err := r.updateTargetClone(target, func(c *nib.Nib) bool {
+		// Guard existence first so a missing target stays a no-op — updateTargetClone
+		// would otherwise surface GetForUpdate's not-found error. The write itself
+		// goes through an owned clone, never the shared pointer (nibs-twvo).
+		if _, err := r.Reader.Get(normalizedTargetID); err == nil {
+			if err := r.updateTargetClone(normalizedTargetID, func(c *nib.Nib) bool {
 				return c.RemoveBlockedBy(b.ID)
 			}); err != nil {
 				return fmt.Errorf("failed to remove blocking from %s: %w", normalizedTargetID, err)
@@ -237,9 +244,9 @@ func (r *Resolver) removeBlockedByRelationships(b *nib.Nib, targetIDs []string) 
 // in-progress, deferred, completed, or scrapped (or has no parent). A deferred
 // parent is parked, so it is left untouched — a child going in-progress does
 // not un-park it.
-// Best-effort: warns on stderr and stops on any error. Mutates a clone before
-// each Update (clone-before-mutate, as UpdateNib does with b := original.Clone())
-// so a refused write never corrupts the shared in-memory nib.
+// Best-effort: warns on stderr and stops on any error. Mutates an owned clone
+// (from GetForUpdate) before each Update — as UpdateNib does — so a refused write
+// never corrupts the shared in-memory nib.
 //
 // Stop-on-first-error is a deliberate atomicity choice (nibs-twvo), NOT laziness.
 // The walk does not skip a refused ancestor to activate the ones above it. The
@@ -261,11 +268,12 @@ func (r *Resolver) activateParentChain(childID, parentID string) {
 			return // already active or resolved, stop
 		}
 		nextParentID := parent.Parent
-		// Reader.Get returns the SHARED in-memory pointer (nibcore.Core.Get hands
-		// back c.nibs[id] directly, not a defensive copy). Compute the if-match
-		// from the parent's current etag, then mutate a CLONE — never the shared
-		// pointer — so a failed Update (genuine on-disk divergence ->
-		// ETagMismatchError) leaves the in-memory nib untouched, rather than
+		// Reader.Get above returns the SHARED in-memory pointer (nibcore.Core.Get
+		// hands back c.nibs[id] directly, not a defensive copy) — read-only, used
+		// only for the status gate and next-parent. Compute the if-match from the
+		// parent's current etag, then mutate an OWNED clone from GetForUpdate —
+		// never the shared pointer — so a failed Update (genuine on-disk divergence
+		// -> ETagMismatchError) leaves the in-memory nib untouched, rather than
 		// corrupting the store to show in-progress while disk was never written.
 		//
 		// Caveat: parent.ETag() can still false-conflict for a reloaded nib whose
@@ -278,7 +286,10 @@ func (r *Resolver) activateParentChain(childID, parentID string) {
 		// reverted lost-update/data-loss regression (see nibs-znt8/nibs-7d3o,
 		// guarded by TestActivateParentChainGenuineDivergenceIsRefused).
 		parentETag := parent.ETag()
-		updated := parent.Clone()
+		updated, err := r.Reader.GetForUpdate(parentID)
+		if err != nil {
+			return
+		}
 		updated.Status = "in-progress"
 		if err := r.Writer.Update(updated, &parentETag); err != nil {
 			fmt.Fprintf(os.Stderr, "warning: could not activate ancestor %s (from %s): %v — chain activation stops at this ancestor; it and any higher todo/draft ancestors stay unactivated until the next child-start re-triggers the walk\n", parentID, childID, err)

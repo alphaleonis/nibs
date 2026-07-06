@@ -8,7 +8,19 @@ import (
 
 // NibReader provides read-only access to the nib store.
 type NibReader interface {
+	// Get returns the SHARED, read-only in-memory nib pointer (nibcore.Core.Get
+	// hands back c.nibs[id] directly, not a defensive copy). Treat the result as
+	// immutable: mutating it corrupts the store, and a subsequent rejected
+	// Writer.Update leaves that phantom mutation visible in memory even though it
+	// was never persisted (nibs-twvo/nibs-e9oz). Any write path must obtain its
+	// working nib via GetForUpdate (or updateTargetClone) instead.
 	Get(id string) (*nib.Nib, error)
+	// GetForUpdate returns an OWNED deep copy (a Clone) of the nib the caller may
+	// freely mutate before handing it to Writer.Update — the store's shared
+	// pointer is never touched, so a refused write cannot corrupt in-memory state.
+	// It returns the same errors as Get (notably ErrNotFound) when the nib is
+	// missing. This is the one blessed accessor for every mutation site.
+	GetForUpdate(id string) (*nib.Nib, error)
 	All() []*nib.Nib
 	Search(query string) ([]*nib.Nib, error)
 	NormalizeID(id string) (string, bool)

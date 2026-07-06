@@ -28,10 +28,14 @@ func (r *mutationResolver) reorderChildrenImpl(parentID string, childIDs []strin
 
 	keys := nib.OrderKeyN(len(ordered))
 	for i, b := range ordered {
-		// Mutate a CLONE, never the shared Reader.Get pointer (nibs-twvo): a
-		// mid-loop Update rejection must not leave the failing item's shared
-		// in-memory nib showing a phantom order that was never persisted.
-		clone := b.Clone()
+		// Mutate an OWNED clone from GetForUpdate, never the shared Reader.Get
+		// pointer (nibs-twvo): a mid-loop Update rejection must not leave the
+		// failing item's shared in-memory nib showing a phantom order that was
+		// never persisted.
+		clone, err := r.Reader.GetForUpdate(b.ID)
+		if err != nil {
+			return nil, err
+		}
 		clone.Order = keys[i]
 		if err := r.Writer.Update(clone, ifMatchPtr(etagByID, b.ID)); err != nil {
 			return nil, err
@@ -111,10 +115,14 @@ func (r *mutationResolver) reorderSiblingsImpl(siblingIDs []string, afterID *str
 	prev := lower
 	for i, b := range block {
 		newKey := nib.OrderBetween(prev, upper)
-		// Mutate a CLONE, never the shared Reader.Get pointer (nibs-twvo): a
-		// mid-loop Update rejection must not leave the failing item's shared
-		// in-memory nib showing a phantom order that was never persisted.
-		clone := b.Clone()
+		// Mutate an OWNED clone from GetForUpdate, never the shared Reader.Get
+		// pointer (nibs-twvo): a mid-loop Update rejection must not leave the
+		// failing item's shared in-memory nib showing a phantom order that was
+		// never persisted.
+		clone, err := r.Reader.GetForUpdate(b.ID)
+		if err != nil {
+			return nil, err
+		}
 		clone.Order = newKey
 		if err := r.Writer.Update(clone, ifMatchPtr(etagByID, b.ID)); err != nil {
 			return nil, err

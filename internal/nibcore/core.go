@@ -615,6 +615,19 @@ func (c *Core) Get(id string) (*nib.Nib, error) {
 	return nil, ErrNotFound
 }
 
+// GetForUpdate returns a deep copy (Clone) of the nib the caller OWNS and may
+// freely mutate before handing it to Update. Unlike Get — which returns the
+// SHARED c.nibs[id] pointer — mutating the returned nib never touches in-memory
+// store state, so a rejected Update cannot leave a phantom mutation behind.
+// Returns the same errors as Get (notably ErrNotFound) when the nib is missing.
+func (c *Core) GetForUpdate(id string) (*nib.Nib, error) {
+	b, err := c.Get(id)
+	if err != nil {
+		return nil, err
+	}
+	return b.Clone(), nil
+}
+
 // NormalizeID resolves a potentially short ID to its full form.
 // If a prefix is configured and the query doesn't include it, the prefix is automatically prepended.
 // Returns the full ID and true if found, or the original ID and false if not found.
