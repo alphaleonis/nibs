@@ -5,6 +5,7 @@
   import type { NibFilter, ViewLevel, ColumnKey, RowDensity } from "../types";
   import type { Preferences } from "../preferences.svelte";
   import { buildTableData } from "../tableData";
+  import { isBucketId, bucketIdForItem } from "../tree";
   import { prepareFilter, isDragAllowed } from "../filter";
   import { resolveFilter, resolveViewLevel, resolveVisibleColumns, resolveColumnWidths } from "../resolvePrefs";
   import TreeTableRow from "./TreeTableRow.svelte";
@@ -58,11 +59,7 @@
   let resolvedColumnWidths = $derived(resolveColumnWidths(prefs, columnWidths));
 
   let dragAllowed = $derived(isDragAllowed(resolvedFilter));
-  let hideParent = $derived(resolvedViewLevel === "milestones");
-  let showColumn = $derived((key: ColumnKey) => {
-    if (key === "parent") return !hideParent && resolvedVisibleColumns.includes("parent");
-    return resolvedVisibleColumns.includes(key);
-  });
+  let showColumn = $derived((key: ColumnKey) => resolvedVisibleColumns.includes(key));
 
   // Explicit table width = actions column (32px) + sum of visible column widths.
   // Required for table-layout: fixed to enforce column widths regardless of content.
@@ -185,10 +182,15 @@
         next.delete(current.parentId);
         current = nibMap.get(current.parentId);
       }
+      // The target may sit inside a synthetic "No X" bucket, which is never any
+      // real nib's parentId — so the chain walk above cannot un-collapse it.
+      // Un-collapse the enclosing bucket for the current lens too.
+      const bucketId = bucketIdForItem(nibMap, nibId, resolvedViewLevel);
+      if (bucketId) next.delete(bucketId);
       // If expansion changes nothing yet the nib is still not visible, it is in
-      // the dataset but excluded from the visible rows — by an active client
-      // filter OR the current view level (e.g. viewLevel='milestones' drops a
-      // top-level epic via buildViewTree), regardless of collapse state.
+      // the dataset but excluded from the visible rows by an active client
+      // filter, regardless of collapse state. (Grouping lenses are lossless —
+      // buildViewTree never drops a work item — so the lens alone cannot hide it.)
       // Ancestor-expansion can never reveal it, so clear and bail — otherwise
       // reassigning `collapsedIds` to a new Set every pass would loop forever
       // (effect_update_depth_exceeded).
@@ -381,7 +383,7 @@
     if (!nibId) return;
 
     // Only draggable rows can initiate drag
-    if (nibId === "__unparented__" || !dragAllowed) return;
+    if (isBucketId(nibId) || !dragAllowed) return;
 
     treeDrag.onRowPointerDown(nibId, e);
   }
@@ -478,9 +480,8 @@
           dimmed={row.dimmed}
           collapsed={collapsedIds.has(row.nib.id)}
           parentNib={row.parentNib}
-          {hideParent}
           visibleColumns={resolvedVisibleColumns}
-          draggable={row.nib.id !== "__unparented__" && dragAllowed}
+          draggable={!isBucketId(row.nib.id) && dragAllowed}
           highlighted={changeTracker.isHighlighted(row.nib.id)}
           fading={changeTracker.isFading(row.nib.id)}
         />

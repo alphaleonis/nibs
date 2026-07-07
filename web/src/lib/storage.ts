@@ -9,7 +9,7 @@ const STORAGE_KEY = "nibs-filter-preferences";
 
 const DEFAULTS: FilterPreferences = {
   filter: {},
-  viewLevel: "milestones",
+  viewLevel: "none",
 };
 
 function parseColumnVisibility(

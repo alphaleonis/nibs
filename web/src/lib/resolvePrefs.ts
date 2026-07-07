@@ -7,7 +7,7 @@ export function resolveFilter(prefs: Preferences | undefined, filter: NibFilter 
 }
 
 export function resolveViewLevel(prefs: Preferences | undefined, viewLevel: ViewLevel | undefined): ViewLevel {
-  return prefs?.viewLevel ?? viewLevel ?? "milestones";
+  return prefs?.viewLevel ?? viewLevel ?? "none";
 }
 
 export function resolveVisibleColumns(prefs: Preferences | undefined, visibleColumns: ColumnKey[] | undefined): ColumnKey[] {

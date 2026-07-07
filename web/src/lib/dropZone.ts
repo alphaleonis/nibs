@@ -1,4 +1,5 @@
 import { getValidChildTypes, isLeafType } from "./typeHierarchy";
+import { isBucketId } from "./tree";
 import type { RowData } from "./tableData";
 import type { DropZone } from "./drag.svelte";
 
@@ -33,6 +34,12 @@ export function isValidDropTarget(
   draggedIds: string[],
   descendantIds: Set<string>,
 ): boolean {
+  // Synthetic "No X" bucket rows are display-only containers, not real nibs.
+  // Any zone dropping onto one would issue reorderNib/reparent against a
+  // synthetic id, which the backend rejects ("sibling nib not found"). Reject
+  // all zones so the bucket is never a valid drop target.
+  if (isBucketId(targetNib.id)) return false;
+
   // Can't drop on self
   if (draggedIds.includes(targetNib.id)) return false;
 

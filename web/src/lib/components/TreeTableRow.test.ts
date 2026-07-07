@@ -358,9 +358,9 @@ describe("TreeTableRow", () => {
     expect(toggle.querySelector("svg")).toBeInTheDocument();
   });
 
-  it("renders empty ID cell for virtual __unparented__ node", () => {
+  it("renders empty ID cell for a synthetic bucket node", () => {
     const { container } = renderRow({
-      nib: makeTreeTableNib({ id: "__unparented__", title: "Unparented", type: "", status: "" }),
+      nib: makeTreeTableNib({ id: "__no_epic__", title: "No epic (2)", type: "", status: "" }),
       depth: 0,
       hasChildren: true,
       dimmed: false,
@@ -454,7 +454,6 @@ describe("TreeTableRow", () => {
       hasChildren: false,
       dimmed: false,
       parentNib,
-      hideParent: false,
       visibleColumns,
     });
 

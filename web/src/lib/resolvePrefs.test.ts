@@ -37,16 +37,16 @@ describe("resolveFilter", () => {
 
 describe("resolveViewLevel", () => {
   it("returns prefs.viewLevel when prefs is defined", () => {
-    const prefs = makePrefs({ viewLevel: "backlog" as ViewLevel });
-    expect(resolveViewLevel(prefs, "milestones")).toBe("backlog");
+    const prefs = makePrefs({ viewLevel: "features" as ViewLevel });
+    expect(resolveViewLevel(prefs, "milestones")).toBe("features");
   });
 
   it("returns viewLevel prop when prefs is undefined", () => {
     expect(resolveViewLevel(undefined, "epics")).toBe("epics");
   });
 
-  it("returns 'milestones' when both are undefined", () => {
-    expect(resolveViewLevel(undefined, undefined)).toBe("milestones");
+  it("returns 'none' when both are undefined", () => {
+    expect(resolveViewLevel(undefined, undefined)).toBe("none");
   });
 });
 

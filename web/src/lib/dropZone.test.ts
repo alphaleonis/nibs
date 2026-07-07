@@ -129,6 +129,13 @@ describe("isValidDropTarget", () => {
     expect(isValidDropTarget(["task"], target, "before", ["nib-001"], new Set())).toBe(true);
     expect(isValidDropTarget(["task"], target, "after", ["nib-001"], new Set())).toBe(true);
   });
+
+  it("synthetic bucket rows are never valid drop targets (any zone)", () => {
+    const bucket = { id: "__no_epic__", type: "", parentId: null };
+    expect(isValidDropTarget(["task"], bucket, "before", [], new Set())).toBe(false);
+    expect(isValidDropTarget(["task"], bucket, "after", [], new Set())).toBe(false);
+    expect(isValidDropTarget(["task"], bucket, "reparent", [], new Set())).toBe(false);
+  });
 });
 
 describe("collectDescendantIds", () => {

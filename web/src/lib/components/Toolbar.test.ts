@@ -32,42 +32,49 @@ describe("Toolbar", () => {
 
   it("renders view selector button showing current view label", () => {
     render(Toolbar, { ...defaultToolbarProps, viewLevel: "milestones" });
-    expect(screen.getByTitle("Select view")).toHaveTextContent("Milestones");
+    expect(screen.getByTitle("Group by")).toHaveTextContent("Milestones");
   });
 
   it("shows 'Epics' label when viewLevel is epics", () => {
     render(Toolbar, { ...defaultToolbarProps, viewLevel: "epics" });
-    expect(screen.getByTitle("Select view")).toHaveTextContent("Epics");
+    expect(screen.getByTitle("Group by")).toHaveTextContent("Epics");
   });
 
-  it("shows 'Backlog Items' label when viewLevel is backlog", () => {
-    render(Toolbar, { ...defaultToolbarProps, viewLevel: "backlog" });
-    expect(screen.getByTitle("Select view")).toHaveTextContent("Backlog Items");
+  it("shows 'Features & Bugs' label when viewLevel is features", () => {
+    render(Toolbar, { ...defaultToolbarProps, viewLevel: "features" });
+    expect(screen.getByTitle("Group by")).toHaveTextContent("Features & Bugs");
+  });
+
+  it("shows 'None' label when viewLevel is none", () => {
+    render(Toolbar, { ...defaultToolbarProps, viewLevel: "none" });
+    expect(screen.getByTitle("Group by")).toHaveTextContent("None");
   });
 
   it("view selector button is enabled (not disabled)", () => {
     render(Toolbar, { ...defaultToolbarProps });
-    expect(screen.getByTitle("Select view")).not.toBeDisabled();
+    expect(screen.getByTitle("Group by")).not.toBeDisabled();
   });
 
-  it("opens dropdown with three view options when view selector is clicked", async () => {
+  it("opens dropdown with all four grouping lenses when the control is clicked", async () => {
     render(Toolbar, { ...defaultToolbarProps });
 
-    await user.click(screen.getByTitle("Select view"));
+    await user.click(screen.getByTitle("Group by"));
 
-    // All three view levels should appear as radio items
+    // All four lenses should appear as radio items
     const radioItems = screen.getAllByRole("menuitemradio");
-    expect(radioItems).toHaveLength(3);
+    expect(radioItems).toHaveLength(4);
+    expect(screen.getByRole("menuitemradio", { name: /None/i })).toBeInTheDocument();
     expect(screen.getByRole("menuitemradio", { name: /Milestones/i })).toBeInTheDocument();
     expect(screen.getByRole("menuitemradio", { name: /Epics/i })).toBeInTheDocument();
-    expect(screen.getByRole("menuitemradio", { name: /Backlog Items/i })).toBeInTheDocument();
+    expect(screen.getByRole("menuitemradio", { name: /Features & Bugs/i })).toBeInTheDocument();
+    expect(screen.queryByRole("menuitemradio", { name: /Backlog Items/i })).not.toBeInTheDocument();
   });
 
   it("calls onviewlevelchange and closes dropdown when an option is clicked", async () => {
     const onviewlevelchange = vi.fn();
     render(Toolbar, { ...defaultToolbarProps, viewLevel: "milestones", onviewlevelchange });
 
-    await user.click(screen.getByTitle("Select view"));
+    await user.click(screen.getByTitle("Group by"));
     await user.click(screen.getByRole("menuitemradio", { name: /Epics/i }));
 
     expect(onviewlevelchange).toHaveBeenCalledWith("epics");
@@ -76,7 +83,7 @@ describe("Toolbar", () => {
   it("closes dropdown on second click of view selector button", async () => {
     render(Toolbar, { ...defaultToolbarProps });
 
-    const viewBtn = screen.getByTitle("Select view");
+    const viewBtn = screen.getByTitle("Group by");
     await user.click(viewBtn);
     expect(screen.getAllByRole("menuitemradio").length).toBeGreaterThan(0);
 
@@ -284,15 +291,14 @@ describe("Toolbar", () => {
     expect(screen.queryAllByRole("menuitemcheckbox")).toHaveLength(0);
   });
 
-  it("Parent column is not shown in Columns checklist when viewLevel is milestones", async () => {
+  it("Parent column is shown in Columns checklist for milestones (parent is now a normal column)", async () => {
     render(Toolbar, { ...defaultToolbarProps, viewLevel: "milestones" as ViewLevel });
 
     await user.click(screen.getByTitle("Columns"));
 
     const items = screen.getAllByRole("menuitemcheckbox");
     const labels = items.map(item => item.textContent?.trim());
-    expect(labels).not.toContain("Parent");
-    // But other columns should be there
+    expect(labels).toContain("Parent");
     expect(labels).toContain("ID");
     expect(labels).toContain("Title");
   });

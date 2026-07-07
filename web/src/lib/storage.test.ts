@@ -25,19 +25,19 @@ describe("storage", () => {
 
   it("returns defaults when localStorage is empty", () => {
     const loaded = loadPreferences();
-    expect(loaded).toEqual({ filter: {}, viewLevel: "milestones" });
+    expect(loaded).toEqual({ filter: {}, viewLevel: "none" });
   });
 
   it("returns defaults when localStorage has corrupt JSON", () => {
     store["nibs-filter-preferences"] = "not valid json{{{";
     const loaded = loadPreferences();
-    expect(loaded).toEqual({ filter: {}, viewLevel: "milestones" });
+    expect(loaded).toEqual({ filter: {}, viewLevel: "none" });
   });
 
   it("returns defaults when localStorage has non-object value", () => {
     store["nibs-filter-preferences"] = '"just a string"';
     const loaded = loadPreferences();
-    expect(loaded).toEqual({ filter: {}, viewLevel: "milestones" });
+    expect(loaded).toEqual({ filter: {}, viewLevel: "none" });
   });
 
   it("gracefully falls back to default when old viewMode value is stored", () => {
@@ -46,7 +46,7 @@ describe("storage", () => {
       viewMode: "hierarchy",
     });
     const loaded = loadPreferences();
-    expect(loaded).toEqual({ filter: { search: "old" }, viewLevel: "milestones" });
+    expect(loaded).toEqual({ filter: { search: "old" }, viewLevel: "none" });
   });
 
   it("gracefully handles unknown viewLevel value", () => {
@@ -55,7 +55,16 @@ describe("storage", () => {
       viewLevel: "unknown-value",
     });
     const loaded = loadPreferences();
-    expect(loaded).toEqual({ filter: {}, viewLevel: "milestones" });
+    expect(loaded).toEqual({ filter: {}, viewLevel: "none" });
+  });
+
+  it("accepts the renamed 'features' viewLevel", () => {
+    store["nibs-filter-preferences"] = JSON.stringify({
+      filter: {},
+      viewLevel: "features",
+    });
+    const loaded = loadPreferences();
+    expect(loaded.viewLevel).toBe("features");
   });
 
   it("enforces alwaysVisible columns in stored columnVisibility", () => {

@@ -5,7 +5,7 @@ import type { NibFilter, ViewLevel, ColumnKey, RowDensity } from "./types";
 
 export class Preferences {
   filter: NibFilter = $state({});
-  viewLevel: ViewLevel = $state("milestones");
+  viewLevel: ViewLevel = $state("none");
   columnVisibility: Partial<Record<ViewLevel, ColumnKey[]>> = $state({});
   columnWidths: Partial<Record<ViewLevel, Partial<Record<ColumnKey, number>>>> = $state({});
   #detailPanelWidth: number | undefined = $state(undefined);

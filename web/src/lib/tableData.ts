@@ -1,5 +1,5 @@
 import type { TreeTableNib, NibFilter, ViewLevel, TreeNode } from "./types";
-import { buildViewTree } from "./tree";
+import { buildViewTree, isBucketId } from "./tree";
 import { hasClientFilters, matchesFilter } from "./filter";
 
 export interface RowData {
@@ -74,6 +74,31 @@ export function buildTableData(
 
   // Stage 5: Build view tree
   const tree = buildViewTree<TreeTableNib>(allNibs, viewLevel);
+
+  // Stage 5a: Synthetic "No X" bucket nodes are not real nibs, so they never
+  // appear in the real-parentId-derived `parentIds` or `visibleIds` sets. Fold
+  // them in from the emitted tree so consumers treat them like real containers:
+  //   - collapse (parentIds): a bucket with children is collapsible.
+  //   - filter visibility (visibleIds): a bucket whose subtree contains a visible
+  //     descendant must itself be visible, or flatten() would skip it AND its
+  //     children — silently dropping filter-matching loose items (the lens is
+  //     lossless, so a client filter must not hide them).
+  (function foldBuckets(nodes: TreeNode<TreeTableNib>[]): boolean {
+    let anyVisible = false;
+    for (const node of nodes) {
+      const childVisible = foldBuckets(node.children);
+      const isBucket = isBucketId(node.nib.id);
+      if (isBucket && node.children.length > 0) {
+        parentIds.add(node.nib.id);
+      }
+      const selfVisible = (visibleIds ? visibleIds.has(node.nib.id) : true) || childVisible;
+      if (visibleIds && isBucket && selfVisible) {
+        visibleIds.add(node.nib.id);
+      }
+      anyVisible = anyVisible || selfVisible;
+    }
+    return anyVisible;
+  })(tree);
 
   // Stage 6: Flatten tree with collapse gating, visibility filtering, dimming, parent resolution
   const rows: RowData[] = [];

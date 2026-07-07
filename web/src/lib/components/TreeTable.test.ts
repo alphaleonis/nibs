@@ -288,7 +288,7 @@ describe("TreeTable", () => {
     expect(reexecute).toHaveBeenCalledTimes(1);
   });
 
-  it("milestones view shows only milestone subtrees", () => {
+  it("milestones view: milestone headers keep subtrees; loose work lands in a 'No milestone' bucket (lossless)", () => {
     const nibs: TreeTableNib[] = [
       makeTreeTableNib({ id: "nibs-001", title: "Milestone A", type: "milestone" }),
       makeTreeTableNib({ id: "nibs-002", title: "Epic under A", type: "epic", parentId: "nibs-001" }),
@@ -302,14 +302,19 @@ describe("TreeTable", () => {
     const { container } = renderTreeTable({ filter: {}, viewLevel: "milestones" as ViewLevel });
 
     const rows = container.querySelectorAll("[data-testid='tree-row']");
-    // Milestone A and its child Epic, but not the standalone task
-    expect(rows).toHaveLength(2);
-    expect(screen.getByText("Milestone A")).toBeInTheDocument();
-    expect(screen.getByText("Epic under A")).toBeInTheDocument();
-    expect(screen.queryByText("Standalone task")).not.toBeInTheDocument();
+    // Milestone A + Epic + "No milestone" bucket + Standalone task
+    expect(rows).toHaveLength(4);
+
+    // Scope to row title cells ("Milestone A" also appears in the Epic's parent cell now)
+    const titles = Array.from(container.querySelectorAll("[data-testid='title-text']")).map(e => e.textContent);
+    expect(titles).toContain("Milestone A");
+    expect(titles).toContain("Epic under A");
+    // Nothing is dropped: the standalone task now shows under a "No milestone" bucket
+    expect(titles).toContain("No milestone (1)");
+    expect(titles).toContain("Standalone task");
   });
 
-  it("milestones view hides the Parent column", () => {
+  it("milestones view shows the Parent column (parent is a normal column in every lens)", () => {
     const nibs: TreeTableNib[] = [
       makeTreeTableNib({ id: "nibs-001", title: "Milestone A", type: "milestone" }),
       makeTreeTableNib({ id: "nibs-002", title: "Task", type: "task", parentId: "nibs-001" }),
@@ -323,11 +328,11 @@ describe("TreeTable", () => {
 
     const thead = container.querySelector("thead")!;
     const headers = Array.from(thead.querySelectorAll("th")).map(th => th.textContent?.trim());
-    expect(headers).not.toContain("Parent");
+    expect(headers).toContain("Parent");
 
-    // Row parent cells should not be present
+    // The child task's parent cell renders its milestone parent
     const parentCells = container.querySelectorAll("[data-testid='nib-parent']");
-    expect(parentCells).toHaveLength(0);
+    expect(parentCells.length).toBeGreaterThan(0);
   });
 
   it("epics view shows Parent column", () => {
@@ -551,7 +556,7 @@ describe("TreeTable", () => {
     expect(container.querySelector("[data-testid='nib-state']")).toBeInTheDocument();
   });
 
-  it("parent column hidden by both hideParent and visibleColumns exclusion", () => {
+  it("parent column hidden by visibleColumns exclusion", () => {
     const nibs: TreeTableNib[] = [
       makeTreeTableNib({ id: "nibs-001", title: "Epic A", type: "epic" }),
       makeTreeTableNib({ id: "nibs-002", title: "Task", type: "task", parentId: "nibs-001" }),

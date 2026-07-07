@@ -6,6 +6,7 @@
   import StatusDot from "./StatusDot.svelte";
   import TypeIcon from "./TypeIcon.svelte";
   import { canHaveChildren } from "../typeHierarchy";
+  import { isBucketId } from "../tree";
   import { useSelection, useDrag } from "../contexts";
 
   import type { DropZone } from "../drag.svelte";
@@ -17,7 +18,6 @@
     dimmed?: boolean;
     collapsed?: boolean;
     parentNib?: TreeTableNib | null;
-    hideParent?: boolean;
     visibleColumns?: ColumnKey[];
     draggable?: boolean;
     highlighted?: boolean;
@@ -31,7 +31,6 @@
     dimmed = false,
     collapsed = false,
     parentNib = null,
-    hideParent = false,
     visibleColumns = [...ALL_COLUMN_KEYS],
     draggable = false,
     highlighted = false,
@@ -98,11 +97,11 @@
 
   <!-- ID column -->
   {#if visibleColumns.includes("id")}
-    <td data-testid="nib-id" class="text-body px-3 cell-truncate row-cell" style="color: var(--muted-foreground);">{nib.id === "__unparented__" ? "" : shortId}</td>
+    <td data-testid="nib-id" class="text-body px-3 cell-truncate row-cell" style="color: var(--muted-foreground);">{isBucketId(nib.id) ? "" : shortId}</td>
   {/if}
 
   <!-- Parent column -->
-  {#if !hideParent && visibleColumns.includes("parent")}
+  {#if visibleColumns.includes("parent")}
     <td data-testid="nib-parent" class="text-body px-3 cell-truncate row-cell" style="color: var(--text-secondary);" title={parentNib ? parentNib.id : undefined}>
       {#if parentNib}
         <TypeIcon type={parentNib.type} size={14} />

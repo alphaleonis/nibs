@@ -11,6 +11,7 @@
     Columns3,
     Eye,
     EyeOff,
+    ListTree,
   } from "@lucide/svelte";
   import { typeIcons } from "../icons";
   import { priorityIndicators } from "../badges";
@@ -60,9 +61,10 @@
   }
 
   const VIEW_LEVEL_ICON_INFO: Record<ViewLevel, TypeIconInfo> = {
+    none: { icon: ListTree, color: "var(--muted-foreground)" },
     milestones: typeIcons.milestone,
     epics: typeIcons.epic,
-    backlog: typeIcons.feature,
+    features: typeIcons.feature,
   };
 
   // Resolve values: prefs takes precedence over individual props
@@ -77,15 +79,14 @@
   let columnsOpen = $state(false);
   let viewLevelIconInfo = $derived(VIEW_LEVEL_ICON_INFO[resolvedViewLevel]);
 
-  // Filter columns shown in the checklist: hide "parent" for milestones view
-  let columnOptions = $derived(
-    DEFAULT_COLUMNS.filter(col => !(col.key === "parent" && resolvedViewLevel === "milestones"))
-  );
+  // Parent is a normal toggleable column in every lens now.
+  let columnOptions = $derived(DEFAULT_COLUMNS);
 
   const VIEW_LEVEL_LABELS: Record<ViewLevel, string> = {
+    none: "None",
     milestones: "Milestones",
     epics: "Epics",
-    backlog: "Backlog Items",
+    features: "Features & Bugs",
   };
 
   function emitFilter(updated: NibFilter) {
@@ -317,7 +318,7 @@
     <!-- View selector -->
     <DropdownMenu.Root bind:open={viewLevelOpen}>
       <DropdownMenu.Trigger
-        title="Select view"
+        title="Group by"
         class={buttonVariants({ variant: "outline", size: "default" })}
       >
         <ViewLevelIcon size={14} style="color: {viewLevelIconInfo.color};" />

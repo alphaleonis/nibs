@@ -454,16 +454,16 @@ describe("App", () => {
     expect(paneGroup).toHaveAttribute("data-direction", "horizontal");
   });
 
-  it("renders toolbar icon buttons including view selector", () => {
+  it("renders toolbar icon buttons including the group-by control", () => {
     render(App);
 
     expect(screen.getByTitle("New item")).toBeInTheDocument();
-    expect(screen.getByTitle("Select view")).toBeInTheDocument();
+    expect(screen.getByTitle("Group by")).toBeInTheDocument();
     expect(screen.getByTitle("Settings")).toBeInTheDocument();
     expect(screen.getByTitle("Columns")).toBeInTheDocument();
 
-    // View selector should show "Milestones" (default viewLevel)
-    expect(screen.getByTitle("Select view")).toHaveTextContent("Milestones");
+    // Group-by control should show "None" (default lens)
+    expect(screen.getByTitle("Group by")).toHaveTextContent("None");
   });
 
   it("TreeTable DOM element persists when panel opens", async () => {

@@ -32,7 +32,7 @@ describe("Preferences", () => {
   it("uses defaults when localStorage is empty", () => {
     const prefs = new Preferences();
     expect(prefs.filter).toEqual({});
-    expect(prefs.viewLevel).toBe("milestones");
+    expect(prefs.viewLevel).toBe("none");
     expect(prefs.columnVisibility).toEqual({});
     expect(prefs.columnWidths).toEqual({});
   });
@@ -91,8 +91,8 @@ describe("Preferences", () => {
 
     prefs.setColumnWidth("id", 250);
 
-    // Should update the underlying columnWidths for the current viewLevel
-    expect(prefs.columnWidths.milestones?.id).toBe(250);
+    // Should update the underlying columnWidths for the current viewLevel (default "none")
+    expect(prefs.columnWidths.none?.id).toBe(250);
     // Should NOT have saved to localStorage
     expect(mockStorage.setItem).not.toHaveBeenCalled();
   });
@@ -106,7 +106,7 @@ describe("Preferences", () => {
 
     expect(mockStorage.setItem).toHaveBeenCalledTimes(1);
     const stored = JSON.parse(store["nibs-filter-preferences"]);
-    expect(stored.columnWidths.milestones.title).toBe(500);
+    expect(stored.columnWidths.none.title).toBe(500);
   });
 
   it("detailPanelWidth defaults to DEFAULT_DETAIL_PANEL_WIDTH when nothing persisted", () => {

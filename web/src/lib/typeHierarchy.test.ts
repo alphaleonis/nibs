@@ -1,5 +1,24 @@
 import { describe, it, expect } from "vitest";
-import { getValidChildTypes, isLeafType, canHaveChildren, VALID_CHILD_TYPES } from "./typeHierarchy";
+import { getValidChildTypes, isLeafType, canHaveChildren, VALID_CHILD_TYPES, typeRank } from "./typeHierarchy";
+
+describe("typeRank", () => {
+  it("orders container types above leaf types", () => {
+    expect(typeRank("milestone")).toBe(3);
+    expect(typeRank("epic")).toBe(2);
+    expect(typeRank("feature")).toBe(1);
+    expect(typeRank("bug")).toBe(1);
+    expect(typeRank("task")).toBe(0);
+  });
+
+  it("ranks research at the leaf tier (0)", () => {
+    expect(typeRank("research")).toBe(0);
+  });
+
+  it("treats unknown and empty types as leaf tier (0)", () => {
+    expect(typeRank("unknown")).toBe(0);
+    expect(typeRank("")).toBe(0);
+  });
+});
 
 describe("getValidChildTypes", () => {
   it("milestone can only have epic children", () => {

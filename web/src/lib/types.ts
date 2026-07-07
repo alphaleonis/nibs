@@ -48,7 +48,7 @@ export interface TreeNode<T extends TreeNib = TreeNib> {
   depth: number;
 }
 
-export const VIEW_LEVELS = ["milestones", "epics", "backlog"] as const;
+export const VIEW_LEVELS = ["none", "milestones", "epics", "features"] as const;
 export type ViewLevel = (typeof VIEW_LEVELS)[number];
 
 export const ALL_COLUMN_KEYS = ["id", "parent", "type", "title", "state", "effort", "tags"] as const;

@@ -1,6 +1,7 @@
 import { describe, it, expect } from "vitest";
-import { buildTree, buildViewTree } from "./tree";
-import type { TreeNib, TreeTableNib } from "./types";
+import { buildTree, buildViewTree, isBucketId, bucketIdForItem } from "./tree";
+import { typeRank } from "./typeHierarchy";
+import type { TreeNib, TreeTableNib, TreeNode, ViewLevel } from "./types";
 
 function makeTreeNib(overrides: Partial<TreeNib> = {}): TreeNib {
   return {
@@ -25,6 +26,50 @@ function makeTreeTableNib(overrides: Partial<TreeTableNib> = {}): TreeTableNib {
     ...overrides,
   };
 }
+
+/** Collect all nib ids appearing anywhere in a forest (depth-first). */
+function collectIds<T extends TreeNib>(nodes: TreeNode<T>[]): string[] {
+  const ids: string[] = [];
+  for (const node of nodes) {
+    ids.push(node.nib.id);
+    ids.push(...collectIds(node.children));
+  }
+  return ids;
+}
+
+/**
+ * A deliberately messy hierarchy: every type present at root and mis-nested
+ * (tier-skipping and orphaned), plus a nib whose parentId points to a missing
+ * nib. No hierarchy inversions (a container is never nested under a lower tier),
+ * so the completeness invariant below is well-defined.
+ */
+const MESSY_FIXTURE: TreeNib[] = [
+  makeTreeNib({ id: "m1", type: "milestone" }),
+  makeTreeNib({ id: "e1", type: "epic", parentId: "m1" }),
+  makeTreeNib({ id: "f1", type: "feature", parentId: "e1" }),
+  makeTreeNib({ id: "b1", type: "bug", parentId: "f1" }),
+  makeTreeNib({ id: "t1", type: "task", parentId: "b1" }),
+  makeTreeNib({ id: "r1", type: "research", parentId: "f1" }),
+  makeTreeNib({ id: "r3", type: "research", parentId: "e1" }),
+  makeTreeNib({ id: "b2", type: "bug", parentId: "m1" }), // bug directly under milestone (tier skip)
+  makeTreeNib({ id: "m2", type: "milestone" }),            // empty milestone
+  makeTreeNib({ id: "e2", type: "epic" }),                 // orphan epic at root
+  makeTreeNib({ id: "t2", type: "task", parentId: "e2" }), // task directly under epic
+  makeTreeNib({ id: "f2", type: "feature" }),              // orphan feature at root
+  makeTreeNib({ id: "t3", type: "task", parentId: "f2" }),
+  makeTreeNib({ id: "t4", type: "task" }),                 // orphan task at root
+  makeTreeNib({ id: "r2", type: "research" }),             // orphan research at root
+  makeTreeNib({ id: "t5", type: "task", parentId: "missing-parent-xyz" }), // dangling parent
+];
+
+// Expected grouping-tier ranks, derived from the single source of truth
+// (typeRank) rather than frozen literals — so a future TYPE_RANK change that
+// desyncs the lens boundaries would fail these tests instead of passing silently.
+const GROUPING_LENS_RANKS: Record<Exclude<ViewLevel, "none">, number> = {
+  milestones: typeRank("milestone"),
+  epics: typeRank("epic"),
+  features: typeRank("feature"),
+};
 
 describe("buildTree", () => {
   it("returns empty array for empty input", () => {
@@ -138,42 +183,71 @@ describe("buildTree", () => {
 });
 
 describe("buildViewTree", () => {
-  describe("milestones view", () => {
-    it("returns empty array when no milestones exist", () => {
+  describe("none lens", () => {
+    it("returns the full tree unchanged (nothing hidden, depths preserved)", () => {
       const nibs: TreeNib[] = [
-        makeTreeNib({ id: "nibs-001", title: "Standalone task", type: "task" }),
-        makeTreeNib({ id: "nibs-002", title: "A bug", type: "bug" }),
+        makeTreeNib({ id: "nibs-001", title: "Milestone", type: "milestone" }),
+        makeTreeNib({ id: "nibs-002", title: "Epic", type: "epic", parentId: "nibs-001" }),
+        makeTreeNib({ id: "nibs-003", title: "Feature", type: "feature", parentId: "nibs-002" }),
+        makeTreeNib({ id: "nibs-004", title: "Task", type: "task", parentId: "nibs-003" }),
+        makeTreeNib({ id: "nibs-005", title: "Standalone task", type: "task" }),
       ];
 
-      const result = buildViewTree(nibs, "milestones");
-      expect(result).toHaveLength(0);
-    });
+      const result = buildViewTree(nibs, "none");
 
-    it("promotes milestones to roots with their full subtrees", () => {
+      // Two roots: the milestone chain and the standalone task
+      expect(result).toHaveLength(2);
+      expect(result[0].nib.id).toBe("nibs-001");
+      expect(result[0].depth).toBe(0);
+
+      const epic = result[0].children[0];
+      expect(epic.nib.id).toBe("nibs-002");
+      expect(epic.depth).toBe(1);
+      const feature = epic.children[0];
+      expect(feature.nib.id).toBe("nibs-003");
+      expect(feature.depth).toBe(2);
+      const task = feature.children[0];
+      expect(task.nib.id).toBe("nibs-004");
+      expect(task.depth).toBe(3);
+
+      // Standalone task stays a root at depth 0 — nothing swept into a bucket
+      expect(result[1].nib.id).toBe("nibs-005");
+      expect(result[1].depth).toBe(0);
+    });
+  });
+
+  describe("milestones lens", () => {
+    it("promotes milestones to headers with full subtrees; loose feature/bug go under 'No milestone'", () => {
       const nibs: TreeNib[] = [
         makeTreeNib({ id: "nibs-001", title: "Milestone A", type: "milestone" }),
         makeTreeNib({ id: "nibs-002", title: "Epic under A", type: "epic", parentId: "nibs-001" }),
         makeTreeNib({ id: "nibs-003", title: "Task under epic", type: "task", parentId: "nibs-002" }),
-        makeTreeNib({ id: "nibs-004", title: "Standalone task", type: "task" }),
+        makeTreeNib({ id: "nibs-004", title: "Root feature", type: "feature" }),
+        makeTreeNib({ id: "nibs-005", title: "Root bug", type: "bug" }),
       ];
 
       const result = buildViewTree(nibs, "milestones");
 
-      // Only the milestone should be a root; standalone task is discarded
-      expect(result).toHaveLength(1);
+      // Milestone header keeps its full subtree
       expect(result[0].nib.id).toBe("nibs-001");
       expect(result[0].depth).toBe(0);
-
-      // Subtree is preserved
-      expect(result[0].children).toHaveLength(1);
       expect(result[0].children[0].nib.id).toBe("nibs-002");
       expect(result[0].children[0].depth).toBe(1);
-      expect(result[0].children[0].children).toHaveLength(1);
       expect(result[0].children[0].children[0].nib.id).toBe("nibs-003");
       expect(result[0].children[0].children[0].depth).toBe(2);
+
+      // Single "No milestone" bucket holds the loose feature and bug
+      const bucket = result.find(r => isBucketId(r.nib.id))!;
+      expect(bucket).toBeDefined();
+      expect(bucket.nib.id).toBe("__no_milestone__");
+      const bucketChildIds = bucket.children.map(c => c.nib.id);
+      expect(bucketChildIds).toEqual(["nibs-004", "nibs-005"]);
+
+      // No milestone-rank item was hidden (Milestone A is present as a header)
+      expect(result.filter(r => r.nib.id === "nibs-001")).toHaveLength(1);
     });
 
-    it("keeps nested milestone inside parent milestone subtree (no duplication)", () => {
+    it("keeps a nested milestone inside its parent milestone (no duplication)", () => {
       const nibs: TreeNib[] = [
         makeTreeNib({ id: "nibs-001", title: "Parent milestone", type: "milestone" }),
         makeTreeNib({ id: "nibs-002", title: "Child milestone", type: "milestone", parentId: "nibs-001" }),
@@ -182,166 +256,250 @@ describe("buildViewTree", () => {
 
       const result = buildViewTree(nibs, "milestones");
 
-      // Only the outer milestone is a root
+      // Only the outer milestone is a top-level header; child stays nested (not re-promoted)
       expect(result).toHaveLength(1);
       expect(result[0].nib.id).toBe("nibs-001");
-
-      // The child milestone stays in subtree
       expect(result[0].children).toHaveLength(1);
       expect(result[0].children[0].nib.id).toBe("nibs-002");
-      expect(result[0].children[0].children).toHaveLength(1);
       expect(result[0].children[0].children[0].nib.id).toBe("nibs-003");
     });
   });
 
-  describe("epics view", () => {
-    it("promotes epics to roots with their subtrees, discarding milestones and standalone items", () => {
-      const nibs: TreeNib[] = [
-        makeTreeNib({ id: "nibs-001", title: "Milestone", type: "milestone" }),
-        makeTreeNib({ id: "nibs-002", title: "Epic A", type: "epic", parentId: "nibs-001" }),
-        makeTreeNib({ id: "nibs-003", title: "Task under epic", type: "task", parentId: "nibs-002" }),
-        makeTreeNib({ id: "nibs-004", title: "Standalone task", type: "task" }),
-      ];
-
-      const result = buildViewTree(nibs, "epics");
-
-      // Only Epic A should be a root; milestone container and standalone task discarded
-      expect(result).toHaveLength(1);
-      expect(result[0].nib.id).toBe("nibs-002");
-      expect(result[0].depth).toBe(0);
-      expect(result[0].children).toHaveLength(1);
-      expect(result[0].children[0].nib.id).toBe("nibs-003");
-      expect(result[0].children[0].depth).toBe(1);
-    });
-
-    it("keeps nested epic inside parent epic subtree (no duplication)", () => {
-      const nibs: TreeNib[] = [
-        makeTreeNib({ id: "nibs-001", title: "Parent epic", type: "epic" }),
-        makeTreeNib({ id: "nibs-002", title: "Child epic", type: "epic", parentId: "nibs-001" }),
-        makeTreeNib({ id: "nibs-003", title: "Task under child", type: "task", parentId: "nibs-002" }),
-      ];
-
-      const result = buildViewTree(nibs, "epics");
-
-      // Only the outer epic is a root
-      expect(result).toHaveLength(1);
-      expect(result[0].nib.id).toBe("nibs-001");
-
-      // The child epic stays in subtree
-      expect(result[0].children).toHaveLength(1);
-      expect(result[0].children[0].nib.id).toBe("nibs-002");
-      expect(result[0].children[0].children).toHaveLength(1);
-      expect(result[0].children[0].children[0].nib.id).toBe("nibs-003");
-    });
-  });
-
-  describe("backlog view", () => {
-    it("shows features/bugs as roots with only their task children", () => {
+  describe("epics lens", () => {
+    it("hides the milestone row, surfaces its epic as a header, buckets loose feature/bug", () => {
       const nibs: TreeNib[] = [
         makeTreeNib({ id: "nibs-001", title: "Milestone", type: "milestone" }),
         makeTreeNib({ id: "nibs-002", title: "Epic", type: "epic", parentId: "nibs-001" }),
-        makeTreeNib({ id: "nibs-003", title: "Feature A", type: "feature", parentId: "nibs-002" }),
-        makeTreeNib({ id: "nibs-004", title: "Task 1", type: "task", parentId: "nibs-003" }),
-        makeTreeNib({ id: "nibs-005", title: "Bug B", type: "bug" }),
-        makeTreeNib({ id: "nibs-006", title: "Task 2", type: "task", parentId: "nibs-005" }),
+        makeTreeNib({ id: "nibs-003", title: "Feature under epic", type: "feature", parentId: "nibs-002" }),
+        makeTreeNib({ id: "nibs-004", title: "Task under feature", type: "task", parentId: "nibs-003" }),
+        makeTreeNib({ id: "nibs-005", title: "Loose feature", type: "feature" }),
+        makeTreeNib({ id: "nibs-006", title: "Loose bug", type: "bug" }),
       ];
 
-      const result = buildViewTree(nibs, "backlog");
+      const result = buildViewTree(nibs, "epics");
 
-      // Feature A and Bug B should be roots
-      expect(result).toHaveLength(2);
-      expect(result[0].nib.id).toBe("nibs-003");
-      expect(result[0].nib.type).toBe("feature");
+      // Milestone row absent
+      expect(result.find(r => r.nib.id === "nibs-001")).toBeUndefined();
+
+      // Epic is a top-level header with its full subtree
+      expect(result[0].nib.id).toBe("nibs-002");
       expect(result[0].depth).toBe(0);
-      expect(result[0].children).toHaveLength(1);
-      expect(result[0].children[0].nib.id).toBe("nibs-004");
-      expect(result[0].children[0].depth).toBe(1);
+      expect(result[0].children[0].nib.id).toBe("nibs-003");
+      expect(result[0].children[0].children[0].nib.id).toBe("nibs-004");
 
-      expect(result[1].nib.id).toBe("nibs-005");
-      expect(result[1].nib.type).toBe("bug");
-      expect(result[1].depth).toBe(0);
-      expect(result[1].children).toHaveLength(1);
-      expect(result[1].children[0].nib.id).toBe("nibs-006");
-      expect(result[1].children[0].depth).toBe(1);
+      // Loose feature/bug go under "No epic"
+      const bucket = result.find(r => r.nib.id === "__no_epic__")!;
+      expect(bucket).toBeDefined();
+      expect(bucket.children.map(c => c.nib.id)).toEqual(["nibs-005", "nibs-006"]);
     });
 
-    it("includes only task-type children under backlog roots, not nested features/bugs", () => {
+    it("puts loose tasks of a milestone (with no epic) under 'No epic'", () => {
       const nibs: TreeNib[] = [
-        makeTreeNib({ id: "nibs-001", title: "Feature A", type: "feature" }),
+        makeTreeNib({ id: "nibs-001", title: "Milestone", type: "milestone" }),
         makeTreeNib({ id: "nibs-002", title: "Task 1", type: "task", parentId: "nibs-001" }),
-        makeTreeNib({ id: "nibs-003", title: "Sub-bug", type: "bug", parentId: "nibs-001" }),
-        makeTreeNib({ id: "nibs-004", title: "Task under sub-bug", type: "task", parentId: "nibs-003" }),
+        makeTreeNib({ id: "nibs-003", title: "Task 2", type: "task", parentId: "nibs-001" }),
       ];
 
-      const result = buildViewTree(nibs, "backlog");
+      const result = buildViewTree(nibs, "epics");
 
-      // Feature A is a root with only Task 1 as child
-      const featureA = result.find(r => r.nib.id === "nibs-001")!;
-      expect(featureA).toBeDefined();
-      expect(featureA.children).toHaveLength(1);
-      expect(featureA.children[0].nib.id).toBe("nibs-002");
-
-      // Sub-bug is also promoted to its own root with its task
-      const subBug = result.find(r => r.nib.id === "nibs-003")!;
-      expect(subBug).toBeDefined();
-      expect(subBug.children).toHaveLength(1);
-      expect(subBug.children[0].nib.id).toBe("nibs-004");
-    });
-
-    it("places orphaned tasks under a virtual 'Unparented' root node", () => {
-      const nibs: TreeNib[] = [
-        makeTreeNib({ id: "nibs-001", title: "Feature A", type: "feature" }),
-        makeTreeNib({ id: "nibs-002", title: "Task under feature", type: "task", parentId: "nibs-001" }),
-        makeTreeNib({ id: "nibs-003", title: "Orphan task 1", type: "task" }),
-        makeTreeNib({ id: "nibs-004", title: "Orphan task 2", type: "task" }),
-      ];
-
-      const result = buildViewTree(nibs, "backlog");
-
-      // Feature A + Unparented group
-      expect(result).toHaveLength(2);
-
-      const featureA = result.find(r => r.nib.id === "nibs-001")!;
-      expect(featureA).toBeDefined();
-      expect(featureA.children).toHaveLength(1);
-
-      const unparented = result.find(r => r.nib.id === "__unparented__")!;
-      expect(unparented).toBeDefined();
-      expect(unparented.nib.title).toBe("Unparented");
-      expect(unparented.nib.type).toBe("");
-      expect(unparented.depth).toBe(0);
-      expect(unparented.children).toHaveLength(2);
-      expect(unparented.children[0].nib.id).toBe("nibs-003");
-      expect(unparented.children[0].depth).toBe(1);
-      expect(unparented.children[1].nib.id).toBe("nibs-004");
-      expect(unparented.children[1].depth).toBe(1);
-    });
-
-    it("virtual Unparented nib includes blockingIds and blockedByIds when T is TreeTableNib", () => {
-      const nibs: TreeTableNib[] = [
-        makeTreeTableNib({ id: "nibs-001", title: "Orphan task", type: "task" }),
-      ];
-
-      const result = buildViewTree<TreeTableNib>(nibs, "backlog");
-
-      // The virtual "Unparented" nib should have blockingIds and blockedByIds arrays
-      const unparented = result.find(r => r.nib.id === "__unparented__")!;
-      expect(unparented).toBeDefined();
-      expect(unparented.nib.blockingIds).toEqual([]);
-      expect(unparented.nib.blockedByIds).toEqual([]);
-    });
-
-    it("does not create Unparented node when all tasks have feature/bug parents", () => {
-      const nibs: TreeNib[] = [
-        makeTreeNib({ id: "nibs-001", title: "Feature A", type: "feature" }),
-        makeTreeNib({ id: "nibs-002", title: "Task 1", type: "task", parentId: "nibs-001" }),
-      ];
-
-      const result = buildViewTree(nibs, "backlog");
-
+      // No epic headers exist; milestone row hidden; tasks fall to the bucket
       expect(result).toHaveLength(1);
-      expect(result[0].nib.id).toBe("nibs-001");
-      expect(result.find(r => r.nib.id === "__unparented__")).toBeUndefined();
+      const bucket = result[0];
+      expect(bucket.nib.id).toBe("__no_epic__");
+      expect(bucket.children.map(c => c.nib.id)).toEqual(["nibs-002", "nibs-003"]);
     });
+  });
+
+  describe("features & bugs lens", () => {
+    it("surfaces feature/bug headers; a task directly under an epic lands in 'No feature or bug'", () => {
+      const nibs: TreeNib[] = [
+        makeTreeNib({ id: "nibs-001", title: "Milestone", type: "milestone" }),
+        makeTreeNib({ id: "nibs-002", title: "Epic", type: "epic", parentId: "nibs-001" }),
+        makeTreeNib({ id: "nibs-003", title: "Feature", type: "feature", parentId: "nibs-002" }),
+        makeTreeNib({ id: "nibs-004", title: "Task under feature", type: "task", parentId: "nibs-003" }),
+        makeTreeNib({ id: "nibs-005", title: "Task under epic", type: "task", parentId: "nibs-002" }),
+      ];
+
+      const result = buildViewTree(nibs, "features");
+
+      // Milestone and epic rows are absent
+      expect(result.find(r => r.nib.id === "nibs-001")).toBeUndefined();
+      expect(result.find(r => r.nib.id === "nibs-002")).toBeUndefined();
+
+      // Feature becomes a header with its task subtree
+      expect(result[0].nib.id).toBe("nibs-003");
+      expect(result[0].depth).toBe(0);
+      expect(result[0].children[0].nib.id).toBe("nibs-004");
+
+      // The task under the epic (no feature/bug ancestor) lands in the bucket
+      const bucket = result.find(r => isBucketId(r.nib.id))!;
+      expect(bucket).toBeDefined();
+      expect(bucket.nib.id).toBe("__no_feature_or_bug__");
+      expect(bucket.children.map(c => c.nib.id)).toEqual(["nibs-005"]);
+    });
+
+    it("never drops research nibs and keeps research nested under a feature header", () => {
+      const nibs: TreeNib[] = [
+        makeTreeNib({ id: "nibs-001", title: "Root research", type: "research" }),
+        makeTreeNib({ id: "nibs-002", title: "Task under research", type: "task", parentId: "nibs-001" }),
+        makeTreeNib({ id: "nibs-003", title: "Feature", type: "feature" }),
+        makeTreeNib({ id: "nibs-004", title: "Research under feature", type: "research", parentId: "nibs-003" }),
+      ];
+
+      const result = buildViewTree(nibs, "features");
+
+      // Feature is a header; the research under it stays nested (research rank 0, not a grouping type)
+      const feature = result.find(r => r.nib.id === "nibs-003")!;
+      expect(feature).toBeDefined();
+      expect(feature.children.map(c => c.nib.id)).toContain("nibs-004");
+
+      // Root research (rank 0, not feature/bug) becomes a bucket item, carrying its task subtree
+      const bucket = result.find(r => r.nib.id === "__no_feature_or_bug__")!;
+      expect(bucket).toBeDefined();
+      const rootResearch = bucket.children.find(c => c.nib.id === "nibs-001")!;
+      expect(rootResearch).toBeDefined();
+      expect(rootResearch.children.map(c => c.nib.id)).toEqual(["nibs-002"]);
+
+      // Every research id appears somewhere in the output forest
+      const allIds = collectIds(result);
+      expect(allIds).toContain("nibs-001");
+      expect(allIds).toContain("nibs-004");
+    });
+  });
+
+  describe("completeness invariant (messy hierarchy)", () => {
+    for (const lens of ["milestones", "epics", "features"] as const) {
+      it(`${lens}: rank<=gRank items appear exactly once, rank>gRank items are hidden but descendants survive`, () => {
+        const gRank = GROUPING_LENS_RANKS[lens];
+        const result = buildViewTree(MESSY_FIXTURE, lens);
+
+        // Real nib ids only (drop synthetic bucket nodes)
+        const outputIds = collectIds(result).filter(id => !isBucketId(id));
+
+        const counts = new Map<string, number>();
+        for (const id of outputIds) counts.set(id, (counts.get(id) ?? 0) + 1);
+
+        for (const nib of MESSY_FIXTURE) {
+          if (typeRank(nib.type) <= gRank) {
+            // (a) present exactly once — no drop, no duplication
+            expect(counts.get(nib.id), `${nib.id} (${nib.type}) should appear exactly once`).toBe(1);
+          } else {
+            // (b) above-tier container: not its own row, but its descendants survive
+            expect(counts.get(nib.id), `${nib.id} (${nib.type}) should be hidden`).toBeUndefined();
+          }
+        }
+
+        // (b) descendants survive: children of hidden containers still appear.
+        // e1's child f1 (feature) survives in epics/features lenses even though e1 is hidden there.
+        if (gRank < typeRank("epic")) {
+          expect(outputIds).toContain("f1");
+        }
+      });
+    }
+  });
+
+  describe("bucket node", () => {
+    it("titles the bucket with its direct-child count (not recursive descendants)", () => {
+      const nibs: TreeNib[] = [
+        makeTreeNib({ id: "nibs-001", title: "Loose feature", type: "feature" }),
+        makeTreeNib({ id: "nibs-002", title: "Loose bug", type: "bug" }),
+        // A nested task under the loose feature: it must NOT inflate the bucket count.
+        makeTreeNib({ id: "nibs-003", title: "Task under loose feature", type: "task", parentId: "nibs-001" }),
+      ];
+
+      const result = buildViewTree(nibs, "epics");
+
+      const bucket = result.find(r => isBucketId(r.nib.id))!;
+      // Count is direct children only — the nested task is (3) if recursive, (2) if direct.
+      expect(bucket.nib.title).toBe("No epic (2)");
+      expect(bucket.children).toHaveLength(2);
+      // The nested task lives under the feature, not as a direct bucket child.
+      const feature = bucket.children.find(c => c.nib.id === "nibs-001")!;
+      expect(feature.children.map(c => c.nib.id)).toEqual(["nibs-003"]);
+    });
+  });
+});
+
+describe("bucketIdForItem", () => {
+  function nibMapOf(nibs: TreeNib[]): Map<string, TreeNib> {
+    return new Map(nibs.map(n => [n.id, n]));
+  }
+
+  it("returns null for the none lens (no buckets)", () => {
+    const map = nibMapOf([makeTreeNib({ id: "t1", type: "task" })]);
+    expect(bucketIdForItem(map, "t1", "none")).toBeNull();
+  });
+
+  it("returns the lens bucket for a loose item with no grouping ancestor", () => {
+    const map = nibMapOf([makeTreeNib({ id: "t1", type: "task" })]);
+    expect(bucketIdForItem(map, "t1", "epics")).toBe("__no_epic__");
+  });
+
+  it("returns null when the item sits under a grouping header", () => {
+    const map = nibMapOf([
+      makeTreeNib({ id: "e1", type: "epic" }),
+      makeTreeNib({ id: "f1", type: "feature", parentId: "e1" }),
+      makeTreeNib({ id: "t1", type: "task", parentId: "f1" }),
+    ]);
+    expect(bucketIdForItem(map, "t1", "epics")).toBeNull();
+  });
+
+  it("returns null when the item IS a grouping header itself", () => {
+    const map = nibMapOf([makeTreeNib({ id: "e1", type: "epic" })]);
+    expect(bucketIdForItem(map, "e1", "epics")).toBeNull();
+  });
+
+  it("buckets a loose task under a milestone (above-tier ancestor, no epic)", () => {
+    const map = nibMapOf([
+      makeTreeNib({ id: "m1", type: "milestone" }),
+      makeTreeNib({ id: "t1", type: "task", parentId: "m1" }),
+    ]);
+    expect(bucketIdForItem(map, "t1", "epics")).toBe("__no_epic__");
+  });
+
+  it("features lens: task under an epic (no feature/bug) lands in the bucket", () => {
+    const map = nibMapOf([
+      makeTreeNib({ id: "e1", type: "epic" }),
+      makeTreeNib({ id: "t1", type: "task", parentId: "e1" }),
+    ]);
+    expect(bucketIdForItem(map, "t1", "features")).toBe("__no_feature_or_bug__");
+  });
+
+  it("features lens: task under a feature is under a header (null)", () => {
+    const map = nibMapOf([
+      makeTreeNib({ id: "f1", type: "feature" }),
+      makeTreeNib({ id: "t1", type: "task", parentId: "f1" }),
+    ]);
+    expect(bucketIdForItem(map, "t1", "features")).toBeNull();
+  });
+
+  // An item whose OWN rank is above the grouping tier is hidden outright by
+  // buildViewTree (not swept into a bucket), so it has no enclosing bucket —
+  // bucketIdForItem must agree and return null, else ensure-visible would
+  // spuriously un-collapse a bucket when deep-linking to such a container.
+  it("returns null for an above-tier container queried in a lower lens", () => {
+    const map = nibMapOf([
+      makeTreeNib({ id: "m1", type: "milestone" }),
+      makeTreeNib({ id: "e1", type: "epic", parentId: "m1" }),
+    ]);
+    expect(bucketIdForItem(map, "m1", "epics")).toBeNull(); // milestone hidden in epics lens
+    expect(bucketIdForItem(map, "m1", "features")).toBeNull(); // milestone hidden in features lens
+    expect(bucketIdForItem(map, "e1", "features")).toBeNull(); // epic hidden in features lens
+  });
+});
+
+describe("isBucketId", () => {
+  it("is true for synthetic bucket ids and false for real nib ids", () => {
+    expect(isBucketId("__no_epic__")).toBe(true);
+    expect(isBucketId("__no_milestone__")).toBe(true);
+    expect(isBucketId("__no_feature_or_bug__")).toBe(true);
+    expect(isBucketId("nibs-abc1")).toBe(false);
+    expect(isBucketId("")).toBe(false);
+    // Exact-set membership is collision-proof: a real id can never equal a bucket
+    // id, even with a user nibs.prefix that starts with underscores or that shares
+    // a bucket-id substring.
+    expect(isBucketId("__proj-abc1")).toBe(false);
+    expect(isBucketId("__no_epic__x")).toBe(false);
+    expect(isBucketId("no_epic")).toBe(false);
   });
 });

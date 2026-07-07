@@ -1,6 +1,7 @@
 import { test, expect, type Page } from "@playwright/test";
 import { mkdirSync } from "node:fs";
 import { join } from "node:path";
+import { VIEW_LEVELS } from "../src/lib/types";
 
 // Captures PNGs of the key web UI states into web/screenshots/output/ so an
 // agent (or human) can visually verify UI changes. Run via `task screenshots`.
@@ -10,8 +11,6 @@ import { join } from "node:path";
 
 const OUT = join(import.meta.dirname, "output");
 mkdirSync(OUT, { recursive: true });
-
-const VIEW_LEVELS = ["milestones", "epics", "backlog"] as const;
 
 async function openApp(page: Page, viewLevel: (typeof VIEW_LEVELS)[number] = "milestones") {
   await page.addInitScript(level => {
