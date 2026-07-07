@@ -91,19 +91,20 @@ describe("Toolbar", () => {
     expect(screen.queryAllByRole("menuitemradio")).toHaveLength(0);
   });
 
-  it("opens type dropdown with all 5 nib types when New item is clicked", async () => {
+  it("opens type dropdown with all 6 nib types when New item is clicked", async () => {
     render(Toolbar, { ...defaultToolbarProps });
 
     await user.click(screen.getByTestId("toolbar-add"));
 
-    // All 5 nib types should appear as menu items
+    // All 6 nib types should appear as menu items
     const items = screen.getAllByRole("menuitem");
-    expect(items).toHaveLength(5);
+    expect(items).toHaveLength(6);
     expect(screen.getByTestId("toolbar-add-milestone")).toBeInTheDocument();
     expect(screen.getByTestId("toolbar-add-epic")).toBeInTheDocument();
     expect(screen.getByTestId("toolbar-add-bug")).toBeInTheDocument();
     expect(screen.getByTestId("toolbar-add-feature")).toBeInTheDocument();
     expect(screen.getByTestId("toolbar-add-task")).toBeInTheDocument();
+    expect(screen.getByTestId("toolbar-add-research")).toBeInTheDocument();
   });
 
   it("calls oncreatenew with selected type when a type is clicked", async () => {
@@ -350,7 +351,7 @@ describe("Toolbar", () => {
 // from FilterBar into Toolbar during the nibs-5a8k design-system refactor, but its
 // only test coverage lived in FilterBar.test.ts, which was deleted with the component.
 describe("Toolbar — filter dropdowns", () => {
-  it("opens the Type dropdown with all 5 type checkboxes when its trigger is clicked", async () => {
+  it("opens the Type dropdown with all 6 type checkboxes when its trigger is clicked", async () => {
     render(Toolbar, { ...defaultToolbarProps });
 
     // No type checkboxes visible initially
@@ -363,6 +364,7 @@ describe("Toolbar — filter dropdowns", () => {
     expect(screen.getByRole("menuitemcheckbox", { name: "task" })).toBeInTheDocument();
     expect(screen.getByRole("menuitemcheckbox", { name: "milestone" })).toBeInTheDocument();
     expect(screen.getByRole("menuitemcheckbox", { name: "epic" })).toBeInTheDocument();
+    expect(screen.getByRole("menuitemcheckbox", { name: "research" })).toBeInTheDocument();
   });
 
   it("checking a type checkbox emits filter with that type", async () => {
