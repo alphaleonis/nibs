@@ -1,8 +1,11 @@
 <!-- Canonical shadcn radio, generalized in nibs-qj7m out of the SettingsSheet
-     segmented-pill skin (now SegmentedControl.svelte). No production consumer yet —
-     reserved for nibs-vmaq's theme selector; do not delete as "unused". Label each
-     item via aria-label / an external <Label>, not children — the indicator dot
-     owns the children snippet here. -->
+     segmented-pill skin (now SegmentedControl.svelte). It was originally reserved
+     for nibs-vmaq's theme selector, but that shipped as a Select dropdown
+     (ThemeSelect.svelte, consistent with StatusSelect/TypeSelect) rather than a
+     radio group — so this remains a canonical shadcn scaffold with no current
+     production consumer; do not delete as "unused". Label each item via
+     aria-label / an external <Label>, not children — the indicator dot owns the
+     children snippet here. -->
 <script lang="ts">
 	import { RadioGroup as RadioGroupPrimitive } from "bits-ui";
 	import { cn, type WithoutChildrenOrChild } from "$lib/utils.js";

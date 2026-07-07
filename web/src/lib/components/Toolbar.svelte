@@ -1,6 +1,6 @@
 <script lang="ts">
-  import { VIEW_LEVELS, DEFAULT_COLUMNS, ALL_COLUMN_KEYS } from "../types";
-  import type { NibFilter, ViewLevel, ColumnKey, RowDensity } from "../types";
+  import { VIEW_LEVELS, DEFAULT_COLUMNS, ALL_COLUMN_KEYS, DEFAULT_THEME } from "../types";
+  import type { NibFilter, ViewLevel, ColumnKey, RowDensity, Theme } from "../types";
   import type { Preferences } from "../preferences.svelte";
   import { resolveStatusConflicts } from "../filter";
   import { TERMINAL_STATUSES, TYPES, STATUSES, PRIORITIES, ESTIMATES, ESTIMATE_LABELS } from "../constants";
@@ -35,6 +35,8 @@
     oncreatenew = undefined as ((type: string) => void) | undefined,
     rowDensity = "compact" as RowDensity,
     ondensitychange = undefined as ((density: RowDensity) => void) | undefined,
+    theme = DEFAULT_THEME as Theme,
+    onthemechange = undefined as ((theme: Theme) => void) | undefined,
     availableTags = [],
   }: {
     prefs?: Preferences;
@@ -47,6 +49,8 @@
     oncreatenew?: (type: string) => void;
     rowDensity?: RowDensity;
     ondensitychange?: (density: RowDensity) => void;
+    theme?: Theme;
+    onthemechange?: (theme: Theme) => void;
     availableTags?: string[];
   } = $props();
 
@@ -57,6 +61,16 @@
       prefs.rowDensity = density;
     } else {
       ondensitychange?.(density);
+    }
+  }
+
+  let resolvedTheme = $derived(prefs ? prefs.theme : theme);
+
+  function handleSetTheme(t: Theme) {
+    if (prefs) {
+      prefs.theme = t;
+    } else {
+      onthemechange?.(t);
     }
   }
 
@@ -341,7 +355,12 @@
     </DropdownMenu.Root>
 
     <!-- Settings sheet -->
-    <SettingsSheet rowDensity={resolvedDensity} ondensitychange={handleSetDensity} />
+    <SettingsSheet
+      rowDensity={resolvedDensity}
+      ondensitychange={handleSetDensity}
+      theme={resolvedTheme}
+      onthemechange={handleSetTheme}
+    />
 
     <!-- Columns dropdown -->
     <DropdownMenu.Root bind:open={columnsOpen}>

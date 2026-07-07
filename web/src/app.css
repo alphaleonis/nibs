@@ -190,6 +190,76 @@
   --text-caption-leading: 1rem;  /* 16px */
 }
 
+/* ── Swappable dark palettes (nibs-vmaq) ─────────────────────────────
+   The active palette is chosen via a `data-theme` attribute on <html>
+   (index.html keeps class="dark" — all three palettes are dark; data-theme
+   only picks the surface/accent hues). Each block is a DIFF: it overrides
+   ONLY the chrome/surface tokens that differ from the base :root values
+   (plus, for Dracula, a few accent tokens). Type / status / priority hues
+   and the THEME-INVARIANT typography tokens are never overridden here.
+
+   "midnight" intentionally has NO block: it IS the bare :root values above,
+   so `data-theme="midnight"` (or no attribute) falls through to :root and
+   renders the original near-black palette with no visual change.
+
+   Any token referenced below is already registered in the `@theme inline`
+   layer at the top of this file; a brand-new token would need registering
+   in BOTH layers. */
+
+/* Graphite (default) — softer, warmer dark with a VSCode Dark+ / Azure DevOps
+   feel: surfaces are lifted off pure black and nudged a touch warm (hue ~75),
+   accents shifted toward a VSCode azure blue. */
+:root[data-theme="graphite"] {
+  --background: oklch(0.234 0.006 75);       /* ~#1e1e1e, warm graphite */
+  --card: oklch(0.268 0.006 75);
+  --popover: oklch(0.29 0.007 75);
+  --primary: oklch(0.55 0.155 250);         /* VSCode-ish azure blue */
+  --primary-foreground: oklch(0.985 0.003 247);
+  --secondary: oklch(0.32 0.007 75);
+  --secondary-foreground: oklch(0.96 0.004 80);
+  --muted: oklch(0.32 0.007 75);
+  --muted-foreground: oklch(0.67 0.01 75);  /* brighter for contrast on lifted bg */
+  --accent: oklch(0.35 0.008 75);
+  --accent-foreground: oklch(0.96 0.004 80);
+  --border: oklch(0.36 0.007 75);
+  --input: oklch(0.36 0.007 75);
+  --ring: oklch(0.55 0.155 250);
+}
+
+/* Dracula — signature purple-tinted palette. Surfaces map to the official
+   Dracula background (#282a36) / current-line (#44475a); accents (primary,
+   ring, link, tags) go purple (#bd93f9) so the theme reads authentically.
+   Type/status/priority hues are left readable against the darker surfaces. */
+:root[data-theme="dracula"] {
+  --background: oklch(0.283 0.023 280);     /* #282a36 */
+  --foreground: oklch(0.97 0.005 100);      /* #f8f8f2 */
+  --card: oklch(0.318 0.024 282);
+  --card-foreground: oklch(0.97 0.005 100);
+  --popover: oklch(0.338 0.025 282);
+  --popover-foreground: oklch(0.97 0.005 100);
+  --primary: oklch(0.70 0.17 300);          /* purple #bd93f9 */
+  --primary-foreground: oklch(0.22 0.03 285);
+  --secondary: oklch(0.40 0.028 280);       /* current-line #44475a */
+  --secondary-foreground: oklch(0.97 0.005 100);
+  --muted: oklch(0.40 0.028 280);
+  --muted-foreground: oklch(0.70 0.055 275); /* comment tone, lifted for contrast */
+  --accent: oklch(0.44 0.032 280);
+  --accent-foreground: oklch(0.97 0.005 100);
+  --border: oklch(0.405 0.028 280);         /* #44475a */
+  --input: oklch(0.43 0.03 280);
+  --ring: oklch(0.70 0.17 300);
+  --text-secondary: oklch(0.75 0.05 280);
+
+  /* Domain accents — kept purple-family for cohesion */
+  --link: oklch(0.78 0.15 298);
+  --link-hover: oklch(0.85 0.12 300);
+  --link-underline: oklch(0.78 0.15 298 / 0.4);
+  --link-hover-underline: oklch(0.85 0.12 300 / 0.6);
+  --tag-bg: oklch(0.70 0.17 300 / 0.15);
+  --tag-text: oklch(0.82 0.13 300);
+  --tag-border: oklch(0.70 0.17 300 / 0.35);
+}
+
 /* ── Semantic type-scale utilities ──────────────────────────────────
    Bundled font-size + weight + line-height per semantic role. Prefer
    these over ad-hoc `text-xs/sm` + `font-*` combinations. */

@@ -13,6 +13,8 @@ const user = userEvent.setup({ pointerEventsCheck: 0 });
 const defaultProps = () => ({
   rowDensity: "compact" as const,
   ondensitychange: vi.fn(),
+  theme: "graphite" as const,
+  onthemechange: vi.fn(),
 });
 
 describe("SettingsSheet", () => {
@@ -254,5 +256,85 @@ describe("SettingsSheet", () => {
     await user.keyboard("{ArrowRight}");
 
     expect(ondensitychange).toHaveBeenCalledWith("comfortable");
+  });
+
+  it("shows a Theme control reflecting the current theme", async () => {
+    render(SettingsSheet, { ...defaultProps(), theme: "dracula" });
+
+    await user.click(screen.getByTitle("Settings"));
+
+    expect(screen.getByText("Theme")).toBeInTheDocument();
+    // The ThemeSelect trigger shows the current theme's label.
+    expect(screen.getByTestId("theme-select")).toHaveTextContent("Dracula");
+  });
+
+  it("emits onthemechange with the selected theme", async () => {
+    const onthemechange = vi.fn();
+    render(SettingsSheet, { ...defaultProps(), theme: "graphite", onthemechange });
+
+    await user.click(screen.getByTitle("Settings"));
+    await user.click(screen.getByTestId("theme-select"));
+    await user.click(screen.getByRole("option", { name: "Midnight" }));
+
+    expect(onthemechange).toHaveBeenCalledWith("midnight");
+  });
+
+  it("Escape dismissing the open Theme dropdown keeps the Settings panel open", async () => {
+    render(SettingsSheet, { ...defaultProps() });
+    await user.click(screen.getByTitle("Settings"));
+    expect(screen.getByText("Appearance")).toBeInTheDocument();
+
+    // Open the Theme select; its popover content portals to document.body with
+    // data-slot="select-content".
+    await user.click(screen.getByTestId("theme-select"));
+    await waitFor(() =>
+      expect(document.querySelector("[data-slot='select-content']")).not.toBeNull(),
+    );
+
+    // Escape must be consumed by the select popover only — bits-ui's escape-layer
+    // calls preventDefault() but never stopPropagation(), so without a guard the
+    // sheet's own document-level Escape handler would ALSO fire and close the panel.
+    await user.keyboard("{Escape}");
+
+    // The select popover closes...
+    await waitFor(() =>
+      expect(document.querySelector("[data-slot='select-content']")).toBeNull(),
+    );
+
+    // ...but the Settings panel stays open. Wait past the fly-out duration (200ms)
+    // so a buggy close (which only unmounts after the transition) is observable.
+    await new Promise((r) => setTimeout(r, 300));
+    expect(screen.getByText("Appearance")).toBeInTheDocument();
+
+    // A SECOND Escape — now that no select popover is open — falls through the
+    // guard and closes the panel. Pins the documented "the select tears its
+    // content down; a second Escape then closes the panel" contract, so the guard
+    // can never regress into swallowing Escape permanently.
+    await user.keyboard("{Escape}");
+    await waitFor(() => expect(screen.queryByText("Appearance")).not.toBeInTheDocument());
+  });
+
+  it("does not close on a pointerdown inside the portaled Theme select popover (isInsideOrTrigger)", async () => {
+    render(SettingsSheet, { ...defaultProps() });
+    await user.click(screen.getByTitle("Settings"));
+    expect(screen.getByText("Appearance")).toBeInTheDocument();
+
+    // Open the Theme select; its content portals to document.body as a body-level
+    // sibling of the panel <aside>. A pointerdown inside it must be treated as
+    // "inside" by isInsideOrTrigger's select-content branch and NOT dismiss the
+    // whole panel on the very click that picks an option.
+    await user.click(screen.getByTestId("theme-select"));
+    const content = await waitFor(() => {
+      const el = document.querySelector("[data-slot='select-content']");
+      expect(el).not.toBeNull();
+      return el as Element;
+    });
+
+    fireEvent.pointerDown(content);
+
+    // Flush pending effects: an erroneous dismissal would unmount the panel, so a
+    // surviving panel proves the select-content pointerdown was ignored.
+    await tick();
+    expect(screen.getByText("Appearance")).toBeInTheDocument();
   });
 });

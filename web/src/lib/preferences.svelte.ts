@@ -1,7 +1,7 @@
 import { untrack } from "svelte";
 import { loadPreferences, savePreferences } from "./storage";
-import { ALL_COLUMN_KEYS, DEFAULT_COLUMN_WIDTHS, DEFAULT_DETAIL_PANEL_WIDTH, MIN_DETAIL_PANEL_WIDTH } from "./types";
-import type { NibFilter, ViewLevel, ColumnKey, RowDensity } from "./types";
+import { ALL_COLUMN_KEYS, DEFAULT_COLUMN_WIDTHS, DEFAULT_DETAIL_PANEL_WIDTH, MIN_DETAIL_PANEL_WIDTH, DEFAULT_THEME } from "./types";
+import type { NibFilter, ViewLevel, ColumnKey, RowDensity, Theme } from "./types";
 
 export class Preferences {
   filter: NibFilter = $state({});
@@ -10,6 +10,7 @@ export class Preferences {
   columnWidths: Partial<Record<ViewLevel, Partial<Record<ColumnKey, number>>>> = $state({});
   #detailPanelWidth: number | undefined = $state(undefined);
   rowDensity: RowDensity = $state("compact");
+  theme: Theme = $state(DEFAULT_THEME);
 
   visibleColumns: ColumnKey[] = $derived(
     this.columnVisibility[this.viewLevel] ?? [...ALL_COLUMN_KEYS]
@@ -32,6 +33,7 @@ export class Preferences {
     this.columnWidths = initial.columnWidths ?? {};
     this.#detailPanelWidth = initial.detailPanelWidth;
     this.rowDensity = initial.rowDensity ?? "compact";
+    this.theme = initial.theme ?? DEFAULT_THEME;
 
     // Auto-save when filter, viewLevel, or columnVisibility change.
     // columnWidths and detailPanelWidth are excluded (untracked) — use flush*() methods instead.
@@ -44,6 +46,7 @@ export class Preferences {
         this.viewLevel;
         this.columnVisibility;
         this.rowDensity;
+        this.theme;
         // Skip the initial save that fires on construction (we just loaded these values)
         if (!initialized) {
           initialized = true;
@@ -88,6 +91,7 @@ export class Preferences {
       columnWidths: this.columnWidths,
       detailPanelWidth: this.#detailPanelWidth,
       rowDensity: this.rowDensity,
+      theme: this.theme,
     });
   }
 }

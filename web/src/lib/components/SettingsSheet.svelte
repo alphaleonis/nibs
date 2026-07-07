@@ -4,8 +4,9 @@
 </script>
 
 <script lang="ts">
-  import type { RowDensity } from "../types";
+  import type { RowDensity, Theme } from "../types";
   import SegmentedControl from "./SegmentedControl.svelte";
+  import ThemeSelect from "./ThemeSelect.svelte";
   import { Button, buttonVariants } from "$lib/components/ui/button/index.js";
   import { Settings2, X } from "@lucide/svelte";
   import { Portal } from "bits-ui";
@@ -17,10 +18,14 @@
     open = $bindable(false),
     rowDensity,
     ondensitychange,
+    theme,
+    onthemechange,
   }: {
     open?: boolean;
     rowDensity: RowDensity;
     ondensitychange: (d: RowDensity) => void;
+    theme: Theme;
+    onthemechange: (t: Theme) => void;
   } = $props();
 
   const densityOptions: { value: RowDensity; label: string }[] = [
@@ -41,6 +46,23 @@
     open = false;
   }
 
+  // clickOutside "inside" predicate. The gear trigger toggles the panel, so a
+  // pointerdown on it must not also dismiss (double-fire). The Theme control is a
+  // shadcn Select whose dropdown content portals to document.body — i.e. a
+  // body-level sibling of this <aside>, which clickOutside would otherwise read
+  // as "outside" and dismiss the whole panel on the very click that picks an
+  // option. Treat any pointerdown within an OPEN portaled select popover as
+  // inside. The `[data-state='open']` filter is load-bearing: bits-ui keeps
+  // closed content mounted (data-state="closed") for its ~100ms exit animation,
+  // so an unfiltered match would defer clicks to a dropdown that is already gone.
+  function isInsideOrTrigger(target: Node): boolean {
+    if (triggerEl?.contains(target)) return true;
+    return (
+      target instanceof Element &&
+      target.closest("[data-slot='select-content'][data-state='open']") !== null
+    );
+  }
+
   // Escape-to-dismiss listens on `document`, not on the <aside>, because this is
   // a non-modal panel that does NOT trap focus: the user can Tab into the
   // (portaled-sibling) background, and a keydown handler bound to the <aside>
@@ -50,10 +72,21 @@
   $effect(() => {
     if (!open) return;
     function onKeydown(e: KeyboardEvent) {
-      if (e.key === "Escape") {
-        e.preventDefault();
-        close();
-      }
+      if (e.key !== "Escape") return;
+      // A portaled select popover (e.g. the Theme dropdown) is OPEN — defer to it.
+      // bits-ui's escape-layer only calls e.preventDefault(), never
+      // stopPropagation(), and both listeners sit on `document` in the bubble
+      // phase, so without this guard the sheet's Escape handler would ALSO fire and
+      // close the whole panel on the Escape meant to dismiss just the dropdown. The
+      // select tears its content down; a second Escape (none open) then closes the
+      // panel. The `[data-state='open']` filter matters: bits-ui flips content to
+      // data-state="closed" synchronously on close but keeps it mounted ~100ms for
+      // the exit animation — matching that lingering closed content would drop a
+      // legitimate Escape (needing a third press). Mirrors the isInsideOrTrigger
+      // select-content guard on clickOutside.
+      if (document.querySelector("[data-slot='select-content'][data-state='open']")) return;
+      e.preventDefault();
+      close();
     }
     document.addEventListener("keydown", onKeydown);
     return () => document.removeEventListener("keydown", onKeydown);
@@ -120,7 +153,7 @@
       aria-describedby={descId}
       tabindex="-1"
       transition:fly={{ x: 320, duration: 200 }}
-      use:clickOutside={{ enabled: open, onOutside: close, ignore: triggerEl }}
+      use:clickOutside={{ enabled: open, onOutside: close, ignore: isInsideOrTrigger }}
       class="bg-background ring-foreground/10 fixed inset-y-0 right-0 z-50 flex h-full w-3/4 flex-col gap-4 border-l shadow-lg ring-1 outline-none sm:max-w-sm"
     >
       <div class="flex flex-col gap-1.5 p-4">
@@ -136,6 +169,11 @@
           >
             Appearance
           </h3>
+
+          <div class="flex items-center justify-between gap-3">
+            <span class="text-sm text-foreground">Theme</span>
+            <ThemeSelect value={theme} onchange={onthemechange} />
+          </div>
 
           <div class="flex items-center justify-between gap-3">
             <span class="text-sm text-foreground">Row density</span>

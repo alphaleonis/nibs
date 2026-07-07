@@ -4,6 +4,38 @@
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>Nibs</title>
+    <!-- FOUC guard (nibs-vmaq): pick the saved palette BEFORE first paint so the
+         app never flashes the wrong theme. This runs before any module loads, so
+         it must stay self-contained — no imports. It therefore duplicates FOUR
+         things owned by the TypeScript source of truth, ALL of which must be kept
+         in sync:
+           1. the theme allowlist ["graphite","midnight","dracula"]
+              ↔ THEMES              (src/lib/types.ts)
+           2. the storage key "nibs-filter-preferences"
+              ↔ STORAGE_KEY         (src/lib/storage.ts)
+           3. the top-level `.theme` JSON shape
+              ↔ FilterPreferences   (savePreferences in src/lib/storage.ts)
+           4. the default "graphite"
+              ↔ DEFAULT_THEME       (src/lib/types.ts)
+         src/lib/fouc-guard.test.ts asserts all four against those constants so
+         drift fails loudly. Any error here falls back to the default
+         ("graphite"). -->
+    <script>
+      (function () {
+        var themes = ["graphite", "midnight", "dracula"];
+        var t = "graphite";
+        try {
+          var raw = localStorage.getItem("nibs-filter-preferences");
+          if (raw) {
+            var stored = JSON.parse(raw).theme;
+            if (themes.indexOf(stored) !== -1) t = stored;
+          }
+        } catch (e) {
+          /* ignore — fall back to default */
+        }
+        document.documentElement.setAttribute("data-theme", t);
+      })();
+    </script>
   </head>
   <body class="bg-background text-foreground antialiased">
     <div id="app"></div>

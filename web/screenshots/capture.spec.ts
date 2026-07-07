@@ -1,24 +1,33 @@
 import { test, expect, type Page } from "@playwright/test";
 import { mkdirSync } from "node:fs";
 import { join } from "node:path";
-import { VIEW_LEVELS } from "../src/lib/types";
+import { VIEW_LEVELS, THEMES } from "../src/lib/types";
+import type { Theme } from "../src/lib/types";
 
 // Captures PNGs of the key web UI states into web/screenshots/output/ so an
 // agent (or human) can visually verify UI changes. Run via `task screenshots`.
 //
-// When the theme engine lands (nibs-vmaq), extend this to loop the captures
-// once per theme. When the board view lands (nibs-sg09), add a capture for it.
+// The theme engine (nibs-vmaq) is exercised below: each palette gets a
+// table + detail capture so the three can be compared side by side.
+// When the board view lands (nibs-sg09), add a capture for it.
 
 const OUT = join(import.meta.dirname, "output");
 mkdirSync(OUT, { recursive: true });
 
-async function openApp(page: Page, viewLevel: (typeof VIEW_LEVELS)[number] = "milestones") {
-  await page.addInitScript(level => {
-    localStorage.setItem(
-      "nibs-filter-preferences",
-      JSON.stringify({ filter: {}, viewLevel: level }),
-    );
-  }, viewLevel);
+async function openApp(
+  page: Page,
+  viewLevel: (typeof VIEW_LEVELS)[number] = "milestones",
+  theme?: Theme,
+) {
+  await page.addInitScript(
+    ({ level, t }) => {
+      localStorage.setItem(
+        "nibs-filter-preferences",
+        JSON.stringify({ filter: {}, viewLevel: level, ...(t ? { theme: t } : {}) }),
+      );
+    },
+    { level: viewLevel, t: theme },
+  );
   await page.goto("/");
   await expect(page.locator("tr[data-nib-id]").first()).toBeVisible({ timeout: 10_000 });
 }
@@ -59,3 +68,31 @@ test("context menu", async ({ page }) => {
   await expect(page.locator('[data-testid="context-menu"]')).toBeVisible({ timeout: 3_000 });
   await shot(page, "context-menu");
 });
+
+// Per-theme captures (nibs-vmaq): table + detail panel under each palette so an
+// agent can confirm Graphite reads as a softer/warmer dark, Dracula is clearly
+// purple-tinted, and pills/indicators/body text stay readable in all three.
+for (const { value } of THEMES) {
+  test(`theme ${value} — table`, async ({ page }) => {
+    await openApp(page, "milestones", value);
+    await shot(page, `theme-${value}-table`);
+  });
+
+  test(`theme ${value} — detail panel`, async ({ page }) => {
+    await openApp(page, "milestones", value);
+    await page.locator("tr[data-nib-id]").first().locator('[data-action="title"]').click();
+    await expect(page.locator('[data-testid="detail-panel"]')).toBeVisible({ timeout: 5_000 });
+    await expect(page.locator('[data-testid="detail-loading"]')).toBeHidden({ timeout: 5_000 });
+    await shot(page, `theme-${value}-detail`);
+  });
+}
+
+// Settings sheet open with the Theme dropdown visible, per palette.
+for (const { value } of THEMES) {
+  test(`theme ${value} — settings sheet`, async ({ page }) => {
+    await openApp(page, "milestones", value);
+    await page.getByTitle("Settings").click();
+    await expect(page.getByTestId("theme-select")).toBeVisible({ timeout: 3_000 });
+    await shot(page, `theme-${value}-settings`);
+  });
+}

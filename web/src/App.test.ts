@@ -130,6 +130,44 @@ describe("App", () => {
     expect(screen.getByText("Test nib")).toBeInTheDocument();
   });
 
+  it("applies prefs.theme to document.documentElement as the app renders", () => {
+    // The only runtime call site of applyTheme is App.svelte's $effect on
+    // prefs.theme — the glue from persisted Preferences to the live DOM. Seed a
+    // non-default theme, render App, and assert data-theme reflects it. Uses the
+    // same defineProperty localStorage pattern as the panel-width tests below.
+    const savedStorage = globalThis.localStorage;
+    const savedTheme = document.documentElement.dataset.theme;
+    const mockStore: Record<string, string> = {
+      "nibs-filter-preferences": JSON.stringify({
+        filter: {},
+        viewLevel: "none",
+        theme: "dracula",
+      }),
+    };
+    Object.defineProperty(globalThis, "localStorage", {
+      value: {
+        getItem: (key: string) => mockStore[key] ?? null,
+        setItem: (key: string, value: string) => { mockStore[key] = value; },
+        removeItem: (key: string) => { delete mockStore[key]; },
+      },
+      writable: true,
+      configurable: true,
+    });
+
+    try {
+      render(App);
+      expect(document.documentElement.dataset.theme).toBe("dracula");
+    } finally {
+      Object.defineProperty(globalThis, "localStorage", {
+        value: savedStorage,
+        writable: true,
+        configurable: true,
+      });
+      if (savedTheme === undefined) delete document.documentElement.dataset.theme;
+      else document.documentElement.dataset.theme = savedTheme;
+    }
+  });
+
   it("wires filter state between Toolbar and TreeTable", async () => {
     const user = userEvent.setup({ pointerEventsCheck: 0 });
     render(App);

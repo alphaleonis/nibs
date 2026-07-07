@@ -26,6 +26,7 @@
   import { Toaster } from "./lib/components/ui/sonner";
   import { toast } from "svelte-sonner";
   import { initMutationStore } from "./lib/mutations";
+  import { applyTheme } from "./lib/theme";
   import {
     reparentBatch,
     reorderChain,
@@ -47,6 +48,14 @@
   });
 
   const prefs = new Preferences();
+
+  // Live-apply the selected palette: repaints the app whenever prefs.theme
+  // changes (no reload). The FOUC guard in index.html sets the initial
+  // data-theme before first paint; this keeps it in sync thereafter.
+  $effect(() => {
+    applyTheme(prefs.theme);
+  });
+
   const selection = new SelectionState();
   const drag = new DragState();
   // isBlocked reads editor/confirmDialog, created below — the closure is only

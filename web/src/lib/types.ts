@@ -86,6 +86,32 @@ export const MAX_DETAIL_PANEL_PERCENT = 75;
 
 export type RowDensity = "compact" | "comfortable";
 
+// Curated palettes selectable from the Settings sheet. The chosen palette is
+// selected via the `data-theme` attribute on <html>. "midnight" is the original
+// near-black palette (the bare :root values in app.css) and intentionally has no
+// override block. "graphite" is the default for fresh profiles.
+//
+// IMPORTANT: every entry here is DARK-only. index.html hardcodes class="dark" on
+// <html> and never toggles it, and app.css wires Tailwind's `dark:` variant to
+// that class (`@custom-variant dark (&:is(.dark *))`) — keyed off the class,
+// INDEPENDENT of `data-theme`. Shipped shadcn components use `dark:` utilities
+// (e.g. dark:bg-input/30), so a new entry only re-tints the swappable palette
+// tokens; the `dark:` utilities keep firing regardless of `data-theme`.
+// Therefore adding a LIGHT theme is NOT "just another entry": it requires a seam
+// change so applyTheme() (theme.ts) and the FOUC guard (index.html) toggle the
+// `.dark` class per a light/dark flag. That rework is tracked in nibs-fen5.
+export const THEMES = [
+  { value: "graphite", label: "Graphite" },
+  { value: "midnight", label: "Midnight" },
+  { value: "dracula", label: "Dracula" },
+] as const;
+
+export type Theme = (typeof THEMES)[number]["value"];
+
+// Also duplicated by index.html's pre-paint FOUC guard (`var t = "graphite"`),
+// kept in sync by src/lib/fouc-guard.test.ts.
+export const DEFAULT_THEME: Theme = "graphite";
+
 export interface FilterPreferences {
   filter: NibFilter;
   viewLevel: ViewLevel;
@@ -93,4 +119,5 @@ export interface FilterPreferences {
   columnWidths?: Partial<Record<ViewLevel, Partial<Record<ColumnKey, number>>>>;
   detailPanelWidth?: number;
   rowDensity?: RowDensity;
+  theme?: Theme;
 }

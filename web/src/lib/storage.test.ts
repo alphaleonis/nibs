@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach, vi } from "vitest";
-import { savePreferences, loadPreferences } from "./storage";
+import { savePreferences, loadPreferences, parseTheme } from "./storage";
 import { MIN_DETAIL_PANEL_WIDTH } from "./types";
 
 const store: Record<string, string> = {};
@@ -20,24 +20,25 @@ describe("storage", () => {
   it("saves and loads filter preferences with viewLevel", () => {
     savePreferences({ filter: { search: "test" }, viewLevel: "epics" });
     const loaded = loadPreferences();
-    expect(loaded).toEqual({ filter: { search: "test" }, viewLevel: "epics" });
+    // theme resolves to the default ("graphite") when not persisted
+    expect(loaded).toEqual({ filter: { search: "test" }, viewLevel: "epics", theme: "graphite" });
   });
 
   it("returns defaults when localStorage is empty", () => {
     const loaded = loadPreferences();
-    expect(loaded).toEqual({ filter: {}, viewLevel: "none" });
+    expect(loaded).toEqual({ filter: {}, viewLevel: "none", theme: "graphite" });
   });
 
   it("returns defaults when localStorage has corrupt JSON", () => {
     store["nibs-filter-preferences"] = "not valid json{{{";
     const loaded = loadPreferences();
-    expect(loaded).toEqual({ filter: {}, viewLevel: "none" });
+    expect(loaded).toEqual({ filter: {}, viewLevel: "none", theme: "graphite" });
   });
 
   it("returns defaults when localStorage has non-object value", () => {
     store["nibs-filter-preferences"] = '"just a string"';
     const loaded = loadPreferences();
-    expect(loaded).toEqual({ filter: {}, viewLevel: "none" });
+    expect(loaded).toEqual({ filter: {}, viewLevel: "none", theme: "graphite" });
   });
 
   it("gracefully falls back to default when old viewMode value is stored", () => {
@@ -46,7 +47,7 @@ describe("storage", () => {
       viewMode: "hierarchy",
     });
     const loaded = loadPreferences();
-    expect(loaded).toEqual({ filter: { search: "old" }, viewLevel: "none" });
+    expect(loaded).toEqual({ filter: { search: "old" }, viewLevel: "none", theme: "graphite" });
   });
 
   it("gracefully handles unknown viewLevel value", () => {
@@ -55,7 +56,7 @@ describe("storage", () => {
       viewLevel: "unknown-value",
     });
     const loaded = loadPreferences();
-    expect(loaded).toEqual({ filter: {}, viewLevel: "none" });
+    expect(loaded).toEqual({ filter: {}, viewLevel: "none", theme: "graphite" });
   });
 
   it("accepts the renamed 'features' viewLevel", () => {
@@ -207,5 +208,41 @@ describe("storage", () => {
       const loaded = loadPreferences();
       expect(loaded.detailPanelWidth, `should strip ${label}`).toBeUndefined();
     }
+  });
+
+  it("round-trips a persisted theme", () => {
+    savePreferences({ filter: {}, viewLevel: "none", theme: "dracula" });
+    expect(loadPreferences().theme).toBe("dracula");
+  });
+
+  it("defaults theme to graphite when not persisted", () => {
+    savePreferences({ filter: {}, viewLevel: "none" });
+    expect(loadPreferences().theme).toBe("graphite");
+  });
+
+  it("falls back to graphite for an invalid stored theme", () => {
+    store["nibs-filter-preferences"] = JSON.stringify({
+      filter: {},
+      viewLevel: "none",
+      theme: "solarized",
+    });
+    expect(loadPreferences().theme).toBe("graphite");
+  });
+});
+
+describe("parseTheme", () => {
+  it("passes through each valid theme", () => {
+    expect(parseTheme("graphite")).toBe("graphite");
+    expect(parseTheme("midnight")).toBe("midnight");
+    expect(parseTheme("dracula")).toBe("dracula");
+  });
+
+  it("returns the default for missing/garbage/invalid values", () => {
+    expect(parseTheme(undefined)).toBe("graphite");
+    expect(parseTheme(null)).toBe("graphite");
+    expect(parseTheme("")).toBe("graphite");
+    expect(parseTheme("nope")).toBe("graphite");
+    expect(parseTheme(42)).toBe("graphite");
+    expect(parseTheme({})).toBe("graphite");
   });
 });

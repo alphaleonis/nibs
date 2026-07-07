@@ -2,6 +2,7 @@ import { render, screen } from "@testing-library/svelte";
 import { userEvent } from "@testing-library/user-event";
 import { describe, it, expect, vi } from "vitest";
 import Toolbar from "./Toolbar.svelte";
+import { Preferences } from "../preferences.svelte";
 import { ALL_COLUMN_KEYS } from "../types";
 import type { NibFilter, ViewLevel, ColumnKey } from "../types";
 
@@ -153,6 +154,38 @@ describe("Toolbar", () => {
     await user.click(screen.getByRole("radio", { name: /comfortable/i }));
 
     expect(ondensitychange).toHaveBeenCalledWith("comfortable");
+  });
+
+  it("gear button opens the Settings sheet revealing the Theme control", async () => {
+    render(Toolbar, { ...defaultToolbarProps, theme: "graphite" });
+
+    await user.click(screen.getByTitle("Settings"));
+
+    expect(screen.getByText("Theme")).toBeInTheDocument();
+    expect(screen.getByTestId("theme-select")).toHaveTextContent("Graphite");
+  });
+
+  it("clicking a theme option in the sheet calls onthemechange (callback path)", async () => {
+    const onthemechange = vi.fn();
+    render(Toolbar, { ...defaultToolbarProps, theme: "graphite", onthemechange });
+
+    await user.click(screen.getByTitle("Settings"));
+    await user.click(screen.getByTestId("theme-select"));
+    await user.click(screen.getByRole("option", { name: "Dracula" }));
+
+    expect(onthemechange).toHaveBeenCalledWith("dracula");
+  });
+
+  it("handleSetTheme mutates prefs.theme when prefs is provided (prefs path)", async () => {
+    const prefs = new Preferences();
+    expect(prefs.theme).toBe("graphite");
+    render(Toolbar, { prefs, oncreatenew: vi.fn() });
+
+    await user.click(screen.getByTitle("Settings"));
+    await user.click(screen.getByTestId("theme-select"));
+    await user.click(screen.getByRole("option", { name: "Midnight" }));
+
+    expect(prefs.theme).toBe("midnight");
   });
 
   it("keyword input emits filter with search value", async () => {

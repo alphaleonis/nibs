@@ -1,15 +1,18 @@
-import { VIEW_LEVELS, ALL_COLUMN_KEYS, DEFAULT_COLUMNS, MIN_DETAIL_PANEL_WIDTH } from "./types";
-import type { ColumnKey, FilterPreferences, RowDensity, ViewLevel } from "./types";
+import { VIEW_LEVELS, ALL_COLUMN_KEYS, DEFAULT_COLUMNS, MIN_DETAIL_PANEL_WIDTH, THEMES, DEFAULT_THEME } from "./types";
+import type { ColumnKey, FilterPreferences, RowDensity, ViewLevel, Theme } from "./types";
 
 const ALWAYS_VISIBLE_KEYS = new Set<ColumnKey>(
   DEFAULT_COLUMNS.filter(c => c.alwaysVisible).map(c => c.key),
 );
 
-const STORAGE_KEY = "nibs-filter-preferences";
+// Duplicated verbatim by the pre-paint FOUC guard in index.html; exported so
+// src/lib/fouc-guard.test.ts can assert the two stay in sync.
+export const STORAGE_KEY = "nibs-filter-preferences";
 
 const DEFAULTS: FilterPreferences = {
   filter: {},
   viewLevel: "none",
+  theme: DEFAULT_THEME,
 };
 
 function parseColumnVisibility(
@@ -75,6 +78,16 @@ function parseRowDensity(raw: unknown): RowDensity | undefined {
   return raw as RowDensity;
 }
 
+const VALID_THEMES = new Set<string>(THEMES.map(t => t.value));
+
+// Validate a persisted theme against the known set, falling back to the default
+// for missing/garbage/unknown values. (Unlike the *optional* prefs above which
+// return undefined, theme always resolves to a concrete value.)
+export function parseTheme(raw: unknown): Theme {
+  if (typeof raw === "string" && VALID_THEMES.has(raw)) return raw as Theme;
+  return DEFAULT_THEME;
+}
+
 export function loadPreferences(): FilterPreferences {
   try {
     const raw = localStorage.getItem(STORAGE_KEY);
@@ -92,6 +105,7 @@ export function loadPreferences(): FilterPreferences {
       columnWidths: parseColumnWidths(parsed.columnWidths),
       detailPanelWidth: parseDetailPanelWidth(parsed.detailPanelWidth),
       rowDensity: parseRowDensity(parsed.rowDensity),
+      theme: parseTheme(parsed.theme),
     };
   } catch {
     return { ...DEFAULTS, filter: { ...DEFAULTS.filter } };

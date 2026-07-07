@@ -173,4 +173,28 @@ describe("Preferences", () => {
     expect(stored.detailPanelWidth).toBe(700);
   });
 
+  it("defaults theme to graphite when nothing is persisted", () => {
+    const prefs = new Preferences();
+    expect(prefs.theme).toBe("graphite");
+  });
+
+  it("loads a persisted theme from localStorage", () => {
+    store["nibs-filter-preferences"] = JSON.stringify({
+      filter: {},
+      viewLevel: "none",
+      theme: "dracula",
+    });
+    const prefs = new Preferences();
+    expect(prefs.theme).toBe("dracula");
+  });
+
+  it("save() persists the current theme", () => {
+    const prefs = new Preferences();
+    prefs.theme = "midnight";
+    prefs.save();
+
+    const stored = JSON.parse(store["nibs-filter-preferences"]);
+    expect(stored.theme).toBe("midnight");
+  });
+
 });
