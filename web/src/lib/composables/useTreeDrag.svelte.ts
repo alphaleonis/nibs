@@ -234,7 +234,21 @@ export function useTreeDrag(opts: {
     if (drag.dropTargetId && drag.dropZone && drag.dropValid && opts.ondrop) {
       const rows = opts.getRows();
       const targetRow = rows.find(r => r.nib.id === drag.dropTargetId);
-      const targetParentId = targetRow?.nib.parentId ?? null;
+      // Resolve the target's DISPLAY parent for the reorder. Keep the real parent
+      // when it's the dragged item's OWN parent (shared parent => same-parent reorder)
+      // or when the parent row is visible (genuine cross-parent). A *different*,
+      // hidden parent (promoted header / loose bucket item) falls back to root: this
+      // avoids adopting an unseen container as parent and keeps the shared-parent case
+      // a same-parent reorder. It does NOT fully close the class — a drop next to an
+      // item under a *different* hidden container still re-roots the dragged item
+      // (residual; #jeu5 tracks resolving both source and target through one
+      // display-parent function).
+      const nibMap = nibMapFromRows();
+      const realParentId = targetRow?.nib.parentId ?? null;
+      const targetParentId =
+        realParentId === drag.draggedParentId ? realParentId
+        : realParentId !== null && nibMap.has(realParentId) ? realParentId
+        : null;
       opts.ondrop(drag.dropTargetId, drag.dropZone, targetParentId);
     }
 

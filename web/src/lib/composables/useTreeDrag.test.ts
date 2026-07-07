@@ -212,6 +212,119 @@ describe("useTreeDrag", () => {
     expect(drag.isDragging).toBe(false);
   });
 
+  it("before/after drop on a promoted header (real parent hidden) resolves display parent to null", () => {
+    // Grouping lens (Group by = Features & Bugs / Epics): a feature whose real
+    // parent is an epic/milestone that is NOT among the visible rows is shown
+    // as a promoted top-level header. A before/after (reorder) drop near it must
+    // resolve the DISPLAY parent (root/null), not silently reparent the dragged
+    // item under the hidden container. (Regression test for nibs-m1my.)
+    const dragged = makeNib({ id: "nibs-drag", type: "feature", parentId: null });
+    // Promoted header: real parentId points to an epic that is NOT in `rows`.
+    const header = makeNib({ id: "nibs-header", type: "feature", parentId: "nibs-hidden-epic" });
+    const rows = [
+      makeRow(dragged),
+      makeRow(header), // depth 0, promoted — hidden parent not present in rows
+    ];
+
+    const drag = new DragState();
+    const ondrop = vi.fn();
+    const composable = setup({ drag, rows, ondrop });
+
+    startDragOn("nibs-drag", composable);
+    expect(drag.isDragging).toBe(true);
+
+    // Before/after (reorder) drop near the promoted header.
+    drag.setDropTarget("nibs-header", "before", true);
+    window.dispatchEvent(new PointerEvent("pointerup", { bubbles: true }));
+
+    // The hidden epic is not visible → display parent is root (null), NOT its id.
+    expect(ondrop).toHaveBeenCalledWith("nibs-header", "before", null);
+  });
+
+  it("before/after drop between siblings under the SAME hidden parent keeps that shared parent", () => {
+    // Two siblings E1 and E2 share a hidden parent "M" (e.g. a collapsed/hidden
+    // milestone shown as a loose bucket). Dragging E1 to reorder before E2 is a
+    // same-parent reorder. Because the dragged item and the target share the same
+    // hidden parent, display-parent resolution must KEEP that shared parent —
+    // collapsing it to null would make handleDrop see a cross-parent move and
+    // reparent E1 out to root. Guards the shared-parent-preservation property: it
+    // fails against the intermediate null-collapse state (the symmetric regression
+    // Fix 1 corrected). Like the visible-parent test below, it passes against raw
+    // HEAD, so the promoted-header test above is the forward-direction guard.
+    const e1 = makeNib({ id: "nibs-e1", type: "feature", parentId: "nibs-M" });
+    const e2 = makeNib({ id: "nibs-e2", type: "feature", parentId: "nibs-M" });
+    const rows = [
+      makeRow(e1), // "M" is NOT among the visible rows
+      makeRow(e2),
+    ];
+
+    const drag = new DragState();
+    const ondrop = vi.fn();
+    const composable = setup({ drag, rows, ondrop });
+
+    startDragOn("nibs-e1", composable);
+    expect(drag.isDragging).toBe(true);
+
+    // Reorder before the sibling that shares the same hidden parent.
+    drag.setDropTarget("nibs-e2", "before", true);
+    window.dispatchEvent(new PointerEvent("pointerup", { bubbles: true }));
+
+    // Shared hidden parent must be preserved (NOT null) so the reorder stays under
+    // "M" instead of reparenting E1 out to root.
+    expect(ondrop).toHaveBeenCalledWith("nibs-e2", "before", "nibs-M");
+  });
+
+  it("before/after drop where the target's real parent IS visible resolves that real parent id", () => {
+    // Guards against an always-null over-correction: the target sits under a
+    // normally-expanded parent row that IS present in the visible rows, so its
+    // real parent id must be preserved for the cross-parent move to work. This
+    // does NOT catch the nibs-m1my regression (it passes against the pre-fix code
+    // too) — tests #1 and the shared-hidden-parent test are the real guards.
+    const dragged = makeNib({ id: "nibs-drag", type: "feature", parentId: null });
+    const epic = makeNib({ id: "nibs-epic", type: "epic", parentId: null });
+    const child = makeNib({ id: "nibs-child", type: "feature", parentId: "nibs-epic" });
+    const rows = [
+      makeRow(dragged),
+      makeRow(epic, { hasChildren: true }),
+      makeRow(child, { depth: 1, parentNib: epic }),
+    ];
+
+    const drag = new DragState();
+    const ondrop = vi.fn();
+    const composable = setup({ drag, rows, ondrop });
+
+    startDragOn("nibs-drag", composable);
+    drag.setDropTarget("nibs-child", "after", true);
+    window.dispatchEvent(new PointerEvent("pointerup", { bubbles: true }));
+
+    // The epic parent IS visible → resolve the real parent id.
+    expect(ondrop).toHaveBeenCalledWith("nibs-child", "after", "nibs-epic");
+  });
+
+  it("reparent-zone drop resolves a hidden real parent to null", () => {
+    // Reparent zone: the target itself becomes the new parent (handleDrop uses
+    // the target id and ignores targetParentId), so dropping onto a promoted
+    // header whose real parent is hidden must still fire the reparent path.
+    const dragged = makeNib({ id: "nibs-drag", type: "feature", parentId: null });
+    const epic = makeNib({ id: "nibs-epic", type: "epic", parentId: "nibs-hidden-ms" });
+    const rows = [
+      makeRow(dragged),
+      makeRow(epic, { hasChildren: true }),
+    ];
+
+    const drag = new DragState();
+    const ondrop = vi.fn();
+    const composable = setup({ drag, rows, ondrop });
+
+    startDragOn("nibs-drag", composable);
+    drag.setDropTarget("nibs-epic", "reparent", true);
+    window.dispatchEvent(new PointerEvent("pointerup", { bubbles: true }));
+
+    // Reparent still fires; targetParentId is resolved to null (hidden parent not
+    // visible) but handleDrop ignores it for the reparent zone.
+    expect(ondrop).toHaveBeenCalledWith("nibs-epic", "reparent", null);
+  });
+
   it("Escape during drag cancels without calling ondrop", () => {
     const nib1 = makeNib({ id: "nibs-001" });
     const rows = [makeRow(nib1)];
