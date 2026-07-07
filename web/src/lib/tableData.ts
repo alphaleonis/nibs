@@ -108,7 +108,9 @@ export function buildTableData(
       // If we have visibility filtering, skip non-visible nodes
       if (visibleIds && !visibleIds.has(node.nib.id)) continue;
 
-      const dimmed = matchingIds ? !matchingIds.has(node.nib.id) : false;
+      // Bucket nodes are synthetic structural containers, never real nibs in
+      // matchingIds, so they must never be dimmed by a client filter.
+      const dimmed = matchingIds && !isBucketId(node.nib.id) ? !matchingIds.has(node.nib.id) : false;
       const visibleChildren = visibleIds
         ? node.children.filter(c => visibleIds.has(c.nib.id))
         : node.children;

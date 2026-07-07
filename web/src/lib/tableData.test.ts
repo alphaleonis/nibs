@@ -142,6 +142,75 @@ describe("buildTableData", () => {
     expect(result.rows[0].hasChildren).toBe(true);
   });
 
+  describe("excludeStatus client filter (hide completed)", () => {
+    it("dims a completed parent with an active child instead of dropping it", () => {
+      const nibs = [
+        makeTreeTableNib({ id: "nibs-001", type: "milestone", status: "completed", title: "Done milestone" }),
+        makeTreeTableNib({ id: "nibs-002", type: "task", status: "in-progress", title: "Active task", parentId: "nibs-001" }),
+      ];
+      const filter: NibFilter = { excludeStatus: ["completed", "scrapped"] };
+      const result = buildTableData(nibs, filter, "milestones", noCollapsed);
+
+      // Both rows present: the excluded (completed) parent survives as a dimmed
+      // ancestor of its active child, keeping the child visible.
+      expect(result.rows).toHaveLength(2);
+
+      const parent = result.rows.find(r => r.nib.id === "nibs-001")!;
+      const child = result.rows.find(r => r.nib.id === "nibs-002")!;
+      expect(parent).toBeDefined();
+      expect(parent.dimmed).toBe(true);
+      expect(child).toBeDefined();
+      expect(child.dimmed).toBe(false);
+    });
+
+    it("hides a completed leaf with no active descendants", () => {
+      const nibs = [
+        makeTreeTableNib({ id: "nibs-001", type: "milestone", status: "in-progress", title: "Active milestone" }),
+        makeTreeTableNib({ id: "nibs-002", type: "task", status: "completed", title: "Done leaf", parentId: "nibs-001" }),
+      ];
+      const filter: NibFilter = { excludeStatus: ["completed", "scrapped"] };
+      const result = buildTableData(nibs, filter, "milestones", noCollapsed);
+
+      const ids = result.rows.map(r => r.nib.id);
+      expect(ids).toContain("nibs-001");
+      expect(ids).not.toContain("nibs-002");
+
+      // The active milestone matches the filter directly, so it is not dimmed.
+      const parent = result.rows.find(r => r.nib.id === "nibs-001")!;
+      expect(parent.dimmed).toBe(false);
+    });
+
+    it("epics lens: dims completed epic, keeps active child, never dims the bucket header", () => {
+      const nibs = [
+        makeTreeTableNib({ id: "E1", type: "epic", status: "completed", title: "Done epic" }),
+        makeTreeTableNib({ id: "T1", type: "task", status: "in-progress", title: "Active task under epic", parentId: "E1" }),
+        // A loose active task with no epic ancestor lands in the synthetic
+        // "No epic" bucket, so a bucket header row is emitted.
+        makeTreeTableNib({ id: "T2", type: "task", status: "in-progress", title: "Loose active task" }),
+      ];
+      const filter: NibFilter = { excludeStatus: ["completed", "scrapped"] };
+      const result = buildTableData(nibs, filter, "epics", noCollapsed);
+
+      // Completed epic survives as a dimmed ancestor of its active child.
+      const epic = result.rows.find(r => r.nib.id === "E1")!;
+      expect(epic).toBeDefined();
+      expect(epic.dimmed).toBe(true);
+
+      // Active child is visible and not dimmed.
+      const child = result.rows.find(r => r.nib.id === "T1")!;
+      expect(child).toBeDefined();
+      expect(child.dimmed).toBe(false);
+
+      // The synthetic "No epic" bucket header is a structural container, never a
+      // real nib in matchingIds, so it must never be dimmed. (RED before the
+      // flatten isBucketId guard: bucket ids are absent from matchingIds, so the
+      // old `!matchingIds.has(id)` marked this row dimmed:true.)
+      const bucket = result.rows.find(r => isBucketId(r.nib.id));
+      expect(bucket).toBeDefined();
+      expect(bucket!.dimmed).toBe(false);
+    });
+  });
+
   describe("view levels", () => {
     const hierarchyNibs = [
       makeTreeTableNib({ id: "nibs-001", type: "milestone", title: "Milestone" }),
@@ -299,6 +368,16 @@ describe("buildTableData", () => {
       const looseIds = looseOnly.rows.map(r => r.nib.id);
       expect(looseIds).toContain("T2");
       expect(looseIds.some(id => isBucketId(id))).toBe(true);
+    });
+
+    it("never dims the 'No X' bucket header under an active client filter", () => {
+      // A type filter (a real client filter) is active, so Stage-4 dimming runs.
+      // T2 (matching) lands in the "No epic" bucket. The bucket is a structural
+      // container, never a real nib in matchingIds, so it must not be dimmed.
+      const result = buildTableData(nibs, { type: ["task"] }, "epics", noCollapsed);
+      const bucket = result.rows.find(r => isBucketId(r.nib.id));
+      expect(bucket).toBeDefined();
+      expect(bucket!.dimmed).toBe(false);
     });
   });
 });

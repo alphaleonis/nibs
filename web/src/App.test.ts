@@ -157,12 +157,15 @@ describe("App", () => {
     expect(nibsCalls.length).toBeGreaterThan(0);
     // Filtered above to calls whose variables.filter is defined, so variables exists.
     const latestVars = nibsCalls[nibsCalls.length - 1][0].variables!;
+    // search stays server-side; excludeStatus is now applied client-side (so the
+    // server still returns completed/scrapped ancestors for in-place dimming) and
+    // must NOT be forwarded to the GraphQL server.
     expect(latestVars.filter).toEqual(
       expect.objectContaining({
         search: "bug",
-        excludeStatus: ["completed", "scrapped"],
       })
     );
+    expect(latestVars.filter).not.toHaveProperty("excludeStatus");
   });
 
   it("opens detail panel when a title is clicked", async () => {

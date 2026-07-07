@@ -66,6 +66,16 @@ describe("matchesFilter", () => {
     expect(matchesFilter(nib, { status: ["in-progress", "todo"] })).toBe(true);
     expect(matchesFilter(nib, { status: ["completed"] })).toBe(false);
   });
+
+  it("returns false when nib status is in excludeStatus", () => {
+    const nib = makeNib({ status: "completed" });
+    expect(matchesFilter(nib, { excludeStatus: ["completed", "scrapped"] })).toBe(false);
+  });
+
+  it("returns true when nib status is not in excludeStatus", () => {
+    const nib = makeNib({ status: "todo" });
+    expect(matchesFilter(nib, { excludeStatus: ["completed", "scrapped"] })).toBe(true);
+  });
 });
 
 describe("hasClientFilters", () => {
@@ -89,8 +99,12 @@ describe("hasClientFilters", () => {
     expect(hasClientFilters({ status: ["todo"] })).toBe(true);
   });
 
+  it("returns true when excludeStatus is active", () => {
+    expect(hasClientFilters({ excludeStatus: ["completed", "scrapped"] })).toBe(true);
+  });
+
   it("returns false for search-only filter (not advanced)", () => {
-    expect(hasClientFilters({ search: "test", excludeStatus: ["completed"] })).toBe(false);
+    expect(hasClientFilters({ search: "test" })).toBe(false);
   });
 
   it("returns false for empty filter", () => {
@@ -104,7 +118,7 @@ describe("hasClientFilters", () => {
 
 describe("prepareFilter", () => {
   it("returns original filter as serverFilter when no client filters are active", () => {
-    const filter: NibFilter = { search: "hello", excludeStatus: ["completed"] };
+    const filter: NibFilter = { search: "hello" };
     const result = prepareFilter(filter);
 
     expect(result.serverFilter).toBe(filter); // reference equality
@@ -112,12 +126,26 @@ describe("prepareFilter", () => {
     expect(result.matchesClient(makeNib())).toBe(true);
   });
 
+  it("moves excludeStatus out of serverFilter into the client-side filter", () => {
+    const filter: NibFilter = { search: "hello", excludeStatus: ["completed", "scrapped"] };
+    const result = prepareFilter(filter);
+
+    // excludeStatus is filtered client-side (so completed/scrapped ancestors of
+    // active children can be fetched and dimmed rather than dropped server-side).
+    expect(result.serverFilter).toEqual({ search: "hello" });
+    expect(result.serverFilter).not.toHaveProperty("excludeStatus");
+    expect(result.clientFiltersActive).toBe(true);
+    expect(result.matchesClient(makeNib({ status: "completed" }))).toBe(false);
+    expect(result.matchesClient(makeNib({ status: "todo" }))).toBe(true);
+  });
+
   it("strips type from serverFilter when type filter is active", () => {
     const filter: NibFilter = { search: "hello", type: ["bug"], excludeStatus: ["completed"] };
     const result = prepareFilter(filter);
 
-    expect(result.serverFilter).toEqual({ search: "hello", excludeStatus: ["completed"] });
+    expect(result.serverFilter).toEqual({ search: "hello" });
     expect(result.serverFilter).not.toHaveProperty("type");
+    expect(result.serverFilter).not.toHaveProperty("excludeStatus");
     expect(result.clientFiltersActive).toBe(true);
   });
 
@@ -133,12 +161,13 @@ describe("prepareFilter", () => {
     };
     const result = prepareFilter(filter);
 
-    expect(result.serverFilter).toEqual({ search: "test", excludeStatus: ["scrapped"] });
+    expect(result.serverFilter).toEqual({ search: "test" });
     expect(result.serverFilter).not.toHaveProperty("type");
     expect(result.serverFilter).not.toHaveProperty("priority");
     expect(result.serverFilter).not.toHaveProperty("status");
     expect(result.serverFilter).not.toHaveProperty("estimate");
     expect(result.serverFilter).not.toHaveProperty("tags");
+    expect(result.serverFilter).not.toHaveProperty("excludeStatus");
     expect(result.clientFiltersActive).toBe(true);
   });
 
@@ -191,7 +220,7 @@ describe("prepareFilter", () => {
     expect(result.matchesClient(makeNib({ status: "completed" }))).toBe(false);
   });
 
-  it("resolves all status conflicts and returns no client filters when status is fully removed", () => {
+  it("resolves all status conflicts, keeping excludeStatus as the client filter", () => {
     const filter: NibFilter = {
       status: ["completed"],
       excludeStatus: ["completed", "scrapped"],
@@ -199,10 +228,12 @@ describe("prepareFilter", () => {
     };
     const result = prepareFilter(filter);
 
-    // All status values conflict, so status is removed entirely — no client filters remain
-    expect(result.clientFiltersActive).toBe(false);
-    expect(result.serverFilter).toEqual({ excludeStatus: ["completed", "scrapped"], search: "test" });
-    expect(result.matchesClient(makeNib())).toBe(true);
+    // All status values conflict, so the include status list is removed entirely,
+    // but excludeStatus remains as an active client-side filter.
+    expect(result.clientFiltersActive).toBe(true);
+    expect(result.serverFilter).toEqual({ search: "test" });
+    expect(result.matchesClient(makeNib({ status: "completed" }))).toBe(false);
+    expect(result.matchesClient(makeNib({ status: "todo" }))).toBe(true);
   });
 });
 
@@ -335,7 +366,16 @@ describe("isDragAllowed", () => {
     expect(isDragAllowed({})).toBe(true);
   });
 
-  it("returns true when only excludeStatus is set (server-side default filter)", () => {
+  it("returns true when only excludeStatus is set (the 'hide completed' toggle)", () => {
+    // excludeStatus is a client-side filter set when the "Include completed" toggle
+    // is OFF (it is absent by default). It dims filtered-out ancestors in place and
+    // removes filtered-out leaves rather than reordering rows — so drag must stay
+    // allowed when it is the ONLY active client filter.
     expect(isDragAllowed({ excludeStatus: ["completed", "scrapped"] })).toBe(true);
+  });
+
+  it("returns false when a real client filter is combined with excludeStatus", () => {
+    expect(isDragAllowed({ type: ["bug"], excludeStatus: ["completed", "scrapped"] })).toBe(false);
+    expect(isDragAllowed({ status: ["todo"], excludeStatus: ["completed", "scrapped"] })).toBe(false);
   });
 });

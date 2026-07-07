@@ -1,7 +1,14 @@
 import type { NibSummary, NibFilter } from "./types";
 
-/** Fields that are filtered client-side (not supported by the GraphQL server). */
-const CLIENT_FIELDS = ["type", "priority", "estimate", "tags", "status"] as const;
+/**
+ * Fields applied client-side even though the GraphQL server also supports them
+ * (see internal/graph/filters.go). They are filtered here so a non-matching
+ * ancestor of visible children is kept and dimmed in place (tableData.ts Stage 4)
+ * rather than dropped by the server. excludeStatus in particular was moved here so
+ * a completed parent of active children dims instead of vanishing (nibs-3up4).
+ * A filtered-out leaf with no visible descendants is still removed from the rows.
+ */
+const CLIENT_FIELDS = ["type", "priority", "estimate", "tags", "status", "excludeStatus"] as const;
 type ClientField = (typeof CLIENT_FIELDS)[number];
 
 export interface PreparedFilter {
@@ -11,10 +18,12 @@ export interface PreparedFilter {
 }
 
 /**
- * Returns true if nib matches all active client filter criteria (type, priority, status, estimate, tags).
+ * Returns true if nib matches all active client filter criteria (type, priority,
+ * status, excludeStatus, estimate, tags).
  * Empty/undefined filter arrays are ignored (match everything).
  * Multiple filter fields use AND logic — the nib must match all active filters.
  * Tags use OR logic within the group — nib must have at least one matching tag.
+ * excludeStatus is a negative filter — a nib whose status is listed is a non-match.
  */
 export function matchesFilter(nib: NibSummary, filter: NibFilter): boolean {
   if (filter.type?.length && !filter.type.includes(nib.type)) {
@@ -24,6 +33,9 @@ export function matchesFilter(nib: NibSummary, filter: NibFilter): boolean {
     return false;
   }
   if (filter.status?.length && !filter.status.includes(nib.status)) {
+    return false;
+  }
+  if (filter.excludeStatus?.length && filter.excludeStatus.includes(nib.status)) {
     return false;
   }
   if (filter.estimate?.length && !filter.estimate.includes(nib.estimate)) {
@@ -39,13 +51,17 @@ export function matchesFilter(nib: NibSummary, filter: NibFilter): boolean {
 
 /**
  * Returns true if filter has any active client-side filter criteria.
- * Search and excludeStatus are not considered client filters.
+ * Search is not considered a client filter. excludeStatus IS a client filter
+ * so a filtered-out ancestor of visible children is dimmed in place (Stage 4 in
+ * tableData.ts) rather than dropped server-side; a filtered-out leaf with no
+ * visible descendants is still removed from the rows.
  */
 export function hasClientFilters(filter: NibFilter): boolean {
   return !!(
     filter.type?.length ||
     filter.priority?.length ||
     filter.status?.length ||
+    filter.excludeStatus?.length ||
     filter.estimate?.length ||
     filter.tags?.length
   );
@@ -70,7 +86,7 @@ export function prepareFilter(filter: NibFilter): PreparedFilter {
     };
   }
 
-  const { type, priority, estimate, tags, status, ...serverFilter } = resolved;
+  const { type, priority, estimate, tags, status, excludeStatus, ...serverFilter } = resolved;
 
   return {
     serverFilter,
@@ -92,7 +108,13 @@ export function getStatusConflicts(filter: NibFilter): string[] {
 
 /** Returns true when drag-and-drop reordering is safe (no search/filters distorting row order). */
 export function isDragAllowed(filter: NibFilter): boolean {
-  return !filter.search && !hasClientFilters(filter);
+  // excludeStatus (set when the "Include completed" toggle is OFF; absent by
+  // default) is a client filter, but it dims a filtered-out ancestor of visible
+  // children in place and removes a filtered-out leaf — it never reorders rows —
+  // so it must not disable drag on its own. Only real client filters
+  // (type/priority/status/estimate/tags) or search block reordering.
+  const { excludeStatus: _excludeStatus, ...rest } = filter;
+  return !filter.search && !hasClientFilters(rest);
 }
 
 /**

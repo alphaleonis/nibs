@@ -1272,13 +1272,11 @@ describe("TreeTable", () => {
       // queryStore should have been called again with the updated filter
       expect(mockQueryStore.mock.calls.length).toBeGreaterThan(initialCallCount);
 
-      // The latest call should include excludeStatus in the server filter
+      // excludeStatus is now a client-side filter, so it is stripped from the
+      // server filter — the re-query fetches completed/scrapped nibs so their
+      // active descendants stay visible (with the ancestor dimmed in place).
       const latestCall = mockQueryStore.mock.calls[mockQueryStore.mock.calls.length - 1];
-      expect(latestCall[0].variables!.filter).toEqual(
-        expect.objectContaining({
-          excludeStatus: ["completed", "scrapped"],
-        })
-      );
+      expect(latestCall[0].variables!.filter).not.toHaveProperty("excludeStatus");
     });
 
     it("renders updated data after filter change", async () => {
