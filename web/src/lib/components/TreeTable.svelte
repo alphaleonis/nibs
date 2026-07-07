@@ -178,7 +178,13 @@
     if (!visibleRowIds.includes(nibId)) {
       const next = new Set(collapsedIds);
       let current = nibMap.get(nibId);
-      while (current?.parentId) {
+      // Guard against a parentId cycle (A->B->A) — only possible via corrupt
+      // .nibs data, but an unguarded walk here would spin forever inside this
+      // reactive $effect and hang the tab. Mirrors the visited guard in
+      // tableData.ts's ancestor walk.
+      const visited = new Set<string>();
+      while (current?.parentId && !visited.has(current.parentId)) {
+        visited.add(current.parentId);
         next.delete(current.parentId);
         current = nibMap.get(current.parentId);
       }
