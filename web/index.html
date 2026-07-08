@@ -1,15 +1,15 @@
 <!doctype html>
-<html lang="en" class="dark">
+<html lang="en">
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>Nibs</title>
-    <!-- FOUC guard (nibs-vmaq): pick the saved palette BEFORE first paint so the
-         app never flashes the wrong theme. This runs before any module loads, so
-         it must stay self-contained — no imports. It therefore duplicates FOUR
-         things owned by the TypeScript source of truth, ALL of which must be kept
-         in sync:
-           1. the theme allowlist ["graphite","midnight","dracula"]
+    <!-- FOUC guard (nibs-vmaq): pick the saved palette AND its light/dark class
+         BEFORE first paint so the app never flashes the wrong theme. This runs
+         before any module loads, so it must stay self-contained — no imports. It
+         therefore duplicates FIVE things owned by the TypeScript source of truth,
+         ALL of which must be kept in sync:
+           1. the theme allowlist ["graphite","midnight","dracula","daylight"]
               ↔ THEMES              (src/lib/types.ts)
            2. the storage key "nibs-filter-preferences"
               ↔ STORAGE_KEY         (src/lib/storage.ts)
@@ -17,12 +17,17 @@
               ↔ FilterPreferences   (savePreferences in src/lib/storage.ts)
            4. the default "graphite"
               ↔ DEFAULT_THEME       (src/lib/types.ts)
-         src/lib/fouc-guard.test.ts asserts all four against those constants so
+           5. the dark-flag map { graphite:1, midnight:1, dracula:1, daylight:0 }
+              ↔ THEMES[].dark       (src/lib/types.ts) — owns the `.dark` class,
+                which app.css keys Tailwind's `dark:` variant off of, so this must
+                be set before paint or light themes flash dark shadcn utilities.
+         src/lib/fouc-guard.test.ts asserts all five against those constants so
          drift fails loudly. Any error here falls back to the default
-         ("graphite"). -->
+         ("graphite", dark). -->
     <script>
       (function () {
-        var themes = ["graphite", "midnight", "dracula"];
+        var themes = ["graphite", "midnight", "dracula", "daylight"];
+        var dark = { graphite: 1, midnight: 1, dracula: 1, daylight: 0 };
         var t = "graphite";
         try {
           var raw = localStorage.getItem("nibs-filter-preferences");
@@ -34,6 +39,7 @@
           /* ignore — fall back to default */
         }
         document.documentElement.setAttribute("data-theme", t);
+        document.documentElement.classList.toggle("dark", dark[t] !== 0);
       })();
     </script>
   </head>

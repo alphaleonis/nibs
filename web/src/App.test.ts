@@ -114,10 +114,19 @@ describe("App", () => {
     // jsdom shares window.history/location across tests in a file, so reset to a
     // clean URL before each test to mirror a fresh page load.
     window.history.replaceState(null, "", "/");
+    // App's $effect runs applyTheme, which mutates <html> class/dataset. jsdom
+    // shares document.documentElement across tests in a file (index.html's FOUC
+    // guard never runs here), so reset the light/dark seam to a clean slate.
+    document.documentElement.classList.remove("dark");
+    delete document.documentElement.dataset.theme;
   });
 
   it("renders with dark theme shell containing Toolbar and TreeTable", () => {
     render(App);
+
+    // Default prefs resolve to the dark Graphite palette, so App's $effect adds
+    // `.dark` to <html> (index.html no longer hardcodes it — nibs-fen5).
+    expect(document.documentElement.classList.contains("dark")).toBe(true);
 
     // Dark theme shell: has the app title with project name
     expect(screen.getByText("Nibs - test-project")).toBeInTheDocument();
@@ -157,6 +166,8 @@ describe("App", () => {
     try {
       render(App);
       expect(document.documentElement.dataset.theme).toBe("dracula");
+      // Dracula is a dark theme, so applyTheme keeps `.dark` present.
+      expect(document.documentElement.classList.contains("dark")).toBe(true);
     } finally {
       Object.defineProperty(globalThis, "localStorage", {
         value: savedStorage,
@@ -165,6 +176,54 @@ describe("App", () => {
       });
       if (savedTheme === undefined) delete document.documentElement.dataset.theme;
       else document.documentElement.dataset.theme = savedTheme;
+    }
+  });
+
+  it("renders WITHOUT `.dark` when the seeded theme is the light Daylight palette", () => {
+    // The complement of the dark-theme assertions: a seeded light theme must clear
+    // `.dark` so shadcn `dark:` utilities switch off and the app renders light
+    // (nibs-fen5). Uses the same defineProperty localStorage pattern.
+    //
+    // Force the opposite starting state so this can only pass if App actively
+    // clears `.dark` (the shared beforeEach already removes it, which would make
+    // the assertion vacuous). Mirrors theme.test.ts's "removes `.dark`" unit test.
+    const hadDark = document.documentElement.classList.contains("dark");
+    document.documentElement.classList.add("dark");
+
+    const savedStorage = globalThis.localStorage;
+    const savedTheme = document.documentElement.dataset.theme;
+    const mockStore: Record<string, string> = {
+      "nibs-filter-preferences": JSON.stringify({
+        filter: {},
+        viewLevel: "none",
+        theme: "daylight",
+      }),
+    };
+    Object.defineProperty(globalThis, "localStorage", {
+      value: {
+        getItem: (key: string) => mockStore[key] ?? null,
+        setItem: (key: string, value: string) => { mockStore[key] = value; },
+        removeItem: (key: string) => { delete mockStore[key]; },
+      },
+      writable: true,
+      configurable: true,
+    });
+
+    try {
+      render(App);
+      expect(document.documentElement.dataset.theme).toBe("daylight");
+      expect(document.documentElement.classList.contains("dark")).toBe(false);
+    } finally {
+      Object.defineProperty(globalThis, "localStorage", {
+        value: savedStorage,
+        writable: true,
+        configurable: true,
+      });
+      if (savedTheme === undefined) delete document.documentElement.dataset.theme;
+      else document.documentElement.dataset.theme = savedTheme;
+      // Restore the `.dark` class we forced on above, so this test leaves the
+      // shared document element as it found it (not reliant on the next beforeEach).
+      document.documentElement.classList.toggle("dark", hadDark);
     }
   });
 

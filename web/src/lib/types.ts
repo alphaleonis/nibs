@@ -91,19 +91,21 @@ export type RowDensity = "compact" | "comfortable";
 // near-black palette (the bare :root values in app.css) and intentionally has no
 // override block. "graphite" is the default for fresh profiles.
 //
-// IMPORTANT: every entry here is DARK-only. index.html hardcodes class="dark" on
-// <html> and never toggles it, and app.css wires Tailwind's `dark:` variant to
-// that class (`@custom-variant dark (&:is(.dark *))`) — keyed off the class,
+// Each entry carries a `dark` flag that OWNS the light/dark axis (nibs-fen5).
+// The theme seam toggles the `.dark` class on <html> from this flag: applyTheme()
+// (theme.ts) and the pre-paint FOUC guard (index.html) both set `.dark` to match
+// the active theme's `dark` value. This matters because app.css wires Tailwind's
+// `dark:` variant to that class (`@custom-variant dark (&:is(.dark *))`) —
 // INDEPENDENT of `data-theme`. Shipped shadcn components use `dark:` utilities
-// (e.g. dark:bg-input/30), so a new entry only re-tints the swappable palette
-// tokens; the `dark:` utilities keep firing regardless of `data-theme`.
-// Therefore adding a LIGHT theme is NOT "just another entry": it requires a seam
-// change so applyTheme() (theme.ts) and the FOUC guard (index.html) toggle the
-// `.dark` class per a light/dark flag. That rework is tracked in nibs-fen5.
+// (e.g. dark:bg-input/30); driving `.dark` from the flag lets a LIGHT palette
+// switch those utilities off so the app renders light, not just re-tint chrome.
+// "daylight" is the first light entry (dark: false); the three original palettes
+// stay dark (dark: true).
 export const THEMES = [
-  { value: "graphite", label: "Graphite" },
-  { value: "midnight", label: "Midnight" },
-  { value: "dracula", label: "Dracula" },
+  { value: "graphite", label: "Graphite", dark: true },
+  { value: "midnight", label: "Midnight", dark: true },
+  { value: "dracula", label: "Dracula", dark: true },
+  { value: "daylight", label: "Daylight", dark: false },
 ] as const;
 
 export type Theme = (typeof THEMES)[number]["value"];

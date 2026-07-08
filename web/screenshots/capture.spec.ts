@@ -7,8 +7,11 @@ import type { Theme } from "../src/lib/types";
 // Captures PNGs of the key web UI states into web/screenshots/output/ so an
 // agent (or human) can visually verify UI changes. Run via `task screenshots`.
 //
-// The theme engine (nibs-vmaq) is exercised below: each palette gets a
-// table + detail capture so the three can be compared side by side.
+// The theme engine (nibs-vmaq, nibs-fen5) is exercised below: each palette gets a
+// table + detail + settings capture so the palettes can be compared side by side.
+// The captures drive the REAL app (page.goto loads index.html), so the light/dark
+// `.dark` class is toggled by the FOUC guard + App's $effect exactly as at runtime
+// — the light Daylight palette (nibs-fen5) therefore renders with `.dark` cleared.
 // When the board view lands (nibs-sg09), add a capture for it.
 
 const OUT = join(import.meta.dirname, "output");
@@ -69,9 +72,10 @@ test("context menu", async ({ page }) => {
   await shot(page, "context-menu");
 });
 
-// Per-theme captures (nibs-vmaq): table + detail panel under each palette so an
-// agent can confirm Graphite reads as a softer/warmer dark, Dracula is clearly
-// purple-tinted, and pills/indicators/body text stay readable in all three.
+// Per-theme captures (nibs-vmaq, nibs-fen5): table + detail panel under each
+// palette so an agent can confirm Graphite reads as a softer/warmer dark, Dracula
+// is clearly purple-tinted, Daylight renders as a warm LIGHT theme (shadcn inputs/
+// borders light, not dark), and pills/indicators/body text stay readable in all.
 for (const { value } of THEMES) {
   test(`theme ${value} — table`, async ({ page }) => {
     await openApp(page, "milestones", value);

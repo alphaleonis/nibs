@@ -19,9 +19,11 @@ describe("ThemeSelect", () => {
 
     // All themes should be present as options (labels shown)
     const labels = screen.getAllByRole("option").map((o) => o.textContent?.trim());
+    expect(labels).toHaveLength(4);
     expect(labels).toContain("Graphite");
     expect(labels).toContain("Midnight");
     expect(labels).toContain("Dracula");
+    expect(labels).toContain("Daylight");
 
     // Selecting emits the theme value (not the label)
     await user.click(screen.getByRole("option", { name: "Dracula" }));

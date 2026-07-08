@@ -190,13 +190,20 @@
   --text-caption-leading: 1rem;  /* 16px */
 }
 
-/* ── Swappable dark palettes (nibs-vmaq) ─────────────────────────────
-   The active palette is chosen via a `data-theme` attribute on <html>
-   (index.html keeps class="dark" — all three palettes are dark; data-theme
-   only picks the surface/accent hues). Each block is a DIFF: it overrides
-   ONLY the chrome/surface tokens that differ from the base :root values
-   (plus, for Dracula, a few accent tokens). Type / status / priority hues
-   and the THEME-INVARIANT typography tokens are never overridden here.
+/* ── Swappable palettes (nibs-vmaq, nibs-fen5) ───────────────────────
+   The active palette is chosen via a `data-theme` attribute on <html>. The
+   light/dark axis is owned by the `.dark` class, toggled per-theme from the
+   THEMES `dark` flag by applyTheme() (theme.ts) and the FOUC guard (index.html)
+   — app.css keys Tailwind's `dark:` variant off that class. Graphite, Midnight
+   and Dracula are DARK (`.dark` present); Daylight is LIGHT (`.dark` absent), the
+   first light palette (nibs-fen5).
+
+   Each block is a DIFF: it overrides ONLY the tokens that differ from the base
+   :root values. The dark palettes touch mostly chrome/surface (plus, for Dracula,
+   a few accent tokens). Daylight is the exception: because the base :root domain
+   hues (type/status/priority/link/tag/etc.) are tuned bright FOR DARK backgrounds,
+   the light palette must ALSO darken those domain tokens so they stay legible on
+   near-white surfaces. The THEME-INVARIANT typography tokens are never overridden.
 
    "midnight" intentionally has NO block: it IS the bare :root values above,
    so `data-theme="midnight"` (or no attribute) falls through to :root and
@@ -258,6 +265,100 @@
   --tag-bg: oklch(0.70 0.17 300 / 0.15);
   --tag-text: oklch(0.82 0.13 300);
   --tag-border: oklch(0.70 0.17 300 / 0.35);
+}
+
+/* Daylight — the first LIGHT palette. `.dark` is absent for this
+   theme, so shadcn `dark:` utilities switch off and components render light.
+   Chrome is a soft, warm off-white (hue ~80) echoing Graphite's warm family;
+   the foreground is a warm near-black. Because the base :root domain hues are
+   tuned bright for dark backgrounds, this block ALSO darkens every domain token
+   (type/status/priority/link/tag/error/archive/delete) toward ~-600/-700 so they
+   hold contrast on light surfaces, and re-tints the subtle *-bg / alpha tokens
+   that were built to glow on dark. Typography tokens stay invariant. */
+:root[data-theme="daylight"] {
+  /* Chrome / surface */
+  --background: oklch(0.985 0.004 85);      /* soft warm off-white */
+  --foreground: oklch(0.22 0.006 75);       /* warm near-black */
+  --card: oklch(0.995 0.002 85);
+  --card-foreground: oklch(0.22 0.006 75);
+  --popover: oklch(0.998 0.002 85);
+  --popover-foreground: oklch(0.22 0.006 75);
+  --primary: oklch(0.5 0.19 255);           /* azure, darkened to hold on white */
+  --primary-foreground: oklch(0.99 0.005 250);
+  --secondary: oklch(0.94 0.004 85);
+  --secondary-foreground: oklch(0.28 0.006 75);
+  --muted: oklch(0.955 0.004 85);
+  --muted-foreground: oklch(0.5 0.012 75);  /* darkened: legible on light */
+  --accent: oklch(0.93 0.005 85);           /* hover surface */
+  --accent-foreground: oklch(0.28 0.006 75);
+  --destructive: oklch(0.52 0.22 27);       /* red, darkened for white bg */
+  --destructive-foreground: oklch(0.99 0.005 27);
+  --border: oklch(0.9 0.005 85);
+  --input: oklch(0.89 0.005 85);
+  --ring: oklch(0.5 0.19 255);
+
+  /* Unique app token */
+  --text-secondary: oklch(0.48 0.012 75);
+
+  /* Type icon colors — config canonical hues, darkened (~-600/-700) for white */
+  --type-milestone: oklch(0.55 0.11 215);   /* cyan */
+  --type-epic: oklch(0.52 0.24 293);         /* violet */
+  --type-bug: oklch(0.52 0.2 25);            /* red */
+  --type-feature: oklch(0.52 0.13 160);      /* emerald */
+  --type-task: oklch(0.52 0.16 245);         /* blue */
+  --type-research: oklch(0.58 0.13 68);      /* amber */
+
+  /* Status colors — darker *-text on lighter same-hue *-bg tints */
+  --status-draft-bg: oklch(0.94 0.03 250);
+  --status-draft-text: oklch(0.52 0.16 250);
+  --status-todo-bg: oklch(0.94 0.04 160);
+  --status-todo-text: oklch(0.52 0.13 160);
+  --status-in-progress-bg: oklch(0.94 0.05 80);
+  --status-in-progress-text: oklch(0.58 0.13 68);
+  --status-deferred-bg: oklch(0.93 0.02 286);
+  --status-deferred-text: oklch(0.5 0.05 286);
+  --status-completed-bg: oklch(0.93 0.005 261);
+  --status-completed-text: oklch(0.5 0.015 261);
+  --status-scrapped-bg: oklch(0.95 0.004 264);
+  --status-scrapped-text: oklch(0.62 0.01 264); /* dimmer than completed */
+
+  /* Priority colors */
+  --priority-critical: oklch(0.52 0.22 27);
+  --priority-high: oklch(0.6 0.14 66);
+  --priority-normal: oklch(0.55 0.012 264);
+  --priority-low: oklch(0.63 0.01 264);
+
+  /* Blocking/blocked indicators */
+  --blocked: oklch(0.52 0.22 27);
+  --blocking: oklch(0.62 0.15 66);
+
+  /* Interactive colors */
+  --link: oklch(0.5 0.2 276);
+  --link-hover: oklch(0.44 0.2 276);
+  --link-underline: oklch(0.5 0.2 276 / 0.4);
+  --link-hover-underline: oklch(0.44 0.2 276 / 0.6);
+  --warning: oklch(0.6 0.16 60);
+  --warning-hover: oklch(0.54 0.15 58);
+  --danger: oklch(0.52 0.21 27);
+  --danger-hover: oklch(0.46 0.19 26);
+
+  /* Error display — darker text, tints re-tuned to read on white */
+  --error-text: oklch(0.5 0.2 25);
+  --error-bg: oklch(0.62 0.22 25 / 0.1);
+  --error-border: oklch(0.62 0.22 25 / 0.3);
+
+  /* Tags */
+  --tag-bg: oklch(0.5 0.19 255 / 0.1);
+  --tag-text: oklch(0.46 0.19 276);
+  --tag-border: oklch(0.5 0.19 255 / 0.3);
+
+  /* Archive/delete action colors */
+  --archive: oklch(0.58 0.13 66);
+  --archive-border: oklch(0.58 0.13 66 / 0.35);
+  --archive-bg-hover: oklch(0.58 0.13 66 / 0.12);
+  --delete: oklch(0.52 0.21 27);
+  --delete-border: oklch(0.52 0.21 27 / 0.3);
+  --delete-bg-hover: oklch(0.52 0.21 27 / 0.1);
 }
 
 /* ── Semantic type-scale utilities ──────────────────────────────────

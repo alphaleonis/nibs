@@ -20,6 +20,21 @@ describe("index.html FOUC guard stays in sync with the TS source of truth", () =
     expect(inlineThemes).toEqual(THEMES.map((t) => t.value));
   });
 
+  it("inline dark-flag map matches each THEME's `dark` boolean", () => {
+    // Sync-point 5 (nibs-fen5): the guard sets the `.dark` class before first
+    // paint from `var dark = { graphite: 1, ... }`. app.css keys Tailwind's `dark:`
+    // variant off that class, so a stale flag would flash light themes as dark (or
+    // vice-versa) until App's $effect corrected it. Extract the object literal and
+    // assert it matches THEMES exactly (1 = dark, 0 = light).
+    const match = html.match(/var dark = (\{[^}]*\});/);
+    expect(match, "could not find `var dark = {...}` in index.html").not.toBeNull();
+    // Quote the bare object keys so the literal parses as JSON.
+    const json = match![1].replace(/([A-Za-z_]\w*)\s*:/g, '"$1":');
+    const inlineDark = JSON.parse(json) as Record<string, number>;
+    const expected = Object.fromEntries(THEMES.map((t) => [t.value, t.dark ? 1 : 0]));
+    expect(inlineDark).toEqual(expected);
+  });
+
   it("inline storage key matches STORAGE_KEY", () => {
     expect(html).toContain(`localStorage.getItem("${STORAGE_KEY}")`);
   });
