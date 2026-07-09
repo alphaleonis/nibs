@@ -294,6 +294,11 @@
     border: none;
     padding: 0;
     font: inherit;
+    /* Join the row's type scale (14px) instead of inheriting the 16px root;
+       the title stays the primary column via weight, not size. */
+    font-size: var(--text-body-size);
+    font-weight: 500;
+    line-height: var(--text-body-leading);
     text-align: left;
   }
 
