@@ -20,18 +20,71 @@
           { EditorView, keymap },
           { EditorState },
           { markdown },
-          { oneDark },
+          { HighlightStyle, syntaxHighlighting },
+          { tags: t },
         ] = await Promise.all([
           import("codemirror"),
           import("@codemirror/view"),
           import("@codemirror/state"),
           import("@codemirror/lang-markdown"),
-          import("@codemirror/theme-one-dark"),
+          import("@codemirror/language"),
+          import("@lezer/highlight"),
         ]);
 
         if (!container || aborted) return;
 
         container.innerHTML = "";
+
+        // Token-driven chrome: every colour is a CSS var, so the editor tracks
+        // the app's light/dark theme engine automatically (no fixed oneDark).
+        const isDark =
+          typeof document !== "undefined" &&
+          document.documentElement.classList.contains("dark");
+
+        const appTheme = EditorView.theme(
+          {
+            "&": {
+              backgroundColor: "var(--background)",
+              color: "var(--foreground)",
+              fontSize: "0.875rem",
+              height: "100%",
+            },
+            "&.cm-focused": { outline: "none" },
+            ".cm-content": {
+              caretColor: "var(--ring)",
+              fontFamily:
+                "ui-monospace, SFMono-Regular, 'SF Mono', Menlo, Consolas, monospace",
+            },
+            ".cm-cursor, .cm-dropCursor": { borderLeftColor: "var(--ring)" },
+            "&.cm-focused .cm-selectionBackground, .cm-selectionBackground, ::selection":
+              { backgroundColor: "var(--accent)" },
+            ".cm-gutters": {
+              backgroundColor: "var(--muted)",
+              color: "var(--muted-foreground)",
+              border: "none",
+              borderRight: "1px solid var(--border)",
+            },
+            ".cm-activeLine": { backgroundColor: "transparent" },
+            ".cm-activeLineGutter": {
+              backgroundColor: "var(--muted)",
+              color: "var(--foreground)",
+            },
+          },
+          { dark: isDark },
+        );
+
+        const appHighlight = syntaxHighlighting(
+          HighlightStyle.define([
+            { tag: t.heading, color: "var(--type-feature)", fontWeight: "600" },
+            { tag: t.strong, fontWeight: "700", color: "var(--foreground)" },
+            { tag: t.emphasis, fontStyle: "italic" },
+            { tag: [t.link, t.url], color: "var(--link)" },
+            { tag: t.monospace, color: "var(--tag-text)" },
+            { tag: t.list, color: "var(--muted-foreground)" },
+            { tag: t.quote, color: "var(--muted-foreground)", fontStyle: "italic" },
+            { tag: t.contentSeparator, color: "var(--muted-foreground)" },
+          ]),
+        );
 
         view = new EditorView({
           state: EditorState.create({
@@ -39,7 +92,8 @@
             extensions: [
               basicSetup,
               markdown(),
-              oneDark,
+              appTheme,
+              appHighlight,
               EditorView.lineWrapping,
               EditorView.updateListener.of((update: any) => {
                 if (update.docChanged) {
@@ -83,7 +137,6 @@
 
   .markdown-editor :global(.cm-editor) {
     height: 100%;
-    border-radius: var(--radius-lg);
   }
 
   .markdown-editor :global(.cm-scroller) {

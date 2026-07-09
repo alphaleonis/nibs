@@ -17,8 +17,12 @@ vi.mock("codemirror", () => ({
 vi.mock("@codemirror/lang-markdown", () => ({
   markdown: () => [],
 }));
-vi.mock("@codemirror/theme-one-dark", () => ({
-  oneDark: [],
+vi.mock("@codemirror/language", () => ({
+  HighlightStyle: { define: () => [] },
+  syntaxHighlighting: () => [],
+}));
+vi.mock("@lezer/highlight", () => ({
+  tags: new Proxy({}, { get: () => ({}) }),
 }));
 vi.mock("@codemirror/state", () => ({
   EditorState: {
@@ -34,6 +38,7 @@ vi.mock("@codemirror/view", () => {
   return {
     EditorView: class MockEditorView {
       static lineWrapping = [];
+      static theme = (_spec: any, _opts?: any) => [];
       static updateListener = {
         of: (cb: any) => {
           mockUpdateListenerCallback.current = cb;
