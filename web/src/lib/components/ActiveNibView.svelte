@@ -493,8 +493,7 @@
           </div>
           <div class="anv-saveset">
             <Button
-              size="sm"
-              class="text-sm"
+              size="default"
               data-testid="anv-save"
               disabled={!form.dirty || form.saving || disabled}
               onclick={handleSave}
@@ -503,8 +502,7 @@
             </Button>
             <Button
               variant="outline"
-              size="sm"
-              class="text-sm"
+              size="default"
               data-testid="anv-discard"
               disabled={!form.dirty || form.saving || disabled}
               onclick={handleDiscard}
