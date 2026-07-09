@@ -28,6 +28,7 @@ function makeRow(nib: TreeTableNib, opts: Partial<RowData> = {}): RowData {
     hasChildren: false,
     dimmed: false,
     parentNib: null,
+    displayParentId: null,
     ...opts,
   };
 }

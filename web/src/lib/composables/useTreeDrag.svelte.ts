@@ -124,7 +124,10 @@ export function useTreeDrag(opts: {
     const nibMap = nibMapFromRows();
     draggedTypes = ids.map(id => nibMap.get(id)?.type ?? "").filter(Boolean);
 
-    const parents = new Set(ids.map(id => nibMap.get(id)?.parentId));
+    // Resolve the source's parent through the same display-parent authority as
+    // the target (RowData.displayParentId), not the raw nib.parentId. This keeps
+    // the shared-parent check in handleDrop lens-agnostic and symmetric.
+    const parents = new Set(ids.map(id => rows.find(r => r.nib.id === id)?.displayParentId));
     draggedParentId = parents.size === 1 ? [...parents][0] : undefined;
 
     drag.startDrag(ids, draggedParentId);
@@ -184,11 +187,17 @@ export function useTreeDrag(opts: {
       dragDescendantIds,
     );
 
-    // For before/after on a different parent, validate the type hierarchy
+    // For before/after on a different parent, validate the type hierarchy.
+    // Compare and look up the parent through displayParentId so move-validation
+    // and the drop agree. displayParentId is guaranteed by the producer
+    // (tableData's flatten) to be a real nib id or null — never a synthetic
+    // bucket id (see the RowData.displayParentId invariant) — so no isBucketId
+    // guard is needed here.
     if (valid && (zone === "before" || zone === "after")) {
-      if (draggedParentId !== undefined && targetRow.nib.parentId !== draggedParentId) {
+      if (draggedParentId !== undefined && targetRow.displayParentId !== draggedParentId) {
         const nibMap = nibMapFromRows();
-        const targetParent = targetRow.nib.parentId ? nibMap.get(targetRow.nib.parentId) : null;
+        const dp = targetRow.displayParentId;
+        const targetParent = dp ? nibMap.get(dp) ?? null : null;
         valid = isValidCrossParentDrop(draggedTypes, targetParent?.type ?? null);
       }
     }
@@ -234,21 +243,15 @@ export function useTreeDrag(opts: {
     if (drag.dropTargetId && drag.dropZone && drag.dropValid && opts.ondrop) {
       const rows = opts.getRows();
       const targetRow = rows.find(r => r.nib.id === drag.dropTargetId);
-      // Resolve the target's DISPLAY parent for the reorder. Keep the real parent
-      // when it's the dragged item's OWN parent (shared parent => same-parent reorder)
-      // or when the parent row is visible (genuine cross-parent). A *different*,
-      // hidden parent (promoted header / loose bucket item) falls back to root: this
-      // avoids adopting an unseen container as parent and keeps the shared-parent case
-      // a same-parent reorder. It does NOT fully close the class — a drop next to an
-      // item under a *different* hidden container still re-roots the dragged item
-      // (residual; #jeu5 tracks resolving both source and target through one
-      // display-parent function).
-      const nibMap = nibMapFromRows();
-      const realParentId = targetRow?.nib.parentId ?? null;
-      const targetParentId =
-        realParentId === drag.draggedParentId ? realParentId
-        : realParentId !== null && nibMap.has(realParentId) ? realParentId
-        : null;
+      // Resolve the target's DISPLAY parent (the container it sits under in the
+      // current view tree), which tableData derives from the node's display
+      // position rather than its raw nib.parentId. Both the drag source
+      // (draggedParentId) and the target are resolved through displayParentId, so
+      // a reorder never adopts a hidden container as the new parent: a promoted
+      // header resolves to root, siblings under the same hidden container keep
+      // that shared container, and an item under a *different* hidden container
+      // resolves to its own display parent.
+      const targetParentId = targetRow?.displayParentId ?? null;
       opts.ondrop(drag.dropTargetId, drag.dropZone, targetParentId);
     }
 

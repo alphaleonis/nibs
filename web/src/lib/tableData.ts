@@ -8,6 +8,22 @@ export interface RowData {
   hasChildren: boolean;
   dimmed: boolean;
   parentNib: TreeTableNib | null;
+  /**
+   * The id of this row's DISPLAY container in the current view tree — the node
+   * whose `children` array holds it — or null when it is a display root. This is
+   * the structural authority for drag reorder: under a grouping lens it differs
+   * from `nib.parentId` (a promoted header's display parent is null though its
+   * real parent is a hidden container). Distinct from `parentNib`, which stays
+   * the real logical parent used by the "Parent" column.
+   *
+   * INVARIANT: always a real nib id or `null` — NEVER a synthetic bucket id. A
+   * bucket's children inherit the bucket's OWN display parent (`null` for today's
+   * single top-level bucket), so consumers can use this value directly as a
+   * backend `parentId` / type-lookup key without an `isBucketId` guard. If
+   * buckets ever nest, the recursion in `flatten` must pass the bucket's own
+   * resolved display parent rather than the value threaded down.
+   */
+  displayParentId: string | null;
 }
 
 export interface TableData {
@@ -103,7 +119,7 @@ export function buildTableData(
   // Stage 6: Flatten tree with collapse gating, visibility filtering, dimming, parent resolution
   const rows: RowData[] = [];
 
-  function flatten(nodes: TreeNode<TreeTableNib>[]): void {
+  function flatten(nodes: TreeNode<TreeTableNib>[], displayParentId: string | null): void {
     for (const node of nodes) {
       // If we have visibility filtering, skip non-visible nodes
       if (visibleIds && !visibleIds.has(node.nib.id)) continue;
@@ -122,15 +138,25 @@ export function buildTableData(
         hasChildren: visibleChildren.length > 0,
         dimmed,
         parentNib,
+        // The display parent is the node whose children array holds this node.
+        // Threaded top-down from the forest roots (null) so it reflects the
+        // node's DISPLAY position after buildViewTree's grouping reparenting,
+        // not its raw nib.parentId.
+        displayParentId,
       });
 
       if (!collapsedIds.has(node.nib.id)) {
-        flatten(node.children);
+        // A bucket is synthetic (not a real nib), so its children must inherit
+        // the bucket's OWN display parent — never the unusable bucket id. This
+        // upholds the RowData.displayParentId invariant. (If buckets ever nest,
+        // this must resolve the bucket's own display parent, not the value
+        // threaded down.)
+        flatten(node.children, isBucketId(node.nib.id) ? displayParentId : node.nib.id);
       }
     }
   }
 
-  flatten(tree);
+  flatten(tree, null);
 
   return { rows, allTags, parentIds };
 }

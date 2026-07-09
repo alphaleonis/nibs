@@ -380,4 +380,102 @@ describe("buildTableData", () => {
       expect(bucket!.dimmed).toBe(false);
     });
   });
+
+  describe("displayParentId (view-tree display position)", () => {
+    it("none lens: root has null display parent, child points to its parent id", () => {
+      const nibs = [
+        makeTreeTableNib({ id: "nibs-001", type: "milestone", title: "Root" }),
+        makeTreeTableNib({ id: "nibs-002", type: "task", title: "Child", parentId: "nibs-001" }),
+      ];
+      const result = buildTableData(nibs, emptyFilter, "none", noCollapsed);
+
+      const root = result.rows.find(r => r.nib.id === "nibs-001")!;
+      const child = result.rows.find(r => r.nib.id === "nibs-002")!;
+      expect(root.displayParentId).toBeNull();
+      expect(child.displayParentId).toBe("nibs-001");
+    });
+
+    it("none lens: a dangling-parent item re-roots (displayParentId null, nib.parentId non-null)", () => {
+      // Real parent id points at a nib not in the set, so buildTree makes it a
+      // root. Its DISPLAY parent is null even though nib.parentId is set.
+      const nibs = [
+        makeTreeTableNib({ id: "nibs-001", type: "task", title: "Orphan", parentId: "missing-xyz" }),
+      ];
+      const result = buildTableData(nibs, emptyFilter, "none", noCollapsed);
+
+      const orphan = result.rows.find(r => r.nib.id === "nibs-001")!;
+      expect(orphan.nib.parentId).toBe("missing-xyz");
+      expect(orphan.displayParentId).toBeNull();
+    });
+
+    describe("grouping lens (epics) reparenting", () => {
+      // M1(milestone, above tier → hidden) → E1(epic) → F1(feature). T1 is a loose
+      // task that lands in the synthetic "No epic" bucket.
+      const nibs: TreeTableNib[] = [
+        makeTreeTableNib({ id: "M1", type: "milestone", title: "Milestone" }),
+        makeTreeTableNib({ id: "E1", type: "epic", title: "Epic", parentId: "M1" }),
+        makeTreeTableNib({ id: "F1", type: "feature", title: "Feature", parentId: "E1" }),
+        makeTreeTableNib({ id: "T1", type: "task", title: "Loose task" }),
+      ];
+
+      it("promoted header re-roots: displayParentId null though nib.parentId is set (the crux)", () => {
+        const result = buildTableData(nibs, emptyFilter, "epics", noCollapsed);
+
+        // E1's real parent M1 is hidden by the lens, so E1 is promoted to a
+        // top-level header: its DISPLAY parent is root even though nib.parentId
+        // still points at the hidden milestone.
+        const header = result.rows.find(r => r.nib.id === "E1")!;
+        expect(header.nib.parentId).toBe("M1");
+        expect(header.displayParentId).toBeNull();
+      });
+
+      it("a child under a promoted header points to that header", () => {
+        const result = buildTableData(nibs, emptyFilter, "epics", noCollapsed);
+
+        const child = result.rows.find(r => r.nib.id === "F1")!;
+        expect(child.displayParentId).toBe("E1");
+      });
+
+      it("a loose bucket item inherits the bucket's own display parent (null), never the synthetic bucket id", () => {
+        const result = buildTableData(nibs, emptyFilter, "epics", noCollapsed);
+
+        // The bucket itself re-roots to null (it is a top-level display node).
+        const bucket = result.rows.find(r => isBucketId(r.nib.id))!;
+        expect(bucket).toBeDefined();
+        expect(bucket.displayParentId).toBeNull();
+
+        // RowData.displayParentId invariant: NEVER a synthetic bucket id. A loose
+        // bucket item inherits the bucket's OWN display parent (null here) rather
+        // than the unusable bucket id, so consumers can use it directly as a
+        // backend parentId without an isBucketId guard.
+        const item = result.rows.find(r => r.nib.id === "T1")!;
+        expect(item.displayParentId).toBeNull();
+        expect(isBucketId(item.displayParentId ?? "")).toBe(false);
+      });
+
+      it("two loose siblings in one bucket resolve to the identical display parent (symmetric nibs-m1my property)", () => {
+        // Two loose tasks with no grouping ancestor both fall into the single
+        // "No epic" bucket. flatten() threads ONE displayParentId to every child
+        // of a node, so both siblings get the identical value (null — the bucket's
+        // OWN display parent). This is the structural home of the symmetric
+        // nibs-m1my property that moved out of useTreeDrag: a reorder between two
+        // such siblings reads sourceParentId === targetParentId → a same-parent
+        // reorder, never a re-root. The EQUAL assertion pins that symmetric
+        // property (both siblings share one container); the toBeNull assertion is
+        // the one that catches a producer-fix revert — under a revert both would
+        // still be EQUAL, but at the synthetic bucket id, so equality alone is not
+        // the discriminating check.
+        const twoLoose: TreeTableNib[] = [
+          makeTreeTableNib({ id: "L1", type: "task", title: "Loose task 1" }),
+          makeTreeTableNib({ id: "L2", type: "task", title: "Loose task 2" }),
+        ];
+        const result = buildTableData(twoLoose, emptyFilter, "epics", noCollapsed);
+
+        const l1 = result.rows.find(r => r.nib.id === "L1")!;
+        const l2 = result.rows.find(r => r.nib.id === "L2")!;
+        expect(l1.displayParentId).toBe(l2.displayParentId);
+        expect(l1.displayParentId).toBeNull();
+      });
+    });
+  });
 });

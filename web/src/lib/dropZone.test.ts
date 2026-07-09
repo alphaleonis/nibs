@@ -37,6 +37,7 @@ function makeRow(overrides: Partial<Omit<RowData, "nib">> & { nib?: Partial<Tree
     hasChildren: false,
     dimmed: false,
     parentNib: null,
+    displayParentId: null,
     ...rowOverrides,
   };
 }
