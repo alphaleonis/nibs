@@ -4,7 +4,6 @@
   import { createClient } from "./lib/graphql";
   import { CONFIG_QUERY, NIB_DETAIL_QUERY } from "./lib/queries";
   import { Preferences } from "./lib/preferences.svelte";
-  import { DEFAULT_DETAIL_PANEL_WIDTH, MIN_DETAIL_PANEL_WIDTH, DEFAULT_DETAIL_PANEL_HEIGHT, MIN_DETAIL_PANEL_HEIGHT, MAX_DETAIL_PANEL_PERCENT } from "./lib/types";
   import Toolbar from "./lib/components/Toolbar.svelte";
 
   import TreeTable from "./lib/components/TreeTable.svelte";
@@ -21,11 +20,13 @@
   import { createActiveView } from "./lib/composables/useActiveView.svelte";
   import type { ActiveView, DetailView, DetailNib } from "./lib/composables/useActiveView.svelte";
   import { useKeyboardShortcuts } from "./lib/composables/useKeyboardShortcuts.svelte";
+  import { createDetailPaneLayout } from "./lib/composables/detailPaneLayout.svelte";
+  import { orientationOf } from "./lib/composables/detailPaneLayout";
   import { createNibForm, editNibForm } from "./lib/nibForm.svelte";
   import type { CreateForm, EditForm, CreateDefaults, NibSnapshot } from "./lib/nibForm.svelte";
   import { createLiveNib } from "./lib/liveNib.svelte";
   import type { LiveNib } from "./lib/liveNib.svelte";
-  import type { TreeTableNib, DetailPanelPosition } from "./lib/types";
+  import type { TreeTableNib } from "./lib/types";
   import * as Resizable from "./lib/components/ui/resizable";
   import type ResizablePane from "./lib/components/ui/resizable/resizable-pane.svelte";
   import { Toaster } from "./lib/components/ui/sonner";
@@ -307,7 +308,7 @@
     getContextMenuNibId: () => contextMenuNibId,
   });
 
-  // --- PaneForge resize integration ---
+  // --- Detail-pane sizing (composable owns the math; App owns measurement + wiring) ---
   let paneGroupEl: HTMLElement | null = $state(null);
   let detailPaneComponent: ReturnType<typeof ResizablePane> | undefined = $state(undefined);
   let containerWidth = $state(0);
@@ -318,44 +319,24 @@
   // PaneForge direction all switch off this.
   const position = $derived(prefs.detailPanelPosition);
 
-  // Single source of truth for App's pane sizing + PaneForge direction. Keyed by
-  // DetailPanelPosition, so adding a third position (e.g. "left"/"top") is one
-  // table entry and a missing key is a compile-time exhaustiveness error — instead
-  // of silently falling through to the "right"/horizontal branch across the many
-  // per-axis sites below (review #2). NOTE: this table covers only App's sizing;
-  // a new position must ALSO be handled at the other position-dependent surfaces,
-  // which are NOT keyed off this Record: SettingsSheet's `positionOptions` list.
-  const ORIENTATION: Record<DetailPanelPosition, {
-    direction: "horizontal" | "vertical";
-    minPx: number;
-    defaultPx: number;
-    getSizePx: (p: Preferences) => number;
-    setSizePx: (p: Preferences, px: number) => void;
-    flushSizePx: (p: Preferences) => void;
-  }> = {
-    right: {
-      direction: "horizontal",
-      minPx: MIN_DETAIL_PANEL_WIDTH,
-      defaultPx: DEFAULT_DETAIL_PANEL_WIDTH,
-      getSizePx: (p) => p.detailPanelWidth,
-      setSizePx: (p, px) => p.setDetailPanelWidth(px),
-      flushSizePx: (p) => p.flushDetailPanelWidth(),
-    },
-    bottom: {
-      direction: "vertical",
-      minPx: MIN_DETAIL_PANEL_HEIGHT,
-      defaultPx: DEFAULT_DETAIL_PANEL_HEIGHT,
-      getSizePx: (p) => p.detailPanelHeight,
-      setSizePx: (p, px) => p.setDetailPanelHeight(px),
-      flushSizePx: (p) => p.flushDetailPanelHeight(),
-    },
-  };
+  // PaneForge split direction for the active dock. App needs it to pick which
+  // measured dimension to feed the layout as `containerSize`, and to set the
+  // PaneGroup `direction` — both consume the module's orientation mapping.
+  const direction = $derived(orientationOf(position).direction);
 
-  // Orientation descriptor for the active dock position.
-  const orient = $derived(ORIENTATION[position]);
+  // The measured extent of the split axis: height for a vertical (bottom) split,
+  // width otherwise. All px<->% conversions in the layout run against this.
+  const containerSize = $derived(direction === "vertical" ? containerHeight : containerWidth);
 
-  // Sensible default when container hasn't been measured yet (~30% for detail panel)
-  const FALLBACK_DETAIL_SIZE_PERCENT = 30;
+  // Sizing math (orientation mapping, px<->%, min/max/default percent, and the
+  // resize / drag-flush / reset handlers) lives in the layout composable. App
+  // feeds it reactive inputs as getters and still owns the ResizeObserver
+  // measurement below and the PaneForge wiring in the template.
+  const layout = createDetailPaneLayout({
+    prefs,
+    position: () => position,
+    containerSize: () => containerSize,
+  });
 
   // Track container width AND height reactively via ResizeObserver. The size
   // axis PaneForge measures against depends on the dock orientation, so keep both.
@@ -373,47 +354,10 @@
     return () => observer.disconnect();
   });
 
-  // The measured extent of the split axis: height for a vertical (bottom) split,
-  // width otherwise. All px<->% conversions run against this.
-  const containerSize = $derived(orient.direction === "vertical" ? containerHeight : containerWidth);
-
-  // Convert a pixel size along the split axis to a percentage of the container
-  function pixelToPercent(px: number): number {
-    if (containerSize <= 0) return FALLBACK_DETAIL_SIZE_PERCENT;
-    return (px / containerSize) * 100;
-  }
-
-  // Convert a percentage back to a pixel size along the split axis. The
-  // container-unmeasured fallback returns the active axis's default (width for
-  // right, height for bottom), not a hardcoded width.
-  function percentToPixel(pct: number): number {
-    if (containerSize <= 0) return orient.defaultPx;
-    return (pct / 100) * containerSize;
-  }
-
-  // Per-orientation size source + min, routed through the descriptor.
-  const currentSizePx = $derived(orient.getSizePx(prefs));
-
-  // Computed min/max as percentages (recalculated when container changes)
-  let minSizePercent = $derived(pixelToPercent(orient.minPx));
-  let maxSizePercent = MAX_DETAIL_PANEL_PERCENT;
-  let defaultSizePercent = $derived(pixelToPercent(currentSizePx));
-
-  function handleDetailPaneResize(size: number) {
-    if (containerSize <= 0) return; // Skip until ResizeObserver has fired
-    orient.setSizePx(prefs, percentToPixel(size));
-  }
-
-  function handleDraggingChange(dragging: boolean) {
-    // Drag ended — persist the size for the active orientation
-    if (!dragging) orient.flushSizePx(prefs);
-  }
-
   function handleResizeHandleDblClick() {
-    orient.setSizePx(prefs, orient.defaultPx);
-    orient.flushSizePx(prefs);
-    // Resize the PaneForge pane to match the new default size
-    detailPaneComponent?.resize(pixelToPercent(orient.defaultPx));
+    // Reset persists + flushes the default size and returns the percent to
+    // resize the PaneForge pane to.
+    detailPaneComponent?.resize(layout.reset());
   }
 
   // Reactively collapse/expand the detail pane based on the docked-view state.
@@ -422,7 +366,7 @@
     if (dockOpen) {
       if (detailPaneComponent.isCollapsed()) {
         detailPaneComponent.expand();
-        detailPaneComponent.resize(defaultSizePercent);
+        detailPaneComponent.resize(layout.defaultPercent);
       }
     } else {
       if (!detailPaneComponent.isCollapsed()) {
@@ -454,7 +398,7 @@
          live in contexts provided OUTSIDE this block (review #1, nibs-a5sb). -->
     {#key position}
     <Resizable.PaneGroup
-      direction={orient.direction}
+      direction={direction}
       class="flex-1 min-h-0"
       bind:ref={paneGroupEl}
     >
@@ -472,15 +416,15 @@
         data-testid="resize-handle"
         class={dockOpen ? "" : "hidden"}
         ondblclick={handleResizeHandleDblClick}
-        onDraggingChange={handleDraggingChange}
+        onDraggingChange={layout.onDraggingChange}
       />
       <Resizable.Pane
-        defaultSize={dockOpen ? defaultSizePercent : 0}
-        minSize={dockOpen ? minSizePercent : 0}
-        maxSize={dockOpen ? maxSizePercent : 0}
+        defaultSize={dockOpen ? layout.defaultPercent : 0}
+        minSize={dockOpen ? layout.minPercent : 0}
+        maxSize={dockOpen ? layout.maxPercent : 0}
         collapsible={true}
         collapsedSize={0}
-        onResize={handleDetailPaneResize}
+        onResize={layout.onResize}
         onCollapse={() => {
           if (!dockOpen) return;
           // Capture at schedule time; only close if still docked-open when the
@@ -491,7 +435,7 @@
             await view.requestClose();
             if (dockOpen && detailPaneComponent?.isCollapsed()) {
               detailPaneComponent.expand();
-              detailPaneComponent.resize(defaultSizePercent);
+              detailPaneComponent.resize(layout.defaultPercent);
             }
           });
         }}
