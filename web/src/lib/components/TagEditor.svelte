@@ -193,24 +193,25 @@
       {:else if tags.length === 0}
         <Button
           variant="outline"
-          size="xs"
+          size="sm"
+          class="text-sm"
           data-testid={addTestId}
           aria-label="Add tag"
           onclick={reveal}
         >
-          <Plus size={12} />
+          <Plus size={14} />
           Add tag
         </Button>
       {:else}
         <Button
           variant="ghost"
-          size="icon-xs"
+          size="icon-sm"
           data-testid={addTestId}
           aria-label="Add tag"
           title="Add tag"
           onclick={reveal}
         >
-          <Plus size={12} />
+          <Plus size={14} />
         </Button>
       {/if}
     {/if}
