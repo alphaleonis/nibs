@@ -1,5 +1,5 @@
-import { VIEW_LEVELS, ALL_COLUMN_KEYS, DEFAULT_COLUMNS, MIN_DETAIL_PANEL_WIDTH, THEMES, DEFAULT_THEME } from "./types";
-import type { ColumnKey, FilterPreferences, RowDensity, ViewLevel, Theme } from "./types";
+import { VIEW_LEVELS, ALL_COLUMN_KEYS, DEFAULT_COLUMNS, MIN_DETAIL_PANEL_WIDTH, MIN_DETAIL_PANEL_HEIGHT, DETAIL_PANEL_POSITIONS, THEMES, DEFAULT_THEME } from "./types";
+import type { ColumnKey, FilterPreferences, RowDensity, ViewLevel, Theme, DetailPanelPosition } from "./types";
 
 const ALWAYS_VISIBLE_KEYS = new Set<ColumnKey>(
   DEFAULT_COLUMNS.filter(c => c.alwaysVisible).map(c => c.key),
@@ -71,6 +71,20 @@ function parseDetailPanelWidth(raw: unknown): number | undefined {
   return Math.max(MIN_DETAIL_PANEL_WIDTH, raw);
 }
 
+const VALID_DETAIL_PANEL_POSITIONS = new Set<string>(DETAIL_PANEL_POSITIONS);
+
+// Optional like detailPanelWidth/rowDensity: return undefined for
+// missing/garbage so Preferences supplies the concrete default.
+function parseDetailPanelPosition(raw: unknown): DetailPanelPosition | undefined {
+  if (typeof raw === "string" && VALID_DETAIL_PANEL_POSITIONS.has(raw)) return raw as DetailPanelPosition;
+  return undefined;
+}
+
+function parseDetailPanelHeight(raw: unknown): number | undefined {
+  if (typeof raw !== "number" || !isFinite(raw) || raw <= 0) return undefined;
+  return Math.max(MIN_DETAIL_PANEL_HEIGHT, raw);
+}
+
 const VALID_ROW_DENSITIES = new Set<string>(["compact", "comfortable"]);
 
 function parseRowDensity(raw: unknown): RowDensity | undefined {
@@ -104,6 +118,8 @@ export function loadPreferences(): FilterPreferences {
       columnVisibility: parseColumnVisibility(parsed.columnVisibility),
       columnWidths: parseColumnWidths(parsed.columnWidths),
       detailPanelWidth: parseDetailPanelWidth(parsed.detailPanelWidth),
+      detailPanelPosition: parseDetailPanelPosition(parsed.detailPanelPosition),
+      detailPanelHeight: parseDetailPanelHeight(parsed.detailPanelHeight),
       rowDensity: parseRowDensity(parsed.rowDensity),
       theme: parseTheme(parsed.theme),
     };

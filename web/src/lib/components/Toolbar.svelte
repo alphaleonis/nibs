@@ -1,6 +1,6 @@
 <script lang="ts">
-  import { VIEW_LEVELS, DEFAULT_COLUMNS, ALL_COLUMN_KEYS, DEFAULT_THEME } from "../types";
-  import type { NibFilter, ViewLevel, ColumnKey, RowDensity, Theme } from "../types";
+  import { VIEW_LEVELS, DEFAULT_COLUMNS, ALL_COLUMN_KEYS, DEFAULT_THEME, DEFAULT_DETAIL_PANEL_POSITION } from "../types";
+  import type { NibFilter, ViewLevel, ColumnKey, RowDensity, Theme, DetailPanelPosition } from "../types";
   import type { Preferences } from "../preferences.svelte";
   import { resolveStatusConflicts } from "../filter";
   import { TERMINAL_STATUSES, TYPES, STATUSES, PRIORITIES, ESTIMATES, ESTIMATE_LABELS } from "../constants";
@@ -37,6 +37,8 @@
     ondensitychange = undefined as ((density: RowDensity) => void) | undefined,
     theme = DEFAULT_THEME as Theme,
     onthemechange = undefined as ((theme: Theme) => void) | undefined,
+    detailPanelPosition = undefined as DetailPanelPosition | undefined,
+    onpositionchange = undefined as ((p: DetailPanelPosition) => void) | undefined,
     availableTags = [],
   }: {
     prefs?: Preferences;
@@ -51,6 +53,8 @@
     ondensitychange?: (density: RowDensity) => void;
     theme?: Theme;
     onthemechange?: (theme: Theme) => void;
+    detailPanelPosition?: DetailPanelPosition;
+    onpositionchange?: (p: DetailPanelPosition) => void;
     availableTags?: string[];
   } = $props();
 
@@ -71,6 +75,16 @@
       prefs.theme = t;
     } else {
       onthemechange?.(t);
+    }
+  }
+
+  let resolvedPosition = $derived(prefs ? prefs.detailPanelPosition : (detailPanelPosition ?? DEFAULT_DETAIL_PANEL_POSITION));
+
+  function handleSetPosition(p: DetailPanelPosition) {
+    if (prefs) {
+      prefs.detailPanelPosition = p;
+    } else {
+      onpositionchange?.(p);
     }
   }
 
@@ -360,6 +374,8 @@
       ondensitychange={handleSetDensity}
       theme={resolvedTheme}
       onthemechange={handleSetTheme}
+      detailPanelPosition={resolvedPosition}
+      onpositionchange={handleSetPosition}
     />
 
     <!-- Columns dropdown -->

@@ -1,12 +1,14 @@
 import { setContext, getContext } from 'svelte';
 import type { SelectionState } from './selection.svelte';
 import type { DragState } from './drag.svelte';
+import { TreeViewState } from './treeView.svelte';
 import type { ConfirmDialogState } from './composables/useConfirmDialog.svelte';
 import type { EditorOrchestrationState } from './composables/useEditorOrchestration.svelte';
 import type { HistoryNav } from './composables/useHistoryNav.svelte';
 
 export const SELECTION_KEY = 'nibs:selection';
 export const DRAG_KEY = 'nibs:drag';
+export const TREE_VIEW_KEY = 'nibs:tree-view';
 export const CONFIRM_DIALOG_KEY = 'nibs:confirm-dialog';
 export const EDITOR_ORCHESTRATION_KEY = 'nibs:editor-orchestration';
 export const HISTORY_NAV_KEY = 'nibs:history-nav';
@@ -22,6 +24,13 @@ export function useDrag(): DragState {
   const d = getContext<DragState>(DRAG_KEY);
   if (!d) throw new Error('useDrag() called outside provider — call provideDrag() in a parent component');
   return d;
+}
+
+export function provideTreeView(t: TreeViewState) { setContext(TREE_VIEW_KEY, t); }
+export function useTreeView(): TreeViewState {
+  const t = getContext<TreeViewState>(TREE_VIEW_KEY);
+  if (!t) throw new Error('useTreeView() called outside provider — call provideTreeView() in a parent component');
+  return t;
 }
 
 export function provideHistoryNav(n: HistoryNav) { setContext(HISTORY_NAV_KEY, n); }
@@ -50,6 +59,7 @@ export function makeTestContext(
   selection: SelectionState,
   drag: DragState,
   opts?: {
+    treeView?: TreeViewState;
     confirmDialog?: ConfirmDialogState;
     editorOrchestration?: EditorOrchestrationState;
     historyNav?: HistoryNav;
@@ -58,6 +68,9 @@ export function makeTestContext(
   const m = new Map<string, unknown>();
   m.set(SELECTION_KEY, selection);
   m.set(DRAG_KEY, drag);
+  // Always provide a tree-view so components that read collapse state work in
+  // tests without extra setup.
+  m.set(TREE_VIEW_KEY, opts?.treeView ?? new TreeViewState());
   if (opts?.confirmDialog) m.set(CONFIRM_DIALOG_KEY, opts.confirmDialog);
   if (opts?.editorOrchestration) m.set(EDITOR_ORCHESTRATION_KEY, opts.editorOrchestration);
   // Always provide a history-nav so components that read it work in tests without extra setup.

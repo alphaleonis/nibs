@@ -1,7 +1,7 @@
 import { untrack } from "svelte";
 import { loadPreferences, savePreferences } from "./storage";
-import { ALL_COLUMN_KEYS, DEFAULT_COLUMN_WIDTHS, DEFAULT_DETAIL_PANEL_WIDTH, MIN_DETAIL_PANEL_WIDTH, DEFAULT_THEME } from "./types";
-import type { NibFilter, ViewLevel, ColumnKey, RowDensity, Theme } from "./types";
+import { ALL_COLUMN_KEYS, DEFAULT_COLUMN_WIDTHS, DEFAULT_DETAIL_PANEL_WIDTH, MIN_DETAIL_PANEL_WIDTH, DEFAULT_DETAIL_PANEL_HEIGHT, MIN_DETAIL_PANEL_HEIGHT, DEFAULT_DETAIL_PANEL_POSITION, DEFAULT_THEME } from "./types";
+import type { NibFilter, ViewLevel, ColumnKey, RowDensity, Theme, DetailPanelPosition } from "./types";
 
 export class Preferences {
   filter: NibFilter = $state({});
@@ -9,6 +9,10 @@ export class Preferences {
   columnVisibility: Partial<Record<ViewLevel, ColumnKey[]>> = $state({});
   columnWidths: Partial<Record<ViewLevel, Partial<Record<ColumnKey, number>>>> = $state({});
   #detailPanelWidth: number | undefined = $state(undefined);
+  // Discrete toggle → auto-saved (like theme/rowDensity).
+  detailPanelPosition: DetailPanelPosition = $state(DEFAULT_DETAIL_PANEL_POSITION);
+  // Pointer-pattern → excluded from auto-save, flushed like width.
+  #detailPanelHeight: number | undefined = $state(undefined);
   rowDensity: RowDensity = $state("compact");
   theme: Theme = $state(DEFAULT_THEME);
 
@@ -25,6 +29,10 @@ export class Preferences {
     this.#detailPanelWidth ?? DEFAULT_DETAIL_PANEL_WIDTH
   );
 
+  detailPanelHeight: number = $derived(
+    this.#detailPanelHeight ?? DEFAULT_DETAIL_PANEL_HEIGHT
+  );
+
   constructor() {
     const initial = loadPreferences();
     this.filter = initial.filter;
@@ -32,6 +40,8 @@ export class Preferences {
     this.columnVisibility = initial.columnVisibility ?? {};
     this.columnWidths = initial.columnWidths ?? {};
     this.#detailPanelWidth = initial.detailPanelWidth;
+    this.detailPanelPosition = initial.detailPanelPosition ?? DEFAULT_DETAIL_PANEL_POSITION;
+    this.#detailPanelHeight = initial.detailPanelHeight;
     this.rowDensity = initial.rowDensity ?? "compact";
     this.theme = initial.theme ?? DEFAULT_THEME;
 
@@ -47,6 +57,7 @@ export class Preferences {
         this.columnVisibility;
         this.rowDensity;
         this.theme;
+        this.detailPanelPosition;
         // Skip the initial save that fires on construction (we just loaded these values)
         if (!initialized) {
           initialized = true;
@@ -63,6 +74,11 @@ export class Preferences {
   setDetailPanelWidth(width: number): void {
     if (!isFinite(width) || width <= 0) return;
     this.#detailPanelWidth = Math.max(MIN_DETAIL_PANEL_WIDTH, width);
+  }
+
+  setDetailPanelHeight(height: number): void {
+    if (!isFinite(height) || height <= 0) return;
+    this.#detailPanelHeight = Math.max(MIN_DETAIL_PANEL_HEIGHT, height);
   }
 
   setColumnWidth(key: ColumnKey, width: number): void {
@@ -83,6 +99,10 @@ export class Preferences {
     this.save();
   }
 
+  flushDetailPanelHeight(): void {
+    this.save();
+  }
+
   save(): void {
     savePreferences({
       filter: this.filter,
@@ -90,6 +110,8 @@ export class Preferences {
       columnVisibility: this.columnVisibility,
       columnWidths: this.columnWidths,
       detailPanelWidth: this.#detailPanelWidth,
+      detailPanelPosition: this.detailPanelPosition,
+      detailPanelHeight: this.#detailPanelHeight,
       rowDensity: this.rowDensity,
       theme: this.theme,
     });

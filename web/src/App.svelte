@@ -3,7 +3,7 @@
   import { createClient } from "./lib/graphql";
   import { CONFIG_QUERY } from "./lib/queries";
   import { Preferences } from "./lib/preferences.svelte";
-  import { DEFAULT_DETAIL_PANEL_WIDTH, MAX_DETAIL_PANEL_PERCENT } from "./lib/types";
+  import { DEFAULT_DETAIL_PANEL_WIDTH, MIN_DETAIL_PANEL_WIDTH, DEFAULT_DETAIL_PANEL_HEIGHT, MIN_DETAIL_PANEL_HEIGHT, MAX_DETAIL_PANEL_PERCENT } from "./lib/types";
   import Toolbar from "./lib/components/Toolbar.svelte";
 
   import TreeTable from "./lib/components/TreeTable.svelte";
@@ -15,12 +15,13 @@
   import { SelectionState } from "./lib/selection.svelte";
   import { DragState } from "./lib/drag.svelte";
   import type { DropZone } from "./lib/drag.svelte";
-  import { provideSelection, provideDrag, provideConfirmDialog, provideEditorOrchestration, provideHistoryNav } from "./lib/contexts";
+  import { TreeViewState } from "./lib/treeView.svelte";
+  import { provideSelection, provideDrag, provideTreeView, provideConfirmDialog, provideEditorOrchestration, provideHistoryNav } from "./lib/contexts";
   import { createHistoryNav } from "./lib/composables/useHistoryNav.svelte";
   import { createConfirmDialog } from "./lib/composables/useConfirmDialog.svelte";
   import { createEditorOrchestration } from "./lib/composables/useEditorOrchestration.svelte";
   import { useKeyboardShortcuts } from "./lib/composables/useKeyboardShortcuts.svelte";
-  import type { TreeTableNib } from "./lib/types";
+  import type { TreeTableNib, DetailPanelPosition } from "./lib/types";
   import * as Resizable from "./lib/components/ui/resizable";
   import type ResizablePane from "./lib/components/ui/resizable/resizable-pane.svelte";
   import { Toaster } from "./lib/components/ui/sonner";
@@ -58,6 +59,10 @@
 
   const selection = new SelectionState();
   const drag = new DragState();
+  // Collapse state lives here — OUTSIDE the {#key position} block that remounts the
+  // PaneGroup (and TreeTable) on a dock toggle — so it survives the remount, like
+  // selection/drag (nibs-a5sb, review #1).
+  const treeView = new TreeViewState();
   // isBlocked reads editor/confirmDialog, created below — the closure is only
   // invoked at popstate time, by which point both exist. While a blocking overlay
   // is open, Back/Forward must not navigate the panel behind it (nibs-g1fy).
@@ -67,6 +72,7 @@
   });
   provideSelection(selection);
   provideDrag(drag);
+  provideTreeView(treeView);
   provideHistoryNav(nav);
 
   // Wire browser history: sync selection from the initial URL, then let
@@ -170,60 +176,110 @@
   let paneGroupEl: HTMLElement | null = $state(null);
   let detailPaneComponent: ReturnType<typeof ResizablePane> | undefined = $state(undefined);
   let containerWidth = $state(0);
+  let containerHeight = $state(0);
+
+  // Detail-panel dock position: "right" (horizontal split, size = width) or
+  // "bottom" (vertical split, size = height). The size axis, pref field, and
+  // PaneForge direction all switch off this.
+  const position = $derived(prefs.detailPanelPosition);
+
+  // Single source of truth for App's pane sizing + PaneForge direction. Keyed by
+  // DetailPanelPosition, so adding a third position (e.g. "left"/"top") is one
+  // table entry and a missing key is a compile-time exhaustiveness error — instead
+  // of silently falling through to the "right"/horizontal branch across the many
+  // per-axis sites below (review #2). NOTE: this table covers only App's sizing;
+  // a new position must ALSO be handled at the other position-dependent surfaces,
+  // which are NOT keyed off this Record: DetailPanel's border/min-width CSS
+  // (`.detail-panel-bottom`) and SettingsSheet's `positionOptions` list.
+  const ORIENTATION: Record<DetailPanelPosition, {
+    direction: "horizontal" | "vertical";
+    minPx: number;
+    defaultPx: number;
+    getSizePx: (p: Preferences) => number;
+    setSizePx: (p: Preferences, px: number) => void;
+    flushSizePx: (p: Preferences) => void;
+  }> = {
+    right: {
+      direction: "horizontal",
+      minPx: MIN_DETAIL_PANEL_WIDTH,
+      defaultPx: DEFAULT_DETAIL_PANEL_WIDTH,
+      getSizePx: (p) => p.detailPanelWidth,
+      setSizePx: (p, px) => p.setDetailPanelWidth(px),
+      flushSizePx: (p) => p.flushDetailPanelWidth(),
+    },
+    bottom: {
+      direction: "vertical",
+      minPx: MIN_DETAIL_PANEL_HEIGHT,
+      defaultPx: DEFAULT_DETAIL_PANEL_HEIGHT,
+      getSizePx: (p) => p.detailPanelHeight,
+      setSizePx: (p, px) => p.setDetailPanelHeight(px),
+      flushSizePx: (p) => p.flushDetailPanelHeight(),
+    },
+  };
+
+  // Orientation descriptor for the active dock position.
+  const orient = $derived(ORIENTATION[position]);
 
   // Sensible default when container hasn't been measured yet (~30% for detail panel)
   const FALLBACK_DETAIL_SIZE_PERCENT = 30;
 
-  // Track container width reactively via ResizeObserver
+  // Track container width AND height reactively via ResizeObserver. The size
+  // axis PaneForge measures against depends on the dock orientation, so keep both.
   $effect(() => {
     if (!paneGroupEl) return;
-    // Synchronously read the initial width so containerWidth is valid before
+    // Synchronously read the initial dimensions so they are valid before
     // PaneForge fires its first onResize callback during mount.
     containerWidth = paneGroupEl.offsetWidth;
+    containerHeight = paneGroupEl.offsetHeight;
     const observer = new ResizeObserver(([entry]) => {
       containerWidth = entry.contentRect.width;
+      containerHeight = entry.contentRect.height;
     });
     observer.observe(paneGroupEl);
     return () => observer.disconnect();
   });
 
-  // Convert pixel width to percentage of the container
+  // The measured extent of the split axis: height for a vertical (bottom) split,
+  // width otherwise. All px<->% conversions run against this.
+  const containerSize = $derived(orient.direction === "vertical" ? containerHeight : containerWidth);
+
+  // Convert a pixel size along the split axis to a percentage of the container
   function pixelToPercent(px: number): number {
-    if (containerWidth <= 0) return FALLBACK_DETAIL_SIZE_PERCENT;
-    return (px / containerWidth) * 100;
+    if (containerSize <= 0) return FALLBACK_DETAIL_SIZE_PERCENT;
+    return (px / containerSize) * 100;
   }
 
-  // Convert percentage to pixel width
+  // Convert a percentage back to a pixel size along the split axis. The
+  // container-unmeasured fallback returns the active axis's default (width for
+  // right, height for bottom), not a hardcoded width.
   function percentToPixel(pct: number): number {
-    if (containerWidth <= 0) return DEFAULT_DETAIL_PANEL_WIDTH;
-    return (pct / 100) * containerWidth;
+    if (containerSize <= 0) return orient.defaultPx;
+    return (pct / 100) * containerSize;
   }
+
+  // Per-orientation size source + min, routed through the descriptor.
+  const currentSizePx = $derived(orient.getSizePx(prefs));
 
   // Computed min/max as percentages (recalculated when container changes)
-  let minSizePercent = $derived(pixelToPercent(200));
+  let minSizePercent = $derived(pixelToPercent(orient.minPx));
   let maxSizePercent = MAX_DETAIL_PANEL_PERCENT;
-  let defaultSizePercent = $derived(pixelToPercent(prefs.detailPanelWidth));
+  let defaultSizePercent = $derived(pixelToPercent(currentSizePx));
 
   function handleDetailPaneResize(size: number) {
-    if (containerWidth <= 0) return; // Skip until ResizeObserver has fired
-    const px = percentToPixel(size);
-    prefs.setDetailPanelWidth(px);
+    if (containerSize <= 0) return; // Skip until ResizeObserver has fired
+    orient.setSizePx(prefs, percentToPixel(size));
   }
 
   function handleDraggingChange(dragging: boolean) {
-    if (!dragging) {
-      // Drag ended — persist the width
-      prefs.flushDetailPanelWidth();
-    }
+    // Drag ended — persist the size for the active orientation
+    if (!dragging) orient.flushSizePx(prefs);
   }
 
   function handleResizeHandleDblClick() {
-    prefs.setDetailPanelWidth(DEFAULT_DETAIL_PANEL_WIDTH);
-    prefs.flushDetailPanelWidth();
-    // Resize the PaneForge pane to match the new pixel width
-    if (detailPaneComponent) {
-      detailPaneComponent.resize(pixelToPercent(DEFAULT_DETAIL_PANEL_WIDTH));
-    }
+    orient.setSizePx(prefs, orient.defaultPx);
+    orient.flushSizePx(prefs);
+    // Resize the PaneForge pane to match the new default size
+    detailPaneComponent?.resize(pixelToPercent(orient.defaultPx));
   }
 
   // Reactively collapse/expand the detail pane based on selection state
@@ -257,8 +313,14 @@
         oncreatenew={(type) => editor.handleCreateNew(type)}
       />
     </div>
+    <!-- Re-key on position so the whole PaneGroup remounts when the dock toggles.
+         PaneForge fixes the split `direction` at pane-group creation, so the
+         reactive `direction` prop alone can't re-orient an existing group — the
+         remount is required. Collapse/selection/drag state survive because they
+         live in contexts provided OUTSIDE this block (review #1, nibs-a5sb). -->
+    {#key position}
     <Resizable.PaneGroup
-      direction="horizontal"
+      direction={orient.direction}
       class="flex-1 min-h-0"
       bind:ref={paneGroupEl}
     >
@@ -300,6 +362,7 @@
         {#if selection.panelOpen && selection.selectedNibId}
           <DetailPanel
             nibId={selection.selectedNibId}
+            position={position}
             onclose={() => nav.closePanel()}
             onnibselect={(nibId) => nav.navigateToNib(nibId)}
             onmissing={handleMissingNib}
@@ -309,6 +372,7 @@
         {/if}
       </Resizable.Pane>
     </Resizable.PaneGroup>
+    {/key}
   </main>
 </div>
 

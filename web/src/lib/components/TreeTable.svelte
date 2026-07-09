@@ -11,7 +11,7 @@
   import TreeTableRow from "./TreeTableRow.svelte";
   import { Plus, Minus } from "@lucide/svelte";
   import type { DropZone } from "../drag.svelte";
-  import { useSelection, useDrag, useHistoryNav } from "../contexts";
+  import { useSelection, useDrag, useHistoryNav, useTreeView } from "../contexts";
   import { useColumnResize } from "../composables/useColumnResize.svelte";
   import { useTreeDrag } from "../composables/useTreeDrag.svelte";
   import { useKeyboardNav } from "../composables/useKeyboardNav.svelte";
@@ -51,6 +51,10 @@
   const selection = useSelection();
   const drag = useDrag();
   const nav = useHistoryNav();
+  // Collapse state is owned by TreeViewState (provided in App.svelte, outside the
+  // {#key position} block) so it survives a TreeTable remount on a dock-position
+  // toggle — see treeView.svelte.ts (nibs-a5sb, review #1).
+  const treeView = useTreeView();
 
   // Resolve values: prefs takes precedence over individual props
   let resolvedFilter = $derived(resolveFilter(prefs, filter));
@@ -128,13 +132,11 @@
     });
   });
 
-  let collapsedIds: Set<string> = $state(new Set());
-
   let allNibs = $derived($result.data?.nibs ?? []);
 
   // The client-side filter is the original filter (not the server-stripped version).
   // buildTableData uses hasClientFilters/matchesFilter from filter.ts directly.
-  let tableData = $derived(buildTableData(allNibs, resolvedFilter, resolvedViewLevel, collapsedIds));
+  let tableData = $derived(buildTableData(allNibs, resolvedFilter, resolvedViewLevel, treeView.collapsedIds));
   let rows = $derived(tableData.rows);
   let parentIds = $derived(tableData.parentIds);
   let visibleRowIds = $derived(rows.map(r => r.nib.id));
@@ -176,7 +178,7 @@
     // The nib is in the dataset but not currently visible. Try to expand its
     // collapsed ancestors so it becomes reachable.
     if (!visibleRowIds.includes(nibId)) {
-      const next = new Set(collapsedIds);
+      const next = new Set(treeView.collapsedIds);
       let current = nibMap.get(nibId);
       // Guard against a parentId cycle (A->B->A) — only possible via corrupt
       // .nibs data, but an unguarded walk here would spin forever inside this
@@ -200,14 +202,14 @@
       // Ancestor-expansion can never reveal it, so clear and bail — otherwise
       // reassigning `collapsedIds` to a new Set every pass would loop forever
       // (effect_update_depth_exceeded).
-      if (sameSet(next, collapsedIds)) {
+      if (sameSet(next, treeView.collapsedIds)) {
         selection.clearEnsureVisible();
         return;
       }
       // Ancestors were collapsed — expand them and let the effect re-run once
       // visibleRowIds updates (either the nib appears, or the next pass hits
       // the filtered-out guard above and clears).
-      collapsedIds = next;
+      treeView.collapsedIds = next;
       return;
     }
 
@@ -235,21 +237,21 @@
   });
 
   function toggleNode(id: string) {
-    const next = new Set(collapsedIds);
+    const next = new Set(treeView.collapsedIds);
     if (next.has(id)) {
       next.delete(id);
     } else {
       next.add(id);
     }
-    collapsedIds = next;
+    treeView.collapsedIds = next;
   }
 
   function expandAll() {
-    collapsedIds = new Set();
+    treeView.collapsedIds = new Set();
   }
 
   function collapseAll() {
-    collapsedIds = new Set(parentIds);
+    treeView.collapsedIds = new Set(parentIds);
   }
 
   // --- Column resize (composable) ---
@@ -291,7 +293,7 @@
     selection,
     getRows: () => rows,
     getVisibleRowIds: () => visibleRowIds,
-    getCollapsedIds: () => collapsedIds,
+    getCollapsedIds: () => treeView.collapsedIds,
     toggleNode,
     getScrollContainer: () => scrollContainerEl ?? null,
     onDragKeyDown: treeDrag.onDragKeyDown,
@@ -484,7 +486,7 @@
           depth={row.depth}
           hasChildren={row.hasChildren}
           dimmed={row.dimmed}
-          collapsed={collapsedIds.has(row.nib.id)}
+          collapsed={treeView.collapsedIds.has(row.nib.id)}
           parentNib={row.parentNib}
           visibleColumns={resolvedVisibleColumns}
           draggable={!isBucketId(row.nib.id) && dragAllowed}

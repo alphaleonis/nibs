@@ -1,4 +1,4 @@
-import { render, screen } from "@testing-library/svelte";
+import { render, screen, within } from "@testing-library/svelte";
 import { userEvent } from "@testing-library/user-event";
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import App from "./App.svelte";
@@ -552,6 +552,66 @@ describe("App", () => {
 
     const paneGroup = container.querySelector("[data-pane-group]");
     expect(paneGroup).toHaveAttribute("data-direction", "horizontal");
+  });
+
+  it("PaneForge pane group uses vertical direction when detailPanelPosition is bottom", async () => {
+    // Seed a "bottom" dock preference. The PaneGroup's split direction is resolved
+    // at mount from the pref (vertical = table on top, preview below), independent
+    // of whether the detail panel is open — so no panel-open interaction is needed.
+    const savedStorage = globalThis.localStorage;
+    const mockStore: Record<string, string> = {
+      "nibs-filter-preferences": JSON.stringify({
+        filter: {},
+        viewLevel: "none",
+        detailPanelPosition: "bottom",
+      }),
+    };
+    Object.defineProperty(globalThis, "localStorage", {
+      value: {
+        getItem: (key: string) => mockStore[key] ?? null,
+        setItem: (key: string, value: string) => { mockStore[key] = value; },
+        removeItem: (key: string) => { delete mockStore[key]; },
+      },
+      writable: true,
+      configurable: true,
+    });
+
+    try {
+      const { container } = render(App);
+
+      const paneGroup = container.querySelector("[data-pane-group]");
+      expect(paneGroup).toHaveAttribute("data-direction", "vertical");
+    } finally {
+      Object.defineProperty(globalThis, "localStorage", {
+        value: savedStorage,
+        writable: true,
+        configurable: true,
+      });
+    }
+  });
+
+  it("preserves tree collapse state across a detail-panel dock toggle", async () => {
+    // Regression (review #1 / nibs-a5sb): toggling the dock position remounts the
+    // PaneGroup (PaneForge fixes split direction at creation), which remounts
+    // TreeTable. Collapse state used to be TreeTable-local $state and reset on the
+    // remount, silently re-expanding every branch. It now lives in a TreeViewState
+    // provided outside the {#key position} block, so it survives the remount.
+    const user = userEvent.setup();
+    render(App);
+
+    // Collapse the milestone so its child ("Test nib") is hidden.
+    await user.click(screen.getByTestId("collapse-all"));
+    expect(screen.queryByText("Test nib")).not.toBeInTheDocument();
+
+    // Toggle the dock position to "bottom" at runtime — this remounts the PaneGroup.
+    await user.click(screen.getByTitle("Settings"));
+    const group = screen.getByRole("radiogroup", { name: /detail panel position/i });
+    await user.click(within(group).getByRole("radio", { name: /bottom/i }));
+
+    // The collapsed branch must stay collapsed — the child is still hidden and the
+    // root milestone is still shown.
+    expect(screen.queryByText("Test nib")).not.toBeInTheDocument();
+    expect(screen.getByText("Test milestone")).toBeInTheDocument();
   });
 
   it("renders toolbar icon buttons including the group-by control", () => {

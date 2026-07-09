@@ -84,6 +84,16 @@ export const DEFAULT_DETAIL_PANEL_WIDTH = 400;
 export const MIN_DETAIL_PANEL_WIDTH = 200;
 export const MAX_DETAIL_PANEL_PERCENT = 75;
 
+// The detail panel can dock at the RIGHT (table on the left, preview on the
+// right) or the BOTTOM (table on top, preview below). Bottom keeps full table
+// width when many columns are shown. MAX_DETAIL_PANEL_PERCENT is reused for both
+// orientations; only the min/default sizes differ per axis.
+export const DETAIL_PANEL_POSITIONS = ["right", "bottom"] as const;
+export type DetailPanelPosition = (typeof DETAIL_PANEL_POSITIONS)[number];
+export const DEFAULT_DETAIL_PANEL_POSITION: DetailPanelPosition = "right";
+export const DEFAULT_DETAIL_PANEL_HEIGHT = 300;
+export const MIN_DETAIL_PANEL_HEIGHT = 150;
+
 export type RowDensity = "compact" | "comfortable";
 
 // Curated palettes selectable from the Settings sheet. The chosen palette is
@@ -120,6 +130,8 @@ export interface FilterPreferences {
   columnVisibility?: Partial<Record<ViewLevel, ColumnKey[]>>;
   columnWidths?: Partial<Record<ViewLevel, Partial<Record<ColumnKey, number>>>>;
   detailPanelWidth?: number;
+  detailPanelPosition?: DetailPanelPosition;
+  detailPanelHeight?: number;
   rowDensity?: RowDensity;
   theme?: Theme;
 }

@@ -1,4 +1,4 @@
-import { render, screen, waitFor, fireEvent } from "@testing-library/svelte";
+import { render, screen, waitFor, fireEvent, within } from "@testing-library/svelte";
 import { userEvent } from "@testing-library/user-event";
 import { describe, it, expect, vi } from "vitest";
 import SettingsSheet from "./SettingsSheet.svelte";
@@ -15,6 +15,8 @@ const defaultProps = () => ({
   ondensitychange: vi.fn(),
   theme: "graphite" as const,
   onthemechange: vi.fn(),
+  detailPanelPosition: "right" as const,
+  onpositionchange: vi.fn(),
 });
 
 describe("SettingsSheet", () => {
@@ -209,7 +211,9 @@ describe("SettingsSheet", () => {
     const group = screen.getByRole("radiogroup", { name: /row density/i });
     expect(group).toBeInTheDocument();
 
-    const options = screen.getAllByRole("radio");
+    // Scope to the density group — the sheet now has a second radiogroup
+    // (detail panel position), so a document-wide radio query would return 4.
+    const options = within(group).getAllByRole("radio");
     expect(options).toHaveLength(2);
     expect(screen.getByRole("radio", { name: /compact/i })).toBeInTheDocument();
     expect(screen.getByRole("radio", { name: /comfortable/i })).toBeInTheDocument();
@@ -256,6 +260,52 @@ describe("SettingsSheet", () => {
     await user.keyboard("{ArrowRight}");
 
     expect(ondensitychange).toHaveBeenCalledWith("comfortable");
+  });
+
+  it("shows a Detail panel position radiogroup with Right and Bottom options", async () => {
+    render(SettingsSheet, { ...defaultProps() });
+
+    await user.click(screen.getByTitle("Settings"));
+
+    const group = screen.getByRole("radiogroup", { name: /detail panel position/i });
+    expect(group).toBeInTheDocument();
+
+    const options = within(group).getAllByRole("radio");
+    expect(options).toHaveLength(2);
+    expect(within(group).getByRole("radio", { name: /right/i })).toBeInTheDocument();
+    expect(within(group).getByRole("radio", { name: /bottom/i })).toBeInTheDocument();
+  });
+
+  it("marks the option matching detailPanelPosition as aria-checked", async () => {
+    render(SettingsSheet, { ...defaultProps(), detailPanelPosition: "bottom" });
+
+    await user.click(screen.getByTitle("Settings"));
+
+    const group = screen.getByRole("radiogroup", { name: /detail panel position/i });
+    expect(within(group).getByRole("radio", { name: /bottom/i })).toHaveAttribute("aria-checked", "true");
+    expect(within(group).getByRole("radio", { name: /right/i })).toHaveAttribute("aria-checked", "false");
+  });
+
+  it("clicking Bottom calls onpositionchange with 'bottom'", async () => {
+    const onpositionchange = vi.fn();
+    render(SettingsSheet, { ...defaultProps(), detailPanelPosition: "right", onpositionchange });
+
+    await user.click(screen.getByTitle("Settings"));
+    const group = screen.getByRole("radiogroup", { name: /detail panel position/i });
+    await user.click(within(group).getByRole("radio", { name: /bottom/i }));
+
+    expect(onpositionchange).toHaveBeenCalledWith("bottom");
+  });
+
+  it("clicking from bottom back to Right calls onpositionchange with 'right'", async () => {
+    const onpositionchange = vi.fn();
+    render(SettingsSheet, { ...defaultProps(), detailPanelPosition: "bottom", onpositionchange });
+
+    await user.click(screen.getByTitle("Settings"));
+    const group = screen.getByRole("radiogroup", { name: /detail panel position/i });
+    await user.click(within(group).getByRole("radio", { name: /right/i }));
+
+    expect(onpositionchange).toHaveBeenCalledWith("right");
   });
 
   it("shows a Theme control reflecting the current theme", async () => {

@@ -1067,6 +1067,22 @@ describe("DetailPanel", () => {
     });
   });
 
+  it("adds the detail-panel-bottom class when position is 'bottom'", () => {
+    mockNibQuery(makeNibData());
+
+    renderPanel({ nibId: "nibs-abc1", onclose: vi.fn(), position: "bottom" });
+
+    expect(screen.getByTestId("detail-panel")).toHaveClass("detail-panel-bottom");
+  });
+
+  it("does not add the detail-panel-bottom class for the default 'right' position", () => {
+    mockNibQuery(makeNibData());
+
+    renderPanel({ nibId: "nibs-abc1", onclose: vi.fn() });
+
+    expect(screen.getByTestId("detail-panel")).not.toHaveClass("detail-panel-bottom");
+  });
+
   it("renders delete and archive action buttons", () => {
     mockNibQuery(makeNibData());
 

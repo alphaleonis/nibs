@@ -17,9 +17,13 @@
   import { useConfirmDialog } from "$lib/contexts";
   import { updateNib as updateNibCmd, deleteNib as deleteNibCmd, archiveNib as archiveNibCmd } from "$lib/mutations/commands";
   import type { UpdateNibInput } from "$lib/mutations/types";
+  import type { DetailPanelPosition } from "../types";
 
   interface Props {
     nibId: string;
+    /** Dock position: "right" (border on the left) or "bottom" (border on top,
+     *  full-width so no min-width). Defaults to "right". */
+    position?: DetailPanelPosition;
     onclose: () => void;
     onnibselect?: (nibId: string) => void;
     onedit?: (nibId: string) => void;
@@ -30,7 +34,7 @@
     onmissing?: (nibId: string) => void;
   }
 
-  let { nibId, onclose, onnibselect, onedit, onaddchild, onmissing }: Props = $props();
+  let { nibId, position = "right", onclose, onnibselect, onedit, onaddchild, onmissing }: Props = $props();
 
   const client = getContextClient();
   const mutations = getMutationStore();
@@ -255,7 +259,7 @@
   }
 </script>
 
-<div data-testid="detail-panel" class="detail-panel" role="complementary" aria-label="Nib detail">
+<div data-testid="detail-panel" class="detail-panel" class:detail-panel-bottom={position === "bottom"} role="complementary" aria-label="Nib detail">
   <div class="detail-header">
     <!-- -ml-2.5 cancels the button's px-2.5 so the ID stays flush with the panel's
          left edge, matching the prior static <span>. aria-label/title include the
@@ -468,6 +472,15 @@
     overflow-y: auto;
     padding: 1rem;
     min-width: 300px;
+  }
+
+  /* Bottom dock: the split is vertical (table on top, preview below), so the
+     divider moves to the top edge and the 300px min-width is dropped (the panel
+     spans the full table width). */
+  .detail-panel-bottom {
+    border-left: none;
+    border-top: 1px solid var(--border);
+    min-width: 0;
   }
 
   .detail-header {

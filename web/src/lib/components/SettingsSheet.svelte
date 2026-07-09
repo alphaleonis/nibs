@@ -4,7 +4,7 @@
 </script>
 
 <script lang="ts">
-  import type { RowDensity, Theme } from "../types";
+  import type { RowDensity, Theme, DetailPanelPosition } from "../types";
   import SegmentedControl from "./SegmentedControl.svelte";
   import ThemeSelect from "./ThemeSelect.svelte";
   import { Button, buttonVariants } from "$lib/components/ui/button/index.js";
@@ -20,17 +20,26 @@
     ondensitychange,
     theme,
     onthemechange,
+    detailPanelPosition,
+    onpositionchange,
   }: {
     open?: boolean;
     rowDensity: RowDensity;
     ondensitychange: (d: RowDensity) => void;
     theme: Theme;
     onthemechange: (t: Theme) => void;
+    detailPanelPosition: DetailPanelPosition;
+    onpositionchange: (p: DetailPanelPosition) => void;
   } = $props();
 
   const densityOptions: { value: RowDensity; label: string }[] = [
     { value: "compact", label: "Compact" },
     { value: "comfortable", label: "Comfortable" },
+  ];
+
+  const positionOptions: { value: DetailPanelPosition; label: string }[] = [
+    { value: "right", label: "Right" },
+    { value: "bottom", label: "Bottom" },
   ];
 
   const uid = idCounter++;
@@ -182,6 +191,16 @@
               options={densityOptions}
               ariaLabel="Row density"
               onchange={(v) => ondensitychange(v as RowDensity)}
+            />
+          </div>
+
+          <div class="flex items-center justify-between gap-3">
+            <span class="text-sm text-foreground">Detail panel position</span>
+            <SegmentedControl
+              value={detailPanelPosition}
+              options={positionOptions}
+              ariaLabel="Detail panel position"
+              onchange={(v) => onpositionchange(v as DetailPanelPosition)}
             />
           </div>
         </section>

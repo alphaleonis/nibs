@@ -1,6 +1,6 @@
 import { describe, it, expect, beforeEach, vi } from "vitest";
 import { savePreferences, loadPreferences, parseTheme } from "./storage";
-import { MIN_DETAIL_PANEL_WIDTH } from "./types";
+import { MIN_DETAIL_PANEL_WIDTH, MIN_DETAIL_PANEL_HEIGHT } from "./types";
 
 const store: Record<string, string> = {};
 const mockStorage = {
@@ -207,6 +207,87 @@ describe("storage", () => {
       });
       const loaded = loadPreferences();
       expect(loaded.detailPanelWidth, `should strip ${label}`).toBeUndefined();
+    }
+  });
+
+  it("saves and loads detailPanelPosition", () => {
+    savePreferences({
+      filter: {},
+      viewLevel: "milestones",
+      detailPanelPosition: "bottom",
+    });
+    const loaded = loadPreferences();
+    expect(loaded.detailPanelPosition).toBe("bottom");
+  });
+
+  it("returns undefined detailPanelPosition when not set", () => {
+    savePreferences({ filter: {}, viewLevel: "milestones" });
+    const loaded = loadPreferences();
+    expect(loaded.detailPanelPosition).toBeUndefined();
+  });
+
+  it("returns undefined detailPanelPosition for an invalid stored value", () => {
+    store["nibs-filter-preferences"] = JSON.stringify({
+      filter: {},
+      viewLevel: "milestones",
+      detailPanelPosition: "diagonal",
+    });
+    const loaded = loadPreferences();
+    expect(loaded.detailPanelPosition).toBeUndefined();
+  });
+
+  it("saves and loads detailPanelHeight", () => {
+    savePreferences({
+      filter: {},
+      viewLevel: "milestones",
+      detailPanelHeight: 400,
+    });
+    const loaded = loadPreferences();
+    expect(loaded.detailPanelHeight).toBe(400);
+  });
+
+  it("returns undefined detailPanelHeight when not set", () => {
+    savePreferences({ filter: {}, viewLevel: "milestones" });
+    const loaded = loadPreferences();
+    expect(loaded.detailPanelHeight).toBeUndefined();
+  });
+
+  it("clamps detailPanelHeight to MIN on load but applies no MAX clamp", () => {
+    // Below MIN is raised to the floor...
+    store["nibs-filter-preferences"] = JSON.stringify({
+      filter: {},
+      viewLevel: "milestones",
+      detailPanelHeight: 50,
+    });
+    expect(loadPreferences().detailPanelHeight).toBe(MIN_DETAIL_PANEL_HEIGHT);
+
+    // ...but there is intentionally no upper bound — large values load unchanged.
+    store["nibs-filter-preferences"] = JSON.stringify({
+      filter: {},
+      viewLevel: "milestones",
+      detailPanelHeight: 9999,
+    });
+    expect(loadPreferences().detailPanelHeight).toBe(9999);
+  });
+
+  it("strips invalid detailPanelHeight values", () => {
+    const cases: [string, unknown][] = [
+      ["negative", -100],
+      ["zero", 0],
+      ["Infinity", Infinity],
+      ["NaN", NaN],
+      ["string", "300"],
+      ["null", null],
+      ["object", { height: 300 }],
+    ];
+    for (const [label, value] of cases) {
+      store["nibs-filter-preferences"] = JSON.stringify({
+        filter: {},
+        viewLevel: "milestones",
+        detailPanelHeight: value,
+      });
+      const loaded = loadPreferences();
+      expect(loaded.detailPanelHeight, `should strip ${label}`).toBeUndefined();
     }
   });
 

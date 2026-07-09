@@ -2,7 +2,7 @@ import { test, expect, type Page } from "@playwright/test";
 import { mkdirSync } from "node:fs";
 import { join } from "node:path";
 import { VIEW_LEVELS, THEMES } from "../src/lib/types";
-import type { Theme } from "../src/lib/types";
+import type { Theme, DetailPanelPosition } from "../src/lib/types";
 
 // Captures PNGs of the key web UI states into web/screenshots/output/ so an
 // agent (or human) can visually verify UI changes. Run via `task screenshots`.
@@ -21,15 +21,21 @@ async function openApp(
   page: Page,
   viewLevel: (typeof VIEW_LEVELS)[number] = "milestones",
   theme?: Theme,
+  position?: DetailPanelPosition,
 ) {
   await page.addInitScript(
-    ({ level, t }) => {
+    ({ level, t, pos }) => {
       localStorage.setItem(
         "nibs-filter-preferences",
-        JSON.stringify({ filter: {}, viewLevel: level, ...(t ? { theme: t } : {}) }),
+        JSON.stringify({
+          filter: {},
+          viewLevel: level,
+          ...(t ? { theme: t } : {}),
+          ...(pos ? { detailPanelPosition: pos } : {}),
+        }),
       );
     },
-    { level: viewLevel, t: theme },
+    { level: viewLevel, t: theme, pos: position },
   );
   await page.goto("/");
   await expect(page.locator("tr[data-nib-id]").first()).toBeVisible({ timeout: 10_000 });
@@ -63,6 +69,15 @@ test("editor modal", async ({ page }) => {
   // Wait for the CodeMirror editor to mount so the body area isn't blank.
   await expect(page.locator(".cm-content").first()).toBeVisible({ timeout: 5_000 });
   await shot(page, "editor-modal");
+});
+
+test("detail panel — bottom dock", async ({ page }) => {
+  // Detail panel docked at the bottom (table on top, preview below) — nibs-x9xl.
+  await openApp(page, "milestones", undefined, "bottom");
+  await page.locator("tr[data-nib-id]").first().locator('[data-action="title"]').click();
+  await expect(page.locator('[data-testid="detail-panel"]')).toBeVisible({ timeout: 5_000 });
+  await expect(page.locator('[data-testid="detail-loading"]')).toBeHidden({ timeout: 5_000 });
+  await shot(page, "detail-panel-bottom");
 });
 
 test("context menu", async ({ page }) => {

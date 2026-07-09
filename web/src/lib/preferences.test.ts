@@ -10,7 +10,7 @@ const mockStorage = {
 Object.defineProperty(globalThis, "localStorage", { value: mockStorage, writable: true });
 
 import { Preferences } from "./preferences.svelte";
-import { ALL_COLUMN_KEYS, DEFAULT_COLUMN_WIDTHS, DEFAULT_DETAIL_PANEL_WIDTH, MIN_DETAIL_PANEL_WIDTH } from "./types";
+import { ALL_COLUMN_KEYS, DEFAULT_COLUMN_WIDTHS, DEFAULT_DETAIL_PANEL_WIDTH, MIN_DETAIL_PANEL_WIDTH, DEFAULT_DETAIL_PANEL_HEIGHT, MIN_DETAIL_PANEL_HEIGHT } from "./types";
 
 describe("Preferences", () => {
   beforeEach(() => {
@@ -171,6 +171,96 @@ describe("Preferences", () => {
     expect(mockStorage.setItem).toHaveBeenCalledTimes(1);
     const stored = JSON.parse(store["nibs-filter-preferences"]);
     expect(stored.detailPanelWidth).toBe(700);
+  });
+
+  it("detailPanelPosition defaults to right when nothing persisted", () => {
+    const prefs = new Preferences();
+    expect(prefs.detailPanelPosition).toBe("right");
+  });
+
+  it("detailPanelPosition loads persisted value", () => {
+    store["nibs-filter-preferences"] = JSON.stringify({
+      filter: {},
+      viewLevel: "none",
+      detailPanelPosition: "bottom",
+    });
+    const prefs = new Preferences();
+    expect(prefs.detailPanelPosition).toBe("bottom");
+  });
+
+  it("save() persists the current detailPanelPosition", () => {
+    const prefs = new Preferences();
+    prefs.detailPanelPosition = "bottom";
+    prefs.save();
+
+    const stored = JSON.parse(store["nibs-filter-preferences"]);
+    expect(stored.detailPanelPosition).toBe("bottom");
+  });
+
+  it("detailPanelHeight defaults to DEFAULT_DETAIL_PANEL_HEIGHT when nothing persisted", () => {
+    const prefs = new Preferences();
+    expect(prefs.detailPanelHeight).toBe(DEFAULT_DETAIL_PANEL_HEIGHT);
+  });
+
+  it("detailPanelHeight returns persisted value when available", () => {
+    store["nibs-filter-preferences"] = JSON.stringify({
+      filter: {},
+      viewLevel: "milestones",
+      detailPanelHeight: 450,
+    });
+    const prefs = new Preferences();
+    expect(prefs.detailPanelHeight).toBe(450);
+  });
+
+  it("setDetailPanelHeight updates height without triggering save", () => {
+    const prefs = new Preferences();
+    mockStorage.setItem.mockClear();
+
+    prefs.setDetailPanelHeight(500);
+
+    expect(prefs.detailPanelHeight).toBe(500);
+    expect(mockStorage.setItem).not.toHaveBeenCalled();
+  });
+
+  it("setDetailPanelHeight clamps to MIN but has no MAX clamp", () => {
+    const prefs = new Preferences();
+
+    // Below MIN is raised to the floor...
+    prefs.setDetailPanelHeight(50);
+    expect(prefs.detailPanelHeight).toBe(MIN_DETAIL_PANEL_HEIGHT);
+
+    // ...but there is intentionally no upper bound — large values pass through.
+    prefs.setDetailPanelHeight(9999);
+    expect(prefs.detailPanelHeight).toBe(9999);
+  });
+
+  it("setDetailPanelHeight ignores invalid values", () => {
+    const prefs = new Preferences();
+    prefs.setDetailPanelHeight(400);
+
+    prefs.setDetailPanelHeight(NaN);
+    expect(prefs.detailPanelHeight).toBe(400);
+
+    prefs.setDetailPanelHeight(Infinity);
+    expect(prefs.detailPanelHeight).toBe(400);
+
+    prefs.setDetailPanelHeight(-100);
+    expect(prefs.detailPanelHeight).toBe(400);
+
+    prefs.setDetailPanelHeight(0);
+    expect(prefs.detailPanelHeight).toBe(400);
+  });
+
+  it("flushDetailPanelHeight persists height to localStorage", () => {
+    const prefs = new Preferences();
+    prefs.setDetailPanelHeight(600);
+    mockStorage.setItem.mockClear();
+
+    prefs.flushDetailPanelHeight();
+
+    expect(mockStorage.setItem).toHaveBeenCalledTimes(1);
+    const stored = JSON.parse(store["nibs-filter-preferences"]);
+    expect(stored.detailPanelHeight).toBe(600);
   });
 
   it("defaults theme to graphite when nothing is persisted", () => {
