@@ -88,7 +88,7 @@ describe("classifyNibEvent", () => {
 
   it("treats a null-etag event as a self-echo when selfEtag is also null", () => {
     // Documented edge: rule (a) is a literal `nib.etag === selfEtag`, so null === null
-    // suppresses. This is not widened by the model — it matches EditorModal today.
+    // suppresses. This is not widened by the model — it matches the legacy editor.
     const next = classifyNibEvent(initialNibChangeState, updatedEvent(makePayload({ etag: null })), null);
     expect(next).toBe(initialNibChangeState);
   });

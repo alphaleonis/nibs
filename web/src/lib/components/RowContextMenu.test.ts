@@ -9,7 +9,7 @@ import type {
   ConfirmDialogState,
   ConfirmDialogOptions,
 } from "$lib/composables/useConfirmDialog.svelte";
-import type { EditorOrchestrationState } from "$lib/composables/useEditorOrchestration.svelte";
+import type { ActiveView } from "$lib/composables/useActiveView.svelte";
 import type { TreeTableNib } from "../types";
 
 // bits-ui scroll lock sets pointer-events: none on <body>, so disable the check
@@ -60,24 +60,27 @@ function makeMockConfirmDialog(): ConfirmDialogState & {
   return state;
 }
 
-function makeMockEditorOrchestration(): EditorOrchestrationState {
+/** A spyable ActiveView stub whose `open` mirrors selection (so "Open" tests can
+ *  assert selectedNibId) while `startCreateChild` is observable for "Add child". */
+function makeMockActiveView(selection: SelectionState) {
   return {
-    editorOpen: false,
-    editorMode: "create",
-    editorNibId: undefined,
-    editorNibData: undefined,
-    editorDefaultType: "task",
-    editorDefaultParent: undefined,
-    typePickerOpen: false,
-    typePickerParentId: "",
-    typePickerParentType: "",
-    handleCreateNew: vi.fn(),
-    handleEditNib: vi.fn(),
-    handleAddChild: vi.fn(),
-    handleTypePickerSelect: vi.fn(),
-    handleEditorClose: vi.fn(),
-    handleEditorSave: vi.fn(),
-    closeTypePicker: vi.fn(),
+    state: { kind: "closed" as const },
+    form: null,
+    detail: null,
+    isOpen: false,
+    presentation: "docked" as const,
+    blocksHistoryNav: false,
+    open: vi.fn(async (id: string) => { selection.select(id); }),
+    expand: vi.fn(),
+    collapse: vi.fn(),
+    startCreate: vi.fn(async () => {}),
+    startCreateChild: vi.fn(async () => {}),
+    chooseType: vi.fn(),
+    cancelType: vi.fn(),
+    save: vi.fn(async () => undefined),
+    requestClose: vi.fn(async () => { selection.close(); }),
+    syncTo: vi.fn(),
+    dispose: vi.fn(),
   };
 }
 
@@ -100,15 +103,15 @@ function makeNib(overrides: Partial<TreeTableNib> = {}): TreeTableNib {
 
 describe("RowContextMenu", () => {
   let mockConfirmDialog: ReturnType<typeof makeMockConfirmDialog>;
-  let mockEditor: ReturnType<typeof makeMockEditorOrchestration>;
+  let mockView: ReturnType<typeof makeMockActiveView>;
   let selection: SelectionState;
 
   beforeEach(() => {
     mockExecute.mockReset().mockResolvedValue({ ok: true, data: {} });
     mockIsMutating.mockReset().mockReturnValue(false);
     mockConfirmDialog = makeMockConfirmDialog();
-    mockEditor = makeMockEditorOrchestration();
     selection = new SelectionState();
+    mockView = makeMockActiveView(selection);
   });
 
   function renderMenu(
@@ -127,7 +130,7 @@ describe("RowContextMenu", () => {
       },
       context: makeTestContext(selection, new DragState(), {
         confirmDialog: mockConfirmDialog,
-        editorOrchestration: mockEditor,
+        activeView: mockView as unknown as ActiveView,
       }),
     });
   }
@@ -472,7 +475,7 @@ describe("RowContextMenu", () => {
   });
 
   describe("Edit action", () => {
-    it("clicking Edit calls editor.handleEditNib", async () => {
+    it("clicking Edit opens the unified view via view.open", async () => {
       renderMenu();
 
       await waitFor(() => {
@@ -481,12 +484,12 @@ describe("RowContextMenu", () => {
 
       await user.click(screen.getByTestId("ctx-edit"));
 
-      expect(mockEditor.handleEditNib).toHaveBeenCalledWith("nibs-abc1");
+      expect(mockView.open).toHaveBeenCalledWith("nibs-abc1");
     });
   });
 
   describe("Add child action", () => {
-    it("clicking Add child calls editor.handleAddChild with nib id and type", async () => {
+    it("clicking Add child calls view.startCreateChild with nib id and type", async () => {
       renderMenu({ nib: makeNib({ id: "nibs-epic1", type: "epic" }) });
 
       await waitFor(() => {
@@ -495,7 +498,7 @@ describe("RowContextMenu", () => {
 
       await user.click(screen.getByTestId("ctx-add-child"));
 
-      expect(mockEditor.handleAddChild).toHaveBeenCalledWith(
+      expect(mockView.startCreateChild).toHaveBeenCalledWith(
         "nibs-epic1",
         "epic",
       );
@@ -658,7 +661,7 @@ describe("RowContextMenu", () => {
         },
         context: makeTestContext(selection, new DragState(), {
           confirmDialog: mockConfirmDialog,
-          editorOrchestration: mockEditor,
+          activeView: mockView as unknown as ActiveView,
         }),
       });
 

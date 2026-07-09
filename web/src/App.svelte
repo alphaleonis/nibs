@@ -1,26 +1,30 @@
 <script lang="ts">
+  import { untrack } from "svelte";
   import { setContextClient, queryStore } from "@urql/svelte";
   import { createClient } from "./lib/graphql";
-  import { CONFIG_QUERY } from "./lib/queries";
+  import { CONFIG_QUERY, NIB_DETAIL_QUERY } from "./lib/queries";
   import { Preferences } from "./lib/preferences.svelte";
   import { DEFAULT_DETAIL_PANEL_WIDTH, MIN_DETAIL_PANEL_WIDTH, DEFAULT_DETAIL_PANEL_HEIGHT, MIN_DETAIL_PANEL_HEIGHT, MAX_DETAIL_PANEL_PERCENT } from "./lib/types";
   import Toolbar from "./lib/components/Toolbar.svelte";
 
   import TreeTable from "./lib/components/TreeTable.svelte";
-  import DetailPanel from "./lib/components/DetailPanel.svelte";
-  import EditorModal from "./lib/components/EditorModal.svelte";
-  import TypePickerPopover from "./lib/components/TypePickerPopover.svelte";
+  import ActiveNibView from "./lib/components/ActiveNibView.svelte";
   import RowContextMenu from "./lib/components/RowContextMenu.svelte";
   import ConfirmDialog from "./lib/components/ConfirmDialog.svelte";
   import { SelectionState } from "./lib/selection.svelte";
   import { DragState } from "./lib/drag.svelte";
   import type { DropZone } from "./lib/drag.svelte";
   import { TreeViewState } from "./lib/treeView.svelte";
-  import { provideSelection, provideDrag, provideTreeView, provideConfirmDialog, provideEditorOrchestration, provideHistoryNav } from "./lib/contexts";
+  import { provideSelection, provideDrag, provideTreeView, provideConfirmDialog, provideActiveView, provideHistoryNav } from "./lib/contexts";
   import { createHistoryNav } from "./lib/composables/useHistoryNav.svelte";
   import { createConfirmDialog } from "./lib/composables/useConfirmDialog.svelte";
-  import { createEditorOrchestration } from "./lib/composables/useEditorOrchestration.svelte";
+  import { createActiveView } from "./lib/composables/useActiveView.svelte";
+  import type { ActiveView, DetailView, DetailNib } from "./lib/composables/useActiveView.svelte";
   import { useKeyboardShortcuts } from "./lib/composables/useKeyboardShortcuts.svelte";
+  import { createNibForm, editNibForm } from "./lib/nibForm.svelte";
+  import type { CreateForm, EditForm, CreateDefaults, NibSnapshot } from "./lib/nibForm.svelte";
+  import { createLiveNib } from "./lib/liveNib.svelte";
+  import type { LiveNib } from "./lib/liveNib.svelte";
   import type { TreeTableNib, DetailPanelPosition } from "./lib/types";
   import * as Resizable from "./lib/components/ui/resizable";
   import type ResizablePane from "./lib/components/ui/resizable/resizable-pane.svelte";
@@ -63,48 +67,179 @@
   // PaneGroup (and TreeTable) on a dock toggle — so it survives the remount, like
   // selection/drag (nibs-a5sb, review #1).
   const treeView = new TreeViewState();
-  // isBlocked reads editor/confirmDialog, created below — the closure is only
-  // invoked at popstate time, by which point both exist. While a blocking overlay
-  // is open, Back/Forward must not navigate the panel behind it (nibs-g1fy).
+  const confirmDialog = createConfirmDialog();
+
+  // --- active-nib-view presenter (unified detail/editor) ------------------
+  // Forward reference: `nav.isBlocked` and the injected factories close over the
+  // presenter, which is constructed below. Held in a const object (not a
+  // reassigned `let`) so the reactive reads of `holder.view.state` stay
+  // warning-clean; every read is lazy (after construction).
+  const holder: { view: ActiveView | null } = { view: null };
+
+  // isBlocked reads view.blocksHistoryNav (dirty buffer / open type picker),
+  // replacing the old "modal open" check. While blocked, Back/Forward must not
+  // navigate the panel behind it (nibs-g1fy).
   const nav = createHistoryNav({
     selection,
-    isBlocked: () => editor.editorOpen || editor.typePickerOpen || confirmDialog.open,
+    isBlocked: () => holder.view?.blocksHistoryNav ?? false,
   });
+
+  // The nib id the view currently targets for editing (viewing/gone) drives the
+  // SINGLE detail query — used both to render relations AND to seed the edit
+  // form. Paused when nothing is being viewed.
+  const detailTargetId = $derived.by(() => {
+    const s = holder.view?.state;
+    return s && (s.kind === "viewing" || s.kind === "gone") ? s.nibId : null;
+  });
+  const detailStore = $derived(
+    queryStore({
+      client,
+      query: NIB_DETAIL_QUERY,
+      variables: { id: detailTargetId ?? "" },
+      pause: !detailTargetId,
+    }),
+  );
+  const detailNib = $derived(($detailStore.data?.nib as DetailNib | undefined) ?? null);
+  const detailFetching = $derived($detailStore.fetching);
+  const detailError = $derived($detailStore.error);
+
+  /** Project a loaded detail nib onto the form's committed-snapshot shape. */
+  function snapshotFromDetail(n: DetailNib): NibSnapshot {
+    return {
+      id: n.id,
+      title: n.title,
+      status: n.status,
+      type: n.type,
+      priority: n.priority ?? "",
+      estimate: n.estimate ?? "",
+      tags: n.tags ? [...n.tags] : [],
+      body: n.body ?? "",
+      etag: n.etag,
+    };
+  }
+
+  // --- presenter dependency factories -------------------------------------
+  // `detail` returns a thin reactive window onto the single App-level query
+  // (keyed on the view's target, which equals `nibId` by the time this runs).
+  const detail = (_nibId: string): DetailView => ({
+    get nib() { return detailNib; },
+    get fetching() { return detailFetching; },
+  });
+
+  // `editForm` seeds from the shared detail query. When the async query hasn't
+  // resolved yet it starts from a placeholder; the presenter adopts the real
+  // snapshot via `applyExternal` once `detail.nib` lands (no second fetch). A
+  // create→edit hand-off passes the freshly-created snapshot as `seed`, so the
+  // edit form renders the new nib immediately (no blank flash before the detail
+  // query runs for the brand-new id).
+  const editForm = (nibId: string, seed?: NibSnapshot): EditForm => {
+    const initial: NibSnapshot =
+      seed ??
+      (detailNib && detailNib.id === nibId
+        ? snapshotFromDetail(detailNib)
+        : { id: nibId, title: "", status: "", type: "task", priority: "", estimate: "", tags: [], body: "", etag: "" });
+    return editNibForm({ mutations }, initial);
+  };
+
+  const createForm = (defaults: CreateDefaults): CreateForm => createNibForm({ mutations }, defaults);
+
+  const liveNib = (nibId: string): LiveNib =>
+    createLiveNib({
+      client,
+      nibId: () => nibId,
+      // Read the presenter's live edit-form etag so a post-save echo is filtered.
+      selfEtag: () => {
+        const f = holder.view?.form;
+        return f && f.mode === "edit" ? f.etag : undefined;
+      },
+    });
+
+  // Promise wrapper over the shared confirm dialog: resolve true on confirm,
+  // false on any dismissal (Cancel / Escape / overlay). The pending resolver is
+  // completed by the confirm action (below) and by ConfirmDialog's oncancel.
+  let pendingDiscardResolve: ((v: boolean) => void) | null = null;
+  function confirmDiscard(): Promise<boolean> {
+    return new Promise((resolve) => {
+      pendingDiscardResolve = resolve;
+      confirmDialog.showConfirm({
+        title: "Discard unsaved changes?",
+        message: "You have unsaved changes that will be lost.",
+        label: "Discard",
+        variant: "warning",
+        action: () => {
+          confirmDialog.close();
+          const r = pendingDiscardResolve;
+          pendingDiscardResolve = null;
+          r?.(true);
+        },
+      });
+    });
+  }
+
+  const view = createActiveView({ nav, detail, editForm, createForm, liveNib, confirm: confirmDiscard });
+  holder.view = view;
+
   provideSelection(selection);
   provideDrag(drag);
   provideTreeView(treeView);
   provideHistoryNav(nav);
-
-  // Wire browser history: sync selection from the initial URL, then let
-  // Back/Forward drive selection via popstate. syncFromUrl reads/writes only
-  // non-reactive deps (window.location/history), so this effect runs once
-  // (no reactive reads). handlePopState is only registered as a listener
-  // here, never invoked in the effect body.
-  $effect(() => {
-    nav.syncFromUrl();
-    window.addEventListener("popstate", nav.handlePopState);
-    return () => window.removeEventListener("popstate", nav.handlePopState);
-  });
-  const confirmDialog = createConfirmDialog();
   provideConfirmDialog(confirmDialog);
-  // Pass `nav` so editor-save auto-select records a Back-stop (creating/opening
-  // a nib after save routes through history, per nibs-58c3 "all open paths").
-  const editor = createEditorOrchestration({ client, nav });
-  provideEditorOrchestration(editor);
-  // Collect unique tags from the query results via TreeTable callback
-  let availableTags: string[] = $state([]);
+  provideActiveView(view);
 
-  // The open nib resolved to nothing (deleted / archived / stale link): close the
-  // panel, heal the stale ?nib= URL, and tell the user why it vanished. Deferred
-  // to a microtask so we don't mutate selection during DetailPanel's own effect
-  // flush (nibs-etk3).
+  // Whether the docked detail pane should be open: the view is open AND
+  // presented docked (expanded routes to the full-screen modal instead).
+  const dockOpen = $derived(view.isOpen && view.presentation === "docked");
+
+  // Wire browser history: sync selection from the initial URL, then let the view
+  // follow. Back/Forward drive selection via popstate; the view syncs to it.
+  // Untracked so this runs ONCE on mount: `syncFromUrl` and `syncTo` both read
+  // reactive state (selection, viewState) — without untrack, `syncTo`'s internal
+  // viewState read+write would self-trigger the effect into an infinite loop.
+  $effect(() => {
+    untrack(() => {
+      nav.syncFromUrl();
+      view.syncTo(selection.selectedNibId);
+    });
+    window.addEventListener("popstate", onPopState);
+    return () => window.removeEventListener("popstate", onPopState);
+  });
+
+  function onPopState(e: PopStateEvent) {
+    // handlePopState updates selection (honoring the blocked-overlay guard); the
+    // view then syncs to the resulting selection — the sole guard-bypass path.
+    nav.handlePopState(e);
+    view.syncTo(selection.selectedNibId);
+  }
+
+  // A viewed nib that resolves to nothing (deleted / archived / stale link):
+  // close the view, heal the ?nib= URL, and tell the user. Distinct from the
+  // deleted-while-viewing "gone" state, which keeps the (cached) nib on screen.
+  let reportedMissingFor: string | null = null;
+  $effect(() => {
+    const s = view.state;
+    if (s.kind !== "viewing") {
+      reportedMissingFor = null;
+      return;
+    }
+    if (!detailFetching && detailError === undefined && detailNib === null && reportedMissingFor !== s.nibId) {
+      reportedMissingFor = s.nibId;
+      handleMissingNib(s.nibId);
+    }
+  });
+
   function handleMissingNib(id: string) {
+    // Deferred to a microtask so we don't mutate state during the detail query's
+    // own effect flush (nibs-etk3).
     queueMicrotask(() => {
+      view.syncTo(null);
       selection.close();
       nav.replaceClosed();
       toast.error(`Nib ${id} no longer exists`);
     });
   }
+
+  // Collect unique tags from the query results via TreeTable callback
+  let availableTags: string[] = $state([]);
 
   function handleTagsChange(tags: string[]) {
     availableTags = tags;
@@ -151,10 +286,10 @@
   let contextMenuNib: TreeTableNib | null = $state(null);
 
   function handleRowContextMenu(nibId: string, event: MouseEvent, nib: TreeTableNib) {
-    // If the right-clicked nib is not in the selection, select it first —
-    // route through nav so the URL/history stay in sync (nibs-58c3).
+    // If the right-clicked nib is not in the selection, open it first — route
+    // through the view so the dirty-guard + URL/history stay in sync (nibs-58c3).
     if (!selection.isSelected(nibId)) {
-      nav.navigateToNib(nibId);
+      view.open(nibId);
     }
     contextMenuNibId = nibId;
     contextMenuNib = nib;
@@ -166,7 +301,7 @@
   useKeyboardShortcuts({
     selection,
     nav,
-    editor,
+    view,
     confirmDialog,
     mutations,
     getContextMenuNibId: () => contextMenuNibId,
@@ -189,8 +324,7 @@
   // of silently falling through to the "right"/horizontal branch across the many
   // per-axis sites below (review #2). NOTE: this table covers only App's sizing;
   // a new position must ALSO be handled at the other position-dependent surfaces,
-  // which are NOT keyed off this Record: DetailPanel's border/min-width CSS
-  // (`.detail-panel-bottom`) and SettingsSheet's `positionOptions` list.
+  // which are NOT keyed off this Record: SettingsSheet's `positionOptions` list.
   const ORIENTATION: Record<DetailPanelPosition, {
     direction: "horizontal" | "vertical";
     minPx: number;
@@ -282,10 +416,10 @@
     detailPaneComponent?.resize(pixelToPercent(orient.defaultPx));
   }
 
-  // Reactively collapse/expand the detail pane based on selection state
+  // Reactively collapse/expand the detail pane based on the docked-view state.
   $effect(() => {
     if (!detailPaneComponent) return;
-    if (selection.panelOpen) {
+    if (dockOpen) {
       if (detailPaneComponent.isCollapsed()) {
         detailPaneComponent.expand();
         detailPaneComponent.resize(defaultSizePercent);
@@ -310,7 +444,7 @@
       <Toolbar
         {prefs}
         {availableTags}
-        oncreatenew={(type) => editor.handleCreateNew(type)}
+        oncreatenew={(type) => view.startCreate({ type })}
       />
     </div>
     <!-- Re-key on position so the whole PaneGroup remounts when the dock toggles.
@@ -329,52 +463,60 @@
           {prefs}
           ontagschange={handleTagsChange}
           onrowcontextmenu={handleRowContextMenu}
-          onaddchild={editor.handleAddChild}
+          onaddchild={(parentId, parentType) => view.startCreateChild(parentId, parentType)}
           rowDensity={prefs.rowDensity}
           ondrop={handleDrop}
         />
       </Resizable.Pane>
       <Resizable.Handle
         data-testid="resize-handle"
-        class={selection.panelOpen ? "" : "hidden"}
+        class={dockOpen ? "" : "hidden"}
         ondblclick={handleResizeHandleDblClick}
         onDraggingChange={handleDraggingChange}
       />
       <Resizable.Pane
-        defaultSize={selection.panelOpen ? defaultSizePercent : 0}
-        minSize={selection.panelOpen ? minSizePercent : 0}
-        maxSize={selection.panelOpen ? maxSizePercent : 0}
+        defaultSize={dockOpen ? defaultSizePercent : 0}
+        minSize={dockOpen ? minSizePercent : 0}
+        maxSize={dockOpen ? maxSizePercent : 0}
         collapsible={true}
         collapsedSize={0}
         onResize={handleDetailPaneResize}
         onCollapse={() => {
-          if (!selection.panelOpen) return;
-          // Capture the open nib at schedule time; only close if it's still the one
-          // showing when the frame fires. A different nib opened during the rAF window
-          // (near-impossible resize-drag race) must not be closed / push a spurious
-          // {nibId:null}. nibs-58c3.
-          const openedId = selection.selectedNibId;
-          requestAnimationFrame(() => { if (selection.selectedNibId === openedId) nav.closePanel(); });
+          if (!dockOpen) return;
+          // Capture at schedule time; only close if still docked-open when the
+          // frame fires (avoids a resize-drag race). If the dirty-guard refuses
+          // the close, re-expand so the pane stays consistent with view state.
+          requestAnimationFrame(async () => {
+            if (!dockOpen) return;
+            await view.requestClose();
+            if (dockOpen && detailPaneComponent?.isCollapsed()) {
+              detailPaneComponent.expand();
+              detailPaneComponent.resize(defaultSizePercent);
+            }
+          });
         }}
         bind:this={detailPaneComponent}
         data-testid="detail-pane"
       >
-        {#if selection.panelOpen && selection.selectedNibId}
-          <DetailPanel
-            nibId={selection.selectedNibId}
-            position={position}
-            onclose={() => nav.closePanel()}
-            onnibselect={(nibId) => nav.navigateToNib(nibId)}
-            onmissing={handleMissingNib}
-            onedit={editor.handleEditNib}
-            onaddchild={editor.handleAddChild}
-          />
+        {#if dockOpen}
+          <ActiveNibView />
         {/if}
       </Resizable.Pane>
     </Resizable.PaneGroup>
     {/key}
   </main>
 </div>
+
+<!-- Expanded presentation: the same view, hosted in a full-screen modal overlay.
+     Kept separate from the docked pane; the buffer/query survive the swap because
+     they live in the presenter, not this component. -->
+{#if view.isOpen && view.presentation === "expanded"}
+  <div class="anv-modal-backdrop" data-testid="active-nib-modal" role="presentation">
+    <div class="anv-modal-shell">
+      <ActiveNibView />
+    </div>
+  </div>
+{/if}
 
 {#if drag.isDragging && drag.draggedIds.length > 1}
   <div
@@ -392,25 +534,6 @@
   </div>
 {/if}
 
-<EditorModal
-  open={editor.editorOpen}
-  mode={editor.editorMode}
-  nibId={editor.editorNibId}
-  nibData={editor.editorNibData}
-  defaultType={editor.editorDefaultType}
-  defaultParent={editor.editorDefaultParent}
-  onclose={editor.handleEditorClose}
-  onsave={editor.handleEditorSave}
-/>
-
-{#if editor.typePickerOpen}
-  <TypePickerPopover
-    parentType={editor.typePickerParentType}
-    onselect={editor.handleTypePickerSelect}
-    oncancel={() => { editor.closeTypePicker(); }}
-  />
-{/if}
-
 <RowContextMenu
   bind:open={contextMenuOpen}
   position={contextMenuPosition}
@@ -425,5 +548,48 @@
   confirmLabel={confirmDialog.label}
   variant={confirmDialog.variant}
   onconfirm={() => { confirmDialog.action?.(); }}
-  oncancel={() => { confirmDialog.close(); }}
+  oncancel={() => {
+    confirmDialog.close();
+    // Complete a pending discard-guard promise as "keep my changes".
+    if (pendingDiscardResolve) {
+      const r = pendingDiscardResolve;
+      pendingDiscardResolve = null;
+      r(false);
+    }
+  }}
 />
+
+<style>
+  .anv-modal-backdrop {
+    position: fixed;
+    inset: 0;
+    z-index: var(--z-modal);
+    display: flex;
+    align-items: stretch;
+    justify-content: center;
+    padding: 1rem;
+    background: color-mix(in oklab, var(--background), transparent 15%);
+  }
+
+  @media (min-width: 640px) {
+    .anv-modal-backdrop {
+      padding: 2rem;
+    }
+  }
+
+  .anv-modal-shell {
+    width: 100%;
+    max-width: 1100px;
+    max-height: 100%;
+    display: flex;
+    background: var(--background);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-lg);
+    overflow: hidden;
+    box-shadow: 0 10px 40px oklch(0 0 0 / 0.35);
+  }
+
+  .anv-modal-shell :global(.anv) {
+    flex: 1;
+  }
+</style>

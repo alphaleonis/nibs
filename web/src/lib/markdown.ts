@@ -93,8 +93,8 @@ function postProcessMentionsInDom(html: string, resolve: MentionResolver): strin
  * (returning the full nib ID). Unresolved tokens remain as plain text. Code spans
  * and fenced code blocks are never rewritten.
  *
- * Omitting the resolver yields the original plain-render behavior (used e.g. by
- * EditorModal's preview where mention resolution isn't needed).
+ * Omitting the resolver yields the original plain-render behavior (used where
+ * mention resolution isn't needed).
  *
  * @param resolveMention Optional callback invoked with each mention token
  *   (the raw text after `#`). Returns the full nib ID when resolved, or

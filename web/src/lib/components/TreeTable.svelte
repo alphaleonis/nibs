@@ -11,7 +11,7 @@
   import TreeTableRow from "./TreeTableRow.svelte";
   import { Plus, Minus } from "@lucide/svelte";
   import type { DropZone } from "../drag.svelte";
-  import { useSelection, useDrag, useHistoryNav, useTreeView } from "../contexts";
+  import { useSelection, useDrag, useActiveView, useTreeView } from "../contexts";
   import { useColumnResize } from "../composables/useColumnResize.svelte";
   import { useTreeDrag } from "../composables/useTreeDrag.svelte";
   import { useKeyboardNav } from "../composables/useKeyboardNav.svelte";
@@ -50,7 +50,10 @@
 
   const selection = useSelection();
   const drag = useDrag();
-  const nav = useHistoryNav();
+  // Explicit navigation (title/row click, keyboard Enter) opens the unified view,
+  // which routes through the dirty-guard + nav (URL/history). Multi-select stays
+  // on SelectionState directly; the view follows via syncTo (documented bypass).
+  const view = useActiveView();
   // Collapse state is owned by TreeViewState (provided in App.svelte, outside the
   // {#key position} block) so it survives a TreeTable remount on a dock-position
   // toggle — see treeView.svelte.ts (nibs-a5sb, review #1).
@@ -297,7 +300,7 @@
     toggleNode,
     getScrollContainer: () => scrollContainerEl ?? null,
     onDragKeyDown: treeDrag.onDragKeyDown,
-    navigateToNib: nav.navigateToNib,
+    navigateToNib: (id) => { void view.open(id); },
   });
 
   // --- Event delegation helpers ---
@@ -336,7 +339,7 @@
     }
 
     if (action === "title") {
-      nav.navigateToNib(nibId);
+      void view.open(nibId);
       return; // Title click selects, not row click
     }
 
@@ -356,10 +359,14 @@
     // Only a plain click is treated as navigation.
     if (e.shiftKey) {
       selection.rangeSelect(nibId, visibleRowIds);
+      // Multi-select desync: let the view follow the (possibly collapsed-to-one)
+      // selection without a dirty-prompt — the documented guard-bypass path.
+      view.syncTo(selection.selectedNibId);
     } else if (e.ctrlKey || e.metaKey) {
       selection.toggleSelect(nibId);
+      view.syncTo(selection.selectedNibId);
     } else {
-      nav.navigateToNib(nibId);
+      void view.open(nibId);
     }
   }
 
@@ -369,7 +376,7 @@
     const nibId = getNibIdFromEvent(e);
     if (!nibId) return;
 
-    nav.navigateToNib(nibId);
+    void view.open(nibId);
   }
 
   function handleDelegatedContextMenu(e: MouseEvent) {

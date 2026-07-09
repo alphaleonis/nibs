@@ -66,7 +66,18 @@
 
   const isCreating = $derived(viewState.kind === "creating");
   const isGone = $derived(viewState.kind === "gone");
-  const disabled = $derived(isGone); // gone -> inputs read-only
+  // An edit buffer renders a blank placeholder form until its detail query
+  // resolves (or, for a create→edit hand-off, until it's seeded). Disable inputs
+  // during that window so there's no editable-blank flash. `form.etag` is the
+  // "seeded" signal (set by the create hand-off seed OR by the async detail
+  // seed's applyExternal); `!view.detail?.nib?.etag` covers the tick before the
+  // seed effect runs.
+  const loadingUnseeded = $derived.by(() => {
+    if (form?.mode !== "edit" || form.etag) return false;
+    const d = view.detail;
+    return !!d?.fetching && !d?.nib?.etag;
+  });
+  const disabled = $derived(isGone || loadingUnseeded); // gone / still-loading -> read-only
 
   // The nib id the buffer targets (edit forms only; null while creating).
   const nibId = $derived(form && form.mode === "edit" ? form.id : null);

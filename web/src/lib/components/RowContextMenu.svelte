@@ -3,7 +3,7 @@
   import { STATUSES, PRIORITIES } from "../constants";
   import { canHaveChildren } from "../typeHierarchy";
   import * as DropdownMenu from "$lib/components/ui/dropdown-menu/index.js";
-  import { useSelection, useConfirmDialog, useEditorOrchestration, useHistoryNav } from "$lib/contexts";
+  import { useSelection, useConfirmDialog, useActiveView, useHistoryNav } from "$lib/contexts";
   import { getMutationStore } from "$lib/mutations";
   import {
     setStatusBatch,
@@ -29,7 +29,7 @@
 
   const selection = useSelection();
   const confirmDialog = useConfirmDialog();
-  const editor = useEditorOrchestration();
+  const view = useActiveView();
   const nav = useHistoryNav();
   const mutations = getMutationStore();
 
@@ -52,20 +52,22 @@
 
   function handleOpen() {
     if (nib) {
-      // Route through nav so the URL/history stay in sync (nibs-58c3).
-      nav.navigateToNib(nib.id);
+      // Open the unified view (guarded); it routes through nav so the URL/history
+      // stay in sync (nibs-58c3).
+      view.open(nib.id);
     }
   }
 
   function handleEdit() {
     if (nib) {
-      editor.handleEditNib(nib.id);
+      // Edit is just opening the unified buffered view (create/edit are one view).
+      view.open(nib.id);
     }
   }
 
   function handleAddChild() {
     if (nib) {
-      editor.handleAddChild(nib.id, nib.type);
+      view.startCreateChild(nib.id, nib.type);
     }
   }
 

@@ -74,8 +74,10 @@ export interface DetailView {
 export interface ActiveViewDeps {
   /** History/URL navigation (delegated, never owned). */
   nav: Pick<HistoryNav, "navigateToNib" | "closePanel" | "replaceClosed">;
-  /** Build an edit form for a nib (seeds from the shared detail query — no re-fetch). */
-  editForm: (nibId: string) => EditForm;
+  /** Build an edit form for a nib. Seeds from the shared detail query (no
+   *  re-fetch); a create→edit hand-off may pass the freshly-created snapshot so
+   *  the first edit form renders immediately (its detail query hasn't run yet). */
+  editForm: (nibId: string, seed?: NibSnapshot) => EditForm;
   /** Build a create form for the given defaults. */
   createForm: (defaults: CreateDefaults) => CreateForm;
   /** Build the live-change subscription binder for a nib. */
@@ -125,6 +127,10 @@ export function createActiveView(deps: ActiveViewDeps): ActiveView {
   let createNonce = 0;
   let liveDispose: (() => void) | null = null;
   let lastExternal: NibSnapshot | null = null;
+  // A create→edit hand-off stashes the created snapshot here so reconcileBuffer
+  // can seed the first edit form for the brand-new id (whose detail query hasn't
+  // run yet), avoiding a blank flash. Consumed exactly once, then cleared.
+  let pendingCreateSeed: NibSnapshot | null = null;
 
   /** Content-identity of the current buffer, or null when there is none. */
   function bufferKey(s: ViewState): string | null {
@@ -173,7 +179,8 @@ export function createActiveView(deps: ActiveViewDeps): ActiveView {
     if (s.kind === "viewing" || s.kind === "gone") {
       const nibId = s.nibId;
       detailView = deps.detail(nibId);
-      form = deps.editForm(nibId);
+      form = deps.editForm(nibId, pendingCreateSeed ?? undefined);
+      pendingCreateSeed = null;
       // Own the live subscription in its own root: disposing it on the next
       // target change tears down the internal $effect the real binder registers.
       liveDispose = $effect.root(() => {
@@ -217,6 +224,47 @@ export function createActiveView(deps: ActiveViewDeps): ActiveView {
       f.noteExternalChange(ext);
     }
     lastExternal = ext;
+  });
+
+  /** Project a loaded detail nib onto the form's committed-snapshot shape. */
+  function snapshotFromDetail(n: DetailNib): NibSnapshot {
+    return {
+      id: n.id,
+      title: n.title,
+      status: n.status,
+      type: n.type,
+      priority: n.priority ?? "",
+      estimate: n.estimate ?? "",
+      tags: n.tags ? [...n.tags] : [],
+      body: n.body ?? "",
+      etag: n.etag,
+    };
+  }
+
+  // Async edit-form seed. `editForm(id)` is built eagerly with a placeholder so
+  // the view has a form to render immediately; the real snapshot only arrives
+  // once the (async) detail query resolves. When it does, adopt it via
+  // `applyExternal` — which rebaselines the working copy and clears dirt, so a
+  // freshly-opened nib is pristine and its editor re-inits with the real body.
+  // Guards: only edit forms, only a fully-loaded nib (etag present), exactly
+  // once per buffer identity (`currentKey`) so a background refetch never
+  // clobbers in-progress edits, and only while the buffer is pristine — a dirty
+  // buffer is left untouched (the one-shot still arms so it won't re-seed later).
+  let seededKey: string | null = null;
+  $effect(() => {
+    const f = form;
+    const d = detailView;
+    if (!f || f.mode !== "edit" || !d) return;
+    const n = d.nib;
+    if (!n || !n.etag) return;
+    if (seededKey === currentKey) return;
+    // Mark the key seeded even when we skip below, so this one-shot never
+    // re-fires for the same buffer: once seeded, a later genuine external change
+    // arrives via the live bridge's noteExternalChange, not applyExternal.
+    seededKey = currentKey;
+    // Don't rebaseline over in-progress edits: applyExternal wipes the working
+    // copy. If the user already typed before the detail landed, keep their buffer.
+    if (!f.dirty) f.applyExternal(snapshotFromDetail(n));
   });
 
   return {
@@ -272,6 +320,10 @@ export function createActiveView(deps: ActiveViewDeps): ActiveView {
         // true and those transitions aren't blocked). Firing nav unconditionally would
         // yank the URL to a nib the presenter no longer reflects.
         if (outcome.kind === "created" && form === f) {
+          // Hand the created snapshot to the edit form the SAVED transition
+          // builds so it renders the new nib immediately (its detail query
+          // hasn't run yet). reconcileBuffer consumes + clears it.
+          pendingCreateSeed = outcome.snapshot;
           apply({ type: "SAVED", nibId: outcome.id });
           deps.nav.navigateToNib(outcome.id);
         }

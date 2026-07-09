@@ -1,4 +1,4 @@
-import { render, screen, within } from "@testing-library/svelte";
+import { render, screen, within, waitFor } from "@testing-library/svelte";
 import { userEvent } from "@testing-library/user-event";
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import App from "./App.svelte";
@@ -58,9 +58,10 @@ vi.mock("@urql/svelte", async () => {
     stale: false,
   });
 
-  // DetailPanel runs NIB_DETAIL_QUERY; it must resolve to a real nib or the panel
-  // now treats it as not-found and self-closes (nibs-etk3). Layout tests only need
-  // the panel to render, so a single static nib suffices.
+  // The active-nib view runs NIB_DETAIL_QUERY (to seed the edit form + render
+  // relations); it must resolve to a real nib or App treats it as not-found and
+  // self-closes (nibs-etk3). Layout tests only need the panel to render, so a
+  // single static nib suffices.
   const nibDetailData = readable({
     fetching: false,
     error: undefined,
@@ -87,16 +88,25 @@ vi.mock("@urql/svelte", async () => {
     stale: false,
   });
 
+  // A settled detail query that resolves to NO nib — a deleted / archived /
+  // stale ?nib= link. App treats this as missing and self-closes (nibs-etk3).
+  const missingDetailData = readable({
+    fetching: false,
+    error: undefined,
+    data: { nib: null },
+    stale: false,
+  });
+
   return {
     ...actual,
     getContextClient: vi.fn(),
     setContextClient: vi.fn(),
-    queryStore: vi.fn().mockImplementation((opts: { query: unknown }) => {
+    queryStore: vi.fn().mockImplementation((opts: { query: unknown; variables?: { id?: string } }) => {
       if (opts.query === CONFIG_QUERY) {
         return configData;
       }
       if (opts.query === NIB_DETAIL_QUERY) {
-        return nibDetailData;
+        return opts.variables?.id === "nibs-gone" ? missingDetailData : nibDetailData;
       }
       return nibsData;
     }),
@@ -270,14 +280,14 @@ describe("App", () => {
     render(App);
 
     // Panel should not be open initially
-    expect(screen.queryByTestId("detail-panel")).not.toBeInTheDocument();
+    expect(screen.queryByTestId("active-nib-view")).not.toBeInTheDocument();
 
     // Click a nib title
     const titleTexts = screen.getAllByTestId("title-text");
     await user.click(titleTexts[0]);
 
     // Detail panel should appear
-    expect(screen.getByTestId("detail-panel")).toBeInTheDocument();
+    expect(screen.getByTestId("active-nib-view")).toBeInTheDocument();
   });
 
   it("closes detail panel when close button is clicked", async () => {
@@ -287,11 +297,11 @@ describe("App", () => {
     // Open the panel
     const titleTexts = screen.getAllByTestId("title-text");
     await user.click(titleTexts[0]);
-    expect(screen.getByTestId("detail-panel")).toBeInTheDocument();
+    expect(screen.getByTestId("active-nib-view")).toBeInTheDocument();
 
     // Close the panel
-    await user.click(screen.getByTestId("detail-close"));
-    expect(screen.queryByTestId("detail-panel")).not.toBeInTheDocument();
+    await user.click(screen.getByTestId("anv-close"));
+    expect(screen.queryByTestId("active-nib-view")).not.toBeInTheDocument();
   });
 
   it("closes detail panel when Escape key is pressed", async () => {
@@ -301,18 +311,18 @@ describe("App", () => {
     // Open the panel by clicking a title
     const titleTexts = screen.getAllByTestId("title-text");
     await user.click(titleTexts[0]);
-    expect(screen.getByTestId("detail-panel")).toBeInTheDocument();
+    expect(screen.getByTestId("active-nib-view")).toBeInTheDocument();
 
     // Press Escape
     await user.keyboard("{Escape}");
-    expect(screen.queryByTestId("detail-panel")).not.toBeInTheDocument();
+    expect(screen.queryByTestId("active-nib-view")).not.toBeInTheDocument();
   });
 
   it("tree-table is full width when panel is closed", () => {
     const { container } = render(App);
 
     // No detail panel
-    expect(screen.queryByTestId("detail-panel")).not.toBeInTheDocument();
+    expect(screen.queryByTestId("active-nib-view")).not.toBeInTheDocument();
 
     // PaneGroup is always present (tree-table is always in a pane)
     expect(container.querySelector("[data-pane-group]")).toBeInTheDocument();
@@ -335,7 +345,7 @@ describe("App", () => {
     await user.click(titleTexts[0]);
 
     // Both panes should exist within a PaneForge group
-    expect(screen.getByTestId("detail-panel")).toBeInTheDocument();
+    expect(screen.getByTestId("active-nib-view")).toBeInTheDocument();
     const paneGroup = container.querySelector("[data-pane-group]");
     expect(paneGroup).toBeInTheDocument();
 
@@ -355,7 +365,7 @@ describe("App", () => {
     // Open the detail panel by clicking a title
     const titleTexts = screen.getAllByTestId("title-text");
     await user.click(titleTexts[0]);
-    expect(screen.getByTestId("detail-panel")).toBeInTheDocument();
+    expect(screen.getByTestId("active-nib-view")).toBeInTheDocument();
 
     // Open the Type dropdown in toolbar
     await user.click(screen.getByRole("button", { name: /type/i }));
@@ -368,7 +378,7 @@ describe("App", () => {
     expect(screen.queryByRole("menuitemcheckbox", { name: "bug" })).not.toBeInTheDocument();
 
     // Detail panel should still be open
-    expect(screen.getByTestId("detail-panel")).toBeInTheDocument();
+    expect(screen.getByTestId("active-nib-view")).toBeInTheDocument();
   });
 
   it("resize handle renders between tree-table and detail panel when panel is open", async () => {
@@ -528,7 +538,7 @@ describe("App", () => {
       await user.click(titleTexts[0]);
 
       // The PaneGroup should exist
-      expect(screen.getByTestId("detail-panel")).toBeInTheDocument();
+      expect(screen.getByTestId("active-nib-view")).toBeInTheDocument();
 
       // The resize handle should exist with the onDraggingChange callback wired
       const resizeHandle = screen.getByTestId("resize-handle");
@@ -651,14 +661,14 @@ describe("App", () => {
     // Open the detail panel
     const titleTexts = screen.getAllByTestId("title-text");
     await user.click(titleTexts[0]);
-    expect(screen.getByTestId("detail-panel")).toBeInTheDocument();
+    expect(screen.getByTestId("active-nib-view")).toBeInTheDocument();
 
     // Get a reference to the TreeTable element while panel is open
     const treeTable = screen.getByTestId("tree-table");
     expect(treeTable).toBeInTheDocument();
 
     // Close the panel
-    await user.click(screen.getByTestId("detail-close"));
+    await user.click(screen.getByTestId("anv-close"));
 
     // The same DOM element should still be in the document (not recreated)
     expect(treeTable).toBeInTheDocument();
@@ -669,7 +679,7 @@ describe("App", () => {
     const { container } = render(App);
 
     // No nib selected, panel is closed
-    expect(screen.queryByTestId("detail-panel")).not.toBeInTheDocument();
+    expect(screen.queryByTestId("active-nib-view")).not.toBeInTheDocument();
 
     // PaneGroup should still be in the DOM
     const paneGroup = container.querySelector("[data-pane-group]");
@@ -686,7 +696,7 @@ describe("App", () => {
     await user.click(titleTexts[0]);
 
     // Detail panel should appear
-    expect(screen.getByTestId("detail-panel")).toBeInTheDocument();
+    expect(screen.getByTestId("active-nib-view")).toBeInTheDocument();
 
     // The detail pane should not be in collapsed state
     const detailPane = container.querySelector("[data-testid='detail-pane']");
@@ -702,13 +712,13 @@ describe("App", () => {
     // Open the detail panel
     const titleTexts = screen.getAllByTestId("title-text");
     await user.click(titleTexts[0]);
-    expect(screen.getByTestId("detail-panel")).toBeInTheDocument();
+    expect(screen.getByTestId("active-nib-view")).toBeInTheDocument();
 
     // Close the panel
-    await user.click(screen.getByTestId("detail-close"));
+    await user.click(screen.getByTestId("anv-close"));
 
     // Detail panel content should not be visible
-    expect(screen.queryByTestId("detail-panel")).not.toBeInTheDocument();
+    expect(screen.queryByTestId("active-nib-view")).not.toBeInTheDocument();
 
     // The detail pane DOM element should still exist but be collapsed
     const detailPane = container.querySelector("[data-testid='detail-pane']");
@@ -731,9 +741,89 @@ describe("App", () => {
     expect(screen.getByTestId("resize-handle")).not.toHaveClass("hidden");
 
     // Close the panel
-    await user.click(screen.getByTestId("detail-close"));
+    await user.click(screen.getByTestId("anv-close"));
 
     // Resize handle should be hidden again
     expect(screen.getByTestId("resize-handle")).toHaveClass("hidden");
+  });
+
+  // ─── Unified active-nib-view wiring (nibs-1h2m) ───────────────
+
+  it("keyboard 'n' opens a docked create view through the presenter", async () => {
+    const user = userEvent.setup();
+    render(App);
+
+    expect(screen.queryByTestId("active-nib-view")).not.toBeInTheDocument();
+
+    // 'n' routes to view.startCreate({ type: "task" }); a create instance renders
+    // in the docked pane with a "Create" primary button and no overflow menu.
+    await user.keyboard("n");
+
+    expect(screen.getByTestId("active-nib-view")).toBeInTheDocument();
+    expect(screen.getByTestId("anv-save")).toHaveTextContent("Create");
+    expect(screen.queryByTestId("anv-overflow")).not.toBeInTheDocument();
+  });
+
+  it("expand routes the view into a full-screen modal; collapse returns it to the dock", async () => {
+    const user = userEvent.setup();
+    render(App);
+
+    // Open a nib (docked).
+    const titleTexts = screen.getAllByTestId("title-text");
+    await user.click(titleTexts[0]);
+    expect(screen.getByTestId("active-nib-view")).toBeInTheDocument();
+    expect(screen.queryByTestId("active-nib-modal")).not.toBeInTheDocument();
+
+    // Expand → the view moves to the modal overlay (docked pane no longer hosts it).
+    await user.click(screen.getByTestId("anv-expand"));
+    expect(screen.getByTestId("active-nib-modal")).toBeInTheDocument();
+
+    // Collapse (from inside the modal) → back to the dock, modal gone.
+    await user.click(screen.getByTestId("anv-collapse"));
+    expect(screen.queryByTestId("active-nib-modal")).not.toBeInTheDocument();
+    expect(screen.getByTestId("active-nib-view")).toBeInTheDocument();
+  });
+
+  it("heals a stale ?nib=<gone> deep link: self-closes the view (nibs-etk3)", async () => {
+    // Land on a URL whose nib no longer exists. The detail query settles with a
+    // null nib, so App fires the missing-nib heal (closes the view + toast).
+    window.history.replaceState(null, "", "/?nib=nibs-gone");
+
+    render(App);
+
+    // The view must not stay open on a nib that resolves to nothing.
+    await waitFor(() => {
+      expect(screen.queryByTestId("active-nib-view")).not.toBeInTheDocument();
+    });
+    // The stale query string is healed off the URL.
+    expect(window.location.search).toBe("");
+  });
+
+  it("Back/Forward (popstate) retargets the docked view to the history nib (nibs-1h2m)", async () => {
+    // Composed path: App's onPopState runs nav.handlePopState (updates selection
+    // from the owned history state) then view.syncTo(selection.selectedNibId) —
+    // the sole guard-bypass. A real popstate must retarget the docked view to the
+    // history nib without looping or desyncing.
+    const user = userEvent.setup();
+    render(App);
+
+    // Open a nib in the docked view.
+    const titleTexts = screen.getAllByTestId("title-text");
+    await user.click(titleTexts[0]);
+    expect(screen.getByTestId("active-nib-view")).toBeInTheDocument();
+
+    const firstId = screen.getByTestId("anv-id").textContent?.trim();
+    expect(firstId).toBeTruthy();
+    // Pick a DIFFERENT known nib as the Back/Forward target.
+    const target = firstId === "nibs-m1" ? "nibs-abc1" : "nibs-m1";
+
+    // Dispatch a real popstate carrying the owned history state for `target`.
+    window.dispatchEvent(new PopStateEvent("popstate", { state: { nibId: target } }));
+
+    // The docked view retargets to the history nib (single, non-duplicated view).
+    await waitFor(() => {
+      expect(screen.getByTestId("anv-id")).toHaveTextContent(target);
+    });
+    expect(screen.getAllByTestId("active-nib-view")).toHaveLength(1);
   });
 });

@@ -55,28 +55,39 @@ for (const level of VIEW_LEVELS) {
 test("detail panel", async ({ page }) => {
   await openApp(page);
   await page.locator("tr[data-nib-id]").first().locator('[data-action="title"]').click();
-  await expect(page.locator('[data-testid="detail-panel"]')).toBeVisible({ timeout: 5_000 });
-  await expect(page.locator('[data-testid="detail-loading"]')).toBeHidden({ timeout: 5_000 });
+  await expect(page.locator('[data-testid="active-nib-view"]')).toBeVisible({ timeout: 5_000 });
+  await expect(page.locator('[data-testid="anv-title"]')).toBeVisible({ timeout: 5_000 });
   await shot(page, "detail-panel");
 });
 
-test("editor modal", async ({ page }) => {
+test("active view — editing", async ({ page }) => {
+  // The unified view with the body editor toggled on (CodeMirror + preview) —
+  // the buffered edit experience that replaced the standalone editor modal.
   await openApp(page);
-  await page.locator("tr[data-nib-id]").first().click({ button: "right" });
-  await expect(page.locator('[data-testid="context-menu"]')).toBeVisible({ timeout: 3_000 });
-  await page.locator('[data-testid="ctx-edit"]').click();
-  await expect(page.locator('[data-testid="editor-modal"]')).toBeVisible({ timeout: 5_000 });
+  await page.locator("tr[data-nib-id]").first().locator('[data-action="title"]').click();
+  await expect(page.locator('[data-testid="active-nib-view"]')).toBeVisible({ timeout: 5_000 });
+  await page.locator('[data-testid="anv-edit-toggle"]').click();
   // Wait for the CodeMirror editor to mount so the body area isn't blank.
   await expect(page.locator(".cm-content").first()).toBeVisible({ timeout: 5_000 });
-  await shot(page, "editor-modal");
+  await shot(page, "active-view-editing");
+});
+
+test("active view — expanded modal", async ({ page }) => {
+  // The same view promoted to the full-screen modal presentation (wide, two-col).
+  await openApp(page);
+  await page.locator("tr[data-nib-id]").first().locator('[data-action="title"]').click();
+  await expect(page.locator('[data-testid="active-nib-view"]')).toBeVisible({ timeout: 5_000 });
+  await page.locator('[data-testid="anv-expand"]').click();
+  await expect(page.locator('[data-testid="active-nib-modal"]')).toBeVisible({ timeout: 5_000 });
+  await shot(page, "active-view-expanded");
 });
 
 test("detail panel — bottom dock", async ({ page }) => {
-  // Detail panel docked at the bottom (table on top, preview below) — nibs-x9xl.
+  // Detail view docked at the bottom (table on top, preview below) — nibs-x9xl.
   await openApp(page, "milestones", undefined, "bottom");
   await page.locator("tr[data-nib-id]").first().locator('[data-action="title"]').click();
-  await expect(page.locator('[data-testid="detail-panel"]')).toBeVisible({ timeout: 5_000 });
-  await expect(page.locator('[data-testid="detail-loading"]')).toBeHidden({ timeout: 5_000 });
+  await expect(page.locator('[data-testid="active-nib-view"]')).toBeVisible({ timeout: 5_000 });
+  await expect(page.locator('[data-testid="anv-title"]')).toBeVisible({ timeout: 5_000 });
   await shot(page, "detail-panel-bottom");
 });
 
@@ -100,8 +111,8 @@ for (const { value } of THEMES) {
   test(`theme ${value} — detail panel`, async ({ page }) => {
     await openApp(page, "milestones", value);
     await page.locator("tr[data-nib-id]").first().locator('[data-action="title"]').click();
-    await expect(page.locator('[data-testid="detail-panel"]')).toBeVisible({ timeout: 5_000 });
-    await expect(page.locator('[data-testid="detail-loading"]')).toBeHidden({ timeout: 5_000 });
+    await expect(page.locator('[data-testid="active-nib-view"]')).toBeVisible({ timeout: 5_000 });
+    await expect(page.locator('[data-testid="anv-title"]')).toBeVisible({ timeout: 5_000 });
     await shot(page, `theme-${value}-detail`);
   });
 }

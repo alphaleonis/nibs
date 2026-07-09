@@ -24,7 +24,10 @@ interface FakeEdit {
   id: string;
   dirty: boolean;
   etag: string;
+  title: string;
+  body: string;
   noteExternalChange: ReturnType<typeof vi.fn>;
+  applyExternal: ReturnType<typeof vi.fn>;
   save: ReturnType<typeof vi.fn>;
 }
 
@@ -52,13 +55,18 @@ function makeDeps() {
   const created: string[] = [];
   const disposed: string[] = [];
 
-  const editForm = (nibId: string): EditForm => {
+  // Honors a create→edit `seed` (Fix 2): the edit form adopts the seed's
+  // title/body/etag so the create hand-off carries the new nib's content.
+  const editForm = (nibId: string, seed?: NibSnapshot): EditForm => {
     const f: FakeEdit = {
       mode: "edit",
       id: nibId,
       dirty: false,
-      etag: "e0",
+      etag: seed?.etag ?? "e0",
+      title: seed?.title ?? "",
+      body: seed?.body ?? "",
       noteExternalChange: vi.fn(),
+      applyExternal: vi.fn(),
       save: vi.fn(async () => ({ kind: "saved", snapshot: snap({ id: nibId }) })),
     };
     editForms.set(nibId, f);
@@ -69,7 +77,11 @@ function makeDeps() {
     const f: FakeCreate = {
       mode: "create",
       dirty: false,
-      save: vi.fn(async () => ({ kind: "created", id: "nibs-new1", snapshot: snap({ id: "nibs-new1" }) })),
+      save: vi.fn(async () => ({
+        kind: "created",
+        id: "nibs-new1",
+        snapshot: snap({ id: "nibs-new1", title: "Fresh", body: "Hello body", etag: "e-new" }),
+      })),
     };
     createForms.push(f);
     return f as unknown as CreateForm;
@@ -329,6 +341,14 @@ describe("createActiveView · create -> edit hand-off", () => {
     expect(view.form?.mode).toBe("edit");
     expect(h.nav.navigateToNib).toHaveBeenCalledWith("nibs-new1");
 
+    // Fix 2: the edit form the SAVED transition builds is seeded from the created
+    // snapshot (no blank flash), so it carries the created title/body/etag before
+    // the new nib's detail query has run.
+    const edited = h.editForms.get("nibs-new1")!;
+    expect(edited.title).toBe("Fresh");
+    expect(edited.body).toBe("Hello body");
+    expect(edited.etag).toBe("e-new");
+
     dispose();
   });
 
@@ -343,6 +363,56 @@ describe("createActiveView · create -> edit hand-off", () => {
     expect(h.editForms.get("n1")!.save).toHaveBeenCalledTimes(1);
     expect(outcome).toEqual({ kind: "saved", snapshot: expect.any(Object) });
     expect(view.state).toEqual({ kind: "viewing", nibId: "n1", presentation: "docked" });
+
+    dispose();
+  });
+});
+
+describe("createActiveView · async edit-form seed", () => {
+  it("does NOT overwrite the buffer when it is dirty before the detail lands", async () => {
+    const h = makeDeps();
+    const { view, dispose } = mount(h.deps);
+
+    await view.open("n1");
+    flushSync();
+    const f = h.editForms.get("n1")!;
+    // The user types into the buffer before the (async) detail query resolves.
+    f.dirty = true;
+
+    // Detail resolves with a real, etagged snapshot.
+    h.detailInsts.get("n1")!.nib = { id: "n1", title: "Loaded", etag: "e1" };
+    h.detailInsts.get("n1")!.fetching = false;
+    flushSync();
+
+    // The seed must NOT rebaseline over the user's in-progress edits.
+    expect(f.applyExternal).not.toHaveBeenCalled();
+
+    dispose();
+  });
+
+  it("adopts the detail snapshot exactly once when the buffer is pristine", async () => {
+    const h = makeDeps();
+    const { view, dispose } = mount(h.deps);
+
+    await view.open("n1");
+    flushSync();
+    const f = h.editForms.get("n1")!;
+    expect(f.dirty).toBe(false);
+
+    const loaded = { id: "n1", title: "Loaded", etag: "e1" };
+    h.detailInsts.get("n1")!.nib = loaded;
+    h.detailInsts.get("n1")!.fetching = false;
+    flushSync();
+
+    expect(f.applyExternal).toHaveBeenCalledTimes(1);
+    expect(f.applyExternal).toHaveBeenCalledWith(
+      expect.objectContaining({ id: "n1", title: "Loaded", etag: "e1" }),
+    );
+
+    // A background re-emit of the same detail must not re-seed the buffer.
+    h.detailInsts.get("n1")!.nib = { ...loaded };
+    flushSync();
+    expect(f.applyExternal).toHaveBeenCalledTimes(1);
 
     dispose();
   });

@@ -18,7 +18,7 @@
 
 <!-- `rounded-lg` is intentional: this shared Input primitive matches the
      button/select primitive family radius. (Hand-styled panel inputs — TagEditor,
-     DetailPanel, EditorModal — use the smaller `var(--radius-md)` instead.) -->
+     ActiveNibView — use the smaller `var(--radius-md)` instead.) -->
 <input
 	bind:this={ref}
 	bind:value
