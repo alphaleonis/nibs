@@ -243,7 +243,7 @@
     border: 1px solid var(--tag-border);
     border-radius: 9999px;
     padding: 0.125rem 0.5rem;
-    font-size: 0.75rem;
+    font-size: 0.875rem;
   }
 
   .tag-remove {
@@ -276,7 +276,7 @@
     border-radius: var(--radius-md);
     padding: 0.2rem 0.5rem;
     color: var(--foreground);
-    font-size: 0.8125rem;
+    font-size: 0.875rem;
     outline: none;
   }
 
@@ -315,7 +315,7 @@
     border-radius: var(--radius-sm);
     padding: 0.28rem 0.5rem;
     color: var(--popover-foreground);
-    font-size: 0.8125rem;
+    font-size: 0.875rem;
     cursor: pointer;
   }
 
