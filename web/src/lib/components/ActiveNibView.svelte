@@ -28,7 +28,6 @@
     Archive,
     Trash2,
     SquarePen,
-    Columns2,
     FileText,
   } from "@lucide/svelte";
 
@@ -54,6 +53,14 @@
   import TypePickerPopover from "./TypePickerPopover.svelte";
   import { Button } from "$lib/components/ui/button/index.js";
   import * as DropdownMenu from "$lib/components/ui/dropdown-menu/index.js";
+
+  interface Props {
+    /** The full tag universe, offered as TagEditor suggestions (already-applied
+     *  tags are excluded downstream). Empty while none are known yet. */
+    suggestions?: string[];
+  }
+
+  let { suggestions = [] }: Props = $props();
 
   const view = useActiveView();
   const mutations = getMutationStore();
@@ -333,10 +340,12 @@
     role="complementary"
     aria-label="Nib detail"
   >
-    <!-- Type color band down the left edge, hued by the current type. -->
-    <div class="anv-band" style="background: var(--type-{currentType})" aria-hidden="true"></div>
+    <!-- Top region: header + metadata band. The type-color band spans only this
+         region (it stops at the metaband's bottom edge, not the body/rail). -->
+    <div class="anv-top">
+      <div class="anv-band" style="background: var(--type-{currentType})" aria-hidden="true"></div>
 
-    <div class="anv-panel">
+      <div class="anv-topmain">
       <!-- ============ Header: three rows ============ -->
       <div class="anv-head">
         <!-- Row 1: id + unsaved dot | expand/collapse · overflow · close -->
@@ -472,11 +481,13 @@
           <div class="anv-tags">
             <TagEditor
               tags={[...form.tags]}
+              {suggestions}
               onadd={(t) => form.addTag(t)}
               onremove={(t) => form.removeTag(t)}
               chipTestId="anv-tag"
               removeTestId="anv-tag-remove"
               inputTestId="anv-tag-input"
+              addTestId="anv-tag-add"
               {disabled}
             />
           </div>
@@ -536,9 +547,13 @@
           <EstimateSelect value={form.estimate} onchange={(v) => (form.estimate = v)} testId="anv-estimate" {disabled} />
         </div>
       </div>
+      </div>
+    </div>
 
-      <!-- ============ Content: body column (+ optional rail) ============ -->
-      <div class="anv-content" class:anv-two-col={showRail}>
+    <!-- ============ Content: body column (+ optional rail) ============ -->
+    <!-- Fills the remaining panel height and scrolls; the rail's right column
+         therefore stretches to the bottom of the panel. -->
+    <div class="anv-content" class:anv-two-col={showRail}>
         <div class="anv-body" bind:this={bodyColEl}>
           <div class="anv-section-head">
             <span class="anv-section-label">Description</span>
@@ -558,14 +573,17 @@
               {#if bodyModeEffective === "edit"}
                 <button
                   type="button"
-                  class="anv-mini-btn"
-                  class:anv-mini-on={previewOn}
+                  class="anv-switch"
+                  role="switch"
+                  aria-checked={previewOn}
+                  aria-label="Preview"
                   data-testid="anv-preview-toggle"
-                  aria-pressed={previewOn}
                   onclick={() => (previewOn = !previewOn)}
                 >
-                  <Columns2 size={13} />
-                  Preview
+                  <span class="anv-switch-label">Preview</span>
+                  <span class="anv-switch-track" class:anv-switch-on={previewOn}>
+                    <span class="anv-switch-knob"></span>
+                  </span>
                 </button>
               {/if}
             </div>
@@ -624,17 +642,25 @@
           </aside>
         {/if}
       </div>
-    </div>
   </div>
 {/if}
 
 <style>
   .anv {
     display: flex;
+    flex-direction: column;
     height: 100%;
     min-width: 0;
     overflow: hidden;
     background: var(--background);
+    color: var(--foreground);
+  }
+
+  /* Top region: band + header + metadata band. Fixed height (does not scroll);
+     the band is a flex sibling that stretches to this region's bottom edge. */
+  .anv-top {
+    display: flex;
+    flex: none;
   }
 
   .anv-band {
@@ -642,14 +668,11 @@
     flex: none;
   }
 
-  .anv-panel {
+  .anv-topmain {
     flex: 1;
     min-width: 0;
     display: flex;
     flex-direction: column;
-    overflow-y: auto;
-    font-size: 0.875rem;
-    color: var(--foreground);
   }
 
   /* ---------- header (three rows) ---------- */
@@ -699,7 +722,7 @@
     border-radius: var(--radius-md);
     padding: 0.12rem 0.35rem;
     color: var(--foreground);
-    font-size: 1.12rem;
+    font-size: 1.25rem;
     font-weight: 620;
     letter-spacing: -0.01em;
     outline: none;
@@ -769,7 +792,9 @@
     flex-wrap: wrap;
     gap: 0.65rem 1rem;
     align-items: flex-end;
-    background: var(--muted);
+    /* Match the rail background exactly; the top/bottom hairlines are the
+       separator between the top region and the body/rail below. */
+    background: color-mix(in oklab, var(--background), var(--card) 35%);
     border-top: 1px solid var(--border);
     border-bottom: 1px solid var(--border);
     padding: 0.65rem 0.9rem;
@@ -782,16 +807,22 @@
   }
 
   .anv-field-label {
-    font-size: 0.7rem;
+    font-size: 0.75rem;
     font-weight: 500;
     color: var(--muted-foreground);
   }
 
   /* ---------- content columns ---------- */
+  /* Fills the remaining panel height and owns the scroll. The single grid row
+     stretches (align-content) so the rail cell reaches the panel bottom when the
+     content is short; it grows past the container and scrolls when content is
+     tall. */
   .anv-content {
     display: grid;
     grid-template-columns: 1fr;
+    flex: 1;
     min-height: 0;
+    overflow-y: auto;
   }
 
   .anv-content.anv-two-col {
@@ -813,7 +844,7 @@
   }
 
   .anv-section-label {
-    font-size: 0.7rem;
+    font-size: 0.75rem;
     font-weight: 500;
     color: var(--muted-foreground);
   }
@@ -845,6 +876,55 @@
   .anv-mini-btn.anv-mini-on {
     color: var(--primary);
     background: color-mix(in oklab, var(--primary), transparent 88%);
+  }
+
+  /* Preview toggle rendered as a small switch (pill track + sliding knob). */
+  .anv-switch {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.4rem;
+    height: 1.5rem;
+    padding: 0 0.2rem 0 0.4rem;
+    border: 0;
+    background: none;
+    color: var(--muted-foreground);
+    font-size: 0.72rem;
+    cursor: pointer;
+    border-radius: var(--radius-md);
+  }
+
+  .anv-switch:hover {
+    color: var(--foreground);
+  }
+
+  .anv-switch-track {
+    position: relative;
+    width: 1.6rem;
+    height: 0.9rem;
+    flex: none;
+    border-radius: 9999px;
+    background: var(--border);
+    transition: background 0.15s;
+  }
+
+  .anv-switch-track.anv-switch-on {
+    background: var(--primary);
+  }
+
+  .anv-switch-knob {
+    position: absolute;
+    top: 0.1rem;
+    left: 0.1rem;
+    width: 0.7rem;
+    height: 0.7rem;
+    border-radius: 50%;
+    background: var(--primary-foreground);
+    box-shadow: 0 1px 2px oklch(0 0 0 / 0.3);
+    transition: transform 0.15s;
+  }
+
+  .anv-switch-track.anv-switch-on .anv-switch-knob {
+    transform: translateX(0.7rem);
   }
 
   .anv-prose {

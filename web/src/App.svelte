@@ -443,7 +443,7 @@
         data-testid="detail-pane"
       >
         {#if dockOpen}
-          <ActiveNibView />
+          <ActiveNibView suggestions={availableTags} />
         {/if}
       </Resizable.Pane>
     </Resizable.PaneGroup>
@@ -457,7 +457,7 @@
 {#if view.isOpen && view.presentation === "expanded"}
   <div class="anv-modal-backdrop" data-testid="active-nib-modal" role="presentation">
     <div class="anv-modal-shell">
-      <ActiveNibView />
+      <ActiveNibView suggestions={availableTags} />
     </div>
   </div>
 {/if}
