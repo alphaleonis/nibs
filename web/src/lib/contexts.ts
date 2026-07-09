@@ -5,6 +5,7 @@ import { TreeViewState } from './treeView.svelte';
 import type { ConfirmDialogState } from './composables/useConfirmDialog.svelte';
 import type { EditorOrchestrationState } from './composables/useEditorOrchestration.svelte';
 import type { HistoryNav } from './composables/useHistoryNav.svelte';
+import type { ActiveView } from './composables/useActiveView.svelte';
 
 export const SELECTION_KEY = 'nibs:selection';
 export const DRAG_KEY = 'nibs:drag';
@@ -12,6 +13,7 @@ export const TREE_VIEW_KEY = 'nibs:tree-view';
 export const CONFIRM_DIALOG_KEY = 'nibs:confirm-dialog';
 export const EDITOR_ORCHESTRATION_KEY = 'nibs:editor-orchestration';
 export const HISTORY_NAV_KEY = 'nibs:history-nav';
+export const ACTIVE_VIEW_KEY = 'nibs:active-view';
 
 export function provideSelection(s: SelectionState) { setContext(SELECTION_KEY, s); }
 export function useSelection(): SelectionState {
@@ -47,6 +49,13 @@ export function useConfirmDialog(): ConfirmDialogState {
   return cd;
 }
 
+export function provideActiveView(v: ActiveView) { setContext(ACTIVE_VIEW_KEY, v); }
+export function useActiveView(): ActiveView {
+  const v = getContext<ActiveView>(ACTIVE_VIEW_KEY);
+  if (!v) throw new Error('useActiveView() called outside provider — call provideActiveView() in a parent component');
+  return v;
+}
+
 export function provideEditorOrchestration(eo: EditorOrchestrationState) { setContext(EDITOR_ORCHESTRATION_KEY, eo); }
 export function useEditorOrchestration(): EditorOrchestrationState {
   const eo = getContext<EditorOrchestrationState>(EDITOR_ORCHESTRATION_KEY);
@@ -63,6 +72,7 @@ export function makeTestContext(
     confirmDialog?: ConfirmDialogState;
     editorOrchestration?: EditorOrchestrationState;
     historyNav?: HistoryNav;
+    activeView?: ActiveView;
   },
 ): Map<string, unknown> {
   const m = new Map<string, unknown>();
@@ -73,6 +83,7 @@ export function makeTestContext(
   m.set(TREE_VIEW_KEY, opts?.treeView ?? new TreeViewState());
   if (opts?.confirmDialog) m.set(CONFIRM_DIALOG_KEY, opts.confirmDialog);
   if (opts?.editorOrchestration) m.set(EDITOR_ORCHESTRATION_KEY, opts.editorOrchestration);
+  if (opts?.activeView) m.set(ACTIVE_VIEW_KEY, opts.activeView);
   // Always provide a history-nav so components that read it work in tests without extra setup.
   // Default is a select-only stub that mirrors selection without touching browser history.
   m.set(HISTORY_NAV_KEY, opts?.historyNav ?? {
