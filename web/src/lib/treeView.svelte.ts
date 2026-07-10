@@ -26,6 +26,16 @@ export class TreeViewState {
    */
   #collapsedIds: Set<string> = $state(new Set());
 
+  /**
+   * Saved vertical scroll offset of the tree table's scroll container. Persisted
+   * here (outside App's {#key position} block) so it survives the PaneForge
+   * PaneGroup remount on a detail-panel dock toggle, same rationale as
+   * collapsedIds. Unlike collapsedIds this is a plain public primitive with no
+   * in-place-mutation footgun, so it needs no private-field/getter encapsulation
+   * — it matches SelectionState's public $state fields (nibs-n47p).
+   */
+  scrollTop: number = $state(0);
+
   /** Read-only view of the collapsed-node ids. Reading it inside a
    *  `$derived`/`$effect` still tracks, because the getter reads the $state. */
   get collapsedIds(): ReadonlySet<string> {

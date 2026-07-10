@@ -15,6 +15,7 @@
   import { useColumnResize } from "../composables/useColumnResize.svelte";
   import { useTreeDrag } from "../composables/useTreeDrag.svelte";
   import { useKeyboardNav } from "../composables/useKeyboardNav.svelte";
+  import { useScrollRestore } from "../composables/useScrollRestore.svelte";
   import { NibChangeTracker } from "../changeTracker.svelte";
   import { onDestroy, untrack } from "svelte";
 
@@ -222,6 +223,10 @@
       const tr = scrollContainer.querySelector(`tr[data-nib-id="${nibId}"]`);
       if (tr) {
         tr.scrollIntoView({ block: "nearest" });
+        // Claim the container so the restore effect can't reset this deep-link
+        // scroll back to the top, regardless of effect flush order (nibs-n47p
+        // review #1).
+        scrollRestore.cancel();
       }
     }
     selection.clearEnsureVisible();
@@ -275,6 +280,31 @@
 
   // --- Scroll container ---
   let scrollContainerEl: HTMLDivElement | undefined = $state(undefined);
+
+  // --- Scroll-position restore (composable) ---
+  // Saves/restores the scroll offset across App's {#key position} remount (the
+  // detail-panel dock toggle recreates this container at scrollTop=0). The saved
+  // value lives in TreeViewState outside the keyed block, the same way
+  // collapsedIds survives the remount (nibs-n47p).
+  const scrollRestore = useScrollRestore({
+    getScrollContainer: () => scrollContainerEl ?? null,
+    getSavedScrollTop: () => treeView.scrollTop,
+    setSavedScrollTop: (n) => { treeView.scrollTop = n; },
+    hasContent: () => rows.length > 0,
+  });
+
+  // Re-attempt the restore whenever the container binds or the rows change: after
+  // a {#key} remount the fresh container starts at scrollTop=0, and restore() only
+  // applies the saved offset once content is present (then it's a no-op). Touch
+  // both deps so the effect re-runs across the remount + first render.
+  $effect(() => {
+    void scrollContainerEl; void rows.length;
+    // untrack the restore call so the effect keeps only its two intended deps
+    // (container binding + row count) and takes no incidental dependency on
+    // treeView.scrollTop read inside restore(), mirroring the file's convention
+    // for self-feeding side-effects (nibs-n47p review #3).
+    untrack(() => scrollRestore.restore());
+  });
 
   // --- Drag-and-drop (composable) ---
   const treeDrag = useTreeDrag({
@@ -413,7 +443,7 @@
   </div>
 {:else}
   <!-- svelte-ignore a11y_no_noninteractive_tabindex -->
-  <div bind:this={scrollContainerEl} class="overflow-auto h-full scroll-container" role="grid" tabindex="0" onkeydown={keyboardNav.handleKeydown} onclick={handleDelegatedClick} ondblclick={handleDelegatedDblClick} oncontextmenu={handleDelegatedContextMenu} onpointerdown={handleDelegatedPointerDown} style="--row-pad-y: {rowDensity === 'comfortable' ? '0.625rem' : '0.25rem'}">
+  <div bind:this={scrollContainerEl} class="overflow-auto h-full scroll-container" role="grid" tabindex="0" onkeydown={keyboardNav.handleKeydown} onscroll={scrollRestore.onScroll} onclick={handleDelegatedClick} ondblclick={handleDelegatedDblClick} oncontextmenu={handleDelegatedContextMenu} onpointerdown={handleDelegatedPointerDown} style="--row-pad-y: {rowDensity === 'comfortable' ? '0.625rem' : '0.25rem'}">
   <table bind:this={tableEl} class="border-collapse" style="table-layout: fixed; width: {tableWidth}px;">
     <thead class="sticky top-0" style="z-index: var(--z-sticky);">
       <tr>

@@ -102,6 +102,13 @@ describe("TreeViewState", () => {
     expect(state.collapsedIds.size).toBe(0);
   });
 
+  it("scrollTop defaults to 0 and persists when assigned", () => {
+    const state = new TreeViewState();
+    expect(state.scrollTop).toBe(0);
+    state.scrollTop = 300;
+    expect(state.scrollTop).toBe(300);
+  });
+
   it("collapsedIds is typed read-only but returns the live Set (no runtime freeze)", () => {
     // Documents the actual runtime boundary: the getter's ReadonlySet type is
     // erased at runtime, so a cast can mutate the backing Set in place. This is a
