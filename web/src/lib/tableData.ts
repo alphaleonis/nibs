@@ -36,7 +36,7 @@ export function buildTableData(
   allNibs: TreeTableNib[],
   filter: NibFilter,
   viewLevel: ViewLevel,
-  collapsedIds: Set<string>,
+  collapsedIds: ReadonlySet<string>,
 ): TableData {
   // Stage 1: Build nibMap for O(1) parent lookups
   const nibMap = new Map<string, TreeTableNib>();

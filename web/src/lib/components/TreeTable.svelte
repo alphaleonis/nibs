@@ -145,7 +145,7 @@
   let visibleRowIds = $derived(rows.map(r => r.nib.id));
 
   // Structural equality for two string sets (size + membership).
-  function sameSet(a: Set<string>, b: Set<string>): boolean {
+  function sameSet(a: ReadonlySet<string>, b: ReadonlySet<string>): boolean {
     if (a.size !== b.size) return false;
     for (const x of a) {
       if (!b.has(x)) return false;
@@ -212,7 +212,7 @@
       // Ancestors were collapsed — expand them and let the effect re-run once
       // visibleRowIds updates (either the nib appears, or the next pass hits
       // the filtered-out guard above and clears).
-      treeView.collapsedIds = next;
+      treeView.setCollapsed(next);
       return;
     }
 
@@ -240,21 +240,15 @@
   });
 
   function toggleNode(id: string) {
-    const next = new Set(treeView.collapsedIds);
-    if (next.has(id)) {
-      next.delete(id);
-    } else {
-      next.add(id);
-    }
-    treeView.collapsedIds = next;
+    treeView.toggle(id);
   }
 
   function expandAll() {
-    treeView.collapsedIds = new Set();
+    treeView.expandAll();
   }
 
   function collapseAll() {
-    treeView.collapsedIds = new Set(parentIds);
+    treeView.collapseAll(parentIds);
   }
 
   // --- Column resize (composable) ---
@@ -493,7 +487,7 @@
           depth={row.depth}
           hasChildren={row.hasChildren}
           dimmed={row.dimmed}
-          collapsed={treeView.collapsedIds.has(row.nib.id)}
+          collapsed={treeView.isCollapsed(row.nib.id)}
           parentNib={row.parentNib}
           visibleColumns={resolvedVisibleColumns}
           draggable={!isBucketId(row.nib.id) && dragAllowed}

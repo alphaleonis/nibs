@@ -5,7 +5,7 @@ export function useKeyboardNav(opts: {
   selection: SelectionState;
   getRows: () => RowData[];
   getVisibleRowIds: () => string[];
-  getCollapsedIds: () => Set<string>;
+  getCollapsedIds: () => ReadonlySet<string>;
   toggleNode: (id: string) => void;
   getScrollContainer: () => HTMLElement | null;
   onDragKeyDown: (e: KeyboardEvent) => void;
