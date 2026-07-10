@@ -7,6 +7,7 @@ import TreeTable from "./TreeTable.svelte";
 import type { TreeTableNib, ViewLevel, ColumnKey } from "../types";
 import { SelectionState } from "../selection.svelte";
 import { DragState } from "../drag.svelte";
+import { TreeViewState } from "../treeView.svelte";
 import { makeTestContext } from "../contexts";
 
 function makeTreeTableNib(overrides: Partial<TreeTableNib> = {}): TreeTableNib {
@@ -43,11 +44,15 @@ const mockSubscriptionStore = vi.mocked(subscriptionStore);
 /** Render TreeTable with required context. */
 function renderTreeTable(
   props: Record<string, unknown>,
-  opts?: { selection?: SelectionState; drag?: DragState },
+  opts?: { selection?: SelectionState; drag?: DragState; treeView?: TreeViewState },
 ) {
   return render(TreeTable, {
     props: props as any,
-    context: makeTestContext(opts?.selection ?? new SelectionState(), opts?.drag ?? new DragState()),
+    context: makeTestContext(
+      opts?.selection ?? new SelectionState(),
+      opts?.drag ?? new DragState(),
+      { treeView: opts?.treeView },
+    ),
   });
 }
 
@@ -1316,6 +1321,70 @@ describe("TreeTable", () => {
       expect(rows).toHaveLength(2);
       expect(screen.getByText("Active Task")).toBeInTheDocument();
       expect(screen.queryByText("Completed Task")).not.toBeInTheDocument();
+    });
+  });
+
+  // Scroll-restore lifecycle (nibs-qpvw). These drive the real mount → scroll →
+  // remount → restore path through TreeTable + TreeViewState — the coverage gap
+  // the prior review flagged, where the two confirmed defects lived.
+  //
+  // jsdom has NO layout, so it cannot reproduce real scrollTop CLAMPING
+  // (scrollHeight - clientHeight) and does not fire a native scroll event on a
+  // programmatic scrollTop assignment. jsdom stores scrollTop verbatim, so these
+  // tests verify the restore-effect WIRING (mount/remount → restore) end-to-end;
+  // the clamp-echo defect's trigger (#2) is covered at the unit level via
+  // simulation in useScrollRestore.test.ts.
+  describe("scroll restore (nibs-qpvw)", () => {
+    const nibs: TreeTableNib[] = [
+      makeTreeTableNib({ id: "nibs-m1", title: "Milestone", type: "milestone" }),
+      makeTreeTableNib({ id: "nibs-001", title: "Task", type: "task", parentId: "nibs-m1" }),
+    ];
+
+    it("restores the saved scroll offset onto the scroll container on mount", async () => {
+      const tv = new TreeViewState();
+      tv.scrollTop = 500;
+
+      mockQueryStore.mockReturnValue(
+        readable({ fetching: false, error: undefined, data: { nibs }, stale: false }) as any
+      );
+
+      const { container } = renderTreeTable({ filter: {} }, { treeView: tv });
+      await tick();
+
+      const sc = container.querySelector(".scroll-container") as HTMLElement;
+      expect(sc).not.toBeNull();
+      expect(sc.scrollTop).toBe(500);
+    });
+
+    it("re-restores the saved offset onto a fresh container after a refetch destroys and recreates it", async () => {
+      const tv = new TreeViewState();
+      tv.scrollTop = 500;
+
+      // Writable query store lets us drive data → fetching → data. The
+      // {#if $result.fetching} branch destroys the scroll container while
+      // in-flight and recreates a NEW element when data returns, exercising the
+      // element-identity re-restore (each new container fails container ===
+      // restoredEl and re-arms restore()).
+      const store = writable<any>({ fetching: false, error: undefined, data: { nibs }, stale: false });
+      mockQueryStore.mockReturnValue(store as any);
+
+      const { container } = renderTreeTable({ filter: {} }, { treeView: tv });
+      await tick();
+
+      // Initial mount restores the saved offset.
+      expect((container.querySelector(".scroll-container") as HTMLElement).scrollTop).toBe(500);
+
+      // Refetch in-flight: the container is destroyed (loading branch).
+      store.set({ fetching: true, error: undefined, data: undefined, stale: false });
+      await tick();
+      expect(container.querySelector(".scroll-container")).toBeNull();
+
+      // Data returns: a NEW container mounts and must be re-restored to 500.
+      store.set({ fetching: false, error: undefined, data: { nibs }, stale: false });
+      await tick();
+      const sc2 = container.querySelector(".scroll-container") as HTMLElement;
+      expect(sc2).not.toBeNull();
+      expect(sc2.scrollTop).toBe(500);
     });
   });
 });

@@ -223,10 +223,11 @@
       const tr = scrollContainer.querySelector(`tr[data-nib-id="${nibId}"]`);
       if (tr) {
         tr.scrollIntoView({ block: "nearest" });
-        // Claim the container so the restore effect can't reset this deep-link
-        // scroll back to the top, regardless of effect flush order (nibs-n47p
-        // review #1).
-        scrollRestore.cancel();
+        // Persist the deep-link offset synchronously AND claim the container, so
+        // the restore effect can't reset this scroll and a refetch that unmounts
+        // the container before the async scroll event can't lose it (nibs-n47p
+        // review #1). claim() self-locates the live container via getScrollContainer().
+        scrollRestore.claim();
       }
     }
     selection.clearEnsureVisible();
