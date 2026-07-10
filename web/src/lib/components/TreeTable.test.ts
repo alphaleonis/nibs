@@ -1364,7 +1364,7 @@ describe("TreeTable", () => {
       // {#if $result.fetching} branch destroys the scroll container while
       // in-flight and recreates a NEW element when data returns, exercising the
       // element-identity re-restore (each new container fails container ===
-      // restoredEl and re-arms restore()).
+      // ownedEl and re-arms restore()).
       const store = writable<any>({ fetching: false, error: undefined, data: { nibs }, stale: false });
       mockQueryStore.mockReturnValue(store as any);
 

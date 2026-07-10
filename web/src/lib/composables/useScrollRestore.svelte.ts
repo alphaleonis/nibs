@@ -11,53 +11,76 @@
  * `restore()` after the container binds and rows render lives in TreeTable. This
  * module owns the ordering logic that keeps the fresh container's scrollTop=0
  * from clobbering the saved value before the initial restore has run.
+ *
+ * Coordination model (nibs-72sf redesign — replaces the one-shot `suppressNextScroll`
+ * boolean that was patched in four consecutive reviews). Two INDEPENDENT pieces of
+ * state, each self-describing so no entry point can leave the other misattributed
+ * to the wrong element:
+ *
+ *   ownedEl           the element we've taken over — restore() applied the saved
+ *                     offset to it, OR claim() adopted it after ensureVisible.
+ *                     Keyed to element IDENTITY (not composable-instance lifetime)
+ *                     so a container recreated within the same TreeTable instance
+ *                     (urql refetch / empty-filter clear) is treated as fresh.
+ *   lastWrite {el,top} the exact element + value of our most recent PROGRAMMATIC
+ *                     scroll write. A scroll event on THAT element whose scrollTop
+ *                     still equals THAT value is that write's own echo (including
+ *                     the browser's clamp, captured by reading scrollTop back) —
+ *                     never user intent — so onScroll skips persisting it. Because
+ *                     the record carries its own element, a write stranded on a
+ *                     torn-down container can NEVER be mistaken for a live
+ *                     container's echo. That cross-element bleed — one closure
+ *                     boolean standing in for "was the next scroll ours" — was the
+ *                     root the four findings kept re-surfacing.
+ *
+ * The single rule: onScroll persists a scroll UNLESS it exactly reproduces our last
+ * programmatic write to the same element. That one rule subsumes all three earlier
+ * patches — clamped-echo suppression, no-op-strand avoidance, and claim()
+ * flag-normalization — because a no-op or clamped write simply produces a lastWrite
+ * whose (el, top) a genuine user scroll cannot match.
  */
 export function useScrollRestore(opts: {
   getScrollContainer: () => HTMLElement | null;
   getSavedScrollTop: () => number;
   setSavedScrollTop: (n: number) => void;
   hasContent: () => boolean;
-}): { onScroll: () => void; restore: () => void; claim: () => void } {
-  // restoredEl: the container element we've already restored OR that ensureVisible
-  // has claimed via claim(). Keyed to element IDENTITY, not composable-instance
-  // lifetime — so a container recreated within the same TreeTable instance (urql
-  // refetch / empty-filter clear) gets a fresh restore. (nibs-n47p review #2)
-  let restoredEl: HTMLElement | null = null;
-  // One-shot: armed by restore()'s programmatic write, consumed by the single
-  // native scroll event that write provokes. A real browser CLAMPS an
-  // over-large scrollTop assignment to scrollHeight - clientHeight and then
-  // fires a scroll event; without this flag onScroll() would persist that
-  // clamped value, permanently shrinking the saved offset on a shorter refetch.
-  // Armed ONLY when the write actually moved the container — a browser fires a
-  // scroll event only on a move, so a no-op write (target === current, e.g. the
-  // common saved=0 / fresh-container-at-0 case) provokes no echo; arming there
-  // would strand the flag and swallow the user's next genuine scroll.
-  // (nibs-n47p review #2; nibs-qpvw review #1)
-  let suppressNextScroll = false;
+}): { onScroll: (event: Event) => void; restore: () => void; claim: () => void } {
+  let ownedEl: HTMLElement | null = null;
+  let lastWrite: { el: HTMLElement; top: number } | null = null;
 
   function restore(): void {
     const container = opts.getScrollContainer();
-    if (!container || container === restoredEl) return; // no container, or already handled
-    // Leave restoredEl unset so a later call can still restore once rows populate
-    // after the remount (else scrollTop would clamp to 0 against an empty table).
+    if (!container || container === ownedEl) return; // no container, or already ours
+    // Leave ownedEl unset until content exists, so a later call can still restore
+    // once rows populate after the remount (else scrollTop would clamp to 0 against
+    // an empty table).
     if (!opts.hasContent()) return;
-    const before = container.scrollTop;
     container.scrollTop = opts.getSavedScrollTop();
-    restoredEl = container;
-    // Reading scrollTop back captures the browser's clamp too. Arm only when the
-    // write moved the container (no move → no echo → arming would strand the
-    // flag). Assigning unconditionally also clears any flag stranded from a
-    // prior container.
-    suppressNextScroll = container.scrollTop !== before;
+    ownedEl = container;
+    // Read scrollTop back so lastWrite.top captures the browser's clamp: the echo
+    // this write provokes reports this exact value on this exact element, so
+    // onScroll can recognise and skip it. A no-op write (saved === current, e.g. the
+    // common top-of-list case) records top === current and provokes no echo — and a
+    // genuine later scroll reports a different value, so nothing is ever swallowed.
+    lastWrite = { el: container, top: container.scrollTop };
   }
 
-  function onScroll(): void {
-    const container = opts.getScrollContainer();
-    // Record only once THIS element is restored/claimed — ignores the fresh
-    // container's scrollTop=0 noise before restore, so it can't overwrite the
-    // saved value we still need to apply.
-    if (!container || container !== restoredEl) return;
-    if (suppressNextScroll) { suppressNextScroll = false; return; } // one-shot restore-echo guard
+  function onScroll(event: Event): void {
+    // Key off the element that actually fired (the handler is bound to the scroll
+    // container), not an ambient getScrollContainer() read — so a stale event from a
+    // just-detached container is attributed to that container, never the live one.
+    const container = event.currentTarget as HTMLElement | null;
+    // Record only once THIS element is ours — ignores the fresh container's
+    // scrollTop=0 noise before restore, so it can't overwrite the saved value we
+    // still need to apply.
+    if (!container || container !== ownedEl) return;
+    // Skip the echo of our own programmatic write: same element, same (clamped)
+    // value. Consume it once; a genuine user scroll reports a different value and is
+    // persisted.
+    if (lastWrite && lastWrite.el === container && lastWrite.top === container.scrollTop) {
+      lastWrite = null;
+      return;
+    }
     opts.setSavedScrollTop(container.scrollTop);
   }
 
@@ -65,21 +88,26 @@ export function useScrollRestore(opts: {
     const container = opts.getScrollContainer();
     if (!container) return;
     // ensureVisible scrolled the deep-linked row into view. Persist that offset
-    // synchronously so it is durable even if a refetch unmounts the container
-    // before the async scroll event fires; mark the element handled so restore()
-    // won't overwrite it. Self-locates via getScrollContainer() (single source of
-    // truth) so restoredEl can only ever be the live container, matching restore()
-    // / onScroll() and the sibling composables. (nibs-n47p review #1)
+    // synchronously so it is durable even if a refetch unmounts the container before
+    // the async scroll event fires; take ownership so restore() won't overwrite it.
+    // Self-locates via getScrollContainer() (single source of truth), matching
+    // restore() and the sibling composables. (nibs-n47p review #1)
+    //
+    // claim() performs NO programmatic write of its own, so it arms no echo — and
+    // because lastWrite is element-keyed, any record stranded from a prior container
+    // is inert here (its el can't equal this container). That is what makes the
+    // recurring "claim() didn't normalize the suppress flag" bug structurally
+    // impossible rather than one-more-patch away.
     //
     // What this guarantees vs. the restore() effect is order-dependent, not
     // absolute: the target row ends up VISIBLE either way, but the exact resting
-    // offset differs by flush order. If claim() runs after restore() already
-    // applied the saved offset and left the row visible, scrollIntoView(
-    // {block:"nearest"}) is a no-op and the container keeps the restored offset
-    // rather than a fresh deep-link offset. Callers that need the deep-link
-    // offset specifically must ensure ensureVisible runs before restore().
+    // offset differs by flush order. If claim() runs after restore() already applied
+    // the saved offset and left the row visible, scrollIntoView({block:"nearest"}) is
+    // a no-op and the container keeps the restored offset rather than a fresh
+    // deep-link offset. Callers that need the deep-link offset specifically must
+    // ensure ensureVisible runs before restore().
     opts.setSavedScrollTop(container.scrollTop);
-    restoredEl = container;
+    ownedEl = container;
   }
 
   return { onScroll, restore, claim };
