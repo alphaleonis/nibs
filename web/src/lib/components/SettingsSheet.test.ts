@@ -13,6 +13,8 @@ const user = userEvent.setup({ pointerEventsCheck: 0 });
 const defaultProps = () => ({
   rowDensity: "compact" as const,
   ondensitychange: vi.fn(),
+  blockedEmphasis: "pill" as const,
+  onemphasischange: vi.fn(),
   theme: "graphite" as const,
   onthemechange: vi.fn(),
   detailPanelPosition: "right" as const,
@@ -260,6 +262,53 @@ describe("SettingsSheet", () => {
     await user.keyboard("{ArrowRight}");
 
     expect(ondensitychange).toHaveBeenCalledWith("comfortable");
+  });
+
+  it("shows a Blocked emphasis radiogroup with Subtle, Pill, and Pill+dim options", async () => {
+    render(SettingsSheet, { ...defaultProps() });
+
+    await user.click(screen.getByTitle("Settings"));
+
+    const group = screen.getByRole("radiogroup", { name: /blocked emphasis/i });
+    expect(group).toBeInTheDocument();
+
+    const options = within(group).getAllByRole("radio");
+    expect(options).toHaveLength(3);
+    expect(within(group).getByRole("radio", { name: "Subtle" })).toBeInTheDocument();
+    expect(within(group).getByRole("radio", { name: "Pill" })).toBeInTheDocument();
+    expect(within(group).getByRole("radio", { name: "Pill+dim" })).toBeInTheDocument();
+  });
+
+  it("marks the option matching blockedEmphasis as aria-checked", async () => {
+    render(SettingsSheet, { ...defaultProps(), blockedEmphasis: "pill-dim" });
+
+    await user.click(screen.getByTitle("Settings"));
+
+    const group = screen.getByRole("radiogroup", { name: /blocked emphasis/i });
+    expect(within(group).getByRole("radio", { name: "Pill+dim" })).toHaveAttribute("aria-checked", "true");
+    expect(within(group).getByRole("radio", { name: "Pill" })).toHaveAttribute("aria-checked", "false");
+  });
+
+  it("clicking Subtle calls onemphasischange with 'subtle'", async () => {
+    const onemphasischange = vi.fn();
+    render(SettingsSheet, { ...defaultProps(), blockedEmphasis: "pill", onemphasischange });
+
+    await user.click(screen.getByTitle("Settings"));
+    const group = screen.getByRole("radiogroup", { name: /blocked emphasis/i });
+    await user.click(within(group).getByRole("radio", { name: "Subtle" }));
+
+    expect(onemphasischange).toHaveBeenCalledWith("subtle");
+  });
+
+  it("clicking Pill+dim calls onemphasischange with 'pill-dim'", async () => {
+    const onemphasischange = vi.fn();
+    render(SettingsSheet, { ...defaultProps(), blockedEmphasis: "pill", onemphasischange });
+
+    await user.click(screen.getByTitle("Settings"));
+    const group = screen.getByRole("radiogroup", { name: /blocked emphasis/i });
+    await user.click(within(group).getByRole("radio", { name: "Pill+dim" }));
+
+    expect(onemphasischange).toHaveBeenCalledWith("pill-dim");
   });
 
   it("shows a Detail panel position radiogroup with Right and Bottom options", async () => {

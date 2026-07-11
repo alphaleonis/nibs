@@ -51,6 +51,7 @@
   --color-priority-normal: var(--priority-normal);
   --color-priority-low: var(--priority-low);
   --color-blocked: var(--blocked);
+  --color-blocked-bg: var(--blocked-bg);
   --color-blocking: var(--blocking);
   --color-link: var(--link);
   --color-link-hover: var(--link-hover);
@@ -138,8 +139,13 @@
   --priority-normal: oklch(0.706 0.015 264);   /* gray-400 */
   --priority-low: oklch(0.551 0.02 264);       /* gray-500 */
 
-  /* Blocking/blocked indicator colors */
-  --blocked: oklch(0.577 0.245 27);       /* red-500 */
+  /* Blocking/blocked indicator colors. --blocked is a FOREGROUND-only token
+     (pill label + bare lock icon), so it's lightened past red-500 and the tint
+     darkened so the 12px pill label clears WCAG AA small-text contrast (4.5:1);
+     the pair computes to ~4.83:1. Inherited by graphite/dracula; daylight
+     overrides both below. */
+  --blocked: oklch(0.66 0.225 27);        /* red-400, lightened for AA contrast */
+  --blocked-bg: oklch(0.24 0.05 27);      /* subtle same-hue dark red tint */
   --blocking: oklch(0.768 0.188 84);      /* amber-500 */
 
   /* Interactive colors */
@@ -330,6 +336,7 @@
 
   /* Blocking/blocked indicators */
   --blocked: oklch(0.52 0.22 27);
+  --blocked-bg: oklch(0.94 0.04 27);        /* light same-hue red tint */
   --blocking: oklch(0.62 0.15 66);
 
   /* Interactive colors */

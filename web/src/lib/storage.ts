@@ -1,5 +1,5 @@
-import { VIEW_LEVELS, ALL_COLUMN_KEYS, DEFAULT_COLUMNS, MIN_DETAIL_PANEL_WIDTH, MIN_DETAIL_PANEL_HEIGHT, DETAIL_PANEL_POSITIONS, THEMES, DEFAULT_THEME } from "./types";
-import type { ColumnKey, FilterPreferences, RowDensity, ViewLevel, Theme, DetailPanelPosition } from "./types";
+import { VIEW_LEVELS, ALL_COLUMN_KEYS, DEFAULT_COLUMNS, MIN_DETAIL_PANEL_WIDTH, MIN_DETAIL_PANEL_HEIGHT, DETAIL_PANEL_POSITIONS, BLOCKED_EMPHASES, THEMES, DEFAULT_THEME } from "./types";
+import type { ColumnKey, FilterPreferences, RowDensity, ViewLevel, Theme, DetailPanelPosition, BlockedEmphasis } from "./types";
 
 const ALWAYS_VISIBLE_KEYS = new Set<ColumnKey>(
   DEFAULT_COLUMNS.filter(c => c.alwaysVisible).map(c => c.key),
@@ -92,6 +92,15 @@ function parseRowDensity(raw: unknown): RowDensity | undefined {
   return raw as RowDensity;
 }
 
+const VALID_BLOCKED_EMPHASES = new Set<string>(BLOCKED_EMPHASES);
+
+// Optional like rowDensity: return undefined for missing/garbage so Preferences
+// supplies the concrete default.
+function parseBlockedEmphasis(raw: unknown): BlockedEmphasis | undefined {
+  if (typeof raw !== "string" || !VALID_BLOCKED_EMPHASES.has(raw)) return undefined;
+  return raw as BlockedEmphasis;
+}
+
 const VALID_THEMES = new Set<string>(THEMES.map(t => t.value));
 
 // Validate a persisted theme against the known set, falling back to the default
@@ -121,6 +130,7 @@ export function loadPreferences(): FilterPreferences {
       detailPanelPosition: parseDetailPanelPosition(parsed.detailPanelPosition),
       detailPanelHeight: parseDetailPanelHeight(parsed.detailPanelHeight),
       rowDensity: parseRowDensity(parsed.rowDensity),
+      blockedEmphasis: parseBlockedEmphasis(parsed.blockedEmphasis),
       theme: parseTheme(parsed.theme),
     };
   } catch {

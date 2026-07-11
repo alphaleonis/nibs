@@ -263,6 +263,30 @@ describe("Preferences", () => {
     expect(stored.detailPanelHeight).toBe(600);
   });
 
+  it("defaults blockedEmphasis to pill when nothing is persisted", () => {
+    const prefs = new Preferences();
+    expect(prefs.blockedEmphasis).toBe("pill");
+  });
+
+  it("loads a persisted blockedEmphasis from localStorage", () => {
+    store["nibs-filter-preferences"] = JSON.stringify({
+      filter: {},
+      viewLevel: "none",
+      blockedEmphasis: "subtle",
+    });
+    const prefs = new Preferences();
+    expect(prefs.blockedEmphasis).toBe("subtle");
+  });
+
+  it("save() persists the current blockedEmphasis", () => {
+    const prefs = new Preferences();
+    prefs.blockedEmphasis = "pill-dim";
+    prefs.save();
+
+    const stored = JSON.parse(store["nibs-filter-preferences"]);
+    expect(stored.blockedEmphasis).toBe("pill-dim");
+  });
+
   it("defaults theme to graphite when nothing is persisted", () => {
     const prefs = new Preferences();
     expect(prefs.theme).toBe("graphite");

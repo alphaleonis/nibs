@@ -41,6 +41,8 @@
     archiveNib as archiveNibCmd,
   } from "$lib/mutations/commands";
   import type { EditForm } from "../nibForm.svelte";
+  import type { BlockedEmphasis } from "../types";
+  import { DEFAULT_BLOCKED_EMPHASIS, blockedVariantFor } from "../types";
   import type { DetailNibRef } from "../composables/useActiveView.svelte";
 
   import StatusSelect from "./StatusSelect.svelte";
@@ -48,6 +50,7 @@
   import PrioritySelect from "./PrioritySelect.svelte";
   import EstimateSelect from "./EstimateSelect.svelte";
   import TagEditor from "./TagEditor.svelte";
+  import BlockedBadge from "./BlockedBadge.svelte";
   import MarkdownEditor from "./MarkdownEditor.svelte";
   import RelatedNibGroup from "./RelatedNibGroup.svelte";
   import TypePickerPopover from "./TypePickerPopover.svelte";
@@ -58,9 +61,11 @@
     /** The full tag universe, offered as TagEditor suggestions (already-applied
      *  tags are excluded downstream). Empty while none are known yet. */
     suggestions?: string[];
+    /** How the blocked state is emphasized in the header (see BlockedEmphasis). */
+    blockedEmphasis?: BlockedEmphasis;
   }
 
-  let { suggestions = [] }: Props = $props();
+  let { suggestions = [], blockedEmphasis = DEFAULT_BLOCKED_EMPHASIS }: Props = $props();
 
   const view = useActiveView();
   const mutations = getMutationStore();
@@ -73,6 +78,13 @@
 
   const isCreating = $derived(viewState.kind === "creating");
   const isGone = $derived(viewState.kind === "gone");
+
+  // Blocked-state emphasis in the header (mirrors the tree row): the count comes
+  // from the detail query's active-only `blockedBy` (completed/scrapped filtered
+  // server-side). `subtle` shows the bare lock; `pill`/`pill-dim` show the pill
+  // (nothing to dim in the header, so `pill-dim` renders the same as `pill`).
+  const blockedByCount = $derived(detailNib?.blockedBy?.length ?? 0);
+  const blockedVariant = $derived(blockedVariantFor(blockedEmphasis));
   // An edit buffer renders a blank placeholder form until its detail query
   // resolves (or, for a create→edit hand-off, until it's seeded). Disable inputs
   // during that window so there's no editable-blank flash. `form.etag` is the
@@ -372,6 +384,10 @@
               {/if}
               {nibId}
             </Button>
+          {/if}
+
+          {#if !isCreating && blockedByCount > 0}
+            <BlockedBadge count={blockedByCount} variant={blockedVariant} />
           {/if}
 
           <span class="anv-grow"></span>

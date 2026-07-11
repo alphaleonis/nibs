@@ -1,9 +1,10 @@
 <script lang="ts">
-  import { ALL_COLUMN_KEYS } from "../types";
-  import type { TreeTableNib, ColumnKey } from "../types";
+  import { ALL_COLUMN_KEYS, DEFAULT_BLOCKED_EMPHASIS, blockedVariantFor } from "../types";
+  import type { TreeTableNib, ColumnKey, BlockedEmphasis } from "../types";
   import { priorityIndicators, statusDotColors } from "../badges";
-  import { Lock, Link, ChevronRight, ChevronDown, Plus } from "@lucide/svelte";
+  import { Link, ChevronRight, ChevronDown, Plus } from "@lucide/svelte";
   import StatusDot from "./StatusDot.svelte";
+  import BlockedBadge from "./BlockedBadge.svelte";
   import TypeIcon from "./TypeIcon.svelte";
   import { canHaveChildren } from "../typeHierarchy";
   import { isBucketId } from "../tree";
@@ -22,6 +23,7 @@
     draggable?: boolean;
     highlighted?: boolean;
     fading?: boolean;
+    blockedEmphasis?: BlockedEmphasis;
   }
 
   let {
@@ -35,6 +37,7 @@
     draggable = false,
     highlighted = false,
     fading = false,
+    blockedEmphasis = DEFAULT_BLOCKED_EMPHASIS,
   }: Props = $props();
 
   const selection = useSelection();
@@ -56,6 +59,18 @@
   const priorityIndicator = $derived(getPriorityIndicator(nib.priority));
   const shortId = $derived(nib.id.substring(nib.id.lastIndexOf("-") + 1));
   const statusDotColor = $derived(statusDotColors[nib.status] ?? "var(--muted-foreground)");
+  const isBlocked = $derived(nib.blockedByIds.length > 0);
+  // `subtle` keeps the bare lock icon; `pill` / `pill-dim` render the pill.
+  const blockedVariant = $derived(blockedVariantFor(blockedEmphasis));
+  // `pill-dim` additionally dims the whole row. Gated off during drag, while a
+  // drop target, and during the change-pulse so its 0.6 opacity doesn't mute
+  // those affordances. NOTE: this gate is not the sole row-opacity source — the
+  // `dimmed` inline style (0.4) and `.nib-fading` (0) also apply to this <tr>;
+  // their relative precedence currently rests on inline-vs-class + declaration
+  // order, not an explicit rule (single-sourcing tracked in nibs-g07f).
+  const blockedDim = $derived(
+    blockedEmphasis === "pill-dim" && isBlocked && !isDragged && !isDropTarget && !highlighted,
+  );
 </script>
 
 <tr
@@ -72,6 +87,7 @@
   class:drop-invalid={isDropTarget && !dropValid}
   class:nib-highlighted={highlighted}
   class:nib-fading={fading}
+  class:blocked-dim={blockedDim}
   data-nib-id={nib.id}
   style={dimmed && !isDragged ? "opacity: 0.4;" : ""}
 >
@@ -148,14 +164,11 @@
           data-action="title"
           class="title-text-btn"
         >{nib.title}</button>
-        {#if nib.blockedByIds.length > 0}
-          <span
-            data-testid="blocked-icon"
-            class="inline-flex items-center shrink-0"
-            style="color: var(--blocked);"
-            title="Blocked by {nib.blockedByIds.length} nib(s)"
-          ><Lock size={12} /></span>
+        {#if isBlocked}
+          <BlockedBadge count={nib.blockedByIds.length} variant={blockedVariant} />
         {/if}
+        <!-- 'blocking' intentionally keeps the plain link icon; the pill/emphasis
+             treatment is blocked-only for now (follow-up: nibs-e81b). -->
         {#if nib.blockingIds.length > 0}
           <span
             data-testid="blocking-icon"
@@ -220,6 +233,12 @@
   /* Drag state: dimmed dragged row */
   .tree-row.dragged {
     opacity: 0.3;
+  }
+
+  /* Blocked emphasis "pill-dim": fade the whole row so blocked work recedes.
+     Gated off during drag (see blockedDim) so it never fights .dragged. */
+  .tree-row.blocked-dim {
+    opacity: 0.6;
   }
 
   /* Drop zone indicators */

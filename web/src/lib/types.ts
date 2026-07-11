@@ -96,6 +96,29 @@ export const MIN_DETAIL_PANEL_HEIGHT = 150;
 
 export type RowDensity = "compact" | "comfortable";
 
+// How the "blocked" state is emphasized in the tree row + ActiveNibView header:
+//   subtle   → the bare lock icon
+//   pill     → tinted "Blocked" pill (default)
+//   pill-dim → pill + the whole table row dimmed
+export const BLOCKED_EMPHASES = ["subtle", "pill", "pill-dim"] as const;
+export type BlockedEmphasis = (typeof BLOCKED_EMPHASES)[number];
+export const DEFAULT_BLOCKED_EMPHASIS: BlockedEmphasis = "pill";
+
+// Maps a BlockedEmphasis to the BlockedBadge presentational `variant`. Exhaustive
+// switch (no default) so adding a new emphasis is a compile-time error here until
+// its variant is decided — the single source of truth for both the tree row and
+// the ActiveNibView header. Row dimming (`pill-dim`) is handled separately at the
+// row level; it is not a badge concern.
+export function blockedVariantFor(e: BlockedEmphasis): "icon" | "pill" {
+  switch (e) {
+    case "subtle":
+      return "icon";
+    case "pill":
+    case "pill-dim":
+      return "pill";
+  }
+}
+
 // Curated palettes selectable from the Settings sheet. The chosen palette is
 // selected via the `data-theme` attribute on <html>. "midnight" is the original
 // near-black palette (the bare :root values in app.css) and intentionally has no
@@ -133,5 +156,6 @@ export interface FilterPreferences {
   detailPanelPosition?: DetailPanelPosition;
   detailPanelHeight?: number;
   rowDensity?: RowDensity;
+  blockedEmphasis?: BlockedEmphasis;
   theme?: Theme;
 }

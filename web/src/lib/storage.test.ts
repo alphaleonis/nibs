@@ -291,6 +291,25 @@ describe("storage", () => {
     }
   });
 
+  it("saves and loads blockedEmphasis", () => {
+    savePreferences({ filter: {}, viewLevel: "none", blockedEmphasis: "pill-dim" });
+    expect(loadPreferences().blockedEmphasis).toBe("pill-dim");
+  });
+
+  it("returns undefined blockedEmphasis when not set", () => {
+    savePreferences({ filter: {}, viewLevel: "none" });
+    expect(loadPreferences().blockedEmphasis).toBeUndefined();
+  });
+
+  it("returns undefined blockedEmphasis for an invalid stored value", () => {
+    store["nibs-filter-preferences"] = JSON.stringify({
+      filter: {},
+      viewLevel: "none",
+      blockedEmphasis: "loud",
+    });
+    expect(loadPreferences().blockedEmphasis).toBeUndefined();
+  });
+
   it("round-trips a persisted theme", () => {
     savePreferences({ filter: {}, viewLevel: "none", theme: "dracula" });
     expect(loadPreferences().theme).toBe("dracula");

@@ -182,7 +182,7 @@ describe("TreeTableRow", () => {
     expect(stateCell.querySelector("[data-testid='status-dot']")).toBeInTheDocument();
   });
 
-  it("shows blocked icon with tooltip when blockedByIds is non-empty", () => {
+  it("shows the blocked pill (default emphasis) with tooltip when blockedByIds is non-empty", () => {
     const { container } = renderRow({
       nib: makeTreeTableNib({ blockedByIds: ["nibs-xyz1", "nibs-xyz2"] }),
       depth: 0,
@@ -190,12 +190,57 @@ describe("TreeTableRow", () => {
       dimmed: false,
     });
 
-    const blocked = container.querySelector("[data-testid='blocked-icon']") as HTMLElement;
-    expect(blocked).toBeInTheDocument();
-    expect(blocked.getAttribute("title")).toBe("Blocked by 2 nib(s)");
+    const badge = container.querySelector("[data-testid='blocked-badge']") as HTMLElement;
+    expect(badge).toBeInTheDocument();
+    expect(badge.textContent).toContain("Blocked");
+    expect(badge.getAttribute("title")).toBe("Blocked by 2 nib(s)");
+    // Default is the pill, not the bare icon.
+    expect(container.querySelector("[data-testid='blocked-icon']")).not.toBeInTheDocument();
   });
 
-  it("hides blocked indicator when blockedByIds is empty", () => {
+  it("renders the bare lock icon (no pill) when blockedEmphasis is 'subtle'", () => {
+    const { container } = renderRow({
+      nib: makeTreeTableNib({ blockedByIds: ["nibs-xyz1", "nibs-xyz2"] }),
+      depth: 0,
+      hasChildren: false,
+      dimmed: false,
+      blockedEmphasis: "subtle",
+    });
+
+    const icon = container.querySelector("[data-testid='blocked-icon']") as HTMLElement;
+    expect(icon).toBeInTheDocument();
+    expect(icon.getAttribute("title")).toBe("Blocked by 2 nib(s)");
+    expect(container.querySelector("[data-testid='blocked-badge']")).not.toBeInTheDocument();
+  });
+
+  it("renders the pill AND dims the row when blockedEmphasis is 'pill-dim'", () => {
+    const { container } = renderRow({
+      nib: makeTreeTableNib({ blockedByIds: ["nibs-xyz1"] }),
+      depth: 0,
+      hasChildren: false,
+      dimmed: false,
+      blockedEmphasis: "pill-dim",
+    });
+
+    expect(container.querySelector("[data-testid='blocked-badge']")).toBeInTheDocument();
+    const row = container.querySelector("tr") as HTMLElement;
+    expect(row.classList.contains("blocked-dim")).toBe(true);
+  });
+
+  it("does not dim the row for pill-dim when the nib is not blocked", () => {
+    const { container } = renderRow({
+      nib: makeTreeTableNib({ blockedByIds: [] }),
+      depth: 0,
+      hasChildren: false,
+      dimmed: false,
+      blockedEmphasis: "pill-dim",
+    });
+
+    const row = container.querySelector("tr") as HTMLElement;
+    expect(row.classList.contains("blocked-dim")).toBe(false);
+  });
+
+  it("hides all blocked indicators when blockedByIds is empty", () => {
     const { container } = renderRow({
       nib: makeTreeTableNib({ blockedByIds: [] }),
       depth: 0,
@@ -203,8 +248,8 @@ describe("TreeTableRow", () => {
       dimmed: false,
     });
 
-    const blocked = container.querySelector("[data-testid='blocked-icon']");
-    expect(blocked).not.toBeInTheDocument();
+    expect(container.querySelector("[data-testid='blocked-badge']")).not.toBeInTheDocument();
+    expect(container.querySelector("[data-testid='blocked-icon']")).not.toBeInTheDocument();
   });
 
   it("shows blocking icon with tooltip when blockingIds is non-empty", () => {
@@ -738,5 +783,49 @@ describe("TreeTableRow context-based state", () => {
 
     const row = container.querySelector("tr") as HTMLElement;
     expect(row.classList.contains("nib-fading")).toBe(false);
+  });
+
+  // pill-dim row opacity composites through the whole <tr>, so the dim must yield
+  // to row-level affordances (drop target, change-pulse) or it mutes them by 40%.
+  it("does NOT dim a pill-dim blocked row while it is a drop target", () => {
+    const drag = new DragState();
+    drag.startDrag(["nibs-other"]);
+    drag.setDropTarget("nibs-abc1", "reparent", true);
+
+    const { container } = renderRowWithContext(
+      {
+        nib: makeTreeTableNib({ id: "nibs-abc1", blockedByIds: ["nibs-xyz1"] }),
+        blockedEmphasis: "pill-dim",
+      },
+      { drag },
+    );
+
+    const row = container.querySelector("tr") as HTMLElement;
+    // Dim suppressed so the drop affordance renders at full opacity...
+    expect(row.classList.contains("blocked-dim")).toBe(false);
+    // ...but the drop-target indicator still applies.
+    expect(row.classList.contains("drop-reparent")).toBe(true);
+  });
+
+  it("does NOT dim a pill-dim blocked row during the change-pulse (highlighted)", () => {
+    const { container } = renderRowWithContext({
+      nib: makeTreeTableNib({ blockedByIds: ["nibs-xyz1"] }),
+      blockedEmphasis: "pill-dim",
+      highlighted: true,
+    });
+
+    const row = container.querySelector("tr") as HTMLElement;
+    expect(row.classList.contains("blocked-dim")).toBe(false);
+    expect(row.classList.contains("nib-highlighted")).toBe(true);
+  });
+
+  it("still dims a plain pill-dim blocked row (not dragged, not a drop target, not highlighted)", () => {
+    const { container } = renderRowWithContext({
+      nib: makeTreeTableNib({ blockedByIds: ["nibs-xyz1"] }),
+      blockedEmphasis: "pill-dim",
+    });
+
+    const row = container.querySelector("tr") as HTMLElement;
+    expect(row.classList.contains("blocked-dim")).toBe(true);
   });
 });

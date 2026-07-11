@@ -188,6 +188,27 @@ describe("Toolbar", () => {
     expect(prefs.theme).toBe("midnight");
   });
 
+  it("clicking a Blocked emphasis option in the sheet calls onemphasischange (callback path)", async () => {
+    const onemphasischange = vi.fn();
+    render(Toolbar, { ...defaultToolbarProps, blockedEmphasis: "pill", onemphasischange });
+
+    await user.click(screen.getByTitle("Settings"));
+    await user.click(screen.getByRole("radio", { name: "Subtle" }));
+
+    expect(onemphasischange).toHaveBeenCalledWith("subtle");
+  });
+
+  it("handleSetBlockedEmphasis mutates prefs.blockedEmphasis when prefs is provided (prefs path)", async () => {
+    const prefs = new Preferences();
+    expect(prefs.blockedEmphasis).toBe("pill");
+    render(Toolbar, { prefs, oncreatenew: vi.fn() });
+
+    await user.click(screen.getByTitle("Settings"));
+    await user.click(screen.getByRole("radio", { name: "Pill+dim" }));
+
+    expect(prefs.blockedEmphasis).toBe("pill-dim");
+  });
+
   it("keyword input emits filter with search value", async () => {
     const onchange = vi.fn();
     render(Toolbar, { ...defaultToolbarProps, onchange });

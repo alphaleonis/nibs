@@ -211,11 +211,15 @@ function makeView(opts: {
   return view as unknown as FakeView;
 }
 
-function renderView(view: FakeView, confirmDialog: ConfirmDialogState) {
+function renderView(
+  view: FakeView,
+  confirmDialog: ConfirmDialogState,
+  props: Record<string, unknown> = {},
+) {
   const ctx = new Map<string, unknown>();
   ctx.set(ACTIVE_VIEW_KEY, view);
   ctx.set(CONFIRM_DIALOG_KEY, confirmDialog);
-  return render(ActiveNibView, { context: ctx });
+  return render(ActiveNibView, { context: ctx, props });
 }
 
 describe("ActiveNibView", () => {
@@ -309,6 +313,46 @@ describe("ActiveNibView", () => {
       renderView(view, confirmDialog);
       await user.click(screen.getByTestId("anv-close"));
       expect(view.requestClose).toHaveBeenCalledTimes(1);
+    });
+  });
+
+  describe("blocked badge (header)", () => {
+    it("shows the blocked pill (default emphasis) when detailNib.blockedBy is non-empty", () => {
+      const detail = {
+        nib: makeDetailNib({ blockedBy: [ref("nibs-b1", "Blocker", "todo", "task")] }),
+        fetching: false,
+      };
+      renderView(makeView({ detail }), confirmDialog);
+
+      const badge = screen.getByTestId("blocked-badge");
+      expect(badge).toBeInTheDocument();
+      expect(badge).toHaveTextContent("Blocked");
+      expect(badge).toHaveAttribute("title", "Blocked by 1 nib(s)");
+    });
+
+    it("hides the blocked badge when blockedBy is empty", () => {
+      // The default detail nib has blockedBy: [].
+      renderView(makeView({}), confirmDialog);
+      expect(screen.queryByTestId("blocked-badge")).not.toBeInTheDocument();
+      expect(screen.queryByTestId("blocked-icon")).not.toBeInTheDocument();
+    });
+
+    it("renders the bare lock icon (no pill) when blockedEmphasis is 'subtle'", () => {
+      const detail = {
+        nib: makeDetailNib({ blockedBy: [ref("nibs-b1", "Blocker", "todo", "task")] }),
+        fetching: false,
+      };
+      renderView(makeView({ detail }), confirmDialog, { blockedEmphasis: "subtle" });
+
+      expect(screen.getByTestId("blocked-icon")).toBeInTheDocument();
+      expect(screen.queryByTestId("blocked-badge")).not.toBeInTheDocument();
+    });
+
+    it("does not show the badge while creating (no blockers yet)", () => {
+      const form = makeCreateForm({ title: "New nib", dirty: true });
+      renderView(makeView({ kind: "creating", form, detail: null }), confirmDialog);
+      expect(screen.queryByTestId("blocked-badge")).not.toBeInTheDocument();
+      expect(screen.queryByTestId("blocked-icon")).not.toBeInTheDocument();
     });
   });
 

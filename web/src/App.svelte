@@ -409,6 +409,7 @@
           onrowcontextmenu={handleRowContextMenu}
           onaddchild={(parentId, parentType) => view.startCreateChild(parentId, parentType)}
           rowDensity={prefs.rowDensity}
+          blockedEmphasis={prefs.blockedEmphasis}
           ondrop={handleDrop}
         />
       </Resizable.Pane>
@@ -443,7 +444,7 @@
         data-testid="detail-pane"
       >
         {#if dockOpen}
-          <ActiveNibView suggestions={availableTags} />
+          <ActiveNibView suggestions={availableTags} blockedEmphasis={prefs.blockedEmphasis} />
         {/if}
       </Resizable.Pane>
     </Resizable.PaneGroup>
@@ -457,7 +458,7 @@
 {#if view.isOpen && view.presentation === "expanded"}
   <div class="anv-modal-backdrop" data-testid="active-nib-modal" role="presentation">
     <div class="anv-modal-shell">
-      <ActiveNibView suggestions={availableTags} />
+      <ActiveNibView suggestions={availableTags} blockedEmphasis={prefs.blockedEmphasis} />
     </div>
   </div>
 {/if}

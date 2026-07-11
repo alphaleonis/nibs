@@ -1,7 +1,7 @@
 import { untrack } from "svelte";
 import { loadPreferences, savePreferences } from "./storage";
-import { ALL_COLUMN_KEYS, DEFAULT_COLUMN_WIDTHS, DEFAULT_DETAIL_PANEL_WIDTH, MIN_DETAIL_PANEL_WIDTH, DEFAULT_DETAIL_PANEL_HEIGHT, MIN_DETAIL_PANEL_HEIGHT, DEFAULT_DETAIL_PANEL_POSITION, DEFAULT_THEME } from "./types";
-import type { NibFilter, ViewLevel, ColumnKey, RowDensity, Theme, DetailPanelPosition } from "./types";
+import { ALL_COLUMN_KEYS, DEFAULT_COLUMN_WIDTHS, DEFAULT_DETAIL_PANEL_WIDTH, MIN_DETAIL_PANEL_WIDTH, DEFAULT_DETAIL_PANEL_HEIGHT, MIN_DETAIL_PANEL_HEIGHT, DEFAULT_DETAIL_PANEL_POSITION, DEFAULT_BLOCKED_EMPHASIS, DEFAULT_THEME } from "./types";
+import type { NibFilter, ViewLevel, ColumnKey, RowDensity, Theme, DetailPanelPosition, BlockedEmphasis } from "./types";
 
 export class Preferences {
   filter: NibFilter = $state({});
@@ -14,6 +14,7 @@ export class Preferences {
   // Pointer-pattern → excluded from auto-save, flushed like width.
   #detailPanelHeight: number | undefined = $state(undefined);
   rowDensity: RowDensity = $state("compact");
+  blockedEmphasis: BlockedEmphasis = $state(DEFAULT_BLOCKED_EMPHASIS);
   theme: Theme = $state(DEFAULT_THEME);
 
   visibleColumns: ColumnKey[] = $derived(
@@ -43,6 +44,7 @@ export class Preferences {
     this.detailPanelPosition = initial.detailPanelPosition ?? DEFAULT_DETAIL_PANEL_POSITION;
     this.#detailPanelHeight = initial.detailPanelHeight;
     this.rowDensity = initial.rowDensity ?? "compact";
+    this.blockedEmphasis = initial.blockedEmphasis ?? DEFAULT_BLOCKED_EMPHASIS;
     this.theme = initial.theme ?? DEFAULT_THEME;
 
     // Auto-save when filter, viewLevel, or columnVisibility change.
@@ -56,6 +58,7 @@ export class Preferences {
         this.viewLevel;
         this.columnVisibility;
         this.rowDensity;
+        this.blockedEmphasis;
         this.theme;
         this.detailPanelPosition;
         // Skip the initial save that fires on construction (we just loaded these values)
@@ -113,6 +116,7 @@ export class Preferences {
       detailPanelPosition: this.detailPanelPosition,
       detailPanelHeight: this.#detailPanelHeight,
       rowDensity: this.rowDensity,
+      blockedEmphasis: this.blockedEmphasis,
       theme: this.theme,
     });
   }

@@ -1,6 +1,6 @@
 <script lang="ts">
-  import { VIEW_LEVELS, DEFAULT_COLUMNS, ALL_COLUMN_KEYS, DEFAULT_THEME, DEFAULT_DETAIL_PANEL_POSITION } from "../types";
-  import type { NibFilter, ViewLevel, ColumnKey, RowDensity, Theme, DetailPanelPosition } from "../types";
+  import { VIEW_LEVELS, DEFAULT_COLUMNS, ALL_COLUMN_KEYS, DEFAULT_THEME, DEFAULT_DETAIL_PANEL_POSITION, DEFAULT_BLOCKED_EMPHASIS } from "../types";
+  import type { NibFilter, ViewLevel, ColumnKey, RowDensity, Theme, DetailPanelPosition, BlockedEmphasis } from "../types";
   import type { Preferences } from "../preferences.svelte";
   import { resolveStatusConflicts } from "../filter";
   import { TERMINAL_STATUSES, TYPES, STATUSES, PRIORITIES, ESTIMATES, ESTIMATE_LABELS } from "../constants";
@@ -35,6 +35,8 @@
     oncreatenew = undefined as ((type: string) => void) | undefined,
     rowDensity = "compact" as RowDensity,
     ondensitychange = undefined as ((density: RowDensity) => void) | undefined,
+    blockedEmphasis = DEFAULT_BLOCKED_EMPHASIS as BlockedEmphasis,
+    onemphasischange = undefined as ((emphasis: BlockedEmphasis) => void) | undefined,
     theme = DEFAULT_THEME as Theme,
     onthemechange = undefined as ((theme: Theme) => void) | undefined,
     detailPanelPosition = undefined as DetailPanelPosition | undefined,
@@ -51,6 +53,8 @@
     oncreatenew?: (type: string) => void;
     rowDensity?: RowDensity;
     ondensitychange?: (density: RowDensity) => void;
+    blockedEmphasis?: BlockedEmphasis;
+    onemphasischange?: (emphasis: BlockedEmphasis) => void;
     theme?: Theme;
     onthemechange?: (theme: Theme) => void;
     detailPanelPosition?: DetailPanelPosition;
@@ -65,6 +69,16 @@
       prefs.rowDensity = density;
     } else {
       ondensitychange?.(density);
+    }
+  }
+
+  let resolvedBlockedEmphasis = $derived(prefs ? prefs.blockedEmphasis : blockedEmphasis);
+
+  function handleSetBlockedEmphasis(emphasis: BlockedEmphasis) {
+    if (prefs) {
+      prefs.blockedEmphasis = emphasis;
+    } else {
+      onemphasischange?.(emphasis);
     }
   }
 
@@ -372,6 +386,8 @@
     <SettingsSheet
       rowDensity={resolvedDensity}
       ondensitychange={handleSetDensity}
+      blockedEmphasis={resolvedBlockedEmphasis}
+      onemphasischange={handleSetBlockedEmphasis}
       theme={resolvedTheme}
       onthemechange={handleSetTheme}
       detailPanelPosition={resolvedPosition}

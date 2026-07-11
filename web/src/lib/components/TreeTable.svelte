@@ -1,8 +1,8 @@
 <script lang="ts">
   import { queryStore, subscriptionStore, getContextClient } from "@urql/svelte";
   import { TREE_TABLE_QUERY, NIB_CHANGED_SUBSCRIPTION } from "../queries";
-  import { ALL_COLUMN_KEYS } from "../types";
-  import type { NibFilter, ViewLevel, ColumnKey, RowDensity } from "../types";
+  import { ALL_COLUMN_KEYS, DEFAULT_BLOCKED_EMPHASIS } from "../types";
+  import type { NibFilter, ViewLevel, ColumnKey, RowDensity, BlockedEmphasis } from "../types";
   import type { Preferences } from "../preferences.svelte";
   import { buildTableData } from "../tableData";
   import { isBucketId, bucketIdForItem } from "../tree";
@@ -31,6 +31,7 @@
     onrowcontextmenu?: (nibId: string, event: MouseEvent, nib: import("../types").TreeTableNib) => void;
     onaddchild?: (nibId: string, nibType: string) => void;
     rowDensity?: RowDensity;
+    blockedEmphasis?: BlockedEmphasis;
     ondrop?: (targetNibId: string, zone: DropZone, targetParentId: string | null) => void;
   }
 
@@ -46,6 +47,7 @@
     onrowcontextmenu,
     onaddchild,
     rowDensity = "compact" as RowDensity,
+    blockedEmphasis = DEFAULT_BLOCKED_EMPHASIS as BlockedEmphasis,
     ondrop,
   }: Props = $props();
 
@@ -524,6 +526,7 @@
           draggable={!isBucketId(row.nib.id) && dragAllowed}
           highlighted={changeTracker.isHighlighted(row.nib.id)}
           fading={changeTracker.isFading(row.nib.id)}
+          {blockedEmphasis}
         />
       {/each}
     </tbody>
