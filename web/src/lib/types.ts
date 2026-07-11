@@ -51,13 +51,16 @@ export interface TreeNode<T extends TreeNib = TreeNib> {
 export const VIEW_LEVELS = ["none", "milestones", "epics", "features"] as const;
 export type ViewLevel = (typeof VIEW_LEVELS)[number];
 
-export const ALL_COLUMN_KEYS = ["id", "parent", "type", "title", "state", "effort", "tags"] as const;
+export const ALL_COLUMN_KEYS = ["id", "parent", "type", "title", "state", "effort", "tags", "blocking", "blockedBy"] as const;
 export type ColumnKey = (typeof ALL_COLUMN_KEYS)[number];
 
 export interface ColumnConfig {
   key: ColumnKey;
   label: string;
   alwaysVisible: boolean;
+  // Omitted ⇒ visible by default. Set false for opt-in columns that start hidden
+  // (e.g. blocking / blockedBy) but remain toggleable in the Columns dropdown.
+  defaultVisible?: boolean;
 }
 
 export const DEFAULT_COLUMNS: ColumnConfig[] = [
@@ -68,7 +71,13 @@ export const DEFAULT_COLUMNS: ColumnConfig[] = [
   { key: "state", label: "State", alwaysVisible: false },
   { key: "effort", label: "Effort", alwaysVisible: false },
   { key: "tags", label: "Tags", alwaysVisible: false },
+  { key: "blocking", label: "Blocking", alwaysVisible: false, defaultVisible: false },
+  { key: "blockedBy", label: "Blocked by", alwaysVisible: false, defaultVisible: false },
 ];
+
+// Columns shown when a view level has no persisted column configuration. Opt-in
+// columns (defaultVisible: false) are excluded; everything else is on by default.
+export const DEFAULT_VISIBLE_COLUMNS: ColumnKey[] = DEFAULT_COLUMNS.filter((c) => c.defaultVisible !== false).map((c) => c.key);
 
 export const DEFAULT_COLUMN_WIDTHS: Record<ColumnKey, number> = {
   id: 100,
@@ -78,6 +87,8 @@ export const DEFAULT_COLUMN_WIDTHS: Record<ColumnKey, number> = {
   state: 120,
   effort: 70,
   tags: 150,
+  blocking: 90,
+  blockedBy: 100,
 };
 
 export const DEFAULT_DETAIL_PANEL_WIDTH = 400;

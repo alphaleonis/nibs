@@ -277,6 +277,102 @@ describe("TreeTableRow", () => {
     expect(blocking).not.toBeInTheDocument();
   });
 
+  it("renders the Blocked-by cell with a count and lock icon when blockedBy column is visible", () => {
+    const visibleColumns: ColumnKey[] = ["title", "blockedBy"];
+    const { container } = renderRow({
+      nib: makeTreeTableNib({ blockedByIds: ["nibs-a", "nibs-b"] }),
+      depth: 0,
+      hasChildren: false,
+      dimmed: false,
+      visibleColumns,
+    });
+
+    const cell = container.querySelector("[data-testid='nib-blocked-by']") as HTMLElement;
+    expect(cell).toBeInTheDocument();
+    expect(cell.textContent?.trim()).toBe("2");
+    // Lucide Lock icon renders as an SVG inside the cell.
+    expect(cell.querySelector("svg")).toBeInTheDocument();
+    // Tooltip lists the blocking nib IDs.
+    expect(cell.querySelector("[title='nibs-a, nibs-b']")).toBeInTheDocument();
+  });
+
+  it("renders an empty Blocked-by cell (no icon/count) when blockedByIds is empty", () => {
+    const visibleColumns: ColumnKey[] = ["title", "blockedBy"];
+    const { container } = renderRow({
+      nib: makeTreeTableNib({ blockedByIds: [] }),
+      depth: 0,
+      hasChildren: false,
+      dimmed: false,
+      visibleColumns,
+    });
+
+    const cell = container.querySelector("[data-testid='nib-blocked-by']") as HTMLElement;
+    expect(cell).toBeInTheDocument();
+    expect(cell.textContent?.trim()).toBe("");
+    expect(cell.querySelector("svg")).not.toBeInTheDocument();
+  });
+
+  it("does not render the Blocked-by cell when the column is not visible", () => {
+    const visibleColumns: ColumnKey[] = ["title"];
+    const { container } = renderRow({
+      nib: makeTreeTableNib({ blockedByIds: ["nibs-a"] }),
+      depth: 0,
+      hasChildren: false,
+      dimmed: false,
+      visibleColumns,
+    });
+
+    expect(container.querySelector("[data-testid='nib-blocked-by']")).not.toBeInTheDocument();
+  });
+
+  it("renders the Blocking cell with a count and link icon when blocking column is visible", () => {
+    const visibleColumns: ColumnKey[] = ["title", "blocking"];
+    const { container } = renderRow({
+      nib: makeTreeTableNib({ blockingIds: ["nibs-c", "nibs-d", "nibs-e"] }),
+      depth: 0,
+      hasChildren: false,
+      dimmed: false,
+      visibleColumns,
+    });
+
+    const cell = container.querySelector("[data-testid='nib-blocking']") as HTMLElement;
+    expect(cell).toBeInTheDocument();
+    expect(cell.textContent?.trim()).toBe("3");
+    // Lucide Link icon renders as an SVG inside the cell.
+    expect(cell.querySelector("svg")).toBeInTheDocument();
+    // Tooltip lists the blocked nib IDs.
+    expect(cell.querySelector("[title='nibs-c, nibs-d, nibs-e']")).toBeInTheDocument();
+  });
+
+  it("renders an empty Blocking cell (no icon/count) when blockingIds is empty", () => {
+    const visibleColumns: ColumnKey[] = ["title", "blocking"];
+    const { container } = renderRow({
+      nib: makeTreeTableNib({ blockingIds: [] }),
+      depth: 0,
+      hasChildren: false,
+      dimmed: false,
+      visibleColumns,
+    });
+
+    const cell = container.querySelector("[data-testid='nib-blocking']") as HTMLElement;
+    expect(cell).toBeInTheDocument();
+    expect(cell.textContent?.trim()).toBe("");
+    expect(cell.querySelector("svg")).not.toBeInTheDocument();
+  });
+
+  it("does not render the Blocking cell when the column is not visible", () => {
+    const visibleColumns: ColumnKey[] = ["title"];
+    const { container } = renderRow({
+      nib: makeTreeTableNib({ blockingIds: ["nibs-c"] }),
+      depth: 0,
+      hasChildren: false,
+      dimmed: false,
+      visibleColumns,
+    });
+
+    expect(container.querySelector("[data-testid='nib-blocking']")).not.toBeInTheDocument();
+  });
+
   it("renders parent info in the parent cell when parentNib is provided", () => {
     const parentNib = makeTreeTableNib({ id: "nibs-p001", title: "Parent Epic", type: "epic" });
     const { container } = renderRow({

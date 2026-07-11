@@ -3,7 +3,7 @@ import { userEvent } from "@testing-library/user-event";
 import { describe, it, expect, vi } from "vitest";
 import Toolbar from "./Toolbar.svelte";
 import { Preferences } from "../preferences.svelte";
-import { ALL_COLUMN_KEYS } from "../types";
+import { ALL_COLUMN_KEYS, DEFAULT_VISIBLE_COLUMNS } from "../types";
 import type { NibFilter, ViewLevel, ColumnKey } from "../types";
 
 // bits-ui scroll lock sets pointer-events: none on <body>, so disable the check
@@ -333,6 +333,54 @@ describe("Toolbar", () => {
     expect(callArg).not.toContain("tags");
     expect(callArg).toContain("id");
     expect(callArg).toContain("title");
+  });
+
+  it("lists Blocking and Blocked by in the Columns dropdown", async () => {
+    render(Toolbar, { ...defaultToolbarProps, viewLevel: "epics" as ViewLevel });
+
+    await user.click(screen.getByTitle("Columns"));
+
+    const items = screen.getAllByRole("menuitemcheckbox");
+    const labels = items.map(item => item.textContent?.trim());
+    expect(labels).toContain("Blocking");
+    expect(labels).toContain("Blocked by");
+  });
+
+  it("Blocking and Blocked by are unchecked when using the default-visible columns", async () => {
+    render(Toolbar, {
+      ...defaultToolbarProps,
+      visibleColumns: [...DEFAULT_VISIBLE_COLUMNS] as ColumnKey[],
+      viewLevel: "epics" as ViewLevel,
+    });
+
+    await user.click(screen.getByTitle("Columns"));
+
+    const items = screen.getAllByRole("menuitemcheckbox");
+    const blocking = items.find(item => item.textContent?.trim() === "Blocking");
+    const blockedBy = items.find(item => item.textContent?.trim() === "Blocked by");
+    expect(blocking).toHaveAttribute("aria-checked", "false");
+    expect(blockedBy).toHaveAttribute("aria-checked", "false");
+  });
+
+  it("toggling Blocking on emits it appended in canonical order (after tags)", async () => {
+    const oncolumnschange = vi.fn();
+    render(Toolbar, {
+      ...defaultToolbarProps,
+      visibleColumns: [...DEFAULT_VISIBLE_COLUMNS] as ColumnKey[],
+      oncolumnschange,
+      viewLevel: "epics" as ViewLevel,
+    });
+
+    await user.click(screen.getByTitle("Columns"));
+
+    const items = screen.getAllByRole("menuitemcheckbox");
+    const blockingItem = items.find(item => item.textContent?.trim() === "Blocking");
+    expect(blockingItem).toBeInTheDocument();
+    await user.click(blockingItem!);
+
+    expect(oncolumnschange).toHaveBeenCalledOnce();
+    const callArg = oncolumnschange.mock.calls[0][0] as ColumnKey[];
+    expect(callArg).toEqual(["id", "parent", "type", "title", "state", "effort", "tags", "blocking"]);
   });
 
   it("closes Columns dropdown on second click", async () => {

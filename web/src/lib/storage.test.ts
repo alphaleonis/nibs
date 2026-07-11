@@ -96,6 +96,22 @@ describe("storage", () => {
     expect(titleCount).toBe(1);
   });
 
+  it("accepts and round-trips the blocking/blockedBy columns per view level", () => {
+    // Opt-in columns toggled on for a specific view level must survive a
+    // save → load round-trip (they are valid keys once in ALL_COLUMN_KEYS).
+    savePreferences({
+      filter: {},
+      viewLevel: "epics",
+      columnVisibility: {
+        epics: ["id", "title", "blocking", "blockedBy"],
+      },
+    });
+    const loaded = loadPreferences();
+    expect(loaded.columnVisibility?.epics).toContain("blocking");
+    expect(loaded.columnVisibility?.epics).toContain("blockedBy");
+    expect(loaded.columnVisibility?.epics).toContain("title");
+  });
+
   it("saves and loads column widths per view level", () => {
     savePreferences({
       filter: {},

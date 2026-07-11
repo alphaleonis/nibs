@@ -1,6 +1,6 @@
 import { untrack } from "svelte";
 import { loadPreferences, savePreferences } from "./storage";
-import { ALL_COLUMN_KEYS, DEFAULT_COLUMN_WIDTHS, DEFAULT_DETAIL_PANEL_WIDTH, MIN_DETAIL_PANEL_WIDTH, DEFAULT_DETAIL_PANEL_HEIGHT, MIN_DETAIL_PANEL_HEIGHT, DEFAULT_DETAIL_PANEL_POSITION, DEFAULT_BLOCKED_EMPHASIS, DEFAULT_THEME } from "./types";
+import { DEFAULT_VISIBLE_COLUMNS, DEFAULT_COLUMN_WIDTHS, DEFAULT_DETAIL_PANEL_WIDTH, MIN_DETAIL_PANEL_WIDTH, DEFAULT_DETAIL_PANEL_HEIGHT, MIN_DETAIL_PANEL_HEIGHT, DEFAULT_DETAIL_PANEL_POSITION, DEFAULT_BLOCKED_EMPHASIS, DEFAULT_THEME } from "./types";
 import type { NibFilter, ViewLevel, ColumnKey, RowDensity, Theme, DetailPanelPosition, BlockedEmphasis } from "./types";
 
 export class Preferences {
@@ -18,7 +18,7 @@ export class Preferences {
   theme: Theme = $state(DEFAULT_THEME);
 
   visibleColumns: ColumnKey[] = $derived(
-    this.columnVisibility[this.viewLevel] ?? [...ALL_COLUMN_KEYS]
+    this.columnVisibility[this.viewLevel] ?? [...DEFAULT_VISIBLE_COLUMNS]
   );
 
   currentColumnWidths: Record<ColumnKey, number> = $derived({

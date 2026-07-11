@@ -10,7 +10,7 @@ const mockStorage = {
 Object.defineProperty(globalThis, "localStorage", { value: mockStorage, writable: true });
 
 import { Preferences } from "./preferences.svelte";
-import { ALL_COLUMN_KEYS, DEFAULT_COLUMN_WIDTHS, DEFAULT_DETAIL_PANEL_WIDTH, MIN_DETAIL_PANEL_WIDTH, DEFAULT_DETAIL_PANEL_HEIGHT, MIN_DETAIL_PANEL_HEIGHT } from "./types";
+import { DEFAULT_VISIBLE_COLUMNS, DEFAULT_COLUMN_WIDTHS, DEFAULT_DETAIL_PANEL_WIDTH, MIN_DETAIL_PANEL_WIDTH, DEFAULT_DETAIL_PANEL_HEIGHT, MIN_DETAIL_PANEL_HEIGHT } from "./types";
 
 describe("Preferences", () => {
   beforeEach(() => {
@@ -48,9 +48,11 @@ describe("Preferences", () => {
     expect(stored.viewLevel).toBe("epics");
   });
 
-  it("visibleColumns returns ALL_COLUMN_KEYS when no per-viewLevel override", () => {
+  it("visibleColumns returns DEFAULT_VISIBLE_COLUMNS when no per-viewLevel override (opt-in columns hidden)", () => {
     const prefs = new Preferences();
-    expect(prefs.visibleColumns).toEqual([...ALL_COLUMN_KEYS]);
+    expect(prefs.visibleColumns).toEqual([...DEFAULT_VISIBLE_COLUMNS]);
+    expect(prefs.visibleColumns).not.toContain("blocking");
+    expect(prefs.visibleColumns).not.toContain("blockedBy");
   });
 
   it("visibleColumns returns per-viewLevel columns when set", () => {

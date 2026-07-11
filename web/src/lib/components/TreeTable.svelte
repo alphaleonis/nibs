@@ -511,6 +511,20 @@
             <div class="resize-handle" onpointerdown={(e) => columnResize.onPointerDown(e, "tags")} onpointermove={columnResize.onPointerMove} onpointerup={columnResize.onPointerUp} ondblclick={() => columnResize.onDblClick("tags", showColumn)}></div>
           </th>
         {/if}
+        {#if showColumn("blocking")}
+          <th class="text-left text-label text-muted-foreground px-3 py-2 relative bg-background" style="width: {resolvedColumnWidths.blocking}px;">
+            Blocking
+            <!-- svelte-ignore a11y_no_static_element_interactions -->
+            <div class="resize-handle" onpointerdown={(e) => columnResize.onPointerDown(e, "blocking")} onpointermove={columnResize.onPointerMove} onpointerup={columnResize.onPointerUp} ondblclick={() => columnResize.onDblClick("blocking", showColumn)}></div>
+          </th>
+        {/if}
+        {#if showColumn("blockedBy")}
+          <th class="text-left text-label text-muted-foreground px-3 py-2 relative bg-background" style="width: {resolvedColumnWidths.blockedBy}px;">
+            Blocked by
+            <!-- svelte-ignore a11y_no_static_element_interactions -->
+            <div class="resize-handle" onpointerdown={(e) => columnResize.onPointerDown(e, "blockedBy")} onpointermove={columnResize.onPointerMove} onpointerup={columnResize.onPointerUp} ondblclick={() => columnResize.onDblClick("blockedBy", showColumn)}></div>
+          </th>
+        {/if}
       </tr>
     </thead>
     <tbody>

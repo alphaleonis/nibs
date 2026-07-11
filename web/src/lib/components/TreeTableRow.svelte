@@ -2,7 +2,7 @@
   import { ALL_COLUMN_KEYS, DEFAULT_BLOCKED_EMPHASIS, blockedVariantFor } from "../types";
   import type { TreeTableNib, ColumnKey, BlockedEmphasis } from "../types";
   import { priorityIndicators, statusDotColors } from "../badges";
-  import { Link, ChevronRight, ChevronDown, Plus } from "@lucide/svelte";
+  import { Link, Lock, ChevronRight, ChevronDown, Plus } from "@lucide/svelte";
   import StatusDot from "./StatusDot.svelte";
   import BlockedBadge from "./BlockedBadge.svelte";
   import TypeIcon from "./TypeIcon.svelte";
@@ -208,6 +208,32 @@
           style="background-color: var(--popover); color: var(--muted-foreground);"
         >{tag}</span>
       {/each}
+    </td>
+  {/if}
+
+  <!-- Blocking column (opt-in) -->
+  {#if visibleColumns.includes("blocking")}
+    <td data-testid="nib-blocking" class="text-body px-3 cell-truncate row-cell">
+      {#if nib.blockingIds.length > 0}
+        <span
+          class="inline-flex items-center gap-1"
+          style="color: var(--blocking);"
+          title={nib.blockingIds.join(", ")}
+        ><Link size={12} />{nib.blockingIds.length}</span>
+      {/if}
+    </td>
+  {/if}
+
+  <!-- Blocked by column (opt-in) -->
+  {#if visibleColumns.includes("blockedBy")}
+    <td data-testid="nib-blocked-by" class="text-body px-3 cell-truncate row-cell">
+      {#if nib.blockedByIds.length > 0}
+        <span
+          class="inline-flex items-center gap-1"
+          style="color: var(--blocked);"
+          title={nib.blockedByIds.join(", ")}
+        ><Lock size={12} />{nib.blockedByIds.length}</span>
+      {/if}
     </td>
   {/if}
 </tr>

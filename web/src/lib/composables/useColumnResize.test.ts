@@ -1,6 +1,6 @@
 import { describe, it, expect, vi } from "vitest";
 import type { ColumnKey } from "../types";
-import { ALL_COLUMN_KEYS } from "../types";
+import { ALL_COLUMN_KEYS, DEFAULT_COLUMN_WIDTHS } from "../types";
 import { useColumnResize } from "./useColumnResize.svelte";
 
 describe("useColumnResize", () => {
@@ -11,15 +11,7 @@ describe("useColumnResize", () => {
     const setColumnWidth = vi.fn();
     const onResizeEnd = overrides.onResizeEnd ?? vi.fn();
     const getColumnWidths = () =>
-      overrides.columnWidths ?? {
-        id: 100,
-        parent: 160,
-        type: 80,
-        title: 400,
-        state: 120,
-        effort: 70,
-        tags: 150,
-      };
+      overrides.columnWidths ?? { ...DEFAULT_COLUMN_WIDTHS };
 
     const tableEl = document.createElement("table");
     document.body.appendChild(tableEl);

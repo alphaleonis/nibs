@@ -5,6 +5,7 @@ import { readable, writable } from "svelte/store";
 import { tick } from "svelte";
 import TreeTable from "./TreeTable.svelte";
 import type { TreeTableNib, ViewLevel, ColumnKey } from "../types";
+import { DEFAULT_COLUMN_WIDTHS } from "../types";
 import { SelectionState } from "../selection.svelte";
 import { DragState } from "../drag.svelte";
 import { TreeViewState } from "../treeView.svelte";
@@ -559,6 +560,78 @@ describe("TreeTable", () => {
     // Title and state cells should be rendered
     expect(container.querySelector("[data-testid='nib-title']")).toBeInTheDocument();
     expect(container.querySelector("[data-testid='nib-state']")).toBeInTheDocument();
+  });
+
+  it("renders Blocking and Blocked by headers when those columns are visible", () => {
+    const nibs: TreeTableNib[] = [
+      makeTreeTableNib({ id: "nibs-001", title: "Epic A", type: "epic" }),
+    ];
+
+    mockQueryStore.mockReturnValue(
+      readable({ fetching: false, error: undefined, data: { nibs }, stale: false }) as any
+    );
+
+    const visibleColumns: ColumnKey[] = ["title", "blocking", "blockedBy"];
+    const { container } = renderTreeTable({
+      filter: {},
+      viewLevel: "epics" as ViewLevel,
+      visibleColumns,
+    });
+
+    const thead = container.querySelector("thead")!;
+    const headers = Array.from(thead.querySelectorAll("th")).map(th => th.textContent?.trim());
+    expect(headers).toContain("Blocking");
+    expect(headers).toContain("Blocked by");
+  });
+
+  it("omits Blocking and Blocked by headers when those columns are not visible", () => {
+    const nibs: TreeTableNib[] = [
+      makeTreeTableNib({ id: "nibs-001", title: "Epic A", type: "epic" }),
+    ];
+
+    mockQueryStore.mockReturnValue(
+      readable({ fetching: false, error: undefined, data: { nibs }, stale: false }) as any
+    );
+
+    // The default-visible set (no blocking / blockedBy).
+    const visibleColumns: ColumnKey[] = ["id", "parent", "type", "title", "state", "effort", "tags"];
+    const { container } = renderTreeTable({
+      filter: {},
+      viewLevel: "epics" as ViewLevel,
+      visibleColumns,
+    });
+
+    const thead = container.querySelector("thead")!;
+    const headers = Array.from(thead.querySelectorAll("th")).map(th => th.textContent?.trim());
+    expect(headers).not.toContain("Blocking");
+    expect(headers).not.toContain("Blocked by");
+  });
+
+  it("table width grows by the blocking/blockedBy column widths when they are shown", () => {
+    const nibs: TreeTableNib[] = [
+      makeTreeTableNib({ id: "nibs-001", title: "Epic A", type: "epic" }),
+    ];
+
+    mockQueryStore.mockReturnValue(
+      readable({ fetching: false, error: undefined, data: { nibs }, stale: false }) as any
+    );
+
+    const base = renderTreeTable({
+      filter: {},
+      viewLevel: "epics" as ViewLevel,
+      visibleColumns: ["title"] as ColumnKey[],
+    });
+    const baseWidth = parseInt((base.container.querySelector("table") as HTMLElement).style.width, 10);
+
+    const withCols = renderTreeTable({
+      filter: {},
+      viewLevel: "epics" as ViewLevel,
+      visibleColumns: ["title", "blocking", "blockedBy"] as ColumnKey[],
+    });
+    const grownWidth = parseInt((withCols.container.querySelector("table") as HTMLElement).style.width, 10);
+
+    // blocking + blockedBy default widths added to the base table width.
+    expect(grownWidth).toBe(baseWidth + DEFAULT_COLUMN_WIDTHS.blocking + DEFAULT_COLUMN_WIDTHS.blockedBy);
   });
 
   it("parent column hidden by visibleColumns exclusion", () => {
