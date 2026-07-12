@@ -11,21 +11,41 @@ const { mockViewInstances, mockUpdateListenerCallback } = vi.hoisted(() => {
 });
 
 // Mock CodeMirror modules
-vi.mock("codemirror", () => ({
-  basicSetup: [],
-}));
 vi.mock("@codemirror/lang-markdown", () => ({
   markdown: () => [],
 }));
 vi.mock("@codemirror/language", () => ({
   HighlightStyle: { define: () => [] },
   syntaxHighlighting: () => [],
+  defaultHighlightStyle: [],
+  indentOnInput: () => [],
+  bracketMatching: () => [],
+  foldKeymap: [],
+}));
+vi.mock("@codemirror/commands", () => ({
+  history: () => [],
+  defaultKeymap: [],
+  historyKeymap: [],
+}));
+vi.mock("@codemirror/search", () => ({
+  highlightSelectionMatches: () => [],
+  searchKeymap: [],
+}));
+vi.mock("@codemirror/autocomplete", () => ({
+  closeBrackets: () => [],
+  autocompletion: () => [],
+  closeBracketsKeymap: [],
+  completionKeymap: [],
+}));
+vi.mock("@codemirror/lint", () => ({
+  lintKeymap: [],
 }));
 vi.mock("@lezer/highlight", () => ({
   tags: new Proxy({}, { get: () => ({}) }),
 }));
 vi.mock("@codemirror/state", () => ({
   EditorState: {
+    allowMultipleSelections: { of: () => [] },
     create: (config: any) => ({
       doc: {
         length: config?.doc?.length ?? 0,
@@ -63,6 +83,12 @@ vi.mock("@codemirror/view", () => {
         return [];
       },
     },
+    highlightSpecialChars: () => [],
+    drawSelection: () => [],
+    dropCursor: () => [],
+    rectangularSelection: () => [],
+    crosshairCursor: () => [],
+    highlightActiveLine: () => [],
   };
 });
 

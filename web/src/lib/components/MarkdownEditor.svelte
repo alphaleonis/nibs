@@ -16,18 +16,45 @@
     (async () => {
       try {
         const [
-          { basicSetup },
-          { EditorView, keymap },
+          {
+            EditorView,
+            keymap,
+            highlightSpecialChars,
+            drawSelection,
+            dropCursor,
+            rectangularSelection,
+            crosshairCursor,
+            highlightActiveLine,
+          },
           { EditorState },
           { markdown },
-          { HighlightStyle, syntaxHighlighting },
+          {
+            HighlightStyle,
+            syntaxHighlighting,
+            defaultHighlightStyle,
+            indentOnInput,
+            bracketMatching,
+            foldKeymap,
+          },
+          { history, defaultKeymap, historyKeymap },
+          { highlightSelectionMatches, searchKeymap },
+          {
+            closeBrackets,
+            autocompletion,
+            closeBracketsKeymap,
+            completionKeymap,
+          },
+          { lintKeymap },
           { tags: t },
         ] = await Promise.all([
-          import("codemirror"),
           import("@codemirror/view"),
           import("@codemirror/state"),
           import("@codemirror/lang-markdown"),
           import("@codemirror/language"),
+          import("@codemirror/commands"),
+          import("@codemirror/search"),
+          import("@codemirror/autocomplete"),
+          import("@codemirror/lint"),
           import("@lezer/highlight"),
         ]);
 
@@ -86,11 +113,41 @@
           ]),
         );
 
+        // basicSetup reproduced without the gutter extensions
+        // (lineNumbers, highlightActiveLineGutter, foldGutter) so the
+        // prose editor has no left gutter. Everything else basicSetup
+        // provides is retained.
+        const editorBasics = [
+          highlightSpecialChars(),
+          history(),
+          drawSelection(),
+          dropCursor(),
+          EditorState.allowMultipleSelections.of(true),
+          indentOnInput(),
+          syntaxHighlighting(defaultHighlightStyle, { fallback: true }),
+          bracketMatching(),
+          closeBrackets(),
+          autocompletion(),
+          rectangularSelection(),
+          crosshairCursor(),
+          highlightActiveLine(),
+          highlightSelectionMatches(),
+          keymap.of([
+            ...closeBracketsKeymap,
+            ...defaultKeymap,
+            ...searchKeymap,
+            ...historyKeymap,
+            ...foldKeymap,
+            ...completionKeymap,
+            ...lintKeymap,
+          ]),
+        ];
+
         view = new EditorView({
           state: EditorState.create({
             doc: initialValue,
             extensions: [
-              basicSetup,
+              ...editorBasics,
               markdown(),
               appTheme,
               appHighlight,
