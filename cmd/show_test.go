@@ -310,11 +310,18 @@ func TestGet_UnknownFieldJSONEnvelope(t *testing.T) {
 		t.Fatal("expected an error for an unknown field")
 	}
 	m := parseJSONObject(t, out)
-	if m["success"] != false {
-		t.Errorf("success = %v, want false", m["success"])
+	if _, ok := m["success"]; ok {
+		t.Errorf("--json error must not carry a 'success' key; got: %v", m)
 	}
-	if m["code"] != "VALIDATION_ERROR" {
-		t.Errorf("code = %v, want VALIDATION_ERROR", m["code"])
+	errObj, ok := m["error"].(map[string]any)
+	if !ok {
+		t.Fatalf("top-level 'error' object missing, got: %v", m)
+	}
+	if errObj["code"] != "VALIDATION_ERROR" {
+		t.Errorf("error.code = %v, want VALIDATION_ERROR", errObj["code"])
+	}
+	if msg, _ := errObj["message"].(string); !strings.Contains(msg, "unknown field") {
+		t.Errorf("error.message should name the invalid field, got: %v", errObj["message"])
 	}
 }
 
@@ -331,12 +338,17 @@ func TestGet_BadViewErrors(t *testing.T) {
 
 func TestGet_NotFoundText(t *testing.T) {
 	dir := setupGetCobraTest(t, getFixture())
-	_, err := runGetCmd(t, dir, "does-not-exist")
+	out, err := runGetCmd(t, dir, "does-not-exist")
 	if err == nil {
 		t.Fatal("expected a not-found error")
 	}
 	if !strings.Contains(err.Error(), "not found") {
 		t.Errorf("error should indicate not found, got: %v", err)
+	}
+	// get's text-mode error is single-stream: written to stdout as
+	// "error <CODE>: <message>" (design §5.5), not stderr.
+	if !strings.Contains(out, "error NOT_FOUND: nib not found: does-not-exist") {
+		t.Errorf("text error should be on stdout, got:\n%s", out)
 	}
 }
 
@@ -347,11 +359,18 @@ func TestGet_NotFoundJSONEnvelope(t *testing.T) {
 		t.Fatal("expected a not-found error")
 	}
 	m := parseJSONObject(t, out)
-	if m["success"] != false {
-		t.Errorf("success = %v, want false", m["success"])
+	if _, ok := m["success"]; ok {
+		t.Errorf("--json error must not carry a 'success' key; got: %v", m)
 	}
-	if m["code"] != "NOT_FOUND" {
-		t.Errorf("code = %v, want NOT_FOUND", m["code"])
+	errObj, ok := m["error"].(map[string]any)
+	if !ok {
+		t.Fatalf("top-level 'error' object missing, got: %v", m)
+	}
+	if errObj["code"] != "NOT_FOUND" {
+		t.Errorf("error.code = %v, want NOT_FOUND", errObj["code"])
+	}
+	if msg, _ := errObj["message"].(string); !strings.Contains(msg, "not found") {
+		t.Errorf("error.message should indicate not found, got: %v", errObj["message"])
 	}
 }
 

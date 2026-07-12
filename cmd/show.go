@@ -55,11 +55,11 @@ func runGet(cmd *cobra.Command, args []string) error {
 	for _, id := range args {
 		b, err := gqlResolver.Query().Nib(context.Background(), id)
 		if err != nil {
-			return reportErr(getJSON, output.ErrNotFound,
+			return reportGetErr(getJSON, output.ErrNotFound,
 				fmt.Errorf("failed to find nib: %w", err))
 		}
 		if b == nil {
-			return reportErr(getJSON, output.ErrNotFound,
+			return reportGetErr(getJSON, output.ErrNotFound,
 				fmt.Errorf("nib not found: %s", id))
 		}
 		nibs = append(nibs, b)
@@ -69,7 +69,7 @@ func runGet(cmd *cobra.Command, args []string) error {
 	// bad view/field/nesting is surfaced as a validation error naming the menu.
 	sel, err := projection.Compile(getView, getFields)
 	if err != nil {
-		return reportErr(getJSON, output.ErrValidation, err)
+		return reportGetErr(getJSON, output.ErrValidation, err)
 	}
 
 	resolver := gqlResolver.ProjectionResolver(context.Background())
@@ -78,6 +78,18 @@ func runGet(cmd *cobra.Command, args []string) error {
 		return renderGetJSON(nibs, sel, resolver)
 	}
 	return renderGetText(nibs, sel, resolver)
+}
+
+// reportGetErr is get's error path. It differs from the shared reportErr in
+// text mode only: get writes its error to stdout (design §5.5 — agents read
+// stdout + $? without a 2>stderr split) via output.TextError, rather than
+// letting the boundary print to stderr. Both modes return a reported
+// CodedError carrying the code for the boundary's exit-status mapping.
+func reportGetErr(jsonMode bool, code string, err error) error {
+	if jsonMode {
+		return output.Error(code, err.Error())
+	}
+	return output.TextError(code, err.Error())
 }
 
 // renderGetJSON emits the single-read output contract. When neither --view nor
@@ -95,7 +107,7 @@ func renderGetJSON(nibs []*nib.Nib, sel projection.Selection, r projection.Resol
 	for i, b := range nibs {
 		p, err := projection.Project(b, sel, r)
 		if err != nil {
-			return reportErr(true, output.ErrValidation, err)
+			return reportGetErr(true, output.ErrValidation, err)
 		}
 		projected[i] = p
 	}
@@ -119,7 +131,7 @@ func renderGetText(nibs []*nib.Nib, sel projection.Selection, r projection.Resol
 		}
 		p, err := projection.Project(b, sel, r)
 		if err != nil {
-			return reportErr(false, output.ErrValidation, err)
+			return reportGetErr(false, output.ErrValidation, err)
 		}
 		printProjectedText(p)
 	}

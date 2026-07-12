@@ -459,17 +459,15 @@ func TestLinksCommand_NibNotFound_JSON(t *testing.T) {
 		t.Fatal("expected error, got nil")
 	}
 	var env struct {
-		Success bool   `json:"success"`
-		Code    string `json:"code"`
+		Error struct {
+			Code string `json:"code"`
+		} `json:"error"`
 	}
 	if err := json.Unmarshal([]byte(out), &env); err != nil {
 		t.Fatalf("unmarshal: %v\nraw: %s", err, out)
 	}
-	if env.Success {
-		t.Errorf("env.Success = true, want false")
-	}
-	if env.Code != "NOT_FOUND" {
-		t.Errorf("env.Code = %q, want NOT_FOUND", env.Code)
+	if env.Error.Code != "NOT_FOUND" {
+		t.Errorf("env.error.code = %q, want NOT_FOUND", env.Error.Code)
 	}
 }
 
@@ -1241,20 +1239,18 @@ func TestLinksCommand_JSONMode_FailingCommand_NoUsageNoAutoError(t *testing.T) {
 	}
 
 	// Captured os.Stdout must contain exactly one parseable JSON document
-	// with success=false.
+	// in the {error:{code,message}} contract (no success/data wrapper).
 	var env struct {
-		Success bool   `json:"success"`
-		Code    string `json:"code"`
-		Error   string `json:"error"`
+		Error struct {
+			Code    string `json:"code"`
+			Message string `json:"message"`
+		} `json:"error"`
 	}
 	if err := json.Unmarshal([]byte(stdout), &env); err != nil {
 		t.Fatalf("stdout is not a single parseable JSON document: %v\nraw: %s", err, stdout)
 	}
-	if env.Success {
-		t.Errorf("env.Success = true, want false; raw: %s", stdout)
-	}
-	if env.Code != "NOT_FOUND" {
-		t.Errorf("env.Code = %q, want NOT_FOUND; raw: %s", env.Code, stdout)
+	if env.Error.Code != "NOT_FOUND" {
+		t.Errorf("env.error.code = %q, want NOT_FOUND; raw: %s", env.Error.Code, stdout)
 	}
 
 	// Cobra's writers must contain neither a Usage: block nor an auto Error: line.

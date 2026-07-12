@@ -4,6 +4,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"io/fs"
 	"os"
 
 	"github.com/alphaleonis/nibs/internal/config"
@@ -114,26 +115,52 @@ func resolveNibsPath(flagPath string, c *config.Config) (string, error) {
 	return root, nil
 }
 
-// reportExitError is the testable error boundary for the CLI.
+// reportExitError is the single, testable error boundary for the CLI. It is
+// the ONE place that decides the process exit status, mapping each error's
+// structured CODE to a stable code via output.ExitCode (NOT_FOUND→3,
+// VALIDATION→2, CONFLICT→4, IO/file→5, anything else→1, success→0).
 //
-//   - nil err: returns 0, writes nothing.
-//   - err satisfying errors.Is(err, output.ErrAlreadyReported): the
-//     underlying RunE already wrote a JSON envelope to stdout. Returning
-//     a duplicate "Error: ..." line on stderr would corrupt callers that
-//     pipe `2>&1 | jq`. Suppress the print; just signal exit code 1.
-//   - any other err: print "Error: <err>\n" to stderr (text mode) and
-//     return 1. This replaces Cobra's auto-print, which was silenced via
-//     rootCmd.SilenceErrors so the boundary owns it in one place.
+//   - nil err: returns 0 (ExitOK), writes nothing.
+//   - *output.CodedError (recovered via errors.As, so wrapping is fine):
+//     exit status comes from its code. If it is Reported the command already
+//     wrote the user-visible report to stdout (a --json envelope or get's
+//     text line) — printing "Error: ..." on stderr would duplicate it and
+//     corrupt callers piping `2>&1 | jq`, so suppress the stderr print.
+//     A non-reported coded error (the shared text path) still prints to
+//     stderr; only its exit status is now code-driven.
+//   - any other (uncoded) err: print "Error: <err>\n" to stderr and map
+//     filesystem/IO failures to ExitIO, everything else to ExitError. This
+//     replaces Cobra's auto-print, silenced via rootCmd.SilenceErrors so the
+//     boundary owns error reporting in one place.
 func reportExitError(stderr io.Writer, err error) int {
 	if err == nil {
-		return 0
+		return output.ExitOK
 	}
-	if !errors.Is(err, output.ErrAlreadyReported) {
-		// Best-effort write to stderr; if the writer is broken we still
-		// want to exit with code 1 so the shell sees the failure.
-		_, _ = fmt.Fprintf(stderr, "Error: %s\n", err.Error())
+	var ce *output.CodedError
+	if errors.As(err, &ce) {
+		if !ce.Reported {
+			_, _ = fmt.Fprintf(stderr, "Error: %s\n", ce.Msg)
+		}
+		return output.ExitCode(ce.Code)
 	}
-	return 1
+	// Best-effort write to stderr; if the writer is broken we still want to
+	// exit non-zero so the shell sees the failure.
+	_, _ = fmt.Fprintf(stderr, "Error: %s\n", err.Error())
+	if isIOError(err) {
+		return output.ExitIO
+	}
+	return output.ExitError
+}
+
+// isIOError reports whether an uncoded error is a filesystem/IO failure, so
+// the boundary can map it to output.ExitIO. Coded errors already carry
+// output.ErrFileError; this covers plain errors bubbling up from os/fs calls
+// (e.g. config or nib loading in PersistentPreRunE).
+func isIOError(err error) bool {
+	var pe *fs.PathError
+	return errors.As(err, &pe) ||
+		errors.Is(err, fs.ErrNotExist) ||
+		errors.Is(err, fs.ErrPermission)
 }
 
 func Execute() {

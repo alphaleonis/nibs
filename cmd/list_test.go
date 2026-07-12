@@ -474,23 +474,21 @@ func TestListCommand_Columns_MutuallyExclusiveWithJSON_EnvelopeShape(t *testing.
 	if execErr == nil {
 		t.Fatalf("list --columns --json should have failed; out: %q", out)
 	}
-	// JSON mode emits a structured envelope on stdout.
+	// JSON mode emits the {error:{code,message}} contract on stdout.
 	var env struct {
-		Success bool   `json:"success"`
-		Error   string `json:"error"`
-		Code    string `json:"code"`
+		Error struct {
+			Code    string `json:"code"`
+			Message string `json:"message"`
+		} `json:"error"`
 	}
 	if err := json.Unmarshal([]byte(out), &env); err != nil {
 		t.Fatalf("stdout is not a JSON envelope: %v\nraw: %s", err, out)
 	}
-	if env.Success {
-		t.Errorf("envelope success=true, want false")
+	if env.Error.Code != "VALIDATION_ERROR" {
+		t.Errorf("envelope error.code=%q, want VALIDATION_ERROR", env.Error.Code)
 	}
-	if env.Code != "VALIDATION_ERROR" {
-		t.Errorf("envelope code=%q, want VALIDATION_ERROR", env.Code)
-	}
-	if !strings.Contains(env.Error, "--columns") || !strings.Contains(env.Error, "--json") {
-		t.Errorf("envelope error %q does not mention both --columns and --json", env.Error)
+	if !strings.Contains(env.Error.Message, "--columns") || !strings.Contains(env.Error.Message, "--json") {
+		t.Errorf("envelope error.message %q does not mention both --columns and --json", env.Error.Message)
 	}
 }
 
