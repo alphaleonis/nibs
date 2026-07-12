@@ -63,11 +63,15 @@ func formatCycle(path []string) string {
 	return strings.Join(path, " → ")
 }
 
-// cmdError returns an appropriate error for JSON or text mode.
+// cmdError returns an appropriate error for JSON or text mode. In BOTH modes it
+// carries the structured code so the CLI boundary (reportExitError) maps it to a
+// stable exit status; text mode returns a non-reported *output.CodedError (the
+// boundary prints "Error: <msg>" and exits on ExitCode(code)), JSON mode reports
+// the {error:{code,message}} envelope on stdout.
 // Note: Use %v instead of %w for error arguments - wrapping is not preserved in JSON mode.
 func cmdError(jsonMode bool, code string, format string, args ...any) error {
 	if jsonMode {
 		return output.Error(code, fmt.Sprintf(format, args...))
 	}
-	return fmt.Errorf(format, args...)
+	return &output.CodedError{Code: code, Msg: fmt.Sprintf(format, args...)}
 }
