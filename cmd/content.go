@@ -1,43 +1,51 @@
 package cmd
 
 import (
+	"errors"
 	"fmt"
-	"io"
 	"os"
 	"strings"
 
+	"github.com/alphaleonis/nibs/internal/input"
 	"github.com/alphaleonis/nibs/internal/nib"
 	"github.com/alphaleonis/nibs/internal/output"
 )
 
-// resolveContent returns content from a direct value or file flag.
-// If value is "-", reads from stdin.
-func resolveContent(value, file string) (string, error) {
-	if value != "" && file != "" {
-		return "", fmt.Errorf("cannot use both --body and --body-file")
-	}
-
-	if value == "-" {
-		data, err := io.ReadAll(os.Stdin)
+// resolveBodyFlag resolves full-body content from the --body and --body-file
+// flags. --body accepts only the input channel ("-" for stdin, "@FILE" for a
+// file) — never inline prose; --body-file names a file directly. cobra marks
+// the two mutually exclusive, so at most one is set.
+func resolveBodyFlag(bodyValue, bodyFile string) (string, error) {
+	if bodyFile != "" {
+		data, err := os.ReadFile(bodyFile)
 		if err != nil {
-			return "", fmt.Errorf("reading stdin: %w", err)
+			return "", &input.IOError{Err: fmt.Errorf("reading %s: %w", bodyFile, err)}
 		}
 		return string(data), nil
 	}
+	return input.Prose(bodyValue, os.Stdin)
+}
 
-	if value != "" {
-		return value, nil
+// resolveAppendFlag resolves --body-append content from the input channel
+// ("-"/"@FILE") and trims a trailing newline so appended sections do not accrue
+// blank lines.
+func resolveAppendFlag(value string) (string, error) {
+	text, err := input.Prose(value, os.Stdin)
+	if err != nil {
+		return "", err
 	}
+	return strings.TrimRight(text, "\n"), nil
+}
 
-	if file != "" {
-		data, err := os.ReadFile(file)
-		if err != nil {
-			return "", fmt.Errorf("reading file: %w", err)
-		}
-		return string(data), nil
+// inputError maps an input-channel resolution error to the correct CLI error
+// code: a failed read (*input.IOError) is a FILE_ERROR (exit 5); a usage error
+// (inline prose or a malformed "@") is a validation error (exit 2).
+func inputError(jsonMode bool, err error) error {
+	var ioErr *input.IOError
+	if errors.As(err, &ioErr) {
+		return cmdError(jsonMode, output.ErrFileError, "%s", err)
 	}
-
-	return "", nil
+	return cmdError(jsonMode, output.ErrValidation, "%s", err)
 }
 
 // applyTags adds tags to a nib, returning an error if any tag is invalid.
@@ -62,16 +70,4 @@ func cmdError(jsonMode bool, code string, format string, args ...any) error {
 		return output.Error(code, fmt.Sprintf(format, args...))
 	}
 	return fmt.Errorf(format, args...)
-}
-
-// resolveAppendContent handles --append value, supporting stdin with "-".
-func resolveAppendContent(value string) (string, error) {
-	if value == "-" {
-		data, err := io.ReadAll(os.Stdin)
-		if err != nil {
-			return "", fmt.Errorf("reading stdin: %w", err)
-		}
-		return strings.TrimRight(string(data), "\n"), nil
-	}
-	return value, nil
 }

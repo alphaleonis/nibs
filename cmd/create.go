@@ -58,9 +58,9 @@ var createCmd = &cobra.Command{
 			return cmdError(createJSON, output.ErrValidation, "invalid estimate: %s (must be %s)", createEstimate, app.Config().EstimateList())
 		}
 
-		body, err := resolveContent(createBody, createBodyFile)
+		body, err := resolveBodyFlag(createBody, createBodyFile)
 		if err != nil {
-			return cmdError(createJSON, output.ErrFileError, "%s", err)
+			return inputError(createJSON, err)
 		}
 
 		// Resolve the effective type before template lookup
@@ -181,7 +181,7 @@ func init() {
 		estimateNames[i] = e.Name
 	}
 	createCmd.Flags().StringVarP(&createEstimate, "estimate", "e", "", "Estimate size ("+strings.Join(estimateNames, ", ")+")")
-	createCmd.Flags().StringVarP(&createBody, "body", "d", "", "Body content (use '-' to read from stdin)")
+	createCmd.Flags().StringVarP(&createBody, "body", "d", "", "Body input channel: '-' for stdin or '@FILE' for a file (no inline text)")
 	createCmd.Flags().StringVar(&createBodyFile, "body-file", "", "Read body from file")
 	createCmd.Flags().StringArrayVar(&createTag, "tag", nil, "Add tag (can be repeated)")
 	createCmd.Flags().StringVar(&createParent, "parent", "", "Parent nib ID")

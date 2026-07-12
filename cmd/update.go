@@ -84,10 +84,12 @@ var updateCmd = &cobra.Command{
 			ifMatch = &updateIfMatch
 		}
 
-		// Build and validate field updates
+		// Build and validate field updates. inputError maps a body input-channel
+		// I/O failure to FILE_ERROR (exit 5) while validation/usage errors stay
+		// VALIDATION (exit 2).
 		input, fieldChanges, err := buildUpdateInput(cmd, b.Tags, b.Body, app.Config())
 		if err != nil {
-			return cmdError(updateJSON, output.ErrValidation, "%s", err)
+			return inputError(updateJSON, err)
 		}
 		changes = append(changes, fieldChanges...)
 
@@ -203,8 +205,8 @@ func buildUpdateInput(cmd *cobra.Command, existingTags []string, currentBody str
 
 	// Handle body modifications
 	if cmd.Flags().Changed("body") || cmd.Flags().Changed("body-file") {
-		// Full body replacement
-		body, err := resolveContent(updateBody, updateBodyFile)
+		// Full body replacement via the input channel ("-"/"@FILE") or --body-file
+		body, err := resolveBodyFlag(updateBody, updateBodyFile)
 		if err != nil {
 			return input, nil, err
 		}
@@ -228,7 +230,7 @@ func buildUpdateInput(cmd *cobra.Command, existingTags []string, currentBody str
 		}
 
 		if cmd.Flags().Changed("body-append") {
-			appendText, err := resolveAppendContent(updateBodyAppend)
+			appendText, err := resolveAppendFlag(updateBodyAppend)
 			if err != nil {
 				return input, nil, err
 			}
@@ -355,11 +357,11 @@ func init() {
 	}
 	updateCmd.Flags().StringVarP(&updateEstimate, "estimate", "e", "", "New estimate ("+strings.Join(estimateNames, ", ")+", or empty to clear)")
 	updateCmd.Flags().StringVar(&updateTitle, "title", "", "New title")
-	updateCmd.Flags().StringVarP(&updateBody, "body", "d", "", "New body (use '-' to read from stdin)")
+	updateCmd.Flags().StringVarP(&updateBody, "body", "d", "", "New body input channel: '-' for stdin or '@FILE' for a file (no inline text)")
 	updateCmd.Flags().StringVar(&updateBodyFile, "body-file", "", "Read body from file")
 	updateCmd.Flags().StringArrayVar(&updateBodyReplaceOld, "body-replace-old", nil, "Text to find and replace (requires --body-replace-new)")
 	updateCmd.Flags().StringArrayVar(&updateBodyReplaceNew, "body-replace-new", nil, "Replacement text (requires --body-replace-old)")
-	updateCmd.Flags().StringVar(&updateBodyAppend, "body-append", "", "Text to append to body (use '-' for stdin)")
+	updateCmd.Flags().StringVar(&updateBodyAppend, "body-append", "", "Append to body via input channel: '-' for stdin or '@FILE' for a file (no inline text)")
 	updateCmd.Flags().StringVar(&updateParent, "parent", "", "Set parent nib ID")
 	updateCmd.Flags().BoolVar(&updateRemoveParent, "remove-parent", false, "Remove parent")
 	updateCmd.Flags().StringArrayVar(&updateBlocking, "blocking", nil, "ID of nib this blocks (can be repeated)")

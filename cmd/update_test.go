@@ -1,12 +1,14 @@
 package cmd
 
 import (
+	"errors"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
 
 	"github.com/alphaleonis/nibs/internal/nib"
+	"github.com/alphaleonis/nibs/internal/output"
 	"github.com/spf13/pflag"
 )
 
@@ -215,6 +217,112 @@ func TestUpdateSingleBodyReplaceWorks(t *testing.T) {
 	err := rootCmd.Execute()
 	if err != nil {
 		t.Fatalf("single --body-replace-old should succeed, got error: %v", err)
+	}
+}
+
+// writeUpdateNib creates a nibs dir with a single nib and returns (nibsDir, id).
+func writeUpdateNib(t *testing.T, id, body string) (string, string) {
+	t.Helper()
+	nibsDir := filepath.Join(t.TempDir(), ".nibs")
+	if err := os.MkdirAll(nibsDir, 0755); err != nil {
+		t.Fatal(err)
+	}
+	content := "---\ntitle: Test\nstatus: todo\ntype: task\n---\n" + body
+	if err := os.WriteFile(filepath.Join(nibsDir, id+"--test.md"), []byte(content), 0644); err != nil {
+		t.Fatal(err)
+	}
+	return nibsDir, id
+}
+
+// TestUpdateBodyFromFile verifies `update --body @FILE` replaces the body.
+func TestUpdateBodyFromFile(t *testing.T) {
+	t.Cleanup(resetUpdateFlags)
+	resetUpdateFlags()
+
+	nibsDir, id := writeUpdateNib(t, "upd-1", "old body\n")
+	bodyFile := filepath.Join(t.TempDir(), "new.md")
+	if err := os.WriteFile(bodyFile, []byte("brand new body\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	rootCmd.SetArgs([]string{"--nibs-path", nibsDir, "update", id, "--body", "@" + bodyFile})
+	if err := rootCmd.Execute(); err != nil {
+		t.Fatalf("update --body @file failed: %v", err)
+	}
+
+	content, _ := os.ReadFile(filepath.Join(nibsDir, id+"--test.md"))
+	if !strings.Contains(string(content), "brand new body") {
+		t.Errorf("body not replaced from file, got:\n%s", content)
+	}
+	if strings.Contains(string(content), "old body") {
+		t.Errorf("old body should be gone, got:\n%s", content)
+	}
+}
+
+// TestUpdateBodyAppendFromFile verifies `--body-append @FILE` appends the file
+// content (with the trailing newline trimmed).
+func TestUpdateBodyAppendFromFile(t *testing.T) {
+	t.Cleanup(resetUpdateFlags)
+	resetUpdateFlags()
+
+	nibsDir, id := writeUpdateNib(t, "upd-2", "existing body\n")
+	appendFile := filepath.Join(t.TempDir(), "add.md")
+	if err := os.WriteFile(appendFile, []byte("## Added\nmore text\n\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	rootCmd.SetArgs([]string{"--nibs-path", nibsDir, "update", id, "--body-append", "@" + appendFile})
+	if err := rootCmd.Execute(); err != nil {
+		t.Fatalf("update --body-append @file failed: %v", err)
+	}
+
+	content, _ := os.ReadFile(filepath.Join(nibsDir, id+"--test.md"))
+	if !strings.Contains(string(content), "existing body") || !strings.Contains(string(content), "more text") {
+		t.Errorf("append did not combine bodies, got:\n%s", content)
+	}
+}
+
+// TestUpdateRejectsInlineBody verifies the inline `--body "<string>"` form is
+// gone on update: a bare value is a validation error.
+func TestUpdateRejectsInlineBody(t *testing.T) {
+	t.Cleanup(resetUpdateFlags)
+	resetUpdateFlags()
+
+	nibsDir, id := writeUpdateNib(t, "upd-3", "body\n")
+
+	rootCmd.SetArgs([]string{"--nibs-path", nibsDir, "update", id, "--body", "inline replacement", "--json"})
+	err := rootCmd.Execute()
+	if err == nil {
+		t.Fatal("expected inline --body to be rejected, got nil")
+	}
+	var ce *output.CodedError
+	if !errors.As(err, &ce) {
+		t.Fatalf("error = %T, want *output.CodedError", err)
+	}
+	if output.ExitCode(ce.Code) != output.ExitValidation {
+		t.Errorf("inline --body exit = %d, want %d (validation)", output.ExitCode(ce.Code), output.ExitValidation)
+	}
+}
+
+// TestUpdateMissingBodyFileIsIOError verifies a missing `@FILE` on update maps
+// to the I/O exit code (5), not a validation error.
+func TestUpdateMissingBodyFileIsIOError(t *testing.T) {
+	t.Cleanup(resetUpdateFlags)
+	resetUpdateFlags()
+
+	nibsDir, id := writeUpdateNib(t, "upd-4", "body\n")
+
+	rootCmd.SetArgs([]string{"--nibs-path", nibsDir, "update", id, "--body", "@/no/such/file-xyz.md", "--json"})
+	err := rootCmd.Execute()
+	if err == nil {
+		t.Fatal("expected missing @file to error, got nil")
+	}
+	var ce *output.CodedError
+	if !errors.As(err, &ce) {
+		t.Fatalf("error = %T, want *output.CodedError", err)
+	}
+	if output.ExitCode(ce.Code) != output.ExitIO {
+		t.Errorf("missing @file exit = %d, want %d (IO)", output.ExitCode(ce.Code), output.ExitIO)
 	}
 }
 

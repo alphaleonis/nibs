@@ -1,6 +1,7 @@
 package cmd
 
 import (
+	"errors"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -8,7 +9,19 @@ import (
 	"testing"
 
 	"github.com/alphaleonis/nibs/internal/nib"
+	"github.com/alphaleonis/nibs/internal/output"
 )
+
+// writeBodyFile writes content to a temp file and returns the "@path" token
+// used by body/prose flags (which no longer accept inline text).
+func writeBodyFile(t *testing.T, content string) string {
+	t.Helper()
+	path := filepath.Join(t.TempDir(), "body.md")
+	if err := os.WriteFile(path, []byte(content), 0o644); err != nil {
+		t.Fatalf("writing body file: %v", err)
+	}
+	return "@" + path
+}
 
 func resetCreateFlags() {
 	createStatus = ""
@@ -214,7 +227,7 @@ func TestCreateBodyFlagSkipsEditor(t *testing.T) {
 
 	rootCmd.SetArgs([]string{
 		"--nibs-path", nibsDir,
-		"create", "Body Flag Test", "-t", "task", "-d", "Custom body content", "--json",
+		"create", "Body Flag Test", "-t", "task", "-d", writeBodyFile(t, "Custom body content"), "--json",
 	})
 
 	err := rootCmd.Execute()
@@ -237,6 +250,128 @@ func TestCreateBodyFlagSkipsEditor(t *testing.T) {
 	// Template should NOT be present
 	if strings.Contains(body, "## Description") {
 		t.Errorf("template should not be used when --body is provided, got:\n%s", body)
+	}
+}
+
+// withStdin temporarily replaces os.Stdin with a pipe carrying content, so
+// tests can exercise the "-" input channel end-to-end.
+func withStdin(t *testing.T, content string) {
+	t.Helper()
+	r, w, err := os.Pipe()
+	if err != nil {
+		t.Fatalf("os.Pipe: %v", err)
+	}
+	go func() {
+		_, _ = w.WriteString(content)
+		_ = w.Close()
+	}()
+	orig := os.Stdin
+	os.Stdin = r
+	t.Cleanup(func() {
+		os.Stdin = orig
+		_ = r.Close()
+	})
+}
+
+// TestCreateBodyFromStdin verifies that `--body -` reads the full body from
+// stdin verbatim — backticks, quotes and newlines survive intact (the whole
+// point of the input channel: no fragile shell escaping).
+func TestCreateBodyFromStdin(t *testing.T) {
+	nibsDir := setupCreateTest(t)
+	t.Setenv("EDITOR", "")
+	t.Setenv("VISUAL", "")
+
+	body := "## Section\n`code` with \"quotes\" and 'apostrophes'\nmultiple\nlines\n"
+	withStdin(t, body)
+
+	rootCmd.SetArgs([]string{
+		"--nibs-path", nibsDir,
+		"create", "Stdin Body", "-t", "task", "-d", "-", "--json",
+	})
+	if err := rootCmd.Execute(); err != nil {
+		t.Fatalf("create failed: %v", err)
+	}
+
+	entries, _ := os.ReadDir(nibsDir)
+	content, _ := os.ReadFile(filepath.Join(nibsDir, entries[0].Name()))
+	if !strings.Contains(string(content), "`code` with \"quotes\" and 'apostrophes'") {
+		t.Errorf("piped body not preserved verbatim, got:\n%s", content)
+	}
+	if !strings.Contains(string(content), "multiple\nlines") {
+		t.Errorf("piped multi-line body not preserved, got:\n%s", content)
+	}
+}
+
+// TestCreateBodyFromFile verifies that `--body @FILE` reads the file content.
+func TestCreateBodyFromFile(t *testing.T) {
+	nibsDir := setupCreateTest(t)
+	t.Setenv("EDITOR", "")
+	t.Setenv("VISUAL", "")
+
+	rootCmd.SetArgs([]string{
+		"--nibs-path", nibsDir,
+		"create", "File Body", "-t", "task", "-d", writeBodyFile(t, "content from a file\n"), "--json",
+	})
+	if err := rootCmd.Execute(); err != nil {
+		t.Fatalf("create failed: %v", err)
+	}
+
+	entries, _ := os.ReadDir(nibsDir)
+	content, _ := os.ReadFile(filepath.Join(nibsDir, entries[0].Name()))
+	if !strings.Contains(string(content), "content from a file") {
+		t.Errorf("file body not used, got:\n%s", content)
+	}
+}
+
+// TestCreateRejectsInlineBody verifies the inline `--body "<string>"` form is
+// gone: a bare value is rejected with a validation error and nothing is created.
+func TestCreateRejectsInlineBody(t *testing.T) {
+	nibsDir := setupCreateTest(t)
+	t.Setenv("EDITOR", "")
+	t.Setenv("VISUAL", "")
+
+	rootCmd.SetArgs([]string{
+		"--nibs-path", nibsDir,
+		"create", "Inline Body", "-t", "task", "-d", "some inline body text", "--json",
+	})
+	err := rootCmd.Execute()
+	if err == nil {
+		t.Fatal("expected inline --body to be rejected, got nil")
+	}
+	var ce *output.CodedError
+	if !errors.As(err, &ce) {
+		t.Fatalf("error = %T, want *output.CodedError", err)
+	}
+	if output.ExitCode(ce.Code) != output.ExitValidation {
+		t.Errorf("inline --body exit = %d, want %d (validation)", output.ExitCode(ce.Code), output.ExitValidation)
+	}
+	entries, _ := os.ReadDir(nibsDir)
+	if len(entries) != 0 {
+		t.Errorf("expected no nib created on rejection, found %d entries", len(entries))
+	}
+}
+
+// TestCreateMissingBodyFileIsIOError verifies a missing `@FILE` maps to the
+// I/O exit code (5), not a validation error.
+func TestCreateMissingBodyFileIsIOError(t *testing.T) {
+	nibsDir := setupCreateTest(t)
+	t.Setenv("EDITOR", "")
+	t.Setenv("VISUAL", "")
+
+	rootCmd.SetArgs([]string{
+		"--nibs-path", nibsDir,
+		"create", "Missing File", "-t", "task", "-d", "@/no/such/file-xyz.md", "--json",
+	})
+	err := rootCmd.Execute()
+	if err == nil {
+		t.Fatal("expected missing @file to error, got nil")
+	}
+	var ce *output.CodedError
+	if !errors.As(err, &ce) {
+		t.Fatalf("error = %T, want *output.CodedError", err)
+	}
+	if output.ExitCode(ce.Code) != output.ExitIO {
+		t.Errorf("missing @file exit = %d, want %d (IO)", output.ExitCode(ce.Code), output.ExitIO)
 	}
 }
 
@@ -305,7 +440,7 @@ func TestCreateAfterRootSibling(t *testing.T) {
 	// Create root A.
 	rootCmd.SetArgs([]string{
 		"--nibs-path", nibsDir,
-		"create", "Root A", "-t", "bug", "-d", "body-a", "--json",
+		"create", "Root A", "-t", "bug", "-d", writeBodyFile(t, "body-a"), "--json",
 	})
 	if err := rootCmd.Execute(); err != nil {
 		t.Fatalf("create A failed: %v", err)
@@ -316,7 +451,7 @@ func TestCreateAfterRootSibling(t *testing.T) {
 	// Create root B.
 	rootCmd.SetArgs([]string{
 		"--nibs-path", nibsDir,
-		"create", "Root B", "-t", "bug", "-d", "body-b", "--json",
+		"create", "Root B", "-t", "bug", "-d", writeBodyFile(t, "body-b"), "--json",
 	})
 	if err := rootCmd.Execute(); err != nil {
 		t.Fatalf("create B failed: %v", err)
@@ -329,7 +464,7 @@ func TestCreateAfterRootSibling(t *testing.T) {
 	// NOT after B.
 	rootCmd.SetArgs([]string{
 		"--nibs-path", nibsDir,
-		"create", "Root C", "-t", "bug", "-d", "body-c",
+		"create", "Root C", "-t", "bug", "-d", writeBodyFile(t, "body-c"),
 		"--after", idA, "--json",
 	})
 	if err := rootCmd.Execute(); err != nil {
