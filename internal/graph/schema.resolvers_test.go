@@ -2116,7 +2116,7 @@ func TestUpdateNibWithRelationships(t *testing.T) {
 
 		input := model.UpdateNibInput{
 			Status:      stringPtr("in-progress"),
-			Parent:      stringPtr("epic-1"),
+			Parent:      graphql.OmittableOf(stringPtr("epic-1")),
 			AddBlocking: []string{"blocker-1"},
 		}
 
@@ -2148,7 +2148,7 @@ func TestUpdateNibWithRelationships(t *testing.T) {
 
 		input := model.UpdateNibInput{
 			Status: stringPtr("completed"),
-			Parent: stringPtr("epic-2"),
+			Parent: graphql.OmittableOf(stringPtr("epic-2")),
 			BodyMod: &model.BodyModification{
 				Replace: []*model.ReplaceOperation{
 					{Old: "- [ ] Step 1", New: "- [x] Step 1"},
@@ -2189,7 +2189,7 @@ func TestUpdateNibWithRelationships(t *testing.T) {
 		mustCreate(t, core, task2)
 
 		input := model.UpdateNibInput{
-			Parent: stringPtr("task-invalid-2"),
+			Parent: graphql.OmittableOf(stringPtr("task-invalid-2")),
 		}
 
 		_, err := resolver.Mutation().UpdateNib(ctx, "task-invalid-1", input)
@@ -2369,7 +2369,7 @@ func TestUpdateNibWithRelationships(t *testing.T) {
 		// Remove parent by setting to empty string
 		emptyParent := ""
 		input := model.UpdateNibInput{
-			Parent: &emptyParent,
+			Parent: graphql.OmittableOf(&emptyParent),
 		}
 
 		got, err := resolver.Mutation().UpdateNib(ctx, "task-parent-remove", input)
@@ -2446,7 +2446,7 @@ func TestUpdateNibWithRelationships(t *testing.T) {
 
 		input := model.UpdateNibInput{
 			Status:         stringPtr("in-progress"),
-			Parent:         stringPtr("epic-all"),
+			Parent:         graphql.OmittableOf(stringPtr("epic-all")),
 			AddBlocking:    []string{"new-blocked"},
 			RemoveBlocking: []string{"old-blocking"},
 			AddBlockedBy:   []string{"new-blocker"},
@@ -3880,7 +3880,7 @@ func TestUpdateNibTypeChangeValidatesParent(t *testing.T) {
 		// Change task to epic AND move parent from feature to milestone — should succeed
 		newType := "epic"
 		newParent := "ms-tc-sim"
-		input := model.UpdateNibInput{Type: &newType, Parent: &newParent}
+		input := model.UpdateNibInput{Type: &newType, Parent: graphql.OmittableOf(&newParent)}
 		got, err := resolver.Mutation().UpdateNib(ctx, "task-tc-sim", input)
 		if err != nil {
 			t.Fatalf("expected no error, got: %v", err)
@@ -3900,7 +3900,7 @@ func TestUpdateNibTypeChangeValidatesParent(t *testing.T) {
 		// Change task to epic AND set parent to nonexistent nib — parent validation should fail
 		newType := "epic"
 		newParent := "nonexistent-nib"
-		input := model.UpdateNibInput{Type: &newType, Parent: &newParent}
+		input := model.UpdateNibInput{Type: &newType, Parent: graphql.OmittableOf(&newParent)}
 		_, err := resolver.Mutation().UpdateNib(ctx, "task-tc-fp", input)
 		if err == nil {
 			t.Fatal("expected error for nonexistent parent, got nil")
@@ -3982,7 +3982,7 @@ func TestReparentRecalculatesOrderKey(t *testing.T) {
 		// Now move via UpdateNib
 		mr := resolver.Mutation()
 		parentID := "epic-a"
-		input := model.UpdateNibInput{Parent: &parentID}
+		input := model.UpdateNibInput{Parent: graphql.OmittableOf(&parentID)}
 		got, err := mr.UpdateNib(ctx, "child-b1", input)
 		if err != nil {
 			t.Fatalf("UpdateNib() error = %v", err)

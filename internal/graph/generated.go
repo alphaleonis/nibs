@@ -5911,7 +5911,7 @@ func (ec *executionContext) unmarshalInputUpdateNibInput(ctx context.Context, ob
 			if err != nil {
 				return it, err
 			}
-			it.Parent = data
+			it.Parent = graphql.OmittableOf(data)
 		case "addBlocking":
 			ctx := graphql.WithPathContext(ctx, graphql.NewPathWithField("addBlocking"))
 			data, err := ec.unmarshalOString2ᚕstringᚄ(ctx, v)

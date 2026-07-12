@@ -173,8 +173,9 @@ func (r *mutationResolver) UpdateNib(ctx context.Context, id string, input model
 	}
 	if input.Type != nil {
 		b.Type = *input.Type
-		// Re-validate existing parent against the new type (when parent isn't also being changed)
-		if b.Parent != "" && input.Parent == nil {
+		// Re-validate existing parent against the new type (when parent isn't also
+		// being changed — i.e. the parent field was omitted, not set to null/id).
+		if b.Parent != "" && !input.Parent.IsSet() {
 			if err := r.validateAndSetParent(b, b.Parent); err != nil {
 				return nil, err
 			}
@@ -284,9 +285,19 @@ func (r *mutationResolver) UpdateNib(ctx context.Context, id string, input model
 		b.Documents = newDocs
 	}
 
-	// Handle parent relationship
-	if input.Parent != nil {
-		if err := r.validateAndSetParent(b, *input.Parent); err != nil {
+	// Handle parent relationship. parent is graphql.Omittable[*string] so the
+	// wire distinguishes three cases (nibs-gzdx):
+	//   - not set (omitted)        → leave unchanged (the type-change path above
+	//                                re-validates the existing parent when needed)
+	//   - set to null OR ""        → clear the parent (validateAndSetParent("")
+	//                                moves the nib to root)
+	//   - set to a non-empty id    → normalize + validate + set
+	if p, ok := input.Parent.ValueOK(); ok {
+		newParent := ""
+		if p != nil {
+			newParent = *p
+		}
+		if err := r.validateAndSetParent(b, newParent); err != nil {
 			return nil, err
 		}
 	}
@@ -555,7 +566,14 @@ func (r *mutationResolver) ReorderNib(ctx context.Context, id string, afterID *s
 		return nil, fmt.Errorf("at most one of afterId, beforeId, first may be specified")
 	}
 
-	// Optional reparent: change parent before reordering (atomic cross-parent move)
+	// Optional reparent: change parent before reordering (atomic cross-parent move).
+	// parentID stays a plain *string here (NOT omittable, unlike updateNib.parent):
+	// nil means "no reparent — reorder within the current parent", and this differs
+	// from updateNib where an explicit parent:null CLEARS the parent (moves to
+	// root). For reorderNib, root context is expressed by an explicit parentId:""
+	// (empty string), which validateAndSetParent treats as clear-to-root. This
+	// asymmetry is intentional: a reorder must be able to omit reparenting entirely,
+	// so null cannot double as a clear here.
 	if parentID != nil {
 		newParent := *parentID
 		if err := r.validateAndSetParent(b, newParent); err != nil {
@@ -622,6 +640,13 @@ func (r *nibResolver) Type(ctx context.Context, obj *nib.Nib) (string, error) {
 // Priority is the resolver for the priority field. Mirrors Type: the stored Nib
 // keeps Priority empty when the file omits it; this resolver applies the "normal"
 // presentation default for the non-nullable field. See nib.DefaultPriority.
+//
+// Read-back limitation (nibs-gzdx, decided out of scope): clearing priority via
+// updateNib(priority: null) stores "" on disk, but this resolver reports the
+// effective "normal" for empty. So a cleared priority reads back as "normal" and
+// a web round-trip that writes the read value back can self-revert the clear.
+// This is by design — empty→normal is the data model — not a resolver bug; do
+// not "fix" it here without also changing that model.
 func (r *nibResolver) Priority(ctx context.Context, obj *nib.Nib) (string, error) {
 	return obj.EffectivePriority(), nil
 }

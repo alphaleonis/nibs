@@ -249,13 +249,15 @@ func buildUpdateInput(cmd *cobra.Command, existingTags []string, currentBody str
 		changes = append(changes, "tags")
 	}
 
-	// Handle parent relationship
+	// Handle parent relationship. Parent is Omittable[*string]: an explicit
+	// value sets it, empty string clears it. Only set when a parent flag was
+	// given so the field stays omitted (unchanged) otherwise.
 	if cmd.Flags().Changed("parent") {
-		input.Parent = &updateParent
+		input.Parent = graphql.OmittableOf(&updateParent)
 		changes = append(changes, "parent")
 	} else if updateRemoveParent {
 		emptyParent := ""
-		input.Parent = &emptyParent
+		input.Parent = graphql.OmittableOf(&emptyParent)
 		changes = append(changes, "parent")
 	}
 
@@ -295,7 +297,7 @@ func hasFieldUpdates(input model.UpdateNibInput) bool {
 	return input.Status != nil || input.Type != nil || input.Priority.IsSet() || input.Estimate.IsSet() ||
 		input.Title != nil || input.Body != nil || input.BodyMod != nil || input.Tags != nil ||
 		input.AddTags != nil || input.RemoveTags != nil ||
-		input.Parent != nil || input.AddBlocking != nil || input.RemoveBlocking != nil ||
+		input.Parent.IsSet() || input.AddBlocking != nil || input.RemoveBlocking != nil ||
 		input.AddBlockedBy != nil || input.RemoveBlockedBy != nil ||
 		input.Documents != nil || input.AddDocuments != nil || input.RemoveDocuments != nil
 }

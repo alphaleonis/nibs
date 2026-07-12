@@ -176,17 +176,34 @@ input CreateNibInput {
 Input for updating an existing nib
 """
 input UpdateNibInput {
-  "New title"
+  """
+  New title. Not a clearable field: null/omit both leave the title unchanged
+  (a title is required, so it is never cleared).
+  """
   title: String
-  "New status"
+  """
+  New status. Not a clearable field: null/omit both leave the status unchanged.
+  """
   status: String
-  "New type"
+  """
+  New type. Not a clearable field: null/omit both leave the type unchanged.
+  """
   type: String
-  "New priority"
+  """
+  New priority. Explicit null clears the priority; omit to leave it unchanged.
+  Note: a cleared priority reads back as the effective default "normal" (the
+  data model treats empty as normal), so the clear is not observable on read.
+  """
   priority: String
-  "New estimate size (s, m, l, xl, or null to clear)"
+  """
+  New estimate size (s, m, l, xl). Explicit null clears the estimate; omit to
+  leave it unchanged.
+  """
   estimate: String
-  "Replace all tags (nil preserves existing, mutually exclusive with addTags/removeTags)"
+  """
+  Replace all tags. An empty list clears all tags; omit (null) to leave the
+  existing tags unchanged. Mutually exclusive with addTags/removeTags.
+  """
   tags: [String!]
   "Add tags to existing list"
   addTags: [String!]
@@ -197,7 +214,11 @@ input UpdateNibInput {
   "Structured body modifications (mutually exclusive with body)"
   bodyMod: BodyModification
   
-  "Set parent nib ID (null/empty to clear, validates type hierarchy)"
+  """
+  Set the parent nib ID (validated against the type hierarchy). Explicit null
+  OR empty string clears the parent (moves the nib to root); omit to leave it
+  unchanged.
+  """
   parent: String
   "Add nibs to blocking list (validates cycles and existence)"
   addBlocking: [String!]
