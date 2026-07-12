@@ -12,18 +12,20 @@
 
   let { value, onchange, testId = "priority-select", disabled = false }: Props = $props();
 
-  let displayIndicator = $derived(value ? priorityIndicators[value] : null);
+  // A nib always has an effective priority; an unset value shows as "normal",
+  // matching the TUI (which builds its list solely from config.DefaultPriorities).
+  let effective = $derived(value || "normal");
+  let displayIndicator = $derived(priorityIndicators[effective]);
 </script>
 
-<Select.Root type="single" value={value || "__none__"} {disabled} onValueChange={(v) => { if (v) onchange(v === "__none__" ? "" : v); }}>
+<Select.Root type="single" value={effective} {disabled} onValueChange={(v) => { if (v) onchange(v); }}>
   <Select.Trigger data-testid={testId} size="sm" class="flex-1">
     {#if displayIndicator}
       <span class="inline-block w-3.5 text-center text-xs font-bold" style="color: {displayIndicator.color};">{displayIndicator.symbol}</span>
     {/if}
-    {value || "None"}
+    {effective}
   </Select.Trigger>
   <Select.Content>
-    <Select.Item value="__none__">None</Select.Item>
     {#each PRIORITIES as p}
       {@const ind = priorityIndicators[p]}
       <Select.Item value={p}>
