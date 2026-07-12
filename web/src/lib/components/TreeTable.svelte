@@ -327,7 +327,7 @@
     toggleNode,
     getScrollContainer: () => scrollContainerEl ?? null,
     onDragKeyDown: treeDrag.onDragKeyDown,
-    navigateToNib: (id) => { void view.open(id); },
+    navigateToNib: (id) => openOrToggleBucket(id),
   });
 
   // --- Event delegation helpers ---
@@ -351,6 +351,20 @@
     return { action, el: actionEl };
   }
 
+  // Row-open guard for synthetic grouping buckets. A "No X" bucket row
+  // (isBucketId) is not a real nib, so routing its synthetic id through
+  // view.open resolves an empty detail query and fires the missing-nib
+  // ("no longer exists") heal path (nibs-gkwg). Instead, opening a bucket
+  // toggles/collapses its group — the same effect as its caret — mirroring the
+  // drag guard that already skips buckets (isBucketId, ~lines 428/540).
+  function openOrToggleBucket(id: string) {
+    if (isBucketId(id)) {
+      toggleNode(id);
+      return;
+    }
+    void view.open(id);
+  }
+
   function handleDelegatedClick(e: MouseEvent) {
     if (drag.isDragging) return;
 
@@ -366,7 +380,7 @@
     }
 
     if (action === "title") {
-      void view.open(nibId);
+      openOrToggleBucket(nibId);
       return; // Title click selects, not row click
     }
 
@@ -393,7 +407,7 @@
       selection.toggleSelect(nibId);
       view.syncTo(selection.selectedNibId);
     } else {
-      void view.open(nibId);
+      openOrToggleBucket(nibId);
     }
   }
 
@@ -403,7 +417,7 @@
     const nibId = getNibIdFromEvent(e);
     if (!nibId) return;
 
-    void view.open(nibId);
+    openOrToggleBucket(nibId);
   }
 
   function handleDelegatedContextMenu(e: MouseEvent) {

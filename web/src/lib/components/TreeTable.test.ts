@@ -6,6 +6,7 @@ import { tick } from "svelte";
 import TreeTable from "./TreeTable.svelte";
 import type { TreeTableNib, ViewLevel, ColumnKey } from "../types";
 import { DEFAULT_COLUMN_WIDTHS } from "../types";
+import { bucketIdForItem, isBucketId } from "../tree";
 import { SelectionState } from "../selection.svelte";
 import { DragState } from "../drag.svelte";
 import { TreeViewState } from "../treeView.svelte";
@@ -1081,6 +1082,81 @@ describe("TreeTable", () => {
 
       // Title click selects via context
       expect(sel.selectedNibId).toBe("nibs-001");
+    });
+
+    // Regression (nibs-gkwg): a synthetic "No X" grouping bucket row is not a
+    // real nib. Routing its synthetic id through view.open resolves an empty
+    // detail query and fires the missing-nib ("no longer exists") heal path.
+    // A bucket row must instead toggle/collapse its group, mirroring its caret.
+    function makeBucketTestNibs(): TreeTableNib[] {
+      return [
+        makeTreeTableNib({ id: "nibs-m1", title: "Milestone A", type: "milestone" }),
+        makeTreeTableNib({ id: "nibs-e1", title: "Epic under A", type: "epic", parentId: "nibs-m1" }),
+        // No milestone parent -> falls into the synthetic "No milestone" bucket.
+        makeTreeTableNib({ id: "nibs-loose", title: "Loose Task", type: "task" }),
+      ];
+    }
+
+    function milestoneBucketId(nibs: TreeTableNib[]): string {
+      const bucketId = bucketIdForItem(new Map(nibs.map(n => [n.id, n])), "nibs-loose", "milestones");
+      expect(bucketId).not.toBeNull();
+      expect(isBucketId(bucketId!)).toBe(true);
+      return bucketId!;
+    }
+
+    it("clicking a bucket row title does NOT open/select it and toggles its group instead", async () => {
+      const user = userEvent.setup();
+      const sel = new SelectionState();
+      const nibs = makeBucketTestNibs();
+      const bucketId = milestoneBucketId(nibs);
+
+      const { container } = setupWithNibs(nibs, {}, { selection: sel });
+
+      // The bucket row and its child are visible initially.
+      expect(screen.getByText("Loose Task")).toBeInTheDocument();
+      const bucketTitle = container.querySelector(
+        `tr[data-nib-id="${bucketId}"] [data-action="title"]`,
+      ) as HTMLElement;
+      expect(bucketTitle).toBeInTheDocument();
+
+      // Click the bucket's title (the exact path that used to route to view.open).
+      await user.click(bucketTitle);
+
+      // It must NOT open/select the synthetic bucket id (no "no longer exists").
+      expect(sel.selectedNibId).not.toBe(bucketId);
+      expect(sel.selectedNibId).toBeNull();
+
+      // Instead the group collapses — its child is hidden.
+      expect(screen.queryByText("Loose Task")).not.toBeInTheDocument();
+
+      // Clicking again re-expands the group.
+      const bucketTitleAfter = container.querySelector(
+        `tr[data-nib-id="${bucketId}"] [data-action="title"]`,
+      ) as HTMLElement;
+      await user.click(bucketTitleAfter);
+      expect(screen.getByText("Loose Task")).toBeInTheDocument();
+    });
+
+    it("clicking a bucket row body does NOT open/select it and toggles its group instead", async () => {
+      const user = userEvent.setup();
+      const sel = new SelectionState();
+      const nibs = makeBucketTestNibs();
+      const bucketId = milestoneBucketId(nibs);
+
+      const { container } = setupWithNibs(nibs, {}, { selection: sel });
+
+      expect(screen.getByText("Loose Task")).toBeInTheDocument();
+
+      // Click the row body (a non-action cell), not the title/caret.
+      const bucketBodyCell = container.querySelector(
+        `tr[data-nib-id="${bucketId}"] [data-testid="nib-type"]`,
+      ) as HTMLElement;
+      expect(bucketBodyCell).toBeInTheDocument();
+      await user.click(bucketBodyCell);
+
+      expect(sel.selectedNibId).not.toBe(bucketId);
+      expect(sel.selectedNibId).toBeNull();
+      expect(screen.queryByText("Loose Task")).not.toBeInTheDocument();
     });
 
     it("TreeTableRow renders with zero callback props (pure data/visual)", () => {
