@@ -9,6 +9,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/99designs/gqlgen/graphql"
 	"github.com/alphaleonis/nibs/internal/nib"
 	"github.com/alphaleonis/nibs/internal/nibcore"
 	"github.com/alphaleonis/nibs/internal/config"
@@ -1023,7 +1024,7 @@ func TestMutationUpdateNib(t *testing.T) {
 		newBody := "Updated body"
 		input := model.UpdateNibInput{
 			Title:    &newTitle,
-			Priority: &newPriority,
+			Priority: graphql.OmittableOf(&newPriority),
 			Body:     &newBody,
 		}
 		got, err := mr.UpdateNib(ctx, "update-test", input)
@@ -3646,7 +3647,7 @@ func TestUpdateNibEstimate(t *testing.T) {
 		b := createTestNib(t, core, "est-1", "Task", "todo")
 		est := "m"
 		updated, err := resolver.Mutation().UpdateNib(ctx, b.ID, model.UpdateNibInput{
-			Estimate: &est,
+			Estimate: graphql.OmittableOf(&est),
 		})
 		if err != nil {
 			t.Fatalf("unexpected error: %v", err)
@@ -3675,7 +3676,7 @@ func TestUpdateNibEstimate(t *testing.T) {
 
 		empty := ""
 		updated, err := resolver.Mutation().UpdateNib(ctx, b.ID, model.UpdateNibInput{
-			Estimate: &empty,
+			Estimate: graphql.OmittableOf(&empty),
 		})
 		if err != nil {
 			t.Fatalf("unexpected error: %v", err)

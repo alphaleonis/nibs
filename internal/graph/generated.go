@@ -5862,14 +5862,14 @@ func (ec *executionContext) unmarshalInputUpdateNibInput(ctx context.Context, ob
 			if err != nil {
 				return it, err
 			}
-			it.Priority = data
+			it.Priority = graphql.OmittableOf(data)
 		case "estimate":
 			ctx := graphql.WithPathContext(ctx, graphql.NewPathWithField("estimate"))
 			data, err := ec.unmarshalOString2ᚖstring(ctx, v)
 			if err != nil {
 				return it, err
 			}
-			it.Estimate = data
+			it.Estimate = graphql.OmittableOf(data)
 		case "tags":
 			ctx := graphql.WithPathContext(ctx, graphql.NewPathWithField("tags"))
 			data, err := ec.unmarshalOString2ᚕstringᚄ(ctx, v)

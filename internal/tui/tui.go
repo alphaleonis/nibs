@@ -9,6 +9,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/99designs/gqlgen/graphql"
 	"github.com/atotto/clipboard"
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
@@ -452,7 +453,7 @@ func (a *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		// Update all nibs' priority via backend mutations
 		for _, nibID := range msg.nibIDs {
 			_, err := a.backend.UpdateNib(context.Background(), nibID, model.UpdateNibInput{
-				Priority: &msg.priority,
+				Priority: graphql.OmittableOf(&msg.priority),
 			})
 			if err != nil {
 				// Continue with other nibs even if one fails
@@ -484,7 +485,7 @@ func (a *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case estimateSelectedMsg:
 		for _, nibID := range msg.nibIDs {
 			_, err := a.backend.UpdateNib(context.Background(), nibID, model.UpdateNibInput{
-				Estimate: &msg.estimate,
+				Estimate: graphql.OmittableOf(&msg.estimate),
 			})
 			if err != nil {
 				continue

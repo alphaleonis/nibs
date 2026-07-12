@@ -8,6 +8,7 @@ import (
 	"io"
 	"strconv"
 
+	"github.com/99designs/gqlgen/graphql"
 	"github.com/alphaleonis/nibs/internal/nib"
 )
 
@@ -191,9 +192,9 @@ type UpdateNibInput struct {
 	// New type
 	Type *string `json:"type,omitempty"`
 	// New priority
-	Priority *string `json:"priority,omitempty"`
+	Priority graphql.Omittable[*string] `json:"priority,omitempty"`
 	// New estimate size (s, m, l, xl, or null to clear)
-	Estimate *string `json:"estimate,omitempty"`
+	Estimate graphql.Omittable[*string] `json:"estimate,omitempty"`
 	// Replace all tags (nil preserves existing, mutually exclusive with addTags/removeTags)
 	Tags []string `json:"tags,omitempty"`
 	// Add tags to existing list

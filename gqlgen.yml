@@ -34,6 +34,17 @@ models:
         resolver: true
       priority:
         resolver: true
+  # UpdateNibInput: priority/estimate must distinguish an explicit JSON `null`
+  # ("clear this field") from an omitted field ("leave unchanged"). Plain
+  # *string collapses both to nil, so a clear never persists (nibs-qijw).
+  # omittable wraps them in graphql.Omittable[*string]: IsSet() is true for
+  # null (with a nil inner pointer) and false when omitted.
+  UpdateNibInput:
+    fields:
+      priority:
+        omittable: true
+      estimate:
+        omittable: true
   # Map ID scalar to string
   ID:
     model:

@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"strings"
 
+	"github.com/99designs/gqlgen/graphql"
 	"github.com/alphaleonis/nibs/internal/config"
 	"github.com/alphaleonis/nibs/internal/graph/model"
 	"github.com/alphaleonis/nibs/internal/nibcore"
@@ -183,7 +184,7 @@ func buildUpdateInput(cmd *cobra.Command, existingTags []string, currentBody str
 		if !cfg.IsValidPriority(updatePriority) {
 			return input, nil, fmt.Errorf("invalid priority: %s (must be %s)", updatePriority, cfg.PriorityList())
 		}
-		input.Priority = &updatePriority
+		input.Priority = graphql.OmittableOf(&updatePriority)
 		changes = append(changes, "priority")
 	}
 
@@ -191,7 +192,7 @@ func buildUpdateInput(cmd *cobra.Command, existingTags []string, currentBody str
 		if !cfg.IsValidEstimate(updateEstimate) {
 			return input, nil, fmt.Errorf("invalid estimate: %s (must be %s)", updateEstimate, cfg.EstimateList())
 		}
-		input.Estimate = &updateEstimate
+		input.Estimate = graphql.OmittableOf(&updateEstimate)
 		changes = append(changes, "estimate")
 	}
 
@@ -291,7 +292,7 @@ func buildUpdateInput(cmd *cobra.Command, existingTags []string, currentBody str
 
 // hasFieldUpdates returns true if any field in the input is set.
 func hasFieldUpdates(input model.UpdateNibInput) bool {
-	return input.Status != nil || input.Type != nil || input.Priority != nil || input.Estimate != nil ||
+	return input.Status != nil || input.Type != nil || input.Priority.IsSet() || input.Estimate.IsSet() ||
 		input.Title != nil || input.Body != nil || input.BodyMod != nil || input.Tags != nil ||
 		input.AddTags != nil || input.RemoveTags != nil ||
 		input.Parent != nil || input.AddBlocking != nil || input.RemoveBlocking != nil ||

@@ -188,11 +188,22 @@ func (r *mutationResolver) UpdateNib(ctx context.Context, id string, input model
 			}
 		}
 	}
-	if input.Priority != nil {
-		b.Priority = *input.Priority
+	// priority/estimate are graphql.Omittable[*string] so an explicit JSON
+	// `null` (IsSet with a nil inner pointer → clear the field) is distinct from
+	// an omitted field (not set → leave unchanged). See gqlgen.yml and nibs-qijw.
+	if p, ok := input.Priority.ValueOK(); ok {
+		if p != nil {
+			b.Priority = *p
+		} else {
+			b.Priority = "" // explicit null clears the priority
+		}
 	}
-	if input.Estimate != nil {
-		b.Estimate = *input.Estimate
+	if e, ok := input.Estimate.ValueOK(); ok {
+		if e != nil {
+			b.Estimate = *e
+		} else {
+			b.Estimate = "" // explicit null clears the estimate
+		}
 	}
 	if input.Body != nil {
 		b.Body = *input.Body

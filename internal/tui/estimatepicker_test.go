@@ -178,7 +178,7 @@ func TestAppEstimatePickerWiring(t *testing.T) {
 		if call.ID != "nib-1" {
 			t.Errorf("got ID %q, want %q", call.ID, "nib-1")
 		}
-		if call.Input.Estimate == nil || *call.Input.Estimate != "xl" {
+		if est, ok := call.Input.Estimate.ValueOK(); !ok || est == nil || *est != "xl" {
 			t.Errorf("got Estimate %v, want ptr to %q", call.Input.Estimate, "xl")
 		}
 	})
