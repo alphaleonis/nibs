@@ -30,19 +30,38 @@ func JoinWithOr(items []string) string {
 	}
 }
 
+// HierarchyError describes an illegal parent-type relationship. It carries the
+// child and attempted-parent types plus the set of parent types that WOULD be
+// legal for the child, so callers (e.g. the CLI's HIERARCHY error) can surface
+// the allowed set structurally instead of re-deriving it or scraping the
+// message. Allowed is empty when the child type cannot have a parent at all.
+type HierarchyError struct {
+	ChildType  string
+	ParentType string
+	Allowed    []string
+}
+
+func (e *HierarchyError) Error() string {
+	if len(e.Allowed) == 0 {
+		return fmt.Sprintf("%s cannot have a parent", e.ChildType)
+	}
+	return fmt.Sprintf("%s can only have a %s parent, not %s", e.ChildType, JoinWithOr(e.Allowed), e.ParentType)
+}
+
 // ValidateParentType checks whether childType can have parentType as a parent.
-// Returns nil if valid, or an error describing the constraint violation.
+// Returns nil if valid, or a *HierarchyError describing the constraint
+// violation (and the allowed parent types).
 func ValidateParentType(childType, parentType string) error {
 	allowed := ValidParentTypes(childType)
 	if allowed == nil {
-		return fmt.Errorf("%s cannot have a parent", childType)
+		return &HierarchyError{ChildType: childType, ParentType: parentType}
 	}
 	for _, a := range allowed {
 		if a == parentType {
 			return nil
 		}
 	}
-	return fmt.Errorf("%s can only have a %s parent, not %s", childType, JoinWithOr(allowed), parentType)
+	return &HierarchyError{ChildType: childType, ParentType: parentType, Allowed: allowed}
 }
 
 // ValidParentTypes returns the valid parent types for a given nib type.

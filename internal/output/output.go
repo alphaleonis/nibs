@@ -56,6 +56,7 @@ const (
 	ErrFileError     = "FILE_ERROR"
 	ErrValidation    = "VALIDATION_ERROR"
 	ErrConflict      = "CONFLICT"
+	ErrHierarchy     = "HIERARCHY"
 )
 
 // Process exit codes. The CLI boundary maps every error's structured CODE to
@@ -77,7 +78,7 @@ func ExitCode(code string) int {
 	switch code {
 	case ErrNotFound:
 		return ExitNotFound
-	case ErrValidation, ErrInvalidStatus:
+	case ErrValidation, ErrInvalidStatus, ErrHierarchy:
 		return ExitValidation
 	case ErrConflict:
 		return ExitConflict
@@ -169,6 +170,10 @@ type errorEnvelope struct {
 type errorBody struct {
 	Code    string `json:"code"`
 	Message string `json:"message"`
+	// AllowedParentTypes carries the legal parent types for a HIERARCHY error so
+	// agents can branch on the allowed set structurally. Omitted for every other
+	// error code.
+	AllowedParentTypes []string `json:"allowedParentTypes,omitempty"`
 }
 
 // Error writes the --json error contract to stdout and returns a reported
@@ -187,6 +192,22 @@ func Error(code string, message string) error {
 	enc.SetIndent("", "  ")
 	_ = enc.Encode(errorEnvelope{Error: errorBody{Code: code, Message: message}})
 	return &CodedError{Code: code, Msg: message, Reported: true}
+}
+
+// ErrorHierarchy writes the --json error contract for an illegal parent-type
+// relationship — the standard {code,message} plus the allowed parent types —
+// and returns a reported CodedError coded ErrHierarchy. Like Error, the returned
+// error satisfies errors.Is(err, ErrAlreadyReported) so the boundary suppresses
+// its duplicate stderr line.
+func ErrorHierarchy(message string, allowedParentTypes []string) error {
+	enc := json.NewEncoder(os.Stdout)
+	enc.SetIndent("", "  ")
+	_ = enc.Encode(errorEnvelope{Error: errorBody{
+		Code:               ErrHierarchy,
+		Message:            message,
+		AllowedParentTypes: allowedParentTypes,
+	}})
+	return &CodedError{Code: ErrHierarchy, Msg: message, Reported: true}
 }
 
 // TextError writes get's single-stream text error to stdout — "error <CODE>:
