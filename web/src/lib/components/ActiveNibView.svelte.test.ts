@@ -518,6 +518,28 @@ describe("ActiveNibView", () => {
       expect(screen.queryByTestId("anv-related-section")).not.toBeInTheDocument();
       expect(screen.queryByTestId("anv-deleted-notice")).not.toBeInTheDocument();
     });
+
+    it("opens the body in edit mode by default (editor visible, not the preview-only prose)", () => {
+      const form = makeCreateForm({ title: "New nib", dirty: true });
+      renderView(makeView({ kind: "creating", form, detail: null }), confirmDialog);
+
+      // The markdown editor is shown immediately so the user can type the body.
+      expect(screen.getByTestId("anv-editor-container")).toBeInTheDocument();
+      expect(screen.getByTestId("anv-edit-toggle")).toHaveAttribute("aria-pressed", "true");
+      // The preview-only prose block (edit mode off) is not the body content.
+      expect(screen.queryByTestId("anv-body-prose")).not.toBeInTheDocument();
+    });
+
+    it("still lets the user toggle a new nib's body back to preview", async () => {
+      const form = makeCreateForm({ title: "New nib", dirty: true });
+      renderView(makeView({ kind: "creating", form, detail: null }), confirmDialog);
+
+      expect(screen.getByTestId("anv-editor-container")).toBeInTheDocument();
+
+      await user.click(screen.getByTestId("anv-edit-toggle"));
+      expect(screen.queryByTestId("anv-editor-container")).not.toBeInTheDocument();
+      expect(screen.getByTestId("anv-body-prose")).toBeInTheDocument();
+    });
   });
 
   describe("conflict banner", () => {

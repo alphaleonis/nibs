@@ -40,7 +40,7 @@
     deleteNib as deleteNibCmd,
     archiveNib as archiveNibCmd,
   } from "$lib/mutations/commands";
-  import type { EditForm } from "../nibForm.svelte";
+  import type { CreateForm, EditForm } from "../nibForm.svelte";
   import type { BlockedEmphasis } from "../types";
   import { DEFAULT_BLOCKED_EMPHASIS, blockedVariantFor } from "../types";
   import type { DetailNibRef } from "../composables/useActiveView.svelte";
@@ -145,6 +145,22 @@
   // `gone` nibs are read-only: never surface the editor even if edit mode was
   // toggled on before the nib was deleted out from under us.
   const bodyModeEffective = $derived<"preview" | "edit">(disabled ? "preview" : bodyMode);
+
+  // A brand-new nib opens in edit mode so the user can type the body straight
+  // away; an existing nib opens in preview. This runs on mount and re-applies
+  // the default at each new buffer session, so it also fires on in-place
+  // transitions (viewing→creating, closed→creating) — ActiveNibView is NOT
+  // re-keyed per create. Each create/open swaps the form instance (see
+  // useActiveView.reconcileBuffer), so tracking form identity scopes the reset
+  // to session boundaries: a user's later toggle within the same session is
+  // preserved (we only act on a change).
+  let bodyModeSession: CreateForm | EditForm | null = null;
+  $effect(() => {
+    const f = form;
+    if (f === bodyModeSession) return;
+    bodyModeSession = f;
+    bodyMode = isCreating ? "edit" : "preview";
+  });
 
   // Two INDEPENDENT width breakpoints, both fed by one ResizeObserver:
   //   (a) rootWidth >= 720  -> relationships move to a right rail (else stack)
