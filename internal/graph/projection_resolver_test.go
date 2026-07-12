@@ -25,8 +25,9 @@ func TestProjectionResolver_NibByID(t *testing.T) {
 }
 
 // TestProjectionResolver_ChildCountAndProgress pins the direct-children rollups:
-// ChildCount is the number of children, Progress counts resolved children
-// (completed or scrapped) with a rounded percentage. A leaf reports zeros.
+// ChildCount is the number of children; Progress is the canonical
+// child-completion rollup (done = completed only, total excludes scrapped,
+// scrapped surfaced separately). A leaf reports zeros.
 func TestProjectionResolver_ChildCountAndProgress(t *testing.T) {
 	resolver, core := setupTestResolver(t)
 	mustCreate(t, core, &nib.Nib{ID: "par", Slug: "par", Title: "Parent", Status: "in-progress"})
@@ -35,6 +36,7 @@ func TestProjectionResolver_ChildCountAndProgress(t *testing.T) {
 	mustCreate(t, core, &nib.Nib{ID: "c3", Slug: "c3", Title: "C3", Status: "todo", Parent: "par"})
 	pr := resolver.ProjectionResolver(context.Background())
 
+	// ChildCount counts every parent link, including the scrapped child.
 	if got := pr.ChildCount("par"); got != 3 {
 		t.Errorf("ChildCount(par) = %d, want 3", got)
 	}
@@ -42,15 +44,61 @@ func TestProjectionResolver_ChildCountAndProgress(t *testing.T) {
 		t.Errorf("ChildCount(c1) = %d, want 0 (leaf)", got)
 	}
 
-	// 2 of 3 children resolved (completed + scrapped) -> 67%.
-	want := ProgressRollup{Total: 3, Done: 2, Percent: 67}
+	// Canonical rollup: 1 completed of 2 non-scrapped children -> 50%;
+	// the scrapped child is excluded from Total/Done and reported separately.
+	want := ProgressRollup{Total: 2, Done: 1, Percent: 50, Scrapped: 1}
 	if got := pr.Progress("par"); !reflect.DeepEqual(got, want) {
 		t.Errorf("Progress(par) = %#v, want %#v", got, want)
 	}
 	// Leaf: no children -> all zeros, no divide-by-zero.
-	wantLeaf := ProgressRollup{Total: 0, Done: 0, Percent: 0}
+	wantLeaf := ProgressRollup{Total: 0, Done: 0, Percent: 0, Scrapped: 0}
 	if got := pr.Progress("c3"); !reflect.DeepEqual(got, wantLeaf) {
 		t.Errorf("Progress(c3) = %#v, want %#v", got, wantLeaf)
+	}
+}
+
+// TestComputeProgress pins the canonical progress rule directly, independent of
+// the store: done = completed only, total excludes scrapped, percent rounds, and
+// scrapped is reported for transparency.
+func TestComputeProgress(t *testing.T) {
+	cases := []struct {
+		name     string
+		statuses []string
+		want     ProgressRollup
+	}{
+		{"no children", nil, ProgressRollup{}},
+		{
+			"mixed with scrapped excluded",
+			[]string{"completed", "scrapped", "todo"},
+			ProgressRollup{Total: 2, Done: 1, Percent: 50, Scrapped: 1},
+		},
+		{
+			"all completed",
+			[]string{"completed", "completed"},
+			ProgressRollup{Total: 2, Done: 2, Percent: 100},
+		},
+		{
+			"rounds to nearest",
+			[]string{"completed", "todo", "todo"}, // 1/3 = 33.33 -> 33
+			ProgressRollup{Total: 3, Done: 1, Percent: 33},
+		},
+		{
+			"only scrapped -> zero denominator",
+			[]string{"scrapped", "scrapped"},
+			ProgressRollup{Total: 0, Done: 0, Percent: 0, Scrapped: 2},
+		},
+		{
+			"draft and deferred count toward total but not done",
+			[]string{"draft", "deferred", "in-progress", "completed"},
+			ProgressRollup{Total: 4, Done: 1, Percent: 25},
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := ComputeProgress(tc.statuses); !reflect.DeepEqual(got, tc.want) {
+				t.Errorf("ComputeProgress(%v) = %#v, want %#v", tc.statuses, got, tc.want)
+			}
+		})
 	}
 }
 

@@ -3,7 +3,7 @@
 {{end -}}
 
 {{- define "epicGroup" -}}
-### Epic: {{.Epic.Title}} {{nibRef .Epic}}
+### Epic: {{.Epic.Title}} — {{.Progress.Percent}}% ({{.Progress.Done}}/{{.Progress.Total}}) {{nibRef .Epic}}
 {{with firstParagraph .Epic.Body}}
 > {{.}}
 {{end}}
@@ -15,7 +15,7 @@
 
 # Roadmap
 {{range .Milestones}}
-## Milestone: {{.Milestone.Title}} {{nibRef .Milestone}}
+## Milestone: {{.Milestone.Title}} — {{.Progress.Percent}}% ({{.Progress.Done}}/{{.Progress.Total}}) {{nibRef .Milestone}}
 {{with firstParagraph .Milestone.Body}}
 > {{.}}
 {{end}}

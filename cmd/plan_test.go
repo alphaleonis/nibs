@@ -113,11 +113,13 @@ func TestBuildPlan_BasicDisplay(t *testing.T) {
 	}
 }
 
-func TestBuildPlan_AcceptanceCriteria(t *testing.T) {
+func TestBuildPlan_AcceptanceRollup(t *testing.T) {
 	resolver, create := setupPlanTest(t)
 
 	create("epic-1", "My Epic", "in-progress", "epic", "", "", "")
 
+	// A "## Acceptance Criteria" section with 3 boxes, 1 checked. The boxes in
+	// other sections must NOT count toward the acceptance rollup.
 	bodyWithAC := `Some intro text.
 
 ## Acceptance Criteria
@@ -128,7 +130,7 @@ func TestBuildPlan_AcceptanceCriteria(t *testing.T) {
 
 ## Other Section
 
-Other content.
+- [x] Not an acceptance box
 `
 	create("task-1", "Task With AC", "todo", "task", "epic-1", "a0", bodyWithAC)
 
@@ -141,26 +143,40 @@ Other content.
 		t.Fatalf("items count = %d, want 1", len(plan.Items))
 	}
 
-	item := plan.Items[0]
-	if item.AcceptanceCriteria == "" {
-		t.Fatal("AcceptanceCriteria should not be empty")
+	got := plan.Items[0].Acceptance
+	if got == nil {
+		t.Fatal("Acceptance rollup should not be nil")
+	}
+	if got.Total != 3 {
+		t.Errorf("Acceptance.Total = %d, want 3 (only boxes in the Acceptance section)", got.Total)
+	}
+	if got.Checked != 1 {
+		t.Errorf("Acceptance.Checked = %d, want 1", got.Checked)
+	}
+}
+
+// TestBuildPlan_AcceptanceHeadingVariants pins that both the current
+// "### Acceptance" body-template heading and the older "## Acceptance Criteria"
+// heading are recognized when counting checkboxes.
+func TestBuildPlan_AcceptanceHeadingVariants(t *testing.T) {
+	resolver, create := setupPlanTest(t)
+
+	create("epic-1", "My Epic", "in-progress", "epic", "", "", "")
+	create("task-1", "Level-3 Acceptance", "todo", "task", "epic-1", "a0",
+		"### Acceptance\n\n- [x] one\n- [ ] two\n")
+	create("task-2", "Criteria Heading", "todo", "task", "epic-1", "a1",
+		"## Acceptance Criteria\n\n- [x] done\n")
+
+	plan, err := buildPlan(context.Background(), resolver, "epic-1", false)
+	if err != nil {
+		t.Fatalf("buildPlan error: %v", err)
 	}
 
-	// Should contain the criteria lines but not the heading or other sections
-	if !strings.Contains(item.AcceptanceCriteria, "First criterion") {
-		t.Errorf("AC should contain 'First criterion', got: %q", item.AcceptanceCriteria)
+	if got := plan.Items[0].Acceptance; got == nil || got.Checked != 1 || got.Total != 2 {
+		t.Errorf("item[0].Acceptance = %+v, want {Checked:1, Total:2}", got)
 	}
-	if !strings.Contains(item.AcceptanceCriteria, "Second criterion") {
-		t.Errorf("AC should contain 'Second criterion', got: %q", item.AcceptanceCriteria)
-	}
-	if !strings.Contains(item.AcceptanceCriteria, "Third criterion") {
-		t.Errorf("AC should contain 'Third criterion', got: %q", item.AcceptanceCriteria)
-	}
-	if strings.Contains(item.AcceptanceCriteria, "## Acceptance Criteria") {
-		t.Errorf("AC should not contain section heading, got: %q", item.AcceptanceCriteria)
-	}
-	if strings.Contains(item.AcceptanceCriteria, "Other content") {
-		t.Errorf("AC should NOT contain content from other sections, got: %q", item.AcceptanceCriteria)
+	if got := plan.Items[1].Acceptance; got == nil || got.Checked != 1 || got.Total != 1 {
+		t.Errorf("item[1].Acceptance = %+v, want {Checked:1, Total:1}", got)
 	}
 }
 
@@ -204,14 +220,14 @@ func TestBuildPlan_JSONOutput(t *testing.T) {
 	if got.Items[0].ID != "task-1" {
 		t.Errorf("JSON items[0].id = %q, want %q", got.Items[0].ID, "task-1")
 	}
-	if got.Items[0].AcceptanceCriteria == "" {
-		t.Error("JSON items[0].acceptance_criteria should not be empty")
+	if got.Items[0].Acceptance == nil || got.Items[0].Acceptance.Total != 1 {
+		t.Errorf("JSON items[0].acceptance = %+v, want {Checked:0, Total:1}", got.Items[0].Acceptance)
 	}
 
-	// Verify JSON field names (snake_case)
+	// Verify the acceptance rollup serializes as a nested object.
 	raw := string(data)
-	if !strings.Contains(raw, `"acceptance_criteria"`) {
-		t.Errorf("JSON should use snake_case field 'acceptance_criteria', got: %s", raw)
+	if !strings.Contains(raw, `"acceptance":{"checked":0,"total":1}`) {
+		t.Errorf("JSON should carry acceptance rollup object, got: %s", raw)
 	}
 	if !strings.Contains(raw, `"position"`) {
 		t.Errorf("JSON should contain 'position' field, got: %s", raw)
@@ -241,12 +257,12 @@ func TestBuildPlan_EmptyChildren(t *testing.T) {
 	}
 }
 
-func TestBuildPlan_MissingAcceptanceCriteria(t *testing.T) {
+func TestBuildPlan_MissingAcceptanceSection(t *testing.T) {
 	resolver, create := setupPlanTest(t)
 
 	create("epic-1", "My Epic", "in-progress", "epic", "", "", "")
 
-	// One child with AC, one without
+	// One child with an Acceptance section, two without.
 	create("task-1", "Has AC", "todo", "task", "epic-1", "a0", "## Acceptance Criteria\n\n- [ ] Do it\n")
 	create("task-2", "No AC", "todo", "task", "epic-1", "a1", "Just a plain description.\n")
 	create("task-3", "Empty Body", "todo", "task", "epic-1", "a2", "")
@@ -260,30 +276,27 @@ func TestBuildPlan_MissingAcceptanceCriteria(t *testing.T) {
 		t.Fatalf("items count = %d, want 3", len(plan.Items))
 	}
 
-	// First item should have AC
-	if plan.Items[0].AcceptanceCriteria == "" {
-		t.Error("item[0] should have acceptance criteria")
+	// First item should carry an acceptance rollup.
+	if plan.Items[0].Acceptance == nil {
+		t.Error("item[0] should have an acceptance rollup")
 	}
 
-	// Second and third items should have empty AC (omitted in JSON)
-	if plan.Items[1].AcceptanceCriteria != "" {
-		t.Errorf("item[1].AcceptanceCriteria = %q, want empty", plan.Items[1].AcceptanceCriteria)
+	// Items without an Acceptance section report nil (omitted in JSON).
+	if plan.Items[1].Acceptance != nil {
+		t.Errorf("item[1].Acceptance = %+v, want nil", plan.Items[1].Acceptance)
 	}
-	if plan.Items[2].AcceptanceCriteria != "" {
-		t.Errorf("item[2].AcceptanceCriteria = %q, want empty", plan.Items[2].AcceptanceCriteria)
+	if plan.Items[2].Acceptance != nil {
+		t.Errorf("item[2].Acceptance = %+v, want nil", plan.Items[2].Acceptance)
 	}
 
-	// Verify JSON omits empty acceptance_criteria
+	// Verify JSON omits the acceptance key for the two items without a section.
 	data, err := json.Marshal(plan)
 	if err != nil {
 		t.Fatalf("json.Marshal error: %v", err)
 	}
-
-	// Count occurrences of "acceptance_criteria" - should appear only once
 	raw := string(data)
-	count := strings.Count(raw, "acceptance_criteria")
-	if count != 1 {
-		t.Errorf("'acceptance_criteria' should appear once in JSON (for item with AC), appeared %d times", count)
+	if count := strings.Count(raw, `"acceptance"`); count != 1 {
+		t.Errorf("'acceptance' should appear once in JSON (for item with a section), appeared %d times", count)
 	}
 }
 

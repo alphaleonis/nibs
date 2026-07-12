@@ -8,17 +8,50 @@ import (
 	"github.com/alphaleonis/nibs/internal/projection"
 )
 
-// ProgressRollup is the value projected for the computed `progress` field: a
-// direct-children completion rollup. Total is the number of direct children;
-// Done counts children in a resolved status (completed or scrapped — the
-// canonical "finished" set from nib.IsResolvedStatus); Percent is
-// round(Done/Total*100), and 0 when the nib has no children. A leaf nib (no
-// children) therefore reports {total:0, done:0, percent:0}: progress is a
-// rollup over descendants, not a reflection of the nib's own status.
+// ProgressRollup is the value projected for the computed `progress` field, and
+// the ONE canonical child-completion rollup reused by the recipe views
+// (context, plan, roadmap) so `nibs get <id> -f progress` and those views can
+// never disagree. Build it only via ComputeProgress — do not fork the rule.
+//
+// Canonical definition (single source of truth):
+//   - Done     = direct children whose status is "completed". Scrapped work is
+//     cancelled, not finished, so it is NOT counted as done.
+//   - Total    = direct children EXCLUDING scrapped ones. Scrapped work is
+//     abandoned — neither done nor pending — so it leaves the denominator
+//     entirely. draft/todo/in-progress/deferred children all count toward Total.
+//   - Percent  = round(Done/Total*100); 0 when Total == 0.
+//   - Scrapped = direct children with status "scrapped", surfaced purely for
+//     transparency (excluded from both Done and Total).
+//
+// A leaf nib (no children) reports {total:0, done:0, percent:0, scrapped:0}:
+// progress is a rollup over children, not a reflection of the nib's own status.
 type ProgressRollup struct {
-	Total   int `json:"total"`
-	Done    int `json:"done"`
-	Percent int `json:"percent"`
+	Total    int `json:"total"`
+	Done     int `json:"done"`
+	Percent  int `json:"percent"`
+	Scrapped int `json:"scrapped"`
+}
+
+// ComputeProgress builds the canonical ProgressRollup from a set of child
+// status strings. It is the single place the done/total/percent rule lives; the
+// projected `progress` field and every recipe view call it, so the rollup is
+// identical everywhere. See ProgressRollup for the exact definition.
+func ComputeProgress(childStatuses []string) ProgressRollup {
+	var r ProgressRollup
+	for _, s := range childStatuses {
+		if s == "scrapped" {
+			r.Scrapped++
+			continue
+		}
+		r.Total++
+		if s == "completed" {
+			r.Done++
+		}
+	}
+	if r.Total > 0 {
+		r.Percent = int(math.Round(float64(r.Done) / float64(r.Total) * 100))
+	}
+	return r
 }
 
 // projectionResolver adapts the GraphQL resolver's store logic to the
@@ -75,24 +108,18 @@ func (p *projectionResolver) ChildCount(id string) int {
 	return count
 }
 
-// Progress returns a ProgressRollup over the nib's direct children. See
-// ProgressRollup for the exact semantics.
+// Progress returns the canonical child-completion ProgressRollup over the nib's
+// direct children, collecting the child set from the incoming parent links (the
+// same set the Children resolver derives). See ProgressRollup / ComputeProgress
+// for the exact rule.
 func (p *projectionResolver) Progress(id string) any {
-	var total, done int
+	var statuses []string
 	for _, link := range p.r.Reader.FindIncomingLinks(id) {
-		if link.LinkType != "parent" {
-			continue
-		}
-		total++
-		if nib.IsResolvedStatus(link.FromNib.Status) {
-			done++
+		if link.LinkType == "parent" {
+			statuses = append(statuses, link.FromNib.Status)
 		}
 	}
-	percent := 0
-	if total > 0 {
-		percent = int(math.Round(float64(done) / float64(total) * 100))
-	}
-	return ProgressRollup{Total: total, Done: done, Percent: percent}
+	return ComputeProgress(statuses)
 }
 
 // Ready reports whether the nib is startable: not already resolved
