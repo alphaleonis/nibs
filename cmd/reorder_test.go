@@ -80,13 +80,16 @@ func reorderFixture() map[string]string {
 }
 
 // listChildrenOrder runs `nibs list --parent <id> --json` and returns the
-// resulting children in disk order.
+// resulting children in disk order. It projects id+order explicitly (the
+// default ref view omits order) and reads them off the {nibs,count,truncated}
+// envelope, returning bare nibs carrying only the two fields the reorder
+// assertions consult (ID for identity, Order for the failure diagnostic).
 func listChildrenOrder(t *testing.T, nibsDir, parentID string) []*nib.Nib {
 	t.Helper()
 	t.Cleanup(resetRootPersistentFlags)
 	t.Cleanup(resetListFlags)
 	resetListFlags()
-	rootCmd.SetArgs([]string{"--nibs-path", nibsDir, "list", "--parent", parentID, "--json"})
+	rootCmd.SetArgs([]string{"--nibs-path", nibsDir, "list", "--parent", parentID, "-f", "id,order", "--json"})
 
 	var execErr error
 	out := captureStdout(t, func() {
@@ -95,9 +98,18 @@ func listChildrenOrder(t *testing.T, nibsDir, parentID string) []*nib.Nib {
 	if execErr != nil {
 		t.Fatalf("list --parent %s failed: %v", parentID, execErr)
 	}
-	var results []*nib.Nib
-	if err := json.Unmarshal([]byte(out), &results); err != nil {
+	var env struct {
+		Nibs []struct {
+			ID    string `json:"id"`
+			Order string `json:"order"`
+		} `json:"nibs"`
+	}
+	if err := json.Unmarshal([]byte(out), &env); err != nil {
 		t.Fatalf("unmarshal: %v\nraw: %s", err, out)
+	}
+	results := make([]*nib.Nib, len(env.Nibs))
+	for i, n := range env.Nibs {
+		results[i] = &nib.Nib{ID: n.ID, Order: n.Order}
 	}
 	return results
 }
@@ -213,12 +225,15 @@ func TestReorderCommand_ChildrenOf_RootEmptyString(t *testing.T) {
 }
 
 // listRootOrder runs `nibs list --no-parent --json` to list root-level nibs.
+// It projects id+order and reads them off the {nibs,count,truncated} envelope
+// (same shape as listChildrenOrder), returning bare nibs carrying only ID and
+// Order.
 func listRootOrder(t *testing.T, nibsDir string) []*nib.Nib {
 	t.Helper()
 	t.Cleanup(resetRootPersistentFlags)
 	t.Cleanup(resetListFlags)
 	resetListFlags()
-	rootCmd.SetArgs([]string{"--nibs-path", nibsDir, "list", "--no-parent", "--json"})
+	rootCmd.SetArgs([]string{"--nibs-path", nibsDir, "list", "--no-parent", "-f", "id,order", "--json"})
 
 	var execErr error
 	out := captureStdout(t, func() {
@@ -227,9 +242,18 @@ func listRootOrder(t *testing.T, nibsDir string) []*nib.Nib {
 	if execErr != nil {
 		t.Fatalf("list --no-parent failed: %v", execErr)
 	}
-	var results []*nib.Nib
-	if err := json.Unmarshal([]byte(out), &results); err != nil {
+	var env struct {
+		Nibs []struct {
+			ID    string `json:"id"`
+			Order string `json:"order"`
+		} `json:"nibs"`
+	}
+	if err := json.Unmarshal([]byte(out), &env); err != nil {
 		t.Fatalf("unmarshal: %v\nraw: %s", err, out)
+	}
+	results := make([]*nib.Nib, len(env.Nibs))
+	for i, n := range env.Nibs {
+		results[i] = &nib.Nib{ID: n.ID, Order: n.Order}
 	}
 	return results
 }

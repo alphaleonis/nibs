@@ -3,15 +3,11 @@ package cmd
 import (
 	"context"
 	"fmt"
-	"os"
 
-	"github.com/alphaleonis/nibs/internal/graph"
 	"github.com/alphaleonis/nibs/internal/graph/model"
-	"github.com/alphaleonis/nibs/internal/nib"
 	"github.com/alphaleonis/nibs/internal/output"
-	"github.com/alphaleonis/nibs/internal/ui"
+	"github.com/alphaleonis/nibs/internal/projection"
 	"github.com/spf13/cobra"
-	"golang.org/x/term"
 )
 
 var (
@@ -38,21 +34,43 @@ var (
 	listReady       bool
 	listQuiet       bool
 	listSort        string
-	listFull        bool
-	listColumns     string
+	listView        string
+	listFields      string
+	listNoHeader    bool
+	listCount       bool
+	listLimit       int
 )
 
 var listCmd = &cobra.Command{
 	Use:     "list",
 	Aliases: []string{"ls"},
-	Short:   "List all nibs",
-	Long: `Lists all nibs in the .nibs directory.
+	Short:   "List nibs (projected, TSV by default)",
+	Long: `List nibs matching the filter flags, projected through the field-set engine.
 
-Position column (#):
-  The leftmost # column shows each nib's natural-order position among its
-  siblings (per-parent, 1-based). It is independent of --sort, so under
-  --sort priority the numbers will appear non-monotonic — that's by design,
-  letting you reference "move from 2 to 5" regardless of the current sort.
+The filtered set is projected and rendered as tab-separated rows under a
+"# <n> nibs" comment header (drop it with --no-header). Every output form
+shares one field-selection model with 'nibs get'.
+
+  --view id|ref|card|full   Select a coarse field set (leanest to fullest).
+                            Defaults to 'ref' when neither --view nor -f is
+                            given.
+  -f, --fields <spec>       Select exact fields, additive over --view. Scalars,
+                            computed fields (children, progress, ready), and one
+                            level of nested relation projection are supported,
+                            e.g. -f "id,blocked-by(id,status)". Given alone
+                            (no --view), the projection is exactly those fields.
+
+Output modes:
+  (default)                 TSV rows + the "# <n> nibs" header.
+  --no-header               TSV rows only (no header line).
+  --json                    The {"nibs":[…],"count":N,"truncated":<bool>}
+                            envelope — the same shape rel and the recipe views
+                            emit.
+  -q, --quiet               Ids only, one per line (the 'id' view, unwrapped).
+  -c, --count               The true count of the filtered set as a bare
+                            integer (pre-limit; ignores --view/-f/--json).
+  --limit N                 Project only the first N rows and set
+                            "truncated":true in the envelope. N<=0 is unlimited.
 
 Search Syntax (--search/-S):
   The search flag supports Bleve query string syntax:
@@ -75,7 +93,10 @@ Search Syntax (--search/-S):
   interleaved with full-text hits by the list's sort order.`,
 	RunE: func(cmd *cobra.Command, args []string) error {
 		app := getApp(cmd)
-		// Build GraphQL filter from CLI flags
+
+		// Build the GraphQL filter from the CLI flags. This filtering/sorting
+		// layer is unchanged by the projection rewire — only the output layer
+		// moved onto the field-set engine.
 		filter := &model.NibFilter{
 			Status:          listStatus,
 			ExcludeStatus:   listNoStatus,
@@ -89,12 +110,9 @@ Search Syntax (--search/-S):
 			ExcludeTags:     listNoTag,
 		}
 
-		// Add search filter if provided
 		if listSearch != "" {
 			filter.Search = &listSearch
 		}
-
-		// Add parent/blocks filters
 		if listHasParent {
 			filter.HasParent = &listHasParent
 		}
@@ -120,15 +138,15 @@ Search Syntax (--search/-S):
 		if listMentionedBy != "" {
 			filter.MentionedByID = &listMentionedBy
 		}
-		// --ready and --is-blocked are mutually exclusive
-		if listReady && listIsBlocked {
-			return fmt.Errorf("--ready and --is-blocked are mutually exclusive")
-		}
 
+		// --ready and --is-blocked are mutually exclusive.
+		if listReady && listIsBlocked {
+			return reportErr(listJSON, output.ErrValidation,
+				fmt.Errorf("--ready and --is-blocked are mutually exclusive"))
+		}
 		if listIsBlocked {
 			filter.IsBlocked = &listIsBlocked
 		}
-
 		// --ready: nibs available to start (not blocked, excludes
 		// in-progress/completed/scrapped/draft/deferred). Deferred nibs are
 		// parked (non-terminal but not actionable now), so they stay out of the
@@ -139,30 +157,25 @@ Search Syntax (--search/-S):
 			filter.ExcludeStatus = append(filter.ExcludeStatus, "in-progress", "completed", "scrapped", "draft", "deferred")
 		}
 
-		// --columns is mutually exclusive with --json and --quiet. Validate
-		// up-front (and parse the column spec) so callers get a clean error
-		// before any nib lookups run. The dual-path convention via reportErr
-		// matches cmd/links.go: text mode → Cobra renders the error to stderr;
-		// JSON mode → structured envelope on stdout AND a non-zero exit.
-		columnsRequested := cmd.Flags().Changed("columns")
-		var cols []output.Column
-		if columnsRequested {
-			if listJSON {
-				return reportErr(listJSON, output.ErrValidation,
-					fmt.Errorf("--columns and --json are mutually exclusive"))
-			}
-			if listQuiet {
-				return reportErr(listJSON, output.ErrValidation,
-					fmt.Errorf("--columns and --quiet are mutually exclusive"))
-			}
-			parsed, perr := output.ParseColumns(listColumns)
-			if perr != nil {
-				return reportErr(listJSON, output.ErrValidation, perr)
-			}
-			cols = parsed
+		// Compile the projection selection: --view first, then -f merged
+		// additively on top. A bad view/field/nesting is a VALIDATION error
+		// naming the menu, surfaced before any nib work — so even the
+		// count/quiet shortcuts reject a bad -f rather than silently ignoring
+		// it.
+		sel, err := projection.Compile(listView, listFields)
+		if err != nil {
+			return reportErr(listJSON, output.ErrValidation, err)
+		}
+		// An empty selection (neither --view nor -f) defaults to the ref tier.
+		// Applying it as the empty-selection fallback — rather than a literal
+		// flag default — keeps `-f id,title` meaning exactly {id,title} instead
+		// of ref∪{id,title}. ref is a compile-time-valid view, so this never
+		// errors.
+		if sel.IsEmpty() {
+			sel, _ = projection.ViewFields(string(projection.ViewRef))
 		}
 
-		// Execute query via GraphQL resolver with sort
+		// Execute the query (filter + sort).
 		nibSort := buildNibSort(listSort)
 		resolver := app.newResolver()
 		nibs, err := resolver.Query().Nibs(context.Background(), filter, nibSort)
@@ -170,33 +183,15 @@ Search Syntax (--search/-S):
 			return fmt.Errorf("querying nibs: %w", err)
 		}
 
-		// JSON output (flat list) — work on copies to avoid mutating Core state
-		if listJSON {
-			filtered := filterResolvedBlockers(nibs, app.Core)
-			if !listFull {
-				for i, b := range filtered {
-					clone := *b
-					clone.Body = ""
-					filtered[i] = &clone
-				}
-			}
-			// Always emit `[]` for empty list fields so agent consumers can
-			// rely on `jq '.[]'` without special-casing null.
-			if filtered == nil {
-				filtered = []*nib.Nib{}
-			}
-			return output.SuccessMultiple(filtered)
-		}
-
-		// --columns: tab-separated tabular output (flat, like --quiet but
-		// with selectable fields). Spec was already parsed up-front so the
-		// dispatch is unconditional here.
-		if columnsRequested {
-			_, _ = fmt.Fprint(cmd.OutOrStdout(), output.FormatColumns(nibs, cols))
+		// -c/--count: the true count of the filtered set (pre-limit) as a bare
+		// integer. Independent of --json and the projection selection.
+		if listCount {
+			fmt.Println(projection.Count(nibs))
 			return nil
 		}
 
-		// Quiet mode: just IDs (flat)
+		// -q/--quiet: ids only, one per line (equivalent to the id view,
+		// unwrapped). Independent of --limit and the projection selection.
 		if listQuiet {
 			for _, b := range nibs {
 				fmt.Println(b.ID)
@@ -204,54 +199,21 @@ Search Syntax (--search/-S):
 			return nil
 		}
 
-		// Default: tree view
-		// We need all nibs to find ancestors for context
-		allNibs, err := resolver.Query().Nibs(context.Background(), nil, nil)
+		// Project the filtered nibs through the selection, applying --limit.
+		projResolver := resolver.ProjectionResolver(context.Background())
+		pl, err := projection.ProjectList(nibs, sel, projResolver, listLimit)
 		if err != nil {
-			return fmt.Errorf("querying all nibs for tree: %w", err)
+			return reportErr(listJSON, output.ErrValidation, err)
 		}
 
-		// Create sort function for tree building
-		sortFn := func(b []*nib.Nib) {
-			graph.ApplySorting(b, nibSort, app.Config())
+		// --json: the {nibs,count,truncated} envelope (byte-identical to what
+		// rel and the recipe views emit).
+		if listJSON {
+			return output.JSONRaw(pl)
 		}
 
-		// Build tree
-		tree := ui.BuildTree(nibs, allNibs, sortFn)
-
-		if len(tree) == 0 {
-			fmt.Println(ui.Muted.Render("No nibs found. Create one with: nibs new <title>"))
-			return nil
-		}
-
-		// Calculate max ID width from all nibs in tree
-		maxIDWidth := 2
-		for _, b := range allNibs {
-			if len(b.ID) > maxIDWidth {
-				maxIDWidth = len(b.ID)
-			}
-		}
-		maxIDWidth += 2
-
-		// Check if any nibs have tags
-		hasTags := false
-		for _, b := range nibs {
-			if len(b.Tags) > 0 {
-				hasTags = true
-				break
-			}
-		}
-
-		// Detect terminal width (default to 80 if not a terminal)
-		termWidth := 80
-		if w, _, err := term.GetSize(int(os.Stdout.Fd())); err == nil && w > 0 {
-			termWidth = w
-		}
-
-		// Per-parent natural-order position map (independent of --sort).
-		positions := nib.PositionMap(allNibs)
-
-		fmt.Print(ui.RenderTree(tree, app.Config(), maxIDWidth, hasTags, termWidth, positions))
+		// Default: TSV rows under a "# <n> nibs" header (--no-header drops it).
+		fmt.Print(output.FormatListTSV(pl.Rows(), !listNoHeader))
 		return nil
 	},
 }
@@ -279,15 +241,8 @@ func buildNibSort(sortFlag string) *model.NibSort {
 	}
 }
 
-func truncate(s string, maxLen int) string {
-	if len(s) <= maxLen {
-		return s
-	}
-	return s[:maxLen-3] + "..."
-}
-
 func init() {
-	listCmd.Flags().BoolVar(&listJSON, "json", false, "Output as JSON")
+	listCmd.Flags().BoolVar(&listJSON, "json", false, "Emit the {nibs,count,truncated} JSON envelope")
 	listCmd.Flags().StringVarP(&listSearch, "search", "S", "", "Full-text search in title and body (nib IDs and ID fragments match directly)")
 	listCmd.Flags().StringArrayVarP(&listStatus, "status", "s", nil, "Filter by status (can be repeated)")
 	listCmd.Flags().StringArrayVar(&listNoStatus, "no-status", nil, "Exclude by status (can be repeated)")
@@ -310,7 +265,10 @@ func init() {
 	listCmd.Flags().BoolVar(&listReady, "ready", false, "Filter nibs available to start (not blocked, excludes in-progress/completed/scrapped/draft/deferred)")
 	listCmd.Flags().BoolVarP(&listQuiet, "quiet", "q", false, "Only output IDs (one per line)")
 	listCmd.Flags().StringVar(&listSort, "sort", "", "Sort by: created, updated, status, priority, status-priority, id (default: order key)")
-	listCmd.Flags().BoolVar(&listFull, "full", false, "Include nib body in JSON output")
-	listCmd.Flags().StringVar(&listColumns, "columns", "", "Tab-separated tabular output. Comma-separated column names. Available: "+output.AvailableColumnsString())
+	listCmd.Flags().StringVar(&listView, "view", "", "View tier: id, ref, card, or full (default: ref)")
+	listCmd.Flags().StringVarP(&listFields, "fields", "f", "", "Field selection (additive over --view), e.g. \"status,priority\" or \"id,blocked-by(id,status)\"")
+	listCmd.Flags().BoolVar(&listNoHeader, "no-header", false, "Drop the \"# <n> nibs\" header from TSV output")
+	listCmd.Flags().BoolVarP(&listCount, "count", "c", false, "Output the count of matching nibs as a bare integer")
+	listCmd.Flags().IntVar(&listLimit, "limit", 0, "Project only the first N rows (0 = unlimited); sets truncated:true when it drops rows")
 	rootCmd.AddCommand(listCmd)
 }
