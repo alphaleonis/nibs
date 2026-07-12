@@ -278,6 +278,158 @@ describe("useTreeDrag", () => {
     cleanup?.();
   });
 
+  it("before/after reorder where dragged & target share a display container but have DIFFERENT real parents is INVALID (nibs-dapk)", () => {
+    // Bug nibs-dapk: in a grouping lens two rows can share the same DISPLAY
+    // container (both display at root → displayParentId null) while having
+    // DIFFERENT real nib.parentId — e.g. a promoted feature header (real parent
+    // a hidden epic) and a loose "No X" bucket task (real parent null). A plain
+    // before/after reorder here fires a parent-less reorderNibCmd, but the
+    // backend computes siblings from the dragged item's UNCHANGED real parent and
+    // rejects ("not a sibling (different parent)"). "Reorder" only means something
+    // within a single real parent, so the affordance must read INVALID and the
+    // drop must never be offered. This drives the REAL onDragPointerMove validity
+    // path (not setDropTarget), which is where the false-valid slips through.
+    const dragged = makeNib({ id: "F1", type: "feature", parentId: "hidden-epic" });
+    const target = makeNib({ id: "T1", type: "task", parentId: null });
+    const rows = [
+      // Promoted header: real parent a hidden epic, but display parent is root.
+      makeRow(dragged, { displayParentId: null }),
+      // Loose "No epic" bucket item: real parent null, display parent root too.
+      makeRow(target, { displayParentId: null }),
+    ];
+
+    const drag = new DragState();
+    const composable = setup({ drag, rows });
+
+    startDragOn("F1", composable);
+    expect(drag.isDragging).toBe(true);
+
+    const tr = document.createElement("tr");
+    tr.dataset.nibId = "T1";
+    tr.getBoundingClientRect = () => ({
+      top: 200, bottom: 240, left: 0, right: 800,
+      height: 40, width: 800, x: 0, y: 200,
+      toJSON: () => {},
+    }) as DOMRect;
+    document.body.appendChild(tr);
+    const origElementFromPoint = document.elementFromPoint;
+    document.elementFromPoint = () => tr;
+
+    // clientY=205 → 5px into a 40px row → ratio 0.125 < 0.3 → "before" (reorder).
+    window.dispatchEvent(new PointerEvent("pointermove", {
+      clientX: 200, clientY: 205, bubbles: true,
+    }));
+
+    expect(drag.dropTargetId).toBe("T1");
+    expect(drag.dropZone).toBe("before");
+    // Equal display parent (null) but different real parent → INVALID.
+    expect(drag.dropValid).toBe(false);
+
+    document.elementFromPoint = origElementFromPoint;
+    document.body.removeChild(tr);
+    cleanup?.();
+  });
+
+  it("before/after reorder between genuine real siblings (same display + same real parent) stays VALID (nibs-dapk guardrail)", () => {
+    // Scope guardrail for the nibs-dapk fix: when the dragged and target rows are
+    // real siblings (same real nib.parentId) and share the same display
+    // container, a before/after reorder must remain VALID — the new real-parent
+    // guard only rejects the equal-display / DIFFERENT-real-parent case.
+    const dragged = makeNib({ id: "C1", type: "task", parentId: "epic-A" });
+    const target = makeNib({ id: "C2", type: "task", parentId: "epic-A" });
+    const rows = [
+      makeRow(dragged, { displayParentId: "epic-A" }),
+      makeRow(target, { displayParentId: "epic-A" }),
+    ];
+
+    const drag = new DragState();
+    const composable = setup({ drag, rows });
+
+    startDragOn("C1", composable);
+    expect(drag.isDragging).toBe(true);
+
+    const tr = document.createElement("tr");
+    tr.dataset.nibId = "C2";
+    tr.getBoundingClientRect = () => ({
+      top: 200, bottom: 240, left: 0, right: 800,
+      height: 40, width: 800, x: 0, y: 200,
+      toJSON: () => {},
+    }) as DOMRect;
+    document.body.appendChild(tr);
+    const origElementFromPoint = document.elementFromPoint;
+    document.elementFromPoint = () => tr;
+
+    window.dispatchEvent(new PointerEvent("pointermove", {
+      clientX: 200, clientY: 205, bubbles: true,
+    }));
+
+    expect(drag.dropTargetId).toBe("C2");
+    expect(drag.dropZone).toBe("before");
+    // Genuine same-real-parent reorder → still VALID.
+    expect(drag.dropValid).toBe(true);
+
+    document.elementFromPoint = origElementFromPoint;
+    document.body.removeChild(tr);
+    cleanup?.();
+  });
+
+  it("before/after reorder for a MULTI-SELECT drag spanning MIXED real parents is INVALID (nibs-dapk fail-closed)", () => {
+    // Completeness gap in the nibs-dapk guard: for a multi-select drag whose
+    // selected rows span DIFFERENT real parents, the shared-real-parent Set
+    // collapses to size≠1 → draggedRealParentId === undefined. A guard that only
+    // rejects when draggedRealParentId is DEFINED-and-different fails OPEN here —
+    // the drop reads valid, then handleDrop fires a parent-less reorder the
+    // backend rejects ("not a sibling"). With no single PROVABLE shared real
+    // parent we cannot establish real-sibling-hood, so a before/after reorder
+    // must be INVALID (fail closed). Drives the real onDragPointerMove path.
+    const d1 = makeNib({ id: "D1", type: "feature", parentId: "epic-A" });
+    const d2 = makeNib({ id: "D2", type: "task", parentId: "epic-B" });
+    const target = makeNib({ id: "T1", type: "task", parentId: "epic-C" });
+    const rows = [
+      // Both dragged rows display at root (equal displayParentId null) but have
+      // DIFFERENT real parents → draggedRealParentId becomes undefined.
+      makeRow(d1, { displayParentId: null }),
+      makeRow(d2, { displayParentId: null }),
+      makeRow(target, { displayParentId: null }),
+    ];
+
+    // Multi-select: both D1 and D2 selected, drag started on D1.
+    const selection = new SelectionState();
+    selection.selectedIds = new Set(["D1", "D2"]);
+
+    const drag = new DragState();
+    const composable = setup({ selection, drag, rows });
+
+    startDragOn("D1", composable);
+    expect(drag.isDragging).toBe(true);
+    expect(drag.draggedIds).toEqual(expect.arrayContaining(["D1", "D2"]));
+
+    const tr = document.createElement("tr");
+    tr.dataset.nibId = "T1";
+    tr.getBoundingClientRect = () => ({
+      top: 200, bottom: 240, left: 0, right: 800,
+      height: 40, width: 800, x: 0, y: 200,
+      toJSON: () => {},
+    }) as DOMRect;
+    document.body.appendChild(tr);
+    const origElementFromPoint = document.elementFromPoint;
+    document.elementFromPoint = () => tr;
+
+    // clientY=205 → "before" zone (reorder).
+    window.dispatchEvent(new PointerEvent("pointermove", {
+      clientX: 200, clientY: 205, bubbles: true,
+    }));
+
+    expect(drag.dropTargetId).toBe("T1");
+    expect(drag.dropZone).toBe("before");
+    // No single provable shared real parent → INVALID.
+    expect(drag.dropValid).toBe(false);
+
+    document.elementFromPoint = origElementFromPoint;
+    document.body.removeChild(tr);
+    cleanup?.();
+  });
+
   it("before/after drop forwards a promoted header's display parent (null), not its hidden real parent", () => {
     // What this verifies at the useTreeDrag layer: onDragPointerUp forwards the
     // TARGET row's displayParentId verbatim — it does NOT read nib.parentId. The

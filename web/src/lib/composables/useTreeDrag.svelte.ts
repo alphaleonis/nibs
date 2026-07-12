@@ -25,6 +25,10 @@ export function useTreeDrag(opts: {
   let dragDescendantIds: Set<string> = new Set();
   let draggedTypes: string[] = [];
   let draggedParentId: string | null | undefined = undefined;
+  // The dragged rows' shared REAL nib.parentId (undefined = mixed real parents).
+  // Distinct from draggedParentId, which is the shared DISPLAY parent. Needed to
+  // reject a same-display-container / different-real-parent reorder (nibs-dapk).
+  let draggedRealParentId: string | null | undefined = undefined;
   let autoScrollRAF: number | null = null;
 
   // Pending drag state (before threshold)
@@ -130,6 +134,12 @@ export function useTreeDrag(opts: {
     const parents = new Set(ids.map(id => rows.find(r => r.nib.id === id)?.displayParentId));
     draggedParentId = parents.size === 1 ? [...parents][0] : undefined;
 
+    // Also cache the shared REAL parent (nib.parentId). Two rows can share a
+    // display container (equal displayParentId) yet have different real parents;
+    // a before/after reorder is only meaningful within a single real parent.
+    const realParents = new Set(ids.map(id => rows.find(r => r.nib.id === id)?.nib.parentId));
+    draggedRealParentId = realParents.size === 1 ? [...realParents][0] : undefined;
+
     drag.startDrag(ids, draggedParentId);
     document.body.style.cursor = "grabbing";
   }
@@ -199,6 +209,22 @@ export function useTreeDrag(opts: {
         const dp = targetRow.displayParentId;
         const targetParent = dp ? nibMap.get(dp) ?? null : null;
         valid = isValidCrossParentDrop(draggedTypes, targetParent?.type ?? null);
+      } else if (draggedRealParentId === undefined || targetRow.nib.parentId !== draggedRealParentId) {
+        // Same DISPLAY container (equal displayParentId) but no PROVABLE single
+        // shared real parent for the reorder. This fires when either:
+        //   - the dragged set has no single real parent (draggedRealParentId
+        //     undefined) — a multi-select spanning mixed real parents, or a
+        //     selected-but-hidden row that misses rows.find; or
+        //   - the target's real parent differs from the dragged set's shared real
+        //     parent — e.g. a promoted header (real parent a hidden container) and
+        //     a loose "No X" bucket item both displaying at root.
+        // A plain before/after reorder here fires a parent-less reorderNibCmd, but
+        // the backend computes siblings from the dragged item's UNCHANGED real
+        // parent and rejects it ("not a sibling"). Reorder is only meaningful
+        // within a single real parent, so FAIL CLOSED: mark the drop INVALID rather
+        // than offer a valid-looking affordance that errors on drop (nibs-dapk).
+        // The cross-DISPLAY-parent reparentAndReorder case above is unaffected.
+        valid = false;
       }
     }
 
@@ -224,6 +250,7 @@ export function useTreeDrag(opts: {
     dragDescendantIds = new Set();
     draggedTypes = [];
     draggedParentId = undefined;
+    draggedRealParentId = undefined;
     dragPending = false;
     dragStartNibId = null;
     stopAutoScroll();
