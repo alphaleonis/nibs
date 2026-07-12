@@ -925,3 +925,66 @@ describe("TreeTableRow context-based state", () => {
     expect(row.classList.contains("blocked-dim")).toBe(true);
   });
 });
+
+// Row opacity is single-sourced through one computed value applied inline, so
+// `tr.style.opacity` IS the resolved opacity — no CSS-cascade / specificity /
+// declaration-order guessing. Documented precedence:
+//   fading (0) > dragged (0.3) > dimmed (0.4) > blocked-dim (0.6) > normal (1).
+// The normal rank is written as no inline opacity (CSS default 1), so its
+// resolved `style.opacity` is the empty string.
+describe("TreeTableRow single-sourced row opacity precedence", () => {
+  interface OpacityOptions {
+    dimmed?: boolean;
+    fading?: boolean;
+    dragged?: boolean;
+    pillDim?: boolean;
+    blocked?: boolean;
+  }
+
+  function renderRowInState(opts: OpacityOptions) {
+    const drag = new DragState();
+    if (opts.dragged) drag.startDrag(["nibs-abc1"]);
+    return render(TreeTableRow, {
+      props: {
+        nib: makeTreeTableNib({
+          id: "nibs-abc1",
+          blockedByIds: opts.blocked ? ["nibs-xyz1"] : [],
+        }),
+        dimmed: opts.dimmed ?? false,
+        fading: opts.fading ?? false,
+        blockedEmphasis: opts.pillDim ? "pill-dim" : undefined,
+      },
+      context: makeTestContext(new SelectionState(), drag),
+    });
+  }
+
+  // NOTE: `dragged + blocked-dim` is intentionally NOT tested — blockedDim is gated
+  // on `!isDragged` (see the derived in TreeTableRow.svelte), so the two class
+  // markers can never co-occur; there is no precedence to pin between them.
+  const cases: Array<{ name: string; opts: OpacityOptions; expected: string }> = [
+    // nib-required combo #1: fading must fully fade even when blocked-dim would apply.
+    { name: "fading + blocked-dim -> 0 (fading wins)", opts: { fading: true, pillDim: true, blocked: true }, expected: "0" },
+    // nib-required combo #2: dimmed wins over blocked-dim (blocked-dim no longer a dead class).
+    { name: "dimmed + blocked-dim + blocked -> 0.4 (dimmed wins)", opts: { dimmed: true, pillDim: true, blocked: true }, expected: "0.4" },
+    // Fading is the top rank: it must beat BOTH independent lower booleans, which
+    // is the exact inline-dimmed-beats-fading regression this refactor removed.
+    { name: "fading + dimmed -> 0 (fading wins over dimmed)", opts: { fading: true, dimmed: true }, expected: "0" },
+    { name: "fading + dragged -> 0 (fading wins over dragged)", opts: { fading: true, dragged: true }, expected: "0" },
+    // Single-state ranks.
+    { name: "fading alone -> 0", opts: { fading: true }, expected: "0" },
+    { name: "dragged alone -> 0.3", opts: { dragged: true }, expected: "0.3" },
+    { name: "dimmed alone -> 0.4", opts: { dimmed: true }, expected: "0.4" },
+    { name: "blocked-dim alone -> 0.6", opts: { pillDim: true, blocked: true }, expected: "0.6" },
+    { name: "no dimming state -> normal (no inline opacity)", opts: {}, expected: "" },
+    // Cross-rank tie-break: dragged outranks dimmed.
+    { name: "dragged + dimmed -> 0.3 (dragged wins)", opts: { dragged: true, dimmed: true }, expected: "0.3" },
+  ];
+
+  for (const { name, opts, expected } of cases) {
+    it(name, () => {
+      const { container } = renderRowInState(opts);
+      const row = container.querySelector("tr") as HTMLElement;
+      expect(row.style.opacity).toBe(expected);
+    });
+  }
+});

@@ -64,12 +64,32 @@
   const blockedVariant = $derived(blockedVariantFor(blockedEmphasis));
   // `pill-dim` additionally dims the whole row. Gated off during drag, while a
   // drop target, and during the change-pulse so its 0.6 opacity doesn't mute
-  // those affordances. NOTE: this gate is not the sole row-opacity source — the
-  // `dimmed` inline style (0.4) and `.nib-fading` (0) also apply to this <tr>;
-  // their relative precedence currently rests on inline-vs-class + declaration
-  // order, not an explicit rule (single-sourcing tracked in nibs-g07f).
+  // those affordances. This is only the *blocked-dim* trigger — the resolved
+  // row opacity is single-sourced by `rowOpacity` below.
   const blockedDim = $derived(
     blockedEmphasis === "pill-dim" && isBlocked && !isDragged && !isDropTarget && !highlighted,
+  );
+
+  // Single source of truth for the row opacity, applied inline below. Multiple
+  // states can be active at once, so precedence is made explicit here rather
+  // than left to CSS inline-vs-class specificity + stylesheet declaration order
+  // (which previously made `.blocked-dim` a dead class and left the delete
+  // fade-out one reorder away from breaking). Precedence, strongest first:
+  //   fading (0)      — a deleted row MUST fully fade to 0; it wins over all.
+  //   dragged (0.3)   — the dragged source row recedes while in flight.
+  //   dimmed (0.4)    — filter-context fade for non-matching rows.
+  //   blocked-dim (0.6) — blocked work recedes; weakest dim, yields to the above.
+  //   normal (1).
+  // Only `fading` carries a transition (see `.nib-fading` in the style block);
+  // every other rank is instant. The value is applied inline on the row, and the
+  // normal rank (1) is written as *no* inline opacity (the CSS default) so an
+  // undimmed row stays DOM-identical to before this single-sourcing.
+  const rowOpacity = $derived(
+    fading ? 0 :
+    isDragged ? 0.3 :
+    dimmed ? 0.4 :
+    blockedDim ? 0.6 :
+    1,
   );
 </script>
 
@@ -89,7 +109,7 @@
   class:nib-fading={fading}
   class:blocked-dim={blockedDim}
   data-nib-id={nib.id}
-  style={dimmed && !isDragged ? "opacity: 0.4;" : ""}
+  style={rowOpacity < 1 ? `opacity: ${rowOpacity};` : ""}
 >
   <!-- Actions column -->
   <td class="actions-cell row-cell">
@@ -256,16 +276,12 @@
     background-color: oklch(0.488 0.243 264 / 0.15);
   }
 
-  /* Drag state: dimmed dragged row */
-  .tree-row.dragged {
-    opacity: 0.3;
-  }
-
-  /* Blocked emphasis "pill-dim": fade the whole row so blocked work recedes.
-     Gated off during drag (see blockedDim) so it never fights .dragged. */
-  .tree-row.blocked-dim {
-    opacity: 0.6;
-  }
+  /* Drag / pill-dim state markers — no styling here; opacity is single-sourced by
+     the `rowOpacity` derived in the script block and applied inline on the row.
+     `.dragged` is retained because useTreeDrag strips it from the drag-image clone
+     (useTreeDrag.svelte.ts) so the ghost isn't faded. `.blocked-dim` has no CSS or
+     JS consumer; it stays only as a state marker that tests assert to pin the
+     blockedDim gating logic (drag/drop/pulse suppression). */
 
   /* Drop zone indicators */
   .tree-row.drop-before {
@@ -294,9 +310,11 @@
     100% { background-color: transparent; }
   }
 
-  /* Fade-out for deleted rows */
+  /* Fade-out for deleted rows. The target opacity (0) comes from `rowOpacity`
+     (inline); this class carries ONLY the transition so that when `fading`
+     flips true the inline opacity animates 0.5s to 0. All other opacity ranks
+     are instant because no other state adds a transition. */
   .tree-row.nib-fading {
-    opacity: 0;
     transition: opacity 0.5s ease-out;
   }
 
