@@ -326,6 +326,25 @@ describe("storage", () => {
     expect(loadPreferences().blockedEmphasis).toBeUndefined();
   });
 
+  it("saves and loads previewOpen", () => {
+    savePreferences({ filter: {}, viewLevel: "none", previewOpen: false });
+    expect(loadPreferences().previewOpen).toBe(false);
+  });
+
+  it("returns undefined previewOpen when not set", () => {
+    savePreferences({ filter: {}, viewLevel: "none" });
+    expect(loadPreferences().previewOpen).toBeUndefined();
+  });
+
+  it("returns undefined previewOpen for a non-boolean stored value", () => {
+    store["nibs-filter-preferences"] = JSON.stringify({
+      filter: {},
+      viewLevel: "none",
+      previewOpen: "yes",
+    });
+    expect(loadPreferences().previewOpen).toBeUndefined();
+  });
+
   it("round-trips a persisted theme", () => {
     savePreferences({ filter: {}, viewLevel: "none", theme: "dracula" });
     expect(loadPreferences().theme).toBe("dracula");

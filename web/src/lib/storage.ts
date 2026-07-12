@@ -101,6 +101,12 @@ function parseBlockedEmphasis(raw: unknown): BlockedEmphasis | undefined {
   return raw as BlockedEmphasis;
 }
 
+// Optional like rowDensity/blockedEmphasis: return undefined for
+// missing/garbage so Preferences supplies the concrete default.
+function parsePreviewOpen(raw: unknown): boolean | undefined {
+  return typeof raw === "boolean" ? raw : undefined;
+}
+
 const VALID_THEMES = new Set<string>(THEMES.map(t => t.value));
 
 // Validate a persisted theme against the known set, falling back to the default
@@ -132,6 +138,7 @@ export function loadPreferences(): FilterPreferences {
       rowDensity: parseRowDensity(parsed.rowDensity),
       blockedEmphasis: parseBlockedEmphasis(parsed.blockedEmphasis),
       theme: parseTheme(parsed.theme),
+      previewOpen: parsePreviewOpen(parsed.previewOpen),
     };
   } catch {
     return { ...DEFAULTS, filter: { ...DEFAULTS.filter } };

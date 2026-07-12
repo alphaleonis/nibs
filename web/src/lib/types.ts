@@ -107,6 +107,11 @@ export const MIN_DETAIL_PANEL_HEIGHT = 150;
 
 export type RowDensity = "compact" | "comfortable";
 
+// Whether the editor's side-by-side Preview pane is shown while editing a nib
+// body. Persisted so the on/off choice survives remounts (docked↔expanded) and
+// sessions. Defaults to on (matches the original local-state default).
+export const DEFAULT_PREVIEW_OPEN = true;
+
 // How the "blocked" state is emphasized in the tree row + ActiveNibView header:
 //   subtle   → the bare lock icon
 //   pill     → tinted "Blocked" pill (default)
@@ -169,4 +174,5 @@ export interface FilterPreferences {
   rowDensity?: RowDensity;
   blockedEmphasis?: BlockedEmphasis;
   theme?: Theme;
+  previewOpen?: boolean;
 }

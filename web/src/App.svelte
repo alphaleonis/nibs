@@ -440,7 +440,7 @@
         data-testid="detail-pane"
       >
         {#if dockOpen}
-          <ActiveNibView suggestions={availableTags} blockedEmphasis={prefs.blockedEmphasis} />
+          <ActiveNibView suggestions={availableTags} blockedEmphasis={prefs.blockedEmphasis} {prefs} />
         {/if}
       </Resizable.Pane>
     </Resizable.PaneGroup>
@@ -454,7 +454,7 @@
 {#if view.isOpen && view.presentation === "expanded"}
   <div class="anv-modal-backdrop" data-testid="active-nib-modal" role="presentation">
     <div class="anv-modal-shell">
-      <ActiveNibView suggestions={availableTags} blockedEmphasis={prefs.blockedEmphasis} />
+      <ActiveNibView suggestions={availableTags} blockedEmphasis={prefs.blockedEmphasis} {prefs} />
     </div>
   </div>
 {/if}

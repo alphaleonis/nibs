@@ -313,4 +313,28 @@ describe("Preferences", () => {
     expect(stored.theme).toBe("midnight");
   });
 
+  it("defaults previewOpen to true when nothing is persisted", () => {
+    const prefs = new Preferences();
+    expect(prefs.previewOpen).toBe(true);
+  });
+
+  it("loads a persisted previewOpen from localStorage", () => {
+    store["nibs-filter-preferences"] = JSON.stringify({
+      filter: {},
+      viewLevel: "none",
+      previewOpen: false,
+    });
+    const prefs = new Preferences();
+    expect(prefs.previewOpen).toBe(false);
+  });
+
+  it("save() persists the current previewOpen", () => {
+    const prefs = new Preferences();
+    prefs.previewOpen = false;
+    prefs.save();
+
+    const stored = JSON.parse(store["nibs-filter-preferences"]);
+    expect(stored.previewOpen).toBe(false);
+  });
+
 });

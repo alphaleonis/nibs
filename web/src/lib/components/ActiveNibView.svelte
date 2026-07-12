@@ -42,7 +42,8 @@
   } from "$lib/mutations/commands";
   import type { CreateForm, EditForm } from "../nibForm.svelte";
   import type { BlockedEmphasis } from "../types";
-  import { DEFAULT_BLOCKED_EMPHASIS, blockedVariantFor } from "../types";
+  import { DEFAULT_BLOCKED_EMPHASIS, DEFAULT_PREVIEW_OPEN, blockedVariantFor } from "../types";
+  import type { Preferences } from "../preferences.svelte";
   import type { DetailNibRef } from "../composables/useActiveView.svelte";
 
   import StatusSelect from "./StatusSelect.svelte";
@@ -63,9 +64,13 @@
     suggestions?: string[];
     /** How the blocked state is emphasized in the header (see BlockedEmphasis). */
     blockedEmphasis?: BlockedEmphasis;
+    /** User preferences. The side-by-side Preview toggle reads/writes
+     *  `prefs.previewOpen` so the choice persists across remounts and sessions.
+     *  Optional (undefined in some tests) → falls back to the default. */
+    prefs?: Preferences;
   }
 
-  let { suggestions = [], blockedEmphasis = DEFAULT_BLOCKED_EMPHASIS }: Props = $props();
+  let { suggestions = [], blockedEmphasis = DEFAULT_BLOCKED_EMPHASIS, prefs }: Props = $props();
 
   const view = useActiveView();
   const mutations = getMutationStore();
@@ -141,7 +146,11 @@
 
   // --- local presentational state ----------------------------------------
   let bodyMode: "preview" | "edit" = $state("preview");
-  let previewOn = $state(true);
+  // The side-by-side Preview pane toggle is backed by the user preference so it
+  // survives remounts (docked↔expanded) and sessions. Read through the pref
+  // (falling back to the default when no prefs instance is supplied); the toggle
+  // writes back to `prefs.previewOpen`, which auto-persists like other prefs.
+  const previewOn = $derived(prefs?.previewOpen ?? DEFAULT_PREVIEW_OPEN);
   // `gone` nibs are read-only: never surface the editor even if edit mode was
   // toggled on before the nib was deleted out from under us.
   const bodyModeEffective = $derived<"preview" | "edit">(disabled ? "preview" : bodyMode);
@@ -610,7 +619,7 @@
                   aria-checked={previewOn}
                   aria-label="Preview"
                   data-testid="anv-preview-toggle"
-                  onclick={() => (previewOn = !previewOn)}
+                  onclick={() => { if (prefs) prefs.previewOpen = !prefs.previewOpen; }}
                 >
                   <span class="anv-switch-label">Preview</span>
                   <span class="anv-switch-track" class:anv-switch-on={previewOn}>

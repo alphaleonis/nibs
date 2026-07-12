@@ -4,6 +4,7 @@ import { describe, it, expect, vi, beforeEach } from "vitest";
 import { flushSync } from "svelte";
 import { ACTIVE_VIEW_KEY, CONFIRM_DIALOG_KEY } from "$lib/contexts";
 import type { ConfirmDialogState, ConfirmDialogOptions } from "$lib/composables/useConfirmDialog.svelte";
+import { Preferences } from "$lib/preferences.svelte";
 import ActiveNibView from "./ActiveNibView.svelte";
 
 // bits-ui scroll lock sets pointer-events: none on <body>, so disable the check.
@@ -401,6 +402,48 @@ describe("ActiveNibView", () => {
 
       await user.click(anchor);
       expect(view.open).toHaveBeenCalledWith("nibs-gx0f");
+    });
+  });
+
+  describe("preview toggle (persisted)", () => {
+    it("shows the preview pane while editing when prefs.previewOpen is true (default)", async () => {
+      const prefs = new Preferences();
+      expect(prefs.previewOpen).toBe(true);
+      renderView(makeView({}), confirmDialog, { prefs });
+
+      await user.click(screen.getByTestId("anv-edit-toggle"));
+      expect(screen.getByTestId("anv-editor-container")).toBeInTheDocument();
+      expect(screen.getByTestId("anv-preview-pane")).toBeInTheDocument();
+      expect(screen.getByTestId("anv-preview-toggle")).toHaveAttribute("aria-checked", "true");
+    });
+
+    it("starts with the preview pane hidden when prefs.previewOpen is false (persistence round-trip)", async () => {
+      const prefs = new Preferences();
+      prefs.previewOpen = false;
+      renderView(makeView({}), confirmDialog, { prefs });
+
+      await user.click(screen.getByTestId("anv-edit-toggle"));
+      expect(screen.getByTestId("anv-editor-container")).toBeInTheDocument();
+      expect(screen.queryByTestId("anv-preview-pane")).not.toBeInTheDocument();
+      expect(screen.getByTestId("anv-preview-toggle")).toHaveAttribute("aria-checked", "false");
+    });
+
+    it("toggling the Preview switch writes through to prefs.previewOpen and updates the view", async () => {
+      const prefs = new Preferences();
+      renderView(makeView({}), confirmDialog, { prefs });
+
+      await user.click(screen.getByTestId("anv-edit-toggle"));
+      const toggle = screen.getByTestId("anv-preview-toggle");
+      expect(toggle).toHaveAttribute("aria-checked", "true");
+
+      await user.click(toggle);
+      expect(prefs.previewOpen).toBe(false);
+      expect(screen.getByTestId("anv-preview-toggle")).toHaveAttribute("aria-checked", "false");
+      expect(screen.queryByTestId("anv-preview-pane")).not.toBeInTheDocument();
+
+      await user.click(screen.getByTestId("anv-preview-toggle"));
+      expect(prefs.previewOpen).toBe(true);
+      expect(screen.getByTestId("anv-preview-pane")).toBeInTheDocument();
     });
   });
 
