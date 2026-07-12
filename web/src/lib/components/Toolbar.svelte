@@ -257,7 +257,7 @@
      single gapped container (a gap-y there would insert a visible gap between two bands that
      read as one chrome unit). -->
 <header class="flex flex-wrap items-center justify-between gap-3 border-b border-border px-6 py-3">
-  <h1 class="min-w-0 truncate text-xl font-semibold">Nibs{projectName ? ` - ${projectName}` : ""}</h1>
+  <h1 class="min-w-0 max-w-[28ch] lg:max-w-none truncate text-xl font-semibold">Nibs{projectName ? ` - ${projectName}` : ""}</h1>
 
   <div class="flex shrink-0 items-center gap-1">
     <!-- New button -->
