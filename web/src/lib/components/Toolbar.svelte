@@ -42,6 +42,7 @@
     detailPanelPosition = undefined as DetailPanelPosition | undefined,
     onpositionchange = undefined as ((p: DetailPanelPosition) => void) | undefined,
     availableTags = [],
+    projectName = "",
   }: {
     prefs?: Preferences;
     filter?: NibFilter;
@@ -60,6 +61,7 @@
     detailPanelPosition?: DetailPanelPosition;
     onpositionchange?: (p: DetailPanelPosition) => void;
     availableTags?: string[];
+    projectName?: string;
   } = $props();
 
   let resolvedDensity = $derived(prefs ? prefs.rowDensity : rowDensity);
@@ -250,96 +252,44 @@
 
 </script>
 
-<div class="flex items-center gap-2 rounded-lg border border-border bg-card px-3 py-2">
-  <!-- New button -->
-  <DropdownMenu.Root bind:open={addMenuOpen}>
-    <DropdownMenu.Trigger
-      title="New item"
-      data-testid="toolbar-add"
-      class={buttonVariants({ variant: "default", size: "default" })}
-    >
-      <Plus size={16} />
-      New
-    </DropdownMenu.Trigger>
+<!-- App header chrome: two sibling root bands (this <header> + the filter band below)
+     mount directly as flex-column children of App's h-screen shell; do not wrap them in a
+     single gapped container (a gap-y there would insert a visible gap between two bands that
+     read as one chrome unit). -->
+<header class="flex flex-wrap items-center justify-between gap-3 border-b border-border px-6 py-3">
+  <h1 class="min-w-0 truncate text-xl font-semibold">Nibs{projectName ? ` - ${projectName}` : ""}</h1>
 
-    <DropdownMenu.Content align="start" class="w-40">
-      {#each TYPES as nibType}
-        {@const iconInfo = typeIcons[nibType]}
-        {@const TypeIconComponent = iconInfo.icon}
-        <DropdownMenu.Item
-          data-testid="toolbar-add-{nibType}"
-          class="flex items-center gap-2 text-sm"
-          onclick={() => { oncreatenew?.(nibType); }}
-        >
-          <TypeIconComponent size={14} style="color: {iconInfo.color};" />
-          {nibType}
-        </DropdownMenu.Item>
-      {/each}
-    </DropdownMenu.Content>
-  </DropdownMenu.Root>
-
-  <!-- Keyword search -->
-  <Input
-    type="text"
-    placeholder="Filter by keyword"
-    value={resolvedFilter.search ?? ""}
-    oninput={handleKeyword}
-    data-testid="filter-keyword"
-    class="min-w-0 flex-1"
-  />
-
-  <!-- Filter dropdowns -->
-  {#each dropdowns as dd}
-    {@const count = getCount(dd.field)}
-    <DropdownMenu.Root open={filterOpenStates[dd.id]} onOpenChange={(open) => handleFilterOpenChange(dd.id, open)}>
+  <div class="flex shrink-0 items-center gap-1">
+    <!-- New button -->
+    <DropdownMenu.Root bind:open={addMenuOpen}>
       <DropdownMenu.Trigger
-        class="{buttonVariants({ variant: 'outline', size: 'default' })} shrink-0 text-muted-foreground"
+        title="New item"
+        data-testid="toolbar-add"
+        class={buttonVariants({ variant: "default", size: "default" })}
       >
-        {dd.label}
-        <span class="ml-0.5 inline-flex h-4.5 min-w-4.5 items-center justify-center rounded-full px-1 text-label {count ? 'bg-primary text-primary-foreground' : 'invisible'}">{count || 0}</span>
-        <ChevronDown size={14} class="text-muted-foreground" />
+        <Plus size={16} />
+        New
       </DropdownMenu.Trigger>
-      <DropdownMenu.Content align="start">
-        {#each dd.values as value}
-          <DropdownMenu.CheckboxItem
-            checked={isChecked(dd.field, value)}
-            onCheckedChange={() => handleToggle(dd.field, value)}
-            aria-label={value}
+
+      <DropdownMenu.Content align="start" class="w-40">
+        {#each TYPES as nibType}
+          {@const iconInfo = typeIcons[nibType]}
+          {@const TypeIconComponent = iconInfo.icon}
+          <DropdownMenu.Item
+            data-testid="toolbar-add-{nibType}"
+            class="flex items-center gap-2 text-sm"
+            onclick={() => { oncreatenew?.(nibType); }}
           >
-            {#if dd.field === "type"}
-              <TypeIcon type={value} size={14} />
-            {:else if dd.field === "priority"}
-              {@const ind = priorityIndicators[value]}
-              {#if ind}
-                <span class="inline-block w-3.5 text-center text-xs font-bold" style="color: {ind.color};">{ind.symbol}</span>
-              {:else}
-                <span class="inline-block w-3.5"></span>
-              {/if}
-            {:else if dd.field === "status"}
-              <StatusDot status={value} />
-            {:else if dd.field === "estimate"}
-              <span class="inline-block w-3.5 text-center text-xs font-semibold text-muted-foreground">{value.toUpperCase()}</span>
-            {/if}
-            {#if dd.field === "estimate"}{ESTIMATE_LABELS[value] ?? value}{:else}{value}{/if}
-          </DropdownMenu.CheckboxItem>
+            <TypeIconComponent size={14} style="color: {iconInfo.color};" />
+            {nibType}
+          </DropdownMenu.Item>
         {/each}
-        <DropdownMenu.Separator />
-        <DropdownMenu.Item
-          disabled={count === 0}
-          onSelect={() => handleClearField(dd.field, dd.id)}
-        >
-          <X size={13} />
-          Clear
-        </DropdownMenu.Item>
       </DropdownMenu.Content>
     </DropdownMenu.Root>
-  {/each}
 
-  <!-- Separator -->
-  <div class="mx-2 h-5 w-px bg-border shrink-0"></div>
+    <!-- Separator -->
+    <div class="mx-1 h-5 w-px bg-border shrink-0"></div>
 
-  <!-- View controls -->
-  <div class="flex items-center gap-1 shrink-0">
     <!-- Include completed toggle -->
     <button
       type="button"
@@ -418,4 +368,65 @@
       </DropdownMenu.Content>
     </DropdownMenu.Root>
   </div>
+</header>
+
+<!-- Filter band: search + filters. role="search" restores a landmark for these
+     controls, which sit between the <header> band and <main> (outside both). -->
+<div class="flex flex-wrap items-center gap-2 border-b border-border px-6 py-2" role="search" aria-label="Filters">
+  <!-- Keyword search -->
+  <Input
+    type="text"
+    placeholder="Filter by keyword"
+    value={resolvedFilter.search ?? ""}
+    oninput={handleKeyword}
+    data-testid="filter-keyword"
+    class="min-w-0 flex-1"
+  />
+
+  <!-- Filter dropdowns -->
+  {#each dropdowns as dd}
+    {@const count = getCount(dd.field)}
+    <DropdownMenu.Root open={filterOpenStates[dd.id]} onOpenChange={(open) => handleFilterOpenChange(dd.id, open)}>
+      <DropdownMenu.Trigger
+        class="{buttonVariants({ variant: 'outline', size: 'default' })} shrink-0 text-muted-foreground"
+      >
+        {dd.label}
+        <span class="ml-0.5 inline-flex h-4.5 min-w-4.5 items-center justify-center rounded-full px-1 text-label {count ? 'bg-primary text-primary-foreground' : 'invisible'}">{count || 0}</span>
+        <ChevronDown size={14} class="text-muted-foreground" />
+      </DropdownMenu.Trigger>
+      <DropdownMenu.Content align="start">
+        {#each dd.values as value}
+          <DropdownMenu.CheckboxItem
+            checked={isChecked(dd.field, value)}
+            onCheckedChange={() => handleToggle(dd.field, value)}
+            aria-label={value}
+          >
+            {#if dd.field === "type"}
+              <TypeIcon type={value} size={14} />
+            {:else if dd.field === "priority"}
+              {@const ind = priorityIndicators[value]}
+              {#if ind}
+                <span class="inline-block w-3.5 text-center text-xs font-bold" style="color: {ind.color};">{ind.symbol}</span>
+              {:else}
+                <span class="inline-block w-3.5"></span>
+              {/if}
+            {:else if dd.field === "status"}
+              <StatusDot status={value} />
+            {:else if dd.field === "estimate"}
+              <span class="inline-block w-3.5 text-center text-xs font-semibold text-muted-foreground">{value.toUpperCase()}</span>
+            {/if}
+            {#if dd.field === "estimate"}{ESTIMATE_LABELS[value] ?? value}{:else}{value}{/if}
+          </DropdownMenu.CheckboxItem>
+        {/each}
+        <DropdownMenu.Separator />
+        <DropdownMenu.Item
+          disabled={count === 0}
+          onSelect={() => handleClearField(dd.field, dd.id)}
+        >
+          <X size={13} />
+          Clear
+        </DropdownMenu.Item>
+      </DropdownMenu.Content>
+    </DropdownMenu.Root>
+  {/each}
 </div>

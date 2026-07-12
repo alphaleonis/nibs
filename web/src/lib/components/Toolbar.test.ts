@@ -20,6 +20,19 @@ const defaultToolbarProps = {
 };
 
 describe("Toolbar", () => {
+  it("renders the title with the project name when projectName is provided", () => {
+    render(Toolbar, { ...defaultToolbarProps, projectName: "test-project" });
+
+    expect(screen.getByText("Nibs - test-project")).toBeInTheDocument();
+  });
+
+  it("renders the bare 'Nibs' title when no projectName is provided", () => {
+    render(Toolbar, { ...defaultToolbarProps });
+
+    const heading = screen.getByRole("heading", { level: 1 });
+    expect(heading).toHaveTextContent(/^Nibs$/);
+  });
+
   it("renders New button, keyword input, filter dropdowns, and view controls", () => {
     render(Toolbar, { ...defaultToolbarProps });
 

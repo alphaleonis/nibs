@@ -379,18 +379,14 @@
 <Toaster richColors />
 
 <div class="h-screen flex flex-col">
-  <header class="border-b border-border px-6 py-4">
-    <h1 class="text-xl font-semibold">Nibs{projectName ? ` - ${projectName}` : ""}</h1>
-  </header>
+  <Toolbar
+    {prefs}
+    {projectName}
+    {availableTags}
+    oncreatenew={(type) => view.startCreate({ type })}
+  />
 
   <main class="flex-1 min-h-0 flex flex-col px-6 py-6">
-    <div class="mb-4 flex flex-col gap-2">
-      <Toolbar
-        {prefs}
-        {availableTags}
-        oncreatenew={(type) => view.startCreate({ type })}
-      />
-    </div>
     <!-- Re-key on position so the whole PaneGroup remounts when the dock toggles.
          PaneForge fixes the split `direction` at pane-group creation, so the
          reactive `direction` prop alone can't re-orient an existing group — the
