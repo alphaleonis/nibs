@@ -753,7 +753,6 @@
 
   .anv-title:focus {
     border-color: var(--ring);
-    background: var(--accent);
   }
 
   .anv-title::placeholder {
