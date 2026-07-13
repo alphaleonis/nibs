@@ -24,9 +24,8 @@ type nibWithLinks struct {
 }
 
 var deleteCmd = &cobra.Command{
-	Use:     "delete <id> [id...]",
-	Aliases: []string{"rm"},
-	Short:   "Delete one or more nibs",
+	Use:   "delete <id> [id...]",
+	Short: "Delete one or more nibs (alias of `rm --delete`)",
 	Long: `Deletes one or more nibs after confirmation (use -f to skip confirmation).
 
 If other nibs reference the target nib(s) (as parent or via blocking), you will be

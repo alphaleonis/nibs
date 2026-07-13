@@ -31,9 +31,6 @@ var (
 	setRemoveTag       []string
 	setDocument        []string
 	setRemoveDocument  []string
-	setAfter           string
-	setBefore          string
-	setFirst           bool
 	setIfMatch         string
 	setJSON            bool
 )
@@ -105,43 +102,12 @@ documents), or clears a clearable field (--clear priority|estimate|parent).`,
 			if err != nil {
 				return setMutationError(setJSON, err)
 			}
-			// Refresh ifMatch to the new etag so subsequent mutations
-			// (e.g. ReorderNib) don't fail with an etag mismatch
-			if ifMatch != nil {
-				newETag := b.ETag()
-				ifMatch = &newETag
-			}
-		}
-
-		// Handle positioning flags (--after, --before, --first). Positioning stays
-		// on set for now; it moves to `nibs mv` in a later feature.
-		hasPosition := setAfter != "" || setBefore != "" || setFirst
-		if hasPosition {
-			var afterID, beforeID *string
-			var first *bool
-
-			if setAfter != "" {
-				afterID = &setAfter
-			}
-			if setBefore != "" {
-				beforeID = &setBefore
-			}
-			if setFirst {
-				f := true
-				first = &f
-			}
-
-			b, err = resolver.Mutation().ReorderNib(ctx, b.ID, afterID, beforeID, first, nil, ifMatch)
-			if err != nil {
-				return setMutationError(setJSON, err)
-			}
-			changes = append(changes, "position")
 		}
 
 		// Require at least one change
 		if len(changes) == 0 {
 			return cmdError(setJSON, output.ErrValidation,
-				"no changes specified (use --status, --type, --priority, --estimate, --title, --parent, --blocking, --blocked-by, --tag, --document, --clear, --after, --before, --first, or their --remove-* variants)")
+				"no changes specified (use --status, --type, --priority, --estimate, --title, --parent, --blocking, --blocked-by, --tag, --document, --clear, or their --remove-* variants; use `nibs mv` to reposition or reparent)")
 		}
 
 		// Echo the updated nib as a lean card — the same projection + rendering
@@ -385,11 +351,7 @@ func init() {
 	setCmd.Flags().StringArrayVar(&setRemoveTag, "remove-tag", nil, "Remove tag (can be repeated)")
 	setCmd.Flags().StringArrayVar(&setDocument, "document", nil, "Add document path (can be repeated)")
 	setCmd.Flags().StringArrayVar(&setRemoveDocument, "remove-document", nil, "Remove document path (can be repeated)")
-	setCmd.Flags().StringVar(&setAfter, "after", "", "Move after this sibling nib ID")
-	setCmd.Flags().StringVar(&setBefore, "before", "", "Move before this sibling nib ID")
-	setCmd.Flags().BoolVar(&setFirst, "first", false, "Move to first position")
 	setCmd.Flags().StringVar(&setIfMatch, "if-match", "", "Only update if etag matches (optimistic locking)")
-	setCmd.MarkFlagsMutuallyExclusive("after", "before", "first")
 	setCmd.Flags().BoolVar(&setJSON, "json", false, "Output as JSON")
 	rootCmd.AddCommand(setCmd)
 }
