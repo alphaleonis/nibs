@@ -77,6 +77,23 @@ const (
 	kindRelation
 )
 
+// String renders a field kind as its stable, external-facing token. It is the
+// single source of truth for the kind vocabulary surfaced by FieldCatalog (and
+// thus the `nibs catalog fields` view), so introspection cannot drift from the
+// engine's own classification.
+func (k fieldKind) String() string {
+	switch k {
+	case kindScalar:
+		return "scalar"
+	case kindComputed:
+		return "computed"
+	case kindRelation:
+		return "relation"
+	default:
+		return "unknown"
+	}
+}
+
 // fieldDef is a single menu entry: its kind, its JSON output key, and (for
 // scalars) how to pull its value off the nib.
 type fieldDef struct {
@@ -150,6 +167,27 @@ func FieldMenu() []Field {
 // source of truth so help and error messages cannot drift from the menu.
 func FieldMenuString() string {
 	return joinFields(FieldMenu())
+}
+
+// FieldInfo describes one projectable field for external introspection: its
+// mask token, its kind (scalar/computed/relation), and the JSON key it
+// serializes to. It is the shape the `nibs catalog fields` view renders.
+type FieldInfo struct {
+	Name    Field
+	Kind    string
+	JSONKey string
+}
+
+// FieldCatalog returns every projectable field in canonical menu order with
+// its kind and JSON output key. It is derived from the same registry that
+// drives projection, so a catalog built from it can never disagree with what
+// `-f`/--fields actually projects or the key each field serializes to.
+func FieldCatalog() []FieldInfo {
+	out := make([]FieldInfo, len(registry))
+	for i, d := range registry {
+		out[i] = FieldInfo{Name: d.name, Kind: d.kind.String(), JSONKey: d.key()}
+	}
+	return out
 }
 
 // relationNames lists the nestable relation fields (for error messages).
