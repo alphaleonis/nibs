@@ -2,6 +2,7 @@ package cmd
 
 import (
 	_ "embed"
+	"io"
 	"os"
 	"text/template"
 
@@ -54,20 +55,28 @@ body section conventions, GraphQL examples).`,
 			return err
 		}
 
-		tmpl, err := template.New("prompt-full").Parse(agentPromptFull)
-		if err != nil {
-			return err
-		}
-
-		data := promptData{
-			GraphQLSchema: GetGraphQLSchema(),
-			Types:         config.DefaultTypes,
-			Statuses:      config.DefaultStatuses,
-			Priorities:    config.DefaultPriorities,
-		}
-
-		return tmpl.Execute(os.Stdout, data)
+		return renderFullPrompt(os.Stdout)
 	},
+}
+
+// renderFullPrompt executes the full-guide template with the live config enums
+// (types/statuses/priorities) so the rendered guide can never drift from the
+// values the CLI accepts. Extracted from the command's RunE so tests can render
+// it without going through cwd-based config discovery.
+func renderFullPrompt(w io.Writer) error {
+	tmpl, err := template.New("prompt-full").Parse(agentPromptFull)
+	if err != nil {
+		return err
+	}
+
+	data := promptData{
+		GraphQLSchema: GetGraphQLSchema(),
+		Types:         config.DefaultTypes,
+		Statuses:      config.DefaultStatuses,
+		Priorities:    config.DefaultPriorities,
+	}
+
+	return tmpl.Execute(w, data)
 }
 
 func init() {

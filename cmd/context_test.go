@@ -7,7 +7,6 @@ import (
 	"reflect"
 	"testing"
 
-	"github.com/alphaleonis/nibs/internal/nibcontext"
 	"github.com/spf13/pflag"
 )
 
@@ -62,8 +61,8 @@ func contextFixture() map[string]string {
 }
 
 // runContextJSON drives `context --json <idArg>` through the full Cobra
-// pipeline and returns the decoded Summary.
-func runContextJSON(t *testing.T, cfgPath, nibsDir, idArg string) nibcontext.Summary {
+// pipeline and returns the decoded context output.
+func runContextJSON(t *testing.T, cfgPath, nibsDir, idArg string) contextOutput {
 	t.Helper()
 	resetContextFlags()
 	rootCmd.SetArgs([]string{
@@ -78,11 +77,11 @@ func runContextJSON(t *testing.T, cfgPath, nibsDir, idArg string) nibcontext.Sum
 	if execErr != nil {
 		t.Fatalf("context --json %q failed: %v", idArg, execErr)
 	}
-	var sum nibcontext.Summary
-	if err := json.Unmarshal([]byte(out), &sum); err != nil {
-		t.Fatalf("unmarshal context summary for %q: %v\nraw: %s", idArg, err, out)
+	var got contextOutput
+	if err := json.Unmarshal([]byte(out), &got); err != nil {
+		t.Fatalf("unmarshal context output for %q: %v\nraw: %s", idArg, err, out)
 	}
-	return sum
+	return got
 }
 
 // TestContextCommand_ShortIDResolves is the regression test for nibs-h5nm:

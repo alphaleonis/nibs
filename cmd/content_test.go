@@ -1,9 +1,14 @@
 package cmd
 
 import (
+	"errors"
+	"os"
+	"path/filepath"
 	"testing"
 
+	"github.com/alphaleonis/nibs/internal/input"
 	"github.com/alphaleonis/nibs/internal/nib"
+	"github.com/alphaleonis/nibs/internal/output"
 )
 
 func TestApplyTags(t *testing.T) {
@@ -102,42 +107,88 @@ func TestFormatCycle(t *testing.T) {
 	}
 }
 
-func TestResolveAppendContent(t *testing.T) {
-	tests := []struct {
-		name  string
-		value string
-		want  string
-	}{
-		{
-			name:  "direct value",
-			value: "some text",
-			want:  "some text",
-		},
-		{
-			name:  "direct multiline value",
-			value: "line 1\nline 2",
-			want:  "line 1\nline 2",
-		},
-		{
-			name:  "empty value",
-			value: "",
-			want:  "",
-		},
-		// Note: stdin case ("-") is tested in integration tests
-		// as it's difficult to mock in unit tests
+func TestResolveBodyFlag(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "body.md")
+	content := "# Title\n\nSome **prose**.\n"
+	if err := os.WriteFile(path, []byte(content), 0o644); err != nil {
+		t.Fatalf("writing fixture: %v", err)
 	}
 
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			got, err := resolveAppendContent(tt.value)
-			if err != nil {
-				t.Errorf("resolveAppendContent() unexpected error: %v", err)
-				return
-			}
-			if got != tt.want {
-				t.Errorf("resolveAppendContent() = %q, want %q", got, tt.want)
-			}
-		})
+	t.Run("@file reads the file verbatim", func(t *testing.T) {
+		got, err := resolveBodyFlag("@"+path, "")
+		if err != nil {
+			t.Fatalf("resolveBodyFlag(@file) unexpected error: %v", err)
+		}
+		if got != content {
+			t.Errorf("resolveBodyFlag(@file) = %q, want %q", got, content)
+		}
+	})
+
+	t.Run("--body-file reads the file verbatim", func(t *testing.T) {
+		got, err := resolveBodyFlag("", path)
+		if err != nil {
+			t.Fatalf("resolveBodyFlag(--body-file) unexpected error: %v", err)
+		}
+		if got != content {
+			t.Errorf("resolveBodyFlag(--body-file) = %q, want %q", got, content)
+		}
+	})
+
+	t.Run("inline value is rejected", func(t *testing.T) {
+		_, err := resolveBodyFlag("just some inline body", "")
+		if !errors.Is(err, input.ErrInlineProse) {
+			t.Errorf("resolveBodyFlag(inline) error = %v, want ErrInlineProse", err)
+		}
+	})
+
+	t.Run("missing @file is an IO error mapped to exit 5", func(t *testing.T) {
+		_, err := resolveBodyFlag("@"+filepath.Join(dir, "nope.md"), "")
+		if err == nil {
+			t.Fatal("resolveBodyFlag(@missing) expected error, got nil")
+		}
+		mapped := inputError(true, err)
+		var ce *output.CodedError
+		if !errors.As(mapped, &ce) {
+			t.Fatalf("inputError() = %T, want *output.CodedError", mapped)
+		}
+		if output.ExitCode(ce.Code) != output.ExitIO {
+			t.Errorf("inputError() exit = %d, want %d (IO)", output.ExitCode(ce.Code), output.ExitIO)
+		}
+	})
+
+	t.Run("inline value maps to a validation exit code", func(t *testing.T) {
+		_, err := resolveBodyFlag("inline", "")
+		mapped := inputError(true, err)
+		var ce *output.CodedError
+		if !errors.As(mapped, &ce) {
+			t.Fatalf("inputError() = %T, want *output.CodedError", mapped)
+		}
+		if output.ExitCode(ce.Code) != output.ExitValidation {
+			t.Errorf("inputError() exit = %d, want %d (validation)", output.ExitCode(ce.Code), output.ExitValidation)
+		}
+	})
+}
+
+func TestResolveAppendFlag(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "append.md")
+	// Trailing newlines should be trimmed so appended sections don't accrue
+	// blank lines.
+	if err := os.WriteFile(path, []byte("appended line\n\n"), 0o644); err != nil {
+		t.Fatalf("writing fixture: %v", err)
+	}
+
+	got, err := resolveAppendFlag("@" + path)
+	if err != nil {
+		t.Fatalf("resolveAppendFlag(@file) unexpected error: %v", err)
+	}
+	if got != "appended line" {
+		t.Errorf("resolveAppendFlag(@file) = %q, want %q", got, "appended line")
+	}
+
+	if _, err := resolveAppendFlag("inline append text"); !errors.Is(err, input.ErrInlineProse) {
+		t.Errorf("resolveAppendFlag(inline) error = %v, want ErrInlineProse", err)
 	}
 }
 

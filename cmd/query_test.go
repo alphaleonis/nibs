@@ -2,14 +2,18 @@ package cmd
 
 import (
 	"encoding/json"
+	"errors"
+	"io"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
 
+	"github.com/alphaleonis/nibs/internal/config"
+	"github.com/alphaleonis/nibs/internal/input"
 	"github.com/alphaleonis/nibs/internal/nib"
 	"github.com/alphaleonis/nibs/internal/nibcore"
-	"github.com/alphaleonis/nibs/internal/config"
+	"github.com/alphaleonis/nibs/internal/output"
 )
 
 func setupQueryTestApp(t *testing.T) *App {
@@ -545,30 +549,36 @@ func TestGetGraphQLSchema(t *testing.T) {
 	}
 }
 
-func TestGraphQLSchemaWithoutNibsDir(t *testing.T) {
-	// Bug: graphql --schema fails when no .nibs directory exists because
+func TestSchemaWithoutNibsDir(t *testing.T) {
+	// Bug: --schema fails when no .nibs directory exists because
 	// PersistentPreRunE errors before RunE can short-circuit with querySchemaOnly.
-	t.Setenv("NIBS_PATH", "")
+	// Both the primary name ("query") and the legacy alias ("graphql") must
+	// short-circuit — the PersistentPreRunE bypass keys on cmd.Name(), which is
+	// "query" (derived from Use) regardless of the invocation spelling.
+	for _, name := range []string{"query", "graphql"} {
+		t.Run(name, func(t *testing.T) {
+			t.Setenv("NIBS_PATH", "")
 
-	// Work from a temp dir with no .nibs directory
-	origDir, err := os.Getwd()
-	if err != nil {
-		t.Fatal(err)
-	}
-	tmpDir := t.TempDir()
-	if err := os.Chdir(tmpDir); err != nil {
-		t.Fatal(err)
-	}
-	t.Cleanup(func() { _ = os.Chdir(origDir) })
+			// Work from a temp dir with no .nibs directory
+			origDir, err := os.Getwd()
+			if err != nil {
+				t.Fatal(err)
+			}
+			tmpDir := t.TempDir()
+			if err := os.Chdir(tmpDir); err != nil {
+				t.Fatal(err)
+			}
+			t.Cleanup(func() { _ = os.Chdir(origDir) })
 
-	// Reset the global flag state after test
-	oldVal := querySchemaOnly
-	t.Cleanup(func() { querySchemaOnly = oldVal })
+			// Reset the global flag state after test
+			oldVal := querySchemaOnly
+			t.Cleanup(func() { querySchemaOnly = oldVal })
 
-	rootCmd.SetArgs([]string{"graphql", "--schema"})
-	err = rootCmd.Execute()
-	if err != nil {
-		t.Fatalf("graphql --schema should work without .nibs directory, got: %v", err)
+			rootCmd.SetArgs([]string{name, "--schema"})
+			if err := rootCmd.Execute(); err != nil {
+				t.Fatalf("%s --schema should work without .nibs directory, got: %v", name, err)
+			}
+		})
 	}
 }
 
@@ -587,4 +597,244 @@ func TestReadFromStdin(t *testing.T) {
 			t.Logf("readFromStdin() returned %q (may vary by test environment)", result)
 		}
 	})
+}
+
+// resetQueryFlags restores the query command's global flag state (and the root
+// persistent flags) to defaults so full-command tests don't leak into each
+// other.
+func resetQueryFlags() {
+	queryJSON = false
+	queryVariables = ""
+	queryOperation = ""
+	querySchemaOnly = false
+	resetRootPersistentFlags()
+}
+
+// TestResolveQuery pins the positional query resolution: "@FILE" reads a file
+// and a bare inline string passes through verbatim, while a missing "@FILE" is
+// an *input.IOError (→ FILE_ERROR) and an empty "@" is a usage error.
+func TestResolveQuery(t *testing.T) {
+	dir := t.TempDir()
+	qfile := filepath.Join(dir, "q.graphql")
+	if err := os.WriteFile(qfile, []byte(`{ nib(id:"x"){ id } }`), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	tests := []struct {
+		name    string
+		args    []string
+		want    string
+		wantErr bool
+		wantIO  bool // expect an *input.IOError (→ FILE_ERROR)
+	}{
+		{"inline passthrough", []string{`{ nibs { id } }`}, `{ nibs { id } }`, false, false},
+		{"file", []string{"@" + qfile}, `{ nib(id:"x"){ id } }`, false, false},
+		{"missing file", []string{"@" + filepath.Join(dir, "nope.graphql")}, "", true, true},
+		{"empty @", []string{"@"}, "", true, false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got, err := resolveQuery(tt.args)
+			if tt.wantErr {
+				if err == nil {
+					t.Fatal("expected error, got nil")
+				}
+				var ioErr *input.IOError
+				if gotIO := errors.As(err, &ioErr); gotIO != tt.wantIO {
+					t.Errorf("IOError = %v, want %v (err = %v)", gotIO, tt.wantIO, err)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
+			if got != tt.want {
+				t.Errorf("resolveQuery() = %q, want %q", got, tt.want)
+			}
+		})
+	}
+}
+
+// TestResolveQueryStdin covers the "-" channel by feeding a pipe through
+// os.Stdin.
+func TestResolveQueryStdin(t *testing.T) {
+	r, w, err := os.Pipe()
+	if err != nil {
+		t.Fatal(err)
+	}
+	orig := os.Stdin
+	os.Stdin = r
+	t.Cleanup(func() { os.Stdin = orig })
+
+	go func() {
+		_, _ = io.WriteString(w, `{ nibs { id } }`)
+		_ = w.Close()
+	}()
+
+	got, err := resolveQuery([]string{"-"})
+	if err != nil {
+		t.Fatalf("resolveQuery(\"-\") error = %v", err)
+	}
+	if got != `{ nibs { id } }` {
+		t.Errorf("resolveQuery(\"-\") = %q, want the piped query", got)
+	}
+}
+
+// TestResolveVariables pins --variables resolution: empty → nil, inline JSON and
+// "@FILE" both parse, a missing file is an *input.IOError (→ FILE_ERROR), and
+// malformed JSON is a validation-class error (not an IOError).
+func TestResolveVariables(t *testing.T) {
+	dir := t.TempDir()
+	vfile := filepath.Join(dir, "vars.json")
+	if err := os.WriteFile(vfile, []byte(`{"id":"abc"}`), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	tests := []struct {
+		name    string
+		value   string
+		wantID  string // expected variables["id"]; "" means a nil map
+		wantErr bool
+		wantIO  bool
+	}{
+		{"empty means nil", "", "", false, false},
+		{"inline json", `{"id":"abc"}`, "abc", false, false},
+		{"file json", "@" + vfile, "abc", false, false},
+		{"missing file", "@" + filepath.Join(dir, "nope.json"), "", true, true},
+		{"bad json", `{not json}`, "", true, false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			vars, err := resolveVariables(tt.value)
+			if tt.wantErr {
+				if err == nil {
+					t.Fatal("expected error, got nil")
+				}
+				var ioErr *input.IOError
+				if gotIO := errors.As(err, &ioErr); gotIO != tt.wantIO {
+					t.Errorf("IOError = %v, want %v (err = %v)", gotIO, tt.wantIO, err)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
+			if tt.wantID == "" {
+				if vars != nil {
+					t.Errorf("expected nil variables, got %v", vars)
+				}
+				return
+			}
+			if got, _ := vars["id"].(string); got != tt.wantID {
+				t.Errorf("variables[id] = %q, want %q", got, tt.wantID)
+			}
+		})
+	}
+}
+
+// TestQueryCommandFileInputContract runs the real command end-to-end via an
+// "@FILE" query and pins the output contract: the selection is returned
+// directly under {nib} with NO data:/success: wrapper.
+func TestQueryCommandFileInputContract(t *testing.T) {
+	t.Cleanup(resetQueryFlags)
+	resetQueryFlags()
+
+	nibsDir, id := writeSetNib(t, "shape-1", "body")
+	qfile := filepath.Join(t.TempDir(), "q.graphql")
+	if err := os.WriteFile(qfile, []byte(`{ nib(id:"`+id+`"){ id } }`), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	rootCmd.SetArgs([]string{"--nibs-path", nibsDir, "query", "@" + qfile, "--json"})
+	var execErr error
+	out := captureStdout(t, func() { execErr = rootCmd.Execute() })
+	if execErr != nil {
+		t.Fatalf("query @FILE should succeed, got: %v", execErr)
+	}
+
+	var top map[string]json.RawMessage
+	if err := json.Unmarshal([]byte(out), &top); err != nil {
+		t.Fatalf("output is not valid JSON: %v\n%s", err, out)
+	}
+	if _, ok := top["nib"]; !ok {
+		t.Errorf("expected top-level {nib}, got: %s", out)
+	}
+	if _, ok := top["data"]; ok {
+		t.Errorf("output must NOT carry a data: wrapper: %s", out)
+	}
+	if _, ok := top["success"]; ok {
+		t.Errorf("output must NOT carry a success: wrapper: %s", out)
+	}
+}
+
+// TestQueryCommandGraphqlAlias verifies the legacy "graphql" alias still runs
+// the command and yields the same {nib} contract.
+func TestQueryCommandGraphqlAlias(t *testing.T) {
+	t.Cleanup(resetQueryFlags)
+	resetQueryFlags()
+
+	nibsDir, id := writeSetNib(t, "alias-1", "body")
+
+	rootCmd.SetArgs([]string{"--nibs-path", nibsDir, "graphql", `{ nib(id:"` + id + `"){ id } }`, "--json"})
+	var execErr error
+	out := captureStdout(t, func() { execErr = rootCmd.Execute() })
+	if execErr != nil {
+		t.Fatalf("graphql alias should still work, got: %v", execErr)
+	}
+
+	var top map[string]json.RawMessage
+	if err := json.Unmarshal([]byte(out), &top); err != nil {
+		t.Fatalf("alias output is not valid JSON: %v\n%s", err, out)
+	}
+	if _, ok := top["nib"]; !ok {
+		t.Errorf("alias output missing top-level {nib}: %s", out)
+	}
+}
+
+// TestQueryCommandMissingFileIsFileError verifies a missing "@FILE" fails
+// through the coded boundary as FILE_ERROR (exit 5).
+func TestQueryCommandMissingFileIsFileError(t *testing.T) {
+	t.Cleanup(resetQueryFlags)
+	resetQueryFlags()
+
+	nibsDir, _ := writeSetNib(t, "mf-1", "body")
+	missing := filepath.Join(t.TempDir(), "nope.graphql")
+
+	rootCmd.SetArgs([]string{"--nibs-path", nibsDir, "query", "@" + missing})
+	err := rootCmd.Execute()
+	if err == nil {
+		t.Fatal("expected an error for a missing @FILE, got nil")
+	}
+	var ce *output.CodedError
+	if !errors.As(err, &ce) {
+		t.Fatalf("expected *output.CodedError, got %T: %v", err, err)
+	}
+	if ce.Code != output.ErrFileError {
+		t.Errorf("code = %q, want %q", ce.Code, output.ErrFileError)
+	}
+	if got := output.ExitCode(ce.Code); got != output.ExitIO {
+		t.Errorf("exit code = %d, want %d (ExitIO)", got, output.ExitIO)
+	}
+}
+
+// TestQueryCommandGraphqlErrorIsCoded verifies a GraphQL validation failure
+// routes through the coded boundary with a validation exit (2).
+func TestQueryCommandGraphqlErrorIsCoded(t *testing.T) {
+	t.Cleanup(resetQueryFlags)
+	resetQueryFlags()
+
+	nibsDir, _ := writeSetNib(t, "gqlerr-1", "body")
+
+	rootCmd.SetArgs([]string{"--nibs-path", nibsDir, "query", `{ notAField { id } }`})
+	err := rootCmd.Execute()
+	if err == nil {
+		t.Fatal("expected an error for an invalid query, got nil")
+	}
+	var ce *output.CodedError
+	if !errors.As(err, &ce) {
+		t.Fatalf("expected *output.CodedError, got %T: %v", err, err)
+	}
+	if got := output.ExitCode(ce.Code); got != output.ExitValidation {
+		t.Errorf("exit code = %d, want %d (ExitValidation)", got, output.ExitValidation)
+	}
 }

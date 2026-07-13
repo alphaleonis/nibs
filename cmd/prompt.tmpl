@@ -1,21 +1,24 @@
 <EXTREMELY_IMPORTANT>
 # Nibs — agentic-first issue tracker
 
-Use nibs (not TodoWrite or todo lists) for all work tracking in this project.
+Track ALL work in this project with nibs (issues stored as Markdown files), not
+TodoWrite or ad-hoc todo lists.
 
-**Before using any `nibs` command, run `nibs prime --full` to load the full reference.** That command emits the complete CLI guide (commands, flags, body section conventions, GraphQL schema). Do not guess syntax — read the full reference first.
-
-Tip: `nibs list --columns id,status,title` (and `nibs links --columns ...`) emits tab-separated rows for easy parsing — see `--full` for the full column set.
+**Learn the CLI grammar first: run `nibs cheat` once.** It prints the whole
+verb surface (get/list/rel, new/set/body/mv/rm/close, catalog) on one screen.
+For detail: `nibs catalog <topic>` (fields, filters, hierarchy, recipes,
+examples, schema) and `nibs <cmd> --help`. Full reference: `nibs prime --full`.
+Do not guess syntax — read the grammar first.
 
 ## Workflow
 
-- BEFORE a task: find or create a nib (`nibs list --ready`, `nibs create "Title" -t <type>`), set status `in-progress`. (`--ready` excludes blocked, in-progress, completed, scrapped, draft, and `deferred`/parked nibs — see `--full` for status semantics.)
-- DURING: keep todo items current (`- [ ]` → `- [x]`) as work happens.
-- AFTER: mark `completed` only when no unchecked todos remain. Append `## Summary of Changes` (or `## Reasons for Scrapping`).
+- BEFORE a task: find or create a nib (`nibs list --ready`, `nibs new "Title" -t <type>`), set it `in-progress` (`nibs set <id> -s in-progress`). `--ready` excludes blocked, in-progress, completed, scrapped, draft, and deferred/parked nibs.
+- DURING: keep the body's todo items current (`- [ ]` → `- [x]`) as work happens (`nibs body <id> --replace-old … --replace-new …`).
+- AFTER: mark `completed` only when no unchecked todos remain. Prefer `nibs close <id> --summary -` (appends a summary, propagates to the parent). Use `## Reasons for Scrapping` when scrapping.
 - COMMITS: include both code and nib files.
 - SUBAGENTS: set `in-progress` BEFORE launching, `completed` AFTER — they run fresh and won't update nibs for you.
 
 ## Errors
 
-If a `nibs` command errors, stop. Find the root cause and suggest a mitigation (code fix, follow-up nib, workaround). Never silently retry.
+Every command uses stable exit codes (0 ok / 2 validation / 3 not-found / 4 conflict / 5 io); with `--json`, errors come back as `{"error":{"code","message"}}`. If a `nibs` command errors, STOP. Find the root cause and suggest a mitigation (code fix, follow-up nib, workaround). Never silently retry.
 </EXTREMELY_IMPORTANT>

@@ -1,61 +1,43 @@
 package cmd
 
 import (
-	"bytes"
 	"context"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"sort"
 	"strconv"
 	"strings"
 
-	"github.com/alphaleonis/nibs/internal/config"
 	"github.com/alphaleonis/nibs/internal/graph"
 	"github.com/alphaleonis/nibs/internal/graph/model"
 	"github.com/alphaleonis/nibs/internal/nib"
 	"github.com/alphaleonis/nibs/internal/output"
+	"github.com/alphaleonis/nibs/internal/projection"
 	"github.com/alphaleonis/nibs/internal/toposort"
-	"github.com/alphaleonis/nibs/internal/ui"
 	"github.com/spf13/cobra"
 )
 
-// formatLinksRow renders one link row (id, status, title) for human output.
-// Kept local to cmd/links.go because list and show use divergent row formats
-// (columnar and block-oriented respectively); consolidating into a shared
-// ui helper would require a format enum whose cost outweighs the handful
-// of lines saved.
-func formatLinksRow(r *nib.Nib, cfg *config.Config) string {
-	statusCfg := cfg.GetStatus(r.Status)
-	statusColor := "gray"
-	if statusCfg != nil {
-		statusColor = statusCfg.Color
-	}
-	isArchive := cfg.IsArchiveStatus(r.Status)
-	return fmt.Sprintf("%s  %s  %s",
-		ui.ID.Render(r.ID),
-		ui.RenderStatusWithColor(r.Status, statusColor, isArchive),
-		r.Title)
-}
-
-// Package-level flag vars for the links command.
+// Package-level flag vars for the rel command.
 var (
-	linksRel        []string
-	linksDepth      string // "" = default; "N" | "all"
-	linksOrder      string // "" | "topo"
-	linksFlat       bool
-	linksJSON       bool
-	linksColumns    string
-	linksStatus     []string
-	linksNoStatus   []string
-	linksType       []string
-	linksNoType     []string
-	linksPriority   []string
-	linksNoPriority []string
-	linksTag        []string
-	linksEstimate   []string
-	linksNoEstimate []string
-	linksActive     bool
+	relKinds      []string
+	relDepth      string // "" = default; "N" | "all"
+	relOrder      string // "" | "topo"
+	relFlat       bool   // deprecated no-op: the envelope is always a flat list
+	relJSON       bool
+	relView       string
+	relFields     string
+	relNoHeader   bool
+	relLimit      int
+	relStatus     []string
+	relNoStatus   []string
+	relType       []string
+	relNoType     []string
+	relPriority   []string
+	relNoPriority []string
+	relTag        []string
+	relEstimate   []string
+	relNoEstimate []string
+	relActive     bool
 )
 
 // relKind is the closed set of relationship names accepted by --rel.
@@ -93,13 +75,13 @@ var directRels = []relKind{
 
 // Sentinel errors classified by the RunE handler. Use errors.Is to match.
 var (
-	errLinksNotFound           = errors.New("nib not found")
-	errLinksInvalidRel         = errors.New("invalid rel")
-	errLinksFilterInapplicable = errors.New("filter not applicable to rel")
-	errLinksDepthInapplicable  = errors.New("--depth not applicable to rel")
-	errLinksOrderInapplicable  = errors.New("--order not applicable to rel")
-	errLinksInvalidDepth       = errors.New("invalid --depth value")
-	errLinksCycle              = errors.New("dependency cycle")
+	errRelNotFound           = errors.New("nib not found")
+	errRelInvalidRel         = errors.New("invalid rel")
+	errRelFilterInapplicable = errors.New("filter not applicable to rel")
+	errRelDepthInapplicable  = errors.New("--depth not applicable to rel")
+	errRelOrderInapplicable  = errors.New("--order not applicable to rel")
+	errRelInvalidDepth       = errors.New("invalid --depth value")
+	errRelCycle              = errors.New("dependency cycle")
 )
 
 // relSpec describes per-rel capabilities used for flag validation and
@@ -132,95 +114,9 @@ var relTable = map[relKind]relSpec{
 	relNeighboursActive:      {ExpandsTo: directRels, NeighbourActive: true},
 }
 
-// LinksRelBody is the body of a single relation in the envelope.
-type LinksRelBody struct {
-	Nibs []*nib.Nib `json:"nibs"`
-}
-
-// LinksResult is the full envelope. Relations preserve insertion order via
-// custom marshaling; `depth` is emitted only when --depth was passed.
-type LinksResult struct {
-	ID    string
-	Depth *int
-	// relKeys preserves the order the relations were added.
-	relKeys []string
-	// relations maps rel name to body.
-	relations map[string]LinksRelBody
-}
-
-// addRel appends a rel body, preserving first-seen insertion order.
-func (r *LinksResult) addRel(key string, body LinksRelBody) {
-	if _, ok := r.relations[key]; ok {
-		return
-	}
-	if r.relations == nil {
-		r.relations = map[string]LinksRelBody{}
-	}
-	r.relations[key] = body
-	r.relKeys = append(r.relKeys, key)
-}
-
-// MarshalJSON emits the envelope with a stable key order inside `relations`
-// matching the order keys were added. This matters because Go's encoding/json
-// sorts map keys alphabetically by default, which would break the declared
-// "caller-supplied rel order" invariant.
-func (r LinksResult) MarshalJSON() ([]byte, error) {
-	var buf bytes.Buffer
-	buf.WriteByte('{')
-	// id first
-	buf.WriteString(`"id":`)
-	idBytes, err := json.Marshal(r.ID)
-	if err != nil {
-		return nil, err
-	}
-	buf.Write(idBytes)
-	// optional depth
-	if r.Depth != nil {
-		buf.WriteString(`,"depth":`)
-		dBytes, err := json.Marshal(*r.Depth)
-		if err != nil {
-			return nil, err
-		}
-		buf.Write(dBytes)
-	}
-	// relations — ordered
-	buf.WriteString(`,"relations":{`)
-	for i, key := range r.relKeys {
-		if i > 0 {
-			buf.WriteByte(',')
-		}
-		kBytes, err := json.Marshal(key)
-		if err != nil {
-			return nil, err
-		}
-		buf.Write(kBytes)
-		buf.WriteByte(':')
-		body := r.relations[key]
-		if body.Nibs == nil {
-			body.Nibs = []*nib.Nib{}
-		}
-		bBytes, err := json.Marshal(body)
-		if err != nil {
-			return nil, err
-		}
-		buf.Write(bBytes)
-	}
-	buf.WriteString(`}}`)
-	return buf.Bytes(), nil
-}
-
-// LinksFlatResult is the envelope used under --flat: a single deduped
-// list of nibs across all requested rels.
-type LinksFlatResult struct {
-	ID    string     `json:"id"`
-	Depth *int       `json:"depth,omitempty"`
-	Nibs  []*nib.Nib `json:"nibs"`
-}
-
 // parseRels parses the repeated --rel values, splitting comma-separated
-// entries inside a single value. Returns the validated, expanded list
-// (meta rels expanded to their direct constituents) paired with the
-// original caller-supplied list (for envelope key order).
+// entries inside a single value. Returns the validated list (meta rels are
+// left intact; expandRels resolves them to their atomic constituents).
 //
 // When --rel is empty, default to `neighbours`.
 func parseRels(raw []string) ([]relKind, error) {
@@ -238,7 +134,7 @@ func parseRels(raw []string) ([]relKind, error) {
 			r := relKind(part)
 			if _, ok := relTable[r]; !ok {
 				return nil, fmt.Errorf("%w: %q — accepted: %s",
-					errLinksInvalidRel, part, strings.Join(allRelNames(), ", "))
+					errRelInvalidRel, part, strings.Join(allRelNames(), ", "))
 			}
 			if seen[r] {
 				continue
@@ -262,14 +158,13 @@ func allRelNames() []string {
 
 // expandRels turns the caller-supplied rel list into the final list of
 // atomic rels to fetch. Meta rels (neighbours/neighbours-active) are
-// replaced by their direct constituents. Order is preserved.
+// replaced by their direct constituents. Order is preserved and the result
+// is deduped across rels.
 // Returns:
-//   - fetched: the list of atomic rels to fetch (for dispatch)
-//   - outKeys: the list of keys to emit in the envelope, in order
-//     (meta rels emit their constituent keys; atomic rels emit themselves)
+//   - fetched: the ordered, deduped list of atomic rels to traverse
 //   - applyActive: true when neighbours-active is present — the caller
 //     must OR --active into the filter for the expanded rels.
-func expandRels(in []relKind) (fetched []relKind, outKeys []relKind, applyActive bool) {
+func expandRels(in []relKind) (fetched []relKind, applyActive bool) {
 	seen := map[relKind]bool{}
 	for _, r := range in {
 		spec := relTable[r]
@@ -283,7 +178,6 @@ func expandRels(in []relKind) (fetched []relKind, outKeys []relKind, applyActive
 				}
 				seen[sub] = true
 				fetched = append(fetched, sub)
-				outKeys = append(outKeys, sub)
 			}
 			continue
 		}
@@ -292,23 +186,22 @@ func expandRels(in []relKind) (fetched []relKind, outKeys []relKind, applyActive
 		}
 		seen[r] = true
 		fetched = append(fetched, r)
-		outKeys = append(outKeys, r)
 	}
-	return fetched, outKeys, applyActive
+	return fetched, applyActive
 }
 
-// linksFilterFlags is the single source of truth for which CLI filter flags
+// relFilterFlags is the single source of truth for which CLI filter flags
 // are set and how they translate to a NibFilter / error message / presence
 // check. When adding a new filter flag, add it to:
 //   - the struct fields below
-//   - readLinksFilterFlags (CLI flag vars → struct)
+//   - readRelFilterFlags (CLI flag vars → struct)
 //   - activeFilterNames (struct → error message labels)
 //   - isEmpty (struct → presence check)
 //   - buildNibFilter (struct → model.NibFilter)
 //
 // All five live in this file, adjacent to each other, so a reviewer can see
 // at a glance that the list is complete.
-type linksFilterFlags struct {
+type relFilterFlags struct {
 	Status     []string
 	NoStatus   []string
 	Type       []string
@@ -321,27 +214,27 @@ type linksFilterFlags struct {
 	Active     bool
 }
 
-// readLinksFilterFlags reads the package-level CLI flag vars into a struct
+// readRelFilterFlags reads the package-level CLI flag vars into a struct
 // the rest of the pipeline can consume. This is the ONLY place that reads
 // the flag vars for filter-flag purposes.
-func readLinksFilterFlags() linksFilterFlags {
-	return linksFilterFlags{
-		Status:     linksStatus,
-		NoStatus:   linksNoStatus,
-		Type:       linksType,
-		NoType:     linksNoType,
-		Priority:   linksPriority,
-		NoPriority: linksNoPriority,
-		Tag:        linksTag,
-		Estimate:   linksEstimate,
-		NoEstimate: linksNoEstimate,
-		Active:     linksActive,
+func readRelFilterFlags() relFilterFlags {
+	return relFilterFlags{
+		Status:     relStatus,
+		NoStatus:   relNoStatus,
+		Type:       relType,
+		NoType:     relNoType,
+		Priority:   relPriority,
+		NoPriority: relNoPriority,
+		Tag:        relTag,
+		Estimate:   relEstimate,
+		NoEstimate: relNoEstimate,
+		Active:     relActive,
 	}
 }
 
 // isEmpty reports whether no filter flag was set (used to short-circuit
 // buildNibFilter so the resolver can use its uncached fast path).
-func (f linksFilterFlags) isEmpty() bool {
+func (f relFilterFlags) isEmpty() bool {
 	return !f.Active &&
 		len(f.Status) == 0 && len(f.NoStatus) == 0 &&
 		len(f.Type) == 0 && len(f.NoType) == 0 &&
@@ -352,7 +245,7 @@ func (f linksFilterFlags) isEmpty() bool {
 
 // activeFilterNames returns the --flag names currently set, for use in
 // error messages when a filter is inapplicable to the chosen rel.
-func (f linksFilterFlags) activeFilterNames() []string {
+func (f relFilterFlags) activeFilterNames() []string {
 	var names []string
 	if f.Active {
 		names = append(names, "--active")
@@ -391,7 +284,7 @@ func (f linksFilterFlags) activeFilterNames() []string {
 // is set (isEmpty()) returns nil so the resolver short-circuits. When
 // forceActive is true, excludes completed/scrapped on top of any explicit
 // status flags (used by neighbours-active).
-func (f linksFilterFlags) buildNibFilter(forceActive bool) (*model.NibFilter, error) {
+func (f relFilterFlags) buildNibFilter(forceActive bool) (*model.NibFilter, error) {
 	active := f.Active || forceActive
 	if active {
 		for _, s := range f.Status {
@@ -424,7 +317,7 @@ func (f linksFilterFlags) buildNibFilter(forceActive bool) (*model.NibFilter, er
 // Special value "all" resolves to -1 (traverse until exhaustion). Any other
 // input that is not a positive integer in its entirety — including trailing
 // garbage like "3abc", fractions like "1.5", or negative values — is rejected
-// with errLinksInvalidDepth. strconv.Atoi (not fmt.Sscanf) is used because
+// with errRelInvalidDepth. strconv.Atoi (not fmt.Sscanf) is used because
 // the %d verb stops at the first non-digit and reports success.
 func parseDepth(raw string) (int, bool, error) {
 	if raw == "" {
@@ -435,7 +328,7 @@ func parseDepth(raw string) (int, bool, error) {
 	}
 	n, err := strconv.Atoi(raw)
 	if err != nil || n < 1 {
-		return 0, false, fmt.Errorf("%w: %q (must be positive integer or 'all')", errLinksInvalidDepth, raw)
+		return 0, false, fmt.Errorf("%w: %q (must be positive integer or 'all')", errRelInvalidDepth, raw)
 	}
 	return n, true, nil
 }
@@ -625,7 +518,7 @@ func topoSortNibs(candidates []*nib.Nib) ([]*nib.Nib, error) {
 			sort.Strings(c)
 			names = append(names, "["+strings.Join(c, ", ")+"]")
 		}
-		return nil, fmt.Errorf("%w detected: %s", errLinksCycle, strings.Join(names, ", "))
+		return nil, fmt.Errorf("%w detected: %s", errRelCycle, strings.Join(names, ", "))
 	}
 	out := make([]*nib.Nib, 0, len(ordered))
 	for _, id := range ordered {
@@ -634,10 +527,13 @@ func topoSortNibs(candidates []*nib.Nib) ([]*nib.Nib, error) {
 	return out, nil
 }
 
-var linksCmd = &cobra.Command{
-	Use:   "links <id>",
-	Short: "Query relationships (mentions, parent/children, blocking, etc.) for a nib",
-	Long: `Query any relationship direction for a nib under one stable JSON envelope.
+var relCmd = &cobra.Command{
+	Use:     "rel <id>",
+	Aliases: []string{"links"},
+	Short:   "Query relationships (mentions, parent/children, blocking, etc.) for a nib",
+	Long: `Traverse any relationship direction from a nib and project the related nibs
+through the shared field-set engine — the related set is rendered as the same
+{nibs,count,truncated} envelope 'nibs list' emits.
 
 --rel selects one or more relations (repeatable; comma-separated values OK):
   mentions-out, mentions-in, parent, children, siblings, blocking, blocked-by
@@ -645,9 +541,26 @@ var linksCmd = &cobra.Command{
   mentions-out-transitive, mentions-in-transitive
   neighbours (= all 7 direct rels), neighbours-active (= neighbours with --active)
 
+When several rels are requested the related nibs are unioned into one deduped
+list (first-encountered order across rels), then projected.
+
 --depth N|all applies only to transitive rels (default 1).
 --order topo applies only to children / descendants / blocking-family rels.
---flat collapses multi-rel output to a deduped {id, nibs: [...]} envelope.
+
+Projection (identical to 'nibs list'):
+  --view id|ref|card|full   Select a coarse field set for the related nibs.
+                            Defaults to 'ref' when neither --view nor -f is given.
+  -f, --fields <spec>       Select exact fields, additive over --view, applied to
+                            the related nibs. One level of nested relation
+                            projection is supported, e.g. -f "id,blocked-by(id,status)".
+
+Output modes:
+  (default)                 TSV rows + the "# <n> nibs" header.
+  --no-header               TSV rows only (no header line).
+  --json                    The {"nibs":[…],"count":N,"truncated":<bool>} envelope
+                            — byte-identical to 'nibs list --json'.
+  --limit N                 Project only the first N related nibs and set
+                            "truncated":true in the envelope. N<=0 is unlimited.
 
 Filters (--status, --type, --priority, --estimate, --tag, their --no-... pairs,
 --active) apply only to rels where they make sense — passing an inapplicable
@@ -666,34 +579,30 @@ blocking, blocked-by) and are silently dropped for the singular constituent
 filter-on-singular validation error does not fire here.`,
 	Args: cobra.ExactArgs(1),
 	RunE: func(cmd *cobra.Command, args []string) error {
-		// --columns is mutually exclusive with --json. Validate up-front
-		// so a structured error envelope is emitted before any nib lookups.
-		columnsRequested := cmd.Flags().Changed("columns")
-		if columnsRequested && linksJSON {
-			return reportErr(linksJSON, output.ErrValidation,
-				fmt.Errorf("--columns and --json are mutually exclusive"))
-		}
-		// Parse columns once, before any traversal, so an unknown column
-		// or empty spec fails fast (no wasted graph work).
-		var cols []output.Column
-		if columnsRequested {
-			parsed, perr := output.ParseColumns(linksColumns)
-			if perr != nil {
-				return reportErr(linksJSON, output.ErrValidation, perr)
-			}
-			cols = parsed
-		}
-
-		rels, err := parseRels(linksRel)
+		// Compile the projection selection up-front (mirrors 'nibs list'): a
+		// bad view/field/nesting is a VALIDATION error naming the menu, surfaced
+		// before any traversal work so a bad -f is rejected rather than wasted.
+		sel, err := projection.Compile(relView, relFields)
 		if err != nil {
-			return reportErr(linksJSON, output.ErrValidation, err)
+			return reportErr(relJSON, output.ErrValidation, err)
+		}
+		// An empty selection (neither --view nor -f) defaults to the ref tier —
+		// applied as the empty-selection fallback rather than a flag default so
+		// `-f id,title` means exactly {id,title} instead of ref∪{id,title}.
+		if sel.IsEmpty() {
+			sel, _ = projection.ViewFields(string(projection.ViewRef))
 		}
 
-		fetched, outKeys, forceActive := expandRels(rels)
-
-		depthVal, depthSet, err := parseDepth(linksDepth)
+		rels, err := parseRels(relKinds)
 		if err != nil {
-			return reportErr(linksJSON, output.ErrValidation, err)
+			return reportErr(relJSON, output.ErrValidation, err)
+		}
+
+		fetched, forceActive := expandRels(rels)
+
+		depthVal, depthSet, err := parseDepth(relDepth)
+		if err != nil {
+			return reportErr(relJSON, output.ErrValidation, err)
 		}
 
 		// Validate --depth applies to every explicit rel that was not a meta
@@ -704,49 +613,47 @@ filter-on-singular validation error does not fire here.`,
 			for _, r := range rels {
 				spec := relTable[r]
 				if !spec.AllowsDepth {
-					return reportErr(linksJSON, output.ErrValidation,
-						fmt.Errorf("%w: %s", errLinksDepthInapplicable, r))
+					return reportErr(relJSON, output.ErrValidation,
+						fmt.Errorf("%w: %s", errRelDepthInapplicable, r))
 				}
 			}
 		}
 
 		// Validate --order applies to every explicit rel.
-		if linksOrder != "" {
-			if linksOrder != "topo" {
-				return reportErr(linksJSON, output.ErrValidation,
-					fmt.Errorf("--order must be 'topo', got %q", linksOrder))
+		if relOrder != "" {
+			if relOrder != "topo" {
+				return reportErr(relJSON, output.ErrValidation,
+					fmt.Errorf("--order must be 'topo', got %q", relOrder))
 			}
 			for _, r := range rels {
 				spec := relTable[r]
-				// Meta rels expand; if any constituent supports order that's
-				// OK — but the nib plan said only specific rels support topo.
 				// Reject when the explicit rel doesn't advertise AllowsOrder
 				// (meta rels are rejected because their expanded atomic rels
 				// mix order-supporting and non-supporting).
 				if !spec.AllowsOrder {
-					return reportErr(linksJSON, output.ErrValidation,
-						fmt.Errorf("%w: --order topo not supported for rel %s", errLinksOrderInapplicable, r))
+					return reportErr(relJSON, output.ErrValidation,
+						fmt.Errorf("%w: --order topo not supported for rel %s", errRelOrderInapplicable, r))
 				}
 			}
 		}
 
 		// Validate filters-on-singular. If any explicit rel is singular
 		// (parent) and a filter is set, error out.
-		filterFlags := readLinksFilterFlags()
+		filterFlags := readRelFilterFlags()
 		if !filterFlags.isEmpty() {
 			for _, r := range rels {
 				spec := relTable[r]
 				if spec.IsSingular {
 					filters := strings.Join(filterFlags.activeFilterNames(), ", ")
-					return reportErr(linksJSON, output.ErrValidation,
-						fmt.Errorf("%w: filter %s does not apply to rel %s (singular/chain relation)", errLinksFilterInapplicable, filters, r))
+					return reportErr(relJSON, output.ErrValidation,
+						fmt.Errorf("%w: filter %s does not apply to rel %s (singular/chain relation)", errRelFilterInapplicable, filters, r))
 				}
 			}
 		}
 
 		filter, err := filterFlags.buildNibFilter(forceActive)
 		if err != nil {
-			return reportErr(linksJSON, output.ErrValidation, err)
+			return reportErr(relJSON, output.ErrValidation, err)
 		}
 
 		app := getApp(cmd)
@@ -762,24 +669,23 @@ filter-on-singular validation error does not fire here.`,
 
 		b, err := resolver.Query().Nib(ctx, args[0])
 		if err != nil {
-			return reportErr(linksJSON, output.ErrNotFound,
-				fmt.Errorf("%w: %s: %w", errLinksNotFound, args[0], err))
+			return reportErr(relJSON, output.ErrNotFound,
+				fmt.Errorf("%w: %s: %w", errRelNotFound, args[0], err))
 		}
 		if b == nil {
-			return reportErr(linksJSON, output.ErrNotFound,
-				fmt.Errorf("%w: %s", errLinksNotFound, args[0]))
+			return reportErr(relJSON, output.ErrNotFound,
+				fmt.Errorf("%w: %s", errRelNotFound, args[0]))
 		}
 
-		result := LinksResult{ID: b.ID, relations: map[string]LinksRelBody{}}
-		if depthSet {
-			d := depthVal
-			result.Depth = &d
-		}
-
-		for i, fetchKind := range fetched {
-			// Build per-rel filter: singular rels (already validated to have
-			// no filter via filterFlags.isEmpty()) get nil; everything else
-			// uses the composite filter.
+		// Traverse every atomic rel, unioning the related nibs into one deduped
+		// list in first-encountered order. --order topo is applied per rel
+		// (before the union) so a rel's internal dependency order is preserved.
+		seenNib := map[string]bool{}
+		var results []*nib.Nib
+		for _, fetchKind := range fetched {
+			// Singular rels (parent) were validated to carry no filter via
+			// filterFlags.isEmpty(); pass nil so the resolver stays on its fast
+			// path. Everything else uses the composite filter.
 			perRelFilter := filter
 			if relTable[fetchKind].IsSingular {
 				perRelFilter = nil
@@ -788,127 +694,70 @@ filter-on-singular validation error does not fire here.`,
 			got, ferr := fetchRel(ctx, resolver, b, fetchKind, perRelFilter, depthVal)
 			if ferr != nil {
 				code := output.ErrFileError
-				if errors.Is(ferr, errLinksCycle) {
+				if errors.Is(ferr, errRelCycle) {
 					code = output.ErrValidation
 				}
-				return reportErr(linksJSON, code,
+				return reportErr(relJSON, code,
 					fmt.Errorf("fetching %s: %w", fetchKind, ferr))
 			}
-			if got == nil {
-				got = []*nib.Nib{}
-			}
-			if linksOrder == "topo" && relTable[fetchKind].AllowsOrder {
+			if relOrder == "topo" && relTable[fetchKind].AllowsOrder {
 				ordered, oerr := topoSortNibs(got)
 				if oerr != nil {
 					code := output.ErrFileError
-					if errors.Is(oerr, errLinksCycle) {
+					if errors.Is(oerr, errRelCycle) {
 						code = output.ErrValidation
 					}
-					return reportErr(linksJSON, code, oerr)
+					return reportErr(relJSON, code, oerr)
 				}
 				got = ordered
 			}
-			result.addRel(string(outKeys[i]), LinksRelBody{Nibs: got})
-		}
-
-		if linksJSON {
-			if linksFlat {
-				flat := linksToFlat(result)
-				return output.JSONRaw(flat)
+			for _, n := range got {
+				if seenNib[n.ID] {
+					continue
+				}
+				seenNib[n.ID] = true
+				results = append(results, n)
 			}
-			return output.JSONRaw(result)
 		}
 
-		// --columns implies flat semantics: one deduped row list spanning
-		// all requested rels, no per-rel section headers. This matches the
-		// agent-friendly contract: callers can split-on-tab cleanly across
-		// the whole output. Reuses linksToFlat for dedup ordering.
-		if columnsRequested {
-			flat := linksToFlat(result)
-			_, _ = fmt.Fprint(cmd.OutOrStdout(), output.FormatColumns(flat.Nibs, cols))
-			return nil
+		// Project the related nibs through the selection into the shared
+		// {nibs,count,truncated} envelope — byte-identical to 'nibs list'.
+		projResolver := resolver.ProjectionResolver(context.Background())
+		pl, err := projection.ProjectList(results, sel, projResolver, relLimit)
+		if err != nil {
+			return reportErr(relJSON, output.ErrValidation, err)
 		}
 
-		return renderLinksHuman(cmd, result)
+		if relJSON {
+			return output.JSONRaw(pl)
+		}
+
+		// Default: TSV rows under a "# <n> nibs" header (--no-header drops it).
+		fmt.Print(output.FormatListTSV(pl.Rows(), !relNoHeader))
+		return nil
 	},
 }
 
-// linksToFlat collapses a multi-rel LinksResult into a flat deduped list.
-// Preserves first-encountered order across rels.
-func linksToFlat(r LinksResult) LinksFlatResult {
-	seen := map[string]bool{}
-	var nibs []*nib.Nib
-	for _, key := range r.relKeys {
-		for _, n := range r.relations[key].Nibs {
-			if seen[n.ID] {
-				continue
-			}
-			seen[n.ID] = true
-			nibs = append(nibs, n)
-		}
-	}
-	if nibs == nil {
-		nibs = []*nib.Nib{}
-	}
-	return LinksFlatResult{ID: r.ID, Depth: r.Depth, Nibs: nibs}
-}
-
-// renderLinksHuman prints a sectioned per-rel text block. Under --flat a
-// single deduped list is rendered instead.
-func renderLinksHuman(cmd *cobra.Command, r LinksResult) error {
-	out := cmd.OutOrStdout()
-	app := getApp(cmd)
-	cfg := app.Config()
-
-	if linksFlat {
-		flat := linksToFlat(r)
-		if len(flat.Nibs) == 0 {
-			_, _ = fmt.Fprintln(out, ui.Muted.Render("No linked nibs."))
-			return nil
-		}
-		for _, n := range flat.Nibs {
-			_, _ = fmt.Fprintln(out, formatLinksRow(n, cfg))
-		}
-		return nil
-	}
-
-	if len(r.relKeys) == 0 {
-		_, _ = fmt.Fprintln(out, ui.Muted.Render("No relations requested."))
-		return nil
-	}
-	for i, key := range r.relKeys {
-		if i > 0 {
-			_, _ = fmt.Fprintln(out)
-		}
-		body := r.relations[key]
-		_, _ = fmt.Fprintln(out, ui.Title.Render(key+":"))
-		if len(body.Nibs) == 0 {
-			_, _ = fmt.Fprintln(out, ui.Muted.Render("  (none)"))
-			continue
-		}
-		for _, n := range body.Nibs {
-			_, _ = fmt.Fprintln(out, "  "+formatLinksRow(n, cfg))
-		}
-	}
-	return nil
-}
-
 func init() {
-	linksCmd.Flags().StringArrayVar(&linksRel, "rel", nil, "Relationship to query (repeatable; comma-separated OK)")
-	linksCmd.Flags().StringVar(&linksDepth, "depth", "", "Depth for transitive rels: N (positive integer) or 'all' (default 1)")
-	linksCmd.Flags().StringVar(&linksOrder, "order", "", "Order the results (supports: topo)")
-	linksCmd.Flags().BoolVar(&linksFlat, "flat", false, "Collapse multi-rel output to a single deduped list")
-	linksCmd.Flags().BoolVar(&linksJSON, "json", false, "Output as JSON")
-	linksCmd.Flags().StringVar(&linksColumns, "columns", "", "Tab-separated tabular output (implies flat). Comma-separated column names. Available: "+output.AvailableColumnsString())
-	linksCmd.Flags().StringArrayVarP(&linksStatus, "status", "s", nil, "Filter by status (repeatable)")
-	linksCmd.Flags().StringArrayVar(&linksNoStatus, "no-status", nil, "Exclude by status (repeatable)")
-	linksCmd.Flags().StringArrayVarP(&linksType, "type", "t", nil, "Filter by type (repeatable)")
-	linksCmd.Flags().StringArrayVar(&linksNoType, "no-type", nil, "Exclude by type (repeatable)")
-	linksCmd.Flags().StringArrayVarP(&linksPriority, "priority", "p", nil, "Filter by priority (repeatable)")
-	linksCmd.Flags().StringArrayVar(&linksNoPriority, "no-priority", nil, "Exclude by priority (repeatable)")
-	linksCmd.Flags().StringArrayVar(&linksTag, "tag", nil, "Filter by tag (repeatable)")
-	linksCmd.Flags().StringArrayVarP(&linksEstimate, "estimate", "e", nil, "Filter by estimate (repeatable)")
-	linksCmd.Flags().StringArrayVar(&linksNoEstimate, "no-estimate", nil, "Exclude by estimate (repeatable)")
-	linksCmd.Flags().BoolVar(&linksActive, "active", false, "Exclude completed/scrapped nibs")
-	rootCmd.AddCommand(linksCmd)
+	relCmd.Flags().StringArrayVar(&relKinds, "rel", nil, "Relationship to query (repeatable; comma-separated OK)")
+	relCmd.Flags().StringVar(&relDepth, "depth", "", "Depth for transitive rels: N (positive integer) or 'all' (default 1)")
+	relCmd.Flags().StringVar(&relOrder, "order", "", "Order the results (supports: topo)")
+	relCmd.Flags().BoolVar(&relFlat, "flat", false, "Deprecated no-op: the related set is always a single deduped list")
+	_ = relCmd.Flags().MarkHidden("flat")
+	relCmd.Flags().BoolVar(&relJSON, "json", false, "Emit the {nibs,count,truncated} JSON envelope")
+	relCmd.Flags().StringVar(&relView, "view", "", "View tier for the related nibs: id, ref, card, or full (default: ref)")
+	relCmd.Flags().StringVarP(&relFields, "fields", "f", "", "Field selection for the related nibs (additive over --view), e.g. \"status,priority\" or \"id,blocked-by(id,status)\"")
+	relCmd.Flags().BoolVar(&relNoHeader, "no-header", false, "Drop the \"# <n> nibs\" header from TSV output")
+	relCmd.Flags().IntVar(&relLimit, "limit", 0, "Project only the first N related nibs (0 = unlimited); sets truncated:true when it drops rows")
+	relCmd.Flags().StringArrayVarP(&relStatus, "status", "s", nil, "Filter by status (repeatable)")
+	relCmd.Flags().StringArrayVar(&relNoStatus, "no-status", nil, "Exclude by status (repeatable)")
+	relCmd.Flags().StringArrayVarP(&relType, "type", "t", nil, "Filter by type (repeatable)")
+	relCmd.Flags().StringArrayVar(&relNoType, "no-type", nil, "Exclude by type (repeatable)")
+	relCmd.Flags().StringArrayVarP(&relPriority, "priority", "p", nil, "Filter by priority (repeatable)")
+	relCmd.Flags().StringArrayVar(&relNoPriority, "no-priority", nil, "Exclude by priority (repeatable)")
+	relCmd.Flags().StringArrayVar(&relTag, "tag", nil, "Filter by tag (repeatable)")
+	relCmd.Flags().StringArrayVarP(&relEstimate, "estimate", "e", nil, "Filter by estimate (repeatable)")
+	relCmd.Flags().StringArrayVar(&relNoEstimate, "no-estimate", nil, "Exclude by estimate (repeatable)")
+	relCmd.Flags().BoolVar(&relActive, "active", false, "Exclude completed/scrapped nibs")
+	rootCmd.AddCommand(relCmd)
 }

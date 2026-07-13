@@ -16,6 +16,8 @@ import (
 	"github.com/vektah/gqlparser/v2/formatter"
 	"github.com/vektah/gqlparser/v2/gqlerror"
 	"github.com/alphaleonis/nibs/internal/graph"
+	"github.com/alphaleonis/nibs/internal/input"
+	"github.com/alphaleonis/nibs/internal/output"
 )
 
 var (
@@ -25,43 +27,51 @@ var (
 	querySchemaOnly bool
 )
 
-var graphqlCmd = &cobra.Command{
-	Use:     "graphql <query>",
-	Aliases: []string{"query"},
-	Short:   "Execute a GraphQL query or mutation",
-	Long: `Execute a GraphQL query or mutation against the nibs data.
+var queryCmd = &cobra.Command{
+	Use:     "query [query]",
+	Aliases: []string{"graphql"},
+	Short:   "Run a GraphQL query or mutation",
+	Long: `Run a GraphQL query or mutation against the nibs data.
 
-The argument should be a valid GraphQL query or mutation string.
+The query is the precision path: fetch exactly the fields you need across many
+nibs, traverse relationships in one hop, or batch mutations. Output is the raw
+selection ({nib}/{nibs}/…) with no envelope — pass --json to strip colors for
+piping.
 
-Examples:
-  # List all nibs
-  nibs graphql '{ nibs { id title status } }'
+Pass the query through the escaping-proof input channel so multi-line GraphQL
+never has to survive shell quoting:
 
-  # Get a specific nib
-  nibs graphql '{ nib(id: "abc") { title status body } }'
+  # "-" reads the query from stdin
+  echo '{ nibs { id title status } }' | nibs query -
 
+  # "@FILE" reads the query from a file
+  nibs query @query.graphql --json
+
+A short one-liner may still be passed inline, but "-"/"@FILE" is the primary
+form for anything non-trivial:
+
+  nibs query '{ nib(id: "abc") { title status } }'
+
+More examples:
   # Filter nibs by status
-  nibs graphql '{ nibs(filter: { status: ["todo", "in-progress"] }) { id title } }'
+  nibs query --json '{ nibs(filter: { status: ["todo", "in-progress"] }) { id title } }'
 
-  # Get nibs with relationships
-  nibs graphql '{ nibs { id title blockedBy { id title } children { id title } } }'
+  # Traverse relationships in one query
+  nibs query --json '{ nib(id: "abc") { title parent { title } children { id status } } }'
 
-  # Use variables
-  nibs graphql -v '{"id": "abc"}' 'query GetNib($id: ID!) { nib(id: $id) { title } }'
-
-  # Read from stdin (useful for complex queries or escaping issues)
-  echo '{ nibs { id title } }' | nibs graphql
-  cat query.graphql | nibs graphql
+  # Use variables (inline JSON or "@FILE")
+  nibs query -v '{"id": "abc"}' 'query GetNib($id: ID!) { nib(id: $id) { title } }'
+  nibs query -v @vars.json @query.graphql
 
   # Print the schema
-  nibs graphql --schema`,
+  nibs query --schema`,
 	Args: func(cmd *cobra.Command, args []string) error {
 		if querySchemaOnly {
 			return nil
 		}
-		// Allow 0 args if stdin has data, or exactly 1 arg
+		// Allow 0 args (query comes from piped stdin) or exactly 1 arg.
 		if len(args) > 1 {
-			return fmt.Errorf("accepts at most 1 argument (the GraphQL query)")
+			return fmt.Errorf("accepts at most 1 argument (the GraphQL query, or \"-\"/\"@FILE\")")
 		}
 		return nil
 	},
@@ -73,33 +83,27 @@ Examples:
 
 		app := getApp(cmd)
 
-		var query string
-		if len(args) == 1 {
-			query = args[0]
-		} else {
-			// Try to read from stdin
-			stdinQuery, err := readFromStdin()
-			if err != nil {
-				return err
-			}
-			if stdinQuery == "" {
-				return fmt.Errorf("no query provided (pass as argument or pipe to stdin)")
-			}
-			query = stdinQuery
+		query, err := resolveQuery(args)
+		if err != nil {
+			// A missing "@FILE"/failed stdin read is FILE_ERROR; a malformed
+			// "@" is a usage error — inputError maps each to its exit code.
+			return inputError(queryJSON, err)
+		}
+		if strings.TrimSpace(query) == "" {
+			return cmdError(queryJSON, output.ErrValidation,
+				`no query provided (pass it inline, use "-"/"@FILE", or pipe to stdin)`)
 		}
 
-		// Parse variables if provided
-		var variables map[string]any
-		if queryVariables != "" {
-			if err := json.Unmarshal([]byte(queryVariables), &variables); err != nil {
-				return fmt.Errorf("invalid variables JSON: %w", err)
-			}
+		variables, err := resolveVariables(queryVariables)
+		if err != nil {
+			return inputError(queryJSON, err)
 		}
 
-		// Execute the query
 		result, err := executeQuery(app, query, variables, queryOperation)
 		if err != nil {
-			return err
+			// A GraphQL parse/validation/execution failure — route it through
+			// the coded boundary so both modes get a structured, non-zero exit.
+			return cmdError(queryJSON, output.ErrValidation, "%s", err)
 		}
 
 		// Output (both modes are prettified, but --json skips color)
@@ -111,6 +115,46 @@ Examples:
 
 		return nil
 	},
+}
+
+// resolveQuery resolves the GraphQL query text from the positional arg or piped
+// stdin. A positional "-" reads stdin and "@FILE" reads the named file — the
+// escaping-proof channel, reused from internal/input. Any other positional is
+// taken verbatim as a literal inline query (for short one-liners). With no
+// positional arg, piped stdin is read automatically if present.
+func resolveQuery(args []string) (string, error) {
+	if len(args) == 1 {
+		arg := args[0]
+		if arg == "-" || strings.HasPrefix(arg, "@") {
+			return input.Prose(arg, os.Stdin)
+		}
+		return arg, nil
+	}
+	return readFromStdin()
+}
+
+// resolveVariables parses the --variables value into a map. Inline JSON is the
+// common form; an "@FILE" value reads the JSON from a file (reusing
+// internal/input) so a large variable set need not ride on a shell argument. A
+// missing file surfaces as *input.IOError (FILE_ERROR); malformed JSON is a
+// validation error.
+func resolveVariables(value string) (map[string]any, error) {
+	if value == "" {
+		return nil, nil
+	}
+	raw := value
+	if strings.HasPrefix(value, "@") {
+		resolved, err := input.Prose(value, os.Stdin)
+		if err != nil {
+			return nil, err
+		}
+		raw = resolved
+	}
+	var variables map[string]any
+	if err := json.Unmarshal([]byte(raw), &variables); err != nil {
+		return nil, fmt.Errorf("invalid variables JSON: %w", err)
+	}
+	return variables, nil
 }
 
 // readFromStdin reads the query from stdin if data is available.
@@ -204,9 +248,9 @@ func GetGraphQLSchema() string {
 }
 
 func init() {
-	graphqlCmd.Flags().BoolVar(&queryJSON, "json", false, "Output JSON without colors (for piping)")
-	graphqlCmd.Flags().StringVarP(&queryVariables, "variables", "v", "", "Query variables as JSON string")
-	graphqlCmd.Flags().StringVarP(&queryOperation, "operation", "o", "", "Operation name (for multi-operation documents)")
-	graphqlCmd.Flags().BoolVar(&querySchemaOnly, "schema", false, "Print the GraphQL schema and exit")
-	rootCmd.AddCommand(graphqlCmd)
+	queryCmd.Flags().BoolVar(&queryJSON, "json", false, "Output JSON without colors (for piping)")
+	queryCmd.Flags().StringVarP(&queryVariables, "variables", "v", "", `Query variables as inline JSON or "@FILE"`)
+	queryCmd.Flags().StringVarP(&queryOperation, "operation", "o", "", "Operation name (for multi-operation documents)")
+	queryCmd.Flags().BoolVar(&querySchemaOnly, "schema", false, "Print the GraphQL schema and exit")
+	rootCmd.AddCommand(queryCmd)
 }

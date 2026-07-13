@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"errors"
 	"fmt"
+	"io/fs"
 	"os"
 	"path/filepath"
 	"strings"
@@ -134,12 +135,17 @@ func TestResolveNibsPath(t *testing.T) {
 	})
 }
 
-// TestReportExitError pins the CLI error boundary's contract:
+// TestReportExitError pins the CLI error boundary's contract. It is the ONE
+// place that decides the process exit status, mapping each error's structured
+// CODE to a stable exit code via output.ExitCode:
 //   - nil err → exit 0, no stderr
-//   - plain err → exit 1, stderr is "Error: <msg>\n"
-//   - err wrapping output.ErrAlreadyReported → exit 1, no stderr
-//     (the JSON envelope on stdout is the user-visible report; stderr would
-//     only add a redundant "Error:" line that corrupts `2>&1 | jq` callers)
+//   - plain (uncoded) err → exit 1, stderr "Error: <msg>\n"
+//   - plain filesystem/IO err → exit 5 (ExitIO), stderr "Error: <msg>\n"
+//   - reported CodedError (JSON envelope / get text line already on stdout) →
+//     exit mapped from code, NO stderr (a redundant "Error:" line would
+//     corrupt `2>&1 | jq` callers)
+//   - non-reported CodedError (shared text path) → exit mapped from code,
+//     stderr "Error: <msg>\n" (the boundary owns the print)
 //
 // The `err` field is a thunk so the test can construct the error inside
 // captureStdout — output.Error writes a JSON envelope on construction,
@@ -154,28 +160,46 @@ func TestReportExitError(t *testing.T) {
 		{
 			name:       "nil error returns 0 with empty stderr",
 			err:        func() error { return nil },
-			wantCode:   0,
+			wantCode:   output.ExitOK,
 			wantStderr: "",
 		},
 		{
-			name:       "plain error returns 1 with Error: prefix",
+			name:       "plain error returns generic exit with Error: prefix",
 			err:        func() error { return errors.New("boom") },
-			wantCode:   1,
+			wantCode:   output.ExitError,
 			wantStderr: "Error: boom\n",
 		},
 		{
-			name:       "already-reported error returns 1 with empty stderr",
+			name:       "plain filesystem error maps to ExitIO",
+			err:        func() error { return &fs.PathError{Op: "open", Path: "x", Err: fs.ErrNotExist} },
+			wantCode:   output.ExitIO,
+			wantStderr: "Error: open x: file does not exist\n",
+		},
+		{
+			name:       "reported validation error maps to ExitValidation, no stderr",
 			err:        func() error { return output.Error(output.ErrValidation, "bad") },
-			wantCode:   1,
+			wantCode:   output.ExitValidation,
 			wantStderr: "",
 		},
 		{
-			name: "wrapped already-reported error returns 1 with empty stderr",
+			name: "wrapped reported not-found error maps to ExitNotFound, no stderr",
 			err: func() error {
-				return fmt.Errorf("context: %w", output.Error(output.ErrValidation, "bad"))
+				return fmt.Errorf("context: %w", output.Error(output.ErrNotFound, "missing"))
 			},
-			wantCode:   1,
+			wantCode:   output.ExitNotFound,
 			wantStderr: "",
+		},
+		{
+			name:       "non-reported coded error maps code and prints to stderr",
+			err:        func() error { return &output.CodedError{Code: output.ErrConflict, Msg: "clash"} },
+			wantCode:   output.ExitConflict,
+			wantStderr: "Error: clash\n",
+		},
+		{
+			name:       "unknown code collapses to ExitError",
+			err:        func() error { return &output.CodedError{Code: "WAT", Msg: "huh"} },
+			wantCode:   output.ExitError,
+			wantStderr: "Error: huh\n",
 		},
 	}
 	for _, tt := range tests {

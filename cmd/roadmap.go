@@ -13,6 +13,7 @@ import (
 	"text/template"
 
 	"github.com/alphaleonis/nibs/internal/config"
+	"github.com/alphaleonis/nibs/internal/graph"
 	"github.com/alphaleonis/nibs/internal/nib"
 	"github.com/alphaleonis/nibs/internal/nibcore"
 	"github.com/spf13/cobra"
@@ -42,17 +43,23 @@ type unscheduledGroup struct {
 	Other []*nib.Nib `json:"other,omitempty"`
 }
 
-// milestoneGroup represents a milestone and its contents.
+// milestoneGroup represents a milestone and its contents. Progress is the
+// canonical child-completion rollup over the milestone's DIRECT children
+// (graph.ComputeProgress) — the same value `nibs get <milestone> -f progress`
+// reports — computed over every real child, independent of the display filters.
 type milestoneGroup struct {
-	Milestone *nib.Nib   `json:"milestone"`
-	Epics     []epicGroup  `json:"epics,omitempty"`
-	Other     []*nib.Nib `json:"other,omitempty"`
+	Milestone *nib.Nib             `json:"milestone"`
+	Progress  graph.ProgressRollup `json:"progress"`
+	Epics     []epicGroup          `json:"epics,omitempty"`
+	Other     []*nib.Nib           `json:"other,omitempty"`
 }
 
-// epicGroup represents an epic and its child items.
+// epicGroup represents an epic and its child items. Progress is the canonical
+// child-completion rollup over the epic's direct children.
 type epicGroup struct {
-	Epic  *nib.Nib   `json:"epic"`
-	Items []*nib.Nib `json:"items,omitempty"`
+	Epic     *nib.Nib             `json:"epic"`
+	Progress graph.ProgressRollup `json:"progress"`
+	Items    []*nib.Nib           `json:"items,omitempty"`
 }
 
 
@@ -168,7 +175,11 @@ func buildRoadmap(allNibs []*nib.Nib, includeDone bool, statusFilter, noStatusFi
 		epicItems := filterChildren(children[b.ID], includeDone, cfg)
 		if len(epicItems) > 0 {
 			sortByTypeThenStatus(epicItems, cfg)
-			unscheduledEpics = append(unscheduledEpics, epicGroup{Epic: b, Items: epicItems})
+			unscheduledEpics = append(unscheduledEpics, epicGroup{
+				Epic:     b,
+				Progress: graph.ComputeProgress(childStatuses(children[b.ID])),
+				Items:    epicItems,
+			})
 		}
 	}
 
@@ -220,7 +231,12 @@ func buildRoadmap(allNibs []*nib.Nib, includeDone bool, statusFilter, noStatusFi
 
 // buildMilestoneGroup builds a milestone group with its epics and other items.
 func buildMilestoneGroup(m *nib.Nib, children map[string][]*nib.Nib, includeDone bool, cfg *config.Config) milestoneGroup {
-	group := milestoneGroup{Milestone: m}
+	group := milestoneGroup{
+		Milestone: m,
+		// % complete over the milestone's real direct children (epics + direct
+		// items), computed over the full child set regardless of includeDone.
+		Progress: graph.ComputeProgress(childStatuses(children[m.ID])),
+	}
 
 	// Get direct children of this milestone
 	directChildren := children[m.ID]
@@ -240,7 +256,11 @@ func buildMilestoneGroup(m *nib.Nib, children map[string][]*nib.Nib, includeDone
 		// Only include epics that have visible children
 		if len(epicItems) > 0 {
 			sortByTypeThenStatus(epicItems, cfg)
-			group.Epics = append(group.Epics, epicGroup{Epic: epic, Items: epicItems})
+			group.Epics = append(group.Epics, epicGroup{
+				Epic:     epic,
+				Progress: graph.ComputeProgress(childStatuses(children[epic.ID])),
+				Items:    epicItems,
+			})
 		}
 	}
 
@@ -266,6 +286,16 @@ func buildMilestoneGroup(m *nib.Nib, children map[string][]*nib.Nib, includeDone
 	group.Other = other
 
 	return group
+}
+
+// childStatuses projects a child slice to its status strings, the input
+// graph.ComputeProgress needs to build a canonical progress rollup.
+func childStatuses(children []*nib.Nib) []string {
+	statuses := make([]string, len(children))
+	for i, c := range children {
+		statuses[i] = c.Status
+	}
+	return statuses
 }
 
 // filterChildren filters children based on done status.

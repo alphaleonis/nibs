@@ -2,12 +2,14 @@ package cmd
 
 import (
 	"encoding/json"
+	"errors"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
 
 	"github.com/alphaleonis/nibs/internal/nib"
+	"github.com/alphaleonis/nibs/internal/output"
 	"github.com/spf13/pflag"
 )
 
@@ -30,30 +32,31 @@ func onDiskETag(t *testing.T, nibsDir, id string) string {
 	return b.ETag()
 }
 
-// resetReorderFlags clears the package-level flag vars used by reorderCmd AND
-// Cobra's Changed-state tracking so tests don't pollute each other via
-// rootCmd's singleton state.
-func resetReorderFlags() {
-	reorderAfter = ""
-	reorderBefore = ""
-	reorderFirst = false
-	reorderIfMatch = ""
-	reorderJSON = false
-	reorderChildrenOf = ""
-	reorderChildIfMatch = nil
-	reorderCmd.Flags().Visit(func(f *pflag.Flag) {
+// resetMvFlags clears the package-level flag vars used by mvCmd AND Cobra's
+// Changed-state tracking so tests don't pollute each other via rootCmd's
+// singleton state.
+func resetMvFlags() {
+	mvAfter = ""
+	mvBefore = ""
+	mvFirst = false
+	mvParent = ""
+	mvIfMatch = ""
+	mvJSON = false
+	mvChildrenOf = ""
+	mvChildIfMatch = nil
+	mvCmd.Flags().Visit(func(f *pflag.Flag) {
 		f.Changed = false
 	})
 }
 
-// setupReorderCobraTest writes nib files and returns the .nibs directory so
+// setupMvCobraTest writes nib files and returns the .nibs directory so
 // `rootCmd.SetArgs([...])` can drive the full Cobra pipeline.
-func setupReorderCobraTest(t *testing.T, files map[string]string) string {
+func setupMvCobraTest(t *testing.T, files map[string]string) string {
 	t.Helper()
 	t.Cleanup(resetRootPersistentFlags)
-	t.Cleanup(resetReorderFlags)
+	t.Cleanup(resetMvFlags)
 	t.Cleanup(func() { rootCmd.SetArgs(nil) })
-	resetReorderFlags()
+	resetMvFlags()
 
 	tmpDir := t.TempDir()
 	nibsDir := filepath.Join(tmpDir, ".nibs")
@@ -80,13 +83,16 @@ func reorderFixture() map[string]string {
 }
 
 // listChildrenOrder runs `nibs list --parent <id> --json` and returns the
-// resulting children in disk order.
+// resulting children in disk order. It projects id+order explicitly (the
+// default ref view omits order) and reads them off the {nibs,count,truncated}
+// envelope, returning bare nibs carrying only the two fields the reorder
+// assertions consult (ID for identity, Order for the failure diagnostic).
 func listChildrenOrder(t *testing.T, nibsDir, parentID string) []*nib.Nib {
 	t.Helper()
 	t.Cleanup(resetRootPersistentFlags)
 	t.Cleanup(resetListFlags)
 	resetListFlags()
-	rootCmd.SetArgs([]string{"--nibs-path", nibsDir, "list", "--parent", parentID, "--json"})
+	rootCmd.SetArgs([]string{"--nibs-path", nibsDir, "list", "--parent", parentID, "-f", "id,order", "--json"})
 
 	var execErr error
 	out := captureStdout(t, func() {
@@ -95,9 +101,18 @@ func listChildrenOrder(t *testing.T, nibsDir, parentID string) []*nib.Nib {
 	if execErr != nil {
 		t.Fatalf("list --parent %s failed: %v", parentID, execErr)
 	}
-	var results []*nib.Nib
-	if err := json.Unmarshal([]byte(out), &results); err != nil {
+	var env struct {
+		Nibs []struct {
+			ID    string `json:"id"`
+			Order string `json:"order"`
+		} `json:"nibs"`
+	}
+	if err := json.Unmarshal([]byte(out), &env); err != nil {
 		t.Fatalf("unmarshal: %v\nraw: %s", err, out)
+	}
+	results := make([]*nib.Nib, len(env.Nibs))
+	for i, n := range env.Nibs {
+		results[i] = &nib.Nib{ID: n.ID, Order: n.Order}
 	}
 	return results
 }
@@ -105,7 +120,7 @@ func listChildrenOrder(t *testing.T, nibsDir, parentID string) []*nib.Nib {
 // TestReorderCommand_ChildrenOf exercises the end-to-end Mode A dispatch:
 // `nibs reorder --children-of <parent> <id1> <id2> <id3>`.
 func TestReorderCommand_ChildrenOf(t *testing.T) {
-	nibsDir := setupReorderCobraTest(t, reorderFixture())
+	nibsDir := setupMvCobraTest(t, reorderFixture())
 
 	rootCmd.SetArgs([]string{
 		"--nibs-path", nibsDir,
@@ -145,7 +160,7 @@ func TestReorderCommand_BlockMove(t *testing.T) {
 		"d.md":     "---\nversion: 1\ntitle: D\nstatus: todo\ntype: task\nparent: epic1\norder: d0\n---\n",
 		"e.md":     "---\nversion: 1\ntitle: E\nstatus: todo\ntype: task\nparent: epic1\norder: e0\n---\n",
 	}
-	nibsDir := setupReorderCobraTest(t, files)
+	nibsDir := setupMvCobraTest(t, files)
 
 	rootCmd.SetArgs([]string{
 		"--nibs-path", nibsDir,
@@ -182,7 +197,7 @@ func TestReorderCommand_ChildrenOf_RootEmptyString(t *testing.T) {
 		"r1.md": "---\nversion: 1\ntitle: Root1\nstatus: todo\ntype: task\norder: a0\n---\n",
 		"r2.md": "---\nversion: 1\ntitle: Root2\nstatus: todo\ntype: task\norder: b0\n---\n",
 	}
-	nibsDir := setupReorderCobraTest(t, files)
+	nibsDir := setupMvCobraTest(t, files)
 
 	rootCmd.SetArgs([]string{
 		"--nibs-path", nibsDir,
@@ -213,12 +228,15 @@ func TestReorderCommand_ChildrenOf_RootEmptyString(t *testing.T) {
 }
 
 // listRootOrder runs `nibs list --no-parent --json` to list root-level nibs.
+// It projects id+order and reads them off the {nibs,count,truncated} envelope
+// (same shape as listChildrenOrder), returning bare nibs carrying only ID and
+// Order.
 func listRootOrder(t *testing.T, nibsDir string) []*nib.Nib {
 	t.Helper()
 	t.Cleanup(resetRootPersistentFlags)
 	t.Cleanup(resetListFlags)
 	resetListFlags()
-	rootCmd.SetArgs([]string{"--nibs-path", nibsDir, "list", "--no-parent", "--json"})
+	rootCmd.SetArgs([]string{"--nibs-path", nibsDir, "list", "--no-parent", "-f", "id,order", "--json"})
 
 	var execErr error
 	out := captureStdout(t, func() {
@@ -227,9 +245,18 @@ func listRootOrder(t *testing.T, nibsDir string) []*nib.Nib {
 	if execErr != nil {
 		t.Fatalf("list --no-parent failed: %v", execErr)
 	}
-	var results []*nib.Nib
-	if err := json.Unmarshal([]byte(out), &results); err != nil {
+	var env struct {
+		Nibs []struct {
+			ID    string `json:"id"`
+			Order string `json:"order"`
+		} `json:"nibs"`
+	}
+	if err := json.Unmarshal([]byte(out), &env); err != nil {
 		t.Fatalf("unmarshal: %v\nraw: %s", err, out)
+	}
+	results := make([]*nib.Nib, len(env.Nibs))
+	for i, n := range env.Nibs {
+		results[i] = &nib.Nib{ID: n.ID, Order: n.Order}
 	}
 	return results
 }
@@ -239,7 +266,7 @@ func listRootOrder(t *testing.T, nibsDir string) []*nib.Nib {
 // Without this test, a future refactor could silently shift the regime
 // boundary by changing the dispatch order.
 func TestReorderCommand_SingleNibBoundary(t *testing.T) {
-	nibsDir := setupReorderCobraTest(t, reorderFixture())
+	nibsDir := setupMvCobraTest(t, reorderFixture())
 
 	rootCmd.SetArgs([]string{
 		"--nibs-path", nibsDir,
@@ -273,7 +300,7 @@ func TestReorderCommand_SingleNibBoundary(t *testing.T) {
 // positional positioning flags (`--after/--before/--first`) cannot be
 // specified together.
 func TestReorderCommand_MutexEnforced(t *testing.T) {
-	nibsDir := setupReorderCobraTest(t, reorderFixture())
+	nibsDir := setupMvCobraTest(t, reorderFixture())
 
 	rootCmd.SetArgs([]string{
 		"--nibs-path", nibsDir,
@@ -297,7 +324,7 @@ func TestReorderCommand_MutexEnforced(t *testing.T) {
 // multi-nib reorder; the bulk-mode equivalent is --child-if-match (per-id
 // etags). Silently ignoring --if-match would mislead callers.
 func TestReorderCommand_IfMatchRejectedInModeA(t *testing.T) {
-	nibsDir := setupReorderCobraTest(t, reorderFixture())
+	nibsDir := setupMvCobraTest(t, reorderFixture())
 
 	rootCmd.SetArgs([]string{
 		"--nibs-path", nibsDir,
@@ -323,7 +350,7 @@ func TestReorderCommand_IfMatchRejectedInModeA(t *testing.T) {
 // equivalent is --child-if-match (per-id etags). Silently ignoring
 // --if-match would mislead callers.
 func TestReorderCommand_IfMatchRejectedInModeB(t *testing.T) {
-	nibsDir := setupReorderCobraTest(t, reorderFixture())
+	nibsDir := setupMvCobraTest(t, reorderFixture())
 
 	rootCmd.SetArgs([]string{
 		"--nibs-path", nibsDir,
@@ -346,7 +373,7 @@ func TestReorderCommand_IfMatchRejectedInModeB(t *testing.T) {
 // each child's on-disk etag, pass them through, and verify the reorder
 // applies cleanly.
 func TestReorderCommand_ChildIfMatch(t *testing.T) {
-	nibsDir := setupReorderCobraTest(t, reorderFixture())
+	nibsDir := setupMvCobraTest(t, reorderFixture())
 
 	// Compute the on-disk etag for each child before the reorder.
 	etagA := onDiskETag(t, nibsDir, "a")
@@ -394,7 +421,7 @@ func TestReorderCommand_ChildIfMatch_MalformedRejected(t *testing.T) {
 	for _, tc := range cases {
 		tc := tc
 		t.Run(tc.name, func(t *testing.T) {
-			nibsDir := setupReorderCobraTest(t, reorderFixture())
+			nibsDir := setupMvCobraTest(t, reorderFixture())
 			rootCmd.SetArgs([]string{
 				"--nibs-path", nibsDir,
 				"reorder",
@@ -416,7 +443,7 @@ func TestReorderCommand_ChildIfMatch_MalformedRejected(t *testing.T) {
 // Behavior #14: --child-if-match in single-nib mode is a runtime error
 // redirecting to --if-match.
 func TestReorderCommand_ChildIfMatchRejectedInSingleNib(t *testing.T) {
-	nibsDir := setupReorderCobraTest(t, reorderFixture())
+	nibsDir := setupMvCobraTest(t, reorderFixture())
 
 	rootCmd.SetArgs([]string{
 		"--nibs-path", nibsDir,
@@ -441,7 +468,7 @@ func TestReorderCommand_ChildIfMatchRejectedInSingleNib(t *testing.T) {
 // Behavior #15: --if-match and --child-if-match together is a Cobra
 // mutex error.
 func TestReorderCommand_IfMatchAndChildIfMatchMutex(t *testing.T) {
-	nibsDir := setupReorderCobraTest(t, reorderFixture())
+	nibsDir := setupMvCobraTest(t, reorderFixture())
 
 	rootCmd.SetArgs([]string{
 		"--nibs-path", nibsDir,
@@ -457,5 +484,259 @@ func TestReorderCommand_IfMatchAndChildIfMatchMutex(t *testing.T) {
 	})
 	if execErr == nil {
 		t.Fatal("expected mutex error when --if-match and --child-if-match are both set")
+	}
+}
+
+// getNib runs `nibs get <id> -f <fields> --json` and returns the decoded {nib}
+// contract so mv tests can assert on the resulting parent/order.
+func getNib(t *testing.T, nibsDir, id, fields string) map[string]any {
+	t.Helper()
+	t.Cleanup(resetRootPersistentFlags)
+	rootCmd.SetArgs([]string{"--nibs-path", nibsDir, "get", id, "-f", fields, "--json"})
+	var execErr error
+	out := captureStdout(t, func() { execErr = rootCmd.Execute() })
+	if execErr != nil {
+		t.Fatalf("get %s failed: %v", id, execErr)
+	}
+	var env struct {
+		Nib map[string]any `json:"nib"`
+	}
+	if err := json.Unmarshal([]byte(out), &env); err != nil {
+		t.Fatalf("unmarshal get %s: %v\nraw: %s", id, err, out)
+	}
+	return env.Nib
+}
+
+// TestMvRepositionAfter drives the single-nib reposition path via `nibs mv`
+// (the primary name) and checks the lean card echo names the moved nib.
+func TestMvRepositionAfter(t *testing.T) {
+	nibsDir := setupMvCobraTest(t, reorderFixture())
+
+	rootCmd.SetArgs([]string{"--nibs-path", nibsDir, "mv", "c", "--after", "a"})
+	var execErr error
+	out := captureStdout(t, func() { execErr = rootCmd.Execute() })
+	if execErr != nil {
+		t.Fatalf("mv c --after a failed: %v", execErr)
+	}
+	// Lean card echo: the closed/moved nib is echoed as a card carrying its id.
+	if !strings.Contains(out, "id: c") {
+		t.Errorf("expected lean card echo to name the moved nib, got:\n%s", out)
+	}
+
+	got := listChildrenOrder(t, nibsDir, "epic1")
+	want := []string{"a", "c", "b"}
+	for i, b := range got {
+		if b.ID != want[i] {
+			t.Errorf("got[%d].ID = %q, want %q (order=%q)", i, b.ID, want[i], b.Order)
+		}
+	}
+}
+
+// TestMvRepositionFirst drives `nibs mv <id> --first`.
+func TestMvRepositionFirst(t *testing.T) {
+	nibsDir := setupMvCobraTest(t, reorderFixture())
+
+	rootCmd.SetArgs([]string{"--nibs-path", nibsDir, "mv", "c", "--first"})
+	var execErr error
+	captureStdout(t, func() { execErr = rootCmd.Execute() })
+	if execErr != nil {
+		t.Fatalf("mv c --first failed: %v", execErr)
+	}
+
+	got := listChildrenOrder(t, nibsDir, "epic1")
+	want := []string{"c", "a", "b"}
+	for i, b := range got {
+		if b.ID != want[i] {
+			t.Errorf("got[%d].ID = %q, want %q", i, b.ID, want[i])
+		}
+	}
+}
+
+// reparentFixture has two root epics (ep1 with tasks a,b; ep2 empty) so a task
+// can be legally reparented from one epic to the other.
+func reparentFixture() map[string]string {
+	return map[string]string{
+		"ep1.md": "---\nversion: 1\ntitle: Epic1\nstatus: todo\ntype: epic\norder: a0\n---\n",
+		"ep2.md": "---\nversion: 1\ntitle: Epic2\nstatus: todo\ntype: epic\norder: b0\n---\n",
+		"a.md":   "---\nversion: 1\ntitle: A\nstatus: todo\ntype: task\nparent: ep1\norder: a0\n---\n",
+		"b.md":   "---\nversion: 1\ntitle: B\nstatus: todo\ntype: task\nparent: ep1\norder: b0\n---\n",
+	}
+}
+
+// TestMvReparentAppends moves a task under a new parent with no position flag;
+// it should adopt the new parent (appended to the end of its children) and the
+// lean card echo should reflect the new parent.
+func TestMvReparentAppends(t *testing.T) {
+	nibsDir := setupMvCobraTest(t, reparentFixture())
+
+	rootCmd.SetArgs([]string{"--nibs-path", nibsDir, "mv", "a", "--parent", "ep2"})
+	var execErr error
+	out := captureStdout(t, func() { execErr = rootCmd.Execute() })
+	if execErr != nil {
+		t.Fatalf("mv a --parent ep2 failed: %v", execErr)
+	}
+	if !strings.Contains(out, "parent: ep2") {
+		t.Errorf("expected lean card echo to show the new parent, got:\n%s", out)
+	}
+
+	got := getNib(t, nibsDir, "a", "id,parent")
+	if got["parent"] != "ep2" {
+		t.Errorf("parent = %v, want ep2", got["parent"])
+	}
+}
+
+// TestMvReparentToFirstUnderNewParent combines --parent with --first: the nib is
+// reparented and positioned first among its new siblings atomically.
+func TestMvReparentToFirstUnderNewParent(t *testing.T) {
+	files := reparentFixture()
+	// Give ep2 an existing child so "first" is observable.
+	files["z.md"] = "---\nversion: 1\ntitle: Z\nstatus: todo\ntype: task\nparent: ep2\norder: a0\n---\n"
+	nibsDir := setupMvCobraTest(t, files)
+
+	rootCmd.SetArgs([]string{"--nibs-path", nibsDir, "mv", "a", "--parent", "ep2", "--first"})
+	var execErr error
+	captureStdout(t, func() { execErr = rootCmd.Execute() })
+	if execErr != nil {
+		t.Fatalf("mv a --parent ep2 --first failed: %v", execErr)
+	}
+
+	got := listChildrenOrder(t, nibsDir, "ep2")
+	want := []string{"a", "z"}
+	if len(got) != len(want) {
+		t.Fatalf("got %d children under ep2, want %d", len(got), len(want))
+	}
+	for i, b := range got {
+		if b.ID != want[i] {
+			t.Errorf("got[%d].ID = %q, want %q", i, b.ID, want[i])
+		}
+	}
+}
+
+// TestMvReparentToRoot uses --parent "" to clear the parent (move to root).
+func TestMvReparentToRoot(t *testing.T) {
+	nibsDir := setupMvCobraTest(t, reparentFixture())
+
+	rootCmd.SetArgs([]string{"--nibs-path", nibsDir, "mv", "a", "--parent", ""})
+	var execErr error
+	captureStdout(t, func() { execErr = rootCmd.Execute() })
+	if execErr != nil {
+		t.Fatalf("mv a --parent \"\" failed: %v", execErr)
+	}
+
+	got := getNib(t, nibsDir, "a", "id,parent")
+	if p, ok := got["parent"]; ok && p != "" && p != nil {
+		t.Errorf("expected a to be at root (empty parent), got parent=%v", p)
+	}
+}
+
+// TestMvReparentIllegalHierarchy verifies an illegal reparent (epic under a task)
+// surfaces a structured HIERARCHY error carrying the allowed parent types.
+func TestMvReparentIllegalHierarchy(t *testing.T) {
+	files := map[string]string{
+		"tk.md": "---\nversion: 1\ntitle: Task\nstatus: todo\ntype: task\norder: a0\n---\n",
+		"ep.md": "---\nversion: 1\ntitle: Epic\nstatus: todo\ntype: epic\norder: b0\n---\n",
+	}
+	nibsDir := setupMvCobraTest(t, files)
+
+	rootCmd.SetArgs([]string{"--nibs-path", nibsDir, "mv", "ep", "--parent", "tk", "--json"})
+	var execErr error
+	out := captureStdout(t, func() { execErr = rootCmd.Execute() })
+	if execErr == nil {
+		t.Fatal("expected HIERARCHY error moving an epic under a task")
+	}
+
+	var ce *output.CodedError
+	if !errors.As(execErr, &ce) {
+		t.Fatalf("expected *output.CodedError, got %T: %v", execErr, execErr)
+	}
+	if ce.Code != output.ErrHierarchy {
+		t.Errorf("code = %q, want %q", ce.Code, output.ErrHierarchy)
+	}
+	if output.ExitCode(ce.Code) != output.ExitValidation {
+		t.Errorf("exit code = %d, want %d", output.ExitCode(ce.Code), output.ExitValidation)
+	}
+
+	// The JSON envelope must carry the allowed parent types (milestone for an epic).
+	var env struct {
+		Error struct {
+			Code               string   `json:"code"`
+			AllowedParentTypes []string `json:"allowedParentTypes"`
+		} `json:"error"`
+	}
+	if err := json.Unmarshal([]byte(out), &env); err != nil {
+		t.Fatalf("unmarshal error envelope: %v\nraw: %s", err, out)
+	}
+	if env.Error.Code != output.ErrHierarchy {
+		t.Errorf("envelope code = %q, want %q", env.Error.Code, output.ErrHierarchy)
+	}
+	if len(env.Error.AllowedParentTypes) != 1 || env.Error.AllowedParentTypes[0] != "milestone" {
+		t.Errorf("allowedParentTypes = %v, want [milestone]", env.Error.AllowedParentTypes)
+	}
+}
+
+// TestMvIfMatchConflict verifies a stale --if-match on a single-nib move surfaces
+// a CONFLICT carrying the server's current etag.
+func TestMvIfMatchConflict(t *testing.T) {
+	nibsDir := setupMvCobraTest(t, reorderFixture())
+
+	rootCmd.SetArgs([]string{
+		"--nibs-path", nibsDir,
+		"mv", "c", "--first", "--if-match", "deadbeefdeadbeef", "--json",
+	})
+	var execErr error
+	out := captureStdout(t, func() { execErr = rootCmd.Execute() })
+	if execErr == nil {
+		t.Fatal("expected CONFLICT error with a stale --if-match")
+	}
+	var ce *output.CodedError
+	if !errors.As(execErr, &ce) {
+		t.Fatalf("expected *output.CodedError, got %T: %v", execErr, execErr)
+	}
+	if ce.Code != output.ErrConflict {
+		t.Errorf("code = %q, want %q", ce.Code, output.ErrConflict)
+	}
+	var env struct {
+		Error struct {
+			Code        string `json:"code"`
+			CurrentEtag string `json:"currentEtag"`
+		} `json:"error"`
+	}
+	if err := json.Unmarshal([]byte(out), &env); err != nil {
+		t.Fatalf("unmarshal conflict envelope: %v\nraw: %s", err, out)
+	}
+	if env.Error.Code != output.ErrConflict {
+		t.Errorf("envelope code = %q, want %q", env.Error.Code, output.ErrConflict)
+	}
+	if env.Error.CurrentEtag == "" {
+		t.Errorf("conflict envelope missing currentEtag: %s", out)
+	}
+}
+
+// TestMvNoMoveSpecified rejects a single-nib mv with neither a position nor a
+// parent flag.
+func TestMvNoMoveSpecified(t *testing.T) {
+	nibsDir := setupMvCobraTest(t, reorderFixture())
+
+	rootCmd.SetArgs([]string{"--nibs-path", nibsDir, "mv", "c"})
+	var execErr error
+	captureStdout(t, func() { execErr = rootCmd.Execute() })
+	if execErr == nil {
+		t.Fatal("expected error when mv is given no positioning or parent flag")
+	}
+	var ce *output.CodedError
+	if errors.As(execErr, &ce) && ce.Code != output.ErrValidation {
+		t.Errorf("code = %q, want %q", ce.Code, output.ErrValidation)
+	}
+}
+
+// TestMvParentRejectedWithMultipleIds verifies --parent is a single-nib operation.
+func TestMvParentRejectedWithMultipleIds(t *testing.T) {
+	nibsDir := setupMvCobraTest(t, reparentFixture())
+
+	rootCmd.SetArgs([]string{"--nibs-path", nibsDir, "mv", "a", "b", "--parent", "ep2"})
+	var execErr error
+	captureStdout(t, func() { execErr = rootCmd.Execute() })
+	if execErr == nil {
+		t.Fatal("expected error when --parent is combined with multiple ids")
 	}
 }
