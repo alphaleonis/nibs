@@ -331,6 +331,9 @@ export function createActiveView(deps: ActiveViewDeps): ActiveView {
       if (validTypes.length === 0) return; // leaf parent — nothing to create
       if (validTypes.length === 1) {
         // Unambiguous: create directly (guarded, so a dirty buffer still prompts).
+        // Defensive fast-path: under the current backend-mirrored hierarchy every
+        // non-leaf parent has >=2 child types, so this branch does not fire today —
+        // it's kept for a future hierarchy where a type has exactly one child.
         await guarded({
           type: "START_CREATE",
           defaults: { type: validTypes[0], parent: parentId },

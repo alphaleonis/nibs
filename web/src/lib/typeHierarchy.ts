@@ -1,26 +1,28 @@
 /**
  * Type hierarchy constraints for nib parent-child relationships.
  *
- * milestone -> [epic]
- * epic -> [feature, task, bug]
- * feature -> [task]
+ * milestone -> [epic, bug, feature, task, research]
+ * epic -> [bug, feature, task, research]
+ * bug -> [task, research]
+ * feature -> [task, research]
  * task -> [] (leaf)
- * bug -> [] (leaf)
+ * research -> [] (leaf)
  *
- * This is a curated (opinionated) subset of what the backend permits — e.g. the
- * backend allows epic/feature/bug/task directly under a milestone, but the UI
- * steers toward milestone -> epic -> feature -> task. Every entry here must still
- * be a SUBSET of the backend's rules (internal/nibtypes/hierarchy.go): a bug's
- * only valid parents are milestone and epic, so a bug must NOT appear under a
- * feature (the backend rejects it with a HIERARCHY error).
+ * This MIRRORS the backend rules exactly (internal/nibtypes/hierarchy.go —
+ * `ValidChildTypes`, derived from a bug/feature's parents being milestone|epic
+ * and task/research's being milestone|epic|feature|bug). The web UI, TUI, and
+ * backend all follow the one shared rule set — no curated divergence. Order
+ * follows the canonical type order (milestone, epic, bug, feature, task,
+ * research). Keep this in lockstep with the Go source if the backend changes.
  */
 
 export const VALID_CHILD_TYPES: Record<string, string[]> = {
-  milestone: ["epic"],
-  epic: ["feature", "task", "bug"],
-  feature: ["task"],
+  milestone: ["epic", "bug", "feature", "task", "research"],
+  epic: ["bug", "feature", "task", "research"],
+  bug: ["task", "research"],
+  feature: ["task", "research"],
   task: [],
-  bug: [],
+  research: [],
 };
 
 /** Returns the list of valid child types for the given parent type. */

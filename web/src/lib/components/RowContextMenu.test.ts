@@ -224,14 +224,12 @@ describe("RowContextMenu", () => {
       expect(screen.queryByTestId("ctx-add-child")).not.toBeInTheDocument();
     });
 
-    it("hides Add child for bug type (leaf)", async () => {
+    it("shows Add child for bug type (a bug can parent task/research)", async () => {
       renderMenu({ nib: makeNib({ type: "bug" }) });
 
       await waitFor(() => {
-        expect(screen.getByTestId("ctx-delete")).toBeInTheDocument();
+        expect(screen.getByTestId("ctx-add-child")).toBeInTheDocument();
       });
-
-      expect(screen.queryByTestId("ctx-add-child")).not.toBeInTheDocument();
     });
 
     it("hides Add child in bulk mode even for epic type", async () => {

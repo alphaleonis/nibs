@@ -469,7 +469,7 @@ describe("createActiveView · type picker + blocksHistoryNav", () => {
     expect(view.typePicker).toEqual({
       parentId: "p1",
       parentType: "epic",
-      validTypes: ["feature", "task", "bug"],
+      validTypes: ["bug", "feature", "task", "research"],
       anchor,
     });
     expect(view.blocksHistoryNav).toBe(true);
@@ -494,20 +494,17 @@ describe("createActiveView · type picker + blocksHistoryNav", () => {
     dispose();
   });
 
-  it("startCreateChild with a single valid type creates directly (no picker)", async () => {
+  it("startCreateChild on a milestone offers every non-milestone child type", async () => {
     const h = makeDeps();
     const { view, dispose } = mount(h.deps);
 
     await view.startCreateChild("p1", "milestone", anchor);
     flushSync();
 
-    expect(view.typePicker).toBeNull();
-    expect(view.state).toEqual({
-      kind: "creating",
-      defaults: { type: "epic", parent: "p1" },
-      presentation: "docked",
-    });
-    expect(view.form?.mode).toBe("create");
+    // Backend-mirrored hierarchy: milestone parents epic/bug/feature/task/research.
+    expect(view.typePicker?.validTypes).toEqual(["epic", "bug", "feature", "task", "research"]);
+    expect(view.state.kind).toBe("closed");
+    expect(view.form).toBeNull();
 
     dispose();
   });

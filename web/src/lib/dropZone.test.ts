@@ -209,7 +209,7 @@ describe("isValidCrossParentDrop", () => {
   });
 
   it("validates type hierarchy against parent type", () => {
-    // epic can contain: feature, task, bug
+    // epic can contain: bug, feature, task, research (but not milestone)
     expect(isValidCrossParentDrop(["task"], "epic")).toBe(true);
     expect(isValidCrossParentDrop(["feature"], "epic")).toBe(true);
     expect(isValidCrossParentDrop(["milestone"], "epic")).toBe(false);
@@ -217,7 +217,8 @@ describe("isValidCrossParentDrop", () => {
 
   it("requires all dragged types to be valid children", () => {
     expect(isValidCrossParentDrop(["task", "bug"], "epic")).toBe(true);
-    expect(isValidCrossParentDrop(["task", "epic"], "milestone")).toBe(false);
+    // milestone can parent every other type, but never another milestone.
+    expect(isValidCrossParentDrop(["task", "milestone"], "milestone")).toBe(false);
   });
 });
 
