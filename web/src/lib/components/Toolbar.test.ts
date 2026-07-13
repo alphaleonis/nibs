@@ -36,43 +36,43 @@ describe("Toolbar", () => {
   it("renders New button, keyword input, filter dropdowns, and view controls", () => {
     render(Toolbar, { ...defaultToolbarProps });
 
-    expect(screen.getByTitle("New item")).toBeInTheDocument();
-    expect(screen.getByTitle("New item")).toHaveTextContent("New");
+    expect(screen.getByRole("button", { name: "New item" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "New item" })).toHaveTextContent("New");
     expect(screen.getByTestId("filter-keyword")).toBeInTheDocument();
-    expect(screen.getByTitle("Settings")).toBeInTheDocument();
-    expect(screen.queryByTitle("Options")).not.toBeInTheDocument();
-    expect(screen.getByTitle("Columns")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Settings" })).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Options" })).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Columns" })).toBeInTheDocument();
   });
 
   it("renders view selector button showing current view label", () => {
     render(Toolbar, { ...defaultToolbarProps, viewLevel: "milestones" });
-    expect(screen.getByTitle("Group by")).toHaveTextContent("Milestones");
+    expect(screen.getByRole("button", { name: /^Group by/ })).toHaveTextContent("Milestones");
   });
 
   it("shows 'Epics' label when viewLevel is epics", () => {
     render(Toolbar, { ...defaultToolbarProps, viewLevel: "epics" });
-    expect(screen.getByTitle("Group by")).toHaveTextContent("Epics");
+    expect(screen.getByRole("button", { name: /^Group by/ })).toHaveTextContent("Epics");
   });
 
   it("shows 'Features & Bugs' label when viewLevel is features", () => {
     render(Toolbar, { ...defaultToolbarProps, viewLevel: "features" });
-    expect(screen.getByTitle("Group by")).toHaveTextContent("Features & Bugs");
+    expect(screen.getByRole("button", { name: /^Group by/ })).toHaveTextContent("Features & Bugs");
   });
 
   it("shows 'None' label when viewLevel is none", () => {
     render(Toolbar, { ...defaultToolbarProps, viewLevel: "none" });
-    expect(screen.getByTitle("Group by")).toHaveTextContent("None");
+    expect(screen.getByRole("button", { name: /^Group by/ })).toHaveTextContent("None");
   });
 
   it("view selector button is enabled (not disabled)", () => {
     render(Toolbar, { ...defaultToolbarProps });
-    expect(screen.getByTitle("Group by")).not.toBeDisabled();
+    expect(screen.getByRole("button", { name: /^Group by/ })).not.toBeDisabled();
   });
 
   it("opens dropdown with all four grouping lenses when the control is clicked", async () => {
     render(Toolbar, { ...defaultToolbarProps });
 
-    await user.click(screen.getByTitle("Group by"));
+    await user.click(screen.getByRole("button", { name: /^Group by/ }));
 
     // All four lenses should appear as radio items
     const radioItems = screen.getAllByRole("menuitemradio");
@@ -88,7 +88,7 @@ describe("Toolbar", () => {
     const onviewlevelchange = vi.fn();
     render(Toolbar, { ...defaultToolbarProps, viewLevel: "milestones", onviewlevelchange });
 
-    await user.click(screen.getByTitle("Group by"));
+    await user.click(screen.getByRole("button", { name: /^Group by/ }));
     await user.click(screen.getByRole("menuitemradio", { name: /Epics/i }));
 
     expect(onviewlevelchange).toHaveBeenCalledWith("epics");
@@ -97,7 +97,7 @@ describe("Toolbar", () => {
   it("closes dropdown on second click of view selector button", async () => {
     render(Toolbar, { ...defaultToolbarProps });
 
-    const viewBtn = screen.getByTitle("Group by");
+    const viewBtn = screen.getByRole("button", { name: /^Group by/ });
     await user.click(viewBtn);
     expect(screen.getAllByRole("menuitemradio").length).toBeGreaterThan(0);
 
@@ -134,16 +134,16 @@ describe("Toolbar", () => {
   it("Columns button is enabled", () => {
     render(Toolbar, { ...defaultToolbarProps });
 
-    expect(screen.getByTitle("Columns")).not.toBeDisabled();
+    expect(screen.getByRole("button", { name: "Columns" })).not.toBeDisabled();
   });
 
   it("gear button opens the Settings sheet revealing Appearance and Row density", async () => {
     render(Toolbar, { ...defaultToolbarProps });
 
     // Old Options dropdown is retired
-    expect(screen.queryByTitle("Options")).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Options" })).not.toBeInTheDocument();
 
-    await user.click(screen.getByTitle("Settings"));
+    await user.click(screen.getByRole("button", { name: "Settings" }));
 
     expect(screen.getByText("Appearance")).toBeInTheDocument();
     expect(screen.getByRole("radiogroup", { name: /row density/i })).toBeInTheDocument();
@@ -163,7 +163,7 @@ describe("Toolbar", () => {
     const ondensitychange = vi.fn();
     render(Toolbar, { ...defaultToolbarProps, rowDensity: "compact", ondensitychange });
 
-    await user.click(screen.getByTitle("Settings"));
+    await user.click(screen.getByRole("button", { name: "Settings" }));
     await user.click(screen.getByRole("radio", { name: /comfortable/i }));
 
     expect(ondensitychange).toHaveBeenCalledWith("comfortable");
@@ -172,7 +172,7 @@ describe("Toolbar", () => {
   it("gear button opens the Settings sheet revealing the Theme control", async () => {
     render(Toolbar, { ...defaultToolbarProps, theme: "graphite" });
 
-    await user.click(screen.getByTitle("Settings"));
+    await user.click(screen.getByRole("button", { name: "Settings" }));
 
     expect(screen.getByText("Theme")).toBeInTheDocument();
     expect(screen.getByTestId("theme-select")).toHaveTextContent("Graphite");
@@ -182,7 +182,7 @@ describe("Toolbar", () => {
     const onthemechange = vi.fn();
     render(Toolbar, { ...defaultToolbarProps, theme: "graphite", onthemechange });
 
-    await user.click(screen.getByTitle("Settings"));
+    await user.click(screen.getByRole("button", { name: "Settings" }));
     await user.click(screen.getByTestId("theme-select"));
     await user.click(screen.getByRole("option", { name: "Dracula" }));
 
@@ -194,7 +194,7 @@ describe("Toolbar", () => {
     expect(prefs.theme).toBe("graphite");
     render(Toolbar, { prefs, oncreatenew: vi.fn() });
 
-    await user.click(screen.getByTitle("Settings"));
+    await user.click(screen.getByRole("button", { name: "Settings" }));
     await user.click(screen.getByTestId("theme-select"));
     await user.click(screen.getByRole("option", { name: "Midnight" }));
 
@@ -205,7 +205,7 @@ describe("Toolbar", () => {
     const onemphasischange = vi.fn();
     render(Toolbar, { ...defaultToolbarProps, blockedEmphasis: "pill", onemphasischange });
 
-    await user.click(screen.getByTitle("Settings"));
+    await user.click(screen.getByRole("button", { name: "Settings" }));
     await user.click(screen.getByRole("radio", { name: "Subtle" }));
 
     expect(onemphasischange).toHaveBeenCalledWith("subtle");
@@ -216,7 +216,7 @@ describe("Toolbar", () => {
     expect(prefs.blockedEmphasis).toBe("pill");
     render(Toolbar, { prefs, oncreatenew: vi.fn() });
 
-    await user.click(screen.getByTitle("Settings"));
+    await user.click(screen.getByRole("button", { name: "Settings" }));
     await user.click(screen.getByRole("radio", { name: "Pill+dim" }));
 
     expect(prefs.blockedEmphasis).toBe("pill-dim");
@@ -241,6 +241,29 @@ describe("Toolbar", () => {
     render(Toolbar, { ...defaultToolbarProps });
 
     expect(screen.getByTestId("toolbar-include-completed")).toBeInTheDocument();
+  });
+
+  // Dynamic tooltip/aria-label: the label names the ACTION (hide/show), and
+  // flips with state. Tooltip content lives in a portal that only renders on
+  // hover, so we assert the always-present aria-label instead.
+  it("completed toggle is labeled 'Hide completed' when completed are shown", () => {
+    render(Toolbar, { ...defaultToolbarProps, filter: {} });
+
+    const toggle = screen.getByTestId("toolbar-include-completed");
+    expect(toggle).toHaveAttribute("aria-label", "Hide completed");
+    // The role/name query must resolve without the tooltip being open.
+    expect(screen.getByRole("button", { name: "Hide completed" })).toBe(toggle);
+  });
+
+  it("completed toggle is labeled 'Show completed' when completed are hidden", () => {
+    render(Toolbar, {
+      ...defaultToolbarProps,
+      filter: { excludeStatus: ["completed", "scrapped"] },
+    });
+
+    const toggle = screen.getByTestId("toolbar-include-completed");
+    expect(toggle).toHaveAttribute("aria-label", "Show completed");
+    expect(screen.getByRole("button", { name: "Show completed" })).toBe(toggle);
   });
 
   it("Include completed toggle is pressed by default (no excludeStatus)", () => {
@@ -299,7 +322,7 @@ describe("Toolbar", () => {
   it("opens Columns dropdown when Columns button is clicked", async () => {
     render(Toolbar, { ...defaultToolbarProps, viewLevel: "epics" as ViewLevel });
 
-    await user.click(screen.getByTitle("Columns"));
+    await user.click(screen.getByRole("button", { name: "Columns" }));
 
     // Should show checkboxes for all columns
     const items = screen.getAllByRole("menuitemcheckbox");
@@ -316,7 +339,7 @@ describe("Toolbar", () => {
   it("Title checkbox is always disabled in Columns dropdown", async () => {
     render(Toolbar, { ...defaultToolbarProps });
 
-    await user.click(screen.getByTitle("Columns"));
+    await user.click(screen.getByRole("button", { name: "Columns" }));
 
     const items = screen.getAllByRole("menuitemcheckbox");
     // Find the Title item
@@ -333,7 +356,7 @@ describe("Toolbar", () => {
       oncolumnschange,
     });
 
-    await user.click(screen.getByTitle("Columns"));
+    await user.click(screen.getByRole("button", { name: "Columns" }));
 
     // Find the Tags checkbox and uncheck it
     const items = screen.getAllByRole("menuitemcheckbox");
@@ -351,7 +374,7 @@ describe("Toolbar", () => {
   it("lists Blocking and Blocked by in the Columns dropdown", async () => {
     render(Toolbar, { ...defaultToolbarProps, viewLevel: "epics" as ViewLevel });
 
-    await user.click(screen.getByTitle("Columns"));
+    await user.click(screen.getByRole("button", { name: "Columns" }));
 
     const items = screen.getAllByRole("menuitemcheckbox");
     const labels = items.map(item => item.textContent?.trim());
@@ -366,7 +389,7 @@ describe("Toolbar", () => {
       viewLevel: "epics" as ViewLevel,
     });
 
-    await user.click(screen.getByTitle("Columns"));
+    await user.click(screen.getByRole("button", { name: "Columns" }));
 
     const items = screen.getAllByRole("menuitemcheckbox");
     const blocking = items.find(item => item.textContent?.trim() === "Blocking");
@@ -384,7 +407,7 @@ describe("Toolbar", () => {
       viewLevel: "epics" as ViewLevel,
     });
 
-    await user.click(screen.getByTitle("Columns"));
+    await user.click(screen.getByRole("button", { name: "Columns" }));
 
     const items = screen.getAllByRole("menuitemcheckbox");
     const blockingItem = items.find(item => item.textContent?.trim() === "Blocking");
@@ -399,7 +422,7 @@ describe("Toolbar", () => {
   it("closes Columns dropdown on second click", async () => {
     render(Toolbar, { ...defaultToolbarProps });
 
-    const columnsBtn = screen.getByTitle("Columns");
+    const columnsBtn = screen.getByRole("button", { name: "Columns" });
     await user.click(columnsBtn);
     expect(screen.getAllByRole("menuitemcheckbox").length).toBeGreaterThan(0);
 
@@ -410,7 +433,7 @@ describe("Toolbar", () => {
   it("Parent column is shown in Columns checklist for milestones (parent is now a normal column)", async () => {
     render(Toolbar, { ...defaultToolbarProps, viewLevel: "milestones" as ViewLevel });
 
-    await user.click(screen.getByTitle("Columns"));
+    await user.click(screen.getByRole("button", { name: "Columns" }));
 
     const items = screen.getAllByRole("menuitemcheckbox");
     const labels = items.map(item => item.textContent?.trim());
@@ -422,7 +445,7 @@ describe("Toolbar", () => {
   it("Parent column is shown in Columns checklist when viewLevel is epics", async () => {
     render(Toolbar, { ...defaultToolbarProps, viewLevel: "epics" as ViewLevel });
 
-    await user.click(screen.getByTitle("Columns"));
+    await user.click(screen.getByRole("button", { name: "Columns" }));
 
     const items = screen.getAllByRole("menuitemcheckbox");
     const labels = items.map(item => item.textContent?.trim());
@@ -445,7 +468,7 @@ describe("Toolbar", () => {
       viewLevel: "epics" as ViewLevel,
     });
 
-    await user.click(screen.getByTitle("Columns"));
+    await user.click(screen.getByRole("button", { name: "Columns" }));
 
     // Find the Type checkbox and check it
     const items = screen.getAllByRole("menuitemcheckbox");
@@ -578,6 +601,33 @@ describe("Toolbar — filter dropdowns", () => {
 
     const lastCall = onchange.mock.calls[onchange.mock.calls.length - 1];
     expect(lastCall[0].search).toBeUndefined();
+  });
+
+  // Inline ✕ clear button on the keyword input (nibs-3yla).
+  it("does not render the keyword clear button when the input is empty", () => {
+    render(Toolbar, { ...defaultToolbarProps, filter: {} });
+
+    expect(screen.queryByTestId("filter-keyword-clear")).not.toBeInTheDocument();
+  });
+
+  it("renders the keyword clear button only when the input has text", () => {
+    render(Toolbar, { ...defaultToolbarProps, filter: { search: "auth" } });
+
+    expect(screen.getByTestId("filter-keyword-clear")).toBeInTheDocument();
+    // Also queryable by its accessible name.
+    expect(screen.getByRole("button", { name: "Clear keyword" })).toBeInTheDocument();
+  });
+
+  it("clicking the keyword clear button clears search and refocuses the input", async () => {
+    const onchange = vi.fn();
+    render(Toolbar, { ...defaultToolbarProps, filter: { search: "auth" }, onchange });
+
+    await user.click(screen.getByTestId("filter-keyword-clear"));
+
+    const lastCall = onchange.mock.calls[onchange.mock.calls.length - 1];
+    expect(lastCall[0].search).toBeUndefined();
+    // The input regains focus so the user can keep typing a new query.
+    expect(screen.getByTestId("filter-keyword")).toHaveFocus();
   });
 
   it("does not render the Tags trigger when availableTags is empty", () => {

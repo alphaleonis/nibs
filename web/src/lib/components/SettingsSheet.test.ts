@@ -29,7 +29,7 @@ describe("SettingsSheet", () => {
     expect(screen.queryByText("Appearance")).not.toBeInTheDocument();
 
     // Gear button opens the panel
-    await user.click(screen.getByTitle("Settings"));
+    await user.click(screen.getByRole("button", { name: "Settings" }));
 
     // Title + Appearance section visible
     expect(screen.getByText("Settings")).toBeInTheDocument();
@@ -44,7 +44,7 @@ describe("SettingsSheet", () => {
   it("exposes the panel as a NON-MODAL dialog (aria-modal=false) named Settings", async () => {
     render(SettingsSheet, { ...defaultProps() });
 
-    await user.click(screen.getByTitle("Settings"));
+    await user.click(screen.getByRole("button", { name: "Settings" }));
 
     // The p07b fix: role=dialog with aria-modal="false" (was "true" under bits-ui Dialog).
     const dialog = screen.getByRole("dialog", { name: "Settings" });
@@ -55,7 +55,7 @@ describe("SettingsSheet", () => {
   it("does not lock body scroll: body pointer-events stay interactive while open", async () => {
     render(SettingsSheet, { ...defaultProps() });
 
-    await user.click(screen.getByTitle("Settings"));
+    await user.click(screen.getByRole("button", { name: "Settings" }));
     expect(screen.getByText("Appearance")).toBeInTheDocument();
 
     // Real non-modal contract: the background stays interactive, so <body> must
@@ -69,7 +69,7 @@ describe("SettingsSheet", () => {
 
   it("closes on Escape", async () => {
     render(SettingsSheet, { ...defaultProps() });
-    await user.click(screen.getByTitle("Settings"));
+    await user.click(screen.getByRole("button", { name: "Settings" }));
     expect(screen.getByText("Appearance")).toBeInTheDocument();
 
     await user.keyboard("{Escape}");
@@ -82,7 +82,7 @@ describe("SettingsSheet", () => {
 
   it("closes on Escape even when focus has moved to a background element", async () => {
     render(SettingsSheet, { ...defaultProps() });
-    await user.click(screen.getByTitle("Settings"));
+    await user.click(screen.getByRole("button", { name: "Settings" }));
     expect(screen.getByText("Appearance")).toBeInTheDocument();
 
     // Non-modal panels don't trap focus: the user may Tab into the (still
@@ -110,7 +110,7 @@ describe("SettingsSheet", () => {
 
   it("closes when clicking outside the panel", async () => {
     render(SettingsSheet, { ...defaultProps() });
-    await user.click(screen.getByTitle("Settings"));
+    await user.click(screen.getByRole("button", { name: "Settings" }));
     expect(screen.getByText("Appearance")).toBeInTheDocument();
 
     // clickOutside listens for a real pointerdown on document; a pointerdown on
@@ -124,7 +124,7 @@ describe("SettingsSheet", () => {
 
   it("does not close on a pointerdown inside the panel content", async () => {
     render(SettingsSheet, { ...defaultProps() });
-    await user.click(screen.getByTitle("Settings"));
+    await user.click(screen.getByRole("button", { name: "Settings" }));
     expect(screen.getByText("Appearance")).toBeInTheDocument();
 
     // The clickOutside `node.contains` branch: a pointerdown on real panel
@@ -139,7 +139,7 @@ describe("SettingsSheet", () => {
 
   it("does not close on a pointerdown on the gear trigger (ignore path)", async () => {
     render(SettingsSheet, { ...defaultProps() });
-    const trigger = screen.getByTitle("Settings");
+    const trigger = screen.getByRole("button", { name: "Settings" });
     await user.click(trigger);
     expect(screen.getByText("Appearance")).toBeInTheDocument();
 
@@ -153,7 +153,7 @@ describe("SettingsSheet", () => {
 
   it("re-opens and refocuses the panel after a close (wasOpen cycle)", async () => {
     render(SettingsSheet, { ...defaultProps() });
-    const trigger = screen.getByTitle("Settings");
+    const trigger = screen.getByRole("button", { name: "Settings" });
 
     // First open/close cycle.
     await user.click(trigger);
@@ -179,7 +179,7 @@ describe("SettingsSheet", () => {
 
   it("closes via the visible close (X) button", async () => {
     render(SettingsSheet, { ...defaultProps() });
-    await user.click(screen.getByTitle("Settings"));
+    await user.click(screen.getByRole("button", { name: "Settings" }));
     expect(screen.getByText("Appearance")).toBeInTheDocument();
 
     await user.click(screen.getByRole("button", { name: /close/i }));
@@ -191,7 +191,7 @@ describe("SettingsSheet", () => {
 
   it("moves focus into the panel on open and returns focus to the gear on close", async () => {
     render(SettingsSheet, { ...defaultProps() });
-    const trigger = screen.getByTitle("Settings");
+    const trigger = screen.getByRole("button", { name: "Settings" });
 
     await user.click(trigger);
 
@@ -208,7 +208,7 @@ describe("SettingsSheet", () => {
   it("shows a Row density radiogroup with Compact and Comfortable options", async () => {
     render(SettingsSheet, { ...defaultProps() });
 
-    await user.click(screen.getByTitle("Settings"));
+    await user.click(screen.getByRole("button", { name: "Settings" }));
 
     const group = screen.getByRole("radiogroup", { name: /row density/i });
     expect(group).toBeInTheDocument();
@@ -224,7 +224,7 @@ describe("SettingsSheet", () => {
   it("marks the option matching rowDensity as aria-checked", async () => {
     render(SettingsSheet, { ...defaultProps(), rowDensity: "comfortable" });
 
-    await user.click(screen.getByTitle("Settings"));
+    await user.click(screen.getByRole("button", { name: "Settings" }));
 
     expect(screen.getByRole("radio", { name: /comfortable/i })).toHaveAttribute("aria-checked", "true");
     expect(screen.getByRole("radio", { name: /compact/i })).toHaveAttribute("aria-checked", "false");
@@ -234,7 +234,7 @@ describe("SettingsSheet", () => {
     const ondensitychange = vi.fn();
     render(SettingsSheet, { ...defaultProps(), rowDensity: "compact", ondensitychange });
 
-    await user.click(screen.getByTitle("Settings"));
+    await user.click(screen.getByRole("button", { name: "Settings" }));
     await user.click(screen.getByRole("radio", { name: /comfortable/i }));
 
     expect(ondensitychange).toHaveBeenCalledWith("comfortable");
@@ -244,7 +244,7 @@ describe("SettingsSheet", () => {
     const ondensitychange = vi.fn();
     render(SettingsSheet, { ...defaultProps(), rowDensity: "comfortable", ondensitychange });
 
-    await user.click(screen.getByTitle("Settings"));
+    await user.click(screen.getByRole("button", { name: "Settings" }));
     await user.click(screen.getByRole("radio", { name: /compact/i }));
 
     expect(ondensitychange).toHaveBeenCalledWith("compact");
@@ -254,7 +254,7 @@ describe("SettingsSheet", () => {
     const ondensitychange = vi.fn();
     render(SettingsSheet, { ...defaultProps(), rowDensity: "compact", ondensitychange });
 
-    await user.click(screen.getByTitle("Settings"));
+    await user.click(screen.getByRole("button", { name: "Settings" }));
 
     // Focus the selected radio, then use the arrow key — the WAI-ARIA radiogroup
     // pattern the bits-ui RadioGroup implements for free (roving tabindex + arrows).
@@ -267,7 +267,7 @@ describe("SettingsSheet", () => {
   it("shows a Blocked emphasis radiogroup with Subtle, Pill, and Pill+dim options", async () => {
     render(SettingsSheet, { ...defaultProps() });
 
-    await user.click(screen.getByTitle("Settings"));
+    await user.click(screen.getByRole("button", { name: "Settings" }));
 
     const group = screen.getByRole("radiogroup", { name: /blocked emphasis/i });
     expect(group).toBeInTheDocument();
@@ -282,7 +282,7 @@ describe("SettingsSheet", () => {
   it("marks the option matching blockedEmphasis as aria-checked", async () => {
     render(SettingsSheet, { ...defaultProps(), blockedEmphasis: "pill-dim" });
 
-    await user.click(screen.getByTitle("Settings"));
+    await user.click(screen.getByRole("button", { name: "Settings" }));
 
     const group = screen.getByRole("radiogroup", { name: /blocked emphasis/i });
     expect(within(group).getByRole("radio", { name: "Pill+dim" })).toHaveAttribute("aria-checked", "true");
@@ -293,7 +293,7 @@ describe("SettingsSheet", () => {
     const onemphasischange = vi.fn();
     render(SettingsSheet, { ...defaultProps(), blockedEmphasis: "pill", onemphasischange });
 
-    await user.click(screen.getByTitle("Settings"));
+    await user.click(screen.getByRole("button", { name: "Settings" }));
     const group = screen.getByRole("radiogroup", { name: /blocked emphasis/i });
     await user.click(within(group).getByRole("radio", { name: "Subtle" }));
 
@@ -304,7 +304,7 @@ describe("SettingsSheet", () => {
     const onemphasischange = vi.fn();
     render(SettingsSheet, { ...defaultProps(), blockedEmphasis: "pill", onemphasischange });
 
-    await user.click(screen.getByTitle("Settings"));
+    await user.click(screen.getByRole("button", { name: "Settings" }));
     const group = screen.getByRole("radiogroup", { name: /blocked emphasis/i });
     await user.click(within(group).getByRole("radio", { name: "Pill+dim" }));
 
@@ -314,7 +314,7 @@ describe("SettingsSheet", () => {
   it("shows a Detail panel position radiogroup with Right and Bottom options", async () => {
     render(SettingsSheet, { ...defaultProps() });
 
-    await user.click(screen.getByTitle("Settings"));
+    await user.click(screen.getByRole("button", { name: "Settings" }));
 
     const group = screen.getByRole("radiogroup", { name: /detail panel position/i });
     expect(group).toBeInTheDocument();
@@ -328,7 +328,7 @@ describe("SettingsSheet", () => {
   it("marks the option matching detailPanelPosition as aria-checked", async () => {
     render(SettingsSheet, { ...defaultProps(), detailPanelPosition: "bottom" });
 
-    await user.click(screen.getByTitle("Settings"));
+    await user.click(screen.getByRole("button", { name: "Settings" }));
 
     const group = screen.getByRole("radiogroup", { name: /detail panel position/i });
     expect(within(group).getByRole("radio", { name: /bottom/i })).toHaveAttribute("aria-checked", "true");
@@ -339,7 +339,7 @@ describe("SettingsSheet", () => {
     const onpositionchange = vi.fn();
     render(SettingsSheet, { ...defaultProps(), detailPanelPosition: "right", onpositionchange });
 
-    await user.click(screen.getByTitle("Settings"));
+    await user.click(screen.getByRole("button", { name: "Settings" }));
     const group = screen.getByRole("radiogroup", { name: /detail panel position/i });
     await user.click(within(group).getByRole("radio", { name: /bottom/i }));
 
@@ -350,7 +350,7 @@ describe("SettingsSheet", () => {
     const onpositionchange = vi.fn();
     render(SettingsSheet, { ...defaultProps(), detailPanelPosition: "bottom", onpositionchange });
 
-    await user.click(screen.getByTitle("Settings"));
+    await user.click(screen.getByRole("button", { name: "Settings" }));
     const group = screen.getByRole("radiogroup", { name: /detail panel position/i });
     await user.click(within(group).getByRole("radio", { name: /right/i }));
 
@@ -360,7 +360,7 @@ describe("SettingsSheet", () => {
   it("shows a Theme control reflecting the current theme", async () => {
     render(SettingsSheet, { ...defaultProps(), theme: "dracula" });
 
-    await user.click(screen.getByTitle("Settings"));
+    await user.click(screen.getByRole("button", { name: "Settings" }));
 
     expect(screen.getByText("Theme")).toBeInTheDocument();
     // The ThemeSelect trigger shows the current theme's label.
@@ -371,7 +371,7 @@ describe("SettingsSheet", () => {
     const onthemechange = vi.fn();
     render(SettingsSheet, { ...defaultProps(), theme: "graphite", onthemechange });
 
-    await user.click(screen.getByTitle("Settings"));
+    await user.click(screen.getByRole("button", { name: "Settings" }));
     await user.click(screen.getByTestId("theme-select"));
     await user.click(screen.getByRole("option", { name: "Midnight" }));
 
@@ -380,7 +380,7 @@ describe("SettingsSheet", () => {
 
   it("Escape dismissing the open Theme dropdown keeps the Settings panel open", async () => {
     render(SettingsSheet, { ...defaultProps() });
-    await user.click(screen.getByTitle("Settings"));
+    await user.click(screen.getByRole("button", { name: "Settings" }));
     expect(screen.getByText("Appearance")).toBeInTheDocument();
 
     // Open the Theme select; its popover content portals to document.body with
@@ -415,7 +415,7 @@ describe("SettingsSheet", () => {
 
   it("does not close on a pointerdown inside the portaled Theme select popover (isInsideOrTrigger)", async () => {
     render(SettingsSheet, { ...defaultProps() });
-    await user.click(screen.getByTitle("Settings"));
+    await user.click(screen.getByRole("button", { name: "Settings" }));
     expect(screen.getByText("Appearance")).toBeInTheDocument();
 
     // Open the Theme select; its content portals to document.body as a body-level

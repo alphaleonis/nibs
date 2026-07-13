@@ -121,7 +121,7 @@ for (const { value } of THEMES) {
 for (const { value } of THEMES) {
   test(`theme ${value} — settings sheet`, async ({ page }) => {
     await openApp(page, "milestones", value);
-    await page.getByTitle("Settings").click();
+    await page.getByRole("button", { name: "Settings" }).click();
     await expect(page.getByTestId("theme-select")).toBeVisible({ timeout: 3_000 });
     await shot(page, `theme-${value}-settings`);
   });

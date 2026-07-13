@@ -142,7 +142,7 @@ describe("App", () => {
     expect(screen.getByText("Nibs - test-project")).toBeInTheDocument();
 
     // Toolbar is rendered with controls
-    expect(screen.getByTitle("Settings")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Settings" })).toBeInTheDocument();
     expect(screen.getByTestId("filter-keyword")).toBeInTheDocument();
 
     // TreeTable renders data
@@ -614,7 +614,7 @@ describe("App", () => {
     expect(screen.queryByText("Test nib")).not.toBeInTheDocument();
 
     // Toggle the dock position to "bottom" at runtime — this remounts the PaneGroup.
-    await user.click(screen.getByTitle("Settings"));
+    await user.click(screen.getByRole("button", { name: "Settings" }));
     const group = screen.getByRole("radiogroup", { name: /detail panel position/i });
     await user.click(within(group).getByRole("radio", { name: /bottom/i }));
 
@@ -627,13 +627,13 @@ describe("App", () => {
   it("renders toolbar icon buttons including the group-by control", () => {
     render(App);
 
-    expect(screen.getByTitle("New item")).toBeInTheDocument();
-    expect(screen.getByTitle("Group by")).toBeInTheDocument();
-    expect(screen.getByTitle("Settings")).toBeInTheDocument();
-    expect(screen.getByTitle("Columns")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "New item" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /^Group by/ })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Settings" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Columns" })).toBeInTheDocument();
 
     // Group-by control should show "None" (default lens)
-    expect(screen.getByTitle("Group by")).toHaveTextContent("None");
+    expect(screen.getByRole("button", { name: /^Group by/ })).toHaveTextContent("None");
   });
 
   it("TreeTable DOM element persists when panel opens", async () => {
