@@ -3,11 +3,14 @@ package graph
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"testing"
 
 	"github.com/99designs/gqlgen/graphql"
 	"github.com/99designs/gqlgen/graphql/executor"
+	"github.com/alphaleonis/nibs/internal/graph/model"
 	"github.com/alphaleonis/nibs/internal/nib"
+	"github.com/alphaleonis/nibs/internal/nibtypes"
 )
 
 // updateNibParentResult is the decoded on-the-wire updateNib response for the
@@ -150,6 +153,134 @@ func TestUpdateNibParentNullClears(t *testing.T) {
 				t.Errorf("stored Type = %q, want %q", got.EffectiveType(), tt.wantType)
 			}
 		})
+	}
+}
+
+// TestUpdateNibNoOpTypePreservesInvalidParent pins the fix for nibs-abo2: a nib
+// that already has a pre-existing INVALID parent (e.g. a bug parented under a
+// feature — a state the resolver never created but the fixture generator and
+// core.Create can) must still be editable. The web edit form always sends `type`
+// unconditionally, so a title-only change arrives with `type` PRESENT but EQUAL
+// to the current type. That no-op type submission must NOT re-validate the
+// untouched (already-invalid) parent relationship — otherwise every edit dead-
+// ends with the hierarchy error and the nib becomes uneditable.
+//
+// This case pins the EXPLICIT-type no-op (raw == effective, "bug" == "bug"); the
+// raw-vs-effective refinement (a type-less nib echoing back "task") is pinned
+// separately by TestUpdateNibNoOpTypePreservesInvalidParentTypeless. Keep both:
+// this one guards that a no-op gate exists at all (it fails if the gate is
+// removed), the sibling guards that the gate compares EffectiveType().
+func TestUpdateNibNoOpTypePreservesInvalidParent(t *testing.T) {
+	resolver, core := setupTestResolver(t)
+	// core.Create does NOT validate parent-type hierarchy (that lives at the
+	// resolver layer), so we can construct the invalid bug-under-feature state
+	// directly — exactly how the fixture generator seeds such relationships.
+	mustCreate(t, core, &nib.Nib{ID: "abo2-feat", Title: "Feature", Status: "todo", Type: "feature"})
+	mustCreate(t, core, &nib.Nib{ID: "abo2-bug", Title: "Bug", Status: "todo", Type: "bug", Parent: "abo2-feat"})
+
+	// Title change with type PRESENT but UNCHANGED (bug == bug) — what the web
+	// form sends. This must succeed without re-validating the invalid parent.
+	res := execUpdateNibParent(t, resolver, map[string]any{
+		"id":    "abo2-bug",
+		"input": map[string]any{"title": "Renamed", "type": "bug"},
+	})
+
+	// The invalid parent must be retained on the wire result.
+	if got := wireParent(res); got != "abo2-feat" {
+		t.Errorf("wire parentId = %q, want %q (invalid parent must be retained)", got, "abo2-feat")
+	}
+	if res.Type != "bug" {
+		t.Errorf("wire type = %q, want %q", res.Type, "bug")
+	}
+
+	// The stored nib must reflect the title change and keep its parent.
+	got, err := core.Get("abo2-bug")
+	if err != nil {
+		t.Fatalf("core.Get: %v", err)
+	}
+	if got.Title != "Renamed" {
+		t.Errorf("stored Title = %q, want %q", got.Title, "Renamed")
+	}
+	if got.Parent != "abo2-feat" {
+		t.Errorf("stored Parent = %q, want %q (invalid parent must be retained)", got.Parent, "abo2-feat")
+	}
+}
+
+// TestUpdateNibNoOpTypePreservesInvalidParentTypeless is the type-less sibling of
+// TestUpdateNibNoOpTypePreservesInvalidParent. It pins that no-op detection uses
+// the EFFECTIVE type, not the raw stored Type. A nib whose front matter omits
+// `type:` legitimately carries raw Type == "" (an intentionally preserved on-disk
+// state), but EffectiveType() — and hence the GraphQL Nib.type field the web form
+// reads back — normalizes it to "task". So a title-only edit of such a nib echoes
+// back type:"task"; the raw-string gate would see "" != "task" and mis-classify a
+// semantic no-op (task -> task) as a real type change, re-validating and dead-
+// ending on the untouched (pre-existing invalid) parent. Constructing the invalid
+// state: a type-less child (effective "task") under a research parent — research
+// is NOT a valid parent for a task, so this is invalid, yet must remain editable.
+func TestUpdateNibNoOpTypePreservesInvalidParentTypeless(t *testing.T) {
+	resolver, core := setupTestResolver(t)
+	// core.Create does NOT validate parent-type hierarchy, so we can seed the
+	// invalid type-less-child-under-research state directly.
+	mustCreate(t, core, &nib.Nib{ID: "abo2-research", Title: "Research", Status: "todo", Type: "research"})
+	mustCreate(t, core, &nib.Nib{ID: "abo2-typeless", Title: "Typeless", Status: "todo", Type: "", Parent: "abo2-research"})
+
+	// Title change with type PRESENT as "task" — exactly what the web form echoes
+	// back for a type-less nib (Nib.type resolves to EffectiveType() == "task").
+	// This is a semantic no-op and must succeed without re-validating the parent.
+	res := execUpdateNibParent(t, resolver, map[string]any{
+		"id":    "abo2-typeless",
+		"input": map[string]any{"title": "Renamed", "type": "task"},
+	})
+
+	// The invalid parent must be retained on the wire result.
+	if got := wireParent(res); got != "abo2-research" {
+		t.Errorf("wire parentId = %q, want %q (invalid parent must be retained)", got, "abo2-research")
+	}
+	if res.Type != "task" {
+		t.Errorf("wire type = %q, want %q", res.Type, "task")
+	}
+
+	// The stored nib must reflect the title change and keep its parent.
+	got, err := core.Get("abo2-typeless")
+	if err != nil {
+		t.Fatalf("core.Get: %v", err)
+	}
+	if got.Title != "Renamed" {
+		t.Errorf("stored Title = %q, want %q", got.Title, "Renamed")
+	}
+	if got.Parent != "abo2-research" {
+		t.Errorf("stored Parent = %q, want %q (invalid parent must be retained)", got.Parent, "abo2-research")
+	}
+}
+
+// TestUpdateNibRealInvalidatingTypeChangeStillErrors is the companion guard to
+// TestUpdateNibNoOpTypePreservesInvalidParent: the nibs-abo2 fix gates parent
+// re-validation on an ACTUAL type change, so we must confirm a genuine
+// type change that invalidates the existing parent is STILL rejected. A direct
+// resolver call is used because execUpdateNibParent fatals on any mutation error.
+func TestUpdateNibRealInvalidatingTypeChangeStillErrors(t *testing.T) {
+	resolver, core := setupTestResolver(t)
+	// task-under-feature is a VALID hierarchy.
+	mustCreate(t, core, &nib.Nib{ID: "abo2-feat2", Title: "Feature", Status: "todo", Type: "feature"})
+	mustCreate(t, core, &nib.Nib{ID: "abo2-task", Title: "Task", Status: "todo", Type: "task", Parent: "abo2-feat2"})
+
+	// Changing the task to an epic makes the hierarchy invalid (an epic may only
+	// sit under a milestone), with the parent OMITTED (zero Omittable). This is a
+	// REAL type change, so the parent re-validation must fire and reject it.
+	ctx := context.Background()
+	mr := resolver.Mutation()
+	epicType := "epic"
+	_, err := mr.UpdateNib(ctx, "abo2-task", model.UpdateNibInput{Type: &epicType})
+	if err == nil {
+		t.Fatal("expected error changing task to epic under a feature parent (invalid hierarchy), got nil")
+	}
+	// Assert the SPECIFIC error so the test's claim is self-verifying: the
+	// hierarchy guard returns an unwrapped *nibtypes.HierarchyError, so a future
+	// refactor that introduced an earlier unrelated failure on this input would
+	// no longer satisfy this and the guard's coverage would not silently rot.
+	var hierarchyErr *nibtypes.HierarchyError
+	if !errors.As(err, &hierarchyErr) {
+		t.Errorf("UpdateNib() error = %v, want a *nibtypes.HierarchyError", err)
 	}
 }
 

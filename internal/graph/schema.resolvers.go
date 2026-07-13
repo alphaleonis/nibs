@@ -172,19 +172,32 @@ func (r *mutationResolver) UpdateNib(ctx context.Context, id string, input model
 		b.Status = *input.Status
 	}
 	if input.Type != nil {
+		oldEffectiveType := b.EffectiveType()
 		b.Type = *input.Type
-		// Re-validate existing parent against the new type (when parent isn't also
-		// being changed — i.e. the parent field was omitted, not set to null/id).
-		if b.Parent != "" && !input.Parent.IsSet() {
-			if err := r.validateAndSetParent(b, b.Parent); err != nil {
-				return nil, err
+		// Only re-validate relationships when the EFFECTIVE type ACTUALLY changed.
+		// The web edit form always sends `type` unconditionally, so a title-only
+		// edit arrives with type PRESENT but equal to the current value — a no-op.
+		// No-op detection must use EffectiveType(): a type-less nib carries raw
+		// Type == "" on disk, but the Nib.type field the form reads back normalizes
+		// it to "task", so the form echoes back "task" — a raw comparison would see
+		// "" != "task" and mis-classify that as a real change. A no-op submission
+		// must not re-validate an untouched (possibly pre-existing invalid)
+		// parent/child relationship, or every edit of a nib with a legacy invalid
+		// parent would dead-end with a hierarchy error (nibs-abo2).
+		if b.EffectiveType() != oldEffectiveType {
+			// Re-validate existing parent against the new type (when parent isn't also
+			// being changed — i.e. the parent field was omitted, not set to null/id).
+			if b.Parent != "" && !input.Parent.IsSet() {
+				if err := r.validateAndSetParent(b, b.Parent); err != nil {
+					return nil, err
+				}
 			}
-		}
-		// Validate that existing children are still valid under the new type.
-		for _, link := range r.Reader.FindIncomingLinks(b.ID) {
-			if link.LinkType == "parent" {
-				if err := nibtypes.ValidateParentType(link.FromNib.EffectiveType(), b.EffectiveType()); err != nil {
-					return nil, fmt.Errorf("type change would invalidate child %s: %w", link.FromNib.ID, err)
+			// Validate that existing children are still valid under the new type.
+			for _, link := range r.Reader.FindIncomingLinks(b.ID) {
+				if link.LinkType == "parent" {
+					if err := nibtypes.ValidateParentType(link.FromNib.EffectiveType(), b.EffectiveType()); err != nil {
+						return nil, fmt.Errorf("type change would invalidate child %s: %w", link.FromNib.ID, err)
+					}
 				}
 			}
 		}
