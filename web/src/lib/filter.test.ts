@@ -354,28 +354,39 @@ describe("isDragAllowed", () => {
     expect(isDragAllowed({ search: "hello" })).toBe(false);
   });
 
-  it("returns false when client-side filters are active", () => {
-    expect(isDragAllowed({ type: ["bug"] })).toBe(false);
-    expect(isDragAllowed({ priority: ["high"] })).toBe(false);
-    expect(isDragAllowed({ status: ["todo"] })).toBe(false);
-    expect(isDragAllowed({ estimate: ["m"] })).toBe(false);
-    expect(isDragAllowed({ tags: ["frontend"] })).toBe(false);
-  });
-
-  it("returns true when no search or client filters are active", () => {
-    expect(isDragAllowed({})).toBe(true);
-  });
-
-  it("returns true when only excludeStatus is set (the 'hide completed' toggle)", () => {
-    // excludeStatus is a client-side filter set when the "Include completed" toggle
-    // is OFF (it is absent by default). It dims filtered-out ancestors in place and
-    // removes filtered-out leaves rather than reordering rows — so drag must stay
-    // allowed when it is the ONLY active client filter.
+  it("returns true when a hide-filter is active (filters never reorder rows)", () => {
+    // Hide-filters (type/priority/status/estimate/tags/excludeStatus) keep matching
+    // nibs in tree order, dim ancestors in place, and only remove non-matching
+    // leaves — they never reorder rows. Anchor-based reorder-on-drop stays
+    // well-defined, so drag must remain allowed for every hide-filter.
+    expect(isDragAllowed({ type: ["bug"] })).toBe(true);
+    expect(isDragAllowed({ priority: ["high"] })).toBe(true);
+    expect(isDragAllowed({ status: ["todo"] })).toBe(true);
+    expect(isDragAllowed({ estimate: ["m"] })).toBe(true);
+    expect(isDragAllowed({ tags: ["frontend"] })).toBe(true);
     expect(isDragAllowed({ excludeStatus: ["completed", "scrapped"] })).toBe(true);
   });
 
-  it("returns false when a real client filter is combined with excludeStatus", () => {
-    expect(isDragAllowed({ type: ["bug"], excludeStatus: ["completed", "scrapped"] })).toBe(false);
-    expect(isDragAllowed({ status: ["todo"], excludeStatus: ["completed", "scrapped"] })).toBe(false);
+  it("returns true when hide-filters are combined in any mix", () => {
+    expect(isDragAllowed({ type: ["bug"], excludeStatus: ["completed", "scrapped"] })).toBe(true);
+    expect(isDragAllowed({ status: ["todo"], excludeStatus: ["completed", "scrapped"] })).toBe(true);
+    expect(
+      isDragAllowed({
+        type: ["bug"],
+        priority: ["high"],
+        status: ["todo"],
+        estimate: ["m"],
+        tags: ["frontend"],
+        excludeStatus: ["completed"],
+      }),
+    ).toBe(true);
+  });
+
+  it("returns false when search is combined with hide-filters", () => {
+    expect(isDragAllowed({ search: "hello", type: ["bug"] })).toBe(false);
+  });
+
+  it("returns true when the filter is empty", () => {
+    expect(isDragAllowed({})).toBe(true);
   });
 });

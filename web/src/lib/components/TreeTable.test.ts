@@ -679,7 +679,7 @@ describe("TreeTable", () => {
     expect(draggableRows.length).toBeGreaterThan(0);
   });
 
-  it("rows lack draggable class when filters are active", () => {
+  it("rows keep draggable class when a hide-filter is active (filters never reorder rows)", () => {
     const nibs: TreeTableNib[] = [
       makeTreeTableNib({ id: "nibs-m1", title: "Milestone", type: "milestone" }),
       makeTreeTableNib({ id: "nibs-001", title: "Child Task", type: "task", parentId: "nibs-m1" }),
@@ -694,7 +694,27 @@ describe("TreeTable", () => {
       viewLevel: "milestones" as ViewLevel,
     });
 
-    // With active client filters, rows should NOT have draggable class
+    // A hide-filter keeps matching rows in tree order, so drag stays allowed.
+    const draggableRows = container.querySelectorAll("tr.draggable");
+    expect(draggableRows.length).toBeGreaterThan(0);
+  });
+
+  it("rows lack draggable class when search is active", () => {
+    const nibs: TreeTableNib[] = [
+      makeTreeTableNib({ id: "nibs-m1", title: "Milestone", type: "milestone" }),
+      makeTreeTableNib({ id: "nibs-001", title: "Child Task", type: "task", parentId: "nibs-m1" }),
+    ];
+
+    mockQueryStore.mockReturnValue(
+      readable({ fetching: false, error: undefined, data: { nibs }, stale: false }) as any
+    );
+
+    const { container } = renderTreeTable({
+      filter: { search: "child" },
+      viewLevel: "milestones" as ViewLevel,
+    });
+
+    // Search flattens results out of tree order, so drag must be disabled.
     const draggableRows = container.querySelectorAll("tr.draggable");
     expect(draggableRows).toHaveLength(0);
   });

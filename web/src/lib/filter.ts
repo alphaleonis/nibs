@@ -106,15 +106,23 @@ export function getStatusConflicts(filter: NibFilter): string[] {
   return status.filter((s) => excludeStatus.includes(s));
 }
 
-/** Returns true when drag-and-drop reordering is safe (no search/filters distorting row order). */
+/**
+ * Returns true when drag-and-drop reordering is safe.
+ *
+ * Only search blocks drag: it flattens results out of tree order, so a "drop
+ * before/after this anchor" gesture has no sibling meaning. Hide-filters
+ * (type/priority/status/estimate/tags/excludeStatus) never reorder rows — matching
+ * nibs keep their tree order, ancestors are dimmed in place, and only non-matching
+ * leaves are removed — and reorder-on-drop is anchor-based (reorderNib against the
+ * dragged item's real siblings on the backend), so it stays well-defined even when
+ * other rows are hidden.
+ *
+ * Accepted caveat: dropping relative to a visible anchor while sibling leaves are
+ * hidden lands the item in a well-defined but possibly-surprising spot (it may end
+ * up adjacent to rows the filter currently hides).
+ */
 export function isDragAllowed(filter: NibFilter): boolean {
-  // excludeStatus (set when the "Include completed" toggle is OFF; absent by
-  // default) is a client filter, but it dims a filtered-out ancestor of visible
-  // children in place and removes a filtered-out leaf — it never reorders rows —
-  // so it must not disable drag on its own. Only real client filters
-  // (type/priority/status/estimate/tags) or search block reordering.
-  const { excludeStatus: _excludeStatus, ...rest } = filter;
-  return !filter.search && !hasClientFilters(rest);
+  return !filter.search;
 }
 
 /**
