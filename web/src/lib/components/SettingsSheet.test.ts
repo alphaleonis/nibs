@@ -13,6 +13,8 @@ const user = userEvent.setup({ pointerEventsCheck: 0 });
 const defaultProps = () => ({
   rowDensity: "compact" as const,
   ondensitychange: vi.fn(),
+  fontSize: "medium" as const,
+  onfontsizechange: vi.fn(),
   blockedEmphasis: "pill" as const,
   onemphasischange: vi.fn(),
   theme: "graphite" as const,
@@ -213,8 +215,9 @@ describe("SettingsSheet", () => {
     const group = screen.getByRole("radiogroup", { name: /row density/i });
     expect(group).toBeInTheDocument();
 
-    // Scope to the density group — the sheet now has a second radiogroup
-    // (detail panel position), so a document-wide radio query would return 4.
+    // Scope to the density group — the sheet has several other radiogroups
+    // (font size, blocked emphasis, detail panel position), so a document-wide
+    // radio query would return more than these two.
     const options = within(group).getAllByRole("radio");
     expect(options).toHaveLength(2);
     expect(screen.getByRole("radio", { name: /compact/i })).toBeInTheDocument();
@@ -355,6 +358,53 @@ describe("SettingsSheet", () => {
     await user.click(within(group).getByRole("radio", { name: /right/i }));
 
     expect(onpositionchange).toHaveBeenCalledWith("right");
+  });
+
+  it("shows a Font size radiogroup with Small, Medium, and Large options", async () => {
+    render(SettingsSheet, { ...defaultProps() });
+
+    await user.click(screen.getByRole("button", { name: "Settings" }));
+
+    const group = screen.getByRole("radiogroup", { name: /font size/i });
+    expect(group).toBeInTheDocument();
+
+    const options = within(group).getAllByRole("radio");
+    expect(options).toHaveLength(3);
+    expect(within(group).getByRole("radio", { name: "Small" })).toBeInTheDocument();
+    expect(within(group).getByRole("radio", { name: "Medium" })).toBeInTheDocument();
+    expect(within(group).getByRole("radio", { name: "Large" })).toBeInTheDocument();
+  });
+
+  it("marks the option matching fontSize as aria-checked", async () => {
+    render(SettingsSheet, { ...defaultProps(), fontSize: "large" });
+
+    await user.click(screen.getByRole("button", { name: "Settings" }));
+
+    const group = screen.getByRole("radiogroup", { name: /font size/i });
+    expect(within(group).getByRole("radio", { name: "Large" })).toHaveAttribute("aria-checked", "true");
+    expect(within(group).getByRole("radio", { name: "Medium" })).toHaveAttribute("aria-checked", "false");
+  });
+
+  it("clicking Small calls onfontsizechange with 'small'", async () => {
+    const onfontsizechange = vi.fn();
+    render(SettingsSheet, { ...defaultProps(), fontSize: "medium", onfontsizechange });
+
+    await user.click(screen.getByRole("button", { name: "Settings" }));
+    const group = screen.getByRole("radiogroup", { name: /font size/i });
+    await user.click(within(group).getByRole("radio", { name: "Small" }));
+
+    expect(onfontsizechange).toHaveBeenCalledWith("small");
+  });
+
+  it("clicking Large calls onfontsizechange with 'large'", async () => {
+    const onfontsizechange = vi.fn();
+    render(SettingsSheet, { ...defaultProps(), fontSize: "medium", onfontsizechange });
+
+    await user.click(screen.getByRole("button", { name: "Settings" }));
+    const group = screen.getByRole("radiogroup", { name: /font size/i });
+    await user.click(within(group).getByRole("radio", { name: "Large" }));
+
+    expect(onfontsizechange).toHaveBeenCalledWith("large");
   });
 
   it("shows a Theme control reflecting the current theme", async () => {

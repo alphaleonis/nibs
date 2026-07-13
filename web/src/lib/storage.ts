@@ -1,5 +1,5 @@
-import { VIEW_LEVELS, ALL_COLUMN_KEYS, DEFAULT_COLUMNS, MIN_DETAIL_PANEL_WIDTH, MIN_DETAIL_PANEL_HEIGHT, DETAIL_PANEL_POSITIONS, BLOCKED_EMPHASES, THEMES, DEFAULT_THEME } from "./types";
-import type { ColumnKey, FilterPreferences, RowDensity, ViewLevel, Theme, DetailPanelPosition, BlockedEmphasis } from "./types";
+import { VIEW_LEVELS, ALL_COLUMN_KEYS, DEFAULT_COLUMNS, MIN_DETAIL_PANEL_WIDTH, MIN_DETAIL_PANEL_HEIGHT, DETAIL_PANEL_POSITIONS, BLOCKED_EMPHASES, THEMES, DEFAULT_THEME, FONT_SCALES } from "./types";
+import type { ColumnKey, FilterPreferences, RowDensity, ViewLevel, Theme, DetailPanelPosition, BlockedEmphasis, FontSize } from "./types";
 
 const ALWAYS_VISIBLE_KEYS = new Set<ColumnKey>(
   DEFAULT_COLUMNS.filter(c => c.alwaysVisible).map(c => c.key),
@@ -92,6 +92,15 @@ function parseRowDensity(raw: unknown): RowDensity | undefined {
   return raw as RowDensity;
 }
 
+const VALID_FONT_SIZES = new Set<string>(Object.keys(FONT_SCALES));
+
+// Optional like rowDensity: return undefined for missing/garbage so Preferences
+// supplies the concrete default (medium).
+function parseFontSize(raw: unknown): FontSize | undefined {
+  if (typeof raw !== "string" || !VALID_FONT_SIZES.has(raw)) return undefined;
+  return raw as FontSize;
+}
+
 const VALID_BLOCKED_EMPHASES = new Set<string>(BLOCKED_EMPHASES);
 
 // Optional like rowDensity: return undefined for missing/garbage so Preferences
@@ -136,6 +145,7 @@ export function loadPreferences(): FilterPreferences {
       detailPanelPosition: parseDetailPanelPosition(parsed.detailPanelPosition),
       detailPanelHeight: parseDetailPanelHeight(parsed.detailPanelHeight),
       rowDensity: parseRowDensity(parsed.rowDensity),
+      fontSize: parseFontSize(parsed.fontSize),
       blockedEmphasis: parseBlockedEmphasis(parsed.blockedEmphasis),
       theme: parseTheme(parsed.theme),
       previewOpen: parsePreviewOpen(parsed.previewOpen),

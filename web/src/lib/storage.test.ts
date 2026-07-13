@@ -326,6 +326,25 @@ describe("storage", () => {
     expect(loadPreferences().blockedEmphasis).toBeUndefined();
   });
 
+  it("saves and loads fontSize", () => {
+    savePreferences({ filter: {}, viewLevel: "none", fontSize: "large" });
+    expect(loadPreferences().fontSize).toBe("large");
+  });
+
+  it("returns undefined fontSize when not set", () => {
+    savePreferences({ filter: {}, viewLevel: "none" });
+    expect(loadPreferences().fontSize).toBeUndefined();
+  });
+
+  it("returns undefined fontSize for an invalid stored value", () => {
+    store["nibs-filter-preferences"] = JSON.stringify({
+      filter: {},
+      viewLevel: "none",
+      fontSize: "gigantic",
+    });
+    expect(loadPreferences().fontSize).toBeUndefined();
+  });
+
   it("saves and loads previewOpen", () => {
     savePreferences({ filter: {}, viewLevel: "none", previewOpen: false });
     expect(loadPreferences().previewOpen).toBe(false);

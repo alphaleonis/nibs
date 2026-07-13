@@ -184,14 +184,21 @@
   /* ── Semantic type scale ────────────────────────────────────────
      Theme-INVARIANT typography tokens. Do NOT override these in any
      [data-theme]/.dark block — only color tokens vary per theme, type
-     stays constant. Consumed by the @utility classes below. */
-  --text-label-size: 0.75rem;    /* 12px */
+     stays constant. Consumed by the @utility classes below.
+
+     `--font-scale` is the global font-size preference multiplier (S/M/L →
+     0.9/1/1.15, default 1). It ALSO stays theme-invariant: it is set on
+     document.documentElement by applyFontScale() from the persisted pref and
+     multiplies ONLY the three type-SIZE tokens below — root font-size, spacing,
+     rem and row-density are deliberately untouched (nibs-gymz). */
+  --font-scale: 1;
+  --text-label-size: calc(0.75rem * var(--font-scale));    /* 12px */
   --text-label-weight: 500;
   --text-label-leading: 1rem;    /* 16px — tight */
-  --text-body-size: 0.875rem;    /* 14px */
+  --text-body-size: calc(0.875rem * var(--font-scale));    /* 14px */
   --text-body-weight: 400;
   --text-body-leading: 1.25rem;  /* 20px */
-  --text-caption-size: 0.75rem;  /* 12px */
+  --text-caption-size: calc(0.75rem * var(--font-scale));  /* 12px */
   --text-caption-weight: 400;
   --text-caption-leading: 1rem;  /* 16px */
 }

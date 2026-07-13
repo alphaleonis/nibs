@@ -33,6 +33,7 @@
   import { toast } from "svelte-sonner";
   import { initMutationStore } from "./lib/mutations";
   import { applyTheme } from "./lib/theme";
+  import { applyFontScale } from "./lib/fontScale";
   import {
     reparentBatch,
     reorderChain,
@@ -60,6 +61,13 @@
   // data-theme before first paint; this keeps it in sync thereafter.
   $effect(() => {
     applyTheme(prefs.theme);
+  });
+
+  // Live-apply the global font-size preference: writes the S/M/L multiplier onto
+  // --font-scale whenever prefs.fontSize changes, scaling the type scale only
+  // (not layout/spacing). No pre-paint FOUC guard needed (a tiny reflow is fine).
+  $effect(() => {
+    applyFontScale(prefs.fontSize);
   });
 
   const selection = new SelectionState();

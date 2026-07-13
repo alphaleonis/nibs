@@ -2,7 +2,7 @@ import { test, expect, type Page } from "@playwright/test";
 import { mkdirSync } from "node:fs";
 import { join } from "node:path";
 import { VIEW_LEVELS, THEMES } from "../src/lib/types";
-import type { Theme, DetailPanelPosition } from "../src/lib/types";
+import type { Theme, DetailPanelPosition, FontSize } from "../src/lib/types";
 
 // Captures PNGs of the key web UI states into web/screenshots/output/ so an
 // agent (or human) can visually verify UI changes. Run via `task screenshots`.
@@ -22,9 +22,10 @@ async function openApp(
   viewLevel: (typeof VIEW_LEVELS)[number] = "milestones",
   theme?: Theme,
   position?: DetailPanelPosition,
+  fontSize?: FontSize,
 ) {
   await page.addInitScript(
-    ({ level, t, pos }) => {
+    ({ level, t, pos, fs }) => {
       localStorage.setItem(
         "nibs-filter-preferences",
         JSON.stringify({
@@ -32,10 +33,11 @@ async function openApp(
           viewLevel: level,
           ...(t ? { theme: t } : {}),
           ...(pos ? { detailPanelPosition: pos } : {}),
+          ...(fs ? { fontSize: fs } : {}),
         }),
       );
     },
-    { level: viewLevel, t: theme, pos: position },
+    { level: viewLevel, t: theme, pos: position, fs: fontSize },
   );
   await page.goto("/");
   await expect(page.locator("tr[data-nib-id]").first()).toBeVisible({ timeout: 10_000 });
@@ -125,4 +127,16 @@ for (const { value } of THEMES) {
     await expect(page.getByTestId("theme-select")).toBeVisible({ timeout: 3_000 });
     await shot(page, `theme-${value}-settings`);
   });
+}
+
+// Global font-size preference (nibs-gymz): spot-check the type scale at Small and
+// Large in a light (daylight) and a dark (graphite) palette. The whole app scales
+// off the single --font-scale root variable, so the table shows it across many rows.
+for (const theme of ["daylight", "graphite"] as const) {
+  for (const fontSize of ["small", "large"] as const) {
+    test(`font size ${fontSize} — ${theme} table`, async ({ page }) => {
+      await openApp(page, "milestones", theme, undefined, fontSize);
+      await shot(page, `fontsize-${fontSize}-${theme}-table`);
+    });
+  }
 }

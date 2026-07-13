@@ -1,7 +1,7 @@
 import { untrack } from "svelte";
 import { loadPreferences, savePreferences } from "./storage";
-import { DEFAULT_VISIBLE_COLUMNS, DEFAULT_COLUMN_WIDTHS, DEFAULT_DETAIL_PANEL_WIDTH, MIN_DETAIL_PANEL_WIDTH, DEFAULT_DETAIL_PANEL_HEIGHT, MIN_DETAIL_PANEL_HEIGHT, DEFAULT_DETAIL_PANEL_POSITION, DEFAULT_BLOCKED_EMPHASIS, DEFAULT_THEME, DEFAULT_PREVIEW_OPEN } from "./types";
-import type { NibFilter, ViewLevel, ColumnKey, RowDensity, Theme, DetailPanelPosition, BlockedEmphasis } from "./types";
+import { DEFAULT_VISIBLE_COLUMNS, DEFAULT_COLUMN_WIDTHS, DEFAULT_DETAIL_PANEL_WIDTH, MIN_DETAIL_PANEL_WIDTH, DEFAULT_DETAIL_PANEL_HEIGHT, MIN_DETAIL_PANEL_HEIGHT, DEFAULT_DETAIL_PANEL_POSITION, DEFAULT_BLOCKED_EMPHASIS, DEFAULT_FONT_SIZE, DEFAULT_THEME, DEFAULT_PREVIEW_OPEN } from "./types";
+import type { NibFilter, ViewLevel, ColumnKey, RowDensity, Theme, DetailPanelPosition, BlockedEmphasis, FontSize } from "./types";
 
 export class Preferences {
   filter: NibFilter = $state({});
@@ -14,6 +14,9 @@ export class Preferences {
   // Pointer-pattern → excluded from auto-save, flushed like width.
   #detailPanelHeight: number | undefined = $state(undefined);
   rowDensity: RowDensity = $state("compact");
+  // Discrete toggle → auto-saved (like theme/rowDensity). Scales the UI type
+  // scale via --font-scale; decoupled from rowDensity (spacing).
+  fontSize: FontSize = $state(DEFAULT_FONT_SIZE);
   blockedEmphasis: BlockedEmphasis = $state(DEFAULT_BLOCKED_EMPHASIS);
   theme: Theme = $state(DEFAULT_THEME);
   // Discrete toggle → auto-saved (like theme/rowDensity/detailPanelPosition).
@@ -57,6 +60,7 @@ export class Preferences {
     this.detailPanelPosition = initial.detailPanelPosition ?? DEFAULT_DETAIL_PANEL_POSITION;
     this.#detailPanelHeight = initial.detailPanelHeight;
     this.rowDensity = initial.rowDensity ?? "compact";
+    this.fontSize = initial.fontSize ?? DEFAULT_FONT_SIZE;
     this.blockedEmphasis = initial.blockedEmphasis ?? DEFAULT_BLOCKED_EMPHASIS;
     this.theme = initial.theme ?? DEFAULT_THEME;
     this.previewOpen = initial.previewOpen ?? DEFAULT_PREVIEW_OPEN;
@@ -72,6 +76,7 @@ export class Preferences {
         this.viewLevel;
         this.columnVisibility;
         this.rowDensity;
+        this.fontSize;
         this.blockedEmphasis;
         this.theme;
         this.detailPanelPosition;
@@ -131,6 +136,7 @@ export class Preferences {
       detailPanelPosition: this.detailPanelPosition,
       detailPanelHeight: this.#detailPanelHeight,
       rowDensity: this.rowDensity,
+      fontSize: this.fontSize,
       blockedEmphasis: this.blockedEmphasis,
       theme: this.theme,
       previewOpen: this.previewOpen,

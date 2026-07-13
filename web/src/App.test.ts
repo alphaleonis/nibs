@@ -237,6 +237,93 @@ describe("App", () => {
     }
   });
 
+  it("applies a persisted large fontSize to --font-scale as the app renders", async () => {
+    // The only runtime call site of applyFontScale is App.svelte's $effect on
+    // prefs.fontSize — the glue from persisted Preferences to the live DOM,
+    // mirroring the applyTheme effect above. Seed a non-default fontSize, render
+    // App, and assert --font-scale reflects it. Same defineProperty localStorage
+    // pattern as the theme tests.
+    const savedStorage = globalThis.localStorage;
+    const savedFontScale = document.documentElement.style.getPropertyValue("--font-scale");
+    const mockStore: Record<string, string> = {
+      "nibs-filter-preferences": JSON.stringify({
+        filter: {},
+        viewLevel: "none",
+        fontSize: "large",
+      }),
+    };
+    Object.defineProperty(globalThis, "localStorage", {
+      value: {
+        getItem: (key: string) => mockStore[key] ?? null,
+        setItem: (key: string, value: string) => { mockStore[key] = value; },
+        removeItem: (key: string) => { delete mockStore[key]; },
+      },
+      writable: true,
+      configurable: true,
+    });
+    // Force a sentinel so this can only pass if App's $effect actively writes the
+    // scale — otherwise a stale/default value could satisfy the assertion and make
+    // it vacuous (mirrors the light-theme test forcing the opposite `.dark` state).
+    document.documentElement.style.setProperty("--font-scale", "999");
+
+    try {
+      render(App);
+      // large → FONT_SCALES.large (1.15), written by App.svelte's $effect.
+      await waitFor(() =>
+        expect(document.documentElement.style.getPropertyValue("--font-scale")).toBe("1.15"),
+      );
+    } finally {
+      Object.defineProperty(globalThis, "localStorage", {
+        value: savedStorage,
+        writable: true,
+        configurable: true,
+      });
+      // Restore the shared documentElement's --font-scale so no other test in this
+      // file sees a stale value (jsdom shares the element across tests).
+      if (savedFontScale === "") document.documentElement.style.removeProperty("--font-scale");
+      else document.documentElement.style.setProperty("--font-scale", savedFontScale);
+    }
+  });
+
+  it("applies a persisted small fontSize to --font-scale as the app renders", async () => {
+    // Complement of the large case: a seeded small fontSize resolves to the 0.9
+    // multiplier, proving the effect reads the real preference (not a constant).
+    const savedStorage = globalThis.localStorage;
+    const savedFontScale = document.documentElement.style.getPropertyValue("--font-scale");
+    const mockStore: Record<string, string> = {
+      "nibs-filter-preferences": JSON.stringify({
+        filter: {},
+        viewLevel: "none",
+        fontSize: "small",
+      }),
+    };
+    Object.defineProperty(globalThis, "localStorage", {
+      value: {
+        getItem: (key: string) => mockStore[key] ?? null,
+        setItem: (key: string, value: string) => { mockStore[key] = value; },
+        removeItem: (key: string) => { delete mockStore[key]; },
+      },
+      writable: true,
+      configurable: true,
+    });
+    document.documentElement.style.setProperty("--font-scale", "999");
+
+    try {
+      render(App);
+      await waitFor(() =>
+        expect(document.documentElement.style.getPropertyValue("--font-scale")).toBe("0.9"),
+      );
+    } finally {
+      Object.defineProperty(globalThis, "localStorage", {
+        value: savedStorage,
+        writable: true,
+        configurable: true,
+      });
+      if (savedFontScale === "") document.documentElement.style.removeProperty("--font-scale");
+      else document.documentElement.style.setProperty("--font-scale", savedFontScale);
+    }
+  });
+
   it("wires filter state between Toolbar and TreeTable", async () => {
     const user = userEvent.setup({ pointerEventsCheck: 0 });
     render(App);

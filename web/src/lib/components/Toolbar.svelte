@@ -1,6 +1,6 @@
 <script lang="ts">
-  import { VIEW_LEVELS, DEFAULT_COLUMNS, ALL_COLUMN_KEYS, DEFAULT_THEME, DEFAULT_DETAIL_PANEL_POSITION, DEFAULT_BLOCKED_EMPHASIS } from "../types";
-  import type { NibFilter, ViewLevel, ColumnKey, RowDensity, Theme, DetailPanelPosition, BlockedEmphasis } from "../types";
+  import { VIEW_LEVELS, DEFAULT_COLUMNS, ALL_COLUMN_KEYS, DEFAULT_THEME, DEFAULT_DETAIL_PANEL_POSITION, DEFAULT_BLOCKED_EMPHASIS, DEFAULT_FONT_SIZE } from "../types";
+  import type { NibFilter, ViewLevel, ColumnKey, RowDensity, FontSize, Theme, DetailPanelPosition, BlockedEmphasis } from "../types";
   import type { Preferences } from "../preferences.svelte";
   import { resolveStatusConflicts } from "../filter";
   import { TERMINAL_STATUSES, TYPES, STATUSES, PRIORITIES, ESTIMATES, ESTIMATE_LABELS } from "../constants";
@@ -38,6 +38,8 @@
     oncreatenew = undefined as ((type: string) => void) | undefined,
     rowDensity = "compact" as RowDensity,
     ondensitychange = undefined as ((density: RowDensity) => void) | undefined,
+    fontSize = DEFAULT_FONT_SIZE as FontSize,
+    onfontsizechange = undefined as ((fontSize: FontSize) => void) | undefined,
     blockedEmphasis = DEFAULT_BLOCKED_EMPHASIS as BlockedEmphasis,
     onemphasischange = undefined as ((emphasis: BlockedEmphasis) => void) | undefined,
     theme = DEFAULT_THEME as Theme,
@@ -57,6 +59,8 @@
     oncreatenew?: (type: string) => void;
     rowDensity?: RowDensity;
     ondensitychange?: (density: RowDensity) => void;
+    fontSize?: FontSize;
+    onfontsizechange?: (fontSize: FontSize) => void;
     blockedEmphasis?: BlockedEmphasis;
     onemphasischange?: (emphasis: BlockedEmphasis) => void;
     theme?: Theme;
@@ -74,6 +78,16 @@
       prefs.rowDensity = density;
     } else {
       ondensitychange?.(density);
+    }
+  }
+
+  let resolvedFontSize = $derived(prefs ? prefs.fontSize : fontSize);
+
+  function handleSetFontSize(fs: FontSize) {
+    if (prefs) {
+      prefs.fontSize = fs;
+    } else {
+      onfontsizechange?.(fs);
     }
   }
 
@@ -410,6 +424,8 @@
     <SettingsSheet
       rowDensity={resolvedDensity}
       ondensitychange={handleSetDensity}
+      fontSize={resolvedFontSize}
+      onfontsizechange={handleSetFontSize}
       blockedEmphasis={resolvedBlockedEmphasis}
       onemphasischange={handleSetBlockedEmphasis}
       theme={resolvedTheme}

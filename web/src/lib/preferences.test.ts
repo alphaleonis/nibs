@@ -289,6 +289,30 @@ describe("Preferences", () => {
     expect(stored.blockedEmphasis).toBe("pill-dim");
   });
 
+  it("defaults fontSize to medium when nothing is persisted", () => {
+    const prefs = new Preferences();
+    expect(prefs.fontSize).toBe("medium");
+  });
+
+  it("loads a persisted fontSize from localStorage", () => {
+    store["nibs-filter-preferences"] = JSON.stringify({
+      filter: {},
+      viewLevel: "none",
+      fontSize: "large",
+    });
+    const prefs = new Preferences();
+    expect(prefs.fontSize).toBe("large");
+  });
+
+  it("save() persists the current fontSize", () => {
+    const prefs = new Preferences();
+    prefs.fontSize = "small";
+    prefs.save();
+
+    const stored = JSON.parse(store["nibs-filter-preferences"]);
+    expect(stored.fontSize).toBe("small");
+  });
+
   it("defaults theme to graphite when nothing is persisted", () => {
     const prefs = new Preferences();
     expect(prefs.theme).toBe("graphite");

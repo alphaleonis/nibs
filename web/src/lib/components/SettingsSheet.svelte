@@ -4,7 +4,7 @@
 </script>
 
 <script lang="ts">
-  import type { RowDensity, Theme, DetailPanelPosition, BlockedEmphasis } from "../types";
+  import type { RowDensity, FontSize, Theme, DetailPanelPosition, BlockedEmphasis } from "../types";
   import SegmentedControl from "./SegmentedControl.svelte";
   import ThemeSelect from "./ThemeSelect.svelte";
   import { Button, buttonVariants } from "$lib/components/ui/button/index.js";
@@ -19,6 +19,8 @@
     open = $bindable(false),
     rowDensity,
     ondensitychange,
+    fontSize,
+    onfontsizechange,
     blockedEmphasis,
     onemphasischange,
     theme,
@@ -29,6 +31,8 @@
     open?: boolean;
     rowDensity: RowDensity;
     ondensitychange: (d: RowDensity) => void;
+    fontSize: FontSize;
+    onfontsizechange: (f: FontSize) => void;
     blockedEmphasis: BlockedEmphasis;
     onemphasischange: (e: BlockedEmphasis) => void;
     theme: Theme;
@@ -40,6 +44,12 @@
   const densityOptions: { value: RowDensity; label: string }[] = [
     { value: "compact", label: "Compact" },
     { value: "comfortable", label: "Comfortable" },
+  ];
+
+  const fontSizeOptions: { value: FontSize; label: string }[] = [
+    { value: "small", label: "Small" },
+    { value: "medium", label: "Medium" },
+    { value: "large", label: "Large" },
   ];
 
   const emphasisOptions: { value: BlockedEmphasis; label: string }[] = [
@@ -219,6 +229,16 @@
               options={densityOptions}
               ariaLabel="Row density"
               onchange={(v) => ondensitychange(v as RowDensity)}
+            />
+          </div>
+
+          <div class="flex items-center justify-between gap-3">
+            <span class="text-sm text-foreground">Font size</span>
+            <SegmentedControl
+              value={fontSize}
+              options={fontSizeOptions}
+              ariaLabel="Font size"
+              onchange={(v) => onfontsizechange(v as FontSize)}
             />
           </div>
 

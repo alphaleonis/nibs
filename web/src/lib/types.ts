@@ -111,6 +111,15 @@ export const MIN_DETAIL_PANEL_HEIGHT = 150;
 
 export type RowDensity = "compact" | "comfortable";
 
+// Global font-size preference. Scales the whole UI type scale from one root CSS
+// variable (`--font-scale`) applied ONLY to the semantic type-size tokens, so
+// layout rem/spacing/row-density stay untouched. Decoupled from RowDensity.
+export type FontSize = "small" | "medium" | "large";
+// Default is Medium = 1.0 so existing users see no change.
+export const DEFAULT_FONT_SIZE: FontSize = "medium";
+// The multiplier each size feeds into `--font-scale`.
+export const FONT_SCALES: Record<FontSize, number> = { small: 0.9, medium: 1, large: 1.15 };
+
 // Whether the editor's side-by-side Preview pane is shown while editing a nib
 // body. Persisted so the on/off choice survives remounts (docked↔expanded) and
 // sessions. Defaults to on (matches the original local-state default).
@@ -176,6 +185,7 @@ export interface FilterPreferences {
   detailPanelPosition?: DetailPanelPosition;
   detailPanelHeight?: number;
   rowDensity?: RowDensity;
+  fontSize?: FontSize;
   blockedEmphasis?: BlockedEmphasis;
   theme?: Theme;
   previewOpen?: boolean;

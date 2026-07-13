@@ -1,4 +1,4 @@
-import { render, screen } from "@testing-library/svelte";
+import { render, screen, within } from "@testing-library/svelte";
 import { userEvent } from "@testing-library/user-event";
 import { describe, it, expect, vi } from "vitest";
 import Toolbar from "./Toolbar.svelte";
@@ -199,6 +199,41 @@ describe("Toolbar", () => {
     await user.click(screen.getByRole("option", { name: "Midnight" }));
 
     expect(prefs.theme).toBe("midnight");
+  });
+
+  it("gear button opens the Settings sheet revealing the Font size control", async () => {
+    render(Toolbar, { ...defaultToolbarProps });
+
+    await user.click(screen.getByRole("button", { name: "Settings" }));
+
+    expect(screen.getByRole("radiogroup", { name: /font size/i })).toBeInTheDocument();
+    const group = screen.getByRole("radiogroup", { name: /font size/i });
+    expect(within(group).getByRole("radio", { name: "Small" })).toBeInTheDocument();
+    expect(within(group).getByRole("radio", { name: "Medium" })).toBeInTheDocument();
+    expect(within(group).getByRole("radio", { name: "Large" })).toBeInTheDocument();
+  });
+
+  it("clicking a Font size option in the sheet calls onfontsizechange (callback path)", async () => {
+    const onfontsizechange = vi.fn();
+    render(Toolbar, { ...defaultToolbarProps, fontSize: "medium", onfontsizechange });
+
+    await user.click(screen.getByRole("button", { name: "Settings" }));
+    const group = screen.getByRole("radiogroup", { name: /font size/i });
+    await user.click(within(group).getByRole("radio", { name: "Large" }));
+
+    expect(onfontsizechange).toHaveBeenCalledWith("large");
+  });
+
+  it("handleSetFontSize mutates prefs.fontSize when prefs is provided (prefs path)", async () => {
+    const prefs = new Preferences();
+    expect(prefs.fontSize).toBe("medium");
+    render(Toolbar, { prefs, oncreatenew: vi.fn() });
+
+    await user.click(screen.getByRole("button", { name: "Settings" }));
+    const group = screen.getByRole("radiogroup", { name: /font size/i });
+    await user.click(within(group).getByRole("radio", { name: "Small" }));
+
+    expect(prefs.fontSize).toBe("small");
   });
 
   it("clicking a Blocked emphasis option in the sheet calls onemphasischange (callback path)", async () => {
