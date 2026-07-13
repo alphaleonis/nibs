@@ -65,9 +65,9 @@
     }
   }
 
-  function handleAddChild() {
+  function handleAddChild(anchor: DOMRect) {
     if (nib) {
-      view.startCreateChild(nib.id, nib.type);
+      view.startCreateChild(nib.id, nib.type, anchor);
     }
   }
 
@@ -206,7 +206,12 @@
       {#if showAddChild}
         <DropdownMenu.Item
           data-testid="ctx-add-child"
-          onclick={() => { open = false; handleAddChild(); }}
+          onclick={(e) => {
+            // Capture the item's rect before the menu closes; the picker anchors there.
+            const anchor = (e.currentTarget as HTMLElement).getBoundingClientRect();
+            open = false;
+            handleAddChild(anchor);
+          }}
         >
           Add child
         </DropdownMenu.Item>

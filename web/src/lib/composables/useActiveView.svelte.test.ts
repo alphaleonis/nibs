@@ -454,27 +454,54 @@ describe("createActiveView · live bridge", () => {
 });
 
 describe("createActiveView · type picker + blocksHistoryNav", () => {
-  it("startCreateChild with several valid types opens the picker and blocks history", async () => {
+  const anchor = { x: 10, y: 20, width: 14, height: 14 };
+
+  it("startCreateChild with several valid types opens the picker overlay (buffer untouched) and blocks history", async () => {
     const h = makeDeps();
     const { view, dispose } = mount(h.deps);
 
-    await view.startCreateChild("p1", "epic");
+    await view.startCreateChild("p1", "epic", anchor);
     flushSync();
 
-    expect(view.state.kind).toBe("pickingType");
-    expect(view.blocksHistoryNav).toBe(true);
+    // The picker overlays — it is NOT a ViewState, so the buffer stays put.
+    expect(view.state.kind).toBe("closed");
     expect(view.form).toBeNull();
+    expect(view.typePicker).toEqual({
+      parentId: "p1",
+      parentType: "epic",
+      validTypes: ["feature", "task", "bug"],
+      anchor,
+    });
+    expect(view.blocksHistoryNav).toBe(true);
 
     dispose();
   });
 
-  it("startCreateChild with a single valid type goes straight to creating", async () => {
+  it("keeps the open detail view visible while the picker is up (issue #4)", async () => {
     const h = makeDeps();
     const { view, dispose } = mount(h.deps);
 
-    await view.startCreateChild("p1", "milestone");
+    await view.open("n1");
+    flushSync();
+    await view.startCreateChild("p1", "epic", anchor);
     flushSync();
 
+    // The n1 detail buffer is still present behind the overlay.
+    expect(view.state).toEqual({ kind: "viewing", nibId: "n1", presentation: "docked" });
+    expect(view.form?.mode).toBe("edit");
+    expect(view.typePicker).not.toBeNull();
+
+    dispose();
+  });
+
+  it("startCreateChild with a single valid type creates directly (no picker)", async () => {
+    const h = makeDeps();
+    const { view, dispose } = mount(h.deps);
+
+    await view.startCreateChild("p1", "milestone", anchor);
+    flushSync();
+
+    expect(view.typePicker).toBeNull();
     expect(view.state).toEqual({
       kind: "creating",
       defaults: { type: "epic", parent: "p1" },
@@ -485,15 +512,29 @@ describe("createActiveView · type picker + blocksHistoryNav", () => {
     dispose();
   });
 
-  it("chooseType resolves the picker into a create buffer", async () => {
+  it("startCreateChild with a leaf parent is a no-op", async () => {
     const h = makeDeps();
     const { view, dispose } = mount(h.deps);
 
-    await view.startCreateChild("p1", "epic");
-    flushSync();
-    view.chooseType("feature");
+    await view.startCreateChild("p1", "task", anchor);
     flushSync();
 
+    expect(view.typePicker).toBeNull();
+    expect(view.state.kind).toBe("closed");
+
+    dispose();
+  });
+
+  it("chooseType closes the picker and opens a create buffer for the picked type", async () => {
+    const h = makeDeps();
+    const { view, dispose } = mount(h.deps);
+
+    await view.startCreateChild("p1", "epic", anchor);
+    flushSync();
+    await view.chooseType("feature");
+    flushSync();
+
+    expect(view.typePicker).toBeNull();
     expect(view.state).toEqual({
       kind: "creating",
       defaults: { type: "feature", parent: "p1" },
@@ -504,19 +545,45 @@ describe("createActiveView · type picker + blocksHistoryNav", () => {
     dispose();
   });
 
-  it("cancelType returns to the resume target when picking from a viewing nib", async () => {
+  it("choosing a type over a dirty buffer runs the discard guard; refusal keeps the buffer", async () => {
     const h = makeDeps();
     const { view, dispose } = mount(h.deps);
 
     await view.open("n1");
     flushSync();
-    await view.startCreateChild("p1", "epic");
+    h.editForms.get("n1")!.dirty = true;
+    await view.startCreateChild("p1", "epic", anchor);
     flushSync();
-    expect(view.state.kind).toBe("pickingType");
+    // Opening the picker never prompts (no buffer change yet).
+    expect(h.confirm).not.toHaveBeenCalled();
+
+    h.confirm.mockResolvedValueOnce(false);
+    await view.chooseType("feature");
+    flushSync();
+
+    // Refused: the create is abandoned and the dirty viewing buffer survives.
+    expect(h.confirm).toHaveBeenCalledTimes(1);
+    expect(view.typePicker).toBeNull();
+    expect(view.state).toEqual({ kind: "viewing", nibId: "n1", presentation: "docked" });
+
+    dispose();
+  });
+
+  it("cancelType closes the picker and leaves the underlying view untouched", async () => {
+    const h = makeDeps();
+    const { view, dispose } = mount(h.deps);
+
+    await view.open("n1");
+    flushSync();
+    await view.startCreateChild("p1", "epic", anchor);
+    flushSync();
+    expect(view.typePicker).not.toBeNull();
 
     view.cancelType();
     flushSync();
+    expect(view.typePicker).toBeNull();
     expect(view.state).toEqual({ kind: "viewing", nibId: "n1", presentation: "docked" });
+    expect(view.blocksHistoryNav).toBe(false);
 
     dispose();
   });

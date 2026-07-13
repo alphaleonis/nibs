@@ -489,7 +489,7 @@ describe("RowContextMenu", () => {
   });
 
   describe("Add child action", () => {
-    it("clicking Add child calls view.startCreateChild with nib id and type", async () => {
+    it("clicking Add child calls view.startCreateChild with nib id, type, and an anchor rect", async () => {
       renderMenu({ nib: makeNib({ id: "nibs-epic1", type: "epic" }) });
 
       await waitFor(() => {
@@ -498,9 +498,11 @@ describe("RowContextMenu", () => {
 
       await user.click(screen.getByTestId("ctx-add-child"));
 
+      // The third arg is the clicked item's rect (all-zero DOMRect under jsdom).
       expect(mockView.startCreateChild).toHaveBeenCalledWith(
         "nibs-epic1",
         "epic",
+        expect.objectContaining({ x: expect.any(Number), y: expect.any(Number) }),
       );
     });
   });

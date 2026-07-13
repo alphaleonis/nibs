@@ -1,33 +1,50 @@
 <script lang="ts">
   import { getValidChildTypes } from "../typeHierarchy";
+  import TypeIcon from "./TypeIcon.svelte";
   import * as Popover from "$lib/components/ui/popover/index.js";
+  import type { AnchorRect } from "../composables/useActiveView.svelte";
 
   interface Props {
     parentType: string;
     onselect: (type: string) => void;
     oncancel: () => void;
+    /** Viewport rect of the control that opened the picker; the popover anchors
+     *  to it. Omitted (tests) falls back to screen center. */
+    anchor?: AnchorRect;
   }
 
-  let { parentType, onselect, oncancel }: Props = $props();
+  let { parentType, onselect, oncancel, anchor }: Props = $props();
 
   let validTypes = $derived(getValidChildTypes(parentType));
   let popoverOpen = $state(true);
+  // Selecting a type closes the popover, which fires onOpenChange(false); that
+  // must NOT be reported as a cancel (it would double-fire alongside onselect).
+  let selecting = false;
+
+  // Pin the invisible trigger over the opener's rect so the popover opens there
+  // (position:fixed lives in the CSS; these override the centered fallback).
+  let anchorStyle = $derived(
+    anchor
+      ? `top:${anchor.y}px; left:${anchor.x}px; width:${anchor.width}px; height:${anchor.height}px; transform:none;`
+      : "top:50%; left:50%;",
+  );
 
   function handleOpenChange(open: boolean) {
-    if (!open) {
+    if (!open && !selecting) {
       oncancel();
     }
   }
 
   function handleSelect(type: string) {
+    selecting = true;
     popoverOpen = false;
     onselect(type);
   }
 </script>
 
 <Popover.Root bind:open={popoverOpen} onOpenChange={handleOpenChange}>
-  <!-- Invisible trigger anchored to mouse position / center of screen -->
-  <Popover.Trigger data-testid="type-picker-trigger" class="type-picker-anchor">
+  <!-- Invisible trigger pinned over the control that opened the picker. -->
+  <Popover.Trigger data-testid="type-picker-trigger" class="type-picker-anchor" style={anchorStyle}>
     Select child type
   </Popover.Trigger>
 
@@ -42,6 +59,7 @@
           data-testid="type-picker-item"
           onclick={() => handleSelect(childType)}
         >
+          <TypeIcon type={childType} size={14} />
           {childType}
         </button>
       {/each}
@@ -50,10 +68,10 @@
 </Popover.Root>
 
 <style>
+  /* Invisible anchor: position:fixed here; top/left (and width/height when a
+     rect is given) are set inline from the `anchor` prop. */
   :global(.type-picker-anchor) {
     position: fixed;
-    top: 50%;
-    left: 50%;
     width: 0;
     height: 0;
     padding: 0 !important;

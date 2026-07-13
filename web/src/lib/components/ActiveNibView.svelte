@@ -7,10 +7,12 @@
    * the layout keys off measured container width, not the dock position.
    *
    * State-driven render (per `view.state.kind`):
-   *   - `pickingType` -> the shared TypePickerPopover.
    *   - `viewing` / `gone` / `creating` -> the full three-row-header nib view.
    *     `gone` adds a "deleted" notice and disables inputs; `creating` hides
    *     relationships/documents/archive/delete and its primary button is "Create".
+   *
+   * The add-child type picker is NOT a state here — it overlays as an anchored
+   * popover hosted by App (`view.typePicker`), so it never replaces this view.
    *
    * All edits are buffered on `view.form` (CreateForm | EditForm) — nothing
    * persists until Save. This component owns only presentational/local state
@@ -44,7 +46,7 @@
   import type { BlockedEmphasis } from "../types";
   import { DEFAULT_BLOCKED_EMPHASIS, DEFAULT_PREVIEW_OPEN, blockedVariantFor } from "../types";
   import type { Preferences } from "../preferences.svelte";
-  import type { DetailNibRef } from "../composables/useActiveView.svelte";
+  import type { DetailNibRef, AnchorRect } from "../composables/useActiveView.svelte";
 
   import StatusSelect from "./StatusSelect.svelte";
   import TypeSelect from "./TypeSelect.svelte";
@@ -54,7 +56,6 @@
   import BlockedBadge from "./BlockedBadge.svelte";
   import MarkdownEditor from "./MarkdownEditor.svelte";
   import RelatedNibGroup from "./RelatedNibGroup.svelte";
-  import TypePickerPopover from "./TypePickerPopover.svelte";
   import { Button } from "$lib/components/ui/button/index.js";
   import * as DropdownMenu from "$lib/components/ui/dropdown-menu/index.js";
 
@@ -176,6 +177,9 @@
   //   (b) bodyColWidth >= 560 -> editor + preview sit side-by-side (else stack)
   let rootEl: HTMLDivElement | undefined = $state();
   let bodyColEl: HTMLDivElement | undefined = $state();
+  // The overflow (⋯) trigger — the type picker anchors to it when "New child
+  // nib" is chosen from that menu (the menu item itself is gone by then).
+  let menuTriggerEl: HTMLElement | null = $state(null);
   let rootWidth = $state(0);
   let bodyColWidth = $state(0);
   const wide = $derived(rootWidth >= 720);
@@ -246,8 +250,8 @@
     if (f && f.mode === "edit" && f.externalChange) f.applyExternal(f.externalChange);
   }
 
-  function handleNewChild() {
-    if (nibId) view.startCreateChild(nibId, childParentType);
+  function handleNewChild(anchor: AnchorRect) {
+    if (nibId) view.startCreateChild(nibId, childParentType, anchor);
   }
 
   function handleCopyId() {
@@ -304,7 +308,9 @@
             label="Children"
             items={refs(detailNib.children)}
             onnibselect={(id) => view.open(id)}
-            onaction={childTypes.length > 0 ? handleNewChild : undefined}
+            onaction={childTypes.length > 0
+              ? (e) => handleNewChild((e.currentTarget as HTMLElement).getBoundingClientRect())
+              : undefined}
             actionLabel="Add child nib"
             testId="anv-related-children"
           />
@@ -362,13 +368,7 @@
   {/if}
 {/snippet}
 
-{#if viewState.kind === "pickingType"}
-  <TypePickerPopover
-    parentType={viewState.parentType}
-    onselect={(t) => view.chooseType(t)}
-    oncancel={() => view.cancelType()}
-  />
-{:else if form}
+{#if form}
   <div
     bind:this={rootEl}
     class="anv"
@@ -447,6 +447,7 @@
                 {#snippet child({ props })}
                   <Button
                     {...props}
+                    bind:ref={menuTriggerEl}
                     variant="ghost"
                     size="icon-sm"
                     data-testid="anv-overflow"
@@ -461,7 +462,7 @@
                 <DropdownMenu.Item
                   data-testid="anv-menu-new-child"
                   disabled={childTypes.length === 0 || disabled}
-                  onSelect={handleNewChild}
+                  onSelect={() => menuTriggerEl && handleNewChild(menuTriggerEl.getBoundingClientRect())}
                 >
                   <Plus size={15} />
                   New child nib

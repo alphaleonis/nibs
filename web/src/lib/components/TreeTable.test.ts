@@ -1030,7 +1030,12 @@ describe("TreeTable", () => {
       await user.click(addChildBtn);
 
       expect(onaddchild).toHaveBeenCalledOnce();
-      expect(onaddchild).toHaveBeenCalledWith("nibs-m1", "milestone");
+      // Third arg is the clicked [+]'s viewport rect (the type picker anchors to it).
+      expect(onaddchild).toHaveBeenCalledWith(
+        "nibs-m1",
+        "milestone",
+        expect.objectContaining({ x: expect.any(Number), y: expect.any(Number) }),
+      );
 
       // selection should NOT have changed
       expect(sel.selectedNibId).toBeNull();

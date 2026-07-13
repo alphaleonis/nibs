@@ -88,12 +88,35 @@ export interface ActiveViewDeps {
   confirm: () => Promise<boolean>;
 }
 
+/** A viewport-space rectangle (from getBoundingClientRect) the type picker anchors to. */
+export interface AnchorRect {
+  x: number;
+  y: number;
+  width: number;
+  height: number;
+}
+
+/**
+ * Transient state for the add-child type picker. Kept OUTSIDE the ViewState
+ * machine so it overlays the current view (docked nib, table, …) as an anchored
+ * popover instead of replacing it — picking a type never swaps the detail buffer
+ * until the user commits to a type (which then runs a normal guarded START_CREATE).
+ */
+export interface TypePickerState {
+  parentId: string;
+  parentType: string;
+  validTypes: string[];
+  anchor: AnchorRect;
+}
+
 export interface ActiveView {
   readonly state: ViewState;
   readonly form: CreateForm | EditForm | null;
   readonly detail: DetailView | null;
   readonly isOpen: boolean;
   readonly presentation: Presentation;
+  /** The open add-child type picker, or null. Overlays the view (never replaces it). */
+  readonly typePicker: TypePickerState | null;
   /** True while Back/Forward must be frozen: dirty buffer or an open type picker. */
   readonly blocksHistoryNav: boolean;
 
@@ -101,8 +124,10 @@ export interface ActiveView {
   expand(): void;
   collapse(): void;
   startCreate(defaults: { type: string; parent?: string }): Promise<void>;
-  startCreateChild(parentId: string, parentType: string): Promise<void>;
-  chooseType(nibType: string): void;
+  /** Add a child of `parentId`: 1 valid type → create directly; ≥2 → open the
+   *  type picker anchored to `anchor` (the clicked control's viewport rect). */
+  startCreateChild(parentId: string, parentType: string, anchor: AnchorRect): Promise<void>;
+  chooseType(nibType: string): Promise<void>;
   cancelType(): void;
   save(): Promise<CreateOutcome | EditOutcome | undefined>;
   requestClose(): Promise<void>;
@@ -121,6 +146,9 @@ export function createActiveView(deps: ActiveViewDeps): ActiveView {
   let form = $state.raw<CreateForm | EditForm | null>(null);
   let detailView = $state.raw<DetailView | null>(null);
   let live = $state.raw<LiveNib | null>(null);
+  // The add-child type picker overlays the view; it is deliberately NOT part of
+  // the ViewState machine (see TypePickerState) so it never disturbs the buffer.
+  let typePicker = $state.raw<TypePickerState | null>(null);
 
   // Non-reactive bookkeeping.
   let currentKey: string | null = null;
@@ -141,17 +169,13 @@ export function createActiveView(deps: ActiveViewDeps): ActiveView {
       case "creating":
         return `create:${createNonce}`;
       default:
-        return null; // closed / pickingType
+        return null; // closed
     }
   }
 
-  /** Only these actions (re)enter a fresh create episode → bump the nonce. */
+  /** Only this action (re)enters a fresh create episode → bump the nonce. */
   function initiatesCreate(action: Action): boolean {
-    return (
-      action.type === "START_CREATE" ||
-      action.type === "CHOOSE_TYPE" ||
-      action.type === "START_CREATE_CHILD"
-    );
+    return action.type === "START_CREATE";
   }
 
   /** Reconcile the form/live/detail to match the current buffer identity. */
@@ -189,7 +213,7 @@ export function createActiveView(deps: ActiveViewDeps): ActiveView {
       return;
     }
 
-    // closed / pickingType: no buffer.
+    // closed: no buffer.
     form = null;
   }
 
@@ -283,8 +307,11 @@ export function createActiveView(deps: ActiveViewDeps): ActiveView {
     get presentation() {
       return viewState.kind === "closed" ? "docked" : viewState.presentation;
     },
+    get typePicker() {
+      return typePicker;
+    },
     get blocksHistoryNav() {
-      return Boolean(form?.dirty) || viewState.kind === "pickingType";
+      return Boolean(form?.dirty) || typePicker !== null;
     },
 
     async open(nibId) {
@@ -299,15 +326,29 @@ export function createActiveView(deps: ActiveViewDeps): ActiveView {
     async startCreate(defaults) {
       await guarded({ type: "START_CREATE", defaults });
     },
-    async startCreateChild(parentId, parentType) {
+    async startCreateChild(parentId, parentType, anchor) {
       const validTypes = getValidChildTypes(parentType);
-      await guarded({ type: "START_CREATE_CHILD", parentId, parentType, validTypes });
+      if (validTypes.length === 0) return; // leaf parent — nothing to create
+      if (validTypes.length === 1) {
+        // Unambiguous: create directly (guarded, so a dirty buffer still prompts).
+        await guarded({
+          type: "START_CREATE",
+          defaults: { type: validTypes[0], parent: parentId },
+        });
+        return;
+      }
+      // Several valid types: overlay the anchored picker (no buffer change yet).
+      typePicker = { parentId, parentType, validTypes, anchor };
     },
-    chooseType(nibType) {
-      apply({ type: "CHOOSE_TYPE", nibType });
+    async chooseType(nibType) {
+      const tp = typePicker;
+      if (!tp) return;
+      typePicker = null;
+      // Committing to a type is a normal guarded create off the picked parent.
+      await guarded({ type: "START_CREATE", defaults: { type: nibType, parent: tp.parentId } });
     },
     cancelType() {
-      apply({ type: "CANCEL_TYPE" });
+      typePicker = null;
     },
     async save() {
       const f = form;

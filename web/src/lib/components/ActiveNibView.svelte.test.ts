@@ -462,12 +462,17 @@ describe("ActiveNibView", () => {
       expect(screen.getByTestId("anv-menu-delete")).toBeInTheDocument();
     });
 
-    it("New child nib calls view.startCreateChild(nibId, parentType)", async () => {
+    it("New child nib calls view.startCreateChild(nibId, parentType, anchor)", async () => {
       const view = makeView({});
       renderView(view, confirmDialog);
       await openMenu();
       await user.click(screen.getByTestId("anv-menu-new-child"));
-      expect(view.startCreateChild).toHaveBeenCalledWith("nibs-1t4t", "feature");
+      // Third arg is the ⋯ trigger's rect (the picker anchors there).
+      expect(view.startCreateChild).toHaveBeenCalledWith(
+        "nibs-1t4t",
+        "feature",
+        expect.objectContaining({ x: expect.any(Number), y: expect.any(Number) }),
+      );
     });
 
     it("Copy ID writes the nib id to the clipboard", async () => {

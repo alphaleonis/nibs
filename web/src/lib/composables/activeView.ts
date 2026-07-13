@@ -19,24 +19,13 @@ export type ViewState =
   | { kind: "closed" }
   | { kind: "viewing"; nibId: string; presentation: Presentation }
   | { kind: "gone"; nibId: string; presentation: Presentation }
-  | { kind: "creating"; defaults: { type: string; parent?: string }; presentation: Presentation }
-  | {
-      kind: "pickingType";
-      parentId: string;
-      parentType: string;
-      validTypes: string[];
-      presentation: Presentation;
-      resume: { nibId: string; presentation: Presentation } | null;
-    };
+  | { kind: "creating"; defaults: { type: string; parent?: string }; presentation: Presentation };
 
 export type Action =
   | { type: "OPEN"; nibId: string }
   | { type: "EXPAND" }
   | { type: "COLLAPSE" }
   | { type: "START_CREATE"; defaults: { type: string; parent?: string } }
-  | { type: "START_CREATE_CHILD"; parentId: string; parentType: string; validTypes: string[] }
-  | { type: "CHOOSE_TYPE"; nibType: string }
-  | { type: "CANCEL_TYPE" }
   | { type: "SAVED"; nibId: string }
   | { type: "DELETED" }
   | { type: "CLOSE" };
@@ -56,8 +45,6 @@ function withPresentation(s: ViewState, p: Presentation): ViewState {
     case "gone":
       return { ...s, presentation: p };
     case "creating":
-      return { ...s, presentation: p };
-    case "pickingType":
       return { ...s, presentation: p };
   }
 }
@@ -89,44 +76,6 @@ export function reduce(s: ViewState, a: Action): ViewState {
     case "START_CREATE":
       return { kind: "creating", defaults: a.defaults, presentation: presentationOf(s) };
 
-    case "START_CREATE_CHILD": {
-      if (a.validTypes.length === 0) return s; // leaf parent — nothing to create
-      const presentation = presentationOf(s);
-      if (a.validTypes.length === 1) {
-        return {
-          kind: "creating",
-          defaults: { type: a.validTypes[0], parent: a.parentId },
-          presentation,
-        };
-      }
-      // Several valid types: disambiguate via the type picker. Carry a resume
-      // target so CANCEL_TYPE returns to the nib we were viewing (if any).
-      const resume =
-        s.kind === "viewing" ? { nibId: s.nibId, presentation: s.presentation } : null;
-      return {
-        kind: "pickingType",
-        parentId: a.parentId,
-        parentType: a.parentType,
-        validTypes: a.validTypes,
-        presentation,
-        resume,
-      };
-    }
-
-    case "CHOOSE_TYPE":
-      if (s.kind !== "pickingType") return s;
-      return {
-        kind: "creating",
-        defaults: { type: a.nibType, parent: s.parentId },
-        presentation: s.presentation,
-      };
-
-    case "CANCEL_TYPE":
-      if (s.kind !== "pickingType") return s;
-      return s.resume
-        ? { kind: "viewing", nibId: s.resume.nibId, presentation: s.resume.presentation }
-        : { kind: "closed" };
-
     case "SAVED":
       // Create -> edit hand-off: adopt the freshly-minted id atomically.
       if (s.kind !== "creating") return s;
@@ -155,10 +104,6 @@ export function abandonsBuffer(s: ViewState, a: Action): boolean {
     case "START_CREATE":
     case "CLOSE":
       return hasBuffer(s);
-    case "START_CREATE_CHILD":
-      // A leaf parent (no valid child types) is a reduce no-op, so it abandons
-      // nothing — don't prompt to discard a buffer that won't actually be discarded.
-      return hasBuffer(s) && a.validTypes.length > 0;
     default:
       return false;
   }

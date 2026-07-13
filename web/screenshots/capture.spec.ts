@@ -100,6 +100,20 @@ test("context menu", async ({ page }) => {
   await shot(page, "context-menu");
 });
 
+test("add-child type picker — anchored, over an open detail view", async ({ page }) => {
+  // nibs-fkby: the picker is an anchored popover (with type icons) that overlays
+  // the app; opening it must NOT hide the detail view. Use an epic (>=2 valid
+  // child types) so the picker actually appears instead of creating directly.
+  await openApp(page);
+  const epicRow = page.locator('tr[data-nib-id="tnib-e001"]');
+  await epicRow.locator('[data-action="title"]').click();
+  await expect(page.locator('[data-testid="active-nib-view"]')).toBeVisible({ timeout: 5_000 });
+  await epicRow.hover();
+  await epicRow.locator('[data-testid="row-add-child"]').click();
+  await expect(page.locator('[data-testid="type-picker-popover"]')).toBeVisible({ timeout: 5_000 });
+  await shot(page, "type-picker");
+});
+
 // Per-theme captures (nibs-vmaq, nibs-fen5): table + detail panel under each
 // palette so an agent can confirm Graphite reads as a softer/warmer dark, Dracula
 // is clearly purple-tinted, Daylight renders as a warm LIGHT theme (shadcn inputs/

@@ -12,7 +12,7 @@
     label: string;
     items: RelatedNibItem[];
     onnibselect?: (id: string) => void;
-    onaction?: () => void;
+    onaction?: (event: MouseEvent) => void;
     actionLabel?: string;
     testId: string;
   }
@@ -51,7 +51,7 @@
         class="detail-related-add-child"
         data-testid="detail-related-add-child"
         title={actionLabel}
-        onclick={() => onaction?.()}
+        onclick={(e) => onaction?.(e)}
       >
         <Plus size={14} />
       </button>

@@ -29,7 +29,7 @@
     oncolumnresizeend?: () => void;
     ontagschange?: (tags: string[]) => void;
     onrowcontextmenu?: (nibId: string, event: MouseEvent, nib: import("../types").TreeTableNib) => void;
-    onaddchild?: (nibId: string, nibType: string) => void;
+    onaddchild?: (nibId: string, nibType: string, anchor: DOMRect) => void;
     rowDensity?: RowDensity;
     blockedEmphasis?: BlockedEmphasis;
     ondrop?: (targetNibId: string, zone: DropZone, targetParentId: string | null) => void;
@@ -386,7 +386,8 @@
 
     if (action === "add-child") {
       const nibType = actionResult!.el.dataset.childType ?? "";
-      onaddchild?.(nibId, nibType);
+      // Anchor the type picker to the clicked [+] button (its viewport rect).
+      onaddchild?.(nibId, nibType, actionResult!.el.getBoundingClientRect());
       return; // Don't fire row click for add-child
     }
 

@@ -58,7 +58,7 @@ describe("TypePickerPopover", () => {
     expect(onselect).toHaveBeenCalledWith("task");
   });
 
-  it("renders valid child types for a feature parent", async () => {
+  it("renders only task for a feature parent (a bug cannot be a feature child)", async () => {
     render(TypePickerPopover, {
       parentType: "feature",
       onselect: vi.fn(),
@@ -67,9 +67,8 @@ describe("TypePickerPopover", () => {
 
     await waitFor(() => {
       const items = screen.getAllByTestId("type-picker-item");
-      expect(items).toHaveLength(2);
+      expect(items).toHaveLength(1);
       expect(items[0]).toHaveTextContent("task");
-      expect(items[1]).toHaveTextContent("bug");
     });
   });
 });

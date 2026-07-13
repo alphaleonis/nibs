@@ -8,6 +8,7 @@
 
   import TreeTable from "./lib/components/TreeTable.svelte";
   import ActiveNibView from "./lib/components/ActiveNibView.svelte";
+  import TypePickerPopover from "./lib/components/TypePickerPopover.svelte";
   import RowContextMenu from "./lib/components/RowContextMenu.svelte";
   import ConfirmDialog from "./lib/components/ConfirmDialog.svelte";
   import { SelectionState } from "./lib/selection.svelte";
@@ -425,7 +426,7 @@
           {prefs}
           ontagschange={handleTagsChange}
           onrowcontextmenu={handleRowContextMenu}
-          onaddchild={(parentId, parentType) => view.startCreateChild(parentId, parentType)}
+          onaddchild={(parentId, parentType, anchor) => view.startCreateChild(parentId, parentType, anchor)}
           rowDensity={prefs.rowDensity}
           blockedEmphasis={prefs.blockedEmphasis}
           ondrop={handleDrop}
@@ -479,6 +480,18 @@
       <ActiveNibView suggestions={availableTags} blockedEmphasis={prefs.blockedEmphasis} {prefs} />
     </div>
   </div>
+{/if}
+
+<!-- Add-child type picker: an anchored popover overlaying the whole app (never
+     replaces the detail view). Opened from the table [+], row context menu, or
+     the detail view's own add-child controls (nibs-fkby). -->
+{#if view.typePicker}
+  <TypePickerPopover
+    parentType={view.typePicker.parentType}
+    anchor={view.typePicker.anchor}
+    onselect={(t) => view.chooseType(t)}
+    oncancel={() => view.cancelType()}
+  />
 {/if}
 
 {#if drag.isDragging && drag.draggedIds.length > 1}
