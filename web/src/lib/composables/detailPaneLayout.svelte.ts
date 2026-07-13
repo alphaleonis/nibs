@@ -20,7 +20,7 @@ import {
   percentToPixel,
   minPercent as minPercentOf,
   maxPercent as maxPercentOf,
-  defaultPercent as defaultPercentOf,
+  initialPercent as initialPercentOf,
   type PaneSizePrefs,
 } from "./detailPaneLayout";
 
@@ -60,6 +60,11 @@ export interface DetailPaneLayout {
 
 export function createDetailPaneLayout(deps: DetailPaneLayoutDeps): DetailPaneLayout {
   const { prefs } = deps;
+  // Only a user drag should persist a size. PaneForge also fires onResize for
+  // programmatic/mount resizes (initial layout, expand, reset) — persisting those
+  // lets a transient mount size (floored to the min) clobber a stored width on
+  // reload (nibs-lcyo). Track drag state and gate onResize on it.
+  let dragging = false;
 
   return {
     get direction() {
@@ -73,23 +78,29 @@ export function createDetailPaneLayout(deps: DetailPaneLayoutDeps): DetailPaneLa
     },
     get defaultPercent() {
       const orient = orientationOf(deps.position());
-      return defaultPercentOf(orient, orient.getSizePx(prefs), deps.containerSize());
+      // Unset → screen-relative default percent; user-set → anchored px → percent.
+      return initialPercentOf(orient, orient.getRawSizePx(prefs), deps.containerSize());
     },
     onResize(sizePercent) {
+      if (!dragging) return; // Ignore programmatic/mount resizes; persist user drags only.
       const cs = deps.containerSize();
       if (cs <= 0) return; // Skip until the ResizeObserver has measured the container.
       const orient = orientationOf(deps.position());
       orient.setSizePx(prefs, percentToPixel(sizePercent, cs, orient.defaultPx));
     },
-    onDraggingChange(dragging) {
+    onDraggingChange(isDragging) {
+      dragging = isDragging;
       // Drag ended — persist the size for the active orientation.
-      if (!dragging) orientationOf(deps.position()).flushSizePx(prefs);
+      if (!isDragging) orientationOf(deps.position()).flushSizePx(prefs);
     },
     reset() {
       const orient = orientationOf(deps.position());
-      orient.setSizePx(prefs, orient.defaultPx);
+      const cs = deps.containerSize();
+      // Reset to the screen-relative default percent, persisted as px for the axis.
+      const pct = initialPercentOf(orient, undefined, cs);
+      orient.setSizePx(prefs, percentToPixel(pct, cs, orient.defaultPx));
       orient.flushSizePx(prefs);
-      return defaultPercentOf(orient, orient.defaultPx, deps.containerSize());
+      return pct;
     },
   };
 }

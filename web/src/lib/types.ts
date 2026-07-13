@@ -94,6 +94,10 @@ export const DEFAULT_COLUMN_WIDTHS: Record<ColumnKey, number> = {
 export const DEFAULT_DETAIL_PANEL_WIDTH = 400;
 export const MIN_DETAIL_PANEL_WIDTH = 200;
 export const MAX_DETAIL_PANEL_PERCENT = 75;
+// Size the detail pane opens at when the user hasn't resized it — a percent of
+// the container, so the default stays screen-relative instead of a fixed px that
+// looks narrow on large displays (nibs-lcyo). Applies to both dock orientations.
+export const DEFAULT_DETAIL_PANEL_PERCENT = 40;
 
 // The detail panel can dock at the RIGHT (table on the left, preview on the
 // right) or the BOTTOM (table on top, preview below). Bottom keeps full table

@@ -9,10 +9,12 @@ import {
   minPercent,
   maxPercent,
   defaultPercent,
+  initialPercent,
   type PaneSizePrefs,
 } from "./detailPaneLayout";
 import {
   DEFAULT_DETAIL_PANEL_WIDTH,
+  DEFAULT_DETAIL_PANEL_PERCENT,
   MIN_DETAIL_PANEL_WIDTH,
   DEFAULT_DETAIL_PANEL_HEIGHT,
   MIN_DETAIL_PANEL_HEIGHT,
@@ -24,12 +26,33 @@ function makePrefs(overrides: { width?: number; height?: number } = {}) {
   return {
     detailPanelWidth: overrides.width ?? DEFAULT_DETAIL_PANEL_WIDTH,
     detailPanelHeight: overrides.height ?? DEFAULT_DETAIL_PANEL_HEIGHT,
+    detailPanelWidthRaw: overrides.width,
+    detailPanelHeightRaw: overrides.height,
     setDetailPanelWidth: vi.fn(),
     setDetailPanelHeight: vi.fn(),
     flushDetailPanelWidth: vi.fn(),
     flushDetailPanelHeight: vi.fn(),
   } satisfies PaneSizePrefs;
 }
+
+describe("initialPercent", () => {
+  const right = orientationOf("right");
+
+  it("opens at DEFAULT_DETAIL_PANEL_PERCENT when unset, independent of screen size", () => {
+    // The whole point: same percent at a small and a large container.
+    expect(initialPercent(right, undefined, 1000)).toBe(DEFAULT_DETAIL_PANEL_PERCENT);
+    expect(initialPercent(right, undefined, 2400)).toBe(DEFAULT_DETAIL_PANEL_PERCENT);
+  });
+
+  it("anchors to the stored px (px -> percent) once set", () => {
+    expect(initialPercent(right, 600, 1200)).toBe(50); // 600 / 1200
+  });
+
+  it("clamps the unset default up to the min band on a tiny container", () => {
+    // min% = 200/300 ≈ 66.7 > 40, so the floor wins over the default percent.
+    expect(initialPercent(right, undefined, 300)).toBeCloseTo((200 / 300) * 100, 5);
+  });
+});
 
 describe("detailPaneLayout px<->% conversion", () => {
   it("round-trips px -> % -> px against a measured container", () => {

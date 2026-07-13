@@ -36,6 +36,17 @@ export class Preferences {
     this.#detailPanelHeight ?? DEFAULT_DETAIL_PANEL_HEIGHT
   );
 
+  /** Raw persisted sizes — `undefined` until the user resizes. The pane layout
+   *  uses these to tell a user-set size from the default: unset opens at a
+   *  percent of the container instead of a fixed px (nibs-lcyo). */
+  get detailPanelWidthRaw(): number | undefined {
+    return this.#detailPanelWidth;
+  }
+
+  get detailPanelHeightRaw(): number | undefined {
+    return this.#detailPanelHeight;
+  }
+
   constructor() {
     const initial = loadPreferences();
     this.filter = initial.filter;

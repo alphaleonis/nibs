@@ -374,6 +374,20 @@
       }
     }
   });
+
+  // One-shot initial sizing: on load the pane can mount ALREADY open (a resumed
+  // selection) while the container is still unmeasured (size 0), so PaneForge
+  // bakes in a size from fallback percents and collapses it to ~min. The
+  // collapse/expand effect above skips this case (the pane isn't collapsed), so
+  // resize the pane to the correct percent once the container has been measured.
+  // Guarded to fire only once — it must never fight the user's later resizes.
+  let paneInitialSized = false;
+  $effect(() => {
+    if (paneInitialSized) return;
+    if (!detailPaneComponent || !dockOpen || containerSize <= 0) return;
+    detailPaneComponent.resize(layout.defaultPercent);
+    paneInitialSized = true;
+  });
 </script>
 
 <Toaster richColors />

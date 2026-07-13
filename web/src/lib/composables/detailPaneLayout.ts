@@ -16,6 +16,7 @@
 
 import {
   DEFAULT_DETAIL_PANEL_WIDTH,
+  DEFAULT_DETAIL_PANEL_PERCENT,
   MIN_DETAIL_PANEL_WIDTH,
   DEFAULT_DETAIL_PANEL_HEIGHT,
   MIN_DETAIL_PANEL_HEIGHT,
@@ -34,6 +35,9 @@ export const FALLBACK_DETAIL_SIZE_PERCENT = 30;
 export interface PaneSizePrefs {
   readonly detailPanelWidth: number;
   readonly detailPanelHeight: number;
+  /** Raw persisted size, or `undefined` when the user hasn't resized (→ default). */
+  readonly detailPanelWidthRaw: number | undefined;
+  readonly detailPanelHeightRaw: number | undefined;
   setDetailPanelWidth(px: number): void;
   setDetailPanelHeight(px: number): void;
   flushDetailPanelWidth(): void;
@@ -46,6 +50,7 @@ export interface OrientationDescriptor {
   readonly minPx: number;
   readonly defaultPx: number;
   getSizePx(p: PaneSizePrefs): number;
+  getRawSizePx(p: PaneSizePrefs): number | undefined;
   setSizePx(p: PaneSizePrefs, px: number): void;
   flushSizePx(p: PaneSizePrefs): void;
 }
@@ -63,6 +68,7 @@ export const ORIENTATIONS: Record<DetailPanelPosition, OrientationDescriptor> = 
     minPx: MIN_DETAIL_PANEL_WIDTH,
     defaultPx: DEFAULT_DETAIL_PANEL_WIDTH,
     getSizePx: (p) => p.detailPanelWidth,
+    getRawSizePx: (p) => p.detailPanelWidthRaw,
     setSizePx: (p, px) => p.setDetailPanelWidth(px),
     flushSizePx: (p) => p.flushDetailPanelWidth(),
   },
@@ -71,6 +77,7 @@ export const ORIENTATIONS: Record<DetailPanelPosition, OrientationDescriptor> = 
     minPx: MIN_DETAIL_PANEL_HEIGHT,
     defaultPx: DEFAULT_DETAIL_PANEL_HEIGHT,
     getSizePx: (p) => p.detailPanelHeight,
+    getRawSizePx: (p) => p.detailPanelHeightRaw,
     setSizePx: (p, px) => p.setDetailPanelHeight(px),
     flushSizePx: (p) => p.flushDetailPanelHeight(),
   },
@@ -133,4 +140,26 @@ export function defaultPercent(
     minPercent(orient, containerSize),
     maxPercent(),
   );
+}
+
+/**
+ * Initial pane size as a percent of the container. When the user hasn't resized
+ * (`rawSizePx === undefined`) the pane opens at DEFAULT_DETAIL_PANEL_PERCENT —
+ * screen-relative, so it doesn't look narrow on large displays (nibs-lcyo). Once
+ * a size is stored the pane anchors to it (px → percent). Both are clamped to the
+ * [minPercent, maxPercent] band.
+ */
+export function initialPercent(
+  orient: OrientationDescriptor,
+  rawSizePx: number | undefined,
+  containerSize: number,
+): number {
+  if (rawSizePx === undefined) {
+    return clampPercent(
+      DEFAULT_DETAIL_PANEL_PERCENT,
+      minPercent(orient, containerSize),
+      maxPercent(),
+    );
+  }
+  return defaultPercent(orient, rawSizePx, containerSize);
 }
