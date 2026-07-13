@@ -853,16 +853,18 @@
   }
 
   /* ---------- content columns ---------- */
-  /* Fills the remaining panel height and owns the scroll. The single grid row
-     stretches (align-content) so the rail cell reaches the panel bottom when the
-     content is short; it grows past the container and scrolls when content is
-     tall. */
+  /* Fills the remaining panel height. The single grid row is bounded to the
+     panel height (minmax(0, 1fr)) so the body and rail cells are viewport-sized
+     rather than content-sized — that lets the body editor fill and scroll
+     internally (nibs-7rly). Scroll is owned by .anv-body / .anv-rail, which each
+     scroll independently when their content overflows. */
   .anv-content {
     display: grid;
     grid-template-columns: 1fr;
+    grid-template-rows: minmax(0, 1fr);
     flex: 1;
     min-height: 0;
-    overflow-y: auto;
+    overflow: hidden;
   }
 
   .anv-content.anv-two-col {
@@ -875,6 +877,8 @@
     flex-direction: column;
     gap: 0.85rem;
     min-width: 0;
+    min-height: 0;
+    overflow-y: auto;
   }
 
   .anv-section-head {
@@ -976,10 +980,17 @@
     font-style: italic;
   }
 
+  /* Fills the remaining body-column height so the editor pane is a fixed size
+     from the start and scrolls internally, rather than growing with content.
+     grid-auto-rows: minmax(0, 1fr) makes every pane share the height equally and
+     stay bounded — so the stacked editor+preview layout also scrolls internally
+     instead of growing. min-height keeps a sensible floor on very short panels. */
   .anv-editwrap {
     display: grid;
     grid-template-columns: 1fr;
+    grid-auto-rows: minmax(0, 1fr);
     gap: 0.7rem;
+    flex: 1;
     min-height: 230px;
   }
 
@@ -987,8 +998,10 @@
     grid-template-columns: 1fr 1fr;
   }
 
+  /* min-height: 0 lets the editor shrink into its grid track so CodeMirror's
+     internal scroller engages instead of the pane growing to fit content. */
   .anv-editor {
-    min-height: 200px;
+    min-height: 0;
     min-width: 0;
     border: 1px solid var(--border);
     border-radius: var(--radius-md);
@@ -996,6 +1009,7 @@
   }
 
   .anv-preview-pane {
+    min-height: 0;
     border: 1px solid var(--border);
     border-radius: var(--radius-md);
     padding: 0.7rem 0.8rem;
@@ -1012,6 +1026,8 @@
     gap: 1.1rem;
     background: color-mix(in oklab, var(--background), var(--card) 35%);
     min-width: 0;
+    min-height: 0;
+    overflow-y: auto;
   }
 
   .anv-rail-head {
