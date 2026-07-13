@@ -734,7 +734,7 @@
     display: inline-flex;
     align-items: center;
     gap: 0.4rem;
-    font-size: 0.8rem;
+    font-size: var(--text-label-size);
     color: var(--muted-foreground);
   }
 
@@ -808,7 +808,7 @@
     background-color: var(--destructive);
     color: var(--destructive-foreground);
     border-radius: var(--radius-md);
-    font-size: 0.875rem;
+    font-size: var(--text-body-size);
     font-weight: 500;
   }
 
@@ -822,7 +822,7 @@
     background-color: var(--warning);
     color: var(--warning-foreground, white);
     border-radius: var(--radius-md);
-    font-size: 0.8125rem;
+    font-size: var(--text-body-size);
     font-weight: 500;
   }
 
@@ -847,8 +847,8 @@
   }
 
   .anv-field-label {
-    font-size: 0.75rem;
-    font-weight: 500;
+    font-size: var(--text-label-size);
+    font-weight: var(--text-label-weight);
     color: var(--muted-foreground);
   }
 
@@ -884,8 +884,8 @@
   }
 
   .anv-section-label {
-    font-size: 0.75rem;
-    font-weight: 500;
+    font-size: var(--text-label-size);
+    font-weight: var(--text-label-weight);
     color: var(--muted-foreground);
   }
 
@@ -901,7 +901,7 @@
     height: 1.5rem;
     padding: 0 0.4rem;
     border-radius: var(--radius-md);
-    font-size: 0.72rem;
+    font-size: var(--text-label-size);
     color: var(--muted-foreground);
     background: none;
     border: 0;
@@ -928,7 +928,7 @@
     border: 0;
     background: none;
     color: var(--muted-foreground);
-    font-size: 0.72rem;
+    font-size: var(--text-label-size);
     cursor: pointer;
     border-radius: var(--radius-md);
   }
@@ -1015,10 +1015,10 @@
   }
 
   .anv-rail-head {
-    font-size: 0.72rem;
-    font-weight: 600;
+    font-size: var(--text-label-size);
+    font-weight: var(--text-label-weight);
     letter-spacing: 0.02em;
-    color: var(--foreground);
+    color: var(--muted-foreground);
     margin-bottom: 0.3rem;
   }
 
@@ -1051,6 +1051,7 @@
     color: var(--link);
     padding: 0.25rem 0.4rem;
     border-radius: var(--radius-md);
+    font-size: var(--text-body-size);
   }
 
   .anv-document-path {

@@ -82,6 +82,9 @@
     display: flex;
     flex-direction: column;
     gap: 0.25rem;
+    /* Pin rail content to the shared body token; without this the links inherit
+       the app default (16px) instead of matching table/detail body (nibs-0mas). */
+    font-size: var(--text-body-size);
   }
 
   .detail-related-group-header {
@@ -124,6 +127,8 @@
   }
 
   .detail-label {
+    font-size: var(--text-label-size);
+    font-weight: var(--text-label-weight);
     color: var(--muted-foreground);
     white-space: nowrap;
   }
