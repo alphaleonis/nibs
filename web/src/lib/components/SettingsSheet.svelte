@@ -9,7 +9,7 @@
   import ThemeSelect from "./ThemeSelect.svelte";
   import { Button, buttonVariants } from "$lib/components/ui/button/index.js";
   import * as Tooltip from "$lib/components/ui/tooltip/index.js";
-  import { Settings2, X } from "@lucide/svelte";
+  import { Settings, X } from "@lucide/svelte";
   import { Portal } from "bits-ui";
   import { fly } from "svelte/transition";
   import { untrack } from "svelte";
@@ -179,7 +179,7 @@
         class={buttonVariants({ variant: "ghost", size: "icon" })}
         onclick={() => (open = !open)}
       >
-        <Settings2 size={16} />
+        <Settings size={16} />
       </button>
     {/snippet}
   </Tooltip.Trigger>
