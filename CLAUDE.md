@@ -92,7 +92,7 @@ For optional config fields with non-zero defaults, use pointer types (`*int`, `*
 
 ### Agent Integration
 
-`nibs prime` outputs a prompt template (`cmd/prompt.tmpl`) that teaches coding agents how to use the GraphQL CLI. This is the primary interface for AI agents.
+`nibs prime` outputs the agent onboarding prompt (slim `cmd/prompt.tmpl`, or the full guide `cmd/prompt-full.tmpl` with `--full`). `nibs cheat` prints the whole CLI grammar on one screen, and `nibs catalog <topic>` emits generated vocabulary (fields, filters, hierarchy, recipes, examples, schema). Together these are the primary interface for AI agents.
 
 ## Branching & Workflow
 
