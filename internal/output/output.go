@@ -57,6 +57,12 @@ const (
 	ErrValidation    = "VALIDATION_ERROR"
 	ErrConflict      = "CONFLICT"
 	ErrHierarchy     = "HIERARCHY"
+	// ErrTextNotFound / ErrTextAmbiguous are the surgical body-replace outcomes:
+	// the search text occurred zero times (not found) or more than once
+	// (ambiguous). Both are validation-class (exit 2) and carry an occurrences
+	// count so an agent can branch on it. See ErrorText and body.go.
+	ErrTextNotFound  = "TEXT_NOT_FOUND"
+	ErrTextAmbiguous = "TEXT_AMBIGUOUS"
 )
 
 // Process exit codes. The CLI boundary maps every error's structured CODE to
@@ -78,7 +84,7 @@ func ExitCode(code string) int {
 	switch code {
 	case ErrNotFound:
 		return ExitNotFound
-	case ErrValidation, ErrInvalidStatus, ErrHierarchy:
+	case ErrValidation, ErrInvalidStatus, ErrHierarchy, ErrTextNotFound, ErrTextAmbiguous:
 		return ExitValidation
 	case ErrConflict:
 		return ExitConflict
@@ -179,6 +185,11 @@ type errorBody struct {
 	// reconcile). Omitted for every other error code, and for a CONFLICT with no
 	// reusable token (e.g. an ETagRequiredError, which has no comparison etag).
 	CurrentEtag string `json:"currentEtag,omitempty"`
+	// Occurrences carries the number of times the surgical replace's search text
+	// matched: 0 for TEXT_NOT_FOUND, N (>1) for TEXT_AMBIGUOUS. It is a pointer so
+	// a real zero is emitted (occurrences:0) while every other error code omits
+	// the field entirely.
+	Occurrences *int `json:"occurrences,omitempty"`
 }
 
 // Error writes the --json error contract to stdout and returns a reported
@@ -233,6 +244,24 @@ func ErrorConflict(message, currentEtag string) error {
 		CurrentEtag: currentEtag,
 	}})
 	return &CodedError{Code: ErrConflict, Msg: message, Reported: true}
+}
+
+// ErrorText writes the --json error contract for a surgical body-replace that
+// did not match exactly once — the standard {code,message} plus an occurrences
+// count — and returns a reported CodedError. code is ErrTextNotFound
+// (occurrences 0) or ErrTextAmbiguous (occurrences N>1). An agent reads
+// occurrences structurally rather than parsing it out of the message. Like
+// Error, the returned error satisfies errors.Is(err, ErrAlreadyReported) so the
+// boundary suppresses its duplicate stderr line.
+func ErrorText(code, message string, occurrences int) error {
+	enc := json.NewEncoder(os.Stdout)
+	enc.SetIndent("", "  ")
+	_ = enc.Encode(errorEnvelope{Error: errorBody{
+		Code:        code,
+		Message:     message,
+		Occurrences: &occurrences,
+	}})
+	return &CodedError{Code: code, Msg: message, Reported: true}
 }
 
 // TextError writes get's single-stream text error to stdout — "error <CODE>:

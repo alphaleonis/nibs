@@ -135,6 +135,8 @@ func TestExitCode(t *testing.T) {
 		{ErrNotFound, ExitNotFound},        // 3
 		{ErrValidation, ExitValidation},    // 2
 		{ErrInvalidStatus, ExitValidation}, // 2
+		{ErrTextNotFound, ExitValidation},  // 2
+		{ErrTextAmbiguous, ExitValidation}, // 2
 		{ErrConflict, ExitConflict},        // 4
 		{ErrFileError, ExitIO},             // 5
 		{ErrNoNibsDir, ExitIO},             // 5

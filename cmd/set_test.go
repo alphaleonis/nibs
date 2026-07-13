@@ -27,11 +27,6 @@ func resetSetFlags() {
 	setEstimate = ""
 	setTitle = ""
 	setClear = nil
-	setBody = ""
-	setBodyFile = ""
-	setBodyReplaceOld = nil
-	setBodyReplaceNew = nil
-	setBodyAppend = ""
 	setParent = ""
 	setBlocking = nil
 	setRemoveBlocking = nil
@@ -61,11 +56,6 @@ func TestResetSetFlagsClearsAllState(t *testing.T) {
 	setEstimate = "xl"
 	setTitle = "dirty"
 	setClear = []string{"priority"}
-	setBody = "dirty"
-	setBodyFile = "dirty"
-	setBodyReplaceOld = []string{"a"}
-	setBodyReplaceNew = []string{"b"}
-	setBodyAppend = "dirty"
 	setParent = "dirty"
 	setBlocking = []string{"x"}
 	setRemoveBlocking = []string{"y"}
@@ -101,21 +91,6 @@ func TestResetSetFlagsClearsAllState(t *testing.T) {
 	}
 	if setClear != nil {
 		t.Errorf("setClear not reset: %v", setClear)
-	}
-	if setBody != "" {
-		t.Errorf("setBody not reset: %q", setBody)
-	}
-	if setBodyFile != "" {
-		t.Errorf("setBodyFile not reset: %q", setBodyFile)
-	}
-	if setBodyReplaceOld != nil {
-		t.Errorf("setBodyReplaceOld not reset: %v", setBodyReplaceOld)
-	}
-	if setBodyReplaceNew != nil {
-		t.Errorf("setBodyReplaceNew not reset: %v", setBodyReplaceNew)
-	}
-	if setBodyAppend != "" {
-		t.Errorf("setBodyAppend not reset: %q", setBodyAppend)
 	}
 	if setParent != "" {
 		t.Errorf("setParent not reset: %q", setParent)
@@ -161,66 +136,6 @@ func TestResetSetFlagsClearsAllState(t *testing.T) {
 	}
 }
 
-func TestSetRejectsDuplicateBodyReplaceFlags(t *testing.T) {
-	t.Cleanup(func() {
-		resetSetFlags()
-	})
-	resetSetFlags()
-
-	tmpDir := t.TempDir()
-	nibsDir := filepath.Join(tmpDir, ".nibs")
-	if err := os.MkdirAll(nibsDir, 0755); err != nil {
-		t.Fatal(err)
-	}
-	nibContent := "---\ntitle: Test\nstatus: todo\ntype: task\n---\nline one\nline two\n"
-	if err := os.WriteFile(filepath.Join(nibsDir, "dup-1--test.md"), []byte(nibContent), 0644); err != nil {
-		t.Fatal(err)
-	}
-
-	rootCmd.SetArgs([]string{
-		"--nibs-path", nibsDir,
-		"set", "dup-1",
-		"--body-replace-old", "line one", "--body-replace-new", "LINE ONE",
-		"--body-replace-old", "line two", "--body-replace-new", "LINE TWO",
-	})
-
-	err := rootCmd.Execute()
-	if err == nil {
-		t.Fatal("expected error when --body-replace-old is specified multiple times, got nil")
-	}
-	if !strings.Contains(err.Error(), "cannot be specified multiple times") {
-		t.Errorf("error should mention 'cannot be specified multiple times', got: %s", err)
-	}
-}
-
-func TestSetSingleBodyReplaceWorks(t *testing.T) {
-	t.Cleanup(func() {
-		resetSetFlags()
-	})
-	resetSetFlags()
-
-	tmpDir := t.TempDir()
-	nibsDir := filepath.Join(tmpDir, ".nibs")
-	if err := os.MkdirAll(nibsDir, 0755); err != nil {
-		t.Fatal(err)
-	}
-	nibContent := "---\ntitle: Test\nstatus: todo\ntype: task\n---\nline one\nline two\n"
-	if err := os.WriteFile(filepath.Join(nibsDir, "dup-2--test.md"), []byte(nibContent), 0644); err != nil {
-		t.Fatal(err)
-	}
-
-	rootCmd.SetArgs([]string{
-		"--nibs-path", nibsDir,
-		"set", "dup-2",
-		"--body-replace-old", "line one", "--body-replace-new", "LINE ONE",
-	})
-
-	err := rootCmd.Execute()
-	if err != nil {
-		t.Fatalf("single --body-replace-old should succeed, got error: %v", err)
-	}
-}
-
 // writeSetNib creates a nibs dir with a single nib and returns (nibsDir, id).
 func writeSetNib(t *testing.T, id, body string) (string, string) {
 	t.Helper()
@@ -233,98 +148,6 @@ func writeSetNib(t *testing.T, id, body string) (string, string) {
 		t.Fatal(err)
 	}
 	return nibsDir, id
-}
-
-// TestSetBodyFromFile verifies `set --body @FILE` replaces the body.
-func TestSetBodyFromFile(t *testing.T) {
-	t.Cleanup(resetSetFlags)
-	resetSetFlags()
-
-	nibsDir, id := writeSetNib(t, "upd-1", "old body\n")
-	bodyFile := filepath.Join(t.TempDir(), "new.md")
-	if err := os.WriteFile(bodyFile, []byte("brand new body\n"), 0644); err != nil {
-		t.Fatal(err)
-	}
-
-	rootCmd.SetArgs([]string{"--nibs-path", nibsDir, "set", id, "--body", "@" + bodyFile})
-	if err := rootCmd.Execute(); err != nil {
-		t.Fatalf("set --body @file failed: %v", err)
-	}
-
-	content, _ := os.ReadFile(filepath.Join(nibsDir, id+"--test.md"))
-	if !strings.Contains(string(content), "brand new body") {
-		t.Errorf("body not replaced from file, got:\n%s", content)
-	}
-	if strings.Contains(string(content), "old body") {
-		t.Errorf("old body should be gone, got:\n%s", content)
-	}
-}
-
-// TestSetBodyAppendFromFile verifies `--body-append @FILE` appends the file
-// content (with the trailing newline trimmed).
-func TestSetBodyAppendFromFile(t *testing.T) {
-	t.Cleanup(resetSetFlags)
-	resetSetFlags()
-
-	nibsDir, id := writeSetNib(t, "upd-2", "existing body\n")
-	appendFile := filepath.Join(t.TempDir(), "add.md")
-	if err := os.WriteFile(appendFile, []byte("## Added\nmore text\n\n"), 0644); err != nil {
-		t.Fatal(err)
-	}
-
-	rootCmd.SetArgs([]string{"--nibs-path", nibsDir, "set", id, "--body-append", "@" + appendFile})
-	if err := rootCmd.Execute(); err != nil {
-		t.Fatalf("set --body-append @file failed: %v", err)
-	}
-
-	content, _ := os.ReadFile(filepath.Join(nibsDir, id+"--test.md"))
-	if !strings.Contains(string(content), "existing body") || !strings.Contains(string(content), "more text") {
-		t.Errorf("append did not combine bodies, got:\n%s", content)
-	}
-}
-
-// TestSetRejectsInlineBody verifies the inline `--body "<string>"` form is
-// gone on set: a bare value is a validation error.
-func TestSetRejectsInlineBody(t *testing.T) {
-	t.Cleanup(resetSetFlags)
-	resetSetFlags()
-
-	nibsDir, id := writeSetNib(t, "upd-3", "body\n")
-
-	rootCmd.SetArgs([]string{"--nibs-path", nibsDir, "set", id, "--body", "inline replacement", "--json"})
-	err := rootCmd.Execute()
-	if err == nil {
-		t.Fatal("expected inline --body to be rejected, got nil")
-	}
-	var ce *output.CodedError
-	if !errors.As(err, &ce) {
-		t.Fatalf("error = %T, want *output.CodedError", err)
-	}
-	if output.ExitCode(ce.Code) != output.ExitValidation {
-		t.Errorf("inline --body exit = %d, want %d (validation)", output.ExitCode(ce.Code), output.ExitValidation)
-	}
-}
-
-// TestSetMissingBodyFileIsIOError verifies a missing `@FILE` on set maps
-// to the I/O exit code (5), not a validation error.
-func TestSetMissingBodyFileIsIOError(t *testing.T) {
-	t.Cleanup(resetSetFlags)
-	resetSetFlags()
-
-	nibsDir, id := writeSetNib(t, "upd-4", "body\n")
-
-	rootCmd.SetArgs([]string{"--nibs-path", nibsDir, "set", id, "--body", "@/no/such/file-xyz.md", "--json"})
-	err := rootCmd.Execute()
-	if err == nil {
-		t.Fatal("expected missing @file to error, got nil")
-	}
-	var ce *output.CodedError
-	if !errors.As(err, &ce) {
-		t.Fatalf("error = %T, want *output.CodedError", err)
-	}
-	if output.ExitCode(ce.Code) != output.ExitIO {
-		t.Errorf("missing @file exit = %d, want %d (IO)", output.ExitCode(ce.Code), output.ExitIO)
-	}
 }
 
 // TestSetStatusEchoesLeanCard verifies `set --status --json` echoes the lean

@@ -22,11 +22,6 @@ var (
 	setEstimate        string
 	setTitle           string
 	setClear           []string
-	setBody            string
-	setBodyFile        string
-	setBodyReplaceOld  []string
-	setBodyReplaceNew  []string
-	setBodyAppend      string
 	setParent          string
 	setBlocking        []string
 	setRemoveBlocking  []string
@@ -215,45 +210,6 @@ func buildSetInput(cmd *cobra.Command, cfg *config.Config) (model.UpdateNibInput
 		changes = append(changes, "title")
 	}
 
-	// Handle body modifications. These stay on set for now; they move to
-	// `nibs body` in a later feature.
-	if cmd.Flags().Changed("body") || cmd.Flags().Changed("body-file") {
-		// Full body replacement via the input channel ("-"/"@FILE") or --body-file
-		body, err := resolveBodyFlag(setBody, setBodyFile)
-		if err != nil {
-			return input, nil, err
-		}
-		input.Body = &body
-		changes = append(changes, "body")
-	} else if cmd.Flags().Changed("body-replace-old") || cmd.Flags().Changed("body-append") {
-		// Body modifications via bodyMod
-		bodyMod := &model.BodyModification{}
-
-		if cmd.Flags().Changed("body-replace-old") {
-			// --body-replace-old requires --body-replace-new (enforced by MarkFlagsRequiredTogether)
-			if len(setBodyReplaceOld) > 1 || len(setBodyReplaceNew) > 1 {
-				return input, nil, fmt.Errorf("--body-replace-old/--body-replace-new cannot be specified multiple times; use GraphQL for multiple replacements")
-			}
-			bodyMod.Replace = []*model.ReplaceOperation{
-				{
-					Old: setBodyReplaceOld[0],
-					New: setBodyReplaceNew[0],
-				},
-			}
-		}
-
-		if cmd.Flags().Changed("body-append") {
-			appendText, err := resolveAppendFlag(setBodyAppend)
-			if err != nil {
-				return input, nil, err
-			}
-			bodyMod.Append = &appendText
-		}
-
-		input.BodyMod = bodyMod
-		changes = append(changes, "body")
-	}
-
 	// Handle tags using granular add/remove (consistent with relationships)
 	if len(setTag) > 0 {
 		input.AddTags = setTag
@@ -342,7 +298,7 @@ func parseClearFields(fields []string) (map[string]bool, error) {
 // hasFieldUpdates returns true if any field in the input is set.
 func hasFieldUpdates(input model.UpdateNibInput) bool {
 	return input.Status != nil || input.Type != nil || input.Priority.IsSet() || input.Estimate.IsSet() ||
-		input.Title != nil || input.Body != nil || input.BodyMod != nil || input.Tags != nil ||
+		input.Title != nil || input.Tags != nil ||
 		input.AddTags != nil || input.RemoveTags != nil ||
 		input.Parent.IsSet() || input.AddBlocking != nil || input.RemoveBlocking != nil ||
 		input.AddBlockedBy != nil || input.RemoveBlockedBy != nil ||
@@ -420,11 +376,6 @@ func init() {
 	setCmd.Flags().StringVarP(&setEstimate, "estimate", "e", "", "New estimate ("+strings.Join(estimateNames, ", ")+"; use --clear estimate to clear)")
 	setCmd.Flags().StringVar(&setTitle, "title", "", "New title")
 	setCmd.Flags().StringArrayVar(&setClear, "clear", nil, "Clear a field to its default ("+strings.Join(clearableFields, ", ")+"; can be repeated)")
-	setCmd.Flags().StringVarP(&setBody, "body", "d", "", "New body input channel: '-' for stdin or '@FILE' for a file (no inline text)")
-	setCmd.Flags().StringVar(&setBodyFile, "body-file", "", "Read body from file")
-	setCmd.Flags().StringArrayVar(&setBodyReplaceOld, "body-replace-old", nil, "Text to find and replace (requires --body-replace-new)")
-	setCmd.Flags().StringArrayVar(&setBodyReplaceNew, "body-replace-new", nil, "Replacement text (requires --body-replace-old)")
-	setCmd.Flags().StringVar(&setBodyAppend, "body-append", "", "Append to body via input channel: '-' for stdin or '@FILE' for a file (no inline text)")
 	setCmd.Flags().StringVar(&setParent, "parent", "", "Set parent nib ID (use --clear parent to remove)")
 	setCmd.Flags().StringArrayVar(&setBlocking, "blocking", nil, "ID of nib this blocks (can be repeated)")
 	setCmd.Flags().StringArrayVar(&setRemoveBlocking, "remove-blocking", nil, "ID of nib to unblock (can be repeated)")
@@ -440,10 +391,5 @@ func init() {
 	setCmd.Flags().StringVar(&setIfMatch, "if-match", "", "Only update if etag matches (optimistic locking)")
 	setCmd.MarkFlagsMutuallyExclusive("after", "before", "first")
 	setCmd.Flags().BoolVar(&setJSON, "json", false, "Output as JSON")
-	// body and body-file are mutually exclusive with body modifications
-	setCmd.MarkFlagsMutuallyExclusive("body", "body-file", "body-replace-old")
-	setCmd.MarkFlagsMutuallyExclusive("body", "body-file", "body-append")
-	// body-replace-old and body-append can now be used together!
-	setCmd.MarkFlagsRequiredTogether("body-replace-old", "body-replace-new")
 	rootCmd.AddCommand(setCmd)
 }
