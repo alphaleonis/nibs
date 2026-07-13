@@ -2,15 +2,20 @@ package cmd
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/base64"
 	"encoding/json"
 	"fmt"
+	"io/fs"
 	"net"
 	"net/http"
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"testing"
+	"testing/fstest"
 	"time"
 
 	"github.com/gorilla/websocket"
@@ -645,6 +650,122 @@ func TestStartServerReflectsExternalFileEdits(t *testing.T) {
 	case <-errCh:
 	case <-time.After(5 * time.Second):
 		t.Fatal("server did not shut down")
+	}
+}
+
+// TestSecurityHeaders_Present pins that every response carries the baseline
+// security headers. Uses the API-only mux (nil static FS): the headers must be
+// set unconditionally, independent of whether the SPA is served.
+func TestSecurityHeaders_Present(t *testing.T) {
+	app := setupServeTestApp(t)
+	handler := newServeMux(app, nil)
+
+	req := httptest.NewRequest(http.MethodGet, "/health", nil)
+	rec := httptest.NewRecorder()
+	handler.ServeHTTP(rec, req)
+
+	want := map[string]string{
+		"X-Content-Type-Options": "nosniff",
+		"X-Frame-Options":        "DENY",
+		"Referrer-Policy":        "no-referrer",
+	}
+	for k, v := range want {
+		if got := rec.Header().Get(k); got != v {
+			t.Errorf("%s = %q, want %q", k, got, v)
+		}
+	}
+
+	csp := rec.Header().Get("Content-Security-Policy")
+	if csp == "" {
+		t.Fatal("Content-Security-Policy header is empty")
+	}
+	for _, sub := range []string{"default-src 'self'", "frame-ancestors 'none'", "form-action 'self'", "img-src 'self' data: https:", "script-src 'self'"} {
+		if !strings.Contains(csp, sub) {
+			t.Errorf("CSP %q does not contain %q", csp, sub)
+		}
+	}
+}
+
+// TestSecurityHeaders_CSPPinsFoucHash proves the served CSP allowlists the
+// sha256 of the actually-embedded FOUC-guard inline script, so the strict
+// policy never blocks it. It hashes index.html independently (mirroring, not
+// calling, the middleware) and asserts the header pins that exact value.
+func TestSecurityHeaders_CSPPinsFoucHash(t *testing.T) {
+	// Prefer the production embed (WebDistFS). Under `go test ./cmd/` the embed
+	// lives in package main, so WebDistFS is nil here; fall back to the on-disk
+	// build produced by `task build` / `web:build` when present. Either source
+	// yields the *actual* served index.html bytes newServeMux hashes.
+	staticFS := WebDistFS
+	if staticFS == nil {
+		distDir := filepath.Join("..", "web", "dist")
+		if _, err := os.Stat(filepath.Join(distDir, "index.html")); err == nil {
+			staticFS = os.DirFS(distDir)
+		}
+	}
+
+	expected := firstInlineScriptHash(t, staticFS)
+	if expected == "" {
+		t.Skip("no built index.html with an inline FOUC script available; run `task build` to enable this assertion")
+	}
+
+	app := setupServeTestApp(t)
+	handler := newServeMux(app, staticFS)
+
+	req := httptest.NewRequest(http.MethodGet, "/", nil)
+	rec := httptest.NewRecorder()
+	handler.ServeHTTP(rec, req)
+
+	csp := rec.Header().Get("Content-Security-Policy")
+	quoted := "'" + expected + "'"
+	if !strings.Contains(csp, quoted) {
+		t.Errorf("CSP does not pin FOUC script hash %s\nCSP: %s", quoted, csp)
+	}
+}
+
+// firstInlineScriptHash independently derives the CSP sha256 source hash of the
+// first inline (no-src) <script> in fsys's index.html, mirroring the middleware
+// logic without calling it — so the test proves the served header matches the
+// real bytes rather than trusting the code under test. Returns "" when fsys is
+// nil or has no such script.
+func firstInlineScriptHash(t *testing.T, fsys fs.FS) string {
+	t.Helper()
+	if fsys == nil {
+		return ""
+	}
+	data, err := fs.ReadFile(fsys, "index.html")
+	if err != nil {
+		return ""
+	}
+	re := regexp.MustCompile(`(?s)<script([^>]*)>(.*?)</script>`)
+	for _, m := range re.FindAllStringSubmatch(string(data), -1) {
+		if strings.Contains(m[1], "src") {
+			continue
+		}
+		sum := sha256.Sum256([]byte(m[2]))
+		return "sha256-" + base64.StdEncoding.EncodeToString(sum[:])
+	}
+	return ""
+}
+
+// TestExtractInlineScriptHashes feeds a controlled HTML document with one
+// inline and one external (src) script and asserts exactly one hash is returned,
+// equal to the sha256 of the inline body, proving src scripts are excluded.
+func TestExtractInlineScriptHashes(t *testing.T) {
+	const inlineBody = `console.log("hi");`
+	html := `<html><head>` +
+		`<script>` + inlineBody + `</script>` +
+		`<script type="module" src="/assets/app.js"></script>` +
+		`</head></html>`
+	fsys := fstest.MapFS{"index.html": {Data: []byte(html)}}
+
+	got := extractInlineScriptHashes(fsys)
+	if len(got) != 1 {
+		t.Fatalf("got %d hashes, want 1: %v", len(got), got)
+	}
+	sum := sha256.Sum256([]byte(inlineBody))
+	want := "sha256-" + base64.StdEncoding.EncodeToString(sum[:])
+	if got[0] != want {
+		t.Errorf("hash = %q, want %q", got[0], want)
 	}
 }
 

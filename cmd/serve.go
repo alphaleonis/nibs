@@ -2,6 +2,8 @@ package cmd
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"io/fs"
@@ -11,7 +13,9 @@ import (
 	"os"
 	"os/exec"
 	"os/signal"
+	"regexp"
 	"runtime"
+	"strings"
 	"syscall"
 	"time"
 
@@ -162,7 +166,130 @@ func newServeMux(app *App, staticFS fs.FS) http.Handler {
 	if staticFS != nil {
 		mux.Handle("/", spaHandler(staticFS))
 	}
-	return corsMiddleware(mux)
+	// Compute the CSP once at construction time: buildCSP reads the embedded
+	// index.html to pin the FOUC-guard inline script's hash (see
+	// securityHeadersMiddleware). CORS is left outermost so its headers (and
+	// the 204 preflight short-circuit) wrap the security-header layer, which in
+	// turn applies to every proxied response.
+	csp := buildCSP(staticFS)
+	return corsMiddleware(securityHeadersMiddleware(mux, csp))
+}
+
+// inlineScriptRe matches every <script ...>...</script> block in an HTML
+// document. Submatch 1 is the opening tag's raw attribute string (empty for a
+// bare <script>), submatch 2 is the exact body between the opening tag's ">"
+// and the "</script>" — including any leading/trailing whitespace and newlines,
+// which are part of the bytes a CSP hash is computed over. The (?s) flag lets
+// "." span newlines; ".*?" is non-greedy so adjacent scripts don't merge.
+var inlineScriptRe = regexp.MustCompile(`(?s)<script([^>]*)>(.*?)</script>`)
+
+// scriptSrcAttrRe matches a real `src` attribute in a <script> tag's attribute
+// string: an `src` token on a start/whitespace boundary followed by `=`. Using
+// an attribute-name boundary rather than a bare substring avoids misclassifying
+// an inline script whose tag carries an unrelated src-containing attribute
+// (e.g. data-source, id="x-src") as external — which would drop its hash and let
+// the strict script-src silently block it.
+var scriptSrcAttrRe = regexp.MustCompile(`(?i)(?:^|\s)src\s*=`)
+
+// extractInlineScriptHashes reads index.html from fsys and returns a CSP
+// source hash ("sha256-<standard-base64>") for every *inline* <script> — one
+// whose opening tag carries no src attribute. The hash is computed over the
+// raw body bytes exactly as served, so it can never drift from the shipped
+// markup. Returns nil (no error) when fsys is nil or the file cannot be read,
+// so the CSP degrades gracefully to omitting the hashes.
+func extractInlineScriptHashes(fsys fs.FS) []string {
+	if fsys == nil {
+		return nil
+	}
+	data, err := fs.ReadFile(fsys, "index.html")
+	if err != nil {
+		// A non-nil FS whose index.html is unreadable is an unexpected build/embed
+		// regression, not the expected nil-FS (API-only) path — warn so the
+		// silently stricter CSP (FOUC hash dropped) is diagnosable, matching the
+		// file's degraded-but-non-fatal Warning convention (StartWatching, openBrowser).
+		fmt.Fprintf(os.Stderr, "Warning: failed to read index.html for CSP script hash: %v\n", err)
+		return nil
+	}
+	var hashes []string
+	for _, m := range inlineScriptRe.FindAllStringSubmatch(string(data), -1) {
+		attrs, body := m[1], m[2]
+		if scriptSrcAttrRe.MatchString(attrs) {
+			continue // external script — its URL is covered by script-src 'self', not a hash
+		}
+		sum := sha256.Sum256([]byte(body))
+		hashes = append(hashes, "sha256-"+base64.StdEncoding.EncodeToString(sum[:]))
+	}
+	return hashes
+}
+
+// buildCSP assembles the Content-Security-Policy served by
+// securityHeadersMiddleware. script-src is 'self' plus a quoted sha256 hash for
+// each inline script found in fsys's index.html; when there are no hashes (nil
+// FS, e.g. API-only test muxes) script-src is just 'self'.
+//
+// Two directives are deliberately weaker or narrower than script-src, and the
+// choices are load-bearing:
+//   - style-src keeps 'unsafe-inline' because Svelte/bits-ui components emit
+//     per-render dynamic inline style= attributes (interpolated colors, computed
+//     widths, popover coordinates) that cannot be sha256-pinned like the single
+//     static FOUC script. Inline styles are an accepted lower risk than inline
+//     scripts — do NOT drop 'unsafe-inline' here without re-verifying dynamic
+//     component styling.
+//   - img-src is 'self' data: https:: external images linked from user-authored
+//     nib markdown (rendered by web/src/lib/markdown.ts) are allowed over https so
+//     markdown image links render. This accepts that rendered markdown may issue
+//     outbound https image requests (e.g. tracking pixels); plaintext http image
+//     origins stay blocked. Narrow to 'self' data: only if a no-outbound-requests
+//     posture is later preferred over external-image support.
+//
+// Unlike the script hash, these origin allowlists do not self-maintain across
+// frontend rebuilds — a newly introduced external asset origin must be added
+// here consciously.
+func buildCSP(fsys fs.FS) string {
+	scriptSrc := "'self'"
+	for _, h := range extractInlineScriptHashes(fsys) {
+		scriptSrc += " '" + h + "'"
+	}
+	return strings.Join([]string{
+		"default-src 'self'",
+		"script-src " + scriptSrc,
+		"style-src 'self' 'unsafe-inline'",
+		"img-src 'self' data: https:",
+		"font-src 'self' data:",
+		"connect-src 'self'",
+		"object-src 'none'",
+		"base-uri 'self'",
+		"form-action 'self'",
+		"frame-ancestors 'none'",
+	}, "; ")
+}
+
+// securityHeadersMiddleware sets baseline HTTP security headers on every
+// response before delegating to next, so they are present even if next writes
+// the status line itself:
+//
+//	Content-Security-Policy: <csp>   — restricts resource origins (see below)
+//	X-Content-Type-Options: nosniff  — disables MIME sniffing
+//	X-Frame-Options: DENY            — blocks framing (clickjacking defense)
+//	Referrer-Policy: no-referrer     — never leak the URL as a referrer
+//
+// Why the CSP's script-src carries a *computed* hash: web/index.html ships one
+// inline <script>, the FOUC guard (nibs-vmaq), which runs before any module
+// loads and therefore has no src for a URL allowlist to cover. A strict CSP
+// would block it, so buildCSP allowlists its exact sha256. That hash is derived
+// at mux-construction time from the *embedded, built* index.html, so it
+// self-maintains: rebuilding the frontend regenerates the served bytes and the
+// hash together, with nothing to hardcode or keep in sync. See nibs-0gqi for
+// the security-headers work item.
+func securityHeadersMiddleware(next http.Handler, csp string) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		h := w.Header()
+		h.Set("Content-Security-Policy", csp)
+		h.Set("X-Content-Type-Options", "nosniff")
+		h.Set("X-Frame-Options", "DENY")
+		h.Set("Referrer-Policy", "no-referrer")
+		next.ServeHTTP(w, r)
+	})
 }
 
 // isAllowedOrigin returns true if the origin is a localhost address.
