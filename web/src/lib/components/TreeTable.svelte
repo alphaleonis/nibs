@@ -9,7 +9,7 @@
   import { prepareFilter, isDragAllowed } from "../filter";
   import { resolveFilter, resolveViewLevel, resolveVisibleColumns, resolveColumnWidths } from "../resolvePrefs";
   import TreeTableRow from "./TreeTableRow.svelte";
-  import { Plus, Minus } from "@lucide/svelte";
+  import { CopyPlus, CopyMinus } from "@lucide/svelte";
   import type { DropZone } from "../drag.svelte";
   import { useSelection, useDrag, useActiveView, useTreeView } from "../contexts";
   import { useColumnResize } from "../composables/useColumnResize.svelte";
@@ -469,10 +469,10 @@
                actions column; smaller than the Button primitive's minimum size. -->
           <div class="flex items-center">
             <button data-testid="expand-all" class="rounded-sm p-0.5 text-muted-foreground hover:text-foreground" onclick={expandAll} title="Expand all">
-              <Plus size={12} />
+              <CopyPlus size={12} />
             </button>
             <button data-testid="collapse-all" class="rounded-sm p-0.5 text-muted-foreground hover:text-foreground" onclick={collapseAll} title="Collapse all">
-              <Minus size={12} />
+              <CopyMinus size={12} />
             </button>
           </div>
         </th>
