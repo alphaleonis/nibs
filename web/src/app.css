@@ -189,18 +189,21 @@
      `--font-scale` is the global font-size preference multiplier (S/M/L →
      0.9/1/1.15, default 1). It ALSO stays theme-invariant: it is set on
      document.documentElement by applyFontScale() from the persisted pref and
-     multiplies ONLY the three type-SIZE tokens below — root font-size, spacing,
-     rem and row-density are deliberately untouched (nibs-gymz). */
+     scales the type RHYTHM — both the *-size AND *-leading tokens below — plus
+     the table row padding (--row-pad-y in TreeTable), so row height tracks the
+     font size. Root font-size, spacing and rem stay untouched; row DENSITY still
+     selects the BASE row padding and --font-scale multiplies it on top
+     (nibs-gymz). */
   --font-scale: 1;
   --text-label-size: calc(0.75rem * var(--font-scale));    /* 12px */
   --text-label-weight: 500;
-  --text-label-leading: 1rem;    /* 16px — tight */
+  --text-label-leading: calc(1rem * var(--font-scale));    /* 16px — tight */
   --text-body-size: calc(0.875rem * var(--font-scale));    /* 14px */
   --text-body-weight: 400;
-  --text-body-leading: 1.25rem;  /* 20px */
+  --text-body-leading: calc(1.25rem * var(--font-scale));  /* 20px */
   --text-caption-size: calc(0.75rem * var(--font-scale));  /* 12px */
   --text-caption-weight: 400;
-  --text-caption-leading: 1rem;  /* 16px */
+  --text-caption-leading: calc(1rem * var(--font-scale));  /* 16px */
 }
 
 /* ── Swappable palettes (nibs-vmaq, nibs-fen5) ───────────────────────

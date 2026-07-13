@@ -460,7 +460,7 @@
   </div>
 {:else}
   <!-- svelte-ignore a11y_no_noninteractive_tabindex -->
-  <div bind:this={scrollContainerEl} class="overflow-auto h-full scroll-container" role="grid" tabindex="0" onkeydown={keyboardNav.handleKeydown} onscroll={scrollRestore.onScroll} onclick={handleDelegatedClick} ondblclick={handleDelegatedDblClick} oncontextmenu={handleDelegatedContextMenu} onpointerdown={handleDelegatedPointerDown} style="--row-pad-y: {rowDensity === 'comfortable' ? '0.625rem' : '0.25rem'}">
+  <div bind:this={scrollContainerEl} class="overflow-auto h-full scroll-container" role="grid" tabindex="0" onkeydown={keyboardNav.handleKeydown} onscroll={scrollRestore.onScroll} onclick={handleDelegatedClick} ondblclick={handleDelegatedDblClick} oncontextmenu={handleDelegatedContextMenu} onpointerdown={handleDelegatedPointerDown} style="--row-pad-y: calc({rowDensity === 'comfortable' ? '0.625rem' : '0.25rem'} * var(--font-scale))">
   <table bind:this={tableEl} class="border-collapse" style="table-layout: fixed; width: {tableWidth}px;">
     <thead class="sticky top-0" style="z-index: var(--z-sticky);">
       <tr>
