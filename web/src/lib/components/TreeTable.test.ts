@@ -7,6 +7,7 @@ import TreeTable from "./TreeTable.svelte";
 import type { TreeTableNib, ViewLevel, ColumnKey } from "../types";
 import { DEFAULT_COLUMN_WIDTHS } from "../types";
 import { bucketIdForItem, isBucketId } from "../tree";
+import { OPEN_PLUS_DEFERRED_STATUSES } from "../constants";
 import { SelectionState } from "../selection.svelte";
 import { DragState } from "../drag.svelte";
 import { TreeViewState } from "../treeView.svelte";
@@ -1445,17 +1446,17 @@ describe("TreeTable", () => {
       const initialCallCount = mockQueryStore.mock.calls.length;
       expect(initialCallCount).toBeGreaterThanOrEqual(1);
 
-      // Re-render with a different filter (simulating "Include completed" toggle)
-      await rerender({ filter: { excludeStatus: ["completed", "scrapped"] } });
+      // Re-render with a different filter (simulating the "Open + deferred" preset)
+      await rerender({ filter: { status: [...OPEN_PLUS_DEFERRED_STATUSES] } });
 
       // queryStore should have been called again with the updated filter
       expect(mockQueryStore.mock.calls.length).toBeGreaterThan(initialCallCount);
 
-      // excludeStatus is now a client-side filter, so it is stripped from the
+      // The status include-list is a client-side filter, so it is stripped from the
       // server filter — the re-query fetches completed/scrapped nibs so their
       // active descendants stay visible (with the ancestor dimmed in place).
       const latestCall = mockQueryStore.mock.calls[mockQueryStore.mock.calls.length - 1];
-      expect(latestCall[0].variables!.filter).not.toHaveProperty("excludeStatus");
+      expect(latestCall[0].variables!.filter).not.toHaveProperty("status");
     });
 
     it("renders updated data after filter change", async () => {
@@ -1488,7 +1489,7 @@ describe("TreeTable", () => {
         readable({ fetching: false, error: undefined, data: { nibs: filteredNibs }, stale: false }) as any
       );
 
-      await rerender({ filter: { excludeStatus: ["completed", "scrapped"] } });
+      await rerender({ filter: { status: [...OPEN_PLUS_DEFERRED_STATUSES] } });
 
       // Should have 2 rows after filter change
       rows = container.querySelectorAll("[data-testid='tree-row']");

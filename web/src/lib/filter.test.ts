@@ -3,10 +3,9 @@ import {
   matchesFilter,
   hasClientFilters,
   prepareFilter,
-  getStatusConflicts,
-  resolveStatusConflicts,
   isDragAllowed,
 } from "./filter";
+import { OPEN_STATUSES, OPEN_PLUS_DEFERRED_STATUSES } from "./constants";
 import type { NibSummary, NibFilter } from "./types";
 
 function makeNib(overrides: Partial<NibSummary> = {}): NibSummary {
@@ -22,6 +21,36 @@ function makeNib(overrides: Partial<NibSummary> = {}): NibSummary {
     ...overrides,
   };
 }
+
+describe("status presets", () => {
+  it("Open preset is draft/todo/in-progress (hides deferred + terminal)", () => {
+    expect(OPEN_STATUSES).toEqual(["draft", "todo", "in-progress"]);
+  });
+
+  it("Open + deferred preset is everything except completed + scrapped", () => {
+    expect(OPEN_PLUS_DEFERRED_STATUSES).toEqual([
+      "draft",
+      "todo",
+      "in-progress",
+      "deferred",
+    ]);
+  });
+
+  it("the Open + deferred include-list hides completed and scrapped via matchesFilter", () => {
+    const filter: NibFilter = { status: [...OPEN_PLUS_DEFERRED_STATUSES] };
+    expect(matchesFilter(makeNib({ status: "todo" }), filter)).toBe(true);
+    expect(matchesFilter(makeNib({ status: "deferred" }), filter)).toBe(true);
+    expect(matchesFilter(makeNib({ status: "completed" }), filter)).toBe(false);
+    expect(matchesFilter(makeNib({ status: "scrapped" }), filter)).toBe(false);
+  });
+
+  it("the Open include-list also hides deferred via matchesFilter", () => {
+    const filter: NibFilter = { status: [...OPEN_STATUSES] };
+    expect(matchesFilter(makeNib({ status: "in-progress" }), filter)).toBe(true);
+    expect(matchesFilter(makeNib({ status: "deferred" }), filter)).toBe(false);
+    expect(matchesFilter(makeNib({ status: "completed" }), filter)).toBe(false);
+  });
+});
 
 describe("matchesFilter", () => {
   it("returns true when nib type matches one of the filter types", () => {
@@ -66,16 +95,6 @@ describe("matchesFilter", () => {
     expect(matchesFilter(nib, { status: ["in-progress", "todo"] })).toBe(true);
     expect(matchesFilter(nib, { status: ["completed"] })).toBe(false);
   });
-
-  it("returns false when nib status is in excludeStatus", () => {
-    const nib = makeNib({ status: "completed" });
-    expect(matchesFilter(nib, { excludeStatus: ["completed", "scrapped"] })).toBe(false);
-  });
-
-  it("returns true when nib status is not in excludeStatus", () => {
-    const nib = makeNib({ status: "todo" });
-    expect(matchesFilter(nib, { excludeStatus: ["completed", "scrapped"] })).toBe(true);
-  });
 });
 
 describe("hasClientFilters", () => {
@@ -97,10 +116,6 @@ describe("hasClientFilters", () => {
 
   it("returns true when status filter is active", () => {
     expect(hasClientFilters({ status: ["todo"] })).toBe(true);
-  });
-
-  it("returns true when excludeStatus is active", () => {
-    expect(hasClientFilters({ excludeStatus: ["completed", "scrapped"] })).toBe(true);
   });
 
   it("returns false for search-only filter (not advanced)", () => {
@@ -126,26 +141,29 @@ describe("prepareFilter", () => {
     expect(result.matchesClient(makeNib())).toBe(true);
   });
 
-  it("moves excludeStatus out of serverFilter into the client-side filter", () => {
-    const filter: NibFilter = { search: "hello", excludeStatus: ["completed", "scrapped"] };
+  it("moves the status include-list out of serverFilter into the client-side filter", () => {
+    const filter: NibFilter = {
+      search: "hello",
+      status: [...OPEN_PLUS_DEFERRED_STATUSES],
+    };
     const result = prepareFilter(filter);
 
-    // excludeStatus is filtered client-side (so completed/scrapped ancestors of
-    // active children can be fetched and dimmed rather than dropped server-side).
+    // status is filtered client-side (so completed/scrapped ancestors of active
+    // children can be fetched and dimmed rather than dropped server-side).
     expect(result.serverFilter).toEqual({ search: "hello" });
-    expect(result.serverFilter).not.toHaveProperty("excludeStatus");
+    expect(result.serverFilter).not.toHaveProperty("status");
     expect(result.clientFiltersActive).toBe(true);
     expect(result.matchesClient(makeNib({ status: "completed" }))).toBe(false);
     expect(result.matchesClient(makeNib({ status: "todo" }))).toBe(true);
   });
 
   it("strips type from serverFilter when type filter is active", () => {
-    const filter: NibFilter = { search: "hello", type: ["bug"], excludeStatus: ["completed"] };
+    const filter: NibFilter = { search: "hello", type: ["bug"], status: ["todo"] };
     const result = prepareFilter(filter);
 
     expect(result.serverFilter).toEqual({ search: "hello" });
     expect(result.serverFilter).not.toHaveProperty("type");
-    expect(result.serverFilter).not.toHaveProperty("excludeStatus");
+    expect(result.serverFilter).not.toHaveProperty("status");
     expect(result.clientFiltersActive).toBe(true);
   });
 
@@ -157,7 +175,6 @@ describe("prepareFilter", () => {
       status: ["todo"],
       estimate: ["m"],
       tags: ["frontend"],
-      excludeStatus: ["scrapped"],
     };
     const result = prepareFilter(filter);
 
@@ -167,7 +184,6 @@ describe("prepareFilter", () => {
     expect(result.serverFilter).not.toHaveProperty("status");
     expect(result.serverFilter).not.toHaveProperty("estimate");
     expect(result.serverFilter).not.toHaveProperty("tags");
-    expect(result.serverFilter).not.toHaveProperty("excludeStatus");
     expect(result.clientFiltersActive).toBe(true);
   });
 
@@ -204,149 +220,6 @@ describe("prepareFilter", () => {
     // empty tags
     expect(result.matchesClient(makeNib({ tags: [] }))).toBe(false);
   });
-
-  it("automatically resolves status conflicts before splitting", () => {
-    const filter: NibFilter = {
-      status: ["todo", "completed"],
-      excludeStatus: ["completed", "scrapped"],
-      search: "test",
-    };
-    const result = prepareFilter(filter);
-
-    // "completed" should be removed from the status filter since it conflicts
-    // with excludeStatus — only "todo" remains as a client filter
-    expect(result.clientFiltersActive).toBe(true);
-    expect(result.matchesClient(makeNib({ status: "todo" }))).toBe(true);
-    expect(result.matchesClient(makeNib({ status: "completed" }))).toBe(false);
-  });
-
-  it("resolves all status conflicts, keeping excludeStatus as the client filter", () => {
-    const filter: NibFilter = {
-      status: ["completed"],
-      excludeStatus: ["completed", "scrapped"],
-      search: "test",
-    };
-    const result = prepareFilter(filter);
-
-    // All status values conflict, so the include status list is removed entirely,
-    // but excludeStatus remains as an active client-side filter.
-    expect(result.clientFiltersActive).toBe(true);
-    expect(result.serverFilter).toEqual({ search: "test" });
-    expect(result.matchesClient(makeNib({ status: "completed" }))).toBe(false);
-    expect(result.matchesClient(makeNib({ status: "todo" }))).toBe(true);
-  });
-});
-
-describe("getStatusConflicts", () => {
-  it("returns empty array when no overlap between status and excludeStatus", () => {
-    const filter: NibFilter = {
-      status: ["todo", "in-progress"],
-      excludeStatus: ["completed", "scrapped"],
-    };
-
-    expect(getStatusConflicts(filter)).toEqual([]);
-  });
-
-  it("returns conflicting values when status and excludeStatus overlap", () => {
-    const filter: NibFilter = {
-      status: ["completed"],
-      excludeStatus: ["completed", "scrapped"],
-    };
-
-    expect(getStatusConflicts(filter)).toEqual(["completed"]);
-  });
-
-  it("returns multiple conflicts when several statuses overlap", () => {
-    const filter: NibFilter = {
-      status: ["completed", "scrapped", "todo"],
-      excludeStatus: ["completed", "scrapped"],
-    };
-
-    expect(getStatusConflicts(filter)).toEqual(["completed", "scrapped"]);
-  });
-
-  it("returns empty array when status is undefined", () => {
-    const filter: NibFilter = {
-      excludeStatus: ["completed", "scrapped"],
-    };
-
-    expect(getStatusConflicts(filter)).toEqual([]);
-  });
-
-  it("returns empty array when excludeStatus is undefined", () => {
-    const filter: NibFilter = {
-      status: ["completed"],
-    };
-
-    expect(getStatusConflicts(filter)).toEqual([]);
-  });
-
-  it("returns empty array when both are undefined", () => {
-    expect(getStatusConflicts({})).toEqual([]);
-  });
-
-  it("returns empty array when status is empty", () => {
-    const filter: NibFilter = {
-      status: [],
-      excludeStatus: ["completed", "scrapped"],
-    };
-
-    expect(getStatusConflicts(filter)).toEqual([]);
-  });
-
-  it("returns empty array when excludeStatus is empty", () => {
-    const filter: NibFilter = {
-      status: ["completed"],
-      excludeStatus: [],
-    };
-
-    expect(getStatusConflicts(filter)).toEqual([]);
-  });
-});
-
-describe("resolveStatusConflicts", () => {
-  it("returns filter unchanged when there are no conflicts", () => {
-    const filter: NibFilter = {
-      status: ["todo"],
-      excludeStatus: ["completed", "scrapped"],
-    };
-
-    const result = resolveStatusConflicts(filter);
-    expect(result).toBe(filter); // reference equality — no copy made
-  });
-
-  it("removes conflicting status values and keeps non-conflicting ones", () => {
-    const filter: NibFilter = {
-      status: ["todo", "completed"],
-      excludeStatus: ["completed", "scrapped"],
-    };
-
-    const result = resolveStatusConflicts(filter);
-    expect(result.status).toEqual(["todo"]);
-    expect(result.excludeStatus).toEqual(["completed", "scrapped"]);
-  });
-
-  it("deletes status field entirely when all values conflict", () => {
-    const filter: NibFilter = {
-      status: ["completed", "scrapped"],
-      excludeStatus: ["completed", "scrapped"],
-      search: "test",
-    };
-
-    const result = resolveStatusConflicts(filter);
-    expect(result).not.toHaveProperty("status");
-    expect(result.search).toBe("test");
-    expect(result.excludeStatus).toEqual(["completed", "scrapped"]);
-  });
-
-  it("handles undefined status gracefully", () => {
-    const filter: NibFilter = {
-      excludeStatus: ["completed"],
-    };
-
-    const result = resolveStatusConflicts(filter);
-    expect(result).toBe(filter);
-  });
 });
 
 describe("isDragAllowed", () => {
@@ -355,21 +228,19 @@ describe("isDragAllowed", () => {
   });
 
   it("returns true when a hide-filter is active (filters never reorder rows)", () => {
-    // Hide-filters (type/priority/status/estimate/tags/excludeStatus) keep matching
-    // nibs in tree order, dim ancestors in place, and only remove non-matching
-    // leaves — they never reorder rows. Anchor-based reorder-on-drop stays
-    // well-defined, so drag must remain allowed for every hide-filter.
+    // Hide-filters (type/priority/status/estimate/tags) keep matching nibs in tree
+    // order, dim ancestors in place, and only remove non-matching leaves — they
+    // never reorder rows. Anchor-based reorder-on-drop stays well-defined, so drag
+    // must remain allowed for every hide-filter (including the "Open" status preset).
     expect(isDragAllowed({ type: ["bug"] })).toBe(true);
     expect(isDragAllowed({ priority: ["high"] })).toBe(true);
-    expect(isDragAllowed({ status: ["todo"] })).toBe(true);
+    expect(isDragAllowed({ status: [...OPEN_STATUSES] })).toBe(true);
     expect(isDragAllowed({ estimate: ["m"] })).toBe(true);
     expect(isDragAllowed({ tags: ["frontend"] })).toBe(true);
-    expect(isDragAllowed({ excludeStatus: ["completed", "scrapped"] })).toBe(true);
   });
 
   it("returns true when hide-filters are combined in any mix", () => {
-    expect(isDragAllowed({ type: ["bug"], excludeStatus: ["completed", "scrapped"] })).toBe(true);
-    expect(isDragAllowed({ status: ["todo"], excludeStatus: ["completed", "scrapped"] })).toBe(true);
+    expect(isDragAllowed({ type: ["bug"], status: [...OPEN_PLUS_DEFERRED_STATUSES] })).toBe(true);
     expect(
       isDragAllowed({
         type: ["bug"],
@@ -377,7 +248,6 @@ describe("isDragAllowed", () => {
         status: ["todo"],
         estimate: ["m"],
         tags: ["frontend"],
-        excludeStatus: ["completed"],
       }),
     ).toBe(true);
   });

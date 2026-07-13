@@ -2,15 +2,13 @@
   import { VIEW_LEVELS, DEFAULT_COLUMNS, ALL_COLUMN_KEYS, DEFAULT_THEME, DEFAULT_DETAIL_PANEL_POSITION, DEFAULT_BLOCKED_EMPHASIS, DEFAULT_FONT_SIZE } from "../types";
   import type { NibFilter, ViewLevel, ColumnKey, RowDensity, FontSize, Theme, DetailPanelPosition, BlockedEmphasis } from "../types";
   import type { Preferences } from "../preferences.svelte";
-  import { resolveStatusConflicts } from "../filter";
-  import { TERMINAL_STATUSES, TYPES, STATUSES, PRIORITIES, ESTIMATES, ESTIMATE_LABELS } from "../constants";
+  import { TYPES, STATUSES, PRIORITIES, ESTIMATES, ESTIMATE_LABELS, OPEN_STATUSES, OPEN_PLUS_DEFERRED_STATUSES } from "../constants";
   import {
     Plus,
     ChevronDown,
     X,
     Columns3,
     Eye,
-    EyeOff,
     ListTree,
     ListFilter,
   } from "@lucide/svelte";
@@ -134,10 +132,6 @@
   let resolvedVisibleColumns = $derived(resolveVisibleColumns(prefs, visibleColumns));
   let ViewLevelIcon = $derived(VIEW_LEVEL_ICON_INFO[resolvedViewLevel].icon);
 
-  let includeCompleted = $derived(!resolvedFilter.excludeStatus?.length);
-  // Dynamic label describes the ACTION the toggle performs (not the current
-  // state): when completed are shown, the toggle hides them, and vice versa.
-  let completedLabel = $derived(includeCompleted ? "Hide completed" : "Show completed");
   // Static trigger labels shared by each control's aria-label and its Tooltip.Content,
   // defined once so the accessible name and the visible tooltip can't drift apart.
   const newItemLabel = "New item";
@@ -161,17 +155,6 @@
 
   function emitFilter(updated: NibFilter) {
     emitFilterHelper(prefs, onchange, updated);
-  }
-
-  function handleToggleIncludeCompleted(checked: boolean) {
-    let updated = { ...resolvedFilter };
-    if (!checked) {
-      updated.excludeStatus = [...TERMINAL_STATUSES];
-      updated = resolveStatusConflicts(updated);
-    } else {
-      delete updated.excludeStatus;
-    }
-    emitFilter(updated);
   }
 
   function handleSelectViewLevel(level: ViewLevel) {
@@ -259,15 +242,21 @@
   }
 
   function handleToggle(field: FilterField, value: string) {
-    let updated: NibFilter = { ...resolvedFilter };
+    const updated: NibFilter = { ...resolvedFilter };
     updated[field] = toggleArrayValue(resolvedFilter[field], value);
     if (updated[field] === undefined) {
       delete updated[field];
     }
-    if (field === "status") {
-      updated = resolveStatusConflicts(updated);
-    }
     emitFilter(updated);
+  }
+
+  // State-facet quick presets (nibs-ni1v): OVERWRITE the status include-list in
+  // one click. The include-list is the single source of truth for status
+  // visibility, so a preset replaces (not merges with) the current selection; the
+  // per-status checkboxes below remain for precise tweaking afterward.
+  function applyStatusPreset(statuses: readonly string[]) {
+    emitFilter({ ...resolvedFilter, status: [...statuses] });
+    filterOpenStates.state = false;
   }
 
   function handleClearField(field: FilterField, id: DropdownId) {
@@ -367,26 +356,6 @@
       <Tooltip.Content side="bottom">{groupByLabel}</Tooltip.Content>
     </Tooltip.Root>
 
-    <!-- Include completed toggle. Plain button, so Tooltip.Trigger renders it
-         directly (its onclick chains with the tooltip's via mergeProps). -->
-    <Tooltip.Root>
-      <Tooltip.Trigger
-        type="button"
-        aria-label={completedLabel}
-        aria-pressed={includeCompleted}
-        data-testid="toolbar-include-completed"
-        class={buttonVariants({ variant: "ghost", size: "icon" })}
-        onclick={() => handleToggleIncludeCompleted(!includeCompleted)}
-      >
-        {#if includeCompleted}
-          <Eye size={16} />
-        {:else}
-          <EyeOff size={16} />
-        {/if}
-      </Tooltip.Trigger>
-      <Tooltip.Content side="bottom">{completedLabel}</Tooltip.Content>
-    </Tooltip.Root>
-
     <!-- Columns dropdown -->
     <Tooltip.Root>
       <DropdownMenu.Root bind:open={columnsOpen}>
@@ -459,10 +428,9 @@
     />
     {#if hasKeyword}
       <!-- Clear button. Plain button, so Tooltip.Trigger renders it directly (its
-           onclick chains with the tooltip's via mergeProps), matching the
-           Include-completed toggle. Styled via the shared buttonVariants primitive
-           so it inherits the focus-visible ring, active press, and radius; the
-           positioning utilities are layered on with cn. -->
+           onclick chains with the tooltip's via mergeProps). Styled via the shared
+           buttonVariants primitive so it inherits the focus-visible ring, active
+           press, and radius; the positioning utilities are layered on with cn. -->
       <Tooltip.Root>
         <Tooltip.Trigger
           type="button"
@@ -493,6 +461,29 @@
         <ChevronDown size={14} class="text-muted-foreground" />
       </DropdownMenu.Trigger>
       <DropdownMenu.Content align="start">
+        {#if dd.id === "state"}
+          <!-- Quick presets that OVERWRITE the status include-list (nibs-ni1v).
+               Replaces the retired standalone hide-completed toggle: "Open" shows
+               active work, "Open + deferred" mirrors the old hide-completed
+               (everything except completed + scrapped). The per-status checkboxes
+               below remain for precise tweaking. -->
+          <DropdownMenu.Label class="text-label text-muted-foreground">Presets</DropdownMenu.Label>
+          <DropdownMenu.Item
+            data-testid="state-preset-open"
+            onSelect={() => applyStatusPreset(OPEN_STATUSES)}
+          >
+            <Eye size={14} />
+            Open
+          </DropdownMenu.Item>
+          <DropdownMenu.Item
+            data-testid="state-preset-open-deferred"
+            onSelect={() => applyStatusPreset(OPEN_PLUS_DEFERRED_STATUSES)}
+          >
+            <Eye size={14} />
+            Open + deferred
+          </DropdownMenu.Item>
+          <DropdownMenu.Separator />
+        {/if}
         {#each dd.values as value}
           <DropdownMenu.CheckboxItem
             checked={isChecked(dd.field, value)}

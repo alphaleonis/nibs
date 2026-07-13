@@ -4,6 +4,7 @@ import { describe, it, expect, vi } from "vitest";
 import Toolbar from "./Toolbar.svelte";
 import { Preferences } from "../preferences.svelte";
 import { ALL_COLUMN_KEYS, DEFAULT_VISIBLE_COLUMNS } from "../types";
+import { OPEN_STATUSES, OPEN_PLUS_DEFERRED_STATUSES } from "../constants";
 import type { NibFilter, ViewLevel, ColumnKey } from "../types";
 
 // bits-ui scroll lock sets pointer-events: none on <body>, so disable the check
@@ -269,88 +270,13 @@ describe("Toolbar", () => {
     expect(lastCall[0]).toMatchObject({ search: "auth" });
   });
 
-  // Standalone "Include completed" toggle (view filter that stays in the toolbar
-  // after the Options dropdown was retired). Coverage migrated from the deleted
-  // Options-based Include-completed tests.
-  it("renders the standalone Include completed toggle", () => {
+  // The standalone hide/show-completed toggle was removed (nibs-ni1v); status
+  // visibility is now driven solely by the State-facet include-list + its presets.
+  it("no longer renders the standalone completed toggle", () => {
     render(Toolbar, { ...defaultToolbarProps });
 
-    expect(screen.getByTestId("toolbar-include-completed")).toBeInTheDocument();
-  });
-
-  // Dynamic tooltip/aria-label: the label names the ACTION (hide/show), and
-  // flips with state. Tooltip content lives in a portal that only renders on
-  // hover, so we assert the always-present aria-label instead.
-  it("completed toggle is labeled 'Hide completed' when completed are shown", () => {
-    render(Toolbar, { ...defaultToolbarProps, filter: {} });
-
-    const toggle = screen.getByTestId("toolbar-include-completed");
-    expect(toggle).toHaveAttribute("aria-label", "Hide completed");
-    // The role/name query must resolve without the tooltip being open.
-    expect(screen.getByRole("button", { name: "Hide completed" })).toBe(toggle);
-  });
-
-  it("completed toggle is labeled 'Show completed' when completed are hidden", () => {
-    render(Toolbar, {
-      ...defaultToolbarProps,
-      filter: { excludeStatus: ["completed", "scrapped"] },
-    });
-
-    const toggle = screen.getByTestId("toolbar-include-completed");
-    expect(toggle).toHaveAttribute("aria-label", "Show completed");
-    expect(screen.getByRole("button", { name: "Show completed" })).toBe(toggle);
-  });
-
-  it("Include completed toggle is pressed by default (no excludeStatus)", () => {
-    render(Toolbar, { ...defaultToolbarProps });
-
-    expect(screen.getByTestId("toolbar-include-completed")).toHaveAttribute("aria-pressed", "true");
-  });
-
-  it("Include completed toggle is not pressed when excludeStatus is set", () => {
-    render(Toolbar, {
-      ...defaultToolbarProps,
-      filter: { excludeStatus: ["completed", "scrapped"] },
-    });
-
-    expect(screen.getByTestId("toolbar-include-completed")).toHaveAttribute("aria-pressed", "false");
-  });
-
-  it("clicking the toggle when included emits excludeStatus", async () => {
-    const onchange = vi.fn();
-    render(Toolbar, { ...defaultToolbarProps, onchange });
-
-    await user.click(screen.getByTestId("toolbar-include-completed"));
-
-    const lastCall = onchange.mock.calls[onchange.mock.calls.length - 1];
-    expect(lastCall[0]).toMatchObject({ excludeStatus: ["completed", "scrapped"] });
-  });
-
-  it("clicking the toggle preserves other filter fields", async () => {
-    const onchange = vi.fn();
-    render(Toolbar, { ...defaultToolbarProps, filter: { search: "auth" }, onchange });
-
-    await user.click(screen.getByTestId("toolbar-include-completed"));
-
-    const lastCall = onchange.mock.calls[onchange.mock.calls.length - 1];
-    expect(lastCall[0]).toMatchObject({
-      search: "auth",
-      excludeStatus: ["completed", "scrapped"],
-    });
-  });
-
-  it("clicking the toggle when excluded clears excludeStatus", async () => {
-    const onchange = vi.fn();
-    render(Toolbar, {
-      ...defaultToolbarProps,
-      filter: { excludeStatus: ["completed", "scrapped"] },
-      onchange,
-    });
-
-    await user.click(screen.getByTestId("toolbar-include-completed"));
-
-    const lastCall = onchange.mock.calls[onchange.mock.calls.length - 1];
-    expect(lastCall[0].excludeStatus).toBeUndefined();
+    expect(screen.queryByTestId("toolbar-include-completed")).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /completed/i })).not.toBeInTheDocument();
   });
 
   // Columns dropdown tests
@@ -714,37 +640,72 @@ describe("Toolbar — filter dropdowns", () => {
     expect(clearItem).toHaveAttribute("data-disabled", "");
   });
 
-  it("resolves a conflicting status away when checked (resolveStatusConflicts)", async () => {
+  it("clicking the 'Open' preset overwrites status with the Open set", async () => {
     const onchange = vi.fn();
-    render(Toolbar, {
-      ...defaultToolbarProps,
-      filter: { excludeStatus: ["completed", "scrapped"] },
-      onchange,
-    });
+    render(Toolbar, { ...defaultToolbarProps, onchange });
 
     await user.click(screen.getByRole("button", { name: /state/i }));
-    // "completed" is in excludeStatus, so checking it must be resolved away
-    await user.click(screen.getByRole("menuitemcheckbox", { name: "completed" }));
+    await user.click(screen.getByTestId("state-preset-open"));
 
     const lastCall = onchange.mock.calls[onchange.mock.calls.length - 1];
-    expect(lastCall[0].status).toBeUndefined();
-    expect(lastCall[0].excludeStatus).toEqual(["completed", "scrapped"]);
+    expect(lastCall[0].status).toEqual([...OPEN_STATUSES]);
   });
 
-  it("emits a non-conflicting status and preserves excludeStatus", async () => {
+  it("clicking the 'Open + deferred' preset overwrites status with that set", async () => {
+    const onchange = vi.fn();
+    render(Toolbar, { ...defaultToolbarProps, onchange });
+
+    await user.click(screen.getByRole("button", { name: /state/i }));
+    await user.click(screen.getByTestId("state-preset-open-deferred"));
+
+    const lastCall = onchange.mock.calls[onchange.mock.calls.length - 1];
+    expect(lastCall[0].status).toEqual([...OPEN_PLUS_DEFERRED_STATUSES]);
+  });
+
+  it("a preset REPLACES an existing status selection (does not merge)", async () => {
     const onchange = vi.fn();
     render(Toolbar, {
       ...defaultToolbarProps,
-      filter: { excludeStatus: ["completed", "scrapped"] },
+      filter: { status: ["completed"] },
       onchange,
     });
 
     await user.click(screen.getByRole("button", { name: /state/i }));
-    await user.click(screen.getByRole("menuitemcheckbox", { name: "todo" }));
+    await user.click(screen.getByTestId("state-preset-open"));
 
     const lastCall = onchange.mock.calls[onchange.mock.calls.length - 1];
-    expect(lastCall[0].status).toEqual(["todo"]);
-    expect(lastCall[0].excludeStatus).toEqual(["completed", "scrapped"]);
+    // "completed" is gone — the preset overwrites the whole include-list.
+    expect(lastCall[0].status).toEqual([...OPEN_STATUSES]);
+  });
+
+  it("a preset preserves other filter fields (only status is overwritten)", async () => {
+    const onchange = vi.fn();
+    render(Toolbar, {
+      ...defaultToolbarProps,
+      filter: { search: "auth", type: ["bug"] },
+      onchange,
+    });
+
+    await user.click(screen.getByRole("button", { name: /state/i }));
+    await user.click(screen.getByTestId("state-preset-open-deferred"));
+
+    const lastCall = onchange.mock.calls[onchange.mock.calls.length - 1];
+    expect(lastCall[0]).toMatchObject({
+      search: "auth",
+      type: ["bug"],
+      status: [...OPEN_PLUS_DEFERRED_STATUSES],
+    });
+  });
+
+  it("per-status checkboxes still toggle the include-list after presets exist", async () => {
+    const onchange = vi.fn();
+    render(Toolbar, { ...defaultToolbarProps, filter: { status: ["todo"] }, onchange });
+
+    await user.click(screen.getByRole("button", { name: /state/i }));
+    await user.click(screen.getByRole("menuitemcheckbox", { name: "in-progress" }));
+
+    const lastCall = onchange.mock.calls[onchange.mock.calls.length - 1];
+    expect(lastCall[0].status).toEqual(["todo", "in-progress"]);
   });
 
   it("shows an active-count badge on triggers whose category has selections", () => {

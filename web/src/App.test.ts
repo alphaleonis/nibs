@@ -337,8 +337,10 @@ describe("App", () => {
     await user.type(searchInput, "bug");
     expect(searchInput).toHaveValue("bug");
 
-    // Toggle "Include completed" off via the standalone toolbar toggle
-    await user.click(screen.getByTestId("toolbar-include-completed"));
+    // Hide completed via the State-facet "Open + deferred" preset (the toggle it
+    // replaced, nibs-ni1v): open the State dropdown, then click the preset.
+    await user.click(screen.getByRole("button", { name: /state/i }));
+    await user.click(screen.getByTestId("state-preset-open-deferred"));
 
     // With $derived(queryStore(...)), filter changes should trigger new queryStore calls
     expect(mockQueryStore.mock.calls.length).toBeGreaterThan(initialCallCount);
@@ -351,15 +353,15 @@ describe("App", () => {
     expect(nibsCalls.length).toBeGreaterThan(0);
     // Filtered above to calls whose variables.filter is defined, so variables exists.
     const latestVars = nibsCalls[nibsCalls.length - 1][0].variables!;
-    // search stays server-side; excludeStatus is now applied client-side (so the
-    // server still returns completed/scrapped ancestors for in-place dimming) and
-    // must NOT be forwarded to the GraphQL server.
+    // search stays server-side; the status include-list is applied client-side (so
+    // the server still returns completed/scrapped ancestors for in-place dimming)
+    // and must NOT be forwarded to the GraphQL server.
     expect(latestVars.filter).toEqual(
       expect.objectContaining({
         search: "bug",
       })
     );
-    expect(latestVars.filter).not.toHaveProperty("excludeStatus");
+    expect(latestVars.filter).not.toHaveProperty("status");
   });
 
   it("opens detail panel when a title is clicked", async () => {

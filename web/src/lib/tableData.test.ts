@@ -2,6 +2,7 @@ import { describe, it, expect } from "vitest";
 import { buildTableData } from "./tableData";
 import { isBucketId } from "./tree";
 import { typeRank } from "./typeHierarchy";
+import { OPEN_PLUS_DEFERRED_STATUSES } from "./constants";
 import type { TreeTableNib, NibFilter } from "./types";
 
 function makeTreeTableNib(overrides: Partial<TreeTableNib> = {}): TreeTableNib {
@@ -142,13 +143,17 @@ describe("buildTableData", () => {
     expect(result.rows[0].hasChildren).toBe(true);
   });
 
-  describe("excludeStatus client filter (hide completed)", () => {
+  // The "hide completed" behavior is now expressed as the "Open + deferred" status
+  // include-list (everything except completed + scrapped), not a separate
+  // excludeStatus field (nibs-ni1v). A non-matching ancestor of an active child is
+  // still dimmed in place rather than dropped.
+  describe("status include-list client filter (hide completed)", () => {
     it("dims a completed parent with an active child instead of dropping it", () => {
       const nibs = [
         makeTreeTableNib({ id: "nibs-001", type: "milestone", status: "completed", title: "Done milestone" }),
         makeTreeTableNib({ id: "nibs-002", type: "task", status: "in-progress", title: "Active task", parentId: "nibs-001" }),
       ];
-      const filter: NibFilter = { excludeStatus: ["completed", "scrapped"] };
+      const filter: NibFilter = { status: [...OPEN_PLUS_DEFERRED_STATUSES] };
       const result = buildTableData(nibs, filter, "milestones", noCollapsed);
 
       // Both rows present: the excluded (completed) parent survives as a dimmed
@@ -168,7 +173,7 @@ describe("buildTableData", () => {
         makeTreeTableNib({ id: "nibs-001", type: "milestone", status: "in-progress", title: "Active milestone" }),
         makeTreeTableNib({ id: "nibs-002", type: "task", status: "completed", title: "Done leaf", parentId: "nibs-001" }),
       ];
-      const filter: NibFilter = { excludeStatus: ["completed", "scrapped"] };
+      const filter: NibFilter = { status: [...OPEN_PLUS_DEFERRED_STATUSES] };
       const result = buildTableData(nibs, filter, "milestones", noCollapsed);
 
       const ids = result.rows.map(r => r.nib.id);
@@ -188,7 +193,7 @@ describe("buildTableData", () => {
         // "No epic" bucket, so a bucket header row is emitted.
         makeTreeTableNib({ id: "T2", type: "task", status: "in-progress", title: "Loose active task" }),
       ];
-      const filter: NibFilter = { excludeStatus: ["completed", "scrapped"] };
+      const filter: NibFilter = { status: [...OPEN_PLUS_DEFERRED_STATUSES] };
       const result = buildTableData(nibs, filter, "epics", noCollapsed);
 
       // Completed epic survives as a dimmed ancestor of its active child.

@@ -50,6 +50,50 @@ describe("storage", () => {
     expect(loaded).toEqual({ filter: { search: "old" }, viewLevel: "none", theme: "graphite" });
   });
 
+  // Legacy `excludeStatus` (the retired hide-completed negative filter, nibs-ni1v)
+  // must never survive into the loaded filter. When no explicit status include-list
+  // is present it is translated to the equivalent include-list (all statuses except
+  // the excluded ones); otherwise it is simply dropped (status is the single source
+  // of truth). Old persisted state must never crash the load.
+  it("translates a legacy excludeStatus into the equivalent status include-list", () => {
+    store["nibs-filter-preferences"] = JSON.stringify({
+      filter: { excludeStatus: ["completed", "scrapped"] },
+      viewLevel: "none",
+    });
+    const loaded = loadPreferences();
+    expect(loaded.filter).not.toHaveProperty("excludeStatus");
+    expect(loaded.filter.status).toEqual(["draft", "todo", "in-progress", "deferred"]);
+  });
+
+  it("drops a legacy excludeStatus when an explicit status include-list is present", () => {
+    store["nibs-filter-preferences"] = JSON.stringify({
+      filter: { status: ["todo"], excludeStatus: ["completed", "scrapped"] },
+      viewLevel: "none",
+    });
+    const loaded = loadPreferences();
+    expect(loaded.filter).not.toHaveProperty("excludeStatus");
+    expect(loaded.filter.status).toEqual(["todo"]);
+  });
+
+  it("preserves other filter fields while dropping legacy excludeStatus", () => {
+    store["nibs-filter-preferences"] = JSON.stringify({
+      filter: { search: "auth", type: ["bug"], excludeStatus: ["scrapped"] },
+      viewLevel: "none",
+    });
+    const loaded = loadPreferences();
+    expect(loaded.filter).not.toHaveProperty("excludeStatus");
+    expect(loaded.filter.search).toBe("auth");
+    expect(loaded.filter.type).toEqual(["bug"]);
+    // Complement of {scrapped} across STATUSES, order-preserving.
+    expect(loaded.filter.status).toEqual([
+      "draft",
+      "todo",
+      "in-progress",
+      "deferred",
+      "completed",
+    ]);
+  });
+
   it("gracefully handles unknown viewLevel value", () => {
     store["nibs-filter-preferences"] = JSON.stringify({
       filter: {},
