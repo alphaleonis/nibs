@@ -173,7 +173,7 @@
       tabindex="-1"
       transition:fly={{ x: 320, duration: 200 }}
       use:clickOutside={{ enabled: open, onOutside: close, ignore: isInsideOrTrigger }}
-      class="bg-background ring-foreground/10 fixed inset-y-0 right-0 z-50 flex h-full w-3/4 flex-col gap-4 border-l shadow-lg ring-1 outline-none sm:max-w-sm"
+      class="bg-background border-border ring-foreground/10 fixed inset-y-0 right-0 z-50 flex h-full w-3/4 flex-col gap-4 border-l shadow-lg ring-1 outline-none sm:max-w-sm"
     >
       <div class="flex flex-col gap-1.5 p-4">
         <h2 id={titleId} class="text-base leading-none font-medium">Settings</h2>
