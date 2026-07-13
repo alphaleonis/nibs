@@ -33,7 +33,7 @@ a full view of your project.`,
 		// ensure it never accesses the App.
 		if cmd.Name() == "init" || cmd.Name() == "prime" || cmd.Name() == "version" ||
 			cmd.Name() == "catalog" || cmd.Name() == "cheat" ||
-			(cmd.Name() == "graphql" && querySchemaOnly) {
+			(cmd.Name() == "query" && querySchemaOnly) {
 			return nil
 		}
 
