@@ -174,6 +174,11 @@ type errorBody struct {
 	// agents can branch on the allowed set structurally. Omitted for every other
 	// error code.
 	AllowedParentTypes []string `json:"allowedParentTypes,omitempty"`
+	// CurrentEtag carries the server's current etag for a reconcilable CONFLICT so
+	// an agent can retry with it (the textbook "409 → retry with the server etag"
+	// reconcile). Omitted for every other error code, and for a CONFLICT with no
+	// reusable token (e.g. an ETagRequiredError, which has no comparison etag).
+	CurrentEtag string `json:"currentEtag,omitempty"`
 }
 
 // Error writes the --json error contract to stdout and returns a reported
@@ -208,6 +213,26 @@ func ErrorHierarchy(message string, allowedParentTypes []string) error {
 		AllowedParentTypes: allowedParentTypes,
 	}})
 	return &CodedError{Code: ErrHierarchy, Msg: message, Reported: true}
+}
+
+// ErrorConflict writes the --json error contract for a reconcilable ETag
+// conflict — the standard {code,message} plus the server's currentEtag — and
+// returns a reported CodedError coded ErrConflict. An agent following the
+// "409 → re-read the server etag → retry with it" reconcile pattern reads
+// currentEtag structurally rather than parsing it out of the message. A blank
+// currentEtag is omitted (a CONFLICT with no reusable token, e.g. a required
+// but missing etag). Like Error, the returned error satisfies
+// errors.Is(err, ErrAlreadyReported) so the boundary suppresses its duplicate
+// stderr line.
+func ErrorConflict(message, currentEtag string) error {
+	enc := json.NewEncoder(os.Stdout)
+	enc.SetIndent("", "  ")
+	_ = enc.Encode(errorEnvelope{Error: errorBody{
+		Code:        ErrConflict,
+		Message:     message,
+		CurrentEtag: currentEtag,
+	}})
+	return &CodedError{Code: ErrConflict, Msg: message, Reported: true}
 }
 
 // TextError writes get's single-stream text error to stdout — "error <CODE>:
