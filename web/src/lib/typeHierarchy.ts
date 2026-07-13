@@ -3,15 +3,22 @@
  *
  * milestone -> [epic]
  * epic -> [feature, task, bug]
- * feature -> [task, bug]
+ * feature -> [task]
  * task -> [] (leaf)
  * bug -> [] (leaf)
+ *
+ * This is a curated (opinionated) subset of what the backend permits — e.g. the
+ * backend allows epic/feature/bug/task directly under a milestone, but the UI
+ * steers toward milestone -> epic -> feature -> task. Every entry here must still
+ * be a SUBSET of the backend's rules (internal/nibtypes/hierarchy.go): a bug's
+ * only valid parents are milestone and epic, so a bug must NOT appear under a
+ * feature (the backend rejects it with a HIERARCHY error).
  */
 
 export const VALID_CHILD_TYPES: Record<string, string[]> = {
   milestone: ["epic"],
   epic: ["feature", "task", "bug"],
-  feature: ["task", "bug"],
+  feature: ["task"],
   task: [],
   bug: [],
 };

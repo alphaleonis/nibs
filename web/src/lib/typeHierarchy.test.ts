@@ -29,8 +29,10 @@ describe("getValidChildTypes", () => {
     expect(getValidChildTypes("epic")).toEqual(["feature", "task", "bug"]);
   });
 
-  it("feature can have task and bug children", () => {
-    expect(getValidChildTypes("feature")).toEqual(["task", "bug"]);
+  it("feature can only have task children (a bug cannot be a feature child)", () => {
+    // Backend (internal/nibtypes/hierarchy.go) restricts a bug's parents to
+    // milestone|epic, so a bug must never be offered as a child of a feature.
+    expect(getValidChildTypes("feature")).toEqual(["task"]);
   });
 
   it("task has no valid children", () => {
