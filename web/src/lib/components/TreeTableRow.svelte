@@ -3,7 +3,7 @@
   import type { TreeTableNib, ColumnKey, BlockedEmphasis } from "../types";
   import { priorityIndicators, statusDotColors } from "../badges";
   import { Link, Lock, ChevronRight, ChevronDown, Plus } from "@lucide/svelte";
-  import StatusDot from "./StatusDot.svelte";
+  import StatusIcon from "./StatusIcon.svelte";
   import BlockedBadge from "./BlockedBadge.svelte";
   import TypeIcon from "./TypeIcon.svelte";
   import { canHaveChildren } from "../typeHierarchy";
@@ -204,7 +204,7 @@
   <!-- State column -->
   {#if visibleColumns.includes("state")}
     <td data-testid="nib-state" class="text-body px-3 cell-truncate row-cell">
-      <StatusDot status={nib.status} class="mr-1.5" />
+      <StatusIcon status={nib.status} class="mr-1.5" />
       <span style="color: {statusDotColor};">{nib.status}</span>
     </td>
   {/if}

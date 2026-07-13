@@ -179,7 +179,7 @@ describe("TreeTableRow", () => {
 
     const stateCell = container.querySelector("[data-testid='nib-state']") as HTMLElement;
     expect(stateCell.textContent).toContain("deferred");
-    expect(stateCell.querySelector("[data-testid='status-dot']")).toBeInTheDocument();
+    expect(stateCell.querySelector("[data-testid='status-icon']")).toBeInTheDocument();
   });
 
   it("shows the blocked pill (default emphasis) with tooltip when blockedByIds is non-empty", () => {
@@ -416,7 +416,7 @@ describe("TreeTableRow", () => {
     expect(stateCell.textContent).toContain("in-progress");
 
     // Should contain a dot element
-    const dot = stateCell.querySelector("[data-testid='status-dot']");
+    const dot = stateCell.querySelector("[data-testid='status-icon']");
     expect(dot).toBeInTheDocument();
   });
 

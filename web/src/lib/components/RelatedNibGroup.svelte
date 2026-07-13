@@ -1,6 +1,6 @@
 <script lang="ts">
   import { ChevronDown, ChevronRight, Plus } from "@lucide/svelte";
-  import StatusDot from "./StatusDot.svelte";
+  import StatusIcon from "./StatusIcon.svelte";
 
   export interface RelatedNibItem {
     id: string;
@@ -69,7 +69,7 @@
           data-testid="detail-related-link"
           onclick={() => onnibselect?.(item.id)}
         >
-          <StatusDot status={item.status} />
+          <StatusIcon status={item.status} />
           {item.title}
         </button>
       {/each}

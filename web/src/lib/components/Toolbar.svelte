@@ -21,7 +21,7 @@
   import { buttonVariants } from "$lib/components/ui/button/index.js";
   import { cn } from "$lib/utils.js";
   import { Input } from "$lib/components/ui/input/index.js";
-  import StatusDot from "./StatusDot.svelte";
+  import StatusIcon from "./StatusIcon.svelte";
   import TypeIcon from "./TypeIcon.svelte";
   import SettingsSheet from "./SettingsSheet.svelte";
 
@@ -500,7 +500,7 @@
                 <span class="inline-block w-3.5"></span>
               {/if}
             {:else if dd.field === "status"}
-              <StatusDot status={value} />
+              <StatusIcon status={value} />
             {:else if dd.field === "estimate"}
               <span class="inline-block w-3.5 text-center text-xs font-semibold text-muted-foreground">{value.toUpperCase()}</span>
             {/if}

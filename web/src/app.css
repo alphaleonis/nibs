@@ -115,7 +115,7 @@
 
   /* Status colors — mirror the TUI/config convention (in-progress=yellow,
      todo=green, draft=blue, completed=gray, scrapped=gray). The *-text token
-     is the visible StatusDot color (~-400 for the dark UI); the *-bg token is
+     is the visible status-icon color (~-400 for the dark UI); the *-bg token is
      a subtle same-hue dark tint kept coherent for any pill/badge consumer. */
   --status-draft-bg: oklch(0.27 0.06 254);          /* blue tint */
   --status-draft-text: oklch(0.707 0.165 254.624);  /* blue-400 */
