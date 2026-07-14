@@ -56,7 +56,7 @@
           {confirmLabel}
         </AlertDialog.Action>
         {#if onsave}
-          <!-- Opt-in Save action (nibs-s9au): the recommended, safe choice for the
+          <!-- Opt-in Save action: the recommended, safe choice for the
                dirty-nav guard, rendered rightmost as the primary button. Only
                present when the caller supplies `onsave` (never for Delete/Archive). -->
           <AlertDialog.Action

@@ -465,7 +465,7 @@
          PaneForge fixes the split `direction` at pane-group creation, so the
          reactive `direction` prop alone can't re-orient an existing group — the
          remount is required. Collapse/selection/drag state survive because they
-         live in contexts provided OUTSIDE this block (review #1, nibs-a5sb). -->
+         live in contexts provided OUTSIDE this block. -->
     {#key position}
     <Resizable.PaneGroup
       direction={direction}
@@ -535,7 +535,7 @@
 
 <!-- Add-child type picker: an anchored popover overlaying the whole app (never
      replaces the detail view). Opened from the table [+], row context menu, or
-     the detail view's own add-child controls (nibs-fkby). -->
+     the detail view's own add-child controls. -->
 {#if view.typePicker}
   <TypePickerPopover
     parentType={view.typePicker.parentType}

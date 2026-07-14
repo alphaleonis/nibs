@@ -512,7 +512,7 @@ export class EditForm extends BaseForm implements NibFormFields {
       // server-side 409 is routed into the inline conflict resolver (below), and
       // a plain error is surfaced by the caller via the returned `error` outcome;
       // either way the raw `toast.error(<GraphQL message>)` the dispatcher would
-      // otherwise fire must NOT race ahead of that (the whole point of Item 2).
+      // otherwise fire must NOT race ahead of that (the whole point of suppressing it).
       const result = await this.deps.mutations.execute(
         updateNibCmd(this.id, input, ifMatch),
         { suppressToast: true },

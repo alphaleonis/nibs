@@ -107,7 +107,7 @@ export interface ActiveViewDeps {
    *  null-remote conflict fallback uses this as the LAST-resort feedback path:
    *  when it can neither surface the inline resolver (no snapshot to reconcile
    *  against) nor defer to a fresher subscription change, the suppressed
-   *  dispatcher toast (Item 2) would otherwise leave a rejected save silent. */
+   *  dispatcher toast would otherwise leave a rejected save silent. */
   notifyError: (message: string) => void;
   /** Prompt the dirty-nav guard and resolve the user's tri-state choice:
    *  "save" (persist then proceed), "discard" (drop edits and
@@ -146,7 +146,7 @@ export interface ActiveView {
   readonly typePicker: TypePickerState | null;
   /** True while Back/Forward must be frozen: dirty buffer or an open type picker. */
   readonly blocksHistoryNav: boolean;
-  /** True while the active edit form's null-remote conflict fallback (Item 3) is
+  /** True while the active edit form's null-remote conflict fallback is
    *  in flight. `EditForm.save()` resets `form.saving` to false BEFORE the
    *  presenter's fallback fetch begins, so the Save control (keyed on
    *  `form.saving`) would otherwise re-enable mid-fallback and a re-click could
@@ -190,7 +190,7 @@ export function createActiveView(deps: ActiveViewDeps): ActiveView {
   // Bumped whenever the live bridge silently rebaselines a clean buffer onto an
   // incoming change (see the bridge $effect). The view watches it for the toast.
   let externalApplied = $state(0);
-  // The edit form whose null-remote conflict fallback (Item 3) is CURRENTLY in
+  // The edit form whose null-remote conflict fallback is CURRENTLY in
   // flight, or null. Reactive so `savePending` can keep the Save control disabled
   // through the fallback's round-trip; also the in-flight guard (HIGH #1) that
   // stops a re-entrant save() from starting a second fetch/dispatch/toast.
@@ -331,7 +331,7 @@ export function createActiveView(deps: ActiveViewDeps): ActiveView {
    *
    * - create → f.save(); on "created" (still this episode) SAVED-transition and
    *   navigate to the new id.
-   * - edit → f.save(); a null-remote 409 runs the conflict fallback (Item 3).
+   * - edit → f.save(); a null-remote 409 runs the conflict fallback.
    */
   async function save(): Promise<CreateOutcome | EditOutcome | undefined> {
     const f = form;
@@ -357,7 +357,7 @@ export function createActiveView(deps: ActiveViewDeps): ActiveView {
     const outcome = await f.save();
 
     // A server-side 409 that raced the live subscription (remote unknown): run
-    // the null-remote conflict fallback (Item 3 — see the helper). `form === f`
+    // the null-remote conflict fallback (see the helper). `form === f`
     // is a cheap early-out; the helper re-checks it (and dirtiness / a fresher
     // sub change) before and after its fetch.
     if (outcome.kind === "conflict" && outcome.remote === null && form === f) {
@@ -366,11 +366,11 @@ export function createActiveView(deps: ActiveViewDeps): ActiveView {
     return outcome;
   }
 
-  // Item 3 — null-remote conflict fallback. A server-side 409 that raced the live
+  // Null-remote conflict fallback. A server-side 409 that raced the live
   // subscription returns `remote: null` (no snapshot to reconcile against yet). If
   // the subscription is down/lagging it may NEVER backfill `externalChange`,
   // leaving the user stuck with a dirty buffer and — now that the raw toast is
-  // suppressed (Item 2) — no feedback at all. Fetch the current remote snapshot
+  // suppressed — no feedback at all. Fetch the current remote snapshot
   // once and feed the resolver directly.
   //
   // Freshness guards (`canSurface`, never regress a fresher subscription update):

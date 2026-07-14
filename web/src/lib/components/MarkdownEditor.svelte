@@ -16,7 +16,7 @@
      *   1. feed `onchange`'s value back as `initialValue` UNMODIFIED — no trim, no
      *      CRLF/whitespace normalization. A transform makes every self-originated
      *      keystroke look out-of-band, firing a doc-replace on each keypress that
-     *      clobbers the live selection (the exact defect nibs-fva8 removed); and
+     *      clobbers the live selection; and
      *   2. NOT route that value back through a setter that can remount this
      *      component (e.g. a `bumpBodyVersion`-ing setBody) — that remounts the
      *      editor on every keystroke.

@@ -452,7 +452,7 @@
       </DropdownMenu.Trigger>
       <DropdownMenu.Content align="start">
         {#if dd.id === "state"}
-          <!-- Quick presets that OVERWRITE the status include-list (nibs-ni1v).
+          <!-- Quick presets that OVERWRITE the status include-list.
                Replaces the retired standalone hide-completed toggle: "Open" shows
                active work, "Open + deferred" mirrors the old hide-completed
                (everything except completed + scrapped). The per-status checkboxes

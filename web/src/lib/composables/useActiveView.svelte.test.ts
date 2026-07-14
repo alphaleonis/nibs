@@ -140,8 +140,8 @@ function makeDeps() {
     };
   };
 
-  // One-shot "current snapshot" fetch used by the null-remote conflict fallback
-  // (Item 3). Defaults to null (no remote); tests override per-call.
+  // One-shot "current snapshot" fetch used by the null-remote conflict fallback.
+  // Defaults to null (no remote); tests override per-call.
   const fetchSnapshot = vi.fn(async (_nibId: string): Promise<NibSnapshot | null> => null);
 
   // Last-resort feedback used by the null-remote conflict fallback when it can
@@ -842,7 +842,7 @@ describe("createActiveView · live bridge", () => {
   });
 });
 
-describe("createActiveView · null-remote conflict fallback (Item 3)", () => {
+describe("createActiveView · null-remote conflict fallback", () => {
   it("one-shot-fetches the current snapshot and feeds the resolver when save() returns a null-remote conflict", async () => {
     const h = makeDeps();
     const { view, dispose } = mount(h.deps);

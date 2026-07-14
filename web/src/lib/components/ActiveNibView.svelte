@@ -776,7 +776,7 @@
           {:else}
             <div class="anv-editwrap" class:anv-editwrap-side={previewOn && sideBySide}>
               <div class="anv-editor" data-testid="anv-editor-container">
-                <!-- ECHO-LOOP CONTRACT (nibs-fva8, see MarkdownEditor Props):
+                <!-- ECHO-LOOP CONTRACT (see MarkdownEditor Props):
                      onchange's value is stored VERBATIM into form.body and fed
                      straight back as initialValue — no transform, and NOT through
                      a bumping setBody. The {#key bodyVersion} remount is reserved
@@ -1004,7 +1004,7 @@
   /* Fills the remaining panel height. The single grid row is bounded to the
      panel height (minmax(0, 1fr)) so the body and rail cells are viewport-sized
      rather than content-sized — that lets the body editor fill and scroll
-     internally (nibs-7rly). Scroll is owned by .anv-body / .anv-rail, which each
+     internally. Scroll is owned by .anv-body / .anv-rail, which each
      scroll independently when their content overflows. */
   .anv-content {
     display: grid;

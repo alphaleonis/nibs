@@ -83,7 +83,7 @@
     flex-direction: column;
     gap: 0.25rem;
     /* Pin rail content to the shared body token; without this the links inherit
-       the app default (16px) instead of matching table/detail body (nibs-0mas). */
+       the app default (16px) instead of matching table/detail body. */
     font-size: var(--text-body-size);
   }
 

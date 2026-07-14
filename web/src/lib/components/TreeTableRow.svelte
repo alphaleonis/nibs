@@ -191,7 +191,8 @@
           <BlockedBadge count={nib.blockedByIds.length} variant={blockedVariant} />
         {/if}
         <!-- 'blocking' intentionally keeps the plain link icon; the pill/emphasis
-             treatment is blocked-only for now (follow-up: nibs-e81b). -->
+             treatment is blocked-only for now — see nibs-e81b for the planned
+             mirrored emphasis treatment. -->
         {#if nib.blockingIds.length > 0}
           <span
             data-testid="blocking-icon"
@@ -385,7 +386,7 @@
        selected/focused row's inset ring (box-shadow: inset 0 0 0 2px var(--ring)
        on .tree-row.focused). Without this the button sits flush at x=0 and its
        rounded --accent hover fill (and any focus ring) paints OVER the ring,
-       reading as bleeding past the row border (nibs-qjxm). 2px == the widest
+       reading as bleeding past the row border. 2px == the widest
        ring, so the fill starts exactly at the ring's inner edge — inside it. */
     margin-inline: 2px;
     padding: 0.125rem;

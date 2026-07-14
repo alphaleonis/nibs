@@ -153,10 +153,10 @@
   });
 </script>
 
-<!-- Genuinely non-modal settings panel (nibs-p07b): role="dialog" with
+<!-- Genuinely non-modal settings panel: role="dialog" with
      aria-modal="false", no overlay, the page stays scrollable, and focus is not
      trapped — so the table behind stays visible/interactive while the user
-     previews settings (row density now; live theme preview later, nibs-vmaq).
+     previews settings (row density now).
      Hand-wired off bits-ui Dialog because Dialog.Content hardcodes
      aria-modal="true" (not overridable via props); here we portal a plain <aside>
      and hand-wire Esc + click-outside dismissal. Do NOT reintroduce an overlay,
