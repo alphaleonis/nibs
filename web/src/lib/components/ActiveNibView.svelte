@@ -888,7 +888,10 @@
     border-radius: var(--radius-md);
     padding: 0.12rem 0.35rem;
     color: var(--foreground);
-    font-size: 1.25rem;
+    /* Scale with the global font-size preference (nibs-asuv): the title is
+       larger than the body role, so there is no shared token — multiply the
+       base size by --font-scale directly, mirroring the type-scale tokens. */
+    font-size: calc(1.25rem * var(--font-scale));
     font-weight: 620;
     letter-spacing: -0.01em;
     outline: none;

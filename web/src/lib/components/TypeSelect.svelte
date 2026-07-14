@@ -14,7 +14,7 @@
 </script>
 
 <Select.Root type="single" {value} {disabled} onValueChange={(v) => { if (v) onchange(v); }}>
-  <Select.Trigger data-testid={testId} size="sm" class="flex-1">
+  <Select.Trigger data-testid={testId} size="default" class="flex-1">
     <TypeIcon type={value} size={14} />
     {value}
   </Select.Trigger>
