@@ -480,6 +480,26 @@
 
 .prose-nib li { margin: 0.125rem 0; }
 
+/* GitHub-style task lists: the checkbox replaces the list marker, so drop the
+   bullet on items that carry one and present the box as a clickable control
+   (the click is handled via delegation; see ActiveNibView.handleProseClick). */
+/* Direct-child `:has()` forms so ONLY the task `<li>` itself drops its marker:
+   a checkbox that is an immediate child (tight lists) or nested one level through
+   a directly-child `<p>` (loose lists, where marked wraps the checkbox in a `<p>`).
+   A plain bullet that merely CONTAINS a nested checklist keeps its own marker —
+   the descendant form `li:has(input)` wrongly stripped it. Only task checkboxes
+   survive sanitization, so bare `input` == `input[data-task-ordinal]` here. */
+.prose-nib li:has(> input),
+.prose-nib li:has(> p > input) {
+  list-style: none;
+}
+
+.prose-nib input {
+  margin-right: 0.35em;
+  vertical-align: middle;
+  cursor: pointer;
+}
+
 .prose-nib code {
   background-color: var(--muted);
   border-radius: var(--radius-sm);

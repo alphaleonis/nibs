@@ -143,6 +143,40 @@ describe("editNibForm — buffering & dirty", () => {
     expect(form.dirty).toBe(false);
   });
 
+  it("setBody() replaces the body, marks dirty, and bumps bodyVersion (editor re-init)", () => {
+    const { deps } = makeMutations();
+    const form = editNibForm(deps, seed({ body: "- [ ] a" }));
+    const v0 = form.bodyVersion;
+
+    form.setBody("- [x] a");
+    expect(form.body).toBe("- [x] a");
+    expect(form.dirty).toBe(true);
+    // Bumping bodyVersion re-keys the CodeMirror editor so an open editor pane
+    // stays in sync with an out-of-band body edit (e.g. a task-checkbox flip).
+    expect(form.bodyVersion).toBe(v0 + 1);
+  });
+
+  it("a body set via setBody() is persisted by save()", async () => {
+    const { deps, calls } = makeMutations(updateResponder("etag-2"));
+    const form = editNibForm(deps, seed({ body: "- [ ] a" }));
+
+    form.setBody("- [x] a");
+    await form.save();
+
+    expect(calls[0].input.body).toBe("- [x] a");
+  });
+
+  it("discard() reverts a setBody() change", () => {
+    const { deps } = makeMutations();
+    const form = editNibForm(deps, seed({ body: "- [ ] a" }));
+
+    form.setBody("- [x] a");
+    expect(form.dirty).toBe(true);
+    form.discard();
+    expect(form.body).toBe("- [ ] a");
+    expect(form.dirty).toBe(false);
+  });
+
   it("the edit type setter never swaps the body", () => {
     const { deps } = makeMutations();
     const form = editNibForm(deps, seed({ type: "task", body: "Original body" }));

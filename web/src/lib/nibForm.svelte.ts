@@ -45,6 +45,10 @@ export interface NibFormFields {
   priority: string;
   estimate: string;
   body: string;
+  /** Replace the body wholesale AND re-init the editor (bumps bodyVersion), so an
+   *  out-of-band body edit (e.g. a rendered task-checkbox flip) stays in sync with
+   *  an open editor pane. Marks the buffer dirty exactly like typing does. */
+  setBody(value: string): void;
   readonly tags: readonly string[];
   addTag(tag: string): void;
   removeTag(tag: string): void;
@@ -187,6 +191,13 @@ abstract class BaseForm implements NibFormFields {
       this.body !== b.body ||
       !sameTags(this.#tags, b.tags)
     );
+  }
+
+  setBody(value: string): void {
+    this.body = value;
+    // Re-key the editor so an open pane picks up the new body; body change alone
+    // marks the buffer dirty via the derived `dirty` getter (body !== baseline).
+    this.bumpBodyVersion();
   }
 
   addTag(tag: string): void {

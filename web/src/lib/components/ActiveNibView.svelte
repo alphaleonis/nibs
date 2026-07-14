@@ -33,7 +33,7 @@
     FileText,
   } from "@lucide/svelte";
 
-  import { renderMarkdown } from "../markdown";
+  import { renderMarkdown, toggleTaskLine } from "../markdown";
   import { getValidChildTypes } from "../typeHierarchy";
   import { copyToClipboard } from "$lib/clipboard";
   import { getMutationStore } from "$lib/mutations";
@@ -251,6 +251,26 @@
   // --- actions ------------------------------------------------------------
   function handleProseClick(event: MouseEvent) {
     const target = event.target as HTMLElement | null;
+
+    // Task-list checkbox: flip the matching source line in the WORKING COPY so it
+    // marks the buffer dirty and persists on Save like any other edit — NO
+    // auto-save. The ordinal on the checkbox maps to the Nth task line in
+    // form.body (see toggleTaskLine). preventDefault so the native toggle doesn't
+    // fight the re-render, which re-derives the checked state from the flipped body.
+    const checkbox = target?.closest("input[data-task-ordinal]") as HTMLInputElement | null;
+    if (checkbox) {
+      event.preventDefault();
+      const f = form;
+      if (!f || disabled) return; // read-only (gone / still-loading) -> ignore
+      // Provenance is enforced in markdown.ts (only our nonce-stamped checkboxes
+      // keep `data-task-ordinal`), but parse strictly here too: require an
+      // all-digits value so an empty/whitespace attr can't coerce to 0.
+      const raw = checkbox.dataset.taskOrdinal ?? "";
+      if (!/^\d+$/.test(raw)) return;
+      f.setBody(toggleTaskLine(f.body, Number(raw)));
+      return;
+    }
+
     const anchor = target?.closest("a[data-nib-id]") as HTMLAnchorElement | null;
     if (!anchor) return;
     event.preventDefault();

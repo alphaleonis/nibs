@@ -5,6 +5,7 @@ import { flushSync } from "svelte";
 import { ACTIVE_VIEW_KEY, CONFIRM_DIALOG_KEY } from "$lib/contexts";
 import type { ConfirmDialogState, ConfirmDialogOptions } from "$lib/composables/useConfirmDialog.svelte";
 import { Preferences } from "$lib/preferences.svelte";
+import { editNibForm } from "$lib/nibForm.svelte";
 import ActiveNibView from "./ActiveNibView.svelte";
 
 // bits-ui scroll lock sets pointer-events: none on <body>, so disable the check.
@@ -71,6 +72,7 @@ interface FakeForm {
   dirty: boolean;
   saving: boolean;
   externalChange: unknown;
+  setBody: (value: string) => void;
   addTag: (t: string) => void;
   removeTag: (t: string) => void;
   discard: ReturnType<typeof vi.fn>;
@@ -94,6 +96,10 @@ function makeEditForm(overrides: Partial<FakeForm> = {}): FakeForm {
     dirty: false,
     saving: false,
     externalChange: null as unknown,
+    setBody(value: string) {
+      form.body = value;
+      form.bodyVersion++;
+    },
     addTag(t: string) {
       if (!form.tags.includes(t)) form.tags = [...form.tags, t];
     },
@@ -122,6 +128,10 @@ function makeCreateForm(overrides: Partial<FakeForm> = {}): FakeForm {
     dirty: false,
     saving: false,
     externalChange: null as unknown,
+    setBody(value: string) {
+      form.body = value;
+      form.bodyVersion++;
+    },
     addTag(t: string) {
       if (!form.tags.includes(t)) form.tags = [...form.tags, t];
     },
@@ -407,6 +417,108 @@ describe("ActiveNibView", () => {
 
       await user.click(anchor);
       expect(view.open).toHaveBeenCalledWith("nibs-gx0f");
+    });
+  });
+
+  describe("task-list checkboxes (click to toggle, persist on save)", () => {
+    // Uses a REAL EditForm so `dirty`/`discard`/`body` behave authentically —
+    // the checkbox flip must mark the buffer dirty exactly like typing does.
+    function realEditForm(body: string) {
+      return editNibForm(
+        { mutations: { execute: mockExecute } } as never,
+        {
+          id: "nibs-1t4t",
+          title: "Task nib",
+          status: "todo",
+          type: "task",
+          priority: "normal",
+          estimate: "m",
+          tags: [],
+          body,
+          etag: "e0",
+        },
+      );
+    }
+
+    function renderWithForm(form: unknown) {
+      const detail = { nib: makeDetailNib({ body: "" }), fetching: false };
+      return renderView(makeView({ form: form as FakeForm, detail }), confirmDialog);
+    }
+
+    it("renders enabled checkboxes with data-task-ordinal in the preview prose", () => {
+      const form = realEditForm("- [ ] one\n- [x] two");
+      renderWithForm(form);
+
+      const prose = screen.getByTestId("anv-body-prose");
+      const boxes = prose.querySelectorAll<HTMLInputElement>('input[type="checkbox"][data-task-ordinal]');
+      expect(boxes).toHaveLength(2);
+      expect(boxes[0].disabled).toBe(false);
+      expect(boxes[0].getAttribute("data-task-ordinal")).toBe("0");
+      expect(boxes[1].getAttribute("data-task-ordinal")).toBe("1");
+    });
+
+    it("clicking a checkbox flips the matching source line and marks the buffer dirty (no save)", async () => {
+      const form = realEditForm("- [ ] first\n- [ ] second\n- [ ] third");
+      const view = makeView({ form: form as unknown as FakeForm, detail: { nib: makeDetailNib({ body: "" }), fetching: false } });
+      renderView(view, confirmDialog);
+      expect(form.dirty).toBe(false);
+
+      const prose = screen.getByTestId("anv-body-prose");
+      const box = prose.querySelector('input[data-task-ordinal="1"]') as HTMLInputElement;
+      await user.click(box);
+
+      expect(form.body).toBe("- [ ] first\n- [x] second\n- [ ] third");
+      expect(form.dirty).toBe(true);
+      // Buffered edit only — nothing is persisted until Save.
+      expect(mockExecute).not.toHaveBeenCalled();
+      expect(view.save).not.toHaveBeenCalled();
+    });
+
+    it("maps ordinals by position with duplicate lines (no text drift)", async () => {
+      const form = realEditForm("- [ ] same\n- [ ] same\n- [ ] same");
+      renderWithForm(form);
+
+      const prose = screen.getByTestId("anv-body-prose");
+      await user.click(prose.querySelector('input[data-task-ordinal="2"]') as HTMLInputElement);
+      expect(form.body).toBe("- [ ] same\n- [ ] same\n- [x] same");
+    });
+
+    it("re-renders the preview with the flipped checkbox checked", async () => {
+      const form = realEditForm("- [ ] toggle me");
+      renderWithForm(form);
+
+      const prose = screen.getByTestId("anv-body-prose");
+      const box = () => prose.querySelector('input[data-task-ordinal="0"]') as HTMLInputElement;
+      expect(box().checked).toBe(false);
+
+      await user.click(box());
+      await waitFor(() => expect(box().checked).toBe(true));
+    });
+
+    it("Discard reverts a checkbox flip", async () => {
+      const form = realEditForm("- [ ] a\n- [ ] b");
+      renderWithForm(form);
+
+      const prose = screen.getByTestId("anv-body-prose");
+      await user.click(prose.querySelector('input[data-task-ordinal="0"]') as HTMLInputElement);
+      expect(form.body).toBe("- [x] a\n- [ ] b");
+      expect(form.dirty).toBe(true);
+
+      await user.click(screen.getByTestId("anv-discard"));
+      expect(form.body).toBe("- [ ] a\n- [ ] b");
+      expect(form.dirty).toBe(false);
+    });
+
+    it("does not toggle when the nib is read-only (gone)", async () => {
+      const form = realEditForm("- [ ] a");
+      renderView(makeView({ kind: "gone", form: form as unknown as FakeForm }), confirmDialog);
+
+      const prose = screen.getByTestId("anv-body-prose");
+      const box = prose.querySelector('input[data-task-ordinal="0"]') as HTMLInputElement;
+      await user.click(box);
+      // Body unchanged: a deleted nib is read-only, so the flip is ignored.
+      expect(form.body).toBe("- [ ] a");
+      expect(form.dirty).toBe(false);
     });
   });
 
