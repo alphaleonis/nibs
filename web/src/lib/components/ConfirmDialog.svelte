@@ -26,7 +26,8 @@
   <AlertDialog.Root open={true} onOpenChange={handleOpenChange}>
     <AlertDialog.Content
       data-testid={testId}
-      overlayProps={{ "data-testid": `${testId}-overlay` }}
+      class="z-[var(--z-modal-top)]"
+      overlayProps={{ "data-testid": `${testId}-overlay`, class: "z-[var(--z-modal-top)]" }}
       onOverlayClick={oncancel}
     >
       <AlertDialog.Header>

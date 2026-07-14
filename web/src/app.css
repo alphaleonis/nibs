@@ -180,6 +180,9 @@
   --z-dropdown: 10;
   --z-sticky: 20;
   --z-modal: 100;
+  /* Sits above --z-modal so a confirm/alert dialog raised from within an
+     expanded (full-screen) modal is not occluded by it (nibs-8cfb). */
+  --z-modal-top: 200;
 
   /* ── Semantic type scale ────────────────────────────────────────
      Theme-INVARIANT typography tokens. Do NOT override these in any
