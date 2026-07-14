@@ -62,6 +62,20 @@ test("detail panel", async ({ page }) => {
   await shot(page, "detail-panel");
 });
 
+// Task-list checkboxes in rendered nib body: clickable (nibs-7m5f) + theme-styled
+// (nibs-y6aq). tnib-t005 has a MIXED checked/unchecked checklist; capture it under a
+// dark (graphite) and the light (daylight) palette so the themed checkbox — themed
+// border, --primary fill, --primary-foreground check, no gray native default — is
+// visible in both light and dark, in both states.
+for (const { value } of THEMES) {
+  test(`task-list checkboxes — ${value}`, async ({ page }) => {
+    await openApp(page, "none", value);
+    await page.locator('tr[data-nib-id="tnib-t005"]').locator('[data-action="title"]').click();
+    await expect(page.locator('[data-testid="anv-body-prose"]')).toBeVisible({ timeout: 5_000 });
+    await shot(page, `task-checkboxes-${value}`);
+  });
+}
+
 test("active view — editing", async ({ page }) => {
   // The unified view with the body editor toggled on (CodeMirror + preview) —
   // the buffered edit experience that replaced the standalone editor modal.

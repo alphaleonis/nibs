@@ -494,10 +494,54 @@
   list-style: none;
 }
 
-.prose-nib input {
-  margin-right: 0.35em;
+/* Rendered task-list checkboxes (`- [ ]` / `- [x]`). These are the only inputs
+   that survive sanitization, so `.prose-nib input[type="checkbox"]` targets
+   exactly them. The native UA control was rendered gray: it ignores the active
+   palette AND — because no theme sets `color-scheme: dark` (the light/dark axis
+   is the `.dark` class only) — a native checkbox paints as a LIGHT-mode control
+   even on the dark themes. So style a custom box from theme tokens instead
+   (nibs-y6aq): mirrors the shadcn Checkbox — `--input` border, `--primary` fill
+   + `--primary-foreground` check when checked, `--ring` focus ring. Size/margin
+   match the former inline checkbox so there is no layout shift. */
+.prose-nib input[type="checkbox"] {
+  /* Checkmark shape as a themeable mask (not a baked-color image) so the check
+     stays legible on every palette's primary fill — e.g. Dracula's DARK check
+     on its light-purple primary, near-white elsewhere. */
+  --check-mask: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%23000' stroke-width='3.5' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M20 6 9 17l-5-5'/%3E%3C/svg%3E");
+  appearance: none;
+  -webkit-appearance: none;
+  position: relative;
+  box-sizing: border-box;
+  width: 1em;
+  height: 1em;
+  margin: 0 0.35em 0 0;
   vertical-align: middle;
+  border: 1px solid var(--input);
+  border-radius: var(--radius-sm);
+  background-color: transparent;
   cursor: pointer;
+  transition:
+    background-color 0.15s,
+    border-color 0.15s;
+}
+
+.prose-nib input[type="checkbox"]:checked {
+  background-color: var(--primary);
+  border-color: var(--primary);
+}
+
+.prose-nib input[type="checkbox"]:checked::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  background-color: var(--primary-foreground);
+  -webkit-mask: var(--check-mask) center / 0.72em 0.72em no-repeat;
+  mask: var(--check-mask) center / 0.72em 0.72em no-repeat;
+}
+
+.prose-nib input[type="checkbox"]:focus-visible {
+  outline: 2px solid var(--ring);
+  outline-offset: 2px;
 }
 
 .prose-nib code {
