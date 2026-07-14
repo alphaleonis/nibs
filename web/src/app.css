@@ -123,11 +123,11 @@
   --status-todo-text: oklch(0.765 0.177 163.223);   /* emerald-400 */
   --status-in-progress-bg: oklch(0.27 0.05 84);     /* amber tint */
   --status-in-progress-text: oklch(0.828 0.189 84.429); /* amber-400 */
-  /* deferred = "parked" (non-terminal): a muted slate-violet, deliberately
-     tinted (chroma ~0.06) so it reads as distinct from the near-neutral grays
-     of completed/scrapped; dimmed lightness signals paused rather than active. */
-  --status-deferred-bg: oklch(0.27 0.04 286);       /* muted slate-violet tint */
-  --status-deferred-text: oklch(0.65 0.06 286);     /* muted slate-violet */
+  /* deferred = "parked" (non-terminal): a dim magenta, deliberately tinted at
+     low chroma so it reads as distinct from the near-neutral grays of
+     completed/scrapped; dimmed lightness signals paused rather than active. */
+  --status-deferred-bg: oklch(0.27 0.045 340);      /* dim magenta tint */
+  --status-deferred-text: oklch(0.65 0.08 340);     /* dim magenta */
   --status-completed-bg: oklch(0.27 0.01 261);      /* neutral gray tint */
   --status-completed-text: oklch(0.707 0.022 261.325); /* gray-400 */
   --status-scrapped-bg: oklch(0.205 0.01 264);      /* gray-800 */
@@ -331,8 +331,8 @@
   --status-todo-text: oklch(0.52 0.13 160);
   --status-in-progress-bg: oklch(0.94 0.05 80);
   --status-in-progress-text: oklch(0.58 0.13 68);
-  --status-deferred-bg: oklch(0.93 0.02 286);
-  --status-deferred-text: oklch(0.5 0.05 286);
+  --status-deferred-bg: oklch(0.93 0.025 340);      /* dim magenta tint */
+  --status-deferred-text: oklch(0.48 0.11 340);     /* darker magenta for light-surface legibility */
   --status-completed-bg: oklch(0.93 0.005 261);
   --status-completed-text: oklch(0.5 0.015 261);
   --status-scrapped-bg: oklch(0.95 0.004 264);
