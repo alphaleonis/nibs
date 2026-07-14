@@ -369,6 +369,13 @@
     display: inline-flex;
     align-items: center;
     justify-content: center;
+    /* Inset the button from the row's left edge by the width of the
+       selected/focused row's inset ring (box-shadow: inset 0 0 0 2px var(--ring)
+       on .tree-row.focused). Without this the button sits flush at x=0 and its
+       rounded --accent hover fill (and any focus ring) paints OVER the ring,
+       reading as bleeding past the row border (nibs-qjxm). 2px == the widest
+       ring, so the fill starts exactly at the ring's inner edge — inside it. */
+    margin-inline: 2px;
     padding: 0.125rem;
     color: var(--muted-foreground);
     background: none;
@@ -386,5 +393,16 @@
   .row-add-child-btn:hover {
     color: var(--foreground);
     background-color: var(--accent);
+  }
+
+  /* Contained inset focus ring — mirrors .scroll-container:focus-visible in
+     app.css (outline + negative outline-offset). outline-offset: -2px draws the
+     ring INSIDE the button box so it can never bleed past the row border, unlike
+     the UA default outline it replaces. Reveal on keyboard focus so the ring is
+     visible even when the row isn't hovered. */
+  .row-add-child-btn:focus-visible {
+    opacity: 1;
+    outline: 2px solid var(--ring);
+    outline-offset: -2px;
   }
 </style>
