@@ -17,13 +17,13 @@
   import type { TypeIconInfo } from "../icons";
   import { resolveFilter, resolveViewLevel, resolveVisibleColumns, emitFilter as emitFilterHelper } from "../resolvePrefs";
   import * as DropdownMenu from "$lib/components/ui/dropdown-menu/index.js";
-  import * as Tooltip from "$lib/components/ui/tooltip/index.js";
   import { buttonVariants } from "$lib/components/ui/button/index.js";
-  import { cn } from "$lib/utils.js";
   import { Input } from "$lib/components/ui/input/index.js";
   import StatusIcon from "./StatusIcon.svelte";
   import TypeIcon from "./TypeIcon.svelte";
   import SettingsSheet from "./SettingsSheet.svelte";
+  import TooltipButton from "./TooltipButton.svelte";
+  import TooltipDropdownTrigger from "./TooltipDropdownTrigger.svelte";
 
   let {
     prefs = undefined as Preferences | undefined,
@@ -284,109 +284,100 @@
   <h1 class="min-w-0 max-w-[28ch] lg:max-w-none truncate text-xl font-semibold">Nibs{projectName ? ` - ${projectName}` : ""}</h1>
 
   <div class="flex shrink-0 items-center gap-1">
-    <!-- New button. Wrapped via Tooltip.Trigger's `child` snippet so the tooltip
-         and the DropdownMenu triggers merge onto a SINGLE button element. -->
-    <Tooltip.Root>
-      <DropdownMenu.Root bind:open={addMenuOpen}>
-        <Tooltip.Trigger>
-          {#snippet child({ props })}
-            <DropdownMenu.Trigger
-              {...props}
-              aria-label={newItemLabel}
-              data-testid="toolbar-add"
-              class={buttonVariants({ variant: "default", size: "default" })}
-            >
-              <Plus size={16} />
-              New
-            </DropdownMenu.Trigger>
-          {/snippet}
-        </Tooltip.Trigger>
+    <!-- New button. TooltipDropdownTrigger wraps the tooltip; the DropdownMenu.Trigger
+         it renders CHAINS the tooltip's handlers with the menu's open handlers. -->
+    <DropdownMenu.Root bind:open={addMenuOpen}>
+      <TooltipDropdownTrigger tooltip={newItemLabel}>
+        {#snippet trigger({ props })}
+          <DropdownMenu.Trigger
+            {...props}
+            aria-label={newItemLabel}
+            data-testid="toolbar-add"
+            class={buttonVariants({ variant: "default", size: "default" })}
+          >
+            <Plus size={16} />
+            New
+          </DropdownMenu.Trigger>
+        {/snippet}
+      </TooltipDropdownTrigger>
 
-        <DropdownMenu.Content align="start" class="w-40">
-          {#each TYPES as nibType}
-            {@const iconInfo = typeIcons[nibType]}
-            {@const TypeIconComponent = iconInfo.icon}
-            <DropdownMenu.Item
-              data-testid="toolbar-add-{nibType}"
-              class="flex items-center gap-2 text-sm"
-              onclick={() => { oncreatenew?.(nibType); }}
-            >
-              <TypeIconComponent size={14} style="color: {iconInfo.color};" />
-              {nibType}
-            </DropdownMenu.Item>
-          {/each}
-        </DropdownMenu.Content>
-      </DropdownMenu.Root>
-      <Tooltip.Content side="bottom">{newItemLabel}</Tooltip.Content>
-    </Tooltip.Root>
+      <DropdownMenu.Content align="start" class="w-40">
+        {#each TYPES as nibType}
+          {@const iconInfo = typeIcons[nibType]}
+          {@const TypeIconComponent = iconInfo.icon}
+          <DropdownMenu.Item
+            data-testid="toolbar-add-{nibType}"
+            class="flex items-center gap-2 text-sm"
+            onclick={() => { oncreatenew?.(nibType); }}
+          >
+            <TypeIconComponent size={14} style="color: {iconInfo.color};" />
+            {nibType}
+          </DropdownMenu.Item>
+        {/each}
+      </DropdownMenu.Content>
+    </DropdownMenu.Root>
 
     <!-- Separator -->
     <div class="mx-1 h-5 w-px bg-border shrink-0"></div>
 
     <!-- View selector (group-by) -->
-    <Tooltip.Root>
-      <DropdownMenu.Root bind:open={viewLevelOpen}>
-        <Tooltip.Trigger>
-          {#snippet child({ props })}
-            <DropdownMenu.Trigger
-              {...props}
-              aria-label={`${groupByLabel}: ${VIEW_LEVEL_LABELS[resolvedViewLevel]}`}
-              class={buttonVariants({ variant: "outline", size: "default" })}
-            >
-              <ViewLevelIcon size={14} style="color: {viewLevelIconInfo.color};" />
-              {VIEW_LEVEL_LABELS[resolvedViewLevel]}
-              <ChevronDown size={14} />
-            </DropdownMenu.Trigger>
-          {/snippet}
-        </Tooltip.Trigger>
+    <DropdownMenu.Root bind:open={viewLevelOpen}>
+      <TooltipDropdownTrigger tooltip={groupByLabel}>
+        {#snippet trigger({ props })}
+          <DropdownMenu.Trigger
+            {...props}
+            aria-label={`${groupByLabel}: ${VIEW_LEVEL_LABELS[resolvedViewLevel]}`}
+            class={buttonVariants({ variant: "outline", size: "default" })}
+          >
+            <ViewLevelIcon size={14} style="color: {viewLevelIconInfo.color};" />
+            {VIEW_LEVEL_LABELS[resolvedViewLevel]}
+            <ChevronDown size={14} />
+          </DropdownMenu.Trigger>
+        {/snippet}
+      </TooltipDropdownTrigger>
 
-        <DropdownMenu.Content align="end" class="w-40">
-          <DropdownMenu.RadioGroup value={resolvedViewLevel} onValueChange={(v) => { if (v) handleSelectViewLevel(v as ViewLevel); }}>
-            {#each VIEW_LEVELS as level}
-              {@const iconInfo = VIEW_LEVEL_ICON_INFO[level]}
-              {@const LevelIcon = iconInfo.icon}
-              <DropdownMenu.RadioItem value={level} class="flex items-center gap-2 text-sm">
-                <LevelIcon size={14} style="color: {iconInfo.color};" />
-                {VIEW_LEVEL_LABELS[level]}
-              </DropdownMenu.RadioItem>
-            {/each}
-          </DropdownMenu.RadioGroup>
-        </DropdownMenu.Content>
-      </DropdownMenu.Root>
-      <Tooltip.Content side="bottom">{groupByLabel}</Tooltip.Content>
-    </Tooltip.Root>
+      <DropdownMenu.Content align="end" class="w-40">
+        <DropdownMenu.RadioGroup value={resolvedViewLevel} onValueChange={(v) => { if (v) handleSelectViewLevel(v as ViewLevel); }}>
+          {#each VIEW_LEVELS as level}
+            {@const iconInfo = VIEW_LEVEL_ICON_INFO[level]}
+            {@const LevelIcon = iconInfo.icon}
+            <DropdownMenu.RadioItem value={level} class="flex items-center gap-2 text-sm">
+              <LevelIcon size={14} style="color: {iconInfo.color};" />
+              {VIEW_LEVEL_LABELS[level]}
+            </DropdownMenu.RadioItem>
+          {/each}
+        </DropdownMenu.RadioGroup>
+      </DropdownMenu.Content>
+    </DropdownMenu.Root>
 
     <!-- Columns dropdown -->
-    <Tooltip.Root>
-      <DropdownMenu.Root bind:open={columnsOpen}>
-        <Tooltip.Trigger>
-          {#snippet child({ props })}
-            <DropdownMenu.Trigger
-              {...props}
-              aria-label={columnsLabel}
-              aria-expanded={columnsOpen}
-              class={buttonVariants({ variant: "ghost", size: "icon" })}
-            >
-              <Columns3 size={16} />
-            </DropdownMenu.Trigger>
-          {/snippet}
-        </Tooltip.Trigger>
+    <DropdownMenu.Root bind:open={columnsOpen}>
+      <TooltipDropdownTrigger tooltip={columnsLabel}>
+        {#snippet trigger({ props })}
+          <DropdownMenu.Trigger
+            {...props}
+            aria-label={columnsLabel}
+            aria-expanded={columnsOpen}
+            class={buttonVariants({ variant: "ghost", size: "icon" })}
+          >
+            <Columns3 size={16} />
+          </DropdownMenu.Trigger>
+        {/snippet}
+      </TooltipDropdownTrigger>
 
-        <DropdownMenu.Content align="end" class="w-44">
-          {#each columnOptions as col}
-            <DropdownMenu.CheckboxItem
-              checked={resolvedVisibleColumns.includes(col.key)}
-              disabled={col.alwaysVisible}
-              onCheckedChange={(checked) => handleColumnToggle(col.key, checked)}
-              class="flex items-center gap-2.5 text-sm"
-            >
-              {col.label}
-            </DropdownMenu.CheckboxItem>
-          {/each}
-        </DropdownMenu.Content>
-      </DropdownMenu.Root>
-      <Tooltip.Content side="bottom">{columnsLabel}</Tooltip.Content>
-    </Tooltip.Root>
+      <DropdownMenu.Content align="end" class="w-44">
+        {#each columnOptions as col}
+          <DropdownMenu.CheckboxItem
+            checked={resolvedVisibleColumns.includes(col.key)}
+            disabled={col.alwaysVisible}
+            onCheckedChange={(checked) => handleColumnToggle(col.key, checked)}
+            class="flex items-center gap-2.5 text-sm"
+          >
+            {col.label}
+          </DropdownMenu.CheckboxItem>
+        {/each}
+      </DropdownMenu.Content>
+    </DropdownMenu.Root>
 
     <!-- Settings sheet (far-right). The gear button + its own Tooltip live inside
          SettingsSheet.svelte. -->
@@ -427,25 +418,24 @@
       class="pl-8 {hasKeyword ? 'pr-8' : ''}"
     />
     {#if hasKeyword}
-      <!-- Clear button. Plain button, so Tooltip.Trigger renders it directly (its
-           onclick chains with the tooltip's via mergeProps). Styled via the shared
-           buttonVariants primitive so it inherits the focus-visible ring, active
-           press, and radius; the positioning utilities are layered on with cn. -->
-      <Tooltip.Root>
-        <Tooltip.Trigger
-          type="button"
-          aria-label={clearKeywordLabel}
-          data-testid="filter-keyword-clear"
-          class={cn(
-            buttonVariants({ variant: "ghost", size: "icon-xs" }),
-            "absolute right-1 inset-y-0 my-auto text-muted-foreground"
-          )}
-          onclick={clearKeyword}
-        >
-          <X size={14} />
-        </Tooltip.Trigger>
-        <Tooltip.Content side="bottom">{clearKeywordLabel}</Tooltip.Content>
-      </Tooltip.Root>
+      <!-- Clear button. Plain action button: TooltipButton spreads the tooltip
+           props then lets our explicit onclick OVERRIDE. This drops the tooltip's
+           own close-on-click handler (previously chained by a bare Tooltip.Trigger),
+           which is safe here: clearKeyword sets search=undefined, so this button
+           unmounts via {#if hasKeyword} and bits-ui's trigger-unregister cleanup
+           closes the tooltip anyway. Styled via the shared buttonVariants primitive
+           (focus ring, active press, radius); the absolute-positioning utilities
+           are layered on via the class prop. -->
+      <TooltipButton
+        label={clearKeywordLabel}
+        variant="ghost"
+        size="icon-xs"
+        data-testid="filter-keyword-clear"
+        class="absolute right-1 inset-y-0 my-auto text-muted-foreground"
+        onclick={clearKeyword}
+      >
+        <X size={14} />
+      </TooltipButton>
     {/if}
   </div>
 

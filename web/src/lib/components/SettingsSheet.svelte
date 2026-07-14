@@ -7,8 +7,8 @@
   import type { RowDensity, FontSize, Theme, DetailPanelPosition, BlockedEmphasis } from "../types";
   import SegmentedControl from "./SegmentedControl.svelte";
   import ThemeSelect from "./ThemeSelect.svelte";
-  import { Button, buttonVariants } from "$lib/components/ui/button/index.js";
-  import * as Tooltip from "$lib/components/ui/tooltip/index.js";
+  import { Button } from "$lib/components/ui/button/index.js";
+  import TooltipButton from "./TooltipButton.svelte";
   import { Settings, X } from "@lucide/svelte";
   import { Portal } from "bits-ui";
   import { fly } from "svelte/transition";
@@ -161,30 +161,22 @@
      aria-modal="true" (not overridable via props); here we portal a plain <aside>
      and hand-wire Esc + click-outside dismissal. Do NOT reintroduce an overlay,
      body scroll lock, or focus trap — that would break the non-modal contract. -->
-<!-- Tooltip.Trigger's `child` snippet delegates rendering to the SAME <button>,
-     preserving bind:this={triggerEl} (needed for focus + clickOutside contains),
-     aria-expanded, aria-controls, and the onclick toggle. `{...props}` (the
-     tooltip's trigger attrs + hover attachment) is spread first so the explicit
-     onclick below wins and the panel-toggle behavior is unchanged. -->
-<Tooltip.Root>
-  <Tooltip.Trigger>
-    {#snippet child({ props })}
-      <button
-        {...props}
-        bind:this={triggerEl}
-        type="button"
-        aria-label={settingsLabel}
-        aria-expanded={open}
-        aria-controls={panelId}
-        class={buttonVariants({ variant: "ghost", size: "icon" })}
-        onclick={() => (open = !open)}
-      >
-        <Settings size={16} />
-      </button>
-    {/snippet}
-  </Tooltip.Trigger>
-  <Tooltip.Content side="bottom">{settingsLabel}</Tooltip.Content>
-</Tooltip.Root>
+<!-- TooltipButton owns the tooltip + the single <button>. bind:ref exposes that
+     button as triggerEl (needed for focus return + clickOutside `contains`), and
+     aria-expanded / aria-controls forward through. The wrapper spreads the
+     tooltip's props first and applies our onclick last, so the panel-toggle
+     OVERRIDES and behavior is unchanged. -->
+<TooltipButton
+  label={settingsLabel}
+  variant="ghost"
+  size="icon"
+  bind:ref={triggerEl}
+  aria-expanded={open}
+  aria-controls={panelId}
+  onclick={() => (open = !open)}
+>
+  <Settings size={16} />
+</TooltipButton>
 
 {#if open}
   <Portal>
