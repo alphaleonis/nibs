@@ -145,7 +145,7 @@ describe("editNibForm — buffering & dirty", () => {
     expect(form.dirty).toBe(false);
   });
 
-  it("setBody() replaces the body, marks dirty, and bumps bodyVersion (editor re-init)", () => {
+  it("setBody() replaces the body, marks dirty, and does NOT bump bodyVersion by default (in-place sync)", () => {
     const { deps } = makeMutations();
     const form = editNibForm(deps, seed({ body: "- [ ] a" }));
     const v0 = form.bodyVersion;
@@ -153,8 +153,43 @@ describe("editNibForm — buffering & dirty", () => {
     form.setBody("- [x] a");
     expect(form.body).toBe("- [x] a");
     expect(form.dirty).toBe(true);
-    // Bumping bodyVersion re-keys the CodeMirror editor so an open editor pane
-    // stays in sync with an out-of-band body edit (e.g. a task-checkbox flip).
+    // Default is in-place: no remount. MarkdownEditor syncs the out-of-band change
+    // via a minimal-diff doc transaction, preserving undo/cursor/scroll (nibs-fva8).
+    // The checkbox-flip path uses this default.
+    expect(form.bodyVersion).toBe(v0);
+  });
+
+  it("setBody(value, { reinitEditor: true }) bumps bodyVersion (forces a full editor re-init)", () => {
+    const { deps } = makeMutations();
+    const form = editNibForm(deps, seed({ body: "- [ ] a" }));
+    const v0 = form.bodyVersion;
+
+    form.setBody("- [x] a", { reinitEditor: true });
+    expect(form.body).toBe("- [x] a");
+    expect(form.dirty).toBe(true);
+    // Explicit opt-in: bump bodyVersion so the `{#key}` fully re-keys the editor.
+    expect(form.bodyVersion).toBe(v0 + 1);
+  });
+
+  it("discard() bumps bodyVersion so a reset fully re-inits the editor (no stale doc)", () => {
+    const { deps } = makeMutations();
+    const form = editNibForm(deps, seed({ body: "- [ ] a" }));
+    // A non-remounting edit first, so the only bump under test is discard's.
+    form.setBody("- [x] a", { reinitEditor: false });
+    const v0 = form.bodyVersion;
+
+    form.discard();
+    expect(form.body).toBe("- [ ] a");
+    expect(form.bodyVersion).toBe(v0 + 1);
+  });
+
+  it("applyExternal() bumps bodyVersion so load-theirs fully re-inits the editor", () => {
+    const { deps } = makeMutations();
+    const form = editNibForm(deps, seed({ etag: "etag-1", body: "mine" }));
+    const v0 = form.bodyVersion;
+
+    form.applyExternal(seed({ etag: "etag-2", body: "theirs" }));
+    expect(form.body).toBe("theirs");
     expect(form.bodyVersion).toBe(v0 + 1);
   });
 

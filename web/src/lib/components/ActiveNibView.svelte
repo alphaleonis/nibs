@@ -267,6 +267,10 @@
       // all-digits value so an empty/whitespace attr can't coerce to 0.
       const raw = checkbox.dataset.taskOrdinal ?? "";
       if (!/^\d+$/.test(raw)) return;
+      // setBody's default is in-place (non-remounting) for exactly this kind of
+      // out-of-band edit (nibs-fva8): an open editor pane syncs the flipped body
+      // via a minimal-diff CodeMirror transaction, keeping its undo history /
+      // cursor / scroll intact (rather than the {#key} remount).
       f.setBody(toggleTaskLine(f.body, Number(raw)));
       return;
     }
@@ -772,6 +776,12 @@
           {:else}
             <div class="anv-editwrap" class:anv-editwrap-side={previewOn && sideBySide}>
               <div class="anv-editor" data-testid="anv-editor-container">
+                <!-- ECHO-LOOP CONTRACT (nibs-fva8, see MarkdownEditor Props):
+                     onchange's value is stored VERBATIM into form.body and fed
+                     straight back as initialValue — no transform, and NOT through
+                     a bumping setBody. The {#key bodyVersion} remount is reserved
+                     for genuine baseline resets (discard / applyExternal /
+                     create->edit); out-of-band edits (checkbox flip) sync in place. -->
                 {#key form.bodyVersion}
                   <MarkdownEditor
                     initialValue={form.body}

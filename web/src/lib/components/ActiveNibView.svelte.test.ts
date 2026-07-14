@@ -78,7 +78,7 @@ interface FakeForm {
   dirty: boolean;
   saving: boolean;
   externalChange: unknown;
-  setBody: (value: string) => void;
+  setBody: (value: string, opts?: { reinitEditor?: boolean }) => void;
   addTag: (t: string) => void;
   removeTag: (t: string) => void;
   discard: ReturnType<typeof vi.fn>;
@@ -102,9 +102,9 @@ function makeEditForm(overrides: Partial<FakeForm> = {}): FakeForm {
     dirty: false,
     saving: false,
     externalChange: null as unknown,
-    setBody(value: string) {
+    setBody(value: string, opts?: { reinitEditor?: boolean }) {
       form.body = value;
-      form.bodyVersion++;
+      if (opts?.reinitEditor === true) form.bodyVersion++;
     },
     addTag(t: string) {
       if (!form.tags.includes(t)) form.tags = [...form.tags, t];
@@ -134,9 +134,9 @@ function makeCreateForm(overrides: Partial<FakeForm> = {}): FakeForm {
     dirty: false,
     saving: false,
     externalChange: null as unknown,
-    setBody(value: string) {
+    setBody(value: string, opts?: { reinitEditor?: boolean }) {
       form.body = value;
-      form.bodyVersion++;
+      if (opts?.reinitEditor === true) form.bodyVersion++;
     },
     addTag(t: string) {
       if (!form.tags.includes(t)) form.tags = [...form.tags, t];
@@ -478,6 +478,22 @@ describe("ActiveNibView", () => {
       // Buffered edit only — nothing is persisted until Save.
       expect(mockExecute).not.toHaveBeenCalled();
       expect(view.save).not.toHaveBeenCalled();
+    });
+
+    it("flipping a checkbox updates body + dirty WITHOUT bumping bodyVersion (no editor remount)", async () => {
+      const form = realEditForm("- [ ] a\n- [ ] b");
+      const v0 = form.bodyVersion;
+      renderWithForm(form);
+
+      const prose = screen.getByTestId("anv-body-prose");
+      await user.click(prose.querySelector('input[data-task-ordinal="0"]') as HTMLInputElement);
+
+      expect(form.body).toBe("- [x] a\n- [ ] b");
+      expect(form.dirty).toBe(true);
+      // No remount (nibs-fva8): the flip uses setBody's in-place default (no
+      // bodyVersion bump), so an open editor pane keeps its undo history / cursor /
+      // scroll — MarkdownEditor syncs the change via a minimal-diff transaction.
+      expect(form.bodyVersion).toBe(v0);
     });
 
     it("maps ordinals by position with duplicate lines (no text drift)", async () => {

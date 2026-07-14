@@ -45,10 +45,14 @@ export interface NibFormFields {
   priority: string;
   estimate: string;
   body: string;
-  /** Replace the body wholesale AND re-init the editor (bumps bodyVersion), so an
-   *  out-of-band body edit (e.g. a rendered task-checkbox flip) stays in sync with
-   *  an open editor pane. Marks the buffer dirty exactly like typing does. */
-  setBody(value: string): void;
+  /** Replace the body wholesale, marking the buffer dirty exactly like typing does.
+   *
+   *  Default (opts unset / `reinitEditor: false`) is in-place: an open editor pane
+   *  syncs the change via a minimal-diff doc transaction (see MarkdownEditor's
+   *  external-value sync), preserving undo/cursor/scroll — the safe choice for an
+   *  out-of-band edit like a rendered task-checkbox flip. Pass
+   *  `{ reinitEditor: true }` to force a full editor re-init (`{#key}` remount). */
+  setBody(value: string, opts?: { reinitEditor?: boolean }): void;
   readonly tags: readonly string[];
   addTag(tag: string): void;
   removeTag(tag: string): void;
@@ -198,11 +202,17 @@ abstract class BaseForm implements NibFormFields {
     );
   }
 
-  setBody(value: string): void {
+  setBody(value: string, opts?: { reinitEditor?: boolean }): void {
     this.body = value;
-    // Re-key the editor so an open pane picks up the new body; body change alone
-    // marks the buffer dirty via the derived `dirty` getter (body !== baseline).
-    this.bumpBodyVersion();
+    // A body change alone marks the buffer dirty via the derived `dirty` getter
+    // (body !== baseline). DEFAULT is in-place / non-remounting: an open editor
+    // pane syncs the new body via a minimal-diff doc transaction that preserves
+    // undo history / cursor / scroll (nibs-fva8) — the safe choice for an
+    // out-of-band edit like the task-checkbox flip. Pass `{ reinitEditor: true }`
+    // to force a full editor re-init (the `{#key bodyVersion}` remount) instead.
+    // (Genuine baseline resets — discard / applyExternal / afterTypeChange —
+    // call bumpBodyVersion() directly, not through here.)
+    if (opts?.reinitEditor === true) this.bumpBodyVersion();
   }
 
   addTag(tag: string): void {
