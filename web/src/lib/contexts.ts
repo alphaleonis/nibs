@@ -96,6 +96,7 @@ export function makeTestContext(
     save: async () => undefined,
     requestClose: async () => { selection.close(); },
     syncTo: () => {},
+    noteMissing: () => "closed",
     dispose: () => {},
   } satisfies ActiveView);
   // Always provide a history-nav so components that read it work in tests without extra setup.

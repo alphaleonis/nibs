@@ -4,6 +4,59 @@ import { describe, it, expect, vi, beforeEach } from "vitest";
 import App from "./App.svelte";
 import { CONFIG_QUERY, NIB_DETAIL_QUERY } from "./lib/queries";
 
+// The detail query for a nib that exists NOW but can be made to vanish mid-session
+// (deleted / archived while the user has it open). Hoisted so the mock factory and
+// the tests share one store instance: the factory serves it for `nibs-vanish`, and
+// a test settles it to `{ nib: null }` once the buffer is dirty.
+const { vanishingNib, vanishingDetailData } = await vi.hoisted(async () => {
+  const { writable } = await import("svelte/store");
+  const nib = {
+    id: "nibs-vanish",
+    title: "Vanishing nib",
+    status: "todo",
+    type: "task",
+    priority: "normal",
+    estimate: "",
+    tags: [] as string[],
+    body: "",
+    documents: [] as string[],
+    etag: "etag-vanish",
+    parent: null,
+    children: [] as unknown[],
+    blocking: [] as unknown[],
+    blockedBy: [] as unknown[],
+    mentions: [] as unknown[],
+    mentionedBy: [] as unknown[],
+  };
+  type DetailStore = {
+    fetching: boolean;
+    error: undefined;
+    data: { nib: typeof nib | null };
+    stale: boolean;
+  };
+  return {
+    vanishingNib: nib,
+    vanishingDetailData: writable<DetailStore>({
+      fetching: false,
+      error: undefined,
+      data: { nib },
+      stale: false,
+    }),
+  };
+});
+
+/** Settle the vanishing nib's detail query to "no such nib". */
+const vanishNib = () =>
+  vanishingDetailData.set({ fetching: false, error: undefined, data: { nib: null }, stale: false });
+/** Restore the vanishing nib so the shared store doesn't leak between tests. */
+const restoreVanishingNib = () =>
+  vanishingDetailData.set({
+    fetching: false,
+    error: undefined,
+    data: { nib: vanishingNib },
+    stale: false,
+  });
+
 vi.mock("@urql/svelte", async () => {
   const { readable } = await import("svelte/store");
   const actual = await vi.importActual<typeof import("@urql/svelte")>("@urql/svelte");
@@ -106,7 +159,9 @@ vi.mock("@urql/svelte", async () => {
         return configData;
       }
       if (opts.query === NIB_DETAIL_QUERY) {
-        return opts.variables?.id === "nibs-gone" ? missingDetailData : nibDetailData;
+        if (opts.variables?.id === "nibs-gone") return missingDetailData;
+        if (opts.variables?.id === "nibs-vanish") return vanishingDetailData;
+        return nibDetailData;
       }
       return nibsData;
     }),
@@ -129,6 +184,9 @@ describe("App", () => {
     // guard never runs here), so reset the light/dark seam to a clean slate.
     document.documentElement.classList.remove("dark");
     delete document.documentElement.dataset.theme;
+    // The vanishing nib's detail store is module-level, so a test that deletes it
+    // would leak into the next one.
+    restoreVanishingNib();
   });
 
   it("renders with dark theme shell containing Toolbar and TreeTable", () => {
@@ -888,11 +946,36 @@ describe("App", () => {
     expect(window.location.search).toBe("");
   });
 
+  it("keeps a DIRTY buffer when the viewed nib vanishes: shows the deleted notice, no self-close", async () => {
+    const user = userEvent.setup();
+    // Open a nib that exists, then type into it so the buffer holds unsaved edits.
+    window.history.replaceState(null, "", "/?nib=nibs-vanish");
+    render(App);
+
+    const title = await screen.findByTestId("anv-title");
+    await user.type(title, " edited");
+    expect(title).toHaveValue("Vanishing nib edited");
+
+    // The nib is deleted out from under the open editor: the detail query settles
+    // with a null nib while the buffer is dirty.
+    vanishNib();
+
+    // The unsaved edits must survive behind the read-only deleted notice — the
+    // view stays open rather than silently dropping the buffer.
+    await waitFor(() => {
+      expect(screen.getByTestId("anv-deleted-notice")).toBeInTheDocument();
+    });
+    expect(screen.getByTestId("active-nib-view")).toBeInTheDocument();
+    expect(screen.getByTestId("anv-title")).toHaveValue("Vanishing nib edited");
+    // The ?nib= URL still points at what is on screen, so it must not be healed.
+    expect(window.location.search).toBe("?nib=nibs-vanish");
+  });
+
   it("Back/Forward (popstate) retargets the docked view to the history nib", async () => {
     // Composed path: App's onPopState runs nav.handlePopState (updates selection
-    // from the owned history state) then view.syncTo(selection.selectedNibId) —
-    // the sole guard-bypass. A real popstate must retarget the docked view to the
-    // history nib without looping or desyncing.
+    // from the owned history state) then view.syncTo(selection.selectedNibId),
+    // which skips the dirty guard. A real popstate must retarget the docked view
+    // to the history nib without looping or desyncing.
     const user = userEvent.setup();
     render(App);
 

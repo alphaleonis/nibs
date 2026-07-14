@@ -86,6 +86,7 @@ function makeMockActiveView(selection: SelectionState) {
     save: vi.fn(async () => undefined),
     requestClose: vi.fn(async () => { selection.close(); }),
     syncTo: vi.fn(),
+    noteMissing: vi.fn(() => "closed"),
     dispose: vi.fn(),
   };
 }

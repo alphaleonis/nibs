@@ -196,6 +196,7 @@ interface FakeView {
   save: ReturnType<typeof vi.fn>;
   requestClose: ReturnType<typeof vi.fn>;
   syncTo: ReturnType<typeof vi.fn>;
+  noteMissing: ReturnType<typeof vi.fn>;
   dispose: ReturnType<typeof vi.fn>;
 }
 
@@ -228,6 +229,7 @@ function makeView(opts: {
     save: vi.fn(async () => ({ kind: "saved", snapshot: {} })),
     requestClose: vi.fn(),
     syncTo: vi.fn(),
+    noteMissing: vi.fn(() => "closed"),
     dispose: vi.fn(),
   });
   return view as unknown as FakeView;

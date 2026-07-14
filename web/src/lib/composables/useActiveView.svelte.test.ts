@@ -144,8 +144,8 @@ function makeDeps() {
   // Defaults to null (no remote); tests override per-call.
   const fetchSnapshot = vi.fn(async (_nibId: string): Promise<NibSnapshot | null> => null);
 
-  // Last-resort feedback used by the null-remote conflict fallback when it can
-  // neither surface the resolver nor defer to the subscription (wired to a toast).
+  // Last-resort feedback used by the null-remote conflict fallback when its fetch
+  // FAILS — no snapshot to resolve against, no deletion to report (wired to a toast).
   const notifyError = vi.fn<(message: string) => void>();
 
   const deps: ActiveViewDeps = {
@@ -368,6 +368,148 @@ describe("createActiveView · guard funnel", () => {
     view.syncTo(null);
     flushSync();
     expect(view.state.kind).toBe("closed");
+
+    dispose();
+  });
+});
+
+describe("createActiveView · missing nib", () => {
+  it("closes a CLEAN buffer and reports it closed (stale deep link)", async () => {
+    const h = makeDeps();
+    const { view, dispose } = mount(h.deps);
+
+    await view.open("n1");
+    flushSync();
+
+    // Nothing unsaved to lose: drop the view so the caller heals the URL.
+    expect(view.noteMissing("n1")).toBe("closed");
+    flushSync();
+    expect(view.state.kind).toBe("closed");
+    expect(view.form).toBeNull();
+    expect(h.confirm).not.toHaveBeenCalled();
+
+    dispose();
+  });
+
+  it("routes a DIRTY buffer to gone, preserving the form and its edits", async () => {
+    const h = makeDeps();
+    const { view, dispose } = mount(h.deps);
+
+    await view.open("n1");
+    flushSync();
+    const f = view.form;
+    h.editForms.get("n1")!.dirty = true;
+
+    // Unsaved edits must survive: same outcome as the live-subscription deletion
+    // path (gone), never a silent close.
+    expect(view.noteMissing("n1")).toBe("kept");
+    flushSync();
+    expect(view.state).toEqual({ kind: "gone", nibId: "n1", presentation: "docked" });
+    expect(view.form).toBe(f);
+    expect(view.blocksHistoryNav).toBe(true);
+    // The buffer is preserved outright — no discard prompt is involved.
+    expect(h.confirm).not.toHaveBeenCalled();
+
+    dispose();
+  });
+
+  it("ignores a stale report for a nib the view has already moved off", async () => {
+    const h = makeDeps();
+    const { view, dispose } = mount(h.deps);
+
+    await view.open("n1");
+    flushSync();
+    await view.open("n2");
+    flushSync();
+
+    // A report queued for n1 must not disturb the n2 buffer. "stale" — distinct
+    // from "kept": nothing was preserved, the view simply is not on n1.
+    expect(view.noteMissing("n1")).toBe("stale");
+    flushSync();
+    expect(view.state).toEqual({ kind: "viewing", nibId: "n2", presentation: "docked" });
+    expect(view.form).toBe(h.editForms.get("n2"));
+
+    dispose();
+  });
+
+  it("reports 'kept' for a repeat report while already gone on the same id, changing nothing", async () => {
+    const h = makeDeps();
+    const { view, dispose } = mount(h.deps);
+
+    await view.open("n1");
+    flushSync();
+    const f = view.form;
+    h.editForms.get("n1")!.dirty = true;
+
+    expect(view.noteMissing("n1")).toBe("kept");
+    flushSync();
+    const goneState = view.state;
+
+    // A second report for the SAME id while already `gone` is not stale: the
+    // buffer for n1 is still on screen behind the deleted notice. "kept" is what
+    // tells the caller the ?nib= URL still describes something and must survive.
+    expect(view.noteMissing("n1")).toBe("kept");
+    flushSync();
+    expect(view.state).toEqual(goneState);
+    expect(view.form).toBe(f);
+    expect(h.editForms.get("n1")!.dirty).toBe(true);
+
+    dispose();
+  });
+
+  it("reports 'kept' from gone even when the buffer is PRISTINE (live-bridge deletion)", async () => {
+    const h = makeDeps();
+    const { view, dispose } = mount(h.deps);
+
+    await view.open("n1");
+    flushSync();
+    const f = view.form;
+
+    // The live bridge applies DELETED with no dirty gate, so a pristine nib
+    // reaches `gone` with no report ever made. A detail-query report arriving
+    // afterward must not close it out from under the notice.
+    h.liveInsts.get("n1")!.deleted = true;
+    flushSync();
+    expect(view.state.kind).toBe("gone");
+
+    expect(view.noteMissing("n1")).toBe("kept");
+    flushSync();
+    expect(view.state).toEqual({ kind: "gone", nibId: "n1", presentation: "docked" });
+    expect(view.form).toBe(f);
+
+    dispose();
+  });
+
+  it("survives a same-id resync while gone: keeps the buffer and re-converges", async () => {
+    const h = makeDeps();
+    const { view, dispose } = mount(h.deps);
+
+    await view.open("n1");
+    flushSync();
+    const f = view.form;
+    h.editForms.get("n1")!.dirty = true;
+
+    expect(view.noteMissing("n1")).toBe("kept");
+    flushSync();
+    expect(view.state.kind).toBe("gone");
+
+    // Back/Forward while a dirty `gone` buffer blocks history nav: handlePopState
+    // re-anchors on the SAME id, and the unconditional syncTo that follows bounces
+    // gone -> viewing. The buffer key (`edit:n1`) is identical across both states,
+    // so reconcileBuffer must leave the form — and the user's edits — untouched.
+    view.syncTo("n1");
+    flushSync();
+    expect(view.state).toEqual({ kind: "viewing", nibId: "n1", presentation: "docked" });
+    expect(view.form).toBe(f);
+    expect(h.editForms.get("n1")!.dirty).toBe(true);
+
+    // The nib is still missing, so the re-armed report converges straight back to
+    // `gone` on the same buffer — no loop, no rebuild, no lost edits.
+    expect(view.noteMissing("n1")).toBe("kept");
+    flushSync();
+    expect(view.state).toEqual({ kind: "gone", nibId: "n1", presentation: "docked" });
+    expect(view.form).toBe(f);
+    expect(h.confirm).not.toHaveBeenCalled();
 
     dispose();
   });
@@ -948,13 +1090,14 @@ describe("createActiveView · null-remote conflict fallback", () => {
     dispose();
   });
 
-  it("does NOT toast when the fallback fetch resolves null (nib gone) — the missing-nib path owns that message", async () => {
+  it("routes the buffer to gone when the fallback fetch resolves null (nib gone), keeping the edits", async () => {
     const h = makeDeps();
     const { view, dispose } = mount(h.deps);
 
     await view.open("n1");
     flushSync();
     const f = h.editForms.get("n1")!;
+    const formBefore = view.form;
     f.dirty = true;
 
     // The save was rejected on a stale if-match, but the current snapshot can't be
@@ -966,10 +1109,17 @@ describe("createActiveView · null-remote conflict fallback", () => {
     await view.save();
     flushSync();
 
-    // The nib is gone: "please retry" would be wrong advice, and App's missing-nib
-    // effect owns telling the user. The fallback must stay silent (MEDIUM #3) —
-    // never surface a resolver, never toast.
     expect(h.fetchSnapshot).toHaveBeenCalledWith("n1");
+    // The fetch is network-authoritative, so it has PROVEN the deletion. It must
+    // act on that itself: nothing else is guaranteed to arrive (this fallback runs
+    // precisely when the live subscription may be lagging). `gone` renders the
+    // deleted notice, so the rejected save is not silent.
+    expect(view.state).toEqual({ kind: "gone", nibId: "n1", presentation: "docked" });
+    // The dirty buffer survives the transition — same buffer key (`edit:n1`).
+    expect(view.form).toBe(formBefore);
+    expect(h.editForms.get("n1")!.dirty).toBe(true);
+    // No resolver (nothing to reconcile against) and no "please retry" toast —
+    // that is wrong advice for a nib that no longer exists.
     expect(f.noteExternalChange).not.toHaveBeenCalled();
     expect(h.notifyError).not.toHaveBeenCalled();
 

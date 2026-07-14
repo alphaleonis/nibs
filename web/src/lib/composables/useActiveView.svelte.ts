@@ -47,6 +47,22 @@ import type { HistoryNav } from "./useHistoryNav.svelte";
  */
 export type ConfirmChoice = "save" | "discard" | "cancel";
 
+/**
+ * What `noteMissing` did with a report that a nib resolves to nothing. Each
+ * token describes what is on screen afterward, so a caller can decide whether
+ * the URL still has anything to describe:
+ *   - "closed" — the view is closed and no buffer for the nib remains. The
+ *     caller owns healing the URL and reporting the deletion.
+ *   - "kept"   — the view holds the nib's buffer in `gone`, which renders its
+ *     own deleted notice. The selection and `?nib=` URL still describe what is
+ *     shown. `gone` renders the form read-only, so a kept buffer is VISIBLE —
+ *     not retrievable or savable.
+ *   - "stale"  — the view is not on this nib at all, so nothing changed. The
+ *     report says nothing about whatever (or nothing) is on screen now, and the
+ *     caller must not close or heal on it.
+ */
+export type MissingNibOutcome = "closed" | "kept" | "stale";
+
 /** Minimal nib reference shape used by relation lists. */
 export interface DetailNibRef {
   id: string;
@@ -105,9 +121,9 @@ export interface ActiveViewDeps {
   fetchSnapshot: (nibId: string) => Promise<NibSnapshot | null>;
   /** Surface a transient error message to the user (wired to a toast). The
    *  null-remote conflict fallback uses this as the LAST-resort feedback path:
-   *  when it can neither surface the inline resolver (no snapshot to reconcile
-   *  against) nor defer to a fresher subscription change, the suppressed
-   *  dispatcher toast would otherwise leave a rejected save silent. */
+   *  when its fetch FAILS it has no snapshot to reconcile against and no
+   *  deletion to report, so the suppressed dispatcher toast would otherwise
+   *  leave a rejected save silent. */
   notifyError: (message: string) => void;
   /** Prompt the dirty-nav guard and resolve the user's tri-state choice:
    *  "save" (persist then proceed), "discard" (drop edits and
@@ -169,8 +185,22 @@ export interface ActiveView {
   cancelType(): void;
   save(): Promise<CreateOutcome | EditOutcome | undefined>;
   requestClose(): Promise<void>;
-  /** The SOLE guard-bypass: popstate / multi-select desync (history already moved). */
+  /** A guard-bypass: popstate / multi-select desync (history already moved). The
+   *  only transition that may ABANDON a dirty buffer without a confirm — see also
+   *  `noteMissing`, which bypasses the guard only where it provably cannot fire. */
   syncTo(nibId: string | null): void;
+  /** Report that `nibId` resolves to nothing (deleted / archived / stale link).
+   *  When the view is `viewing` `nibId`, the buffer's dirtiness decides its fate,
+   *  since the report itself cannot tell a stale deep link apart from a nib
+   *  deleted under a live editor:
+   *    - pristine -> "closed": drop the view; the caller heals the URL.
+   *    - dirty    -> "kept": transition to `gone`, holding the unsaved edits on
+   *      screen. This is the outcome the live-subscription deletion path also
+   *      produces for a dirty buffer, so whichever signal arrives first agrees.
+   *  Already `gone` on `nibId` -> "kept": the buffer is on screen behind the
+   *  deleted notice; nothing to do. Any other state -> "stale". See
+   *  `MissingNibOutcome` for what each token promises the caller. */
+  noteMissing(nibId: string): MissingNibOutcome;
   /** Tear down the live subscription (call on host teardown). */
   dispose(): void;
 }
@@ -325,6 +355,31 @@ export function createActiveView(deps: ActiveViewDeps): ActiveView {
   }
 
   /**
+   * Route a "this nib resolves to nothing" report into the machine. See the
+   * `ActiveView.noteMissing` contract and `MissingNibOutcome`. A local function
+   * so the null-remote conflict fallback — which proves a deletion of its own —
+   * can drive the same decision rather than re-deriving it.
+   */
+  function noteMissing(nibId: string): MissingNibOutcome {
+    const s = viewState;
+    // Already `gone` on this id: the report agrees with the state, and the
+    // buffer for `nibId` is still on screen behind the deleted notice.
+    if (s.kind === "gone" && s.nibId === nibId) return "kept";
+    // The view is not on `nibId`, so this report says nothing about its buffer.
+    if (s.kind !== "viewing" || s.nibId !== nibId) return "stale";
+    // Unsaved edits outweigh the missing nib: DELETED keeps the same buffer key
+    // (`edit:<id>`), so reconcileBuffer leaves the form — and the user's work —
+    // intact. Deliberately unguarded: the nib is gone whether or not the user
+    // confirms, and the guard's Save option cannot succeed against it.
+    if (form?.dirty) {
+      apply({ type: "DELETED" });
+      return "kept";
+    }
+    apply({ type: "CLOSE" });
+    return "closed";
+  }
+
+  /**
    * Persist the active buffer through the normal save path (the SAME routine the
    * Save control invokes). Extracted so the dirty-nav guard's "Save" branch can
    * reuse it without reimplementing the create hand-off / conflict routing.
@@ -370,8 +425,10 @@ export function createActiveView(deps: ActiveViewDeps): ActiveView {
   // subscription returns `remote: null` (no snapshot to reconcile against yet). If
   // the subscription is down/lagging it may NEVER backfill `externalChange`,
   // leaving the user stuck with a dirty buffer and — now that the raw toast is
-  // suppressed — no feedback at all. Fetch the current remote snapshot
-  // once and feed the resolver directly.
+  // suppressed — no feedback at all. Fetch the current remote snapshot once and
+  // act on its result directly: a snapshot feeds the resolver, a resolved null
+  // routes the buffer to `gone` (whose deleted notice reports the deletion), and
+  // a failed fetch toasts.
   //
   // Freshness guards (`canSurface`, never regress a fresher subscription update):
   //   - `form === f`: the buffer didn't swap to another nib mid-save.
@@ -409,12 +466,21 @@ export function createActiveView(deps: ActiveViewDeps): ActiveView {
       } else if (loadFailed) {
         // Couldn't load the current revision: the save WAS rejected and its raw
         // toast is suppressed, so degrade to a visible message rather than fail
-        // silently. NOT emitted for a deleted nib (snapshot === null, no throw):
-        // "please retry" is wrong advice when the nib is gone — the missing-nib
-        // path (App.svelte) owns that message.
+        // silently. "please retry" is right only here — a resolved null (below)
+        // means the nib is gone, which no retry fixes.
         deps.notifyError(
           "This nib changed on the server and the latest version couldn't be loaded. Please retry.",
         );
+      } else {
+        // Resolved null: this fetch is network-authoritative, so it has PROVEN
+        // the nib no longer exists. Drive the machine with that rather than wait
+        // on another signal — the subscription this fallback exists to work
+        // around may be the very thing that is lagging. `canSurface()` held, so
+        // the buffer is still `f` and dirty: noteMissing leaves it in `gone` —
+        // moving it there, or finding the live bridge already did — where the
+        // view's deleted notice reports the deletion and the rejected save
+        // stops being silent.
+        noteMissing(f.id);
       }
     } finally {
       // Identity-check the clear (regression): if the active form swapped
@@ -601,6 +667,7 @@ export function createActiveView(deps: ActiveViewDeps): ActiveView {
     syncTo(nibId) {
       apply(nibId === null ? { type: "CLOSE" } : { type: "OPEN", nibId });
     },
+    noteMissing,
     dispose() {
       if (liveDispose) {
         liveDispose();

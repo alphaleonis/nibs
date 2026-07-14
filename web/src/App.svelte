@@ -262,17 +262,33 @@
 
   function onPopState(e: PopStateEvent) {
     // handlePopState updates selection (honoring the blocked-overlay guard); the
-    // view then syncs to the resulting selection — the sole guard-bypass path.
+    // view then syncs to the resulting selection. syncTo skips the dirty guard,
+    // which is what this path needs: history has already moved, so a confirm
+    // would arrive too late to prevent the navigation it asks about.
     nav.handlePopState(e);
     view.syncTo(selection.selectedNibId);
   }
 
-  // A viewed nib that resolves to nothing (deleted / archived / stale link):
-  // close the view, heal the ?nib= URL, and tell the user. Distinct from the
-  // deleted-while-viewing "gone" state, which keeps the (cached) nib on screen.
+  // A viewed nib that resolves to nothing (deleted / archived / stale link).
+  // `view.noteMissing` owns the outcome: a pristine buffer closes (healed below),
+  // a dirty one holds the unsaved edits on screen in the "gone" state.
+  //
+  // This effect acts only while the view is `viewing`. The live-subscription
+  // deletion path (useActiveView's bridge) applies DELETED with no dirty gate, so
+  // a missing nib can reach "gone" without this effect reporting at all — the
+  // close/heal/toast below is not the only outcome for a missing nib. "gone" is
+  // not terminal either: a later syncTo on the same id returns the view to
+  // `viewing`, where this effect is live again.
   let reportedMissingFor: string | null = null;
   $effect(() => {
     const s = view.state;
+    // Only `viewing` can produce a report; `closed`, `creating`, and `gone` return
+    // early. That early return — not the latch — is what keeps a report from
+    // repeating on the state a report just produced. (`gone` does not imply a
+    // report was made: the live bridge's ungated DELETED reaches it too.) Clearing
+    // the latch here is safe: getting back to `viewing` on the same still-missing
+    // id takes an OPEN — via `open` or the guard-bypassing `syncTo` — after which
+    // noteMissing decides afresh against the buffer's dirtiness at that moment.
     if (s.kind !== "viewing") {
       reportedMissingFor = null;
       return;
@@ -287,7 +303,22 @@
     // Deferred to a microtask so we don't mutate state during the detail query's
     // own effect flush.
     queueMicrotask(() => {
-      view.syncTo(null);
+      const outcome = view.noteMissing(id);
+      if (outcome === "stale") {
+        // The view is not on `id` — it moved to another nib, to "creating", or
+        // closed. This report says nothing about whatever (or nothing) is on
+        // screen now, so nothing here may act on it. Release the latch (only if
+        // it is still ours) so a later report for `id` is not suppressed.
+        if (reportedMissingFor === id) reportedMissingFor = null;
+        return;
+      }
+      if (outcome === "kept") {
+        // `id`'s buffer is on screen in the "gone" state, so the selection and
+        // ?nib= URL still describe what is shown and must survive. The view's own
+        // deleted notice reports the deletion — no toast on top.
+        return;
+      }
+      // "closed" — nothing for `id` is on screen any more: heal the URL and say why.
       selection.close();
       nav.replaceClosed();
       toast.error(`Nib ${id} no longer exists`);
