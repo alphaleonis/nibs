@@ -282,6 +282,101 @@ describe("SelectionState", () => {
     });
   });
 
+  describe("retainOnly (prune to matching set)", () => {
+    it("drops selectedIds that are not in the matching set", () => {
+      const state = new SelectionState();
+      state.toggleSelect("nibs-a");
+      state.toggleSelect("nibs-b");
+      state.toggleSelect("nibs-c");
+
+      state.retainOnly(new Set(["nibs-a", "nibs-c"]));
+
+      expect(state.selectedIds.has("nibs-a")).toBe(true);
+      expect(state.selectedIds.has("nibs-b")).toBe(false);
+      expect(state.selectedIds.has("nibs-c")).toBe(true);
+      expect(state.selectedIds.size).toBe(2);
+    });
+
+    it("is a no-op when every selected id still matches", () => {
+      const state = new SelectionState();
+      state.toggleSelect("nibs-a");
+      state.toggleSelect("nibs-b");
+      const before = state.selectedIds;
+
+      state.retainOnly(new Set(["nibs-a", "nibs-b", "nibs-extra"]));
+
+      // Nothing dropped — the same Set reference is kept (no needless reassign).
+      expect(state.selectedIds).toBe(before);
+      expect(state.selectedIds.size).toBe(2);
+    });
+
+    it("resets anchorId to null when the anchor falls out of the set", () => {
+      const state = new SelectionState();
+      state.toggleSelect("nibs-a"); // anchor = nibs-a
+      state.toggleSelect("nibs-b"); // anchor = nibs-b
+
+      state.retainOnly(new Set(["nibs-a"]));
+
+      expect(state.anchorId).toBeNull();
+    });
+
+    it("preserves anchorId when the anchor still matches", () => {
+      const state = new SelectionState();
+      state.toggleSelect("nibs-a");
+      state.toggleSelect("nibs-b"); // anchor = nibs-b
+
+      state.retainOnly(new Set(["nibs-a", "nibs-b"]));
+
+      expect(state.anchorId).toBe("nibs-b");
+    });
+
+    it("resets focusedNibId to null when the focused row falls out", () => {
+      const state = new SelectionState();
+      state.toggleSelect("nibs-a");
+      state.toggleSelect("nibs-b"); // focus = nibs-b
+
+      state.retainOnly(new Set(["nibs-a"]));
+
+      expect(state.focusedNibId).toBeNull();
+    });
+
+    it("preserves focusedNibId when the focused row still matches", () => {
+      const state = new SelectionState();
+      state.toggleSelect("nibs-a");
+      state.toggleSelect("nibs-b"); // focus = nibs-b
+
+      state.retainOnly(new Set(["nibs-a", "nibs-b"]));
+
+      expect(state.focusedNibId).toBe("nibs-b");
+    });
+
+    it("leaves the detail-panel selection (selectedNibId) untouched even when filtered out", () => {
+      const state = new SelectionState();
+      state.select("nibs-open"); // opens the detail panel for nibs-open
+
+      state.retainOnly(new Set(["nibs-other"]));
+
+      // Detail panel stays open on the same nib — pruning only affects multi-select.
+      expect(state.selectedNibId).toBe("nibs-open");
+      // …but the multi-select set / anchor / focus are pruned.
+      expect(state.selectedIds.has("nibs-open")).toBe(false);
+      expect(state.anchorId).toBeNull();
+      expect(state.focusedNibId).toBeNull();
+    });
+
+    it("clears the whole multi-select set when nothing matches", () => {
+      const state = new SelectionState();
+      state.toggleSelect("nibs-a");
+      state.toggleSelect("nibs-b");
+
+      state.retainOnly(new Set());
+
+      expect(state.selectedIds.size).toBe(0);
+      expect(state.anchorId).toBeNull();
+      expect(state.focusedNibId).toBeNull();
+    });
+  });
+
   describe("ensureVisible", () => {
     it("ensureVisible sets pendingEnsureVisibleId", () => {
       const state = new SelectionState();

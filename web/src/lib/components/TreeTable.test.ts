@@ -1562,4 +1562,120 @@ describe("TreeTable", () => {
       expect(sc2.scrollTop).toBe(500);
     });
   });
+
+  describe("prune multi-select on filter change (nibs-mpkm)", () => {
+    function makeNibs(): TreeTableNib[] {
+      return [
+        makeTreeTableNib({ id: "nibs-m1", title: "Milestone", type: "milestone" }),
+        makeTreeTableNib({ id: "nibs-t1", title: "Task one", type: "task", parentId: "nibs-m1" }),
+        makeTreeTableNib({ id: "nibs-t2", title: "Task two", type: "task", parentId: "nibs-m1" }),
+        makeTreeTableNib({ id: "nibs-b1", title: "A bug", type: "bug", parentId: "nibs-m1" }),
+      ];
+    }
+
+    it("drops selected nibs that no longer match the active client filter", async () => {
+      const sel = new SelectionState();
+      sel.toggleSelect("nibs-t1");
+      sel.toggleSelect("nibs-t2");
+      sel.toggleSelect("nibs-b1");
+
+      mockQueryStore.mockReturnValue(
+        readable({ fetching: false, error: undefined, data: { nibs: makeNibs() }, stale: false }) as any
+      );
+
+      const { rerender } = renderTreeTable(
+        { filter: {}, viewLevel: "milestones" as ViewLevel },
+        { selection: sel },
+      );
+      await tick();
+
+      // No filter yet — all three remain selected.
+      expect(sel.selectedIds.size).toBe(3);
+
+      // Filter to tasks only — the bug is no longer selectable and must be pruned.
+      await rerender({ filter: { type: ["task"] }, viewLevel: "milestones" as ViewLevel });
+      await tick();
+
+      expect(sel.selectedIds.has("nibs-t1")).toBe(true);
+      expect(sel.selectedIds.has("nibs-t2")).toBe(true);
+      expect(sel.selectedIds.has("nibs-b1")).toBe(false);
+      expect(sel.selectedIds.size).toBe(2);
+    });
+
+    it("resets anchor/focus that fall out of the filter", async () => {
+      const sel = new SelectionState();
+      sel.toggleSelect("nibs-t1");
+      sel.toggleSelect("nibs-b1"); // anchor + focus land on the bug
+
+      mockQueryStore.mockReturnValue(
+        readable({ fetching: false, error: undefined, data: { nibs: makeNibs() }, stale: false }) as any
+      );
+
+      const { rerender } = renderTreeTable(
+        { filter: {}, viewLevel: "milestones" as ViewLevel },
+        { selection: sel },
+      );
+      await tick();
+      expect(sel.anchorId).toBe("nibs-b1");
+      expect(sel.focusedNibId).toBe("nibs-b1");
+
+      await rerender({ filter: { type: ["task"] }, viewLevel: "milestones" as ViewLevel });
+      await tick();
+
+      expect(sel.anchorId).toBeNull();
+      expect(sel.focusedNibId).toBeNull();
+    });
+
+    it("keeps the multi-selection intact when a parent row is collapsed (no filter)", async () => {
+      const user = userEvent.setup();
+      const sel = new SelectionState();
+      sel.toggleSelect("nibs-t1");
+      sel.toggleSelect("nibs-t2");
+
+      mockQueryStore.mockReturnValue(
+        readable({ fetching: false, error: undefined, data: { nibs: makeNibs() }, stale: false }) as any
+      );
+
+      const { container } = renderTreeTable(
+        { filter: {}, viewLevel: "milestones" as ViewLevel },
+        { selection: sel },
+      );
+      await tick();
+      expect(sel.selectedIds.size).toBe(2);
+
+      // Collapse the milestone — hides the two selected tasks from view.
+      const toggle = container.querySelector("tr[data-nib-id='nibs-m1'] [data-action='toggle']") as HTMLElement;
+      await user.click(toggle);
+      await tick();
+
+      // Rows are hidden…
+      expect(screen.queryByText("Task one")).not.toBeInTheDocument();
+      // …but the selection is preserved — collapse is not a filter (nibs-mpkm).
+      expect(sel.selectedIds.has("nibs-t1")).toBe(true);
+      expect(sel.selectedIds.has("nibs-t2")).toBe(true);
+      expect(sel.selectedIds.size).toBe(2);
+    });
+
+    it("does not prune while the query is still fetching (cold deep-link guard)", async () => {
+      const sel = new SelectionState();
+      sel.select("nibs-deep");
+      sel.toggleSelect("nibs-deep2");
+
+      // Query in flight: fetching, no data yet.
+      mockQueryStore.mockReturnValue(
+        readable({ fetching: true, error: undefined, data: undefined, stale: false }) as any
+      );
+
+      renderTreeTable(
+        { filter: {}, viewLevel: "milestones" as ViewLevel },
+        { selection: sel },
+      );
+      await tick();
+
+      // Data hasn't landed — selection must be left intact, not wiped to empty.
+      expect(sel.selectedIds.has("nibs-deep")).toBe(true);
+      expect(sel.selectedIds.has("nibs-deep2")).toBe(true);
+      expect(sel.selectedIds.size).toBe(2);
+    });
+  });
 });

@@ -80,6 +80,39 @@ export class SelectionState {
     return this.selectedIds.has(nibId);
   }
 
+  /**
+   * Prunes the multi-select set (and anchor/focus) down to only the ids present
+   * in `matchingIds`, dropping any that are no longer selectable (e.g. filtered
+   * out of the current view). The detail-panel selection (`selectedNibId`) is
+   * intentionally left untouched — pruning targets the bulk-action set only so a
+   * multi-drag / bulk mutation never applies to rows the user can no longer see
+   * (nibs-mpkm).
+   *
+   * Safe to call from a reactive `$effect`: only reassigns `selectedIds` when
+   * something is actually dropped, so an unchanged selection produces no writes
+   * and cannot feed a reactive update loop.
+   */
+  retainOnly(matchingIds: Set<string>): void {
+    let changed = false;
+    const next = new Set<string>();
+    for (const id of this.selectedIds) {
+      if (matchingIds.has(id)) {
+        next.add(id);
+      } else {
+        changed = true;
+      }
+    }
+    if (changed) {
+      this.selectedIds = next;
+    }
+    if (this.anchorId !== null && !matchingIds.has(this.anchorId)) {
+      this.anchorId = null;
+    }
+    if (this.focusedNibId !== null && !matchingIds.has(this.focusedNibId)) {
+      this.focusedNibId = null;
+    }
+  }
+
   /** Clears selectedIds and anchor */
   deselectAll(): void {
     this.selectedIds = new Set();
