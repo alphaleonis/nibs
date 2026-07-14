@@ -288,6 +288,179 @@ describe("editNibForm — conflict & overwrite", () => {
     expect(form.etag).toBe("etag-after");
   });
 
+  it("save() surfaces a server-side etag conflict (stale if-match) as a conflict outcome", async () => {
+    // No proactive externalChange was recorded (the subscription raced the save):
+    // the write reaches the server, which rejects it on the stale if-match.
+    const { deps, calls } = makeMutations(() => ({
+      ok: false,
+      error: "[GraphQL] etag mismatch: provided etag-1, current is etag-9",
+    }));
+    const form = editNibForm(deps, seed({ etag: "etag-1" }));
+    form.title = "Mine";
+
+    const outcome = await form.save();
+
+    // It reached the server (dispatched) and came back a conflict, not a bare error.
+    expect(calls).toHaveLength(1);
+    expect(outcome.kind).toBe("conflict");
+    if (outcome.kind === "conflict") {
+      // No remote snapshot is known from the error alone; the live subscription
+      // backfills externalChange shortly after.
+      expect(outcome.remote).toBeNull();
+    }
+  });
+
+  // F3: pin the EXACT Go ETagMismatchError.Error() format string (with and
+  // without urql's "[GraphQL] " prefix) through isEtagConflict. The Go side is
+  // pinned by TestETagMismatchErrorFormat (internal/nibcore); if a Go maintainer
+  // rewords that message, this expectation and the Go test must move together.
+  it.each([
+    "etag mismatch: provided etag-1, current is etag-9",
+    "[GraphQL] etag mismatch: provided etag-1, current is etag-9",
+  ])("classifies the exact Go etag-mismatch string %j as a conflict", async (message) => {
+    const { deps, calls } = makeMutations(() => ({ ok: false, error: message }));
+    const form = editNibForm(deps, seed({ etag: "etag-1" }));
+    form.title = "Mine";
+
+    const outcome = await form.save();
+
+    expect(calls).toHaveLength(1);
+    expect(outcome.kind).toBe("conflict");
+  });
+
+  it("save() still returns a plain error for non-conflict failures", async () => {
+    const { deps } = makeMutations(() => ({ ok: false, error: "boom: disk full" }));
+    const form = editNibForm(deps, seed({ etag: "etag-1" }));
+    form.title = "Mine";
+
+    const outcome = await form.save();
+    expect(outcome.kind).toBe("error");
+    if (outcome.kind === "error") expect(outcome.message).toBe("boom: disk full");
+  });
+
+  it("save({overwrite:true}) with no known remote bypasses if-match (last-write-wins)", async () => {
+    const { deps, calls } = makeMutations(updateResponder("etag-after"));
+    const form = editNibForm(deps, seed({ etag: "etag-1" }));
+    form.title = "Mine";
+
+    const outcome = await form.save({ overwrite: true });
+
+    expect(calls).toHaveLength(1);
+    // No known remote etag -> omit if-match entirely so the write always lands.
+    expect(calls[0].ifMatch).toBeUndefined();
+    expect(outcome.kind).toBe("saved");
+    expect(form.etag).toBe("etag-after");
+  });
+
+  it("clears the external-change warning once the buffer converges to the remote's field values (F7/AC3), and every field participates", () => {
+    const { deps } = makeMutations();
+    const form = editNibForm(deps, seed({ etag: "etag-1" }));
+
+    // Start editing (dirty), then a genuine external change is recorded. The
+    // remote differs from the baseline in ALL SEVEN fields (type included) so
+    // each one's participation in #matchesFields can be proven below.
+    form.title = "Mine edit";
+    const remote = seed({
+      etag: "etag-9",
+      title: "Theirs",
+      status: "in-progress",
+      type: "bug",
+      body: "Remote body",
+      priority: "low",
+      estimate: "L",
+      tags: ["x", "y"],
+    });
+    form.noteExternalChange(remote);
+    expect(form.externalChange).toEqual(remote);
+
+    // The user manually edits the buffer to exactly the remote's field values
+    // (etags still differ). Tags are added in the REVERSE order of the remote's
+    // to exercise sameTags order-insensitivity (a position-wise compare would
+    // wrongly keep the warning up). There is nothing left to resolve → it clears.
+    form.title = "Theirs";
+    form.status = "in-progress";
+    form.type = "bug";
+    form.body = "Remote body";
+    form.priority = "low";
+    form.estimate = "L";
+    form.removeTag("alpha");
+    form.removeTag("beta");
+    form.addTag("y");
+    form.addTag("x"); // buffer tags ["y","x"] vs remote ["x","y"] — reordered but equal
+    expect(form.externalChange).toBeNull();
+
+    // Prove each of the 7 fields participates: diverge it in isolation from the
+    // fully-converged state and the warning must re-surface; restoring clears it.
+    // A #matchesFields that silently dropped any field comparison would stay null.
+    const check = (diverge: () => void, restore: () => void) => {
+      diverge();
+      expect(form.externalChange).toEqual(remote);
+      restore();
+      expect(form.externalChange).toBeNull();
+    };
+    check(() => (form.title = "x"), () => (form.title = "Theirs"));
+    check(() => (form.status = "todo"), () => (form.status = "in-progress"));
+    check(() => (form.type = "task"), () => (form.type = "bug"));
+    check(() => (form.priority = "high"), () => (form.priority = "low"));
+    check(() => (form.estimate = "M"), () => (form.estimate = "L"));
+    check(() => (form.body = "Other body"), () => (form.body = "Remote body"));
+    check(() => form.addTag("z"), () => form.removeTag("z"));
+
+    // Diverging again re-surfaces the warning (it is derived, not one-shot).
+    form.title = "Diverged";
+    expect(form.externalChange).toEqual(remote);
+  });
+
+  it("a converged dirty buffer SAVES with the remote etag rather than a silent no-op (HIGH #1)", async () => {
+    // AC3 exposed a dead Save: after a dirty buffer's edits converge to the
+    // remote's field values the getter reads null (banner hides) but the buffer
+    // stays dirty-vs-baseline, so Save stays enabled. The old save() read the raw
+    // #externalChange and short-circuited to {conflict} with no dispatch and no
+    // feedback. The content already equals the server's current revision, so the
+    // fix performs a REAL write using the remote's etag as if-match.
+    const { deps, calls } = makeMutations(updateResponder("etag-converged"));
+    const form = editNibForm(deps, seed({ etag: "etag-1" }));
+
+    // Dirty edit, then a genuine external change is recorded.
+    form.title = "Mine edit";
+    const remote = seed({ etag: "etag-9", title: "Theirs", body: "Remote body" });
+    form.noteExternalChange(remote);
+    expect(form.externalChange).toEqual(remote);
+
+    // Converge the buffer to the remote's field values (etags still differ).
+    form.title = "Theirs";
+    form.body = "Remote body";
+    expect(form.externalChange).toBeNull(); // getter converged → banner hidden
+    expect(form.dirty).toBe(true); // but still dirty vs the ORIGINAL baseline
+
+    const outcome = await form.save();
+
+    // A real write happened (not a silent conflict no-op), using the remote etag.
+    expect(calls).toHaveLength(1);
+    expect(calls[0].ifMatch).toBe("etag-9");
+    expect(outcome.kind).toBe("saved");
+    // The buffer rebaselines → clean (Save legitimately disables), external cleared.
+    expect(form.dirty).toBe(false);
+    expect(form.externalChange).toBeNull();
+    expect(form.etag).toBe("etag-converged");
+  });
+
+  it("sameTags is duplicate-sensitive: a duplicate-tag remote does not falsely converge (#matchesFields)", () => {
+    // sameTags feeds #matchesFields (the AC3 convergence decision, which after
+    // HIGH #1 gates a write path). A duplicate-INSENSITIVE compare would treat
+    // buffer ["x","x"] as equal to remote ["x","y"] (same length, distinct set
+    // ⊆), silently hiding a real difference. Every non-tag field is equal here,
+    // so the tag comparison alone decides.
+    const { deps } = makeMutations();
+    const form = editNibForm(deps, seed({ etag: "etag-1", tags: ["x", "x"] }));
+
+    const remote = seed({ etag: "etag-9", tags: ["x", "y"] });
+    form.noteExternalChange(remote);
+
+    // Buffer tags ["x","x"] are NOT equal to remote tags ["x","y"] as multisets.
+    expect(form.externalChange).toEqual(remote);
+  });
+
   it("applyExternal rebases baseline and fields to the remote and clears the external change", () => {
     const { deps } = makeMutations();
     const form = editNibForm(deps, seed({ etag: "etag-1" }));

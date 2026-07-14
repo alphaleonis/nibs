@@ -18,6 +18,7 @@
  * so the shell is boundary-testable with stubs under `$effect.root`.
  */
 
+import { untrack } from "svelte";
 import { getValidChildTypes } from "../typeHierarchy";
 import {
   reduce,
@@ -119,6 +120,10 @@ export interface ActiveView {
   readonly typePicker: TypePickerState | null;
   /** True while Back/Forward must be frozen: dirty buffer or an open type picker. */
   readonly blocksHistoryNav: boolean;
+  /** Monotonic counter bumped each time a CLEAN buffer is silently rebaselined
+   *  onto an incoming change (in-app or on-disk). The view watches it to fire a
+   *  minor "updated" toast; the value itself is opaque (only deltas matter). */
+  readonly externalApplied: number;
 
   open(nibId: string): Promise<void>;
   expand(): void;
@@ -149,6 +154,9 @@ export function createActiveView(deps: ActiveViewDeps): ActiveView {
   // The add-child type picker overlays the view; it is deliberately NOT part of
   // the ViewState machine (see TypePickerState) so it never disturbs the buffer.
   let typePicker = $state.raw<TypePickerState | null>(null);
+  // Bumped whenever the live bridge silently rebaselines a clean buffer onto an
+  // incoming change (see the bridge $effect). The view watches it for the toast.
+  let externalApplied = $state(0);
 
   // Non-reactive bookkeeping.
   let currentKey: string | null = null;
@@ -159,6 +167,11 @@ export function createActiveView(deps: ActiveViewDeps): ActiveView {
   // can seed the first edit form for the brand-new id (whose detail query hasn't
   // run yet), avoiding a blank flash. Consumed exactly once, then cleared.
   let pendingCreateSeed: NibSnapshot | null = null;
+  // One-shot guard for the async detail-query seed (further below): the buffer
+  // key it last seeded. The live bridge ALSO stamps it once it has taken over
+  // syncing (F4), so a slower detail seed that resolves with an older snapshot
+  // can't regress a buffer the bridge already advanced.
+  let seededKey: string | null = null;
 
   /** Content-identity of the current buffer, or null when there is none. */
   function bufferKey(s: ViewState): string | null {
@@ -235,6 +248,17 @@ export function createActiveView(deps: ActiveViewDeps): ActiveView {
 
   // Bridge the live subscription into the machine + form. Reads `live`/`form`
   // reactively so it re-runs both on a target swap and on a new event.
+  //
+  // Reconciliation axis is DIRTY vs NOT-DIRTY, not in-app vs external — the
+  // subscription can't tell whose mutation it is (a context-menu status change
+  // is a distinct etag, so it is NOT self-echo-suppressed), and the right
+  // behavior only depends on whether we'd lose unsaved edits:
+  //   - not dirty -> silently rebaseline onto the incoming version (applyExternal)
+  //     and bump `externalApplied` so the view fires a minor "updated" toast.
+  //   - dirty     -> record it (noteExternalChange) so the view shows a persistent
+  //     "Load theirs / Overwrite" warning region instead of clobbering edits.
+  // `dirty` is read untracked so a later keystroke doesn't re-run this bridge —
+  // only a genuinely new `ext` (guarded by `ext !== lastExternal`) acts.
   $effect(() => {
     const l = live;
     const f = form;
@@ -245,9 +269,39 @@ export function createActiveView(deps: ActiveViewDeps): ActiveView {
     if (l.deleted) apply({ type: "DELETED" });
     const ext = l.external;
     if (ext && ext !== lastExternal && f && f.mode === "edit") {
-      f.noteExternalChange(ext);
+      if (untrack(() => f.dirty)) {
+        f.noteExternalChange(ext);
+      } else {
+        f.applyExternal(ext);
+        externalApplied++;
+      }
+      // F4: the live bridge is now the source of truth for this buffer — stamp
+      // the one-shot seed guard so a slower detail-query seed that resolves with
+      // an OLDER snapshot can't regress the buffer/etag backward (both
+      // applyExternal paths apply unconditionally, with no freshness check).
+      seededKey = currentKey;
     }
     lastExternal = ext;
+  });
+
+  // F1: a NOT-dirty buffer must never be able to force-overwrite the remote's
+  // newer change with stale content. When the buffer converges back to not-dirty
+  // while an external change is still pending — the user hit Discard, or edited
+  // back to the baseline, with the conflict resolver up — adopt the remote
+  // through the CLEAN path: applyExternal rebaselines onto it and clears the
+  // resolver, and we advance externalApplied for the minor "updated" toast. This
+  // makes a stale Overwrite structurally impossible (a not-dirty buffer has no
+  // resolver to Overwrite from). Distinct from the bridge above (which reacts to
+  // new live events); this fires on the dirty→not-dirty transition itself.
+  $effect(() => {
+    const f = form;
+    if (!f || f.mode !== "edit") return;
+    const ext = f.externalChange; // tracked: convergence-derived, null when resolved
+    const dirty = f.dirty; // tracked
+    if (ext && !dirty) {
+      f.applyExternal(ext);
+      externalApplied++;
+    }
   });
 
   /** Project a loaded detail nib onto the form's committed-snapshot shape. */
@@ -274,7 +328,6 @@ export function createActiveView(deps: ActiveViewDeps): ActiveView {
   // once per buffer identity (`currentKey`) so a background refetch never
   // clobbers in-progress edits, and only while the buffer is pristine — a dirty
   // buffer is left untouched (the one-shot still arms so it won't re-seed later).
-  let seededKey: string | null = null;
   $effect(() => {
     const f = form;
     const d = detailView;
@@ -312,6 +365,9 @@ export function createActiveView(deps: ActiveViewDeps): ActiveView {
     },
     get blocksHistoryNav() {
       return Boolean(form?.dirty) || typePicker !== null;
+    },
+    get externalApplied() {
+      return externalApplied;
     },
 
     async open(nibId) {

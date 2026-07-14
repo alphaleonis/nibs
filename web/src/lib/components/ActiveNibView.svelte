@@ -172,6 +172,23 @@
     bodyMode = isCreating ? "edit" : "preview";
   });
 
+  // Minor "Nib updated" toast when the presenter silently rebaselines a CLEAN
+  // buffer onto an incoming change (in-app status change, on-disk edit, ...).
+  // Tracks the presenter's monotonic counter; the first observed value is
+  // adopted without toasting, so mount / nib-swap never fires a spurious toast.
+  let externalAppliedSeen = -1;
+  $effect(() => {
+    const n = view.externalApplied;
+    if (externalAppliedSeen === -1) {
+      externalAppliedSeen = n;
+      return;
+    }
+    if (n !== externalAppliedSeen) {
+      externalAppliedSeen = n;
+      toast.success("Nib updated");
+    }
+  });
+
   // Two INDEPENDENT width breakpoints, both fed by one ResizeObserver:
   //   (a) rootWidth >= 720  -> relationships move to a right rail (else stack)
   //   (b) bodyColWidth >= 560 -> editor + preview sit side-by-side (else stack)
@@ -218,26 +235,28 @@
   async function handleSave() {
     const f = form;
     if (!f || !f.dirty || f.saving) return;
+    // Capture the saved instance + id BEFORE the await. The buffer can swap to
+    // another nib mid-flight (popstate / syncTo guard-bypass), so the live
+    // `form`/`nibId` getters read AFTER the await may point at a different nib
+    // (HIGH #2). Re-check `form === f` before touching the saved instance and
+    // never read the live getters for these branches.
+    const savedId = f.mode === "edit" ? f.id : null;
     const outcome = await view.save();
     if (!outcome) return;
     if (outcome.kind === "error") {
       toast.error(outcome.message ?? "Save failed");
     } else if (outcome.kind === "conflict") {
-      confirmDialog.showConfirm({
-        title: "Overwrite external changes?",
-        message: "This nib was modified externally. Saving will overwrite those changes.",
-        label: "Overwrite",
-        variant: "warning",
-        action: async () => {
-          confirmDialog.close();
-          const editForm = form as EditForm;
-          await editForm.save({ overwrite: true });
-        },
-      });
+      // Stale-base save: route into the SAME persistent, non-modal resolver as
+      // the proactive path (Load theirs / Overwrite) — never a modal. Attach the
+      // conflicting snapshot to the SAVED instance only if it is still the live
+      // buffer; a swap means nib A's snapshot must never land on nib B's form.
+      if (outcome.remote && form === f && f.mode === "edit") f.noteExternalChange(outcome.remote);
     } else if (outcome.kind === "created") {
       toast.success(`Created ${outcome.id}`);
     } else if (outcome.kind === "saved") {
-      toast.success(`Updated ${nibId ?? ""}`.trim());
+      // Only toast for a save whose buffer is still on screen, and name it with
+      // the captured id (not the possibly-swapped live `nibId`).
+      if (form === f) toast.success(`Updated ${savedId ?? ""}`.trim());
     }
   }
 
@@ -245,9 +264,34 @@
     form?.discard();
   }
 
-  function handleReloadExternal() {
+  // "Load theirs": drop my unsaved edits and adopt the incoming snapshot. Guard
+  // `saving` (F5): a Load-theirs mid-Overwrite would diverge the buffer from disk
+  // (the in-flight save's continuation rebaselines against pre-interleave fields).
+  function handleLoadTheirs() {
     const f = form;
-    if (f && f.mode === "edit" && f.externalChange) f.applyExternal(f.externalChange);
+    // `isGone`: a deleted nib is read-only; never resolve a conflict against it
+    // (the resolver is also hidden in that state — MEDIUM #3, belt-and-braces).
+    if (isGone || !f || f.mode !== "edit" || f.saving || !f.externalChange) return;
+    f.applyExternal(f.externalChange);
+  }
+
+  // "Overwrite": keep my edits and force-save over the remote (last-write-wins).
+  // Guards `dirty` (F1) so a reverted/clean buffer can't force a stale write, and
+  // `saving` to block a double-Overwrite.
+  async function handleOverwrite() {
+    const f = form;
+    // `isGone`: never force-save over a deleted nib (would error / risk
+    // resurrecting stale content); the resolver is hidden here too — MEDIUM #3.
+    if (isGone || !f || f.mode !== "edit" || f.saving || !f.dirty) return;
+    // Capture the id BEFORE the await so the success toast names the saved nib,
+    // not whatever the live `nibId` derived reads after the buffer may have swapped.
+    const savedId = f.id;
+    const outcome = await f.save({ overwrite: true });
+    if (!outcome) return;
+    if (outcome.kind === "error") toast.error(outcome.message ?? "Save failed");
+    // Only toast for a save whose buffer is still on screen (mirror handleSave):
+    // a mid-overwrite swap means this success belongs to a nib no longer shown.
+    else if (outcome.kind === "saved" && form === f) toast.success(`Updated ${savedId}`);
   }
 
   function handleNewChild(anchor: AnchorRect) {
@@ -560,13 +604,46 @@
         <div class="anv-deleted-notice" data-testid="anv-deleted-notice">This nib was deleted</div>
       {/if}
 
-      <!-- ============ External-change (conflict) banner ============ -->
-      {#if form.mode === "edit" && form.externalChange}
-        <div class="anv-conflict" data-testid="anv-conflict-banner">
-          <span>This nib was modified externally.</span>
-          <Button variant="outline" size="sm" data-testid="anv-conflict-reload" onclick={handleReloadExternal}>
-            Reload
-          </Button>
+      <!-- ===== External-change resolver (persistent, non-modal surface) =====
+           Only shows when the change arrived while the buffer had unsaved edits
+           (a clean buffer is rebaselined silently by the presenter). The
+           `form.dirty` gate is load-bearing (F1): a not-dirty buffer must never
+           expose Overwrite, or it could force stale/reverted content over the
+           remote's newer change. It stays until resolved via Load theirs or
+           Overwrite. role="dialog" + aria-modal="false" follows the SettingsSheet
+           non-modal idiom (F6) — NOT role="alert" (that assertive live region is
+           for brief non-interactive status text, not focusable controls).
+           Hidden in the `gone` state (MEDIUM #3): a deleted nib is read-only, so
+           the deleted notice alone shows — never it and this resolver together. -->
+      {#if !isGone && form.mode === "edit" && form.externalChange && form.dirty}
+        <div
+          class="anv-conflict"
+          data-testid="anv-conflict-banner"
+          role="dialog"
+          aria-modal="false"
+          aria-label="This nib changed elsewhere — resolve the conflict"
+        >
+          <span>This nib changed elsewhere while you were editing — keep your edits or load the new version.</span>
+          <div class="anv-conflict-actions">
+            <Button
+              variant="outline"
+              size="sm"
+              data-testid="anv-conflict-load-theirs"
+              disabled={form.saving}
+              onclick={handleLoadTheirs}
+            >
+              Load theirs
+            </Button>
+            <Button
+              variant="outline"
+              size="sm"
+              data-testid="anv-conflict-overwrite"
+              disabled={!form.dirty || form.saving}
+              onclick={handleOverwrite}
+            >
+              Overwrite
+            </Button>
+          </div>
         </div>
       {/if}
 
@@ -825,6 +902,12 @@
     border-radius: var(--radius-md);
     font-size: var(--text-body-size);
     font-weight: 500;
+  }
+
+  .anv-conflict-actions {
+    display: flex;
+    gap: 0.4rem;
+    flex: none;
   }
 
   /* ---------- metadata band (full-bleed tinted strip) ---------- */

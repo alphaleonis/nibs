@@ -26,6 +26,7 @@ interface FakeEdit {
   etag: string;
   title: string;
   body: string;
+  externalChange: NibSnapshot | null;
   noteExternalChange: ReturnType<typeof vi.fn>;
   applyExternal: ReturnType<typeof vi.fn>;
   save: ReturnType<typeof vi.fn>;
@@ -57,18 +58,28 @@ function makeDeps() {
 
   // Honors a create→edit `seed` (Fix 2): the edit form adopts the seed's
   // title/body/etag so the create hand-off carries the new nib's content.
+  // A `$state` object so `dirty`/`externalChange` are reactive — the presenter's
+  // conflict-adopt effect (F1) tracks them. The spies faithfully mirror the real
+  // EditForm's state transitions (noteExternalChange records, applyExternal clears).
   const editForm = (nibId: string, seed?: NibSnapshot): EditForm => {
-    const f: FakeEdit = {
+    const f = $state<FakeEdit>({
       mode: "edit",
       id: nibId,
       dirty: false,
       etag: seed?.etag ?? "e0",
       title: seed?.title ?? "",
       body: seed?.body ?? "",
-      noteExternalChange: vi.fn(),
-      applyExternal: vi.fn(),
+      externalChange: null,
+      noteExternalChange: vi.fn((remote: NibSnapshot) => {
+        f.externalChange = remote;
+      }),
+      applyExternal: vi.fn((remote: NibSnapshot) => {
+        f.externalChange = null;
+        f.etag = remote.etag;
+        f.dirty = false;
+      }),
       save: vi.fn(async () => ({ kind: "saved", snapshot: snap({ id: nibId }) })),
-    };
+    });
     editForms.set(nibId, f);
     return f as unknown as EditForm;
   };
@@ -436,18 +447,110 @@ describe("createActiveView · live bridge", () => {
     dispose();
   });
 
-  it("feeds live.external into the edit form via noteExternalChange", async () => {
+  it("feeds live.external into a DIRTY edit form via noteExternalChange (persistent warning path)", async () => {
     const h = makeDeps();
     const { view, dispose } = mount(h.deps);
 
     await view.open("n1");
     flushSync();
+    // Unsaved edits present -> the incoming change must not clobber the buffer;
+    // it surfaces as a persistent warning region instead.
+    h.editForms.get("n1")!.dirty = true;
 
     const remote = snap({ id: "n1", etag: "e9", title: "Theirs" });
     h.liveInsts.get("n1")!.external = remote;
     flushSync();
 
     expect(h.editForms.get("n1")!.noteExternalChange).toHaveBeenCalledWith(remote);
+    expect(h.editForms.get("n1")!.applyExternal).not.toHaveBeenCalled();
+    // No auto-apply happened, so the "updated" toast counter must not advance.
+    expect(view.externalApplied).toBe(0);
+
+    dispose();
+  });
+
+  it("silently rebaselines a CLEAN edit form via applyExternal and advances externalApplied (toast path)", async () => {
+    const h = makeDeps();
+    const { view, dispose } = mount(h.deps);
+
+    await view.open("n1");
+    flushSync();
+    const f = h.editForms.get("n1")!;
+    expect(f.dirty).toBe(false);
+    expect(view.externalApplied).toBe(0);
+
+    const remote = snap({ id: "n1", etag: "e9", title: "Theirs" });
+    h.liveInsts.get("n1")!.external = remote;
+    flushSync();
+
+    // Not dirty -> rebaseline onto the incoming version (no warning region),
+    // and advance the counter the view watches to fire the minor toast.
+    expect(f.applyExternal).toHaveBeenCalledWith(remote);
+    expect(f.noteExternalChange).not.toHaveBeenCalled();
+    expect(view.externalApplied).toBe(1);
+
+    dispose();
+  });
+
+  it("adopts the pending remote via the CLEAN path when a dirty buffer goes not-dirty again (Discard/undo) — F1", async () => {
+    const h = makeDeps();
+    const { view, dispose } = mount(h.deps);
+
+    await view.open("n1");
+    flushSync();
+    const f = h.editForms.get("n1")!;
+    // Unsaved edits present when a genuine external change lands -> recorded as a
+    // warning (the persistent Load-theirs / Overwrite resolver).
+    f.dirty = true;
+    const remote = snap({ id: "n1", etag: "e9", title: "Theirs" });
+    h.liveInsts.get("n1")!.external = remote;
+    flushSync();
+    expect(f.noteExternalChange).toHaveBeenCalledWith(remote);
+    expect(f.externalChange).toEqual(remote);
+    expect(f.applyExternal).not.toHaveBeenCalled();
+    expect(view.externalApplied).toBe(0);
+
+    // User hits Discard (or edits back to baseline): the buffer converges to
+    // not-dirty while the external change is still pending.
+    f.dirty = false;
+    flushSync();
+
+    // The presenter adopts the remote through the CLEAN path (applyExternal
+    // rebaselines + clears the resolver) and advances the toast counter — so a
+    // stale Overwrite over the remote's newer change is structurally impossible.
+    expect(f.applyExternal).toHaveBeenCalledWith(remote);
+    expect(f.externalChange).toBeNull();
+    expect(view.externalApplied).toBe(1);
+
+    dispose();
+  });
+
+  it("does not regress the buffer when an older detail seed resolves after the live bridge advanced it — F4", async () => {
+    const h = makeDeps();
+    const { view, dispose } = mount(h.deps);
+
+    await view.open("n1");
+    flushSync();
+    const f = h.editForms.get("n1")!;
+    expect(f.dirty).toBe(false);
+
+    // A fresh external write lands via the live bridge BEFORE the (slower) detail
+    // query resolves — the bridge silently rebaselines the clean buffer onto it.
+    const fresh = snap({ id: "n1", etag: "e9", title: "Fresh remote" });
+    h.liveInsts.get("n1")!.external = fresh;
+    flushSync();
+    expect(f.applyExternal).toHaveBeenCalledTimes(1);
+    expect(f.applyExternal).toHaveBeenCalledWith(fresh);
+
+    // Now the detail query resolves with an OLDER server-read snapshot. The
+    // one-shot seed must NOT re-apply it over the fresher bridge state (that would
+    // regress fields + etag backward, surfacing as a spurious 409 on next save).
+    h.detailInsts.get("n1")!.nib = { id: "n1", title: "Stale", etag: "e0" };
+    h.detailInsts.get("n1")!.fetching = false;
+    flushSync();
+
+    expect(f.applyExternal).toHaveBeenCalledTimes(1);
+    expect(f.applyExternal).toHaveBeenLastCalledWith(fresh);
 
     dispose();
   });

@@ -59,7 +59,11 @@ export type CreateOutcome =
 
 export type EditOutcome =
   | { kind: "saved"; snapshot: NibSnapshot }
-  | { kind: "conflict"; remote: NibSnapshot }
+  // `remote` is the known-conflicting snapshot when we detected the change
+  // proactively (via `noteExternalChange`); it is `null` for a server-side
+  // if-match rejection that raced the subscription — the live subscription
+  // backfills the snapshot into `externalChange` moments later.
+  | { kind: "conflict"; remote: NibSnapshot | null }
   | { kind: "error"; message?: string };
 
 // --- internals ------------------------------------------------------------
@@ -87,11 +91,36 @@ function fieldsFromSnapshot(s: NibSnapshot): FieldValues {
   };
 }
 
-/** Order-insensitive tag-set equality (add-then-remove returns to baseline). */
+/**
+ * Recognize a server-side optimistic-concurrency rejection (stale if-match).
+ * The Go backend surfaces `ETagMismatchError` whose message is exactly
+ * "etag mismatch: provided <x>, current is <y>" (see internal/nibcore/core.go,
+ * `ETagMismatchError.Error`); urql prefixes it with "[GraphQL] ". A substring
+ * match keeps the check resilient to that wrapping.
+ *
+ * This is a cross-boundary STRING contract — the GraphQL error carries no
+ * structured code today, so this human-readable text is the only signal. The
+ * exact format is pinned on both sides: Go `TestETagMismatchErrorFormat`
+ * (internal/nibcore) and the "classifies the exact Go etag-mismatch string"
+ * cases in nibForm.svelte.test.ts. Rewording the Go message silently breaks
+ * conflict routing here — keep them in lockstep. (A future `extensions.code =
+ * "ETAG_MISMATCH"` would let us classify structurally; deferred, see nibs-k82m.)
+ */
+function isEtagConflict(message: string | undefined): boolean {
+  return !!message && /etag mismatch/i.test(message);
+}
+
+/**
+ * Order-insensitive but duplicate-SENSITIVE tag equality (a multiset compare via
+ * a sorted element-wise comparison). Add-then-remove returns to baseline, while
+ * ["x","x"] and ["x","y"] are correctly unequal — the latter mattered once this
+ * fed #matchesFields (the convergence decision that gates a real write path).
+ */
 function sameTags(a: readonly string[], b: readonly string[]): boolean {
   if (a.length !== b.length) return false;
-  const set = new Set(b);
-  return a.every((t) => set.has(t));
+  const sa = [...a].sort();
+  const sb = [...b].sort();
+  return sa.every((t, i) => t === sb[i]);
 }
 
 /**
@@ -350,7 +379,30 @@ export class EditForm extends BaseForm implements NibFormFields {
   }
 
   get externalChange(): NibSnapshot | null {
-    return this.#externalChange;
+    const remote = this.#externalChange;
+    // AC3: once the working copy has converged back to the recorded remote's
+    // field values there is nothing left to resolve — clear the warning even
+    // though the etags still differ. This is DERIVED (not one-shot): diverging
+    // again re-surfaces it. `save()` applies the SAME convergence check, so the
+    // two accessors never disagree: on a converged buffer save() performs a real
+    // write against the remote etag rather than a silent no-op (HIGH #1).
+    if (!remote || this.#matchesFields(remote)) return null;
+    return remote;
+  }
+
+  /** Whether the working copy already equals the remote snapshot's field values.
+   *  Title is compared trimmed — save() writes `title.trim()`, so convergence must
+   *  be judged against what would actually be persisted, not the raw buffer. */
+  #matchesFields(remote: NibSnapshot): boolean {
+    return (
+      this.title.trim() === remote.title &&
+      this.status === remote.status &&
+      this.type === remote.type &&
+      this.priority === remote.priority &&
+      this.estimate === remote.estimate &&
+      this.body === remote.body &&
+      sameTags(this.tags, remote.tags)
+    );
   }
 
   /** Feed a subscription event. Self-echoes (remote etag === ours) are dropped. */
@@ -377,12 +429,35 @@ export class EditForm extends BaseForm implements NibFormFields {
 
     const external = this.#externalChange;
     if (external && !opts?.overwrite) {
-      return { kind: "conflict", remote: external };
+      // Only a buffer that STILL diverges from the recorded remote is a genuine,
+      // unresolved conflict — surface the resolver without dispatching. If the
+      // working copy has converged to the remote's field values (the same check
+      // the `externalChange` getter uses, so the two never disagree — HIGH #1),
+      // there is nothing to resolve: the content we'd send already equals the
+      // server's current revision. Fall through to a REAL write below, using the
+      // remote's etag as if-match, so Save legitimately succeeds and rebaselines
+      // instead of a silent, feedback-less no-op.
+      if (!this.#matchesFields(external)) {
+        return { kind: "conflict", remote: external };
+      }
     }
 
-    // Overwrite uses the REMOTE etag (fixes the stale-baseline concurrency bug);
-    // a normal save uses our baseline etag.
-    const ifMatch = opts?.overwrite && external ? external.etag : this.#etag;
+    // if-match selection:
+    // - overwrite → last-write-wins: re-adopt the known REMOTE etag, or omit
+    //   if-match entirely when no remote is known. Omitting lets the write land
+    //   ONLY under the default `require_if_match: false`; under `true` the
+    //   backend returns ETagRequiredError and the write does NOT land. The
+    //   no-remote overwrite branch is currently unreachable from the UI anyway
+    //   (Overwrite renders only while `externalChange` is set).
+    // - converged proactive change (external set, non-overwrite) → the REMOTE
+    //   etag: the content equals the remote and that etag is the server's
+    //   current state, so the write lands, advances the etag, and rebaselines.
+    // - normal save → our baseline etag.
+    const ifMatch = opts?.overwrite
+      ? (external?.etag ?? undefined)
+      : external
+        ? external.etag
+        : this.#etag;
 
     const baselineTags = this.baseline.tags;
     const input: UpdateNibInput = {
@@ -401,7 +476,20 @@ export class EditForm extends BaseForm implements NibFormFields {
     this.setSaving(true);
     try {
       const result = await this.deps.mutations.execute(updateNibCmd(this.id, input, ifMatch));
-      if (!result.ok) return { kind: "error", message: result.error };
+      if (!result.ok) {
+        // Route a server-side if-match rejection into the SAME conflict resolver
+        // as the proactive path — the buffer stays dirty, so nothing is clobbered.
+        // NOTE: MutationDispatcher.#executeLeaf has ALREADY fired a raw
+        // `toast.error(<GraphQL message>)` before we return here (it toasts every
+        // failed mutation). This only governs the returned OUTCOME; the graceful
+        // inline resolver still appears, but a raw error toast races ahead of it.
+        // The remote snapshot isn't in the error, so `remote` is null until the
+        // live subscription backfills it into `externalChange`.
+        if (!opts?.overwrite && isEtagConflict(result.error)) {
+          return { kind: "conflict", remote: this.#externalChange };
+        }
+        return { kind: "error", message: result.error };
+      }
 
       const newEtag: string = result.data?.updateNib?.etag ?? this.#etag;
       this.#etag = newEtag;

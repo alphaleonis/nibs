@@ -75,6 +75,7 @@ interface FakeForm {
   removeTag: (t: string) => void;
   discard: ReturnType<typeof vi.fn>;
   applyExternal: ReturnType<typeof vi.fn>;
+  noteExternalChange: ReturnType<typeof vi.fn>;
   save?: ReturnType<typeof vi.fn>;
 }
 
@@ -101,6 +102,7 @@ function makeEditForm(overrides: Partial<FakeForm> = {}): FakeForm {
     },
     discard: vi.fn(),
     applyExternal: vi.fn(),
+    noteExternalChange: vi.fn(),
     ...overrides,
   });
   return form as FakeForm;
@@ -128,6 +130,7 @@ function makeCreateForm(overrides: Partial<FakeForm> = {}): FakeForm {
     },
     discard: vi.fn(),
     applyExternal: vi.fn(),
+    noteExternalChange: vi.fn(),
     ...overrides,
   });
   return form as FakeForm;
@@ -166,6 +169,7 @@ interface FakeView {
   isOpen: boolean;
   presentation: "docked" | "expanded";
   blocksHistoryNav: boolean;
+  externalApplied: number;
   open: ReturnType<typeof vi.fn>;
   expand: ReturnType<typeof vi.fn>;
   collapse: ReturnType<typeof vi.fn>;
@@ -197,6 +201,7 @@ function makeView(opts: {
     isOpen: true,
     presentation: opts.presentation ?? "docked",
     blocksHistoryNav: false,
+    externalApplied: 0,
     open: vi.fn(),
     expand: vi.fn(),
     collapse: vi.fn(),
@@ -554,6 +559,21 @@ describe("ActiveNibView", () => {
       expect(screen.getByTestId("anv-save")).toBeDisabled();
       expect(screen.getByTestId("anv-discard")).toBeDisabled();
     });
+
+    it("hides the conflict resolver even with a pending external change (MEDIUM #3)", () => {
+      // A nib deleted while the resolver was up: the deleted notice and the
+      // "keep your edits or load the new version" resolver must not render
+      // simultaneously (contradictory), and Overwrite must not be able to save
+      // against a deleted nib. Gone → show only the deleted notice.
+      const remote = { id: "nibs-1t4t", etag: "e9" };
+      const form = makeEditForm({ dirty: true, externalChange: remote });
+      renderView(makeView({ kind: "gone", form }), confirmDialog);
+
+      expect(screen.getByTestId("anv-deleted-notice")).toBeInTheDocument();
+      expect(screen.queryByTestId("anv-conflict-banner")).not.toBeInTheDocument();
+      expect(screen.queryByTestId("anv-conflict-overwrite")).not.toBeInTheDocument();
+      expect(screen.queryByTestId("anv-conflict-load-theirs")).not.toBeInTheDocument();
+    });
   });
 
   describe("creating", () => {
@@ -590,37 +610,158 @@ describe("ActiveNibView", () => {
     });
   });
 
-  describe("conflict banner", () => {
-    it("shows the external-change banner and Reload applies the remote snapshot", async () => {
+  describe("external-change resolver (persistent, non-modal)", () => {
+    it("shows the persistent warning region with Load theirs / Overwrite when externalChange is set", () => {
       const remote = { id: "nibs-1t4t", etag: "e9" };
-      const form = makeEditForm({ externalChange: remote });
+      const form = makeEditForm({ dirty: true, externalChange: remote });
       renderView(makeView({ form }), confirmDialog);
 
-      expect(screen.getByTestId("anv-conflict-banner")).toBeInTheDocument();
-      await user.click(screen.getByTestId("anv-conflict-reload"));
+      const banner = screen.getByTestId("anv-conflict-banner");
+      expect(banner).toBeInTheDocument();
+      // It is a persistent, NON-MODAL surface (SettingsSheet idiom, F6):
+      // role="dialog" + aria-modal="false", and it never routes through the
+      // confirm-dialog modal — the actual proof of non-modality.
+      expect(banner).toHaveAttribute("role", "dialog");
+      expect(banner).toHaveAttribute("aria-modal", "false");
+      expect(banner).toHaveAttribute("aria-label");
+      expect(confirmDialog.showConfirm).not.toHaveBeenCalled();
+      expect(screen.getByTestId("anv-conflict-load-theirs")).toBeInTheDocument();
+      expect(screen.getByTestId("anv-conflict-overwrite")).toBeInTheDocument();
+    });
+
+    it("hides the warning region for a NOT-dirty buffer even if externalChange is set (F1 gate)", () => {
+      // Defensive: a non-dirty buffer must never expose Overwrite (it would force
+      // a stale write over the remote's newer change). The presenter also adopts
+      // the remote via the clean path, but the visibility gate is belt-and-braces.
+      const remote = { id: "nibs-1t4t", etag: "e9" };
+      const form = makeEditForm({ dirty: false, externalChange: remote });
+      renderView(makeView({ form }), confirmDialog);
+      expect(screen.queryByTestId("anv-conflict-banner")).not.toBeInTheDocument();
+    });
+
+    it("disables both conflict buttons while a save is in flight, and Load theirs is a no-op — F5", async () => {
+      const remote = { id: "nibs-1t4t", etag: "e9" };
+      const form = makeEditForm({ dirty: true, externalChange: remote, saving: true });
+      renderView(makeView({ form }), confirmDialog);
+
+      const loadBtn = screen.getByTestId("anv-conflict-load-theirs");
+      const overwriteBtn = screen.getByTestId("anv-conflict-overwrite");
+      expect(loadBtn).toBeDisabled();
+      expect(overwriteBtn).toBeDisabled();
+
+      // Clicking the disabled Load-theirs must not diverge the buffer from disk.
+      await user.click(loadBtn);
+      expect(form.applyExternal).not.toHaveBeenCalled();
+    });
+
+    it("Overwrite failure surfaces a toast.error (handleOverwrite error path)", async () => {
+      const remote = { id: "nibs-1t4t", etag: "e9" };
+      const save = vi.fn().mockResolvedValue({ kind: "error", message: "disk full" });
+      const form = makeEditForm({ dirty: true, externalChange: remote, save });
+      renderView(makeView({ form }), confirmDialog);
+
+      await user.click(screen.getByTestId("anv-conflict-overwrite"));
+      expect(save).toHaveBeenCalledWith({ overwrite: true });
+      await waitFor(() => expect(mockToastError).toHaveBeenCalledWith("disk full"));
+    });
+
+    it("Load theirs discards local edits and loads the remote snapshot", async () => {
+      const remote = { id: "nibs-1t4t", etag: "e9" };
+      const form = makeEditForm({ dirty: true, externalChange: remote });
+      renderView(makeView({ form }), confirmDialog);
+
+      await user.click(screen.getByTestId("anv-conflict-load-theirs"));
       expect(form.applyExternal).toHaveBeenCalledWith(remote);
     });
 
-    it("Save on a conflict prompts to overwrite and re-saves with overwrite on confirm", async () => {
+    it("Overwrite force-saves the local buffer over the remote (overwrite:true)", async () => {
       const remote = { id: "nibs-1t4t", etag: "e9" };
-      const save = vi.fn().mockResolvedValue(undefined);
-      const form = makeEditForm({ dirty: true, save });
+      const save = vi.fn().mockResolvedValue({ kind: "saved", snapshot: {} });
+      const form = makeEditForm({ dirty: true, externalChange: remote, save });
+      renderView(makeView({ form }), confirmDialog);
+
+      await user.click(screen.getByTestId("anv-conflict-overwrite"));
+      expect(save).toHaveBeenCalledWith({ overwrite: true });
+      // Never a modal for this path.
+      expect(confirmDialog.showConfirm).not.toHaveBeenCalled();
+    });
+
+    it("Save on a stale base routes into the SAME inline resolver, not a modal", async () => {
+      const remote = { id: "nibs-1t4t", etag: "e9" };
+      const form = makeEditForm({ dirty: true });
       const view = makeView({ form });
-      // First save reports a conflict against the remote snapshot.
+      // The save comes back a conflict (stale if-match) carrying the remote.
       view.save = vi.fn(async () => ({ kind: "conflict", remote }));
       renderView(view, confirmDialog);
 
       await user.click(screen.getByTestId("anv-save"));
 
-      await waitFor(() =>
-        expect(confirmDialog.showConfirm).toHaveBeenCalledWith(
-          expect.objectContaining({ title: "Overwrite external changes?", variant: "warning" }),
-        ),
+      // No overwrite modal — the conflict is surfaced in the persistent region.
+      await waitFor(() => expect(form.noteExternalChange).toHaveBeenCalledWith(remote));
+      expect(confirmDialog.showConfirm).not.toHaveBeenCalledWith(
+        expect.objectContaining({ title: "Overwrite external changes?" }),
       );
+    });
 
-      // Confirming the overwrite re-runs EditForm.save with { overwrite: true }.
-      await confirmDialog.lastOpts!.action();
-      expect(save).toHaveBeenCalledWith({ overwrite: true });
+    it("does not show the warning region for a clean buffer (no false prompt)", () => {
+      const form = makeEditForm({ dirty: false, externalChange: null });
+      renderView(makeView({ form }), confirmDialog);
+      expect(screen.queryByTestId("anv-conflict-banner")).not.toBeInTheDocument();
+    });
+  });
+
+  describe("mid-flight buffer swap (cross-nib safety) — HIGH #2", () => {
+    it("a conflict outcome that resolves AFTER the buffer swaps does not contaminate the new nib", async () => {
+      // handleSave captures the form before the await; if the buffer swaps to
+      // another nib during the in-flight save (popstate / syncTo guard-bypass),
+      // nib A's conflict snapshot must not be attached to nib B's form (which
+      // would fabricate a false resolver on B and lose B's work on Load-theirs).
+      const remote = { id: "nibs-A", etag: "e9" };
+      const formA = makeEditForm({ id: "nibs-A", dirty: true });
+      const formB = makeEditForm({ id: "nibs-B", dirty: true });
+      const view = makeView({ form: formA });
+      view.save = vi.fn(async () => {
+        view.form = formB; // buffer swaps to nib B before the save resolves
+        return { kind: "conflict", remote };
+      });
+      renderView(view, confirmDialog);
+
+      await user.click(screen.getByTestId("anv-save"));
+
+      // Neither nib's form receives nib A's snapshot once the buffer has swapped.
+      expect(formB.noteExternalChange).not.toHaveBeenCalled();
+      expect(formA.noteExternalChange).not.toHaveBeenCalled();
+    });
+
+    it("a saved outcome that resolves AFTER the buffer swaps does not misname the toast", async () => {
+      const formA = makeEditForm({ id: "nibs-A", dirty: true });
+      const formB = makeEditForm({ id: "nibs-B", dirty: true });
+      const view = makeView({ form: formA });
+      view.save = vi.fn(async () => {
+        view.form = formB;
+        return { kind: "saved", snapshot: {} };
+      });
+      renderView(view, confirmDialog);
+
+      await user.click(screen.getByTestId("anv-save"));
+
+      // The success toast must never announce nib B's id for a save that
+      // targeted nib A (the old code read the live derived nibId after the await).
+      expect(mockToastSuccess).not.toHaveBeenCalledWith("Updated nibs-B");
+    });
+  });
+
+  describe("clean auto-apply toast", () => {
+    it("fires a minor 'Nib updated' toast when the presenter rebaselines a clean buffer", async () => {
+      const view = makeView({});
+      renderView(view, confirmDialog);
+
+      expect(mockToastSuccess).not.toHaveBeenCalled();
+      // The presenter silently applied an incoming change and advanced the counter.
+      view.externalApplied = 1;
+      flushSync();
+
+      await waitFor(() => expect(mockToastSuccess).toHaveBeenCalledWith("Nib updated"));
     });
   });
 });
