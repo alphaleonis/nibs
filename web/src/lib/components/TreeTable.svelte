@@ -2,11 +2,11 @@
   import { queryStore, subscriptionStore, getContextClient } from "@urql/svelte";
   import { TREE_TABLE_QUERY, NIB_CHANGED_SUBSCRIPTION } from "../queries";
   import { ALL_COLUMN_KEYS, DEFAULT_BLOCKED_EMPHASIS } from "../types";
-  import type { NibFilter, ViewLevel, ColumnKey, RowDensity, BlockedEmphasis } from "../types";
+  import type { NibFilter, ViewLevel, ColumnKey, RowDensity, BlockedEmphasis, RowSubtreeActions, TreeTableNib } from "../types";
   import type { Preferences } from "../preferences.svelte";
   import { buildTableData } from "../tableData";
-  import { isBucketId, bucketIdForItem } from "../tree";
-  import { prepareFilter, isDragAllowed } from "../filter";
+  import { isBucketId, bucketIdForItem, buildViewTree, collectDescendantIds } from "../tree";
+  import { prepareFilter, isDragAllowed, matchesFilter } from "../filter";
   import { resolveFilter, resolveViewLevel, resolveVisibleColumns, resolveColumnWidths } from "../resolvePrefs";
   import TreeTableRow from "./TreeTableRow.svelte";
   import { CopyPlus, CopyMinus } from "@lucide/svelte";
@@ -28,7 +28,7 @@
     oncolumnwidthschange?: (widths: Record<ColumnKey, number>) => void;
     oncolumnresizeend?: () => void;
     ontagschange?: (tags: string[]) => void;
-    onrowcontextmenu?: (nibId: string, event: MouseEvent, nib: import("../types").TreeTableNib) => void;
+    onrowcontextmenu?: (nibId: string, event: MouseEvent, nib: TreeTableNib, subtree: RowSubtreeActions) => void;
     onaddchild?: (nibId: string, nibType: string, anchor: DOMRect) => void;
     rowDensity?: RowDensity;
     blockedEmphasis?: BlockedEmphasis;
@@ -156,6 +156,34 @@
     return true;
   }
 
+  // --- Prune multi-select of filtered-out nibs ---
+  // When a client-side filter narrows the dataset, any previously multi-selected
+  // nib that no longer matches must be dropped from the selection — otherwise a
+  // bulk mutation or multi-drag silently targets rows the user can no longer see
+  // (nibs-mpkm; drag stays enabled under hide-filters, so this is reachable). The
+  // "matching set" is strictly `matchesFilter` (dimmed ancestors shown only for
+  // tree context are excluded); with no client filters active matchesFilter() is
+  // true for everything, so nothing is pruned — collapsing a parent never
+  // deselects its (still-in-dataset) children.
+  $effect(() => {
+    // Don't prune while the first query is still in flight: allNibs is
+    // transiently [] before the result lands, and a cold deep-link populates the
+    // selection (via syncFromUrl) before data arrives — pruning against an empty
+    // dataset would wrongly drop it. Reading $result.fetching also re-subscribes
+    // so pruning runs once data settles (mirrors the ensure-visible loading guard).
+    if ($result.fetching) return;
+    const nibs = allNibs;
+    const filter = resolvedFilter;
+    const matchingIds = new Set<string>();
+    for (const nib of nibs) {
+      if (matchesFilter(nib, filter)) matchingIds.add(nib.id);
+    }
+    // retainOnly reads selection.* — run untracked so those reads don't subscribe
+    // this effect (which writes them) and cause effect_update_depth_exceeded. It
+    // is a no-op when nothing drops, so re-runs on unrelated data changes are cheap.
+    untrack(() => selection.retainOnly(matchingIds));
+  });
+
   // --- Ensure-visible: expand collapsed ancestors and scroll into view ---
   $effect(() => {
     const nibId = selection.pendingEnsureVisibleId;
@@ -257,6 +285,34 @@
 
   function collapseAll() {
     treeView.collapseAll(parentIds);
+  }
+
+  // --- Subtree expand/collapse (row context menu, nibs-iyw3) ---
+  // Descendants are resolved against the DISPLAYED view tree (buildViewTree), not
+  // raw parentId, so the grouping lens (headers, hidden containers, "No X"
+  // buckets) is honoured. TreeViewState owns the collapse set; these compute the
+  // next set and hand it to setCollapsed.
+  function expandSubtree(rootId: string) {
+    const viewTree = buildViewTree<TreeTableNib>(allNibs, resolvedViewLevel);
+    const descendantIds = collectDescendantIds(viewTree, rootId);
+    const next = new Set(treeView.collapsedIds);
+    next.delete(rootId);
+    for (const id of descendantIds) next.delete(id);
+    if (!sameSet(next, treeView.collapsedIds)) treeView.setCollapsed(next);
+  }
+
+  function collapseSubtree(rootId: string) {
+    const viewTree = buildViewTree<TreeTableNib>(allNibs, resolvedViewLevel);
+    const descendantIds = collectDescendantIds(viewTree, rootId);
+    const next = new Set(treeView.collapsedIds);
+    // Collapse the row itself plus every descendant that actually has children,
+    // so re-expanding the row reveals exactly one level at a time. parentIds
+    // already folds in synthetic buckets (tableData Stage 5a).
+    next.add(rootId);
+    for (const id of descendantIds) {
+      if (parentIds.has(id)) next.add(id);
+    }
+    if (!sameSet(next, treeView.collapsedIds)) treeView.setCollapsed(next);
   }
 
   // --- Column resize (composable) ---
@@ -429,7 +485,11 @@
     if (!row) return;
 
     e.preventDefault();
-    onrowcontextmenu?.(nibId, e, row.nib);
+    onrowcontextmenu?.(nibId, e, row.nib, {
+      hasChildren: row.hasChildren,
+      expandChildren: () => expandSubtree(nibId),
+      collapseChildren: () => collapseSubtree(nibId),
+    });
   }
 
   function handleDelegatedPointerDown(e: PointerEvent) {

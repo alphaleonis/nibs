@@ -103,6 +103,49 @@ export function bucketIdForItem<T extends TreeNib>(
 }
 
 /**
+ * Finds the node with the given id anywhere in a (view) tree. Returns null if
+ * absent. Depth-first; the tree is shallow so recursion is fine.
+ */
+function findNode<T extends TreeNib>(nodes: TreeNode<T>[], id: string): TreeNode<T> | null {
+  for (const node of nodes) {
+    if (node.nib.id === id) return node;
+    const found = findNode(node.children, id);
+    if (found) return found;
+  }
+  return null;
+}
+
+/**
+ * Collects the ids of every descendant of `rootId` within the given tree,
+ * EXCLUDING `rootId` itself. Returns an empty set when `rootId` is not present.
+ *
+ * The tree must be the DISPLAYED view tree (from `buildViewTree`), not the raw
+ * nib list: the grouping lens reparents nodes (headers keep their subtree,
+ * above-tier containers are hidden, loose items fall into a synthetic "No X"
+ * bucket whose id is not a real `parentId`). Walking `node.children` here —
+ * rather than raw `nib.parentId` — yields exactly the rows currently shown under
+ * the subtree. A visited guard makes the walk safe even if a malformed tree ever
+ * contained a cycle.
+ */
+export function collectDescendantIds<T extends TreeNib>(
+  tree: TreeNode<T>[],
+  rootId: string,
+): Set<string> {
+  const result = new Set<string>();
+  const root = findNode(tree, rootId);
+  if (!root) return result;
+
+  const stack: TreeNode<T>[] = [...root.children];
+  while (stack.length > 0) {
+    const node = stack.pop()!;
+    if (result.has(node.nib.id)) continue; // cycle guard
+    result.add(node.nib.id);
+    for (const child of node.children) stack.push(child);
+  }
+  return result;
+}
+
+/**
  * Build a synthetic "No X" bucket node. This node is not a real member of the
  * input set, so TypeScript cannot verify it against the open generic `T` (a
  * caller could instantiate `T` with a subtype requiring extra fields). We cast

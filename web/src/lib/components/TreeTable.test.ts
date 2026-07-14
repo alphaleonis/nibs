@@ -1077,8 +1077,75 @@ describe("TreeTable", () => {
       expect(onrowcontextmenu).toHaveBeenCalledWith(
         "nibs-001",
         expect.any(MouseEvent),
-        expect.objectContaining({ id: "nibs-001", title: "Child Task" })
+        expect.objectContaining({ id: "nibs-001", title: "Child Task" }),
+        expect.objectContaining({
+          hasChildren: false, // Child Task is a leaf
+          expandChildren: expect.any(Function),
+          collapseChildren: expect.any(Function),
+        }),
       );
+    });
+
+    it("context menu supplies hasChildren=true for a parent row (nibs-iyw3)", async () => {
+      const user = userEvent.setup();
+      const onrowcontextmenu = vi.fn();
+      const nibs = makeTestNibs(); // nibs-m1 (milestone) has a child
+
+      const { container } = setupWithNibs(nibs, { onrowcontextmenu });
+
+      const row = container.querySelector("tr[data-nib-id='nibs-m1']") as HTMLElement;
+      await user.pointer({ target: row, keys: "[MouseRight]" });
+
+      expect(onrowcontextmenu).toHaveBeenCalledWith(
+        "nibs-m1",
+        expect.any(MouseEvent),
+        expect.objectContaining({ id: "nibs-m1" }),
+        expect.objectContaining({ hasChildren: true }),
+      );
+    });
+
+    it("subtree collapseChildren/expandChildren toggle the whole subtree (nibs-iyw3)", async () => {
+      const user = userEvent.setup();
+      let captured: import("../types").RowSubtreeActions | undefined;
+      const onrowcontextmenu = vi.fn((_id, _e, _nib, subtree) => { captured = subtree; });
+      const nibs: TreeTableNib[] = [
+        makeTreeTableNib({ id: "nibs-m1", title: "Milestone", type: "milestone" }),
+        makeTreeTableNib({ id: "nibs-e1", title: "Epic", type: "epic", parentId: "nibs-m1" }),
+        makeTreeTableNib({ id: "nibs-t1", title: "Deep task", type: "task", parentId: "nibs-e1" }),
+      ];
+
+      const { container } = setupWithNibs(nibs, { onrowcontextmenu });
+      // Check row presence by id ("Epic" also appears in the task's Parent column,
+      // so text queries are ambiguous).
+      const rowVisible = (id: string) => container.querySelector(`tr[data-nib-id='${id}']`) !== null;
+
+      // All three rows visible initially.
+      expect(rowVisible("nibs-e1")).toBe(true);
+      expect(rowVisible("nibs-t1")).toBe(true);
+
+      // Right-click the milestone to capture its subtree actions.
+      const row = container.querySelector("tr[data-nib-id='nibs-m1']") as HTMLElement;
+      await user.pointer({ target: row, keys: "[MouseRight]" });
+      expect(captured?.hasChildren).toBe(true);
+
+      // Collapse the whole subtree — the milestone collapses, hiding everything below.
+      captured!.collapseChildren();
+      await tick();
+      expect(rowVisible("nibs-e1")).toBe(false);
+      expect(rowVisible("nibs-t1")).toBe(false);
+
+      // Expanding just the milestone reveals exactly ONE level (the epic stays collapsed).
+      const toggle = container.querySelector("tr[data-nib-id='nibs-m1'] [data-action='toggle']") as HTMLElement;
+      await user.click(toggle);
+      await tick();
+      expect(rowVisible("nibs-e1")).toBe(true);
+      expect(rowVisible("nibs-t1")).toBe(false);
+
+      // Expand-children fully expands the subtree again.
+      captured!.expandChildren();
+      await tick();
+      expect(rowVisible("nibs-e1")).toBe(true);
+      expect(rowVisible("nibs-t1")).toBe(true);
     });
 
     it("row double-click selects nib via context", async () => {
@@ -1560,6 +1627,122 @@ describe("TreeTable", () => {
       const sc2 = container.querySelector(".scroll-container") as HTMLElement;
       expect(sc2).not.toBeNull();
       expect(sc2.scrollTop).toBe(500);
+    });
+  });
+
+  describe("prune multi-select on filter change (nibs-mpkm)", () => {
+    function makeNibs(): TreeTableNib[] {
+      return [
+        makeTreeTableNib({ id: "nibs-m1", title: "Milestone", type: "milestone" }),
+        makeTreeTableNib({ id: "nibs-t1", title: "Task one", type: "task", parentId: "nibs-m1" }),
+        makeTreeTableNib({ id: "nibs-t2", title: "Task two", type: "task", parentId: "nibs-m1" }),
+        makeTreeTableNib({ id: "nibs-b1", title: "A bug", type: "bug", parentId: "nibs-m1" }),
+      ];
+    }
+
+    it("drops selected nibs that no longer match the active client filter", async () => {
+      const sel = new SelectionState();
+      sel.toggleSelect("nibs-t1");
+      sel.toggleSelect("nibs-t2");
+      sel.toggleSelect("nibs-b1");
+
+      mockQueryStore.mockReturnValue(
+        readable({ fetching: false, error: undefined, data: { nibs: makeNibs() }, stale: false }) as any
+      );
+
+      const { rerender } = renderTreeTable(
+        { filter: {}, viewLevel: "milestones" as ViewLevel },
+        { selection: sel },
+      );
+      await tick();
+
+      // No filter yet — all three remain selected.
+      expect(sel.selectedIds.size).toBe(3);
+
+      // Filter to tasks only — the bug is no longer selectable and must be pruned.
+      await rerender({ filter: { type: ["task"] }, viewLevel: "milestones" as ViewLevel });
+      await tick();
+
+      expect(sel.selectedIds.has("nibs-t1")).toBe(true);
+      expect(sel.selectedIds.has("nibs-t2")).toBe(true);
+      expect(sel.selectedIds.has("nibs-b1")).toBe(false);
+      expect(sel.selectedIds.size).toBe(2);
+    });
+
+    it("resets anchor/focus that fall out of the filter", async () => {
+      const sel = new SelectionState();
+      sel.toggleSelect("nibs-t1");
+      sel.toggleSelect("nibs-b1"); // anchor + focus land on the bug
+
+      mockQueryStore.mockReturnValue(
+        readable({ fetching: false, error: undefined, data: { nibs: makeNibs() }, stale: false }) as any
+      );
+
+      const { rerender } = renderTreeTable(
+        { filter: {}, viewLevel: "milestones" as ViewLevel },
+        { selection: sel },
+      );
+      await tick();
+      expect(sel.anchorId).toBe("nibs-b1");
+      expect(sel.focusedNibId).toBe("nibs-b1");
+
+      await rerender({ filter: { type: ["task"] }, viewLevel: "milestones" as ViewLevel });
+      await tick();
+
+      expect(sel.anchorId).toBeNull();
+      expect(sel.focusedNibId).toBeNull();
+    });
+
+    it("keeps the multi-selection intact when a parent row is collapsed (no filter)", async () => {
+      const user = userEvent.setup();
+      const sel = new SelectionState();
+      sel.toggleSelect("nibs-t1");
+      sel.toggleSelect("nibs-t2");
+
+      mockQueryStore.mockReturnValue(
+        readable({ fetching: false, error: undefined, data: { nibs: makeNibs() }, stale: false }) as any
+      );
+
+      const { container } = renderTreeTable(
+        { filter: {}, viewLevel: "milestones" as ViewLevel },
+        { selection: sel },
+      );
+      await tick();
+      expect(sel.selectedIds.size).toBe(2);
+
+      // Collapse the milestone — hides the two selected tasks from view.
+      const toggle = container.querySelector("tr[data-nib-id='nibs-m1'] [data-action='toggle']") as HTMLElement;
+      await user.click(toggle);
+      await tick();
+
+      // Rows are hidden…
+      expect(screen.queryByText("Task one")).not.toBeInTheDocument();
+      // …but the selection is preserved — collapse is not a filter (nibs-mpkm).
+      expect(sel.selectedIds.has("nibs-t1")).toBe(true);
+      expect(sel.selectedIds.has("nibs-t2")).toBe(true);
+      expect(sel.selectedIds.size).toBe(2);
+    });
+
+    it("does not prune while the query is still fetching (cold deep-link guard)", async () => {
+      const sel = new SelectionState();
+      sel.select("nibs-deep");
+      sel.toggleSelect("nibs-deep2");
+
+      // Query in flight: fetching, no data yet.
+      mockQueryStore.mockReturnValue(
+        readable({ fetching: true, error: undefined, data: undefined, stale: false }) as any
+      );
+
+      renderTreeTable(
+        { filter: {}, viewLevel: "milestones" as ViewLevel },
+        { selection: sel },
+      );
+      await tick();
+
+      // Data hasn't landed — selection must be left intact, not wiped to empty.
+      expect(sel.selectedIds.has("nibs-deep")).toBe(true);
+      expect(sel.selectedIds.has("nibs-deep2")).toBe(true);
+      expect(sel.selectedIds.size).toBe(2);
     });
   });
 });

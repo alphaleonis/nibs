@@ -47,6 +47,20 @@ export interface TreeNode<T extends TreeNib = TreeNib> {
   depth: number;
 }
 
+/**
+ * Subtree expand/collapse actions for a row, supplied by TreeTable (which owns
+ * the collapse state via TreeViewState) to the row context menu through the
+ * `onrowcontextmenu` callback. `hasChildren` gates whether the menu shows the
+ * options at all.
+ */
+export interface RowSubtreeActions {
+  hasChildren: boolean;
+  /** Fully expand this row and every descendant. */
+  expandChildren: () => void;
+  /** Collapse this row and every descendant (re-expanding reveals one level). */
+  collapseChildren: () => void;
+}
+
 export const VIEW_LEVELS = ["none", "milestones", "epics", "features"] as const;
 export type ViewLevel = (typeof VIEW_LEVELS)[number];
 

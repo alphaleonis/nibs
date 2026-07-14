@@ -118,6 +118,9 @@ describe("RowContextMenu", () => {
     props: {
       nib?: TreeTableNib;
       selectedCount?: number;
+      hasChildren?: boolean;
+      onexpandchildren?: () => void;
+      oncollapsechildren?: () => void;
     } = {},
   ) {
     const nib = props.nib ?? makeNib();
@@ -127,6 +130,9 @@ describe("RowContextMenu", () => {
         position: { x: 100, y: 100 },
         nib,
         selectedCount: props.selectedCount ?? 1,
+        hasChildren: props.hasChildren ?? false,
+        onexpandchildren: props.onexpandchildren,
+        oncollapsechildren: props.oncollapsechildren,
       },
       context: makeTestContext(selection, new DragState(), {
         confirmDialog: mockConfirmDialog,
@@ -240,6 +246,67 @@ describe("RowContextMenu", () => {
       });
 
       expect(screen.queryByTestId("ctx-add-child")).not.toBeInTheDocument();
+    });
+  });
+
+  // ─── expand/collapse children (nibs-iyw3) ─────────────────────
+
+  describe("expand/collapse children", () => {
+    it("shows both options when the row has children in single mode", async () => {
+      renderMenu({ nib: makeNib({ type: "epic" }), hasChildren: true });
+
+      await waitFor(() => {
+        expect(screen.getByTestId("ctx-expand-children")).toBeInTheDocument();
+        expect(screen.getByTestId("ctx-collapse-children")).toBeInTheDocument();
+      });
+    });
+
+    it("hides both options when the row has no children", async () => {
+      renderMenu({ nib: makeNib({ type: "epic" }), hasChildren: false });
+
+      await waitFor(() => {
+        expect(screen.getByTestId("ctx-delete")).toBeInTheDocument();
+      });
+
+      expect(screen.queryByTestId("ctx-expand-children")).not.toBeInTheDocument();
+      expect(screen.queryByTestId("ctx-collapse-children")).not.toBeInTheDocument();
+    });
+
+    it("hides both options in bulk mode even when the row has children", async () => {
+      renderMenu({ nib: makeNib({ type: "epic" }), hasChildren: true, selectedCount: 2 });
+
+      await waitFor(() => {
+        expect(screen.getByTestId("ctx-delete")).toBeInTheDocument();
+      });
+
+      expect(screen.queryByTestId("ctx-expand-children")).not.toBeInTheDocument();
+      expect(screen.queryByTestId("ctx-collapse-children")).not.toBeInTheDocument();
+    });
+
+    it("invokes onexpandchildren when Expand children is clicked", async () => {
+      const onexpandchildren = vi.fn();
+      renderMenu({ nib: makeNib({ type: "epic" }), hasChildren: true, onexpandchildren });
+
+      await waitFor(() => {
+        expect(screen.getByTestId("ctx-expand-children")).toBeInTheDocument();
+      });
+
+      await user.click(screen.getByTestId("ctx-expand-children"));
+
+      expect(onexpandchildren).toHaveBeenCalledOnce();
+    });
+
+    it("invokes oncollapsechildren when Collapse children is clicked", async () => {
+      const oncollapsechildren = vi.fn();
+      renderMenu({ nib: makeNib({ type: "epic" }), hasChildren: true, oncollapsechildren });
+
+      await waitFor(() => {
+        expect(screen.getByTestId("ctx-collapse-children")).toBeInTheDocument();
+      });
+
+      await user.click(screen.getByTestId("ctx-collapse-children"));
+
+      expect(oncollapsechildren).toHaveBeenCalledOnce();
     });
   });
 

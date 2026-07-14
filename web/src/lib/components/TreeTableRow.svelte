@@ -168,7 +168,10 @@
         {:else}
           <span class="inline-block w-5 h-5 shrink-0"></span>
         {/if}
-        <TypeIcon type={nib.type} />
+        <!-- Wrapper adds breathing room after the type icon; TypeIcon forwards
+             no class/style, so the em-based margin lives here (scales with the
+             row font-size). Title column only — the Parent column is untouched. -->
+        <span class="type-icon-gap"><TypeIcon type={nib.type} /></span>
         {#if priorityIndicator}
           <span
             data-testid="priority-icon"
@@ -334,6 +337,15 @@
     gap: 0.25rem;
     overflow: hidden;
     white-space: nowrap;
+  }
+
+  /* Extra horizontal space between the type icon and the title (Title column
+     only). em-based so it scales with the row font-size, matching the inline
+     checkbox convention in .prose-nib (app.css). */
+  .type-icon-gap {
+    display: inline-flex;
+    flex-shrink: 0;
+    margin-inline-end: 0.35em;
   }
 
   .actions-cell {

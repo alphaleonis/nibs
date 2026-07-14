@@ -18,6 +18,11 @@
     position: { x: number; y: number };
     nib: TreeTableNib | null;
     selectedCount?: number;
+    /** Whether the right-clicked row has (visible) children — gates the
+     *  expand/collapse-children options (nibs-iyw3). */
+    hasChildren?: boolean;
+    onexpandchildren?: () => void;
+    oncollapsechildren?: () => void;
   }
 
   let {
@@ -25,6 +30,9 @@
     position,
     nib,
     selectedCount = 1,
+    hasChildren = false,
+    onexpandchildren,
+    oncollapsechildren,
   }: Props = $props();
 
   const selection = useSelection();
@@ -35,6 +43,7 @@
 
   let isBulk = $derived(selectedCount > 1);
   let showAddChild = $derived(!isBulk && nib && canHaveChildren(nib.type));
+  let showSubtreeActions = $derived(!isBulk && hasChildren);
 
   function handleOpenChange(newOpen: boolean) {
     if (!newOpen) {
@@ -199,6 +208,22 @@
           onclick={() => { open = false; handleEdit(); }}
         >
           Edit
+        </DropdownMenu.Item>
+        <DropdownMenu.Separator />
+      {/if}
+
+      {#if showSubtreeActions}
+        <DropdownMenu.Item
+          data-testid="ctx-expand-children"
+          onclick={() => { open = false; onexpandchildren?.(); }}
+        >
+          Expand children
+        </DropdownMenu.Item>
+        <DropdownMenu.Item
+          data-testid="ctx-collapse-children"
+          onclick={() => { open = false; oncollapsechildren?.(); }}
+        >
+          Collapse children
         </DropdownMenu.Item>
         <DropdownMenu.Separator />
       {/if}

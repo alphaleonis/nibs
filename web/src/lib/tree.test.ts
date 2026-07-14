@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { buildTree, buildViewTree, isBucketId, bucketIdForItem } from "./tree";
+import { buildTree, buildViewTree, isBucketId, bucketIdForItem, collectDescendantIds } from "./tree";
 import { typeRank } from "./typeHierarchy";
 import type { TreeNib, TreeTableNib, TreeNode, ViewLevel } from "./types";
 
@@ -501,5 +501,85 @@ describe("isBucketId", () => {
     expect(isBucketId("__proj-abc1")).toBe(false);
     expect(isBucketId("__no_epic__x")).toBe(false);
     expect(isBucketId("no_epic")).toBe(false);
+  });
+});
+
+describe("collectDescendantIds", () => {
+  it("returns an empty set when the root id is not in the tree", () => {
+    const nibs: TreeNib[] = [makeTreeNib({ id: "nibs-001", type: "milestone" })];
+    const tree = buildViewTree(nibs, "milestones");
+    expect(collectDescendantIds(tree, "nibs-missing")).toEqual(new Set());
+  });
+
+  it("returns an empty set for a leaf root (no descendants)", () => {
+    const nibs: TreeNib[] = [
+      makeTreeNib({ id: "nibs-001", type: "milestone" }),
+      makeTreeNib({ id: "nibs-002", type: "epic", parentId: "nibs-001" }),
+    ];
+    const tree = buildViewTree(nibs, "milestones");
+    // nibs-002 (epic) is a leaf in this tree.
+    expect(collectDescendantIds(tree, "nibs-002")).toEqual(new Set());
+  });
+
+  it("collects all descendants of a root, excluding the root itself", () => {
+    const nibs: TreeNib[] = [
+      makeTreeNib({ id: "nibs-001", type: "milestone" }),
+      makeTreeNib({ id: "nibs-002", type: "epic", parentId: "nibs-001" }),
+      makeTreeNib({ id: "nibs-003", type: "feature", parentId: "nibs-002" }),
+      makeTreeNib({ id: "nibs-004", type: "task", parentId: "nibs-003" }),
+      makeTreeNib({ id: "nibs-005", type: "task", parentId: "nibs-002" }),
+    ];
+    const tree = buildViewTree(nibs, "milestones");
+    const result = collectDescendantIds(tree, "nibs-001");
+    expect(result).toEqual(new Set(["nibs-002", "nibs-003", "nibs-004", "nibs-005"]));
+    expect(result.has("nibs-001")).toBe(false);
+  });
+
+  it("collects descendants of a mid-tree node (not just the root)", () => {
+    const nibs: TreeNib[] = [
+      makeTreeNib({ id: "nibs-001", type: "milestone" }),
+      makeTreeNib({ id: "nibs-002", type: "epic", parentId: "nibs-001" }),
+      makeTreeNib({ id: "nibs-003", type: "feature", parentId: "nibs-002" }),
+      makeTreeNib({ id: "nibs-004", type: "task", parentId: "nibs-003" }),
+    ];
+    const tree = buildViewTree(nibs, "milestones");
+    expect(collectDescendantIds(tree, "nibs-002")).toEqual(new Set(["nibs-003", "nibs-004"]));
+  });
+
+  it("computes descendants against the DISPLAYED view tree, honouring the grouping lens", () => {
+    // In the epics lens, the milestone is hidden (above the epic tier) and the
+    // epic becomes a root header keeping its full subtree.
+    const nibs: TreeNib[] = [
+      makeTreeNib({ id: "m1", type: "milestone" }),
+      makeTreeNib({ id: "e1", type: "epic", parentId: "m1" }),
+      makeTreeNib({ id: "f1", type: "feature", parentId: "e1" }),
+      makeTreeNib({ id: "t1", type: "task", parentId: "f1" }),
+    ];
+    const tree = buildViewTree(nibs, "epics");
+    // Milestone is not a node in this view → not found.
+    expect(collectDescendantIds(tree, "m1")).toEqual(new Set());
+    // Epic header owns its whole subtree.
+    expect(collectDescendantIds(tree, "e1")).toEqual(new Set(["f1", "t1"]));
+  });
+
+  it("collects loose items under the synthetic 'No X' bucket", () => {
+    // Loose tasks with no epic ancestor fall into the __no_epic__ bucket.
+    const nibs: TreeNib[] = [
+      makeTreeNib({ id: "t1", type: "task" }),
+      makeTreeNib({ id: "t2", type: "task" }),
+    ];
+    const tree = buildViewTree(nibs, "epics");
+    expect(collectDescendantIds(tree, "__no_epic__")).toEqual(new Set(["t1", "t2"]));
+  });
+
+  it("does not overflow on a cyclic tree (visited guard)", () => {
+    // Hand-build a pathological cyclic node graph (buildTree cannot normally
+    // produce this, but the walk must not hang if one ever appears).
+    const a: TreeNode<TreeNib> = { nib: makeTreeNib({ id: "a" }), children: [], depth: 0 };
+    const b: TreeNode<TreeNib> = { nib: makeTreeNib({ id: "b" }), children: [], depth: 1 };
+    a.children.push(b);
+    b.children.push(a); // cycle: b -> a -> b -> ...
+    const result = collectDescendantIds([a], "a");
+    expect(result).toEqual(new Set(["a", "b"]));
   });
 });
