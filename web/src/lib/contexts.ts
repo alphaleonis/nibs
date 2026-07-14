@@ -84,6 +84,7 @@ export function makeTestContext(
     presentation: 'docked',
     typePicker: null,
     blocksHistoryNav: false,
+    savePending: false,
     externalApplied: 0,
     open: async (id: string) => { selection.select(id); },
     expand: () => {},

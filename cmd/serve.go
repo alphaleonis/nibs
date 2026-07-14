@@ -5,6 +5,7 @@ import (
 	"crypto/sha256"
 	"encoding/base64"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io/fs"
 	"net"
@@ -19,11 +20,14 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/99designs/gqlgen/graphql"
 	"github.com/99designs/gqlgen/graphql/handler"
 	"github.com/99designs/gqlgen/graphql/handler/transport"
 	"github.com/alphaleonis/nibs/internal/config"
 	"github.com/alphaleonis/nibs/internal/graph"
+	"github.com/alphaleonis/nibs/internal/nibcore"
 	"github.com/spf13/cobra"
+	"github.com/vektah/gqlparser/v2/gqlerror"
 )
 
 var (
@@ -350,8 +354,38 @@ func newGraphQLHandler(app *App) http.Handler {
 	srv.AddTransport(transport.Websocket{
 		KeepAlivePingInterval: 10 * time.Second,
 	})
+	srv.SetErrorPresenter(etagErrorPresenter)
 
 	return requestCacheMiddleware(srv)
+}
+
+// etagErrorPresenter is the gqlgen error presenter that attaches a stable,
+// machine-readable extensions.code = "ETAG_MISMATCH" to ONLY the typed
+// *nibcore.ETagMismatchError — the reconcilable optimistic-concurrency conflict
+// the web client routes into its inline "Load theirs / Overwrite" resolver.
+//
+// Every other error (the nibs-9tj2 enum-validation errors, ETagRequiredError,
+// OnDiskUnparseableError, generic failures) is left EXACTLY as the default
+// presenter formats it: no code is added, so callers can't mistake a
+// non-reconcilable failure for a retryable conflict. errors.As walks the wrap
+// chain, so a wrapped ETagMismatchError is still recognised.
+//
+// The web classifier keys on this code first and keeps the human-readable
+// "etag mismatch" substring match only as a fallback (see
+// web/src/lib/nibForm.svelte.ts, isEtagConflict). The message text is preserved
+// verbatim here so that fallback stays intact.
+func etagErrorPresenter(ctx context.Context, err error) *gqlerror.Error {
+	gqlErr := graphql.DefaultErrorPresenter(ctx, err)
+
+	var etagErr *nibcore.ETagMismatchError
+	if errors.As(err, &etagErr) {
+		if gqlErr.Extensions == nil {
+			gqlErr.Extensions = map[string]any{}
+		}
+		gqlErr.Extensions["code"] = "ETAG_MISMATCH"
+	}
+
+	return gqlErr
 }
 
 // requestCacheMiddleware installs a fresh graph.RequestCache on each

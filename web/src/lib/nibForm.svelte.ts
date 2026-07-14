@@ -97,20 +97,25 @@ function fieldsFromSnapshot(s: NibSnapshot): FieldValues {
 
 /**
  * Recognize a server-side optimistic-concurrency rejection (stale if-match).
- * The Go backend surfaces `ETagMismatchError` whose message is exactly
- * "etag mismatch: provided <x>, current is <y>" (see internal/nibcore/core.go,
- * `ETagMismatchError.Error`); urql prefixes it with "[GraphQL] ". A substring
- * match keeps the check resilient to that wrapping.
  *
- * This is a cross-boundary STRING contract — the GraphQL error carries no
- * structured code today, so this human-readable text is the only signal. The
- * exact format is pinned on both sides: Go `TestETagMismatchErrorFormat`
- * (internal/nibcore) and the "classifies the exact Go etag-mismatch string"
- * cases in nibForm.svelte.test.ts. Rewording the Go message silently breaks
- * conflict routing here — keep them in lockstep. (A future `extensions.code =
- * "ETAG_MISMATCH"` would let us classify structurally; deferred, see nibs-k82m.)
+ * PRIMARY signal: the structured GraphQL `extensions.code === "ETAG_MISMATCH"`,
+ * attached by the backend error presenter (cmd/serve.go, `etagErrorPresenter`)
+ * to ONLY the typed `*nibcore.ETagMismatchError`. It is wrapping-proof (survives
+ * message rewording and urql's "[GraphQL] " prefix) and cannot be confused with
+ * a validation/generic error that merely mentions "etag".
+ *
+ * FALLBACK signal: a substring match on the human-readable message
+ * "etag mismatch: provided <x>, current is <y>" (see internal/nibcore/core.go,
+ * `ETagMismatchError.Error`). This is defense-in-depth on the one path that
+ * reaches this classifier — `EditForm.save()` over HTTP — so conflict routing
+ * still works if the structured code ever goes missing (an `etagErrorPresenter`
+ * regression, or a future non-HTTP error path that skips the presenter). The
+ * format is pinned on both sides: Go `TestETagMismatchErrorFormat`
+ * (internal/nibcore) and the "substring fallback" cases in nibForm.svelte.test.ts
+ * — keep them in lockstep.
  */
-function isEtagConflict(message: string | undefined): boolean {
+function isEtagConflict(message: string | undefined, code?: string): boolean {
+  if (code === "ETAG_MISMATCH") return true;
   return !!message && /etag mismatch/i.test(message);
 }
 
@@ -486,17 +491,25 @@ export class EditForm extends BaseForm implements NibFormFields {
 
     this.setSaving(true);
     try {
-      const result = await this.deps.mutations.execute(updateNibCmd(this.id, input, ifMatch));
+      // `suppressToast: true` — save() OWNS the messaging for this call. A
+      // server-side 409 is routed into the inline conflict resolver (below), and
+      // a plain error is surfaced by the caller via the returned `error` outcome;
+      // either way the raw `toast.error(<GraphQL message>)` the dispatcher would
+      // otherwise fire must NOT race ahead of that (the whole point of Item 2).
+      const result = await this.deps.mutations.execute(
+        updateNibCmd(this.id, input, ifMatch),
+        { suppressToast: true },
+      );
       if (!result.ok) {
         // Route a server-side if-match rejection into the SAME conflict resolver
         // as the proactive path — the buffer stays dirty, so nothing is clobbered.
-        // NOTE: MutationDispatcher.#executeLeaf has ALREADY fired a raw
-        // `toast.error(<GraphQL message>)` before we return here (it toasts every
-        // failed mutation). This only governs the returned OUTCOME; the graceful
-        // inline resolver still appears, but a raw error toast races ahead of it.
-        // The remote snapshot isn't in the error, so `remote` is null until the
-        // live subscription backfills it into `externalChange`.
-        if (!opts?.overwrite && isEtagConflict(result.error)) {
+        // Classified on the structured `errorCode` first (extensions.code), with
+        // the message substring as a fallback (isEtagConflict). The remote
+        // snapshot isn't in the error, so `remote` is `this.#externalChange`: the
+        // proactively-recorded remote if the subscription already delivered one,
+        // else null — in which case the presenter (useActiveView) one-shot-fetches
+        // the current snapshot so the resolver isn't stuck waiting on the sub.
+        if (!opts?.overwrite && isEtagConflict(result.error, result.errorCode)) {
           return { kind: "conflict", remote: this.#externalChange };
         }
         return { kind: "error", message: result.error };

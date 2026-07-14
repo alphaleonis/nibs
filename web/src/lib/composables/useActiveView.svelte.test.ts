@@ -133,8 +133,37 @@ function makeDeps() {
     };
   };
 
-  const deps: ActiveViewDeps = { nav, editForm, createForm, liveNib, detail, confirm };
-  return { deps, nav, confirm, editForms, createForms, liveInsts, detailInsts, created, disposed };
+  // One-shot "current snapshot" fetch used by the null-remote conflict fallback
+  // (Item 3). Defaults to null (no remote); tests override per-call.
+  const fetchSnapshot = vi.fn(async (_nibId: string): Promise<NibSnapshot | null> => null);
+
+  // Last-resort feedback used by the null-remote conflict fallback when it can
+  // neither surface the resolver nor defer to the subscription (wired to a toast).
+  const notifyError = vi.fn<(message: string) => void>();
+
+  const deps: ActiveViewDeps = {
+    nav,
+    editForm,
+    createForm,
+    liveNib,
+    detail,
+    fetchSnapshot,
+    notifyError,
+    confirm,
+  };
+  return {
+    deps,
+    nav,
+    confirm,
+    editForms,
+    createForms,
+    liveInsts,
+    detailInsts,
+    fetchSnapshot,
+    notifyError,
+    created,
+    disposed,
+  };
 }
 
 /** Create the presenter inside a fresh effect root; returns view + disposer. */
@@ -551,6 +580,280 @@ describe("createActiveView · live bridge", () => {
 
     expect(f.applyExternal).toHaveBeenCalledTimes(1);
     expect(f.applyExternal).toHaveBeenLastCalledWith(fresh);
+
+    dispose();
+  });
+});
+
+describe("createActiveView · null-remote conflict fallback (Item 3)", () => {
+  it("one-shot-fetches the current snapshot and feeds the resolver when save() returns a null-remote conflict", async () => {
+    const h = makeDeps();
+    const { view, dispose } = mount(h.deps);
+
+    await view.open("n1");
+    flushSync();
+    const f = h.editForms.get("n1")!;
+    f.dirty = true;
+
+    // The server rejected the save on a stale if-match, but the live
+    // subscription is silent — no external event backfilled the remote, so
+    // save() reports a conflict with an unknown (null) remote.
+    const remote = snap({ id: "n1", etag: "e9", title: "Server copy" });
+    h.fetchSnapshot.mockResolvedValueOnce(remote);
+    f.save.mockResolvedValueOnce({ kind: "conflict", remote: null });
+
+    const outcome = await view.save();
+    flushSync();
+
+    // The outcome is passed through unchanged...
+    expect(outcome).toEqual({ kind: "conflict", remote: null });
+    // ...and the fallback fetched the current snapshot for the open nib and fed
+    // it into the inline resolver directly (not waiting on the dead subscription).
+    expect(h.fetchSnapshot).toHaveBeenCalledTimes(1);
+    expect(h.fetchSnapshot).toHaveBeenCalledWith("n1");
+    // The resolver is fed exactly once (no re-surface): pins the fallback ran once.
+    expect(f.noteExternalChange).toHaveBeenCalledTimes(1);
+    expect(f.noteExternalChange).toHaveBeenCalledWith(remote);
+    expect(f.externalChange).toEqual(remote);
+    // A snapshot WAS surfaced, so the toast fallback must stay quiet (no double signal).
+    expect(h.notifyError).not.toHaveBeenCalled();
+
+    dispose();
+  });
+
+  it("does not fetch or clobber when the live subscription already recorded a change (fresher wins)", async () => {
+    const h = makeDeps();
+    const { view, dispose } = mount(h.deps);
+
+    await view.open("n1");
+    flushSync();
+    const f = h.editForms.get("n1")!;
+    f.dirty = true;
+
+    // The live bridge records a fresh external change first.
+    const fromSub = snap({ id: "n1", etag: "e-sub", title: "Sub copy" });
+    h.liveInsts.get("n1")!.external = fromSub;
+    flushSync();
+    expect(f.externalChange).toEqual(fromSub);
+
+    // Now a save resolves as a null-remote conflict; the fallback must NOT run,
+    // because the subscription's (authoritative) record is already up.
+    const stale = snap({ id: "n1", etag: "e-old", title: "Stale copy" });
+    h.fetchSnapshot.mockResolvedValueOnce(stale);
+    f.save.mockResolvedValueOnce({ kind: "conflict", remote: null });
+
+    await view.save();
+    flushSync();
+
+    expect(h.fetchSnapshot).not.toHaveBeenCalled();
+    expect(f.externalChange).toEqual(fromSub); // untouched
+    // Only the live bridge's single call stands — the fallback never re-noted,
+    // which `not.toHaveBeenCalledWith(stale)` alone wouldn't pin (it was already
+    // called once with fromSub).
+    expect(f.noteExternalChange).toHaveBeenCalledTimes(1);
+    expect(f.noteExternalChange).toHaveBeenCalledWith(fromSub);
+    // The subscription's banner is already up — never toast over it.
+    expect(h.notifyError).not.toHaveBeenCalled();
+
+    dispose();
+  });
+
+  it("does not surface the fetched snapshot if the buffer went clean during the fetch (Discard race)", async () => {
+    const h = makeDeps();
+    const { view, dispose } = mount(h.deps);
+
+    await view.open("n1");
+    flushSync();
+    const f = h.editForms.get("n1")!;
+    f.dirty = true;
+
+    const remote = snap({ id: "n1", etag: "e9", title: "Server copy" });
+    // Flip the buffer clean from INSIDE the fetch mock so the pre-fetch guard
+    // genuinely passes (dirty at dispatch) and the fetch runs, then the Discard
+    // lands WHILE the one-shot query is in flight. This exercises the post-await
+    // re-check specifically — flipping dirty in the test body instead would let
+    // the pre-fetch guard short-circuit before fetchSnapshot is ever called.
+    h.fetchSnapshot.mockImplementationOnce(async () => {
+      f.dirty = false; // user hit Discard mid-fetch
+      return remote;
+    });
+    f.save.mockResolvedValueOnce({ kind: "conflict", remote: null });
+
+    await view.save();
+    flushSync();
+
+    // The pre-fetch guard passed and the one-shot fetch actually ran...
+    expect(h.fetchSnapshot).toHaveBeenCalledWith("n1");
+    // ...but the POST-await re-check saw the now-clean buffer and suppressed the
+    // surfacing. A not-dirty buffer has no conflict to resolve — never record one.
+    expect(f.noteExternalChange).not.toHaveBeenCalled();
+
+    dispose();
+  });
+
+  it("does NOT toast when the fallback fetch resolves null (nib gone) — the missing-nib path owns that message", async () => {
+    const h = makeDeps();
+    const { view, dispose } = mount(h.deps);
+
+    await view.open("n1");
+    flushSync();
+    const f = h.editForms.get("n1")!;
+    f.dirty = true;
+
+    // The save was rejected on a stale if-match, but the current snapshot can't be
+    // loaded because the nib was deleted/archived in the race window — fetch
+    // resolves null (NOT a throw; a throw is a transport failure, tested below).
+    h.fetchSnapshot.mockResolvedValueOnce(null);
+    f.save.mockResolvedValueOnce({ kind: "conflict", remote: null });
+
+    await view.save();
+    flushSync();
+
+    // The nib is gone: "please retry" would be wrong advice, and App's missing-nib
+    // effect owns telling the user. The fallback must stay silent (MEDIUM #3) —
+    // never surface a resolver, never toast.
+    expect(h.fetchSnapshot).toHaveBeenCalledWith("n1");
+    expect(f.noteExternalChange).not.toHaveBeenCalled();
+    expect(h.notifyError).not.toHaveBeenCalled();
+
+    dispose();
+  });
+
+  it("toasts when the fallback fetch rejects (transport error) instead of throwing out of save()", async () => {
+    const h = makeDeps();
+    const { view, dispose } = mount(h.deps);
+
+    await view.open("n1");
+    flushSync();
+    const f = h.editForms.get("n1")!;
+    f.dirty = true;
+
+    // The one-shot fetch rejects (a genuine load failure — fetchSnapshot throws on
+    // transport/GraphQL error). save() must swallow it and give the user feedback
+    // rather than surfacing an unhandled rejection. A load FAILURE (unlike a
+    // deleted nib) legitimately toasts "please retry".
+    h.fetchSnapshot.mockRejectedValueOnce(new Error("network down"));
+    f.save.mockResolvedValueOnce({ kind: "conflict", remote: null });
+
+    const outcome = await view.save();
+    flushSync();
+
+    expect(outcome).toEqual({ kind: "conflict", remote: null });
+    expect(h.fetchSnapshot).toHaveBeenCalledWith("n1");
+    expect(f.noteExternalChange).not.toHaveBeenCalled();
+    expect(h.notifyError).toHaveBeenCalledTimes(1);
+    expect(h.notifyError).toHaveBeenCalledWith(
+      "This nib changed on the server and the latest version couldn't be loaded. Please retry.",
+    );
+
+    dispose();
+  });
+
+  it("a re-entrant save() during the in-flight fallback does not double-fetch, double-surface, or double-toast (HIGH #1)", async () => {
+    const h = makeDeps();
+    const { view, dispose } = mount(h.deps);
+
+    await view.open("n1");
+    flushSync();
+    const f = h.editForms.get("n1")!;
+    f.dirty = true;
+
+    // Gate the fallback fetch so a second save() can fire WHILE it is in flight.
+    let releaseFetch!: (v: NibSnapshot | null) => void;
+    h.fetchSnapshot.mockImplementationOnce(
+      () => new Promise<NibSnapshot | null>((resolve) => (releaseFetch = resolve)),
+    );
+    // Every save resolves as a null-remote conflict (persistent, both calls).
+    f.save.mockResolvedValue({ kind: "conflict", remote: null });
+
+    // First save() enters the fallback and parks on the gated fetch. Drain to a
+    // macrotask boundary so save()'s continuation reaches (and calls) fetchSnapshot.
+    const first = view.save();
+    await new Promise((r) => setTimeout(r));
+    flushSync();
+    expect(h.fetchSnapshot).toHaveBeenCalledTimes(1);
+    // While the fallback is in flight the presenter reports savePending so the UI
+    // keeps the Save control disabled (prevents the re-click at its source).
+    expect(view.savePending).toBe(true);
+
+    // A second save() (impatient re-trigger) must NOT start a second fallback: the
+    // in-flight guard skips the fetch/surface/toast even though f.saving is false.
+    const second = await view.save();
+    flushSync();
+    expect(second).toEqual({ kind: "conflict", remote: null });
+    expect(h.fetchSnapshot).toHaveBeenCalledTimes(1); // still exactly one fetch
+
+    // Release the original fetch; it surfaces the snapshot exactly once, then clears.
+    const remote = snap({ id: "n1", etag: "e9", title: "Server copy" });
+    releaseFetch(remote);
+    await first;
+    flushSync();
+
+    expect(f.noteExternalChange).toHaveBeenCalledTimes(1);
+    expect(f.noteExternalChange).toHaveBeenCalledWith(remote);
+    expect(h.notifyError).not.toHaveBeenCalled();
+    expect(view.savePending).toBe(false);
+
+    dispose();
+  });
+
+  it("form A's settling fallback does not clear form B's in-flight marker after a syncTo swap (HIGH #1 cross-form regression)", async () => {
+    const h = makeDeps();
+    const { view, dispose } = mount(h.deps);
+
+    // Two gated fetches: [0] parks A's fallback, [1] parks B's fallback.
+    let releaseA!: (v: NibSnapshot | null) => void;
+    let releaseB!: (v: NibSnapshot | null) => void;
+    h.fetchSnapshot
+      .mockImplementationOnce(() => new Promise<NibSnapshot | null>((r) => (releaseA = r)))
+      .mockImplementationOnce(() => new Promise<NibSnapshot | null>((r) => (releaseB = r)));
+
+    // --- Form A ("n1"): start a null-remote conflict fallback, PARK it in flight.
+    await view.open("n1");
+    flushSync();
+    const a = h.editForms.get("n1")!;
+    a.dirty = true;
+    a.save.mockResolvedValueOnce({ kind: "conflict", remote: null });
+
+    const firstA = view.save();
+    await new Promise((r) => setTimeout(r));
+    flushSync();
+    expect(h.fetchSnapshot).toHaveBeenCalledTimes(1);
+    expect(view.savePending).toBe(true); // A guarded
+
+    // --- Swap the active form to B ("n2") via the guard-bypass (Back/Forward),
+    //     WHILE A's fallback is still in flight.
+    view.syncTo("n2");
+    flushSync();
+    const b = h.editForms.get("n2")!;
+    b.dirty = true;
+
+    // --- Form B hits its OWN null-remote conflict and parks on its own fetch.
+    b.save.mockResolvedValueOnce({ kind: "conflict", remote: null });
+    const firstB = view.save();
+    await new Promise((r) => setTimeout(r));
+    flushSync();
+    expect(h.fetchSnapshot).toHaveBeenCalledTimes(2);
+    expect(view.savePending).toBe(true); // B is now the guarded form
+
+    // --- Release A's (now-orphaned) fetch. A's finally MUST NOT clear B's still-
+    //     pending marker — with the unconditional clear it would flip savePending
+    //     false and reopen B's re-entrancy window (HIGH #1 cross-form regression).
+    releaseA(snap({ id: "n1", etag: "e9" }));
+    await firstA;
+    flushSync();
+    expect(view.savePending).toBe(true); // B STILL guarded (false under the bug)
+    expect(b.noteExternalChange).not.toHaveBeenCalled(); // B's fetch not yet resolved
+    expect(a.noteExternalChange).not.toHaveBeenCalled(); // A is no longer active — surfaced nothing
+
+    // --- Release B's fetch: it surfaces once and clears; savePending falls.
+    const remoteB = snap({ id: "n2", etag: "e9b", title: "B server copy" });
+    releaseB(remoteB);
+    await firstB;
+    flushSync();
+    expect(b.noteExternalChange).toHaveBeenCalledTimes(1);
+    expect(b.noteExternalChange).toHaveBeenCalledWith(remoteB);
+    expect(view.savePending).toBe(false);
 
     dispose();
   });

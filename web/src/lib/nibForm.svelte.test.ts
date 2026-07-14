@@ -11,16 +11,18 @@ interface RecordedCall {
   id?: string;
   input?: any;
   ifMatch?: string;
+  opts?: { suppressToast?: boolean };
 }
 
 /**
- * Fake MutationStore double. Records every dispatched command and returns a
- * canned CommandResult. No DOM, no urql — pure boundary testing.
+ * Fake MutationStore double. Records every dispatched command (and its execute
+ * options) and returns a canned CommandResult. No DOM, no urql — pure boundary
+ * testing.
  */
 function makeMutations(responder?: (cmd: any) => CommandResult) {
   const calls: RecordedCall[] = [];
-  const execute = vi.fn(async (cmd: any): Promise<CommandResult> => {
-    calls.push({ kind: cmd.kind, id: cmd.id, input: cmd.input, ifMatch: cmd.ifMatch });
+  const execute = vi.fn(async (cmd: any, opts?: any): Promise<CommandResult> => {
+    calls.push({ kind: cmd.kind, id: cmd.id, input: cmd.input, ifMatch: cmd.ifMatch, opts });
     return responder ? responder(cmd) : { ok: true, data: {} };
   });
   const deps: FormDeps = { mutations: { execute: execute as any } };
@@ -348,10 +350,12 @@ describe("editNibForm — conflict & overwrite", () => {
   // without urql's "[GraphQL] " prefix) through isEtagConflict. The Go side is
   // pinned by TestETagMismatchErrorFormat (internal/nibcore); if a Go maintainer
   // rewords that message, this expectation and the Go test must move together.
+  // This is the SUBSTRING FALLBACK safety net — it must stay green even after
+  // the structured extensions.code path lands (no errorCode is supplied here).
   it.each([
     "etag mismatch: provided etag-1, current is etag-9",
     "[GraphQL] etag mismatch: provided etag-1, current is etag-9",
-  ])("classifies the exact Go etag-mismatch string %j as a conflict", async (message) => {
+  ])("classifies the exact Go etag-mismatch string %j as a conflict (substring fallback)", async (message) => {
     const { deps, calls } = makeMutations(() => ({ ok: false, error: message }));
     const form = editNibForm(deps, seed({ etag: "etag-1" }));
     form.title = "Mine";
@@ -360,6 +364,35 @@ describe("editNibForm — conflict & overwrite", () => {
 
     expect(calls).toHaveLength(1);
     expect(outcome.kind).toBe("conflict");
+  });
+
+  it("classifies a structured errorCode=ETAG_MISMATCH conflict even when the message text does NOT match", async () => {
+    // The server tagged the typed error with extensions.code = "ETAG_MISMATCH",
+    // but the human-readable message is (hypothetically) reworded so the
+    // substring fallback would MISS it. The structured code must win.
+    const { deps, calls } = makeMutations(() => ({
+      ok: false,
+      error: "[GraphQL] the record was modified by someone else",
+      errorCode: "ETAG_MISMATCH",
+    }));
+    const form = editNibForm(deps, seed({ etag: "etag-1" }));
+    form.title = "Mine";
+
+    const outcome = await form.save();
+
+    expect(calls).toHaveLength(1);
+    expect(outcome.kind).toBe("conflict");
+  });
+
+  it("save()'s update dispatch opts into suppressToast so save() owns the messaging (no racing raw toast)", async () => {
+    const { deps, calls } = makeMutations(updateResponder("etag-2"));
+    const form = editNibForm(deps, seed({ etag: "etag-1" }));
+    form.title = "Mine";
+
+    await form.save();
+
+    expect(calls).toHaveLength(1);
+    expect(calls[0].opts?.suppressToast).toBe(true);
   });
 
   it("save() still returns a plain error for non-conflict failures", async () => {

@@ -1,5 +1,5 @@
 import { toast } from "svelte-sonner";
-import type { Client } from "@urql/core";
+import type { Client, CombinedError } from "@urql/core";
 import {
   UPDATE_NIB_MUTATION,
   DELETE_NIB_MUTATION,
@@ -18,6 +18,7 @@ import type {
   BatchResult,
   SequenceResult,
   SequenceStep,
+  ExecuteOptions,
 } from "./types";
 
 /** Maps command kind to the GraphQL mutation document. */
@@ -34,6 +35,20 @@ function getMutationDoc(kind: LeafCommand["kind"]) {
 
 /** Kinds that need cache invalidation via additionalTypenames. */
 const INVALIDATING_KINDS = new Set<string>(["create-nib", "delete-nib", "archive-nib", "set-parent", "reorder-nib"]);
+
+/**
+ * Lift the first string `extensions.code` off a urql CombinedError's GraphQL
+ * errors (e.g. "ETAG_MISMATCH", set by the backend error presenter). Returns
+ * undefined when no GraphQL error carried a string code — the caller then falls
+ * back to substring-matching the message.
+ */
+function errorCodeOf(error: CombinedError): string | undefined {
+  for (const gqlErr of error.graphQLErrors ?? []) {
+    const code = gqlErr.extensions?.code;
+    if (typeof code === "string") return code;
+  }
+  return undefined;
+}
 
 /** Maps a leaf command to the GraphQL variables. */
 function getVariables(cmd: LeafCommand): Record<string, unknown> {
@@ -71,24 +86,28 @@ export class MutationDispatcher {
     this.#client = client;
   }
 
-  async execute(cmd: LeafCommand): Promise<CommandResult>;
-  async execute(cmd: BatchCommand): Promise<BatchResult>;
-  async execute(cmd: SequenceCommand): Promise<SequenceResult>;
+  async execute(cmd: LeafCommand, opts?: ExecuteOptions): Promise<CommandResult>;
+  async execute(cmd: BatchCommand, opts?: ExecuteOptions): Promise<BatchResult>;
+  async execute(cmd: SequenceCommand, opts?: ExecuteOptions): Promise<SequenceResult>;
   // Union overload so callers holding an un-narrowed AnyCommand (e.g. the
   // MutationStore pass-through) can dispatch without picking a concrete kind.
-  async execute(cmd: AnyCommand): Promise<AnyResult>;
-  async execute(cmd: AnyCommand): Promise<AnyResult> {
+  async execute(cmd: AnyCommand, opts?: ExecuteOptions): Promise<AnyResult>;
+  async execute(cmd: AnyCommand, opts?: ExecuteOptions): Promise<AnyResult> {
+    // suppressToast is threaded into every leaf (including a batch/sequence's
+    // legs) but only ever set by the opted-in caller — default false keeps the
+    // "toast on error" behavior for everyone else.
+    const suppressToast = opts?.suppressToast ?? false;
     switch (cmd.kind) {
       case "batch":
-        return this.#executeBatch(cmd.commands);
+        return this.#executeBatch(cmd.commands, suppressToast);
       case "sequence":
-        return this.#executeSequence(cmd.steps);
+        return this.#executeSequence(cmd.steps, suppressToast);
       default:
-        return this.#executeLeaf(cmd);
+        return this.#executeLeaf(cmd, suppressToast);
     }
   }
 
-  async #executeLeaf(cmd: LeafCommand): Promise<CommandResult> {
+  async #executeLeaf(cmd: LeafCommand, suppressToast = false): Promise<CommandResult> {
     const doc = getMutationDoc(cmd.kind);
     const vars = getVariables(cmd);
     const opts = INVALIDATING_KINDS.has(cmd.kind)
@@ -98,15 +117,17 @@ export class MutationDispatcher {
     const res = await this.#client.mutation(doc, vars, opts).toPromise();
 
     if (res.error) {
-      toast.error(res.error.message);
-      return { ok: false, error: res.error.message };
+      // The caller can opt to OWN the messaging for this call (e.g. save()
+      // routing a 409 into the inline resolver); otherwise toast as before.
+      if (!suppressToast) toast.error(res.error.message);
+      return { ok: false, error: res.error.message, errorCode: errorCodeOf(res.error) };
     }
     return { ok: true, data: res.data };
   }
 
-  async #executeBatch(commands: LeafCommand[]): Promise<BatchResult> {
+  async #executeBatch(commands: LeafCommand[], suppressToast = false): Promise<BatchResult> {
     const results = await Promise.allSettled(
-      commands.map((cmd) => this.#executeLeaf(cmd))
+      commands.map((cmd) => this.#executeLeaf(cmd, suppressToast))
     );
 
     const commandResults: CommandResult[] = results.map((r) =>
@@ -124,14 +145,14 @@ export class MutationDispatcher {
     };
   }
 
-  async #executeSequence(steps: SequenceStep[]): Promise<SequenceResult> {
+  async #executeSequence(steps: SequenceStep[], suppressToast = false): Promise<SequenceResult> {
     const results: CommandResult[] = [];
     let prevResult: CommandResult = { ok: true };
 
     for (let i = 0; i < steps.length; i++) {
       const step = steps[i];
       const cmd = typeof step === "function" ? step(prevResult) : step;
-      const result = await this.#executeLeaf(cmd);
+      const result = await this.#executeLeaf(cmd, suppressToast);
       results.push(result);
 
       if (!result.ok) {

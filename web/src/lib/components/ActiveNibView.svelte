@@ -280,7 +280,11 @@
 
   async function handleSave() {
     const f = form;
-    if (!f || !f.dirty || f.saving) return;
+    // `view.savePending`: a null-remote conflict fallback is in flight for this
+    // form. `f.saving` is already false by then (EditForm.save resets it before
+    // the presenter's fallback fetch), so without this a re-trigger would
+    // re-dispatch mid-fallback (HIGH #1).
+    if (!f || !f.dirty || f.saving || view.savePending) return;
     // Capture the saved instance + id BEFORE the await. The buffer can swap to
     // another nib mid-flight (popstate / syncTo guard-bypass), so the live
     // `form`/`nibId` getters read AFTER the await may point at a different nib
@@ -628,10 +632,10 @@
             <Button
               size="default"
               data-testid="anv-save"
-              disabled={!form.dirty || form.saving || disabled}
+              disabled={!form.dirty || form.saving || disabled || view.savePending}
               onclick={handleSave}
             >
-              {form.saving ? "Saving..." : isCreating ? "Create" : "Save"}
+              {form.saving || view.savePending ? "Saving..." : isCreating ? "Create" : "Save"}
             </Button>
             <Button
               variant="outline"

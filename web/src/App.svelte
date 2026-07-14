@@ -2,7 +2,7 @@
   import { untrack } from "svelte";
   import { setContextClient, queryStore } from "@urql/svelte";
   import { createClient } from "./lib/graphql";
-  import { CONFIG_QUERY, NIB_DETAIL_QUERY } from "./lib/queries";
+  import { CONFIG_QUERY, NIB_DETAIL_QUERY, NIB_CONFLICT_SNAPSHOT_QUERY } from "./lib/queries";
   import { Preferences } from "./lib/preferences.svelte";
   import Toolbar from "./lib/components/Toolbar.svelte";
 
@@ -25,6 +25,8 @@
   import { orientationOf } from "./lib/composables/detailPaneLayout";
   import { createNibForm, editNibForm } from "./lib/nibForm.svelte";
   import type { CreateForm, EditForm, CreateDefaults, NibSnapshot } from "./lib/nibForm.svelte";
+  import { toNibSnapshot } from "./lib/nibChange";
+  import type { RawNibPayload } from "./lib/nibChange";
   import { createLiveNib } from "./lib/liveNib.svelte";
   import type { LiveNib } from "./lib/liveNib.svelte";
   import type { TreeTableNib, RowSubtreeActions } from "./lib/types";
@@ -153,6 +155,32 @@
 
   const createForm = (defaults: CreateDefaults): CreateForm => createNibForm({ mutations }, defaults);
 
+  // One-shot, network-authoritative fetch of a nib's current committed snapshot,
+  // used by the presenter's null-remote conflict fallback (nibs-s80f Item 3).
+  // `network-only` bypasses the cache so we read the server's CURRENT revision —
+  // the whole point is to reconcile against what actually rejected the save. Uses
+  // the DEDICATED NIB_CONFLICT_SNAPSHOT_QUERY (not NIB_DETAIL_QUERY) so its urql
+  // result-source is independent of App's live detailStore — a `{ nib: null }`
+  // (deleted-in-race) response must not feed detailStore and drop the buffer.
+  //
+  // Contract: resolves the snapshot, resolves `null` when the nib no longer
+  // exists, and REJECTS (throws) on a transport/GraphQL error. urql's
+  // `.toPromise()` does NOT reject on failure — it resolves an OperationResult
+  // with `.error` set — so we surface it explicitly (mirrors dispatcher.ts's
+  // `if (res.error)` and liveNib's warn). The presenter's fallback relies on this
+  // to tell a transient load failure ("please retry") apart from a real deletion.
+  const fetchSnapshot = async (nibId: string): Promise<NibSnapshot | null> => {
+    const result = await client
+      .query(NIB_CONFLICT_SNAPSHOT_QUERY, { id: nibId }, { requestPolicy: "network-only" })
+      .toPromise();
+    if (result.error) {
+      console.warn("fetchSnapshot query error:", result.error);
+      throw result.error;
+    }
+    const nib = result.data?.nib as RawNibPayload | null | undefined;
+    return nib ? toNibSnapshot(nib) : null;
+  };
+
   const liveNib = (nibId: string): LiveNib =>
     createLiveNib({
       client,
@@ -186,7 +214,16 @@
     });
   }
 
-  const view = createActiveView({ nav, detail, editForm, createForm, liveNib, confirm: confirmDiscard });
+  const view = createActiveView({
+    nav,
+    detail,
+    editForm,
+    createForm,
+    liveNib,
+    fetchSnapshot,
+    notifyError: (message: string) => toast.error(message),
+    confirm: confirmDiscard,
+  });
   holder.view = view;
 
   provideSelection(selection);

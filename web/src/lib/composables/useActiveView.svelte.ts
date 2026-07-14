@@ -85,6 +85,21 @@ export interface ActiveViewDeps {
   liveNib: (nibId: string) => LiveNib;
   /** The single `NIB_DETAIL_QUERY` wrapper for a nib (relations/documents). */
   detail: (nibId: string) => DetailView;
+  /** One-shot fetch of a nib's CURRENT committed snapshot (network-authoritative,
+   *  bypassing any cached value). Used by the null-remote conflict fallback: when
+   *  a server-side 409 races the live subscription, we fetch the current remote
+   *  directly rather than waiting on a subscription that may be down/lagging.
+   *  Resolves the snapshot, resolves null when the nib no longer exists, and
+   *  REJECTS on a transport/GraphQL error — the fallback relies on the reject vs
+   *  resolve-null distinction to tell a transient load failure apart from a real
+   *  deletion (only the former toasts "please retry"). */
+  fetchSnapshot: (nibId: string) => Promise<NibSnapshot | null>;
+  /** Surface a transient error message to the user (wired to a toast). The
+   *  null-remote conflict fallback uses this as the LAST-resort feedback path:
+   *  when it can neither surface the inline resolver (no snapshot to reconcile
+   *  against) nor defer to a fresher subscription change, the suppressed
+   *  dispatcher toast (Item 2) would otherwise leave a rejected save silent. */
+  notifyError: (message: string) => void;
   /** Ask the user to discard unsaved changes; resolve false to keep them. */
   confirm: () => Promise<boolean>;
 }
@@ -120,6 +135,13 @@ export interface ActiveView {
   readonly typePicker: TypePickerState | null;
   /** True while Back/Forward must be frozen: dirty buffer or an open type picker. */
   readonly blocksHistoryNav: boolean;
+  /** True while the active edit form's null-remote conflict fallback (Item 3) is
+   *  in flight. `EditForm.save()` resets `form.saving` to false BEFORE the
+   *  presenter's fallback fetch begins, so the Save control (keyed on
+   *  `form.saving`) would otherwise re-enable mid-fallback and a re-click could
+   *  re-dispatch. The Save `disabled` binding ORs this in so the control stays
+   *  visibly disabled through the whole fallback (HIGH #1). */
+  readonly savePending: boolean;
   /** Monotonic counter bumped each time a CLEAN buffer is silently rebaselined
    *  onto an incoming change (in-app or on-disk). The view watches it to fire a
    *  minor "updated" toast; the value itself is opaque (only deltas matter). */
@@ -157,6 +179,11 @@ export function createActiveView(deps: ActiveViewDeps): ActiveView {
   // Bumped whenever the live bridge silently rebaselines a clean buffer onto an
   // incoming change (see the bridge $effect). The view watches it for the toast.
   let externalApplied = $state(0);
+  // The edit form whose null-remote conflict fallback (Item 3) is CURRENTLY in
+  // flight, or null. Reactive so `savePending` can keep the Save control disabled
+  // through the fallback's round-trip; also the in-flight guard (HIGH #1) that
+  // stops a re-entrant save() from starting a second fetch/dispatch/toast.
+  let conflictFallbackFor = $state.raw<EditForm | null>(null);
 
   // Non-reactive bookkeeping.
   let currentKey: string | null = null;
@@ -244,6 +271,66 @@ export function createActiveView(deps: ActiveViewDeps): ActiveView {
     }
     apply(action);
     return true;
+  }
+
+  // Item 3 — null-remote conflict fallback. A server-side 409 that raced the live
+  // subscription returns `remote: null` (no snapshot to reconcile against yet). If
+  // the subscription is down/lagging it may NEVER backfill `externalChange`,
+  // leaving the user stuck with a dirty buffer and — now that the raw toast is
+  // suppressed (Item 2) — no feedback at all. Fetch the current remote snapshot
+  // once and feed the resolver directly.
+  //
+  // Freshness guards (`canSurface`, never regress a fresher subscription update):
+  //   - `form === f`: the buffer didn't swap to another nib mid-save.
+  //   - `f.dirty`: only a dirty edit buffer surfaces the resolver; a Discard that
+  //     landed during the fetch means there is nothing to reconcile.
+  //   - `f.externalChange === null`: the live bridge is authoritative — if it
+  //     recorded a (possibly fresher) change in the meantime, don't clobber it.
+  // Checked BEFORE the fetch (skip a needless round-trip if the sub already won)
+  // and AFTER it (guard a change that arrived while the fetch was in flight).
+  //
+  // In-flight guard (HIGH #1): `conflictFallbackFor` blocks a re-entrant save()
+  // from starting a second concurrent fallback (second fetch/dispatch/toast); the
+  // reactive `savePending` flag keeps the Save control disabled through the whole
+  // round-trip so the re-click is prevented at the source.
+  async function runNullRemoteConflictFallback(f: EditForm): Promise<void> {
+    const canSurface = () => form === f && f.dirty && f.externalChange === null;
+    if (!canSurface() || conflictFallbackFor === f) return;
+    conflictFallbackFor = f;
+    try {
+      let snapshot: NibSnapshot | null = null;
+      let loadFailed = false;
+      try {
+        snapshot = await deps.fetchSnapshot(f.id);
+      } catch {
+        // fetchSnapshot REJECTS on a transport/GraphQL error (App.svelte); a
+        // resolved null instead means the nib is genuinely gone. Only a load
+        // FAILURE toasts below — the two must not be conflated.
+        loadFailed = true;
+      }
+      // Post-await re-check: a Discard/swap or a fresher subscription change may
+      // have landed while the fetch was in flight — cede to it, surface nothing.
+      if (!canSurface()) return;
+      if (snapshot) {
+        f.noteExternalChange(snapshot);
+      } else if (loadFailed) {
+        // Couldn't load the current revision: the save WAS rejected and its raw
+        // toast is suppressed, so degrade to a visible message rather than fail
+        // silently. NOT emitted for a deleted nib (snapshot === null, no throw):
+        // "please retry" is wrong advice when the nib is gone — the missing-nib
+        // path (App.svelte) owns that message.
+        deps.notifyError(
+          "This nib changed on the server and the latest version couldn't be loaded. Please retry.",
+        );
+      }
+    } finally {
+      // Identity-check the clear (HIGH #1 regression): if the active form swapped
+      // to another form B mid-fetch and B started its own fallback (overwriting
+      // this marker), our later-firing finally must NOT null B's still-pending
+      // marker — that would flip `savePending` false and reopen B's re-entrancy
+      // window. Only clear the slot if it is still ours.
+      if (conflictFallbackFor === f) conflictFallbackFor = null;
+    }
   }
 
   // Bridge the live subscription into the machine + form. Reads `live`/`form`
@@ -366,6 +453,11 @@ export function createActiveView(deps: ActiveViewDeps): ActiveView {
     get blocksHistoryNav() {
       return Boolean(form?.dirty) || typePicker !== null;
     },
+    get savePending() {
+      // Only while THIS view's active form is the one in fallback — a buffer that
+      // swapped mid-fallback is a different, editable form and must not be frozen.
+      return conflictFallbackFor !== null && conflictFallbackFor === form;
+    },
     get externalApplied() {
       return externalApplied;
     },
@@ -429,7 +521,17 @@ export function createActiveView(deps: ActiveViewDeps): ActiveView {
         }
         return outcome;
       }
-      return await f.save();
+
+      const outcome = await f.save();
+
+      // A server-side 409 that raced the live subscription (remote unknown): run
+      // the null-remote conflict fallback (Item 3 — see the helper). `form === f`
+      // is a cheap early-out; the helper re-checks it (and dirtiness / a fresher
+      // sub change) before and after its fetch.
+      if (outcome.kind === "conflict" && outcome.remote === null && form === f) {
+        await runNullRemoteConflictFallback(f);
+      }
+      return outcome;
     },
     async requestClose() {
       if (await guarded({ type: "CLOSE" })) deps.nav.closePanel();
