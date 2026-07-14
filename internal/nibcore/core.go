@@ -93,7 +93,6 @@ type Core struct {
 	// File watching (optional)
 	watching bool
 	done     chan struct{}
-	onChange func() // callback when nibs change (legacy API)
 
 	// Event subscribers (for channel-based API)
 	subscribers map[uint64]*subscription

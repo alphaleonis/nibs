@@ -57,6 +57,9 @@ type subscription struct {
 // Returns the event channel and an unsubscribe function.
 // The channel receives batches of events after debouncing.
 // Callers should use defer to call the unsubscribe function.
+// Internal state is committed before events are delivered: once an event
+// arrives, Get/All already reflect it. Subscribers may therefore act on the
+// event alone and re-read the store rather than trusting the payload.
 func (c *Core) Subscribe() (<-chan []NibEvent, func()) {
 	c.subMu.Lock()
 	defer c.subMu.Unlock()
@@ -99,17 +102,16 @@ func (c *Core) fanOut(events []NibEvent) {
 	}
 }
 
-// StartWatching begins filesystem monitoring.
-// Use Subscribe() to receive nib change events via a channel.
+// StartWatching starts watching the .nibs directory for changes, updating
+// internal state incrementally (after debouncing) as nibs are created,
+// modified, or deleted. Use Subscribe() to receive the resulting nib change
+// events via a channel. Calling it while already watching is a no-op.
+//
+// Subdirectories present at this point are watched too, on a best-effort basis;
+// ones created later are not, so a directory the walk missed stays unwatched
+// for the watcher's lifetime. Incremental updates also mean a change the
+// watcher never observes stays stale until the next full Load.
 func (c *Core) StartWatching() error {
-	return c.Watch(nil)
-}
-
-// Watch starts watching the .nibs directory for changes.
-// The onChange callback is invoked (after debouncing) whenever nibs are created, modified, or deleted.
-// The internal state is automatically reloaded before the callback is invoked.
-// Deprecated: Use StartWatching() + Subscribe() for new code.
-func (c *Core) Watch(onChange func()) error {
 	c.mu.Lock()
 	if c.watching {
 		c.mu.Unlock()
@@ -139,7 +141,6 @@ func (c *Core) Watch(onChange func()) error {
 
 	c.watching = true
 	c.done = make(chan struct{})
-	c.onChange = onChange
 	c.mu.Unlock()
 
 	// Start the watcher goroutine
@@ -164,7 +165,6 @@ func (c *Core) unwatchLocked() error {
 
 	close(c.done)
 	c.watching = false
-	c.onChange = nil
 
 	// Close all subscriber channels
 	c.subMu.Lock()
@@ -347,16 +347,14 @@ func (c *Core) handleChanges(changes map[string]fsnotify.Op) {
 		}
 	}
 
-	callback := c.onChange
 	c.mu.Unlock()
 
-	// Fan out to subscribers (outside lock)
+	// Load-bearing ordering, not incidental: state is committed above before any
+	// event is delivered, so a subscriber that re-reads via Get/All on an event
+	// sees the change. The TUI does exactly that — it discards the payload and
+	// re-reads — so emitting events before applying state would break it
+	// silently and intermittently. Fan out outside the lock.
 	c.fanOut(events)
-
-	// Invoke legacy callback
-	if callback != nil {
-		callback()
-	}
 }
 
 // fileExists checks if a file exists at the given path.

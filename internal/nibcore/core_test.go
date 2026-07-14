@@ -655,17 +655,13 @@ func TestWatch(t *testing.T) {
 	createTestNib(t, core, "wat1", "Initial Nib", "todo")
 
 	// Start watching
-	changeCount := 0
-	var mu sync.Mutex
-
-	err := core.Watch(func() {
-		mu.Lock()
-		changeCount++
-		mu.Unlock()
-	})
-	if err != nil {
-		t.Fatalf("Watch() error = %v", err)
+	if err := core.StartWatching(); err != nil {
+		t.Fatalf("StartWatching() error = %v", err)
 	}
+	defer func() { _ = core.Unwatch() }()
+
+	ch, unsub := core.Subscribe()
+	defer unsub()
 
 	// Give watcher time to start
 	time.Sleep(50 * time.Millisecond)
@@ -680,26 +676,16 @@ status: open
 		t.Fatalf("failed to write test file: %v", err)
 	}
 
-	// Wait for debounce + processing
-	time.Sleep(200 * time.Millisecond)
-
-	mu.Lock()
-	count := changeCount
-	mu.Unlock()
-
-	if count == 0 {
-		t.Error("onChange callback was not invoked")
+	// Wait for the watcher to report the change
+	select {
+	case <-ch:
+	case <-time.After(500 * time.Millisecond):
+		t.Fatal("timeout waiting for change event")
 	}
 
 	// Verify the new nib is in memory
-	_, err = core.Get("ext1")
-	if err != nil {
+	if _, err := core.Get("ext1"); err != nil {
 		t.Errorf("external nib not loaded: %v", err)
-	}
-
-	// Stop watching
-	if err := core.Unwatch(); err != nil {
-		t.Fatalf("Unwatch() error = %v", err)
 	}
 }
 
@@ -709,16 +695,13 @@ func TestWatchDeletedNib(t *testing.T) {
 	b := createTestNib(t, core, "del1", "To Delete", "todo")
 
 	// Start watching
-	changed := make(chan struct{}, 1)
-	err := core.Watch(func() {
-		select {
-		case changed <- struct{}{}:
-		default:
-		}
-	})
-	if err != nil {
-		t.Fatalf("Watch() error = %v", err)
+	if err := core.StartWatching(); err != nil {
+		t.Fatalf("StartWatching() error = %v", err)
 	}
+	defer func() { _ = core.Unwatch() }()
+
+	ch, unsub := core.Subscribe()
+	defer unsub()
 
 	// Give watcher time to start
 	time.Sleep(50 * time.Millisecond)
@@ -730,20 +713,14 @@ func TestWatchDeletedNib(t *testing.T) {
 
 	// Wait for change notification
 	select {
-	case <-changed:
-		// OK
+	case <-ch:
 	case <-time.After(500 * time.Millisecond):
-		t.Error("onChange callback was not invoked for delete")
+		t.Fatal("timeout waiting for delete event")
 	}
 
 	// Verify the nib is gone from memory
-	_, err = core.Get("del1")
-	if err != ErrNotFound {
+	if _, err := core.Get("del1"); err != ErrNotFound {
 		t.Errorf("deleted nib still in memory: %v", err)
-	}
-
-	if err := core.Unwatch(); err != nil {
-		t.Fatalf("Unwatch() error = %v", err)
 	}
 }
 
@@ -752,12 +729,12 @@ func TestUnwatchIdempotent(t *testing.T) {
 
 	// Unwatch without watching should not error
 	if err := core.Unwatch(); err != nil {
-		t.Errorf("Unwatch() without Watch() error = %v", err)
+		t.Errorf("Unwatch() without StartWatching() error = %v", err)
 	}
 
 	// Start watching
-	if err := core.Watch(func() {}); err != nil {
-		t.Fatalf("Watch() error = %v", err)
+	if err := core.StartWatching(); err != nil {
+		t.Fatalf("StartWatching() error = %v", err)
 	}
 
 	// Unwatch twice should not error
@@ -773,8 +750,8 @@ func TestClose(t *testing.T) {
 	core, _ := setupTestCore(t)
 
 	// Start watching
-	if err := core.Watch(func() {}); err != nil {
-		t.Fatalf("Watch() error = %v", err)
+	if err := core.StartWatching(); err != nil {
+		t.Fatalf("StartWatching() error = %v", err)
 	}
 
 	// Close should stop the watcher
