@@ -1822,3 +1822,148 @@ func TestUpdateWithETagDebug(t *testing.T) {
 		t.Logf("Update failed: %v", err)
 	}
 }
+
+// TestCreateValidatesEnums pins the core write-path chokepoint (nibs-9tj2):
+// Create must reject non-empty type/status/priority/estimate values that are not
+// valid under the config, while still accepting the empty "unset -> default"
+// sentinel and valid values. When no config is set, validation must no-op.
+func TestCreateValidatesEnums(t *testing.T) {
+	t.Run("rejects invalid enum values", func(t *testing.T) {
+		cases := []struct {
+			name string
+			b    *nib.Nib
+		}{
+			{"invalid type", &nib.Nib{ID: "ct1", Title: "T", Status: "todo", Type: "epicc"}},
+			{"invalid status", &nib.Nib{ID: "ct2", Title: "T", Status: "banana"}},
+			{"invalid priority", &nib.Nib{ID: "ct3", Title: "T", Status: "todo", Priority: "urgent"}},
+			{"invalid estimate", &nib.Nib{ID: "ct4", Title: "T", Status: "todo", Estimate: "2h"}},
+		}
+		for _, tc := range cases {
+			t.Run(tc.name, func(t *testing.T) {
+				core, _ := setupTestCore(t)
+				if err := core.Create(tc.b); err == nil {
+					t.Fatalf("Create(%+v) = nil error, want validation error", tc.b)
+				}
+				if _, err := core.Get(tc.b.ID); !errors.Is(err, ErrNotFound) {
+					t.Errorf("nib persisted despite validation failure (Get err = %v)", err)
+				}
+			})
+		}
+	})
+
+	t.Run("accepts empty enum sentinels", func(t *testing.T) {
+		core, _ := setupTestCore(t)
+		if err := core.Create(&nib.Nib{ID: "cempty", Title: "Empty"}); err != nil {
+			t.Fatalf("Create() with empty enums error = %v, want nil", err)
+		}
+	})
+
+	t.Run("accepts valid enum values", func(t *testing.T) {
+		core, _ := setupTestCore(t)
+		b := &nib.Nib{ID: "cvalid", Title: "Valid", Status: "in-progress", Type: "bug", Priority: "high", Estimate: "l"}
+		if err := core.Create(b); err != nil {
+			t.Fatalf("Create() with valid enums error = %v, want nil", err)
+		}
+	})
+
+	t.Run("no-op when config is nil", func(t *testing.T) {
+		tmpDir := t.TempDir()
+		nibsDir := filepath.Join(tmpDir, NibsDir)
+		if err := os.MkdirAll(nibsDir, 0755); err != nil {
+			t.Fatalf("mkdir: %v", err)
+		}
+		core := New(nibsDir, nil)
+		core.SetWarnWriter(nil)
+		b := &nib.Nib{ID: "cnil", Title: "No Config", Status: "banana", Type: "epicc", Priority: "urgent", Estimate: "2h"}
+		if err := core.Create(b); err != nil {
+			t.Fatalf("Create() with nil config error = %v, want nil (no-op)", err)
+		}
+	})
+}
+
+// TestUpdateValidatesEnums pins the same chokepoint on the Update path: an
+// invalid non-empty enum must be rejected and leave the stored nib untouched;
+// empty sentinels and valid values are accepted; nil config no-ops.
+func TestUpdateValidatesEnums(t *testing.T) {
+	newValidNib := func(t *testing.T) *Core {
+		t.Helper()
+		core, _ := setupTestCore(t)
+		if err := core.Create(&nib.Nib{
+			ID: "uenum", Title: "Enum", Status: "todo", Type: "task", Priority: "normal", Estimate: "m",
+		}); err != nil {
+			t.Fatalf("seed Create() error = %v", err)
+		}
+		return core
+	}
+
+	t.Run("rejects invalid enum values", func(t *testing.T) {
+		mutators := []struct {
+			name  string
+			apply func(*nib.Nib)
+		}{
+			{"invalid type", func(b *nib.Nib) { b.Type = "epicc" }},
+			{"invalid status", func(b *nib.Nib) { b.Status = "banana" }},
+			{"invalid priority", func(b *nib.Nib) { b.Priority = "urgent" }},
+			{"invalid estimate", func(b *nib.Nib) { b.Estimate = "2h" }},
+		}
+		for _, m := range mutators {
+			t.Run(m.name, func(t *testing.T) {
+				core := newValidNib(t)
+				b, err := core.GetForUpdate("uenum")
+				if err != nil {
+					t.Fatalf("GetForUpdate() error = %v", err)
+				}
+				m.apply(b)
+				if err := core.Update(b, nil); err == nil {
+					t.Fatalf("Update() = nil error, want validation error")
+				}
+				stored, _ := core.Get("uenum")
+				if stored.Type != "task" || stored.Status != "todo" || stored.Priority != "normal" || stored.Estimate != "m" {
+					t.Errorf("stored nib mutated on failed update: type=%q status=%q priority=%q estimate=%q",
+						stored.Type, stored.Status, stored.Priority, stored.Estimate)
+				}
+			})
+		}
+	})
+
+	t.Run("accepts empty enum sentinels", func(t *testing.T) {
+		core := newValidNib(t)
+		b, _ := core.GetForUpdate("uenum")
+		b.Priority = ""
+		b.Estimate = ""
+		if err := core.Update(b, nil); err != nil {
+			t.Fatalf("Update() clearing priority/estimate error = %v, want nil", err)
+		}
+	})
+
+	t.Run("accepts valid enum values", func(t *testing.T) {
+		core := newValidNib(t)
+		b, _ := core.GetForUpdate("uenum")
+		b.Type = "bug"
+		b.Status = "in-progress"
+		b.Priority = "high"
+		b.Estimate = "xl"
+		if err := core.Update(b, nil); err != nil {
+			t.Fatalf("Update() with valid enums error = %v, want nil", err)
+		}
+	})
+
+	t.Run("no-op when config is nil", func(t *testing.T) {
+		tmpDir := t.TempDir()
+		nibsDir := filepath.Join(tmpDir, NibsDir)
+		if err := os.MkdirAll(nibsDir, 0755); err != nil {
+			t.Fatalf("mkdir: %v", err)
+		}
+		core := New(nibsDir, nil)
+		core.SetWarnWriter(nil)
+		if err := core.Create(&nib.Nib{ID: "un", Title: "No Config", Status: "todo"}); err != nil {
+			t.Fatalf("Create() error = %v", err)
+		}
+		b, _ := core.GetForUpdate("un")
+		b.Status = "banana"
+		b.Type = "epicc"
+		if err := core.Update(b, nil); err != nil {
+			t.Fatalf("Update() with nil config error = %v, want nil (no-op)", err)
+		}
+	})
+}

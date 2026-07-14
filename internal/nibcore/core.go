@@ -647,10 +647,44 @@ func (c *Core) NormalizeID(id string) (string, bool) {
 	return id, false
 }
 
+// validateEnums checks that the nib's enum fields (type, status, priority,
+// estimate) hold either the empty "unset -> use default" sentinel (always
+// accepted) or a value valid under the current config. This is the single
+// write-path chokepoint that gives every entry point — CLI, GraphQL, MCP (which
+// rides the same GraphQL resolvers), and the TUI — uniform enum integrity, so a
+// GraphQL/MCP client can no longer persist a nib with e.g. status "banana"
+// (nibs-9tj2). It matches the CLI's `v != "" && !IsValid...` discipline exactly:
+// only non-empty values are checked, so the empty sentinel that means "apply the
+// default" (EffectiveType/EffectivePriority) is never rejected. No-ops when no
+// config is set (several test setups run config-less).
+func (c *Core) validateEnums(b *nib.Nib) error {
+	if c.config == nil {
+		return nil
+	}
+	if b.Type != "" && !c.config.IsValidType(b.Type) {
+		return fmt.Errorf("invalid type %q: must be one of %s", b.Type, c.config.TypeList())
+	}
+	if b.Status != "" && !c.config.IsValidStatus(b.Status) {
+		return fmt.Errorf("invalid status %q: must be one of %s", b.Status, c.config.StatusList())
+	}
+	if b.Priority != "" && !c.config.IsValidPriority(b.Priority) {
+		return fmt.Errorf("invalid priority %q: must be one of %s", b.Priority, c.config.PriorityList())
+	}
+	if b.Estimate != "" && !c.config.IsValidEstimate(b.Estimate) {
+		return fmt.Errorf("invalid estimate %q: must be one of %s", b.Estimate, c.config.EstimateList())
+	}
+	return nil
+}
+
 // Create adds a new nib, generating an ID if needed, and writes it to disk.
 func (c *Core) Create(b *nib.Nib) error {
 	c.mu.Lock()
 	defer c.mu.Unlock()
+
+	// Reject invalid enum values before touching any state (nibs-9tj2).
+	if err := c.validateEnums(b); err != nil {
+		return err
+	}
 
 	// Generate ID if not provided
 	if b.ID == "" {
@@ -839,6 +873,12 @@ func (c *Core) Update(b *nib.Nib, ifMatch *string) error {
 	storedNib, ok := c.nibs[b.ID]
 	if !ok {
 		return ErrNotFound
+	}
+
+	// Reject invalid enum values before the concurrency guard or any write
+	// (nibs-9tj2) — input validity is independent of the etag precondition.
+	if err := c.validateEnums(b); err != nil {
+		return err
 	}
 
 	// Validate etag if provided or required

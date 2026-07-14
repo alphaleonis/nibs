@@ -919,6 +919,137 @@ func TestMutationCreateNib(t *testing.T) {
 	})
 }
 
+// TestMutationCreateNibValidatesEnums exercises the core write-path chokepoint
+// through the GraphQL/MCP resolver (nibs-9tj2): an invalid non-empty
+// type/status/priority/estimate is rejected and nothing is persisted; empty
+// sentinels and valid values are accepted.
+func TestMutationCreateNibValidatesEnums(t *testing.T) {
+	ctx := context.Background()
+	strPtr := func(s string) *string { return &s }
+
+	cases := []struct {
+		name  string
+		input model.CreateNibInput
+	}{
+		{"invalid type", model.CreateNibInput{Title: "Bad Type", Type: strPtr("epicc")}},
+		{"invalid status", model.CreateNibInput{Title: "Bad Status", Status: strPtr("banana")}},
+		{"invalid priority", model.CreateNibInput{Title: "Bad Priority", Priority: strPtr("urgent")}},
+		{"invalid estimate", model.CreateNibInput{Title: "Bad Estimate", Estimate: strPtr("2h")}},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			resolver, core := setupTestResolver(t)
+			got, err := resolver.Mutation().CreateNib(ctx, tc.input)
+			if err == nil {
+				t.Fatalf("CreateNib(%+v) = nil error, want validation error", tc.input)
+			}
+			if got != nil {
+				t.Errorf("CreateNib() returned non-nil nib %+v on validation failure", got)
+			}
+			if all := core.All(); len(all) != 0 {
+				t.Errorf("CreateNib() persisted %d nib(s) despite validation failure", len(all))
+			}
+		})
+	}
+
+	t.Run("empty enum sentinels accepted", func(t *testing.T) {
+		resolver, _ := setupTestResolver(t)
+		if _, err := resolver.Mutation().CreateNib(ctx, model.CreateNibInput{Title: "Empty Enums"}); err != nil {
+			t.Fatalf("CreateNib() with empty enums error = %v, want nil", err)
+		}
+	})
+
+	t.Run("valid enum values accepted", func(t *testing.T) {
+		resolver, _ := setupTestResolver(t)
+		input := model.CreateNibInput{
+			Title:    "Valid Enums",
+			Type:     strPtr("bug"),
+			Status:   strPtr("in-progress"),
+			Priority: strPtr("high"),
+			Estimate: strPtr("l"),
+		}
+		if _, err := resolver.Mutation().CreateNib(ctx, input); err != nil {
+			t.Fatalf("CreateNib() with valid enums error = %v, want nil", err)
+		}
+	})
+}
+
+// TestMutationUpdateNibValidatesEnums is the Update-path counterpart: an invalid
+// non-empty enum is rejected and the stored nib is left untouched; clearing
+// priority/estimate via explicit null and setting valid values are accepted.
+func TestMutationUpdateNibValidatesEnums(t *testing.T) {
+	ctx := context.Background()
+	strPtr := func(s string) *string { return &s }
+
+	seed := func(t *testing.T) (*Resolver, *nibcore.Core) {
+		t.Helper()
+		resolver, core := setupTestResolver(t)
+		mustCreate(t, core, &nib.Nib{
+			ID: "enum-upd", Title: "Enum Update", Status: "todo", Type: "task", Priority: "normal", Estimate: "m",
+		})
+		return resolver, core
+	}
+
+	cases := []struct {
+		name  string
+		input model.UpdateNibInput
+	}{
+		{"invalid type", model.UpdateNibInput{Type: strPtr("epicc")}},
+		{"invalid status", model.UpdateNibInput{Status: strPtr("banana")}},
+		{"invalid priority", model.UpdateNibInput{Priority: graphql.OmittableOf(strPtr("urgent"))}},
+		{"invalid estimate", model.UpdateNibInput{Estimate: graphql.OmittableOf(strPtr("2h"))}},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			resolver, core := seed(t)
+			if _, err := resolver.Mutation().UpdateNib(ctx, "enum-upd", tc.input); err == nil {
+				t.Fatalf("UpdateNib(%+v) = nil error, want validation error", tc.input)
+			}
+			stored, err := core.Get("enum-upd")
+			if err != nil {
+				t.Fatalf("Get() error = %v", err)
+			}
+			if stored.Type != "task" || stored.Status != "todo" || stored.Priority != "normal" || stored.Estimate != "m" {
+				t.Errorf("stored nib mutated on failed update: type=%q status=%q priority=%q estimate=%q",
+					stored.Type, stored.Status, stored.Priority, stored.Estimate)
+			}
+		})
+	}
+
+	t.Run("clearing priority/estimate via null accepted", func(t *testing.T) {
+		resolver, core := seed(t)
+		input := model.UpdateNibInput{
+			Priority: graphql.OmittableOf[*string](nil),
+			Estimate: graphql.OmittableOf[*string](nil),
+		}
+		if _, err := resolver.Mutation().UpdateNib(ctx, "enum-upd", input); err != nil {
+			t.Fatalf("UpdateNib() clearing priority/estimate error = %v, want nil", err)
+		}
+		stored, _ := core.Get("enum-upd")
+		if stored.Priority != "" || stored.Estimate != "" {
+			t.Errorf("priority/estimate not cleared: priority=%q estimate=%q", stored.Priority, stored.Estimate)
+		}
+	})
+
+	t.Run("valid enum values accepted", func(t *testing.T) {
+		resolver, core := seed(t)
+		input := model.UpdateNibInput{
+			Type:     strPtr("bug"),
+			Status:   strPtr("in-progress"),
+			Priority: graphql.OmittableOf(strPtr("high")),
+			Estimate: graphql.OmittableOf(strPtr("xl")),
+		}
+		if _, err := resolver.Mutation().UpdateNib(ctx, "enum-upd", input); err != nil {
+			t.Fatalf("UpdateNib() with valid enums error = %v, want nil", err)
+		}
+		stored, _ := core.Get("enum-upd")
+		if stored.Type != "bug" || stored.Status != "in-progress" || stored.Priority != "high" || stored.Estimate != "xl" {
+			t.Errorf("valid update not applied: type=%q status=%q priority=%q estimate=%q",
+				stored.Type, stored.Status, stored.Priority, stored.Estimate)
+		}
+	})
+}
+
 func TestMutationCreateNibWithCustomPrefix(t *testing.T) {
 	resolver, _ := setupTestResolver(t)
 	ctx := context.Background()
