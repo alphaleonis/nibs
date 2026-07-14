@@ -1,6 +1,12 @@
 import { render, screen, waitFor, cleanup } from "@testing-library/svelte";
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
+import { Transaction } from "@codemirror/state";
 import MarkdownEditor from "./MarkdownEditor.svelte";
+
+// The annotation the sync effect stamps on its out-of-band doc-replace to keep it
+// out of the undo stack. Built from the same real module the component imports, so
+// it deep-equals what the component dispatches.
+const historyExcluded = Transaction.addToHistory.of(false);
 
 // Track created EditorView instances and their config
 const { mockViewInstances, mockUpdateListenerCallback } = vi.hoisted(() => {
@@ -43,21 +49,15 @@ vi.mock("@codemirror/lint", () => ({
 vi.mock("@lezer/highlight", () => ({
   tags: new Proxy({}, { get: () => ({}) }),
 }));
-vi.mock("@codemirror/state", () => ({
-  EditorState: {
-    allowMultipleSelections: { of: () => [] },
-    create: (config: any) => ({
-      doc: {
-        length: config?.doc?.length ?? 0,
-        toString: () => config?.doc ?? "",
-      },
-    }),
-  },
-  // The sync effect marks its doc-replace transaction as history-excluded.
-  Transaction: {
-    addToHistory: { of: (value: boolean) => ({ __annotation: "addToHistory", value }) },
-  },
-}));
+// @codemirror/state is deliberately NOT faked: the real EditorState normalizes
+// line endings to LF at create time (CRLF/CR are split as line breaks and rejoined
+// with "\n"). A hand-rolled `toString: () => config.doc` would echo the doc back
+// verbatim and hide that, so any test covering line-ending handling would pass
+// against a broken guard. The real module is the only honest oracle here; the
+// mocked EditorView below never applies transactions, so no DOM is needed.
+vi.mock("@codemirror/state", async () =>
+  vi.importActual<typeof import("@codemirror/state")>("@codemirror/state"),
+);
 vi.mock("@codemirror/view", () => {
   return {
     EditorView: class MockEditorView {
@@ -198,7 +198,7 @@ describe("MarkdownEditor", () => {
       changes: { from: 3, to: 4, insert: "x" },
       // Out-of-band sync stays OUT of the undo stack (Ctrl-Z undoes the user's
       // own typing, not the preview-pane checkbox flip).
-      annotations: { __annotation: "addToHistory", value: false },
+      annotations: historyExcluded,
     });
     // Still the SAME editor instance — no remount happened.
     expect(mockViewInstances.length).toBe(1);
@@ -223,7 +223,7 @@ describe("MarkdownEditor", () => {
     expect(view.dispatch).toHaveBeenCalledTimes(1);
     expect(view.dispatch).toHaveBeenCalledWith({
       changes: { from: 2, to: 2, insert: "cd" },
-      annotations: { __annotation: "addToHistory", value: false },
+      annotations: historyExcluded,
     });
   });
 
@@ -245,6 +245,67 @@ describe("MarkdownEditor", () => {
     await rerender({ initialValue: "same", onchange: vi.fn() });
 
     expect(view.dispatch).not.toHaveBeenCalled();
+  });
+
+  // Regression: the Go backend does not normalize line endings, and `Parse` trims
+  // one trailing "\n" off the body, so a Windows-authored nib arrives with interior
+  // CRLFs and a dangling lone CR. EditorState.create normalizes all of that to LF,
+  // so the doc and the echoed prop differ by line endings alone — that is still a
+  // self-echo and must not dispatch.
+  it.each([
+    ["single CRLF", "a\r\nb"],
+    ["blank line between CRLFs", "x\r\n\r\ny"],
+    ["lone CR", "a\rb"],
+    ["realistic CRLF body", "# T\r\n\r\n- [ ] one\r\n- [ ] two\r"],
+  ])(
+    "does NOT dispatch when the echoed value differs from the doc only by line endings (%s)",
+    async (_label, crlfBody) => {
+      const { rerender } = render(MarkdownEditor, {
+        initialValue: crlfBody,
+        onchange: vi.fn(),
+      });
+
+      await waitFor(() => {
+        expect(mockViewInstances.length).toBe(1);
+      });
+
+      const view = mockViewInstances[0];
+      // Precondition: the real EditorState really did normalize away the CRLF, so
+      // an exact === guard cannot recognize the echo. If this ever stops holding,
+      // the test below is vacuous rather than wrong — assert it explicitly.
+      expect(view.state.doc.toString()).toBe(crlfBody.replace(/\r\n?/g, "\n"));
+      expect(view.state.doc.toString()).not.toBe(crlfBody);
+
+      // The parent stores onchange's value verbatim and feeds it straight back.
+      // Nothing changed, so touching the doc here would rewrite the user's content
+      // and mark a pristine form dirty.
+      await rerender({ initialValue: crlfBody, onchange: vi.fn() });
+
+      expect(view.dispatch).not.toHaveBeenCalled();
+    },
+  );
+
+  // Regression: the line-ending-insensitive guard must not swallow real edits that
+  // happen to arrive with CRLF endings.
+  it("DOES dispatch when a CRLF value differs from the doc by more than line endings", async () => {
+    const { rerender } = render(MarkdownEditor, {
+      initialValue: "- [ ] a\r\n",
+      onchange: vi.fn(),
+    });
+
+    await waitFor(() => {
+      expect(mockViewInstances.length).toBe(1);
+    });
+
+    const view = mockViewInstances[0];
+    // Doc is "- [ ] a\n"; an out-of-band checkbox flip arrives still CRLF-encoded.
+    await rerender({ initialValue: "- [x] a\r\n", onchange: vi.fn() });
+
+    expect(view.dispatch).toHaveBeenCalledTimes(1);
+    expect(view.dispatch).toHaveBeenCalledWith({
+      changes: { from: 3, to: 4, insert: "x" },
+      annotations: historyExcluded,
+    });
   });
 
   it("calls onsave on Mod-S keymap", async () => {

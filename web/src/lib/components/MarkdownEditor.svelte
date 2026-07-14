@@ -10,16 +10,31 @@
      * preserving undo / cursor / scroll.
      *
      * ECHO-LOOP CONTRACT — do not break: the sync guard (skip when the incoming
-     * value already equals the editor's doc) only holds because the parent stores
-     * exactly what `onchange` emits and feeds it straight back here. The consumer
-     * MUST:
+     * value already equals the editor's doc, compared in the doc's own line
+     * encoding) only holds because the parent stores exactly what `onchange` emits
+     * and feeds it straight back here. The consumer MUST:
      *   1. feed `onchange`'s value back as `initialValue` UNMODIFIED — no trim, no
-     *      CRLF/whitespace normalization. A transform makes every self-originated
+     *      whitespace normalization. A transform makes every self-originated
      *      keystroke look out-of-band, firing a doc-replace on each keypress that
      *      clobbers the live selection; and
      *   2. NOT route that value back through a setter that can remount this
      *      component (e.g. a `bumpBodyVersion`-ing setBody) — that remounts the
      *      editor on every keystroke.
+     *
+     * Line endings are the ONE exception to rule 1, handled here rather than by the
+     * consumer: CR / CRLF in an incoming value are normalized to the doc's own line
+     * encoding internally (see the sync $effect), because CodeMirror line-splits the
+     * doc and `doc.toString()` rejoins it with "\n", so a CRLF value is never `===`
+     * its own echo. A value therefore keeps its CRLF endings in the consumer until
+     * the user actually edits, at which point `onchange` emits the editor's LF doc.
+     *
+     * Consumers must not normalize the value they feed BACK — rule 1 is easier to
+     * honor as an absolute and the guard already handles it. Normalizing where a body
+     * ENTERS the form (`fieldsFromSnapshot`) is a separate, open question: it would
+     * keep `body` and `baseline.body` in the same encoding (today the first keystroke
+     * flips `body` to LF while the baseline stays CRLF, so `dirty` and
+     * `EditForm.#matchesFields` never settle), but it commits to a CRLF→LF-on-open
+     * policy whose etag / round-trip blast radius is unverified. Deliberately not done.
      */
     initialValue?: string;
     /** Fires with the editor's EXACT current doc string on every doc change. */
@@ -226,23 +241,41 @@
   // not remount us) reconcile the editor doc via a transaction rather than a
   // remount — this preserves undo history and selection.
   //
+  // LINE-ENDING NORMALIZATION: an incoming value can carry CR / CRLF — the backend
+  // does not normalize line endings, and `Parse` (`internal/nib/nib.go`) trims one
+  // trailing "\n" off the body, so a Windows-authored file reaches us with interior
+  // CRLFs and a DANGLING LONE CR at the end. The doc holds none of that: CodeMirror
+  // line-splits the value it is handed, and `doc.toString()` rejoins with "\n".
+  // Comparing the two encodings char-by-char is meaningless, so both the guard and
+  // the diff below work in the doc's own encoding. `state.toText()` applies the SAME
+  // split policy `EditorState.create` used to build the doc (both consult the
+  // `EditorState.lineSeparator` facet, falling back to CodeMirror's CR / CRLF / LF
+  // split) and stringifies through the same "\n" join. Delegating to it rather than
+  // restating the policy as a local regex keeps the normalized value in the doc's
+  // encoding under ANY line-separator configuration.
+  //
   // ECHO-LOOP GUARD: the editor's own updateListener fires onchange on user
   // typing → the parent sets form.body → initialValue updates → this effect
   // re-runs. We compare the incoming value against the editor's CURRENT doc and
   // skip when equal, so a self-echo neither loops nor clobbers the live selection.
+  // A CRLF body echoed back is likewise a self-echo: it differs from the doc only
+  // by the normalization CodeMirror already applied, so it must not dispatch.
   //
   // MINIMAL DIFF: replacing the whole doc (from:0..len) would collapse any
   // interior caret to position 0. Instead we dispatch only the changed sub-range
   // (common-prefix / common-suffix diff), so selections outside the change map
-  // through unchanged — a 1-2 char checkbox flip leaves the caret put.
+  // through unchanged — a 1-2 char checkbox flip leaves the caret put. Diffing
+  // against a non-normalized value would both inflate the changed range and insert
+  // a lone CR that CodeMirror re-splits into an extra line break.
   //
   // addToHistory.of(false): the sync is an out-of-band edit, not a user action —
   // keep it OUT of the undo stack so Ctrl-Z undoes the user's own typing, not a
   // checkbox flip made in the preview pane.
   $effect(() => {
+    const raw = initialValue; // read before the early return so the effect tracks it
     const v = view;
-    const next = initialValue;
     if (!v) return;
+    const next = v.state.toText(raw).toString();
     const cur = v.state.doc.toString();
     if (cur === next) return; // self-echo → nothing to do
 
