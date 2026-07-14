@@ -41,7 +41,7 @@ type typeSelectedMsg struct {
 	nibType string
 }
 
-// closeTypePickerMsg is sent when the type picker is cancelled
+// closeTypePickerMsg is sent when the type picker is canceled
 type closeTypePickerMsg struct{}
 
 // openTypePickerMsg requests opening the type picker for nib(s)

@@ -1,6 +1,6 @@
 <script lang="ts">
   /**
-   * ActiveNibView — the single, buffered nib view (#nibs-893d).
+   * ActiveNibView — the single, buffered nib view.
    *
    * Renders the `useActiveView` presenter's current state. One component,
    * docked (narrow, single column) and expanded (wide, two columns + rail);
@@ -172,8 +172,8 @@
     bodyMode = isCreating ? "edit" : "preview";
   });
 
-  // Auto-focus the (empty) title input when a create buffer first appears
-  // (nibs-57z0), so the user can type the title straight away — for both entry
+  // Auto-focus the (empty) title input when a create buffer first appears,
+  // so the user can type the title straight away — for both entry
   // points (toolbar New menu and a row's add-child [+]), which both land the
   // view in `creating` with a fresh create form. Scoped to the create form
   // instance (like bodyModeSession above): each create swaps the form (see
@@ -268,7 +268,7 @@
       const raw = checkbox.dataset.taskOrdinal ?? "";
       if (!/^\d+$/.test(raw)) return;
       // setBody's default is in-place (non-remounting) for exactly this kind of
-      // out-of-band edit (nibs-fva8): an open editor pane syncs the flipped body
+      // out-of-band edit: an open editor pane syncs the flipped body
       // via a minimal-diff CodeMirror transaction, keeping its undo history /
       // cursor / scroll intact (rather than the {#key} remount).
       f.setBody(toggleTaskLine(f.body, Number(raw)));
@@ -902,7 +902,7 @@
     border-radius: var(--radius-md);
     padding: 0.12rem 0.35rem;
     color: var(--foreground);
-    /* Scale with the global font-size preference (nibs-asuv): the title is
+    /* Scale with the global font-size preference: the title is
        larger than the body role, so there is no shared token — multiply the
        base size by --font-scale directly, mirroring the type-scale tokens. */
     font-size: calc(1.25rem * var(--font-scale));

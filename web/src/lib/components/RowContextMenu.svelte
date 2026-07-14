@@ -19,7 +19,7 @@
     nib: TreeTableNib | null;
     selectedCount?: number;
     /** Whether the right-clicked row has (visible) children — gates the
-     *  expand/collapse-children options (nibs-iyw3). */
+     *  expand/collapse-children options. */
     hasChildren?: boolean;
     onexpandchildren?: () => void;
     oncollapsechildren?: () => void;
@@ -62,7 +62,7 @@
   function handleOpen() {
     if (nib) {
       // Open the unified view (guarded); it routes through nav so the URL/history
-      // stay in sync (nibs-58c3).
+      // stay in sync.
       view.open(nib.id);
     }
   }

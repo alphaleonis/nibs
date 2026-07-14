@@ -467,7 +467,7 @@ func countNibFiles(t *testing.T, nibsDir string) int {
 // TestNewAfterRootSibling verifies that `nibs new --after <root-id>`
 // successfully positions the new nib between the anchor and the next root,
 // not merely appended at the end. Three roots are needed to distinguish
-// "insert between" from "always append last". Regression test for nibs-d44y.
+// "insert between" from "always append last". Regression test.
 func TestNewAfterRootSibling(t *testing.T) {
 	nibsDir := setupNewTest(t)
 	t.Setenv("EDITOR", "")

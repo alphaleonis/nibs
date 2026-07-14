@@ -9,7 +9,7 @@
     onselect: (type: string) => void;
     oncancel: () => void;
     /** Viewport rect of the control that opened the picker; the menu anchors to
-     *  it. Omitted (tests) falls back to screen centre. */
+     *  it. Omitted (tests) falls back to screen center. */
     anchor?: AnchorRect;
   }
 
@@ -23,7 +23,7 @@
   let selecting = false;
 
   // Pin the invisible trigger over the opener's rect so the menu opens there
-  // (position:fixed lives in the CSS; these override the centred fallback).
+  // (position:fixed lives in the CSS; these override the centered fallback).
   let anchorStyle = $derived(
     anchor
       ? `top:${anchor.y}px; left:${anchor.x}px; width:${anchor.width}px; height:${anchor.height}px;`

@@ -104,7 +104,7 @@ func (r *Resolver) validateAndSetParent(b *nib.Nib, parentID string) error {
 		return nil
 	}
 
-	// Normalise short ID to full ID
+	// Normalize short ID to full ID
 	normalizedParent, ok := r.Reader.NormalizeID(parentID)
 	if !ok {
 		return fmt.Errorf("parent nib not found: %s", parentID)
@@ -166,7 +166,7 @@ func (r *Resolver) validateAndAddBlocking(b *nib.Nib, targetIDs []string) error 
 	// earlier pointer; with a duplicate target ID the second iteration would
 	// otherwise hold a stale pre-mutation pointer, compute a stale if-match, and
 	// spuriously fail with an ETagMismatchError after target 1 was already
-	// persisted (nibs-twvo). The fetched clone is what mutate touches, so a
+	// persisted. The fetched clone is what mutate touches, so a
 	// genuinely refused write leaves the shared in-memory nib untouched.
 	for _, targetID := range targets {
 		if err := r.updateTargetClone(targetID, func(c *nib.Nib) bool {
@@ -186,7 +186,7 @@ func (r *Resolver) removeBlockingRelationships(b *nib.Nib, targetIDs []string) e
 		normalizedTargetID, _ := r.Reader.NormalizeID(targetID)
 		// Guard existence first so a missing target stays a no-op — updateTargetClone
 		// would otherwise surface GetForUpdate's not-found error. The write itself
-		// goes through an owned clone, never the shared pointer (nibs-twvo).
+		// goes through an owned clone, never the shared pointer.
 		if _, err := r.Reader.Get(normalizedTargetID); err == nil {
 			if err := r.updateTargetClone(normalizedTargetID, func(c *nib.Nib) bool {
 				return c.RemoveBlockedBy(b.ID)
@@ -248,7 +248,7 @@ func (r *Resolver) removeBlockedByRelationships(b *nib.Nib, targetIDs []string) 
 // (from GetForUpdate) before each Update — as UpdateNib does — so a refused write
 // never corrupts the shared in-memory nib.
 //
-// Stop-on-first-error is a deliberate atomicity choice (nibs-twvo), NOT laziness.
+// Stop-on-first-error is a deliberate atomicity choice, NOT laziness.
 // The walk does not skip a refused ancestor to activate the ones above it. The
 // invariant being maintained is "ancestors of an in-progress nib are active";
 // activating a grandparent while this parent is left todo/draft would violate that

@@ -5,7 +5,7 @@ import type { NibSummary, NibFilter } from "./types";
  * (see internal/graph/filters.go). They are filtered here so a non-matching
  * ancestor of visible children is kept and dimmed in place (tableData.ts Stage 4)
  * rather than dropped by the server. status in particular is applied here so a
- * completed parent of active children dims instead of vanishing (nibs-3up4).
+ * completed parent of active children dims instead of vanishing.
  * A filtered-out leaf with no visible descendants is still removed from the rows.
  */
 const CLIENT_FIELDS = ["type", "priority", "estimate", "tags", "status"] as const;

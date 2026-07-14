@@ -12,7 +12,7 @@ import (
 )
 
 // countingReader wraps a NibReader to count FindMentions / FindMentionedBy
-// invocations. Used to verify per-request memoization behaviour.
+// invocations. Used to verify per-request memoization behavior.
 type countingReader struct {
 	*stubReader
 	mentionsCalls        int32
@@ -62,7 +62,7 @@ func TestCachedMentions_MemoizesWithinRequest(t *testing.T) {
 	if len(first) != 1 || first[0].ID != "b" {
 		t.Fatalf("first = %v, want [b]", first)
 	}
-	// The memoised call must return the identical slice — first element
+	// The memoized call must return the identical slice — first element
 	// pointer equality is sufficient proof no re-fetch happened.
 	if len(second) == 0 || second[0] != first[0] {
 		t.Errorf("second call returned a fresh slice; want the cached pointer")
@@ -143,7 +143,7 @@ func TestRequestCacheFrom_AbsentReturnsNil(t *testing.T) {
 				t.Fatalf("RequestCacheFrom(nil) panicked: %v", r)
 			}
 		}()
-		//nolint:staticcheck // SA1012: passing nil is the point of this test — we're pinning the guard behaviour.
+		//nolint:staticcheck // SA1012: passing nil is the point of this test — we're pinning the guard behavior.
 		if got := RequestCacheFrom(nil); got != nil {
 			t.Errorf("RequestCacheFrom(nil) = %v, want nil", got)
 		}
@@ -160,7 +160,7 @@ func TestRequestCacheFrom_AbsentReturnsNil(t *testing.T) {
 // Lives in the graph package because cachedMentions is unexported — the
 // equivalent cmd-package test (TestRequestCacheMiddleware_FreshCachePerRequest
 // in cmd/serve_test.go) pins only that the middleware installs a fresh
-// cache per request, not the dedup behaviour.
+// cache per request, not the dedup behavior.
 func TestRequestCacheMiddleware_DedupsWithinOneRequest(t *testing.T) {
 	reader := newCountingReader(t)
 
@@ -168,7 +168,7 @@ func TestRequestCacheMiddleware_DedupsWithinOneRequest(t *testing.T) {
 	//
 	// KEEP IN SYNC with cmd/serve.go:requestCacheMiddleware. cachedMentions is
 	// unexported, so this test cannot drive the real middleware through the cmd
-	// package. If the production middleware gains behaviour (additional ctx
+	// package. If the production middleware gains behavior (additional ctx
 	// values, pooling, size limits, etc.) this clone must be updated to match
 	// or the HTTP-boundary dedup guarantee silently drifts.
 	middleware := func(next http.Handler) http.Handler {

@@ -528,7 +528,7 @@ func TestReorderSiblings_IfMatch_Tracer(t *testing.T) {
 }
 
 // Behavior #8: Mode A rejects ifMatch entries that reference the same nib
-// twice (canonicalised), even when the surface forms differ. Without dedup
+// twice (canonicalized), even when the surface forms differ. Without dedup
 // the second value would silently shadow the first.
 func TestReorderChildren_IfMatch_Duplicate(t *testing.T) {
 	ctx := context.Background()
@@ -861,8 +861,8 @@ func sliceContains(s []string, v string) bool {
 	return false
 }
 
-// TestBulkReorderMidLoopFailureLeavesNoPhantomOrder guards the nibs-twvo
-// corruption class in the bulk-reorder loops the sweep extends to (nibs-twvo).
+// TestBulkReorderMidLoopFailureLeavesNoPhantomOrder guards the
+// corruption class in the bulk-reorder loops the sweep extends to.
 // reorderChildrenImpl / reorderSiblingsImpl obtained each nib via Reader.Get (the
 // shared c.nibs[id] pointer) and assigned b.Order = newKey in place before a
 // per-item Writer.Update. A mid-loop Update rejection left earlier siblings

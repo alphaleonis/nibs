@@ -60,7 +60,7 @@ vi.mock("@urql/svelte", async () => {
 
   // The active-nib view runs NIB_DETAIL_QUERY (to seed the edit form + render
   // relations); it must resolve to a real nib or App treats it as not-found and
-  // self-closes (nibs-etk3). Layout tests only need the panel to render, so a
+  // self-closes. Layout tests only need the panel to render, so a
   // single static nib suffices.
   const nibDetailData = readable({
     fetching: false,
@@ -89,7 +89,7 @@ vi.mock("@urql/svelte", async () => {
   });
 
   // A settled detail query that resolves to NO nib — a deleted / archived /
-  // stale ?nib= link. App treats this as missing and self-closes (nibs-etk3).
+  // stale ?nib= link. App treats this as missing and self-closes.
   const missingDetailData = readable({
     fetching: false,
     error: undefined,
@@ -191,8 +191,8 @@ describe("App", () => {
 
   it("renders WITHOUT `.dark` when the seeded theme is the light Daylight palette", () => {
     // The complement of the dark-theme assertions: a seeded light theme must clear
-    // `.dark` so shadcn `dark:` utilities switch off and the app renders light
-    // (nibs-fen5). Uses the same defineProperty localStorage pattern.
+    // `.dark` so shadcn `dark:` utilities switch off and the app renders light.
+    // Uses the same defineProperty localStorage pattern.
     //
     // Force the opposite starting state so this can only pass if App actively
     // clears `.dark` (the shared beforeEach already removes it, which would make
@@ -836,7 +836,7 @@ describe("App", () => {
     expect(screen.getByTestId("resize-handle")).toHaveClass("hidden");
   });
 
-  // ─── Unified active-nib-view wiring (nibs-1h2m) ───────────────
+  // ─── Unified active-nib-view wiring ───────────────
 
   it("keyboard 'n' opens a docked create view through the presenter", async () => {
     const user = userEvent.setup();

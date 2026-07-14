@@ -24,7 +24,7 @@ function clampingContainer(maxScrollTop: number): HTMLElement {
 }
 
 // onScroll now keys off the scroll event's own currentTarget (the element the DOM
-// handler is bound to), not an ambient getScrollContainer() read. (nibs-72sf)
+// handler is bound to), not an ambient getScrollContainer() read.
 function scrollEvent(container: HTMLElement | null): Event {
   return { currentTarget: container } as unknown as Event;
 }
@@ -156,7 +156,7 @@ describe("useScrollRestore", () => {
   });
 
   it("claim() persists container.scrollTop into saved synchronously", () => {
-    // Regression (nibs-n47p, review #1): ensureVisible scrolls the deep-linked row
+    // Regression: ensureVisible scrolls the deep-linked row
     // into view, then claim() must write that offset into the saved slot
     // IMMEDIATELY — not defer it to the async native scroll event, which a refetch
     // can preempt by unmounting the container first.
@@ -227,7 +227,7 @@ describe("useScrollRestore", () => {
   });
 
   it("a browser-CLAMPED restore write is not echoed back into saved (read-back captures the clamp)", () => {
-    // Regression (nibs-qpvw, review #2): the saved offset (5000) is larger than the
+    // Regression: the saved offset (5000) is larger than the
     // shorter refetched list allows; the browser clamps the write to maxScrollTop
     // (1800) and fires a scroll event reporting 1800. restore() reads scrollTop
     // back AFTER the write, so lastWrite.top captures the clamped 1800 — the echo
@@ -255,7 +255,7 @@ describe("useScrollRestore", () => {
   });
 
   it("a no-op restore write does not strand suppression: the next genuine scroll is recorded", () => {
-    // Regression (nibs-qpvw, review #1) — now a consequence of value-keying rather
+    // Regression — now a consequence of value-keying rather
     // than a special "arm only when moved" branch. The common top-of-list case
     // (saved 0, fresh container already at 0) is a no-op write; lastWrite.top is 0.
     // The user's next scroll reports a different value, does not match the echo

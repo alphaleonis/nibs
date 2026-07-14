@@ -1,5 +1,5 @@
 /**
- * Pure state-machine kernel for the active-nib view presenter (#nibs-wvl2).
+ * Pure state-machine kernel for the active-nib view presenter.
  *
  * No DOM, no runes, no async — a total `reduce(state, action)` over the
  * `ViewState` union plus the `abandonsBuffer` dirty-guard predicate. The

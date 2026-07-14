@@ -1,5 +1,5 @@
 /**
- * Reactive shell over the pure pane-layout math (#nibs-dkm8).
+ * Reactive shell over the pure pane-layout math.
  *
  * `createDetailPaneLayout` binds the pure `detailPaneLayout.ts` helpers to the
  * app's reactive inputs (size prefs, dock position, measured container size) and
@@ -63,7 +63,7 @@ export function createDetailPaneLayout(deps: DetailPaneLayoutDeps): DetailPaneLa
   // Only a user drag should persist a size. PaneForge also fires onResize for
   // programmatic/mount resizes (initial layout, expand, reset) — persisting those
   // lets a transient mount size (floored to the min) clobber a stored width on
-  // reload (nibs-lcyo). Track drag state and gate onResize on it.
+  // reload. Track drag state and gate onResize on it.
   let dragging = false;
 
   return {

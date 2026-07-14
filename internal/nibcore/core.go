@@ -84,7 +84,7 @@ type Core struct {
 	// Reverse-mention index: maintained alongside c.nibs so FindMentionedBy /
 	// FindMentions avoid O(N × body) re-parsing on every call. Guarded by c.mu
 	// (writers under Lock, readers under RLock) — mentionIndex itself is not
-	// internally synchronised.
+	// internally synchronized.
 	mentionIdx *mentionIndex
 
 	// Search index (optional, lazy-initialized)
@@ -171,7 +171,7 @@ func (c *Core) loadFromDisk() error {
 	// The ID is derived from the filename (which parses regardless of content), so
 	// migrateV0ToV1 can tell "target's file was skipped this load" apart from
 	// "target genuinely does not exist" and DEFER a v0 nib's migration rather than
-	// erasing its `blocking:` edge to a skipped target (nibs-r3y1 review #2).
+	// erasing its `blocking:` edge to a skipped target.
 	skipped := make(map[string]bool)
 
 	// Walk the entire .nibs directory tree, loading all .md files
@@ -274,7 +274,7 @@ func (c *Core) loadNib(path string) (*nib.Nib, error) {
 	// in memory (Type""→"task", Priority""→"normal") while computeStoredETag
 	// bare-parses the file diverges the in-memory ETag() from the stored etag for
 	// a file that omits the key, false-conflicting a valid if-match Update with no
-	// on-disk change (nibs-7d3o). The stored Nib keeps them EMPTY so Render (which
+	// on-disk change. The stored Nib keeps them EMPTY so Render (which
 	// carries omitempty on both) matches the on-disk bytes; the "task"/"normal"
 	// presentation defaults are applied at the consumption boundary via
 	// nib.EffectiveType()/EffectivePriority() (GraphQL field resolvers, sort,
@@ -633,7 +633,7 @@ func (c *Core) GetForUpdate(id string) (*nib.Nib, error) {
 // Returns the full ID and true if found, or the original ID and false if not found.
 //
 // Shares resolution logic with Core.normalizeIDForLookupLocked and
-// resolveMentionToken via normalizeIDInMap — behaviour changes must be
+// resolveMentionToken via normalizeIDInMap — behavior changes must be
 // made in the shared helper so all three stay in lockstep.
 func (c *Core) NormalizeID(id string) (string, bool) {
 	c.mu.RLock()
@@ -652,8 +652,8 @@ func (c *Core) NormalizeID(id string) (string, bool) {
 // accepted) or a value valid under the current config. This is the single
 // write-path chokepoint that gives every entry point — CLI, GraphQL, MCP (which
 // rides the same GraphQL resolvers), and the TUI — uniform enum integrity, so a
-// GraphQL/MCP client can no longer persist a nib with e.g. status "banana"
-// (nibs-9tj2). It matches the CLI's `v != "" && !IsValid...` discipline exactly:
+// GraphQL/MCP client cannot persist a nib with e.g. status "banana".
+// It matches the CLI's `v != "" && !IsValid...` discipline exactly:
 // only non-empty values are checked, so the empty sentinel that means "apply the
 // default" (EffectiveType/EffectivePriority) is never rejected. No-ops when no
 // config is set (several test setups run config-less).
@@ -681,7 +681,7 @@ func (c *Core) Create(b *nib.Nib) error {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 
-	// Reject invalid enum values before touching any state (nibs-9tj2).
+	// Reject invalid enum values before touching any state.
 	if err := c.validateEnums(b); err != nil {
 		return err
 	}
@@ -732,7 +732,7 @@ func (c *Core) Create(b *nib.Nib) error {
 // the stored Nib's Type/Priority empty when the file omits them (the "task"/
 // "normal" defaults are applied only at the consumption boundary via
 // nib.EffectiveType()/EffectivePriority()), so a priority/type-less file no longer
-// diverges from its in-memory nib.ETag() (nibs-7d3o). The one remaining residual
+// diverges from its in-memory nib.ETag(). The one remaining residual
 // is loadNib's created_at/updated_at mtime fallback for hand-authored files that
 // omit those timestamps — not reproduced here — which no app-created nib ever
 // hits (Render always emits both). Used by bulk-reorder pre-validation
@@ -748,8 +748,8 @@ func (c *Core) CurrentETag(id string) (string, error) {
 
 	storedNib, ok := c.nibs[id]
 	if !ok {
-		// Honour prefix-resolution like Get does, so callers can pass either
-		// short or canonical ids and receive consistent behaviour.
+		// Honor prefix-resolution like Get does, so callers can pass either
+		// short or canonical ids and receive consistent behavior.
 		if c.config != nil && c.config.Nibs.Prefix != "" && !strings.HasPrefix(id, c.config.Nibs.Prefix) {
 			storedNib, ok = c.nibs[c.config.Nibs.Prefix+id]
 		}
@@ -876,7 +876,7 @@ func (c *Core) Update(b *nib.Nib, ifMatch *string) error {
 	}
 
 	// Reject invalid enum values before the concurrency guard or any write
-	// (nibs-9tj2) — input validity is independent of the etag precondition.
+	// — input validity is independent of the etag precondition.
 	if err := c.validateEnums(b); err != nil {
 		return err
 	}

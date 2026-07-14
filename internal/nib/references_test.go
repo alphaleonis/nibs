@@ -525,7 +525,7 @@ func FuzzExtractMentionTokens(f *testing.F) {
 	// Nested fences: tilde outer, backtick inner. The inner fence and its
 	// contents are part of the outer code block (so `#a`, `#b` never leak);
 	// `#c` after the outer close must surface. Pins outer-fence-close
-	// behaviour under nested-fence-type stress.
+	// behavior under nested-fence-type stress.
 	f.Add("~~~\n```\n#a\n```\n#b\n~~~\n#c")
 
 	f.Fuzz(func(t *testing.T, body string) {

@@ -63,8 +63,9 @@ func runRm(cmd *cobra.Command, args []string) error {
 
 	// Confirmation contract. --json implies force (machine callers). Otherwise an
 	// interactive terminal prompts; a NON-interactive caller must pass -f, else we
-	// refuse loudly (VALIDATION) rather than silently cancelling with a success
-	// exit — the old `delete` default that quietly no-op'd for agents.
+	// refuse loudly (VALIDATION) rather than silently canceling with a success
+	// exit — a success exit on a no-op would leave an agent believing the
+	// removal happened.
 	if !rmForce && !rmJSON {
 		if !isInteractiveStdin() {
 			return cmdError(rmJSON, output.ErrValidation,

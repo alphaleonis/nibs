@@ -41,7 +41,7 @@ export class Preferences {
 
   /** Raw persisted sizes — `undefined` until the user resizes. The pane layout
    *  uses these to tell a user-set size from the default: unset opens at a
-   *  percent of the container instead of a fixed px (nibs-lcyo). */
+   *  percent of the container instead of a fixed px. */
   get detailPanelWidthRaw(): number | undefined {
     return this.#detailPanelWidth;
   }

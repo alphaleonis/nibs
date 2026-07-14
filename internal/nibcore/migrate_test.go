@@ -479,8 +479,8 @@ status: todo
 		// Forcing the write failure: the loaded file is chmod'd read-only so
 		// saveToDisk's write (O_WRONLY|O_TRUNC) fails while loadNib's read
 		// (O_RDONLY) still succeeds. This is deterministic and root-independent
-		// on the CI matrix: Linux non-root honours the 0444 mode, and Windows
-		// honours the read-only attribute (os.Geteuid() returns -1 there, so the
+		// on the CI matrix: Linux non-root honors the 0444 mode, and Windows
+		// honors the read-only attribute (os.Geteuid() returns -1 there, so the
 		// root guard below never fires on Windows).
 		if os.Geteuid() == 0 {
 			t.Skip("running as root bypasses file-mode write protection, so the saveToDisk failure can't be forced")

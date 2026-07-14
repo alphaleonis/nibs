@@ -123,7 +123,7 @@ func TestContextCommand_ShortIDResolves(t *testing.T) {
 }
 
 // TestContextCommand_UnknownIDWarns pins that an unknown id still produces the
-// "nib not found" warning and an empty summary (behaviour preserved by the fix).
+// "nib not found" warning and an empty summary (behavior preserved by the fix).
 func TestContextCommand_UnknownIDWarns(t *testing.T) {
 	cfgPath, nibsDir := setupContextCobraTest(t, contextFixture())
 

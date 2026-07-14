@@ -85,8 +85,7 @@ export class SelectionState {
    * in `matchingIds`, dropping any that are no longer selectable (e.g. filtered
    * out of the current view). The detail-panel selection (`selectedNibId`) is
    * intentionally left untouched — pruning targets the bulk-action set only so a
-   * multi-drag / bulk mutation never applies to rows the user can no longer see
-   * (nibs-mpkm).
+   * multi-drag / bulk mutation never applies to rows the user can no longer see.
    *
    * Safe to call from a reactive `$effect`: only reassigns `selectedIds` when
    * something is actually dropped, so an unchanged selection produces no writes

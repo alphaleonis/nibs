@@ -68,7 +68,7 @@ describe("useHistoryNav", () => {
 
     nav.navigateToNib("b");
 
-    // Regression (nibs-58c3): a truthy guard (`if (selectedNibId) return`) would skip
+    // Regression: a truthy guard (`if (selectedNibId) return`) would skip
     // this push. NB this does NOT lock finding #1's `=== id` early-return (a≠b pushes
     // either way) — the focus-resync test below is that lock.
     expect(history.calls).toEqual([
@@ -85,7 +85,7 @@ describe("useHistoryNav", () => {
 
     nav.navigateToNib("a");
 
-    // Regression (nibs-58c3, review #1): the guard early-returned the whole body on
+    // Regression: the guard early-returned the whole body on
     // `selectedNibId === id`, skipping select()'s focus/anchor resync.
     // No duplicate history entry (selectedNibId is already "a")...
     expect(history.calls).toEqual([]);

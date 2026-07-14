@@ -7,12 +7,12 @@ import type { Theme, DetailPanelPosition, FontSize } from "../src/lib/types";
 // Captures PNGs of the key web UI states into web/screenshots/output/ so an
 // agent (or human) can visually verify UI changes. Run via `task screenshots`.
 //
-// The theme engine (nibs-vmaq, nibs-fen5) is exercised below: each palette gets a
+// The theme engine is exercised below: each palette gets a
 // table + detail + settings capture so the palettes can be compared side by side.
 // The captures drive the REAL app (page.goto loads index.html), so the light/dark
 // `.dark` class is toggled by the FOUC guard + App's $effect exactly as at runtime
-// — the light Daylight palette (nibs-fen5) therefore renders with `.dark` cleared.
-// When the board view lands (nibs-sg09), add a capture for it.
+// — the light Daylight palette therefore renders with `.dark` cleared.
+// When the board view lands, add a capture for it.
 
 const OUT = join(import.meta.dirname, "output");
 mkdirSync(OUT, { recursive: true });
@@ -62,8 +62,8 @@ test("detail panel", async ({ page }) => {
   await shot(page, "detail-panel");
 });
 
-// Task-list checkboxes in rendered nib body: clickable (nibs-7m5f) + theme-styled
-// (nibs-y6aq). tnib-t005 has a MIXED checked/unchecked checklist; capture it under a
+// Task-list checkboxes in rendered nib body: clickable + theme-styled.
+// tnib-t005 has a MIXED checked/unchecked checklist; capture it under a
 // dark (graphite) and the light (daylight) palette so the themed checkbox — themed
 // border, --primary fill, --primary-foreground check, no gray native default — is
 // visible in both light and dark, in both states.
@@ -99,7 +99,7 @@ test("active view — expanded modal", async ({ page }) => {
 });
 
 test("detail panel — bottom dock", async ({ page }) => {
-  // Detail view docked at the bottom (table on top, preview below) — nibs-x9xl.
+  // Detail view docked at the bottom (table on top, preview below).
   await openApp(page, "milestones", undefined, "bottom");
   await page.locator("tr[data-nib-id]").first().locator('[data-action="title"]').click();
   await expect(page.locator('[data-testid="active-nib-view"]')).toBeVisible({ timeout: 5_000 });
@@ -128,7 +128,7 @@ test("add-child type picker — anchored, over an open detail view", async ({ pa
   await shot(page, "type-picker");
 });
 
-// Per-theme captures (nibs-vmaq, nibs-fen5): table + detail panel under each
+// Per-theme captures: table + detail panel under each
 // palette so an agent can confirm Graphite reads as a softer/warmer dark, Dracula
 // is clearly purple-tinted, Daylight renders as a warm LIGHT theme (shadcn inputs/
 // borders light, not dark), and pills/indicators/body text stay readable in all.
@@ -157,7 +157,7 @@ for (const { value } of THEMES) {
   });
 }
 
-// Global font-size preference (nibs-gymz): spot-check the type scale at Small and
+// Global font-size preference: spot-check the type scale at Small and
 // Large in a light (daylight) and a dark (graphite) palette. The whole app scales
 // off the single --font-scale root variable, so the table shows it across many rows.
 for (const theme of ["daylight", "graphite"] as const) {

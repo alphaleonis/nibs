@@ -18,7 +18,7 @@ type stubReader struct {
 	cfg     *config.Config
 	// prefix, when set, makes NormalizeID resolve short IDs by prepending the
 	// prefix — mirroring nibcore.Core.NormalizeID's exact-first, then
-	// prefix-prepended behaviour.
+	// prefix-prepended behavior.
 	prefix string
 	// mentionsOut, when populated, is returned by FindMentions keyed on the
 	// source (from) nib ID. Tests that need the mention filter paths to

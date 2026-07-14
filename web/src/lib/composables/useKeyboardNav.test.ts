@@ -179,7 +179,7 @@ describe("useKeyboardNav", () => {
     expect(selection.selectedNibId).toBe("nibs-002");
     // Enter must route through the injected navigateToNib (browser-history push /
     // URL sync), not call selection.select directly — a regression back to the latter
-    // would still pass the assertion above but silently drop history. nibs-58c3.
+    // would still pass the assertion above but silently drop history.
     expect(navigateToNib).toHaveBeenCalledWith("nibs-002");
   });
 

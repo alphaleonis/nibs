@@ -1177,7 +1177,7 @@ describe("TreeTable", () => {
       expect(sel.selectedNibId).toBe("nibs-001");
     });
 
-    // Regression (nibs-gkwg): a synthetic "No X" grouping bucket row is not a
+    // Regression: a synthetic "No X" grouping bucket row is not a
     // real nib. Routing its synthetic id through view.open resolves an empty
     // detail query and fires the missing-nib ("no longer exists") heal path.
     // A bucket row must instead toggle/collapse its group, mirroring its caret.
@@ -1427,7 +1427,7 @@ describe("TreeTable", () => {
       });
     });
 
-    // Regression (nibs-58c3, review #1): ensureVisible for a nib that is in the
+    // Regression: ensureVisible for a nib that is in the
     // dataset but excluded by an active client filter used to spin the effect
     // forever — every pass reassigned collapsedIds to a fresh Set that could
     // never make the filtered-out nib visible (effect_update_depth_exceeded).
@@ -1459,7 +1459,7 @@ describe("TreeTable", () => {
       expect(screen.queryByText("Filtered Task")).not.toBeInTheDocument();
     });
 
-    // Regression (nibs-58c3, review #3): a cold deep-link runs syncFromUrl on
+    // Regression: a cold deep-link runs syncFromUrl on
     // mount before the GraphQL query resolves (allNibs === []). The effect must
     // NOT clear the pending request as "absent" while the query is still
     // fetching — it must wait for data, then expand/scroll.
@@ -1566,7 +1566,7 @@ describe("TreeTable", () => {
     });
   });
 
-  // Scroll-restore lifecycle (nibs-qpvw). These drive the real mount → scroll →
+  // Scroll-restore lifecycle. These drive the real mount → scroll →
   // remount → restore path through TreeTable + TreeViewState — the coverage gap
   // the prior review flagged, where the two confirmed defects lived.
   //
@@ -1717,7 +1717,7 @@ describe("TreeTable", () => {
 
       // Rows are hidden…
       expect(screen.queryByText("Task one")).not.toBeInTheDocument();
-      // …but the selection is preserved — collapse is not a filter (nibs-mpkm).
+      // …but the selection is preserved — collapse is not a filter.
       expect(sel.selectedIds.has("nibs-t1")).toBe(true);
       expect(sel.selectedIds.has("nibs-t2")).toBe(true);
       expect(sel.selectedIds.size).toBe(2);

@@ -77,7 +77,7 @@
   const drag = new DragState();
   // Collapse state lives here — OUTSIDE the {#key position} block that remounts the
   // PaneGroup (and TreeTable) on a dock toggle — so it survives the remount, like
-  // selection/drag (nibs-a5sb, review #1).
+  // selection/drag.
   const treeView = new TreeViewState();
   const confirmDialog = createConfirmDialog();
 
@@ -90,7 +90,7 @@
 
   // isBlocked reads view.blocksHistoryNav (dirty buffer / open type picker),
   // replacing the old "modal open" check. While blocked, Back/Forward must not
-  // navigate the panel behind it (nibs-g1fy).
+  // navigate the panel behind it.
   const nav = createHistoryNav({
     selection,
     isBlocked: () => holder.view?.blocksHistoryNav ?? false,
@@ -156,7 +156,7 @@
   const createForm = (defaults: CreateDefaults): CreateForm => createNibForm({ mutations }, defaults);
 
   // One-shot, network-authoritative fetch of a nib's current committed snapshot,
-  // used by the presenter's null-remote conflict fallback (nibs-s80f Item 3).
+  // used by the presenter's null-remote conflict fallback.
   // `network-only` bypasses the cache so we read the server's CURRENT revision —
   // the whole point is to reconcile against what actually rejected the save. Uses
   // the DEDICATED NIB_CONFLICT_SNAPSHOT_QUERY (not NIB_DETAIL_QUERY) so its urql
@@ -192,8 +192,8 @@
       },
     });
 
-  // Promise wrapper over the shared confirm dialog for the dirty-nav guard
-  // (nibs-s9au). Resolves the tri-state ConfirmChoice: "save" (the Save action),
+  // Promise wrapper over the shared confirm dialog for the dirty-nav guard.
+  // Resolves the tri-state ConfirmChoice: "save" (the Save action),
   // "discard" (the confirm/primary action), or "cancel" on any dismissal
   // (Cancel / Escape / overlay). The pending resolver is completed by exactly one
   // of the three handlers (each nulls it first, so a follow-on dismissal is inert).
@@ -286,7 +286,7 @@
 
   function handleMissingNib(id: string) {
     // Deferred to a microtask so we don't mutate state during the detail query's
-    // own effect flush (nibs-etk3).
+    // own effect flush.
     queueMicrotask(() => {
       view.syncTo(null);
       selection.close();
@@ -341,13 +341,13 @@
   let contextMenuPosition = $state({ x: 0, y: 0 });
   let contextMenuNibId: string | null = $state(null);
   let contextMenuNib: TreeTableNib | null = $state(null);
-  // Subtree expand/collapse actions for the right-clicked row (nibs-iyw3).
+  // Subtree expand/collapse actions for the right-clicked row.
   // TreeTable owns the collapse state, so it hands down closures that mutate it.
   let contextMenuSubtree: RowSubtreeActions | null = $state(null);
 
   function handleRowContextMenu(nibId: string, event: MouseEvent, nib: TreeTableNib, subtree: RowSubtreeActions) {
     // If the right-clicked nib is not in the selection, open it first — route
-    // through the view so the dirty-guard + URL/history stay in sync (nibs-58c3).
+    // through the view so the dirty-guard + URL/history stay in sync.
     if (!selection.isSelected(nibId)) {
       view.open(nibId);
     }

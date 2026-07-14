@@ -17,7 +17,7 @@ type statusSelectedMsg struct {
 	status  string
 }
 
-// closeStatusPickerMsg is sent when the status picker is cancelled
+// closeStatusPickerMsg is sent when the status picker is canceled
 type closeStatusPickerMsg struct{}
 
 // openStatusPickerMsg requests opening the status picker for nib(s)

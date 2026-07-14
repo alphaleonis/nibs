@@ -29,7 +29,7 @@ func (r *mutationResolver) reorderChildrenImpl(parentID string, childIDs []strin
 	keys := nib.OrderKeyN(len(ordered))
 	for i, b := range ordered {
 		// Mutate an OWNED clone from GetForUpdate, never the shared Reader.Get
-		// pointer (nibs-twvo): a mid-loop Update rejection must not leave the
+		// pointer: a mid-loop Update rejection must not leave the
 		// failing item's shared in-memory nib showing a phantom order that was
 		// never persisted.
 		clone, err := r.Reader.GetForUpdate(b.ID)
@@ -116,7 +116,7 @@ func (r *mutationResolver) reorderSiblingsImpl(siblingIDs []string, afterID *str
 	for i, b := range block {
 		newKey := nib.OrderBetween(prev, upper)
 		// Mutate an OWNED clone from GetForUpdate, never the shared Reader.Get
-		// pointer (nibs-twvo): a mid-loop Update rejection must not leave the
+		// pointer: a mid-loop Update rejection must not leave the
 		// failing item's shared in-memory nib showing a phantom order that was
 		// never persisted.
 		clone, err := r.Reader.GetForUpdate(b.ID)
@@ -310,7 +310,7 @@ func (r *mutationResolver) requireIfMatch() bool {
 
 // validateIfMatchETags checks the supplied per-child ETag entries against the
 // listed nibs. Validation order:
-//  1. duplicate-id check (canonicalised) — first duplicate aborts.
+//  1. duplicate-id check (canonicalized) — first duplicate aborts.
 //  2. unknown-id check — every ifMatch entry must reference one of `listed`.
 //  3. completeness check (when requireIfMatch is true) — every listed nib
 //     must appear in the ifMatch map.
@@ -329,7 +329,7 @@ func (r *mutationResolver) validateIfMatchETags(listed []*nib.Nib, ifMatch []*mo
 	}
 
 	// Build a canonical-id -> etag map. The id in the entry may be a short
-	// form under a configured prefix; normalise both sides so cross-form
+	// form under a configured prefix; normalize both sides so cross-form
 	// duplicates and unknown ids surface correctly.
 	etags := make(map[string]string, len(ifMatch))
 	for _, e := range ifMatch {

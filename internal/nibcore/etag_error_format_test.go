@@ -10,7 +10,7 @@ import "testing"
 // web/src/lib/nibForm.svelte.ts (isEtagConflict). There is no structured error
 // code on the GraphQL error today, so this human-readable string IS the contract.
 //
-// If you reword this message, the web classifier silently stops recognising the
+// If you reword this message, the web classifier silently stops recognizing the
 // conflict. Keep the two in lockstep (and update
 // web/src/lib/nibForm.svelte.test.ts, which pins the same string).
 func TestETagMismatchErrorFormat(t *testing.T) {

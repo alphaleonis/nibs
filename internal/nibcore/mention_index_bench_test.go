@@ -56,7 +56,7 @@ func BenchmarkFindMentionedBy_WithIndex(b *testing.B) {
 	cfg := config.DefaultWithPrefix("nibs-")
 
 	// Route through New() so this bench stays resilient to Core struct
-	// field drift — a new required field added to Core gets initialised
+	// field drift — a new required field added to Core gets initialized
 	// correctly without touching this file. We still skip Load() (and
 	// therefore disk I/O) by manually wiring the synthetic nib map.
 	core := New(b.TempDir(), cfg)

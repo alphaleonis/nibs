@@ -17,7 +17,7 @@ type estimateSelectedMsg struct {
 	estimate string
 }
 
-// closeEstimatePickerMsg is sent when the estimate picker is cancelled
+// closeEstimatePickerMsg is sent when the estimate picker is canceled
 type closeEstimatePickerMsg struct{}
 
 // openEstimatePickerMsg requests opening the estimate picker for nib(s)

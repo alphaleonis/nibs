@@ -207,7 +207,7 @@ abstract class BaseForm implements NibFormFields {
     // A body change alone marks the buffer dirty via the derived `dirty` getter
     // (body !== baseline). DEFAULT is in-place / non-remounting: an open editor
     // pane syncs the new body via a minimal-diff doc transaction that preserves
-    // undo history / cursor / scroll (nibs-fva8) — the safe choice for an
+    // undo history / cursor / scroll — the safe choice for an
     // out-of-band edit like the task-checkbox flip. Pass `{ reinitEditor: true }`
     // to force a full editor re-init (the `{#key bodyVersion}` remount) instead.
     // (Genuine baseline resets — discard / applyExternal / afterTypeChange —

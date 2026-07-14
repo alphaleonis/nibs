@@ -97,7 +97,7 @@
 
         container.innerHTML = "";
 
-        // Token-driven chrome: every colour is a CSS var, so the editor tracks
+        // Token-driven chrome: every color is a CSS var, so the editor tracks
         // the app's light/dark theme engine automatically (no fixed oneDark).
         const isDark =
           typeof document !== "undefined" &&
@@ -221,7 +221,7 @@
     };
   });
 
-  // External-value sync (nibs-fva8): when the incoming `initialValue` changes
+  // External-value sync: when the incoming `initialValue` changes
   // out-of-band (e.g. a rendered task-checkbox flip in the parent, which no
   // longer remounts us) reconcile the editor doc via a transaction rather than a
   // remount — this preserves undo history and selection.

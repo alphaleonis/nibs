@@ -145,7 +145,7 @@ describe("buildTableData", () => {
 
   // The "hide completed" behavior is now expressed as the "Open + deferred" status
   // include-list (everything except completed + scrapped), not a separate
-  // excludeStatus field (nibs-ni1v). A non-matching ancestor of an active child is
+  // excludeStatus field. A non-matching ancestor of an active child is
   // still dimmed in place rather than dropped.
   describe("status include-list client filter (hide completed)", () => {
     it("dims a completed parent with an active child instead of dropping it", () => {

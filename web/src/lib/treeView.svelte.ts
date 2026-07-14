@@ -6,7 +6,7 @@
  * If collapse state lived inside TreeTable as component-local $state it would reset
  * on every dock toggle, silently re-expanding every branch. Instead this state is
  * instantiated in App.svelte OUTSIDE the keyed block and shared via context —
- * mirroring SelectionState/DragState (nibs-a5sb, review #1).
+ * mirroring SelectionState/DragState.
  */
 export class TreeViewState {
   /**
@@ -32,7 +32,7 @@ export class TreeViewState {
    * PaneGroup remount on a detail-panel dock toggle, same rationale as
    * collapsedIds. Unlike collapsedIds this is a plain public primitive with no
    * in-place-mutation footgun, so it needs no private-field/getter encapsulation
-   * — it matches SelectionState's public $state fields (nibs-n47p).
+   * — it matches SelectionState's public $state fields.
    */
   scrollTop: number = $state(0);
 

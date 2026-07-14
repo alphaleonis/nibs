@@ -7,8 +7,8 @@ export const STATUSES = ["draft", "todo", "in-progress", "deferred", "completed"
 // hidden (the old hardcoded include-lists would have gone stale).
 export const TERMINAL_STATUSES = ["completed", "scrapped"] as const;
 
-// Quick State-facet presets that set the `status` include-list in one click
-// (nibs-ni1v). The include-list is the single source of truth for status
+// Quick State-facet presets that set the `status` include-list in one click.
+// The include-list is the single source of truth for status
 // visibility, so these OVERWRITE the current selection.
 //   Open + deferred → everything except completed + scrapped (the old "hide
 //                     completed" behavior, now expressed as an include-list)

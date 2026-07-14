@@ -594,7 +594,7 @@ describe("useTreeDrag", () => {
     const escEvent = new KeyboardEvent("keydown", { key: "Escape", bubbles: true, cancelable: true });
     composable.onDragKeyDown(escEvent);
 
-    // Drag should be cancelled, ondrop should NOT have been called
+    // Drag should be canceled, ondrop should NOT have been called
     expect(drag.isDragging).toBe(false);
     expect(ondrop).not.toHaveBeenCalled();
     expect(escEvent.defaultPrevented).toBe(true);

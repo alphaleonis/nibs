@@ -146,7 +146,7 @@ func TestFormatColumns_TagsColumn_JoinedByComma(t *testing.T) {
 // The type and priority columns are the exception: they carry the presentation
 // default ("task"/"normal") via nib.EffectiveType()/EffectivePriority(), matching
 // what every loaded nib rendered before loadNib stopped synthesizing those
-// defaults (nibs-7d3o). Those are legitimate values, not the garbage this test
+// defaults. Those are legitimate values, not the garbage this test
 // guards against; the remaining string columns still render empty.
 func TestFormatColumns_EmptyFields_RenderAsEmptyString(t *testing.T) {
 	b := &nib.Nib{ID: "only-id"}

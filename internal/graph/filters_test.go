@@ -48,7 +48,7 @@ func TestResolveFilterID(t *testing.T) {
 // TestApplyFilterBlockedByIDShortForm is the tracer bullet: a filter with
 // a short `BlockedByID` must match nibs whose `blocked_by` contains the
 // full (prefixed) ID. Prior to the fix, filter.BlockedByID was passed raw
-// to filterBySliceField with no normalisation, so short IDs silently
+// to filterBySliceField with no normalization, so short IDs silently
 // matched nothing.
 func TestApplyFilterBlockedByIDShortForm(t *testing.T) {
 	target := &nib.Nib{ID: "nibs-target", Title: "Target"}

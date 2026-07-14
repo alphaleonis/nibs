@@ -105,7 +105,7 @@ describe("ConfirmDialog", () => {
     expect(screen.getByTestId("confirm-dialog-confirm")).toHaveTextContent("Archive");
   });
 
-  // ─── Opt-in secondary Save action (nibs-s9au) ───────────────
+  // ─── Opt-in secondary Save action ───────────────
 
   it("does NOT render a Save button when onsave is omitted (Delete/Archive unaffected)", () => {
     render(ConfirmDialog, { ...defaultProps });

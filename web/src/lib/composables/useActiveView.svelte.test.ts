@@ -52,7 +52,7 @@ interface LiveInst {
 /** Build a fully-stubbed dependency set with observable spies/handles. */
 function makeDeps() {
   const nav = { navigateToNib: vi.fn(), closePanel: vi.fn(), replaceClosed: vi.fn() };
-  // Tri-state dirty-guard confirm (nibs-s9au): "save" | "discard" | "cancel".
+  // Tri-state dirty-guard confirm: "save" | "discard" | "cancel".
   // Defaults to "discard" — the pre-Save behavior (proceed, abandoning edits).
   const confirm = vi.fn<() => Promise<ConfirmChoice>>(async () => "discard");
 

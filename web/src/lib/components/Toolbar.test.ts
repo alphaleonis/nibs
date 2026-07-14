@@ -270,7 +270,7 @@ describe("Toolbar", () => {
     expect(lastCall[0]).toMatchObject({ search: "auth" });
   });
 
-  // The standalone hide/show-completed toggle was removed (nibs-ni1v); status
+  // The standalone hide/show-completed toggle was removed; status
   // visibility is now driven solely by the State-facet include-list + its presets.
   it("no longer renders the standalone completed toggle", () => {
     render(Toolbar, { ...defaultToolbarProps });
@@ -444,7 +444,7 @@ describe("Toolbar", () => {
   });
 });
 
-// Filter-dropdown coverage ported from the deleted FilterBar.test.ts (nibs-oqr8).
+// Filter-dropdown coverage ported from the deleted FilterBar.test.ts.
 // The filter-toggle logic (toggleArrayValue/handleToggle, mutual exclusion,
 // per-category Clear, status conflict resolution, count badges) was moved verbatim
 // from FilterBar into Toolbar during the nibs-5a8k design-system refactor, but its
@@ -564,7 +564,7 @@ describe("Toolbar — filter dropdowns", () => {
     expect(lastCall[0].search).toBeUndefined();
   });
 
-  // Inline ✕ clear button on the keyword input (nibs-3yla).
+  // Inline ✕ clear button on the keyword input.
   it("does not render the keyword clear button when the input is empty", () => {
     render(Toolbar, { ...defaultToolbarProps, filter: {} });
 

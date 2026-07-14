@@ -21,7 +21,7 @@ describe("index.html FOUC guard stays in sync with the TS source of truth", () =
   });
 
   it("inline dark-flag map matches each THEME's `dark` boolean", () => {
-    // Sync-point 5 (nibs-fen5): the guard sets the `.dark` class before first
+    // Sync-point 5: the guard sets the `.dark` class before first
     // paint from `var dark = { graphite: 1, ... }`. app.css keys Tailwind's `dark:`
     // variant off that class, so a stale flag would flash light themes as dark (or
     // vice-versa) until App's $effect corrected it. Extract the object literal and

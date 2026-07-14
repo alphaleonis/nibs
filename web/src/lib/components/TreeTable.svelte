@@ -59,7 +59,7 @@
   const view = useActiveView();
   // Collapse state is owned by TreeViewState (provided in App.svelte, outside the
   // {#key position} block) so it survives a TreeTable remount on a dock-position
-  // toggle — see treeView.svelte.ts (nibs-a5sb, review #1).
+  // toggle — see treeView.svelte.ts.
   const treeView = useTreeView();
 
   // Resolve values: prefs takes precedence over individual props
@@ -287,10 +287,10 @@
     treeView.collapseAll(parentIds);
   }
 
-  // --- Subtree expand/collapse (row context menu, nibs-iyw3) ---
+  // --- Subtree expand/collapse (row context menu) ---
   // Descendants are resolved against the DISPLAYED view tree (buildViewTree), not
   // raw parentId, so the grouping lens (headers, hidden containers, "No X"
-  // buckets) is honoured. TreeViewState owns the collapse set; these compute the
+  // buckets) is honored. TreeViewState owns the collapse set; these compute the
   // next set and hand it to setCollapsed.
   function expandSubtree(rootId: string) {
     const viewTree = buildViewTree<TreeTableNib>(allNibs, resolvedViewLevel);
@@ -344,7 +344,7 @@
   // Saves/restores the scroll offset across App's {#key position} remount (the
   // detail-panel dock toggle recreates this container at scrollTop=0). The saved
   // value lives in TreeViewState outside the keyed block, the same way
-  // collapsedIds survives the remount (nibs-n47p).
+  // collapsedIds survives the remount.
   const scrollRestore = useScrollRestore({
     getScrollContainer: () => scrollContainerEl ?? null,
     getSavedScrollTop: () => treeView.scrollTop,
@@ -361,7 +361,7 @@
     // untrack the restore call so the effect keeps only its two intended deps
     // (container binding + row count) and takes no incidental dependency on
     // treeView.scrollTop read inside restore(), mirroring the file's convention
-    // for self-feeding side-effects (nibs-n47p review #3).
+    // for self-feeding side-effects.
     untrack(() => scrollRestore.restore());
   });
 
@@ -410,7 +410,7 @@
   // Row-open guard for synthetic grouping buckets. A "No X" bucket row
   // (isBucketId) is not a real nib, so routing its synthetic id through
   // view.open resolves an empty detail query and fires the missing-nib
-  // ("no longer exists") heal path (nibs-gkwg). Instead, opening a bucket
+  // ("no longer exists") heal path. Instead, opening a bucket
   // toggles/collapses its group — the same effect as its caret — mirroring the
   // drag guard that already skips buckets (isBucketId, ~lines 428/540).
   function openOrToggleBucket(id: string) {
@@ -453,7 +453,7 @@
     // collapse-to-exactly-one still opens the single-nib panel (and collapse-to-
     // zero closes it) without a history push, so URL/history can lag selection
     // after these gestures; that's accepted because multi-select is a bulk
-    // gesture, not detail-panel navigation (nibs-58c3).
+    // gesture, not detail-panel navigation.
     // Only a plain click is treated as navigation.
     if (e.shiftKey) {
       selection.rangeSelect(nibId, visibleRowIds);

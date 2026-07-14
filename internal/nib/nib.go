@@ -244,14 +244,13 @@ func (b *Nib) PriorityMigrated() bool {
 // yaml.v2. Unifying the parse and render YAML versions — combined with capturing
 // unknown keys as raw yaml.Node values (see frontMatter.Extra) — makes the
 // unknown-key passthrough a true parse->render fixed point: no yaml.v2->v3
-// scalar re-inference can coerce a bool-like or signed-zero value (nibs-r3y1).
+// scalar re-inference can coerce a bool-like or signed-zero value.
 // Only the YAML formats are registered (nibs are always YAML front matter with
 // `---`/`---yaml` fences); TOML/JSON front matter is not a nib format.
 //
 // The registered unmarshal is boundedYAMLUnmarshal (NOT plain yaml.Unmarshal):
 // it caps the raw front-matter block by byte size and key count before the
-// quadratic struct decode, closing the yaml.v3 O(N²)-in-key-count DoS
-// (nibs-r3y1 review #1).
+// quadratic struct decode, closing the yaml.v3 O(N²)-in-key-count DoS.
 var yamlFrontMatterFormats = []*frontmatter.Format{
 	frontmatter.NewFormat("---", "---", boundedYAMLUnmarshal),
 	frontmatter.NewFormat("---yaml", "---", boundedYAMLUnmarshal),
@@ -281,7 +280,7 @@ const (
 // boundedYAMLUnmarshal is the frontmatter UnmarshalFunc registered for nib front
 // matter. It enforces maxFrontMatterBytes / maxFrontMatterKeys BEFORE delegating
 // to the real yaml.Unmarshal, so a crafted many-key block is rejected with a fast
-// normal error rather than paying yaml.v3's O(N²) map decode (nibs-r3y1 #1).
+// normal error rather than paying yaml.v3's O(N²) map decode.
 //
 // The key-count check first decodes the block into a single yaml.Node — which is
 // LINEAR in the input, unlike the struct decode — counts its mapping keys, and
@@ -374,7 +373,7 @@ type frontMatter struct {
 // stays a faithful witness of the on-disk bytes. If loadNib synthesized these
 // in memory (as it once did), a bare-parse of the same file would render no
 // such key while the in-memory ETag() would render the default, diverging with
-// no on-disk change and false-conflicting an if-match Update (nibs-7d3o). The
+// no on-disk change and false-conflicting an if-match Update. The
 // defaults are therefore applied only at the consumption boundary (GraphQL
 // field resolvers, sort/filter, TUI/CLI display, the JSON projection).
 //
@@ -476,9 +475,9 @@ func Parse(r io.Reader) (*Nib, error) {
 	// A cross-boundary anchor/alias — an anchor on a MODELED field (which decodes
 	// to a plain Go value, dropping the anchor) plus an alias in an unmodeled Extra
 	// key — would otherwise survive as a raw AliasNode and marshal to a DANGLING
-	// alias on Render, producing invalid YAML that permanently corrupts the file
-	// (nibs-r3y1 #2). Resolving at parse restores the old resolve-to-concrete-value
-	// behavior while keeping scalar fidelity for non-alias values.
+	// alias on Render, producing invalid YAML that permanently corrupts the file.
+	// Resolving at parse yields concrete values while keeping scalar fidelity for
+	// non-alias values.
 	//
 	// resolveExtraAliases fails closed on adversarial anchors: yaml.v3 does NOT
 	// expand aliases when decoding into a yaml.Node, so its built-in billion-laughs
@@ -487,7 +486,7 @@ func Parse(r io.Reader) (*Nib, error) {
 	// maxExtraAliasNodes, therefore returns an error here rather than recursing to a
 	// stack overflow or exhausting memory. A crafted file thus fails Parse and is
 	// skipped by the loader (Core.Load log-and-continue) instead of crashing the
-	// process (nibs-mv0i). The budget is shared across all Extra values of the nib.
+	// process. The budget is shared across all Extra values of the nib.
 	// Iterate Extra keys in sorted order so that, when multiple values fail
 	// independently, the key named in the returned error (and thus the
 	// loadFromDisk skip warning) is DETERMINISTIC — Go map iteration order would
@@ -544,14 +543,14 @@ const maxExtraAliasNodes = 100_000
 // of its target, and Anchor is cleared on every node. It is applied to each
 // captured Extra value at parse time (see Parse) so no cross-key anchor/alias
 // dependency can survive to Render, where a dangling alias would marshal to
-// invalid YAML and permanently corrupt the file (nibs-r3y1 #2). Non-alias scalar
+// invalid YAML and permanently corrupt the file. Non-alias scalar
 // values are otherwise preserved verbatim (Kind, Value, Style, Tag), keeping the
 // unknown-key scalar fidelity the passthrough guarantees.
 //
 // It fails closed on adversarial input: a self-referential anchor (a cyclic node
 // graph) returns a "cyclic" error, and a fan-out that would materialize more than
 // the remaining budget returns a limit error — instead of recursing to a stack
-// overflow or exhausting memory (nibs-mv0i). budget is decremented per copied node
+// overflow or exhausting memory. budget is decremented per copied node
 // and is shared across a nib's Extra values by the caller. Returns (nil, nil) only
 // for a nil input.
 func resolveExtraAliases(node *yaml.Node, budget *int) (*yaml.Node, error) {

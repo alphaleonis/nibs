@@ -22,7 +22,7 @@ type parentSelectedMsg struct {
 	parentID string   // the new parent ID (empty string to clear parent)
 }
 
-// closeParentPickerMsg is sent when the parent picker is cancelled
+// closeParentPickerMsg is sent when the parent picker is canceled
 type closeParentPickerMsg struct{}
 
 // parentItem wraps a nib to implement list.Item for the parent picker

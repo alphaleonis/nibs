@@ -484,7 +484,7 @@ func bfsTraverse(ctx context.Context, resolver *graph.Resolver, start *nib.Nib, 
 // ignored. Returns an error when a cycle is present (naming the members).
 //
 // Only `blocked_by` declarations contribute edges. `#<id>` body mentions are
-// informational and never affect topo order — see nib nibs-q4pi.
+// informational and never affect topo order.
 func topoSortNibs(candidates []*nib.Nib) ([]*nib.Nib, error) {
 	byID := make(map[string]*nib.Nib, len(candidates))
 	ids := make([]string, 0, len(candidates))

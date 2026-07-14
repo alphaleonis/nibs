@@ -20,7 +20,7 @@ describe("NIB_DETAIL_QUERY", () => {
 });
 
 describe("NIB_CONFLICT_SNAPSHOT_QUERY", () => {
-  // The null-remote conflict fallback (nibs-s80f Item 3) MUST use a document
+  // The null-remote conflict fallback MUST use a document
   // distinct from NIB_DETAIL_QUERY so urql does not share its result-source with
   // App's live detailStore — otherwise a `{ nib: null }` (deleted-in-race) reply
   // would trip the missing-nib effect and drop the dirty buffer (MEDIUM #3).

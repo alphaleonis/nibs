@@ -250,7 +250,7 @@
     emitFilter(updated);
   }
 
-  // State-facet quick presets (nibs-ni1v): OVERWRITE the status include-list in
+  // State-facet quick presets: OVERWRITE the status include-list in
   // one click. The include-list is the single source of truth for status
   // visibility, so a preset replaces (not merges with) the current selection; the
   // per-status checkboxes below remain for precise tweaking afterward.

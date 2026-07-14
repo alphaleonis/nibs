@@ -920,7 +920,7 @@ func TestMutationCreateNib(t *testing.T) {
 }
 
 // TestMutationCreateNibValidatesEnums exercises the core write-path chokepoint
-// through the GraphQL/MCP resolver (nibs-9tj2): an invalid non-empty
+// through the GraphQL/MCP resolver: an invalid non-empty
 // type/status/priority/estimate is rejected and nothing is persisted; empty
 // sentinels and valid values are accepted.
 func TestMutationCreateNibValidatesEnums(t *testing.T) {
@@ -3561,9 +3561,8 @@ func TestCreateNibPositioning(t *testing.T) {
 
 	t.Run("first flag on root inserts before existing roots", func(t *testing.T) {
 		// `epic1` from the fixture above is an existing root nib. A new root
-		// created with --first should land before it. This is the inverse of
-		// the previous bug-pinning subtest which asserted that positioning
-		// without a parent was rejected — see nibs-d44y.
+		// created with --first must land before it — positioning is valid at
+		// root level, not only among a parent's children.
 		existingRootID := "epic1"
 		if _, err := resolver.Query().Nib(ctx, existingRootID); err != nil {
 			t.Fatalf("missing fixture root %q: %v", existingRootID, err)
@@ -3581,7 +3580,7 @@ func TestCreateNibPositioning(t *testing.T) {
 			t.Errorf("created root should have no parent, got %q", created.Parent)
 		}
 		// Re-read the existing root AFTER the create: positioning backfilled it an
-		// order key, and under clone-before-mutate (nibs-twvo) that key lives on
+		// order key, and under clone-before-mutate that key lives on
 		// the nib's fresh store entry — a pointer captured before the call keeps its
 		// old (empty) order instead of being aliased-mutated in place. Query the
 		// current entry to observe the persisted order.
@@ -4477,7 +4476,7 @@ func TestAutoActivationWorksWithRequireIfMatch(t *testing.T) {
 	}
 }
 
-// --- Phase 1: Bug nibs-j7ez — NormalizeID ok return value must be checked ---
+// --- NormalizeID ok return value must be checked ---
 // These tests verify that NormalizeID failures produce clear "nib not found" errors
 // at each call site, rather than passing through bad IDs to downstream operations.
 
@@ -4703,7 +4702,7 @@ func TestNormalizeIDValidation(t *testing.T) {
 
 func strPtr(s string) *string { return &s }
 
-// --- Phase 2: Bug nibs-r9e1 — Clone-before-mutate in UpdateNib ---
+// --- Clone-before-mutate in UpdateNib ---
 
 func TestUpdateNibCloneBeforeMutate(t *testing.T) {
 	ctx := context.Background()
@@ -4818,7 +4817,7 @@ func (f *failingWriter) Create(b *nib.Nib) error {
 	return f.stubWriter.Create(b)
 }
 
-// --- Phase 3: Bug nibs-kzlw — Atomic multi-step mutations ---
+// --- Atomic multi-step mutations ---
 
 func TestAtomicCreateNib(t *testing.T) {
 	ctx := context.Background()

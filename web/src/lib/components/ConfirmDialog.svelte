@@ -11,7 +11,7 @@
     testId?: string;
     onconfirm: () => void;
     oncancel: () => void;
-    /** Opt-in secondary "Save" action (nibs-s9au). When provided, the dialog
+    /** Opt-in secondary "Save" action. When provided, the dialog
      *  renders a primary Save button in addition to the confirm (Discard) button
      *  — used only by the dirty-nav guard. Omitted (undefined) for Delete/Archive
      *  confirms, which then render exactly as before (no Save button). */

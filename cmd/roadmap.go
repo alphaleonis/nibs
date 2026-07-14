@@ -407,8 +407,8 @@ func renderNibRef(b *nib.Nib, asLink bool, linkPrefix string) string {
 }
 
 // typeBadge returns a shields.io badge markdown for the nib type. Uses
-// EffectiveType so a type-less nib still renders its "task" badge (matching the
-// pre-nibs-7d3o behavior where loadNib synthesized the default).
+// EffectiveType so a type-less nib still renders its "task" badge rather than
+// an empty one.
 func typeBadge(b *nib.Nib) string {
 	typeName := b.EffectiveType()
 	// Map types to colors

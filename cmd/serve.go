@@ -98,7 +98,7 @@ func resolveServeOptions(cfg *config.Config, flagPort int, flagPortSet bool, fla
 // shutdownTimeout is how long to wait for in-flight requests to complete.
 const shutdownTimeout = 5 * time.Second
 
-// startServer starts the HTTP server. It blocks until ctx is cancelled, then
+// startServer starts the HTTP server. It blocks until ctx is canceled, then
 // gracefully shuts down, draining in-flight requests. The opener function is
 // called with the URL after the listener is bound, allowing tests to inject a fake.
 func startServer(ctx context.Context, app *App, host string, port int, open bool, opener func(string) error) error {
@@ -132,7 +132,7 @@ func startServer(ctx context.Context, app *App, host string, port int, open bool
 		}
 	}
 
-	// Shut down gracefully when ctx is cancelled.
+	// Shut down gracefully when ctx is canceled.
 	errCh := make(chan error, 1)
 	go func() {
 		<-ctx.Done()
@@ -278,7 +278,7 @@ func buildCSP(fsys fs.FS) string {
 //	Referrer-Policy: no-referrer     — never leak the URL as a referrer
 //
 // Why the CSP's script-src carries a *computed* hash: web/index.html ships one
-// inline <script>, the FOUC guard (nibs-vmaq), which runs before any module
+// inline <script>, the FOUC guard, which runs before any module
 // loads and therefore has no src for a URL allowlist to cover. A strict CSP
 // would block it, so buildCSP allowlists its exact sha256. That hash is derived
 // at mux-construction time from the *embedded, built* index.html, so it
@@ -338,7 +338,7 @@ func handleHealth(w http.ResponseWriter, r *http.Request) {
 // newGraphQLHandler creates a gqlgen HTTP handler with GET, POST, and WebSocket transports.
 // The returned handler is wrapped in requestCacheMiddleware so every incoming
 // HTTP request gets its own graph.RequestCache in context — resolver helpers
-// (cachedMentions / cachedMentionedBy) use it to memoise per-request mention
+// (cachedMentions / cachedMentionedBy) use it to memoize per-request mention
 // lookups. The in-process CLI executor (cmd/graphql.go) does NOT route
 // through this middleware and intentionally runs without a cache: a single
 // CLI invocation issues one query, so there's nothing to dedup.
@@ -364,11 +364,11 @@ func newGraphQLHandler(app *App) http.Handler {
 // *nibcore.ETagMismatchError — the reconcilable optimistic-concurrency conflict
 // the web client routes into its inline "Load theirs / Overwrite" resolver.
 //
-// Every other error (the nibs-9tj2 enum-validation errors, ETagRequiredError,
+// Every other error (the enum-validation errors, ETagRequiredError,
 // OnDiskUnparseableError, generic failures) is left EXACTLY as the default
 // presenter formats it: no code is added, so callers can't mistake a
 // non-reconcilable failure for a retryable conflict. errors.As walks the wrap
-// chain, so a wrapped ETagMismatchError is still recognised.
+// chain, so a wrapped ETagMismatchError is still recognized.
 //
 // The web classifier keys on this code first and keeps the human-readable
 // "etag mismatch" substring match only as a fallback (see

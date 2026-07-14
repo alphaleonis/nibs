@@ -5,7 +5,7 @@
  * at scrollTop=0. The saved scroll position lives in TreeViewState (outside the
  * keyed block), same rationale as collapsedIds; this composable copies it back
  * onto the fresh container once content is present, then records subsequent
- * scrolls back into the saved slot (nibs-n47p).
+ * scrolls back into the saved slot.
  *
  * Rune-free coordination helper: the reactive `$effect` that re-attempts
  * `restore()` after the container binds and rows render lives in TreeTable. This
@@ -59,7 +59,7 @@ export function useScrollRestore(opts: {
     ownedEl = container;
     // Read scrollTop back so lastWrite.top captures the browser's clamp: the echo
     // this write provokes reports this exact value on this exact element, so
-    // onScroll can recognise and skip it. A no-op write (saved === current, e.g. the
+    // onScroll can recognize and skip it. A no-op write (saved === current, e.g. the
     // common top-of-list case) records top === current and provokes no echo — and a
     // genuine later scroll reports a different value, so nothing is ever swallowed.
     lastWrite = { el: container, top: container.scrollTop };
@@ -91,7 +91,7 @@ export function useScrollRestore(opts: {
     // synchronously so it is durable even if a refetch unmounts the container before
     // the async scroll event fires; take ownership so restore() won't overwrite it.
     // Self-locates via getScrollContainer() (single source of truth), matching
-    // restore() and the sibling composables. (nibs-n47p review #1)
+    // restore() and the sibling composables.
     //
     // claim() performs NO programmatic write of its own, so it arms no echo — and
     // because lastWrite is element-keyed, any record stranded from a prior container

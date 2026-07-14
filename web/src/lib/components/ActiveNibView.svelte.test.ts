@@ -490,7 +490,7 @@ describe("ActiveNibView", () => {
 
       expect(form.body).toBe("- [x] a\n- [ ] b");
       expect(form.dirty).toBe(true);
-      // No remount (nibs-fva8): the flip uses setBody's in-place default (no
+      // No remount: the flip uses setBody's in-place default (no
       // bodyVersion bump), so an open editor pane keeps its undo history / cursor /
       // scroll — MarkdownEditor syncs the change via a minimal-diff transaction.
       expect(form.bodyVersion).toBe(v0);

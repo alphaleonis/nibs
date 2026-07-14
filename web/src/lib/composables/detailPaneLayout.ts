@@ -1,5 +1,5 @@
 /**
- * Pure layout math for the docked detail pane (#nibs-dkm8).
+ * Pure layout math for the docked detail pane.
  *
  * No DOM, no runes — just the orientation mapping and the px<->% conversions
  * that the reactive shell (`detailPaneLayout.svelte.ts`) and the App component
@@ -145,7 +145,7 @@ export function defaultPercent(
 /**
  * Initial pane size as a percent of the container. When the user hasn't resized
  * (`rawSizePx === undefined`) the pane opens at DEFAULT_DETAIL_PANEL_PERCENT —
- * screen-relative, so it doesn't look narrow on large displays (nibs-lcyo). Once
+ * screen-relative, so it doesn't look narrow on large displays. Once
  * a size is stored the pane anchors to it (px → percent). Both are clamped to the
  * [minPercent, maxPercent] band.
  */

@@ -1,5 +1,5 @@
 /**
- * Reactive shell for the active-nib view presenter (#nibs-wvl2).
+ * Reactive shell for the active-nib view presenter.
  *
  * Owns a single `ViewState` and the form/live/detail lifecycle around it. Every
  * public transition routes through the pure kernel (`activeView.ts`) via one of
@@ -39,7 +39,7 @@ import type { LiveNib } from "../liveNib.svelte";
 import type { HistoryNav } from "./useHistoryNav.svelte";
 
 /**
- * The user's choice at the dirty-nav guard (nibs-s9au). Tri-state so the guard
+ * The user's choice at the dirty-nav guard. Tri-state so the guard
  * can offer Save alongside Discard/Cancel:
  *   - "save"    — persist the buffer, then (on success) proceed with the nav.
  *   - "discard" — drop the edits and proceed with the nav (the original behavior).
@@ -109,8 +109,8 @@ export interface ActiveViewDeps {
    *  against) nor defer to a fresher subscription change, the suppressed
    *  dispatcher toast (Item 2) would otherwise leave a rejected save silent. */
   notifyError: (message: string) => void;
-  /** Prompt the dirty-nav guard and resolve the user's tri-state choice
-   *  (nibs-s9au): "save" (persist then proceed), "discard" (drop edits and
+  /** Prompt the dirty-nav guard and resolve the user's tri-state choice:
+   *  "save" (persist then proceed), "discard" (drop edits and
    *  proceed), or "cancel" (keep edits and stay put). */
   confirm: () => Promise<ConfirmChoice>;
 }
@@ -281,7 +281,7 @@ export function createActiveView(deps: ActiveViewDeps): ActiveView {
       // "cancel" — keep the edits, stay put (abort the pending navigation).
       if (choice === "cancel") return false;
       if (choice === "save") {
-        // "save" (nibs-s9au) — persist the buffer through the normal save path,
+        // "save" — persist the buffer through the normal save path,
         // then decide whether the pending navigation proceeds. save() already
         // routes a 409 into the inline Load-theirs / Overwrite resolver (and its
         // null-remote fallback), so we do NOT reimplement conflict handling here.

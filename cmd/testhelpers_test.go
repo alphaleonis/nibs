@@ -86,7 +86,7 @@ func TestResetRootPersistentFlagsClearsAllState(t *testing.T) {
 
 // stdoutMu serializes global os.Stdout mutations across tests that need to
 // observe writes from the output package (which bypasses Cobra's writers).
-// The mutex neutralises the race if anyone later adds t.Parallel() to a
+// The mutex neutralizes the race if anyone later adds t.Parallel() to a
 // test in this package — stdout itself is process-global, so concurrent
 // swaps would silently steal each other's output without this guard.
 var stdoutMu sync.Mutex

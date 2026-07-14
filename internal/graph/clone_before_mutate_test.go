@@ -385,7 +385,7 @@ func TestUpdateNibDuplicateBlockingTargetIsIdempotent(t *testing.T) {
 	}
 }
 
-// TestBackfillOrderKeysRefusedWriteLeavesNoPhantomOrder guards the nibs-twvo
+// TestBackfillOrderKeysRefusedWriteLeavesNoPhantomOrder guards the
 // corruption class in a sibling site the sweep extends to.
 // Orderer.backfillOrderKeys iterates the SHARED c.nibs[id] pointers returned by
 // reader.All()/FindIncomingLinks and assigned b.Order = newKey in place before a

@@ -52,7 +52,7 @@ func (r *mutationResolver) CreateNib(ctx context.Context, input model.CreateNibI
 
 	// Handle parent (with validation)
 	if input.Parent != nil && *input.Parent != "" {
-		// Normalise short ID to full ID
+		// Normalize short ID to full ID
 		parentID, ok := r.Reader.NormalizeID(*input.Parent)
 		if !ok {
 			return nil, fmt.Errorf("parent nib not found: %s", *input.Parent)
@@ -123,7 +123,7 @@ func (r *mutationResolver) CreateNib(ctx context.Context, input model.CreateNibI
 
 	// Single-side: add new nib's ID to each blocking target's blockedBy.
 	// updateTargetClone mutates an owned clone of the target, never the shared
-	// pointer, so a refused write leaves the in-memory nib untouched (nibs-twvo).
+	// pointer, so a refused write leaves the in-memory nib untouched.
 	// Guard existence first so a target that vanished stays a no-op rather than
 	// surfacing GetForUpdate's not-found error.
 	for _, targetID := range blockingTargets {
@@ -183,7 +183,7 @@ func (r *mutationResolver) UpdateNib(ctx context.Context, id string, input model
 		// "" != "task" and mis-classify that as a real change. A no-op submission
 		// must not re-validate an untouched (possibly pre-existing invalid)
 		// parent/child relationship, or every edit of a nib with a legacy invalid
-		// parent would dead-end with a hierarchy error (nibs-abo2).
+		// parent would dead-end with a hierarchy error.
 		if b.EffectiveType() != oldEffectiveType {
 			// Re-validate existing parent against the new type (when parent isn't also
 			// being changed — i.e. the parent field was omitted, not set to null/id).
@@ -204,7 +204,7 @@ func (r *mutationResolver) UpdateNib(ctx context.Context, id string, input model
 	}
 	// priority/estimate are graphql.Omittable[*string] so an explicit JSON
 	// `null` (IsSet with a nil inner pointer → clear the field) is distinct from
-	// an omitted field (not set → leave unchanged). See gqlgen.yml and nibs-qijw.
+	// an omitted field (not set → leave unchanged). See gqlgen.yml.
 	if p, ok := input.Priority.ValueOK(); ok {
 		if p != nil {
 			b.Priority = *p
@@ -299,7 +299,7 @@ func (r *mutationResolver) UpdateNib(ctx context.Context, id string, input model
 	}
 
 	// Handle parent relationship. parent is graphql.Omittable[*string] so the
-	// wire distinguishes three cases (nibs-gzdx):
+	// wire distinguishes three cases:
 	//   - not set (omitted)        → leave unchanged (the type-change path above
 	//                                re-validates the existing parent when needed)
 	//   - set to null OR ""        → clear the parent (validateAndSetParent("")
@@ -398,7 +398,7 @@ func (r *mutationResolver) ArchiveNib(ctx context.Context, id string) (bool, err
 func (r *mutationResolver) SetParent(ctx context.Context, id string, parentID *string, ifMatch *string) (*nib.Nib, error) {
 	// GetForUpdate returns an owned clone — validateAndSetParent and Writer.Update
 	// operate on it, so a rejected write never leaves the shared in-memory nib
-	// showing a phantom parent/order change (nibs-twvo).
+	// showing a phantom parent/order change.
 	b, err := r.Reader.GetForUpdate(id)
 	if err != nil {
 		return nil, err
@@ -430,7 +430,7 @@ func (r *mutationResolver) AddBlocking(ctx context.Context, id string, targetID 
 		return nil, err
 	}
 
-	// Normalise short ID to full ID
+	// Normalize short ID to full ID
 	normalizedTargetID, ok := r.Reader.NormalizeID(targetID)
 	if !ok {
 		return nil, fmt.Errorf("target nib not found: %s", targetID)
@@ -452,7 +452,7 @@ func (r *mutationResolver) AddBlocking(ctx context.Context, id string, targetID 
 
 	// Single-side: add blocker ID to target's blockedBy. updateTargetClone mutates
 	// an owned clone (fetched via GetForUpdate), never the shared pointer, so a
-	// refused write leaves the in-memory nib untouched (nibs-twvo); it keys the
+	// refused write leaves the in-memory nib untouched; it keys the
 	// if-match on the target's pre-mutation etag, preserving require_if_match.
 	if err := r.updateTargetClone(normalizedTargetID, func(c *nib.Nib) bool {
 		c.AddBlockedBy(b.ID)
@@ -471,13 +471,13 @@ func (r *mutationResolver) RemoveBlocking(ctx context.Context, id string, target
 		return nil, err
 	}
 
-	// Normalise short ID to full ID (no-op if target doesn't exist — just return source nib)
+	// Normalize short ID to full ID (no-op if target doesn't exist — just return source nib)
 	normalizedTargetID, _ := r.Reader.NormalizeID(targetID)
 	// RemoveBlocking is a no-op for non-existent targets (acceptable behavior)
 
 	// Single-side: remove blocker ID from target's blockedBy. Guard existence
 	// first so a missing target stays a no-op; the write goes through an owned
-	// clone (via GetForUpdate), never the shared pointer (nibs-twvo).
+	// clone (via GetForUpdate), never the shared pointer.
 	if _, err := r.Reader.Get(normalizedTargetID); err == nil {
 		if err := r.updateTargetClone(normalizedTargetID, func(c *nib.Nib) bool {
 			return c.RemoveBlockedBy(b.ID)
@@ -493,13 +493,13 @@ func (r *mutationResolver) RemoveBlocking(ctx context.Context, id string, target
 // Single-side storage: only modifies this nib's blockedBy field.
 func (r *mutationResolver) AddBlockedBy(ctx context.Context, id string, targetID string, ifMatch *string) (*nib.Nib, error) {
 	// GetForUpdate returns an owned clone — a rejected Update never leaves the
-	// shared in-memory nib showing a phantom blockedBy (nibs-twvo).
+	// shared in-memory nib showing a phantom blockedBy.
 	b, err := r.Reader.GetForUpdate(id)
 	if err != nil {
 		return nil, err
 	}
 
-	// Normalise short ID to full ID
+	// Normalize short ID to full ID
 	normalizedTargetID, ok := r.Reader.NormalizeID(targetID)
 	if !ok {
 		return nil, fmt.Errorf("blocker nib not found: %s", targetID)
@@ -530,13 +530,13 @@ func (r *mutationResolver) AddBlockedBy(ctx context.Context, id string, targetID
 // Single-side storage: only modifies this nib's blockedBy field.
 func (r *mutationResolver) RemoveBlockedBy(ctx context.Context, id string, targetID string, ifMatch *string) (*nib.Nib, error) {
 	// GetForUpdate returns an owned clone — a rejected Update never leaves the
-	// shared in-memory nib showing a phantom blockedBy (nibs-twvo).
+	// shared in-memory nib showing a phantom blockedBy.
 	b, err := r.Reader.GetForUpdate(id)
 	if err != nil {
 		return nil, err
 	}
 
-	// Normalise short ID to full ID (no-op if target doesn't exist — just remove any matching ID)
+	// Normalize short ID to full ID (no-op if target doesn't exist — just remove any matching ID)
 	normalizedTargetID, _ := r.Reader.NormalizeID(targetID)
 	// RemoveBlockedBy is a no-op for non-existent targets (acceptable behavior)
 
@@ -551,8 +551,7 @@ func (r *mutationResolver) RemoveBlockedBy(ctx context.Context, id string, targe
 func (r *mutationResolver) ReorderNib(ctx context.Context, id string, afterID *string, beforeID *string, first *bool, parentID *string, ifMatch *string) (*nib.Nib, error) {
 	// GetForUpdate returns an owned clone — validateAndSetParent/positionAfter/
 	// positionBefore and Writer.Update operate on it, so a rejected write never
-	// leaves the shared in-memory nib showing a phantom order/parent change
-	// (nibs-twvo).
+	// leaves the shared in-memory nib showing a phantom order/parent change.
 	b, err := r.Reader.GetForUpdate(id)
 	if err != nil {
 		return nil, err
@@ -645,7 +644,7 @@ func (r *mutationResolver) ReorderSiblings(ctx context.Context, siblingIds []str
 // Type is the resolver for the type field. The stored Nib keeps Type empty when
 // the file omits it (so the etag witnesses the on-disk bytes); this resolver
 // applies the presentation default so the non-nullable field always resolves a
-// value ("task"). See nib.DefaultType and nibs-7d3o.
+// value ("task"). See nib.DefaultType.
 func (r *nibResolver) Type(ctx context.Context, obj *nib.Nib) (string, error) {
 	return obj.EffectiveType(), nil
 }
@@ -654,7 +653,7 @@ func (r *nibResolver) Type(ctx context.Context, obj *nib.Nib) (string, error) {
 // keeps Priority empty when the file omits it; this resolver applies the "normal"
 // presentation default for the non-nullable field. See nib.DefaultPriority.
 //
-// Read-back limitation (nibs-gzdx, decided out of scope): clearing priority via
+// Read-back limitation (decided out of scope): clearing priority via
 // updateNib(priority: null) stores "" on disk, but this resolver reports the
 // effective "normal" for empty. So a cleared priority reads back as "normal" and
 // a web round-trip that writes the read value back can self-revert the clear.

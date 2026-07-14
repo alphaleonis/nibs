@@ -12,7 +12,7 @@ type NibReader interface {
 	// hands back c.nibs[id] directly, not a defensive copy). Treat the result as
 	// immutable: mutating it corrupts the store, and a subsequent rejected
 	// Writer.Update leaves that phantom mutation visible in memory even though it
-	// was never persisted (nibs-twvo/nibs-e9oz). Any write path must obtain its
+	// was never persisted. Any write path must obtain its
 	// working nib via GetForUpdate (or updateTargetClone) instead.
 	Get(id string) (*nib.Nib, error)
 	// GetForUpdate returns an OWNED deep copy (a Clone) of the nib the caller may
@@ -34,7 +34,7 @@ type NibReader interface {
 	// Priority empty when the file omits them (the "task"/"normal" presentation
 	// defaults are applied only at the consumption boundary via
 	// nib.EffectiveType()/EffectivePriority()), so priority/type-less files no
-	// longer diverge from their in-memory nib.ETag() (nibs-7d3o). The sole residual
+	// longer diverge from their in-memory nib.ETag(). The sole residual
 	// divergence is the created_at/updated_at mtime fallback loadNib synthesizes for
 	// hand-authored files missing those timestamps, which computeStoredETag does not
 	// reproduce (see nibcore.computeStoredETag). Falls back to the in-memory etag only when no on-disk file

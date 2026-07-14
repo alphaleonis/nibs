@@ -94,9 +94,9 @@ Search Syntax (--search/-S):
 	RunE: func(cmd *cobra.Command, args []string) error {
 		app := getApp(cmd)
 
-		// Build the GraphQL filter from the CLI flags. This filtering/sorting
-		// layer is unchanged by the projection rewire — only the output layer
-		// moved onto the field-set engine.
+		// Build the GraphQL filter from the CLI flags. Filtering and sorting are
+		// resolved here; the output layer projects the results separately through
+		// the field-set engine.
 		filter := &model.NibFilter{
 			Status:          listStatus,
 			ExcludeStatus:   listNoStatus,
@@ -129,8 +129,8 @@ Search Syntax (--search/-S):
 			filter.NoBlocking = &listNoBlocking
 		}
 		// MentionsID / MentionedByID accept short or full IDs; the GraphQL
-		// filter layer normalises via NibReader.NormalizeID in ApplyFilter
-		// (internal/graph/filters.go:resolveFilterID). Do not normalise at
+		// filter layer normalizes via NibReader.NormalizeID in ApplyFilter
+		// (internal/graph/filters.go:resolveFilterID). Do not normalize at
 		// the CLI layer.
 		if listMentions != "" {
 			filter.MentionsID = &listMentions

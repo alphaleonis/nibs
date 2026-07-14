@@ -3,9 +3,9 @@ import { Flag, Layers, Bug, Sparkles, SquareCheck, FlaskConical } from "@lucide/
 import { typeIcons } from "./icons";
 
 // The web type icons mirror the canonical config/TUI types (internal/config/config.go
-// DefaultTypes) so every nib type renders an icon coloured from its --type-* token.
+// DefaultTypes) so every nib type renders an icon colored from its --type-* token.
 // nibs-159v: research must be present (previously rendered iconless) and the domain
-// colour tokens must stay wired to the TUI hues.
+// color tokens must stay wired to the TUI hues.
 describe("typeIcons", () => {
   it("covers every canonical config type, including research", () => {
     for (const type of ["milestone", "epic", "bug", "feature", "task", "research"]) {

@@ -154,7 +154,7 @@ describe("editNibForm — buffering & dirty", () => {
     expect(form.body).toBe("- [x] a");
     expect(form.dirty).toBe(true);
     // Default is in-place: no remount. MarkdownEditor syncs the out-of-band change
-    // via a minimal-diff doc transaction, preserving undo/cursor/scroll (nibs-fva8).
+    // via a minimal-diff doc transaction, preserving undo/cursor/scroll.
     // The checkbox-flip path uses this default.
     expect(form.bodyVersion).toBe(v0);
   });

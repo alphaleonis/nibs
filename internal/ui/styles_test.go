@@ -424,7 +424,7 @@ func TestShortStatus_NoCollisions(t *testing.T) {
 }
 
 // TestRenderNibRow_DeferredStatusCell locks in that a "deferred" nib renders a
-// visible, config-coloured status cell — never blank, never the "?" unknown
+// visible, config-colored status cell — never blank, never the "?" unknown
 // marker, and never dimmed like an archived nib. "deferred" was added to config
 // in a prior slice; this guards the full TUI render chain
 // (GetNibColors -> ShortStatus -> RenderStatusTextWithColor) against a
@@ -433,7 +433,7 @@ func TestRenderNibRow_DeferredStatusCell(t *testing.T) {
 	cfg := config.Default()
 	nc := cfg.GetNibColors("deferred", "task", "")
 
-	// Config drives the render inputs: deferred is a real (non-fallback) colour
+	// Config drives the render inputs: deferred is a real (non-fallback) color
 	// and, crucially, is NOT an archive status (so the row is not dimmed).
 	if nc.IsArchive {
 		t.Fatal("deferred must be non-archive so its row is not dimmed")

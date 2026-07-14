@@ -40,7 +40,7 @@ type blockingConfirmedMsg struct {
 	toRemove []string         // IDs to remove from blocking
 }
 
-// closeBlockingPickerMsg is sent when the blocking picker is cancelled
+// closeBlockingPickerMsg is sent when the blocking picker is canceled
 type closeBlockingPickerMsg struct{}
 
 // openBlockingPickerMsg requests opening the blocking picker for a nib

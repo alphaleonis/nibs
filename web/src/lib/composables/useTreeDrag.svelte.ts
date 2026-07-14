@@ -27,7 +27,7 @@ export function useTreeDrag(opts: {
   let draggedParentId: string | null | undefined = undefined;
   // The dragged rows' shared REAL nib.parentId (undefined = mixed real parents).
   // Distinct from draggedParentId, which is the shared DISPLAY parent. Needed to
-  // reject a same-display-container / different-real-parent reorder (nibs-dapk).
+  // reject a same-display-container / different-real-parent reorder.
   let draggedRealParentId: string | null | undefined = undefined;
   let autoScrollRAF: number | null = null;
 
@@ -222,7 +222,7 @@ export function useTreeDrag(opts: {
         // the backend computes siblings from the dragged item's UNCHANGED real
         // parent and rejects it ("not a sibling"). Reorder is only meaningful
         // within a single real parent, so FAIL CLOSED: mark the drop INVALID rather
-        // than offer a valid-looking affordance that errors on drop (nibs-dapk).
+        // than offer a valid-looking affordance that errors on drop.
         // The cross-DISPLAY-parent reparentAndReorder case above is unaffected.
         valid = false;
       }

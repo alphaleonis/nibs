@@ -62,8 +62,8 @@ export const NIB_DETAIL_QUERY = gql`
   }
 `;
 
-// Lean, DEDICATED one-shot query for the null-remote conflict fallback
-// (nibs-s80f Item 3). It selects ONLY the fields `toNibSnapshot` reads — a strict
+// Lean, DEDICATED one-shot query for the null-remote conflict fallback.
+// It selects ONLY the fields `toNibSnapshot` reads — a strict
 // subset of NIB_DETAIL_QUERY — under a DISTINCT operation name. That distinctness
 // is load-bearing: urql keys its result-source on (query text + variables), so a
 // separate document means this network-only fetch does NOT share a source with

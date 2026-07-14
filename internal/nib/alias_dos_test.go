@@ -6,7 +6,7 @@ import (
 	"testing"
 )
 
-// Regression tests for nibs-mv0i: resolveExtraAliases must fail closed on
+// resolveExtraAliases must fail closed on
 // adversarial YAML anchors captured in unknown (Extra) front-matter keys, rather
 // than recursing to a stack overflow (cyclic anchor) or exhausting memory
 // (billion-laughs fan-out). These inputs are bounded: with the guard in place the

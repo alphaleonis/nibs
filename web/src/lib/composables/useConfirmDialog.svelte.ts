@@ -11,7 +11,7 @@ export interface ConfirmDialogOptions {
   label: string;
   variant: "danger" | "warning";
   action: () => void;
-  /** Optional secondary "Save" action (nibs-s9au). Present ONLY for the dirty-nav
+  /** Optional secondary "Save" action. Present ONLY for the dirty-nav
    *  guard, which offers Save alongside Discard/Cancel; omitted by Delete/Archive
    *  confirms, which must render exactly as before (no Save button). */
   saveLabel?: string;

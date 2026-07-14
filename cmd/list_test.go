@@ -323,7 +323,7 @@ func TestListCommand_MentionsFlag_ShortIDNormalisation(t *testing.T) {
 	// Passing a short-form id (without the prefix) should still resolve via
 	// the GraphQL filter layer's NormalizeID path. We write an explicit
 	// .nibs.yml with prefix `nibs-` and point --config at it so the loaded
-	// config's prefix is honoured regardless of test cwd.
+	// config's prefix is honored regardless of test cwd.
 	tmpDir := t.TempDir()
 	nibsDir := filepath.Join(tmpDir, ".nibs")
 	if err := os.MkdirAll(nibsDir, 0755); err != nil {
@@ -344,7 +344,7 @@ func TestListCommand_MentionsFlag_ShortIDNormalisation(t *testing.T) {
 	resetListFlags()
 	t.Cleanup(func() { configPath = "" })
 
-	// Pass the short form "a1" — filter layer should normalise to nibs-a1.
+	// Pass the short form "a1" — filter layer should normalize to nibs-a1.
 	rootCmd.SetArgs([]string{
 		"--config", cfgPath,
 		"--nibs-path", nibsDir,

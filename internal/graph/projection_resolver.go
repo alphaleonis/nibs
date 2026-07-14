@@ -15,7 +15,7 @@ import (
 //
 // Canonical definition (single source of truth):
 //   - Done     = direct children whose status is "completed". Scrapped work is
-//     cancelled, not finished, so it is NOT counted as done.
+//     canceled, not finished, so it is NOT counted as done.
 //   - Total    = direct children EXCLUDING scrapped ones. Scrapped work is
 //     abandoned — neither done nor pending — so it leaves the denominator
 //     entirely. draft/todo/in-progress/deferred children all count toward Total.

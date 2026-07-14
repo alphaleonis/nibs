@@ -255,7 +255,7 @@ describe("RowContextMenu", () => {
     });
   });
 
-  // ─── expand/collapse children (nibs-iyw3) ─────────────────────
+  // ─── expand/collapse children ─────────────────────
 
   describe("expand/collapse children", () => {
     it("shows both options when the row has children in single mode", async () => {

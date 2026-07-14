@@ -233,7 +233,7 @@ func TestGetNotFound(t *testing.T) {
 // TestGetForUpdate pins the accessor contract: GetForUpdate hands back an
 // OWNED, independent copy the caller may mutate freely, and mutating it never
 // leaks into the shared store nib that Get returns. This is the safe-by-
-// construction guarantee the mutation sites rely on (nibs-0vjp) — mutate then a
+// construction guarantee the mutation sites rely on — mutate then a
 // failed Update must not corrupt in-memory state.
 func TestGetForUpdate(t *testing.T) {
 	core, _ := setupTestCore(t)
@@ -1823,7 +1823,7 @@ func TestUpdateWithETagDebug(t *testing.T) {
 	}
 }
 
-// TestCreateValidatesEnums pins the core write-path chokepoint (nibs-9tj2):
+// TestCreateValidatesEnums pins the core write-path chokepoint:
 // Create must reject non-empty type/status/priority/estimate values that are not
 // valid under the config, while still accepting the empty "unset -> default"
 // sentinel and valid values. When no config is set, validation must no-op.

@@ -101,7 +101,6 @@ func (c *Core) fanOut(events []NibEvent) {
 
 // StartWatching begins filesystem monitoring.
 // Use Subscribe() to receive nib change events via a channel.
-// This is the preferred API for new code; Watch() is kept for backward compatibility.
 func (c *Core) StartWatching() error {
 	return c.Watch(nil)
 }

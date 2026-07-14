@@ -8,7 +8,7 @@ import type { Theme } from "./types";
  * a tiny pure helper so it can be unit-tested directly (App.svelte drives it from
  * a $effect on prefs.theme).
  *
- * The `.dark` class OWNS the light/dark axis (nibs-fen5): app.css wires Tailwind's
+ * The `.dark` class OWNS the light/dark axis: app.css wires Tailwind's
  * `dark:` variant to it (`@custom-variant dark (&:is(.dark *))`), so shadcn `dark:`
  * utilities only fire when it is present. Driving it from the per-theme flag lets a
  * light palette (e.g. Daylight) switch those utilities off. Unknown themes default

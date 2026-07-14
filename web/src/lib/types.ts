@@ -109,7 +109,7 @@ export const MIN_DETAIL_PANEL_WIDTH = 200;
 export const MAX_DETAIL_PANEL_PERCENT = 75;
 // Size the detail pane opens at when the user hasn't resized it — a percent of
 // the container, so the default stays screen-relative instead of a fixed px that
-// looks narrow on large displays (nibs-lcyo). Applies to both dock orientations.
+// looks narrow on large displays. Applies to both dock orientations.
 export const DEFAULT_DETAIL_PANEL_PERCENT = 40;
 
 // The detail panel can dock at the RIGHT (table on the left, preview on the
@@ -166,7 +166,7 @@ export function blockedVariantFor(e: BlockedEmphasis): "icon" | "pill" {
 // near-black palette (the bare :root values in app.css) and intentionally has no
 // override block. "graphite" is the default for fresh profiles.
 //
-// Each entry carries a `dark` flag that OWNS the light/dark axis (nibs-fen5).
+// Each entry carries a `dark` flag that OWNS the light/dark axis.
 // The theme seam toggles the `.dark` class on <html> from this flag: applyTheme()
 // (theme.ts) and the pre-paint FOUC guard (index.html) both set `.dark` to match
 // the active theme's `dark` value. This matters because app.css wires Tailwind's

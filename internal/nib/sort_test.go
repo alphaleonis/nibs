@@ -289,7 +289,7 @@ func TestSortByStatusPriorityAndType(t *testing.T) {
 		// loadNib synthesized Type="task". This distinguishes the fix from a naive
 		// "unknown type sorts last": task is NOT last in this order, so an empty
 		// type ranked as "task" sorts BEFORE "research", whereas ranked as unknown
-		// it would sort AFTER it (nibs-7d3o behavior preservation).
+		// it would sort AFTER it.
 		typeNamesFull := []string{"milestone", "epic", "bug", "feature", "task", "research"}
 		nibs := []*Nib{
 			{ID: "research1", Title: "A Research", Status: "todo", Priority: "normal", Type: "research"},

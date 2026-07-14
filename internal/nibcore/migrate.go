@@ -16,7 +16,7 @@ import "github.com/alphaleonis/nibs/internal/nib"
 // migration would erase the edge (`omitempty` drops the `blocking:` line) while
 // the transfer to the skipped target never happened — irrecoverable data loss.
 // Leaving it unmigrated lets a later clean Load (target repaired) complete the
-// migration without dropping the edge (nibs-r3y1 review #2).
+// migration without dropping the edge.
 //
 // A deferred nib's file is NOT guaranteed untouched, however. In a chain
 // A --blocking--> B --blocking--> C where only C's file is skipped, B is deferred

@@ -17,7 +17,7 @@ type prioritySelectedMsg struct {
 	priority string
 }
 
-// closePriorityPickerMsg is sent when the priority picker is cancelled
+// closePriorityPickerMsg is sent when the priority picker is canceled
 type closePriorityPickerMsg struct{}
 
 // openPriorityPickerMsg requests opening the priority picker for nib(s)

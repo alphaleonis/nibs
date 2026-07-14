@@ -18,8 +18,8 @@ import (
 //     reads as "resolve a filter ID" rather than "normalize a generic ID",
 //     making intent explicit.
 //   - Future extension point: this is the single place where all four
-//     filter.*ID branches can gain shared behaviour — e.g. the 128-char
-//     input-length cap tracked in nibs-puq1 — without touching each
+//     filter.*ID branches can gain shared behavior — e.g. the 128-char
+//     input-length cap — without touching each
 //     branch individually.
 //
 // Every filter.*ID branch in ApplyFilter pairs this call with an explicit
@@ -40,15 +40,15 @@ func resolveFilterID(reader NibReader, id string) (string, bool) {
 // keyed on ctx values only.
 //
 // ctx is currently consulted only by the mention-filter branches (for
-// RequestCache lookup). ApplyFilter does not check cancellation or honour
-// deadlines — passing a cancelled ctx will not short-circuit; every filter
+// RequestCache lookup). ApplyFilter does not check cancellation or honor
+// deadlines — passing a canceled ctx will not short-circuit; every filter
 // branch runs to completion.
 //
 // Callers threading filter.MentionsID / filter.MentionedByID must let
-// ApplyFilter handle ID resolution via resolveFilterID. Pre-normalising in
+// ApplyFilter handle ID resolution via resolveFilterID. Pre-normalizing in
 // the caller is not required for correctness, but mixing short and full
 // forms across resolvers within the same request will desync the cache
-// keys (keyed on the full normalised ID) and silently degrade memoisation.
+// keys (keyed on the full normalized ID) and silently degrade memoization.
 func ApplyFilter(ctx context.Context, nibs []*nib.Nib, filter *model.NibFilter, reader NibReader, blocking BlockingChecker) []*nib.Nib {
 	if filter == nil {
 		return nibs
@@ -130,7 +130,7 @@ func ApplyFilter(ctx context.Context, nibs []*nib.Nib, filter *model.NibFilter, 
 }
 
 // filterByMentionsID keeps nibs that mention the given target in their body.
-// targetID must already be a full (normalised) ID — callers resolve via
+// targetID must already be a full (normalized) ID — callers resolve via
 // resolveFilterID before invoking. Routes through the per-request mention
 // cache attached to ctx (if any).
 func filterByMentionsID(ctx context.Context, nibs []*nib.Nib, targetID string, reader NibReader) []*nib.Nib {
@@ -149,7 +149,7 @@ func filterByMentionsID(ctx context.Context, nibs []*nib.Nib, targetID string, r
 }
 
 // filterByMentionedByID keeps nibs that are mentioned in the given source's body.
-// sourceID must already be a full (normalised) ID — callers resolve via
+// sourceID must already be a full (normalized) ID — callers resolve via
 // resolveFilterID before invoking. Routes through the per-request mention
 // cache attached to ctx (if any).
 func filterByMentionedByID(ctx context.Context, nibs []*nib.Nib, sourceID string, reader NibReader) []*nib.Nib {
@@ -306,7 +306,7 @@ func includeAncestors(nibs []*nib.Nib, reader NibReader) []*nib.Nib {
 
 // filterByBlockingID filters nibs that are blocking a specific nib ID.
 // Computed: checks if targetID has this nib in its blockedBy.
-// targetID must already be a full (normalised) ID — callers resolve via
+// targetID must already be a full (normalized) ID — callers resolve via
 // resolveFilterID before invoking. Returns nil if the target nib cannot
 // be fetched (defensive: the caller already proved the ID resolves, but
 // Get may still fail on a concurrent delete).
