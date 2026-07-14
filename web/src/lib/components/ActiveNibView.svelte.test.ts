@@ -608,6 +608,36 @@ describe("ActiveNibView", () => {
       expect(screen.queryByTestId("anv-editor-container")).not.toBeInTheDocument();
       expect(screen.getByTestId("anv-body-prose")).toBeInTheDocument();
     });
+
+    it("auto-focuses the empty title input on entering the create form (nibs-57z0)", async () => {
+      // Both entry points (toolbar New menu and a row's add-child [+]) land the
+      // view in `creating` with a fresh create form, so one assertion covers both.
+      const form = makeCreateForm();
+      renderView(makeView({ kind: "creating", form, detail: null }), confirmDialog);
+
+      const title = screen.getByTestId("anv-title");
+      await waitFor(() => expect(title).toHaveFocus());
+    });
+
+    it("focuses the title only once per entry — an unrelated update must not re-steal focus", async () => {
+      const form = makeCreateForm();
+      renderView(makeView({ kind: "creating", form, detail: null }), confirmDialog);
+
+      const title = screen.getByTestId("anv-title") as HTMLInputElement;
+      await waitFor(() => expect(title).toHaveFocus());
+
+      // The user moves focus out of the title; then an unrelated reactive update
+      // fires on the SAME create buffer (no form swap — dirty flips). Focus must
+      // stay where the user put it, not snap back to the title.
+      title.blur();
+      expect(title).not.toHaveFocus();
+
+      form.dirty = true;
+      flushSync();
+      await Promise.resolve(); // drain any queued focus microtask
+
+      expect(title).not.toHaveFocus();
+    });
   });
 
   describe("external-change resolver (persistent, non-modal)", () => {

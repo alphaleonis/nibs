@@ -172,6 +172,30 @@
     bodyMode = isCreating ? "edit" : "preview";
   });
 
+  // Auto-focus the (empty) title input when a create buffer first appears
+  // (nibs-57z0), so the user can type the title straight away — for both entry
+  // points (toolbar New menu and a row's add-child [+]), which both land the
+  // view in `creating` with a fresh create form. Scoped to the create form
+  // instance (like bodyModeSession above): each create swaps the form (see
+  // useActiveView.reconcileBuffer), so this fires once per entry — typing/edits
+  // within the same buffer keep the same instance and never re-steal focus. The
+  // `isCreating` guard means the create→edit hand-off (form swaps to an edit
+  // buffer) does not pull focus. Deferred via queueMicrotask so the input is
+  // mounted/bound before we focus (mirrors TagEditor's tick + SettingsSheet's
+  // microtask deferral); titleEl is read only inside the callback, so it is not
+  // a tracked dependency and binding it never re-runs this effect.
+  let titleFocusSession: CreateForm | EditForm | null = null;
+  $effect(() => {
+    const f = form;
+    if (!isCreating || !f) {
+      titleFocusSession = null;
+      return;
+    }
+    if (f === titleFocusSession) return;
+    titleFocusSession = f;
+    queueMicrotask(() => titleEl?.focus());
+  });
+
   // Minor "Nib updated" toast when the presenter silently rebaselines a CLEAN
   // buffer onto an incoming change (in-app status change, on-disk edit, ...).
   // Tracks the presenter's monotonic counter; the first observed value is
@@ -194,6 +218,8 @@
   //   (b) bodyColWidth >= 560 -> editor + preview sit side-by-side (else stack)
   let rootEl: HTMLDivElement | undefined = $state();
   let bodyColEl: HTMLDivElement | undefined = $state();
+  // The title <input>, focused on entering a create buffer (see the effect below).
+  let titleEl: HTMLInputElement | undefined = $state();
   // The overflow (⋯) trigger — the type picker anchors to it when "New child
   // nib" is chosen from that menu (the menu item itself is gone by then).
   let menuTriggerEl: HTMLElement | null = $state(null);
@@ -552,6 +578,7 @@
 
         <!-- Row 2: title (single line, ellipsis, full-text tooltip) -->
         <input
+          bind:this={titleEl}
           type="text"
           class="anv-title"
           data-testid="anv-title"
