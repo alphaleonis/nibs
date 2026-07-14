@@ -38,6 +38,15 @@ import type {
 import type { LiveNib } from "../liveNib.svelte";
 import type { HistoryNav } from "./useHistoryNav.svelte";
 
+/**
+ * The user's choice at the dirty-nav guard (nibs-s9au). Tri-state so the guard
+ * can offer Save alongside Discard/Cancel:
+ *   - "save"    — persist the buffer, then (on success) proceed with the nav.
+ *   - "discard" — drop the edits and proceed with the nav (the original behavior).
+ *   - "cancel"  — keep the edits and stay put.
+ */
+export type ConfirmChoice = "save" | "discard" | "cancel";
+
 /** Minimal nib reference shape used by relation lists. */
 export interface DetailNibRef {
   id: string;
@@ -100,8 +109,10 @@ export interface ActiveViewDeps {
    *  against) nor defer to a fresher subscription change, the suppressed
    *  dispatcher toast (Item 2) would otherwise leave a rejected save silent. */
   notifyError: (message: string) => void;
-  /** Ask the user to discard unsaved changes; resolve false to keep them. */
-  confirm: () => Promise<boolean>;
+  /** Prompt the dirty-nav guard and resolve the user's tri-state choice
+   *  (nibs-s9au): "save" (persist then proceed), "discard" (drop edits and
+   *  proceed), or "cancel" (keep edits and stay put). */
+  confirm: () => Promise<ConfirmChoice>;
 }
 
 /** A viewport-space rectangle (from getBoundingClientRect) the type picker anchors to. */
@@ -266,11 +277,93 @@ export function createActiveView(deps: ActiveViewDeps): ActiveView {
 
   async function guarded(action: Action): Promise<boolean> {
     if (abandonsBuffer(viewState, action) && form?.dirty) {
-      const ok = await deps.confirm();
-      if (!ok) return false;
+      const choice = await deps.confirm();
+      // "cancel" — keep the edits, stay put (abort the pending navigation).
+      if (choice === "cancel") return false;
+      if (choice === "save") {
+        // "save" (nibs-s9au) — persist the buffer through the normal save path,
+        // then decide whether the pending navigation proceeds. save() already
+        // routes a 409 into the inline Load-theirs / Overwrite resolver (and its
+        // null-remote fallback), so we do NOT reimplement conflict handling here.
+        // Capture the form we are saving BEFORE the await: the dialog has already
+        // closed, so the UI is interactive during the in-flight save and a
+        // competing navigation can swap `form` while we wait (HIGH).
+        const saved = form;
+        const outcome = await save();
+        // Conflict → ABORT the navigation and leave the buffer intact: save() has
+        // surfaced the resolver; the user resolves it and re-navigates manually.
+        // Never proceed (that would strand the unresolved edit / lose the intent).
+        if (!outcome || outcome.kind === "conflict") return false;
+        // Plain (non-conflict) error → abort. Both edit AND create save() now
+        // suppress the dispatcher toast, so the guard is the SOLE feedback for a
+        // failed save in this flow — including a client-side create error (e.g.
+        // empty title) that never reaches the dispatcher at all. Skip only the
+        // benign "Save already in progress" concurrency result (internal state, not
+        // a user-actionable error, L2). Never navigate on a failed save.
+        if (outcome.kind === "error") {
+          if (outcome.message !== "Save already in progress") {
+            deps.notifyError(outcome.message ?? "Save failed");
+          }
+          return false;
+        }
+        // Save succeeded. Apply the pending navigation ONLY if we are still on the
+        // form we saved. `form` swaps away from `saved` in two cases, and neither
+        // may apply the now-stale captured action:
+        //   1. CREATE hand-off — save() SAVED-transitions and navigates to the new
+        //      nib, so the user is already there; re-applying would double-navigate.
+        //   2. A competing navigation ran during the in-flight save (dialog closed,
+        //      UI interactive) — applying the stale OPEN/CLOSE over the newer buffer
+        //      would swap it out and silently discard its unsaved edits (HIGH).
+        // The single identity check covers both; only an EDIT save that stayed on
+        // its own (now rebaselined-clean) buffer falls through to navigate.
+        if (form !== saved) return false;
+      }
+      // "discard" — abandon the buffer and proceed (the original behavior).
     }
     apply(action);
     return true;
+  }
+
+  /**
+   * Persist the active buffer through the normal save path (the SAME routine the
+   * Save control invokes). Extracted so the dirty-nav guard's "Save" branch can
+   * reuse it without reimplementing the create hand-off / conflict routing.
+   *
+   * - create → f.save(); on "created" (still this episode) SAVED-transition and
+   *   navigate to the new id.
+   * - edit → f.save(); a null-remote 409 runs the conflict fallback (Item 3).
+   */
+  async function save(): Promise<CreateOutcome | EditOutcome | undefined> {
+    const f = form;
+    if (!f) return undefined;
+    if (f.mode === "create") {
+      const outcome = await f.save();
+      // Re-validate the buffer is still THIS create episode before handing off:
+      // the user may have closed / opened another nib / started a new create while
+      // save() was in flight (create forms don't rebaseline mid-save, so dirty stays
+      // true and those transitions aren't blocked). Firing nav unconditionally would
+      // yank the URL to a nib the presenter no longer reflects.
+      if (outcome.kind === "created" && form === f) {
+        // Hand the created snapshot to the edit form the SAVED transition
+        // builds so it renders the new nib immediately (its detail query
+        // hasn't run yet). reconcileBuffer consumes + clears it.
+        pendingCreateSeed = outcome.snapshot;
+        apply({ type: "SAVED", nibId: outcome.id });
+        deps.nav.navigateToNib(outcome.id);
+      }
+      return outcome;
+    }
+
+    const outcome = await f.save();
+
+    // A server-side 409 that raced the live subscription (remote unknown): run
+    // the null-remote conflict fallback (Item 3 — see the helper). `form === f`
+    // is a cheap early-out; the helper re-checks it (and dirtiness / a fresher
+    // sub change) before and after its fetch.
+    if (outcome.kind === "conflict" && outcome.remote === null && form === f) {
+      await runNullRemoteConflictFallback(f);
+    }
+    return outcome;
   }
 
   // Item 3 — null-remote conflict fallback. A server-side 409 that raced the live
@@ -501,38 +594,7 @@ export function createActiveView(deps: ActiveViewDeps): ActiveView {
     cancelType() {
       typePicker = null;
     },
-    async save() {
-      const f = form;
-      if (!f) return undefined;
-      if (f.mode === "create") {
-        const outcome = await f.save();
-        // Re-validate the buffer is still THIS create episode before handing off:
-        // the user may have closed / opened another nib / started a new create while
-        // save() was in flight (create forms don't rebaseline mid-save, so dirty stays
-        // true and those transitions aren't blocked). Firing nav unconditionally would
-        // yank the URL to a nib the presenter no longer reflects.
-        if (outcome.kind === "created" && form === f) {
-          // Hand the created snapshot to the edit form the SAVED transition
-          // builds so it renders the new nib immediately (its detail query
-          // hasn't run yet). reconcileBuffer consumes + clears it.
-          pendingCreateSeed = outcome.snapshot;
-          apply({ type: "SAVED", nibId: outcome.id });
-          deps.nav.navigateToNib(outcome.id);
-        }
-        return outcome;
-      }
-
-      const outcome = await f.save();
-
-      // A server-side 409 that raced the live subscription (remote unknown): run
-      // the null-remote conflict fallback (Item 3 — see the helper). `form === f`
-      // is a cheap early-out; the helper re-checks it (and dirtiness / a fresher
-      // sub change) before and after its fetch.
-      if (outcome.kind === "conflict" && outcome.remote === null && form === f) {
-        await runNullRemoteConflictFallback(f);
-      }
-      return outcome;
-    },
+    save,
     async requestClose() {
       if (await guarded({ type: "CLOSE" })) deps.nav.closePanel();
     },

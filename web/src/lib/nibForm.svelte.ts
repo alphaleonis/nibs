@@ -345,7 +345,14 @@ export class CreateForm extends BaseForm implements NibFormFields {
 
     this.setSaving(true);
     try {
-      const result = await this.deps.mutations.execute(createNibCmd(input));
+      // suppressToast: save() OWNS the messaging for this call (mirrors the edit
+      // path). The direct Save button (ActiveNibView.handleSave) and the dirty-nav
+      // guard each surface a create error exactly once — so the dispatcher must not
+      // also toast it (would double up), and client-side early-returns above (empty
+      // title) that never reach the dispatcher still get that single feedback.
+      const result = await this.deps.mutations.execute(createNibCmd(input), {
+        suppressToast: true,
+      });
       if (!result.ok) return { kind: "error", message: result.error };
 
       const created = result.data?.createNib;

@@ -11,9 +11,15 @@
     testId?: string;
     onconfirm: () => void;
     oncancel: () => void;
+    /** Opt-in secondary "Save" action (nibs-s9au). When provided, the dialog
+     *  renders a primary Save button in addition to the confirm (Discard) button
+     *  — used only by the dirty-nav guard. Omitted (undefined) for Delete/Archive
+     *  confirms, which then render exactly as before (no Save button). */
+    onsave?: () => void;
+    saveLabel?: string;
   }
 
-  let { open, title, message, confirmLabel, variant, confirmDisabled = false, testId = "confirm-dialog", onconfirm, oncancel }: Props = $props();
+  let { open, title, message, confirmLabel, variant, confirmDisabled = false, testId = "confirm-dialog", onconfirm, oncancel, onsave, saveLabel = "Save" }: Props = $props();
 
   function handleOpenChange(newOpen: boolean) {
     if (!newOpen) {
@@ -49,6 +55,18 @@
         >
           {confirmLabel}
         </AlertDialog.Action>
+        {#if onsave}
+          <!-- Opt-in Save action (nibs-s9au): the recommended, safe choice for the
+               dirty-nav guard, rendered rightmost as the primary button. Only
+               present when the caller supplies `onsave` (never for Delete/Archive). -->
+          <AlertDialog.Action
+            data-testid={`${testId}-save`}
+            variant="default"
+            onclick={onsave}
+          >
+            {saveLabel}
+          </AlertDialog.Action>
+        {/if}
       </AlertDialog.Footer>
     </AlertDialog.Content>
   </AlertDialog.Root>

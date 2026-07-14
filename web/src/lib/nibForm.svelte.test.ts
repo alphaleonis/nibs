@@ -662,6 +662,17 @@ describe("createNibForm — save", () => {
     }
   });
 
+  it("save()'s create dispatch opts into suppressToast so the single owner (Save button / dirty-nav guard) owns the messaging (no racing raw toast)", async () => {
+    const { deps, calls } = makeMutations(createResponder());
+    const form = createNibForm(deps, { type: "feature" });
+    form.title = "My task";
+
+    await form.save();
+
+    expect(calls).toHaveLength(1);
+    expect(calls[0].opts?.suppressToast).toBe(true);
+  });
+
   it("includes priority, estimate, tags, body and parent when present", async () => {
     const { deps, calls } = makeMutations(createResponder());
     const form = createNibForm(deps, { type: "task", parent: "nibs-parent" });

@@ -19,7 +19,7 @@
   import { createHistoryNav } from "./lib/composables/useHistoryNav.svelte";
   import { createConfirmDialog } from "./lib/composables/useConfirmDialog.svelte";
   import { createActiveView } from "./lib/composables/useActiveView.svelte";
-  import type { ActiveView, DetailView, DetailNib } from "./lib/composables/useActiveView.svelte";
+  import type { ActiveView, DetailView, DetailNib, ConfirmChoice } from "./lib/composables/useActiveView.svelte";
   import { useKeyboardShortcuts } from "./lib/composables/useKeyboardShortcuts.svelte";
   import { createDetailPaneLayout } from "./lib/composables/detailPaneLayout.svelte";
   import { orientationOf } from "./lib/composables/detailPaneLayout";
@@ -192,23 +192,33 @@
       },
     });
 
-  // Promise wrapper over the shared confirm dialog: resolve true on confirm,
-  // false on any dismissal (Cancel / Escape / overlay). The pending resolver is
-  // completed by the confirm action (below) and by ConfirmDialog's oncancel.
-  let pendingDiscardResolve: ((v: boolean) => void) | null = null;
-  function confirmDiscard(): Promise<boolean> {
+  // Promise wrapper over the shared confirm dialog for the dirty-nav guard
+  // (nibs-s9au). Resolves the tri-state ConfirmChoice: "save" (the Save action),
+  // "discard" (the confirm/primary action), or "cancel" on any dismissal
+  // (Cancel / Escape / overlay). The pending resolver is completed by exactly one
+  // of the three handlers (each nulls it first, so a follow-on dismissal is inert).
+  let pendingDiscardResolve: ((v: ConfirmChoice) => void) | null = null;
+  function resolveDiscard(choice: ConfirmChoice) {
+    const r = pendingDiscardResolve;
+    pendingDiscardResolve = null;
+    r?.(choice);
+  }
+  function confirmDiscard(): Promise<ConfirmChoice> {
     return new Promise((resolve) => {
       pendingDiscardResolve = resolve;
       confirmDialog.showConfirm({
-        title: "Discard unsaved changes?",
-        message: "You have unsaved changes that will be lost.",
+        title: "Unsaved changes",
+        message: "You have unsaved changes. Save them and continue, or discard them.",
         label: "Discard",
         variant: "warning",
+        saveLabel: "Save",
+        saveAction: () => {
+          confirmDialog.close();
+          resolveDiscard("save");
+        },
         action: () => {
           confirmDialog.close();
-          const r = pendingDiscardResolve;
-          pendingDiscardResolve = null;
-          r?.(true);
+          resolveDiscard("discard");
         },
       });
     });
@@ -567,15 +577,14 @@
   message={confirmDialog.message}
   confirmLabel={confirmDialog.label}
   variant={confirmDialog.variant}
+  saveLabel={confirmDialog.saveLabel ?? undefined}
+  onsave={confirmDialog.saveAction ? () => { confirmDialog.saveAction?.(); } : undefined}
   onconfirm={() => { confirmDialog.action?.(); }}
   oncancel={() => {
     confirmDialog.close();
-    // Complete a pending discard-guard promise as "keep my changes".
-    if (pendingDiscardResolve) {
-      const r = pendingDiscardResolve;
-      pendingDiscardResolve = null;
-      r(false);
-    }
+    // Complete a pending discard-guard promise as "cancel" (keep my changes,
+    // stay put). No-op when a Save/Discard already resolved it (resolver nulled).
+    resolveDiscard("cancel");
   }}
 />
 

@@ -1,6 +1,11 @@
 import { describe, it, expect, vi } from "vitest";
 import { flushSync } from "svelte";
-import { createActiveView, type ActiveViewDeps, type ActiveView } from "./useActiveView.svelte";
+import {
+  createActiveView,
+  type ActiveViewDeps,
+  type ActiveView,
+  type ConfirmChoice,
+} from "./useActiveView.svelte";
 import type { CreateForm, EditForm, CreateDefaults, NibSnapshot } from "../nibForm.svelte";
 import type { LiveNib } from "../liveNib.svelte";
 
@@ -47,7 +52,9 @@ interface LiveInst {
 /** Build a fully-stubbed dependency set with observable spies/handles. */
 function makeDeps() {
   const nav = { navigateToNib: vi.fn(), closePanel: vi.fn(), replaceClosed: vi.fn() };
-  const confirm = vi.fn<() => Promise<boolean>>(async () => true);
+  // Tri-state dirty-guard confirm (nibs-s9au): "save" | "discard" | "cancel".
+  // Defaults to "discard" — the pre-Save behavior (proceed, abandoning edits).
+  const confirm = vi.fn<() => Promise<ConfirmChoice>>(async () => "discard");
 
   const editForms = new Map<string, FakeEdit>();
   const createForms: FakeCreate[] = [];
@@ -258,14 +265,14 @@ describe("createActiveView · buffer lifecycle", () => {
 });
 
 describe("createActiveView · guard funnel", () => {
-  it("refuses close when the form is dirty and confirm resolves false", async () => {
+  it("refuses close when the form is dirty and confirm resolves cancel", async () => {
     const h = makeDeps();
     const { view, dispose } = mount(h.deps);
 
     await view.open("n1");
     flushSync();
     h.editForms.get("n1")!.dirty = true;
-    h.confirm.mockResolvedValueOnce(false);
+    h.confirm.mockResolvedValueOnce("cancel");
 
     await view.requestClose();
     expect(h.confirm).toHaveBeenCalledTimes(1);
@@ -275,14 +282,14 @@ describe("createActiveView · guard funnel", () => {
     dispose();
   });
 
-  it("refuses opening another nib when dirty and confirm resolves false", async () => {
+  it("refuses opening another nib when dirty and confirm resolves cancel", async () => {
     const h = makeDeps();
     const { view, dispose } = mount(h.deps);
 
     await view.open("n1");
     flushSync();
     h.editForms.get("n1")!.dirty = true;
-    h.confirm.mockResolvedValueOnce(false);
+    h.confirm.mockResolvedValueOnce("cancel");
 
     await view.open("n2");
     expect(h.confirm).toHaveBeenCalledTimes(1);
@@ -292,14 +299,14 @@ describe("createActiveView · guard funnel", () => {
     dispose();
   });
 
-  it("refuses startCreate when dirty and confirm resolves false", async () => {
+  it("refuses startCreate when dirty and confirm resolves cancel", async () => {
     const h = makeDeps();
     const { view, dispose } = mount(h.deps);
 
     await view.open("n1");
     flushSync();
     h.editForms.get("n1")!.dirty = true;
-    h.confirm.mockResolvedValueOnce(false);
+    h.confirm.mockResolvedValueOnce("cancel");
 
     await view.startCreate({ type: "bug" });
     expect(h.confirm).toHaveBeenCalledTimes(1);
@@ -308,19 +315,21 @@ describe("createActiveView · guard funnel", () => {
     dispose();
   });
 
-  it("proceeds through the guard when confirm resolves true", async () => {
+  it("proceeds through the guard when confirm resolves discard", async () => {
     const h = makeDeps();
     const { view, dispose } = mount(h.deps);
 
     await view.open("n1");
     flushSync();
     h.editForms.get("n1")!.dirty = true;
-    h.confirm.mockResolvedValueOnce(true);
+    h.confirm.mockResolvedValueOnce("discard");
 
     await view.requestClose();
     flushSync();
     expect(view.state.kind).toBe("closed");
     expect(h.nav.closePanel).toHaveBeenCalledTimes(1);
+    // Discard drops the buffer without saving.
+    expect(h.editForms.get("n1")!.save).not.toHaveBeenCalled();
 
     dispose();
   });
@@ -359,6 +368,254 @@ describe("createActiveView · guard funnel", () => {
     view.syncTo(null);
     flushSync();
     expect(view.state.kind).toBe("closed");
+
+    dispose();
+  });
+});
+
+describe("createActiveView · guard funnel · Save option (nibs-s9au)", () => {
+  it("Save → saved: persists the edit buffer, then PROCEEDS with the pending navigation", async () => {
+    const h = makeDeps();
+    const { view, dispose } = mount(h.deps);
+
+    await view.open("n1");
+    flushSync();
+    const f = h.editForms.get("n1")!;
+    f.dirty = true;
+    // Default edit save() resolves { kind: "saved" }.
+    h.confirm.mockResolvedValueOnce("save");
+    h.nav.navigateToNib.mockClear();
+
+    await view.open("n2");
+    flushSync();
+
+    // The buffer was saved through the normal path...
+    expect(f.save).toHaveBeenCalledTimes(1);
+    // ...and the pending navigation then proceeded in the same step.
+    expect(h.nav.navigateToNib).toHaveBeenCalledTimes(1);
+    expect(h.nav.navigateToNib).toHaveBeenCalledWith("n2");
+    expect(view.state).toEqual({ kind: "viewing", nibId: "n2", presentation: "docked" });
+
+    dispose();
+  });
+
+  it("Save → 409 conflict: ABORTS the navigation, leaves the buffer intact, and surfaces the resolver via save()", async () => {
+    const h = makeDeps();
+    const { view, dispose } = mount(h.deps);
+
+    await view.open("n1");
+    flushSync();
+    const f = h.editForms.get("n1")!;
+    f.dirty = true;
+
+    // The save rejects on a stale if-match with an unknown (null) remote; the
+    // presenter's null-remote fallback fetches the current snapshot and feeds it
+    // into the inline Load-theirs / Overwrite resolver (save() owns this).
+    const remote = snap({ id: "n1", etag: "e9", title: "Server copy" });
+    h.fetchSnapshot.mockResolvedValueOnce(remote);
+    f.save.mockResolvedValueOnce({ kind: "conflict", remote: null });
+    h.confirm.mockResolvedValueOnce("save");
+    h.nav.navigateToNib.mockClear();
+
+    await view.open("n2");
+    flushSync();
+
+    // The save was attempted and the resolver surfaced (buffer preserved)...
+    expect(f.save).toHaveBeenCalledTimes(1);
+    expect(h.fetchSnapshot).toHaveBeenCalledWith("n1");
+    expect(f.noteExternalChange).toHaveBeenCalledWith(remote);
+    // ...but the navigation was ABORTED — the user stays on the dirty n1 buffer
+    // to resolve the conflict and re-navigate manually. No data lost.
+    expect(h.nav.navigateToNib).not.toHaveBeenCalled();
+    expect(view.state).toEqual({ kind: "viewing", nibId: "n1", presentation: "docked" });
+    expect(f.dirty).toBe(true);
+
+    dispose();
+  });
+
+  it("Save → plain error: ABORTS the navigation and surfaces the error via the toast channel", async () => {
+    const h = makeDeps();
+    const { view, dispose } = mount(h.deps);
+
+    await view.open("n1");
+    flushSync();
+    const f = h.editForms.get("n1")!;
+    f.dirty = true;
+
+    f.save.mockResolvedValueOnce({ kind: "error", message: "server exploded" });
+    h.confirm.mockResolvedValueOnce("save");
+    h.nav.navigateToNib.mockClear();
+
+    await view.open("n2");
+    flushSync();
+
+    // The error is surfaced (the edit path suppresses the dispatcher toast, so
+    // the guard is the only feedback) and the navigation is aborted.
+    expect(h.notifyError).toHaveBeenCalledTimes(1);
+    expect(h.notifyError).toHaveBeenCalledWith("server exploded");
+    expect(h.nav.navigateToNib).not.toHaveBeenCalled();
+    expect(view.state).toEqual({ kind: "viewing", nibId: "n1", presentation: "docked" });
+    expect(f.dirty).toBe(true);
+
+    dispose();
+  });
+
+  it("Save on a CREATE buffer: the create's own post-save navigation wins; the guard's pending nav is NOT double-applied", async () => {
+    const h = makeDeps();
+    const { view, dispose } = mount(h.deps);
+
+    await view.startCreate({ type: "task" });
+    flushSync();
+    const c = h.createForms[0];
+    c.dirty = true;
+    // Default create save() resolves { kind: "created", id: "nibs-new1", ... },
+    // and the presenter internally SAVED-transitions + navigates to the new id.
+    h.confirm.mockResolvedValueOnce("save");
+    h.nav.navigateToNib.mockClear();
+
+    // Guarded action targets n2, but the create's own navigation must win.
+    await view.open("n2");
+    flushSync();
+
+    expect(c.save).toHaveBeenCalledTimes(1);
+    // Exactly ONE navigation happened — to the freshly-created nib, not n2.
+    expect(h.nav.navigateToNib).toHaveBeenCalledTimes(1);
+    expect(h.nav.navigateToNib).toHaveBeenCalledWith("nibs-new1");
+    expect(h.nav.navigateToNib).not.toHaveBeenCalledWith("n2");
+    expect(view.state).toEqual({ kind: "viewing", nibId: "nibs-new1", presentation: "docked" });
+
+    dispose();
+  });
+
+  it("Discard still proceeds with the navigation without saving (unchanged)", async () => {
+    const h = makeDeps();
+    const { view, dispose } = mount(h.deps);
+
+    await view.open("n1");
+    flushSync();
+    const f = h.editForms.get("n1")!;
+    f.dirty = true;
+    h.confirm.mockResolvedValueOnce("discard");
+    h.nav.navigateToNib.mockClear();
+
+    await view.open("n2");
+    flushSync();
+
+    expect(f.save).not.toHaveBeenCalled();
+    expect(h.nav.navigateToNib).toHaveBeenCalledWith("n2");
+    expect(view.state).toEqual({ kind: "viewing", nibId: "n2", presentation: "docked" });
+
+    dispose();
+  });
+
+  it("Cancel stays put without saving (unchanged)", async () => {
+    const h = makeDeps();
+    const { view, dispose } = mount(h.deps);
+
+    await view.open("n1");
+    flushSync();
+    const f = h.editForms.get("n1")!;
+    f.dirty = true;
+    h.confirm.mockResolvedValueOnce("cancel");
+    h.nav.navigateToNib.mockClear();
+
+    await view.open("n2");
+    flushSync();
+
+    expect(f.save).not.toHaveBeenCalled();
+    expect(h.nav.navigateToNib).not.toHaveBeenCalled();
+    expect(view.state).toEqual({ kind: "viewing", nibId: "n1", presentation: "docked" });
+
+    dispose();
+  });
+
+  it("Save in flight: a competing navigation that swaps the form mid-await does NOT apply the stale pending action (no silent discard) (HIGH)", async () => {
+    const h = makeDeps();
+    const { view, dispose } = mount(h.deps);
+
+    await view.open("n1");
+    flushSync();
+    const a = h.editForms.get("n1")!;
+    a.dirty = true;
+
+    // Gate A's save so we can interleave a navigation while it is in flight.
+    let releaseSave!: (v: { kind: "saved"; snapshot: NibSnapshot }) => void;
+    a.save.mockImplementationOnce(
+      () => new Promise((resolve) => (releaseSave = resolve)),
+    );
+    h.confirm.mockResolvedValueOnce("save");
+    h.nav.navigateToNib.mockClear();
+
+    // Navigate away → guard → "save" → parks on the gated save. Do NOT await yet.
+    const pending = view.open("n2");
+    await new Promise((r) => setTimeout(r));
+    flushSync();
+    expect(a.save).toHaveBeenCalledTimes(1);
+
+    // While the save is in flight (dialog already closed, UI interactive), a
+    // competing navigation (Back/Forward guard-bypass) swaps the active form to n3.
+    view.syncTo("n3");
+    flushSync();
+    expect(view.state).toEqual({ kind: "viewing", nibId: "n3", presentation: "docked" });
+
+    // A's save now resolves. The guard must NOT apply the stale OPEN n2 over n3
+    // (that would swap the buffer and silently discard n3's edits).
+    releaseSave({ kind: "saved", snapshot: snap({ id: "n1", etag: "e1" }) });
+    await pending;
+    flushSync();
+
+    expect(h.nav.navigateToNib).not.toHaveBeenCalledWith("n2");
+    expect(view.state).toEqual({ kind: "viewing", nibId: "n3", presentation: "docked" });
+
+    dispose();
+  });
+
+  it("Save → CREATE error (incl. client-side, dispatcher-bypassing): guard surfaces exactly one notifyError — no silent no-op (HIGH)", async () => {
+    const h = makeDeps();
+    const { view, dispose } = mount(h.deps);
+
+    await view.startCreate({ type: "task" });
+    flushSync();
+    const c = h.createForms[0];
+    c.dirty = true;
+    // A client-side create error (e.g. empty title) never reaches the dispatcher,
+    // and create save() now suppresses the dispatcher toast anyway — so the guard
+    // is the SOLE owner and MUST surface it, else Save is a silent no-op.
+    c.save.mockResolvedValueOnce({ kind: "error", message: "Title is required" });
+    h.confirm.mockResolvedValueOnce("save");
+    h.nav.navigateToNib.mockClear();
+
+    await view.open("n2");
+    flushSync();
+
+    expect(c.save).toHaveBeenCalledTimes(1);
+    expect(h.notifyError).toHaveBeenCalledTimes(1);
+    expect(h.notifyError).toHaveBeenCalledWith("Title is required");
+    expect(h.nav.navigateToNib).not.toHaveBeenCalled();
+
+    dispose();
+  });
+
+  it("Save → benign 'Save already in progress' result: does NOT notifyError (internal state, not user-actionable) (L2)", async () => {
+    const h = makeDeps();
+    const { view, dispose } = mount(h.deps);
+
+    await view.open("n1");
+    flushSync();
+    const f = h.editForms.get("n1")!;
+    f.dirty = true;
+    // A concurrent save is already in flight → the form's save() short-circuits.
+    f.save.mockResolvedValueOnce({ kind: "error", message: "Save already in progress" });
+    h.confirm.mockResolvedValueOnce("save");
+    h.nav.navigateToNib.mockClear();
+
+    await view.open("n2");
+    flushSync();
+
+    // The benign in-progress result is not surfaced; navigation still aborted.
+    expect(h.notifyError).not.toHaveBeenCalled();
+    expect(h.nav.navigateToNib).not.toHaveBeenCalled();
+    expect(view.state).toEqual({ kind: "viewing", nibId: "n1", presentation: "docked" });
 
     dispose();
   });
@@ -960,7 +1217,7 @@ describe("createActiveView · type picker + blocksHistoryNav", () => {
     // Opening the picker never prompts (no buffer change yet).
     expect(h.confirm).not.toHaveBeenCalled();
 
-    h.confirm.mockResolvedValueOnce(false);
+    h.confirm.mockResolvedValueOnce("cancel");
     await view.chooseType("feature");
     flushSync();
 

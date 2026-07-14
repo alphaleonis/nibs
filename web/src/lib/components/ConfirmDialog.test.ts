@@ -104,4 +104,68 @@ describe("ConfirmDialog", () => {
     expect(screen.getByTestId("confirm-dialog-title")).toHaveTextContent("Archive nib?");
     expect(screen.getByTestId("confirm-dialog-confirm")).toHaveTextContent("Archive");
   });
+
+  // ─── Opt-in secondary Save action (nibs-s9au) ───────────────
+
+  it("does NOT render a Save button when onsave is omitted (Delete/Archive unaffected)", () => {
+    render(ConfirmDialog, { ...defaultProps });
+
+    // The default confirm (no onsave) shows only Cancel + confirm, never Save.
+    expect(screen.queryByTestId("confirm-dialog-save")).not.toBeInTheDocument();
+    expect(screen.getByTestId("confirm-dialog-cancel")).toBeInTheDocument();
+    expect(screen.getByTestId("confirm-dialog-confirm")).toBeInTheDocument();
+  });
+
+  it("renders a Save button and calls onsave when clicked (opt-in)", async () => {
+    const user = userEvent.setup();
+    const onsave = vi.fn();
+    render(ConfirmDialog, {
+      ...defaultProps,
+      title: "Unsaved changes",
+      confirmLabel: "Discard",
+      variant: "warning" as const,
+      saveLabel: "Save",
+      onsave,
+    });
+
+    const saveButton = screen.getByTestId("confirm-dialog-save");
+    expect(saveButton).toHaveTextContent("Save");
+
+    await user.click(saveButton);
+    expect(onsave).toHaveBeenCalledOnce();
+  });
+
+  it("does not fire oncancel when the Save button is clicked", async () => {
+    // The dirty-nav guard resolver relies on Save winning over any close-driven
+    // oncancel: bits-ui runs the user onclick (onsave) before its internal close,
+    // so onsave fires and oncancel must not usurp the result (App also null-guards
+    // the pending resolver as belt-and-braces).
+    const user = userEvent.setup();
+    const onsave = vi.fn();
+    const oncancel = vi.fn();
+    render(ConfirmDialog, {
+      ...defaultProps,
+      confirmLabel: "Discard",
+      variant: "warning" as const,
+      onsave,
+      oncancel,
+    });
+
+    await user.click(screen.getByTestId("confirm-dialog-save"));
+    await new Promise((r) => setTimeout(r, 50));
+    expect(onsave).toHaveBeenCalledOnce();
+    expect(oncancel).not.toHaveBeenCalled();
+  });
+
+  it("uses the provided saveLabel for the Save button", () => {
+    render(ConfirmDialog, {
+      ...defaultProps,
+      confirmLabel: "Discard",
+      variant: "warning" as const,
+      saveLabel: "Save & continue",
+      onsave: vi.fn(),
+    });
+
+    expect(screen.getByTestId("confirm-dialog-save")).toHaveTextContent("Save & continue");
+  });
 });
