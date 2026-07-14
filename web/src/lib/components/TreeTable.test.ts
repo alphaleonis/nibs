@@ -1077,8 +1077,75 @@ describe("TreeTable", () => {
       expect(onrowcontextmenu).toHaveBeenCalledWith(
         "nibs-001",
         expect.any(MouseEvent),
-        expect.objectContaining({ id: "nibs-001", title: "Child Task" })
+        expect.objectContaining({ id: "nibs-001", title: "Child Task" }),
+        expect.objectContaining({
+          hasChildren: false, // Child Task is a leaf
+          expandChildren: expect.any(Function),
+          collapseChildren: expect.any(Function),
+        }),
       );
+    });
+
+    it("context menu supplies hasChildren=true for a parent row (nibs-iyw3)", async () => {
+      const user = userEvent.setup();
+      const onrowcontextmenu = vi.fn();
+      const nibs = makeTestNibs(); // nibs-m1 (milestone) has a child
+
+      const { container } = setupWithNibs(nibs, { onrowcontextmenu });
+
+      const row = container.querySelector("tr[data-nib-id='nibs-m1']") as HTMLElement;
+      await user.pointer({ target: row, keys: "[MouseRight]" });
+
+      expect(onrowcontextmenu).toHaveBeenCalledWith(
+        "nibs-m1",
+        expect.any(MouseEvent),
+        expect.objectContaining({ id: "nibs-m1" }),
+        expect.objectContaining({ hasChildren: true }),
+      );
+    });
+
+    it("subtree collapseChildren/expandChildren toggle the whole subtree (nibs-iyw3)", async () => {
+      const user = userEvent.setup();
+      let captured: import("../types").RowSubtreeActions | undefined;
+      const onrowcontextmenu = vi.fn((_id, _e, _nib, subtree) => { captured = subtree; });
+      const nibs: TreeTableNib[] = [
+        makeTreeTableNib({ id: "nibs-m1", title: "Milestone", type: "milestone" }),
+        makeTreeTableNib({ id: "nibs-e1", title: "Epic", type: "epic", parentId: "nibs-m1" }),
+        makeTreeTableNib({ id: "nibs-t1", title: "Deep task", type: "task", parentId: "nibs-e1" }),
+      ];
+
+      const { container } = setupWithNibs(nibs, { onrowcontextmenu });
+      // Check row presence by id ("Epic" also appears in the task's Parent column,
+      // so text queries are ambiguous).
+      const rowVisible = (id: string) => container.querySelector(`tr[data-nib-id='${id}']`) !== null;
+
+      // All three rows visible initially.
+      expect(rowVisible("nibs-e1")).toBe(true);
+      expect(rowVisible("nibs-t1")).toBe(true);
+
+      // Right-click the milestone to capture its subtree actions.
+      const row = container.querySelector("tr[data-nib-id='nibs-m1']") as HTMLElement;
+      await user.pointer({ target: row, keys: "[MouseRight]" });
+      expect(captured?.hasChildren).toBe(true);
+
+      // Collapse the whole subtree — the milestone collapses, hiding everything below.
+      captured!.collapseChildren();
+      await tick();
+      expect(rowVisible("nibs-e1")).toBe(false);
+      expect(rowVisible("nibs-t1")).toBe(false);
+
+      // Expanding just the milestone reveals exactly ONE level (the epic stays collapsed).
+      const toggle = container.querySelector("tr[data-nib-id='nibs-m1'] [data-action='toggle']") as HTMLElement;
+      await user.click(toggle);
+      await tick();
+      expect(rowVisible("nibs-e1")).toBe(true);
+      expect(rowVisible("nibs-t1")).toBe(false);
+
+      // Expand-children fully expands the subtree again.
+      captured!.expandChildren();
+      await tick();
+      expect(rowVisible("nibs-e1")).toBe(true);
+      expect(rowVisible("nibs-t1")).toBe(true);
     });
 
     it("row double-click selects nib via context", async () => {

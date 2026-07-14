@@ -28,7 +28,7 @@
     oncolumnwidthschange?: (widths: Record<ColumnKey, number>) => void;
     oncolumnresizeend?: () => void;
     ontagschange?: (tags: string[]) => void;
-    onrowcontextmenu?: (nibId: string, event: MouseEvent, nib: import("../types").TreeTableNib) => void;
+    onrowcontextmenu?: (nibId: string, event: MouseEvent, nib: TreeTableNib, subtree: RowSubtreeActions) => void;
     onaddchild?: (nibId: string, nibType: string, anchor: DOMRect) => void;
     rowDensity?: RowDensity;
     blockedEmphasis?: BlockedEmphasis;
@@ -287,6 +287,34 @@
     treeView.collapseAll(parentIds);
   }
 
+  // --- Subtree expand/collapse (row context menu, nibs-iyw3) ---
+  // Descendants are resolved against the DISPLAYED view tree (buildViewTree), not
+  // raw parentId, so the grouping lens (headers, hidden containers, "No X"
+  // buckets) is honoured. TreeViewState owns the collapse set; these compute the
+  // next set and hand it to setCollapsed.
+  function expandSubtree(rootId: string) {
+    const viewTree = buildViewTree<TreeTableNib>(allNibs, resolvedViewLevel);
+    const descendantIds = collectDescendantIds(viewTree, rootId);
+    const next = new Set(treeView.collapsedIds);
+    next.delete(rootId);
+    for (const id of descendantIds) next.delete(id);
+    if (!sameSet(next, treeView.collapsedIds)) treeView.setCollapsed(next);
+  }
+
+  function collapseSubtree(rootId: string) {
+    const viewTree = buildViewTree<TreeTableNib>(allNibs, resolvedViewLevel);
+    const descendantIds = collectDescendantIds(viewTree, rootId);
+    const next = new Set(treeView.collapsedIds);
+    // Collapse the row itself plus every descendant that actually has children,
+    // so re-expanding the row reveals exactly one level at a time. parentIds
+    // already folds in synthetic buckets (tableData Stage 5a).
+    next.add(rootId);
+    for (const id of descendantIds) {
+      if (parentIds.has(id)) next.add(id);
+    }
+    if (!sameSet(next, treeView.collapsedIds)) treeView.setCollapsed(next);
+  }
+
   // --- Column resize (composable) ---
   let tableEl: HTMLTableElement | undefined = $state(undefined);
 
@@ -457,7 +485,11 @@
     if (!row) return;
 
     e.preventDefault();
-    onrowcontextmenu?.(nibId, e, row.nib);
+    onrowcontextmenu?.(nibId, e, row.nib, {
+      hasChildren: row.hasChildren,
+      expandChildren: () => expandSubtree(nibId),
+      collapseChildren: () => collapseSubtree(nibId),
+    });
   }
 
   function handleDelegatedPointerDown(e: PointerEvent) {

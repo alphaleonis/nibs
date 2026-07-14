@@ -27,7 +27,7 @@
   import type { CreateForm, EditForm, CreateDefaults, NibSnapshot } from "./lib/nibForm.svelte";
   import { createLiveNib } from "./lib/liveNib.svelte";
   import type { LiveNib } from "./lib/liveNib.svelte";
-  import type { TreeTableNib } from "./lib/types";
+  import type { TreeTableNib, RowSubtreeActions } from "./lib/types";
   import * as Resizable from "./lib/components/ui/resizable";
   import type ResizablePane from "./lib/components/ui/resizable/resizable-pane.svelte";
   import { Toaster } from "./lib/components/ui/sonner";
@@ -294,8 +294,11 @@
   let contextMenuPosition = $state({ x: 0, y: 0 });
   let contextMenuNibId: string | null = $state(null);
   let contextMenuNib: TreeTableNib | null = $state(null);
+  // Subtree expand/collapse actions for the right-clicked row (nibs-iyw3).
+  // TreeTable owns the collapse state, so it hands down closures that mutate it.
+  let contextMenuSubtree: RowSubtreeActions | null = $state(null);
 
-  function handleRowContextMenu(nibId: string, event: MouseEvent, nib: TreeTableNib) {
+  function handleRowContextMenu(nibId: string, event: MouseEvent, nib: TreeTableNib, subtree: RowSubtreeActions) {
     // If the right-clicked nib is not in the selection, open it first — route
     // through the view so the dirty-guard + URL/history stay in sync (nibs-58c3).
     if (!selection.isSelected(nibId)) {
@@ -303,6 +306,7 @@
     }
     contextMenuNibId = nibId;
     contextMenuNib = nib;
+    contextMenuSubtree = subtree;
     contextMenuPosition = { x: event.clientX, y: event.clientY };
     contextMenuOpen = true;
   }
@@ -515,6 +519,9 @@
   position={contextMenuPosition}
   nib={contextMenuNib}
   selectedCount={selection.hasMultiSelect ? selection.selectedIds.size : 1}
+  hasChildren={contextMenuSubtree?.hasChildren ?? false}
+  onexpandchildren={() => contextMenuSubtree?.expandChildren()}
+  oncollapsechildren={() => contextMenuSubtree?.collapseChildren()}
 />
 
 <ConfirmDialog
