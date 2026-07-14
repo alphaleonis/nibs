@@ -19,9 +19,9 @@
 </script>
 
 <Select.Root type="single" value={effective} {disabled} onValueChange={(v) => { if (v) onchange(v); }}>
-  <Select.Trigger data-testid={testId} size="sm" class="flex-1">
+  <Select.Trigger data-testid={testId} size="default" class="flex-1">
     {#if displayIndicator}
-      <span class="inline-block w-3.5 text-center text-xs font-bold" style="color: {displayIndicator.color};">{displayIndicator.symbol}</span>
+      <span class="inline-block w-3.5 text-center text-caption font-bold" style="color: {displayIndicator.color};">{displayIndicator.symbol}</span>
     {/if}
     {effective}
   </Select.Trigger>
@@ -30,7 +30,7 @@
       {@const ind = priorityIndicators[p]}
       <Select.Item value={p}>
         {#if ind}
-          <span class="inline-block w-3.5 text-center text-xs font-bold" style="color: {ind.color};">{ind.symbol}</span>
+          <span class="inline-block w-3.5 text-center text-caption font-bold" style="color: {ind.color};">{ind.symbol}</span>
         {:else}
           <span class="inline-block w-3.5"></span>
         {/if}
