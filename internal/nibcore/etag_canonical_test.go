@@ -504,7 +504,7 @@ func TestComputeStoredETagReadErrorFailsClosed(t *testing.T) {
 }
 
 // TestComputeStoredETagFailsOpenWhenNotFlushed pins the two fail-OPEN branches of
-// computeStoredETag's matrix (finding #1): a nib with no on-disk file yet (empty
+// computeStoredETag's matrix: a nib with no on-disk file yet (empty
 // Path, or the file removed → os.IsNotExist) falls back to the in-memory etag so
 // a normal if-match still matches, matching Update's not-flushed semantics.
 func TestComputeStoredETagFailsOpenWhenNotFlushed(t *testing.T) {
@@ -543,7 +543,7 @@ func TestComputeStoredETagFailsOpenWhenNotFlushed(t *testing.T) {
 	})
 }
 
-// TestComputeStoredETagOutOfProjectionContent covers finding #2: content on
+// TestComputeStoredETagOutOfProjectionContent covers content on
 // disk that lives outside Render()'s modeled field set (unknown/extra YAML keys
 // and the legacy v0 `blocking:` field) must still be reflected in the stored
 // etag, so an external edit confined to that content is detected and NOT

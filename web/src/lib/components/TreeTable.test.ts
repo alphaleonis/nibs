@@ -1086,7 +1086,7 @@ describe("TreeTable", () => {
       );
     });
 
-    it("context menu supplies hasChildren=true for a parent row (nibs-iyw3)", async () => {
+    it("context menu supplies hasChildren=true for a parent row", async () => {
       const user = userEvent.setup();
       const onrowcontextmenu = vi.fn();
       const nibs = makeTestNibs(); // nibs-m1 (milestone) has a child
@@ -1104,7 +1104,7 @@ describe("TreeTable", () => {
       );
     });
 
-    it("subtree collapseChildren/expandChildren toggle the whole subtree (nibs-iyw3)", async () => {
+    it("subtree collapseChildren/expandChildren toggle the whole subtree", async () => {
       const user = userEvent.setup();
       let captured: import("../types").RowSubtreeActions | undefined;
       const onrowcontextmenu = vi.fn((_id, _e, _nib, subtree) => { captured = subtree; });
@@ -1576,7 +1576,7 @@ describe("TreeTable", () => {
   // tests verify the restore-effect WIRING (mount/remount → restore) end-to-end;
   // the clamp-echo defect's trigger (#2) is covered at the unit level via
   // simulation in useScrollRestore.test.ts.
-  describe("scroll restore (nibs-qpvw)", () => {
+  describe("scroll restore", () => {
     const nibs: TreeTableNib[] = [
       makeTreeTableNib({ id: "nibs-m1", title: "Milestone", type: "milestone" }),
       makeTreeTableNib({ id: "nibs-001", title: "Task", type: "task", parentId: "nibs-m1" }),
@@ -1630,7 +1630,7 @@ describe("TreeTable", () => {
     });
   });
 
-  describe("prune multi-select on filter change (nibs-mpkm)", () => {
+  describe("prune multi-select on filter change", () => {
     function makeNibs(): TreeTableNib[] {
       return [
         makeTreeTableNib({ id: "nibs-m1", title: "Milestone", type: "milestone" }),

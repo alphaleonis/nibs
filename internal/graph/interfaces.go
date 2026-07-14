@@ -42,7 +42,7 @@ type NibReader interface {
 	// be read or parsed fails CLOSED, returning a non-reconcilable
 	// *nibcore.OnDiskUnparseableError (empty etag string, no reusable token) so
 	// bulk-reorder pre-validation refuses the operation and no retry can clobber
-	// the file (finding #5). Used by bulk-reorder pre-validation. Returns
+	// the file. Used by bulk-reorder pre-validation. Returns
 	// the same errors as Get (notably ErrNotFound) when the nib is missing.
 	CurrentETag(id string) (string, error)
 }

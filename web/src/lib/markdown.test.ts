@@ -592,11 +592,11 @@ describe("ordinal-consistency cross-check (render <-> toggleTaskLine)", () => {
   }
 });
 
-// Finding #3: a raw-HTML checkbox (with or without a forged data-task-ordinal)
+// a raw-HTML checkbox (with or without a forged data-task-ordinal)
 // must NOT become a clickable, ordinal-bearing task checkbox, and must not shift
 // the ordinals of real task items around it. Provenance is enforced at the
 // sanitize boundary via a per-render nonce that body content cannot predict.
-describe("renderMarkdown task-checkbox provenance (finding #3)", () => {
+describe("renderMarkdown task-checkbox provenance", () => {
   it("strips a raw <input type=checkbox> with a forged data-task-ordinal", () => {
     const html = renderMarkdown(
       '- [ ] real\n\n<input type="checkbox" data-task-ordinal="0" checked onclick="alert(1)"> decoy',
@@ -658,10 +658,10 @@ describe("renderMarkdown task-checkbox provenance (finding #3)", () => {
   });
 });
 
-// Finding #5: the input-hardening hook is registered on a MODULE-SCOPED
+// the input-hardening hook is registered on a MODULE-SCOPED
 // DOMPurify instance, not the shared global default export — so it never leaks
 // onto other consumers or accumulates across module re-evaluation.
-describe("DOMPurify isolation (finding #5)", () => {
+describe("DOMPurify isolation", () => {
   it("does not mutate the shared global DOMPurify singleton", () => {
     renderMarkdown("- [ ] ensure our scoped hook is active");
     // The GLOBAL default export must still keep a plain text input — proof our

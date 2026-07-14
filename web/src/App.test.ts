@@ -873,7 +873,7 @@ describe("App", () => {
     expect(screen.getByTestId("active-nib-view")).toBeInTheDocument();
   });
 
-  it("heals a stale ?nib=<gone> deep link: self-closes the view (nibs-etk3)", async () => {
+  it("heals a stale ?nib=<gone> deep link: self-closes the view", async () => {
     // Land on a URL whose nib no longer exists. The detail query settles with a
     // null nib, so App fires the missing-nib heal (closes the view + toast).
     window.history.replaceState(null, "", "/?nib=nibs-gone");
@@ -888,7 +888,7 @@ describe("App", () => {
     expect(window.location.search).toBe("");
   });
 
-  it("Back/Forward (popstate) retargets the docked view to the history nib (nibs-1h2m)", async () => {
+  it("Back/Forward (popstate) retargets the docked view to the history nib", async () => {
     // Composed path: App's onPopState runs nav.handlePopState (updates selection
     // from the owned history state) then view.syncTo(selection.selectedNibId) —
     // the sole guard-bypass. A real popstate must retarget the docked view to the

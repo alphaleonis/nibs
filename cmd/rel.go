@@ -658,7 +658,7 @@ filter-on-singular validation error does not fire here.`,
 
 		app := getApp(cmd)
 		resolver := app.newResolver()
-		// Use Cobra's cancellable context so SIGINT propagates through a
+		// Use Cobra's cancelable context so SIGINT propagates through a
 		// potentially long-running traversal (e.g. --rel descendants --depth all).
 		// Guard against nil which can occur when cmd.Context() is not set (e.g.
 		// tests that don't call ExecuteContext).

@@ -373,7 +373,7 @@ describe("createActiveView · guard funnel", () => {
   });
 });
 
-describe("createActiveView · guard funnel · Save option (nibs-s9au)", () => {
+describe("createActiveView · guard funnel · Save option", () => {
   it("Save → saved: persists the edit buffer, then PROCEEDS with the pending navigation", async () => {
     const h = makeDeps();
     const { view, dispose } = mount(h.deps);
@@ -1006,7 +1006,7 @@ describe("createActiveView · null-remote conflict fallback", () => {
     dispose();
   });
 
-  it("a re-entrant save() during the in-flight fallback does not double-fetch, double-surface, or double-toast (HIGH #1)", async () => {
+  it("a re-entrant save() during the in-flight fallback does not double-fetch, double-surface, or double-toast", async () => {
     const h = makeDeps();
     const { view, dispose } = mount(h.deps);
 
@@ -1054,7 +1054,7 @@ describe("createActiveView · null-remote conflict fallback", () => {
     dispose();
   });
 
-  it("form A's settling fallback does not clear form B's in-flight marker after a syncTo swap (HIGH #1 cross-form regression)", async () => {
+  it("form A's settling fallback does not clear form B's in-flight marker after a syncTo swap (cross-form regression)", async () => {
     const h = makeDeps();
     const { view, dispose } = mount(h.deps);
 
@@ -1095,7 +1095,7 @@ describe("createActiveView · null-remote conflict fallback", () => {
 
     // --- Release A's (now-orphaned) fetch. A's finally MUST NOT clear B's still-
     //     pending marker — with the unconditional clear it would flip savePending
-    //     false and reopen B's re-entrancy window (HIGH #1 cross-form regression).
+    //     false and reopen B's re-entrancy window (cross-form regression).
     releaseA(snap({ id: "n1", etag: "e9" }));
     await firstA;
     flushSync();

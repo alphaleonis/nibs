@@ -278,7 +278,7 @@ describe("useTreeDrag", () => {
     cleanup?.();
   });
 
-  it("before/after reorder where dragged & target share a display container but have DIFFERENT real parents is INVALID (nibs-dapk)", () => {
+  it("before/after reorder where dragged & target share a display container but have DIFFERENT real parents is INVALID", () => {
     // In a grouping lens two rows can share the same DISPLAY
     // container (both display at root → displayParentId null) while having
     // DIFFERENT real nib.parentId — e.g. a promoted feature header (real parent
@@ -330,7 +330,7 @@ describe("useTreeDrag", () => {
     cleanup?.();
   });
 
-  it("before/after reorder between genuine real siblings (same display + same real parent) stays VALID (nibs-dapk guardrail)", () => {
+  it("before/after reorder between genuine real siblings (same display + same real parent) stays VALID (guardrail)", () => {
     // Scope guardrail for the real-parent guard: when the dragged and target rows are
     // real siblings (same real nib.parentId) and share the same display
     // container, a before/after reorder must remain VALID — the new real-parent
@@ -373,7 +373,7 @@ describe("useTreeDrag", () => {
     cleanup?.();
   });
 
-  it("before/after reorder for a MULTI-SELECT drag spanning MIXED real parents is INVALID (nibs-dapk fail-closed)", () => {
+  it("before/after reorder for a MULTI-SELECT drag spanning MIXED real parents is INVALID (fail-closed)", () => {
     // Completeness gap in the real-parent guard: for a multi-select drag whose
     // selected rows span DIFFERENT real parents, the shared-real-parent Set
     // collapses to size≠1 → draggedRealParentId === undefined. A guard that only

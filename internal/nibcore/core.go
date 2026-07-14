@@ -795,8 +795,8 @@ func (c *Core) CurrentETag(id string) (string, error) {
 // deliberately as fail-OPEN (return the in-memory ETag with a nil error, so a
 // normal if-match still matches) or fail-CLOSED (return a non-reconcilable
 // *OnDiskUnparseableError and NO etag token, so Update/CurrentETag refuse the
-// overwrite and no retry-with-Current can satisfy the guard — the finding #5
-// hardening). A client's if-match always originates from a canonical nib.ETag()
+// overwrite and no retry-with-Current can satisfy the guard). A client's
+// if-match always originates from a canonical nib.ETag()
 // (16 lowercase hex chars) obtained via Get.
 //
 //	condition                          verdict  returns                      logged?
@@ -847,8 +847,8 @@ func (c *Core) computeStoredETag(storedNib *nib.Nib) (string, error) {
 		// File EXISTS but is unparseable (torn/partial write, git merge-conflict
 		// markers, hand-edit YAML typo). Fail CLOSED with a non-reconcilable error
 		// so the divergent/corrupt file cannot be clobbered — not even by a naive
-		// client that retries with a fabricated/raw-bytes etag (the finding #5
-		// single-shot vulnerability). RETURN the error (do not log it here) — the
+		// client that retries with a fabricated/raw-bytes etag in a single shot.
+		// RETURN the error (do not log it here) — the
 		// caller surfaces it where it matters; logging too would double-handle it
 		// and flood stderr on the hot Children read path (orderer.go
 		// backfillOrderKeys).
@@ -894,7 +894,7 @@ func (c *Core) Update(b *nib.Nib, ifMatch *string) error {
 			// unreadable). Surface the distinct, non-reconcilable error rather than
 			// an ETagMismatchError: there is no server etag a retry could echo back
 			// to satisfy the guard, so the corrupt/unreadable file cannot be
-			// clobbered by a blind reconcile-retry (finding #5).
+			// clobbered by a blind reconcile-retry.
 			return err
 		}
 		if currentETag != *ifMatch {

@@ -151,7 +151,7 @@ export interface ActiveView {
    *  presenter's fallback fetch begins, so the Save control (keyed on
    *  `form.saving`) would otherwise re-enable mid-fallback and a re-click could
    *  re-dispatch. The Save `disabled` binding ORs this in so the control stays
-   *  visibly disabled through the whole fallback (HIGH #1). */
+   *  visibly disabled through the whole fallback. */
   readonly savePending: boolean;
   /** Monotonic counter bumped each time a CLEAN buffer is silently rebaselined
    *  onto an incoming change (in-app or on-disk). The view watches it to fire a
@@ -192,7 +192,7 @@ export function createActiveView(deps: ActiveViewDeps): ActiveView {
   let externalApplied = $state(0);
   // The edit form whose null-remote conflict fallback is CURRENTLY in
   // flight, or null. Reactive so `savePending` can keep the Save control disabled
-  // through the fallback's round-trip; also the in-flight guard (HIGH #1) that
+  // through the fallback's round-trip; also the in-flight guard that
   // stops a re-entrant save() from starting a second fetch/dispatch/toast.
   let conflictFallbackFor = $state.raw<EditForm | null>(null);
 
@@ -382,7 +382,7 @@ export function createActiveView(deps: ActiveViewDeps): ActiveView {
   // Checked BEFORE the fetch (skip a needless round-trip if the sub already won)
   // and AFTER it (guard a change that arrived while the fetch was in flight).
   //
-  // In-flight guard (HIGH #1): `conflictFallbackFor` blocks a re-entrant save()
+  // In-flight guard: `conflictFallbackFor` blocks a re-entrant save()
   // from starting a second concurrent fallback (second fetch/dispatch/toast); the
   // reactive `savePending` flag keeps the Save control disabled through the whole
   // round-trip so the re-click is prevented at the source.
@@ -417,7 +417,7 @@ export function createActiveView(deps: ActiveViewDeps): ActiveView {
         );
       }
     } finally {
-      // Identity-check the clear (HIGH #1 regression): if the active form swapped
+      // Identity-check the clear (regression): if the active form swapped
       // to another form B mid-fetch and B started its own fallback (overwriting
       // this marker), our later-firing finally must NOT null B's still-pending
       // marker — that would flip `savePending` false and reopen B's re-entrancy

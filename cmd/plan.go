@@ -174,7 +174,7 @@ var planCmd = &cobra.Command{
 		resolver := app.newResolver()
 
 		// Thread cmd.Context() into buildPlan so this command becomes
-		// cancellable once root-level signal wiring lands (cmd.Execute
+		// cancelable once root-level signal wiring lands (cmd.Execute
 		// currently calls rootCmd.Execute(), not ExecuteContext, so
 		// cmd.Context() is nil today — in both production and tests).
 		// Guard against nil so the change is safe to land ahead of the

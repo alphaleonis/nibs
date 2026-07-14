@@ -914,7 +914,7 @@ func TestBlockingRoundtrip(t *testing.T) {
 }
 
 // TestUnknownKeysRoundtrip verifies that front-matter keys not modeled by any
-// named field survive a Parse->Render->Parse cycle (finding #2), so an external
+// named field survive a Parse->Render->Parse cycle, so an external
 // edit confined to such a key is visible to the canonical etag rather than being
 // silently stripped.
 func TestUnknownKeysRoundtrip(t *testing.T) {
@@ -1037,7 +1037,7 @@ func yamlKeyNames(t reflect.Type) map[string]struct{} {
 	return names
 }
 
-// TestRenderExtraKeyCollisionDoesNotPanic covers finding #2: an Extra key that
+// TestRenderExtraKeyCollisionDoesNotPanic covers an Extra key that
 // collides with a modeled field name (reachable via the "promote an unknown key
 // to a modeled field" evolution path) must NOT panic Render/ETag. Render drops
 // the colliding Extra key (the modeled field wins) and honors its (,error)
@@ -1088,7 +1088,7 @@ func TestRenderExtraKeyCollisionDoesNotPanic(t *testing.T) {
 }
 
 // TestRenderDeterministicWithExtra guards the etag against Go map-iteration
-// nondeterminism (finding #2): rendering the same nib repeatedly, and rendering
+// nondeterminism: rendering the same nib repeatedly, and rendering
 // a fresh clone, must produce byte-identical output despite several unknown keys.
 func TestRenderDeterministicWithExtra(t *testing.T) {
 	b := &Nib{
@@ -1124,7 +1124,7 @@ func TestRenderDeterministicWithExtra(t *testing.T) {
 }
 
 // TestRenderFixedPoint verifies parse->render->parse->render is a fixed point
-// for a nib carrying unknown keys and a legacy blocking field (finding #2), so
+// for a nib carrying unknown keys and a legacy blocking field, so
 // the etag settles rather than oscillating.
 func TestRenderFixedPoint(t *testing.T) {
 	const input = `---
@@ -1364,7 +1364,7 @@ use: *t`,
 }
 
 // TestRenderNoChurnWithoutExtraOrBlocking pins the "no churn for normal nibs"
-// requirement (finding #2): a nib with no unknown keys and no legacy blocking
+// requirement: a nib with no unknown keys and no legacy blocking
 // must render without any `blocking:` line or stray inline keys — i.e. the
 // passthrough machinery is invisible unless it carries content.
 func TestRenderNoChurnWithoutExtraOrBlocking(t *testing.T) {

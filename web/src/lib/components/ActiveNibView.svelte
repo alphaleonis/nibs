@@ -287,12 +287,12 @@
     // `view.savePending`: a null-remote conflict fallback is in flight for this
     // form. `f.saving` is already false by then (EditForm.save resets it before
     // the presenter's fallback fetch), so without this a re-trigger would
-    // re-dispatch mid-fallback (HIGH #1).
+    // re-dispatch mid-fallback.
     if (!f || !f.dirty || f.saving || view.savePending) return;
     // Capture the saved instance + id BEFORE the await. The buffer can swap to
     // another nib mid-flight (popstate / syncTo guard-bypass), so the live
-    // `form`/`nibId` getters read AFTER the await may point at a different nib
-    // (HIGH #2). Re-check `form === f` before touching the saved instance and
+    // `form`/`nibId` getters read AFTER the await may point at a different nib.
+    // Re-check `form === f` before touching the saved instance and
     // never read the live getters for these branches.
     const savedId = f.mode === "edit" ? f.id : null;
     const outcome = await view.save();

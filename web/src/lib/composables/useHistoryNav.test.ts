@@ -69,7 +69,7 @@ describe("useHistoryNav", () => {
     nav.navigateToNib("b");
 
     // Regression: a truthy guard (`if (selectedNibId) return`) would skip
-    // this push. NB this does NOT lock finding #1's `=== id` early-return (a≠b pushes
+    // this push. NB this does NOT lock the `=== id` early-return (a≠b pushes
     // either way) — the focus-resync test below is that lock.
     expect(history.calls).toEqual([
       { kind: "push", state: { nibId: "b" }, url: "?nib=b" },
@@ -116,7 +116,7 @@ describe("useHistoryNav", () => {
     expect(selection.selectedNibId).toBeNull();
   });
 
-  it("replaceClosed heals the URL in place (replaceState to clean path), leaving selection to the caller (nibs-etk3)", () => {
+  it("replaceClosed heals the URL in place (replaceState to clean path), leaving selection to the caller", () => {
     // Used after deleting/archiving the open nib, or when landing on a nib that
     // no longer exists: heal the current entry in place (replace, no Back-stop),
     // so a stale ?nib=<gone> doesn't survive reload/Back. Selection is the
@@ -185,7 +185,7 @@ describe("useHistoryNav", () => {
     expect(history.calls).toEqual([]);
   });
 
-  it("handlePopState is a no-op behind an open overlay: keeps selection, re-anchors history (nibs-g1fy)", () => {
+  it("handlePopState is a no-op behind an open overlay: keeps selection, re-anchors history", () => {
     // A blocking modal (editor/type-picker/confirm) is open. Back/Forward must not
     // navigate the covered panel; history is re-anchored to the shown nib so URL
     // stays consistent and selection is untouched.
@@ -202,7 +202,7 @@ describe("useHistoryNav", () => {
     ]);
   });
 
-  it("handlePopState behind an overlay with a closed panel re-anchors to the clean path (nibs-g1fy)", () => {
+  it("handlePopState behind an overlay with a closed panel re-anchors to the clean path", () => {
     const selection = new SelectionState(); // nothing selected
     const { nav, history } = setup({
       selection,

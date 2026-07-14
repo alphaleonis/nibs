@@ -382,7 +382,7 @@ func (r *mutationResolver) validateIfMatchETags(listed []*nib.Nib, ifMatch []*mo
 		if err != nil {
 			// An uncertifiable on-disk file (unparseable/unreadable) surfaces the
 			// distinct, NON-RECONCILABLE OnDiskUnparseableError carrying no etag
-			// token — mirroring Update's fail-closed path (finding #5). Propagate it
+			// token — mirroring Update's fail-closed path. Propagate it
 			// (wrapped, so errors.As still finds it) rather than collapsing it into a
 			// reconcilable "etag mismatch" the client could retry past.
 			var unparseable *nibcore.OnDiskUnparseableError

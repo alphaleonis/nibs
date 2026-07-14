@@ -418,7 +418,7 @@ export class EditForm extends BaseForm implements NibFormFields {
     // though the etags still differ. This is DERIVED (not one-shot): diverging
     // again re-surfaces it. `save()` applies the SAME convergence check, so the
     // two accessors never disagree: on a converged buffer save() performs a real
-    // write against the remote etag rather than a silent no-op (HIGH #1).
+    // write against the remote etag rather than a silent no-op.
     if (!remote || this.#matchesFields(remote)) return null;
     return remote;
   }
@@ -465,7 +465,7 @@ export class EditForm extends BaseForm implements NibFormFields {
       // Only a buffer that STILL diverges from the recorded remote is a genuine,
       // unresolved conflict — surface the resolver without dispatching. If the
       // working copy has converged to the remote's field values (the same check
-      // the `externalChange` getter uses, so the two never disagree — HIGH #1),
+      // the `externalChange` getter uses, so the two never disagree),
       // there is nothing to resolve: the content we'd send already equals the
       // server's current revision. Fall through to a REAL write below, using the
       // remote's etag as if-match, so Save legitimately succeeds and rebaselines

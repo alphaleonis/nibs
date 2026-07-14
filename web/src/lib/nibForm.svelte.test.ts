@@ -454,7 +454,7 @@ describe("editNibForm — conflict & overwrite", () => {
     expect(form.etag).toBe("etag-after");
   });
 
-  it("clears the external-change warning once the buffer converges to the remote's field values (F7/AC3), and every field participates", () => {
+  it("clears the external-change warning once the buffer converges to the remote's field values, and every field participates", () => {
     const { deps } = makeMutations();
     const form = editNibForm(deps, seed({ etag: "etag-1" }));
 
@@ -513,7 +513,7 @@ describe("editNibForm — conflict & overwrite", () => {
     expect(form.externalChange).toEqual(remote);
   });
 
-  it("a converged dirty buffer SAVES with the remote etag rather than a silent no-op (HIGH #1)", async () => {
+  it("a converged dirty buffer SAVES with the remote etag rather than a silent no-op", async () => {
     // Convergence can strand Save: after a dirty buffer's edits converge to the
     // remote's field values the getter reads null (banner hides) but the buffer
     // stays dirty-vs-baseline, so Save stays enabled. Reading the raw

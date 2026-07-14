@@ -458,7 +458,7 @@ describe("buildTableData", () => {
         expect(isBucketId(item.displayParentId ?? "")).toBe(false);
       });
 
-      it("two loose siblings in one bucket resolve to the identical display parent (symmetric nibs-m1my property)", () => {
+      it("two loose siblings in one bucket resolve to the identical display parent (symmetric property)", () => {
         // Two loose tasks with no grouping ancestor both fall into the single
         // "No epic" bucket. flatten() threads ONE displayParentId to every child
         // of a node, so both siblings get the identical value (null — the bucket's

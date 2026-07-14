@@ -759,7 +759,7 @@ func TestNibReader_CurrentETag_NotFound(t *testing.T) {
 	}
 }
 
-// TestReorderChildren_IfMatch_UnparseableFileNonReconcilable covers finding #5
+// TestReorderChildren_IfMatch_UnparseableFileNonReconcilable covers the fail-closed path
 // for the bulk-reorder pre-validation path: when a listed child's on-disk file
 // is unparseable, ReorderChildren must abort with the distinct, NON-RECONCILABLE
 // *nibcore.OnDiskUnparseableError (carrying no reusable etag token), NOT a plain

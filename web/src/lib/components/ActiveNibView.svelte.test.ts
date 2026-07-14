@@ -743,7 +743,7 @@ describe("ActiveNibView", () => {
       expect(screen.getByTestId("anv-body-prose")).toBeInTheDocument();
     });
 
-    it("auto-focuses the empty title input on entering the create form (nibs-57z0)", async () => {
+    it("auto-focuses the empty title input on entering the create form", async () => {
       // Both entry points (toolbar New menu and a row's add-child [+]) land the
       // view in `creating` with a fresh create form, so one assertion covers both.
       const form = makeCreateForm();
@@ -874,7 +874,7 @@ describe("ActiveNibView", () => {
     });
   });
 
-  describe("mid-flight buffer swap (cross-nib safety) — HIGH #2", () => {
+  describe("mid-flight buffer swap (cross-nib safety)", () => {
     it("a conflict outcome that resolves AFTER the buffer swaps does not contaminate the new nib", async () => {
       // handleSave captures the form before the await; if the buffer swaps to
       // another nib during the in-flight save (popstate / syncTo guard-bypass),
