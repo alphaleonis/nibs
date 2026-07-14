@@ -450,8 +450,8 @@ func TestReorderChildren_BogusParentEmptyChildren(t *testing.T) {
 	ctx := context.Background()
 	resolver, _, _ := setupBulkReorderFixture(t)
 
-	// A non-empty bogus parent with empty childIDs would previously be a
-	// silent no-op success. Now it errors with "parent nib not found".
+	// A non-empty bogus parent with empty childIDs must error with "parent nib
+	// not found" — the trap is silently succeeding as a no-op.
 	_, err := resolver.Mutation().ReorderChildren(ctx, "ghost-parent", []string{}, nil)
 	if err == nil {
 		t.Fatal("expected error for non-existent parent")
@@ -764,8 +764,8 @@ func TestNibReader_CurrentETag_NotFound(t *testing.T) {
 // is unparseable, ReorderChildren must abort with the distinct, NON-RECONCILABLE
 // *nibcore.OnDiskUnparseableError (carrying no reusable etag token), NOT a plain
 // reconcilable "etag mismatch". A client that retries with a fabricated etag
-// (e.g. a hash of the corrupt bytes — the scheme the old fail-closed sentinel
-// exposed) still cannot satisfy the guard, so the corrupt file survives.
+// (e.g. a hash of the corrupt bytes) still cannot satisfy the guard, so the
+// corrupt file survives.
 func TestReorderChildren_IfMatch_UnparseableFileNonReconcilable(t *testing.T) {
 	ctx := context.Background()
 	resolver, core, parentID := setupBulkReorderFixture(t)

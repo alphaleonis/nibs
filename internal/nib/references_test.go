@@ -237,7 +237,7 @@ func TestExtractMentionTokens(t *testing.T) {
 			body: "We use backtick ` for #gx0f refs.",
 			want: []string{"gx0f"},
 		},
-		// Finding #22 — load-bearing invariants that used to be unpinned.
+		// Load-bearing invariants of the reference matcher.
 		{
 			name: "uppercase ID does not match",
 			body: "See #ABCD here",

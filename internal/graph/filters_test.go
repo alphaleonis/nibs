@@ -47,9 +47,8 @@ func TestResolveFilterID(t *testing.T) {
 
 // TestApplyFilterBlockedByIDShortForm is the tracer bullet: a filter with
 // a short `BlockedByID` must match nibs whose `blocked_by` contains the
-// full (prefixed) ID. Prior to the fix, filter.BlockedByID was passed raw
-// to filterBySliceField with no normalization, so short IDs silently
-// matched nothing.
+// full (prefixed) ID. A short BlockedByID must be normalized before matching —
+// passing it raw to filterBySliceField makes short IDs silently match nothing.
 func TestApplyFilterBlockedByIDShortForm(t *testing.T) {
 	target := &nib.Nib{ID: "nibs-target", Title: "Target"}
 	blocked := &nib.Nib{ID: "nibs-blocked", Title: "Blocked", BlockedBy: []string{"nibs-target"}}
@@ -78,11 +77,9 @@ func TestApplyFilterBlockedByIDShortForm(t *testing.T) {
 }
 
 // TestApplyFilterUnknownIDReturnsNil verifies the "unknown target -> nil"
-// contract across all four single-ID filter branches. Previously these
-// branches disagreed: BlockingID via reader.Get returned nil, Mentions(ed)ByID
-// via NormalizeID returned nil, but BlockedByID silently passed the raw ID
-// through and returned empty. All four now route through resolveFilterID
-// and short-circuit to nil on miss.
+// contract across all four single-ID filter branches. All four route through
+// resolveFilterID and short-circuit to nil on miss — the trap is a branch that
+// passes a raw ID through and returns empty instead of nil.
 //
 // The table pairs a negative case (unknown → nil) with a positive control
 // (known → non-nil with a specific ID in the result). Without the positive
@@ -313,8 +310,7 @@ func TestFilterByEstimate(t *testing.T) {
 
 // TestApplyFilterDefaultAwarePriorityAndType is the direct coverage for
 // ApplyFilter's default-aware Type/Priority filtering (the EffectiveType()/
-// EffectivePriority() routing that replaced the deleted filterByFieldWithDefault
-// helper in nibs-7d3o). A default-omitting nib (empty Priority/Type) must filter
+// EffectivePriority() routing). A default-omitting nib (empty Priority/Type) must filter
 // as though the "normal"/"task" presentation defaults were on disk: including it
 // under Priority=["normal"] / Type=["task"], and excluding it under the symmetric
 // ExcludePriority / ExcludeType. Each exclude row keeps a non-default control nib

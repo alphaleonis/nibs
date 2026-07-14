@@ -163,8 +163,7 @@ func (c *Core) loadFromDisk() error {
 	c.nibs = make(map[string]*nib.Nib)
 
 	// Count of nibs whose legacy `priority: deferred` was normalized to `low`
-	// and persisted during this load, so we can log a single summary (restoring
-	// the visibility the removed migrateDeferredPriority pass used to provide).
+	// and persisted during this load, so we can log a single summary.
 	var deferredMigrated int
 
 	// IDs of files present on disk but skipped this load (unparseable/unreadable).
@@ -775,13 +774,13 @@ func (c *Core) CurrentETag(id string) (string, error) {
 // Parsing is done with the bare nib.Parse (which already normalizes the legacy
 // `deferred` priority to `low`) and only the ID is copied over from the stored
 // nib so the rendered `# <id>` header line matches. It deliberately does NOT go
-// through loadNib, but the two now agree on Type/Priority: loadNib keeps them
+// through loadNib, but the two agree on Type/Priority: loadNib keeps them
 // empty when the file omits them (the "task"/"normal" presentation defaults are
 // applied at the consumption boundary via nib.EffectiveType()/EffectivePriority(),
 // never mutated onto the stored Nib), so a bare-parse render and the in-memory
-// nib.ETag() render the same key set. That is what fixed nibs-7d3o: a priority-
+// nib.ETag() render the same key set. The upshot: a priority-
 // or type-less file — including every nib the CreateNib resolver writes without a
-// priority — no longer false-conflicts on an if-match Update, and the just-created
+// priority — does not false-conflict on an if-match Update, and the just-created
 // (never-Loaded) path still round-trips because its stored nib is likewise empty.
 //
 // loadNib's empty-slice defaults are etag-safe (Render's omitempty renders a nil
@@ -1166,7 +1165,7 @@ func (c *Core) LoadAndUnarchive(id string) (*nib.Nib, error) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 
-	// Find the nib (always loaded since we now include archived nibs)
+	// Find the nib (always loaded — archived nibs are included)
 	b, targetID, err := c.findNibLocked(id)
 	if err != nil {
 		return nil, ErrNotFound

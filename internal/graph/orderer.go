@@ -153,8 +153,7 @@ func (o *Orderer) backfillOrderKeys(nibs []*nib.Nib) {
 
 		// Mutate an OWNED clone from GetForUpdate, never the shared reader pointer
 		// (b is c.nibs[id]): a refused write must not leave the shared in-memory
-		// sibling showing a phantom Order that was never persisted (nibs-twvo, same
-		// class the blocking-side sweep fixed).
+		// sibling showing a phantom Order that was never persisted.
 		// GetForUpdate fails only not-found: the sibling was deleted between the
 		// snapshot above and here (a concurrent external/`serve` delete). It's gone,
 		// so there is nothing to backfill — quietly skip it (not a write failure, and

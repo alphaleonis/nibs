@@ -86,10 +86,10 @@ func TestStatusPickerModel(t *testing.T) {
 	})
 
 	// Regression test for the picker "jump" bug: the modal must render at a
-	// constant height no matter which status is selected. Previously the modal
-	// appended the selected status's raw description with no reserved height, so
-	// landing on a status with a longer, more-wrapped description (e.g.
-	// "deferred") grew the box and made list items jump. We assert equal
+	// constant height no matter which status is selected. The trap is appending
+	// the selected status's raw description with no reserved height — a status
+	// with a longer, more-wrapped description (e.g. "deferred") then grows the
+	// box and makes list items jump. We assert equal
 	// lipgloss height across every status, and call out todo vs deferred
 	// (shortest vs longest description) explicitly.
 	t.Run("modal height is constant across all status selections", func(t *testing.T) {

@@ -283,8 +283,7 @@ func buildCSP(fsys fs.FS) string {
 // would block it, so buildCSP allowlists its exact sha256. That hash is derived
 // at mux-construction time from the *embedded, built* index.html, so it
 // self-maintains: rebuilding the frontend regenerates the served bytes and the
-// hash together, with nothing to hardcode or keep in sync. See nibs-0gqi for
-// the security-headers work item.
+// hash together, with nothing to hardcode or keep in sync.
 func securityHeadersMiddleware(next http.Handler, csp string) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		h := w.Header()

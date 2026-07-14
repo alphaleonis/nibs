@@ -413,7 +413,7 @@ export class EditForm extends BaseForm implements NibFormFields {
 
   get externalChange(): NibSnapshot | null {
     const remote = this.#externalChange;
-    // AC3: once the working copy has converged back to the recorded remote's
+    // Once the working copy has converged back to the recorded remote's
     // field values there is nothing left to resolve — clear the warning even
     // though the etags still differ. This is DERIVED (not one-shot): diverging
     // again re-surfaces it. `save()` applies the SAME convergence check, so the

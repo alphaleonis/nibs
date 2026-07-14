@@ -54,7 +54,7 @@ func inMemETag(t *testing.T, core *nibcore.Core, id string) *string {
 }
 
 // TestFailedUpdateLeavesSharedNibUntouched is the clone-before-mutate regression
-// guard for nibs-twvo (same corruption class as nibs-e9oz). Reader.Get returns
+// guard. Reader.Get returns
 // the SHARED c.nibs[id] pointer; a resolver that mutates it before Writer.Update
 // leaves the in-memory store falsely showing the attempted change when the write
 // is rejected (genuine on-disk etag divergence / a concurrent write to the target
@@ -63,8 +63,8 @@ func inMemETag(t *testing.T, core *nibcore.Core, id string) *string {
 // Each case forces the write to fail by genuinely diverging the mutated nib's
 // on-disk file, then asserts the SHARED in-memory nib (fetched fresh via
 // Reader.Get) still shows its PRE-mutation state — i.e. the failed write left no
-// phantom mutation. Every case is red against the pre-fix mutate-shared-pointer
-// code and green once each site mutates a clone instead.
+// phantom mutation. Every case is red against any site that mutates the shared
+// pointer, green when it mutates a clone.
 func TestFailedUpdateLeavesSharedNibUntouched(t *testing.T) {
 	ctx := context.Background()
 
@@ -324,10 +324,10 @@ func TestFailedUpdateLeavesSharedNibUntouched(t *testing.T) {
 	}
 }
 
-// TestUpdateNibDuplicateBlockingTargetIsIdempotent is the regression guard for
-// nibs-twvo (the Phase-2 stale-pointer bug the sweep introduced).
-// validateAndAddBlocking cached each target's *nib.Nib in Phase 1 and reused it
-// in Phase 2; because a successful Writer.Update installs the CLONE as the new
+// TestUpdateNibDuplicateBlockingTargetIsIdempotent is the stale-pointer
+// regression guard for validateAndAddBlocking. Caching each target's *nib.Nib in
+// Phase 1 and reusing it in Phase 2 is the trap: because a successful
+// Writer.Update installs the CLONE as the new
 // c.nibs[id], the cached pointer is orphaned after the first write. With a
 // DUPLICATE target ID (--blocking is a repeatable flag with no dedup), iteration
 // 2 held the stale pre-mutation pointer, computed a stale if-match, and the write
@@ -515,7 +515,7 @@ Body under edit.
 }
 
 // TestBackfillOrderKeysCorruptSiblingDoesNotFloodStderr is the residual-flood
-// guard for the nibs-twvo review (finding #1). backfillOrderKeys runs on the hot
+// guard. backfillOrderKeys runs on the hot
 // Children/root READ path and re-attempts the best-effort Writer.Update on every
 // read for a sibling that never gets an order key. When that sibling's on-disk
 // file is UNCERTIFIABLE (unparseable/unreadable), computeStoredETag returns

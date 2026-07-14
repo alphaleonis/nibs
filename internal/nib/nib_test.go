@@ -958,7 +958,7 @@ Body text.
 	}
 }
 
-// TestExtraBoolLikeScalarPreserved verifies the nibs-r3y1 fix for finding #3: a
+// TestExtraBoolLikeScalarPreserved pins bool-like scalar fidelity: a
 // YAML-1.1 bool-like unknown scalar (`y` — the "Norway problem") is captured as a
 // raw yaml.v3 string node and re-emitted verbatim as `y`, NOT coerced to a Go
 // bool and re-rendered as `true`. yaml.v3 resolves `y` as a string under the YAML
@@ -1165,7 +1165,7 @@ Body.
 // TestExtraPassthroughFixedPoint verifies that arbitrary unknown front-matter
 // keys are a TRUE parse->render fixed point AND that their values are preserved
 // verbatim (not re-inferred) — closing the whole yaml-1.1<->1.2 scalar-coercion
-// class (nibs-r3y1 findings #3 bool-like coercion and #4 signed-zero
+// class (bool-like coercion and signed-zero
 // oscillation). Because Extra is captured as raw yaml.v3 nodes and re-emitted
 // verbatim, no scalar-type re-inference happens on either the parse or the
 // render side.
@@ -1268,7 +1268,7 @@ func TestExtraPassthroughFixedPoint(t *testing.T) {
 	}
 }
 
-// TestExtraAnchorAliasResolvedToFixedPoint covers nibs-r3y1 finding #2: a YAML
+// TestExtraAnchorAliasResolvedToFixedPoint covers cross-boundary aliases: a YAML
 // anchor on a MODELED field combined with an alias in an unmodeled (Extra) key
 // parses fine, but if the alias survives into Render, yaml.Marshal emits a
 // DANGLING alias (`*t`) — the modeled field decoded to a plain Go value dropped

@@ -4,8 +4,8 @@ import { typeIcons } from "./icons";
 
 // The web type icons mirror the canonical config/TUI types (internal/config/config.go
 // DefaultTypes) so every nib type renders an icon colored from its --type-* token.
-// nibs-159v: research must be present (previously rendered iconless) and the domain
-// color tokens must stay wired to the TUI hues.
+// research must be present — a missing entry renders the type iconless — and the
+// domain color tokens must stay wired to the TUI hues.
 describe("typeIcons", () => {
   it("covers every canonical config type, including research", () => {
     for (const type of ["milestone", "epic", "bug", "feature", "task", "research"]) {

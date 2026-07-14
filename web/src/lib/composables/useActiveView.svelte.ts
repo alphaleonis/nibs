@@ -42,7 +42,7 @@ import type { HistoryNav } from "./useHistoryNav.svelte";
  * The user's choice at the dirty-nav guard. Tri-state so the guard
  * can offer Save alongside Discard/Cancel:
  *   - "save"    — persist the buffer, then (on success) proceed with the nav.
- *   - "discard" — drop the edits and proceed with the nav (the original behavior).
+ *   - "discard" — drop the edits and proceed with the nav.
  *   - "cancel"  — keep the edits and stay put.
  */
 export type ConfirmChoice = "save" | "discard" | "cancel";
@@ -318,7 +318,7 @@ export function createActiveView(deps: ActiveViewDeps): ActiveView {
         // its own (now rebaselined-clean) buffer falls through to navigate.
         if (form !== saved) return false;
       }
-      // "discard" — abandon the buffer and proceed (the original behavior).
+      // "discard" — abandon the buffer and proceed.
     }
     apply(action);
     return true;

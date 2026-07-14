@@ -156,7 +156,7 @@ func TestUpdateNibParentNullClears(t *testing.T) {
 	}
 }
 
-// TestUpdateNibNoOpTypePreservesInvalidParent pins the fix for nibs-abo2: a nib
+// TestUpdateNibNoOpTypePreservesInvalidParent pins no-op type handling: a nib
 // that already has a pre-existing INVALID parent (e.g. a bug parented under a
 // feature — a state the resolver never created but the fixture generator and
 // core.Create can) must still be editable. The web edit form always sends `type`
@@ -254,7 +254,7 @@ func TestUpdateNibNoOpTypePreservesInvalidParentTypeless(t *testing.T) {
 }
 
 // TestUpdateNibRealInvalidatingTypeChangeStillErrors is the companion guard to
-// TestUpdateNibNoOpTypePreservesInvalidParent: the nibs-abo2 fix gates parent
+// TestUpdateNibNoOpTypePreservesInvalidParent: the resolver gates parent
 // re-validation on an ACTUAL type change, so we must confirm a genuine
 // type change that invalidates the existing parent is STILL rejected. A direct
 // resolver call is used because execUpdateNibParent fatals on any mutation error.

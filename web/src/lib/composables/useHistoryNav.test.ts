@@ -89,7 +89,7 @@ describe("useHistoryNav", () => {
     // `selectedNibId === id`, skipping select()'s focus/anchor resync.
     // No duplicate history entry (selectedNibId is already "a")...
     expect(history.calls).toEqual([]);
-    // ...but select() re-ran and resynced focus back to "a" (pre-fix left it "b").
+    // ...but select() must still re-run and resync focus back to "a".
     expect(selection.focusedNibId).toBe("a");
     expect(selection.selectedNibId).toBe("a");
   });

@@ -35,7 +35,7 @@ var viewSets = map[View][]Field{
 }
 
 // fullViewFields is every scalar + relation field, in menu order (excludes the
-// computed fields, which are opt-in like body/etag used to be).
+// computed fields, which are opt-in).
 func fullViewFields() []Field {
 	out := make([]Field, 0, len(registry))
 	for _, d := range registry {

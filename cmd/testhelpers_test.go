@@ -30,8 +30,6 @@ import (
 //     the bound var leaves Value populated).
 //   - The pflag Changed bit (matters for MarkFlagsMutuallyExclusive
 //     and any future code that consults Visit).
-//
-// Tracked by nibs-p55x.
 func resetRootPersistentFlags() {
 	nibsPath = ""
 	configPath = ""

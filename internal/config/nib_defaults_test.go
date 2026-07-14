@@ -11,8 +11,8 @@ import (
 // nib.DefaultPriority — the fallbacks applied at the consumption boundary for a
 // file that omits `type:`/`priority:`) and this package's type/priority enums.
 //
-// The nib package cannot import config (the nib->config layering edge was removed
-// alongside resolvedStatuses), so it hardcodes "task"/"normal". This test lives
+// The nib package cannot import config (that would create a nib->config layering
+// edge), so it hardcodes "task"/"normal". This test lives
 // here — config CAN import nib — to pin those two definitions equal, so a future
 // change to the enums (or the constants) cannot silently diverge them.
 func TestNibPresentationDefaultsMatchConfig(t *testing.T) {

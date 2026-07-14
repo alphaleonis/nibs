@@ -910,7 +910,8 @@ describe("ActiveNibView", () => {
       await user.click(screen.getByTestId("anv-save"));
 
       // The success toast must never announce nib B's id for a save that
-      // targeted nib A (the old code read the live derived nibId after the await).
+      // targeted nib A — the toast must use the nibId captured BEFORE the await,
+      // not the live derived value, which a mid-flight swap retargets.
       expect(mockToastSuccess).not.toHaveBeenCalledWith("Updated nibs-B");
     });
   });

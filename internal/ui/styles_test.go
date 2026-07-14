@@ -425,8 +425,7 @@ func TestShortStatus_NoCollisions(t *testing.T) {
 
 // TestRenderNibRow_DeferredStatusCell locks in that a "deferred" nib renders a
 // visible, config-colored status cell — never blank, never the "?" unknown
-// marker, and never dimmed like an archived nib. "deferred" was added to config
-// in a prior slice; this guards the full TUI render chain
+// marker, and never dimmed like an archived nib. This guards the full TUI render chain
 // (GetNibColors -> ShortStatus -> RenderStatusTextWithColor) against a
 // regression that would drop the status glyph.
 func TestRenderNibRow_DeferredStatusCell(t *testing.T) {

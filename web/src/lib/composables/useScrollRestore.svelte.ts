@@ -12,10 +12,8 @@
  * module owns the ordering logic that keeps the fresh container's scrollTop=0
  * from clobbering the saved value before the initial restore has run.
  *
- * Coordination model (nibs-72sf redesign — replaces the one-shot `suppressNextScroll`
- * boolean that was patched in four consecutive reviews). Two INDEPENDENT pieces of
- * state, each self-describing so no entry point can leave the other misattributed
- * to the wrong element:
+ * Coordination model. Two INDEPENDENT pieces of state, each self-describing so no
+ * entry point can leave the other misattributed to the wrong element:
  *
  *   ownedEl           the element we've taken over — restore() applied the saved
  *                     offset to it, OR claim() adopted it after ensureVisible.
@@ -29,14 +27,14 @@
  *                     never user intent — so onScroll skips persisting it. Because
  *                     the record carries its own element, a write stranded on a
  *                     torn-down container can NEVER be mistaken for a live
- *                     container's echo. That cross-element bleed — one closure
- *                     boolean standing in for "was the next scroll ours" — was the
- *                     root the four findings kept re-surfacing.
+ *                     container's echo. A single closure boolean standing in for
+ *                     "was the next scroll ours" cannot say WHICH element a write
+ *                     belongs to; element-keying the record is what closes that
+ *                     cross-element bleed.
  *
  * The single rule: onScroll persists a scroll UNLESS it exactly reproduces our last
- * programmatic write to the same element. That one rule subsumes all three earlier
- * patches — clamped-echo suppression, no-op-strand avoidance, and claim()
- * flag-normalization — because a no-op or clamped write simply produces a lastWrite
+ * programmatic write to the same element. That one rule covers clamped echoes,
+ * no-op strands, and claim(): a no-op or clamped write simply produces a lastWrite
  * whose (el, top) a genuine user scroll cannot match.
  */
 export function useScrollRestore(opts: {
@@ -95,9 +93,8 @@ export function useScrollRestore(opts: {
     //
     // claim() performs NO programmatic write of its own, so it arms no echo — and
     // because lastWrite is element-keyed, any record stranded from a prior container
-    // is inert here (its el can't equal this container). That is what makes the
-    // recurring "claim() didn't normalize the suppress flag" bug structurally
-    // impossible rather than one-more-patch away.
+    // is inert here (its el can't equal this container). Element-keying is what
+    // removes any need for claim() to normalize a suppress flag.
     //
     // What this guarantees vs. the restore() effect is order-dependent, not
     // absolute: the target row ends up VISIBLE either way, but the exact resting

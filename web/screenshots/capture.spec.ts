@@ -115,7 +115,7 @@ test("context menu", async ({ page }) => {
 });
 
 test("add-child type picker — anchored, over an open detail view", async ({ page }) => {
-  // nibs-fkby: the picker is an anchored popover (with type icons) that overlays
+  // The picker is an anchored popover (with type icons) that overlays
   // the app; opening it must NOT hide the detail view. Use an epic (>=2 valid
   // child types) so the picker actually appears instead of creating directly.
   await openApp(page);

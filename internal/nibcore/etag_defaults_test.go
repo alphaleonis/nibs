@@ -43,8 +43,8 @@ updated_at: 2026-01-02T03:04:05Z
 Body.
 `
 
-// TestETagNoFalseConflictOnMissingDefault is the primary regression for
-// nibs-7d3o: a nib LOADED from a file that omits a presentation-defaulted field
+// TestETagNoFalseConflictOnMissingDefault is the primary regression guard:
+// a nib LOADED from a file that omits a presentation-defaulted field
 // (`priority:` or `type:`) must have Get().ETag() equal to CurrentETag() (no
 // false conflict), an if-match Update using the Get() etag must succeed with no
 // concurrent on-disk change, AND that Update must NOT persist the default back to
@@ -113,10 +113,10 @@ func TestETagNoFalseConflictOnMissingDefault(t *testing.T) {
 	}
 }
 
-// TestETagJustCreatedOmittingPriorityRoundTrips pins the nibs-znt8 fix: a nib
+// TestETagJustCreatedOmittingPriorityRoundTrips pins the create path: a nib
 // created in-session WITHOUT a priority (never Loaded) must still round-trip an
-// immediate if-match Update. Removing loadNib's synthesis must not regress this
-// path — Create keeps Priority empty, Render omits it, and the bare-parse stored
+// immediate if-match Update. loadNib synthesizes no defaults, so this path must
+// hold on its own — Create keeps Priority empty, Render omits it, and the bare-parse stored
 // etag equals the in-memory etag.
 func TestETagJustCreatedOmittingPriorityRoundTrips(t *testing.T) {
 	nibsDir := setupNibsDir(t)

@@ -592,8 +592,8 @@ func TestNewVisualTakesPrecedence(t *testing.T) {
 	}
 }
 
-// TestNewCommandNameAndAliases pins the rename: the primary command is `new`
-// and the old names remain reachable as aliases.
+// TestNewCommandNameAndAliases pins the command surface: the primary command is
+// `new`, with `create` and `c` reachable as aliases.
 func TestNewCommandNameAndAliases(t *testing.T) {
 	if got := newCmd.Name(); got != "new" {
 		t.Errorf("command name = %q, want %q", got, "new")
@@ -607,8 +607,7 @@ func TestNewCommandNameAndAliases(t *testing.T) {
 	}
 }
 
-// TestCreateAliasStillCreates verifies the historical `create` name still
-// creates a nib through the alias.
+// TestCreateAliasStillCreates verifies the `create` alias creates a nib.
 func TestCreateAliasStillCreates(t *testing.T) {
 	nibsDir := setupNewTest(t)
 	t.Setenv("EDITOR", "")

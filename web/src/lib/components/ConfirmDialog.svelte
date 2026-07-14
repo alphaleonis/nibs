@@ -14,7 +14,7 @@
     /** Opt-in secondary "Save" action. When provided, the dialog
      *  renders a primary Save button in addition to the confirm (Discard) button
      *  — used only by the dirty-nav guard. Omitted (undefined) for Delete/Archive
-     *  confirms, which then render exactly as before (no Save button). */
+     *  confirms, which render no Save button. */
     onsave?: () => void;
     saveLabel?: string;
   }

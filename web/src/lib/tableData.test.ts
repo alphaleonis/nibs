@@ -463,7 +463,7 @@ describe("buildTableData", () => {
         // "No epic" bucket. flatten() threads ONE displayParentId to every child
         // of a node, so both siblings get the identical value (null — the bucket's
         // OWN display parent). This is the structural home of the symmetric
-        // nibs-m1my property that moved out of useTreeDrag: a reorder between two
+        // same-container property: a reorder between two
         // such siblings reads sourceParentId === targetParentId → a same-parent
         // reorder, never a re-root. The EQUAL assertion pins that symmetric
         // property (both siblings share one container); the toBeNull assertion is

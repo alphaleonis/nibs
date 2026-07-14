@@ -70,8 +70,8 @@ func BenchmarkFindMentionedBy_WithIndex(b *testing.B) {
 	}
 }
 
-// BenchmarkFindMentionedBy_PureFunction measures the old O(N × body) path
-// (the pure-function oracle that still exists in the package).
+// BenchmarkFindMentionedBy_PureFunction measures the O(N × body) pure-function
+// oracle, the index-free baseline the cached path is compared against.
 func BenchmarkFindMentionedBy_PureFunction(b *testing.B) {
 	nibs, target := buildMentionFixture(b, 500, 5)
 

@@ -337,7 +337,7 @@ func (r *mutationResolver) UpdateNib(ctx context.Context, id string, input model
 		r.removeBlockedByRelationships(b, input.RemoveBlockedBy)
 	}
 
-	// ETag validation now happens inside Update() under write lock.
+	// ETag validation happens inside Update() under write lock.
 	// Writer.Update replaces the in-memory pointer with b (the clone).
 	if err := r.Writer.Update(b, input.IfMatch); err != nil {
 		return nil, err
@@ -415,7 +415,7 @@ func (r *mutationResolver) SetParent(ctx context.Context, id string, parentID *s
 		return nil, err
 	}
 
-	// ETag validation now happens inside Update() under write lock
+	// ETag validation happens inside Update() under write lock
 	if err := r.Writer.Update(b, ifMatch); err != nil {
 		return nil, err
 	}

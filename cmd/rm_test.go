@@ -93,9 +93,9 @@ func TestRmDeleteForce(t *testing.T) {
 	}
 }
 
-// TestRmRefusesWithoutForceNonInteractive is the key contract change: a
-// non-interactive caller (no TTY) that omits -f gets a clear VALIDATION error
-// instead of the old silent Cancel-but-exit-0 behavior. withStdin forces a
+// TestRmRefusesWithoutForceNonInteractive is the contract: a non-interactive
+// caller (no TTY) that omits -f gets a clear VALIDATION error — the trap is
+// silently canceling and exiting 0. withStdin forces a
 // non-terminal stdin so the test is deterministic regardless of how it is run.
 func TestRmRefusesWithoutForceNonInteractive(t *testing.T) {
 	nibsDir := setupRmTest(t, map[string]string{

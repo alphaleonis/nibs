@@ -154,6 +154,6 @@ func AvailableColumnsString() string {
 	return strings.Join(names, ", ")
 }
 
-// availableNames is the internal alias used in error messages. Kept as a
-// thin wrapper so the historical name appears at error-message sites.
+// availableNames is a short alias for AvailableColumnsString used at
+// error-message sites.
 func availableNames() string { return AvailableColumnsString() }

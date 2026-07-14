@@ -56,13 +56,12 @@ func isNilValue(v any) bool {
 // clone, and writes it — the SHARED c.nibs[id] pointer is never mutated. A
 // rejected Writer.Update (genuine on-disk etag divergence, or a concurrent write
 // to the target between its fetch and its Update) therefore leaves the shared
-// in-memory nib untouched instead of showing a phantom mutation (nibs-twvo; same
-// corruption class nibs-e9oz fixed for activateParentChain).
+// in-memory nib untouched instead of showing a phantom mutation.
 //
 // Sourcing the clone from GetForUpdate makes the fetch FRESH per call: with a
 // duplicate target id, a second invocation re-reads the now-updated c.nibs[id]
 // (installed by the first Update) rather than reusing a stale pre-mutation
-// pointer, preserving the twvo fix inherently.
+// pointer.
 //
 // The if-match is the target's PRE-mutation ETag, computed from the fresh clone
 // before mutate runs — equivalent to the shared nib's current etag since the
@@ -280,11 +279,10 @@ func (r *Resolver) activateParentChain(childID, parentID string) {
 		// on-disk file omits created_at/updated_at (loadNib synthesizes those from
 		// the file's mtime while the stored etag bare-parses), spuriously dropping
 		// activation for such hand-authored files. The priority/type axis of this
-		// false-conflict is fixed (nibs-7d3o: loadNib keeps a default-omitting nib's
-		// Type/Priority empty, so a missing priority:/type: line no longer diverges).
-		// Do NOT substitute CurrentETag here — that reintroduces the
-		// reverted lost-update/data-loss regression (see nibs-znt8/nibs-7d3o,
-		// guarded by TestActivateParentChainGenuineDivergenceIsRefused).
+		// false-conflict does not arise: loadNib keeps a default-omitting nib's
+		// Type/Priority empty, so a missing priority:/type: line does not diverge.
+		// Do NOT substitute CurrentETag here — that causes a lost-update/data-loss
+		// regression (guarded by TestActivateParentChainGenuineDivergenceIsRefused).
 		parentETag := parent.ETag()
 		updated, err := r.Reader.GetForUpdate(parentID)
 		if err != nil {

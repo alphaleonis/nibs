@@ -54,11 +54,10 @@ func createTestNib(t *testing.T, core *nibcore.Core, id, title, status string) *
 	return b
 }
 
-// TestNibFieldResolversApplyPresentationDefaults pins the behavior-preservation
-// contract for nibs-7d3o: the stored Nib keeps Type/Priority EMPTY when the file
+// TestNibFieldResolversApplyPresentationDefaults pins the split between stored
+// and presented values: the stored Nib keeps Type/Priority EMPTY when the file
 // omits them (so the etag witnesses the on-disk bytes), but the non-nullable
-// GraphQL fields must still resolve the "task"/"normal" presentation defaults —
-// exactly what a client saw before loadNib stopped synthesizing them. Uses a
+// GraphQL fields must still resolve the "task"/"normal" presentation defaults. Uses a
 // fresh Core.Load to exercise the reload path where the false-conflict bug lived.
 func TestNibFieldResolversApplyPresentationDefaults(t *testing.T) {
 	tmpDir := t.TempDir()

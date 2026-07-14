@@ -84,7 +84,7 @@ func runContextJSON(t *testing.T, cfgPath, nibsDir, idArg string) contextOutput 
 	return got
 }
 
-// TestContextCommand_ShortIDResolves is the regression test for nibs-h5nm:
+// TestContextCommand_ShortIDResolves pins short-id resolution:
 // `context <short-id>` must resolve to the same nib as `context <full-id>`,
 // with no "nib not found" warning and identical summary content.
 func TestContextCommand_ShortIDResolves(t *testing.T) {

@@ -160,7 +160,7 @@
   // When a client-side filter narrows the dataset, any previously multi-selected
   // nib that no longer matches must be dropped from the selection — otherwise a
   // bulk mutation or multi-drag silently targets rows the user can no longer see
-  // (nibs-mpkm; drag stays enabled under hide-filters, so this is reachable). The
+  // (drag stays enabled under hide-filters, so this is reachable). The
   // "matching set" is strictly `matchesFilter` (dimmed ancestors shown only for
   // tree context are excluded); with no client filters active matchesFilter() is
   // true for everything, so nothing is pruned — collapsing a parent never
@@ -198,7 +198,7 @@
     // The nib isn't in the dataset. Two distinct cases must NOT be conflated:
     //   - Query still loading (cold deep-link fires syncFromUrl before the
     //     GraphQL result lands, so allNibs is []): keep the pending request so
-    //     the expand/scroll runs once data arrives (nibs-58c3 AC3). Reading
+    //     the expand/scroll runs once data arrives. Reading
     //     $result.fetching also subscribes the effect to re-run on settle.
     //   - Query settled and the nib is genuinely absent (archived/bad URL):
     //     clear and bail — there is nothing to scroll to.
@@ -255,8 +255,8 @@
         tr.scrollIntoView({ block: "nearest" });
         // Persist the deep-link offset synchronously AND claim the container, so
         // the restore effect can't reset this scroll and a refetch that unmounts
-        // the container before the async scroll event can't lose it (nibs-n47p
-        // review #1). claim() self-locates the live container via getScrollContainer().
+        // the container before the async scroll event can't lose it.
+        // claim() self-locates the live container via getScrollContainer().
         scrollRestore.claim();
       }
     }

@@ -118,7 +118,7 @@ export class MutationDispatcher {
 
     if (res.error) {
       // The caller can opt to OWN the messaging for this call (e.g. save()
-      // routing a 409 into the inline resolver); otherwise toast as before.
+      // routing a 409 into the inline resolver); otherwise toast the error here.
       if (!suppressToast) toast.error(res.error.message);
       return { ok: false, error: res.error.message, errorCode: errorCodeOf(res.error) };
     }

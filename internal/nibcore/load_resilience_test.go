@@ -11,7 +11,7 @@ import (
 	"github.com/alphaleonis/nibs/internal/config"
 )
 
-// TestLoadSkipsUnparseableFiles covers nibs-r3y1 finding #1: yaml.v3 hard-errors
+// TestLoadSkipsUnparseableFiles covers duplicate-key resilience: yaml.v3 hard-errors
 // on a duplicate front-matter key (both a modeled key and an unmodeled/Extra
 // key), where yaml.v2 silently took last-wins. loadFromDisk must NOT abort the
 // whole WalkDir on one such file — a single pre-existing malformed nib must
@@ -124,9 +124,9 @@ Body dup-extra.
 	}
 }
 
-// TestLoadSkipsManyKeyFrontMatterDoS covers nibs-r3y1 review #1: a crafted
+// TestLoadSkipsManyKeyFrontMatterDoS covers the key-count DoS: a crafted
 // front-matter block with an excessive key count parses successfully but is
-// O(N²) in yaml.v3, so nib.Parse now caps it with a normal error. loadFromDisk
+// O(N²) in yaml.v3, so nib.Parse caps it with a normal error. loadFromDisk
 // must log-and-skip that file (fast) rather than hang, while still loading the
 // valid nibs beside it. Generation is bounded (a few thousand short keys) so the
 // test's own footprint stays tiny; nib.Parse rejects it before the quadratic

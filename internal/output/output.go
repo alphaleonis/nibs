@@ -26,8 +26,8 @@ var ErrAlreadyReported = errors.New("already reported to stdout")
 // single-stream text line (TextError) — so the boundary must NOT also print
 // "Error: <msg>" to stderr (that would duplicate the report and corrupt
 // callers piping `2>&1 | jq`). A reported CodedError therefore satisfies
-// errors.Is(err, ErrAlreadyReported), preserving the historical sentinel
-// contract. The sentinel name never surfaces in Error() output — only the
+// errors.Is(err, ErrAlreadyReported). The sentinel name never surfaces in
+// Error() output — only the
 // original message does.
 //
 // Err (optional) is the wrapped cause. Unwrap exposes it so callers'

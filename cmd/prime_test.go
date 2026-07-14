@@ -58,14 +58,14 @@ func TestFullPromptEnumsRender(t *testing.T) {
 	}
 }
 
-// TestFullPromptIsMateriallyShorter pins that the rewrite stayed materially
-// under the 343-line pre-rewrite guide (the projection/catalog model replaced
-// most of the old prose).
+// TestFullPromptIsMateriallyShorter pins a hard ceiling on the full guide: it
+// must stay under 300 lines, so the projection/catalog model keeps carrying the
+// reference weight instead of inlined prose.
 func TestFullPromptIsMateriallyShorter(t *testing.T) {
 	out := renderedFullPrompt(t)
 	lines := strings.Count(out, "\n")
 	if lines >= 300 {
-		t.Fatalf("full guide is %d lines; expected materially < 343", lines)
+		t.Fatalf("full guide is %d lines; expected < 300", lines)
 	}
 }
 

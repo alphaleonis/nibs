@@ -548,10 +548,10 @@ status: todo
 	})
 
 	t.Run("defers migration when a blocking target's file was skipped (no edge loss)", func(t *testing.T) {
-		// nibs-r3y1 review #2: a v0 nib A with blocking:[B] must NOT lose that edge
-		// when B's file is unparseable at load time. Pre-fix, loadFromDisk skipped B
-		// and migrateV0ToV1 still cleared+persisted A with `blocking:` erased —
-		// irrecoverable. A must instead stay v0 with Blocking intact (memory AND
+		// A v0 nib A with blocking:[B] must NOT lose that edge when B's file is
+		// unparseable at load time. The trap: loadFromDisk skips B, and migrating A
+		// anyway would clear+persist it with `blocking:` erased — irrecoverable.
+		// A must instead stay v0 with Blocking intact (memory AND
 		// disk) so a later clean Load completes the migration.
 		tmpDir := t.TempDir()
 		nibsDir := filepath.Join(tmpDir, NibsDir)
@@ -643,7 +643,7 @@ Body B.
 	})
 
 	t.Run("chain A->B->C: deferred middle nib still receives sibling blockedBy transfer (lossless convergence)", func(t *testing.T) {
-		// nibs-r3y1 review #1 (FINAL pass): in a v0 chain A blocking:[B],
+		// In a v0 chain A blocking:[B],
 		// B blocking:[C] where only C's file is skipped, B is deferred for its OWN
 		// edge (B→C) yet A's migration still transfers A→B onto B and re-persists
 		// B. This contradicts a naive "deferred nib's file is untouched" reading,

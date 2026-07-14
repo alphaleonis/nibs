@@ -117,8 +117,8 @@ func swapFrontMatterLines(t *testing.T, path, keyA, keyB string) {
 	}
 }
 
-// TestActivateParentChainBenignDriftActivates covers the original nibs-e9oz bug,
-// which nibs-znt8 fixed by canonicalizing the stored etag: a todo parent whose
+// TestActivateParentChainBenignDriftActivates pins benign-drift activation,
+// which depends on the stored etag being canonicalized: a todo parent whose
 // on-disk file is canonically equivalent to (but not byte-identical with) its
 // in-memory form must still auto-activate when a child starts, with no false
 // etag mismatch and no stderr warning.

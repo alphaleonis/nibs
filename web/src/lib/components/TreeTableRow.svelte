@@ -73,8 +73,9 @@
   // Single source of truth for the row opacity, applied inline below. Multiple
   // states can be active at once, so precedence is made explicit here rather
   // than left to CSS inline-vs-class specificity + stylesheet declaration order
-  // (which previously made `.blocked-dim` a dead class and left the delete
-  // fade-out one reorder away from breaking). Precedence, strongest first:
+  // (which cannot express this precedence reliably — leaving it to CSS silently
+  // kills `.blocked-dim` and puts the delete fade-out one reorder away from
+  // breaking). Precedence, strongest first:
   //   fading (0)      — a deleted row MUST fully fade to 0; it wins over all.
   //   dragged (0.3)   — the dragged source row recedes while in flight.
   //   dimmed (0.4)    — filter-context fade for non-matching rows.
@@ -83,7 +84,7 @@
   // Only `fading` carries a transition (see `.nib-fading` in the style block);
   // every other rank is instant. The value is applied inline on the row, and the
   // normal rank (1) is written as *no* inline opacity (the CSS default) so an
-  // undimmed row stays DOM-identical to before this single-sourcing.
+  // undimmed row carries no inline opacity attribute at all.
   const rowOpacity = $derived(
     fading ? 0 :
     isDragged ? 0.3 :

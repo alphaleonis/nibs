@@ -120,8 +120,7 @@ type relEnvelope struct {
 
 func decodeRelEnvelope(t *testing.T, raw string) relEnvelope {
 	t.Helper()
-	// The flat envelope must never carry a per-rel "relations" key — that was
-	// the old grouped shape.
+	// The envelope is a flat list: it must never carry a per-rel "relations" key.
 	if strings.Contains(raw, `"relations"`) {
 		t.Fatalf("rel envelope should not contain a relations key; got:\n%s", raw)
 	}

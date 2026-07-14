@@ -222,8 +222,8 @@
   });
 
   // External-value sync: when the incoming `initialValue` changes
-  // out-of-band (e.g. a rendered task-checkbox flip in the parent, which no
-  // longer remounts us) reconcile the editor doc via a transaction rather than a
+  // out-of-band (e.g. a rendered task-checkbox flip in the parent, which does
+  // not remount us) reconcile the editor doc via a transaction rather than a
   // remount — this preserves undo history and selection.
   //
   // ECHO-LOOP GUARD: the editor's own updateListener fires onchange on user

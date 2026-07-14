@@ -50,7 +50,7 @@ describe("storage", () => {
     expect(loaded).toEqual({ filter: { search: "old" }, viewLevel: "none", theme: "graphite" });
   });
 
-  // Legacy `excludeStatus` (the retired hide-completed negative filter, nibs-ni1v)
+  // Legacy `excludeStatus` (the retired hide-completed negative filter)
   // must never survive into the loaded filter. When no explicit status include-list
   // is present it is translated to the equivalent include-list (all statuses except
   // the excluded ones); otherwise it is simply dropped (status is the single source

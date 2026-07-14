@@ -6,8 +6,7 @@ import { toast } from "svelte-sonner";
  * Success shows a confirmation toast; failure (e.g. clipboard permission
  * denied, or an insecure context where `navigator.clipboard` is unavailable)
  * shows an error toast. The promise always resolves — callers do not need to
- * handle rejection. Behavior matches the "Copy ID" action originally inlined
- * in RowContextMenu.
+ * handle rejection.
  */
 export async function copyToClipboard(text: string): Promise<void> {
   try {

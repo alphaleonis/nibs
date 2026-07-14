@@ -420,7 +420,7 @@
     {#if hasKeyword}
       <!-- Clear button. Plain action button: TooltipButton spreads the tooltip
            props then lets our explicit onclick OVERRIDE. This drops the tooltip's
-           own close-on-click handler (previously chained by a bare Tooltip.Trigger),
+           own close-on-click handler,
            which is safe here: clearKeyword sets search=undefined, so this button
            unmounts via {#if hasKeyword} and bits-ui's trigger-unregister cleanup
            closes the tooltip anyway. Styled via the shared buttonVariants primitive
@@ -452,11 +452,10 @@
       </DropdownMenu.Trigger>
       <DropdownMenu.Content align="start">
         {#if dd.id === "state"}
-          <!-- Quick presets that OVERWRITE the status include-list.
-               Replaces the retired standalone hide-completed toggle: "Open" shows
-               active work, "Open + deferred" mirrors the old hide-completed
-               (everything except completed + scrapped). The per-status checkboxes
-               below remain for precise tweaking. -->
+          <!-- Quick presets that OVERWRITE the status include-list. "Open" shows
+               active work; "Open + deferred" shows everything except completed +
+               scrapped. The per-status checkboxes below remain for precise
+               tweaking. -->
           <DropdownMenu.Label class="text-label text-muted-foreground">Presets</DropdownMenu.Label>
           <DropdownMenu.Item
             data-testid="state-preset-open"

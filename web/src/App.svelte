@@ -88,9 +88,8 @@
   // warning-clean; every read is lazy (after construction).
   const holder: { view: ActiveView | null } = { view: null };
 
-  // isBlocked reads view.blocksHistoryNav (dirty buffer / open type picker),
-  // replacing the old "modal open" check. While blocked, Back/Forward must not
-  // navigate the panel behind it.
+  // isBlocked reads view.blocksHistoryNav (dirty buffer / open type picker).
+  // While blocked, Back/Forward must not navigate the panel behind it.
   const nav = createHistoryNav({
     selection,
     isBlocked: () => holder.view?.blocksHistoryNav ?? false,

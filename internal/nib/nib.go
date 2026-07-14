@@ -206,14 +206,14 @@ type Nib struct {
 	// (`y`/`yes`/`no`/`on`/`off`, kept as strings) and signed-zero floats (`-0.0`,
 	// kept verbatim rather than collapsing to `0`). parse->render is a fixed point,
 	// so the render — and thus the etag — is stable and never self-conflicts (a
-	// TRUE fixed point; nibs-r3y1).
+	// TRUE fixed point).
 	//
 	// Non-scalar FORMATTING is NOT byte-preserved: block-scalar indentation is
 	// normalized (a 2-space `|` block re-emits at 4 spaces), a standalone/head
 	// comment on its own line above a key is dropped (it attaches to the key node,
 	// which the inline map does not capture), and a cross-boundary anchor/alias is
 	// RESOLVED to its concrete value at parse time, not preserved (see
-	// resolveExtraAliases / nibs-r3y1 #2). Fidelity is a guarantee about scalar
+	// resolveExtraAliases). Fidelity is a guarantee about scalar
 	// values, not about arbitrary source formatting.
 	//
 	// Not exposed over the GraphQL/JSON surface (json:"-"). yaml.v3 sorts inline-
@@ -371,14 +371,14 @@ type frontMatter struct {
 // The stored Nib keeps Type/Priority EMPTY when the file omits them: Render
 // carries `omitempty` on both, so the canonical render — and thus the etag —
 // stays a faithful witness of the on-disk bytes. If loadNib synthesized these
-// in memory (as it once did), a bare-parse of the same file would render no
+// in memory, a bare-parse of the same file would render no
 // such key while the in-memory ETag() would render the default, diverging with
 // no on-disk change and false-conflicting an if-match Update. The
 // defaults are therefore applied only at the consumption boundary (GraphQL
 // field resolvers, sort/filter, TUI/CLI display, the JSON projection).
 //
-// They live in the nib package (not config) to avoid the nib->config layering
-// edge removed alongside resolvedStatuses; the values intentionally match
+// They live in the nib package (not config) to avoid a nib->config layering
+// edge; the values intentionally match
 // config's default type ("task") and priority ("normal"). config's DefaultTypes
 // and DefaultPriorities remain the source for the full enum and colors — these
 // two constants only name the fallback member of each, and a guard test in the
@@ -821,8 +821,7 @@ func (b *Nib) ETag() string {
 // The stored Nib keeps Type/Priority empty when the file omits them (so the etag
 // witnesses the on-disk bytes — see DefaultType). The JSON surface, however, must
 // present the effective value ("task"/"normal") so it agrees with the GraphQL
-// field resolvers and with the pre-nibs-7d3o behavior (loadNib used to synthesize
-// these). We marshal a value COPY with the effective values applied, leaving the
+// field resolvers. We marshal a value COPY with the effective values applied, leaving the
 // receiver — and thus b.ETag(), computed from the raw Render() — untouched.
 func (b *Nib) MarshalJSON() ([]byte, error) {
 	type NibAlias Nib // Avoid infinite recursion

@@ -43,7 +43,7 @@ func execUpdateNib(t *testing.T, resolver *Resolver, variables map[string]any) {
 	}
 }
 
-// TestUpdateNibNullClearsField pins nibs-qijw: an explicit JSON `null` for a
+// TestUpdateNibNullClearsField pins null-vs-omit semantics: an explicit JSON `null` for a
 // clearable optional string field (priority/estimate) must CLEAR the stored
 // value, while an OMITTED field must leave it unchanged. Driven through the
 // real executor because the null-vs-omit distinction only exists on the wire —

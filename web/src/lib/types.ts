@@ -135,7 +135,7 @@ export const FONT_SCALES: Record<FontSize, number> = { small: 0.9, medium: 1, la
 
 // Whether the editor's side-by-side Preview pane is shown while editing a nib
 // body. Persisted so the on/off choice survives remounts (docked↔expanded) and
-// sessions. Defaults to on (matches the original local-state default).
+// sessions. Defaults to on.
 export const DEFAULT_PREVIEW_OPEN = true;
 
 // How the "blocked" state is emphasized in the tree row + ActiveNibView header:

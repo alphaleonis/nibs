@@ -3,7 +3,7 @@
  *
  * No DOM, no runes — just the orientation mapping and the px<->% conversions
  * that the reactive shell (`detailPaneLayout.svelte.ts`) and the App component
- * wire into PaneForge. Extracted from App.svelte so the sizing math is
+ * wire into PaneForge. Kept free of DOM and runes so the sizing math is
  * unit-testable without mounting a component.
  *
  * The detail pane docks either at the RIGHT (horizontal split, size axis =

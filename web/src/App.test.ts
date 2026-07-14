@@ -135,7 +135,7 @@ describe("App", () => {
     render(App);
 
     // Default prefs resolve to the dark Graphite palette, so App's $effect adds
-    // `.dark` to <html> (index.html no longer hardcodes it — nibs-fen5).
+    // `.dark` to <html> — index.html does not hardcode it.
     expect(document.documentElement.classList.contains("dark")).toBe(true);
 
     // Dark theme shell: has the app title with project name
@@ -337,8 +337,8 @@ describe("App", () => {
     await user.type(searchInput, "bug");
     expect(searchInput).toHaveValue("bug");
 
-    // Hide completed via the State-facet "Open + deferred" preset (the toggle it
-    // replaced, nibs-ni1v): open the State dropdown, then click the preset.
+    // Hide completed via the State-facet "Open + deferred" preset: open the
+    // State dropdown, then click the preset.
     await user.click(screen.getByRole("button", { name: /state/i }));
     await user.click(screen.getByTestId("state-preset-open-deferred"));
 
@@ -690,11 +690,11 @@ describe("App", () => {
   });
 
   it("preserves tree collapse state across a detail-panel dock toggle", async () => {
-    // Regression (review #1 / nibs-a5sb): toggling the dock position remounts the
-    // PaneGroup (PaneForge fixes split direction at creation), which remounts
-    // TreeTable. Collapse state used to be TreeTable-local $state and reset on the
-    // remount, silently re-expanding every branch. It now lives in a TreeViewState
-    // provided outside the {#key position} block, so it survives the remount.
+    // Toggling the dock position remounts the PaneGroup (PaneForge fixes split
+    // direction at creation), which remounts TreeTable. Collapse state therefore
+    // cannot be TreeTable-local $state — that resets on the remount and silently
+    // re-expands every branch. It lives in a TreeViewState provided outside the
+    // {#key position} block, so it survives the remount.
     const user = userEvent.setup();
     render(App);
 

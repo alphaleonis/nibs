@@ -444,11 +444,9 @@ describe("Toolbar", () => {
   });
 });
 
-// Filter-dropdown coverage ported from the deleted FilterBar.test.ts.
-// The filter-toggle logic (toggleArrayValue/handleToggle, mutual exclusion,
-// per-category Clear, status conflict resolution, count badges) was moved verbatim
-// from FilterBar into Toolbar during the nibs-5a8k design-system refactor, but its
-// only test coverage lived in FilterBar.test.ts, which was deleted with the component.
+// Filter-dropdown coverage. Toolbar owns the filter-toggle logic
+// (toggleArrayValue/handleToggle, mutual exclusion, per-category Clear, status
+// conflict resolution, count badges), so its behavior is pinned here.
 describe("Toolbar — filter dropdowns", () => {
   it("opens the Type dropdown with all 6 type checkboxes when its trigger is clicked", async () => {
     render(Toolbar, { ...defaultToolbarProps });

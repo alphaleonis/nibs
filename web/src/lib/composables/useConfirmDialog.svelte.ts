@@ -13,7 +13,7 @@ export interface ConfirmDialogOptions {
   action: () => void;
   /** Optional secondary "Save" action. Present ONLY for the dirty-nav
    *  guard, which offers Save alongside Discard/Cancel; omitted by Delete/Archive
-   *  confirms, which must render exactly as before (no Save button). */
+   *  confirms, which must render no Save button. */
   saveLabel?: string;
   saveAction?: () => void;
 }

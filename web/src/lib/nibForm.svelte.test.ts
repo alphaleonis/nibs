@@ -514,12 +514,13 @@ describe("editNibForm — conflict & overwrite", () => {
   });
 
   it("a converged dirty buffer SAVES with the remote etag rather than a silent no-op (HIGH #1)", async () => {
-    // AC3 exposed a dead Save: after a dirty buffer's edits converge to the
+    // Convergence can strand Save: after a dirty buffer's edits converge to the
     // remote's field values the getter reads null (banner hides) but the buffer
-    // stays dirty-vs-baseline, so Save stays enabled. The old save() read the raw
-    // #externalChange and short-circuited to {conflict} with no dispatch and no
-    // feedback. The content already equals the server's current revision, so the
-    // fix performs a REAL write using the remote's etag as if-match.
+    // stays dirty-vs-baseline, so Save stays enabled. Reading the raw
+    // #externalChange and short-circuiting to {conflict} would dispatch nothing
+    // and give no feedback. The content already equals the server's current
+    // revision, so save() must perform a REAL write using the remote's etag as
+    // if-match.
     const { deps, calls } = makeMutations(updateResponder("etag-converged"));
     const form = editNibForm(deps, seed({ etag: "etag-1" }));
 
@@ -548,8 +549,8 @@ describe("editNibForm — conflict & overwrite", () => {
   });
 
   it("sameTags is duplicate-sensitive: a duplicate-tag remote does not falsely converge (#matchesFields)", () => {
-    // sameTags feeds #matchesFields (the AC3 convergence decision, which after
-    // HIGH #1 gates a write path). A duplicate-INSENSITIVE compare would treat
+    // sameTags feeds #matchesFields (the convergence decision, which gates a
+    // write path). A duplicate-INSENSITIVE compare would treat
     // buffer ["x","x"] as equal to remote ["x","y"] (same length, distinct set
     // ⊆), silently hiding a real difference. Every non-tag field is equal here,
     // so the tag comparison alone decides.

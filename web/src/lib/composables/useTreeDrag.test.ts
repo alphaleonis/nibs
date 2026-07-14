@@ -279,7 +279,7 @@ describe("useTreeDrag", () => {
   });
 
   it("before/after reorder where dragged & target share a display container but have DIFFERENT real parents is INVALID (nibs-dapk)", () => {
-    // Bug nibs-dapk: in a grouping lens two rows can share the same DISPLAY
+    // In a grouping lens two rows can share the same DISPLAY
     // container (both display at root → displayParentId null) while having
     // DIFFERENT real nib.parentId — e.g. a promoted feature header (real parent
     // a hidden epic) and a loose "No X" bucket task (real parent null). A plain
@@ -331,7 +331,7 @@ describe("useTreeDrag", () => {
   });
 
   it("before/after reorder between genuine real siblings (same display + same real parent) stays VALID (nibs-dapk guardrail)", () => {
-    // Scope guardrail for the nibs-dapk fix: when the dragged and target rows are
+    // Scope guardrail for the real-parent guard: when the dragged and target rows are
     // real siblings (same real nib.parentId) and share the same display
     // container, a before/after reorder must remain VALID — the new real-parent
     // guard only rejects the equal-display / DIFFERENT-real-parent case.
@@ -374,7 +374,7 @@ describe("useTreeDrag", () => {
   });
 
   it("before/after reorder for a MULTI-SELECT drag spanning MIXED real parents is INVALID (nibs-dapk fail-closed)", () => {
-    // Completeness gap in the nibs-dapk guard: for a multi-select drag whose
+    // Completeness gap in the real-parent guard: for a multi-select drag whose
     // selected rows span DIFFERENT real parents, the shared-real-parent Set
     // collapses to size≠1 → draggedRealParentId === undefined. A guard that only
     // rejects when draggedRealParentId is DEFINED-and-different fails OPEN here —
@@ -437,9 +437,9 @@ describe("useTreeDrag", () => {
     // milestone hidden by the lens), which tableData emits with
     // displayParentId === null though nib.parentId is non-null. Forwarding null
     // (not the hidden real parent) is what keeps a reorder from silently
-    // reparenting under the hidden container — the residual nibs-m1my guarded.
-    // (A revert to targetRow.nib.parentId would forward "nibs-hidden-epic" here
-    // and fail this test.)
+    // reparenting under the hidden container.
+    // (Forwarding targetRow.nib.parentId instead would send "nibs-hidden-epic"
+    // here and fail this test.)
     const dragged = makeNib({ id: "nibs-drag", type: "feature", parentId: null });
     const header = makeNib({ id: "nibs-header", type: "feature", parentId: "nibs-hidden-epic" });
     const rows = [
@@ -474,10 +474,10 @@ describe("useTreeDrag", () => {
     // same displayParentId, so reading the source would yield the same value):
     // that swap is owned by the sibling "DIFFERENT display container" test below,
     // which gives source and target distinct values. What this test does pin is
-    // the "not null" half — a revert to targetRow.nib.parentId (null here) would
-    // forward null and fail this assertion. The symmetric nibs-m1my property (two
-    // loose siblings resolving to the SAME container) moved into tableData.flatten
-    // and is re-tested in tableData.test.ts.
+    // the "not null" half — forwarding targetRow.nib.parentId (null here) would
+    // send null and fail this assertion. The symmetric property (two loose
+    // siblings resolving to the SAME container) lives in tableData.flatten and is
+    // tested in tableData.test.ts.
     const e1 = makeNib({ id: "nibs-e1", type: "feature", parentId: null });
     const e2 = makeNib({ id: "nibs-e2", type: "feature", parentId: null });
     const rows = [
@@ -500,10 +500,10 @@ describe("useTreeDrag", () => {
   });
 
   it("before/after drop next to an item under a DIFFERENT display container resolves the target's container", () => {
-    // Residual the minimal #m1my fix left open: the dragged item and the target
-    // sit under DIFFERENT display containers (here two distinct buckets/parents).
-    // The old heuristic re-rooted the drop to null whenever the target's real
-    // parent wasn't a visible row; resolving through displayParentId instead
+    // The dragged item and the target sit under DIFFERENT display containers
+    // (here two distinct buckets/parents). Re-rooting the drop to null whenever
+    // the target's real parent isn't a visible row is the trap; resolving
+    // through displayParentId instead
     // keeps the target's own container, so handleDrop performs a correct
     // cross-parent move rather than dumping the item at root.
     const dragged = makeNib({ id: "nibs-drag", type: "feature", parentId: null });

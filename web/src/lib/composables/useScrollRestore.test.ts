@@ -105,8 +105,8 @@ describe("useScrollRestore", () => {
 
     // restore()'s write here is a no-op (saved 0 → container already 0), so it
     // arms lastWrite={top:0}. A genuine user scroll reports a DIFFERENT value, so
-    // it does not match the echo record and is persisted. (This is the case that
-    // used to strand the old boolean flag.)
+    // it does not match the echo record and is persisted. (A one-shot boolean
+    // flag strands here — the no-op write arms it and the genuine scroll eats it.)
     r.restore();
     container.scrollTop = 120;
     r.onScroll(scrollEvent(container));
@@ -279,9 +279,8 @@ describe("useScrollRestore", () => {
   });
 
   it("a suppression armed on a torn-down container cannot swallow a genuine scroll on the next container (cross-generation strand)", () => {
-    // Regression (review 2026-07-10 21-18-21): the fourth consecutive finding. With
-    // the old closure boolean, a flag armed by a clamped restore() on container A,
-    // whose echo was dropped when a refetch tore A down, would strand and swallow
+    // With a closure boolean, a flag armed by a clamped restore() on container A,
+    // whose echo is dropped when a refetch tears A down, strands and swallows
     // the user's first genuine scroll on container B (adopted by claim()). Because
     // lastWrite now carries its OWN element, a record armed on A can never match a
     // scroll on B — the whole bug class is structurally impossible.

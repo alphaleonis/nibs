@@ -313,11 +313,11 @@ describe("toggleTaskLine", () => {
 });
 
 // These lock the fixes for review findings #1/#2/#4: the ordinal->source-line
-// map is now derived from marked's tokenizer (the same parser that renders), so
+// map is derived from marked's tokenizer (the same parser that renders), so
 // clicking the Nth rendered checkbox flips the Nth task line even for the
-// constructs where the old flat line-scanner diverged (blockquote, imperfect
-// fence detection, tab/HTML-block indented code). The old regex impl flipped the
-// WRONG source line (or a line inside code) for every case below.
+// constructs a flat line-scanner diverges on (blockquote, imperfect fence
+// detection, tab/HTML-block indented code) — a regex scanner flips the WRONG
+// source line (or a line inside code) for every case below.
 describe("toggleTaskLine — divergence classes (token-derived map)", () => {
   it("#1 blockquoted task: flips the QUOTED line, not the real one below it", () => {
     // Old impl: `> - [ ]` never matched, so ordinal 0 flipped `real` (line 1).
@@ -447,10 +447,10 @@ describe("toggleTaskLine — line-ending normalization (#2)", () => {
   });
 });
 
-// Round 3 (redesign): a fenced/indented code block echoing `- [ ]` INSIDE a
-// list item, FOLLOWED by a multi-line nested sub-task, previously back-matched
-// the sub-task's ordinal onto a source line INSIDE the code fence (silent
-// code-block corruption on Save). The ordinal->line map is now derived by
+// A fenced/indented code block echoing `- [ ]` INSIDE a list item, FOLLOWED by
+// a multi-line nested sub-task, is the trap: back-matching the sub-task's
+// ordinal lands on a source line INSIDE the code fence (silent code-block
+// corruption on Save). The ordinal->line map is instead derived by
 // accumulating LINE offsets over marked's own token tree (a `- [ ]` inside a
 // `code`/`html`/prose span is inert text, never a `checkbox` token), so it can
 // never be recorded and a real checkbox can never map onto it.
@@ -513,9 +513,9 @@ describe("toggleTaskLine — code-echo INSIDE a list item, then a nested sub-tas
 // The regression LOCK the test-reviewer asked for: render each tricky body,
 // read the DOM `data-task-ordinal` values in document order, then assert that
 // `toggleTaskLine(body, ord)` flips EXACTLY the checkbox rendered at that ordinal
-// (and no other) — so the render side and the flip side can never silently drift
-// apart again. Under the old regex scanner, the blockquote / fence / tab / HTML
-// cases flipped the wrong (or a code) line, changing a different checkbox.
+// (and no other) — so the render side and the flip side cannot silently drift
+// apart. Under a regex scanner the blockquote / fence / tab / HTML cases flip
+// the wrong (or a code) line, changing a different checkbox.
 describe("ordinal-consistency cross-check (render <-> toggleTaskLine)", () => {
   const trickyBodies: Record<string, string> = {
     simple: "- [ ] a\n- [x] b\n- [ ] c",

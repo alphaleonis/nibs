@@ -17,7 +17,7 @@ const DEFAULTS: FilterPreferences = {
 };
 
 // Sanitize/migrate a persisted filter. The legacy `excludeStatus` field (the
-// standalone hide-completed negative filter, removed in nibs-ni1v) is folded into
+// retired standalone hide-completed negative filter) is folded into
 // the single `status` include-list: with no explicit include-list present it is
 // translated to the equivalent one (every status except the excluded ones,
 // STATUSES order preserved); otherwise it is dropped, since `status` is now the

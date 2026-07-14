@@ -61,9 +61,8 @@ func TestRequestCacheMiddleware_FreshCachePerRequest(t *testing.T) {
 	}
 }
 
-// The intra-request dedup pin (originally named
-// TestRequestCacheMiddleware_DedupsWithinOneRequest) lives in the graph
-// package — see TestRequestCacheMiddleware_DedupsWithinOneRequest in
+// The intra-request dedup pin lives in the graph package — see
+// TestRequestCacheMiddleware_DedupsWithinOneRequest in
 // internal/graph/request_cache_test.go. It has to be there because the
 // cachedMentions helper the middleware threads through is unexported;
 // proving the middleware dedups end-to-end requires direct access to it.
