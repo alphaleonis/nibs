@@ -816,7 +816,7 @@ describe("ActiveNibView", () => {
       expect(screen.getByTestId("anv-save")).toHaveTextContent("Create");
       expect(screen.queryByTestId("anv-overflow")).not.toBeInTheDocument();
       expect(screen.queryByTestId("anv-related-section")).not.toBeInTheDocument();
-      expect(screen.queryByTestId("anv-deleted-notice")).not.toBeInTheDocument();
+      expect(screen.queryByTestId("anv-gone-notice")).not.toBeInTheDocument();
     });
 
     it("opens the body in edit mode by default (editor visible, not the preview-only prose)", () => {

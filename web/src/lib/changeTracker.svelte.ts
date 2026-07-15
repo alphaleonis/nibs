@@ -13,10 +13,13 @@ export class NibChangeTracker {
   handleEvent(event: { type: string; nibId: string }): void {
     if (event.type === "updated" || event.type === "created") {
       this.#setHighlighted(event.nibId);
-    } else if (event.type === "deleted" || event.type === "archived") {
-      // Both take the nib out of the visible tree — archiving moves it into the
-      // archive, which the main list excludes — so the row fades out either way.
+    } else if (event.type === "deleted") {
       this.#setFading(event.nibId);
+    } else if (event.type === "archived") {
+      // Deliberately no fade: archiving does not take the nib out of the tree.
+      // It stays in the store at its new path and keeps being returned by the
+      // list query, so fading the row would play an exit the row never makes —
+      // it would drop to invisible and then pop back.
     } else if (import.meta.env.DEV) {
       console.warn(`NibChangeTracker: unhandled event type "${event.type}"`);
     }
