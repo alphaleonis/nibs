@@ -113,7 +113,11 @@ tasks:
       - defer: rm -rf "{{.TMP}}"
       - cp -r testdata/fixtures/sample-project/.nibs testdata/fixtures/sample-project/.nibs.yml "{{.TMP}}/"
       - echo "Using temporary copy at {{.TMP}}"
-      - go run . serve --nibs-path "{{.TMP}}/.nibs" {{.CLI_ARGS}}
+      # --config, not --nibs-path: this runs from the repo root, and --nibs-path
+      # moves only the data directory — config discovery would still walk up from
+      # the cwd and apply THIS project's prefix to fixture data. Naming the
+      # fixture's config resolves its data directory alongside it.
+      - go run . serve --config "{{.TMP}}/.nibs.yml" {{.CLI_ARGS}}
 
   demo:tui:
     desc: Run the TUI with the sample project fixture (temporary copy)
@@ -124,7 +128,8 @@ tasks:
       - defer: rm -rf "{{.TMP}}"
       - cp -r testdata/fixtures/sample-project/.nibs testdata/fixtures/sample-project/.nibs.yml "{{.TMP}}/"
       - echo "Using temporary copy at {{.TMP}}"
-      - go run . tui --nibs-path "{{.TMP}}/.nibs"
+      # --config, not --nibs-path — see the demo task above.
+      - go run . tui --config "{{.TMP}}/.nibs.yml"
 
   check:
     desc: Type-check the web UI (svelte-check)

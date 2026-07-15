@@ -2550,6 +2550,9 @@ ENDNIB
 echo ""
 echo "Generated $(find "$DIR" -name '*.md' | wc -l) nib files in $DIR"
 echo ""
+# --config, not --nibs-path: --nibs-path moves only the data directory, so config
+# discovery would still walk up from the cwd and apply the outer project's prefix
+# to this fixture's tnib- data. Naming the fixture's config resolves .nibs beside it.
 echo "To use this fixture:"
-echo "  nibs list --nibs-path testdata/fixtures/sample-project/.nibs"
-echo "  nibs serve --nibs-path testdata/fixtures/sample-project/.nibs"
+echo "  nibs list --config testdata/fixtures/sample-project/.nibs.yml"
+echo "  nibs serve --config testdata/fixtures/sample-project/.nibs.yml"

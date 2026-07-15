@@ -21,7 +21,11 @@ export default defineConfig({
     viewport: { width: 1440, height: 900 },
   },
   webServer: {
-    command: `cd .. && go run . serve --port 3132 --no-open --nibs-path "${join(tmp, ".nibs")}"`,
+    // --config, not --nibs-path: the server runs from the repo root, and
+    // --nibs-path moves only the data directory — config discovery would still
+    // walk up from the cwd and apply THIS project's prefix to fixture data.
+    // Naming the fixture's config resolves its data directory alongside it.
+    command: `cd .. && go run . serve --port 3132 --no-open --config "${join(tmp, ".nibs.yml")}"`,
     url: "http://127.0.0.1:3132",
     // Never reuse: a leftover server could be pointed at real data.
     reuseExistingServer: false,
