@@ -300,9 +300,13 @@ func (c *Core) handleChanges(changes map[string]fsnotify.Op) {
 			// already-archived nib clears the same check, because then the stored
 			// archive Path is the very file that just disappeared.
 			//
-			// This also decides the same way whichever order fsnotify delivers the
-			// rename and the archive-path create in, since both leave the store
-			// pointing at that existing file.
+			// PRECONDITION — this process performed the archive. The stored Path is
+			// only authoritative for a move Archive() made; an archive performed by
+			// anything else (the CLI against a running server, a pull in the
+			// separate .nibs repo) leaves the stored Path pointing at the vanished
+			// file, so the check is false and the move reports as a deletion. Both
+			// halves of that move land in one debounce batch and the batch is a Go
+			// map, so which one wins is not even stable run to run.
 			if c.isArchivedPath(stored.Path) && c.fileExists(filepath.Join(c.root, stored.Path)) {
 				events = append(events, NibEvent{
 					Type:  EventArchived,
