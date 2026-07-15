@@ -224,6 +224,209 @@ describe("editNibForm — buffering & dirty", () => {
   });
 });
 
+// --- Line-ending-insensitive body comparison ------------------------------
+
+/**
+ * The buffer and its baseline can legitimately hold the SAME content in
+ * different line encodings: a nib read from disk keeps whatever endings it has
+ * (the backend does not normalize), while `onchange` emits CodeMirror's
+ * always-LF doc the moment the user types. Both `dirty` and `#matchesFields`
+ * must therefore judge bodies line-ending-insensitively, or a CRLF nib is
+ * permanently dirty / never converges after a single keystroke.
+ *
+ * These cases pin the predicate on BOTH sides — semantically-equal bodies must
+ * compare equal, and genuinely different content must still compare different,
+ * including differences a too-eager normalization would erase (a `\r\n` that
+ * collapses to two newlines instead of one, a trailing terminator).
+ */
+describe("editNibForm — body comparison ignores line endings", () => {
+  it("a CRLF baseline vs the editor's LF doc is NOT dirty (type a char, delete it)", () => {
+    const { deps } = makeMutations();
+    const form = editNibForm(deps, seed({ body: "line one\r\nline two" }));
+    expect(form.dirty).toBe(false);
+
+    // A genuine keystroke: MarkdownEditor's onchange writes its LF doc straight
+    // into `body`. Typing then deleting leaves semantically identical content.
+    form.body = "line one\nline twoX";
+    expect(form.dirty).toBe(true);
+    form.body = "line one\nline two";
+    expect(form.dirty).toBe(false);
+  });
+
+  it("a CRLF baseline vs genuinely different content IS dirty (the guard is not over-broad)", () => {
+    const { deps } = makeMutations();
+    const form = editNibForm(deps, seed({ body: "line one\r\nline two" }));
+
+    form.body = "line one\nline three";
+    expect(form.dirty).toBe(true);
+  });
+
+  it("a lone CR baseline compares equal to the LF doc, and mixed endings normalize on both sides", () => {
+    const { deps } = makeMutations();
+
+    const f1 = editNibForm(deps, seed({ body: "a\rb" }));
+    f1.body = "a\nb";
+    expect(f1.dirty).toBe(false);
+
+    // Mixed CRLF / lone CR / LF in one body, all collapsing to the LF doc.
+    const f2 = editNibForm(deps, seed({ body: "a\r\nb\rc\nd" }));
+    f2.body = "a\nb\nc\nd";
+    expect(f2.dirty).toBe(false);
+  });
+
+  it("a CRLF pair collapses to ONE newline, not two (a blank line is a real difference)", () => {
+    const { deps } = makeMutations();
+
+    // The boundary a naive /\r/g -> "\n" would get wrong: it would turn the
+    // baseline into "a\n\nb" and falsely call this buffer clean.
+    const f1 = editNibForm(deps, seed({ body: "a\r\nb" }));
+    f1.body = "a\n\nb";
+    expect(f1.dirty).toBe(true);
+
+    // Conversely a genuine CRLF blank line DOES equal two LF newlines.
+    const f2 = editNibForm(deps, seed({ body: "a\r\n\r\nb" }));
+    f2.body = "a\n\nb";
+    expect(f2.dirty).toBe(false);
+  });
+
+  it("a trailing CRLF terminator equals a lone LF terminator", () => {
+    const { deps } = makeMutations();
+    const form = editNibForm(deps, seed({ body: "a\r\n" }));
+
+    form.body = "a\n";
+    expect(form.dirty).toBe(false);
+  });
+
+  it("deleting the trailing terminator entirely IS dirty (not masked by normalization)", () => {
+    const { deps } = makeMutations();
+    const form = editNibForm(deps, seed({ body: "a\r\n" }));
+
+    form.body = "a";
+    expect(form.dirty).toBe(true);
+  });
+
+  it("an empty body compares clean", () => {
+    const { deps } = makeMutations();
+    const form = editNibForm(deps, seed({ body: "" }));
+
+    form.body = "";
+    expect(form.dirty).toBe(false);
+  });
+
+  it("a terminator-only CRLF body equals a lone LF", () => {
+    const { deps } = makeMutations();
+    const form = editNibForm(deps, seed({ body: "\r\n" }));
+
+    form.body = "\n";
+    expect(form.dirty).toBe(false);
+  });
+
+  it("an empty body gaining a newline IS dirty", () => {
+    const { deps } = makeMutations();
+    const form = editNibForm(deps, seed({ body: "" }));
+
+    form.body = "\n";
+    expect(form.dirty).toBe(true);
+  });
+
+  it("reversed and doubled CR sequences each count as their own break", () => {
+    const { deps } = makeMutations();
+
+    // `/\r\n?/g` binds `?` to the TRAILING \n only, so a \r not followed by \n is
+    // its own break: "\r\r" is two breaks and "\n\r" is a \n plus a lone \r.
+    const f1 = editNibForm(deps, seed({ body: "a\r\rb" }));
+    f1.body = "a\n\nb";
+    expect(f1.dirty).toBe(false);
+
+    const f2 = editNibForm(deps, seed({ body: "a\n\rb" }));
+    f2.body = "a\n\nb";
+    expect(f2.dirty).toBe(false);
+  });
+
+  it("a doubled CR is two breaks, not one (the break count stays distinguished)", () => {
+    const { deps } = makeMutations();
+
+    const f1 = editNibForm(deps, seed({ body: "a\r\rb" }));
+    f1.body = "a\nb";
+    expect(f1.dirty).toBe(true);
+
+    const f2 = editNibForm(deps, seed({ body: "a\n\rb" }));
+    f2.body = "a\nb";
+    expect(f2.dirty).toBe(true);
+  });
+
+  it("a body with no line terminator at all is unaffected", () => {
+    const { deps } = makeMutations();
+    const form = editNibForm(deps, seed({ body: "single line" }));
+
+    expect(form.dirty).toBe(false);
+    form.body = "single line!";
+    expect(form.dirty).toBe(true);
+  });
+
+  it("#matchesFields converges for a CRLF-origin body, so the conflict banner self-clears", () => {
+    const { deps } = makeMutations();
+    const form = editNibForm(deps, seed({ etag: "etag-1", body: "a\r\nb" }));
+
+    // Dirty edit, then a genuine external change whose body is CRLF (the remote
+    // is read from disk, so it carries the file's own endings).
+    form.title = "Mine edit";
+    const remote = seed({ etag: "etag-9", title: "Theirs", body: "a\r\nb\r\nc" });
+    form.noteExternalChange(remote);
+    expect(form.externalChange).toEqual(remote);
+
+    // The user converges the buffer by hand. The editor emits LF, so the buffer's
+    // body differs from the remote's ONLY in line encoding — there is nothing left
+    // to resolve and the banner must clear.
+    form.title = "Theirs";
+    form.body = "a\nb\nc";
+    expect(form.externalChange).toBeNull();
+
+    // Derived, not one-shot: a real body difference re-surfaces it.
+    form.body = "a\nb\nd";
+    expect(form.externalChange).toEqual(remote);
+    form.body = "a\nb\nc";
+    expect(form.externalChange).toBeNull();
+  });
+
+  it("a body differing from the remote in CONTENT keeps the conflict banner up", () => {
+    const { deps } = makeMutations();
+    const form = editNibForm(deps, seed({ etag: "etag-1", body: "a\r\nb" }));
+
+    form.title = "Mine edit";
+    const remote = seed({ etag: "etag-9", title: "Theirs", body: "a\r\nb\r\nc" });
+    form.noteExternalChange(remote);
+
+    // Every other field now matches the remote, so the body alone holds the banner
+    // up: a real content difference must keep it there rather than being absorbed
+    // as a mere encoding difference.
+    form.title = "Theirs";
+    form.body = "a\nb\nd";
+    expect(form.externalChange).toEqual(remote);
+  });
+
+  it("a CRLF-origin converged buffer SAVES with the remote etag", async () => {
+    const { deps, calls } = makeMutations(updateResponder("etag-converged"));
+    const form = editNibForm(deps, seed({ etag: "etag-1", body: "a\r\nb" }));
+
+    form.body = "a\nb\nc";
+    const remote = seed({ etag: "etag-9", body: "a\r\nb\r\nc" });
+    form.noteExternalChange(remote);
+
+    // Converged on content, so save() takes the real-write path against the
+    // remote etag rather than short-circuiting to {conflict}. The LF buffer is
+    // what gets written — the persisted body's endings change from CRLF to LF.
+    expect(form.externalChange).toBeNull();
+    const outcome = await form.save();
+
+    expect(calls).toHaveLength(1);
+    expect(calls[0].ifMatch).toBe("etag-9");
+    expect(calls[0].input.body).toBe("a\nb\nc");
+    expect(outcome.kind).toBe("saved");
+    expect(form.dirty).toBe(false);
+  });
+});
+
 describe("editNibForm — save", () => {
   it("builds UpdateNibInput with priority||null, estimate||null and tag diff, using baseline etag", async () => {
     const { deps, calls } = makeMutations(updateResponder("etag-2"));

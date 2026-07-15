@@ -137,6 +137,29 @@ function sameTags(a: readonly string[], b: readonly string[]): boolean {
 }
 
 /**
+ * Line-ending-insensitive body equality (`\r\n` and a lone `\r` each collapse to
+ * one `\n` on both sides, so a CRLF pair counts as ONE break, not two).
+ *
+ * The two sides can hold the same content in different encodings: a body enters
+ * the form with whatever endings the file has (the backend does not normalize),
+ * but MarkdownEditor's `onchange` emits CodeMirror's always-LF doc, which the
+ * view assigns straight to `body`. A byte-exact compare would therefore keep a
+ * CRLF nib dirty forever after one keystroke, and `#matchesFields` would never
+ * converge.
+ *
+ * Comparison-side only, by design: `body` keeps its CRLF until the user edits.
+ * Normalizing where a body ENTERS the form instead would commit to a
+ * CRLF->LF-on-open policy with an unverified etag / round-trip blast radius
+ * (see the MarkdownEditor docblock). Because #matchesFields gates a real write,
+ * a buffer differing from the remote only in line endings now takes the write
+ * path — persisting the LF body over a CRLF remote. That is a genuine content
+ * change on disk, accepted because reaching it requires the user to have edited.
+ */
+function sameBody(a: string, b: string): boolean {
+  return a.replace(/\r\n?/g, "\n") === b.replace(/\r\n?/g, "\n");
+}
+
+/**
  * Shared working-copy-vs-baseline machinery. Owns the buffered fields, the
  * baseline used for `dirty`/tag-diffing, the `saving` flag, and the body
  * version counter. The `type` setter delegates to `afterTypeChange`, which the
@@ -197,7 +220,7 @@ abstract class BaseForm implements NibFormFields {
       this.#type !== b.type ||
       this.priority !== b.priority ||
       this.estimate !== b.estimate ||
-      this.body !== b.body ||
+      !sameBody(this.body, b.body) ||
       !sameTags(this.#tags, b.tags)
     );
   }
@@ -205,7 +228,8 @@ abstract class BaseForm implements NibFormFields {
   setBody(value: string, opts?: { reinitEditor?: boolean }): void {
     this.body = value;
     // A body change alone marks the buffer dirty via the derived `dirty` getter
-    // (body !== baseline). DEFAULT is in-place / non-remounting: an open editor
+    // (sameBody(body, baseline) — so a body differing from the baseline only in
+    // line endings does NOT dirty it). DEFAULT is in-place / non-remounting: an open editor
     // pane syncs the new body via a minimal-diff doc transaction that preserves
     // undo history / cursor / scroll — the safe choice for an
     // out-of-band edit like the task-checkbox flip. Pass `{ reinitEditor: true }`
@@ -425,7 +449,8 @@ export class EditForm extends BaseForm implements NibFormFields {
 
   /** Whether the working copy already equals the remote snapshot's field values.
    *  Title is compared trimmed — save() writes `title.trim()`, so convergence must
-   *  be judged against what would actually be persisted, not the raw buffer. */
+   *  be judged against what would actually be persisted, not the raw buffer. The
+   *  body is compared line-ending-insensitively (sameBody). */
   #matchesFields(remote: NibSnapshot): boolean {
     return (
       this.title.trim() === remote.title &&
@@ -433,7 +458,7 @@ export class EditForm extends BaseForm implements NibFormFields {
       this.type === remote.type &&
       this.priority === remote.priority &&
       this.estimate === remote.estimate &&
-      this.body === remote.body &&
+      sameBody(this.body, remote.body) &&
       sameTags(this.tags, remote.tags)
     );
   }

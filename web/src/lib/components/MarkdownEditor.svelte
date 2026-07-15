@@ -31,10 +31,11 @@
      * Consumers must not normalize the value they feed BACK — rule 1 is easier to
      * honor as an absolute and the guard already handles it. Normalizing where a body
      * ENTERS the form (`fieldsFromSnapshot`) is a separate, open question: it would
-     * keep `body` and `baseline.body` in the same encoding (today the first keystroke
-     * flips `body` to LF while the baseline stays CRLF, so `dirty` and
-     * `EditForm.#matchesFields` never settle), but it commits to a CRLF→LF-on-open
-     * policy whose etag / round-trip blast radius is unverified. Deliberately not done.
+     * keep `body` and `baseline.body` in the same encoding (the first keystroke flips
+     * `body` to LF while the baseline stays CRLF; `nibForm.svelte.ts`'s `sameBody`
+     * absorbs that at the comparison sites, so `dirty` and `EditForm.#matchesFields`
+     * settle regardless), but it commits to a CRLF→LF-on-open policy whose etag /
+     * round-trip blast radius is unverified. Deliberately not done.
      */
     initialValue?: string;
     /** Fires with the editor's EXACT current doc string on every doc change. */
