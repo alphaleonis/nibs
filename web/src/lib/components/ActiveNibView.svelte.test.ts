@@ -276,6 +276,21 @@ describe("ActiveNibView", () => {
       expect(title).toHaveClass("anv-title");
     });
 
+    it("disables — not merely readonlys — the title while the detail fetch is unseeded", () => {
+      // `readonly` earns its place only where there are unsaved edits to select
+      // and copy (see the gone tests). An unseeded title is an empty placeholder
+      // with nothing to recover, so it keeps plain `disabled` and stays
+      // unfocusable: `readonly` would let a click park a caret in it, and because
+      // the input is patched in place rather than remounted, the seed landing
+      // under that caret would splice the user's keystrokes into the
+      // freshly-seeded title.
+      renderView(makeView({ form: makeEditForm({ title: "" }), detail: { nib: null, fetching: true } }), confirmDialog);
+
+      const title = screen.getByTestId("anv-title");
+      expect(title).toBeDisabled();
+      expect(title).not.toHaveAttribute("readonly");
+    });
+
     it("renders the current tags", () => {
       renderView(makeView({}), confirmDialog);
       const tags = screen.getAllByTestId("anv-tag");
@@ -724,7 +739,16 @@ describe("ActiveNibView", () => {
       const form = makeEditForm({ dirty: true });
       renderView(makeView({ kind: "gone", form }), confirmDialog);
       expect(screen.getByTestId("anv-gone-notice")).toHaveTextContent("This nib was deleted");
-      expect(screen.getByTestId("anv-title")).toBeDisabled();
+      // The title refuses edits via `readonly`, NOT `disabled` (see the input's
+      // comment). Both halves are load-bearing: dropping the attribute makes the
+      // title editable, while swapping it back to `disabled` puts recovery of an
+      // unsaved title back at the user agent's discretion. Whether the text is
+      // genuinely *selectable* is a rendering behavior jsdom cannot answer —
+      // only the attribute is asserted here.
+      expect(screen.getByTestId("anv-title")).toHaveAttribute("readonly");
+      expect(screen.getByTestId("anv-title")).not.toBeDisabled();
+      // No readonly equivalent exists for the metadata selects — bits-ui's
+      // Select takes only `disabled` — so these stay disabled.
       expect(screen.getByTestId("anv-status")).toBeDisabled();
       expect(screen.getByTestId("anv-type")).toBeDisabled();
       // Body editing, Save, and Discard must all be disabled even when dirty,
@@ -732,6 +756,95 @@ describe("ActiveNibView", () => {
       expect(screen.getByTestId("anv-edit-toggle")).toBeDisabled();
       expect(screen.getByTestId("anv-save")).toBeDisabled();
       expect(screen.getByTestId("anv-discard")).toBeDisabled();
+    });
+
+    it("keeps the title's value intact and uneditable while gone", async () => {
+      // `readonly` must not become a license to edit: the preserved buffer is
+      // shown so it can be recovered, not revised. Typing into it must not
+      // reach the form (which would also mark a gone buffer newly dirty).
+      const form = makeEditForm({ title: "Preserved title", dirty: true });
+      renderView(makeView({ kind: "gone", form }), confirmDialog);
+      const title = screen.getByTestId("anv-title") as HTMLInputElement;
+      expect(title.value).toBe("Preserved title");
+      await user.type(title, "XYZ");
+      expect(title.value).toBe("Preserved title");
+      expect(form.title).toBe("Preserved title");
+    });
+
+    it("Copy body puts the buffer's RAW markdown on the clipboard, not its rendered form", async () => {
+      // The whole point of the action: while gone the body renders as HTML
+      // (bodyModeEffective pins preview), so the markdown source of unsaved
+      // edits is otherwise unrecoverable. It must copy form.body — the live
+      // dirty buffer — verbatim, syntax intact.
+      const writeText = vi.fn().mockResolvedValue(undefined);
+      Object.defineProperty(navigator, "clipboard", { value: { writeText }, writable: true, configurable: true });
+      const raw = "# Heading\n\nEdited [link](http://x) and **bold**.";
+      const form = makeEditForm({ body: raw, dirty: true });
+      renderView(makeView({ kind: "gone", form }), confirmDialog);
+
+      await user.click(screen.getByTestId("anv-gone-copy-body"));
+
+      // Pins the source against the rendered form: bodyHtml would arrive as
+      // "<h1>Heading</h1>...", so an exact match on `raw` is what bites.
+      expect(writeText).toHaveBeenCalledWith(raw);
+    });
+
+    it("Copy body names the body rather than quoting it into the toast", async () => {
+      // A nib body is far too long to sit in a toast, so the id path's
+      // Copied "<text>" phrasing must not be reused for it.
+      const writeText = vi.fn().mockResolvedValue(undefined);
+      Object.defineProperty(navigator, "clipboard", { value: { writeText }, writable: true, configurable: true });
+      const raw = "x".repeat(400);
+      renderView(makeView({ kind: "gone", form: makeEditForm({ body: raw }) }), confirmDialog);
+
+      await user.click(screen.getByTestId("anv-gone-copy-body"));
+
+      // The exact match is what bites: the id path's `Copied "<text>"` phrasing
+      // would inline all 400 characters here.
+      await waitFor(() => expect(mockToastSuccess).toHaveBeenCalledWith("Copied body to clipboard"));
+    });
+
+    it("offers no Copy body action when there is no body to copy", () => {
+      // An empty buffer has nothing to recover; offering the action would
+      // promise a copy and deliver an empty clipboard.
+      renderView(makeView({ kind: "gone", form: makeEditForm({ body: "" }) }), confirmDialog);
+      expect(screen.getByTestId("anv-gone-notice")).toBeInTheDocument();
+      expect(screen.queryByTestId("anv-gone-copy-body")).not.toBeInTheDocument();
+    });
+
+    it("does not offer Copy body outside the gone state", () => {
+      // It is the gone notice's escape hatch. A live nib's body is already
+      // retrievable through the editor, so the action would be noise.
+      renderView(makeView({ form: makeEditForm({ body: "some body" }) }), confirmDialog);
+      expect(screen.queryByTestId("anv-gone-copy-body")).not.toBeInTheDocument();
+    });
+
+    it("does not offer Copy body for an archived nib, whose buffer still saves", () => {
+      // Copy body is the escape hatch for edits with no write path. An archived
+      // nib keeps a working Save in the close guard's prompt (canSaveState is
+      // true for it), so offering to copy the edits out would steer the user to
+      // Discard and destroy the title edits, which have no copy action.
+      renderView(
+        makeView({ kind: "gone", reason: "archived", form: makeEditForm({ body: "some body", dirty: true }) }),
+        confirmDialog,
+      );
+      expect(screen.getByTestId("anv-gone-notice")).toHaveTextContent("This nib was archived");
+      expect(screen.queryByTestId("anv-gone-copy-body")).not.toBeInTheDocument();
+    });
+
+    it("paints Copy body against the notice band rather than the app background", () => {
+      // `outline` sets `bg-background` with no resting text color, so it would
+      // inherit the notice's --destructive-foreground and render near-white on
+      // near-white in Daylight (measured 1.01:1 — the control would be invisible
+      // at rest). Each `dark:`/`hover:` variant needs its own override because
+      // tailwind-merge keys on the modifier.
+      renderView(makeView({ kind: "gone", form: makeEditForm({ body: "some body" }) }), confirmDialog);
+
+      const classes = screen.getByTestId("anv-gone-copy-body").className.split(/\s+/);
+      expect(classes).not.toContain("bg-background");
+      expect(classes).not.toContain("dark:bg-input/30");
+      expect(classes).not.toContain("hover:text-foreground");
+      expect(classes).toContain("bg-transparent");
     });
 
     it("forces an OPEN editor back to preview when the nib goes away mid-edit", async () => {

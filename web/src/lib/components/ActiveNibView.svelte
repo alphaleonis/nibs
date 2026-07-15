@@ -367,6 +367,17 @@
     if (nibId) copyToClipboard(nibId);
   }
 
+  // A `gone` buffer is read-only, so `bodyModeEffective` pins the body to the
+  // rendered-markdown preview — the raw source of any unsaved edits is on screen
+  // only in rendered form (headings as <h1>, links without their []() syntax).
+  // The prose pane renders that same live buffer and is selectable, so the edits
+  // themselves are not trapped; what this hands back is their only VERBATIM
+  // copy — the markdown source.
+  function handleCopyBody() {
+    const f = form;
+    if (f) copyToClipboard(f.body, "body");
+  }
+
   function handleArchive() {
     if (!nibId) return;
     const id = nibId;
@@ -615,7 +626,25 @@
           </Button>
         </div>
 
-        <!-- Row 2: title (single line, ellipsis, full-text tooltip) -->
+        <!-- Row 2: title (single line, ellipsis, full-text tooltip)
+             `readonly` rather than `disabled` while `gone`: both refuse edits,
+             but a `gone` buffer's title can hold unsaved edits, and selection
+             plus copy is what hands them back. HTML defines `disabled` in terms
+             of focus and event dispatch and leaves selection of the control's
+             text to the user agent, so it is not a property this can rely on; a
+             `readonly` input stays focusable with its text selectable.
+             The gate is split rather than reusing the `disabled` derivation: an
+             unseeded title is an empty placeholder with nothing to recover, and
+             `readonly` would let it take a caret before the seed lands, so it
+             keeps plain `disabled` and stays unfocusable.
+             This is NOT parity with the metadata band below, but the cause is
+             local, not upstream: the shadcn select trigger sets `select-none`
+             unconditionally (its `disabled:` classes touch only cursor and
+             opacity), which is what makes those values unselectable. Being
+             unconditional, it is not keyed to `disabled` at all, so no swap on
+             the trigger would lift it — undoing it means making that class
+             conditional in the vendored primitive, which reaches every select
+             in the app. -->
         <input
           bind:this={titleEl}
           type="text"
@@ -625,7 +654,8 @@
           placeholder="Nib title..."
           title={form.title}
           bind:value={form.title}
-          {disabled}
+          readonly={isGone}
+          disabled={loadingUnseeded}
         />
 
         <!-- Row 3: tags (inline) | Save + Discard -->
@@ -669,14 +699,46 @@
            The notice is the user's only explanation for the read-only panel, so
            it must name the real cause: an archived nib still exists. Its color
            carries the same distinction the copy does — warning for archived (a
-           reversible move whose buffer still saves), destructive for deleted. -->
+           reversible move whose buffer still saves), destructive for deleted.
+           "Copy body" is the escape hatch for edits with no write path, so it
+           is scoped to DELETED — the one state `canSaveState` calls unsavable —
+           and only when there is a body to copy. Deliberately NOT offered for
+           archived: that buffer keeps a working Save in the close guard's
+           prompt, and inviting the user to copy the edits out would steer them
+           to Discard, which drops the title edits that have no copy action. -->
       {#if isGone}
         <div
           class="anv-gone-notice"
           class:anv-gone-notice--archived={goneReason === "archived"}
           data-testid="anv-gone-notice"
         >
-          {goneReason === "archived" ? "This nib was archived" : "This nib was deleted"}
+          <span>{goneReason === "archived" ? "This nib was archived" : "This nib was deleted"}</span>
+          {#if form.body && goneReason === "deleted"}
+            <div class="anv-gone-actions">
+              <!-- The colors track the notice band rather than the app chrome:
+                   `outline` paints `bg-background` and sets no resting text
+                   color, so the band's inherited `--destructive-foreground`
+                   lands near-white on near-white in Daylight (measured 1.01:1).
+                   The `dark:`/`hover:` variants each need their own override —
+                   tailwind-merge keys on the modifier, so a bare `bg-transparent`
+                   leaves `dark:bg-input/30` and `hover:text-foreground` standing.
+                   `bg-black/10` on hover is a deliberate exception to the
+                   semantic-token rule: the band paints the same `--destructive`
+                   pair in every theme, so there is no theme-varying token to
+                   track, and a flat darkening raises contrast in both. -->
+              <Button
+                variant="outline"
+                size="sm"
+                class="border-current bg-transparent text-current hover:bg-black/10 hover:text-current dark:bg-transparent dark:border-current dark:hover:bg-black/10"
+                data-testid="anv-gone-copy-body"
+                title="Copy the description's markdown source"
+                onclick={handleCopyBody}
+              >
+                <Copy size={14} />
+                Copy body
+              </Button>
+            </div>
+          {/if}
         </div>
       {/if}
 
@@ -935,7 +997,11 @@
     text-overflow: ellipsis;
   }
 
-  .anv-title:hover:not(:disabled) {
+  /* The hover border reads as "click to edit", so it belongs only on a title
+     that actually takes edits — :read-write excludes both readonly and
+     disabled. The focus ring below is deliberately NOT gated: a readonly input
+     is still focusable, and focus must stay visible when it lands there. */
+  .anv-title:read-write:hover {
     border-color: var(--border);
   }
 
@@ -965,7 +1031,12 @@
   }
 
   /* ---------- gone / conflict banners ---------- */
+  /* Same shape as .anv-conflict below: message left, actions right. */
   .anv-gone-notice {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 0.75rem;
     margin: 0 0.8rem 0.5rem;
     padding: 0.5rem 0.75rem;
     background-color: var(--destructive);
@@ -973,6 +1044,12 @@
     border-radius: var(--radius-md);
     font-size: var(--text-body-size);
     font-weight: 500;
+  }
+
+  .anv-gone-actions {
+    display: flex;
+    gap: 0.4rem;
+    flex: none;
   }
 
   /* An archived nib still exists and still saves, so it gets the attention
