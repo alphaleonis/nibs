@@ -412,7 +412,7 @@
   // view.open resolves an empty detail query and fires the missing-nib
   // ("no longer exists") heal path. Instead, opening a bucket
   // toggles/collapses its group — the same effect as its caret — mirroring the
-  // drag guard that already skips buckets (isBucketId, ~lines 428/540).
+  // drag handlers, which skip buckets via the same isBucketId test.
   function openOrToggleBucket(id: string) {
     if (isBucketId(id)) {
       toggleNode(id);
@@ -435,11 +435,6 @@
       return; // Don't fire row click for toggle
     }
 
-    if (action === "title") {
-      openOrToggleBucket(nibId);
-      return; // Title click selects, not row click
-    }
-
     if (action === "add-child") {
       const nibType = actionResult!.el.dataset.childType ?? "";
       // Anchor the type picker to the clicked [+] button (its viewport rect).
@@ -447,7 +442,23 @@
       return; // Don't fire row click for add-child
     }
 
-    // Default: row click with modifier handling.
+    // A synthetic grouping bucket is not a nib: feeding its id to
+    // rangeSelect/toggleSelect would put an unresolvable id in selectedIds. So
+    // every click ON a bucket row — plain or modified, title or row body —
+    // toggles its group, like its caret.
+    //
+    // This covers the CLICKED id only. A shift-click whose range SPANS a bucket
+    // still sweeps that bucket in, because rangeSelect slices visibleRowIds and
+    // bucket rows are interleaved with nib rows there — untouched by this guard.
+    if (isBucketId(nibId)) {
+      toggleNode(nibId);
+      return;
+    }
+
+    // Default: row click and title click share one modifier path, so the same
+    // gesture means the same thing on the row body and on the title. The
+    // toggle and add-child controls return above without reading modifiers —
+    // they are their own affordances, not part of the row's gesture surface.
     // Shift/Ctrl-Cmd are bulk-selection gestures — intentionally NOT routed
     // through nav, so they record no Back/Forward history entry. Note that a
     // collapse-to-exactly-one still opens the single-nib panel (and collapse-to-

@@ -1003,6 +1003,51 @@ describe("TreeTable", () => {
       expect(sel.selectedIds.has("nibs-002")).toBe(true);
     });
 
+    it("Ctrl+click on the title text toggles nib in selection via context", async () => {
+      const user = userEvent.setup();
+      const sel = new SelectionState();
+      sel.select("nibs-m1"); // Pre-select milestone
+      const nibs = makeTestNibs();
+
+      const { container } = setupWithNibs(nibs, {}, { selection: sel });
+
+      // Ctrl+click the title text itself — the same gesture as on the row body.
+      const titleText = container.querySelector(
+        "tr[data-nib-id='nibs-001'] [data-action='title']",
+      ) as HTMLElement;
+      await user.keyboard("{Control>}");
+      await user.click(titleText);
+      await user.keyboard("{/Control}");
+
+      expect(sel.selectedIds.has("nibs-001")).toBe(true);
+      expect(sel.selectedIds.has("nibs-m1")).toBe(true);
+    });
+
+    it("Shift+click on the title text range-selects via context", async () => {
+      const user = userEvent.setup();
+      const sel = new SelectionState();
+      sel.select("nibs-m1"); // Anchor at milestone
+      const nibs = [
+        makeTreeTableNib({ id: "nibs-m1", title: "Milestone", type: "milestone" }),
+        makeTreeTableNib({ id: "nibs-001", title: "Task 1", type: "task", parentId: "nibs-m1" }),
+        makeTreeTableNib({ id: "nibs-002", title: "Task 2", type: "task", parentId: "nibs-m1" }),
+      ];
+
+      const { container } = setupWithNibs(nibs, {}, { selection: sel });
+
+      // Shift+click the title text of Task 2 — range from the milestone anchor.
+      const titleText = container.querySelector(
+        "tr[data-nib-id='nibs-002'] [data-action='title']",
+      ) as HTMLElement;
+      await user.keyboard("{Shift>}");
+      await user.click(titleText);
+      await user.keyboard("{/Shift}");
+
+      expect(sel.selectedIds.has("nibs-m1")).toBe(true);
+      expect(sel.selectedIds.has("nibs-001")).toBe(true);
+      expect(sel.selectedIds.has("nibs-002")).toBe(true);
+    });
+
     it("toggle click dispatches collapse/expand via delegation and does NOT select", async () => {
       const user = userEvent.setup();
       const sel = new SelectionState();
@@ -1163,20 +1208,6 @@ describe("TreeTable", () => {
       expect(sel.selectedNibId).toBe("nibs-m1");
     });
 
-    it("title click does NOT also fire row-level selection for other actions", async () => {
-      const user = userEvent.setup();
-      const sel = new SelectionState();
-      const nibs = makeTestNibs();
-
-      const { container } = setupWithNibs(nibs, {}, { selection: sel });
-
-      const titleText = container.querySelector("tr[data-nib-id='nibs-001'] [data-action='title']") as HTMLElement;
-      await user.click(titleText);
-
-      // Title click selects via context
-      expect(sel.selectedNibId).toBe("nibs-001");
-    });
-
     // Regression: a synthetic "No X" grouping bucket row is not a
     // real nib. Routing its synthetic id through view.open resolves an empty
     // detail query and fires the missing-nib ("no longer exists") heal path.
@@ -1249,6 +1280,53 @@ describe("TreeTable", () => {
 
       expect(sel.selectedNibId).not.toBe(bucketId);
       expect(sel.selectedNibId).toBeNull();
+      expect(screen.queryByText("Loose Task")).not.toBeInTheDocument();
+    });
+
+    it("Ctrl+click on a bucket row title toggles its group and keeps the synthetic id out of the selection", async () => {
+      const user = userEvent.setup();
+      const sel = new SelectionState();
+      sel.select("nibs-m1");
+      const nibs = makeBucketTestNibs();
+      const bucketId = milestoneBucketId(nibs);
+
+      const { container } = setupWithNibs(nibs, {}, { selection: sel });
+
+      expect(screen.getByText("Loose Task")).toBeInTheDocument();
+      const bucketTitle = container.querySelector(
+        `tr[data-nib-id="${bucketId}"] [data-action="title"]`,
+      ) as HTMLElement;
+
+      await user.keyboard("{Control>}");
+      await user.click(bucketTitle);
+      await user.keyboard("{/Control}");
+
+      // A bucket is not a nib, so it can never join the bulk-action set.
+      expect(sel.selectedIds.has(bucketId)).toBe(false);
+      expect(sel.selectedIds.has("nibs-m1")).toBe(true);
+      // The group collapses instead — its child is hidden.
+      expect(screen.queryByText("Loose Task")).not.toBeInTheDocument();
+    });
+
+    it("Shift+click on a bucket row body toggles its group and keeps the synthetic id out of the selection", async () => {
+      const user = userEvent.setup();
+      const sel = new SelectionState();
+      sel.select("nibs-m1");
+      const nibs = makeBucketTestNibs();
+      const bucketId = milestoneBucketId(nibs);
+
+      const { container } = setupWithNibs(nibs, {}, { selection: sel });
+
+      expect(screen.getByText("Loose Task")).toBeInTheDocument();
+      const bucketBodyCell = container.querySelector(
+        `tr[data-nib-id="${bucketId}"] [data-testid="nib-type"]`,
+      ) as HTMLElement;
+
+      await user.keyboard("{Shift>}");
+      await user.click(bucketBodyCell);
+      await user.keyboard("{/Shift}");
+
+      expect(sel.selectedIds.has(bucketId)).toBe(false);
       expect(screen.queryByText("Loose Task")).not.toBeInTheDocument();
     });
 
