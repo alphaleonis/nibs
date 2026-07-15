@@ -25,8 +25,18 @@
      * consumer: CR / CRLF in an incoming value are normalized to the doc's own line
      * encoding internally (see the sync $effect), because CodeMirror line-splits the
      * doc and `doc.toString()` rejoins it with "\n", so a CRLF value is never `===`
-     * its own echo. A value therefore keeps its CRLF endings in the consumer until
-     * the user actually edits, at which point `onchange` emits the editor's LF doc.
+     * its own echo.
+     *
+     * LINE-ENDING POLICY for the consumer's value: it keeps its CRLF endings until
+     * the USER edits, at which point `onchange` emits the editor's LF doc. An
+     * out-of-band sync does NOT flip it to LF — that is what the sync's write-back
+     * suppression buys, and it is what lets a rendered checkbox flip (which
+     * preserves the body's original endings, see `toggleTaskLine`) persist the same
+     * body whether or not this editor happens to be mounted. Consequence: after a
+     * sync, the consumer's value and the live doc are intentionally divergent
+     * ENCODINGS of the same content. That is stable, not a bug in waiting: the sync
+     * guard compares in the doc's encoding, so the next effect run finds them equal
+     * and does not dispatch.
      *
      * Consumers must not normalize the value they feed BACK — rule 1 is easier to
      * honor as an absolute and the guard already handles it. Normalizing where a body
@@ -38,7 +48,12 @@
      * round-trip blast radius is unverified. Deliberately not done.
      */
     initialValue?: string;
-    /** Fires with the editor's EXACT current doc string on every doc change. */
+    /**
+     * Fires with the editor's EXACT current doc string on every doc change EXCEPT
+     * the external-value sync's own (see the sync $effect's WRITE-BACK
+     * SUPPRESSION note) — a sync carries no information the consumer does not
+     * already have, since it is reconciling toward the consumer's own value.
+     */
     onchange: (value: string) => void;
     onsave?: () => void;
   }
@@ -60,6 +75,13 @@
   // BEFORE `view`, so it is always present when the sync effect fires.
   let cmTransaction: typeof import("@codemirror/state").Transaction | undefined =
     $state.raw(undefined);
+
+  // True only for the duration of the sync $effect's own dispatch, so the
+  // updateListener can tell that doc change apart from a user edit and skip the
+  // onchange write-back (see the WRITE-BACK SUPPRESSION note on the effect).
+  // Plain `let`: read and written within one synchronous call stack, never
+  // rendered, so it needs no reactivity.
+  let syncing = false;
 
   $effect(() => {
     if (!container) return;
@@ -205,8 +227,11 @@
               appTheme,
               appHighlight,
               EditorView.lineWrapping,
+              // `docChanged` is `!changes.empty` — it does NOT distinguish a user
+              // edit from the sync effect's own dispatch, so the `syncing` guard
+              // is what keeps the sync from echoing the doc back to the consumer.
               EditorView.updateListener.of((update: any) => {
-                if (update.docChanged) {
+                if (update.docChanged && !syncing) {
                   onchange(update.state.doc.toString());
                 }
               }),
@@ -272,6 +297,19 @@
   // addToHistory.of(false): the sync is an out-of-band edit, not a user action —
   // keep it OUT of the undo stack so Ctrl-Z undoes the user's own typing, not a
   // checkbox flip made in the preview pane.
+  //
+  // WRITE-BACK SUPPRESSION: the dispatch below changes the doc, so the
+  // updateListener would fire onchange and push the doc's LF-only string back to
+  // the consumer — overwriting the very value we are reconciling TOWARD, and
+  // silently stripping the CRLFs an incoming body still carries. `syncing` marks
+  // the window so the listener can skip it. The flag is exact rather than
+  // best-effort: EditorView.dispatch runs dispatchTransactions -> update() and
+  // fires updateListener from inside that call, with no scheduling on the path, so
+  // the listener always observes the flag set. It is preferred over sniffing the
+  // addToHistory annotation because that annotation means "keep out of undo", not
+  // "this is a sync" — any future history-excluded transaction would inherit the
+  // suppression by accident, and the guard would silently no-op if the annotation
+  // were ever dropped.
   $effect(() => {
     const raw = initialValue; // read before the early return so the effect tracks it
     const v = view;
@@ -290,12 +328,17 @@
       nextEnd--;
     }
 
-    v.dispatch({
-      changes: { from: start, to: curEnd, insert: next.slice(start, nextEnd) },
-      ...(cmTransaction
-        ? { annotations: cmTransaction.addToHistory.of(false) }
-        : {}),
-    });
+    syncing = true;
+    try {
+      v.dispatch({
+        changes: { from: start, to: curEnd, insert: next.slice(start, nextEnd) },
+        ...(cmTransaction
+          ? { annotations: cmTransaction.addToHistory.of(false) }
+          : {}),
+      });
+    } finally {
+      syncing = false;
+    }
   });
 </script>
 

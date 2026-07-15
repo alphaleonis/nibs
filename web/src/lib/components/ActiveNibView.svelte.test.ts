@@ -533,6 +533,39 @@ describe("ActiveNibView", () => {
       expect(form.dirty).toBe(false);
     });
 
+    // The same handleProseClick is wired to two DOM sites: the preview-only prose
+    // (no editor mounted) and the side-by-side preview pane (editor mounted beside
+    // it). A flip must persist the same bytes from both — an unrelated view toggle
+    // must not decide the body's line endings.
+    it("persists the SAME body for a flip in preview-only and side-by-side modes (CRLF kept)", async () => {
+      const crlfBody = "- [ ] a\r\n- [ ] b";
+
+      // Preview-only: no editor exists, so nothing can rewrite the flipped body.
+      const previewForm = realEditForm(crlfBody);
+      const { unmount } = renderWithForm(previewForm);
+      await user.click(
+        screen.getByTestId("anv-body-prose").querySelector('input[data-task-ordinal="0"]') as HTMLInputElement,
+      );
+      const previewOnlyBody = previewForm.body;
+      unmount();
+
+      // Side-by-side: identical click, but a live CodeMirror editor is mounted.
+      const sideForm = realEditForm(crlfBody);
+      renderWithForm(sideForm);
+      await user.click(screen.getByTestId("anv-edit-toggle"));
+      // The editor must have really initialized: the sync effect no-ops while
+      // `view` is undefined, which would make the assertion below vacuous.
+      await waitFor(() =>
+        expect(screen.getByTestId("anv-editor-container").querySelector(".cm-content")).not.toBeNull(),
+      );
+      await user.click(
+        screen.getByTestId("anv-preview-pane").querySelector('input[data-task-ordinal="0"]') as HTMLInputElement,
+      );
+
+      expect(sideForm.body).toBe(previewOnlyBody);
+      expect(sideForm.body).toBe("- [x] a\r\n- [ ] b");
+    });
+
     it("does not toggle when the nib is read-only (gone)", async () => {
       const form = realEditForm("- [ ] a");
       renderView(makeView({ kind: "gone", form: form as unknown as FakeForm }), confirmDialog);
