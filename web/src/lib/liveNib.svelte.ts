@@ -5,7 +5,7 @@
  * self-echo suppression, dedup policy, and the payload→snapshot mapping all live
  * in the pure reducer (`nibChange.ts`).
  *
- * The whole model NOTIFIES only: it exposes reactive `deleted` / `external` /
+ * The whole model NOTIFIES only: it exposes reactive `gone` / `external` /
  * `error`. Banners, highlights, and the pending/keep-mine/apply conflict
  * lifecycle belong to the view and the form model.
  */
@@ -19,6 +19,7 @@ import {
   classifyNibEvent,
   initialNibChangeState,
   type NibChangeState,
+  type NibGoneReason,
   type RawNibEvent,
 } from "./nibChange";
 
@@ -33,8 +34,10 @@ export interface LiveNibOptions {
 }
 
 export interface LiveNib {
-  /** The viewed nib was deleted on the server (resets on nibId change). */
-  readonly deleted: boolean;
+  /** Why the viewed nib left its location on the server, or null while it is
+   *  still there (resets on nibId change). `"archived"` still exists and is
+   *  still savable; `"deleted"` is not. */
+  readonly gone: NibGoneReason | null;
   /** Latest non-self, de-duped external snapshot (null until one arrives). */
   readonly external: NibSnapshot | null;
   readonly error: unknown;
@@ -95,8 +98,8 @@ export function createLiveNib(opts: LiveNibOptions): LiveNib {
   });
 
   return {
-    get deleted() {
-      return state.deleted;
+    get gone() {
+      return state.gone;
     },
     get external() {
       return state.external;

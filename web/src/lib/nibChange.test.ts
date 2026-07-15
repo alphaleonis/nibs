@@ -61,7 +61,7 @@ describe("classifyNibEvent", () => {
   it("builds an external snapshot for an updated event (no self match)", () => {
     const next = classifyNibEvent(initialNibChangeState, updatedEvent(makePayload()), null);
     expect(next).not.toBe(initialNibChangeState);
-    expect(next.deleted).toBe(false);
+    expect(next.gone).toBeNull();
     expect(next.external).toEqual(toNibSnapshot(makePayload()));
     expect(next.lastExternalEtag).toBe("etag-1");
   });
@@ -74,7 +74,7 @@ describe("classifyNibEvent", () => {
   });
 
   it("suppresses a self-echo (nib.etag === selfEtag) by returning prev unchanged", () => {
-    const prev: NibChangeState = { deleted: false, external: null, lastExternalEtag: null };
+    const prev: NibChangeState = { gone: null, external: null, lastExternalEtag: null };
     const next = classifyNibEvent(prev, updatedEvent(makePayload({ etag: "mine" })), "mine");
     expect(next).toBe(prev); // reference-stable no-op
   });
@@ -109,7 +109,7 @@ describe("classifyNibEvent", () => {
     const withExternal = classifyNibEvent(initialNibChangeState, updatedEvent(makePayload()), null);
     const deleted: RawNibEvent = { type: "deleted", nibId: "nibs-abc1", nib: null };
     const next = classifyNibEvent(withExternal, deleted, null);
-    expect(next.deleted).toBe(true);
+    expect(next.gone).toBe("deleted");
     expect(next.external).toBeNull();
   });
 
@@ -120,8 +120,79 @@ describe("classifyNibEvent", () => {
     expect(second).toBe(first); // reference-stable no-op
   });
 
+  it("marks gone with reason 'archived' and clears external on an archived event", () => {
+    const withExternal = classifyNibEvent(initialNibChangeState, updatedEvent(makePayload()), null);
+    const archived: RawNibEvent = { type: "archived", nibId: "nibs-abc1", nib: makePayload() };
+    const next = classifyNibEvent(withExternal, archived, null);
+    // An archived nib still EXISTS, at its archive path — the reason is what the
+    // presenter needs to keep Save on offer for it.
+    expect(next.gone).toBe("archived");
+    expect(next.external).toBeNull();
+  });
+
+  it("distinguishes archived from deleted", () => {
+    const archived: RawNibEvent = { type: "archived", nibId: "nibs-abc1", nib: makePayload() };
+    const deleted: RawNibEvent = { type: "deleted", nibId: "nibs-abc1", nib: null };
+    expect(classifyNibEvent(initialNibChangeState, archived, null).gone).toBe("archived");
+    expect(classifyNibEvent(initialNibChangeState, deleted, null).gone).toBe("deleted");
+  });
+
+  it("returns prev unchanged when already gone for the same reason (reference-stable)", () => {
+    // Distinct etags deliberately: an identical payload would be swallowed by the
+    // etag dedup, so the no-op would prove nothing about the `gone` branch.
+    const first = classifyNibEvent(
+      initialNibChangeState,
+      { type: "archived", nibId: "nibs-abc1", nib: makePayload({ etag: "e1" }) },
+      null,
+    );
+    const second = classifyNibEvent(
+      first,
+      { type: "archived", nibId: "nibs-abc1", nib: makePayload({ etag: "e2" }) },
+      null,
+    );
+    expect(second).toBe(first); // reference-stable no-op
+  });
+
+  it("lets a deletion supersede an archive (an archived nib can still be deleted)", () => {
+    const archived: RawNibEvent = { type: "archived", nibId: "nibs-abc1", nib: makePayload() };
+    const deleted: RawNibEvent = { type: "deleted", nibId: "nibs-abc1", nib: null };
+    const first = classifyNibEvent(initialNibChangeState, archived, null);
+    const second = classifyNibEvent(first, deleted, null);
+    expect(second.gone).toBe("deleted");
+  });
+
+  it("treats a deletion as terminal: a later archived event does not downgrade it", () => {
+    // The mirror of the supersede rule above, and the same contract the view
+    // reducer states. A downgrade would re-offer a save against a nib that no
+    // longer exists, so the classifier must refuse it on its own rather than
+    // leaning on the reducer one layer up to catch it.
+    const deleted: RawNibEvent = { type: "deleted", nibId: "nibs-abc1", nib: null };
+    // A distinct etag: an identical payload would be swallowed by the etag
+    // dedup, so the no-op would prove nothing about the `gone` branch.
+    const archived: RawNibEvent = {
+      type: "archived",
+      nibId: "nibs-abc1",
+      nib: makePayload({ etag: "e2" }),
+    };
+    const first = classifyNibEvent(initialNibChangeState, deleted, null);
+    const second = classifyNibEvent(first, archived, null);
+    expect(second.gone).toBe("deleted");
+    expect(second).toBe(first); // reference-stable no-op
+  });
+
+  it("does not clear `gone` when a later updated event arrives", () => {
+    // Order-independence: archiving a nib into a WATCHED archive directory emits
+    // both `archived` (the rename) and `updated` (the create at the archive path),
+    // and the batch may carry them either way round. Neither ordering may leave
+    // the buffer looking live.
+    const archived: RawNibEvent = { type: "archived", nibId: "nibs-abc1", nib: makePayload() };
+    const afterArchive = classifyNibEvent(initialNibChangeState, archived, null);
+    const afterUpdate = classifyNibEvent(afterArchive, updatedEvent(makePayload({ etag: "e2" })), null);
+    expect(afterUpdate.gone).toBe("archived");
+  });
+
   it("returns prev unchanged for a created/updated event with a missing payload", () => {
-    const prev: NibChangeState = { deleted: false, external: null, lastExternalEtag: null };
+    const prev: NibChangeState = { gone: null, external: null, lastExternalEtag: null };
     const next = classifyNibEvent(prev, { type: "updated", nibId: "nibs-abc1", nib: null }, null);
     expect(next).toBe(prev);
   });

@@ -24,6 +24,10 @@ const (
 	EventUpdated
 	// EventDeleted indicates a nib was deleted.
 	EventDeleted
+	// EventArchived indicates a nib was moved into the archive directory. The
+	// nib still exists — it lives at its new archive path and remains readable
+	// and updatable — so this is distinct from EventDeleted.
+	EventArchived
 )
 
 // String returns a human-readable representation of the event type.
@@ -35,6 +39,8 @@ func (e EventType) String() string {
 		return "updated"
 	case EventDeleted:
 		return "deleted"
+	case EventArchived:
+		return "archived"
 	default:
 		return "unknown"
 	}
@@ -273,31 +279,56 @@ func (c *Core) handleChanges(changes map[string]fsnotify.Op) {
 		// reporting watcher-level errors that today's callers don't expect.
 		id, _ := nib.ParseFilename(filename)
 
-		// Handle removes/renames (file is gone)
+		// Handle removes/renames (file is gone from this path)
 		if op&fsnotify.Remove != 0 || op&fsnotify.Rename != 0 {
+			stored, exists := c.nibs[id]
+			if !exists {
+				continue
+			}
+
 			// Check if the file actually exists (rename might be followed by create)
-			if _, exists := c.nibs[id]; exists {
-				// Only delete if it was in our map and file is actually gone
-				if !c.fileExists(path) {
-					delete(c.nibs, id)
+			if c.fileExists(path) {
+				continue
+			}
 
-					// Drop from reverse-mention index.
-					c.mentionIdx.Remove(id)
+			// The store, not the filesystem, decides whether the nib is gone.
+			// Archive renames the file into archive/ and rewrites the stored Path
+			// while holding the same lock this handler takes, so the half-applied
+			// move is never observable here: a stored archive Path whose file is
+			// present means the nib moved rather than vanished, and it stays in
+			// the store — readable and updatable at its new location. Deleting an
+			// already-archived nib clears the same check, because then the stored
+			// archive Path is the very file that just disappeared.
+			//
+			// This also decides the same way whichever order fsnotify delivers the
+			// rename and the archive-path create in, since both leave the store
+			// pointing at that existing file.
+			if c.isArchivedPath(stored.Path) && c.fileExists(filepath.Join(c.root, stored.Path)) {
+				events = append(events, NibEvent{
+					Type:  EventArchived,
+					Nib:   stored,
+					NibID: id,
+				})
+				continue
+			}
 
-					// Update search index
-					if c.searchIndex != nil {
-						if err := c.searchIndex.DeleteNib(id); err != nil {
-							c.logWarn("failed to remove nib %s from search index: %v", id, err)
-						}
-					}
+			delete(c.nibs, id)
 
-					events = append(events, NibEvent{
-						Type:   EventDeleted,
-						Nib:   nil,
-						NibID: id,
-					})
+			// Drop from reverse-mention index.
+			c.mentionIdx.Remove(id)
+
+			// Update search index
+			if c.searchIndex != nil {
+				if err := c.searchIndex.DeleteNib(id); err != nil {
+					c.logWarn("failed to remove nib %s from search index: %v", id, err)
 				}
 			}
+
+			events = append(events, NibEvent{
+				Type:  EventDeleted,
+				Nib:   nil,
+				NibID: id,
+			})
 			continue
 		}
 

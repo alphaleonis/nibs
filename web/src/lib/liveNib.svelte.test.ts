@@ -81,12 +81,12 @@ describe("createLiveNib", () => {
     expect(live.external).not.toBeNull();
     expect(live.external?.title).toBe("Title");
     expect(live.external?.etag).toBe("etag-1");
-    expect(live.deleted).toBe(false);
+    expect(live.gone).toBeNull();
 
     dispose();
   });
 
-  it("sets deleted when the subscription emits a delete", () => {
+  it("sets gone: 'deleted' when the subscription emits a delete", () => {
     const fake = makeFakeSub();
     let live!: ReturnType<typeof createLiveNib>;
 
@@ -103,8 +103,37 @@ describe("createLiveNib", () => {
     fake.stores[0].set({ data: { nibChanged: { type: "deleted", nibId: "nibs-abc1", nib: null } } });
     flushSync();
 
-    expect(live.deleted).toBe(true);
+    expect(live.gone).toBe("deleted");
     expect(live.external).toBeNull();
+
+    dispose();
+  });
+
+  it("sets gone: 'archived' when the subscription emits an archive", () => {
+    const fake = makeFakeSub();
+    let live!: ReturnType<typeof createLiveNib>;
+
+    const dispose = withRoot(() => {
+      live = createLiveNib({
+        client: {} as never,
+        nibId: () => "nibs-abc1",
+        selfEtag: () => undefined,
+        subscriptionStore: fake.subscriptionStore,
+      });
+    });
+    flushSync();
+
+    // The wire carries the nib for an archive (it still exists), unlike a delete.
+    fake.stores[0].set({
+      data: {
+        nibChanged: { type: "archived", nibId: "nibs-abc1", nib: payload() as never },
+      },
+    });
+    flushSync();
+
+    // Reported as its own reason, never collapsed into "deleted" — the presenter
+    // keys savability off this.
+    expect(live.gone).toBe("archived");
 
     dispose();
   });
@@ -141,7 +170,7 @@ describe("createLiveNib", () => {
     dispose();
   });
 
-  it("re-subscribes and resets deleted when nibId changes", () => {
+  it("re-subscribes and resets `gone` when nibId changes", () => {
     const fake = makeFakeSub();
     // $state so a reassignment actually re-runs the binder's effect (a plain
     // `let` would not notify Svelte, mirroring how nibId flows as a reactive prop).
@@ -160,14 +189,14 @@ describe("createLiveNib", () => {
 
     fake.stores[0].set({ data: { nibChanged: { type: "deleted", nibId: "nibs-abc1", nib: null } } });
     flushSync();
-    expect(live.deleted).toBe(true);
+    expect(live.gone).toBe("deleted");
 
     id = "nibs-xyz9";
     flushSync();
 
     expect(fake.calls).toHaveLength(2);
     expect(fake.calls[1].variables.id).toBe("nibs-xyz9");
-    expect(live.deleted).toBe(false); // reset on nibId change
+    expect(live.gone).toBeNull(); // reset on nibId change
     expect(live.external).toBeNull();
 
     // The new subscription drives state independently.
@@ -195,7 +224,7 @@ describe("createLiveNib", () => {
 
     expect(fake.calls).toHaveLength(0); // no open
     expect(live.external).toBeNull();
-    expect(live.deleted).toBe(false);
+    expect(live.gone).toBeNull();
 
     // Transitioning to an id opens the subscription.
     id = "nibs-abc1";

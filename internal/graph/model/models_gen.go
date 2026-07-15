@@ -80,9 +80,11 @@ type CreateNibInput struct {
 type Mutation struct {
 }
 
-// A change event emitted when a nib is created, updated, or deleted.
+// A change event emitted when a nib is created, updated, deleted, or archived.
 type NibChangeEvent struct {
-	// The type of change: created, updated, or deleted
+	// The type of change: created, updated, deleted, or archived. An archived nib
+	// still exists — it moved to the archive directory and remains readable and
+	// updatable there — so archived is reported separately from deleted.
 	Type string `json:"type"`
 	// The ID of the affected nib (always present, even for deletes)
 	NibID string `json:"nibId"`

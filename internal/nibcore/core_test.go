@@ -946,6 +946,174 @@ status: in-progress
 	})
 }
 
+// collectNibEvents drains ch for the whole window and returns every event naming
+// nibID. An archive move can surface as more than one batch — the rename of the
+// old path and the create at the archive path are separate fsnotify events, and
+// the archive directory is only watched when it existed at StartWatching — so
+// the assertions look at the settled set rather than the first batch.
+func collectNibEvents(t *testing.T, ch <-chan []NibEvent, nibID string, window time.Duration) []NibEvent {
+	t.Helper()
+
+	var got []NibEvent
+	deadline := time.After(window)
+	for {
+		select {
+		case batch, ok := <-ch:
+			if !ok {
+				return got
+			}
+			for _, e := range batch {
+				if e.NibID == nibID {
+					got = append(got, e)
+				}
+			}
+		case <-deadline:
+			return got
+		}
+	}
+}
+
+// TestWatcherArchiveVsDelete pins the removal branch's classification. A file
+// leaving its path only means the nib was deleted when the nib is really gone:
+// Archive moves the file into archive/ and rewrites the stored Path, so the nib
+// still exists there and is still savable. Reporting that as a deletion both
+// lies to subscribers and evicts a live nib from the store.
+func TestWatcherArchiveVsDelete(t *testing.T) {
+	const nibID = "evt1"
+
+	tests := []struct {
+		name string
+		// preWatch runs before StartWatching, so whatever it creates is walked
+		// into the watch set.
+		preWatch func(t *testing.T, core *Core, nibsDir, filename string)
+		// act triggers the removal under test while the watcher is running.
+		act  func(t *testing.T, core *Core, nibsDir, filename string)
+		want EventType
+		// notWant must never appear for the nib: the misclassification each case
+		// exists to catch.
+		notWant     EventType
+		wantNibSet  bool
+		wantInStore bool
+	}{
+		{
+			name: "archiving into a fresh archive dir reports archived",
+			act: func(t *testing.T, core *Core, nibsDir, filename string) {
+				if err := core.Archive(nibID); err != nil {
+					t.Fatalf("Archive() error = %v", err)
+				}
+			},
+			want:        EventArchived,
+			notWant:     EventDeleted,
+			wantNibSet:  true,
+			wantInStore: true,
+		},
+		{
+			// The archive directory already exists, so the walk watches it and the
+			// create at the archive path lands in the same batch as the rename —
+			// the ordering fsnotify can produce either way round.
+			name: "archiving into a pre-existing watched archive dir reports archived",
+			preWatch: func(t *testing.T, core *Core, nibsDir, filename string) {
+				if err := os.MkdirAll(filepath.Join(nibsDir, ArchiveDir), 0755); err != nil {
+					t.Fatalf("failed to pre-create archive dir: %v", err)
+				}
+			},
+			act: func(t *testing.T, core *Core, nibsDir, filename string) {
+				if err := core.Archive(nibID); err != nil {
+					t.Fatalf("Archive() error = %v", err)
+				}
+			},
+			want:        EventArchived,
+			notWant:     EventDeleted,
+			wantNibSet:  true,
+			wantInStore: true,
+		},
+		{
+			name: "removing the file reports deleted",
+			act: func(t *testing.T, core *Core, nibsDir, filename string) {
+				if err := os.Remove(filepath.Join(nibsDir, filename)); err != nil {
+					t.Fatalf("failed to remove nib file: %v", err)
+				}
+			},
+			want:        EventDeleted,
+			notWant:     EventArchived,
+			wantNibSet:  false,
+			wantInStore: false,
+		},
+		{
+			// The stored Path says archive/, which is what marks an archived nib —
+			// but its file is gone, so this is a real deletion, not a move.
+			name: "removing an already-archived file reports deleted",
+			preWatch: func(t *testing.T, core *Core, nibsDir, filename string) {
+				if err := core.Archive(nibID); err != nil {
+					t.Fatalf("Archive() error = %v", err)
+				}
+			},
+			act: func(t *testing.T, core *Core, nibsDir, filename string) {
+				if err := os.Remove(filepath.Join(nibsDir, ArchiveDir, filename)); err != nil {
+					t.Fatalf("failed to remove archived nib file: %v", err)
+				}
+			},
+			want:        EventDeleted,
+			notWant:     EventArchived,
+			wantNibSet:  false,
+			wantInStore: false,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			core, nibsDir := setupTestCore(t)
+			b := createTestNib(t, core, nibID, "Event Test", "todo")
+			// Capture the filename now: Archive mutates the stored nib's Path in
+			// place, and this is the same pointer.
+			filename := filepath.Base(b.Path)
+
+			if tt.preWatch != nil {
+				tt.preWatch(t, core, nibsDir, filename)
+			}
+
+			if err := core.StartWatching(); err != nil {
+				t.Fatalf("StartWatching() error = %v", err)
+			}
+			defer func() { _ = core.Unwatch() }()
+
+			ch, unsub := core.Subscribe()
+			defer unsub()
+
+			// Let the watch goroutine reach its select before mutating the tree.
+			time.Sleep(50 * time.Millisecond)
+
+			tt.act(t, core, nibsDir, filename)
+
+			got := collectNibEvents(t, ch, nibID, 500*time.Millisecond)
+
+			var found *NibEvent
+			for i, e := range got {
+				if e.Type == tt.notWant {
+					t.Errorf("got a %s event for %s; want none (events: %+v)", e.Type, nibID, got)
+				}
+				if e.Type == tt.want && found == nil {
+					found = &got[i]
+				}
+			}
+			if found == nil {
+				t.Fatalf("expected a %s event for %s, got: %+v", tt.want, nibID, got)
+			}
+			if tt.wantNibSet && found.Nib == nil {
+				t.Errorf("%s event should carry the nib", tt.want)
+			}
+			if !tt.wantNibSet && found.Nib != nil {
+				t.Errorf("%s event should have a nil nib, got %+v", tt.want, found.Nib)
+			}
+
+			_, err := core.Get(nibID)
+			if inStore := err == nil; inStore != tt.wantInStore {
+				t.Errorf("Get(%q) found = %v, want %v", nibID, inStore, tt.wantInStore)
+			}
+		})
+	}
+}
+
 func TestSubscribersClosedOnUnwatch(t *testing.T) {
 	core, _ := setupTestCore(t)
 

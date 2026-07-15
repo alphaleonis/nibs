@@ -12,7 +12,7 @@
  * content-identity (`edit:<id>` / `create:<nonce>`), so it survives
  * expand/collapse/save-same-nib and is recreated only on a real target change.
  * A single `$effect` bridges the live subscription into the machine:
- * `live.deleted -> DELETED` and `live.external -> form.noteExternalChange`.
+ * `live.gone -> DELETED / ARCHIVED` and `live.external -> form.noteExternalChange`.
  *
  * Everything is dependency-injected (nav, form/live/detail factories, confirm)
  * so the shell is boundary-testable with stubs under `$effect.root`.
@@ -23,6 +23,7 @@ import { getValidChildTypes } from "../typeHierarchy";
 import {
   reduce,
   abandonsBuffer,
+  canSaveState,
   type ViewState,
   type Action,
   type Presentation,
@@ -127,8 +128,22 @@ export interface ActiveViewDeps {
   notifyError: (message: string) => void;
   /** Prompt the dirty-nav guard and resolve the user's tri-state choice:
    *  "save" (persist then proceed), "discard" (drop edits and
-   *  proceed), or "cancel" (keep edits and stay put). */
-  confirm: () => Promise<ConfirmChoice>;
+   *  proceed), or "cancel" (keep edits and stay put).
+   *
+   *  `canSave: false` means the buffer's nib was DELETED, so the prompt must
+   *  offer Discard/Cancel only — that save cannot succeed. It does NOT mean
+   *  merely "gone": an archived nib is gone from its old path yet still exists
+   *  and still saves, and it arrives here with `canSave: true`.
+   *
+   *  What the required param enforces is narrow. It binds CALLERS — `confirm()`
+   *  with no argument is a compile error — and it guarantees any implementation
+   *  that declares the param receives a defined boolean. It does NOT bind
+   *  implementations: TypeScript's parameter-arity rule accepts a zero-arg
+   *  `() => Promise<ConfirmChoice>` here, so an implementation that ignores
+   *  `canSave` compiles clean and silently offers the dead-end Save this flag
+   *  exists to withdraw. Honoring it is a review obligation, not a compile-time
+   *  one; the `toHaveBeenCalledWith({ canSave })` tests are the real enforcement. */
+  confirm: (opts: { canSave: boolean }) => Promise<ConfirmChoice>;
 }
 
 /** A viewport-space rectangle (from getBoundingClientRect) the type picker anchors to. */
@@ -183,13 +198,24 @@ export interface ActiveView {
   startCreateChild(parentId: string, parentType: string, anchor: AnchorRect): Promise<void>;
   chooseType(nibType: string): Promise<void>;
   cancelType(): void;
+  /** Persist the active buffer through the normal save path (create hand-off and
+   *  conflict routing included). Resolves the form's outcome, or `undefined` when
+   *  nothing was dispatched: no buffer, or a DELETED nib — that save can only
+   *  fail, so save() refuses it rather than leaving that to each caller. A `gone`
+   *  buffer whose nib was merely ARCHIVED still saves: it exists at its archive
+   *  path and the write lands there. The refusal is SILENT (`undefined`, which
+   *  callers already treat as "did not attempt" and abort on); a caller that must
+   *  explain the dead end to the user checks `canSaveState(state)` itself before
+   *  calling. */
   save(): Promise<CreateOutcome | EditOutcome | undefined>;
   requestClose(): Promise<void>;
   /** A guard-bypass: popstate / multi-select desync (history already moved). The
    *  only transition that may ABANDON a dirty buffer without a confirm — see also
    *  `noteMissing`, which bypasses the guard only where it provably cannot fire. */
   syncTo(nibId: string | null): void;
-  /** Report that `nibId` resolves to nothing (deleted / archived / stale link).
+  /** Report that `nibId` resolves to nothing — it is absent from the server, so
+   *  this routes to `gone`/"deleted" (an ARCHIVED nib still resolves, and reaches
+   *  `gone` via the live bridge instead, keeping its Save).
    *  When the view is `viewing` `nibId`, the buffer's dirtiness decides its fate,
    *  since the report itself cannot tell a stale deep link apart from a nib
    *  deleted under a live editor:
@@ -307,10 +333,31 @@ export function createActiveView(deps: ActiveViewDeps): ActiveView {
 
   async function guarded(action: Action): Promise<boolean> {
     if (abandonsBuffer(viewState, action) && form?.dirty) {
-      const choice = await deps.confirm();
+      // Only a DELETED nib withdraws Save — that save is a dead end. An archived
+      // buffer keeps it: the nib still exists in the archive and the write lands
+      // there. The prompt itself always fires: proceeding DOES abandon the
+      // unsaved edits either way, and dropping the whole confirm would destroy
+      // them silently.
+      const choice = await deps.confirm({ canSave: canSaveState(viewState) });
       // "cancel" — keep the edits, stay put (abort the pending navigation).
       if (choice === "cancel") return false;
       if (choice === "save") {
+        // Re-check savability AFTER the await. `abandonsBuffer` and the `canSave`
+        // offer above are both evaluated BEFORE it, so neither can see a deletion
+        // that lands while the prompt is open — the exact cascade this guard is
+        // most exposed to (a dirty buffer's Delete succeeds, its handler calls
+        // requestClose(), and the live bridge routes viewing -> gone while the
+        // user is still deciding; an already-archived buffer can be deleted the
+        // same way). Abort rather than discard-and-proceed: the user asked to
+        // KEEP this work, so dropping it would be the opposite of their intent,
+        // and the rule below — never navigate on a save that did not succeed —
+        // covers a save that could not even run. The buffer stays on screen in
+        // `gone`, and the retry prompts Discard-only (canSave: false), so this
+        // aborts once rather than trapping.
+        if (!canSaveState(viewState)) {
+          deps.notifyError("This nib no longer exists, so your changes can't be saved.");
+          return false;
+        }
         // "save" — persist the buffer through the normal save path,
         // then decide whether the pending navigation proceeds. save() already
         // routes a 409 into the inline Load-theirs / Overwrite resolver (and its
@@ -370,7 +417,8 @@ export function createActiveView(deps: ActiveViewDeps): ActiveView {
     // Unsaved edits outweigh the missing nib: DELETED keeps the same buffer key
     // (`edit:<id>`), so reconcileBuffer leaves the form — and the user's work —
     // intact. Deliberately unguarded: the nib is gone whether or not the user
-    // confirms, and the guard's Save option cannot succeed against it.
+    // confirms, and the guard's Save option cannot succeed against a nib the
+    // server no longer resolves.
     if (form?.dirty) {
       apply({ type: "DELETED" });
       return "kept";
@@ -384,6 +432,11 @@ export function createActiveView(deps: ActiveViewDeps): ActiveView {
    * Save control invokes). Extracted so the dirty-nav guard's "Save" branch can
    * reuse it without reimplementing the create hand-off / conflict routing.
    *
+   * - no buffer, or a DELETED nib → `undefined`, nothing dispatched. Both
+   *   callers gate on savability before they get here, but the gate lives at this
+   *   chokepoint too so a caller cannot dispatch against a deleted nib by
+   *   forgetting to — the reuse this docblock invites must be safe by default.
+   *   An archived buffer still saves (see `canSaveState`).
    * - create → f.save(); on "created" (still this episode) SAVED-transition and
    *   navigate to the new id.
    * - edit → f.save(); a null-remote 409 runs the conflict fallback.
@@ -391,6 +444,12 @@ export function createActiveView(deps: ActiveViewDeps): ActiveView {
   async function save(): Promise<CreateOutcome | EditOutcome | undefined> {
     const f = form;
     if (!f) return undefined;
+    // A DELETED nib's mutation can only fail — and dispatching it anyway is what
+    // strands the panel. Refuse silently: this is a precondition, not a
+    // user-facing failure, and `undefined` routes into the "did not attempt"
+    // branch both callers already have. The guard's own pre-await check owns the
+    // user-facing message. An archived buffer is savable and falls through.
+    if (!canSaveState(viewState)) return undefined;
     if (f.mode === "create") {
       const outcome = await f.save();
       // Re-validate the buffer is still THIS create episode before handing off:
@@ -512,7 +571,9 @@ export function createActiveView(deps: ActiveViewDeps): ActiveView {
       lastExternal = null;
       return;
     }
-    if (l.deleted) apply({ type: "DELETED" });
+    // The reason travels with the report: an archived nib still exists at its
+    // archive path, so its buffer stays savable (see `canSaveState`).
+    if (l.gone) apply({ type: l.gone === "archived" ? "ARCHIVED" : "DELETED" });
     const ext = l.external;
     if (ext && ext !== lastExternal && f && f.mode === "edit") {
       if (untrack(() => f.dirty)) {

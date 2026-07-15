@@ -8,8 +8,9 @@
    *
    * State-driven render (per `view.state.kind`):
    *   - `viewing` / `gone` / `creating` -> the full three-row-header nib view.
-   *     `gone` adds a "deleted" notice and disables inputs; `creating` hides
-   *     relationships/documents/archive/delete and its primary button is "Create".
+   *     `gone` adds a notice naming its reason (deleted / archived) and disables
+   *     inputs; `creating` hides relationships/documents/archive/delete and its
+   *     primary button is "Create".
    *
    * The add-child type picker is NOT a state here — it overlays as an anchored
    * popover hosted by App (`view.typePicker`), so it never replaces this view.
@@ -84,6 +85,8 @@
 
   const isCreating = $derived(viewState.kind === "creating");
   const isGone = $derived(viewState.kind === "gone");
+  /** Why the buffer is `gone`, or null when it isn't. Drives the notice copy. */
+  const goneReason = $derived(viewState.kind === "gone" ? viewState.reason : null);
 
   // Blocked-state emphasis in the header (mirrors the tree row): the count comes
   // from the detail query's active-only `blockedBy` (completed/scrapped filtered
@@ -153,7 +156,7 @@
   // writes back to `prefs.previewOpen`, which auto-persists like other prefs.
   const previewOn = $derived(prefs?.previewOpen ?? DEFAULT_PREVIEW_OPEN);
   // `gone` nibs are read-only: never surface the editor even if edit mode was
-  // toggled on before the nib was deleted out from under us.
+  // toggled on before the nib went away out from under us.
   const bodyModeEffective = $derived<"preview" | "edit">(disabled ? "preview" : bodyMode);
 
   // A brand-new nib opens in edit mode so the user can type the body straight
@@ -284,11 +287,19 @@
 
   async function handleSave() {
     const f = form;
+    // `isGone`: this panel renders every `gone` buffer read-only (`disabled`),
+    // so no save may originate from it. Same intent as
+    // handleLoadTheirs/handleOverwrite. The rendered controls that reach here are
+    // already gone-disabled, so this is belt-and-braces for any future path that
+    // lets a gone buffer's editor stay interactive. It is deliberately broader
+    // than the presenter's rule — view.save() refuses only a DELETED nib, and an
+    // archived buffer is still saved through the dirty-nav guard's prompt, not
+    // through this panel.
     // `view.savePending`: a null-remote conflict fallback is in flight for this
     // form. `f.saving` is already false by then (EditForm.save resets it before
     // the presenter's fallback fetch), so without this a re-trigger would
     // re-dispatch mid-fallback.
-    if (!f || !f.dirty || f.saving || view.savePending) return;
+    if (isGone || !f || !f.dirty || f.saving || view.savePending) return;
     // Capture the saved instance + id BEFORE the await. The buffer can swap to
     // another nib mid-flight (popstate / syncTo guard-bypass), so the live
     // `form`/`nibId` getters read AFTER the await may point at a different nib.
@@ -654,9 +665,19 @@
         </div>
       </div>
 
-      <!-- ============ Deleted notice (gone) ============ -->
+      <!-- ============ Gone notice (deleted / archived) ============
+           The notice is the user's only explanation for the read-only panel, so
+           it must name the real cause: an archived nib still exists. Its color
+           carries the same distinction the copy does — warning for archived (a
+           reversible move whose buffer still saves), destructive for deleted. -->
       {#if isGone}
-        <div class="anv-deleted-notice" data-testid="anv-deleted-notice">This nib was deleted</div>
+        <div
+          class="anv-gone-notice"
+          class:anv-gone-notice--archived={goneReason === "archived"}
+          data-testid="anv-gone-notice"
+        >
+          {goneReason === "archived" ? "This nib was archived" : "This nib was deleted"}
+        </div>
       {/if}
 
       <!-- ===== External-change resolver (persistent, non-modal surface) =====
@@ -943,8 +964,8 @@
     flex: none;
   }
 
-  /* ---------- deleted / conflict banners ---------- */
-  .anv-deleted-notice {
+  /* ---------- gone / conflict banners ---------- */
+  .anv-gone-notice {
     margin: 0 0.8rem 0.5rem;
     padding: 0.5rem 0.75rem;
     background-color: var(--destructive);
@@ -952,6 +973,13 @@
     border-radius: var(--radius-md);
     font-size: var(--text-body-size);
     font-weight: 500;
+  }
+
+  /* An archived nib still exists and still saves, so it gets the attention
+     token the conflict banner uses — not the error token a deletion gets. */
+  .anv-gone-notice--archived {
+    background-color: var(--warning);
+    color: var(--warning-foreground, white);
   }
 
   .anv-conflict {

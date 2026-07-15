@@ -2,6 +2,7 @@ import { describe, it, expect } from "vitest";
 import {
   reduce,
   abandonsBuffer,
+  canSaveState,
   type ViewState,
   type Action,
 } from "./activeView";
@@ -11,8 +12,14 @@ import {
 const closed: ViewState = { kind: "closed" };
 const viewingD: ViewState = { kind: "viewing", nibId: "n1", presentation: "docked" };
 const viewingE: ViewState = { kind: "viewing", nibId: "n1", presentation: "expanded" };
-const goneD: ViewState = { kind: "gone", nibId: "n1", presentation: "docked" };
-const goneE: ViewState = { kind: "gone", nibId: "n1", presentation: "expanded" };
+const goneD: ViewState = { kind: "gone", nibId: "n1", presentation: "docked", reason: "deleted" };
+const goneE: ViewState = { kind: "gone", nibId: "n1", presentation: "expanded", reason: "deleted" };
+const goneArchivedD: ViewState = {
+  kind: "gone",
+  nibId: "n1",
+  presentation: "docked",
+  reason: "archived",
+};
 const creatingD: ViewState = { kind: "creating", defaults: { type: "task" }, presentation: "docked" };
 const creatingE: ViewState = { kind: "creating", defaults: { type: "task" }, presentation: "expanded" };
 
@@ -121,11 +128,12 @@ describe("reduce · SAVED", () => {
 // --- DELETED -----------------------------------------------------------------
 
 describe("reduce · DELETED", () => {
-  it("maps viewing -> gone, keeping nibId and presentation", () => {
+  it("maps viewing -> gone with reason 'deleted', keeping nibId and presentation", () => {
     expect(reduce(viewingE, { type: "DELETED" })).toEqual({
       kind: "gone",
       nibId: "n1",
       presentation: "expanded",
+      reason: "deleted",
     });
   });
 
@@ -133,6 +141,47 @@ describe("reduce · DELETED", () => {
     expect(reduce(goneD, { type: "DELETED" })).toEqual(goneD);
     expect(reduce(creatingD, { type: "DELETED" })).toEqual(creatingD);
     expect(reduce(closed, { type: "DELETED" })).toEqual(closed);
+  });
+});
+
+// --- ARCHIVED ----------------------------------------------------------------
+
+describe("reduce · ARCHIVED", () => {
+  it("maps viewing -> gone with reason 'archived', keeping nibId and presentation", () => {
+    // Same destination state as DELETED, different reason: an archived nib still
+    // exists at its archive path, so the reason is what lets the shell keep Save
+    // on offer for it.
+    expect(reduce(viewingE, { type: "ARCHIVED" })).toEqual({
+      kind: "gone",
+      nibId: "n1",
+      presentation: "expanded",
+      reason: "archived",
+    });
+  });
+
+  it("is a no-op outside viewing", () => {
+    expect(reduce(goneD, { type: "ARCHIVED" })).toEqual(goneD);
+    expect(reduce(creatingD, { type: "ARCHIVED" })).toEqual(creatingD);
+    expect(reduce(closed, { type: "ARCHIVED" })).toEqual(closed);
+  });
+});
+
+// --- gone -> gone reason transitions -----------------------------------------
+
+describe("reduce · a deletion supersedes an archive", () => {
+  it("upgrades gone(archived) -> gone(deleted): an archived nib can still be deleted", () => {
+    // Not cosmetic: the archived reason is what keeps Save on offer, so missing
+    // this transition would leave a dead-end Save pointed at a deleted nib.
+    expect(reduce(goneArchivedD, { type: "DELETED" })).toEqual({
+      kind: "gone",
+      nibId: "n1",
+      presentation: "docked",
+      reason: "deleted",
+    });
+  });
+
+  it("never downgrades gone(deleted) -> gone(archived): deletion is terminal", () => {
+    expect(reduce(goneD, { type: "ARCHIVED" })).toEqual(goneD);
   });
 });
 
@@ -156,8 +205,10 @@ describe("reduce · illegal (state, action) pairs are no-ops", () => {
     ["closed + DELETED", closed, { type: "DELETED" }],
     ["viewing + SAVED(same)", viewingD, { type: "SAVED", nibId: "n1" }],
     ["gone + DELETED", goneD, { type: "DELETED" }],
+    ["gone + ARCHIVED", goneD, { type: "ARCHIVED" }],
     ["gone + SAVED", goneD, { type: "SAVED", nibId: "x" }],
     ["creating + DELETED", creatingD, { type: "DELETED" }],
+    ["creating + ARCHIVED", creatingD, { type: "ARCHIVED" }],
   ];
 
   it.each(cases)("%s leaves state unchanged", (_label, state, action) => {
@@ -183,6 +234,10 @@ describe("abandonsBuffer", () => {
     // CLOSE
     ["viewing + CLOSE", viewingD, { type: "CLOSE" }, true],
     ["gone + CLOSE", goneD, { type: "CLOSE" }, true],
+    // Closing an ARCHIVED gone buffer abandons its unsaved edits just as surely
+    // as a deleted one — the reason changes what the prompt may OFFER, never
+    // whether it fires.
+    ["gone(archived) + CLOSE", goneArchivedD, { type: "CLOSE" }, true],
     ["creating + CLOSE", creatingD, { type: "CLOSE" }, true],
     ["closed + CLOSE", closed, { type: "CLOSE" }, false],
     // Buffer-preserving actions never abandon
@@ -190,10 +245,32 @@ describe("abandonsBuffer", () => {
     ["viewing + COLLAPSE", viewingE, { type: "COLLAPSE" }, false],
     ["viewing + SAVED", viewingD, { type: "SAVED", nibId: "n1" }, false],
     ["viewing + DELETED", viewingD, { type: "DELETED" }, false],
+    ["viewing + ARCHIVED", viewingD, { type: "ARCHIVED" }, false],
     ["creating + SAVED", creatingD, { type: "SAVED", nibId: "x" }, false],
   ];
 
   it.each(cases)("%s -> %s", (_label, state, action, expected) => {
     expect(abandonsBuffer(state, action)).toBe(expected);
+  });
+});
+
+// --- canSaveState ------------------------------------------------------------
+
+describe("canSaveState", () => {
+  const cases: Array<[string, ViewState, boolean]> = [
+    // The one unsavable state: the nib does not exist, so nothing can be written.
+    ["gone(deleted) -> false", goneD, false],
+    ["gone(deleted, expanded) -> false", goneE, false],
+    // Archived nibs still exist at their archive path and still accept writes.
+    ["gone(archived) -> true", goneArchivedD, true],
+    ["viewing -> true", viewingD, true],
+    ["creating -> true", creatingD, true],
+    // No buffer to save, but the flag is about the nib, not the buffer — the
+    // shell gates on `form` separately.
+    ["closed -> true", closed, true],
+  ];
+
+  it.each(cases)("%s", (_label, state, expected) => {
+    expect(canSaveState(state)).toBe(expected);
   });
 });

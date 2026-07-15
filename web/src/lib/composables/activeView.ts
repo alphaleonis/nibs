@@ -15,10 +15,20 @@
 
 export type Presentation = "docked" | "expanded";
 
+/**
+ * Why a `gone` buffer's nib is no longer where the view found it. `gone` is one
+ * state with two causes, and they differ in what the user can still do:
+ *   - "deleted"  — the nib does not exist; a save against it can only fail.
+ *   - "archived" — the nib still exists at its archive path, still readable and
+ *     still writable, so a save against it genuinely succeeds.
+ * Savability is derived from this, never from the `gone` tag alone.
+ */
+export type GoneReason = "deleted" | "archived";
+
 export type ViewState =
   | { kind: "closed" }
   | { kind: "viewing"; nibId: string; presentation: Presentation }
-  | { kind: "gone"; nibId: string; presentation: Presentation }
+  | { kind: "gone"; nibId: string; presentation: Presentation; reason: GoneReason }
   | { kind: "creating"; defaults: { type: string; parent?: string }; presentation: Presentation };
 
 export type Action =
@@ -28,6 +38,7 @@ export type Action =
   | { type: "START_CREATE"; defaults: { type: string; parent?: string } }
   | { type: "SAVED"; nibId: string }
   | { type: "DELETED" }
+  | { type: "ARCHIVED" }
   | { type: "CLOSE" };
 
 /** Current presentation, defaulting to docked for `closed` (which has none). */
@@ -81,13 +92,41 @@ export function reduce(s: ViewState, a: Action): ViewState {
       if (s.kind !== "creating") return s;
       return { kind: "viewing", nibId: a.nibId, presentation: s.presentation };
 
+    // Both causes land in `gone` and keep the same buffer; only the reason —
+    // and therefore what the shell may still offer — differs.
     case "DELETED":
-      if (s.kind !== "viewing") return s;
-      return { kind: "gone", nibId: s.nibId, presentation: s.presentation };
+    case "ARCHIVED": {
+      const reason: GoneReason = a.type === "ARCHIVED" ? "archived" : "deleted";
+      if (s.kind === "viewing") {
+        return { kind: "gone", nibId: s.nibId, presentation: s.presentation, reason };
+      }
+      // A deletion supersedes an archive: an archived nib can still be deleted,
+      // and that withdraws the save its reason was keeping on offer. Nothing
+      // supersedes a deletion — it is terminal — and re-reporting the reason the
+      // state already carries is a no-op.
+      if (s.kind === "gone" && s.reason === "archived" && reason === "deleted") {
+        return { ...s, reason };
+      }
+      return s;
+    }
 
     case "CLOSE":
       return { kind: "closed" };
   }
+}
+
+/**
+ * True when the state's buffer can still be persisted.
+ *
+ * Only a DELETED nib is unsavable — its mutation has nothing to target and can
+ * only fail. Every other state, `gone`/"archived" included, has a real write
+ * path: archiving moves the file into archive/ and rewrites the nib's stored
+ * path, leaving it present and updatable there. Deriving this from the `gone`
+ * tag instead of the reason would withdraw a save that genuinely succeeds, and
+ * the user's only remaining option would destroy their unsaved edits.
+ */
+export function canSaveState(s: ViewState): boolean {
+  return !(s.kind === "gone" && s.reason === "deleted");
 }
 
 /**

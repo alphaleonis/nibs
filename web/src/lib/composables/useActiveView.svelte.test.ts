@@ -8,6 +8,7 @@ import {
 } from "./useActiveView.svelte";
 import type { CreateForm, EditForm, CreateDefaults, NibSnapshot } from "../nibForm.svelte";
 import type { LiveNib } from "../liveNib.svelte";
+import type { NibGoneReason } from "../nibChange";
 
 function snap(overrides: Partial<NibSnapshot> = {}): NibSnapshot {
   return {
@@ -44,7 +45,7 @@ interface FakeCreate {
 }
 
 interface LiveInst {
-  deleted: boolean;
+  gone: NibGoneReason | null;
   external: NibSnapshot | null;
   error: unknown;
 }
@@ -54,7 +55,10 @@ function makeDeps() {
   const nav = { navigateToNib: vi.fn(), closePanel: vi.fn(), replaceClosed: vi.fn() };
   // Tri-state dirty-guard confirm: "save" | "discard" | "cancel".
   // Defaults to "discard" — the pre-Save behavior (proceed, abandoning edits).
-  const confirm = vi.fn<() => Promise<ConfirmChoice>>(async () => "discard");
+  // Typed with the real `ActiveViewDeps.confirm` signature: TypeScript would
+  // accept a zero-arg stub here (see that dep's docblock), so keeping the
+  // parameter is what makes a drift in the opts shape show up as a type error.
+  const confirm = vi.fn<(opts: { canSave: boolean }) => Promise<ConfirmChoice>>(async () => "discard");
 
   const editForms = new Map<string, FakeEdit>();
   const createForms: FakeCreate[] = [];
@@ -107,7 +111,7 @@ function makeDeps() {
 
   const liveNib = (nibId: string): LiveNib => {
     created.push(nibId);
-    const inst = $state<LiveInst>({ deleted: false, external: null, error: undefined });
+    const inst = $state<LiveInst>({ gone: null, external: null, error: undefined });
     liveInsts.set(nibId, inst);
     // Registers a cleanup so the shell's per-target $effect.root disposal is
     // observable (mirrors the real liveNib's internal subscription teardown).
@@ -115,8 +119,8 @@ function makeDeps() {
       disposed.push(nibId);
     });
     return {
-      get deleted() {
-        return inst.deleted;
+      get gone() {
+        return inst.gone;
       },
       get external() {
         return inst.external;
@@ -404,7 +408,7 @@ describe("createActiveView · missing nib", () => {
     // path (gone), never a silent close.
     expect(view.noteMissing("n1")).toBe("kept");
     flushSync();
-    expect(view.state).toEqual({ kind: "gone", nibId: "n1", presentation: "docked" });
+    expect(view.state).toEqual({ kind: "gone", nibId: "n1", presentation: "docked", reason: "deleted" });
     expect(view.form).toBe(f);
     expect(view.blocksHistoryNav).toBe(true);
     // The buffer is preserved outright — no discard prompt is involved.
@@ -468,13 +472,13 @@ describe("createActiveView · missing nib", () => {
     // The live bridge applies DELETED with no dirty gate, so a pristine nib
     // reaches `gone` with no report ever made. A detail-query report arriving
     // afterward must not close it out from under the notice.
-    h.liveInsts.get("n1")!.deleted = true;
+    h.liveInsts.get("n1")!.gone = "deleted";
     flushSync();
     expect(view.state.kind).toBe("gone");
 
     expect(view.noteMissing("n1")).toBe("kept");
     flushSync();
-    expect(view.state).toEqual({ kind: "gone", nibId: "n1", presentation: "docked" });
+    expect(view.state).toEqual({ kind: "gone", nibId: "n1", presentation: "docked", reason: "deleted" });
     expect(view.form).toBe(f);
 
     dispose();
@@ -507,7 +511,7 @@ describe("createActiveView · missing nib", () => {
     // `gone` on the same buffer — no loop, no rebuild, no lost edits.
     expect(view.noteMissing("n1")).toBe("kept");
     flushSync();
-    expect(view.state).toEqual({ kind: "gone", nibId: "n1", presentation: "docked" });
+    expect(view.state).toEqual({ kind: "gone", nibId: "n1", presentation: "docked", reason: "deleted" });
     expect(view.form).toBe(f);
     expect(h.confirm).not.toHaveBeenCalled();
 
@@ -763,6 +767,269 @@ describe("createActiveView · guard funnel · Save option", () => {
   });
 });
 
+describe("createActiveView · guard funnel · DELETED buffers cannot be saved", () => {
+  /** Open n1, dirty its buffer, and route it to `gone`/"deleted" with the edits preserved. */
+  async function openDirtyGone(h: ReturnType<typeof makeDeps>, view: ActiveView) {
+    await view.open("n1");
+    flushSync();
+    const f = h.editForms.get("n1")!;
+    f.dirty = true;
+    expect(view.noteMissing("n1")).toBe("kept");
+    flushSync();
+    expect(view.state.kind).toBe("gone");
+    return f;
+  }
+
+  it("save() itself refuses a gone buffer, without relying on its callers to check", async () => {
+    const h = makeDeps();
+    const { view, dispose } = mount(h.deps);
+    const f = await openDirtyGone(h, view);
+
+    // Call save() DIRECTLY — the way a future caller reusing this chokepoint
+    // would, having never heard of `gone`. It must refuse on its own rather than
+    // dispatch a mutation at a deleted nib.
+    const outcome = await view.save();
+
+    expect(f.save).not.toHaveBeenCalled();
+    // `undefined` = "did not attempt", the token both existing callers already
+    // abort on. The refusal is silent by contract: explaining the dead end
+    // belongs to the guard, which checks `gone` before it ever calls save().
+    expect(outcome).toBeUndefined();
+    expect(h.notifyError).not.toHaveBeenCalled();
+    // The buffer and its unsaved edits stay exactly where they were.
+    expect(view.state.kind).toBe("gone");
+    expect(view.form).toBe(f);
+
+    dispose();
+  });
+
+  it("tells the dialog a gone buffer cannot be saved, so it renders Discard-only", async () => {
+    const h = makeDeps();
+    const { view, dispose } = mount(h.deps);
+    await openDirtyGone(h, view);
+
+    h.confirm.mockResolvedValueOnce("discard");
+    await view.requestClose();
+
+    // The prompt MUST still fire — closing a dirty `gone` buffer does discard
+    // unsaved edits, so skipping it would destroy them silently. What changes is
+    // the offer: `canSave: false` drops the Save button (App.svelte omits
+    // saveLabel/saveAction), leaving Discard/Cancel — the only outcomes a
+    // deleted nib can honor.
+    expect(h.confirm).toHaveBeenCalledTimes(1);
+    expect(h.confirm).toHaveBeenCalledWith({ canSave: false });
+
+    dispose();
+  });
+
+  it("still offers Save while the nib is live (canSave: true)", async () => {
+    const h = makeDeps();
+    const { view, dispose } = mount(h.deps);
+
+    await view.open("n1");
+    flushSync();
+    h.editForms.get("n1")!.dirty = true;
+    h.confirm.mockResolvedValueOnce("cancel");
+
+    await view.requestClose();
+
+    // The boundary's other side: a live buffer is savable, so the Save option
+    // stays. Only `gone` withdraws it.
+    expect(h.confirm).toHaveBeenCalledWith({ canSave: true });
+
+    dispose();
+  });
+
+  it("never fires a save against a gone buffer even if the guard resolves 'save'", async () => {
+    const h = makeDeps();
+    const { view, dispose } = mount(h.deps);
+    const f = await openDirtyGone(h, view);
+
+    h.confirm.mockResolvedValueOnce("save");
+    await view.requestClose();
+    flushSync();
+
+    // Defense in depth. The dialog no longer offers Save from `gone`, but the
+    // guard must not TRUST that: a stale/racing resolution must never dispatch a
+    // mutation against a nib that no longer exists.
+    expect(f.save).not.toHaveBeenCalled();
+    // A save that cannot run is a save that did not succeed, so the pending
+    // close does not proceed (the guard's standing "never navigate on a failed
+    // save" rule). The buffer and its edits stay on screen.
+    expect(h.nav.closePanel).not.toHaveBeenCalled();
+    expect(view.state.kind).toBe("gone");
+    expect(view.form).toBe(f);
+    // ...and the dead-end is explained rather than a silent no-op.
+    expect(h.notifyError).toHaveBeenCalledTimes(1);
+
+    dispose();
+  });
+
+  it("does not save — or strand the panel — when the nib vanishes while the prompt is open", async () => {
+    const h = makeDeps();
+    const { view, dispose } = mount(h.deps);
+
+    await view.open("n1");
+    flushSync();
+    const f = h.editForms.get("n1")!;
+    f.dirty = true;
+
+    // The cascade: a dirty buffer's Archive/Delete succeeds and the handler calls
+    // requestClose(). The prompt opens while the nib is still LIVE (so it offers
+    // Save), the deletion lands underneath via the live bridge, and only THEN
+    // does the user pick Save. `abandonsBuffer` is evaluated before this await,
+    // so no predicate change can see the deletion — only a post-await re-check.
+    h.confirm.mockImplementationOnce(async () => {
+      h.liveInsts.get("n1")!.gone = "deleted";
+      flushSync();
+      return "save";
+    });
+
+    await view.requestClose();
+    flushSync();
+
+    // Offered while live...
+    expect(h.confirm).toHaveBeenCalledWith({ canSave: true });
+    // ...but never dispatched against the nib that vanished mid-prompt.
+    expect(f.save).not.toHaveBeenCalled();
+    expect(view.state.kind).toBe("gone");
+    expect(view.form).toBe(f);
+
+    // Not stranded: the retry sees `gone` up front, prompts Discard-only, and
+    // closes cleanly. This is what breaks the trap — the impossible Save is no
+    // longer on offer, so the user cannot re-enter the dead end.
+    h.confirm.mockResolvedValueOnce("discard");
+    await view.requestClose();
+    flushSync();
+
+    expect(h.confirm).toHaveBeenLastCalledWith({ canSave: false });
+    expect(view.state.kind).toBe("closed");
+    expect(h.nav.closePanel).toHaveBeenCalledTimes(1);
+
+    dispose();
+  });
+
+  it("leaves a PRISTINE gone buffer unprompted (nothing to abandon)", async () => {
+    const h = makeDeps();
+    const { view, dispose } = mount(h.deps);
+
+    await view.open("n1");
+    flushSync();
+    // Pristine + gone: `abandonsBuffer` is true, but the guard also gates on
+    // dirtiness, so there is no prompt to strip a Save button from.
+    h.liveInsts.get("n1")!.gone = "deleted";
+    flushSync();
+    expect(view.state.kind).toBe("gone");
+
+    await view.requestClose();
+    flushSync();
+
+    expect(h.confirm).not.toHaveBeenCalled();
+    expect(view.state.kind).toBe("closed");
+    expect(h.nav.closePanel).toHaveBeenCalledTimes(1);
+
+    dispose();
+  });
+});
+
+describe("createActiveView · guard funnel · ARCHIVED buffers stay savable", () => {
+  /** Open n1, dirty its buffer, and archive it under the live editor. */
+  async function openDirtyArchived(h: ReturnType<typeof makeDeps>, view: ActiveView) {
+    await view.open("n1");
+    flushSync();
+    const f = h.editForms.get("n1")!;
+    f.dirty = true;
+    h.liveInsts.get("n1")!.gone = "archived";
+    flushSync();
+    expect(view.state).toEqual({
+      kind: "gone",
+      nibId: "n1",
+      presentation: "docked",
+      reason: "archived",
+    });
+    return f;
+  }
+
+  it("save() persists an archived buffer — the nib still exists in the archive", async () => {
+    const h = makeDeps();
+    const { view, dispose } = mount(h.deps);
+    const f = await openDirtyArchived(h, view);
+
+    const outcome = await view.save();
+
+    // Archiving only MOVES the nib: it stays in the store and Core.Update writes
+    // to its archive path, so this save really lands. Refusing it here would
+    // destroy the user's edits for no reason.
+    expect(f.save).toHaveBeenCalledTimes(1);
+    expect(outcome).toEqual({ kind: "saved", snapshot: expect.objectContaining({ id: "n1" }) });
+
+    dispose();
+  });
+
+  it("keeps the Save option when closing a dirty archived buffer", async () => {
+    const h = makeDeps();
+    const { view, dispose } = mount(h.deps);
+    await openDirtyArchived(h, view);
+
+    h.confirm.mockResolvedValueOnce("cancel");
+    await view.requestClose();
+
+    // `gone` alone must not withdraw Save — only the DELETED reason may.
+    expect(h.confirm).toHaveBeenCalledWith({ canSave: true });
+
+    dispose();
+  });
+
+  it("saves and then closes when the guard resolves 'save' on an archived buffer", async () => {
+    const h = makeDeps();
+    const { view, dispose } = mount(h.deps);
+    const f = await openDirtyArchived(h, view);
+
+    h.confirm.mockResolvedValueOnce("save");
+    await view.requestClose();
+    flushSync();
+
+    // The whole point of the distinction: the save runs, succeeds, and the
+    // pending close proceeds — no dead end, no lost edits, no error toast.
+    expect(f.save).toHaveBeenCalledTimes(1);
+    expect(h.notifyError).not.toHaveBeenCalled();
+    expect(view.state.kind).toBe("closed");
+    expect(h.nav.closePanel).toHaveBeenCalledTimes(1);
+
+    dispose();
+  });
+
+  it("still refuses when the nib is DELETED out of the archive mid-prompt", async () => {
+    const h = makeDeps();
+    const { view, dispose } = mount(h.deps);
+    const f = await openDirtyArchived(h, view);
+
+    // An archived nib can still be deleted. The prompt opens offering Save (the
+    // buffer is archived, so savable), the deletion lands underneath, and only
+    // then does the user pick Save — the post-await re-check must catch it.
+    h.confirm.mockImplementationOnce(async () => {
+      h.liveInsts.get("n1")!.gone = "deleted";
+      flushSync();
+      return "save";
+    });
+
+    await view.requestClose();
+    flushSync();
+
+    expect(h.confirm).toHaveBeenCalledWith({ canSave: true });
+    expect(f.save).not.toHaveBeenCalled();
+    expect(h.notifyError).toHaveBeenCalledTimes(1);
+    expect(view.state).toEqual({
+      kind: "gone",
+      nibId: "n1",
+      presentation: "docked",
+      reason: "deleted",
+    });
+
+    dispose();
+  });
+});
+
 describe("createActiveView · create -> edit hand-off", () => {
   it("save() on a create commits, dispatches SAVED, and navigates to the new id", async () => {
     const h = makeDeps();
@@ -866,10 +1133,10 @@ describe("createActiveView · live bridge", () => {
     flushSync();
     h.editForms.get("n1")!.dirty = true;
 
-    h.liveInsts.get("n1")!.deleted = true;
+    h.liveInsts.get("n1")!.gone = "deleted";
     flushSync();
 
-    expect(view.state).toEqual({ kind: "gone", nibId: "n1", presentation: "docked" });
+    expect(view.state).toEqual({ kind: "gone", nibId: "n1", presentation: "docked", reason: "deleted" });
     expect(view.blocksHistoryNav).toBe(true);
 
     dispose();
@@ -1114,7 +1381,7 @@ describe("createActiveView · null-remote conflict fallback", () => {
     // act on that itself: nothing else is guaranteed to arrive (this fallback runs
     // precisely when the live subscription may be lagging). `gone` renders the
     // deleted notice, so the rejected save is not silent.
-    expect(view.state).toEqual({ kind: "gone", nibId: "n1", presentation: "docked" });
+    expect(view.state).toEqual({ kind: "gone", nibId: "n1", presentation: "docked", reason: "deleted" });
     // The dirty buffer survives the transition — same buffer key (`edit:n1`).
     expect(view.form).toBe(formBefore);
     expect(h.editForms.get("n1")!.dirty).toBe(true);

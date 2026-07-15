@@ -202,19 +202,32 @@
     pendingDiscardResolve = null;
     r?.(choice);
   }
-  function confirmDiscard(): Promise<ConfirmChoice> {
+  // `canSave: false` — the buffer's nib was DELETED, so a Save would dispatch
+  // against nothing and fail; the copy below may state that as fact. It does not
+  // mean merely "gone": an archived buffer arrives with `canSave: true` and keeps
+  // its Save, because its nib still exists in the archive and the write lands.
+  // Omitting saveLabel/saveAction renders the dialog Discard-only (showConfirm
+  // nulls both, and ConfirmDialog gates its Save button on `onsave`), the same
+  // shape Delete/Archive confirms use.
+  function confirmDiscard({ canSave }: { canSave: boolean }): Promise<ConfirmChoice> {
     return new Promise((resolve) => {
       pendingDiscardResolve = resolve;
       confirmDialog.showConfirm({
-        title: "Unsaved changes",
-        message: "You have unsaved changes. Save them and continue, or discard them.",
+        title: canSave ? "Unsaved changes" : "This nib was deleted",
+        message: canSave
+          ? "You have unsaved changes. Save them and continue, or discard them."
+          : "This nib no longer exists, so your unsaved changes can't be saved. Discard them and continue?",
         label: "Discard",
         variant: "warning",
-        saveLabel: "Save",
-        saveAction: () => {
-          confirmDialog.close();
-          resolveDiscard("save");
-        },
+        ...(canSave
+          ? {
+              saveLabel: "Save",
+              saveAction: () => {
+                confirmDialog.close();
+                resolveDiscard("save");
+              },
+            }
+          : {}),
         action: () => {
           confirmDialog.close();
           resolveDiscard("discard");

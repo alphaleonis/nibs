@@ -48,6 +48,21 @@ describe("NibChangeTracker", () => {
     tracker.destroy();
   });
 
+  it("handleEvent('archived') fades too — the nib leaves the visible tree", () => {
+    const tracker = new NibChangeTracker({ fadeDurationMs: 500 });
+
+    tracker.handleEvent({ type: "archived", nibId: "nibs-arc1" });
+    // Archiving moves the nib out of the main list, so its row leaves the same
+    // way a deleted one does. Highlighting it would be wrong (it isn't staying).
+    expect(tracker.isFading("nibs-arc1")).toBe(true);
+    expect(tracker.isHighlighted("nibs-arc1")).toBe(false);
+
+    vi.advanceTimersByTime(500);
+    expect(tracker.isFading("nibs-arc1")).toBe(false);
+
+    tracker.destroy();
+  });
+
   it("rapid duplicate events reset the timer", () => {
     const tracker = new NibChangeTracker({ highlightDurationMs: 1000 });
 

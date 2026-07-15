@@ -8,7 +8,7 @@ import { CONFIG_QUERY, NIB_DETAIL_QUERY } from "./lib/queries";
 // (deleted / archived while the user has it open). Hoisted so the mock factory and
 // the tests share one store instance: the factory serves it for `nibs-vanish`, and
 // a test settles it to `{ nib: null }` once the buffer is dirty.
-const { vanishingNib, vanishingDetailData } = await vi.hoisted(async () => {
+const { vanishingNib, vanishingDetailData, nibSubData } = await vi.hoisted(async () => {
   const { writable } = await import("svelte/store");
   const nib = {
     id: "nibs-vanish",
@@ -42,6 +42,15 @@ const { vanishingNib, vanishingDetailData } = await vi.hoisted(async () => {
       data: { nib },
       stale: false,
     }),
+    // The live NIB_CHANGED subscription. Writable so a test can push a real
+    // server event (the only way a buffer reaches `gone`/"archived" — an archived
+    // nib still RESOLVES, so the detail query never goes null for it).
+    nibSubData: writable<{ fetching: boolean; error: undefined; data: unknown; stale: boolean }>({
+      fetching: false,
+      error: undefined,
+      data: undefined,
+      stale: false,
+    }),
   };
 });
 
@@ -57,6 +66,19 @@ const restoreVanishingNib = () =>
     stale: false,
   });
 
+/** Push a live `archived` event for `id` — the nib moved to the archive, and
+ *  still exists there. */
+const archiveNib = (id: string) =>
+  nibSubData.set({
+    fetching: false,
+    error: undefined,
+    data: { nibChanged: { type: "archived", nibId: id, nib: vanishingNib } },
+    stale: false,
+  });
+/** Reset the shared subscription store so an event doesn't leak between tests. */
+const resetNibSub = () =>
+  nibSubData.set({ fetching: false, error: undefined, data: undefined, stale: false });
+
 vi.mock("@urql/svelte", async () => {
   const { readable } = await import("svelte/store");
   const actual = await vi.importActual<typeof import("@urql/svelte")>("@urql/svelte");
@@ -68,7 +90,12 @@ vi.mock("@urql/svelte", async () => {
     stale: false,
   });
 
-  const nibsData = readable({
+  // `reexecute`: TreeTable calls it on every change event that is not a delete
+  // (a delete defers it behind the fade timer). A bare `readable` has no such
+  // method, and the resulting TypeError aborts the whole effect flush — taking
+  // the active-nib view's live bridge down with it — so any subscription-driven
+  // test would silently observe nothing.
+  const nibsData = Object.assign(readable({
     fetching: false,
     error: undefined,
     data: {
@@ -102,14 +129,7 @@ vi.mock("@urql/svelte", async () => {
       ],
     },
     stale: false,
-  });
-
-  const subscriptionData = readable({
-    fetching: false,
-    error: undefined,
-    data: undefined,
-    stale: false,
-  });
+  }), { reexecute: vi.fn() });
 
   // The active-nib view runs NIB_DETAIL_QUERY (to seed the edit form + render
   // relations); it must resolve to a real nib or App treats it as not-found and
@@ -165,7 +185,7 @@ vi.mock("@urql/svelte", async () => {
       }
       return nibsData;
     }),
-    subscriptionStore: vi.fn().mockReturnValue(subscriptionData),
+    subscriptionStore: vi.fn().mockReturnValue(nibSubData),
   };
 });
 
@@ -185,8 +205,9 @@ describe("App", () => {
     document.documentElement.classList.remove("dark");
     delete document.documentElement.dataset.theme;
     // The vanishing nib's detail store is module-level, so a test that deletes it
-    // would leak into the next one.
+    // would leak into the next one. Same for the shared subscription store.
     restoreVanishingNib();
+    resetNibSub();
   });
 
   it("renders with dark theme shell containing Toolbar and TreeTable", () => {
@@ -963,12 +984,98 @@ describe("App", () => {
     // The unsaved edits must survive behind the read-only deleted notice — the
     // view stays open rather than silently dropping the buffer.
     await waitFor(() => {
-      expect(screen.getByTestId("anv-deleted-notice")).toBeInTheDocument();
+      expect(screen.getByTestId("anv-gone-notice")).toBeInTheDocument();
     });
     expect(screen.getByTestId("active-nib-view")).toBeInTheDocument();
     expect(screen.getByTestId("anv-title")).toHaveValue("Vanishing nib edited");
     // The ?nib= URL still points at what is on screen, so it must not be healed.
     expect(window.location.search).toBe("?nib=nibs-vanish");
+  });
+
+  it("closing a dirty buffer whose nib vanished prompts Discard-only, then closes", async () => {
+    const user = userEvent.setup();
+    window.history.replaceState(null, "", "/?nib=nibs-vanish");
+    render(App);
+
+    const title = await screen.findByTestId("anv-title");
+    await user.type(title, " edited");
+    vanishNib();
+    await waitFor(() => {
+      expect(screen.getByTestId("anv-gone-notice")).toBeInTheDocument();
+    });
+
+    await user.click(screen.getByTestId("anv-close"));
+
+    // The prompt MUST still fire — closing does abandon the unsaved edits — but
+    // the nib is deleted, so a Save could only dispatch against nothing and fail.
+    // App withdraws the option instead of offering that dead end.
+    await waitFor(() => {
+      expect(screen.getByTestId("confirm-dialog")).toBeInTheDocument();
+    });
+    expect(screen.getByTestId("confirm-dialog-title")).toHaveTextContent("This nib was deleted");
+    expect(screen.queryByTestId("confirm-dialog-save")).not.toBeInTheDocument();
+    // Discard/Cancel — the only outcomes a deleted nib can honor — remain.
+    expect(screen.getByTestId("confirm-dialog-confirm")).toHaveTextContent("Discard");
+    expect(screen.getByTestId("confirm-dialog-cancel")).toBeInTheDocument();
+
+    // Discard resolves the guard and the panel closes: not stranded.
+    await user.click(screen.getByTestId("confirm-dialog-confirm"));
+    await waitFor(() => {
+      expect(screen.queryByTestId("active-nib-view")).not.toBeInTheDocument();
+    });
+  });
+
+  it("closing a dirty buffer whose nib was ARCHIVED still offers Save", async () => {
+    const user = userEvent.setup();
+    window.history.replaceState(null, "", "/?nib=nibs-vanish");
+    render(App);
+
+    const title = await screen.findByTestId("anv-title");
+    await user.type(title, " edited");
+    // Archived, not deleted: the nib moved into the archive and still exists
+    // there, so Core.Update writes to its archive path and a save really lands.
+    archiveNib("nibs-vanish");
+    await waitFor(() => {
+      expect(screen.getByTestId("anv-gone-notice")).toHaveTextContent("This nib was archived");
+    });
+
+    await user.click(screen.getByTestId("anv-close"));
+
+    await waitFor(() => {
+      expect(screen.getByTestId("confirm-dialog")).toBeInTheDocument();
+    });
+    // The regression this pins: `gone` alone once withdrew Save, so archiving a
+    // nib with unsaved edits left destroying them as the only way forward — and
+    // said "This nib was deleted" while doing it. Both are false for an archive.
+    expect(screen.getByTestId("confirm-dialog-title")).toHaveTextContent("Unsaved changes");
+    expect(screen.getByTestId("confirm-dialog-save")).toHaveTextContent("Save");
+
+    await user.click(screen.getByTestId("confirm-dialog-cancel"));
+  });
+
+  it("closing a dirty buffer whose nib is still live offers Save", async () => {
+    const user = userEvent.setup();
+    window.history.replaceState(null, "", "/?nib=nibs-vanish");
+    render(App);
+
+    const title = await screen.findByTestId("anv-title");
+    await user.type(title, " edited");
+
+    await user.click(screen.getByTestId("anv-close"));
+
+    // The boundary's other side: nothing was deleted, so the guard keeps its
+    // recommended Save. Only a `gone` buffer withdraws it.
+    await waitFor(() => {
+      expect(screen.getByTestId("confirm-dialog")).toBeInTheDocument();
+    });
+    expect(screen.getByTestId("confirm-dialog-title")).toHaveTextContent("Unsaved changes");
+    expect(screen.getByTestId("confirm-dialog-save")).toHaveTextContent("Save");
+
+    // Cancel out to close the dialog before the test ends, rather than leaving it
+    // open at teardown. (Not leak avoidance: the per-test unmount discards the App
+    // closure and nothing awaits the pending promise. Closing here keeps teardown
+    // clear of bits-ui's deferred body-scroll-lock timer — see test-setup.ts.)
+    await user.click(screen.getByTestId("confirm-dialog-cancel"));
   });
 
   it("Back/Forward (popstate) retargets the docked view to the history nib", async () => {

@@ -14,7 +14,15 @@
 
 import type { NibSnapshot } from "./nibForm.svelte";
 
-export type NibChangeType = "created" | "updated" | "deleted";
+export type NibChangeType = "created" | "updated" | "deleted" | "archived";
+
+/**
+ * Why the viewed nib is no longer at its old location. The two causes are NOT
+ * interchangeable: a deleted nib is gone, while an archived one still exists at
+ * its archive path and still accepts writes. The presenter keys savability off
+ * this, so collapsing them back to a boolean silently forecloses a real save.
+ */
+export type NibGoneReason = Extract<NibChangeType, "deleted" | "archived">;
 
 /** A committed nib as it arrives over `NIB_CHANGED_SUBSCRIPTION` (nullable fields). */
 export interface RawNibPayload {
@@ -42,8 +50,9 @@ export interface RawNibEvent {
 }
 
 export interface NibChangeState {
-  /** The viewed nib was deleted on the server (resets on nib change). */
-  deleted: boolean;
+  /** Why the viewed nib left its location, or null while it is still there
+   *  (resets on nib change). */
+  gone: NibGoneReason | null;
   /** Latest non-self, de-duped external snapshot (null until one arrives). */
   external: NibSnapshot | null;
   /** Etag of the last external snapshot surfaced — used for dedup. */
@@ -51,7 +60,7 @@ export interface NibChangeState {
 }
 
 export const initialNibChangeState: NibChangeState = {
-  deleted: false,
+  gone: null,
   external: null,
   lastExternalEtag: null,
 };
@@ -74,21 +83,30 @@ export function toNibSnapshot(nib: RawNibPayload): NibSnapshot {
 /**
  * Reduce a subscription event onto the previous state.
  *
- * - `deleted` → `{ deleted: true, external: null }` (returns `prev` when already
- *   deleted, so it is reference-stable).
+ * - `deleted` / `archived` → `{ gone: <reason>, external: null }` (returns `prev`
+ *   when the reason would not change, so it is reference-stable). The reason is
+ *   carried rather than collapsed to a flag: an archived nib still exists and
+ *   still accepts a save, a deleted one does not. A deletion is terminal —
+ *   nothing downgrades `deleted` back to `archived` — matching the view
+ *   reducer's contract in `activeView.ts`.
  * - `created` / `updated` collapse to the same path: build a snapshot UNLESS
  *   (a) it is a self-echo (`nib.etag === selfEtag`) or (b) it duplicates the last
  *   external etag (`nib.etag === prev.lastExternalEtag && etag !== ""`); either
- *   case returns `prev` unchanged. A missing payload also returns `prev`.
+ *   case returns `prev` unchanged. A missing payload also returns `prev`. Such an
+ *   event never clears `gone`: archiving into a WATCHED archive directory emits
+ *   the rename and the archive-path create in one batch, in either order, and
+ *   neither ordering may leave the buffer looking live.
  */
 export function classifyNibEvent(
   prev: NibChangeState,
   event: RawNibEvent,
   selfEtag: string | null,
 ): NibChangeState {
-  if (event.type === "deleted") {
-    if (prev.deleted) return prev;
-    return { deleted: true, external: null, lastExternalEtag: prev.lastExternalEtag };
+  if (event.type === "deleted" || event.type === "archived") {
+    // A deletion is terminal, so only an unchanged reason or a late `archived`
+    // over an already-`deleted` nib is a no-op.
+    if (prev.gone === event.type || prev.gone === "deleted") return prev;
+    return { gone: event.type, external: null, lastExternalEtag: prev.lastExternalEtag };
   }
 
   const nib = event.nib;
@@ -102,7 +120,7 @@ export function classifyNibEvent(
   if (nib.etag === prev.lastExternalEtag && etag !== "") return prev;
 
   return {
-    deleted: prev.deleted,
+    gone: prev.gone,
     external: toNibSnapshot(nib),
     lastExternalEtag: etag,
   };

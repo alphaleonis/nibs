@@ -202,15 +202,20 @@ interface FakeView {
 
 function makeView(opts: {
   kind?: "viewing" | "gone" | "creating";
+  /** Only meaningful for `gone`; defaults to "deleted". */
+  reason?: "deleted" | "archived";
   form?: FakeForm;
   detail?: { nib: unknown; fetching: boolean } | null;
   presentation?: "docked" | "expanded";
 }): FakeView {
   const kind = opts.kind ?? "viewing";
+  const presentation = opts.presentation ?? "docked";
   const stateObj =
     kind === "creating"
-      ? { kind, defaults: { type: "task" }, presentation: opts.presentation ?? "docked" }
-      : { kind, nibId: "nibs-1t4t", presentation: opts.presentation ?? "docked" };
+      ? { kind, defaults: { type: "task" }, presentation }
+      : kind === "gone"
+        ? { kind, nibId: "nibs-1t4t", presentation, reason: opts.reason ?? "deleted" }
+        : { kind, nibId: "nibs-1t4t", presentation };
   const view = $state({
     state: stateObj,
     form: opts.form ?? makeEditForm(),
@@ -712,13 +717,13 @@ describe("ActiveNibView", () => {
     });
   });
 
-  describe("gone (deleted while viewing)", () => {
+  describe("gone (deleted or archived while viewing)", () => {
     it("shows the deleted notice and fully disables editing", () => {
       // Dirty form so Save/Discard aren't disabled purely by the clean-guard —
       // the `gone` state alone must keep them disabled.
       const form = makeEditForm({ dirty: true });
       renderView(makeView({ kind: "gone", form }), confirmDialog);
-      expect(screen.getByTestId("anv-deleted-notice")).toHaveTextContent("This nib was deleted");
+      expect(screen.getByTestId("anv-gone-notice")).toHaveTextContent("This nib was deleted");
       expect(screen.getByTestId("anv-title")).toBeDisabled();
       expect(screen.getByTestId("anv-status")).toBeDisabled();
       expect(screen.getByTestId("anv-type")).toBeDisabled();
@@ -727,6 +732,38 @@ describe("ActiveNibView", () => {
       expect(screen.getByTestId("anv-edit-toggle")).toBeDisabled();
       expect(screen.getByTestId("anv-save")).toBeDisabled();
       expect(screen.getByTestId("anv-discard")).toBeDisabled();
+    });
+
+    it("forces an OPEN editor back to preview when the nib goes away mid-edit", async () => {
+      // The editor's `onsave` is the other way into handleSave, so `gone` must
+      // unmount it. Reaching that needs `bodyMode` to actually be "edit" first —
+      // a buffer that never left preview would assert nothing, since
+      // bodyModeEffective returns "preview" either way.
+      const form = makeEditForm({ body: "body text" });
+      const view = makeView({ form });
+      renderView(view, confirmDialog);
+
+      await user.click(screen.getByTestId("anv-edit-toggle"));
+      // The editor really mounted, so `bodyMode` is committed to "edit" and the
+      // override below is what does the work.
+      await waitFor(() =>
+        expect(screen.getByTestId("anv-editor-container")).toBeInTheDocument(),
+      );
+
+      // The nib is deleted out from under the open editor.
+      view.state = {
+        kind: "gone",
+        nibId: "nibs-1t4t",
+        presentation: "docked",
+        reason: "deleted",
+      };
+
+      // `disabled` forces bodyModeEffective to "preview" regardless of bodyMode,
+      // so the editor unmounts and takes its onsave with it.
+      await waitFor(() =>
+        expect(screen.queryByTestId("anv-editor-container")).not.toBeInTheDocument(),
+      );
+      expect(screen.getByTestId("anv-gone-notice")).toBeInTheDocument();
     });
 
     it("hides the conflict resolver even with a pending external change (MEDIUM #3)", () => {
@@ -738,10 +775,36 @@ describe("ActiveNibView", () => {
       const form = makeEditForm({ dirty: true, externalChange: remote });
       renderView(makeView({ kind: "gone", form }), confirmDialog);
 
-      expect(screen.getByTestId("anv-deleted-notice")).toBeInTheDocument();
+      expect(screen.getByTestId("anv-gone-notice")).toBeInTheDocument();
       expect(screen.queryByTestId("anv-conflict-banner")).not.toBeInTheDocument();
       expect(screen.queryByTestId("anv-conflict-overwrite")).not.toBeInTheDocument();
       expect(screen.queryByTestId("anv-conflict-load-theirs")).not.toBeInTheDocument();
+    });
+
+    it("says the nib was ARCHIVED — not deleted — when that is why it went away", () => {
+      // The notice is the user's only explanation of why the panel went
+      // read-only. An archived nib still exists in the archive, so calling it
+      // deleted is simply false.
+      const form = makeEditForm({ dirty: true });
+      renderView(makeView({ kind: "gone", reason: "archived", form }), confirmDialog);
+      expect(screen.getByTestId("anv-gone-notice")).toHaveTextContent("This nib was archived");
+    });
+
+    it("paints the archived notice as a warning and the deleted notice as an error", () => {
+      // The notice's color is signal, not decoration: it sits next to copy that
+      // distinguishes the two causes, so painting an archived nib — reversible,
+      // still savable — in the deletion's error color contradicts the text above
+      // it. The modifier carries the warning token; its absence leaves the base
+      // destructive rule.
+      const archived = renderView(
+        makeView({ kind: "gone", reason: "archived", form: makeEditForm() }),
+        confirmDialog,
+      );
+      expect(screen.getByTestId("anv-gone-notice")).toHaveClass("anv-gone-notice--archived");
+      archived.unmount();
+
+      renderView(makeView({ kind: "gone", reason: "deleted", form: makeEditForm() }), confirmDialog);
+      expect(screen.getByTestId("anv-gone-notice")).not.toHaveClass("anv-gone-notice--archived");
     });
   });
 
