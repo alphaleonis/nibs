@@ -12,6 +12,7 @@ import { SelectionState } from "../selection.svelte";
 import { DragState } from "../drag.svelte";
 import { TreeViewState } from "../treeView.svelte";
 import { makeTestContext } from "../contexts";
+import { NibChangeTracker } from "../changeTracker.svelte";
 
 function makeTreeTableNib(overrides: Partial<TreeTableNib> = {}): TreeTableNib {
   return {
@@ -358,6 +359,92 @@ describe("TreeTable", () => {
       );
     } finally {
       errorSpy.mockRestore();
+    }
+  });
+
+  // A "deleted" event defers its refetch by ~fadeDurationMs so the row's
+  // fade-out animation can play before the row leaves the dataset. The timer
+  // must be cleared on unmount — otherwise it outlives the component and fires
+  // reexecute on a torn-down urql store.
+  it("clears the deferred delete refetch on unmount so it never fires after teardown", async () => {
+    const nibs: TreeTableNib[] = [
+      makeTreeTableNib({ id: "nibs-m1", title: "Milestone", type: "milestone" }),
+    ];
+
+    const reexecute = vi.fn();
+    mockQueryStore.mockReturnValue({
+      ...readable({ fetching: false, error: undefined, data: { nibs }, stale: false }),
+      reexecute,
+    } as any);
+
+    const subStore = writable<any>({ fetching: true, error: undefined, data: undefined, stale: false });
+    mockSubscriptionStore.mockReturnValue(subStore as any);
+
+    const fadeMs = new NibChangeTracker().fadeDurationMs;
+    // Fake ONLY the timer fns so Svelte's microtask-based tick() stays real.
+    vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+    try {
+      const { unmount } = renderTreeTable({ filter: {} });
+      await tick();
+
+      // A delete defers its refetch — nothing fires synchronously.
+      subStore.set({
+        fetching: true,
+        error: undefined,
+        data: { nibChanged: { type: "deleted", nibId: "nibs-m1" } },
+        stale: false,
+      });
+      await tick();
+      expect(reexecute).not.toHaveBeenCalled();
+
+      // Unmount inside the fade window, then let the deferred deadline pass.
+      unmount();
+      vi.advanceTimersByTime(fadeMs);
+
+      // The deferred timer was cleared on teardown, so reexecute never ran.
+      expect(reexecute).not.toHaveBeenCalled();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  // The complement to the unmount guard: while the component stays mounted, the
+  // deferred delete refetch DOES fire once the fade window elapses.
+  it("fires the deferred delete refetch once the fade window elapses while mounted", async () => {
+    const nibs: TreeTableNib[] = [
+      makeTreeTableNib({ id: "nibs-m1", title: "Milestone", type: "milestone" }),
+    ];
+
+    const reexecute = vi.fn();
+    mockQueryStore.mockReturnValue({
+      ...readable({ fetching: false, error: undefined, data: { nibs }, stale: false }),
+      reexecute,
+    } as any);
+
+    const subStore = writable<any>({ fetching: true, error: undefined, data: undefined, stale: false });
+    mockSubscriptionStore.mockReturnValue(subStore as any);
+
+    const fadeMs = new NibChangeTracker().fadeDurationMs;
+    vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+    try {
+      renderTreeTable({ filter: {} });
+      await tick();
+
+      subStore.set({
+        fetching: true,
+        error: undefined,
+        data: { nibChanged: { type: "deleted", nibId: "nibs-m1" } },
+        stale: false,
+      });
+      await tick();
+      // Deferred: the refetch has not fired yet.
+      expect(reexecute).not.toHaveBeenCalled();
+
+      // The fade window elapses — the deferred refetch fires exactly once.
+      vi.advanceTimersByTime(fadeMs);
+      expect(reexecute).toHaveBeenCalledTimes(1);
+    } finally {
+      vi.useRealTimers();
     }
   });
 

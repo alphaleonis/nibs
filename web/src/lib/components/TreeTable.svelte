@@ -94,7 +94,20 @@
 
   // --- Real-time subscription for nib changes ---
   const changeTracker = new NibChangeTracker();
-  onDestroy(() => changeTracker.destroy());
+
+  // A "deleted" event defers its refetch by ~fadeDurationMs so the row's
+  // fade-out animation can play before it leaves the dataset (see the $effect
+  // below). Capture that timer so an unmount inside the fade window clears it —
+  // otherwise it outlives the component and calls reexecute on a torn-down urql
+  // store. Cleared here on true unmount rather than via an $effect cleanup: the
+  // subscription effect re-runs on every event, so an effect cleanup would also
+  // cancel a still-pending deferred delete on the NEXT event and cut the fade
+  // short. Only the latest pending timer is tracked.
+  let pendingDeleteTimer: ReturnType<typeof setTimeout> | undefined;
+  onDestroy(() => {
+    clearTimeout(pendingDeleteTimer);
+    changeTracker.destroy();
+  });
 
   const subscription = subscriptionStore({
     client,
@@ -150,7 +163,7 @@
       changeTracker.handleEvent(event);
 
       if (event.type === "deleted") {
-        setTimeout(() => {
+        pendingDeleteTimer = setTimeout(() => {
           refetchTree();
         }, changeTracker.fadeDurationMs);
       } else {
