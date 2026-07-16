@@ -278,3 +278,56 @@ describe("useKeyboardShortcuts · confirm-dialog gate (nibs-an5d)", () => {
     });
   });
 });
+
+describe("useKeyboardShortcuts · bucket target guard (nibs-oxaq)", () => {
+  // A synthetic grouping-bucket id (e.g. "__no_milestone__") can be arrow-focused
+  // (focus() has no bucket guard, unlike select/toggleSelect/rangeSelect) or supplied
+  // as the context-menu target. getActionTargetIds must never resolve a bucket id, so
+  // Delete/Backspace can't dispatch a phantom deleteBatch(["__no_milestone__"]). Each
+  // negative test carries a real-id positive control (same key, same path) so it can
+  // only pass because the bucket guard bit, not because the handler is unwired.
+
+  describe.each(["Delete", "Backspace"] as const)("%s", key => {
+    it("does NOT fire the confirm when a bucket row is focused", () => {
+      const h = makeHarness();
+      h.selection.focus("__no_milestone__");
+      mount(h);
+
+      const button = focusEl(document.createElement("button"));
+      press(key, button);
+
+      expect(h.showConfirm).not.toHaveBeenCalled();
+    });
+
+    it("DOES fire the confirm when a real nib is focused (control)", () => {
+      const h = makeHarness();
+      h.selection.focus("tnib-abcd");
+      mount(h);
+
+      const button = focusEl(document.createElement("button"));
+      press(key, button);
+
+      expect(h.showConfirm).toHaveBeenCalledTimes(1);
+    });
+
+    it("does NOT fire the confirm when the context-menu target is a bucket", () => {
+      const h = makeHarness({ getContextMenuNibId: () => "__no_milestone__" });
+      mount(h);
+
+      const button = focusEl(document.createElement("button"));
+      press(key, button);
+
+      expect(h.showConfirm).not.toHaveBeenCalled();
+    });
+
+    it("DOES fire the confirm when the context-menu target is a real nib (control)", () => {
+      const h = makeHarness({ getContextMenuNibId: () => "tnib-abcd" });
+      mount(h);
+
+      const button = focusEl(document.createElement("button"));
+      press(key, button);
+
+      expect(h.showConfirm).toHaveBeenCalledTimes(1);
+    });
+  });
+});

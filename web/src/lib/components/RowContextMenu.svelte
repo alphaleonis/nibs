@@ -12,6 +12,7 @@
     archiveBatch,
   } from "$lib/mutations/commands";
   import { copyToClipboard } from "$lib/clipboard";
+  import { getActionTargetIds } from "$lib/actionTarget";
 
   interface Props {
     open: boolean;
@@ -51,14 +52,6 @@
     }
   }
 
-  /** Resolves which nib IDs an action should target. */
-  function getActionTargetIds(): string[] {
-    if (selection.hasMultiSelect) return [...selection.selectedIds];
-    if (selection.focusedNibId) return [selection.focusedNibId];
-    if (nib) return [nib.id];
-    return [];
-  }
-
   function handleOpen() {
     if (nib) {
       // Open the unified view (guarded); it routes through nav so the URL/history
@@ -81,13 +74,13 @@
   }
 
   async function handleStatusChange(status: string) {
-    const ids = getActionTargetIds();
+    const ids = getActionTargetIds(selection, nib?.id ?? null);
     if (ids.length === 0) return;
     await mutations.execute(setStatusBatch(ids, status));
   }
 
   async function handlePriorityChange(priority: string) {
-    const ids = getActionTargetIds();
+    const ids = getActionTargetIds(selection, nib?.id ?? null);
     if (ids.length === 0) return;
     await mutations.execute(setPriorityBatch(ids, priority));
   }
@@ -98,7 +91,7 @@
   }
 
   function handleDelete() {
-    const ids = getActionTargetIds();
+    const ids = getActionTargetIds(selection, nib?.id ?? null);
     if (ids.length === 0) return;
 
     const count = ids.length;
@@ -121,7 +114,7 @@
   }
 
   function handleArchive() {
-    const ids = getActionTargetIds();
+    const ids = getActionTargetIds(selection, nib?.id ?? null);
     if (ids.length === 0) return;
 
     const count = ids.length;

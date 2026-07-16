@@ -1,4 +1,5 @@
 import type { SelectionState } from "../selection.svelte";
+import { isBucketId } from "../tree";
 
 export interface HistoryLike {
   pushState(data: unknown, unused: string, url?: string | null): void;
@@ -49,6 +50,11 @@ export function createHistoryNav(opts: {
   const closeUrl = () => getLocation().pathname || "/";
 
   function navigateToNib(id: string) {
+    // A synthetic grouping-bucket id ("No X") can route here via view.open on a
+    // right-clicked/arrow-focused bucket row. select() already no-ops on a bucket
+    // (nibs-mn0t), but the history push must be skipped too — otherwise a stale
+    // ?nib=<bucket> survives reload/Back and tries to select a nonexistent nib.
+    if (isBucketId(id)) return;
     // Gate ONLY the history push, not the select: `select()` is a full resync
     // (selectedNibId, focusedNibId, selectedIds, anchorId), so it must run even
     // when the nib is already open — otherwise focus/anchor drift (e.g. after

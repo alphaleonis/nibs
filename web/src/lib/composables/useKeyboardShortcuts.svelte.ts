@@ -13,6 +13,7 @@ import type { ConfirmDialogState } from "./useConfirmDialog.svelte";
 import type { ActiveView } from "./useActiveView.svelte";
 import type { MutationStore } from "../mutations/store.svelte";
 import { deleteBatch } from "../mutations/commands";
+import { getActionTargetIds } from "../actionTarget";
 
 /** Returns true if focus is inside an input/textarea/select/contenteditable */
 function isInputFocused(): boolean {
@@ -63,18 +64,8 @@ export function useKeyboardShortcuts(opts: {
     return confirmDialog.open;
   }
 
-  /** Resolves which nib IDs an action should target, checking multi-select,
-   *  focused row, then context menu in priority order. */
-  function getActionTargetIds(): string[] {
-    if (selection.hasMultiSelect) return [...selection.selectedIds];
-    if (selection.focusedNibId) return [selection.focusedNibId];
-    const ctxId = opts.getContextMenuNibId();
-    if (ctxId) return [ctxId];
-    return [];
-  }
-
   function handleDelete() {
-    const ids = getActionTargetIds();
+    const ids = getActionTargetIds(selection, opts.getContextMenuNibId());
     if (ids.length === 0) return;
 
     const count = ids.length;
@@ -143,7 +134,7 @@ export function useKeyboardShortcuts(opts: {
           if (modalOpen()) return;
           if (confirmOpen()) return;
           if (isInputFocused()) return;
-          if (getActionTargetIds().length === 0) return;
+          if (getActionTargetIds(selection, opts.getContextMenuNibId()).length === 0) return;
           e.preventDefault();
           handleDelete();
         },
@@ -151,7 +142,7 @@ export function useKeyboardShortcuts(opts: {
           if (modalOpen()) return;
           if (confirmOpen()) return;
           if (isInputFocused()) return;
-          if (getActionTargetIds().length === 0) return;
+          if (getActionTargetIds(selection, opts.getContextMenuNibId()).length === 0) return;
           e.preventDefault();
           handleDelete();
         },

@@ -373,6 +373,22 @@ describe("RowContextMenu", () => {
       expect(mockConfirmDialog.showConfirm).toHaveBeenCalledOnce();
       expect(mockConfirmDialog.lastOpts?.title).toBe("Delete nib");
     });
+
+    it("does NOT resolve a synthetic bucket id as the delete target (nibs-oxaq)", async () => {
+      // Right-clicking a "No X" grouping-bucket row sets nib to the bucket. Its id
+      // is unresolvable for any bulk action, so getActionTargetIds must exclude it —
+      // delete then early-returns and never opens the confirm (which would otherwise
+      // dispatch a phantom deleteBatch(["__no_milestone__"])).
+      renderMenu({ nib: makeNib({ id: "__no_milestone__" }) });
+
+      await waitFor(() => {
+        expect(screen.getByTestId("ctx-delete")).toBeInTheDocument();
+      });
+
+      await user.click(screen.getByTestId("ctx-delete"));
+
+      expect(mockConfirmDialog.showConfirm).not.toHaveBeenCalled();
+    });
   });
 
   // ─── Confirm dialog for delete/archive ────────────────────────
