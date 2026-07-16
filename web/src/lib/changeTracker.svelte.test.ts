@@ -64,6 +64,22 @@ describe("NibChangeTracker", () => {
     tracker.destroy();
   });
 
+  it("handleEvent('unarchived') highlights same as updated — the row re-entered/changed", () => {
+    const tracker = new NibChangeTracker({ highlightDurationMs: 1000 });
+
+    // An unarchive moves the nib back to its main path and changes its row, so it
+    // reads as an update (highlight), never a removal (fade) — and it must not
+    // fall through to the DEV "unhandled event type" warning.
+    tracker.handleEvent({ type: "unarchived", nibId: "nibs-unarc1" });
+    expect(tracker.isHighlighted("nibs-unarc1")).toBe(true);
+    expect(tracker.isFading("nibs-unarc1")).toBe(false);
+
+    vi.advanceTimersByTime(1000);
+    expect(tracker.isHighlighted("nibs-unarc1")).toBe(false);
+
+    tracker.destroy();
+  });
+
   it("rapid duplicate events reset the timer", () => {
     const tracker = new NibChangeTracker({ highlightDurationMs: 1000 });
 

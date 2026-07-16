@@ -607,9 +607,17 @@ export function createActiveView(deps: ActiveViewDeps): ActiveView {
       lastExternal = null;
       return;
     }
-    // The reason travels with the report: an archived nib still exists at its
-    // archive path, so its buffer stays savable (see `canSaveState`).
-    if (l.gone) apply({ type: l.gone === "archived" ? "ARCHIVED" : "DELETED" });
+    // Both directions are driven, symmetrically. Into `gone`: the reason travels
+    // with the report — an archived nib still exists at its archive path, so its
+    // buffer stays savable (see `canSaveState`). Back out: when the classifier
+    // clears `gone` (an external UNARCHIVE), dispatch UNARCHIVED so a
+    // `gone`/"archived" buffer returns to `viewing` and the banner comes down
+    // without a reload (nibs-2fgz). UNARCHIVED is a no-op on any non-`gone`/archived
+    // state, so dispatching it whenever `l.gone` is null is safe — in particular it
+    // never resurrects a `gone`/"deleted" buffer (deletion is terminal).
+    if (l.gone === "archived") apply({ type: "ARCHIVED" });
+    else if (l.gone === "deleted") apply({ type: "DELETED" });
+    else apply({ type: "UNARCHIVED" });
     const ext = l.external;
     if (ext && ext !== lastExternal && f && f.mode === "edit") {
       if (untrack(() => f.dirty)) {

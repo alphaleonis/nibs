@@ -191,6 +191,70 @@ describe("classifyNibEvent", () => {
     expect(afterUpdate.gone).toBe("archived");
   });
 
+  it("clears `gone` when an unarchived event arrives (the unarchive reopens the view)", () => {
+    // The inverse of the archive-then-update case above: an external UNARCHIVE
+    // brings the nib back to its main path, so the classifier must drop the stale
+    // "archived" banner — the created/updated family's `gone`-preserving rule is
+    // the wrong one for the one event that genuinely means "it's live again".
+    const archived: RawNibEvent = { type: "archived", nibId: "nibs-abc1", nib: makePayload() };
+    const afterArchive = classifyNibEvent(initialNibChangeState, archived, null);
+    expect(afterArchive.gone).toBe("archived");
+
+    const unarchived: RawNibEvent = {
+      type: "unarchived",
+      nibId: "nibs-abc1",
+      nib: makePayload({ etag: "e2", title: "Back" }),
+    };
+    const afterUnarchive = classifyNibEvent(afterArchive, unarchived, null);
+    expect(afterUnarchive.gone).toBeNull();
+    expect(afterUnarchive.external).toEqual(toNibSnapshot(makePayload({ etag: "e2", title: "Back" })));
+    expect(afterUnarchive.lastExternalEtag).toBe("e2");
+  });
+
+  it("clears `gone` on unarchive even when the etag is unchanged (a move keeps the content etag)", () => {
+    // Archiving/unarchiving is a pure file move: the content — and thus the FNV
+    // etag of Render() — is unchanged. The unarchive therefore carries the SAME
+    // etag the last `updated` recorded, so reopening the view must NOT be gated by
+    // the etag dedup, or the banner sticks until reload (the exact nibs-2fgz bug).
+    const seeded = classifyNibEvent(
+      initialNibChangeState,
+      updatedEvent(makePayload({ etag: "same" })),
+      null,
+    );
+    expect(seeded.lastExternalEtag).toBe("same");
+    const archived: RawNibEvent = {
+      type: "archived",
+      nibId: "nibs-abc1",
+      nib: makePayload({ etag: "same" }),
+    };
+    const afterArchive = classifyNibEvent(seeded, archived, null);
+    expect(afterArchive.gone).toBe("archived");
+    // Unarchive carries the same "same" etag as the pre-archive revision.
+    const unarchived: RawNibEvent = {
+      type: "unarchived",
+      nibId: "nibs-abc1",
+      nib: makePayload({ etag: "same" }),
+    };
+    const afterUnarchive = classifyNibEvent(afterArchive, unarchived, null);
+    expect(afterUnarchive.gone).toBeNull();
+  });
+
+  it("does not resurrect a deleted nib on an unarchive (deletion is terminal)", () => {
+    // The watcher never emits an unarchive for a file that no longer exists, but
+    // the classifier must refuse the downgrade on its own so an out-of-order
+    // stream can never re-offer a save against a deleted nib.
+    const deleted: RawNibEvent = { type: "deleted", nibId: "nibs-abc1", nib: null };
+    const first = classifyNibEvent(initialNibChangeState, deleted, null);
+    const unarchived: RawNibEvent = {
+      type: "unarchived",
+      nibId: "nibs-abc1",
+      nib: makePayload({ etag: "e2" }),
+    };
+    const second = classifyNibEvent(first, unarchived, null);
+    expect(second.gone).toBe("deleted");
+    expect(second).toBe(first); // reference-stable no-op
+  });
+
   it("returns prev unchanged for a created/updated event with a missing payload", () => {
     const prev: NibChangeState = { gone: null, external: null, lastExternalEtag: null };
     const next = classifyNibEvent(prev, { type: "updated", nibId: "nibs-abc1", nib: null }, null);

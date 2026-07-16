@@ -39,6 +39,7 @@ export type Action =
   | { type: "SAVED"; nibId: string }
   | { type: "DELETED" }
   | { type: "ARCHIVED" }
+  | { type: "UNARCHIVED" }
   | { type: "CLOSE" };
 
 /** Current presentation, defaulting to docked for `closed` (which has none). */
@@ -109,6 +110,17 @@ export function reduce(s: ViewState, a: Action): ViewState {
       }
       return s;
     }
+
+    // The inverse of ARCHIVED: an external unarchive brings the nib back to its
+    // main path, so a `gone`/"archived" buffer returns to `viewing` (live and
+    // savable) with the same nibId/presentation — the buffer key is unchanged, so
+    // the shell keeps the working copy. A deletion is terminal: `gone`/"deleted"
+    // is never reopened, mirroring the classifier's own refusal.
+    case "UNARCHIVED":
+      if (s.kind === "gone" && s.reason === "archived") {
+        return { kind: "viewing", nibId: s.nibId, presentation: s.presentation };
+      }
+      return s;
 
     case "CLOSE":
       return { kind: "closed" };

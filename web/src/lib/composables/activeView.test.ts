@@ -166,6 +166,37 @@ describe("reduce · ARCHIVED", () => {
   });
 });
 
+// --- UNARCHIVED --------------------------------------------------------------
+
+describe("reduce · UNARCHIVED", () => {
+  it("maps gone(archived) -> viewing, keeping nibId and presentation", () => {
+    // An external unarchive brings the nib back to its main path: the buffer is
+    // live again, so the view leaves `gone` and the stale banner comes down. The
+    // buffer key (`edit:n1`) is identical across both states, so the shell keeps
+    // the same form.
+    expect(reduce(goneArchivedD, { type: "UNARCHIVED" })).toEqual({
+      kind: "viewing",
+      nibId: "n1",
+      presentation: "docked",
+    });
+  });
+
+  it("leaves the reopened state savable", () => {
+    expect(canSaveState(reduce(goneArchivedD, { type: "UNARCHIVED" }))).toBe(true);
+  });
+
+  it("never resurrects a deleted nib (deletion is terminal)", () => {
+    expect(reduce(goneD, { type: "UNARCHIVED" })).toEqual(goneD);
+    expect(reduce(goneE, { type: "UNARCHIVED" })).toEqual(goneE);
+  });
+
+  it("is a no-op outside gone(archived)", () => {
+    expect(reduce(viewingD, { type: "UNARCHIVED" })).toEqual(viewingD);
+    expect(reduce(creatingD, { type: "UNARCHIVED" })).toEqual(creatingD);
+    expect(reduce(closed, { type: "UNARCHIVED" })).toEqual(closed);
+  });
+});
+
 // --- gone -> gone reason transitions -----------------------------------------
 
 describe("reduce · a deletion supersedes an archive", () => {
@@ -246,6 +277,10 @@ describe("abandonsBuffer", () => {
     ["viewing + SAVED", viewingD, { type: "SAVED", nibId: "n1" }, false],
     ["viewing + DELETED", viewingD, { type: "DELETED" }, false],
     ["viewing + ARCHIVED", viewingD, { type: "ARCHIVED" }, false],
+    // Reopening a gone(archived) buffer keeps the same nib target, so it never
+    // abandons the working copy — the unsaved edits ride through into `viewing`.
+    ["gone(archived) + UNARCHIVED", goneArchivedD, { type: "UNARCHIVED" }, false],
+    ["viewing + UNARCHIVED", viewingD, { type: "UNARCHIVED" }, false],
     ["creating + SAVED", creatingD, { type: "SAVED", nibId: "x" }, false],
   ];
 

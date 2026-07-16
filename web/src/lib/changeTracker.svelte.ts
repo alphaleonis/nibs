@@ -11,7 +11,9 @@ export class NibChangeTracker {
   }
 
   handleEvent(event: { type: string; nibId: string }): void {
-    if (event.type === "updated" || event.type === "created") {
+    if (event.type === "updated" || event.type === "created" || event.type === "unarchived") {
+      // An unarchive moves the nib back to its main path and changes its row, so
+      // it reads as an update (highlight), not a removal (fade).
       this.#setHighlighted(event.nibId);
     } else if (event.type === "deleted") {
       this.#setFading(event.nibId);

@@ -14,7 +14,7 @@
 
 import type { NibSnapshot } from "./nibForm.svelte";
 
-export type NibChangeType = "created" | "updated" | "deleted" | "archived";
+export type NibChangeType = "created" | "updated" | "deleted" | "archived" | "unarchived";
 
 /**
  * Why the viewed nib is no longer at its old location. The two causes are NOT
@@ -89,6 +89,14 @@ export function toNibSnapshot(nib: RawNibPayload): NibSnapshot {
  *   still accepts a save, a deleted one does not. A deletion is terminal —
  *   nothing downgrades `deleted` back to `archived` — matching the view
  *   reducer's contract in `activeView.ts`.
+ * - `unarchived` reopens the view: the nib is back at its main path, so `gone` is
+ *   CLEARED (unless it is `deleted` — a deletion is terminal and the watcher never
+ *   emits an unarchive for a file that no longer exists). The clear happens
+ *   independent of the etag dedup below: archiving/unarchiving is a pure move that
+ *   leaves the content etag unchanged, so routing the reopen through the dedup
+ *   would swallow the very event that must take the banner down (nibs-2fgz). A
+ *   fresh snapshot rides along only when it is genuinely new (not a self-echo or a
+ *   duplicate revision).
  * - `created` / `updated` collapse to the same path: build a snapshot UNLESS
  *   (a) it is a self-echo (`nib.etag === selfEtag`) or (b) it duplicates the last
  *   external etag (`nib.etag === prev.lastExternalEtag && etag !== ""`); either
@@ -107,6 +115,24 @@ export function classifyNibEvent(
     // over an already-`deleted` nib is a no-op.
     if (prev.gone === event.type || prev.gone === "deleted") return prev;
     return { gone: event.type, external: null, lastExternalEtag: prev.lastExternalEtag };
+  }
+
+  if (event.type === "unarchived") {
+    // Deletion is terminal — nothing resurrects a deleted nib.
+    if (prev.gone === "deleted") return prev;
+    // Reference-stable clear of `gone` (no-op when it was already null). Kept
+    // separate from the snapshot adoption below so the reopen never rides on the
+    // etag dedup — a move leaves the content etag unchanged, so an unarchive
+    // routed through the dedup would be swallowed and the banner would stick.
+    const cleared: NibChangeState = prev.gone === null ? prev : { ...prev, gone: null };
+    const nib = event.nib;
+    // Self-echo, missing payload, or a duplicate revision: nothing fresh to
+    // adopt, but STILL reopen the view.
+    if (!nib || nib.etag === selfEtag) return cleared;
+    const etag = nib.etag ?? "";
+    if (nib.etag === prev.lastExternalEtag && etag !== "") return cleared;
+    // A genuinely new revision arrived with the unarchive: adopt it AND reopen.
+    return { gone: null, external: toNibSnapshot(nib), lastExternalEtag: etag };
   }
 
   const nib = event.nib;

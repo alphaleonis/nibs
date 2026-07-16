@@ -20,10 +20,9 @@ type EventType int
 const (
 	// EventCreated indicates a new nib was created.
 	EventCreated EventType = iota
-	// EventUpdated indicates an existing nib changed in place: either its
-	// content was modified, or it was moved OUT of the archive (unarchived) —
-	// a location-only change with no body edit. Both keep the nib live in the
-	// store, so both surface as an update rather than a create/delete/archive.
+	// EventUpdated indicates an existing nib changed in place: its content was
+	// modified while it stayed live at the same location. A move OUT of the
+	// archive is reported separately as EventUnarchived, not as an update.
 	EventUpdated
 	// EventDeleted indicates a nib was deleted.
 	EventDeleted
@@ -31,6 +30,12 @@ const (
 	// nib still exists — it lives at its new archive path and remains readable
 	// and updatable — so this is distinct from EventDeleted.
 	EventArchived
+	// EventUnarchived indicates a nib was moved OUT of the archive directory back
+	// to the main data directory. The nib stays live in the store (its Path is
+	// rewritten to the main location); this is the inverse of EventArchived and is
+	// distinct from EventUpdated so a viewer can clear an "archived" banner rather
+	// than treat the move as an in-place content edit.
+	EventUnarchived
 )
 
 // String returns a human-readable representation of the event type.
@@ -44,6 +49,8 @@ func (e EventType) String() string {
 		return "deleted"
 	case EventArchived:
 		return "archived"
+	case EventUnarchived:
+		return "unarchived"
 	default:
 		return "unknown"
 	}
@@ -368,15 +375,17 @@ func (c *Core) handleChanges(changes map[string]fsnotify.Op) {
 			// Moved OUT of the archive: the file left an archive path and now
 			// exists at the main-directory <basename>. An unarchive
 			// (LoadAndUnarchive/Unarchive). The nib is NOT gone — keep it in the
-			// store at its new path and report it as updated. Evicting here would
-			// silently drop a live nib whose file is present on disk.
+			// store at its new path and report it as EventUnarchived, the distinct
+			// inverse of EventArchived (so a viewer can clear an "archived" banner
+			// rather than treat this as an in-place edit — nibs-2fgz). Evicting here
+			// would silently drop a live nib whose file is present on disk.
 			if fromArchive {
 				mainRel := filepath.ToSlash(filename)
 				if c.fileExists(filepath.Join(c.root, mainRel)) {
 					stored.Path = mainRel
 					c.nibs[id] = stored
 					events = append(events, NibEvent{
-						Type:  EventUpdated,
+						Type:  EventUnarchived,
 						Nib:   stored,
 						NibID: id,
 					})

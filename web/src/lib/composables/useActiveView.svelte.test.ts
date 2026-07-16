@@ -1295,6 +1295,55 @@ describe("createActiveView · async edit-form seed", () => {
   });
 });
 
+describe("createActiveView · live bridge · unarchive", () => {
+  it("exits the gone/banner state when live.gone goes archived -> null (nibs-2fgz)", async () => {
+    const h = makeDeps();
+    const { view, dispose } = mount(h.deps);
+
+    await view.open("n1");
+    flushSync();
+    const f = view.form;
+
+    // Archive out-of-process: the banner appears (gone/archived).
+    h.liveInsts.get("n1")!.gone = "archived";
+    flushSync();
+    expect(view.state).toEqual({ kind: "gone", nibId: "n1", presentation: "docked", reason: "archived" });
+
+    // Unarchive out-of-process: the classifier clears `gone` back to null, and the
+    // bridge must dispatch UNARCHIVED so the view returns to `viewing` — the banner
+    // comes down without a navigate/reload. This is the reducer+bridge half of the
+    // fix; the classifier alone (gone -> null on the live binder) is not enough.
+    h.liveInsts.get("n1")!.gone = null;
+    flushSync();
+    expect(view.state).toEqual({ kind: "viewing", nibId: "n1", presentation: "docked" });
+    // The buffer survives the round-trip untouched (same buffer key, edit:n1).
+    expect(view.form).toBe(f);
+    expect(h.created).toEqual(["n1"]);
+
+    dispose();
+  });
+
+  it("does NOT resurrect a deleted buffer when live.gone reads null (deletion is terminal)", async () => {
+    const h = makeDeps();
+    const { view, dispose } = mount(h.deps);
+
+    await view.open("n1");
+    flushSync();
+    h.liveInsts.get("n1")!.gone = "deleted";
+    flushSync();
+    expect(view.state.kind).toBe("gone");
+
+    // A stray gone -> null (which the real binder never produces for a deletion)
+    // must not reopen a deleted buffer: the reducer's UNARCHIVED only reopens the
+    // ARCHIVED reason, so the deleted notice stays put.
+    h.liveInsts.get("n1")!.gone = null;
+    flushSync();
+    expect(view.state).toEqual({ kind: "gone", nibId: "n1", presentation: "docked", reason: "deleted" });
+
+    dispose();
+  });
+});
+
 describe("createActiveView · live bridge", () => {
   it("maps live.deleted -> gone and keeps history blocked while dirty", async () => {
     const h = makeDeps();

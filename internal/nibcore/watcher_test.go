@@ -338,13 +338,16 @@ func TestWatcherExternalArchiveReportsArchivedNotDeleted(t *testing.T) {
 	}
 }
 
-// TestWatcherUnarchiveReportsUpdatedNotDeleted covers nibs-ow1k: unarchiving a
-// nib while the watcher is running (via the production LoadAndUnarchive path,
-// reached when an archived nib is edited) must NOT emit a deleted event and must
-// NOT evict the nib from the store while its file exists on disk — for either
-// batch ordering. Create-first is the ordering the investigation measured as
-// real data loss; it must be covered, not just remove-first.
-func TestWatcherUnarchiveReportsUpdatedNotDeleted(t *testing.T) {
+// TestWatcherUnarchiveReportsUnarchivedNotDeleted covers nibs-ow1k and nibs-2fgz:
+// unarchiving a nib while the watcher is running (via the production
+// LoadAndUnarchive path, reached when an archived nib is edited) must NOT emit a
+// deleted event and must NOT evict the nib from the store while its file exists
+// on disk — for either batch ordering. Create-first is the ordering the
+// investigation measured as real data loss; it must be covered, not just
+// remove-first. The remove-half of the move must report the distinct
+// EventUnarchived (not EventUpdated), so a viewer can clear an "archived" banner
+// on the reverse direction (nibs-2fgz).
+func TestWatcherUnarchiveReportsUnarchivedNotDeleted(t *testing.T) {
 	const nibID = "unx1"
 
 	for _, createFirst := range []bool{false, true} {
@@ -381,16 +384,16 @@ func TestWatcherUnarchiveReportsUpdatedNotDeleted(t *testing.T) {
 			got := collectNibEvents(t, ch, nibID, 150*time.Millisecond)
 			assertNoDeletedFor(t, got, nibID)
 
-			// The unarchive (remove-half) branch must report the move as updated,
-			// never as archived. A bare assertHasTypeFor(EventUpdated) does NOT pin
-			// this: the create-half of the same move independently emits an
-			// EventUpdated for the already-stored nib, so an update is present even
-			// when the unarchive branch is mislabeled. The plausible mislabel is a
-			// copy/paste of the sibling archive branch's EventArchived, so also
-			// assert that NO archived event surfaces for this nib — only the
-			// unarchive branch could produce one here, so that is the assertion that
-			// bites the mislabel.
-			assertHasTypeFor(t, got, nibID, EventUpdated)
+			// The unarchive (remove-half) branch must report the move as its own
+			// distinct EventUnarchived, never as updated or archived. This pins the
+			// direction precisely: the create-half of the same move independently
+			// emits an EventUpdated for the already-stored nib, so EventUnarchived is
+			// the only witness that the REMOVE-half classified the move as an
+			// unarchive rather than falling back to a plain update (the nibs-2fgz
+			// bug). The plausible mislabel is a copy/paste of the sibling archive
+			// branch's EventArchived, so also assert that NO archived event surfaces
+			// for this nib.
+			assertHasTypeFor(t, got, nibID, EventUnarchived)
 			assertNoTypeFor(t, got, nibID, EventArchived)
 
 			// Data-loss guard: the nib must remain in the store and its file must
