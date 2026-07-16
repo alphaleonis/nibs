@@ -20,7 +20,10 @@ type EventType int
 const (
 	// EventCreated indicates a new nib was created.
 	EventCreated EventType = iota
-	// EventUpdated indicates an existing nib was modified.
+	// EventUpdated indicates an existing nib changed in place: either its
+	// content was modified, or it was moved OUT of the archive (unarchived) —
+	// a location-only change with no body edit. Both keep the nib live in the
+	// store, so both surface as an update rather than a create/delete/archive.
 	EventUpdated
 	// EventDeleted indicates a nib was deleted.
 	EventDeleted
@@ -303,31 +306,62 @@ func (c *Core) handleChanges(changes map[string]fsnotify.Op) {
 				continue
 			}
 
-			// The store, not the filesystem, decides whether the nib is gone.
-			// Archive renames the file into archive/ and rewrites the stored Path
-			// while holding the same lock this handler takes, so the half-applied
-			// move is never observable here: a stored archive Path whose file is
-			// present means the nib moved rather than vanished, and it stays in
-			// the store — readable and updatable at its new location. Deleting an
-			// already-archived nib clears the same check, because then the stored
-			// archive Path is the very file that just disappeared.
+			// A file leaving `path` is archive, unarchive, or deletion. Decide
+			// from the filesystem's CURRENT truth — the event path plus where the
+			// file lives now — never from stored.Path and never from batch order.
 			//
-			// PRECONDITION — this process performed the archive. The stored Path is
-			// only authoritative for a move Archive() made; an archive performed by
-			// anything else (the CLI against a running server, a pull in the
-			// separate .nibs repo) leaves the stored Path pointing at the vanished
-			// file, so the check is false and the move reports as a deletion. Both
-			// halves of that move land in one debounce batch and the batch is a Go
-			// map, so which one wins is not even stable run to run.
-			if c.isArchivedPath(stored.Path) && c.fileExists(filepath.Join(c.root, stored.Path)) {
-				events = append(events, NibEvent{
-					Type:  EventArchived,
-					Nib:   stored,
-					NibID: id,
-				})
-				continue
+			// stored.Path is authoritative only for a move THIS process made:
+			// Archive/Unarchive/LoadAndUnarchive rewrite it under the lock this
+			// handler takes. Any other mover (the CLI against a running server, a
+			// pull in the separate .nibs repo) leaves it stale, so keying the
+			// decision off it misreports the move. Both halves of a move — the
+			// rename at the old path and the create at the new one — land in one
+			// debounce batch that iterates as a Go map, so which half updates the
+			// store first is not stable run to run. Reading only on-disk facts,
+			// which are identical whichever half runs first, removes that
+			// dependence entirely.
+			fromArchive := c.isArchivedAbsPath(path)
+
+			// Moved INTO the archive: the file left a main-directory path and now
+			// exists at archive/<basename>. An archive by any mover, in-process or
+			// not. Emitting archived REQUIRES the archive file to exist, so a
+			// misdetection can never strand a phantom — the deliberate safe bias.
+			if !fromArchive {
+				archiveRel := filepath.ToSlash(filepath.Join(ArchiveDir, filename))
+				if c.fileExists(filepath.Join(c.root, archiveRel)) {
+					stored.Path = archiveRel
+					c.nibs[id] = stored
+					events = append(events, NibEvent{
+						Type:  EventArchived,
+						Nib:   stored,
+						NibID: id,
+					})
+					continue
+				}
 			}
 
+			// Moved OUT of the archive: the file left an archive path and now
+			// exists at the main-directory <basename>. An unarchive
+			// (LoadAndUnarchive/Unarchive). The nib is NOT gone — keep it in the
+			// store at its new path and report it as updated. Evicting here would
+			// silently drop a live nib whose file is present on disk.
+			if fromArchive {
+				mainRel := filepath.ToSlash(filename)
+				if c.fileExists(filepath.Join(c.root, mainRel)) {
+					stored.Path = mainRel
+					c.nibs[id] = stored
+					events = append(events, NibEvent{
+						Type:  EventUpdated,
+						Nib:   stored,
+						NibID: id,
+					})
+					continue
+				}
+			}
+
+			// Genuinely gone: a real deletion, or a delete of an already-archived
+			// nib (the file that vanished is the very one stored.Path pointed at,
+			// and it exists at neither the archive nor the main location now).
 			delete(c.nibs, id)
 
 			// Drop from reverse-mention index.
@@ -408,4 +442,17 @@ func (c *Core) handleChanges(changes map[string]fsnotify.Op) {
 func (c *Core) fileExists(path string) bool {
 	_, err := os.Stat(path)
 	return err == nil
+}
+
+// isArchivedAbsPath reports whether an absolute filesystem path lies within the
+// archive directory under the nibs root. It is the on-disk-location counterpart
+// to isArchivedPath (which classifies a stored, root-relative Path); the removal
+// branch uses it to read the move's direction from the event path rather than
+// from the possibly-stale stored Path.
+func (c *Core) isArchivedAbsPath(absPath string) bool {
+	rel, err := filepath.Rel(c.root, absPath)
+	if err != nil {
+		return false
+	}
+	return c.isArchivedPath(filepath.ToSlash(rel))
 }

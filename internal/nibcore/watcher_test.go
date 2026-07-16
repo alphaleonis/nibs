@@ -8,6 +8,8 @@ import (
 	"runtime"
 	"testing"
 	"time"
+
+	"github.com/fsnotify/fsnotify"
 )
 
 // countWatchLoops reports how many goroutines are currently executing
@@ -206,5 +208,203 @@ func TestRestartWatchingDoesNotDuplicateEvents(t *testing.T) {
 		}
 
 		unsubscribe()
+	}
+}
+
+// The removal branch of handleChanges must decide archive-vs-unarchive-vs-delete
+// from the filesystem's current truth, never from the possibly-stale stored Path
+// and never from the order the debounce batch happens to iterate. The two tests
+// below pin that for a move performed by a mover OTHER than in-process Archive:
+// an external archive (a nib renamed INTO archive/ by the CLI against a running
+// server or a pull in the separate .nibs repo) and an unarchive (a nib renamed
+// OUT of archive/ by LoadAndUnarchive when an archived nib is edited).
+//
+// Both are exercised for BOTH batch orderings. Ordering is forced by driving the
+// two halves of the move as two separate single-entry debounce batches — one map
+// key per handleChanges call — rather than one two-key batch, which would iterate
+// as a Go map and pick an order at random. handleChanges no-ops unless watching,
+// so the flag is set directly instead of via StartWatching: a real fsnotify loop
+// would compete to deliver these same events with an uncontrolled order and
+// defeat the point of the test.
+
+// watchingCore returns a core with a nib created and a filename, with the
+// watching flag forced on (no real watch loop) so handleChanges runs.
+func watchingCore(t *testing.T, nibID string) (*Core, string, string) {
+	t.Helper()
+	core, nibsDir := setupTestCore(t)
+	b := createTestNib(t, core, nibID, "Move Test", "todo")
+	filename := filepath.Base(b.Path)
+	return core, nibsDir, filename
+}
+
+func setWatching(core *Core) {
+	core.mu.Lock()
+	core.watching = true
+	core.mu.Unlock()
+}
+
+// driveMove feeds the rename-at-old-path and create-at-new-path halves of a move
+// as two separate debounce batches, in the requested order.
+func driveMove(core *Core, removeAbs, createAbs string, createFirst bool) {
+	removeBatch := func() { core.handleChanges(map[string]fsnotify.Op{removeAbs: fsnotify.Rename}) }
+	createBatch := func() { core.handleChanges(map[string]fsnotify.Op{createAbs: fsnotify.Create}) }
+	if createFirst {
+		createBatch()
+		removeBatch()
+	} else {
+		removeBatch()
+		createBatch()
+	}
+}
+
+func assertNoDeletedFor(t *testing.T, events []NibEvent, nibID string) {
+	t.Helper()
+	for _, e := range events {
+		if e.NibID == nibID && e.Type == EventDeleted {
+			t.Fatalf("got a deleted event for %s; a move was misreported as a deletion (events: %+v)", nibID, events)
+		}
+	}
+}
+
+func assertHasTypeFor(t *testing.T, events []NibEvent, nibID string, want EventType) {
+	t.Helper()
+	for _, e := range events {
+		if e.NibID == nibID && e.Type == want {
+			return
+		}
+	}
+	t.Fatalf("expected a %s event for %s, got: %+v", want, nibID, events)
+}
+
+func assertNoTypeFor(t *testing.T, events []NibEvent, nibID string, unwanted EventType) {
+	t.Helper()
+	for _, e := range events {
+		if e.NibID == nibID && e.Type == unwanted {
+			t.Fatalf("unexpected %s event for %s: %+v", unwanted, nibID, events)
+		}
+	}
+}
+
+// TestWatcherExternalArchiveReportsArchivedNotDeleted covers nibs-y56n: an
+// archive performed OUTSIDE this process (so the stored Path is never rewritten
+// and stays stale) must report as archived, not deleted, and must not evict the
+// live nib — for either batch ordering.
+func TestWatcherExternalArchiveReportsArchivedNotDeleted(t *testing.T) {
+	const nibID = "arx1"
+
+	for _, createFirst := range []bool{false, true} {
+		name := "remove-first"
+		if createFirst {
+			name = "create-first"
+		}
+		t.Run(name, func(t *testing.T) {
+			core, nibsDir, filename := watchingCore(t, nibID)
+
+			// The archive dir must exist for the archive-path create to be a real
+			// on-disk fact the handler can stat.
+			archiveDir := filepath.Join(nibsDir, ArchiveDir)
+			if err := os.MkdirAll(archiveDir, 0o755); err != nil {
+				t.Fatalf("mkdir archive: %v", err)
+			}
+
+			mainAbs := filepath.Join(nibsDir, filename)
+			archiveAbs := filepath.Join(archiveDir, filename)
+
+			// External archive: move the file on disk WITHOUT calling core.Archive,
+			// so the stored Path stays "<filename>" (stale), exactly as the CLI
+			// against a running server or a .nibs pull would leave it.
+			if err := os.Rename(mainAbs, archiveAbs); err != nil {
+				t.Fatalf("external archive rename: %v", err)
+			}
+
+			setWatching(core)
+			ch, unsub := core.Subscribe()
+			defer unsub()
+
+			driveMove(core, mainAbs, archiveAbs, createFirst)
+
+			got := collectNibEvents(t, ch, nibID, 150*time.Millisecond)
+			assertNoDeletedFor(t, got, nibID)
+			assertHasTypeFor(t, got, nibID, EventArchived)
+
+			n, err := core.Get(nibID)
+			if err != nil {
+				t.Fatalf("nib evicted from store after external archive: Get(%q) = %v", nibID, err)
+			}
+			if !core.isArchivedPath(n.Path) {
+				t.Errorf("stored Path = %q, want an archive path", n.Path)
+			}
+		})
+	}
+}
+
+// TestWatcherUnarchiveReportsUpdatedNotDeleted covers nibs-ow1k: unarchiving a
+// nib while the watcher is running (via the production LoadAndUnarchive path,
+// reached when an archived nib is edited) must NOT emit a deleted event and must
+// NOT evict the nib from the store while its file exists on disk — for either
+// batch ordering. Create-first is the ordering the investigation measured as
+// real data loss; it must be covered, not just remove-first.
+func TestWatcherUnarchiveReportsUpdatedNotDeleted(t *testing.T) {
+	const nibID = "unx1"
+
+	for _, createFirst := range []bool{false, true} {
+		name := "remove-first"
+		if createFirst {
+			name = "create-first"
+		}
+		t.Run(name, func(t *testing.T) {
+			core, nibsDir, filename := watchingCore(t, nibID)
+
+			// Start it archived, then unarchive via the production path
+			// (LoadAndUnarchive rewrites the stored Path to the main dir under the
+			// lock, BEFORE the debounced handler runs).
+			if err := core.Archive(nibID); err != nil {
+				t.Fatalf("Archive: %v", err)
+			}
+			archiveAbs := filepath.Join(nibsDir, ArchiveDir, filename)
+			mainAbs := filepath.Join(nibsDir, filename)
+
+			if _, err := core.LoadAndUnarchive(nibID); err != nil {
+				t.Fatalf("LoadAndUnarchive: %v", err)
+			}
+			if core.fileExists(archiveAbs) || !core.fileExists(mainAbs) {
+				t.Fatalf("precondition: expected file at %s and not %s", mainAbs, archiveAbs)
+			}
+
+			setWatching(core)
+			ch, unsub := core.Subscribe()
+			defer unsub()
+
+			// The move left archive/ (rename half) and arrived in main (create half).
+			driveMove(core, archiveAbs, mainAbs, createFirst)
+
+			got := collectNibEvents(t, ch, nibID, 150*time.Millisecond)
+			assertNoDeletedFor(t, got, nibID)
+
+			// The unarchive (remove-half) branch must report the move as updated,
+			// never as archived. A bare assertHasTypeFor(EventUpdated) does NOT pin
+			// this: the create-half of the same move independently emits an
+			// EventUpdated for the already-stored nib, so an update is present even
+			// when the unarchive branch is mislabeled. The plausible mislabel is a
+			// copy/paste of the sibling archive branch's EventArchived, so also
+			// assert that NO archived event surfaces for this nib — only the
+			// unarchive branch could produce one here, so that is the assertion that
+			// bites the mislabel.
+			assertHasTypeFor(t, got, nibID, EventUpdated)
+			assertNoTypeFor(t, got, nibID, EventArchived)
+
+			// Data-loss guard: the nib must remain in the store and its file must
+			// still exist on disk.
+			n, err := core.Get(nibID)
+			if err != nil {
+				t.Fatalf("nib evicted from store during unarchive (data loss): Get(%q) = %v", nibID, err)
+			}
+			if !core.fileExists(filepath.Join(nibsDir, n.Path)) {
+				t.Errorf("stored Path %q has no file on disk", n.Path)
+			}
+			if core.isArchivedPath(n.Path) {
+				t.Errorf("stored Path = %q, want a main-directory path after unarchive", n.Path)
+			}
+		})
 	}
 }
