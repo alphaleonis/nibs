@@ -1,5 +1,6 @@
 import type { SelectionState } from "../selection.svelte";
 import type { RowData } from "../tableData";
+import { isBucketId } from "../tree";
 
 export function useKeyboardNav(opts: {
   selection: SelectionState;
@@ -24,6 +25,21 @@ export function useKeyboardNav(opts: {
     }
   }
 
+  // Which row an Enter/Space acts on. Prefer the row that the KEY EVENT came
+  // from — i.e. the DOM-focused control's `<tr data-nib-id>` ancestor (the Tab
+  // case, where DOM focus sits on a row's title button). Fall back to the virtual
+  // `focusedNibId` only when the event has no row ancestor, which is the arrow-key
+  // case: arrow nav leaves DOM focus on the grid container and tracks the focused
+  // row solely in `focusedNibId`. Resolving from the event is what lets Enter/Space
+  // act on the Tab-focused row rather than a stale `focusedNibId` — e.g. after
+  // Escape clears `focusedNibId` while the title button keeps DOM focus.
+  function resolveTargetId(event: KeyboardEvent, currentRows: RowData[], focusedIndex: number): string | null {
+    const target = event.target as HTMLElement | null;
+    const domRow = target?.closest?.("tr[data-nib-id]") as HTMLElement | null;
+    if (domRow?.dataset.nibId) return domRow.dataset.nibId;
+    return focusedIndex >= 0 ? currentRows[focusedIndex].nib.id : null;
+  }
+
   function handleKeydown(event: KeyboardEvent) {
     // Escape cancels drag before anything else
     opts.onDragKeyDown(event);
@@ -35,8 +51,19 @@ export function useKeyboardNav(opts: {
       const tag = target.tagName;
       if (tag === "INPUT" || tag === "TEXTAREA" || tag === "SELECT") return;
       if (target.isContentEditable) return;
-      // Let native button activation (Enter/Space) work for action buttons inside rows
-      if ((event.key === "Enter" || event.key === " ") && tag === "BUTTON" && target.closest("[data-action]")) return;
+      // Let native button activation (Enter/Space) work for the row's action
+      // buttons — toggle and add-child — but NOT the title. The title routes
+      // through the keyboard path below so Space toggles selection (instead of
+      // firing a native click that opens the nib) and Enter opens it. Both the
+      // Enter and Space cases resolve WHICH row to act on from the event's own
+      // DOM row ancestor, so they work even when DOM focus (Tab) and the virtual
+      // `focusedNibId` disagree — no focus-sync side channel required.
+      if (event.key === "Enter" || event.key === " ") {
+        if (tag === "BUTTON") {
+          const action = target.closest("[data-action]")?.getAttribute("data-action");
+          if (action && action !== "title") return;
+        }
+      }
     }
 
     const currentRows = opts.getRows();
@@ -106,14 +133,27 @@ export function useKeyboardNav(opts: {
       }
       case "Enter": {
         event.preventDefault();
-        if (focusedIndex >= 0) {
-          opts.navigateToNib(currentRows[focusedIndex].nib.id);
+        const targetId = resolveTargetId(event, currentRows, focusedIndex);
+        if (targetId === null) break;
+        // A synthetic grouping bucket is not a real nib — Enter toggles its group
+        // (like its caret) instead of opening a detail view for an unresolvable id.
+        if (isBucketId(targetId)) {
+          opts.toggleNode(targetId);
+        } else {
+          opts.navigateToNib(targetId);
         }
         break;
       }
       case " ": {
         event.preventDefault();
-        selection.toggleFocusedSelection();
+        const targetId = resolveTargetId(event, currentRows, focusedIndex);
+        if (targetId === null) break;
+        // Buckets are not selectable (SelectionState.toggleSelect rejects them),
+        // so Space on a bucket is a no-op. toggleSelect also moves focus/anchor to
+        // the toggled row — matching mouse Ctrl/Cmd-click — so the Space-toggled
+        // row becomes the focused row.
+        if (isBucketId(targetId)) break;
+        selection.toggleSelect(targetId);
         break;
       }
       default:

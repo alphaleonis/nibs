@@ -146,22 +146,14 @@ describe("SelectionState", () => {
 
     it("toggleSelect() ignores a synthetic bucket id (Space on a focused bucket row)", () => {
       const state = new SelectionState();
-      // Reachable via keyboard: arrow focuses a bucket row, then Space calls
-      // toggleFocusedSelection -> toggleSelect(bucketId). rangeSelect's slice
-      // filter does not cover this path.
+      // Reachable via keyboard: a bucket row can be arrow-focused, and Space
+      // resolves the row from the DOM and calls toggleSelect(bucketId). The
+      // rangeSelect slice filter does not cover this path.
       state.toggleSelect("__no_milestone__");
       expect(state.selectedIds.has("__no_milestone__")).toBe(false);
       expect(state.selectedIds.size).toBe(0);
       // The bucket must not become an anchor or focus for selection either.
       expect(state.anchorId).toBeNull();
-    });
-
-    it("toggleFocusedSelection() on a focused bucket adds nothing", () => {
-      const state = new SelectionState();
-      state.focus("__no_milestone__");
-      state.toggleFocusedSelection();
-      expect(state.selectedIds.has("__no_milestone__")).toBe(false);
-      expect(state.selectedIds.size).toBe(0);
     });
 
     it("a bucket-id write is a no-op, not a destructive clear of a live selection", () => {
@@ -293,29 +285,6 @@ describe("SelectionState", () => {
 
       expect(state.selectedIds.size).toBe(0);
       expect(state.selectedNibId).toBeNull();
-    });
-
-    it("toggleFocusedSelection() toggles focused row in selectedIds", () => {
-      const state = new SelectionState();
-      state.select("nibs-abc1"); // sets focus + selected
-      state.focus("nibs-xyz2");
-
-      state.toggleFocusedSelection();
-      expect(state.selectedIds.has("nibs-xyz2")).toBe(true);
-      expect(state.selectedIds.has("nibs-abc1")).toBe(true);
-      expect(state.selectedIds.size).toBe(2);
-
-      // Toggle again to remove
-      state.toggleFocusedSelection();
-      expect(state.selectedIds.has("nibs-xyz2")).toBe(false);
-      expect(state.selectedIds.has("nibs-abc1")).toBe(true);
-      expect(state.selectedIds.size).toBe(1);
-    });
-
-    it("toggleFocusedSelection() does nothing when no focus", () => {
-      const state = new SelectionState();
-      state.toggleFocusedSelection();
-      expect(state.selectedIds.size).toBe(0);
     });
 
     it("isSelected() returns correct value", () => {

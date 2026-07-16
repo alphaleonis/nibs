@@ -912,6 +912,23 @@ describe("TreeTable", () => {
       expect(sel.selectedNibId).toBe("nibs-001");
     });
 
+    it("Space toggles the arrow-focused row (focusedNibId fallback path)", async () => {
+      const user = userEvent.setup();
+      const sel = new SelectionState();
+      sel.focus("nibs-001");
+      const nibs = makeKeyboardTestNibs(2);
+
+      setupWithNibs(nibs, {}, { selection: sel });
+      const scrollContainer = getScrollContainer();
+      // DOM focus on the grid container (not a row) — the key event has no row
+      // ancestor, so Space must fall back to the virtual focusedNibId.
+      scrollContainer.focus();
+
+      await user.keyboard(" ");
+
+      expect(sel.selectedIds.has("nibs-001")).toBe(true);
+    });
+
     it("ArrowLeft on expanded parent collapses it", async () => {
       const user = userEvent.setup();
       const sel = new SelectionState();
@@ -1433,29 +1450,202 @@ describe("TreeTable", () => {
       expect((rows[1] as HTMLElement).dataset.nibId).toBe("nibs-001");
     });
 
-    it("title element is a <button> for keyboard accessibility (Enter/Space activate)", async () => {
+    // Space/Enter on a row title resolve WHICH row to act on from the key event's
+    // own DOM row ancestor (`tr[data-nib-id]`), falling back to the virtual
+    // `focusedNibId` only when the event has no row ancestor (arrow-key nav, where
+    // DOM focus sits on the grid container). No DOM->virtual focus sync exists.
+    it("Space on a Tab-focused title toggles THAT row (resolved from the DOM), preserving a multi-select", async () => {
+      const user = userEvent.setup();
+      const sel = new SelectionState();
+      const nibs = [
+        makeTreeTableNib({ id: "nibs-m1", title: "Milestone", type: "milestone" }),
+        makeTreeTableNib({ id: "nibs-001", title: "Task 1", type: "task", parentId: "nibs-m1" }),
+        makeTreeTableNib({ id: "nibs-002", title: "Task 2", type: "task", parentId: "nibs-m1" }),
+        makeTreeTableNib({ id: "nibs-003", title: "Task 3", type: "task", parentId: "nibs-m1" }),
+      ];
+
+      const { container } = setupWithNibs(nibs, {}, { selection: sel });
+
+      // Seed a pre-existing multi-select (003) and a STALE virtual focus on a
+      // DIFFERENT row (001) than the one we tab to. The row that Space acts on must
+      // come from the DOM event, not this stale focusedNibId.
+      sel.toggleSelect("nibs-003");
+      sel.focus("nibs-001");
+
+      // Tab lands DOM focus on row 002's title.
+      const title2 = container.querySelector(
+        "tr[data-nib-id='nibs-002'] [data-action='title']",
+      ) as HTMLElement;
+      expect(title2.tagName).toBe("BUTTON");
+      title2.focus();
+
+      // Real keypress: userEvent synthesizes the native button click that a dropped
+      // preventDefault() would let through, so this catches a native open leaking in.
+      await user.keyboard(" ");
+
+      // The tabbed-to row (002) toggles in — resolved from the DOM, NOT the stale
+      // focusedNibId (001), which a naive focusedNibId-only fix would have toggled.
+      expect(sel.selectedIds.has("nibs-002")).toBe(true);
+      expect(sel.selectedIds.has("nibs-001")).toBe(false);
+      // The pre-existing multi-select survives — a native open would have collapsed
+      // the selection to a single 002, dropping 003.
+      expect(sel.selectedIds.has("nibs-003")).toBe(true);
+      // toggleSelect also moves focus/anchor to the toggled row (like Ctrl-click).
+      expect(sel.focusedNibId).toBe("nibs-002");
+    });
+
+    // When focusedNibId is null (e.g. Escape cleared it) but DOM focus is still on
+    // a row title, Enter must still open that row — the keyboard path resolves the
+    // target from the event's DOM row, not from the (null) focusedNibId.
+    it("after focus is cleared, Enter on a still-DOM-focused title still opens the nib", async () => {
       const user = userEvent.setup();
       const sel = new SelectionState();
       const nibs = makeTestNibs();
 
       const { container } = setupWithNibs(nibs, {}, { selection: sel });
 
-      // The title element should be a <button> so Enter/Space natively fire click events
-      const titleEl = container.querySelector("tr[data-nib-id='nibs-001'] [data-action='title']") as HTMLElement;
-      expect(titleEl.tagName).toBe("BUTTON");
+      const title = container.querySelector(
+        "tr[data-nib-id='nibs-001'] [data-action='title']",
+      ) as HTMLElement;
+      title.focus();
+      // Simulate the Escape hierarchy clearing virtual focus WITHOUT blurring DOM
+      // focus (SelectionState.clearFocus, what the Escape handler calls last).
+      sel.clearFocus();
+      expect(sel.focusedNibId).toBeNull();
 
-      // Focus the title and press Enter — should activate select via context
-      titleEl.focus();
       await user.keyboard("{Enter}");
+
+      // Enter still opens the nib — the target is resolved from the DOM row, not
+      // the now-null focusedNibId.
       expect(sel.selectedNibId).toBe("nibs-001");
+    });
 
-      // Reset selection to verify Space also works
-      sel.clearAll();
+    // Enter on a Tab-focused bucket title toggles its group: the target resolves
+    // from the DOM row (a bucket id), and Enter routes a bucket to toggleNode
+    // rather than navigateToNib.
+    it("Enter on a Tab-focused bucket title toggles its group", async () => {
+      const user = userEvent.setup();
+      const sel = new SelectionState();
+      const nibs = makeBucketTestNibs();
+      const bucketId = milestoneBucketId(nibs);
 
-      titleEl.focus();
-      // Press Space — should also activate select via context
+      const { container } = setupWithNibs(nibs, {}, { selection: sel });
+
+      // The bucket's child is visible initially.
+      expect(screen.getByText("Loose Task")).toBeInTheDocument();
+
+      const bucketTitle = container.querySelector(
+        `tr[data-nib-id="${bucketId}"] [data-action="title"]`,
+      ) as HTMLElement;
+      bucketTitle.focus();
+      await user.keyboard("{Enter}");
+
+      // Enter toggled the group closed — its child is hidden — and the synthetic
+      // bucket id never entered the selection.
+      expect(screen.queryByText("Loose Task")).not.toBeInTheDocument();
+      expect(sel.selectedIds.has(bucketId)).toBe(false);
+      expect(sel.selectedNibId).toBeNull();
+    });
+
+    // Passive focus must NOT arm a destructive action: getActionTargetIds()
+    // (Delete/Edit target resolver) falls back to focusedNibId, so merely tabbing
+    // to a row must not set focusedNibId — only an explicit selection gesture may.
+    it("focusing a row title does not arm it as the Delete target (focus alone sets no action target)", async () => {
+      const sel = new SelectionState();
+      const nibs = makeTestNibs();
+
+      const { container } = setupWithNibs(nibs, {}, { selection: sel });
+
+      const title = container.querySelector(
+        "tr[data-nib-id='nibs-001'] [data-action='title']",
+      ) as HTMLElement;
+      title.focus();
+
+      // getActionTargetIds() keys the Delete/Edit target off focusedNibId when
+      // there is no multi-select or context-menu target. Passive focus must leave
+      // focusedNibId (and the selection) empty so nothing is armed.
+      expect(sel.focusedNibId).toBeNull();
+      expect(sel.selectedIds.size).toBe(0);
+    });
+
+    it("Enter on a focused row title opens it (keyboard-nav path)", async () => {
+      const user = userEvent.setup();
+      const sel = new SelectionState();
+      const nibs = makeTestNibs();
+
+      const { container } = setupWithNibs(nibs, {}, { selection: sel });
+
+      const title = container.querySelector(
+        "tr[data-nib-id='nibs-001'] [data-action='title']",
+      ) as HTMLElement;
+      title.focus();
+      await user.keyboard("{Enter}");
+
+      expect(sel.selectedNibId).toBe("nibs-001");
+    });
+
+    it("Space on a title toggles that same row back out after a click selected it", async () => {
+      const user = userEvent.setup();
+      const sel = new SelectionState();
+      const nibs = makeTestNibs();
+
+      const { container } = setupWithNibs(nibs, {}, { selection: sel });
+
+      const title = container.querySelector(
+        "tr[data-nib-id='nibs-001'] [data-action='title']",
+      ) as HTMLElement;
+
+      // A click selects the row.
+      await user.click(title);
+      expect(sel.selectedIds.has("nibs-001")).toBe(true);
+      expect(sel.focusedNibId).toBe("nibs-001");
+
+      // Space on that same title toggles the row back out — the keyboard path
+      // resolves its target from the event's DOM row (001). Use a real keypress
+      // (focus + user.keyboard) so a dropped preventDefault would let the native
+      // click through and be caught, rather than a raw synthetic keydown.
+      title.focus();
       await user.keyboard(" ");
-      expect(sel.selectedNibId).toBe("nibs-001");
+      expect(sel.selectedIds.has("nibs-001")).toBe(false);
+    });
+
+    it("Space on the toggle button keeps native activation (collapses, does NOT toggle selection)", async () => {
+      const user = userEvent.setup();
+      const sel = new SelectionState();
+      const nibs = makeTestNibs();
+
+      const { container } = setupWithNibs(nibs, {}, { selection: sel });
+
+      expect(screen.getByText("Child Task")).toBeInTheDocument();
+
+      const toggle = container.querySelector(
+        "tr[data-nib-id='nibs-m1'] [data-action='toggle']",
+      ) as HTMLElement;
+      toggle.focus();
+      await user.keyboard(" ");
+
+      // Native activation still fires the collapse...
+      expect(screen.queryByText("Child Task")).not.toBeInTheDocument();
+      // ...and Space did NOT toggle selection — the exemption still covers toggle.
+      expect(sel.selectedIds.size).toBe(0);
+    });
+
+    it("Space on the add-child button keeps native activation (opens type picker, does NOT toggle selection)", async () => {
+      const user = userEvent.setup();
+      const sel = new SelectionState();
+      const onaddchild = vi.fn();
+      const nibs = makeTestNibs();
+
+      const { container } = setupWithNibs(nibs, { onaddchild }, { selection: sel });
+
+      const addChild = container.querySelector(
+        "tr[data-nib-id='nibs-m1'] [data-action='add-child']",
+      ) as HTMLElement;
+      addChild.focus();
+      await user.keyboard(" ");
+
+      expect(onaddchild).toHaveBeenCalledOnce();
+      expect(sel.selectedIds.size).toBe(0);
     });
 
     it("row pointerdown enters pending drag state via context", async () => {

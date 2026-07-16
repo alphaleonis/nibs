@@ -38,12 +38,12 @@ export class SelectionState {
     this.focusedNibId = null;
   }
 
-  /** Ctrl/Cmd+click (or Space on a focused row): toggle nib in/out of
+  /** Ctrl/Cmd+click, or Space on a focused row: toggle nib in/out of
    *  selectedIds, update anchor. A synthetic grouping-bucket id is unresolvable
    *  for any bulk action, so it is never admitted — one of the three `selectedIds`
    *  add-writers (with `select` and `rangeSelect`) that enforce the invariant.
-   *  This guard specifically closes the keyboard path (arrow onto a bucket, then
-   *  Space -> toggleFocusedSelection) that the range slice does not cover. */
+   *  This guard also covers the keyboard path, where a bucket row can be focused
+   *  (arrow) and Space-toggled, which the range slice does not reach. */
   toggleSelect(nibId: string): void {
     if (isBucketId(nibId)) return;
     const next = new Set(this.selectedIds);
@@ -102,12 +102,6 @@ export class SelectionState {
     } else {
       this.selectedNibId = null;
     }
-  }
-
-  /** Space key: toggle focused row in/out of selectedIds */
-  toggleFocusedSelection(): void {
-    if (!this.focusedNibId) return;
-    this.toggleSelect(this.focusedNibId);
   }
 
   /** Returns true if nibId is in selectedIds */
