@@ -51,6 +51,7 @@ func init() {
 var versionCmd = &cobra.Command{
 	Use:   "version",
 	Short: "Show version information",
+	Args:  cobra.NoArgs, // prints build info; takes no positional args
 	Run: func(cmd *cobra.Command, args []string) {
 		fmt.Printf("nibs %s (%s) built %s\n", version, commit, date)
 	},

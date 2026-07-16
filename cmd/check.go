@@ -34,6 +34,7 @@ var checkCmd = &cobra.Command{
 
 Use --fix to automatically remove broken links and self-references.
 Note: Cycles cannot be auto-fixed and require manual intervention.`,
+	Args: cobra.NoArgs, // operates on the whole store; takes no positional args
 	RunE: func(cmd *cobra.Command, args []string) error {
 		app := getApp(cmd)
 		var configErrors []string

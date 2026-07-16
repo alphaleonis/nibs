@@ -91,6 +91,7 @@ Search Syntax (--search/-S):
   characters), a prefix of the full ID (starting with the configured
   prefix), or an exact full ID, case-insensitive. ID matches are
   interleaved with full-text hits by the list's sort order.`,
+	Args: cobra.NoArgs, // all filtering is via flags; takes no positional args
 	RunE: func(cmd *cobra.Command, args []string) error {
 		app := getApp(cmd)
 

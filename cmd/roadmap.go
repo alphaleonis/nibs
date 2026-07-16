@@ -66,6 +66,7 @@ type epicGroup struct {
 var roadmapCmd = &cobra.Command{
 	Use:   "roadmap",
 	Short: "Generate a Markdown roadmap from milestones and epics",
+	Args:  cobra.NoArgs, // renders the whole store; takes no positional args
 	RunE: func(cmd *cobra.Command, args []string) error {
 		app := getApp(cmd)
 		// Query all nibs via GraphQL resolver

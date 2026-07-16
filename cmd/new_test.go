@@ -627,6 +627,36 @@ func TestCreateAliasStillCreates(t *testing.T) {
 	}
 }
 
+// TestNewRejectsExtraArgs verifies the title is a single positional: a second
+// arg is rejected and no nib is created. Before MaximumNArgs(1), extra args
+// were silently folded into the title via strings.Join, so `new First Second`
+// created a nib titled "First Second" and returned nil — this guard bites
+// against that.
+func TestNewRejectsExtraArgs(t *testing.T) {
+	nibsDir := setupNewTest(t)
+	t.Setenv("EDITOR", "")
+	t.Setenv("VISUAL", "")
+
+	rootCmd.SetArgs([]string{
+		"--nibs-path", nibsDir,
+		"new", "First", "Second", "-t", "task",
+	})
+	var err error
+	_ = captureStdout(t, func() { err = rootCmd.Execute() })
+	if err == nil {
+		t.Fatal("expected `new` to reject a second positional arg, got nil")
+	}
+	// Pin the failure to the arity guard specifically — not some unrelated error
+	// (a config load, an editor spawn) that would also leave err != nil and no
+	// nib created, letting a broken MaximumNArgs(1) slip through green.
+	if !strings.Contains(err.Error(), "arg(s)") {
+		t.Errorf("expected an arg-count error, got: %v", err)
+	}
+	if n := countNibFiles(t, nibsDir); n != 0 {
+		t.Errorf("expected no nib created when extra args are rejected, found %d", n)
+	}
+}
+
 // TestNewEchoesCardText verifies the text echo is a lean card (key: value
 // lines from the card projection) — never the full body.
 func TestNewEchoesCardText(t *testing.T) {

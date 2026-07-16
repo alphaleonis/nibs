@@ -39,6 +39,11 @@ var newCmd = &cobra.Command{
 	Aliases: []string{"create", "c"},
 	Short:   "Create a new nib",
 	Long:    `Creates a new nib (issue) with a generated ID and optional title.`,
+	// At most one positional: the optional title. Zero args is legal (the title
+	// defaults to "Untitled"), so this is MaximumNArgs(1), not ExactArgs(1).
+	// Extra args used to be silently folded into the title via strings.Join;
+	// rejecting them keeps the documented `nibs new "<title>"` contract explicit.
+	Args: cobra.MaximumNArgs(1),
 	RunE: func(cmd *cobra.Command, args []string) error {
 		app := getApp(cmd)
 		title := strings.Join(args, " ")
