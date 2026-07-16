@@ -532,9 +532,13 @@ func TestServeOpenBrowser(t *testing.T) {
 	port := ln.Addr().(*net.TCPAddr).Port
 	_ = ln.Close()
 
-	var openedURL string
+	// The opener runs on the server goroutine; deliver its URL over a buffered
+	// channel so the test observes it with a real happens-before edge rather
+	// than racing on a shared variable. Buffer 1 keeps the server goroutine
+	// from blocking even if the test isn't yet receiving.
+	openedURL := make(chan string, 1)
 	opener := func(url string) error {
-		openedURL = url
+		openedURL <- url
 		return nil
 	}
 
@@ -547,25 +551,16 @@ func TestServeOpenBrowser(t *testing.T) {
 		errCh <- startServer(ctx, app, "127.0.0.1", port, true, opener)
 	}()
 
-	// Wait for server to be ready
-	ready := false
-	deadline := time.Now().Add(2 * time.Second)
-	for time.Now().Before(deadline) {
-		conn, err := net.Dial("tcp", fmt.Sprintf("127.0.0.1:%d", port))
-		if err == nil {
-			_ = conn.Close()
-			ready = true
-			break
-		}
-		time.Sleep(10 * time.Millisecond)
-	}
-	if !ready {
-		t.Fatal("server did not become ready within 2s")
-	}
-
+	// Receiving from the channel both proves the callback fired and
+	// synchronizes with its write, so no separate readiness poll is needed.
 	expected := fmt.Sprintf("http://127.0.0.1:%d", port)
-	if openedURL != expected {
-		t.Errorf("expected browser opened with %q, got %q", expected, openedURL)
+	select {
+	case got := <-openedURL:
+		if got != expected {
+			t.Errorf("expected browser opened with %q, got %q", expected, got)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("browser open callback not invoked within 2s")
 	}
 
 	// Clean shutdown — no goroutine leak
