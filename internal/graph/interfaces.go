@@ -21,6 +21,14 @@ type NibReader interface {
 	// It returns the same errors as Get (notably ErrNotFound) when the nib is
 	// missing. This is the one blessed accessor for every mutation site.
 	GetForUpdate(id string) (*nib.Nib, error)
+	// GetSnapshot returns a detached deep copy of the nib, cloned WHILE the store
+	// lock is held, so the result never aliases the live store pointer and no
+	// field (notably Path) is read off-lock. This is the blessed READ accessor
+	// for values that outlive the lock — relationship resolvers whose fields
+	// gqlgen marshals asynchronously, concurrently with in-place mutations like
+	// Archive rewriting a stored nib's Path. Unlike Get (live pointer) it is
+	// race-safe to read from later; ok is false when the nib is absent.
+	GetSnapshot(id string) (*nib.Nib, bool)
 	All() []*nib.Nib
 	Search(query string) ([]*nib.Nib, error)
 	NormalizeID(id string) (string, bool)

@@ -626,6 +626,30 @@ func (c *Core) GetForUpdate(id string) (*nib.Nib, error) {
 	return b.Clone(), nil
 }
 
+// GetSnapshot returns a detached deep copy of the nib, cloned WHILE c.mu is
+// held, so the returned value never aliases the live store pointer and no field
+// (notably Path) is read off-lock. This is the read accessor callers use when
+// the result outlives the lock — e.g. GraphQL relationship resolvers whose
+// fields gqlgen marshals asynchronously, concurrently with in-place mutations
+// like Archive/Unarchive rewriting a stored nib's Path. Get returns the live
+// pointer (and would leave that later read racing the writer); GetSnapshot
+// returns a safe copy. Resolution mirrors Get (exact id, then the configured
+// prefix prepended); ok is false when the nib is absent.
+func (c *Core) GetSnapshot(id string) (*nib.Nib, bool) {
+	c.mu.RLock()
+	defer c.mu.RUnlock()
+
+	if b, ok := c.nibs[id]; ok {
+		return b.Clone(), true // clone under the lock — this is the whole point
+	}
+	if c.config != nil && c.config.Nibs.Prefix != "" && !strings.HasPrefix(id, c.config.Nibs.Prefix) {
+		if b, ok := c.nibs[c.config.Nibs.Prefix+id]; ok {
+			return b.Clone(), true
+		}
+	}
+	return nil, false
+}
+
 // NormalizeID resolves a potentially short ID to its full form.
 // If a prefix is configured and the query doesn't include it, the prefix is automatically prepended.
 // Returns the full ID and true if found, or the original ID and false if not found.

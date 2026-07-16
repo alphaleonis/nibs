@@ -710,10 +710,13 @@ func (r *nibResolver) BlockedByIds(ctx context.Context, obj *nib.Nib) ([]string,
 
 // BlockedBy is the resolver for the blockedBy field.
 // Returns only active (non-completed, non-scrapped) blockers.
+//
+// Returns detached snapshots via Reader.GetSnapshot (clone-under-lock), never
+// the live c.nibs pointers — gqlgen marshals their fields asynchronously.
 func (r *nibResolver) BlockedBy(ctx context.Context, obj *nib.Nib, filter *model.NibFilter) ([]*nib.Nib, error) {
 	var result []*nib.Nib
 	for _, blockerID := range obj.BlockedBy {
-		if blocker, err := r.Reader.Get(blockerID); err == nil {
+		if blocker, ok := r.Reader.GetSnapshot(blockerID); ok {
 			if !isResolvedStatus(blocker.Status) {
 				result = append(result, blocker)
 			}
@@ -726,6 +729,11 @@ func (r *nibResolver) BlockedBy(ctx context.Context, obj *nib.Nib, filter *model
 // Blocking is the resolver for the blocking field.
 // Computed: returns active nibs whose BlockedBy field contains this nib's ID.
 // A resolved nib is not considered to be blocking anything.
+//
+// Returns detached snapshots via Reader.GetSnapshot (clone-under-lock), never
+// the live c.nibs pointers — gqlgen marshals their fields asynchronously. Only
+// the immutable link.FromNib.ID is read off the live pointer; the status filter
+// runs against the detached clone.
 func (r *nibResolver) Blocking(ctx context.Context, obj *nib.Nib, filter *model.NibFilter) ([]*nib.Nib, error) {
 	if isResolvedStatus(obj.Status) {
 		return ApplyFilter(ctx, nil, filter, r.Reader, r.Resolver.Blocking), nil
@@ -733,8 +741,12 @@ func (r *nibResolver) Blocking(ctx context.Context, obj *nib.Nib, filter *model.
 	incoming := r.Reader.FindIncomingLinks(obj.ID)
 	var result []*nib.Nib
 	for _, link := range incoming {
-		if link.LinkType == "blocked_by" && !isResolvedStatus(link.FromNib.Status) {
-			result = append(result, link.FromNib)
+		if link.LinkType != "blocked_by" {
+			continue
+		}
+		snap, ok := r.Reader.GetSnapshot(link.FromNib.ID)
+		if ok && !isResolvedStatus(snap.Status) {
+			result = append(result, snap)
 		}
 	}
 
@@ -742,21 +754,36 @@ func (r *nibResolver) Blocking(ctx context.Context, obj *nib.Nib, filter *model.
 }
 
 // Parent is the resolver for the parent field.
+//
+// Returns a detached snapshot via Reader.GetSnapshot (clone-under-lock), never
+// the live c.nibs pointer — gqlgen marshals its fields asynchronously. A broken
+// parent link (absent target) resolves to nil, as before.
 func (r *nibResolver) Parent(ctx context.Context, obj *nib.Nib) (*nib.Nib, error) {
 	if obj.Parent == "" {
 		return nil, nil
 	}
-	// Filter out broken links
-	parent, err := r.Reader.Get(obj.Parent)
-	if errors.Is(err, nib.ErrNotFound) {
+	// A missing parent is a broken link → nil (mirrors the prior ErrNotFound path).
+	snap, ok := r.Reader.GetSnapshot(obj.Parent)
+	if !ok {
 		return nil, nil
 	}
-	return parent, err
+	return snap, nil
 }
 
 // Children is the resolver for the children field.
+//
+// Returns detached snapshots via Reader.GetSnapshot (clone-under-lock), never
+// the live c.nibs pointers — gqlgen marshals their fields asynchronously. Only
+// the immutable sibling.ID is read off GetSortedSiblings' live pointers; the
+// sort/backfill it performs internally is a separate pre-existing concern.
 func (r *nibResolver) Children(ctx context.Context, obj *nib.Nib, filter *model.NibFilter, sort *model.NibSort) ([]*nib.Nib, error) {
-	result := r.Orderer.GetSortedSiblings(obj.ID)
+	siblings := r.Orderer.GetSortedSiblings(obj.ID)
+	result := make([]*nib.Nib, 0, len(siblings))
+	for _, sib := range siblings {
+		if snap, ok := r.Reader.GetSnapshot(sib.ID); ok {
+			result = append(result, snap)
+		}
+	}
 	result = ApplyFilter(ctx, result, filter, r.Reader, r.Resolver.Blocking)
 	ApplySorting(result, sort, r.Reader.Config())
 	return result, nil

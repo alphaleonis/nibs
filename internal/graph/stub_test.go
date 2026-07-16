@@ -47,6 +47,20 @@ func (s *stubReader) GetForUpdate(id string) (*nib.Nib, error) {
 	return b.Clone(), nil
 }
 
+// GetSnapshot mirrors nibcore.Core.GetSnapshot: return a detached Clone of the
+// nib (exact id, then the configured prefix prepended), or ok=false when absent.
+func (s *stubReader) GetSnapshot(id string) (*nib.Nib, bool) {
+	if b, ok := s.nibs[id]; ok {
+		return b.Clone(), true
+	}
+	if s.prefix != "" && !strings.HasPrefix(id, s.prefix) {
+		if b, ok := s.nibs[s.prefix+id]; ok {
+			return b.Clone(), true
+		}
+	}
+	return nil, false
+}
+
 func (s *stubReader) All() []*nib.Nib {
 	return s.allNibs
 }
