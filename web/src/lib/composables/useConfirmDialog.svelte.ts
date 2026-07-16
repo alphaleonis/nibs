@@ -16,6 +16,15 @@ export interface ConfirmDialogOptions {
    *  confirms, which must render no Save button. */
   saveLabel?: string;
   saveAction?: () => void;
+  /** Called when THIS confirm is abandoned without the user picking its primary
+   *  (Discard) or Save action — i.e. dismissed (Cancel / Escape / overlay) OR
+   *  superseded by a later `showConfirm` before it was answered. It runs exactly
+   *  once and only for its own invocation, so a caller awaiting a promise can
+   *  settle it here knowing a LATER dialog can never trigger it. This is what
+   *  makes the single shared dialog safe under overlapping confirms: without it,
+   *  a superseding confirm silently orphaned the previous one's pending promise
+   *  (nibs-an5d). Omitted by Delete/Archive confirms, which await nothing. */
+  onDismiss?: () => void;
 }
 
 export interface ConfirmDialogState {
@@ -29,6 +38,10 @@ export interface ConfirmDialogState {
    *  didn't request one (Delete/Archive). */
   readonly saveLabel: string | null;
   readonly saveAction: (() => void) | null;
+  /** The current confirm's dismissal owner (from `onDismiss`), or null. The host
+   *  runs it on a Cancel/Escape/overlay dismissal AFTER `close()`. `showConfirm`
+   *  runs the PREVIOUS one automatically when a new confirm supersedes it. */
+  readonly dismissAction: (() => void) | null;
   showConfirm: (opts: ConfirmDialogOptions) => void;
   close: () => void;
 }
@@ -42,8 +55,16 @@ export function createConfirmDialog(): ConfirmDialogState {
   let action: (() => void) | null = $state(null);
   let saveLabel: string | null = $state(null);
   let saveAction: (() => void) | null = $state(null);
+  let dismissAction: (() => void) | null = $state(null);
 
   function showConfirm(opts: ConfirmDialogOptions) {
+    // A new confirm reuses the single dialog component, so it SUPERSEDES any
+    // still-pending one. Settle that superseded confirm (run its dismissal owner)
+    // so a caller awaiting it never hangs — the exact leak nibs-an5d fixed. Capture
+    // it BEFORE overwriting the slot, run it AFTER the new state is installed so a
+    // re-entrant showConfirm from within it (should one ever occur) can't be
+    // clobbered. Nulled here because the superseded owner is one-shot.
+    const superseded = dismissAction;
     title = opts.title;
     message = opts.message;
     label = opts.label;
@@ -53,7 +74,9 @@ export function createConfirmDialog(): ConfirmDialogState {
     // dirty-guard invocation never leaks a Save button onto a later Delete/Archive.
     saveLabel = opts.saveLabel ?? null;
     saveAction = opts.saveAction ?? null;
+    dismissAction = opts.onDismiss ?? null;
     open = true;
+    superseded?.();
   }
 
   function close() {
@@ -61,6 +84,7 @@ export function createConfirmDialog(): ConfirmDialogState {
     action = null;
     saveAction = null;
     saveLabel = null;
+    dismissAction = null;
   }
 
   return {
@@ -72,6 +96,7 @@ export function createConfirmDialog(): ConfirmDialogState {
     get action() { return action; },
     get saveLabel() { return saveLabel; },
     get saveAction() { return saveAction; },
+    get dismissAction() { return dismissAction; },
     showConfirm,
     close,
   };

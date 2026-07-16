@@ -194,14 +194,16 @@
   // Promise wrapper over the shared confirm dialog for the dirty-nav guard.
   // Resolves the tri-state ConfirmChoice: "save" (the Save action),
   // "discard" (the confirm/primary action), or "cancel" on any dismissal
-  // (Cancel / Escape / overlay). The pending resolver is completed by exactly one
-  // of the three handlers (each nulls it first, so a follow-on dismissal is inert).
-  let pendingDiscardResolve: ((v: ConfirmChoice) => void) | null = null;
-  function resolveDiscard(choice: ConfirmChoice) {
-    const r = pendingDiscardResolve;
-    pendingDiscardResolve = null;
-    r?.(choice);
-  }
+  // (Cancel / Escape / overlay) OR when a later confirm supersedes this one before
+  // it is answered.
+  //
+  // Each invocation owns its OWN resolver via a latched `settle` closure — there
+  // is no shared single slot to overwrite, so overlapping confirms can never leak
+  // one another's promise (nibs-an5d). The three action handlers settle explicitly;
+  // dismissal/supersession routes through `onDismiss`, which the dialog runs for
+  // exactly this invocation. `settle` is idempotent, so a follow-on dismissal
+  // after an explicit Save/Discard is inert.
+  //
   // `canSave: false` — the buffer's nib was DELETED, so a Save would dispatch
   // against nothing and fail; the copy below may state that as fact. It does not
   // mean merely "gone": an archived buffer arrives with `canSave: true` and keeps
@@ -211,7 +213,12 @@
   // shape Delete/Archive confirms use.
   function confirmDiscard({ canSave }: { canSave: boolean }): Promise<ConfirmChoice> {
     return new Promise((resolve) => {
-      pendingDiscardResolve = resolve;
+      let settled = false;
+      const settle = (choice: ConfirmChoice) => {
+        if (settled) return;
+        settled = true;
+        resolve(choice);
+      };
       confirmDialog.showConfirm({
         title: canSave ? "Unsaved changes" : "This nib was deleted",
         message: canSave
@@ -224,14 +231,18 @@
               saveLabel: "Save",
               saveAction: () => {
                 confirmDialog.close();
-                resolveDiscard("save");
+                settle("save");
               },
             }
           : {}),
         action: () => {
           confirmDialog.close();
-          resolveDiscard("discard");
+          settle("discard");
         },
+        // Dismissed (Cancel / Escape / overlay) or superseded before it was
+        // answered: keep the edits and stay put. Owned by this invocation, so a
+        // later Delete/Archive confirm's dismissal can never resolve it.
+        onDismiss: () => settle("cancel"),
       });
     });
   }
@@ -624,10 +635,13 @@
   onsave={confirmDialog.saveAction ? () => { confirmDialog.saveAction?.(); } : undefined}
   onconfirm={() => { confirmDialog.action?.(); }}
   oncancel={() => {
+    // Run THIS confirm's dismissal owner (the dirty-guard settles "cancel" —
+    // keep my changes, stay put). Capture it before close() nulls it. A confirm
+    // that installed no owner (Delete/Archive) just closes, so a dismissal here
+    // can never resolve a different dialog's pending promise (nibs-an5d).
+    const onDismiss = confirmDialog.dismissAction;
     confirmDialog.close();
-    // Complete a pending discard-guard promise as "cancel" (keep my changes,
-    // stay put). No-op when a Save/Discard already resolved it (resolver nulled).
-    resolveDiscard("cancel");
+    onDismiss?.();
   }}
 />
 

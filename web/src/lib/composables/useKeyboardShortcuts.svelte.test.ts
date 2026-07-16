@@ -22,6 +22,7 @@ function makeHarness(
     selection?: SelectionState;
     isOpen?: boolean;
     presentation?: string;
+    confirmOpen?: boolean;
     getContextMenuNibId?: () => string | null;
   } = {},
 ) {
@@ -49,7 +50,7 @@ function makeHarness(
   const showConfirm = vi.fn();
   const close = vi.fn();
   const confirmDialog = {
-    open: false,
+    open: overrides.confirmOpen ?? false,
     title: "",
     message: "",
     label: "",
@@ -57,6 +58,7 @@ function makeHarness(
     action: null,
     saveLabel: null,
     saveAction: null,
+    dismissAction: null,
     showConfirm,
     close,
   } as unknown as ConfirmDialogState;
@@ -159,6 +161,113 @@ describe("useKeyboardShortcuts · readonly input gate", () => {
     // target). Without this control the negative test proves nothing.
     it("DOES fire the delete confirm when a non-input element is focused", () => {
       const h = makeHarness();
+      h.selection.focus("tnib-abcd");
+      mount(h);
+
+      const button = focusEl(document.createElement("button"));
+      press(key, button);
+
+      expect(h.showConfirm).toHaveBeenCalledTimes(1);
+    });
+  });
+});
+
+describe("useKeyboardShortcuts · confirm-dialog gate (nibs-an5d)", () => {
+  // The single shared confirm dialog is reused for every confirm. A global row
+  // shortcut firing a SECOND confirm over an open one reuses that dialog and
+  // strands the first confirm's pending promise. tinykeys binds a bare `window`
+  // listener with no target filtering, so a key pressed while focus sits on a
+  // dialog button still reaches these handlers — the gate is the only thing that
+  // stops it. Each negative test carries a positive control (same key, dialog
+  // closed) so it can only pass because the gate bit, not because the handler is
+  // unwired.
+
+  it("'n' does NOT start a create while a confirm dialog is open", () => {
+    const h = makeHarness({ confirmOpen: true });
+    mount(h);
+
+    // Focus a plain button (isInputFocused() false) — the exact repro: focus on a
+    // dialog control, confirm open, pane docked.
+    const button = focusEl(document.createElement("button"));
+    press("n", button);
+
+    expect(h.startCreate).not.toHaveBeenCalled();
+  });
+
+  it("'n' DOES start a create when no confirm dialog is open (control)", () => {
+    const h = makeHarness({ confirmOpen: false });
+    mount(h);
+
+    const button = focusEl(document.createElement("button"));
+    press("n", button);
+
+    expect(h.startCreate).toHaveBeenCalledTimes(1);
+  });
+
+  it("'$mod+n' does NOT start a create while a confirm dialog is open", () => {
+    const h = makeHarness({ confirmOpen: true });
+    mount(h);
+
+    // $mod resolves to Ctrl on non-Mac (jsdom's default); the gate is on the
+    // same confirmOpen() check as bare 'n', but that path is separately bound.
+    const button = focusEl(document.createElement("button"));
+    button.dispatchEvent(
+      new KeyboardEvent("keydown", { key: "n", ctrlKey: true, bubbles: true, cancelable: true }),
+    );
+
+    expect(h.startCreate).not.toHaveBeenCalled();
+  });
+
+  it("'$mod+n' DOES start a create when no confirm dialog is open (control)", () => {
+    const h = makeHarness({ confirmOpen: false });
+    mount(h);
+
+    const button = focusEl(document.createElement("button"));
+    button.dispatchEvent(
+      new KeyboardEvent("keydown", { key: "n", ctrlKey: true, bubbles: true, cancelable: true }),
+    );
+
+    expect(h.startCreate).toHaveBeenCalledTimes(1);
+  });
+
+  it("'e' does NOT open the focused nib while a confirm dialog is open", () => {
+    const h = makeHarness({ confirmOpen: true });
+    h.selection.focus("tnib-abcd"); // a valid edit target
+    mount(h);
+
+    const button = focusEl(document.createElement("button"));
+    press("e", button);
+
+    expect(h.open).not.toHaveBeenCalled();
+  });
+
+  it("'e' DOES open the focused nib when no confirm dialog is open (control)", () => {
+    const h = makeHarness({ confirmOpen: false });
+    h.selection.focus("tnib-abcd");
+    mount(h);
+
+    const button = focusEl(document.createElement("button"));
+    press("e", button);
+
+    expect(h.open).toHaveBeenCalledTimes(1);
+  });
+
+  // Delete/Backspace are the wrong-dialog-answer variant: repainting the open
+  // discard confirm as a Delete confirm while its resolver is still pending.
+  describe.each(["Delete", "Backspace"] as const)("%s", key => {
+    it("does NOT open a second (delete) confirm while a confirm dialog is open", () => {
+      const h = makeHarness({ confirmOpen: true });
+      h.selection.focus("tnib-abcd"); // a valid delete target
+      mount(h);
+
+      const button = focusEl(document.createElement("button"));
+      press(key, button);
+
+      expect(h.showConfirm).not.toHaveBeenCalled();
+    });
+
+    it("DOES open the delete confirm when no confirm dialog is open (control)", () => {
+      const h = makeHarness({ confirmOpen: false });
       h.selection.focus("tnib-abcd");
       mount(h);
 

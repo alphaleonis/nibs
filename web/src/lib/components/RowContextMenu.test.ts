@@ -44,6 +44,7 @@ function makeMockConfirmDialog(): ConfirmDialogState & {
     action: null as (() => void) | null,
     saveLabel: null as string | null,
     saveAction: null as (() => void) | null,
+    dismissAction: null as (() => void) | null,
     lastOpts: null as ConfirmDialogOptions | null,
     showConfirm: vi.fn((opts: ConfirmDialogOptions) => {
       state.open = true;
@@ -54,6 +55,7 @@ function makeMockConfirmDialog(): ConfirmDialogState & {
       state.action = opts.action;
       state.saveLabel = opts.saveLabel ?? null;
       state.saveAction = opts.saveAction ?? null;
+      state.dismissAction = opts.onDismiss ?? null;
       state.lastOpts = opts;
     }),
     close: vi.fn(() => {
@@ -61,6 +63,7 @@ function makeMockConfirmDialog(): ConfirmDialogState & {
       state.action = null;
       state.saveLabel = null;
       state.saveAction = null;
+      state.dismissAction = null;
     }),
   };
   return state;

@@ -50,6 +50,19 @@ export function useKeyboardShortcuts(opts: {
     return view.isOpen && view.presentation === "expanded";
   }
 
+  /** True while a confirm dialog is up. The row shortcuts open confirms of their
+   *  own (create/edit route through the dirty-guard; Delete/Backspace open a
+   *  delete confirm), and firing a SECOND confirm reuses the single dialog and
+   *  abandons the first's pending promise — the leak nibs-an5d fixed. tinykeys
+   *  binds a bare `window` listener with no target filtering, so a key pressed
+   *  while focus sits on a dialog button still reaches here; this gate stops it.
+   *  Escape is deliberately NOT gated on this — bits-ui's escape layer consumes
+   *  it (marks it defaultPrevented) so the Escape handler already bails, letting
+   *  the dialog close itself. */
+  function confirmOpen(): boolean {
+    return confirmDialog.open;
+  }
+
   /** Resolves which nib IDs an action should target, checking multi-select,
    *  focused row, then context menu in priority order. */
   function getActionTargetIds(): string[] {
@@ -107,17 +120,20 @@ export function useKeyboardShortcuts(opts: {
         },
         n: (e: KeyboardEvent) => {
           if (modalOpen()) return;
+          if (confirmOpen()) return;
           if (isInputFocused()) return;
           e.preventDefault();
           view.startCreate({ type: "task" });
         },
         "$mod+n": (e: KeyboardEvent) => {
           if (modalOpen()) return;
+          if (confirmOpen()) return;
           e.preventDefault();
           view.startCreate({ type: "task" });
         },
         e: (e: KeyboardEvent) => {
           if (modalOpen()) return;
+          if (confirmOpen()) return;
           if (isInputFocused()) return;
           if (!selection.focusedNibId) return;
           e.preventDefault();
@@ -125,6 +141,7 @@ export function useKeyboardShortcuts(opts: {
         },
         Delete: (e: KeyboardEvent) => {
           if (modalOpen()) return;
+          if (confirmOpen()) return;
           if (isInputFocused()) return;
           if (getActionTargetIds().length === 0) return;
           e.preventDefault();
@@ -132,6 +149,7 @@ export function useKeyboardShortcuts(opts: {
         },
         Backspace: (e: KeyboardEvent) => {
           if (modalOpen()) return;
+          if (confirmOpen()) return;
           if (isInputFocused()) return;
           if (getActionTargetIds().length === 0) return;
           e.preventDefault();

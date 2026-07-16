@@ -1079,6 +1079,40 @@ describe("App", () => {
     await user.click(screen.getByTestId("confirm-dialog-cancel"));
   });
 
+  it("gates 'n' while a discard confirm is open, so the pending close is not stranded (nibs-an5d)", async () => {
+    // The dirty-guard's confirm reuses the single dialog. Before the fix, pressing
+    // 'n' while it was open fired a SECOND confirmDiscard that overwrote the single
+    // pending-resolver slot: the original requestClose promise leaked, and
+    // answering the dialog ran the create instead — stranding the close forever.
+    const user = userEvent.setup();
+    window.history.replaceState(null, "", "/?nib=nibs-vanish");
+    render(App);
+
+    const title = await screen.findByTestId("anv-title");
+    await user.type(title, " edited"); // dirty the buffer
+
+    // Request close → the dirty-guard opens the discard confirm.
+    await user.click(screen.getByTestId("anv-close"));
+    await waitFor(() => {
+      expect(screen.getByTestId("confirm-dialog")).toBeInTheDocument();
+    });
+    expect(screen.getByTestId("confirm-dialog-title")).toHaveTextContent("Unsaved changes");
+
+    // Press 'n' while the confirm is open. The gate must swallow it — no second
+    // confirm, no competing create guard hijacking the pending close.
+    await user.keyboard("n");
+
+    // Discard resolves the ORIGINAL requestClose, so the panel closes. In the
+    // unfixed code the create guard would own the slot here and a create view
+    // would open instead (and the close would leak).
+    await user.click(screen.getByTestId("confirm-dialog-confirm"));
+    await waitFor(() => {
+      expect(screen.queryByTestId("active-nib-view")).not.toBeInTheDocument();
+    });
+    // No create view leaked open in place of the close.
+    expect(screen.queryByTestId("anv-save")).not.toBeInTheDocument();
+  });
+
   it("Back/Forward (popstate) retargets the docked view to the history nib", async () => {
     // Composed path: App's onPopState runs nav.handlePopState (updates selection
     // from the owned history state) then view.syncTo(selection.selectedNibId),
