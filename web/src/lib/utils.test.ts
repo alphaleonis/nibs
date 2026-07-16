@@ -73,6 +73,21 @@ describe("cn() semantic type-scale merging", () => {
     expect(classes).toContain("text-sm");
   });
 
+  it("keeps a modifier'd bg under a later bare bg (guards tailwind-merge modifier keying)", () => {
+    // tailwind-merge treats a variant/modifier as part of a class's identity:
+    // `dark:bg-input/30` (dark-only) and a later bare `bg-transparent` share the
+    // bg-color group but sit in DIFFERENT modifier scopes, so both survive. The
+    // ActiveNibView "Copy body" button relies on exactly this to keep its
+    // `dark:`/`hover:` overrides standing beside a bare `bg-transparent`. This
+    // assertion flips (fails) on a tailwind-merge bump that stops keying on the
+    // modifier: the later bare class would then drop the modifier'd one, leaving
+    // only `bg-transparent`.
+    const result = cn("dark:bg-input/30", "bg-transparent");
+    const classes = result.split(/\s+/);
+    expect(classes).toContain("dark:bg-input/30");
+    expect(classes).toContain("bg-transparent");
+  });
+
   it("documents: the ConfirmDialog warning-button path keeps its arbitrary color value", () => {
     // Real shipping shape: Button base `text-sm font-medium` + the ConfirmDialog
     // override `text-[var(--warning-foreground,white)]`. tailwind-merge classifies

@@ -644,22 +644,16 @@
         <!-- Row 2: title (single line, ellipsis, full-text tooltip)
              `readonly` rather than `disabled` while `gone`: both refuse edits,
              but a `gone` buffer's title can hold unsaved edits, and selection
-             plus copy is what hands them back. HTML defines `disabled` in terms
-             of focus and event dispatch and leaves selection of the control's
-             text to the user agent, so it is not a property this can rely on; a
-             `readonly` input stays focusable with its text selectable.
+             plus copy is what hands them back — a `readonly` input stays
+             focusable with its text selectable.
              The gate is split rather than reusing the `disabled` derivation: an
              unseeded title is an empty placeholder with nothing to recover, and
              `readonly` would let it take a caret before the seed lands, so it
              keeps plain `disabled` and stays unfocusable.
-             This is NOT parity with the metadata band below, but the cause is
-             local, not upstream: the shadcn select trigger sets `select-none`
-             unconditionally (its `disabled:` classes touch only cursor and
-             opacity), which is what makes those values unselectable. Being
-             unconditional, it is not keyed to `disabled` at all, so no swap on
-             the trigger would lift it — undoing it means making that class
-             conditional in the vendored primitive, which reaches every select
-             in the app. -->
+             The metadata band below is NOT selectable while `gone`, for a local
+             (not upstream) reason: the vendored select trigger sets `select-none`
+             unconditionally (see select-trigger.svelte). Making it conditional
+             was judged not worth building (scrapped nibs-3jqj). -->
         <input
           bind:this={titleEl}
           type="text"
@@ -734,9 +728,10 @@
                    `outline` paints `bg-background` and sets no resting text
                    color, so the band's inherited `--destructive-foreground`
                    lands near-white on near-white in Daylight (measured 1.01:1).
-                   The `dark:`/`hover:` variants each need their own override —
-                   tailwind-merge keys on the modifier, so a bare `bg-transparent`
-                   leaves `dark:bg-input/30` and `hover:text-foreground` standing.
+                   The `dark:`/`hover:` variants each need their own override:
+                   tailwind-merge keeps a modifier'd class under a later bare one,
+                   so `bg-transparent` cannot drop `dark:bg-input/30` (pinned by
+                   utils.test.ts).
                    `bg-black/10` on hover is a deliberate exception to the
                    semantic-token rule: the band paints the same `--destructive`
                    pair in every theme, so there is no theme-varying token to
