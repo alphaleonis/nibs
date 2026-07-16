@@ -296,6 +296,71 @@ describe("TreeTable", () => {
     expect(reexecute).toHaveBeenCalledTimes(1);
   });
 
+  // Regression: TreeTable used to call `result.reexecute(...)` synchronously in
+  // the subscription $effect (inside untrack(), which does not catch). A
+  // throwing/absent reexecute therefore propagated out of the effect body and
+  // aborted Svelte's whole effect flush — silently killing the live bridge, so
+  // NO subsequent change event was ever processed for the rest of the session.
+  // reexecute is now isolated in a try/catch: one failing refetch is surfaced
+  // (console.error) and the effect keeps running for the next event.
+  it("survives a throwing reexecute: a later change event is still processed and the failure is surfaced", async () => {
+    const nibs: TreeTableNib[] = [
+      makeTreeTableNib({ id: "nibs-m1", title: "Milestone", type: "milestone" }),
+    ];
+
+    // The non-deleted branch calls reexecute synchronously; make it always throw.
+    const reexecute = vi.fn(() => {
+      throw new TypeError("reexecute exploded");
+    });
+    mockQueryStore.mockReturnValue({
+      ...readable({ fetching: false, error: undefined, data: { nibs }, stale: false }),
+      reexecute,
+    } as any);
+
+    const subStore = writable<any>({ fetching: true, error: undefined, data: undefined, stale: false });
+    mockSubscriptionStore.mockReturnValue(subStore as any);
+
+    const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+
+    try {
+      renderTreeTable({ filter: {} });
+      await tick();
+
+      // First non-deleted event: the effect flush DID run and reexecute was
+      // called (guards against a "flush never ran" false pass) — and it threw.
+      subStore.set({
+        fetching: true,
+        error: undefined,
+        data: { nibChanged: { type: "created", nibId: "nibs-a" } },
+        stale: false,
+      });
+      await tick();
+      expect(reexecute).toHaveBeenCalledTimes(1);
+
+      // The load-bearing behavior: that throw did NOT take the bridge down. A
+      // SECOND, distinct event still reaches the effect and refetches. Without
+      // the try/catch the aborted flush leaves this stuck at 1 (bridge dead).
+      subStore.set({
+        fetching: true,
+        error: undefined,
+        data: { nibChanged: { type: "created", nibId: "nibs-b" } },
+        stale: false,
+      });
+      await tick();
+      expect(reexecute).toHaveBeenCalledTimes(2);
+
+      // The failure is surfaced, not silently swallowed — once per throwing
+      // refetch (two events, two throws), with the thrown error passed through.
+      expect(errorSpy).toHaveBeenCalledTimes(2);
+      expect(errorSpy).toHaveBeenLastCalledWith(
+        "Failed to refetch nibs after a change event:",
+        expect.any(TypeError),
+      );
+    } finally {
+      errorSpy.mockRestore();
+    }
+  });
+
   it("milestones view: milestone headers keep subtrees; loose work lands in a 'No milestone' bucket (lossless)", () => {
     const nibs: TreeTableNib[] = [
       makeTreeTableNib({ id: "nibs-001", title: "Milestone A", type: "milestone" }),

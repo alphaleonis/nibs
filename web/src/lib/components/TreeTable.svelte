@@ -107,6 +107,22 @@
   // instead. Plain let (not $state) so writes do not re-trigger the effect.
   let lastEventKey = "";
 
+  // Refetch the tree query after a change event. Isolated in a try/catch so a
+  // throwing (or absent) `reexecute` cannot propagate out of the $effect body
+  // below: an uncaught throw there aborts Svelte's whole effect flush and
+  // silently takes the live subscription bridge down for the rest of the
+  // session (the failure mode is "the UI just stops updating", with no error).
+  // The catch surfaces the failure rather than swallowing it. Guards both the
+  // synchronous non-deleted branch and the deferred deleted branch — a throw in
+  // the setTimeout would otherwise surface as an uncaught timer error.
+  function refetchTree() {
+    try {
+      result.reexecute({ requestPolicy: "network-only" });
+    } catch (err) {
+      console.error("Failed to refetch nibs after a change event:", err);
+    }
+  }
+
   $effect(() => {
     if ($subscription.error) {
       console.warn("Nib subscription error:", $subscription.error);
@@ -121,7 +137,12 @@
 
     // All side-effects (changeTracker writes, query reexecute) must run
     // untracked so they do not feed back into this effect and cause a
-    // reactive loop.
+    // reactive loop. A throw anywhere in this body aborts Svelte's effect flush
+    // and kills this bridge, so the fragile call — urql's reexecute, which can
+    // throw or be absent — is isolated in refetchTree's try/catch.
+    // changeTracker.handleEvent is deliberately NOT wrapped: it is total (only
+    // Set/Map writes and timer scheduling, no external calls, no throw sites),
+    // so wrapping it would only swallow a genuine bug in our own code.
     untrack(() => {
       if (key === lastEventKey) return;
       lastEventKey = key;
@@ -130,10 +151,10 @@
 
       if (event.type === "deleted") {
         setTimeout(() => {
-          result.reexecute({ requestPolicy: "network-only" });
+          refetchTree();
         }, changeTracker.fadeDurationMs);
       } else {
-        result.reexecute({ requestPolicy: "network-only" });
+        refetchTree();
       }
     });
   });

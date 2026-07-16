@@ -92,9 +92,10 @@ vi.mock("@urql/svelte", async () => {
 
   // `reexecute`: TreeTable calls it on every change event that is not a delete
   // (a delete defers it behind the fade timer). A bare `readable` has no such
-  // method, and the resulting TypeError aborts the whole effect flush — taking
-  // the active-nib view's live bridge down with it — so any subscription-driven
-  // test would silently observe nothing.
+  // method, so it would throw a TypeError. TreeTable isolates the reexecute call
+  // in a try/catch, so a throw is caught (surfaced as a console.error, refetch
+  // lost) rather than aborting the effect flush — but a real reexecute is still
+  // supplied here so subscription-driven tests exercise the live refetch path.
   const nibsData = Object.assign(readable({
     fetching: false,
     error: undefined,
