@@ -145,12 +145,18 @@ func (c *Core) StartWatching() error {
 		return nil
 	})
 
+	// Capture the done channel in a local while the lock is still held, and hand
+	// that local to the loop. The loop must never re-read c.done: a restart
+	// assigns a fresh channel, and a loop that reads the field would latch onto
+	// the new one and never exit. Reading the field at the `go` statement below
+	// would be just as wrong — the lock is already released by then.
 	c.watching = true
-	c.done = make(chan struct{})
+	done := make(chan struct{})
+	c.done = done
 	c.mu.Unlock()
 
 	// Start the watcher goroutine
-	go c.watchLoop(watcher)
+	go c.watchLoop(watcher, done)
 
 	return nil
 }
@@ -183,8 +189,14 @@ func (c *Core) unwatchLocked() error {
 	return nil
 }
 
-// watchLoop processes filesystem events with debouncing.
-func (c *Core) watchLoop(watcher *fsnotify.Watcher) {
+// watchLoop processes filesystem events with debouncing until done is closed.
+//
+// done is a parameter rather than a read of c.done because the loop must be
+// bound to the watch it was started for. StartWatching installs a new c.done on
+// every restart, so a loop selecting on the field would see the successor's
+// open channel and run forever — holding its fsnotify watcher and descriptors
+// open past the Unwatch that was meant to release them.
+func (c *Core) watchLoop(watcher *fsnotify.Watcher, done <-chan struct{}) {
 	defer func() { _ = watcher.Close() }()
 
 	var debounceTimer *time.Timer
@@ -193,7 +205,7 @@ func (c *Core) watchLoop(watcher *fsnotify.Watcher) {
 
 	for {
 		select {
-		case <-c.done:
+		case <-done:
 			if debounceTimer != nil {
 				debounceTimer.Stop()
 			}
