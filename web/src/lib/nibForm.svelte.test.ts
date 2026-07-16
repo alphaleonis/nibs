@@ -622,6 +622,40 @@ describe("editNibForm — conflict & overwrite", () => {
     expect(outcome.kind).toBe("conflict");
   });
 
+  it("classifies a structured errorCode=NOT_FOUND as a `missing` outcome (deleted nib), NOT a conflict or plain error", async () => {
+    // The target nib was DELETED server-side: GetForUpdate returns nib.ErrNotFound
+    // BEFORE any if-match check, so the backend tags it extensions.code = "NOT_FOUND"
+    // (never ETAG_MISMATCH). save() must surface this as `missing` so the presenter
+    // routes the view to gone/deleted rather than showing the raw "not found" toast.
+    const { deps, calls } = makeMutations(() => ({
+      ok: false,
+      error: "[GraphQL] target nib not found: n1: nib not found",
+      errorCode: "NOT_FOUND",
+    }));
+    const form = editNibForm(deps, seed({ etag: "etag-1" }));
+    form.title = "Mine";
+
+    const outcome = await form.save();
+
+    expect(calls).toHaveLength(1);
+    expect(outcome.kind).toBe("missing");
+  });
+
+  it("classifies NOT_FOUND as `missing` even under overwrite (a deleted nib cannot be force-saved)", async () => {
+    const { deps } = makeMutations(() => ({
+      ok: false,
+      error: "target nib not found: n1: nib not found",
+      errorCode: "NOT_FOUND",
+    }));
+    const form = editNibForm(deps, seed({ etag: "etag-1" }));
+    form.noteExternalChange(seed({ etag: "etag-remote", title: "Theirs" }));
+    form.title = "Mine";
+
+    const outcome = await form.save({ overwrite: true });
+
+    expect(outcome.kind).toBe("missing");
+  });
+
   it("save()'s update dispatch opts into suppressToast so save() owns the messaging (no racing raw toast)", async () => {
     const { deps, calls } = makeMutations(updateResponder("etag-2"));
     const form = editNibForm(deps, seed({ etag: "etag-1" }));

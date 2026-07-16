@@ -72,6 +72,15 @@ export type EditOutcome =
   // if-match rejection that raced the subscription — the live subscription
   // backfills the snapshot into `externalChange` moments later.
   | { kind: "conflict"; remote: NibSnapshot | null }
+  // The target nib no longer resolves on the server (surfaced as
+  // extensions.code = "NOT_FOUND"). Distinct from a plain error so the presenter
+  // routes it to the gone/deleted notice via `noteMissing` instead of showing the
+  // raw "target nib not found" toast. On the edit-save path this marks the edited
+  // nib's OWN deletion: an archived nib stays in the store and its Update lands as
+  // "saved", and the save input carries no blocking fields, so a concurrently-
+  // deleted blocking target (the other NOT_FOUND source, via updateTargetClone's
+  // %w wrap) is not reachable here.
+  | { kind: "missing" }
   | { kind: "error"; message?: string };
 
 // --- internals ------------------------------------------------------------
@@ -121,6 +130,32 @@ function fieldsFromSnapshot(s: NibSnapshot): FieldValues {
 function isEtagConflict(message: string | undefined, code?: string): boolean {
   if (code === "ETAG_MISMATCH") return true;
   return !!message && /etag mismatch/i.test(message);
+}
+
+/**
+ * Recognize a mutation that failed because the target nib no longer resolves on
+ * the server (a genuine DELETE).
+ *
+ * Keyed ONLY on the structured GraphQL `extensions.code === "NOT_FOUND"`, which
+ * the backend error presenter (cmd/serve.go, `etagErrorPresenter`) attaches to
+ * any error carrying `nib.ErrNotFound`. Unlike `isEtagConflict`, there is NO
+ * human-readable substring fallback: a NOT_FOUND classification routes the whole
+ * view to gone/deleted (a stronger, less-recoverable action than the conflict
+ * resolver), so it must require the structured code rather than guess from prose
+ * — many benign errors mention "not found" (a missing parent, a missing blocker)
+ * without the edited nib itself being gone. The Go side is pinned by
+ * cmd/serve_errorpresenter_test.go (TestETagErrorPresenter_TagsNotFound).
+ *
+ * Routing a NOT_FOUND to gone/deleted is sound for `EditForm.save()` only because
+ * its `UpdateNibInput` sends no blocking fields — so the sole ErrNotFound it can
+ * raise is the edited nib's own deletion. (A deleted blocking target also mints
+ * NOT_FOUND via updateTargetClone's %w wrap; a missing parent does not, as
+ * validateAndSetParent formats with %s.) If blocking fields are added to that
+ * input, a concurrently-deleted blocking target would also mint NOT_FOUND and
+ * misroute the edited nib.
+ */
+function isNotFound(code?: string): boolean {
+  return code === "NOT_FOUND";
 }
 
 /**
@@ -553,6 +588,15 @@ export class EditForm extends BaseForm implements NibFormFields {
         // the current snapshot so the resolver isn't stuck waiting on the sub.
         if (!opts?.overwrite && isEtagConflict(result.error, result.errorCode)) {
           return { kind: "conflict", remote: this.#externalChange };
+        }
+        // A deleted nib surfaces as NOT_FOUND (GetForUpdate returns ErrNotFound
+        // before any if-match check, so it is never an etag conflict). Report it
+        // as `missing` — not a plain error — so the presenter routes the view to
+        // gone/deleted rather than showing the raw "not found" toast. Not gated
+        // on `overwrite`: force-saving over a nib that no longer exists is just as
+        // impossible, so it too must route to the deleted notice.
+        if (isNotFound(result.errorCode)) {
+          return { kind: "missing" };
         }
         return { kind: "error", message: result.error };
       }

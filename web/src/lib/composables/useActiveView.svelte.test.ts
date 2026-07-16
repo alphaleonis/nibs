@@ -1030,6 +1030,177 @@ describe("createActiveView · guard funnel · ARCHIVED buffers stay savable", ()
   });
 });
 
+describe("createActiveView · NOT_FOUND save routes to gone/deleted (subscription silent)", () => {
+  it("routes a `missing` save outcome to gone/deleted, keeping the dirty edits", async () => {
+    const h = makeDeps();
+    const { view, dispose } = mount(h.deps);
+
+    await view.open("n1");
+    flushSync();
+    const f = h.editForms.get("n1")!;
+    const formBefore = view.form;
+    f.dirty = true;
+
+    // The nib was DELETED server-side; the save fails with extensions.code =
+    // "NOT_FOUND", which EditForm.save() surfaces as `missing`. With the live
+    // subscription silent, NOTHING else corrects the view — this route is the
+    // only thing that moves it off `viewing`.
+    f.save.mockResolvedValueOnce({ kind: "missing" });
+
+    const outcome = await view.save();
+    flushSync();
+
+    // The outcome is passed through unchanged...
+    expect(outcome).toEqual({ kind: "missing" });
+    // ...and the view is routed to gone/deleted so its deleted notice replaces
+    // the raw "target nib not found" toast.
+    expect(view.state).toEqual({ kind: "gone", nibId: "n1", presentation: "docked", reason: "deleted" });
+    // The dirty buffer survives the transition — same buffer key (`edit:n1`).
+    expect(view.form).toBe(formBefore);
+    expect(h.editForms.get("n1")!.dirty).toBe(true);
+    // No raw error toast, and no null-remote fallback fetch — this is the direct
+    // NOT_FOUND path, distinct from the etag-conflict fallback.
+    expect(h.notifyError).not.toHaveBeenCalled();
+    expect(h.fetchSnapshot).not.toHaveBeenCalled();
+
+    dispose();
+  });
+
+  it("after a NOT_FOUND save, the retry close prompt is Discard-only (canSave:false)", async () => {
+    const h = makeDeps();
+    const { view, dispose } = mount(h.deps);
+
+    await view.open("n1");
+    flushSync();
+    const f = h.editForms.get("n1")!;
+    f.dirty = true;
+    f.save.mockResolvedValueOnce({ kind: "missing" });
+
+    await view.save();
+    flushSync();
+    expect(view.state.kind).toBe("gone");
+
+    // The follow-up close still prompts (closing does discard the unsaved edits),
+    // but the offer is Discard-only — the deleted nib's save is a dead end.
+    h.confirm.mockResolvedValueOnce("discard");
+    await view.requestClose();
+    expect(h.confirm).toHaveBeenCalledWith({ canSave: false });
+
+    dispose();
+  });
+
+  it("guard 'Save' → `missing`: ABORTS the navigation and routes to gone/deleted (no raw toast)", async () => {
+    const h = makeDeps();
+    const { view, dispose } = mount(h.deps);
+
+    await view.open("n1");
+    flushSync();
+    const f = h.editForms.get("n1")!;
+    f.dirty = true;
+
+    f.save.mockResolvedValueOnce({ kind: "missing" });
+    h.confirm.mockResolvedValueOnce("save");
+    h.nav.navigateToNib.mockClear();
+
+    await view.open("n2");
+    flushSync();
+
+    expect(f.save).toHaveBeenCalledTimes(1);
+    // The pending navigation is aborted — the user stays to see the deleted
+    // notice — and the buffer is routed to gone/deleted, not left `viewing`.
+    expect(h.nav.navigateToNib).not.toHaveBeenCalled();
+    expect(view.state).toEqual({ kind: "gone", nibId: "n1", presentation: "docked", reason: "deleted" });
+    // The guard does NOT surface a plain-error toast for a missing nib; the
+    // deleted notice owns the feedback.
+    expect(h.notifyError).not.toHaveBeenCalled();
+
+    dispose();
+  });
+
+  it("REGRESSION (nibs-gysg): an archived buffer's `saved` outcome stays gone/archived and keeps its Save", async () => {
+    const h = makeDeps();
+    const { view, dispose } = mount(h.deps);
+
+    await view.open("n1");
+    flushSync();
+    const f = h.editForms.get("n1")!;
+    f.dirty = true;
+    // Archive the nib under the live editor: it moves to gone/archived but stays
+    // in the store, so its Update SUCCEEDS ("saved") — it never returns NOT_FOUND.
+    h.liveInsts.get("n1")!.gone = "archived";
+    flushSync();
+    expect(view.state).toEqual({ kind: "gone", nibId: "n1", presentation: "docked", reason: "archived" });
+
+    // Default edit save() resolves { kind: "saved" } — the archive path.
+    const outcome = await view.save();
+    flushSync();
+
+    expect(f.save).toHaveBeenCalledTimes(1);
+    expect(outcome).toEqual({ kind: "saved", snapshot: expect.objectContaining({ id: "n1" }) });
+    // A successful archive-save is NEVER routed through noteMissing (only a
+    // `missing` outcome is), so the archived buffer keeps its reason — and its Save.
+    // This now BITES: noteMissing upgrades archived->deleted, so routing a `saved`
+    // outcome through it would flip this buffer to gone/deleted (it must not).
+    expect(view.state).toEqual({ kind: "gone", nibId: "n1", presentation: "docked", reason: "archived" });
+    expect(h.notifyError).not.toHaveBeenCalled();
+
+    dispose();
+  });
+
+  it("REGRESSION (nibs-gysg): an archived buffer whose save returns `missing` UPGRADES to gone/deleted", async () => {
+    const h = makeDeps();
+    const { view, dispose } = mount(h.deps);
+
+    await view.open("n1");
+    flushSync();
+    const f = h.editForms.get("n1")!;
+    f.dirty = true;
+    // Archive under the editor -> gone/archived, with the Save (and the buffer)
+    // preserved because an archived nib still exists at its archive path.
+    h.liveInsts.get("n1")!.gone = "archived";
+    flushSync();
+    expect(view.state).toEqual({ kind: "gone", nibId: "n1", presentation: "docked", reason: "archived" });
+
+    // The nib is then DELETED elsewhere while the live subscription is down. The
+    // guarded Save's mutation comes back NOT_FOUND (`missing`); save() routes it
+    // through noteMissing, which must UPGRADE the archived buffer to gone/deleted —
+    // withdrawing the now-dead Save and swapping the archived notice for the deleted
+    // one. Without the upgrade the buffer stays gone/archived, silently re-offering
+    // a Save that can only fail (the #1 regression).
+    f.save.mockResolvedValueOnce({ kind: "missing" });
+    const outcome = await view.save();
+    flushSync();
+
+    expect(f.save).toHaveBeenCalledTimes(1);
+    expect(outcome).toEqual({ kind: "missing" });
+    expect(view.state).toEqual({ kind: "gone", nibId: "n1", presentation: "docked", reason: "deleted" });
+    // No raw toast — the deleted notice owns the feedback.
+    expect(h.notifyError).not.toHaveBeenCalled();
+
+    dispose();
+  });
+
+  it("REGRESSION: a `saved` outcome on a live viewing buffer stays `viewing` (not routed to gone)", async () => {
+    const h = makeDeps();
+    const { view, dispose } = mount(h.deps);
+
+    await view.open("n1");
+    flushSync();
+    const f = h.editForms.get("n1")!;
+    f.dirty = true;
+    // Default save() resolves { kind: "saved" }.
+
+    await view.save();
+    flushSync();
+
+    expect(f.save).toHaveBeenCalledTimes(1);
+    // A successful save leaves the buffer on screen, still `viewing` — never gone.
+    expect(view.state).toEqual({ kind: "viewing", nibId: "n1", presentation: "docked" });
+
+    dispose();
+  });
+});
+
 describe("createActiveView · create -> edit hand-off", () => {
   it("save() on a create commits, dispatches SAVED, and navigates to the new id", async () => {
     const h = makeDeps();

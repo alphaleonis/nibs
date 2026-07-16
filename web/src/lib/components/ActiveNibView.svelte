@@ -308,7 +308,12 @@
     const savedId = f.mode === "edit" ? f.id : null;
     const outcome = await view.save();
     if (!outcome) return;
-    if (outcome.kind === "error") {
+    if (outcome.kind === "missing") {
+      // The nib was DELETED server-side. view.save() already routed the buffer to
+      // gone/deleted via noteMissing, so the deleted notice now owns the feedback —
+      // deliberately NO toast (the raw "target nib not found" message is what this
+      // whole path exists to suppress).
+    } else if (outcome.kind === "error") {
       toast.error(outcome.message ?? "Save failed");
     } else if (outcome.kind === "conflict") {
       // Stale-base save: route into the SAME persistent, non-modal resolver as
@@ -353,7 +358,17 @@
     const savedId = f.id;
     const outcome = await f.save({ overwrite: true });
     if (!outcome) return;
-    if (outcome.kind === "error") toast.error(outcome.message ?? "Save failed");
+    if (outcome.kind === "missing") {
+      // The nib was deleted out from under the conflict resolver. This handler
+      // calls f.save() directly (not view.save()), so route the deletion through
+      // the presenter here: gone/deleted's notice replaces the raw toast, matching
+      // handleSave's NOT_FOUND behavior. Guard `form === f` (mirror the `saved`
+      // branch below and useActiveView.save()'s routing): if the buffer swapped
+      // mid-save — a Close→Discard then a reopen of the SAME id — noteMissing's
+      // internal nibId guard would NOT catch the stale report (ids match) and would
+      // silently close the freshly-reopened pristine buffer.
+      if (form === f) view.noteMissing(f.id);
+    } else if (outcome.kind === "error") toast.error(outcome.message ?? "Save failed");
     // Only toast for a save whose buffer is still on screen (mirror handleSave):
     // a mid-overwrite swap means this success belongs to a nib no longer shown.
     else if (outcome.kind === "saved" && form === f) toast.success(`Updated ${savedId}`);

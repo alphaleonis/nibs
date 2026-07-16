@@ -223,9 +223,13 @@ export interface ActiveView {
    *    - dirty    -> "kept": transition to `gone`, holding the unsaved edits on
    *      screen. This is the outcome the live-subscription deletion path also
    *      produces for a dirty buffer, so whichever signal arrives first agrees.
-   *  Already `gone` on `nibId` -> "kept": the buffer is on screen behind the
-   *  deleted notice; nothing to do. Any other state -> "stale". See
-   *  `MissingNibOutcome` for what each token promises the caller. */
+   *  Already `gone` on `nibId` -> "kept": the buffer is on screen behind its
+   *  notice. An ARCHIVED buffer is upgraded to `gone`/"deleted" first — a
+   *  confirmed deletion supersedes the archive, so its now-dead Save is withdrawn
+   *  and the notice swaps from archived to deleted (the reducer's DELETED action
+   *  makes the same transition); an already-deleted buffer is left unchanged. Any
+   *  other state -> "stale". See `MissingNibOutcome` for what each token promises
+   *  the caller. */
   noteMissing(nibId: string): MissingNibOutcome;
   /** Tear down the live subscription (call on host teardown). */
   dispose(): void;
@@ -370,7 +374,10 @@ export function createActiveView(deps: ActiveViewDeps): ActiveView {
         // Conflict → ABORT the navigation and leave the buffer intact: save() has
         // surfaced the resolver; the user resolves it and re-navigates manually.
         // Never proceed (that would strand the unresolved edit / lose the intent).
-        if (!outcome || outcome.kind === "conflict") return false;
+        // `missing` (a deleted nib) aborts the same way: save() already routed the
+        // buffer to gone/deleted via noteMissing, so proceeding would skip past the
+        // deleted notice, and the retry then prompts Discard-only.
+        if (!outcome || outcome.kind === "conflict" || outcome.kind === "missing") return false;
         // Plain (non-conflict) error → abort. Both edit AND create save() now
         // suppress the dispatcher toast, so the guard is the SOLE feedback for a
         // failed save in this flow — including a client-side create error (e.g.
@@ -410,8 +417,16 @@ export function createActiveView(deps: ActiveViewDeps): ActiveView {
   function noteMissing(nibId: string): MissingNibOutcome {
     const s = viewState;
     // Already `gone` on this id: the report agrees with the state, and the
-    // buffer for `nibId` is still on screen behind the deleted notice.
-    if (s.kind === "gone" && s.nibId === nibId) return "kept";
+    // buffer for `nibId` is still on screen behind its notice. An ARCHIVED buffer
+    // is upgraded to DELETED first — a proven deletion supersedes the archive (the
+    // reducer's DELETED action makes the same archived->deleted transition), which
+    // withdraws the Save its "archived" reason kept on offer and swaps the archived
+    // notice for the deleted one. An already-deleted buffer is a no-op (DELETED is
+    // terminal), so we skip the redundant reduce.
+    if (s.kind === "gone" && s.nibId === nibId) {
+      if (s.reason === "archived") apply({ type: "DELETED" });
+      return "kept";
+    }
     // The view is not on `nibId`, so this report says nothing about its buffer.
     if (s.kind !== "viewing" || s.nibId !== nibId) return "stale";
     // Unsaved edits outweigh the missing nib: DELETED keeps the same buffer key
@@ -469,6 +484,27 @@ export function createActiveView(deps: ActiveViewDeps): ActiveView {
     }
 
     const outcome = await f.save();
+
+    // A NOT_FOUND save (EditForm.save → `missing`) routes the buffer to
+    // gone/deleted so its deleted notice replaces the raw "target nib not found"
+    // toast. This is the subscription-DOWN path the live bridge and the
+    // etag-conflict fallback both miss — a delete is not a conflict, so it never
+    // reaches runNullRemoteConflictFallback. On this save path the only ErrNotFound
+    // reachable is the edited nib's OWN deletion, because the edit-save input
+    // carries no parent/blocking fields (a concurrently-deleted relationship TARGET
+    // is the other way an UpdateNib mints NOT_FOUND — see cmd/serve.go's
+    // etagErrorPresenter). If those fields are ever added to the save input, a
+    // deleted RELATED nib would misroute the still-alive edited nib to gone/deleted.
+    // An archived nib is NOT gone from the store — Core.Archive keeps it — so its
+    // Update lands as a normal "saved" rather than `missing`, keeping its Save
+    // (nibs-gysg). Mirrors the fallback's resolved-null branch — drive the
+    // machine via noteMissing rather than wait on a signal that may never arrive.
+    // `noteMissing` is itself state-guarded (a stale/swapped buffer returns "stale"
+    // and no-ops), so the `form === f` check is a cheap early-out, not the sole
+    // safety.
+    if (outcome.kind === "missing" && form === f) {
+      noteMissing(f.id);
+    }
 
     // A server-side 409 that raced the live subscription (remote unknown): run
     // the null-remote conflict fallback (see the helper). `form === f`

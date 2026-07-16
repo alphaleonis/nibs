@@ -25,6 +25,7 @@ import (
 	"github.com/99designs/gqlgen/graphql/handler/transport"
 	"github.com/alphaleonis/nibs/internal/config"
 	"github.com/alphaleonis/nibs/internal/graph"
+	"github.com/alphaleonis/nibs/internal/nib"
 	"github.com/alphaleonis/nibs/internal/nibcore"
 	"github.com/spf13/cobra"
 	"github.com/vektah/gqlparser/v2/gqlerror"
@@ -361,32 +362,62 @@ func newGraphQLHandler(app *App) http.Handler {
 }
 
 // etagErrorPresenter is the gqlgen error presenter that attaches a stable,
-// machine-readable extensions.code = "ETAG_MISMATCH" to ONLY the typed
-// *nibcore.ETagMismatchError — the reconcilable optimistic-concurrency conflict
-// the web client routes into its inline "Load theirs / Overwrite" resolver.
+// machine-readable extensions.code to the two mutation failures the web client
+// must route structurally rather than by prose:
+//
+//   - "ETAG_MISMATCH" on ONLY the typed *nibcore.ETagMismatchError — the
+//     reconcilable optimistic-concurrency conflict the web client routes into
+//     its inline "Load theirs / Overwrite" resolver. errors.As walks the wrap
+//     chain, so a wrapped ETagMismatchError is still recognized.
+//   - "NOT_FOUND" on any error carrying nib.ErrNotFound (via errors.Is, so a
+//     wrapped "target nib not found: <id>: nib not found" still matches). A
+//     delete of the edited nib surfaces here — GetForUpdate returns ErrNotFound
+//     BEFORE any if-match check, so it is not an etag conflict — and the web
+//     client routes it to its gone/deleted notice instead of a raw toast. The tag
+//     keys only on the error type, not on WHICH nib is gone: a concurrently-
+//     deleted BLOCKING target (a different nib than the one being edited) also
+//     carries ErrNotFound, because updateTargetClone wraps it with %w
+//     ("target nib not found: <id>: %w"), so it would be tagged NOT_FOUND too. (A
+//     missing PARENT does NOT: validateAndSetParent formats its id with %s and
+//     does not carry ErrNotFound, so it never tags.) That breadth is inert on
+//     today's web save path because its edit-save input sends no parent/blocking
+//     fields (only title/status/type/priority/estimate/body/tags), so the only
+//     ErrNotFound it can raise is the edited nib's own deletion, and an archived
+//     nib stays in the store so its Update lands as a normal write. If blocking
+//     fields are later added to that input, a deleted BLOCKING target would also
+//     mint NOT_FOUND
+//     and misroute the still-alive edited nib to gone/deleted.
 //
 // Every other error (the enum-validation errors, ETagRequiredError,
 // OnDiskUnparseableError, generic failures) is left EXACTLY as the default
 // presenter formats it: no code is added, so callers can't mistake a
-// non-reconcilable failure for a retryable conflict. errors.As walks the wrap
-// chain, so a wrapped ETagMismatchError is still recognized.
+// non-reconcilable failure for a retryable conflict or a real deletion.
 //
-// The web classifier keys on this code first and keeps the human-readable
-// "etag mismatch" substring match only as a fallback (see
-// web/src/lib/nibForm.svelte.ts, isEtagConflict). The message text is preserved
-// verbatim here so that fallback stays intact.
+// The web classifiers key on these codes first; the "etag mismatch" substring
+// match is kept only as a fallback (see web/src/lib/nibForm.svelte.ts,
+// isEtagConflict). The message text is preserved verbatim here so that fallback
+// stays intact.
 func etagErrorPresenter(ctx context.Context, err error) *gqlerror.Error {
 	gqlErr := graphql.DefaultErrorPresenter(ctx, err)
 
 	var etagErr *nibcore.ETagMismatchError
-	if errors.As(err, &etagErr) {
-		if gqlErr.Extensions == nil {
-			gqlErr.Extensions = map[string]any{}
-		}
-		gqlErr.Extensions["code"] = "ETAG_MISMATCH"
+	switch {
+	case errors.As(err, &etagErr):
+		setErrorCode(gqlErr, "ETAG_MISMATCH")
+	case errors.Is(err, nib.ErrNotFound):
+		setErrorCode(gqlErr, "NOT_FOUND")
 	}
 
 	return gqlErr
+}
+
+// setErrorCode attaches a stable extensions.code to a presented GraphQL error,
+// allocating the extensions map on first use.
+func setErrorCode(gqlErr *gqlerror.Error, code string) {
+	if gqlErr.Extensions == nil {
+		gqlErr.Extensions = map[string]any{}
+	}
+	gqlErr.Extensions["code"] = code
 }
 
 // requestCacheMiddleware installs a fresh graph.RequestCache on each

@@ -1128,6 +1128,36 @@ describe("ActiveNibView", () => {
       // not the live derived value, which a mid-flight swap retargets.
       expect(mockToastSuccess).not.toHaveBeenCalledWith("Updated nibs-B");
     });
+
+    it("a `missing` overwrite that resolves AFTER a reopen does not close the freshly-reopened buffer", async () => {
+      // handleOverwrite's `missing` branch must be `form === f`-guarded (mirroring
+      // its own `saved` branch and useActiveView.save()'s routing). Reopen-race:
+      // an in-flight Overwrite on nib A, the user Closes→Discards and reopens A as
+      // a fresh PRISTINE buffer, then the stale overwrite resolves NOT_FOUND. Since
+      // the reopened id equals the original, noteMissing's internal nibId guard
+      // does NOT catch it — only `form === f` does. Without the guard, the stale
+      // report silently closes the innocent reopened buffer and desyncs the URL.
+      const remote = { id: "nibs-A", etag: "e9" };
+      const formB = makeEditForm({ id: "nibs-A", dirty: true });
+      const view = makeView({
+        form: makeEditForm({
+          id: "nibs-A",
+          dirty: true,
+          externalChange: remote,
+          save: vi.fn(async () => {
+            view.form = formB; // buffer swaps to the reopened (same-id) pristine form
+            return { kind: "missing" };
+          }),
+        }),
+      });
+      renderView(view, confirmDialog);
+
+      await user.click(screen.getByTestId("anv-conflict-overwrite"));
+
+      // The `form === f` guard suppresses the stale report — the reopened buffer
+      // is never routed through noteMissing.
+      expect(view.noteMissing).not.toHaveBeenCalled();
+    });
   });
 
   describe("clean auto-apply toast", () => {
