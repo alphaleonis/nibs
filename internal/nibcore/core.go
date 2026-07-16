@@ -1071,8 +1071,8 @@ func (c *Core) Unarchive(id string) error {
 		return fmt.Errorf("moving nib from archive: %w", err)
 	}
 
-	// Update nib's path
-	targetNib.Path = newRelPath
+	// Update nib's path (forward slashes, matching Archive and loadNib)
+	targetNib.Path = filepath.ToSlash(newRelPath)
 	c.nibs[targetID] = targetNib
 
 	return nil
@@ -1184,8 +1184,8 @@ func (c *Core) LoadAndUnarchive(id string) (*nib.Nib, error) {
 		return nil, fmt.Errorf("moving nib from archive: %w", err)
 	}
 
-	// Update nib's path
-	b.Path = newRelPath
+	// Update nib's path (forward slashes, matching Archive and loadNib)
+	b.Path = filepath.ToSlash(newRelPath)
 	c.nibs[targetID] = b
 
 	return b, nil

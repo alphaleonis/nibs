@@ -658,7 +658,7 @@ func TestWatch(t *testing.T) {
 	if err := core.StartWatching(); err != nil {
 		t.Fatalf("StartWatching() error = %v", err)
 	}
-	defer func() { _ = core.Unwatch() }()
+	defer func() { _ = core.StopWatching() }()
 
 	ch, unsub := core.Subscribe()
 	defer unsub()
@@ -698,7 +698,7 @@ func TestWatchDeletedNib(t *testing.T) {
 	if err := core.StartWatching(); err != nil {
 		t.Fatalf("StartWatching() error = %v", err)
 	}
-	defer func() { _ = core.Unwatch() }()
+	defer func() { _ = core.StopWatching() }()
 
 	ch, unsub := core.Subscribe()
 	defer unsub()
@@ -724,12 +724,12 @@ func TestWatchDeletedNib(t *testing.T) {
 	}
 }
 
-func TestUnwatchIdempotent(t *testing.T) {
+func TestStopWatchingIdempotent(t *testing.T) {
 	core, _ := setupTestCore(t)
 
-	// Unwatch without watching should not error
-	if err := core.Unwatch(); err != nil {
-		t.Errorf("Unwatch() without StartWatching() error = %v", err)
+	// StopWatching without watching should not error
+	if err := core.StopWatching(); err != nil {
+		t.Errorf("StopWatching() without StartWatching() error = %v", err)
 	}
 
 	// Start watching
@@ -737,12 +737,12 @@ func TestUnwatchIdempotent(t *testing.T) {
 		t.Fatalf("StartWatching() error = %v", err)
 	}
 
-	// Unwatch twice should not error
-	if err := core.Unwatch(); err != nil {
-		t.Errorf("first Unwatch() error = %v", err)
+	// StopWatching twice should not error
+	if err := core.StopWatching(); err != nil {
+		t.Errorf("first StopWatching() error = %v", err)
 	}
-	if err := core.Unwatch(); err != nil {
-		t.Errorf("second Unwatch() error = %v", err)
+	if err := core.StopWatching(); err != nil {
+		t.Errorf("second StopWatching() error = %v", err)
 	}
 }
 
@@ -767,7 +767,7 @@ func TestSubscribe(t *testing.T) {
 	if err := core.StartWatching(); err != nil {
 		t.Fatalf("StartWatching() error = %v", err)
 	}
-	defer func() { _ = core.Unwatch() }()
+	defer func() { _ = core.StopWatching() }()
 
 	// Subscribe to events
 	ch, unsub := core.Subscribe()
@@ -815,7 +815,7 @@ func TestSubscribeMultiple(t *testing.T) {
 	if err := core.StartWatching(); err != nil {
 		t.Fatalf("StartWatching() error = %v", err)
 	}
-	defer func() { _ = core.Unwatch() }()
+	defer func() { _ = core.StopWatching() }()
 
 	// Create two subscribers
 	ch1, unsub1 := core.Subscribe()
@@ -858,7 +858,7 @@ func TestUnsubscribe(t *testing.T) {
 	if err := core.StartWatching(); err != nil {
 		t.Fatalf("StartWatching() error = %v", err)
 	}
-	defer func() { _ = core.Unwatch() }()
+	defer func() { _ = core.StopWatching() }()
 
 	ch, unsub := core.Subscribe()
 	unsub()
@@ -879,7 +879,7 @@ func TestEventTypes(t *testing.T) {
 	if err := core.StartWatching(); err != nil {
 		t.Fatalf("StartWatching() error = %v", err)
 	}
-	defer func() { _ = core.Unwatch() }()
+	defer func() { _ = core.StopWatching() }()
 
 	ch, unsub := core.Subscribe()
 	defer unsub()
@@ -1075,7 +1075,7 @@ func TestWatcherArchiveVsDelete(t *testing.T) {
 			if err := core.StartWatching(); err != nil {
 				t.Fatalf("StartWatching() error = %v", err)
 			}
-			defer func() { _ = core.Unwatch() }()
+			defer func() { _ = core.StopWatching() }()
 
 			ch, unsub := core.Subscribe()
 			defer unsub()
@@ -1114,7 +1114,7 @@ func TestWatcherArchiveVsDelete(t *testing.T) {
 	}
 }
 
-func TestSubscribersClosedOnUnwatch(t *testing.T) {
+func TestSubscribersClosedOnStopWatching(t *testing.T) {
 	core, _ := setupTestCore(t)
 
 	if err := core.StartWatching(); err != nil {
@@ -1123,15 +1123,15 @@ func TestSubscribersClosedOnUnwatch(t *testing.T) {
 
 	ch, _ := core.Subscribe() // Note: not calling unsub
 
-	// Unwatch should close subscriber channels
-	if err := core.Unwatch(); err != nil {
-		t.Fatalf("Unwatch() error = %v", err)
+	// StopWatching should close subscriber channels
+	if err := core.StopWatching(); err != nil {
+		t.Fatalf("StopWatching() error = %v", err)
 	}
 
 	// Channel should be closed
 	_, ok := <-ch
 	if ok {
-		t.Error("expected channel to be closed after Unwatch")
+		t.Error("expected channel to be closed after StopWatching")
 	}
 }
 
@@ -1144,7 +1144,7 @@ func TestMultipleChangesInDebounceWindow(t *testing.T) {
 	if err := core.StartWatching(); err != nil {
 		t.Fatalf("StartWatching() error = %v", err)
 	}
-	defer func() { _ = core.Unwatch() }()
+	defer func() { _ = core.StopWatching() }()
 
 	ch, unsub := core.Subscribe()
 	defer unsub()
@@ -1233,7 +1233,7 @@ func TestInvalidFileIgnored(t *testing.T) {
 	if err := core.StartWatching(); err != nil {
 		t.Fatalf("StartWatching() error = %v", err)
 	}
-	defer func() { _ = core.Unwatch() }()
+	defer func() { _ = core.StopWatching() }()
 
 	ch, unsub := core.Subscribe()
 	defer unsub()
@@ -1297,7 +1297,7 @@ func TestRapidUpdatesToSameFile(t *testing.T) {
 	if err := core.StartWatching(); err != nil {
 		t.Fatalf("StartWatching() error = %v", err)
 	}
-	defer func() { _ = core.Unwatch() }()
+	defer func() { _ = core.StopWatching() }()
 
 	ch, unsub := core.Subscribe()
 	defer unsub()

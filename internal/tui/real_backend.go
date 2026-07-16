@@ -126,7 +126,7 @@ func (b *RealBackend) StartWatching() error {
 }
 
 func (b *RealBackend) StopWatching() {
-	_ = b.core.Unwatch()
+	_ = b.core.StopWatching()
 }
 
 func (b *RealBackend) Subscribe() (events <-chan struct{}, cancel func()) {

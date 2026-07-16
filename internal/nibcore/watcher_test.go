@@ -57,7 +57,7 @@ func waitForWatchLoops(want int, timeout time.Duration) (int, bool) {
 	}
 }
 
-// restartTwice drives Unwatch -> StartWatching twice with nothing in between.
+// restartTwice drives StopWatching -> StartWatching twice with nothing in between.
 //
 // The second restart is what does the work. The first one spawns a loop that
 // has almost certainly not reached its select yet, and the second reassigns
@@ -74,8 +74,8 @@ func waitForWatchLoops(want int, timeout time.Duration) (int, bool) {
 func restartTwice(t *testing.T, core *Core, cycle int) {
 	t.Helper()
 	for i := range 2 {
-		if err := core.Unwatch(); err != nil {
-			t.Fatalf("cycle %d: Unwatch() #%d error = %v", cycle, i+1, err)
+		if err := core.StopWatching(); err != nil {
+			t.Fatalf("cycle %d: StopWatching() #%d error = %v", cycle, i+1, err)
 		}
 		if err := core.StartWatching(); err != nil {
 			t.Fatalf("cycle %d: StartWatching() #%d error = %v", cycle, i+1, err)
@@ -83,7 +83,7 @@ func restartTwice(t *testing.T, core *Core, cycle int) {
 	}
 }
 
-// TestRestartWatchingDoesNotOrphanWatchLoop covers Unwatch -> StartWatching.
+// TestRestartWatchingDoesNotOrphanWatchLoop covers StopWatching -> StartWatching.
 // watchLoop must exit on the done channel it was started with, not on whatever
 // c.done happens to hold when it next reaches the select — otherwise a restart
 // leaves the old loop running against a fresh, open channel, leaking the
@@ -97,7 +97,7 @@ func TestRestartWatchingDoesNotOrphanWatchLoop(t *testing.T) {
 	if err := core.StartWatching(); err != nil {
 		t.Fatalf("StartWatching() error = %v", err)
 	}
-	defer func() { _ = core.Unwatch() }()
+	defer func() { _ = core.StopWatching() }()
 
 	for cycle := range restartCycles {
 		restartTwice(t, core, cycle)
@@ -150,7 +150,7 @@ func TestRestartWatchingDoesNotDuplicateEvents(t *testing.T) {
 	if err := core.StartWatching(); err != nil {
 		t.Fatalf("StartWatching() error = %v", err)
 	}
-	defer func() { _ = core.Unwatch() }()
+	defer func() { _ = core.StopWatching() }()
 
 	for round := range rounds {
 		restartTwice(t, core, round)
@@ -406,5 +406,99 @@ func TestWatcherUnarchiveReportsUpdatedNotDeleted(t *testing.T) {
 				t.Errorf("stored Path = %q, want a main-directory path after unarchive", n.Path)
 			}
 		})
+	}
+}
+
+// TestEventPayloadsAreImmutableSnapshots pins the payload contract from
+// nibs-y5nb: an event's Nib is a snapshot taken at publish time, so a subscriber
+// holding a payload never sees its fields change even when the store later
+// mutates that same nib in place. Archive, Unarchive, and LoadAndUnarchive all
+// rewrite Path on the stored *nib.Nib under c.mu; without a clone at publish, a
+// held EventArchived payload aliases that pointer and its Path flips under the
+// subscriber.
+//
+// The move is driven create-first so the EventArchived branch publishes the
+// pointer that STAYS in the store (the create half replaces c.nibs[id] with the
+// reloaded nib; the remove half then re-stores and archives that same pointer).
+// Remove-first would publish an orphaned pointer that no later mutation touches,
+// so it could not reproduce the bug.
+//
+// The deterministic guard is the Path assertion below: on unfixed code the held
+// payload aliases the live store nib, so Unarchive's in-place Path write is
+// visible through it. The concurrent reader is a best-effort race surfacer under
+// -race, but does not reliably trip the detector (measured 0/5) — do not rely on
+// it as the guard. Cloning at publish removes the value change (and closes the
+// underlying race regardless of whether the detector observes it).
+func TestEventPayloadsAreImmutableSnapshots(t *testing.T) {
+	const nibID = "snap1"
+	core, nibsDir, filename := watchingCore(t, nibID)
+
+	archiveDir := filepath.Join(nibsDir, ArchiveDir)
+	if err := os.MkdirAll(archiveDir, 0o755); err != nil {
+		t.Fatalf("mkdir archive: %v", err)
+	}
+	mainAbs := filepath.Join(nibsDir, filename)
+	archiveAbs := filepath.Join(archiveDir, filename)
+
+	// Move the file into archive/ on disk, then drive the move through
+	// handleChanges so it emits EventArchived carrying the stored nib (Path
+	// rewritten to the archive location).
+	if err := os.Rename(mainAbs, archiveAbs); err != nil {
+		t.Fatalf("archive rename: %v", err)
+	}
+
+	setWatching(core)
+	ch, unsub := core.Subscribe()
+	defer unsub()
+
+	driveMove(core, mainAbs, archiveAbs, true /* createFirst */)
+
+	got := collectNibEvents(t, ch, nibID, 150*time.Millisecond)
+
+	var held *NibEvent
+	for i := range got {
+		if got[i].Type == EventArchived {
+			held = &got[i]
+			break
+		}
+	}
+	if held == nil || held.Nib == nil {
+		t.Fatalf("expected an EventArchived carrying a nib, got: %+v", got)
+	}
+
+	wantPath := held.Nib.Path
+	if !core.isArchivedPath(wantPath) {
+		t.Fatalf("precondition: held payload Path = %q, want an archive path", wantPath)
+	}
+
+	// Read the held payload's Path continuously while Unarchive mutates the stored
+	// nib's Path in place under c.mu. On unfixed code the payload aliases the store
+	// pointer, so this is a read/write data race AND the observed value changes.
+	stop := make(chan struct{})
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		var sink string
+		for {
+			select {
+			case <-stop:
+				_ = sink
+				return
+			default:
+				sink = held.Nib.Path
+			}
+		}
+	}()
+
+	if err := core.Unarchive(nibID); err != nil {
+		t.Fatalf("Unarchive: %v", err)
+	}
+	close(stop)
+	<-done
+
+	if held.Nib.Path != wantPath {
+		t.Fatalf("held payload Path mutated after Unarchive: got %q, want %q — "+
+			"the payload aliased the live store nib instead of an immutable snapshot",
+			held.Nib.Path, wantPath)
 	}
 }

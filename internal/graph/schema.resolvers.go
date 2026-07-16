@@ -870,6 +870,9 @@ func (r *subscriptionResolver) NibChanged(ctx context.Context, id *string) (<-ch
 					if id != nil && evt.NibID != *id {
 						continue
 					}
+					// evt.Nib is already an immutable snapshot (see Core.Subscribe),
+					// so it is safe to hand to gqlgen for asynchronous field
+					// resolution — including path — without re-reading the store.
 					event := &model.NibChangeEvent{
 						Type:  evt.Type.String(),
 						NibID: evt.NibID,

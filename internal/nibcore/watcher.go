@@ -62,13 +62,38 @@ type subscription struct {
 	id uint64
 }
 
-// Subscribe creates a new subscription to nib change events.
-// Returns the event channel and an unsubscribe function.
-// The channel receives batches of events after debouncing.
-// Callers should use defer to call the unsubscribe function.
-// Internal state is committed before events are delivered: once an event
-// arrives, Get/All already reflect it. Subscribers may therefore act on the
-// event alone and re-read the store rather than trusting the payload.
+// Subscribe creates a new subscription to nib change events. It returns the
+// event channel and an unsubscribe function; callers should defer the
+// unsubscribe.
+//
+// The channel receives batches of events after debouncing. Internal state is
+// committed before events are delivered: once an event arrives, Get/All already
+// reflect it.
+//
+// Payloads are immutable snapshots. Each event's Nib is a Clone taken at publish
+// time, so a payload's fields never change after delivery even when the store
+// later mutates that nib in place (e.g. Archive/Unarchive rewriting Path). Trust
+// the payload: re-reading the store is neither required nor, for a removal
+// event, possible — a deleted nib is gone from the store, so the payload is the
+// only record of it. This is the single statement of the payload contract; the
+// snapshot is produced in one place, in handleChanges just before fan-out.
+//
+// Sharp edges callers must account for:
+//
+//   - Events are dropped under backpressure. fanOut sends non-blocking on a
+//     channel buffered at 16, so once 16 batches back up for a subscriber,
+//     further batches are silently dropped for it. The stream is not a reliable
+//     log.
+//   - A change that produces no events notifies nobody. fanOut early-returns on
+//     an empty batch, so an unparseable filename, a Remove for an untracked id,
+//     or a loadNib error surfaces to no subscriber.
+//   - StopWatching closes and drops every subscriber channel. Consumers must
+//     handle the channel close, and the unsubscribe returned here becomes a
+//     no-op afterwards (the subscription is already gone from the map).
+//   - Subscribing while nothing is watched registers silently and never
+//     delivers. Subscribe does not check c.watching, and cmd/serve.go treats a
+//     watcher start failure as non-fatal, so a server can run with subscribers
+//     attached to a watcher that never started.
 func (c *Core) Subscribe() (<-chan []NibEvent, func()) {
 	c.subMu.Lock()
 	defer c.subMu.Unlock()
@@ -164,8 +189,8 @@ func (c *Core) StartWatching() error {
 	return nil
 }
 
-// Unwatch stops watching the .nibs directory.
-func (c *Core) Unwatch() error {
+// StopWatching stops watching the .nibs directory.
+func (c *Core) StopWatching() error {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 
@@ -198,7 +223,7 @@ func (c *Core) unwatchLocked() error {
 // bound to the watch it was started for. StartWatching installs a new c.done on
 // every restart, so a loop selecting on the field would see the successor's
 // open channel and run forever — holding its fsnotify watcher and descriptors
-// open past the Unwatch that was meant to release them.
+// open past the StopWatching that was meant to release them.
 func (c *Core) watchLoop(watcher *fsnotify.Watcher, done <-chan struct{}) {
 	defer func() { _ = watcher.Close() }()
 
@@ -425,6 +450,21 @@ func (c *Core) handleChanges(changes map[string]fsnotify.Op) {
 					NibID: newNib.ID,
 				})
 			}
+		}
+	}
+
+	// Snapshot every payload while the lock is still held: each event carries a
+	// Clone, not the live c.nibs pointer, so a subscriber's payload fields cannot
+	// change after delivery even when the store later mutates that same nib in
+	// place — Archive, Unarchive, and LoadAndUnarchive all rewrite Path on the
+	// stored pointer. This is the single choke point that makes every published
+	// payload an immutable snapshot; the contract itself is documented on
+	// Subscribe. Cloning here (under the lock) also keeps Clone's field reads from
+	// racing those in-place writers, which hold the same lock. One allocation per
+	// changed nib, not per subscriber.
+	for i := range events {
+		if events[i].Nib != nil {
+			events[i].Nib = events[i].Nib.Clone()
 		}
 	}
 

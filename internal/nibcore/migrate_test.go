@@ -197,7 +197,7 @@ priority: normal
 		if err := core.StartWatching(); err != nil {
 			t.Fatalf("StartWatching() error: %v", err)
 		}
-		defer func() { _ = core.Unwatch() }()
+		defer func() { _ = core.StopWatching() }()
 
 		ch, unsub := core.Subscribe()
 		defer unsub()

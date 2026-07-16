@@ -560,7 +560,7 @@ func TestCoreWatcher_WriteReparsesMentionEdges(t *testing.T) {
 	if err := core.StartWatching(); err != nil {
 		t.Fatalf("StartWatching: %v", err)
 	}
-	defer func() { _ = core.Unwatch() }()
+	defer func() { _ = core.StopWatching() }()
 	ch, unsub := core.Subscribe()
 	defer unsub()
 
@@ -604,7 +604,7 @@ func TestCoreWatcher_RemoveDropsFromMentionIndex(t *testing.T) {
 	if err := core.StartWatching(); err != nil {
 		t.Fatalf("StartWatching: %v", err)
 	}
-	defer func() { _ = core.Unwatch() }()
+	defer func() { _ = core.StopWatching() }()
 	ch, unsub := core.Subscribe()
 	defer unsub()
 
