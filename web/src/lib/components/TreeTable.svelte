@@ -145,8 +145,14 @@
   $effect(() => {
     const data = $subscription.data;
     if (!data?.nibChanged) return;
-    const event = data.nibChanged as { type: string; nibId: string };
-    const key = `${event.type}:${event.nibId}`;
+    const event = data.nibChanged as { type: string; nibId: string; nib?: { etag?: string | null } | null };
+    // Include the payload etag so a genuine second edit to the SAME nib (new
+    // etag) refetches, while a burst of duplicate emissions for ONE commit
+    // (shared etag) still collapses. `deleted`/`archived` carry a null nib →
+    // etag falls back to "" so their (type:nibId) dedup is unaffected — matching
+    // the etag-keyed external dedup in nibChange.ts.
+    const etag = event.nib?.etag ?? "";
+    const key = `${event.type}:${event.nibId}:${etag}`;
 
     // All side-effects (changeTracker writes, query reexecute) must run
     // untracked so they do not feed back into this effect and cause a

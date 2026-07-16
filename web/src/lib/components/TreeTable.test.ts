@@ -297,6 +297,114 @@ describe("TreeTable", () => {
     expect(reexecute).toHaveBeenCalledTimes(1);
   });
 
+  // Content-key dedup must NOT collapse two genuinely-distinct edits to the same
+  // nib. A burst re-emission of ONE commit shares an etag; a real second edit
+  // carries a NEW etag. Keying dedup on (type:nibId) alone drops the second edit
+  // and the tree goes stale relative to it. The key includes the payload etag so
+  // a distinct-etag edit still refetches.
+  it("refetches for a second distinct-etag edit to the same nib (does not over-dedup)", async () => {
+    const nibs: TreeTableNib[] = [
+      makeTreeTableNib({ id: "nibs-x", title: "Original", type: "task" }),
+    ];
+
+    const reexecute = vi.fn();
+    mockQueryStore.mockReturnValue({
+      ...readable({ fetching: false, error: undefined, data: { nibs }, stale: false }),
+      reexecute,
+    } as any);
+
+    const subStore = writable<any>({ fetching: true, error: undefined, data: undefined, stale: false });
+    mockSubscriptionStore.mockReturnValue(subStore as any);
+
+    renderTreeTable({ filter: {} });
+    await tick();
+
+    // Mirror the real subscription payload: type + nibId + a nib object carrying
+    // an etag (NIB_CHANGED_SUBSCRIPTION selects nib { ... etag ... }).
+    const makeEvent = (etag: string) => ({
+      type: "updated",
+      nibId: "nibs-x",
+      nib: {
+        id: "nibs-x",
+        title: "Edited",
+        status: "in-progress",
+        type: "task",
+        priority: "normal",
+        estimate: "m",
+        tags: [],
+        body: "",
+        etag,
+        updatedAt: "2026-03-20T10:00:00Z",
+        parentId: null,
+        blockingIds: [],
+        blockedByIds: [],
+      },
+    });
+
+    // Edit A commits (etag e1).
+    subStore.set({ fetching: true, error: undefined, data: { nibChanged: makeEvent("e1") }, stale: false });
+    await tick();
+
+    // A genuinely distinct edit B to the SAME nib commits (etag e2).
+    subStore.set({ fetching: true, error: undefined, data: { nibChanged: makeEvent("e2") }, stale: false });
+    await tick();
+
+    // Both distinct edits must refetch — the second must not be swallowed.
+    expect(reexecute).toHaveBeenCalledTimes(2);
+  });
+
+  // Complement to the two-distinct-edits case: a burst re-emission of ONE commit
+  // shares an etag, so even WITH the nib payload present the identical repeats
+  // must still coalesce to a single refetch (no effect_update_depth loop).
+  it("still coalesces 20 identical emissions that carry the same etag to one refetch", async () => {
+    const nibs: TreeTableNib[] = [
+      makeTreeTableNib({ id: "nibs-x", title: "Original", type: "task" }),
+    ];
+
+    const reexecute = vi.fn();
+    mockQueryStore.mockReturnValue({
+      ...readable({ fetching: false, error: undefined, data: { nibs }, stale: false }),
+      reexecute,
+    } as any);
+
+    const subStore = writable<any>({ fetching: true, error: undefined, data: undefined, stale: false });
+    mockSubscriptionStore.mockReturnValue(subStore as any);
+
+    renderTreeTable({ filter: {} });
+    await tick();
+
+    const evt = {
+      type: "updated",
+      nibId: "nibs-x",
+      nib: {
+        id: "nibs-x",
+        title: "Edited",
+        status: "in-progress",
+        type: "task",
+        priority: "normal",
+        estimate: "m",
+        tags: [],
+        body: "",
+        etag: "same-etag",
+        updatedAt: "2026-03-20T10:00:00Z",
+        parentId: null,
+        blockingIds: [],
+        blockedByIds: [],
+      },
+    };
+    for (let i = 0; i < 20; i++) {
+      subStore.set({
+        fetching: true,
+        error: undefined,
+        data: { nibChanged: { type: evt.type, nibId: evt.nibId, nib: { ...evt.nib } } },
+        stale: false,
+      });
+      await tick();
+    }
+
+    expect(reexecute).toHaveBeenCalledTimes(1);
+  });
+
   // Regression: TreeTable used to call `result.reexecute(...)` synchronously in
   // the subscription $effect (inside untrack(), which does not catch). A
   // throwing/absent reexecute therefore propagated out of the effect body and
