@@ -384,6 +384,26 @@ func (c *Core) handleChanges(changes map[string]fsnotify.Op) {
 				}
 			}
 
+			// Same-id slug rename: the file left `path`, but a file whose parsed id
+			// equals this id lives elsewhere in the store. A slug rename changes the
+			// basename (nibs-x--old-slug.md -> nibs-x--new-slug.md), so neither cheap
+			// basename check above matched — yet nib.ParseFilename yields the same id
+			// for both names. The nib is NOT gone: point stored.Path at the file's
+			// new location and report the move as an update, keeping it live in the
+			// store. Evicting here would drop a live nib whose file is present on
+			// disk under a new name. Bounded — reached only after both basename
+			// checks miss, right before the genuine-delete fall-through.
+			if newRel, ok := c.findRelPathByID(id); ok {
+				stored.Path = newRel
+				c.nibs[id] = stored
+				events = append(events, NibEvent{
+					Type:  EventUpdated,
+					Nib:   stored,
+					NibID: id,
+				})
+				continue
+			}
+
 			// Genuinely gone: a real deletion, or a delete of an already-archived
 			// nib (the file that vanished is the very one stored.Path pointed at,
 			// and it exists at neither the archive nor the main location now).
@@ -495,4 +515,39 @@ func (c *Core) isArchivedAbsPath(absPath string) bool {
 		return false
 	}
 	return c.isArchivedPath(filepath.ToSlash(rel))
+}
+
+// findRelPathByID scans the main data directory and the archive subdirectory for
+// a nib file whose parsed id equals id, returning its root-relative,
+// forward-slash path. It recognizes a nib by id rather than by exact basename, so
+// it locates a file that a same-id slug rename moved to a new name — the case the
+// removal branch's two basename checks (archive-in, unarchive-out) cannot match.
+// The scan is bounded to two os.ReadDir calls and is reached only on the removal
+// branch's delete fall-through, so the two basename checks stay the cheap fast
+// path.
+func (c *Core) findRelPathByID(id string) (string, bool) {
+	if id == "" {
+		return "", false
+	}
+	for _, dir := range []string{c.root, filepath.Join(c.root, ArchiveDir)} {
+		entries, err := os.ReadDir(dir)
+		if err != nil {
+			continue
+		}
+		for _, entry := range entries {
+			if entry.IsDir() || !strings.HasSuffix(entry.Name(), ".md") {
+				continue
+			}
+			fileID, _ := nib.ParseFilename(entry.Name())
+			if fileID != id {
+				continue
+			}
+			rel, err := filepath.Rel(c.root, filepath.Join(dir, entry.Name()))
+			if err != nil {
+				continue
+			}
+			return filepath.ToSlash(rel), true
+		}
+	}
+	return "", false
 }

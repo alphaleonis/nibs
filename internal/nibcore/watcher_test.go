@@ -409,6 +409,70 @@ func TestWatcherUnarchiveReportsUpdatedNotDeleted(t *testing.T) {
 	}
 }
 
+// TestWatcherSameIdSlugRenameNotEvicted covers nibs-ab2s: a same-id slug rename
+// that moves a file within the same non-archive directory
+// (ab21--move-test.md -> ab21--new-slug.md) must NOT emit a deleted event and
+// must NOT evict the nib from the store — its file exists on disk under the new
+// name, and nib.ParseFilename yields the same id for both names. Both cheap
+// basename checks in the removal branch (archive-in, unarchive-out) miss because
+// the basename changed, so without the bounded by-ID scan the nib falls through
+// to the genuine-delete path. Both batch orderings are covered: create-first
+// evicts permanently (no later create re-adds it), remove-first evicts
+// transiently but still lies with a deleted event.
+func TestWatcherSameIdSlugRenameNotEvicted(t *testing.T) {
+	const nibID = "ab21"
+
+	for _, createFirst := range []bool{false, true} {
+		name := "remove-first"
+		if createFirst {
+			name = "create-first"
+		}
+		t.Run(name, func(t *testing.T) {
+			core, nibsDir, oldFilename := watchingCore(t, nibID)
+
+			oldAbs := filepath.Join(nibsDir, oldFilename)
+			newAbs := filepath.Join(nibsDir, nibID+"--new-slug.md")
+
+			// Physical rename so the old path is gone and the new one loads —
+			// exactly what a slug rename by any mover leaves on disk. Same id, new
+			// slug, same non-archive directory.
+			if err := os.Rename(oldAbs, newAbs); err != nil {
+				t.Fatalf("slug rename: %v", err)
+			}
+			if core.fileExists(oldAbs) || !core.fileExists(newAbs) {
+				t.Fatalf("precondition: expected file at %s and not %s", newAbs, oldAbs)
+			}
+
+			setWatching(core)
+			ch, unsub := core.Subscribe()
+			defer unsub()
+
+			driveMove(core, oldAbs, newAbs, createFirst)
+
+			got := collectNibEvents(t, ch, nibID, 150*time.Millisecond)
+
+			// The move must never surface as a deletion. This is the assertion that
+			// bites remove-first, where the create-half re-adds the nib so Get would
+			// succeed even against the bug.
+			assertNoDeletedFor(t, got, nibID)
+
+			// Data-loss guard: the nib must remain in the store and its file must
+			// still exist on disk at the new name. This is the assertion that bites
+			// create-first, where the remove-half evicts permanently.
+			n, err := core.Get(nibID)
+			if err != nil {
+				t.Fatalf("nib evicted from store during slug rename (data loss): Get(%q) = %v", nibID, err)
+			}
+			if !core.fileExists(filepath.Join(nibsDir, n.Path)) {
+				t.Errorf("stored Path %q has no file on disk", n.Path)
+			}
+			if core.isArchivedPath(n.Path) {
+				t.Errorf("stored Path = %q, want a main-directory path", n.Path)
+			}
+		})
+	}
+}
+
 // TestEventPayloadsAreImmutableSnapshots pins the payload contract from
 // nibs-y5nb: an event's Nib is a snapshot taken at publish time, so a subscriber
 // holding a payload never sees its fields change even when the store later
