@@ -1395,6 +1395,31 @@ describe("TreeTable", () => {
       expect(screen.queryByText("Loose Task")).not.toBeInTheDocument();
     });
 
+    it("Shift+click whose range SPANS a bucket selects the nibs in range and NOT the bucket's synthetic id", async () => {
+      const user = userEvent.setup();
+      const sel = new SelectionState();
+      const nibs = makeBucketTestNibs();
+      const bucketId = milestoneBucketId(nibs);
+      // Anchor on the epic, which sits BEFORE the bucket in view order.
+      sel.select("nibs-e1");
+
+      const { container } = setupWithNibs(nibs, {}, { selection: sel });
+
+      // View order is [m1, e1, <bucket>, loose]. Shift-click the loose task's row
+      // body (after the bucket) so the range spans the interleaved bucket row.
+      const looseBodyCell = container.querySelector(
+        `tr[data-nib-id="nibs-loose"] [data-testid="nib-type"]`,
+      ) as HTMLElement;
+      expect(looseBodyCell).toBeInTheDocument();
+      await user.keyboard("{Shift>}");
+      await user.click(looseBodyCell);
+      await user.keyboard("{/Shift}");
+
+      expect(sel.selectedIds.has("nibs-e1")).toBe(true);
+      expect(sel.selectedIds.has("nibs-loose")).toBe(true);
+      expect(sel.selectedIds.has(bucketId)).toBe(false);
+    });
+
     it("TreeTableRow renders with zero callback props (pure data/visual)", () => {
       const nibs = makeTestNibs();
       const { container } = setupWithNibs(nibs);

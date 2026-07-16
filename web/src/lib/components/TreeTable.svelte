@@ -463,14 +463,14 @@
       return; // Don't fire row click for add-child
     }
 
-    // A synthetic grouping bucket is not a nib: feeding its id to
-    // rangeSelect/toggleSelect would put an unresolvable id in selectedIds. So
-    // every click ON a bucket row — plain or modified, title or row body —
-    // toggles its group, like its caret.
-    //
-    // This covers the CLICKED id only. A shift-click whose range SPANS a bucket
-    // still sweeps that bucket in, because rangeSelect slices visibleRowIds and
-    // bucket rows are interleaved with nib rows there — untouched by this guard.
+    // A synthetic grouping bucket is not a nib, so every click ON a bucket row —
+    // plain or modified, title or row body — toggles its group, like its caret,
+    // rather than routing to selection. This handles the CLICKED id only. The
+    // other bucket-selection paths are guarded at the source, in SelectionState:
+    // rangeSelect filters bucket ids out of a range that SPANS a bucket, and
+    // select/toggleSelect reject a bucket id outright — so an interleaved or
+    // keyboard-focused bucket never reaches selectedIds even where this
+    // click-level guard does not see it.
     if (isBucketId(nibId)) {
       toggleNode(nibId);
       return;

@@ -166,6 +166,29 @@ describe("useKeyboardNav", () => {
     expect(selection.selectedIds.has("nibs-003")).toBe(true);
   });
 
+  it("Shift+ArrowDown across a synthetic bucket row keeps its id out of the selection", () => {
+    const selection = new SelectionState();
+    selection.select("nibs-e1"); // anchor
+    selection.focus("nibs-e1");
+    const header = makeNib({ id: "nibs-m1", type: "milestone" });
+    const epic = makeNib({ id: "nibs-e1", type: "epic", parentId: "nibs-m1" });
+    // Synthetic bucket row, interleaved between nib rows (as buildViewTree emits it).
+    const bucket = makeNib({ id: "__no_milestone__", type: "" });
+    const loose = makeNib({ id: "nibs-loose" });
+    const rows = [makeRow(header), makeRow(epic), makeRow(bucket, { hasChildren: true }), makeRow(loose)];
+    const { handleKeydown } = setup({ selection, rows });
+
+    // First Shift+ArrowDown lands focus on the bucket row...
+    handleKeydown(keydown("ArrowDown", { shiftKey: true }));
+    // ...second Shift+ArrowDown lands on the loose task, spanning the bucket.
+    handleKeydown(keydown("ArrowDown", { shiftKey: true }));
+
+    expect(selection.focusedNibId).toBe("nibs-loose");
+    expect(selection.selectedIds.has("nibs-e1")).toBe(true);
+    expect(selection.selectedIds.has("nibs-loose")).toBe(true);
+    expect(selection.selectedIds.has("__no_milestone__")).toBe(false);
+  });
+
   it("Enter on focused row selects it", () => {
     const selection = new SelectionState();
     selection.focus("nibs-002");

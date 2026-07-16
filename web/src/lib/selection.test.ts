@@ -15,6 +15,14 @@ describe("SelectionState", () => {
     expect(state.panelOpen).toBe(true);
   });
 
+  it("select() ignores a synthetic bucket id (view.open on a focused bucket / stale ?nib= URL)", () => {
+    const state = new SelectionState();
+    state.select("__no_milestone__");
+    expect(state.selectedNibId).toBeNull();
+    expect(state.selectedIds.has("__no_milestone__")).toBe(false);
+    expect(state.panelOpen).toBe(false);
+  });
+
   it("close() clears selectedNibId and panelOpen becomes false", () => {
     const state = new SelectionState();
     state.select("nibs-abc1");
@@ -136,6 +144,41 @@ describe("SelectionState", () => {
       expect(state.panelOpen).toBe(false);
     });
 
+    it("toggleSelect() ignores a synthetic bucket id (Space on a focused bucket row)", () => {
+      const state = new SelectionState();
+      // Reachable via keyboard: arrow focuses a bucket row, then Space calls
+      // toggleFocusedSelection -> toggleSelect(bucketId). rangeSelect's slice
+      // filter does not cover this path.
+      state.toggleSelect("__no_milestone__");
+      expect(state.selectedIds.has("__no_milestone__")).toBe(false);
+      expect(state.selectedIds.size).toBe(0);
+      // The bucket must not become an anchor or focus for selection either.
+      expect(state.anchorId).toBeNull();
+    });
+
+    it("toggleFocusedSelection() on a focused bucket adds nothing", () => {
+      const state = new SelectionState();
+      state.focus("__no_milestone__");
+      state.toggleFocusedSelection();
+      expect(state.selectedIds.has("__no_milestone__")).toBe(false);
+      expect(state.selectedIds.size).toBe(0);
+    });
+
+    it("a bucket-id write is a no-op, not a destructive clear of a live selection", () => {
+      // The guards must reject the bucket WITHOUT wiping an existing real
+      // selection — a virgin-state test can't tell a correct no-op from a clear.
+      const state = new SelectionState();
+      state.toggleSelect("nibs-abc1");
+      state.toggleSelect("nibs-xyz2");
+      expect(state.selectedIds.size).toBe(2);
+
+      state.toggleSelect("__no_milestone__"); // guarded: must not touch the set
+      expect([...state.selectedIds].sort()).toEqual(["nibs-abc1", "nibs-xyz2"]);
+
+      state.select("__no_milestone__"); // guarded: must not clear selectedIds either
+      expect([...state.selectedIds].sort()).toEqual(["nibs-abc1", "nibs-xyz2"]);
+    });
+
     it("rangeSelect() selects range from anchor to target", () => {
       const state = new SelectionState();
       const visibleIds = ["nibs-001", "nibs-002", "nibs-003", "nibs-004", "nibs-005"];
@@ -200,6 +243,56 @@ describe("SelectionState", () => {
       state.rangeSelect("nibs-002", visibleIds);
       expect(state.selectedNibId).toBe("nibs-002");
       expect(state.selectedIds.size).toBe(1);
+    });
+
+    // Synthetic "No X" grouping-bucket rows are interleaved with nib rows in
+    // visibleIds. A range that spans a bucket must select the nibs on both sides
+    // but must never sweep the bucket's unresolvable synthetic id into selectedIds.
+    it("rangeSelect() spanning a bucket selects the nibs on both sides but not the bucket", () => {
+      const state = new SelectionState();
+      const visibleIds = ["nibs-m1", "nibs-e1", "__no_milestone__", "nibs-loose"];
+      state.select("nibs-e1"); // anchor before the bucket
+      state.rangeSelect("nibs-loose", visibleIds); // target after the bucket
+
+      expect(state.selectedIds.has("nibs-e1")).toBe(true);
+      expect(state.selectedIds.has("nibs-loose")).toBe(true);
+      expect(state.selectedIds.has("__no_milestone__")).toBe(false);
+      expect(state.selectedIds.size).toBe(2);
+    });
+
+    it("rangeSelect() with the bucket as the target contributes no id but still selects the nib range", () => {
+      const state = new SelectionState();
+      const visibleIds = ["nibs-m1", "nibs-e1", "__no_milestone__", "nibs-loose"];
+      state.select("nibs-m1");
+      state.rangeSelect("__no_milestone__", visibleIds);
+
+      expect(state.selectedIds.has("nibs-m1")).toBe(true);
+      expect(state.selectedIds.has("nibs-e1")).toBe(true);
+      expect(state.selectedIds.has("__no_milestone__")).toBe(false);
+      expect(state.selectedIds.size).toBe(2);
+    });
+
+    it("rangeSelect() with the bucket as the anchor contributes no id but still selects the nib range", () => {
+      const state = new SelectionState();
+      const visibleIds = ["nibs-m1", "nibs-e1", "__no_milestone__", "nibs-loose"];
+      // Defensive: no live path sets anchorId to a bucket (the add-writers guard
+      // it), but rangeSelect must still resolve sanely if one ever does.
+      state.anchorId = "__no_milestone__";
+      state.rangeSelect("nibs-e1", visibleIds);
+
+      expect(state.selectedIds.has("nibs-e1")).toBe(true);
+      expect(state.selectedIds.has("__no_milestone__")).toBe(false);
+      expect(state.selectedIds.size).toBe(1);
+    });
+
+    it("rangeSelect() over a range that is only a bucket yields an empty selection without crashing", () => {
+      const state = new SelectionState();
+      const visibleIds = ["nibs-m1", "nibs-e1", "__no_milestone__", "nibs-loose"];
+      state.anchorId = "__no_milestone__";
+      state.rangeSelect("__no_milestone__", visibleIds);
+
+      expect(state.selectedIds.size).toBe(0);
+      expect(state.selectedNibId).toBeNull();
     });
 
     it("toggleFocusedSelection() toggles focused row in selectedIds", () => {
