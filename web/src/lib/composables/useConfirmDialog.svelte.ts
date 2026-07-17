@@ -44,21 +44,15 @@ export interface ConfirmDialogState {
    *  didn't request one (Delete/Archive). */
   readonly saveLabel: string | null;
   readonly saveAction: (() => void) | null;
-  /** The current confirm's dismissal owner (from `onDismiss`), or null. `dismiss()`
-   *  runs it on a Cancel/Escape/overlay dismissal AFTER `close()`. `showConfirm`
-   *  runs the PREVIOUS one automatically when a new confirm supersedes it. */
-  readonly dismissAction: (() => void) | null;
   showConfirm: (opts: ConfirmDialogOptions) => void;
   close: () => void;
   /** Settle a Cancel / Escape / overlay dismissal of the LIVE confirm: close the
-   *  dialog, then run its dismissal owner. The host template wires this to
-   *  `oncancel`. Folding the capture→close→fire sequence into one named method
-   *  (rather than inlining it in the host) makes that sequence unit-testable here
-   *  and shrinks the host binding to a single `dismiss()` call. NOTE: the host
-   *  binding itself is NOT covered by a test — a regression that rewrote
-   *  `oncancel` to a bare `close()` (dropping the owner fire, reintroducing the
-   *  nibs-an5d leak) would pass the whole suite. That host-wiring guard is
-   *  deferred; see the note in useConfirmDialog.svelte.test.ts. (nibs-imgm) */
+   *  dialog, then run its dismissal owner. `ConfirmDialog` calls this for every
+   *  dismissal route, so the capture→close→fire sequence lives in one named method
+   *  the component owns — there is no per-route host wiring that could drop the
+   *  owner fire (e.g. by being rewritten to a bare `close()`, which would
+   *  reintroduce the nibs-an5d leak). The Cancel-fires-the-owner behavior is
+   *  covered at the component seam in ConfirmDialog.test.ts. (nibs-an5d/nibs-imgm) */
   dismiss: () => void;
 }
 
@@ -111,11 +105,10 @@ export function createConfirmDialog(): ConfirmDialogState {
     // changes / stay put, so its owner must run. Capture it BEFORE close() nulls it,
     // then fire it AFTER close(). A confirm that installed no owner (Delete/Archive)
     // just closes, so a dismissal here can never resolve a different dialog's pending
-    // promise. This is exactly the App.svelte `oncancel` dance, folded into one named
-    // method so the host binding is a single `dismiss()` call instead of an inline
-    // capture→close→fire sequence the host could get wrong. (The host CAN still be
-    // rewritten to a bare close() that drops the owner — that binding is not covered
-    // by a test; see the dismiss() JSDoc and the test-file note.) (nibs-an5d/nibs-imgm)
+    // promise. `ConfirmDialog` calls this for every dismissal route (Cancel / Escape /
+    // overlay), so the capture→close→fire sequence lives in the component rather than
+    // an inline host binding a future edit could rewrite to a bare close() that drops
+    // the owner fire (nibs-an5d). (nibs-an5d/nibs-imgm)
     const owner = dismissAction;
     close();
     owner?.();
@@ -130,7 +123,6 @@ export function createConfirmDialog(): ConfirmDialogState {
     get action() { return action; },
     get saveLabel() { return saveLabel; },
     get saveAction() { return saveAction; },
-    get dismissAction() { return dismissAction; },
     showConfirm,
     close,
     dismiss,

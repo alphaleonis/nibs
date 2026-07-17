@@ -209,8 +209,8 @@
   // mean merely "gone": an archived buffer arrives with `canSave: true` and keeps
   // its Save, because its nib still exists in the archive and the write lands.
   // Omitting saveLabel/saveAction renders the dialog Discard-only (showConfirm
-  // nulls both, and ConfirmDialog gates its Save button on `onsave`), the same
-  // shape Delete/Archive confirms use.
+  // nulls both, and ConfirmDialog gates its Save button on `confirm.saveAction`),
+  // the same shape Delete/Archive confirms use.
   function confirmDiscard({ canSave }: { canSave: boolean }): Promise<ConfirmChoice> {
     return new Promise((resolve) => {
       let settled = false;
@@ -625,17 +625,12 @@
   oncollapsechildren={() => contextMenuSubtree?.collapseChildren()}
 />
 
-<ConfirmDialog
-  open={confirmDialog.open}
-  title={confirmDialog.title}
-  message={confirmDialog.message}
-  confirmLabel={confirmDialog.label}
-  variant={confirmDialog.variant}
-  saveLabel={confirmDialog.saveLabel ?? undefined}
-  onsave={confirmDialog.saveAction ? () => { confirmDialog.saveAction?.(); } : undefined}
-  onconfirm={() => { confirmDialog.action?.(); }}
-  oncancel={() => confirmDialog.dismiss()}
-/>
+<!-- Hand the whole composable to the dialog. The dialog reads its display state
+     from it AND owns every route (confirm, Save, dismiss), so there is no inline
+     per-route wiring here that a future edit could rewrite from `dismiss()` to a
+     bare `close()` (which would drop the dismissal owner and reintroduce the
+     nibs-an5d promise leak). (nibs-i567) -->
+<ConfirmDialog confirm={confirmDialog} />
 
 <style>
   .anv-modal-backdrop {

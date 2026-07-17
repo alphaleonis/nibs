@@ -59,7 +59,6 @@ function makeHarness(
     action: null,
     saveLabel: null,
     saveAction: null,
-    dismissAction: null,
     showConfirm,
     close,
     dismiss,

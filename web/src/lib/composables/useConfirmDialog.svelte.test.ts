@@ -36,7 +36,10 @@ describe("useConfirmDialog · overlapping-confirm ownership", () => {
     expect(onDismissA).toHaveBeenCalledTimes(1);
     // B is the live confirm; it has not been dismissed yet.
     expect(onDismissB).not.toHaveBeenCalled();
-    expect(dialog.dismissAction).toBe(onDismissB);
+    // B is the installed owner: dismissing the live confirm runs B (only), once.
+    dialog.dismiss();
+    expect(onDismissB).toHaveBeenCalledTimes(1);
+    expect(onDismissA).toHaveBeenCalledTimes(1);
   });
 
   it("two overlapping confirms BOTH settle exactly once — neither promise leaks", () => {
@@ -78,22 +81,21 @@ describe("useConfirmDialog · overlapping-confirm ownership", () => {
     // The Discard/Save handlers call close() and settle their promise directly, so
     // close() must not ALSO fire onDismiss (which would double-settle / mis-settle).
     dialog.close();
-    expect(dialog.dismissAction).toBeNull();
+    expect(onDismiss).not.toHaveBeenCalled();
+    // close() DROPPED the owner (did not retain it): a following dismiss() can't
+    // resurrect and fire it.
+    dialog.dismiss();
     expect(onDismiss).not.toHaveBeenCalled();
   });
 });
 
 describe("useConfirmDialog · dismiss()", () => {
-  // dismiss() is the structural home of the Cancel/Escape/overlay settlement that
-  // used to live inline in App.svelte's `oncancel` — capture the owner, close, fire
-  // the owner. These tests pin THAT composable logic (capture→close→fire, once-only,
-  // fire-after-close). They do NOT render App.svelte or ConfirmDialog, so they do
-  // NOT cover the host binding `oncancel={() => confirmDialog.dismiss()}`: a
-  // regression that rewrote it to a bare `close()` (dropping the owner fire and
-  // reintroducing the nibs-an5d leak) passes every test here. A host-wiring guard
-  // for that binding is deferred — cancel and a leaked (never-settling) promise are
-  // DOM-indistinguishable in the App's jsdom flow (both merely abort the pending
-  // navigation), so there is nothing to assert on. (nibs-imgm)
+  // dismiss() is the structural home of the Cancel/Escape/overlay settlement —
+  // capture the owner, close, fire the owner. These tests pin THAT composable logic
+  // (capture→close→fire, once-only, fire-after-close). ConfirmDialog wires every
+  // dismissal route to dismiss(), and that component seam — Cancel/Escape/overlay
+  // firing the dismissal OWNER, not a bare close() that would drop it and reintroduce
+  // the nibs-an5d leak — is covered in ConfirmDialog.test.ts. (nibs-an5d/nibs-imgm)
 
   it("fires the current confirm's onDismiss exactly once and closes the dialog", () => {
     const dialog = createConfirmDialog();
@@ -104,7 +106,6 @@ describe("useConfirmDialog · dismiss()", () => {
 
     expect(onDismiss).toHaveBeenCalledTimes(1);
     expect(dialog.open).toBe(false);
-    expect(dialog.dismissAction).toBeNull();
   });
 
   it("runs the owner AFTER close() — the dialog is already closed when the owner fires", () => {
@@ -128,7 +129,6 @@ describe("useConfirmDialog · dismiss()", () => {
     dialog.showConfirm(opts({ title: "Delete nib", variant: "danger" }));
     expect(() => dialog.dismiss()).not.toThrow();
     expect(dialog.open).toBe(false);
-    expect(dialog.dismissAction).toBeNull();
   });
 
   it("does not double-fire the owner when called twice", () => {
