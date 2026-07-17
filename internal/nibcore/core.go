@@ -11,6 +11,7 @@ import (
 	"sort"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/alphaleonis/nibs/internal/config"
@@ -94,10 +95,24 @@ type Core struct {
 	watching bool
 	done     chan struct{}
 
-	// Event subscribers (for channel-based API)
-	subscribers map[uint64]*subscription
-	subMu       sync.RWMutex
-	nextSubID   uint64
+	// Event subscribers (for channel-based API). Two kinds share subMu and the
+	// nextSubID counter but live in separate maps: payload subscribers receive
+	// cloned NibEvent batches; signal-only subscribers receive a bare struct{}
+	// tick ("something changed") and never a payload.
+	subscribers       map[uint64]*subscription
+	signalSubscribers map[uint64]chan struct{}
+	subMu             sync.RWMutex
+	nextSubID         uint64
+
+	// payloadSubCount mirrors len(subscribers): incremented/decremented under
+	// subMu alongside every payload subscribe/unsubscribe, but read WITHOUT any
+	// lock (a single atomic load) by handleChanges to decide whether the per-nib
+	// payload clone is worth paying. Keeping it atomic lets handleChanges read it
+	// while holding c.mu without acquiring subMu on that hot path — sparing the
+	// lock and its contention, not for deadlock safety (the established order is
+	// c.mu -> subMu, taken in unwatchLocked/Close; nothing acquires c.mu while
+	// holding subMu). See handleChanges for the full reasoning.
+	payloadSubCount atomic.Int64
 
 	// Warning logger for non-fatal errors (defaults to stderr)
 	warnWriter io.Writer
@@ -106,12 +121,13 @@ type Core struct {
 // New creates a new Core with the given root path and configuration.
 func New(root string, cfg *config.Config) *Core {
 	return &Core{
-		root:        root,
-		config:      cfg,
-		nibs:        make(map[string]*nib.Nib),
-		mentionIdx:  newMentionIndex(),
-		subscribers: make(map[uint64]*subscription),
-		warnWriter:  os.Stderr,
+		root:              root,
+		config:            cfg,
+		nibs:              make(map[string]*nib.Nib),
+		mentionIdx:        newMentionIndex(),
+		subscribers:       make(map[uint64]*subscription),
+		signalSubscribers: make(map[uint64]chan struct{}),
+		warnWriter:        os.Stderr,
 	}
 }
 

@@ -8,8 +8,8 @@ import (
 	"sync/atomic"
 	"time"
 
-	"github.com/fsnotify/fsnotify"
 	"github.com/alphaleonis/nibs/internal/nib"
+	"github.com/fsnotify/fsnotify"
 )
 
 const debounceDelay = 100 * time.Millisecond
@@ -58,9 +58,9 @@ func (e EventType) String() string {
 
 // NibEvent represents a change to a nib.
 type NibEvent struct {
-	Type   EventType  // The type of change
-	Nib   *nib.Nib // The nib (nil for Deleted events)
-	NibID string     // Always set, useful for Deleted when Nib is nil
+	Type  EventType // The type of change
+	Nib   *nib.Nib  // The nib (nil for Deleted events)
+	NibID string    // Always set, useful for Deleted when Nib is nil
 }
 
 // subscription represents a subscriber to nib events.
@@ -69,9 +69,11 @@ type subscription struct {
 	id uint64
 }
 
-// Subscribe creates a new subscription to nib change events. It returns the
-// event channel and an unsubscribe function; callers should defer the
-// unsubscribe.
+// Subscribe creates a new PAYLOAD subscription to nib change events. It returns
+// the event channel and an unsubscribe function; callers should defer the
+// unsubscribe. Callers that only need to know THAT something changed (not what)
+// should use SubscribeSignal instead — it skips the per-change clone described
+// below.
 //
 // The channel receives batches of events after debouncing. Internal state is
 // committed before events are delivered: once an event arrives, Get/All already
@@ -85,6 +87,21 @@ type subscription struct {
 // only record of it. This is the single statement of the payload contract; the
 // snapshot is produced in one place, in handleChanges just before fan-out.
 //
+// Payload vs signal-only, and who pays for the clone:
+//
+//   - Signal-only subscribers (SubscribeSignal) receive a bare struct{} tick and
+//     never a payload, so they need no snapshot.
+//   - The per-nib clone is paid ONLY when at least one payload subscriber is
+//     attached at the moment handleChanges decides. With no payload subscriber
+//     (e.g. the TUI, which is signal-only), the clone loop is skipped entirely
+//     and the batch's live c.nibs pointers are never handed out.
+//   - Attach race: a payload subscriber that attaches in the narrow window AFTER
+//     that "no payload subscribers" decision but BEFORE fan-out is dropped for
+//     that one batch — it is delivered nothing rather than the uncloned live
+//     pointers. Dropping is already part of the contract (see backpressure
+//     below); leaking a live pointer off-lock is not. The subscriber receives
+//     every subsequent batch normally.
+//
 // Sharp edges callers must account for:
 //
 //   - Events are dropped under backpressure. fanOut sends non-blocking on a
@@ -94,9 +111,10 @@ type subscription struct {
 //   - A change that produces no events notifies nobody. fanOut early-returns on
 //     an empty batch, so an unparseable filename, a Remove for an untracked id,
 //     or a loadNib error surfaces to no subscriber.
-//   - StopWatching closes and drops every subscriber channel. Consumers must
-//     handle the channel close, and the unsubscribe returned here becomes a
-//     no-op afterwards (the subscription is already gone from the map).
+//   - StopWatching closes and drops every subscriber channel (payload and
+//     signal-only alike). Consumers must handle the channel close, and the
+//     unsubscribe returned here becomes a no-op afterwards (the subscription is
+//     already gone from the map).
 //   - Subscribing while nothing is watched registers silently and never
 //     delivers. Subscribe does not check c.watching, and cmd/serve.go treats a
 //     watcher start failure as non-fatal, so a server can run with subscribers
@@ -110,6 +128,9 @@ func (c *Core) Subscribe() (<-chan []NibEvent, func()) {
 
 	sub := &subscription{ch: ch, id: id}
 	c.subscribers[id] = sub
+	// Bump the payload-subscriber count under subMu, mirroring the map insert, so
+	// handleChanges' lock-free read of it stays consistent with the map.
+	c.payloadSubCount.Add(1)
 
 	unsubscribe := func() {
 		c.subMu.Lock()
@@ -117,15 +138,71 @@ func (c *Core) Subscribe() (<-chan []NibEvent, func()) {
 		if _, ok := c.subscribers[id]; ok {
 			close(ch)
 			delete(c.subscribers, id)
+			c.payloadSubCount.Add(-1)
 		}
 	}
 
 	return ch, unsubscribe
 }
 
-// fanOut sends events to all subscribers (non-blocking).
-// Slow subscribers will have events dropped rather than blocking others.
-func (c *Core) fanOut(events []NibEvent) {
+// SubscribeSignal creates a SIGNAL-ONLY subscription. It returns a channel that
+// receives a struct{} tick whenever a debounced change is published, and an
+// unsubscribe function; callers should defer the unsubscribe.
+//
+// Unlike Subscribe, a signal-only subscriber carries no payload — it learns only
+// THAT nibs changed, not which or how. Callers that re-read the store on every
+// notification (the TUI does exactly this) want this variant: it never causes the
+// per-nib clone that payload subscribers pay for, so an all-signal-only fan-out
+// allocates nothing per changed nib. The delivery, drop-under-backpressure, and
+// StopWatching-closes-the-channel semantics are otherwise identical to Subscribe.
+func (c *Core) SubscribeSignal() (<-chan struct{}, func()) {
+	c.subMu.Lock()
+	defer c.subMu.Unlock()
+
+	id := atomic.AddUint64(&c.nextSubID, 1)
+	ch := make(chan struct{}, 16)
+	c.signalSubscribers[id] = ch
+
+	unsubscribe := func() {
+		c.subMu.Lock()
+		defer c.subMu.Unlock()
+		if _, ok := c.signalSubscribers[id]; ok {
+			close(ch)
+			delete(c.signalSubscribers, id)
+		}
+	}
+
+	return ch, unsubscribe
+}
+
+// hasPayloadSubscribers reports whether at least one payload subscriber is
+// currently attached. It is the clone-gating predicate: handleChanges pays for
+// the per-nib payload clone only when this is true. The read is a single atomic
+// load and takes no lock, so handleChanges can call it while holding c.mu without
+// acquiring subMu on that hot path — sparing the lock and its contention. This is
+// not for deadlock safety: the established order is c.mu -> subMu (see
+// unwatchLocked/Close) and nothing acquires c.mu while holding subMu.
+func (c *Core) hasPayloadSubscribers() bool {
+	return c.payloadSubCount.Load() > 0
+}
+
+// fanOut delivers a change batch to subscribers (non-blocking). Slow subscribers
+// have the batch dropped rather than blocking others.
+//
+// payloadsCloned tells fanOut whether handleChanges actually cloned every
+// event's Nib. It is load-bearing for correctness, not a mere optimization flag:
+// when it is false the events still carry LIVE c.nibs pointers (the clone loop
+// was skipped because no payload subscriber was attached at the decision point),
+// so those events MUST NOT reach any payload subscriber — handing a live pointer
+// out off-lock is the y5nb race. Signal-only subscribers carry no payload, so
+// they always get a bare tick regardless.
+//
+// Payload subscribers therefore receive the batch only when payloadsCloned is
+// true. A payload subscriber that attached after the (false) decision but before
+// this call is consequently delivered nothing for this batch — the documented
+// attach-race drop (see Subscribe). Dropping is safe; delivering the uncloned
+// batch would not be.
+func (c *Core) fanOut(events []NibEvent, payloadsCloned bool) {
 	if len(events) == 0 {
 		return
 	}
@@ -133,12 +210,23 @@ func (c *Core) fanOut(events []NibEvent) {
 	c.subMu.RLock()
 	defer c.subMu.RUnlock()
 
-	for _, sub := range c.subscribers {
+	if payloadsCloned {
+		for _, sub := range c.subscribers {
+			select {
+			case sub.ch <- events:
+				// Sent successfully
+			default:
+				// Subscriber is slow, drop events
+			}
+		}
+	}
+
+	for _, ch := range c.signalSubscribers {
 		select {
-		case sub.ch <- events:
-			// Sent successfully
+		case ch <- struct{}{}:
+			// Ticked successfully
 		default:
-			// Subscriber is slow, drop events
+			// Subscriber is slow, drop the tick
 		}
 	}
 }
@@ -213,12 +301,20 @@ func (c *Core) unwatchLocked() error {
 	close(c.done)
 	c.watching = false
 
-	// Close all subscriber channels
+	// Close all subscriber channels (both kinds). Resetting payloadSubCount to 0
+	// under subMu keeps it consistent with the now-empty payload map; a straggling
+	// unsubscribe for one of these dropped subscriptions no-ops (its id is gone from
+	// the map) and so cannot double-decrement below zero.
 	c.subMu.Lock()
 	for id, sub := range c.subscribers {
 		close(sub.ch)
 		delete(c.subscribers, id)
 	}
+	for id, ch := range c.signalSubscribers {
+		close(ch)
+		delete(c.signalSubscribers, id)
+	}
+	c.payloadSubCount.Store(0)
 	c.subMu.Unlock()
 
 	return nil
@@ -468,13 +564,13 @@ func (c *Core) handleChanges(changes map[string]fsnotify.Op) {
 
 			if existed {
 				events = append(events, NibEvent{
-					Type:   EventUpdated,
+					Type:  EventUpdated,
 					Nib:   newNib,
 					NibID: newNib.ID,
 				})
 			} else {
 				events = append(events, NibEvent{
-					Type:   EventCreated,
+					Type:  EventCreated,
 					Nib:   newNib,
 					NibID: newNib.ID,
 				})
@@ -491,9 +587,31 @@ func (c *Core) handleChanges(changes map[string]fsnotify.Op) {
 	// Subscribe. Cloning here (under the lock) also keeps Clone's field reads from
 	// racing those in-place writers, which hold the same lock. One allocation per
 	// changed nib, not per subscriber.
-	for i := range events {
-		if events[i].Nib != nil {
-			events[i].Nib = events[i].Nib.Clone()
+	//
+	// Gate the clone on at least one payload subscriber being attached. With only
+	// signal-only subscribers (e.g. the TUI, which re-reads the store on every
+	// tick and discards payloads) the clone is pure waste, so skip it. The read is
+	// a single atomic load taking no lock, so on this hot path it avoids acquiring
+	// subMu at all — no lock, no contention, and no coupling with the subsequent
+	// fanOut's subMu.RLock. This is not about deadlock: the established lock order
+	// is c.mu -> subMu (unwatchLocked/Close both take subMu.Lock under c.mu) and
+	// nothing ever acquires c.mu while holding subMu, so a subMu-guarded read here
+	// would be deadlock-free too — just needlessly locked. Rule for the future:
+	// never acquire c.mu while holding subMu.
+	//
+	// When the clone is skipped, events[i].Nib stays a LIVE c.nibs pointer (set to
+	// newNib/stored above, never nil'd), so this batch must never be delivered to a
+	// payload subscriber. fanOut, told cloningPayloads == false, delivers to signal
+	// subscribers only. The attach race — a payload subscriber appearing between
+	// this decision and fanOut — resolves by dropping the batch for it (see fanOut
+	// and Subscribe): correct under the drop contract, and strictly safer than
+	// leaking a live pointer.
+	cloningPayloads := c.hasPayloadSubscribers()
+	if cloningPayloads {
+		for i := range events {
+			if events[i].Nib != nil {
+				events[i].Nib = events[i].Nib.Clone()
+			}
 		}
 	}
 
@@ -504,7 +622,7 @@ func (c *Core) handleChanges(changes map[string]fsnotify.Op) {
 	// sees the change. The TUI does exactly that — it discards the payload and
 	// re-reads — so emitting events before applying state would break it
 	// silently and intermittently. Fan out outside the lock.
-	c.fanOut(events)
+	c.fanOut(events, cloningPayloads)
 }
 
 // fileExists checks if a file exists at the given path.

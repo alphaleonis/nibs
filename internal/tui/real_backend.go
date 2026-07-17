@@ -130,16 +130,9 @@ func (b *RealBackend) StopWatching() {
 }
 
 func (b *RealBackend) Subscribe() (events <-chan struct{}, cancel func()) {
-	nibEvents, unsubscribe := b.core.Subscribe()
-
-	// Translate []NibEvent channel to struct{} channel (TUI only needs "something changed")
-	ch := make(chan struct{}, 16)
-	go func() {
-		defer close(ch)
-		for range nibEvents {
-			ch <- struct{}{}
-		}
-	}()
-
-	return ch, unsubscribe
+	// The TUI only needs "something changed" — it re-reads the store on every
+	// tick and never inspects a payload. SubscribeSignal delivers exactly that
+	// without the per-change payload clone, and its channel already matches this
+	// signature, so pass it straight through (no translate goroutine).
+	return b.core.SubscribeSignal()
 }

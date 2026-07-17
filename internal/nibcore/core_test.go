@@ -1122,6 +1122,9 @@ func TestSubscribersClosedOnStopWatching(t *testing.T) {
 	}
 
 	ch, _ := core.Subscribe() // Note: not calling unsub
+	if !core.hasPayloadSubscribers() {
+		t.Fatal("hasPayloadSubscribers() = false right after Subscribe, want true")
+	}
 
 	// StopWatching should close subscriber channels
 	if err := core.StopWatching(); err != nil {
@@ -1132,6 +1135,16 @@ func TestSubscribersClosedOnStopWatching(t *testing.T) {
 	_, ok := <-ch
 	if ok {
 		t.Error("expected channel to be closed after StopWatching")
+	}
+
+	// StopWatching force-closes the payload subscriber without running its
+	// unsubscribe (which is what decrements the count), so unwatchLocked's
+	// payloadSubCount.Store(0) is the only thing that reclaims the counter here.
+	// Drop that reset and the count stays stuck-positive, so handleChanges would
+	// keep paying the per-nib clone with zero live payload subscribers — defeating
+	// the optimization. This assertion bites exactly that regression.
+	if core.hasPayloadSubscribers() {
+		t.Error("hasPayloadSubscribers() = true after StopWatching, want false")
 	}
 }
 

@@ -6,9 +6,11 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+	"sync"
 	"testing"
 	"time"
 
+	"github.com/alphaleonis/nibs/internal/nib"
 	"github.com/fsnotify/fsnotify"
 )
 
@@ -568,4 +570,222 @@ func TestEventPayloadsAreImmutableSnapshots(t *testing.T) {
 			"the payload aliased the live store nib instead of an immutable snapshot",
 			held.Nib.Path, wantPath)
 	}
+}
+
+// TestHasPayloadSubscribersPredicate pins the clone-gating decision from
+// nibs-hz5b: handleChanges pays for the per-nib payload clone only when a payload
+// subscriber (Subscribe) is attached — a signal-only subscriber (SubscribeSignal)
+// must not flip the predicate, because it never receives a payload. This is the
+// directly testable seam for "should we clone?".
+//
+// It bites: an implementation that always clones (hasPayloadSubscribers hardcoded
+// to return true, or counting signal-only subscribers) fails the only-signal and
+// no-subscribers cases below.
+func TestHasPayloadSubscribersPredicate(t *testing.T) {
+	tests := []struct {
+		name string
+		// attach registers whatever subscribers the case needs and returns a
+		// cleanup that unsubscribes them.
+		attach func(c *Core) func()
+		want   bool
+	}{
+		{
+			name:   "no subscribers",
+			attach: func(*Core) func() { return func() {} },
+			want:   false,
+		},
+		{
+			name: "only signal-only subscriber",
+			attach: func(c *Core) func() {
+				_, unsub := c.SubscribeSignal()
+				return unsub
+			},
+			want: false,
+		},
+		{
+			name: "payload subscriber",
+			attach: func(c *Core) func() {
+				_, unsub := c.Subscribe()
+				return unsub
+			},
+			want: true,
+		},
+		{
+			name: "payload and signal-only subscribers",
+			attach: func(c *Core) func() {
+				_, unsubP := c.Subscribe()
+				_, unsubS := c.SubscribeSignal()
+				return func() { unsubP(); unsubS() }
+			},
+			want: true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			core, _ := setupTestCore(t)
+			cleanup := tt.attach(core)
+			defer cleanup()
+
+			if got := core.hasPayloadSubscribers(); got != tt.want {
+				t.Fatalf("hasPayloadSubscribers() = %v, want %v", got, tt.want)
+			}
+		})
+	}
+}
+
+// TestHasPayloadSubscribersAfterUnsubscribe pins that the count follows the
+// payload map back down: once the sole payload subscriber unsubscribes, the
+// predicate reverts to false and cloning is skipped again.
+func TestHasPayloadSubscribersAfterUnsubscribe(t *testing.T) {
+	core, _ := setupTestCore(t)
+
+	_, unsub := core.Subscribe()
+	if !core.hasPayloadSubscribers() {
+		t.Fatal("hasPayloadSubscribers() = false right after Subscribe, want true")
+	}
+	unsub()
+	if core.hasPayloadSubscribers() {
+		t.Fatal("hasPayloadSubscribers() = true after unsubscribe, want false")
+	}
+}
+
+// TestSubscribeSignalReceivesTick verifies a signal-only subscriber is notified
+// when a debounced change is published — without requiring any payload.
+func TestSubscribeSignalReceivesTick(t *testing.T) {
+	core, nibsDir, filename := watchingCore(t, "sig1")
+	setWatching(core)
+
+	sigCh, unsub := core.SubscribeSignal()
+	defer unsub()
+
+	// A write to the existing nib publishes a non-empty batch (EventUpdated).
+	abs := filepath.Join(nibsDir, filename)
+	core.handleChanges(map[string]fsnotify.Op{abs: fsnotify.Write})
+
+	select {
+	case _, ok := <-sigCh:
+		if !ok {
+			t.Fatal("signal channel closed instead of ticking")
+		}
+	case <-time.After(time.Second):
+		t.Fatal("no signal tick delivered for a published change")
+	}
+}
+
+// TestFanOutSkipPathDropsPayloadDelivery pins constraint 2 of nibs-hz5b directly:
+// on the skip path (payloadsCloned == false) fanOut must deliver NOTHING to a
+// payload subscriber — even one that raced in after the decision — because the
+// batch still holds live c.nibs pointers. Signal-only subscribers must still tick.
+//
+// It bites: a fanOut that delivered the uncloned batch to payload subscribers on
+// the skip path would surface the batch on payloadCh below and fail the test —
+// exactly the y5nb live-pointer leak.
+func TestFanOutSkipPathDropsPayloadDelivery(t *testing.T) {
+	core, _ := setupTestCore(t)
+
+	payloadCh, unsubP := core.Subscribe()
+	defer unsubP()
+	sigCh, unsubS := core.SubscribeSignal()
+	defer unsubS()
+
+	// Stand in for the uncloned batch handleChanges would leave when the clone is
+	// skipped: a live-pointer Nib that must not escape to a payload subscriber.
+	live := &nib.Nib{ID: "leak1", Path: "leak1.md"}
+	events := []NibEvent{{Type: EventUpdated, NibID: "leak1", Nib: live}}
+
+	core.fanOut(events, false /* payloadsCloned */)
+
+	// Signal-only subscriber must tick.
+	select {
+	case <-sigCh:
+	case <-time.After(time.Second):
+		t.Fatal("signal-only subscriber got no tick on the skip path")
+	}
+
+	// Payload subscriber must receive nothing (dropped), never the live-pointer batch.
+	// Sound as a negative assertion, not a flaky "wait and hope nothing arrives":
+	// fanOut is synchronous and already returned above, so no async sender can race
+	// this select — payloadCh is provably drained-empty and stays so.
+	select {
+	case got := <-payloadCh:
+		t.Fatalf("payload subscriber received a batch on the skip path (%+v) — "+
+			"a live/uncloned pointer leaked off-lock", got)
+	case <-time.After(50 * time.Millisecond):
+		// Correct: the batch was dropped for the payload subscriber.
+	}
+}
+
+// TestSignalOnlySkipPathRaceClean exercises the skip path under concurrent load
+// with -race: a signal-only subscriber, a producer spinning handleChanges (each
+// iteration loads a fresh *nib.Nib and swaps the store pointer, so the discarded
+// batch holds live pointers), and store readers, all at once. It
+// verifies two things: the skip path is concurrency-clean — handleChanges racing
+// All/Get (and a concurrent sigCh consumer) surfaces no data race — and the
+// two-WaitGroup shutdown joins cleanly (the drainer consumes sigCh concurrently
+// with the producer's sends and is itself joined, so it can't leak past the
+// test). Run it under `go test -race`.
+//
+// It does NOT pin the live-pointer-leak invariant. With no payload subscriber
+// attached, fanOut has no payload channel to (mis)deliver to, and the producer
+// swaps in a brand-new pointer each iteration rather than mutating a
+// previously-delivered one in place, so the leak cannot manifest here. That
+// invariant is pinned directly and synchronously by
+// TestFanOutSkipPathDropsPayloadDelivery.
+func TestSignalOnlySkipPathRaceClean(t *testing.T) {
+	core, nibsDir, filename := watchingCore(t, "race1")
+	setWatching(core)
+
+	sigCh, unsub := core.SubscribeSignal()
+	defer unsub()
+
+	abs := filepath.Join(nibsDir, filename)
+
+	stop := make(chan struct{})
+	var wg sync.WaitGroup      // producer + readers: finite work
+	var drain sync.WaitGroup   // drainer: runs until stop is closed
+
+	// Consume ticks concurrently with the producer so a reader races the signal
+	// sends under -race. (fanOut's tick send is non-blocking — select with a
+	// default — so a full sigCh never wedges the producer anyway; excess ticks
+	// are simply dropped.) The drainer is on its OWN WaitGroup, not wg: it only
+	// returns once stop is closed, and stop is closed after wg.Wait() — putting it
+	// in wg would deadlock (wg.Wait would block on a goroutine that waits on
+	// close(stop)).
+	drain.Add(1)
+	go func() {
+		defer drain.Done()
+		for {
+			select {
+			case <-sigCh:
+			case <-stop:
+				return
+			}
+		}
+	}()
+
+	// Producer: repeatedly publish change batches on the skip path (no payload
+	// subscriber attached), so every batch carries a live c.nibs pointer.
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		for range 300 {
+			core.handleChanges(map[string]fsnotify.Op{abs: fsnotify.Write})
+		}
+	}()
+
+	// Concurrent store readers: if the skip path ever handed a live pointer to a
+	// reader off-lock, the detector would fire here.
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		for range 300 {
+			_ = core.All()
+			_, _ = core.Get("race1")
+		}
+	}()
+
+	wg.Wait()    // producer + readers done
+	close(stop)  // signal the drainer to exit
+	drain.Wait() // join the drainer so it can't outlive the test
 }
