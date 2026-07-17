@@ -35,10 +35,11 @@ type NibReader interface {
 	// GraphQL Nibs filter/sort pipeline; gqlgen's async field marshaler) still
 	// holding the old pointer never observe a non-Path field torn mid-write. The
 	// only writers that rewrite Path in place are Archive, Unarchive,
-	// LoadAndUnarchive, and the watcher's move/rename branches. A slug rename is one
-	// of those watcher branches and likewise rewrites ONLY Path in place; Slug,
-	// though also filename-derived, is an off-lock-read field and must be updated
-	// copy-on-write like any other non-Path field. The store-side (producer) half of
+	// LoadAndUnarchive, and the watcher's archive/unarchive *move* branches. The
+	// watcher's same-id slug-rename branch is COPY-ON-WRITE, not an in-place Path
+	// writer: a rename also changes Slug (filename-derived, an off-lock-read field),
+	// so the branch installs a fresh *nib.Nib carrying the new Path AND re-derived
+	// Slug rather than editing the stored pointer. The store-side (producer) half of
 	// this invariant is enforced by the deterministic guard
 	// nibcore.TestCoreMutators_FreezeGuard.
 	//

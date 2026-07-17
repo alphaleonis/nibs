@@ -478,6 +478,82 @@ func TestWatcherSameIdSlugRenameNotEvicted(t *testing.T) {
 	}
 }
 
+// TestWatcherSameIdSlugRenameUpdatesSlug covers nibs-41xj: the same-id
+// slug-rename branch of handleChanges (nibs-x--old-slug.md -> nibs-x--new-slug.md)
+// must re-derive the in-memory Slug from the new filename, not merely rewrite
+// Path. Slug is a filename-derived field, and that branch keeps the nib live by
+// pointing Path at the file's new location WITHOUT reloading its content — so a
+// Slug left untouched stays stale, desynced from both Path and the file on disk.
+//
+// Only the rename half is driven (no following Create). That is what isolates
+// this branch: were a Create event also handled, the create/write branch would
+// reload the nib from disk and mask the stale Slug. This is why the sibling
+// TestWatcherSameIdSlugRenameNotEvicted (which drives both halves) does not catch
+// it.
+func TestWatcherSameIdSlugRenameUpdatesSlug(t *testing.T) {
+	const nibID = "sr41"
+	const newSlug = "new-slug"
+
+	core, nibsDir, oldFilename := watchingCore(t, nibID)
+
+	// Precondition: the created nib carries a DIFFERENT slug, so a stale-slug bug
+	// leaves Slug unchanged and the assertion below still bites.
+	before, err := core.Get(nibID)
+	if err != nil {
+		t.Fatalf("Get: %v", err)
+	}
+	if before.Slug == newSlug {
+		t.Fatalf("precondition: nib already has slug %q before rename", newSlug)
+	}
+
+	oldAbs := filepath.Join(nibsDir, oldFilename)
+	newName := nib.BuildFilename(nibID, newSlug)
+	newAbs := filepath.Join(nibsDir, newName)
+	if err := os.Rename(oldAbs, newAbs); err != nil {
+		t.Fatalf("slug rename: %v", err)
+	}
+
+	setWatching(core)
+	ch, unsub := core.Subscribe()
+	defer unsub()
+
+	// Drive ONLY the rename half so the same-id slug-rename branch is the last
+	// word (no create/write reload to overwrite a stale Slug).
+	core.handleChanges(map[string]fsnotify.Op{oldAbs: fsnotify.Rename})
+
+	got, err := core.Get(nibID)
+	if err != nil {
+		t.Fatalf("nib evicted during slug rename: Get(%q) = %v", nibID, err)
+	}
+	if got.Slug != newSlug {
+		t.Errorf("stored Slug = %q, want %q (slug not re-derived from renamed file)", got.Slug, newSlug)
+	}
+	if wantPath := filepath.ToSlash(newName); got.Path != wantPath {
+		t.Errorf("stored Path = %q, want %q", got.Path, wantPath)
+	}
+
+	// The emitted event must carry the re-derived slug too, not just the store: a
+	// copy-on-write that reinstalled the store but published a stale-slug payload
+	// would pass the Get assertions above yet strand a wrong Slug in every
+	// subscriber. Mirrors the event assertions in the sibling rename tests.
+	events := collectNibEvents(t, ch, nibID, 150*time.Millisecond)
+	var updated *NibEvent
+	for i := range events {
+		if events[i].Type == EventUpdated {
+			updated = &events[i]
+		}
+	}
+	if updated == nil {
+		t.Fatalf("no EventUpdated emitted for %q; got %v", nibID, events)
+	}
+	if updated.Nib == nil {
+		t.Fatalf("emitted EventUpdated has a nil Nib")
+	}
+	if updated.Nib.Slug != newSlug {
+		t.Errorf("emitted EventUpdated Slug = %q, want %q", updated.Nib.Slug, newSlug)
+	}
+}
+
 // TestEventPayloadsAreImmutableSnapshots pins the payload contract from
 // nibs-y5nb: an event's Nib is a snapshot taken at publish time, so a subscriber
 // holding a payload never sees its fields change even when the store later

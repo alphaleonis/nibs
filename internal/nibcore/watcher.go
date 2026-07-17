@@ -493,17 +493,28 @@ func (c *Core) handleChanges(changes map[string]fsnotify.Op) {
 			// equals this id lives elsewhere in the store. A slug rename changes the
 			// basename (nibs-x--old-slug.md -> nibs-x--new-slug.md), so neither cheap
 			// basename check above matched — yet nib.ParseFilename yields the same id
-			// for both names. The nib is NOT gone: point stored.Path at the file's
-			// new location and report the move as an update, keeping it live in the
-			// store. Evicting here would drop a live nib whose file is present on
-			// disk under a new name. Bounded — reached only after both basename
-			// checks miss, right before the genuine-delete fall-through.
+			// for both names. The nib is NOT gone: point it at the file's new
+			// location, re-derive its filename-sourced Slug, and report the move as
+			// an update, keeping it live in the store. Evicting here would drop a
+			// live nib whose file is present on disk under a new name. Bounded —
+			// reached only after both basename checks miss, right before the
+			// genuine-delete fall-through.
+			//
+			// Copy-on-write: this changes Slug, a NON-Path field, so it must land on
+			// a FRESH pointer rather than editing the published one — mutating Slug
+			// in place would let an off-lock reader (the GraphQL Nibs pipeline)
+			// observe it torn mid-write. Only Path may change in place on a stored
+			// pointer (the archive/unarchive branches above do so); the slug-rename
+			// case additionally re-derives Slug and therefore clones. See the
+			// canonical invariant at NibReader.GetSnapshot (internal/graph/interfaces.go).
 			if newRel, ok := c.findRelPathByID(id); ok {
-				stored.Path = newRel
-				c.nibs[id] = stored
+				updated := stored.Clone()
+				updated.Path = newRel
+				_, updated.Slug = nib.ParseFilename(filepath.Base(newRel))
+				c.nibs[id] = updated
 				events = append(events, NibEvent{
 					Type:  EventUpdated,
-					Nib:   stored,
+					Nib:   updated,
 					NibID: id,
 				})
 				continue

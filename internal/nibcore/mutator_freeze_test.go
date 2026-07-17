@@ -36,8 +36,9 @@ import (
 // field diverge from its "before" clone, which DeepEqual reports. A copy-on-write
 // mutator, by contrast, installs a DIFFERENT pointer and leaves the captured one
 // fully frozen (even Path), which also passes. Path is the sole in-place exception
-// (Archive/Unarchive/LoadAndUnarchive and the watcher's move/rename branches
-// rewrite it under c.mu), so it is excluded from the comparison.
+// (Archive/Unarchive/LoadAndUnarchive and the watcher's archive/unarchive move
+// branches rewrite it under c.mu; the watcher's slug-rename branch is instead
+// copy-on-write), so it is excluded from the comparison.
 //
 // The "before" snapshot is a DEEP clone (not a shallow *p copy) on purpose: a
 // shallow copy would share slice/map backing storage with the live pointer, so an
@@ -247,7 +248,7 @@ func TestCoreMutators_FreezeGuard(t *testing.T) {
 			},
 		},
 		{
-			name: "watcher-slug-rename", // Same-id rename: rewrites Path in place.
+			name: "watcher-slug-rename", // Same-id rename: copy-on-write (new Path + re-derived Slug).
 			setup: func(t *testing.T, c *Core, _ string) {
 				createTestNib(t, c, "wrename", "Watch Rename", "todo")
 				setWatching(c)
