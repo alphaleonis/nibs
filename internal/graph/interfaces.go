@@ -18,8 +18,8 @@ type NibReader interface {
 	// GetForUpdate returns an OWNED deep copy (a Clone) of the nib the caller may
 	// freely mutate before handing it to Writer.Update — the store's shared
 	// pointer is never touched, so a refused write cannot corrupt in-memory state.
-	// It returns the same errors as Get (notably ErrNotFound) when the nib is
-	// missing. This is the one blessed accessor for every mutation site.
+	// It returns ErrNotFound when the nib is missing. This is the one blessed
+	// accessor for every mutation site.
 	GetForUpdate(id string) (*nib.Nib, error)
 	// GetSnapshot returns a detached deep copy of the nib, cloned WHILE the store
 	// lock is held, so the result never aliases the live store pointer and no

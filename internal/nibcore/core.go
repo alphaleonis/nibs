@@ -633,13 +633,18 @@ func (c *Core) Get(id string) (*nib.Nib, error) {
 // freely mutate before handing it to Update. Unlike Get — which returns the
 // SHARED c.nibs[id] pointer — mutating the returned nib never touches in-memory
 // store state, so a rejected Update cannot leave a phantom mutation behind.
-// Returns the same errors as Get (notably ErrNotFound) when the nib is missing.
+// Resolution mirrors Get (exact id, then the configured prefix prepended);
+// returns ErrNotFound when the nib is missing.
+//
+// The Clone is taken WHILE c.mu is held (via GetSnapshot's clone-under-RLock),
+// so the shallow struct copy's field reads — notably Path — cannot race an
+// in-place Path writer holding c.mu (e.g. Archive/Unarchive). Cloning the
+// shared pointer off-lock would race that writer.
 func (c *Core) GetForUpdate(id string) (*nib.Nib, error) {
-	b, err := c.Get(id)
-	if err != nil {
-		return nil, err
+	if b, ok := c.GetSnapshot(id); ok {
+		return b, nil
 	}
-	return b.Clone(), nil
+	return nil, ErrNotFound
 }
 
 // GetSnapshot returns a detached deep copy of the nib, cloned WHILE c.mu is

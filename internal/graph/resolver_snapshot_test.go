@@ -827,11 +827,11 @@ func TestSnapshotHelpersWrapErrNotFound(t *testing.T) {
 //   - It sources its returned nib from Reader.Get (the shared pointer, WITHOUT an
 //     off-lock clone) rather than Reader.GetForUpdate, so the source's Path is
 //     never cloned off-lock during the mutation. The GetForUpdate-based mutations
-//     (update, setParent, reorder, ...) clone the working nib off the lock inside
-//     GetForUpdate itself (nibcore.Core.GetForUpdate: c.Get then b.Clone() with no
-//     lock held), which races Archive's in-place Path write independently of the
-//     returned value — a distinct, pre-existing nibcore concern outside this fix's
-//     scope — so they cannot cleanly isolate the return-value race.
+//     (update, setParent, reorder, ...) sourced their working nib from
+//     GetForUpdate, whose own input-side clone once raced Archive's in-place Path
+//     write independently of the returned value — a distinct nibcore concern,
+//     since closed by cloning under c.mu — so they could not cleanly isolate the
+//     return-value race this test guards.
 //   - A non-existent target makes the resolver skip its target-side write entirely
 //     (the existence guard is false), so there is no optimistic-concurrency etag
 //     collision under the 8-way concurrency below, and the ONLY off-lock read of
