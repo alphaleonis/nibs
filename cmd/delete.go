@@ -30,7 +30,7 @@ var deleteCmd = &cobra.Command{
 
 If other nibs reference the target nib(s) (as parent or via blocking), you will be
 warned and those references will be removed after confirmation. Use -f to skip all warnings.`,
-	Args: cobra.MinimumNArgs(1),
+	Args: codedMinimumNArgs(&deleteJSON, 1),
 	RunE: func(cmd *cobra.Command, args []string) error {
 		app := getApp(cmd)
 		ctx := context.Background()

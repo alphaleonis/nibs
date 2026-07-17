@@ -71,7 +71,7 @@ Block move:   nibs mv <id1> <id2> ... --first
 Children-of:  nibs mv --children-of <parent-id> <id1> <id2> ...
 
 Use --children-of "" to reorder root-level (no-parent) siblings.`,
-	Args: cobra.MinimumNArgs(1),
+	Args: codedMinimumNArgs(&mvJSON, 1),
 	RunE: func(cmd *cobra.Command, args []string) error {
 		// Dispatch by (args count, flag shape) into one of three regimes:
 		//   - Mode A — --children-of <parent> set (incl. ""): args are full

@@ -18,7 +18,7 @@ import (
 var cheatCmd = &cobra.Command{
 	Use:               "cheat",
 	Short:             "Print the whole nibs agent grammar on one screen",
-	Args:              cobra.NoArgs,
+	Args:              codedNoArgs(nil),
 	DisableAutoGenTag: true,
 	RunE: func(cmd *cobra.Command, args []string) error {
 		cfg := config.Default()

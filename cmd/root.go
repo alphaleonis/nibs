@@ -133,6 +133,15 @@ func resolveNibsPath(flagPath string, c *config.Config) (string, error) {
 //     filesystem/IO failures to ExitIO, everything else to ExitError. This
 //     replaces Cobra's auto-print, silenced via rootCmd.SilenceErrors so the
 //     boundary owns error reporting in one place.
+//
+// Positional-argument (arg-count) errors reach this boundary already coded:
+// commands wire their Args field to the codedNoArgs/codedExactArgs/
+// codedMinimumNArgs/codedMaximumNArgs helpers (cmd/args.go) — or, for the two
+// commands with bespoke arg logic (archive, query), an inline validator that
+// routes through cmdError — never stock cobra.NoArgs/ExactArgs/etc., so an arity
+// violation is a VALIDATION_ERROR (exit 2) and, for --json commands, the {error}
+// envelope — matching value-validation errors instead of Cobra's plain-text
+// exit 1.
 func reportExitError(stderr io.Writer, err error) int {
 	if err == nil {
 		return output.ExitOK

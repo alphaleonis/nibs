@@ -577,7 +577,7 @@ apply to the non-singular constituents (mentions-out/in, children, siblings,
 blocking, blocked-by) and are silently dropped for the singular constituent
 (parent) — parent is aggregated by expansion, not requested directly, so the
 filter-on-singular validation error does not fire here.`,
-	Args: cobra.ExactArgs(1),
+	Args: codedExactArgs(&relJSON, 1),
 	RunE: func(cmd *cobra.Command, args []string) error {
 		// Compile the projection selection up-front (mirrors 'nibs list'): a
 		// bad view/field/nesting is a VALIDATION error naming the menu, surfaced

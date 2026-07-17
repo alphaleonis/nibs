@@ -57,7 +57,7 @@ active phase.
 With a nib ID, shows a subtree summary for that nib: the same progress rollup
 over its direct children, plus active tasks, next tasks, and key decisions
 (works for milestones, epics, features — any nib with children).`,
-	Args: cobra.MaximumNArgs(1),
+	Args: codedMaximumNArgs(&contextJSON, 1),
 	RunE: func(cmd *cobra.Command, args []string) error {
 		app := getApp(cmd)
 		resolver := app.newResolver()

@@ -25,7 +25,7 @@ var closeCmd = &cobra.Command{
 	Use:   "close <id>",
 	Short: "Close a nib by marking it completed with a summary",
 	Long:  `Closes a nib by marking it completed with a summary. If the nib has a parent, updates the parent's Current Focus and merges Key Decisions. The --if-match flag protects the target nib only; the parent update uses its own etag internally.`,
-	Args:  cobra.ExactArgs(1),
+	Args:  codedExactArgs(&closeJSON, 1),
 	RunE: func(cmd *cobra.Command, args []string) error {
 		app := getApp(cmd)
 		ctx := context.Background()

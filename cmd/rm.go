@@ -35,7 +35,7 @@ Confirmation: an interactive terminal prompts before removing. Agents and script
 must pass -f/--force (or --json, which implies force). With no terminal to prompt
 on and no --force, rm refuses with a validation error rather than silently doing
 nothing.`,
-	Args: cobra.MinimumNArgs(1),
+	Args: codedMinimumNArgs(&rmJSON, 1),
 	RunE: runRm,
 }
 

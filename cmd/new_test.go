@@ -648,9 +648,18 @@ func TestNewRejectsExtraArgs(t *testing.T) {
 	}
 	// Pin the failure to the arity guard specifically — not some unrelated error
 	// (a config load, an editor spawn) that would also leave err != nil and no
-	// nib created, letting a broken MaximumNArgs(1) slip through green.
-	if !strings.Contains(err.Error(), "arg(s)") {
+	// nib created, letting a broken codedMaximumNArgs(1) slip through green.
+	if !strings.Contains(err.Error(), "argument(s)") {
 		t.Errorf("expected an arg-count error, got: %v", err)
+	}
+	// The coded validator routes arg-count errors through the same VALIDATION
+	// path as value errors (exit 2), not cobra's plain-text exit 1.
+	var ce *output.CodedError
+	if !errors.As(err, &ce) {
+		t.Fatalf("error = %T, want *output.CodedError", err)
+	}
+	if output.ExitCode(ce.Code) != output.ExitValidation {
+		t.Errorf("exit = %d, want %d (validation)", output.ExitCode(ce.Code), output.ExitValidation)
 	}
 	if n := countNibFiles(t, nibsDir); n != 0 {
 		t.Errorf("expected no nib created when extra args are rejected, found %d", n)

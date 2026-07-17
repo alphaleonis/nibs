@@ -47,7 +47,7 @@ clean git working tree (check covers both .nibs/ and .nibs.yml) unless
 Use --dry-run to print the planned renames without mutating anything.
 Dry-run is read-only and does NOT consult git, so --force is ignored
 when combined with --dry-run.`,
-	Args: cobra.ExactArgs(1),
+	Args: codedExactArgs(&setPrefixJSON, 1),
 	RunE: runSetPrefix,
 }
 

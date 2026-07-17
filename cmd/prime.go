@@ -34,7 +34,7 @@ var primeCmd = &cobra.Command{
 By default, emits a slim prompt with the mandatory workflow rules and a directive to load
 the full reference on demand. Pass --full to emit the complete CLI guide (commands, flags,
 body section conventions, GraphQL examples).`,
-	Args: cobra.NoArgs,
+	Args: codedNoArgs(nil),
 	RunE: func(cmd *cobra.Command, args []string) error {
 		// If no explicit path given, check if a nibs project exists by searching
 		// upward for a .nibs.yml config file

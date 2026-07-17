@@ -62,7 +62,7 @@ Topics:
 Run 'nibs catalog' with no topic for this index. --json emits structured data
 for fields, filters, hierarchy, recipes, and the index; examples is always JSON;
 schema is always SDL.`,
-	Args:              cobra.MaximumNArgs(1),
+	Args:              codedMaximumNArgs(&catalogJSON, 1),
 	ValidArgs:         catalogTopicNames(),
 	DisableAutoGenTag: true,
 	RunE:              runCatalog,

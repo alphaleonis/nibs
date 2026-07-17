@@ -39,7 +39,7 @@ Operations (choose one):
 The surgical --replace-old/--replace-new form matches exactly once: zero
 matches fail with TEXT_NOT_FOUND and more than one with TEXT_AMBIGUOUS (both
 exit 2), each reporting the occurrence count.`,
-	Args: cobra.ExactArgs(1),
+	Args: codedExactArgs(&bodyJSON, 1),
 	RunE: runBody,
 }
 

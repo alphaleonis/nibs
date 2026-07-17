@@ -38,7 +38,7 @@ explicitly (-f body / -f etag) or via --view full.
                             for one id, {"nibs": [ … ]} for several. No success
                             or data wrapper. Defaults to the 'card' field set
                             when neither --view nor -f is given.`,
-	Args: cobra.MinimumNArgs(1),
+	Args: codedMinimumNArgs(&getJSON, 1),
 	RunE: runGet,
 }
 

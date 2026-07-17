@@ -43,7 +43,7 @@ var newCmd = &cobra.Command{
 	// defaults to "Untitled"), so this is MaximumNArgs(1), not ExactArgs(1).
 	// Extra args used to be silently folded into the title via strings.Join;
 	// rejecting them keeps the documented `nibs new "<title>"` contract explicit.
-	Args: cobra.MaximumNArgs(1),
+	Args: codedMaximumNArgs(&newJSON, 1),
 	RunE: func(cmd *cobra.Command, args []string) error {
 		app := getApp(cmd)
 		title := strings.Join(args, " ")

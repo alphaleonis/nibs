@@ -24,7 +24,7 @@ var initCmd = &cobra.Command{
 	Long:  `Creates a .nibs directory and .nibs.yml config file in the current directory.`,
 	// Target directory comes from --nibs-path / cwd and the prefix from --prefix;
 	// no positional args are read.
-	Args: cobra.NoArgs,
+	Args: codedNoArgs(&initJSON),
 	RunE: func(cmd *cobra.Command, args []string) error {
 		var projectDir string
 		var nibsDir string

@@ -43,7 +43,7 @@ var serveCmd = &cobra.Command{
 	Aliases: []string{"serve"},
 	Short:   "Start the web UI server",
 	// Host and port come from --host/--port (or config); no positional args.
-	Args: cobra.NoArgs,
+	Args: codedNoArgs(nil),
 	RunE: func(cmd *cobra.Command, args []string) error {
 		app := getApp(cmd)
 		defer func() { _ = app.Core.Close() }()

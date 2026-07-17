@@ -70,8 +70,14 @@ More examples:
 			return nil
 		}
 		// Allow 0 args (query comes from piped stdin) or exactly 1 arg.
+		// Route the arity violation through the coded envelope (exit 2, and the
+		// {error} envelope for --json), uniform with the coded* validators — the
+		// --schema bypass above and the 0-or-1-arg stdin logic are why this stays
+		// a bespoke validator rather than codedMaximumNArgs.
 		if len(args) > 1 {
-			return fmt.Errorf("accepts at most 1 argument (the GraphQL query, or \"-\"/\"@FILE\")")
+			return cmdError(queryJSON, output.ErrValidation,
+				`%s accepts at most 1 argument (the GraphQL query, or "-"/"@FILE"), got %d`,
+				invokedName(cmd), len(args))
 		}
 		return nil
 	},

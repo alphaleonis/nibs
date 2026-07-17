@@ -19,14 +19,15 @@ The archive keeps the main .nibs directory tidy while preserving project history
 
 Relationships (parent, blocking) are preserved in archived nibs.`,
 	// archive takes NO positional arguments — it archives every eligible nib.
-	// A custom validator (rather than bare cobra.NoArgs) is used so the error
-	// names the id-taking alternative: an argument here was a caller reaching
-	// for `nibs rm <id>` (which archives by default). Without this, an id was
-	// silently discarded and every completed/scrapped nib archived. Flags are
-	// parsed before Args validation, so archiveJSON is already set here and the
-	// coded cmdError routes through the --json envelope (exit 2). A bare
-	// cobra.NoArgs would not: stock arg-count errors print plain text and exit 1,
-	// as the other commands' NoArgs validators still do.
+	// A custom validator (rather than the shared codedNoArgs helper) is used so
+	// the error names the id-taking alternative: an argument here was a caller
+	// reaching for `nibs rm <id>` (which archives by default). Without this, an
+	// id was silently discarded and every completed/scrapped nib archived. Flags
+	// are parsed before Args validation, so archiveJSON is already set here and
+	// the coded cmdError routes through the --json envelope (exit 2). This
+	// bespoke message is the only thing that sets archive apart: the coded
+	// exit-2/envelope behavior it shares with every other command (the coded*
+	// validators in cmd/args.go), rather than being the exception it once was.
 	Args: func(cmd *cobra.Command, args []string) error {
 		if len(args) > 0 {
 			return cmdError(archiveJSON, output.ErrValidation,

@@ -47,7 +47,7 @@ var setCmd = &cobra.Command{
 	Long: `Sets one or more properties of an existing nib: metadata (status, type,
 priority, estimate, title), links (parent, blocking, blocked-by, tags,
 documents), or clears a clearable field (--clear priority|estimate|parent).`,
-	Args: cobra.ExactArgs(1),
+	Args: codedExactArgs(&setJSON, 1),
 	RunE: func(cmd *cobra.Command, args []string) error {
 		app := getApp(cmd)
 		ctx := context.Background()

@@ -168,7 +168,7 @@ var planCmd = &cobra.Command{
 	Use:   "plan <parent-id>",
 	Short: "Display plan view for a parent nib and its children",
 	Long:  `Shows an ordered view of a parent nib's children with position, status, title, and acceptance criteria.`,
-	Args:  cobra.ExactArgs(1),
+	Args:  codedExactArgs(&planJSON, 1),
 	RunE: func(cmd *cobra.Command, args []string) error {
 		app := getApp(cmd)
 		resolver := app.newResolver()
