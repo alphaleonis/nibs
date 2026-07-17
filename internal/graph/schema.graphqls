@@ -81,7 +81,10 @@ type Mutation {
   """
   Reorder the full set of children under a parent. childIds must list exactly
   all children of parentId, in the desired new order. Returns affected nibs in
-  the requested new order. Use parentId="" for root-level (no-parent) siblings.
+  the requested new order; a child deleted concurrently (in the window between
+  this batch persisting and the response snapshot) is omitted from the returned
+  set, and the persisted order among the survivors is still valid. Use
+  parentId="" for root-level (no-parent) siblings.
   Errors if childIds is missing children, contains non-existent IDs, contains
   nibs whose parent != parentId, or contains duplicates.
 
@@ -108,7 +111,10 @@ type Mutation {
   sibling. All siblingIds must share the same parent (inferred from the listed
   nibs). Anchor must be a sibling and must NOT appear in siblingIds. Exactly
   one of afterId, beforeId, first must be specified. Listed siblings become a
-  contiguous block at the requested position, preserving their listed order.
+  contiguous block at the requested position, preserving their listed order. A
+  sibling deleted concurrently (in the window between this batch persisting and
+  the response snapshot) is omitted from the returned set; the persisted order
+  among the survivors is still valid.
 
   Optional ifMatch carries per-sibling ETags for optimistic concurrency. Each
   entry's ETag is pre-checked against the on-disk content of the corresponding

@@ -106,16 +106,23 @@ func (r *Resolver) snapshotResult(id string) (*nib.Nib, error) {
 }
 
 // snapshotResults is the slice form of snapshotResult for the bulk-reorder
-// resolvers, preserving order. Each element is detached via GetSnapshot; a !ok on
-// any element (a just-written nib that vanished before the snapshot) is an error,
-// matching snapshotResult — a bulk reorder must return the full ordered set it
-// persisted, never a silently-shortened list.
+// resolvers, preserving order. Each element is detached via GetSnapshot. Unlike
+// the singular snapshotResult, a !ok is NOT an error here: every input nib was
+// just written by the reorder loop, so a miss means the nib vanished via a
+// concurrent delete in the lock-free window between its order-key write
+// committing and this post-write snapshot. Skip the vanished element and return
+// the surviving snapshots in order — the persisted order among the survivors is
+// still valid, so the shortened ordered set is the honest result. Failing the
+// whole already-persisted batch instead would misreport a durable write as a
+// total failure and dead-end the client's same-input retry on
+// validateBulkChildren (the deleted child no longer existing).
 func (r *Resolver) snapshotResults(nibs []*nib.Nib) ([]*nib.Nib, error) {
 	out := make([]*nib.Nib, 0, len(nibs))
 	for _, b := range nibs {
 		snap, ok := r.Reader.GetSnapshot(b.ID)
 		if !ok {
-			return nil, fmt.Errorf("nib not found after write: %s: %w", b.ID, nib.ErrNotFound)
+			// Deleted concurrently after its order-key write committed; skip it.
+			continue
 		}
 		out = append(out, snap)
 	}

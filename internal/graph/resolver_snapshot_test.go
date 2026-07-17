@@ -776,12 +776,20 @@ func TestMutationResolversReturnSnapshots(t *testing.T) {
 	})
 }
 
-// TestSnapshotHelpersWrapErrNotFound pins that snapshotResult/snapshotResults
-// wrap nib.ErrNotFound when GetSnapshot misses (the nib was deleted in the
-// window between the write committing and the re-lookup). Over `nibs serve`,
+// TestSnapshotHelpersWrapErrNotFound pins that the SINGULAR snapshotResult wraps
+// nib.ErrNotFound when GetSnapshot misses (the nib was deleted in the window
+// between the write committing and the re-lookup). Over `nibs serve`,
 // etagErrorPresenter (cmd/serve.go) tags the error NOT_FOUND only when
 // errors.Is(err, nib.ErrNotFound) holds; a bare error would surface untagged and
 // the web client would show a raw toast instead of its gone/deleted notice.
+//
+// The PLURAL snapshotResults deliberately does NOT error on a miss: a bulk
+// reorder just wrote every listed nib, so a miss means a concurrent delete
+// landed after the order-key write committed, and the persisted order among the
+// surviving siblings is still valid. It returns the survivors (see
+// TestSnapshotResultsSkipsVanishedElements), so here — where the only listed nib
+// is absent — it yields an empty, error-free result rather than a wrapped
+// ErrNotFound.
 //
 // The helpers are driven directly against a stubReader with an empty store, so
 // GetSnapshot always returns !ok — a deterministic stand-in for the
@@ -802,18 +810,133 @@ func TestSnapshotHelpersWrapErrNotFound(t *testing.T) {
 		}
 	})
 
-	t.Run("snapshotResults", func(t *testing.T) {
+	t.Run("snapshotResults returns survivors, not an error", func(t *testing.T) {
 		got, err := r.snapshotResults([]*nib.Nib{{ID: "missing"}})
-		if got != nil {
-			t.Errorf("expected nil slice, got %v", got)
+		if err != nil {
+			t.Fatalf("expected no error on GetSnapshot miss (survivors-only contract), got %v", err)
 		}
-		if err == nil {
-			t.Fatal("expected error on GetSnapshot miss, got nil")
-		}
-		if !errors.Is(err, nib.ErrNotFound) {
-			t.Errorf("error does not wrap nib.ErrNotFound: %v", err)
+		if len(got) != 0 {
+			t.Errorf("expected empty survivor slice for an all-absent input, got %v", got)
 		}
 	})
+}
+
+// TestSnapshotResultsSkipsVanishedElements pins the survivors-only contract of
+// snapshotResults (the bulk-reorder facet): every element present in the store
+// is returned as a detached snapshot in the requested order, and an element
+// absent from GetSnapshot — a sibling deleted in the lock-free window between the
+// reorder's order-key write committing and this post-write snapshot — is skipped
+// rather than failing the whole already-persisted batch. The order among the
+// survivors is preserved.
+//
+// This is the strong deterministic guard: it drives snapshotResults directly
+// against a stubReader whose store holds only the "surviving" ids, so a listed
+// id absent from the map is an exact stand-in for the concurrent-delete race
+// without depending on the scheduler.
+func TestSnapshotResultsSkipsVanishedElements(t *testing.T) {
+	// present is the set of ids the store still holds. snapshotResults returns a
+	// GetSnapshot clone for each of these and skips the rest.
+	present := map[string]*nib.Nib{
+		"a": {ID: "a", Title: "A"},
+		"b": {ID: "b", Title: "B"},
+		"c": {ID: "c", Title: "C"},
+		"d": {ID: "d", Title: "D"},
+	}
+
+	tests := []struct {
+		name  string
+		input []string // ordered ids handed to snapshotResults
+		want  []string // ordered surviving ids
+	}{
+		{"all present, order preserved", []string{"a", "b", "c", "d"}, []string{"a", "b", "c", "d"}},
+		{"middle vanished", []string{"a", "gone", "c"}, []string{"a", "c"}},
+		{"first vanished", []string{"gone", "b", "c"}, []string{"b", "c"}},
+		{"last vanished", []string{"a", "b", "gone"}, []string{"a", "b"}},
+		{"multiple vanished", []string{"a", "x", "c", "y"}, []string{"a", "c"}},
+		{"all vanished", []string{"x", "y"}, []string{}},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			r := &Resolver{Reader: &stubReader{nibs: present}}
+
+			in := make([]*nib.Nib, len(tt.input))
+			for i, id := range tt.input {
+				in[i] = &nib.Nib{ID: id}
+			}
+
+			got, err := r.snapshotResults(in)
+			if err != nil {
+				t.Fatalf("snapshotResults returned error, want survivors: %v", err)
+			}
+
+			gotIDs := make([]string, len(got))
+			for i, b := range got {
+				gotIDs[i] = b.ID
+			}
+			if !slices.Equal(gotIDs, tt.want) {
+				t.Errorf("survivor ids = %v, want %v", gotIDs, tt.want)
+			}
+		})
+	}
+}
+
+// vanishingSnapshotReader wraps a NibReader and reports one id as vanished from
+// GetSnapshot ONLY, leaving every other accessor (Get, GetForUpdate, and the ids
+// the Orderer's sortedSiblings sees) intact. It is a deterministic stand-in for a
+// nib deleted in the lock-free window between a bulk reorder's order-key write
+// committing and its post-write snapshot: the reorder validates and persists the
+// full block, then snapshotResults snapshots into the gap the delete left.
+type vanishingSnapshotReader struct {
+	NibReader
+	vanishID string
+}
+
+func (v *vanishingSnapshotReader) GetSnapshot(id string) (*nib.Nib, bool) {
+	if id == v.vanishID {
+		return nil, false
+	}
+	return v.NibReader.GetSnapshot(id)
+}
+
+// TestReorderChildrenSurvivesConcurrentDelete drives the real ReorderChildren
+// resolver end-to-end (validate -> assign order keys -> persist -> snapshot) with
+// a middle child that vanishes from GetSnapshot exactly as the post-write
+// snapshot runs — the concurrent-delete race described in nibs-3lul. Wrapping
+// only the resolver's Reader (the Orderer still resolves siblings against the
+// unwrapped core) keeps this deterministic without a scheduler hook: the reorder
+// still validates and writes all three children, then snapshots into the gap.
+//
+// The resolver must return the surviving children in order with NO error — the
+// persisted order is honest. On the pre-fix code snapshotResults erred on the
+// miss, surfacing the whole already-persisted batch to the client as a total
+// failure, so this test fails there.
+func TestReorderChildrenSurvivesConcurrentDelete(t *testing.T) {
+	resolver, core := setupTestResolver(t)
+
+	parent := createTestNib(t, core, "parent1", "Parent", "todo")
+	childIDs := []string{"child1", "child2", "child3"}
+	for _, id := range childIDs {
+		mustCreate(t, core, &nib.Nib{ID: id, Slug: id, Title: "Child", Status: "todo", Parent: parent.ID})
+	}
+
+	// child2 vanishes from GetSnapshot only — as if a concurrent delete landed
+	// after its order-key write committed.
+	resolver.Reader = &vanishingSnapshotReader{NibReader: core, vanishID: "child2"}
+	mr := &mutationResolver{resolver}
+
+	got, err := mr.ReorderChildren(context.Background(), parent.ID, childIDs, nil)
+	if err != nil {
+		t.Fatalf("ReorderChildren surfaced a total-failure error for one concurrently-deleted child: %v", err)
+	}
+
+	gotIDs := make([]string, len(got))
+	for i, b := range got {
+		gotIDs[i] = b.ID
+	}
+	if want := []string{"child1", "child3"}; !slices.Equal(gotIDs, want) {
+		t.Errorf("survivors = %v, want %v (order preserved, deleted child skipped)", gotIDs, want)
+	}
 }
 
 // TestMutationResolverRaceUnderExecutor drives the removeBlocking mutation
