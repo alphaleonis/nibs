@@ -44,7 +44,10 @@ func (r *mutationResolver) reorderChildrenImpl(parentID string, childIDs []strin
 		// returned slice so callers see the persisted order.
 		ordered[i] = clone
 	}
-	return ordered, nil
+	// Each element is now the live store pointer Writer.Update installed — return
+	// detached snapshots so no live c.nibs pointer escapes to gqlgen's async
+	// marshaler (whose Path a concurrent Archive rewrites in place).
+	return r.snapshotResults(ordered)
 }
 
 // reorderSiblingsImpl is the shared core of ReorderSiblings: validate inputs,
@@ -132,7 +135,10 @@ func (r *mutationResolver) reorderSiblingsImpl(siblingIDs []string, afterID *str
 		block[i] = clone
 		prev = newKey
 	}
-	return block, nil
+	// Each element is now the live store pointer Writer.Update installed — return
+	// detached snapshots so no live c.nibs pointer escapes to gqlgen's async
+	// marshaler (whose Path a concurrent Archive rewrites in place).
+	return r.snapshotResults(block)
 }
 
 // ifMatchPtr returns a pointer to the pre-validated etag for id, or nil

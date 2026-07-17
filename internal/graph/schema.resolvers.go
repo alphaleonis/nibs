@@ -136,7 +136,9 @@ func (r *mutationResolver) CreateNib(ctx context.Context, input model.CreateNibI
 		}
 	}
 
-	return b, nil
+	// Writer.Create installed b AS the shared store entry (c.nibs[b.ID] = b), so
+	// b is now the live pointer — return a detached snapshot, never b itself.
+	return r.snapshotResult(b.ID)
 }
 
 // UpdateNib is the resolver for the updateNib field.
@@ -351,7 +353,8 @@ func (r *mutationResolver) UpdateNib(ctx context.Context, id string, input model
 		}
 	}
 
-	return b, nil
+	// Writer.Update installed b AS the shared store entry — return a snapshot.
+	return r.snapshotResult(b.ID)
 }
 
 // DeleteNib is the resolver for the deleteNib field.
@@ -418,7 +421,8 @@ func (r *mutationResolver) SetParent(ctx context.Context, id string, parentID *s
 	if err := r.Writer.Update(b, ifMatch); err != nil {
 		return nil, err
 	}
-	return b, nil
+	// Writer.Update installed b AS the shared store entry — return a snapshot.
+	return r.snapshotResult(b.ID)
 }
 
 // AddBlocking is the resolver for the addBlocking field.
@@ -459,7 +463,9 @@ func (r *mutationResolver) AddBlocking(ctx context.Context, id string, targetID 
 	}); err != nil {
 		return nil, err
 	}
-	return b, nil
+	// b is the live Reader.Get pointer for id (only the target was mutated) —
+	// return a detached snapshot rather than the shared store pointer.
+	return r.snapshotResult(b.ID)
 }
 
 // RemoveBlocking is the resolver for the removeBlocking field.
@@ -485,7 +491,9 @@ func (r *mutationResolver) RemoveBlocking(ctx context.Context, id string, target
 		}
 	}
 
-	return b, nil
+	// b is the live Reader.Get pointer for id (only the target was mutated) —
+	// return a detached snapshot rather than the shared store pointer.
+	return r.snapshotResult(b.ID)
 }
 
 // AddBlockedBy is the resolver for the addBlockedBy field.
@@ -522,7 +530,8 @@ func (r *mutationResolver) AddBlockedBy(ctx context.Context, id string, targetID
 	if err := r.Writer.Update(b, ifMatch); err != nil {
 		return nil, err
 	}
-	return b, nil
+	// Writer.Update installed b AS the shared store entry — return a snapshot.
+	return r.snapshotResult(b.ID)
 }
 
 // RemoveBlockedBy is the resolver for the removeBlockedBy field.
@@ -543,7 +552,8 @@ func (r *mutationResolver) RemoveBlockedBy(ctx context.Context, id string, targe
 	if err := r.Writer.Update(b, ifMatch); err != nil {
 		return nil, err
 	}
-	return b, nil
+	// Writer.Update installed b AS the shared store entry — return a snapshot.
+	return r.snapshotResult(b.ID)
 }
 
 // ReorderNib is the resolver for the reorderNib field.
@@ -627,7 +637,8 @@ func (r *mutationResolver) ReorderNib(ctx context.Context, id string, afterID *s
 	if err := r.Writer.Update(b, ifMatch); err != nil {
 		return nil, err
 	}
-	return b, nil
+	// Writer.Update installed b AS the shared store entry — return a snapshot.
+	return r.snapshotResult(b.ID)
 }
 
 // ReorderChildren is the resolver for the reorderChildren field.

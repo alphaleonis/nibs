@@ -26,21 +26,22 @@ type NibReader interface {
 	// field (notably Path) is read off-lock. This is the blessed READ accessor
 	// for values that outlive the lock.
 	//
-	// Rule for the GraphQL read/query/relationship resolvers: a resolver that
-	// returns nib data outliving the store lock MUST hand out a GetSnapshot clone,
-	// never a live c.nibs pointer. gqlgen marshals a returned nib's fields
-	// asynchronously and off the store lock, concurrently with an in-place
-	// mutation like Archive rewriting a stored nib's Path under c.mu, so a live
-	// pointer that reaches gqlgen is a data race. Only the immutable ID may be
+	// Rule for EVERY GraphQL resolver — read, query, relationship, AND mutation:
+	// a resolver that returns nib data outliving the store lock MUST hand out a
+	// GetSnapshot clone, never a live c.nibs pointer. gqlgen marshals a returned
+	// nib's fields asynchronously and off the store lock, concurrently with an
+	// in-place mutation like Archive rewriting a stored nib's Path under c.mu, so a
+	// live pointer that reaches gqlgen is a data race. Only the immutable ID may be
 	// read off a live pointer to look the snapshot up.
 	//
-	// This rule is NOT yet universal. The mutation resolvers (CreateNib,
-	// UpdateNib, SetParent, the blocking add/remove pair, AddBlockedBy,
-	// RemoveBlockedBy, and the reorder family ReorderNib/ReorderChildren/
-	// ReorderSiblings) still return the live c.nibs pointer to gqlgen rather than
-	// a snapshot; extending the snapshot discipline to the write side is a
-	// deferred follow-up (nib nibs-hi5i). Do not read the rule above as an
-	// automatic guarantee that already covers a newly added resolver.
+	// This rule is now universal — it covers the write side too. The mutation
+	// resolvers (CreateNib, UpdateNib, SetParent, the blocking add/remove pair,
+	// AddBlockedBy, RemoveBlockedBy, and the reorder family ReorderNib/
+	// ReorderChildren/ReorderSiblings) return a GetSnapshot clone via
+	// mutationResolver.snapshotResult / snapshotResults, never the live c.nibs
+	// pointer that Writer.Create/Writer.Update installed as the store entry (or
+	// that Reader.Get handed back). A newly added resolver that returns nib data
+	// is covered by this rule and must snapshot its result the same way.
 	//
 	// What snapshotting at the END of the Nibs pipeline buys: it detaches the
 	// RETURNED nib data, so no live c.nibs pointer outlives the store lock to

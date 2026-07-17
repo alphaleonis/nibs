@@ -2,6 +2,7 @@ package graph
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"slices"
 	"sync"
@@ -489,6 +490,396 @@ func TestQueryAndMentionResolverRaceUnderExecutor(t *testing.T) {
 			_ = core.Unarchive(target.ID)
 			_ = core.Archive(source.ID)
 			_ = core.Unarchive(source.ID)
+		}()
+	}
+	wg.Wait()
+}
+
+// TestMutationResolversReturnSnapshots extends the detachment rule to every
+// mutation resolver that returns nib data. Each returns a nib that gqlgen
+// marshals asynchronously and off the store lock, while Archive rewrites a
+// stored nib's Path in place under c.mu. Handing out the live c.nibs pointer
+// (the one Writer.Create/Writer.Update installed, or the one Reader.Get handed
+// back) is a data race; a GetSnapshot clone detaches the returned value.
+//
+// Each subtest drives a mutation resolver, captures the returned nib's Path,
+// then archives the underlying stored nib (which rewrites its Path in place
+// under c.mu). If the resolver returned the live pointer, the captured Path
+// mutates and the assertion fails (proving the bug on unfixed code). With the
+// snapshot fix the captured Path is frozen.
+func TestMutationResolversReturnSnapshots(t *testing.T) {
+	t.Run("CreateNib", func(t *testing.T) {
+		resolver, core := setupTestResolver(t)
+		mr := resolver.Mutation()
+		ctx := context.Background()
+
+		got, err := mr.CreateNib(ctx, model.CreateNibInput{Title: "Fresh"})
+		if err != nil {
+			t.Fatalf("CreateNib resolver: %v", err)
+		}
+		if got == nil {
+			t.Fatal("CreateNib resolver returned nil")
+		}
+		before := got.Path
+
+		if err := core.Archive(got.ID); err != nil {
+			t.Fatalf("Archive: %v", err)
+		}
+
+		if got.Path != before {
+			t.Errorf("captured nib Path mutated after Archive: got %q, want frozen %q (resolver leaked the live store pointer)", got.Path, before)
+		}
+	})
+
+	t.Run("UpdateNib", func(t *testing.T) {
+		resolver, core := setupTestResolver(t)
+		mr := resolver.Mutation()
+		ctx := context.Background()
+
+		target := createTestNib(t, core, "target1", "Target", "todo")
+
+		newTitle := "Updated Title"
+		got, err := mr.UpdateNib(ctx, target.ID, model.UpdateNibInput{Title: &newTitle})
+		if err != nil {
+			t.Fatalf("UpdateNib resolver: %v", err)
+		}
+		if got == nil {
+			t.Fatal("UpdateNib resolver returned nil")
+		}
+		before := got.Path
+
+		if err := core.Archive(target.ID); err != nil {
+			t.Fatalf("Archive: %v", err)
+		}
+
+		if got.Path != before {
+			t.Errorf("captured nib Path mutated after Archive: got %q, want frozen %q (resolver leaked the live store pointer)", got.Path, before)
+		}
+	})
+
+	t.Run("SetParent", func(t *testing.T) {
+		resolver, core := setupTestResolver(t)
+		mr := resolver.Mutation()
+		ctx := context.Background()
+
+		parent := &nib.Nib{ID: "parent1", Slug: "parent", Title: "Parent", Status: "todo", Type: "feature"}
+		mustCreate(t, core, parent)
+		child := createTestNib(t, core, "child1", "Child", "todo")
+
+		got, err := mr.SetParent(ctx, child.ID, &parent.ID, nil)
+		if err != nil {
+			t.Fatalf("SetParent resolver: %v", err)
+		}
+		if got == nil {
+			t.Fatal("SetParent resolver returned nil")
+		}
+		before := got.Path
+
+		if err := core.Archive(child.ID); err != nil {
+			t.Fatalf("Archive: %v", err)
+		}
+
+		if got.Path != before {
+			t.Errorf("captured nib Path mutated after Archive: got %q, want frozen %q (resolver leaked the live store pointer)", got.Path, before)
+		}
+	})
+
+	t.Run("AddBlocking", func(t *testing.T) {
+		resolver, core := setupTestResolver(t)
+		mr := resolver.Mutation()
+		ctx := context.Background()
+
+		source := createTestNib(t, core, "source1", "Source", "todo")
+		target := createTestNib(t, core, "target1", "Target", "todo")
+
+		got, err := mr.AddBlocking(ctx, source.ID, target.ID)
+		if err != nil {
+			t.Fatalf("AddBlocking resolver: %v", err)
+		}
+		if got == nil {
+			t.Fatal("AddBlocking resolver returned nil")
+		}
+		before := got.Path
+
+		if err := core.Archive(source.ID); err != nil {
+			t.Fatalf("Archive: %v", err)
+		}
+
+		if got.Path != before {
+			t.Errorf("captured nib Path mutated after Archive: got %q, want frozen %q (resolver leaked the live store pointer)", got.Path, before)
+		}
+	})
+
+	t.Run("RemoveBlocking", func(t *testing.T) {
+		resolver, core := setupTestResolver(t)
+		mr := resolver.Mutation()
+		ctx := context.Background()
+
+		source := createTestNib(t, core, "source1", "Source", "todo")
+		target := &nib.Nib{ID: "target1", Slug: "target", Title: "Target", Status: "todo", BlockedBy: []string{"source1"}}
+		mustCreate(t, core, target)
+
+		got, err := mr.RemoveBlocking(ctx, source.ID, target.ID)
+		if err != nil {
+			t.Fatalf("RemoveBlocking resolver: %v", err)
+		}
+		if got == nil {
+			t.Fatal("RemoveBlocking resolver returned nil")
+		}
+		before := got.Path
+
+		if err := core.Archive(source.ID); err != nil {
+			t.Fatalf("Archive: %v", err)
+		}
+
+		if got.Path != before {
+			t.Errorf("captured nib Path mutated after Archive: got %q, want frozen %q (resolver leaked the live store pointer)", got.Path, before)
+		}
+	})
+
+	t.Run("AddBlockedBy", func(t *testing.T) {
+		resolver, core := setupTestResolver(t)
+		mr := resolver.Mutation()
+		ctx := context.Background()
+
+		blocked := createTestNib(t, core, "blocked1", "Blocked", "todo")
+		blocker := createTestNib(t, core, "blocker1", "Blocker", "todo")
+
+		got, err := mr.AddBlockedBy(ctx, blocked.ID, blocker.ID, nil)
+		if err != nil {
+			t.Fatalf("AddBlockedBy resolver: %v", err)
+		}
+		if got == nil {
+			t.Fatal("AddBlockedBy resolver returned nil")
+		}
+		before := got.Path
+
+		if err := core.Archive(blocked.ID); err != nil {
+			t.Fatalf("Archive: %v", err)
+		}
+
+		if got.Path != before {
+			t.Errorf("captured nib Path mutated after Archive: got %q, want frozen %q (resolver leaked the live store pointer)", got.Path, before)
+		}
+	})
+
+	t.Run("RemoveBlockedBy", func(t *testing.T) {
+		resolver, core := setupTestResolver(t)
+		mr := resolver.Mutation()
+		ctx := context.Background()
+
+		blocker := createTestNib(t, core, "blocker1", "Blocker", "todo")
+		blocked := &nib.Nib{ID: "blocked1", Slug: "blocked", Title: "Blocked", Status: "todo", BlockedBy: []string{"blocker1"}}
+		mustCreate(t, core, blocked)
+
+		got, err := mr.RemoveBlockedBy(ctx, blocked.ID, blocker.ID, nil)
+		if err != nil {
+			t.Fatalf("RemoveBlockedBy resolver: %v", err)
+		}
+		if got == nil {
+			t.Fatal("RemoveBlockedBy resolver returned nil")
+		}
+		before := got.Path
+
+		if err := core.Archive(blocked.ID); err != nil {
+			t.Fatalf("Archive: %v", err)
+		}
+
+		if got.Path != before {
+			t.Errorf("captured nib Path mutated after Archive: got %q, want frozen %q (resolver leaked the live store pointer)", got.Path, before)
+		}
+	})
+
+	t.Run("ReorderNib", func(t *testing.T) {
+		resolver, core := setupTestResolver(t)
+		mr := resolver.Mutation()
+		ctx := context.Background()
+
+		a := createTestNib(t, core, "a1", "A", "todo")
+		b := createTestNib(t, core, "b1", "B", "todo")
+
+		got, err := mr.ReorderNib(ctx, a.ID, &b.ID, nil, nil, nil, nil)
+		if err != nil {
+			t.Fatalf("ReorderNib resolver: %v", err)
+		}
+		if got == nil {
+			t.Fatal("ReorderNib resolver returned nil")
+		}
+		before := got.Path
+
+		if err := core.Archive(a.ID); err != nil {
+			t.Fatalf("Archive: %v", err)
+		}
+
+		if got.Path != before {
+			t.Errorf("captured nib Path mutated after Archive: got %q, want frozen %q (resolver leaked the live store pointer)", got.Path, before)
+		}
+	})
+
+	t.Run("ReorderChildren", func(t *testing.T) {
+		resolver, core := setupTestResolver(t)
+		mr := resolver.Mutation()
+		ctx := context.Background()
+
+		parent := createTestNib(t, core, "parent1", "Parent", "todo")
+		c1 := &nib.Nib{ID: "c1", Slug: "c1", Title: "C1", Status: "todo", Parent: parent.ID}
+		c2 := &nib.Nib{ID: "c2", Slug: "c2", Title: "C2", Status: "todo", Parent: parent.ID}
+		mustCreate(t, core, c1)
+		mustCreate(t, core, c2)
+
+		got, err := mr.ReorderChildren(ctx, parent.ID, []string{c2.ID, c1.ID}, nil)
+		if err != nil {
+			t.Fatalf("ReorderChildren resolver: %v", err)
+		}
+		if len(got) != 2 {
+			t.Fatalf("ReorderChildren resolver returned %d nibs, want 2", len(got))
+		}
+		before := got[0].Path
+
+		if err := core.Archive(got[0].ID); err != nil {
+			t.Fatalf("Archive: %v", err)
+		}
+
+		if got[0].Path != before {
+			t.Errorf("captured nib Path mutated after Archive: got %q, want frozen %q (resolver leaked the live store pointer)", got[0].Path, before)
+		}
+	})
+
+	t.Run("ReorderSiblings", func(t *testing.T) {
+		resolver, core := setupTestResolver(t)
+		mr := resolver.Mutation()
+		ctx := context.Background()
+
+		parent := createTestNib(t, core, "parent1", "Parent", "todo")
+		c1 := &nib.Nib{ID: "c1", Slug: "c1", Title: "C1", Status: "todo", Parent: parent.ID}
+		c2 := &nib.Nib{ID: "c2", Slug: "c2", Title: "C2", Status: "todo", Parent: parent.ID}
+		mustCreate(t, core, c1)
+		mustCreate(t, core, c2)
+
+		first := true
+		got, err := mr.ReorderSiblings(ctx, []string{c1.ID}, nil, nil, &first, nil)
+		if err != nil {
+			t.Fatalf("ReorderSiblings resolver: %v", err)
+		}
+		if len(got) != 1 {
+			t.Fatalf("ReorderSiblings resolver returned %d nibs, want 1", len(got))
+		}
+		before := got[0].Path
+
+		if err := core.Archive(got[0].ID); err != nil {
+			t.Fatalf("Archive: %v", err)
+		}
+
+		if got[0].Path != before {
+			t.Errorf("captured nib Path mutated after Archive: got %q, want frozen %q (resolver leaked the live store pointer)", got[0].Path, before)
+		}
+	})
+}
+
+// TestSnapshotHelpersWrapErrNotFound pins that snapshotResult/snapshotResults
+// wrap nib.ErrNotFound when GetSnapshot misses (the nib was deleted in the
+// window between the write committing and the re-lookup). Over `nibs serve`,
+// etagErrorPresenter (cmd/serve.go) tags the error NOT_FOUND only when
+// errors.Is(err, nib.ErrNotFound) holds; a bare error would surface untagged and
+// the web client would show a raw toast instead of its gone/deleted notice.
+//
+// The helpers are driven directly against a stubReader with an empty store, so
+// GetSnapshot always returns !ok — a deterministic stand-in for the
+// concurrent-delete race without depending on the scheduler.
+func TestSnapshotHelpersWrapErrNotFound(t *testing.T) {
+	r := &Resolver{Reader: &stubReader{nibs: map[string]*nib.Nib{}}}
+
+	t.Run("snapshotResult", func(t *testing.T) {
+		got, err := r.snapshotResult("missing")
+		if got != nil {
+			t.Errorf("expected nil nib, got %v", got)
+		}
+		if err == nil {
+			t.Fatal("expected error on GetSnapshot miss, got nil")
+		}
+		if !errors.Is(err, nib.ErrNotFound) {
+			t.Errorf("error does not wrap nib.ErrNotFound: %v", err)
+		}
+	})
+
+	t.Run("snapshotResults", func(t *testing.T) {
+		got, err := r.snapshotResults([]*nib.Nib{{ID: "missing"}})
+		if got != nil {
+			t.Errorf("expected nil slice, got %v", got)
+		}
+		if err == nil {
+			t.Fatal("expected error on GetSnapshot miss, got nil")
+		}
+		if !errors.Is(err, nib.ErrNotFound) {
+			t.Errorf("error does not wrap nib.ErrNotFound: %v", err)
+		}
+	})
+}
+
+// TestMutationResolverRaceUnderExecutor drives the removeBlocking mutation
+// through the real gqlgen executor concurrently with Archive/Unarchive on the nib
+// it returns (the source). The mutation's returned `path` field is marshaled
+// asynchronously off the value the resolver returns, while Archive/Unarchive
+// rewrite the stored nib's Path in place under c.mu.
+//
+// removeBlocking against a NON-EXISTENT target is chosen deliberately as the
+// demonstrator, to isolate exactly the return-value race this fix closes:
+//   - It sources its returned nib from Reader.Get (the shared pointer, WITHOUT an
+//     off-lock clone) rather than Reader.GetForUpdate, so the source's Path is
+//     never cloned off-lock during the mutation. The GetForUpdate-based mutations
+//     (update, setParent, reorder, ...) clone the working nib off the lock inside
+//     GetForUpdate itself (nibcore.Core.GetForUpdate: c.Get then b.Clone() with no
+//     lock held), which races Archive's in-place Path write independently of the
+//     returned value — a distinct, pre-existing nibcore concern outside this fix's
+//     scope — so they cannot cleanly isolate the return-value race.
+//   - A non-existent target makes the resolver skip its target-side write entirely
+//     (the existence guard is false), so there is no optimistic-concurrency etag
+//     collision under the 8-way concurrency below, and the ONLY off-lock read of
+//     the source's Path is the value handed to gqlgen. It is a documented no-op
+//     that still returns and marshals the source nib.
+//
+// Because the resolver now snapshots via Reader.GetSnapshot (clone-under-lock),
+// the marshaled value is a detached copy and this is `-race` clean. It fails
+// under `-race` if the mutation resolver ever reverts to handing out the live
+// c.nibs pointer, so it is a real detector guard, not skipped.
+func TestMutationResolverRaceUnderExecutor(t *testing.T) {
+	resolver, core := setupTestResolver(t)
+
+	createTestNib(t, core, "source1", "Source", "todo")
+
+	es := NewExecutableSchema(Config{Resolvers: resolver})
+	exec := executor.New(es)
+
+	runMutation := func() {
+		ctx := graphql.StartOperationTrace(context.Background())
+		params := &graphql.RawParams{
+			Query:     `mutation { removeBlocking(id: "source1", targetId: "nonexistent") { path } }`,
+			Variables: map[string]any{},
+		}
+		opCtx, errs := exec.CreateOperationContext(ctx, params)
+		if len(errs) > 0 {
+			t.Errorf("CreateOperationContext: %v", errs)
+			return
+		}
+		ctx = graphql.WithOperationContext(ctx, opCtx)
+		handler, ctx := exec.DispatchOperation(ctx, opCtx)
+		// Assert the mutation actually succeeds and marshals `path`. Without this,
+		// a future regression that made the resolver error out (no `path` marshal)
+		// would never open the race window, leaving the -race guard silently green.
+		resp := handler(ctx)
+		if len(resp.Errors) > 0 {
+			t.Errorf("mutation returned errors (race window never opened): %v", resp.Errors)
+		}
+	}
+
+	var wg sync.WaitGroup
+	for i := 0; i < 8; i++ {
+		wg.Add(2)
+		go func() { defer wg.Done(); runMutation() }()
+		go func() {
+			defer wg.Done()
+			_ = core.Archive("source1")
+			_ = core.Unarchive("source1")
 		}()
 	}
 	wg.Wait()

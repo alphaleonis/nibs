@@ -86,6 +86,42 @@ func (r *Resolver) updateTargetClone(id string, mutate func(*nib.Nib) bool) erro
 	return r.Writer.Update(clone, &ifMatch)
 }
 
+// snapshotResult returns a detached GetSnapshot clone of the nib a mutation just
+// wrote, so gqlgen never marshals the live c.nibs pointer. Every nib-returning
+// mutation resolver ends by handing its result to this helper: Writer.Create/
+// Writer.Update install the working nib AS the shared store entry (c.nibs[id] =
+// b), and Reader.Get hands back that same live pointer — either way the value the
+// resolver would otherwise return aliases the store, whose Path a concurrent
+// Archive/Unarchive/slug-rename rewrites in place under c.mu while gqlgen marshals
+// the returned nib's fields asynchronously off the lock. A GetSnapshot clone taken
+// under the store lock is the only value safe to hand out. A !ok means the nib
+// vanished between the write and the snapshot (e.g. a concurrent delete): report
+// it as an error rather than returning a nil nib for the non-null result.
+func (r *Resolver) snapshotResult(id string) (*nib.Nib, error) {
+	snap, ok := r.Reader.GetSnapshot(id)
+	if !ok {
+		return nil, fmt.Errorf("nib not found after write: %s: %w", id, nib.ErrNotFound)
+	}
+	return snap, nil
+}
+
+// snapshotResults is the slice form of snapshotResult for the bulk-reorder
+// resolvers, preserving order. Each element is detached via GetSnapshot; a !ok on
+// any element (a just-written nib that vanished before the snapshot) is an error,
+// matching snapshotResult — a bulk reorder must return the full ordered set it
+// persisted, never a silently-shortened list.
+func (r *Resolver) snapshotResults(nibs []*nib.Nib) ([]*nib.Nib, error) {
+	out := make([]*nib.Nib, 0, len(nibs))
+	for _, b := range nibs {
+		snap, ok := r.Reader.GetSnapshot(b.ID)
+		if !ok {
+			return nil, fmt.Errorf("nib not found after write: %s: %w", b.ID, nib.ErrNotFound)
+		}
+		out = append(out, snap)
+	}
+	return out, nil
+}
+
 // validateAndSetParent validates and sets the parent relationship.
 // When the parent changes, the order key is recalculated to avoid collisions
 // with existing siblings in the new parent group.

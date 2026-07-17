@@ -78,7 +78,7 @@ func TestReorderRootNibFirst(t *testing.T) {
 		},
 		allNibs: []*nib.Nib{root1, root2, root3},
 	}
-	writer := &stubWriter{}
+	writer := &stubWriter{store: reader}
 
 	resolver := &Resolver{
 		Reader: reader, Writer: writer,
@@ -109,7 +109,7 @@ func TestReorderRootNibAfter(t *testing.T) {
 		},
 		allNibs: []*nib.Nib{root1, root2, root3},
 	}
-	writer := &stubWriter{}
+	writer := &stubWriter{store: reader}
 
 	resolver := &Resolver{
 		Reader: reader, Writer: writer,
@@ -140,7 +140,7 @@ func TestReorderRootNibBefore(t *testing.T) {
 		},
 		allNibs: []*nib.Nib{root1, root2, root3},
 	}
-	writer := &stubWriter{}
+	writer := &stubWriter{store: reader}
 
 	resolver := &Resolver{
 		Reader: reader, Writer: writer,
@@ -177,7 +177,7 @@ func TestReorderBeforeWithDuplicateOrderKeys(t *testing.T) {
 		allNibs: []*nib.Nib{zs2b, kofy, n1nb},
 	}
 
-	writer := &stubWriter{}
+	writer := &stubWriter{store: reader}
 	resolver := &Resolver{
 		Reader: reader, Writer: writer,
 		Validator: &stubValidator{}, Blocking: &stubBlockingChecker{},
@@ -214,7 +214,7 @@ func TestReorderAfterWithDuplicateOrderKeys(t *testing.T) {
 		allNibs: []*nib.Nib{a1, a2, a3},
 	}
 
-	writer := &stubWriter{}
+	writer := &stubWriter{store: reader}
 	resolver := &Resolver{
 		Reader: reader, Writer: writer,
 		Validator: &stubValidator{}, Blocking: &stubBlockingChecker{},
@@ -264,11 +264,11 @@ func TestReorderRootNibRejectsNonSibling(t *testing.T) {
 }
 
 func TestCreateRootNibsGetUniqueOrderKeys(t *testing.T) {
-	writer := &stubWriter{}
 	reader := &stubReader{
 		nibs:    map[string]*nib.Nib{},
 		allNibs: []*nib.Nib{},
 	}
+	writer := &stubWriter{store: reader}
 
 	resolver := &Resolver{
 		Reader:    reader,
