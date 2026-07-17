@@ -905,12 +905,15 @@ func (r *queryResolver) Nibs(ctx context.Context, filter *model.NibFilter, sort 
 	// above (whose Path a concurrent Archive rewrites in place under c.mu), so no
 	// live c.nibs pointer outlives the store lock to reach gqlgen's async
 	// marshaler. That detachment is all this end-of-pipeline snapshot buys; it
-	// does NOT make the synchronous pipeline above race-free. That pipeline reads
-	// non-Path fields (Parent, BlockedBy, ...) off live pointers, and
-	// RemoveLinksTo/FixBrokenLinks mutate Parent/BlockedBy/Documents in place on
-	// those same live pointers off-lock — a pre-existing data race tracked in nib
-	// nibs-pyei, not something this snapshot placement closes. See
-	// NibReader.GetSnapshot for the full contract.
+	// does NOT by itself make the synchronous pipeline above race-free. That
+	// pipeline reads non-Path fields (Parent, BlockedBy, ...) off live pointers,
+	// but every writer that changes those fields now installs a FRESH pointer
+	// instead of editing a published one in place — including RemoveLinksTo and
+	// FixBrokenLinks, which became copy-on-write in nib nibs-pyei — so the off-lock
+	// reads no longer race them. Path is the only field still mutated in place on a
+	// published stored pointer (Archive/Unarchive/slug rename), which is exactly
+	// why the returned data must still be snapshotted. See NibReader.GetSnapshot
+	// for the full contract.
 	snapshots := make([]*nib.Nib, 0, len(result))
 	for _, b := range result {
 		if snap, ok := r.Reader.GetSnapshot(b.ID); ok {

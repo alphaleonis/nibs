@@ -3,6 +3,7 @@ package nibcore
 import (
 	"os"
 	"path/filepath"
+	"slices"
 
 	"github.com/alphaleonis/nibs/internal/nib"
 )
@@ -236,34 +237,48 @@ func canonicalCycleKey(path []string) string {
 
 // RemoveLinksTo removes all links pointing to the given target ID from all nibs.
 // Returns the number of links removed.
+//
+// Copy-on-write: for every nib that actually changes we clone it, mutate the
+// clone, persist the clone, and reinstall it under c.nibs[id] — the stored
+// pointer is never edited in place. That matters because the GraphQL Nibs
+// pipeline (ApplyFilter/includeAncestors) reads Parent/BlockedBy off the live
+// c.nibs pointers WITHOUT c.mu; mutating a stored pointer's Parent (torn string)
+// or BlockedBy (torn slice header — memory-unsafe) in place races that off-lock
+// reader (nibs-pyei). Reinstalling a fresh pointer leaves any reader still
+// holding the old one a stable, unmutated value. Ranging over c.nibs while
+// reassigning an existing key's value is safe in Go.
 func (c *Core) RemoveLinksTo(targetID string) (int, error) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 
 	removed := 0
-	for _, b := range c.nibs {
-		changed := false
+	for id, b := range c.nibs {
+		// Detect changes by READING the stored pointer only — never mutate it,
+		// so an unchanged nib skips the Clone() below.
+		removeParent := b.Parent == targetID
+		removeBlocker := slices.Contains(b.BlockedBy, targetID)
 
-		// Remove parent link
-		if b.Parent == targetID {
-			b.Parent = ""
-			changed = true
+		if !removeParent && !removeBlocker {
+			continue
+		}
+
+		clone := b.Clone()
+		if removeParent {
+			clone.Parent = ""
 			removed++
 		}
-
-		// Remove blocked_by links (single-side: no blocking field to remove)
-		originalBlockedByLen := len(b.BlockedBy)
-		b.RemoveBlockedBy(targetID)
-		if len(b.BlockedBy) < originalBlockedByLen {
-			changed = true
-			removed += originalBlockedByLen - len(b.BlockedBy)
+		if removeBlocker {
+			// RemoveBlockedBy strips every occurrence of targetID; count the
+			// drops via the length delta (matching FixBrokenLinks).
+			before := len(clone.BlockedBy)
+			clone.RemoveBlockedBy(targetID)
+			removed += before - len(clone.BlockedBy)
 		}
 
-		if changed {
-			if err := c.saveToDisk(b); err != nil {
-				return removed, err
-			}
+		if err := c.saveToDisk(clone); err != nil {
+			return removed, err
 		}
+		c.nibs[id] = clone
 	}
 
 	return removed, nil
@@ -271,29 +286,34 @@ func (c *Core) RemoveLinksTo(targetID string) (int, error) {
 
 // FixBrokenLinks removes all broken links (links to non-existent nibs) and self-references.
 // Returns the number of issues fixed.
+//
+// Copy-on-write for the same reason as RemoveLinksTo: mutate a clone and
+// reinstall it rather than editing the stored pointer in place, so no off-lock
+// reader ever sees a stored pointer's fields torn mid-write. The Nibs filter/sort
+// pipeline reads Parent/BlockedBy off-lock (the pyei race); Documents is made
+// copy-on-write here too for the same discipline, so any future off-lock reader of
+// it is safe as well (nibs-pyei).
 func (c *Core) FixBrokenLinks() (int, error) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 
-	fixed := 0
-	for _, b := range c.nibs {
-		changed := false
+	projectRoot := filepath.Dir(c.root)
 
-		// Fix parent link
+	fixed := 0
+	for id, b := range c.nibs {
+		// Detect changes by READING the stored pointer only — never mutate it.
+
+		// Parent is broken when it points at self or a nib no longer in the store.
+		fixParent := false
 		if b.Parent != "" {
 			if b.Parent == b.ID {
-				b.Parent = ""
-				changed = true
-				fixed++
+				fixParent = true
 			} else if _, ok := c.nibs[b.Parent]; !ok {
-				b.Parent = ""
-				changed = true
-				fixed++
+				fixParent = true
 			}
 		}
 
-		// Fix blocked_by links (single-side: no blocking field to fix)
-		originalBlockedByLen := len(b.BlockedBy)
+		// Surviving blocked_by set (drop self-refs and links to missing nibs).
 		var newBlockedBy []string
 		for _, blocker := range b.BlockedBy {
 			if blocker == b.ID {
@@ -304,35 +324,40 @@ func (c *Core) FixBrokenLinks() (int, error) {
 			}
 			newBlockedBy = append(newBlockedBy, blocker)
 		}
-		if len(newBlockedBy) < originalBlockedByLen {
-			b.BlockedBy = newBlockedBy
-			changed = true
-			fixed += originalBlockedByLen - len(newBlockedBy)
+		blockedRemoved := len(b.BlockedBy) - len(newBlockedBy)
+
+		// Surviving document set (drop paths that no longer exist on disk).
+		var newDocs []string
+		for _, docPath := range b.Documents {
+			absPath := filepath.Join(projectRoot, docPath)
+			if _, err := os.Stat(absPath); !os.IsNotExist(err) {
+				newDocs = append(newDocs, docPath)
+			}
+		}
+		docsRemoved := len(b.Documents) - len(newDocs)
+
+		if !fixParent && blockedRemoved == 0 && docsRemoved == 0 {
+			continue
 		}
 
-		// Fix broken document links
-		if len(b.Documents) > 0 {
-			projectRoot := filepath.Dir(c.root)
-			originalDocLen := len(b.Documents)
-			var newDocs []string
-			for _, docPath := range b.Documents {
-				absPath := filepath.Join(projectRoot, docPath)
-				if _, err := os.Stat(absPath); !os.IsNotExist(err) {
-					newDocs = append(newDocs, docPath)
-				}
-			}
-			if len(newDocs) < originalDocLen {
-				b.Documents = newDocs
-				changed = true
-				fixed += originalDocLen - len(newDocs)
-			}
+		clone := b.Clone()
+		if fixParent {
+			clone.Parent = ""
+			fixed++
+		}
+		if blockedRemoved > 0 {
+			clone.BlockedBy = newBlockedBy
+			fixed += blockedRemoved
+		}
+		if docsRemoved > 0 {
+			clone.Documents = newDocs
+			fixed += docsRemoved
 		}
 
-		if changed {
-			if err := c.saveToDisk(b); err != nil {
-				return fixed, err
-			}
+		if err := c.saveToDisk(clone); err != nil {
+			return fixed, err
 		}
+		c.nibs[id] = clone
 	}
 
 	return fixed, nil

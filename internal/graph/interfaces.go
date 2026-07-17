@@ -44,23 +44,26 @@ type NibReader interface {
 	//
 	// What snapshotting at the END of the Nibs pipeline buys: it detaches the
 	// RETURNED nib data, so no live c.nibs pointer outlives the store lock to
-	// reach gqlgen's async marshaler. It does NOT make the synchronous
+	// reach gqlgen's async marshaler. It does NOT on its own make the synchronous
 	// pre-snapshot reads race-free. The Nibs pipeline
 	// (ApplyFilter/includeAncestors/ApplySorting) reads non-Path fields (Parent,
 	// BlockedBy, Status, Type, Priority, Tags, Title, timestamps, Order, ...) off
-	// live pointers before snapshotting at the end. Most non-Path field changes
-	// install a FRESH stored pointer rather than mutating the existing one
-	// (Core.Update for API writes, the file watcher's create/write branch for
-	// external edits), so an off-lock reader cannot see those changes torn. But
-	// RemoveLinksTo and FixBrokenLinks (internal/nibcore/link_health.go) are
-	// exceptions: they mutate Parent/BlockedBy/Documents IN PLACE on live stored
-	// pointers, and the pre-snapshot pipeline reads exactly those fields off-lock.
-	// That is a real, pre-existing data race (tracked in nib nibs-pyei) which
-	// snapshotting AFTER the pipeline does not close; closing it needs either
-	// copy-on-write in the link-health mutators or moving the snapshot BEFORE the
-	// pipeline. Path itself is only ever mutated in place on a stored pointer
-	// (Archive/Unarchive/LoadAndUnarchive and slug rename), which is why returned
-	// data must be snapshotted rather than handed out live.
+	// live pointers before snapshotting at the end. Every non-Path field change on
+	// a PUBLISHED stored pointer installs a FRESH pointer rather than mutating the
+	// existing one: Core.Update for API writes, the file watcher's create/write
+	// branch for external edits, and — as of nib nibs-pyei — RemoveLinksTo and
+	// FixBrokenLinks (internal/nibcore/link_health.go), which now clone the nib,
+	// apply the Parent/BlockedBy/Documents changes to the clone, and reinstall it
+	// under c.nibs[id]. So an off-lock reader still holding the old pointer cannot
+	// see those changes torn, and the pre-snapshot pipeline reads no longer race
+	// the link-health mutators. (migrateV0ToV1 does edit BlockedBy/Blocking/Version
+	// in place, but only on fresh, not-yet-published pointers while c.mu is held
+	// during loadFromDisk, which rebuilds c.nibs from scratch — the same
+	// not-yet-published class as loadNib's empty-slice defaults, not an off-lock
+	// reader race.) Path is the sole field still mutated in place on a PUBLISHED
+	// stored pointer (Archive/Unarchive/LoadAndUnarchive, slug rename, and the
+	// watcher's external move detection), which is why returned data must be
+	// snapshotted rather than handed out live.
 	//
 	// Unlike Get (live pointer) the result is race-safe to read from later; ok is
 	// false when the nib is absent.

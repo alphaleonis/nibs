@@ -121,9 +121,10 @@ func (p *projectionResolver) Progress(id string) any {
 			// mutated in place on a stored pointer (status changes go through
 			// Update, which installs a fresh pointer), and this method returns a
 			// computed ProgressRollup value, so no pointer escapes to async
-			// marshaling. No snapshot/clone is needed. This is a per-field
-			// judgment, not the general rule — some non-Path fields (Parent,
-			// BlockedBy) ARE mutated in place; see NibReader.GetSnapshot.
+			// marshaling. No snapshot/clone is needed. As of the pyei
+			// copy-on-write change no non-Path field is mutated in place on a
+			// published stored pointer; only Path is (see NibReader.GetSnapshot
+			// for the full contract).
 			statuses = append(statuses, link.FromNib.Status)
 		}
 	}

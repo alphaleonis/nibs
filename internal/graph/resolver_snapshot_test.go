@@ -2,6 +2,8 @@ package graph
 
 import (
 	"context"
+	"fmt"
+	"slices"
 	"sync"
 	"testing"
 
@@ -500,4 +502,177 @@ func nibIndexByID(nibs []*nib.Nib, id string) int {
 		}
 	}
 	return -1
+}
+
+// TestNibsFilterRaceAgainstRemoveLinksTo reproduces the write-side data race in
+// nibs-pyei. The Nibs query pipeline reads b.Parent off the LIVE c.nibs pointers
+// off-lock (ApplyFilter's NoParent predicate, internal/graph/filters.go), while
+// Core.RemoveLinksTo mutates b.Parent under c.mu (internal/nibcore/link_health.go).
+// On the old in-place code those two accesses touch the same b.Parent word with
+// no synchronization between them, so `-race` fires (read at filters.go vs write
+// at link_health.go). With RemoveLinksTo copy-on-write — it installs a fresh
+// cloned pointer instead of mutating the stored one — the off-lock reader only
+// ever holds the frozen old pointer, so this is `-race` clean. It stays a live
+// detector: revert RemoveLinksTo to in-place mutation and `-race` fires again.
+//
+// The writer restores each child's parent between removals (via Update, which
+// already installs a fresh pointer) so the mutating access keeps firing across
+// the whole run instead of a single one-shot burst that the reader might miss.
+func TestNibsFilterRaceAgainstRemoveLinksTo(t *testing.T) {
+	resolver, core := setupTestResolver(t)
+
+	parent := createTestNib(t, core, "parent1", "Parent", "todo")
+	var childIDs []string
+	for i := 0; i < 30; i++ {
+		id := fmt.Sprintf("child%d", i)
+		mustCreate(t, core, &nib.Nib{ID: id, Slug: id, Title: "Child", Status: "todo", Parent: parent.ID})
+		childIDs = append(childIDs, id)
+	}
+
+	noParent := true
+	filter := &model.NibFilter{NoParent: &noParent}
+
+	var wg sync.WaitGroup
+	for i := 0; i < 8; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			for j := 0; j < 200; j++ {
+				// Reads b.Parent off the live store pointers, off-lock.
+				_ = ApplyFilter(context.Background(), core.All(), filter, resolver.Reader, resolver.Blocking)
+			}
+		}()
+	}
+
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		for j := 0; j < 50; j++ {
+			if _, err := core.RemoveLinksTo(parent.ID); err != nil {
+				t.Errorf("RemoveLinksTo: %v", err)
+				return
+			}
+			for _, id := range childIDs {
+				b, err := core.GetForUpdate(id)
+				if err != nil {
+					t.Errorf("GetForUpdate restore: %v", err)
+					return
+				}
+				b.Parent = parent.ID
+				if err := core.Update(b, nil); err != nil {
+					t.Errorf("Update restore: %v", err)
+					return
+				}
+			}
+		}
+	}()
+	wg.Wait()
+}
+
+// TestRemoveLinksToFreezesReadPointers is the deterministic companion to the
+// -race demonstrator above: it pins the copy-on-write contract without depending
+// on the scheduler. It captures the LIVE stored pointer of a linked nib (from
+// All, the same pointers the Nibs pipeline reads off-lock), runs RemoveLinksTo
+// on its parent and its blocker, then asserts the captured pointer's Parent and
+// BlockedBy are FROZEN. On the old in-place code RemoveLinksTo mutated that very
+// pointer (Parent -> "", BlockedBy -> a shorter slice) and these assertions
+// fail; with copy-on-write the mutation lands on a fresh clone reinstalled in the
+// store and the captured pointer is untouched.
+func TestRemoveLinksToFreezesReadPointers(t *testing.T) {
+	_, core := setupTestResolver(t)
+
+	parent := createTestNib(t, core, "parent1", "Parent", "todo")
+	blocker := createTestNib(t, core, "blocker1", "Blocker", "todo")
+	child := &nib.Nib{ID: "child1", Slug: "child", Title: "Child", Status: "todo", Parent: parent.ID, BlockedBy: []string{blocker.ID}}
+	mustCreate(t, core, child)
+
+	all := core.All()
+	idx := nibIndexByID(all, child.ID)
+	if idx < 0 {
+		t.Fatalf("All did not return %q", child.ID)
+	}
+	captured := all[idx]
+	beforeParent := captured.Parent
+	beforeBlockedBy := append([]string(nil), captured.BlockedBy...)
+
+	if _, err := core.RemoveLinksTo(parent.ID); err != nil {
+		t.Fatalf("RemoveLinksTo(parent): %v", err)
+	}
+	if _, err := core.RemoveLinksTo(blocker.ID); err != nil {
+		t.Fatalf("RemoveLinksTo(blocker): %v", err)
+	}
+
+	if captured.Parent != beforeParent {
+		t.Errorf("captured Parent mutated in place: got %q, want frozen %q (RemoveLinksTo must copy-on-write)", captured.Parent, beforeParent)
+	}
+	if !slices.Equal(captured.BlockedBy, beforeBlockedBy) {
+		t.Errorf("captured BlockedBy mutated in place: got %v, want frozen %v (RemoveLinksTo must copy-on-write)", captured.BlockedBy, beforeBlockedBy)
+	}
+
+	// The store itself must still reflect the removals, on fresh pointers.
+	reloaded, err := core.Get(child.ID)
+	if err != nil {
+		t.Fatalf("Get: %v", err)
+	}
+	if reloaded.Parent != "" || len(reloaded.BlockedBy) != 0 {
+		t.Errorf("stored nib not updated: parent=%q blocked_by=%v", reloaded.Parent, reloaded.BlockedBy)
+	}
+}
+
+// TestFixBrokenLinksFreezesReadPointers is the FixBrokenLinks analogue of the
+// guard above. The nib has a broken parent, a mix of valid/broken blocked_by,
+// and a broken document link. Capturing its live pointer, running FixBrokenLinks,
+// then asserting Parent/BlockedBy/Documents on the captured pointer are frozen
+// proves FixBrokenLinks copies-on-write rather than mutating the stored pointer
+// the Nibs pipeline reads off-lock. Fails on the old in-place code, passes after.
+func TestFixBrokenLinksFreezesReadPointers(t *testing.T) {
+	_, core := setupTestResolver(t)
+
+	valid := createTestNib(t, core, "valid1", "Valid", "todo")
+	broken := &nib.Nib{
+		ID: "broken1", Slug: "broken", Title: "Broken", Status: "todo",
+		Parent:    "ghost",                       // broken parent (no such nib)
+		BlockedBy: []string{valid.ID, "ghost2"},  // one valid, one broken
+		Documents: []string{"does/not/exist.md"}, // broken document link
+	}
+	mustCreate(t, core, broken)
+
+	all := core.All()
+	idx := nibIndexByID(all, broken.ID)
+	if idx < 0 {
+		t.Fatalf("All did not return %q", broken.ID)
+	}
+	captured := all[idx]
+	beforeParent := captured.Parent
+	beforeBlockedBy := append([]string(nil), captured.BlockedBy...)
+	beforeDocs := append([]string(nil), captured.Documents...)
+
+	if _, err := core.FixBrokenLinks(); err != nil {
+		t.Fatalf("FixBrokenLinks: %v", err)
+	}
+
+	if captured.Parent != beforeParent {
+		t.Errorf("captured Parent mutated in place: got %q, want frozen %q (FixBrokenLinks must copy-on-write)", captured.Parent, beforeParent)
+	}
+	if !slices.Equal(captured.BlockedBy, beforeBlockedBy) {
+		t.Errorf("captured BlockedBy mutated in place: got %v, want frozen %v (FixBrokenLinks must copy-on-write)", captured.BlockedBy, beforeBlockedBy)
+	}
+	if !slices.Equal(captured.Documents, beforeDocs) {
+		t.Errorf("captured Documents mutated in place: got %v, want frozen %v (FixBrokenLinks must copy-on-write)", captured.Documents, beforeDocs)
+	}
+
+	// The store itself must still reflect the fixes, on a fresh pointer.
+	reloaded, err := core.Get(broken.ID)
+	if err != nil {
+		t.Fatalf("Get: %v", err)
+	}
+	if reloaded.Parent != "" {
+		t.Errorf("broken parent not fixed: %q", reloaded.Parent)
+	}
+	if len(reloaded.BlockedBy) != 1 || reloaded.BlockedBy[0] != valid.ID {
+		t.Errorf("blocked_by not fixed: got %v, want [%s]", reloaded.BlockedBy, valid.ID)
+	}
+	if len(reloaded.Documents) != 0 {
+		t.Errorf("broken document not fixed: %v", reloaded.Documents)
+	}
 }
