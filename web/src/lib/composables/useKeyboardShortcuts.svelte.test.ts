@@ -49,6 +49,7 @@ function makeHarness(
 
   const showConfirm = vi.fn();
   const close = vi.fn();
+  const dismiss = vi.fn();
   const confirmDialog = {
     open: overrides.confirmOpen ?? false,
     title: "",
@@ -61,6 +62,7 @@ function makeHarness(
     dismissAction: null,
     showConfirm,
     close,
+    dismiss,
   } as unknown as ConfirmDialogState;
 
   const execute = vi.fn(async () => ({ ok: true }));

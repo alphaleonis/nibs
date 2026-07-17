@@ -634,15 +634,7 @@
   saveLabel={confirmDialog.saveLabel ?? undefined}
   onsave={confirmDialog.saveAction ? () => { confirmDialog.saveAction?.(); } : undefined}
   onconfirm={() => { confirmDialog.action?.(); }}
-  oncancel={() => {
-    // Run THIS confirm's dismissal owner (the dirty-guard settles "cancel" —
-    // keep my changes, stay put). Capture it before close() nulls it. A confirm
-    // that installed no owner (Delete/Archive) just closes, so a dismissal here
-    // can never resolve a different dialog's pending promise (nibs-an5d).
-    const onDismiss = confirmDialog.dismissAction;
-    confirmDialog.close();
-    onDismiss?.();
-  }}
+  oncancel={() => confirmDialog.dismiss()}
 />
 
 <style>

@@ -63,6 +63,11 @@ function makeMockConfirmDialog(): ConfirmDialogState & { lastOpts: ConfirmDialog
       state.saveAction = null;
       state.dismissAction = null;
     }),
+    dismiss: vi.fn(() => {
+      const owner = state.dismissAction;
+      state.close();
+      owner?.();
+    }),
   };
   return state;
 }
