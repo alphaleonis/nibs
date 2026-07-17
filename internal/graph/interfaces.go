@@ -24,10 +24,46 @@ type NibReader interface {
 	// GetSnapshot returns a detached deep copy of the nib, cloned WHILE the store
 	// lock is held, so the result never aliases the live store pointer and no
 	// field (notably Path) is read off-lock. This is the blessed READ accessor
-	// for values that outlive the lock — relationship resolvers whose fields
-	// gqlgen marshals asynchronously, concurrently with in-place mutations like
-	// Archive rewriting a stored nib's Path. Unlike Get (live pointer) it is
-	// race-safe to read from later; ok is false when the nib is absent.
+	// for values that outlive the lock.
+	//
+	// Rule for the GraphQL read/query/relationship resolvers: a resolver that
+	// returns nib data outliving the store lock MUST hand out a GetSnapshot clone,
+	// never a live c.nibs pointer. gqlgen marshals a returned nib's fields
+	// asynchronously and off the store lock, concurrently with an in-place
+	// mutation like Archive rewriting a stored nib's Path under c.mu, so a live
+	// pointer that reaches gqlgen is a data race. Only the immutable ID may be
+	// read off a live pointer to look the snapshot up.
+	//
+	// This rule is NOT yet universal. The mutation resolvers (CreateNib,
+	// UpdateNib, SetParent, the blocking add/remove pair, AddBlockedBy,
+	// RemoveBlockedBy, and the reorder family ReorderNib/ReorderChildren/
+	// ReorderSiblings) still return the live c.nibs pointer to gqlgen rather than
+	// a snapshot; extending the snapshot discipline to the write side is a
+	// deferred follow-up (nib nibs-hi5i). Do not read the rule above as an
+	// automatic guarantee that already covers a newly added resolver.
+	//
+	// What snapshotting at the END of the Nibs pipeline buys: it detaches the
+	// RETURNED nib data, so no live c.nibs pointer outlives the store lock to
+	// reach gqlgen's async marshaler. It does NOT make the synchronous
+	// pre-snapshot reads race-free. The Nibs pipeline
+	// (ApplyFilter/includeAncestors/ApplySorting) reads non-Path fields (Parent,
+	// BlockedBy, Status, Type, Priority, Tags, Title, timestamps, Order, ...) off
+	// live pointers before snapshotting at the end. Most non-Path field changes
+	// install a FRESH stored pointer rather than mutating the existing one
+	// (Core.Update for API writes, the file watcher's create/write branch for
+	// external edits), so an off-lock reader cannot see those changes torn. But
+	// RemoveLinksTo and FixBrokenLinks (internal/nibcore/link_health.go) are
+	// exceptions: they mutate Parent/BlockedBy/Documents IN PLACE on live stored
+	// pointers, and the pre-snapshot pipeline reads exactly those fields off-lock.
+	// That is a real, pre-existing data race (tracked in nib nibs-pyei) which
+	// snapshotting AFTER the pipeline does not close; closing it needs either
+	// copy-on-write in the link-health mutators or moving the snapshot BEFORE the
+	// pipeline. Path itself is only ever mutated in place on a stored pointer
+	// (Archive/Unarchive/LoadAndUnarchive and slug rename), which is why returned
+	// data must be snapshotted rather than handed out live.
+	//
+	// Unlike Get (live pointer) the result is race-safe to read from later; ok is
+	// false when the nib is absent.
 	GetSnapshot(id string) (*nib.Nib, bool)
 	All() []*nib.Nib
 	Search(query string) ([]*nib.Nib, error)

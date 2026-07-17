@@ -7,7 +7,6 @@ package graph
 
 import (
 	"context"
-	"errors"
 	"fmt"
 
 	"github.com/alphaleonis/nibs/internal/graph/model"
@@ -797,7 +796,7 @@ func (r *nibResolver) Children(ctx context.Context, obj *nib.Nib, filter *model.
 // should request the `mentions` field with a filter instead, e.g.
 // `mentions(filter: { excludeStatus: ["completed", "scrapped"] }) { id }`.
 func (r *nibResolver) MentionIds(ctx context.Context, obj *nib.Nib) ([]string, error) {
-	return MentionIDList(cachedMentions(ctx, r.Reader, obj.ID)), nil
+	return existingMentionIDs(r.Reader, cachedMentions(ctx, r.Reader, obj.ID)), nil
 }
 
 // MentionedByIds is the resolver for the mentionedByIds field.
@@ -808,39 +807,75 @@ func (r *nibResolver) MentionIds(ctx context.Context, obj *nib.Nib) ([]string, e
 // should request the `mentionedBy` field with a filter, e.g.
 // `mentionedBy(filter: { excludeStatus: ["completed", "scrapped"] }) { id }`.
 func (r *nibResolver) MentionedByIds(ctx context.Context, obj *nib.Nib) ([]string, error) {
-	return MentionIDList(cachedMentionedBy(ctx, r.Reader, obj.ID)), nil
+	return existingMentionIDs(r.Reader, cachedMentionedBy(ctx, r.Reader, obj.ID)), nil
 }
 
 // Mentions is the resolver for the mentions field.
+//
+// Returns detached snapshots via Reader.GetSnapshot (clone-under-lock), never
+// the live c.nibs pointers cachedMentions/FindMentions hand back — gqlgen
+// marshals their fields asynchronously. Only the immutable ID is read off the
+// cached live pointers; a mention that vanished before the snapshot is skipped.
 //
 // Unlike BlockedBy/Blocking, mentions are informational and include nibs in
 // all statuses (archived, scrapped, completed). Callers who want active-only
 // should pass `filter: { excludeStatus: ["completed", "scrapped"] }`.
 func (r *nibResolver) Mentions(ctx context.Context, obj *nib.Nib, filter *model.NibFilter) ([]*nib.Nib, error) {
-	result := cachedMentions(ctx, r.Reader, obj.ID)
+	mentioned := cachedMentions(ctx, r.Reader, obj.ID)
+	result := make([]*nib.Nib, 0, len(mentioned))
+	for _, m := range mentioned {
+		if snap, ok := r.Reader.GetSnapshot(m.ID); ok {
+			result = append(result, snap)
+		}
+	}
 	return ApplyFilter(ctx, result, filter, r.Reader, r.Resolver.Blocking), nil
 }
 
 // MentionedBy is the resolver for the mentionedBy field.
 //
+// Returns detached snapshots via Reader.GetSnapshot (clone-under-lock), never
+// the live c.nibs pointers cachedMentionedBy/FindMentionedBy hand back — gqlgen
+// marshals their fields asynchronously. Only the immutable ID is read off the
+// cached live pointers; a source that vanished before the snapshot is skipped.
+//
 // Unlike BlockedBy/Blocking, mentions are informational and include nibs in
 // all statuses (archived, scrapped, completed). Callers who want active-only
 // should pass `filter: { excludeStatus: ["completed", "scrapped"] }`.
 func (r *nibResolver) MentionedBy(ctx context.Context, obj *nib.Nib, filter *model.NibFilter) ([]*nib.Nib, error) {
-	result := cachedMentionedBy(ctx, r.Reader, obj.ID)
+	mentionedBy := cachedMentionedBy(ctx, r.Reader, obj.ID)
+	result := make([]*nib.Nib, 0, len(mentionedBy))
+	for _, m := range mentionedBy {
+		if snap, ok := r.Reader.GetSnapshot(m.ID); ok {
+			result = append(result, snap)
+		}
+	}
 	return ApplyFilter(ctx, result, filter, r.Reader, r.Resolver.Blocking), nil
 }
 
 // Nib is the resolver for the nib field.
+//
+// Returns a detached snapshot via Reader.GetSnapshot (clone-under-lock), never
+// the live c.nibs pointer — gqlgen marshals its fields asynchronously. A missing
+// nib resolves to nil (mirrors the prior ErrNotFound path); GetSnapshot resolves
+// short IDs exactly as Get did.
 func (r *queryResolver) Nib(ctx context.Context, id string) (*nib.Nib, error) {
-	b, err := r.Reader.Get(id)
-	if errors.Is(err, nib.ErrNotFound) {
+	snap, ok := r.Reader.GetSnapshot(id)
+	if !ok {
 		return nil, nil
 	}
-	return b, err
+	return snap, nil
 }
 
 // Nibs is the resolver for the nibs field.
+//
+// Returns detached snapshots via Reader.GetSnapshot (clone-under-lock), never
+// the live c.nibs pointers — gqlgen marshals their fields asynchronously. The
+// filter/ancestor/sort pipeline runs synchronously over the live pointers
+// (Search and All both hand back store pointers, as does includeAncestors), then
+// every element handed back is replaced by its snapshot so no live pointer
+// escapes to async marshaling. Only the immutable ID is read off the live
+// pointers at the snapshot step; a nib that vanished before the snapshot is
+// skipped. This one conversion covers both the All and the Search branches.
 func (r *queryResolver) Nibs(ctx context.Context, filter *model.NibFilter, sort *model.NibSort) ([]*nib.Nib, error) {
 	var nibs []*nib.Nib
 
@@ -865,7 +900,24 @@ func (r *queryResolver) Nibs(ctx context.Context, filter *model.NibFilter, sort 
 	}
 
 	ApplySorting(result, sort, r.Reader.Config())
-	return result, nil
+
+	// Detach: hand gqlgen snapshots, never the live store pointers gathered
+	// above (whose Path a concurrent Archive rewrites in place under c.mu), so no
+	// live c.nibs pointer outlives the store lock to reach gqlgen's async
+	// marshaler. That detachment is all this end-of-pipeline snapshot buys; it
+	// does NOT make the synchronous pipeline above race-free. That pipeline reads
+	// non-Path fields (Parent, BlockedBy, ...) off live pointers, and
+	// RemoveLinksTo/FixBrokenLinks mutate Parent/BlockedBy/Documents in place on
+	// those same live pointers off-lock — a pre-existing data race tracked in nib
+	// nibs-pyei, not something this snapshot placement closes. See
+	// NibReader.GetSnapshot for the full contract.
+	snapshots := make([]*nib.Nib, 0, len(result))
+	for _, b := range result {
+		if snap, ok := r.Reader.GetSnapshot(b.ID); ok {
+			snapshots = append(snapshots, snap)
+		}
+	}
+	return snapshots, nil
 }
 
 // Config is the resolver for the config field.

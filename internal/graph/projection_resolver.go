@@ -116,6 +116,14 @@ func (p *projectionResolver) Progress(id string) any {
 	var statuses []string
 	for _, link := range p.r.Reader.FindIncomingLinks(id) {
 		if link.LinkType == "parent" {
+			// Reading Status off the live link.FromNib pointer is safe here,
+			// unlike the resolvers that hand nibs to gqlgen: Status is not
+			// mutated in place on a stored pointer (status changes go through
+			// Update, which installs a fresh pointer), and this method returns a
+			// computed ProgressRollup value, so no pointer escapes to async
+			// marshaling. No snapshot/clone is needed. This is a per-field
+			// judgment, not the general rule — some non-Path fields (Parent,
+			// BlockedBy) ARE mutated in place; see NibReader.GetSnapshot.
 			statuses = append(statuses, link.FromNib.Status)
 		}
 	}
