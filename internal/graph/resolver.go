@@ -91,9 +91,10 @@ func (r *Resolver) updateTargetClone(id string, mutate func(*nib.Nib) bool) erro
 // mutation resolver ends by handing its result to this helper: Writer.Create/
 // Writer.Update install the working nib AS the shared store entry (c.nibs[id] =
 // b), and Reader.Get hands back that same live pointer — either way the value the
-// resolver would otherwise return aliases the store, whose Path a concurrent
-// Archive/Unarchive/slug-rename rewrites in place under c.mu while gqlgen marshals
-// the returned nib's fields asynchronously off the lock. A GetSnapshot clone taken
+// resolver would otherwise return aliases the store. Per the canonical
+// live-pointer / copy-on-write invariant (NibReader.GetSnapshot), a stored
+// pointer's Path is still rewritten in place under c.mu while gqlgen marshals the
+// returned nib's fields asynchronously off the lock, so a GetSnapshot clone taken
 // under the store lock is the only value safe to hand out. A !ok means the nib
 // vanished between the write and the snapshot (e.g. a concurrent delete): report
 // it as an error rather than returning a nil nib for the non-null result.

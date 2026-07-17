@@ -918,13 +918,11 @@ func (r *queryResolver) Nibs(ctx context.Context, filter *model.NibFilter, sort 
 	// marshaler. That detachment is all this end-of-pipeline snapshot buys; it
 	// does NOT by itself make the synchronous pipeline above race-free. That
 	// pipeline reads non-Path fields (Parent, BlockedBy, ...) off live pointers,
-	// but every writer that changes those fields now installs a FRESH pointer
-	// instead of editing a published one in place — including RemoveLinksTo and
-	// FixBrokenLinks, which became copy-on-write in nib nibs-pyei — so the off-lock
-	// reads no longer race them. Path is the only field still mutated in place on a
-	// published stored pointer (Archive/Unarchive/slug rename), which is exactly
-	// why the returned data must still be snapshotted. See NibReader.GetSnapshot
-	// for the full contract.
+	// and relies on the canonical live-pointer / copy-on-write invariant (see
+	// NibReader.GetSnapshot) to keep those reads safe: every writer that changes a
+	// non-Path field installs a FRESH pointer instead of editing a published one in
+	// place, while Path — the one field still mutated in place — is exactly why the
+	// returned data must still be snapshotted.
 	snapshots := make([]*nib.Nib, 0, len(result))
 	for _, b := range result {
 		if snap, ok := r.Reader.GetSnapshot(b.ID); ok {

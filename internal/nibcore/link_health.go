@@ -240,13 +240,13 @@ func canonicalCycleKey(path []string) string {
 //
 // Copy-on-write: for every nib that actually changes we clone it, mutate the
 // clone, persist the clone, and reinstall it under c.nibs[id] — the stored
-// pointer is never edited in place. That matters because the GraphQL Nibs
-// pipeline (ApplyFilter/includeAncestors) reads Parent/BlockedBy off the live
-// c.nibs pointers WITHOUT c.mu; mutating a stored pointer's Parent (torn string)
-// or BlockedBy (torn slice header — memory-unsafe) in place races that off-lock
-// reader (nibs-pyei). Reinstalling a fresh pointer leaves any reader still
-// holding the old one a stable, unmutated value. Ranging over c.nibs while
-// reassigning an existing key's value is safe in Go.
+// pointer is never edited in place. This upholds the canonical live-pointer /
+// copy-on-write invariant (see NibReader.GetSnapshot in
+// internal/graph/interfaces.go): the changed fields here (Parent, a torn string;
+// BlockedBy, a memory-unsafe torn slice header) are non-Path, so they must land
+// on a fresh pointer, leaving any off-lock reader still holding the old one a
+// stable, unmutated value. Ranging over c.nibs while reassigning an existing
+// key's value is safe in Go.
 func (c *Core) RemoveLinksTo(targetID string) (int, error) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
@@ -289,10 +289,10 @@ func (c *Core) RemoveLinksTo(targetID string) (int, error) {
 //
 // Copy-on-write for the same reason as RemoveLinksTo: mutate a clone and
 // reinstall it rather than editing the stored pointer in place, so no off-lock
-// reader ever sees a stored pointer's fields torn mid-write. The Nibs filter/sort
-// pipeline reads Parent/BlockedBy off-lock (the pyei race); Documents is made
-// copy-on-write here too for the same discipline, so any future off-lock reader of
-// it is safe as well (nibs-pyei).
+// reader ever sees a stored pointer's non-Path fields torn mid-write. See the
+// canonical live-pointer / copy-on-write invariant at NibReader.GetSnapshot
+// (internal/graph/interfaces.go). Documents is made copy-on-write here too, for
+// the same discipline, so any future off-lock reader of it is safe as well.
 func (c *Core) FixBrokenLinks() (int, error) {
 	c.mu.Lock()
 	defer c.mu.Unlock()

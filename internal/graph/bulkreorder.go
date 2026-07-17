@@ -46,7 +46,8 @@ func (r *mutationResolver) reorderChildrenImpl(parentID string, childIDs []strin
 	}
 	// Each element is now the live store pointer Writer.Update installed — return
 	// detached snapshots so no live c.nibs pointer escapes to gqlgen's async
-	// marshaler (whose Path a concurrent Archive rewrites in place).
+	// marshaler (see the canonical live-pointer / copy-on-write invariant at
+	// NibReader.GetSnapshot).
 	return r.snapshotResults(ordered)
 }
 
@@ -137,7 +138,8 @@ func (r *mutationResolver) reorderSiblingsImpl(siblingIDs []string, afterID *str
 	}
 	// Each element is now the live store pointer Writer.Update installed — return
 	// detached snapshots so no live c.nibs pointer escapes to gqlgen's async
-	// marshaler (whose Path a concurrent Archive rewrites in place).
+	// marshaler (see the canonical live-pointer / copy-on-write invariant at
+	// NibReader.GetSnapshot).
 	return r.snapshotResults(block)
 }
 

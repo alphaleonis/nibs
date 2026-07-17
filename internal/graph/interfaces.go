@@ -26,45 +26,46 @@ type NibReader interface {
 	// field (notably Path) is read off-lock. This is the blessed READ accessor
 	// for values that outlive the lock.
 	//
-	// Rule for EVERY GraphQL resolver — read, query, relationship, AND mutation:
-	// a resolver that returns nib data outliving the store lock MUST hand out a
-	// GetSnapshot clone, never a live c.nibs pointer. gqlgen marshals a returned
-	// nib's fields asynchronously and off the store lock, concurrently with an
-	// in-place mutation like Archive rewriting a stored nib's Path under c.mu, so a
-	// live pointer that reaches gqlgen is a data race. Only the immutable ID may be
-	// read off a live pointer to look the snapshot up.
+	// CANONICAL INVARIANT (the live-pointer / copy-on-write rule). This doc is its
+	// single authoritative statement; sibling comments across internal/nibcore and
+	// internal/graph defer here rather than re-derive it. A Core mutator may change
+	// ONLY Path in place on a pointer already published in c.nibs; every other
+	// field change must be copy-on-write — install a fresh *nib.Nib under the map
+	// key rather than edit the stored one. That lets an off-lock reader (the
+	// GraphQL Nibs filter/sort pipeline; gqlgen's async field marshaler) still
+	// holding the old pointer never observe a non-Path field torn mid-write. The
+	// only writers that rewrite Path in place are Archive, Unarchive,
+	// LoadAndUnarchive, and the watcher's move/rename branches. A slug rename is one
+	// of those watcher branches and likewise rewrites ONLY Path in place; Slug,
+	// though also filename-derived, is an off-lock-read field and must be updated
+	// copy-on-write like any other non-Path field. The store-side (producer) half of
+	// this invariant is enforced by the deterministic guard
+	// nibcore.TestCoreMutators_FreezeGuard.
 	//
-	// This rule is now universal — it covers the write side too. The mutation
-	// resolvers (CreateNib, UpdateNib, SetParent, the blocking add/remove pair,
-	// AddBlockedBy, RemoveBlockedBy, and the reorder family ReorderNib/
-	// ReorderChildren/ReorderSiblings) return a GetSnapshot clone via
-	// mutationResolver.snapshotResult / snapshotResults, never the live c.nibs
-	// pointer that Writer.Create/Writer.Update installed as the store entry (or
-	// that Reader.Get handed back). A newly added resolver that returns nib data
-	// is covered by this rule and must snapshot its result the same way.
+	// Consequences that follow from the canonical rule (specifics, not a
+	// re-derivation of it):
 	//
-	// What snapshotting at the END of the Nibs pipeline buys: it detaches the
-	// RETURNED nib data, so no live c.nibs pointer outlives the store lock to
-	// reach gqlgen's async marshaler. It does NOT on its own make the synchronous
-	// pre-snapshot reads race-free. The Nibs pipeline
-	// (ApplyFilter/includeAncestors/ApplySorting) reads non-Path fields (Parent,
-	// BlockedBy, Status, Type, Priority, Tags, Title, timestamps, Order, ...) off
-	// live pointers before snapshotting at the end. Every non-Path field change on
-	// a PUBLISHED stored pointer installs a FRESH pointer rather than mutating the
-	// existing one: Core.Update for API writes, the file watcher's create/write
-	// branch for external edits, and — as of nib nibs-pyei — RemoveLinksTo and
-	// FixBrokenLinks (internal/nibcore/link_health.go), which now clone the nib,
-	// apply the Parent/BlockedBy/Documents changes to the clone, and reinstall it
-	// under c.nibs[id]. So an off-lock reader still holding the old pointer cannot
-	// see those changes torn, and the pre-snapshot pipeline reads no longer race
-	// the link-health mutators. (migrateV0ToV1 does edit BlockedBy/Blocking/Version
-	// in place, but only on fresh, not-yet-published pointers while c.mu is held
-	// during loadFromDisk, which rebuilds c.nibs from scratch — the same
-	// not-yet-published class as loadNib's empty-slice defaults, not an off-lock
-	// reader race.) Path is the sole field still mutated in place on a PUBLISHED
-	// stored pointer (Archive/Unarchive/LoadAndUnarchive, slug rename, and the
-	// watcher's external move detection), which is why returned data must be
-	// snapshotted rather than handed out live.
+	//   - EVERY GraphQL resolver — read, query, relationship, AND mutation — that
+	//     returns nib data outliving the store lock MUST hand out a GetSnapshot
+	//     clone, never a live c.nibs pointer; only the immutable ID may be read off
+	//     a live pointer to look the snapshot up. The mutation resolvers (CreateNib,
+	//     UpdateNib, SetParent, AddBlockedBy/RemoveBlockedBy, the blocking add/remove
+	//     pair, and the reorder family ReorderNib/ReorderChildren/ReorderSiblings)
+	//     return their result via mutationResolver.snapshotResult / snapshotResults,
+	//     never the live pointer Writer.Create/Writer.Update installed. A newly added
+	//     resolver that returns nib data must snapshot its result the same way.
+	//
+	//   - Snapshotting at the END of the Nibs pipeline detaches only the RETURNED
+	//     data; it does NOT make the synchronous pre-snapshot reads race-free. The
+	//     pipeline (ApplyFilter/includeAncestors/ApplySorting) reads non-Path fields
+	//     (Parent, BlockedBy, Status, Type, Priority, Tags, Title, timestamps,
+	//     Order, ...) off live pointers before the final snapshot — safe precisely
+	//     because the canonical rule guarantees those fields are never rewritten in
+	//     place on a published pointer (Core.Update, the watcher's create/write
+	//     branch, and — as of nib nibs-pyei — RemoveLinksTo/FixBrokenLinks all
+	//     install a fresh pointer). migrateV0ToV1 does edit BlockedBy/Blocking/
+	//     Version in place, but only on fresh, not-yet-published pointers while c.mu
+	//     is held during loadFromDisk, so no off-lock reader can observe it.
 	//
 	// Unlike Get (live pointer) the result is race-safe to read from later; ok is
 	// false when the nib is absent.
