@@ -63,7 +63,7 @@ tasks:
         .
 
   test:
-    desc: Run all tests (Go + web)
+    desc: Run all tests (Go + web, incl. the -race gate on nibcore + graph)
     deps: [web:build]
     cmds:
       # Go tests run memory-capped so a runaway test is OOM-killed inside its own
@@ -71,8 +71,23 @@ tasks:
       # (nibs-mv0i). Falls back to plain `go test` where systemd --user scopes
       # aren't available. Override the cap with GO_TEST_MEM_MAX (default 4G).
       - bash scripts/go-test-capped.sh ./...
+      # Run the concurrency-critical packages a second time under -race, so a
+      # reintroduced data race fails the default gate rather than only when
+      # someone remembers to pass -race by hand (nibs-7l3v). Many guards in these
+      # packages (payload-snapshot / live-pointer detachment, the GetForUpdate
+      # clone-under-lock guard, the store-level freeze guard) are only meaningful
+      # under the detector; a plain `go test` degrades them to trivial checks.
+      - task: test:race
       - cd web && npm run check
       - cd web && npx vitest run --reporter=agent
+
+  test:race:
+    desc: Run the -race detector on the concurrency-critical packages (nibcore + graph)
+    cmds:
+      # Scoped to the two packages that carry the concurrency invariants — a full
+      # `-race ./...` is slow (the watcher tests use real debounce timing).
+      # -count=1 defeats the test cache so the detector always actually runs.
+      - bash scripts/go-test-capped.sh -race -count=1 ./internal/nibcore/... ./internal/graph/...
 
   nibs:
     desc: Build and run the nibs CLI (pass args after `--`, e.g. `task nibs -- list --json`)

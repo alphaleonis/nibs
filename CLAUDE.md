@@ -11,7 +11,8 @@ Nibs is a file-based issue tracker for AI-first workflows. Issues ("nibs") are s
 All commands use [Task](https://taskfile.dev/) (`go-task/task`) as the task runner. Tool version pinning (Go, golangci-lint, Task itself) is handled by [mise](https://mise.jdx.dev/) via `mise.toml`, so the only thing contributors need to install manually is mise.
 
 - `task build` - Build the `./nibs` executable (runs codegen first)
-- `task test` - Run all tests: Go + web (runs codegen and web:build first)
+- `task test` - Run all tests: Go + web (runs codegen and web:build first); includes the `-race` gate on `internal/nibcore` + `internal/graph`
+- `task test:race` - Run the `-race` detector on the concurrency-critical packages (`internal/nibcore` + `internal/graph`) only
 - `task codegen` - Regenerate GraphQL code (`go generate ./...`)
 - `task nibs` - Build and run the CLI in one step (`go run .`)
 - `go test ./internal/nib/` - Run tests for a specific package
@@ -140,6 +141,7 @@ Before starting any new work, run `git fetch` (and `git -C .nibs fetch`) and che
 - Web test commands require `web/` as the working directory. If cwd has drifted, `cd` to the project root's `web/` directory first.
 - **Always use `--reporter=agent`** when running vitest — it keeps output concise. Never pipe vitest through grep; read the output once.
 - `task test` runs both Go and web tests. No need to run them separately unless debugging a specific failure.
+- **`-race` runs automatically**: `task test` runs `internal/nibcore` + `internal/graph` a second time under `-race` (via `task test:race`), and CI runs the same detector lane on Linux. These packages carry the concurrency invariants (live-pointer/copy-on-write, clone-under-lock), whose guards degrade to trivial checks without `-race` — so a reintroduced data race now fails the default gate, not just a manual `go test -race`.
 - **Visual verification of the web UI**: `task screenshots` captures PNGs of the key UI states (table at each view level, detail panel, editor modal, context menu) into `web/screenshots/output/` (gitignored), served from a temp copy of the sample fixture. Read the PNGs to *see* rendered changes — jsdom tests can't verify pixels. One-time setup: `cd web && npx playwright install chromium` (plain `install`, not `--with-deps` — that flag is apt-only and fails on Fedora). Extend `web/screenshots/capture.spec.ts` when new views or themes land.
 - **bits-ui timer flush**: `test-setup.ts` has an `afterAll` that waits 50ms so bits-ui's body-scroll-lock deferred cleanup (24ms setTimeout) fires while jsdom still exists. Without this, the timer fires after jsdom teardown causing a spurious "document is not defined" error.
 
