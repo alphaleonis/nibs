@@ -32,6 +32,7 @@ WHEN DELEGATING to subagents (auto-tdd, auto-dev, feature-dev, etc.):
 ```bash
 nibs list --ready                 # nibs ready to start (not blocked; excludes in-progress/completed/scrapped/draft/deferred)
 nibs list --ready --json          # same, as the {nibs,count,truncated} envelope
+nibs list                         # all OPEN nibs (completed/scrapped hidden by default; --all to include them)
 nibs get <id> [id...]             # full detail of specific nibs (on-disk document by default)
 ```
 </EXTREMELY_IMPORTANT>
@@ -120,7 +121,7 @@ nibs rel <id> --rel descendants --depth all      # full descendant tree (transit
 nibs rel <id> --rel neighbours-active            # all 7 direct rels, excluding completed/scrapped
 nibs rel <id> --rel mentions-in                  # nibs whose bodies mention <id>
 ```
-Relations: `parent, children, siblings, blocking, blocked-by, mentions-out, mentions-in`, their transitive forms (`ancestors, descendants, blockers-transitive, blocks-transitive, mentions-out-transitive, mentions-in-transitive`), and `neighbours` / `neighbours-active`. `--rel` is repeatable / comma-separated (results are unioned and deduped). Filters (`--status/--type/--priority/--estimate/--tag`, their `--no-…` pairs, `--active`) apply where they make sense. Add `-f`/`--view` to project the related nibs. `nibs list --mentions <id>` / `--mentioned-by <id>` filter a *list* by mention relation.
+Relations: `parent, children, siblings, blocking, blocked-by, mentions-out, mentions-in`, their transitive forms (`ancestors, descendants, blockers-transitive, blocks-transitive, mentions-out-transitive, mentions-in-transitive`), and `neighbours` / `neighbours-active`. `--rel` is repeatable / comma-separated (results are unioned and deduped). Filters (`--status/--type/--priority/--estimate/--tag`, their `--no-…` pairs, `--active`/`--all`) apply where they make sense; like `list`, **`rel` is open by default** and `-s`/`--no-status` take the `open`/`closed`/`parked` groups (see Statuses). Add `-f`/`--view` to project the related nibs. `nibs list --mentions <id>` / `--mentioned-by <id>` filter a *list* by mention relation.
 
 Topological ordering (`--order topo`, valid on children/descendants/blocking-family) reads each child's `blocked_by` to build a dependency graph: if B is `blocked_by: [a]` and A is a sibling, A comes before B. Edges outside the subtree are dropped; cycles raise an error naming the participants. `#<id>` mentions do NOT create ordering edges.
 
@@ -139,6 +140,13 @@ Configured statuses:
 {{- end}}
 
 **`deferred` = parked**: intentionally not-now but not abandoned. Non-terminal, not archived (stays visible in listings), but **excluded from `nibs list --ready`**. Choosing among the not-active states: **draft** = needs refinement before it can be worked; **deferred** = ready but parked for later; **scrapped** = will not be done (terminal, archived). `deferred` is a status, not a priority.
+
+**Status filtering (`nibs list` / `nibs rel`) is open by default.** With no status flag both commands list only **open** nibs (completed and scrapped hidden), and the header discloses how many were hidden — `# 12 nibs (3 hidden: completed/scrapped — --all to include)`. `-s`/`--status` and `--no-status` accept status **groups** as well as concrete statuses:
+- **open** = in-progress, todo, draft, deferred (every non-archived status)
+- **closed** = completed, scrapped (the archived statuses)
+- **parked** = deferred
+
+An explicit `-s` overrides the open default (`-s closed` shows only completed/scrapped); `--all` includes every status; `--open`/`--active` is shorthand for `-s open`. So **open work under a parent needs no post-filtering** — `nibs rel <id> --rel descendants -t bug` already returns only open bugs; don't hand-roll a `--json | python` status filter. `-c`/`-q` honor the open default too; add `--all` for true totals. (A filter that admits no status, e.g. `--no-status open`, is a validation error rather than a silent empty result.)
 
 ## Priorities
 

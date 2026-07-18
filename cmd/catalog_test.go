@@ -164,6 +164,103 @@ func TestCatalogFiltersMatchConfig(t *testing.T) {
 	}
 }
 
+// TestCatalogFiltersShowStatusGroups pins that catalog filters documents the
+// status groups (open/closed/parked) with members derived from config, and
+// discloses the open-by-default behavior — the vocabulary the open default
+// depends on for discoverability.
+func TestCatalogFiltersShowStatusGroups(t *testing.T) {
+	// JSON mode: status_groups decode with config-derived members, and
+	// open_by_default is advertised.
+	jsonOut, err := execCatalog(t, "--json", "filters")
+	if err != nil {
+		t.Fatalf("catalog --json filters: %v", err)
+	}
+	var got struct {
+		StatusGroups []struct {
+			Group   string   `json:"group"`
+			Members []string `json:"members"`
+		} `json:"status_groups"`
+		OpenByDefault bool `json:"open_by_default"`
+	}
+	if err := json.Unmarshal([]byte(jsonOut), &got); err != nil {
+		t.Fatalf("decode filters JSON: %v\n%s", err, jsonOut)
+	}
+	if !got.OpenByDefault {
+		t.Errorf("filters JSON open_by_default = false, want true")
+	}
+	cfg := config.Default()
+	want := map[string][]string{
+		"open":   cfg.OpenStatusNames(),
+		"closed": cfg.ArchiveStatusNames(),
+		"parked": cfg.ParkedStatusNames(),
+	}
+	if len(got.StatusGroups) != len(want) {
+		t.Fatalf("got %d status groups, want %d", len(got.StatusGroups), len(want))
+	}
+	for _, g := range got.StatusGroups {
+		w, ok := want[g.Group]
+		if !ok {
+			t.Errorf("unexpected status group %q", g.Group)
+			continue
+		}
+		if !reflect.DeepEqual(g.Members, w) {
+			t.Errorf("status group %q members = %v, want %v", g.Group, g.Members, w)
+		}
+	}
+
+	// Text mode: the group names and the open-by-default disclosure appear.
+	textOut, err := execCatalog(t, "filters")
+	if err != nil {
+		t.Fatalf("catalog filters: %v", err)
+	}
+	for _, want := range []string{
+		"Status groups", "open", "closed", "parked",
+		"open nibs by default", "--all",
+	} {
+		if !strings.Contains(textOut, want) {
+			t.Errorf("catalog filters text missing %q", want)
+		}
+	}
+}
+
+// TestCatalogExamplesShowOpenWorkRecipes pins that catalog examples surfaces the
+// open-work recipes (open work under a parent, only-closed via -s closed,
+// everything via --all) so an agent finds them instead of hand-rolling a
+// '--json | python' post-filter.
+func TestCatalogExamplesShowOpenWorkRecipes(t *testing.T) {
+	// JSON mode: recipes decode alongside the {nib} and list payloads.
+	jsonOut, err := execCatalog(t, "--json", "examples")
+	if err != nil {
+		t.Fatalf("catalog --json examples: %v", err)
+	}
+	var got struct {
+		Recipes []recipeInfo `json:"recipes"`
+	}
+	if err := json.Unmarshal([]byte(jsonOut), &got); err != nil {
+		t.Fatalf("decode examples JSON: %v\n%s", err, jsonOut)
+	}
+	if !reflect.DeepEqual(got.Recipes, catalogOpenWorkRecipes()) {
+		t.Errorf("examples recipes = %+v, want %+v", got.Recipes, catalogOpenWorkRecipes())
+	}
+
+	// Text mode: the key open-work commands and the anti-post-filter note appear.
+	textOut, err := execCatalog(t, "examples")
+	if err != nil {
+		t.Fatalf("catalog examples: %v", err)
+	}
+	for _, want := range []string{
+		"Open-work recipes",
+		"open by default",
+		"nibs rel <id> --rel descendants",
+		"nibs list -s closed",
+		"nibs list --all",
+	} {
+		if !strings.Contains(textOut, want) {
+			t.Errorf("catalog examples text missing %q", want)
+		}
+	}
+}
+
 // TestCatalogHierarchyMatchesNibtypes pins that catalog hierarchy is generated
 // from nibtypes.ValidParentTypes / ValidChildTypes for every configured type.
 func TestCatalogHierarchyMatchesNibtypes(t *testing.T) {

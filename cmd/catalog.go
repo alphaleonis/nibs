@@ -156,8 +156,30 @@ type filterInfo struct {
 	Values      []string `json:"values"`
 }
 
+// statusGroupCatalog describes one status group accepted by -s/--status and
+// --no-status and the concrete statuses it expands to, all derived from config
+// so the group members cannot drift from what resolveStatusFilter expands.
+type statusGroupCatalog struct {
+	Group   string   `json:"group"`
+	Members []string `json:"members"`
+}
+
+// statusGroupCatalogEntries returns the accepted status groups and their
+// concrete members, sourced from config (the same sets statusGroupMembers
+// expands to).
+func statusGroupCatalogEntries(cfg *config.Config) []statusGroupCatalog {
+	return []statusGroupCatalog{
+		{statusGroupOpen, cfg.OpenStatusNames()},
+		{statusGroupClosed, cfg.ArchiveStatusNames()},
+		{statusGroupParked, cfg.ParkedStatusNames()},
+	}
+}
+
 // catalogFilters renders the enum-valued filter flags and their values,
-// generated from config (the single source of truth for the enums).
+// generated from config (the single source of truth for the enums). The status
+// groups (open/closed/parked) are documented alongside the concrete statuses
+// because -s/--status and --no-status accept them anywhere a concrete status is
+// accepted, and list/rel apply an open-by-default status filter.
 func catalogFilters() error {
 	cfg := config.Default()
 	filters := []filterInfo{
@@ -166,8 +188,13 @@ func catalogFilters() error {
 		{"priority", "--priority/-p", "--no-priority", cfg.PriorityNames()},
 		{"estimate", "--estimate/-e", "--no-estimate", cfg.EstimateNames()},
 	}
+	statusGroups := statusGroupCatalogEntries(cfg)
 	if catalogJSON {
-		return output.JSONRaw(map[string]any{"filters": filters})
+		return output.JSONRaw(map[string]any{
+			"filters":         filters,
+			"status_groups":   statusGroups,
+			"open_by_default": true,
+		})
 	}
 
 	var b strings.Builder
@@ -179,6 +206,19 @@ func catalogFilters() error {
 		_, _ = fmt.Fprintf(tw, "%s\t%s\t%s\t%s\n", f.Field, f.IncludeFlag, f.ExcludeFlag, strings.Join(f.Values, ", "))
 	}
 	_ = tw.Flush()
+
+	b.WriteString("\nStatus groups — accepted by -s/--status and --no-status anywhere a concrete\n")
+	b.WriteString("status is (they expand to their member statuses):\n\n")
+	gtw := tabwriter.NewWriter(&b, 0, 0, 2, ' ', 0)
+	_, _ = fmt.Fprintln(gtw, "GROUP\tMEMBERS")
+	for _, g := range statusGroups {
+		_, _ = fmt.Fprintf(gtw, "%s\t%s\n", g.Group, strings.Join(g.Members, ", "))
+	}
+	_ = gtw.Flush()
+
+	b.WriteString("\n'nibs list' and 'nibs rel' show only open nibs by default (completed/scrapped\n")
+	b.WriteString("hidden). An explicit -s overrides that (-s closed shows only completed/scrapped),\n")
+	b.WriteString("--all includes every status, and --open/--active is shorthand for -s open.\n")
 	fmt.Print(b.String())
 	return nil
 }
@@ -242,10 +282,12 @@ func catalogExamples() error {
 		return err
 	}
 
+	recipes := catalogOpenWorkRecipes()
 	if catalogJSON {
 		return output.JSONRaw(map[string]any{
-			"nib":  map[string]any{"nib": single},
-			"list": list,
+			"nib":     map[string]any{"nib": single},
+			"list":    list,
+			"recipes": recipes,
 		})
 	}
 
@@ -255,7 +297,34 @@ func catalogExamples() error {
 	}
 	fmt.Println()
 	fmt.Println("# List — the {nibs,count,truncated} envelope ('nibs list --json', card view)")
-	return output.JSONRaw(list)
+	if err := output.JSONRaw(list); err != nil {
+		return err
+	}
+
+	var b strings.Builder
+	b.WriteString("\n# Open-work recipes — list/rel are open by default, so no post-filtering\n")
+	b.WriteString("# (no '--json | python status filter') is needed:\n")
+	tw := tabwriter.NewWriter(&b, 0, 0, 2, ' ', 0)
+	for _, r := range recipes {
+		_, _ = fmt.Fprintf(tw, "  %s\t%s\n", r.Command, r.Purpose)
+	}
+	_ = tw.Flush()
+	fmt.Print(b.String())
+	return nil
+}
+
+// catalogOpenWorkRecipes returns the copy-paste command lines for the most
+// common open-work questions. They lean on the open-by-default status filter so
+// an agent never hand-rolls a '--json | python' post-filter to hide
+// completed/scrapped nibs — the incident that motivated the open default.
+func catalogOpenWorkRecipes() []recipeInfo {
+	return []recipeInfo{
+		{"nibs list", "open work everywhere (completed/scrapped hidden by default)"},
+		{"nibs rel <id> --rel descendants", "open work under a parent (add -t bug for open bugs only)"},
+		{"nibs list -s closed", "only completed/scrapped (an explicit -s overrides the open default)"},
+		{"nibs list --all", "every status, including completed/scrapped"},
+		{"nibs list --ready", "open, unblocked, actionable (excludes in-progress/draft/deferred)"},
+	}
 }
 
 // catalogSampleNib is a representative, deterministic nib used to generate the

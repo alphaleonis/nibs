@@ -36,6 +36,26 @@ func TestCheatSheetCoversTheSurface(t *testing.T) {
 	}
 }
 
+// TestCheatSheetShowsOpenDefaultAndGroups asserts the cheat sheet conveys the
+// status-group vocabulary (open/closed/parked as -s/--no-status values), the
+// open-by-default behavior of list/rel, the "open work under X" recipe, and the
+// terse-output (-c/-q) caveat — the discoverability the open default depends on.
+func TestCheatSheetShowsOpenDefaultAndGroups(t *testing.T) {
+	got := cheatSheet(config.Default())
+	for _, want := range []string{
+		"open|closed|parked",           // the status-group vocabulary
+		"OPEN only by default",         // list/rel are open by default
+		"--all",                        // --all shows everything
+		"descendants -t bug",           // the "open work under X" recipe
+		"no post-filter",               // the recipe needs no post-filtering
+		"-c/-q honor the open default", // the terse-output caveat
+	} {
+		if !strings.Contains(got, want) {
+			t.Errorf("cheat sheet missing %q", want)
+		}
+	}
+}
+
 // TestCheatSheetEnumsAreGenerated asserts the type/status/priority/estimate lines
 // are sourced from config (not hand-transcribed), so they cannot drift from what
 // the CLI accepts.

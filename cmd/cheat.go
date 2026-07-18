@@ -50,8 +50,11 @@ VIEWS  id < ref < card < full (leanest→fullest). -f adds exact fields, e.g. -f
 INPUT  prose/multi-line is ALWAYS '-' (stdin) or '@FILE', never inline — body, new -d, close --summary.
 EXIT   0 ok · 2 validation · 3 not-found · 4 conflict · 5 io.  --json error → {error:{code,message}}
 TYPE   %s   (hierarchy: nibs catalog hierarchy)
-STATUS %s   (deferred = parked, excl. --ready)
+STATUS %s   (-s/--no-status groups: open|closed|parked; deferred=parked, excl. --ready)
 PRIO   %s (default normal)   EST  %s (s=1 m=3 l=5 xl=8; default m)
+FILTER list/rel show OPEN only by default (completed/scrapped hidden; header notes "N hidden — --all to include").
+       -s overrides (-s closed = only closed); --all = every status. Open work under X: 'rel <id> --rel
+       descendants -t bug' is already open — no post-filter. -c/-q honor the open default (--all for totals).
 RULE   On any nibs error: STOP, find the root cause, never silently retry.
 `,
 		strings.Join(cfg.TypeNames(), ", "),
