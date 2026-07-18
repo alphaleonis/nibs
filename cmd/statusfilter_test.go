@@ -166,3 +166,36 @@ func TestResolveStatusFilter_InvalidToken(t *testing.T) {
 		})
 	}
 }
+
+// TestResolveStatusFilter_ContradictoryFilter pins that a status filter admitting
+// no status at all fails loudly instead of silently returning zero rows — an
+// empty result reads as "no such nibs exist" to an agent.
+func TestResolveStatusFilter_ContradictoryFilter(t *testing.T) {
+	cfg := config.Default()
+	contradictory := []struct {
+		name string
+		in   statusFilterInput
+	}{
+		{"no-status open under open default", statusFilterInput{NoStatus: []string{"open"}}},
+		{"-s open --no-status open", statusFilterInput{Status: []string{"open"}, NoStatus: []string{"open"}}},
+		{"-s completed --no-status completed", statusFilterInput{Status: []string{"completed"}, NoStatus: []string{"completed"}}},
+		{"no-status open and closed", statusFilterInput{NoStatus: []string{"open", "closed"}}},
+	}
+	for _, tt := range contradictory {
+		t.Run(tt.name, func(t *testing.T) {
+			_, _, err := resolveStatusFilter(cfg, tt.in)
+			if err == nil {
+				t.Fatal("expected a contradiction error, got nil (would silently return zero rows)")
+			}
+			if !strings.Contains(err.Error(), "--all") {
+				t.Errorf("error %q should suggest --all as a recovery", err.Error())
+			}
+		})
+	}
+
+	// The escape hatch: --all --no-status open is NOT contradictory — it means
+	// "everything except the open set" = the closed set — and must not error.
+	if _, _, err := resolveStatusFilter(cfg, statusFilterInput{All: true, NoStatus: []string{"open"}}); err != nil {
+		t.Errorf("--all --no-status open should yield the closed set, not error: %v", err)
+	}
+}

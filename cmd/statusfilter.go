@@ -70,7 +70,47 @@ func resolveStatusFilter(cfg *config.Config, in statusFilterInput) (include, exc
 	if len(include) == 0 && !in.All {
 		exclude = appendMissingStatuses(exclude, cfg.ArchiveStatusNames())
 	}
+
+	// A status filter that admits no status at all is a data-independent
+	// contradiction — e.g. `--no-status open` (the open default excludes
+	// closed, --no-status excludes the rest) or `-s open --no-status open`. It
+	// would return zero rows regardless of the data, which an agent reads as
+	// "no such nibs exist". Fail loudly instead of silently emitting nothing.
+	if statusFilterAdmitsNothing(cfg, include, exclude) {
+		return nil, nil, fmt.Errorf(
+			"status filter admits no status (include=%s, exclude=%s): every status is excluded, so nothing can match — drop a --no-status or use --all",
+			formatStatusList(include), formatStatusList(exclude))
+	}
 	return include, exclude, nil
+}
+
+// statusFilterAdmitsNothing reports whether the (include, exclude) pair leaves
+// no status able to pass: the base set (include, or every status when include
+// is empty) is fully covered by exclude. Such a filter matches nothing
+// regardless of the data.
+func statusFilterAdmitsNothing(cfg *config.Config, include, exclude []string) bool {
+	base := include
+	if len(base) == 0 {
+		base = cfg.StatusNames()
+	}
+	excluded := make(map[string]bool, len(exclude))
+	for _, s := range exclude {
+		excluded[s] = true
+	}
+	for _, s := range base {
+		if !excluded[s] {
+			return false
+		}
+	}
+	return true
+}
+
+// formatStatusList renders a status list for error messages; "(none)" when empty.
+func formatStatusList(s []string) string {
+	if len(s) == 0 {
+		return "(none)"
+	}
+	return strings.Join(s, ", ")
 }
 
 // expandStatusTokens validates and expands a list of status/group tokens into a
