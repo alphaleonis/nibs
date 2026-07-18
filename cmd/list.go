@@ -4,6 +4,8 @@ import (
 	"context"
 	"fmt"
 
+	"github.com/alphaleonis/nibs/internal/config"
+	"github.com/alphaleonis/nibs/internal/graph"
 	"github.com/alphaleonis/nibs/internal/graph/model"
 	"github.com/alphaleonis/nibs/internal/output"
 	"github.com/alphaleonis/nibs/internal/projection"
@@ -75,10 +77,15 @@ Output modes:
   --no-header               TSV rows only (no header line).
   --json                    The {"nibs":[…],"count":N,"truncated":<bool>}
                             envelope — the same shape rel and the recipe views
-                            emit.
+                            emit. Carries "hidden_closed":N when the open default
+                            suppressed that many completed/scrapped nibs.
   -q, --quiet               Ids only, one per line (the 'id' view, unwrapped).
+                            Honors the open default (completed/scrapped hidden);
+                            add --all to include them. Never annotated.
   -c, --count               The true count of the filtered set as a bare
                             integer (pre-limit; ignores --view/-f/--json).
+                            Honors the open default, so it counts open nibs only;
+                            use --all for the total across every status.
   --limit N                 Project only the first N rows and set
                             "truncated":true in the envelope. N<=0 is unlimited.
 
@@ -111,7 +118,7 @@ Search Syntax (--search/-S):
 		// self-contained status filter (below), so suppress the open default when
 		// it is set — the group expansion of any explicit -s/--no-status still
 		// applies.
-		includeStatus, excludeStatus, err := resolveStatusFilter(app.Config(), statusFilterInput{
+		includeStatus, excludeStatus, openDefaultApplied, err := resolveStatusFilter(app.Config(), statusFilterInput{
 			Status:   listStatus,
 			NoStatus: listNoStatus,
 			All:      listAll || listReady,
@@ -226,23 +233,75 @@ Search Syntax (--search/-S):
 			return nil
 		}
 
+		// hidden_closed: when the open default silently dropped completed/scrapped
+		// rows, disclose how many matched every OTHER filter so the caller can see
+		// the set is partial. Only meaningful when the open default is active (an
+		// explicit -s/--open/--all/--ready never hides silently). Computed
+		// pre-limit (like -c): re-run the same query with the archive exclusion
+		// removed and subtract the displayed count. Skipped after the -c/-q early
+		// returns, so the terse outputs stay bare.
+		hiddenClosed := 0
+		if openDefaultApplied {
+			hiddenClosed, err = countHiddenClosed(context.Background(), app.Config(), resolver, filter,
+				statusFilterInput{Status: listStatus, NoStatus: listNoStatus}, nibSort, len(nibs))
+			if err != nil {
+				return reportErr(listJSON, output.ErrValidation, err)
+			}
+		}
+
 		// Project the filtered nibs through the selection, applying --limit.
 		projResolver := resolver.ProjectionResolver(context.Background())
 		pl, err := projection.ProjectList(nibs, sel, projResolver, listLimit)
 		if err != nil {
 			return reportErr(listJSON, output.ErrValidation, err)
 		}
+		pl.SetHiddenClosed(hiddenClosed)
 
-		// --json: the {nibs,count,truncated} envelope (byte-identical to what
-		// rel and the recipe views emit).
+		// --json: the {nibs,count,truncated,hidden_closed} envelope (byte-identical
+		// to what rel and the recipe views emit).
 		if listJSON {
 			return output.JSONRaw(pl)
 		}
 
-		// Default: TSV rows under a "# <n> nibs" header (--no-header drops it).
-		fmt.Print(output.FormatListTSV(pl.Rows(), !listNoHeader))
+		// Default: TSV rows under a "# <n> nibs" header (--no-header drops it),
+		// annotated with the hidden-closed count when the open default suppressed
+		// rows.
+		fmt.Print(output.FormatListTSV(pl.Rows(), !listNoHeader, hiddenClosed, closedStatusLabel(app.Config())))
 		return nil
 	},
+}
+
+// countHiddenClosed returns how many nibs the open-by-default archive exclusion
+// removed from the displayed set. It re-runs the query with the archive
+// exclusion dropped — every other filter identical, only the status resolution
+// widened to --all semantics (keeping any --no-status) — and subtracts the
+// displayed count. Both counts are pre-limit, so the result is the size of the
+// full matching completed/scrapped set independent of --limit. Only call this
+// when the open default was applied; otherwise nothing was hidden.
+func countHiddenClosed(ctx context.Context, cfg *config.Config, resolver *graph.Resolver, displayed *model.NibFilter, status statusFilterInput, sort *model.NibSort, displayedCount int) (int, error) {
+	widenedInclude, widenedExclude, _, err := resolveStatusFilter(cfg, statusFilterInput{
+		Status:   status.Status,
+		NoStatus: status.NoStatus,
+		All:      true, // drop the open-default archive exclusion; keep --no-status
+	})
+	if err != nil {
+		return 0, err
+	}
+	// Copy the displayed filter and override only its status fields so every
+	// other constraint (type, priority, tags, parent, search, mentions, …) is
+	// identical — the difference in matches is exactly the hidden closed set.
+	widened := *displayed
+	widened.Status = widenedInclude
+	widened.ExcludeStatus = widenedExclude
+	all, err := resolver.Query().Nibs(ctx, &widened, sort)
+	if err != nil {
+		return 0, fmt.Errorf("querying nibs for hidden-count: %w", err)
+	}
+	hidden := len(all) - displayedCount
+	if hidden < 0 {
+		hidden = 0
+	}
+	return hidden, nil
 }
 
 // buildNibSort maps CLI --sort flag values to a GraphQL NibSort.
@@ -293,12 +352,12 @@ func init() {
 	listCmd.Flags().BoolVar(&listAll, "all", false, "Include every status (disable the open-by-default filter)")
 	listCmd.Flags().BoolVar(&listOpen, "open", false, "Show only open nibs — shorthand for -s open (the default when no status filter is given)")
 	listCmd.Flags().BoolVar(&listActive, "active", false, "Alias for --open (show only open nibs)")
-	listCmd.Flags().BoolVarP(&listQuiet, "quiet", "q", false, "Only output IDs (one per line)")
+	listCmd.Flags().BoolVarP(&listQuiet, "quiet", "q", false, "Only output IDs, one per line (honors the open default; add --all to include completed/scrapped)")
 	listCmd.Flags().StringVar(&listSort, "sort", "", "Sort by: created, updated, status, priority, status-priority, id (default: order key)")
 	listCmd.Flags().StringVar(&listView, "view", "", "View tier: id, ref, card, or full (default: ref)")
 	listCmd.Flags().StringVarP(&listFields, "fields", "f", "", "Field selection (additive over --view), e.g. \"status,priority\" or \"id,blocked-by(id,status)\"")
 	listCmd.Flags().BoolVar(&listNoHeader, "no-header", false, "Drop the \"# <n> nibs\" header from TSV output")
-	listCmd.Flags().BoolVarP(&listCount, "count", "c", false, "Output the count of matching nibs as a bare integer")
+	listCmd.Flags().BoolVarP(&listCount, "count", "c", false, "Output the count of matching nibs as a bare integer (honors the open default; use --all for the total across every status)")
 	listCmd.Flags().IntVar(&listLimit, "limit", 0, "Project only the first N rows (0 = unlimited); sets truncated:true when it drops rows")
 	rootCmd.AddCommand(listCmd)
 }

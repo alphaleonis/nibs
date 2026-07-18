@@ -48,7 +48,13 @@ type statusFilterInput struct {
 //
 // An unknown token (neither a concrete status nor a group) is a validation
 // error naming the offending token and the accepted values.
-func resolveStatusFilter(cfg *config.Config, in statusFilterInput) (include, exclude []string, err error) {
+//
+// openDefaultApplied reports whether the open-by-default archive exclusion was
+// added (no explicit -s/--open/--active and no --all). Callers use it to decide
+// whether to disclose the hidden completed/scrapped count: the open default is
+// the only path that silently drops rows, so a partial set is only unobservable
+// there.
+func resolveStatusFilter(cfg *config.Config, in statusFilterInput) (include, exclude []string, openDefaultApplied bool, err error) {
 	statusTokens := in.Status
 	if in.Open {
 		// --open / --active is shorthand for -s open; append rather than
@@ -58,16 +64,17 @@ func resolveStatusFilter(cfg *config.Config, in statusFilterInput) (include, exc
 
 	include, err = expandStatusTokens(cfg, statusTokens)
 	if err != nil {
-		return nil, nil, err
+		return nil, nil, false, err
 	}
 	exclude, err = expandStatusTokens(cfg, in.NoStatus)
 	if err != nil {
-		return nil, nil, err
+		return nil, nil, false, err
 	}
 
 	// Open-by-default: apply only when the caller supplied no explicit include
 	// set and did not ask for --all. An explicit -s (even -s open) overrides it.
 	if len(include) == 0 && !in.All {
+		openDefaultApplied = true
 		exclude = appendMissingStatuses(exclude, cfg.ArchiveStatusNames())
 	}
 
@@ -77,11 +84,19 @@ func resolveStatusFilter(cfg *config.Config, in statusFilterInput) (include, exc
 	// would return zero rows regardless of the data, which an agent reads as
 	// "no such nibs exist". Fail loudly instead of silently emitting nothing.
 	if statusFilterAdmitsNothing(cfg, include, exclude) {
-		return nil, nil, fmt.Errorf(
+		return nil, nil, false, fmt.Errorf(
 			"status filter admits no status (include=%s, exclude=%s): every status is excluded, so nothing can match — drop a --no-status or use --all",
 			formatStatusList(include), formatStatusList(exclude))
 	}
-	return include, exclude, nil
+	return include, exclude, openDefaultApplied, nil
+}
+
+// closedStatusLabel renders the archive ("closed") status names as a
+// slash-joined label ("completed/scrapped") for the hidden-count disclosure in
+// the TSV header. Derived from config so it stays correct if the archive set
+// ever changes.
+func closedStatusLabel(cfg *config.Config) string {
+	return strings.Join(cfg.ArchiveStatusNames(), "/")
 }
 
 // statusFilterAdmitsNothing reports whether the (include, exclude) pair leaves

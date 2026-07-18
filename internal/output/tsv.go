@@ -30,14 +30,25 @@ func FormatTSV(rows [][]string) string {
 // grid is empty) followed by the tab-separated rows (see FormatTSV). Passing
 // includeHeader=false drops the comment line — the --no-header form.
 //
+// When hiddenClosed > 0 the header is annotated to disclose that the open
+// default silently suppressed that many completed/scrapped rows, e.g.
+// "# 8 nibs (43 hidden: completed/scrapped — --all to include)". hiddenLabel
+// names the suppressed statuses ("completed/scrapped"). The caller passes
+// hiddenClosed = 0 whenever the annotation does not apply (an explicit status
+// selection, --all, --ready, or nothing hidden), which suppresses the note.
+//
 // The grid is supplied by the caller (produced by
 // projection.ProjectedList.Rows) so this stays free of any projection or
 // transport dependency: it is pure string assembly, reused by list/rel/recipe
 // views.
-func FormatListTSV(rows [][]string, includeHeader bool) string {
+func FormatListTSV(rows [][]string, includeHeader bool, hiddenClosed int, hiddenLabel string) string {
 	body := FormatTSV(rows)
 	if !includeHeader {
 		return body
 	}
-	return fmt.Sprintf("# %d nibs\n", len(rows)) + body
+	header := fmt.Sprintf("# %d nibs", len(rows))
+	if hiddenClosed > 0 {
+		header += fmt.Sprintf(" (%d hidden: %s — --all to include)", hiddenClosed, hiddenLabel)
+	}
+	return header + "\n" + body
 }

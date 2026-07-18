@@ -45,6 +45,40 @@ func TestProjectList_JSONEnvelope(t *testing.T) {
 	}
 }
 
+// TestProjectList_HiddenClosedEnvelope pins the open-default disclosure field:
+// SetHiddenClosed with a positive value adds "hidden_closed" after "truncated";
+// the default (0) omits the key entirely so its presence is a reliable signal.
+func TestProjectList_HiddenClosedEnvelope(t *testing.T) {
+	sel, _ := ParseFields("id")
+
+	t.Run("positive value is disclosed", func(t *testing.T) {
+		pl, err := ProjectList(sampleNibs()[:1], sel, nil, 0)
+		if err != nil {
+			t.Fatalf("ProjectList: %v", err)
+		}
+		pl.SetHiddenClosed(42)
+		if pl.HiddenClosed() != 42 {
+			t.Errorf("HiddenClosed() = %d, want 42", pl.HiddenClosed())
+		}
+		got, _ := json.Marshal(pl)
+		want := `{"nibs":[{"id":"a1"}],"count":1,"truncated":false,"hidden_closed":42}`
+		if string(got) != want {
+			t.Errorf("envelope = %s, want %s", got, want)
+		}
+	})
+
+	t.Run("zero is omitted", func(t *testing.T) {
+		pl, err := ProjectList(sampleNibs()[:1], sel, nil, 0)
+		if err != nil {
+			t.Fatalf("ProjectList: %v", err)
+		}
+		got, _ := json.Marshal(pl)
+		if strings.Contains(string(got), "hidden_closed") {
+			t.Errorf("envelope should omit hidden_closed when 0, got %s", got)
+		}
+	})
+}
+
 // TestProjectList_EmptyEnvelope asserts an empty input yields nibs:[] (not null),
 // count:0, truncated:false — a consumer can index .nibs unconditionally.
 func TestProjectList_EmptyEnvelope(t *testing.T) {

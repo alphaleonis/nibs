@@ -813,13 +813,15 @@ func TestRelCommand_NoHeader_DropsHeader(t *testing.T) {
 
 // TestRelCommand_JSON_EnvelopeKeysMatchList is the byte-shape parity acceptance
 // criterion: rel --json and list --json share the identical top-level envelope
-// keys ({nibs, count, truncated}).
+// keys ({nibs, count, truncated}). Both use --all so the optional hidden_closed
+// key is absent — this pins the base envelope shape; hidden_closed presence is
+// covered in the open-default tests.
 func TestRelCommand_JSON_EnvelopeKeysMatchList(t *testing.T) {
 	nibsDir := setupRelCobraTest(t, hierarchyFixture)
 
-	relOut := runRelJSON(t, "--nibs-path", nibsDir, "rel", "c1", "--rel", "siblings", "--json")
+	relOut := runRelJSON(t, "--nibs-path", nibsDir, "rel", "c1", "--rel", "siblings", "--all", "--json")
 	resetRelFlags()
-	listOut := runRelJSON(t, "--nibs-path", nibsDir, "list", "--json")
+	listOut := runRelJSON(t, "--nibs-path", nibsDir, "list", "--all", "--json")
 
 	relKeys := topLevelKeys(t, relOut)
 	listKeys := topLevelKeys(t, listOut)

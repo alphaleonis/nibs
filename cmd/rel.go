@@ -300,17 +300,21 @@ func (f relFilterFlags) activeFilterNames() []string {
 // precedence). forceActive is set by the neighbours-active meta rel and folds
 // the open group into the include set (== -s open) for the expanded rels.
 //
+// openDefaultApplied reports whether the open-by-default archive exclusion was
+// applied (no explicit -s/--open/--active/--all/neighbours-active), so the
+// caller knows when to disclose the hidden completed/scrapped count.
+//
 // Returns nil when the resulting filter constrains nothing (only --all, no
 // other flag) so singular/nil-filter callers keep the resolver's fast path.
-func (f relFilterFlags) buildNibFilter(cfg *config.Config, forceActive bool) (*model.NibFilter, error) {
-	includeStatus, excludeStatus, err := resolveStatusFilter(cfg, statusFilterInput{
+func (f relFilterFlags) buildNibFilter(cfg *config.Config, forceActive bool) (*model.NibFilter, bool, error) {
+	includeStatus, excludeStatus, openDefaultApplied, err := resolveStatusFilter(cfg, statusFilterInput{
 		Status:   f.Status,
 		NoStatus: f.NoStatus,
 		All:      f.All,
 		Open:     f.Active || f.Open || forceActive,
 	})
 	if err != nil {
-		return nil, err
+		return nil, false, err
 	}
 	filter := &model.NibFilter{
 		Status:          includeStatus,
@@ -324,9 +328,9 @@ func (f relFilterFlags) buildNibFilter(cfg *config.Config, forceActive bool) (*m
 		ExcludeEstimate: f.NoEstimate,
 	}
 	if relFilterIsNoop(filter) {
-		return nil, nil
+		return nil, openDefaultApplied, nil
 	}
-	return filter, nil
+	return filter, openDefaultApplied, nil
 }
 
 // relFilterIsNoop reports whether the filter constrains nothing buildNibFilter
@@ -562,6 +566,61 @@ func topoSortNibs(candidates []*nib.Nib) ([]*nib.Nib, error) {
 	return out, nil
 }
 
+// relCountHiddenClosed returns how many related nibs the open-by-default archive
+// exclusion removed from the displayed union. It rebuilds the filter with --all
+// semantics (dropping the archive exclusion, keeping every other constraint),
+// re-runs the traversal, and subtracts the displayed union size. Both counts are
+// pre-limit, so the result is the full hidden set independent of --limit. Only
+// call this when the open default was applied; otherwise nothing was hidden.
+func relCountHiddenClosed(ctx context.Context, resolver *graph.Resolver, b *nib.Nib, fetched []relKind, flags relFilterFlags, cfg *config.Config, depth, displayedCount int) (int, error) {
+	widenedFlags := flags
+	widenedFlags.All = true
+	widenedFlags.Active = false
+	widenedFlags.Open = false
+	// forceActive is false: neighbours-active implies -s open, which suppresses
+	// the open default, so this path is never reached for it.
+	widenedFilter, _, err := widenedFlags.buildNibFilter(cfg, false)
+	if err != nil {
+		return 0, err
+	}
+	widenedCount, err := relUnionCount(ctx, resolver, b, fetched, widenedFilter, depth)
+	if err != nil {
+		return 0, err
+	}
+	hidden := widenedCount - displayedCount
+	if hidden < 0 {
+		hidden = 0
+	}
+	return hidden, nil
+}
+
+// relUnionCount traverses every atomic rel and returns the size of the deduped
+// union of related nibs — the pre-limit, order-independent count. It mirrors the
+// display traversal's fetch+dedup (singular rels pass nil so they stay
+// unfiltered) but skips --order topo, which reorders without changing the set.
+func relUnionCount(ctx context.Context, resolver *graph.Resolver, b *nib.Nib, fetched []relKind, filter *model.NibFilter, depth int) (int, error) {
+	seen := map[string]bool{}
+	count := 0
+	for _, fetchKind := range fetched {
+		perRelFilter := filter
+		if relTable[fetchKind].IsSingular {
+			perRelFilter = nil
+		}
+		got, err := fetchRel(ctx, resolver, b, fetchKind, perRelFilter, depth)
+		if err != nil {
+			return 0, fmt.Errorf("fetching %s: %w", fetchKind, err)
+		}
+		for _, n := range got {
+			if seen[n.ID] {
+				continue
+			}
+			seen[n.ID] = true
+			count++
+		}
+	}
+	return count, nil
+}
+
 var relCmd = &cobra.Command{
 	Use:     "rel <id>",
 	Aliases: []string{"links"},
@@ -593,7 +652,9 @@ Output modes:
   (default)                 TSV rows + the "# <n> nibs" header.
   --no-header               TSV rows only (no header line).
   --json                    The {"nibs":[…],"count":N,"truncated":<bool>} envelope
-                            — byte-identical to 'nibs list --json'.
+                            — byte-identical to 'nibs list --json'. Carries
+                            "hidden_closed":N when the open default suppressed that
+                            many completed/scrapped related nibs.
   --limit N                 Project only the first N related nibs and set
                             "truncated":true in the envelope. N<=0 is unlimited.
 
@@ -696,7 +757,7 @@ filter-on-singular validation error does not fire here.`,
 		}
 
 		app := getApp(cmd)
-		filter, err := filterFlags.buildNibFilter(app.Config(), forceActive)
+		filter, openDefaultApplied, err := filterFlags.buildNibFilter(app.Config(), forceActive)
 		if err != nil {
 			return reportErr(relJSON, output.ErrValidation, err)
 		}
@@ -764,20 +825,42 @@ filter-on-singular validation error does not fire here.`,
 			}
 		}
 
+		// hidden_closed: when the open default silently dropped completed/scrapped
+		// related nibs, disclose how many matched every OTHER filter so the caller
+		// can see the related set is partial. Re-run the same traversal with the
+		// archive exclusion dropped (every other filter identical) and subtract the
+		// displayed union size. Both counts are pre-limit, so the result is the full
+		// hidden set independent of --limit.
+		hiddenClosed := 0
+		if openDefaultApplied {
+			hiddenClosed, err = relCountHiddenClosed(ctx, resolver, b, fetched, filterFlags, app.Config(), depthVal, len(results))
+			if err != nil {
+				code := output.ErrFileError
+				if errors.Is(err, errRelCycle) {
+					code = output.ErrValidation
+				}
+				return reportErr(relJSON, code, err)
+			}
+		}
+
 		// Project the related nibs through the selection into the shared
-		// {nibs,count,truncated} envelope — byte-identical to 'nibs list'.
+		// {nibs,count,truncated,hidden_closed} envelope — byte-identical to
+		// 'nibs list'.
 		projResolver := resolver.ProjectionResolver(context.Background())
 		pl, err := projection.ProjectList(results, sel, projResolver, relLimit)
 		if err != nil {
 			return reportErr(relJSON, output.ErrValidation, err)
 		}
+		pl.SetHiddenClosed(hiddenClosed)
 
 		if relJSON {
 			return output.JSONRaw(pl)
 		}
 
-		// Default: TSV rows under a "# <n> nibs" header (--no-header drops it).
-		fmt.Print(output.FormatListTSV(pl.Rows(), !relNoHeader))
+		// Default: TSV rows under a "# <n> nibs" header (--no-header drops it),
+		// annotated with the hidden-closed count when the open default suppressed
+		// related nibs.
+		fmt.Print(output.FormatListTSV(pl.Rows(), !relNoHeader, hiddenClosed, closedStatusLabel(app.Config())))
 		return nil
 	},
 }
