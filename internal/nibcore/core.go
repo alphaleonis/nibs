@@ -219,6 +219,20 @@ func (c *Core) loadFromDisk() error {
 			deferredMigrated++
 		}
 
+		// Two on-disk files can parse to the same id (e.g. a slugged and a
+		// slugless file for one prefixed id). WalkDir visits lexically, so the
+		// last file loaded wins; warn per shadowing event and name both files so
+		// the duplicate is discoverable instead of silently swallowed. We warn
+		// rather than fail the load: a duplicate is usually a transient abnormal
+		// state (an interrupted rename, a manual copy), so degrading to a visible
+		// warning beats refusing to load the entire store. Both paths are logged
+		// in the walk's absolute form (like the skip warning above) so the
+		// operator can go straight to the offending files.
+		if existing, ok := c.nibs[b.ID]; ok {
+			c.logWarn("duplicate nib id %q on disk: %s shadows %s (last file loaded wins; resolve the duplicate)",
+				b.ID, path, filepath.Join(c.root, existing.Path))
+		}
+
 		c.nibs[b.ID] = b
 		return nil
 	})
