@@ -32,13 +32,19 @@ var (
 	newBefore    string
 	newFirst     bool
 	newJSON      bool
+	newNoEdit    bool
 )
 
 var newCmd = &cobra.Command{
 	Use:     "new [title]",
 	Aliases: []string{"create", "c"},
 	Short:   "Create a new nib",
-	Long:    `Creates a new nib (issue) with a generated ID and optional title.`,
+	Long: `Creates a new nib (issue) with a generated ID and optional title.
+
+When no body is supplied on an interactive terminal, $EDITOR (or $VISUAL) opens
+to author the body from the type's template. The editor is skipped — the template
+is used as-is — with --no-edit, with --json, or when stdin/stdout is not a terminal
+(pipe, redirect, or agent/subagent shell), keeping --json output clean and parseable.`,
 	// At most one positional: the optional title. Zero args is legal (the title
 	// defaults to "Untitled"), so this is MaximumNArgs(1), not ExactArgs(1).
 	// Extra args used to be silently folded into the title via strings.Join;
@@ -79,8 +85,7 @@ var newCmd = &cobra.Command{
 		// Use template body when no body provided and type has a template
 		if body == "" {
 			tmplBody := bodytemplate.BodyTemplate(effectiveType)
-			// Open editor if available and interactive (or EDITOR is set)
-			if tmplBody != "" && getEditor() != "" {
+			if shouldOpenEditor(tmplBody) {
 				edited, editErr := editContent(tmplBody)
 				if editErr != nil {
 					return cmdError(newJSON, output.ErrFileError, "editor failed: %v", editErr)
@@ -174,6 +179,29 @@ var newCmd = &cobra.Command{
 	},
 }
 
+// shouldOpenEditor decides whether `nibs new` (given no body) should launch
+// $EDITOR to author the template body interactively. It stays out of the editor
+// for machine or non-interactive invocations: --json (output must remain clean and
+// parseable), --no-edit (explicit opt-out), or any context without a controlling
+// terminal on both stdin and stdout (agent Bash tool, subagent, pipe/redirect).
+// In a non-tty context the editor cannot open /dev/tty; launching it there errors
+// and its stderr noise corrupts --json capture, which previously produced a
+// duplicate nib on the parse-failure retry.
+func shouldOpenEditor(tmplBody string) bool {
+	if tmplBody == "" || newJSON || newNoEdit {
+		return false
+	}
+	if !isInteractiveTerminal() {
+		return false
+	}
+	// editContent independently no-ops when no editor is configured (it early-returns
+	// the input unchanged before any side effect), so this final check is a readability
+	// short-circuit, not the sole enforcement. The two together are defense-in-depth for
+	// spawning an external process — which is why mutating this line alone changes no
+	// observable behavior and no behavioral test can isolate it.
+	return getEditor() != ""
+}
+
 // echoCard renders a freshly-created nib as a card: the {nib} JSON contract in
 // --json mode, or the "key: value" text card otherwise. Both reuse get's
 // projection rendering so the echo matches `nibs get`.
@@ -223,7 +251,8 @@ func init() {
 	newCmd.Flags().StringVar(&newAfter, "after", "", "Insert after this sibling nib ID")
 	newCmd.Flags().StringVar(&newBefore, "before", "", "Insert before this sibling nib ID")
 	newCmd.Flags().BoolVar(&newFirst, "first", false, "Insert before all siblings")
-	newCmd.Flags().BoolVar(&newJSON, "json", false, "Output as JSON")
+	newCmd.Flags().BoolVar(&newJSON, "json", false, "Output as JSON (implies --no-edit)")
+	newCmd.Flags().BoolVar(&newNoEdit, "no-edit", false, "Never open $EDITOR; use the template body as-is")
 	newCmd.MarkFlagsMutuallyExclusive("body", "body-file")
 	newCmd.MarkFlagsMutuallyExclusive("after", "before", "first")
 	rootCmd.AddCommand(newCmd)

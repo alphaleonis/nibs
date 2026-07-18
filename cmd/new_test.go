@@ -42,6 +42,7 @@ func resetNewFlags() {
 	newBefore = ""
 	newFirst = false
 	newJSON = false
+	newNoEdit = false
 }
 
 func TestResetNewFlagsClearsAllState(t *testing.T) {
@@ -61,6 +62,7 @@ func TestResetNewFlagsClearsAllState(t *testing.T) {
 	newBefore = "dirty"
 	newFirst = true
 	newJSON = true
+	newNoEdit = true
 
 	resetNewFlags()
 
@@ -112,6 +114,9 @@ func TestResetNewFlagsClearsAllState(t *testing.T) {
 	if newJSON {
 		t.Error("newJSON not reset")
 	}
+	if newNoEdit {
+		t.Error("newNoEdit not reset")
+	}
 }
 
 func setupNewTest(t *testing.T) string {
@@ -146,8 +151,19 @@ func writeEditorScript(t *testing.T, dir string) string {
 	return scriptPath
 }
 
+// forceInteractive overrides the isInteractiveTerminal gate for a test and
+// restores it afterward. Tests run serially (they mutate global rootCmd
+// state), so a package-level override with cleanup is safe.
+func forceInteractive(t *testing.T, interactive bool) {
+	t.Helper()
+	orig := isInteractiveTerminal
+	isInteractiveTerminal = func() bool { return interactive }
+	t.Cleanup(func() { isInteractiveTerminal = orig })
+}
+
 func TestNewEditorOpensWithTemplate(t *testing.T) {
 	nibsDir := setupNewTest(t)
+	forceInteractive(t, true)
 	scriptPath := writeEditorScript(t, filepath.Dir(nibsDir))
 
 	// Set EDITOR to our test script
@@ -156,7 +172,7 @@ func TestNewEditorOpensWithTemplate(t *testing.T) {
 
 	rootCmd.SetArgs([]string{
 		"--nibs-path", nibsDir,
-		"new", "Editor Test", "-t", "task", "--json",
+		"new", "Editor Test", "-t", "task",
 	})
 
 	out := captureStdout(t, func() {
@@ -565,6 +581,7 @@ func otherID(t *testing.T, nibsDir string, excluded map[string]bool) string {
 
 func TestNewVisualTakesPrecedence(t *testing.T) {
 	nibsDir := setupNewTest(t)
+	forceInteractive(t, true)
 	scriptPath := writeEditorScript(t, filepath.Dir(nibsDir))
 
 	// Set VISUAL to working script, EDITOR to a nonexistent command
@@ -573,7 +590,7 @@ func TestNewVisualTakesPrecedence(t *testing.T) {
 
 	rootCmd.SetArgs([]string{
 		"--nibs-path", nibsDir,
-		"new", "Visual Test", "-t", "task", "--json",
+		"new", "Visual Test", "-t", "task",
 	})
 
 	out := captureStdout(t, func() {
@@ -589,6 +606,118 @@ func TestNewVisualTakesPrecedence(t *testing.T) {
 
 	if !strings.Contains(body, "EDITED BY SCRIPT") {
 		t.Errorf("expected VISUAL editor to be used, got:\n%s", body)
+	}
+}
+
+// TestNewJSONNeverOpensEditor isolates the --json guard: with interactive forced
+// true and EDITOR set, only the newJSON check keeps the editor from running.
+// It also pins that --json emits clean, parseable JSON in a machine context.
+func TestNewJSONNeverOpensEditor(t *testing.T) {
+	nibsDir := setupNewTest(t)
+	forceInteractive(t, true)
+	scriptPath := writeEditorScript(t, filepath.Dir(nibsDir))
+
+	t.Setenv("EDITOR", scriptPath)
+	t.Setenv("VISUAL", "")
+
+	rootCmd.SetArgs([]string{
+		"--nibs-path", nibsDir,
+		"new", "JSON No Editor", "-t", "task", "--json",
+	})
+
+	out := captureStdout(t, func() {
+		if err := rootCmd.Execute(); err != nil {
+			t.Fatalf("new --json failed: %v", err)
+		}
+	})
+
+	entries, _ := os.ReadDir(nibsDir)
+	content, _ := os.ReadFile(filepath.Join(nibsDir, entries[0].Name()))
+	body := string(content)
+
+	if !strings.Contains(body, "## Description") {
+		t.Errorf("expected task template in body, got:\n%s", body)
+	}
+	if strings.Contains(body, "EDITED BY SCRIPT") {
+		t.Errorf("editor must not run in --json mode, got:\n%s", body)
+	}
+
+	// The captured stdout must be clean, parseable JSON carrying a nib object.
+	var got struct {
+		Nib json.RawMessage `json:"nib"`
+	}
+	if err := json.Unmarshal([]byte(out), &got); err != nil {
+		t.Fatalf("--json output is not valid JSON: %v\n%s", err, out)
+	}
+	if len(got.Nib) == 0 {
+		t.Errorf("expected a {\"nib\": {...}} object in --json output, got:\n%s", out)
+	}
+}
+
+// TestNewNonTTYFallsBackToTemplate isolates the TTY guard: no --json, EDITOR set,
+// so only isInteractiveTerminal()==false keeps the editor from running. This is the
+// agent/subagent/pipe case that previously errored on /dev/tty.
+func TestNewNonTTYFallsBackToTemplate(t *testing.T) {
+	nibsDir := setupNewTest(t)
+	forceInteractive(t, false)
+	scriptPath := writeEditorScript(t, filepath.Dir(nibsDir))
+
+	t.Setenv("EDITOR", scriptPath)
+	t.Setenv("VISUAL", "")
+
+	rootCmd.SetArgs([]string{
+		"--nibs-path", nibsDir,
+		"new", "Non TTY", "-t", "task",
+	})
+
+	_ = captureStdout(t, func() {
+		if err := rootCmd.Execute(); err != nil {
+			t.Fatalf("new failed: %v", err)
+		}
+	})
+
+	entries, _ := os.ReadDir(nibsDir)
+	content, _ := os.ReadFile(filepath.Join(nibsDir, entries[0].Name()))
+	body := string(content)
+
+	if !strings.Contains(body, "## Description") {
+		t.Errorf("expected task template in body, got:\n%s", body)
+	}
+	if strings.Contains(body, "EDITED BY SCRIPT") {
+		t.Errorf("editor must not run without a controlling terminal, got:\n%s", body)
+	}
+}
+
+// TestNewNoEditFlagSkipsEditor isolates the --no-edit guard: interactive forced
+// true and EDITOR set, so only newNoEdit keeps the editor from running.
+func TestNewNoEditFlagSkipsEditor(t *testing.T) {
+	nibsDir := setupNewTest(t)
+	forceInteractive(t, true)
+	scriptPath := writeEditorScript(t, filepath.Dir(nibsDir))
+
+	t.Setenv("EDITOR", scriptPath)
+	t.Setenv("VISUAL", "")
+
+	rootCmd.SetArgs([]string{
+		"--nibs-path", nibsDir,
+		"new", "No Edit Flag", "-t", "task", "--no-edit",
+	})
+
+	_ = captureStdout(t, func() {
+		if err := rootCmd.Execute(); err != nil {
+			t.Fatalf("new --no-edit failed: %v", err)
+		}
+	})
+
+	entries, _ := os.ReadDir(nibsDir)
+	content, _ := os.ReadFile(filepath.Join(nibsDir, entries[0].Name()))
+	body := string(content)
+
+	if !strings.Contains(body, "## Description") {
+		t.Errorf("expected task template in body, got:\n%s", body)
+	}
+	if strings.Contains(body, "EDITED BY SCRIPT") {
+		t.Errorf("editor must not run with --no-edit, got:\n%s", body)
 	}
 }
 

@@ -4,7 +4,17 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
+
+	"golang.org/x/term"
 )
+
+// isInteractiveTerminal reports whether the process is attached to a terminal on
+// both stdin and stdout — the precondition for launching an interactive editor.
+// It is a package-level var so tests can force interactive/non-interactive
+// behavior without a real TTY (os.Stdout is a pipe under captureStdout).
+var isInteractiveTerminal = func() bool {
+	return term.IsTerminal(int(os.Stdin.Fd())) && term.IsTerminal(int(os.Stdout.Fd()))
+}
 
 // getEditor returns the user's preferred editor from environment variables.
 // Checks $VISUAL first, then $EDITOR (matching the POSIX convention).
