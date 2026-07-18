@@ -354,7 +354,8 @@ func (c *Config) IsArchiveStatus(name string) bool {
 // ArchiveStatusNames returns the names of all statuses marked for archiving,
 // derived from DefaultStatuses (the single source of truth). Every returned
 // name satisfies IsArchiveStatus. Today this is {completed, scrapped}; deriving
-// it here keeps the set correct if the Archive flags ever change.
+// it here keeps the set correct if the Archive flags ever change. This is the
+// "closed" status group.
 func (c *Config) ArchiveStatusNames() []string {
 	var names []string
 	for _, s := range DefaultStatuses {
@@ -362,6 +363,35 @@ func (c *Config) ArchiveStatusNames() []string {
 			names = append(names, s.Name)
 		}
 	}
+	return names
+}
+
+// parkedStatuses is the single source of truth for the "parked" status group —
+// non-terminal statuses that are not actionable right now but not abandoned.
+// Unlike open/closed this cannot be derived from the Archive flag, so it is
+// enumerated here once. Today this is {deferred}.
+var parkedStatuses = []string{"deferred"}
+
+// OpenStatusNames returns the names of all non-archive statuses — the "open"
+// status group. Derived from DefaultStatuses (Archive == false), so it stays
+// correct if the Archive flags ever change. Today this is
+// {in-progress, todo, draft, deferred}.
+func (c *Config) OpenStatusNames() []string {
+	var names []string
+	for _, s := range DefaultStatuses {
+		if !s.Archive {
+			names = append(names, s.Name)
+		}
+	}
+	return names
+}
+
+// ParkedStatusNames returns the names of the "parked" status group — a
+// defensive copy of the canonical parkedStatuses set so callers cannot mutate
+// the source. Parked statuses are non-archive (a subset of the open group).
+func (c *Config) ParkedStatusNames() []string {
+	names := make([]string, len(parkedStatuses))
+	copy(names, parkedStatuses)
 	return names
 }
 

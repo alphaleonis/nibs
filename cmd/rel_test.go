@@ -65,6 +65,8 @@ func resetRelFlags() {
 	relEstimate = nil
 	relNoEstimate = nil
 	relActive = false
+	relOpen = false
+	relAll = false
 	if relCmd != nil {
 		relCmd.Flags().Visit(func(f *pflag.Flag) {
 			f.Changed = false
@@ -183,7 +185,8 @@ func runRelExpectError(t *testing.T, args ...string) (string, error) {
 // end-to-end.
 func TestRelCommand_MentionsOut_JSON(t *testing.T) {
 	nibsDir := setupRelCobraTest(t, relFixture)
-	out := runRelJSON(t, "--nibs-path", nibsDir, "rel", "a1", "--rel", "mentions-out", "--json")
+	// --all keeps c3 (completed) in the result (rel is open-by-default).
+	out := runRelJSON(t, "--nibs-path", nibsDir, "rel", "a1", "--rel", "mentions-out", "--all", "--json")
 	env := decodeRelEnvelope(t, out)
 	if env.Count != 3 {
 		t.Fatalf("count = %d, want 3 (b2, c3, d4)\nraw: %s", env.Count, out)
@@ -198,7 +201,8 @@ func TestRelCommand_MentionsOut_JSON(t *testing.T) {
 
 func TestRelCommand_MentionsIn_JSON(t *testing.T) {
 	nibsDir := setupRelCobraTest(t, relFixture)
-	out := runRelJSON(t, "--nibs-path", nibsDir, "rel", "a1", "--rel", "mentions-in", "--json")
+	// --all keeps f6 (scrapped) in the result (rel is open-by-default).
+	out := runRelJSON(t, "--nibs-path", nibsDir, "rel", "a1", "--rel", "mentions-in", "--all", "--json")
 	env := decodeRelEnvelope(t, out)
 	ids := relEnvIDs(env)
 	// e5 and f6 both mention a1.
@@ -232,7 +236,8 @@ func TestRelCommand_Parent_Empty_JSON(t *testing.T) {
 
 func TestRelCommand_Children_JSON(t *testing.T) {
 	nibsDir := setupRelCobraTest(t, hierarchyFixture)
-	out := runRelJSON(t, "--nibs-path", nibsDir, "rel", "p1", "--rel", "children", "--json")
+	// --all keeps c3 (completed) in the child set (rel is open-by-default).
+	out := runRelJSON(t, "--nibs-path", nibsDir, "rel", "p1", "--rel", "children", "--all", "--json")
 	env := decodeRelEnvelope(t, out)
 	if env.Count != 3 {
 		t.Fatalf("children count = %d, want 3 (c1, c2, c3)\nraw: %s", env.Count, out)
@@ -267,8 +272,9 @@ func TestRelCommand_BlockedBy_JSON(t *testing.T) {
 
 func TestRelCommand_Siblings_WithParent_JSON(t *testing.T) {
 	nibsDir := setupRelCobraTest(t, hierarchyFixture)
-	// c1 under parent p1 has siblings c2 and c3 (self excluded).
-	out := runRelJSON(t, "--nibs-path", nibsDir, "rel", "c1", "--rel", "siblings", "--json")
+	// c1 under parent p1 has siblings c2 and c3 (self excluded). --all keeps
+	// c3 (completed) visible (rel is open-by-default).
+	out := runRelJSON(t, "--nibs-path", nibsDir, "rel", "c1", "--rel", "siblings", "--all", "--json")
 	env := decodeRelEnvelope(t, out)
 	ids := relEnvIDs(env)
 	if ids["c1"] {
@@ -329,7 +335,8 @@ func TestRelCommand_MultiRel_UnionDedup_JSON(t *testing.T) {
 func TestRelCommand_Neighbours_UnionsSevenRels(t *testing.T) {
 	nibsDir := setupRelCobraTest(t, hierarchyFixture)
 	// c1's neighbours: parent p1 and siblings c2/c3. All deduped, self excluded.
-	out := runRelJSON(t, "--nibs-path", nibsDir, "rel", "c1", "--rel", "neighbours", "--json")
+	// --all keeps c3 (completed sibling) visible (rel is open-by-default).
+	out := runRelJSON(t, "--nibs-path", nibsDir, "rel", "c1", "--rel", "neighbours", "--all", "--json")
 	env := decodeRelEnvelope(t, out)
 	ids := relEnvIDs(env)
 	for _, want := range []string{"p1", "c2", "c3"} {
@@ -784,7 +791,8 @@ func TestRelCommand_DefaultView_Ref(t *testing.T) {
 // under a "# <n> nibs" header.
 func TestRelCommand_TSV_DefaultHeader(t *testing.T) {
 	nibsDir := setupRelCobraTest(t, hierarchyFixture)
-	out := runRelJSON(t, "--nibs-path", nibsDir, "rel", "p1", "--rel", "children", "-f", "id,status")
+	// --all keeps all 3 children (c3 is completed) so the header count is stable.
+	out := runRelJSON(t, "--nibs-path", nibsDir, "rel", "p1", "--rel", "children", "-f", "id,status", "--all")
 	lines := strings.Split(strings.TrimRight(out, "\n"), "\n")
 	if lines[0] != "# 3 nibs" {
 		t.Errorf("header = %q, want %q\nraw:\n%s", lines[0], "# 3 nibs", out)
@@ -841,8 +849,9 @@ func TestRelCommand_Limit_SetsTruncated(t *testing.T) {
 
 func TestRelCommand_LinksAlias_Works(t *testing.T) {
 	nibsDir := setupRelCobraTest(t, hierarchyFixture)
-	// The `links` alias must resolve to the rel command.
-	out := runRelJSON(t, "--nibs-path", nibsDir, "links", "p1", "--rel", "children", "--json")
+	// The `links` alias must resolve to the rel command. --all keeps all 3
+	// children (c3 is completed) so the count is stable (rel is open-by-default).
+	out := runRelJSON(t, "--nibs-path", nibsDir, "links", "p1", "--rel", "children", "--all", "--json")
 	env := decodeRelEnvelope(t, out)
 	if env.Count != 3 {
 		t.Errorf("links alias children count = %d, want 3\nraw: %s", env.Count, out)

@@ -97,6 +97,9 @@ func resetListFlags() {
 	listMentions = ""
 	listMentionedBy = ""
 	listReady = false
+	listAll = false
+	listOpen = false
+	listActive = false
 	listQuiet = false
 	listSort = ""
 	listView = ""
@@ -145,6 +148,9 @@ func TestResetListFlagsClearsAllState(t *testing.T) {
 		"mentions":     "dirty",
 		"mentioned-by": "dirty",
 		"ready":        "true",
+		"all":          "true",
+		"open":         "true",
+		"active":       "true",
 		"quiet":        "true",
 		"sort":         "created",
 		"view":         "card",
@@ -251,10 +257,11 @@ func envelopeIDs(env listEnvelope) map[string]bool {
 
 func TestListCommand_MentionsFlag(t *testing.T) {
 	// --mentions <id> → nibs whose bodies mention <id>.
-	// Target nibs-a1 → mentioners are c3 (completed) and d4 (todo).
+	// Target nibs-a1 → mentioners are c3 (completed) and d4 (todo). --all keeps
+	// the completed mentioner in the result (list is open-by-default).
 	nibsDir := setupListCobraTest(t, mentionsFixture())
 
-	rootCmd.SetArgs([]string{"--nibs-path", nibsDir, "list", "--mentions", "a1", "--json"})
+	rootCmd.SetArgs([]string{"--nibs-path", nibsDir, "list", "--mentions", "a1", "--all", "--json"})
 
 	var execErr error
 	out := captureStdout(t, func() {
@@ -296,10 +303,11 @@ func TestListCommand_MentionsFlag_ComposesWithStatus(t *testing.T) {
 }
 
 func TestListCommand_MentionedByFlag(t *testing.T) {
-	// --mentioned-by nibs-a1 → nibs listed in a1's body: b2 and c3.
+	// --mentioned-by nibs-a1 → nibs listed in a1's body: b2 and c3. --all keeps
+	// c3 (completed) visible (list is open-by-default).
 	nibsDir := setupListCobraTest(t, mentionsFixture())
 
-	rootCmd.SetArgs([]string{"--nibs-path", nibsDir, "list", "--mentioned-by", "a1", "--json"})
+	rootCmd.SetArgs([]string{"--nibs-path", nibsDir, "list", "--mentioned-by", "a1", "--all", "--json"})
 
 	var execErr error
 	out := captureStdout(t, func() {
@@ -345,10 +353,11 @@ func TestListCommand_MentionsFlag_ShortIDNormalisation(t *testing.T) {
 	t.Cleanup(func() { configPath = "" })
 
 	// Pass the short form "a1" — filter layer should normalize to nibs-a1.
+	// --all keeps the completed mentioner visible (list is open-by-default).
 	rootCmd.SetArgs([]string{
 		"--config", cfgPath,
 		"--nibs-path", nibsDir,
-		"list", "--mentions", "a1", "--json",
+		"list", "--mentions", "a1", "--all", "--json",
 	})
 
 	var execErr error

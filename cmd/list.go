@@ -32,6 +32,9 @@ var (
 	listMentions    string
 	listMentionedBy string
 	listReady       bool
+	listAll         bool
+	listOpen        bool
+	listActive      bool
 	listQuiet       bool
 	listSort        string
 	listView        string
@@ -50,6 +53,13 @@ var listCmd = &cobra.Command{
 The filtered set is projected and rendered as tab-separated rows under a
 "# <n> nibs" comment header (drop it with --no-header). Every output form
 shares one field-selection model with 'nibs get'.
+
+Status filtering (open by default):
+  With no status flag, only open nibs are listed (completed and scrapped are
+  hidden). -s/--status and --no-status accept the status groups open, closed,
+  and parked anywhere a concrete status is accepted. Any explicit -s overrides
+  the open default (so -s closed shows completed/scrapped). --open (alias
+  --active) is shorthand for -s open; --all disables the open default entirely.
 
   --view id|ref|card|full   Select a coarse field set (leanest to fullest).
                             Defaults to 'ref' when neither --view nor -f is
@@ -95,12 +105,28 @@ Search Syntax (--search/-S):
 	RunE: func(cmd *cobra.Command, args []string) error {
 		app := getApp(cmd)
 
+		// Resolve the status filter through the shared helper: expand status
+		// groups (open/closed/parked), apply the open-by-default rule, and honor
+		// the -s/--no-status/--all/--open precedence. --ready is a stricter,
+		// self-contained status filter (below), so suppress the open default when
+		// it is set — the group expansion of any explicit -s/--no-status still
+		// applies.
+		includeStatus, excludeStatus, err := resolveStatusFilter(app.Config(), statusFilterInput{
+			Status:   listStatus,
+			NoStatus: listNoStatus,
+			All:      listAll || listReady,
+			Open:     listOpen || listActive,
+		})
+		if err != nil {
+			return reportErr(listJSON, output.ErrValidation, err)
+		}
+
 		// Build the GraphQL filter from the CLI flags. Filtering and sorting are
 		// resolved here; the output layer projects the results separately through
 		// the field-set engine.
 		filter := &model.NibFilter{
-			Status:          listStatus,
-			ExcludeStatus:   listNoStatus,
+			Status:          includeStatus,
+			ExcludeStatus:   excludeStatus,
 			Type:            listType,
 			ExcludeType:     listNoType,
 			Priority:        listPriority,
@@ -264,6 +290,9 @@ func init() {
 	listCmd.Flags().StringVar(&listMentions, "mentions", "", "Filter nibs whose bodies mention this ID (short or full)")
 	listCmd.Flags().StringVar(&listMentionedBy, "mentioned-by", "", "Filter nibs mentioned in the given ID's body (short or full)")
 	listCmd.Flags().BoolVar(&listReady, "ready", false, "Filter nibs available to start (not blocked, excludes in-progress/completed/scrapped/draft/deferred)")
+	listCmd.Flags().BoolVar(&listAll, "all", false, "Include every status (disable the open-by-default filter)")
+	listCmd.Flags().BoolVar(&listOpen, "open", false, "Show only open nibs — shorthand for -s open (the default when no status filter is given)")
+	listCmd.Flags().BoolVar(&listActive, "active", false, "Alias for --open (show only open nibs)")
 	listCmd.Flags().BoolVarP(&listQuiet, "quiet", "q", false, "Only output IDs (one per line)")
 	listCmd.Flags().StringVar(&listSort, "sort", "", "Sort by: created, updated, status, priority, status-priority, id (default: order key)")
 	listCmd.Flags().StringVar(&listView, "view", "", "View tier: id, ref, card, or full (default: ref)")

@@ -8,6 +8,7 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/alphaleonis/nibs/internal/config"
 	"github.com/alphaleonis/nibs/internal/graph"
 	"github.com/alphaleonis/nibs/internal/graph/model"
 	"github.com/alphaleonis/nibs/internal/nib"
@@ -38,6 +39,8 @@ var (
 	relEstimate   []string
 	relNoEstimate []string
 	relActive     bool
+	relOpen       bool
+	relAll        bool
 )
 
 // relKind is the closed set of relationship names accepted by --rel.
@@ -211,7 +214,9 @@ type relFilterFlags struct {
 	Tag        []string
 	Estimate   []string
 	NoEstimate []string
-	Active     bool
+	Active     bool // --active / --open: shorthand for -s open (a constraint)
+	Open       bool // --open (alias of --active); tracked separately for reset/labels
+	All        bool // --all: widen to every status; NOT a constraint (see isEmpty)
 }
 
 // readRelFilterFlags reads the package-level CLI flag vars into a struct
@@ -229,13 +234,18 @@ func readRelFilterFlags() relFilterFlags {
 		Estimate:   relEstimate,
 		NoEstimate: relNoEstimate,
 		Active:     relActive,
+		Open:       relOpen,
+		All:        relAll,
 	}
 }
 
-// isEmpty reports whether no filter flag was set (used to short-circuit
-// buildNibFilter so the resolver can use its uncached fast path).
+// isEmpty reports whether the caller set no *constraining* filter flag. It
+// gates the filters-on-singular validation: passing a real filter to a singular
+// rel (parent/ancestors) is an error, but the open-by-default status filter and
+// --all (a widener, not a constraint) must not trip it. --active/--open are
+// shorthand for -s open, so they DO count as constraints.
 func (f relFilterFlags) isEmpty() bool {
-	return !f.Active &&
+	return !f.Active && !f.Open &&
 		len(f.Status) == 0 && len(f.NoStatus) == 0 &&
 		len(f.Type) == 0 && len(f.NoType) == 0 &&
 		len(f.Priority) == 0 && len(f.NoPriority) == 0 &&
@@ -247,8 +257,13 @@ func (f relFilterFlags) isEmpty() bool {
 // error messages when a filter is inapplicable to the chosen rel.
 func (f relFilterFlags) activeFilterNames() []string {
 	var names []string
+	// --all is intentionally omitted: it widens rather than constrains, so it
+	// never triggers the filters-on-singular error (see isEmpty).
 	if f.Active {
 		names = append(names, "--active")
+	}
+	if f.Open {
+		names = append(names, "--open")
 	}
 	if len(f.Status) > 0 {
 		names = append(names, "--status")
@@ -280,28 +295,25 @@ func (f relFilterFlags) activeFilterNames() []string {
 	return names
 }
 
-// buildNibFilter translates the struct into a *model.NibFilter. When no flag
-// is set (isEmpty()) returns nil so the resolver short-circuits. When
-// forceActive is true, excludes completed/scrapped on top of any explicit
-// status flags (used by neighbours-active).
-func (f relFilterFlags) buildNibFilter(forceActive bool) (*model.NibFilter, error) {
-	active := f.Active || forceActive
-	if active {
-		for _, s := range f.Status {
-			if s == "completed" || s == "scrapped" {
-				return nil, fmt.Errorf("--active excludes completed and scrapped; combining with --status %s always yields empty results", s)
-			}
-		}
+// buildNibFilter translates the struct into a *model.NibFilter, resolving the
+// status filter through the shared helper (group expansion + open-by-default +
+// precedence). forceActive is set by the neighbours-active meta rel and folds
+// the open group into the include set (== -s open) for the expanded rels.
+//
+// Returns nil when the resulting filter constrains nothing (only --all, no
+// other flag) so singular/nil-filter callers keep the resolver's fast path.
+func (f relFilterFlags) buildNibFilter(cfg *config.Config, forceActive bool) (*model.NibFilter, error) {
+	includeStatus, excludeStatus, err := resolveStatusFilter(cfg, statusFilterInput{
+		Status:   f.Status,
+		NoStatus: f.NoStatus,
+		All:      f.All,
+		Open:     f.Active || f.Open || forceActive,
+	})
+	if err != nil {
+		return nil, err
 	}
-	if f.isEmpty() && !forceActive {
-		return nil, nil
-	}
-	excludeStatus := append([]string(nil), f.NoStatus...)
-	if active {
-		excludeStatus = append(excludeStatus, "completed", "scrapped")
-	}
-	return &model.NibFilter{
-		Status:          f.Status,
+	filter := &model.NibFilter{
+		Status:          includeStatus,
 		ExcludeStatus:   excludeStatus,
 		Type:            f.Type,
 		ExcludeType:     f.NoType,
@@ -310,7 +322,21 @@ func (f relFilterFlags) buildNibFilter(forceActive bool) (*model.NibFilter, erro
 		Tags:            f.Tag,
 		Estimate:        f.Estimate,
 		ExcludeEstimate: f.NoEstimate,
-	}, nil
+	}
+	if relFilterIsNoop(filter) {
+		return nil, nil
+	}
+	return filter, nil
+}
+
+// relFilterIsNoop reports whether the filter constrains nothing buildNibFilter
+// can populate — every field empty. Such a filter is equivalent to nil, and
+// returning nil lets the resolver take its uncached fast path.
+func relFilterIsNoop(f *model.NibFilter) bool {
+	return len(f.Status) == 0 && len(f.ExcludeStatus) == 0 &&
+		len(f.Type) == 0 && len(f.ExcludeType) == 0 &&
+		len(f.Priority) == 0 && len(f.ExcludePriority) == 0 &&
+		len(f.Tags) == 0 && len(f.Estimate) == 0 && len(f.ExcludeEstimate) == 0
 }
 
 // parseDepth returns the resolved depth (0 means "caller did not pass --depth").
@@ -575,6 +601,14 @@ Filters (--status, --type, --priority, --estimate, --tag, their --no-... pairs,
 --active) apply only to rels where they make sense — passing an inapplicable
 filter is a validation error (parent is singular; ancestors is a chain).
 
+Status filtering (open by default):
+  With no status flag, only open related nibs are returned (completed and
+  scrapped are hidden). -s/--status and --no-status accept the status groups
+  open, closed, and parked anywhere a concrete status is accepted. Any explicit
+  -s overrides the open default. --open (alias --active) is shorthand for
+  -s open; --all disables the open default. Singular rels (parent) still bypass
+  the filter, so a completed parent is always shown.
+
 For transitive rels (descendants, blockers-transitive, blocks-transitive,
 mentions-*-transitive), filtering is match-only: the walk follows the full
 structural graph and the filter only selects which reached nodes are emitted.
@@ -661,12 +695,12 @@ filter-on-singular validation error does not fire here.`,
 			}
 		}
 
-		filter, err := filterFlags.buildNibFilter(forceActive)
+		app := getApp(cmd)
+		filter, err := filterFlags.buildNibFilter(app.Config(), forceActive)
 		if err != nil {
 			return reportErr(relJSON, output.ErrValidation, err)
 		}
 
-		app := getApp(cmd)
 		resolver := app.newResolver()
 		// Use Cobra's cancelable context so SIGINT propagates through a
 		// potentially long-running traversal (e.g. --rel descendants --depth all).
@@ -768,6 +802,8 @@ func init() {
 	relCmd.Flags().StringArrayVar(&relTag, "tag", nil, "Filter by tag (repeatable)")
 	relCmd.Flags().StringArrayVarP(&relEstimate, "estimate", "e", nil, "Filter by estimate (repeatable)")
 	relCmd.Flags().StringArrayVar(&relNoEstimate, "no-estimate", nil, "Exclude by estimate (repeatable)")
-	relCmd.Flags().BoolVar(&relActive, "active", false, "Exclude completed/scrapped nibs")
+	relCmd.Flags().BoolVar(&relActive, "active", false, "Show only open related nibs — shorthand for -s open")
+	relCmd.Flags().BoolVar(&relOpen, "open", false, "Alias for --active (show only open related nibs)")
+	relCmd.Flags().BoolVar(&relAll, "all", false, "Include every status (disable the open-by-default filter)")
 	rootCmd.AddCommand(relCmd)
 }

@@ -138,6 +138,66 @@ func TestArchiveStatusNames(t *testing.T) {
 	}
 }
 
+func TestOpenStatusNames(t *testing.T) {
+	cfg := Default()
+	got := cfg.OpenStatusNames()
+
+	// Today the open set is exactly the non-archive statuses.
+	want := []string{"in-progress", "todo", "draft", "deferred"}
+	if len(got) != len(want) {
+		t.Fatalf("len(OpenStatusNames()) = %d, want %d (%v)", len(got), len(want), got)
+	}
+	for i, name := range want {
+		if got[i] != name {
+			t.Errorf("OpenStatusNames()[%d] = %q, want %q", i, got[i], name)
+		}
+	}
+
+	// No open status may be an archive status.
+	for _, name := range got {
+		if cfg.IsArchiveStatus(name) {
+			t.Errorf("OpenStatusNames() returned archived status %q", name)
+		}
+	}
+
+	// Open and archive together must cover every status exactly once.
+	if len(got)+len(cfg.ArchiveStatusNames()) != len(cfg.StatusNames()) {
+		t.Errorf("open (%d) + archive (%d) must equal all statuses (%d)",
+			len(got), len(cfg.ArchiveStatusNames()), len(cfg.StatusNames()))
+	}
+}
+
+func TestParkedStatusNames(t *testing.T) {
+	cfg := Default()
+	got := cfg.ParkedStatusNames()
+
+	want := []string{"deferred"}
+	if len(got) != len(want) {
+		t.Fatalf("len(ParkedStatusNames()) = %d, want %d (%v)", len(got), len(want), got)
+	}
+	for i, name := range want {
+		if got[i] != name {
+			t.Errorf("ParkedStatusNames()[%d] = %q, want %q", i, got[i], name)
+		}
+	}
+
+	// Parked statuses are valid, non-archive statuses (a subset of open).
+	for _, name := range got {
+		if !cfg.IsValidStatus(name) {
+			t.Errorf("ParkedStatusNames() returned unknown status %q", name)
+		}
+		if cfg.IsArchiveStatus(name) {
+			t.Errorf("ParkedStatusNames() returned archived status %q", name)
+		}
+	}
+
+	// The returned slice must be a copy — mutating it must not corrupt the source.
+	got[0] = "mutated"
+	if cfg.ParkedStatusNames()[0] != "deferred" {
+		t.Error("ParkedStatusNames() must return a defensive copy")
+	}
+}
+
 func TestGetStatus(t *testing.T) {
 	cfg := Default()
 
