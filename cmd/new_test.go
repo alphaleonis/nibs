@@ -1,6 +1,7 @@
 package cmd
 
 import (
+	"bytes"
 	"encoding/json"
 	"errors"
 	"os"
@@ -43,6 +44,7 @@ func resetNewFlags() {
 	newFirst = false
 	newJSON = false
 	newNoEdit = false
+	newNoDedupCheck = false
 }
 
 func TestResetNewFlagsClearsAllState(t *testing.T) {
@@ -63,6 +65,7 @@ func TestResetNewFlagsClearsAllState(t *testing.T) {
 	newFirst = true
 	newJSON = true
 	newNoEdit = true
+	newNoDedupCheck = true
 
 	resetNewFlags()
 
@@ -116,6 +119,9 @@ func TestResetNewFlagsClearsAllState(t *testing.T) {
 	}
 	if newNoEdit {
 		t.Error("newNoEdit not reset")
+	}
+	if newNoDedupCheck {
+		t.Error("newNoDedupCheck not reset")
 	}
 }
 
@@ -985,5 +991,212 @@ func TestNewHierarchyErrorJSON(t *testing.T) {
 	}
 	if output.ExitCode(ce.Code) != output.ExitValidation {
 		t.Errorf("exit = %d, want %d (validation)", output.ExitCode(ce.Code), output.ExitValidation)
+	}
+}
+
+// makeClosedNib creates a nib with the given closed status and body, returning
+// its id. Used to seed the dedup-check integration tests. The dedup check runs
+// on this creation too, but with no prior closed nibs it produces no matches.
+func makeClosedNib(t *testing.T, nibsDir, title, status, body string) string {
+	t.Helper()
+	rootCmd.SetArgs([]string{
+		"--nibs-path", nibsDir,
+		"new", title, "-t", "bug", "-s", status,
+		"-d", writeBodyFile(t, body), "--json",
+	})
+	_ = captureStdout(t, func() {
+		if err := rootCmd.Execute(); err != nil {
+			t.Fatalf("seeding %s nib %q failed: %v", status, title, err)
+		}
+	})
+	id := firstCreatedID(t, nibsDir)
+	resetNewFlags()
+	return id
+}
+
+// newDupJSON runs `nibs new <title> --json` and returns the created id, the
+// parsed possible_duplicates array (nil if absent), and asserts exit 0.
+func newDupJSON(t *testing.T, nibsDir, title string, extraArgs ...string) (string, []possibleDuplicate) {
+	t.Helper()
+	args := []string{
+		"--nibs-path", nibsDir,
+		"new", title, "-t", "bug",
+		"-d", writeBodyFile(t, "seed\n"), "--json",
+	}
+	args = append(args, extraArgs...)
+	rootCmd.SetArgs(args)
+
+	var execErr error
+	out := captureStdout(t, func() { execErr = rootCmd.Execute() })
+	if execErr != nil {
+		t.Fatalf("new %q --json returned non-nil error (want exit 0): %v", title, execErr)
+	}
+
+	var got struct {
+		Nib                map[string]any      `json:"nib"`
+		PossibleDuplicates []possibleDuplicate `json:"possible_duplicates"`
+	}
+	if err := json.Unmarshal([]byte(out), &got); err != nil {
+		t.Fatalf("new %q --json output not parseable: %v\n%s", title, err, out)
+	}
+	if got.Nib == nil {
+		t.Fatalf("new %q --json missing {nib}; got:\n%s", title, out)
+	}
+	id, _ := got.Nib["id"].(string)
+	return id, got.PossibleDuplicates
+}
+
+// TestNewWarnsOnScrappedDuplicateText verifies the human/text path: a new nib
+// whose normalized title equals a scrapped nib triggers a warn-only stderr
+// notice naming the scrapped nib's id, status, and reason snippet — while the
+// create still succeeds (exit 0) and stdout carries the clean card.
+func TestNewWarnsOnScrappedDuplicateText(t *testing.T) {
+	nibsDir := setupNewTest(t)
+	t.Setenv("EDITOR", "")
+	t.Setenv("VISUAL", "")
+
+	scrapID := makeClosedNib(t, nibsDir, "Fix the login flow", "scrapped",
+		"## Reasons for Scrapping\n- Too risky to implement right now\n")
+
+	var errBuf bytes.Buffer
+	rootCmd.SetErr(&errBuf)
+	t.Cleanup(func() { rootCmd.SetErr(nil); rootCmd.SetOut(nil) })
+
+	rootCmd.SetArgs([]string{
+		"--nibs-path", nibsDir,
+		"new", "Fix the login flow", "-t", "bug",
+		"-d", writeBodyFile(t, "seed\n"),
+	})
+	var execErr error
+	out := captureStdout(t, func() { execErr = rootCmd.Execute() })
+	if execErr != nil {
+		t.Fatalf("new returned non-nil error (want exit 0): %v", execErr)
+	}
+
+	// Stdout must stay the clean card (no warning leaked onto it).
+	if !strings.Contains(out, "title: Fix the login flow") {
+		t.Errorf("stdout missing the card; got:\n%s", out)
+	}
+	if strings.Contains(out, "warning:") {
+		t.Errorf("warning leaked onto stdout; got:\n%s", out)
+	}
+
+	// Stderr carries the warn-only notice with id, status, and reason.
+	warn := errBuf.String()
+	for _, want := range []string{scrapID, "scrapped", "Fix the login flow", "Too risky to implement right now"} {
+		if !strings.Contains(warn, want) {
+			t.Errorf("stderr warning missing %q; got:\n%s", want, warn)
+		}
+	}
+}
+
+// TestNewWarnsOnCompletedDuplicateJSON verifies a completed match is surfaced in
+// --json via the possible_duplicates field (no reason for a completed match),
+// the {nib} contract is preserved, and the exit code is 0.
+func TestNewWarnsOnCompletedDuplicateJSON(t *testing.T) {
+	nibsDir := setupNewTest(t)
+	t.Setenv("EDITOR", "")
+	t.Setenv("VISUAL", "")
+
+	doneID := makeClosedNib(t, nibsDir, "Add dark mode", "completed", "## Summary\nShipped.\n")
+
+	_, dups := newDupJSON(t, nibsDir, "Add dark mode")
+	if len(dups) != 1 {
+		t.Fatalf("possible_duplicates = %#v, want exactly one completed match", dups)
+	}
+	if dups[0].ID != doneID {
+		t.Errorf("match id = %q, want %q", dups[0].ID, doneID)
+	}
+	if dups[0].Status != "completed" {
+		t.Errorf("match status = %q, want completed", dups[0].Status)
+	}
+	if dups[0].Reason != "" {
+		t.Errorf("completed match should have no reason, got %q", dups[0].Reason)
+	}
+}
+
+// TestNewDoesNotWarnOnOpenDuplicate pins the closed-only scope: an OPEN nib with
+// an identical title is NOT surfaced. This is the guard that would fail if the
+// finder scanned all statuses instead of just completed/scrapped.
+func TestNewDoesNotWarnOnOpenDuplicate(t *testing.T) {
+	nibsDir := setupNewTest(t)
+	t.Setenv("EDITOR", "")
+	t.Setenv("VISUAL", "")
+
+	// Seed an OPEN nib (todo) with a title the new nib will exactly match.
+	makeClosedNib(t, nibsDir, "Refactor the parser", "todo", "## Description\nwork\n")
+
+	_, dups := newDupJSON(t, nibsDir, "Refactor the parser")
+	if len(dups) != 0 {
+		t.Errorf("open same-title nib should not be surfaced; got %#v", dups)
+	}
+}
+
+// TestNewNoMatchOmitsDuplicatesField verifies a no-match create emits no
+// possible_duplicates key at all and exits 0.
+func TestNewNoMatchOmitsDuplicatesField(t *testing.T) {
+	nibsDir := setupNewTest(t)
+	t.Setenv("EDITOR", "")
+	t.Setenv("VISUAL", "")
+
+	makeClosedNib(t, nibsDir, "Fix the login flow", "scrapped",
+		"## Reasons for Scrapping\n- nope\n")
+
+	_, dups := newDupJSON(t, nibsDir, "A completely unrelated distinct heading")
+	if len(dups) != 0 {
+		t.Errorf("expected no matches for a distinct title; got %#v", dups)
+	}
+
+	// And the raw JSON must not carry the key at all (omitempty).
+	rootCmd.SetArgs([]string{
+		"--nibs-path", nibsDir,
+		"new", "Another unrelated distinct heading", "-t", "bug",
+		"-d", writeBodyFile(t, "seed\n"), "--json",
+	})
+	out := captureStdout(t, func() {
+		if err := rootCmd.Execute(); err != nil {
+			t.Fatalf("new failed: %v", err)
+		}
+	})
+	if strings.Contains(out, "possible_duplicates") {
+		t.Errorf("no-match --json should omit possible_duplicates key; got:\n%s", out)
+	}
+}
+
+// TestNewNoDedupCheckSuppresses verifies --no-dedup-check skips the check even
+// when a scrapped match exists: no possible_duplicates field is emitted.
+func TestNewNoDedupCheckSuppresses(t *testing.T) {
+	nibsDir := setupNewTest(t)
+	t.Setenv("EDITOR", "")
+	t.Setenv("VISUAL", "")
+
+	makeClosedNib(t, nibsDir, "Fix the login flow", "scrapped",
+		"## Reasons for Scrapping\n- Too risky\n")
+
+	_, dups := newDupJSON(t, nibsDir, "Fix the login flow", "--no-dedup-check")
+	if len(dups) != 0 {
+		t.Errorf("--no-dedup-check must suppress matches; got %#v", dups)
+	}
+}
+
+// TestNewScrappedDuplicateJSONCarriesReason verifies the --json path surfaces a
+// scrapped match WITH its reason snippet, exit 0.
+func TestNewScrappedDuplicateJSONCarriesReason(t *testing.T) {
+	nibsDir := setupNewTest(t)
+	t.Setenv("EDITOR", "")
+	t.Setenv("VISUAL", "")
+
+	scrapID := makeClosedNib(t, nibsDir, "Support offline mode", "scrapped",
+		"## Reasons for Scrapping\n- Out of scope for this milestone\n")
+
+	_, dups := newDupJSON(t, nibsDir, "Support offline mode")
+	if len(dups) != 1 {
+		t.Fatalf("possible_duplicates = %#v, want one scrapped match", dups)
+	}
+	if dups[0].ID != scrapID || dups[0].Status != "scrapped" {
+		t.Errorf("match = %#v, want scrapped %q", dups[0], scrapID)
+	}
+	if dups[0].Reason != "Out of scope for this milestone" {
+		t.Errorf("reason = %q, want the scrapping reason snippet", dups[0].Reason)
 	}
 }

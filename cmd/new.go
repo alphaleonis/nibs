@@ -30,9 +30,10 @@ var (
 	newPrefix    string
 	newAfter     string
 	newBefore    string
-	newFirst     bool
-	newJSON      bool
-	newNoEdit    bool
+	newFirst        bool
+	newJSON         bool
+	newNoEdit       bool
+	newNoDedupCheck bool
 )
 
 var newCmd = &cobra.Command{
@@ -171,11 +172,20 @@ is used as-is — with --no-edit, with --json, or when stdin/stdout is not a ter
 			return cmdError(newJSON, output.ErrFileError, "failed to create nib: %v", err)
 		}
 
+		// Dedup safety net: before the card echo, scan CLOSED nibs (completed /
+		// scrapped — hidden from the day-to-day list) for a likely duplicate of
+		// this new title/slug. Warn-only and non-blocking; the create already
+		// succeeded. --no-dedup-check skips it entirely.
+		var dups []possibleDuplicate
+		if !newNoDedupCheck {
+			dups = findPossibleDuplicates(app.Core.All(), app.Config(), b.ID, b.Title, b.Slug)
+		}
+
 		// Echo the created nib as a lean card — the same projection + rendering
 		// path `nibs get` uses (no body/etag unless explicitly asked). Card is a
 		// compile-time-valid view, so ViewFields never errors here.
 		card, _ := projection.ViewFields(string(projection.ViewCard))
-		return echoCard(newJSON, b, resolver.ProjectionResolver(context.Background()), card)
+		return echoCardWithDuplicates(cmd, newJSON, b, resolver.ProjectionResolver(context.Background()), card, dups)
 	},
 }
 
@@ -217,6 +227,33 @@ func echoCard(jsonMode bool, b *nib.Nib, r projection.Resolver, sel projection.S
 	return nil
 }
 
+// echoCardWithDuplicates renders the created-nib card and surfaces any closed-nib
+// duplicate matches alongside it. With no matches it is exactly echoCard. In
+// --json mode a non-empty match set adds a sibling "possible_duplicates" array to
+// the {nib} contract (the nib object is unchanged); in text mode the card is
+// printed to stdout and a warn-only notice is written to stderr, keeping stdout
+// clean and the exit status 0.
+func echoCardWithDuplicates(cmd *cobra.Command, jsonMode bool, b *nib.Nib, r projection.Resolver, sel projection.Selection, dups []possibleDuplicate) error {
+	if jsonMode {
+		if len(dups) == 0 {
+			return renderGetJSON([]*nib.Nib{b}, sel, r)
+		}
+		p, err := projection.Project(b, sel, r)
+		if err != nil {
+			return cmdError(true, output.ErrValidation, "failed to project nib: %v", err)
+		}
+		return output.JSONRaw(map[string]any{
+			"nib":                 p,
+			"possible_duplicates": dups,
+		})
+	}
+	if err := echoCard(false, b, r, sel); err != nil {
+		return err
+	}
+	printDuplicateWarning(cmd.ErrOrStderr(), dups)
+	return nil
+}
+
 func init() {
 	// Build help text with allowed values from hardcoded config
 	statusNames := make([]string, len(config.DefaultStatuses))
@@ -253,6 +290,7 @@ func init() {
 	newCmd.Flags().BoolVar(&newFirst, "first", false, "Insert before all siblings")
 	newCmd.Flags().BoolVar(&newJSON, "json", false, "Output as JSON (implies --no-edit)")
 	newCmd.Flags().BoolVar(&newNoEdit, "no-edit", false, "Never open $EDITOR; use the template body as-is")
+	newCmd.Flags().BoolVar(&newNoDedupCheck, "no-dedup-check", false, "Skip the closed-nib (completed/scrapped) duplicate check")
 	newCmd.MarkFlagsMutuallyExclusive("body", "body-file")
 	newCmd.MarkFlagsMutuallyExclusive("after", "before", "first")
 	rootCmd.AddCommand(newCmd)
