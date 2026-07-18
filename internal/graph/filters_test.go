@@ -76,6 +76,54 @@ func TestApplyFilterBlockedByIDShortForm(t *testing.T) {
 	}
 }
 
+// TestApplyFilterParentIDShortForm pins that a short ParentID is normalized
+// before matching, exactly like the other filter.*ID branches: a filter with
+// ParentID "parent" must match nibs whose Parent field holds the full
+// "nibs-parent". Passing the short id raw to the exact-match filter makes
+// `list --parent <short-id>` silently return nothing.
+func TestApplyFilterParentIDShortForm(t *testing.T) {
+	parent := &nib.Nib{ID: "nibs-parent", Title: "Parent"}
+	child := &nib.Nib{ID: "nibs-child", Title: "Child", Parent: "nibs-parent"}
+	unrelated := &nib.Nib{ID: "nibs-other", Title: "Other"}
+
+	reader := &stubReader{
+		nibs: map[string]*nib.Nib{
+			"nibs-parent": parent,
+			"nibs-child":  child,
+			"nibs-other":  unrelated,
+		},
+		allNibs: []*nib.Nib{parent, child, unrelated},
+		prefix:  "nibs-",
+	}
+	blocking := &stubBlockingChecker{}
+
+	filter := &model.NibFilter{ParentID: strPtr("parent")}
+	got := ApplyFilter(context.Background(), reader.allNibs, filter, reader, blocking)
+
+	if len(got) != 1 {
+		t.Fatalf("got %d nibs, want 1 (nibs-child); short ParentID was not normalized", len(got))
+	}
+	if got[0].ID != "nibs-child" {
+		t.Errorf("got %q, want %q", got[0].ID, "nibs-child")
+	}
+}
+
+// TestApplyFilterParentIDUnknownReturnsNil pins the "unknown target -> nil"
+// contract for ParentID, matching the other single-ID filter branches.
+func TestApplyFilterParentIDUnknownReturnsNil(t *testing.T) {
+	child := &nib.Nib{ID: "nibs-child", Title: "Child", Parent: "nibs-parent"}
+	reader := &stubReader{
+		nibs:    map[string]*nib.Nib{"nibs-child": child},
+		allNibs: []*nib.Nib{child},
+		prefix:  "nibs-",
+	}
+	filter := &model.NibFilter{ParentID: strPtr("nonexistent")}
+	got := ApplyFilter(context.Background(), reader.allNibs, filter, reader, &stubBlockingChecker{})
+	if got != nil {
+		t.Errorf("unknown ParentID should short-circuit to nil, got %v", got)
+	}
+}
+
 // TestApplyFilterUnknownIDReturnsNil verifies the "unknown target -> nil"
 // contract across all four single-ID filter branches. All four route through
 // resolveFilterID and short-circuit to nil on miss — the trap is a branch that

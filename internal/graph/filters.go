@@ -79,7 +79,15 @@ func ApplyFilter(ctx context.Context, nibs []*nib.Nib, filter *model.NibFilter, 
 	result = filterByPredicate(result, filter.HasParent, func(b *nib.Nib) bool { return b.Parent != "" })
 	result = filterByPredicate(result, filter.NoParent, func(b *nib.Nib) bool { return b.Parent == "" })
 	if filter.ParentID != nil && *filter.ParentID != "" {
-		result = filterByField(result, []string{*filter.ParentID}, func(b *nib.Nib) string { return b.Parent })
+		// Normalize the parent id like every other *ID filter: the stored
+		// b.Parent is a full (prefixed) id, so a short --parent must be resolved
+		// first or it silently matches nothing. Unknown target short-circuits to
+		// nil (shared contract for all *ID filters).
+		fullID, ok := resolveFilterID(reader, *filter.ParentID)
+		if !ok {
+			return nil
+		}
+		result = filterByField(result, []string{fullID}, func(b *nib.Nib) string { return b.Parent })
 	}
 
 	// Blocking filters (computed via BlockingChecker)
