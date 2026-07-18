@@ -530,9 +530,11 @@ func TestRelCommand_Descendants_DepthAll(t *testing.T) {
 	}
 }
 
-// TestRelCommand_Descendants_StatusFilter_PrunesSubtree pins the downward-closed
-// prune semantic: a node that fails the filter stops traversal through it.
-func TestRelCommand_Descendants_StatusFilter_PrunesSubtree(t *testing.T) {
+// TestRelCommand_Descendants_StatusFilter_MatchesSubtree pins match-only
+// semantics on a transitive rel: the filter selects which reached nodes are
+// emitted, but never gates traversal — a matching node behind a non-matching
+// intermediate is still returned.
+func TestRelCommand_Descendants_StatusFilter_MatchesSubtree(t *testing.T) {
 	files := map[string]string{
 		"root--r.md": "---\ntitle: Root\nstatus: todo\ntype: epic\n---\n",
 		"mid--m.md":  "---\ntitle: Mid\nstatus: in-progress\ntype: task\nparent: root\norder: a0\n---\n",
@@ -542,11 +544,50 @@ func TestRelCommand_Descendants_StatusFilter_PrunesSubtree(t *testing.T) {
 	out := runRelJSON(t, "--nibs-path", nibsDir, "rel", "root", "--rel", "descendants", "--status", "todo", "--depth", "all", "--json")
 	env := decodeRelEnvelope(t, out)
 	ids := relEnvIDs(env)
-	if ids["leaf"] {
-		t.Errorf("leaf should be pruned behind mid (in-progress fails --status todo); got %v", ids)
+	if !ids["leaf"] {
+		t.Errorf("leaf (todo) should be reached through mid and matched by --status todo; got %v", ids)
 	}
 	if ids["mid"] {
-		t.Errorf("mid should be excluded by --status todo; got %v", ids)
+		t.Errorf("mid (in-progress) should be excluded by --status todo; got %v", ids)
+	}
+}
+
+// TestRelCommand_Descendants_TypeFilter_MatchesUnderNonMatchingIntermediate is
+// the canonical footgun case: a bug nested under an epic (which fails -t bug).
+// descendants -t bug must return the bug regardless of the intermediate's type.
+func TestRelCommand_Descendants_TypeFilter_MatchesUnderNonMatchingIntermediate(t *testing.T) {
+	files := map[string]string{
+		"root--r.md": "---\ntitle: Root\nstatus: todo\ntype: milestone\n---\n",
+		"epic--e.md": "---\ntitle: Epic\nstatus: todo\ntype: epic\nparent: root\norder: a0\n---\n",
+		"bug--b.md":  "---\ntitle: Bug\nstatus: todo\ntype: bug\nparent: epic\norder: a0\n---\n",
+	}
+	nibsDir := setupRelCobraTest(t, files)
+	out := runRelJSON(t, "--nibs-path", nibsDir, "rel", "root", "--rel", "descendants", "--type", "bug", "--depth", "all", "--json")
+	env := decodeRelEnvelope(t, out)
+	ids := relEnvIDs(env)
+	if !ids["bug"] {
+		t.Errorf("bug nested under a non-bug epic must be returned by descendants -t bug; got %v", ids)
+	}
+	if ids["epic"] || ids["root"] {
+		t.Errorf("only the bug should match -t bug; got %v", ids)
+	}
+}
+
+// TestRelCommand_Descendants_Depth_CountsStructuralHops pins that --depth counts
+// structural edges, not matching hops: with match-only traversal a deep match is
+// out of range at a shallow depth even though nearer nodes were filtered out.
+func TestRelCommand_Descendants_Depth_CountsStructuralHops(t *testing.T) {
+	files := map[string]string{
+		"root--r.md": "---\ntitle: Root\nstatus: todo\ntype: milestone\n---\n",
+		"epic--e.md": "---\ntitle: Epic\nstatus: todo\ntype: epic\nparent: root\norder: a0\n---\n",
+		"bug--b.md":  "---\ntitle: Bug\nstatus: todo\ntype: bug\nparent: epic\norder: a0\n---\n",
+	}
+	nibsDir := setupRelCobraTest(t, files)
+	// bug is 2 structural hops down (root→epic→bug); depth 1 must not reach it.
+	out := runRelJSON(t, "--nibs-path", nibsDir, "rel", "root", "--rel", "descendants", "--type", "bug", "--depth", "1", "--json")
+	env := decodeRelEnvelope(t, out)
+	if ids := relEnvIDs(env); ids["bug"] {
+		t.Errorf("bug at structural depth 2 should be out of range at --depth 1; got %v", ids)
 	}
 }
 

@@ -436,21 +436,28 @@ func bfsChainAncestors(ctx context.Context, resolver *graph.Resolver, b *nib.Nib
 }
 
 // bfsDescendants performs BFS over children edges from b up to depth.
-// The filter applies to each child-fetch call.
+// Filtering is match-only (see bfsTraverse): every descendant is reached, and
+// filter selects which are emitted.
 func bfsDescendants(ctx context.Context, resolver *graph.Resolver, b *nib.Nib, filter *model.NibFilter, depth int) ([]*nib.Nib, error) {
 	return bfsTraverse(ctx, resolver, b, filter, depth, relChildren)
 }
 
 // bfsTransitive performs generic BFS traversal from b following `edge`.
+// Filtering is match-only (see bfsTraverse).
 func bfsTransitive(ctx context.Context, resolver *graph.Resolver, b *nib.Nib, filter *model.NibFilter, depth int, edge relKind) ([]*nib.Nib, error) {
 	return bfsTraverse(ctx, resolver, b, filter, depth, edge)
 }
 
-// bfsTraverse is the shared BFS engine. It walks `edge` from `b` up to
-// `depth` levels (depth < 0 = unlimited) with a visited set for cycle
-// safety. Filter is applied at each direct-fetch call.
+// bfsTraverse is the shared BFS engine. It walks `edge` from `start` up to
+// `depth` levels (depth < 0 = unlimited) with a visited set for cycle safety.
+//
+// Filtering is match-only: the walk follows the full structural graph (edges
+// are fetched unfiltered) and `filter` only selects which reached nodes are
+// emitted. A matching node behind a non-matching intermediate is therefore
+// still returned — the filter never prunes the traversal frontier. `depth`
+// counts structural hops, independent of which nodes match.
 func bfsTraverse(ctx context.Context, resolver *graph.Resolver, start *nib.Nib, filter *model.NibFilter, depth int, edge relKind) ([]*nib.Nib, error) {
-	var out []*nib.Nib
+	var reached []*nib.Nib
 	seen := map[string]bool{start.ID: true}
 	frontier := []*nib.Nib{start}
 	level := 0
@@ -460,7 +467,9 @@ func bfsTraverse(ctx context.Context, resolver *graph.Resolver, start *nib.Nib, 
 		}
 		var next []*nib.Nib
 		for _, cur := range frontier {
-			children, err := fetchRel(ctx, resolver, cur, edge, filter, 0)
+			// Fetch the edge unfiltered so the frontier expands through every
+			// node; the filter is applied to the emitted set below, never here.
+			children, err := fetchRel(ctx, resolver, cur, edge, nil, 0)
 			if err != nil {
 				return nil, err
 			}
@@ -469,14 +478,14 @@ func bfsTraverse(ctx context.Context, resolver *graph.Resolver, start *nib.Nib, 
 					continue
 				}
 				seen[c.ID] = true
-				out = append(out, c)
+				reached = append(reached, c)
 				next = append(next, c)
 			}
 		}
 		frontier = next
 		level++
 	}
-	return out, nil
+	return graph.ApplyFilter(ctx, reached, filter, resolver.Reader, resolver.Blocking), nil
 }
 
 // topoSortNibs reorders `candidates` using `blocked_by` edges among the set.
@@ -567,10 +576,11 @@ Filters (--status, --type, --priority, --estimate, --tag, their --no-... pairs,
 filter is a validation error (parent is singular; ancestors is a chain).
 
 For transitive rels (descendants, blockers-transitive, blocks-transitive,
-mentions-*-transitive), filters apply at each traversal step: a node that
-fails the filter stops traversal through it, and nodes beyond it are not
-visited (downward-closed pruning). Consequences: a matching leaf whose
-intermediate ancestor fails the filter is NOT included in the result.
+mentions-*-transitive), filtering is match-only: the walk follows the full
+structural graph and the filter only selects which reached nodes are emitted.
+A matching node behind a non-matching intermediate is still returned (e.g.
+--rel descendants -t bug finds a bug nested under an epic). --depth counts
+structural hops, independent of which nodes match.
 
 --rel neighbours and --rel neighbours-active accept filter flags. Filters
 apply to the non-singular constituents (mentions-out/in, children, siblings,
