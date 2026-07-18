@@ -210,7 +210,7 @@ func (c *Core) loadFromDisk() error {
 			// "log and continue" posture. The file's bytes are left untouched
 			// (skip = not loaded into memory; never delete/rewrite).
 			c.logWarn("skipping unparseable nib file %s: %v", path, loadErr)
-			if id, _ := nib.ParseFilename(filepath.Base(path)); id != "" {
+			if id, _ := nib.ParseFilename(filepath.Base(path), c.configPrefix()); id != "" {
 				skipped[id] = true
 			}
 			return nil
@@ -282,7 +282,7 @@ func (c *Core) loadNib(path string) (*nib.Nib, error) {
 
 	// Extract ID and slug from filename
 	filename := filepath.Base(path)
-	b.ID, b.Slug = nib.ParseFilename(filename)
+	b.ID, b.Slug = nib.ParseFilename(filename, c.configPrefix())
 
 	// Type and Priority are DELIBERATELY not defaulted here. Synthesizing them
 	// in memory (Type""→"task", Priority""→"normal") while computeStoredETag
@@ -1193,7 +1193,7 @@ func (c *Core) GetFromArchive(id string) (*nib.Nib, error) {
 			continue
 		}
 
-		fileID, _ := nib.ParseFilename(entry.Name())
+		fileID, _ := nib.ParseFilename(entry.Name(), c.configPrefix())
 		if fileID == fullID {
 			path := filepath.Join(archiveDir, entry.Name())
 			return c.loadNib(path)

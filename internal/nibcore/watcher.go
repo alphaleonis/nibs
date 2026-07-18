@@ -420,7 +420,7 @@ func (c *Core) handleChanges(changes map[string]fsnotify.Op) {
 		// lookup — the malformed path simply falls out of the handler as a silent
 		// skip. Widening this to surface the error would require a scheme for
 		// reporting watcher-level errors that today's callers don't expect.
-		id, _ := nib.ParseFilename(filename)
+		id, _ := nib.ParseFilename(filename, c.configPrefix())
 
 		// Handle removes/renames (file is gone from this path)
 		if op&fsnotify.Remove != 0 || op&fsnotify.Rename != 0 {
@@ -510,7 +510,7 @@ func (c *Core) handleChanges(changes map[string]fsnotify.Op) {
 			if newRel, ok := c.findRelPathByID(id); ok {
 				updated := stored.Clone()
 				updated.Path = newRel
-				_, updated.Slug = nib.ParseFilename(filepath.Base(newRel))
+				_, updated.Slug = nib.ParseFilename(filepath.Base(newRel), c.configPrefix())
 				c.nibs[id] = updated
 				events = append(events, NibEvent{
 					Type:  EventUpdated,
@@ -676,7 +676,7 @@ func (c *Core) findRelPathByID(id string) (string, bool) {
 			if entry.IsDir() || !strings.HasSuffix(entry.Name(), ".md") {
 				continue
 			}
-			fileID, _ := nib.ParseFilename(entry.Name())
+			fileID, _ := nib.ParseFilename(entry.Name(), c.configPrefix())
 			if fileID != id {
 				continue
 			}

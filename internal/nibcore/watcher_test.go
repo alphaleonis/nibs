@@ -478,6 +478,73 @@ func TestWatcherSameIdSlugRenameNotEvicted(t *testing.T) {
 	}
 }
 
+// TestWatcherSameIdSluglessRenameNotEvicted covers nibs-mccz: a same-id rename
+// that DROPS the slug from a prefixed nib (nibs-x9z2--move-test.md ->
+// nibs-x9z2.md) must NOT evict the nib. Every configured id prefix ends in a
+// dash, so the legacy single-dash filename parse split the slugless target name
+// (nibs-x9z2.md) into id "nibs" — a different id than the stored "nibs-x9z2".
+// findRelPathByID then failed to match the renamed file by id, so the removal
+// branch fell through to genuine-delete, dropping a live nib whose file exists on
+// disk. Mirrors TestWatcherSameIdSlugRenameNotEvicted but renames to the SLUGLESS
+// {id}.md form and requires a PREFIXED core, which is what the prefix bug uniquely
+// breaks. Both batch orderings are covered.
+func TestWatcherSameIdSluglessRenameNotEvicted(t *testing.T) {
+	const fullID = "nibs-x9z2"
+
+	for _, createFirst := range []bool{false, true} {
+		name := "remove-first"
+		if createFirst {
+			name = "create-first"
+		}
+		t.Run(name, func(t *testing.T) {
+			// A prefixed core is essential: the bug bites only when the id carries
+			// the configured prefix, whose trailing dash the legacy parse mis-split.
+			core, nibsDir := mustLoadPrefixedCore(t)
+			createTestNib(t, core, fullID, "Move Test", "todo")
+
+			oldAbs := filepath.Join(nibsDir, nib.BuildFilename(fullID, nib.Slugify("Move Test")))
+			newAbs := filepath.Join(nibsDir, nib.BuildFilename(fullID, "")) // slugless {id}.md
+
+			// Physical rename so the old path is gone and the new (slugless) one
+			// loads — exactly what a slug-dropping rename leaves on disk.
+			if err := os.Rename(oldAbs, newAbs); err != nil {
+				t.Fatalf("slugless rename: %v", err)
+			}
+			if core.fileExists(oldAbs) || !core.fileExists(newAbs) {
+				t.Fatalf("precondition: expected file at %s and not %s", newAbs, oldAbs)
+			}
+
+			setWatching(core)
+			ch, unsub := core.Subscribe()
+			defer unsub()
+
+			driveMove(core, oldAbs, newAbs, createFirst)
+
+			got := collectNibEvents(t, ch, fullID, 150*time.Millisecond)
+
+			// The move must never surface as a deletion (bites remove-first, where
+			// the create-half would otherwise re-add the nib and mask the eviction).
+			assertNoDeletedFor(t, got, fullID)
+
+			// Data-loss guard: the nib must remain in the store under its full id,
+			// its file present on disk at the slugless name.
+			n, err := core.Get(fullID)
+			if err != nil {
+				t.Fatalf("nib evicted from store during slugless rename (data loss): Get(%q) = %v", fullID, err)
+			}
+			if n.ID != fullID {
+				t.Errorf("stored ID = %q, want %q", n.ID, fullID)
+			}
+			if !core.fileExists(filepath.Join(nibsDir, n.Path)) {
+				t.Errorf("stored Path %q has no file on disk", n.Path)
+			}
+			if wantPath := filepath.ToSlash(nib.BuildFilename(fullID, "")); n.Path != wantPath {
+				t.Errorf("stored Path = %q, want slugless %q", n.Path, wantPath)
+			}
+		})
+	}
+}
+
 // TestWatcherSameIdSlugRenameUpdatesSlug covers nibs-41xj: the same-id
 // slug-rename branch of handleChanges (nibs-x--old-slug.md -> nibs-x--new-slug.md)
 // must re-derive the in-memory Slug from the new filename, not merely rewrite

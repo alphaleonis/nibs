@@ -2125,3 +2125,39 @@ func TestUpdateValidatesEnums(t *testing.T) {
 		}
 	})
 }
+
+// TestLoadSluglessPrefixedFileKeepsFullID pins nibs-mccz: a slugless nib file
+// whose id carries the configured prefix (nibs-x9z2.md) must load under its FULL
+// prefixed id, not the pre-dash fragment. Every configured prefix ends in a dash,
+// which the legacy single-dash filename parse mis-split — assigning id "nibs" to
+// the file and stranding the real nib so no lookup by "nibs-x9z2" could find it.
+func TestLoadSluglessPrefixedFileKeepsFullID(t *testing.T) {
+	const fullID = "nibs-x9z2"
+
+	// Persist a real, slugless prefixed nib through one core so the on-disk file is
+	// {id}.md (nibs-x9z2.md) rather than hand-rolled YAML.
+	core, nibsDir := mustLoadPrefixedCore(t)
+	if err := core.Create(&nib.Nib{ID: fullID, Slug: "", Title: "Slugless", Status: "todo"}); err != nil {
+		t.Fatalf("create slugless nib: %v", err)
+	}
+	// Precondition: the file on disk really is the slugless {id}.md form.
+	sluglessAbs := filepath.Join(nibsDir, nib.BuildFilename(fullID, ""))
+	if _, err := os.Stat(sluglessAbs); err != nil {
+		t.Fatalf("precondition: expected slugless file %s on disk: %v", sluglessAbs, err)
+	}
+
+	// A fresh core loading the same directory from disk must recover the FULL
+	// prefixed id (a second core so the load is a real cold read, not the cache).
+	core2 := New(nibsDir, config.DefaultWithPrefix("nibs-"))
+	core2.SetWarnWriter(nil)
+	if err := core2.Load(); err != nil {
+		t.Fatalf("reader load: %v", err)
+	}
+	b, err := core2.Get(fullID)
+	if err != nil {
+		t.Fatalf("nib lost after reload — Get(%q) = %v (slugless prefixed id misparsed on load)", fullID, err)
+	}
+	if b.ID != fullID {
+		t.Errorf("loaded ID = %q, want %q", b.ID, fullID)
+	}
+}

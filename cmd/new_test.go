@@ -403,7 +403,7 @@ func readNibByID(t *testing.T, nibsDir, idPrefix string) *nib.Nib {
 		if e.IsDir() {
 			continue
 		}
-		id, _ := nib.ParseFilename(e.Name())
+		id, _ := nib.ParseFilename(e.Name(), "")
 		if id != idPrefix {
 			continue
 		}
@@ -435,7 +435,7 @@ func firstCreatedID(t *testing.T, nibsDir string) string {
 		if e.IsDir() {
 			continue
 		}
-		id, _ := nib.ParseFilename(e.Name())
+		id, _ := nib.ParseFilename(e.Name(), "")
 		if id != "" {
 			return id
 		}
@@ -457,7 +457,7 @@ func countNibFiles(t *testing.T, nibsDir string) int {
 		if e.IsDir() {
 			continue
 		}
-		if id, _ := nib.ParseFilename(e.Name()); id != "" {
+		if id, _ := nib.ParseFilename(e.Name(), ""); id != "" {
 			n++
 		}
 	}
@@ -548,7 +548,7 @@ func otherID(t *testing.T, nibsDir string, excluded map[string]bool) string {
 		if e.IsDir() {
 			continue
 		}
-		id, _ := nib.ParseFilename(e.Name())
+		id, _ := nib.ParseFilename(e.Name(), "")
 		if id == "" || excluded[id] {
 			continue
 		}

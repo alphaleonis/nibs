@@ -88,38 +88,64 @@ func TestParseFilename(t *testing.T) {
 	tests := []struct {
 		name         string
 		filename     string
+		prefix       string
 		expectedID   string
 		expectedSlug string
 	}{
-		// New format with double-dash
-		{"new format basic", "abc--my-slug.md", "abc", "my-slug"},
-		{"new format with prefix", "nibs-z5r9--add-unit-tests.md", "nibs-z5r9", "add-unit-tests"},
-		{"new format long slug", "xyz--this-is-a-longer-slug.md", "xyz", "this-is-a-longer-slug"},
+		// New format with double-dash (prefix-agnostic: the double-dash check runs
+		// first, so the same result holds with or without a configured prefix).
+		{"new format basic", "abc--my-slug.md", "", "abc", "my-slug"},
+		{"new format with prefix", "nibs-z5r9--add-unit-tests.md", "", "nibs-z5r9", "add-unit-tests"},
+		{"new format long slug", "xyz--this-is-a-longer-slug.md", "", "xyz", "this-is-a-longer-slug"},
 
-		// Dot format
-		{"dot format basic", "abc.my-slug.md", "abc", "my-slug"},
-		{"dot format with prefix", "nibs-z5r9.add-unit-tests.md", "nibs-z5r9", "add-unit-tests"},
+		// Dot format (also prefix-agnostic: the dot check runs before the prefix branch).
+		{"dot format basic", "abc.my-slug.md", "", "abc", "my-slug"},
+		{"dot format with prefix", "nibs-z5r9.add-unit-tests.md", "", "nibs-z5r9", "add-unit-tests"},
 
-		// Legacy format with single dash
-		{"legacy format basic", "abc-my-slug.md", "abc", "my-slug"},
-		{"legacy format multi-part slug", "abc-my-multi-part-slug.md", "abc", "my-multi-part-slug"},
+		// Legacy format with single dash (prefix-less: guards the SplitN fallback).
+		{"legacy format basic", "abc-my-slug.md", "", "abc", "my-slug"},
+		{"legacy format multi-part slug", "abc-my-multi-part-slug.md", "", "abc", "my-multi-part-slug"},
 
 		// ID only
-		{"id only with md", "abc.md", "abc", ""},
-		{"id only with prefix", "nibs-z5r9.md", "nibs", "z5r9"}, // legacy format interpretation
-		{"id only no extension", "abc", "abc", ""},
+		{"id only with md", "abc.md", "", "abc", ""},
+		{"id only no extension", "abc", "", "abc", ""},
+
+		// Prefix-less legacy interpretation: with no configured prefix, a slugless
+		// prefixed-looking id is still split on its first dash (unchanged behavior).
+		{"id only prefixed, no configured prefix", "nibs-z5r9.md", "", "nibs", "z5r9"},
+
+		// Prefix-aware slugless id (nibs-mccz): with the prefix configured, a slugless
+		// prefixed id keeps its full id and yields an empty slug — the split the legacy
+		// fallback got wrong.
+		{"slugless prefixed id", "nibs-x9z2.md", "nibs-", "nibs-x9z2", ""},
+		{"slugless prefixed id, tnib", "tnib-a1b2.md", "tnib-", "tnib-a1b2", ""},
+
+		// Prefixed id with a double-dash slug (double-dash branch still wins first).
+		{"prefixed id double-dash slug", "nibs-x9z2--my-slug.md", "nibs-", "nibs-x9z2", "my-slug"},
+
+		// Prefixed id with a dot slug: the dot branch runs BEFORE the prefix branch,
+		// so it wins even with the prefix configured — guards the order-dependent
+		// precedence in ParseFilename (a reorder would misparse this as slugless).
+		{"prefixed id dot slug", "nibs-x9z2.my-slug.md", "nibs-", "nibs-x9z2", "my-slug"},
+
+		// Prefixed id with a legacy single-dash slug: the dash after the prefix
+		// separates a slug, so id keeps the prefix and slug is the remainder.
+		{"prefixed id single-dash slug", "nibs-x9z2-my-slug.md", "nibs-", "nibs-x9z2", "my-slug"},
+
+		// Prefix configured but name doesn't match it: falls back to legacy split.
+		{"prefix set but no match", "other-thing.md", "nibs-", "other", "thing"},
 
 		// Edge cases
-		{"empty string", "", "", ""},
-		{"just md extension", ".md", "", ""},
+		{"empty string", "", "", "", ""},
+		{"just md extension", ".md", "", "", ""},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			gotID, gotSlug := ParseFilename(tt.filename)
+			gotID, gotSlug := ParseFilename(tt.filename, tt.prefix)
 			if gotID != tt.expectedID || gotSlug != tt.expectedSlug {
-				t.Errorf("ParseFilename(%q) = (%q, %q), want (%q, %q)",
-					tt.filename, gotID, gotSlug, tt.expectedID, tt.expectedSlug)
+				t.Errorf("ParseFilename(%q, %q) = (%q, %q), want (%q, %q)",
+					tt.filename, tt.prefix, gotID, gotSlug, tt.expectedID, tt.expectedSlug)
 			}
 		})
 	}
@@ -195,22 +221,26 @@ func TestNewID(t *testing.T) {
 
 func TestParseFilenameAndBuildFilenameRoundtrip(t *testing.T) {
 	tests := []struct {
-		name string
-		id   string
-		slug string
+		name   string
+		id     string
+		slug   string
+		prefix string
 	}{
-		{"basic", "abc", "my-slug"},
-		{"with prefix", "nibs-z5r9", "add-tests"},
-		{"no slug", "xyz", ""},
+		{"basic", "abc", "my-slug", ""},
+		{"with prefix", "nibs-z5r9", "add-tests", "nibs-"},
+		{"no slug", "xyz", "", ""},
+		// Slugless prefixed id: BuildFilename emits {id}.md and ParseFilename must
+		// recover the full prefixed id with an empty slug (nibs-mccz).
+		{"slugless prefixed id", "nibs-z5r9", "", "nibs-"},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			filename := BuildFilename(tt.id, tt.slug)
-			gotID, gotSlug := ParseFilename(filename)
+			gotID, gotSlug := ParseFilename(filename, tt.prefix)
 			if gotID != tt.id || gotSlug != tt.slug {
-				t.Errorf("Roundtrip failed: BuildFilename(%q, %q) = %q, ParseFilename = (%q, %q)",
-					tt.id, tt.slug, filename, gotID, gotSlug)
+				t.Errorf("Roundtrip failed: BuildFilename(%q, %q) = %q, ParseFilename(_, %q) = (%q, %q)",
+					tt.id, tt.slug, filename, tt.prefix, gotID, gotSlug)
 			}
 		})
 	}
