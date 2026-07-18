@@ -650,9 +650,20 @@ statuses:
 	})
 }
 
+// isolateConfigSearch bounds FindConfig's upward walk at dir by setting
+// NIBS_CONFIG_ROOT, so a stray ancestor .nibs.yml (e.g. /tmp/.nibs.yml) can't
+// leak into config-discovery tests that assert "no config found" / "default
+// config". When the fixture places its config at dir (or below), the config is
+// still found because the ceiling directory itself is checked.
+func isolateConfigSearch(t *testing.T, dir string) {
+	t.Helper()
+	t.Setenv("NIBS_CONFIG_ROOT", dir)
+}
+
 func TestFindConfig(t *testing.T) {
 	t.Run("finds config in current directory", func(t *testing.T) {
 		tmpDir := t.TempDir()
+		isolateConfigSearch(t, tmpDir)
 		configPath := filepath.Join(tmpDir, ConfigFileName)
 		if err := os.WriteFile(configPath, []byte("nibs:\n  prefix: test-\n"), 0644); err != nil {
 			t.Fatalf("WriteFile error = %v", err)
@@ -669,6 +680,7 @@ func TestFindConfig(t *testing.T) {
 
 	t.Run("finds config in parent directory", func(t *testing.T) {
 		tmpDir := t.TempDir()
+		isolateConfigSearch(t, tmpDir)
 		subDir := filepath.Join(tmpDir, "sub", "dir")
 		if err := os.MkdirAll(subDir, 0755); err != nil {
 			t.Fatalf("MkdirAll error = %v", err)
@@ -690,6 +702,7 @@ func TestFindConfig(t *testing.T) {
 
 	t.Run("returns empty string when no config found", func(t *testing.T) {
 		tmpDir := t.TempDir()
+		isolateConfigSearch(t, tmpDir)
 
 		found, err := FindConfig(tmpDir)
 		if err != nil {
@@ -701,9 +714,80 @@ func TestFindConfig(t *testing.T) {
 	})
 }
 
+func TestFindConfig_RespectsCeiling(t *testing.T) {
+	// writeConfig places a .nibs.yml in dir.
+	writeConfig := func(t *testing.T, dir string) string {
+		t.Helper()
+		p := filepath.Join(dir, ConfigFileName)
+		if err := os.WriteFile(p, []byte("nibs:\n  prefix: test-\n"), 0644); err != nil {
+			t.Fatalf("WriteFile error = %v", err)
+		}
+		return p
+	}
+
+	// mkSub creates a child directory and returns its path.
+	mkSub := func(t *testing.T, parent, name string) string {
+		t.Helper()
+		p := filepath.Join(parent, name)
+		if err := os.MkdirAll(p, 0755); err != nil {
+			t.Fatalf("MkdirAll error = %v", err)
+		}
+		return p
+	}
+
+	t.Run("config above the ceiling is not found", func(t *testing.T) {
+		root := t.TempDir()
+		ceiling := mkSub(t, root, "ceiling")
+		start := mkSub(t, ceiling, "start")
+		writeConfig(t, root) // above the ceiling
+
+		t.Setenv("NIBS_CONFIG_ROOT", ceiling)
+		found, err := FindConfig(start)
+		if err != nil {
+			t.Fatalf("FindConfig() error = %v", err)
+		}
+		if found != "" {
+			t.Errorf("FindConfig() = %q, want empty (config above ceiling must not be found)", found)
+		}
+	})
+
+	t.Run("config at the ceiling is found", func(t *testing.T) {
+		root := t.TempDir()
+		ceiling := mkSub(t, root, "ceiling")
+		start := mkSub(t, ceiling, "start")
+		want := writeConfig(t, ceiling) // at the ceiling
+
+		t.Setenv("NIBS_CONFIG_ROOT", ceiling)
+		found, err := FindConfig(start)
+		if err != nil {
+			t.Fatalf("FindConfig() error = %v", err)
+		}
+		if found != want {
+			t.Errorf("FindConfig() = %q, want %q (config at ceiling must be found)", found, want)
+		}
+	})
+
+	t.Run("config below the ceiling is found", func(t *testing.T) {
+		root := t.TempDir()
+		ceiling := mkSub(t, root, "ceiling")
+		start := mkSub(t, ceiling, "start")
+		want := writeConfig(t, start) // below the ceiling
+
+		t.Setenv("NIBS_CONFIG_ROOT", ceiling)
+		found, err := FindConfig(start)
+		if err != nil {
+			t.Fatalf("FindConfig() error = %v", err)
+		}
+		if found != want {
+			t.Errorf("FindConfig() = %q, want %q (config below ceiling must be found)", found, want)
+		}
+	})
+}
+
 func TestLoadFromDirectory(t *testing.T) {
 	t.Run("loads config from directory with .nibs.yml", func(t *testing.T) {
 		tmpDir := t.TempDir()
+		isolateConfigSearch(t, tmpDir)
 		configPath := filepath.Join(tmpDir, ConfigFileName)
 		configYAML := `nibs:
   path: custom-nibs
@@ -731,6 +815,7 @@ func TestLoadFromDirectory(t *testing.T) {
 
 	t.Run("returns default config when no config file exists", func(t *testing.T) {
 		tmpDir := t.TempDir()
+		isolateConfigSearch(t, tmpDir)
 
 		cfg, err := LoadFromDirectory(tmpDir)
 		if err != nil {

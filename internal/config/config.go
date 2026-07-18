@@ -148,16 +148,40 @@ func DefaultWithPrefix(prefix string) *Config {
 
 // FindConfig searches upward from the given directory for a .nibs.yml config file.
 // Returns the absolute path to the config file, or empty string if not found.
+//
+// The NIBS_CONFIG_ROOT environment variable, when set to a non-empty path,
+// bounds the upward walk: each directory up to and including that ceiling is
+// checked for .nibs.yml, but the walk never ascends above it. Comparison is
+// done on absolute paths (via filepath.Abs), so a ceiling that isn't an
+// ancestor of startDir simply never triggers and the walk proceeds to the
+// filesystem root as usual. When unset, behavior is unchanged (walk to root).
+// This is mainly a sandboxing/test-isolation knob — it keeps a stray ancestor
+// .nibs.yml (e.g. /tmp/.nibs.yml) from leaking into tests that expect no
+// config to be found.
 func FindConfig(startDir string) (string, error) {
 	dir, err := filepath.Abs(startDir)
 	if err != nil {
 		return "", err
 	}
 
+	// NIBS_CONFIG_ROOT caps how far the upward walk may climb.
+	var ceiling string
+	if raw := os.Getenv("NIBS_CONFIG_ROOT"); raw != "" {
+		ceiling, err = filepath.Abs(raw)
+		if err != nil {
+			return "", err
+		}
+	}
+
 	for {
 		configPath := filepath.Join(dir, ConfigFileName)
 		if _, err := os.Stat(configPath); err == nil {
 			return configPath, nil
+		}
+
+		// Stop at the ceiling: this dir was checked, but do not ascend above it.
+		if ceiling != "" && dir == ceiling {
+			return "", nil
 		}
 
 		parent := filepath.Dir(dir)
