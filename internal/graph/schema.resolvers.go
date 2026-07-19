@@ -12,6 +12,7 @@ import (
 	"github.com/alphaleonis/nibs/internal/graph/model"
 	"github.com/alphaleonis/nibs/internal/nib"
 	"github.com/alphaleonis/nibs/internal/nibtypes"
+	"github.com/alphaleonis/nibs/internal/updatecheck"
 )
 
 // CreateNib is the resolver for the createNib field.
@@ -939,6 +940,15 @@ func (r *queryResolver) Config(ctx context.Context) (*model.Config, error) {
 		ProjectName: cfg.GetProjectName(),
 		Prefix:      cfg.Nibs.Prefix,
 	}, nil
+}
+
+// UpdateStatus is the resolver for the updateStatus field. It is best-effort:
+// any gating (dev build / CI / opt-out) or network failure yields
+// updateAvailable=false rather than failing the query, so the web UI can query
+// it freely without risking an error on the page.
+func (r *queryResolver) UpdateStatus(ctx context.Context) (*model.UpdateStatus, error) {
+	res, ok := updatecheck.NewChecker(r.Version).Check(ctx)
+	return updateStatusResult(r.Version, res, ok), nil
 }
 
 // NibChanged is the resolver for the nibChanged field.

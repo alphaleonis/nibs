@@ -9,6 +9,16 @@ export const CONFIG_QUERY = gql`
   }
 `;
 
+export const UPDATE_STATUS_QUERY = gql`
+  query UpdateStatus {
+    updateStatus {
+      current
+      latest
+      updateAvailable
+    }
+  }
+`;
+
 export const NIB_DETAIL_QUERY = gql`
   query NibDetail($id: ID!) {
     nib(id: $id) {
