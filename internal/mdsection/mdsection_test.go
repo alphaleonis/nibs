@@ -4,29 +4,30 @@ import "testing"
 
 func TestFind(t *testing.T) {
 	tests := []struct {
-		name      string
-		body      string
-		heading   string
-		wantText  string
-		wantFound bool
+		name       string
+		body       string
+		heading    string
+		matchLevel int
+		wantText   string
+		wantFound  bool
 	}{
 		{
-			name: "basic section between two headings",
-			body: "## Goal\n\nBuild the thing.\n\n## Key Decisions\n\n- Use GraphQL\n- File-based storage\n\n## Notes\n\nOther stuff.",
+			name:      "basic section between two headings",
+			body:      "## Goal\n\nBuild the thing.\n\n## Key Decisions\n\n- Use GraphQL\n- File-based storage\n\n## Notes\n\nOther stuff.",
 			heading:   "Key Decisions",
 			wantText:  "\n- Use GraphQL\n- File-based storage\n",
 			wantFound: true,
 		},
 		{
-			name: "case insensitive match",
-			body: "## key decisions\n\n- Works with lowercase\n",
+			name:      "case insensitive match",
+			body:      "## key decisions\n\n- Works with lowercase\n",
 			heading:   "Key Decisions",
 			wantText:  "\n- Works with lowercase\n",
 			wantFound: true,
 		},
 		{
-			name: "heading at end of document",
-			body: "## Goal\n\nShip it.\n\n## Notes\n\nTrailing content with no next heading.",
+			name:      "heading at end of document",
+			body:      "## Goal\n\nShip it.\n\n## Notes\n\nTrailing content with no next heading.",
 			heading:   "Notes",
 			wantText:  "\nTrailing content with no next heading.\n",
 			wantFound: true,
@@ -87,11 +88,76 @@ func TestFind(t *testing.T) {
 			wantText:  "\nFirst.\n",
 			wantFound: true,
 		},
+		// --- level-aware matching ---
+		{
+			name:       "wildcard matches any level (h2)",
+			body:       "## Sub\n\nLevel-two content.\n",
+			heading:    "Sub",
+			matchLevel: 0,
+			wantText:   "\nLevel-two content.\n",
+			wantFound:  true,
+		},
+		{
+			name:       "wildcard matches any level (h3)",
+			body:       "### Sub\n\nLevel-three content.\n",
+			heading:    "Sub",
+			matchLevel: 0,
+			wantText:   "\nLevel-three content.\n",
+			wantFound:  true,
+		},
+		{
+			name:       "spelled level 3 does not match level 2",
+			body:       "## Sub\n\nLevel-two content.\n",
+			heading:    "Sub",
+			matchLevel: 3,
+			wantText:   "",
+			wantFound:  false,
+		},
+		{
+			name:       "spelled level 2 matches level 2",
+			body:       "## Sub\n\nLevel-two content.\n",
+			heading:    "Sub",
+			matchLevel: 2,
+			wantText:   "\nLevel-two content.\n",
+			wantFound:  true,
+		},
+		{
+			name:       "spelled level 2 does not match level 3",
+			body:       "### Sub\n\nLevel-three content.\n",
+			heading:    "Sub",
+			matchLevel: 2,
+			wantText:   "",
+			wantFound:  false,
+		},
+		{
+			name:       "spelled level 3 matches level 3 among mixed levels",
+			body:       "## Sub\n\nTwo.\n\n### Sub\n\nThree.\n",
+			heading:    "Sub",
+			matchLevel: 3,
+			wantText:   "\nThree.\n",
+			wantFound:  true,
+		},
+		{
+			name:       "parenthetical suffix respects level (no match at wrong level)",
+			body:       "### Key Decisions (Phase 2)\n\n- Decision one\n",
+			heading:    "Key Decisions",
+			matchLevel: 2,
+			wantText:   "",
+			wantFound:  false,
+		},
+		{
+			name:       "parenthetical suffix still matches at the right level",
+			body:       "### Key Decisions (Phase 2)\n\n- Decision one\n",
+			heading:    "Key Decisions",
+			matchLevel: 3,
+			wantText:   "\n- Decision one\n",
+			wantFound:  true,
+		},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			got, found := Find(tt.body, tt.heading)
+			got, found := Find(tt.body, tt.heading, tt.matchLevel)
 			if found != tt.wantFound {
 				t.Errorf("found = %v, want %v", found, tt.wantFound)
 			}
@@ -107,6 +173,7 @@ func TestReplace(t *testing.T) {
 		name       string
 		body       string
 		heading    string
+		matchLevel int
 		newContent string
 		want       string
 	}{
@@ -138,11 +205,28 @@ func TestReplace(t *testing.T) {
 			newContent: "\nReplaced B.\n",
 			want:       "## A\n\nContent A.\n\n### Sub-A\n\nSub content.\n\n## B\n\nReplaced B.\n\n## C\n\nContent C.",
 		},
+		// --- level-aware matching ---
+		{
+			name:       "spelled level 3 does not clobber level 2 (unchanged)",
+			body:       "## Sub\n\nOld two.\n\n### Child\n\nChild content.\n",
+			heading:    "Sub",
+			matchLevel: 3,
+			newContent: "\nReplacement.\n",
+			want:       "## Sub\n\nOld two.\n\n### Child\n\nChild content.\n",
+		},
+		{
+			name:       "spelled level 2 replaces the level-2 heading",
+			body:       "## Sub\n\nOld two.\n\n## Next\n\nKeep.\n",
+			heading:    "Sub",
+			matchLevel: 2,
+			newContent: "\nReplacement.\n",
+			want:       "## Sub\n\nReplacement.\n\n## Next\n\nKeep.\n",
+		},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			got := Replace(tt.body, tt.heading, tt.newContent)
+			got := Replace(tt.body, tt.heading, tt.newContent, tt.matchLevel)
 			if got != tt.want {
 				t.Errorf("Replace() =\n%q\nwant:\n%q", got, tt.want)
 			}
@@ -152,74 +236,150 @@ func TestReplace(t *testing.T) {
 
 func TestSet(t *testing.T) {
 	tests := []struct {
-		name    string
-		body    string
-		level   int
-		heading string
-		content string
-		want    string
+		name        string
+		body        string
+		matchLevel  int
+		appendLevel int
+		heading     string
+		content     string
+		want        string
 	}{
 		{
-			name:    "replaces existing section",
-			body:    "## Goal\n\nShip it.\n\n## Notes\n\nOld notes.\n\n## End",
-			level:   2,
-			heading: "Notes",
-			content: "\nNew notes.\n",
-			want:    "## Goal\n\nShip it.\n\n## Notes\n\nNew notes.\n\n## End",
+			name:        "replaces existing section",
+			body:        "## Goal\n\nShip it.\n\n## Notes\n\nOld notes.\n\n## End",
+			matchLevel:  0,
+			appendLevel: 2,
+			heading:     "Notes",
+			content:     "\nNew notes.\n",
+			want:        "## Goal\n\nShip it.\n\n## Notes\n\nNew notes.\n\n## End",
 		},
 		{
-			name:    "appends new section when not found",
-			body:    "## Goal\n\nShip it.",
-			level:   2,
-			heading: "Key Decisions",
-			content: "\n- Decision one\n",
-			want:    "## Goal\n\nShip it.\n\n## Key Decisions\n\n- Decision one\n",
+			name:        "appends new section when not found",
+			body:        "## Goal\n\nShip it.",
+			matchLevel:  0,
+			appendLevel: 2,
+			heading:     "Key Decisions",
+			content:     "\n- Decision one\n",
+			want:        "## Goal\n\nShip it.\n\n## Key Decisions\n\n- Decision one\n",
 		},
 		{
-			name:    "appends to empty body",
-			body:    "",
-			level:   2,
-			heading: "Notes",
-			content: "\nSome notes.\n",
-			want:    "\n## Notes\n\nSome notes.\n",
+			name:        "appends to empty body",
+			body:        "",
+			matchLevel:  0,
+			appendLevel: 2,
+			heading:     "Notes",
+			content:     "\nSome notes.\n",
+			want:        "\n## Notes\n\nSome notes.\n",
 		},
 		{
-			name:    "appends h3 section",
-			body:    "## Parent\n\nSome content.",
-			level:   3,
-			heading: "Details",
-			content: "\nDetail text.\n",
-			want:    "## Parent\n\nSome content.\n\n### Details\n\nDetail text.\n",
+			name:        "appends h3 section",
+			body:        "## Parent\n\nSome content.",
+			matchLevel:  0,
+			appendLevel: 3,
+			heading:     "Details",
+			content:     "\nDetail text.\n",
+			want:        "## Parent\n\nSome content.\n\n### Details\n\nDetail text.\n",
 		},
 		{
-			name:    "appends h1 section",
-			body:    "## Existing\n\nContent.",
-			level:   1,
-			heading: "Top Level",
-			content: "\nTop-level text.\n",
-			want:    "## Existing\n\nContent.\n\n# Top Level\n\nTop-level text.\n",
+			name:        "appends h1 section",
+			body:        "## Existing\n\nContent.",
+			matchLevel:  0,
+			appendLevel: 1,
+			heading:     "Top Level",
+			content:     "\nTop-level text.\n",
+			want:        "## Existing\n\nContent.\n\n# Top Level\n\nTop-level text.\n",
 		},
 		{
-			name:    "level zero clamps to h1",
-			body:    "## Existing\n\nContent.",
-			level:   0,
-			heading: "Added",
-			content: "\nNew content.\n",
-			want:    "## Existing\n\nContent.\n\n# Added\n\nNew content.\n",
+			name:        "append level zero clamps to h1",
+			body:        "## Existing\n\nContent.",
+			matchLevel:  0,
+			appendLevel: 0,
+			heading:     "Added",
+			content:     "\nNew content.\n",
+			want:        "## Existing\n\nContent.\n\n# Added\n\nNew content.\n",
 		},
 		{
-			name:    "negative level clamps to h1",
-			body:    "## Existing\n\nContent.",
-			level:   -1,
-			heading: "Added",
-			content: "\nNew content.\n",
-			want:    "## Existing\n\nContent.\n\n# Added\n\nNew content.\n",
+			name:        "negative append level clamps to h1",
+			body:        "## Existing\n\nContent.",
+			matchLevel:  0,
+			appendLevel: -1,
+			heading:     "Added",
+			content:     "\nNew content.\n",
+			want:        "## Existing\n\nContent.\n\n# Added\n\nNew content.\n",
+		},
+		// --- level-aware matching ---
+		{
+			name:        "spelled matchLevel misses same-name lower level and appends instead of clobbering",
+			body:        "## Sub\n\nOld two.\n\n### Child\n\nChild content.",
+			matchLevel:  3,
+			appendLevel: 3,
+			heading:     "Sub",
+			content:     "\nBrand new.\n",
+			want:        "## Sub\n\nOld two.\n\n### Child\n\nChild content.\n\n### Sub\n\nBrand new.\n",
+		},
+		{
+			name:        "wildcard matchLevel replaces the existing level-2 section",
+			body:        "## Sub\n\nOld two.\n\n## Next\n\nKeep.\n",
+			matchLevel:  0,
+			appendLevel: 2,
+			heading:     "Sub",
+			content:     "\nUpdated.\n",
+			want:        "## Sub\n\nUpdated.\n\n## Next\n\nKeep.\n",
+		},
+		{
+			name:        "spelled matchLevel replaces a match at that exact level",
+			body:        "## Sub\n\nTwo.\n\n### Sub\n\nOld three.\n",
+			matchLevel:  3,
+			appendLevel: 3,
+			heading:     "Sub",
+			content:     "\nNew three.\n",
+			want:        "## Sub\n\nTwo.\n\n### Sub\n\nNew three.\n",
 		},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			got := Set(tt.body, tt.level, tt.heading, tt.content)
+			got := SetAtLevel(tt.body, tt.matchLevel, tt.appendLevel, tt.heading, tt.content)
+			if got != tt.want {
+				t.Errorf("SetAtLevel() =\n%q\nwant:\n%q", got, tt.want)
+			}
+		})
+	}
+}
+
+// TestSetWildcard verifies the wildcard-match Set wrapper: it matches an existing
+// heading regardless of the level it is spelled at (proving it delegates to
+// SetAtLevel with AnyLevel), and appends at the requested level when absent.
+func TestSetWildcard(t *testing.T) {
+	tests := []struct {
+		name        string
+		body        string
+		appendLevel int
+		heading     string
+		content     string
+		want        string
+	}{
+		{
+			name:        "matches a level-3 heading despite appendLevel 2 (wildcard)",
+			body:        "## Parent\n\nTwo.\n\n### Sub\n\nOld three.\n",
+			appendLevel: 2,
+			heading:     "Sub",
+			content:     "\nNew three.\n",
+			want:        "## Parent\n\nTwo.\n\n### Sub\n\nNew three.\n",
+		},
+		{
+			name:        "appends at appendLevel when no match",
+			body:        "## Goal\n\nShip it.",
+			appendLevel: 2,
+			heading:     "Key Decisions",
+			content:     "\n- Decision one\n",
+			want:        "## Goal\n\nShip it.\n\n## Key Decisions\n\n- Decision one\n",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := Set(tt.body, tt.appendLevel, tt.heading, tt.content)
 			if got != tt.want {
 				t.Errorf("Set() =\n%q\nwant:\n%q", got, tt.want)
 			}

@@ -89,6 +89,27 @@ func TestSectionHeadingLevel(t *testing.T) {
 	}
 }
 
+// TestSectionMatchLevel pins the MATCH-level derivation, which differs from the
+// append level only for a bare heading: a spelled marker count wins, but a bare
+// heading yields 0 (wildcard — match any level), NOT the append default of 2.
+func TestSectionMatchLevel(t *testing.T) {
+	for _, tc := range []struct {
+		flag string
+		want int
+	}{
+		{"## H", 2},
+		{"### H", 3},
+		{"#### H", 4},
+		{"H", 0},     // bare heading is a wildcard (match any level)
+		{" ## H", 2}, // leading whitespace trimmed first
+		{"   ### H", 3},
+	} {
+		if got := sectionMatchLevel(tc.flag); got != tc.want {
+			t.Errorf("sectionMatchLevel(%q) = %d, want %d", tc.flag, got, tc.want)
+		}
+	}
+}
+
 // TestBodyAppendFromStdin verifies `body <id> --append -` appends a block read
 // from stdin, that special characters survive verbatim, and that the --json
 // echo is the lean card (no body leak).
@@ -245,6 +266,142 @@ func TestBodySectionCreateReplacesExistingSection(t *testing.T) {
 	// truncating the preceding section would otherwise pass unnoticed.
 	if !strings.Contains(content, "## Description") || !strings.Contains(content, "Something.") {
 		t.Errorf("preceding section should survive the upsert-replace, got:\n%s", content)
+	}
+}
+
+// TestBodySectionCreateSpelledLevelDoesNotClobberLowerLevel verifies the
+// level-aware match: `--section "### Sub" --set - --create` against a body whose
+// only "Sub" is a LEVEL-2 "## Sub" (with a nested "### Child") must NOT match and
+// clobber that level-2 section. The spelled level-3 request finds no level-3 "Sub",
+// so --create appends a fresh "### Sub" and leaves the level-2 section intact.
+func TestBodySectionCreateSpelledLevelDoesNotClobberLowerLevel(t *testing.T) {
+	t.Cleanup(resetBodyFlags)
+	resetBodyFlags()
+
+	body := "## Sub\nlevel-two text\n\n### Child\nnested child\n"
+	nibsDir, id := writeSetNib(t, "bdy-level-1", body)
+	withStdin(t, "fresh level-three content\n")
+
+	rootCmd.SetArgs([]string{"--nibs-path", nibsDir, "body", id, "--section", "### Sub", "--set", "-", "--create"})
+	if err := rootCmd.Execute(); err != nil {
+		t.Fatalf("body --section \"### Sub\" --set - --create failed: %v", err)
+	}
+
+	content := readNibFile(t, nibsDir, bodyNibFile(id))
+	// The level-2 "## Sub" section AND its nested "### Child" must survive: a
+	// spelled "### Sub" must not match the level-2 heading and swallow the section.
+	if !strings.Contains(content, "level-two text") {
+		t.Errorf("level-2 ## Sub content was clobbered, got:\n%s", content)
+	}
+	if !strings.Contains(content, "nested child") {
+		t.Errorf("nested ### Child content was clobbered, got:\n%s", content)
+	}
+	// The new "### Sub" heading is appended with the piped content.
+	if !strings.Contains(content, "fresh level-three content") {
+		t.Errorf("new ### Sub content missing, got:\n%s", content)
+	}
+	// Both headings are present as exact heading lines: the original level-2 and
+	// the newly appended level-3 (substring counting would confuse "## Sub" with
+	// the "## Sub" inside "### Sub").
+	var hasL2, hasL3, childCount int
+	for _, line := range strings.Split(content, "\n") {
+		switch strings.TrimSpace(line) {
+		case "## Sub":
+			hasL2++
+		case "### Sub":
+			hasL3++
+		case "### Child":
+			childCount++
+		}
+	}
+	if hasL2 != 1 {
+		t.Errorf("expected the original level-2 '## Sub' heading exactly once, got %d, body:\n%s", hasL2, content)
+	}
+	if hasL3 != 1 {
+		t.Errorf("expected a new level-3 '### Sub' heading exactly once, got %d, body:\n%s", hasL3, content)
+	}
+	if childCount != 1 {
+		t.Errorf("expected the nested '### Child' heading to survive, got %d, body:\n%s", childCount, content)
+	}
+}
+
+// TestBodySectionCreateBareMatchesAnyLevel verifies the wildcard is preserved
+// through the CLI path: the only heading is a level-3 "### Sub", yet a bare
+// `--section "Sub" --set - --create` matches and replaces it IN PLACE. The
+// level-3 seed is load-bearing — the bare append default is level 2, so a
+// regression that hard-coded the bare match level to 2 (instead of AnyLevel)
+// would miss "### Sub", append a duplicate "## Sub", and leave "old three"
+// behind. The load-bearing discriminators are the "old three" survival check
+// and the zero-"## Sub" check — both fail under that counterfactual. The
+// single-"### Sub" count corroborates in-place replacement but, on its own,
+// stays 1 under the regression (the untouched level-3 seed), so it is not the
+// leg that bites.
+func TestBodySectionCreateBareMatchesAnyLevel(t *testing.T) {
+	t.Cleanup(resetBodyFlags)
+	resetBodyFlags()
+
+	nibsDir, id := writeSetNib(t, "bdy-bare-l3", "### Sub\nold three\n")
+	withStdin(t, "replaced content\n")
+
+	rootCmd.SetArgs([]string{"--nibs-path", nibsDir, "body", id, "--section", "Sub", "--set", "-", "--create"})
+	if err := rootCmd.Execute(); err != nil {
+		t.Fatalf("body --section \"Sub\" --set - --create failed: %v", err)
+	}
+
+	content := readNibFile(t, nibsDir, bodyNibFile(id))
+	if !strings.Contains(content, "replaced content") {
+		t.Errorf("bare section did not replace existing content, got:\n%s", content)
+	}
+	if strings.Contains(content, "old three") {
+		t.Errorf("old content should be replaced, got:\n%s", content)
+	}
+	// Exactly one "### Sub" heading and no "## Sub": a wildcard match replaces the
+	// level-3 heading in place. A bare→fixed-level-2 regression would instead
+	// append a new "## Sub" and leave "### Sub" untouched.
+	var l3Count, l2Count int
+	for _, line := range strings.Split(content, "\n") {
+		switch strings.TrimSpace(line) {
+		case "### Sub":
+			l3Count++
+		case "## Sub":
+			l2Count++
+		}
+	}
+	if l3Count != 1 {
+		t.Errorf("bare wildcard should replace the level-3 heading in place (one '### Sub'), got %d, body:\n%s", l3Count, content)
+	}
+	if l2Count != 0 {
+		t.Errorf("bare wildcard must not append a duplicate '## Sub', got %d, body:\n%s", l2Count, content)
+	}
+}
+
+// TestBodySectionStrictSpelledLevelMismatchNotFound verifies the SAFE outcome of a
+// level mismatch in the strict (no --create) path: `--section "### Sub" --set -`
+// against a body whose only "Sub" is a level-2 "## Sub" yields a section-not-found
+// validation error, NOT a silent clobber of the level-2 section.
+func TestBodySectionStrictSpelledLevelMismatchNotFound(t *testing.T) {
+	t.Cleanup(resetBodyFlags)
+	resetBodyFlags()
+
+	nibsDir, id := writeSetNib(t, "bdy-level-3", "## Sub\nkeep me\n")
+	withStdin(t, "whatever\n")
+
+	rootCmd.SetArgs([]string{"--nibs-path", nibsDir, "body", id, "--section", "### Sub", "--set", "-", "--json"})
+	err := rootCmd.Execute()
+	if err == nil {
+		t.Fatal("expected a level-mismatched strict --section --set to error, got nil")
+	}
+	var ce *output.CodedError
+	if !errors.As(err, &ce) {
+		t.Fatalf("error = %T, want *output.CodedError", err)
+	}
+	if output.ExitCode(ce.Code) != output.ExitValidation {
+		t.Errorf("level-mismatch exit = %d, want %d (validation)", output.ExitCode(ce.Code), output.ExitValidation)
+	}
+	// The level-2 section must be untouched (no clobber).
+	content := readNibFile(t, nibsDir, bodyNibFile(id))
+	if !strings.Contains(content, "keep me") {
+		t.Errorf("level-2 ## Sub content must survive the rejected request, got:\n%s", content)
 	}
 }
 

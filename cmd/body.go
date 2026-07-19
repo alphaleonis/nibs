@@ -43,6 +43,11 @@ Operations (choose one):
 --create to create the heading in place (upsert), or use --append, whose block
 carries its own heading. --create is valid only with --section --set.
 
+--section matches at the level you SPELL: "### H" matches only a level-3 heading
+and will NOT match (or clobber) a level-2 "## H"; a bare "H" (no #) matches a
+heading at any level. When --create finds no match, the new heading is created at
+the spelled level (a bare heading defaults to "##").
+
 The surgical --replace-old/--replace-new form matches exactly once: zero
 matches fail with TEXT_NOT_FOUND and more than one with TEXT_AMBIGUOUS (both
 exit 2), each reporting the occurrence count.`,
@@ -173,24 +178,30 @@ func buildBodyInput(b *nib.Nib, setChanged, appendChanged, sectionChanged, repla
 		// Trim surrounding whitespace BEFORE stripping "#" so a leading space
 		// (" ## H") cannot defeat TrimLeft and leave the markers in the text.
 		heading := strings.TrimSpace(strings.TrimLeft(strings.TrimSpace(bodySection), "#"))
+		// matchLevel: a spelled level ("### H") matches only an existing heading at
+		// that exact level; a bare heading ("H") is a wildcard (0) matching any level.
+		// This keeps a "### Sub" request from silently clobbering a level-2 "## Sub".
+		matchLevel := sectionMatchLevel(bodySection)
 		content, err := resolveBodyFlag(bodySet, "")
 		if err != nil {
 			return input, err
 		}
 		if create {
-			// Upsert: replace the section if present, append it (at the level the
-			// flag spells) if absent.
-			newBody := mdsection.Set(b.Body, sectionHeadingLevel(bodySection), heading, strings.TrimRight(content, "\n"))
+			// Upsert: replace a section matching at matchLevel if present, else append
+			// a new heading at the level the flag spells (bare defaults to level 2).
+			// SetAtLevel (not Set) because a spelled "### H" must gate the match to
+			// its exact level; the two clearly-named level vars can't be transposed.
+			newBody := mdsection.SetAtLevel(b.Body, matchLevel, sectionHeadingLevel(bodySection), heading, strings.TrimRight(content, "\n"))
 			input.Body = &newBody
 			break
 		}
-		// Strict default: --set replaces only; a missing heading is a no-op in
-		// mdsection, so check first and fail loudly rather than silently doing
-		// nothing.
-		if _, found := mdsection.Find(b.Body, heading); !found {
+		// Strict default: --set replaces only; a heading absent at the requested
+		// level is a no-op in mdsection, so check first and fail loudly rather than
+		// silently doing nothing (or clobbering a same-named heading at another level).
+		if _, found := mdsection.Find(b.Body, heading, matchLevel); !found {
 			return input, &sectionNotFoundError{heading: bodySection}
 		}
-		newBody := mdsection.Replace(b.Body, heading, strings.TrimRight(content, "\n"))
+		newBody := mdsection.Replace(b.Body, heading, strings.TrimRight(content, "\n"), matchLevel)
 		input.Body = &newBody
 
 	case setChanged:
@@ -223,12 +234,24 @@ func buildBodyInput(b *nib.Nib, setChanged, appendChanged, sectionChanged, repla
 // value by counting its leading '#' characters ("## H" → 2, "### H" → 3). A bare
 // heading with no markers ("H") defaults to level 2, the "##" section convention
 // nibs bodies use. Whitespace is trimmed first so " ## H" still reads as level 2.
+// This is the APPEND level — the level of a new heading created by --create when
+// no match exists — distinct from the match level (see sectionMatchLevel).
 func sectionHeadingLevel(flag string) int {
 	level := mdsection.HeadingLevel(strings.TrimSpace(flag))
 	if level == 0 {
 		return 2
 	}
 	return level
+}
+
+// sectionMatchLevel derives the heading level a --section flag REQUIRES an
+// existing heading to match. A spelled level ("### H" → 3) matches only a heading
+// at that exact level; a bare heading ("H" → 0) is a wildcard matching any level.
+// Whitespace is trimmed first so " ### H" still reads as level 3. Unlike
+// sectionHeadingLevel, a bare heading yields 0 (wildcard), not the append default
+// of 2 — so a bare --section keeps its historic level-agnostic matching.
+func sectionMatchLevel(flag string) int {
+	return mdsection.HeadingLevel(strings.TrimSpace(flag))
 }
 
 // sectionNotFoundError signals that --section named a heading absent from the
@@ -263,7 +286,7 @@ func bodyMutationError(jsonOutput bool, err error) error {
 func init() {
 	bodyCmd.Flags().StringVar(&bodySet, "set", "", "Replace the body from the input channel: '-' for stdin or '@FILE' for a file (no inline text)")
 	bodyCmd.Flags().StringVar(&bodyAppend, "append", "", "Append a block from the input channel: '-' for stdin or '@FILE' for a file (no inline text)")
-	bodyCmd.Flags().StringVar(&bodySection, "section", "", "Heading whose content --set replaces (e.g. \"## Notes\")")
+	bodyCmd.Flags().StringVar(&bodySection, "section", "", "Heading whose content --set replaces (e.g. \"## Notes\"); a spelled level matches only that level, a bare heading matches any level")
 	bodyCmd.Flags().BoolVar(&bodyCreate, "create", false, "With --section --set, create the heading if absent (upsert); default errors on a missing heading")
 	bodyCmd.Flags().StringVar(&bodyReplaceOld, "replace-old", "", "Text to find and replace exactly once (requires --replace-new)")
 	bodyCmd.Flags().StringVar(&bodyReplaceNew, "replace-new", "", "Replacement text (requires --replace-old)")

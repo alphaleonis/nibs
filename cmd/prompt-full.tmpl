@@ -185,6 +185,8 @@ nibs body <id> --section "## Notes" --set @notes.md     # replace only the conte
 nibs body <id> --append -                               # append a block from stdin
 nibs body <id> --replace-old "- [ ] Task" --replace-new "- [x] Task"   # replace exactly one occurrence
 ```
+`--section` matches an existing heading at the level you SPELL: `### H` matches only a level-3 heading (never a level-2 `## H`), while a bare `H` (no `#`) matches a heading at any level. With `--create`, a missing heading is created at the spelled level (a bare heading defaults to `##`).
+
 `--replace-old`/`--replace-new` must match exactly once: zero matches → `TEXT_NOT_FOUND`, more than one → `TEXT_AMBIGUOUS` (both exit 2, with an occurrence count). For several replacements in one atomic write, use `nibs graphql` with `bodyMod.replace` (see GraphQL).
 
 ## Reordering

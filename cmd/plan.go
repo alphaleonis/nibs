@@ -118,9 +118,9 @@ func buildPlan(ctx context.Context, resolver *graph.Resolver, parentID string, a
 // when neither section exists. Only "- [ ]" / "- [x]" list items are counted;
 // checked is the "[x]"/"[X]" subset.
 func acceptanceRollup(body string) *AcceptanceRollup {
-	section, found := mdsection.Find(body, "Acceptance")
+	section, found := mdsection.Find(body, "Acceptance", mdsection.AnyLevel)
 	if !found {
-		section, found = mdsection.Find(body, "Acceptance Criteria")
+		section, found = mdsection.Find(body, "Acceptance Criteria", mdsection.AnyLevel)
 	}
 	if !found {
 		return nil

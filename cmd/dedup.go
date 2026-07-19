@@ -82,7 +82,7 @@ func tokenSubset(sub, super []string) bool {
 // "## Reasons for Scrapping" section: the first non-empty line, stripped of a
 // leading list marker and truncated. Returns "" when the section is absent.
 func scrapReasonSnippet(body string) string {
-	content, found := mdsection.Find(body, "Reasons for Scrapping")
+	content, found := mdsection.Find(body, "Reasons for Scrapping", mdsection.AnyLevel)
 	if !found {
 		return ""
 	}

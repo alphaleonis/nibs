@@ -72,7 +72,8 @@ var closeCmd = &cobra.Command{
 		// Save original body before mutation (needed for Key Decisions extraction)
 		originalBody := b.Body
 
-		// Append summary section to body
+		// Append summary section to body. Set is the wildcard-match variant (matches
+		// a "Summary" heading at any level); appendLevel 2 creates it at "## " when absent.
 		newBody := mdsection.Set(b.Body, 2, "Summary", "\n"+summary+"\n")
 
 		// Build update input
@@ -104,12 +105,13 @@ var closeCmd = &cobra.Command{
 				focusContent := fmt.Sprintf("\nCompleted %s: %s\n", b.ID, summary)
 				parentBody = mdsection.Set(parentBody, 2, "Current Focus", focusContent)
 
-				// Merge Key Decisions from closed nib into parent
-				if childDecisions, found := mdsection.Find(originalBody, "Key Decisions"); found {
-					existingDecisions, hasExisting := mdsection.Find(parentBody, "Key Decisions")
+				// Merge Key Decisions from closed nib into parent. All matches are
+				// wildcard (AnyLevel) to preserve the historic level-agnostic behavior.
+				if childDecisions, found := mdsection.Find(originalBody, "Key Decisions", mdsection.AnyLevel); found {
+					existingDecisions, hasExisting := mdsection.Find(parentBody, "Key Decisions", mdsection.AnyLevel)
 					if hasExisting {
 						merged := strings.TrimRight(existingDecisions, "\n") + "\n" + childDecisions
-						parentBody = mdsection.Replace(parentBody, "Key Decisions", merged)
+						parentBody = mdsection.Replace(parentBody, "Key Decisions", merged, mdsection.AnyLevel)
 					} else {
 						parentBody = mdsection.Set(parentBody, 2, "Key Decisions", childDecisions)
 					}

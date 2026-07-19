@@ -183,7 +183,7 @@ func CalcProgress(nibs []*nib.Nib) Progress {
 
 // ExtractDecisions parses bullet points from a "Key Decisions" section in markdown.
 func ExtractDecisions(body string) []string {
-	content, found := mdsection.Find(body, "Key Decisions")
+	content, found := mdsection.Find(body, "Key Decisions", mdsection.AnyLevel)
 	if !found {
 		return nil
 	}
