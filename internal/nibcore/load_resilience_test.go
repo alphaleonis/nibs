@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 
@@ -186,6 +187,9 @@ Body.
 // callback's own `if err != nil { return err }` must keep aborting the walk. This
 // guards that seam against a future over-broad "simplify both branches" refactor.
 func TestLoadPropagatesWalkDirIOError(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("chmod 0 does not deny directory reads on Windows")
+	}
 	if os.Getuid() == 0 {
 		t.Skip("chmod 0 does not deny directory reads for root; run as non-root to exercise the WalkDir I/O-error branch")
 	}

@@ -1,6 +1,9 @@
 package cmd
 
-import "testing"
+import (
+	"path/filepath"
+	"testing"
+)
 
 func fakeEnv(m map[string]string) func(string) string {
 	return func(k string) string { return m[k] }
@@ -23,7 +26,9 @@ func TestDetectPackageManager(t *testing.T) {
 		{"gobin", "/opt/gobin/nibs", map[string]string{"GOBIN": "/opt/gobin"}, "go install"},
 		{"gopath bin", "/ws/gp/bin/nibs", map[string]string{"GOPATH": "/ws/gp"}, "go install"},
 		{"home go bin", "/home/u/go/bin/nibs", map[string]string{"HOME": "/home/u"}, "go install"},
-		{"gopath with multiple entries", "/second/gp/bin/nibs", map[string]string{"GOPATH": "/first/gp:/second/gp"}, "go install"},
+		// Build GOPATH with the OS list separator (":" on Unix, ";" on Windows)
+		// so filepath.SplitList in inGoBin splits it on every platform.
+		{"gopath with multiple entries", "/second/gp/bin/nibs", map[string]string{"GOPATH": "/first/gp" + string(filepath.ListSeparator) + "/second/gp"}, "go install"},
 
 		// Must NOT be flagged — these are the default install.sh targets and
 		// ordinary system locations that `nibs upgrade` should self-replace.

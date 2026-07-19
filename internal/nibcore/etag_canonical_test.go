@@ -6,6 +6,7 @@ import (
 	"hash/fnv"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 
@@ -433,6 +434,9 @@ func TestComputeStoredETagReadErrorFailsClosed(t *testing.T) {
 	}
 
 	t.Run("CurrentETag returns a non-reconcilable error for an unreadable file", func(t *testing.T) {
+		if runtime.GOOS == "windows" {
+			t.Skip("chmod 0 does not make a file unreadable on Windows")
+		}
 		nibsDir := setupNibsDir(t)
 		writeNibFile(t, nibsDir, canonEtagFile, canonEtagCanonical)
 		core := setupLoadedCore(t, nibsDir)
@@ -461,6 +465,9 @@ func TestComputeStoredETagReadErrorFailsClosed(t *testing.T) {
 	})
 
 	t.Run("if-match Update on an unreadable file is refused (non-reconcilable) and disk survives", func(t *testing.T) {
+		if runtime.GOOS == "windows" {
+			t.Skip("chmod 0 does not make a file unreadable on Windows")
+		}
 		nibsDir := setupNibsDir(t)
 		writeNibFile(t, nibsDir, canonEtagFile, canonEtagCanonical)
 		core := setupLoadedCore(t, nibsDir)
