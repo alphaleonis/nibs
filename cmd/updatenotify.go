@@ -19,6 +19,7 @@ var updateNotifySkip = map[string]bool{
 	"graphql":          true,
 	"query":            true,
 	"tui":              true,
+	"upgrade":          true, // upgrade reports availability itself
 	"completion":       true,
 	"__complete":       true,
 	"__completeNoDesc": true,

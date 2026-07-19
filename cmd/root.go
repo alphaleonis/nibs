@@ -32,7 +32,7 @@ a full view of your project.`,
 		// These commands must NOT call getApp(). If adding a command here,
 		// ensure it never accesses the App.
 		if cmd.Name() == "init" || cmd.Name() == "prime" || cmd.Name() == "version" ||
-			cmd.Name() == "catalog" || cmd.Name() == "cheat" ||
+			cmd.Name() == "catalog" || cmd.Name() == "cheat" || cmd.Name() == "upgrade" ||
 			(cmd.Name() == "query" && querySchemaOnly) {
 			return nil
 		}
