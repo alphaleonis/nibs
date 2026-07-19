@@ -193,6 +193,80 @@ func TestFind(t *testing.T) {
 	}
 }
 
+// TestFindExact pins FindExact's exact-only contract: it matches an exact heading
+// (case-insensitively, honoring the level gate) but NEVER falls back to a
+// parenthetical-suffix heading — the crucial difference from Find.
+func TestFindExact(t *testing.T) {
+	tests := []struct {
+		name       string
+		body       string
+		heading    string
+		matchLevel int
+		wantText   string
+		wantFound  bool
+	}{
+		{
+			name:      "matches an exact heading",
+			body:      "## Key Decisions\n\n- Use GraphQL\n",
+			heading:   "Key Decisions",
+			wantText:  "\n- Use GraphQL\n",
+			wantFound: true,
+		},
+		{
+			name:      "case insensitive exact match",
+			body:      "## key decisions\n\n- lower\n",
+			heading:   "Key Decisions",
+			wantText:  "\n- lower\n",
+			wantFound: true,
+		},
+		{
+			// The load-bearing difference from Find: a lone parenthetical heading is
+			// NOT matched by FindExact (Find WOULD fall back to it).
+			name:      "does NOT fall back to a lone parenthetical heading",
+			body:      "## Key Decisions (Phase 1)\n\n- Decision one\n",
+			heading:   "Key Decisions",
+			wantText:  "",
+			wantFound: false,
+		},
+		{
+			// An exact heading is found even when a parenthetical one also exists.
+			name:      "finds the exact heading alongside a parenthetical one",
+			body:      "## Key Decisions (Phase 1)\n\n- old\n\n## Key Decisions\n\n- exact\n",
+			heading:   "Key Decisions",
+			wantText:  "\n- exact\n",
+			wantFound: true,
+		},
+		{
+			name:       "respects the level gate (no exact match at the wrong level)",
+			body:       "## Key Decisions\n\n- two\n",
+			heading:    "Key Decisions",
+			matchLevel: 3,
+			wantText:   "",
+			wantFound:  false,
+		},
+		{
+			name:       "matches an exact heading at the spelled level",
+			body:       "### Key Decisions\n\n- three\n",
+			heading:    "Key Decisions",
+			matchLevel: 3,
+			wantText:   "\n- three\n",
+			wantFound:  true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got, found := FindExact(tt.body, tt.heading, tt.matchLevel)
+			if found != tt.wantFound {
+				t.Errorf("found = %v, want %v", found, tt.wantFound)
+			}
+			if got != tt.wantText {
+				t.Errorf("content = %q, want %q", got, tt.wantText)
+			}
+		})
+	}
+}
+
 func TestReplace(t *testing.T) {
 	tests := []struct {
 		name       string

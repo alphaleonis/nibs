@@ -155,6 +155,11 @@ func runBody(cmd *cobra.Command, args []string) error {
 		// usage/validation error to VALIDATION.
 		return inputError(bodyJSON, err)
 	}
+
+	// Compute the shadowing-append warning against the ORIGINAL body, before the
+	// write reassigns b. It rides alongside the card echo below (never blocking).
+	warning := sectionShadowWarning(b.Body, setChanged, sectionChanged, bodyCreate)
+
 	if bodyIfMatch != "" {
 		input.IfMatch = &bodyIfMatch
 	}
@@ -165,8 +170,10 @@ func runBody(cmd *cobra.Command, args []string) error {
 	}
 
 	// Lean card echo — the same projection path `nibs get` uses (no body/etag).
+	// A non-blocking warning rides alongside: text mode writes it to stderr, --json
+	// mode adds a sibling "warnings" array, mirroring `nibs new`'s convention.
 	card, _ := projection.ViewFields(string(projection.ViewCard))
-	return echoCard(bodyJSON, b, resolver.ProjectionResolver(ctx), card)
+	return echoCardWithWarning(cmd, bodyJSON, b, resolver.ProjectionResolver(ctx), card, warning)
 }
 
 // buildBodyInput resolves the requested body operation into an UpdateNibInput.
@@ -178,11 +185,10 @@ func buildBodyInput(b *nib.Nib, setChanged, appendChanged, sectionChanged, repla
 
 	switch {
 	case sectionChanged:
-		// Replace the content under a heading. mdsection matches on the heading
-		// text without its "#" markers, so accept both "## Notes" and "Notes".
-		// Trim surrounding whitespace BEFORE stripping "#" so a leading space
-		// (" ## H") cannot defeat TrimLeft and leave the markers in the text.
-		heading := strings.TrimSpace(strings.TrimLeft(strings.TrimSpace(bodySection), "#"))
+		// Derive heading text and match level from the flag via the shared helpers
+		// so this write and the shadow-warning check (sectionShadowWarning) can never
+		// disagree on what was targeted.
+		heading := sectionHeadingText(bodySection)
 		// matchLevel: a spelled level ("### H") matches only an existing heading at
 		// that exact level; a bare heading ("H") is a wildcard (0) matching any level.
 		// This keeps a "### Sub" request from silently clobbering a level-2 "## Sub".
@@ -204,7 +210,14 @@ func buildBodyInput(b *nib.Nib, setChanged, appendChanged, sectionChanged, repla
 		// level is a no-op in mdsection, so check first and fail loudly rather than
 		// silently doing nothing (or clobbering a same-named heading at another level).
 		if _, found := mdsection.Find(b.Body, heading, matchLevel); !found {
-			return input, &sectionNotFoundError{heading: bodySection}
+			// An EXACT same-text heading at a DIFFERENT level than the spelled one
+			// changes the advice: don't blindly recommend --create (that would append
+			// a shadowed duplicate) — teach spelling the existing level instead.
+			// FindExact (not Find) so a lone parenthetical "H (…)" does NOT trip this:
+			// an exact --create heading would win the wildcard read over it, so the
+			// normal --create guidance is correct there.
+			_, otherLevel := mdsection.FindExact(b.Body, heading, mdsection.AnyLevel)
+			return input, &sectionNotFoundError{heading: bodySection, otherLevelExists: otherLevel}
 		}
 		newBody := mdsection.Replace(b.Body, heading, strings.TrimRight(content, "\n"), matchLevel)
 		input.Body = &newBody
@@ -235,6 +248,16 @@ func buildBodyInput(b *nib.Nib, setChanged, appendChanged, sectionChanged, repla
 	return input, nil
 }
 
+// sectionHeadingText derives the heading TEXT a --section flag targets: the value
+// with its "#" markers stripped. Surrounding whitespace is trimmed BEFORE the "#"
+// are stripped so a leading space (" ## H") cannot defeat TrimLeft and leave the
+// markers in the text. This is the single source of truth for the derivation so
+// the write (buildBodyInput) and the shadow-warning check (sectionShadowWarning)
+// cannot desync.
+func sectionHeadingText(flag string) string {
+	return strings.TrimSpace(strings.TrimLeft(strings.TrimSpace(flag), "#"))
+}
+
 // sectionHeadingLevel derives the Markdown heading level from a --section flag
 // value by counting its leading '#' characters ("## H" → 2, "### H" → 3). A bare
 // heading with no markers ("H") defaults to level 2, the "##" section convention
@@ -260,12 +283,88 @@ func sectionMatchLevel(flag string) int {
 }
 
 // sectionNotFoundError signals that --section named a heading absent from the
-// body. It is a usage/validation error (not an I/O failure), so inputError maps
-// it to VALIDATION (exit 2).
-type sectionNotFoundError struct{ heading string }
+// body at the requested match level. It is a usage/validation error (not an I/O
+// failure), so inputError maps it to VALIDATION (exit 2). otherLevelExists is
+// true when a same-text heading DOES exist at a different level than the spelled
+// one: the message then teaches spelling that level (over a blind --create, which
+// would append a duplicate that wildcard readers may shadow — see
+// sectionShadowWarning).
+type sectionNotFoundError struct {
+	heading          string
+	otherLevelExists bool
+}
 
 func (e *sectionNotFoundError) Error() string {
+	if e.otherLevelExists {
+		return fmt.Sprintf("no %q section — a same-named heading exists at another level; spell that level to target it, or add --create to add a new %q", e.heading, e.heading)
+	}
 	return fmt.Sprintf("section %q not found — --section --set replaces an existing section; use --append (its block carries the heading) to create one, or add --create to create it in place", e.heading)
+}
+
+// sectionShadowWarning returns a non-blocking warning when a `--section --set
+// --create` request will APPEND a new heading at the spelled level while an EXACT
+// same-text heading already exists at a DIFFERENT level. The tool's own wildcard
+// readers — decision extraction (`nibs context`, via nibcontext.ExtractDecisions)
+// and the parent-nib "Key Decisions" merge (`nibs close`) — call mdsection.Find
+// at AnyLevel and surface only the FIRST matching heading, so the appended section
+// would be written-but-shadowed. Two same-text headings at different levels are
+// legitimate Markdown, so this warns rather than blocks.
+//
+// The two lookups deliberately differ. replacing uses Find (exact-preferred with a
+// parenthetical fallback) to mirror exactly what SetAtLevel does: a match at the
+// spelled level means this is a replace, not an append, so nothing is created and
+// nothing can be shadowed. The other-level check uses FindExact (exact only): the
+// appended heading is EXACT, and an exact heading WINS the wildcard read over a
+// parenthetical one — so a lone "H (…)" is NOT a shadow. Warn iff !replacing &&
+// exact; in the append branch no match exists at the spelled level, so any exact
+// heading found is necessarily at a different level (a genuine shadow).
+//
+// Returns "" when the request replaces in place, when no EXACT same-text heading
+// exists at another level, or when this is not a `--section --set --create`
+// request. A bare --section ("X", matchLevel AnyLevel) has replacing == found and
+// so never trips this — it replaces the existing heading rather than appending.
+func sectionShadowWarning(originalBody string, setChanged, sectionChanged, create bool) string {
+	if !sectionChanged || !setChanged || !create {
+		return ""
+	}
+	heading := sectionHeadingText(bodySection)
+	matchLevel := sectionMatchLevel(bodySection)
+	if _, replacing := mdsection.Find(originalBody, heading, matchLevel); replacing {
+		return ""
+	}
+	if _, exact := mdsection.FindExact(originalBody, heading, mdsection.AnyLevel); !exact {
+		return ""
+	}
+	return fmt.Sprintf("warning: created a new %q section, but a same-named heading already exists at another level; wildcard readers — decision extraction (`nibs context`) and the parent-nib Key Decisions merge (`nibs close`) — may surface only the first. Spell the existing level to target it instead.", bodySection)
+}
+
+// echoCardWithWarning renders the body-mutation card and surfaces a non-blocking
+// warning alongside it, mirroring echoCardWithDuplicates' channel discipline
+// (`nibs new`): text mode prints the card to stdout and the warning to stderr;
+// --json mode adds a sibling "warnings" array to the {nib} contract (the nib
+// object is unchanged) so the stdout echo stays valid JSON. An empty warning
+// makes this exactly echoCard.
+func echoCardWithWarning(cmd *cobra.Command, jsonMode bool, b *nib.Nib, r projection.Resolver, sel projection.Selection, warning string) error {
+	if warning == "" {
+		return echoCard(jsonMode, b, r, sel)
+	}
+	if jsonMode {
+		p, err := projection.Project(b, sel, r)
+		if err != nil {
+			return cmdError(true, output.ErrValidation, "failed to project nib: %v", err)
+		}
+		return output.JSONRaw(map[string]any{
+			"nib":      p,
+			"warnings": []string{warning},
+		})
+	}
+	if err := echoCard(false, b, r, sel); err != nil {
+		return err
+	}
+	// Writes to stderr; a write error here is not actionable and must not derail
+	// the (already successful) mutation, so the result is explicitly ignored.
+	_, _ = fmt.Fprintln(cmd.ErrOrStderr(), warning)
+	return nil
 }
 
 // bodyMutationError maps a body-mutation error to a CLI error. A surgical

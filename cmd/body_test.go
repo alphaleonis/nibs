@@ -1,6 +1,7 @@
 package cmd
 
 import (
+	"bytes"
 	"encoding/json"
 	"errors"
 	"os"
@@ -415,7 +416,10 @@ func TestBodySectionCreateBareMatchesAnyLevel(t *testing.T) {
 // TestBodySectionStrictSpelledLevelMismatchNotFound verifies the SAFE outcome of a
 // level mismatch in the strict (no --create) path: `--section "### Sub" --set -`
 // against a body whose only "Sub" is a level-2 "## Sub" yields a section-not-found
-// validation error, NOT a silent clobber of the level-2 section.
+// validation error, NOT a silent clobber of the level-2 section. Because that
+// same-name heading is an EXACT one at another level, the error also TEACHES the
+// level mismatch rather than blindly recommending --create (which would append a
+// heading a wildcard reader could shadow).
 func TestBodySectionStrictSpelledLevelMismatchNotFound(t *testing.T) {
 	t.Cleanup(resetBodyFlags)
 	resetBodyFlags()
@@ -434,6 +438,11 @@ func TestBodySectionStrictSpelledLevelMismatchNotFound(t *testing.T) {
 	}
 	if output.ExitCode(ce.Code) != output.ExitValidation {
 		t.Errorf("level-mismatch exit = %d, want %d (validation)", output.ExitCode(ce.Code), output.ExitValidation)
+	}
+	// The message must teach the level mismatch (an EXACT same-name heading exists
+	// at another level), not merely recommend --create.
+	if !strings.Contains(ce.Msg, "another level") {
+		t.Errorf("strict level-mismatch message should reference the same-name heading at another level, got: %q", ce.Msg)
 	}
 	// The level-2 section must be untouched (no clobber).
 	content := readNibFile(t, nibsDir, bodyNibFile(id))
@@ -996,5 +1005,325 @@ func TestBodyMissingFileIsIOError(t *testing.T) {
 	}
 	if output.ExitCode(ce.Code) != output.ExitIO {
 		t.Errorf("missing @file exit = %d, want %d (IO)", output.ExitCode(ce.Code), output.ExitIO)
+	}
+}
+
+// headingLevelCounts tallies exact heading lines by their marker level so tests
+// can distinguish "## X" from "### X" without substring confusion.
+func headingLevelCounts(content, text string) (l2, l3 int) {
+	for _, line := range strings.Split(content, "\n") {
+		switch strings.TrimSpace(line) {
+		case "## " + text:
+			l2++
+		case "### " + text:
+			l3++
+		}
+	}
+	return l2, l3
+}
+
+// TestBodySectionCreateWarnsOnShadowingAppend verifies the shadowing-append
+// safety net: `--section "### X" --set - --create` against a body whose only "X"
+// is a LEVEL-2 "## X" appends a fresh level-3 "### X" (exit 0) AND emits a
+// warn-only stderr notice, because wildcard readers (mdsection.Find at AnyLevel)
+// surface only the first same-text heading, so the appended section is
+// written-but-shadowed. The warning must reach stderr, not stdout.
+func TestBodySectionCreateWarnsOnShadowingAppend(t *testing.T) {
+	t.Cleanup(resetBodyFlags)
+	resetBodyFlags()
+
+	nibsDir, id := writeSetNib(t, "bdy-shadow-1", "## X\n- a\n")
+	withStdin(t, "sub")
+
+	var errBuf bytes.Buffer
+	rootCmd.SetErr(&errBuf)
+	t.Cleanup(func() { rootCmd.SetErr(nil); rootCmd.SetOut(nil) })
+
+	rootCmd.SetArgs([]string{"--nibs-path", nibsDir, "body", id, "--section", "### X", "--set", "-", "--create"})
+	var execErr error
+	out := captureStdout(t, func() { execErr = rootCmd.Execute() })
+	if execErr != nil {
+		t.Fatalf("shadowing --create append should succeed (exit 0), got: %v", execErr)
+	}
+
+	// The append still happens: the level-2 "## X" survives and a new level-3
+	// "### X" is added with the piped content.
+	content := readNibFile(t, nibsDir, bodyNibFile(id))
+	if l2, l3 := headingLevelCounts(content, "X"); l2 != 1 || l3 != 1 {
+		t.Errorf("expected one '## X' and one '### X', got l2=%d l3=%d, body:\n%s", l2, l3, content)
+	}
+	if !strings.Contains(content, "sub") {
+		t.Errorf("appended level-3 content missing, got:\n%s", content)
+	}
+	// The pre-existing level-2 content must survive the append (not clobbered).
+	if !strings.Contains(content, "- a") {
+		t.Errorf("pre-existing '## X' content ('- a') must survive the append, got:\n%s", content)
+	}
+
+	// The warning goes to stderr (never stdout, which stays the clean card) and
+	// names the shadow: the spelled section and the level mismatch.
+	if strings.Contains(out, "warning:") {
+		t.Errorf("warning leaked onto stdout; got:\n%s", out)
+	}
+	warn := errBuf.String()
+	for _, want := range []string{"warning:", "### X", "another level"} {
+		if !strings.Contains(warn, want) {
+			t.Errorf("stderr warning missing %q; got:\n%s", want, warn)
+		}
+	}
+}
+
+// TestBodySectionCreateShadowingAppendJSONWarningsField pins the --json warnings
+// contract (mirroring `nibs new`'s possible_duplicates sibling): a shadowing
+// `--section "### X" --set - --create --json` echoes a single valid JSON doc
+// decoding to {"nib":{...},"warnings":["…another level…"]}, the nib id matches,
+// the card stays lean (no body), and nothing leaks to stderr in JSON mode.
+func TestBodySectionCreateShadowingAppendJSONWarningsField(t *testing.T) {
+	t.Cleanup(resetBodyFlags)
+	resetBodyFlags()
+
+	nibsDir, id := writeSetNib(t, "bdy-shadow-json", "## X\n- a\n")
+	withStdin(t, "sub")
+
+	var errBuf bytes.Buffer
+	rootCmd.SetErr(&errBuf)
+	t.Cleanup(func() { rootCmd.SetErr(nil); rootCmd.SetOut(nil) })
+
+	rootCmd.SetArgs([]string{"--nibs-path", nibsDir, "body", id, "--section", "### X", "--set", "-", "--create", "--json"})
+	var execErr error
+	out := captureStdout(t, func() { execErr = rootCmd.Execute() })
+	if execErr != nil {
+		t.Fatalf("shadowing --create --json append should succeed (exit 0), got: %v", execErr)
+	}
+
+	var envelope map[string]any
+	if err := json.Unmarshal([]byte(out), &envelope); err != nil {
+		t.Fatalf("stdout is not a single valid JSON doc: %v\n%s", err, out)
+	}
+	nibObj, ok := envelope["nib"].(map[string]any)
+	if !ok {
+		t.Fatalf("expected {nib:{...}} echo, got: %s", out)
+	}
+	if nibObj["id"] != id {
+		t.Errorf("echoed nib id = %v, want %q", nibObj["id"], id)
+	}
+	// Lean card: no body field on the echoed nib.
+	if _, present := nibObj["body"]; present {
+		t.Errorf("lean card should not include body, got: %s", out)
+	}
+	warnings, ok := envelope["warnings"].([]any)
+	if !ok || len(warnings) != 1 {
+		t.Fatalf("expected a warnings array of length 1, got: %s", out)
+	}
+	warnStr, _ := warnings[0].(string)
+	for _, want := range []string{"### X", "another level"} {
+		if !strings.Contains(warnStr, want) {
+			t.Errorf("warnings[0] missing %q; got: %q", want, warnStr)
+		}
+	}
+	// In --json mode the warning rides the JSON sibling, not stderr.
+	if warn := errBuf.String(); strings.Contains(warn, "warning:") {
+		t.Errorf("--json mode must not write the warning to stderr, got:\n%s", warn)
+	}
+}
+
+// TestBodySectionCreateNonShadowingJSONOmitsWarnings verifies the companion
+// contract (mirroring `nibs new`'s omitted-possible_duplicates test): a
+// non-shadowing `--create --json` echo omits the "warnings" key entirely and
+// decodes to just {nib}.
+func TestBodySectionCreateNonShadowingJSONOmitsWarnings(t *testing.T) {
+	t.Cleanup(resetBodyFlags)
+	resetBodyFlags()
+
+	nibsDir, id := writeSetNib(t, "bdy-nowarn-json", "## Intro\nkeep\n")
+	withStdin(t, "fresh")
+
+	rootCmd.SetArgs([]string{"--nibs-path", nibsDir, "body", id, "--section", "### New", "--set", "-", "--create", "--json"})
+	out := captureStdout(t, func() {
+		if err := rootCmd.Execute(); err != nil {
+			t.Fatalf("non-shadowing --create --json should succeed, got: %v", err)
+		}
+	})
+
+	if strings.Contains(out, "warnings") {
+		t.Errorf("non-shadowing --json should omit the warnings key; got:\n%s", out)
+	}
+	var envelope map[string]any
+	if err := json.Unmarshal([]byte(out), &envelope); err != nil {
+		t.Fatalf("stdout is not valid JSON: %v\n%s", err, out)
+	}
+	if _, present := envelope["warnings"]; present {
+		t.Errorf("non-shadowing --json must not carry a warnings key; got:\n%s", out)
+	}
+}
+
+// TestBodySectionCreateReplaceEmitsNoWarning verifies the in-place replace path
+// stays quiet: `--section "### X" --set - --create` on a body that ALREADY has a
+// level-3 "### X" replaces its content (no append, no duplicate heading), so the
+// shadowing warning must NOT fire.
+func TestBodySectionCreateReplaceEmitsNoWarning(t *testing.T) {
+	t.Cleanup(resetBodyFlags)
+	resetBodyFlags()
+
+	nibsDir, id := writeSetNib(t, "bdy-shadow-2", "### X\nold\n")
+	withStdin(t, "new sub")
+
+	var errBuf bytes.Buffer
+	rootCmd.SetErr(&errBuf)
+	t.Cleanup(func() { rootCmd.SetErr(nil); rootCmd.SetOut(nil) })
+
+	rootCmd.SetArgs([]string{"--nibs-path", nibsDir, "body", id, "--section", "### X", "--set", "-", "--create"})
+	_ = captureStdout(t, func() {
+		if err := rootCmd.Execute(); err != nil {
+			t.Fatalf("in-place replace should succeed, got: %v", err)
+		}
+	})
+
+	content := readNibFile(t, nibsDir, bodyNibFile(id))
+	if _, l3 := headingLevelCounts(content, "X"); l3 != 1 {
+		t.Errorf("expected the level-3 heading to stay exactly once, got l3=%d, body:\n%s", l3, content)
+	}
+	if !strings.Contains(content, "new sub") || strings.Contains(content, "old") {
+		t.Errorf("expected in-place content replacement, got:\n%s", content)
+	}
+	if warn := errBuf.String(); strings.Contains(warn, "warning:") {
+		t.Errorf("in-place replace must not warn, got stderr:\n%s", warn)
+	}
+}
+
+// TestBodySectionCreateCleanAppendEmitsNoWarning verifies a --create append with
+// NO pre-existing same-text heading at any level stays quiet: there is nothing to
+// shadow, so the warning must NOT fire.
+func TestBodySectionCreateCleanAppendEmitsNoWarning(t *testing.T) {
+	t.Cleanup(resetBodyFlags)
+	resetBodyFlags()
+
+	nibsDir, id := writeSetNib(t, "bdy-shadow-3", "## Intro\nkeep\n")
+	withStdin(t, "fresh")
+
+	var errBuf bytes.Buffer
+	rootCmd.SetErr(&errBuf)
+	t.Cleanup(func() { rootCmd.SetErr(nil); rootCmd.SetOut(nil) })
+
+	rootCmd.SetArgs([]string{"--nibs-path", nibsDir, "body", id, "--section", "### New", "--set", "-", "--create"})
+	_ = captureStdout(t, func() {
+		if err := rootCmd.Execute(); err != nil {
+			t.Fatalf("clean append should succeed, got: %v", err)
+		}
+	})
+
+	content := readNibFile(t, nibsDir, bodyNibFile(id))
+	if _, l3 := headingLevelCounts(content, "New"); l3 != 1 {
+		t.Errorf("expected a new '### New' exactly once, got l3=%d, body:\n%s", l3, content)
+	}
+	if !strings.Contains(content, "fresh") {
+		t.Errorf("appended content missing, got:\n%s", content)
+	}
+	// The pre-existing section must survive the append (not clobbered).
+	if !strings.Contains(content, "## Intro") || !strings.Contains(content, "keep") {
+		t.Errorf("pre-existing '## Intro' section must survive the append, got:\n%s", content)
+	}
+	if warn := errBuf.String(); strings.Contains(warn, "warning:") {
+		t.Errorf("clean append must not warn, got stderr:\n%s", warn)
+	}
+}
+
+// TestBodySectionCreateBareRequestEmitsNoWarning verifies a bare (level-agnostic)
+// `--section "X" --set - --create` against a body with a level-2 "## X" replaces
+// that heading in place (bare = wildcard match) rather than appending, so no
+// shadow is created and the warning must NOT fire.
+func TestBodySectionCreateBareRequestEmitsNoWarning(t *testing.T) {
+	t.Cleanup(resetBodyFlags)
+	resetBodyFlags()
+
+	nibsDir, id := writeSetNib(t, "bdy-shadow-4", "## X\n- a\n")
+	withStdin(t, "replaced")
+
+	var errBuf bytes.Buffer
+	rootCmd.SetErr(&errBuf)
+	t.Cleanup(func() { rootCmd.SetErr(nil); rootCmd.SetOut(nil) })
+
+	rootCmd.SetArgs([]string{"--nibs-path", nibsDir, "body", id, "--section", "X", "--set", "-", "--create"})
+	_ = captureStdout(t, func() {
+		if err := rootCmd.Execute(); err != nil {
+			t.Fatalf("bare --create should succeed, got: %v", err)
+		}
+	})
+
+	content := readNibFile(t, nibsDir, bodyNibFile(id))
+	if l2, l3 := headingLevelCounts(content, "X"); l2 != 1 || l3 != 0 {
+		t.Errorf("bare wildcard should replace '## X' in place (one '## X', no '### X'), got l2=%d l3=%d, body:\n%s", l2, l3, content)
+	}
+	if !strings.Contains(content, "replaced") || strings.Contains(content, "- a") {
+		t.Errorf("expected in-place replacement of the level-2 section, got:\n%s", content)
+	}
+	if warn := errBuf.String(); strings.Contains(warn, "warning:") {
+		t.Errorf("bare replace must not warn, got stderr:\n%s", warn)
+	}
+}
+
+// TestBodySectionCreateParentheticalOnlyEmitsNoWarning pins the exactness of the
+// shadow trigger: a body whose ONLY same-name heading is a PARENTHETICAL
+// "## Key Decisions (Phase 1)" is NOT shadowed by an appended exact
+// "### Key Decisions" — the exact heading WINS the wildcard read (Find prefers
+// exact over parenthetical), so `--section "### Key Decisions" --create` must
+// append without warning. Keying the check on Find (which falls back to the
+// parenthetical) instead of FindExact would wrongly warn here.
+func TestBodySectionCreateParentheticalOnlyEmitsNoWarning(t *testing.T) {
+	t.Cleanup(resetBodyFlags)
+	resetBodyFlags()
+
+	nibsDir, id := writeSetNib(t, "bdy-paren-1", "## Key Decisions (Phase 1)\n- old\n")
+	withStdin(t, "sub")
+
+	var errBuf bytes.Buffer
+	rootCmd.SetErr(&errBuf)
+	t.Cleanup(func() { rootCmd.SetErr(nil); rootCmd.SetOut(nil) })
+
+	rootCmd.SetArgs([]string{"--nibs-path", nibsDir, "body", id, "--section", "### Key Decisions", "--set", "-", "--create"})
+	_ = captureStdout(t, func() {
+		if err := rootCmd.Execute(); err != nil {
+			t.Fatalf("parenthetical-only --create append should succeed, got: %v", err)
+		}
+	})
+
+	content := readNibFile(t, nibsDir, bodyNibFile(id))
+	if !strings.Contains(content, "## Key Decisions (Phase 1)") || !strings.Contains(content, "- old") {
+		t.Errorf("parenthetical section must survive the append, got:\n%s", content)
+	}
+	if !strings.Contains(content, "### Key Decisions") || !strings.Contains(content, "sub") {
+		t.Errorf("exact level-3 section should be appended, got:\n%s", content)
+	}
+	if warn := errBuf.String(); strings.Contains(warn, "warning:") {
+		t.Errorf("appended exact heading wins the wildcard read (not shadowed) — must NOT warn, got stderr:\n%s", warn)
+	}
+}
+
+// TestBodySectionStrictParentheticalOnlyKeepsCreateSuggestion pins the strict
+// counterpart: when the only same-name heading is a PARENTHETICAL one, the
+// strict not-found error must keep the NORMAL --create guidance (an exact
+// --create heading would win the read), NOT the "another level" teaching text
+// reserved for an exact heading at a different level.
+func TestBodySectionStrictParentheticalOnlyKeepsCreateSuggestion(t *testing.T) {
+	t.Cleanup(resetBodyFlags)
+	resetBodyFlags()
+
+	nibsDir, id := writeSetNib(t, "bdy-paren-2", "## Key Decisions (Phase 1)\n- old\n")
+	withStdin(t, "y")
+
+	rootCmd.SetArgs([]string{"--nibs-path", nibsDir, "body", id, "--section", "### Key Decisions", "--set", "-", "--json"})
+	err := rootCmd.Execute()
+	if err == nil {
+		t.Fatal("expected a strict not-found for a parenthetical-only heading, got nil")
+	}
+	var ce *output.CodedError
+	if !errors.As(err, &ce) {
+		t.Fatalf("error = %T, want *output.CodedError", err)
+	}
+	if strings.Contains(ce.Msg, "another level") {
+		t.Errorf("parenthetical-only miss must NOT use the 'another level' teaching text, got: %q", ce.Msg)
+	}
+	if !strings.Contains(ce.Msg, "--create") {
+		t.Errorf("parenthetical-only miss should keep the --create suggestion, got: %q", ce.Msg)
 	}
 }

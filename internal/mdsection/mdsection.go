@@ -89,6 +89,27 @@ func Find(body, heading string, matchLevel int) (string, bool) {
 	return trimTrailingBlanks(content), true
 }
 
+// FindExact locates a section by heading text like Find, but runs ONLY the exact
+// case-insensitive pass — it NEVER falls back to a "<heading> (…)"
+// parenthetical-suffix match. matchLevel is the same sentinel as Find (AnyLevel
+// matches any level; N>0 matches only level N).
+//
+// Use FindExact when the distinction between an exact heading and a parenthetical
+// one is load-bearing. Because Find prefers an exact heading over a parenthetical
+// one, a freshly-created exact heading WINS a wildcard read even when a lone
+// "<heading> (…)" also exists — so a caller reasoning about whether that new
+// exact heading would be shadowed must key on an EXACT existing heading, which
+// only FindExact detects.
+func FindExact(body, heading string, matchLevel int) (string, bool) {
+	lines := strings.Split(body, "\n")
+	sec, found := scanSection(lines, strings.ToLower(heading), matchLevel, exactHeading)
+	if !found {
+		return "", false
+	}
+	content := strings.Join(lines[sec.startIdx:sec.endIdx], "\n") + "\n"
+	return trimTrailingBlanks(content), true
+}
+
 // Replace replaces the content of a named section, keeping the heading line intact.
 // The heading is matched case-insensitively, preferring an EXACT heading over a
 // parenthetical-suffix fallback (see Find). Content between the heading and the next
