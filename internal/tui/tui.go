@@ -18,6 +18,7 @@ import (
 	"github.com/alphaleonis/nibs/internal/nibtypes"
 	"github.com/alphaleonis/nibs/internal/config"
 	"github.com/alphaleonis/nibs/internal/graph/model"
+	"github.com/alphaleonis/nibs/internal/updatecheck"
 )
 
 // viewState represents which view is currently active
@@ -57,6 +58,24 @@ func calculatePaneWidths(totalWidth int) (int, int) {
 
 // nibsChangedMsg is sent when nibs change on disk (via file watcher)
 type nibsChangedMsg struct{}
+
+// updateCheckMsg carries the result of the background "is a newer release
+// available?" check.
+type updateCheckMsg struct {
+	available bool
+	latest    string
+}
+
+// checkForUpdateCmd runs the update check off the render loop (Bubbletea runs
+// each tea.Cmd in its own goroutine). It is entirely best-effort: a gated-off
+// (dev build / CI / opt-out) or failed check simply yields available=false, so
+// the indicator stays hidden and the UI is never blocked.
+func checkForUpdateCmd(version string) tea.Cmd {
+	return func() tea.Msg {
+		res, ok := updatecheck.NewChecker(version).Check(context.Background())
+		return updateCheckMsg{available: ok && res.UpdateAvailable, latest: res.Latest}
+	}
+}
 
 // cursorChangedMsg is sent when the list cursor moves to a different nib
 type cursorChangedMsg struct {
@@ -150,22 +169,27 @@ type App struct {
 	// Editor state - tracks nib being edited to update updated_at on save
 	editingNibID      string
 	editingNibModTime time.Time
+
+	// Running binary version, used for the background update check.
+	version string
 }
 
-// New creates a new TUI application
-func New(backend Backend, cfg *config.Config) *App {
+// New creates a new TUI application. version is the running binary version,
+// used for the best-effort "update available" indicator.
+func New(backend Backend, cfg *config.Config, version string) *App {
 	return &App{
 		state:   viewList,
 		backend: backend,
 		config:  cfg,
 		list:    newListModel(backend, cfg),
 		preview: newPreviewModel(nil, 0, 0),
+		version: version,
 	}
 }
 
 // Init initializes the application
 func (a *App) Init() tea.Cmd {
-	return a.list.Init()
+	return tea.Batch(a.list.Init(), checkForUpdateCmd(a.version))
 }
 
 // isTwoColumnMode returns true if the terminal width supports two-column layout
@@ -298,6 +322,14 @@ func (a *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			a.preview = newPreviewModel(item.nib, rightWidth, a.height-2)
 		}
 		return a, cmd
+
+	case updateCheckMsg:
+		// Best-effort: surface the indicator when a newer release exists.
+		if msg.available {
+			a.list.updateAvailable = true
+			a.list.updateLatest = msg.latest
+		}
+		return a, nil
 
 	case nibsChangedMsg:
 		// Nibs changed on disk - refresh
@@ -904,9 +936,10 @@ func getEditor() string {
 	return "nano"
 }
 
-// Run starts the TUI application with file watching
-func Run(backend Backend, cfg *config.Config) error {
-	app := New(backend, cfg)
+// Run starts the TUI application with file watching. version is the running
+// binary version, used for the best-effort update-available indicator.
+func Run(backend Backend, cfg *config.Config, version string) error {
+	app := New(backend, cfg, version)
 	p := tea.NewProgram(app, tea.WithAltScreen())
 
 	// Store reference to program for sending messages from watcher

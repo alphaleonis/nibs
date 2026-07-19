@@ -14,7 +14,7 @@ var tuiCmd = &cobra.Command{
 		app := getApp(cmd)
 		resolver := app.newResolver()
 		backend := tui.NewRealBackend(app.Core, resolver)
-		return tui.Run(backend, app.Config())
+		return tui.Run(backend, app.Config(), version)
 	},
 }
 

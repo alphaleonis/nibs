@@ -146,6 +146,10 @@ type listModel struct {
 
 	// Help panel state — set by App when ? is toggled
 	helpExpanded bool
+
+	// Update-available indicator — set by App from the background update check.
+	updateAvailable bool
+	updateLatest    string
 }
 
 func newListModel(backend Backend, cfg *config.Config) listModel {
@@ -1046,7 +1050,20 @@ func (m listModel) Footer() string {
 		footer += help
 	}
 
+	footer += m.updateIndicator()
+
 	return footer
+}
+
+// updateIndicator returns an unobtrusive trailing "update available" hint for
+// the footer, or "" when no newer release is known. It never steals focus; it
+// just points at `nibs upgrade`.
+func (m listModel) updateIndicator() string {
+	if !m.updateAvailable || m.updateLatest == "" {
+		return ""
+	}
+	style := lipgloss.NewStyle().Foreground(ui.ColorPrimary).Bold(true)
+	return "  " + style.Render(fmt.Sprintf("↑ nibs %s available — nibs upgrade", m.updateLatest))
 }
 
 // expandedHelpEntries returns all keybindings for the expanded help panel,
