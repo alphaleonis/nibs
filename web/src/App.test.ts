@@ -845,15 +845,46 @@ describe("App", () => {
   });
 
   it("PaneGroup is always present even when no nib is selected", () => {
-    const { container } = render(App);
+    // Seed the default "right" dock explicitly. The PaneGroup's split direction is
+    // resolved from prefs.detailPanelPosition; when localStorage is functional and
+    // shared (as on CI), a dock preference persisted by an earlier test can leak in
+    // and flip this to "vertical". Seeding a scoped store makes it deterministic —
+    // symmetric to the "bottom" seeding above.
+    const savedStorage = globalThis.localStorage;
+    const mockStore: Record<string, string> = {
+      "nibs-filter-preferences": JSON.stringify({
+        filter: {},
+        viewLevel: "none",
+        detailPanelPosition: "right",
+      }),
+    };
+    Object.defineProperty(globalThis, "localStorage", {
+      value: {
+        getItem: (key: string) => mockStore[key] ?? null,
+        setItem: (key: string, value: string) => { mockStore[key] = value; },
+        removeItem: (key: string) => { delete mockStore[key]; },
+      },
+      writable: true,
+      configurable: true,
+    });
 
-    // No nib selected, panel is closed
-    expect(screen.queryByTestId("active-nib-view")).not.toBeInTheDocument();
+    try {
+      const { container } = render(App);
 
-    // PaneGroup should still be in the DOM
-    const paneGroup = container.querySelector("[data-pane-group]");
-    expect(paneGroup).toBeInTheDocument();
-    expect(paneGroup).toHaveAttribute("data-direction", "horizontal");
+      // No nib selected, panel is closed
+      expect(screen.queryByTestId("active-nib-view")).not.toBeInTheDocument();
+
+      // PaneGroup should still be in the DOM
+      const paneGroup = container.querySelector("[data-pane-group]");
+      expect(paneGroup).toBeInTheDocument();
+      expect(paneGroup).toHaveAttribute("data-direction", "horizontal");
+    } finally {
+      Object.defineProperty(globalThis, "localStorage", {
+        value: savedStorage,
+        writable: true,
+        configurable: true,
+      });
+    }
   });
 
   it("detail panel shows when nib is selected (with collapsible pane)", async () => {
