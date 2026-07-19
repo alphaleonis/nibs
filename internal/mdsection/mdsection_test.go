@@ -88,6 +88,31 @@ func TestFind(t *testing.T) {
 			wantText:  "\nFirst.\n",
 			wantFound: true,
 		},
+		// --- exact-preferred matching (an exact heading wins over a parenthetical suffix) ---
+		{
+			// P2 regression: a parenthetical "(Phase 1)" ordered BEFORE the exact
+			// heading must not win — the exact "## Key Decisions" section is returned.
+			name:      "exact heading wins over an earlier parenthetical suffix",
+			body:      "## Key Decisions (Phase 1)\n- old\n\n## Key Decisions\n- keep\n",
+			heading:   "Key Decisions",
+			wantText:  "- keep\n",
+			wantFound: true,
+		},
+		{
+			// Two-pass × level-gate interaction: the exact heading is at the WRONG
+			// level ("### Foo", level 3) while a parenthetical heading sits at the
+			// RIGHT level ("## Foo (Bar)", level 2). Pass 1 (exact) finds no level-2
+			// exact heading — the gate rejects the level-3 "### Foo" — so pass 2 falls
+			// back to the level-2 parenthetical. This discriminates a two-pass whose
+			// EXACT pass drops the level gate: that bug would return the level-3
+			// "### Foo" content ("\nlevel-three exact.\n") instead.
+			name:       "exact pass level gate defers to a right-level parenthetical fallback",
+			body:       "### Foo\n\nlevel-three exact.\n\n## Foo (Bar)\n\nlevel-two paren.\n",
+			heading:    "Foo",
+			matchLevel: 2,
+			wantText:   "\nlevel-two paren.\n",
+			wantFound:  true,
+		},
 		// --- level-aware matching ---
 		{
 			name:       "wildcard matches any level (h2)",
@@ -205,6 +230,16 @@ func TestReplace(t *testing.T) {
 			newContent: "\nReplaced B.\n",
 			want:       "## A\n\nContent A.\n\n### Sub-A\n\nSub content.\n\n## B\n\nReplaced B.\n\n## C\n\nContent C.",
 		},
+		// --- exact-preferred matching ---
+		{
+			// The exact "## Key Decisions" is replaced even though a parenthetical
+			// "(Phase 1)" heading precedes it; the parenthetical section is untouched.
+			name:       "replaces the exact heading, not an earlier parenthetical",
+			body:       "## Key Decisions (Phase 1)\n- old\n\n## Key Decisions\n- keep\n",
+			heading:    "Key Decisions",
+			newContent: "\n- new\n",
+			want:       "## Key Decisions (Phase 1)\n- old\n\n## Key Decisions\n\n- new\n",
+		},
 		// --- level-aware matching ---
 		{
 			name:       "spelled level 3 does not clobber level 2 (unchanged)",
@@ -306,6 +341,18 @@ func TestSet(t *testing.T) {
 			heading:     "Added",
 			content:     "\nNew content.\n",
 			want:        "## Existing\n\nContent.\n\n# Added\n\nNew content.\n",
+		},
+		// --- exact-preferred matching ---
+		{
+			// Set finds the exact heading (not the earlier parenthetical) and
+			// replaces it in place rather than appending a duplicate.
+			name:        "replaces the exact heading, not an earlier parenthetical",
+			body:        "## Key Decisions (Phase 1)\n- old\n\n## Key Decisions\n- keep\n",
+			matchLevel:  0,
+			appendLevel: 2,
+			heading:     "Key Decisions",
+			content:     "\n- new\n",
+			want:        "## Key Decisions (Phase 1)\n- old\n\n## Key Decisions\n\n- new\n",
 		},
 		// --- level-aware matching ---
 		{

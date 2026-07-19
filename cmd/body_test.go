@@ -209,6 +209,43 @@ func TestBodySectionReplacesSectionContent(t *testing.T) {
 	}
 }
 
+// TestBodySectionExactBeatsEarlierParenthetical verifies the P2 fix through the
+// CLI path: a bare `--section "Key Decisions" --set -` against a body where a
+// parenthetical `## Key Decisions (Phase 1)` precedes the exact `## Key
+// Decisions` replaces the EXACT section. Under the pre-fix single-pass matcher
+// the earlier parenthetical heading would win, so the load-bearing checks are
+// that the exact section got the new content while the `(Phase 1)` content
+// survives untouched.
+func TestBodySectionExactBeatsEarlierParenthetical(t *testing.T) {
+	t.Cleanup(resetBodyFlags)
+	resetBodyFlags()
+
+	body := "## Key Decisions (Phase 1)\n- old phase-one\n\n## Key Decisions\n- keep\n"
+	nibsDir, id := writeSetNib(t, "bdy-exact-1", body)
+	withStdin(t, "new exact content\n")
+
+	rootCmd.SetArgs([]string{"--nibs-path", nibsDir, "body", id, "--section", "Key Decisions", "--set", "-"})
+	if err := rootCmd.Execute(); err != nil {
+		t.Fatalf("body --section \"Key Decisions\" --set - failed: %v", err)
+	}
+
+	content := readNibFile(t, nibsDir, bodyNibFile(id))
+	// The exact "## Key Decisions" section received the new content.
+	if !strings.Contains(content, "new exact content") {
+		t.Errorf("exact section not replaced, got:\n%s", content)
+	}
+	if strings.Contains(content, "- keep") {
+		t.Errorf("exact section content should be gone, got:\n%s", content)
+	}
+	// The earlier parenthetical "(Phase 1)" section must be untouched.
+	if !strings.Contains(content, "## Key Decisions (Phase 1)") {
+		t.Errorf("parenthetical heading should survive, got:\n%s", content)
+	}
+	if !strings.Contains(content, "- old phase-one") {
+		t.Errorf("parenthetical section content must be untouched, got:\n%s", content)
+	}
+}
+
 // TestBodySectionCreateAddsMissingSection verifies `--section "## New" --set
 // --create -` creates the absent heading (upsert) instead of erroring, appending
 // it exactly once with the piped content.

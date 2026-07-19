@@ -48,6 +48,11 @@ and will NOT match (or clobber) a level-2 "## H"; a bare "H" (no #) matches a
 heading at any level. When --create finds no match, the new heading is created at
 the spelled level (a bare heading defaults to "##").
 
+--section matches a heading by EXACT text first; only if no exact heading exists
+does it fall back to a heading whose text is "<name> (…)" (a parenthetical
+suffix), so "Key Decisions" targets an exact "## Key Decisions" over a
+"## Key Decisions (Phase 1)".
+
 The surgical --replace-old/--replace-new form matches exactly once: zero
 matches fail with TEXT_NOT_FOUND and more than one with TEXT_AMBIGUOUS (both
 exit 2), each reporting the occurrence count.`,
@@ -286,7 +291,7 @@ func bodyMutationError(jsonOutput bool, err error) error {
 func init() {
 	bodyCmd.Flags().StringVar(&bodySet, "set", "", "Replace the body from the input channel: '-' for stdin or '@FILE' for a file (no inline text)")
 	bodyCmd.Flags().StringVar(&bodyAppend, "append", "", "Append a block from the input channel: '-' for stdin or '@FILE' for a file (no inline text)")
-	bodyCmd.Flags().StringVar(&bodySection, "section", "", "Heading whose content --set replaces (e.g. \"## Notes\"); a spelled level matches only that level, a bare heading matches any level")
+	bodyCmd.Flags().StringVar(&bodySection, "section", "", "Heading whose content --set replaces (e.g. \"## Notes\"); matches exact text first, else a \"<name> (…)\" suffix; a spelled level matches only that level, a bare heading matches any level")
 	bodyCmd.Flags().BoolVar(&bodyCreate, "create", false, "With --section --set, create the heading if absent (upsert); default errors on a missing heading")
 	bodyCmd.Flags().StringVar(&bodyReplaceOld, "replace-old", "", "Text to find and replace exactly once (requires --replace-new)")
 	bodyCmd.Flags().StringVar(&bodyReplaceNew, "replace-new", "", "Replacement text (requires --replace-old)")
