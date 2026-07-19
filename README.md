@@ -78,10 +78,10 @@ nibs init
 This creates a `.nibs/` directory and a `.nibs.yml` configuration file. Both should be tracked in version control.
 
 ```bash
-nibs create "Set up CI pipeline" -t task -d "Configure GitHub Actions for build and test"
-nibs list                       # list all nibs
-nibs tui                        # interactive terminal UI
-nibs web                        # open the web UI in your browser
+nibs new "Set up CI pipeline" -t task    # create a task
+nibs list                                # list all nibs
+nibs tui                                 # interactive terminal UI
+nibs web                                 # open the web UI in your browser
 ```
 
 ## Agent Integration
@@ -122,15 +122,17 @@ Or, if your agent framework supports startup hooks, wire `nibs prime` to run at 
 | Command | Description |
 |---------|-------------|
 | `nibs init` | Initialize a new nibs project |
-| `nibs create` | Create a new nib (task, bug, feature, epic, milestone) |
+| `nibs new` | Create a new nib (milestone, epic, feature, task, bug, or research) |
 | `nibs list` | List nibs with filtering by status, type, priority, tags |
-| `nibs show <id>` | Display a nib's full contents |
-| `nibs update <id>` | Update properties, body content, or relationships |
+| `nibs get <id>` | Display one or more nibs (full document by default) |
+| `nibs set <id>` | Update a nib's metadata and links, or clear a field |
+| `nibs body <id>` | Edit a nib's Markdown body (set, append, or replace sections) |
+| `nibs mv <id>` | Reposition a nib among its siblings or reparent it |
 | `nibs close <id>` | Mark a nib completed with a summary |
 | `nibs context` | Show project status summary with progress |
 | `nibs plan <id>` | View an ordered plan of a parent nib's children |
-| `nibs graphql` | Execute arbitrary GraphQL queries and mutations |
-| `nibs roadmap` | Generate a Markdown roadmap from milestones |
+| `nibs query` | Run a GraphQL query or mutation |
+| `nibs roadmap` | Generate a Markdown roadmap from milestones and epics |
 | `nibs check` | Validate configuration and data integrity |
 | `nibs web` | Start the web UI server |
 | `nibs tui` | Open the terminal UI |
@@ -144,7 +146,7 @@ Run `nibs <command> --help` for full usage details.
 
 Each nib has:
 
-- **Type**: milestone, epic, feature, task, or bug
+- **Type**: milestone, epic, feature, task, bug, or research
 - **Status**: draft, todo, in-progress, deferred, completed, or scrapped
 - **Priority** (optional): critical, high, normal, or low
 - **Estimate** (optional): s, m, l, or xl (t-shirt sizes)
