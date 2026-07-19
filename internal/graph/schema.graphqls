@@ -9,6 +9,16 @@ type Config {
   prefix: String!
 }
 
+"Result of the best-effort check for a newer nibs release."
+type UpdateStatus {
+  "The running server version (e.g. \"v0.5.1\"); empty for a dev build."
+  current: String!
+  "The latest released version (e.g. \"v0.6.0\"); empty if unknown."
+  latest: String!
+  "True when a newer release than the running version is available."
+  updateAvailable: Boolean!
+}
+
 type Query {
   """
   Get a single nib by ID. Accepts either the full ID (e.g., "nibs-abc1") or the short ID without prefix (e.g., "abc1").
@@ -24,6 +34,13 @@ type Query {
 
   "Get project configuration"
   config: Config!
+
+  """
+  Whether a newer nibs release is available than the one running the server.
+  Best-effort: on a dev build, in CI, when opted out, or on network failure,
+  updateAvailable is false and latest may be empty.
+  """
+  updateStatus: UpdateStatus!
 }
 
 type Mutation {

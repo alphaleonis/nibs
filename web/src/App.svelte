@@ -5,6 +5,7 @@
   import { CONFIG_QUERY, NIB_DETAIL_QUERY, NIB_CONFLICT_SNAPSHOT_QUERY } from "./lib/queries";
   import { Preferences } from "./lib/preferences.svelte";
   import Toolbar from "./lib/components/Toolbar.svelte";
+  import UpdateBanner from "./lib/components/UpdateBanner.svelte";
 
   import TreeTable from "./lib/components/TreeTable.svelte";
   import ActiveNibView from "./lib/components/ActiveNibView.svelte";
@@ -507,6 +508,7 @@
 <Toaster richColors />
 
 <div class="h-screen flex flex-col">
+  <UpdateBanner />
   <Toolbar
     {prefs}
     {projectName}

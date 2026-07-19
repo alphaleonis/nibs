@@ -234,6 +234,16 @@ type UpdateNibInput struct {
 	IfMatch *string `json:"ifMatch,omitempty"`
 }
 
+// Result of the best-effort check for a newer nibs release.
+type UpdateStatus struct {
+	// The running server version (e.g. "v0.5.1"); empty for a dev build.
+	Current string `json:"current"`
+	// The latest released version (e.g. "v0.6.0"); empty if unknown.
+	Latest string `json:"latest"`
+	// True when a newer release than the running version is available.
+	UpdateAvailable bool `json:"updateAvailable"`
+}
+
 // Sort field for nib queries
 type NibSortField string
 

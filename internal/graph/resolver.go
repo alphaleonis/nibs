@@ -21,6 +21,9 @@ type Resolver struct {
 	Blocking   BlockingChecker
 	Subscriber NibSubscriber
 	Orderer    *Orderer
+	// Version is the running binary version, used by the updateStatus query.
+	// Empty (or "dev") disables the check.
+	Version string
 }
 
 // checkMutualExclusion returns an error if both the replace field and any
