@@ -56,6 +56,17 @@ task build
 
 Prebuilt binaries are also available on the [Releases](https://github.com/alphaleonis/nibs/releases) page.
 
+### Updating
+
+nibs notifies you when a newer release is available — a trailing line on the CLI, a footer hint in the TUI, and a banner in the web UI. To upgrade in place:
+
+```bash
+nibs upgrade            # download, verify, and replace the running binary (rolls back on failure)
+nibs upgrade --check    # just report whether an update is available
+```
+
+If nibs was installed by a package manager (Homebrew, Nix, Scoop, Chocolatey, WinGet, or `go install`), `nibs upgrade` defers to that manager with guidance instead of replacing the binary itself. Set `NIBS_NO_UPDATE_CHECK=1` to silence the update notifications.
+
 ## Quick Start
 
 Initialize nibs in your project:
@@ -125,6 +136,7 @@ Or, if your agent framework supports startup hooks, wire `nibs prime` to run at 
 | `nibs tui` | Open the terminal UI |
 | `nibs prime` | Output the agent integration prompt (slim default; pass `--full` for the complete reference) |
 | `nibs archive` | Move completed/scrapped nibs to the archive |
+| `nibs upgrade` | Update nibs to the latest release (checksum-verified, with rollback); `--check` to only check |
 
 Run `nibs <command> --help` for full usage details.
 

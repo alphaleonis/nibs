@@ -7,8 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Added
+- **Update notifications across CLI, TUI, and web** — nibs checks GitHub for a newer release (cached ~24 h in the user cache directory; silently skipped for dev builds, in CI, or when `NIBS_NO_UPDATE_CHECK` is set) and surfaces it unobtrusively: a trailing line on stderr after an interactive CLI command (never for `--json`, pipes, or `serve`/`graphql`/`query`), a footer hint in the TUI, and a dismissible banner in the web UI — backed by a new best-effort `updateStatus` GraphQL query and remembered per version. Version comparison only: no telemetry and no automatic action. (Refs: nibs-jlzy, nibs-ipmj, nibs-imib, nibs-25od.)
+- **`nibs upgrade`** — downloads, checksum-verifies, and replaces the running binary with the latest release (or a specific `--version <tag>`), rolling back automatically on failure. `--check` reports whether an update is available without changing anything; pre-releases are skipped by default. When nibs was installed by a package manager (Homebrew, Nix, Scoop, Chocolatey, WinGet, or `go install`), `upgrade` defers to that manager with guidance instead of replacing the binary itself. (Refs: nibs-hkub.)
+
 ### Changed
 - **BREAKING:** `deferred` is now a nib *status* (parked; non-terminal; excluded from `--ready`) instead of a priority. The priority axis is now `critical / high / normal / low`, and `--priority deferred` is no longer accepted. Existing nibs with `priority: deferred` are normalized to `priority: low` on load — its lowest-rank equivalent — and the normalization is persisted immediately so on-disk and in-memory values agree. (Refs: nibs-0m5d.)
+- Release archives are now named `{project}_{os}_{arch}` (the version is no longer embedded in the asset name) and their checksums are published as a single `checksums.txt`, so `nibs upgrade` can match the asset for the running platform; `install.sh` and `install.ps1` resolve the new names. (Refs: nibs-hkub.)
 
 ### Fixed
 - Keyword search (web keyword box, `nibs list -S`, GraphQL `search:`) now matches nib IDs and ID fragments directly: a substring of the short ID (very short fragments excluded), a prefix of the full ID, or an exact full ID, case-insensitive, surrounding whitespace trimmed. In queries without an explicit sort (e.g. `nibs query`), ID matches come first (sorted by ID, capped at the search limit), followed by full-text hits in relevance order; sorted surfaces (`nibs list`, the web view) interleave them per their sort. A nib matching both appears once. Previously an ID query returned nothing because the index stores `id` as an unanalyzed keyword field. (Refs: nibs-sn96.)
