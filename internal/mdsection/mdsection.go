@@ -19,7 +19,7 @@ func findSection(lines []string, heading string) (section, bool) {
 		if !isHeading(trimmed) {
 			continue
 		}
-		l := headingLevel(trimmed)
+		l := HeadingLevel(trimmed)
 		text := strings.TrimSpace(trimmed[l:])
 		if !matchesHeading(text, target) {
 			continue
@@ -29,7 +29,7 @@ func findSection(lines []string, heading string) (section, bool) {
 		end := len(lines)
 		for j := i + 1; j < len(lines); j++ {
 			jTrimmed := strings.TrimSpace(lines[j])
-			if isHeading(jTrimmed) && headingLevel(jTrimmed) <= l {
+			if isHeading(jTrimmed) && HeadingLevel(jTrimmed) <= l {
 				end = j
 				break
 			}
@@ -104,8 +104,10 @@ func isHeading(line string) bool {
 	return len(stripped) > 0 && stripped[0] == ' '
 }
 
-// headingLevel returns the number of # characters at the start of a heading line.
-func headingLevel(line string) int {
+// HeadingLevel returns the number of # characters at the start of a heading
+// line. It counts from the first rune, so callers pass a whitespace-trimmed
+// line (e.g. "## H" → 2).
+func HeadingLevel(line string) int {
 	return len(line) - len(strings.TrimLeft(line, "#"))
 }
 

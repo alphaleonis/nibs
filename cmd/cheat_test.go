@@ -36,6 +36,28 @@ func TestCheatSheetCoversTheSurface(t *testing.T) {
 	}
 }
 
+// TestCheatSheetShowsSectionCreate asserts the body line hints that --section
+// --set replaces an EXISTING heading and how to create one (--create), so an
+// agent does not learn only the strict-default half of the operation.
+func TestCheatSheetShowsSectionCreate(t *testing.T) {
+	got := cheatSheet(config.Default())
+	// Scope the assertion to the body line so an unrelated future --create mention
+	// elsewhere in the sheet can't mask a regressed body line.
+	var bodyLine string
+	for _, line := range strings.Split(got, "\n") {
+		if strings.Contains(line, "body <id>") {
+			bodyLine = line
+			break
+		}
+	}
+	if bodyLine == "" {
+		t.Fatalf("cheat sheet has no 'body <id>' line, got:\n%s", got)
+	}
+	if !strings.Contains(bodyLine, "--create") {
+		t.Errorf("cheat sheet body line should mention --create, got line: %q", bodyLine)
+	}
+}
+
 // TestCheatSheetShowsOpenDefaultAndGroups asserts the cheat sheet conveys the
 // status-group vocabulary (open/closed/parked as -s/--no-status values), the
 // open-by-default behavior of list/rel, the "open work under X" recipe, and the

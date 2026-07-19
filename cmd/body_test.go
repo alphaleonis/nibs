@@ -23,6 +23,7 @@ func resetBodyFlags() {
 	bodyReplaceNew = ""
 	bodyIfMatch = ""
 	bodyJSON = false
+	bodyCreate = false
 	bodyCmd.Flags().Visit(func(f *pflag.Flag) {
 		f.Changed = false
 	})
@@ -37,18 +38,56 @@ func TestResetBodyFlagsClearsAllState(t *testing.T) {
 	bodyReplaceNew = "dirty"
 	bodyIfMatch = "dirty"
 	bodyJSON = true
+	bodyCreate = true
 
 	resetBodyFlags()
 
 	if bodySet != "" || bodyAppend != "" || bodySection != "" ||
-		bodyReplaceOld != "" || bodyReplaceNew != "" || bodyIfMatch != "" || bodyJSON {
-		t.Errorf("resetBodyFlags left non-zero state: set=%q append=%q section=%q old=%q new=%q ifMatch=%q json=%v",
-			bodySet, bodyAppend, bodySection, bodyReplaceOld, bodyReplaceNew, bodyIfMatch, bodyJSON)
+		bodyReplaceOld != "" || bodyReplaceNew != "" || bodyIfMatch != "" || bodyJSON || bodyCreate {
+		t.Errorf("resetBodyFlags left non-zero state: set=%q append=%q section=%q old=%q new=%q ifMatch=%q json=%v create=%v",
+			bodySet, bodyAppend, bodySection, bodyReplaceOld, bodyReplaceNew, bodyIfMatch, bodyJSON, bodyCreate)
 	}
 }
 
 // bodyNibFile is the on-disk filename writeSetNib produces for a nib id.
 func bodyNibFile(id string) string { return id + "--test.md" }
+
+// TestBodyHelpDocumentsSectionCreate asserts the body command's Long help teaches
+// the --section --set precondition (an existing heading) and the --create escape
+// hatch, so the strict default is discoverable from --help alone.
+func TestBodyHelpDocumentsSectionCreate(t *testing.T) {
+	long := bodyCmd.Long
+	if !strings.Contains(long, "--create") {
+		t.Errorf("body Long help should mention --create, got:\n%s", long)
+	}
+	// Assert on a phrase unique to the new precondition sentence. A bare
+	// "existing" check would pass on the pre-existing "Edits an existing nib's
+	// body." even if the precondition sentence were deleted.
+	if !strings.Contains(long, "targets an existing heading and errors if it is absent") {
+		t.Errorf("body Long help should state the existing-heading precondition, got:\n%s", long)
+	}
+}
+
+// TestSectionHeadingLevel pins the heading-level derivation boundaries: the
+// spelled marker count wins, a bare heading defaults to level 2, and leading
+// whitespace is trimmed before the markers are counted.
+func TestSectionHeadingLevel(t *testing.T) {
+	for _, tc := range []struct {
+		flag string
+		want int
+	}{
+		{"## H", 2},
+		{"### H", 3},
+		{"#### H", 4},
+		{"H", 2},     // bare heading defaults to the "##" convention
+		{" ## H", 2}, // leading whitespace trimmed first
+		{"   ### H", 3},
+	} {
+		if got := sectionHeadingLevel(tc.flag); got != tc.want {
+			t.Errorf("sectionHeadingLevel(%q) = %d, want %d", tc.flag, got, tc.want)
+		}
+	}
+}
 
 // TestBodyAppendFromStdin verifies `body <id> --append -` appends a block read
 // from stdin, that special characters survive verbatim, and that the --json
@@ -149,6 +188,94 @@ func TestBodySectionReplacesSectionContent(t *testing.T) {
 	}
 }
 
+// TestBodySectionCreateAddsMissingSection verifies `--section "## New" --set
+// --create -` creates the absent heading (upsert) instead of erroring, appending
+// it exactly once with the piped content.
+func TestBodySectionCreateAddsMissingSection(t *testing.T) {
+	t.Cleanup(resetBodyFlags)
+	resetBodyFlags()
+
+	nibsDir, id := writeSetNib(t, "bdy-create-1", "## Intro\nkeep me\n")
+	withStdin(t, "brand new content\n")
+
+	rootCmd.SetArgs([]string{"--nibs-path", nibsDir, "body", id, "--section", "## New", "--set", "-", "--create"})
+	if err := rootCmd.Execute(); err != nil {
+		t.Fatalf("body --section --set - --create failed: %v", err)
+	}
+
+	content := readNibFile(t, nibsDir, bodyNibFile(id))
+	if got := strings.Count(content, "## New"); got != 1 {
+		t.Errorf("expected the new heading exactly once, got %d, body:\n%s", got, content)
+	}
+	if !strings.Contains(content, "brand new content") {
+		t.Errorf("new section content missing, got:\n%s", content)
+	}
+	if !strings.Contains(content, "## Intro") || !strings.Contains(content, "keep me") {
+		t.Errorf("existing section disturbed, got:\n%s", content)
+	}
+}
+
+// TestBodySectionCreateReplacesExistingSection verifies `--section --set
+// --create` on a body that ALREADY has the heading replaces its content in place
+// without duplicating the heading (upsert stays idempotent on the heading).
+func TestBodySectionCreateReplacesExistingSection(t *testing.T) {
+	t.Cleanup(resetBodyFlags)
+	resetBodyFlags()
+
+	body := "## Description\nSomething.\n\n## Reasons for Scrapping\nold reason\n"
+	nibsDir, id := writeSetNib(t, "bdy-create-2", body)
+	withStdin(t, "new reason: out of scope\n")
+
+	rootCmd.SetArgs([]string{"--nibs-path", nibsDir, "body", id, "--section", "## Reasons for Scrapping", "--set", "-", "--create"})
+	if err := rootCmd.Execute(); err != nil {
+		t.Fatalf("body --section --set - --create on existing section failed: %v", err)
+	}
+
+	content := readNibFile(t, nibsDir, bodyNibFile(id))
+	if got := strings.Count(content, "## Reasons for Scrapping"); got != 1 {
+		t.Errorf("heading should appear exactly once, got %d, body:\n%s", got, content)
+	}
+	if !strings.Contains(content, "new reason: out of scope") {
+		t.Errorf("new content missing, got:\n%s", content)
+	}
+	if strings.Contains(content, "old reason") {
+		t.Errorf("old content should be gone, got:\n%s", content)
+	}
+	// Content BEFORE the target heading must survive the upsert-replace; a bug
+	// truncating the preceding section would otherwise pass unnoticed.
+	if !strings.Contains(content, "## Description") || !strings.Contains(content, "Something.") {
+		t.Errorf("preceding section should survive the upsert-replace, got:\n%s", content)
+	}
+}
+
+// TestBodySectionCreateLeadingWhitespaceStaysClean verifies that a --section
+// value with leading whitespace (" ## H") is trimmed BEFORE the "#" markers are
+// stripped, so it derives heading "H" at level 2 and creates a clean "## H"
+// section — not a garbled "## ## H" heading with the markers retained.
+func TestBodySectionCreateLeadingWhitespaceStaysClean(t *testing.T) {
+	t.Cleanup(resetBodyFlags)
+	resetBodyFlags()
+
+	nibsDir, id := writeSetNib(t, "bdy-create-ws", "## Intro\nkeep me\n")
+	withStdin(t, "brand new content\n")
+
+	rootCmd.SetArgs([]string{"--nibs-path", nibsDir, "body", id, "--section", " ## H", "--set", "-", "--create"})
+	if err := rootCmd.Execute(); err != nil {
+		t.Fatalf("body --section \" ## H\" --set - --create failed: %v", err)
+	}
+
+	content := readNibFile(t, nibsDir, bodyNibFile(id))
+	if strings.Contains(content, "## ## H") {
+		t.Errorf("leading whitespace produced a garbled heading, got:\n%s", content)
+	}
+	if got := strings.Count(content, "## H"); got != 1 {
+		t.Errorf("expected a clean \"## H\" heading exactly once, got %d, body:\n%s", got, content)
+	}
+	if !strings.Contains(content, "brand new content") {
+		t.Errorf("new section content missing, got:\n%s", content)
+	}
+}
+
 // TestBodySectionNotFound verifies replacing a heading that does not exist is a
 // validation error (not a silent no-op).
 func TestBodySectionNotFound(t *testing.T) {
@@ -169,6 +296,68 @@ func TestBodySectionNotFound(t *testing.T) {
 	}
 	if output.ExitCode(ce.Code) != output.ExitValidation {
 		t.Errorf("missing section exit = %d, want %d (validation)", output.ExitCode(ce.Code), output.ExitValidation)
+	}
+	// The message must teach both fixes: --append (its block carries the heading)
+	// and --create (upsert in place).
+	if !strings.Contains(ce.Msg, "--append") {
+		t.Errorf("missing-section message should name --append, got: %q", ce.Msg)
+	}
+	if !strings.Contains(ce.Msg, "--create") {
+		t.Errorf("missing-section message should name --create, got: %q", ce.Msg)
+	}
+}
+
+// TestBodyCreateRequiresSectionSet verifies --create is rejected (validation,
+// exit 2) unless paired with --section --set. --create is an upsert modifier for
+// that one operation; on plain --set (no --section) it is meaningless.
+func TestBodyCreateRequiresSectionSet(t *testing.T) {
+	t.Cleanup(resetBodyFlags)
+	resetBodyFlags()
+
+	nibsDir, id := writeSetNib(t, "bdy-create-3", "## Intro\nhi\n")
+	withStdin(t, "whatever\n")
+
+	rootCmd.SetArgs([]string{"--nibs-path", nibsDir, "body", id, "--create", "--set", "-", "--json"})
+	err := rootCmd.Execute()
+	if err == nil {
+		t.Fatal("expected --create without --section to error, got nil")
+	}
+	var ce *output.CodedError
+	if !errors.As(err, &ce) {
+		t.Fatalf("error = %T, want *output.CodedError", err)
+	}
+	if output.ExitCode(ce.Code) != output.ExitValidation {
+		t.Errorf("--create misuse exit = %d, want %d (validation)", output.ExitCode(ce.Code), output.ExitValidation)
+	}
+}
+
+// TestBodyCreateFalseStillErrorsOnMissingSection verifies that an explicit
+// --create=false behaves exactly like omitting --create: a missing heading is a
+// validation error (exit 2), NOT a silent upsert. Guards against passing the
+// flag's presence (Changed) instead of its value into the upsert branch.
+func TestBodyCreateFalseStillErrorsOnMissingSection(t *testing.T) {
+	t.Cleanup(resetBodyFlags)
+	resetBodyFlags()
+
+	nibsDir, id := writeSetNib(t, "bdy-create-false", "## Intro\nhi\n")
+	withStdin(t, "whatever\n")
+
+	rootCmd.SetArgs([]string{"--nibs-path", nibsDir, "body", id, "--section", "## New", "--set", "-", "--create=false", "--json"})
+	err := rootCmd.Execute()
+	if err == nil {
+		t.Fatal("expected --create=false on a missing section to error like omitting --create, got nil")
+	}
+	var ce *output.CodedError
+	if !errors.As(err, &ce) {
+		t.Fatalf("error = %T, want *output.CodedError", err)
+	}
+	if output.ExitCode(ce.Code) != output.ExitValidation {
+		t.Errorf("--create=false missing-section exit = %d, want %d (validation)", output.ExitCode(ce.Code), output.ExitValidation)
+	}
+	// The section must NOT have been created (no silent upsert).
+	content := readNibFile(t, nibsDir, bodyNibFile(id))
+	if strings.Contains(content, "## New") {
+		t.Errorf("--create=false must not create the section, got:\n%s", content)
 	}
 }
 

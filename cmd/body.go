@@ -3,6 +3,7 @@ package cmd
 import (
 	"context"
 	"errors"
+	"fmt"
 	"strings"
 
 	"github.com/alphaleonis/nibs/internal/graph/model"
@@ -21,6 +22,7 @@ var (
 	bodyReplaceNew string
 	bodyIfMatch    string
 	bodyJSON       bool
+	bodyCreate     bool
 )
 
 var bodyCmd = &cobra.Command{
@@ -32,9 +34,14 @@ multi-line Markdown never has to ride on a shell argument.
 
 Operations (choose one):
   --set <chan>                 Replace the entire body.
-  --section "## H" --set <chan>  Replace only the content under heading "## H".
-  --append <chan>              Append a block to the body.
+  --section "## H" --set <chan>  Replace the content under an EXISTING heading "## H".
+  --section "## H" --set <chan> --create  Upsert: replace if present, else create "## H".
+  --append <chan>              Append a block to the body (its block carries its own heading).
   --replace-old T --replace-new U  Replace exactly one occurrence of T with U.
+
+--section --set targets an existing heading and errors if it is absent; add
+--create to create the heading in place (upsert), or use --append, whose block
+carries its own heading. --create is valid only with --section --set.
 
 The surgical --replace-old/--replace-new form matches exactly once: zero
 matches fail with TEXT_NOT_FOUND and more than one with TEXT_AMBIGUOUS (both
@@ -63,6 +70,13 @@ func runBody(cmd *cobra.Command, args []string) error {
 			"--section requires --set to supply the replacement content channel")
 	}
 
+	// --create is an upsert modifier for --section --set only; it is meaningless
+	// on any other operation, so reject it loudly rather than ignore it.
+	if cmd.Flags().Changed("create") && (!sectionChanged || !setChanged) {
+		return cmdError(bodyJSON, output.ErrValidation,
+			"--create is only valid with --section --set")
+	}
+
 	// Require exactly one primary operation. Cobra's mutual-exclusion groups
 	// reject the "more than one" case; this catches "none at all".
 	if !setChanged && !appendChanged && !replaceChanged {
@@ -86,7 +100,7 @@ func runBody(cmd *cobra.Command, args []string) error {
 		}
 	}
 
-	input, err := buildBodyInput(b, setChanged, appendChanged, sectionChanged, replaceChanged)
+	input, err := buildBodyInput(b, setChanged, appendChanged, sectionChanged, replaceChanged, bodyCreate)
 	if err != nil {
 		// buildBodyInput only returns input-channel resolution errors and section
 		// validation errors; inputError maps a failed read to FILE_ERROR and a
@@ -110,21 +124,31 @@ func runBody(cmd *cobra.Command, args []string) error {
 // buildBodyInput resolves the requested body operation into an UpdateNibInput.
 // Exactly one of the flag-changed booleans is true (cobra enforces mutual
 // exclusion; the caller rejects the none-set case). --section combines with
-// --set to target one heading's content.
-func buildBodyInput(b *nib.Nib, setChanged, appendChanged, sectionChanged, replaceChanged bool) (model.UpdateNibInput, error) {
+// --set to target one heading's content; create makes that pairing an upsert.
+func buildBodyInput(b *nib.Nib, setChanged, appendChanged, sectionChanged, replaceChanged, create bool) (model.UpdateNibInput, error) {
 	var input model.UpdateNibInput
 
 	switch {
 	case sectionChanged:
 		// Replace the content under a heading. mdsection matches on the heading
 		// text without its "#" markers, so accept both "## Notes" and "Notes".
-		// It is a no-op when the heading is absent, so check first and fail loudly
-		// rather than silently doing nothing.
-		heading := strings.TrimSpace(strings.TrimLeft(bodySection, "#"))
+		// Trim surrounding whitespace BEFORE stripping "#" so a leading space
+		// (" ## H") cannot defeat TrimLeft and leave the markers in the text.
+		heading := strings.TrimSpace(strings.TrimLeft(strings.TrimSpace(bodySection), "#"))
 		content, err := resolveBodyFlag(bodySet, "")
 		if err != nil {
 			return input, err
 		}
+		if create {
+			// Upsert: replace the section if present, append it (at the level the
+			// flag spells) if absent.
+			newBody := mdsection.Set(b.Body, sectionHeadingLevel(bodySection), heading, strings.TrimRight(content, "\n"))
+			input.Body = &newBody
+			break
+		}
+		// Strict default: --set replaces only; a missing heading is a no-op in
+		// mdsection, so check first and fail loudly rather than silently doing
+		// nothing.
 		if _, found := mdsection.Find(b.Body, heading); !found {
 			return input, &sectionNotFoundError{heading: bodySection}
 		}
@@ -157,13 +181,25 @@ func buildBodyInput(b *nib.Nib, setChanged, appendChanged, sectionChanged, repla
 	return input, nil
 }
 
+// sectionHeadingLevel derives the Markdown heading level from a --section flag
+// value by counting its leading '#' characters ("## H" → 2, "### H" → 3). A bare
+// heading with no markers ("H") defaults to level 2, the "##" section convention
+// nibs bodies use. Whitespace is trimmed first so " ## H" still reads as level 2.
+func sectionHeadingLevel(flag string) int {
+	level := mdsection.HeadingLevel(strings.TrimSpace(flag))
+	if level == 0 {
+		return 2
+	}
+	return level
+}
+
 // sectionNotFoundError signals that --section named a heading absent from the
 // body. It is a usage/validation error (not an I/O failure), so inputError maps
 // it to VALIDATION (exit 2).
 type sectionNotFoundError struct{ heading string }
 
 func (e *sectionNotFoundError) Error() string {
-	return "section not found: " + e.heading
+	return fmt.Sprintf("section %q not found — --section --set replaces an existing section; use --append (its block carries the heading) to create one, or add --create to create it in place", e.heading)
 }
 
 // bodyMutationError maps a body-mutation error to a CLI error. A surgical
@@ -190,6 +226,7 @@ func init() {
 	bodyCmd.Flags().StringVar(&bodySet, "set", "", "Replace the body from the input channel: '-' for stdin or '@FILE' for a file (no inline text)")
 	bodyCmd.Flags().StringVar(&bodyAppend, "append", "", "Append a block from the input channel: '-' for stdin or '@FILE' for a file (no inline text)")
 	bodyCmd.Flags().StringVar(&bodySection, "section", "", "Heading whose content --set replaces (e.g. \"## Notes\")")
+	bodyCmd.Flags().BoolVar(&bodyCreate, "create", false, "With --section --set, create the heading if absent (upsert); default errors on a missing heading")
 	bodyCmd.Flags().StringVar(&bodyReplaceOld, "replace-old", "", "Text to find and replace exactly once (requires --replace-new)")
 	bodyCmd.Flags().StringVar(&bodyReplaceNew, "replace-new", "", "Replacement text (requires --replace-old)")
 	bodyCmd.Flags().StringVar(&bodyIfMatch, "if-match", "", "Only update if etag matches (optimistic locking)")

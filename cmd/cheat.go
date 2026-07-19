@@ -39,7 +39,7 @@ READ   get <id…>          nib document (default); -f/--view id|ref|card|full; 
        recipes            context [id] · plan <id> · roadmap · list --ready
 WRITE  new "<title>" -t T create; also -s -p -e --parent --blocked-by --tag --after/--before/--first
        set <id>           metadata/links; --clear priority|estimate|parent; --remove-tag/-blocked-by/…
-       body <id>          --set | --append | --section "## H" --set | --replace-old T --replace-new U
+       body <id>          --set | --append | --section "## H" --set [--create] | --replace-old T --replace-new U
        mv <id[…]>         --after|--before|--first <anchor> | --parent <id> | --children-of <p> <id…>
        rm <id…>           --archive (default) | --delete (irreversible); agents pass -f/--force
        close <id> --summary -   mark completed, append summary, propagate to parent
