@@ -148,7 +148,13 @@ func runBody(cmd *cobra.Command, args []string) error {
 		}
 	}
 
-	input, err := buildBodyInput(b, setChanged, appendChanged, sectionChanged, replaceChanged, bodyCreate)
+	// Snapshot the body before UpdateNib (below) reassigns b; the shadow-warning
+	// check reads this original for its pre-write EXACT other-level lookup.
+	// buildBodyInput itself never mutates b.Body — it only reads it to build a
+	// separate newBody — so this capture is a safety margin against future reorder.
+	originalBody := b.Body
+
+	input, sectionAppended, err := buildBodyInput(b, setChanged, appendChanged, sectionChanged, replaceChanged, bodyCreate)
 	if err != nil {
 		// buildBodyInput only returns input-channel resolution errors and section
 		// validation errors; inputError maps a failed read to FILE_ERROR and a
@@ -157,8 +163,10 @@ func runBody(cmd *cobra.Command, args []string) error {
 	}
 
 	// Compute the shadowing-append warning against the ORIGINAL body, before the
-	// write reassigns b. It rides alongside the card echo below (never blocking).
-	warning := sectionShadowWarning(b.Body, setChanged, sectionChanged, bodyCreate)
+	// write reassigns b. Its append-vs-replace input is the write's own signal
+	// (sectionAppended), not a re-derivation. It rides alongside the card echo below
+	// (never blocking).
+	warning := sectionShadowWarning(originalBody, setChanged, sectionChanged, bodyCreate, sectionAppended)
 
 	if bodyIfMatch != "" {
 		input.IfMatch = &bodyIfMatch
@@ -180,7 +188,15 @@ func runBody(cmd *cobra.Command, args []string) error {
 // Exactly one of the flag-changed booleans is true (cobra enforces mutual
 // exclusion; the caller rejects the none-set case). --section combines with
 // --set to target one heading's content; create makes that pairing an upsert.
-func buildBodyInput(b *nib.Nib, setChanged, appendChanged, sectionChanged, replaceChanged, create bool) (model.UpdateNibInput, error) {
+//
+// The returned bool is sectionAppended: it is the SetAtLevel write's own record
+// of whether the `--section --set --create` upsert appended a NEW section heading
+// (true) or replaced an existing section in place (false). It names the specific
+// `--section --create` append the shadow-warning cares about, NOT any append: the
+// plain `--append` flag path (and every other operation) returns false, because
+// only a section-create append can leave a written-but-shadowed heading. It is the
+// authoritative append-vs-replace signal that drives sectionShadowWarning.
+func buildBodyInput(b *nib.Nib, setChanged, appendChanged, sectionChanged, replaceChanged, create bool) (model.UpdateNibInput, bool, error) {
 	var input model.UpdateNibInput
 
 	switch {
@@ -195,16 +211,18 @@ func buildBodyInput(b *nib.Nib, setChanged, appendChanged, sectionChanged, repla
 		matchLevel := sectionMatchLevel(bodySection)
 		content, err := resolveBodyFlag(bodySet, "")
 		if err != nil {
-			return input, err
+			return input, false, err
 		}
 		if create {
 			// Upsert: replace a section matching at matchLevel if present, else append
 			// a new heading at the level the flag spells (bare defaults to level 2).
 			// SetAtLevel (not Set) because a spelled "### H" must gate the match to
 			// its exact level; the two clearly-named level vars can't be transposed.
-			newBody := mdsection.SetAtLevel(b.Body, matchLevel, sectionHeadingLevel(bodySection), heading, strings.TrimRight(content, "\n"))
+			// The returned bool is the write's authoritative record of whether it
+			// appended a new section (shadowable) or replaced one in place.
+			newBody, sectionAppended := mdsection.SetAtLevel(b.Body, matchLevel, sectionHeadingLevel(bodySection), heading, strings.TrimRight(content, "\n"))
 			input.Body = &newBody
-			break
+			return input, sectionAppended, nil
 		}
 		// Strict default: --set replaces only; a heading absent at the requested
 		// level is a no-op in mdsection, so check first and fail loudly rather than
@@ -217,7 +235,7 @@ func buildBodyInput(b *nib.Nib, setChanged, appendChanged, sectionChanged, repla
 			// an exact --create heading would win the wildcard read over it, so the
 			// normal --create guidance is correct there.
 			_, otherLevel := mdsection.FindExact(b.Body, heading, mdsection.AnyLevel)
-			return input, &sectionNotFoundError{heading: bodySection, otherLevelExists: otherLevel}
+			return input, false, &sectionNotFoundError{heading: bodySection, otherLevelExists: otherLevel}
 		}
 		newBody := mdsection.Replace(b.Body, heading, strings.TrimRight(content, "\n"), matchLevel)
 		input.Body = &newBody
@@ -226,14 +244,14 @@ func buildBodyInput(b *nib.Nib, setChanged, appendChanged, sectionChanged, repla
 		// Replace the whole body verbatim.
 		content, err := resolveBodyFlag(bodySet, "")
 		if err != nil {
-			return input, err
+			return input, false, err
 		}
 		input.Body = &content
 
 	case appendChanged:
 		appendText, err := resolveAppendFlag(bodyAppend)
 		if err != nil {
-			return input, err
+			return input, false, err
 		}
 		input.BodyMod = &model.BodyModification{Append: &appendText}
 
@@ -245,7 +263,7 @@ func buildBodyInput(b *nib.Nib, setChanged, appendChanged, sectionChanged, repla
 		}
 	}
 
-	return input, nil
+	return input, false, nil
 }
 
 // sectionHeadingText derives the heading TEXT a --section flag targets: the value
@@ -302,7 +320,7 @@ func (e *sectionNotFoundError) Error() string {
 }
 
 // sectionShadowWarning returns a non-blocking warning when a `--section --set
-// --create` request will APPEND a new heading at the spelled level while an EXACT
+// --create` request APPENDED a new heading at the spelled level while an EXACT
 // same-text heading already exists at a DIFFERENT level. The tool's own wildcard
 // readers — decision extraction (`nibs context`, via nibcontext.ExtractDecisions)
 // and the parent-nib "Key Decisions" merge (`nibs close`) — call mdsection.Find
@@ -310,28 +328,32 @@ func (e *sectionNotFoundError) Error() string {
 // would be written-but-shadowed. Two same-text headings at different levels are
 // legitimate Markdown, so this warns rather than blocks.
 //
-// The two lookups deliberately differ. replacing uses Find (exact-preferred with a
-// parenthetical fallback) to mirror exactly what SetAtLevel does: a match at the
-// spelled level means this is a replace, not an append, so nothing is created and
-// nothing can be shadowed. The other-level check uses FindExact (exact only): the
-// appended heading is EXACT, and an exact heading WINS the wildcard read over a
-// parenthetical one — so a lone "H (…)" is NOT a shadow. Warn iff !replacing &&
-// exact; in the append branch no match exists at the spelled level, so any exact
-// heading found is necessarily at a different level (a genuine shadow).
+// The append-vs-replace decision is the write's own: sectionAppended is the bool
+// SetAtLevel returned, the single source of truth. A replace-in-place creates
+// nothing and so can never shadow; only an append can. This deliberately does NOT
+// re-derive the decision with a second Find — that duplicated the write's branch
+// and stayed correct only by the unenforced invariant that both used the same
+// matchLevel.
 //
-// Returns "" when the request replaces in place, when no EXACT same-text heading
-// exists at another level, or when this is not a `--section --set --create`
-// request. A bare --section ("X", matchLevel AnyLevel) has replacing == found and
-// so never trips this — it replaces the existing heading rather than appending.
-func sectionShadowWarning(originalBody string, setChanged, sectionChanged, create bool) string {
+// The other-level check uses FindExact (exact only): the appended heading is
+// EXACT, and an exact heading WINS a wildcard read over a parenthetical one — so a
+// lone "H (…)" is NOT a shadow. Warn iff sectionAppended && an EXACT same-text
+// heading exists; in the append branch no match existed at the spelled level, so
+// any exact heading found is necessarily at a different level (a genuine shadow).
+//
+// Returns "" when the write replaced in place (sectionAppended == false), when no
+// EXACT same-text heading exists at another level, or when this is not a
+// `--section --set --create` request. A bare --section ("X", matchLevel AnyLevel)
+// replaces an existing heading at any level rather than appending, so it never
+// trips this.
+func sectionShadowWarning(originalBody string, setChanged, sectionChanged, create, sectionAppended bool) string {
 	if !sectionChanged || !setChanged || !create {
 		return ""
 	}
-	heading := sectionHeadingText(bodySection)
-	matchLevel := sectionMatchLevel(bodySection)
-	if _, replacing := mdsection.Find(originalBody, heading, matchLevel); replacing {
+	if !sectionAppended {
 		return ""
 	}
+	heading := sectionHeadingText(bodySection)
 	if _, exact := mdsection.FindExact(originalBody, heading, mdsection.AnyLevel); !exact {
 		return ""
 	}

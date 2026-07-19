@@ -1327,3 +1327,46 @@ func TestBodySectionStrictParentheticalOnlyKeepsCreateSuggestion(t *testing.T) {
 		t.Errorf("parenthetical-only miss should keep the --create suggestion, got: %q", ce.Msg)
 	}
 }
+
+// TestSectionShadowWarningTrustsWriteSignal severs the warning from any body-based
+// re-derivation of append-vs-replace. It calls sectionShadowWarning directly with
+// a sectionAppended value that CONTRADICTS what the pre-refactor
+// `Find(originalBody, heading, matchLevel)` re-derivation would compute — so the
+// assertion holds ONLY if the function trusts the write's signal (the parameter)
+// instead of recomputing its own answer from originalBody. This pins nib 2x53's
+// acceptance criterion #2: the end-to-end shadow tests cannot provide this guard,
+// because the old (re-derived) and new (parameter-driven) implementations are
+// behavior-equivalent for every CLI-reachable input and both pass that whole
+// suite.
+//
+// Setup: bodySection "### Key Decisions" (matchLevel 3) over an originalBody whose
+// EXACT level-3 "Key Decisions" heading a re-derivation WOULD find — so
+// Find(body, "Key Decisions", 3) HITS and the old code computes replacing=true,
+// suppressing the warning. That same exact heading satisfies the FindExact
+// other-level gate, so the only remaining driver of the outcome is the
+// sectionAppended parameter.
+func TestSectionShadowWarningTrustsWriteSignal(t *testing.T) {
+	t.Cleanup(resetBodyFlags)
+	resetBodyFlags()
+	bodySection = "### Key Decisions"
+
+	// A body-based re-derivation (Find at matchLevel 3) HITS this exact level-3
+	// heading and would report "replacing" — i.e. it would suppress the warning.
+	originalBody := "### Key Decisions\n\n- old\n"
+
+	// sectionAppended=true (the write appended a new heading): the warning MUST
+	// fire, following the write's signal — not the re-derivation, which would say
+	// "replacing" and return "". This is the assertion that fails under a reverted
+	// Find-based implementation, so it guards criterion #2.
+	if got := sectionShadowWarning(originalBody, true, true, true, true); got == "" {
+		t.Fatal("sectionAppended=true must warn; an empty result means the warning " +
+			"re-derives append/replace from originalBody instead of trusting the write's signal")
+	}
+
+	// Inverse direction: sectionAppended=false (the write replaced in place) must
+	// NOT warn, even though an exact same-text heading exists — a replace shadows
+	// nothing. Pins both directions of the parameter.
+	if got := sectionShadowWarning(originalBody, true, true, true, false); got != "" {
+		t.Errorf("sectionAppended=false must not warn (a replace-in-place shadows nothing), got: %q", got)
+	}
+}

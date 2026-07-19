@@ -137,7 +137,12 @@ func Replace(body, heading, newContent string, matchLevel int) string {
 // to at least 1). This is the wildcard-match variant: use it for callers that
 // target a heading regardless of the level it is spelled at. Use SetAtLevel to
 // gate the match to a specific level.
-func Set(body string, appendLevel int, heading, content string) string {
+//
+// The returned bool is appended: true when no existing section matched and a new
+// heading was appended, false when an existing section was replaced in place. It
+// is the authoritative append-vs-replace signal — callers must not re-derive it
+// from a separate Find. The tuple is propagated straight from SetAtLevel.
+func Set(body string, appendLevel int, heading, content string) (string, bool) {
 	return SetAtLevel(body, AnyLevel, appendLevel, heading, content)
 }
 
@@ -151,14 +156,21 @@ func Set(body string, appendLevel int, heading, content string) string {
 // create a new heading at a chosen level when absent. The two intent-revealing
 // entry points (Set for wildcard, SetAtLevel for a spelled level) keep callers
 // from transposing the two adjacent int levels.
-func SetAtLevel(body string, matchLevel, appendLevel int, heading, content string) string {
+//
+// The returned bool is appended: true when no matching section was found and a
+// new heading was appended at appendLevel, false when an existing matched section
+// was replaced in place. This is the write's own record of what it did — the
+// single source of truth for callers reasoning about append-vs-replace (e.g. the
+// shadowing-append warning), so they need not re-run a separate Find and risk
+// disagreeing with the write.
+func SetAtLevel(body string, matchLevel, appendLevel int, heading, content string) (string, bool) {
 	if appendLevel < 1 {
 		appendLevel = 1
 	}
 	lines := strings.Split(body, "\n")
 	_, found := findSection(lines, heading, matchLevel)
 	if found {
-		return Replace(body, heading, content, matchLevel)
+		return Replace(body, heading, content, matchLevel), false
 	}
 
 	// Append new section.
@@ -167,9 +179,9 @@ func SetAtLevel(body string, matchLevel, appendLevel int, heading, content strin
 	if body == "" {
 		// Leading newline ensures a blank line before the heading when this
 		// content is later joined with YAML front matter or other preamble.
-		return "\n" + section
+		return "\n" + section, true
 	}
-	return body + "\n\n" + section
+	return body + "\n\n" + section, true
 }
 
 // isHeading returns true if the line starts with one or more # followed by a space.

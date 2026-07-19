@@ -74,7 +74,7 @@ var closeCmd = &cobra.Command{
 
 		// Append summary section to body. Set is the wildcard-match variant (matches
 		// a "Summary" heading at any level); appendLevel 2 creates it at "## " when absent.
-		newBody := mdsection.Set(b.Body, 2, "Summary", "\n"+summary+"\n")
+		newBody, _ := mdsection.Set(b.Body, 2, "Summary", "\n"+summary+"\n")
 
 		// Build update input
 		completed := "completed"
@@ -103,7 +103,7 @@ var closeCmd = &cobra.Command{
 				// Replace (not append) Current Focus: after closing a child, the milestone's
 				// focus should reflect the latest completed work, not accumulate history.
 				focusContent := fmt.Sprintf("\nCompleted %s: %s\n", b.ID, summary)
-				parentBody = mdsection.Set(parentBody, 2, "Current Focus", focusContent)
+				parentBody, _ = mdsection.Set(parentBody, 2, "Current Focus", focusContent)
 
 				// Merge Key Decisions from closed nib into parent. All matches are
 				// wildcard (AnyLevel) to preserve the historic level-agnostic behavior.
@@ -113,7 +113,7 @@ var closeCmd = &cobra.Command{
 						merged := strings.TrimRight(existingDecisions, "\n") + "\n" + childDecisions
 						parentBody = mdsection.Replace(parentBody, "Key Decisions", merged, mdsection.AnyLevel)
 					} else {
-						parentBody = mdsection.Set(parentBody, 2, "Key Decisions", childDecisions)
+						parentBody, _ = mdsection.Set(parentBody, 2, "Key Decisions", childDecisions)
 					}
 				}
 
