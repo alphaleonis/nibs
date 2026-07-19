@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## v0.6.0 - 2026-07-19
+
 ### Added
 - **Update notifications across CLI, TUI, and web** — nibs checks GitHub for a newer release (cached ~24 h in the user cache directory; silently skipped for dev builds, in CI, or when `NIBS_NO_UPDATE_CHECK` is set) and surfaces it unobtrusively: a trailing line on stderr after an interactive CLI command (never for `--json`, pipes, or `serve`/`graphql`/`query`), a footer hint in the TUI, and a dismissible banner in the web UI — backed by a new best-effort `updateStatus` GraphQL query and remembered per version. Version comparison only: no telemetry and no automatic action. (Refs: nibs-jlzy, nibs-ipmj, nibs-imib, nibs-25od.)
 - **`nibs upgrade`** — downloads, checksum-verifies, and replaces the running binary with the latest release (or a specific `--version <tag>`), rolling back automatically on failure. `--check` reports whether an update is available without changing anything; pre-releases are skipped by default. When nibs was installed by a package manager (Homebrew, Nix, Scoop, Chocolatey, WinGet, or `go install`), `upgrade` defers to that manager with guidance instead of replacing the binary itself. (Refs: nibs-hkub.)
