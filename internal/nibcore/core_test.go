@@ -230,6 +230,62 @@ func TestGetNotFound(t *testing.T) {
 	}
 }
 
+// TestGetForUpdate pins the accessor contract: GetForUpdate hands back an
+// OWNED, independent copy the caller may mutate freely, and mutating it never
+// leaks into the shared store nib that Get returns. This is the safe-by-
+// construction guarantee the mutation sites rely on — mutate then a
+// failed Update must not corrupt in-memory state.
+func TestGetForUpdate(t *testing.T) {
+	core, _ := setupTestCore(t)
+
+	original := createTestNib(t, core, "abc1", "First", "todo")
+	original.Tags = []string{"keep"}
+	if err := core.Update(original, nil); err != nil {
+		t.Fatalf("Update() error = %v", err)
+	}
+
+	t.Run("returns an independent copy", func(t *testing.T) {
+		owned, err := core.GetForUpdate("abc1")
+		if err != nil {
+			t.Fatalf("GetForUpdate() error = %v", err)
+		}
+
+		shared, err := core.Get("abc1")
+		if err != nil {
+			t.Fatalf("Get() error = %v", err)
+		}
+		if owned == shared {
+			t.Fatal("GetForUpdate returned the SHARED pointer, want an independent copy")
+		}
+
+		// Mutate the owned copy — including a slice field to prove the deep copy.
+		owned.Status = "in-progress"
+		owned.Title = "Mutated"
+		owned.Tags = append(owned.Tags, "leaked")
+
+		// The shared store nib must be untouched by the mutation above.
+		got, err := core.Get("abc1")
+		if err != nil {
+			t.Fatalf("Get() error = %v", err)
+		}
+		if got.Status != "todo" {
+			t.Errorf("shared Status = %q, want %q (mutation of owned copy leaked into the store)", got.Status, "todo")
+		}
+		if got.Title != "First" {
+			t.Errorf("shared Title = %q, want %q", got.Title, "First")
+		}
+		if len(got.Tags) != 1 || got.Tags[0] != "keep" {
+			t.Errorf("shared Tags = %v, want [keep] (slice mutation leaked)", got.Tags)
+		}
+	})
+
+	t.Run("missing id returns ErrNotFound", func(t *testing.T) {
+		if _, err := core.GetForUpdate("xyz"); err != ErrNotFound {
+			t.Errorf("GetForUpdate() error = %v, want ErrNotFound", err)
+		}
+	})
+}
+
 func TestGetShortID(t *testing.T) {
 	// Create a core with a configured prefix
 	tmpDir := t.TempDir()
@@ -599,17 +655,13 @@ func TestWatch(t *testing.T) {
 	createTestNib(t, core, "wat1", "Initial Nib", "todo")
 
 	// Start watching
-	changeCount := 0
-	var mu sync.Mutex
-
-	err := core.Watch(func() {
-		mu.Lock()
-		changeCount++
-		mu.Unlock()
-	})
-	if err != nil {
-		t.Fatalf("Watch() error = %v", err)
+	if err := core.StartWatching(); err != nil {
+		t.Fatalf("StartWatching() error = %v", err)
 	}
+	defer func() { _ = core.StopWatching() }()
+
+	ch, unsub := core.Subscribe()
+	defer unsub()
 
 	// Give watcher time to start
 	time.Sleep(50 * time.Millisecond)
@@ -624,26 +676,16 @@ status: open
 		t.Fatalf("failed to write test file: %v", err)
 	}
 
-	// Wait for debounce + processing
-	time.Sleep(200 * time.Millisecond)
-
-	mu.Lock()
-	count := changeCount
-	mu.Unlock()
-
-	if count == 0 {
-		t.Error("onChange callback was not invoked")
+	// Wait for the watcher to report the change
+	select {
+	case <-ch:
+	case <-time.After(500 * time.Millisecond):
+		t.Fatal("timeout waiting for change event")
 	}
 
 	// Verify the new nib is in memory
-	_, err = core.Get("ext1")
-	if err != nil {
+	if _, err := core.Get("ext1"); err != nil {
 		t.Errorf("external nib not loaded: %v", err)
-	}
-
-	// Stop watching
-	if err := core.Unwatch(); err != nil {
-		t.Fatalf("Unwatch() error = %v", err)
 	}
 }
 
@@ -653,16 +695,13 @@ func TestWatchDeletedNib(t *testing.T) {
 	b := createTestNib(t, core, "del1", "To Delete", "todo")
 
 	// Start watching
-	changed := make(chan struct{}, 1)
-	err := core.Watch(func() {
-		select {
-		case changed <- struct{}{}:
-		default:
-		}
-	})
-	if err != nil {
-		t.Fatalf("Watch() error = %v", err)
+	if err := core.StartWatching(); err != nil {
+		t.Fatalf("StartWatching() error = %v", err)
 	}
+	defer func() { _ = core.StopWatching() }()
+
+	ch, unsub := core.Subscribe()
+	defer unsub()
 
 	// Give watcher time to start
 	time.Sleep(50 * time.Millisecond)
@@ -674,42 +713,36 @@ func TestWatchDeletedNib(t *testing.T) {
 
 	// Wait for change notification
 	select {
-	case <-changed:
-		// OK
+	case <-ch:
 	case <-time.After(500 * time.Millisecond):
-		t.Error("onChange callback was not invoked for delete")
+		t.Fatal("timeout waiting for delete event")
 	}
 
 	// Verify the nib is gone from memory
-	_, err = core.Get("del1")
-	if err != ErrNotFound {
+	if _, err := core.Get("del1"); err != ErrNotFound {
 		t.Errorf("deleted nib still in memory: %v", err)
-	}
-
-	if err := core.Unwatch(); err != nil {
-		t.Fatalf("Unwatch() error = %v", err)
 	}
 }
 
-func TestUnwatchIdempotent(t *testing.T) {
+func TestStopWatchingIdempotent(t *testing.T) {
 	core, _ := setupTestCore(t)
 
-	// Unwatch without watching should not error
-	if err := core.Unwatch(); err != nil {
-		t.Errorf("Unwatch() without Watch() error = %v", err)
+	// StopWatching without watching should not error
+	if err := core.StopWatching(); err != nil {
+		t.Errorf("StopWatching() without StartWatching() error = %v", err)
 	}
 
 	// Start watching
-	if err := core.Watch(func() {}); err != nil {
-		t.Fatalf("Watch() error = %v", err)
+	if err := core.StartWatching(); err != nil {
+		t.Fatalf("StartWatching() error = %v", err)
 	}
 
-	// Unwatch twice should not error
-	if err := core.Unwatch(); err != nil {
-		t.Errorf("first Unwatch() error = %v", err)
+	// StopWatching twice should not error
+	if err := core.StopWatching(); err != nil {
+		t.Errorf("first StopWatching() error = %v", err)
 	}
-	if err := core.Unwatch(); err != nil {
-		t.Errorf("second Unwatch() error = %v", err)
+	if err := core.StopWatching(); err != nil {
+		t.Errorf("second StopWatching() error = %v", err)
 	}
 }
 
@@ -717,8 +750,8 @@ func TestClose(t *testing.T) {
 	core, _ := setupTestCore(t)
 
 	// Start watching
-	if err := core.Watch(func() {}); err != nil {
-		t.Fatalf("Watch() error = %v", err)
+	if err := core.StartWatching(); err != nil {
+		t.Fatalf("StartWatching() error = %v", err)
 	}
 
 	// Close should stop the watcher
@@ -734,7 +767,7 @@ func TestSubscribe(t *testing.T) {
 	if err := core.StartWatching(); err != nil {
 		t.Fatalf("StartWatching() error = %v", err)
 	}
-	defer func() { _ = core.Unwatch() }()
+	defer func() { _ = core.StopWatching() }()
 
 	// Subscribe to events
 	ch, unsub := core.Subscribe()
@@ -782,7 +815,7 @@ func TestSubscribeMultiple(t *testing.T) {
 	if err := core.StartWatching(); err != nil {
 		t.Fatalf("StartWatching() error = %v", err)
 	}
-	defer func() { _ = core.Unwatch() }()
+	defer func() { _ = core.StopWatching() }()
 
 	// Create two subscribers
 	ch1, unsub1 := core.Subscribe()
@@ -825,7 +858,7 @@ func TestUnsubscribe(t *testing.T) {
 	if err := core.StartWatching(); err != nil {
 		t.Fatalf("StartWatching() error = %v", err)
 	}
-	defer func() { _ = core.Unwatch() }()
+	defer func() { _ = core.StopWatching() }()
 
 	ch, unsub := core.Subscribe()
 	unsub()
@@ -846,7 +879,7 @@ func TestEventTypes(t *testing.T) {
 	if err := core.StartWatching(); err != nil {
 		t.Fatalf("StartWatching() error = %v", err)
 	}
-	defer func() { _ = core.Unwatch() }()
+	defer func() { _ = core.StopWatching() }()
 
 	ch, unsub := core.Subscribe()
 	defer unsub()
@@ -913,7 +946,175 @@ status: in-progress
 	})
 }
 
-func TestSubscribersClosedOnUnwatch(t *testing.T) {
+// collectNibEvents drains ch for the whole window and returns every event naming
+// nibID. An archive move can surface as more than one batch — the rename of the
+// old path and the create at the archive path are separate fsnotify events, and
+// the archive directory is only watched when it existed at StartWatching — so
+// the assertions look at the settled set rather than the first batch.
+func collectNibEvents(t *testing.T, ch <-chan []NibEvent, nibID string, window time.Duration) []NibEvent {
+	t.Helper()
+
+	var got []NibEvent
+	deadline := time.After(window)
+	for {
+		select {
+		case batch, ok := <-ch:
+			if !ok {
+				return got
+			}
+			for _, e := range batch {
+				if e.NibID == nibID {
+					got = append(got, e)
+				}
+			}
+		case <-deadline:
+			return got
+		}
+	}
+}
+
+// TestWatcherArchiveVsDelete pins the removal branch's classification. A file
+// leaving its path only means the nib was deleted when the nib is really gone:
+// Archive moves the file into archive/ and rewrites the stored Path, so the nib
+// still exists there and is still savable. Reporting that as a deletion both
+// lies to subscribers and evicts a live nib from the store.
+func TestWatcherArchiveVsDelete(t *testing.T) {
+	const nibID = "evt1"
+
+	tests := []struct {
+		name string
+		// preWatch runs before StartWatching, so whatever it creates is walked
+		// into the watch set.
+		preWatch func(t *testing.T, core *Core, nibsDir, filename string)
+		// act triggers the removal under test while the watcher is running.
+		act  func(t *testing.T, core *Core, nibsDir, filename string)
+		want EventType
+		// notWant must never appear for the nib: the misclassification each case
+		// exists to catch.
+		notWant     EventType
+		wantNibSet  bool
+		wantInStore bool
+	}{
+		{
+			name: "archiving into a fresh archive dir reports archived",
+			act: func(t *testing.T, core *Core, nibsDir, filename string) {
+				if err := core.Archive(nibID); err != nil {
+					t.Fatalf("Archive() error = %v", err)
+				}
+			},
+			want:        EventArchived,
+			notWant:     EventDeleted,
+			wantNibSet:  true,
+			wantInStore: true,
+		},
+		{
+			// The archive directory already exists, so the walk watches it and the
+			// create at the archive path lands in the same batch as the rename —
+			// the ordering fsnotify can produce either way round.
+			name: "archiving into a pre-existing watched archive dir reports archived",
+			preWatch: func(t *testing.T, core *Core, nibsDir, filename string) {
+				if err := os.MkdirAll(filepath.Join(nibsDir, ArchiveDir), 0755); err != nil {
+					t.Fatalf("failed to pre-create archive dir: %v", err)
+				}
+			},
+			act: func(t *testing.T, core *Core, nibsDir, filename string) {
+				if err := core.Archive(nibID); err != nil {
+					t.Fatalf("Archive() error = %v", err)
+				}
+			},
+			want:        EventArchived,
+			notWant:     EventDeleted,
+			wantNibSet:  true,
+			wantInStore: true,
+		},
+		{
+			name: "removing the file reports deleted",
+			act: func(t *testing.T, core *Core, nibsDir, filename string) {
+				if err := os.Remove(filepath.Join(nibsDir, filename)); err != nil {
+					t.Fatalf("failed to remove nib file: %v", err)
+				}
+			},
+			want:        EventDeleted,
+			notWant:     EventArchived,
+			wantNibSet:  false,
+			wantInStore: false,
+		},
+		{
+			// The stored Path says archive/, which is what marks an archived nib —
+			// but its file is gone, so this is a real deletion, not a move.
+			name: "removing an already-archived file reports deleted",
+			preWatch: func(t *testing.T, core *Core, nibsDir, filename string) {
+				if err := core.Archive(nibID); err != nil {
+					t.Fatalf("Archive() error = %v", err)
+				}
+			},
+			act: func(t *testing.T, core *Core, nibsDir, filename string) {
+				if err := os.Remove(filepath.Join(nibsDir, ArchiveDir, filename)); err != nil {
+					t.Fatalf("failed to remove archived nib file: %v", err)
+				}
+			},
+			want:        EventDeleted,
+			notWant:     EventArchived,
+			wantNibSet:  false,
+			wantInStore: false,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			core, nibsDir := setupTestCore(t)
+			b := createTestNib(t, core, nibID, "Event Test", "todo")
+			// Capture the filename now: Archive mutates the stored nib's Path in
+			// place, and this is the same pointer.
+			filename := filepath.Base(b.Path)
+
+			if tt.preWatch != nil {
+				tt.preWatch(t, core, nibsDir, filename)
+			}
+
+			if err := core.StartWatching(); err != nil {
+				t.Fatalf("StartWatching() error = %v", err)
+			}
+			defer func() { _ = core.StopWatching() }()
+
+			ch, unsub := core.Subscribe()
+			defer unsub()
+
+			// Let the watch goroutine reach its select before mutating the tree.
+			time.Sleep(50 * time.Millisecond)
+
+			tt.act(t, core, nibsDir, filename)
+
+			got := collectNibEvents(t, ch, nibID, 500*time.Millisecond)
+
+			var found *NibEvent
+			for i, e := range got {
+				if e.Type == tt.notWant {
+					t.Errorf("got a %s event for %s; want none (events: %+v)", e.Type, nibID, got)
+				}
+				if e.Type == tt.want && found == nil {
+					found = &got[i]
+				}
+			}
+			if found == nil {
+				t.Fatalf("expected a %s event for %s, got: %+v", tt.want, nibID, got)
+			}
+			if tt.wantNibSet && found.Nib == nil {
+				t.Errorf("%s event should carry the nib", tt.want)
+			}
+			if !tt.wantNibSet && found.Nib != nil {
+				t.Errorf("%s event should have a nil nib, got %+v", tt.want, found.Nib)
+			}
+
+			_, err := core.Get(nibID)
+			if inStore := err == nil; inStore != tt.wantInStore {
+				t.Errorf("Get(%q) found = %v, want %v", nibID, inStore, tt.wantInStore)
+			}
+		})
+	}
+}
+
+func TestSubscribersClosedOnStopWatching(t *testing.T) {
 	core, _ := setupTestCore(t)
 
 	if err := core.StartWatching(); err != nil {
@@ -921,16 +1122,29 @@ func TestSubscribersClosedOnUnwatch(t *testing.T) {
 	}
 
 	ch, _ := core.Subscribe() // Note: not calling unsub
+	if !core.hasPayloadSubscribers() {
+		t.Fatal("hasPayloadSubscribers() = false right after Subscribe, want true")
+	}
 
-	// Unwatch should close subscriber channels
-	if err := core.Unwatch(); err != nil {
-		t.Fatalf("Unwatch() error = %v", err)
+	// StopWatching should close subscriber channels
+	if err := core.StopWatching(); err != nil {
+		t.Fatalf("StopWatching() error = %v", err)
 	}
 
 	// Channel should be closed
 	_, ok := <-ch
 	if ok {
-		t.Error("expected channel to be closed after Unwatch")
+		t.Error("expected channel to be closed after StopWatching")
+	}
+
+	// StopWatching force-closes the payload subscriber without running its
+	// unsubscribe (which is what decrements the count), so unwatchLocked's
+	// payloadSubCount.Store(0) is the only thing that reclaims the counter here.
+	// Drop that reset and the count stays stuck-positive, so handleChanges would
+	// keep paying the per-nib clone with zero live payload subscribers — defeating
+	// the optimization. This assertion bites exactly that regression.
+	if core.hasPayloadSubscribers() {
+		t.Error("hasPayloadSubscribers() = true after StopWatching, want false")
 	}
 }
 
@@ -943,7 +1157,7 @@ func TestMultipleChangesInDebounceWindow(t *testing.T) {
 	if err := core.StartWatching(); err != nil {
 		t.Fatalf("StartWatching() error = %v", err)
 	}
-	defer func() { _ = core.Unwatch() }()
+	defer func() { _ = core.StopWatching() }()
 
 	ch, unsub := core.Subscribe()
 	defer unsub()
@@ -1032,7 +1246,7 @@ func TestInvalidFileIgnored(t *testing.T) {
 	if err := core.StartWatching(); err != nil {
 		t.Fatalf("StartWatching() error = %v", err)
 	}
-	defer func() { _ = core.Unwatch() }()
+	defer func() { _ = core.StopWatching() }()
 
 	ch, unsub := core.Subscribe()
 	defer unsub()
@@ -1096,7 +1310,7 @@ func TestRapidUpdatesToSameFile(t *testing.T) {
 	if err := core.StartWatching(); err != nil {
 		t.Fatalf("StartWatching() error = %v", err)
 	}
-	defer func() { _ = core.Unwatch() }()
+	defer func() { _ = core.StopWatching() }()
 
 	ch, unsub := core.Subscribe()
 	defer unsub()
@@ -1764,5 +1978,186 @@ func TestUpdateWithETagDebug(t *testing.T) {
 	err := core.Update(b, &etagAfterCreate)
 	if err != nil {
 		t.Logf("Update failed: %v", err)
+	}
+}
+
+// TestCreateValidatesEnums pins the core write-path chokepoint:
+// Create must reject non-empty type/status/priority/estimate values that are not
+// valid under the config, while still accepting the empty "unset -> default"
+// sentinel and valid values. When no config is set, validation must no-op.
+func TestCreateValidatesEnums(t *testing.T) {
+	t.Run("rejects invalid enum values", func(t *testing.T) {
+		cases := []struct {
+			name string
+			b    *nib.Nib
+		}{
+			{"invalid type", &nib.Nib{ID: "ct1", Title: "T", Status: "todo", Type: "epicc"}},
+			{"invalid status", &nib.Nib{ID: "ct2", Title: "T", Status: "banana"}},
+			{"invalid priority", &nib.Nib{ID: "ct3", Title: "T", Status: "todo", Priority: "urgent"}},
+			{"invalid estimate", &nib.Nib{ID: "ct4", Title: "T", Status: "todo", Estimate: "2h"}},
+		}
+		for _, tc := range cases {
+			t.Run(tc.name, func(t *testing.T) {
+				core, _ := setupTestCore(t)
+				if err := core.Create(tc.b); err == nil {
+					t.Fatalf("Create(%+v) = nil error, want validation error", tc.b)
+				}
+				if _, err := core.Get(tc.b.ID); !errors.Is(err, ErrNotFound) {
+					t.Errorf("nib persisted despite validation failure (Get err = %v)", err)
+				}
+			})
+		}
+	})
+
+	t.Run("accepts empty enum sentinels", func(t *testing.T) {
+		core, _ := setupTestCore(t)
+		if err := core.Create(&nib.Nib{ID: "cempty", Title: "Empty"}); err != nil {
+			t.Fatalf("Create() with empty enums error = %v, want nil", err)
+		}
+	})
+
+	t.Run("accepts valid enum values", func(t *testing.T) {
+		core, _ := setupTestCore(t)
+		b := &nib.Nib{ID: "cvalid", Title: "Valid", Status: "in-progress", Type: "bug", Priority: "high", Estimate: "l"}
+		if err := core.Create(b); err != nil {
+			t.Fatalf("Create() with valid enums error = %v, want nil", err)
+		}
+	})
+
+	t.Run("no-op when config is nil", func(t *testing.T) {
+		tmpDir := t.TempDir()
+		nibsDir := filepath.Join(tmpDir, NibsDir)
+		if err := os.MkdirAll(nibsDir, 0755); err != nil {
+			t.Fatalf("mkdir: %v", err)
+		}
+		core := New(nibsDir, nil)
+		core.SetWarnWriter(nil)
+		b := &nib.Nib{ID: "cnil", Title: "No Config", Status: "banana", Type: "epicc", Priority: "urgent", Estimate: "2h"}
+		if err := core.Create(b); err != nil {
+			t.Fatalf("Create() with nil config error = %v, want nil (no-op)", err)
+		}
+	})
+}
+
+// TestUpdateValidatesEnums pins the same chokepoint on the Update path: an
+// invalid non-empty enum must be rejected and leave the stored nib untouched;
+// empty sentinels and valid values are accepted; nil config no-ops.
+func TestUpdateValidatesEnums(t *testing.T) {
+	newValidNib := func(t *testing.T) *Core {
+		t.Helper()
+		core, _ := setupTestCore(t)
+		if err := core.Create(&nib.Nib{
+			ID: "uenum", Title: "Enum", Status: "todo", Type: "task", Priority: "normal", Estimate: "m",
+		}); err != nil {
+			t.Fatalf("seed Create() error = %v", err)
+		}
+		return core
+	}
+
+	t.Run("rejects invalid enum values", func(t *testing.T) {
+		mutators := []struct {
+			name  string
+			apply func(*nib.Nib)
+		}{
+			{"invalid type", func(b *nib.Nib) { b.Type = "epicc" }},
+			{"invalid status", func(b *nib.Nib) { b.Status = "banana" }},
+			{"invalid priority", func(b *nib.Nib) { b.Priority = "urgent" }},
+			{"invalid estimate", func(b *nib.Nib) { b.Estimate = "2h" }},
+		}
+		for _, m := range mutators {
+			t.Run(m.name, func(t *testing.T) {
+				core := newValidNib(t)
+				b, err := core.GetForUpdate("uenum")
+				if err != nil {
+					t.Fatalf("GetForUpdate() error = %v", err)
+				}
+				m.apply(b)
+				if err := core.Update(b, nil); err == nil {
+					t.Fatalf("Update() = nil error, want validation error")
+				}
+				stored, _ := core.Get("uenum")
+				if stored.Type != "task" || stored.Status != "todo" || stored.Priority != "normal" || stored.Estimate != "m" {
+					t.Errorf("stored nib mutated on failed update: type=%q status=%q priority=%q estimate=%q",
+						stored.Type, stored.Status, stored.Priority, stored.Estimate)
+				}
+			})
+		}
+	})
+
+	t.Run("accepts empty enum sentinels", func(t *testing.T) {
+		core := newValidNib(t)
+		b, _ := core.GetForUpdate("uenum")
+		b.Priority = ""
+		b.Estimate = ""
+		if err := core.Update(b, nil); err != nil {
+			t.Fatalf("Update() clearing priority/estimate error = %v, want nil", err)
+		}
+	})
+
+	t.Run("accepts valid enum values", func(t *testing.T) {
+		core := newValidNib(t)
+		b, _ := core.GetForUpdate("uenum")
+		b.Type = "bug"
+		b.Status = "in-progress"
+		b.Priority = "high"
+		b.Estimate = "xl"
+		if err := core.Update(b, nil); err != nil {
+			t.Fatalf("Update() with valid enums error = %v, want nil", err)
+		}
+	})
+
+	t.Run("no-op when config is nil", func(t *testing.T) {
+		tmpDir := t.TempDir()
+		nibsDir := filepath.Join(tmpDir, NibsDir)
+		if err := os.MkdirAll(nibsDir, 0755); err != nil {
+			t.Fatalf("mkdir: %v", err)
+		}
+		core := New(nibsDir, nil)
+		core.SetWarnWriter(nil)
+		if err := core.Create(&nib.Nib{ID: "un", Title: "No Config", Status: "todo"}); err != nil {
+			t.Fatalf("Create() error = %v", err)
+		}
+		b, _ := core.GetForUpdate("un")
+		b.Status = "banana"
+		b.Type = "epicc"
+		if err := core.Update(b, nil); err != nil {
+			t.Fatalf("Update() with nil config error = %v, want nil (no-op)", err)
+		}
+	})
+}
+
+// TestLoadSluglessPrefixedFileKeepsFullID pins nibs-mccz: a slugless nib file
+// whose id carries the configured prefix (nibs-x9z2.md) must load under its FULL
+// prefixed id, not the pre-dash fragment. Every configured prefix ends in a dash,
+// which the legacy single-dash filename parse mis-split — assigning id "nibs" to
+// the file and stranding the real nib so no lookup by "nibs-x9z2" could find it.
+func TestLoadSluglessPrefixedFileKeepsFullID(t *testing.T) {
+	const fullID = "nibs-x9z2"
+
+	// Persist a real, slugless prefixed nib through one core so the on-disk file is
+	// {id}.md (nibs-x9z2.md) rather than hand-rolled YAML.
+	core, nibsDir := mustLoadPrefixedCore(t)
+	if err := core.Create(&nib.Nib{ID: fullID, Slug: "", Title: "Slugless", Status: "todo"}); err != nil {
+		t.Fatalf("create slugless nib: %v", err)
+	}
+	// Precondition: the file on disk really is the slugless {id}.md form.
+	sluglessAbs := filepath.Join(nibsDir, nib.BuildFilename(fullID, ""))
+	if _, err := os.Stat(sluglessAbs); err != nil {
+		t.Fatalf("precondition: expected slugless file %s on disk: %v", sluglessAbs, err)
+	}
+
+	// A fresh core loading the same directory from disk must recover the FULL
+	// prefixed id (a second core so the load is a real cold read, not the cache).
+	core2 := New(nibsDir, config.DefaultWithPrefix("nibs-"))
+	core2.SetWarnWriter(nil)
+	if err := core2.Load(); err != nil {
+		t.Fatalf("reader load: %v", err)
+	}
+	b, err := core2.Get(fullID)
+	if err != nil {
+		t.Fatalf("nib lost after reload — Get(%q) = %v (slugless prefixed id misparsed on load)", fullID, err)
+	}
+	if b.ID != fullID {
+		t.Errorf("loaded ID = %q, want %q", b.ID, fullID)
 	}
 }

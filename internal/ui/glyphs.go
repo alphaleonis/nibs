@@ -70,13 +70,6 @@ func glyphLow() string {
 	return "↓" // ↓
 }
 
-func glyphDeferred() string {
-	if useASCIIGlyphs() {
-		return ">"
-	}
-	return "→" // →
-}
-
 // Indicator dots for blocked/blocking nibs.
 func glyphBlocked() string {
 	if useASCIIGlyphs() {

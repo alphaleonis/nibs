@@ -9,7 +9,7 @@ import type {
   ConfirmDialogState,
   ConfirmDialogOptions,
 } from "$lib/composables/useConfirmDialog.svelte";
-import type { EditorOrchestrationState } from "$lib/composables/useEditorOrchestration.svelte";
+import type { ActiveView } from "$lib/composables/useActiveView.svelte";
 import type { TreeTableNib } from "../types";
 
 // bits-ui scroll lock sets pointer-events: none on <body>, so disable the check
@@ -42,6 +42,8 @@ function makeMockConfirmDialog(): ConfirmDialogState & {
     label: "",
     variant: "danger" as "danger" | "warning",
     action: null as (() => void) | null,
+    saveLabel: null as string | null,
+    saveAction: null as (() => void) | null,
     lastOpts: null as ConfirmDialogOptions | null,
     showConfirm: vi.fn((opts: ConfirmDialogOptions) => {
       state.open = true;
@@ -50,33 +52,44 @@ function makeMockConfirmDialog(): ConfirmDialogState & {
       state.label = opts.label;
       state.variant = opts.variant;
       state.action = opts.action;
+      state.saveLabel = opts.saveLabel ?? null;
+      state.saveAction = opts.saveAction ?? null;
       state.lastOpts = opts;
     }),
     close: vi.fn(() => {
       state.open = false;
       state.action = null;
+      state.saveLabel = null;
+      state.saveAction = null;
     }),
+    // These tests drive showConfirm/close only; dismiss() is never exercised here.
+    dismiss: vi.fn(),
   };
   return state;
 }
 
-function makeMockEditorOrchestration(): EditorOrchestrationState {
+/** A spyable ActiveView stub whose `open` mirrors selection (so "Open" tests can
+ *  assert selectedNibId) while `startCreateChild` is observable for "Add child". */
+function makeMockActiveView(selection: SelectionState) {
   return {
-    editorOpen: false,
-    editorMode: "create",
-    editorNibId: undefined,
-    editorNibData: undefined,
-    editorDefaultType: "task",
-    editorDefaultParent: undefined,
-    typePickerOpen: false,
-    typePickerParentId: "",
-    typePickerParentType: "",
-    handleEditNib: vi.fn(),
-    handleAddChild: vi.fn(),
-    handleTypePickerSelect: vi.fn(),
-    handleEditorClose: vi.fn(),
-    handleEditorSave: vi.fn(),
-    closeTypePicker: vi.fn(),
+    state: { kind: "closed" as const },
+    form: null,
+    detail: null,
+    isOpen: false,
+    presentation: "docked" as const,
+    blocksHistoryNav: false,
+    open: vi.fn(async (id: string) => { selection.select(id); }),
+    expand: vi.fn(),
+    collapse: vi.fn(),
+    startCreate: vi.fn(async () => {}),
+    startCreateChild: vi.fn(async () => {}),
+    chooseType: vi.fn(),
+    cancelType: vi.fn(),
+    save: vi.fn(async () => undefined),
+    requestClose: vi.fn(async () => { selection.close(); }),
+    syncTo: vi.fn(),
+    noteMissing: vi.fn(() => "closed"),
+    dispose: vi.fn(),
   };
 }
 
@@ -99,21 +112,24 @@ function makeNib(overrides: Partial<TreeTableNib> = {}): TreeTableNib {
 
 describe("RowContextMenu", () => {
   let mockConfirmDialog: ReturnType<typeof makeMockConfirmDialog>;
-  let mockEditor: ReturnType<typeof makeMockEditorOrchestration>;
+  let mockView: ReturnType<typeof makeMockActiveView>;
   let selection: SelectionState;
 
   beforeEach(() => {
     mockExecute.mockReset().mockResolvedValue({ ok: true, data: {} });
     mockIsMutating.mockReset().mockReturnValue(false);
     mockConfirmDialog = makeMockConfirmDialog();
-    mockEditor = makeMockEditorOrchestration();
     selection = new SelectionState();
+    mockView = makeMockActiveView(selection);
   });
 
   function renderMenu(
     props: {
       nib?: TreeTableNib;
       selectedCount?: number;
+      hasChildren?: boolean;
+      onexpandchildren?: () => void;
+      oncollapsechildren?: () => void;
     } = {},
   ) {
     const nib = props.nib ?? makeNib();
@@ -123,10 +139,13 @@ describe("RowContextMenu", () => {
         position: { x: 100, y: 100 },
         nib,
         selectedCount: props.selectedCount ?? 1,
+        hasChildren: props.hasChildren ?? false,
+        onexpandchildren: props.onexpandchildren,
+        oncollapsechildren: props.oncollapsechildren,
       },
       context: makeTestContext(selection, new DragState(), {
         confirmDialog: mockConfirmDialog,
-        editorOrchestration: mockEditor,
+        activeView: mockView as unknown as ActiveView,
       }),
     });
   }
@@ -220,14 +239,12 @@ describe("RowContextMenu", () => {
       expect(screen.queryByTestId("ctx-add-child")).not.toBeInTheDocument();
     });
 
-    it("hides Add child for bug type (leaf)", async () => {
+    it("shows Add child for bug type (a bug can parent task/research)", async () => {
       renderMenu({ nib: makeNib({ type: "bug" }) });
 
       await waitFor(() => {
-        expect(screen.getByTestId("ctx-delete")).toBeInTheDocument();
+        expect(screen.getByTestId("ctx-add-child")).toBeInTheDocument();
       });
-
-      expect(screen.queryByTestId("ctx-add-child")).not.toBeInTheDocument();
     });
 
     it("hides Add child in bulk mode even for epic type", async () => {
@@ -238,6 +255,67 @@ describe("RowContextMenu", () => {
       });
 
       expect(screen.queryByTestId("ctx-add-child")).not.toBeInTheDocument();
+    });
+  });
+
+  // ─── expand/collapse children ─────────────────────
+
+  describe("expand/collapse children", () => {
+    it("shows both options when the row has children in single mode", async () => {
+      renderMenu({ nib: makeNib({ type: "epic" }), hasChildren: true });
+
+      await waitFor(() => {
+        expect(screen.getByTestId("ctx-expand-children")).toBeInTheDocument();
+        expect(screen.getByTestId("ctx-collapse-children")).toBeInTheDocument();
+      });
+    });
+
+    it("hides both options when the row has no children", async () => {
+      renderMenu({ nib: makeNib({ type: "epic" }), hasChildren: false });
+
+      await waitFor(() => {
+        expect(screen.getByTestId("ctx-delete")).toBeInTheDocument();
+      });
+
+      expect(screen.queryByTestId("ctx-expand-children")).not.toBeInTheDocument();
+      expect(screen.queryByTestId("ctx-collapse-children")).not.toBeInTheDocument();
+    });
+
+    it("hides both options in bulk mode even when the row has children", async () => {
+      renderMenu({ nib: makeNib({ type: "epic" }), hasChildren: true, selectedCount: 2 });
+
+      await waitFor(() => {
+        expect(screen.getByTestId("ctx-delete")).toBeInTheDocument();
+      });
+
+      expect(screen.queryByTestId("ctx-expand-children")).not.toBeInTheDocument();
+      expect(screen.queryByTestId("ctx-collapse-children")).not.toBeInTheDocument();
+    });
+
+    it("invokes onexpandchildren when Expand children is clicked", async () => {
+      const onexpandchildren = vi.fn();
+      renderMenu({ nib: makeNib({ type: "epic" }), hasChildren: true, onexpandchildren });
+
+      await waitFor(() => {
+        expect(screen.getByTestId("ctx-expand-children")).toBeInTheDocument();
+      });
+
+      await user.click(screen.getByTestId("ctx-expand-children"));
+
+      expect(onexpandchildren).toHaveBeenCalledOnce();
+    });
+
+    it("invokes oncollapsechildren when Collapse children is clicked", async () => {
+      const oncollapsechildren = vi.fn();
+      renderMenu({ nib: makeNib({ type: "epic" }), hasChildren: true, oncollapsechildren });
+
+      await waitFor(() => {
+        expect(screen.getByTestId("ctx-collapse-children")).toBeInTheDocument();
+      });
+
+      await user.click(screen.getByTestId("ctx-collapse-children"));
+
+      expect(oncollapsechildren).toHaveBeenCalledOnce();
     });
   });
 
@@ -293,6 +371,22 @@ describe("RowContextMenu", () => {
 
       expect(mockConfirmDialog.showConfirm).toHaveBeenCalledOnce();
       expect(mockConfirmDialog.lastOpts?.title).toBe("Delete nib");
+    });
+
+    it("does NOT resolve a synthetic bucket id as the delete target (nibs-oxaq)", async () => {
+      // Right-clicking a "No X" grouping-bucket row sets nib to the bucket. Its id
+      // is unresolvable for any bulk action, so getActionTargetIds must exclude it —
+      // delete then early-returns and never opens the confirm (which would otherwise
+      // dispatch a phantom deleteBatch(["__no_milestone__"])).
+      renderMenu({ nib: makeNib({ id: "__no_milestone__" }) });
+
+      await waitFor(() => {
+        expect(screen.getByTestId("ctx-delete")).toBeInTheDocument();
+      });
+
+      await user.click(screen.getByTestId("ctx-delete"));
+
+      expect(mockConfirmDialog.showConfirm).not.toHaveBeenCalled();
     });
   });
 
@@ -471,7 +565,7 @@ describe("RowContextMenu", () => {
   });
 
   describe("Edit action", () => {
-    it("clicking Edit calls editor.handleEditNib", async () => {
+    it("clicking Edit opens the unified view via view.open", async () => {
       renderMenu();
 
       await waitFor(() => {
@@ -480,12 +574,12 @@ describe("RowContextMenu", () => {
 
       await user.click(screen.getByTestId("ctx-edit"));
 
-      expect(mockEditor.handleEditNib).toHaveBeenCalledWith("nibs-abc1");
+      expect(mockView.open).toHaveBeenCalledWith("nibs-abc1");
     });
   });
 
   describe("Add child action", () => {
-    it("clicking Add child calls editor.handleAddChild with nib id and type", async () => {
+    it("clicking Add child calls view.startCreateChild with nib id, type, and an anchor rect", async () => {
       renderMenu({ nib: makeNib({ id: "nibs-epic1", type: "epic" }) });
 
       await waitFor(() => {
@@ -494,9 +588,11 @@ describe("RowContextMenu", () => {
 
       await user.click(screen.getByTestId("ctx-add-child"));
 
-      expect(mockEditor.handleAddChild).toHaveBeenCalledWith(
+      // The third arg is the clicked item's rect (all-zero DOMRect under jsdom).
+      expect(mockView.startCreateChild).toHaveBeenCalledWith(
         "nibs-epic1",
         "epic",
+        expect.objectContaining({ x: expect.any(Number), y: expect.any(Number) }),
       );
     });
   });
@@ -657,7 +753,7 @@ describe("RowContextMenu", () => {
         },
         context: makeTestContext(selection, new DragState(), {
           confirmDialog: mockConfirmDialog,
-          editorOrchestration: mockEditor,
+          activeView: mockView as unknown as ActiveView,
         }),
       });
 

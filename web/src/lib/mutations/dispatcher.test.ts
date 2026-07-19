@@ -27,7 +27,10 @@ vi.mock("svelte-sonner", async () => {
   };
 });
 
-function createMockClient(result?: { data?: unknown; error?: { message: string } }) {
+function createMockClient(result?: {
+  data?: unknown;
+  error?: { message: string; graphQLErrors?: { extensions?: { code?: string } }[] };
+}) {
   const mockMutation = vi.fn().mockReturnValue({
     toPromise: vi.fn().mockResolvedValue(
       result ?? { data: { updateNib: { id: "nibs-abc1" } }, error: undefined }
@@ -115,6 +118,73 @@ describe("MutationDispatcher", () => {
 
       expect(mockToastError).toHaveBeenCalledWith("Something went wrong");
       expect(result).toEqual({ ok: false, error: "Something went wrong" });
+    });
+
+    it("lifts the GraphQL extensions.code onto the failure result", async () => {
+      const client = createMockClient({
+        error: {
+          message: "[GraphQL] etag mismatch: provided a, current is b",
+          graphQLErrors: [{ extensions: { code: "ETAG_MISMATCH" } }],
+        },
+      });
+      const dispatcher = new MutationDispatcher(client);
+
+      const result = await dispatcher.execute(updateNib("nibs-abc1", { title: "x" }, "a"));
+
+      expect(result.ok).toBe(false);
+      expect(result.errorCode).toBe("ETAG_MISMATCH");
+    });
+
+    it("leaves errorCode undefined when the server tagged no code", async () => {
+      const client = createMockClient({ error: { message: "disk full" } });
+      const dispatcher = new MutationDispatcher(client);
+
+      const result = await dispatcher.execute(updateNib("nibs-abc1", { title: "x" }));
+
+      expect(result.errorCode).toBeUndefined();
+    });
+  });
+
+  describe("toast suppression (suppressToast)", () => {
+    it("toasts on error by default", async () => {
+      const client = createMockClient({ error: { message: "boom" } });
+      const dispatcher = new MutationDispatcher(client);
+
+      const result = await dispatcher.execute(updateNib("nibs-abc1", { title: "x" }));
+
+      expect(mockToastError).toHaveBeenCalledWith("boom");
+      // The failure is still reported to the caller either way.
+      expect(result).toMatchObject({ ok: false, error: "boom" });
+    });
+
+    it("suppresses the error toast when suppressToast is set (caller owns messaging)", async () => {
+      const client = createMockClient({
+        error: {
+          message: "[GraphQL] etag mismatch: provided a, current is b",
+          graphQLErrors: [{ extensions: { code: "ETAG_MISMATCH" } }],
+        },
+      });
+      const dispatcher = new MutationDispatcher(client);
+
+      const result = await dispatcher.execute(
+        updateNib("nibs-abc1", { title: "x" }, "a"),
+        { suppressToast: true },
+      );
+
+      // No raw toast races the caller's inline resolver...
+      expect(mockToastError).not.toHaveBeenCalled();
+      // ...but the failure + structured code are still returned so save() can route it.
+      expect(result).toMatchObject({ ok: false, errorCode: "ETAG_MISMATCH" });
+    });
+
+    it("does not suppress toasts for other legs of a batch (opt-in is per-call, not global)", async () => {
+      const client = createMockClient({ error: { message: "batch-boom" } });
+      const dispatcher = new MutationDispatcher(client);
+
+      // A batch WITHOUT the option toasts each failed leg as before.
+      await dispatcher.execute(batch([deleteNib("a"), deleteNib("b")]));
+
+      expect(mockToastError).toHaveBeenCalledTimes(2);
     });
   });
 

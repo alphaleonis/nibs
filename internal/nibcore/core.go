@@ -3,19 +3,19 @@
 package nibcore
 
 import (
-	"encoding/hex"
+	"bytes"
 	"fmt"
-	"hash/fnv"
 	"io"
 	"os"
 	"path/filepath"
 	"sort"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
-	"github.com/alphaleonis/nibs/internal/nib"
 	"github.com/alphaleonis/nibs/internal/config"
+	"github.com/alphaleonis/nibs/internal/nib"
 	"github.com/alphaleonis/nibs/internal/search"
 )
 
@@ -43,19 +43,49 @@ func (e *ETagRequiredError) Error() string {
 	return "if-match etag is required (set require_if_match: false in config to disable)"
 }
 
+// OnDiskUnparseableError is returned by an if-match Update (and by CurrentETag,
+// used in the bulk-reorder pre-validation) when the CURRENT on-disk state of a
+// nib cannot be certified: the file EXISTS but is unparseable (torn/partial
+// write, git merge-conflict markers, hand-edit YAML typo) or unreadable
+// (permission denied, transient/torn I/O — a non-IsNotExist read error).
+//
+// Unlike ETagMismatchError it deliberately carries NO reusable etag token. A
+// client following the textbook "409 → retry with the server's Current etag"
+// reconcile pattern therefore has nothing to echo back that could satisfy the
+// guard: every recomputation of an uncertifiable file yields this same
+// non-reconcilable error, so the corrupt/unreadable file can never be clobbered
+// by a blind retry. It must be repaired manually (or re-read once it is
+// parseable/readable again). This is a distinct error class from a genuine
+// concurrency conflict (ETagMismatchError), which IS reconcilable.
+type OnDiskUnparseableError struct {
+	ID     string // nib id whose on-disk file could not be certified
+	Path   string // repo-relative path of the uncertifiable file
+	Reason string // "unparseable" or "unreadable"
+	Err    error  // underlying parse/read error
+}
+
+func (e *OnDiskUnparseableError) Error() string {
+	return fmt.Sprintf(
+		"on-disk nib file %s is %s and its current state cannot be certified for an if-match update; repair the file (this conflict is not resolvable by retrying with a server etag): %v",
+		e.Path, e.Reason, e.Err,
+	)
+}
+
+func (e *OnDiskUnparseableError) Unwrap() error { return e.Err }
+
 // Core provides thread-safe in-memory storage for nibs with filesystem persistence.
 type Core struct {
 	root   string         // absolute path to .nibs directory
 	config *config.Config // project configuration
 
 	// In-memory state
-	mu    sync.RWMutex
+	mu   sync.RWMutex
 	nibs map[string]*nib.Nib // ID -> Nib
 
 	// Reverse-mention index: maintained alongside c.nibs so FindMentionedBy /
 	// FindMentions avoid O(N × body) re-parsing on every call. Guarded by c.mu
 	// (writers under Lock, readers under RLock) — mentionIndex itself is not
-	// internally synchronised.
+	// internally synchronized.
 	mentionIdx *mentionIndex
 
 	// Search index (optional, lazy-initialized)
@@ -64,12 +94,25 @@ type Core struct {
 	// File watching (optional)
 	watching bool
 	done     chan struct{}
-	onChange func() // callback when nibs change (legacy API)
 
-	// Event subscribers (for channel-based API)
-	subscribers map[uint64]*subscription
-	subMu       sync.RWMutex
-	nextSubID   uint64
+	// Event subscribers (for channel-based API). Two kinds share subMu and the
+	// nextSubID counter but live in separate maps: payload subscribers receive
+	// cloned NibEvent batches; signal-only subscribers receive a bare struct{}
+	// tick ("something changed") and never a payload.
+	subscribers       map[uint64]*subscription
+	signalSubscribers map[uint64]chan struct{}
+	subMu             sync.RWMutex
+	nextSubID         uint64
+
+	// payloadSubCount mirrors len(subscribers): incremented/decremented under
+	// subMu alongside every payload subscribe/unsubscribe, but read WITHOUT any
+	// lock (a single atomic load) by handleChanges to decide whether the per-nib
+	// payload clone is worth paying. Keeping it atomic lets handleChanges read it
+	// while holding c.mu without acquiring subMu on that hot path — sparing the
+	// lock and its contention, not for deadlock safety (the established order is
+	// c.mu -> subMu, taken in unwatchLocked/Close; nothing acquires c.mu while
+	// holding subMu). See handleChanges for the full reasoning.
+	payloadSubCount atomic.Int64
 
 	// Warning logger for non-fatal errors (defaults to stderr)
 	warnWriter io.Writer
@@ -78,12 +121,13 @@ type Core struct {
 // New creates a new Core with the given root path and configuration.
 func New(root string, cfg *config.Config) *Core {
 	return &Core{
-		root:        root,
-		config:      cfg,
-		nibs:       make(map[string]*nib.Nib),
-		mentionIdx:  newMentionIndex(),
-		subscribers: make(map[uint64]*subscription),
-		warnWriter:  os.Stderr,
+		root:              root,
+		config:            cfg,
+		nibs:              make(map[string]*nib.Nib),
+		mentionIdx:        newMentionIndex(),
+		subscribers:       make(map[uint64]*subscription),
+		signalSubscribers: make(map[uint64]chan struct{}),
+		warnWriter:        os.Stderr,
 	}
 }
 
@@ -133,6 +177,17 @@ func (c *Core) loadFromDisk() error {
 	// Clear existing nibs
 	c.nibs = make(map[string]*nib.Nib)
 
+	// Count of nibs whose legacy `priority: deferred` was normalized to `low`
+	// and persisted during this load, so we can log a single summary.
+	var deferredMigrated int
+
+	// IDs of files present on disk but skipped this load (unparseable/unreadable).
+	// The ID is derived from the filename (which parses regardless of content), so
+	// migrateV0ToV1 can tell "target's file was skipped this load" apart from
+	// "target genuinely does not exist" and DEFER a v0 nib's migration rather than
+	// erasing its `blocking:` edge to a skipped target.
+	skipped := make(map[string]bool)
+
 	// Walk the entire .nibs directory tree, loading all .md files
 	err := filepath.WalkDir(c.root, func(path string, d os.DirEntry, err error) error {
 		if err != nil {
@@ -144,9 +199,38 @@ func (c *Core) loadFromDisk() error {
 			return nil
 		}
 
-		b, loadErr := c.loadNib(path)
+		b, migrated, loadErr := c.loadNibReconciledLocked(path)
 		if loadErr != nil {
-			return fmt.Errorf("loading %s: %w", path, loadErr)
+			// Log-and-skip a single unparseable/unreadable file rather than
+			// aborting the whole walk: yaml.v3 hard-errors on a duplicate
+			// front-matter key (where yaml.v2 took last-wins), so one pre-existing
+			// malformed nib (bad merge, hand-edit, partial write) would otherwise
+			// make every nibs command fail to load ANY nib. Degrade to one missing
+			// nib instead of a dead store, matching the fsnotify watcher's per-file
+			// "log and continue" posture. The file's bytes are left untouched
+			// (skip = not loaded into memory; never delete/rewrite).
+			c.logWarn("skipping unparseable nib file %s: %v", path, loadErr)
+			if id, _ := nib.ParseFilename(filepath.Base(path), c.configPrefix()); id != "" {
+				skipped[id] = true
+			}
+			return nil
+		}
+		if migrated {
+			deferredMigrated++
+		}
+
+		// Two on-disk files can parse to the same id (e.g. a slugged and a
+		// slugless file for one prefixed id). WalkDir visits lexically, so the
+		// last file loaded wins; warn per shadowing event and name both files so
+		// the duplicate is discoverable instead of silently swallowed. We warn
+		// rather than fail the load: a duplicate is usually a transient abnormal
+		// state (an interrupted rename, a manual copy), so degrading to a visible
+		// warning beats refusing to load the entire store. Both paths are logged
+		// in the walk's absolute form (like the skip warning above) so the
+		// operator can go straight to the offending files.
+		if existing, ok := c.nibs[b.ID]; ok {
+			c.logWarn("duplicate nib id %q on disk: %s shadows %s (last file loaded wins; resolve the duplicate)",
+				b.ID, path, filepath.Join(c.root, existing.Path))
 		}
 
 		c.nibs[b.ID] = b
@@ -156,8 +240,15 @@ func (c *Core) loadFromDisk() error {
 		return err
 	}
 
-	// Migrate v0 nibs to v1 (single-side blocking)
-	if err := c.migrateV0ToV1(); err != nil {
+	if deferredMigrated > 0 {
+		c.logWarn("migrated %d nib(s): priority 'deferred' -> 'low'", deferredMigrated)
+	}
+
+	// Migrate v0 nibs to v1 (single-side blocking). This runs after the walk so
+	// every blocking target is already in c.nibs. v0+deferred nibs are converged
+	// here rather than in loadNibReconciledLocked (which gates persistence on
+	// Version >= 1 to avoid the lossy v0 render — see its doc comment).
+	if err := c.migrateV0ToV1(skipped); err != nil {
 		return fmt.Errorf("migration v0→v1: %w", err)
 	}
 
@@ -205,15 +296,21 @@ func (c *Core) loadNib(path string) (*nib.Nib, error) {
 
 	// Extract ID and slug from filename
 	filename := filepath.Base(path)
-	b.ID, b.Slug = nib.ParseFilename(filename)
+	b.ID, b.Slug = nib.ParseFilename(filename, c.configPrefix())
 
-	// Apply defaults for GraphQL non-nullable fields
-	if b.Type == "" {
-		b.Type = "task"
-	}
-	if b.Priority == "" {
-		b.Priority = "normal"
-	}
+	// Type and Priority are DELIBERATELY not defaulted here. Synthesizing them
+	// in memory (Type""→"task", Priority""→"normal") while computeStoredETag
+	// bare-parses the file diverges the in-memory ETag() from the stored etag for
+	// a file that omits the key, false-conflicting a valid if-match Update with no
+	// on-disk change. The stored Nib keeps them EMPTY so Render (which
+	// carries omitempty on both) matches the on-disk bytes; the "task"/"normal"
+	// presentation defaults are applied at the consumption boundary via
+	// nib.EffectiveType()/EffectivePriority() (GraphQL field resolvers, sort,
+	// filter, TUI/CLI display, the JSON projection).
+	//
+	// The empty-slice defaults below are kept: they satisfy GraphQL's non-null
+	// list fields and are etag-safe (Render's omitempty treats a nil and an empty
+	// slice identically, so neither changes the canonical render).
 	if b.Tags == nil {
 		b.Tags = []string{}
 	}
@@ -223,6 +320,20 @@ func (c *Core) loadNib(path string) (*nib.Nib, error) {
 	if b.Documents == nil {
 		b.Documents = []string{}
 	}
+	// created_at/updated_at fallbacks are also kept. Unlike Type/Priority these
+	// cannot be expressed as a pure Effective* accessor — the mtime fallback needs
+	// the file's stat, unavailable at the consumption boundary — so moving them
+	// would balloon scope for no real-world gain: every app-written nib always
+	// carries both timestamps (Create sets them, Render emits them), so the only
+	// files this synthesis touches are hand-authored ones missing EITHER timestamp
+	// (created_at is synthesized from updated_at or the file mtime below, then
+	// updated_at is defaulted to created_at). Such a file retains a residual etag
+	// divergence (in-memory carries the synthesized timestamp; the bare-parse stored
+	// etag does not), and because every Get returns the same synthesized pointer the
+	// divergence never clears — an if-match Update on such a file permanently
+	// false-conflicts. This is pre-existing, orthogonal to the priority/type fix,
+	// deliberately accepted (not fixed here), and not exercised by any real or
+	// app-created nib.
 	if b.CreatedAt == nil {
 		if b.UpdatedAt != nil {
 			b.CreatedAt = b.UpdatedAt
@@ -240,6 +351,68 @@ func (c *Core) loadNib(path string) (*nib.Nib, error) {
 	}
 
 	return b, nil
+}
+
+// loadNibReconciledLocked loads and parses a single nib file (via loadNib) and,
+// for the bulk load path only, persists any load-time normalization back to
+// disk so the on-disk bytes converge with the in-memory value immediately. It
+// returns whether such a migration was persisted so the caller can log an
+// aggregate count. Only loadFromDisk funnels through here — startup Load, where
+// the file watcher is inactive.
+//
+// The incremental watcher path (handleChanges) deliberately does NOT call this:
+// it uses the read-only loadNib and reconciles in memory only. nib.Parse already
+// normalizes `deferred` → `low` in memory, so a legacy file arriving via the
+// watcher is still correct in memory; persisting from the always-on fsnotify
+// path is avoided because that write would be an unguarded read-modify-write
+// that could clobber a concurrent external write (git checkout / editor / second
+// instance), dirty the separate .nibs git tree (breaking the prescribed
+// `git -C .nibs pull --rebase`), and fire a spurious content-free self-write
+// event. On the watcher path disk converges on the next explicit Update/Load.
+//
+// The upshot for consistency: the bulk Load path persists migrations, so disk
+// and memory agree immediately; the watcher path leaves disk untouched, so a
+// legacy `deferred` (or v0) file that first appears post-startup stays diverged
+// on disk (memory is correct) until the next explicit Update or full Load.
+//
+// Today the only such normalization is the legacy `priority: deferred` → `low`
+// migration: nib.Parse rewrites the value in memory and flags the nib via
+// PriorityMigrated(). The etag layer no longer depends on this write-back:
+// computeStoredETag parses the on-disk file and hashes its canonical Render(),
+// so a legacy `deferred` file yields the same etag as the in-memory `low` value
+// and an if-match Update matches either way. The write-back is retained purely
+// to converge the raw on-disk bytes with the in-memory value, so external
+// consumers (git diffs, editors, other tooling) see the migrated `low` promptly
+// rather than only after the next explicit Update.
+//
+// The write is gated on Version >= 1 to leave legacy v0 nibs to migrateV0ToV1,
+// which performs the COMPLETE v0->v1 conversion (blocking -> blocked_by on
+// targets, clear blocking, bump version) and persists it; the bulk path always
+// runs that pass after the walk. Persisting a v0 nib here would write a
+// half-migrated file (priority normalized but still version 0 with `blocking:`
+// intact — nib.Render now preserves that field rather than dropping it) and then
+// migrateV0ToV1 would rewrite it again: a redundant double-write of a transiently
+// inconsistent shape. Gating on Version >= 1 avoids both.
+//
+// Persistence is best-effort: on a write failure (read-only mount, disk full,
+// restricted permissions) it logs, returns migrated=false, and continues,
+// leaving the nib correct in memory — on-disk convergence then waits for the
+// next successful write. This mirrors the "don't fail load" posture of the
+// search-index re-population in loadFromDisk. Must be called with c.mu held (it
+// may saveToDisk).
+func (c *Core) loadNibReconciledLocked(path string) (*nib.Nib, bool, error) {
+	b, err := c.loadNib(path)
+	if err != nil {
+		return nil, false, err
+	}
+	if b.PriorityMigrated() && b.Version >= 1 {
+		if err := c.saveToDisk(b); err != nil {
+			c.logWarn("could not persist priority migration for %s: %v", b.ID, err)
+			return b, false, nil
+		}
+		return b, true, nil
+	}
+	return b, false, nil
 }
 
 // ensureSearchIndexLocked initializes the in-memory search index if not already created.
@@ -350,8 +523,9 @@ func normalizeSearchQuery(query string) string {
 }
 
 // isIDFragment reports whether a normalized query consists solely of
-// short-ID characters: [0-9a-z], the generator alphabet (nib.idAlphabet in
-// internal/nib/id.go). Hyphens are deliberately excluded — they belong to
+// short-ID characters: [0-9a-z], as gated by nib.IsIDChar (derived from
+// nib.idAlphabet, the single source of truth for the short-ID charset).
+// Hyphens are deliberately excluded — they belong to
 // prefixes (reprefix.prefixPattern / ValidatePrefix), not short IDs, and
 // admitting them would let Bleve operator queries like `-42` (negation)
 // substring-match legacy or foreign-prefix IDs, which come from filenames
@@ -362,8 +536,7 @@ func normalizeSearchQuery(query string) string {
 // are otherwise findable only by charset-clean fragments.
 func isIDFragment(query string) bool {
 	for i := 0; i < len(query); i++ {
-		c := query[i]
-		if (c < '0' || c > '9') && (c < 'a' || c > 'z') {
+		if !nib.IsIDChar(query[i]) {
 			return false
 		}
 	}
@@ -470,12 +643,54 @@ func (c *Core) Get(id string) (*nib.Nib, error) {
 	return nil, ErrNotFound
 }
 
+// GetForUpdate returns a deep copy (Clone) of the nib the caller OWNS and may
+// freely mutate before handing it to Update. Unlike Get — which returns the
+// SHARED c.nibs[id] pointer — mutating the returned nib never touches in-memory
+// store state, so a rejected Update cannot leave a phantom mutation behind.
+// Resolution mirrors Get (exact id, then the configured prefix prepended);
+// returns ErrNotFound when the nib is missing.
+//
+// The Clone is taken WHILE c.mu is held (via GetSnapshot's clone-under-RLock),
+// so the shallow struct copy's field reads — notably Path — cannot race an
+// in-place Path writer holding c.mu (e.g. Archive/Unarchive). Cloning the
+// shared pointer off-lock would race that writer.
+func (c *Core) GetForUpdate(id string) (*nib.Nib, error) {
+	if b, ok := c.GetSnapshot(id); ok {
+		return b, nil
+	}
+	return nil, ErrNotFound
+}
+
+// GetSnapshot returns a detached deep copy of the nib, cloned WHILE c.mu is
+// held, so the returned value never aliases the live store pointer and no field
+// (notably Path) is read off-lock. This is the read accessor callers use when
+// the result outlives the lock — e.g. GraphQL relationship resolvers whose
+// fields gqlgen marshals asynchronously, concurrently with in-place mutations
+// like Archive/Unarchive rewriting a stored nib's Path. Get returns the live
+// pointer (and would leave that later read racing the writer); GetSnapshot
+// returns a safe copy. Resolution mirrors Get (exact id, then the configured
+// prefix prepended); ok is false when the nib is absent.
+func (c *Core) GetSnapshot(id string) (*nib.Nib, bool) {
+	c.mu.RLock()
+	defer c.mu.RUnlock()
+
+	if b, ok := c.nibs[id]; ok {
+		return b.Clone(), true // clone under the lock — this is the whole point
+	}
+	if c.config != nil && c.config.Nibs.Prefix != "" && !strings.HasPrefix(id, c.config.Nibs.Prefix) {
+		if b, ok := c.nibs[c.config.Nibs.Prefix+id]; ok {
+			return b.Clone(), true
+		}
+	}
+	return nil, false
+}
+
 // NormalizeID resolves a potentially short ID to its full form.
 // If a prefix is configured and the query doesn't include it, the prefix is automatically prepended.
 // Returns the full ID and true if found, or the original ID and false if not found.
 //
 // Shares resolution logic with Core.normalizeIDForLookupLocked and
-// resolveMentionToken via normalizeIDInMap — behaviour changes must be
+// resolveMentionToken via normalizeIDInMap — behavior changes must be
 // made in the shared helper so all three stay in lockstep.
 func (c *Core) NormalizeID(id string) (string, bool) {
 	c.mu.RLock()
@@ -489,10 +704,44 @@ func (c *Core) NormalizeID(id string) (string, bool) {
 	return id, false
 }
 
+// validateEnums checks that the nib's enum fields (type, status, priority,
+// estimate) hold either the empty "unset -> use default" sentinel (always
+// accepted) or a value valid under the current config. This is the single
+// write-path chokepoint that gives every entry point — CLI, GraphQL, MCP (which
+// rides the same GraphQL resolvers), and the TUI — uniform enum integrity, so a
+// GraphQL/MCP client cannot persist a nib with e.g. status "banana".
+// It matches the CLI's `v != "" && !IsValid...` discipline exactly:
+// only non-empty values are checked, so the empty sentinel that means "apply the
+// default" (EffectiveType/EffectivePriority) is never rejected. No-ops when no
+// config is set (several test setups run config-less).
+func (c *Core) validateEnums(b *nib.Nib) error {
+	if c.config == nil {
+		return nil
+	}
+	if b.Type != "" && !c.config.IsValidType(b.Type) {
+		return fmt.Errorf("invalid type %q: must be one of %s", b.Type, c.config.TypeList())
+	}
+	if b.Status != "" && !c.config.IsValidStatus(b.Status) {
+		return fmt.Errorf("invalid status %q: must be one of %s", b.Status, c.config.StatusList())
+	}
+	if b.Priority != "" && !c.config.IsValidPriority(b.Priority) {
+		return fmt.Errorf("invalid priority %q: must be one of %s", b.Priority, c.config.PriorityList())
+	}
+	if b.Estimate != "" && !c.config.IsValidEstimate(b.Estimate) {
+		return fmt.Errorf("invalid estimate %q: must be one of %s", b.Estimate, c.config.EstimateList())
+	}
+	return nil
+}
+
 // Create adds a new nib, generating an ID if needed, and writes it to disk.
 func (c *Core) Create(b *nib.Nib) error {
 	c.mu.Lock()
 	defer c.mu.Unlock()
+
+	// Reject invalid enum values before touching any state.
+	if err := c.validateEnums(b); err != nil {
+		return err
+	}
 
 	// Generate ID if not provided
 	if b.ID == "" {
@@ -533,20 +782,31 @@ func (c *Core) Create(b *nib.Nib) error {
 	return nil
 }
 
-// CurrentETag returns the canonical FNV-64a hex ETag for the nib's on-disk
-// content. Used by bulk-reorder pre-validation to check optimistic
-// concurrency without a write. Returns ErrNotFound when the id does not
-// resolve. Falls back to the in-memory etag when no on-disk file exists yet
-// (e.g. a freshly created nib that hasn't been flushed) — this matches the
-// fallback semantics inside Update.
+// CurrentETag returns the canonical ETag for the nib's on-disk content — a hash
+// of the parsed file's canonical Render() (see computeStoredETag), so it agrees
+// with the in-memory nib.ETag() across benign formatting drift (reordered YAML
+// keys, whitespace, the `deferred`->`low` priority normalization). loadNib keeps
+// the stored Nib's Type/Priority empty when the file omits them (the "task"/
+// "normal" defaults are applied only at the consumption boundary via
+// nib.EffectiveType()/EffectivePriority()), so a priority/type-less file no longer
+// diverges from its in-memory nib.ETag(). The one remaining residual
+// is loadNib's created_at/updated_at mtime fallback for hand-authored files that
+// omit those timestamps — not reproduced here — which no app-created nib ever
+// hits (Render always emits both). Used by bulk-reorder pre-validation
+// to check optimistic concurrency without a write. Returns ErrNotFound when the
+// id does not resolve. Falls back to the in-memory etag only when no on-disk
+// file exists yet (empty Path, or os.IsNotExist — a freshly created nib not yet
+// flushed, or an externally removed file), matching the fallback semantics inside
+// Update; an existing file that cannot be read or parsed fails CLOSED instead
+// (see computeStoredETag's fail-open/fail-closed matrix).
 func (c *Core) CurrentETag(id string) (string, error) {
 	c.mu.RLock()
 	defer c.mu.RUnlock()
 
 	storedNib, ok := c.nibs[id]
 	if !ok {
-		// Honour prefix-resolution like Get does, so callers can pass either
-		// short or canonical ids and receive consistent behaviour.
+		// Honor prefix-resolution like Get does, so callers can pass either
+		// short or canonical ids and receive consistent behavior.
 		if c.config != nil && c.config.Nibs.Prefix != "" && !strings.HasPrefix(id, c.config.Nibs.Prefix) {
 			storedNib, ok = c.nibs[c.config.Nibs.Prefix+id]
 		}
@@ -554,25 +814,109 @@ func (c *Core) CurrentETag(id string) (string, error) {
 			return "", ErrNotFound
 		}
 	}
-	return c.computeStoredETag(storedNib), nil
+	return c.computeStoredETag(storedNib)
 }
 
-// computeStoredETag returns the canonical etag for a stored nib by reading
-// the current on-disk content and FNV-64a hashing it. If the on-disk file is
-// missing (e.g. freshly created in memory but not yet flushed), it falls back
-// to the in-memory nib's ETag. Caller must hold c.mu (read or write lock).
-func (c *Core) computeStoredETag(storedNib *nib.Nib) string {
+// computeStoredETag returns the canonical etag for a stored nib by reading AND
+// PARSING the current on-disk file and returning the parsed nib's ETag (a hash
+// of its canonical Render()) — not a hash of the raw disk bytes. Hashing the
+// canonical render (rather than the bytes) makes the stored etag equal the
+// in-memory nib.ETag() whenever the on-disk content is canonically equivalent,
+// so an ETag()-derived if-match (a) survives benign round-trip/formatting drift
+// (reordered YAML keys, whitespace, the `deferred`->`low` priority
+// normalization) yet (b) still fails with ETagMismatchError on genuine content
+// divergence — including divergence in content outside Render()'s modeled fields
+// (unknown/extra YAML keys, a legacy v0 `blocking:` line), which nib.Render now
+// preserves. Caller must hold c.mu (read or write lock).
+//
+// Parsing is done with the bare nib.Parse (which already normalizes the legacy
+// `deferred` priority to `low`) and only the ID is copied over from the stored
+// nib so the rendered `# <id>` header line matches. It deliberately does NOT go
+// through loadNib, but the two agree on Type/Priority: loadNib keeps them
+// empty when the file omits them (the "task"/"normal" presentation defaults are
+// applied at the consumption boundary via nib.EffectiveType()/EffectivePriority(),
+// never mutated onto the stored Nib), so a bare-parse render and the in-memory
+// nib.ETag() render the same key set. The upshot: a priority-
+// or type-less file — including every nib the CreateNib resolver writes without a
+// priority — does not false-conflict on an if-match Update, and the just-created
+// (never-Loaded) path still round-trips because its stored nib is likewise empty.
+//
+// loadNib's empty-slice defaults are etag-safe (Render's omitempty renders a nil
+// and an empty slice identically). The lone divergence loadNib can still
+// introduce is its created_at/updated_at mtime fallback, not reproduced here — but
+// that only touches HAND-AUTHORED files missing those timestamps; every app-
+// created nib carries both (Create sets them, Render emits them), so no real or
+// app-created nib hits it.
+//
+// Fallback discipline when the canonical render cannot be computed from disk.
+// The etag exists to certify the current on-disk bytes, so each branch is chosen
+// deliberately as fail-OPEN (return the in-memory ETag with a nil error, so a
+// normal if-match still matches) or fail-CLOSED (return a non-reconcilable
+// *OnDiskUnparseableError and NO etag token, so Update/CurrentETag refuse the
+// overwrite and no retry-with-Current can satisfy the guard). A client's
+// if-match always originates from a canonical nib.ETag()
+// (16 lowercase hex chars) obtained via Get.
+//
+//	condition                          verdict  returns                      logged?
+//	---------------------------------  -------  ---------------------------  -------
+//	empty Path                         OPEN     (in-memory ETag(), nil)      no  (not flushed yet)
+//	read err, os.IsNotExist            OPEN     (in-memory ETag(), nil)      no  (not flushed / P2 delete-race)
+//	read err, other (perms, torn I/O)  CLOSED   ("", OnDiskUnparseableError) no  (returned; caller surfaces)
+//	parse err (corrupt/conflict/typo)  CLOSED   ("", OnDiskUnparseableError) no  (returned; caller surfaces)
+//	parsed OK                          --       (canonical b.ETag(), nil)    --
+//
+// The two OPEN branches are intentionally SILENT: "not flushed yet" is the normal
+// freshly-created path, and an externally-deleted file (P2) is an accepted race
+// (resurrection). The two CLOSED branches do NOT log here either: they RETURN a
+// distinct non-reconcilable *OnDiskUnparseableError (no sentinel etag a naive
+// reconcile-retry could echo back), and it is the CALLER's job to surface it —
+// Update propagates it to the client (cmd/update.go → FILE_ERROR) and the
+// bulk-reorder pre-validation wraps it, while the best-effort backfill/activation
+// read paths deliberately swallow it. Logging here as well would double-handle the
+// error and flood stderr on the hot Children read path (orderer.go's
+// backfillOrderKeys re-attempts the Update once per read for a persistently
+// uncertifiable sibling). Caller must hold c.mu (read or write lock).
+func (c *Core) computeStoredETag(storedNib *nib.Nib) (string, error) {
 	if storedNib.Path == "" {
-		return storedNib.ETag()
+		return storedNib.ETag(), nil
 	}
 	diskPath := filepath.Join(c.root, storedNib.Path)
-	content, err := os.ReadFile(diskPath)
+	raw, err := os.ReadFile(diskPath)
 	if err != nil {
-		return storedNib.ETag()
+		if os.IsNotExist(err) {
+			// Legitimately "in memory but not flushed yet" (freshly created) or
+			// externally removed (accepted delete-race, P2): fall back to the
+			// in-memory etag, matching Update's own not-flushed semantics. Silent
+			// by design — this is the normal path, not an anomaly.
+			return storedNib.ETag(), nil
+		}
+		// File EXISTS but its bytes cannot be READ (permission-denied, transient
+		// or torn I/O). Fail CLOSED with a non-reconcilable error carrying no etag
+		// token: the current on-disk content cannot be certified, so the overwrite
+		// is refused and no retry-with-Current can satisfy the guard. We RETURN the
+		// error rather than logging it here — the caller surfaces it where it
+		// matters (see the matrix above); logging too would double-handle it and
+		// flood stderr on the hot Children read path (orderer.go backfillOrderKeys).
+		return "", &OnDiskUnparseableError{ID: storedNib.ID, Path: storedNib.Path, Reason: "unreadable", Err: err}
 	}
-	h := fnv.New64a()
-	h.Write(content)
-	return hex.EncodeToString(h.Sum(nil))
+
+	b, err := nib.Parse(bytes.NewReader(raw))
+	if err != nil {
+		// File EXISTS but is unparseable (torn/partial write, git merge-conflict
+		// markers, hand-edit YAML typo). Fail CLOSED with a non-reconcilable error
+		// so the divergent/corrupt file cannot be clobbered — not even by a naive
+		// client that retries with a fabricated/raw-bytes etag in a single shot.
+		// RETURN the error (do not log it here) — the
+		// caller surfaces it where it matters; logging too would double-handle it
+		// and flood stderr on the hot Children read path (orderer.go
+		// backfillOrderKeys).
+		return "", &OnDiskUnparseableError{ID: storedNib.ID, Path: storedNib.Path, Reason: "unparseable", Err: err}
+	}
+	// The rendered form includes the `# <id>` header, which is derived from the
+	// filename (not the front matter). Use the stored id so the render — and thus
+	// the etag — matches what the caller computed from the same stored nib.
+	b.ID = storedNib.ID
+	return b.ETag(), nil
 }
 
 // Update modifies an existing nib and writes it to disk.
@@ -588,6 +932,12 @@ func (c *Core) Update(b *nib.Nib, ifMatch *string) error {
 		return ErrNotFound
 	}
 
+	// Reject invalid enum values before the concurrency guard or any write
+	// — input validity is independent of the etag precondition.
+	if err := c.validateEnums(b); err != nil {
+		return err
+	}
+
 	// Validate etag if provided or required
 	requireIfMatch := c.config != nil && c.config.Nibs.RequireIfMatch
 
@@ -596,7 +946,15 @@ func (c *Core) Update(b *nib.Nib, ifMatch *string) error {
 	}
 
 	if ifMatch != nil && *ifMatch != "" {
-		currentETag := c.computeStoredETag(storedNib)
+		currentETag, err := c.computeStoredETag(storedNib)
+		if err != nil {
+			// The current on-disk state cannot be certified (unparseable or
+			// unreadable). Surface the distinct, non-reconcilable error rather than
+			// an ETagMismatchError: there is no server etag a retry could echo back
+			// to satisfy the guard, so the corrupt/unreadable file cannot be
+			// clobbered by a blind reconcile-retry.
+			return err
+		}
 		if currentETag != *ifMatch {
 			return &ETagMismatchError{
 				Provided: *ifMatch,
@@ -772,8 +1130,8 @@ func (c *Core) Unarchive(id string) error {
 		return fmt.Errorf("moving nib from archive: %w", err)
 	}
 
-	// Update nib's path
-	targetNib.Path = newRelPath
+	// Update nib's path (forward slashes, matching Archive and loadNib)
+	targetNib.Path = filepath.ToSlash(newRelPath)
 	c.nibs[targetID] = targetNib
 
 	return nil
@@ -849,7 +1207,7 @@ func (c *Core) GetFromArchive(id string) (*nib.Nib, error) {
 			continue
 		}
 
-		fileID, _ := nib.ParseFilename(entry.Name())
+		fileID, _ := nib.ParseFilename(entry.Name(), c.configPrefix())
 		if fileID == fullID {
 			path := filepath.Join(archiveDir, entry.Name())
 			return c.loadNib(path)
@@ -865,7 +1223,7 @@ func (c *Core) LoadAndUnarchive(id string) (*nib.Nib, error) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 
-	// Find the nib (always loaded since we now include archived nibs)
+	// Find the nib (always loaded — archived nibs are included)
 	b, targetID, err := c.findNibLocked(id)
 	if err != nil {
 		return nil, ErrNotFound
@@ -885,8 +1243,8 @@ func (c *Core) LoadAndUnarchive(id string) (*nib.Nib, error) {
 		return nil, fmt.Errorf("moving nib from archive: %w", err)
 	}
 
-	// Update nib's path
-	b.Path = newRelPath
+	// Update nib's path (forward slashes, matching Archive and loadNib)
+	b.Path = filepath.ToSlash(newRelPath)
 	c.nibs[targetID] = b
 
 	return b, nil

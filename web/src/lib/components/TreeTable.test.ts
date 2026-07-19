@@ -5,9 +5,14 @@ import { readable, writable } from "svelte/store";
 import { tick } from "svelte";
 import TreeTable from "./TreeTable.svelte";
 import type { TreeTableNib, ViewLevel, ColumnKey } from "../types";
+import { DEFAULT_COLUMN_WIDTHS } from "../types";
+import { bucketIdForItem, isBucketId } from "../tree";
+import { OPEN_PLUS_DEFERRED_STATUSES } from "../constants";
 import { SelectionState } from "../selection.svelte";
 import { DragState } from "../drag.svelte";
+import { TreeViewState } from "../treeView.svelte";
 import { makeTestContext } from "../contexts";
+import { NibChangeTracker } from "../changeTracker.svelte";
 
 function makeTreeTableNib(overrides: Partial<TreeTableNib> = {}): TreeTableNib {
   return {
@@ -43,11 +48,15 @@ const mockSubscriptionStore = vi.mocked(subscriptionStore);
 /** Render TreeTable with required context. */
 function renderTreeTable(
   props: Record<string, unknown>,
-  opts?: { selection?: SelectionState; drag?: DragState },
+  opts?: { selection?: SelectionState; drag?: DragState; treeView?: TreeViewState },
 ) {
   return render(TreeTable, {
     props: props as any,
-    context: makeTestContext(opts?.selection ?? new SelectionState(), opts?.drag ?? new DragState()),
+    context: makeTestContext(
+      opts?.selection ?? new SelectionState(),
+      opts?.drag ?? new DragState(),
+      { treeView: opts?.treeView },
+    ),
   });
 }
 
@@ -288,7 +297,266 @@ describe("TreeTable", () => {
     expect(reexecute).toHaveBeenCalledTimes(1);
   });
 
-  it("milestones view shows only milestone subtrees", () => {
+  // Content-key dedup must NOT collapse two genuinely-distinct edits to the same
+  // nib. A burst re-emission of ONE commit shares an etag; a real second edit
+  // carries a NEW etag. Keying dedup on (type:nibId) alone drops the second edit
+  // and the tree goes stale relative to it. The key includes the payload etag so
+  // a distinct-etag edit still refetches.
+  it("refetches for a second distinct-etag edit to the same nib (does not over-dedup)", async () => {
+    const nibs: TreeTableNib[] = [
+      makeTreeTableNib({ id: "nibs-x", title: "Original", type: "task" }),
+    ];
+
+    const reexecute = vi.fn();
+    mockQueryStore.mockReturnValue({
+      ...readable({ fetching: false, error: undefined, data: { nibs }, stale: false }),
+      reexecute,
+    } as any);
+
+    const subStore = writable<any>({ fetching: true, error: undefined, data: undefined, stale: false });
+    mockSubscriptionStore.mockReturnValue(subStore as any);
+
+    renderTreeTable({ filter: {} });
+    await tick();
+
+    // Mirror the real subscription payload: type + nibId + a nib object carrying
+    // an etag (NIB_CHANGED_SUBSCRIPTION selects nib { ... etag ... }).
+    const makeEvent = (etag: string) => ({
+      type: "updated",
+      nibId: "nibs-x",
+      nib: {
+        id: "nibs-x",
+        title: "Edited",
+        status: "in-progress",
+        type: "task",
+        priority: "normal",
+        estimate: "m",
+        tags: [],
+        body: "",
+        etag,
+        updatedAt: "2026-03-20T10:00:00Z",
+        parentId: null,
+        blockingIds: [],
+        blockedByIds: [],
+      },
+    });
+
+    // Edit A commits (etag e1).
+    subStore.set({ fetching: true, error: undefined, data: { nibChanged: makeEvent("e1") }, stale: false });
+    await tick();
+
+    // A genuinely distinct edit B to the SAME nib commits (etag e2).
+    subStore.set({ fetching: true, error: undefined, data: { nibChanged: makeEvent("e2") }, stale: false });
+    await tick();
+
+    // Both distinct edits must refetch — the second must not be swallowed.
+    expect(reexecute).toHaveBeenCalledTimes(2);
+  });
+
+  // Complement to the two-distinct-edits case: a burst re-emission of ONE commit
+  // shares an etag, so even WITH the nib payload present the identical repeats
+  // must still coalesce to a single refetch (no effect_update_depth loop).
+  it("still coalesces 20 identical emissions that carry the same etag to one refetch", async () => {
+    const nibs: TreeTableNib[] = [
+      makeTreeTableNib({ id: "nibs-x", title: "Original", type: "task" }),
+    ];
+
+    const reexecute = vi.fn();
+    mockQueryStore.mockReturnValue({
+      ...readable({ fetching: false, error: undefined, data: { nibs }, stale: false }),
+      reexecute,
+    } as any);
+
+    const subStore = writable<any>({ fetching: true, error: undefined, data: undefined, stale: false });
+    mockSubscriptionStore.mockReturnValue(subStore as any);
+
+    renderTreeTable({ filter: {} });
+    await tick();
+
+    const evt = {
+      type: "updated",
+      nibId: "nibs-x",
+      nib: {
+        id: "nibs-x",
+        title: "Edited",
+        status: "in-progress",
+        type: "task",
+        priority: "normal",
+        estimate: "m",
+        tags: [],
+        body: "",
+        etag: "same-etag",
+        updatedAt: "2026-03-20T10:00:00Z",
+        parentId: null,
+        blockingIds: [],
+        blockedByIds: [],
+      },
+    };
+    for (let i = 0; i < 20; i++) {
+      subStore.set({
+        fetching: true,
+        error: undefined,
+        data: { nibChanged: { type: evt.type, nibId: evt.nibId, nib: { ...evt.nib } } },
+        stale: false,
+      });
+      await tick();
+    }
+
+    expect(reexecute).toHaveBeenCalledTimes(1);
+  });
+
+  // Regression: TreeTable used to call `result.reexecute(...)` synchronously in
+  // the subscription $effect (inside untrack(), which does not catch). A
+  // throwing/absent reexecute therefore propagated out of the effect body and
+  // aborted Svelte's whole effect flush — silently killing the live bridge, so
+  // NO subsequent change event was ever processed for the rest of the session.
+  // reexecute is now isolated in a try/catch: one failing refetch is surfaced
+  // (console.error) and the effect keeps running for the next event.
+  it("survives a throwing reexecute: a later change event is still processed and the failure is surfaced", async () => {
+    const nibs: TreeTableNib[] = [
+      makeTreeTableNib({ id: "nibs-m1", title: "Milestone", type: "milestone" }),
+    ];
+
+    // The non-deleted branch calls reexecute synchronously; make it always throw.
+    const reexecute = vi.fn(() => {
+      throw new TypeError("reexecute exploded");
+    });
+    mockQueryStore.mockReturnValue({
+      ...readable({ fetching: false, error: undefined, data: { nibs }, stale: false }),
+      reexecute,
+    } as any);
+
+    const subStore = writable<any>({ fetching: true, error: undefined, data: undefined, stale: false });
+    mockSubscriptionStore.mockReturnValue(subStore as any);
+
+    const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+
+    try {
+      renderTreeTable({ filter: {} });
+      await tick();
+
+      // First non-deleted event: the effect flush DID run and reexecute was
+      // called (guards against a "flush never ran" false pass) — and it threw.
+      subStore.set({
+        fetching: true,
+        error: undefined,
+        data: { nibChanged: { type: "created", nibId: "nibs-a" } },
+        stale: false,
+      });
+      await tick();
+      expect(reexecute).toHaveBeenCalledTimes(1);
+
+      // The load-bearing behavior: that throw did NOT take the bridge down. A
+      // SECOND, distinct event still reaches the effect and refetches. Without
+      // the try/catch the aborted flush leaves this stuck at 1 (bridge dead).
+      subStore.set({
+        fetching: true,
+        error: undefined,
+        data: { nibChanged: { type: "created", nibId: "nibs-b" } },
+        stale: false,
+      });
+      await tick();
+      expect(reexecute).toHaveBeenCalledTimes(2);
+
+      // The failure is surfaced, not silently swallowed — once per throwing
+      // refetch (two events, two throws), with the thrown error passed through.
+      expect(errorSpy).toHaveBeenCalledTimes(2);
+      expect(errorSpy).toHaveBeenLastCalledWith(
+        "Failed to refetch nibs after a change event:",
+        expect.any(TypeError),
+      );
+    } finally {
+      errorSpy.mockRestore();
+    }
+  });
+
+  // A "deleted" event defers its refetch by ~fadeDurationMs so the row's
+  // fade-out animation can play before the row leaves the dataset. The timer
+  // must be cleared on unmount — otherwise it outlives the component and fires
+  // reexecute on a torn-down urql store.
+  it("clears the deferred delete refetch on unmount so it never fires after teardown", async () => {
+    const nibs: TreeTableNib[] = [
+      makeTreeTableNib({ id: "nibs-m1", title: "Milestone", type: "milestone" }),
+    ];
+
+    const reexecute = vi.fn();
+    mockQueryStore.mockReturnValue({
+      ...readable({ fetching: false, error: undefined, data: { nibs }, stale: false }),
+      reexecute,
+    } as any);
+
+    const subStore = writable<any>({ fetching: true, error: undefined, data: undefined, stale: false });
+    mockSubscriptionStore.mockReturnValue(subStore as any);
+
+    const fadeMs = new NibChangeTracker().fadeDurationMs;
+    // Fake ONLY the timer fns so Svelte's microtask-based tick() stays real.
+    vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+    try {
+      const { unmount } = renderTreeTable({ filter: {} });
+      await tick();
+
+      // A delete defers its refetch — nothing fires synchronously.
+      subStore.set({
+        fetching: true,
+        error: undefined,
+        data: { nibChanged: { type: "deleted", nibId: "nibs-m1" } },
+        stale: false,
+      });
+      await tick();
+      expect(reexecute).not.toHaveBeenCalled();
+
+      // Unmount inside the fade window, then let the deferred deadline pass.
+      unmount();
+      vi.advanceTimersByTime(fadeMs);
+
+      // The deferred timer was cleared on teardown, so reexecute never ran.
+      expect(reexecute).not.toHaveBeenCalled();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  // The complement to the unmount guard: while the component stays mounted, the
+  // deferred delete refetch DOES fire once the fade window elapses.
+  it("fires the deferred delete refetch once the fade window elapses while mounted", async () => {
+    const nibs: TreeTableNib[] = [
+      makeTreeTableNib({ id: "nibs-m1", title: "Milestone", type: "milestone" }),
+    ];
+
+    const reexecute = vi.fn();
+    mockQueryStore.mockReturnValue({
+      ...readable({ fetching: false, error: undefined, data: { nibs }, stale: false }),
+      reexecute,
+    } as any);
+
+    const subStore = writable<any>({ fetching: true, error: undefined, data: undefined, stale: false });
+    mockSubscriptionStore.mockReturnValue(subStore as any);
+
+    const fadeMs = new NibChangeTracker().fadeDurationMs;
+    vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+    try {
+      renderTreeTable({ filter: {} });
+      await tick();
+
+      subStore.set({
+        fetching: true,
+        error: undefined,
+        data: { nibChanged: { type: "deleted", nibId: "nibs-m1" } },
+        stale: false,
+      });
+      await tick();
+      // Deferred: the refetch has not fired yet.
+      expect(reexecute).not.toHaveBeenCalled();
+
+      // The fade window elapses — the deferred refetch fires exactly once.
+      vi.advanceTimersByTime(fadeMs);
+      expect(reexecute).toHaveBeenCalledTimes(1);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("milestones view: milestone headers keep subtrees; loose work lands in a 'No milestone' bucket (lossless)", () => {
     const nibs: TreeTableNib[] = [
       makeTreeTableNib({ id: "nibs-001", title: "Milestone A", type: "milestone" }),
       makeTreeTableNib({ id: "nibs-002", title: "Epic under A", type: "epic", parentId: "nibs-001" }),
@@ -302,14 +570,19 @@ describe("TreeTable", () => {
     const { container } = renderTreeTable({ filter: {}, viewLevel: "milestones" as ViewLevel });
 
     const rows = container.querySelectorAll("[data-testid='tree-row']");
-    // Milestone A and its child Epic, but not the standalone task
-    expect(rows).toHaveLength(2);
-    expect(screen.getByText("Milestone A")).toBeInTheDocument();
-    expect(screen.getByText("Epic under A")).toBeInTheDocument();
-    expect(screen.queryByText("Standalone task")).not.toBeInTheDocument();
+    // Milestone A + Epic + "No milestone" bucket + Standalone task
+    expect(rows).toHaveLength(4);
+
+    // Scope to row title cells ("Milestone A" also appears in the Epic's parent cell now)
+    const titles = Array.from(container.querySelectorAll("[data-testid='title-text']")).map(e => e.textContent);
+    expect(titles).toContain("Milestone A");
+    expect(titles).toContain("Epic under A");
+    // Nothing is dropped: the standalone task now shows under a "No milestone" bucket
+    expect(titles).toContain("No milestone (1)");
+    expect(titles).toContain("Standalone task");
   });
 
-  it("milestones view hides the Parent column", () => {
+  it("milestones view shows the Parent column (parent is a normal column in every lens)", () => {
     const nibs: TreeTableNib[] = [
       makeTreeTableNib({ id: "nibs-001", title: "Milestone A", type: "milestone" }),
       makeTreeTableNib({ id: "nibs-002", title: "Task", type: "task", parentId: "nibs-001" }),
@@ -323,11 +596,11 @@ describe("TreeTable", () => {
 
     const thead = container.querySelector("thead")!;
     const headers = Array.from(thead.querySelectorAll("th")).map(th => th.textContent?.trim());
-    expect(headers).not.toContain("Parent");
+    expect(headers).toContain("Parent");
 
-    // Row parent cells should not be present
+    // The child task's parent cell renders its milestone parent
     const parentCells = container.querySelectorAll("[data-testid='nib-parent']");
-    expect(parentCells).toHaveLength(0);
+    expect(parentCells.length).toBeGreaterThan(0);
   });
 
   it("epics view shows Parent column", () => {
@@ -467,7 +740,7 @@ describe("TreeTable", () => {
     // The serverFilter passed to queryStore should NOT contain status,
     // just like type/priority/estimate/tags are stripped out.
     const lastCall = mockQueryStore.mock.calls[mockQueryStore.mock.calls.length - 1];
-    const variables = lastCall[0].variables;
+    const variables = lastCall[0].variables!;
     expect(variables.filter).not.toHaveProperty("status");
   });
 
@@ -551,7 +824,79 @@ describe("TreeTable", () => {
     expect(container.querySelector("[data-testid='nib-state']")).toBeInTheDocument();
   });
 
-  it("parent column hidden by both hideParent and visibleColumns exclusion", () => {
+  it("renders Blocking and Blocked by headers when those columns are visible", () => {
+    const nibs: TreeTableNib[] = [
+      makeTreeTableNib({ id: "nibs-001", title: "Epic A", type: "epic" }),
+    ];
+
+    mockQueryStore.mockReturnValue(
+      readable({ fetching: false, error: undefined, data: { nibs }, stale: false }) as any
+    );
+
+    const visibleColumns: ColumnKey[] = ["title", "blocking", "blockedBy"];
+    const { container } = renderTreeTable({
+      filter: {},
+      viewLevel: "epics" as ViewLevel,
+      visibleColumns,
+    });
+
+    const thead = container.querySelector("thead")!;
+    const headers = Array.from(thead.querySelectorAll("th")).map(th => th.textContent?.trim());
+    expect(headers).toContain("Blocking");
+    expect(headers).toContain("Blocked by");
+  });
+
+  it("omits Blocking and Blocked by headers when those columns are not visible", () => {
+    const nibs: TreeTableNib[] = [
+      makeTreeTableNib({ id: "nibs-001", title: "Epic A", type: "epic" }),
+    ];
+
+    mockQueryStore.mockReturnValue(
+      readable({ fetching: false, error: undefined, data: { nibs }, stale: false }) as any
+    );
+
+    // The default-visible set (no blocking / blockedBy).
+    const visibleColumns: ColumnKey[] = ["id", "parent", "type", "title", "state", "effort", "tags"];
+    const { container } = renderTreeTable({
+      filter: {},
+      viewLevel: "epics" as ViewLevel,
+      visibleColumns,
+    });
+
+    const thead = container.querySelector("thead")!;
+    const headers = Array.from(thead.querySelectorAll("th")).map(th => th.textContent?.trim());
+    expect(headers).not.toContain("Blocking");
+    expect(headers).not.toContain("Blocked by");
+  });
+
+  it("table width grows by the blocking/blockedBy column widths when they are shown", () => {
+    const nibs: TreeTableNib[] = [
+      makeTreeTableNib({ id: "nibs-001", title: "Epic A", type: "epic" }),
+    ];
+
+    mockQueryStore.mockReturnValue(
+      readable({ fetching: false, error: undefined, data: { nibs }, stale: false }) as any
+    );
+
+    const base = renderTreeTable({
+      filter: {},
+      viewLevel: "epics" as ViewLevel,
+      visibleColumns: ["title"] as ColumnKey[],
+    });
+    const baseWidth = parseInt((base.container.querySelector("table") as HTMLElement).style.width, 10);
+
+    const withCols = renderTreeTable({
+      filter: {},
+      viewLevel: "epics" as ViewLevel,
+      visibleColumns: ["title", "blocking", "blockedBy"] as ColumnKey[],
+    });
+    const grownWidth = parseInt((withCols.container.querySelector("table") as HTMLElement).style.width, 10);
+
+    // blocking + blockedBy default widths added to the base table width.
+    expect(grownWidth).toBe(baseWidth + DEFAULT_COLUMN_WIDTHS.blocking + DEFAULT_COLUMN_WIDTHS.blockedBy);
+  });
+
+  it("parent column hidden by visibleColumns exclusion", () => {
     const nibs: TreeTableNib[] = [
       makeTreeTableNib({ id: "nibs-001", title: "Epic A", type: "epic" }),
       makeTreeTableNib({ id: "nibs-002", title: "Task", type: "task", parentId: "nibs-001" }),
@@ -595,7 +940,7 @@ describe("TreeTable", () => {
     expect(draggableRows.length).toBeGreaterThan(0);
   });
 
-  it("rows lack draggable class when filters are active", () => {
+  it("rows keep draggable class when a hide-filter is active (filters never reorder rows)", () => {
     const nibs: TreeTableNib[] = [
       makeTreeTableNib({ id: "nibs-m1", title: "Milestone", type: "milestone" }),
       makeTreeTableNib({ id: "nibs-001", title: "Child Task", type: "task", parentId: "nibs-m1" }),
@@ -610,7 +955,27 @@ describe("TreeTable", () => {
       viewLevel: "milestones" as ViewLevel,
     });
 
-    // With active client filters, rows should NOT have draggable class
+    // A hide-filter keeps matching rows in tree order, so drag stays allowed.
+    const draggableRows = container.querySelectorAll("tr.draggable");
+    expect(draggableRows.length).toBeGreaterThan(0);
+  });
+
+  it("rows lack draggable class when search is active", () => {
+    const nibs: TreeTableNib[] = [
+      makeTreeTableNib({ id: "nibs-m1", title: "Milestone", type: "milestone" }),
+      makeTreeTableNib({ id: "nibs-001", title: "Child Task", type: "task", parentId: "nibs-m1" }),
+    ];
+
+    mockQueryStore.mockReturnValue(
+      readable({ fetching: false, error: undefined, data: { nibs }, stale: false }) as any
+    );
+
+    const { container } = renderTreeTable({
+      filter: { search: "child" },
+      viewLevel: "milestones" as ViewLevel,
+    });
+
+    // Search flattens results out of tree order, so drag must be disabled.
     const draggableRows = container.querySelectorAll("tr.draggable");
     expect(draggableRows).toHaveLength(0);
   });
@@ -740,6 +1105,23 @@ describe("TreeTable", () => {
       await user.keyboard("{Enter}");
 
       expect(sel.selectedNibId).toBe("nibs-001");
+    });
+
+    it("Space toggles the arrow-focused row (focusedNibId fallback path)", async () => {
+      const user = userEvent.setup();
+      const sel = new SelectionState();
+      sel.focus("nibs-001");
+      const nibs = makeKeyboardTestNibs(2);
+
+      setupWithNibs(nibs, {}, { selection: sel });
+      const scrollContainer = getScrollContainer();
+      // DOM focus on the grid container (not a row) — the key event has no row
+      // ancestor, so Space must fall back to the virtual focusedNibId.
+      scrollContainer.focus();
+
+      await user.keyboard(" ");
+
+      expect(sel.selectedIds.has("nibs-001")).toBe(true);
     });
 
     it("ArrowLeft on expanded parent collapses it", async () => {
@@ -898,6 +1280,51 @@ describe("TreeTable", () => {
       expect(sel.selectedIds.has("nibs-002")).toBe(true);
     });
 
+    it("Ctrl+click on the title text toggles nib in selection via context", async () => {
+      const user = userEvent.setup();
+      const sel = new SelectionState();
+      sel.select("nibs-m1"); // Pre-select milestone
+      const nibs = makeTestNibs();
+
+      const { container } = setupWithNibs(nibs, {}, { selection: sel });
+
+      // Ctrl+click the title text itself — the same gesture as on the row body.
+      const titleText = container.querySelector(
+        "tr[data-nib-id='nibs-001'] [data-action='title']",
+      ) as HTMLElement;
+      await user.keyboard("{Control>}");
+      await user.click(titleText);
+      await user.keyboard("{/Control}");
+
+      expect(sel.selectedIds.has("nibs-001")).toBe(true);
+      expect(sel.selectedIds.has("nibs-m1")).toBe(true);
+    });
+
+    it("Shift+click on the title text range-selects via context", async () => {
+      const user = userEvent.setup();
+      const sel = new SelectionState();
+      sel.select("nibs-m1"); // Anchor at milestone
+      const nibs = [
+        makeTreeTableNib({ id: "nibs-m1", title: "Milestone", type: "milestone" }),
+        makeTreeTableNib({ id: "nibs-001", title: "Task 1", type: "task", parentId: "nibs-m1" }),
+        makeTreeTableNib({ id: "nibs-002", title: "Task 2", type: "task", parentId: "nibs-m1" }),
+      ];
+
+      const { container } = setupWithNibs(nibs, {}, { selection: sel });
+
+      // Shift+click the title text of Task 2 — range from the milestone anchor.
+      const titleText = container.querySelector(
+        "tr[data-nib-id='nibs-002'] [data-action='title']",
+      ) as HTMLElement;
+      await user.keyboard("{Shift>}");
+      await user.click(titleText);
+      await user.keyboard("{/Shift}");
+
+      expect(sel.selectedIds.has("nibs-m1")).toBe(true);
+      expect(sel.selectedIds.has("nibs-001")).toBe(true);
+      expect(sel.selectedIds.has("nibs-002")).toBe(true);
+    });
+
     it("toggle click dispatches collapse/expand via delegation and does NOT select", async () => {
       const user = userEvent.setup();
       const sel = new SelectionState();
@@ -946,7 +1373,12 @@ describe("TreeTable", () => {
       await user.click(addChildBtn);
 
       expect(onaddchild).toHaveBeenCalledOnce();
-      expect(onaddchild).toHaveBeenCalledWith("nibs-m1", "milestone");
+      // Third arg is the clicked [+]'s viewport rect (the type picker anchors to it).
+      expect(onaddchild).toHaveBeenCalledWith(
+        "nibs-m1",
+        "milestone",
+        expect.objectContaining({ x: expect.any(Number), y: expect.any(Number) }),
+      );
 
       // selection should NOT have changed
       expect(sel.selectedNibId).toBeNull();
@@ -967,8 +1399,75 @@ describe("TreeTable", () => {
       expect(onrowcontextmenu).toHaveBeenCalledWith(
         "nibs-001",
         expect.any(MouseEvent),
-        expect.objectContaining({ id: "nibs-001", title: "Child Task" })
+        expect.objectContaining({ id: "nibs-001", title: "Child Task" }),
+        expect.objectContaining({
+          hasChildren: false, // Child Task is a leaf
+          expandChildren: expect.any(Function),
+          collapseChildren: expect.any(Function),
+        }),
       );
+    });
+
+    it("context menu supplies hasChildren=true for a parent row", async () => {
+      const user = userEvent.setup();
+      const onrowcontextmenu = vi.fn();
+      const nibs = makeTestNibs(); // nibs-m1 (milestone) has a child
+
+      const { container } = setupWithNibs(nibs, { onrowcontextmenu });
+
+      const row = container.querySelector("tr[data-nib-id='nibs-m1']") as HTMLElement;
+      await user.pointer({ target: row, keys: "[MouseRight]" });
+
+      expect(onrowcontextmenu).toHaveBeenCalledWith(
+        "nibs-m1",
+        expect.any(MouseEvent),
+        expect.objectContaining({ id: "nibs-m1" }),
+        expect.objectContaining({ hasChildren: true }),
+      );
+    });
+
+    it("subtree collapseChildren/expandChildren toggle the whole subtree", async () => {
+      const user = userEvent.setup();
+      let captured: import("../types").RowSubtreeActions | undefined;
+      const onrowcontextmenu = vi.fn((_id, _e, _nib, subtree) => { captured = subtree; });
+      const nibs: TreeTableNib[] = [
+        makeTreeTableNib({ id: "nibs-m1", title: "Milestone", type: "milestone" }),
+        makeTreeTableNib({ id: "nibs-e1", title: "Epic", type: "epic", parentId: "nibs-m1" }),
+        makeTreeTableNib({ id: "nibs-t1", title: "Deep task", type: "task", parentId: "nibs-e1" }),
+      ];
+
+      const { container } = setupWithNibs(nibs, { onrowcontextmenu });
+      // Check row presence by id ("Epic" also appears in the task's Parent column,
+      // so text queries are ambiguous).
+      const rowVisible = (id: string) => container.querySelector(`tr[data-nib-id='${id}']`) !== null;
+
+      // All three rows visible initially.
+      expect(rowVisible("nibs-e1")).toBe(true);
+      expect(rowVisible("nibs-t1")).toBe(true);
+
+      // Right-click the milestone to capture its subtree actions.
+      const row = container.querySelector("tr[data-nib-id='nibs-m1']") as HTMLElement;
+      await user.pointer({ target: row, keys: "[MouseRight]" });
+      expect(captured?.hasChildren).toBe(true);
+
+      // Collapse the whole subtree — the milestone collapses, hiding everything below.
+      captured!.collapseChildren();
+      await tick();
+      expect(rowVisible("nibs-e1")).toBe(false);
+      expect(rowVisible("nibs-t1")).toBe(false);
+
+      // Expanding just the milestone reveals exactly ONE level (the epic stays collapsed).
+      const toggle = container.querySelector("tr[data-nib-id='nibs-m1'] [data-action='toggle']") as HTMLElement;
+      await user.click(toggle);
+      await tick();
+      expect(rowVisible("nibs-e1")).toBe(true);
+      expect(rowVisible("nibs-t1")).toBe(false);
+
+      // Expand-children fully expands the subtree again.
+      captured!.expandChildren();
+      await tick();
+      expect(rowVisible("nibs-e1")).toBe(true);
+      expect(rowVisible("nibs-t1")).toBe(true);
     });
 
     it("row double-click selects nib via context", async () => {
@@ -986,18 +1485,151 @@ describe("TreeTable", () => {
       expect(sel.selectedNibId).toBe("nibs-m1");
     });
 
-    it("title click does NOT also fire row-level selection for other actions", async () => {
+    // Regression: a synthetic "No X" grouping bucket row is not a
+    // real nib. Routing its synthetic id through view.open resolves an empty
+    // detail query and fires the missing-nib ("no longer exists") heal path.
+    // A bucket row must instead toggle/collapse its group, mirroring its caret.
+    function makeBucketTestNibs(): TreeTableNib[] {
+      return [
+        makeTreeTableNib({ id: "nibs-m1", title: "Milestone A", type: "milestone" }),
+        makeTreeTableNib({ id: "nibs-e1", title: "Epic under A", type: "epic", parentId: "nibs-m1" }),
+        // No milestone parent -> falls into the synthetic "No milestone" bucket.
+        makeTreeTableNib({ id: "nibs-loose", title: "Loose Task", type: "task" }),
+      ];
+    }
+
+    function milestoneBucketId(nibs: TreeTableNib[]): string {
+      const bucketId = bucketIdForItem(new Map(nibs.map(n => [n.id, n])), "nibs-loose", "milestones");
+      expect(bucketId).not.toBeNull();
+      expect(isBucketId(bucketId!)).toBe(true);
+      return bucketId!;
+    }
+
+    it("clicking a bucket row title does NOT open/select it and toggles its group instead", async () => {
       const user = userEvent.setup();
       const sel = new SelectionState();
-      const nibs = makeTestNibs();
+      const nibs = makeBucketTestNibs();
+      const bucketId = milestoneBucketId(nibs);
 
       const { container } = setupWithNibs(nibs, {}, { selection: sel });
 
-      const titleText = container.querySelector("tr[data-nib-id='nibs-001'] [data-action='title']") as HTMLElement;
-      await user.click(titleText);
+      // The bucket row and its child are visible initially.
+      expect(screen.getByText("Loose Task")).toBeInTheDocument();
+      const bucketTitle = container.querySelector(
+        `tr[data-nib-id="${bucketId}"] [data-action="title"]`,
+      ) as HTMLElement;
+      expect(bucketTitle).toBeInTheDocument();
 
-      // Title click selects via context
-      expect(sel.selectedNibId).toBe("nibs-001");
+      // Click the bucket's title (the exact path that used to route to view.open).
+      await user.click(bucketTitle);
+
+      // It must NOT open/select the synthetic bucket id (no "no longer exists").
+      expect(sel.selectedNibId).not.toBe(bucketId);
+      expect(sel.selectedNibId).toBeNull();
+
+      // Instead the group collapses — its child is hidden.
+      expect(screen.queryByText("Loose Task")).not.toBeInTheDocument();
+
+      // Clicking again re-expands the group.
+      const bucketTitleAfter = container.querySelector(
+        `tr[data-nib-id="${bucketId}"] [data-action="title"]`,
+      ) as HTMLElement;
+      await user.click(bucketTitleAfter);
+      expect(screen.getByText("Loose Task")).toBeInTheDocument();
+    });
+
+    it("clicking a bucket row body does NOT open/select it and toggles its group instead", async () => {
+      const user = userEvent.setup();
+      const sel = new SelectionState();
+      const nibs = makeBucketTestNibs();
+      const bucketId = milestoneBucketId(nibs);
+
+      const { container } = setupWithNibs(nibs, {}, { selection: sel });
+
+      expect(screen.getByText("Loose Task")).toBeInTheDocument();
+
+      // Click the row body (a non-action cell), not the title/caret.
+      const bucketBodyCell = container.querySelector(
+        `tr[data-nib-id="${bucketId}"] [data-testid="nib-type"]`,
+      ) as HTMLElement;
+      expect(bucketBodyCell).toBeInTheDocument();
+      await user.click(bucketBodyCell);
+
+      expect(sel.selectedNibId).not.toBe(bucketId);
+      expect(sel.selectedNibId).toBeNull();
+      expect(screen.queryByText("Loose Task")).not.toBeInTheDocument();
+    });
+
+    it("Ctrl+click on a bucket row title toggles its group and keeps the synthetic id out of the selection", async () => {
+      const user = userEvent.setup();
+      const sel = new SelectionState();
+      sel.select("nibs-m1");
+      const nibs = makeBucketTestNibs();
+      const bucketId = milestoneBucketId(nibs);
+
+      const { container } = setupWithNibs(nibs, {}, { selection: sel });
+
+      expect(screen.getByText("Loose Task")).toBeInTheDocument();
+      const bucketTitle = container.querySelector(
+        `tr[data-nib-id="${bucketId}"] [data-action="title"]`,
+      ) as HTMLElement;
+
+      await user.keyboard("{Control>}");
+      await user.click(bucketTitle);
+      await user.keyboard("{/Control}");
+
+      // A bucket is not a nib, so it can never join the bulk-action set.
+      expect(sel.selectedIds.has(bucketId)).toBe(false);
+      expect(sel.selectedIds.has("nibs-m1")).toBe(true);
+      // The group collapses instead — its child is hidden.
+      expect(screen.queryByText("Loose Task")).not.toBeInTheDocument();
+    });
+
+    it("Shift+click on a bucket row body toggles its group and keeps the synthetic id out of the selection", async () => {
+      const user = userEvent.setup();
+      const sel = new SelectionState();
+      sel.select("nibs-m1");
+      const nibs = makeBucketTestNibs();
+      const bucketId = milestoneBucketId(nibs);
+
+      const { container } = setupWithNibs(nibs, {}, { selection: sel });
+
+      expect(screen.getByText("Loose Task")).toBeInTheDocument();
+      const bucketBodyCell = container.querySelector(
+        `tr[data-nib-id="${bucketId}"] [data-testid="nib-type"]`,
+      ) as HTMLElement;
+
+      await user.keyboard("{Shift>}");
+      await user.click(bucketBodyCell);
+      await user.keyboard("{/Shift}");
+
+      expect(sel.selectedIds.has(bucketId)).toBe(false);
+      expect(screen.queryByText("Loose Task")).not.toBeInTheDocument();
+    });
+
+    it("Shift+click whose range SPANS a bucket selects the nibs in range and NOT the bucket's synthetic id", async () => {
+      const user = userEvent.setup();
+      const sel = new SelectionState();
+      const nibs = makeBucketTestNibs();
+      const bucketId = milestoneBucketId(nibs);
+      // Anchor on the epic, which sits BEFORE the bucket in view order.
+      sel.select("nibs-e1");
+
+      const { container } = setupWithNibs(nibs, {}, { selection: sel });
+
+      // View order is [m1, e1, <bucket>, loose]. Shift-click the loose task's row
+      // body (after the bucket) so the range spans the interleaved bucket row.
+      const looseBodyCell = container.querySelector(
+        `tr[data-nib-id="nibs-loose"] [data-testid="nib-type"]`,
+      ) as HTMLElement;
+      expect(looseBodyCell).toBeInTheDocument();
+      await user.keyboard("{Shift>}");
+      await user.click(looseBodyCell);
+      await user.keyboard("{/Shift}");
+
+      expect(sel.selectedIds.has("nibs-e1")).toBe(true);
+      expect(sel.selectedIds.has("nibs-loose")).toBe(true);
+      expect(sel.selectedIds.has(bucketId)).toBe(false);
     });
 
     it("TreeTableRow renders with zero callback props (pure data/visual)", () => {
@@ -1013,29 +1645,202 @@ describe("TreeTable", () => {
       expect((rows[1] as HTMLElement).dataset.nibId).toBe("nibs-001");
     });
 
-    it("title element is a <button> for keyboard accessibility (Enter/Space activate)", async () => {
+    // Space/Enter on a row title resolve WHICH row to act on from the key event's
+    // own DOM row ancestor (`tr[data-nib-id]`), falling back to the virtual
+    // `focusedNibId` only when the event has no row ancestor (arrow-key nav, where
+    // DOM focus sits on the grid container). No DOM->virtual focus sync exists.
+    it("Space on a Tab-focused title toggles THAT row (resolved from the DOM), preserving a multi-select", async () => {
+      const user = userEvent.setup();
+      const sel = new SelectionState();
+      const nibs = [
+        makeTreeTableNib({ id: "nibs-m1", title: "Milestone", type: "milestone" }),
+        makeTreeTableNib({ id: "nibs-001", title: "Task 1", type: "task", parentId: "nibs-m1" }),
+        makeTreeTableNib({ id: "nibs-002", title: "Task 2", type: "task", parentId: "nibs-m1" }),
+        makeTreeTableNib({ id: "nibs-003", title: "Task 3", type: "task", parentId: "nibs-m1" }),
+      ];
+
+      const { container } = setupWithNibs(nibs, {}, { selection: sel });
+
+      // Seed a pre-existing multi-select (003) and a STALE virtual focus on a
+      // DIFFERENT row (001) than the one we tab to. The row that Space acts on must
+      // come from the DOM event, not this stale focusedNibId.
+      sel.toggleSelect("nibs-003");
+      sel.focus("nibs-001");
+
+      // Tab lands DOM focus on row 002's title.
+      const title2 = container.querySelector(
+        "tr[data-nib-id='nibs-002'] [data-action='title']",
+      ) as HTMLElement;
+      expect(title2.tagName).toBe("BUTTON");
+      title2.focus();
+
+      // Real keypress: userEvent synthesizes the native button click that a dropped
+      // preventDefault() would let through, so this catches a native open leaking in.
+      await user.keyboard(" ");
+
+      // The tabbed-to row (002) toggles in — resolved from the DOM, NOT the stale
+      // focusedNibId (001), which a naive focusedNibId-only fix would have toggled.
+      expect(sel.selectedIds.has("nibs-002")).toBe(true);
+      expect(sel.selectedIds.has("nibs-001")).toBe(false);
+      // The pre-existing multi-select survives — a native open would have collapsed
+      // the selection to a single 002, dropping 003.
+      expect(sel.selectedIds.has("nibs-003")).toBe(true);
+      // toggleSelect also moves focus/anchor to the toggled row (like Ctrl-click).
+      expect(sel.focusedNibId).toBe("nibs-002");
+    });
+
+    // When focusedNibId is null (e.g. Escape cleared it) but DOM focus is still on
+    // a row title, Enter must still open that row — the keyboard path resolves the
+    // target from the event's DOM row, not from the (null) focusedNibId.
+    it("after focus is cleared, Enter on a still-DOM-focused title still opens the nib", async () => {
       const user = userEvent.setup();
       const sel = new SelectionState();
       const nibs = makeTestNibs();
 
       const { container } = setupWithNibs(nibs, {}, { selection: sel });
 
-      // The title element should be a <button> so Enter/Space natively fire click events
-      const titleEl = container.querySelector("tr[data-nib-id='nibs-001'] [data-action='title']") as HTMLElement;
-      expect(titleEl.tagName).toBe("BUTTON");
+      const title = container.querySelector(
+        "tr[data-nib-id='nibs-001'] [data-action='title']",
+      ) as HTMLElement;
+      title.focus();
+      // Simulate the Escape hierarchy clearing virtual focus WITHOUT blurring DOM
+      // focus (SelectionState.clearFocus, what the Escape handler calls last).
+      sel.clearFocus();
+      expect(sel.focusedNibId).toBeNull();
 
-      // Focus the title and press Enter — should activate select via context
-      titleEl.focus();
       await user.keyboard("{Enter}");
+
+      // Enter still opens the nib — the target is resolved from the DOM row, not
+      // the now-null focusedNibId.
       expect(sel.selectedNibId).toBe("nibs-001");
+    });
 
-      // Reset selection to verify Space also works
-      sel.clearAll();
+    // Enter on a Tab-focused bucket title toggles its group: the target resolves
+    // from the DOM row (a bucket id), and Enter routes a bucket to toggleNode
+    // rather than navigateToNib.
+    it("Enter on a Tab-focused bucket title toggles its group", async () => {
+      const user = userEvent.setup();
+      const sel = new SelectionState();
+      const nibs = makeBucketTestNibs();
+      const bucketId = milestoneBucketId(nibs);
 
-      titleEl.focus();
-      // Press Space — should also activate select via context
+      const { container } = setupWithNibs(nibs, {}, { selection: sel });
+
+      // The bucket's child is visible initially.
+      expect(screen.getByText("Loose Task")).toBeInTheDocument();
+
+      const bucketTitle = container.querySelector(
+        `tr[data-nib-id="${bucketId}"] [data-action="title"]`,
+      ) as HTMLElement;
+      bucketTitle.focus();
+      await user.keyboard("{Enter}");
+
+      // Enter toggled the group closed — its child is hidden — and the synthetic
+      // bucket id never entered the selection.
+      expect(screen.queryByText("Loose Task")).not.toBeInTheDocument();
+      expect(sel.selectedIds.has(bucketId)).toBe(false);
+      expect(sel.selectedNibId).toBeNull();
+    });
+
+    // Passive focus must NOT arm a destructive action: getActionTargetIds()
+    // (Delete/Edit target resolver) falls back to focusedNibId, so merely tabbing
+    // to a row must not set focusedNibId — only an explicit selection gesture may.
+    it("focusing a row title does not arm it as the Delete target (focus alone sets no action target)", async () => {
+      const sel = new SelectionState();
+      const nibs = makeTestNibs();
+
+      const { container } = setupWithNibs(nibs, {}, { selection: sel });
+
+      const title = container.querySelector(
+        "tr[data-nib-id='nibs-001'] [data-action='title']",
+      ) as HTMLElement;
+      title.focus();
+
+      // getActionTargetIds() keys the Delete/Edit target off focusedNibId when
+      // there is no multi-select or context-menu target. Passive focus must leave
+      // focusedNibId (and the selection) empty so nothing is armed.
+      expect(sel.focusedNibId).toBeNull();
+      expect(sel.selectedIds.size).toBe(0);
+    });
+
+    it("Enter on a focused row title opens it (keyboard-nav path)", async () => {
+      const user = userEvent.setup();
+      const sel = new SelectionState();
+      const nibs = makeTestNibs();
+
+      const { container } = setupWithNibs(nibs, {}, { selection: sel });
+
+      const title = container.querySelector(
+        "tr[data-nib-id='nibs-001'] [data-action='title']",
+      ) as HTMLElement;
+      title.focus();
+      await user.keyboard("{Enter}");
+
+      expect(sel.selectedNibId).toBe("nibs-001");
+    });
+
+    it("Space on a title toggles that same row back out after a click selected it", async () => {
+      const user = userEvent.setup();
+      const sel = new SelectionState();
+      const nibs = makeTestNibs();
+
+      const { container } = setupWithNibs(nibs, {}, { selection: sel });
+
+      const title = container.querySelector(
+        "tr[data-nib-id='nibs-001'] [data-action='title']",
+      ) as HTMLElement;
+
+      // A click selects the row.
+      await user.click(title);
+      expect(sel.selectedIds.has("nibs-001")).toBe(true);
+      expect(sel.focusedNibId).toBe("nibs-001");
+
+      // Space on that same title toggles the row back out — the keyboard path
+      // resolves its target from the event's DOM row (001). Use a real keypress
+      // (focus + user.keyboard) so a dropped preventDefault would let the native
+      // click through and be caught, rather than a raw synthetic keydown.
+      title.focus();
       await user.keyboard(" ");
-      expect(sel.selectedNibId).toBe("nibs-001");
+      expect(sel.selectedIds.has("nibs-001")).toBe(false);
+    });
+
+    it("Space on the toggle button keeps native activation (collapses, does NOT toggle selection)", async () => {
+      const user = userEvent.setup();
+      const sel = new SelectionState();
+      const nibs = makeTestNibs();
+
+      const { container } = setupWithNibs(nibs, {}, { selection: sel });
+
+      expect(screen.getByText("Child Task")).toBeInTheDocument();
+
+      const toggle = container.querySelector(
+        "tr[data-nib-id='nibs-m1'] [data-action='toggle']",
+      ) as HTMLElement;
+      toggle.focus();
+      await user.keyboard(" ");
+
+      // Native activation still fires the collapse...
+      expect(screen.queryByText("Child Task")).not.toBeInTheDocument();
+      // ...and Space did NOT toggle selection — the exemption still covers toggle.
+      expect(sel.selectedIds.size).toBe(0);
+    });
+
+    it("Space on the add-child button keeps native activation (opens type picker, does NOT toggle selection)", async () => {
+      const user = userEvent.setup();
+      const sel = new SelectionState();
+      const onaddchild = vi.fn();
+      const nibs = makeTestNibs();
+
+      const { container } = setupWithNibs(nibs, { onaddchild }, { selection: sel });
+
+      const addChild = container.querySelector(
+        "tr[data-nib-id='nibs-m1'] [data-action='add-child']",
+      ) as HTMLElement;
+      addChild.focus();
+      await user.keyboard(" ");
+
+      expect(onaddchild).toHaveBeenCalledOnce();
+      expect(sel.selectedIds.size).toBe(0);
     });
 
     it("row pointerdown enters pending drag state via context", async () => {
@@ -1175,7 +1980,7 @@ describe("TreeTable", () => {
       });
     });
 
-    // Regression (nibs-58c3, review #1): ensureVisible for a nib that is in the
+    // Regression: ensureVisible for a nib that is in the
     // dataset but excluded by an active client filter used to spin the effect
     // forever — every pass reassigned collapsedIds to a fresh Set that could
     // never make the filtered-out nib visible (effect_update_depth_exceeded).
@@ -1207,7 +2012,7 @@ describe("TreeTable", () => {
       expect(screen.queryByText("Filtered Task")).not.toBeInTheDocument();
     });
 
-    // Regression (nibs-58c3, review #3): a cold deep-link runs syncFromUrl on
+    // Regression: a cold deep-link runs syncFromUrl on
     // mount before the GraphQL query resolves (allNibs === []). The effect must
     // NOT clear the pending request as "absent" while the query is still
     // fetching — it must wait for data, then expand/scroll.
@@ -1261,19 +2066,17 @@ describe("TreeTable", () => {
       const initialCallCount = mockQueryStore.mock.calls.length;
       expect(initialCallCount).toBeGreaterThanOrEqual(1);
 
-      // Re-render with a different filter (simulating "Include completed" toggle)
-      await rerender({ filter: { excludeStatus: ["completed", "scrapped"] } });
+      // Re-render with a different filter (simulating the "Open + deferred" preset)
+      await rerender({ filter: { status: [...OPEN_PLUS_DEFERRED_STATUSES] } });
 
       // queryStore should have been called again with the updated filter
       expect(mockQueryStore.mock.calls.length).toBeGreaterThan(initialCallCount);
 
-      // The latest call should include excludeStatus in the server filter
+      // The status include-list is a client-side filter, so it is stripped from the
+      // server filter — the re-query fetches completed/scrapped nibs so their
+      // active descendants stay visible (with the ancestor dimmed in place).
       const latestCall = mockQueryStore.mock.calls[mockQueryStore.mock.calls.length - 1];
-      expect(latestCall[0].variables.filter).toEqual(
-        expect.objectContaining({
-          excludeStatus: ["completed", "scrapped"],
-        })
-      );
+      expect(latestCall[0].variables!.filter).not.toHaveProperty("status");
     });
 
     it("renders updated data after filter change", async () => {
@@ -1306,13 +2109,193 @@ describe("TreeTable", () => {
         readable({ fetching: false, error: undefined, data: { nibs: filteredNibs }, stale: false }) as any
       );
 
-      await rerender({ filter: { excludeStatus: ["completed", "scrapped"] } });
+      await rerender({ filter: { status: [...OPEN_PLUS_DEFERRED_STATUSES] } });
 
       // Should have 2 rows after filter change
       rows = container.querySelectorAll("[data-testid='tree-row']");
       expect(rows).toHaveLength(2);
       expect(screen.getByText("Active Task")).toBeInTheDocument();
       expect(screen.queryByText("Completed Task")).not.toBeInTheDocument();
+    });
+  });
+
+  // Scroll-restore lifecycle. These drive the real mount → scroll →
+  // remount → restore path through TreeTable + TreeViewState — the coverage gap
+  // the prior review flagged, where the two confirmed defects lived.
+  //
+  // jsdom has NO layout, so it cannot reproduce real scrollTop CLAMPING
+  // (scrollHeight - clientHeight) and does not fire a native scroll event on a
+  // programmatic scrollTop assignment. jsdom stores scrollTop verbatim, so these
+  // tests verify the restore-effect WIRING (mount/remount → restore) end-to-end;
+  // the clamp-echo defect's trigger (#2) is covered at the unit level via
+  // simulation in useScrollRestore.test.ts.
+  describe("scroll restore", () => {
+    const nibs: TreeTableNib[] = [
+      makeTreeTableNib({ id: "nibs-m1", title: "Milestone", type: "milestone" }),
+      makeTreeTableNib({ id: "nibs-001", title: "Task", type: "task", parentId: "nibs-m1" }),
+    ];
+
+    it("restores the saved scroll offset onto the scroll container on mount", async () => {
+      const tv = new TreeViewState();
+      tv.scrollTop = 500;
+
+      mockQueryStore.mockReturnValue(
+        readable({ fetching: false, error: undefined, data: { nibs }, stale: false }) as any
+      );
+
+      const { container } = renderTreeTable({ filter: {} }, { treeView: tv });
+      await tick();
+
+      const sc = container.querySelector(".scroll-container") as HTMLElement;
+      expect(sc).not.toBeNull();
+      expect(sc.scrollTop).toBe(500);
+    });
+
+    it("re-restores the saved offset onto a fresh container after a refetch destroys and recreates it", async () => {
+      const tv = new TreeViewState();
+      tv.scrollTop = 500;
+
+      // Writable query store lets us drive data → fetching → data. The
+      // {#if $result.fetching} branch destroys the scroll container while
+      // in-flight and recreates a NEW element when data returns, exercising the
+      // element-identity re-restore (each new container fails container ===
+      // ownedEl and re-arms restore()).
+      const store = writable<any>({ fetching: false, error: undefined, data: { nibs }, stale: false });
+      mockQueryStore.mockReturnValue(store as any);
+
+      const { container } = renderTreeTable({ filter: {} }, { treeView: tv });
+      await tick();
+
+      // Initial mount restores the saved offset.
+      expect((container.querySelector(".scroll-container") as HTMLElement).scrollTop).toBe(500);
+
+      // Refetch in-flight: the container is destroyed (loading branch).
+      store.set({ fetching: true, error: undefined, data: undefined, stale: false });
+      await tick();
+      expect(container.querySelector(".scroll-container")).toBeNull();
+
+      // Data returns: a NEW container mounts and must be re-restored to 500.
+      store.set({ fetching: false, error: undefined, data: { nibs }, stale: false });
+      await tick();
+      const sc2 = container.querySelector(".scroll-container") as HTMLElement;
+      expect(sc2).not.toBeNull();
+      expect(sc2.scrollTop).toBe(500);
+    });
+  });
+
+  describe("prune multi-select on filter change", () => {
+    function makeNibs(): TreeTableNib[] {
+      return [
+        makeTreeTableNib({ id: "nibs-m1", title: "Milestone", type: "milestone" }),
+        makeTreeTableNib({ id: "nibs-t1", title: "Task one", type: "task", parentId: "nibs-m1" }),
+        makeTreeTableNib({ id: "nibs-t2", title: "Task two", type: "task", parentId: "nibs-m1" }),
+        makeTreeTableNib({ id: "nibs-b1", title: "A bug", type: "bug", parentId: "nibs-m1" }),
+      ];
+    }
+
+    it("drops selected nibs that no longer match the active client filter", async () => {
+      const sel = new SelectionState();
+      sel.toggleSelect("nibs-t1");
+      sel.toggleSelect("nibs-t2");
+      sel.toggleSelect("nibs-b1");
+
+      mockQueryStore.mockReturnValue(
+        readable({ fetching: false, error: undefined, data: { nibs: makeNibs() }, stale: false }) as any
+      );
+
+      const { rerender } = renderTreeTable(
+        { filter: {}, viewLevel: "milestones" as ViewLevel },
+        { selection: sel },
+      );
+      await tick();
+
+      // No filter yet — all three remain selected.
+      expect(sel.selectedIds.size).toBe(3);
+
+      // Filter to tasks only — the bug is no longer selectable and must be pruned.
+      await rerender({ filter: { type: ["task"] }, viewLevel: "milestones" as ViewLevel });
+      await tick();
+
+      expect(sel.selectedIds.has("nibs-t1")).toBe(true);
+      expect(sel.selectedIds.has("nibs-t2")).toBe(true);
+      expect(sel.selectedIds.has("nibs-b1")).toBe(false);
+      expect(sel.selectedIds.size).toBe(2);
+    });
+
+    it("resets anchor/focus that fall out of the filter", async () => {
+      const sel = new SelectionState();
+      sel.toggleSelect("nibs-t1");
+      sel.toggleSelect("nibs-b1"); // anchor + focus land on the bug
+
+      mockQueryStore.mockReturnValue(
+        readable({ fetching: false, error: undefined, data: { nibs: makeNibs() }, stale: false }) as any
+      );
+
+      const { rerender } = renderTreeTable(
+        { filter: {}, viewLevel: "milestones" as ViewLevel },
+        { selection: sel },
+      );
+      await tick();
+      expect(sel.anchorId).toBe("nibs-b1");
+      expect(sel.focusedNibId).toBe("nibs-b1");
+
+      await rerender({ filter: { type: ["task"] }, viewLevel: "milestones" as ViewLevel });
+      await tick();
+
+      expect(sel.anchorId).toBeNull();
+      expect(sel.focusedNibId).toBeNull();
+    });
+
+    it("keeps the multi-selection intact when a parent row is collapsed (no filter)", async () => {
+      const user = userEvent.setup();
+      const sel = new SelectionState();
+      sel.toggleSelect("nibs-t1");
+      sel.toggleSelect("nibs-t2");
+
+      mockQueryStore.mockReturnValue(
+        readable({ fetching: false, error: undefined, data: { nibs: makeNibs() }, stale: false }) as any
+      );
+
+      const { container } = renderTreeTable(
+        { filter: {}, viewLevel: "milestones" as ViewLevel },
+        { selection: sel },
+      );
+      await tick();
+      expect(sel.selectedIds.size).toBe(2);
+
+      // Collapse the milestone — hides the two selected tasks from view.
+      const toggle = container.querySelector("tr[data-nib-id='nibs-m1'] [data-action='toggle']") as HTMLElement;
+      await user.click(toggle);
+      await tick();
+
+      // Rows are hidden…
+      expect(screen.queryByText("Task one")).not.toBeInTheDocument();
+      // …but the selection is preserved — collapse is not a filter.
+      expect(sel.selectedIds.has("nibs-t1")).toBe(true);
+      expect(sel.selectedIds.has("nibs-t2")).toBe(true);
+      expect(sel.selectedIds.size).toBe(2);
+    });
+
+    it("does not prune while the query is still fetching (cold deep-link guard)", async () => {
+      const sel = new SelectionState();
+      sel.select("nibs-deep");
+      sel.toggleSelect("nibs-deep2");
+
+      // Query in flight: fetching, no data yet.
+      mockQueryStore.mockReturnValue(
+        readable({ fetching: true, error: undefined, data: undefined, stale: false }) as any
+      );
+
+      renderTreeTable(
+        { filter: {}, viewLevel: "milestones" as ViewLevel },
+        { selection: sel },
+      );
+      await tick();
+
+      // Data hasn't landed — selection must be left intact, not wiped to empty.
+      expect(sel.selectedIds.has("nibs-deep")).toBe(true);
+      expect(sel.selectedIds.has("nibs-deep2")).toBe(true);
+      expect(sel.selectedIds.size).toBe(2);
     });
   });
 });

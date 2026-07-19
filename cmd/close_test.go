@@ -69,9 +69,10 @@ func TestCloseBasic(t *testing.T) {
 		"abc-1--my-task.md": "---\ntitle: My Task\nstatus: in-progress\ntype: task\n---\n\nSome body content.\n",
 	})
 
+	withStdin(t, "All done\n")
 	rootCmd.SetArgs([]string{
 		"--nibs-path", nibsDir,
-		"close", "abc-1", "--summary", "All done",
+		"close", "abc-1", "--summary", "-",
 	})
 
 	err := rootCmd.Execute()
@@ -90,9 +91,10 @@ func TestCloseSummaryAppended(t *testing.T) {
 		"sum-1--my-task.md": "---\ntitle: My Task\nstatus: in-progress\ntype: task\n---\n\nExisting body.\n",
 	})
 
+	withStdin(t, "Implemented the feature and added tests.\n")
 	rootCmd.SetArgs([]string{
 		"--nibs-path", nibsDir,
-		"close", "sum-1", "--summary", "Implemented the feature and added tests.",
+		"close", "sum-1", "--summary", "-",
 	})
 
 	if err := rootCmd.Execute(); err != nil {
@@ -119,9 +121,10 @@ func TestCloseFailsWithIncompleteChildren(t *testing.T) {
 		"ch-2--child-wip.md": "---\ntitle: Child WIP\nstatus: in-progress\ntype: task\nparent: par-1\n---\n\nStill working.\n",
 	})
 
+	withStdin(t, "Done\n")
 	rootCmd.SetArgs([]string{
 		"--nibs-path", nibsDir,
-		"close", "par-1", "--summary", "Done",
+		"close", "par-1", "--summary", "-",
 	})
 
 	err := rootCmd.Execute()
@@ -142,9 +145,10 @@ func TestCloseForceWithIncompleteChildren(t *testing.T) {
 		"frc-2--child.md":  "---\ntitle: Child\nstatus: todo\ntype: task\nparent: frc-1\n---\n\nTodo.\n",
 	})
 
+	withStdin(t, "Forced close\n")
 	rootCmd.SetArgs([]string{
 		"--nibs-path", nibsDir,
-		"close", "frc-1", "--summary", "Forced close", "--force",
+		"close", "frc-1", "--summary", "-", "--force",
 	})
 
 	err := rootCmd.Execute()
@@ -164,9 +168,10 @@ func TestCloseUpdatesParentCurrentFocus(t *testing.T) {
 		"ph-1--phase.md":     "---\ntitle: Phase 1\nstatus: in-progress\ntype: epic\nparent: ms-1\n---\n\nPhase 1 body.\n",
 	})
 
+	withStdin(t, "Phase 1 completed successfully.\n")
 	rootCmd.SetArgs([]string{
 		"--nibs-path", nibsDir,
-		"close", "ph-1", "--summary", "Phase 1 completed successfully.",
+		"close", "ph-1", "--summary", "-",
 	})
 
 	if err := rootCmd.Execute(); err != nil {
@@ -185,9 +190,10 @@ func TestCloseUpdatesParentKeyDecisions(t *testing.T) {
 		"ph-2--phase.md": "---\ntitle: Phase 2\nstatus: in-progress\ntype: epic\nparent: ms-2\n---\n\n## Key Decisions\n\n- Used GraphQL instead of REST\n- Chose table-driven tests\n",
 	})
 
+	withStdin(t, "Phase 2 done.\n")
 	rootCmd.SetArgs([]string{
 		"--nibs-path", nibsDir,
-		"close", "ph-2", "--summary", "Phase 2 done.",
+		"close", "ph-2", "--summary", "-",
 	})
 
 	if err := rootCmd.Execute(); err != nil {
@@ -209,9 +215,10 @@ func TestCloseNoParent(t *testing.T) {
 		"nop-1--solo.md": "---\ntitle: Solo Task\nstatus: in-progress\ntype: task\n---\n\nJust a task.\n",
 	})
 
+	withStdin(t, "Done without parent\n")
 	rootCmd.SetArgs([]string{
 		"--nibs-path", nibsDir,
-		"close", "nop-1", "--summary", "Done without parent",
+		"close", "nop-1", "--summary", "-",
 	})
 
 	if err := rootCmd.Execute(); err != nil {
@@ -230,9 +237,10 @@ func TestCloseParentMissingSections(t *testing.T) {
 		"ph-3--phase.md": "---\ntitle: Phase 3\nstatus: in-progress\ntype: epic\nparent: ms-3\n---\n\n## Key Decisions\n\n- Chose mdsection for parsing\n",
 	})
 
+	withStdin(t, "Phase 3 completed.\n")
 	rootCmd.SetArgs([]string{
 		"--nibs-path", nibsDir,
-		"close", "ph-3", "--summary", "Phase 3 completed.",
+		"close", "ph-3", "--summary", "-",
 	})
 
 	if err := rootCmd.Execute(); err != nil {
@@ -275,9 +283,10 @@ func TestCloseJSONOutput(t *testing.T) {
 		"json-1--task.md": "---\ntitle: JSON Task\nstatus: in-progress\ntype: task\n---\n\nBody.\n",
 	})
 
+	withStdin(t, "Done\n")
 	rootCmd.SetArgs([]string{
 		"--nibs-path", nibsDir,
-		"close", "json-1", "--summary", "Done", "--json",
+		"close", "json-1", "--summary", "-", "--json",
 	})
 
 	// JSON output goes via output.Success which writes to stdout.
@@ -319,9 +328,10 @@ func TestCloseSucceedsWithAllChildrenCompleted(t *testing.T) {
 		"ch-4--child-b.md": "---\ntitle: Child B\nstatus: scrapped\ntype: task\nparent: par-2\n---\n\nScrapped.\n",
 	})
 
+	withStdin(t, "All children resolved\n")
 	rootCmd.SetArgs([]string{
 		"--nibs-path", nibsDir,
-		"close", "par-2", "--summary", "All children resolved",
+		"close", "par-2", "--summary", "-",
 	})
 
 	err := rootCmd.Execute()

@@ -185,7 +185,7 @@ func TestPositionMap(t *testing.T) {
 
 func TestSortByStatusPriorityAndType(t *testing.T) {
 	statusNames := []string{"draft", "todo", "in-progress", "completed"}
-	ranker := &testRanker{names: []string{"critical", "high", "normal", "low", "deferred"}}
+	ranker := &testRanker{names: []string{"critical", "high", "normal", "low"}}
 	typeNames := []string{"bug", "feature", "task"}
 
 	t.Run("sorts by status first", func(t *testing.T) {
@@ -219,7 +219,7 @@ func TestSortByStatusPriorityAndType(t *testing.T) {
 
 		SortByStatusPriorityAndType(nibs, statusNames, typeNames, ranker)
 
-		// Order by priority: critical, high, normal (and empty), low, deferred
+		// Order by priority: critical, high, normal (and empty), low
 		// Within same priority, order by title alphabetically
 		expectedOrder := []string{"A Critical", "B High", "C Normal", "D No Priority", "E Low"}
 		for i, expected := range expectedOrder {
@@ -281,6 +281,28 @@ func TestSortByStatusPriorityAndType(t *testing.T) {
 		}
 		if nibs[2].Type != "task" {
 			t.Errorf("Third nib type = %q, want \"task\"", nibs[2].Type)
+		}
+	})
+
+	t.Run("empty type treated as task (default), not sorted last", func(t *testing.T) {
+		// A type-less nib must sort at the "task" position, exactly as it did when
+		// loadNib synthesized Type="task". This distinguishes the fix from a naive
+		// "unknown type sorts last": task is NOT last in this order, so an empty
+		// type ranked as "task" sorts BEFORE "research", whereas ranked as unknown
+		// it would sort AFTER it.
+		typeNamesFull := []string{"milestone", "epic", "bug", "feature", "task", "research"}
+		nibs := []*Nib{
+			{ID: "research1", Title: "A Research", Status: "todo", Priority: "normal", Type: "research"},
+			{ID: "notype1", Title: "B No Type", Status: "todo", Priority: "normal", Type: ""},
+		}
+
+		SortByStatusPriorityAndType(nibs, statusNames, typeNamesFull, ranker)
+
+		if nibs[0].ID != "notype1" {
+			t.Errorf("nibs[0].ID = %q, want notype1 (empty type must rank as task, before research)", nibs[0].ID)
+		}
+		if nibs[1].ID != "research1" {
+			t.Errorf("nibs[1].ID = %q, want research1", nibs[1].ID)
 		}
 	})
 

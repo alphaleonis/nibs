@@ -28,6 +28,7 @@ function makeRow(nib: TreeTableNib, opts: Partial<RowData> = {}): RowData {
     hasChildren: false,
     dimmed: false,
     parentNib: null,
+    displayParentId: null,
     ...opts,
   };
 }
@@ -165,6 +166,29 @@ describe("useKeyboardNav", () => {
     expect(selection.selectedIds.has("nibs-003")).toBe(true);
   });
 
+  it("Shift+ArrowDown across a synthetic bucket row keeps its id out of the selection", () => {
+    const selection = new SelectionState();
+    selection.select("nibs-e1"); // anchor
+    selection.focus("nibs-e1");
+    const header = makeNib({ id: "nibs-m1", type: "milestone" });
+    const epic = makeNib({ id: "nibs-e1", type: "epic", parentId: "nibs-m1" });
+    // Synthetic bucket row, interleaved between nib rows (as buildViewTree emits it).
+    const bucket = makeNib({ id: "__no_milestone__", type: "" });
+    const loose = makeNib({ id: "nibs-loose" });
+    const rows = [makeRow(header), makeRow(epic), makeRow(bucket, { hasChildren: true }), makeRow(loose)];
+    const { handleKeydown } = setup({ selection, rows });
+
+    // First Shift+ArrowDown lands focus on the bucket row...
+    handleKeydown(keydown("ArrowDown", { shiftKey: true }));
+    // ...second Shift+ArrowDown lands on the loose task, spanning the bucket.
+    handleKeydown(keydown("ArrowDown", { shiftKey: true }));
+
+    expect(selection.focusedNibId).toBe("nibs-loose");
+    expect(selection.selectedIds.has("nibs-e1")).toBe(true);
+    expect(selection.selectedIds.has("nibs-loose")).toBe(true);
+    expect(selection.selectedIds.has("__no_milestone__")).toBe(false);
+  });
+
   it("Enter on focused row selects it", () => {
     const selection = new SelectionState();
     selection.focus("nibs-002");
@@ -178,21 +202,67 @@ describe("useKeyboardNav", () => {
     expect(selection.selectedNibId).toBe("nibs-002");
     // Enter must route through the injected navigateToNib (browser-history push /
     // URL sync), not call selection.select directly — a regression back to the latter
-    // would still pass the assertion above but silently drop history. nibs-58c3.
+    // would still pass the assertion above but silently drop history.
     expect(navigateToNib).toHaveBeenCalledWith("nibs-002");
   });
 
-  it("Space toggles focused row selection", () => {
+  it("Space toggles focused row selection (fallback: event has no DOM row)", () => {
     const selection = new SelectionState();
     selection.focus("nibs-001");
     const nib1 = makeNib({ id: "nibs-001" });
     const rows = [makeRow(nib1)];
     const { handleKeydown } = setup({ selection, rows });
 
+    // A bare KeyboardEvent has target=null (the arrow-key case, where DOM focus
+    // is on the grid container), so the target resolves from focusedNibId.
     handleKeydown(keydown(" "));
 
-    // toggleFocusedSelection should add the focused item to selection
     expect(selection.selectedIds.has("nibs-001")).toBe(true);
+  });
+
+  // Enter/Space resolve WHICH row to act on from the event's own `tr[data-nib-id]`
+  // DOM ancestor (the Tab case), preferring it over a stale focusedNibId. These
+  // dispatch a real event from a button inside a row so `event.target` is set.
+  function dispatchFromRow(
+    handleKeydown: (e: KeyboardEvent) => void,
+    nibId: string,
+    key: string,
+  ): void {
+    const host = document.createElement("div");
+    host.innerHTML = `<table><tbody><tr data-nib-id="${nibId}"><td><button data-action="title">t</button></td></tr></tbody></table>`;
+    document.body.appendChild(host);
+    host.addEventListener("keydown", handleKeydown as EventListener);
+    const btn = host.querySelector("button") as HTMLButtonElement;
+    btn.dispatchEvent(new KeyboardEvent("keydown", { key, bubbles: true, cancelable: true }));
+    host.remove();
+  }
+
+  it("Space resolves the target from the event's DOM row, not a stale focusedNibId", () => {
+    const selection = new SelectionState();
+    // Stale virtual focus on a DIFFERENT row than the one the event comes from.
+    selection.focus("nibs-001");
+    const rows = [makeRow(makeNib({ id: "nibs-001" })), makeRow(makeNib({ id: "nibs-002" }))];
+    const { handleKeydown } = setup({ selection, rows });
+
+    dispatchFromRow(handleKeydown, "nibs-002", " ");
+
+    // The DOM row (002) is toggled, not the stale focusedNibId (001).
+    expect(selection.selectedIds.has("nibs-002")).toBe(true);
+    expect(selection.selectedIds.has("nibs-001")).toBe(false);
+  });
+
+  it("Enter on a DOM bucket row toggles its group instead of navigating", () => {
+    const selection = new SelectionState();
+    const toggleNode = vi.fn();
+    const navigateToNib = vi.fn();
+    const bucketId = "__no_milestone__";
+    const rows = [makeRow(makeNib({ id: bucketId, type: "" }), { hasChildren: true })];
+    const { handleKeydown } = setup({ selection, rows, toggleNode, navigateToNib });
+
+    dispatchFromRow(handleKeydown, bucketId, "Enter");
+
+    expect(toggleNode).toHaveBeenCalledWith(bucketId);
+    expect(navigateToNib).not.toHaveBeenCalled();
   });
 
   it("ArrowLeft on expanded parent collapses it", () => {

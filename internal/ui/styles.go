@@ -55,33 +55,6 @@ func IsValidColor(color string) bool {
 	return ok
 }
 
-// Status badge styles (for inline use, like in show command)
-var (
-	StatusOpen = lipgloss.NewStyle().
-			Foreground(lipgloss.Color("#fff")).
-			Background(ColorSuccess).
-			Padding(0, 1).
-			Bold(true)
-
-	StatusDone = lipgloss.NewStyle().
-			Foreground(lipgloss.Color("#fff")).
-			Background(ColorSecondary).
-			Padding(0, 1)
-
-	StatusInProgress = lipgloss.NewStyle().
-				Foreground(lipgloss.Color("#fff")).
-				Background(ColorWarning).
-				Padding(0, 1).
-				Bold(true)
-)
-
-// Status text styles (for table use, no background/padding)
-var (
-	StatusOpenText       = lipgloss.NewStyle().Foreground(ColorSuccess).Bold(true)
-	StatusDoneText       = lipgloss.NewStyle().Foreground(ColorSecondary)
-	StatusInProgressText = lipgloss.NewStyle().Foreground(ColorWarning).Bold(true)
-)
-
 // Tag badge style - black text on gray background
 var TagBadge = lipgloss.NewStyle().
 	Foreground(lipgloss.Color("#000")).
@@ -184,34 +157,6 @@ var Header = lipgloss.NewStyle().
 	Foreground(ColorPrimary).
 	Bold(true).
 	MarginBottom(1)
-
-// RenderStatus returns a styled status badge based on the status string (legacy, uses hardcoded colors)
-func RenderStatus(status string) string {
-	switch status {
-	case "todo", "draft":
-		return StatusOpen.Render(status)
-	case "completed", "scrapped":
-		return StatusDone.Render(status)
-	case "in-progress", "in_progress":
-		return StatusInProgress.Render(status)
-	default:
-		return Muted.Render(status)
-	}
-}
-
-// RenderStatusText returns styled status text (for tables, no background) (legacy, uses hardcoded colors)
-func RenderStatusText(status string) string {
-	switch status {
-	case "todo", "draft":
-		return StatusOpenText.Render(status)
-	case "completed", "scrapped":
-		return StatusDoneText.Render(status)
-	case "in-progress", "in_progress":
-		return StatusInProgressText.Render("in-progress")
-	default:
-		return Muted.Render(status)
-	}
-}
 
 // RenderStatusWithColor returns a styled status badge using the specified color.
 func RenderStatusWithColor(status, color string, isArchiveStatus bool) string {
@@ -320,10 +265,19 @@ func ShortType(t string) string {
 
 // ShortStatus returns a single-character code for the nib status.
 // Derived from the first letter of each entry in config.DefaultStatuses,
-// uppercased. Returns "?" for unknown or empty values.
+// uppercased — with one exception: "deferred" maps to "F" (not "D") so it does
+// not collide with "draft", which keeps "D". Returns "?" for unknown or empty
+// values.
 func ShortStatus(s string) string {
 	if s == "" {
 		return "?"
+	}
+	// "deferred" and "draft" share a first letter. Draft keeps "D" (established);
+	// deferred is disambiguated to "F" (from "deFerred") so the single-char status
+	// column stays unambiguous. The final glyph/label is a TUI-slice concern; this
+	// only guarantees uniqueness (see TestShortStatus_NoCollisions).
+	if s == "deferred" {
+		return "F"
 	}
 	for _, def := range config.DefaultStatuses {
 		if def.Name == s {
@@ -344,8 +298,6 @@ func GetPrioritySymbol(priority string) string {
 		return glyphHigh()
 	case "low":
 		return glyphLow()
-	case "deferred":
-		return glyphDeferred()
 	default:
 		return ""
 	}
@@ -372,7 +324,7 @@ type NibRowConfig struct {
 	StatusColor   string
 	TypeColor     string
 	PriorityColor string
-	Priority      string // Priority value (critical, high, normal, low, deferred)
+	Priority      string // Priority value (critical, high, normal, low)
 	IsArchive     bool
 	MaxTitleWidth int  // 0 means no truncation
 	ShowCursor    bool // Show selection cursor

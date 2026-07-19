@@ -17,13 +17,17 @@
 	} = $props();
 </script>
 
+<!-- `whitespace-nowrap`: pairs with dropdown-menu-content's `w-auto`/`max-w`
+     deviation — items never wrap. A long user-defined tag label is hard-clipped
+     by the Content `max-w` + `overflow-x-hidden` (no ellipsis; acceptable for the
+     rare unbounded-tag edge case). See dropdown-menu-content.svelte. -->
 <DropdownMenuPrimitive.CheckboxItem
 	bind:ref
 	bind:checked
 	bind:indeterminate
 	data-slot="dropdown-menu-checkbox-item"
 	class={cn(
-		"focus:bg-accent focus:text-accent-foreground focus:**:text-accent-foreground gap-1.5 rounded-md py-1 pr-8 pl-1.5 text-sm data-inset:pl-7 [&_svg:not([class*='size-'])]:size-4 relative flex cursor-default items-center outline-hidden select-none data-[disabled]:pointer-events-none data-[disabled]:opacity-50 [&_svg]:pointer-events-none [&_svg]:shrink-0",
+		"focus:bg-accent focus:text-accent-foreground focus:**:text-accent-foreground gap-1.5 rounded-md py-1 pr-8 pl-1.5 text-sm whitespace-nowrap data-inset:pl-7 [&_svg:not([class*='size-'])]:size-4 relative flex cursor-default items-center outline-hidden select-none data-[disabled]:pointer-events-none data-[disabled]:opacity-50 [&_svg]:pointer-events-none [&_svg]:shrink-0",
 		className
 	)}
 	{...restProps}

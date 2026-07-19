@@ -1,7 +1,7 @@
 import { setContext, getContext } from "svelte";
 import type { Client } from "@urql/core";
 import { MutationDispatcher } from "./dispatcher";
-import type { AnyCommand, AnyResult, LeafCommand, BatchCommand, SequenceCommand, CommandResult, BatchResult, SequenceResult } from "./types";
+import type { AnyCommand, AnyResult, LeafCommand, BatchCommand, SequenceCommand, CommandResult, BatchResult, SequenceResult, ExecuteOptions } from "./types";
 
 const MUTATION_STORE_KEY = "nibs:mutations";
 
@@ -44,10 +44,10 @@ export class MutationStore {
     return this.#inflight.has(id);
   }
 
-  async execute(cmd: LeafCommand): Promise<CommandResult>;
-  async execute(cmd: BatchCommand): Promise<BatchResult>;
-  async execute(cmd: SequenceCommand): Promise<SequenceResult>;
-  async execute(cmd: AnyCommand): Promise<AnyResult> {
+  async execute(cmd: LeafCommand, opts?: ExecuteOptions): Promise<CommandResult>;
+  async execute(cmd: BatchCommand, opts?: ExecuteOptions): Promise<BatchResult>;
+  async execute(cmd: SequenceCommand, opts?: ExecuteOptions): Promise<SequenceResult>;
+  async execute(cmd: AnyCommand, opts?: ExecuteOptions): Promise<AnyResult> {
     const ids = extractIds(cmd);
 
     // Add IDs to in-flight set
@@ -59,7 +59,7 @@ export class MutationStore {
     this.#pendingCount++;
 
     try {
-      return await this.#dispatcher.execute(cmd);
+      return await this.#dispatcher.execute(cmd, opts);
     } finally {
       // Remove IDs from in-flight set
       for (const id of ids) {

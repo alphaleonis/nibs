@@ -33,6 +33,15 @@ tasks:
       - npm ci
       - npm run build
 
+  web:check:
+    desc: Type-check the web UI (svelte-check)
+    # No codegen dep: svelte-check only reads web/ TS+Svelte sources and
+    # node_modules — nothing under web/src imports Go-generated GraphQL code.
+    # Wired into the `test` gate (svelte-check is clean; see nibs-pg6i).
+    dir: web
+    cmds:
+      - npm run check
+
   build:
     desc: Build the nibs CLI executable
     deps: [web:build]
@@ -54,11 +63,31 @@ tasks:
         .
 
   test:
-    desc: Run all tests (Go + web)
+    desc: Run all tests (Go + web, incl. the -race gate on nibcore + graph)
     deps: [web:build]
     cmds:
-      - go test ./...
+      # Go tests run memory-capped so a runaway test is OOM-killed inside its own
+      # cgroup instead of triggering a global OOM that takes down the WSL VM
+      # (nibs-mv0i). Falls back to plain `go test` where systemd --user scopes
+      # aren't available. Override the cap with GO_TEST_MEM_MAX (default 4G).
+      - bash scripts/go-test-capped.sh ./...
+      # Run the concurrency-critical packages a second time under -race, so a
+      # reintroduced data race fails the default gate rather than only when
+      # someone remembers to pass -race by hand (nibs-7l3v). Many guards in these
+      # packages (payload-snapshot / live-pointer detachment, the GetForUpdate
+      # clone-under-lock guard, the store-level freeze guard) are only meaningful
+      # under the detector; a plain `go test` degrades them to trivial checks.
+      - task: test:race
+      - cd web && npm run check
       - cd web && npx vitest run --reporter=agent
+
+  test:race:
+    desc: Run the -race detector on the concurrency-critical packages (nibcore + graph)
+    cmds:
+      # Scoped to the two packages that carry the concurrency invariants — a full
+      # `-race ./...` is slow (the watcher tests use real debounce timing).
+      # -count=1 defeats the test cache so the detector always actually runs.
+      - bash scripts/go-test-capped.sh -race -count=1 ./internal/nibcore/... ./internal/graph/...
 
   nibs:
     desc: Build and run the nibs CLI (pass args after `--`, e.g. `task nibs -- list --json`)
@@ -99,7 +128,11 @@ tasks:
       - defer: rm -rf "{{.TMP}}"
       - cp -r testdata/fixtures/sample-project/.nibs testdata/fixtures/sample-project/.nibs.yml "{{.TMP}}/"
       - echo "Using temporary copy at {{.TMP}}"
-      - go run . serve --nibs-path "{{.TMP}}/.nibs" {{.CLI_ARGS}}
+      # --config, not --nibs-path: this runs from the repo root, and --nibs-path
+      # moves only the data directory — config discovery would still walk up from
+      # the cwd and apply THIS project's prefix to fixture data. Naming the
+      # fixture's config resolves its data directory alongside it.
+      - go run . serve --config "{{.TMP}}/.nibs.yml" {{.CLI_ARGS}}
 
   demo:tui:
     desc: Run the TUI with the sample project fixture (temporary copy)
@@ -110,7 +143,12 @@ tasks:
       - defer: rm -rf "{{.TMP}}"
       - cp -r testdata/fixtures/sample-project/.nibs testdata/fixtures/sample-project/.nibs.yml "{{.TMP}}/"
       - echo "Using temporary copy at {{.TMP}}"
-      - go run . tui --nibs-path "{{.TMP}}/.nibs"
+      # --config, not --nibs-path — see the demo task above.
+      - go run . tui --config "{{.TMP}}/.nibs.yml"
+
+  check:
+    desc: Type-check the web UI (svelte-check)
+    deps: [web:check]
 
   lint:
     desc: Run golangci-lint

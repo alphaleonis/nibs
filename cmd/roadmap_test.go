@@ -105,6 +105,50 @@ func TestBuildRoadmap(t *testing.T) {
 	}
 }
 
+// TestBuildRoadmap_Progress pins the canonical % complete per node: the
+// milestone rollup counts its direct epic children (scrapped excluded from the
+// denominator), and an epic rollup counts its direct task children.
+func TestBuildRoadmap_Progress(t *testing.T) {
+	cfg := config.Default()
+	now := time.Now()
+
+	nibs := []*nib.Nib{
+		{ID: "m1", Type: "milestone", Title: "v1.0", Status: "in-progress", CreatedAt: &now},
+		{ID: "e1", Type: "epic", Title: "Done Epic", Status: "completed", Parent: "m1"},
+		{ID: "e2", Type: "epic", Title: "Active Epic", Status: "in-progress", Parent: "m1"},
+		{ID: "e3", Type: "epic", Title: "Scrapped Epic", Status: "scrapped", Parent: "m1"},
+		{ID: "t1", Type: "task", Title: "T1", Status: "todo", Parent: "e1"},
+		{ID: "t2", Type: "task", Title: "T2", Status: "completed", Parent: "e2"},
+		{ID: "t3", Type: "task", Title: "T3", Status: "todo", Parent: "e2"},
+	}
+
+	result := buildRoadmap(nibs, true, nil, nil, cfg)
+	if len(result.Milestones) != 1 {
+		t.Fatalf("got %d milestones, want 1", len(result.Milestones))
+	}
+	ms := result.Milestones[0]
+
+	// Milestone: 3 direct epic children, 1 completed, 1 scrapped (excluded) ->
+	// total 2, done 1, 50%.
+	if ms.Progress.Total != 2 || ms.Progress.Done != 1 || ms.Progress.Percent != 50 || ms.Progress.Scrapped != 1 {
+		t.Errorf("milestone progress = %+v, want {Total:2, Done:1, Percent:50, Scrapped:1}", ms.Progress)
+	}
+
+	// Epic e2: 2 task children, 1 completed -> 50%.
+	var e2 *epicGroup
+	for i := range ms.Epics {
+		if ms.Epics[i].Epic.ID == "e2" {
+			e2 = &ms.Epics[i]
+		}
+	}
+	if e2 == nil {
+		t.Fatal("epic e2 not found in milestone group")
+	}
+	if e2.Progress.Total != 2 || e2.Progress.Done != 1 || e2.Progress.Percent != 50 {
+		t.Errorf("epic e2 progress = %+v, want {Total:2, Done:1, Percent:50}", e2.Progress)
+	}
+}
+
 func TestFirstParagraph(t *testing.T) {
 	tests := []struct {
 		name  string

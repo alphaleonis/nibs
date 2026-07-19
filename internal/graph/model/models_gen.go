@@ -8,6 +8,7 @@ import (
 	"io"
 	"strconv"
 
+	"github.com/99designs/gqlgen/graphql"
 	"github.com/alphaleonis/nibs/internal/nib"
 )
 
@@ -79,9 +80,11 @@ type CreateNibInput struct {
 type Mutation struct {
 }
 
-// A change event emitted when a nib is created, updated, or deleted.
+// A change event emitted when a nib is created, updated, deleted, or archived.
 type NibChangeEvent struct {
-	// The type of change: created, updated, or deleted
+	// The type of change: created, updated, deleted, or archived. An archived nib
+	// still exists — it moved to the archive directory and remains readable and
+	// updatable there — so archived is reported separately from deleted.
 	Type string `json:"type"`
 	// The ID of the affected nib (always present, even for deletes)
 	NibID string `json:"nibId"`
@@ -184,17 +187,22 @@ type Subscription struct {
 
 // Input for updating an existing nib
 type UpdateNibInput struct {
-	// New title
+	// New title. Not a clearable field: null/omit both leave the title unchanged
+	// (a title is required, so it is never cleared).
 	Title *string `json:"title,omitempty"`
-	// New status
+	// New status. Not a clearable field: null/omit both leave the status unchanged.
 	Status *string `json:"status,omitempty"`
-	// New type
+	// New type. Not a clearable field: null/omit both leave the type unchanged.
 	Type *string `json:"type,omitempty"`
-	// New priority
-	Priority *string `json:"priority,omitempty"`
-	// New estimate size (s, m, l, xl, or null to clear)
-	Estimate *string `json:"estimate,omitempty"`
-	// Replace all tags (nil preserves existing, mutually exclusive with addTags/removeTags)
+	// New priority. Explicit null clears the priority; omit to leave it unchanged.
+	// Note: a cleared priority reads back as the effective default "normal" (the
+	// data model treats empty as normal), so the clear is not observable on read.
+	Priority graphql.Omittable[*string] `json:"priority,omitempty"`
+	// New estimate size (s, m, l, xl). Explicit null clears the estimate; omit to
+	// leave it unchanged.
+	Estimate graphql.Omittable[*string] `json:"estimate,omitempty"`
+	// Replace all tags. An empty list clears all tags; omit (null) to leave the
+	// existing tags unchanged. Mutually exclusive with addTags/removeTags.
 	Tags []string `json:"tags,omitempty"`
 	// Add tags to existing list
 	AddTags []string `json:"addTags,omitempty"`
@@ -204,8 +212,10 @@ type UpdateNibInput struct {
 	Body *string `json:"body,omitempty"`
 	// Structured body modifications (mutually exclusive with body)
 	BodyMod *BodyModification `json:"bodyMod,omitempty"`
-	// Set parent nib ID (null/empty to clear, validates type hierarchy)
-	Parent *string `json:"parent,omitempty"`
+	// Set the parent nib ID (validated against the type hierarchy). Explicit null
+	// OR empty string clears the parent (moves the nib to root); omit to leave it
+	// unchanged.
+	Parent graphql.Omittable[*string] `json:"parent,omitempty"`
 	// Add nibs to blocking list (validates cycles and existence)
 	AddBlocking []string `json:"addBlocking,omitempty"`
 	// Remove nibs from blocking list
@@ -222,6 +232,16 @@ type UpdateNibInput struct {
 	RemoveDocuments []string `json:"removeDocuments,omitempty"`
 	// ETag for optimistic concurrency control (optional)
 	IfMatch *string `json:"ifMatch,omitempty"`
+}
+
+// Result of the best-effort check for a newer nibs release.
+type UpdateStatus struct {
+	// The running server version (e.g. "v0.5.1"); empty for a dev build.
+	Current string `json:"current"`
+	// The latest released version (e.g. "v0.6.0"); empty if unknown.
+	Latest string `json:"latest"`
+	// True when a newer release than the running version is available.
+	UpdateAvailable bool `json:"updateAvailable"`
 }
 
 // Sort field for nib queries

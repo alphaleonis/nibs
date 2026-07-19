@@ -18,7 +18,7 @@ type stubReader struct {
 	cfg     *config.Config
 	// prefix, when set, makes NormalizeID resolve short IDs by prepending the
 	// prefix — mirroring nibcore.Core.NormalizeID's exact-first, then
-	// prefix-prepended behaviour.
+	// prefix-prepended behavior.
 	prefix string
 	// mentionsOut, when populated, is returned by FindMentions keyed on the
 	// source (from) nib ID. Tests that need the mention filter paths to
@@ -34,6 +34,31 @@ func (s *stubReader) Get(id string) (*nib.Nib, error) {
 		return b, nil
 	}
 	return nil, nib.ErrNotFound
+}
+
+// GetForUpdate mirrors nibcore.Core.GetForUpdate: return an owned Clone of the
+// shared nib (or the not-found error), so mutation sites under test never touch
+// the stub's shared pointers.
+func (s *stubReader) GetForUpdate(id string) (*nib.Nib, error) {
+	b, err := s.Get(id)
+	if err != nil {
+		return nil, err
+	}
+	return b.Clone(), nil
+}
+
+// GetSnapshot mirrors nibcore.Core.GetSnapshot: return a detached Clone of the
+// nib (exact id, then the configured prefix prepended), or ok=false when absent.
+func (s *stubReader) GetSnapshot(id string) (*nib.Nib, bool) {
+	if b, ok := s.nibs[id]; ok {
+		return b.Clone(), true
+	}
+	if s.prefix != "" && !strings.HasPrefix(id, s.prefix) {
+		if b, ok := s.nibs[s.prefix+id]; ok {
+			return b.Clone(), true
+		}
+	}
+	return nil, false
 }
 
 func (s *stubReader) All() []*nib.Nib {
@@ -97,18 +122,48 @@ func (s *stubReader) CurrentETag(id string) (string, error) {
 }
 
 // stubWriter implements NibWriter for testing.
+//
+// When store is set, Create/Update reflect the write into the shared stubReader
+// map — Create assigns an ID exactly as nibcore.Core.Create does — so a
+// resolver's GetSnapshot read-after-write sees the just-written nib, mirroring
+// the real store where the reader and writer are the same object. When store is
+// nil the writer only records calls (the legacy record-only behavior for tests
+// that don't exercise the nib-returning resolver path).
 type stubWriter struct {
+	store   *stubReader
 	created []*nib.Nib
 	updated []*nib.Nib
 	deleted []string
 }
 
 func (s *stubWriter) Create(b *nib.Nib) error {
+	if s.store != nil {
+		if b.ID == "" {
+			prefix, length := "", 4
+			if cfg := s.store.Config(); cfg != nil {
+				prefix = cfg.Nibs.Prefix
+				if cfg.Nibs.IDLength > 0 {
+					length = cfg.Nibs.IDLength
+				}
+			}
+			b.ID = nib.NewID(prefix, length)
+		}
+		if s.store.nibs == nil {
+			s.store.nibs = map[string]*nib.Nib{}
+		}
+		s.store.nibs[b.ID] = b
+	}
 	s.created = append(s.created, b)
 	return nil
 }
 
 func (s *stubWriter) Update(b *nib.Nib, ifMatch *string) error {
+	if s.store != nil {
+		if s.store.nibs == nil {
+			s.store.nibs = map[string]*nib.Nib{}
+		}
+		s.store.nibs[b.ID] = b
+	}
 	s.updated = append(s.updated, b)
 	return nil
 }
@@ -272,10 +327,10 @@ func TestArchiveNibWithStub(t *testing.T) {
 
 // TestCreateNibWithStub verifies mutation orchestration through interfaces.
 func TestCreateNibWithStub(t *testing.T) {
-	writer := &stubWriter{}
 	reader := &stubReader{
 		nibs: map[string]*nib.Nib{},
 	}
+	writer := &stubWriter{store: reader}
 
 	resolver := &Resolver{
 		Reader:    reader,

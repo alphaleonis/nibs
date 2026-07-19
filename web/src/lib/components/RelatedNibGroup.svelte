@@ -1,6 +1,6 @@
 <script lang="ts">
   import { ChevronDown, ChevronRight, Plus } from "@lucide/svelte";
-  import StatusDot from "./StatusDot.svelte";
+  import StatusIcon from "./StatusIcon.svelte";
 
   export interface RelatedNibItem {
     id: string;
@@ -12,7 +12,7 @@
     label: string;
     items: RelatedNibItem[];
     onnibselect?: (id: string) => void;
-    onaction?: () => void;
+    onaction?: (event: MouseEvent) => void;
     actionLabel?: string;
     testId: string;
   }
@@ -23,6 +23,8 @@
 </script>
 
 {#snippet toggleButton()}
+  <!-- Raw button: collapsible group header (chevron + label) with bespoke
+       layout; no matching shared Button variant. -->
   <button
     class="detail-related-group-header"
     data-testid="detail-group-toggle"
@@ -43,11 +45,13 @@
   {#if onaction}
     <div class="detail-related-group-header-row">
       {@render toggleButton()}
+      <!-- Raw button: reveal-style icon action tied to the group header row;
+           kept raw for layout parity with the toggle above. -->
       <button
         class="detail-related-add-child"
         data-testid="detail-related-add-child"
         title={actionLabel}
-        onclick={() => onaction?.()}
+        onclick={(e) => onaction?.(e)}
       >
         <Plus size={14} />
       </button>
@@ -58,12 +62,14 @@
   {#if !collapsed}
     <div class="detail-related-group-items">
       {#each items as item}
+        <!-- Raw button: full-width link-style list row (status dot + title);
+             behaves as a navigation link, not a standalone Button. -->
         <button
           class="detail-related-link"
           data-testid="detail-related-link"
           onclick={() => onnibselect?.(item.id)}
         >
-          <StatusDot status={item.status} />
+          <StatusIcon status={item.status} />
           {item.title}
         </button>
       {/each}
@@ -76,6 +82,9 @@
     display: flex;
     flex-direction: column;
     gap: 0.25rem;
+    /* Pin rail content to the shared body token; without this the links inherit
+       the app default (16px) instead of matching table/detail body. */
+    font-size: var(--text-body-size);
   }
 
   .detail-related-group-header {
@@ -107,7 +116,7 @@
     color: var(--muted-foreground);
     background: none;
     border: none;
-    border-radius: 0.25rem;
+    border-radius: var(--radius-sm);
     cursor: pointer;
     opacity: 1;
   }
@@ -118,6 +127,8 @@
   }
 
   .detail-label {
+    font-size: var(--text-label-size);
+    font-weight: var(--text-label-weight);
     color: var(--muted-foreground);
     white-space: nowrap;
   }
@@ -137,7 +148,7 @@
     border: none;
     color: var(--link);
     padding: 0.25rem 0.5rem;
-    border-radius: 0.375rem;
+    border-radius: var(--radius-md);
     cursor: pointer;
     text-align: left;
     width: 100%;

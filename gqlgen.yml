@@ -25,6 +25,30 @@ models:
   # Use existing Nib type from nib package
   Nib:
     model: github.com/alphaleonis/nibs/internal/nib.Nib
+    fields:
+      # The stored Nib keeps Type/Priority empty when the file omits them (so the
+      # etag witnesses the on-disk bytes — see nib.DefaultType). These field
+      # resolvers apply the "task"/"normal" presentation defaults so the
+      # non-nullable GraphQL fields always resolve a value (nibs-7d3o).
+      type:
+        resolver: true
+      priority:
+        resolver: true
+  # UpdateNibInput: priority/estimate/parent must distinguish an explicit JSON
+  # `null` ("clear this field") from an omitted field ("leave unchanged"). Plain
+  # *string collapses both to nil, so a clear never persists (nibs-qijw). For
+  # parent, empty string ("") already clears; making it omittable lets an
+  # explicit null clear it too, so clearing is consistent (nibs-gzdx).
+  # omittable wraps them in graphql.Omittable[*string]: IsSet() is true for
+  # null (with a nil inner pointer) and false when omitted.
+  UpdateNibInput:
+    fields:
+      priority:
+        omittable: true
+      estimate:
+        omittable: true
+      parent:
+        omittable: true
   # Map ID scalar to string
   ID:
     model:

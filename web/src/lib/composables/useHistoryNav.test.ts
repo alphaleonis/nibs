@@ -50,6 +50,19 @@ describe("useHistoryNav", () => {
     expect(selection.selectedNibId).toBe("tnib-42");
   });
 
+  it("navigateToNib does NOT push ?nib=<bucket> for a synthetic grouping-bucket id (nibs-oxaq)", () => {
+    // A right-clicked/arrow-focused "No X" bucket row can route here. select()
+    // already no-ops on a bucket id, but the history push must also be skipped —
+    // otherwise a stale ?nib=__no_milestone__ survives reload/Back and tries to
+    // select a nonexistent nib.
+    const { nav, selection, history } = setup();
+
+    nav.navigateToNib("__no_milestone__");
+
+    expect(history.calls).toEqual([]);
+    expect(selection.selectedNibId).toBeNull();
+  });
+
   it("navigateToNib is idempotent when the nib is already selected", () => {
     const selection = new SelectionState();
     selection.select("tnib-7");
@@ -68,8 +81,8 @@ describe("useHistoryNav", () => {
 
     nav.navigateToNib("b");
 
-    // Regression (nibs-58c3): a truthy guard (`if (selectedNibId) return`) would skip
-    // this push. NB this does NOT lock finding #1's `=== id` early-return (a≠b pushes
+    // Regression: a truthy guard (`if (selectedNibId) return`) would skip
+    // this push. NB this does NOT lock the `=== id` early-return (a≠b pushes
     // either way) — the focus-resync test below is that lock.
     expect(history.calls).toEqual([
       { kind: "push", state: { nibId: "b" }, url: "?nib=b" },
@@ -85,11 +98,11 @@ describe("useHistoryNav", () => {
 
     nav.navigateToNib("a");
 
-    // Regression (nibs-58c3, review #1): the guard early-returned the whole body on
+    // Regression: the guard early-returned the whole body on
     // `selectedNibId === id`, skipping select()'s focus/anchor resync.
     // No duplicate history entry (selectedNibId is already "a")...
     expect(history.calls).toEqual([]);
-    // ...but select() re-ran and resynced focus back to "a" (pre-fix left it "b").
+    // ...but select() must still re-run and resync focus back to "a".
     expect(selection.focusedNibId).toBe("a");
     expect(selection.selectedNibId).toBe("a");
   });
@@ -116,7 +129,7 @@ describe("useHistoryNav", () => {
     expect(selection.selectedNibId).toBeNull();
   });
 
-  it("replaceClosed heals the URL in place (replaceState to clean path), leaving selection to the caller (nibs-etk3)", () => {
+  it("replaceClosed heals the URL in place (replaceState to clean path), leaving selection to the caller", () => {
     // Used after deleting/archiving the open nib, or when landing on a nib that
     // no longer exists: heal the current entry in place (replace, no Back-stop),
     // so a stale ?nib=<gone> doesn't survive reload/Back. Selection is the
@@ -185,7 +198,7 @@ describe("useHistoryNav", () => {
     expect(history.calls).toEqual([]);
   });
 
-  it("handlePopState is a no-op behind an open overlay: keeps selection, re-anchors history (nibs-g1fy)", () => {
+  it("handlePopState is a no-op behind an open overlay: keeps selection, re-anchors history", () => {
     // A blocking modal (editor/type-picker/confirm) is open. Back/Forward must not
     // navigate the covered panel; history is re-anchored to the shown nib so URL
     // stays consistent and selection is untouched.
@@ -202,7 +215,7 @@ describe("useHistoryNav", () => {
     ]);
   });
 
-  it("handlePopState behind an overlay with a closed panel re-anchors to the clean path (nibs-g1fy)", () => {
+  it("handlePopState behind an overlay with a closed panel re-anchors to the clean path", () => {
     const selection = new SelectionState(); // nothing selected
     const { nav, history } = setup({
       selection,

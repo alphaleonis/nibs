@@ -1,9 +1,12 @@
 package graph
 
 import (
+	"errors"
 	"fmt"
+	"os"
 
 	"github.com/alphaleonis/nibs/internal/nib"
+	"github.com/alphaleonis/nibs/internal/nibcore"
 )
 
 // Orderer handles nib ordering operations with only read/write dependencies.
@@ -136,20 +139,68 @@ func (o *Orderer) backfillOrderKeys(nibs []*nib.Nib) {
 		}
 	}
 
-	// Assign keys to unordered nibs, appending after the last ordered one
-	for _, b := range nibs {
+	// Assign keys to unordered nibs, appending after the last ordered one.
+	for i := range nibs {
+		b := nibs[i]
 		if b.Order != "" {
 			continue
 		}
 		newKey := nib.OrderBetween(lastKey, "")
 
-		// Compute ETag BEFORE mutation so it matches the on-disk version
+		// Compute ETag BEFORE mutation so it matches the on-disk version.
 		etag := b.ETag()
-		b.Order = newKey
 		lastKey = newKey
 
-		// Best-effort persist: ordering falls back to title sort if this fails
-		_ = o.writer.Update(b, &etag)
+		// Mutate an OWNED clone from GetForUpdate, never the shared reader pointer
+		// (b is c.nibs[id]): a refused write must not leave the shared in-memory
+		// sibling showing a phantom Order that was never persisted.
+		// GetForUpdate fails only not-found: the sibling was deleted between the
+		// snapshot above and here (a concurrent external/`serve` delete). It's gone,
+		// so there is nothing to backfill — quietly skip it (not a write failure, and
+		// the nib no longer exists, so no warning is warranted).
+		clone, err := o.reader.GetForUpdate(b.ID)
+		if err != nil {
+			continue
+		}
+		clone.Order = newKey
+
+		// Best-effort persist: ordering falls back to title sort if this fails.
+		// backfillOrderKeys runs on the hot Children/root READ path (once per
+		// parent per tree render/poll), and a persistently unwritable sibling
+		// keeps Order=="" so needsBackfill never clears — meaning this Update is
+		// re-attempted on EVERY read. Classify the error so a steady-state
+		// failure does not flood stderr under a long-running `nibs serve`:
+		//   - *ETagMismatchError: a stable on-disk etag divergence (e.g. a
+		//     hand-authored nib missing an order key AND both timestamps, whose
+		//     synthesized-from-mtime in-memory etag permanently differs from the
+		//     stored one). This is the already-accepted best-effort fallback — the
+		//     failed clone's computed key is DISCARDED (nibs[i] keeps its pre-write,
+		//     Order=="" pointer), so the sibling falls back to title sort; the write
+		//     simply cannot land. Stay quiet.
+		//   - *OnDiskUnparseableError: the file is corrupt/unreadable. Suppressing
+		//     our OWN warning here avoids the orderer emitting a line per read on the
+		//     hot Children/root path; the condition is still surfaced where it
+		//     matters — at the write/pre-validation boundary (cmd/update.go →
+		//     FILE_ERROR, bulk-reorder pre-validation). nibcore.computeStoredETag now
+		//     RETURNS this error instead of logging it, so suppressing here means the
+		//     read path emits no warning at all (no orderer line, no nibcore
+		//     double-log, no flood).
+		// Warn only on a genuinely unexpected write failure (disk I/O, etc.) so a
+		// real problem stays diagnosable (matches activateParentChain's stderr
+		// warning). Propagating is not an option: getRootSiblings/GetSortedSiblings
+		// return no error and have many callers, so this stays best-effort.
+		if err := o.writer.Update(clone, &etag); err != nil {
+			var etagMismatch *nibcore.ETagMismatchError
+			var unparseable *nibcore.OnDiskUnparseableError
+			if !errors.As(err, &etagMismatch) && !errors.As(err, &unparseable) {
+				fmt.Fprintf(os.Stderr, "warning: could not backfill order key for %s: %v — this sibling stays unordered (falls back to title sort) until the next successful write\n", b.ID, err)
+			}
+			continue
+		}
+		// The write installed the clone as the new c.nibs[id]; reflect the
+		// persisted order in the returned slice without touching the pre-write
+		// pointer.
+		nibs[i] = clone
 	}
 }
 

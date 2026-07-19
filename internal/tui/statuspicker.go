@@ -17,7 +17,7 @@ type statusSelectedMsg struct {
 	status  string
 }
 
-// closeStatusPickerMsg is sent when the status picker is cancelled
+// closeStatusPickerMsg is sent when the status picker is canceled
 type closeStatusPickerMsg struct{}
 
 // openStatusPickerMsg requests opening the status picker for nib(s)
@@ -107,8 +107,8 @@ func newStatusPickerModel(nibIDs []string, nibTitle, currentStatus string, cfg *
 	}
 
 	// Calculate modal dimensions
-	modalWidth := max(40, min(60, width*50/100))
-	modalHeight := max(10, min(16, height*50/100))
+	modalWidth := pickerModalWidth(width, 0, 0)
+	modalHeight := pickerModalHeight(height, 0, 0)
 	listWidth := modalWidth - 6
 	listHeight := modalHeight - 7
 
@@ -149,8 +149,8 @@ func (m statusPickerModel) Update(msg tea.Msg) (statusPickerModel, tea.Cmd) {
 	case tea.WindowSizeMsg:
 		m.width = msg.Width
 		m.height = msg.Height
-		modalWidth := max(40, min(60, msg.Width*50/100))
-		modalHeight := max(10, min(16, msg.Height*50/100))
+		modalWidth := pickerModalWidth(msg.Width, 0, 0)
+		modalHeight := pickerModalHeight(msg.Height, 0, 0)
 		listWidth := modalWidth - 6
 		listHeight := modalHeight - 7
 		m.list.SetSize(listWidth, listHeight)
@@ -181,11 +181,20 @@ func (m statusPickerModel) View() string {
 		return "Loading..."
 	}
 
-	// Get description of currently selected status
-	var description string
-	if item, ok := m.list.SelectedItem().(statusItem); ok && item.description != "" {
-		description = item.description
+	// Reserve a fixed description-area height so the modal keeps a constant
+	// height regardless of which status is selected (longer descriptions like
+	// "deferred" would otherwise wrap to more lines and make items jump).
+	var selected string
+	var allDescs []string
+	for _, li := range m.list.Items() {
+		if item, ok := li.(statusItem); ok {
+			allDescs = append(allDescs, item.description)
+		}
 	}
+	if item, ok := m.list.SelectedItem().(statusItem); ok {
+		selected = item.description
+	}
+	description := reservePickerDescription(selected, allDescs, pickerModalWidth(m.width, 0, 0))
 
 	// For multi-select, don't show individual nib ID
 	var nibID string

@@ -89,8 +89,13 @@ func (d linkDelegate) Render(w io.Writer, m list.Model, index int, listItem list
 	// Format the link type label
 	labelCol := lipgloss.NewStyle().Width(12).Render(ui.Muted.Render(item.label + ":"))
 
-	// Get colors from config
-	colors := d.cfg.GetNibColors(link.nib.Status, link.nib.Type, link.nib.Priority)
+	// Get colors from config. EffectiveType so a type-less nib keeps its "task"
+	// badge. Raw Priority is safe here despite the missing default: GetNibColors ->
+	// GetPriority yields a different PriorityColor for "" (none) vs "normal" ("white"),
+	// but that color is only ever consumed by RenderPrioritySymbol, which returns ""
+	// (discarding the color) whenever GetPrioritySymbol is empty — and the symbol is
+	// empty for both "" and "normal", so the rendered result is identical.
+	colors := d.cfg.GetNibColors(link.nib.Status, link.nib.EffectiveType(), link.nib.Priority)
 
 	// Calculate max title width using responsive columns
 	baseWidth := d.cols.ID + d.cols.Status + d.cols.Type + 12 + 4 // label + cursor + padding
@@ -103,7 +108,7 @@ func (d linkDelegate) Render(w io.Writer, m list.Model, index int, listItem list
 	row := ui.RenderNibRow(
 		link.nib.ID,
 		link.nib.Status,
-		link.nib.Type,
+		link.nib.EffectiveType(),
 		link.nib.Title,
 		ui.NibRowConfig{
 			StatusColor:   colors.StatusColor,
@@ -330,7 +335,7 @@ func (m detailModel) Update(msg tea.Msg) (detailModel, tea.Cmd) {
 				return openParentPickerMsg{
 					nibIDs:       []string{m.nib.ID},
 					nibTitle:     m.nib.Title,
-					nibTypes:     []string{m.nib.Type},
+					nibTypes:     []string{m.nib.EffectiveType()},
 					currentParent: m.nib.Parent,
 				}
 			}
@@ -352,7 +357,7 @@ func (m detailModel) Update(msg tea.Msg) (detailModel, tea.Cmd) {
 				return openTypePickerMsg{
 					nibIDs:      []string{m.nib.ID},
 					nibTitle:    m.nib.Title,
-					currentType: m.nib.Type,
+					currentType: m.nib.EffectiveType(),
 					validTypes:  validTypes,
 				}
 			}
@@ -363,7 +368,7 @@ func (m detailModel) Update(msg tea.Msg) (detailModel, tea.Cmd) {
 				return openPriorityPickerMsg{
 					nibIDs:         []string{m.nib.ID},
 					nibTitle:       m.nib.Title,
-					currentPriority: m.nib.Priority,
+					currentPriority: m.nib.EffectivePriority(),
 				}
 			}
 
@@ -603,9 +608,11 @@ func (m detailModel) resolveAllLinks() []resolvedLink {
 	var links []resolvedLink
 	ctx := context.Background()
 
-	// Filter out resolved nibs (completed/scrapped) from blocking relationships
+	// Filter out resolved nibs (completed/scrapped) from blocking relationships.
+	// This is the *resolved/terminal* set — derive it from the canonical
+	// resolved predicate so it tracks nib semantics, not a literal.
 	activeOnly := &model.NibFilter{
-		ExcludeStatus: []string{"completed", "scrapped"},
+		ExcludeStatus: nib.ResolvedStatusNames(),
 	}
 
 	// Resolve outgoing links via backend
@@ -684,8 +691,8 @@ func compareNibsByStatusPriorityAndType(a, b *nib.Nib, statusNames, typeNames []
 	if pi != pj {
 		return pi < pj
 	}
-	// Tertiary: type order
-	ti, tj := getTypeOrder(a.Type), getTypeOrder(b.Type)
+	// Tertiary: type order (EffectiveType so a type-less nib sorts as "task")
+	ti, tj := getTypeOrder(a.EffectiveType()), getTypeOrder(b.EffectiveType())
 	if ti != tj {
 		return ti < tj
 	}

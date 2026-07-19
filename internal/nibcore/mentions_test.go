@@ -204,7 +204,7 @@ func TestFindMentionedByInMap_DeterministicOrder(t *testing.T) {
 		}
 	}
 
-	// Defence-in-depth: 10 subsequent calls must all produce the same
+	// Defense-in-depth: 10 subsequent calls must all produce the same
 	// order. Catches a future regression where the sort is dropped and
 	// Go's randomized map iteration surfaces through.
 	for i := 0; i < 10; i++ {
@@ -560,7 +560,7 @@ func TestCoreWatcher_WriteReparsesMentionEdges(t *testing.T) {
 	if err := core.StartWatching(); err != nil {
 		t.Fatalf("StartWatching: %v", err)
 	}
-	defer func() { _ = core.Unwatch() }()
+	defer func() { _ = core.StopWatching() }()
 	ch, unsub := core.Subscribe()
 	defer unsub()
 
@@ -604,7 +604,7 @@ func TestCoreWatcher_RemoveDropsFromMentionIndex(t *testing.T) {
 	if err := core.StartWatching(); err != nil {
 		t.Fatalf("StartWatching: %v", err)
 	}
-	defer func() { _ = core.Unwatch() }()
+	defer func() { _ = core.StopWatching() }()
 	ch, unsub := core.Subscribe()
 	defer unsub()
 

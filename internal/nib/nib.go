@@ -7,7 +7,9 @@ import (
 	"fmt"
 	"hash/fnv"
 	"io"
+	"reflect"
 	"regexp"
+	"sort"
 	"strings"
 	"time"
 
@@ -170,8 +172,12 @@ type Nib struct {
 	// Parent is the optional parent nib ID (milestone, epic, or feature).
 	Parent string `yaml:"parent,omitempty" json:"parent,omitempty"`
 
-	// Blocking is DEPRECATED — only used for parsing v0 (legacy) files during migration.
-	// In v1+, blocking is computed by scanning other nibs' BlockedBy fields via FindIncomingLinks.
+	// Blocking is DEPRECATED for computing links: in v1+, blocking is derived by
+	// scanning other nibs' BlockedBy fields via FindIncomingLinks, and normal v1
+	// nibs never set it. It is still parsed from v0 (legacy) files during
+	// migration AND re-emitted by Render (with omitempty) so a legacy v0 file's
+	// on-disk `blocking:` content round-trips into the canonical etag instead of
+	// being silently stripped; see renderFrontMatter.Blocking.
 	Blocking []string `yaml:"blocking,omitempty" json:"-"`
 
 	// BlockedBy is a list of nib IDs that are blocking this nib.
@@ -182,9 +188,158 @@ type Nib struct {
 
 	// Order is a fractional index string for sorting among siblings.
 	Order string `yaml:"order,omitempty" json:"order,omitempty"`
+
+	// Extra holds front-matter keys that none of the modeled fields above claim
+	// (e.g. a hand-added `assignee: bob`, or forward-compatible keys written by a
+	// newer tool). Parse captures each unknown key's value as a raw yaml.v3 node
+	// via a yaml inline catch-all and Render re-emits it verbatim, so unknown keys
+	// survive a round-trip instead of being silently stripped. This keeps the
+	// canonical etag (a hash of Render()) a faithful witness of the on-disk
+	// content: an external edit confined to an unmodeled key still changes the etag.
+	//
+	// Round-trip fidelity: unknown-key SCALAR VALUES round-trip verbatim. Both
+	// Parse and Render use yaml.v3, and each unknown value is carried as a raw
+	// yaml.Node preserving its original scalar text, quoting style, and tag, so no
+	// yaml re-inference happens on either side. This closes the entire
+	// YAML-1.1<->1.2 coercion class a yaml.v2-parse / yaml.v3-render split would
+	// otherwise inflict — including the "Norway problem" bool-like scalars
+	// (`y`/`yes`/`no`/`on`/`off`, kept as strings) and signed-zero floats (`-0.0`,
+	// kept verbatim rather than collapsing to `0`). parse->render is a fixed point,
+	// so the render — and thus the etag — is stable and never self-conflicts (a
+	// TRUE fixed point).
+	//
+	// Non-scalar FORMATTING is NOT byte-preserved: block-scalar indentation is
+	// normalized (a 2-space `|` block re-emits at 4 spaces), a standalone/head
+	// comment on its own line above a key is dropped (it attaches to the key node,
+	// which the inline map does not capture), and a cross-boundary anchor/alias is
+	// RESOLVED to its concrete value at parse time, not preserved (see
+	// resolveExtraAliases). Fidelity is a guarantee about scalar
+	// values, not about arbitrary source formatting.
+	//
+	// Not exposed over the GraphQL/JSON surface (json:"-"). yaml.v3 sorts inline-
+	// map keys, so the render (and thus the etag) stays deterministic regardless of
+	// Go map iteration order.
+	Extra map[string]yaml.Node `yaml:"-" json:"-"`
+
+	// priorityMigrated is a transient, load-boundary-only flag (never
+	// serialized) set by Parse when a legacy `priority: deferred` value was
+	// normalized to `low`. The loader reads it via PriorityMigrated()
+	// immediately after Parse to persist the normalization so the on-disk value
+	// converges with memory at load time. It is not general-purpose "was this
+	// nib ever migrated" state: Clone() clears it, so it is meaningful only on a
+	// freshly-parsed nib.
+	priorityMigrated bool
 }
 
-// frontMatter is the subset of Nib that gets serialized to YAML front matter.
+// PriorityMigrated reports whether Parse normalized a legacy `priority: deferred`
+// value to `low` for this nib. The loader persists such nibs so the on-disk
+// value converges with the in-memory value (avoiding an etag divergence that
+// would break if-match updates). See the migration note in Parse.
+func (b *Nib) PriorityMigrated() bool {
+	return b.priorityMigrated
+}
+
+// yamlFrontMatterFormats parses nib front matter with yaml.v3 (the same YAML
+// implementation Render marshals with), NOT the frontmatter library's default
+// yaml.v2. Unifying the parse and render YAML versions — combined with capturing
+// unknown keys as raw yaml.Node values (see frontMatter.Extra) — makes the
+// unknown-key passthrough a true parse->render fixed point: no yaml.v2->v3
+// scalar re-inference can coerce a bool-like or signed-zero value.
+// Only the YAML formats are registered (nibs are always YAML front matter with
+// `---`/`---yaml` fences); TOML/JSON front matter is not a nib format.
+//
+// The registered unmarshal is boundedYAMLUnmarshal (NOT plain yaml.Unmarshal):
+// it caps the raw front-matter block by byte size and key count before the
+// quadratic struct decode, closing the yaml.v3 O(N²)-in-key-count DoS.
+var yamlFrontMatterFormats = []*frontmatter.Format{
+	frontmatter.NewFormat("---", "---", boundedYAMLUnmarshal),
+	frontmatter.NewFormat("---yaml", "---", boundedYAMLUnmarshal),
+}
+
+// Front-matter decode bounds. yaml.v3's decode of a mapping into a Go
+// map/struct-with-inline-catch-all is O(N²) in that mapping's key count (~2.7s
+// at 40k keys, ~1 MB), and that decode runs inside frontmatter.Parse BEFORE the
+// alias budget or any other guard — so a crafted many-key nib would hang
+// Core.Load under c.mu and re-hang every if-match Update's computeStoredETag.
+// These bounds cap the attack surface before the decode: a real nib has a
+// handful of keys and well under ~2 KB of front matter, so both ceilings sit far
+// above anything legitimate (128x / 66x headroom) while capping the quadratic
+// cost to a couple of milliseconds. Exceeding either returns a normal parse
+// error, so loadFromDisk log-and-skips the file instead of blocking on it.
+const (
+	// maxFrontMatterBytes bounds the raw YAML front-matter block (the bytes
+	// between the `---` fences, excluding the markdown body). 256 KiB.
+	maxFrontMatterBytes = 256 * 1024
+	// maxFrontMatterKeys bounds the total number of mapping keys in the
+	// front-matter block. The top-level key count is the direct O(N²) driver
+	// (the inline Extra map + modeled fields); counting recursively also caps any
+	// mapping-heavy nested value. A real nib has fewer than ~15 keys.
+	maxFrontMatterKeys = 1000
+)
+
+// boundedYAMLUnmarshal is the frontmatter UnmarshalFunc registered for nib front
+// matter. It enforces maxFrontMatterBytes / maxFrontMatterKeys BEFORE delegating
+// to the real yaml.Unmarshal, so a crafted many-key block is rejected with a fast
+// normal error rather than paying yaml.v3's O(N²) map decode.
+//
+// The key-count check first decodes the block into a single yaml.Node — which is
+// LINEAR in the input, unlike the struct decode — counts its mapping keys, and
+// rejects before the quadratic decode. Node decode does not expand aliases, so a
+// billion-laughs graph stays compact here (the alias fan-out is bounded later by
+// resolveExtraAliases). If the node decode itself fails (malformed YAML), we fall
+// through to the real yaml.Unmarshal so it produces the canonical parse error
+// (duplicate key, type mismatch, syntax) unchanged.
+func boundedYAMLUnmarshal(data []byte, v any) error {
+	if len(data) > maxFrontMatterBytes {
+		return fmt.Errorf("front matter is %d bytes, exceeding the %d-byte limit", len(data), maxFrontMatterBytes)
+	}
+	var root yaml.Node
+	if err := yaml.Unmarshal(data, &root); err == nil {
+		if n := countMappingKeys(&root); n > maxFrontMatterKeys {
+			return fmt.Errorf("front matter has %d keys, exceeding the %d-key limit", n, maxFrontMatterKeys)
+		}
+	}
+	return yaml.Unmarshal(data, v)
+}
+
+// countMappingKeys returns the total number of key/value pairs across every
+// mapping node in the tree rooted at n (computed from a linear yaml.Node decode).
+// yaml.v3 stores a mapping's children as a flat [k0,v0,k1,v1,...] slice, so a
+// mapping contributes len(Content)/2 keys. See maxFrontMatterKeys.
+//
+// It counts LITERAL mapping keys only and does NOT expand YAML merge keys (`<<`):
+// a `<<` merge counts as a single key here and its referenced mapping is not
+// pulled in (the yaml.Node decode this runs on never expands aliases/merges). So
+// a merge-amplified document undercounts against maxFrontMatterKeys. That is
+// safe: yaml.v3 implements `<<` as alias traversal, so the same built-in
+// alias-ratio guard that structurally bounds billion-laughs during the real
+// struct decode also bounds merge amplification — it is not the key cap that
+// bounds it here. See TestParseRejectsMergeKeyExpansion.
+func countMappingKeys(n *yaml.Node) int {
+	if n == nil {
+		return 0
+	}
+	count := 0
+	if n.Kind == yaml.MappingNode {
+		count += len(n.Content) / 2
+	}
+	for _, child := range n.Content {
+		count += countMappingKeys(child)
+	}
+	return count
+}
+
+// frontMatter is the subset of Nib parsed from YAML front matter (via yaml.v3;
+// see yamlFrontMatterFormats).
+//
+// LOAD-BEARING INVARIANT: frontMatter's modeled yaml-key set must stay identical
+// to renderFrontMatter's (the render projection). Parse routes every key NOT
+// matched by a named field here into the inline Extra catch-all; Render re-emits
+// Extra as an inline map. If a key were modeled on one side but not the other, a
+// pre-existing on-disk file could parse that key into Extra and then collide with
+// the modeled render field — which yaml.v3 turns into a panic. The symmetry is
+// enforced by TestFrontMatterRenderProjectionSymmetry (reflection) and defended
+// at render time by Render's modeledRenderTags collision drop.
 type frontMatter struct {
 	Version   int        `yaml:"version,omitempty"`
 	Title     string     `yaml:"title"`
@@ -200,19 +355,89 @@ type frontMatter struct {
 	BlockedBy []string   `yaml:"blocked_by,omitempty"`
 	Documents []string   `yaml:"documents,omitempty"`
 	Order     string     `yaml:"order,omitempty"`
+
+	// Extra is a yaml inline catch-all: any front-matter key not matched by a
+	// named field above lands here (via yaml.v3, see yamlFrontMatterFormats). Each
+	// value is captured as a raw yaml.Node so unknown keys survive parsing and are
+	// re-emitted by Render with their original scalar text/style/tag intact — no
+	// type re-inference. See Nib.Extra.
+	Extra map[string]yaml.Node `yaml:",inline"`
 }
+
+// DefaultType and DefaultPriority are the single source of truth for the
+// PRESENTATION defaults applied when a nib file omits the corresponding front
+// matter key. They are consumed via EffectiveType/EffectivePriority.
+//
+// The stored Nib keeps Type/Priority EMPTY when the file omits them: Render
+// carries `omitempty` on both, so the canonical render — and thus the etag —
+// stays a faithful witness of the on-disk bytes. If loadNib synthesized these
+// in memory, a bare-parse of the same file would render no
+// such key while the in-memory ETag() would render the default, diverging with
+// no on-disk change and false-conflicting an if-match Update. The
+// defaults are therefore applied only at the consumption boundary (GraphQL
+// field resolvers, sort/filter, TUI/CLI display, the JSON projection).
+//
+// They live in the nib package (not config) to avoid a nib->config layering
+// edge; the values intentionally match
+// config's default type ("task") and priority ("normal"). config's DefaultTypes
+// and DefaultPriorities remain the source for the full enum and colors — these
+// two constants only name the fallback member of each, and a guard test in the
+// config package pins them equal so the two definitions cannot drift.
+const (
+	DefaultType     = "task"
+	DefaultPriority = "normal"
+)
+
+// EffectiveType returns the nib's type, or DefaultType when the file omitted it.
+// Use this at every consumption boundary (display, sort, filter, GraphQL/JSON)
+// that must treat a type-less nib as the default; never mutate b.Type to the
+// default, or the etag will diverge from the on-disk bytes (see DefaultType).
+func (b *Nib) EffectiveType() string {
+	if b.Type == "" {
+		return DefaultType
+	}
+	return b.Type
+}
+
+// EffectivePriority returns the nib's priority, or DefaultPriority when omitted.
+// See EffectiveType for why the stored Priority is never mutated to the default.
+func (b *Nib) EffectivePriority() string {
+	if b.Priority == "" {
+		return DefaultPriority
+	}
+	return b.Priority
+}
+
+// resolvedStatuses is the single source of truth for the "resolved" (done)
+// status set — statuses that mean the nib is finished. Both IsResolvedStatus
+// and ResolvedStatusNames derive from it, so the set has exactly one definition.
+var resolvedStatuses = []string{"completed", "scrapped"}
 
 // IsResolvedStatus returns true if the status means the nib is "done"
 // (either completed or scrapped). This is the canonical definition used
 // by all packages for filtering resolved blockers and blocking relationships.
 func IsResolvedStatus(status string) bool {
-	return status == "completed" || status == "scrapped"
+	for _, s := range resolvedStatuses {
+		if status == s {
+			return true
+		}
+	}
+	return false
+}
+
+// ResolvedStatusNames returns the names of all statuses considered "resolved"
+// (done) — a defensive copy of the canonical resolvedStatuses set, so callers
+// cannot mutate the source. Today this is {completed, scrapped}.
+func ResolvedStatusNames() []string {
+	names := make([]string, len(resolvedStatuses))
+	copy(names, resolvedStatuses)
+	return names
 }
 
 // Parse reads a nib from a reader (markdown with YAML front matter).
 func Parse(r io.Reader) (*Nib, error) {
 	var fm frontMatter
-	body, err := frontmatter.Parse(r, &fm)
+	body, err := frontmatter.Parse(r, &fm, yamlFrontMatterFormats...)
 	if err != nil {
 		return nil, fmt.Errorf("parsing front matter: %w", err)
 	}
@@ -224,41 +449,246 @@ func Parse(r io.Reader) (*Nib, error) {
 		return nil, fmt.Errorf("invalid order key: %w", err)
 	}
 
+	// Migration: "deferred" was removed as a priority and reintroduced as a
+	// status. Files written before the change may still carry
+	// `priority: deferred`. Priority was never validated at parse time, so such
+	// a file already loaded; the point of this normalization is to produce a
+	// valid, sanely-sortable value on the current (deferred-free) priority axis.
+	// We target "low" because "deferred" was the *lowest* priority — ranked
+	// below "low" in the old enum — so mapping it to "low" preserves its
+	// relative rank. (Do not "tidy" this to "normal": that would silently
+	// re-rank legacy nibs upward.) The value is normalized in memory here so it
+	// is always valid even without a Core; when loaded through a Core's bulk
+	// Load, the loader persists it (see Core.loadNibReconciledLocked) so the raw
+	// on-disk bytes converge with the in-memory value immediately. This is no
+	// longer required for etag correctness — Core.computeStoredETag parses the
+	// on-disk file and hashes its canonical Render(), so a legacy `deferred` file
+	// already yields the same etag as the in-memory `low` value — but it keeps
+	// disk and memory in sync for external consumers (git diffs, editors).
+	priorityMigrated := false
+	if fm.Priority == "deferred" {
+		fm.Priority = "low"
+		priorityMigrated = true
+	}
+
+	// Resolve any YAML anchors/aliases captured in Extra to their concrete value.
+	// A cross-boundary anchor/alias — an anchor on a MODELED field (which decodes
+	// to a plain Go value, dropping the anchor) plus an alias in an unmodeled Extra
+	// key — would otherwise survive as a raw AliasNode and marshal to a DANGLING
+	// alias on Render, producing invalid YAML that permanently corrupts the file.
+	// Resolving at parse yields concrete values while keeping scalar fidelity for
+	// non-alias values.
+	//
+	// resolveExtraAliases fails closed on adversarial anchors: yaml.v3 does NOT
+	// expand aliases when decoding into a yaml.Node, so its built-in billion-laughs
+	// budget never runs and Extra can hold a compact graph our expansion would blow
+	// up. A self-referential (cyclic) anchor, or a fan-out exceeding
+	// maxExtraAliasNodes, therefore returns an error here rather than recursing to a
+	// stack overflow or exhausting memory. A crafted file thus fails Parse and is
+	// skipped by the loader (Core.Load log-and-continue) instead of crashing the
+	// process. The budget is shared across all Extra values of the nib.
+	// Iterate Extra keys in sorted order so that, when multiple values fail
+	// independently, the key named in the returned error (and thus the
+	// loadFromDisk skip warning) is DETERMINISTIC — Go map iteration order would
+	// otherwise pick an arbitrary offender across runs. The shared alias budget is
+	// consumed in this same order, so a budget-exhaustion error is deterministic too.
+	extraKeys := make([]string, 0, len(fm.Extra))
+	for k := range fm.Extra {
+		extraKeys = append(extraKeys, k)
+	}
+	sort.Strings(extraKeys)
+	aliasBudget := maxExtraAliasNodes
+	for _, k := range extraKeys {
+		v := fm.Extra[k]
+		resolved, err := resolveExtraAliases(&v, &aliasBudget)
+		if err != nil {
+			return nil, fmt.Errorf("parsing front matter: unknown key %q: %w", k, err)
+		}
+		if resolved != nil {
+			fm.Extra[k] = *resolved
+		}
+	}
+
 	return &Nib{
-		Version:   fm.Version,
-		Title:     fm.Title,
-		Status:    fm.Status,
-		Type:      fm.Type,
-		Priority:  fm.Priority,
-		Estimate:  fm.Estimate,
-		Tags:      fm.Tags,
-		CreatedAt: fm.CreatedAt,
-		UpdatedAt: fm.UpdatedAt,
-		Body:      bodyStr,
-		Parent:    fm.Parent,
-		Blocking:  fm.Blocking,
-		BlockedBy: fm.BlockedBy,
-		Documents: fm.Documents,
-		Order:     fm.Order,
+		Version:          fm.Version,
+		Title:            fm.Title,
+		Status:           fm.Status,
+		Type:             fm.Type,
+		Priority:         fm.Priority,
+		Estimate:         fm.Estimate,
+		Tags:             fm.Tags,
+		CreatedAt:        fm.CreatedAt,
+		UpdatedAt:        fm.UpdatedAt,
+		Body:             bodyStr,
+		Parent:           fm.Parent,
+		Blocking:         fm.Blocking,
+		BlockedBy:        fm.BlockedBy,
+		Documents:        fm.Documents,
+		Order:            fm.Order,
+		Extra:            fm.Extra,
+		priorityMigrated: priorityMigrated,
 	}, nil
 }
 
+// maxExtraAliasNodes bounds how many nodes anchor/alias resolution may
+// materialize across all Extra values of a single nib. yaml.v3 preserves aliases
+// unexpanded when decoding into yaml.Node, so its own expansion budget never
+// applies here; this is the equivalent guard. A legitimate unknown-key value is a
+// handful of nodes, so this ceiling sits far above any real nib while capping
+// exponential (billion-laughs) fan-out at ~tens of MB.
+const maxExtraAliasNodes = 100_000
+
+// resolveExtraAliases returns a deep copy of node with all YAML anchor/alias
+// state stripped: an alias node is replaced by a (recursively resolved) deep copy
+// of its target, and Anchor is cleared on every node. It is applied to each
+// captured Extra value at parse time (see Parse) so no cross-key anchor/alias
+// dependency can survive to Render, where a dangling alias would marshal to
+// invalid YAML and permanently corrupt the file. Non-alias scalar
+// values are otherwise preserved verbatim (Kind, Value, Style, Tag), keeping the
+// unknown-key scalar fidelity the passthrough guarantees.
+//
+// It fails closed on adversarial input: a self-referential anchor (a cyclic node
+// graph) returns a "cyclic" error, and a fan-out that would materialize more than
+// the remaining budget returns a limit error — instead of recursing to a stack
+// overflow or exhausting memory. budget is decremented per copied node
+// and is shared across a nib's Extra values by the caller. Returns (nil, nil) only
+// for a nil input.
+func resolveExtraAliases(node *yaml.Node, budget *int) (*yaml.Node, error) {
+	return resolveExtraAliasesGuarded(node, make(map[*yaml.Node]bool), budget)
+}
+
+// resolveExtraAliasesGuarded carries the per-value cycle set (alias targets on the
+// current resolution path) and the shared node budget.
+func resolveExtraAliasesGuarded(node *yaml.Node, active map[*yaml.Node]bool, budget *int) (*yaml.Node, error) {
+	if node == nil {
+		return nil, nil
+	}
+	if node.Kind == yaml.AliasNode {
+		// Replace the alias with a resolved deep copy of its anchor target. A
+		// well-formed parse always sets Alias; fail CLOSED if it is nil (a
+		// malformed/unreachable state) rather than silently returning no value,
+		// consistent with the rest of this guard's fail-closed posture.
+		if node.Alias == nil {
+			return nil, fmt.Errorf("alias node has no target (malformed anchor/alias)")
+		}
+		// A target already on the active resolution path means the alias points
+		// back into its own expansion: a cycle. Without this check the recursion
+		// never terminates (stack overflow).
+		if active[node.Alias] {
+			return nil, fmt.Errorf("cyclic anchor/alias reference")
+		}
+		active[node.Alias] = true
+		resolved, err := resolveExtraAliasesGuarded(node.Alias, active, budget)
+		delete(active, node.Alias)
+		return resolved, err
+	}
+	// Charge each materialized node against the shared budget before copying it.
+	// This is what bounds exponential fan-out: an anchor referenced N times per
+	// level across M levels expands to N^M nodes.
+	if *budget <= 0 {
+		return nil, fmt.Errorf("anchor/alias expansion exceeds %d-node limit", maxExtraAliasNodes)
+	}
+	*budget--
+	resolved := *node // copy scalar fields (Kind, Value, Style, Tag, ...)
+	resolved.Anchor = ""
+	if len(node.Content) > 0 {
+		resolved.Content = make([]*yaml.Node, len(node.Content))
+		for i, child := range node.Content {
+			rc, err := resolveExtraAliasesGuarded(child, active, budget)
+			if err != nil {
+				return nil, err
+			}
+			resolved.Content[i] = rc
+		}
+	}
+	return &resolved, nil
+}
+
 // renderFrontMatter is used for YAML output with yaml.v3 (supports custom marshalers).
-// Note: Blocking is intentionally omitted — only blockedBy is persisted (single-side storage).
+//
+// Blocking carries omitempty: for a v1+ nib it is always nil (blocking is
+// single-side, computed at query time from other nibs' BlockedBy), so it is
+// absent from the render — the normal case is unchanged. It is emitted ONLY for
+// a legacy v0 nib parsed straight from disk (before migrateV0ToV1 clears it), so
+// the canonical render — and thus the etag — stays a faithful witness of a v0
+// file's on-disk `blocking:` content rather than silently dropping it.
+//
+// Extra is a yaml inline catch-all mirroring frontMatter.Extra: unknown keys
+// captured on Parse are re-emitted here. yaml.v3 sorts inline-map keys, so the
+// render is deterministic regardless of Go map iteration order.
+//
+// LOAD-BEARING INVARIANT: renderFrontMatter's modeled yaml-key set must stay
+// identical to frontMatter's (the parse projection) — see that struct's note.
+// yaml.v3 PANICS ("cannot have key ... in inlined map: conflicts with struct
+// field") if an inline Extra key collides with a modeled field name, so Render
+// pre-drops any such key (modeledRenderTags) to keep its ([]byte, error) contract
+// panic-free, and TestFrontMatterRenderProjectionSymmetry pins the two key sets.
 type renderFrontMatter struct {
-	Version   int        `yaml:"version"`
-	Title     string     `yaml:"title"`
-	Status    string     `yaml:"status"`
-	Type      string     `yaml:"type,omitempty"`
-	Priority  string     `yaml:"priority,omitempty"`
-	Estimate  string     `yaml:"estimate,omitempty"`
-	Tags      []string   `yaml:"tags,omitempty"`
-	CreatedAt *time.Time `yaml:"created_at,omitempty"`
-	UpdatedAt *time.Time `yaml:"updated_at,omitempty"`
-	Parent    string     `yaml:"parent,omitempty"`
-	BlockedBy []string   `yaml:"blocked_by,omitempty"`
-	Documents []string   `yaml:"documents,omitempty"`
-	Order     string     `yaml:"order,omitempty"`
+	Version   int                  `yaml:"version"`
+	Title     string               `yaml:"title"`
+	Status    string               `yaml:"status"`
+	Type      string               `yaml:"type,omitempty"`
+	Priority  string               `yaml:"priority,omitempty"`
+	Estimate  string               `yaml:"estimate,omitempty"`
+	Tags      []string             `yaml:"tags,omitempty"`
+	CreatedAt *time.Time           `yaml:"created_at,omitempty"`
+	UpdatedAt *time.Time           `yaml:"updated_at,omitempty"`
+	Parent    string               `yaml:"parent,omitempty"`
+	Blocking  []string             `yaml:"blocking,omitempty"`
+	BlockedBy []string             `yaml:"blocked_by,omitempty"`
+	Documents []string             `yaml:"documents,omitempty"`
+	Order     string               `yaml:"order,omitempty"`
+	Extra     map[string]yaml.Node `yaml:",inline"`
+}
+
+// modeledRenderTags is the set of YAML key names that renderFrontMatter models
+// with a named field (i.e. every field except the ,inline Extra catch-all),
+// derived by reflection so it can never drift from the struct. Render consults it
+// to drop any Extra key that collides with a modeled field name: yaml.v3 panics
+// ("cannot have key ... in inlined map") on such a collision, and a modeled key
+// appearing in Extra is a programming error (Parse only ever routes UNMODELED
+// keys into Extra), so the modeled field wins and Render stays panic-free.
+var modeledRenderTags = buildModeledRenderTags()
+
+func buildModeledRenderTags() map[string]struct{} {
+	t := reflect.TypeOf(renderFrontMatter{})
+	tags := make(map[string]struct{}, t.NumField())
+	for i := 0; i < t.NumField(); i++ {
+		name, _, _ := strings.Cut(t.Field(i).Tag.Get("yaml"), ",")
+		if name == "" {
+			continue // the ,inline Extra catch-all (and any unnamed field)
+		}
+		tags[name] = struct{}{}
+	}
+	return tags
+}
+
+// renderExtra returns b.Extra with any key colliding with a modeled render field
+// dropped, without mutating b.Extra. The common case (no Extra, or no collision)
+// returns the original map with no allocation. A collision cannot arise from
+// normal Parse output (parse and render model the same key set), so this is
+// defense for the "promote an unknown key to a modeled field" evolution path,
+// keeping Render panic-free rather than letting yaml.v3 panic on the inline map.
+func (b *Nib) renderExtra() map[string]yaml.Node {
+	if len(b.Extra) == 0 {
+		return b.Extra
+	}
+	filtered := b.Extra
+	copied := false
+	for k := range b.Extra {
+		if _, collides := modeledRenderTags[k]; !collides {
+			continue
+		}
+		if !copied {
+			filtered = make(map[string]yaml.Node, len(b.Extra))
+			for kk, vv := range b.Extra {
+				filtered[kk] = vv
+			}
+			copied = true
+		}
+		delete(filtered, k)
+	}
+	return filtered
 }
 
 // Render serializes the nib back to markdown with YAML front matter.
@@ -274,9 +704,11 @@ func (b *Nib) Render() ([]byte, error) {
 		CreatedAt: b.CreatedAt,
 		UpdatedAt: b.UpdatedAt,
 		Parent:    b.Parent,
+		Blocking:  b.Blocking,
 		BlockedBy: b.BlockedBy,
 		Documents: b.Documents,
 		Order:     b.Order,
+		Extra:     b.renderExtra(),
 	}
 
 	fmBytes, err := yaml.Marshal(&fm)
@@ -312,10 +744,17 @@ func (b *Nib) Render() ([]byte, error) {
 }
 
 // Clone returns a deep copy of the Nib. Slice fields (Tags, BlockedBy, Blocking,
-// Documents) and pointer fields (CreatedAt, UpdatedAt) are copied independently
-// so that mutating the clone does not affect the original.
+// Documents), the Extra unknown-key map, and pointer fields (CreatedAt,
+// UpdatedAt) are copied independently so that mutating the clone does not affect
+// the original.
 func (b *Nib) Clone() *Nib {
 	clone := *b // shallow copy of all value fields
+
+	// priorityMigrated is a load-boundary-only signal (consumed by the loader
+	// right after Parse). A clone is a working copy for mutation/update, never a
+	// freshly-parsed nib, so clear it here rather than let a stale `true` ride
+	// along through every Clone/Update cycle.
+	clone.priorityMigrated = false
 
 	// Deep-copy slice fields
 	if b.Tags != nil {
@@ -333,6 +772,19 @@ func (b *Nib) Clone() *Nib {
 	if b.Documents != nil {
 		clone.Documents = make([]string, len(b.Documents))
 		copy(clone.Documents, b.Documents)
+	}
+
+	// Deep-copy the unknown-key passthrough so a mutated clone can't alias (and
+	// thus corrupt) the original's Extra map. A shallow struct copy would share
+	// the same underlying map. Note this is a top-level copy of the map; each
+	// yaml.Node value is copied by value, but a node's internal Content slice
+	// (child nodes of a map/sequence value) is still shared, which is acceptable
+	// because Extra values are treated as opaque, immutable passthrough content.
+	if b.Extra != nil {
+		clone.Extra = make(map[string]yaml.Node, len(b.Extra))
+		for k, v := range b.Extra {
+			clone.Extra[k] = v
+		}
 	}
 
 	// Deep-copy pointer fields
@@ -363,14 +815,24 @@ func (b *Nib) ETag() string {
 	return hex.EncodeToString(h.Sum(nil))
 }
 
-// MarshalJSON implements json.Marshaler to include computed etag field.
+// MarshalJSON implements json.Marshaler to include the computed etag field and
+// to project the PRESENTATION defaults for Type/Priority.
+//
+// The stored Nib keeps Type/Priority empty when the file omits them (so the etag
+// witnesses the on-disk bytes — see DefaultType). The JSON surface, however, must
+// present the effective value ("task"/"normal") so it agrees with the GraphQL
+// field resolvers. We marshal a value COPY with the effective values applied, leaving the
+// receiver — and thus b.ETag(), computed from the raw Render() — untouched.
 func (b *Nib) MarshalJSON() ([]byte, error) {
 	type NibAlias Nib // Avoid infinite recursion
+	alias := NibAlias(*b)
+	alias.Type = b.EffectiveType()
+	alias.Priority = b.EffectivePriority()
 	return json.Marshal(&struct {
 		*NibAlias
 		ETag string `json:"etag"`
 	}{
-		NibAlias: (*NibAlias)(b),
-		ETag:      b.ETag(),
+		NibAlias: &alias,
+		ETag:     b.ETag(),
 	})
 }

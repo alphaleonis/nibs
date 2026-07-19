@@ -3,15 +3,13 @@ package cmd
 import (
 	"context"
 	"fmt"
-	"os"
 
+	"github.com/alphaleonis/nibs/internal/config"
 	"github.com/alphaleonis/nibs/internal/graph"
 	"github.com/alphaleonis/nibs/internal/graph/model"
-	"github.com/alphaleonis/nibs/internal/nib"
 	"github.com/alphaleonis/nibs/internal/output"
-	"github.com/alphaleonis/nibs/internal/ui"
+	"github.com/alphaleonis/nibs/internal/projection"
 	"github.com/spf13/cobra"
-	"golang.org/x/term"
 )
 
 var (
@@ -36,23 +34,60 @@ var (
 	listMentions    string
 	listMentionedBy string
 	listReady       bool
+	listAll         bool
+	listOpen        bool
+	listActive      bool
 	listQuiet       bool
 	listSort        string
-	listFull        bool
-	listColumns     string
+	listView        string
+	listFields      string
+	listNoHeader    bool
+	listCount       bool
+	listLimit       int
 )
 
 var listCmd = &cobra.Command{
 	Use:     "list",
 	Aliases: []string{"ls"},
-	Short:   "List all nibs",
-	Long: `Lists all nibs in the .nibs directory.
+	Short:   "List nibs (projected, TSV by default)",
+	Long: `List nibs matching the filter flags, projected through the field-set engine.
 
-Position column (#):
-  The leftmost # column shows each nib's natural-order position among its
-  siblings (per-parent, 1-based). It is independent of --sort, so under
-  --sort priority the numbers will appear non-monotonic — that's by design,
-  letting you reference "move from 2 to 5" regardless of the current sort.
+The filtered set is projected and rendered as tab-separated rows under a
+"# <n> nibs" comment header (drop it with --no-header). Every output form
+shares one field-selection model with 'nibs get'.
+
+Status filtering (open by default):
+  With no status flag, only open nibs are listed (completed and scrapped are
+  hidden). -s/--status and --no-status accept the status groups open, closed,
+  and parked anywhere a concrete status is accepted. Any explicit -s overrides
+  the open default (so -s closed shows completed/scrapped). --open (alias
+  --active) is shorthand for -s open; --all disables the open default entirely.
+
+  --view id|ref|card|full   Select a coarse field set (leanest to fullest).
+                            Defaults to 'ref' when neither --view nor -f is
+                            given.
+  -f, --fields <spec>       Select exact fields, additive over --view. Scalars,
+                            computed fields (children, progress, ready), and one
+                            level of nested relation projection are supported,
+                            e.g. -f "id,blocked-by(id,status)". Given alone
+                            (no --view), the projection is exactly those fields.
+
+Output modes:
+  (default)                 TSV rows + the "# <n> nibs" header.
+  --no-header               TSV rows only (no header line).
+  --json                    The {"nibs":[…],"count":N,"truncated":<bool>}
+                            envelope — the same shape rel and the recipe views
+                            emit. Carries "hidden_closed":N when the open default
+                            suppressed that many completed/scrapped nibs.
+  -q, --quiet               Ids only, one per line (the 'id' view, unwrapped).
+                            Honors the open default (completed/scrapped hidden);
+                            add --all to include them. Never annotated.
+  -c, --count               The true count of the filtered set as a bare
+                            integer (pre-limit; ignores --view/-f/--json).
+                            Honors the open default, so it counts open nibs only;
+                            use --all for the total across every status.
+  --limit N                 Project only the first N rows and set
+                            "truncated":true in the envelope. N<=0 is unlimited.
 
 Search Syntax (--search/-S):
   The search flag supports Bleve query string syntax:
@@ -73,12 +108,32 @@ Search Syntax (--search/-S):
   characters), a prefix of the full ID (starting with the configured
   prefix), or an exact full ID, case-insensitive. ID matches are
   interleaved with full-text hits by the list's sort order.`,
+	Args: codedNoArgs(&listJSON), // all filtering is via flags; takes no positional args
 	RunE: func(cmd *cobra.Command, args []string) error {
 		app := getApp(cmd)
-		// Build GraphQL filter from CLI flags
+
+		// Resolve the status filter through the shared helper: expand status
+		// groups (open/closed/parked), apply the open-by-default rule, and honor
+		// the -s/--no-status/--all/--open precedence. --ready is a stricter,
+		// self-contained status filter (below), so suppress the open default when
+		// it is set — the group expansion of any explicit -s/--no-status still
+		// applies.
+		includeStatus, excludeStatus, openDefaultApplied, err := resolveStatusFilter(app.Config(), statusFilterInput{
+			Status:   listStatus,
+			NoStatus: listNoStatus,
+			All:      listAll || listReady,
+			Open:     listOpen || listActive,
+		})
+		if err != nil {
+			return reportErr(listJSON, output.ErrValidation, err)
+		}
+
+		// Build the GraphQL filter from the CLI flags. Filtering and sorting are
+		// resolved here; the output layer projects the results separately through
+		// the field-set engine.
 		filter := &model.NibFilter{
-			Status:          listStatus,
-			ExcludeStatus:   listNoStatus,
+			Status:          includeStatus,
+			ExcludeStatus:   excludeStatus,
 			Type:            listType,
 			ExcludeType:     listNoType,
 			Priority:        listPriority,
@@ -89,12 +144,9 @@ Search Syntax (--search/-S):
 			ExcludeTags:     listNoTag,
 		}
 
-		// Add search filter if provided
 		if listSearch != "" {
 			filter.Search = &listSearch
 		}
-
-		// Add parent/blocks filters
 		if listHasParent {
 			filter.HasParent = &listHasParent
 		}
@@ -111,8 +163,8 @@ Search Syntax (--search/-S):
 			filter.NoBlocking = &listNoBlocking
 		}
 		// MentionsID / MentionedByID accept short or full IDs; the GraphQL
-		// filter layer normalises via NibReader.NormalizeID in ApplyFilter
-		// (internal/graph/filters.go:resolveFilterID). Do not normalise at
+		// filter layer normalizes via NibReader.NormalizeID in ApplyFilter
+		// (internal/graph/filters.go:resolveFilterID). Do not normalize at
 		// the CLI layer.
 		if listMentions != "" {
 			filter.MentionsID = &listMentions
@@ -120,46 +172,44 @@ Search Syntax (--search/-S):
 		if listMentionedBy != "" {
 			filter.MentionedByID = &listMentionedBy
 		}
-		// --ready and --is-blocked are mutually exclusive
-		if listReady && listIsBlocked {
-			return fmt.Errorf("--ready and --is-blocked are mutually exclusive")
-		}
 
+		// --ready and --is-blocked are mutually exclusive.
+		if listReady && listIsBlocked {
+			return reportErr(listJSON, output.ErrValidation,
+				fmt.Errorf("--ready and --is-blocked are mutually exclusive"))
+		}
 		if listIsBlocked {
 			filter.IsBlocked = &listIsBlocked
 		}
-
-		// --ready: nibs available to start (not blocked, excludes in-progress/completed/scrapped/draft)
+		// --ready: nibs available to start (not blocked, excludes
+		// in-progress/completed/scrapped/draft/deferred). Deferred nibs are
+		// parked (non-terminal but not actionable now), so they stay out of the
+		// ready queue.
 		if listReady {
 			isBlocked := false
 			filter.IsBlocked = &isBlocked
-			filter.ExcludeStatus = append(filter.ExcludeStatus, "in-progress", "completed", "scrapped", "draft")
+			filter.ExcludeStatus = append(filter.ExcludeStatus, "in-progress", "completed", "scrapped", "draft", "deferred")
 		}
 
-		// --columns is mutually exclusive with --json and --quiet. Validate
-		// up-front (and parse the column spec) so callers get a clean error
-		// before any nib lookups run. The dual-path convention via reportErr
-		// matches cmd/links.go: text mode → Cobra renders the error to stderr;
-		// JSON mode → structured envelope on stdout AND a non-zero exit.
-		columnsRequested := cmd.Flags().Changed("columns")
-		var cols []output.Column
-		if columnsRequested {
-			if listJSON {
-				return reportErr(listJSON, output.ErrValidation,
-					fmt.Errorf("--columns and --json are mutually exclusive"))
-			}
-			if listQuiet {
-				return reportErr(listJSON, output.ErrValidation,
-					fmt.Errorf("--columns and --quiet are mutually exclusive"))
-			}
-			parsed, perr := output.ParseColumns(listColumns)
-			if perr != nil {
-				return reportErr(listJSON, output.ErrValidation, perr)
-			}
-			cols = parsed
+		// Compile the projection selection: --view first, then -f merged
+		// additively on top. A bad view/field/nesting is a VALIDATION error
+		// naming the menu, surfaced before any nib work — so even the
+		// count/quiet shortcuts reject a bad -f rather than silently ignoring
+		// it.
+		sel, err := projection.Compile(listView, listFields)
+		if err != nil {
+			return reportErr(listJSON, output.ErrValidation, err)
+		}
+		// An empty selection (neither --view nor -f) defaults to the ref tier.
+		// Applying it as the empty-selection fallback — rather than a literal
+		// flag default — keeps `-f id,title` meaning exactly {id,title} instead
+		// of ref∪{id,title}. ref is a compile-time-valid view, so this never
+		// errors.
+		if sel.IsEmpty() {
+			sel, _ = projection.ViewFields(string(projection.ViewRef))
 		}
 
-		// Execute query via GraphQL resolver with sort
+		// Execute the query (filter + sort).
 		nibSort := buildNibSort(listSort)
 		resolver := app.newResolver()
 		nibs, err := resolver.Query().Nibs(context.Background(), filter, nibSort)
@@ -167,33 +217,15 @@ Search Syntax (--search/-S):
 			return fmt.Errorf("querying nibs: %w", err)
 		}
 
-		// JSON output (flat list) — work on copies to avoid mutating Core state
-		if listJSON {
-			filtered := filterResolvedBlockers(nibs, app.Core)
-			if !listFull {
-				for i, b := range filtered {
-					clone := *b
-					clone.Body = ""
-					filtered[i] = &clone
-				}
-			}
-			// Always emit `[]` for empty list fields so agent consumers can
-			// rely on `jq '.[]'` without special-casing null.
-			if filtered == nil {
-				filtered = []*nib.Nib{}
-			}
-			return output.SuccessMultiple(filtered)
-		}
-
-		// --columns: tab-separated tabular output (flat, like --quiet but
-		// with selectable fields). Spec was already parsed up-front so the
-		// dispatch is unconditional here.
-		if columnsRequested {
-			_, _ = fmt.Fprint(cmd.OutOrStdout(), output.FormatColumns(nibs, cols))
+		// -c/--count: the true count of the filtered set (pre-limit) as a bare
+		// integer. Independent of --json and the projection selection.
+		if listCount {
+			fmt.Println(projection.Count(nibs))
 			return nil
 		}
 
-		// Quiet mode: just IDs (flat)
+		// -q/--quiet: ids only, one per line (equivalent to the id view,
+		// unwrapped). Independent of --limit and the projection selection.
 		if listQuiet {
 			for _, b := range nibs {
 				fmt.Println(b.ID)
@@ -201,56 +233,75 @@ Search Syntax (--search/-S):
 			return nil
 		}
 
-		// Default: tree view
-		// We need all nibs to find ancestors for context
-		allNibs, err := resolver.Query().Nibs(context.Background(), nil, nil)
+		// hidden_closed: when the open default silently dropped completed/scrapped
+		// rows, disclose how many matched every OTHER filter so the caller can see
+		// the set is partial. Only meaningful when the open default is active (an
+		// explicit -s/--open/--all/--ready never hides silently). Computed
+		// pre-limit (like -c): re-run the same query with the archive exclusion
+		// removed and subtract the displayed count. Skipped after the -c/-q early
+		// returns, so the terse outputs stay bare.
+		hiddenClosed := 0
+		if openDefaultApplied {
+			hiddenClosed, err = countHiddenClosed(context.Background(), app.Config(), resolver, filter,
+				statusFilterInput{Status: listStatus, NoStatus: listNoStatus}, nibSort, len(nibs))
+			if err != nil {
+				return reportErr(listJSON, output.ErrValidation, err)
+			}
+		}
+
+		// Project the filtered nibs through the selection, applying --limit.
+		projResolver := resolver.ProjectionResolver(context.Background())
+		pl, err := projection.ProjectList(nibs, sel, projResolver, listLimit)
 		if err != nil {
-			return fmt.Errorf("querying all nibs for tree: %w", err)
+			return reportErr(listJSON, output.ErrValidation, err)
+		}
+		pl.SetHiddenClosed(hiddenClosed)
+
+		// --json: the {nibs,count,truncated,hidden_closed} envelope (byte-identical
+		// to what rel and the recipe views emit).
+		if listJSON {
+			return output.JSONRaw(pl)
 		}
 
-		// Create sort function for tree building
-		sortFn := func(b []*nib.Nib) {
-			graph.ApplySorting(b, nibSort, app.Config())
-		}
-
-		// Build tree
-		tree := ui.BuildTree(nibs, allNibs, sortFn)
-
-		if len(tree) == 0 {
-			fmt.Println(ui.Muted.Render("No nibs found. Create one with: nibs new <title>"))
-			return nil
-		}
-
-		// Calculate max ID width from all nibs in tree
-		maxIDWidth := 2
-		for _, b := range allNibs {
-			if len(b.ID) > maxIDWidth {
-				maxIDWidth = len(b.ID)
-			}
-		}
-		maxIDWidth += 2
-
-		// Check if any nibs have tags
-		hasTags := false
-		for _, b := range nibs {
-			if len(b.Tags) > 0 {
-				hasTags = true
-				break
-			}
-		}
-
-		// Detect terminal width (default to 80 if not a terminal)
-		termWidth := 80
-		if w, _, err := term.GetSize(int(os.Stdout.Fd())); err == nil && w > 0 {
-			termWidth = w
-		}
-
-		// Per-parent natural-order position map (independent of --sort).
-		positions := nib.PositionMap(allNibs)
-
-		fmt.Print(ui.RenderTree(tree, app.Config(), maxIDWidth, hasTags, termWidth, positions))
+		// Default: TSV rows under a "# <n> nibs" header (--no-header drops it),
+		// annotated with the hidden-closed count when the open default suppressed
+		// rows.
+		fmt.Print(output.FormatListTSV(pl.Rows(), !listNoHeader, hiddenClosed, closedStatusLabel(app.Config())))
 		return nil
 	},
+}
+
+// countHiddenClosed returns how many nibs the open-by-default archive exclusion
+// removed from the displayed set. It re-runs the query with the archive
+// exclusion dropped — every other filter identical, only the status resolution
+// widened to --all semantics (keeping any --no-status) — and subtracts the
+// displayed count. Both counts are pre-limit, so the result is the size of the
+// full matching completed/scrapped set independent of --limit. Only call this
+// when the open default was applied; otherwise nothing was hidden.
+func countHiddenClosed(ctx context.Context, cfg *config.Config, resolver *graph.Resolver, displayed *model.NibFilter, status statusFilterInput, sort *model.NibSort, displayedCount int) (int, error) {
+	widenedInclude, widenedExclude, _, err := resolveStatusFilter(cfg, statusFilterInput{
+		Status:   status.Status,
+		NoStatus: status.NoStatus,
+		All:      true, // drop the open-default archive exclusion; keep --no-status
+	})
+	if err != nil {
+		return 0, err
+	}
+	// Copy the displayed filter and override only its status fields so every
+	// other constraint (type, priority, tags, parent, search, mentions, …) is
+	// identical — the difference in matches is exactly the hidden closed set.
+	widened := *displayed
+	widened.Status = widenedInclude
+	widened.ExcludeStatus = widenedExclude
+	all, err := resolver.Query().Nibs(ctx, &widened, sort)
+	if err != nil {
+		return 0, fmt.Errorf("querying nibs for hidden-count: %w", err)
+	}
+	hidden := len(all) - displayedCount
+	if hidden < 0 {
+		hidden = 0
+	}
+	return hidden, nil
 }
 
 // buildNibSort maps CLI --sort flag values to a GraphQL NibSort.
@@ -276,15 +327,8 @@ func buildNibSort(sortFlag string) *model.NibSort {
 	}
 }
 
-func truncate(s string, maxLen int) string {
-	if len(s) <= maxLen {
-		return s
-	}
-	return s[:maxLen-3] + "..."
-}
-
 func init() {
-	listCmd.Flags().BoolVar(&listJSON, "json", false, "Output as JSON")
+	listCmd.Flags().BoolVar(&listJSON, "json", false, "Emit the {nibs,count,truncated} JSON envelope")
 	listCmd.Flags().StringVarP(&listSearch, "search", "S", "", "Full-text search in title and body (nib IDs and ID fragments match directly)")
 	listCmd.Flags().StringArrayVarP(&listStatus, "status", "s", nil, "Filter by status (can be repeated)")
 	listCmd.Flags().StringArrayVar(&listNoStatus, "no-status", nil, "Exclude by status (can be repeated)")
@@ -304,10 +348,16 @@ func init() {
 	listCmd.Flags().BoolVar(&listIsBlocked, "is-blocked", false, "Filter nibs that are blocked by others")
 	listCmd.Flags().StringVar(&listMentions, "mentions", "", "Filter nibs whose bodies mention this ID (short or full)")
 	listCmd.Flags().StringVar(&listMentionedBy, "mentioned-by", "", "Filter nibs mentioned in the given ID's body (short or full)")
-	listCmd.Flags().BoolVar(&listReady, "ready", false, "Filter nibs available to start (not blocked, excludes in-progress/completed/scrapped/draft)")
-	listCmd.Flags().BoolVarP(&listQuiet, "quiet", "q", false, "Only output IDs (one per line)")
+	listCmd.Flags().BoolVar(&listReady, "ready", false, "Filter nibs available to start (not blocked, excludes in-progress/completed/scrapped/draft/deferred)")
+	listCmd.Flags().BoolVar(&listAll, "all", false, "Include every status (disable the open-by-default filter)")
+	listCmd.Flags().BoolVar(&listOpen, "open", false, "Show only open nibs — shorthand for -s open (the default when no status filter is given)")
+	listCmd.Flags().BoolVar(&listActive, "active", false, "Alias for --open (show only open nibs)")
+	listCmd.Flags().BoolVarP(&listQuiet, "quiet", "q", false, "Only output IDs, one per line (honors the open default; add --all to include completed/scrapped)")
 	listCmd.Flags().StringVar(&listSort, "sort", "", "Sort by: created, updated, status, priority, status-priority, id (default: order key)")
-	listCmd.Flags().BoolVar(&listFull, "full", false, "Include nib body in JSON output")
-	listCmd.Flags().StringVar(&listColumns, "columns", "", "Tab-separated tabular output. Comma-separated column names. Available: "+output.AvailableColumnsString())
+	listCmd.Flags().StringVar(&listView, "view", "", "View tier: id, ref, card, or full (default: ref)")
+	listCmd.Flags().StringVarP(&listFields, "fields", "f", "", "Field selection (additive over --view), e.g. \"status,priority\" or \"id,blocked-by(id,status)\"")
+	listCmd.Flags().BoolVar(&listNoHeader, "no-header", false, "Drop the \"# <n> nibs\" header from TSV output")
+	listCmd.Flags().BoolVarP(&listCount, "count", "c", false, "Output the count of matching nibs as a bare integer (honors the open default; use --all for the total across every status)")
+	listCmd.Flags().IntVar(&listLimit, "limit", 0, "Project only the first N rows (0 = unlimited); sets truncated:true when it drops rows")
 	rootCmd.AddCommand(listCmd)
 }

@@ -147,7 +147,7 @@ func scanMentions(source []byte, segStart, segStop int, out *[]string, seen map[
 // in any other script adjacent to a `#` is not strongly "word-like" for
 // the purpose of distinguishing a sigil from an identifier. Tracked this
 // way intentionally; do not widen to `unicode.IsLetter` without a test
-// to pin the new behaviour.
+// to pin the new behavior.
 func isWordChar(b byte) bool {
 	return (b >= 'a' && b <= 'z') ||
 		(b >= 'A' && b <= 'Z') ||

@@ -40,8 +40,8 @@ func (n *TreeNode) ToJSON(includeFull bool) *TreeNodeJSON {
 		Path:     n.Nib.Path,
 		Title:    n.Nib.Title,
 		Status:   n.Nib.Status,
-		Type:     n.Nib.Type,
-		Priority: n.Nib.Priority,
+		Type:     n.Nib.EffectiveType(),
+		Priority: n.Nib.EffectivePriority(),
 		Tags:     n.Nib.Tags,
 		Matched:  n.Matched,
 	}
@@ -334,11 +334,17 @@ func renderNode(sb *strings.Builder, node *TreeNode, depth int, isLast bool, anc
 		}
 	}
 
-	// Get colors from config
-	colors := cfg.GetNibColors(b.Status, b.Type, b.Priority)
+	// Get colors from config. Use EffectiveType so a type-less nib renders its
+	// "task" badge (and color) as it did when loadNib synthesized the default. Raw
+	// Priority is safe here despite the missing default: GetNibColors -> GetPriority
+	// yields a DIFFERENT PriorityColor for "" (none) vs "normal" ("white"), but that
+	// color is only ever consumed by RenderPrioritySymbol, which returns "" (discarding
+	// the color) whenever GetPrioritySymbol is empty — and the symbol is empty for both
+	// "" and "normal", so the rendered result is identical.
+	colors := cfg.GetNibColors(b.Status, b.EffectiveType(), b.Priority)
 
 	// Use shared RenderNibRow function with responsive columns
-	row := RenderNibRow(b.ID, b.Status, b.Type, b.Title, NibRowConfig{
+	row := RenderNibRow(b.ID, b.Status, b.EffectiveType(), b.Title, NibRowConfig{
 		StatusColor:   colors.StatusColor,
 		TypeColor:     colors.TypeColor,
 		PriorityColor: colors.PriorityColor,

@@ -6,7 +6,7 @@ import {
   resolveColumnWidths,
   emitFilter,
 } from "./resolvePrefs";
-import { ALL_COLUMN_KEYS, DEFAULT_COLUMN_WIDTHS } from "./types";
+import { DEFAULT_COLUMN_WIDTHS, DEFAULT_VISIBLE_COLUMNS } from "./types";
 import type { NibFilter, ViewLevel, ColumnKey } from "./types";
 import type { Preferences } from "./preferences.svelte.ts";
 
@@ -37,16 +37,16 @@ describe("resolveFilter", () => {
 
 describe("resolveViewLevel", () => {
   it("returns prefs.viewLevel when prefs is defined", () => {
-    const prefs = makePrefs({ viewLevel: "backlog" as ViewLevel });
-    expect(resolveViewLevel(prefs, "milestones")).toBe("backlog");
+    const prefs = makePrefs({ viewLevel: "features" as ViewLevel });
+    expect(resolveViewLevel(prefs, "milestones")).toBe("features");
   });
 
   it("returns viewLevel prop when prefs is undefined", () => {
     expect(resolveViewLevel(undefined, "epics")).toBe("epics");
   });
 
-  it("returns 'milestones' when both are undefined", () => {
-    expect(resolveViewLevel(undefined, undefined)).toBe("milestones");
+  it("returns 'none' when both are undefined", () => {
+    expect(resolveViewLevel(undefined, undefined)).toBe("none");
   });
 });
 
@@ -61,8 +61,10 @@ describe("resolveVisibleColumns", () => {
     expect(resolveVisibleColumns(undefined, cols)).toEqual(["type", "state"]);
   });
 
-  it("returns all column keys when both are undefined", () => {
-    expect(resolveVisibleColumns(undefined, undefined)).toEqual([...ALL_COLUMN_KEYS]);
+  it("returns the default-visible columns when both are undefined (new opt-in columns excluded)", () => {
+    expect(resolveVisibleColumns(undefined, undefined)).toEqual([...DEFAULT_VISIBLE_COLUMNS]);
+    expect(resolveVisibleColumns(undefined, undefined)).not.toContain("blocking");
+    expect(resolveVisibleColumns(undefined, undefined)).not.toContain("blockedBy");
   });
 });
 

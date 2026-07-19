@@ -5,6 +5,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/alphaleonis/nibs/internal/config"
 	"github.com/alphaleonis/nibs/internal/graph/model"
 	"github.com/alphaleonis/nibs/internal/nib"
 	"github.com/alphaleonis/nibs/internal/nibcore"
@@ -121,7 +122,7 @@ func TestNibsSortByPriority(t *testing.T) {
 		t.Fatalf("got %d nibs, want 4", len(got))
 	}
 
-	// Config order: critical, high, normal, low, deferred
+	// Config order: critical, high, normal, low
 	wantOrder := []string{"sort-2", "sort-4", "sort-3", "sort-1"}
 	for i, want := range wantOrder {
 		if got[i].ID != want {
@@ -369,6 +370,30 @@ func TestNibsSortByStatusPriority(t *testing.T) {
 		if got[i].ID != want {
 			t.Errorf("position %d: got %s (%s/%s/%s), want %s",
 				i, got[i].ID, got[i].Status, got[i].Priority, got[i].Type, want)
+		}
+	}
+}
+
+// TestApplySortingByStatus_OrderIncludesDeferred locks in the canonical status
+// sort order derived from config.DefaultStatuses, including the deferred status
+// which sits between draft (live, unrefined) and completed (terminal).
+func TestApplySortingByStatus_OrderIncludesDeferred(t *testing.T) {
+	// Deliberately scrambled input.
+	nibs := []*nib.Nib{
+		{ID: "scr", Status: "scrapped"},
+		{ID: "cmp", Status: "completed"},
+		{ID: "def", Status: "deferred"},
+		{ID: "drf", Status: "draft"},
+		{ID: "tod", Status: "todo"},
+		{ID: "inp", Status: "in-progress"},
+	}
+
+	ApplySorting(nibs, &model.NibSort{Field: model.NibSortFieldStatus}, config.Default())
+
+	wantOrder := []string{"in-progress", "todo", "draft", "deferred", "completed", "scrapped"}
+	for i, want := range wantOrder {
+		if nibs[i].Status != want {
+			t.Errorf("position %d: got status %q, want %q", i, nibs[i].Status, want)
 		}
 	}
 }

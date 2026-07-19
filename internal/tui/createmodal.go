@@ -15,7 +15,7 @@ type nibCreatedMsg struct {
 	nibType string
 }
 
-// closeCreateModalMsg is sent when the create modal is cancelled
+// closeCreateModalMsg is sent when the create modal is canceled
 type closeCreateModalMsg struct{}
 
 // createModalModel is the model for the create nib modal

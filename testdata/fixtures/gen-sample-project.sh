@@ -559,9 +559,9 @@ cat > "$DIR/tnib-f012--slack-integration.md" << 'ENDNIB'
 # tnib-f012
 version: 1
 title: Slack integration
-status: draft
+status: deferred
 type: feature
-priority: deferred
+priority: low
 estimate: l
 created_at: 2026-03-08T09:00:00Z
 updated_at: 2026-03-15T10:00:00Z
@@ -2000,6 +2000,86 @@ Getting-started guide covering local development setup, project structure, codin
 ENDNIB
 
 # ============================================================
+# RESEARCH
+# ============================================================
+
+cat > "$DIR/tnib-r001--oauth2-library-evaluation.md" << 'ENDNIB'
+---
+# tnib-r001
+version: 1
+title: Evaluate OAuth2 provider libraries
+status: completed
+type: research
+priority: normal
+estimate: m
+tags:
+    - security
+created_at: 2026-02-20T10:00:00Z
+updated_at: 2026-03-01T16:00:00Z
+parent: tnib-f002
+order: d
+---
+
+Spike to pick the OAuth2 client library before building the social-login feature.
+
+## Question
+
+Which OAuth2 client library should we standardize on for Google and GitHub sign-in — do we adopt a batteries-included framework or wire up the flow against a minimal client?
+
+## Findings
+
+- A full auth framework handles token refresh and provider metadata out of the box, but pulls in session and CSRF opinions we would have to fight.
+- A minimal client keeps the authorization-code + PKCE flow explicit and testable, at the cost of writing provider config ourselves.
+- Both Google and GitHub follow standard authorization-code; no provider-specific quirks that force a heavier dependency.
+
+## Decision
+
+Use a minimal OAuth2 client and own the provider config. The flow is small enough that explicit control beats framework lock-in, and it keeps the token store consistent with our existing session handling.
+
+## Follow-ups
+
+- Feed the decision into the OAuth2 social-login feature.
+- Revisit if a third provider with non-standard flow is added.
+ENDNIB
+
+cat > "$DIR/tnib-r002--concurrent-edit-conflict-strategy.md" << 'ENDNIB'
+---
+# tnib-r002
+version: 1
+title: Research concurrent task-edit conflict strategy
+status: todo
+type: research
+priority: high
+estimate: m
+tags:
+    - perf
+created_at: 2026-03-18T09:00:00Z
+updated_at: 2026-03-24T11:00:00Z
+parent: tnib-f004
+order: d
+---
+
+Decide how simultaneous edits to the same task should be reconciled before multi-user editing lands.
+
+## Question
+
+When two clients edit the same task concurrently, do we use optimistic concurrency (etag / version check, reject-and-retry) or last-write-wins, and how does the choice interact with the planned real-time collaboration work?
+
+## Findings
+
+- (pending) Compare optimistic version checks against field-level merge.
+- (pending) Estimate conflict frequency for the expected team sizes.
+
+## Decision
+
+Pending.
+
+## Follow-ups
+
+- Align the outcome with the Real-time Collaboration epic.
+ENDNIB
+
+# ============================================================
 # BUGS
 # ============================================================
 
@@ -2198,7 +2278,7 @@ version: 1
 title: Push notifications not requesting permission on mobile
 status: draft
 type: bug
-priority: deferred
+priority: low
 estimate: s
 created_at: 2026-03-14T09:00:00Z
 updated_at: 2026-03-18T09:00:00Z
@@ -2470,6 +2550,9 @@ ENDNIB
 echo ""
 echo "Generated $(find "$DIR" -name '*.md' | wc -l) nib files in $DIR"
 echo ""
+# --config, not --nibs-path: --nibs-path moves only the data directory, so config
+# discovery would still walk up from the cwd and apply the outer project's prefix
+# to this fixture's tnib- data. Naming the fixture's config resolves .nibs beside it.
 echo "To use this fixture:"
-echo "  nibs list --nibs-path testdata/fixtures/sample-project/.nibs"
-echo "  nibs serve --nibs-path testdata/fixtures/sample-project/.nibs"
+echo "  nibs list --config testdata/fixtures/sample-project/.nibs.yml"
+echo "  nibs serve --config testdata/fixtures/sample-project/.nibs.yml"

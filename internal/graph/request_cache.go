@@ -7,7 +7,7 @@ import (
 	"github.com/alphaleonis/nibs/internal/nib"
 )
 
-// RequestCache memoises per-request mention lookups so that a single GraphQL
+// RequestCache memoizes per-request mention lookups so that a single GraphQL
 // operation querying the same nib's mentions / mentionedBy across multiple
 // selections (e.g. both `mentions { id }` and `mentionIds`, or the same
 // relationship reached from several parent selections) does not re-run the
@@ -20,9 +20,9 @@ import (
 // RequestCacheFrom, in which case cached* helpers fall straight through to
 // the reader (see TestCachedMentions_NilCacheFallsThrough).
 //
-// Keys are full (normalised) nib IDs. Callers should resolve short-form IDs
+// Keys are full (normalized) nib IDs. Callers should resolve short-form IDs
 // via NibReader.NormalizeID before looking up; the cache itself does not
-// normalise.
+// normalize.
 type RequestCache struct {
 	mu          sync.Mutex
 	mentions    map[string][]*nib.Nib
@@ -61,8 +61,8 @@ func RequestCacheFrom(ctx context.Context) *RequestCache {
 }
 
 // cachedMentions returns the nibs mentioned by sourceID. When a RequestCache
-// is attached to ctx, the result is memoised on first read. Callers must
-// have already normalised sourceID to its full form.
+// is attached to ctx, the result is memoized on first read. Callers must
+// have already normalized sourceID to its full form.
 func cachedMentions(ctx context.Context, reader NibReader, sourceID string) []*nib.Nib {
 	cache := RequestCacheFrom(ctx)
 	if cache == nil {
@@ -76,7 +76,7 @@ func cachedMentions(ctx context.Context, reader NibReader, sourceID string) []*n
 	cache.mu.Unlock()
 
 	// Run the lookup outside the lock so concurrent cache users for
-	// *different* keys aren't serialised on our reader call.
+	// *different* keys aren't serialized on our reader call.
 	result := reader.FindMentions(sourceID)
 
 	cache.mu.Lock()

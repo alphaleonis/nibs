@@ -10,6 +10,14 @@ import (
 
 const idAlphabet = "0123456789abcdefghijklmnopqrstuvwxyz"
 
+// IsIDChar reports whether c is a valid short-ID character, i.e. a member of
+// idAlphabet ([0-9a-z]). This is THE charset gate other packages must reuse
+// instead of hand-rolling byte-range checks — idAlphabet is the single source
+// of truth for the nib short-ID charset, and this predicate is derived from it.
+func IsIDChar(c byte) bool {
+	return strings.IndexByte(idAlphabet, c) >= 0
+}
+
 // NewID generates a new NanoID for a nib with an optional prefix and configurable length.
 func NewID(prefix string, length int) string {
 	id, err := gonanoid.Generate(idAlphabet, length)
@@ -19,13 +27,19 @@ func NewID(prefix string, length int) string {
 	return prefix + id
 }
 
-// ParseFilename extracts the ID and optional slug from a nib filename.
+// ParseFilename extracts the ID and optional slug from a nib filename. The
+// configured id prefix (e.g. "nibs-", "" for none) disambiguates the legacy
+// single-dash format, whose separator collides with the trailing dash every
+// prefix ends in.
+//
 // Supports multiple formats for backward compatibility:
 //   - New format: "f7g--user-registration.md" -> ("f7g", "user-registration")
 //   - Dot format: "f7g.user-registration.md" -> ("f7g", "user-registration")
-//   - Legacy format: "f7g-user-registration.md" -> ("f7g", "user-registration")
+//   - Prefixed slugless: "nibs-x9z2.md" with prefix "nibs-" -> ("nibs-x9z2", "")
+//   - Prefixed legacy slug: "nibs-x9z2-slug.md" with prefix "nibs-" -> ("nibs-x9z2", "slug")
+//   - Legacy format (no prefix): "f7g-user-registration.md" -> ("f7g", "user-registration")
 //   - ID only: "f7g.md" -> ("f7g", "")
-func ParseFilename(name string) (id, slug string) {
+func ParseFilename(name, prefix string) (id, slug string) {
 	// Remove .md extension
 	name = strings.TrimSuffix(name, ".md")
 
@@ -39,7 +53,28 @@ func ParseFilename(name string) (id, slug string) {
 		return name[:idx], name[idx+1:]
 	}
 
-	// Fall back to original legacy format (single dash separator): id-slug
+	// Prefix-aware single-dash handling: a configured prefix always ends in a dash,
+	// so the legacy SplitN below would mis-split the prefix's own trailing dash
+	// (e.g. "nibs-x9z2" -> id "nibs"). When the name carries the prefix, split only
+	// on a dash AFTER it — a legacy single-dash slug on a prefixed id — and treat a
+	// prefixed id with no further dash as slugless (the whole name is the id).
+	//
+	// ORDER-DEPENDENT: this must stay AFTER the "--" and "." checks above. A prefixed
+	// id with a double-dash or dot slug (nibs-x9z2--slug / nibs-x9z2.slug) resolves
+	// via those branches; reordering this ahead of them would swallow the separator
+	// and misparse the slug. (rest can never START with a dash here — that would be a
+	// "--" in name, already handled above — so idx > 0 is exhaustive.)
+	if prefix != "" && strings.HasPrefix(name, prefix) {
+		rest := name[len(prefix):]
+		if idx := strings.Index(rest, "-"); idx > 0 {
+			return prefix + rest[:idx], rest[idx+1:]
+		}
+		return name, ""
+	}
+
+	// Fall back to original legacy format (single dash separator): id-slug. Reached
+	// only with no configured prefix, or a name that doesn't carry it — preserving
+	// behavior for prefix-less legacy ids.
 	parts := strings.SplitN(name, "-", 2)
 	id = parts[0]
 	if len(parts) > 1 {

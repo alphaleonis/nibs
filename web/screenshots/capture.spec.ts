@@ -1,25 +1,44 @@
 import { test, expect, type Page } from "@playwright/test";
 import { mkdirSync } from "node:fs";
 import { join } from "node:path";
+import { VIEW_LEVELS, THEMES } from "../src/lib/types";
+import type { Theme, DetailPanelPosition, FontSize } from "../src/lib/types";
 
 // Captures PNGs of the key web UI states into web/screenshots/output/ so an
 // agent (or human) can visually verify UI changes. Run via `task screenshots`.
 //
-// When the theme engine lands (nibs-vmaq), extend this to loop the captures
-// once per theme. When the board view lands (nibs-sg09), add a capture for it.
+// The theme engine is exercised below: each palette gets a
+// table + detail + settings capture so the palettes can be compared side by side.
+// The captures drive the REAL app (page.goto loads index.html), so the light/dark
+// `.dark` class is toggled by the FOUC guard + App's $effect exactly as at runtime
+// — the light Daylight palette therefore renders with `.dark` cleared.
+// When the board view lands, add a capture for it.
 
 const OUT = join(import.meta.dirname, "output");
 mkdirSync(OUT, { recursive: true });
 
-const VIEW_LEVELS = ["milestones", "epics", "backlog"] as const;
-
-async function openApp(page: Page, viewLevel: (typeof VIEW_LEVELS)[number] = "milestones") {
-  await page.addInitScript(level => {
-    localStorage.setItem(
-      "nibs-filter-preferences",
-      JSON.stringify({ filter: {}, viewLevel: level }),
-    );
-  }, viewLevel);
+async function openApp(
+  page: Page,
+  viewLevel: (typeof VIEW_LEVELS)[number] = "milestones",
+  theme?: Theme,
+  position?: DetailPanelPosition,
+  fontSize?: FontSize,
+) {
+  await page.addInitScript(
+    ({ level, t, pos, fs }) => {
+      localStorage.setItem(
+        "nibs-filter-preferences",
+        JSON.stringify({
+          filter: {},
+          viewLevel: level,
+          ...(t ? { theme: t } : {}),
+          ...(pos ? { detailPanelPosition: pos } : {}),
+          ...(fs ? { fontSize: fs } : {}),
+        }),
+      );
+    },
+    { level: viewLevel, t: theme, pos: position, fs: fontSize },
+  );
   await page.goto("/");
   await expect(page.locator("tr[data-nib-id]").first()).toBeVisible({ timeout: 10_000 });
 }
@@ -38,20 +57,54 @@ for (const level of VIEW_LEVELS) {
 test("detail panel", async ({ page }) => {
   await openApp(page);
   await page.locator("tr[data-nib-id]").first().locator('[data-action="title"]').click();
-  await expect(page.locator('[data-testid="detail-panel"]')).toBeVisible({ timeout: 5_000 });
-  await expect(page.locator('[data-testid="detail-loading"]')).toBeHidden({ timeout: 5_000 });
+  await expect(page.locator('[data-testid="active-nib-view"]')).toBeVisible({ timeout: 5_000 });
+  await expect(page.locator('[data-testid="anv-title"]')).toBeVisible({ timeout: 5_000 });
   await shot(page, "detail-panel");
 });
 
-test("editor modal", async ({ page }) => {
+// Task-list checkboxes in rendered nib body: clickable + theme-styled.
+// tnib-t005 has a MIXED checked/unchecked checklist; capture it under a
+// dark (graphite) and the light (daylight) palette so the themed checkbox — themed
+// border, --primary fill, --primary-foreground check, no gray native default — is
+// visible in both light and dark, in both states.
+for (const { value } of THEMES) {
+  test(`task-list checkboxes — ${value}`, async ({ page }) => {
+    await openApp(page, "none", value);
+    await page.locator('tr[data-nib-id="tnib-t005"]').locator('[data-action="title"]').click();
+    await expect(page.locator('[data-testid="anv-body-prose"]')).toBeVisible({ timeout: 5_000 });
+    await shot(page, `task-checkboxes-${value}`);
+  });
+}
+
+test("active view — editing", async ({ page }) => {
+  // The unified view with the body editor toggled on (CodeMirror + preview) —
+  // the buffered edit experience that replaced the standalone editor modal.
   await openApp(page);
-  await page.locator("tr[data-nib-id]").first().click({ button: "right" });
-  await expect(page.locator('[data-testid="context-menu"]')).toBeVisible({ timeout: 3_000 });
-  await page.locator('[data-testid="ctx-edit"]').click();
-  await expect(page.locator('[data-testid="editor-modal"]')).toBeVisible({ timeout: 5_000 });
+  await page.locator("tr[data-nib-id]").first().locator('[data-action="title"]').click();
+  await expect(page.locator('[data-testid="active-nib-view"]')).toBeVisible({ timeout: 5_000 });
+  await page.locator('[data-testid="anv-edit-toggle"]').click();
   // Wait for the CodeMirror editor to mount so the body area isn't blank.
   await expect(page.locator(".cm-content").first()).toBeVisible({ timeout: 5_000 });
-  await shot(page, "editor-modal");
+  await shot(page, "active-view-editing");
+});
+
+test("active view — expanded modal", async ({ page }) => {
+  // The same view promoted to the full-screen modal presentation (wide, two-col).
+  await openApp(page);
+  await page.locator("tr[data-nib-id]").first().locator('[data-action="title"]').click();
+  await expect(page.locator('[data-testid="active-nib-view"]')).toBeVisible({ timeout: 5_000 });
+  await page.locator('[data-testid="anv-expand"]').click();
+  await expect(page.locator('[data-testid="active-nib-modal"]')).toBeVisible({ timeout: 5_000 });
+  await shot(page, "active-view-expanded");
+});
+
+test("detail panel — bottom dock", async ({ page }) => {
+  // Detail view docked at the bottom (table on top, preview below).
+  await openApp(page, "milestones", undefined, "bottom");
+  await page.locator("tr[data-nib-id]").first().locator('[data-action="title"]').click();
+  await expect(page.locator('[data-testid="active-nib-view"]')).toBeVisible({ timeout: 5_000 });
+  await expect(page.locator('[data-testid="anv-title"]')).toBeVisible({ timeout: 5_000 });
+  await shot(page, "detail-panel-bottom");
 });
 
 test("context menu", async ({ page }) => {
@@ -60,3 +113,58 @@ test("context menu", async ({ page }) => {
   await expect(page.locator('[data-testid="context-menu"]')).toBeVisible({ timeout: 3_000 });
   await shot(page, "context-menu");
 });
+
+test("add-child type picker — anchored, over an open detail view", async ({ page }) => {
+  // The picker is an anchored popover (with type icons) that overlays
+  // the app; opening it must NOT hide the detail view. Use an epic (>=2 valid
+  // child types) so the picker actually appears instead of creating directly.
+  await openApp(page);
+  const epicRow = page.locator('tr[data-nib-id="tnib-e001"]');
+  await epicRow.locator('[data-action="title"]').click();
+  await expect(page.locator('[data-testid="active-nib-view"]')).toBeVisible({ timeout: 5_000 });
+  await epicRow.hover();
+  await epicRow.locator('[data-testid="row-add-child"]').click();
+  await expect(page.locator('[data-testid="type-picker-popover"]')).toBeVisible({ timeout: 5_000 });
+  await shot(page, "type-picker");
+});
+
+// Per-theme captures: table + detail panel under each
+// palette so an agent can confirm Graphite reads as a softer/warmer dark, Dracula
+// is clearly purple-tinted, Daylight renders as a warm LIGHT theme (shadcn inputs/
+// borders light, not dark), and pills/indicators/body text stay readable in all.
+for (const { value } of THEMES) {
+  test(`theme ${value} — table`, async ({ page }) => {
+    await openApp(page, "milestones", value);
+    await shot(page, `theme-${value}-table`);
+  });
+
+  test(`theme ${value} — detail panel`, async ({ page }) => {
+    await openApp(page, "milestones", value);
+    await page.locator("tr[data-nib-id]").first().locator('[data-action="title"]').click();
+    await expect(page.locator('[data-testid="active-nib-view"]')).toBeVisible({ timeout: 5_000 });
+    await expect(page.locator('[data-testid="anv-title"]')).toBeVisible({ timeout: 5_000 });
+    await shot(page, `theme-${value}-detail`);
+  });
+}
+
+// Settings sheet open with the Theme dropdown visible, per palette.
+for (const { value } of THEMES) {
+  test(`theme ${value} — settings sheet`, async ({ page }) => {
+    await openApp(page, "milestones", value);
+    await page.getByRole("button", { name: "Settings" }).click();
+    await expect(page.getByTestId("theme-select")).toBeVisible({ timeout: 3_000 });
+    await shot(page, `theme-${value}-settings`);
+  });
+}
+
+// Global font-size preference: spot-check the type scale at Small and
+// Large in a light (daylight) and a dark (graphite) palette. The whole app scales
+// off the single --font-scale root variable, so the table shows it across many rows.
+for (const theme of ["daylight", "graphite"] as const) {
+  for (const fontSize of ["small", "large"] as const) {
+    test(`font size ${fontSize} — ${theme} table`, async ({ page }) => {
+      await openApp(page, "milestones", theme, undefined, fontSize);
+      await shot(page, `fontsize-${fontSize}-${theme}-table`);
+    });
+  }
+}

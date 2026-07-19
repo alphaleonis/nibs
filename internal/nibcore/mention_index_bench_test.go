@@ -56,7 +56,7 @@ func BenchmarkFindMentionedBy_WithIndex(b *testing.B) {
 	cfg := config.DefaultWithPrefix("nibs-")
 
 	// Route through New() so this bench stays resilient to Core struct
-	// field drift — a new required field added to Core gets initialised
+	// field drift — a new required field added to Core gets initialized
 	// correctly without touching this file. We still skip Load() (and
 	// therefore disk I/O) by manually wiring the synthetic nib map.
 	core := New(b.TempDir(), cfg)
@@ -70,8 +70,8 @@ func BenchmarkFindMentionedBy_WithIndex(b *testing.B) {
 	}
 }
 
-// BenchmarkFindMentionedBy_PureFunction measures the old O(N × body) path
-// (the pure-function oracle that still exists in the package).
+// BenchmarkFindMentionedBy_PureFunction measures the O(N × body) pure-function
+// oracle, the index-free baseline the cached path is compared against.
 func BenchmarkFindMentionedBy_PureFunction(b *testing.B) {
 	nibs, target := buildMentionFixture(b, 500, 5)
 

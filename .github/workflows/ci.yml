@@ -27,6 +27,12 @@ jobs:
       - run: cd web && npm ci && npm run build
       - run: go build ./...
       - run: go test -count=1 ./...
+      # Run the concurrency-critical packages under the race detector so a
+      # reintroduced data race fails CI (nibs-7l3v). Linux-only: -race on
+      # Windows needs a mingw toolchain and is materially slower, and the
+      # invariants are OS-independent, so one detector lane suffices.
+      - run: go test -race -count=1 ./internal/nibcore/... ./internal/graph/...
+        if: matrix.os == 'ubuntu-latest'
       - run: cd web && npx vitest run --reporter=default
 
   lint:
@@ -41,4 +47,5 @@ jobs:
           node-version: "22"
       - run: go generate ./...
       - run: cd web && npm ci && npm run build
+      - run: cd web && npm run check
       - uses: golangci/golangci-lint-action@v9

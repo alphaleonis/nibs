@@ -3,7 +3,7 @@
   import { STATUSES, PRIORITIES } from "../constants";
   import { canHaveChildren } from "../typeHierarchy";
   import * as DropdownMenu from "$lib/components/ui/dropdown-menu/index.js";
-  import { useSelection, useConfirmDialog, useEditorOrchestration, useHistoryNav } from "$lib/contexts";
+  import { useSelection, useConfirmDialog, useActiveView, useHistoryNav } from "$lib/contexts";
   import { getMutationStore } from "$lib/mutations";
   import {
     setStatusBatch,
@@ -11,13 +11,19 @@
     deleteBatch,
     archiveBatch,
   } from "$lib/mutations/commands";
-  import { toast } from "svelte-sonner";
+  import { copyToClipboard } from "$lib/clipboard";
+  import { getActionTargetIds } from "$lib/actionTarget";
 
   interface Props {
     open: boolean;
     position: { x: number; y: number };
     nib: TreeTableNib | null;
     selectedCount?: number;
+    /** Whether the right-clicked row has (visible) children — gates the
+     *  expand/collapse-children options. */
+    hasChildren?: boolean;
+    onexpandchildren?: () => void;
+    oncollapsechildren?: () => void;
   }
 
   let {
@@ -25,16 +31,20 @@
     position,
     nib,
     selectedCount = 1,
+    hasChildren = false,
+    onexpandchildren,
+    oncollapsechildren,
   }: Props = $props();
 
   const selection = useSelection();
   const confirmDialog = useConfirmDialog();
-  const editor = useEditorOrchestration();
+  const view = useActiveView();
   const nav = useHistoryNav();
   const mutations = getMutationStore();
 
   let isBulk = $derived(selectedCount > 1);
   let showAddChild = $derived(!isBulk && nib && canHaveChildren(nib.type));
+  let showSubtreeActions = $derived(!isBulk && hasChildren);
 
   function handleOpenChange(newOpen: boolean) {
     if (!newOpen) {
@@ -42,56 +52,46 @@
     }
   }
 
-  /** Resolves which nib IDs an action should target. */
-  function getActionTargetIds(): string[] {
-    if (selection.hasMultiSelect) return [...selection.selectedIds];
-    if (selection.focusedNibId) return [selection.focusedNibId];
-    if (nib) return [nib.id];
-    return [];
-  }
-
   function handleOpen() {
     if (nib) {
-      // Route through nav so the URL/history stay in sync (nibs-58c3).
-      nav.navigateToNib(nib.id);
+      // Open the unified view (guarded); it routes through nav so the URL/history
+      // stay in sync.
+      view.open(nib.id);
     }
   }
 
   function handleEdit() {
     if (nib) {
-      editor.handleEditNib(nib.id);
+      // Edit is just opening the unified buffered view (create/edit are one view).
+      view.open(nib.id);
     }
   }
 
-  function handleAddChild() {
+  function handleAddChild(anchor: DOMRect) {
     if (nib) {
-      editor.handleAddChild(nib.id, nib.type);
+      view.startCreateChild(nib.id, nib.type, anchor);
     }
   }
 
   async function handleStatusChange(status: string) {
-    const ids = getActionTargetIds();
+    const ids = getActionTargetIds(selection, nib?.id ?? null);
     if (ids.length === 0) return;
     await mutations.execute(setStatusBatch(ids, status));
   }
 
   async function handlePriorityChange(priority: string) {
-    const ids = getActionTargetIds();
+    const ids = getActionTargetIds(selection, nib?.id ?? null);
     if (ids.length === 0) return;
     await mutations.execute(setPriorityBatch(ids, priority));
   }
 
   function handleCopyId() {
     if (!nib) return;
-    const id = nib.id;
-    navigator.clipboard.writeText(id).then(
-      () => toast.success(`Copied "${id}" to clipboard`),
-      () => toast.error("Failed to copy to clipboard"),
-    );
+    copyToClipboard(nib.id);
   }
 
   function handleDelete() {
-    const ids = getActionTargetIds();
+    const ids = getActionTargetIds(selection, nib?.id ?? null);
     if (ids.length === 0) return;
 
     const count = ids.length;
@@ -107,14 +107,14 @@
         const result = await mutations.execute(deleteBatch(ids));
         if (result.ok) {
           selection.clearAll();
-          nav.replaceClosed(); // heal a stale ?nib=<deleted> URL (nibs-etk3)
+          nav.replaceClosed(); // heal a stale ?nib=<deleted> URL
         }
       },
     });
   }
 
   function handleArchive() {
-    const ids = getActionTargetIds();
+    const ids = getActionTargetIds(selection, nib?.id ?? null);
     if (ids.length === 0) return;
 
     const count = ids.length;
@@ -130,7 +130,7 @@
         const result = await mutations.execute(archiveBatch(ids));
         if (result.ok) {
           selection.clearAll();
-          nav.replaceClosed(); // heal a stale ?nib=<archived> URL (nibs-etk3)
+          nav.replaceClosed(); // heal a stale ?nib=<archived> URL
         }
       },
     });
@@ -138,6 +138,44 @@
 </script>
 
 {#if open && nib}
+  <!-- Declared here (a child of the {#if} block, not of DropdownMenu.Content)
+       so it is a local snippet in lexical scope for the {@render} calls below,
+       rather than being interpreted as an unknown prop of Content. -->
+  {#snippet metadataSubmenu(label: string, values: readonly string[], currentValue: string,
+      onchange: (v: string) => void, testId: string)}
+    <DropdownMenu.Sub>
+      <DropdownMenu.SubTrigger data-testid="ctx-{testId}-trigger">
+        {label}
+      </DropdownMenu.SubTrigger>
+      <DropdownMenu.SubContent>
+        {#if isBulk}
+          {#each values as v}
+            <DropdownMenu.Item
+              data-testid="ctx-{testId}-{v}"
+              onclick={() => { open = false; onchange(v); }}
+            >
+              {v}
+            </DropdownMenu.Item>
+          {/each}
+        {:else}
+          <DropdownMenu.RadioGroup
+            value={currentValue}
+            onValueChange={(v) => { if (v) { open = false; onchange(v); } }}
+          >
+            {#each values as v}
+              <DropdownMenu.RadioItem
+                data-testid="ctx-{testId}-{v}"
+                value={v}
+              >
+                {v}
+              </DropdownMenu.RadioItem>
+            {/each}
+          </DropdownMenu.RadioGroup>
+        {/if}
+      </DropdownMenu.SubContent>
+    </DropdownMenu.Sub>
+  {/snippet}
+
   <DropdownMenu.Root open={true} onOpenChange={handleOpenChange}>
     <!-- Hidden trigger positioned at cursor -->
     <DropdownMenu.Trigger
@@ -167,50 +205,36 @@
         <DropdownMenu.Separator />
       {/if}
 
+      {#if showSubtreeActions}
+        <DropdownMenu.Item
+          data-testid="ctx-expand-children"
+          onclick={() => { open = false; onexpandchildren?.(); }}
+        >
+          Expand children
+        </DropdownMenu.Item>
+        <DropdownMenu.Item
+          data-testid="ctx-collapse-children"
+          onclick={() => { open = false; oncollapsechildren?.(); }}
+        >
+          Collapse children
+        </DropdownMenu.Item>
+        <DropdownMenu.Separator />
+      {/if}
+
       {#if showAddChild}
         <DropdownMenu.Item
           data-testid="ctx-add-child"
-          onclick={() => { open = false; handleAddChild(); }}
+          onclick={(e) => {
+            // Capture the item's rect before the menu closes; the picker anchors there.
+            const anchor = (e.currentTarget as HTMLElement).getBoundingClientRect();
+            open = false;
+            handleAddChild(anchor);
+          }}
         >
           Add child
         </DropdownMenu.Item>
         <DropdownMenu.Separator />
       {/if}
-
-      {#snippet metadataSubmenu(label: string, values: string[], currentValue: string,
-          onchange: (v: string) => void, testId: string)}
-        <DropdownMenu.Sub>
-          <DropdownMenu.SubTrigger data-testid="ctx-{testId}-trigger">
-            {label}
-          </DropdownMenu.SubTrigger>
-          <DropdownMenu.SubContent>
-            {#if isBulk}
-              {#each values as v}
-                <DropdownMenu.Item
-                  data-testid="ctx-{testId}-{v}"
-                  onclick={() => { open = false; onchange(v); }}
-                >
-                  {v}
-                </DropdownMenu.Item>
-              {/each}
-            {:else}
-              <DropdownMenu.RadioGroup
-                value={currentValue}
-                onValueChange={(v) => { if (v) { open = false; onchange(v); } }}
-              >
-                {#each values as v}
-                  <DropdownMenu.RadioItem
-                    data-testid="ctx-{testId}-{v}"
-                    value={v}
-                  >
-                    {v}
-                  </DropdownMenu.RadioItem>
-                {/each}
-              </DropdownMenu.RadioGroup>
-            {/if}
-          </DropdownMenu.SubContent>
-        </DropdownMenu.Sub>
-      {/snippet}
 
       {@render metadataSubmenu("Status", STATUSES, nib.status, handleStatusChange, "status")}
 

@@ -87,18 +87,20 @@ func ParseColumns(spec string) ([]Column, error) {
 // Multi-value fields (tags) are joined internally with ',' (commas don't
 // collide with the tab separator). Empty fields render as the empty string.
 // time.Time fields render as RFC3339, or "" when nil.
+//
+// It builds a string grid via renderField and delegates the tab/newline
+// assembly to FormatTSV — the same primitive the list projection uses — so the
+// two TSV renderers share one convention.
 func FormatColumns(nibs []*nib.Nib, columns []Column) string {
-	var sb strings.Builder
-	for _, n := range nibs {
-		for i, c := range columns {
-			if i > 0 {
-				sb.WriteByte('\t')
-			}
-			sb.WriteString(renderField(n, c))
+	rows := make([][]string, len(nibs))
+	for i, n := range nibs {
+		row := make([]string, len(columns))
+		for j, c := range columns {
+			row[j] = renderField(n, c)
 		}
-		sb.WriteByte('\n')
+		rows[i] = row
 	}
-	return sb.String()
+	return FormatTSV(rows)
 }
 
 // renderField extracts the string representation of a single column from a
@@ -116,9 +118,9 @@ func renderField(n *nib.Nib, c Column) string {
 	case ColumnStatus:
 		return n.Status
 	case ColumnType:
-		return n.Type
+		return n.EffectiveType()
 	case ColumnPriority:
-		return n.Priority
+		return n.EffectivePriority()
 	case ColumnEstimate:
 		return n.Estimate
 	case ColumnOrder:
@@ -152,6 +154,6 @@ func AvailableColumnsString() string {
 	return strings.Join(names, ", ")
 }
 
-// availableNames is the internal alias used in error messages. Kept as a
-// thin wrapper so the historical name appears at error-message sites.
+// availableNames is a short alias for AvailableColumnsString used at
+// error-message sites.
 func availableNames() string { return AvailableColumnsString() }

@@ -11,7 +11,8 @@ Nibs is a file-based issue tracker for AI-first workflows. Issues ("nibs") are s
 All commands use [Task](https://taskfile.dev/) (`go-task/task`) as the task runner. Tool version pinning (Go, golangci-lint, Task itself) is handled by [mise](https://mise.jdx.dev/) via `mise.toml`, so the only thing contributors need to install manually is mise.
 
 - `task build` - Build the `./nibs` executable (runs codegen first)
-- `task test` - Run all tests: Go + web (runs codegen and web:build first)
+- `task test` - Run all tests: Go + web (runs codegen and web:build first); includes the `-race` gate on `internal/nibcore` + `internal/graph`
+- `task test:race` - Run the `-race` detector on the concurrency-critical packages (`internal/nibcore` + `internal/graph`) only
 - `task codegen` - Regenerate GraphQL code (`go generate ./...`)
 - `task nibs` - Build and run the CLI in one step (`go run .`)
 - `go test ./internal/nib/` - Run tests for a specific package
@@ -20,6 +21,8 @@ All commands use [Task](https://taskfile.dev/) (`go-task/task`) as the task runn
 - `task demo:tui` - Run the TUI with the sample-project fixture
 - `task screenshots` - Capture web UI screenshots to `web/screenshots/output/` for visual verification
 - `task --list` - List all available tasks
+
+`go build ./...` fails in a fresh git worktree — `embed.go` embeds `web/dist`, which is gitignored, so it looks like a broken checkout (`pattern all:web/dist: no matching files found`). Build the web assets there first, or scope to what you need (`go test ./internal/...`).
 
 ## GraphQL Schema Changes
 
@@ -52,7 +55,7 @@ The GraphQL engine runs in-process for CLI commands (`cmd/graphql.go` executes q
 - **`internal/nib/`** - Core `Nib` struct, Markdown+YAML parsing/rendering, ID generation, sorting
 - **`internal/nibcore/`** - `Core` type: thread-safe in-memory nib store with filesystem persistence, file watching (fsnotify), search (Bleve), and archive management
 - **`internal/graph/`** - gqlgen GraphQL layer. `schema.graphqls` is the schema, `schema.resolvers.go` has resolver implementations, `resolver.go` has shared validation logic (parent hierarchy, cycle detection, etag validation)
-- **`internal/config/`** - Configuration from `.nibs.yml`. Hardcoded enums: statuses (draft/todo/in-progress/completed/scrapped), types (milestone/epic/bug/feature/task), priorities (critical/high/normal/low/deferred)
+- **`internal/config/`** - Configuration from `.nibs.yml`. Hardcoded enums: statuses (draft/todo/in-progress/deferred/completed/scrapped), types (milestone/epic/bug/feature/task), priorities (critical/high/normal/low)
 - **`internal/tui/`** - Bubbletea TUI app. Uses the GraphQL resolver internally for all mutations
 - **`internal/search/`** - Bleve full-text search index (lazy-initialized, in-memory)
 - **`internal/ui/`** - Shared UI utilities (styles, tree rendering)
@@ -77,22 +80,23 @@ The GraphQL engine runs in-process for CLI commands (`cmd/graphql.go` executes q
 - **Event delegation**: TreeTable uses delegated event handlers on the scroll container (not per-row callbacks). TreeTableRow is a pure render component with zero callback props — interactive elements use `data-action` attributes (toggle, title, add-child, drag-handle). New actions require a handler case in TreeTable's `handleDelegatedClick`.
 - **Svelte context for ambient state**: SelectionState and DragState are provided via `provideSelection`/`provideDrag` from `contexts.ts`. Components read with `useSelection()`/`useDrag()`. Tests must provide context via `makeTestContext()` from contexts.ts — pass as `context` option to `render()`.
 - **Shared field components**: Use `StatusSelect`, `TypeSelect`, `PrioritySelect`, `EstimateSelect`, `TagEditor` from `web/src/lib/components/` instead of inline select/tag markup. Use `renderMarkdown()` from `web/src/lib/markdown.ts` instead of inline DOMPurify+marked. Use `.prose-nib` CSS class for markdown prose styling.
+- There is no prettier config — **do not run prettier**; it reformats unrelated files (one run churned 129 lines of untouched code).
 
 ### Nib Data Model
 
-Nibs are Markdown files with YAML front matter stored in `.nibs/`. Filename format: `{id}-{slug}.md` or `{id}.md`. Archived nibs go to `.nibs/archive/`. The `Nib` struct fields like `ID`, `Slug`, and `Path` are derived from the filename/path, not from front matter.
+Nibs are Markdown files with YAML front matter stored in `.nibs/`. Filename format: `{id}-{slug}.md` or `{id}.md`. Archived nibs go to `.nibs/archive/` but **stay in the store and remain visible in all queries** — `Core.Archive` keeps the nib in memory and rewrites its `Path`. Archiving is a move, not a removal (only `Delete` removes). The `Nib` struct fields like `ID`, `Slug`, and `Path` are derived from the filename/path, not from front matter.
 
 The `Path` field always uses forward slashes (normalized via `filepath.ToSlash`) for cross-platform portability. When using `Path` for filesystem operations, combine with `filepath.Join(c.root, b.Path)` which handles mixed separators.
 
 ### Configuration
 
-Project config lives in `.nibs.yml` at project root (searched upward from cwd). Key settings: `nibs.prefix` (ID prefix like "myproj-"), `nibs.id_length`, `nibs.path` (data directory, default `.nibs`), `nibs.require_if_match` (optimistic concurrency). Nibs path can also be set via `--nibs-path` flag or `NIBS_PATH` env var.
+Project config lives in `.nibs.yml` at project root (searched upward from cwd). Key settings: `nibs.prefix` (ID prefix like "myproj-"), `nibs.id_length`, `nibs.path` (data directory, default `.nibs`), `nibs.require_if_match` (optimistic concurrency). Nibs path can also be set via `--nibs-path` flag or `NIBS_PATH` env var — but those move **only the data directory**; config is still discovered from cwd, so pointing them at another project silently applies *this* project's prefix/id_length/defaults to that project's data. To work against another project, pass `--config <dir>/.nibs.yml` — it resolves that project's data directory too, so `--nibs-path` is unnecessary.
 
 For optional config fields with non-zero defaults, use pointer types (`*int`, `*bool`) with `yaml:"...,omitempty"` so nil means "use default" vs explicit zero/false. See `ServerConfig` for the pattern.
 
 ### Agent Integration
 
-`nibs prime` outputs a prompt template (`cmd/prompt.tmpl`) that teaches coding agents how to use the GraphQL CLI. This is the primary interface for AI agents.
+`nibs prime` outputs the agent onboarding prompt (slim `cmd/prompt.tmpl`, or the full guide `cmd/prompt-full.tmpl` with `--full`). `nibs cheat` prints the whole CLI grammar on one screen, and `nibs catalog <topic>` emits generated vocabulary (fields, filters, hierarchy, recipes, examples, schema). Together these are the primary interface for AI agents.
 
 ## Branching & Workflow
 
@@ -127,15 +131,17 @@ Before starting any new work, run `git fetch` (and `git -C .nibs fetch`) and che
 ## Testing
 
 - Always write or update tests for changes
+- **Prove a new guard bites**: break the behavior it guards and confirm the test fails. A test that passes while its target is broken is decoration. This keeps happening here — guards placed after an assert that throws first (so they never run), and a mutation that survived the entire 1240-test suite.
 - Use table-driven tests following Go conventions
 - Never hardcode `/` or `\` in path assertions — use `filepath.Join` for OS paths and forward slashes for nib `Path` fields
 - For manual CLI testing: `task nibs` compiles and runs the CLI
 - For manual CLI testing, `task demo` serves the web UI with a temporary copy of the sample-project fixture (safe to mutate), and `task demo:tui` does the same for the TUI
-- **Test fixture dataset**: `testdata/fixtures/sample-project/` has 87 curated nibs (prefix `tnib-`) covering all types, statuses, priorities, hierarchies, and relationships. Use `fixtures.CopySampleProject(t)` from `testdata/fixtures/` to get a temporary copy for write tests. Regenerate with `bash testdata/fixtures/gen-sample-project.sh`.
+- **Test fixture dataset**: `testdata/fixtures/sample-project/` has 89 curated nibs (prefix `tnib-`) covering all types, statuses, priorities, hierarchies, and relationships. Use `fixtures.CopySampleProject(t)` from `testdata/fixtures/` to get a temporary copy for write tests. Regenerate with `bash testdata/fixtures/gen-sample-project.sh`.
 - Web UI tests: `cd web && npm install && npx vitest run --reporter=agent` (Vitest + jsdom + @testing-library/svelte). Run `npm install` first — node_modules can go stale after branch switches.
 - Web test commands require `web/` as the working directory. If cwd has drifted, `cd` to the project root's `web/` directory first.
 - **Always use `--reporter=agent`** when running vitest — it keeps output concise. Never pipe vitest through grep; read the output once.
 - `task test` runs both Go and web tests. No need to run them separately unless debugging a specific failure.
+- **`-race` runs automatically**: `task test` runs `internal/nibcore` + `internal/graph` a second time under `-race` (via `task test:race`), and CI runs the same detector lane on Linux. These packages carry the concurrency invariants (live-pointer/copy-on-write, clone-under-lock), whose guards degrade to trivial checks without `-race` — so a reintroduced data race now fails the default gate, not just a manual `go test -race`.
 - **Visual verification of the web UI**: `task screenshots` captures PNGs of the key UI states (table at each view level, detail panel, editor modal, context menu) into `web/screenshots/output/` (gitignored), served from a temp copy of the sample fixture. Read the PNGs to *see* rendered changes — jsdom tests can't verify pixels. One-time setup: `cd web && npx playwright install chromium` (plain `install`, not `--with-deps` — that flag is apt-only and fails on Fedora). Extend `web/screenshots/capture.spec.ts` when new views or themes land.
 - **bits-ui timer flush**: `test-setup.ts` has an `afterAll` that waits 50ms so bits-ui's body-scroll-lock deferred cleanup (24ms setTimeout) fires while jsdom still exists. Without this, the timer fires after jsdom teardown causing a spurious "document is not defined" error.
 
@@ -160,4 +166,5 @@ When working from a plan or work item:
 - No backwards compatibility requirements for CLI usage or APIs — this is a new, unreleased project. Only existing nibs data files (`.nibs/` Markdown+YAML format) must remain compatible. Feel free to make breaking CLI/API changes without migration shims.
 - **Always prefer TDD when fixing bugs**: write a failing test that reproduces the bug first, then fix the code to make it pass.
 - **Code review findings that are too large to fix in-place should be deferred as nibs**, not silently skipped. If a finding requires architectural redesign or broad refactoring beyond the current task's scope, create a follow-up nib to track it.
+- **A finding is a claim, and a nib made from one inherits the claim without its evidence.** Defer findings with the command and output that demonstrate them, or label the claim `[Unverified]`. Reproduce a load-bearing premise before building on it: in one 7-nib batch, 4 premises were false — `disabled` blocks selection (it doesn't, in Chromium), a race detector fired 3/8 (80 runs say never), shorthand `#id` mentions don't link (they do), archiving removes a nib from the list (it doesn't). Every refutation came from running something; none from reading. The one premise that survived came from using the app.
 - **When creating a new nib, place it at the appropriate position** using `reorderNib` (e.g. `afterId` of a related nib). Consider development dependencies, complexity, and type (bugs before refactors before features) when choosing where it belongs. Don't leave new nibs at the default position.

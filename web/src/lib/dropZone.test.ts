@@ -26,7 +26,10 @@ function makeNib(overrides: Partial<TreeTableNib> = {}): TreeTableNib {
   };
 }
 
-function makeRow(overrides: Partial<RowData> & { nib?: Partial<TreeTableNib> } = {}): RowData {
+// Omit `nib` from the base Partial<RowData> before re-adding it: intersecting
+// `Partial<RowData>` (nib: TreeTableNib) with `{ nib?: Partial<TreeTableNib> }`
+// would AND the two nib types, forcing callers to pass a full TreeTableNib.
+function makeRow(overrides: Partial<Omit<RowData, "nib">> & { nib?: Partial<TreeTableNib> } = {}): RowData {
   const { nib: nibOverrides, ...rowOverrides } = overrides;
   return {
     nib: makeNib(nibOverrides),
@@ -34,6 +37,7 @@ function makeRow(overrides: Partial<RowData> & { nib?: Partial<TreeTableNib> } =
     hasChildren: false,
     dimmed: false,
     parentNib: null,
+    displayParentId: null,
     ...rowOverrides,
   };
 }
@@ -126,6 +130,13 @@ describe("isValidDropTarget", () => {
     expect(isValidDropTarget(["task"], target, "before", ["nib-001"], new Set())).toBe(true);
     expect(isValidDropTarget(["task"], target, "after", ["nib-001"], new Set())).toBe(true);
   });
+
+  it("synthetic bucket rows are never valid drop targets (any zone)", () => {
+    const bucket = { id: "__no_epic__", type: "", parentId: null };
+    expect(isValidDropTarget(["task"], bucket, "before", [], new Set())).toBe(false);
+    expect(isValidDropTarget(["task"], bucket, "after", [], new Set())).toBe(false);
+    expect(isValidDropTarget(["task"], bucket, "reparent", [], new Set())).toBe(false);
+  });
 });
 
 describe("collectDescendantIds", () => {
@@ -198,7 +209,7 @@ describe("isValidCrossParentDrop", () => {
   });
 
   it("validates type hierarchy against parent type", () => {
-    // epic can contain: feature, task, bug
+    // epic can contain: bug, feature, task, research (but not milestone)
     expect(isValidCrossParentDrop(["task"], "epic")).toBe(true);
     expect(isValidCrossParentDrop(["feature"], "epic")).toBe(true);
     expect(isValidCrossParentDrop(["milestone"], "epic")).toBe(false);
@@ -206,7 +217,8 @@ describe("isValidCrossParentDrop", () => {
 
   it("requires all dragged types to be valid children", () => {
     expect(isValidCrossParentDrop(["task", "bug"], "epic")).toBe(true);
-    expect(isValidCrossParentDrop(["task", "epic"], "milestone")).toBe(false);
+    // milestone can parent every other type, but never another milestone.
+    expect(isValidCrossParentDrop(["task", "milestone"], "milestone")).toBe(false);
   });
 });
 

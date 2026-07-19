@@ -43,8 +43,10 @@ func inferParent(chosenType string, selectedNib *nib.Nib) (parentID string, afte
 		return "", ""
 	}
 
-	// Check if chosen type can be a child of the selected nib's type
-	validChildren := nibtypes.ValidChildTypes(selectedNib.Type)
+	// Check if chosen type can be a child of the selected nib's type. EffectiveType
+	// so a type-less nib is treated as "task" (ValidChildTypes special-cases "" as
+	// "no parent → all types", which would be wrong for an existing leaf nib).
+	validChildren := nibtypes.ValidChildTypes(selectedNib.EffectiveType())
 	for _, childType := range validChildren {
 		if childType == chosenType {
 			return selectedNib.ID, ""
@@ -52,7 +54,7 @@ func inferParent(chosenType string, selectedNib *nib.Nib) (parentID string, afte
 	}
 
 	// Check if chosen type is the same level (same valid parent types) → sibling
-	selectedParentTypes := nibtypes.ValidParentTypes(selectedNib.Type)
+	selectedParentTypes := nibtypes.ValidParentTypes(selectedNib.EffectiveType())
 	chosenParentTypes := nibtypes.ValidParentTypes(chosenType)
 	if sameParentTypes(selectedParentTypes, chosenParentTypes) {
 		if selectedNib.Parent != "" {

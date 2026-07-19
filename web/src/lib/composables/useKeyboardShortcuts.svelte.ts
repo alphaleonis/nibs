@@ -10,9 +10,10 @@ import { bindGlobalShortcuts } from "../keyboard";
 import type { SelectionState } from "../selection.svelte";
 import type { HistoryNav } from "./useHistoryNav.svelte";
 import type { ConfirmDialogState } from "./useConfirmDialog.svelte";
-import type { EditorOrchestrationState } from "./useEditorOrchestration.svelte";
+import type { ActiveView } from "./useActiveView.svelte";
 import type { MutationStore } from "../mutations/store.svelte";
 import { deleteBatch } from "../mutations/commands";
+import { getActionTargetIds } from "../actionTarget";
 
 /** Returns true if focus is inside an input/textarea/select/contenteditable */
 function isInputFocused(): boolean {
@@ -29,7 +30,7 @@ function isInputFocused(): boolean {
  *
  * @param opts.selection - Selection state (from context)
  * @param opts.nav - History navigation controller (from context)
- * @param opts.editor - Editor orchestration state (from context)
+ * @param opts.view - Active-nib-view presenter (from context)
  * @param opts.confirmDialog - Confirm dialog state (from context)
  * @param opts.mutations - Mutation store (from context)
  * @param opts.getContextMenuNibId - Reactive getter for context menu nib ID (for action targeting)
@@ -37,25 +38,34 @@ function isInputFocused(): boolean {
 export function useKeyboardShortcuts(opts: {
   selection: SelectionState;
   nav: HistoryNav;
-  editor: EditorOrchestrationState;
+  view: ActiveView;
   confirmDialog: ConfirmDialogState;
   mutations: MutationStore;
   getContextMenuNibId: () => string | null;
 }): void {
-  const { selection, nav, editor, confirmDialog, mutations } = opts;
+  const { selection, nav, view, confirmDialog, mutations } = opts;
 
-  /** Resolves which nib IDs an action should target, checking multi-select,
-   *  focused row, then context menu in priority order. */
-  function getActionTargetIds(): string[] {
-    if (selection.hasMultiSelect) return [...selection.selectedIds];
-    if (selection.focusedNibId) return [selection.focusedNibId];
-    const ctxId = opts.getContextMenuNibId();
-    if (ctxId) return [ctxId];
-    return [];
+  /** True while the full-screen modal presentation is up — global row shortcuts
+   *  (create/edit/delete) must not act on the table behind it. */
+  function modalOpen(): boolean {
+    return view.isOpen && view.presentation === "expanded";
+  }
+
+  /** True while a confirm dialog is up. The row shortcuts open confirms of their
+   *  own (create/edit route through the dirty-guard; Delete/Backspace open a
+   *  delete confirm), and firing a SECOND confirm reuses the single dialog and
+   *  abandons the first's pending promise — the leak nibs-an5d fixed. tinykeys
+   *  binds a bare `window` listener with no target filtering, so a key pressed
+   *  while focus sits on a dialog button still reaches here; this gate stops it.
+   *  Escape is deliberately NOT gated on this — bits-ui's escape layer consumes
+   *  it (marks it defaultPrevented) so the Escape handler already bails, letting
+   *  the dialog close itself. */
+  function confirmOpen(): boolean {
+    return confirmDialog.open;
   }
 
   function handleDelete() {
-    const ids = getActionTargetIds();
+    const ids = getActionTargetIds(selection, opts.getContextMenuNibId());
     if (ids.length === 0) return;
 
     const count = ids.length;
@@ -82,12 +92,11 @@ export function useKeyboardShortcuts(opts: {
       {
         Escape: (e: KeyboardEvent) => {
           if (e.defaultPrevented) return;
-          // Enhanced Escape hierarchy: editor modal -> detail panel -> deselect -> clear focus
-          if (editor.editorOpen) return; // Editor has its own Escape handling
-          if (selection.panelOpen) {
+          // Enhanced Escape hierarchy: open view -> deselect -> clear focus.
+          if (view.isOpen) {
             e.preventDefault();
-            // Route through nav so the URL/history stay in sync (nibs-58c3).
-            nav.closePanel();
+            // Routes through the dirty-guard, then nav (URL/history stay in sync).
+            view.requestClose();
             return;
           }
           if (selection.hasMultiSelect || selection.selectedIds.size > 0) {
@@ -101,34 +110,39 @@ export function useKeyboardShortcuts(opts: {
           }
         },
         n: (e: KeyboardEvent) => {
-          if (editor.editorOpen) return;
+          if (modalOpen()) return;
+          if (confirmOpen()) return;
           if (isInputFocused()) return;
           e.preventDefault();
-          editor.handleCreateNew("task");
+          view.startCreate({ type: "task" });
         },
         "$mod+n": (e: KeyboardEvent) => {
-          if (editor.editorOpen) return;
+          if (modalOpen()) return;
+          if (confirmOpen()) return;
           e.preventDefault();
-          editor.handleCreateNew("task");
+          view.startCreate({ type: "task" });
         },
         e: (e: KeyboardEvent) => {
-          if (editor.editorOpen) return;
+          if (modalOpen()) return;
+          if (confirmOpen()) return;
           if (isInputFocused()) return;
           if (!selection.focusedNibId) return;
           e.preventDefault();
-          editor.handleEditNib(selection.focusedNibId);
+          view.open(selection.focusedNibId);
         },
         Delete: (e: KeyboardEvent) => {
-          if (editor.editorOpen) return;
+          if (modalOpen()) return;
+          if (confirmOpen()) return;
           if (isInputFocused()) return;
-          if (getActionTargetIds().length === 0) return;
+          if (getActionTargetIds(selection, opts.getContextMenuNibId()).length === 0) return;
           e.preventDefault();
           handleDelete();
         },
         Backspace: (e: KeyboardEvent) => {
-          if (editor.editorOpen) return;
+          if (modalOpen()) return;
+          if (confirmOpen()) return;
           if (isInputFocused()) return;
-          if (getActionTargetIds().length === 0) return;
+          if (getActionTargetIds(selection, opts.getContextMenuNibId()).length === 0) return;
           e.preventDefault();
           handleDelete();
         },

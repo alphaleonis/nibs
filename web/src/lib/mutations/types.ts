@@ -60,6 +60,20 @@ export interface CommandResult {
   ok: boolean;
   data?: any;
   error?: string;
+  /** Machine-readable GraphQL error code lifted from the failed leaf's
+   *  `extensions.code` (e.g. "ETAG_MISMATCH"), when the server tagged one.
+   *  Classifiers should prefer this over substring-matching `error`. */
+  errorCode?: string;
+}
+
+/** Options threaded through `MutationStore.execute` → `MutationDispatcher`. */
+export interface ExecuteOptions {
+  /** Suppress the default `toast.error(...)` on a failed leaf mutation so the
+   *  CALLER owns messaging for this call (e.g. `save()` routes a 409 into the
+   *  inline conflict resolver instead of a racing raw toast). Defaults to
+   *  false — every other caller keeps the "toast on error" behavior, including
+   *  the individual legs of a batch/sequence. */
+  suppressToast?: boolean;
 }
 
 export interface BatchResult {

@@ -13,6 +13,7 @@ import (
 	"text/template"
 
 	"github.com/alphaleonis/nibs/internal/config"
+	"github.com/alphaleonis/nibs/internal/graph"
 	"github.com/alphaleonis/nibs/internal/nib"
 	"github.com/alphaleonis/nibs/internal/nibcore"
 	"github.com/spf13/cobra"
@@ -42,23 +43,30 @@ type unscheduledGroup struct {
 	Other []*nib.Nib `json:"other,omitempty"`
 }
 
-// milestoneGroup represents a milestone and its contents.
+// milestoneGroup represents a milestone and its contents. Progress is the
+// canonical child-completion rollup over the milestone's DIRECT children
+// (graph.ComputeProgress) — the same value `nibs get <milestone> -f progress`
+// reports — computed over every real child, independent of the display filters.
 type milestoneGroup struct {
-	Milestone *nib.Nib   `json:"milestone"`
-	Epics     []epicGroup  `json:"epics,omitempty"`
-	Other     []*nib.Nib `json:"other,omitempty"`
+	Milestone *nib.Nib             `json:"milestone"`
+	Progress  graph.ProgressRollup `json:"progress"`
+	Epics     []epicGroup          `json:"epics,omitempty"`
+	Other     []*nib.Nib           `json:"other,omitempty"`
 }
 
-// epicGroup represents an epic and its child items.
+// epicGroup represents an epic and its child items. Progress is the canonical
+// child-completion rollup over the epic's direct children.
 type epicGroup struct {
-	Epic  *nib.Nib   `json:"epic"`
-	Items []*nib.Nib `json:"items,omitempty"`
+	Epic     *nib.Nib             `json:"epic"`
+	Progress graph.ProgressRollup `json:"progress"`
+	Items    []*nib.Nib           `json:"items,omitempty"`
 }
 
 
 var roadmapCmd = &cobra.Command{
 	Use:   "roadmap",
 	Short: "Generate a Markdown roadmap from milestones and epics",
+	Args:  codedNoArgs(&roadmapJSON), // renders the whole store; takes no positional args
 	RunE: func(cmd *cobra.Command, args []string) error {
 		app := getApp(cmd)
 		// Query all nibs via GraphQL resolver
@@ -111,6 +119,7 @@ func buildRoadmap(allNibs []*nib.Nib, includeDone bool, statusFilter, noStatusFi
 	// Find milestones, applying status filters
 	var milestones []*nib.Nib
 	for _, b := range allNibs {
+		// Classification check — exempt: empty type is never milestone/epic.
 		if b.Type != "milestone" {
 			continue
 		}
@@ -156,6 +165,7 @@ func buildRoadmap(allNibs []*nib.Nib, includeDone bool, statusFilter, noStatusFi
 	// Find unscheduled epics (epics not under a milestone)
 	var unscheduledEpics []epicGroup
 	for _, b := range allNibs {
+		// Classification check — exempt: empty type is never milestone/epic.
 		if b.Type != "epic" {
 			continue
 		}
@@ -166,7 +176,11 @@ func buildRoadmap(allNibs []*nib.Nib, includeDone bool, statusFilter, noStatusFi
 		epicItems := filterChildren(children[b.ID], includeDone, cfg)
 		if len(epicItems) > 0 {
 			sortByTypeThenStatus(epicItems, cfg)
-			unscheduledEpics = append(unscheduledEpics, epicGroup{Epic: b, Items: epicItems})
+			unscheduledEpics = append(unscheduledEpics, epicGroup{
+				Epic:     b,
+				Progress: graph.ComputeProgress(childStatuses(children[b.ID])),
+				Items:    epicItems,
+			})
 		}
 	}
 
@@ -178,7 +192,8 @@ func buildRoadmap(allNibs []*nib.Nib, includeDone bool, statusFilter, noStatusFi
 	// Find orphan items (not milestone, not epic, no parent or parent is not milestone/epic)
 	var orphanItems []*nib.Nib
 	for _, b := range allNibs {
-		// Skip milestones and epics
+		// Skip milestones and epics.
+		// Classification check — exempt: empty type is never milestone/epic.
 		if b.Type == "milestone" || b.Type == "epic" {
 			continue
 		}
@@ -217,7 +232,12 @@ func buildRoadmap(allNibs []*nib.Nib, includeDone bool, statusFilter, noStatusFi
 
 // buildMilestoneGroup builds a milestone group with its epics and other items.
 func buildMilestoneGroup(m *nib.Nib, children map[string][]*nib.Nib, includeDone bool, cfg *config.Config) milestoneGroup {
-	group := milestoneGroup{Milestone: m}
+	group := milestoneGroup{
+		Milestone: m,
+		// % complete over the milestone's real direct children (epics + direct
+		// items), computed over the full child set regardless of includeDone.
+		Progress: graph.ComputeProgress(childStatuses(children[m.ID])),
+	}
 
 	// Get direct children of this milestone
 	directChildren := children[m.ID]
@@ -237,7 +257,11 @@ func buildMilestoneGroup(m *nib.Nib, children map[string][]*nib.Nib, includeDone
 		// Only include epics that have visible children
 		if len(epicItems) > 0 {
 			sortByTypeThenStatus(epicItems, cfg)
-			group.Epics = append(group.Epics, epicGroup{Epic: epic, Items: epicItems})
+			group.Epics = append(group.Epics, epicGroup{
+				Epic:     epic,
+				Progress: graph.ComputeProgress(childStatuses(children[epic.ID])),
+				Items:    epicItems,
+			})
 		}
 	}
 
@@ -263,6 +287,16 @@ func buildMilestoneGroup(m *nib.Nib, children map[string][]*nib.Nib, includeDone
 	group.Other = other
 
 	return group
+}
+
+// childStatuses projects a child slice to its status strings, the input
+// graph.ComputeProgress needs to build a canonical progress rollup.
+func childStatuses(children []*nib.Nib) []string {
+	statuses := make([]string, len(children))
+	for i, c := range children {
+		statuses[i] = c.Status
+	}
+	return statuses
 }
 
 // filterChildren filters children based on done status.
@@ -323,8 +357,9 @@ func sortByTypeThenStatus(nibs []*nib.Nib, cfg interface {
 	}
 
 	sort.Slice(nibs, func(i, j int) bool {
-		// First by type
-		ti, tj := typeOrder[nibs[i].Type], typeOrder[nibs[j].Type]
+		// First by type (EffectiveType so a type-less nib sorts as "task", not at
+		// the zero-value/first slot).
+		ti, tj := typeOrder[nibs[i].EffectiveType()], typeOrder[nibs[j].EffectiveType()]
 		if ti != tj {
 			return ti < tj
 		}
@@ -372,11 +407,11 @@ func renderNibRef(b *nib.Nib, asLink bool, linkPrefix string) string {
 	return fmt.Sprintf("([%s](%s%s))", b.ID, linkPrefix, b.Path)
 }
 
-// typeBadge returns a shields.io badge markdown for the nib type.
+// typeBadge returns a shields.io badge markdown for the nib type. Uses
+// EffectiveType so a type-less nib still renders its "task" badge rather than
+// an empty one.
 func typeBadge(b *nib.Nib) string {
-	if b.Type == "" {
-		return ""
-	}
+	typeName := b.EffectiveType()
 	// Map types to colors
 	colors := map[string]string{
 		"bug":       "d73a4a",
@@ -385,11 +420,11 @@ func typeBadge(b *nib.Nib) string {
 		"epic":      "5319e7",
 		"milestone": "fbca04",
 	}
-	color := colors[b.Type]
+	color := colors[typeName]
 	if color == "" {
 		color = "gray"
 	}
-	return fmt.Sprintf("![%s](https://img.shields.io/badge/%s-%s?style=flat-square)", b.Type, b.Type, color)
+	return fmt.Sprintf("![%s](https://img.shields.io/badge/%s-%s?style=flat-square)", typeName, typeName, color)
 }
 
 // defaultLinkPrefix returns the relative path from cwd to the .nibs directory.

@@ -35,12 +35,13 @@ if (-not $Version) {
 
 Write-Host "Version: $Version"
 
-# Build URLs
-$Ver = $Version -replace '^v', ''
-$Archive = "${Binary}_${Ver}_windows_${Arch}.zip"
+# Build URLs. Asset names are version-less ({binary}_{os}_{arch}) and the
+# checksum file is a fixed "checksums.txt" — see .goreleaser.yaml. This keeps
+# them in lockstep with what `nibs upgrade` (go-selfupdate) expects.
+$Archive = "${Binary}_windows_${Arch}.zip"
 $BaseUrl = "https://github.com/$Repo/releases/download/$Version"
 $ArchiveUrl = "$BaseUrl/$Archive"
-$ChecksumsUrl = "$BaseUrl/${Binary}_${Ver}_checksums.txt"
+$ChecksumsUrl = "$BaseUrl/checksums.txt"
 
 # Create temp directory
 $TmpDir = Join-Path ([System.IO.Path]::GetTempPath()) "nibs-install-$([System.Guid]::NewGuid().ToString('N').Substring(0,8))"

@@ -1,6 +1,6 @@
 import { describe, it, expect, beforeEach, vi } from "vitest";
-import { savePreferences, loadPreferences } from "./storage";
-import { MIN_DETAIL_PANEL_WIDTH } from "./types";
+import { savePreferences, loadPreferences, parseTheme } from "./storage";
+import { MIN_DETAIL_PANEL_WIDTH, MIN_DETAIL_PANEL_HEIGHT } from "./types";
 
 const store: Record<string, string> = {};
 const mockStorage = {
@@ -20,24 +20,25 @@ describe("storage", () => {
   it("saves and loads filter preferences with viewLevel", () => {
     savePreferences({ filter: { search: "test" }, viewLevel: "epics" });
     const loaded = loadPreferences();
-    expect(loaded).toEqual({ filter: { search: "test" }, viewLevel: "epics" });
+    // theme resolves to the default ("graphite") when not persisted
+    expect(loaded).toEqual({ filter: { search: "test" }, viewLevel: "epics", theme: "graphite" });
   });
 
   it("returns defaults when localStorage is empty", () => {
     const loaded = loadPreferences();
-    expect(loaded).toEqual({ filter: {}, viewLevel: "milestones" });
+    expect(loaded).toEqual({ filter: {}, viewLevel: "none", theme: "graphite" });
   });
 
   it("returns defaults when localStorage has corrupt JSON", () => {
     store["nibs-filter-preferences"] = "not valid json{{{";
     const loaded = loadPreferences();
-    expect(loaded).toEqual({ filter: {}, viewLevel: "milestones" });
+    expect(loaded).toEqual({ filter: {}, viewLevel: "none", theme: "graphite" });
   });
 
   it("returns defaults when localStorage has non-object value", () => {
     store["nibs-filter-preferences"] = '"just a string"';
     const loaded = loadPreferences();
-    expect(loaded).toEqual({ filter: {}, viewLevel: "milestones" });
+    expect(loaded).toEqual({ filter: {}, viewLevel: "none", theme: "graphite" });
   });
 
   it("gracefully falls back to default when old viewMode value is stored", () => {
@@ -46,7 +47,51 @@ describe("storage", () => {
       viewMode: "hierarchy",
     });
     const loaded = loadPreferences();
-    expect(loaded).toEqual({ filter: { search: "old" }, viewLevel: "milestones" });
+    expect(loaded).toEqual({ filter: { search: "old" }, viewLevel: "none", theme: "graphite" });
+  });
+
+  // Legacy `excludeStatus` (the retired hide-completed negative filter)
+  // must never survive into the loaded filter. When no explicit status include-list
+  // is present it is translated to the equivalent include-list (all statuses except
+  // the excluded ones); otherwise it is simply dropped (status is the single source
+  // of truth). Old persisted state must never crash the load.
+  it("translates a legacy excludeStatus into the equivalent status include-list", () => {
+    store["nibs-filter-preferences"] = JSON.stringify({
+      filter: { excludeStatus: ["completed", "scrapped"] },
+      viewLevel: "none",
+    });
+    const loaded = loadPreferences();
+    expect(loaded.filter).not.toHaveProperty("excludeStatus");
+    expect(loaded.filter.status).toEqual(["draft", "todo", "in-progress", "deferred"]);
+  });
+
+  it("drops a legacy excludeStatus when an explicit status include-list is present", () => {
+    store["nibs-filter-preferences"] = JSON.stringify({
+      filter: { status: ["todo"], excludeStatus: ["completed", "scrapped"] },
+      viewLevel: "none",
+    });
+    const loaded = loadPreferences();
+    expect(loaded.filter).not.toHaveProperty("excludeStatus");
+    expect(loaded.filter.status).toEqual(["todo"]);
+  });
+
+  it("preserves other filter fields while dropping legacy excludeStatus", () => {
+    store["nibs-filter-preferences"] = JSON.stringify({
+      filter: { search: "auth", type: ["bug"], excludeStatus: ["scrapped"] },
+      viewLevel: "none",
+    });
+    const loaded = loadPreferences();
+    expect(loaded.filter).not.toHaveProperty("excludeStatus");
+    expect(loaded.filter.search).toBe("auth");
+    expect(loaded.filter.type).toEqual(["bug"]);
+    // Complement of {scrapped} across STATUSES, order-preserving.
+    expect(loaded.filter.status).toEqual([
+      "draft",
+      "todo",
+      "in-progress",
+      "deferred",
+      "completed",
+    ]);
   });
 
   it("gracefully handles unknown viewLevel value", () => {
@@ -55,7 +100,16 @@ describe("storage", () => {
       viewLevel: "unknown-value",
     });
     const loaded = loadPreferences();
-    expect(loaded).toEqual({ filter: {}, viewLevel: "milestones" });
+    expect(loaded).toEqual({ filter: {}, viewLevel: "none", theme: "graphite" });
+  });
+
+  it("accepts the renamed 'features' viewLevel", () => {
+    store["nibs-filter-preferences"] = JSON.stringify({
+      filter: {},
+      viewLevel: "features",
+    });
+    const loaded = loadPreferences();
+    expect(loaded.viewLevel).toBe("features");
   });
 
   it("enforces alwaysVisible columns in stored columnVisibility", () => {
@@ -84,6 +138,22 @@ describe("storage", () => {
     const loaded = loadPreferences();
     const titleCount = loaded.columnVisibility?.milestones?.filter(k => k === "title").length;
     expect(titleCount).toBe(1);
+  });
+
+  it("accepts and round-trips the blocking/blockedBy columns per view level", () => {
+    // Opt-in columns toggled on for a specific view level must survive a
+    // save → load round-trip (they are valid keys once in ALL_COLUMN_KEYS).
+    savePreferences({
+      filter: {},
+      viewLevel: "epics",
+      columnVisibility: {
+        epics: ["id", "title", "blocking", "blockedBy"],
+      },
+    });
+    const loaded = loadPreferences();
+    expect(loaded.columnVisibility?.epics).toContain("blocking");
+    expect(loaded.columnVisibility?.epics).toContain("blockedBy");
+    expect(loaded.columnVisibility?.epics).toContain("title");
   });
 
   it("saves and loads column widths per view level", () => {
@@ -198,5 +268,179 @@ describe("storage", () => {
       const loaded = loadPreferences();
       expect(loaded.detailPanelWidth, `should strip ${label}`).toBeUndefined();
     }
+  });
+
+  it("saves and loads detailPanelPosition", () => {
+    savePreferences({
+      filter: {},
+      viewLevel: "milestones",
+      detailPanelPosition: "bottom",
+    });
+    const loaded = loadPreferences();
+    expect(loaded.detailPanelPosition).toBe("bottom");
+  });
+
+  it("returns undefined detailPanelPosition when not set", () => {
+    savePreferences({ filter: {}, viewLevel: "milestones" });
+    const loaded = loadPreferences();
+    expect(loaded.detailPanelPosition).toBeUndefined();
+  });
+
+  it("returns undefined detailPanelPosition for an invalid stored value", () => {
+    store["nibs-filter-preferences"] = JSON.stringify({
+      filter: {},
+      viewLevel: "milestones",
+      detailPanelPosition: "diagonal",
+    });
+    const loaded = loadPreferences();
+    expect(loaded.detailPanelPosition).toBeUndefined();
+  });
+
+  it("saves and loads detailPanelHeight", () => {
+    savePreferences({
+      filter: {},
+      viewLevel: "milestones",
+      detailPanelHeight: 400,
+    });
+    const loaded = loadPreferences();
+    expect(loaded.detailPanelHeight).toBe(400);
+  });
+
+  it("returns undefined detailPanelHeight when not set", () => {
+    savePreferences({ filter: {}, viewLevel: "milestones" });
+    const loaded = loadPreferences();
+    expect(loaded.detailPanelHeight).toBeUndefined();
+  });
+
+  it("clamps detailPanelHeight to MIN on load but applies no MAX clamp", () => {
+    // Below MIN is raised to the floor...
+    store["nibs-filter-preferences"] = JSON.stringify({
+      filter: {},
+      viewLevel: "milestones",
+      detailPanelHeight: 50,
+    });
+    expect(loadPreferences().detailPanelHeight).toBe(MIN_DETAIL_PANEL_HEIGHT);
+
+    // ...but there is intentionally no upper bound — large values load unchanged.
+    store["nibs-filter-preferences"] = JSON.stringify({
+      filter: {},
+      viewLevel: "milestones",
+      detailPanelHeight: 9999,
+    });
+    expect(loadPreferences().detailPanelHeight).toBe(9999);
+  });
+
+  it("strips invalid detailPanelHeight values", () => {
+    const cases: [string, unknown][] = [
+      ["negative", -100],
+      ["zero", 0],
+      ["Infinity", Infinity],
+      ["NaN", NaN],
+      ["string", "300"],
+      ["null", null],
+      ["object", { height: 300 }],
+    ];
+    for (const [label, value] of cases) {
+      store["nibs-filter-preferences"] = JSON.stringify({
+        filter: {},
+        viewLevel: "milestones",
+        detailPanelHeight: value,
+      });
+      const loaded = loadPreferences();
+      expect(loaded.detailPanelHeight, `should strip ${label}`).toBeUndefined();
+    }
+  });
+
+  it("saves and loads blockedEmphasis", () => {
+    savePreferences({ filter: {}, viewLevel: "none", blockedEmphasis: "pill-dim" });
+    expect(loadPreferences().blockedEmphasis).toBe("pill-dim");
+  });
+
+  it("returns undefined blockedEmphasis when not set", () => {
+    savePreferences({ filter: {}, viewLevel: "none" });
+    expect(loadPreferences().blockedEmphasis).toBeUndefined();
+  });
+
+  it("returns undefined blockedEmphasis for an invalid stored value", () => {
+    store["nibs-filter-preferences"] = JSON.stringify({
+      filter: {},
+      viewLevel: "none",
+      blockedEmphasis: "loud",
+    });
+    expect(loadPreferences().blockedEmphasis).toBeUndefined();
+  });
+
+  it("saves and loads fontSize", () => {
+    savePreferences({ filter: {}, viewLevel: "none", fontSize: "large" });
+    expect(loadPreferences().fontSize).toBe("large");
+  });
+
+  it("returns undefined fontSize when not set", () => {
+    savePreferences({ filter: {}, viewLevel: "none" });
+    expect(loadPreferences().fontSize).toBeUndefined();
+  });
+
+  it("returns undefined fontSize for an invalid stored value", () => {
+    store["nibs-filter-preferences"] = JSON.stringify({
+      filter: {},
+      viewLevel: "none",
+      fontSize: "gigantic",
+    });
+    expect(loadPreferences().fontSize).toBeUndefined();
+  });
+
+  it("saves and loads previewOpen", () => {
+    savePreferences({ filter: {}, viewLevel: "none", previewOpen: false });
+    expect(loadPreferences().previewOpen).toBe(false);
+  });
+
+  it("returns undefined previewOpen when not set", () => {
+    savePreferences({ filter: {}, viewLevel: "none" });
+    expect(loadPreferences().previewOpen).toBeUndefined();
+  });
+
+  it("returns undefined previewOpen for a non-boolean stored value", () => {
+    store["nibs-filter-preferences"] = JSON.stringify({
+      filter: {},
+      viewLevel: "none",
+      previewOpen: "yes",
+    });
+    expect(loadPreferences().previewOpen).toBeUndefined();
+  });
+
+  it("round-trips a persisted theme", () => {
+    savePreferences({ filter: {}, viewLevel: "none", theme: "dracula" });
+    expect(loadPreferences().theme).toBe("dracula");
+  });
+
+  it("defaults theme to graphite when not persisted", () => {
+    savePreferences({ filter: {}, viewLevel: "none" });
+    expect(loadPreferences().theme).toBe("graphite");
+  });
+
+  it("falls back to graphite for an invalid stored theme", () => {
+    store["nibs-filter-preferences"] = JSON.stringify({
+      filter: {},
+      viewLevel: "none",
+      theme: "solarized",
+    });
+    expect(loadPreferences().theme).toBe("graphite");
+  });
+});
+
+describe("parseTheme", () => {
+  it("passes through each valid theme", () => {
+    expect(parseTheme("graphite")).toBe("graphite");
+    expect(parseTheme("midnight")).toBe("midnight");
+    expect(parseTheme("dracula")).toBe("dracula");
+  });
+
+  it("returns the default for missing/garbage/invalid values", () => {
+    expect(parseTheme(undefined)).toBe("graphite");
+    expect(parseTheme(null)).toBe("graphite");
+    expect(parseTheme("")).toBe("graphite");
+    expect(parseTheme("nope")).toBe("graphite");
+    expect(parseTheme(42)).toBe("graphite");
+    expect(parseTheme({})).toBe("graphite");
   });
 });

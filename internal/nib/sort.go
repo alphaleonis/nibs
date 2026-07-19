@@ -68,7 +68,9 @@ type PriorityRanker interface {
 // SortByStatusPriorityAndType sorts nibs by status order, then priority, then type, then title.
 // Available via CLI --sort status-priority. The default sort is SortByOrder.
 // Unrecognized statuses, priorities, and types are sorted last within their category.
-// Nibs without priority are treated as "normal" priority for sorting purposes.
+// Nibs without priority are treated as "normal" (via the ranker) and nibs without
+// a type as "task" (via EffectiveType) for sorting purposes, so a default-omitting
+// nib sorts at the same position it would if the default were written to disk.
 func SortByStatusPriorityAndType(nibs []*Nib, statusNames, typeNames []string, ranker PriorityRanker) {
 	statusOrder := make(map[string]int)
 	for i, s := range statusNames {
@@ -104,8 +106,8 @@ func SortByStatusPriorityAndType(nibs []*Nib, statusNames, typeNames []string, r
 		if pi != pj {
 			return pi < pj
 		}
-		// Tertiary: type order
-		ti, tj := getTypeOrder(nibs[i].Type), getTypeOrder(nibs[j].Type)
+		// Tertiary: type order (EffectiveType so a type-less nib sorts as "task")
+		ti, tj := getTypeOrder(nibs[i].EffectiveType()), getTypeOrder(nibs[j].EffectiveType())
 		if ti != tj {
 			return ti < tj
 		}

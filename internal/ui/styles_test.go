@@ -46,7 +46,6 @@ func TestRenderNibRow_IndicatorsDontShiftTitle(t *testing.T) {
 		{"priority high", NibRowConfig{Priority: "high", PriorityColor: "red"}},
 		{"priority critical", NibRowConfig{Priority: "critical", PriorityColor: "red"}},
 		{"priority low", NibRowConfig{Priority: "low", PriorityColor: "blue"}},
-		{"priority deferred", NibRowConfig{Priority: "deferred", PriorityColor: "blue"}},
 		{"blocked + priority", NibRowConfig{IsBlocked: true, Priority: "high", PriorityColor: "red"}},
 		{"blocking + priority", NibRowConfig{IsBlocking: true, Priority: "critical", PriorityColor: "red"}},
 		{"dimmed", NibRowConfig{Dimmed: true}},
@@ -372,6 +371,7 @@ func TestShortStatus(t *testing.T) {
 		{"draft", "D"},
 		{"todo", "T"},
 		{"in-progress", "I"},
+		{"deferred", "F"},
 		{"completed", "C"},
 		{"scrapped", "S"},
 		{"unknown", "?"},
@@ -407,15 +407,74 @@ func TestShortType_NoCollisions(t *testing.T) {
 }
 
 // TestShortStatus_NoCollisions is the status counterpart of
-// TestShortType_NoCollisions — see that test for rationale.
+// TestShortType_NoCollisions — see that test for rationale. It validates the
+// actual ShortStatus output (not the raw first letter) because some statuses
+// (e.g. "deferred" vs "draft") share a first letter and are disambiguated
+// inside ShortStatus.
 func TestShortStatus_NoCollisions(t *testing.T) {
 	seen := map[string]string{}
 	for _, def := range config.DefaultStatuses {
-		s := strings.ToUpper(def.Name[:1])
+		s := ShortStatus(def.Name)
 		if existing, ok := seen[s]; ok {
 			t.Fatalf("ShortStatus collision: %q and %q both abbreviate to %q",
 				existing, def.Name, s)
 		}
 		seen[s] = def.Name
 	}
+}
+
+// TestRenderNibRow_DeferredStatusCell locks in that a "deferred" nib renders a
+// visible, config-colored status cell — never blank, never the "?" unknown
+// marker, and never dimmed like an archived nib. This guards the full TUI render chain
+// (GetNibColors -> ShortStatus -> RenderStatusTextWithColor) against a
+// regression that would drop the status glyph.
+func TestRenderNibRow_DeferredStatusCell(t *testing.T) {
+	cfg := config.Default()
+	nc := cfg.GetNibColors("deferred", "task", "")
+
+	// Config drives the render inputs: deferred is a real (non-fallback) color
+	// and, crucially, is NOT an archive status (so the row is not dimmed).
+	if nc.IsArchive {
+		t.Fatal("deferred must be non-archive so its row is not dimmed")
+	}
+	if nc.StatusColor != "gray" {
+		t.Errorf("deferred status colour = %q, want %q", nc.StatusColor, "gray")
+	}
+	if ResolveColor(nc.StatusColor) == ColorMuted {
+		t.Error("deferred status colour resolved to the unknown-colour fallback (ColorMuted)")
+	}
+
+	// Title intentionally contains no "F" so the only "F" in the row is the
+	// ShortStatus glyph for deferred.
+	const title = "Parked work"
+
+	t.Run("single-char status column", func(t *testing.T) {
+		row := RenderNibRow("tnib-1", "deferred", "task", title, NibRowConfig{
+			MaxTitleWidth: 60,
+			StatusColor:   nc.StatusColor,
+			TypeColor:     nc.TypeColor,
+			IsArchive:     nc.IsArchive,
+		})
+		stripped := ansi.Strip(row)
+		if !strings.Contains(stripped, "F") {
+			t.Errorf("status cell missing 'F' glyph for deferred; row: %q", stripped)
+		}
+		if strings.Contains(stripped, "?") {
+			t.Errorf("deferred rendered as unknown status '?'; row: %q", stripped)
+		}
+	})
+
+	t.Run("full-name status column", func(t *testing.T) {
+		row := RenderNibRow("tnib-1", "deferred", "task", title, NibRowConfig{
+			MaxTitleWidth: 60,
+			StatusColor:   nc.StatusColor,
+			TypeColor:     nc.TypeColor,
+			IsArchive:     nc.IsArchive,
+			UseFullNames:  true,
+		})
+		stripped := ansi.Strip(row)
+		if !strings.Contains(stripped, "deferred") {
+			t.Errorf("full-name status cell missing 'deferred'; row: %q", stripped)
+		}
+	})
 }

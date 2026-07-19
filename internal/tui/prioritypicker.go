@@ -17,7 +17,7 @@ type prioritySelectedMsg struct {
 	priority string
 }
 
-// closePriorityPickerMsg is sent when the priority picker is cancelled
+// closePriorityPickerMsg is sent when the priority picker is canceled
 type closePriorityPickerMsg struct{}
 
 // openPriorityPickerMsg requests opening the priority picker for nib(s)
@@ -106,8 +106,8 @@ func newPriorityPickerModel(nibIDs []string, nibTitle, currentPriority string, c
 	}
 
 	// Calculate modal dimensions
-	modalWidth := max(40, min(60, width*50/100))
-	modalHeight := max(10, min(16, height*50/100))
+	modalWidth := pickerModalWidth(width, 0, 0)
+	modalHeight := pickerModalHeight(height, 0, 0)
 	listWidth := modalWidth - 6
 	listHeight := modalHeight - 7
 
@@ -148,8 +148,8 @@ func (m priorityPickerModel) Update(msg tea.Msg) (priorityPickerModel, tea.Cmd) 
 	case tea.WindowSizeMsg:
 		m.width = msg.Width
 		m.height = msg.Height
-		modalWidth := max(40, min(60, msg.Width*50/100))
-		modalHeight := max(10, min(16, msg.Height*50/100))
+		modalWidth := pickerModalWidth(msg.Width, 0, 0)
+		modalHeight := pickerModalHeight(msg.Height, 0, 0)
 		listWidth := modalWidth - 6
 		listHeight := modalHeight - 7
 		m.list.SetSize(listWidth, listHeight)
@@ -180,11 +180,19 @@ func (m priorityPickerModel) View() string {
 		return "Loading..."
 	}
 
-	// Get description of currently selected priority
-	var description string
-	if item, ok := m.list.SelectedItem().(priorityItem); ok && item.description != "" {
-		description = item.description
+	// Reserve a fixed description-area height so the modal keeps a constant
+	// height regardless of which priority is selected.
+	var selected string
+	var allDescs []string
+	for _, li := range m.list.Items() {
+		if item, ok := li.(priorityItem); ok {
+			allDescs = append(allDescs, item.description)
+		}
 	}
+	if item, ok := m.list.SelectedItem().(priorityItem); ok {
+		selected = item.description
+	}
+	description := reservePickerDescription(selected, allDescs, pickerModalWidth(m.width, 0, 0))
 
 	// For multi-select, don't show individual nib ID
 	var nibID string

@@ -330,7 +330,7 @@ func snapshotFromDisk(t *testing.T, nibsPath string) []NibSnapshot {
 		if parseErr != nil {
 			return parseErr
 		}
-		id, _ := nib.ParseFilename(filepath.Base(path))
+		id, _ := nib.ParseFilename(filepath.Base(path), "tnib-")
 		snap = append(snap, NibSnapshot{
 			ID:        id,
 			Path:      filepath.ToSlash(rel),

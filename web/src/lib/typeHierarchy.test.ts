@@ -1,25 +1,51 @@
 import { describe, it, expect } from "vitest";
-import { getValidChildTypes, isLeafType, canHaveChildren, VALID_CHILD_TYPES } from "./typeHierarchy";
+import { getValidChildTypes, isLeafType, canHaveChildren, VALID_CHILD_TYPES, typeRank } from "./typeHierarchy";
 
+describe("typeRank", () => {
+  it("orders container types above leaf types", () => {
+    expect(typeRank("milestone")).toBe(3);
+    expect(typeRank("epic")).toBe(2);
+    expect(typeRank("feature")).toBe(1);
+    expect(typeRank("bug")).toBe(1);
+    expect(typeRank("task")).toBe(0);
+  });
+
+  it("ranks research at the leaf tier (0)", () => {
+    expect(typeRank("research")).toBe(0);
+  });
+
+  it("treats unknown and empty types as leaf tier (0)", () => {
+    expect(typeRank("unknown")).toBe(0);
+    expect(typeRank("")).toBe(0);
+  });
+});
+
+// These mirror the backend exactly (internal/nibtypes/hierarchy.go); order
+// follows the canonical type order milestone, epic, bug, feature, task, research.
 describe("getValidChildTypes", () => {
-  it("milestone can only have epic children", () => {
-    expect(getValidChildTypes("milestone")).toEqual(["epic"]);
+  it("milestone can have every non-milestone type as a child", () => {
+    expect(getValidChildTypes("milestone")).toEqual(["epic", "bug", "feature", "task", "research"]);
   });
 
-  it("epic can have feature, task, and bug children", () => {
-    expect(getValidChildTypes("epic")).toEqual(["feature", "task", "bug"]);
+  it("epic can have bug, feature, task, and research children", () => {
+    expect(getValidChildTypes("epic")).toEqual(["bug", "feature", "task", "research"]);
   });
 
-  it("feature can have task and bug children", () => {
-    expect(getValidChildTypes("feature")).toEqual(["task", "bug"]);
+  it("bug can have task and research children", () => {
+    expect(getValidChildTypes("bug")).toEqual(["task", "research"]);
+  });
+
+  it("feature can have task and research children (a bug cannot be a feature child)", () => {
+    // A bug's parents are milestone|epic only, so it is never a feature child.
+    expect(getValidChildTypes("feature")).toEqual(["task", "research"]);
   });
 
   it("task has no valid children", () => {
     expect(getValidChildTypes("task")).toEqual([]);
   });
 
-  it("bug has no valid children", () => {
-    expect(getValidChildTypes("bug")).toEqual([]);
+  it("research has no valid children", () => {
+    expect(getValidChildTypes("research")).toEqual([]);
   });
 
   it("unknown type returns empty array", () => {
@@ -33,8 +59,12 @@ describe("isLeafType", () => {
     expect(isLeafType("task")).toBe(true);
   });
 
-  it("bug is a leaf type", () => {
-    expect(isLeafType("bug")).toBe(true);
+  it("research is a leaf type", () => {
+    expect(isLeafType("research")).toBe(true);
+  });
+
+  it("bug is NOT a leaf type (it can parent task/research)", () => {
+    expect(isLeafType("bug")).toBe(false);
   });
 
   it("milestone is not a leaf type", () => {
@@ -67,12 +97,16 @@ describe("canHaveChildren", () => {
     expect(canHaveChildren("feature")).toBe(true);
   });
 
+  it("bug can have children (task/research)", () => {
+    expect(canHaveChildren("bug")).toBe(true);
+  });
+
   it("task cannot have children", () => {
     expect(canHaveChildren("task")).toBe(false);
   });
 
-  it("bug cannot have children", () => {
-    expect(canHaveChildren("bug")).toBe(false);
+  it("research cannot have children", () => {
+    expect(canHaveChildren("research")).toBe(false);
   });
 
   it("unknown type cannot have children", () => {

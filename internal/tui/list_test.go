@@ -189,14 +189,13 @@ func TestSortNibs(t *testing.T) {
 			{ID: "1", Status: "todo", Type: "task", Priority: "low", Title: "A"},
 			{ID: "2", Status: "todo", Type: "task", Priority: "critical", Title: "B"},
 			{ID: "3", Status: "todo", Type: "task", Priority: "high", Title: "C"},
-			{ID: "4", Status: "todo", Type: "task", Priority: "", Title: "D"},       // empty = normal
-			{ID: "5", Status: "todo", Type: "task", Priority: "deferred", Title: "E"},
+			{ID: "4", Status: "todo", Type: "task", Priority: "", Title: "D"}, // empty = normal
 		}
 
 		nib.SortByStatusPriorityAndType(nibs, statusNames, typeNames, config.Default())
 
-		// Order: critical, high, normal (empty), low, deferred
-		expectedPriorities := []string{"critical", "high", "", "low", "deferred"}
+		// Order: critical, high, normal (empty), low
+		expectedPriorities := []string{"critical", "high", "", "low"}
 		for i, want := range expectedPriorities {
 			if nibs[i].Priority != want {
 				t.Errorf("index %d: got priority %q, want %q", i, nibs[i].Priority, want)

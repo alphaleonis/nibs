@@ -79,15 +79,16 @@ fi
 
 echo "Installing ${BINARY} ${VERSION} (${OS}/${ARCH})"
 
-# Build URLs
+# Build URLs. Asset names are version-less ({binary}_{os}_{arch}) and the
+# checksum file is a fixed "checksums.txt" — see .goreleaser.yaml. This keeps
+# them in lockstep with what `nibs upgrade` (go-selfupdate) expects.
 TAG="${VERSION}"
-VER="${VERSION#v}"
 EXT="tar.gz"
 [ "$OS" = "windows" ] && EXT="zip"
-ARCHIVE="${BINARY}_${VER}_${OS}_${ARCH}.${EXT}"
+ARCHIVE="${BINARY}_${OS}_${ARCH}.${EXT}"
 BASE_URL="https://github.com/${REPO}/releases/download/${TAG}"
 ARCHIVE_URL="${BASE_URL}/${ARCHIVE}"
-CHECKSUMS_URL="${BASE_URL}/${BINARY}_${VER}_checksums.txt"
+CHECKSUMS_URL="${BASE_URL}/checksums.txt"
 
 # Create temp directory with cleanup
 TMPDIR="$(mktemp -d)"

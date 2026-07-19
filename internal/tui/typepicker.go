@@ -18,8 +18,8 @@ func validTypesForNib(n *nib.Nib, backend Backend) []string {
 	// Constraint from parent
 	parentType := ""
 	if n.Parent != "" {
-		if p, err := backend.GetNib(context.Background(), n.Parent); err == nil {
-			parentType = p.Type
+		if p, err := backend.GetNib(context.Background(), n.Parent); err == nil && p != nil {
+			parentType = p.EffectiveType()
 		}
 	}
 	validFromParent := nibtypes.ValidChildTypes(parentType)
@@ -28,7 +28,7 @@ func validTypesForNib(n *nib.Nib, backend Backend) []string {
 	children, _ := backend.GetChildren(context.Background(), n, nil)
 	var childTypes []string
 	for _, c := range children {
-		childTypes = append(childTypes, c.Type)
+		childTypes = append(childTypes, c.EffectiveType())
 	}
 	validFromChildren := nibtypes.ValidParentTypesForChildren(childTypes)
 
@@ -41,7 +41,7 @@ type typeSelectedMsg struct {
 	nibType string
 }
 
-// closeTypePickerMsg is sent when the type picker is cancelled
+// closeTypePickerMsg is sent when the type picker is canceled
 type closeTypePickerMsg struct{}
 
 // openTypePickerMsg requests opening the type picker for nib(s)
@@ -69,7 +69,6 @@ type typePickerModel struct {
 	nibIDs      []string
 	nibTitle    string
 	currentType string
-	maxDescLen  int // longest description length for stable sizing
 	width       int
 	height      int
 }
@@ -88,7 +87,6 @@ func newTypePickerModel(nibIDs []string, nibTitle, currentType string, validType
 
 	items := make([]typeItem, 0, len(types))
 	cursor := 0
-	maxDescLen := 0
 
 	for _, t := range types {
 		if validSet != nil && !validSet[t.Name] {
@@ -97,9 +95,6 @@ func newTypePickerModel(nibIDs []string, nibTitle, currentType string, validType
 		isCurrent := t.Name == currentType
 		if isCurrent {
 			cursor = len(items)
-		}
-		if len(t.Description) > maxDescLen {
-			maxDescLen = len(t.Description)
 		}
 		items = append(items, typeItem{
 			name:        t.Name,
@@ -115,7 +110,6 @@ func newTypePickerModel(nibIDs []string, nibTitle, currentType string, validType
 		nibIDs:      nibIDs,
 		nibTitle:    nibTitle,
 		currentType: currentType,
-		maxDescLen:  maxDescLen,
 		width:       width,
 		height:      height,
 	}
@@ -207,29 +201,17 @@ func (m typePickerModel) View() string {
 
 	// Description of selected item, padded to a fixed number of lines so the
 	// dialog never changes height when moving between items.
-	modalWidth := max(40, min(60, m.width*50/100))
-	descWidth := modalWidth - 6 // account for border + padding
-	descStyle := lipgloss.NewStyle().Width(descWidth)
-
-	// Render all descriptions at target width and find the tallest
-	maxLines := 0
-	for _, item := range m.items {
-		rendered := descStyle.Render(item.description)
-		n := strings.Count(rendered, "\n") + 1
-		if n > maxLines {
-			maxLines = n
-		}
+	allDescs := make([]string, len(m.items))
+	for i, item := range m.items {
+		allDescs[i] = item.description
 	}
-
-	description := ""
-	if m.cursor < len(m.items) {
-		rendered := descStyle.Render(m.items[m.cursor].description)
-		actual := strings.Count(rendered, "\n") + 1
-		for i := actual; i < maxLines; i++ {
-			rendered += "\n"
-		}
-		description = ui.Muted.Render(rendered)
+	var selected string
+	if item, ok := m.SelectedItem(); ok {
+		selected = item.description
 	}
+	description := ui.Muted.Render(
+		reservePickerDescription(selected, allDescs, pickerModalWidth(m.width, 0, 0)),
+	)
 
 	var nibID string
 	if len(m.nibIDs) == 1 {

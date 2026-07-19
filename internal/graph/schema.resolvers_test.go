@@ -9,6 +9,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/99designs/gqlgen/graphql"
 	"github.com/alphaleonis/nibs/internal/nib"
 	"github.com/alphaleonis/nibs/internal/nibcore"
 	"github.com/alphaleonis/nibs/internal/config"
@@ -51,6 +52,69 @@ func createTestNib(t *testing.T, core *nibcore.Core, id, title, status string) *
 		t.Fatalf("failed to create test nib: %v", err)
 	}
 	return b
+}
+
+// TestNibFieldResolversApplyPresentationDefaults pins the split between stored
+// and presented values: the stored Nib keeps Type/Priority EMPTY when the file
+// omits them (so the etag witnesses the on-disk bytes), but the non-nullable
+// GraphQL fields must still resolve the "task"/"normal" presentation defaults. Uses a
+// fresh Core.Load to exercise the reload path where the false-conflict bug lived.
+func TestNibFieldResolversApplyPresentationDefaults(t *testing.T) {
+	tmpDir := t.TempDir()
+	nibsDir := filepath.Join(tmpDir, ".nibs")
+	if err := os.MkdirAll(nibsDir, 0755); err != nil {
+		t.Fatalf("mkdir: %v", err)
+	}
+	write := func(name, content string) {
+		if err := os.WriteFile(filepath.Join(nibsDir, name), []byte(content), 0644); err != nil {
+			t.Fatalf("write %s: %v", name, err)
+		}
+	}
+	// Omits `priority:` (what CreateNib writes without a priority); `type:` present.
+	write("nopri1--x.md", "---\nversion: 1\ntitle: No Priority\nstatus: todo\ntype: bug\ncreated_at: 2026-01-02T03:04:05Z\nupdated_at: 2026-01-02T03:04:05Z\n---\n\nBody.\n")
+	// Omits `type:` (hand-authored); explicit priority preserved.
+	write("notype1--y.md", "---\nversion: 1\ntitle: No Type\nstatus: todo\npriority: high\ncreated_at: 2026-01-02T03:04:05Z\nupdated_at: 2026-01-02T03:04:05Z\n---\n\nBody.\n")
+
+	core := nibcore.New(nibsDir, config.Default())
+	core.SetWarnWriter(nil)
+	if err := core.Load(); err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	resolver := &Resolver{Reader: core, Writer: core, Validator: core, Blocking: core, Orderer: NewOrderer(core, core)}
+	ctx := context.Background()
+	nr := resolver.Nib()
+
+	t.Run("priority-less nib: stored empty, resolver returns normal", func(t *testing.T) {
+		b, err := resolver.Query().Nib(ctx, "nopri1")
+		if err != nil {
+			t.Fatalf("Nib(): %v", err)
+		}
+		if b.Priority != "" {
+			t.Errorf("stored Priority = %q, want empty (must not be synthesized onto the struct)", b.Priority)
+		}
+		if got, err := nr.Priority(ctx, b); err != nil || got != "normal" {
+			t.Errorf("Priority resolver = %q, %v; want \"normal\", nil", got, err)
+		}
+		if got, err := nr.Type(ctx, b); err != nil || got != "bug" {
+			t.Errorf("Type resolver = %q, %v; want \"bug\" (explicit), nil", got, err)
+		}
+	})
+
+	t.Run("type-less nib: stored empty, resolver returns task", func(t *testing.T) {
+		b, err := resolver.Query().Nib(ctx, "notype1")
+		if err != nil {
+			t.Fatalf("Nib(): %v", err)
+		}
+		if b.Type != "" {
+			t.Errorf("stored Type = %q, want empty (must not be synthesized onto the struct)", b.Type)
+		}
+		if got, err := nr.Type(ctx, b); err != nil || got != "task" {
+			t.Errorf("Type resolver = %q, %v; want \"task\", nil", got, err)
+		}
+		if got, err := nr.Priority(ctx, b); err != nil || got != "high" {
+			t.Errorf("Priority resolver = %q, %v; want \"high\" (explicit), nil", got, err)
+		}
+	})
 }
 
 func TestQueryNib(t *testing.T) {
@@ -854,6 +918,137 @@ func TestMutationCreateNib(t *testing.T) {
 	})
 }
 
+// TestMutationCreateNibValidatesEnums exercises the core write-path chokepoint
+// through the GraphQL/MCP resolver: an invalid non-empty
+// type/status/priority/estimate is rejected and nothing is persisted; empty
+// sentinels and valid values are accepted.
+func TestMutationCreateNibValidatesEnums(t *testing.T) {
+	ctx := context.Background()
+	strPtr := func(s string) *string { return &s }
+
+	cases := []struct {
+		name  string
+		input model.CreateNibInput
+	}{
+		{"invalid type", model.CreateNibInput{Title: "Bad Type", Type: strPtr("epicc")}},
+		{"invalid status", model.CreateNibInput{Title: "Bad Status", Status: strPtr("banana")}},
+		{"invalid priority", model.CreateNibInput{Title: "Bad Priority", Priority: strPtr("urgent")}},
+		{"invalid estimate", model.CreateNibInput{Title: "Bad Estimate", Estimate: strPtr("2h")}},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			resolver, core := setupTestResolver(t)
+			got, err := resolver.Mutation().CreateNib(ctx, tc.input)
+			if err == nil {
+				t.Fatalf("CreateNib(%+v) = nil error, want validation error", tc.input)
+			}
+			if got != nil {
+				t.Errorf("CreateNib() returned non-nil nib %+v on validation failure", got)
+			}
+			if all := core.All(); len(all) != 0 {
+				t.Errorf("CreateNib() persisted %d nib(s) despite validation failure", len(all))
+			}
+		})
+	}
+
+	t.Run("empty enum sentinels accepted", func(t *testing.T) {
+		resolver, _ := setupTestResolver(t)
+		if _, err := resolver.Mutation().CreateNib(ctx, model.CreateNibInput{Title: "Empty Enums"}); err != nil {
+			t.Fatalf("CreateNib() with empty enums error = %v, want nil", err)
+		}
+	})
+
+	t.Run("valid enum values accepted", func(t *testing.T) {
+		resolver, _ := setupTestResolver(t)
+		input := model.CreateNibInput{
+			Title:    "Valid Enums",
+			Type:     strPtr("bug"),
+			Status:   strPtr("in-progress"),
+			Priority: strPtr("high"),
+			Estimate: strPtr("l"),
+		}
+		if _, err := resolver.Mutation().CreateNib(ctx, input); err != nil {
+			t.Fatalf("CreateNib() with valid enums error = %v, want nil", err)
+		}
+	})
+}
+
+// TestMutationUpdateNibValidatesEnums is the Update-path counterpart: an invalid
+// non-empty enum is rejected and the stored nib is left untouched; clearing
+// priority/estimate via explicit null and setting valid values are accepted.
+func TestMutationUpdateNibValidatesEnums(t *testing.T) {
+	ctx := context.Background()
+	strPtr := func(s string) *string { return &s }
+
+	seed := func(t *testing.T) (*Resolver, *nibcore.Core) {
+		t.Helper()
+		resolver, core := setupTestResolver(t)
+		mustCreate(t, core, &nib.Nib{
+			ID: "enum-upd", Title: "Enum Update", Status: "todo", Type: "task", Priority: "normal", Estimate: "m",
+		})
+		return resolver, core
+	}
+
+	cases := []struct {
+		name  string
+		input model.UpdateNibInput
+	}{
+		{"invalid type", model.UpdateNibInput{Type: strPtr("epicc")}},
+		{"invalid status", model.UpdateNibInput{Status: strPtr("banana")}},
+		{"invalid priority", model.UpdateNibInput{Priority: graphql.OmittableOf(strPtr("urgent"))}},
+		{"invalid estimate", model.UpdateNibInput{Estimate: graphql.OmittableOf(strPtr("2h"))}},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			resolver, core := seed(t)
+			if _, err := resolver.Mutation().UpdateNib(ctx, "enum-upd", tc.input); err == nil {
+				t.Fatalf("UpdateNib(%+v) = nil error, want validation error", tc.input)
+			}
+			stored, err := core.Get("enum-upd")
+			if err != nil {
+				t.Fatalf("Get() error = %v", err)
+			}
+			if stored.Type != "task" || stored.Status != "todo" || stored.Priority != "normal" || stored.Estimate != "m" {
+				t.Errorf("stored nib mutated on failed update: type=%q status=%q priority=%q estimate=%q",
+					stored.Type, stored.Status, stored.Priority, stored.Estimate)
+			}
+		})
+	}
+
+	t.Run("clearing priority/estimate via null accepted", func(t *testing.T) {
+		resolver, core := seed(t)
+		input := model.UpdateNibInput{
+			Priority: graphql.OmittableOf[*string](nil),
+			Estimate: graphql.OmittableOf[*string](nil),
+		}
+		if _, err := resolver.Mutation().UpdateNib(ctx, "enum-upd", input); err != nil {
+			t.Fatalf("UpdateNib() clearing priority/estimate error = %v, want nil", err)
+		}
+		stored, _ := core.Get("enum-upd")
+		if stored.Priority != "" || stored.Estimate != "" {
+			t.Errorf("priority/estimate not cleared: priority=%q estimate=%q", stored.Priority, stored.Estimate)
+		}
+	})
+
+	t.Run("valid enum values accepted", func(t *testing.T) {
+		resolver, core := seed(t)
+		input := model.UpdateNibInput{
+			Type:     strPtr("bug"),
+			Status:   strPtr("in-progress"),
+			Priority: graphql.OmittableOf(strPtr("high")),
+			Estimate: graphql.OmittableOf(strPtr("xl")),
+		}
+		if _, err := resolver.Mutation().UpdateNib(ctx, "enum-upd", input); err != nil {
+			t.Fatalf("UpdateNib() with valid enums error = %v, want nil", err)
+		}
+		stored, _ := core.Get("enum-upd")
+		if stored.Type != "bug" || stored.Status != "in-progress" || stored.Priority != "high" || stored.Estimate != "xl" {
+			t.Errorf("valid update not applied: type=%q status=%q priority=%q estimate=%q",
+				stored.Type, stored.Status, stored.Priority, stored.Estimate)
+		}
+	})
+}
+
 func TestMutationCreateNibWithCustomPrefix(t *testing.T) {
 	resolver, _ := setupTestResolver(t)
 	ctx := context.Background()
@@ -959,7 +1154,7 @@ func TestMutationUpdateNib(t *testing.T) {
 		newBody := "Updated body"
 		input := model.UpdateNibInput{
 			Title:    &newTitle,
-			Priority: &newPriority,
+			Priority: graphql.OmittableOf(&newPriority),
 			Body:     &newBody,
 		}
 		got, err := mr.UpdateNib(ctx, "update-test", input)
@@ -2051,7 +2246,7 @@ func TestUpdateNibWithRelationships(t *testing.T) {
 
 		input := model.UpdateNibInput{
 			Status:      stringPtr("in-progress"),
-			Parent:      stringPtr("epic-1"),
+			Parent:      graphql.OmittableOf(stringPtr("epic-1")),
 			AddBlocking: []string{"blocker-1"},
 		}
 
@@ -2083,7 +2278,7 @@ func TestUpdateNibWithRelationships(t *testing.T) {
 
 		input := model.UpdateNibInput{
 			Status: stringPtr("completed"),
-			Parent: stringPtr("epic-2"),
+			Parent: graphql.OmittableOf(stringPtr("epic-2")),
 			BodyMod: &model.BodyModification{
 				Replace: []*model.ReplaceOperation{
 					{Old: "- [ ] Step 1", New: "- [x] Step 1"},
@@ -2124,7 +2319,7 @@ func TestUpdateNibWithRelationships(t *testing.T) {
 		mustCreate(t, core, task2)
 
 		input := model.UpdateNibInput{
-			Parent: stringPtr("task-invalid-2"),
+			Parent: graphql.OmittableOf(stringPtr("task-invalid-2")),
 		}
 
 		_, err := resolver.Mutation().UpdateNib(ctx, "task-invalid-1", input)
@@ -2304,7 +2499,7 @@ func TestUpdateNibWithRelationships(t *testing.T) {
 		// Remove parent by setting to empty string
 		emptyParent := ""
 		input := model.UpdateNibInput{
-			Parent: &emptyParent,
+			Parent: graphql.OmittableOf(&emptyParent),
 		}
 
 		got, err := resolver.Mutation().UpdateNib(ctx, "task-parent-remove", input)
@@ -2381,7 +2576,7 @@ func TestUpdateNibWithRelationships(t *testing.T) {
 
 		input := model.UpdateNibInput{
 			Status:         stringPtr("in-progress"),
-			Parent:         stringPtr("epic-all"),
+			Parent:         graphql.OmittableOf(stringPtr("epic-all")),
 			AddBlocking:    []string{"new-blocked"},
 			RemoveBlocking: []string{"old-blocking"},
 			AddBlockedBy:   []string{"new-blocker"},
@@ -3365,12 +3560,10 @@ func TestCreateNibPositioning(t *testing.T) {
 
 	t.Run("first flag on root inserts before existing roots", func(t *testing.T) {
 		// `epic1` from the fixture above is an existing root nib. A new root
-		// created with --first should land before it. This is the inverse of
-		// the previous bug-pinning subtest which asserted that positioning
-		// without a parent was rejected — see nibs-d44y.
+		// created with --first must land before it — positioning is valid at
+		// root level, not only among a parent's children.
 		existingRootID := "epic1"
-		existing, err := resolver.Query().Nib(ctx, existingRootID)
-		if err != nil || existing == nil {
+		if _, err := resolver.Query().Nib(ctx, existingRootID); err != nil {
 			t.Fatalf("missing fixture root %q: %v", existingRootID, err)
 		}
 		firstFlag := true
@@ -3384,6 +3577,15 @@ func TestCreateNibPositioning(t *testing.T) {
 		}
 		if created.Parent != "" {
 			t.Errorf("created root should have no parent, got %q", created.Parent)
+		}
+		// Re-read the existing root AFTER the create: positioning backfilled it an
+		// order key, and under clone-before-mutate that key lives on
+		// the nib's fresh store entry — a pointer captured before the call keeps its
+		// old (empty) order instead of being aliased-mutated in place. Query the
+		// current entry to observe the persisted order.
+		existing, err := resolver.Query().Nib(ctx, existingRootID)
+		if err != nil || existing == nil {
+			t.Fatalf("missing fixture root %q after create: %v", existingRootID, err)
 		}
 		if created.Order >= existing.Order {
 			t.Errorf("order %q should be < existing root order %q", created.Order, existing.Order)
@@ -3574,7 +3776,7 @@ func TestUpdateNibEstimate(t *testing.T) {
 		b := createTestNib(t, core, "est-1", "Task", "todo")
 		est := "m"
 		updated, err := resolver.Mutation().UpdateNib(ctx, b.ID, model.UpdateNibInput{
-			Estimate: &est,
+			Estimate: graphql.OmittableOf(&est),
 		})
 		if err != nil {
 			t.Fatalf("unexpected error: %v", err)
@@ -3603,7 +3805,7 @@ func TestUpdateNibEstimate(t *testing.T) {
 
 		empty := ""
 		updated, err := resolver.Mutation().UpdateNib(ctx, b.ID, model.UpdateNibInput{
-			Estimate: &empty,
+			Estimate: graphql.OmittableOf(&empty),
 		})
 		if err != nil {
 			t.Fatalf("unexpected error: %v", err)
@@ -3807,7 +4009,7 @@ func TestUpdateNibTypeChangeValidatesParent(t *testing.T) {
 		// Change task to epic AND move parent from feature to milestone — should succeed
 		newType := "epic"
 		newParent := "ms-tc-sim"
-		input := model.UpdateNibInput{Type: &newType, Parent: &newParent}
+		input := model.UpdateNibInput{Type: &newType, Parent: graphql.OmittableOf(&newParent)}
 		got, err := resolver.Mutation().UpdateNib(ctx, "task-tc-sim", input)
 		if err != nil {
 			t.Fatalf("expected no error, got: %v", err)
@@ -3827,7 +4029,7 @@ func TestUpdateNibTypeChangeValidatesParent(t *testing.T) {
 		// Change task to epic AND set parent to nonexistent nib — parent validation should fail
 		newType := "epic"
 		newParent := "nonexistent-nib"
-		input := model.UpdateNibInput{Type: &newType, Parent: &newParent}
+		input := model.UpdateNibInput{Type: &newType, Parent: graphql.OmittableOf(&newParent)}
 		_, err := resolver.Mutation().UpdateNib(ctx, "task-tc-fp", input)
 		if err == nil {
 			t.Fatal("expected error for nonexistent parent, got nil")
@@ -3909,7 +4111,7 @@ func TestReparentRecalculatesOrderKey(t *testing.T) {
 		// Now move via UpdateNib
 		mr := resolver.Mutation()
 		parentID := "epic-a"
-		input := model.UpdateNibInput{Parent: &parentID}
+		input := model.UpdateNibInput{Parent: graphql.OmittableOf(&parentID)}
 		got, err := mr.UpdateNib(ctx, "child-b1", input)
 		if err != nil {
 			t.Fatalf("UpdateNib() error = %v", err)
@@ -4027,6 +4229,44 @@ func TestAutoActivationPropagatesInProgress(t *testing.T) {
 	}
 	if updatedParent.Status != "in-progress" {
 		t.Errorf("expected parent status 'in-progress', got %q", updatedParent.Status)
+	}
+}
+
+// TestAutoActivationSkipsDeferredParent locks in that a deferred parent stays
+// parked: activateParentChain only promotes todo/draft parents, so a child
+// going in-progress must not un-park a deferred ancestor.
+func TestAutoActivationSkipsDeferredParent(t *testing.T) {
+	resolver, core := setupTestResolverWithAutoActivation(t)
+	ctx := context.Background()
+
+	// Parent epic is deferred (parked); child task is todo.
+	parent := createTestNib(t, core, "epic-def", "Deferred Epic", "deferred")
+	parent.Type = "epic"
+	if err := core.Update(parent, nil); err != nil {
+		t.Fatalf("setup: %v", err)
+	}
+
+	child := createTestNib(t, core, "task-def", "Child Task", "todo")
+	child.Type = "task"
+	child.Parent = "epic-def"
+	if err := core.Update(child, nil); err != nil {
+		t.Fatalf("setup: %v", err)
+	}
+
+	// Set child to in-progress.
+	inProgress := "in-progress"
+	input := model.UpdateNibInput{Status: &inProgress}
+	if _, err := resolver.Mutation().UpdateNib(ctx, "task-def", input); err != nil {
+		t.Fatalf("UpdateNib failed: %v", err)
+	}
+
+	// Parent must remain deferred (parked), not auto-activated.
+	updatedParent, err := resolver.Query().Nib(ctx, "epic-def")
+	if err != nil {
+		t.Fatalf("Query parent failed: %v", err)
+	}
+	if updatedParent.Status != "deferred" {
+		t.Errorf("expected parent status 'deferred' (parked), got %q", updatedParent.Status)
 	}
 }
 
@@ -4235,7 +4475,7 @@ func TestAutoActivationWorksWithRequireIfMatch(t *testing.T) {
 	}
 }
 
-// --- Phase 1: Bug nibs-j7ez — NormalizeID ok return value must be checked ---
+// --- NormalizeID ok return value must be checked ---
 // These tests verify that NormalizeID failures produce clear "nib not found" errors
 // at each call site, rather than passing through bad IDs to downstream operations.
 
@@ -4461,7 +4701,7 @@ func TestNormalizeIDValidation(t *testing.T) {
 
 func strPtr(s string) *string { return &s }
 
-// --- Phase 2: Bug nibs-r9e1 — Clone-before-mutate in UpdateNib ---
+// --- Clone-before-mutate in UpdateNib ---
 
 func TestUpdateNibCloneBeforeMutate(t *testing.T) {
 	ctx := context.Background()
@@ -4576,7 +4816,7 @@ func (f *failingWriter) Create(b *nib.Nib) error {
 	return f.stubWriter.Create(b)
 }
 
-// --- Phase 3: Bug nibs-kzlw — Atomic multi-step mutations ---
+// --- Atomic multi-step mutations ---
 
 func TestAtomicCreateNib(t *testing.T) {
 	ctx := context.Background()

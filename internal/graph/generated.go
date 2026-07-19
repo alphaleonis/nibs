@@ -108,13 +108,20 @@ type ComplexityRoot struct {
 	}
 
 	Query struct {
-		Config func(childComplexity int) int
-		Nib    func(childComplexity int, id string) int
-		Nibs   func(childComplexity int, filter *model.NibFilter, sort *model.NibSort) int
+		Config       func(childComplexity int) int
+		Nib          func(childComplexity int, id string) int
+		Nibs         func(childComplexity int, filter *model.NibFilter, sort *model.NibSort) int
+		UpdateStatus func(childComplexity int) int
 	}
 
 	Subscription struct {
 		NibChanged func(childComplexity int, id *string) int
+	}
+
+	UpdateStatus struct {
+		Current         func(childComplexity int) int
+		Latest          func(childComplexity int) int
+		UpdateAvailable func(childComplexity int) int
 	}
 }
 
@@ -133,6 +140,9 @@ type MutationResolver interface {
 	ReorderSiblings(ctx context.Context, siblingIds []string, afterID *string, beforeID *string, first *bool, ifMatch []*model.ChildEtag) ([]*nib.Nib, error)
 }
 type NibResolver interface {
+	Type(ctx context.Context, obj *nib.Nib) (string, error)
+	Priority(ctx context.Context, obj *nib.Nib) (string, error)
+
 	ParentID(ctx context.Context, obj *nib.Nib) (*string, error)
 	BlockingIds(ctx context.Context, obj *nib.Nib) ([]string, error)
 	BlockedByIds(ctx context.Context, obj *nib.Nib) ([]string, error)
@@ -149,6 +159,7 @@ type QueryResolver interface {
 	Nib(ctx context.Context, id string) (*nib.Nib, error)
 	Nibs(ctx context.Context, filter *model.NibFilter, sort *model.NibSort) ([]*nib.Nib, error)
 	Config(ctx context.Context) (*model.Config, error)
+	UpdateStatus(ctx context.Context) (*model.UpdateStatus, error)
 }
 type SubscriptionResolver interface {
 	NibChanged(ctx context.Context, id *string) (<-chan *model.NibChangeEvent, error)
@@ -554,6 +565,12 @@ func (e *executableSchema) Complexity(ctx context.Context, typeName, field strin
 		}
 
 		return e.complexity.Query.Nibs(childComplexity, args["filter"].(*model.NibFilter), args["sort"].(*model.NibSort)), true
+	case "Query.updateStatus":
+		if e.complexity.Query.UpdateStatus == nil {
+			break
+		}
+
+		return e.complexity.Query.UpdateStatus(childComplexity), true
 
 	case "Subscription.nibChanged":
 		if e.complexity.Subscription.NibChanged == nil {
@@ -566,6 +583,25 @@ func (e *executableSchema) Complexity(ctx context.Context, typeName, field strin
 		}
 
 		return e.complexity.Subscription.NibChanged(childComplexity, args["id"].(*string)), true
+
+	case "UpdateStatus.current":
+		if e.complexity.UpdateStatus.Current == nil {
+			break
+		}
+
+		return e.complexity.UpdateStatus.Current(childComplexity), true
+	case "UpdateStatus.latest":
+		if e.complexity.UpdateStatus.Latest == nil {
+			break
+		}
+
+		return e.complexity.UpdateStatus.Latest(childComplexity), true
+	case "UpdateStatus.updateAvailable":
+		if e.complexity.UpdateStatus.UpdateAvailable == nil {
+			break
+		}
+
+		return e.complexity.UpdateStatus.UpdateAvailable(childComplexity), true
 
 	}
 	return 0, false
@@ -2399,7 +2435,7 @@ func (ec *executionContext) _Nib_type(ctx context.Context, field graphql.Collect
 		field,
 		ec.fieldContext_Nib_type,
 		func(ctx context.Context) (any, error) {
-			return obj.Type, nil
+			return ec.resolvers.Nib().Type(ctx, obj)
 		},
 		nil,
 		ec.marshalNString2string,
@@ -2412,8 +2448,8 @@ func (ec *executionContext) fieldContext_Nib_type(_ context.Context, field graph
 	fc = &graphql.FieldContext{
 		Object:     "Nib",
 		Field:      field,
-		IsMethod:   false,
-		IsResolver: false,
+		IsMethod:   true,
+		IsResolver: true,
 		Child: func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
 			return nil, errors.New("field of type String does not have child fields")
 		},
@@ -2428,7 +2464,7 @@ func (ec *executionContext) _Nib_priority(ctx context.Context, field graphql.Col
 		field,
 		ec.fieldContext_Nib_priority,
 		func(ctx context.Context) (any, error) {
-			return obj.Priority, nil
+			return ec.resolvers.Nib().Priority(ctx, obj)
 		},
 		nil,
 		ec.marshalNString2string,
@@ -2441,8 +2477,8 @@ func (ec *executionContext) fieldContext_Nib_priority(_ context.Context, field g
 	fc = &graphql.FieldContext{
 		Object:     "Nib",
 		Field:      field,
-		IsMethod:   false,
-		IsResolver: false,
+		IsMethod:   true,
+		IsResolver: true,
 		Child: func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
 			return nil, errors.New("field of type String does not have child fields")
 		},
@@ -3769,6 +3805,43 @@ func (ec *executionContext) fieldContext_Query_config(_ context.Context, field g
 	return fc, nil
 }
 
+func (ec *executionContext) _Query_updateStatus(ctx context.Context, field graphql.CollectedField) (ret graphql.Marshaler) {
+	return graphql.ResolveField(
+		ctx,
+		ec.OperationContext,
+		field,
+		ec.fieldContext_Query_updateStatus,
+		func(ctx context.Context) (any, error) {
+			return ec.resolvers.Query().UpdateStatus(ctx)
+		},
+		nil,
+		ec.marshalNUpdateStatus2ᚖgithubᚗcomᚋalphaleonisᚋnibsᚋinternalᚋgraphᚋmodelᚐUpdateStatus,
+		true,
+		true,
+	)
+}
+
+func (ec *executionContext) fieldContext_Query_updateStatus(_ context.Context, field graphql.CollectedField) (fc *graphql.FieldContext, err error) {
+	fc = &graphql.FieldContext{
+		Object:     "Query",
+		Field:      field,
+		IsMethod:   true,
+		IsResolver: true,
+		Child: func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+			switch field.Name {
+			case "current":
+				return ec.fieldContext_UpdateStatus_current(ctx, field)
+			case "latest":
+				return ec.fieldContext_UpdateStatus_latest(ctx, field)
+			case "updateAvailable":
+				return ec.fieldContext_UpdateStatus_updateAvailable(ctx, field)
+			}
+			return nil, fmt.Errorf("no field named %q was found under type UpdateStatus", field.Name)
+		},
+	}
+	return fc, nil
+}
+
 func (ec *executionContext) _Query___type(ctx context.Context, field graphql.CollectedField) (ret graphql.Marshaler) {
 	return graphql.ResolveField(
 		ctx,
@@ -3922,6 +3995,93 @@ func (ec *executionContext) fieldContext_Subscription_nibChanged(ctx context.Con
 	if fc.Args, err = ec.field_Subscription_nibChanged_args(ctx, field.ArgumentMap(ec.Variables)); err != nil {
 		ec.Error(ctx, err)
 		return fc, err
+	}
+	return fc, nil
+}
+
+func (ec *executionContext) _UpdateStatus_current(ctx context.Context, field graphql.CollectedField, obj *model.UpdateStatus) (ret graphql.Marshaler) {
+	return graphql.ResolveField(
+		ctx,
+		ec.OperationContext,
+		field,
+		ec.fieldContext_UpdateStatus_current,
+		func(ctx context.Context) (any, error) {
+			return obj.Current, nil
+		},
+		nil,
+		ec.marshalNString2string,
+		true,
+		true,
+	)
+}
+
+func (ec *executionContext) fieldContext_UpdateStatus_current(_ context.Context, field graphql.CollectedField) (fc *graphql.FieldContext, err error) {
+	fc = &graphql.FieldContext{
+		Object:     "UpdateStatus",
+		Field:      field,
+		IsMethod:   false,
+		IsResolver: false,
+		Child: func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+			return nil, errors.New("field of type String does not have child fields")
+		},
+	}
+	return fc, nil
+}
+
+func (ec *executionContext) _UpdateStatus_latest(ctx context.Context, field graphql.CollectedField, obj *model.UpdateStatus) (ret graphql.Marshaler) {
+	return graphql.ResolveField(
+		ctx,
+		ec.OperationContext,
+		field,
+		ec.fieldContext_UpdateStatus_latest,
+		func(ctx context.Context) (any, error) {
+			return obj.Latest, nil
+		},
+		nil,
+		ec.marshalNString2string,
+		true,
+		true,
+	)
+}
+
+func (ec *executionContext) fieldContext_UpdateStatus_latest(_ context.Context, field graphql.CollectedField) (fc *graphql.FieldContext, err error) {
+	fc = &graphql.FieldContext{
+		Object:     "UpdateStatus",
+		Field:      field,
+		IsMethod:   false,
+		IsResolver: false,
+		Child: func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+			return nil, errors.New("field of type String does not have child fields")
+		},
+	}
+	return fc, nil
+}
+
+func (ec *executionContext) _UpdateStatus_updateAvailable(ctx context.Context, field graphql.CollectedField, obj *model.UpdateStatus) (ret graphql.Marshaler) {
+	return graphql.ResolveField(
+		ctx,
+		ec.OperationContext,
+		field,
+		ec.fieldContext_UpdateStatus_updateAvailable,
+		func(ctx context.Context) (any, error) {
+			return obj.UpdateAvailable, nil
+		},
+		nil,
+		ec.marshalNBoolean2bool,
+		true,
+		true,
+	)
+}
+
+func (ec *executionContext) fieldContext_UpdateStatus_updateAvailable(_ context.Context, field graphql.CollectedField) (fc *graphql.FieldContext, err error) {
+	fc = &graphql.FieldContext{
+		Object:     "UpdateStatus",
+		Field:      field,
+		IsMethod:   false,
+		IsResolver: false,
+		Child: func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+			return nil, errors.New("field of type Boolean does not have child fields")
+		},
 	}
 	return fc, nil
 }
@@ -5859,14 +6019,14 @@ func (ec *executionContext) unmarshalInputUpdateNibInput(ctx context.Context, ob
 			if err != nil {
 				return it, err
 			}
-			it.Priority = data
+			it.Priority = graphql.OmittableOf(data)
 		case "estimate":
 			ctx := graphql.WithPathContext(ctx, graphql.NewPathWithField("estimate"))
 			data, err := ec.unmarshalOString2ᚖstring(ctx, v)
 			if err != nil {
 				return it, err
 			}
-			it.Estimate = data
+			it.Estimate = graphql.OmittableOf(data)
 		case "tags":
 			ctx := graphql.WithPathContext(ctx, graphql.NewPathWithField("tags"))
 			data, err := ec.unmarshalOString2ᚕstringᚄ(ctx, v)
@@ -5908,7 +6068,7 @@ func (ec *executionContext) unmarshalInputUpdateNibInput(ctx context.Context, ob
 			if err != nil {
 				return it, err
 			}
-			it.Parent = data
+			it.Parent = graphql.OmittableOf(data)
 		case "addBlocking":
 			ctx := graphql.WithPathContext(ctx, graphql.NewPathWithField("addBlocking"))
 			data, err := ec.unmarshalOString2ᚕstringᚄ(ctx, v)
@@ -6188,15 +6348,77 @@ func (ec *executionContext) _Nib(ctx context.Context, sel ast.SelectionSet, obj 
 				atomic.AddUint32(&out.Invalids, 1)
 			}
 		case "type":
-			out.Values[i] = ec._Nib_type(ctx, field, obj)
-			if out.Values[i] == graphql.Null {
-				atomic.AddUint32(&out.Invalids, 1)
+			field := field
+
+			innerFunc := func(ctx context.Context, fs *graphql.FieldSet) (res graphql.Marshaler) {
+				defer func() {
+					if r := recover(); r != nil {
+						ec.Error(ctx, ec.Recover(ctx, r))
+					}
+				}()
+				res = ec._Nib_type(ctx, field, obj)
+				if res == graphql.Null {
+					atomic.AddUint32(&fs.Invalids, 1)
+				}
+				return res
 			}
+
+			if field.Deferrable != nil {
+				dfs, ok := deferred[field.Deferrable.Label]
+				di := 0
+				if ok {
+					dfs.AddField(field)
+					di = len(dfs.Values) - 1
+				} else {
+					dfs = graphql.NewFieldSet([]graphql.CollectedField{field})
+					deferred[field.Deferrable.Label] = dfs
+				}
+				dfs.Concurrently(di, func(ctx context.Context) graphql.Marshaler {
+					return innerFunc(ctx, dfs)
+				})
+
+				// don't run the out.Concurrently() call below
+				out.Values[i] = graphql.Null
+				continue
+			}
+
+			out.Concurrently(i, func(ctx context.Context) graphql.Marshaler { return innerFunc(ctx, out) })
 		case "priority":
-			out.Values[i] = ec._Nib_priority(ctx, field, obj)
-			if out.Values[i] == graphql.Null {
-				atomic.AddUint32(&out.Invalids, 1)
+			field := field
+
+			innerFunc := func(ctx context.Context, fs *graphql.FieldSet) (res graphql.Marshaler) {
+				defer func() {
+					if r := recover(); r != nil {
+						ec.Error(ctx, ec.Recover(ctx, r))
+					}
+				}()
+				res = ec._Nib_priority(ctx, field, obj)
+				if res == graphql.Null {
+					atomic.AddUint32(&fs.Invalids, 1)
+				}
+				return res
 			}
+
+			if field.Deferrable != nil {
+				dfs, ok := deferred[field.Deferrable.Label]
+				di := 0
+				if ok {
+					dfs.AddField(field)
+					di = len(dfs.Values) - 1
+				} else {
+					dfs = graphql.NewFieldSet([]graphql.CollectedField{field})
+					deferred[field.Deferrable.Label] = dfs
+				}
+				dfs.Concurrently(di, func(ctx context.Context) graphql.Marshaler {
+					return innerFunc(ctx, dfs)
+				})
+
+				// don't run the out.Concurrently() call below
+				out.Values[i] = graphql.Null
+				continue
+			}
+
+			out.Concurrently(i, func(ctx context.Context) graphql.Marshaler { return innerFunc(ctx, out) })
 		case "estimate":
 			out.Values[i] = ec._Nib_estimate(ctx, field, obj)
 			if out.Values[i] == graphql.Null {
@@ -6778,6 +7000,28 @@ func (ec *executionContext) _Query(ctx context.Context, sel ast.SelectionSet) gr
 			}
 
 			out.Concurrently(i, func(ctx context.Context) graphql.Marshaler { return rrm(innerCtx) })
+		case "updateStatus":
+			field := field
+
+			innerFunc := func(ctx context.Context, fs *graphql.FieldSet) (res graphql.Marshaler) {
+				defer func() {
+					if r := recover(); r != nil {
+						ec.Error(ctx, ec.Recover(ctx, r))
+					}
+				}()
+				res = ec._Query_updateStatus(ctx, field)
+				if res == graphql.Null {
+					atomic.AddUint32(&fs.Invalids, 1)
+				}
+				return res
+			}
+
+			rrm := func(ctx context.Context) graphql.Marshaler {
+				return ec.OperationContext.RootResolverMiddleware(ctx,
+					func(ctx context.Context) graphql.Marshaler { return innerFunc(ctx, out) })
+			}
+
+			out.Concurrently(i, func(ctx context.Context) graphql.Marshaler { return rrm(innerCtx) })
 		case "__type":
 			out.Values[i] = ec.OperationContext.RootResolverMiddleware(innerCtx, func(ctx context.Context) (res graphql.Marshaler) {
 				return ec._Query___type(ctx, field)
@@ -6827,6 +7071,55 @@ func (ec *executionContext) _Subscription(ctx context.Context, sel ast.Selection
 	default:
 		panic("unknown field " + strconv.Quote(fields[0].Name))
 	}
+}
+
+var updateStatusImplementors = []string{"UpdateStatus"}
+
+func (ec *executionContext) _UpdateStatus(ctx context.Context, sel ast.SelectionSet, obj *model.UpdateStatus) graphql.Marshaler {
+	fields := graphql.CollectFields(ec.OperationContext, sel, updateStatusImplementors)
+
+	out := graphql.NewFieldSet(fields)
+	deferred := make(map[string]*graphql.FieldSet)
+	for i, field := range fields {
+		switch field.Name {
+		case "__typename":
+			out.Values[i] = graphql.MarshalString("UpdateStatus")
+		case "current":
+			out.Values[i] = ec._UpdateStatus_current(ctx, field, obj)
+			if out.Values[i] == graphql.Null {
+				out.Invalids++
+			}
+		case "latest":
+			out.Values[i] = ec._UpdateStatus_latest(ctx, field, obj)
+			if out.Values[i] == graphql.Null {
+				out.Invalids++
+			}
+		case "updateAvailable":
+			out.Values[i] = ec._UpdateStatus_updateAvailable(ctx, field, obj)
+			if out.Values[i] == graphql.Null {
+				out.Invalids++
+			}
+		default:
+			panic("unknown field " + strconv.Quote(field.Name))
+		}
+	}
+	out.Dispatch(ctx)
+	if out.Invalids > 0 {
+		return graphql.Null
+	}
+
+	atomic.AddInt32(&ec.deferred, int32(len(deferred)))
+
+	for label, dfs := range deferred {
+		ec.processDeferredGroup(graphql.DeferredGroup{
+			Label:    label,
+			Path:     graphql.GetPath(ctx),
+			FieldSet: dfs,
+			Context:  ctx,
+		})
+	}
+
+	return out
 }
 
 var __DirectiveImplementors = []string{"__Directive"}
@@ -7424,6 +7717,20 @@ func (ec *executionContext) marshalNTime2ᚖtimeᚐTime(ctx context.Context, sel
 func (ec *executionContext) unmarshalNUpdateNibInput2githubᚗcomᚋalphaleonisᚋnibsᚋinternalᚋgraphᚋmodelᚐUpdateNibInput(ctx context.Context, v any) (model.UpdateNibInput, error) {
 	res, err := ec.unmarshalInputUpdateNibInput(ctx, v)
 	return res, graphql.ErrorOnPath(ctx, err)
+}
+
+func (ec *executionContext) marshalNUpdateStatus2githubᚗcomᚋalphaleonisᚋnibsᚋinternalᚋgraphᚋmodelᚐUpdateStatus(ctx context.Context, sel ast.SelectionSet, v model.UpdateStatus) graphql.Marshaler {
+	return ec._UpdateStatus(ctx, sel, &v)
+}
+
+func (ec *executionContext) marshalNUpdateStatus2ᚖgithubᚗcomᚋalphaleonisᚋnibsᚋinternalᚋgraphᚋmodelᚐUpdateStatus(ctx context.Context, sel ast.SelectionSet, v *model.UpdateStatus) graphql.Marshaler {
+	if v == nil {
+		if !graphql.HasFieldError(ctx, graphql.GetFieldContext(ctx)) {
+			graphql.AddErrorf(ctx, "the requested element is null which the schema does not allow")
+		}
+		return graphql.Null
+	}
+	return ec._UpdateStatus(ctx, sel, v)
 }
 
 func (ec *executionContext) marshalN__Directive2githubᚗcomᚋ99designsᚋgqlgenᚋgraphqlᚋintrospectionᚐDirective(ctx context.Context, sel ast.SelectionSet, v introspection.Directive) graphql.Marshaler {

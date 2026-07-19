@@ -2,6 +2,7 @@ package cmd
 
 import (
 	_ "embed"
+	"io"
 	"os"
 	"text/template"
 
@@ -33,7 +34,7 @@ var primeCmd = &cobra.Command{
 By default, emits a slim prompt with the mandatory workflow rules and a directive to load
 the full reference on demand. Pass --full to emit the complete CLI guide (commands, flags,
 body section conventions, GraphQL examples).`,
-	Args: cobra.NoArgs,
+	Args: codedNoArgs(nil),
 	RunE: func(cmd *cobra.Command, args []string) error {
 		// If no explicit path given, check if a nibs project exists by searching
 		// upward for a .nibs.yml config file
@@ -54,20 +55,28 @@ body section conventions, GraphQL examples).`,
 			return err
 		}
 
-		tmpl, err := template.New("prompt-full").Parse(agentPromptFull)
-		if err != nil {
-			return err
-		}
-
-		data := promptData{
-			GraphQLSchema: GetGraphQLSchema(),
-			Types:         config.DefaultTypes,
-			Statuses:      config.DefaultStatuses,
-			Priorities:    config.DefaultPriorities,
-		}
-
-		return tmpl.Execute(os.Stdout, data)
+		return renderFullPrompt(os.Stdout)
 	},
+}
+
+// renderFullPrompt executes the full-guide template with the live config enums
+// (types/statuses/priorities) so the rendered guide can never drift from the
+// values the CLI accepts. Extracted from the command's RunE so tests can render
+// it without going through cwd-based config discovery.
+func renderFullPrompt(w io.Writer) error {
+	tmpl, err := template.New("prompt-full").Parse(agentPromptFull)
+	if err != nil {
+		return err
+	}
+
+	data := promptData{
+		GraphQLSchema: GetGraphQLSchema(),
+		Types:         config.DefaultTypes,
+		Statuses:      config.DefaultStatuses,
+		Priorities:    config.DefaultPriorities,
+	}
+
+	return tmpl.Execute(w, data)
 }
 
 func init() {

@@ -13,18 +13,23 @@ import (
 // stubSubscriber implements NibSubscriber for testing.
 // It returns a channel that the test controls directly.
 type stubSubscriber struct {
-	ch           chan []nibcore.NibEvent
-	unsubscribed bool
+	ch chan []nibcore.NibEvent
+	// unsubscribed is closed by the returned unsubscribe func. Closing (rather
+	// than setting a bool) gives the test a happens-before to wait on before
+	// asserting that unsubscribe ran, avoiding a data race with the resolver's
+	// background cleanup goroutine.
+	unsubscribed chan struct{}
 }
 
 func newStubSubscriber() *stubSubscriber {
 	return &stubSubscriber{
-		ch: make(chan []nibcore.NibEvent, 16),
+		ch:           make(chan []nibcore.NibEvent, 16),
+		unsubscribed: make(chan struct{}),
 	}
 }
 
 func (s *stubSubscriber) Subscribe() (<-chan []NibEvent, func()) {
-	return s.ch, func() { s.unsubscribed = true }
+	return s.ch, func() { close(s.unsubscribed) }
 }
 
 func TestNibChangedSubscription(t *testing.T) {
@@ -242,9 +247,13 @@ func TestNibChangedSubscription(t *testing.T) {
 			t.Fatal("channel not closed after context cancel")
 		}
 
-		// Give goroutine time to call unsubscribe
-		time.Sleep(50 * time.Millisecond)
-		if !sub.unsubscribed {
+		// Wait for the resolver goroutine's deferred cleanup to call unsubscribe.
+		// Receiving from the closed channel establishes a happens-before with the
+		// stub's write, so the assertion is race-free without a sleep.
+		select {
+		case <-sub.unsubscribed:
+			// unsubscribe was called (channel closed) — expected.
+		case <-time.After(time.Second):
 			t.Error("unsubscribe was not called")
 		}
 	})

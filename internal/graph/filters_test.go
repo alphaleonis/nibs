@@ -47,9 +47,8 @@ func TestResolveFilterID(t *testing.T) {
 
 // TestApplyFilterBlockedByIDShortForm is the tracer bullet: a filter with
 // a short `BlockedByID` must match nibs whose `blocked_by` contains the
-// full (prefixed) ID. Prior to the fix, filter.BlockedByID was passed raw
-// to filterBySliceField with no normalisation, so short IDs silently
-// matched nothing.
+// full (prefixed) ID. A short BlockedByID must be normalized before matching —
+// passing it raw to filterBySliceField makes short IDs silently match nothing.
 func TestApplyFilterBlockedByIDShortForm(t *testing.T) {
 	target := &nib.Nib{ID: "nibs-target", Title: "Target"}
 	blocked := &nib.Nib{ID: "nibs-blocked", Title: "Blocked", BlockedBy: []string{"nibs-target"}}
@@ -77,12 +76,58 @@ func TestApplyFilterBlockedByIDShortForm(t *testing.T) {
 	}
 }
 
+// TestApplyFilterParentIDShortForm pins that a short ParentID is normalized
+// before matching, exactly like the other filter.*ID branches: a filter with
+// ParentID "parent" must match nibs whose Parent field holds the full
+// "nibs-parent". Passing the short id raw to the exact-match filter makes
+// `list --parent <short-id>` silently return nothing.
+func TestApplyFilterParentIDShortForm(t *testing.T) {
+	parent := &nib.Nib{ID: "nibs-parent", Title: "Parent"}
+	child := &nib.Nib{ID: "nibs-child", Title: "Child", Parent: "nibs-parent"}
+	unrelated := &nib.Nib{ID: "nibs-other", Title: "Other"}
+
+	reader := &stubReader{
+		nibs: map[string]*nib.Nib{
+			"nibs-parent": parent,
+			"nibs-child":  child,
+			"nibs-other":  unrelated,
+		},
+		allNibs: []*nib.Nib{parent, child, unrelated},
+		prefix:  "nibs-",
+	}
+	blocking := &stubBlockingChecker{}
+
+	filter := &model.NibFilter{ParentID: strPtr("parent")}
+	got := ApplyFilter(context.Background(), reader.allNibs, filter, reader, blocking)
+
+	if len(got) != 1 {
+		t.Fatalf("got %d nibs, want 1 (nibs-child); short ParentID was not normalized", len(got))
+	}
+	if got[0].ID != "nibs-child" {
+		t.Errorf("got %q, want %q", got[0].ID, "nibs-child")
+	}
+}
+
+// TestApplyFilterParentIDUnknownReturnsNil pins the "unknown target -> nil"
+// contract for ParentID, matching the other single-ID filter branches.
+func TestApplyFilterParentIDUnknownReturnsNil(t *testing.T) {
+	child := &nib.Nib{ID: "nibs-child", Title: "Child", Parent: "nibs-parent"}
+	reader := &stubReader{
+		nibs:    map[string]*nib.Nib{"nibs-child": child},
+		allNibs: []*nib.Nib{child},
+		prefix:  "nibs-",
+	}
+	filter := &model.NibFilter{ParentID: strPtr("nonexistent")}
+	got := ApplyFilter(context.Background(), reader.allNibs, filter, reader, &stubBlockingChecker{})
+	if got != nil {
+		t.Errorf("unknown ParentID should short-circuit to nil, got %v", got)
+	}
+}
+
 // TestApplyFilterUnknownIDReturnsNil verifies the "unknown target -> nil"
-// contract across all four single-ID filter branches. Previously these
-// branches disagreed: BlockingID via reader.Get returned nil, Mentions(ed)ByID
-// via NormalizeID returned nil, but BlockedByID silently passed the raw ID
-// through and returned empty. All four now route through resolveFilterID
-// and short-circuit to nil on miss.
+// contract across all four single-ID filter branches. All four route through
+// resolveFilterID and short-circuit to nil on miss — the trap is a branch that
+// passes a raw ID through and returns empty instead of nil.
 //
 // The table pairs a negative case (unknown → nil) with a positive control
 // (known → non-nil with a specific ID in the result). Without the positive
@@ -311,39 +356,55 @@ func TestFilterByEstimate(t *testing.T) {
 	})
 }
 
-func TestFilterByFieldWithDefault(t *testing.T) {
-	nibs := []*nib.Nib{
-		{ID: "a", Priority: "high"},
-		{ID: "b", Priority: ""}, // should be treated as "normal"
-		{ID: "c", Priority: "low"},
-		{ID: "d", Priority: "normal"},
+// TestApplyFilterDefaultAwarePriorityAndType is the direct coverage for
+// ApplyFilter's default-aware Type/Priority filtering (the EffectiveType()/
+// EffectivePriority() routing). A default-omitting nib (empty Priority/Type) must filter
+// as though the "normal"/"task" presentation defaults were on disk: including it
+// under Priority=["normal"] / Type=["task"], and excluding it under the symmetric
+// ExcludePriority / ExcludeType. Each exclude row keeps a non-default control nib
+// so a regression that dropped everything would not pass silently.
+func TestApplyFilterDefaultAwarePriorityAndType(t *testing.T) {
+	// defaulted omits both priority: and type: (empty fields); explicit carries
+	// non-default values so each case has a surviving control.
+	defaulted := &nib.Nib{ID: "nibs-defaulted", Title: "Defaulted"}
+	explicit := &nib.Nib{ID: "nibs-explicit", Title: "Explicit", Priority: "high", Type: "bug"}
+
+	reader := &stubReader{
+		nibs: map[string]*nib.Nib{
+			"nibs-defaulted": defaulted,
+			"nibs-explicit":  explicit,
+		},
+		allNibs: []*nib.Nib{defaulted, explicit},
+		prefix:  "nibs-",
+	}
+	blocking := &stubBlockingChecker{}
+
+	tests := []struct {
+		name    string
+		filter  *model.NibFilter
+		wantIDs []string
+	}{
+		{"Priority normal includes default-omitting nib", &model.NibFilter{Priority: []string{"normal"}}, []string{"nibs-defaulted"}},
+		{"ExcludePriority normal excludes default-omitting nib", &model.NibFilter{ExcludePriority: []string{"normal"}}, []string{"nibs-explicit"}},
+		{"Type task includes default-omitting nib", &model.NibFilter{Type: []string{"task"}}, []string{"nibs-defaulted"}},
+		{"ExcludeType task excludes default-omitting nib", &model.NibFilter{ExcludeType: []string{"task"}}, []string{"nibs-explicit"}},
 	}
 
-	getPriority := func(b *nib.Nib) string { return b.Priority }
-
-	t.Run("matches explicit and defaulted", func(t *testing.T) {
-		got := filterByFieldWithDefault(nibs, []string{"normal"}, "normal", getPriority)
-		if len(got) != 2 {
-			t.Fatalf("got %d nibs, want 2", len(got))
-		}
-		if got[0].ID != "b" || got[1].ID != "d" {
-			t.Errorf("got IDs %s, %s, want b, d", got[0].ID, got[1].ID)
-		}
-	})
-
-	t.Run("matches non-default values", func(t *testing.T) {
-		got := filterByFieldWithDefault(nibs, []string{"high"}, "normal", getPriority)
-		if len(got) != 1 || got[0].ID != "a" {
-			t.Errorf("got %v, want [a]", got)
-		}
-	})
-
-	t.Run("nil values is no-op", func(t *testing.T) {
-		got := filterByFieldWithDefault(nibs, nil, "normal", getPriority)
-		if len(got) != len(nibs) {
-			t.Errorf("got %d nibs, want %d (no-op)", len(got), len(nibs))
-		}
-	})
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := ApplyFilter(context.Background(), reader.allNibs, tt.filter, reader, blocking)
+			gotIDs := make([]string, 0, len(got))
+			for _, b := range got {
+				gotIDs = append(gotIDs, b.ID)
+			}
+			sort.Strings(gotIDs)
+			want := append([]string(nil), tt.wantIDs...)
+			sort.Strings(want)
+			if !reflect.DeepEqual(gotIDs, want) {
+				t.Errorf("got IDs %v, want %v", gotIDs, want)
+			}
+		})
+	}
 }
 
 func TestIncludeAncestors(t *testing.T) {

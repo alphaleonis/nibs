@@ -17,7 +17,7 @@ type estimateSelectedMsg struct {
 	estimate string
 }
 
-// closeEstimatePickerMsg is sent when the estimate picker is cancelled
+// closeEstimatePickerMsg is sent when the estimate picker is canceled
 type closeEstimatePickerMsg struct{}
 
 // openEstimatePickerMsg requests opening the estimate picker for nib(s)
@@ -101,8 +101,8 @@ func newEstimatePickerModel(nibIDs []string, nibTitle, currentEstimate string, c
 		})
 	}
 
-	modalWidth := max(40, min(60, width*50/100))
-	modalHeight := max(10, min(16, height*50/100))
+	modalWidth := pickerModalWidth(width, 0, 0)
+	modalHeight := pickerModalHeight(height, 0, 0)
 	listWidth := modalWidth - 6
 	listHeight := modalHeight - 7
 
@@ -142,8 +142,8 @@ func (m estimatePickerModel) Update(msg tea.Msg) (estimatePickerModel, tea.Cmd) 
 	case tea.WindowSizeMsg:
 		m.width = msg.Width
 		m.height = msg.Height
-		modalWidth := max(40, min(60, msg.Width*50/100))
-		modalHeight := max(10, min(16, msg.Height*50/100))
+		modalWidth := pickerModalWidth(msg.Width, 0, 0)
+		modalHeight := pickerModalHeight(msg.Height, 0, 0)
 		listWidth := modalWidth - 6
 		listHeight := modalHeight - 7
 		m.list.SetSize(listWidth, listHeight)
@@ -174,10 +174,19 @@ func (m estimatePickerModel) View() string {
 		return "Loading..."
 	}
 
-	var description string
-	if item, ok := m.list.SelectedItem().(estimateItem); ok && item.description != "" {
-		description = item.description
+	// Reserve a fixed description-area height so the modal keeps a constant
+	// height regardless of which estimate is selected.
+	var selected string
+	var allDescs []string
+	for _, li := range m.list.Items() {
+		if item, ok := li.(estimateItem); ok {
+			allDescs = append(allDescs, item.description)
+		}
 	}
+	if item, ok := m.list.SelectedItem().(estimateItem); ok {
+		selected = item.description
+	}
+	description := reservePickerDescription(selected, allDescs, pickerModalWidth(m.width, 0, 0))
 
 	var nibID string
 	if len(m.nibIDs) == 1 {

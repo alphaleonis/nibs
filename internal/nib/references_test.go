@@ -237,7 +237,7 @@ func TestExtractMentionTokens(t *testing.T) {
 			body: "We use backtick ` for #gx0f refs.",
 			want: []string{"gx0f"},
 		},
-		// Finding #22 — load-bearing invariants that used to be unpinned.
+		// Load-bearing invariants of the reference matcher.
 		{
 			name: "uppercase ID does not match",
 			body: "See #ABCD here",
@@ -253,13 +253,13 @@ func TestExtractMentionTokens(t *testing.T) {
 			body: "See #gx0f,\r\nand #nibs-abc.",
 			want: []string{"gx0f", "nibs-abc"},
 		},
-		// Finding #1 — multi-backtick code spans must not leak mentions.
+		// multi-backtick code spans must not leak mentions.
 		{
 			name: "multi-backtick code span strips its contents",
 			body: "We use ``#gx0f`` in a sentence",
 			want: nil,
 		},
-		// Finding #2 — ATX heading text is walked, mentions inside it count.
+		// ATX heading text is walked, mentions inside it count.
 		{
 			name: "mentions inside heading text are extracted",
 			body: "## Related: #abc1 and #def2",
@@ -270,7 +270,7 @@ func TestExtractMentionTokens(t *testing.T) {
 			body: "# Release notes for #nibs-def\n\nBody body #nibs-def and #other",
 			want: []string{"nibs-def", "other"},
 		},
-		// Finding #10 — pin `##gx0f` behavior. Goldmark parses this as a
+		// pin `##gx0f` behavior. Goldmark parses this as a
 		// level-2 heading whose text is "gx0f body text", so `gx0f` surfaces
 		// as a mention. The leading `##` is the heading marker itself and
 		// never reaches the mention scanner.
@@ -279,14 +279,14 @@ func TestExtractMentionTokens(t *testing.T) {
 			body: "##gx0f body text",
 			want: []string{"gx0f"},
 		},
-		// Finding #11 — indented (4-space/tab) code blocks are skipped by
+		// indented (4-space/tab) code blocks are skipped by
 		// goldmark, so mentions inside them do not leak.
 		{
 			name: "four-space indented code block is skipped",
 			body: "Intro.\n\n    code line #gx0f\n\nOutro #abc",
 			want: []string{"abc"},
 		},
-		// Finding #12 — pin goldmark behavior for tab-indented fences.
+		// pin goldmark behavior for tab-indented fences.
 		// A tab-indented triple-backtick line is parsed as an indented code
 		// block (so the fence opener itself is in code), and the line after
 		// the code block terminates the block; `#inside` lands in a
@@ -301,7 +301,7 @@ func TestExtractMentionTokens(t *testing.T) {
 			body: "\t# Title\n\nbody with #abc",
 			want: []string{"abc"},
 		},
-		// Finding #13 — reference-link definitions are not walked as text.
+		// reference-link definitions are not walked as text.
 		{
 			name: "reference-link definition URL does not produce a mention",
 			body: "[foo]: #anchor\n\nBody text with #real.",
@@ -328,7 +328,7 @@ func TestExtractMentionTokens(t *testing.T) {
 			body: "![alt #gx0f](img.png)",
 			want: nil,
 		},
-		// Finding #1 (iteration 2) — word-boundary must survive AST
+		// word-boundary must survive AST
 		// segment splits. goldmark splits inline text at emphasis and other
 		// delimiters, so a `#` at position 0 of a follow-up segment must
 		// still see the previous segment's last char as the word boundary.
@@ -525,7 +525,7 @@ func FuzzExtractMentionTokens(f *testing.F) {
 	// Nested fences: tilde outer, backtick inner. The inner fence and its
 	// contents are part of the outer code block (so `#a`, `#b` never leak);
 	// `#c` after the outer close must surface. Pins outer-fence-close
-	// behaviour under nested-fence-type stress.
+	// behavior under nested-fence-type stress.
 	f.Add("~~~\n```\n#a\n```\n#b\n~~~\n#c")
 
 	f.Fuzz(func(t *testing.T, body string) {

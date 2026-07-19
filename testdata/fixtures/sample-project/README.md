@@ -4,15 +4,15 @@ A curated test dataset of 87 nibs modeling a **TaskFlow** project management Saa
 
 ## Contents
 
-| Type      | Count | Statuses covered                                      |
-|-----------|-------|-------------------------------------------------------|
-| milestone | 2     | in-progress, draft                                    |
-| epic      | 6     | in-progress, todo, draft                              |
-| feature   | 20    | completed, in-progress, todo, draft, scrapped         |
-| task      | 44    | completed, in-progress, todo, draft, scrapped         |
-| bug       | 15    | in-progress, todo, draft                              |
+| Type      | Count | Statuses covered                                        |
+|-----------|-------|---------------------------------------------------------|
+| milestone | 2     | in-progress, draft                                      |
+| epic      | 6     | in-progress, todo, draft                                |
+| feature   | 20    | completed, in-progress, todo, draft, deferred, scrapped |
+| task      | 44    | completed, in-progress, todo, draft, scrapped           |
+| bug       | 15    | in-progress, todo, draft                                |
 
-All 5 priorities (critical, high, normal, low, deferred), all 4 estimates (s, m, l, xl), 9 distinct tags, 4 document references, and 3 blocking relationships.
+All 4 priorities (critical, high, normal, low), all 4 estimates (s, m, l, xl), 9 distinct tags, 4 document references, and 3 blocking relationships. The deferred status is exercised by the Slack integration feature.
 
 ## Usage
 

@@ -169,18 +169,20 @@ describe("TreeTableRow", () => {
     expect(screen.getByText("\u2193")).toBeInTheDocument();
   });
 
-  it("renders priority icon for deferred priority", () => {
-    renderRow({
-      nib: makeTreeTableNib({ priority: "deferred" }),
+  it("renders deferred as a status with text and a colored dot", () => {
+    const { container } = renderRow({
+      nib: makeTreeTableNib({ status: "deferred" }),
       depth: 0,
       hasChildren: false,
       dimmed: false,
     });
 
-    expect(screen.getByText("\u21CA")).toBeInTheDocument();
+    const stateCell = container.querySelector("[data-testid='nib-state']") as HTMLElement;
+    expect(stateCell.textContent).toContain("deferred");
+    expect(stateCell.querySelector("[data-testid='status-icon']")).toBeInTheDocument();
   });
 
-  it("shows blocked icon with tooltip when blockedByIds is non-empty", () => {
+  it("shows the blocked pill (default emphasis) with tooltip when blockedByIds is non-empty", () => {
     const { container } = renderRow({
       nib: makeTreeTableNib({ blockedByIds: ["nibs-xyz1", "nibs-xyz2"] }),
       depth: 0,
@@ -188,12 +190,57 @@ describe("TreeTableRow", () => {
       dimmed: false,
     });
 
-    const blocked = container.querySelector("[data-testid='blocked-icon']") as HTMLElement;
-    expect(blocked).toBeInTheDocument();
-    expect(blocked.getAttribute("title")).toBe("Blocked by 2 nib(s)");
+    const badge = container.querySelector("[data-testid='blocked-badge']") as HTMLElement;
+    expect(badge).toBeInTheDocument();
+    expect(badge.textContent).toContain("Blocked");
+    expect(badge.getAttribute("title")).toBe("Blocked by 2 nib(s)");
+    // Default is the pill, not the bare icon.
+    expect(container.querySelector("[data-testid='blocked-icon']")).not.toBeInTheDocument();
   });
 
-  it("hides blocked indicator when blockedByIds is empty", () => {
+  it("renders the bare lock icon (no pill) when blockedEmphasis is 'subtle'", () => {
+    const { container } = renderRow({
+      nib: makeTreeTableNib({ blockedByIds: ["nibs-xyz1", "nibs-xyz2"] }),
+      depth: 0,
+      hasChildren: false,
+      dimmed: false,
+      blockedEmphasis: "subtle",
+    });
+
+    const icon = container.querySelector("[data-testid='blocked-icon']") as HTMLElement;
+    expect(icon).toBeInTheDocument();
+    expect(icon.getAttribute("title")).toBe("Blocked by 2 nib(s)");
+    expect(container.querySelector("[data-testid='blocked-badge']")).not.toBeInTheDocument();
+  });
+
+  it("renders the pill AND dims the row when blockedEmphasis is 'pill-dim'", () => {
+    const { container } = renderRow({
+      nib: makeTreeTableNib({ blockedByIds: ["nibs-xyz1"] }),
+      depth: 0,
+      hasChildren: false,
+      dimmed: false,
+      blockedEmphasis: "pill-dim",
+    });
+
+    expect(container.querySelector("[data-testid='blocked-badge']")).toBeInTheDocument();
+    const row = container.querySelector("tr") as HTMLElement;
+    expect(row.classList.contains("blocked-dim")).toBe(true);
+  });
+
+  it("does not dim the row for pill-dim when the nib is not blocked", () => {
+    const { container } = renderRow({
+      nib: makeTreeTableNib({ blockedByIds: [] }),
+      depth: 0,
+      hasChildren: false,
+      dimmed: false,
+      blockedEmphasis: "pill-dim",
+    });
+
+    const row = container.querySelector("tr") as HTMLElement;
+    expect(row.classList.contains("blocked-dim")).toBe(false);
+  });
+
+  it("hides all blocked indicators when blockedByIds is empty", () => {
     const { container } = renderRow({
       nib: makeTreeTableNib({ blockedByIds: [] }),
       depth: 0,
@@ -201,8 +248,8 @@ describe("TreeTableRow", () => {
       dimmed: false,
     });
 
-    const blocked = container.querySelector("[data-testid='blocked-icon']");
-    expect(blocked).not.toBeInTheDocument();
+    expect(container.querySelector("[data-testid='blocked-badge']")).not.toBeInTheDocument();
+    expect(container.querySelector("[data-testid='blocked-icon']")).not.toBeInTheDocument();
   });
 
   it("shows blocking icon with tooltip when blockingIds is non-empty", () => {
@@ -228,6 +275,102 @@ describe("TreeTableRow", () => {
 
     const blocking = container.querySelector("[data-testid='blocking-icon']");
     expect(blocking).not.toBeInTheDocument();
+  });
+
+  it("renders the Blocked-by cell with a count and lock icon when blockedBy column is visible", () => {
+    const visibleColumns: ColumnKey[] = ["title", "blockedBy"];
+    const { container } = renderRow({
+      nib: makeTreeTableNib({ blockedByIds: ["nibs-a", "nibs-b"] }),
+      depth: 0,
+      hasChildren: false,
+      dimmed: false,
+      visibleColumns,
+    });
+
+    const cell = container.querySelector("[data-testid='nib-blocked-by']") as HTMLElement;
+    expect(cell).toBeInTheDocument();
+    expect(cell.textContent?.trim()).toBe("2");
+    // Lucide Lock icon renders as an SVG inside the cell.
+    expect(cell.querySelector("svg")).toBeInTheDocument();
+    // Tooltip lists the blocking nib IDs.
+    expect(cell.querySelector("[title='nibs-a, nibs-b']")).toBeInTheDocument();
+  });
+
+  it("renders an empty Blocked-by cell (no icon/count) when blockedByIds is empty", () => {
+    const visibleColumns: ColumnKey[] = ["title", "blockedBy"];
+    const { container } = renderRow({
+      nib: makeTreeTableNib({ blockedByIds: [] }),
+      depth: 0,
+      hasChildren: false,
+      dimmed: false,
+      visibleColumns,
+    });
+
+    const cell = container.querySelector("[data-testid='nib-blocked-by']") as HTMLElement;
+    expect(cell).toBeInTheDocument();
+    expect(cell.textContent?.trim()).toBe("");
+    expect(cell.querySelector("svg")).not.toBeInTheDocument();
+  });
+
+  it("does not render the Blocked-by cell when the column is not visible", () => {
+    const visibleColumns: ColumnKey[] = ["title"];
+    const { container } = renderRow({
+      nib: makeTreeTableNib({ blockedByIds: ["nibs-a"] }),
+      depth: 0,
+      hasChildren: false,
+      dimmed: false,
+      visibleColumns,
+    });
+
+    expect(container.querySelector("[data-testid='nib-blocked-by']")).not.toBeInTheDocument();
+  });
+
+  it("renders the Blocking cell with a count and link icon when blocking column is visible", () => {
+    const visibleColumns: ColumnKey[] = ["title", "blocking"];
+    const { container } = renderRow({
+      nib: makeTreeTableNib({ blockingIds: ["nibs-c", "nibs-d", "nibs-e"] }),
+      depth: 0,
+      hasChildren: false,
+      dimmed: false,
+      visibleColumns,
+    });
+
+    const cell = container.querySelector("[data-testid='nib-blocking']") as HTMLElement;
+    expect(cell).toBeInTheDocument();
+    expect(cell.textContent?.trim()).toBe("3");
+    // Lucide Link icon renders as an SVG inside the cell.
+    expect(cell.querySelector("svg")).toBeInTheDocument();
+    // Tooltip lists the blocked nib IDs.
+    expect(cell.querySelector("[title='nibs-c, nibs-d, nibs-e']")).toBeInTheDocument();
+  });
+
+  it("renders an empty Blocking cell (no icon/count) when blockingIds is empty", () => {
+    const visibleColumns: ColumnKey[] = ["title", "blocking"];
+    const { container } = renderRow({
+      nib: makeTreeTableNib({ blockingIds: [] }),
+      depth: 0,
+      hasChildren: false,
+      dimmed: false,
+      visibleColumns,
+    });
+
+    const cell = container.querySelector("[data-testid='nib-blocking']") as HTMLElement;
+    expect(cell).toBeInTheDocument();
+    expect(cell.textContent?.trim()).toBe("");
+    expect(cell.querySelector("svg")).not.toBeInTheDocument();
+  });
+
+  it("does not render the Blocking cell when the column is not visible", () => {
+    const visibleColumns: ColumnKey[] = ["title"];
+    const { container } = renderRow({
+      nib: makeTreeTableNib({ blockingIds: ["nibs-c"] }),
+      depth: 0,
+      hasChildren: false,
+      dimmed: false,
+      visibleColumns,
+    });
+
+    expect(container.querySelector("[data-testid='nib-blocking']")).not.toBeInTheDocument();
   });
 
   it("renders parent info in the parent cell when parentNib is provided", () => {
@@ -273,7 +416,7 @@ describe("TreeTableRow", () => {
     expect(stateCell.textContent).toContain("in-progress");
 
     // Should contain a dot element
-    const dot = stateCell.querySelector("[data-testid='status-dot']");
+    const dot = stateCell.querySelector("[data-testid='status-icon']");
     expect(dot).toBeInTheDocument();
   });
 
@@ -356,9 +499,9 @@ describe("TreeTableRow", () => {
     expect(toggle.querySelector("svg")).toBeInTheDocument();
   });
 
-  it("renders empty ID cell for virtual __unparented__ node", () => {
+  it("renders empty ID cell for a synthetic bucket node", () => {
     const { container } = renderRow({
-      nib: makeTreeTableNib({ id: "__unparented__", title: "Unparented", type: "", status: "" }),
+      nib: makeTreeTableNib({ id: "__no_epic__", title: "No epic (2)", type: "", status: "" }),
       depth: 0,
       hasChildren: true,
       dimmed: false,
@@ -452,7 +595,6 @@ describe("TreeTableRow", () => {
       hasChildren: false,
       dimmed: false,
       parentNib,
-      hideParent: false,
       visibleColumns,
     });
 
@@ -738,4 +880,111 @@ describe("TreeTableRow context-based state", () => {
     const row = container.querySelector("tr") as HTMLElement;
     expect(row.classList.contains("nib-fading")).toBe(false);
   });
+
+  // pill-dim row opacity composites through the whole <tr>, so the dim must yield
+  // to row-level affordances (drop target, change-pulse) or it mutes them by 40%.
+  it("does NOT dim a pill-dim blocked row while it is a drop target", () => {
+    const drag = new DragState();
+    drag.startDrag(["nibs-other"]);
+    drag.setDropTarget("nibs-abc1", "reparent", true);
+
+    const { container } = renderRowWithContext(
+      {
+        nib: makeTreeTableNib({ id: "nibs-abc1", blockedByIds: ["nibs-xyz1"] }),
+        blockedEmphasis: "pill-dim",
+      },
+      { drag },
+    );
+
+    const row = container.querySelector("tr") as HTMLElement;
+    // Dim suppressed so the drop affordance renders at full opacity...
+    expect(row.classList.contains("blocked-dim")).toBe(false);
+    // ...but the drop-target indicator still applies.
+    expect(row.classList.contains("drop-reparent")).toBe(true);
+  });
+
+  it("does NOT dim a pill-dim blocked row during the change-pulse (highlighted)", () => {
+    const { container } = renderRowWithContext({
+      nib: makeTreeTableNib({ blockedByIds: ["nibs-xyz1"] }),
+      blockedEmphasis: "pill-dim",
+      highlighted: true,
+    });
+
+    const row = container.querySelector("tr") as HTMLElement;
+    expect(row.classList.contains("blocked-dim")).toBe(false);
+    expect(row.classList.contains("nib-highlighted")).toBe(true);
+  });
+
+  it("still dims a plain pill-dim blocked row (not dragged, not a drop target, not highlighted)", () => {
+    const { container } = renderRowWithContext({
+      nib: makeTreeTableNib({ blockedByIds: ["nibs-xyz1"] }),
+      blockedEmphasis: "pill-dim",
+    });
+
+    const row = container.querySelector("tr") as HTMLElement;
+    expect(row.classList.contains("blocked-dim")).toBe(true);
+  });
+});
+
+// Row opacity is single-sourced through one computed value applied inline, so
+// `tr.style.opacity` IS the resolved opacity — no CSS-cascade / specificity /
+// declaration-order guessing. Documented precedence:
+//   fading (0) > dragged (0.3) > dimmed (0.4) > blocked-dim (0.6) > normal (1).
+// The normal rank is written as no inline opacity (CSS default 1), so its
+// resolved `style.opacity` is the empty string.
+describe("TreeTableRow single-sourced row opacity precedence", () => {
+  interface OpacityOptions {
+    dimmed?: boolean;
+    fading?: boolean;
+    dragged?: boolean;
+    pillDim?: boolean;
+    blocked?: boolean;
+  }
+
+  function renderRowInState(opts: OpacityOptions) {
+    const drag = new DragState();
+    if (opts.dragged) drag.startDrag(["nibs-abc1"]);
+    return render(TreeTableRow, {
+      props: {
+        nib: makeTreeTableNib({
+          id: "nibs-abc1",
+          blockedByIds: opts.blocked ? ["nibs-xyz1"] : [],
+        }),
+        dimmed: opts.dimmed ?? false,
+        fading: opts.fading ?? false,
+        blockedEmphasis: opts.pillDim ? "pill-dim" : undefined,
+      },
+      context: makeTestContext(new SelectionState(), drag),
+    });
+  }
+
+  // NOTE: `dragged + blocked-dim` is intentionally NOT tested — blockedDim is gated
+  // on `!isDragged` (see the derived in TreeTableRow.svelte), so the two class
+  // markers can never co-occur; there is no precedence to pin between them.
+  const cases: Array<{ name: string; opts: OpacityOptions; expected: string }> = [
+    // nib-required combo #1: fading must fully fade even when blocked-dim would apply.
+    { name: "fading + blocked-dim -> 0 (fading wins)", opts: { fading: true, pillDim: true, blocked: true }, expected: "0" },
+    // nib-required combo #2: dimmed wins over blocked-dim (blocked-dim no longer a dead class).
+    { name: "dimmed + blocked-dim + blocked -> 0.4 (dimmed wins)", opts: { dimmed: true, pillDim: true, blocked: true }, expected: "0.4" },
+    // Fading is the top rank: it must beat BOTH independent lower booleans, which
+    // is the exact inline-dimmed-beats-fading regression this refactor removed.
+    { name: "fading + dimmed -> 0 (fading wins over dimmed)", opts: { fading: true, dimmed: true }, expected: "0" },
+    { name: "fading + dragged -> 0 (fading wins over dragged)", opts: { fading: true, dragged: true }, expected: "0" },
+    // Single-state ranks.
+    { name: "fading alone -> 0", opts: { fading: true }, expected: "0" },
+    { name: "dragged alone -> 0.3", opts: { dragged: true }, expected: "0.3" },
+    { name: "dimmed alone -> 0.4", opts: { dimmed: true }, expected: "0.4" },
+    { name: "blocked-dim alone -> 0.6", opts: { pillDim: true, blocked: true }, expected: "0.6" },
+    { name: "no dimming state -> normal (no inline opacity)", opts: {}, expected: "" },
+    // Cross-rank tie-break: dragged outranks dimmed.
+    { name: "dragged + dimmed -> 0.3 (dragged wins)", opts: { dragged: true, dimmed: true }, expected: "0.3" },
+  ];
+
+  for (const { name, opts, expected } of cases) {
+    it(name, () => {
+      const { container } = renderRowInState(opts);
+      const row = container.querySelector("tr") as HTMLElement;
+      expect(row.style.opacity).toBe(expected);
+    });
+  }
 });

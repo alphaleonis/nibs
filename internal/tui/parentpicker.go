@@ -22,7 +22,7 @@ type parentSelectedMsg struct {
 	parentID string   // the new parent ID (empty string to clear parent)
 }
 
-// closeParentPickerMsg is sent when the parent picker is cancelled
+// closeParentPickerMsg is sent when the parent picker is canceled
 type closeParentPickerMsg struct{}
 
 // parentItem wraps a nib to implement list.Item for the parent picker
@@ -65,11 +65,16 @@ func (d parentItemDelegate) Render(w io.Writer, m list.Model, index int, listIte
 		_, _ = fmt.Fprint(w, cursor+text)
 
 	case parentItem:
-		// Get colors from config
-		colors := d.cfg.GetNibColors(item.nib.Status, item.nib.Type, item.nib.Priority)
+		// Get colors from config. EffectiveType so a type-less nib keeps its "task"
+		// badge. Raw Priority is safe here despite the missing default: GetNibColors ->
+		// GetPriority yields a different PriorityColor for "" (none) vs "normal"
+		// ("white"), but that color is only ever consumed by RenderPrioritySymbol, which
+		// returns "" (discarding the color) whenever GetPrioritySymbol is empty — and the
+		// symbol is empty for both "" and "normal", so the rendered result is identical.
+		colors := d.cfg.GetNibColors(item.nib.Status, item.nib.EffectiveType(), item.nib.Priority)
 
 		// Format: [type] title (id)
-		typeBadge := ui.RenderTypeText(item.nib.Type, colors.TypeColor)
+		typeBadge := ui.RenderTypeText(item.nib.EffectiveType(), colors.TypeColor)
 		title := item.nib.Title
 		if colors.IsArchive {
 			title = ui.Muted.Render(title)
@@ -141,7 +146,7 @@ func newParentPickerModel(nibIDs []string, nibTitle string, nibTypes []string, c
 		// Check if type is valid
 		isValidType := false
 		for _, validType := range validParentTypes {
-			if b.Type == validType {
+			if b.EffectiveType() == validType {
 				isValidType = true
 				break
 			}
@@ -159,8 +164,8 @@ func newParentPickerModel(nibIDs []string, nibTitle string, nibTypes []string, c
 		typeOrder[t] = i
 	}
 	sort.Slice(eligibleNibs, func(i, j int) bool {
-		// Primary: type order
-		ti, tj := typeOrder[eligibleNibs[i].Type], typeOrder[eligibleNibs[j].Type]
+		// Primary: type order (EffectiveType so a type-less nib sorts as "task")
+		ti, tj := typeOrder[eligibleNibs[i].EffectiveType()], typeOrder[eligibleNibs[j].EffectiveType()]
 		if ti != tj {
 			return ti < tj
 		}

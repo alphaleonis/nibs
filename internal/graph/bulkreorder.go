@@ -1,12 +1,14 @@
 package graph
 
 import (
+	"errors"
 	"fmt"
 	"sort"
 	"strings"
 
 	"github.com/alphaleonis/nibs/internal/graph/model"
 	"github.com/alphaleonis/nibs/internal/nib"
+	"github.com/alphaleonis/nibs/internal/nibcore"
 )
 
 // reorderChildrenImpl is the shared core of ReorderChildren: validate inputs,
@@ -26,12 +28,27 @@ func (r *mutationResolver) reorderChildrenImpl(parentID string, childIDs []strin
 
 	keys := nib.OrderKeyN(len(ordered))
 	for i, b := range ordered {
-		b.Order = keys[i]
-		if err := r.Writer.Update(b, ifMatchPtr(etagByID, b.ID)); err != nil {
+		// Mutate an OWNED clone from GetForUpdate, never the shared Reader.Get
+		// pointer: a mid-loop Update rejection must not leave the
+		// failing item's shared in-memory nib showing a phantom order that was
+		// never persisted.
+		clone, err := r.Reader.GetForUpdate(b.ID)
+		if err != nil {
 			return nil, err
 		}
+		clone.Order = keys[i]
+		if err := r.Writer.Update(clone, ifMatchPtr(etagByID, b.ID)); err != nil {
+			return nil, err
+		}
+		// The write installed the clone as the new c.nibs[id]; reflect it in the
+		// returned slice so callers see the persisted order.
+		ordered[i] = clone
 	}
-	return ordered, nil
+	// Each element is now the live store pointer Writer.Update installed — return
+	// detached snapshots so no live c.nibs pointer escapes to gqlgen's async
+	// marshaler (see the canonical live-pointer / copy-on-write invariant at
+	// NibReader.GetSnapshot).
+	return r.snapshotResults(ordered)
 }
 
 // reorderSiblingsImpl is the shared core of ReorderSiblings: validate inputs,
@@ -100,15 +117,30 @@ func (r *mutationResolver) reorderSiblingsImpl(siblingIDs []string, afterID *str
 
 	// Generate keys strictly between lower and upper, one per block member.
 	prev := lower
-	for _, b := range block {
+	for i, b := range block {
 		newKey := nib.OrderBetween(prev, upper)
-		b.Order = newKey
-		if err := r.Writer.Update(b, ifMatchPtr(etagByID, b.ID)); err != nil {
+		// Mutate an OWNED clone from GetForUpdate, never the shared Reader.Get
+		// pointer: a mid-loop Update rejection must not leave the
+		// failing item's shared in-memory nib showing a phantom order that was
+		// never persisted.
+		clone, err := r.Reader.GetForUpdate(b.ID)
+		if err != nil {
 			return nil, err
 		}
+		clone.Order = newKey
+		if err := r.Writer.Update(clone, ifMatchPtr(etagByID, b.ID)); err != nil {
+			return nil, err
+		}
+		// The write installed the clone as the new c.nibs[id]; reflect it in the
+		// returned slice so callers see the persisted order.
+		block[i] = clone
 		prev = newKey
 	}
-	return block, nil
+	// Each element is now the live store pointer Writer.Update installed — return
+	// detached snapshots so no live c.nibs pointer escapes to gqlgen's async
+	// marshaler (see the canonical live-pointer / copy-on-write invariant at
+	// NibReader.GetSnapshot).
+	return r.snapshotResults(block)
 }
 
 // ifMatchPtr returns a pointer to the pre-validated etag for id, or nil
@@ -286,7 +318,7 @@ func (r *mutationResolver) requireIfMatch() bool {
 
 // validateIfMatchETags checks the supplied per-child ETag entries against the
 // listed nibs. Validation order:
-//  1. duplicate-id check (canonicalised) — first duplicate aborts.
+//  1. duplicate-id check (canonicalized) — first duplicate aborts.
 //  2. unknown-id check — every ifMatch entry must reference one of `listed`.
 //  3. completeness check (when requireIfMatch is true) — every listed nib
 //     must appear in the ifMatch map.
@@ -305,7 +337,7 @@ func (r *mutationResolver) validateIfMatchETags(listed []*nib.Nib, ifMatch []*mo
 	}
 
 	// Build a canonical-id -> etag map. The id in the entry may be a short
-	// form under a configured prefix; normalise both sides so cross-form
+	// form under a configured prefix; normalize both sides so cross-form
 	// duplicates and unknown ids surface correctly.
 	etags := make(map[string]string, len(ifMatch))
 	for _, e := range ifMatch {
@@ -356,6 +388,15 @@ func (r *mutationResolver) validateIfMatchETags(listed []*nib.Nib, ifMatch []*mo
 		}
 		current, err := r.Reader.CurrentETag(b.ID)
 		if err != nil {
+			// An uncertifiable on-disk file (unparseable/unreadable) surfaces the
+			// distinct, NON-RECONCILABLE OnDiskUnparseableError carrying no etag
+			// token — mirroring Update's fail-closed path. Propagate it
+			// (wrapped, so errors.As still finds it) rather than collapsing it into a
+			// reconcilable "etag mismatch" the client could retry past.
+			var unparseable *nibcore.OnDiskUnparseableError
+			if errors.As(err, &unparseable) {
+				return nil, fmt.Errorf("failed to reorder %s: %w", b.ID, err)
+			}
 			return nil, fmt.Errorf("failed to read current etag for %s: %w", b.ID, err)
 		}
 		if current != want {

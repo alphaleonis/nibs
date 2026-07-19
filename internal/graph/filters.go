@@ -18,8 +18,8 @@ import (
 //     reads as "resolve a filter ID" rather than "normalize a generic ID",
 //     making intent explicit.
 //   - Future extension point: this is the single place where all four
-//     filter.*ID branches can gain shared behaviour — e.g. the 128-char
-//     input-length cap tracked in nibs-puq1 — without touching each
+//     filter.*ID branches can gain shared behavior — e.g. the 128-char
+//     input-length cap — without touching each
 //     branch individually.
 //
 // Every filter.*ID branch in ApplyFilter pairs this call with an explicit
@@ -40,15 +40,15 @@ func resolveFilterID(reader NibReader, id string) (string, bool) {
 // keyed on ctx values only.
 //
 // ctx is currently consulted only by the mention-filter branches (for
-// RequestCache lookup). ApplyFilter does not check cancellation or honour
-// deadlines — passing a cancelled ctx will not short-circuit; every filter
+// RequestCache lookup). ApplyFilter does not check cancellation or honor
+// deadlines — passing a canceled ctx will not short-circuit; every filter
 // branch runs to completion.
 //
 // Callers threading filter.MentionsID / filter.MentionedByID must let
-// ApplyFilter handle ID resolution via resolveFilterID. Pre-normalising in
+// ApplyFilter handle ID resolution via resolveFilterID. Pre-normalizing in
 // the caller is not required for correctness, but mixing short and full
 // forms across resolvers within the same request will desync the cache
-// keys (keyed on the full normalised ID) and silently degrade memoisation.
+// keys (keyed on the full normalized ID) and silently degrade memoization.
 func ApplyFilter(ctx context.Context, nibs []*nib.Nib, filter *model.NibFilter, reader NibReader, blocking BlockingChecker) []*nib.Nib {
 	if filter == nil {
 		return nibs
@@ -56,20 +56,16 @@ func ApplyFilter(ctx context.Context, nibs []*nib.Nib, filter *model.NibFilter, 
 
 	result := nibs
 
-	// String field filters
+	// String field filters. Type and Priority use the effective value so a
+	// default-omitting nib filters as though the "task"/"normal" default were on
+	// disk (matching the stored Nib's presentation defaults — see nib.DefaultType).
 	result = filterByField(result, filter.Status, func(b *nib.Nib) string { return b.Status })
 	result = excludeByField(result, filter.ExcludeStatus, func(b *nib.Nib) string { return b.Status })
-	result = filterByField(result, filter.Type, func(b *nib.Nib) string { return b.Type })
-	result = excludeByField(result, filter.ExcludeType, func(b *nib.Nib) string { return b.Type })
+	result = filterByField(result, filter.Type, func(b *nib.Nib) string { return b.EffectiveType() })
+	result = excludeByField(result, filter.ExcludeType, func(b *nib.Nib) string { return b.EffectiveType() })
 
-	// Priority with default (empty → "normal")
-	result = filterByFieldWithDefault(result, filter.Priority, "normal", func(b *nib.Nib) string { return b.Priority })
-	result = excludeByField(result, filter.ExcludePriority, func(b *nib.Nib) string {
-		if b.Priority == "" {
-			return "normal"
-		}
-		return b.Priority
-	})
+	result = filterByField(result, filter.Priority, func(b *nib.Nib) string { return b.EffectivePriority() })
+	result = excludeByField(result, filter.ExcludePriority, func(b *nib.Nib) string { return b.EffectivePriority() })
 
 	// Estimate filters
 	result = filterByField(result, filter.Estimate, func(b *nib.Nib) string { return b.Estimate })
@@ -83,7 +79,15 @@ func ApplyFilter(ctx context.Context, nibs []*nib.Nib, filter *model.NibFilter, 
 	result = filterByPredicate(result, filter.HasParent, func(b *nib.Nib) bool { return b.Parent != "" })
 	result = filterByPredicate(result, filter.NoParent, func(b *nib.Nib) bool { return b.Parent == "" })
 	if filter.ParentID != nil && *filter.ParentID != "" {
-		result = filterByField(result, []string{*filter.ParentID}, func(b *nib.Nib) string { return b.Parent })
+		// Normalize the parent id like every other *ID filter: the stored
+		// b.Parent is a full (prefixed) id, so a short --parent must be resolved
+		// first or it silently matches nothing. Unknown target short-circuits to
+		// nil (shared contract for all *ID filters).
+		fullID, ok := resolveFilterID(reader, *filter.ParentID)
+		if !ok {
+			return nil
+		}
+		result = filterByField(result, []string{fullID}, func(b *nib.Nib) string { return b.Parent })
 	}
 
 	// Blocking filters (computed via BlockingChecker)
@@ -134,7 +138,7 @@ func ApplyFilter(ctx context.Context, nibs []*nib.Nib, filter *model.NibFilter, 
 }
 
 // filterByMentionsID keeps nibs that mention the given target in their body.
-// targetID must already be a full (normalised) ID — callers resolve via
+// targetID must already be a full (normalized) ID — callers resolve via
 // resolveFilterID before invoking. Routes through the per-request mention
 // cache attached to ctx (if any).
 func filterByMentionsID(ctx context.Context, nibs []*nib.Nib, targetID string, reader NibReader) []*nib.Nib {
@@ -153,7 +157,7 @@ func filterByMentionsID(ctx context.Context, nibs []*nib.Nib, targetID string, r
 }
 
 // filterByMentionedByID keeps nibs that are mentioned in the given source's body.
-// sourceID must already be a full (normalised) ID — callers resolve via
+// sourceID must already be a full (normalized) ID — callers resolve via
 // resolveFilterID before invoking. Routes through the per-request mention
 // cache attached to ctx (if any).
 func filterByMentionedByID(ctx context.Context, nibs []*nib.Nib, sourceID string, reader NibReader) []*nib.Nib {
@@ -279,32 +283,6 @@ outer:
 	return result
 }
 
-// filterByFieldWithDefault works like filterByField but applies a default
-// value when the getter returns empty string.
-// Returns input unchanged if values is empty.
-func filterByFieldWithDefault(nibs []*nib.Nib, values []string, defaultVal string, getter func(*nib.Nib) string) []*nib.Nib {
-	if len(values) == 0 {
-		return nibs
-	}
-
-	valueSet := make(map[string]bool, len(values))
-	for _, v := range values {
-		valueSet[v] = true
-	}
-
-	var result []*nib.Nib
-	for _, b := range nibs {
-		val := getter(b)
-		if val == "" {
-			val = defaultVal
-		}
-		if valueSet[val] {
-			result = append(result, b)
-		}
-	}
-	return result
-}
-
 // includeAncestors walks the parent chain for every nib in the result and adds
 // any missing ancestor nibs.  This ensures the client can always build a
 // complete tree hierarchy even when search or filters matched only leaves.
@@ -336,7 +314,7 @@ func includeAncestors(nibs []*nib.Nib, reader NibReader) []*nib.Nib {
 
 // filterByBlockingID filters nibs that are blocking a specific nib ID.
 // Computed: checks if targetID has this nib in its blockedBy.
-// targetID must already be a full (normalised) ID — callers resolve via
+// targetID must already be a full (normalized) ID — callers resolve via
 // resolveFilterID before invoking. Returns nil if the target nib cannot
 // be fetched (defensive: the caller already proved the ID resolves, but
 // Get may still fail on a concurrent delete).

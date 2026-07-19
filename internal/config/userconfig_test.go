@@ -218,6 +218,7 @@ func TestBoolFieldsRoundTrip(t *testing.T) {
 func TestLoadWithUserConfig(t *testing.T) {
 	t.Run("project values override user values", func(t *testing.T) {
 		projectDir := t.TempDir()
+		isolateConfigSearch(t, projectDir)
 		userCfgDir := t.TempDir()
 
 		// User config: id_length=8, hide_completed=false
@@ -260,6 +261,7 @@ func TestLoadWithUserConfig(t *testing.T) {
 
 	t.Run("nil project fields fall through to user config", func(t *testing.T) {
 		projectDir := t.TempDir()
+		isolateConfigSearch(t, projectDir)
 		userCfgDir := t.TempDir()
 
 		// User config: hide_completed=false, wide_mode=false
@@ -297,6 +299,7 @@ func TestLoadWithUserConfig(t *testing.T) {
 
 	t.Run("user config id_length applies when project omits it", func(t *testing.T) {
 		projectDir := t.TempDir()
+		isolateConfigSearch(t, projectDir)
 		userCfgDir := t.TempDir()
 
 		// User config: id_length=8
@@ -330,6 +333,7 @@ func TestLoadWithUserConfig(t *testing.T) {
 
 	t.Run("no user config file, project only", func(t *testing.T) {
 		projectDir := t.TempDir()
+		isolateConfigSearch(t, projectDir)
 
 		projectYAML := `nibs:
   prefix: "proj-"
@@ -366,6 +370,7 @@ func TestLoadWithUserConfig(t *testing.T) {
 	t.Run("no project config, user only", func(t *testing.T) {
 		// Empty directory with no .nibs.yml
 		projectDir := t.TempDir()
+		isolateConfigSearch(t, projectDir)
 		userCfgDir := t.TempDir()
 
 		userYAML := `nibs:

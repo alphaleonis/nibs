@@ -16,14 +16,15 @@ describe("TypePickerPopover", () => {
 
     await waitFor(() => {
       const items = screen.getAllByTestId("type-picker-item");
-      expect(items).toHaveLength(3);
-      expect(items[0]).toHaveTextContent("feature");
-      expect(items[1]).toHaveTextContent("task");
-      expect(items[2]).toHaveTextContent("bug");
+      expect(items).toHaveLength(4);
+      expect(items[0]).toHaveTextContent("bug");
+      expect(items[1]).toHaveTextContent("feature");
+      expect(items[2]).toHaveTextContent("task");
+      expect(items[3]).toHaveTextContent("research");
     });
   });
 
-  it("renders single valid type for milestone parent", async () => {
+  it("renders every non-milestone type for a milestone parent", async () => {
     render(TypePickerPopover, {
       parentType: "milestone",
       onselect: vi.fn(),
@@ -32,8 +33,14 @@ describe("TypePickerPopover", () => {
 
     await waitFor(() => {
       const items = screen.getAllByTestId("type-picker-item");
-      expect(items).toHaveLength(1);
-      expect(items[0]).toHaveTextContent("epic");
+      expect(items).toHaveLength(5);
+      expect(items.map((el) => el.textContent?.trim())).toEqual([
+        "epic",
+        "bug",
+        "feature",
+        "task",
+        "research",
+      ]);
     });
   });
 
@@ -58,7 +65,7 @@ describe("TypePickerPopover", () => {
     expect(onselect).toHaveBeenCalledWith("task");
   });
 
-  it("renders valid child types for a feature parent", async () => {
+  it("renders task and research for a feature parent (a bug cannot be a feature child)", async () => {
     render(TypePickerPopover, {
       parentType: "feature",
       onselect: vi.fn(),
@@ -69,7 +76,7 @@ describe("TypePickerPopover", () => {
       const items = screen.getAllByTestId("type-picker-item");
       expect(items).toHaveLength(2);
       expect(items[0]).toHaveTextContent("task");
-      expect(items[1]).toHaveTextContent("bug");
+      expect(items[1]).toHaveTextContent("research");
     });
   });
 });

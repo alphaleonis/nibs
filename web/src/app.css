@@ -33,12 +33,15 @@
   --color-type-bug: var(--type-bug);
   --color-type-feature: var(--type-feature);
   --color-type-task: var(--type-task);
+  --color-type-research: var(--type-research);
   --color-status-draft-bg: var(--status-draft-bg);
   --color-status-draft-text: var(--status-draft-text);
   --color-status-todo-bg: var(--status-todo-bg);
   --color-status-todo-text: var(--status-todo-text);
   --color-status-in-progress-bg: var(--status-in-progress-bg);
   --color-status-in-progress-text: var(--status-in-progress-text);
+  --color-status-deferred-bg: var(--status-deferred-bg);
+  --color-status-deferred-text: var(--status-deferred-text);
   --color-status-completed-bg: var(--status-completed-bg);
   --color-status-completed-text: var(--status-completed-text);
   --color-status-scrapped-bg: var(--status-scrapped-bg);
@@ -47,8 +50,8 @@
   --color-priority-high: var(--priority-high);
   --color-priority-normal: var(--priority-normal);
   --color-priority-low: var(--priority-low);
-  --color-priority-deferred: var(--priority-deferred);
   --color-blocked: var(--blocked);
+  --color-blocked-bg: var(--blocked-bg);
   --color-blocking: var(--blocking);
   --color-link: var(--link);
   --color-link-hover: var(--link-hover);
@@ -99,34 +102,50 @@
   /* Unique app token (no exact shadcn equivalent) */
   --text-secondary: oklch(0.706 0.015 264); /* gray-400 */
 
-  /* Type colors (dot icon backgrounds) */
-  --type-milestone: oklch(0.627 0.265 303); /* purple-500 */
-  --type-epic: oklch(0.585 0.233 277);      /* indigo-500 */
-  --type-bug: oklch(0.577 0.245 27);        /* red-500 */
-  --type-feature: oklch(0.696 0.17 162);    /* emerald-500 */
-  --type-task: oklch(0.685 0.169 237);      /* sky-500 */
+  /* Type icon colors — mirror the TUI/config canonical hues
+     (internal/config: milestone=cyan, epic=purple, bug=red, feature=green,
+     task=blue, research=yellow), tuned one step brighter (~-400) for the
+     dark UI. */
+  --type-milestone: oklch(0.789 0.154 211.53);  /* cyan-400 */
+  --type-epic: oklch(0.702 0.183 293.541);      /* violet-400 (config "purple") */
+  --type-bug: oklch(0.704 0.191 22.216);        /* red-400 */
+  --type-feature: oklch(0.765 0.177 163.223);   /* emerald-400 (config "green") */
+  --type-task: oklch(0.746 0.16 232.661);       /* sky-400 (config "blue") */
+  --type-research: oklch(0.828 0.189 84.429);   /* amber-400 (config "yellow") */
 
-  /* Status pill backgrounds and text */
-  --status-draft-bg: oklch(0.269 0.015 264);     /* gray-700 */
-  --status-draft-text: oklch(0.871 0.006 264);   /* gray-300 */
-  --status-todo-bg: oklch(0.233 0.098 293);      /* violet-900 */
-  --status-todo-text: oklch(0.811 0.111 293);    /* violet-300 */
-  --status-in-progress-bg: oklch(0.282 0.091 267); /* blue-900 */
-  --status-in-progress-text: oklch(0.809 0.105 251); /* blue-300 */
-  --status-completed-bg: oklch(0.266 0.065 152); /* green-900 */
-  --status-completed-text: oklch(0.845 0.143 164); /* green-300 */
-  --status-scrapped-bg: oklch(0.205 0.01 264);   /* gray-800 */
-  --status-scrapped-text: oklch(0.551 0.02 264); /* gray-500 */
+  /* Status colors — mirror the TUI/config convention (in-progress=yellow,
+     todo=green, draft=blue, completed=gray, scrapped=gray). The *-text token
+     is the visible status-icon color (~-400 for the dark UI); the *-bg token is
+     a subtle same-hue dark tint kept coherent for any pill/badge consumer. */
+  --status-draft-bg: oklch(0.27 0.06 254);          /* blue tint */
+  --status-draft-text: oklch(0.707 0.165 254.624);  /* blue-400 */
+  --status-todo-bg: oklch(0.27 0.05 163);           /* emerald tint */
+  --status-todo-text: oklch(0.765 0.177 163.223);   /* emerald-400 */
+  --status-in-progress-bg: oklch(0.27 0.05 84);     /* amber tint */
+  --status-in-progress-text: oklch(0.828 0.189 84.429); /* amber-400 */
+  /* deferred = "parked" (non-terminal): a dim magenta, deliberately tinted at
+     low chroma so it reads as distinct from the near-neutral grays of
+     completed/scrapped; dimmed lightness signals paused rather than active. */
+  --status-deferred-bg: oklch(0.27 0.045 340);      /* dim magenta tint */
+  --status-deferred-text: oklch(0.65 0.08 340);     /* dim magenta */
+  --status-completed-bg: oklch(0.27 0.01 261);      /* neutral gray tint */
+  --status-completed-text: oklch(0.707 0.022 261.325); /* gray-400 */
+  --status-scrapped-bg: oklch(0.205 0.01 264);      /* gray-800 */
+  --status-scrapped-text: oklch(0.551 0.027 264.364); /* gray-500 (dimmer than completed) */
 
   /* Priority colors */
   --priority-critical: oklch(0.577 0.245 27);  /* red-500 */
   --priority-high: oklch(0.795 0.184 86);      /* yellow-500 */
   --priority-normal: oklch(0.706 0.015 264);   /* gray-400 */
   --priority-low: oklch(0.551 0.02 264);       /* gray-500 */
-  --priority-deferred: oklch(0.551 0.02 264);  /* gray-500 */
 
-  /* Blocking/blocked indicator colors */
-  --blocked: oklch(0.577 0.245 27);       /* red-500 */
+  /* Blocking/blocked indicator colors. --blocked is a FOREGROUND-only token
+     (pill label + bare lock icon), so it's lightened past red-500 and the tint
+     darkened so the 12px pill label clears WCAG AA small-text contrast (4.5:1);
+     the pair computes to ~4.83:1. Inherited by graphite/dracula; daylight
+     overrides both below. */
+  --blocked: oklch(0.66 0.225 27);        /* red-400, lightened for AA contrast */
+  --blocked-bg: oklch(0.24 0.05 27);      /* subtle same-hue dark red tint */
   --blocking: oklch(0.768 0.188 84);      /* amber-500 */
 
   /* Interactive colors */
@@ -161,6 +180,230 @@
   --z-dropdown: 10;
   --z-sticky: 20;
   --z-modal: 100;
+  /* Sits above --z-modal so a confirm/alert dialog raised from within an
+     expanded (full-screen) modal is not occluded by it (nibs-8cfb). */
+  --z-modal-top: 200;
+
+  /* ── Semantic type scale ────────────────────────────────────────
+     Theme-INVARIANT typography tokens. Do NOT override these in any
+     [data-theme]/.dark block — only color tokens vary per theme, type
+     stays constant. Consumed by the @utility classes below.
+
+     `--font-scale` is the global font-size preference multiplier (S/M/L →
+     0.9/1/1.15, default 1). It ALSO stays theme-invariant: it is set on
+     document.documentElement by applyFontScale() from the persisted pref and
+     scales the type RHYTHM — both the *-size AND *-leading tokens below — plus
+     the table row padding (--row-pad-y in TreeTable), so row height tracks the
+     font size. Root font-size, spacing and rem stay untouched; row DENSITY still
+     selects the BASE row padding and --font-scale multiplies it on top
+     (nibs-gymz). */
+  --font-scale: 1;
+  --text-label-size: calc(0.75rem * var(--font-scale));    /* 12px */
+  --text-label-weight: 500;
+  --text-label-leading: calc(1rem * var(--font-scale));    /* 16px — tight */
+  --text-body-size: calc(0.875rem * var(--font-scale));    /* 14px */
+  --text-body-weight: 400;
+  --text-body-leading: calc(1.25rem * var(--font-scale));  /* 20px */
+  --text-caption-size: calc(0.75rem * var(--font-scale));  /* 12px */
+  --text-caption-weight: 400;
+  --text-caption-leading: calc(1rem * var(--font-scale));  /* 16px */
+}
+
+/* ── Swappable palettes (nibs-vmaq, nibs-fen5) ───────────────────────
+   The active palette is chosen via a `data-theme` attribute on <html>. The
+   light/dark axis is owned by the `.dark` class, toggled per-theme from the
+   THEMES `dark` flag by applyTheme() (theme.ts) and the FOUC guard (index.html)
+   — app.css keys Tailwind's `dark:` variant off that class. Graphite, Midnight
+   and Dracula are DARK (`.dark` present); Daylight is LIGHT (`.dark` absent), the
+   first light palette (nibs-fen5).
+
+   Each block is a DIFF: it overrides ONLY the tokens that differ from the base
+   :root values. The dark palettes touch mostly chrome/surface (plus, for Dracula,
+   a few accent tokens). Daylight is the exception: because the base :root domain
+   hues (type/status/priority/link/tag/etc.) are tuned bright FOR DARK backgrounds,
+   the light palette must ALSO darken those domain tokens so they stay legible on
+   near-white surfaces. The THEME-INVARIANT typography tokens are never overridden.
+
+   "midnight" intentionally has NO block: it IS the bare :root values above,
+   so `data-theme="midnight"` (or no attribute) falls through to :root and
+   renders the original near-black palette with no visual change.
+
+   Any token referenced below is already registered in the `@theme inline`
+   layer at the top of this file; a brand-new token would need registering
+   in BOTH layers. */
+
+/* Graphite (default) — softer, warmer dark with a VSCode Dark+ / Azure DevOps
+   feel: surfaces are lifted off pure black and nudged a touch warm (hue ~75),
+   accents shifted toward a VSCode azure blue. */
+:root[data-theme="graphite"] {
+  --background: oklch(0.234 0.006 75);       /* ~#1e1e1e, warm graphite */
+  --card: oklch(0.268 0.006 75);
+  --popover: oklch(0.29 0.007 75);
+  --primary: oklch(0.55 0.155 250);         /* VSCode-ish azure blue */
+  --primary-foreground: oklch(0.985 0.003 247);
+  --secondary: oklch(0.32 0.007 75);
+  --secondary-foreground: oklch(0.96 0.004 80);
+  --muted: oklch(0.32 0.007 75);
+  --muted-foreground: oklch(0.67 0.01 75);  /* brighter for contrast on lifted bg */
+  --accent: oklch(0.35 0.008 75);
+  --accent-foreground: oklch(0.96 0.004 80);
+  --border: oklch(0.36 0.007 75);
+  --input: oklch(0.36 0.007 75);
+  --ring: oklch(0.55 0.155 250);
+}
+
+/* Dracula — signature purple-tinted palette. Surfaces map to the official
+   Dracula background (#282a36) / current-line (#44475a); accents (primary,
+   ring, link, tags) go purple (#bd93f9) so the theme reads authentically.
+   Type/status/priority hues are left readable against the darker surfaces. */
+:root[data-theme="dracula"] {
+  --background: oklch(0.283 0.023 280);     /* #282a36 */
+  --foreground: oklch(0.97 0.005 100);      /* #f8f8f2 */
+  --card: oklch(0.318 0.024 282);
+  --card-foreground: oklch(0.97 0.005 100);
+  --popover: oklch(0.338 0.025 282);
+  --popover-foreground: oklch(0.97 0.005 100);
+  --primary: oklch(0.70 0.17 300);          /* purple #bd93f9 */
+  --primary-foreground: oklch(0.22 0.03 285);
+  --secondary: oklch(0.40 0.028 280);       /* current-line #44475a */
+  --secondary-foreground: oklch(0.97 0.005 100);
+  --muted: oklch(0.40 0.028 280);
+  --muted-foreground: oklch(0.70 0.055 275); /* comment tone, lifted for contrast */
+  --accent: oklch(0.44 0.032 280);
+  --accent-foreground: oklch(0.97 0.005 100);
+  --border: oklch(0.405 0.028 280);         /* #44475a */
+  --input: oklch(0.43 0.03 280);
+  --ring: oklch(0.70 0.17 300);
+  --text-secondary: oklch(0.75 0.05 280);
+
+  /* Domain accents — kept purple-family for cohesion */
+  --link: oklch(0.78 0.15 298);
+  --link-hover: oklch(0.85 0.12 300);
+  --link-underline: oklch(0.78 0.15 298 / 0.4);
+  --link-hover-underline: oklch(0.85 0.12 300 / 0.6);
+  --tag-bg: oklch(0.70 0.17 300 / 0.15);
+  --tag-text: oklch(0.82 0.13 300);
+  --tag-border: oklch(0.70 0.17 300 / 0.35);
+}
+
+/* Daylight — the first LIGHT palette. `.dark` is absent for this
+   theme, so shadcn `dark:` utilities switch off and components render light.
+   Chrome is a soft, warm off-white (hue ~80) echoing Graphite's warm family;
+   the foreground is a warm near-black. Because the base :root domain hues are
+   tuned bright for dark backgrounds, this block ALSO darkens every domain token
+   (type/status/priority/link/tag/error/archive/delete) toward ~-600/-700 so they
+   hold contrast on light surfaces, and re-tints the subtle *-bg / alpha tokens
+   that were built to glow on dark. Typography tokens stay invariant. */
+:root[data-theme="daylight"] {
+  /* Chrome / surface */
+  --background: oklch(0.985 0.004 85);      /* soft warm off-white */
+  --foreground: oklch(0.22 0.006 75);       /* warm near-black */
+  --card: oklch(0.995 0.002 85);
+  --card-foreground: oklch(0.22 0.006 75);
+  --popover: oklch(0.998 0.002 85);
+  --popover-foreground: oklch(0.22 0.006 75);
+  --primary: oklch(0.5 0.19 255);           /* azure, darkened to hold on white */
+  --primary-foreground: oklch(0.99 0.005 250);
+  --secondary: oklch(0.94 0.004 85);
+  --secondary-foreground: oklch(0.28 0.006 75);
+  --muted: oklch(0.955 0.004 85);
+  --muted-foreground: oklch(0.5 0.012 75);  /* darkened: legible on light */
+  --accent: oklch(0.93 0.005 85);           /* hover surface */
+  --accent-foreground: oklch(0.28 0.006 75);
+  --destructive: oklch(0.52 0.22 27);       /* red, darkened for white bg */
+  --destructive-foreground: oklch(0.99 0.005 27);
+  --border: oklch(0.9 0.005 85);
+  --input: oklch(0.89 0.005 85);
+  --ring: oklch(0.5 0.19 255);
+
+  /* Unique app token */
+  --text-secondary: oklch(0.48 0.012 75);
+
+  /* Type icon colors — config canonical hues, darkened (~-600/-700) for white */
+  --type-milestone: oklch(0.55 0.11 215);   /* cyan */
+  --type-epic: oklch(0.52 0.24 293);         /* violet */
+  --type-bug: oklch(0.52 0.2 25);            /* red */
+  --type-feature: oklch(0.52 0.13 160);      /* emerald */
+  --type-task: oklch(0.52 0.16 245);         /* blue */
+  --type-research: oklch(0.58 0.13 68);      /* amber */
+
+  /* Status colors — darker *-text on lighter same-hue *-bg tints */
+  --status-draft-bg: oklch(0.94 0.03 250);
+  --status-draft-text: oklch(0.52 0.16 250);
+  --status-todo-bg: oklch(0.94 0.04 160);
+  --status-todo-text: oklch(0.52 0.13 160);
+  --status-in-progress-bg: oklch(0.94 0.05 80);
+  --status-in-progress-text: oklch(0.58 0.13 68);
+  --status-deferred-bg: oklch(0.93 0.025 340);      /* dim magenta tint */
+  --status-deferred-text: oklch(0.48 0.11 340);     /* darker magenta for light-surface legibility */
+  --status-completed-bg: oklch(0.93 0.005 261);
+  --status-completed-text: oklch(0.5 0.015 261);
+  --status-scrapped-bg: oklch(0.95 0.004 264);
+  --status-scrapped-text: oklch(0.62 0.01 264); /* dimmer than completed */
+
+  /* Priority colors */
+  --priority-critical: oklch(0.52 0.22 27);
+  --priority-high: oklch(0.6 0.14 66);
+  --priority-normal: oklch(0.55 0.012 264);
+  --priority-low: oklch(0.63 0.01 264);
+
+  /* Blocking/blocked indicators */
+  --blocked: oklch(0.52 0.22 27);
+  --blocked-bg: oklch(0.94 0.04 27);        /* light same-hue red tint */
+  --blocking: oklch(0.62 0.15 66);
+
+  /* Interactive colors */
+  --link: oklch(0.5 0.2 276);
+  --link-hover: oklch(0.44 0.2 276);
+  --link-underline: oklch(0.5 0.2 276 / 0.4);
+  --link-hover-underline: oklch(0.44 0.2 276 / 0.6);
+  --warning: oklch(0.6 0.16 60);
+  --warning-hover: oklch(0.54 0.15 58);
+  --danger: oklch(0.52 0.21 27);
+  --danger-hover: oklch(0.46 0.19 26);
+
+  /* Error display — darker text, tints re-tuned to read on white */
+  --error-text: oklch(0.5 0.2 25);
+  --error-bg: oklch(0.62 0.22 25 / 0.1);
+  --error-border: oklch(0.62 0.22 25 / 0.3);
+
+  /* Tags */
+  --tag-bg: oklch(0.5 0.19 255 / 0.1);
+  --tag-text: oklch(0.46 0.19 276);
+  --tag-border: oklch(0.5 0.19 255 / 0.3);
+
+  /* Archive/delete action colors */
+  --archive: oklch(0.58 0.13 66);
+  --archive-border: oklch(0.58 0.13 66 / 0.35);
+  --archive-bg-hover: oklch(0.58 0.13 66 / 0.12);
+  --delete: oklch(0.52 0.21 27);
+  --delete-border: oklch(0.52 0.21 27 / 0.3);
+  --delete-bg-hover: oklch(0.52 0.21 27 / 0.1);
+}
+
+/* ── Semantic type-scale utilities ──────────────────────────────────
+   Bundled font-size + weight + line-height per semantic role. Prefer
+   these over ad-hoc `text-xs/sm` + `font-*` combinations. */
+
+/* Control labels, table headers, meta labels — 12px / 500 / tight */
+@utility text-label {
+  font-size: var(--text-label-size);
+  font-weight: var(--text-label-weight);
+  line-height: var(--text-label-leading);
+}
+
+/* Default body text — 14px / 400 */
+@utility text-body {
+  font-size: var(--text-body-size);
+  font-weight: var(--text-body-weight);
+  line-height: var(--text-body-leading);
+}
+
+/* Secondary / muted captions — 12px / 400 */
+@utility text-caption {
+  font-size: var(--text-caption-size);
+  font-weight: var(--text-caption-weight);
+  line-height: var(--text-caption-leading);
 }
 
 
@@ -210,6 +453,12 @@
 
 /* Shared markdown prose styles for nib body rendering */
 .prose-nib {
+  /* Explicit base size so rendered prose is identical regardless of ancestor
+     context (the full-screen editor renders inside a shadcn Dialog carrying
+     `text-sm`; the detail panel would otherwise inherit the app default). Pinned
+     to the shared body token so prose matches table/detail body text app-wide
+     (nibs-0mas). Headings below use `em` so they scale off this base. */
+  font-size: var(--text-body-size);
   line-height: 1.6;
   color: var(--foreground);
   overflow-wrap: break-word;
@@ -221,9 +470,9 @@
   font-weight: 600;
 }
 
-.prose-nib h1 { font-size: 1.125rem; }
-.prose-nib h2 { font-size: 1rem; }
-.prose-nib h3 { font-size: 0.9375rem; }
+.prose-nib h1 { font-size: 1.375em; }
+.prose-nib h2 { font-size: 1.15em; }
+.prose-nib h3 { font-size: 1.0625em; }
 .prose-nib p { margin: 0.375rem 0; }
 
 .prose-nib ul,
@@ -234,18 +483,82 @@
 
 .prose-nib li { margin: 0.125rem 0; }
 
+/* GitHub-style task lists: the checkbox replaces the list marker, so drop the
+   bullet on items that carry one and present the box as a clickable control
+   (the click is handled via delegation; see ActiveNibView.handleProseClick). */
+/* Direct-child `:has()` forms so ONLY the task `<li>` itself drops its marker:
+   a checkbox that is an immediate child (tight lists) or nested one level through
+   a directly-child `<p>` (loose lists, where marked wraps the checkbox in a `<p>`).
+   A plain bullet that merely CONTAINS a nested checklist keeps its own marker —
+   the descendant form `li:has(input)` wrongly stripped it. Only task checkboxes
+   survive sanitization, so bare `input` == `input[data-task-ordinal]` here. */
+.prose-nib li:has(> input),
+.prose-nib li:has(> p > input) {
+  list-style: none;
+}
+
+/* Rendered task-list checkboxes (`- [ ]` / `- [x]`). These are the only inputs
+   that survive sanitization, so `.prose-nib input[type="checkbox"]` targets
+   exactly them. The native UA control was rendered gray: it ignores the active
+   palette AND — because no theme sets `color-scheme: dark` (the light/dark axis
+   is the `.dark` class only) — a native checkbox paints as a LIGHT-mode control
+   even on the dark themes. So style a custom box from theme tokens instead
+   (nibs-y6aq): mirrors the shadcn Checkbox — `--input` border, `--primary` fill
+   + `--primary-foreground` check when checked, `--ring` focus ring. Size/margin
+   match the former inline checkbox so there is no layout shift. */
+.prose-nib input[type="checkbox"] {
+  /* Checkmark shape as a themeable mask (not a baked-color image) so the check
+     stays legible on every palette's primary fill — e.g. Dracula's DARK check
+     on its light-purple primary, near-white elsewhere. */
+  --check-mask: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%23000' stroke-width='3.5' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M20 6 9 17l-5-5'/%3E%3C/svg%3E");
+  appearance: none;
+  -webkit-appearance: none;
+  position: relative;
+  box-sizing: border-box;
+  width: 1em;
+  height: 1em;
+  margin: 0 0.35em 0 0;
+  vertical-align: middle;
+  border: 1px solid var(--input);
+  border-radius: var(--radius-sm);
+  background-color: transparent;
+  cursor: pointer;
+  transition:
+    background-color 0.15s,
+    border-color 0.15s;
+}
+
+.prose-nib input[type="checkbox"]:checked {
+  background-color: var(--primary);
+  border-color: var(--primary);
+}
+
+.prose-nib input[type="checkbox"]:checked::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  background-color: var(--primary-foreground);
+  -webkit-mask: var(--check-mask) center / 0.72em 0.72em no-repeat;
+  mask: var(--check-mask) center / 0.72em 0.72em no-repeat;
+}
+
+.prose-nib input[type="checkbox"]:focus-visible {
+  outline: 2px solid var(--ring);
+  outline-offset: 2px;
+}
+
 .prose-nib code {
   background-color: var(--muted);
-  border-radius: 0.25rem;
+  border-radius: var(--radius-sm);
   padding: 0.125rem 0.375rem;
-  font-size: 0.75rem;
+  font-size: 0.875em;
   font-family: ui-monospace, monospace;
 }
 
 .prose-nib pre {
   background-color: var(--card);
   border: 1px solid var(--border);
-  border-radius: 0.375rem;
+  border-radius: var(--radius-md);
   padding: 0.75rem;
   overflow-x: auto;
   margin: 0.5rem 0;

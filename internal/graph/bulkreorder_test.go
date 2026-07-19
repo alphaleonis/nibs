@@ -2,7 +2,11 @@ package graph
 
 import (
 	"context"
+	"encoding/hex"
 	"errors"
+	"hash/fnv"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -446,8 +450,8 @@ func TestReorderChildren_BogusParentEmptyChildren(t *testing.T) {
 	ctx := context.Background()
 	resolver, _, _ := setupBulkReorderFixture(t)
 
-	// A non-empty bogus parent with empty childIDs would previously be a
-	// silent no-op success. Now it errors with "parent nib not found".
+	// A non-empty bogus parent with empty childIDs must error with "parent nib
+	// not found" — the trap is silently succeeding as a no-op.
 	_, err := resolver.Mutation().ReorderChildren(ctx, "ghost-parent", []string{}, nil)
 	if err == nil {
 		t.Fatal("expected error for non-existent parent")
@@ -524,7 +528,7 @@ func TestReorderSiblings_IfMatch_Tracer(t *testing.T) {
 }
 
 // Behavior #8: Mode A rejects ifMatch entries that reference the same nib
-// twice (canonicalised), even when the surface forms differ. Without dedup
+// twice (canonicalized), even when the surface forms differ. Without dedup
 // the second value would silently shadow the first.
 func TestReorderChildren_IfMatch_Duplicate(t *testing.T) {
 	ctx := context.Background()
@@ -753,6 +757,174 @@ func TestNibReader_CurrentETag_NotFound(t *testing.T) {
 	if !errors.Is(err, nibcore.ErrNotFound) {
 		t.Errorf("expected nibcore.ErrNotFound, got %v", err)
 	}
+}
+
+// TestReorderChildren_IfMatch_UnparseableFileNonReconcilable covers the fail-closed path
+// for the bulk-reorder pre-validation path: when a listed child's on-disk file
+// is unparseable, ReorderChildren must abort with the distinct, NON-RECONCILABLE
+// *nibcore.OnDiskUnparseableError (carrying no reusable etag token), NOT a plain
+// reconcilable "etag mismatch". A client that retries with a fabricated etag
+// (e.g. a hash of the corrupt bytes) still cannot satisfy the guard, so the
+// corrupt file survives.
+func TestReorderChildren_IfMatch_UnparseableFileNonReconcilable(t *testing.T) {
+	ctx := context.Background()
+	resolver, core, parentID := setupBulkReorderFixture(t)
+
+	// Capture valid etags for all three children while they are still parseable.
+	ifMatch := childEtags(t, resolver, "a", "b", "c")
+
+	// Corrupt child "b" on disk (git-merge-conflict markers → invalid YAML).
+	bNib, err := core.Get("b")
+	if err != nil {
+		t.Fatalf("Get(b): %v", err)
+	}
+	bPath := filepath.Join(core.Root(), bNib.Path)
+	const corrupt = `---
+title: Second
+status: todo
+<<<<<<< HEAD
+order: b0
+=======
+order: b9
+>>>>>>> other
+---
+
+Body under edit.
+`
+	if err := os.WriteFile(bPath, []byte(corrupt), 0o644); err != nil {
+		t.Fatalf("corrupting b: %v", err)
+	}
+
+	// Attempt 1: pre-validation must fail with the non-reconcilable error.
+	_, err = resolver.Mutation().ReorderChildren(ctx, parentID, []string{"c", "a", "b"}, ifMatch)
+	var unparseable *nibcore.OnDiskUnparseableError
+	if !errors.As(err, &unparseable) {
+		t.Fatalf("attempt 1: got %T: %v, want wrapped *nibcore.OnDiskUnparseableError", err, err)
+	}
+
+	// Attempt 2 hits the SAME branch as attempt 1 (validateIfMatchETags returns
+	// the wrapped OnDiskUnparseableError before the `current != want` comparison),
+	// so it adds no branch coverage — it just documents that an etag fabricated
+	// from the corrupt bytes still cannot reach the comparison, hence cannot clobber.
+	h := fnv.New64a()
+	h.Write([]byte(corrupt))
+	fabricated := hex.EncodeToString(h.Sum(nil))
+	retry := []*model.ChildEtag{
+		{ID: "a", Etag: ifMatch[0].Etag},
+		{ID: "b", Etag: fabricated},
+		{ID: "c", Etag: ifMatch[2].Etag},
+	}
+	_, err = resolver.Mutation().ReorderChildren(ctx, parentID, []string{"c", "a", "b"}, retry)
+	if !errors.As(err, &unparseable) {
+		t.Fatalf("attempt 2 (reconcile-retry): got %T: %v, want *nibcore.OnDiskUnparseableError (clobber must be impossible)", err, err)
+	}
+
+	// The corrupt bytes must survive both attempts (no reorder write clobbered it).
+	after, err := os.ReadFile(bPath)
+	if err != nil {
+		t.Fatalf("reading b after refused reorders: %v", err)
+	}
+	if string(after) != corrupt {
+		t.Errorf("a refused reorder overwrote the unparseable child file:\n got:\n%s\nwant:\n%s", after, corrupt)
+	}
+}
+
+// failOnUpdateWriter wraps a NibWriter and fails Update for one target ID,
+// delegating every other call (including successful Updates) to the embedded
+// writer. It deterministically simulates a mid-loop write rejection — e.g. an
+// on-disk divergence between bulk-reorder's T0 pre-validation and a later
+// per-item write, or a transient disk error.
+type failOnUpdateWriter struct {
+	NibWriter
+	failID  string
+	failErr error
+	updated []string // IDs successfully persisted (in call order)
+}
+
+func (w *failOnUpdateWriter) Update(b *nib.Nib, ifMatch *string) error {
+	if b.ID == w.failID {
+		return w.failErr
+	}
+	if err := w.NibWriter.Update(b, ifMatch); err != nil {
+		return err
+	}
+	w.updated = append(w.updated, b.ID)
+	return nil
+}
+
+func sliceContains(s []string, v string) bool {
+	for _, x := range s {
+		if x == v {
+			return true
+		}
+	}
+	return false
+}
+
+// TestBulkReorderMidLoopFailureLeavesNoPhantomOrder guards the
+// corruption class in the bulk-reorder loops the sweep extends to.
+// reorderChildrenImpl / reorderSiblingsImpl obtained each nib via Reader.Get (the
+// shared c.nibs[id] pointer) and assigned b.Order = newKey in place before a
+// per-item Writer.Update. A mid-loop Update rejection left earlier siblings
+// persisted AND the failing one showing a phantom order in memory only. The fix
+// mutates a CLONE per item and only swaps the returned pointer on success.
+//
+// A decorating writer forces the 2nd item in the block to fail. Each subtest
+// asserts the failing item's shared in-memory nib shows no phantom order, while an
+// earlier item IS persisted (proving the failure is genuinely mid-loop). RED
+// against the mutate-shared-pointer code, GREEN after.
+func TestBulkReorderMidLoopFailureLeavesNoPhantomOrder(t *testing.T) {
+	ctx := context.Background()
+
+	t.Run("ReorderChildren", func(t *testing.T) {
+		_, core, parentID := setupBulkReorderFixture(t) // children a,b,c ordered a0,b0,c0
+		fw := &failOnUpdateWriter{NibWriter: core, failID: "b", failErr: errors.New("simulated mid-loop write failure")}
+		r := &Resolver{Reader: core, Writer: fw, Validator: core, Blocking: core, Orderer: NewOrderer(core, fw)}
+
+		_, err := r.Mutation().ReorderChildren(ctx, parentID, []string{"a", "b", "c"}, nil)
+		if err == nil {
+			t.Fatal("expected mid-loop write failure, got nil error")
+		}
+
+		// The failing item's shared in-memory nib must show no phantom order.
+		gotB, err := core.Get("b")
+		if err != nil {
+			t.Fatalf("get b: %v", err)
+		}
+		if gotB.Order != "b0" {
+			t.Errorf("failing item 'b' left with phantom Order %q after refused write; want pre-call %q", gotB.Order, "b0")
+		}
+		// An earlier item was persisted before the failure — confirms this
+		// exercises a genuine mid-loop rejection (not a first-item failure).
+		if !sliceContains(fw.updated, "a") {
+			t.Errorf("earlier item 'a' was not persisted before the failure (updated=%v) — not a mid-loop failure", fw.updated)
+		}
+	})
+
+	t.Run("ReorderSiblings", func(t *testing.T) {
+		_, core, _ := setupBlockMoveFixture(t) // children a..e ordered a0..e0
+		fw := &failOnUpdateWriter{NibWriter: core, failID: "e", failErr: errors.New("simulated mid-loop write failure")}
+		r := &Resolver{Reader: core, Writer: fw, Validator: core, Blocking: core, Orderer: NewOrderer(core, fw)}
+
+		// Move block [c, e] after a; the loop writes c then e — e fails mid-loop.
+		_, err := r.Mutation().ReorderSiblings(ctx, []string{"c", "e"}, strPtr("a"), nil, nil, nil)
+		if err == nil {
+			t.Fatal("expected mid-loop write failure, got nil error")
+		}
+
+		gotE, err := core.Get("e")
+		if err != nil {
+			t.Fatalf("get e: %v", err)
+		}
+		if gotE.Order != "e0" {
+			t.Errorf("failing item 'e' left with phantom Order %q after refused write; want pre-call %q", gotE.Order, "e0")
+		}
+		// An earlier block item was persisted before the failure — confirms a
+		// genuine mid-loop rejection.
+		if !sliceContains(fw.updated, "c") {
+			t.Errorf("earlier item 'c' was not persisted before the failure (updated=%v) — not a mid-loop failure", fw.updated)
+		}
+	})
 }
 
 // childEtags reads the current on-disk etag for each id and packs the

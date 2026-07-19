@@ -21,7 +21,11 @@ builds:
       - -s -w -X github.com/alphaleonis/nibs/cmd.version={{ .Tag }}
 
 archives:
-  - formats:
+  # Version-less asset names ({project}_{os}_{arch}) so `nibs upgrade`
+  # (github.com/creativeprojects/go-selfupdate) can match assets against the
+  # running platform. install.sh / install.ps1 resolve the same names.
+  - name_template: "{{ .ProjectName }}_{{ .Os }}_{{ .Arch }}"
+    formats:
       - tar.gz
     format_overrides:
       - goos: windows
@@ -32,6 +36,11 @@ archives:
       - src: ./third_party_licenses/**/*
         dst: .
         strip_parent: false
+
+# Single, fixed-name checksum file so go-selfupdate's ChecksumValidator
+# (UniqueFilename: "checksums.txt") verifies downloads without templating.
+checksum:
+  name_template: "checksums.txt"
 
 release:
   draft: true

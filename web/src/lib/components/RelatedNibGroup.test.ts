@@ -26,8 +26,8 @@ describe("RelatedNibGroup", () => {
     const link = screen.getByTestId("detail-related-link");
     expect(link).toHaveTextContent("Foo");
 
-    // Status dot is present inside the link
-    const dot = link.querySelector(".status-dot");
+    // Status icon is present inside the link
+    const dot = link.querySelector("[data-testid='status-icon']");
     expect(dot).toBeInTheDocument();
   });
 

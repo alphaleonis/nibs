@@ -32,8 +32,8 @@ func TestDefault(t *testing.T) {
 	if len(DefaultTypes) != 6 {
 		t.Errorf("len(DefaultTypes) = %d, want 6", len(DefaultTypes))
 	}
-	if len(DefaultStatuses) != 5 {
-		t.Errorf("len(DefaultStatuses) = %d, want 5", len(DefaultStatuses))
+	if len(DefaultStatuses) != 6 {
+		t.Errorf("len(DefaultStatuses) = %d, want 6", len(DefaultStatuses))
 	}
 }
 
@@ -59,6 +59,7 @@ func TestIsValidStatus(t *testing.T) {
 		{"draft", true},
 		{"todo", true},
 		{"in-progress", true},
+		{"deferred", true},
 		{"completed", true},
 		{"scrapped", true},
 		{"invalid", false},
@@ -85,7 +86,7 @@ func TestIsValidStatus(t *testing.T) {
 func TestStatusList(t *testing.T) {
 	cfg := Default()
 	got := cfg.StatusList()
-	want := "in-progress, todo, draft, completed, scrapped"
+	want := "in-progress, todo, draft, deferred, completed, scrapped"
 
 	if got != want {
 		t.Errorf("StatusList() = %q, want %q", got, want)
@@ -96,14 +97,104 @@ func TestStatusNames(t *testing.T) {
 	cfg := Default()
 	got := cfg.StatusNames()
 
-	if len(got) != 5 {
-		t.Fatalf("len(StatusNames()) = %d, want 5", len(got))
+	if len(got) != 6 {
+		t.Fatalf("len(StatusNames()) = %d, want 6", len(got))
 	}
-	expected := []string{"in-progress", "todo", "draft", "completed", "scrapped"}
+	expected := []string{"in-progress", "todo", "draft", "deferred", "completed", "scrapped"}
 	for i, name := range expected {
 		if got[i] != name {
 			t.Errorf("StatusNames()[%d] = %q, want %q", i, got[i], name)
 		}
+	}
+}
+
+func TestArchiveStatusNames(t *testing.T) {
+	cfg := Default()
+	got := cfg.ArchiveStatusNames()
+
+	// Today the archive set is exactly {completed, scrapped}.
+	want := []string{"completed", "scrapped"}
+	if len(got) != len(want) {
+		t.Fatalf("len(ArchiveStatusNames()) = %d, want %d (%v)", len(got), len(want), got)
+	}
+	for i, name := range want {
+		if got[i] != name {
+			t.Errorf("ArchiveStatusNames()[%d] = %q, want %q", i, got[i], name)
+		}
+	}
+
+	// Every returned name must satisfy the canonical archive predicate.
+	for _, name := range got {
+		if !cfg.IsArchiveStatus(name) {
+			t.Errorf("ArchiveStatusNames() returned %q which is not IsArchiveStatus", name)
+		}
+	}
+
+	// "deferred" is terminal-adjacent but NOT archived; it must be excluded.
+	for _, name := range got {
+		if name == "deferred" {
+			t.Errorf("ArchiveStatusNames() must not include %q", name)
+		}
+	}
+}
+
+func TestOpenStatusNames(t *testing.T) {
+	cfg := Default()
+	got := cfg.OpenStatusNames()
+
+	// Today the open set is exactly the non-archive statuses.
+	want := []string{"in-progress", "todo", "draft", "deferred"}
+	if len(got) != len(want) {
+		t.Fatalf("len(OpenStatusNames()) = %d, want %d (%v)", len(got), len(want), got)
+	}
+	for i, name := range want {
+		if got[i] != name {
+			t.Errorf("OpenStatusNames()[%d] = %q, want %q", i, got[i], name)
+		}
+	}
+
+	// No open status may be an archive status.
+	for _, name := range got {
+		if cfg.IsArchiveStatus(name) {
+			t.Errorf("OpenStatusNames() returned archived status %q", name)
+		}
+	}
+
+	// Open and archive together must cover every status exactly once.
+	if len(got)+len(cfg.ArchiveStatusNames()) != len(cfg.StatusNames()) {
+		t.Errorf("open (%d) + archive (%d) must equal all statuses (%d)",
+			len(got), len(cfg.ArchiveStatusNames()), len(cfg.StatusNames()))
+	}
+}
+
+func TestParkedStatusNames(t *testing.T) {
+	cfg := Default()
+	got := cfg.ParkedStatusNames()
+
+	want := []string{"deferred"}
+	if len(got) != len(want) {
+		t.Fatalf("len(ParkedStatusNames()) = %d, want %d (%v)", len(got), len(want), got)
+	}
+	for i, name := range want {
+		if got[i] != name {
+			t.Errorf("ParkedStatusNames()[%d] = %q, want %q", i, got[i], name)
+		}
+	}
+
+	// Parked statuses are valid, non-archive statuses (a subset of open).
+	for _, name := range got {
+		if !cfg.IsValidStatus(name) {
+			t.Errorf("ParkedStatusNames() returned unknown status %q", name)
+		}
+		if cfg.IsArchiveStatus(name) {
+			t.Errorf("ParkedStatusNames() returned archived status %q", name)
+		}
+	}
+
+	// The returned slice must be a copy — mutating it must not corrupt the source.
+	got[0] = "mutated"
+	if cfg.ParkedStatusNames()[0] != "deferred" {
+		t.Error("ParkedStatusNames() must return a defensive copy")
 	}
 }
 
@@ -177,6 +268,7 @@ func TestIsArchiveStatus(t *testing.T) {
 		{"draft", false},
 		{"todo", false},
 		{"in-progress", false},
+		{"deferred", false}, // non-terminal: parked, not archived
 		{"invalid", false},
 	}
 
@@ -246,8 +338,8 @@ func TestLoadAndSave(t *testing.T) {
 		t.Errorf("DefaultType = %q, want \"bug\"", loaded.Nibs.DefaultType)
 	}
 	// Statuses are hardcoded, not stored in config
-	if len(loaded.StatusNames()) != 5 {
-		t.Errorf("len(StatusNames()) = %d, want 5", len(loaded.StatusNames()))
+	if len(loaded.StatusNames()) != 6 {
+		t.Errorf("len(StatusNames()) = %d, want 6", len(loaded.StatusNames()))
 	}
 }
 
@@ -274,9 +366,9 @@ func TestLoadAppliesDefaults(t *testing.T) {
 	if cfg.Nibs.IDLength != 4 {
 		t.Errorf("IDLength default not applied: got %d, want 4", cfg.Nibs.IDLength)
 	}
-	// Statuses are hardcoded, always 5
-	if len(cfg.StatusNames()) != 5 {
-		t.Errorf("Hardcoded statuses: got %d, want 5", len(cfg.StatusNames()))
+	// Statuses are hardcoded, always 6
+	if len(cfg.StatusNames()) != 6 {
+		t.Errorf("Hardcoded statuses: got %d, want 6", len(cfg.StatusNames()))
 	}
 	// DefaultStatus is always "todo"
 	if cfg.GetDefaultStatus() != "todo" {
@@ -294,7 +386,7 @@ func TestStatusesAreHardcoded(t *testing.T) {
 	cfg := Default()
 
 	// All hardcoded statuses should be valid
-	hardcodedStatuses := []string{"draft", "todo", "in-progress", "completed", "scrapped"}
+	hardcodedStatuses := []string{"draft", "todo", "in-progress", "deferred", "completed", "scrapped"}
 	for _, status := range hardcodedStatuses {
 		if !cfg.IsValidStatus(status) {
 			t.Errorf("IsValidStatus(%q) = false, want true", status)
@@ -427,8 +519,8 @@ func TestTypesAreHardcoded(t *testing.T) {
 	}
 
 	// Statuses should also be hardcoded
-	if len(loaded.StatusNames()) != 5 {
-		t.Errorf("len(StatusNames()) = %d, want 5", len(loaded.StatusNames()))
+	if len(loaded.StatusNames()) != 6 {
+		t.Errorf("len(StatusNames()) = %d, want 6", len(loaded.StatusNames()))
 	}
 }
 
@@ -505,6 +597,7 @@ func TestStatusDescriptions(t *testing.T) {
 			"draft":       "Needs refinement before it can be worked on",
 			"todo":        "Ready to be worked on",
 			"in-progress": "Currently being worked on",
+			"deferred":    "Parked — not actionable now, but not abandoned (scrapped) or merely unrefined (draft)",
 			"completed":   "Finished successfully",
 			"scrapped":    "Will not be done",
 		}
@@ -557,9 +650,20 @@ statuses:
 	})
 }
 
+// isolateConfigSearch bounds FindConfig's upward walk at dir by setting
+// NIBS_CONFIG_ROOT, so a stray ancestor .nibs.yml (e.g. /tmp/.nibs.yml) can't
+// leak into config-discovery tests that assert "no config found" / "default
+// config". When the fixture places its config at dir (or below), the config is
+// still found because the ceiling directory itself is checked.
+func isolateConfigSearch(t *testing.T, dir string) {
+	t.Helper()
+	t.Setenv("NIBS_CONFIG_ROOT", dir)
+}
+
 func TestFindConfig(t *testing.T) {
 	t.Run("finds config in current directory", func(t *testing.T) {
 		tmpDir := t.TempDir()
+		isolateConfigSearch(t, tmpDir)
 		configPath := filepath.Join(tmpDir, ConfigFileName)
 		if err := os.WriteFile(configPath, []byte("nibs:\n  prefix: test-\n"), 0644); err != nil {
 			t.Fatalf("WriteFile error = %v", err)
@@ -576,6 +680,7 @@ func TestFindConfig(t *testing.T) {
 
 	t.Run("finds config in parent directory", func(t *testing.T) {
 		tmpDir := t.TempDir()
+		isolateConfigSearch(t, tmpDir)
 		subDir := filepath.Join(tmpDir, "sub", "dir")
 		if err := os.MkdirAll(subDir, 0755); err != nil {
 			t.Fatalf("MkdirAll error = %v", err)
@@ -597,6 +702,7 @@ func TestFindConfig(t *testing.T) {
 
 	t.Run("returns empty string when no config found", func(t *testing.T) {
 		tmpDir := t.TempDir()
+		isolateConfigSearch(t, tmpDir)
 
 		found, err := FindConfig(tmpDir)
 		if err != nil {
@@ -608,9 +714,80 @@ func TestFindConfig(t *testing.T) {
 	})
 }
 
+func TestFindConfig_RespectsCeiling(t *testing.T) {
+	// writeConfig places a .nibs.yml in dir.
+	writeConfig := func(t *testing.T, dir string) string {
+		t.Helper()
+		p := filepath.Join(dir, ConfigFileName)
+		if err := os.WriteFile(p, []byte("nibs:\n  prefix: test-\n"), 0644); err != nil {
+			t.Fatalf("WriteFile error = %v", err)
+		}
+		return p
+	}
+
+	// mkSub creates a child directory and returns its path.
+	mkSub := func(t *testing.T, parent, name string) string {
+		t.Helper()
+		p := filepath.Join(parent, name)
+		if err := os.MkdirAll(p, 0755); err != nil {
+			t.Fatalf("MkdirAll error = %v", err)
+		}
+		return p
+	}
+
+	t.Run("config above the ceiling is not found", func(t *testing.T) {
+		root := t.TempDir()
+		ceiling := mkSub(t, root, "ceiling")
+		start := mkSub(t, ceiling, "start")
+		writeConfig(t, root) // above the ceiling
+
+		t.Setenv("NIBS_CONFIG_ROOT", ceiling)
+		found, err := FindConfig(start)
+		if err != nil {
+			t.Fatalf("FindConfig() error = %v", err)
+		}
+		if found != "" {
+			t.Errorf("FindConfig() = %q, want empty (config above ceiling must not be found)", found)
+		}
+	})
+
+	t.Run("config at the ceiling is found", func(t *testing.T) {
+		root := t.TempDir()
+		ceiling := mkSub(t, root, "ceiling")
+		start := mkSub(t, ceiling, "start")
+		want := writeConfig(t, ceiling) // at the ceiling
+
+		t.Setenv("NIBS_CONFIG_ROOT", ceiling)
+		found, err := FindConfig(start)
+		if err != nil {
+			t.Fatalf("FindConfig() error = %v", err)
+		}
+		if found != want {
+			t.Errorf("FindConfig() = %q, want %q (config at ceiling must be found)", found, want)
+		}
+	})
+
+	t.Run("config below the ceiling is found", func(t *testing.T) {
+		root := t.TempDir()
+		ceiling := mkSub(t, root, "ceiling")
+		start := mkSub(t, ceiling, "start")
+		want := writeConfig(t, start) // below the ceiling
+
+		t.Setenv("NIBS_CONFIG_ROOT", ceiling)
+		found, err := FindConfig(start)
+		if err != nil {
+			t.Fatalf("FindConfig() error = %v", err)
+		}
+		if found != want {
+			t.Errorf("FindConfig() = %q, want %q (config below ceiling must be found)", found, want)
+		}
+	})
+}
+
 func TestLoadFromDirectory(t *testing.T) {
 	t.Run("loads config from directory with .nibs.yml", func(t *testing.T) {
 		tmpDir := t.TempDir()
+		isolateConfigSearch(t, tmpDir)
 		configPath := filepath.Join(tmpDir, ConfigFileName)
 		configYAML := `nibs:
   path: custom-nibs
@@ -638,6 +815,7 @@ func TestLoadFromDirectory(t *testing.T) {
 
 	t.Run("returns default config when no config file exists", func(t *testing.T) {
 		tmpDir := t.TempDir()
+		isolateConfigSearch(t, tmpDir)
 
 		cfg, err := LoadFromDirectory(tmpDir)
 		if err != nil {
@@ -760,8 +938,8 @@ func TestIsValidPriority(t *testing.T) {
 		{"high", true},
 		{"normal", true},
 		{"low", true},
-		{"deferred", true},
-		{"", true}, // empty is valid (means no priority)
+		{"deferred", false}, // removed as a priority (now a status)
+		{"", true},          // empty is valid (means no priority)
 		{"invalid", false},
 		{"CRITICAL", false}, // case sensitive
 		{"medium", false},   // not a valid priority
@@ -780,7 +958,7 @@ func TestIsValidPriority(t *testing.T) {
 func TestPriorityList(t *testing.T) {
 	cfg := Default()
 	got := cfg.PriorityList()
-	want := "critical, high, normal, low, deferred"
+	want := "critical, high, normal, low"
 
 	if got != want {
 		t.Errorf("PriorityList() = %q, want %q", got, want)
@@ -791,10 +969,10 @@ func TestPriorityNames(t *testing.T) {
 	cfg := Default()
 	got := cfg.PriorityNames()
 
-	if len(got) != 5 {
-		t.Fatalf("len(PriorityNames()) = %d, want 5", len(got))
+	if len(got) != 4 {
+		t.Fatalf("len(PriorityNames()) = %d, want 4", len(got))
 	}
-	expected := []string{"critical", "high", "normal", "low", "deferred"}
+	expected := []string{"critical", "high", "normal", "low"}
 	for i, name := range expected {
 		if got[i] != name {
 			t.Errorf("PriorityNames()[%d] = %q, want %q", i, got[i], name)
@@ -842,7 +1020,6 @@ func TestPriorityDescriptions(t *testing.T) {
 		"high":     "Important, should be done before normal work",
 		"normal":   "Standard priority",
 		"low":      "Less important, can be delayed",
-		"deferred": "Explicitly pushed back, avoid doing unless necessary",
 	}
 
 	for priorityName, expectedDesc := range expectedDescriptions {
@@ -870,10 +1047,10 @@ func TestPriorityRank(t *testing.T) {
 		{"high", "high", 1},
 		{"normal", "normal", 2},
 		{"low", "low", 3},
-		{"deferred", "deferred", 4},
 		// Empty string treated as normal
 		{"empty is normal", "", 2},
-		// Unknown priority sorts last
+		// Unknown priority sorts last ("deferred" is no longer a priority)
+		{"deferred is unknown", "deferred", len(DefaultPriorities)},
 		{"unknown sorts last", "bogus", len(DefaultPriorities)},
 		{"case sensitive", "CRITICAL", len(DefaultPriorities)},
 	}
@@ -889,8 +1066,8 @@ func TestPriorityRank(t *testing.T) {
 }
 
 func TestDefaultPrioritiesCount(t *testing.T) {
-	if len(DefaultPriorities) != 5 {
-		t.Errorf("len(DefaultPriorities) = %d, want 5", len(DefaultPriorities))
+	if len(DefaultPriorities) != 4 {
+		t.Errorf("len(DefaultPriorities) = %d, want 4", len(DefaultPriorities))
 	}
 }
 

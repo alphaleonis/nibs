@@ -22,7 +22,7 @@ func ValidateParentInMap(nibs map[string]*nib.Nib, b *nib.Nib, parentID string) 
 		return fmt.Errorf("parent nib not found: %s", parentID)
 	}
 
-	return nibtypes.ValidateParentType(b.Type, parent.Type)
+	return nibtypes.ValidateParentType(b.EffectiveType(), parent.EffectiveType())
 }
 
 // ValidateParent checks if a parent is valid for the given nib.

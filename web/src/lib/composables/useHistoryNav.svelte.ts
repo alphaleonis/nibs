@@ -1,4 +1,5 @@
 import type { SelectionState } from "../selection.svelte";
+import { isBucketId } from "../tree";
 
 export interface HistoryLike {
   pushState(data: unknown, unused: string, url?: string | null): void;
@@ -11,7 +12,7 @@ export interface HistoryNav {
   /** Heal the current history entry in place to the clean no-nib URL
    *  (replaceState, no Back-stop). Caller owns the selection state. Used when a
    *  stale `?nib=<gone>` must be normalized: deleting/archiving the open nib, or
-   *  landing on a nib that no longer exists (nibs-etk3). */
+   *  landing on a nib that no longer exists. */
   replaceClosed(): void;
   handlePopState(e: { state: unknown }): void;
   syncFromUrl(): void;
@@ -37,7 +38,7 @@ export function createHistoryNav(opts: {
   history?: HistoryLike;
   getLocation?: () => { search: string; pathname: string };
   /** True while a blocking overlay (editor modal / type picker / confirm dialog)
-   *  is open. Back/Forward must not navigate the panel behind it (nibs-g1fy). */
+   *  is open. Back/Forward must not navigate the panel behind it. */
   isBlocked?: () => boolean;
 }): HistoryNav {
   const { selection } = opts;
@@ -49,25 +50,30 @@ export function createHistoryNav(opts: {
   const closeUrl = () => getLocation().pathname || "/";
 
   function navigateToNib(id: string) {
+    // A synthetic grouping-bucket id ("No X") can route here via view.open on a
+    // right-clicked/arrow-focused bucket row. select() already no-ops on a bucket
+    // (nibs-mn0t), but the history push must be skipped too — otherwise a stale
+    // ?nib=<bucket> survives reload/Back and tries to select a nonexistent nib.
+    if (isBucketId(id)) return;
     // Gate ONLY the history push, not the select: `select()` is a full resync
     // (selectedNibId, focusedNibId, selectedIds, anchorId), so it must run even
     // when the nib is already open — otherwise focus/anchor drift (e.g. after
-    // arrow-key nav) survives a re-navigation and can misdirect Delete/Edit
-    // (nibs-58c3). The guard's single job is "don't push a duplicate entry".
+    // arrow-key nav) survives a re-navigation and can misdirect Delete/Edit.
+    // The guard's single job is "don't push a duplicate entry".
     //
     // Boundary: selectedNibId can also change WITHOUT going through nav — a
     // multi-select collapse-to-one (toggleSelect/rangeSelect) opens the panel
     // and collapse-to-zero closes it, neither writing history. So URL/history
     // may lag selectedNibId after a bulk gesture; that's an accepted residual
-    // for multi-select (not detail-panel navigation) (nibs-58c3).
+    // for multi-select (not detail-panel navigation).
     if (selection.selectedNibId !== id) history.pushState({ nibId: id }, "", nibUrl(id));
     selection.select(id);
   }
 
   function closePanel() {
     // Gate ONLY the history push; close() is idempotent, so always calling it is
-    // harmless and keeps the guard's single job = "don't push a duplicate entry"
-    // (nibs-58c3). See navigateToNib for the multi-select desync boundary.
+    // harmless and keeps the guard's single job = "don't push a duplicate entry".
+    // See navigateToNib for the multi-select desync boundary.
     if (selection.selectedNibId !== null) history.pushState({ nibId: null }, "", closeUrl());
     selection.close();
   }
@@ -82,7 +88,7 @@ export function createHistoryNav(opts: {
     // shown selection so Back/Forward is a no-op and the URL stays consistent
     // with the (covered) panel. We intentionally do NOT close the overlay here —
     // the editor modal's own close path guards unsaved changes; the user
-    // dismisses via Escape/Cancel, then Back/Forward resumes (nibs-g1fy).
+    // dismisses via Escape/Cancel, then Back/Forward resumes.
     if (isBlocked()) {
       if (selection.selectedNibId !== null) {
         history.pushState({ nibId: selection.selectedNibId }, "", nibUrl(selection.selectedNibId));

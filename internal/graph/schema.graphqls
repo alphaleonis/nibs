@@ -9,6 +9,16 @@ type Config {
   prefix: String!
 }
 
+"Result of the best-effort check for a newer nibs release."
+type UpdateStatus {
+  "The running server version (e.g. \"v0.5.1\"); empty for a dev build."
+  current: String!
+  "The latest released version (e.g. \"v0.6.0\"); empty if unknown."
+  latest: String!
+  "True when a newer release than the running version is available."
+  updateAvailable: Boolean!
+}
+
 type Query {
   """
   Get a single nib by ID. Accepts either the full ID (e.g., "nibs-abc1") or the short ID without prefix (e.g., "abc1").
@@ -24,6 +34,13 @@ type Query {
 
   "Get project configuration"
   config: Config!
+
+  """
+  Whether a newer nibs release is available than the one running the server.
+  Best-effort: on a dev build, in CI, when opted out, or on network failure,
+  updateAvailable is false and latest may be empty.
+  """
+  updateStatus: UpdateStatus!
 }
 
 type Mutation {
@@ -81,7 +98,10 @@ type Mutation {
   """
   Reorder the full set of children under a parent. childIds must list exactly
   all children of parentId, in the desired new order. Returns affected nibs in
-  the requested new order. Use parentId="" for root-level (no-parent) siblings.
+  the requested new order; a child deleted concurrently (in the window between
+  this batch persisting and the response snapshot) is omitted from the returned
+  set, and the persisted order among the survivors is still valid. Use
+  parentId="" for root-level (no-parent) siblings.
   Errors if childIds is missing children, contains non-existent IDs, contains
   nibs whose parent != parentId, or contains duplicates.
 
@@ -108,7 +128,10 @@ type Mutation {
   sibling. All siblingIds must share the same parent (inferred from the listed
   nibs). Anchor must be a sibling and must NOT appear in siblingIds. Exactly
   one of afterId, beforeId, first must be specified. Listed siblings become a
-  contiguous block at the requested position, preserving their listed order.
+  contiguous block at the requested position, preserving their listed order. A
+  sibling deleted concurrently (in the window between this batch persisting and
+  the response snapshot) is omitted from the returned set; the persisted order
+  among the survivors is still valid.
 
   Optional ifMatch carries per-sibling ETags for optimistic concurrency. Each
   entry's ETag is pre-checked against the on-disk content of the corresponding
@@ -176,17 +199,34 @@ input CreateNibInput {
 Input for updating an existing nib
 """
 input UpdateNibInput {
-  "New title"
+  """
+  New title. Not a clearable field: null/omit both leave the title unchanged
+  (a title is required, so it is never cleared).
+  """
   title: String
-  "New status"
+  """
+  New status. Not a clearable field: null/omit both leave the status unchanged.
+  """
   status: String
-  "New type"
+  """
+  New type. Not a clearable field: null/omit both leave the type unchanged.
+  """
   type: String
-  "New priority"
+  """
+  New priority. Explicit null clears the priority; omit to leave it unchanged.
+  Note: a cleared priority reads back as the effective default "normal" (the
+  data model treats empty as normal), so the clear is not observable on read.
+  """
   priority: String
-  "New estimate size (s, m, l, xl, or null to clear)"
+  """
+  New estimate size (s, m, l, xl). Explicit null clears the estimate; omit to
+  leave it unchanged.
+  """
   estimate: String
-  "Replace all tags (nil preserves existing, mutually exclusive with addTags/removeTags)"
+  """
+  Replace all tags. An empty list clears all tags; omit (null) to leave the
+  existing tags unchanged. Mutually exclusive with addTags/removeTags.
+  """
   tags: [String!]
   "Add tags to existing list"
   addTags: [String!]
@@ -197,7 +237,11 @@ input UpdateNibInput {
   "Structured body modifications (mutually exclusive with body)"
   bodyMod: BodyModification
   
-  "Set parent nib ID (null/empty to clear, validates type hierarchy)"
+  """
+  Set the parent nib ID (validated against the type hierarchy). Explicit null
+  OR empty string clears the parent (moves the nib to root); omit to leave it
+  unchanged.
+  """
   parent: String
   "Add nibs to blocking list (validates cycles and existence)"
   addBlocking: [String!]
@@ -261,11 +305,11 @@ type Nib {
   version: Int!
   "Nib title"
   title: String!
-  "Current status (draft, todo, in-progress, completed, scrapped)"
+  "Current status (draft, todo, in-progress, deferred, completed, scrapped)"
   status: String!
   "Nib type (milestone, epic, bug, feature, task)"
   type: String!
-  "Priority level (critical, high, normal, low, deferred)"
+  "Priority level (critical, high, normal, low)"
   priority: String!
   "Estimate size (s, m, l, xl, or empty)"
   estimate: String!
@@ -440,10 +484,14 @@ type Subscription {
 }
 
 """
-A change event emitted when a nib is created, updated, or deleted.
+A change event emitted when a nib is created, updated, deleted, or archived.
 """
 type NibChangeEvent {
-  "The type of change: created, updated, or deleted"
+  """
+  The type of change: created, updated, deleted, or archived. An archived nib
+  still exists — it moved to the archive directory and remains readable and
+  updatable there — so archived is reported separately from deleted.
+  """
   type: String!
   "The ID of the affected nib (always present, even for deletes)"
   nibId: ID!

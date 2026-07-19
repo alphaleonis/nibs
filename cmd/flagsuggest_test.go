@@ -90,14 +90,14 @@ func TestFlagSuggestion_Integration(t *testing.T) {
 			wantContain: "Did you mean --config?",
 		},
 		{
-			// `update.go` sorts alphabetically AFTER `root.go`, so its
-			// `rootCmd.AddCommand(updateCmd)` runs in init() *after*
-			// installFlagSuggestions. updateCmd never gets flagErrorFunc
+			// `set.go` sorts alphabetically AFTER `root.go`, so its
+			// `rootCmd.AddCommand(setCmd)` runs in init() *after*
+			// installFlagSuggestions. setCmd never gets flagErrorFunc
 			// set explicitly — it relies on Cobra's parent-walk in
 			// FlagErrorFunc() to find rootCmd's. This case pins that
 			// contract: if the parent-walk ever breaks, this test fails.
 			name:        "late-registered subcommand: --titel suggests --title",
-			args:        []string{"update", "--titel", "abc-1"},
+			args:        []string{"set", "--titel", "abc-1"},
 			wantErr:     true,
 			wantContain: "Did you mean --title?",
 		},

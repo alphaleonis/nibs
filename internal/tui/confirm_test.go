@@ -24,17 +24,16 @@ func setupTestApp(t *testing.T, nibs []*nib.Nib) (*App, *StubBackend) {
 	}
 
 	cfg := config.Default()
-	app := New(stub, cfg)
+	app := New(stub, cfg, "dev")
 
 	// Initialize and set a reasonable window size
 	initCmd := app.Init()
 	app.Update(tea.WindowSizeMsg{Width: 120, Height: 40})
 
-	// Execute the init command (loadNibs) to populate the list
-	if initCmd != nil {
-		msg := initCmd()
-		app.Update(msg)
-	}
+	// Execute the init command to populate the list. Init returns a batch
+	// (loadNibs + the background update check), so unwrap it the way the
+	// Bubbletea runtime does rather than feeding the BatchMsg to Update.
+	processCmd(app, initCmd)
 
 	return app, stub
 }

@@ -2,6 +2,7 @@ import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { SelectionState } from "../selection.svelte";
 import { DragState } from "../drag.svelte";
 import type { RowData } from "../tableData";
+import { buildTableData } from "../tableData";
 import type { TreeTableNib } from "../types";
 import { useTreeDrag } from "./useTreeDrag.svelte";
 
@@ -34,6 +35,7 @@ function makeRow(nib: TreeTableNib, opts: Partial<RowData> = {}): RowData {
     hasChildren: false,
     dimmed: false,
     parentNib: null,
+    displayParentId: null,
     ...opts,
   };
 }
@@ -212,6 +214,367 @@ describe("useTreeDrag", () => {
     expect(drag.isDragging).toBe(false);
   });
 
+  it("cross-container before/after drop onto a loose bucket item stays valid (real onDragPointerMove path)", () => {
+    // Regression guard for the #jeu5 producer invariant, driving the REAL
+    // onDragPointerMove cross-parent type-validation branch — the resolution
+    // tests below deliberately bypass it via setDropTarget(..., true), which is
+    // why the original regression went uncaught. Rows come from the real
+    // buildTableData pipeline so the producer fix's effect on a loose bucket
+    // item's displayParentId is exercised end-to-end.
+    //
+    // Epics lens: E1 (epic header) → F1 (feature child, displayParentId "E1") is
+    // dragged; T1 (loose task) lands in the "No epic" bucket. Dropping F1 BEFORE
+    // the loose bucket item T1 is a cross-container reorder to root. Before the
+    // producer fix, T1's displayParentId was the synthetic bucket id, so the
+    // validation looked up the bucket pseudo-nib (type "") and
+    // isValidCrossParentDrop(["feature"], "") rejected the drop (dropValid=false).
+    // After the fix T1 resolves to null (root) → the drop is valid.
+    const nibs: TreeTableNib[] = [
+      makeNib({ id: "E1", type: "epic", parentId: null }),
+      makeNib({ id: "F1", type: "feature", parentId: "E1" }),
+      makeNib({ id: "T1", type: "task", parentId: null }),
+    ];
+    const { rows } = buildTableData(nibs, {}, "epics", new Set<string>());
+
+    // The synthetic bucket row is present in the rows fed to the composable, so
+    // nibMap includes the pseudo-nib (type "") — reproducing the exact bug
+    // surface. The discriminating assertion below is drag.dropValid: with the
+    // producer fix reverted, T1's displayParentId is the bucket id and the drop
+    // is rejected there.
+    expect(rows.some(r => r.nib.id === "__no_epic__")).toBe(true);
+
+    const drag = new DragState();
+    const composable = setup({ drag, rows });
+
+    // Drag F1 (feature under the visible E1 header → draggedParentId "E1").
+    startDragOn("F1", composable);
+    expect(drag.isDragging).toBe(true);
+
+    // Build a <tr data-nib-id="T1"> and point elementFromPoint at it. Cursor in
+    // the top 30% of the row → "before" zone (cross-container reorder, not
+    // reparent).
+    const tr = document.createElement("tr");
+    tr.dataset.nibId = "T1";
+    tr.getBoundingClientRect = () => ({
+      top: 200, bottom: 240, left: 0, right: 800,
+      height: 40, width: 800, x: 0, y: 200,
+      toJSON: () => {},
+    }) as DOMRect;
+    document.body.appendChild(tr);
+    const origElementFromPoint = document.elementFromPoint;
+    document.elementFromPoint = () => tr;
+
+    // clientY=205 → 5px into a 40px row → ratio 0.125 < 0.3 → "before".
+    window.dispatchEvent(new PointerEvent("pointermove", {
+      clientX: 200, clientY: 205, bubbles: true,
+    }));
+
+    expect(drag.dropTargetId).toBe("T1");
+    expect(drag.dropZone).toBe("before");
+    expect(drag.dropValid).toBe(true);
+
+    document.elementFromPoint = origElementFromPoint;
+    document.body.removeChild(tr);
+    cleanup?.();
+  });
+
+  it("before/after reorder where dragged & target share a display container but have DIFFERENT real parents is INVALID", () => {
+    // In a grouping lens two rows can share the same DISPLAY
+    // container (both display at root → displayParentId null) while having
+    // DIFFERENT real nib.parentId — e.g. a promoted feature header (real parent
+    // a hidden epic) and a loose "No X" bucket task (real parent null). A plain
+    // before/after reorder here fires a parent-less reorderNibCmd, but the
+    // backend computes siblings from the dragged item's UNCHANGED real parent and
+    // rejects ("not a sibling (different parent)"). "Reorder" only means something
+    // within a single real parent, so the affordance must read INVALID and the
+    // drop must never be offered. This drives the REAL onDragPointerMove validity
+    // path (not setDropTarget), which is where the false-valid slips through.
+    const dragged = makeNib({ id: "F1", type: "feature", parentId: "hidden-epic" });
+    const target = makeNib({ id: "T1", type: "task", parentId: null });
+    const rows = [
+      // Promoted header: real parent a hidden epic, but display parent is root.
+      makeRow(dragged, { displayParentId: null }),
+      // Loose "No epic" bucket item: real parent null, display parent root too.
+      makeRow(target, { displayParentId: null }),
+    ];
+
+    const drag = new DragState();
+    const composable = setup({ drag, rows });
+
+    startDragOn("F1", composable);
+    expect(drag.isDragging).toBe(true);
+
+    const tr = document.createElement("tr");
+    tr.dataset.nibId = "T1";
+    tr.getBoundingClientRect = () => ({
+      top: 200, bottom: 240, left: 0, right: 800,
+      height: 40, width: 800, x: 0, y: 200,
+      toJSON: () => {},
+    }) as DOMRect;
+    document.body.appendChild(tr);
+    const origElementFromPoint = document.elementFromPoint;
+    document.elementFromPoint = () => tr;
+
+    // clientY=205 → 5px into a 40px row → ratio 0.125 < 0.3 → "before" (reorder).
+    window.dispatchEvent(new PointerEvent("pointermove", {
+      clientX: 200, clientY: 205, bubbles: true,
+    }));
+
+    expect(drag.dropTargetId).toBe("T1");
+    expect(drag.dropZone).toBe("before");
+    // Equal display parent (null) but different real parent → INVALID.
+    expect(drag.dropValid).toBe(false);
+
+    document.elementFromPoint = origElementFromPoint;
+    document.body.removeChild(tr);
+    cleanup?.();
+  });
+
+  it("before/after reorder between genuine real siblings (same display + same real parent) stays VALID (guardrail)", () => {
+    // Scope guardrail for the real-parent guard: when the dragged and target rows are
+    // real siblings (same real nib.parentId) and share the same display
+    // container, a before/after reorder must remain VALID — the new real-parent
+    // guard only rejects the equal-display / DIFFERENT-real-parent case.
+    const dragged = makeNib({ id: "C1", type: "task", parentId: "epic-A" });
+    const target = makeNib({ id: "C2", type: "task", parentId: "epic-A" });
+    const rows = [
+      makeRow(dragged, { displayParentId: "epic-A" }),
+      makeRow(target, { displayParentId: "epic-A" }),
+    ];
+
+    const drag = new DragState();
+    const composable = setup({ drag, rows });
+
+    startDragOn("C1", composable);
+    expect(drag.isDragging).toBe(true);
+
+    const tr = document.createElement("tr");
+    tr.dataset.nibId = "C2";
+    tr.getBoundingClientRect = () => ({
+      top: 200, bottom: 240, left: 0, right: 800,
+      height: 40, width: 800, x: 0, y: 200,
+      toJSON: () => {},
+    }) as DOMRect;
+    document.body.appendChild(tr);
+    const origElementFromPoint = document.elementFromPoint;
+    document.elementFromPoint = () => tr;
+
+    window.dispatchEvent(new PointerEvent("pointermove", {
+      clientX: 200, clientY: 205, bubbles: true,
+    }));
+
+    expect(drag.dropTargetId).toBe("C2");
+    expect(drag.dropZone).toBe("before");
+    // Genuine same-real-parent reorder → still VALID.
+    expect(drag.dropValid).toBe(true);
+
+    document.elementFromPoint = origElementFromPoint;
+    document.body.removeChild(tr);
+    cleanup?.();
+  });
+
+  it("before/after reorder for a MULTI-SELECT drag spanning MIXED real parents is INVALID (fail-closed)", () => {
+    // Completeness gap in the real-parent guard: for a multi-select drag whose
+    // selected rows span DIFFERENT real parents, the shared-real-parent Set
+    // collapses to size≠1 → draggedRealParentId === undefined. A guard that only
+    // rejects when draggedRealParentId is DEFINED-and-different fails OPEN here —
+    // the drop reads valid, then handleDrop fires a parent-less reorder the
+    // backend rejects ("not a sibling"). With no single PROVABLE shared real
+    // parent we cannot establish real-sibling-hood, so a before/after reorder
+    // must be INVALID (fail closed). Drives the real onDragPointerMove path.
+    const d1 = makeNib({ id: "D1", type: "feature", parentId: "epic-A" });
+    const d2 = makeNib({ id: "D2", type: "task", parentId: "epic-B" });
+    const target = makeNib({ id: "T1", type: "task", parentId: "epic-C" });
+    const rows = [
+      // Both dragged rows display at root (equal displayParentId null) but have
+      // DIFFERENT real parents → draggedRealParentId becomes undefined.
+      makeRow(d1, { displayParentId: null }),
+      makeRow(d2, { displayParentId: null }),
+      makeRow(target, { displayParentId: null }),
+    ];
+
+    // Multi-select: both D1 and D2 selected, drag started on D1.
+    const selection = new SelectionState();
+    selection.selectedIds = new Set(["D1", "D2"]);
+
+    const drag = new DragState();
+    const composable = setup({ selection, drag, rows });
+
+    startDragOn("D1", composable);
+    expect(drag.isDragging).toBe(true);
+    expect(drag.draggedIds).toEqual(expect.arrayContaining(["D1", "D2"]));
+
+    const tr = document.createElement("tr");
+    tr.dataset.nibId = "T1";
+    tr.getBoundingClientRect = () => ({
+      top: 200, bottom: 240, left: 0, right: 800,
+      height: 40, width: 800, x: 0, y: 200,
+      toJSON: () => {},
+    }) as DOMRect;
+    document.body.appendChild(tr);
+    const origElementFromPoint = document.elementFromPoint;
+    document.elementFromPoint = () => tr;
+
+    // clientY=205 → "before" zone (reorder).
+    window.dispatchEvent(new PointerEvent("pointermove", {
+      clientX: 200, clientY: 205, bubbles: true,
+    }));
+
+    expect(drag.dropTargetId).toBe("T1");
+    expect(drag.dropZone).toBe("before");
+    // No single provable shared real parent → INVALID.
+    expect(drag.dropValid).toBe(false);
+
+    document.elementFromPoint = origElementFromPoint;
+    document.body.removeChild(tr);
+    cleanup?.();
+  });
+
+  it("before/after drop forwards a promoted header's display parent (null), not its hidden real parent", () => {
+    // What this verifies at the useTreeDrag layer: onDragPointerUp forwards the
+    // TARGET row's displayParentId verbatim — it does NOT read nib.parentId. The
+    // target is a promoted header (a feature whose real parent is an epic/
+    // milestone hidden by the lens), which tableData emits with
+    // displayParentId === null though nib.parentId is non-null. Forwarding null
+    // (not the hidden real parent) is what keeps a reorder from silently
+    // reparenting under the hidden container.
+    // (Forwarding targetRow.nib.parentId instead would send "nibs-hidden-epic"
+    // here and fail this test.)
+    const dragged = makeNib({ id: "nibs-drag", type: "feature", parentId: null });
+    const header = makeNib({ id: "nibs-header", type: "feature", parentId: "nibs-hidden-epic" });
+    const rows = [
+      makeRow(dragged, { displayParentId: null }),
+      // Promoted header: real parentId set, but its DISPLAY parent is root (null).
+      makeRow(header, { displayParentId: null }),
+    ];
+
+    const drag = new DragState();
+    const ondrop = vi.fn();
+    const composable = setup({ drag, rows, ondrop });
+
+    startDragOn("nibs-drag", composable);
+    expect(drag.isDragging).toBe(true);
+
+    // Before/after (reorder) drop near the promoted header.
+    drag.setDropTarget("nibs-header", "before", true);
+    window.dispatchEvent(new PointerEvent("pointerup", { bubbles: true }));
+
+    // Display parent is root (null), NOT the hidden epic id.
+    expect(ondrop).toHaveBeenCalledWith("nibs-header", "before", null);
+  });
+
+  it("before/after drop forwards the target row's non-null displayParentId (same-container reorder keeps the container, not null)", () => {
+    // What this verifies at the useTreeDrag layer: when the target row has a
+    // non-null display parent, onDragPointerUp forwards THAT value rather than
+    // collapsing to null (which would make handleDrop see a cross-parent move and
+    // re-root the item). Both rows share the same real display container here — a
+    // plain same-container reorder — so the forwarded value is that container.
+    //
+    // This test does NOT discriminate a source/target swap (both rows carry the
+    // same displayParentId, so reading the source would yield the same value):
+    // that swap is owned by the sibling "DIFFERENT display container" test below,
+    // which gives source and target distinct values. What this test does pin is
+    // the "not null" half — forwarding targetRow.nib.parentId (null here) would
+    // send null and fail this assertion. The symmetric property (two loose
+    // siblings resolving to the SAME container) lives in tableData.flatten and is
+    // tested in tableData.test.ts.
+    const e1 = makeNib({ id: "nibs-e1", type: "feature", parentId: null });
+    const e2 = makeNib({ id: "nibs-e2", type: "feature", parentId: null });
+    const rows = [
+      makeRow(e1, { displayParentId: "nibs-shared-epic" }),
+      makeRow(e2, { displayParentId: "nibs-shared-epic" }),
+    ];
+
+    const drag = new DragState();
+    const ondrop = vi.fn();
+    const composable = setup({ drag, rows, ondrop });
+
+    startDragOn("nibs-e1", composable);
+    expect(drag.isDragging).toBe(true);
+
+    // Reorder before E2; the drop must forward E2's non-null display parent.
+    drag.setDropTarget("nibs-e2", "before", true);
+    window.dispatchEvent(new PointerEvent("pointerup", { bubbles: true }));
+
+    expect(ondrop).toHaveBeenCalledWith("nibs-e2", "before", "nibs-shared-epic");
+  });
+
+  it("before/after drop next to an item under a DIFFERENT display container resolves the target's container", () => {
+    // The dragged item and the target sit under DIFFERENT display containers
+    // (here two distinct buckets/parents). Re-rooting the drop to null whenever
+    // the target's real parent isn't a visible row is the trap; resolving
+    // through displayParentId instead
+    // keeps the target's own container, so handleDrop performs a correct
+    // cross-parent move rather than dumping the item at root.
+    const dragged = makeNib({ id: "nibs-drag", type: "feature", parentId: null });
+    const target = makeNib({ id: "nibs-target", type: "feature", parentId: null });
+    const rows = [
+      makeRow(dragged, { displayParentId: "__no_milestone__" }),
+      makeRow(target, { displayParentId: "nibs-other-epic" }),
+    ];
+
+    const drag = new DragState();
+    const ondrop = vi.fn();
+    const composable = setup({ drag, rows, ondrop });
+
+    startDragOn("nibs-drag", composable);
+    drag.setDropTarget("nibs-target", "before", true);
+    window.dispatchEvent(new PointerEvent("pointerup", { bubbles: true }));
+
+    // Resolves to the target's display container (NOT null): a genuine
+    // cross-parent move, not a silent re-root.
+    expect(ondrop).toHaveBeenCalledWith("nibs-target", "before", "nibs-other-epic");
+  });
+
+  it("before/after drop where the target's display parent is a visible parent resolves that parent id", () => {
+    // Guards against an always-null over-correction: the target sits under a
+    // normally-expanded parent row present in the visible rows, so its display
+    // parent id must be preserved for the cross-parent move to work.
+    const dragged = makeNib({ id: "nibs-drag", type: "feature", parentId: null });
+    const epic = makeNib({ id: "nibs-epic", type: "epic", parentId: null });
+    const child = makeNib({ id: "nibs-child", type: "feature", parentId: "nibs-epic" });
+    const rows = [
+      makeRow(dragged, { displayParentId: null }),
+      makeRow(epic, { hasChildren: true, displayParentId: null }),
+      makeRow(child, { depth: 1, parentNib: epic, displayParentId: "nibs-epic" }),
+    ];
+
+    const drag = new DragState();
+    const ondrop = vi.fn();
+    const composable = setup({ drag, rows, ondrop });
+
+    startDragOn("nibs-drag", composable);
+    drag.setDropTarget("nibs-child", "after", true);
+    window.dispatchEvent(new PointerEvent("pointerup", { bubbles: true }));
+
+    // The epic parent IS visible → resolve its id as the display parent.
+    expect(ondrop).toHaveBeenCalledWith("nibs-child", "after", "nibs-epic");
+  });
+
+  it("reparent-zone drop resolves a promoted header's display parent to null", () => {
+    // Reparent zone: the target itself becomes the new parent (handleDrop uses
+    // the target id and ignores targetParentId), so dropping onto a promoted
+    // header whose display parent is root must still fire the reparent path.
+    const dragged = makeNib({ id: "nibs-drag", type: "feature", parentId: null });
+    const epic = makeNib({ id: "nibs-epic", type: "epic", parentId: "nibs-hidden-ms" });
+    const rows = [
+      makeRow(dragged, { displayParentId: null }),
+      makeRow(epic, { hasChildren: true, displayParentId: null }),
+    ];
+
+    const drag = new DragState();
+    const ondrop = vi.fn();
+    const composable = setup({ drag, rows, ondrop });
+
+    startDragOn("nibs-drag", composable);
+    drag.setDropTarget("nibs-epic", "reparent", true);
+    window.dispatchEvent(new PointerEvent("pointerup", { bubbles: true }));
+
+    // Reparent still fires; targetParentId is resolved to null (display parent is
+    // root) but handleDrop ignores it for the reparent zone.
+    expect(ondrop).toHaveBeenCalledWith("nibs-epic", "reparent", null);
+  });
+
   it("Escape during drag cancels without calling ondrop", () => {
     const nib1 = makeNib({ id: "nibs-001" });
     const rows = [makeRow(nib1)];
@@ -231,7 +594,7 @@ describe("useTreeDrag", () => {
     const escEvent = new KeyboardEvent("keydown", { key: "Escape", bubbles: true, cancelable: true });
     composable.onDragKeyDown(escEvent);
 
-    // Drag should be cancelled, ondrop should NOT have been called
+    // Drag should be canceled, ondrop should NOT have been called
     expect(drag.isDragging).toBe(false);
     expect(ondrop).not.toHaveBeenCalled();
     expect(escEvent.defaultPrevented).toBe(true);

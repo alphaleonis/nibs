@@ -1,7 +1,7 @@
 <script lang="ts">
   import { STATUSES } from "../constants";
   import * as Select from "$lib/components/ui/select/index.js";
-  import StatusDot from "./StatusDot.svelte";
+  import StatusIcon from "./StatusIcon.svelte";
 
   interface Props {
     value: string;
@@ -14,14 +14,14 @@
 </script>
 
 <Select.Root type="single" {value} {disabled} onValueChange={(v) => { if (v) onchange(v); }}>
-  <Select.Trigger data-testid={testId} size="sm" class="flex-1">
-    <StatusDot status={value} />
+  <Select.Trigger data-testid={testId} size="default" class="flex-1">
+    <StatusIcon status={value} />
     {value}
   </Select.Trigger>
   <Select.Content>
     {#each STATUSES as s}
       <Select.Item value={s}>
-        <StatusDot status={s} />
+        <StatusIcon status={s} />
         {s}
       </Select.Item>
     {/each}

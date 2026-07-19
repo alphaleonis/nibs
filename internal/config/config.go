@@ -19,11 +19,14 @@ const (
 
 // DefaultStatuses defines the hardcoded status configuration.
 // Statuses are not configurable - they are hardcoded like types.
-// Order determines sort priority: in-progress first (active work), then todo, draft, and done states last.
+// Order determines sort priority: in-progress first (active work), then todo
+// and draft, then deferred (parked, non-terminal), and the archived terminal
+// states (completed, scrapped) last.
 var DefaultStatuses = []StatusConfig{
 	{Name: "in-progress", Color: "yellow", Description: "Currently being worked on"},
 	{Name: "todo", Color: "green", Description: "Ready to be worked on"},
 	{Name: "draft", Color: "blue", Description: "Needs refinement before it can be worked on"},
+	{Name: "deferred", Color: "gray", Description: "Parked — not actionable now, but not abandoned (scrapped) or merely unrefined (draft)"},
 	{Name: "completed", Color: "gray", Archive: true, Description: "Finished successfully"},
 	{Name: "scrapped", Color: "gray", Archive: true, Description: "Will not be done"},
 }
@@ -45,7 +48,6 @@ var DefaultPriorities = []PriorityConfig{
 	{Name: "high", Color: "yellow", Description: "Important, should be done before normal work"},
 	{Name: "normal", Color: "white", Description: "Standard priority"},
 	{Name: "low", Color: "gray", Description: "Less important, can be delayed"},
-	{Name: "deferred", Color: "gray", Description: "Explicitly pushed back, avoid doing unless necessary"},
 }
 
 // DefaultEstimates defines the hardcoded estimate configuration.
@@ -146,16 +148,40 @@ func DefaultWithPrefix(prefix string) *Config {
 
 // FindConfig searches upward from the given directory for a .nibs.yml config file.
 // Returns the absolute path to the config file, or empty string if not found.
+//
+// The NIBS_CONFIG_ROOT environment variable, when set to a non-empty path,
+// bounds the upward walk: each directory up to and including that ceiling is
+// checked for .nibs.yml, but the walk never ascends above it. Comparison is
+// done on absolute paths (via filepath.Abs), so a ceiling that isn't an
+// ancestor of startDir simply never triggers and the walk proceeds to the
+// filesystem root as usual. When unset, behavior is unchanged (walk to root).
+// This is mainly a sandboxing/test-isolation knob — it keeps a stray ancestor
+// .nibs.yml (e.g. /tmp/.nibs.yml) from leaking into tests that expect no
+// config to be found.
 func FindConfig(startDir string) (string, error) {
 	dir, err := filepath.Abs(startDir)
 	if err != nil {
 		return "", err
 	}
 
+	// NIBS_CONFIG_ROOT caps how far the upward walk may climb.
+	var ceiling string
+	if raw := os.Getenv("NIBS_CONFIG_ROOT"); raw != "" {
+		ceiling, err = filepath.Abs(raw)
+		if err != nil {
+			return "", err
+		}
+	}
+
 	for {
 		configPath := filepath.Join(dir, ConfigFileName)
 		if _, err := os.Stat(configPath); err == nil {
 			return configPath, nil
+		}
+
+		// Stop at the ceiling: this dir was checked, but do not ascend above it.
+		if ceiling != "" && dir == ceiling {
+			return "", nil
 		}
 
 		parent := filepath.Dir(dir)
@@ -347,6 +373,50 @@ func (c *Config) IsArchiveStatus(name string) bool {
 		return s.Archive
 	}
 	return false
+}
+
+// ArchiveStatusNames returns the names of all statuses marked for archiving,
+// derived from DefaultStatuses (the single source of truth). Every returned
+// name satisfies IsArchiveStatus. Today this is {completed, scrapped}; deriving
+// it here keeps the set correct if the Archive flags ever change. This is the
+// "closed" status group.
+func (c *Config) ArchiveStatusNames() []string {
+	var names []string
+	for _, s := range DefaultStatuses {
+		if s.Archive {
+			names = append(names, s.Name)
+		}
+	}
+	return names
+}
+
+// parkedStatuses is the single source of truth for the "parked" status group —
+// non-terminal statuses that are not actionable right now but not abandoned.
+// Unlike open/closed this cannot be derived from the Archive flag, so it is
+// enumerated here once. Today this is {deferred}.
+var parkedStatuses = []string{"deferred"}
+
+// OpenStatusNames returns the names of all non-archive statuses — the "open"
+// status group. Derived from DefaultStatuses (Archive == false), so it stays
+// correct if the Archive flags ever change. Today this is
+// {in-progress, todo, draft, deferred}.
+func (c *Config) OpenStatusNames() []string {
+	var names []string
+	for _, s := range DefaultStatuses {
+		if !s.Archive {
+			names = append(names, s.Name)
+		}
+	}
+	return names
+}
+
+// ParkedStatusNames returns the names of the "parked" status group — a
+// defensive copy of the canonical parkedStatuses set so callers cannot mutate
+// the source. Parked statuses are non-archive (a subset of the open group).
+func (c *Config) ParkedStatusNames() []string {
+	names := make([]string, len(parkedStatuses))
+	copy(names, parkedStatuses)
+	return names
 }
 
 // GetType returns the TypeConfig for a given type name, or nil if not found.
