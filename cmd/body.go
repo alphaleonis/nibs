@@ -46,8 +46,46 @@ carries its own heading. --create is valid only with --section --set.
 The surgical --replace-old/--replace-new form matches exactly once: zero
 matches fail with TEXT_NOT_FOUND and more than one with TEXT_AMBIGUOUS (both
 exit 2), each reporting the occurrence count.`,
-	Args: codedExactArgs(&bodyJSON, 1),
+	Args: bodyArgs,
 	RunE: runBody,
+}
+
+// bodyArgs validates the body command's positional arguments. Before the
+// ordinary arg-count check it catches a common footgun: --set and --append are
+// string flags, so a following flag token — long like "--create" or short like
+// cobra's auto-registered "-h" — is silently bound as the flag's value (pflag
+// consumes the next token), pushing the real input channel out as a stray
+// positional. Both failing shapes reach this validator — the trailing-"-" shape
+// short-circuits here (2 positionals) before RunE, and the no-trailing-"-" shape
+// (1 positional) would otherwise trip an unrelated inline-prose error in RunE —
+// so this single placement names the swallowed token and steers to the correct
+// order for both. When neither flag swallowed a flag token, it falls through to
+// the standard exactly-one-argument check.
+func bodyArgs(cmd *cobra.Command, args []string) error {
+	if swallowed, ok := swallowedFlagValue(bodySet); ok {
+		return cmdError(bodyJSON, output.ErrValidation,
+			"--set expects an input channel ('-' or '@FILE'); %q was consumed as its value — write it as `--set - %s`",
+			swallowed, swallowed)
+	}
+	if swallowed, ok := swallowedFlagValue(bodyAppend); ok {
+		return cmdError(bodyJSON, output.ErrValidation,
+			"--append expects an input channel ('-' or '@FILE'); %q was consumed as its value — write it as `--append - %s`",
+			swallowed, swallowed)
+	}
+	return codedExactArgs(&bodyJSON, 1)(cmd, args)
+}
+
+// swallowedFlagValue reports whether a string flag's value looks like a flag
+// token pflag bound by mistake. A legitimate input channel is only ever "-" or
+// "@FILE", so any value beginning with "-" other than the lone "-" stdin marker
+// can only be a following flag the string flag ate — long ("--create") or short
+// ("-h", cobra's auto --help shorthand) alike. The lone "-" is excluded so the
+// valid stdin channel never false-positives.
+func swallowedFlagValue(value string) (string, bool) {
+	if value != "-" && strings.HasPrefix(value, "-") {
+		return value, true
+	}
+	return "", false
 }
 
 func runBody(cmd *cobra.Command, args []string) error {

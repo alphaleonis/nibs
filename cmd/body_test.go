@@ -331,6 +331,238 @@ func TestBodyCreateRequiresSectionSet(t *testing.T) {
 	}
 }
 
+// TestBodySetSwallowsFollowingFlagTwoArg verifies the swallowed-flag footgun in
+// its 2-arg (trailing "-") shape: because --set is a string flag,
+// "body <id> --section H --set --create -" binds "--create" as --set's value,
+// leaving "-" as a second stray positional. That shape short-circuits at Args
+// validation (2 args) before RunE ever runs, so the diagnostic must name the
+// swallowed flag and steer to the correct order from the Args validator.
+func TestBodySetSwallowsFollowingFlagTwoArg(t *testing.T) {
+	t.Cleanup(resetBodyFlags)
+	resetBodyFlags()
+
+	// A placeholder id and empty dir are sufficient for the 2-arg shape: the
+	// swallowed "--create" leaves "-" as a second stray positional, so the
+	// counterfactual (guard removed) is codedExactArgs' arg-count error at
+	// ValidateArgs — which fires before PersistentPreRunE builds the store,
+	// independent of whether the id names a real nib. (The 1-arg tests DO need a
+	// real nib, since their counterfactual reaches RunE.)
+	dir := t.TempDir()
+
+	rootCmd.SetArgs([]string{"--nibs-path", dir, "body", "placeholder-id", "--section", "## H", "--set", "--create", "-"})
+	err := rootCmd.Execute()
+	if err == nil {
+		t.Fatal("expected error when --set swallowed --create, got nil")
+	}
+	var ce *output.CodedError
+	if !errors.As(err, &ce) {
+		t.Fatalf("error = %T, want *output.CodedError", err)
+	}
+	if output.ExitCode(ce.Code) != output.ExitValidation {
+		t.Errorf("swallowed-flag exit = %d, want %d (validation)", output.ExitCode(ce.Code), output.ExitValidation)
+	}
+	if !strings.Contains(ce.Msg, "--create") {
+		t.Errorf("message should name the swallowed flag --create, got: %q", ce.Msg)
+	}
+	if !strings.Contains(ce.Msg, "--set - --create") {
+		t.Errorf("message should steer to `--set - --create`, got: %q", ce.Msg)
+	}
+}
+
+// TestBodySetSwallowsFollowingFlagOneArg verifies the same footgun in its 1-arg
+// shape (no trailing "-"): "body <id> --section H --set --create" leaves exactly
+// one positional, so Args' count check passes. Without the guard, runBody would
+// load the nib and then trip the generic ErrInlineProse in resolveBodyFlag
+// ("--create" is not a valid channel). The Args-validator guard fires first for
+// this shape too, naming the swallowed flag rather than emitting that unrelated
+// inline-prose text. A REAL nib is required so the guard-removed counterfactual
+// actually reaches resolveBodyFlag (an unknown id would fail earlier at the nib
+// lookup instead), demonstrating the guard pre-empts the inline-prose path.
+func TestBodySetSwallowsFollowingFlagOneArg(t *testing.T) {
+	t.Cleanup(resetBodyFlags)
+	resetBodyFlags()
+
+	nibsDir, id := writeSetNib(t, "bdy-swallow-1arg", "## H\nhi\n")
+
+	rootCmd.SetArgs([]string{"--nibs-path", nibsDir, "body", id, "--section", "## H", "--set", "--create"})
+	err := rootCmd.Execute()
+	if err == nil {
+		t.Fatal("expected error when --set swallowed --create, got nil")
+	}
+	var ce *output.CodedError
+	if !errors.As(err, &ce) {
+		t.Fatalf("error = %T, want *output.CodedError", err)
+	}
+	if output.ExitCode(ce.Code) != output.ExitValidation {
+		t.Errorf("swallowed-flag exit = %d, want %d (validation)", output.ExitCode(ce.Code), output.ExitValidation)
+	}
+	if !strings.Contains(ce.Msg, "--create") {
+		t.Errorf("message should name the swallowed flag --create, got: %q", ce.Msg)
+	}
+	if !strings.Contains(ce.Msg, "--set - --create") {
+		t.Errorf("message should steer to `--set - --create`, got: %q", ce.Msg)
+	}
+}
+
+// TestBodyAppendSwallowsFollowingFlag verifies the --append arm of the same
+// footgun: "body <id> --append --create -" binds "--create" as --append's value
+// and steers to `--append - --create`.
+func TestBodyAppendSwallowsFollowingFlag(t *testing.T) {
+	t.Cleanup(resetBodyFlags)
+	resetBodyFlags()
+
+	// The guard short-circuits at ValidateArgs (see TwoArg), so no real nib is
+	// needed — a placeholder id and empty dir exercise the same code path.
+	dir := t.TempDir()
+
+	rootCmd.SetArgs([]string{"--nibs-path", dir, "body", "placeholder-id", "--append", "--create", "-"})
+	err := rootCmd.Execute()
+	if err == nil {
+		t.Fatal("expected error when --append swallowed --create, got nil")
+	}
+	var ce *output.CodedError
+	if !errors.As(err, &ce) {
+		t.Fatalf("error = %T, want *output.CodedError", err)
+	}
+	if output.ExitCode(ce.Code) != output.ExitValidation {
+		t.Errorf("swallowed-flag exit = %d, want %d (validation)", output.ExitCode(ce.Code), output.ExitValidation)
+	}
+	if !strings.Contains(ce.Msg, "--create") {
+		t.Errorf("message should name the swallowed flag --create, got: %q", ce.Msg)
+	}
+	if !strings.Contains(ce.Msg, "--append - --create") {
+		t.Errorf("message should steer to `--append - --create`, got: %q", ce.Msg)
+	}
+}
+
+// TestBodyAppendSwallowsFollowingFlagOneArg covers the --append arm of the
+// footgun in its 1-arg shape (no trailing "-"): "body <id> --append --create"
+// leaves exactly one positional, so Args passes the count check and RunE would
+// otherwise trip a generic inline-prose error. The Args-validator guard fires
+// here too, naming the swallowed flag and steering to `--append - --create`.
+func TestBodyAppendSwallowsFollowingFlagOneArg(t *testing.T) {
+	t.Cleanup(resetBodyFlags)
+	resetBodyFlags()
+
+	// A real nib is required: without the guard the counterfactual reaches RunE
+	// and would trip the generic ErrInlineProse in resolveAppendFlag; an unknown
+	// id would fail earlier at the nib lookup instead. See the --set 1-arg test.
+	nibsDir, id := writeSetNib(t, "bdy-swallow-append-1arg", "## H\nhi\n")
+
+	rootCmd.SetArgs([]string{"--nibs-path", nibsDir, "body", id, "--append", "--create"})
+	err := rootCmd.Execute()
+	if err == nil {
+		t.Fatal("expected error when --append swallowed --create, got nil")
+	}
+	var ce *output.CodedError
+	if !errors.As(err, &ce) {
+		t.Fatalf("error = %T, want *output.CodedError", err)
+	}
+	if output.ExitCode(ce.Code) != output.ExitValidation {
+		t.Errorf("swallowed-flag exit = %d, want %d (validation)", output.ExitCode(ce.Code), output.ExitValidation)
+	}
+	if !strings.Contains(ce.Msg, "--create") {
+		t.Errorf("message should name the swallowed flag --create, got: %q", ce.Msg)
+	}
+	if !strings.Contains(ce.Msg, "--append - --create") {
+		t.Errorf("message should steer to `--append - --create`, got: %q", ce.Msg)
+	}
+}
+
+// TestBodySetSwallowsSingleDashFlag covers a SINGLE-dash swallow — the shape the
+// widened swallowedFlagValue guard was added to catch. "body <id> --set -h"
+// binds "-h" (cobra's auto --help shorthand, present on every command) as
+// --set's value, so help never fires and the invocation reaches the Args
+// validator with one positional. Without the guard, runBody would load the nib
+// and then trip the generic ErrInlineProse in resolveBodyFlag ("-h" is not a
+// valid channel); the guard fires first, naming the swallowed token and steering
+// to `--set - -h`. A REAL nib is required so the guard-removed counterfactual
+// reaches resolveBodyFlag rather than failing earlier at the nib lookup.
+func TestBodySetSwallowsSingleDashFlag(t *testing.T) {
+	t.Cleanup(resetBodyFlags)
+	resetBodyFlags()
+
+	nibsDir, id := writeSetNib(t, "bdy-swallow-shorthand", "## H\nhi\n")
+
+	rootCmd.SetArgs([]string{"--nibs-path", nibsDir, "body", id, "--set", "-h"})
+	err := rootCmd.Execute()
+	if err == nil {
+		t.Fatal("expected error when --set swallowed -h, got nil")
+	}
+	var ce *output.CodedError
+	if !errors.As(err, &ce) {
+		t.Fatalf("error = %T, want *output.CodedError", err)
+	}
+	if output.ExitCode(ce.Code) != output.ExitValidation {
+		t.Errorf("swallowed-flag exit = %d, want %d (validation)", output.ExitCode(ce.Code), output.ExitValidation)
+	}
+	// The message must name the swallowed single-dash token and steer to the
+	// corrected `--set - -h` form — NOT the pre-widening generic inline-prose text.
+	if !strings.Contains(ce.Msg, "-h") {
+		t.Errorf("message should name the swallowed token -h, got: %q", ce.Msg)
+	}
+	if !strings.Contains(ce.Msg, "--set - -h") {
+		t.Errorf("message should steer to `--set - -h`, got: %q", ce.Msg)
+	}
+	if strings.Contains(ce.Msg, "inline text is not allowed") {
+		t.Errorf("guard should replace the generic inline-prose fallback, got: %q", ce.Msg)
+	}
+}
+
+// TestBodyValidChannelsNotSwallowed pins the load-bearing boundary of the
+// widened swallowedFlagValue guard: the two legitimate input channels that a
+// naive "any leading dash" check could misread must NOT false-positive. "-"
+// (the stdin marker) and "@FILE" both drive a normal successful --set, proving
+// the guard's `value != "-"` exclusion and the "@" prefix stay clear of it.
+func TestBodyValidChannelsNotSwallowed(t *testing.T) {
+	t.Run("stdin dash", func(t *testing.T) {
+		t.Cleanup(resetBodyFlags)
+		resetBodyFlags()
+
+		nibsDir, id := writeSetNib(t, "bdy-chan-dash", "old body\n")
+		withStdin(t, "piped body\n")
+
+		rootCmd.SetArgs([]string{"--nibs-path", nibsDir, "body", id, "--set", "-"})
+		if err := rootCmd.Execute(); err != nil {
+			t.Fatalf("body --set - should succeed, guard must not false-positive on \"-\": %v", err)
+		}
+		content := readNibFile(t, nibsDir, bodyNibFile(id))
+		if !strings.Contains(content, "piped body") {
+			t.Errorf("stdin body not written, got:\n%s", content)
+		}
+		// --set replaces the whole body; the seeded "old body" must be gone, or a
+		// bug that appended instead of replacing would slip through this subtest.
+		if strings.Contains(content, "old body") {
+			t.Errorf("--set - should replace, not append; old body still present, got:\n%s", content)
+		}
+	})
+
+	t.Run("file channel", func(t *testing.T) {
+		t.Cleanup(resetBodyFlags)
+		resetBodyFlags()
+
+		nibsDir, id := writeSetNib(t, "bdy-chan-file", "old body\n")
+		secFile := filepath.Join(t.TempDir(), "content.md")
+		if err := os.WriteFile(secFile, []byte("file body\n"), 0644); err != nil {
+			t.Fatal(err)
+		}
+
+		rootCmd.SetArgs([]string{"--nibs-path", nibsDir, "body", id, "--set", "@" + secFile})
+		if err := rootCmd.Execute(); err != nil {
+			t.Fatalf("body --set @FILE should succeed, guard must not false-positive on \"@FILE\": %v", err)
+		}
+		content := readNibFile(t, nibsDir, bodyNibFile(id))
+		if !strings.Contains(content, "file body") {
+			t.Errorf("file body not written, got:\n%s", content)
+		}
+		// --set replaces the whole body; the seeded "old body" must be gone, or a
+		// bug that appended instead of replacing would slip through this subtest.
+		if strings.Contains(content, "old body") {
+			t.Errorf("--set @FILE should replace, not append; old body still present, got:\n%s", content)
+		}
+	})
+}
+
 // TestBodyCreateFalseStillErrorsOnMissingSection verifies that an explicit
 // --create=false behaves exactly like omitting --create: a missing heading is a
 // validation error (exit 2), NOT a silent upsert. Guards against passing the

@@ -18,11 +18,13 @@ import (
 // Convention: never wire a command's Args field to a stock
 // cobra.NoArgs/ExactArgs/MinimumNArgs/MaximumNArgs — use these coded
 // equivalents so every positional-arg error is uniform CLI-wide: exit 2 and,
-// for a --json command, the {error} envelope. The two commands with bespoke arg
-// logic (archiveCmd, queryCmd) do NOT use the stock validators either — each
-// keeps an inline validator that still routes its arity violation through
-// cmdError: archiveCmd adds an id-specific hint naming `nibs rm`, and queryCmd
-// preserves its --schema bypass and 0-or-1-arg stdin logic.
+// for a --json command, the {error} envelope. The three commands with bespoke
+// arg logic (archiveCmd, queryCmd, bodyCmd) do NOT use the stock validators
+// either — each keeps an inline validator that still routes its arity violation
+// through cmdError: archiveCmd adds an id-specific hint naming `nibs rm`,
+// queryCmd preserves its --schema bypass and 0-or-1-arg stdin logic, and bodyCmd
+// (bodyArgs) pre-checks the --set/--append flag-swallow footgun before falling
+// through to codedExactArgs.
 //
 // jsonMode is a nil-safe pointer to the command's --json flag var. Cobra parses
 // flags before it validates args, so dereferencing it inside the returned
