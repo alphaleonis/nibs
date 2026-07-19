@@ -73,6 +73,11 @@ a full view of your project.`,
 		cmd.SetContext(withApp(cmd.Context(), &App{Core: core}))
 		return nil
 	},
+	// Runs only after a subcommand succeeds (Cobra skips PostRun on error).
+	// Best-effort update notice; never blocks or fails the command.
+	PersistentPostRun: func(cmd *cobra.Command, _ []string) {
+		maybeNotifyUpdate(cmd)
+	},
 }
 
 func init() {
