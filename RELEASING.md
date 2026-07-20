@@ -5,6 +5,8 @@ Releases are built by a GitHub Actions workflow and published as draft GitHub Re
 ## Prerequisites
 
 - Push access to `main`
+- CI green on the `main` commit being released — the workflow refuses to tag a
+  commit whose latest CI run has not completed successfully
 - A changelog entry for the version being released (stable releases only)
 
 ## Steps
@@ -24,20 +26,23 @@ Commit this to `main` and push.
 
 ### 2. Trigger the release workflow
 
-Go to **Actions > Release > Run workflow** on GitHub and enter the version. Accepted formats:
+Go to **Actions > Release > Run workflow** on GitHub, keep **Use workflow from**
+set to `main`, and enter the version. Accepted formats:
 
 - `v0.1.0` — stable release (requires changelog entry)
 - `v0.1.0-alpha.1`, `v0.1.0-rc.1` — pre-release (changelog not required)
 
 The workflow will:
 
-1. Validate the version format
-2. Verify a matching changelog entry exists (stable releases only)
-3. Extract release notes from the changelog, or generate a placeholder for pre-releases
-4. Create and push a git tag
-5. Build binaries for Linux, macOS, and Windows (amd64 + arm64) via GoReleaser
-6. Collect third-party dependency licenses via `go-licenses`
-7. Create a **draft** GitHub Release with the binaries and license notices
+1. Refuse to run unless dispatched from `main` and the latest CI run for that
+   commit completed successfully (applies to pre-releases too)
+2. Validate the version format
+3. Verify a matching changelog entry exists (stable releases only)
+4. Extract release notes from the changelog, or generate a placeholder for pre-releases
+5. Create and push a git tag
+6. Build binaries for Linux, macOS, and Windows (amd64 + arm64) via GoReleaser
+7. Collect third-party dependency licenses via `go-licenses`
+8. Create a **draft** GitHub Release with the binaries and license notices
 
 ### 3. Review and publish
 
