@@ -45,5 +45,10 @@ checksum:
 release:
   draft: true
 
-changelog:
-  disable: true
+# Do NOT set `changelog.disable: true`: the release workflow passes
+# `--release-notes` (from CHANGELOG.md), which GoReleaser loads inside the
+# changelog pipe. Disabling the changelog skips that pipe entirely, so the
+# notes are never read and the GitHub release body comes out empty. With the
+# pipe enabled and `--release-notes` set, GoReleaser uses the file verbatim and
+# generates no commit changelog (early return in the changelog pipe). See
+# nibs-gyj5.
