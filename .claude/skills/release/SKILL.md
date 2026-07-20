@@ -1,13 +1,15 @@
 ---
-description: Drive a nibs release end-to-end — gated on green CI, stops at a draft for a human to publish
-argument-hint: "[vX.Y.Z]"
+name: release
+description: Cut a nibs release end-to-end — author and scrub the changelog, merge to main, wait for green CI, dispatch the gated Release workflow, verify and revise the draft, then stop for a human to publish. User-invoked only.
+invoke-by: user
 ---
 
 You are cutting a nibs release. `RELEASING.md` is the source of truth; follow the steps
 below **in order**. This drives the gated **Release** workflow and **stops at a draft** —
 a human reviews and clicks Publish.
 
-Requested version: `$ARGUMENTS` (may be empty — if so, propose one in step 1).
+If a version was passed as an argument (e.g. `/release v0.7.0`), use it: `$ARGUMENTS`.
+If none was given, propose one in step 1.
 
 ## Hard rules — do not violate
 
@@ -25,7 +27,7 @@ Requested version: `$ARGUMENTS` (may be empty — if so, propose one in step 1).
 ## Steps
 
 ### 1. Version
-If `$ARGUMENTS` is a version (`vX.Y.Z` or a pre-release like `vX.Y.Z-rc.1`), use it.
+If a version argument was given (`vX.Y.Z` or a pre-release like `vX.Y.Z-rc.1`), use it.
 Otherwise read the latest tag (`git tag --sort=-v:refname | head -1`) and the
 `## [Unreleased]` section of `CHANGELOG.md`, propose the next semver bump, and **confirm
 with the user** before continuing. A version containing `-` is a pre-release.
