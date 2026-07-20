@@ -10,7 +10,8 @@ on:
         type: string
 
 permissions:
-  contents: write
+  contents: write # push tags and create the release
+  actions: read   # read the CI run conclusion for the release commit
 
 jobs:
   release:
@@ -29,6 +30,38 @@ jobs:
           else
             echo "prerelease=false" >> "$GITHUB_OUTPUT"
           fi
+
+      - name: Require release from main
+        run: |
+          if [[ "${{ github.ref }}" != "refs/heads/main" ]]; then
+            echo "::error::Release must be dispatched from main (got: ${{ github.ref }}). CI only runs on main, so other refs have no signal to gate on."
+            exit 1
+          fi
+
+      - name: Require passing CI on this commit
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          SHA="${{ github.sha }}"
+          echo "Checking CI (ci.yml) status for commit $SHA"
+          RUN=$(gh api "repos/${{ github.repository }}/actions/workflows/ci.yml/runs?head_sha=$SHA" \
+            --jq '.workflow_runs | sort_by(.created_at) | last')
+          if [[ -z "$RUN" || "$RUN" == "null" ]]; then
+            echo "::error::No CI run found for $SHA. CI must run and pass on main before releasing — push to main and wait for CI to finish."
+            exit 1
+          fi
+          STATUS=$(jq -r '.status' <<<"$RUN")
+          CONCLUSION=$(jq -r '.conclusion' <<<"$RUN")
+          echo "Latest CI run for $SHA: status='$STATUS' conclusion='$CONCLUSION'"
+          if [[ "$STATUS" != "completed" ]]; then
+            echo "::error::CI for $SHA is '$STATUS' (not yet completed). Wait for CI to finish before releasing."
+            exit 1
+          fi
+          if [[ "$CONCLUSION" != "success" ]]; then
+            echo "::error::CI for $SHA concluded '$CONCLUSION' (need: success). Refusing to release from a red commit."
+            exit 1
+          fi
+          echo "CI passed for $SHA — proceeding to tag and release."
 
       - uses: actions/checkout@v6
         with:
