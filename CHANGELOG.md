@@ -7,6 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## v0.6.1 - 2026-07-20
+
+### Fixed
+- GitHub Release notes are populated again — v0.6.0's release body came up empty because GoReleaser's `changelog.disable` suppressed the notes passed to `--release-notes`; removing it restores the changelog-derived body. (Refs: nibs-gyj5.)
+
+### Changed
+- The **Release** workflow now refuses to run unless it is dispatched from `main` and the latest CI run for the release commit completed successfully, so a release can no longer be tagged from a red or unverified commit (applies to pre-releases too). (Refs: nibs-o2iv.)
+
 ## v0.6.0 - 2026-07-19
 
 ### Added
