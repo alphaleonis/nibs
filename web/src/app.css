@@ -34,17 +34,11 @@
   --color-type-feature: var(--type-feature);
   --color-type-task: var(--type-task);
   --color-type-research: var(--type-research);
-  --color-status-draft-bg: var(--status-draft-bg);
   --color-status-draft-text: var(--status-draft-text);
-  --color-status-todo-bg: var(--status-todo-bg);
   --color-status-todo-text: var(--status-todo-text);
-  --color-status-in-progress-bg: var(--status-in-progress-bg);
   --color-status-in-progress-text: var(--status-in-progress-text);
-  --color-status-deferred-bg: var(--status-deferred-bg);
   --color-status-deferred-text: var(--status-deferred-text);
-  --color-status-completed-bg: var(--status-completed-bg);
   --color-status-completed-text: var(--status-completed-text);
-  --color-status-scrapped-bg: var(--status-scrapped-bg);
   --color-status-scrapped-text: var(--status-scrapped-text);
   --color-priority-critical: var(--priority-critical);
   --color-priority-high: var(--priority-high);
@@ -53,6 +47,7 @@
   --color-blocked: var(--blocked);
   --color-blocked-bg: var(--blocked-bg);
   --color-blocking: var(--blocking);
+  --color-blocking-bg: var(--blocking-bg);
   --color-link: var(--link);
   --color-link-hover: var(--link-hover);
   --color-warning: var(--warning);
@@ -115,22 +110,15 @@
 
   /* Status colors — mirror the TUI/config convention (in-progress=yellow,
      todo=green, draft=blue, completed=gray, scrapped=gray). The *-text token
-     is the visible status-icon color (~-400 for the dark UI); the *-bg token is
-     a subtle same-hue dark tint kept coherent for any pill/badge consumer. */
-  --status-draft-bg: oklch(0.27 0.06 254);          /* blue tint */
+     is the visible status-icon color (~-400 for the dark UI). */
   --status-draft-text: oklch(0.707 0.165 254.624);  /* blue-400 */
-  --status-todo-bg: oklch(0.27 0.05 163);           /* emerald tint */
   --status-todo-text: oklch(0.765 0.177 163.223);   /* emerald-400 */
-  --status-in-progress-bg: oklch(0.27 0.05 84);     /* amber tint */
   --status-in-progress-text: oklch(0.828 0.189 84.429); /* amber-400 */
   /* deferred = "parked" (non-terminal): a dim magenta, deliberately tinted at
      low chroma so it reads as distinct from the near-neutral grays of
      completed/scrapped; dimmed lightness signals paused rather than active. */
-  --status-deferred-bg: oklch(0.27 0.045 340);      /* dim magenta tint */
   --status-deferred-text: oklch(0.65 0.08 340);     /* dim magenta */
-  --status-completed-bg: oklch(0.27 0.01 261);      /* neutral gray tint */
   --status-completed-text: oklch(0.707 0.022 261.325); /* gray-400 */
-  --status-scrapped-bg: oklch(0.205 0.01 264);      /* gray-800 */
   --status-scrapped-text: oklch(0.551 0.027 264.364); /* gray-500 (dimmer than completed) */
 
   /* Priority colors */
@@ -139,14 +127,15 @@
   --priority-normal: oklch(0.706 0.015 264);   /* gray-400 */
   --priority-low: oklch(0.551 0.02 264);       /* gray-500 */
 
-  /* Blocking/blocked indicator colors. --blocked is a FOREGROUND-only token
-     (pill label + bare lock icon), so it's lightened past red-500 and the tint
-     darkened so the 12px pill label clears WCAG AA small-text contrast (4.5:1);
-     the pair computes to ~4.83:1. Inherited by graphite/dracula; daylight
-     overrides both below. */
+  /* Blocking/blocked indicator colors. --blocked and --blocking are
+     FOREGROUND-only tokens (pill label + bare icon), each paired with a subtle
+     same-hue dark tint so the 12px pill label clears WCAG AA small-text contrast
+     (4.5:1): --blocked/--blocked-bg ~4.83:1, --blocking/--blocking-bg ~7.83:1.
+     Inherited by graphite/dracula; daylight overrides them below. */
   --blocked: oklch(0.66 0.225 27);        /* red-400, lightened for AA contrast */
   --blocked-bg: oklch(0.24 0.05 27);      /* subtle same-hue dark red tint */
   --blocking: oklch(0.768 0.188 84);      /* amber-500 */
+  --blocking-bg: oklch(0.24 0.05 84);     /* subtle same-hue dark amber tint */
 
   /* Interactive colors */
   --link: oklch(0.673 0.182 276);              /* indigo-400 */
@@ -327,18 +316,12 @@
   --type-task: oklch(0.52 0.16 245);         /* blue */
   --type-research: oklch(0.58 0.13 68);      /* amber */
 
-  /* Status colors — darker *-text on lighter same-hue *-bg tints */
-  --status-draft-bg: oklch(0.94 0.03 250);
+  /* Status colors — darker *-text for the light surface. */
   --status-draft-text: oklch(0.52 0.16 250);
-  --status-todo-bg: oklch(0.94 0.04 160);
   --status-todo-text: oklch(0.52 0.13 160);
-  --status-in-progress-bg: oklch(0.94 0.05 80);
   --status-in-progress-text: oklch(0.58 0.13 68);
-  --status-deferred-bg: oklch(0.93 0.025 340);      /* dim magenta tint */
   --status-deferred-text: oklch(0.48 0.11 340);     /* darker magenta for light-surface legibility */
-  --status-completed-bg: oklch(0.93 0.005 261);
   --status-completed-text: oklch(0.5 0.015 261);
-  --status-scrapped-bg: oklch(0.95 0.004 264);
   --status-scrapped-text: oklch(0.62 0.01 264); /* dimmer than completed */
 
   /* Priority colors */
@@ -347,10 +330,14 @@
   --priority-normal: oklch(0.55 0.012 264);
   --priority-low: oklch(0.63 0.01 264);
 
-  /* Blocking/blocked indicators */
+  /* Blocking/blocked indicators. Both --blocked and --blocking are FOREGROUND
+     labels on a subtle same-hue tint, so — mirroring how --blocked is darkened
+     for light mode — the amber --blocking is darkened too so its 12px pill label
+     clears WCAG AA small-text contrast (4.5:1) on the light tint (~5.06:1). */
   --blocked: oklch(0.52 0.22 27);
   --blocked-bg: oklch(0.94 0.04 27);        /* light same-hue red tint */
-  --blocking: oklch(0.62 0.15 66);
+  --blocking: oklch(0.52 0.13 66);          /* darkened amber for AA on light tint */
+  --blocking-bg: oklch(0.96 0.025 66);      /* light same-hue amber tint */
 
   /* Interactive colors */
   --link: oklch(0.5 0.2 276);

@@ -252,7 +252,7 @@ describe("TreeTableRow", () => {
     expect(container.querySelector("[data-testid='blocked-icon']")).not.toBeInTheDocument();
   });
 
-  it("shows blocking icon with tooltip when blockingIds is non-empty", () => {
+  it("shows the blocking pill (default emphasis) with tooltip when blockingIds is non-empty", () => {
     const { container } = renderRow({
       nib: makeTreeTableNib({ blockingIds: ["nibs-xyz1", "nibs-xyz2"] }),
       depth: 0,
@@ -260,12 +260,45 @@ describe("TreeTableRow", () => {
       dimmed: false,
     });
 
-    const blocking = container.querySelector("[data-testid='blocking-icon']") as HTMLElement;
-    expect(blocking).toBeInTheDocument();
-    expect(blocking.getAttribute("title")).toBe("Blocking 2 nib(s)");
+    const badge = container.querySelector("[data-testid='blocking-badge']") as HTMLElement;
+    expect(badge).toBeInTheDocument();
+    expect(badge.textContent).toContain("Blocking");
+    expect(badge.getAttribute("title")).toBe("Blocking 2 nib(s)");
+    // Default is the pill, not the bare icon.
+    expect(container.querySelector("[data-testid='blocking-icon']")).not.toBeInTheDocument();
   });
 
-  it("hides blocking indicator when blockingIds is empty", () => {
+  it("renders the bare link icon (no pill) for blocking when blockedEmphasis is 'subtle'", () => {
+    const { container } = renderRow({
+      nib: makeTreeTableNib({ blockingIds: ["nibs-xyz1", "nibs-xyz2"] }),
+      depth: 0,
+      hasChildren: false,
+      dimmed: false,
+      blockedEmphasis: "subtle",
+    });
+
+    const icon = container.querySelector("[data-testid='blocking-icon']") as HTMLElement;
+    expect(icon).toBeInTheDocument();
+    expect(icon.getAttribute("title")).toBe("Blocking 2 nib(s)");
+    expect(container.querySelector("[data-testid='blocking-badge']")).not.toBeInTheDocument();
+  });
+
+  it("renders the blocking pill but does NOT dim the row for a blocking-only nib under 'pill-dim'", () => {
+    const { container } = renderRow({
+      nib: makeTreeTableNib({ blockingIds: ["nibs-xyz1"], blockedByIds: [] }),
+      depth: 0,
+      hasChildren: false,
+      dimmed: false,
+      blockedEmphasis: "pill-dim",
+    });
+
+    expect(container.querySelector("[data-testid='blocking-badge']")).toBeInTheDocument();
+    // Row dimming is blocked-only — blocking others must not dim the row.
+    const row = container.querySelector("tr") as HTMLElement;
+    expect(row.classList.contains("blocked-dim")).toBe(false);
+  });
+
+  it("hides all blocking indicators when blockingIds is empty", () => {
     const { container } = renderRow({
       nib: makeTreeTableNib({ blockingIds: [] }),
       depth: 0,
@@ -273,8 +306,8 @@ describe("TreeTableRow", () => {
       dimmed: false,
     });
 
-    const blocking = container.querySelector("[data-testid='blocking-icon']");
-    expect(blocking).not.toBeInTheDocument();
+    expect(container.querySelector("[data-testid='blocking-badge']")).not.toBeInTheDocument();
+    expect(container.querySelector("[data-testid='blocking-icon']")).not.toBeInTheDocument();
   });
 
   it("renders the Blocked-by cell with a count and lock icon when blockedBy column is visible", () => {

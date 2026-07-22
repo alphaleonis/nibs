@@ -2,9 +2,10 @@
   import { ALL_COLUMN_KEYS, DEFAULT_BLOCKED_EMPHASIS, blockedVariantFor } from "../types";
   import type { TreeTableNib, ColumnKey, BlockedEmphasis } from "../types";
   import { priorityIndicators, statusDotColors } from "../badges";
-  import { Link, Lock, ChevronRight, ChevronDown, Plus } from "@lucide/svelte";
+  import { ChevronRight, ChevronDown, Plus } from "@lucide/svelte";
   import StatusIcon from "./StatusIcon.svelte";
-  import BlockedBadge from "./BlockedBadge.svelte";
+  import RelationBadge from "./RelationBadge.svelte";
+  import { RELATION_CONFIG } from "../relations";
   import TypeIcon from "./TypeIcon.svelte";
   import { canHaveChildren } from "../typeHierarchy";
   import { isBucketId } from "../tree";
@@ -189,18 +190,13 @@
           class="title-text-btn"
         >{nib.title}</button>
         {#if isBlocked}
-          <BlockedBadge count={nib.blockedByIds.length} variant={blockedVariant} />
+          <RelationBadge kind="blocked" count={nib.blockedByIds.length} variant={blockedVariant} />
         {/if}
-        <!-- 'blocking' intentionally keeps the plain link icon; the pill/emphasis
-             treatment is blocked-only for now — see nibs-e81b for the planned
-             mirrored emphasis treatment. -->
+        <!-- 'blocking' mirrors 'blocked': same emphasis-driven variant (subtle→icon,
+             pill/pill-dim→pill). Row DIMMING stays blocked-only — a nib is not
+             dimmed for blocking others (see blockedDim above). -->
         {#if nib.blockingIds.length > 0}
-          <span
-            data-testid="blocking-icon"
-            class="inline-flex items-center shrink-0"
-            style="color: var(--blocking);"
-            title="Blocking {nib.blockingIds.length} nib(s)"
-          ><Link size={12} /></span>
+          <RelationBadge kind="blocking" count={nib.blockingIds.length} variant={blockedVariant} />
         {/if}
       </div>
     </td>
@@ -240,11 +236,12 @@
   {#if visibleColumns.includes("blocking")}
     <td data-testid="nib-blocking" class="text-body px-3 cell-truncate row-cell">
       {#if nib.blockingIds.length > 0}
+        {@const BlockingIcon = RELATION_CONFIG.blocking.icon}
         <span
           class="inline-flex items-center gap-1"
-          style="color: var(--blocking);"
+          style="color: {RELATION_CONFIG.blocking.iconColor};"
           title={nib.blockingIds.join(", ")}
-        ><Link size={12} />{nib.blockingIds.length}</span>
+        ><BlockingIcon size={12} />{nib.blockingIds.length}</span>
       {/if}
     </td>
   {/if}
@@ -253,11 +250,12 @@
   {#if visibleColumns.includes("blockedBy")}
     <td data-testid="nib-blocked-by" class="text-body px-3 cell-truncate row-cell">
       {#if nib.blockedByIds.length > 0}
+        {@const BlockedIcon = RELATION_CONFIG.blocked.icon}
         <span
           class="inline-flex items-center gap-1"
-          style="color: var(--blocked);"
+          style="color: {RELATION_CONFIG.blocked.iconColor};"
           title={nib.blockedByIds.join(", ")}
-        ><Lock size={12} />{nib.blockedByIds.length}</span>
+        ><BlockedIcon size={12} />{nib.blockedByIds.length}</span>
       {/if}
     </td>
   {/if}
