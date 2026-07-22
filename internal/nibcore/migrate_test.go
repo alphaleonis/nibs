@@ -476,16 +476,6 @@ status: todo
 	})
 
 	t.Run("best-effort persistence: Load succeeds when the migration cannot be written", func(t *testing.T) {
-		// Forcing the write failure: the loaded file is chmod'd read-only so
-		// saveToDisk's write (O_WRONLY|O_TRUNC) fails while loadNib's read
-		// (O_RDONLY) still succeeds. This is deterministic and root-independent
-		// on the CI matrix: Linux non-root honors the 0444 mode, and Windows
-		// honors the read-only attribute (os.Geteuid() returns -1 there, so the
-		// root guard below never fires on Windows).
-		if os.Geteuid() == 0 {
-			t.Skip("running as root bypasses file-mode write protection, so the saveToDisk failure can't be forced")
-		}
-
 		tmpDir := t.TempDir()
 		nibsDir := filepath.Join(tmpDir, NibsDir)
 		if err := os.MkdirAll(nibsDir, 0755); err != nil {
@@ -503,12 +493,15 @@ status: todo
 		writeNibFile(t, nibsDir, filename, raw)
 		path := filepath.Join(nibsDir, filename)
 
-		if err := os.Chmod(path, 0444); err != nil {
-			t.Fatal(err)
-		}
-		// Restore write permission so TempDir cleanup (and Windows deletion of a
-		// read-only file) succeeds.
-		t.Cleanup(func() { _ = os.Chmod(path, 0644) })
+		// Force the persistence failure via the atomic-write rename seam.
+		// saveToDisk now writes a temp file and renames it over the target, so a
+		// read-only target file no longer blocks the write (the rename needs only
+		// a writable directory). Failing the rename simulates a genuinely
+		// un-persistable .nibs (full disk, unwritable dir, torn rename)
+		// deterministically and independent of uid/OS.
+		orig := renameFn
+		renameFn = func(_, _ string) error { return errors.New("simulated persistence failure") }
+		t.Cleanup(func() { renameFn = orig })
 
 		var warnings strings.Builder
 		cfg := config.Default()
