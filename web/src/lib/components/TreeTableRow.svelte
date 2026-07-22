@@ -2,9 +2,10 @@
   import { ALL_COLUMN_KEYS, DEFAULT_BLOCKED_EMPHASIS, blockedVariantFor } from "../types";
   import type { TreeTableNib, ColumnKey, BlockedEmphasis } from "../types";
   import { priorityIndicators, statusDotColors } from "../badges";
-  import { Link, Lock, ChevronRight, ChevronDown, Plus } from "@lucide/svelte";
+  import { ChevronRight, ChevronDown, Plus } from "@lucide/svelte";
   import StatusIcon from "./StatusIcon.svelte";
   import RelationBadge from "./RelationBadge.svelte";
+  import { RELATION_CONFIG } from "../relations";
   import TypeIcon from "./TypeIcon.svelte";
   import { canHaveChildren } from "../typeHierarchy";
   import { isBucketId } from "../tree";
@@ -235,11 +236,12 @@
   {#if visibleColumns.includes("blocking")}
     <td data-testid="nib-blocking" class="text-body px-3 cell-truncate row-cell">
       {#if nib.blockingIds.length > 0}
+        {@const BlockingIcon = RELATION_CONFIG.blocking.icon}
         <span
           class="inline-flex items-center gap-1"
-          style="color: var(--blocking);"
+          style="color: {RELATION_CONFIG.blocking.iconColor};"
           title={nib.blockingIds.join(", ")}
-        ><Link size={12} />{nib.blockingIds.length}</span>
+        ><BlockingIcon size={12} />{nib.blockingIds.length}</span>
       {/if}
     </td>
   {/if}
@@ -248,11 +250,12 @@
   {#if visibleColumns.includes("blockedBy")}
     <td data-testid="nib-blocked-by" class="text-body px-3 cell-truncate row-cell">
       {#if nib.blockedByIds.length > 0}
+        {@const BlockedIcon = RELATION_CONFIG.blocked.icon}
         <span
           class="inline-flex items-center gap-1"
-          style="color: var(--blocked);"
+          style="color: {RELATION_CONFIG.blocked.iconColor};"
           title={nib.blockedByIds.join(", ")}
-        ><Lock size={12} />{nib.blockedByIds.length}</span>
+        ><BlockedIcon size={12} />{nib.blockedByIds.length}</span>
       {/if}
     </td>
   {/if}
