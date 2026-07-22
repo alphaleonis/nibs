@@ -7,6 +7,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## v0.6.2 - 2026-07-22
+
+### Changed
+- The web UI's **"blocking" indicator now uses the same pill treatment as "blocked"** — a nib that blocks others shows an amber "Blocking" pill (link icon) in the tree and the detail-panel header, honoring the same emphasis setting (subtle icon / pill / dimmed row) as the red "Blocked" pill. New WCAG-AA color tokens back the amber tint in both the dark and light themes.
+- **Nib files are now written atomically** — each write goes to a temporary file that is renamed into place, so a crash or a process reading a nib mid-write no longer observes a torn or half-written file.
+
+### Fixed
+- **Same-machine concurrent writes no longer silently overwrite each other** — every write operation briefly takes an advisory lock on the data directory, closing a cross-process window where two nibs processes (or `nibs serve` alongside a CLI) could both pass the etag check and clobber one another's write.
+
 ## v0.6.1 - 2026-07-20
 
 ### Fixed
