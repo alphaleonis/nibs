@@ -47,6 +47,7 @@
   --color-blocked: var(--blocked);
   --color-blocked-bg: var(--blocked-bg);
   --color-blocking: var(--blocking);
+  --color-blocking-bg: var(--blocking-bg);
   --color-link: var(--link);
   --color-link-hover: var(--link-hover);
   --color-warning: var(--warning);
@@ -126,14 +127,15 @@
   --priority-normal: oklch(0.706 0.015 264);   /* gray-400 */
   --priority-low: oklch(0.551 0.02 264);       /* gray-500 */
 
-  /* Blocking/blocked indicator colors. --blocked is a FOREGROUND-only token
-     (pill label + bare lock icon), so it's lightened past red-500 and the tint
-     darkened so the 12px pill label clears WCAG AA small-text contrast (4.5:1);
-     the pair computes to ~4.83:1. Inherited by graphite/dracula; daylight
-     overrides both below. */
+  /* Blocking/blocked indicator colors. --blocked and --blocking are
+     FOREGROUND-only tokens (pill label + bare icon), each paired with a subtle
+     same-hue dark tint so the 12px pill label clears WCAG AA small-text contrast
+     (4.5:1): --blocked/--blocked-bg ~4.83:1, --blocking/--blocking-bg ~7.83:1.
+     Inherited by graphite/dracula; daylight overrides them below. */
   --blocked: oklch(0.66 0.225 27);        /* red-400, lightened for AA contrast */
   --blocked-bg: oklch(0.24 0.05 27);      /* subtle same-hue dark red tint */
   --blocking: oklch(0.768 0.188 84);      /* amber-500 */
+  --blocking-bg: oklch(0.24 0.05 84);     /* subtle same-hue dark amber tint */
 
   /* Interactive colors */
   --link: oklch(0.673 0.182 276);              /* indigo-400 */
@@ -328,10 +330,14 @@
   --priority-normal: oklch(0.55 0.012 264);
   --priority-low: oklch(0.63 0.01 264);
 
-  /* Blocking/blocked indicators */
+  /* Blocking/blocked indicators. Both --blocked and --blocking are FOREGROUND
+     labels on a subtle same-hue tint, so — mirroring how --blocked is darkened
+     for light mode — the amber --blocking is darkened too so its 12px pill label
+     clears WCAG AA small-text contrast (4.5:1) on the light tint (~5.06:1). */
   --blocked: oklch(0.52 0.22 27);
   --blocked-bg: oklch(0.94 0.04 27);        /* light same-hue red tint */
-  --blocking: oklch(0.62 0.15 66);
+  --blocking: oklch(0.52 0.13 66);          /* darkened amber for AA on light tint */
+  --blocking-bg: oklch(0.96 0.025 66);      /* light same-hue amber tint */
 
   /* Interactive colors */
   --link: oklch(0.5 0.2 276);

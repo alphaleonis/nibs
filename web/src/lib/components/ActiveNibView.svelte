@@ -54,7 +54,7 @@
   import PrioritySelect from "./PrioritySelect.svelte";
   import EstimateSelect from "./EstimateSelect.svelte";
   import TagEditor from "./TagEditor.svelte";
-  import BlockedBadge from "./BlockedBadge.svelte";
+  import RelationBadge from "./RelationBadge.svelte";
   import MarkdownEditor from "./MarkdownEditor.svelte";
   import RelatedNibGroup from "./RelatedNibGroup.svelte";
   import { Button } from "$lib/components/ui/button/index.js";
@@ -88,11 +88,13 @@
   /** Why the buffer is `gone`, or null when it isn't. Drives the notice copy. */
   const goneReason = $derived(viewState.kind === "gone" ? viewState.reason : null);
 
-  // Blocked-state emphasis in the header (mirrors the tree row): the count comes
-  // from the detail query's active-only `blockedBy` (completed/scrapped filtered
-  // server-side). `subtle` shows the bare lock; `pill`/`pill-dim` show the pill
-  // (nothing to dim in the header, so `pill-dim` renders the same as `pill`).
+  // Blocked/blocking emphasis in the header (mirrors the tree row): the counts
+  // come from the detail query's active-only `blockedBy`/`blocking`
+  // (completed/scrapped filtered server-side). `subtle` shows the bare icon;
+  // `pill`/`pill-dim` show the pill (nothing to dim in the header, so `pill-dim`
+  // renders the same as `pill`).
   const blockedByCount = $derived(detailNib?.blockedBy?.length ?? 0);
+  const blockingCount = $derived(detailNib?.blocking?.length ?? 0);
   const blockedVariant = $derived(blockedVariantFor(blockedEmphasis));
   // An edit buffer renders a blank placeholder form until its detail query
   // resolves (or, for a create→edit hand-off, until it's seeded). Disable inputs
@@ -547,7 +549,10 @@
           {/if}
 
           {#if !isCreating && blockedByCount > 0}
-            <BlockedBadge count={blockedByCount} variant={blockedVariant} />
+            <RelationBadge kind="blocked" count={blockedByCount} variant={blockedVariant} />
+          {/if}
+          {#if !isCreating && blockingCount > 0}
+            <RelationBadge kind="blocking" count={blockingCount} variant={blockedVariant} />
           {/if}
 
           <span class="anv-grow"></span>

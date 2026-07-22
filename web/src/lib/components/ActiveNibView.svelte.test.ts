@@ -362,7 +362,7 @@ describe("ActiveNibView", () => {
     });
   });
 
-  describe("blocked badge (header)", () => {
+  describe("relation badges (header)", () => {
     it("shows the blocked pill (default emphasis) when detailNib.blockedBy is non-empty", () => {
       const detail = {
         nib: makeDetailNib({ blockedBy: [ref("nibs-b1", "Blocker", "todo", "task")] }),
@@ -399,6 +399,70 @@ describe("ActiveNibView", () => {
       renderView(makeView({ kind: "creating", form, detail: null }), confirmDialog);
       expect(screen.queryByTestId("blocked-badge")).not.toBeInTheDocument();
       expect(screen.queryByTestId("blocked-icon")).not.toBeInTheDocument();
+    });
+
+    it("shows the blocking pill (default emphasis) when detailNib.blocking is non-empty", () => {
+      const detail = {
+        nib: makeDetailNib({ blocking: [ref("nibs-c1", "Blocked child", "todo", "task")] }),
+        fetching: false,
+      };
+      renderView(makeView({ detail }), confirmDialog);
+
+      const badge = screen.getByTestId("blocking-badge");
+      expect(badge).toBeInTheDocument();
+      expect(badge).toHaveTextContent("Blocking");
+      expect(badge).toHaveAttribute("title", "Blocking 1 nib(s)");
+    });
+
+    it("hides the blocking badge when blocking is empty", () => {
+      // The default detail nib has blocking: [].
+      renderView(makeView({}), confirmDialog);
+      expect(screen.queryByTestId("blocking-badge")).not.toBeInTheDocument();
+      expect(screen.queryByTestId("blocking-icon")).not.toBeInTheDocument();
+    });
+
+    it("renders the bare link icon (no pill) for blocking when blockedEmphasis is 'subtle'", () => {
+      const detail = {
+        nib: makeDetailNib({ blocking: [ref("nibs-c1", "Blocked child", "todo", "task")] }),
+        fetching: false,
+      };
+      renderView(makeView({ detail }), confirmDialog, { blockedEmphasis: "subtle" });
+
+      expect(screen.getByTestId("blocking-icon")).toBeInTheDocument();
+      expect(screen.queryByTestId("blocking-badge")).not.toBeInTheDocument();
+    });
+
+    it("does not show the blocked or blocking badges while creating, even with a populated detail (isCreating gate)", () => {
+      // Feed a detail that is BOTH blocked and blocking so both counts are > 0;
+      // then only the `!isCreating` gate suppresses the badges. Removing that
+      // gate makes this test fail — guarding against a vacuous pass on an empty
+      // detail (where blockedByCount/blockingCount are 0 regardless of the gate).
+      const form = makeCreateForm({ title: "New nib", dirty: true });
+      const detail = {
+        nib: makeDetailNib({
+          blockedBy: [ref("nibs-b1", "Blocker", "todo", "task")],
+          blocking: [ref("nibs-c1", "Blocked child", "todo", "task")],
+        }),
+        fetching: false,
+      };
+      renderView(makeView({ kind: "creating", form, detail }), confirmDialog);
+      expect(screen.queryByTestId("blocked-badge")).not.toBeInTheDocument();
+      expect(screen.queryByTestId("blocked-icon")).not.toBeInTheDocument();
+      expect(screen.queryByTestId("blocking-badge")).not.toBeInTheDocument();
+      expect(screen.queryByTestId("blocking-icon")).not.toBeInTheDocument();
+    });
+
+    it("shows both the blocked and blocking badges for a nib that is simultaneously blocked and blocking", () => {
+      const detail = {
+        nib: makeDetailNib({
+          blockedBy: [ref("nibs-b1", "Blocker", "todo", "task")],
+          blocking: [ref("nibs-c1", "Blocked child", "todo", "task")],
+        }),
+        fetching: false,
+      };
+      renderView(makeView({ detail }), confirmDialog);
+      expect(screen.getByTestId("blocked-badge")).toBeInTheDocument();
+      expect(screen.getByTestId("blocking-badge")).toBeInTheDocument();
     });
   });
 

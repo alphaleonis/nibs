@@ -4,7 +4,7 @@
   import { priorityIndicators, statusDotColors } from "../badges";
   import { Link, Lock, ChevronRight, ChevronDown, Plus } from "@lucide/svelte";
   import StatusIcon from "./StatusIcon.svelte";
-  import BlockedBadge from "./BlockedBadge.svelte";
+  import RelationBadge from "./RelationBadge.svelte";
   import TypeIcon from "./TypeIcon.svelte";
   import { canHaveChildren } from "../typeHierarchy";
   import { isBucketId } from "../tree";
@@ -189,18 +189,13 @@
           class="title-text-btn"
         >{nib.title}</button>
         {#if isBlocked}
-          <BlockedBadge count={nib.blockedByIds.length} variant={blockedVariant} />
+          <RelationBadge kind="blocked" count={nib.blockedByIds.length} variant={blockedVariant} />
         {/if}
-        <!-- 'blocking' intentionally keeps the plain link icon; the pill/emphasis
-             treatment is blocked-only for now — see nibs-e81b for the planned
-             mirrored emphasis treatment. -->
+        <!-- 'blocking' mirrors 'blocked': same emphasis-driven variant (subtle→icon,
+             pill/pill-dim→pill). Row DIMMING stays blocked-only — a nib is not
+             dimmed for blocking others (see blockedDim above). -->
         {#if nib.blockingIds.length > 0}
-          <span
-            data-testid="blocking-icon"
-            class="inline-flex items-center shrink-0"
-            style="color: var(--blocking);"
-            title="Blocking {nib.blockingIds.length} nib(s)"
-          ><Link size={12} /></span>
+          <RelationBadge kind="blocking" count={nib.blockingIds.length} variant={blockedVariant} />
         {/if}
       </div>
     </td>

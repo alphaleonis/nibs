@@ -146,7 +146,7 @@ export const BLOCKED_EMPHASES = ["subtle", "pill", "pill-dim"] as const;
 export type BlockedEmphasis = (typeof BLOCKED_EMPHASES)[number];
 export const DEFAULT_BLOCKED_EMPHASIS: BlockedEmphasis = "pill";
 
-// Maps a BlockedEmphasis to the BlockedBadge presentational `variant`. Exhaustive
+// Maps a BlockedEmphasis to the RelationBadge presentational `variant`. Exhaustive
 // switch (no default) so adding a new emphasis is a compile-time error here until
 // its variant is decided — the single source of truth for both the tree row and
 // the ActiveNibView header. Row dimming (`pill-dim`) is handled separately at the
