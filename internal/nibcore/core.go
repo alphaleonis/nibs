@@ -1012,7 +1012,10 @@ func (c *Core) saveToDisk(b *nib.Nib) error {
 		return err
 	}
 
-	if err := os.WriteFile(path, content, 0644); err != nil {
+	// Write atomically (temp file + rename) so a crash or a concurrent reader
+	// never observes a half-written nib — a torn file would fail nib.Parse on the
+	// next snapshot build and surface as an OnDiskUnparseableError.
+	if err := atomicWriteFile(path, content, 0644); err != nil {
 		return fmt.Errorf("writing file: %w", err)
 	}
 
