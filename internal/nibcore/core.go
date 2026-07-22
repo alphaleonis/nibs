@@ -78,6 +78,12 @@ type Core struct {
 	root   string         // absolute path to .nibs directory
 	config *config.Config // project configuration
 
+	// lockPath is the OS-temp-dir path of the cross-process advisory write lock
+	// guarding this .nibs directory. Every write mutator holds it for the duration
+	// of its read-check-write so two nibs processes (or serve + a CLI) on the same
+	// machine cannot both pass the etag check and clobber each other.
+	lockPath string
+
 	// In-memory state
 	mu   sync.RWMutex
 	nibs map[string]*nib.Nib // ID -> Nib
@@ -123,12 +129,22 @@ func New(root string, cfg *config.Config) *Core {
 	return &Core{
 		root:              root,
 		config:            cfg,
+		lockPath:          writeLockPath(root),
 		nibs:              make(map[string]*nib.Nib),
 		mentionIdx:        newMentionIndex(),
 		subscribers:       make(map[uint64]*subscription),
 		signalSubscribers: make(map[uint64]chan struct{}),
 		warnWriter:        os.Stderr,
 	}
+}
+
+// acquireWriteLock takes the cross-process advisory write lock for the whole
+// .nibs directory and returns a release func. Callers already hold c.mu; the lock
+// order is always c.mu then this file lock, so cooperating processes serialize
+// their mutations without any deadlock. Held only for the span of one mutating
+// operation so a long-lived serve process never starves concurrent CLIs.
+func (c *Core) acquireWriteLock() (func() error, error) {
+	return acquireFileLock(c.lockPath)
 }
 
 // SetWarnWriter sets the writer for warning messages.
@@ -738,6 +754,12 @@ func (c *Core) Create(b *nib.Nib) error {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 
+	unlock, err := c.acquireWriteLock()
+	if err != nil {
+		return err
+	}
+	defer func() { _ = unlock() }()
+
 	// Reject invalid enum values before touching any state.
 	if err := c.validateEnums(b); err != nil {
 		return err
@@ -926,6 +948,12 @@ func (c *Core) Update(b *nib.Nib, ifMatch *string) error {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 
+	unlock, lockErr := c.acquireWriteLock()
+	if lockErr != nil {
+		return lockErr
+	}
+	defer func() { _ = unlock() }()
+
 	// Verify nib exists in memory
 	storedNib, ok := c.nibs[b.ID]
 	if !ok {
@@ -1028,6 +1056,12 @@ func (c *Core) Delete(id string) error {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 
+	unlock, err := c.acquireWriteLock()
+	if err != nil {
+		return err
+	}
+	defer func() { _ = unlock() }()
+
 	// Find the nib by exact match
 	targetID := id
 	targetNib, ok := c.nibs[id]
@@ -1074,6 +1108,12 @@ func (c *Core) Archive(id string) error {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 
+	unlock, lockErr := c.acquireWriteLock()
+	if lockErr != nil {
+		return lockErr
+	}
+	defer func() { _ = unlock() }()
+
 	// Find the nib
 	targetNib, targetID, err := c.findNibLocked(id)
 	if err != nil {
@@ -1112,6 +1152,12 @@ func (c *Core) Archive(id string) error {
 func (c *Core) Unarchive(id string) error {
 	c.mu.Lock()
 	defer c.mu.Unlock()
+
+	unlock, lockErr := c.acquireWriteLock()
+	if lockErr != nil {
+		return lockErr
+	}
+	defer func() { _ = unlock() }()
 
 	// Find the nib
 	targetNib, targetID, err := c.findNibLocked(id)
@@ -1225,6 +1271,12 @@ func (c *Core) GetFromArchive(id string) (*nib.Nib, error) {
 func (c *Core) LoadAndUnarchive(id string) (*nib.Nib, error) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
+
+	unlock, lockErr := c.acquireWriteLock()
+	if lockErr != nil {
+		return nil, lockErr
+	}
+	defer func() { _ = unlock() }()
 
 	// Find the nib (always loaded — archived nibs are included)
 	b, targetID, err := c.findNibLocked(id)
