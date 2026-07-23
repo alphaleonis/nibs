@@ -6,6 +6,7 @@ export interface NibSummary {
   priority: string;
   estimate: string;
   tags: string[];
+  createdAt: string;
   updatedAt: string;
 }
 
@@ -64,7 +65,7 @@ export interface RowSubtreeActions {
 export const VIEW_LEVELS = ["none", "milestones", "epics", "features"] as const;
 export type ViewLevel = (typeof VIEW_LEVELS)[number];
 
-export const ALL_COLUMN_KEYS = ["id", "parent", "type", "title", "state", "effort", "tags", "blocking", "blockedBy"] as const;
+export const ALL_COLUMN_KEYS = ["id", "parent", "type", "title", "state", "effort", "tags", "blocking", "blockedBy", "created", "modified"] as const;
 export type ColumnKey = (typeof ALL_COLUMN_KEYS)[number];
 
 export interface ColumnConfig {
@@ -86,6 +87,8 @@ export const DEFAULT_COLUMNS: ColumnConfig[] = [
   { key: "tags", label: "Tags", alwaysVisible: false },
   { key: "blocking", label: "Blocking", alwaysVisible: false, defaultVisible: false },
   { key: "blockedBy", label: "Blocked by", alwaysVisible: false, defaultVisible: false },
+  { key: "created", label: "Created", alwaysVisible: false, defaultVisible: false },
+  { key: "modified", label: "Modified", alwaysVisible: false },
 ];
 
 // Columns shown when a view level has no persisted column configuration. Opt-in
@@ -102,6 +105,8 @@ export const DEFAULT_COLUMN_WIDTHS: Record<ColumnKey, number> = {
   tags: 150,
   blocking: 90,
   blockedBy: 100,
+  created: 110,
+  modified: 110,
 };
 
 export const DEFAULT_DETAIL_PANEL_WIDTH = 400;

@@ -17,6 +17,7 @@ function makeNib(overrides: Partial<NibSummary> = {}): NibSummary {
     priority: "normal",
     estimate: "m",
     tags: [],
+    createdAt: "2026-03-15T10:00:00Z",
     updatedAt: "2026-03-20T10:00:00Z",
     ...overrides,
   };

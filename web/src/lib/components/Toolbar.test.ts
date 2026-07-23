@@ -343,6 +343,56 @@ describe("Toolbar", () => {
     expect(labels).toContain("Blocked by");
   });
 
+  it("lists Created and Modified in the Columns dropdown", async () => {
+    render(Toolbar, { ...defaultToolbarProps, viewLevel: "epics" as ViewLevel });
+
+    await user.click(screen.getByRole("button", { name: "Columns" }));
+
+    const items = screen.getAllByRole("menuitemcheckbox");
+    const labels = items.map(item => item.textContent?.trim());
+    expect(labels).toContain("Created");
+    expect(labels).toContain("Modified");
+  });
+
+  it("Modified is checked and Created is unchecked when using the default-visible columns", async () => {
+    render(Toolbar, {
+      ...defaultToolbarProps,
+      visibleColumns: [...DEFAULT_VISIBLE_COLUMNS] as ColumnKey[],
+      viewLevel: "epics" as ViewLevel,
+    });
+
+    await user.click(screen.getByRole("button", { name: "Columns" }));
+
+    const items = screen.getAllByRole("menuitemcheckbox");
+    const created = items.find(item => item.textContent?.trim() === "Created");
+    const modified = items.find(item => item.textContent?.trim() === "Modified");
+    // modified is default-visible; created is opt-in.
+    expect(modified).toHaveAttribute("aria-checked", "true");
+    expect(created).toHaveAttribute("aria-checked", "false");
+  });
+
+  it("toggling Created on emits it in canonical order (before modified)", async () => {
+    const oncolumnschange = vi.fn();
+    render(Toolbar, {
+      ...defaultToolbarProps,
+      visibleColumns: [...DEFAULT_VISIBLE_COLUMNS] as ColumnKey[],
+      oncolumnschange,
+      viewLevel: "epics" as ViewLevel,
+    });
+
+    await user.click(screen.getByRole("button", { name: "Columns" }));
+
+    const items = screen.getAllByRole("menuitemcheckbox");
+    const createdItem = items.find(item => item.textContent?.trim() === "Created");
+    expect(createdItem).toBeInTheDocument();
+    await user.click(createdItem!);
+
+    expect(oncolumnschange).toHaveBeenCalledOnce();
+    const callArg = oncolumnschange.mock.calls[0][0] as ColumnKey[];
+    // created (canonical index 9) sorts before modified (index 10) in ALL_COLUMN_KEYS.
+    expect(callArg).toEqual(["id", "parent", "type", "title", "state", "effort", "tags", "created", "modified"]);
+  });
+
   it("Blocking and Blocked by are unchecked when using the default-visible columns", async () => {
     render(Toolbar, {
       ...defaultToolbarProps,
@@ -377,7 +427,8 @@ describe("Toolbar", () => {
 
     expect(oncolumnschange).toHaveBeenCalledOnce();
     const callArg = oncolumnschange.mock.calls[0][0] as ColumnKey[];
-    expect(callArg).toEqual(["id", "parent", "type", "title", "state", "effort", "tags", "blocking"]);
+    // blocking (canonical index 7) slots in before the default-visible modified.
+    expect(callArg).toEqual(["id", "parent", "type", "title", "state", "effort", "tags", "blocking", "modified"]);
   });
 
   it("closes Columns dropdown on second click", async () => {

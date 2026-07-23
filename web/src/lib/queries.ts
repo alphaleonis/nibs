@@ -185,6 +185,7 @@ export const TREE_TABLE_QUERY = gql`
       priority
       estimate
       tags
+      createdAt
       updatedAt
       parentId
       blockingIds

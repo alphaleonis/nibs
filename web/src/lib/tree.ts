@@ -163,6 +163,7 @@ function makeBucketNode<T extends TreeNib>(id: string, title: string, children: 
     priority: "",
     estimate: "",
     tags: [],
+    createdAt: "",
     updatedAt: "",
     parentId: null,
     blockingIds: [],

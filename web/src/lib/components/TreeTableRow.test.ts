@@ -1,6 +1,7 @@
 import { render, screen } from "@testing-library/svelte";
 import { describe, it, expect } from "vitest";
 import TreeTableRow from "./TreeTableRow.svelte";
+import { formatRelative } from "../date";
 import type { TreeTableNib, ColumnKey } from "../types";
 import { SelectionState } from "../selection.svelte";
 import { DragState } from "../drag.svelte";
@@ -15,6 +16,7 @@ function makeTreeTableNib(overrides: Partial<TreeTableNib> = {}): TreeTableNib {
     priority: "high",
     estimate: "m",
     tags: ["auth", "urgent"],
+    createdAt: "2026-03-15T10:00:00Z",
     updatedAt: "2026-03-20T10:00:00Z",
     parentId: null,
     blockingIds: [],
@@ -404,6 +406,101 @@ describe("TreeTableRow", () => {
     });
 
     expect(container.querySelector("[data-testid='nib-blocking']")).not.toBeInTheDocument();
+  });
+
+  it("renders the Modified cell bound to updatedAt (distinct from Created) with relative age text and an ISO title", () => {
+    // Created and Modified sit in DIFFERENT relative buckets regardless of
+    // wall-clock: createdAt (2020) collapses to the absolute "Jan 2020" label
+    // while updatedAt stays a relative age. Rendering BOTH cells and asserting
+    // they differ makes a field swap between the two near-identical <td> blocks
+    // observable — a swap renders createdAt's date and fails the check.
+    const visibleColumns: ColumnKey[] = ["title", "created", "modified"];
+    const nib = makeTreeTableNib({
+      createdAt: "2020-01-01T00:00:00Z",
+      updatedAt: "2026-03-20T10:00:00Z",
+    });
+    const { container } = renderRow({
+      nib,
+      depth: 0,
+      hasChildren: false,
+      dimmed: false,
+      visibleColumns,
+    });
+
+    const modifiedCell = container.querySelector("[data-testid='nib-modified']") as HTMLElement;
+    const createdCell = container.querySelector("[data-testid='nib-created']") as HTMLElement;
+    expect(modifiedCell).toBeInTheDocument();
+
+    const modifiedRel = modifiedCell.textContent?.trim() ?? "";
+    const createdRel = createdCell.textContent?.trim() ?? "";
+    // Non-empty, and bound to the RIGHT field (updatedAt, not createdAt).
+    expect(modifiedRel).not.toBe("");
+    expect(modifiedRel).toBe(formatRelative(nib.updatedAt));
+    // Observably different from the Created cell, so a field swap fails here.
+    expect(modifiedRel).not.toBe(createdRel);
+    // Hover title is the full ISO timestamp of updatedAt.
+    expect(modifiedCell.getAttribute("title")).toBe("2026-03-20T10:00:00.000Z");
+  });
+
+  it("does not render the Created cell when the created column is not visible", () => {
+    // 'created' is opt-in; it is absent unless explicitly enabled.
+    const visibleColumns: ColumnKey[] = ["title", "modified"];
+    const { container } = renderRow({
+      nib: makeTreeTableNib({ createdAt: "2026-03-15T10:00:00Z" }),
+      depth: 0,
+      hasChildren: false,
+      dimmed: false,
+      visibleColumns,
+    });
+
+    expect(container.querySelector("[data-testid='nib-created']")).not.toBeInTheDocument();
+  });
+
+  it("renders the Created cell bound to createdAt (distinct from Modified) with relative age text and an ISO title", () => {
+    // Symmetric to the Modified-cell test: distinct buckets (createdAt 2020 ->
+    // "Jan 2020"; updatedAt recent -> relative age) so a field swap that renders
+    // updatedAt in the Created cell is caught by the distinctness assertion.
+    const visibleColumns: ColumnKey[] = ["title", "created", "modified"];
+    const nib = makeTreeTableNib({
+      createdAt: "2020-01-01T00:00:00Z",
+      updatedAt: "2026-03-20T10:00:00Z",
+    });
+    const { container } = renderRow({
+      nib,
+      depth: 0,
+      hasChildren: false,
+      dimmed: false,
+      visibleColumns,
+    });
+
+    const createdCell = container.querySelector("[data-testid='nib-created']") as HTMLElement;
+    const modifiedCell = container.querySelector("[data-testid='nib-modified']") as HTMLElement;
+    expect(createdCell).toBeInTheDocument();
+
+    const createdRel = createdCell.textContent?.trim() ?? "";
+    const modifiedRel = modifiedCell.textContent?.trim() ?? "";
+    expect(createdRel).not.toBe("");
+    expect(createdRel).toBe(formatRelative(nib.createdAt));
+    expect(createdRel).not.toBe(modifiedRel);
+    expect(createdCell.getAttribute("title")).toBe("2020-01-01T00:00:00.000Z");
+  });
+
+  it("renders blank Created / Modified cells for a synthetic bucket row (empty dates)", () => {
+    const visibleColumns: ColumnKey[] = ["title", "created", "modified"];
+    const { container } = renderRow({
+      nib: makeTreeTableNib({ id: "__no_epic__", title: "No epic (2)", type: "", createdAt: "", updatedAt: "" }),
+      depth: 0,
+      hasChildren: true,
+      dimmed: false,
+      visibleColumns,
+    });
+
+    const created = container.querySelector("[data-testid='nib-created']") as HTMLElement;
+    const modified = container.querySelector("[data-testid='nib-modified']") as HTMLElement;
+    expect(created.textContent?.trim()).toBe("");
+    expect(created.getAttribute("title")).toBe("");
+    expect(modified.textContent?.trim()).toBe("");
+    expect(modified.getAttribute("title")).toBe("");
   });
 
   it("renders parent info in the parent cell when parentNib is provided", () => {

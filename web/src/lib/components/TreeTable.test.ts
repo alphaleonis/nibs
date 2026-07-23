@@ -23,6 +23,7 @@ function makeTreeTableNib(overrides: Partial<TreeTableNib> = {}): TreeTableNib {
     priority: "high",
     estimate: "m",
     tags: ["auth"],
+    createdAt: "2026-03-15T10:00:00Z",
     updatedAt: "2026-03-20T10:00:00Z",
     parentId: null,
     blockingIds: [],
@@ -894,6 +895,78 @@ describe("TreeTable", () => {
 
     // blocking + blockedBy default widths added to the base table width.
     expect(grownWidth).toBe(baseWidth + DEFAULT_COLUMN_WIDTHS.blocking + DEFAULT_COLUMN_WIDTHS.blockedBy);
+  });
+
+  it("renders Created and Modified headers when those columns are visible", () => {
+    const nibs: TreeTableNib[] = [
+      makeTreeTableNib({ id: "nibs-001", title: "Epic A", type: "epic" }),
+    ];
+
+    mockQueryStore.mockReturnValue(
+      readable({ fetching: false, error: undefined, data: { nibs }, stale: false }) as any
+    );
+
+    const visibleColumns: ColumnKey[] = ["title", "created", "modified"];
+    const { container } = renderTreeTable({
+      filter: {},
+      viewLevel: "epics" as ViewLevel,
+      visibleColumns,
+    });
+
+    const thead = container.querySelector("thead")!;
+    const headers = Array.from(thead.querySelectorAll("th")).map(th => th.textContent?.trim());
+    expect(headers).toContain("Created");
+    expect(headers).toContain("Modified");
+  });
+
+  it("omits Created and Modified headers when those columns are not visible", () => {
+    const nibs: TreeTableNib[] = [
+      makeTreeTableNib({ id: "nibs-001", title: "Epic A", type: "epic" }),
+    ];
+
+    mockQueryStore.mockReturnValue(
+      readable({ fetching: false, error: undefined, data: { nibs }, stale: false }) as any
+    );
+
+    // A visible set without created / modified.
+    const visibleColumns: ColumnKey[] = ["id", "parent", "type", "title", "state", "effort", "tags"];
+    const { container } = renderTreeTable({
+      filter: {},
+      viewLevel: "epics" as ViewLevel,
+      visibleColumns,
+    });
+
+    const thead = container.querySelector("thead")!;
+    const headers = Array.from(thead.querySelectorAll("th")).map(th => th.textContent?.trim());
+    expect(headers).not.toContain("Created");
+    expect(headers).not.toContain("Modified");
+  });
+
+  it("table width grows by the created/modified column widths when they are shown", () => {
+    const nibs: TreeTableNib[] = [
+      makeTreeTableNib({ id: "nibs-001", title: "Epic A", type: "epic" }),
+    ];
+
+    mockQueryStore.mockReturnValue(
+      readable({ fetching: false, error: undefined, data: { nibs }, stale: false }) as any
+    );
+
+    const base = renderTreeTable({
+      filter: {},
+      viewLevel: "epics" as ViewLevel,
+      visibleColumns: ["title"] as ColumnKey[],
+    });
+    const baseWidth = parseInt((base.container.querySelector("table") as HTMLElement).style.width, 10);
+
+    const withCols = renderTreeTable({
+      filter: {},
+      viewLevel: "epics" as ViewLevel,
+      visibleColumns: ["title", "created", "modified"] as ColumnKey[],
+    });
+    const grownWidth = parseInt((withCols.container.querySelector("table") as HTMLElement).style.width, 10);
+
+    // created + modified default widths added to the base table width.
+    expect(grownWidth).toBe(baseWidth + DEFAULT_COLUMN_WIDTHS.created + DEFAULT_COLUMN_WIDTHS.modified);
   });
 
   it("parent column hidden by visibleColumns exclusion", () => {

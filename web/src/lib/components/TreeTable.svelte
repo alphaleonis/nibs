@@ -651,6 +651,20 @@
             <div class="resize-handle" onpointerdown={(e) => columnResize.onPointerDown(e, "blockedBy")} onpointermove={columnResize.onPointerMove} onpointerup={columnResize.onPointerUp} ondblclick={() => columnResize.onDblClick("blockedBy", showColumn)}></div>
           </th>
         {/if}
+        {#if showColumn("created")}
+          <th class="text-left text-label text-muted-foreground px-3 py-2 relative bg-background" style="width: {resolvedColumnWidths.created}px;">
+            Created
+            <!-- svelte-ignore a11y_no_static_element_interactions -->
+            <div class="resize-handle" onpointerdown={(e) => columnResize.onPointerDown(e, "created")} onpointermove={columnResize.onPointerMove} onpointerup={columnResize.onPointerUp} ondblclick={() => columnResize.onDblClick("created", showColumn)}></div>
+          </th>
+        {/if}
+        {#if showColumn("modified")}
+          <th class="text-left text-label text-muted-foreground px-3 py-2 relative bg-background" style="width: {resolvedColumnWidths.modified}px;">
+            Modified
+            <!-- svelte-ignore a11y_no_static_element_interactions -->
+            <div class="resize-handle" onpointerdown={(e) => columnResize.onPointerDown(e, "modified")} onpointermove={columnResize.onPointerMove} onpointerup={columnResize.onPointerUp} ondblclick={() => columnResize.onDblClick("modified", showColumn)}></div>
+          </th>
+        {/if}
       </tr>
     </thead>
     <tbody>

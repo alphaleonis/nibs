@@ -6,6 +6,7 @@
   import StatusIcon from "./StatusIcon.svelte";
   import RelationBadge from "./RelationBadge.svelte";
   import { RELATION_CONFIG } from "../relations";
+  import { formatRelative, formatAbsolute } from "../date";
   import TypeIcon from "./TypeIcon.svelte";
   import { canHaveChildren } from "../typeHierarchy";
   import { isBucketId } from "../tree";
@@ -258,6 +259,17 @@
         ><BlockedIcon size={12} />{nib.blockedByIds.length}</span>
       {/if}
     </td>
+  {/if}
+
+  <!-- Created column (opt-in). Relative age with the full ISO timestamp on hover.
+       Bucket rows have an empty createdAt, so the formatter returns "" (blank). -->
+  {#if visibleColumns.includes("created")}
+    <td data-testid="nib-created" class="text-body px-3 cell-truncate row-cell" style="color: var(--muted-foreground);" title={formatAbsolute(nib.createdAt)}>{formatRelative(nib.createdAt)}</td>
+  {/if}
+
+  <!-- Modified column. Relative age with the full ISO timestamp on hover. -->
+  {#if visibleColumns.includes("modified")}
+    <td data-testid="nib-modified" class="text-body px-3 cell-truncate row-cell" style="color: var(--muted-foreground);" title={formatAbsolute(nib.updatedAt)}>{formatRelative(nib.updatedAt)}</td>
   {/if}
 </tr>
 

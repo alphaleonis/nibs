@@ -18,6 +18,7 @@ function makeNib(overrides: Partial<TreeTableNib> = {}): TreeTableNib {
     priority: "normal",
     estimate: "",
     tags: [],
+    createdAt: "",
     updatedAt: "",
     parentId: null,
     blockingIds: [],
