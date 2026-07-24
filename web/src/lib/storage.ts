@@ -1,6 +1,6 @@
 import { VIEW_LEVELS, MIN_DETAIL_PANEL_WIDTH, MIN_DETAIL_PANEL_HEIGHT, DETAIL_PANEL_POSITIONS, BLOCKED_EMPHASES, THEMES, DEFAULT_THEME, FONT_SCALES } from "./types";
 import type { FilterPreferences, RowDensity, ViewLevel, Theme, DetailPanelPosition, BlockedEmphasis, FontSize, NibFilter, FlatSort } from "./types";
-import { ALL_COLUMN_KEYS, ALWAYS_VISIBLE_KEYS } from "./columns";
+import { ALL_COLUMN_KEYS, ALWAYS_VISIBLE_KEYS, SORTABLE_COLUMN_KEYS } from "./columns";
 import type { ColumnKey } from "./columns";
 import { STATUSES } from "./constants";
 
@@ -138,12 +138,16 @@ function parsePreviewOpen(raw: unknown): boolean | undefined {
   return typeof raw === "boolean" ? raw : undefined;
 }
 
-const VALID_FLAT_SORT_FIELDS = new Set<string>(["created", "modified"]);
+// The full sortable-field set is single-sourced in columns.ts (derived from
+// COLUMNS[].sortable). A persisted field naming a column that was removed or made
+// non-sortable falls out of this set and is treated as off (no unset-vs-off
+// ambiguity), so old preferences never crash or pin a sort to a gone column.
+const VALID_FLAT_SORT_FIELDS = new Set<string>(SORTABLE_COLUMN_KEYS);
 const VALID_FLAT_SORT_DIRECTIONS = new Set<string>(["asc", "desc"]);
 
 // Optional like blockedEmphasis: return the object only when BOTH field and
 // direction are valid enums; else undefined so Preferences treats it as off
-// (null). An absent/invalid flatSort means "no date sort" — no unset-vs-off
+// (null). An absent/invalid flatSort means "no sort" — no unset-vs-off
 // ambiguity.
 function parseFlatSort(raw: unknown): FlatSort | undefined {
   if (typeof raw !== "object" || raw === null) return undefined;

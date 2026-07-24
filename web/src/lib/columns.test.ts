@@ -5,6 +5,7 @@ import {
   DEFAULT_COLUMN_WIDTHS,
   DEFAULT_VISIBLE_COLUMNS,
   ALWAYS_VISIBLE_KEYS,
+  SORTABLE_COLUMN_KEYS,
   type ColumnKey,
 } from "./columns";
 
@@ -78,17 +79,17 @@ describe("columns model", () => {
     }
   });
 
-  it("only the date columns are sortable, and their sortKey is themselves; every other column is inert", () => {
+  it("every column is sortable, and each column's sortKey is itself", () => {
     for (const key of ALL_COLUMN_KEYS) {
       const def = COLUMNS[key];
-      if (key === "created" || key === "modified") {
-        expect(def.sortable).toBe(true);
-        expect(def.sortKey).toBe(key);
-      } else {
-        expect(def.sortable).toBe(false);
-        expect(def.sortKey).toBeNull();
-      }
+      expect(def.sortable).toBe(true);
+      expect(def.sortKey).toBe(key);
     }
+  });
+
+  it("SORTABLE_COLUMN_KEYS is the sortable subset in canonical order (all columns today)", () => {
+    expect(SORTABLE_COLUMN_KEYS).toEqual(ALL_COLUMN_KEYS.filter((k) => COLUMNS[k].sortable));
+    expect(SORTABLE_COLUMN_KEYS).toEqual([...ALL_COLUMN_KEYS]);
   });
 
   it("title is the only always-visible column", () => {

@@ -77,8 +77,8 @@
   let resolvedViewLevel = $derived(resolveViewLevel(prefs, viewLevel));
   let resolvedVisibleColumns = $derived(resolveVisibleColumns(prefs, visibleColumns));
   let resolvedColumnWidths = $derived(resolveColumnWidths(prefs, columnWidths));
-  // Flat-view date sort. Resolved from prefs/prop; only APPLIED in the flat view,
-  // and only while the sorted column is visible. Hiding the sorted column
+  // Flat-view column sort. Resolved from prefs/prop; only APPLIED in the flat
+  // view, and only while the sorted column is visible. Hiding the sorted column
   // deactivates the sort (rows revert to the manual `order` sequence) instead of
   // leaving rows sorted by an invisible field with no header to clear it; the
   // persisted preference is retained, so re-showing the column reactivates it.
@@ -130,7 +130,7 @@
 
   let allNibs = $derived(dataSource.allNibs);
 
-  // Flat view applies a client-side date sort when one is active; every other
+  // Flat view applies a client-side column sort when one is active; every other
   // view (and Flat with sort off) keeps the server's manual `order` sequence.
   // Only the ROW ORDER changes — other allNibs consumers stay on the raw list.
   let orderedNibs = $derived(activeFlatSort ? applyFlatSort(allNibs, activeFlatSort) : allNibs);
@@ -511,15 +511,15 @@
     treeDrag.onRowPointerDown(nibId, e);
   }
 
-  // --- Flat-view date-header sorting ---
-  // Clicking a Created/Modified header cycles that field asc → desc → off. Only
+  // --- Flat-view header sorting ---
+  // Clicking any sortable header cycles that field asc → desc → off. Only
   // reachable in the flat view (the header renders a plain label elsewhere).
   function handleFlatSortClick(field: FlatSortField) {
     emitFlatSort(prefs, onflatsortchange, nextFlatSort(resolvedFlatSort, field));
   }
 
-  // aria-sort for a sortable date <th>: the active direction when this field is
-  // the flat sort, "none" for the other sortable field in flat view, and
+  // aria-sort for a sortable <th>: the active direction when this field is the
+  // flat sort, "none" for every other sortable header in flat view, and
   // undefined (attribute omitted) in every non-flat view.
   function ariaSortFor(field: FlatSortField): "ascending" | "descending" | "none" | undefined {
     if (resolvedViewLevel !== "flat") return undefined;
@@ -528,12 +528,12 @@
   }
 </script>
 
-<!-- Date-column header content. In the flat view it is a click-to-sort button
-     (asc → desc → off) showing an arrow for the active field; in every other
-     view it is the plain static date-column label. The
-     click is on the button, not the sibling resize handle, and stops
-     propagation so it never reaches the table's delegated row-click handler. -->
-{#snippet sortableDateHeader(field: FlatSortField, label: string)}
+<!-- Sortable-column header content. In the flat view it is a click-to-sort
+     button (asc → desc → off) showing an arrow for the active field; in every
+     other view it is the plain static column label. The click is on the button,
+     not the sibling resize handle, and stops propagation so it never reaches the
+     table's delegated row-click handler. -->
+{#snippet sortableHeader(field: FlatSortField, label: string)}
   {#if resolvedViewLevel === "flat"}
     <button
       type="button"
@@ -595,7 +595,7 @@
             aria-sort={def.sortable && def.sortKey ? ariaSortFor(def.sortKey) : undefined}
           >
             {#if def.sortable && def.sortKey}
-              {@render sortableDateHeader(def.sortKey, def.label)}
+              {@render sortableHeader(def.sortKey, def.label)}
             {:else}
               {@render adapters[key].header()}
             {/if}

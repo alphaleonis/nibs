@@ -65,9 +65,12 @@ export interface RowSubtreeActions {
 export const VIEW_LEVELS = ["none", "flat", "milestones", "epics", "features"] as const;
 export type ViewLevel = (typeof VIEW_LEVELS)[number];
 
-// Flat-view client-side date sort. Absent/null means "off" (manual `order`
-// sequence). Only the "flat" view level applies it; every other view ignores it.
-export type FlatSortField = "created" | "modified";
+// Flat-view client-side sort. Absent/null means "off" (manual `order` sequence).
+// Only the "flat" view level applies it; every other view ignores it. The field
+// union is single-sourced as `SortKey` in columns.ts (the sortable ColumnKey
+// subset); `FlatSortField` re-exports it so the many "./types" importers keep
+// working without duplicating the set.
+export type FlatSortField = SortKey;
 export type FlatSortDirection = "asc" | "desc";
 export interface FlatSort {
   field: FlatSortField;
@@ -78,9 +81,9 @@ export interface FlatSort {
 // re-exported here so the many existing importers of "./types" keep working; the
 // canonical definitions are single-sourced in columns.ts.
 import { COLUMNS, ALL_COLUMN_KEYS, DEFAULT_COLUMN_WIDTHS, DEFAULT_VISIBLE_COLUMNS } from "./columns";
-import type { ColumnKey } from "./columns";
+import type { ColumnKey, SortKey } from "./columns";
 export { ALL_COLUMN_KEYS, DEFAULT_COLUMN_WIDTHS, DEFAULT_VISIBLE_COLUMNS };
-export type { ColumnKey };
+export type { ColumnKey, SortKey };
 
 export interface ColumnConfig {
   key: ColumnKey;

@@ -31,11 +31,14 @@ export const ALL_COLUMN_KEYS = [
 
 export type ColumnKey = (typeof ALL_COLUMN_KEYS)[number];
 
-// The client-side flat-view date sort field. Structurally identical to today's
-// FlatSortField ("created" | "modified"); kept as its own name here because the
-// column model owns column *capabilities*. It widens as more columns become
-// sortable (nibs-6grg).
-export type SortKey = "created" | "modified";
+// The client-side Flat-view click-to-sort field. A column's sort field equals
+// its own key, so the sortable ColumnKey subset IS the field union — this is the
+// SINGLE source of that union (types.ts `FlatSortField` is a re-export). Every
+// column is sortable today (see COLUMNS below), so this equals ColumnKey; the
+// RUNTIME-authoritative gate is `SORTABLE_COLUMN_KEYS` (derived from
+// COLUMNS[].sortable), which parseFlatSort validates against, so a column later
+// marked `sortable:false` is rejected at load even while the type still lists it.
+export type SortKey = ColumnKey;
 
 export interface ColumnDef {
   key: ColumnKey;
@@ -46,9 +49,9 @@ export interface ColumnDef {
   // Shown when a view has no persisted column configuration. Opt-in columns
   // (blocking / blockedBy / created) start hidden but remain toggleable.
   defaultVisible: boolean;
-  // Column capabilities for the sort UI (nibs-6grg). Today only the date
-  // columns are sortable; the click-to-sort header + aria-sort still live in
-  // TreeTable's <th> shell and read these flags.
+  // Column capabilities for the sort UI. Every column is sortable in the Flat
+  // view; the click-to-sort header + aria-sort live in TreeTable's <th> shell
+  // and read these flags. A sortable column's `sortKey` equals its own `key`.
   sortable: boolean;
   sortKey: SortKey | null;
 }
@@ -71,15 +74,15 @@ export interface RowContext {
 // ColumnAdapters snippet map is pinned to the SAME union, so a column with a
 // def but no renderer (or vice versa) also fails to compile.
 export const COLUMNS = {
-  id: { key: "id", label: "ID", defaultWidth: 100, alwaysVisible: false, defaultVisible: true, sortable: false, sortKey: null },
-  parent: { key: "parent", label: "Parent", defaultWidth: 160, alwaysVisible: false, defaultVisible: true, sortable: false, sortKey: null },
-  type: { key: "type", label: "Type", defaultWidth: 80, alwaysVisible: false, defaultVisible: true, sortable: false, sortKey: null },
-  title: { key: "title", label: "Title", defaultWidth: 400, alwaysVisible: true, defaultVisible: true, sortable: false, sortKey: null },
-  state: { key: "state", label: "State", defaultWidth: 120, alwaysVisible: false, defaultVisible: true, sortable: false, sortKey: null },
-  effort: { key: "effort", label: "Effort", defaultWidth: 70, alwaysVisible: false, defaultVisible: true, sortable: false, sortKey: null },
-  tags: { key: "tags", label: "Tags", defaultWidth: 150, alwaysVisible: false, defaultVisible: true, sortable: false, sortKey: null },
-  blocking: { key: "blocking", label: "Blocking", defaultWidth: 90, alwaysVisible: false, defaultVisible: false, sortable: false, sortKey: null },
-  blockedBy: { key: "blockedBy", label: "Blocked by", defaultWidth: 100, alwaysVisible: false, defaultVisible: false, sortable: false, sortKey: null },
+  id: { key: "id", label: "ID", defaultWidth: 100, alwaysVisible: false, defaultVisible: true, sortable: true, sortKey: "id" },
+  parent: { key: "parent", label: "Parent", defaultWidth: 160, alwaysVisible: false, defaultVisible: true, sortable: true, sortKey: "parent" },
+  type: { key: "type", label: "Type", defaultWidth: 80, alwaysVisible: false, defaultVisible: true, sortable: true, sortKey: "type" },
+  title: { key: "title", label: "Title", defaultWidth: 400, alwaysVisible: true, defaultVisible: true, sortable: true, sortKey: "title" },
+  state: { key: "state", label: "State", defaultWidth: 120, alwaysVisible: false, defaultVisible: true, sortable: true, sortKey: "state" },
+  effort: { key: "effort", label: "Effort", defaultWidth: 70, alwaysVisible: false, defaultVisible: true, sortable: true, sortKey: "effort" },
+  tags: { key: "tags", label: "Tags", defaultWidth: 150, alwaysVisible: false, defaultVisible: true, sortable: true, sortKey: "tags" },
+  blocking: { key: "blocking", label: "Blocking", defaultWidth: 90, alwaysVisible: false, defaultVisible: false, sortable: true, sortKey: "blocking" },
+  blockedBy: { key: "blockedBy", label: "Blocked by", defaultWidth: 100, alwaysVisible: false, defaultVisible: false, sortable: true, sortKey: "blockedBy" },
   created: { key: "created", label: "Created", defaultWidth: 110, alwaysVisible: false, defaultVisible: false, sortable: true, sortKey: "created" },
   modified: { key: "modified", label: "Modified", defaultWidth: 110, alwaysVisible: false, defaultVisible: true, sortable: true, sortKey: "modified" },
 } satisfies Record<ColumnKey, ColumnDef>;
@@ -92,6 +95,12 @@ export const DEFAULT_COLUMN_WIDTHS = Object.fromEntries(
 // Derived, order-preserving. Columns shown when a view level has no persisted
 // column configuration (opt-in columns excluded).
 export const DEFAULT_VISIBLE_COLUMNS: ColumnKey[] = ALL_COLUMN_KEYS.filter((k) => COLUMNS[k].defaultVisible);
+
+// Runtime-authoritative sortable set, derived from COLUMNS[].sortable and
+// order-preserving. The single source consumed downstream: parseFlatSort
+// (storage.ts) validates persisted sort fields against it, and TreeTable renders
+// a click-to-sort header for each. A column's sort field equals its own key.
+export const SORTABLE_COLUMN_KEYS: ColumnKey[] = ALL_COLUMN_KEYS.filter((k) => COLUMNS[k].sortable);
 
 // The always-visible columns (title today). Order-preserving. Consumed by the
 // persistence sanitizer to guarantee these survive a load/save round-trip.

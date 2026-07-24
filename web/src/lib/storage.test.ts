@@ -415,16 +415,27 @@ describe("storage", () => {
     expect(loaded.flatSort).toEqual({ field: "modified", direction: "desc" });
   });
 
+  it("accepts any widened sortable field (round-trips a non-date column sort)", () => {
+    for (const field of ["title", "id", "type", "state", "effort", "tags", "blocking", "blockedBy", "parent"]) {
+      store["nibs-filter-preferences"] = JSON.stringify({
+        filter: {},
+        viewLevel: "flat",
+        flatSort: { field, direction: "asc" },
+      });
+      expect(loadPreferences().flatSort).toEqual({ field, direction: "asc" });
+    }
+  });
+
   it("returns undefined flatSort when not set", () => {
     savePreferences({ filter: {}, viewLevel: "none" });
     expect(loadPreferences().flatSort).toBeUndefined();
   });
 
-  it("returns undefined flatSort for an invalid field", () => {
+  it("returns undefined flatSort for an unknown/removed field (e.g. priority — not a column)", () => {
     store["nibs-filter-preferences"] = JSON.stringify({
       filter: {},
       viewLevel: "flat",
-      flatSort: { field: "title", direction: "asc" },
+      flatSort: { field: "priority", direction: "asc" },
     });
     expect(loadPreferences().flatSort).toBeUndefined();
   });

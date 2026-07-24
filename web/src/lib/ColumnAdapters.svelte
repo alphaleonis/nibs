@@ -109,10 +109,11 @@
 
 <!-- ===================== Header snippets ===================== -->
 <!-- Header content is just the column label. The <th> shell (width, resize
-     handle, and the flat-view date sort UI) stays in TreeTable. Sortable columns
-     currently render their own sort-aware header in that shell; these plain-label
-     headers back every column for parity and are what the shell renders for
-     non-sortable columns. -->
+     handle, and the click-to-sort UI) stays in TreeTable. Every column is
+     sortable, so the shell renders its own sort-aware header (built from the
+     column label) — a click-to-sort button in the flat view, a plain label
+     elsewhere. These plain-label snippets back every column for parity and are
+     the shell's fallback for any column later marked non-sortable. -->
 {#snippet headerId()}ID{/snippet}
 {#snippet headerParent()}Parent{/snippet}
 {#snippet headerType()}Type{/snippet}

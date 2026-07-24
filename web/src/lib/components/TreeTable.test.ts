@@ -1177,6 +1177,79 @@ describe("TreeTable", () => {
     });
   });
 
+  describe("flat view column sorting (generalized to every sortable column)", () => {
+    // Three roots whose type ordering (milestone → bug → task) differs from their
+    // incoming manual order, so a Type sort visibly reorders the rows.
+    function renderCols(props: Record<string, unknown> = {}, viewLevel: ViewLevel = "flat" as ViewLevel) {
+      const nibs: TreeTableNib[] = [
+        makeTreeTableNib({ id: "nibs-001", title: "Task", type: "task", status: "todo" }),
+        makeTreeTableNib({ id: "nibs-002", title: "Milestone", type: "milestone", status: "draft" }),
+        makeTreeTableNib({ id: "nibs-003", title: "Bug", type: "bug", status: "completed" }),
+      ];
+      mockQueryStore.mockReturnValue(
+        readable({ fetching: false, error: undefined, data: { nibs }, stale: false }) as any
+      );
+      return renderTreeTable({
+        filter: {},
+        viewLevel,
+        visibleColumns: ["title", "type", "state"] as ColumnKey[],
+        ...props,
+      });
+    }
+
+    it("renders a click-to-sort button for every visible column in flat view (not just dates)", () => {
+      renderCols();
+      expect(screen.getByRole("button", { name: "Sort by Title" })).toBeInTheDocument();
+      expect(screen.getByRole("button", { name: "Sort by Type" })).toBeInTheDocument();
+      expect(screen.getByRole("button", { name: "Sort by State" })).toBeInTheDocument();
+    });
+
+    it("clicking a non-date header (Type) with no active sort emits that field ascending", async () => {
+      const user = userEvent.setup();
+      const onflatsortchange = vi.fn();
+      renderCols({ flatSort: null, onflatsortchange });
+      await user.click(screen.getByRole("button", { name: "Sort by Type" }));
+      expect(onflatsortchange).toHaveBeenLastCalledWith({ field: "type", direction: "asc" });
+    });
+
+    it("reorders rows by a non-date column (type ascending, canonical rank)", () => {
+      const { container } = renderCols({ flatSort: { field: "type", direction: "asc" } });
+      const titles = Array.from(container.querySelectorAll("[data-testid='title-text']")).map((e) => e.textContent);
+      // Canonical rank: milestone → bug → task.
+      expect(titles).toEqual(["Milestone", "Bug", "Task"]);
+    });
+
+    it("shows an arrow and aria-sort on a non-date header (State descending)", () => {
+      const { container } = renderCols({ flatSort: { field: "state", direction: "desc" } });
+      const arrow = container.querySelector("[data-testid='flat-sort-arrow-state']");
+      expect(arrow).toBeInTheDocument();
+      expect(arrow!.classList.contains("lucide-arrow-down")).toBe(true);
+      const stateTh = Array.from(container.querySelectorAll("th")).find((th) => th.textContent?.trim() === "State")!;
+      expect(stateTh.getAttribute("aria-sort")).toBe("descending");
+      // A different sortable header reads "none" while inactive.
+      const typeTh = Array.from(container.querySelectorAll("th")).find((th) => th.textContent?.trim() === "Type")!;
+      expect(typeTh.getAttribute("aria-sort")).toBe("none");
+    });
+
+    it("deactivates the sort when a NON-date sorted column (type) is hidden", () => {
+      const { container } = renderCols({
+        flatSort: { field: "type", direction: "asc" },
+        visibleColumns: ["title", "state"] as ColumnKey[],
+      });
+      const titles = Array.from(container.querySelectorAll("[data-testid='title-text']")).map((e) => e.textContent);
+      // Type column hidden → sort deactivates → manual order (Task, Milestone, Bug).
+      expect(titles).toEqual(["Task", "Milestone", "Bug"]);
+    });
+
+    it("non-date headers are inert in the tree (none) view — plain label, no button or aria-sort", () => {
+      const { container } = renderCols({}, "none" as ViewLevel);
+      expect(screen.queryByRole("button", { name: "Sort by Type" })).not.toBeInTheDocument();
+      expect(container.querySelector("[data-testid='flat-sort-type']")).not.toBeInTheDocument();
+      const typeTh = Array.from(container.querySelectorAll("th")).find((th) => th.textContent?.trim() === "Type")!;
+      expect(typeTh.hasAttribute("aria-sort")).toBe(false);
+    });
+  });
+
   describe("keyboard navigation", () => {
     function setupWithNibs(
       nibs: TreeTableNib[],
