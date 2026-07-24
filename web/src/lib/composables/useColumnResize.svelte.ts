@@ -4,18 +4,23 @@ import { ALL_COLUMN_KEYS, DEFAULT_COLUMN_WIDTHS } from "../types";
 export const MIN_COLUMN_WIDTH = 40;
 export const MAX_COLUMN_WIDTH = 4000;
 
+export interface ColumnResize {
+  /** The column currently being resized (null when idle). */
+  readonly resizingColumn: ColumnKey | null;
+  /** Edge-handle pointerdown — begins tracking a drag-resize. */
+  onPointerDown: (e: PointerEvent, column: ColumnKey) => void;
+  onPointerMove: (e: PointerEvent) => void;
+  onPointerUp: () => void;
+  /** Double-click the edge handle to auto-fit the column to its content. */
+  onDblClick: (column: ColumnKey, showColumn: (key: ColumnKey) => boolean) => void;
+}
+
 export function useColumnResize(opts: {
   getTableEl: () => HTMLTableElement | null;
   getColumnWidths: () => Record<ColumnKey, number>;
   setColumnWidth: (key: ColumnKey, width: number) => void;
   onResizeEnd?: () => void;
-}): {
-  readonly resizingColumn: ColumnKey | null;
-  onPointerDown: (e: PointerEvent, column: ColumnKey) => void;
-  onPointerMove: (e: PointerEvent) => void;
-  onPointerUp: () => void;
-  onDblClick: (column: ColumnKey, showColumn: (key: ColumnKey) => boolean) => void;
-} {
+}): ColumnResize {
   let resizingColumn: ColumnKey | null = $state(null);
   let resizeStartX = 0;
   let resizeStartWidth = 0;
