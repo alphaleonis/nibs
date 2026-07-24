@@ -1,6 +1,5 @@
 <script lang="ts">
-  import { queryStore, subscriptionStore, getContextClient } from "@urql/svelte";
-  import { TREE_TABLE_QUERY, NIB_CHANGED_SUBSCRIPTION } from "../queries";
+  import { getContextClient } from "@urql/svelte";
   import { DEFAULT_BLOCKED_EMPHASIS } from "../types";
   import type { NibFilter, ViewLevel, RowDensity, BlockedEmphasis, RowSubtreeActions, TreeTableNib, FlatSort, FlatSortField } from "../types";
   import { ALL_COLUMN_KEYS, COLUMNS } from "../columns";
@@ -20,8 +19,8 @@
   import { useTreeDrag } from "../composables/useTreeDrag.svelte";
   import { useKeyboardNav } from "../composables/useKeyboardNav.svelte";
   import { useScrollRestore } from "../composables/useScrollRestore.svelte";
-  import { NibChangeTracker } from "../changeTracker.svelte";
-  import { onDestroy, untrack } from "svelte";
+  import { useTableData } from "../composables/useTableData.svelte";
+  import { untrack } from "svelte";
 
   interface Props {
     prefs?: Preferences;
@@ -115,101 +114,21 @@
 
   const client = getContextClient();
 
-  const result = $derived(
-    queryStore({
-      client,
-      query: TREE_TABLE_QUERY,
-      variables: { filter: prepared.serverFilter },
-    })
-  );
-
-  // --- Real-time subscription for nib changes ---
-  const changeTracker = new NibChangeTracker();
-
-  // A "deleted" event defers its refetch by ~fadeDurationMs so the row's
-  // fade-out animation can play before it leaves the dataset (see the $effect
-  // below). Capture that timer so an unmount inside the fade window clears it —
-  // otherwise it outlives the component and calls reexecute on a torn-down urql
-  // store. Cleared here on true unmount rather than via an $effect cleanup: the
-  // subscription effect re-runs on every event, so an effect cleanup would also
-  // cancel a still-pending deferred delete on the NEXT event and cut the fade
-  // short. Only the latest pending timer is tracked.
-  let pendingDeleteTimer: ReturnType<typeof setTimeout> | undefined;
-  onDestroy(() => {
-    clearTimeout(pendingDeleteTimer);
-    changeTracker.destroy();
-  });
-
-  const subscription = subscriptionStore({
+  // Live data source: owns the tree-table list query, the live-refetch decision
+  // driven by the nib-change subscription, and the highlight/fade change tracker.
+  // The fragile refetch logic (dedup / defer-delete / single-timer / throw
+  // isolation) lives in a framework-free core, unit-tested in plain vitest —
+  // see composables/useTableData.svelte.ts + tableDataSource.ts.
+  const dataSource = useTableData({
     client,
-    query: NIB_CHANGED_SUBSCRIPTION,
+    getServerFilter: () => prepared.serverFilter,
   });
 
-  // Track the last-seen event via a stable content key. urql's
-  // subscription store emits a fresh wrapper object on every reactive
-  // cycle, so reference comparison is unreliable — compare by content
-  // instead. Plain let (not $state) so writes do not re-trigger the effect.
-  let lastEventKey = "";
+  // error is `unknown` from the source; the query surfaces urql's CombinedError,
+  // which carries a `.message`. Narrow it for display.
+  let errorMessage = $derived((dataSource.error as { message?: string } | undefined)?.message ?? "");
 
-  // Refetch the tree query after a change event. Isolated in a try/catch so a
-  // throwing (or absent) `reexecute` cannot propagate out of the $effect body
-  // below: an uncaught throw there aborts Svelte's whole effect flush and
-  // silently takes the live subscription bridge down for the rest of the
-  // session (the failure mode is "the UI just stops updating", with no error).
-  // The catch surfaces the failure rather than swallowing it. Guards both the
-  // synchronous non-deleted branch and the deferred deleted branch — a throw in
-  // the setTimeout would otherwise surface as an uncaught timer error.
-  function refetchTree() {
-    try {
-      result.reexecute({ requestPolicy: "network-only" });
-    } catch (err) {
-      console.error("Failed to refetch nibs after a change event:", err);
-    }
-  }
-
-  $effect(() => {
-    if ($subscription.error) {
-      console.warn("Nib subscription error:", $subscription.error);
-    }
-  });
-
-  $effect(() => {
-    const data = $subscription.data;
-    if (!data?.nibChanged) return;
-    const event = data.nibChanged as { type: string; nibId: string; nib?: { etag?: string | null } | null };
-    // Include the payload etag so a genuine second edit to the SAME nib (new
-    // etag) refetches, while a burst of duplicate emissions for ONE commit
-    // (shared etag) still collapses. `deleted`/`archived` carry a null nib →
-    // etag falls back to "" so their (type:nibId) dedup is unaffected — matching
-    // the etag-keyed external dedup in nibChange.ts.
-    const etag = event.nib?.etag ?? "";
-    const key = `${event.type}:${event.nibId}:${etag}`;
-
-    // All side-effects (changeTracker writes, query reexecute) must run
-    // untracked so they do not feed back into this effect and cause a
-    // reactive loop. A throw anywhere in this body aborts Svelte's effect flush
-    // and kills this bridge, so the fragile call — urql's reexecute, which can
-    // throw or be absent — is isolated in refetchTree's try/catch.
-    // changeTracker.handleEvent is deliberately NOT wrapped: it is total (only
-    // Set/Map writes and timer scheduling, no external calls, no throw sites),
-    // so wrapping it would only swallow a genuine bug in our own code.
-    untrack(() => {
-      if (key === lastEventKey) return;
-      lastEventKey = key;
-
-      changeTracker.handleEvent(event);
-
-      if (event.type === "deleted") {
-        pendingDeleteTimer = setTimeout(() => {
-          refetchTree();
-        }, changeTracker.fadeDurationMs);
-      } else {
-        refetchTree();
-      }
-    });
-  });
-
-  let allNibs = $derived($result.data?.nibs ?? []);
+  let allNibs = $derived(dataSource.allNibs);
 
   // Flat view applies a client-side date sort when one is active; every other
   // view (and Flat with sort off) keeps the server's manual `order` sequence.
@@ -245,9 +164,9 @@
     // Don't prune while the first query is still in flight: allNibs is
     // transiently [] before the result lands, and a cold deep-link populates the
     // selection (via syncFromUrl) before data arrives — pruning against an empty
-    // dataset would wrongly drop it. Reading $result.fetching also re-subscribes
+    // dataset would wrongly drop it. Reading dataSource.fetching also re-subscribes
     // so pruning runs once data settles (mirrors the ensure-visible loading guard).
-    if ($result.fetching) return;
+    if (dataSource.fetching) return;
     const nibs = allNibs;
     const filter = resolvedFilter;
     const matchingIds = new Set<string>();
@@ -275,11 +194,11 @@
     //   - Query still loading (cold deep-link fires syncFromUrl before the
     //     GraphQL result lands, so allNibs is []): keep the pending request so
     //     the expand/scroll runs once data arrives. Reading
-    //     $result.fetching also subscribes the effect to re-run on settle.
+    //     dataSource.fetching also subscribes the effect to re-run on settle.
     //   - Query settled and the nib is genuinely absent (archived/bad URL):
     //     clear and bail — there is nothing to scroll to.
     if (!nibMap.has(nibId)) {
-      if (!$result.fetching) {
+      if (!dataSource.fetching) {
         selection.clearEnsureVisible();
       }
       return;
@@ -638,13 +557,13 @@
 {/snippet}
 
 <div data-testid="tree-table" class="h-full">
-{#if $result.fetching}
+{#if dataSource.fetching}
   <div class="flex items-center justify-center py-12 text-body text-muted-foreground">
     <span>Loading...</span>
   </div>
-{:else if $result.error}
+{:else if dataSource.error}
   <div class="rounded-lg bg-destructive/10 px-4 py-3 text-body text-destructive">
-    Error: {$result.error.message}
+    Error: {errorMessage}
   </div>
 {:else if rows.length === 0}
   <div class="flex items-center justify-center py-12 text-body text-muted-foreground">
@@ -697,8 +616,8 @@
           parentNib={row.parentNib}
           visibleColumns={resolvedVisibleColumns}
           draggable={!isBucketId(row.nib.id) && dragAllowed}
-          highlighted={changeTracker.isHighlighted(row.nib.id)}
-          fading={changeTracker.isFading(row.nib.id)}
+          highlighted={dataSource.changed.isHighlighted(row.nib.id)}
+          fading={dataSource.changed.isFading(row.nib.id)}
           {blockedEmphasis}
         />
       {/each}
