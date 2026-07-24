@@ -1,10 +1,10 @@
-import { VIEW_LEVELS, ALL_COLUMN_KEYS, DEFAULT_COLUMNS, MIN_DETAIL_PANEL_WIDTH, MIN_DETAIL_PANEL_HEIGHT, DETAIL_PANEL_POSITIONS, BLOCKED_EMPHASES, THEMES, DEFAULT_THEME, FONT_SCALES } from "./types";
-import type { ColumnKey, FilterPreferences, RowDensity, ViewLevel, Theme, DetailPanelPosition, BlockedEmphasis, FontSize, NibFilter, FlatSort } from "./types";
+import { VIEW_LEVELS, MIN_DETAIL_PANEL_WIDTH, MIN_DETAIL_PANEL_HEIGHT, DETAIL_PANEL_POSITIONS, BLOCKED_EMPHASES, THEMES, DEFAULT_THEME, FONT_SCALES } from "./types";
+import type { FilterPreferences, RowDensity, ViewLevel, Theme, DetailPanelPosition, BlockedEmphasis, FontSize, NibFilter, FlatSort } from "./types";
+import { ALL_COLUMN_KEYS, ALWAYS_VISIBLE_KEYS } from "./columns";
+import type { ColumnKey } from "./columns";
 import { STATUSES } from "./constants";
 
-const ALWAYS_VISIBLE_KEYS = new Set<ColumnKey>(
-  DEFAULT_COLUMNS.filter(c => c.alwaysVisible).map(c => c.key),
-);
+const ALWAYS_VISIBLE_KEY_SET = new Set<ColumnKey>(ALWAYS_VISIBLE_KEYS);
 
 // Duplicated verbatim by the pre-paint FOUC guard in index.html; exported so
 // src/lib/fouc-guard.test.ts can assert the two stay in sync.
@@ -49,7 +49,7 @@ function parseColumnVisibility(
         (v): v is ColumnKey => typeof v === "string" && validKeys.has(v),
       );
       // Ensure alwaysVisible columns are always present
-      for (const key of ALWAYS_VISIBLE_KEYS) {
+      for (const key of ALWAYS_VISIBLE_KEY_SET) {
         if (!filtered.includes(key)) {
           filtered.push(key);
         }

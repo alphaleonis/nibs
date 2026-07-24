@@ -1,6 +1,8 @@
 <script lang="ts">
-  import { VIEW_LEVELS, DEFAULT_COLUMNS, ALL_COLUMN_KEYS, DEFAULT_THEME, DEFAULT_DETAIL_PANEL_POSITION, DEFAULT_BLOCKED_EMPHASIS, DEFAULT_FONT_SIZE } from "../types";
-  import type { NibFilter, ViewLevel, ColumnKey, RowDensity, FontSize, Theme, DetailPanelPosition, BlockedEmphasis } from "../types";
+  import { VIEW_LEVELS, DEFAULT_THEME, DEFAULT_DETAIL_PANEL_POSITION, DEFAULT_BLOCKED_EMPHASIS, DEFAULT_FONT_SIZE } from "../types";
+  import type { NibFilter, ViewLevel, RowDensity, FontSize, Theme, DetailPanelPosition, BlockedEmphasis } from "../types";
+  import { ALL_COLUMN_KEYS, COLUMNS } from "../columns";
+  import type { ColumnKey } from "../columns";
   import type { Preferences } from "../preferences.svelte";
   import { TYPES, STATUSES, PRIORITIES, ESTIMATES, ESTIMATE_LABELS, OPEN_STATUSES, OPEN_PLUS_DEFERRED_STATUSES } from "../constants";
   import {
@@ -145,8 +147,10 @@
   let columnsOpen = $state(false);
   let viewLevelIconInfo = $derived(VIEW_LEVEL_ICON_INFO[resolvedViewLevel]);
 
-  // Parent is a normal toggleable column in every lens now.
-  let columnOptions = $derived(DEFAULT_COLUMNS);
+  // The Columns dropdown derives directly from the column model (single source):
+  // canonical order, each option carrying label + alwaysVisible. Parent is a
+  // normal toggleable column in every lens now.
+  let columnOptions = $derived(ALL_COLUMN_KEYS.map((key) => COLUMNS[key]));
 
   const VIEW_LEVEL_LABELS: Record<ViewLevel, string> = {
     none: "Tree",

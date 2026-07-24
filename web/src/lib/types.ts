@@ -74,8 +74,13 @@ export interface FlatSort {
   direction: FlatSortDirection;
 }
 
-export const ALL_COLUMN_KEYS = ["id", "parent", "type", "title", "state", "effort", "tags", "blocking", "blockedBy", "created", "modified"] as const;
-export type ColumnKey = (typeof ALL_COLUMN_KEYS)[number];
+// The column model lives in columns.ts (pure, zero Svelte dependency). These are
+// re-exported here so the many existing importers of "./types" keep working; the
+// canonical definitions are single-sourced in columns.ts.
+import { COLUMNS, ALL_COLUMN_KEYS, DEFAULT_COLUMN_WIDTHS, DEFAULT_VISIBLE_COLUMNS } from "./columns";
+import type { ColumnKey } from "./columns";
+export { ALL_COLUMN_KEYS, DEFAULT_COLUMN_WIDTHS, DEFAULT_VISIBLE_COLUMNS };
+export type { ColumnKey };
 
 export interface ColumnConfig {
   key: ColumnKey;
@@ -86,37 +91,16 @@ export interface ColumnConfig {
   defaultVisible?: boolean;
 }
 
-export const DEFAULT_COLUMNS: ColumnConfig[] = [
-  { key: "id", label: "ID", alwaysVisible: false },
-  { key: "parent", label: "Parent", alwaysVisible: false },
-  { key: "type", label: "Type", alwaysVisible: false },
-  { key: "title", label: "Title", alwaysVisible: true },
-  { key: "state", label: "State", alwaysVisible: false },
-  { key: "effort", label: "Effort", alwaysVisible: false },
-  { key: "tags", label: "Tags", alwaysVisible: false },
-  { key: "blocking", label: "Blocking", alwaysVisible: false, defaultVisible: false },
-  { key: "blockedBy", label: "Blocked by", alwaysVisible: false, defaultVisible: false },
-  { key: "created", label: "Created", alwaysVisible: false, defaultVisible: false },
-  { key: "modified", label: "Modified", alwaysVisible: false },
-];
-
-// Columns shown when a view level has no persisted column configuration. Opt-in
-// columns (defaultVisible: false) are excluded; everything else is on by default.
-export const DEFAULT_VISIBLE_COLUMNS: ColumnKey[] = DEFAULT_COLUMNS.filter((c) => c.defaultVisible !== false).map((c) => c.key);
-
-export const DEFAULT_COLUMN_WIDTHS: Record<ColumnKey, number> = {
-  id: 100,
-  parent: 160,
-  type: 80,
-  title: 400,
-  state: 120,
-  effort: 70,
-  tags: 150,
-  blocking: 90,
-  blockedBy: 100,
-  created: 110,
-  modified: 110,
-};
+// Derived from COLUMNS, order-preserving. Feeds the Columns dropdown config and
+// the persistence layer. Preserves the legacy convention that a default-visible
+// column omits `defaultVisible` (present-and-false only for opt-in columns), so
+// existing consumers/tests that key off its presence stay valid.
+export const DEFAULT_COLUMNS: ColumnConfig[] = ALL_COLUMN_KEYS.map((key) => {
+  const c = COLUMNS[key];
+  const config: ColumnConfig = { key: c.key, label: c.label, alwaysVisible: c.alwaysVisible };
+  if (!c.defaultVisible) config.defaultVisible = false;
+  return config;
+});
 
 export const DEFAULT_DETAIL_PANEL_WIDTH = 400;
 export const MIN_DETAIL_PANEL_WIDTH = 200;

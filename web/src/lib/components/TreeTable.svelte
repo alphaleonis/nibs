@@ -1,8 +1,11 @@
 <script lang="ts">
   import { queryStore, subscriptionStore, getContextClient } from "@urql/svelte";
   import { TREE_TABLE_QUERY, NIB_CHANGED_SUBSCRIPTION } from "../queries";
-  import { ALL_COLUMN_KEYS, DEFAULT_BLOCKED_EMPHASIS } from "../types";
-  import type { NibFilter, ViewLevel, ColumnKey, RowDensity, BlockedEmphasis, RowSubtreeActions, TreeTableNib, FlatSort, FlatSortField } from "../types";
+  import { DEFAULT_BLOCKED_EMPHASIS } from "../types";
+  import type { NibFilter, ViewLevel, RowDensity, BlockedEmphasis, RowSubtreeActions, TreeTableNib, FlatSort, FlatSortField } from "../types";
+  import { ALL_COLUMN_KEYS, COLUMNS } from "../columns";
+  import type { ColumnKey } from "../columns";
+  import { useColumnAdapters } from "../ColumnAdapters.svelte";
   import type { Preferences } from "../preferences.svelte";
   import { buildTableData } from "../tableData";
   import { isBucketId, bucketIdForItem, buildViewTree, collectDescendantIds } from "../tree";
@@ -58,6 +61,9 @@
 
   const selection = useSelection();
   const drag = useDrag();
+  // Per-column header/cell renderers. Header content for each <th> comes from
+  // the adapter; the <th> shell (width, resize handle, date-sort UI) stays here.
+  const adapters = useColumnAdapters();
   // Explicit navigation (title/row click, keyboard Enter) opens the unified view,
   // which routes through the dirty-guard + nav (URL/history). Multi-select stays
   // on SelectionState directly; the view follows via syncTo (documented bypass).
@@ -90,6 +96,11 @@
   // parents, and the reorder backend requires a real sibling drop target).
   let dragAllowed = $derived(isDragAllowed(resolvedFilter) && resolvedViewLevel !== "flat");
   let showColumn = $derived((key: ColumnKey) => resolvedVisibleColumns.includes(key));
+
+  // Visible columns in canonical order (order = ALL_COLUMN_KEYS; reordering is
+  // nibs-46c1). Drives the <th> loop so the header sequence matches the source-
+  // ordered blocks it replaced.
+  let orderedVisibleColumns = $derived(ALL_COLUMN_KEYS.filter((key) => showColumn(key)));
 
   // Explicit table width = actions column (32px) + sum of visible column widths.
   // Required for table-layout: fixed to enforce column widths regardless of content.
@@ -657,83 +668,22 @@
             </button>
           </div>
         </th>
-        {#if showColumn("id")}
-          <th class="text-left text-label text-muted-foreground px-3 py-2 relative bg-background" style="width: {resolvedColumnWidths.id}px;">
-            ID
+        {#each orderedVisibleColumns as key (key)}
+          {@const def = COLUMNS[key]}
+          <th
+            class="text-left text-label text-muted-foreground px-3 py-2 relative bg-background"
+            style="width: {resolvedColumnWidths[key]}px;"
+            aria-sort={def.sortable && def.sortKey ? ariaSortFor(def.sortKey) : undefined}
+          >
+            {#if def.sortable && def.sortKey}
+              {@render sortableDateHeader(def.sortKey, def.label)}
+            {:else}
+              {@render adapters[key].header()}
+            {/if}
             <!-- svelte-ignore a11y_no_static_element_interactions -->
-            <div class="resize-handle" onpointerdown={(e) => columnResize.onPointerDown(e, "id")} onpointermove={columnResize.onPointerMove} onpointerup={columnResize.onPointerUp} ondblclick={() => columnResize.onDblClick("id", showColumn)}></div>
+            <div class="resize-handle" onpointerdown={(e) => columnResize.onPointerDown(e, key)} onpointermove={columnResize.onPointerMove} onpointerup={columnResize.onPointerUp} ondblclick={() => columnResize.onDblClick(key, showColumn)}></div>
           </th>
-        {/if}
-        {#if showColumn("parent")}
-          <th class="text-left text-label text-muted-foreground px-3 py-2 relative bg-background" style="width: {resolvedColumnWidths.parent}px;">
-            Parent
-            <!-- svelte-ignore a11y_no_static_element_interactions -->
-            <div class="resize-handle" onpointerdown={(e) => columnResize.onPointerDown(e, "parent")} onpointermove={columnResize.onPointerMove} onpointerup={columnResize.onPointerUp} ondblclick={() => columnResize.onDblClick("parent", showColumn)}></div>
-          </th>
-        {/if}
-        {#if showColumn("type")}
-          <th class="text-left text-label text-muted-foreground px-3 py-2 relative bg-background" style="width: {resolvedColumnWidths.type}px;">
-            Type
-            <!-- svelte-ignore a11y_no_static_element_interactions -->
-            <div class="resize-handle" onpointerdown={(e) => columnResize.onPointerDown(e, "type")} onpointermove={columnResize.onPointerMove} onpointerup={columnResize.onPointerUp} ondblclick={() => columnResize.onDblClick("type", showColumn)}></div>
-          </th>
-        {/if}
-        {#if showColumn("title")}
-          <th class="text-left text-label text-muted-foreground px-3 py-2 relative bg-background" style="width: {resolvedColumnWidths.title}px;">
-            Title
-            <!-- svelte-ignore a11y_no_static_element_interactions -->
-            <div class="resize-handle" onpointerdown={(e) => columnResize.onPointerDown(e, "title")} onpointermove={columnResize.onPointerMove} onpointerup={columnResize.onPointerUp} ondblclick={() => columnResize.onDblClick("title", showColumn)}></div>
-          </th>
-        {/if}
-        {#if showColumn("state")}
-          <th class="text-left text-label text-muted-foreground px-3 py-2 relative bg-background" style="width: {resolvedColumnWidths.state}px;">
-            State
-            <!-- svelte-ignore a11y_no_static_element_interactions -->
-            <div class="resize-handle" onpointerdown={(e) => columnResize.onPointerDown(e, "state")} onpointermove={columnResize.onPointerMove} onpointerup={columnResize.onPointerUp} ondblclick={() => columnResize.onDblClick("state", showColumn)}></div>
-          </th>
-        {/if}
-        {#if showColumn("effort")}
-          <th class="text-left text-label text-muted-foreground px-3 py-2 relative bg-background" style="width: {resolvedColumnWidths.effort}px;">
-            Effort
-            <!-- svelte-ignore a11y_no_static_element_interactions -->
-            <div class="resize-handle" onpointerdown={(e) => columnResize.onPointerDown(e, "effort")} onpointermove={columnResize.onPointerMove} onpointerup={columnResize.onPointerUp} ondblclick={() => columnResize.onDblClick("effort", showColumn)}></div>
-          </th>
-        {/if}
-        {#if showColumn("tags")}
-          <th class="text-left text-label text-muted-foreground px-3 py-2 relative bg-background" style="width: {resolvedColumnWidths.tags}px;">
-            Tags
-            <!-- svelte-ignore a11y_no_static_element_interactions -->
-            <div class="resize-handle" onpointerdown={(e) => columnResize.onPointerDown(e, "tags")} onpointermove={columnResize.onPointerMove} onpointerup={columnResize.onPointerUp} ondblclick={() => columnResize.onDblClick("tags", showColumn)}></div>
-          </th>
-        {/if}
-        {#if showColumn("blocking")}
-          <th class="text-left text-label text-muted-foreground px-3 py-2 relative bg-background" style="width: {resolvedColumnWidths.blocking}px;">
-            Blocking
-            <!-- svelte-ignore a11y_no_static_element_interactions -->
-            <div class="resize-handle" onpointerdown={(e) => columnResize.onPointerDown(e, "blocking")} onpointermove={columnResize.onPointerMove} onpointerup={columnResize.onPointerUp} ondblclick={() => columnResize.onDblClick("blocking", showColumn)}></div>
-          </th>
-        {/if}
-        {#if showColumn("blockedBy")}
-          <th class="text-left text-label text-muted-foreground px-3 py-2 relative bg-background" style="width: {resolvedColumnWidths.blockedBy}px;">
-            Blocked by
-            <!-- svelte-ignore a11y_no_static_element_interactions -->
-            <div class="resize-handle" onpointerdown={(e) => columnResize.onPointerDown(e, "blockedBy")} onpointermove={columnResize.onPointerMove} onpointerup={columnResize.onPointerUp} ondblclick={() => columnResize.onDblClick("blockedBy", showColumn)}></div>
-          </th>
-        {/if}
-        {#if showColumn("created")}
-          <th class="text-left text-label text-muted-foreground px-3 py-2 relative bg-background" style="width: {resolvedColumnWidths.created}px;" aria-sort={ariaSortFor("created")}>
-            {@render sortableDateHeader("created", "Created")}
-            <!-- svelte-ignore a11y_no_static_element_interactions -->
-            <div class="resize-handle" onpointerdown={(e) => columnResize.onPointerDown(e, "created")} onpointermove={columnResize.onPointerMove} onpointerup={columnResize.onPointerUp} ondblclick={() => columnResize.onDblClick("created", showColumn)}></div>
-          </th>
-        {/if}
-        {#if showColumn("modified")}
-          <th class="text-left text-label text-muted-foreground px-3 py-2 relative bg-background" style="width: {resolvedColumnWidths.modified}px;" aria-sort={ariaSortFor("modified")}>
-            {@render sortableDateHeader("modified", "Modified")}
-            <!-- svelte-ignore a11y_no_static_element_interactions -->
-            <div class="resize-handle" onpointerdown={(e) => columnResize.onPointerDown(e, "modified")} onpointermove={columnResize.onPointerMove} onpointerup={columnResize.onPointerUp} ondblclick={() => columnResize.onDblClick("modified", showColumn)}></div>
-          </th>
-        {/if}
+        {/each}
       </tr>
     </thead>
     <tbody>

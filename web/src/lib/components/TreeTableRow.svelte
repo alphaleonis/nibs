@@ -1,16 +1,12 @@
 <script lang="ts">
-  import { ALL_COLUMN_KEYS, DEFAULT_BLOCKED_EMPHASIS, blockedVariantFor } from "../types";
-  import type { TreeTableNib, ColumnKey, BlockedEmphasis } from "../types";
-  import { priorityIndicators, statusDotColors } from "../badges";
-  import { ChevronRight, ChevronDown, Plus } from "@lucide/svelte";
-  import StatusIcon from "./StatusIcon.svelte";
-  import RelationBadge from "./RelationBadge.svelte";
-  import { RELATION_CONFIG } from "../relations";
-  import { formatRelative, formatAbsolute } from "../date";
-  import TypeIcon from "./TypeIcon.svelte";
+  import { DEFAULT_BLOCKED_EMPHASIS } from "../types";
+  import type { TreeTableNib, BlockedEmphasis } from "../types";
+  import { ALL_COLUMN_KEYS } from "../columns";
+  import type { ColumnKey, RowContext } from "../columns";
+  import { Plus } from "@lucide/svelte";
   import { canHaveChildren } from "../typeHierarchy";
-  import { isBucketId } from "../tree";
   import { useSelection, useDrag } from "../contexts";
+  import { useColumnAdapters } from "../ColumnAdapters.svelte";
 
   import type { DropZone } from "../drag.svelte";
 
@@ -44,6 +40,18 @@
 
   const selection = useSelection();
   const drag = useDrag();
+  // The per-column cell renderers (pure snippets of RowContext). Provided by
+  // <ColumnAdapters> in the app and by makeTestContext in tests.
+  const adapters = useColumnAdapters();
+
+  // Render cells in canonical column order (ALL_COLUMN_KEYS), filtered to the
+  // visible set — reproducing the source-ordered per-column blocks this loop
+  // replaced. Reordering is a later nib (nibs-46c1).
+  let orderedVisibleColumns = $derived(ALL_COLUMN_KEYS.filter((k) => visibleColumns.includes(k)));
+
+  // The bag each cell adapter reads. Cells are pure functions of this — they
+  // touch no selection/drag context — so ambient row state stays on the <tr>.
+  let rowCtx: RowContext = $derived({ nib, depth, parentNib, hasChildren, collapsed, blockedEmphasis });
 
   // Computed from context + nib.id
   let selected = $derived(selection.selectedNibId === nib.id || selection.selectedIds.has(nib.id));
@@ -54,16 +62,7 @@
   let dropZone: DropZone | null = $derived(isDropTarget ? drag.dropZone : null);
   let dropValid = $derived(isDropTarget ? drag.dropValid : false);
 
-  function getPriorityIndicator(priority: string) {
-    return priorityIndicators[priority] ?? null;
-  }
-
-  const priorityIndicator = $derived(getPriorityIndicator(nib.priority));
-  const shortId = $derived(nib.id.substring(nib.id.lastIndexOf("-") + 1));
-  const statusDotColor = $derived(statusDotColors[nib.status] ?? "var(--muted-foreground)");
   const isBlocked = $derived(nib.blockedByIds.length > 0);
-  // `subtle` keeps the bare lock icon; `pill` / `pill-dim` render the pill.
-  const blockedVariant = $derived(blockedVariantFor(blockedEmphasis));
   // `pill-dim` additionally dims the whole row. Gated off during drag, while a
   // drop target, and during the change-pulse so its 0.6 opacity doesn't mute
   // those affordances. This is only the *blocked-dim* trigger — the resolved
@@ -134,143 +133,12 @@
     </div>
   </td>
 
-  <!-- ID column -->
-  {#if visibleColumns.includes("id")}
-    <td data-testid="nib-id" class="text-body px-3 cell-truncate row-cell" style="color: var(--muted-foreground);">{isBucketId(nib.id) ? "" : shortId}</td>
-  {/if}
-
-  <!-- Parent column -->
-  {#if visibleColumns.includes("parent")}
-    <td data-testid="nib-parent" class="text-body px-3 cell-truncate row-cell" style="color: var(--text-secondary);" title={parentNib ? parentNib.id : undefined}>
-      {#if parentNib}
-        <TypeIcon type={parentNib.type} size={14} />
-        {parentNib.title}
-      {/if}
-    </td>
-  {/if}
-
-  <!-- Type column -->
-  {#if visibleColumns.includes("type")}
-    <td data-testid="nib-type" class="text-body px-3 cell-truncate row-cell" style="color: var(--text-secondary);">{nib.type}</td>
-  {/if}
-
-  <!-- Title column -->
-  {#if visibleColumns.includes("title")}
-    <td data-testid="nib-title" class="cell-truncate row-cell" style="padding-left: {depth * 24}px;">
-      <div class="title-content">
-        {#if hasChildren}
-          <!-- Raw button: delegated expand/collapse control (data-action);
-               kept raw to preserve TreeTable's event delegation. -->
-          <button
-            data-testid="toggle"
-            data-action="toggle"
-            class="shrink-0 w-5 h-5 inline-flex items-center justify-center rounded-sm text-muted-foreground hover:text-foreground"
-          >
-            {#if collapsed}<ChevronRight size={14} />{:else}<ChevronDown size={14} />{/if}
-          </button>
-        {:else}
-          <span class="inline-block w-5 h-5 shrink-0"></span>
-        {/if}
-        <!-- Wrapper adds breathing room after the type icon; TypeIcon forwards
-             no class/style, so the em-based margin lives here (scales with the
-             row font-size). Title column only — the Parent column is untouched. -->
-        <span class="type-icon-gap"><TypeIcon type={nib.type} /></span>
-        {#if priorityIndicator}
-          <span
-            data-testid="priority-icon"
-            class="shrink-0 text-sm font-bold"
-            style="color: {priorityIndicator.color};"
-          >{priorityIndicator.symbol}</span>
-        {/if}
-        <!-- Raw button: delegated title control (data-action) rendered as inline
-             ellipsis-truncating text; the Button primitive's flex/height layout
-             doesn't fit, and delegation must be preserved. -->
-        <button
-          data-testid="title-text"
-          data-action="title"
-          class="title-text-btn"
-        >{nib.title}</button>
-        {#if isBlocked}
-          <RelationBadge kind="blocked" count={nib.blockedByIds.length} variant={blockedVariant} />
-        {/if}
-        <!-- 'blocking' mirrors 'blocked': same emphasis-driven variant (subtle→icon,
-             pill/pill-dim→pill). Row DIMMING stays blocked-only — a nib is not
-             dimmed for blocking others (see blockedDim above). -->
-        {#if nib.blockingIds.length > 0}
-          <RelationBadge kind="blocking" count={nib.blockingIds.length} variant={blockedVariant} />
-        {/if}
-      </div>
-    </td>
-  {/if}
-
-  <!-- State column -->
-  {#if visibleColumns.includes("state")}
-    <td data-testid="nib-state" class="text-body px-3 cell-truncate row-cell">
-      <StatusIcon status={nib.status} class="mr-1.5" />
-      <span style="color: {statusDotColor};">{nib.status}</span>
-    </td>
-  {/if}
-
-  <!-- Effort column -->
-  {#if visibleColumns.includes("effort")}
-    <td data-testid="nib-effort" class="text-body px-3 cell-truncate row-cell">
-      {#if nib.estimate?.trim()}
-        {nib.estimate.toUpperCase()}
-      {/if}
-    </td>
-  {/if}
-
-  <!-- Tags column -->
-  {#if visibleColumns.includes("tags")}
-    <td data-testid="nib-tags" class="px-3 cell-truncate row-cell">
-      {#each nib.tags as tag}
-        <span
-          data-testid="tag"
-          class="inline-flex rounded-sm px-1.5 py-0.5 text-caption"
-          style="background-color: var(--popover); color: var(--muted-foreground);"
-        >{tag}</span>
-      {/each}
-    </td>
-  {/if}
-
-  <!-- Blocking column (opt-in) -->
-  {#if visibleColumns.includes("blocking")}
-    <td data-testid="nib-blocking" class="text-body px-3 cell-truncate row-cell">
-      {#if nib.blockingIds.length > 0}
-        {@const BlockingIcon = RELATION_CONFIG.blocking.icon}
-        <span
-          class="inline-flex items-center gap-1"
-          style="color: {RELATION_CONFIG.blocking.iconColor};"
-          title={nib.blockingIds.join(", ")}
-        ><BlockingIcon size={12} />{nib.blockingIds.length}</span>
-      {/if}
-    </td>
-  {/if}
-
-  <!-- Blocked by column (opt-in) -->
-  {#if visibleColumns.includes("blockedBy")}
-    <td data-testid="nib-blocked-by" class="text-body px-3 cell-truncate row-cell">
-      {#if nib.blockedByIds.length > 0}
-        {@const BlockedIcon = RELATION_CONFIG.blocked.icon}
-        <span
-          class="inline-flex items-center gap-1"
-          style="color: {RELATION_CONFIG.blocked.iconColor};"
-          title={nib.blockedByIds.join(", ")}
-        ><BlockedIcon size={12} />{nib.blockedByIds.length}</span>
-      {/if}
-    </td>
-  {/if}
-
-  <!-- Created column (opt-in). Relative age with the full ISO timestamp on hover.
-       Bucket rows have an empty createdAt, so the formatter returns "" (blank). -->
-  {#if visibleColumns.includes("created")}
-    <td data-testid="nib-created" class="text-body px-3 cell-truncate row-cell" style="color: var(--muted-foreground);" title={formatAbsolute(nib.createdAt)}>{formatRelative(nib.createdAt)}</td>
-  {/if}
-
-  <!-- Modified column. Relative age with the full ISO timestamp on hover. -->
-  {#if visibleColumns.includes("modified")}
-    <td data-testid="nib-modified" class="text-body px-3 cell-truncate row-cell" style="color: var(--muted-foreground);" title={formatAbsolute(nib.updatedAt)}>{formatRelative(nib.updatedAt)}</td>
-  {/if}
+  <!-- Data columns: rendered by the per-column cell adapters in canonical order,
+       filtered to the visible set. Each {@render} emits the column's <td>
+       (testid / classes / inline style live in ColumnAdapters.svelte). -->
+  {#each orderedVisibleColumns as key (key)}
+    {@render adapters[key].cell(rowCtx)}
+  {/each}
 </tr>
 
 <style>
@@ -333,31 +201,11 @@
     transition: opacity 0.5s ease-out;
   }
 
+  /* Actions cell shares .row-cell with the data cells; the data-cell styles
+     (.cell-truncate, .title-content, .type-icon-gap, .title-text-btn) live in
+     ColumnAdapters.svelte, which now owns that markup. */
   .row-cell {
     padding-block: var(--row-pad-y, 0.25rem);
-  }
-
-  .cell-truncate {
-    overflow: hidden;
-    text-overflow: ellipsis;
-    white-space: nowrap;
-  }
-
-  .title-content {
-    display: flex;
-    align-items: center;
-    gap: 0.25rem;
-    overflow: hidden;
-    white-space: nowrap;
-  }
-
-  /* Extra horizontal space between the type icon and the title (Title column
-     only). em-based so it scales with the row font-size, matching the inline
-     checkbox convention in .prose-nib (app.css). */
-  .type-icon-gap {
-    display: inline-flex;
-    flex-shrink: 0;
-    margin-inline-end: 0.35em;
   }
 
   .actions-cell {
@@ -369,24 +217,6 @@
     display: flex;
     align-items: center;
     height: 100%;
-  }
-
-  .title-text-btn {
-    color: var(--foreground);
-    overflow: hidden;
-    text-overflow: ellipsis;
-    min-width: 0;
-    cursor: pointer;
-    background: none;
-    border: none;
-    padding: 0;
-    font: inherit;
-    /* Join the row's type scale (14px) instead of inheriting the 16px root;
-       the title stays the primary column via weight, not size. */
-    font-size: var(--text-body-size);
-    font-weight: 500;
-    line-height: var(--text-body-leading);
-    text-align: left;
   }
 
   .row-add-child-btn {
