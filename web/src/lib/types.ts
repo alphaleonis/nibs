@@ -65,16 +65,18 @@ export interface RowSubtreeActions {
 export const VIEW_LEVELS = ["none", "flat", "milestones", "epics", "features"] as const;
 export type ViewLevel = (typeof VIEW_LEVELS)[number];
 
-// Flat-view client-side sort. Absent/null means "off" (manual `order` sequence).
-// Only the "flat" view level applies it; every other view ignores it. The field
-// union is single-sourced as `SortKey` in columns.ts (the sortable ColumnKey
-// subset); `FlatSortField` re-exports it so the many "./types" importers keep
-// working without duplicating the set.
-export type FlatSortField = SortKey;
-export type FlatSortDirection = "asc" | "desc";
-export interface FlatSort {
-  field: FlatSortField;
-  direction: FlatSortDirection;
+// Client-side table sort. Absent/null means "off" (manual `order` sequence).
+// Applied in every view: a flat sorted list in Flat, sibling-sort (siblings,
+// roots, grouping-bucket items, and promoted group headers reordered, nesting
+// preserved) in the Tree + grouping-lens views. The field union is
+// single-sourced as `SortKey` in columns.ts (the sortable ColumnKey subset);
+// `SortField` re-exports it so the many "./types" importers keep working without
+// duplicating the set.
+export type SortField = SortKey;
+export type SortDirection = "asc" | "desc";
+export interface TableSort {
+  field: SortField;
+  direction: SortDirection;
 }
 
 // The column model lives in columns.ts (pure, zero Svelte dependency). These are
@@ -203,5 +205,5 @@ export interface FilterPreferences {
   blockedEmphasis?: BlockedEmphasis;
   theme?: Theme;
   previewOpen?: boolean;
-  flatSort?: FlatSort;
+  tableSort?: TableSort;
 }

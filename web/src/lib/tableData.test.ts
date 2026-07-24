@@ -1,6 +1,7 @@
 import { describe, it, expect } from "vitest";
 import { buildTableData } from "./tableData";
 import { isBucketId } from "./tree";
+import { applySort } from "./tableSort";
 import { typeRank } from "./typeHierarchy";
 import { OPEN_PLUS_DEFERRED_STATUSES } from "./constants";
 import type { TreeTableNib, NibFilter } from "./types";
@@ -547,5 +548,68 @@ describe("buildTableData", () => {
         expect(l1.displayParentId).toBeNull();
       });
     });
+  });
+});
+
+// The load-bearing premise of nibs-6grg: sorting `allNibs` BEFORE buildTableData
+// yields sibling-sort in the nested views and a flat sorted list in Flat, because
+// buildTree/buildViewTree preserve sibling input order within each group. These
+// tests exercise that seam directly (applySort → buildTableData), independent of
+// the Svelte component.
+describe("buildTableData — sibling-sort from a pre-sorted array", () => {
+  // Two milestone roots (input Z-before-A), one carrying two child tasks (input
+  // Zeta-before-Alpha). A global-flat title order would be Alpha, Root A, Root Z,
+  // Zeta — interleaving a child ahead of a root. Sibling-sort must instead keep
+  // children nested under their parent while ordering each sibling group.
+  const nestedRoots: TreeTableNib[] = [
+    makeTreeTableNib({ id: "m2", title: "Root Z", type: "milestone" }),
+    makeTreeTableNib({ id: "m1", title: "Root A", type: "milestone" }),
+    makeTreeTableNib({ id: "c2", title: "Zeta", type: "task", parentId: "m1" }),
+    makeTreeTableNib({ id: "c1", title: "Alpha", type: "task", parentId: "m1" }),
+  ];
+
+  it("none view: roots AND children reorder by the field, nesting/depths preserved", () => {
+    const sorted = applySort(nestedRoots, { field: "title", direction: "asc" });
+    const result = buildTableData(sorted, emptyFilter, "none", noCollapsed);
+
+    expect(result.rows.map((r) => r.nib.id)).toEqual(["m1", "c1", "c2", "m2"]);
+    // Structure intact: roots at depth 0, the two children nested at depth 1.
+    expect(result.rows.map((r) => r.depth)).toEqual([0, 1, 1, 0]);
+    expect(result.rows.find((r) => r.nib.id === "c1")!.parentNib?.id).toBe("m1");
+    expect(result.rows.find((r) => r.nib.id === "c2")!.parentNib?.id).toBe("m1");
+  });
+
+  it("none view: an UNSORTED array keeps the manual input order (control for the sort)", () => {
+    const result = buildTableData(nestedRoots, emptyFilter, "none", noCollapsed);
+    // No sort applied → input order, nested.
+    expect(result.rows.map((r) => r.nib.id)).toEqual(["m2", "m1", "c2", "c1"]);
+  });
+
+  it("flat view: a pre-sorted array yields a flat sorted list (every row depth 0)", () => {
+    const sorted = applySort(nestedRoots, { field: "title", direction: "asc" });
+    const result = buildTableData(sorted, emptyFilter, "flat", noCollapsed);
+    // Flat has no nesting: pure title order, all depth 0.
+    expect(result.rows.map((r) => r.nib.id)).toEqual(["c1", "m1", "m2", "c2"]);
+    expect(result.rows.every((r) => r.depth === 0)).toBe(true);
+  });
+
+  it("grouping lens (milestones): promoted headers AND bucket items both reorder", () => {
+    const nibs: TreeTableNib[] = [
+      makeTreeTableNib({ id: "m2", title: "M-Zulu", type: "milestone" }),
+      makeTreeTableNib({ id: "m1", title: "M-Alpha", type: "milestone" }),
+      makeTreeTableNib({ id: "t2", title: "T-Zulu", type: "task" }),
+      makeTreeTableNib({ id: "t1", title: "T-Alpha", type: "task" }),
+    ];
+    const sorted = applySort(nibs, { field: "title", direction: "asc" });
+    const result = buildTableData(sorted, emptyFilter, "milestones", noCollapsed);
+
+    // Promoted milestone headers reorder (M-Alpha before M-Zulu)...
+    expect(result.rows[0].nib.id).toBe("m1");
+    expect(result.rows[1].nib.id).toBe("m2");
+    // ...then the synthetic "No milestone" bucket...
+    expect(isBucketId(result.rows[2].nib.id)).toBe(true);
+    // ...whose loose items also reorder (T-Alpha before T-Zulu).
+    expect(result.rows[3].nib.id).toBe("t1");
+    expect(result.rows[4].nib.id).toBe("t2");
   });
 });

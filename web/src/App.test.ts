@@ -418,8 +418,10 @@ describe("App", () => {
     expect(searchInput).toHaveValue("bug");
 
     // Hide completed via the State-facet "Open + deferred" preset: open the
-    // State dropdown, then click the preset.
-    await user.click(screen.getByRole("button", { name: /state/i }));
+    // State dropdown, then click the preset. Anchor the name to the start so it
+    // targets the Toolbar's "State" facet trigger, not the table's new
+    // "Sort by State" header button (headers are now sortable in every view).
+    await user.click(screen.getByRole("button", { name: /^state/i }));
     await user.click(screen.getByTestId("state-preset-open-deferred"));
 
     // With $derived(queryStore(...)), filter changes should trigger new queryStore calls
@@ -536,8 +538,10 @@ describe("App", () => {
     await user.click(titleTexts[0]);
     expect(screen.getByTestId("active-nib-view")).toBeInTheDocument();
 
-    // Open the Type dropdown in toolbar
-    await user.click(screen.getByRole("button", { name: /type/i }));
+    // Open the Type dropdown in toolbar. Anchor the name to the start so it
+    // targets the Toolbar's "Type" facet trigger, not the table's new
+    // "Sort by Type" header button (headers are now sortable in every view).
+    await user.click(screen.getByRole("button", { name: /^type/i }));
     expect(screen.getByRole("menuitemcheckbox", { name: "bug" })).toBeInTheDocument();
 
     // Press Escape — should close only the dropdown, NOT the detail panel

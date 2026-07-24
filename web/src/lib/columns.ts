@@ -31,12 +31,12 @@ export const ALL_COLUMN_KEYS = [
 
 export type ColumnKey = (typeof ALL_COLUMN_KEYS)[number];
 
-// The client-side Flat-view click-to-sort field. A column's sort field equals
-// its own key, so the sortable ColumnKey subset IS the field union — this is the
-// SINGLE source of that union (types.ts `FlatSortField` is a re-export). Every
+// The client-side table click-to-sort field. A column's sort field equals its
+// own key, so the sortable ColumnKey subset IS the field union — this is the
+// SINGLE source of that union (types.ts `SortField` is a re-export). Every
 // column is sortable today (see COLUMNS below), so this equals ColumnKey; the
 // RUNTIME-authoritative gate is `SORTABLE_COLUMN_KEYS` (derived from
-// COLUMNS[].sortable), which parseFlatSort validates against, so a column later
+// COLUMNS[].sortable), which parseTableSort validates against, so a column later
 // marked `sortable:false` is rejected at load even while the type still lists it.
 export type SortKey = ColumnKey;
 
@@ -49,9 +49,9 @@ export interface ColumnDef {
   // Shown when a view has no persisted column configuration. Opt-in columns
   // (blocking / blockedBy / created) start hidden but remain toggleable.
   defaultVisible: boolean;
-  // Column capabilities for the sort UI. Every column is sortable in the Flat
-  // view; the click-to-sort header + aria-sort live in TreeTable's <th> shell
-  // and read these flags. A sortable column's `sortKey` equals its own `key`.
+  // Column capabilities for the sort UI. Every column is sortable in every view;
+  // the click-to-sort header + aria-sort live in TreeTable's <th> shell and read
+  // these flags. A sortable column's `sortKey` equals its own `key`.
   sortable: boolean;
   sortKey: SortKey | null;
 }
@@ -97,7 +97,7 @@ export const DEFAULT_COLUMN_WIDTHS = Object.fromEntries(
 export const DEFAULT_VISIBLE_COLUMNS: ColumnKey[] = ALL_COLUMN_KEYS.filter((k) => COLUMNS[k].defaultVisible);
 
 // Runtime-authoritative sortable set, derived from COLUMNS[].sortable and
-// order-preserving. The single source consumed downstream: parseFlatSort
+// order-preserving. The single source consumed downstream: parseTableSort
 // (storage.ts) validates persisted sort fields against it, and TreeTable renders
 // a click-to-sort header for each. A column's sort field equals its own key.
 export const SORTABLE_COLUMN_KEYS: ColumnKey[] = ALL_COLUMN_KEYS.filter((k) => COLUMNS[k].sortable);

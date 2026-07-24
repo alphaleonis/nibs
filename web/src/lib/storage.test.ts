@@ -408,11 +408,11 @@ describe("storage", () => {
     expect(loadPreferences().previewOpen).toBeUndefined();
   });
 
-  it("saves and loads flatSort (round-trip)", () => {
-    savePreferences({ filter: {}, viewLevel: "flat", flatSort: { field: "modified", direction: "desc" } });
+  it("saves and loads tableSort (round-trip)", () => {
+    savePreferences({ filter: {}, viewLevel: "flat", tableSort: { field: "modified", direction: "desc" } });
     const loaded = loadPreferences();
     expect(loaded.viewLevel).toBe("flat");
-    expect(loaded.flatSort).toEqual({ field: "modified", direction: "desc" });
+    expect(loaded.tableSort).toEqual({ field: "modified", direction: "desc" });
   });
 
   it("accepts any widened sortable field (round-trips a non-date column sort)", () => {
@@ -420,42 +420,42 @@ describe("storage", () => {
       store["nibs-filter-preferences"] = JSON.stringify({
         filter: {},
         viewLevel: "flat",
-        flatSort: { field, direction: "asc" },
+        tableSort: { field, direction: "asc" },
       });
-      expect(loadPreferences().flatSort).toEqual({ field, direction: "asc" });
+      expect(loadPreferences().tableSort).toEqual({ field, direction: "asc" });
     }
   });
 
-  it("returns undefined flatSort when not set", () => {
+  it("returns undefined tableSort when not set", () => {
     savePreferences({ filter: {}, viewLevel: "none" });
-    expect(loadPreferences().flatSort).toBeUndefined();
+    expect(loadPreferences().tableSort).toBeUndefined();
   });
 
-  it("returns undefined flatSort for an unknown/removed field (e.g. priority — not a column)", () => {
+  it("returns undefined tableSort for an unknown/removed field (e.g. priority — not a column)", () => {
     store["nibs-filter-preferences"] = JSON.stringify({
       filter: {},
       viewLevel: "flat",
-      flatSort: { field: "priority", direction: "asc" },
+      tableSort: { field: "priority", direction: "asc" },
     });
-    expect(loadPreferences().flatSort).toBeUndefined();
+    expect(loadPreferences().tableSort).toBeUndefined();
   });
 
-  it("returns undefined flatSort for an invalid direction", () => {
+  it("returns undefined tableSort for an invalid direction", () => {
     store["nibs-filter-preferences"] = JSON.stringify({
       filter: {},
       viewLevel: "flat",
-      flatSort: { field: "created", direction: "sideways" },
+      tableSort: { field: "created", direction: "sideways" },
     });
-    expect(loadPreferences().flatSort).toBeUndefined();
+    expect(loadPreferences().tableSort).toBeUndefined();
   });
 
-  it("returns undefined flatSort for a non-object stored value", () => {
+  it("returns undefined tableSort for a non-object stored value", () => {
     store["nibs-filter-preferences"] = JSON.stringify({
       filter: {},
       viewLevel: "flat",
-      flatSort: "created-asc",
+      tableSort: "created-asc",
     });
-    expect(loadPreferences().flatSort).toBeUndefined();
+    expect(loadPreferences().tableSort).toBeUndefined();
   });
 
   it("accepts the 'flat' viewLevel", () => {

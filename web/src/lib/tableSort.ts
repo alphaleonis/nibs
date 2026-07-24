@@ -1,6 +1,8 @@
-// Client-side sorting for the Flat view. Pure helpers, no Svelte state: the Flat
+// Client-side column sorting for the table. Pure helpers, no Svelte state: a
 // view opts into a per-column sort by clicking a header, and these compute the
-// resulting order and the tri-state header cycle.
+// resulting order and the tri-state header cycle. The Flat view sorts the whole
+// list; the Tree + grouping-lens views sort SIBLINGS (the caller sorts the array
+// before the view tree is built, and the tree builders preserve sibling order).
 //
 // The comparator is a REGISTRY keyed by column kind (one key extractor per
 // sortable field), replacing the original date-only body. Each extractor returns
@@ -10,7 +12,7 @@
 // Array.sort's stability keeps the incoming manual `order` sequence as the
 // tiebreak.
 
-import type { FlatSort, FlatSortField } from "./types";
+import type { TableSort, SortField } from "./types";
 import { STATUSES, TYPES, ESTIMATES } from "./constants";
 
 // The exact per-row fields the comparators read — a structural subset of
@@ -57,7 +59,7 @@ type SortValue = number | string | null;
 // parent column sorts by the parent nib's title). Reuses the existing rank
 // sources — TYPES / STATUSES / ESTIMATES canonical order — never string-sorts
 // enums. Relation columns sort by COUNT (0 is a real value, not empty).
-const KEY_EXTRACTORS: Record<FlatSortField, (nib: SortableRow, byId: Map<string, SortableRow>) => SortValue> = {
+const KEY_EXTRACTORS: Record<SortField, (nib: SortableRow, byId: Map<string, SortableRow>) => SortValue> = {
   title: (n) => textKey(n.title),
   // ids are lexicographic (case-sensitive), unlike the case-folded text sorts.
   id: (n) => n.id || null,
@@ -93,14 +95,18 @@ function compareKeys(a: SortValue, b: SortValue, dir: number): number {
 }
 
 /**
- * Return a NEW array of `nibs` sorted by the given `FlatSort`, or the ORIGINAL
+ * Return a NEW array of `nibs` sorted by the given `TableSort`, or the ORIGINAL
  * array unchanged when `sort` is null (off → keep the incoming manual order).
  *
  * The comparator is selected from KEY_EXTRACTORS by `sort.field`. The sort is
  * STABLE (JS Array.sort is stable), so rows with equal keys keep their incoming
  * order. Empty / missing / invalid keys sort LAST regardless of direction.
+ *
+ * In the nested views the caller sorts `allNibs` up front and lets the tree
+ * builders (which preserve sibling input order) nest the result — so this one
+ * transform yields a flat sorted list in Flat and sibling-sort everywhere else.
  */
-export function applyFlatSort<T extends SortableRow>(nibs: T[], sort: FlatSort | null): T[] {
+export function applySort<T extends SortableRow>(nibs: T[], sort: TableSort | null): T[] {
   if (!sort) return nibs;
   const dir = sort.direction === "asc" ? 1 : -1;
   const extract = KEY_EXTRACTORS[sort.field];
@@ -113,12 +119,12 @@ export function applyFlatSort<T extends SortableRow>(nibs: T[], sort: FlatSort |
 const EMPTY_BY_ID: Map<string, SortableRow> = new Map();
 
 /**
- * Tri-state header cycle for a Flat sort control. Clicking a field advances:
+ * Tri-state header cycle for a table sort control. Clicking a field advances:
  *   off / other field → ascending
  *   same field asc     → descending
  *   same field desc    → off (null)
  */
-export function nextFlatSort(current: FlatSort | null, field: FlatSortField): FlatSort | null {
+export function nextTableSort(current: TableSort | null, field: SortField): TableSort | null {
   if (!current || current.field !== field) return { field, direction: "asc" };
   if (current.direction === "asc") return { field, direction: "desc" };
   return null;

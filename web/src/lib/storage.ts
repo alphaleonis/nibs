@@ -1,5 +1,5 @@
 import { VIEW_LEVELS, MIN_DETAIL_PANEL_WIDTH, MIN_DETAIL_PANEL_HEIGHT, DETAIL_PANEL_POSITIONS, BLOCKED_EMPHASES, THEMES, DEFAULT_THEME, FONT_SCALES } from "./types";
-import type { FilterPreferences, RowDensity, ViewLevel, Theme, DetailPanelPosition, BlockedEmphasis, FontSize, NibFilter, FlatSort } from "./types";
+import type { FilterPreferences, RowDensity, ViewLevel, Theme, DetailPanelPosition, BlockedEmphasis, FontSize, NibFilter, TableSort } from "./types";
 import { ALL_COLUMN_KEYS, ALWAYS_VISIBLE_KEYS, SORTABLE_COLUMN_KEYS } from "./columns";
 import type { ColumnKey } from "./columns";
 import { STATUSES } from "./constants";
@@ -142,21 +142,21 @@ function parsePreviewOpen(raw: unknown): boolean | undefined {
 // COLUMNS[].sortable). A persisted field naming a column that was removed or made
 // non-sortable falls out of this set and is treated as off (no unset-vs-off
 // ambiguity), so old preferences never crash or pin a sort to a gone column.
-const VALID_FLAT_SORT_FIELDS = new Set<string>(SORTABLE_COLUMN_KEYS);
-const VALID_FLAT_SORT_DIRECTIONS = new Set<string>(["asc", "desc"]);
+const VALID_TABLE_SORT_FIELDS = new Set<string>(SORTABLE_COLUMN_KEYS);
+const VALID_TABLE_SORT_DIRECTIONS = new Set<string>(["asc", "desc"]);
 
 // Optional like blockedEmphasis: return the object only when BOTH field and
 // direction are valid enums; else undefined so Preferences treats it as off
-// (null). An absent/invalid flatSort means "no sort" — no unset-vs-off
+// (null). An absent/invalid tableSort means "no sort" — no unset-vs-off
 // ambiguity.
-function parseFlatSort(raw: unknown): FlatSort | undefined {
+function parseTableSort(raw: unknown): TableSort | undefined {
   if (typeof raw !== "object" || raw === null) return undefined;
   const { field, direction } = raw as Record<string, unknown>;
   if (
-    typeof field === "string" && VALID_FLAT_SORT_FIELDS.has(field) &&
-    typeof direction === "string" && VALID_FLAT_SORT_DIRECTIONS.has(direction)
+    typeof field === "string" && VALID_TABLE_SORT_FIELDS.has(field) &&
+    typeof direction === "string" && VALID_TABLE_SORT_DIRECTIONS.has(direction)
   ) {
-    return { field: field as FlatSort["field"], direction: direction as FlatSort["direction"] };
+    return { field: field as TableSort["field"], direction: direction as TableSort["direction"] };
   }
   return undefined;
 }
@@ -192,7 +192,7 @@ export function loadPreferences(): FilterPreferences {
       blockedEmphasis: parseBlockedEmphasis(parsed.blockedEmphasis),
       theme: parseTheme(parsed.theme),
       previewOpen: parsePreviewOpen(parsed.previewOpen),
-      flatSort: parseFlatSort(parsed.flatSort),
+      tableSort: parseTableSort(parsed.tableSort),
     };
   } catch {
     return { ...DEFAULTS, filter: { ...DEFAULTS.filter } };

@@ -1,16 +1,16 @@
 <script lang="ts">
   import { getContextClient } from "@urql/svelte";
   import { DEFAULT_BLOCKED_EMPHASIS } from "../types";
-  import type { NibFilter, ViewLevel, RowDensity, BlockedEmphasis, RowSubtreeActions, TreeTableNib, FlatSort, FlatSortField } from "../types";
+  import type { NibFilter, ViewLevel, RowDensity, BlockedEmphasis, RowSubtreeActions, TreeTableNib, TableSort, SortField } from "../types";
   import { ALL_COLUMN_KEYS, COLUMNS } from "../columns";
   import type { ColumnKey } from "../columns";
   import { useColumnAdapters } from "../ColumnAdapters.svelte";
   import type { Preferences } from "../preferences.svelte";
   import { buildTableData } from "../tableData";
   import { isBucketId, bucketIdForItem, buildViewTree, collectDescendantIds } from "../tree";
-  import { applyFlatSort, nextFlatSort } from "../flatSort";
+  import { applySort, nextTableSort } from "../tableSort";
   import { prepareFilter, isDragAllowed, matchesFilter } from "../filter";
-  import { resolveFilter, resolveViewLevel, resolveVisibleColumns, resolveColumnWidths, resolveFlatSort, emitFlatSort } from "../resolvePrefs";
+  import { resolveFilter, resolveViewLevel, resolveVisibleColumns, resolveColumnWidths, resolveTableSort, emitTableSort } from "../resolvePrefs";
   import TreeTableRow from "./TreeTableRow.svelte";
   import { CopyPlus, CopyMinus, ArrowUp, ArrowDown } from "@lucide/svelte";
   import type { DropZone } from "../drag.svelte";
@@ -28,8 +28,8 @@
     viewLevel?: ViewLevel;
     visibleColumns?: ColumnKey[];
     columnWidths?: Record<ColumnKey, number>;
-    flatSort?: FlatSort | null;
-    onflatsortchange?: (s: FlatSort | null) => void;
+    tableSort?: TableSort | null;
+    ontablesortchange?: (s: TableSort | null) => void;
     oncolumnwidthschange?: (widths: Record<ColumnKey, number>) => void;
     oncolumnresizeend?: () => void;
     ontagschange?: (tags: string[]) => void;
@@ -46,8 +46,8 @@
     viewLevel = undefined as ViewLevel | undefined,
     visibleColumns = undefined as ColumnKey[] | undefined,
     columnWidths = undefined as Record<ColumnKey, number> | undefined,
-    flatSort = undefined as FlatSort | null | undefined,
-    onflatsortchange,
+    tableSort = undefined as TableSort | null | undefined,
+    ontablesortchange,
     oncolumnwidthschange,
     oncolumnresizeend,
     ontagschange,
@@ -77,23 +77,29 @@
   let resolvedViewLevel = $derived(resolveViewLevel(prefs, viewLevel));
   let resolvedVisibleColumns = $derived(resolveVisibleColumns(prefs, visibleColumns));
   let resolvedColumnWidths = $derived(resolveColumnWidths(prefs, columnWidths));
-  // Flat-view column sort. Resolved from prefs/prop; only APPLIED in the flat
-  // view, and only while the sorted column is visible. Hiding the sorted column
-  // deactivates the sort (rows revert to the manual `order` sequence) instead of
-  // leaving rows sorted by an invisible field with no header to clear it; the
-  // persisted preference is retained, so re-showing the column reactivates it.
-  // `activeFlatSort` is the single source of truth for both the row order and the
-  // header sort indicator, so the two can never disagree.
-  let resolvedFlatSort = $derived(resolveFlatSort(prefs, flatSort));
-  let activeFlatSort = $derived(
-    resolvedViewLevel === "flat" && resolvedFlatSort && resolvedVisibleColumns.includes(resolvedFlatSort.field)
-      ? resolvedFlatSort
+  // Table column sort. Resolved from prefs/prop; APPLIED in every view — a flat
+  // sorted list in Flat, sibling-sort (siblings/roots/bucket items/promoted
+  // headers reordered, nesting preserved) in the Tree + grouping lenses. Applied
+  // only while the sorted column is visible: hiding it deactivates the sort (rows
+  // revert to the manual `order` sequence) instead of leaving rows sorted by an
+  // invisible field with no header to clear it; the persisted preference is
+  // retained, so re-showing the column reactivates it. `activeSort` is the single
+  // source of truth for the row order, the header sort indicator, AND the drag
+  // gate, so they can never disagree.
+  let resolvedTableSort = $derived(resolveTableSort(prefs, tableSort));
+  let activeSort = $derived(
+    resolvedTableSort && resolvedVisibleColumns.includes(resolvedTableSort.field)
+      ? resolvedTableSort
       : null
   );
 
-  // Flat is browse-only: drag-reorder is disabled there (Flat rows intermix real
-  // parents, and the reorder backend requires a real sibling drop target).
-  let dragAllowed = $derived(isDragAllowed(resolvedFilter) && resolvedViewLevel !== "flat");
+  // Drag-reorder gating. Flat is browse-only (its rows intermix real parents and
+  // the reorder backend needs a real sibling drop target). In the Tree + lenses
+  // an active sort DISABLES drag: the client-side sort never rewrites the `order`
+  // key, so dropping a row would fight the sorted display. Turning the sort off
+  // (`activeSort == null`, which also covers the sorted-column-hidden case)
+  // restores the exact manual order and re-enables drag.
+  let dragAllowed = $derived(isDragAllowed(resolvedFilter) && resolvedViewLevel !== "flat" && activeSort == null);
   let showColumn = $derived((key: ColumnKey) => resolvedVisibleColumns.includes(key));
 
   // Visible columns in canonical order (order = ALL_COLUMN_KEYS; reordering is
@@ -130,10 +136,12 @@
 
   let allNibs = $derived(dataSource.allNibs);
 
-  // Flat view applies a client-side column sort when one is active; every other
-  // view (and Flat with sort off) keeps the server's manual `order` sequence.
-  // Only the ROW ORDER changes — other allNibs consumers stay on the raw list.
-  let orderedNibs = $derived(activeFlatSort ? applyFlatSort(allNibs, activeFlatSort) : allNibs);
+  // Every view applies the client-side column sort when one is active: Flat gets
+  // a flat sorted list, the nested views get sibling-sort (buildTableData nests
+  // the pre-sorted array, and the tree builders preserve sibling input order).
+  // Sort off keeps the server's manual `order` sequence. Only the ROW ORDER
+  // changes — other allNibs consumers stay on the raw list.
+  let orderedNibs = $derived(activeSort ? applySort(allNibs, activeSort) : allNibs);
 
   // The client-side filter is the original filter (not the server-stripped version).
   // buildTableData uses hasClientFilters/matchesFilter from filter.ts directly.
@@ -511,49 +519,43 @@
     treeDrag.onRowPointerDown(nibId, e);
   }
 
-  // --- Flat-view header sorting ---
-  // Clicking any sortable header cycles that field asc → desc → off. Only
-  // reachable in the flat view (the header renders a plain label elsewhere).
-  function handleFlatSortClick(field: FlatSortField) {
-    emitFlatSort(prefs, onflatsortchange, nextFlatSort(resolvedFlatSort, field));
+  // --- Header sorting ---
+  // Clicking any sortable header cycles that field asc → desc → off. Active in
+  // every view (Flat sorts the whole list; the nested views sort siblings).
+  function handleTableSortClick(field: SortField) {
+    emitTableSort(prefs, ontablesortchange, nextTableSort(resolvedTableSort, field));
   }
 
   // aria-sort for a sortable <th>: the active direction when this field is the
-  // flat sort, "none" for every other sortable header in flat view, and
-  // undefined (attribute omitted) in every non-flat view.
-  function ariaSortFor(field: FlatSortField): "ascending" | "descending" | "none" | undefined {
-    if (resolvedViewLevel !== "flat") return undefined;
-    if (activeFlatSort?.field !== field) return "none";
-    return activeFlatSort.direction === "asc" ? "ascending" : "descending";
+  // table sort, else "none". Every sortable header reports it in every view;
+  // non-sortable headers omit the attribute (handled at the call site).
+  function ariaSortFor(field: SortField): "ascending" | "descending" | "none" {
+    if (activeSort?.field !== field) return "none";
+    return activeSort.direction === "asc" ? "ascending" : "descending";
   }
 </script>
 
-<!-- Sortable-column header content. In the flat view it is a click-to-sort
-     button (asc → desc → off) showing an arrow for the active field; in every
-     other view it is the plain static column label. The click is on the button,
-     not the sibling resize handle, and stops propagation so it never reaches the
-     table's delegated row-click handler. -->
-{#snippet sortableHeader(field: FlatSortField, label: string)}
-  {#if resolvedViewLevel === "flat"}
-    <button
-      type="button"
-      data-testid="flat-sort-{field}"
-      class="inline-flex items-center gap-1 text-label text-muted-foreground hover:text-foreground"
-      aria-label={`Sort by ${label}`}
-      onclick={(e) => { e.stopPropagation(); handleFlatSortClick(field); }}
-    >
-      {label}
-      {#if activeFlatSort?.field === field}
-        {#if activeFlatSort.direction === "asc"}
-          <ArrowUp size={12} data-testid="flat-sort-arrow-{field}" aria-hidden="true" />
-        {:else}
-          <ArrowDown size={12} data-testid="flat-sort-arrow-{field}" aria-hidden="true" />
-        {/if}
-      {/if}
-    </button>
-  {:else}
+<!-- Sortable-column header content: a click-to-sort button (asc → desc → off)
+     showing an arrow for the active field, in EVERY view. The click is on the
+     button, not the sibling resize handle, and stops propagation so it never
+     reaches the table's delegated row-click handler. -->
+{#snippet sortableHeader(field: SortField, label: string)}
+  <button
+    type="button"
+    data-testid="table-sort-{field}"
+    class="inline-flex items-center gap-1 text-label text-muted-foreground hover:text-foreground"
+    aria-label={`Sort by ${label}`}
+    onclick={(e) => { e.stopPropagation(); handleTableSortClick(field); }}
+  >
     {label}
-  {/if}
+    {#if activeSort?.field === field}
+      {#if activeSort.direction === "asc"}
+        <ArrowUp size={12} data-testid="table-sort-arrow-{field}" aria-hidden="true" />
+      {:else}
+        <ArrowDown size={12} data-testid="table-sort-arrow-{field}" aria-hidden="true" />
+      {/if}
+    {/if}
+  </button>
 {/snippet}
 
 <div data-testid="tree-table" class="h-full">

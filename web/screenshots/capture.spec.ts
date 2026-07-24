@@ -61,7 +61,7 @@ test("table — flat view, sorted by Modified desc", async ({ page }) => {
   await page.addInitScript(() => {
     localStorage.setItem(
       "nibs-filter-preferences",
-      JSON.stringify({ filter: {}, viewLevel: "flat", flatSort: { field: "modified", direction: "desc" } }),
+      JSON.stringify({ filter: {}, viewLevel: "flat", tableSort: { field: "modified", direction: "desc" } }),
     );
   });
   await page.goto("/");
