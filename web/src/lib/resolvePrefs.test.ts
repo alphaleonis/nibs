@@ -4,11 +4,13 @@ import {
   resolveViewLevel,
   resolveVisibleColumns,
   resolveColumnWidths,
+  resolveColumnOrder,
   resolveTableSort,
   emitFilter,
   emitTableSort,
+  emitColumnOrder,
 } from "./resolvePrefs";
-import { DEFAULT_COLUMN_WIDTHS, DEFAULT_VISIBLE_COLUMNS } from "./types";
+import { ALL_COLUMN_KEYS, DEFAULT_COLUMN_WIDTHS, DEFAULT_VISIBLE_COLUMNS } from "./types";
 import type { NibFilter, ViewLevel, ColumnKey, TableSort } from "./types";
 import type { Preferences } from "./preferences.svelte.ts";
 
@@ -18,6 +20,7 @@ function makePrefs(overrides: Partial<Preferences> = {}): Preferences {
     viewLevel: "epics" as ViewLevel,
     visibleColumns: ["id", "title"] as ColumnKey[],
     currentColumnWidths: { id: 200, parent: 200, type: 200, title: 500, state: 200, effort: 200, tags: 200 } as Record<ColumnKey, number>,
+    currentColumnOrder: [...ALL_COLUMN_KEYS] as ColumnKey[],
     ...overrides,
   } as Preferences;
 }
@@ -84,6 +87,46 @@ describe("resolveColumnWidths", () => {
 
   it("returns default column widths when both are undefined", () => {
     expect(resolveColumnWidths(undefined, undefined)).toEqual({ ...DEFAULT_COLUMN_WIDTHS });
+  });
+});
+
+describe("resolveColumnOrder", () => {
+  it("returns prefs.currentColumnOrder when prefs is defined", () => {
+    const perm = [...ALL_COLUMN_KEYS].reverse();
+    const prefs = makePrefs({ currentColumnOrder: perm });
+    expect(resolveColumnOrder(prefs, undefined)).toEqual(perm);
+  });
+
+  it("returns the columnOrder prop when prefs is undefined", () => {
+    const order: ColumnKey[] = ["state", "title", "id"];
+    expect(resolveColumnOrder(undefined, order)).toEqual(["state", "title", "id"]);
+  });
+
+  it("returns the canonical ALL_COLUMN_KEYS order when both are undefined", () => {
+    expect(resolveColumnOrder(undefined, undefined)).toEqual([...ALL_COLUMN_KEYS]);
+  });
+});
+
+describe("emitColumnOrder", () => {
+  const perm: ColumnKey[] = [...ALL_COLUMN_KEYS].reverse();
+
+  it("writes prefs.order.setLevel for the current view when prefs is defined", () => {
+    const setLevel = vi.fn();
+    const prefs = { viewLevel: "epics" as ViewLevel, order: { setLevel } } as unknown as Preferences;
+    const onchange = vi.fn();
+    emitColumnOrder(prefs, onchange, perm);
+    expect(setLevel).toHaveBeenCalledWith("epics", perm);
+    expect(onchange).not.toHaveBeenCalled();
+  });
+
+  it("calls onchange when prefs is undefined", () => {
+    const onchange = vi.fn();
+    emitColumnOrder(undefined, onchange, perm);
+    expect(onchange).toHaveBeenCalledWith(perm);
+  });
+
+  it("does nothing when both prefs and onchange are undefined", () => {
+    emitColumnOrder(undefined, undefined, perm);
   });
 });
 

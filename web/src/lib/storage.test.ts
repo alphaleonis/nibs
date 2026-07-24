@@ -1,6 +1,6 @@
 import { describe, it, expect, beforeEach, vi } from "vitest";
-import { savePreferences, loadPreferences, parseTheme, parsePerViewMap } from "./storage";
-import { MIN_DETAIL_PANEL_WIDTH, MIN_DETAIL_PANEL_HEIGHT, VIEW_LEVELS } from "./types";
+import { savePreferences, loadPreferences, parseTheme, parsePerViewMap, parseColumnOrder } from "./storage";
+import { MIN_DETAIL_PANEL_WIDTH, MIN_DETAIL_PANEL_HEIGHT, VIEW_LEVELS, ALL_COLUMN_KEYS } from "./types";
 
 const store: Record<string, string> = {};
 const mockStorage = {
@@ -215,6 +215,60 @@ describe("storage", () => {
     });
     const loaded = loadPreferences();
     expect(loaded.columnWidths).toBeUndefined();
+  });
+
+  it("saves and loads columnOrder per view level (a permutation round-trips)", () => {
+    // A non-default order for milestones must survive save → load unchanged (it is
+    // already a full permutation, so nothing is appended).
+    const perm = [...ALL_COLUMN_KEYS].reverse();
+    savePreferences({
+      filter: {},
+      viewLevel: "milestones",
+      columnOrder: { milestones: perm },
+    });
+    const loaded = loadPreferences();
+    expect(loaded.columnOrder?.milestones).toEqual(perm);
+  });
+
+  it("appends a missing (newly-added) column to a stored partial columnOrder on load", () => {
+    // A persisted order listing only a few keys must gain the rest (canonical
+    // order) so every column still renders after a new column ships.
+    store["nibs-filter-preferences"] = JSON.stringify({
+      filter: {},
+      viewLevel: "epics",
+      columnOrder: { epics: ["title", "id"] },
+    });
+    const loaded = loadPreferences();
+    const rest = ALL_COLUMN_KEYS.filter((k) => k !== "title" && k !== "id");
+    expect(loaded.columnOrder?.epics).toEqual(["title", "id", ...rest]);
+  });
+
+  it("drops unknown keys from a stored columnOrder on load", () => {
+    store["nibs-filter-preferences"] = JSON.stringify({
+      filter: {},
+      viewLevel: "epics",
+      columnOrder: { epics: ["title", "bogus", "id"] },
+    });
+    const loaded = loadPreferences();
+    expect(loaded.columnOrder?.epics).not.toContain("bogus");
+    expect(loaded.columnOrder?.epics?.[0]).toBe("title");
+    expect(loaded.columnOrder?.epics?.[1]).toBe("id");
+  });
+
+  it("returns undefined columnOrder when nothing is persisted", () => {
+    savePreferences({ filter: {}, viewLevel: "milestones" });
+    const loaded = loadPreferences();
+    expect(loaded.columnOrder).toBeUndefined();
+  });
+
+  it("drops a non-array columnOrder level (garbage) so the map collapses to undefined", () => {
+    store["nibs-filter-preferences"] = JSON.stringify({
+      filter: {},
+      viewLevel: "epics",
+      columnOrder: { epics: "not-an-array" },
+    });
+    const loaded = loadPreferences();
+    expect(loaded.columnOrder).toBeUndefined();
   });
 
   it("saves and loads detailPanelWidth", () => {
@@ -519,6 +573,48 @@ describe("parsePerViewMap", () => {
     expect(parsePerViewMap({ epics: ["id", "title"], none: [] }, stringArray)).toEqual({
       epics: ["id", "title"],
     });
+  });
+});
+
+// parseColumnOrder is the per-level validator for the columnOrder map: it drops
+// unknown/duplicate keys, preserves the persisted order of valid keys, and
+// APPENDS any missing ColumnKey in canonical order (so a newly-added column still
+// appears). A non-array yields undefined so the level is dropped.
+describe("parseColumnOrder", () => {
+  it("returns undefined for a non-array input", () => {
+    expect(parseColumnOrder("nope")).toBeUndefined();
+    expect(parseColumnOrder(null)).toBeUndefined();
+    expect(parseColumnOrder({ a: 1 })).toBeUndefined();
+    expect(parseColumnOrder(42)).toBeUndefined();
+  });
+
+  it("returns the full canonical order for an empty array (all keys appended)", () => {
+    expect(parseColumnOrder([])).toEqual([...ALL_COLUMN_KEYS]);
+  });
+
+  it("preserves a persisted partial order and appends the missing keys canonically", () => {
+    const rest = ALL_COLUMN_KEYS.filter((k) => k !== "state" && k !== "title");
+    expect(parseColumnOrder(["state", "title"])).toEqual(["state", "title", ...rest]);
+  });
+
+  it("drops unknown keys before appending the missing ones", () => {
+    const rest = ALL_COLUMN_KEYS.filter((k) => k !== "id");
+    expect(parseColumnOrder(["id", "bogus", 7, null])).toEqual(["id", ...rest]);
+  });
+
+  it("de-duplicates repeated keys (keeps the first occurrence)", () => {
+    const rest = ALL_COLUMN_KEYS.filter((k) => k !== "title");
+    expect(parseColumnOrder(["title", "title", "title"])).toEqual(["title", ...rest]);
+  });
+
+  it("round-trips a full permutation unchanged (nothing to append)", () => {
+    const perm = [...ALL_COLUMN_KEYS].reverse();
+    expect(parseColumnOrder(perm)).toEqual(perm);
+  });
+
+  it("always yields every ColumnKey exactly once regardless of input", () => {
+    const out = parseColumnOrder(["modified", "modified", "bogus", "id"])!;
+    expect([...out].sort()).toEqual([...ALL_COLUMN_KEYS].sort());
   });
 });
 

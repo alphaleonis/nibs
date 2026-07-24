@@ -2,7 +2,7 @@
   import { getContextClient } from "@urql/svelte";
   import { DEFAULT_BLOCKED_EMPHASIS } from "../types";
   import type { NibFilter, ViewLevel, RowDensity, BlockedEmphasis, RowSubtreeActions, TreeTableNib, TableSort, SortField } from "../types";
-  import { ALL_COLUMN_KEYS, COLUMNS } from "../columns";
+  import { COLUMNS } from "../columns";
   import type { ColumnKey } from "../columns";
   import { useColumnAdapters } from "../ColumnAdapters.svelte";
   import type { Preferences } from "../preferences.svelte";
@@ -10,12 +10,13 @@
   import { isBucketId, bucketIdForItem, buildViewTree, collectDescendantIds } from "../tree";
   import { applySort, nextTableSort } from "../tableSort";
   import { prepareFilter, isDragAllowed, matchesFilter } from "../filter";
-  import { resolveFilter, resolveViewLevel, resolveVisibleColumns, resolveColumnWidths, resolveTableSort, emitTableSort } from "../resolvePrefs";
+  import { resolveFilter, resolveViewLevel, resolveVisibleColumns, resolveColumnWidths, resolveColumnOrder, resolveTableSort, emitTableSort, emitColumnOrder } from "../resolvePrefs";
   import TreeTableRow from "./TreeTableRow.svelte";
   import { CopyPlus, CopyMinus, ArrowUp, ArrowDown } from "@lucide/svelte";
   import type { DropZone } from "../drag.svelte";
   import { useSelection, useDrag, useActiveView, useTreeView } from "../contexts";
   import { useColumnResize } from "../composables/useColumnResize.svelte";
+  import { useColumnDrag } from "../composables/useColumnDrag.svelte";
   import { useTreeDrag } from "../composables/useTreeDrag.svelte";
   import { useKeyboardNav } from "../composables/useKeyboardNav.svelte";
   import { useScrollRestore } from "../composables/useScrollRestore.svelte";
@@ -28,10 +29,12 @@
     viewLevel?: ViewLevel;
     visibleColumns?: ColumnKey[];
     columnWidths?: Record<ColumnKey, number>;
+    columnOrder?: ColumnKey[];
     tableSort?: TableSort | null;
     ontablesortchange?: (s: TableSort | null) => void;
     oncolumnwidthschange?: (widths: Record<ColumnKey, number>) => void;
     oncolumnresizeend?: () => void;
+    oncolumnorderchange?: (order: ColumnKey[]) => void;
     ontagschange?: (tags: string[]) => void;
     onrowcontextmenu?: (nibId: string, event: MouseEvent, nib: TreeTableNib, subtree: RowSubtreeActions) => void;
     onaddchild?: (nibId: string, nibType: string, anchor: DOMRect) => void;
@@ -46,10 +49,12 @@
     viewLevel = undefined as ViewLevel | undefined,
     visibleColumns = undefined as ColumnKey[] | undefined,
     columnWidths = undefined as Record<ColumnKey, number> | undefined,
+    columnOrder = undefined as ColumnKey[] | undefined,
     tableSort = undefined as TableSort | null | undefined,
     ontablesortchange,
     oncolumnwidthschange,
     oncolumnresizeend,
+    oncolumnorderchange,
     ontagschange,
     onrowcontextmenu,
     onaddchild,
@@ -77,6 +82,9 @@
   let resolvedViewLevel = $derived(resolveViewLevel(prefs, viewLevel));
   let resolvedVisibleColumns = $derived(resolveVisibleColumns(prefs, visibleColumns));
   let resolvedColumnWidths = $derived(resolveColumnWidths(prefs, columnWidths));
+  // The full per-view column order (all keys). Drives the header + cell + width
+  // loops (filtered to the visible set). Reordering writes it back per view.
+  let resolvedColumnOrder = $derived(resolveColumnOrder(prefs, columnOrder));
   // Table column sort. Resolved from prefs/prop; APPLIED in every view — a flat
   // sorted list in Flat, sibling-sort (siblings/roots/bucket items/promoted
   // headers reordered, nesting preserved) in the Tree + grouping lenses. Applied
@@ -102,15 +110,17 @@
   let dragAllowed = $derived(isDragAllowed(resolvedFilter) && resolvedViewLevel !== "flat" && activeSort == null);
   let showColumn = $derived((key: ColumnKey) => resolvedVisibleColumns.includes(key));
 
-  // Visible columns in canonical order (order = ALL_COLUMN_KEYS; reordering is
-  // nibs-46c1). Drives the <th> loop so the header sequence matches the source-
-  // ordered blocks it replaced.
-  let orderedVisibleColumns = $derived(ALL_COLUMN_KEYS.filter((key) => showColumn(key)));
+  // Visible columns in the per-view order. Drives the <th> loop so the header
+  // sequence follows the persisted columnOrder; TreeTableRow filters the same
+  // order so cells stay aligned under their headers.
+  let orderedVisibleColumns = $derived(resolvedColumnOrder.filter((key) => showColumn(key)));
 
   // Explicit table width = actions column (32px) + sum of visible column widths.
   // Required for table-layout: fixed to enforce column widths regardless of content.
+  // Iterates the ordered set (the sum is order-independent, but keeping the loop on
+  // columnOrder single-sources "the columns this table renders").
   let tableWidth = $derived(
-    32 + ALL_COLUMN_KEYS.reduce((sum, key) => showColumn(key) ? sum + resolvedColumnWidths[key] : sum, 0)
+    32 + orderedVisibleColumns.reduce((sum, key) => sum + resolvedColumnWidths[key], 0)
   );
 
   // Split filter into server-side (sent to GraphQL) and client-side (applied locally).
@@ -340,6 +350,16 @@
     },
   });
 
+  // --- Column reorder (drag a header to a new position) ---
+  // Separate from the row drag (useTreeDrag): a flat column list has no
+  // parent/reparent/zone/nesting concerns, so this owns its own small state
+  // (draggedKey/target/side) rather than reusing the tree DragState. It reuses the
+  // threshold PATTERN only. Writes the full order for the current view.
+  const columnDrag = useColumnDrag({
+    getOrder: () => resolvedColumnOrder,
+    onReorder: (next: ColumnKey[]) => emitColumnOrder(prefs, oncolumnorderchange, next),
+  });
+
   // --- Scroll container ---
   let scrollContainerEl: HTMLDivElement | undefined = $state(undefined);
 
@@ -545,7 +565,7 @@
     data-testid="table-sort-{field}"
     class="inline-flex items-center gap-1 text-label text-muted-foreground hover:text-foreground"
     aria-label={`Sort by ${label}`}
-    onclick={(e) => { e.stopPropagation(); handleTableSortClick(field); }}
+    onclick={(e) => { e.stopPropagation(); if (columnDrag.consumeClickSuppression()) return; handleTableSortClick(field); }}
   >
     {label}
     {#if activeSort?.field === field}
@@ -591,10 +611,21 @@
         </th>
         {#each orderedVisibleColumns as key (key)}
           {@const def = COLUMNS[key]}
+          <!-- svelte-ignore a11y_no_static_element_interactions -->
           <th
-            class="text-left text-label text-muted-foreground px-3 py-2 relative bg-background"
+            data-col-key={key}
+            class="text-left text-label text-muted-foreground px-3 py-2 relative bg-background col-header"
+            class:col-dragging={columnDrag.draggedKey === key}
+            class:col-drop-before={columnDrag.targetKey === key && columnDrag.targetSide === "before"}
+            class:col-drop-after={columnDrag.targetKey === key && columnDrag.targetSide === "after"}
             style="width: {resolvedColumnWidths[key]}px;"
             aria-sort={def.sortable && def.sortKey ? ariaSortFor(def.sortKey) : undefined}
+            onpointerdown={(e) => {
+              // The resize edge-handle owns its own pointerdown; never start a
+              // reorder-drag from it.
+              if ((e.target as HTMLElement).closest(".resize-handle")) return;
+              columnDrag.onHeaderPointerDown(key, e);
+            }}
           >
             {#if def.sortable && def.sortKey}
               {@render sortableHeader(def.sortKey, def.label)}
@@ -617,6 +648,7 @@
           collapsed={treeView.isCollapsed(row.nib.id)}
           parentNib={row.parentNib}
           visibleColumns={resolvedVisibleColumns}
+          columnOrder={resolvedColumnOrder}
           draggable={!isBucketId(row.nib.id) && dragAllowed}
           highlighted={dataSource.changed.isHighlighted(row.nib.id)}
           fading={dataSource.changed.isFading(row.nib.id)}
@@ -628,3 +660,27 @@
   </div>
 {/if}
 </div>
+
+<style>
+  /* Column reorder affordances. The whole header is grabbable (a movement
+     threshold in useColumnDrag distinguishes a reorder-drag from the nibs-6grg
+     sort-click); the resize edge-handle keeps its own col-resize cursor via its
+     higher-specificity rule + stacking. */
+  .col-header {
+    cursor: grab;
+  }
+
+  /* The header being dragged recedes; its drop target shows an insertion edge on
+     the side the cursor is over — mirroring the row drop-before/after indicators. */
+  .col-dragging {
+    opacity: 0.4;
+  }
+
+  .col-drop-before {
+    box-shadow: inset 2px 0 0 0 var(--ring);
+  }
+
+  .col-drop-after {
+    box-shadow: inset -2px 0 0 0 var(--ring);
+  }
+</style>

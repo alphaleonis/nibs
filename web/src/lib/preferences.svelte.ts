@@ -2,7 +2,7 @@ import { untrack } from "svelte";
 import { loadPreferences, savePreferences } from "./storage";
 import { PerViewColumnMap } from "./perViewColumnMap.svelte";
 import type { SaveMode } from "./perViewColumnMap.svelte";
-import { DEFAULT_VISIBLE_COLUMNS, DEFAULT_COLUMN_WIDTHS, DEFAULT_DETAIL_PANEL_WIDTH, MIN_DETAIL_PANEL_WIDTH, DEFAULT_DETAIL_PANEL_HEIGHT, MIN_DETAIL_PANEL_HEIGHT, DEFAULT_DETAIL_PANEL_POSITION, DEFAULT_BLOCKED_EMPHASIS, DEFAULT_FONT_SIZE, DEFAULT_THEME, DEFAULT_PREVIEW_OPEN } from "./types";
+import { ALL_COLUMN_KEYS, DEFAULT_VISIBLE_COLUMNS, DEFAULT_COLUMN_WIDTHS, DEFAULT_DETAIL_PANEL_WIDTH, MIN_DETAIL_PANEL_WIDTH, DEFAULT_DETAIL_PANEL_HEIGHT, MIN_DETAIL_PANEL_HEIGHT, DEFAULT_DETAIL_PANEL_POSITION, DEFAULT_BLOCKED_EMPHASIS, DEFAULT_FONT_SIZE, DEFAULT_THEME, DEFAULT_PREVIEW_OPEN } from "./types";
 import type { NibFilter, ViewLevel, ColumnKey, RowDensity, Theme, DetailPanelPosition, BlockedEmphasis, FontSize, TableSort } from "./types";
 
 export class Preferences {
@@ -15,7 +15,9 @@ export class Preferences {
   //   - visibility REPLACES the default (stored value used whole); auto-saved.
   //   - widths MERGE over the full default; flush-saved (excluded from auto-save
   //     so a drag never persists mid-gesture — persisted on pointerup instead).
-  // nibs-46c1 adds a third `order` instance (storageKey "columnOrder") here.
+  //   - order REPLACES the default (stored value used whole); auto-saved. The
+  //     stored value is already the full canonical set (parseColumnOrder appends
+  //     any missing key on load), so a permutation persists intact.
   readonly visibility = new PerViewColumnMap<ColumnKey[]>({
     storageKey: "columnVisibility",
     defaultValue: [...DEFAULT_VISIBLE_COLUMNS],
@@ -30,12 +32,20 @@ export class Preferences {
     saveMode: "flush",
     requestSave: () => this.save(),
   });
+  readonly order = new PerViewColumnMap<ColumnKey[]>({
+    storageKey: "columnOrder",
+    defaultValue: [...ALL_COLUMN_KEYS],
+    resolve: (stored, dflt) => stored ?? [...dflt],
+    saveMode: "auto",
+    requestSave: () => this.save(),
+  });
   // The auto-save $effect subscribes only to the "auto" instances; iterating one
   // list keeps the save-timing split driven by a single explicit flag. Typed to
   // the members the effect touches so the differing T/R generics can share a list.
   readonly #perViewMaps: readonly { readonly saveMode: SaveMode; track(): void }[] = [
     this.visibility,
     this.widths,
+    this.order,
   ];
 
   #detailPanelWidth: number | undefined = $state(undefined);
@@ -59,6 +69,11 @@ export class Preferences {
 
   currentColumnWidths: Record<ColumnKey, number> = $derived(this.widths.resolve(this.viewLevel));
 
+  // The full canonical column order for the current view (all keys), used as the
+  // render order (filtered to the visible set downstream). Reordering writes
+  // through `order.setLevel`.
+  currentColumnOrder: ColumnKey[] = $derived(this.order.resolve(this.viewLevel));
+
   // Serialized per-view maps, exposed for save() and read-only consumers (tests,
   // the Toolbar visibility toggle writes through `visibility` directly).
   get columnVisibility(): Partial<Record<ViewLevel, ColumnKey[]>> {
@@ -67,6 +82,10 @@ export class Preferences {
 
   get columnWidths(): Partial<Record<ViewLevel, Partial<Record<ColumnKey, number>>>> {
     return this.widths.serialize();
+  }
+
+  get columnOrder(): Partial<Record<ViewLevel, ColumnKey[]>> {
+    return this.order.serialize();
   }
 
   detailPanelWidth: number = $derived(
@@ -94,6 +113,7 @@ export class Preferences {
     this.viewLevel = initial.viewLevel;
     this.visibility.hydrate(initial.columnVisibility);
     this.widths.hydrate(initial.columnWidths);
+    this.order.hydrate(initial.columnOrder);
     this.#detailPanelWidth = initial.detailPanelWidth;
     this.detailPanelPosition = initial.detailPanelPosition ?? DEFAULT_DETAIL_PANEL_POSITION;
     this.#detailPanelHeight = initial.detailPanelHeight;
@@ -171,6 +191,7 @@ export class Preferences {
       viewLevel: this.viewLevel,
       columnVisibility: this.visibility.serialize(),
       columnWidths: this.widths.serialize(),
+      columnOrder: this.order.serialize(),
       detailPanelWidth: this.#detailPanelWidth,
       detailPanelPosition: this.detailPanelPosition,
       detailPanelHeight: this.#detailPanelHeight,

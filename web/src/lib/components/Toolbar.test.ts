@@ -509,6 +509,31 @@ describe("Toolbar", () => {
     // 'type' should be inserted at its canonical position (index 2), not appended at the end
     expect(callArg).toEqual(["id", "parent", "type", "title", "state", "effort", "tags"]);
   });
+
+  it("re-sorts the visible set by the per-view columnOrder on toggle (not the canonical order)", async () => {
+    const oncolumnschange = vi.fn();
+    // A custom order where state/title precede id — distinct from canonical.
+    const columnOrder: ColumnKey[] = ["state", "title", "id", "parent", "type", "effort", "tags", "blocking", "blockedBy", "created", "modified"];
+    render(Toolbar, {
+      ...defaultToolbarProps,
+      visibleColumns: ["title", "state"] as ColumnKey[],
+      columnOrder,
+      oncolumnschange,
+      viewLevel: "epics" as ViewLevel,
+    });
+
+    await user.click(screen.getByRole("button", { name: "Columns" }));
+
+    const items = screen.getAllByRole("menuitemcheckbox");
+    const idItem = items.find((item) => item.textContent?.trim() === "ID");
+    expect(idItem).toBeInTheDocument();
+    await user.click(idItem!);
+
+    expect(oncolumnschange).toHaveBeenCalledOnce();
+    const callArg = oncolumnschange.mock.calls[0][0] as ColumnKey[];
+    // Sorted by columnOrder (state<title<id), NOT canonical (which would be id,title,state).
+    expect(callArg).toEqual(["state", "title", "id"]);
+  });
 });
 
 // Filter-dropdown coverage. Toolbar owns the filter-toggle logic

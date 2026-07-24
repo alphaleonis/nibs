@@ -18,6 +18,7 @@
     collapsed?: boolean;
     parentNib?: TreeTableNib | null;
     visibleColumns?: ColumnKey[];
+    columnOrder?: ColumnKey[];
     draggable?: boolean;
     highlighted?: boolean;
     fading?: boolean;
@@ -32,6 +33,7 @@
     collapsed = false,
     parentNib = null,
     visibleColumns = [...ALL_COLUMN_KEYS],
+    columnOrder = [...ALL_COLUMN_KEYS],
     draggable = false,
     highlighted = false,
     fading = false,
@@ -44,10 +46,11 @@
   // <ColumnAdapters> in the app and by makeTestContext in tests.
   const adapters = useColumnAdapters();
 
-  // Render cells in canonical column order (ALL_COLUMN_KEYS), filtered to the
-  // visible set — reproducing the source-ordered per-column blocks this loop
-  // replaced. Reordering is a later nib (nibs-46c1).
-  let orderedVisibleColumns = $derived(ALL_COLUMN_KEYS.filter((k) => visibleColumns.includes(k)));
+  // Render cells in the per-view column order, filtered to the visible set. The
+  // order (from TreeTable's resolved columnOrder) carries every ColumnKey, so
+  // filtering by visibility yields the ordered visible cells; TreeTable's header
+  // loop iterates the identical sequence so cells stay under their headers.
+  let orderedVisibleColumns = $derived(columnOrder.filter((k) => visibleColumns.includes(k)));
 
   // The bag each cell adapter reads. Cells are pure functions of this — they
   // touch no selection/drag context — so ambient row state stays on the <tr>.

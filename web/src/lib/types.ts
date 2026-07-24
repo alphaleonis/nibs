@@ -197,6 +197,7 @@ export interface FilterPreferences {
   viewLevel: ViewLevel;
   columnVisibility?: Partial<Record<ViewLevel, ColumnKey[]>>;
   columnWidths?: Partial<Record<ViewLevel, Partial<Record<ColumnKey, number>>>>;
+  columnOrder?: Partial<Record<ViewLevel, ColumnKey[]>>;
   detailPanelWidth?: number;
   detailPanelPosition?: DetailPanelPosition;
   detailPanelHeight?: number;

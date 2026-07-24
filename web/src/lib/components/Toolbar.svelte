@@ -18,7 +18,7 @@
   import { typeIcons } from "../icons";
   import { priorityIndicators } from "../badges";
   import type { TypeIconInfo } from "../icons";
-  import { resolveFilter, resolveViewLevel, resolveVisibleColumns, emitFilter as emitFilterHelper } from "../resolvePrefs";
+  import { resolveFilter, resolveViewLevel, resolveVisibleColumns, resolveColumnOrder, emitFilter as emitFilterHelper } from "../resolvePrefs";
   import * as DropdownMenu from "$lib/components/ui/dropdown-menu/index.js";
   import { buttonVariants } from "$lib/components/ui/button/index.js";
   import { Input } from "$lib/components/ui/input/index.js";
@@ -36,6 +36,7 @@
     onviewlevelchange = undefined as ((level: ViewLevel) => void) | undefined,
     visibleColumns = undefined as ColumnKey[] | undefined,
     oncolumnschange = undefined as ((columns: ColumnKey[]) => void) | undefined,
+    columnOrder = undefined as ColumnKey[] | undefined,
     oncreatenew = undefined as ((type: string) => void) | undefined,
     rowDensity = "compact" as RowDensity,
     ondensitychange = undefined as ((density: RowDensity) => void) | undefined,
@@ -57,6 +58,7 @@
     onviewlevelchange?: (level: ViewLevel) => void;
     visibleColumns?: ColumnKey[];
     oncolumnschange?: (columns: ColumnKey[]) => void;
+    columnOrder?: ColumnKey[];
     oncreatenew?: (type: string) => void;
     rowDensity?: RowDensity;
     ondensitychange?: (density: RowDensity) => void;
@@ -134,6 +136,9 @@
   let resolvedFilter = $derived(resolveFilter(prefs, filter));
   let resolvedViewLevel = $derived(resolveViewLevel(prefs, viewLevel));
   let resolvedVisibleColumns = $derived(resolveVisibleColumns(prefs, visibleColumns));
+  // The per-view column order — the visible set is re-sorted by it on toggle so a
+  // re-shown column lands in its user-chosen position, not the canonical one.
+  let resolvedColumnOrder = $derived(resolveColumnOrder(prefs, columnOrder));
   let ViewLevelIcon = $derived(VIEW_LEVEL_ICON_INFO[resolvedViewLevel].icon);
 
   // Static trigger labels shared by each control's aria-label and its Tooltip.Content,
@@ -180,8 +185,9 @@
     } else {
       updated = resolvedVisibleColumns.filter(k => k !== key);
     }
-    // Maintain canonical column order
-    updated.sort((a, b) => ALL_COLUMN_KEYS.indexOf(a) - ALL_COLUMN_KEYS.indexOf(b));
+    // Keep the visible set ordered by the per-view columnOrder (falls back to the
+    // canonical ALL_COLUMN_KEYS order when no custom order is set).
+    updated.sort((a, b) => resolvedColumnOrder.indexOf(a) - resolvedColumnOrder.indexOf(b));
     if (prefs) {
       prefs.visibility.setLevel(prefs.viewLevel, updated);
     } else {

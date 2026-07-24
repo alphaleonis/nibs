@@ -73,6 +73,28 @@ function validateVisibilityLevel(raw: unknown): ColumnKey[] | undefined {
   return filtered.length > 0 ? filtered : undefined;
 }
 
+// Per-level validator for columnOrder: keep the persisted order of valid,
+// non-duplicate column keys, then APPEND any ColumnKey that is missing (in
+// canonical ALL_COLUMN_KEYS order) so a newly-added column still appears — the
+// resolved order is (persisted valid ∪ missing-appended). Unknown/duplicate keys
+// are dropped. A non-array (missing/garbage) level yields undefined so it is
+// dropped and Preferences supplies the default order.
+export function parseColumnOrder(raw: unknown): ColumnKey[] | undefined {
+  if (!Array.isArray(raw)) return undefined;
+  const seen = new Set<ColumnKey>();
+  const ordered: ColumnKey[] = [];
+  for (const v of raw) {
+    if (typeof v === "string" && VALID_COLUMN_KEYS.has(v) && !seen.has(v as ColumnKey)) {
+      seen.add(v as ColumnKey);
+      ordered.push(v as ColumnKey);
+    }
+  }
+  for (const key of ALL_COLUMN_KEYS) {
+    if (!seen.has(key)) ordered.push(key);
+  }
+  return ordered;
+}
+
 // Per-level validator for columnWidths: keep valid column keys mapped to
 // positive finite numbers. A non-object (or array) level yields undefined.
 function validateWidthsLevel(raw: unknown): Partial<Record<ColumnKey, number>> | undefined {
@@ -184,6 +206,7 @@ export function loadPreferences(): FilterPreferences {
         : DEFAULTS.viewLevel,
       columnVisibility: parsePerViewMap(parsed.columnVisibility, validateVisibilityLevel),
       columnWidths: parsePerViewMap(parsed.columnWidths, validateWidthsLevel),
+      columnOrder: parsePerViewMap(parsed.columnOrder, parseColumnOrder),
       detailPanelWidth: parseDetailPanelWidth(parsed.detailPanelWidth),
       detailPanelPosition: parseDetailPanelPosition(parsed.detailPanelPosition),
       detailPanelHeight: parseDetailPanelHeight(parsed.detailPanelHeight),

@@ -2722,3 +2722,109 @@ describe("TreeTable", () => {
     });
   });
 });
+
+describe("TreeTable — per-view column order + reorder drag", () => {
+  beforeEach(() => {
+    mockQueryStore.mockReset();
+    mockSubscriptionStore.mockReset();
+    mockSubscriptionStore.mockReturnValue(
+      readable({ fetching: false, error: undefined, data: undefined, stale: false }) as any
+    );
+  });
+
+  function renderOrdered(props: Record<string, unknown> = {}) {
+    const nibs: TreeTableNib[] = [
+      makeTreeTableNib({ id: "nibs-001", title: "Row one", type: "task", status: "todo" }),
+    ];
+    mockQueryStore.mockReturnValue(
+      readable({ fetching: false, error: undefined, data: { nibs }, stale: false }) as any
+    );
+    return renderTreeTable({
+      filter: {},
+      viewLevel: "flat" as ViewLevel,
+      visibleColumns: ["id", "title", "state"] as ColumnKey[],
+      columnOrder: ["id", "title", "state"] as ColumnKey[],
+      ...props,
+    });
+  }
+
+  it("renders headers in the per-view columnOrder (not canonical)", () => {
+    const { container } = renderOrdered({ columnOrder: ["state", "title", "id"] as ColumnKey[] });
+    const headers = Array.from(container.querySelectorAll("thead th[data-col-key]")).map((th) => th.getAttribute("data-col-key"));
+    expect(headers).toEqual(["state", "title", "id"]);
+  });
+
+  it("renders row cells in the same order as the reordered headers", () => {
+    const { container } = renderOrdered({ columnOrder: ["state", "title", "id"] as ColumnKey[] });
+    const row = container.querySelector("tr[data-testid='tree-row']")!;
+    const cellTestids = Array.from(row.querySelectorAll("td[data-testid]")).map((td) => td.getAttribute("data-testid"));
+    expect(cellTestids).toEqual(["nib-state", "nib-title", "nib-id"]);
+  });
+
+  it("tableWidth sums the visible column widths (actions 32px + widths), order-independent", () => {
+    const { container } = renderOrdered({ columnOrder: ["state", "title", "id"] as ColumnKey[] });
+    const width = parseInt((container.querySelector("table") as HTMLElement).style.width, 10);
+    expect(width).toBe(32 + DEFAULT_COLUMN_WIDTHS.id + DEFAULT_COLUMN_WIDTHS.title + DEFAULT_COLUMN_WIDTHS.state);
+  });
+
+  it("dragging a header past the threshold writes the reordered columnOrder and suppresses the sort click", () => {
+    const oncolumnorderchange = vi.fn();
+    const ontablesortchange = vi.fn();
+    const { container } = renderOrdered({
+      columnOrder: ["id", "title", "state"] as ColumnKey[],
+      oncolumnorderchange,
+      ontablesortchange,
+      tableSort: null,
+    });
+
+    const idTh = container.querySelector("thead th[data-col-key='id']") as HTMLElement;
+    const stateTh = container.querySelector("thead th[data-col-key='state']") as HTMLElement;
+    stateTh.getBoundingClientRect = () =>
+      ({ top: 0, bottom: 40, left: 0, right: 100, width: 100, height: 40, x: 0, y: 0, toJSON: () => {} }) as DOMRect;
+
+    const orig = document.elementFromPoint;
+    document.elementFromPoint = () => stateTh;
+    try {
+      idTh.dispatchEvent(new PointerEvent("pointerdown", { clientX: 10, clientY: 10, button: 0, bubbles: true }));
+      // 70px move crosses the threshold; cursor x=80 is the right half of the
+      // state header (mid=50) → drop "after".
+      window.dispatchEvent(new PointerEvent("pointermove", { clientX: 80, clientY: 10, bubbles: true }));
+      window.dispatchEvent(new PointerEvent("pointerup", { bubbles: true }));
+
+      expect(oncolumnorderchange).toHaveBeenCalledTimes(1);
+      expect(oncolumnorderchange).toHaveBeenCalledWith(["title", "state", "id"]);
+
+      // The click a browser fires right after the drag must NOT toggle the sort.
+      const idSortBtn = container.querySelector("[data-testid='table-sort-id']") as HTMLElement;
+      idSortBtn.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+      expect(ontablesortchange).not.toHaveBeenCalled();
+    } finally {
+      document.elementFromPoint = orig;
+    }
+  });
+
+  it("a plain header click (no drag) still toggles the sort (below-threshold disambiguation)", () => {
+    const ontablesortchange = vi.fn();
+    const { container } = renderOrdered({ ontablesortchange, tableSort: null });
+    const idSortBtn = container.querySelector("[data-testid='table-sort-id']") as HTMLElement;
+    idSortBtn.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+    expect(ontablesortchange).toHaveBeenCalledWith({ field: "id", direction: "asc" });
+  });
+
+  it("a pointerdown on the resize edge-handle resizes and does NOT start a column reorder", () => {
+    const oncolumnorderchange = vi.fn();
+    const oncolumnwidthschange = vi.fn();
+    const { container } = renderOrdered({ oncolumnorderchange, oncolumnwidthschange });
+    const idTh = container.querySelector("thead th[data-col-key='id']") as HTMLElement;
+    const handle = idTh.querySelector(".resize-handle") as HTMLElement;
+
+    handle.dispatchEvent(new PointerEvent("pointerdown", { clientX: 100, clientY: 5, button: 0, bubbles: true }));
+    handle.dispatchEvent(new PointerEvent("pointermove", { clientX: 150, clientY: 5, bubbles: true }));
+    handle.dispatchEvent(new PointerEvent("pointerup", { bubbles: true }));
+
+    // The resize path fired (a width change was emitted)...
+    expect(oncolumnwidthschange).toHaveBeenCalled();
+    // ...and the header-drag guard bailed on the resize handle — no reorder.
+    expect(oncolumnorderchange).not.toHaveBeenCalled();
+  });
+});

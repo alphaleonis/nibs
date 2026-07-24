@@ -10,7 +10,7 @@ const mockStorage = {
 Object.defineProperty(globalThis, "localStorage", { value: mockStorage, writable: true });
 
 import { Preferences } from "./preferences.svelte";
-import { DEFAULT_VISIBLE_COLUMNS, DEFAULT_COLUMN_WIDTHS, DEFAULT_DETAIL_PANEL_WIDTH, MIN_DETAIL_PANEL_WIDTH, DEFAULT_DETAIL_PANEL_HEIGHT, MIN_DETAIL_PANEL_HEIGHT } from "./types";
+import { ALL_COLUMN_KEYS, DEFAULT_VISIBLE_COLUMNS, DEFAULT_COLUMN_WIDTHS, DEFAULT_DETAIL_PANEL_WIDTH, MIN_DETAIL_PANEL_WIDTH, DEFAULT_DETAIL_PANEL_HEIGHT, MIN_DETAIL_PANEL_HEIGHT } from "./types";
 
 describe("Preferences", () => {
   beforeEach(() => {
@@ -35,6 +35,7 @@ describe("Preferences", () => {
     expect(prefs.viewLevel).toBe("none");
     expect(prefs.columnVisibility).toEqual({});
     expect(prefs.columnWidths).toEqual({});
+    expect(prefs.columnOrder).toEqual({});
   });
 
   it("save() persists current state to localStorage", () => {
@@ -64,6 +65,33 @@ describe("Preferences", () => {
 
     const prefs = new Preferences();
     expect(prefs.visibleColumns).toEqual(["id", "title", "state"]);
+  });
+
+  it("currentColumnOrder returns the full canonical order when no per-viewLevel override", () => {
+    const prefs = new Preferences();
+    expect(prefs.currentColumnOrder).toEqual([...ALL_COLUMN_KEYS]);
+  });
+
+  it("currentColumnOrder returns the per-viewLevel order when set", () => {
+    const perm = [...ALL_COLUMN_KEYS].reverse();
+    store["nibs-filter-preferences"] = JSON.stringify({
+      filter: {},
+      viewLevel: "milestones",
+      columnOrder: { milestones: perm },
+    });
+
+    const prefs = new Preferences();
+    expect(prefs.currentColumnOrder).toEqual(perm);
+  });
+
+  it("save() persists the current columnOrder", () => {
+    const prefs = new Preferences();
+    const perm = [...ALL_COLUMN_KEYS].reverse();
+    prefs.order.setLevel(prefs.viewLevel, perm);
+    prefs.save();
+
+    const stored = JSON.parse(store["nibs-filter-preferences"]);
+    expect(stored.columnOrder.none).toEqual(perm);
   });
 
   it("currentColumnWidths returns defaults when no overrides", () => {

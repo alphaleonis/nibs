@@ -54,6 +54,15 @@ describe("Preferences — per-view save-timing split (auto vs flush)", () => {
     expect(mockStorage.setItem).toHaveBeenCalledTimes(1);
     const afterToggle = JSON.parse(store["nibs-filter-preferences"]);
     expect(afterToggle.columnVisibility.none).toEqual(["id", "title"]);
+    mockStorage.setItem.mockClear();
+
+    // An order change mutates the third auto-mode map (columnOrder) — same as
+    // visibility, the effect MUST fire and persist immediately (no flush needed).
+    prefs.order.setLevel(prefs.viewLevel, ["title", "id"]);
+    flushSync();
+    expect(mockStorage.setItem).toHaveBeenCalledTimes(1);
+    const afterReorder = JSON.parse(store["nibs-filter-preferences"]);
+    expect(afterReorder.columnOrder.none).toEqual(["title", "id"]);
 
     dispose();
   });
