@@ -38,9 +38,9 @@ export interface ColumnDrag {
   /** Whole-header pointerdown that MAY become a reorder-drag. */
   onHeaderPointerDown: (key: ColumnKey, e: PointerEvent) => void;
   /**
-   * Click-vs-drag disambiguation for the nibs-6grg sort button: the header's
-   * onclick calls this FIRST. Returns (and clears) true exactly once after a
-   * completed reorder-drag, telling the sort handler to skip — so a past-
+   * Click-vs-drag disambiguation for the nibs-6grg sort control (the header
+   * <th>): its onclick calls this FIRST. Returns (and clears) true exactly once
+   * after a completed reorder-drag, telling the sort handler to skip — so a past-
    * threshold gesture reorders without also toggling the sort. A below-threshold
    * gesture never sets it, so a plain click still sorts.
    */
@@ -64,19 +64,22 @@ export function useColumnDrag(opts: {
   let startY = 0;
   let pendingKey: ColumnKey | null = null;
 
-  // Set true when a real drag completes so the ensuing click on the sort button
-  // is swallowed instead of toggling the sort. Consumed by consumeClickSuppression
-  // (the sort handler) and reset at the start of the next gesture.
+  // Set true when a real drag completes so the ensuing click on the header sort
+  // control is swallowed instead of toggling the sort. Consumed by
+  // consumeClickSuppression (the mouse sort handler) and reset at the start of the
+  // next gesture.
   let suppressNextClick = false;
 
   // Raise the suppression flag AND bound its lifetime to the current event-loop
   // task. The synthetic `click` that follows a past-threshold pointerup is
   // dispatched SYNCHRONOUSLY in the same task, so a SAME-header click still
   // consumes the flag via consumeClickSuppression() before this timeout fires.
-  // A CROSS-header drop lands its click on a common ancestor (<tr>/<thead>) that
-  // has no sort handler and never consumes the flag — the setTimeout(0) clears
-  // it so it cannot leak into a LATER-task keyboard activation (Enter/Space) of
-  // a sort button, which dispatches a click with no preceding pointerdown reset.
+  // A CROSS-header drop lands its click on a common ancestor (<tr>/<thead>) with
+  // no sort handler, so nothing consumes the flag — the setTimeout(0) clears it so
+  // a stale flag can't suppress a LATER, unrelated mouse sort-click on a header.
+  // Keyboard sort activation (Enter/Space on the <th>) never touches this flag: it
+  // runs handleHeaderSortKeydown → onSort directly and dispatches no click, so the
+  // flag's only consumer is the mouse handleHeaderSortClick path.
   function suppressClick() {
     suppressNextClick = true;
     setTimeout(() => {
@@ -128,7 +131,7 @@ export function useColumnDrag(opts: {
         }
       }
       // Any past-threshold gesture is a reorder-drag, not a sort-click — swallow
-      // the click it produces so the header's sort button doesn't also toggle,
+      // the click it produces so the header's sort-click doesn't also toggle,
       // even when the drag ended without a distinct target (no reorder).
       suppressClick();
     }
@@ -141,9 +144,9 @@ export function useColumnDrag(opts: {
       e.stopPropagation();
       // Canceled — no reorder. But a real (past-threshold) drag was in progress,
       // so a synthetic `click` still follows the eventual pointer release over
-      // the origin header's sort button; swallow it (auto-cleared next task) so a
-      // canceled gesture doesn't toggle sort. A sub-threshold pending gesture
-      // never reaches here (guarded by `dragging`), so a plain click still sorts.
+      // the origin header; swallow it (auto-cleared next task) so a canceled
+      // gesture doesn't toggle sort. A sub-threshold pending gesture never reaches
+      // here (guarded by `dragging`), so a plain click still sorts.
       suppressClick();
       cleanup();
     }

@@ -106,20 +106,108 @@ describe("TableHeader — expand/collapse-all wiring", () => {
 });
 
 describe("TableHeader — sort wiring", () => {
-  it("clicking a sort button cycles that field via onSort", () => {
+  it("clicking the header BODY (the <th> itself, not the old label button) sorts that field", () => {
+    // The whole sortable <th> is the sort control now: a click on the cell's
+    // padding — away from the label span — still cycles the sort. Removing the
+    // <th> onclick handler makes this fail (the bite test for nibs-5ela).
     const { container, onSort } = renderHeader();
-    const btn = container.querySelector("[data-testid='table-sort-id']") as HTMLElement;
-    btn.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+    const idTh = container.querySelector("thead th[data-col-key='id']") as HTMLElement;
+    idTh.dispatchEvent(new MouseEvent("click", { bubbles: true }));
     expect(onSort).toHaveBeenCalledWith("id");
+  });
+
+  it("clicking the label span sorts too (the click bubbles to the <th> control)", () => {
+    const { container, onSort } = renderHeader();
+    const label = container.querySelector("[data-testid='table-sort-id']") as HTMLElement;
+    label.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+    expect(onSort).toHaveBeenCalledWith("id");
+  });
+
+  it("the inner sort <button> is absent; the label text + arrow remain", () => {
+    const { container } = renderHeader({ activeSort: { field: "id", direction: "asc" } as TableSort });
+    // No focusable inner button, and no aria-label override — the columnheader's
+    // accessible name stays its visible label so cell/column association reads the
+    // plain column name.
+    expect(container.querySelector('button[aria-label^="Sort by"]')).toBeNull();
+    const idTh = container.querySelector("thead th[data-col-key='id']") as HTMLElement;
+    expect(idTh.getAttribute("aria-label")).toBeNull();
+    // Label text + direction arrow still render inside the header.
+    const label = container.querySelector("[data-testid='table-sort-id']") as HTMLElement;
+    expect(label.textContent?.trim()).toBe("ID");
+    expect(container.querySelector("[data-testid='table-sort-arrow-id']")).toBeInTheDocument();
   });
 
   it("a completed drag suppresses the following sort click (consumeClickSuppression)", () => {
     const columnDrag = makeDragStub({ consumeClickSuppression: vi.fn(() => true) });
     const { container, onSort } = renderHeader({ columnDrag });
-    const btn = container.querySelector("[data-testid='table-sort-id']") as HTMLElement;
-    btn.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+    const idTh = container.querySelector("thead th[data-col-key='id']") as HTMLElement;
+    idTh.dispatchEvent(new MouseEvent("click", { bubbles: true }));
     expect(columnDrag.consumeClickSuppression).toHaveBeenCalled();
     expect(onSort).not.toHaveBeenCalled();
+  });
+
+  it("a click whose target is the resize edge-handle does NOT sort", () => {
+    const { container, onSort } = renderHeader();
+    const handle = container.querySelector("thead th[data-col-key='id'] .resize-handle") as HTMLElement;
+    handle.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+    expect(onSort).not.toHaveBeenCalled();
+  });
+});
+
+describe("TableHeader — keyboard sort (the <th> is the control)", () => {
+  it("makes sortable <th>s focusable (tabindex=0) and leaves the actions column untabbable", () => {
+    const { container } = renderHeader();
+    const idTh = container.querySelector("thead th[data-col-key='id']") as HTMLElement;
+    expect(idTh.getAttribute("tabindex")).toBe("0");
+    // The 32px actions column is not a sort control.
+    const actionsTh = container.querySelector("thead th:not([data-col-key])") as HTMLElement;
+    expect(actionsTh.getAttribute("tabindex")).toBeNull();
+    expect(actionsTh.getAttribute("aria-label")).toBeNull();
+  });
+
+  it("Enter on a focused sortable <th> sorts that field", () => {
+    const { container, onSort } = renderHeader();
+    const idTh = container.querySelector("thead th[data-col-key='id']") as HTMLElement;
+    idTh.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", bubbles: true, cancelable: true }));
+    expect(onSort).toHaveBeenCalledWith("id");
+  });
+
+  it("Space on a focused sortable <th> sorts and prevents default (no page scroll)", () => {
+    const { container, onSort } = renderHeader();
+    const idTh = container.querySelector("thead th[data-col-key='id']") as HTMLElement;
+    const ev = new KeyboardEvent("keydown", { key: " ", bubbles: true, cancelable: true });
+    idTh.dispatchEvent(ev);
+    expect(onSort).toHaveBeenCalledWith("id");
+    expect(ev.defaultPrevented).toBe(true);
+  });
+
+  it("consumes key repeats and modifier chords without sorting", () => {
+    const { container, onSort } = renderHeader();
+    const idTh = container.querySelector("thead th[data-col-key='id']") as HTMLElement;
+    const repeat = new KeyboardEvent("keydown", { key: "Enter", repeat: true, bubbles: true, cancelable: true });
+    const modified = new KeyboardEvent("keydown", { key: "Enter", ctrlKey: true, bubbles: true, cancelable: true });
+    idTh.dispatchEvent(repeat);
+    idTh.dispatchEvent(modified);
+    // A repeat/modifier press does not sort...
+    expect(onSort).not.toHaveBeenCalled();
+    // ...but the header still consumes the key (preventDefault before the sort
+    // gate) so it can never leak to the grid keyboard-nav handler on the scroll
+    // container. The TreeTable-level regression proves the no-leak end to end.
+    expect(repeat.defaultPrevented).toBe(true);
+    expect(modified.defaultPrevented).toBe(true);
+  });
+
+  it("keydown on the non-sortable actions column never sorts", () => {
+    const { container, onSort } = renderHeader();
+    const actionsTh = container.querySelector("thead th:not([data-col-key])") as HTMLElement;
+    actionsTh.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", bubbles: true, cancelable: true }));
+    expect(onSort).not.toHaveBeenCalled();
+  });
+
+  it("the sortable <th> reflects the active sort direction via aria-sort", () => {
+    const { container } = renderHeader({ activeSort: { field: "id", direction: "asc" } as TableSort });
+    const idTh = container.querySelector("thead th[data-col-key='id']") as HTMLElement;
+    expect(idTh.getAttribute("aria-sort")).toBe("ascending");
   });
 });
 

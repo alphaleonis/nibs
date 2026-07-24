@@ -1072,17 +1072,17 @@ describe("TreeTable", () => {
       });
     }
 
-    it("renders the Created/Modified headers as sort buttons in flat view", () => {
+    it("renders the Created/Modified headers as sortable columnheaders in flat view", () => {
       renderFlat();
-      expect(screen.getByRole("button", { name: "Sort by Created" })).toBeInTheDocument();
-      expect(screen.getByRole("button", { name: "Sort by Modified" })).toBeInTheDocument();
+      expect(screen.getByRole("columnheader", { name: "Created" })).toBeInTheDocument();
+      expect(screen.getByRole("columnheader", { name: "Modified" })).toBeInTheDocument();
     });
 
     it("clicking Modified with no active sort emits ascending", async () => {
       const user = userEvent.setup();
       const ontablesortchange = vi.fn();
       renderFlat({ tableSort: null, ontablesortchange });
-      await user.click(screen.getByRole("button", { name: "Sort by Modified" }));
+      await user.click(screen.getByRole("columnheader", { name: "Modified" }));
       expect(ontablesortchange).toHaveBeenLastCalledWith({ field: "modified", direction: "asc" });
     });
 
@@ -1090,7 +1090,7 @@ describe("TreeTable", () => {
       const user = userEvent.setup();
       const ontablesortchange = vi.fn();
       renderFlat({ tableSort: { field: "modified", direction: "asc" }, ontablesortchange });
-      await user.click(screen.getByRole("button", { name: "Sort by Modified" }));
+      await user.click(screen.getByRole("columnheader", { name: "Modified" }));
       expect(ontablesortchange).toHaveBeenLastCalledWith({ field: "modified", direction: "desc" });
     });
 
@@ -1098,7 +1098,7 @@ describe("TreeTable", () => {
       const user = userEvent.setup();
       const ontablesortchange = vi.fn();
       renderFlat({ tableSort: { field: "modified", direction: "desc" }, ontablesortchange });
-      await user.click(screen.getByRole("button", { name: "Sort by Modified" }));
+      await user.click(screen.getByRole("columnheader", { name: "Modified" }));
       expect(ontablesortchange).toHaveBeenLastCalledWith(null);
     });
 
@@ -1151,11 +1151,11 @@ describe("TreeTable", () => {
       expect(modifiedTh.getAttribute("aria-sort")).toBe("none");
     });
 
-    it("date headers ARE sortable buttons in the tree (none) view too (sort lifted from Flat-only)", () => {
+    it("date headers ARE sortable columnheaders in the tree (none) view too (sort lifted from Flat-only)", () => {
       const { container } = renderFlat({ tableSort: { field: "modified", direction: "asc" } }, "none" as ViewLevel);
-      // The header is a click-to-sort button in the tree view, not a plain label.
-      expect(screen.getByRole("button", { name: "Sort by Modified" })).toBeInTheDocument();
-      expect(screen.getByRole("button", { name: "Sort by Created" })).toBeInTheDocument();
+      // The whole header is the click-to-sort control in the tree view, not a plain label.
+      expect(screen.getByRole("columnheader", { name: "Modified" })).toBeInTheDocument();
+      expect(screen.getByRole("columnheader", { name: "Created" })).toBeInTheDocument();
       // The active field shows its direction arrow + aria-sort in the tree view.
       const arrow = container.querySelector("[data-testid='table-sort-arrow-modified']");
       expect(arrow).toBeInTheDocument();
@@ -1191,18 +1191,18 @@ describe("TreeTable", () => {
       });
     }
 
-    it("renders a click-to-sort button for every visible column in flat view (not just dates)", () => {
+    it("renders a click-to-sort columnheader for every visible column in flat view (not just dates)", () => {
       renderCols();
-      expect(screen.getByRole("button", { name: "Sort by Title" })).toBeInTheDocument();
-      expect(screen.getByRole("button", { name: "Sort by Type" })).toBeInTheDocument();
-      expect(screen.getByRole("button", { name: "Sort by State" })).toBeInTheDocument();
+      expect(screen.getByRole("columnheader", { name: "Title" })).toBeInTheDocument();
+      expect(screen.getByRole("columnheader", { name: "Type" })).toBeInTheDocument();
+      expect(screen.getByRole("columnheader", { name: "State" })).toBeInTheDocument();
     });
 
     it("clicking a non-date header (Type) with no active sort emits that field ascending", async () => {
       const user = userEvent.setup();
       const ontablesortchange = vi.fn();
       renderCols({ tableSort: null, ontablesortchange });
-      await user.click(screen.getByRole("button", { name: "Sort by Type" }));
+      await user.click(screen.getByRole("columnheader", { name: "Type" }));
       expect(ontablesortchange).toHaveBeenLastCalledWith({ field: "type", direction: "asc" });
     });
 
@@ -1237,8 +1237,8 @@ describe("TreeTable", () => {
 
     it("non-date headers ARE sortable in the tree (none) view and reorder roots by rank", () => {
       const { container } = renderCols({ tableSort: { field: "type", direction: "asc" } }, "none" as ViewLevel);
-      // The header is a click-to-sort button in the tree view.
-      expect(screen.getByRole("button", { name: "Sort by Type" })).toBeInTheDocument();
+      // The whole header is the click-to-sort control in the tree view.
+      expect(screen.getByRole("columnheader", { name: "Type" })).toBeInTheDocument();
       const typeTh = Array.from(container.querySelectorAll("th")).find((th) => th.textContent?.trim() === "Type")!;
       expect(typeTh.getAttribute("aria-sort")).toBe("ascending");
       // These three are all roots, so the sort reorders them by canonical rank
@@ -1270,16 +1270,16 @@ describe("TreeTable", () => {
 
     const ALL_VIEWS: ViewLevel[] = ["none", "milestones", "epics", "features", "flat"] as ViewLevel[];
 
-    it.each(ALL_VIEWS)("renders a click-to-sort header button in the %s view", (viewLevel) => {
+    it.each(ALL_VIEWS)("renders a click-to-sort columnheader in the %s view", (viewLevel) => {
       renderView(viewLevel);
-      expect(screen.getByRole("button", { name: "Sort by State" })).toBeInTheDocument();
+      expect(screen.getByRole("columnheader", { name: "State" })).toBeInTheDocument();
     });
 
     it.each(ALL_VIEWS)("clicking a header cycles off → asc in the %s view", async (viewLevel) => {
       const user = userEvent.setup();
       const ontablesortchange = vi.fn();
       renderView(viewLevel, { tableSort: null, ontablesortchange });
-      await user.click(screen.getByRole("button", { name: "Sort by State" }));
+      await user.click(screen.getByRole("columnheader", { name: "State" }));
       expect(ontablesortchange).toHaveBeenLastCalledWith({ field: "state", direction: "asc" });
     });
 
@@ -1287,7 +1287,7 @@ describe("TreeTable", () => {
       const user = userEvent.setup();
       const ontablesortchange = vi.fn();
       renderView(viewLevel, { tableSort: { field: "state", direction: "asc" }, ontablesortchange });
-      await user.click(screen.getByRole("button", { name: "Sort by State" }));
+      await user.click(screen.getByRole("columnheader", { name: "State" }));
       expect(ontablesortchange).toHaveBeenLastCalledWith({ field: "state", direction: "desc" });
     });
 
@@ -1295,7 +1295,7 @@ describe("TreeTable", () => {
       const user = userEvent.setup();
       const ontablesortchange = vi.fn();
       renderView(viewLevel, { tableSort: { field: "state", direction: "desc" }, ontablesortchange });
-      await user.click(screen.getByRole("button", { name: "Sort by State" }));
+      await user.click(screen.getByRole("columnheader", { name: "State" }));
       expect(ontablesortchange).toHaveBeenLastCalledWith(null);
     });
 
@@ -1545,6 +1545,80 @@ describe("TreeTable", () => {
       await user.keyboard(" ");
 
       expect(sel.selectedIds.has("nibs-001")).toBe(true);
+    });
+
+    // Regression (nibs-5ela finding #1): a sortable header is a real tab stop
+    // (tabindex=0) whose keydown bubbles to the grid's keyboard-nav handler on the
+    // scroll container. The header must consume its own Enter/Space so a key-repeat
+    // or a modifier chord can never leak through and act on the background,
+    // virtually-focused row. Only a clean press sorts; non-sort keys still pass to
+    // grid nav.
+    describe("sortable header does not leak Enter/Space to grid nav", () => {
+      function titleHeader(container: HTMLElement): HTMLElement {
+        // The always-visible Title column is a sortable columnheader in every view.
+        return container.querySelector("thead th[data-col-key='title']") as HTMLElement;
+      }
+
+      it("held/repeat Space on a focused header does NOT toggle-select the focused row", () => {
+        const sel = new SelectionState();
+        sel.focus("nibs-m1"); // a row is virtually focused, but not selected
+        const nibs = makeKeyboardTestNibs(2);
+        const { container } = setupWithNibs(nibs, {}, { selection: sel });
+        const th = titleHeader(container);
+        th.focus();
+
+        // Autorepeat Space: the grid Space handler would toggle-select focusedNibId.
+        th.dispatchEvent(new KeyboardEvent("keydown", { key: " ", repeat: true, bubbles: true, cancelable: true }));
+
+        expect(sel.selectedIds.has("nibs-m1")).toBe(false);
+      });
+
+      it("modifier+Enter on a focused header does NOT navigate the focused row", () => {
+        const sel = new SelectionState();
+        sel.focus("nibs-m1");
+        const nibs = makeKeyboardTestNibs(2);
+        const { container } = setupWithNibs(nibs, {}, { selection: sel });
+        const th = titleHeader(container);
+        th.focus();
+
+        // Ctrl+Enter: the grid Enter handler would open/select focusedNibId.
+        th.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", ctrlKey: true, bubbles: true, cancelable: true }));
+
+        expect(sel.selectedNibId).toBeNull();
+      });
+
+      it("a clean Enter on a focused header sorts and leaves the focused row untouched", () => {
+        const ontablesortchange = vi.fn();
+        const sel = new SelectionState();
+        sel.focus("nibs-m1");
+        const nibs = makeKeyboardTestNibs(2);
+        const { container } = setupWithNibs(nibs, { tableSort: null, ontablesortchange }, { selection: sel });
+        const th = titleHeader(container);
+        th.focus();
+
+        th.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", bubbles: true, cancelable: true }));
+
+        // The clean press sorts...
+        expect(ontablesortchange).toHaveBeenCalledWith({ field: "title", direction: "asc" });
+        // ...and does not leak to grid nav (no navigate/select of the focused row).
+        expect(sel.selectedNibId).toBeNull();
+        expect(sel.selectedIds.has("nibs-m1")).toBe(false);
+      });
+
+      it("ArrowDown on a focused header still reaches grid nav (not over-swallowed)", () => {
+        const sel = new SelectionState();
+        sel.focus("nibs-m1");
+        const nibs = makeKeyboardTestNibs(2);
+        const { container } = setupWithNibs(nibs, {}, { selection: sel });
+        const th = titleHeader(container);
+        th.focus();
+
+        // ArrowDown is NOT a sort key, so the header ignores it and it bubbles to
+        // grid nav, which advances the virtual focus to the next row.
+        th.dispatchEvent(new KeyboardEvent("keydown", { key: "ArrowDown", bubbles: true, cancelable: true }));
+
+        expect(sel.focusedNibId).toBe("nibs-001");
+      });
     });
 
     it("ArrowLeft on expanded parent collapses it", async () => {
@@ -2803,11 +2877,12 @@ describe("TreeTable — per-view column order + reorder drag", () => {
     }
   });
 
-  it("a plain header click (no drag) still toggles the sort (below-threshold disambiguation)", () => {
+  it("a plain header-body click (no drag) still toggles the sort (below-threshold disambiguation)", () => {
     const ontablesortchange = vi.fn();
     const { container } = renderOrdered({ ontablesortchange, tableSort: null });
-    const idSortBtn = container.querySelector("[data-testid='table-sort-id']") as HTMLElement;
-    idSortBtn.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+    // Click the <th> body itself — the whole header is the sort control now.
+    const idTh = container.querySelector("thead th[data-col-key='id']") as HTMLElement;
+    idTh.dispatchEvent(new MouseEvent("click", { bubbles: true }));
     expect(ontablesortchange).toHaveBeenCalledWith({ field: "id", direction: "asc" });
   });
 
