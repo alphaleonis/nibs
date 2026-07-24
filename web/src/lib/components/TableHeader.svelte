@@ -179,6 +179,11 @@
      higher-specificity rule + stacking. */
   .col-header {
     cursor: grab;
+    /* The header is a click/drag sort control, not selectable text — a header
+       pointer-drag must not start a text selection of the label. The native
+       <button> this replaced provided user-select:none implicitly. */
+    user-select: none;
+    -webkit-user-select: none;
   }
 
   /* The whole sortable header is the click target; shift its label toward the
