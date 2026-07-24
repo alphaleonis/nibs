@@ -54,6 +54,21 @@ for (const level of VIEW_LEVELS) {
   });
 }
 
+// Flat view with an ACTIVE date sort: the Modified header shows its direction
+// arrow and rows are ordered by recency (default is sort-off, so this state is
+// otherwise uncaptured).
+test("table — flat view, sorted by Modified desc", async ({ page }) => {
+  await page.addInitScript(() => {
+    localStorage.setItem(
+      "nibs-filter-preferences",
+      JSON.stringify({ filter: {}, viewLevel: "flat", flatSort: { field: "modified", direction: "desc" } }),
+    );
+  });
+  await page.goto("/");
+  await expect(page.locator("tr[data-nib-id]").first()).toBeVisible({ timeout: 10_000 });
+  await shot(page, "table-flat-sorted-modified");
+});
+
 test("detail panel", async ({ page }) => {
   await openApp(page);
   await page.locator("tr[data-nib-id]").first().locator('[data-action="title"]').click();

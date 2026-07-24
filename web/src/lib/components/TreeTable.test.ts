@@ -1053,6 +1053,130 @@ describe("TreeTable", () => {
     expect(draggableRows).toHaveLength(0);
   });
 
+  describe("flat view date sorting", () => {
+    // Two root tasks whose created/modified ordering differ, so a sort visibly
+    // reorders the rows away from the incoming (manual `order`) sequence.
+    function renderFlat(props: Record<string, unknown> = {}, viewLevel: ViewLevel = "flat" as ViewLevel) {
+      const nibs: TreeTableNib[] = [
+        makeTreeTableNib({ id: "nibs-001", title: "First", type: "task", createdAt: "2026-01-01T00:00:00Z", updatedAt: "2026-03-01T00:00:00Z" }),
+        makeTreeTableNib({ id: "nibs-002", title: "Second", type: "task", createdAt: "2026-02-01T00:00:00Z", updatedAt: "2026-01-01T00:00:00Z" }),
+      ];
+      mockQueryStore.mockReturnValue(
+        readable({ fetching: false, error: undefined, data: { nibs }, stale: false }) as any
+      );
+      return renderTreeTable({
+        filter: {},
+        viewLevel,
+        visibleColumns: ["title", "created", "modified"] as ColumnKey[],
+        ...props,
+      });
+    }
+
+    it("renders the Created/Modified headers as sort buttons in flat view", () => {
+      renderFlat();
+      expect(screen.getByRole("button", { name: "Sort by Created" })).toBeInTheDocument();
+      expect(screen.getByRole("button", { name: "Sort by Modified" })).toBeInTheDocument();
+    });
+
+    it("clicking Modified with no active sort emits ascending", async () => {
+      const user = userEvent.setup();
+      const onflatsortchange = vi.fn();
+      renderFlat({ flatSort: null, onflatsortchange });
+      await user.click(screen.getByRole("button", { name: "Sort by Modified" }));
+      expect(onflatsortchange).toHaveBeenLastCalledWith({ field: "modified", direction: "asc" });
+    });
+
+    it("clicking Modified while ascending emits descending", async () => {
+      const user = userEvent.setup();
+      const onflatsortchange = vi.fn();
+      renderFlat({ flatSort: { field: "modified", direction: "asc" }, onflatsortchange });
+      await user.click(screen.getByRole("button", { name: "Sort by Modified" }));
+      expect(onflatsortchange).toHaveBeenLastCalledWith({ field: "modified", direction: "desc" });
+    });
+
+    it("clicking Modified while descending turns the sort off (null)", async () => {
+      const user = userEvent.setup();
+      const onflatsortchange = vi.fn();
+      renderFlat({ flatSort: { field: "modified", direction: "desc" }, onflatsortchange });
+      await user.click(screen.getByRole("button", { name: "Sort by Modified" }));
+      expect(onflatsortchange).toHaveBeenLastCalledWith(null);
+    });
+
+    it("shows an up arrow and aria-sort=ascending when Modified is sorted ascending", () => {
+      const { container } = renderFlat({ flatSort: { field: "modified", direction: "asc" } });
+      const arrow = container.querySelector("[data-testid='flat-sort-arrow-modified']");
+      expect(arrow).toBeInTheDocument();
+      expect(arrow!.classList.contains("lucide-arrow-up")).toBe(true);
+      const modifiedTh = Array.from(container.querySelectorAll("th")).find((th) => th.textContent?.trim() === "Modified")!;
+      expect(modifiedTh.getAttribute("aria-sort")).toBe("ascending");
+      // The other sortable field reads "none" while inactive.
+      const createdTh = Array.from(container.querySelectorAll("th")).find((th) => th.textContent?.trim() === "Created")!;
+      expect(createdTh.getAttribute("aria-sort")).toBe("none");
+    });
+
+    it("shows a down arrow and aria-sort=descending when Modified is sorted descending", () => {
+      const { container } = renderFlat({ flatSort: { field: "modified", direction: "desc" } });
+      const arrow = container.querySelector("[data-testid='flat-sort-arrow-modified']");
+      expect(arrow).toBeInTheDocument();
+      expect(arrow!.classList.contains("lucide-arrow-down")).toBe(true);
+      const modifiedTh = Array.from(container.querySelectorAll("th")).find((th) => th.textContent?.trim() === "Modified")!;
+      expect(modifiedTh.getAttribute("aria-sort")).toBe("descending");
+    });
+
+    it("reorders rows by the active flat sort (created descending)", () => {
+      const { container } = renderFlat({ flatSort: { field: "created", direction: "desc" } });
+      const titles = Array.from(container.querySelectorAll("[data-testid='title-text']")).map((e) => e.textContent);
+      // createdAt desc: Second (Feb) before First (Jan).
+      expect(titles).toEqual(["Second", "First"]);
+    });
+
+    it("keeps manual order when the flat sort is off (null)", () => {
+      const { container } = renderFlat({ flatSort: null });
+      const titles = Array.from(container.querySelectorAll("[data-testid='title-text']")).map((e) => e.textContent);
+      expect(titles).toEqual(["First", "Second"]);
+    });
+
+    it("deactivates the sort when the sorted column is hidden (reverts to manual order)", () => {
+      // Sort by Created desc, but hide the Created column: with no reachable header
+      // to clear it, the sort would otherwise leave rows ordered by an invisible
+      // field. Instead it deactivates and rows fall back to manual `order`.
+      const { container } = renderFlat({
+        flatSort: { field: "created", direction: "desc" },
+        visibleColumns: ["title", "modified"] as ColumnKey[],
+      });
+      const titles = Array.from(container.querySelectorAll("[data-testid='title-text']")).map((e) => e.textContent);
+      expect(titles).toEqual(["First", "Second"]); // manual order, NOT created-desc ("Second","First")
+      // The still-visible Modified header must not falsely claim an active sort.
+      const modifiedTh = Array.from(container.querySelectorAll("th")).find((th) => th.textContent?.trim() === "Modified")!;
+      expect(modifiedTh.getAttribute("aria-sort")).toBe("none");
+    });
+
+    it("date headers are inert in the tree (none) view — no sort button, arrow, or aria-sort", () => {
+      const { container } = renderFlat({}, "none" as ViewLevel);
+      expect(screen.queryByRole("button", { name: "Sort by Modified" })).not.toBeInTheDocument();
+      expect(screen.queryByRole("button", { name: "Sort by Created" })).not.toBeInTheDocument();
+      expect(container.querySelector("[data-testid='flat-sort-modified']")).not.toBeInTheDocument();
+      expect(container.querySelector("[data-testid='flat-sort-arrow-modified']")).not.toBeInTheDocument();
+      // The plain static labels still render.
+      const headers = Array.from(container.querySelectorAll("th")).map((th) => th.textContent?.trim());
+      expect(headers).toContain("Modified");
+      expect(headers).toContain("Created");
+      // No aria-sort attribute on the date headers outside flat view.
+      const modifiedTh = Array.from(container.querySelectorAll("th")).find((th) => th.textContent?.trim() === "Modified")!;
+      expect(modifiedTh.hasAttribute("aria-sort")).toBe(false);
+    });
+
+    it("rows are not draggable in flat view (browse-only)", () => {
+      const { container } = renderFlat();
+      expect(container.querySelectorAll("tr.draggable")).toHaveLength(0);
+    });
+
+    it("the same rows ARE draggable in the tree (none) view — flat gates drag specifically", () => {
+      const { container } = renderFlat({}, "none" as ViewLevel);
+      expect(container.querySelectorAll("tr.draggable").length).toBeGreaterThan(0);
+    });
+  });
+
   describe("keyboard navigation", () => {
     function setupWithNibs(
       nibs: TreeTableNib[],

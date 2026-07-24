@@ -10,6 +10,7 @@
     Columns3,
     Eye,
     ListTree,
+    List,
     ListFilter,
   } from "@lucide/svelte";
   import { typeIcons } from "../icons";
@@ -121,6 +122,7 @@
 
   const VIEW_LEVEL_ICON_INFO: Record<ViewLevel, TypeIconInfo> = {
     none: { icon: ListTree, color: "var(--muted-foreground)" },
+    flat: { icon: List, color: "var(--muted-foreground)" },
     milestones: typeIcons.milestone,
     epics: typeIcons.epic,
     features: typeIcons.feature,
@@ -147,7 +149,8 @@
   let columnOptions = $derived(DEFAULT_COLUMNS);
 
   const VIEW_LEVEL_LABELS: Record<ViewLevel, string> = {
-    none: "None",
+    none: "Tree",
+    flat: "Flat",
     milestones: "Milestones",
     epics: "Epics",
     features: "Features & Bugs",

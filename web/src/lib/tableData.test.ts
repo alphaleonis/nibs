@@ -387,6 +387,70 @@ describe("buildTableData", () => {
     });
   });
 
+  describe("flat view + client filter (no ancestor context)", () => {
+    // Flat puts every nib at depth 0 with no nesting, so a non-matching ancestor
+    // pulled in "for context" would render as a stray, unindented dimmed row with
+    // no visual link to the match that caused it. The ancestor walk must be gated
+    // off in flat view.
+    const nibs: TreeTableNib[] = [
+      makeTreeTableNib({ id: "E1", type: "epic", title: "Epic" }),
+      makeTreeTableNib({ id: "T1", type: "task", title: "Task", parentId: "E1" }),
+    ];
+
+    it("renders ONLY the matching rows — no dimmed ancestor", () => {
+      const result = buildTableData(nibs, { type: ["task"] }, "flat", noCollapsed);
+      const ids = result.rows.map(r => r.nib.id);
+
+      expect(ids).toEqual(["T1"]);
+      expect(ids).not.toContain("E1");
+      // The one visible row is the direct match, never dimmed.
+      expect(result.rows[0].dimmed).toBe(false);
+    });
+
+    it("with no client filter, flat still shows every nib as an ungrouped depth-0 root", () => {
+      const result = buildTableData(nibs, emptyFilter, "flat", noCollapsed);
+      const ids = result.rows.map(r => r.nib.id);
+
+      expect(ids).toContain("E1");
+      expect(ids).toContain("T1");
+      expect(result.rows.every(r => r.depth === 0)).toBe(true);
+      expect(result.rows.every(r => !r.dimmed)).toBe(true);
+    });
+
+    it("tree (none) view still keeps the non-matching ancestor as a dimmed row", () => {
+      // The flat gate must NOT change nested views: the ancestor context that
+      // makes a matching descendant reachable in a tree stays intact.
+      const result = buildTableData(nibs, { type: ["task"] }, "none", noCollapsed);
+
+      const epic = result.rows.find(r => r.nib.id === "E1")!;
+      const task = result.rows.find(r => r.nib.id === "T1")!;
+      expect(epic).toBeDefined();
+      expect(epic.dimmed).toBe(true);
+      expect(task).toBeDefined();
+      expect(task.dimmed).toBe(false);
+    });
+
+    it("grouping lens (epics) + filter: bucket/ancestor handling unchanged (loose match still rendered under its bucket)", () => {
+      // A grouping lens is not flat: its buckets and ancestor context are
+      // preserved. A loose matching task still surfaces under its "No epic" bucket.
+      const loose: TreeTableNib[] = [
+        makeTreeTableNib({ id: "E1", type: "epic", title: "Epic" }),
+        makeTreeTableNib({ id: "T1", type: "task", title: "Task under epic", parentId: "E1" }),
+        makeTreeTableNib({ id: "T2", type: "task", title: "Orphan task" }),
+      ];
+      const result = buildTableData(loose, { type: ["task"] }, "epics", noCollapsed);
+      const ids = result.rows.map(r => r.nib.id);
+
+      expect(ids).toContain("T1");
+      expect(ids).toContain("T2");
+      expect(ids.some(id => isBucketId(id))).toBe(true);
+      // Epic ancestor of the matching T1 stays as a dimmed context row.
+      const epic = result.rows.find(r => r.nib.id === "E1")!;
+      expect(epic).toBeDefined();
+      expect(epic.dimmed).toBe(true);
+    });
+  });
+
   describe("displayParentId (view-tree display position)", () => {
     it("none lens: root has null display parent, child points to its parent id", () => {
       const nibs = [

@@ -66,7 +66,7 @@ const MESSY_FIXTURE: TreeNib[] = [
 // Expected grouping-tier ranks, derived from the single source of truth
 // (typeRank) rather than frozen literals — so a future TYPE_RANK change that
 // desyncs the lens boundaries would fail these tests instead of passing silently.
-const GROUPING_LENS_RANKS: Record<Exclude<ViewLevel, "none">, number> = {
+const GROUPING_LENS_RANKS: Record<Exclude<ViewLevel, "none" | "flat">, number> = {
   milestones: typeRank("milestone"),
   epics: typeRank("epic"),
   features: typeRank("feature"),
@@ -214,6 +214,41 @@ describe("buildViewTree", () => {
       // Standalone task stays a root at depth 0 — nothing swept into a bucket
       expect(result[1].nib.id).toBe("nibs-005");
       expect(result[1].depth).toBe(0);
+    });
+  });
+
+  describe("flat lens", () => {
+    it("returns every nib as an ungrouped depth-0 root (no nesting, no buckets)", () => {
+      const nibs: TreeNib[] = [
+        makeTreeNib({ id: "nibs-001", title: "Milestone", type: "milestone" }),
+        makeTreeNib({ id: "nibs-002", title: "Epic", type: "epic", parentId: "nibs-001" }),
+        makeTreeNib({ id: "nibs-003", title: "Feature", type: "feature", parentId: "nibs-002" }),
+        makeTreeNib({ id: "nibs-004", title: "Task", type: "task", parentId: "nibs-003" }),
+        makeTreeNib({ id: "nibs-005", title: "Standalone task", type: "task" }),
+      ];
+
+      const result = buildViewTree(nibs, "flat");
+
+      // One node per nib, all at depth 0, none nested.
+      expect(result).toHaveLength(5);
+      for (const node of result) {
+        expect(node.depth).toBe(0);
+        expect(node.children).toEqual([]);
+      }
+
+      // Order preserved (the incoming manual `order` sequence), no bucket nodes.
+      expect(result.map((n) => n.nib.id)).toEqual([
+        "nibs-001",
+        "nibs-002",
+        "nibs-003",
+        "nibs-004",
+        "nibs-005",
+      ]);
+      expect(result.some((n) => isBucketId(n.nib.id))).toBe(false);
+    });
+
+    it("returns an empty forest for empty input", () => {
+      expect(buildViewTree([], "flat")).toEqual([]);
     });
   });
 

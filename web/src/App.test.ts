@@ -801,8 +801,8 @@ describe("App", () => {
     expect(screen.getByRole("button", { name: "Settings" })).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Columns" })).toBeInTheDocument();
 
-    // Group-by control should show "None" (default lens)
-    expect(screen.getByRole("button", { name: /^Group by/ })).toHaveTextContent("None");
+    // Group-by control should show "Tree" (default lens — the full hierarchy)
+    expect(screen.getByRole("button", { name: /^Group by/ })).toHaveTextContent("Tree");
   });
 
   it("TreeTable DOM element persists when panel opens", async () => {

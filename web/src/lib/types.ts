@@ -62,8 +62,17 @@ export interface RowSubtreeActions {
   collapseChildren: () => void;
 }
 
-export const VIEW_LEVELS = ["none", "milestones", "epics", "features"] as const;
+export const VIEW_LEVELS = ["none", "flat", "milestones", "epics", "features"] as const;
 export type ViewLevel = (typeof VIEW_LEVELS)[number];
+
+// Flat-view client-side date sort. Absent/null means "off" (manual `order`
+// sequence). Only the "flat" view level applies it; every other view ignores it.
+export type FlatSortField = "created" | "modified";
+export type FlatSortDirection = "asc" | "desc";
+export interface FlatSort {
+  field: FlatSortField;
+  direction: FlatSortDirection;
+}
 
 export const ALL_COLUMN_KEYS = ["id", "parent", "type", "title", "state", "effort", "tags", "blocking", "blockedBy", "created", "modified"] as const;
 export type ColumnKey = (typeof ALL_COLUMN_KEYS)[number];
@@ -207,4 +216,5 @@ export interface FilterPreferences {
   blockedEmphasis?: BlockedEmphasis;
   theme?: Theme;
   previewOpen?: boolean;
+  flatSort?: FlatSort;
 }

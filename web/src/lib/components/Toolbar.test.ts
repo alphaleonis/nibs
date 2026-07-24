@@ -60,9 +60,14 @@ describe("Toolbar", () => {
     expect(screen.getByRole("button", { name: /^Group by/ })).toHaveTextContent("Features & Bugs");
   });
 
-  it("shows 'None' label when viewLevel is none", () => {
+  it("shows 'Tree' label when viewLevel is none (the full hierarchy view)", () => {
     render(Toolbar, { ...defaultToolbarProps, viewLevel: "none" });
-    expect(screen.getByRole("button", { name: /^Group by/ })).toHaveTextContent("None");
+    expect(screen.getByRole("button", { name: /^Group by/ })).toHaveTextContent("Tree");
+  });
+
+  it("shows 'Flat' label when viewLevel is flat", () => {
+    render(Toolbar, { ...defaultToolbarProps, viewLevel: "flat" });
+    expect(screen.getByRole("button", { name: /^Group by/ })).toHaveTextContent("Flat");
   });
 
   it("view selector button is enabled (not disabled)", () => {
@@ -70,15 +75,16 @@ describe("Toolbar", () => {
     expect(screen.getByRole("button", { name: /^Group by/ })).not.toBeDisabled();
   });
 
-  it("opens dropdown with all four grouping lenses when the control is clicked", async () => {
+  it("opens dropdown with all five view levels when the control is clicked", async () => {
     render(Toolbar, { ...defaultToolbarProps });
 
     await user.click(screen.getByRole("button", { name: /^Group by/ }));
 
-    // All four lenses should appear as radio items
+    // All five view levels should appear as radio items
     const radioItems = screen.getAllByRole("menuitemradio");
-    expect(radioItems).toHaveLength(4);
-    expect(screen.getByRole("menuitemradio", { name: /None/i })).toBeInTheDocument();
+    expect(radioItems).toHaveLength(5);
+    expect(screen.getByRole("menuitemradio", { name: /Tree/i })).toBeInTheDocument();
+    expect(screen.getByRole("menuitemradio", { name: /Flat/i })).toBeInTheDocument();
     expect(screen.getByRole("menuitemradio", { name: /Milestones/i })).toBeInTheDocument();
     expect(screen.getByRole("menuitemradio", { name: /Epics/i })).toBeInTheDocument();
     expect(screen.getByRole("menuitemradio", { name: /Features & Bugs/i })).toBeInTheDocument();
@@ -93,6 +99,16 @@ describe("Toolbar", () => {
     await user.click(screen.getByRole("menuitemradio", { name: /Epics/i }));
 
     expect(onviewlevelchange).toHaveBeenCalledWith("epics");
+  });
+
+  it("calls onviewlevelchange with 'flat' when the Flat option is clicked", async () => {
+    const onviewlevelchange = vi.fn();
+    render(Toolbar, { ...defaultToolbarProps, viewLevel: "none", onviewlevelchange });
+
+    await user.click(screen.getByRole("button", { name: /^Group by/ }));
+    await user.click(screen.getByRole("menuitemradio", { name: /^Flat$/i }));
+
+    expect(onviewlevelchange).toHaveBeenCalledWith("flat");
   });
 
   it("closes dropdown on second click of view selector button", async () => {

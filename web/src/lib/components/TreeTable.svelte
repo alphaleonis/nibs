@@ -2,14 +2,15 @@
   import { queryStore, subscriptionStore, getContextClient } from "@urql/svelte";
   import { TREE_TABLE_QUERY, NIB_CHANGED_SUBSCRIPTION } from "../queries";
   import { ALL_COLUMN_KEYS, DEFAULT_BLOCKED_EMPHASIS } from "../types";
-  import type { NibFilter, ViewLevel, ColumnKey, RowDensity, BlockedEmphasis, RowSubtreeActions, TreeTableNib } from "../types";
+  import type { NibFilter, ViewLevel, ColumnKey, RowDensity, BlockedEmphasis, RowSubtreeActions, TreeTableNib, FlatSort, FlatSortField } from "../types";
   import type { Preferences } from "../preferences.svelte";
   import { buildTableData } from "../tableData";
   import { isBucketId, bucketIdForItem, buildViewTree, collectDescendantIds } from "../tree";
+  import { applyFlatSort, nextFlatSort } from "../flatSort";
   import { prepareFilter, isDragAllowed, matchesFilter } from "../filter";
-  import { resolveFilter, resolveViewLevel, resolveVisibleColumns, resolveColumnWidths } from "../resolvePrefs";
+  import { resolveFilter, resolveViewLevel, resolveVisibleColumns, resolveColumnWidths, resolveFlatSort, emitFlatSort } from "../resolvePrefs";
   import TreeTableRow from "./TreeTableRow.svelte";
-  import { CopyPlus, CopyMinus } from "@lucide/svelte";
+  import { CopyPlus, CopyMinus, ArrowUp, ArrowDown } from "@lucide/svelte";
   import type { DropZone } from "../drag.svelte";
   import { useSelection, useDrag, useActiveView, useTreeView } from "../contexts";
   import { useColumnResize } from "../composables/useColumnResize.svelte";
@@ -25,6 +26,8 @@
     viewLevel?: ViewLevel;
     visibleColumns?: ColumnKey[];
     columnWidths?: Record<ColumnKey, number>;
+    flatSort?: FlatSort | null;
+    onflatsortchange?: (s: FlatSort | null) => void;
     oncolumnwidthschange?: (widths: Record<ColumnKey, number>) => void;
     oncolumnresizeend?: () => void;
     ontagschange?: (tags: string[]) => void;
@@ -41,6 +44,8 @@
     viewLevel = undefined as ViewLevel | undefined,
     visibleColumns = undefined as ColumnKey[] | undefined,
     columnWidths = undefined as Record<ColumnKey, number> | undefined,
+    flatSort = undefined as FlatSort | null | undefined,
+    onflatsortchange,
     oncolumnwidthschange,
     oncolumnresizeend,
     ontagschange,
@@ -67,8 +72,23 @@
   let resolvedViewLevel = $derived(resolveViewLevel(prefs, viewLevel));
   let resolvedVisibleColumns = $derived(resolveVisibleColumns(prefs, visibleColumns));
   let resolvedColumnWidths = $derived(resolveColumnWidths(prefs, columnWidths));
+  // Flat-view date sort. Resolved from prefs/prop; only APPLIED in the flat view,
+  // and only while the sorted column is visible. Hiding the sorted column
+  // deactivates the sort (rows revert to the manual `order` sequence) instead of
+  // leaving rows sorted by an invisible field with no header to clear it; the
+  // persisted preference is retained, so re-showing the column reactivates it.
+  // `activeFlatSort` is the single source of truth for both the row order and the
+  // header sort indicator, so the two can never disagree.
+  let resolvedFlatSort = $derived(resolveFlatSort(prefs, flatSort));
+  let activeFlatSort = $derived(
+    resolvedViewLevel === "flat" && resolvedFlatSort && resolvedVisibleColumns.includes(resolvedFlatSort.field)
+      ? resolvedFlatSort
+      : null
+  );
 
-  let dragAllowed = $derived(isDragAllowed(resolvedFilter));
+  // Flat is browse-only: drag-reorder is disabled there (Flat rows intermix real
+  // parents, and the reorder backend requires a real sibling drop target).
+  let dragAllowed = $derived(isDragAllowed(resolvedFilter) && resolvedViewLevel !== "flat");
   let showColumn = $derived((key: ColumnKey) => resolvedVisibleColumns.includes(key));
 
   // Explicit table width = actions column (32px) + sum of visible column widths.
@@ -180,9 +200,14 @@
 
   let allNibs = $derived($result.data?.nibs ?? []);
 
+  // Flat view applies a client-side date sort when one is active; every other
+  // view (and Flat with sort off) keeps the server's manual `order` sequence.
+  // Only the ROW ORDER changes — other allNibs consumers stay on the raw list.
+  let orderedNibs = $derived(activeFlatSort ? applyFlatSort(allNibs, activeFlatSort) : allNibs);
+
   // The client-side filter is the original filter (not the server-stripped version).
   // buildTableData uses hasClientFilters/matchesFilter from filter.ts directly.
-  let tableData = $derived(buildTableData(allNibs, resolvedFilter, resolvedViewLevel, treeView.collapsedIds));
+  let tableData = $derived(buildTableData(orderedNibs, resolvedFilter, resolvedViewLevel, treeView.collapsedIds));
   let rows = $derived(tableData.rows);
   let parentIds = $derived(tableData.parentIds);
   let visibleRowIds = $derived(rows.map(r => r.nib.id));
@@ -555,7 +580,51 @@
 
     treeDrag.onRowPointerDown(nibId, e);
   }
+
+  // --- Flat-view date-header sorting ---
+  // Clicking a Created/Modified header cycles that field asc → desc → off. Only
+  // reachable in the flat view (the header renders a plain label elsewhere).
+  function handleFlatSortClick(field: FlatSortField) {
+    emitFlatSort(prefs, onflatsortchange, nextFlatSort(resolvedFlatSort, field));
+  }
+
+  // aria-sort for a sortable date <th>: the active direction when this field is
+  // the flat sort, "none" for the other sortable field in flat view, and
+  // undefined (attribute omitted) in every non-flat view.
+  function ariaSortFor(field: FlatSortField): "ascending" | "descending" | "none" | undefined {
+    if (resolvedViewLevel !== "flat") return undefined;
+    if (activeFlatSort?.field !== field) return "none";
+    return activeFlatSort.direction === "asc" ? "ascending" : "descending";
+  }
 </script>
+
+<!-- Date-column header content. In the flat view it is a click-to-sort button
+     (asc → desc → off) showing an arrow for the active field; in every other
+     view it is the plain static date-column label. The
+     click is on the button, not the sibling resize handle, and stops
+     propagation so it never reaches the table's delegated row-click handler. -->
+{#snippet sortableDateHeader(field: FlatSortField, label: string)}
+  {#if resolvedViewLevel === "flat"}
+    <button
+      type="button"
+      data-testid="flat-sort-{field}"
+      class="inline-flex items-center gap-1 text-label text-muted-foreground hover:text-foreground"
+      aria-label={`Sort by ${label}`}
+      onclick={(e) => { e.stopPropagation(); handleFlatSortClick(field); }}
+    >
+      {label}
+      {#if activeFlatSort?.field === field}
+        {#if activeFlatSort.direction === "asc"}
+          <ArrowUp size={12} data-testid="flat-sort-arrow-{field}" aria-hidden="true" />
+        {:else}
+          <ArrowDown size={12} data-testid="flat-sort-arrow-{field}" aria-hidden="true" />
+        {/if}
+      {/if}
+    </button>
+  {:else}
+    {label}
+  {/if}
+{/snippet}
 
 <div data-testid="tree-table" class="h-full">
 {#if $result.fetching}
@@ -652,15 +721,15 @@
           </th>
         {/if}
         {#if showColumn("created")}
-          <th class="text-left text-label text-muted-foreground px-3 py-2 relative bg-background" style="width: {resolvedColumnWidths.created}px;">
-            Created
+          <th class="text-left text-label text-muted-foreground px-3 py-2 relative bg-background" style="width: {resolvedColumnWidths.created}px;" aria-sort={ariaSortFor("created")}>
+            {@render sortableDateHeader("created", "Created")}
             <!-- svelte-ignore a11y_no_static_element_interactions -->
             <div class="resize-handle" onpointerdown={(e) => columnResize.onPointerDown(e, "created")} onpointermove={columnResize.onPointerMove} onpointerup={columnResize.onPointerUp} ondblclick={() => columnResize.onDblClick("created", showColumn)}></div>
           </th>
         {/if}
         {#if showColumn("modified")}
-          <th class="text-left text-label text-muted-foreground px-3 py-2 relative bg-background" style="width: {resolvedColumnWidths.modified}px;">
-            Modified
+          <th class="text-left text-label text-muted-foreground px-3 py-2 relative bg-background" style="width: {resolvedColumnWidths.modified}px;" aria-sort={ariaSortFor("modified")}>
+            {@render sortableDateHeader("modified", "Modified")}
             <!-- svelte-ignore a11y_no_static_element_interactions -->
             <div class="resize-handle" onpointerdown={(e) => columnResize.onPointerDown(e, "modified")} onpointermove={columnResize.onPointerMove} onpointerup={columnResize.onPointerUp} ondblclick={() => columnResize.onDblClick("modified", showColumn)}></div>
           </th>

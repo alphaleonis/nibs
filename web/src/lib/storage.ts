@@ -1,5 +1,5 @@
 import { VIEW_LEVELS, ALL_COLUMN_KEYS, DEFAULT_COLUMNS, MIN_DETAIL_PANEL_WIDTH, MIN_DETAIL_PANEL_HEIGHT, DETAIL_PANEL_POSITIONS, BLOCKED_EMPHASES, THEMES, DEFAULT_THEME, FONT_SCALES } from "./types";
-import type { ColumnKey, FilterPreferences, RowDensity, ViewLevel, Theme, DetailPanelPosition, BlockedEmphasis, FontSize, NibFilter } from "./types";
+import type { ColumnKey, FilterPreferences, RowDensity, ViewLevel, Theme, DetailPanelPosition, BlockedEmphasis, FontSize, NibFilter, FlatSort } from "./types";
 import { STATUSES } from "./constants";
 
 const ALWAYS_VISIBLE_KEYS = new Set<ColumnKey>(
@@ -137,6 +137,25 @@ function parsePreviewOpen(raw: unknown): boolean | undefined {
   return typeof raw === "boolean" ? raw : undefined;
 }
 
+const VALID_FLAT_SORT_FIELDS = new Set<string>(["created", "modified"]);
+const VALID_FLAT_SORT_DIRECTIONS = new Set<string>(["asc", "desc"]);
+
+// Optional like blockedEmphasis: return the object only when BOTH field and
+// direction are valid enums; else undefined so Preferences treats it as off
+// (null). An absent/invalid flatSort means "no date sort" — no unset-vs-off
+// ambiguity.
+function parseFlatSort(raw: unknown): FlatSort | undefined {
+  if (typeof raw !== "object" || raw === null) return undefined;
+  const { field, direction } = raw as Record<string, unknown>;
+  if (
+    typeof field === "string" && VALID_FLAT_SORT_FIELDS.has(field) &&
+    typeof direction === "string" && VALID_FLAT_SORT_DIRECTIONS.has(direction)
+  ) {
+    return { field: field as FlatSort["field"], direction: direction as FlatSort["direction"] };
+  }
+  return undefined;
+}
+
 const VALID_THEMES = new Set<string>(THEMES.map(t => t.value));
 
 // Validate a persisted theme against the known set, falling back to the default
@@ -168,6 +187,7 @@ export function loadPreferences(): FilterPreferences {
       blockedEmphasis: parseBlockedEmphasis(parsed.blockedEmphasis),
       theme: parseTheme(parsed.theme),
       previewOpen: parsePreviewOpen(parsed.previewOpen),
+      flatSort: parseFlatSort(parsed.flatSort),
     };
   } catch {
     return { ...DEFAULTS, filter: { ...DEFAULTS.filter } };

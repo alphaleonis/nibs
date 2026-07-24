@@ -73,15 +73,21 @@ export function buildTableData(
       }
     }
 
-    // Walk ancestor chains for visibility
+    // Walk ancestor chains for visibility so a matching descendant keeps its
+    // nesting context. Flat view has no nesting — every nib is an ungrouped
+    // depth-0 root — so a non-matching ancestor there would render as a stray,
+    // unindented dimmed row with no visual link to its match. Skip the walk in
+    // flat: a non-match is simply excluded like any other.
     const ancestorIds = new Set<string>();
-    for (const id of matchingIds) {
-      const visited = new Set<string>();
-      let current = nibMap.get(id);
-      while (current?.parentId && !visited.has(current.parentId)) {
-        visited.add(current.parentId);
-        ancestorIds.add(current.parentId);
-        current = nibMap.get(current.parentId);
+    if (viewLevel !== "flat") {
+      for (const id of matchingIds) {
+        const visited = new Set<string>();
+        let current = nibMap.get(id);
+        while (current?.parentId && !visited.has(current.parentId)) {
+          visited.add(current.parentId);
+          ancestorIds.add(current.parentId);
+          current = nibMap.get(current.parentId);
+        }
       }
     }
 

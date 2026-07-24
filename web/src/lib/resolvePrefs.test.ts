@@ -4,10 +4,12 @@ import {
   resolveViewLevel,
   resolveVisibleColumns,
   resolveColumnWidths,
+  resolveFlatSort,
   emitFilter,
+  emitFlatSort,
 } from "./resolvePrefs";
 import { DEFAULT_COLUMN_WIDTHS, DEFAULT_VISIBLE_COLUMNS } from "./types";
-import type { NibFilter, ViewLevel, ColumnKey } from "./types";
+import type { NibFilter, ViewLevel, ColumnKey, FlatSort } from "./types";
 import type { Preferences } from "./preferences.svelte.ts";
 
 function makePrefs(overrides: Partial<Preferences> = {}): Preferences {
@@ -85,6 +87,32 @@ describe("resolveColumnWidths", () => {
   });
 });
 
+describe("resolveFlatSort", () => {
+  const asc: FlatSort = { field: "modified", direction: "asc" };
+  const desc: FlatSort = { field: "created", direction: "desc" };
+
+  it("returns prefs.flatSort when prefs is defined (prop ignored)", () => {
+    const prefs = makePrefs({ flatSort: asc });
+    expect(resolveFlatSort(prefs, desc)).toEqual(asc);
+  });
+
+  it("returns null when prefs.flatSort is null even if a non-null prop is supplied", () => {
+    // The regression this guards: null is nullish, so `prefs?.flatSort ?? prop`
+    // would leak the prop's sort. Branching on prefs presence keeps the persisted
+    // "off" state authoritative.
+    const prefs = makePrefs({ flatSort: null });
+    expect(resolveFlatSort(prefs, desc)).toBeNull();
+  });
+
+  it("returns the flatSort prop when prefs is undefined", () => {
+    expect(resolveFlatSort(undefined, desc)).toEqual(desc);
+  });
+
+  it("returns null when both prefs and prop are undefined", () => {
+    expect(resolveFlatSort(undefined, undefined)).toBeNull();
+  });
+});
+
 describe("emitFilter", () => {
   it("mutates prefs.filter when prefs is defined", () => {
     const prefs = makePrefs({ filter: { search: "old" } });
@@ -103,5 +131,36 @@ describe("emitFilter", () => {
   it("does nothing when both prefs and onchange are undefined", () => {
     // Should not throw
     emitFilter(undefined, undefined, { search: "test" });
+  });
+});
+
+describe("emitFlatSort", () => {
+  const asc: FlatSort = { field: "modified", direction: "asc" };
+
+  it("writes prefs.flatSort when prefs is defined (callback not called)", () => {
+    const prefs = makePrefs({ flatSort: null });
+    const onchange = vi.fn();
+    emitFlatSort(prefs, onchange, asc);
+    expect(prefs.flatSort).toEqual(asc);
+    expect(onchange).not.toHaveBeenCalled();
+  });
+
+  it("writes null to prefs.flatSort when turning the sort off", () => {
+    // The write path must persist the "off" state, not skip it — the read path
+    // (resolveFlatSort) treats a present prefs as authoritative including null.
+    const prefs = makePrefs({ flatSort: asc });
+    emitFlatSort(prefs, undefined, null);
+    expect(prefs.flatSort).toBeNull();
+  });
+
+  it("calls onchange when prefs is undefined", () => {
+    const onchange = vi.fn();
+    emitFlatSort(undefined, onchange, asc);
+    expect(onchange).toHaveBeenCalledWith(asc);
+  });
+
+  it("does nothing when both prefs and onchange are undefined", () => {
+    // Should not throw
+    emitFlatSort(undefined, undefined, null);
   });
 });

@@ -40,7 +40,7 @@ interface LensConfig {
   bucketLabel: string;
 }
 
-const GROUPING_LENSES: Record<Exclude<ViewLevel, "none">, LensConfig> = {
+const GROUPING_LENSES: Record<Exclude<ViewLevel, "none" | "flat">, LensConfig> = {
   milestones: { grouping: new Set(["milestone"]),     bucketId: "__no_milestone__",      bucketLabel: "No milestone" },
   epics:      { grouping: new Set(["epic"]),          bucketId: "__no_epic__",           bucketLabel: "No epic" },
   features:   { grouping: new Set(["feature", "bug"]), bucketId: "__no_feature_or_bug__", bucketLabel: "No feature or bug" },
@@ -78,7 +78,9 @@ export function bucketIdForItem<T extends TreeNib>(
   nibId: string,
   viewLevel: ViewLevel,
 ): string | null {
-  if (viewLevel === "none") return null;
+  // The "none" (full tree) and "flat" (ungrouped) views have no synthetic
+  // buckets, so an item never has an enclosing bucket to un-collapse.
+  if (viewLevel === "none" || viewLevel === "flat") return null;
   const cfg = GROUPING_LENSES[viewLevel];
   const self = nibMap.get(nibId);
   // A container ranked above the grouping tier is hidden outright by
@@ -180,6 +182,12 @@ function makeBucketNode<T extends TreeNib>(id: string, title: string, children: 
  * falls into a single "No X" bucket. The `none` lens returns the full tree.
  */
 export function buildViewTree<T extends TreeNib>(nibs: T[], viewLevel: ViewLevel): TreeNode<T>[] {
+  if (viewLevel === "flat") {
+    // Flat view: every nib is an ungrouped depth-0 root — no nesting, no
+    // buckets. Preserves incoming order (the manual `order` sequence).
+    return nibs.map((nib) => ({ nib, children: [], depth: 0 }));
+  }
+
   const fullTree = buildTree(nibs);
 
   if (viewLevel === "none") {

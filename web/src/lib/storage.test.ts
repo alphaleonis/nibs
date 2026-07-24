@@ -408,6 +408,50 @@ describe("storage", () => {
     expect(loadPreferences().previewOpen).toBeUndefined();
   });
 
+  it("saves and loads flatSort (round-trip)", () => {
+    savePreferences({ filter: {}, viewLevel: "flat", flatSort: { field: "modified", direction: "desc" } });
+    const loaded = loadPreferences();
+    expect(loaded.viewLevel).toBe("flat");
+    expect(loaded.flatSort).toEqual({ field: "modified", direction: "desc" });
+  });
+
+  it("returns undefined flatSort when not set", () => {
+    savePreferences({ filter: {}, viewLevel: "none" });
+    expect(loadPreferences().flatSort).toBeUndefined();
+  });
+
+  it("returns undefined flatSort for an invalid field", () => {
+    store["nibs-filter-preferences"] = JSON.stringify({
+      filter: {},
+      viewLevel: "flat",
+      flatSort: { field: "title", direction: "asc" },
+    });
+    expect(loadPreferences().flatSort).toBeUndefined();
+  });
+
+  it("returns undefined flatSort for an invalid direction", () => {
+    store["nibs-filter-preferences"] = JSON.stringify({
+      filter: {},
+      viewLevel: "flat",
+      flatSort: { field: "created", direction: "sideways" },
+    });
+    expect(loadPreferences().flatSort).toBeUndefined();
+  });
+
+  it("returns undefined flatSort for a non-object stored value", () => {
+    store["nibs-filter-preferences"] = JSON.stringify({
+      filter: {},
+      viewLevel: "flat",
+      flatSort: "created-asc",
+    });
+    expect(loadPreferences().flatSort).toBeUndefined();
+  });
+
+  it("accepts the 'flat' viewLevel", () => {
+    store["nibs-filter-preferences"] = JSON.stringify({ filter: {}, viewLevel: "flat" });
+    expect(loadPreferences().viewLevel).toBe("flat");
+  });
+
   it("round-trips a persisted theme", () => {
     savePreferences({ filter: {}, viewLevel: "none", theme: "dracula" });
     expect(loadPreferences().theme).toBe("dracula");

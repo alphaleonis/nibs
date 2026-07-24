@@ -1,7 +1,7 @@
 import { untrack } from "svelte";
 import { loadPreferences, savePreferences } from "./storage";
 import { DEFAULT_VISIBLE_COLUMNS, DEFAULT_COLUMN_WIDTHS, DEFAULT_DETAIL_PANEL_WIDTH, MIN_DETAIL_PANEL_WIDTH, DEFAULT_DETAIL_PANEL_HEIGHT, MIN_DETAIL_PANEL_HEIGHT, DEFAULT_DETAIL_PANEL_POSITION, DEFAULT_BLOCKED_EMPHASIS, DEFAULT_FONT_SIZE, DEFAULT_THEME, DEFAULT_PREVIEW_OPEN } from "./types";
-import type { NibFilter, ViewLevel, ColumnKey, RowDensity, Theme, DetailPanelPosition, BlockedEmphasis, FontSize } from "./types";
+import type { NibFilter, ViewLevel, ColumnKey, RowDensity, Theme, DetailPanelPosition, BlockedEmphasis, FontSize, FlatSort } from "./types";
 
 export class Preferences {
   filter: NibFilter = $state({});
@@ -21,6 +21,9 @@ export class Preferences {
   theme: Theme = $state(DEFAULT_THEME);
   // Discrete toggle → auto-saved (like theme/rowDensity/detailPanelPosition).
   previewOpen: boolean = $state(DEFAULT_PREVIEW_OPEN);
+  // Flat-view date sort. null = off (manual `order`). Discrete toggle →
+  // auto-saved. Only the "flat" view level reads it.
+  flatSort: FlatSort | null = $state(null);
 
   visibleColumns: ColumnKey[] = $derived(
     this.columnVisibility[this.viewLevel] ?? [...DEFAULT_VISIBLE_COLUMNS]
@@ -64,6 +67,7 @@ export class Preferences {
     this.blockedEmphasis = initial.blockedEmphasis ?? DEFAULT_BLOCKED_EMPHASIS;
     this.theme = initial.theme ?? DEFAULT_THEME;
     this.previewOpen = initial.previewOpen ?? DEFAULT_PREVIEW_OPEN;
+    this.flatSort = initial.flatSort ?? null;
 
     // Auto-save when filter, viewLevel, or columnVisibility change.
     // columnWidths and detailPanelWidth are excluded (untracked) — use flush*() methods instead.
@@ -81,6 +85,7 @@ export class Preferences {
         this.theme;
         this.detailPanelPosition;
         this.previewOpen;
+        this.flatSort;
         // Skip the initial save that fires on construction (we just loaded these values)
         if (!initialized) {
           initialized = true;
@@ -140,6 +145,7 @@ export class Preferences {
       blockedEmphasis: this.blockedEmphasis,
       theme: this.theme,
       previewOpen: this.previewOpen,
+      flatSort: this.flatSort ?? undefined,
     });
   }
 }
