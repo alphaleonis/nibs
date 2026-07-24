@@ -38,6 +38,7 @@ import type {
 } from "../nibForm.svelte";
 import type { LiveNib } from "../liveNib.svelte";
 import type { HistoryNav } from "./useHistoryNav.svelte";
+import type { NibDetailQuery } from "../gql/graphql";
 
 /**
  * The user's choice at the dirty-nav guard. Tri-state so the guard
@@ -72,25 +73,18 @@ export interface DetailNibRef {
   status: string;
 }
 
-/** The `NIB_DETAIL_QUERY` nib (relations + documents) the view rail consumes. */
-export interface DetailNib {
-  id: string;
-  title: string;
-  status: string;
-  type: string;
-  priority?: string | null;
-  estimate?: string | null;
-  tags?: readonly string[];
-  body?: string;
-  documents?: readonly string[];
-  etag: string;
-  parent?: DetailNibRef | null;
-  children?: readonly DetailNibRef[];
-  blocking?: readonly DetailNibRef[];
-  blockedBy?: readonly DetailNibRef[];
-  mentions?: readonly DetailNibRef[];
-  mentionedBy?: readonly DetailNibRef[];
-}
+/**
+ * The `NIB_DETAIL_QUERY` nib (relations + documents) the view rail consumes.
+ *
+ * DERIVED from the generated result type so it can never drift from the query:
+ * every field the query selects is present and required here (nullable only
+ * where the schema/selection is). Dropping a field from `NIB_DETAIL_QUERY`'s
+ * selection removes it from this type too, so any consumer that still reads it
+ * fails to compile — closing the "silent blank" this migration set out to
+ * eliminate. `DetailNibRef` (above) mirrors the relation sub-selection shape and
+ * stays hand-written for the `refs()` helper; the two are structurally identical.
+ */
+export type DetailNib = NonNullable<NibDetailQuery["nib"]>;
 
 /** The reactive detail-query wrapper injected by the app (a single live query). */
 export interface DetailView {

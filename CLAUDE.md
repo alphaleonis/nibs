@@ -13,7 +13,7 @@ All commands use [Task](https://taskfile.dev/) (`go-task/task`) as the task runn
 - `task build` - Build the `./nibs` executable (runs codegen first)
 - `task test` - Run all tests: Go + web (runs codegen and web:build first); includes the `-race` gate on `internal/nibcore` + `internal/graph`
 - `task test:race` - Run the `-race` detector on the concurrency-critical packages (`internal/nibcore` + `internal/graph`) only
-- `task codegen` - Regenerate GraphQL code (`go generate ./...`)
+- `task codegen` - Regenerate GraphQL code: Go server (gqlgen, `go generate ./...`) + web client types (graphql-codegen client preset). Runs `go:codegen` + `web:codegen`.
 - `task nibs` - Build and run the CLI in one step (`go run .`)
 - `go test ./internal/nib/` - Run tests for a specific package
 - `cd web && npx vitest run --reporter=agent` - Run web tests only

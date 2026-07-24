@@ -112,7 +112,11 @@
       pause: !detailTargetId,
     }),
   );
-  const detailNib = $derived(($detailStore.data?.nib as DetailNib | undefined) ?? null);
+  // No cast: `$detailStore.data` is typed by NIB_DETAIL_QUERY's generated result,
+  // and `DetailNib` is derived from that same type, so `?? null` yields exactly
+  // `DetailNib | null`. Dropping a selected field from the query therefore breaks
+  // this read site (via snapshotFromDetail) at compile time instead of blanking.
+  const detailNib = $derived($detailStore.data?.nib ?? null);
   const detailFetching = $derived($detailStore.fetching);
   const detailError = $derived($detailStore.error);
 

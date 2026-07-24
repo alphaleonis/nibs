@@ -1,15 +1,15 @@
-import { gql } from "@urql/svelte";
+import { graphql } from "./gql";
 
-export const CONFIG_QUERY = gql`
+export const CONFIG_QUERY = graphql(`
   query Config {
     config {
       projectName
       prefix
     }
   }
-`;
+`);
 
-export const UPDATE_STATUS_QUERY = gql`
+export const UPDATE_STATUS_QUERY = graphql(`
   query UpdateStatus {
     updateStatus {
       current
@@ -17,9 +17,9 @@ export const UPDATE_STATUS_QUERY = gql`
       updateAvailable
     }
   }
-`;
+`);
 
-export const NIB_DETAIL_QUERY = gql`
+export const NIB_DETAIL_QUERY = graphql(`
   query NibDetail($id: ID!) {
     nib(id: $id) {
       id
@@ -70,7 +70,7 @@ export const NIB_DETAIL_QUERY = gql`
       }
     }
   }
-`;
+`);
 
 // Lean, DEDICATED one-shot query for the null-remote conflict fallback.
 // It selects ONLY the fields `toNibSnapshot` reads — a strict
@@ -81,7 +81,7 @@ export const NIB_DETAIL_QUERY = gql`
 // shared, a `{ nib: null }` response (nib deleted in the race window) would be
 // pushed into `detailStore` and trip App's missing-nib effect, silently dropping
 // the user's dirty buffer. Keep this selection in lockstep with `toNibSnapshot`.
-export const NIB_CONFLICT_SNAPSHOT_QUERY = gql`
+export const NIB_CONFLICT_SNAPSHOT_QUERY = graphql(`
   query NibConflictSnapshot($id: ID!) {
     nib(id: $id) {
       id
@@ -95,9 +95,9 @@ export const NIB_CONFLICT_SNAPSHOT_QUERY = gql`
       etag
     }
   }
-`;
+`);
 
-export const UPDATE_NIB_MUTATION = gql`
+export const UPDATE_NIB_MUTATION = graphql(`
   mutation UpdateNib($id: ID!, $input: UpdateNibInput!) {
     updateNib(id: $id, input: $input) {
       id
@@ -110,21 +110,21 @@ export const UPDATE_NIB_MUTATION = gql`
       etag
     }
   }
-`;
+`);
 
-export const DELETE_NIB_MUTATION = gql`
+export const DELETE_NIB_MUTATION = graphql(`
   mutation DeleteNib($id: ID!) {
     deleteNib(id: $id)
   }
-`;
+`);
 
-export const ARCHIVE_NIB_MUTATION = gql`
+export const ARCHIVE_NIB_MUTATION = graphql(`
   mutation ArchiveNib($id: ID!) {
     archiveNib(id: $id)
   }
-`;
+`);
 
-export const CREATE_NIB_MUTATION = gql`
+export const CREATE_NIB_MUTATION = graphql(`
   mutation CreateNib($input: CreateNibInput!) {
     createNib(input: $input) {
       id
@@ -140,9 +140,9 @@ export const CREATE_NIB_MUTATION = gql`
       order
     }
   }
-`;
+`);
 
-export const SET_PARENT_MUTATION = gql`
+export const SET_PARENT_MUTATION = graphql(`
   mutation SetParent($id: ID!, $parentId: String) {
     setParent(id: $id, parentId: $parentId) {
       id
@@ -156,9 +156,9 @@ export const SET_PARENT_MUTATION = gql`
       parentId
     }
   }
-`;
+`);
 
-export const REORDER_NIB_MUTATION = gql`
+export const REORDER_NIB_MUTATION = graphql(`
   mutation ReorderNib($id: ID!, $afterId: ID, $beforeId: ID, $first: Boolean, $parentId: String) {
     reorderNib(id: $id, afterId: $afterId, beforeId: $beforeId, first: $first, parentId: $parentId) {
       id
@@ -173,9 +173,9 @@ export const REORDER_NIB_MUTATION = gql`
       order
     }
   }
-`;
+`);
 
-export const TREE_TABLE_QUERY = gql`
+export const TREE_TABLE_QUERY = graphql(`
   query TreeTable($filter: NibFilter) {
     nibs(filter: $filter, sort: { field: ORDER, direction: ASC }) {
       id
@@ -192,9 +192,9 @@ export const TREE_TABLE_QUERY = gql`
       blockedByIds
     }
   }
-`;
+`);
 
-export const NIB_CHANGED_SUBSCRIPTION = gql`
+export const NIB_CHANGED_SUBSCRIPTION = graphql(`
   subscription NibChanged($id: ID) {
     nibChanged(id: $id) {
       type
@@ -216,4 +216,4 @@ export const NIB_CHANGED_SUBSCRIPTION = gql`
       }
     }
   }
-`;
+`);

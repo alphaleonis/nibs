@@ -1,4 +1,5 @@
 import { toast } from "svelte-sonner";
+import type { DocumentNode } from "graphql";
 import type { Client, CombinedError } from "@urql/core";
 import {
   UPDATE_NIB_MUTATION,
@@ -21,8 +22,16 @@ import type {
   ExecuteOptions,
 } from "./types";
 
-/** Maps command kind to the GraphQL mutation document. */
-function getMutationDoc(kind: LeafCommand["kind"]) {
+/**
+ * Maps command kind to the GraphQL mutation document. The concrete kind→doc→vars
+ * correlation is resolved dynamically here and in `getVariables`, so the specific
+ * per-operation Variables type of each generated TypedDocumentNode cannot be
+ * statically tied to the `Record<string, unknown>` vars built below. Returning
+ * the plain `DocumentNode` at this single dynamic seam lets urql fall back to
+ * `AnyVariables` (the pre-typed-document behavior), keeping this generic executor
+ * intact; every non-dynamic call site keeps full inference from the typed docs.
+ */
+function getMutationDoc(kind: LeafCommand["kind"]): DocumentNode {
   switch (kind) {
     case "create-nib": return CREATE_NIB_MUTATION;
     case "update-nib": return UPDATE_NIB_MUTATION;
