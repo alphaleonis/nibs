@@ -1,6 +1,6 @@
 import { describe, it, expect, beforeEach, vi } from "vitest";
-import { savePreferences, loadPreferences, parseTheme } from "./storage";
-import { MIN_DETAIL_PANEL_WIDTH, MIN_DETAIL_PANEL_HEIGHT } from "./types";
+import { savePreferences, loadPreferences, parseTheme, parsePerViewMap } from "./storage";
+import { MIN_DETAIL_PANEL_WIDTH, MIN_DETAIL_PANEL_HEIGHT, VIEW_LEVELS } from "./types";
 
 const store: Record<string, string> = {};
 const mockStorage = {
@@ -469,6 +469,45 @@ describe("storage", () => {
       theme: "solarized",
     });
     expect(loadPreferences().theme).toBe("graphite");
+  });
+});
+
+// The shared per-view map parser: one VIEW_LEVELS loop with an injected
+// per-level validator. Replaces the two hand-parallel parseColumn* skeletons;
+// the per-level validators (visibility/widths) are exercised behaviorally via
+// loadPreferences above, so here we pin the generic loop contract once with a
+// stand-in validator (accept positive numbers).
+describe("parsePerViewMap", () => {
+  const positiveNumber = (raw: unknown): number | undefined =>
+    typeof raw === "number" && raw > 0 ? raw : undefined;
+
+  const cases: { name: string; raw: unknown; expected: unknown }[] = [
+    { name: "non-object raw → undefined", raw: "nope", expected: undefined },
+    { name: "null raw → undefined", raw: null, expected: undefined },
+    { name: "array raw → undefined (no numeric view-level keys)", raw: [1, 2], expected: undefined },
+    { name: "no level passes the validator → undefined", raw: { none: -1, epics: 0 }, expected: undefined },
+    { name: "keeps only the levels the validator accepts", raw: { none: 5, epics: -1, milestones: 12 }, expected: { none: 5, milestones: 12 } },
+    { name: "ignores keys that are not view levels", raw: { none: 5, bogus: 9 }, expected: { none: 5 } },
+  ];
+
+  for (const { name, raw, expected } of cases) {
+    it(name, () => {
+      expect(parsePerViewMap(raw, positiveNumber)).toEqual(expected);
+    });
+  }
+
+  it("runs the validator once per view level", () => {
+    const validate = vi.fn((raw: unknown) => (typeof raw === "number" ? raw : undefined));
+    parsePerViewMap({ none: 1 }, validate);
+    expect(validate).toHaveBeenCalledTimes(VIEW_LEVELS.length);
+  });
+
+  it("is generic over the value type (array validator, mirroring columnVisibility)", () => {
+    const stringArray = (raw: unknown): string[] | undefined =>
+      Array.isArray(raw) && raw.length > 0 ? (raw as string[]) : undefined;
+    expect(parsePerViewMap({ epics: ["id", "title"], none: [] }, stringArray)).toEqual({
+      epics: ["id", "title"],
+    });
   });
 });
 

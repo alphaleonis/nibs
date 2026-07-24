@@ -36,55 +36,56 @@ function parseFilter(raw: unknown): NibFilter {
   return filter;
 }
 
-function parseColumnVisibility(
+const VALID_COLUMN_KEYS = new Set<string>(ALL_COLUMN_KEYS);
+
+// Shared per-view map parser: one VIEW_LEVELS loop, with the concern-specific
+// per-level validator injected. A level is included only when the validator
+// returns a value; the whole map collapses to undefined when no level survives
+// (so an absent/garbage field stays undefined and Preferences supplies defaults).
+export function parsePerViewMap<T>(
   raw: unknown,
-): Partial<Record<ViewLevel, ColumnKey[]>> | undefined {
+  validateLevel: (raw: unknown) => T | undefined,
+): Partial<Record<ViewLevel, T>> | undefined {
   if (typeof raw !== "object" || raw === null) return undefined;
-  const result: Partial<Record<ViewLevel, ColumnKey[]>> = {};
-  const validKeys = new Set<string>(ALL_COLUMN_KEYS);
+  const result: Partial<Record<ViewLevel, T>> = {};
   for (const level of VIEW_LEVELS) {
-    const arr = (raw as Record<string, unknown>)[level];
-    if (Array.isArray(arr)) {
-      const filtered = arr.filter(
-        (v): v is ColumnKey => typeof v === "string" && validKeys.has(v),
-      );
-      // Ensure alwaysVisible columns are always present
-      for (const key of ALWAYS_VISIBLE_KEY_SET) {
-        if (!filtered.includes(key)) {
-          filtered.push(key);
-        }
-      }
-      if (filtered.length > 0) {
-        result[level] = filtered;
-      }
+    const value = validateLevel((raw as Record<string, unknown>)[level]);
+    if (value !== undefined) {
+      result[level] = value;
     }
   }
   return Object.keys(result).length > 0 ? result : undefined;
 }
 
-function parseColumnWidths(
-  raw: unknown,
-): Partial<Record<ViewLevel, Partial<Record<ColumnKey, number>>>> | undefined {
-  if (typeof raw !== "object" || raw === null) return undefined;
-  const result: Partial<Record<ViewLevel, Partial<Record<ColumnKey, number>>>> = {};
-  const validKeys = new Set<string>(ALL_COLUMN_KEYS);
-  for (const level of VIEW_LEVELS) {
-    const obj = (raw as Record<string, unknown>)[level];
-    if (typeof obj === "object" && obj !== null && !Array.isArray(obj)) {
-      const widths: Partial<Record<ColumnKey, number>> = {};
-      let count = 0;
-      for (const [key, value] of Object.entries(obj as Record<string, unknown>)) {
-        if (validKeys.has(key) && typeof value === "number" && value > 0 && isFinite(value)) {
-          widths[key as ColumnKey] = value;
-          count++;
-        }
-      }
-      if (count > 0) {
-        result[level] = widths;
-      }
+// Per-level validator for columnVisibility: keep valid column keys, always
+// re-add the alwaysVisible columns (title today) so they survive a round-trip.
+// A non-array (missing/garbage) level yields undefined so it is dropped.
+function validateVisibilityLevel(raw: unknown): ColumnKey[] | undefined {
+  if (!Array.isArray(raw)) return undefined;
+  const filtered = raw.filter(
+    (v): v is ColumnKey => typeof v === "string" && VALID_COLUMN_KEYS.has(v),
+  );
+  for (const key of ALWAYS_VISIBLE_KEY_SET) {
+    if (!filtered.includes(key)) {
+      filtered.push(key);
     }
   }
-  return Object.keys(result).length > 0 ? result : undefined;
+  return filtered.length > 0 ? filtered : undefined;
+}
+
+// Per-level validator for columnWidths: keep valid column keys mapped to
+// positive finite numbers. A non-object (or array) level yields undefined.
+function validateWidthsLevel(raw: unknown): Partial<Record<ColumnKey, number>> | undefined {
+  if (typeof raw !== "object" || raw === null || Array.isArray(raw)) return undefined;
+  const widths: Partial<Record<ColumnKey, number>> = {};
+  let count = 0;
+  for (const [key, value] of Object.entries(raw as Record<string, unknown>)) {
+    if (VALID_COLUMN_KEYS.has(key) && typeof value === "number" && value > 0 && isFinite(value)) {
+      widths[key as ColumnKey] = value;
+      count++;
+    }
+  }
+  return count > 0 ? widths : undefined;
 }
 
 function parseDetailPanelWidth(raw: unknown): number | undefined {
@@ -177,8 +178,8 @@ export function loadPreferences(): FilterPreferences {
       viewLevel: (VIEW_LEVELS as readonly string[]).includes(parsed.viewLevel)
         ? parsed.viewLevel
         : DEFAULTS.viewLevel,
-      columnVisibility: parseColumnVisibility(parsed.columnVisibility),
-      columnWidths: parseColumnWidths(parsed.columnWidths),
+      columnVisibility: parsePerViewMap(parsed.columnVisibility, validateVisibilityLevel),
+      columnWidths: parsePerViewMap(parsed.columnWidths, validateWidthsLevel),
       detailPanelWidth: parseDetailPanelWidth(parsed.detailPanelWidth),
       detailPanelPosition: parseDetailPanelPosition(parsed.detailPanelPosition),
       detailPanelHeight: parseDetailPanelHeight(parsed.detailPanelHeight),

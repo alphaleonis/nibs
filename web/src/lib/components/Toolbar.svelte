@@ -183,7 +183,7 @@
     // Maintain canonical column order
     updated.sort((a, b) => ALL_COLUMN_KEYS.indexOf(a) - ALL_COLUMN_KEYS.indexOf(b));
     if (prefs) {
-      prefs.columnVisibility = { ...prefs.columnVisibility, [prefs.viewLevel]: updated };
+      prefs.visibility.setLevel(prefs.viewLevel, updated);
     } else {
       oncolumnschange?.(updated);
     }
