@@ -4,7 +4,7 @@ import { isBucketId } from "./tree";
 import { applySort } from "./tableSort";
 import { typeRank } from "./typeHierarchy";
 import { OPEN_PLUS_DEFERRED_STATUSES } from "./constants";
-import type { TreeTableNib, NibFilter } from "./types";
+import type { TreeTableNib, NibFilter, TableSort } from "./types";
 
 function makeTreeTableNib(overrides: Partial<TreeTableNib> = {}): TreeTableNib {
   return {
@@ -611,5 +611,142 @@ describe("buildTableData — sibling-sort from a pre-sorted array", () => {
     // ...whose loose items also reorder (T-Alpha before T-Zulu).
     expect(result.rows[3].nib.id).toBe("t1");
     expect(result.rows[4].nib.id).toBe("t2");
+  });
+});
+
+// nibs-2lqm: in the epics/features lenses the pre-sort of `allNibs` alone is NOT
+// enough — promoted headers descend through a HIDDEN higher-tier ancestor, so
+// they come out grouped by that ancestor's position. Threading the active sort
+// into buildTableData (→ buildViewTree's node comparator) orders them GLOBALLY.
+// When no sort is passed, the grouped order is preserved (the guard bites).
+describe("buildTableData — global promoted-header ordering under an active sort (nibs-2lqm)", () => {
+  const titleAsc: TableSort = { field: "title", direction: "asc" };
+  const titleDesc: TableSort = { field: "title", direction: "desc" };
+
+  describe("epics lens: two epics under DIFFERENT hidden milestones", () => {
+    // Even after pre-sorting by title, the milestones sort ahead and each epic
+    // trails its milestone, so DFS yields the GROUPED order [Zebra, Apple].
+    const nibs: TreeTableNib[] = [
+      makeTreeTableNib({ id: "m1", title: "Mmm1", type: "milestone" }),
+      makeTreeTableNib({ id: "eZ", title: "Zebra", type: "epic", parentId: "m1" }),
+      makeTreeTableNib({ id: "m2", title: "Mmm2", type: "milestone" }),
+      makeTreeTableNib({ id: "eA", title: "Apple", type: "epic", parentId: "m2" }),
+    ];
+
+    it("no sort arg → grouped DFS header order [Zebra, Apple] (control for the bug)", () => {
+      const sorted = applySort(nibs, titleAsc);
+      const result = buildTableData(sorted, emptyFilter, "epics", noCollapsed);
+      expect(result.rows.map((r) => r.nib.id)).toEqual(["eZ", "eA"]);
+    });
+
+    it("active sort → GLOBAL header order [Apple, Zebra]", () => {
+      const sorted = applySort(nibs, titleAsc);
+      const result = buildTableData(sorted, emptyFilter, "epics", noCollapsed, titleAsc);
+      expect(result.rows.map((r) => r.nib.id)).toEqual(["eA", "eZ"]);
+    });
+
+    it("active sort desc → GLOBAL header order reverses [Zebra, Apple]", () => {
+      const sorted = applySort(nibs, titleDesc);
+      const result = buildTableData(sorted, emptyFilter, "epics", noCollapsed, titleDesc);
+      expect(result.rows.map((r) => r.nib.id)).toEqual(["eZ", "eA"]);
+    });
+  });
+
+  describe("features lens: two features under DIFFERENT hidden epics", () => {
+    const nibs: TreeTableNib[] = [
+      makeTreeTableNib({ id: "e1", title: "Eee1", type: "epic" }),
+      makeTreeTableNib({ id: "fZ", title: "Zebra", type: "feature", parentId: "e1" }),
+      makeTreeTableNib({ id: "e2", title: "Eee2", type: "epic" }),
+      makeTreeTableNib({ id: "fA", title: "Apple", type: "feature", parentId: "e2" }),
+    ];
+
+    it("no sort arg → grouped DFS header order [Zebra, Apple] (control)", () => {
+      const sorted = applySort(nibs, titleAsc);
+      const result = buildTableData(sorted, emptyFilter, "features", noCollapsed);
+      expect(result.rows.map((r) => r.nib.id)).toEqual(["fZ", "fA"]);
+    });
+
+    it("active sort → GLOBAL header order [Apple, Zebra]", () => {
+      const sorted = applySort(nibs, titleAsc);
+      const result = buildTableData(sorted, emptyFilter, "features", noCollapsed, titleAsc);
+      expect(result.rows.map((r) => r.nib.id)).toEqual(["fA", "fZ"]);
+    });
+
+    it("active sort desc → GLOBAL header order reverses [Zebra, Apple]", () => {
+      // The titleDesc pre-sort reshuffles the DFS grouping to [fA, fZ]; only the
+      // threaded desc re-sort corrects it to [fZ, fA] (bites on revert).
+      const sorted = applySort(nibs, titleDesc);
+      const result = buildTableData(sorted, emptyFilter, "features", noCollapsed, titleDesc);
+      expect(result.rows.map((r) => r.nib.id)).toEqual(["fZ", "fA"]);
+    });
+  });
+
+  describe("bucket items from DISTINCT hidden parents also globally order", () => {
+    // Two loose tasks under two different milestones → the "No epic" bucket.
+    const nibs: TreeTableNib[] = [
+      makeTreeTableNib({ id: "m1", title: "Mmm1", type: "milestone" }),
+      makeTreeTableNib({ id: "tZ", title: "Zebra", type: "task", parentId: "m1" }),
+      makeTreeTableNib({ id: "m2", title: "Mmm2", type: "milestone" }),
+      makeTreeTableNib({ id: "tA", title: "Apple", type: "task", parentId: "m2" }),
+    ];
+
+    it("no sort arg → grouped DFS bucket-item order [Zebra, Apple] (control)", () => {
+      const sorted = applySort(nibs, titleAsc);
+      const result = buildTableData(sorted, emptyFilter, "epics", noCollapsed);
+      const itemIds = result.rows
+        .filter((r) => !isBucketId(r.nib.id))
+        .map((r) => r.nib.id);
+      expect(itemIds).toEqual(["tZ", "tA"]);
+    });
+
+    it("active sort → bucket items globally ordered [Apple, Zebra]", () => {
+      const sorted = applySort(nibs, titleAsc);
+      const result = buildTableData(sorted, emptyFilter, "epics", noCollapsed, titleAsc);
+      // Rows: the "No epic" bucket header, then its two items in global order.
+      const bucket = result.rows.find((r) => isBucketId(r.nib.id))!;
+      expect(bucket).toBeDefined();
+      const itemIds = result.rows
+        .filter((r) => !isBucketId(r.nib.id))
+        .map((r) => r.nib.id);
+      expect(itemIds).toEqual(["tA", "tZ"]);
+    });
+  });
+
+  describe("epics lens: headers sort by their hidden parent's title (parent field / byId path)", () => {
+    // `parent` is the only extractor that resolves via byId.get(parentId).title —
+    // the title tests never touch it. Each epic's real parent is a HIDDEN
+    // milestone, so a parent-field sort must order the promoted headers by their
+    // milestone-parent's title, exercising the buildViewTree re-sort's nibMap→byId
+    // lookup. A regression in that map construction would leave the headers in
+    // grouped DFS order [eA, eZ] and fail this test.
+    const parentAsc: TableSort = { field: "parent", direction: "asc" };
+    const nibs: TreeTableNib[] = [
+      makeTreeTableNib({ id: "m1", title: "M-Zebra", type: "milestone" }),
+      makeTreeTableNib({ id: "eA", title: "Apple", type: "epic", parentId: "m1" }),
+      makeTreeTableNib({ id: "m2", title: "M-Apple", type: "milestone" }),
+      makeTreeTableNib({ id: "eZ", title: "Zebra", type: "epic", parentId: "m2" }),
+    ];
+
+    it("active parent sort → headers ordered by hidden parent title [eZ, eA]", () => {
+      const sorted = applySort(nibs, parentAsc);
+      const result = buildTableData(sorted, emptyFilter, "epics", noCollapsed, parentAsc);
+      // eZ's parent "M-Apple" sorts before eA's parent "M-Zebra".
+      expect(result.rows.map((r) => r.nib.id)).toEqual(["eZ", "eA"]);
+    });
+  });
+
+  it("milestones lens: the sort param reorders an UNSORTED array (wiring check)", () => {
+    // Feed a raw, unsorted array straight into buildTableData (no applySort). The
+    // milestone headers and the "No milestone" bucket's loose items come out of
+    // `classify` in raw input order [m2, m1] / [t2, t1]; only the threaded sort
+    // re-sorts them to [m1, m2] / [t1, t2]. This FAILS if `sort` isn't threaded.
+    const nibs: TreeTableNib[] = [
+      makeTreeTableNib({ id: "m2", title: "M-Zulu", type: "milestone" }),
+      makeTreeTableNib({ id: "m1", title: "M-Alpha", type: "milestone" }),
+      makeTreeTableNib({ id: "t2", title: "T-Zulu", type: "task" }),
+      makeTreeTableNib({ id: "t1", title: "T-Alpha", type: "task" }),
+    ];
+    const result = buildTableData(nibs, emptyFilter, "milestones", noCollapsed, titleAsc);
+    expect(result.rows.map((r) => r.nib.id)).toEqual(["m1", "m2", "__no_milestone__", "t1", "t2"]);
   });
 });

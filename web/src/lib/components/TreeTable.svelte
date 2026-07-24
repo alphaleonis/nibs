@@ -142,15 +142,18 @@
   let allNibs = $derived(dataSource.allNibs);
 
   // Every view applies the client-side column sort when one is active: Flat gets
-  // a flat sorted list, the nested views get sibling-sort (buildTableData nests
-  // the pre-sorted array, and the tree builders preserve sibling input order).
-  // Sort off keeps the server's manual `order` sequence. Only the ROW ORDER
-  // changes — other allNibs consumers stay on the raw list.
+  // a flat sorted list; the nested views get sibling-sort (buildTableData nests
+  // the pre-sorted array, and the tree builders preserve sibling input order
+  // WITHIN each subtree). The active sort is ALSO threaded into buildTableData so
+  // the epics/features lenses re-sort their promoted headers and "No X" bucket
+  // items GLOBALLY — the pre-sort alone leaves them grouped by their hidden
+  // higher-tier ancestor. Sort off keeps the server's manual `order` sequence.
+  // Only the ROW ORDER changes — other allNibs consumers stay on the raw list.
   let orderedNibs = $derived(activeSort ? applySort(allNibs, activeSort) : allNibs);
 
   // The client-side filter is the original filter (not the server-stripped version).
   // buildTableData uses hasClientFilters/matchesFilter from filter.ts directly.
-  let tableData = $derived(buildTableData(orderedNibs, resolvedFilter, resolvedViewLevel, treeView.collapsedIds));
+  let tableData = $derived(buildTableData(orderedNibs, resolvedFilter, resolvedViewLevel, treeView.collapsedIds, activeSort));
   let rows = $derived(tableData.rows);
   let parentIds = $derived(tableData.parentIds);
   let visibleRowIds = $derived(rows.map(r => r.nib.id));
@@ -300,6 +303,11 @@
   // raw parentId, so the grouping lens (headers, hidden containers, "No X"
   // buckets) is honored. TreeViewState owns the collapse set; these compute the
   // next set and hand it to setCollapsed.
+  //
+  // Both calls intentionally omit the active-sort comparator that buildTableData
+  // threads in: collectDescendantIds returns an order-INDEPENDENT Set, so
+  // re-sorting the top-level headers / bucket items can't change which ids are a
+  // node's descendants. Building the tree unsorted here is cheaper and equivalent.
   function expandSubtree(rootId: string) {
     const viewTree = buildViewTree<TreeTableNib>(allNibs, resolvedViewLevel);
     const descendantIds = collectDescendantIds(viewTree, rootId);

@@ -180,8 +180,21 @@ function makeBucketNode<T extends TreeNib>(id: string, title: string, children: 
  * entire subtree; containers ranked above the tier are hidden as rows but
  * descended into; everything at or below the tier that isn't a grouping type
  * falls into a single "No X" bucket. The `none` lens returns the full tree.
+ *
+ * `sortComparator` (optional) is the active column sort's node comparator. When
+ * present, the promoted group headers and the bucket's loose items are ordered
+ * GLOBALLY by the sort field, instead of by the DFS position of their hidden
+ * higher-tier ancestor (the epics/features lenses descend through above-tier
+ * containers, so `classify` would otherwise emit headers grouped by that hidden
+ * ancestor). Each header keeps its entire subtree unchanged — only the top-level
+ * header / bucket-item order changes. `flat` and `none` return before this and
+ * are unaffected (their order comes from the pre-sorted input array).
  */
-export function buildViewTree<T extends TreeNib>(nibs: T[], viewLevel: ViewLevel): TreeNode<T>[] {
+export function buildViewTree<T extends TreeNib>(
+  nibs: T[],
+  viewLevel: ViewLevel,
+  sortComparator?: (a: T, b: T) => number,
+): TreeNode<T>[] {
   if (viewLevel === "flat") {
     // Flat view: every nib is an ungrouped depth-0 root — no nesting, no
     // buckets. Preserves incoming order (the manual `order` sequence).
@@ -221,6 +234,15 @@ export function buildViewTree<T extends TreeNib>(nibs: T[], viewLevel: ViewLevel
   }
 
   classify(fullTree);
+
+  // Under an active sort, order the promoted headers and the bucket's loose
+  // items globally by the sort field. `Array.sort` is stable, so equal-key
+  // entries keep their `classify` (DFS/grouped) order as the tiebreak; each
+  // header's subtree is untouched.
+  if (sortComparator) {
+    headers.sort((x, y) => sortComparator(x.nib, y.nib));
+    bucketItems.sort((x, y) => sortComparator(x.nib, y.nib));
+  }
 
   const roots: TreeNode<T>[] = [...headers];
   if (bucketItems.length > 0) {

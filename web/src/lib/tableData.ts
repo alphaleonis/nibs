@@ -1,5 +1,6 @@
-import type { TreeTableNib, NibFilter, ViewLevel, TreeNode } from "./types";
+import type { TreeTableNib, NibFilter, ViewLevel, TreeNode, TableSort } from "./types";
 import { buildViewTree, isBucketId } from "./tree";
+import { makeNibComparator } from "./tableSort";
 import { hasClientFilters, matchesFilter } from "./filter";
 
 export interface RowData {
@@ -37,6 +38,7 @@ export function buildTableData(
   filter: NibFilter,
   viewLevel: ViewLevel,
   collapsedIds: ReadonlySet<string>,
+  sort: TableSort | null = null,
 ): TableData {
   // Stage 1: Build nibMap for O(1) parent lookups
   const nibMap = new Map<string, TreeTableNib>();
@@ -94,8 +96,12 @@ export function buildTableData(
     visibleIds = new Set<string>([...matchingIds, ...ancestorIds]);
   }
 
-  // Stage 5: Build view tree
-  const tree = buildViewTree<TreeTableNib>(allNibs, viewLevel);
+  // Stage 5: Build view tree. When a column sort is active, hand the tree
+  // builder a node comparator (built from the already-computed nibMap) so the
+  // epics/features lenses order their promoted headers + bucket items globally
+  // by the sort field instead of by their hidden higher-tier ancestor.
+  const nodeComparator = sort ? makeNibComparator(sort, nibMap) : undefined;
+  const tree = buildViewTree<TreeTableNib>(allNibs, viewLevel, nodeComparator);
 
   // Stage 5a: Synthetic "No X" bucket nodes are not real nibs, so they never
   // appear in the real-parentId-derived `parentIds` or `visibleIds` sets. Fold
