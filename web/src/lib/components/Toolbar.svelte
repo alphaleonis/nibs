@@ -20,7 +20,7 @@
   import { priorityIndicators } from "../badges";
   import type { TypeIconInfo } from "../icons";
   import { resolveFilter, resolveViewLevel, resolveVisibleColumns, resolveColumnOrder, emitFilter as emitFilterHelper } from "../resolvePrefs";
-  import { parseQuery, serializeQuery, getCompletion, tokenizeSpans, relTokenValueContext } from "../query";
+  import { parseQuery, serializeQuery, getCompletion, tokenizeSpans, tokenSegments, removeTokenRange, relTokenValueContext } from "../query";
   import type { Completion, QueryFilter, SpanKind, RelValueContext, NibSuggestion } from "../query";
   import { createNibSearch, type SearchNibsFn } from "../searchNibs";
   import { getContextClient } from "@urql/svelte";
@@ -336,6 +336,36 @@
   let backdrop = $state<HTMLDivElement | null>(null);
   let spans = $derived(tokenizeSpans(keywordText));
 
+  // --- Token-click affordances (Phase 7) ---
+  // A thin interaction layer ABOVE the input mirrors the backdrop's token layout
+  // (same box metrics, `whitespace-pre` flow and horizontal scroll) so its per-token
+  // hit-regions align glyph-for-glyph. The container is `pointer-events-none`; only
+  // the token wrappers + their × buttons opt back in, so clicking a whitespace gap
+  // still falls through to the input and places the caret normally. `tokenSegs`
+  // groups the highlight spans into one segment per filter token (plus the gaps).
+  let tokenLayer = $state<HTMLDivElement | null>(null);
+  let tokenSegs = $derived(tokenSegments(keywordText));
+
+  // Click a token → select its full range in the input for quick editing. No caret
+  // math beyond the segment offsets; the input stays the sole editor.
+  function selectToken(start: number, end: number) {
+    if (!keywordInput) return;
+    keywordInput.focus();
+    keywordInput.setSelectionRange(start, end);
+  }
+
+  // Click a token's × → splice it out of the query string (collapsing the adjacent
+  // whitespace) and re-emit through the normal parse path so `parseQuery` re-derives
+  // the filter (and drops the token from the invalid sidecar if it was one).
+  function removeToken(start: number, end: number) {
+    const next = removeTokenRange(keywordText, start, end);
+    keywordText = next;
+    emitFromText(next);
+    // A structural edit invalidates any open completion (its offsets/slices are
+    // relative to the pre-removal text) — close it, as the other mutators do.
+    clearCompletion();
+  }
+
   // Per-kind highlight colors, all shadcn semantic tokens (theme-aware): field
   // names read as links, values as normal foreground, punctuation + free text
   // muted, invalid values in the destructive color with a wavy red underline.
@@ -348,8 +378,12 @@
     whitespace: "",
   };
 
+  // Lock the display backdrop AND the token-affordance layer to the input's
+  // horizontal scroll so both stay glyph-aligned as a long query scrolls.
   function syncBackdropScroll() {
-    if (backdrop && keywordInput) backdrop.scrollLeft = keywordInput.scrollLeft;
+    if (!keywordInput) return;
+    if (backdrop) backdrop.scrollLeft = keywordInput.scrollLeft;
+    if (tokenLayer) tokenLayer.scrollLeft = keywordInput.scrollLeft;
   }
 
   // Re-sync after any value change (typing, completion insert, clear, or a
@@ -754,6 +788,45 @@
       style="caret-color: var(--foreground);"
       class="relative z-10 bg-transparent text-transparent pl-8 {hasKeyword ? 'pr-8' : ''}"
     />
+    <!-- Token-click affordance layer (Phase 7): mirrors the backdrop's box metrics,
+         `whitespace-pre` flow and horizontal scroll so its hit-regions line up with
+         the input's glyphs. `aria-hidden` (the input is the accessible editor) and
+         `pointer-events-none` on the container: only the per-token wrappers + their
+         × buttons re-enable pointer events, so a click in a whitespace gap falls
+         through to the input (caret placement) and the search icon / clear button
+         (both z-20) stay clickable. z-20 puts the token wrappers above the z-10
+         input; they render the SAME character stream as the backdrop (tokens wrapped,
+         gaps as inert text) so alignment is glyph-for-glyph. -->
+    <div
+      bind:this={tokenLayer}
+      aria-hidden="true"
+      data-testid="filter-tokens"
+      class="pointer-events-none absolute inset-0 z-20 flex items-center overflow-hidden rounded-lg border border-transparent pl-8 {hasKeyword ? 'pr-8' : 'pr-2.5'} text-sm"
+    >
+      <!-- Token wrapper carries onclick (select the token). It is a pointer-only
+           affordance layered over the accessible input — keyboard users edit the
+           input directly and the layer is aria-hidden — so the missing key handler
+           is intentional; the inline svelte-ignore stays glued to the <span> to keep
+           the whitespace-pre flow free of stray text nodes. -->
+      <div class="shrink-0 whitespace-pre"
+        >{#each tokenSegs as seg (seg.start)}{#if seg.kind === "token"}<!-- svelte-ignore a11y_click_events_have_key_events --><span
+              role="button"
+              tabindex="-1"
+              data-testid="filter-token"
+              data-token-start={seg.start}
+              data-token-end={seg.end}
+              class="group relative cursor-pointer pointer-events-auto"
+              onclick={() => selectToken(seg.start, seg.end)}
+            >{keywordText.slice(seg.start, seg.end)}<button
+                type="button"
+                tabindex="-1"
+                title="Remove"
+                data-testid="filter-token-remove"
+                class="pointer-events-none group-hover:pointer-events-auto absolute -right-1.5 top-1/2 flex size-3.5 -translate-y-1/2 items-center justify-center rounded-full bg-popover text-muted-foreground opacity-0 hover:text-foreground group-hover:opacity-100 focus-visible:pointer-events-auto focus-visible:opacity-100"
+                onmousedown={(e) => e.preventDefault()}
+                onclick={(e) => { e.stopPropagation(); removeToken(seg.start, seg.end); }}
+              ><X size={10} /></button></span>{:else}<span>{keywordText.slice(seg.start, seg.end)}</span>{/if}{/each}</div>
+    </div>
     {#if hasKeyword}
       <!-- Clear button. Plain action button: TooltipButton spreads the tooltip
            props then lets our explicit onclick OVERRIDE. This drops the tooltip's
