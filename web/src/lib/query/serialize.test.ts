@@ -51,10 +51,46 @@ describe("serializeQuery", () => {
   it("returns an empty string for an empty filter", () => {
     expect(serializeQuery({ filter: {} })).toBe("");
   });
+});
 
-  it("ignores non-box NibFilter fields (relationships/existence)", () => {
-    const filter: NibFilter = { status: ["todo"], hasParent: true, parentId: "x", noBlocking: true };
-    expect(serializeQuery({ filter })).toBe("status:todo");
+describe("serializeQuery — relationship + existence tokens (phase 5)", () => {
+  it("emits a relationship-id scalar as field:id", () => {
+    expect(serializeQuery({ filter: { blockingId: "tnib-9" } })).toBe("blocking:tnib-9");
+  });
+
+  it("uses hyphenated field-names for blocked-by / mentioned-by", () => {
+    expect(serializeQuery({ filter: { blockedById: "tnib-1" } })).toBe("blocked-by:tnib-1");
+    expect(serializeQuery({ filter: { mentionedById: "tnib-2" } })).toBe("mentioned-by:tnib-2");
+  });
+
+  it("emits an existence boolean as its fixed token", () => {
+    expect(serializeQuery({ filter: { hasParent: true } })).toBe("has:parent");
+    expect(serializeQuery({ filter: { isBlocked: true } })).toBe("is:blocked");
+    expect(serializeQuery({ filter: { noBlockedBy: true } })).toBe("no:blocked-by");
+  });
+
+  it("omits an existence boolean that is false/undefined", () => {
+    expect(serializeQuery({ filter: { hasParent: false } })).toBe("");
+    expect(serializeQuery({ filter: {} })).toBe("");
+  });
+
+  it("places rel/existence tokens AFTER metadata and BEFORE free-text search", () => {
+    const filter: NibFilter = { status: ["todo"], parentId: "x", search: "login" };
+    expect(serializeQuery({ filter })).toBe("status:todo parent:x login");
+  });
+
+  it("orders rel/existence tokens by dimension: parent, blocking, blocked-by (+is:blocked), mentions, mentioned-by", () => {
+    // Deliberately provide them out of canonical order to prove the fixed order wins.
+    const filter: NibFilter = {
+      mentionedById: "m2",
+      isBlocked: true,
+      blockingId: "b1",
+      mentionsId: "m1",
+      parentId: "p1",
+    };
+    expect(serializeQuery({ filter })).toBe(
+      "parent:p1 blocking:b1 is:blocked mentions:m1 mentioned-by:m2",
+    );
   });
 });
 
@@ -82,6 +118,24 @@ describe("round-trip identity — serializeQuery(parseQuery(s)) === s", () => {
     "status:banana",
     "type:bug status:banana",
     "type:bug login status:banana",
+    // relationship-id scalars (incl. hyphenated field-names)
+    "parent:tnib-1",
+    "blocking:tnib-1",
+    "blocked-by:tnib-1",
+    "mentions:tnib-1",
+    "mentioned-by:tnib-1",
+    // existence/state booleans (incl. hyphenated + is:blocked)
+    "has:parent",
+    "no:parent",
+    "has:blocking",
+    "no:blocking",
+    "has:blocked-by",
+    "no:blocked-by",
+    "is:blocked",
+    // metadata + rel/existence + search interleaved, in canonical order
+    "type:bug parent:tnib-1 has:blocking is:blocked mentions:tnib-2 login",
+    // rel/existence "monster": every rel token in canonical dimension order
+    "parent:tnib-1 has:parent no:parent blocking:tnib-2 has:blocking no:blocking blocked-by:tnib-3 has:blocked-by no:blocked-by is:blocked mentions:tnib-4 mentioned-by:tnib-5",
     // full monster: every field positive + negative, search, then two invalids
     "type:bug -type:task priority:high -priority:low status:todo -status:completed estimate:m -estimate:xl tags:auth -tags:wip login words status:banana -priority:pink",
   ];

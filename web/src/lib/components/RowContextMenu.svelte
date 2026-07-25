@@ -1,5 +1,6 @@
 <script lang="ts">
   import type { TreeTableNib } from "../types";
+  import type { RelIdKey } from "$lib/query";
   import { STATUSES, PRIORITIES } from "../constants";
   import { canHaveChildren } from "../typeHierarchy";
   import * as DropdownMenu from "$lib/components/ui/dropdown-menu/index.js";
@@ -24,6 +25,9 @@
     hasChildren?: boolean;
     onexpandchildren?: () => void;
     oncollapsechildren?: () => void;
+    /** Compose a relationship-id filter onto the current filter, targeting this
+     *  row (`nib.id`). Single-target only. */
+    onfilterrelated?: (field: RelIdKey, id: string) => void;
   }
 
   let {
@@ -34,7 +38,20 @@
     hasChildren = false,
     onexpandchildren,
     oncollapsechildren,
+    onfilterrelated,
   }: Props = $props();
+
+  // "Filter related" items — each composes a scalar relationship-id filter onto the
+  // current filter (AND with existing filters; same-kind overwrites). Directions are
+  // VERIFIED against the server schema: blockingId selects the row's blockers,
+  // blockedById selects what the row blocks.
+  const FILTER_RELATIONS: { label: string; field: RelIdKey }[] = [
+    { label: "Items blocking this", field: "blockingId" },
+    { label: "Items this blocks", field: "blockedById" },
+    { label: "Children of this", field: "parentId" },
+    { label: "Items mentioning this", field: "mentionsId" },
+    { label: "Items this mentions", field: "mentionedById" },
+  ];
 
   const selection = useSelection();
   const confirmDialog = useConfirmDialog();
@@ -71,6 +88,10 @@
     if (nib) {
       view.startCreateChild(nib.id, nib.type, anchor);
     }
+  }
+
+  function handleFilterRelated(field: RelIdKey) {
+    if (nib) onfilterrelated?.(field, nib.id);
   }
 
   async function handleStatusChange(status: string) {
@@ -233,6 +254,27 @@
         >
           Add child
         </DropdownMenu.Item>
+        <DropdownMenu.Separator />
+      {/if}
+
+      {#if !isBulk}
+        <!-- Filter related: compose a relationship-id filter targeting this row.
+             Single-target only (like Add child); ANDs onto the current filter. -->
+        <DropdownMenu.Sub>
+          <DropdownMenu.SubTrigger data-testid="ctx-filter-related-trigger">
+            Filter related
+          </DropdownMenu.SubTrigger>
+          <DropdownMenu.SubContent>
+            {#each FILTER_RELATIONS as rel}
+              <DropdownMenu.Item
+                data-testid="ctx-filter-{rel.field}"
+                onclick={() => { open = false; handleFilterRelated(rel.field); }}
+              >
+                {rel.label}
+              </DropdownMenu.Item>
+            {/each}
+          </DropdownMenu.SubContent>
+        </DropdownMenu.Sub>
         <DropdownMenu.Separator />
       {/if}
 

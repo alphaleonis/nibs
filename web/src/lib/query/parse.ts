@@ -1,5 +1,7 @@
 import { FIELD_SPECS, fieldSpec, isValidValue } from "./fields";
 import type { QueryFilter } from "./fields";
+import { recognizeRelationship } from "./relations";
+import type { RelIdKey, ExistenceKey } from "./relations";
 
 // The structured result of parsing filter-box text: the box-owned `filter` slice
 // plus an `invalidTokens` sidecar carrying known-field tokens whose value failed
@@ -22,13 +24,16 @@ export const FIELD_TOKEN = /^(-?)([A-Za-z]+):(.+)$/;
  * Parse filter-box text into the structured fields the box owns plus the
  * invalid-token sidecar.
  *
- * Routing (design 2.2):
+ * Routing (design 2.2 + 2.4):
  * - known field + valid value → the positive include-list, or the `exclude*`
  *   list when the token is negated (`-field:value`).
  * - known field + invalid value → excluded from the filter, preserved (lowercased)
  *   in `invalidTokens`.
  * - comma splits a token into OR values; repeated same-field tokens union. Both
  *   are deduplicated (lenient-in).
+ * - relationship-id token (`blocking:<id>`, `parent:<id>`, …) → a scalar id field,
+ *   last-wins on repeat; existence token (`has:parent`, `is:blocked`, …) → a boolean
+ *   field set `true`. Neither is negatable — a leading `-` routes to free text.
  * - unknown `field:value` (including Bleve `title:`/`body:`) and bare words →
  *   free-text `search`.
  *
@@ -40,6 +45,9 @@ export function parseQuery(text: string): ParsedQuery {
   const excludes = new Map<string, string[]>();
   const invalidTokens: string[] = [];
   const words: string[] = [];
+  // Relationship-id scalars (last write wins) + existence booleans.
+  const relIds = new Map<RelIdKey, string>();
+  const existence = new Set<ExistenceKey>();
 
   const push = (map: Map<string, string[]>, key: string, value: string) => {
     const list = map.get(key);
@@ -52,8 +60,16 @@ export function parseQuery(text: string): ParsedQuery {
     const match = FIELD_TOKEN.exec(token);
     const spec = match ? fieldSpec(match[2]) : undefined;
     if (!match || !spec) {
-      // Bare word or unknown field → free text, preserved verbatim.
-      words.push(token);
+      // Not a metadata token. Try a relationship-id / existence token (these may
+      // use hyphenated field-names the metadata FIELD_TOKEN regex can't match),
+      // else fall back to free text, preserved verbatim.
+      const rel = recognizeRelationship(token);
+      if (rel) {
+        if (rel.kind === "id") relIds.set(rel.field, rel.value);
+        else existence.add(rel.field);
+      } else {
+        words.push(token);
+      }
       continue;
     }
 
@@ -88,6 +104,12 @@ export function parseQuery(text: string): ParsedQuery {
     if (inc) filter[spec.filterKey] = dedupe(inc);
     const exc = excludes.get(spec.name);
     if (exc) filter[spec.excludeKey] = dedupe(exc);
+  }
+  for (const [field, value] of relIds) {
+    filter[field] = value;
+  }
+  for (const field of existence) {
+    filter[field] = true;
   }
   const search = words.join(" ");
   if (search !== "") filter.search = search;

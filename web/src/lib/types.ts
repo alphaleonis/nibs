@@ -32,6 +32,8 @@ export interface NibFilter {
   noParent?: boolean;
   noBlocking?: boolean;
   noBlockedBy?: boolean;
+  mentionsId?: string;
+  mentionedById?: string;
 }
 
 export interface TreeNib extends NibSummary {

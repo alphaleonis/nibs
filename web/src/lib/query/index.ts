@@ -18,3 +18,7 @@ export type { Completion, CompletionKind } from "./complete";
 // filter box's backdrop highlight layer.
 export { tokenizeSpans } from "./spans";
 export type { Span, SpanKind } from "./spans";
+// Relationship/existence token support (phase 5). `RelIdKey` is the set of scalar
+// relationship-id NibFilter keys — the field the row context menu's "Filter
+// related" items compose onto the current filter.
+export type { RelIdKey, ExistenceKey } from "./relations";

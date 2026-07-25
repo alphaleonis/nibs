@@ -2,10 +2,10 @@ import type { NibFilter } from "../types";
 import { TYPES, STATUSES, PRIORITIES, ESTIMATES } from "../constants";
 
 // The box-owned slice of a NibFilter: the five metadata facets, each with its
-// positive include-list and negative exclude-list, plus the free-text `search`.
-// A full NibFilter is assignable to this (it is a superset), so the Toolbar can
-// hand its canonical filter straight to `serializeQuery`; relationship/existence
-// fields on NibFilter are simply ignored by the query language (phase 2 scope).
+// positive include-list and negative exclude-list, the free-text `search`, and
+// (phase 5) the relationship-id scalars + existence/state booleans. A full
+// NibFilter is assignable to this (it is a superset), so the Toolbar can hand its
+// canonical filter straight to `serializeQuery`.
 export type QueryFilter = Pick<
   NibFilter,
   | "type"
@@ -19,6 +19,20 @@ export type QueryFilter = Pick<
   | "tags"
   | "excludeTags"
   | "search"
+  // Relationship-id scalars (phase 5).
+  | "parentId"
+  | "blockingId"
+  | "blockedById"
+  | "mentionsId"
+  | "mentionedById"
+  // Existence/state booleans (phase 5).
+  | "hasParent"
+  | "noParent"
+  | "hasBlocking"
+  | "noBlocking"
+  | "hasBlockedBy"
+  | "noBlockedBy"
+  | "isBlocked"
 >;
 
 type IncludeKey = "type" | "priority" | "status" | "estimate" | "tags";

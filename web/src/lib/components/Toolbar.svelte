@@ -248,8 +248,9 @@
   // `keywordFocused` false, which re-runs the effect and snaps the box to
   // canonical (field order, casing, whitespace normalized).
   //
-  // The box OWNS this slice of NibFilter; other fields (relationships/existence)
-  // are preserved untouched across box edits.
+  // The box OWNS this slice of NibFilter — the five metadata facets, free text,
+  // and (phase 5) the relationship-id scalars + existence/state booleans. Fields
+  // outside this set are preserved untouched across box edits.
   const BOX_FIELD_KEYS = [
     "type", "excludeType",
     "priority", "excludePriority",
@@ -257,6 +258,10 @@
     "estimate", "excludeEstimate",
     "tags", "excludeTags",
     "search",
+    // Relationship-id scalars.
+    "parentId", "blockingId", "blockedById", "mentionsId", "mentionedById",
+    // Existence/state booleans.
+    "hasParent", "noParent", "hasBlocking", "noBlocking", "hasBlockedBy", "noBlockedBy", "isBlocked",
   ] as const satisfies readonly (keyof QueryFilter)[];
 
   // Copy one box field from the parsed slice onto a NibFilter, or delete it when

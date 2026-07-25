@@ -11,6 +11,7 @@ import type {
 } from "$lib/composables/useConfirmDialog.svelte";
 import type { ActiveView } from "$lib/composables/useActiveView.svelte";
 import type { TreeTableNib } from "../types";
+import type { RelIdKey } from "$lib/query";
 
 // bits-ui scroll lock sets pointer-events: none on <body>, so disable the check
 const user = userEvent.setup({ pointerEventsCheck: 0 });
@@ -131,6 +132,7 @@ describe("RowContextMenu", () => {
       hasChildren?: boolean;
       onexpandchildren?: () => void;
       oncollapsechildren?: () => void;
+      onfilterrelated?: (field: RelIdKey, id: string) => void;
     } = {},
   ) {
     const nib = props.nib ?? makeNib();
@@ -143,6 +145,7 @@ describe("RowContextMenu", () => {
         hasChildren: props.hasChildren ?? false,
         onexpandchildren: props.onexpandchildren,
         oncollapsechildren: props.oncollapsechildren,
+        onfilterrelated: props.onfilterrelated,
       },
       context: makeTestContext(selection, new DragState(), {
         confirmDialog: mockConfirmDialog,
@@ -738,6 +741,100 @@ describe("RowContextMenu", () => {
       // Selection should NOT be cleared on failure
       expect(selection.selectedIds.size).toBe(1);
       expect(selection.selectedIds.has("nibs-abc1")).toBe(true);
+    });
+  });
+
+  // ─── Filter related submenu ───────────────────────────────────
+
+  describe("Filter related submenu", () => {
+    it("shows the submenu trigger in single mode", async () => {
+      renderMenu();
+
+      await waitFor(() => {
+        expect(screen.getByTestId("ctx-filter-related-trigger")).toBeInTheDocument();
+      });
+    });
+
+    it("hides the submenu in bulk mode (single-target gating)", async () => {
+      renderMenu({ selectedCount: 3 });
+
+      await waitFor(() => {
+        expect(screen.getByTestId("ctx-delete")).toBeInTheDocument();
+      });
+
+      expect(screen.queryByTestId("ctx-filter-related-trigger")).not.toBeInTheDocument();
+    });
+
+    // The visible-LABEL → field DIRECTION mapping is the known trap (blocking vs
+    // blocked-by was swapped in the original nib draft). Each case locates the item
+    // by its LABEL TEXT (NOT a field-derived testid, which would move with the field
+    // and mask a swap) and asserts the field it emits. Swapping any label↔field pair
+    // in FILTER_RELATIONS turns the matching row red.
+    const directionCases: { label: string; field: RelIdKey }[] = [
+      { label: "Items blocking this", field: "blockingId" },
+      { label: "Items this blocks", field: "blockedById" },
+      { label: "Children of this", field: "parentId" },
+      { label: "Items mentioning this", field: "mentionsId" },
+      { label: "Items this mentions", field: "mentionedById" },
+    ];
+
+    for (const { label, field } of directionCases) {
+      it(`"${label}" emits onfilterrelated(${field}, nib.id)`, async () => {
+        const onfilterrelated = vi.fn();
+        renderMenu({ nib: makeNib({ id: "nibs-target" }), onfilterrelated });
+
+        await waitFor(() => {
+          expect(screen.getByTestId("ctx-filter-related-trigger")).toBeInTheDocument();
+        });
+
+        // Open the submenu (bits-ui opens the sub on pointerenter of the trigger).
+        await user.pointer({ target: screen.getByTestId("ctx-filter-related-trigger") });
+
+        // Anchor on the human label so a swapped mapping is actually caught.
+        const item = await screen.findByText(label);
+        await user.click(item);
+
+        expect(onfilterrelated).toHaveBeenCalledExactlyOnceWith(field, "nibs-target");
+      });
+    }
+
+    it("composes onto the current filter (ANDs) and overwrites the same-kind field", async () => {
+      // Mirror App.svelte's composition contract: prefs.filter = { ...prefs.filter, [field]: id }.
+      let filter: Record<string, unknown> = { status: ["todo"], parentId: "old-parent" };
+      const onfilterrelated = (field: RelIdKey, id: string) => {
+        filter = { ...filter, [field]: id };
+      };
+
+      renderMenu({ nib: makeNib({ id: "nibs-target" }), onfilterrelated });
+
+      await waitFor(() => {
+        expect(screen.getByTestId("ctx-filter-related-trigger")).toBeInTheDocument();
+      });
+
+      await user.pointer({ target: screen.getByTestId("ctx-filter-related-trigger") });
+      await user.click(await screen.findByTestId("ctx-filter-parentId"));
+
+      // ANDs: the existing status filter is preserved (not replaced).
+      // Overwrites: the same-kind parentId is replaced with the row's id.
+      expect(filter).toEqual({ status: ["todo"], parentId: "nibs-target" });
+    });
+
+    it("ANDs a different-kind rel filter without disturbing an existing status filter", async () => {
+      let filter: Record<string, unknown> = { status: ["todo"] };
+      const onfilterrelated = (field: RelIdKey, id: string) => {
+        filter = { ...filter, [field]: id };
+      };
+
+      renderMenu({ nib: makeNib({ id: "nibs-target" }), onfilterrelated });
+
+      await waitFor(() => {
+        expect(screen.getByTestId("ctx-filter-related-trigger")).toBeInTheDocument();
+      });
+
+      await user.pointer({ target: screen.getByTestId("ctx-filter-related-trigger") });
+      await user.click(await screen.findByTestId("ctx-filter-blockingId"));
+
+      expect(filter).toEqual({ status: ["todo"], blockingId: "nibs-target" });
     });
   });
 

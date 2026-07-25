@@ -163,3 +163,73 @@ describe("parseQuery — metadata grammar", () => {
     expect(parseQuery("type:bug").filter).not.toHaveProperty("search");
   });
 });
+
+describe("parseQuery — relationship + existence tokens (phase 5)", () => {
+  const cases: { name: string; input: string; expected: ParsedQuery }[] = [
+    // --- all five relationship-id tokens → the correct scalar field ---
+    { name: "blocking:<id>", input: "blocking:tnib-1", expected: { filter: { blockingId: "tnib-1" }, invalidTokens: [] } },
+    { name: "blocked-by:<id> (hyphenated)", input: "blocked-by:tnib-1", expected: { filter: { blockedById: "tnib-1" }, invalidTokens: [] } },
+    { name: "parent:<id>", input: "parent:tnib-1", expected: { filter: { parentId: "tnib-1" }, invalidTokens: [] } },
+    { name: "mentions:<id>", input: "mentions:tnib-1", expected: { filter: { mentionsId: "tnib-1" }, invalidTokens: [] } },
+    { name: "mentioned-by:<id> (hyphenated)", input: "mentioned-by:tnib-1", expected: { filter: { mentionedById: "tnib-1" }, invalidTokens: [] } },
+
+    // --- all seven existence tokens → the correct boolean = true ---
+    { name: "has:parent", input: "has:parent", expected: { filter: { hasParent: true }, invalidTokens: [] } },
+    { name: "no:parent", input: "no:parent", expected: { filter: { noParent: true }, invalidTokens: [] } },
+    { name: "has:blocking", input: "has:blocking", expected: { filter: { hasBlocking: true }, invalidTokens: [] } },
+    { name: "no:blocking", input: "no:blocking", expected: { filter: { noBlocking: true }, invalidTokens: [] } },
+    { name: "has:blocked-by (hyphenated)", input: "has:blocked-by", expected: { filter: { hasBlockedBy: true }, invalidTokens: [] } },
+    { name: "no:blocked-by (hyphenated)", input: "no:blocked-by", expected: { filter: { noBlockedBy: true }, invalidTokens: [] } },
+    { name: "is:blocked", input: "is:blocked", expected: { filter: { isBlocked: true }, invalidTokens: [] } },
+
+    // --- case-insensitive field-names + lowercased id values ---
+    { name: "uppercase rel field + value lowercased", input: "PARENT:TNIB-ABC", expected: { filter: { parentId: "tnib-abc" }, invalidTokens: [] } },
+    { name: "uppercase existence token", input: "HAS:PARENT", expected: { filter: { hasParent: true }, invalidTokens: [] } },
+
+    // --- scalar last-wins: a repeated same-kind token OVERWRITES ---
+    { name: "repeated parent overwrites (last wins)", input: "parent:a parent:b", expected: { filter: { parentId: "b" }, invalidTokens: [] } },
+    { name: "repeated blocking overwrites (last wins)", input: "blocking:x blocking:y", expected: { filter: { blockingId: "y" }, invalidTokens: [] } },
+
+    // --- invalid existence subjects → free text (no such field invented) ---
+    { name: "has:mentions is not a field → free text", input: "has:mentions", expected: { filter: { search: "has:mentions" }, invalidTokens: [] } },
+    { name: "no:mentions is not a field → free text", input: "no:mentions", expected: { filter: { search: "no:mentions" }, invalidTokens: [] } },
+    { name: "has:mentioned-by is not a field → free text", input: "has:mentioned-by", expected: { filter: { search: "has:mentioned-by" }, invalidTokens: [] } },
+    { name: "is:<other> is not a field → free text", input: "is:foo", expected: { filter: { search: "is:foo" }, invalidTokens: [] } },
+
+    // --- negation is metadata-only: negated rel/existence → free text ---
+    { name: "-blocking:x → free text (not a negation feature)", input: "-blocking:x", expected: { filter: { search: "-blocking:x" }, invalidTokens: [] } },
+    { name: "-has:parent → free text", input: "-has:parent", expected: { filter: { search: "-has:parent" }, invalidTokens: [] } },
+    { name: "-parent:x → free text", input: "-parent:x", expected: { filter: { search: "-parent:x" }, invalidTokens: [] } },
+
+    // --- empty value is not a rel token (kept as free text, like metadata) ---
+    { name: "blocking: with empty value is free text", input: "blocking:", expected: { filter: { search: "blocking:" }, invalidTokens: [] } },
+    { name: "parent: with empty value is free text", input: "parent:", expected: { filter: { search: "parent:" }, invalidTokens: [] } },
+
+    // --- rel-id value is scalar: NOT comma-split ---
+    { name: "comma in a rel-id value is taken whole (scalar)", input: "parent:a,b", expected: { filter: { parentId: "a,b" }, invalidTokens: [] } },
+
+    // --- interaction with metadata + free text in one query ---
+    {
+      name: "metadata + existence + rel-id + free text together",
+      input: "type:bug has:parent blocking:tnib-1 login",
+      expected: { filter: { type: ["bug"], hasParent: true, blockingId: "tnib-1", search: "login" }, invalidTokens: [] },
+    },
+    {
+      name: "rel-id and its existence sibling coexist",
+      input: "parent:tnib-1 has:parent",
+      expected: { filter: { parentId: "tnib-1", hasParent: true }, invalidTokens: [] },
+    },
+  ];
+
+  for (const { name, input, expected } of cases) {
+    it(name, () => {
+      expect(parseQuery(input)).toEqual(expected);
+    });
+  }
+
+  it("does not touch the invalid-token sidecar for rel/existence tokens", () => {
+    // Rel-id values are pattern-only (any non-empty value); they never populate
+    // invalidTokens the way a bad enum value does.
+    expect(parseQuery("blocking:whatever").invalidTokens).toEqual([]);
+  });
+});

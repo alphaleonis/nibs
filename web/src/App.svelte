@@ -33,6 +33,7 @@
   import { createLiveNib } from "./lib/liveNib.svelte";
   import type { LiveNib } from "./lib/liveNib.svelte";
   import type { TreeTableNib, RowSubtreeActions } from "./lib/types";
+  import type { RelIdKey } from "./lib/query";
   import * as Resizable from "./lib/components/ui/resizable";
   import type ResizablePane from "./lib/components/ui/resizable/resizable-pane.svelte";
   import { Toaster } from "./lib/components/ui/sonner";
@@ -448,6 +449,14 @@
     contextMenuOpen = true;
   }
 
+  // "Filter related" composition: AND the chosen scalar relationship-id onto the
+  // CURRENT filter (spread preserves other facets; same-kind key overwrites). No
+  // navigation — this only re-filters the table. The box, being unfocused, snaps
+  // to the canonical serialization of the updated filter.
+  function handleFilterRelated(field: RelIdKey, id: string) {
+    prefs.filter = { ...prefs.filter, [field]: id };
+  }
+
   // --- Global keyboard shortcuts ---
   useKeyboardShortcuts({
     selection,
@@ -665,6 +674,7 @@
   hasChildren={contextMenuSubtree?.hasChildren ?? false}
   onexpandchildren={() => contextMenuSubtree?.expandChildren()}
   oncollapsechildren={() => contextMenuSubtree?.collapseChildren()}
+  onfilterrelated={handleFilterRelated}
 />
 
 <!-- Hand the whole composable to the dialog. The dialog reads its display state
