@@ -1,11 +1,13 @@
-import { render, screen, within } from "@testing-library/svelte";
+import { render, screen, within, fireEvent } from "@testing-library/svelte";
 import { userEvent } from "@testing-library/user-event";
-import { describe, it, expect, vi } from "vitest";
+import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
+import { tick } from "svelte";
 import Toolbar from "./Toolbar.svelte";
 import { Preferences } from "../preferences.svelte";
 import { ALL_COLUMN_KEYS, DEFAULT_VISIBLE_COLUMNS } from "../types";
 import { OPEN_STATUSES, OPEN_PLUS_DEFERRED_STATUSES } from "../constants";
 import type { NibFilter, ViewLevel, ColumnKey } from "../types";
+import type { NibSuggestion } from "../query";
 
 // bits-ui scroll lock sets pointer-events: none on <body>, so disable the check
 const user = userEvent.setup({ pointerEventsCheck: 0 });
@@ -1195,5 +1197,185 @@ describe("Toolbar — static autocomplete", () => {
 
     await user.type(screen.getByTestId("filter-keyword"), "title:fo");
     expect(screen.queryByTestId("filter-suggestions")).not.toBeInTheDocument();
+  });
+});
+
+// Phase 6: async ID/title typeahead for relationship-id token values. The caret
+// inside `parent:<here>` / `blocking:<here>` / … fires a DEBOUNCED search against
+// an injected `searchNibs`; candidate nibs render as rich rows (type + title + id
+// + status); selecting one inserts its id. The debounce + stale-response guard
+// live in Toolbar state, so these are component tests with fake timers. A synthetic
+// input event (value + caret set directly) drives typing without coupling userEvent
+// to the fake clock.
+describe("Toolbar — relationship-id async typeahead", () => {
+  beforeEach(() => vi.useFakeTimers());
+  afterEach(() => vi.useRealTimers());
+
+  const nib = (over: Partial<NibSuggestion> = {}): NibSuggestion => ({
+    id: "tnib-abc1",
+    title: "Fix login bug",
+    type: "bug",
+    status: "in-progress",
+    ...over,
+  });
+
+  // Set the input value + caret and dispatch a synthetic input event, then flush.
+  async function typeInto(input: HTMLInputElement, value: string, caret = value.length) {
+    input.value = value;
+    input.setSelectionRange(caret, caret);
+    await fireEvent.input(input);
+    await tick();
+  }
+
+  const flush = async () => {
+    await Promise.resolve();
+    await tick();
+  };
+
+  function setup(searchNibs: (fragment: string) => Promise<NibSuggestion[]>) {
+    const prefs = new Preferences();
+    render(Toolbar, { prefs, oncreatenew: vi.fn(), searchNibs });
+    const input = screen.getByTestId("filter-keyword") as HTMLInputElement;
+    fireEvent.focus(input);
+    return { prefs, input };
+  }
+
+  it("fires ONE debounced query with the current fragment; rapid keystrokes coalesce", async () => {
+    const searchNibs = vi.fn().mockResolvedValue([nib()]);
+    const { input } = setup(searchNibs);
+
+    await typeInto(input, "parent:t");
+    await typeInto(input, "parent:tn");
+    // Still inside the debounce window — no query yet.
+    expect(searchNibs).not.toHaveBeenCalled();
+
+    await vi.advanceTimersByTimeAsync(200);
+
+    // Exactly one query, for the LAST fragment (the earlier keystroke coalesced).
+    expect(searchNibs).toHaveBeenCalledTimes(1);
+    expect(searchNibs).toHaveBeenCalledWith("tn");
+  });
+
+  it("does not query until the debounce delay elapses", async () => {
+    const searchNibs = vi.fn().mockResolvedValue([nib()]);
+    const { input } = setup(searchNibs);
+
+    await typeInto(input, "parent:tn");
+    await vi.advanceTimersByTimeAsync(199);
+    expect(searchNibs).not.toHaveBeenCalled();
+
+    await vi.advanceTimersByTimeAsync(1);
+    expect(searchNibs).toHaveBeenCalledOnce();
+  });
+
+  it("does not query for an empty value (parent: with nothing typed)", async () => {
+    const searchNibs = vi.fn().mockResolvedValue([nib()]);
+    const { input } = setup(searchNibs);
+
+    await typeInto(input, "parent:");
+    await vi.advanceTimersByTimeAsync(500);
+
+    expect(searchNibs).not.toHaveBeenCalled();
+    expect(screen.queryByTestId("filter-suggestions")).not.toBeInTheDocument();
+  });
+
+  it("renders rich candidate rows: type + title + id + status", async () => {
+    const searchNibs = vi
+      .fn()
+      .mockResolvedValue([nib({ id: "tnib-xyz9", title: "Login flow", type: "feature", status: "todo" })]);
+    const { input } = setup(searchNibs);
+
+    await typeInto(input, "parent:log");
+    await vi.advanceTimersByTimeAsync(200);
+    await flush();
+
+    const list = screen.getByTestId("filter-suggestions");
+    expect(within(list).getByText("Login flow")).toBeInTheDocument();
+    expect(within(list).getByText("tnib-xyz9")).toBeInTheDocument();
+    // Type is carried on the row wrapper; status renders via the reused StatusIcon.
+    expect(list.querySelector('[data-nib-type="feature"]')).not.toBeNull();
+    expect(within(list).getByTestId("status-icon")).toBeInTheDocument();
+  });
+
+  it("selecting a candidate inserts its id and updates the parsed filter", async () => {
+    const searchNibs = vi.fn().mockResolvedValue([nib({ id: "tnib-xyz9", title: "Login flow" })]);
+    const { prefs, input } = setup(searchNibs);
+
+    await typeInto(input, "parent:log");
+    await vi.advanceTimersByTimeAsync(200);
+    await flush();
+
+    await fireEvent.click(screen.getByText("Login flow"));
+    await flush();
+
+    expect(input.value).toBe("parent:tnib-xyz9");
+    expect(prefs.filter.parentId).toBe("tnib-xyz9");
+  });
+
+  it("ignores a stale (out-of-order) response — an older in-flight query cannot overwrite a newer one", async () => {
+    // Deferred, in call-order, so we can resolve them out of order. Fragment goes
+    // a → ab → a, so the two "a" queries have the SAME fragment: only the request
+    // sequence guard (not the fragment guard) can drop the stale one.
+    const calls: { fragment: string; resolve: (v: NibSuggestion[]) => void }[] = [];
+    const searchNibs = vi.fn(
+      (fragment: string) =>
+        new Promise<NibSuggestion[]>((resolve) => {
+          calls.push({ fragment, resolve });
+        }),
+    );
+    const { input } = setup(searchNibs);
+
+    await typeInto(input, "parent:a");
+    await vi.advanceTimersByTimeAsync(200); // query 0: fragment "a" (stale-to-be)
+    await typeInto(input, "parent:ab");
+    await vi.advanceTimersByTimeAsync(200); // query 1: fragment "ab"
+    await typeInto(input, "parent:a");
+    await vi.advanceTimersByTimeAsync(200); // query 2: fragment "a" (current)
+
+    expect(calls.map((c) => c.fragment)).toEqual(["a", "ab", "a"]);
+
+    // Newest query resolves first and is shown...
+    calls[2].resolve([nib({ id: "tnib-new1", title: "Newest" })]);
+    await flush();
+    // ...then the ORIGINAL "a" query resolves late and must be ignored.
+    calls[0].resolve([nib({ id: "tnib-old1", title: "Oldest" })]);
+    await flush();
+
+    const list = screen.getByTestId("filter-suggestions");
+    expect(within(list).getByText("Newest")).toBeInTheDocument();
+    expect(within(list).queryByText("Oldest")).not.toBeInTheDocument();
+  });
+
+  it("does NOT take the async path for metadata tokens — static enum completion still shows, no search fires", async () => {
+    const searchNibs = vi.fn().mockResolvedValue([nib()]);
+    const { input } = setup(searchNibs);
+
+    await typeInto(input, "type:bu");
+    await vi.advanceTimersByTimeAsync(500);
+
+    // Static suggestion is shown; the async search is never consulted.
+    expect(within(screen.getByTestId("filter-suggestions")).getByText("bug")).toBeInTheDocument();
+    expect(searchNibs).not.toHaveBeenCalled();
+  });
+
+  it("degrades to no suggestions when the search fn REJECTS (no unhandled rejection / throw)", async () => {
+    // A rejecting searchNibs models a urql client that is undefined (App.test's
+    // mock) → `undefined.query(...)` rejects, or a real transport error that
+    // createNibSearch doesn't swallow. runRelSearch must catch it, not leak it.
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    const searchNibs = vi.fn().mockRejectedValue(new Error("boom"));
+    const { input } = setup(searchNibs);
+
+    await typeInto(input, "parent:x");
+    await vi.advanceTimersByTimeAsync(200);
+    await flush();
+
+    // The query fired, but the rejection was swallowed: the popover shows no
+    // rel candidate rows and the component did not throw.
+    expect(searchNibs).toHaveBeenCalledOnce();
+    expect(screen.queryByTestId("filter-suggestions")).not.toBeInTheDocument();
+    expect(warn).toHaveBeenCalled();
+
+    warn.mockRestore();
   });
 });

@@ -22,3 +22,8 @@ export type { Span, SpanKind } from "./spans";
 // relationship-id NibFilter keys — the field the row context menu's "Filter
 // related" items compose onto the current filter.
 export type { RelIdKey, ExistenceKey } from "./relations";
+// Async ID/title typeahead for relationship-id token values (phase 6). The pure
+// caret-in-value detector + the candidate-row shape; the debounced fetch lives in
+// the Toolbar, the search fn in `../searchNibs`.
+export { relTokenValueContext } from "./relComplete";
+export type { RelValueContext, NibSuggestion } from "./relComplete";

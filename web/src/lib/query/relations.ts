@@ -36,7 +36,9 @@ export type ExistenceKey =
   | "isBlocked";
 
 // Token field-name → scalar-id NibFilter key. Includes the hyphenated names.
-const REL_ID_FIELDS: Record<string, RelIdKey> = {
+// Exported so the rel-token typeahead detector (relComplete.ts) recognizes the
+// same five field-names without duplicating the set.
+export const REL_ID_FIELDS: Record<string, RelIdKey> = {
   parent: "parentId",
   blocking: "blockingId",
   "blocked-by": "blockedById",

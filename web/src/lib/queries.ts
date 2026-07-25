@@ -194,6 +194,21 @@ export const TREE_TABLE_QUERY = graphql(`
   }
 `);
 
+// Lean typeahead query for the relationship-id token completion (phase 6). Reuses
+// the existing `nibs` search resolver (Bleve matches an ID fragment AND title) but
+// selects only the four fields a candidate row shows, under its own operation name
+// so its urql result-source stays independent of the tree-table list query.
+export const SEARCH_NIBS_QUERY = graphql(`
+  query SearchNibs($search: String!) {
+    nibs(filter: { search: $search }) {
+      id
+      title
+      type
+      status
+    }
+  }
+`);
+
 export const NIB_CHANGED_SUBSCRIPTION = graphql(`
   subscription NibChanged($id: ID) {
     nibChanged(id: $id) {

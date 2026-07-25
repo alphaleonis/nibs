@@ -25,6 +25,7 @@ type Documents = {
     "\n  mutation SetParent($id: ID!, $parentId: String) {\n    setParent(id: $id, parentId: $parentId) {\n      id\n      title\n      status\n      type\n      priority\n      estimate\n      tags\n      etag\n      parentId\n    }\n  }\n": typeof types.SetParentDocument,
     "\n  mutation ReorderNib($id: ID!, $afterId: ID, $beforeId: ID, $first: Boolean, $parentId: String) {\n    reorderNib(id: $id, afterId: $afterId, beforeId: $beforeId, first: $first, parentId: $parentId) {\n      id\n      title\n      status\n      type\n      priority\n      estimate\n      tags\n      etag\n      parentId\n      order\n    }\n  }\n": typeof types.ReorderNibDocument,
     "\n  query TreeTable($filter: NibFilter) {\n    nibs(filter: $filter, sort: { field: ORDER, direction: ASC }) {\n      id\n      title\n      status\n      type\n      priority\n      estimate\n      tags\n      createdAt\n      updatedAt\n      parentId\n      blockingIds\n      blockedByIds\n    }\n  }\n": typeof types.TreeTableDocument,
+    "\n  query SearchNibs($search: String!) {\n    nibs(filter: { search: $search }) {\n      id\n      title\n      type\n      status\n    }\n  }\n": typeof types.SearchNibsDocument,
     "\n  subscription NibChanged($id: ID) {\n    nibChanged(id: $id) {\n      type\n      nibId\n      nib {\n        id\n        title\n        status\n        type\n        priority\n        estimate\n        tags\n        body\n        etag\n        updatedAt\n        parentId\n        blockingIds\n        blockedByIds\n      }\n    }\n  }\n": typeof types.NibChangedDocument,
 };
 const documents: Documents = {
@@ -39,6 +40,7 @@ const documents: Documents = {
     "\n  mutation SetParent($id: ID!, $parentId: String) {\n    setParent(id: $id, parentId: $parentId) {\n      id\n      title\n      status\n      type\n      priority\n      estimate\n      tags\n      etag\n      parentId\n    }\n  }\n": types.SetParentDocument,
     "\n  mutation ReorderNib($id: ID!, $afterId: ID, $beforeId: ID, $first: Boolean, $parentId: String) {\n    reorderNib(id: $id, afterId: $afterId, beforeId: $beforeId, first: $first, parentId: $parentId) {\n      id\n      title\n      status\n      type\n      priority\n      estimate\n      tags\n      etag\n      parentId\n      order\n    }\n  }\n": types.ReorderNibDocument,
     "\n  query TreeTable($filter: NibFilter) {\n    nibs(filter: $filter, sort: { field: ORDER, direction: ASC }) {\n      id\n      title\n      status\n      type\n      priority\n      estimate\n      tags\n      createdAt\n      updatedAt\n      parentId\n      blockingIds\n      blockedByIds\n    }\n  }\n": types.TreeTableDocument,
+    "\n  query SearchNibs($search: String!) {\n    nibs(filter: { search: $search }) {\n      id\n      title\n      type\n      status\n    }\n  }\n": types.SearchNibsDocument,
     "\n  subscription NibChanged($id: ID) {\n    nibChanged(id: $id) {\n      type\n      nibId\n      nib {\n        id\n        title\n        status\n        type\n        priority\n        estimate\n        tags\n        body\n        etag\n        updatedAt\n        parentId\n        blockingIds\n        blockedByIds\n      }\n    }\n  }\n": types.NibChangedDocument,
 };
 
@@ -100,6 +102,10 @@ export function graphql(source: "\n  mutation ReorderNib($id: ID!, $afterId: ID,
  * The graphql function is used to parse GraphQL queries into a document that can be used by GraphQL clients.
  */
 export function graphql(source: "\n  query TreeTable($filter: NibFilter) {\n    nibs(filter: $filter, sort: { field: ORDER, direction: ASC }) {\n      id\n      title\n      status\n      type\n      priority\n      estimate\n      tags\n      createdAt\n      updatedAt\n      parentId\n      blockingIds\n      blockedByIds\n    }\n  }\n"): (typeof documents)["\n  query TreeTable($filter: NibFilter) {\n    nibs(filter: $filter, sort: { field: ORDER, direction: ASC }) {\n      id\n      title\n      status\n      type\n      priority\n      estimate\n      tags\n      createdAt\n      updatedAt\n      parentId\n      blockingIds\n      blockedByIds\n    }\n  }\n"];
+/**
+ * The graphql function is used to parse GraphQL queries into a document that can be used by GraphQL clients.
+ */
+export function graphql(source: "\n  query SearchNibs($search: String!) {\n    nibs(filter: { search: $search }) {\n      id\n      title\n      type\n      status\n    }\n  }\n"): (typeof documents)["\n  query SearchNibs($search: String!) {\n    nibs(filter: { search: $search }) {\n      id\n      title\n      type\n      status\n    }\n  }\n"];
 /**
  * The graphql function is used to parse GraphQL queries into a document that can be used by GraphQL clients.
  */

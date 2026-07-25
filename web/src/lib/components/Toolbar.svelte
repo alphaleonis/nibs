@@ -20,8 +20,10 @@
   import { priorityIndicators } from "../badges";
   import type { TypeIconInfo } from "../icons";
   import { resolveFilter, resolveViewLevel, resolveVisibleColumns, resolveColumnOrder, emitFilter as emitFilterHelper } from "../resolvePrefs";
-  import { parseQuery, serializeQuery, getCompletion, tokenizeSpans } from "../query";
-  import type { Completion, QueryFilter, SpanKind } from "../query";
+  import { parseQuery, serializeQuery, getCompletion, tokenizeSpans, relTokenValueContext } from "../query";
+  import type { Completion, QueryFilter, SpanKind, RelValueContext, NibSuggestion } from "../query";
+  import { createNibSearch, type SearchNibsFn } from "../searchNibs";
+  import { getContextClient } from "@urql/svelte";
   import { untrack, tick } from "svelte";
   import * as DropdownMenu from "$lib/components/ui/dropdown-menu/index.js";
   import { buttonVariants } from "$lib/components/ui/button/index.js";
@@ -55,6 +57,7 @@
     onpositionchange = undefined as ((p: DetailPanelPosition) => void) | undefined,
     availableTags = [],
     projectName = "",
+    searchNibs = undefined,
   }: {
     prefs?: Preferences;
     filter?: NibFilter;
@@ -77,7 +80,24 @@
     onpositionchange?: (p: DetailPanelPosition) => void;
     availableTags?: string[];
     projectName?: string;
+    searchNibs?: SearchNibsFn;
   } = $props();
+
+  // Relationship-id typeahead search. Defaults to one built from the urql context
+  // client; tests inject `searchNibs` and render Toolbar without a urql provider,
+  // so a missing context here is tolerated (the default is never used then). The
+  // prop is set once — read it untracked (a plain init-time capture, like the
+  // `keywordText` seed below) to avoid a reactivity warning.
+  const injectedSearch = untrack(() => searchNibs);
+  let contextSearchNibs: SearchNibsFn | null = null;
+  if (!injectedSearch) {
+    try {
+      contextSearchNibs = createNibSearch(getContextClient());
+    } catch {
+      contextSearchNibs = null;
+    }
+  }
+  const effectiveSearchNibs: SearchNibsFn = injectedSearch ?? contextSearchNibs ?? (async () => []);
 
   let resolvedDensity = $derived(prefs ? prefs.rowDensity : rowDensity);
 
@@ -363,29 +383,99 @@
   function clearKeyword() {
     keywordText = "";
     setInvalidTokens([]);
-    completion = null;
+    clearCompletion();
     const updated: NibFilter = { ...resolvedFilter };
     for (const key of BOX_FIELD_KEYS) delete updated[key];
     emitFilter(updated);
     keywordInput?.focus();
   }
 
-  // --- Static autocomplete (field names / enum values / existing tags) ---
-  let completion = $state<Completion | null>(null);
+  // --- Autocomplete: static metadata completion + async relationship typeahead ---
+  // `active` unifies the two suggestion sources behind one popover + keyboard nav:
+  //  - "static": the synchronous metadata / enum / tag completion (phases 2–3).
+  //  - "rel":    the caret sits in a relationship-id token's VALUE; candidate nibs
+  //              are fetched asynchronously (debounced) and held in `relResults`.
+  type ActiveCompletion =
+    | { kind: "static"; completion: Completion }
+    | { kind: "rel"; ctx: RelValueContext };
+  let active = $state<ActiveCompletion | null>(null);
   let suggestIndex = $state(-1);
   let suggestBlurTimer: ReturnType<typeof setTimeout> | null = null;
 
-  // Recompute the caret-token suggestions from the input's current value + caret.
-  function refreshCompletion() {
-    if (!keywordInput) { completion = null; return; }
-    const caret = keywordInput.selectionStart ?? keywordInput.value.length;
-    completion = getCompletion(keywordInput.value, caret, availableTags);
-    suggestIndex = -1;
+  // Async rel-token typeahead: debounced search + in-flight/stale-response guard.
+  const REL_SEARCH_DEBOUNCE_MS = 200;
+  let relResults = $state<NibSuggestion[]>([]);
+  let relDebounceTimer: ReturnType<typeof setTimeout> | null = null;
+  // Bumped per fired query; a resolved response whose seq is no longer current is
+  // dropped (a newer keystroke superseded it).
+  let relRequestSeq = 0;
+
+  // Row count for whichever source is active — keyboard nav + render read this.
+  let activeItemCount = $derived(
+    !active ? 0 : active.kind === "static" ? active.completion.items.length : relResults.length,
+  );
+
+  function cancelRelSearch() {
+    if (relDebounceTimer) { clearTimeout(relDebounceTimer); relDebounceTimer = null; }
   }
 
+  // Recompute the caret-token suggestions. A rel-token value context routes to the
+  // async path (debounced fetch); otherwise fall back to static completion.
+  function refreshCompletion() {
+    if (!keywordInput) { active = null; relResults = []; cancelRelSearch(); return; }
+    const value = keywordInput.value;
+    const caret = keywordInput.selectionStart ?? value.length;
+    suggestIndex = -1;
+
+    const relCtx = relTokenValueContext(value, caret);
+    if (relCtx) {
+      active = { kind: "rel", ctx: relCtx };
+      scheduleRelSearch(relCtx.fragment);
+      return;
+    }
+
+    // Left any rel context: drop stale rich rows + any pending fetch.
+    cancelRelSearch();
+    relResults = [];
+    const c = getCompletion(value, caret, availableTags);
+    active = c ? { kind: "static", completion: c } : null;
+  }
+
+  function scheduleRelSearch(fragment: string) {
+    cancelRelSearch();
+    // Empty fragment (`parent:` with nothing typed yet): don't query — show
+    // nothing until the user types at least one character.
+    if (fragment === "") { relResults = []; return; }
+    relDebounceTimer = setTimeout(() => {
+      relDebounceTimer = null;
+      void runRelSearch(fragment);
+    }, REL_SEARCH_DEBOUNCE_MS);
+  }
+
+  async function runRelSearch(fragment: string) {
+    const seq = ++relRequestSeq;
+    // A rejecting search fn (injected/derived one whose promise rejects, or a
+    // real transport error `createNibSearch` doesn't swallow) degrades to "no
+    // suggestions" rather than surfacing as an unhandled rejection — the caller
+    // invokes this as `void runRelSearch(...)` with no `.catch`.
+    let results: NibSuggestion[];
+    try {
+      results = await effectiveSearchNibs(fragment);
+    } catch (err) {
+      console.warn("rel-token search failed:", err);
+      results = [];
+    }
+    // Stale guard: drop the response if a newer query started, or the caret has
+    // since left a rel context / moved to a different fragment.
+    if (seq !== relRequestSeq) return;
+    if (!active || active.kind !== "rel" || active.ctx.fragment !== fragment) return;
+    relResults = results;
+  }
+
+  // Insert a chosen static suggestion (field name / enum value / tag).
   async function applyCompletion(item: string) {
-    if (!completion || !keywordInput) return;
-    const { text, caret } = completion.apply(item);
+    if (!active || active.kind !== "static" || !keywordInput) return;
+    const { text, caret } = active.completion.apply(item);
     keywordText = text;
     emitFromText(text);
     await tick();
@@ -395,24 +485,46 @@
     refreshCompletion();
   }
 
+  // Insert a chosen candidate nib's id, replacing the token's partial value run.
+  async function applyRelSelection(nib: NibSuggestion) {
+    if (!active || active.kind !== "rel" || !keywordInput) return;
+    const { start, end } = active.ctx;
+    const text = keywordText.slice(0, start) + nib.id + keywordText.slice(end);
+    const caret = start + nib.id.length;
+    keywordText = text;
+    emitFromText(text);
+    await tick();
+    keywordInput.focus();
+    keywordInput.setSelectionRange(caret, caret);
+    refreshCompletion();
+  }
+
   function handleKeywordKeydown(event: KeyboardEvent) {
-    if (!completion || completion.items.length === 0) return;
+    if (!active || activeItemCount === 0) return;
     if (event.key === "ArrowDown") {
       event.preventDefault();
-      suggestIndex = (suggestIndex + 1) % completion.items.length;
+      suggestIndex = (suggestIndex + 1) % activeItemCount;
     } else if (event.key === "ArrowUp") {
       event.preventDefault();
-      suggestIndex = suggestIndex <= 0 ? completion.items.length - 1 : suggestIndex - 1;
+      suggestIndex = suggestIndex <= 0 ? activeItemCount - 1 : suggestIndex - 1;
     } else if (event.key === "Enter") {
-      if (suggestIndex >= 0 && suggestIndex < completion.items.length) {
+      if (suggestIndex >= 0 && suggestIndex < activeItemCount) {
         event.preventDefault();
-        applyCompletion(completion.items[suggestIndex]);
+        if (active.kind === "static") applyCompletion(active.completion.items[suggestIndex]);
+        else applyRelSelection(relResults[suggestIndex]);
       }
     } else if (event.key === "Escape") {
       event.preventDefault();
-      completion = null;
-      suggestIndex = -1;
+      clearCompletion();
     }
+  }
+
+  // Drop the active popover + any pending/held rel results.
+  function clearCompletion() {
+    active = null;
+    relResults = [];
+    cancelRelSearch();
+    suggestIndex = -1;
   }
 
   function handleKeywordFocus() {
@@ -428,10 +540,13 @@
     if (suggestBlurTimer) clearTimeout(suggestBlurTimer);
     suggestBlurTimer = setTimeout(() => {
       suggestBlurTimer = null;
-      completion = null;
-      suggestIndex = -1;
+      clearCompletion();
     }, 150);
   }
+
+  // Cancel a pending debounced search on unmount so a fake-timer test (or a real
+  // teardown) can't fire a fetch after the component is gone.
+  $effect(() => () => cancelRelSearch());
 
   function toggleArrayValue(arr: string[] | undefined, value: string): string[] | undefined {
     if (!arr) return [value];
@@ -660,16 +775,38 @@
       </TooltipButton>
     {/if}
 
-    <!-- Static autocomplete popover, anchored below the input. Shown while the
-         box is focused and the caret token has suggestions. -->
-    {#if completion}
+    <!-- Autocomplete popover, anchored below the input. Static path: plain-string
+         metadata/enum/tag rows. Rel path: rich candidate-nib rows (type icon +
+         title + id + status) from the debounced search, shown only once results
+         land. Both share the keyboard nav + active-highlight. -->
+    {#if active?.kind === "static"}
       <SuggestionList
-        items={completion.items}
+        items={active.completion.items}
         activeIndex={suggestIndex}
         onselect={(item) => applyCompletion(item)}
         testId="filter-suggestions"
         itemTestId="filter-suggestion"
       />
+    {:else if active?.kind === "rel" && relResults.length > 0}
+      <SuggestionList
+        items={relResults}
+        activeIndex={suggestIndex}
+        onselect={(nib) => applyRelSelection(nib)}
+        itemKey={(nib) => nib.id}
+        testId="filter-suggestions"
+        itemTestId="filter-suggestion"
+      >
+        {#snippet item(nib)}
+          <span class="flex w-full items-center gap-2" data-nib-type={nib.type}>
+            <TypeIcon type={nib.type} size={14} />
+            <span class="min-w-0 flex-1 truncate">{nib.title}</span>
+            <span class="ml-auto flex shrink-0 items-center gap-1.5 text-muted-foreground">
+              <span class="font-mono text-caption">{nib.id}</span>
+              <StatusIcon status={nib.status} />
+            </span>
+          </span>
+        {/snippet}
+      </SuggestionList>
     {/if}
 
     <!-- Simple, non-overlay marker for known-field tokens with an invalid value
