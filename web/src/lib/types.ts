@@ -6,6 +6,7 @@ export interface NibSummary {
   priority: string;
   estimate: string;
   tags: string[];
+  createdAt: string;
   updatedAt: string;
 }
 
@@ -61,11 +62,30 @@ export interface RowSubtreeActions {
   collapseChildren: () => void;
 }
 
-export const VIEW_LEVELS = ["none", "milestones", "epics", "features"] as const;
+export const VIEW_LEVELS = ["none", "flat", "milestones", "epics", "features"] as const;
 export type ViewLevel = (typeof VIEW_LEVELS)[number];
 
-export const ALL_COLUMN_KEYS = ["id", "parent", "type", "title", "state", "effort", "tags", "blocking", "blockedBy"] as const;
-export type ColumnKey = (typeof ALL_COLUMN_KEYS)[number];
+// Client-side table sort. Absent/null means "off" (manual `order` sequence).
+// Applied in every view: a flat sorted list in Flat, sibling-sort (siblings,
+// roots, grouping-bucket items, and promoted group headers reordered, nesting
+// preserved) in the Tree + grouping-lens views. The field union is
+// single-sourced as `SortKey` in columns.ts (the sortable ColumnKey subset);
+// `SortField` re-exports it so the many "./types" importers keep working without
+// duplicating the set.
+export type SortField = SortKey;
+export type SortDirection = "asc" | "desc";
+export interface TableSort {
+  field: SortField;
+  direction: SortDirection;
+}
+
+// The column model lives in columns.ts (pure, zero Svelte dependency). These are
+// re-exported here so the many existing importers of "./types" keep working; the
+// canonical definitions are single-sourced in columns.ts.
+import { COLUMNS, ALL_COLUMN_KEYS, DEFAULT_COLUMN_WIDTHS, DEFAULT_VISIBLE_COLUMNS } from "./columns";
+import type { ColumnKey, SortKey } from "./columns";
+export { ALL_COLUMN_KEYS, DEFAULT_COLUMN_WIDTHS, DEFAULT_VISIBLE_COLUMNS };
+export type { ColumnKey, SortKey };
 
 export interface ColumnConfig {
   key: ColumnKey;
@@ -76,33 +96,16 @@ export interface ColumnConfig {
   defaultVisible?: boolean;
 }
 
-export const DEFAULT_COLUMNS: ColumnConfig[] = [
-  { key: "id", label: "ID", alwaysVisible: false },
-  { key: "parent", label: "Parent", alwaysVisible: false },
-  { key: "type", label: "Type", alwaysVisible: false },
-  { key: "title", label: "Title", alwaysVisible: true },
-  { key: "state", label: "State", alwaysVisible: false },
-  { key: "effort", label: "Effort", alwaysVisible: false },
-  { key: "tags", label: "Tags", alwaysVisible: false },
-  { key: "blocking", label: "Blocking", alwaysVisible: false, defaultVisible: false },
-  { key: "blockedBy", label: "Blocked by", alwaysVisible: false, defaultVisible: false },
-];
-
-// Columns shown when a view level has no persisted column configuration. Opt-in
-// columns (defaultVisible: false) are excluded; everything else is on by default.
-export const DEFAULT_VISIBLE_COLUMNS: ColumnKey[] = DEFAULT_COLUMNS.filter((c) => c.defaultVisible !== false).map((c) => c.key);
-
-export const DEFAULT_COLUMN_WIDTHS: Record<ColumnKey, number> = {
-  id: 100,
-  parent: 160,
-  type: 80,
-  title: 400,
-  state: 120,
-  effort: 70,
-  tags: 150,
-  blocking: 90,
-  blockedBy: 100,
-};
+// Derived from COLUMNS, order-preserving. Feeds the Columns dropdown config and
+// the persistence layer. Preserves the legacy convention that a default-visible
+// column omits `defaultVisible` (present-and-false only for opt-in columns), so
+// existing consumers/tests that key off its presence stay valid.
+export const DEFAULT_COLUMNS: ColumnConfig[] = ALL_COLUMN_KEYS.map((key) => {
+  const c = COLUMNS[key];
+  const config: ColumnConfig = { key: c.key, label: c.label, alwaysVisible: c.alwaysVisible };
+  if (!c.defaultVisible) config.defaultVisible = false;
+  return config;
+});
 
 export const DEFAULT_DETAIL_PANEL_WIDTH = 400;
 export const MIN_DETAIL_PANEL_WIDTH = 200;
@@ -194,6 +197,7 @@ export interface FilterPreferences {
   viewLevel: ViewLevel;
   columnVisibility?: Partial<Record<ViewLevel, ColumnKey[]>>;
   columnWidths?: Partial<Record<ViewLevel, Partial<Record<ColumnKey, number>>>>;
+  columnOrder?: Partial<Record<ViewLevel, ColumnKey[]>>;
   detailPanelWidth?: number;
   detailPanelPosition?: DetailPanelPosition;
   detailPanelHeight?: number;
@@ -202,4 +206,5 @@ export interface FilterPreferences {
   blockedEmphasis?: BlockedEmphasis;
   theme?: Theme;
   previewOpen?: boolean;
+  tableSort?: TableSort;
 }

@@ -1,6 +1,8 @@
 <script lang="ts">
-  import { VIEW_LEVELS, DEFAULT_COLUMNS, ALL_COLUMN_KEYS, DEFAULT_THEME, DEFAULT_DETAIL_PANEL_POSITION, DEFAULT_BLOCKED_EMPHASIS, DEFAULT_FONT_SIZE } from "../types";
-  import type { NibFilter, ViewLevel, ColumnKey, RowDensity, FontSize, Theme, DetailPanelPosition, BlockedEmphasis } from "../types";
+  import { VIEW_LEVELS, DEFAULT_THEME, DEFAULT_DETAIL_PANEL_POSITION, DEFAULT_BLOCKED_EMPHASIS, DEFAULT_FONT_SIZE } from "../types";
+  import type { NibFilter, ViewLevel, RowDensity, FontSize, Theme, DetailPanelPosition, BlockedEmphasis } from "../types";
+  import { ALL_COLUMN_KEYS, COLUMNS } from "../columns";
+  import type { ColumnKey } from "../columns";
   import type { Preferences } from "../preferences.svelte";
   import { TYPES, STATUSES, PRIORITIES, ESTIMATES, ESTIMATE_LABELS, OPEN_STATUSES, OPEN_PLUS_DEFERRED_STATUSES } from "../constants";
   import {
@@ -10,12 +12,13 @@
     Columns3,
     Eye,
     ListTree,
+    List,
     ListFilter,
   } from "@lucide/svelte";
   import { typeIcons } from "../icons";
   import { priorityIndicators } from "../badges";
   import type { TypeIconInfo } from "../icons";
-  import { resolveFilter, resolveViewLevel, resolveVisibleColumns, emitFilter as emitFilterHelper } from "../resolvePrefs";
+  import { resolveFilter, resolveViewLevel, resolveVisibleColumns, resolveColumnOrder, emitFilter as emitFilterHelper } from "../resolvePrefs";
   import * as DropdownMenu from "$lib/components/ui/dropdown-menu/index.js";
   import { buttonVariants } from "$lib/components/ui/button/index.js";
   import { Input } from "$lib/components/ui/input/index.js";
@@ -33,6 +36,7 @@
     onviewlevelchange = undefined as ((level: ViewLevel) => void) | undefined,
     visibleColumns = undefined as ColumnKey[] | undefined,
     oncolumnschange = undefined as ((columns: ColumnKey[]) => void) | undefined,
+    columnOrder = undefined as ColumnKey[] | undefined,
     oncreatenew = undefined as ((type: string) => void) | undefined,
     rowDensity = "compact" as RowDensity,
     ondensitychange = undefined as ((density: RowDensity) => void) | undefined,
@@ -54,6 +58,7 @@
     onviewlevelchange?: (level: ViewLevel) => void;
     visibleColumns?: ColumnKey[];
     oncolumnschange?: (columns: ColumnKey[]) => void;
+    columnOrder?: ColumnKey[];
     oncreatenew?: (type: string) => void;
     rowDensity?: RowDensity;
     ondensitychange?: (density: RowDensity) => void;
@@ -121,6 +126,7 @@
 
   const VIEW_LEVEL_ICON_INFO: Record<ViewLevel, TypeIconInfo> = {
     none: { icon: ListTree, color: "var(--muted-foreground)" },
+    flat: { icon: List, color: "var(--muted-foreground)" },
     milestones: typeIcons.milestone,
     epics: typeIcons.epic,
     features: typeIcons.feature,
@@ -130,6 +136,9 @@
   let resolvedFilter = $derived(resolveFilter(prefs, filter));
   let resolvedViewLevel = $derived(resolveViewLevel(prefs, viewLevel));
   let resolvedVisibleColumns = $derived(resolveVisibleColumns(prefs, visibleColumns));
+  // The per-view column order — the visible set is re-sorted by it on toggle so a
+  // re-shown column lands in its user-chosen position, not the canonical one.
+  let resolvedColumnOrder = $derived(resolveColumnOrder(prefs, columnOrder));
   let ViewLevelIcon = $derived(VIEW_LEVEL_ICON_INFO[resolvedViewLevel].icon);
 
   // Static trigger labels shared by each control's aria-label and its Tooltip.Content,
@@ -143,11 +152,14 @@
   let columnsOpen = $state(false);
   let viewLevelIconInfo = $derived(VIEW_LEVEL_ICON_INFO[resolvedViewLevel]);
 
-  // Parent is a normal toggleable column in every lens now.
-  let columnOptions = $derived(DEFAULT_COLUMNS);
+  // The Columns dropdown derives directly from the column model (single source):
+  // canonical order, each option carrying label + alwaysVisible. Parent is a
+  // normal toggleable column in every lens now.
+  let columnOptions = $derived(ALL_COLUMN_KEYS.map((key) => COLUMNS[key]));
 
   const VIEW_LEVEL_LABELS: Record<ViewLevel, string> = {
-    none: "None",
+    none: "Tree",
+    flat: "Flat",
     milestones: "Milestones",
     epics: "Epics",
     features: "Features & Bugs",
@@ -173,10 +185,11 @@
     } else {
       updated = resolvedVisibleColumns.filter(k => k !== key);
     }
-    // Maintain canonical column order
-    updated.sort((a, b) => ALL_COLUMN_KEYS.indexOf(a) - ALL_COLUMN_KEYS.indexOf(b));
+    // Keep the visible set ordered by the per-view columnOrder (falls back to the
+    // canonical ALL_COLUMN_KEYS order when no custom order is set).
+    updated.sort((a, b) => resolvedColumnOrder.indexOf(a) - resolvedColumnOrder.indexOf(b));
     if (prefs) {
-      prefs.columnVisibility = { ...prefs.columnVisibility, [prefs.viewLevel]: updated };
+      prefs.visibility.setLevel(prefs.viewLevel, updated);
     } else {
       oncolumnschange?.(updated);
     }

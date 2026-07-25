@@ -23,6 +23,7 @@ function makeTreeTableNib(overrides: Partial<TreeTableNib> = {}): TreeTableNib {
     priority: "high",
     estimate: "m",
     tags: ["auth"],
+    createdAt: "2026-03-15T10:00:00Z",
     updatedAt: "2026-03-20T10:00:00Z",
     parentId: null,
     blockingIds: [],
@@ -219,7 +220,7 @@ describe("TreeTable", () => {
     expect(screen.getByText("The child task")).toBeInTheDocument();
   });
 
-  it("shows loading indicator while fetching", () => {
+  it("shows loading indicator on the initial load (fetching, no data yet)", () => {
     mockQueryStore.mockReturnValue(
       readable({ fetching: true, error: undefined, data: undefined, stale: false }) as any
     );
@@ -227,6 +228,34 @@ describe("TreeTable", () => {
     renderTreeTable({ filter: {} });
 
     expect(screen.getByText(/loading/i)).toBeInTheDocument();
+  });
+
+  // A background refetch is `fetching: true` while data is already present (the
+  // NIB_CHANGED_SUBSCRIPTION-driven live refetch). The table must stay mounted so
+  // an in-progress column drag/resize, an open inline editor, and scroll position
+  // survive — "Loading..." must NOT replace the populated rows.
+  // Bites: reverting the gate to the unguarded `{#if dataSource.fetching}` shows
+  // "Loading..." over the existing data and drops the rows, failing this test.
+  it("keeps the table mounted during a background refetch (fetching with data present)", () => {
+    const nibs: TreeTableNib[] = [
+      makeTreeTableNib({ id: "nibs-m1", title: "Milestone", type: "milestone" }),
+      makeTreeTableNib({ id: "nibs-001", title: "First task", parentId: "nibs-m1" }),
+    ];
+
+    // fetching=true AND non-empty data: a live background refetch, not initial load.
+    mockQueryStore.mockReturnValue(
+      readable({ fetching: true, error: undefined, data: { nibs }, stale: false }) as any
+    );
+
+    const { container } = renderTreeTable({ filter: {} });
+
+    // The populated table stays rendered — rows are still present.
+    const dataRows = container.querySelectorAll("tr[data-testid='tree-row']");
+    expect(dataRows).toHaveLength(2);
+    expect(screen.getByText("First task")).toBeInTheDocument();
+
+    // The initial-load "Loading..." state must NOT replace the table.
+    expect(screen.queryByText(/loading/i)).not.toBeInTheDocument();
   });
 
   it("shows empty state when no nibs returned", () => {
@@ -896,6 +925,78 @@ describe("TreeTable", () => {
     expect(grownWidth).toBe(baseWidth + DEFAULT_COLUMN_WIDTHS.blocking + DEFAULT_COLUMN_WIDTHS.blockedBy);
   });
 
+  it("renders Created and Modified headers when those columns are visible", () => {
+    const nibs: TreeTableNib[] = [
+      makeTreeTableNib({ id: "nibs-001", title: "Epic A", type: "epic" }),
+    ];
+
+    mockQueryStore.mockReturnValue(
+      readable({ fetching: false, error: undefined, data: { nibs }, stale: false }) as any
+    );
+
+    const visibleColumns: ColumnKey[] = ["title", "created", "modified"];
+    const { container } = renderTreeTable({
+      filter: {},
+      viewLevel: "epics" as ViewLevel,
+      visibleColumns,
+    });
+
+    const thead = container.querySelector("thead")!;
+    const headers = Array.from(thead.querySelectorAll("th")).map(th => th.textContent?.trim());
+    expect(headers).toContain("Created");
+    expect(headers).toContain("Modified");
+  });
+
+  it("omits Created and Modified headers when those columns are not visible", () => {
+    const nibs: TreeTableNib[] = [
+      makeTreeTableNib({ id: "nibs-001", title: "Epic A", type: "epic" }),
+    ];
+
+    mockQueryStore.mockReturnValue(
+      readable({ fetching: false, error: undefined, data: { nibs }, stale: false }) as any
+    );
+
+    // A visible set without created / modified.
+    const visibleColumns: ColumnKey[] = ["id", "parent", "type", "title", "state", "effort", "tags"];
+    const { container } = renderTreeTable({
+      filter: {},
+      viewLevel: "epics" as ViewLevel,
+      visibleColumns,
+    });
+
+    const thead = container.querySelector("thead")!;
+    const headers = Array.from(thead.querySelectorAll("th")).map(th => th.textContent?.trim());
+    expect(headers).not.toContain("Created");
+    expect(headers).not.toContain("Modified");
+  });
+
+  it("table width grows by the created/modified column widths when they are shown", () => {
+    const nibs: TreeTableNib[] = [
+      makeTreeTableNib({ id: "nibs-001", title: "Epic A", type: "epic" }),
+    ];
+
+    mockQueryStore.mockReturnValue(
+      readable({ fetching: false, error: undefined, data: { nibs }, stale: false }) as any
+    );
+
+    const base = renderTreeTable({
+      filter: {},
+      viewLevel: "epics" as ViewLevel,
+      visibleColumns: ["title"] as ColumnKey[],
+    });
+    const baseWidth = parseInt((base.container.querySelector("table") as HTMLElement).style.width, 10);
+
+    const withCols = renderTreeTable({
+      filter: {},
+      viewLevel: "epics" as ViewLevel,
+      visibleColumns: ["title", "created", "modified"] as ColumnKey[],
+    });
+    const grownWidth = parseInt((withCols.container.querySelector("table") as HTMLElement).style.width, 10);
+
+    // created + modified default widths added to the base table width.
+    expect(grownWidth).toBe(baseWidth + DEFAULT_COLUMN_WIDTHS.created + DEFAULT_COLUMN_WIDTHS.modified);
+  });
+
   it("parent column hidden by visibleColumns exclusion", () => {
     const nibs: TreeTableNib[] = [
       makeTreeTableNib({ id: "nibs-001", title: "Epic A", type: "epic" }),
@@ -978,6 +1079,356 @@ describe("TreeTable", () => {
     // Search flattens results out of tree order, so drag must be disabled.
     const draggableRows = container.querySelectorAll("tr.draggable");
     expect(draggableRows).toHaveLength(0);
+  });
+
+  describe("table sort — date columns", () => {
+    // Two root tasks whose created/modified ordering differ, so a sort visibly
+    // reorders the rows away from the incoming (manual `order`) sequence.
+    function renderFlat(props: Record<string, unknown> = {}, viewLevel: ViewLevel = "flat" as ViewLevel) {
+      const nibs: TreeTableNib[] = [
+        makeTreeTableNib({ id: "nibs-001", title: "First", type: "task", createdAt: "2026-01-01T00:00:00Z", updatedAt: "2026-03-01T00:00:00Z" }),
+        makeTreeTableNib({ id: "nibs-002", title: "Second", type: "task", createdAt: "2026-02-01T00:00:00Z", updatedAt: "2026-01-01T00:00:00Z" }),
+      ];
+      mockQueryStore.mockReturnValue(
+        readable({ fetching: false, error: undefined, data: { nibs }, stale: false }) as any
+      );
+      return renderTreeTable({
+        filter: {},
+        viewLevel,
+        visibleColumns: ["title", "created", "modified"] as ColumnKey[],
+        ...props,
+      });
+    }
+
+    it("renders the Created/Modified headers as sortable columnheaders in flat view", () => {
+      renderFlat();
+      expect(screen.getByRole("columnheader", { name: "Created" })).toBeInTheDocument();
+      expect(screen.getByRole("columnheader", { name: "Modified" })).toBeInTheDocument();
+    });
+
+    it("clicking Modified with no active sort emits ascending", async () => {
+      const user = userEvent.setup();
+      const ontablesortchange = vi.fn();
+      renderFlat({ tableSort: null, ontablesortchange });
+      await user.click(screen.getByRole("columnheader", { name: "Modified" }));
+      expect(ontablesortchange).toHaveBeenLastCalledWith({ field: "modified", direction: "asc" });
+    });
+
+    it("clicking Modified while ascending emits descending", async () => {
+      const user = userEvent.setup();
+      const ontablesortchange = vi.fn();
+      renderFlat({ tableSort: { field: "modified", direction: "asc" }, ontablesortchange });
+      await user.click(screen.getByRole("columnheader", { name: "Modified" }));
+      expect(ontablesortchange).toHaveBeenLastCalledWith({ field: "modified", direction: "desc" });
+    });
+
+    it("clicking Modified while descending turns the sort off (null)", async () => {
+      const user = userEvent.setup();
+      const ontablesortchange = vi.fn();
+      renderFlat({ tableSort: { field: "modified", direction: "desc" }, ontablesortchange });
+      await user.click(screen.getByRole("columnheader", { name: "Modified" }));
+      expect(ontablesortchange).toHaveBeenLastCalledWith(null);
+    });
+
+    it("shows an up arrow and aria-sort=ascending when Modified is sorted ascending", () => {
+      const { container } = renderFlat({ tableSort: { field: "modified", direction: "asc" } });
+      const arrow = container.querySelector("[data-testid='table-sort-arrow-modified']");
+      expect(arrow).toBeInTheDocument();
+      expect(arrow!.classList.contains("lucide-arrow-up")).toBe(true);
+      const modifiedTh = Array.from(container.querySelectorAll("th")).find((th) => th.textContent?.trim() === "Modified")!;
+      expect(modifiedTh.getAttribute("aria-sort")).toBe("ascending");
+      // The other sortable field reads "none" while inactive.
+      const createdTh = Array.from(container.querySelectorAll("th")).find((th) => th.textContent?.trim() === "Created")!;
+      expect(createdTh.getAttribute("aria-sort")).toBe("none");
+    });
+
+    it("shows a down arrow and aria-sort=descending when Modified is sorted descending", () => {
+      const { container } = renderFlat({ tableSort: { field: "modified", direction: "desc" } });
+      const arrow = container.querySelector("[data-testid='table-sort-arrow-modified']");
+      expect(arrow).toBeInTheDocument();
+      expect(arrow!.classList.contains("lucide-arrow-down")).toBe(true);
+      const modifiedTh = Array.from(container.querySelectorAll("th")).find((th) => th.textContent?.trim() === "Modified")!;
+      expect(modifiedTh.getAttribute("aria-sort")).toBe("descending");
+    });
+
+    it("reorders rows by the active flat sort (created descending)", () => {
+      const { container } = renderFlat({ tableSort: { field: "created", direction: "desc" } });
+      const titles = Array.from(container.querySelectorAll("[data-testid='title-text']")).map((e) => e.textContent);
+      // createdAt desc: Second (Feb) before First (Jan).
+      expect(titles).toEqual(["Second", "First"]);
+    });
+
+    it("keeps manual order when the flat sort is off (null)", () => {
+      const { container } = renderFlat({ tableSort: null });
+      const titles = Array.from(container.querySelectorAll("[data-testid='title-text']")).map((e) => e.textContent);
+      expect(titles).toEqual(["First", "Second"]);
+    });
+
+    it("deactivates the sort when the sorted column is hidden (reverts to manual order)", () => {
+      // Sort by Created desc, but hide the Created column: with no reachable header
+      // to clear it, the sort would otherwise leave rows ordered by an invisible
+      // field. Instead it deactivates and rows fall back to manual `order`.
+      const { container } = renderFlat({
+        tableSort: { field: "created", direction: "desc" },
+        visibleColumns: ["title", "modified"] as ColumnKey[],
+      });
+      const titles = Array.from(container.querySelectorAll("[data-testid='title-text']")).map((e) => e.textContent);
+      expect(titles).toEqual(["First", "Second"]); // manual order, NOT created-desc ("Second","First")
+      // The still-visible Modified header must not falsely claim an active sort.
+      const modifiedTh = Array.from(container.querySelectorAll("th")).find((th) => th.textContent?.trim() === "Modified")!;
+      expect(modifiedTh.getAttribute("aria-sort")).toBe("none");
+    });
+
+    it("date headers ARE sortable columnheaders in the tree (none) view too (sort lifted from Flat-only)", () => {
+      const { container } = renderFlat({ tableSort: { field: "modified", direction: "asc" } }, "none" as ViewLevel);
+      // The whole header is the click-to-sort control in the tree view, not a plain label.
+      expect(screen.getByRole("columnheader", { name: "Modified" })).toBeInTheDocument();
+      expect(screen.getByRole("columnheader", { name: "Created" })).toBeInTheDocument();
+      // The active field shows its direction arrow + aria-sort in the tree view.
+      const arrow = container.querySelector("[data-testid='table-sort-arrow-modified']");
+      expect(arrow).toBeInTheDocument();
+      expect(arrow!.classList.contains("lucide-arrow-up")).toBe(true);
+      const modifiedTh = Array.from(container.querySelectorAll("th")).find((th) => th.textContent?.trim() === "Modified")!;
+      expect(modifiedTh.getAttribute("aria-sort")).toBe("ascending");
+      const createdTh = Array.from(container.querySelectorAll("th")).find((th) => th.textContent?.trim() === "Created")!;
+      expect(createdTh.getAttribute("aria-sort")).toBe("none");
+    });
+
+    it("rows are not draggable in flat view (browse-only), sort on or off", () => {
+      expect(renderFlat().container.querySelectorAll("tr.draggable")).toHaveLength(0);
+    });
+  });
+
+  describe("table sort — every sortable column", () => {
+    // Three roots whose type ordering (milestone → bug → task) differs from their
+    // incoming manual order, so a Type sort visibly reorders the rows.
+    function renderCols(props: Record<string, unknown> = {}, viewLevel: ViewLevel = "flat" as ViewLevel) {
+      const nibs: TreeTableNib[] = [
+        makeTreeTableNib({ id: "nibs-001", title: "Task", type: "task", status: "todo" }),
+        makeTreeTableNib({ id: "nibs-002", title: "Milestone", type: "milestone", status: "draft" }),
+        makeTreeTableNib({ id: "nibs-003", title: "Bug", type: "bug", status: "completed" }),
+      ];
+      mockQueryStore.mockReturnValue(
+        readable({ fetching: false, error: undefined, data: { nibs }, stale: false }) as any
+      );
+      return renderTreeTable({
+        filter: {},
+        viewLevel,
+        visibleColumns: ["title", "type", "state"] as ColumnKey[],
+        ...props,
+      });
+    }
+
+    it("renders a click-to-sort columnheader for every visible column in flat view (not just dates)", () => {
+      renderCols();
+      expect(screen.getByRole("columnheader", { name: "Title" })).toBeInTheDocument();
+      expect(screen.getByRole("columnheader", { name: "Type" })).toBeInTheDocument();
+      expect(screen.getByRole("columnheader", { name: "State" })).toBeInTheDocument();
+    });
+
+    it("clicking a non-date header (Type) with no active sort emits that field ascending", async () => {
+      const user = userEvent.setup();
+      const ontablesortchange = vi.fn();
+      renderCols({ tableSort: null, ontablesortchange });
+      await user.click(screen.getByRole("columnheader", { name: "Type" }));
+      expect(ontablesortchange).toHaveBeenLastCalledWith({ field: "type", direction: "asc" });
+    });
+
+    it("reorders rows by a non-date column (type ascending, canonical rank)", () => {
+      const { container } = renderCols({ tableSort: { field: "type", direction: "asc" } });
+      const titles = Array.from(container.querySelectorAll("[data-testid='title-text']")).map((e) => e.textContent);
+      // Canonical rank: milestone → bug → task.
+      expect(titles).toEqual(["Milestone", "Bug", "Task"]);
+    });
+
+    it("shows an arrow and aria-sort on a non-date header (State descending)", () => {
+      const { container } = renderCols({ tableSort: { field: "state", direction: "desc" } });
+      const arrow = container.querySelector("[data-testid='table-sort-arrow-state']");
+      expect(arrow).toBeInTheDocument();
+      expect(arrow!.classList.contains("lucide-arrow-down")).toBe(true);
+      const stateTh = Array.from(container.querySelectorAll("th")).find((th) => th.textContent?.trim() === "State")!;
+      expect(stateTh.getAttribute("aria-sort")).toBe("descending");
+      // A different sortable header reads "none" while inactive.
+      const typeTh = Array.from(container.querySelectorAll("th")).find((th) => th.textContent?.trim() === "Type")!;
+      expect(typeTh.getAttribute("aria-sort")).toBe("none");
+    });
+
+    it("deactivates the sort when a NON-date sorted column (type) is hidden", () => {
+      const { container } = renderCols({
+        tableSort: { field: "type", direction: "asc" },
+        visibleColumns: ["title", "state"] as ColumnKey[],
+      });
+      const titles = Array.from(container.querySelectorAll("[data-testid='title-text']")).map((e) => e.textContent);
+      // Type column hidden → sort deactivates → manual order (Task, Milestone, Bug).
+      expect(titles).toEqual(["Task", "Milestone", "Bug"]);
+    });
+
+    it("non-date headers ARE sortable in the tree (none) view and reorder roots by rank", () => {
+      const { container } = renderCols({ tableSort: { field: "type", direction: "asc" } }, "none" as ViewLevel);
+      // The whole header is the click-to-sort control in the tree view.
+      expect(screen.getByRole("columnheader", { name: "Type" })).toBeInTheDocument();
+      const typeTh = Array.from(container.querySelectorAll("th")).find((th) => th.textContent?.trim() === "Type")!;
+      expect(typeTh.getAttribute("aria-sort")).toBe("ascending");
+      // These three are all roots, so the sort reorders them by canonical rank
+      // (milestone → bug → task) exactly as in flat view.
+      const titles = Array.from(container.querySelectorAll("[data-testid='title-text']")).map((e) => e.textContent);
+      expect(titles).toEqual(["Milestone", "Bug", "Task"]);
+    });
+  });
+
+  describe("table sort — all views (headers, arrows, sibling-sort, drag gating)", () => {
+    // An epic with a child task yields at least one visible row in every view
+    // level (none/flat show both; the grouping lenses promote/bucket them), so
+    // the sortable <thead> renders and its buttons are assertable everywhere.
+    function renderView(viewLevel: ViewLevel, props: Record<string, unknown> = {}) {
+      const nibs: TreeTableNib[] = [
+        makeTreeTableNib({ id: "nibs-e1", title: "Epic", type: "epic", status: "todo" }),
+        makeTreeTableNib({ id: "nibs-t1", title: "Task", type: "task", status: "draft", parentId: "nibs-e1" }),
+      ];
+      mockQueryStore.mockReturnValue(
+        readable({ fetching: false, error: undefined, data: { nibs }, stale: false }) as any
+      );
+      return renderTreeTable({
+        filter: {},
+        viewLevel,
+        visibleColumns: ["title", "state", "modified"] as ColumnKey[],
+        ...props,
+      });
+    }
+
+    const ALL_VIEWS: ViewLevel[] = ["none", "milestones", "epics", "features", "flat"] as ViewLevel[];
+
+    it.each(ALL_VIEWS)("renders a click-to-sort columnheader in the %s view", (viewLevel) => {
+      renderView(viewLevel);
+      expect(screen.getByRole("columnheader", { name: "State" })).toBeInTheDocument();
+    });
+
+    it.each(ALL_VIEWS)("clicking a header cycles off → asc in the %s view", async (viewLevel) => {
+      const user = userEvent.setup();
+      const ontablesortchange = vi.fn();
+      renderView(viewLevel, { tableSort: null, ontablesortchange });
+      await user.click(screen.getByRole("columnheader", { name: "State" }));
+      expect(ontablesortchange).toHaveBeenLastCalledWith({ field: "state", direction: "asc" });
+    });
+
+    it.each(ALL_VIEWS)("clicking asc → desc in the %s view", async (viewLevel) => {
+      const user = userEvent.setup();
+      const ontablesortchange = vi.fn();
+      renderView(viewLevel, { tableSort: { field: "state", direction: "asc" }, ontablesortchange });
+      await user.click(screen.getByRole("columnheader", { name: "State" }));
+      expect(ontablesortchange).toHaveBeenLastCalledWith({ field: "state", direction: "desc" });
+    });
+
+    it.each(ALL_VIEWS)("clicking desc → off (null) in the %s view", async (viewLevel) => {
+      const user = userEvent.setup();
+      const ontablesortchange = vi.fn();
+      renderView(viewLevel, { tableSort: { field: "state", direction: "desc" }, ontablesortchange });
+      await user.click(screen.getByRole("columnheader", { name: "State" }));
+      expect(ontablesortchange).toHaveBeenLastCalledWith(null);
+    });
+
+    it.each(ALL_VIEWS)("shows the direction arrow + aria-sort for the active field in the %s view", (viewLevel) => {
+      const { container } = renderView(viewLevel, { tableSort: { field: "state", direction: "desc" } });
+      const arrow = container.querySelector("[data-testid='table-sort-arrow-state']");
+      expect(arrow).toBeInTheDocument();
+      expect(arrow!.classList.contains("lucide-arrow-down")).toBe(true);
+      const stateTh = Array.from(container.querySelectorAll("th")).find((th) => th.textContent?.trim() === "State")!;
+      expect(stateTh.getAttribute("aria-sort")).toBe("descending");
+    });
+
+    // --- Sibling-sort: nesting preserved, each sibling group reordered ---
+    // Two milestone roots (input Z-before-A) each a potential parent; one carries
+    // two child tasks (input Zeta-before-Alpha). A title sort must reorder the
+    // ROOTS (A before Z) AND the CHILDREN (Alpha before Zeta) while keeping the
+    // children nested under their parent — NOT flatten everything into one global
+    // title order (which would interleave "Alpha" ahead of the "Root A" parent).
+    function renderNested(props: Record<string, unknown> = {}) {
+      const nibs: TreeTableNib[] = [
+        makeTreeTableNib({ id: "nibs-m2", title: "Root Z", type: "milestone" }),
+        makeTreeTableNib({ id: "nibs-m1", title: "Root A", type: "milestone" }),
+        makeTreeTableNib({ id: "nibs-c2", title: "Zeta", type: "task", parentId: "nibs-m1" }),
+        makeTreeTableNib({ id: "nibs-c1", title: "Alpha", type: "task", parentId: "nibs-m1" }),
+      ];
+      mockQueryStore.mockReturnValue(
+        readable({ fetching: false, error: undefined, data: { nibs }, stale: false }) as any
+      );
+      return renderTreeTable({
+        filter: {},
+        viewLevel: "none" as ViewLevel,
+        visibleColumns: ["title"] as ColumnKey[],
+        ...props,
+      });
+    }
+
+    it("sibling-sorts the tree (none) view: roots and children reorder, nesting preserved", () => {
+      const { container } = renderNested({ tableSort: { field: "title", direction: "asc" } });
+      const titles = Array.from(container.querySelectorAll("[data-testid='title-text']")).map((e) => e.textContent);
+      // Sibling-sort: Root A (with its now-sorted children Alpha, Zeta) then Root Z.
+      // A global flat title sort would be ["Alpha","Root A","Root Z","Zeta"] — the
+      // DIFFERENT expected order below proves the children stayed nested.
+      expect(titles).toEqual(["Root A", "Alpha", "Zeta", "Root Z"]);
+    });
+
+    it("keeps manual (input) order in the tree view when the sort is off", () => {
+      const { container } = renderNested({ tableSort: null });
+      const titles = Array.from(container.querySelectorAll("[data-testid='title-text']")).map((e) => e.textContent);
+      // Input order, nested: Root Z (no children), Root A, then its children as entered.
+      expect(titles).toEqual(["Root Z", "Root A", "Zeta", "Alpha"]);
+    });
+
+    // --- Drag gating: an active sort disables drag-reorder in Tree/lens views ---
+    // A real parent + child so rows are draggable when the gate is open.
+    function renderDrag(viewLevel: ViewLevel, props: Record<string, unknown> = {}) {
+      const nibs: TreeTableNib[] = [
+        makeTreeTableNib({ id: "nibs-m1", title: "Milestone", type: "milestone" }),
+        makeTreeTableNib({ id: "nibs-001", title: "Child Task", type: "task", parentId: "nibs-m1" }),
+      ];
+      mockQueryStore.mockReturnValue(
+        readable({ fetching: false, error: undefined, data: { nibs }, stale: false }) as any
+      );
+      return renderTreeTable({
+        filter: {},
+        viewLevel,
+        visibleColumns: ["title", "state"] as ColumnKey[],
+        ...props,
+      });
+    }
+
+    it("tree (none) view: rows draggable when the sort is off", () => {
+      const { container } = renderDrag("none" as ViewLevel, { tableSort: null });
+      expect(container.querySelectorAll("tr.draggable").length).toBeGreaterThan(0);
+    });
+
+    it("tree (none) view: drag DISABLED while a sort is active", () => {
+      const { container } = renderDrag("none" as ViewLevel, { tableSort: { field: "state", direction: "asc" } });
+      expect(container.querySelectorAll("tr.draggable")).toHaveLength(0);
+    });
+
+    it("grouping lens (milestones): rows draggable when the sort is off", () => {
+      const { container } = renderDrag("milestones" as ViewLevel, { tableSort: null });
+      expect(container.querySelectorAll("tr.draggable").length).toBeGreaterThan(0);
+    });
+
+    it("grouping lens (milestones): drag DISABLED while a sort is active", () => {
+      const { container } = renderDrag("milestones" as ViewLevel, { tableSort: { field: "state", direction: "asc" } });
+      expect(container.querySelectorAll("tr.draggable")).toHaveLength(0);
+    });
+
+    it("re-enabling: drag returns when a hidden sorted column deactivates the sort", () => {
+      // Sort by a column that is NOT visible → activeSort is null → drag allowed,
+      // even though a tableSort preference is set. Confirms the gate keys off the
+      // EFFECTIVE (active) sort, not the raw preference.
+      const { container } = renderDrag("none" as ViewLevel, {
+        tableSort: { field: "created", direction: "asc" },
+        visibleColumns: ["title", "state"] as ColumnKey[],
+      });
+      expect(container.querySelectorAll("tr.draggable").length).toBeGreaterThan(0);
+    });
+
+    it("flat view stays browse-only even with the sort off", () => {
+      const { container } = renderDrag("flat" as ViewLevel, { tableSort: null });
+      expect(container.querySelectorAll("tr.draggable")).toHaveLength(0);
+    });
   });
 
   describe("keyboard navigation", () => {
@@ -1122,6 +1573,80 @@ describe("TreeTable", () => {
       await user.keyboard(" ");
 
       expect(sel.selectedIds.has("nibs-001")).toBe(true);
+    });
+
+    // Regression (nibs-5ela finding #1): a sortable header is a real tab stop
+    // (tabindex=0) whose keydown bubbles to the grid's keyboard-nav handler on the
+    // scroll container. The header must consume its own Enter/Space so a key-repeat
+    // or a modifier chord can never leak through and act on the background,
+    // virtually-focused row. Only a clean press sorts; non-sort keys still pass to
+    // grid nav.
+    describe("sortable header does not leak Enter/Space to grid nav", () => {
+      function titleHeader(container: HTMLElement): HTMLElement {
+        // The always-visible Title column is a sortable columnheader in every view.
+        return container.querySelector("thead th[data-col-key='title']") as HTMLElement;
+      }
+
+      it("held/repeat Space on a focused header does NOT toggle-select the focused row", () => {
+        const sel = new SelectionState();
+        sel.focus("nibs-m1"); // a row is virtually focused, but not selected
+        const nibs = makeKeyboardTestNibs(2);
+        const { container } = setupWithNibs(nibs, {}, { selection: sel });
+        const th = titleHeader(container);
+        th.focus();
+
+        // Autorepeat Space: the grid Space handler would toggle-select focusedNibId.
+        th.dispatchEvent(new KeyboardEvent("keydown", { key: " ", repeat: true, bubbles: true, cancelable: true }));
+
+        expect(sel.selectedIds.has("nibs-m1")).toBe(false);
+      });
+
+      it("modifier+Enter on a focused header does NOT navigate the focused row", () => {
+        const sel = new SelectionState();
+        sel.focus("nibs-m1");
+        const nibs = makeKeyboardTestNibs(2);
+        const { container } = setupWithNibs(nibs, {}, { selection: sel });
+        const th = titleHeader(container);
+        th.focus();
+
+        // Ctrl+Enter: the grid Enter handler would open/select focusedNibId.
+        th.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", ctrlKey: true, bubbles: true, cancelable: true }));
+
+        expect(sel.selectedNibId).toBeNull();
+      });
+
+      it("a clean Enter on a focused header sorts and leaves the focused row untouched", () => {
+        const ontablesortchange = vi.fn();
+        const sel = new SelectionState();
+        sel.focus("nibs-m1");
+        const nibs = makeKeyboardTestNibs(2);
+        const { container } = setupWithNibs(nibs, { tableSort: null, ontablesortchange }, { selection: sel });
+        const th = titleHeader(container);
+        th.focus();
+
+        th.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", bubbles: true, cancelable: true }));
+
+        // The clean press sorts...
+        expect(ontablesortchange).toHaveBeenCalledWith({ field: "title", direction: "asc" });
+        // ...and does not leak to grid nav (no navigate/select of the focused row).
+        expect(sel.selectedNibId).toBeNull();
+        expect(sel.selectedIds.has("nibs-m1")).toBe(false);
+      });
+
+      it("ArrowDown on a focused header still reaches grid nav (not over-swallowed)", () => {
+        const sel = new SelectionState();
+        sel.focus("nibs-m1");
+        const nibs = makeKeyboardTestNibs(2);
+        const { container } = setupWithNibs(nibs, {}, { selection: sel });
+        const th = titleHeader(container);
+        th.focus();
+
+        // ArrowDown is NOT a sort key, so the header ignores it and it bubbles to
+        // grid nav, which advances the virtual focus to the next row.
+        th.dispatchEvent(new KeyboardEvent("keydown", { key: "ArrowDown", bubbles: true, cancelable: true }));
+
+        expect(sel.focusedNibId).toBe("nibs-001");
+      });
     });
 
     it("ArrowLeft on expanded parent collapses it", async () => {
@@ -2297,5 +2822,112 @@ describe("TreeTable", () => {
       expect(sel.selectedIds.has("nibs-deep2")).toBe(true);
       expect(sel.selectedIds.size).toBe(2);
     });
+  });
+});
+
+describe("TreeTable — per-view column order + reorder drag", () => {
+  beforeEach(() => {
+    mockQueryStore.mockReset();
+    mockSubscriptionStore.mockReset();
+    mockSubscriptionStore.mockReturnValue(
+      readable({ fetching: false, error: undefined, data: undefined, stale: false }) as any
+    );
+  });
+
+  function renderOrdered(props: Record<string, unknown> = {}) {
+    const nibs: TreeTableNib[] = [
+      makeTreeTableNib({ id: "nibs-001", title: "Row one", type: "task", status: "todo" }),
+    ];
+    mockQueryStore.mockReturnValue(
+      readable({ fetching: false, error: undefined, data: { nibs }, stale: false }) as any
+    );
+    return renderTreeTable({
+      filter: {},
+      viewLevel: "flat" as ViewLevel,
+      visibleColumns: ["id", "title", "state"] as ColumnKey[],
+      columnOrder: ["id", "title", "state"] as ColumnKey[],
+      ...props,
+    });
+  }
+
+  it("renders headers in the per-view columnOrder (not canonical)", () => {
+    const { container } = renderOrdered({ columnOrder: ["state", "title", "id"] as ColumnKey[] });
+    const headers = Array.from(container.querySelectorAll("thead th[data-col-key]")).map((th) => th.getAttribute("data-col-key"));
+    expect(headers).toEqual(["state", "title", "id"]);
+  });
+
+  it("renders row cells in the same order as the reordered headers", () => {
+    const { container } = renderOrdered({ columnOrder: ["state", "title", "id"] as ColumnKey[] });
+    const row = container.querySelector("tr[data-testid='tree-row']")!;
+    const cellTestids = Array.from(row.querySelectorAll("td[data-testid]")).map((td) => td.getAttribute("data-testid"));
+    expect(cellTestids).toEqual(["nib-state", "nib-title", "nib-id"]);
+  });
+
+  it("tableWidth sums the visible column widths (actions 32px + widths), order-independent", () => {
+    const { container } = renderOrdered({ columnOrder: ["state", "title", "id"] as ColumnKey[] });
+    const width = parseInt((container.querySelector("table") as HTMLElement).style.width, 10);
+    expect(width).toBe(32 + DEFAULT_COLUMN_WIDTHS.id + DEFAULT_COLUMN_WIDTHS.title + DEFAULT_COLUMN_WIDTHS.state);
+  });
+
+  it("dragging a header past the threshold writes the reordered columnOrder and suppresses the sort click", () => {
+    const oncolumnorderchange = vi.fn();
+    const ontablesortchange = vi.fn();
+    const { container } = renderOrdered({
+      columnOrder: ["id", "title", "state"] as ColumnKey[],
+      oncolumnorderchange,
+      ontablesortchange,
+      tableSort: null,
+    });
+
+    const idTh = container.querySelector("thead th[data-col-key='id']") as HTMLElement;
+    const stateTh = container.querySelector("thead th[data-col-key='state']") as HTMLElement;
+    stateTh.getBoundingClientRect = () =>
+      ({ top: 0, bottom: 40, left: 0, right: 100, width: 100, height: 40, x: 0, y: 0, toJSON: () => {} }) as DOMRect;
+
+    const orig = document.elementFromPoint;
+    document.elementFromPoint = () => stateTh;
+    try {
+      idTh.dispatchEvent(new PointerEvent("pointerdown", { clientX: 10, clientY: 10, button: 0, bubbles: true }));
+      // 70px move crosses the threshold; cursor x=80 is the right half of the
+      // state header (mid=50) → drop "after".
+      window.dispatchEvent(new PointerEvent("pointermove", { clientX: 80, clientY: 10, bubbles: true }));
+      window.dispatchEvent(new PointerEvent("pointerup", { bubbles: true }));
+
+      expect(oncolumnorderchange).toHaveBeenCalledTimes(1);
+      expect(oncolumnorderchange).toHaveBeenCalledWith(["title", "state", "id"]);
+
+      // The click a browser fires right after the drag must NOT toggle the sort.
+      const idSortBtn = container.querySelector("[data-testid='table-sort-id']") as HTMLElement;
+      idSortBtn.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+      expect(ontablesortchange).not.toHaveBeenCalled();
+    } finally {
+      document.elementFromPoint = orig;
+    }
+  });
+
+  it("a plain header-body click (no drag) still toggles the sort (below-threshold disambiguation)", () => {
+    const ontablesortchange = vi.fn();
+    const { container } = renderOrdered({ ontablesortchange, tableSort: null });
+    // Click the <th> body itself — the whole header is the sort control now.
+    const idTh = container.querySelector("thead th[data-col-key='id']") as HTMLElement;
+    idTh.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+    expect(ontablesortchange).toHaveBeenCalledWith({ field: "id", direction: "asc" });
+  });
+
+  it("a pointerdown on the resize edge-handle resizes and does NOT start a column reorder", () => {
+    const oncolumnorderchange = vi.fn();
+    const oncolumnwidthschange = vi.fn();
+    const { container } = renderOrdered({ oncolumnorderchange, oncolumnwidthschange });
+    const idTh = container.querySelector("thead th[data-col-key='id']") as HTMLElement;
+    const handle = idTh.querySelector(".resize-handle") as HTMLElement;
+
+    handle.dispatchEvent(new PointerEvent("pointerdown", { clientX: 100, clientY: 5, button: 0, bubbles: true }));
+    handle.dispatchEvent(new PointerEvent("pointermove", { clientX: 150, clientY: 5, bubbles: true }));
+    handle.dispatchEvent(new PointerEvent("pointerup", { bubbles: true }));
+
+    // The resize path fired (a width change was emitted)...
+    expect(oncolumnwidthschange).toHaveBeenCalled();
+    // ...and the header-drag guard bailed on the resize handle — no reorder.
+    expect(oncolumnorderchange).not.toHaveBeenCalled();
   });
 });

@@ -1,7 +1,8 @@
 import { describe, it, expect } from "vitest";
 import { buildTree, buildViewTree, isBucketId, bucketIdForItem, collectDescendantIds } from "./tree";
+import { makeNibComparator } from "./tableSort";
 import { typeRank } from "./typeHierarchy";
-import type { TreeNib, TreeTableNib, TreeNode, ViewLevel } from "./types";
+import type { TreeNib, TreeTableNib, TreeNode, ViewLevel, TableSort } from "./types";
 
 function makeTreeNib(overrides: Partial<TreeNib> = {}): TreeNib {
   return {
@@ -12,6 +13,7 @@ function makeTreeNib(overrides: Partial<TreeNib> = {}): TreeNib {
     priority: "high",
     estimate: "m",
     tags: ["auth"],
+    createdAt: "2026-03-15T10:00:00Z",
     updatedAt: "2026-03-20T10:00:00Z",
     parentId: null,
     ...overrides,
@@ -65,7 +67,7 @@ const MESSY_FIXTURE: TreeNib[] = [
 // Expected grouping-tier ranks, derived from the single source of truth
 // (typeRank) rather than frozen literals — so a future TYPE_RANK change that
 // desyncs the lens boundaries would fail these tests instead of passing silently.
-const GROUPING_LENS_RANKS: Record<Exclude<ViewLevel, "none">, number> = {
+const GROUPING_LENS_RANKS: Record<Exclude<ViewLevel, "none" | "flat">, number> = {
   milestones: typeRank("milestone"),
   epics: typeRank("epic"),
   features: typeRank("feature"),
@@ -213,6 +215,41 @@ describe("buildViewTree", () => {
       // Standalone task stays a root at depth 0 — nothing swept into a bucket
       expect(result[1].nib.id).toBe("nibs-005");
       expect(result[1].depth).toBe(0);
+    });
+  });
+
+  describe("flat lens", () => {
+    it("returns every nib as an ungrouped depth-0 root (no nesting, no buckets)", () => {
+      const nibs: TreeNib[] = [
+        makeTreeNib({ id: "nibs-001", title: "Milestone", type: "milestone" }),
+        makeTreeNib({ id: "nibs-002", title: "Epic", type: "epic", parentId: "nibs-001" }),
+        makeTreeNib({ id: "nibs-003", title: "Feature", type: "feature", parentId: "nibs-002" }),
+        makeTreeNib({ id: "nibs-004", title: "Task", type: "task", parentId: "nibs-003" }),
+        makeTreeNib({ id: "nibs-005", title: "Standalone task", type: "task" }),
+      ];
+
+      const result = buildViewTree(nibs, "flat");
+
+      // One node per nib, all at depth 0, none nested.
+      expect(result).toHaveLength(5);
+      for (const node of result) {
+        expect(node.depth).toBe(0);
+        expect(node.children).toEqual([]);
+      }
+
+      // Order preserved (the incoming manual `order` sequence), no bucket nodes.
+      expect(result.map((n) => n.nib.id)).toEqual([
+        "nibs-001",
+        "nibs-002",
+        "nibs-003",
+        "nibs-004",
+        "nibs-005",
+      ]);
+      expect(result.some((n) => isBucketId(n.nib.id))).toBe(false);
+    });
+
+    it("returns an empty forest for empty input", () => {
+      expect(buildViewTree([], "flat")).toEqual([]);
     });
   });
 
@@ -416,6 +453,142 @@ describe("buildViewTree", () => {
       // The nested task lives under the feature, not as a direct bucket child.
       const feature = bucket.children.find(c => c.nib.id === "nibs-001")!;
       expect(feature.children.map(c => c.nib.id)).toEqual(["nibs-003"]);
+    });
+  });
+
+  // nibs-2lqm: in the epics/features lenses, promoted headers (and bucket items)
+  // descend THROUGH a hidden higher-tier ancestor, so `classify` emits them in
+  // DFS order grouped by that hidden ancestor. When an active sort's comparator
+  // is supplied, they must instead be ordered GLOBALLY by the sort field. The
+  // `none`/`flat`/milestones paths already order correctly and stay untouched.
+  describe("global header + bucket ordering under an active sort (nibs-2lqm)", () => {
+    const cmpFor = (nibs: TreeTableNib[], sort: TableSort) =>
+      makeNibComparator(sort, new Map(nibs.map((n) => [n.id, n])));
+
+    describe("epics lens: three epics under DIFFERENT hidden milestones", () => {
+      // Input laid out so `classify`'s DFS yields the GROUPED order [Mango, Zebra,
+      // Apple] (each epic follows its milestone's position). That order is neither
+      // the asc nor the desc title order, so BOTH directions independently
+      // discriminate the global re-sort from the grouped DFS emission:
+      //   grouped DFS → [eM, eZ, eA];  title asc → [eA, eM, eZ];  desc → [eZ, eM, eA]
+      const nibs: TreeTableNib[] = [
+        makeTreeTableNib({ id: "m1", title: "Mmm1", type: "milestone" }),
+        makeTreeTableNib({ id: "eM", title: "Mango", type: "epic", parentId: "m1" }),
+        makeTreeTableNib({ id: "m2", title: "Mmm2", type: "milestone" }),
+        makeTreeTableNib({ id: "eZ", title: "Zebra", type: "epic", parentId: "m2" }),
+        makeTreeTableNib({ id: "m3", title: "Mmm3", type: "milestone" }),
+        makeTreeTableNib({ id: "eA", title: "Apple", type: "epic", parentId: "m3" }),
+      ];
+
+      it("no comparator → grouped DFS header order (control for the bug)", () => {
+        const result = buildViewTree(nibs, "epics");
+        expect(result.map((r) => r.nib.id)).toEqual(["eM", "eZ", "eA"]);
+      });
+
+      it("title asc → promoted headers in GLOBAL order [Apple, Mango, Zebra]", () => {
+        const cmp = cmpFor(nibs, { field: "title", direction: "asc" });
+        const result = buildViewTree(nibs, "epics", cmp);
+        expect(result.map((r) => r.nib.id)).toEqual(["eA", "eM", "eZ"]);
+        expect(result.map((r) => r.nib.title)).toEqual(["Apple", "Mango", "Zebra"]);
+        // Each header keeps its (empty here) subtree; only top-level order changed.
+        expect(result.every((r) => r.depth === 0)).toBe(true);
+      });
+
+      it("title desc → global order reverses to [Zebra, Mango, Apple]", () => {
+        const cmp = cmpFor(nibs, { field: "title", direction: "desc" });
+        const result = buildViewTree(nibs, "epics", cmp);
+        expect(result.map((r) => r.nib.id)).toEqual(["eZ", "eM", "eA"]);
+      });
+    });
+
+    describe("features lens: three features under DIFFERENT hidden epics", () => {
+      // Same discriminating layout as the epics block: the grouped DFS order
+      // matches neither the asc nor the desc title order, so both directions bite.
+      //   grouped DFS → [fM, fZ, fA];  title asc → [fA, fM, fZ];  desc → [fZ, fM, fA]
+      const nibs: TreeTableNib[] = [
+        makeTreeTableNib({ id: "e1", title: "Eee1", type: "epic" }),
+        makeTreeTableNib({ id: "fM", title: "Mango", type: "feature", parentId: "e1" }),
+        makeTreeTableNib({ id: "e2", title: "Eee2", type: "epic" }),
+        makeTreeTableNib({ id: "fZ", title: "Zebra", type: "feature", parentId: "e2" }),
+        makeTreeTableNib({ id: "e3", title: "Eee3", type: "epic" }),
+        makeTreeTableNib({ id: "fA", title: "Apple", type: "feature", parentId: "e3" }),
+      ];
+
+      it("no comparator → grouped DFS header order (control for the bug)", () => {
+        const result = buildViewTree(nibs, "features");
+        expect(result.map((r) => r.nib.id)).toEqual(["fM", "fZ", "fA"]);
+      });
+
+      it("title asc → promoted headers in GLOBAL order [Apple, Mango, Zebra]", () => {
+        const cmp = cmpFor(nibs, { field: "title", direction: "asc" });
+        const result = buildViewTree(nibs, "features", cmp);
+        expect(result.map((r) => r.nib.id)).toEqual(["fA", "fM", "fZ"]);
+      });
+
+      it("title desc → global order reverses to [Zebra, Mango, Apple]", () => {
+        const cmp = cmpFor(nibs, { field: "title", direction: "desc" });
+        const result = buildViewTree(nibs, "features", cmp);
+        expect(result.map((r) => r.nib.id)).toEqual(["fZ", "fM", "fA"]);
+      });
+    });
+
+    describe("bucket items from DISTINCT above-tier parents", () => {
+      // Two loose tasks under two different milestones fall into the "No epic"
+      // bucket. `classify` DFS yields [Zebra, Apple] (grouped by hidden
+      // milestone); a global title sort must reorder them to [Apple, Zebra].
+      const nibs: TreeTableNib[] = [
+        makeTreeTableNib({ id: "m1", title: "Mmm1", type: "milestone" }),
+        makeTreeTableNib({ id: "tZ", title: "Zebra", type: "task", parentId: "m1" }),
+        makeTreeTableNib({ id: "m2", title: "Mmm2", type: "milestone" }),
+        makeTreeTableNib({ id: "tA", title: "Apple", type: "task", parentId: "m2" }),
+      ];
+
+      it("no comparator → grouped DFS bucket-item order (control)", () => {
+        const result = buildViewTree(nibs, "epics");
+        const bucket = result.find((r) => isBucketId(r.nib.id))!;
+        expect(bucket.children.map((c) => c.nib.id)).toEqual(["tZ", "tA"]);
+      });
+
+      it("title asc → bucket items in GLOBAL order [Apple, Zebra]", () => {
+        const cmp = cmpFor(nibs, { field: "title", direction: "asc" });
+        const result = buildViewTree(nibs, "epics", cmp);
+        const bucket = result.find((r) => isBucketId(r.nib.id))!;
+        expect(bucket.children.map((c) => c.nib.id)).toEqual(["tA", "tZ"]);
+      });
+    });
+
+    it("milestones lens: an unsorted array is globally sorted when a comparator is supplied", () => {
+      // Milestone headers are always display roots, so with no comparator they stay
+      // in raw input order [m2, m1]. Supplying the comparator must re-sort the roots
+      // to [m1, m2] — this fails (roots stay [m2, m1]) if the threading is removed.
+      const nibs: TreeTableNib[] = [
+        makeTreeTableNib({ id: "m2", title: "Zebra", type: "milestone" }),
+        makeTreeTableNib({ id: "m1", title: "Alpha", type: "milestone" }),
+      ];
+      const cmp = cmpFor(nibs, { field: "title", direction: "asc" });
+      const result = buildViewTree(nibs, "milestones", cmp);
+      expect(result.map((r) => r.nib.id)).toEqual(["m1", "m2"]);
+    });
+
+    it("epics lens: a header's subtree order is untouched by the header re-sort", () => {
+      // Two epics under two hidden milestones so the TOP-LEVEL header re-sort
+      // actually reorders roots — the "Zebra epic" carries two child tasks in a
+      // fixed order that the header re-sort must NOT reach into.
+      const nibs: TreeTableNib[] = [
+        makeTreeTableNib({ id: "m1", title: "Mmm1", type: "milestone" }),
+        makeTreeTableNib({ id: "eZ", title: "Zebra epic", type: "epic", parentId: "m1" }),
+        makeTreeTableNib({ id: "tB", title: "Zebra child", type: "task", parentId: "eZ" }),
+        makeTreeTableNib({ id: "tA", title: "Apple child", type: "task", parentId: "eZ" }),
+        makeTreeTableNib({ id: "m2", title: "Mmm2", type: "milestone" }),
+        makeTreeTableNib({ id: "eA", title: "Apple epic", type: "epic", parentId: "m2" }),
+      ];
+      const cmp = cmpFor(nibs, { field: "title", direction: "asc" });
+      const result = buildViewTree(nibs, "epics", cmp);
+      // The top-level headers ARE globally re-sorted (Apple epic before Zebra epic)...
+      expect(result.map((r) => r.nib.id)).toEqual(["eA", "eZ"]);
+      const epic = result.find((r) => r.nib.id === "eZ")!;
+      // ...but each header's subtree stays in incoming order — not re-sorted by title.
+      expect(epic.children.map((c) => c.nib.id)).toEqual(["tB", "tA"]);
     });
   });
 });

@@ -5,6 +5,7 @@ import { TreeViewState } from './treeView.svelte';
 import type { ConfirmDialogState } from './composables/useConfirmDialog.svelte';
 import type { HistoryNav } from './composables/useHistoryNav.svelte';
 import type { ActiveView } from './composables/useActiveView.svelte';
+import { COLUMN_ADAPTERS_KEY, columnAdapters } from './ColumnAdapters.svelte';
 
 export const SELECTION_KEY = 'nibs:selection';
 export const DRAG_KEY = 'nibs:drag';
@@ -68,6 +69,10 @@ export function makeTestContext(
   const m = new Map<string, unknown>();
   m.set(SELECTION_KEY, selection);
   m.set(DRAG_KEY, drag);
+  // Always provide the default column adapters so components that render table
+  // cells/headers (TreeTable, TreeTableRow) work in tests without wrapping them
+  // in <ColumnAdapters>. Mirrors how the real app provides them.
+  m.set(COLUMN_ADAPTERS_KEY, columnAdapters);
   // Always provide a tree-view so components that read collapse state work in
   // tests without extra setup.
   m.set(TREE_VIEW_KEY, opts?.treeView ?? new TreeViewState());

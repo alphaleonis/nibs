@@ -1,10 +1,10 @@
-import { VIEW_LEVELS, ALL_COLUMN_KEYS, DEFAULT_COLUMNS, MIN_DETAIL_PANEL_WIDTH, MIN_DETAIL_PANEL_HEIGHT, DETAIL_PANEL_POSITIONS, BLOCKED_EMPHASES, THEMES, DEFAULT_THEME, FONT_SCALES } from "./types";
-import type { ColumnKey, FilterPreferences, RowDensity, ViewLevel, Theme, DetailPanelPosition, BlockedEmphasis, FontSize, NibFilter } from "./types";
+import { VIEW_LEVELS, MIN_DETAIL_PANEL_WIDTH, MIN_DETAIL_PANEL_HEIGHT, DETAIL_PANEL_POSITIONS, BLOCKED_EMPHASES, THEMES, DEFAULT_THEME, FONT_SCALES } from "./types";
+import type { FilterPreferences, RowDensity, ViewLevel, Theme, DetailPanelPosition, BlockedEmphasis, FontSize, NibFilter, TableSort } from "./types";
+import { ALL_COLUMN_KEYS, ALWAYS_VISIBLE_KEYS, SORTABLE_COLUMN_KEYS } from "./columns";
+import type { ColumnKey } from "./columns";
 import { STATUSES } from "./constants";
 
-const ALWAYS_VISIBLE_KEYS = new Set<ColumnKey>(
-  DEFAULT_COLUMNS.filter(c => c.alwaysVisible).map(c => c.key),
-);
+const ALWAYS_VISIBLE_KEY_SET = new Set<ColumnKey>(ALWAYS_VISIBLE_KEYS);
 
 // Duplicated verbatim by the pre-paint FOUC guard in index.html; exported so
 // src/lib/fouc-guard.test.ts can assert the two stay in sync.
@@ -36,55 +36,78 @@ function parseFilter(raw: unknown): NibFilter {
   return filter;
 }
 
-function parseColumnVisibility(
+const VALID_COLUMN_KEYS = new Set<string>(ALL_COLUMN_KEYS);
+
+// Shared per-view map parser: one VIEW_LEVELS loop, with the concern-specific
+// per-level validator injected. A level is included only when the validator
+// returns a value; the whole map collapses to undefined when no level survives
+// (so an absent/garbage field stays undefined and Preferences supplies defaults).
+export function parsePerViewMap<T>(
   raw: unknown,
-): Partial<Record<ViewLevel, ColumnKey[]>> | undefined {
+  validateLevel: (raw: unknown) => T | undefined,
+): Partial<Record<ViewLevel, T>> | undefined {
   if (typeof raw !== "object" || raw === null) return undefined;
-  const result: Partial<Record<ViewLevel, ColumnKey[]>> = {};
-  const validKeys = new Set<string>(ALL_COLUMN_KEYS);
+  const result: Partial<Record<ViewLevel, T>> = {};
   for (const level of VIEW_LEVELS) {
-    const arr = (raw as Record<string, unknown>)[level];
-    if (Array.isArray(arr)) {
-      const filtered = arr.filter(
-        (v): v is ColumnKey => typeof v === "string" && validKeys.has(v),
-      );
-      // Ensure alwaysVisible columns are always present
-      for (const key of ALWAYS_VISIBLE_KEYS) {
-        if (!filtered.includes(key)) {
-          filtered.push(key);
-        }
-      }
-      if (filtered.length > 0) {
-        result[level] = filtered;
-      }
+    const value = validateLevel((raw as Record<string, unknown>)[level]);
+    if (value !== undefined) {
+      result[level] = value;
     }
   }
   return Object.keys(result).length > 0 ? result : undefined;
 }
 
-function parseColumnWidths(
-  raw: unknown,
-): Partial<Record<ViewLevel, Partial<Record<ColumnKey, number>>>> | undefined {
-  if (typeof raw !== "object" || raw === null) return undefined;
-  const result: Partial<Record<ViewLevel, Partial<Record<ColumnKey, number>>>> = {};
-  const validKeys = new Set<string>(ALL_COLUMN_KEYS);
-  for (const level of VIEW_LEVELS) {
-    const obj = (raw as Record<string, unknown>)[level];
-    if (typeof obj === "object" && obj !== null && !Array.isArray(obj)) {
-      const widths: Partial<Record<ColumnKey, number>> = {};
-      let count = 0;
-      for (const [key, value] of Object.entries(obj as Record<string, unknown>)) {
-        if (validKeys.has(key) && typeof value === "number" && value > 0 && isFinite(value)) {
-          widths[key as ColumnKey] = value;
-          count++;
-        }
-      }
-      if (count > 0) {
-        result[level] = widths;
-      }
+// Per-level validator for columnVisibility: keep valid column keys, always
+// re-add the alwaysVisible columns (title today) so they survive a round-trip.
+// A non-array (missing/garbage) level yields undefined so it is dropped.
+function validateVisibilityLevel(raw: unknown): ColumnKey[] | undefined {
+  if (!Array.isArray(raw)) return undefined;
+  const filtered = raw.filter(
+    (v): v is ColumnKey => typeof v === "string" && VALID_COLUMN_KEYS.has(v),
+  );
+  for (const key of ALWAYS_VISIBLE_KEY_SET) {
+    if (!filtered.includes(key)) {
+      filtered.push(key);
     }
   }
-  return Object.keys(result).length > 0 ? result : undefined;
+  return filtered.length > 0 ? filtered : undefined;
+}
+
+// Per-level validator for columnOrder: keep the persisted order of valid,
+// non-duplicate column keys, then APPEND any ColumnKey that is missing (in
+// canonical ALL_COLUMN_KEYS order) so a newly-added column still appears — the
+// resolved order is (persisted valid ∪ missing-appended). Unknown/duplicate keys
+// are dropped. A non-array (missing/garbage) level yields undefined so it is
+// dropped and Preferences supplies the default order.
+export function parseColumnOrder(raw: unknown): ColumnKey[] | undefined {
+  if (!Array.isArray(raw)) return undefined;
+  const seen = new Set<ColumnKey>();
+  const ordered: ColumnKey[] = [];
+  for (const v of raw) {
+    if (typeof v === "string" && VALID_COLUMN_KEYS.has(v) && !seen.has(v as ColumnKey)) {
+      seen.add(v as ColumnKey);
+      ordered.push(v as ColumnKey);
+    }
+  }
+  for (const key of ALL_COLUMN_KEYS) {
+    if (!seen.has(key)) ordered.push(key);
+  }
+  return ordered;
+}
+
+// Per-level validator for columnWidths: keep valid column keys mapped to
+// positive finite numbers. A non-object (or array) level yields undefined.
+function validateWidthsLevel(raw: unknown): Partial<Record<ColumnKey, number>> | undefined {
+  if (typeof raw !== "object" || raw === null || Array.isArray(raw)) return undefined;
+  const widths: Partial<Record<ColumnKey, number>> = {};
+  let count = 0;
+  for (const [key, value] of Object.entries(raw as Record<string, unknown>)) {
+    if (VALID_COLUMN_KEYS.has(key) && typeof value === "number" && value > 0 && isFinite(value)) {
+      widths[key as ColumnKey] = value;
+      count++;
+    }
+  }
+  return count > 0 ? widths : undefined;
 }
 
 function parseDetailPanelWidth(raw: unknown): number | undefined {
@@ -137,6 +160,29 @@ function parsePreviewOpen(raw: unknown): boolean | undefined {
   return typeof raw === "boolean" ? raw : undefined;
 }
 
+// The full sortable-field set is single-sourced in columns.ts (derived from
+// COLUMNS[].sortable). A persisted field naming a column that was removed or made
+// non-sortable falls out of this set and is treated as off (no unset-vs-off
+// ambiguity), so old preferences never crash or pin a sort to a gone column.
+const VALID_TABLE_SORT_FIELDS = new Set<string>(SORTABLE_COLUMN_KEYS);
+const VALID_TABLE_SORT_DIRECTIONS = new Set<string>(["asc", "desc"]);
+
+// Optional like blockedEmphasis: return the object only when BOTH field and
+// direction are valid enums; else undefined so Preferences treats it as off
+// (null). An absent/invalid tableSort means "no sort" — no unset-vs-off
+// ambiguity.
+function parseTableSort(raw: unknown): TableSort | undefined {
+  if (typeof raw !== "object" || raw === null) return undefined;
+  const { field, direction } = raw as Record<string, unknown>;
+  if (
+    typeof field === "string" && VALID_TABLE_SORT_FIELDS.has(field) &&
+    typeof direction === "string" && VALID_TABLE_SORT_DIRECTIONS.has(direction)
+  ) {
+    return { field: field as TableSort["field"], direction: direction as TableSort["direction"] };
+  }
+  return undefined;
+}
+
 const VALID_THEMES = new Set<string>(THEMES.map(t => t.value));
 
 // Validate a persisted theme against the known set, falling back to the default
@@ -158,8 +204,9 @@ export function loadPreferences(): FilterPreferences {
       viewLevel: (VIEW_LEVELS as readonly string[]).includes(parsed.viewLevel)
         ? parsed.viewLevel
         : DEFAULTS.viewLevel,
-      columnVisibility: parseColumnVisibility(parsed.columnVisibility),
-      columnWidths: parseColumnWidths(parsed.columnWidths),
+      columnVisibility: parsePerViewMap(parsed.columnVisibility, validateVisibilityLevel),
+      columnWidths: parsePerViewMap(parsed.columnWidths, validateWidthsLevel),
+      columnOrder: parsePerViewMap(parsed.columnOrder, parseColumnOrder),
       detailPanelWidth: parseDetailPanelWidth(parsed.detailPanelWidth),
       detailPanelPosition: parseDetailPanelPosition(parsed.detailPanelPosition),
       detailPanelHeight: parseDetailPanelHeight(parsed.detailPanelHeight),
@@ -168,6 +215,7 @@ export function loadPreferences(): FilterPreferences {
       blockedEmphasis: parseBlockedEmphasis(parsed.blockedEmphasis),
       theme: parseTheme(parsed.theme),
       previewOpen: parsePreviewOpen(parsed.previewOpen),
+      tableSort: parseTableSort(parsed.tableSort),
     };
   } catch {
     return { ...DEFAULTS, filter: { ...DEFAULTS.filter } };

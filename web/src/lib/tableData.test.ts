@@ -1,9 +1,10 @@
 import { describe, it, expect } from "vitest";
 import { buildTableData } from "./tableData";
 import { isBucketId } from "./tree";
+import { applySort } from "./tableSort";
 import { typeRank } from "./typeHierarchy";
 import { OPEN_PLUS_DEFERRED_STATUSES } from "./constants";
-import type { TreeTableNib, NibFilter } from "./types";
+import type { TreeTableNib, NibFilter, TableSort } from "./types";
 
 function makeTreeTableNib(overrides: Partial<TreeTableNib> = {}): TreeTableNib {
   return {
@@ -14,6 +15,7 @@ function makeTreeTableNib(overrides: Partial<TreeTableNib> = {}): TreeTableNib {
     priority: "high",
     estimate: "m",
     tags: ["auth"],
+    createdAt: "2026-03-15T10:00:00Z",
     updatedAt: "2026-03-20T10:00:00Z",
     parentId: null,
     blockingIds: [],
@@ -386,6 +388,70 @@ describe("buildTableData", () => {
     });
   });
 
+  describe("flat view + client filter (no ancestor context)", () => {
+    // Flat puts every nib at depth 0 with no nesting, so a non-matching ancestor
+    // pulled in "for context" would render as a stray, unindented dimmed row with
+    // no visual link to the match that caused it. The ancestor walk must be gated
+    // off in flat view.
+    const nibs: TreeTableNib[] = [
+      makeTreeTableNib({ id: "E1", type: "epic", title: "Epic" }),
+      makeTreeTableNib({ id: "T1", type: "task", title: "Task", parentId: "E1" }),
+    ];
+
+    it("renders ONLY the matching rows — no dimmed ancestor", () => {
+      const result = buildTableData(nibs, { type: ["task"] }, "flat", noCollapsed);
+      const ids = result.rows.map(r => r.nib.id);
+
+      expect(ids).toEqual(["T1"]);
+      expect(ids).not.toContain("E1");
+      // The one visible row is the direct match, never dimmed.
+      expect(result.rows[0].dimmed).toBe(false);
+    });
+
+    it("with no client filter, flat still shows every nib as an ungrouped depth-0 root", () => {
+      const result = buildTableData(nibs, emptyFilter, "flat", noCollapsed);
+      const ids = result.rows.map(r => r.nib.id);
+
+      expect(ids).toContain("E1");
+      expect(ids).toContain("T1");
+      expect(result.rows.every(r => r.depth === 0)).toBe(true);
+      expect(result.rows.every(r => !r.dimmed)).toBe(true);
+    });
+
+    it("tree (none) view still keeps the non-matching ancestor as a dimmed row", () => {
+      // The flat gate must NOT change nested views: the ancestor context that
+      // makes a matching descendant reachable in a tree stays intact.
+      const result = buildTableData(nibs, { type: ["task"] }, "none", noCollapsed);
+
+      const epic = result.rows.find(r => r.nib.id === "E1")!;
+      const task = result.rows.find(r => r.nib.id === "T1")!;
+      expect(epic).toBeDefined();
+      expect(epic.dimmed).toBe(true);
+      expect(task).toBeDefined();
+      expect(task.dimmed).toBe(false);
+    });
+
+    it("grouping lens (epics) + filter: bucket/ancestor handling unchanged (loose match still rendered under its bucket)", () => {
+      // A grouping lens is not flat: its buckets and ancestor context are
+      // preserved. A loose matching task still surfaces under its "No epic" bucket.
+      const loose: TreeTableNib[] = [
+        makeTreeTableNib({ id: "E1", type: "epic", title: "Epic" }),
+        makeTreeTableNib({ id: "T1", type: "task", title: "Task under epic", parentId: "E1" }),
+        makeTreeTableNib({ id: "T2", type: "task", title: "Orphan task" }),
+      ];
+      const result = buildTableData(loose, { type: ["task"] }, "epics", noCollapsed);
+      const ids = result.rows.map(r => r.nib.id);
+
+      expect(ids).toContain("T1");
+      expect(ids).toContain("T2");
+      expect(ids.some(id => isBucketId(id))).toBe(true);
+      // Epic ancestor of the matching T1 stays as a dimmed context row.
+      const epic = result.rows.find(r => r.nib.id === "E1")!;
+      expect(epic).toBeDefined();
+      expect(epic.dimmed).toBe(true);
+    });
+  });
+
   describe("displayParentId (view-tree display position)", () => {
     it("none lens: root has null display parent, child points to its parent id", () => {
       const nibs = [
@@ -482,5 +548,205 @@ describe("buildTableData", () => {
         expect(l1.displayParentId).toBeNull();
       });
     });
+  });
+});
+
+// The load-bearing premise of nibs-6grg: sorting `allNibs` BEFORE buildTableData
+// yields sibling-sort in the nested views and a flat sorted list in Flat, because
+// buildTree/buildViewTree preserve sibling input order within each group. These
+// tests exercise that seam directly (applySort → buildTableData), independent of
+// the Svelte component.
+describe("buildTableData — sibling-sort from a pre-sorted array", () => {
+  // Two milestone roots (input Z-before-A), one carrying two child tasks (input
+  // Zeta-before-Alpha). A global-flat title order would be Alpha, Root A, Root Z,
+  // Zeta — interleaving a child ahead of a root. Sibling-sort must instead keep
+  // children nested under their parent while ordering each sibling group.
+  const nestedRoots: TreeTableNib[] = [
+    makeTreeTableNib({ id: "m2", title: "Root Z", type: "milestone" }),
+    makeTreeTableNib({ id: "m1", title: "Root A", type: "milestone" }),
+    makeTreeTableNib({ id: "c2", title: "Zeta", type: "task", parentId: "m1" }),
+    makeTreeTableNib({ id: "c1", title: "Alpha", type: "task", parentId: "m1" }),
+  ];
+
+  it("none view: roots AND children reorder by the field, nesting/depths preserved", () => {
+    const sorted = applySort(nestedRoots, { field: "title", direction: "asc" });
+    const result = buildTableData(sorted, emptyFilter, "none", noCollapsed);
+
+    expect(result.rows.map((r) => r.nib.id)).toEqual(["m1", "c1", "c2", "m2"]);
+    // Structure intact: roots at depth 0, the two children nested at depth 1.
+    expect(result.rows.map((r) => r.depth)).toEqual([0, 1, 1, 0]);
+    expect(result.rows.find((r) => r.nib.id === "c1")!.parentNib?.id).toBe("m1");
+    expect(result.rows.find((r) => r.nib.id === "c2")!.parentNib?.id).toBe("m1");
+  });
+
+  it("none view: an UNSORTED array keeps the manual input order (control for the sort)", () => {
+    const result = buildTableData(nestedRoots, emptyFilter, "none", noCollapsed);
+    // No sort applied → input order, nested.
+    expect(result.rows.map((r) => r.nib.id)).toEqual(["m2", "m1", "c2", "c1"]);
+  });
+
+  it("flat view: a pre-sorted array yields a flat sorted list (every row depth 0)", () => {
+    const sorted = applySort(nestedRoots, { field: "title", direction: "asc" });
+    const result = buildTableData(sorted, emptyFilter, "flat", noCollapsed);
+    // Flat has no nesting: pure title order, all depth 0.
+    expect(result.rows.map((r) => r.nib.id)).toEqual(["c1", "m1", "m2", "c2"]);
+    expect(result.rows.every((r) => r.depth === 0)).toBe(true);
+  });
+
+  it("grouping lens (milestones): promoted headers AND bucket items both reorder", () => {
+    const nibs: TreeTableNib[] = [
+      makeTreeTableNib({ id: "m2", title: "M-Zulu", type: "milestone" }),
+      makeTreeTableNib({ id: "m1", title: "M-Alpha", type: "milestone" }),
+      makeTreeTableNib({ id: "t2", title: "T-Zulu", type: "task" }),
+      makeTreeTableNib({ id: "t1", title: "T-Alpha", type: "task" }),
+    ];
+    const sorted = applySort(nibs, { field: "title", direction: "asc" });
+    const result = buildTableData(sorted, emptyFilter, "milestones", noCollapsed);
+
+    // Promoted milestone headers reorder (M-Alpha before M-Zulu)...
+    expect(result.rows[0].nib.id).toBe("m1");
+    expect(result.rows[1].nib.id).toBe("m2");
+    // ...then the synthetic "No milestone" bucket...
+    expect(isBucketId(result.rows[2].nib.id)).toBe(true);
+    // ...whose loose items also reorder (T-Alpha before T-Zulu).
+    expect(result.rows[3].nib.id).toBe("t1");
+    expect(result.rows[4].nib.id).toBe("t2");
+  });
+});
+
+// nibs-2lqm: in the epics/features lenses the pre-sort of `allNibs` alone is NOT
+// enough — promoted headers descend through a HIDDEN higher-tier ancestor, so
+// they come out grouped by that ancestor's position. Threading the active sort
+// into buildTableData (→ buildViewTree's node comparator) orders them GLOBALLY.
+// When no sort is passed, the grouped order is preserved (the guard bites).
+describe("buildTableData — global promoted-header ordering under an active sort (nibs-2lqm)", () => {
+  const titleAsc: TableSort = { field: "title", direction: "asc" };
+  const titleDesc: TableSort = { field: "title", direction: "desc" };
+
+  describe("epics lens: two epics under DIFFERENT hidden milestones", () => {
+    // Even after pre-sorting by title, the milestones sort ahead and each epic
+    // trails its milestone, so DFS yields the GROUPED order [Zebra, Apple].
+    const nibs: TreeTableNib[] = [
+      makeTreeTableNib({ id: "m1", title: "Mmm1", type: "milestone" }),
+      makeTreeTableNib({ id: "eZ", title: "Zebra", type: "epic", parentId: "m1" }),
+      makeTreeTableNib({ id: "m2", title: "Mmm2", type: "milestone" }),
+      makeTreeTableNib({ id: "eA", title: "Apple", type: "epic", parentId: "m2" }),
+    ];
+
+    it("no sort arg → grouped DFS header order [Zebra, Apple] (control for the bug)", () => {
+      const sorted = applySort(nibs, titleAsc);
+      const result = buildTableData(sorted, emptyFilter, "epics", noCollapsed);
+      expect(result.rows.map((r) => r.nib.id)).toEqual(["eZ", "eA"]);
+    });
+
+    it("active sort → GLOBAL header order [Apple, Zebra]", () => {
+      const sorted = applySort(nibs, titleAsc);
+      const result = buildTableData(sorted, emptyFilter, "epics", noCollapsed, titleAsc);
+      expect(result.rows.map((r) => r.nib.id)).toEqual(["eA", "eZ"]);
+    });
+
+    it("active sort desc → GLOBAL header order reverses [Zebra, Apple]", () => {
+      const sorted = applySort(nibs, titleDesc);
+      const result = buildTableData(sorted, emptyFilter, "epics", noCollapsed, titleDesc);
+      expect(result.rows.map((r) => r.nib.id)).toEqual(["eZ", "eA"]);
+    });
+  });
+
+  describe("features lens: two features under DIFFERENT hidden epics", () => {
+    const nibs: TreeTableNib[] = [
+      makeTreeTableNib({ id: "e1", title: "Eee1", type: "epic" }),
+      makeTreeTableNib({ id: "fZ", title: "Zebra", type: "feature", parentId: "e1" }),
+      makeTreeTableNib({ id: "e2", title: "Eee2", type: "epic" }),
+      makeTreeTableNib({ id: "fA", title: "Apple", type: "feature", parentId: "e2" }),
+    ];
+
+    it("no sort arg → grouped DFS header order [Zebra, Apple] (control)", () => {
+      const sorted = applySort(nibs, titleAsc);
+      const result = buildTableData(sorted, emptyFilter, "features", noCollapsed);
+      expect(result.rows.map((r) => r.nib.id)).toEqual(["fZ", "fA"]);
+    });
+
+    it("active sort → GLOBAL header order [Apple, Zebra]", () => {
+      const sorted = applySort(nibs, titleAsc);
+      const result = buildTableData(sorted, emptyFilter, "features", noCollapsed, titleAsc);
+      expect(result.rows.map((r) => r.nib.id)).toEqual(["fA", "fZ"]);
+    });
+
+    it("active sort desc → GLOBAL header order reverses [Zebra, Apple]", () => {
+      // The titleDesc pre-sort reshuffles the DFS grouping to [fA, fZ]; only the
+      // threaded desc re-sort corrects it to [fZ, fA] (bites on revert).
+      const sorted = applySort(nibs, titleDesc);
+      const result = buildTableData(sorted, emptyFilter, "features", noCollapsed, titleDesc);
+      expect(result.rows.map((r) => r.nib.id)).toEqual(["fZ", "fA"]);
+    });
+  });
+
+  describe("bucket items from DISTINCT hidden parents also globally order", () => {
+    // Two loose tasks under two different milestones → the "No epic" bucket.
+    const nibs: TreeTableNib[] = [
+      makeTreeTableNib({ id: "m1", title: "Mmm1", type: "milestone" }),
+      makeTreeTableNib({ id: "tZ", title: "Zebra", type: "task", parentId: "m1" }),
+      makeTreeTableNib({ id: "m2", title: "Mmm2", type: "milestone" }),
+      makeTreeTableNib({ id: "tA", title: "Apple", type: "task", parentId: "m2" }),
+    ];
+
+    it("no sort arg → grouped DFS bucket-item order [Zebra, Apple] (control)", () => {
+      const sorted = applySort(nibs, titleAsc);
+      const result = buildTableData(sorted, emptyFilter, "epics", noCollapsed);
+      const itemIds = result.rows
+        .filter((r) => !isBucketId(r.nib.id))
+        .map((r) => r.nib.id);
+      expect(itemIds).toEqual(["tZ", "tA"]);
+    });
+
+    it("active sort → bucket items globally ordered [Apple, Zebra]", () => {
+      const sorted = applySort(nibs, titleAsc);
+      const result = buildTableData(sorted, emptyFilter, "epics", noCollapsed, titleAsc);
+      // Rows: the "No epic" bucket header, then its two items in global order.
+      const bucket = result.rows.find((r) => isBucketId(r.nib.id))!;
+      expect(bucket).toBeDefined();
+      const itemIds = result.rows
+        .filter((r) => !isBucketId(r.nib.id))
+        .map((r) => r.nib.id);
+      expect(itemIds).toEqual(["tA", "tZ"]);
+    });
+  });
+
+  describe("epics lens: headers sort by their hidden parent's title (parent field / byId path)", () => {
+    // `parent` is the only extractor that resolves via byId.get(parentId).title —
+    // the title tests never touch it. Each epic's real parent is a HIDDEN
+    // milestone, so a parent-field sort must order the promoted headers by their
+    // milestone-parent's title, exercising the buildViewTree re-sort's nibMap→byId
+    // lookup. A regression in that map construction would leave the headers in
+    // grouped DFS order [eA, eZ] and fail this test.
+    const parentAsc: TableSort = { field: "parent", direction: "asc" };
+    const nibs: TreeTableNib[] = [
+      makeTreeTableNib({ id: "m1", title: "M-Zebra", type: "milestone" }),
+      makeTreeTableNib({ id: "eA", title: "Apple", type: "epic", parentId: "m1" }),
+      makeTreeTableNib({ id: "m2", title: "M-Apple", type: "milestone" }),
+      makeTreeTableNib({ id: "eZ", title: "Zebra", type: "epic", parentId: "m2" }),
+    ];
+
+    it("active parent sort → headers ordered by hidden parent title [eZ, eA]", () => {
+      const sorted = applySort(nibs, parentAsc);
+      const result = buildTableData(sorted, emptyFilter, "epics", noCollapsed, parentAsc);
+      // eZ's parent "M-Apple" sorts before eA's parent "M-Zebra".
+      expect(result.rows.map((r) => r.nib.id)).toEqual(["eZ", "eA"]);
+    });
+  });
+
+  it("milestones lens: the sort param reorders an UNSORTED array (wiring check)", () => {
+    // Feed a raw, unsorted array straight into buildTableData (no applySort). The
+    // milestone headers and the "No milestone" bucket's loose items come out of
+    // `classify` in raw input order [m2, m1] / [t2, t1]; only the threaded sort
+    // re-sorts them to [m1, m2] / [t1, t2]. This FAILS if `sort` isn't threaded.
+    const nibs: TreeTableNib[] = [
+      makeTreeTableNib({ id: "m2", title: "M-Zulu", type: "milestone" }),
+      makeTreeTableNib({ id: "m1", title: "M-Alpha", type: "milestone" }),
+      makeTreeTableNib({ id: "t2", title: "T-Zulu", type: "task" }),
+      makeTreeTableNib({ id: "t1", title: "T-Alpha", type: "task" }),
+    ];
+    const result = buildTableData(nibs, emptyFilter, "milestones", noCollapsed, titleAsc);
+    expect(result.rows.map((r) => r.nib.id)).toEqual(["m1", "m2", "__no_milestone__", "t1", "t2"]);
   });
 });

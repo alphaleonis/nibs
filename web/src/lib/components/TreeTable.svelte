@@ -1,23 +1,25 @@
 <script lang="ts">
-  import { queryStore, subscriptionStore, getContextClient } from "@urql/svelte";
-  import { TREE_TABLE_QUERY, NIB_CHANGED_SUBSCRIPTION } from "../queries";
-  import { ALL_COLUMN_KEYS, DEFAULT_BLOCKED_EMPHASIS } from "../types";
-  import type { NibFilter, ViewLevel, ColumnKey, RowDensity, BlockedEmphasis, RowSubtreeActions, TreeTableNib } from "../types";
+  import { getContextClient } from "@urql/svelte";
+  import { DEFAULT_BLOCKED_EMPHASIS } from "../types";
+  import type { NibFilter, ViewLevel, RowDensity, BlockedEmphasis, RowSubtreeActions, TreeTableNib, TableSort, SortField } from "../types";
+  import type { ColumnKey } from "../columns";
   import type { Preferences } from "../preferences.svelte";
   import { buildTableData } from "../tableData";
   import { isBucketId, bucketIdForItem, buildViewTree, collectDescendantIds } from "../tree";
+  import { applySort, nextTableSort } from "../tableSort";
   import { prepareFilter, isDragAllowed, matchesFilter } from "../filter";
-  import { resolveFilter, resolveViewLevel, resolveVisibleColumns, resolveColumnWidths } from "../resolvePrefs";
+  import { resolveFilter, resolveViewLevel, resolveVisibleColumns, resolveColumnWidths, resolveColumnOrder, resolveTableSort, emitTableSort, emitColumnOrder } from "../resolvePrefs";
   import TreeTableRow from "./TreeTableRow.svelte";
-  import { CopyPlus, CopyMinus } from "@lucide/svelte";
+  import TableHeader from "./TableHeader.svelte";
   import type { DropZone } from "../drag.svelte";
   import { useSelection, useDrag, useActiveView, useTreeView } from "../contexts";
   import { useColumnResize } from "../composables/useColumnResize.svelte";
+  import { useColumnDrag } from "../composables/useColumnDrag.svelte";
   import { useTreeDrag } from "../composables/useTreeDrag.svelte";
   import { useKeyboardNav } from "../composables/useKeyboardNav.svelte";
   import { useScrollRestore } from "../composables/useScrollRestore.svelte";
-  import { NibChangeTracker } from "../changeTracker.svelte";
-  import { onDestroy, untrack } from "svelte";
+  import { useTableData } from "../composables/useTableData.svelte";
+  import { untrack } from "svelte";
 
   interface Props {
     prefs?: Preferences;
@@ -25,8 +27,12 @@
     viewLevel?: ViewLevel;
     visibleColumns?: ColumnKey[];
     columnWidths?: Record<ColumnKey, number>;
+    columnOrder?: ColumnKey[];
+    tableSort?: TableSort | null;
+    ontablesortchange?: (s: TableSort | null) => void;
     oncolumnwidthschange?: (widths: Record<ColumnKey, number>) => void;
     oncolumnresizeend?: () => void;
+    oncolumnorderchange?: (order: ColumnKey[]) => void;
     ontagschange?: (tags: string[]) => void;
     onrowcontextmenu?: (nibId: string, event: MouseEvent, nib: TreeTableNib, subtree: RowSubtreeActions) => void;
     onaddchild?: (nibId: string, nibType: string, anchor: DOMRect) => void;
@@ -41,8 +47,12 @@
     viewLevel = undefined as ViewLevel | undefined,
     visibleColumns = undefined as ColumnKey[] | undefined,
     columnWidths = undefined as Record<ColumnKey, number> | undefined,
+    columnOrder = undefined as ColumnKey[] | undefined,
+    tableSort = undefined as TableSort | null | undefined,
+    ontablesortchange,
     oncolumnwidthschange,
     oncolumnresizeend,
+    oncolumnorderchange,
     ontagschange,
     onrowcontextmenu,
     onaddchild,
@@ -67,14 +77,45 @@
   let resolvedViewLevel = $derived(resolveViewLevel(prefs, viewLevel));
   let resolvedVisibleColumns = $derived(resolveVisibleColumns(prefs, visibleColumns));
   let resolvedColumnWidths = $derived(resolveColumnWidths(prefs, columnWidths));
+  // The full per-view column order (all keys). Drives the header + cell + width
+  // loops (filtered to the visible set). Reordering writes it back per view.
+  let resolvedColumnOrder = $derived(resolveColumnOrder(prefs, columnOrder));
+  // Table column sort. Resolved from prefs/prop; APPLIED in every view — a flat
+  // sorted list in Flat, sibling-sort (siblings/roots/bucket items/promoted
+  // headers reordered, nesting preserved) in the Tree + grouping lenses. Applied
+  // only while the sorted column is visible: hiding it deactivates the sort (rows
+  // revert to the manual `order` sequence) instead of leaving rows sorted by an
+  // invisible field with no header to clear it; the persisted preference is
+  // retained, so re-showing the column reactivates it. `activeSort` is the single
+  // source of truth for the row order, the header sort indicator, AND the drag
+  // gate, so they can never disagree.
+  let resolvedTableSort = $derived(resolveTableSort(prefs, tableSort));
+  let activeSort = $derived(
+    resolvedTableSort && resolvedVisibleColumns.includes(resolvedTableSort.field)
+      ? resolvedTableSort
+      : null
+  );
 
-  let dragAllowed = $derived(isDragAllowed(resolvedFilter));
+  // Drag-reorder gating. Flat is browse-only (its rows intermix real parents and
+  // the reorder backend needs a real sibling drop target). In the Tree + lenses
+  // an active sort DISABLES drag: the client-side sort never rewrites the `order`
+  // key, so dropping a row would fight the sorted display. Turning the sort off
+  // (`activeSort == null`, which also covers the sorted-column-hidden case)
+  // restores the exact manual order and re-enables drag.
+  let dragAllowed = $derived(isDragAllowed(resolvedFilter) && resolvedViewLevel !== "flat" && activeSort == null);
   let showColumn = $derived((key: ColumnKey) => resolvedVisibleColumns.includes(key));
+
+  // Visible columns in the per-view order. Drives the <th> loop so the header
+  // sequence follows the persisted columnOrder; TreeTableRow filters the same
+  // order so cells stay aligned under their headers.
+  let orderedVisibleColumns = $derived(resolvedColumnOrder.filter((key) => showColumn(key)));
 
   // Explicit table width = actions column (32px) + sum of visible column widths.
   // Required for table-layout: fixed to enforce column widths regardless of content.
+  // Iterates the ordered set (the sum is order-independent, but keeping the loop on
+  // columnOrder single-sources "the columns this table renders").
   let tableWidth = $derived(
-    32 + ALL_COLUMN_KEYS.reduce((sum, key) => showColumn(key) ? sum + resolvedColumnWidths[key] : sum, 0)
+    32 + orderedVisibleColumns.reduce((sum, key) => sum + resolvedColumnWidths[key], 0)
   );
 
   // Split filter into server-side (sent to GraphQL) and client-side (applied locally).
@@ -84,105 +125,35 @@
 
   const client = getContextClient();
 
-  const result = $derived(
-    queryStore({
-      client,
-      query: TREE_TABLE_QUERY,
-      variables: { filter: prepared.serverFilter },
-    })
-  );
-
-  // --- Real-time subscription for nib changes ---
-  const changeTracker = new NibChangeTracker();
-
-  // A "deleted" event defers its refetch by ~fadeDurationMs so the row's
-  // fade-out animation can play before it leaves the dataset (see the $effect
-  // below). Capture that timer so an unmount inside the fade window clears it —
-  // otherwise it outlives the component and calls reexecute on a torn-down urql
-  // store. Cleared here on true unmount rather than via an $effect cleanup: the
-  // subscription effect re-runs on every event, so an effect cleanup would also
-  // cancel a still-pending deferred delete on the NEXT event and cut the fade
-  // short. Only the latest pending timer is tracked.
-  let pendingDeleteTimer: ReturnType<typeof setTimeout> | undefined;
-  onDestroy(() => {
-    clearTimeout(pendingDeleteTimer);
-    changeTracker.destroy();
-  });
-
-  const subscription = subscriptionStore({
+  // Live data source: owns the tree-table list query, the live-refetch decision
+  // driven by the nib-change subscription, and the highlight/fade change tracker.
+  // The fragile refetch logic (dedup / defer-delete / single-timer / throw
+  // isolation) lives in a framework-free core, unit-tested in plain vitest —
+  // see composables/useTableData.svelte.ts + tableDataSource.ts.
+  const dataSource = useTableData({
     client,
-    query: NIB_CHANGED_SUBSCRIPTION,
+    getServerFilter: () => prepared.serverFilter,
   });
 
-  // Track the last-seen event via a stable content key. urql's
-  // subscription store emits a fresh wrapper object on every reactive
-  // cycle, so reference comparison is unreliable — compare by content
-  // instead. Plain let (not $state) so writes do not re-trigger the effect.
-  let lastEventKey = "";
+  // error is `unknown` from the source; the query surfaces urql's CombinedError,
+  // which carries a `.message`. Narrow it for display.
+  let errorMessage = $derived((dataSource.error as { message?: string } | undefined)?.message ?? "");
 
-  // Refetch the tree query after a change event. Isolated in a try/catch so a
-  // throwing (or absent) `reexecute` cannot propagate out of the $effect body
-  // below: an uncaught throw there aborts Svelte's whole effect flush and
-  // silently takes the live subscription bridge down for the rest of the
-  // session (the failure mode is "the UI just stops updating", with no error).
-  // The catch surfaces the failure rather than swallowing it. Guards both the
-  // synchronous non-deleted branch and the deferred deleted branch — a throw in
-  // the setTimeout would otherwise surface as an uncaught timer error.
-  function refetchTree() {
-    try {
-      result.reexecute({ requestPolicy: "network-only" });
-    } catch (err) {
-      console.error("Failed to refetch nibs after a change event:", err);
-    }
-  }
+  let allNibs = $derived(dataSource.allNibs);
 
-  $effect(() => {
-    if ($subscription.error) {
-      console.warn("Nib subscription error:", $subscription.error);
-    }
-  });
-
-  $effect(() => {
-    const data = $subscription.data;
-    if (!data?.nibChanged) return;
-    const event = data.nibChanged as { type: string; nibId: string; nib?: { etag?: string | null } | null };
-    // Include the payload etag so a genuine second edit to the SAME nib (new
-    // etag) refetches, while a burst of duplicate emissions for ONE commit
-    // (shared etag) still collapses. `deleted`/`archived` carry a null nib →
-    // etag falls back to "" so their (type:nibId) dedup is unaffected — matching
-    // the etag-keyed external dedup in nibChange.ts.
-    const etag = event.nib?.etag ?? "";
-    const key = `${event.type}:${event.nibId}:${etag}`;
-
-    // All side-effects (changeTracker writes, query reexecute) must run
-    // untracked so they do not feed back into this effect and cause a
-    // reactive loop. A throw anywhere in this body aborts Svelte's effect flush
-    // and kills this bridge, so the fragile call — urql's reexecute, which can
-    // throw or be absent — is isolated in refetchTree's try/catch.
-    // changeTracker.handleEvent is deliberately NOT wrapped: it is total (only
-    // Set/Map writes and timer scheduling, no external calls, no throw sites),
-    // so wrapping it would only swallow a genuine bug in our own code.
-    untrack(() => {
-      if (key === lastEventKey) return;
-      lastEventKey = key;
-
-      changeTracker.handleEvent(event);
-
-      if (event.type === "deleted") {
-        pendingDeleteTimer = setTimeout(() => {
-          refetchTree();
-        }, changeTracker.fadeDurationMs);
-      } else {
-        refetchTree();
-      }
-    });
-  });
-
-  let allNibs = $derived($result.data?.nibs ?? []);
+  // Every view applies the client-side column sort when one is active: Flat gets
+  // a flat sorted list; the nested views get sibling-sort (buildTableData nests
+  // the pre-sorted array, and the tree builders preserve sibling input order
+  // WITHIN each subtree). The active sort is ALSO threaded into buildTableData so
+  // the epics/features lenses re-sort their promoted headers and "No X" bucket
+  // items GLOBALLY — the pre-sort alone leaves them grouped by their hidden
+  // higher-tier ancestor. Sort off keeps the server's manual `order` sequence.
+  // Only the ROW ORDER changes — other allNibs consumers stay on the raw list.
+  let orderedNibs = $derived(activeSort ? applySort(allNibs, activeSort) : allNibs);
 
   // The client-side filter is the original filter (not the server-stripped version).
   // buildTableData uses hasClientFilters/matchesFilter from filter.ts directly.
-  let tableData = $derived(buildTableData(allNibs, resolvedFilter, resolvedViewLevel, treeView.collapsedIds));
+  let tableData = $derived(buildTableData(orderedNibs, resolvedFilter, resolvedViewLevel, treeView.collapsedIds, activeSort));
   let rows = $derived(tableData.rows);
   let parentIds = $derived(tableData.parentIds);
   let visibleRowIds = $derived(rows.map(r => r.nib.id));
@@ -209,9 +180,9 @@
     // Don't prune while the first query is still in flight: allNibs is
     // transiently [] before the result lands, and a cold deep-link populates the
     // selection (via syncFromUrl) before data arrives — pruning against an empty
-    // dataset would wrongly drop it. Reading $result.fetching also re-subscribes
+    // dataset would wrongly drop it. Reading dataSource.fetching also re-subscribes
     // so pruning runs once data settles (mirrors the ensure-visible loading guard).
-    if ($result.fetching) return;
+    if (dataSource.fetching) return;
     const nibs = allNibs;
     const filter = resolvedFilter;
     const matchingIds = new Set<string>();
@@ -239,11 +210,11 @@
     //   - Query still loading (cold deep-link fires syncFromUrl before the
     //     GraphQL result lands, so allNibs is []): keep the pending request so
     //     the expand/scroll runs once data arrives. Reading
-    //     $result.fetching also subscribes the effect to re-run on settle.
+    //     dataSource.fetching also subscribes the effect to re-run on settle.
     //   - Query settled and the nib is genuinely absent (archived/bad URL):
     //     clear and bail — there is nothing to scroll to.
     if (!nibMap.has(nibId)) {
-      if (!$result.fetching) {
+      if (!dataSource.fetching) {
         selection.clearEnsureVisible();
       }
       return;
@@ -332,6 +303,11 @@
   // raw parentId, so the grouping lens (headers, hidden containers, "No X"
   // buckets) is honored. TreeViewState owns the collapse set; these compute the
   // next set and hand it to setCollapsed.
+  //
+  // Both calls intentionally omit the active-sort comparator that buildTableData
+  // threads in: collectDescendantIds returns an order-INDEPENDENT Set, so
+  // re-sorting the top-level headers / bucket items can't change which ids are a
+  // node's descendants. Building the tree unsorted here is cheaper and equivalent.
   function expandSubtree(rootId: string) {
     const viewTree = buildViewTree<TreeTableNib>(allNibs, resolvedViewLevel);
     const descendantIds = collectDescendantIds(viewTree, rootId);
@@ -375,6 +351,16 @@
         oncolumnresizeend?.();
       }
     },
+  });
+
+  // --- Column reorder (drag a header to a new position) ---
+  // Separate from the row drag (useTreeDrag): a flat column list has no
+  // parent/reparent/zone/nesting concerns, so this owns its own small state
+  // (draggedKey/target/side) rather than reusing the tree DragState. It reuses the
+  // threshold PATTERN only. Writes the full order for the current view.
+  const columnDrag = useColumnDrag({
+    getOrder: () => resolvedColumnOrder,
+    onReorder: (next: ColumnKey[]) => emitColumnOrder(prefs, oncolumnorderchange, next),
   });
 
   // --- Scroll container ---
@@ -555,16 +541,28 @@
 
     treeDrag.onRowPointerDown(nibId, e);
   }
+
+  // --- Header sorting ---
+  // Clicking any sortable header cycles that field asc → desc → off. Active in
+  // every view (Flat sorts the whole list; the nested views sort siblings).
+  function handleTableSortClick(field: SortField) {
+    emitTableSort(prefs, ontablesortchange, nextTableSort(resolvedTableSort, field));
+  }
 </script>
 
 <div data-testid="tree-table" class="h-full">
-{#if $result.fetching}
+{#if dataSource.fetching && allNibs.length === 0}
+  <!-- Only the INITIAL load (nothing to show yet) swaps in the loading state.
+       A background refetch (fetching=true while allNibs is already populated,
+       e.g. the NIB_CHANGED_SUBSCRIPTION-driven live refetch) keeps the table
+       mounted so in-progress column drags/resizes, inline editors, and scroll
+       position survive; rows update in place via the useTableData live path. -->
   <div class="flex items-center justify-center py-12 text-body text-muted-foreground">
     <span>Loading...</span>
   </div>
-{:else if $result.error}
+{:else if dataSource.error}
   <div class="rounded-lg bg-destructive/10 px-4 py-3 text-body text-destructive">
-    Error: {$result.error.message}
+    Error: {errorMessage}
   </div>
 {:else if rows.length === 0}
   <div class="flex items-center justify-center py-12 text-body text-muted-foreground">
@@ -574,85 +572,17 @@
   <!-- svelte-ignore a11y_no_noninteractive_tabindex -->
   <div bind:this={scrollContainerEl} class="overflow-auto h-full scroll-container" role="grid" tabindex="0" onkeydown={keyboardNav.handleKeydown} onscroll={scrollRestore.onScroll} onclick={handleDelegatedClick} ondblclick={handleDelegatedDblClick} oncontextmenu={handleDelegatedContextMenu} onpointerdown={handleDelegatedPointerDown} style="--row-pad-y: calc({rowDensity === 'comfortable' ? '0.625rem' : '0.25rem'} * var(--font-scale))">
   <table bind:this={tableEl} class="border-collapse" style="table-layout: fixed; width: {tableWidth}px;">
-    <thead class="sticky top-0" style="z-index: var(--z-sticky);">
-      <tr>
-        <th class="w-8 bg-background" style="width: 32px;">
-          <!-- Raw buttons: two 12px icon controls must fit inside the 32px-wide
-               actions column; smaller than the Button primitive's minimum size. -->
-          <div class="flex items-center">
-            <button data-testid="expand-all" class="rounded-sm p-0.5 text-muted-foreground hover:text-foreground" onclick={expandAll} title="Expand all">
-              <CopyPlus size={12} />
-            </button>
-            <button data-testid="collapse-all" class="rounded-sm p-0.5 text-muted-foreground hover:text-foreground" onclick={collapseAll} title="Collapse all">
-              <CopyMinus size={12} />
-            </button>
-          </div>
-        </th>
-        {#if showColumn("id")}
-          <th class="text-left text-label text-muted-foreground px-3 py-2 relative bg-background" style="width: {resolvedColumnWidths.id}px;">
-            ID
-            <!-- svelte-ignore a11y_no_static_element_interactions -->
-            <div class="resize-handle" onpointerdown={(e) => columnResize.onPointerDown(e, "id")} onpointermove={columnResize.onPointerMove} onpointerup={columnResize.onPointerUp} ondblclick={() => columnResize.onDblClick("id", showColumn)}></div>
-          </th>
-        {/if}
-        {#if showColumn("parent")}
-          <th class="text-left text-label text-muted-foreground px-3 py-2 relative bg-background" style="width: {resolvedColumnWidths.parent}px;">
-            Parent
-            <!-- svelte-ignore a11y_no_static_element_interactions -->
-            <div class="resize-handle" onpointerdown={(e) => columnResize.onPointerDown(e, "parent")} onpointermove={columnResize.onPointerMove} onpointerup={columnResize.onPointerUp} ondblclick={() => columnResize.onDblClick("parent", showColumn)}></div>
-          </th>
-        {/if}
-        {#if showColumn("type")}
-          <th class="text-left text-label text-muted-foreground px-3 py-2 relative bg-background" style="width: {resolvedColumnWidths.type}px;">
-            Type
-            <!-- svelte-ignore a11y_no_static_element_interactions -->
-            <div class="resize-handle" onpointerdown={(e) => columnResize.onPointerDown(e, "type")} onpointermove={columnResize.onPointerMove} onpointerup={columnResize.onPointerUp} ondblclick={() => columnResize.onDblClick("type", showColumn)}></div>
-          </th>
-        {/if}
-        {#if showColumn("title")}
-          <th class="text-left text-label text-muted-foreground px-3 py-2 relative bg-background" style="width: {resolvedColumnWidths.title}px;">
-            Title
-            <!-- svelte-ignore a11y_no_static_element_interactions -->
-            <div class="resize-handle" onpointerdown={(e) => columnResize.onPointerDown(e, "title")} onpointermove={columnResize.onPointerMove} onpointerup={columnResize.onPointerUp} ondblclick={() => columnResize.onDblClick("title", showColumn)}></div>
-          </th>
-        {/if}
-        {#if showColumn("state")}
-          <th class="text-left text-label text-muted-foreground px-3 py-2 relative bg-background" style="width: {resolvedColumnWidths.state}px;">
-            State
-            <!-- svelte-ignore a11y_no_static_element_interactions -->
-            <div class="resize-handle" onpointerdown={(e) => columnResize.onPointerDown(e, "state")} onpointermove={columnResize.onPointerMove} onpointerup={columnResize.onPointerUp} ondblclick={() => columnResize.onDblClick("state", showColumn)}></div>
-          </th>
-        {/if}
-        {#if showColumn("effort")}
-          <th class="text-left text-label text-muted-foreground px-3 py-2 relative bg-background" style="width: {resolvedColumnWidths.effort}px;">
-            Effort
-            <!-- svelte-ignore a11y_no_static_element_interactions -->
-            <div class="resize-handle" onpointerdown={(e) => columnResize.onPointerDown(e, "effort")} onpointermove={columnResize.onPointerMove} onpointerup={columnResize.onPointerUp} ondblclick={() => columnResize.onDblClick("effort", showColumn)}></div>
-          </th>
-        {/if}
-        {#if showColumn("tags")}
-          <th class="text-left text-label text-muted-foreground px-3 py-2 relative bg-background" style="width: {resolvedColumnWidths.tags}px;">
-            Tags
-            <!-- svelte-ignore a11y_no_static_element_interactions -->
-            <div class="resize-handle" onpointerdown={(e) => columnResize.onPointerDown(e, "tags")} onpointermove={columnResize.onPointerMove} onpointerup={columnResize.onPointerUp} ondblclick={() => columnResize.onDblClick("tags", showColumn)}></div>
-          </th>
-        {/if}
-        {#if showColumn("blocking")}
-          <th class="text-left text-label text-muted-foreground px-3 py-2 relative bg-background" style="width: {resolvedColumnWidths.blocking}px;">
-            Blocking
-            <!-- svelte-ignore a11y_no_static_element_interactions -->
-            <div class="resize-handle" onpointerdown={(e) => columnResize.onPointerDown(e, "blocking")} onpointermove={columnResize.onPointerMove} onpointerup={columnResize.onPointerUp} ondblclick={() => columnResize.onDblClick("blocking", showColumn)}></div>
-          </th>
-        {/if}
-        {#if showColumn("blockedBy")}
-          <th class="text-left text-label text-muted-foreground px-3 py-2 relative bg-background" style="width: {resolvedColumnWidths.blockedBy}px;">
-            Blocked by
-            <!-- svelte-ignore a11y_no_static_element_interactions -->
-            <div class="resize-handle" onpointerdown={(e) => columnResize.onPointerDown(e, "blockedBy")} onpointermove={columnResize.onPointerMove} onpointerup={columnResize.onPointerUp} ondblclick={() => columnResize.onDblClick("blockedBy", showColumn)}></div>
-          </th>
-        {/if}
-      </tr>
-    </thead>
+    <TableHeader
+      columns={orderedVisibleColumns}
+      columnWidths={resolvedColumnWidths}
+      {activeSort}
+      {showColumn}
+      {columnResize}
+      {columnDrag}
+      onSort={handleTableSortClick}
+      onExpandAll={expandAll}
+      onCollapseAll={collapseAll}
+    />
     <tbody>
       {#each rows as row (row.nib.id)}
         <TreeTableRow
@@ -663,9 +593,10 @@
           collapsed={treeView.isCollapsed(row.nib.id)}
           parentNib={row.parentNib}
           visibleColumns={resolvedVisibleColumns}
+          columnOrder={resolvedColumnOrder}
           draggable={!isBucketId(row.nib.id) && dragAllowed}
-          highlighted={changeTracker.isHighlighted(row.nib.id)}
-          fading={changeTracker.isFading(row.nib.id)}
+          highlighted={dataSource.changed.isHighlighted(row.nib.id)}
+          fading={dataSource.changed.isFading(row.nib.id)}
           {blockedEmphasis}
         />
       {/each}

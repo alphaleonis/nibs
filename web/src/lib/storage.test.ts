@@ -1,6 +1,6 @@
 import { describe, it, expect, beforeEach, vi } from "vitest";
-import { savePreferences, loadPreferences, parseTheme } from "./storage";
-import { MIN_DETAIL_PANEL_WIDTH, MIN_DETAIL_PANEL_HEIGHT } from "./types";
+import { savePreferences, loadPreferences, parseTheme, parsePerViewMap, parseColumnOrder } from "./storage";
+import { MIN_DETAIL_PANEL_WIDTH, MIN_DETAIL_PANEL_HEIGHT, VIEW_LEVELS, ALL_COLUMN_KEYS } from "./types";
 
 const store: Record<string, string> = {};
 const mockStorage = {
@@ -217,6 +217,60 @@ describe("storage", () => {
     expect(loaded.columnWidths).toBeUndefined();
   });
 
+  it("saves and loads columnOrder per view level (a permutation round-trips)", () => {
+    // A non-default order for milestones must survive save → load unchanged (it is
+    // already a full permutation, so nothing is appended).
+    const perm = [...ALL_COLUMN_KEYS].reverse();
+    savePreferences({
+      filter: {},
+      viewLevel: "milestones",
+      columnOrder: { milestones: perm },
+    });
+    const loaded = loadPreferences();
+    expect(loaded.columnOrder?.milestones).toEqual(perm);
+  });
+
+  it("appends a missing (newly-added) column to a stored partial columnOrder on load", () => {
+    // A persisted order listing only a few keys must gain the rest (canonical
+    // order) so every column still renders after a new column ships.
+    store["nibs-filter-preferences"] = JSON.stringify({
+      filter: {},
+      viewLevel: "epics",
+      columnOrder: { epics: ["title", "id"] },
+    });
+    const loaded = loadPreferences();
+    const rest = ALL_COLUMN_KEYS.filter((k) => k !== "title" && k !== "id");
+    expect(loaded.columnOrder?.epics).toEqual(["title", "id", ...rest]);
+  });
+
+  it("drops unknown keys from a stored columnOrder on load", () => {
+    store["nibs-filter-preferences"] = JSON.stringify({
+      filter: {},
+      viewLevel: "epics",
+      columnOrder: { epics: ["title", "bogus", "id"] },
+    });
+    const loaded = loadPreferences();
+    expect(loaded.columnOrder?.epics).not.toContain("bogus");
+    expect(loaded.columnOrder?.epics?.[0]).toBe("title");
+    expect(loaded.columnOrder?.epics?.[1]).toBe("id");
+  });
+
+  it("returns undefined columnOrder when nothing is persisted", () => {
+    savePreferences({ filter: {}, viewLevel: "milestones" });
+    const loaded = loadPreferences();
+    expect(loaded.columnOrder).toBeUndefined();
+  });
+
+  it("drops a non-array columnOrder level (garbage) so the map collapses to undefined", () => {
+    store["nibs-filter-preferences"] = JSON.stringify({
+      filter: {},
+      viewLevel: "epics",
+      columnOrder: { epics: "not-an-array" },
+    });
+    const loaded = loadPreferences();
+    expect(loaded.columnOrder).toBeUndefined();
+  });
+
   it("saves and loads detailPanelWidth", () => {
     savePreferences({
       filter: {},
@@ -408,6 +462,61 @@ describe("storage", () => {
     expect(loadPreferences().previewOpen).toBeUndefined();
   });
 
+  it("saves and loads tableSort (round-trip)", () => {
+    savePreferences({ filter: {}, viewLevel: "flat", tableSort: { field: "modified", direction: "desc" } });
+    const loaded = loadPreferences();
+    expect(loaded.viewLevel).toBe("flat");
+    expect(loaded.tableSort).toEqual({ field: "modified", direction: "desc" });
+  });
+
+  it("accepts any widened sortable field (round-trips a non-date column sort)", () => {
+    for (const field of ["title", "id", "type", "state", "effort", "tags", "blocking", "blockedBy", "parent"]) {
+      store["nibs-filter-preferences"] = JSON.stringify({
+        filter: {},
+        viewLevel: "flat",
+        tableSort: { field, direction: "asc" },
+      });
+      expect(loadPreferences().tableSort).toEqual({ field, direction: "asc" });
+    }
+  });
+
+  it("returns undefined tableSort when not set", () => {
+    savePreferences({ filter: {}, viewLevel: "none" });
+    expect(loadPreferences().tableSort).toBeUndefined();
+  });
+
+  it("returns undefined tableSort for an unknown/removed field (e.g. priority — not a column)", () => {
+    store["nibs-filter-preferences"] = JSON.stringify({
+      filter: {},
+      viewLevel: "flat",
+      tableSort: { field: "priority", direction: "asc" },
+    });
+    expect(loadPreferences().tableSort).toBeUndefined();
+  });
+
+  it("returns undefined tableSort for an invalid direction", () => {
+    store["nibs-filter-preferences"] = JSON.stringify({
+      filter: {},
+      viewLevel: "flat",
+      tableSort: { field: "created", direction: "sideways" },
+    });
+    expect(loadPreferences().tableSort).toBeUndefined();
+  });
+
+  it("returns undefined tableSort for a non-object stored value", () => {
+    store["nibs-filter-preferences"] = JSON.stringify({
+      filter: {},
+      viewLevel: "flat",
+      tableSort: "created-asc",
+    });
+    expect(loadPreferences().tableSort).toBeUndefined();
+  });
+
+  it("accepts the 'flat' viewLevel", () => {
+    store["nibs-filter-preferences"] = JSON.stringify({ filter: {}, viewLevel: "flat" });
+    expect(loadPreferences().viewLevel).toBe("flat");
+  });
+
   it("round-trips a persisted theme", () => {
     savePreferences({ filter: {}, viewLevel: "none", theme: "dracula" });
     expect(loadPreferences().theme).toBe("dracula");
@@ -425,6 +534,87 @@ describe("storage", () => {
       theme: "solarized",
     });
     expect(loadPreferences().theme).toBe("graphite");
+  });
+});
+
+// The shared per-view map parser: one VIEW_LEVELS loop with an injected
+// per-level validator. Replaces the two hand-parallel parseColumn* skeletons;
+// the per-level validators (visibility/widths) are exercised behaviorally via
+// loadPreferences above, so here we pin the generic loop contract once with a
+// stand-in validator (accept positive numbers).
+describe("parsePerViewMap", () => {
+  const positiveNumber = (raw: unknown): number | undefined =>
+    typeof raw === "number" && raw > 0 ? raw : undefined;
+
+  const cases: { name: string; raw: unknown; expected: unknown }[] = [
+    { name: "non-object raw → undefined", raw: "nope", expected: undefined },
+    { name: "null raw → undefined", raw: null, expected: undefined },
+    { name: "array raw → undefined (no numeric view-level keys)", raw: [1, 2], expected: undefined },
+    { name: "no level passes the validator → undefined", raw: { none: -1, epics: 0 }, expected: undefined },
+    { name: "keeps only the levels the validator accepts", raw: { none: 5, epics: -1, milestones: 12 }, expected: { none: 5, milestones: 12 } },
+    { name: "ignores keys that are not view levels", raw: { none: 5, bogus: 9 }, expected: { none: 5 } },
+  ];
+
+  for (const { name, raw, expected } of cases) {
+    it(name, () => {
+      expect(parsePerViewMap(raw, positiveNumber)).toEqual(expected);
+    });
+  }
+
+  it("runs the validator once per view level", () => {
+    const validate = vi.fn((raw: unknown) => (typeof raw === "number" ? raw : undefined));
+    parsePerViewMap({ none: 1 }, validate);
+    expect(validate).toHaveBeenCalledTimes(VIEW_LEVELS.length);
+  });
+
+  it("is generic over the value type (array validator, mirroring columnVisibility)", () => {
+    const stringArray = (raw: unknown): string[] | undefined =>
+      Array.isArray(raw) && raw.length > 0 ? (raw as string[]) : undefined;
+    expect(parsePerViewMap({ epics: ["id", "title"], none: [] }, stringArray)).toEqual({
+      epics: ["id", "title"],
+    });
+  });
+});
+
+// parseColumnOrder is the per-level validator for the columnOrder map: it drops
+// unknown/duplicate keys, preserves the persisted order of valid keys, and
+// APPENDS any missing ColumnKey in canonical order (so a newly-added column still
+// appears). A non-array yields undefined so the level is dropped.
+describe("parseColumnOrder", () => {
+  it("returns undefined for a non-array input", () => {
+    expect(parseColumnOrder("nope")).toBeUndefined();
+    expect(parseColumnOrder(null)).toBeUndefined();
+    expect(parseColumnOrder({ a: 1 })).toBeUndefined();
+    expect(parseColumnOrder(42)).toBeUndefined();
+  });
+
+  it("returns the full canonical order for an empty array (all keys appended)", () => {
+    expect(parseColumnOrder([])).toEqual([...ALL_COLUMN_KEYS]);
+  });
+
+  it("preserves a persisted partial order and appends the missing keys canonically", () => {
+    const rest = ALL_COLUMN_KEYS.filter((k) => k !== "state" && k !== "title");
+    expect(parseColumnOrder(["state", "title"])).toEqual(["state", "title", ...rest]);
+  });
+
+  it("drops unknown keys before appending the missing ones", () => {
+    const rest = ALL_COLUMN_KEYS.filter((k) => k !== "id");
+    expect(parseColumnOrder(["id", "bogus", 7, null])).toEqual(["id", ...rest]);
+  });
+
+  it("de-duplicates repeated keys (keeps the first occurrence)", () => {
+    const rest = ALL_COLUMN_KEYS.filter((k) => k !== "title");
+    expect(parseColumnOrder(["title", "title", "title"])).toEqual(["title", ...rest]);
+  });
+
+  it("round-trips a full permutation unchanged (nothing to append)", () => {
+    const perm = [...ALL_COLUMN_KEYS].reverse();
+    expect(parseColumnOrder(perm)).toEqual(perm);
+  });
+
+  it("always yields every ColumnKey exactly once regardless of input", () => {
+    const out = parseColumnOrder(["modified", "modified", "bogus", "id"])!;
+    expect([...out].sort()).toEqual([...ALL_COLUMN_KEYS].sort());
   });
 });
 

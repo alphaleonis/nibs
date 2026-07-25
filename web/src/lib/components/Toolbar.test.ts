@@ -60,9 +60,14 @@ describe("Toolbar", () => {
     expect(screen.getByRole("button", { name: /^Group by/ })).toHaveTextContent("Features & Bugs");
   });
 
-  it("shows 'None' label when viewLevel is none", () => {
+  it("shows 'Tree' label when viewLevel is none (the full hierarchy view)", () => {
     render(Toolbar, { ...defaultToolbarProps, viewLevel: "none" });
-    expect(screen.getByRole("button", { name: /^Group by/ })).toHaveTextContent("None");
+    expect(screen.getByRole("button", { name: /^Group by/ })).toHaveTextContent("Tree");
+  });
+
+  it("shows 'Flat' label when viewLevel is flat", () => {
+    render(Toolbar, { ...defaultToolbarProps, viewLevel: "flat" });
+    expect(screen.getByRole("button", { name: /^Group by/ })).toHaveTextContent("Flat");
   });
 
   it("view selector button is enabled (not disabled)", () => {
@@ -70,15 +75,16 @@ describe("Toolbar", () => {
     expect(screen.getByRole("button", { name: /^Group by/ })).not.toBeDisabled();
   });
 
-  it("opens dropdown with all four grouping lenses when the control is clicked", async () => {
+  it("opens dropdown with all five view levels when the control is clicked", async () => {
     render(Toolbar, { ...defaultToolbarProps });
 
     await user.click(screen.getByRole("button", { name: /^Group by/ }));
 
-    // All four lenses should appear as radio items
+    // All five view levels should appear as radio items
     const radioItems = screen.getAllByRole("menuitemradio");
-    expect(radioItems).toHaveLength(4);
-    expect(screen.getByRole("menuitemradio", { name: /None/i })).toBeInTheDocument();
+    expect(radioItems).toHaveLength(5);
+    expect(screen.getByRole("menuitemradio", { name: /Tree/i })).toBeInTheDocument();
+    expect(screen.getByRole("menuitemradio", { name: /Flat/i })).toBeInTheDocument();
     expect(screen.getByRole("menuitemradio", { name: /Milestones/i })).toBeInTheDocument();
     expect(screen.getByRole("menuitemradio", { name: /Epics/i })).toBeInTheDocument();
     expect(screen.getByRole("menuitemradio", { name: /Features & Bugs/i })).toBeInTheDocument();
@@ -93,6 +99,16 @@ describe("Toolbar", () => {
     await user.click(screen.getByRole("menuitemradio", { name: /Epics/i }));
 
     expect(onviewlevelchange).toHaveBeenCalledWith("epics");
+  });
+
+  it("calls onviewlevelchange with 'flat' when the Flat option is clicked", async () => {
+    const onviewlevelchange = vi.fn();
+    render(Toolbar, { ...defaultToolbarProps, viewLevel: "none", onviewlevelchange });
+
+    await user.click(screen.getByRole("button", { name: /^Group by/ }));
+    await user.click(screen.getByRole("menuitemradio", { name: /^Flat$/i }));
+
+    expect(onviewlevelchange).toHaveBeenCalledWith("flat");
   });
 
   it("closes dropdown on second click of view selector button", async () => {
@@ -343,6 +359,56 @@ describe("Toolbar", () => {
     expect(labels).toContain("Blocked by");
   });
 
+  it("lists Created and Modified in the Columns dropdown", async () => {
+    render(Toolbar, { ...defaultToolbarProps, viewLevel: "epics" as ViewLevel });
+
+    await user.click(screen.getByRole("button", { name: "Columns" }));
+
+    const items = screen.getAllByRole("menuitemcheckbox");
+    const labels = items.map(item => item.textContent?.trim());
+    expect(labels).toContain("Created");
+    expect(labels).toContain("Modified");
+  });
+
+  it("Modified is checked and Created is unchecked when using the default-visible columns", async () => {
+    render(Toolbar, {
+      ...defaultToolbarProps,
+      visibleColumns: [...DEFAULT_VISIBLE_COLUMNS] as ColumnKey[],
+      viewLevel: "epics" as ViewLevel,
+    });
+
+    await user.click(screen.getByRole("button", { name: "Columns" }));
+
+    const items = screen.getAllByRole("menuitemcheckbox");
+    const created = items.find(item => item.textContent?.trim() === "Created");
+    const modified = items.find(item => item.textContent?.trim() === "Modified");
+    // modified is default-visible; created is opt-in.
+    expect(modified).toHaveAttribute("aria-checked", "true");
+    expect(created).toHaveAttribute("aria-checked", "false");
+  });
+
+  it("toggling Created on emits it in canonical order (before modified)", async () => {
+    const oncolumnschange = vi.fn();
+    render(Toolbar, {
+      ...defaultToolbarProps,
+      visibleColumns: [...DEFAULT_VISIBLE_COLUMNS] as ColumnKey[],
+      oncolumnschange,
+      viewLevel: "epics" as ViewLevel,
+    });
+
+    await user.click(screen.getByRole("button", { name: "Columns" }));
+
+    const items = screen.getAllByRole("menuitemcheckbox");
+    const createdItem = items.find(item => item.textContent?.trim() === "Created");
+    expect(createdItem).toBeInTheDocument();
+    await user.click(createdItem!);
+
+    expect(oncolumnschange).toHaveBeenCalledOnce();
+    const callArg = oncolumnschange.mock.calls[0][0] as ColumnKey[];
+    // created (canonical index 9) sorts before modified (index 10) in ALL_COLUMN_KEYS.
+    expect(callArg).toEqual(["id", "parent", "type", "title", "state", "effort", "tags", "created", "modified"]);
+  });
+
   it("Blocking and Blocked by are unchecked when using the default-visible columns", async () => {
     render(Toolbar, {
       ...defaultToolbarProps,
@@ -377,7 +443,8 @@ describe("Toolbar", () => {
 
     expect(oncolumnschange).toHaveBeenCalledOnce();
     const callArg = oncolumnschange.mock.calls[0][0] as ColumnKey[];
-    expect(callArg).toEqual(["id", "parent", "type", "title", "state", "effort", "tags", "blocking"]);
+    // blocking (canonical index 7) slots in before the default-visible modified.
+    expect(callArg).toEqual(["id", "parent", "type", "title", "state", "effort", "tags", "blocking", "modified"]);
   });
 
   it("closes Columns dropdown on second click", async () => {
@@ -441,6 +508,31 @@ describe("Toolbar", () => {
     const callArg = oncolumnschange.mock.calls[0][0] as ColumnKey[];
     // 'type' should be inserted at its canonical position (index 2), not appended at the end
     expect(callArg).toEqual(["id", "parent", "type", "title", "state", "effort", "tags"]);
+  });
+
+  it("re-sorts the visible set by the per-view columnOrder on toggle (not the canonical order)", async () => {
+    const oncolumnschange = vi.fn();
+    // A custom order where state/title precede id — distinct from canonical.
+    const columnOrder: ColumnKey[] = ["state", "title", "id", "parent", "type", "effort", "tags", "blocking", "blockedBy", "created", "modified"];
+    render(Toolbar, {
+      ...defaultToolbarProps,
+      visibleColumns: ["title", "state"] as ColumnKey[],
+      columnOrder,
+      oncolumnschange,
+      viewLevel: "epics" as ViewLevel,
+    });
+
+    await user.click(screen.getByRole("button", { name: "Columns" }));
+
+    const items = screen.getAllByRole("menuitemcheckbox");
+    const idItem = items.find((item) => item.textContent?.trim() === "ID");
+    expect(idItem).toBeInTheDocument();
+    await user.click(idItem!);
+
+    expect(oncolumnschange).toHaveBeenCalledOnce();
+    const callArg = oncolumnschange.mock.calls[0][0] as ColumnKey[];
+    // Sorted by columnOrder (state<title<id), NOT canonical (which would be id,title,state).
+    expect(callArg).toEqual(["state", "title", "id"]);
   });
 });
 

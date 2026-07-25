@@ -8,6 +8,7 @@
   import UpdateBanner from "./lib/components/UpdateBanner.svelte";
 
   import TreeTable from "./lib/components/TreeTable.svelte";
+  import ColumnAdapters from "./lib/ColumnAdapters.svelte";
   import ActiveNibView from "./lib/components/ActiveNibView.svelte";
   import TypePickerPopover from "./lib/components/TypePickerPopover.svelte";
   import RowContextMenu from "./lib/components/RowContextMenu.svelte";
@@ -111,7 +112,11 @@
       pause: !detailTargetId,
     }),
   );
-  const detailNib = $derived(($detailStore.data?.nib as DetailNib | undefined) ?? null);
+  // No cast: `$detailStore.data` is typed by NIB_DETAIL_QUERY's generated result,
+  // and `DetailNib` is derived from that same type, so `?? null` yields exactly
+  // `DetailNib | null`. Dropping a selected field from the query therefore breaks
+  // this read site (via snapshotFromDetail) at compile time instead of blanking.
+  const detailNib = $derived($detailStore.data?.nib ?? null);
   const detailFetching = $derived($detailStore.fetching);
   const detailError = $derived($detailStore.error);
 
@@ -516,6 +521,10 @@
     oncreatenew={(type) => view.startCreate({ type })}
   />
 
+  <!-- Provide the per-column header/cell adapters to the table region. The map
+       is a static, app-wide default (columns.ts + ColumnAdapters.svelte); this
+       wrapper is the seam a future per-view override would replace. -->
+  <ColumnAdapters>
   <main class="flex-1 min-h-0 flex flex-col px-6 py-6">
     <!-- Re-key on position so the whole PaneGroup remounts when the dock toggles.
          PaneForge fixes the split `direction` at pane-group creation, so the
@@ -576,6 +585,7 @@
     </Resizable.PaneGroup>
     {/key}
   </main>
+  </ColumnAdapters>
 </div>
 
 <!-- Expanded presentation: the same view, hosted in a full-screen modal overlay.

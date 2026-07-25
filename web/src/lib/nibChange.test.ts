@@ -1,4 +1,5 @@
 import { describe, it, expect } from "vitest";
+import { print } from "graphql";
 import {
   classifyNibEvent,
   toNibSnapshot,
@@ -285,7 +286,9 @@ describe("NIB_CHANGED_SUBSCRIPTION field coverage guard", () => {
     "etag",
   ] as const;
 
-  const source = NIB_CHANGED_SUBSCRIPTION.loc?.source.body ?? "";
+  // NIB_CHANGED_SUBSCRIPTION is now a generated TypedDocumentNode whose serialized
+  // AST carries no `.loc`; reconstruct the query text from the AST via `print`.
+  const source = print(NIB_CHANGED_SUBSCRIPTION);
   // Scope the check to the `nib { ... }` sub-selection only. `id` and `type` also
   // appear elsewhere in the document (the `$id` operation var, `nibChanged(id: $id)`,
   // and the sibling top-level `type` field), so matching the whole source would let a

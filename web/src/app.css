@@ -168,6 +168,9 @@
   /* Z-index scale */
   --z-dropdown: 10;
   --z-sticky: 20;
+  /* The cursor-following column-drag ghost floats above the sticky header while a
+     header is dragged, below modal surfaces. */
+  --z-drag-ghost: 30;
   --z-modal: 100;
   /* Sits above --z-modal so a confirm/alert dialog raised from within an
      expanded (full-screen) modal is not occluded by it (nibs-8cfb). */
@@ -436,6 +439,21 @@
 /* Focused row keyboard cursor */
 .tree-row.focused {
   box-shadow: inset 0 0 0 2px var(--ring);
+}
+
+/* Column-reorder drag cursor. useColumnDrag sets `data-col-drag` on <body> while
+   a header reorder is in flight; these globals force the whole page to the
+   drop-validity cursor. `!important` + the universal selector are needed to beat
+   the element-level `cursor: grab` on `.col-header`/`.tree-row.draggable` (an
+   element's own `cursor` wins over an inherited body cursor), so the intended
+   grabbing/no-drop shows over headers and rows too — not only over bare surfaces. */
+body[data-col-drag="grabbing"],
+body[data-col-drag="grabbing"] * {
+  cursor: grabbing !important;
+}
+body[data-col-drag="no-drop"],
+body[data-col-drag="no-drop"] * {
+  cursor: no-drop !important;
 }
 
 /* Shared markdown prose styles for nib body rendering */

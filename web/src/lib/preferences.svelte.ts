@@ -1,13 +1,53 @@
 import { untrack } from "svelte";
 import { loadPreferences, savePreferences } from "./storage";
-import { DEFAULT_VISIBLE_COLUMNS, DEFAULT_COLUMN_WIDTHS, DEFAULT_DETAIL_PANEL_WIDTH, MIN_DETAIL_PANEL_WIDTH, DEFAULT_DETAIL_PANEL_HEIGHT, MIN_DETAIL_PANEL_HEIGHT, DEFAULT_DETAIL_PANEL_POSITION, DEFAULT_BLOCKED_EMPHASIS, DEFAULT_FONT_SIZE, DEFAULT_THEME, DEFAULT_PREVIEW_OPEN } from "./types";
-import type { NibFilter, ViewLevel, ColumnKey, RowDensity, Theme, DetailPanelPosition, BlockedEmphasis, FontSize } from "./types";
+import { PerViewColumnMap } from "./perViewColumnMap.svelte";
+import type { SaveMode } from "./perViewColumnMap.svelte";
+import { ALL_COLUMN_KEYS, DEFAULT_VISIBLE_COLUMNS, DEFAULT_COLUMN_WIDTHS, DEFAULT_DETAIL_PANEL_WIDTH, MIN_DETAIL_PANEL_WIDTH, DEFAULT_DETAIL_PANEL_HEIGHT, MIN_DETAIL_PANEL_HEIGHT, DEFAULT_DETAIL_PANEL_POSITION, DEFAULT_BLOCKED_EMPHASIS, DEFAULT_FONT_SIZE, DEFAULT_THEME, DEFAULT_PREVIEW_OPEN } from "./types";
+import type { NibFilter, ViewLevel, ColumnKey, RowDensity, Theme, DetailPanelPosition, BlockedEmphasis, FontSize, TableSort } from "./types";
 
 export class Preferences {
   filter: NibFilter = $state({});
   viewLevel: ViewLevel = $state("none");
-  columnVisibility: Partial<Record<ViewLevel, ColumnKey[]>> = $state({});
-  columnWidths: Partial<Record<ViewLevel, Partial<Record<ColumnKey, number>>>> = $state({});
+
+  // Per-view column state, unified behind one primitive. Each concern stays a
+  // separate reactive slice with its own serialized field; the only differences
+  // are the default, resolve combinator, and save timing (injected here).
+  //   - visibility REPLACES the default (stored value used whole); auto-saved.
+  //   - widths MERGE over the full default; flush-saved (excluded from auto-save
+  //     so a drag never persists mid-gesture — persisted on pointerup instead).
+  //   - order REPLACES the default (stored value used whole); auto-saved. The
+  //     stored value is already the full canonical set (parseColumnOrder appends
+  //     any missing key on load), so a permutation persists intact.
+  readonly visibility = new PerViewColumnMap<ColumnKey[]>({
+    storageKey: "columnVisibility",
+    defaultValue: [...DEFAULT_VISIBLE_COLUMNS],
+    resolve: (stored, dflt) => stored ?? [...dflt],
+    saveMode: "auto",
+    requestSave: () => this.save(),
+  });
+  readonly widths = new PerViewColumnMap<Partial<Record<ColumnKey, number>>, Record<ColumnKey, number>>({
+    storageKey: "columnWidths",
+    defaultValue: { ...DEFAULT_COLUMN_WIDTHS },
+    resolve: (stored, dflt) => ({ ...dflt, ...(stored ?? {}) }),
+    saveMode: "flush",
+    requestSave: () => this.save(),
+  });
+  readonly order = new PerViewColumnMap<ColumnKey[]>({
+    storageKey: "columnOrder",
+    defaultValue: [...ALL_COLUMN_KEYS],
+    resolve: (stored, dflt) => stored ?? [...dflt],
+    saveMode: "auto",
+    requestSave: () => this.save(),
+  });
+  // The auto-save $effect subscribes only to the "auto" instances; iterating one
+  // list keeps the save-timing split driven by a single explicit flag. Typed to
+  // the members the effect touches so the differing T/R generics can share a list.
+  readonly #perViewMaps: readonly { readonly saveMode: SaveMode; track(): void }[] = [
+    this.visibility,
+    this.widths,
+    this.order,
+  ];
+
   #detailPanelWidth: number | undefined = $state(undefined);
   // Discrete toggle → auto-saved (like theme/rowDensity).
   detailPanelPosition: DetailPanelPosition = $state(DEFAULT_DETAIL_PANEL_POSITION);
@@ -21,15 +61,32 @@ export class Preferences {
   theme: Theme = $state(DEFAULT_THEME);
   // Discrete toggle → auto-saved (like theme/rowDensity/detailPanelPosition).
   previewOpen: boolean = $state(DEFAULT_PREVIEW_OPEN);
+  // Table column sort. null = off (manual `order`). Discrete toggle →
+  // auto-saved. Applied in every view (flat list in Flat, sibling-sort elsewhere).
+  tableSort: TableSort | null = $state(null);
 
-  visibleColumns: ColumnKey[] = $derived(
-    this.columnVisibility[this.viewLevel] ?? [...DEFAULT_VISIBLE_COLUMNS]
-  );
+  visibleColumns: ColumnKey[] = $derived(this.visibility.resolve(this.viewLevel));
 
-  currentColumnWidths: Record<ColumnKey, number> = $derived({
-    ...DEFAULT_COLUMN_WIDTHS,
-    ...(this.columnWidths[this.viewLevel] ?? {}),
-  });
+  currentColumnWidths: Record<ColumnKey, number> = $derived(this.widths.resolve(this.viewLevel));
+
+  // The full canonical column order for the current view (all keys), used as the
+  // render order (filtered to the visible set downstream). Reordering writes
+  // through `order.setLevel`.
+  currentColumnOrder: ColumnKey[] = $derived(this.order.resolve(this.viewLevel));
+
+  // Serialized per-view maps, exposed for save() and read-only consumers (tests,
+  // the Toolbar visibility toggle writes through `visibility` directly).
+  get columnVisibility(): Partial<Record<ViewLevel, ColumnKey[]>> {
+    return this.visibility.serialize();
+  }
+
+  get columnWidths(): Partial<Record<ViewLevel, Partial<Record<ColumnKey, number>>>> {
+    return this.widths.serialize();
+  }
+
+  get columnOrder(): Partial<Record<ViewLevel, ColumnKey[]>> {
+    return this.order.serialize();
+  }
 
   detailPanelWidth: number = $derived(
     this.#detailPanelWidth ?? DEFAULT_DETAIL_PANEL_WIDTH
@@ -54,8 +111,9 @@ export class Preferences {
     const initial = loadPreferences();
     this.filter = initial.filter;
     this.viewLevel = initial.viewLevel;
-    this.columnVisibility = initial.columnVisibility ?? {};
-    this.columnWidths = initial.columnWidths ?? {};
+    this.visibility.hydrate(initial.columnVisibility);
+    this.widths.hydrate(initial.columnWidths);
+    this.order.hydrate(initial.columnOrder);
     this.#detailPanelWidth = initial.detailPanelWidth;
     this.detailPanelPosition = initial.detailPanelPosition ?? DEFAULT_DETAIL_PANEL_POSITION;
     this.#detailPanelHeight = initial.detailPanelHeight;
@@ -64,9 +122,11 @@ export class Preferences {
     this.blockedEmphasis = initial.blockedEmphasis ?? DEFAULT_BLOCKED_EMPHASIS;
     this.theme = initial.theme ?? DEFAULT_THEME;
     this.previewOpen = initial.previewOpen ?? DEFAULT_PREVIEW_OPEN;
+    this.tableSort = initial.tableSort ?? null;
 
-    // Auto-save when filter, viewLevel, or columnVisibility change.
-    // columnWidths and detailPanelWidth are excluded (untracked) — use flush*() methods instead.
+    // Auto-save when filter, viewLevel, or an "auto" per-view map (columnVisibility)
+    // change. The "flush" per-view maps (columnWidths) and detailPanelWidth are
+    // excluded (never subscribed here) — use flush*() methods instead.
     // $effect requires component context; gracefully skip if instantiated outside one (e.g. tests).
     try {
       let initialized = false;
@@ -74,13 +134,18 @@ export class Preferences {
         // Touch reactive fields to subscribe to them
         this.filter;
         this.viewLevel;
-        this.columnVisibility;
+        // Subscribe only the "auto" per-view maps; "flush" maps stay untracked
+        // so their mutations (width drags) don't trigger auto-save.
+        for (const map of this.#perViewMaps) {
+          if (map.saveMode === "auto") map.track();
+        }
         this.rowDensity;
         this.fontSize;
         this.blockedEmphasis;
         this.theme;
         this.detailPanelPosition;
         this.previewOpen;
+        this.tableSort;
         // Skip the initial save that fires on construction (we just loaded these values)
         if (!initialized) {
           initialized = true;
@@ -105,17 +170,11 @@ export class Preferences {
   }
 
   setColumnWidth(key: ColumnKey, width: number): void {
-    this.columnWidths = {
-      ...this.columnWidths,
-      [this.viewLevel]: {
-        ...(this.columnWidths[this.viewLevel] ?? {}),
-        [key]: width,
-      },
-    };
+    this.widths.updateLevel(this.viewLevel, (current) => ({ ...(current ?? {}), [key]: width }));
   }
 
   flushColumnWidths(): void {
-    this.save();
+    this.widths.flush();
   }
 
   flushDetailPanelWidth(): void {
@@ -130,8 +189,9 @@ export class Preferences {
     savePreferences({
       filter: this.filter,
       viewLevel: this.viewLevel,
-      columnVisibility: this.columnVisibility,
-      columnWidths: this.columnWidths,
+      columnVisibility: this.visibility.serialize(),
+      columnWidths: this.widths.serialize(),
+      columnOrder: this.order.serialize(),
       detailPanelWidth: this.#detailPanelWidth,
       detailPanelPosition: this.detailPanelPosition,
       detailPanelHeight: this.#detailPanelHeight,
@@ -140,6 +200,7 @@ export class Preferences {
       blockedEmphasis: this.blockedEmphasis,
       theme: this.theme,
       previewOpen: this.previewOpen,
+      tableSort: this.tableSort ?? undefined,
     });
   }
 }

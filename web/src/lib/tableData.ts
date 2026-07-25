@@ -1,5 +1,6 @@
-import type { TreeTableNib, NibFilter, ViewLevel, TreeNode } from "./types";
+import type { TreeTableNib, NibFilter, ViewLevel, TreeNode, TableSort } from "./types";
 import { buildViewTree, isBucketId } from "./tree";
+import { makeNibComparator } from "./tableSort";
 import { hasClientFilters, matchesFilter } from "./filter";
 
 export interface RowData {
@@ -37,6 +38,7 @@ export function buildTableData(
   filter: NibFilter,
   viewLevel: ViewLevel,
   collapsedIds: ReadonlySet<string>,
+  sort: TableSort | null = null,
 ): TableData {
   // Stage 1: Build nibMap for O(1) parent lookups
   const nibMap = new Map<string, TreeTableNib>();
@@ -73,23 +75,33 @@ export function buildTableData(
       }
     }
 
-    // Walk ancestor chains for visibility
+    // Walk ancestor chains for visibility so a matching descendant keeps its
+    // nesting context. Flat view has no nesting — every nib is an ungrouped
+    // depth-0 root — so a non-matching ancestor there would render as a stray,
+    // unindented dimmed row with no visual link to its match. Skip the walk in
+    // flat: a non-match is simply excluded like any other.
     const ancestorIds = new Set<string>();
-    for (const id of matchingIds) {
-      const visited = new Set<string>();
-      let current = nibMap.get(id);
-      while (current?.parentId && !visited.has(current.parentId)) {
-        visited.add(current.parentId);
-        ancestorIds.add(current.parentId);
-        current = nibMap.get(current.parentId);
+    if (viewLevel !== "flat") {
+      for (const id of matchingIds) {
+        const visited = new Set<string>();
+        let current = nibMap.get(id);
+        while (current?.parentId && !visited.has(current.parentId)) {
+          visited.add(current.parentId);
+          ancestorIds.add(current.parentId);
+          current = nibMap.get(current.parentId);
+        }
       }
     }
 
     visibleIds = new Set<string>([...matchingIds, ...ancestorIds]);
   }
 
-  // Stage 5: Build view tree
-  const tree = buildViewTree<TreeTableNib>(allNibs, viewLevel);
+  // Stage 5: Build view tree. When a column sort is active, hand the tree
+  // builder a node comparator (built from the already-computed nibMap) so the
+  // epics/features lenses order their promoted headers + bucket items globally
+  // by the sort field instead of by their hidden higher-tier ancestor.
+  const nodeComparator = sort ? makeNibComparator(sort, nibMap) : undefined;
+  const tree = buildViewTree<TreeTableNib>(allNibs, viewLevel, nodeComparator);
 
   // Stage 5a: Synthetic "No X" bucket nodes are not real nibs, so they never
   // appear in the real-parentId-derived `parentIds` or `visibleIds` sets. Fold
