@@ -816,3 +816,106 @@ describe("Toolbar — filter dropdowns", () => {
     expect(effortBadge?.classList.contains("invisible")).toBe(true);
   });
 });
+
+// Query-box ↔ NibFilter sync (phase 1 tracer: the `status:` token + free text).
+// The box parses on input into the same canonical NibFilter the State dropdown
+// reads/writes; the dropdown rewrites the box text while unfocused; the box is
+// never rewritten under the cursor; blur canonicalizes. These use a real
+// `Preferences` instance so the emitted filter round-trips back into
+// `resolvedFilter` (the callback-only path never feeds the change back).
+describe("Toolbar — query box status sync", () => {
+  it("typing 'status:todo' parses into the filter and ticks 'todo' in the State dropdown", async () => {
+    const prefs = new Preferences();
+    render(Toolbar, { prefs, oncreatenew: vi.fn() });
+
+    await user.type(screen.getByTestId("filter-keyword"), "status:todo");
+
+    // Parsed into the canonical filter (status include-list, no free text).
+    expect(prefs.filter.status).toEqual(["todo"]);
+    expect(prefs.filter.search).toBeUndefined();
+
+    // The State dropdown reflects it live.
+    await user.click(screen.getByRole("button", { name: /state/i }));
+    expect(screen.getByRole("menuitemcheckbox", { name: "todo" })).toHaveAttribute("aria-checked", "true");
+  });
+
+  it("typing mixed 'login status:todo' sets both search and status", async () => {
+    const prefs = new Preferences();
+    render(Toolbar, { prefs, oncreatenew: vi.fn() });
+
+    await user.type(screen.getByTestId("filter-keyword"), "login status:todo");
+
+    expect(prefs.filter.search).toBe("login");
+    expect(prefs.filter.status).toEqual(["todo"]);
+  });
+
+  it("bare words populate search only (unchanged Bleve behavior)", async () => {
+    const prefs = new Preferences();
+    render(Toolbar, { prefs, oncreatenew: vi.fn() });
+
+    await user.type(screen.getByTestId("filter-keyword"), "login flow");
+
+    expect(prefs.filter.search).toBe("login flow");
+    expect(prefs.filter.status).toBeUndefined();
+  });
+
+  it("toggling the State dropdown regenerates the box text (canonical form) while unfocused", async () => {
+    const prefs = new Preferences();
+    render(Toolbar, { prefs, oncreatenew: vi.fn() });
+
+    // Box starts empty and is never focused in this test.
+    expect((screen.getByTestId("filter-keyword") as HTMLInputElement).value).toBe("");
+
+    await user.click(screen.getByRole("button", { name: /state/i }));
+    await user.click(screen.getByRole("menuitemcheckbox", { name: "todo" }));
+
+    expect(prefs.filter.status).toEqual(["todo"]);
+    // The unfocused box is rewritten to the canonical token form.
+    expect((screen.getByTestId("filter-keyword") as HTMLInputElement).value).toBe("status:todo");
+  });
+
+  it("does not rewrite the box while it is focused (no canonicalization mid-type)", async () => {
+    const prefs = new Preferences();
+    render(Toolbar, { prefs, oncreatenew: vi.fn() });
+
+    const input = screen.getByTestId("filter-keyword") as HTMLInputElement;
+    // Non-canonical text: uppercase field name and value.
+    await user.type(input, "STATUS:Todo");
+
+    // Parsed and lowercased into the filter...
+    expect(prefs.filter.status).toEqual(["todo"]);
+    // ...but the literal keystrokes remain visible while focused.
+    expect(input.value).toBe("STATUS:Todo");
+    expect(input).toHaveFocus();
+  });
+
+  it("canonicalizes the box text on blur (lowercased token, collapsed whitespace)", async () => {
+    const prefs = new Preferences();
+    render(Toolbar, { prefs, oncreatenew: vi.fn() });
+
+    const input = screen.getByTestId("filter-keyword") as HTMLInputElement;
+    await user.type(input, "STATUS:Todo   extra");
+    expect(input.value).toBe("STATUS:Todo   extra");
+
+    await user.tab(); // blur
+
+    expect(input.value).toBe("status:todo extra");
+    expect(prefs.filter.status).toEqual(["todo"]);
+    expect(prefs.filter.search).toBe("extra");
+  });
+
+  it("the clear button empties the whole query — both status token and free text", async () => {
+    const prefs = new Preferences();
+    prefs.filter = { status: ["todo"], search: "login" };
+    render(Toolbar, { prefs, oncreatenew: vi.fn() });
+
+    // Box seeds to the canonical query for the existing filter.
+    expect((screen.getByTestId("filter-keyword") as HTMLInputElement).value).toBe("status:todo login");
+
+    await user.click(screen.getByTestId("filter-keyword-clear"));
+
+    expect(prefs.filter.status).toBeUndefined();
+    expect(prefs.filter.search).toBeUndefined();
+    expect((screen.getByTestId("filter-keyword") as HTMLInputElement).value).toBe("");
+  });
+});

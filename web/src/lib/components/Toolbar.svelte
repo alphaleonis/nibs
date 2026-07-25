@@ -19,6 +19,8 @@
   import { priorityIndicators } from "../badges";
   import type { TypeIconInfo } from "../icons";
   import { resolveFilter, resolveViewLevel, resolveVisibleColumns, resolveColumnOrder, emitFilter as emitFilterHelper } from "../resolvePrefs";
+  import { parseQuery, serializeQuery } from "../query";
+  import { untrack } from "svelte";
   import * as DropdownMenu from "$lib/components/ui/dropdown-menu/index.js";
   import { buttonVariants } from "$lib/components/ui/button/index.js";
   import { Input } from "$lib/components/ui/input/index.js";
@@ -233,15 +235,53 @@
 
   // DOM ref to the keyword input so the clear button can refocus it.
   let keywordInput = $state<HTMLInputElement | null>(null);
-  let hasKeyword = $derived(!!resolvedFilter.search);
+
+  // --- Query box ↔ NibFilter reconciliation ---
+  // The box parses its text into structured filter fields (status token + free
+  // text) on every keystroke, so the State dropdown ticks live. NibFilter stays
+  // canonical: `keywordText` is the LITERAL text the box shows, reconciled to the
+  // filter's canonical serialization ONLY while the box is unfocused — never
+  // rewritten under the cursor. Blur flips `keywordFocused` false, which re-runs
+  // the effect and snaps the box to canonical (whitespace + casing normalized).
+  let keywordFocused = $state(false);
+  // Seed from the canonical query so the clear button / placeholder state is
+  // correct on first paint (before the effect runs). `untrack` makes the one-time
+  // read explicit — the $effect below owns keeping it in sync thereafter.
+  let keywordText = $state(untrack(() => serializeQuery(resolvedFilter)));
+  let canonicalQuery = $derived(serializeQuery(resolvedFilter));
+  let hasKeyword = $derived(keywordText.length > 0);
+
+  $effect(() => {
+    const next = canonicalQuery;
+    if (!keywordFocused) {
+      // Untracked write: the box mirrors the filter, not the other way around, so
+      // this must not re-subscribe on `keywordText` and self-trigger.
+      untrack(() => {
+        keywordText = next;
+      });
+    }
+  });
 
   function handleKeyword(event: Event) {
-    const value = (event.target as HTMLInputElement).value;
-    emitFilter({ ...resolvedFilter, search: value || undefined });
+    const text = (event.target as HTMLInputElement).value;
+    keywordText = text;
+    const parsed = parseQuery(text);
+    // The box OWNS status + search: set them from the parse, drop them when the
+    // parse yields none. Other facet fields (type/priority/...) are untouched.
+    const updated: NibFilter = { ...resolvedFilter };
+    if (parsed.status) updated.status = parsed.status;
+    else delete updated.status;
+    if (parsed.search) updated.search = parsed.search;
+    else delete updated.search;
+    emitFilter(updated);
   }
 
   function clearKeyword() {
-    emitFilter({ ...resolvedFilter, search: undefined });
+    keywordText = "";
+    const updated: NibFilter = { ...resolvedFilter };
+    delete updated.status;
+    delete updated.search;
+    emitFilter(updated);
     keywordInput?.focus();
   }
 
@@ -424,9 +464,11 @@
     <Input
       bind:ref={keywordInput}
       type="text"
-      placeholder="Filter by keyword"
-      value={resolvedFilter.search ?? ""}
+      placeholder="Filter by keyword or status:todo"
+      value={keywordText}
       oninput={handleKeyword}
+      onfocus={() => (keywordFocused = true)}
+      onblur={() => (keywordFocused = false)}
       data-testid="filter-keyword"
       class="pl-8 {hasKeyword ? 'pr-8' : ''}"
     />
