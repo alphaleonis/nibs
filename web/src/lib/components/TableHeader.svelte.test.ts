@@ -1,8 +1,10 @@
 import { render } from "@testing-library/svelte";
-import { describe, it, expect, vi } from "vitest";
+import { describe, it, expect, vi, afterEach } from "vitest";
+import { flushSync } from "svelte";
 import TableHeader from "./TableHeader.svelte";
 import type { ColumnKey, TableSort } from "../types";
 import { DEFAULT_COLUMN_WIDTHS } from "../types";
+import { useColumnDrag, GHOST_OFFSET_X, GHOST_OFFSET_Y } from "../composables/useColumnDrag.svelte";
 import type { ColumnDrag } from "../composables/useColumnDrag.svelte";
 import type { ColumnResize } from "../composables/useColumnResize.svelte";
 import { SelectionState } from "../selection.svelte";
@@ -29,6 +31,7 @@ function makeDragStub(overrides: Partial<ColumnDrag> = {}): ColumnDrag {
     targetKey: null,
     targetSide: null,
     isDragging: false,
+    ghost: null,
     onHeaderPointerDown: vi.fn(),
     consumeClickSuppression: vi.fn(() => false),
     ...overrides,
@@ -208,6 +211,113 @@ describe("TableHeader — keyboard sort (the <th> is the control)", () => {
     const { container } = renderHeader({ activeSort: { field: "id", direction: "asc" } as TableSort });
     const idTh = container.querySelector("thead th[data-col-key='id']") as HTMLElement;
     expect(idTh.getAttribute("aria-sort")).toBe("ascending");
+  });
+});
+
+describe("TableHeader — column-drag ghost", () => {
+  // The end-to-end reactivity test starts a real reorder that installs window
+  // listeners; dispose the composable's effect root (and clear the body cursor
+  // attribute) after each test so nothing leaks into the next.
+  let disposeGhostRoot: (() => void) | null = null;
+  afterEach(() => {
+    disposeGhostRoot?.();
+    disposeGhostRoot = null;
+    delete document.body.dataset.colDrag;
+    document.elementFromPoint = () => null;
+  });
+
+  it("renders NO ghost when no drag is active", () => {
+    const { container } = renderHeader();
+    expect(container.querySelector("[data-testid='col-drag-ghost']")).toBeNull();
+  });
+
+  it("renders a fixed, pointer-events-none ghost at the pointer showing the dragged column's label + arrow", () => {
+    const columnDrag = makeDragStub({
+      draggedKey: "state",
+      isDragging: true,
+      ghost: { label: "State", sortKey: "state", width: 140, x: 200, y: 60 },
+    });
+    const { container } = renderHeader({
+      columnDrag,
+      activeSort: { field: "state", direction: "desc" } as TableSort,
+    });
+    const ghost = container.querySelector("[data-testid='col-drag-ghost']") as HTMLElement;
+    expect(ghost).toBeInTheDocument();
+    // Decorative clone — hidden from assistive tech (would otherwise announce the
+    // duplicated header text during a drag).
+    expect(ghost.getAttribute("aria-hidden")).toBe("true");
+    // Floats over the table without intercepting the drag's pointer stream.
+    expect(ghost.style.position).toBe("fixed");
+    expect(ghost.style.pointerEvents).toBe("none");
+    // Positioned at the pointer (with the small offset) and sized to the column.
+    expect(ghost.style.left).toBe("212px"); // 200 + 12
+    expect(ghost.style.top).toBe("68px"); // 60 + 8
+    expect(ghost.style.width).toBe("140px");
+    // Shows the dragged column's label...
+    expect(ghost.textContent?.trim()).toContain("State");
+    // ...and its active sort-direction arrow (an <svg>), inlined WITHOUT the
+    // real header's `table-sort-*` testids so the two can't collide during a drag.
+    expect(ghost.querySelector("svg")).toBeInTheDocument();
+    expect(ghost.querySelector("[data-testid='table-sort-arrow-state']")).toBeNull();
+    expect(ghost.querySelector("[data-testid='table-sort-state']")).toBeNull();
+    // The colliding testid lives ONLY on the real (dimmed) header now.
+    const stateTh = container.querySelector("thead th[data-col-key='state']") as HTMLElement;
+    expect(stateTh.querySelector("[data-testid='table-sort-arrow-state']")).toBeInTheDocument();
+    // The original header stays dimmed IN PLACE — the ghost is IN ADDITION to it.
+    expect(stateTh.classList.contains("col-dragging")).toBe(true);
+  });
+
+  it("offsets the ghost from the pointer by (GHOST_OFFSET_X, GHOST_OFFSET_Y)", () => {
+    const columnDrag = makeDragStub({
+      draggedKey: "id",
+      isDragging: true,
+      ghost: { label: "ID", sortKey: "id", width: 100, x: 10, y: 20 },
+    });
+    const { container } = renderHeader({ columnDrag });
+    const ghost = container.querySelector("[data-testid='col-drag-ghost']") as HTMLElement;
+    expect(ghost.style.left).toBe(`${10 + GHOST_OFFSET_X}px`);
+    expect(ghost.style.top).toBe(`${20 + GHOST_OFFSET_Y}px`);
+  });
+
+  it("moving the pointer moves the rendered ghost end-to-end (real composable reactivity)", () => {
+    // Drive the REAL composable — not a stub — so this exercises the reactive path
+    // that makes the clone follow the cursor: a pointermove mutates pointerX/pointerY
+    // ($state), the ghost $derived recomputes, and the rendered element repositions.
+    // Freezing pointerX/pointerY (dropping their `$state`) leaves the second move's
+    // left/top equal to the first's and fails the change assertions below.
+    document.elementFromPoint = () => null;
+    const order: ColumnKey[] = ["id", "title", "state"];
+    let drag!: ColumnDrag;
+    disposeGhostRoot = $effect.root(() => {
+      drag = useColumnDrag({ getOrder: () => order, onReorder: vi.fn() });
+    });
+    flushSync();
+
+    const { container } = renderHeader({ columnDrag: drag });
+    const idTh = container.querySelector("thead th[data-col-key='id']") as HTMLElement;
+
+    // Begin a real reorder: pointerdown on the header, then cross the 5px threshold.
+    idTh.dispatchEvent(new PointerEvent("pointerdown", { clientX: 100, clientY: 10, button: 0, bubbles: true }));
+    window.dispatchEvent(new PointerEvent("pointermove", { clientX: 140, clientY: 40, bubbles: true }));
+    flushSync();
+
+    const ghostAfterMove1 = container.querySelector("[data-testid='col-drag-ghost']") as HTMLElement;
+    expect(ghostAfterMove1).toBeInTheDocument();
+    const left1 = ghostAfterMove1.style.left;
+    const top1 = ghostAfterMove1.style.top;
+    expect(left1).toBe(`${140 + GHOST_OFFSET_X}px`);
+    expect(top1).toBe(`${40 + GHOST_OFFSET_Y}px`);
+
+    // A further pointermove must MOVE the rendered ghost (the feature's whole point).
+    window.dispatchEvent(new PointerEvent("pointermove", { clientX: 260, clientY: 130, bubbles: true }));
+    flushSync();
+
+    const ghostAfterMove2 = container.querySelector("[data-testid='col-drag-ghost']") as HTMLElement;
+    expect(ghostAfterMove2.style.left).toBe(`${260 + GHOST_OFFSET_X}px`);
+    expect(ghostAfterMove2.style.top).toBe(`${130 + GHOST_OFFSET_Y}px`);
+    // The rendered position CHANGED across the two moves — the load-bearing bite.
+    expect(ghostAfterMove2.style.left).not.toBe(left1);
+    expect(ghostAfterMove2.style.top).not.toBe(top1);
   });
 });
 

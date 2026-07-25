@@ -1,4 +1,5 @@
-import type { ColumnKey } from "../columns";
+import { COLUMNS } from "../columns";
+import type { ColumnKey, SortKey } from "../columns";
 
 // Movement threshold before a header pointerdown becomes a reorder-drag instead
 // of a sort-click — mirrors useTreeDrag's DRAG_THRESHOLD pattern. Below the
@@ -6,7 +7,31 @@ import type { ColumnKey } from "../columns";
 // column reorder. The two never both fire: a completed drag suppresses the click.
 const COLUMN_DRAG_THRESHOLD = 5;
 
+// Down-right nudge of the floating ghost from the pointer so the clone sits just
+// off the cursor (and its top-left corner never lands under the hit-test point).
+// Consumed by TableHeader's inline positioning and the ghost-position tests.
+export const GHOST_OFFSET_X = 12;
+export const GHOST_OFFSET_Y = 8;
+
 export type ColumnDropSide = "before" | "after";
+
+/**
+ * Cursor-following clone of the dragged header (parity with row drag's native
+ * HTML5 drag-image). Captured once when a real drag starts; `x`/`y` track the
+ * pointer live so TableHeader can float a fixed clone at the cursor.
+ */
+export interface ColumnDragGhost {
+  /** The dragged column's label. */
+  readonly label: string;
+  /** The dragged column's sort field, for the direction arrow (null if the column is non-sortable). */
+  readonly sortKey: SortKey | null;
+  /** Captured width (px) of the dragged header, so the clone matches the column. */
+  readonly width: number;
+  /** Live pointer x (clientX), updated each pointermove. */
+  readonly x: number;
+  /** Live pointer y (clientY), updated each pointermove. */
+  readonly y: number;
+}
 
 // Pure move: produce the next FULL column order after relocating `dragged` to sit
 // immediately before/after `target`. The order carries every ColumnKey (visible
@@ -35,6 +60,15 @@ export interface ColumnDrag {
   readonly targetSide: ColumnDropSide | null;
   /** True once the movement threshold is crossed (a real reorder-drag). */
   readonly isDragging: boolean;
+  /**
+   * Cursor-following clone of the dragged header while a real (past-threshold)
+   * drag is in flight; null when idle. Mirrors row drag's drag-image: the
+   * original header stays dimmed in place (`.col-dragging`) AND this floats at
+   * the pointer. Cleared whenever the gesture ends — drop, Escape, pointercancel,
+   * OR the host component unmounting mid-drag (an `$effect` cleanup runs
+   * `cleanup()` on teardown).
+   */
+  readonly ghost: ColumnDragGhost | null;
   /** Whole-header pointerdown that MAY become a reorder-drag. */
   onHeaderPointerDown: (key: ColumnKey, e: PointerEvent) => void;
   /**
@@ -57,6 +91,15 @@ export function useColumnDrag(opts: {
   let targetKey: ColumnKey | null = $state(null);
   let targetSide: ColumnDropSide | null = $state(null);
   let dragging = $state(false);
+
+  // Ghost (cursor-following header clone) state. Width + label + sort field are
+  // captured once at drag start; pointerX/Y track the pointer live. The ghost
+  // getter assembles these into ColumnDragGhost (or null when idle).
+  let ghostWidth = $state(0);
+  let ghostLabel = $state("");
+  let ghostSortKey: SortKey | null = $state(null);
+  let pointerX = $state(0);
+  let pointerY = $state(0);
 
   // Pending (pre-threshold) gesture state.
   let pending = false;
@@ -87,6 +130,21 @@ export function useColumnDrag(opts: {
     }, 0);
   }
 
+  // Snapshot the dragged header's geometry + content for the floating clone,
+  // read once when a real drag starts (past threshold). Width comes from the live
+  // <th> rect so the clone matches the on-screen column; label/arrow come from the
+  // column registry keyed by the dragged key.
+  function captureGhost(key: ColumnKey) {
+    const th = document.querySelector(`th[data-col-key="${key}"]`) as HTMLElement | null;
+    ghostWidth = th ? th.getBoundingClientRect().width : 0;
+    const def = COLUMNS[key];
+    ghostLabel = def.label;
+    // Mirror the header's own gate (TableHeader: `sortField = def.sortable ?
+    // def.sortKey : null`) so the ghost never shows a sort arrow the real header
+    // suppresses for a non-sortable column.
+    ghostSortKey = def.sortable ? def.sortKey : null;
+  }
+
   function headerAt(x: number, y: number): { key: ColumnKey; rect: DOMRect } | null {
     const el = document.elementFromPoint(x, y);
     const th = el?.closest("th[data-col-key]") as HTMLElement | null;
@@ -104,21 +162,33 @@ export function useColumnDrag(opts: {
       pending = false;
       dragging = true;
       draggedKey = pendingKey;
-      document.body.style.cursor = "grabbing";
+      if (pendingKey) captureGhost(pendingKey);
     }
 
     if (!dragging) return;
+
+    // Track the live pointer so TableHeader can float the ghost at the cursor.
+    pointerX = e.clientX;
+    pointerY = e.clientY;
 
     const hit = headerAt(e.clientX, e.clientY);
     if (!hit || hit.key === draggedKey) {
       targetKey = null;
       targetSide = null;
-      return;
+    } else {
+      // Before/after decided by which half of the target header the cursor is over.
+      const mid = hit.rect.left + hit.rect.width / 2;
+      targetKey = hit.key;
+      targetSide = e.clientX < mid ? "before" : "after";
     }
-    // Before/after decided by which half of the target header the cursor is over.
-    const mid = hit.rect.left + hit.rect.width / 2;
-    targetKey = hit.key;
-    targetSide = e.clientX < mid ? "before" : "after";
+
+    // The cursor mirrors drop validity: `grabbing` over a droppable header,
+    // `no-drop` over the actions column / table body / outside (targetKey null).
+    // Driven via a body attribute (not `body.style.cursor`) so global
+    // `!important` rules can override the element-level `cursor: grab` on
+    // `.col-header`/`.tree-row.draggable`, which would otherwise win over an
+    // inherited body cursor exactly over the surfaces a reorder passes over.
+    document.body.dataset.colDrag = targetKey != null ? "grabbing" : "no-drop";
   }
 
   function onPointerUp() {
@@ -172,13 +242,18 @@ export function useColumnDrag(opts: {
     window.removeEventListener("pointerup", onPointerUp);
     window.removeEventListener("pointercancel", onPointerCancel);
     window.removeEventListener("keydown", onKeyDown);
-    document.body.style.cursor = "";
+    delete document.body.dataset.colDrag;
     pending = false;
     pendingKey = null;
     dragging = false;
     draggedKey = null;
     targetKey = null;
     targetSide = null;
+    ghostWidth = 0;
+    ghostLabel = "";
+    ghostSortKey = null;
+    pointerX = 0;
+    pointerY = 0;
   }
 
   function onHeaderPointerDown(key: ColumnKey, e: PointerEvent) {
@@ -203,11 +278,28 @@ export function useColumnDrag(opts: {
     return true;
   }
 
+  // Teardown safety net: if the host unmounts mid-drag (App's `{#key position}`
+  // dock-toggle remount, a view switch, a background refetch swapping the table),
+  // the gesture's window listeners, the global drag cursor, and the ghost would
+  // otherwise leak — `cleanup()` is only reachable from drop/Escape/pointercancel.
+  // An `$effect` cleanup (not `onDestroy`) so the composable also works under
+  // `$effect.root` in tests, matching `useTableData.svelte.ts`.
+  $effect(() => () => cleanup());
+
+  // Single ghost object per state change (stable identity, one allocation) rather
+  // than a fresh literal on every read. Null unless a real drag is in flight.
+  const ghost = $derived<ColumnDragGhost | null>(
+    !dragging || draggedKey == null
+      ? null
+      : { label: ghostLabel, sortKey: ghostSortKey, width: ghostWidth, x: pointerX, y: pointerY },
+  );
+
   return {
     get draggedKey() { return draggedKey; },
     get targetKey() { return targetKey; },
     get targetSide() { return targetSide; },
     get isDragging() { return dragging; },
+    get ghost() { return ghost; },
     onHeaderPointerDown,
     consumeClickSuppression,
   };

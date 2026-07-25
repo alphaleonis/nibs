@@ -3,6 +3,7 @@
   import type { ColumnKey } from "../columns";
   import type { TableSort, SortField } from "../types";
   import { useColumnAdapters } from "../ColumnAdapters.svelte";
+  import { GHOST_OFFSET_X, GHOST_OFFSET_Y } from "../composables/useColumnDrag.svelte";
   import type { ColumnDrag } from "../composables/useColumnDrag.svelte";
   import type { ColumnResize } from "../composables/useColumnResize.svelte";
   import { CopyPlus, CopyMinus, ArrowUp, ArrowDown } from "@lucide/svelte";
@@ -126,6 +127,36 @@
           <CopyMinus size={12} />
         </button>
       </div>
+      <!-- Cursor-following clone of the dragged header — parity with row drag's
+           native drag-image. Rendered inside the (non-data) actions <th> so it's
+           valid table markup; `position: fixed` (no transformed ancestor) floats
+           it at the viewport-relative pointer, and `pointer-events: none` keeps it
+           out of the drag's elementFromPoint hit-testing (so drop-target detection
+           still resolves to the header underneath). The original header stays
+           dimmed in place via `.col-dragging` — the ghost is IN ADDITION. -->
+      {#if columnDrag.ghost}
+        {@const ghost = columnDrag.ghost}
+        <div
+          data-testid="col-drag-ghost"
+          aria-hidden="true"
+          class="col-drag-ghost text-left text-label text-muted-foreground px-3 py-2 bg-background border border-border rounded-md shadow-lg"
+          style="position: fixed; pointer-events: none; left: {ghost.x + GHOST_OFFSET_X}px; top: {ghost.y + GHOST_OFFSET_Y}px; width: {ghost.width}px; z-index: var(--z-drag-ghost);"
+        >
+          <!-- Label + active-sort arrow inlined (NOT the sortableHeader snippet) so
+               the ghost carries no `table-sort-*` testids — those would collide with
+               the real (dimmed) header's identical testids while a drag is in flight. -->
+          <span class="sort-label inline-flex items-center gap-1 text-label text-muted-foreground">
+            {ghost.label}
+            {#if ghost.sortKey && activeSort?.field === ghost.sortKey}
+              {#if activeSort.direction === "asc"}
+                <ArrowUp size={12} aria-hidden="true" />
+              {:else}
+                <ArrowDown size={12} aria-hidden="true" />
+              {/if}
+            {/if}
+          </span>
+        </div>
+      {/if}
     </th>
     {#each columns as key (key)}
       {@const def = COLUMNS[key]}
@@ -208,5 +239,16 @@
 
   .col-drop-after {
     box-shadow: inset -2px 0 0 0 var(--ring);
+  }
+
+  /* The cursor-following header clone: reduced opacity so the underlying table
+     reads through it, single-line so it stays the shape of a header cell even for
+     a long label. Position/pointer-events/left/top/width/z-index are inline (they
+     drive per-frame positioning and the acceptance asserts them). */
+  .col-drag-ghost {
+    opacity: 0.6;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
   }
 </style>

@@ -1,5 +1,7 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
+import { flushSync } from "svelte";
 import { useColumnDrag, moveColumn } from "./useColumnDrag.svelte";
+import type { ColumnDrag } from "./useColumnDrag.svelte";
 import type { ColumnKey } from "../columns";
 
 // jsdom doesn't implement elementFromPoint — stub it (tests override per-case).
@@ -54,9 +56,18 @@ describe("useColumnDrag", () => {
     vi.useFakeTimers();
   });
 
+  // Effect roots created by setup(). The composable registers its teardown via an
+  // `$effect`, so it must be instantiated inside a root; disposing the roots here
+  // fires that teardown so no gesture listeners leak across tests.
+  const roots: Array<() => void> = [];
+
   afterEach(() => {
+    while (roots.length) roots.pop()!();
     document.body.style.cursor = "";
+    delete document.body.dataset.colDrag;
     document.elementFromPoint = () => null;
+    // Remove any <th> appended so captureGhost could read a real rect.
+    document.querySelectorAll("th[data-col-key]").forEach((el) => el.remove());
     // Flush any lingering gesture listeners from a test that didn't pointer-up.
     window.dispatchEvent(new PointerEvent("pointerup", { bubbles: true }));
     vi.useRealTimers();
@@ -64,7 +75,13 @@ describe("useColumnDrag", () => {
 
   function setup(order: ColumnKey[] = ["id", "title", "state"]) {
     const onReorder = vi.fn();
-    const drag = useColumnDrag({ getOrder: () => order, onReorder });
+    let drag!: ColumnDrag;
+    const dispose = $effect.root(() => {
+      drag = useColumnDrag({ getOrder: () => order, onReorder });
+    });
+    // Flush so the teardown $effect registers its cleanup (fires on dispose()).
+    flushSync();
+    roots.push(dispose);
     return { drag, onReorder };
   }
 
@@ -193,22 +210,22 @@ describe("useColumnDrag", () => {
     expect(drag.consumeClickSuppression()).toBe(false);
   });
 
-  it("pointercancel mid-drag aborts, restores cursor, and suppresses the trailing click", () => {
+  it("pointercancel mid-drag aborts, clears the drag cursor, and suppresses the trailing click", () => {
     const { drag, onReorder } = setup(["id", "title", "state"]);
     const th = makeTh("state", { left: 0, right: 100, width: 100 });
     document.elementFromPoint = () => th;
 
     startDrag(drag, "id", { x: 80, y: 10 });
     expect(drag.isDragging).toBe(true);
-    expect(document.body.style.cursor).toBe("grabbing");
+    expect(document.body.dataset.colDrag).toBe("grabbing");
 
     window.dispatchEvent(new PointerEvent("pointercancel", { bubbles: true }));
 
-    // Gesture state is fully reset and the grab cursor is restored (no stuck grab).
+    // Gesture state is fully reset and the drag cursor is cleared (no stuck cursor).
     expect(drag.isDragging).toBe(false);
     expect(drag.draggedKey).toBeNull();
     expect(drag.targetKey).toBeNull();
-    expect(document.body.style.cursor).toBe("");
+    expect(document.body.dataset.colDrag).toBeUndefined();
     expect(onReorder).not.toHaveBeenCalled();
     // A real drag was underway, so its trailing click is swallowed, then cleared.
     expect(drag.consumeClickSuppression()).toBe(true);
@@ -230,6 +247,129 @@ describe("useColumnDrag", () => {
     // The past-threshold gesture is still a drag, so the ensuing click is swallowed
     // rather than toggling the sort.
     expect(drag.consumeClickSuppression()).toBe(true);
+  });
+
+  it("drives the cursor from drop validity: grabbing over a header, no-drop over a non-header, reset on drop", () => {
+    const { drag } = setup(["id", "title", "state"]);
+    const th = makeTh("state", { left: 0, right: 100, width: 100 });
+    document.elementFromPoint = () => th;
+
+    // Past threshold, over the mocked header → droppable → grabbing.
+    startDrag(drag, "id", { x: 80, y: 10 });
+    expect(drag.targetKey).toBe("state");
+    expect(document.body.dataset.colDrag).toBe("grabbing");
+
+    // Now over a non-header (elementFromPoint miss → target null) → no-drop.
+    document.elementFromPoint = () => null;
+    window.dispatchEvent(new PointerEvent("pointermove", { clientX: 80, clientY: 10, bubbles: true }));
+    expect(drag.targetKey).toBeNull();
+    expect(document.body.dataset.colDrag).toBe("no-drop");
+
+    window.dispatchEvent(new PointerEvent("pointerup", { bubbles: true }));
+    expect(document.body.dataset.colDrag).toBeUndefined();
+  });
+
+  it("a below-threshold press does NOT override the cursor", () => {
+    const { drag } = setup();
+    delete document.body.dataset.colDrag;
+    drag.onHeaderPointerDown("id", new PointerEvent("pointerdown", { clientX: 100, clientY: 10, button: 0, bubbles: true }));
+    // 2px move stays under the 5px threshold — no drag, no cursor override.
+    window.dispatchEvent(new PointerEvent("pointermove", { clientX: 102, clientY: 10, bubbles: true }));
+    expect(drag.isDragging).toBe(false);
+    expect(document.body.dataset.colDrag).toBeUndefined();
+    window.dispatchEvent(new PointerEvent("pointerup", { bubbles: true }));
+  });
+
+  it("exposes ghost state (label + width + live pointer) during a real drag, cleared on drop", () => {
+    const { drag } = setup(["id", "title", "state"]);
+    // captureGhost reads the dragged column's live <th> width from the document.
+    const idTh = makeTh("id", { width: 123 });
+    document.body.appendChild(idTh);
+    const stateTh = makeTh("state", { left: 0, right: 100, width: 100 });
+    document.elementFromPoint = () => stateTh;
+
+    expect(drag.ghost).toBeNull();
+
+    startDrag(drag, "id", { x: 80, y: 10 });
+    expect(drag.ghost).not.toBeNull();
+    expect(drag.ghost?.label).toBe("ID");
+    expect(drag.ghost?.sortKey).toBe("id");
+    expect(drag.ghost?.width).toBe(123);
+    expect(drag.ghost?.x).toBe(80);
+    expect(drag.ghost?.y).toBe(10);
+
+    // Live tracking: a subsequent pointermove updates the ghost x/y.
+    window.dispatchEvent(new PointerEvent("pointermove", { clientX: 55, clientY: 22, bubbles: true }));
+    expect(drag.ghost?.x).toBe(55);
+    expect(drag.ghost?.y).toBe(22);
+
+    // Dropped → ghost gone.
+    window.dispatchEvent(new PointerEvent("pointerup", { bubbles: true }));
+    expect(drag.ghost).toBeNull();
+  });
+
+  it("clears the ghost on Escape (cancel)", () => {
+    const { drag } = setup(["id", "title", "state"]);
+    document.body.appendChild(makeTh("id", { width: 100 }));
+    const stateTh = makeTh("state", { left: 0, right: 100, width: 100 });
+    document.elementFromPoint = () => stateTh;
+
+    startDrag(drag, "id", { x: 80, y: 10 });
+    expect(drag.ghost).not.toBeNull();
+
+    window.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true, cancelable: true }));
+    expect(drag.ghost).toBeNull();
+
+    window.dispatchEvent(new PointerEvent("pointerup", { bubbles: true }));
+  });
+
+  it("clears the ghost on pointercancel (abort)", () => {
+    const { drag } = setup(["id", "title", "state"]);
+    document.body.appendChild(makeTh("id", { width: 100 }));
+    const stateTh = makeTh("state", { left: 0, right: 100, width: 100 });
+    document.elementFromPoint = () => stateTh;
+
+    startDrag(drag, "id", { x: 80, y: 10 });
+    expect(drag.ghost).not.toBeNull();
+
+    window.dispatchEvent(new PointerEvent("pointercancel", { bubbles: true }));
+    expect(drag.ghost).toBeNull();
+  });
+
+  it("tears down mid-drag when the host unmounts: clears the drag cursor, ghost, and window listeners", () => {
+    const onReorder = vi.fn();
+    const order: ColumnKey[] = ["id", "title", "state"];
+    let drag!: ColumnDrag;
+    // Own root (not via setup) so this test controls the unmount and afterEach
+    // doesn't double-dispose.
+    const dispose = $effect.root(() => {
+      drag = useColumnDrag({ getOrder: () => order, onReorder });
+    });
+    flushSync();
+
+    document.body.appendChild(makeTh("id", { width: 100 }));
+    const stateTh = makeTh("state", { left: 0, right: 100, width: 100 });
+    document.elementFromPoint = () => stateTh;
+
+    startDrag(drag, "id", { x: 80, y: 10 });
+    expect(drag.isDragging).toBe(true);
+    expect(drag.ghost).not.toBeNull();
+    expect(document.body.dataset.colDrag).toBe("grabbing");
+
+    const removeSpy = vi.spyOn(window, "removeEventListener");
+    // Host unmounts mid-drag → the composable's $effect cleanup runs cleanup().
+    dispose();
+
+    // Global cursor + ghost cleared even though no drop/Escape/pointercancel fired.
+    expect(drag.ghost).toBeNull();
+    expect(document.body.dataset.colDrag).toBeUndefined();
+    // All four gesture listeners removed — no stale window listeners survive to
+    // replay a stale reorder on a later unrelated release.
+    const removed = removeSpy.mock.calls.map((c) => c[0]);
+    expect(removed).toEqual(
+      expect.arrayContaining(["pointermove", "pointerup", "pointercancel", "keydown"]),
+    );
+    removeSpy.mockRestore();
   });
 
   it("ignores a non-primary (right) button pointerdown", () => {
