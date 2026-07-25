@@ -372,6 +372,79 @@ describe("useColumnDrag", () => {
     removeSpy.mockRestore();
   });
 
+  it("tears down on lostpointercapture when no matching pointerup arrives: no stuck ghost/cursor/listeners and no phantom reorder", () => {
+    const { drag, onReorder } = setup(["id", "title", "state"]);
+    document.body.appendChild(makeTh("id", { width: 100 }));
+    const stateTh = makeTh("state", { left: 0, right: 100, width: 100 });
+    document.elementFromPoint = () => stateTh;
+
+    // Real drag armed over a distinct target (a reorder is pending on release).
+    startDrag(drag, "id", { x: 80, y: 10 });
+    expect(drag.isDragging).toBe(true);
+    expect(drag.ghost).not.toBeNull();
+    expect(drag.targetKey).toBe("state");
+    expect(document.body.dataset.colDrag).toBe("grabbing");
+
+    const removeSpy = vi.spyOn(window, "removeEventListener");
+    // The pointer leaves the window / focus is lost: no matching pointerup ever
+    // fires, but the browser releases capture. The gesture must tear down cleanly.
+    window.dispatchEvent(new PointerEvent("lostpointercapture", { bubbles: true }));
+
+    // No stuck state: ghost, cursor, and drag flags are all reset.
+    expect(drag.isDragging).toBe(false);
+    expect(drag.ghost).toBeNull();
+    expect(drag.draggedKey).toBeNull();
+    expect(drag.targetKey).toBeNull();
+    expect(document.body.dataset.colDrag).toBeUndefined();
+
+    // Every gesture listener — including the new lostpointercapture one — is gone,
+    // so nothing survives to replay a stale reorder on a later release.
+    const removed = removeSpy.mock.calls.map((c) => c[0]);
+    expect(removed).toEqual(
+      expect.arrayContaining([
+        "pointermove", "pointerup", "pointercancel", "keydown", "lostpointercapture",
+      ]),
+    );
+    removeSpy.mockRestore();
+
+    // A subsequent stray release must NOT commit a phantom reorder: the pointerup
+    // listener is gone, so onReorder is never called.
+    window.dispatchEvent(new PointerEvent("pointerup", { clientX: 80, clientY: 10, bubbles: true }));
+    expect(onReorder).not.toHaveBeenCalled();
+  });
+
+  it("ignores a foreign pointerId: a non-active pointer cannot move, end, or commit the drag", () => {
+    const { drag, onReorder } = setup(["id", "title", "state"]);
+    const stateTh = makeTh("state", { left: 0, right: 100, width: 100 });
+    document.elementFromPoint = () => stateTh;
+
+    // Active drag started by the default pointer (pointerId 0), armed over "state".
+    startDrag(drag, "id", { x: 80, y: 10 });
+    expect(drag.isDragging).toBe(true);
+    expect(drag.targetKey).toBe("state");
+    expect(drag.targetSide).toBe("after");
+
+    // A FOREIGN pointer (pointerId 999) moves over the origin header — must be
+    // ignored, leaving the target untouched (a processed move here would null it,
+    // since the hit key equals the dragged key).
+    const idTh = makeTh("id", { left: 0, right: 100, width: 100 });
+    document.elementFromPoint = () => idTh;
+    window.dispatchEvent(new PointerEvent("pointermove", { clientX: 20, clientY: 10, pointerId: 999, bubbles: true }));
+    expect(drag.targetKey).toBe("state");
+    expect(drag.targetSide).toBe("after");
+
+    // A FOREIGN pointerup must NOT end or commit the drag.
+    window.dispatchEvent(new PointerEvent("pointerup", { pointerId: 999, bubbles: true }));
+    expect(drag.isDragging).toBe(true);
+    expect(onReorder).not.toHaveBeenCalled();
+
+    // The ACTIVE pointer's release ends the drag and commits the armed reorder.
+    window.dispatchEvent(new PointerEvent("pointerup", { pointerId: 0, bubbles: true }));
+    expect(drag.isDragging).toBe(false);
+    expect(onReorder).toHaveBeenCalledTimes(1);
+    expect(onReorder).toHaveBeenCalledWith(["title", "state", "id"]);
+  });
+
   it("ignores a non-primary (right) button pointerdown", () => {
     const { drag, onReorder } = setup();
     const th = makeTh("state", { left: 0, right: 100, width: 100 });

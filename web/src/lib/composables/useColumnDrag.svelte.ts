@@ -107,6 +107,14 @@ export function useColumnDrag(opts: {
   let startY = 0;
   let pendingKey: ColumnKey | null = null;
 
+  // Pointer identity + capture target for the active gesture. `activePointerId` is
+  // the pointer recorded at pointerdown — pointermove/up/cancel/lostpointercapture
+  // ignore any other pointer so a foreign/second pointer can't move, end, or commit
+  // the drag. `captureEl` is the header that holds pointer capture, retained so
+  // cleanup() can release it. Both null when idle.
+  let activePointerId: number | null = null;
+  let captureEl: HTMLElement | null = null;
+
   // Set true when a real drag completes so the ensuing click on the header sort
   // control is swallowed instead of toggling the sort. Consumed by
   // consumeClickSuppression (the mouse sort handler) and reset at the start of the
@@ -155,6 +163,9 @@ export function useColumnDrag(opts: {
   }
 
   function onPointerMove(e: PointerEvent) {
+    // Only the pointer that started the gesture may advance it — ignore a
+    // foreign/second pointer so it can't cross the threshold or retarget the drag.
+    if (e.pointerId !== activePointerId) return;
     if (pending && !dragging) {
       const dx = e.clientX - startX;
       const dy = e.clientY - startY;
@@ -191,7 +202,10 @@ export function useColumnDrag(opts: {
     document.body.dataset.colDrag = targetKey != null ? "grabbing" : "no-drop";
   }
 
-  function onPointerUp() {
+  function onPointerUp(e: PointerEvent) {
+    // Ignore a foreign/second pointer's release — only the active pointer may end
+    // and commit the drag.
+    if (e.pointerId !== activePointerId) return;
     if (dragging) {
       if (draggedKey && targetKey && targetSide) {
         const current = opts.getOrder();
@@ -222,13 +236,25 @@ export function useColumnDrag(opts: {
     }
   }
 
-  function onPointerCancel() {
+  function onPointerCancel(e: PointerEvent) {
+    // Ignore a foreign/second pointer's cancel — only the active pointer's cancel
+    // aborts this drag.
+    if (e.pointerId !== activePointerId) return;
     // A canceled pointer (e.g. touch interruption mid-drag) is an abort: if a
     // real drag was underway, suppress its trailing click as Escape does, then
     // fully reset gesture state, cursor, and window listeners via cleanup().
     if (dragging) {
       suppressClick();
     }
+    cleanup();
+  }
+
+  function onLostPointerCapture(e: PointerEvent) {
+    // Capture was lost for the active pointer (focus change, forced release, or
+    // the pointer leaving the window with no matching pointerup). Tear down
+    // cleanly so no frozen ghost, stuck `data-col-drag` cursor, or leaked window
+    // listeners linger — and so no later stray release can commit a reorder.
+    if (e.pointerId !== activePointerId) return;
     cleanup();
   }
 
@@ -242,6 +268,19 @@ export function useColumnDrag(opts: {
     window.removeEventListener("pointerup", onPointerUp);
     window.removeEventListener("pointercancel", onPointerCancel);
     window.removeEventListener("keydown", onKeyDown);
+    window.removeEventListener("lostpointercapture", onLostPointerCapture);
+    // Release pointer capture if this gesture still holds it. Guarded: the browser
+    // may have already released it (the lostpointercapture path), in which case
+    // releasePointerCapture throws for an unknown pointerId — nothing to do.
+    if (captureEl && activePointerId !== null) {
+      try {
+        captureEl.releasePointerCapture(activePointerId);
+      } catch {
+        // Already released / invalid pointer id.
+      }
+    }
+    captureEl = null;
+    activePointerId = null;
     delete document.body.dataset.colDrag;
     pending = false;
     pendingKey = null;
@@ -266,10 +305,29 @@ export function useColumnDrag(opts: {
     startX = e.clientX;
     startY = e.clientY;
     pendingKey = key;
+    activePointerId = e.pointerId;
+    // Capture the pointer on the header (the element the pointerdown fired on) so
+    // the browser keeps delivering this pointer's move/up/cancel/lostpointercapture
+    // even when it leaves the window — closing the lost-pointerup gap that would
+    // otherwise strand the drag (frozen ghost, stuck cursor, leaked listeners, and
+    // a later stray release committing an unintended reorder). Captured pointer
+    // events still bubble to the window listeners registered below.
+    const el = e.currentTarget as HTMLElement | null;
+    if (el) {
+      try {
+        el.setPointerCapture(e.pointerId);
+        captureEl = el;
+      } catch {
+        // setPointerCapture can throw if the pointer is no longer active; fall back
+        // to the window listeners alone (no capture to release later).
+        captureEl = null;
+      }
+    }
     window.addEventListener("pointermove", onPointerMove);
     window.addEventListener("pointerup", onPointerUp);
     window.addEventListener("pointercancel", onPointerCancel);
     window.addEventListener("keydown", onKeyDown);
+    window.addEventListener("lostpointercapture", onLostPointerCapture);
   }
 
   function consumeClickSuppression(): boolean {
