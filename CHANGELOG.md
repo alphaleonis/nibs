@@ -7,6 +7,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## v0.7.0 - 2026-07-25
+
+### Added
+- **Flat (no-hierarchy) view** for the web table, alongside the tree and grouping views.
+- **Created and Modified date columns** in the web table.
+- **Sort the web table by clicking any column header** — cycles ascending → descending → off, in every view: a flat sorted list in the Flat view, and sibling-preserving sort (siblings, group buckets, and promoted group headers reorder while nesting stays intact) in the tree and grouping (milestones / epics / features) views.
+- **Reorder table columns by dragging a column header**, persisted per view mode.
+
+### Changed
+- The **whole column header is now the sort control** — click anywhere in the header, or focus it and press Enter/Space, not just the label text.
+- Dragging a column header now shows a **ghost of the header that follows the cursor** and a **no-drop cursor** over places a column can't be dropped, matching the row-drag affordances.
+
+### Fixed
+- Dragging a column header no longer selects the header's text.
+- The web table no longer momentarily unmounts — interrupting an in-progress column drag or resize — when a background data refresh arrives.
+- A column drag no longer gets stuck if the pointer is released outside the window or the tab loses focus.
+
 ## v0.6.2 - 2026-07-22
 
 ### Changed
