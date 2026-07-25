@@ -220,7 +220,7 @@ describe("TreeTable", () => {
     expect(screen.getByText("The child task")).toBeInTheDocument();
   });
 
-  it("shows loading indicator while fetching", () => {
+  it("shows loading indicator on the initial load (fetching, no data yet)", () => {
     mockQueryStore.mockReturnValue(
       readable({ fetching: true, error: undefined, data: undefined, stale: false }) as any
     );
@@ -228,6 +228,34 @@ describe("TreeTable", () => {
     renderTreeTable({ filter: {} });
 
     expect(screen.getByText(/loading/i)).toBeInTheDocument();
+  });
+
+  // A background refetch is `fetching: true` while data is already present (the
+  // NIB_CHANGED_SUBSCRIPTION-driven live refetch). The table must stay mounted so
+  // an in-progress column drag/resize, an open inline editor, and scroll position
+  // survive — "Loading..." must NOT replace the populated rows.
+  // Bites: reverting the gate to the unguarded `{#if dataSource.fetching}` shows
+  // "Loading..." over the existing data and drops the rows, failing this test.
+  it("keeps the table mounted during a background refetch (fetching with data present)", () => {
+    const nibs: TreeTableNib[] = [
+      makeTreeTableNib({ id: "nibs-m1", title: "Milestone", type: "milestone" }),
+      makeTreeTableNib({ id: "nibs-001", title: "First task", parentId: "nibs-m1" }),
+    ];
+
+    // fetching=true AND non-empty data: a live background refetch, not initial load.
+    mockQueryStore.mockReturnValue(
+      readable({ fetching: true, error: undefined, data: { nibs }, stale: false }) as any
+    );
+
+    const { container } = renderTreeTable({ filter: {} });
+
+    // The populated table stays rendered — rows are still present.
+    const dataRows = container.querySelectorAll("tr[data-testid='tree-row']");
+    expect(dataRows).toHaveLength(2);
+    expect(screen.getByText("First task")).toBeInTheDocument();
+
+    // The initial-load "Loading..." state must NOT replace the table.
+    expect(screen.queryByText(/loading/i)).not.toBeInTheDocument();
   });
 
   it("shows empty state when no nibs returned", () => {

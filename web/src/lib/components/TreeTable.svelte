@@ -551,7 +551,12 @@
 </script>
 
 <div data-testid="tree-table" class="h-full">
-{#if dataSource.fetching}
+{#if dataSource.fetching && allNibs.length === 0}
+  <!-- Only the INITIAL load (nothing to show yet) swaps in the loading state.
+       A background refetch (fetching=true while allNibs is already populated,
+       e.g. the NIB_CHANGED_SUBSCRIPTION-driven live refetch) keeps the table
+       mounted so in-progress column drags/resizes, inline editors, and scroll
+       position survive; rows update in place via the useTableData live path. -->
   <div class="flex items-center justify-center py-12 text-body text-muted-foreground">
     <span>Loading...</span>
   </div>
