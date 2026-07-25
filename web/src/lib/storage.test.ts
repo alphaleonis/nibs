@@ -1,5 +1,6 @@
 import { describe, it, expect, beforeEach, vi } from "vitest";
 import { savePreferences, loadPreferences, parseTheme, parsePerViewMap, parseColumnOrder } from "./storage";
+import { parseQuery } from "./query";
 import { MIN_DETAIL_PANEL_WIDTH, MIN_DETAIL_PANEL_HEIGHT, VIEW_LEVELS, ALL_COLUMN_KEYS } from "./types";
 
 const store: Record<string, string> = {};
@@ -17,90 +18,94 @@ describe("storage", () => {
     vi.clearAllMocks();
   });
 
-  it("saves and loads filter preferences with viewLevel", () => {
-    savePreferences({ filter: { search: "test" }, viewLevel: "epics" });
+  it("saves and loads the query string with viewLevel", () => {
+    savePreferences({ query: "type:bug login", viewLevel: "epics" });
     const loaded = loadPreferences();
     // theme resolves to the default ("graphite") when not persisted
-    expect(loaded).toEqual({ filter: { search: "test" }, viewLevel: "epics", theme: "graphite" });
+    expect(loaded).toEqual({ query: "type:bug login", viewLevel: "epics", theme: "graphite" });
   });
 
   it("returns defaults when localStorage is empty", () => {
     const loaded = loadPreferences();
-    expect(loaded).toEqual({ filter: {}, viewLevel: "none", theme: "graphite" });
+    expect(loaded).toEqual({ query: "", viewLevel: "none", theme: "graphite" });
   });
 
   it("returns defaults when localStorage has corrupt JSON", () => {
     store["nibs-filter-preferences"] = "not valid json{{{";
     const loaded = loadPreferences();
-    expect(loaded).toEqual({ filter: {}, viewLevel: "none", theme: "graphite" });
+    expect(loaded).toEqual({ query: "", viewLevel: "none", theme: "graphite" });
   });
 
   it("returns defaults when localStorage has non-object value", () => {
     store["nibs-filter-preferences"] = '"just a string"';
     const loaded = loadPreferences();
-    expect(loaded).toEqual({ filter: {}, viewLevel: "none", theme: "graphite" });
+    expect(loaded).toEqual({ query: "", viewLevel: "none", theme: "graphite" });
+  });
+
+  // The query is persisted as a STRING under the `q` key (mirroring the `?q=` URL
+  // param), and it round-trips verbatim through save → load — including an
+  // `exclude*` / `-status:` negation, which must survive untouched (nibs-grvv).
+  it("persists the query under `q` and round-trips it (including -status:)", () => {
+    savePreferences({ query: "-status:completed type:bug login", viewLevel: "none" });
+    expect(JSON.parse(store["nibs-filter-preferences"]).q).toBe("-status:completed type:bug login");
+    expect(loadPreferences().query).toBe("-status:completed type:bug login");
   });
 
   it("gracefully falls back to default when old viewMode value is stored", () => {
     store["nibs-filter-preferences"] = JSON.stringify({
-      filter: { search: "old" },
+      q: "old",
       viewMode: "hierarchy",
     });
     const loaded = loadPreferences();
-    expect(loaded).toEqual({ filter: { search: "old" }, viewLevel: "none", theme: "graphite" });
+    expect(loaded).toEqual({ query: "old", viewLevel: "none", theme: "graphite" });
   });
 
-  // Legacy `excludeStatus` (the retired hide-completed negative filter)
-  // must never survive into the loaded filter. When no explicit status include-list
-  // is present it is translated to the equivalent include-list (all statuses except
-  // the excluded ones); otherwise it is simply dropped (status is the single source
-  // of truth). Old persisted state must never crash the load.
-  it("translates a legacy excludeStatus into the equivalent status include-list", () => {
+  // Legacy migration: an older build persisted the STRUCTURED `filter: NibFilter`
+  // directly (before the query moved to string form). loadPreferences serializes
+  // it to the equivalent canonical query string, so a returning user keeps their
+  // filter and the load never crashes on old state.
+  it("migrates a legacy structured filter to the equivalent canonical query string", () => {
+    store["nibs-filter-preferences"] = JSON.stringify({
+      filter: { type: ["bug"], status: ["todo"], search: "auth" },
+      viewLevel: "none",
+    });
+    // Canonical field order: type, status, then free text.
+    expect(loadPreferences().query).toBe("type:bug status:todo auth");
+  });
+
+  // Faithfulness (nibs-grvv Phase-2 note): a legacy `excludeStatus` migrates to a
+  // `-status:` EXCLUSION, NOT rewritten into a status include-list. The two hide
+  // the same statuses, and keeping the exclude form is exactly what lets a
+  // `-status:X` negation survive a reload untouched.
+  it("migrates a legacy excludeStatus faithfully to a -status: exclusion (not an include-list)", () => {
     store["nibs-filter-preferences"] = JSON.stringify({
       filter: { excludeStatus: ["completed", "scrapped"] },
       viewLevel: "none",
     });
     const loaded = loadPreferences();
-    expect(loaded.filter).not.toHaveProperty("excludeStatus");
-    expect(loaded.filter.status).toEqual(["draft", "todo", "in-progress", "deferred"]);
+    // STATUSES order → completed before scrapped.
+    expect(loaded.query).toBe("-status:completed,scrapped");
+    // Re-parses to the exclusion, with no include-list synthesized.
+    const parsed = parseQuery(loaded.query);
+    expect(parsed.filter.excludeStatus).toEqual(["completed", "scrapped"]);
+    expect(parsed.filter.status).toBeUndefined();
   });
 
-  it("drops a legacy excludeStatus when an explicit status include-list is present", () => {
+  it("does not crash migrating a garbage (non-object) legacy filter — yields an empty query", () => {
     store["nibs-filter-preferences"] = JSON.stringify({
-      filter: { status: ["todo"], excludeStatus: ["completed", "scrapped"] },
+      filter: "not-an-object",
       viewLevel: "none",
     });
-    const loaded = loadPreferences();
-    expect(loaded.filter).not.toHaveProperty("excludeStatus");
-    expect(loaded.filter.status).toEqual(["todo"]);
-  });
-
-  it("preserves other filter fields while dropping legacy excludeStatus", () => {
-    store["nibs-filter-preferences"] = JSON.stringify({
-      filter: { search: "auth", type: ["bug"], excludeStatus: ["scrapped"] },
-      viewLevel: "none",
-    });
-    const loaded = loadPreferences();
-    expect(loaded.filter).not.toHaveProperty("excludeStatus");
-    expect(loaded.filter.search).toBe("auth");
-    expect(loaded.filter.type).toEqual(["bug"]);
-    // Complement of {scrapped} across STATUSES, order-preserving.
-    expect(loaded.filter.status).toEqual([
-      "draft",
-      "todo",
-      "in-progress",
-      "deferred",
-      "completed",
-    ]);
+    expect(loadPreferences().query).toBe("");
   });
 
   it("gracefully handles unknown viewLevel value", () => {
     store["nibs-filter-preferences"] = JSON.stringify({
-      filter: {},
+      q: "",
       viewLevel: "unknown-value",
     });
     const loaded = loadPreferences();
-    expect(loaded).toEqual({ filter: {}, viewLevel: "none", theme: "graphite" });
+    expect(loaded).toEqual({ query: "", viewLevel: "none", theme: "graphite" });
   });
 
   it("accepts the renamed 'features' viewLevel", () => {
@@ -144,7 +149,7 @@ describe("storage", () => {
     // Opt-in columns toggled on for a specific view level must survive a
     // save → load round-trip (they are valid keys once in ALL_COLUMN_KEYS).
     savePreferences({
-      filter: {},
+      query: "",
       viewLevel: "epics",
       columnVisibility: {
         epics: ["id", "title", "blocking", "blockedBy"],
@@ -158,7 +163,7 @@ describe("storage", () => {
 
   it("saves and loads column widths per view level", () => {
     savePreferences({
-      filter: {},
+      query: "",
       viewLevel: "milestones",
       columnWidths: {
         milestones: { id: 120, title: 500 },
@@ -222,7 +227,7 @@ describe("storage", () => {
     // already a full permutation, so nothing is appended).
     const perm = [...ALL_COLUMN_KEYS].reverse();
     savePreferences({
-      filter: {},
+      query: "",
       viewLevel: "milestones",
       columnOrder: { milestones: perm },
     });
@@ -256,7 +261,7 @@ describe("storage", () => {
   });
 
   it("returns undefined columnOrder when nothing is persisted", () => {
-    savePreferences({ filter: {}, viewLevel: "milestones" });
+    savePreferences({ query: "",viewLevel: "milestones" });
     const loaded = loadPreferences();
     expect(loaded.columnOrder).toBeUndefined();
   });
@@ -273,7 +278,7 @@ describe("storage", () => {
 
   it("saves and loads detailPanelWidth", () => {
     savePreferences({
-      filter: {},
+      query: "",
       viewLevel: "milestones",
       detailPanelWidth: 500,
     });
@@ -282,7 +287,7 @@ describe("storage", () => {
   });
 
   it("returns undefined detailPanelWidth when not set", () => {
-    savePreferences({ filter: {}, viewLevel: "milestones" });
+    savePreferences({ query: "",viewLevel: "milestones" });
     const loaded = loadPreferences();
     expect(loaded.detailPanelWidth).toBeUndefined();
   });
@@ -326,7 +331,7 @@ describe("storage", () => {
 
   it("saves and loads detailPanelPosition", () => {
     savePreferences({
-      filter: {},
+      query: "",
       viewLevel: "milestones",
       detailPanelPosition: "bottom",
     });
@@ -335,7 +340,7 @@ describe("storage", () => {
   });
 
   it("returns undefined detailPanelPosition when not set", () => {
-    savePreferences({ filter: {}, viewLevel: "milestones" });
+    savePreferences({ query: "",viewLevel: "milestones" });
     const loaded = loadPreferences();
     expect(loaded.detailPanelPosition).toBeUndefined();
   });
@@ -352,7 +357,7 @@ describe("storage", () => {
 
   it("saves and loads detailPanelHeight", () => {
     savePreferences({
-      filter: {},
+      query: "",
       viewLevel: "milestones",
       detailPanelHeight: 400,
     });
@@ -361,7 +366,7 @@ describe("storage", () => {
   });
 
   it("returns undefined detailPanelHeight when not set", () => {
-    savePreferences({ filter: {}, viewLevel: "milestones" });
+    savePreferences({ query: "",viewLevel: "milestones" });
     const loaded = loadPreferences();
     expect(loaded.detailPanelHeight).toBeUndefined();
   });
@@ -406,12 +411,12 @@ describe("storage", () => {
   });
 
   it("saves and loads blockedEmphasis", () => {
-    savePreferences({ filter: {}, viewLevel: "none", blockedEmphasis: "pill-dim" });
+    savePreferences({ query: "",viewLevel: "none", blockedEmphasis: "pill-dim" });
     expect(loadPreferences().blockedEmphasis).toBe("pill-dim");
   });
 
   it("returns undefined blockedEmphasis when not set", () => {
-    savePreferences({ filter: {}, viewLevel: "none" });
+    savePreferences({ query: "",viewLevel: "none" });
     expect(loadPreferences().blockedEmphasis).toBeUndefined();
   });
 
@@ -425,12 +430,12 @@ describe("storage", () => {
   });
 
   it("saves and loads fontSize", () => {
-    savePreferences({ filter: {}, viewLevel: "none", fontSize: "large" });
+    savePreferences({ query: "",viewLevel: "none", fontSize: "large" });
     expect(loadPreferences().fontSize).toBe("large");
   });
 
   it("returns undefined fontSize when not set", () => {
-    savePreferences({ filter: {}, viewLevel: "none" });
+    savePreferences({ query: "",viewLevel: "none" });
     expect(loadPreferences().fontSize).toBeUndefined();
   });
 
@@ -444,12 +449,12 @@ describe("storage", () => {
   });
 
   it("saves and loads previewOpen", () => {
-    savePreferences({ filter: {}, viewLevel: "none", previewOpen: false });
+    savePreferences({ query: "",viewLevel: "none", previewOpen: false });
     expect(loadPreferences().previewOpen).toBe(false);
   });
 
   it("returns undefined previewOpen when not set", () => {
-    savePreferences({ filter: {}, viewLevel: "none" });
+    savePreferences({ query: "",viewLevel: "none" });
     expect(loadPreferences().previewOpen).toBeUndefined();
   });
 
@@ -463,7 +468,7 @@ describe("storage", () => {
   });
 
   it("saves and loads tableSort (round-trip)", () => {
-    savePreferences({ filter: {}, viewLevel: "flat", tableSort: { field: "modified", direction: "desc" } });
+    savePreferences({ query: "",viewLevel: "flat", tableSort: { field: "modified", direction: "desc" } });
     const loaded = loadPreferences();
     expect(loaded.viewLevel).toBe("flat");
     expect(loaded.tableSort).toEqual({ field: "modified", direction: "desc" });
@@ -481,7 +486,7 @@ describe("storage", () => {
   });
 
   it("returns undefined tableSort when not set", () => {
-    savePreferences({ filter: {}, viewLevel: "none" });
+    savePreferences({ query: "",viewLevel: "none" });
     expect(loadPreferences().tableSort).toBeUndefined();
   });
 
@@ -518,12 +523,12 @@ describe("storage", () => {
   });
 
   it("round-trips a persisted theme", () => {
-    savePreferences({ filter: {}, viewLevel: "none", theme: "dracula" });
+    savePreferences({ query: "",viewLevel: "none", theme: "dracula" });
     expect(loadPreferences().theme).toBe("dracula");
   });
 
   it("defaults theme to graphite when not persisted", () => {
-    savePreferences({ filter: {}, viewLevel: "none" });
+    savePreferences({ query: "",viewLevel: "none" });
     expect(loadPreferences().theme).toBe("graphite");
   });
 

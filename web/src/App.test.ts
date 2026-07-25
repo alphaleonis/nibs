@@ -446,6 +446,63 @@ describe("App", () => {
     expect(latestVars.filter).not.toHaveProperty("status");
   });
 
+  it("URL ?q= wins over a different stored query on load (shared link reproduces its filter)", () => {
+    // localStorage holds one filter; the URL carries a DIFFERENT one. The shared
+    // `?q=` link must win, so the box (and thus the filter) reflects the URL.
+    const savedStorage = globalThis.localStorage;
+    const mockStore: Record<string, string> = {
+      "nibs-filter-preferences": JSON.stringify({ q: "type:feature", viewLevel: "none" }),
+    };
+    Object.defineProperty(globalThis, "localStorage", {
+      value: {
+        getItem: (key: string) => mockStore[key] ?? null,
+        setItem: (key: string, value: string) => { mockStore[key] = value; },
+        removeItem: (key: string) => { delete mockStore[key]; },
+      },
+      writable: true,
+      configurable: true,
+    });
+    window.history.replaceState(null, "", "/?q=type%3Abug");
+
+    try {
+      render(App);
+      const box = screen.getByTestId("filter-keyword") as HTMLInputElement;
+      // URL query (type:bug) wins over the stored one (type:feature).
+      expect(box.value).toBe("type:bug");
+    } finally {
+      Object.defineProperty(globalThis, "localStorage", {
+        value: savedStorage, writable: true, configurable: true,
+      });
+    }
+  });
+
+  it("uses the stored query when the URL has no ?q= (falls back to localStorage)", () => {
+    const savedStorage = globalThis.localStorage;
+    const mockStore: Record<string, string> = {
+      "nibs-filter-preferences": JSON.stringify({ q: "type:feature", viewLevel: "none" }),
+    };
+    Object.defineProperty(globalThis, "localStorage", {
+      value: {
+        getItem: (key: string) => mockStore[key] ?? null,
+        setItem: (key: string, value: string) => { mockStore[key] = value; },
+        removeItem: (key: string) => { delete mockStore[key]; },
+      },
+      writable: true,
+      configurable: true,
+    });
+    // No ?q= in the URL — the stored query is used.
+    window.history.replaceState(null, "", "/");
+
+    try {
+      render(App);
+      expect((screen.getByTestId("filter-keyword") as HTMLInputElement).value).toBe("type:feature");
+    } finally {
+      Object.defineProperty(globalThis, "localStorage", {
+        value: savedStorage, writable: true, configurable: true,
+      });
+    }
+  });
+
   it("opens detail panel when a title is clicked", async () => {
     const user = userEvent.setup();
     render(App);
@@ -1174,5 +1231,49 @@ describe("App", () => {
       expect(screen.getByTestId("anv-id")).toHaveTextContent(target);
     });
     expect(screen.getAllByTestId("active-nib-view")).toHaveLength(1);
+  });
+
+  it("Back/Forward (popstate) re-syncs the filter query from the restored URL", async () => {
+    // The filter query lives in `?q=` and is written with replaceState onto the
+    // CURRENT history entry, while nib navigation pushState-snapshots whatever `?q=`
+    // was in the address bar at that moment. Back/Forward restores an entry whose
+    // `?q=` can differ from the in-memory filter, so onPopState must re-sync the
+    // query from the just-restored URL (URL-wins, exactly as on initial load) — not
+    // just the `?nib=` selection.
+    window.history.replaceState(null, "", "/?q=type%3Abug");
+    render(App);
+
+    // Sanity: the initial `?q=` seeds the box.
+    expect((screen.getByTestId("filter-keyword") as HTMLInputElement).value).toBe("type:bug");
+
+    // Simulate Back to a history entry carrying a DIFFERENT `?q=`. jsdom does not
+    // update location.search on a synthetic popstate, so set it first (mirrors what
+    // a real browser restores), then dispatch the event.
+    window.history.replaceState({ nibId: null }, "", "/?q=type%3Afeature");
+    window.dispatchEvent(new PopStateEvent("popstate", { state: { nibId: null } }));
+
+    // The box (and thus prefs.query) now reflects the RESTORED entry's query.
+    await waitFor(() => {
+      expect((screen.getByTestId("filter-keyword") as HTMLInputElement).value).toBe("type:feature");
+    });
+  });
+
+  it("Back/Forward (popstate) to an entry with NO ?q= clears the filter to empty", async () => {
+    // The `?q=` writer removes the param entirely when the query is empty, so a
+    // restored entry WITHOUT `?q=` genuinely means "empty filter". onPopState must
+    // clear the query (not preserve the current filter) — the `?? ""` fallback, not
+    // `?? prefs.query`.
+    window.history.replaceState(null, "", "/?q=type%3Abug");
+    render(App);
+
+    expect((screen.getByTestId("filter-keyword") as HTMLInputElement).value).toBe("type:bug");
+
+    // Back to a no-filter entry (no `?q=` param).
+    window.history.replaceState({ nibId: null }, "", "/");
+    window.dispatchEvent(new PopStateEvent("popstate", { state: { nibId: null } }));
+
+    await waitFor(() => {
+      expect((screen.getByTestId("filter-keyword") as HTMLInputElement).value).toBe("");
+    });
   });
 });

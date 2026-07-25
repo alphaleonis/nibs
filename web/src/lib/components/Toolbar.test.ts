@@ -1026,6 +1026,19 @@ describe("Toolbar — invalid token handling", () => {
     expect(input.value).toBe("type:bug priority:high status:banana");
   });
 
+  it("seeds the box + marker from prefs.invalidTokens (a reloaded / shared query reproduces parked tokens)", () => {
+    const prefs = new Preferences();
+    prefs.filter = { type: ["bug"] };
+    prefs.invalidTokens = ["status:banana"];
+    render(Toolbar, { prefs, oncreatenew: vi.fn() });
+
+    // The box seeds to the canonical query INCLUDING the parked invalid token,
+    // so opening a shared `?q=` link (or reloading) shows exactly what was shared.
+    expect((screen.getByTestId("filter-keyword") as HTMLInputElement).value).toBe("type:bug status:banana");
+    // ...and the unrecognized-token marker is present on first paint.
+    expect(screen.getByTestId("filter-invalid")).toHaveTextContent("status:banana");
+  });
+
   it("does not render the invalid marker when all tokens are valid", async () => {
     const prefs = new Preferences();
     render(Toolbar, { prefs, oncreatenew: vi.fn() });

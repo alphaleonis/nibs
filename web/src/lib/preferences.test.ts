@@ -18,35 +18,68 @@ describe("Preferences", () => {
     vi.clearAllMocks();
   });
 
-  it("loads initial values from localStorage via loadPreferences", () => {
+  it("reconstructs filter + invalid tokens from a persisted query string", () => {
     store["nibs-filter-preferences"] = JSON.stringify({
-      filter: { search: "hello" },
+      q: "type:bug login status:banana",
       viewLevel: "epics",
     });
 
     const prefs = new Preferences();
-    expect(prefs.filter).toEqual({ search: "hello" });
+    // The valid tokens become the structured filter...
+    expect(prefs.filter).toEqual({ type: ["bug"], search: "login" });
+    // ...and the invalid token is parked in the sidecar (so it round-trips + shows).
+    expect(prefs.invalidTokens).toEqual(["status:banana"]);
     expect(prefs.viewLevel).toBe("epics");
   });
 
   it("uses defaults when localStorage is empty", () => {
     const prefs = new Preferences();
     expect(prefs.filter).toEqual({});
+    expect(prefs.invalidTokens).toEqual([]);
+    expect(prefs.query).toBe("");
     expect(prefs.viewLevel).toBe("none");
     expect(prefs.columnVisibility).toEqual({});
     expect(prefs.columnWidths).toEqual({});
     expect(prefs.columnOrder).toEqual({});
   });
 
-  it("save() persists current state to localStorage", () => {
+  it("save() persists the canonical query string (incl. invalid tokens) under `q`", () => {
     const prefs = new Preferences();
-    prefs.filter = { search: "saved" };
+    prefs.filter = { type: ["bug"], search: "login" };
+    prefs.invalidTokens = ["status:banana"];
     prefs.viewLevel = "epics";
     prefs.save();
 
     const stored = JSON.parse(store["nibs-filter-preferences"]);
-    expect(stored.filter).toEqual({ search: "saved" });
+    // Filter is stored as a STRING under `q`, not the structured `filter` object.
+    expect(stored.q).toBe("type:bug login status:banana");
+    expect(stored.filter).toBeUndefined();
     expect(stored.viewLevel).toBe("epics");
+  });
+
+  it("query derived reflects filter + invalidTokens; a -status: exclusion survives save→reload faithfully", () => {
+    const prefs = new Preferences();
+    prefs.filter = { type: ["bug"], excludeStatus: ["completed"] };
+    // Canonical: type positive, then the status exclusion.
+    expect(prefs.query).toBe("type:bug -status:completed");
+
+    prefs.save();
+    const reloaded = new Preferences();
+    // The exclusion is preserved as an exclusion, NOT mangled into an include-list.
+    expect(reloaded.filter.excludeStatus).toEqual(["completed"]);
+    expect(reloaded.filter.status).toBeUndefined();
+    expect(reloaded.query).toBe("type:bug -status:completed");
+  });
+
+  it("migrates an OLD structured `filter` in localStorage without throwing", () => {
+    // A returning user whose localStorage predates the string format.
+    store["nibs-filter-preferences"] = JSON.stringify({
+      filter: { type: ["bug"], excludeStatus: ["completed"] },
+      viewLevel: "none",
+    });
+    const prefs = new Preferences();
+    expect(prefs.filter.type).toEqual(["bug"]);
+    expect(prefs.filter.excludeStatus).toEqual(["completed"]);
   });
 
   it("visibleColumns returns DEFAULT_VISIBLE_COLUMNS when no per-viewLevel override (opt-in columns hidden)", () => {

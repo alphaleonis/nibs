@@ -194,7 +194,12 @@ export type Theme = (typeof THEMES)[number]["value"];
 export const DEFAULT_THEME: Theme = "graphite";
 
 export interface FilterPreferences {
-  filter: NibFilter;
+  // The filter is persisted as a canonical query STRING (the same human-readable
+  // form shared via the `?q=` URL param), NOT as a structured NibFilter. The
+  // structured filter + its invalid-token sidecar are DERIVED from this via
+  // parseQuery; serializeQuery renders them back. Only the query moves to string
+  // form — every other preference below stays personal and structured.
+  query: string;
   viewLevel: ViewLevel;
   columnVisibility?: Partial<Record<ViewLevel, ColumnKey[]>>;
   columnWidths?: Partial<Record<ViewLevel, Partial<Record<ColumnKey, number>>>>;

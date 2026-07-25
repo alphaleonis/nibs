@@ -269,16 +269,25 @@
   }
 
   // Invalid known-field tokens (e.g. `status:banana`) parsed out of the box text.
-  // They contribute nothing to the filter but are preserved here so the box can
-  // flag them and round-trip them across canonicalization and dropdown edits.
-  let invalidTokens = $state<string[]>([]);
+  // They contribute nothing to the filter but are preserved so the box can flag
+  // them and round-trip them across canonicalization and dropdown edits. When a
+  // `prefs` is present they live on it (persisted + shared as part of the
+  // canonical `?q=` query, so a reload / shared link reproduces the parked
+  // tokens); the prefs-less callback mode keeps them in local component state.
+  let localInvalidTokens = $state<string[]>([]);
+  let resolvedInvalidTokens = $derived(prefs ? prefs.invalidTokens : localInvalidTokens);
+  function setInvalidTokens(tokens: string[]) {
+    if (prefs) prefs.invalidTokens = tokens;
+    else localInvalidTokens = tokens;
+  }
 
   let keywordFocused = $state(false);
   // Seed from the canonical query so the clear button / placeholder state is
-  // correct on first paint (before the effect runs). `untrack` makes the one-time
+  // correct on first paint (before the effect runs), including any parked invalid
+  // tokens restored from storage / a shared link. `untrack` makes the one-time
   // read explicit — the $effect below owns keeping it in sync thereafter.
-  let keywordText = $state(untrack(() => serializeQuery({ filter: resolvedFilter, invalidTokens: [] })));
-  let canonicalQuery = $derived(serializeQuery({ filter: resolvedFilter, invalidTokens }));
+  let keywordText = $state(untrack(() => serializeQuery({ filter: resolvedFilter, invalidTokens: resolvedInvalidTokens })));
+  let canonicalQuery = $derived(serializeQuery({ filter: resolvedFilter, invalidTokens: resolvedInvalidTokens }));
   let hasKeyword = $derived(keywordText.length > 0);
 
   $effect(() => {
@@ -331,7 +340,7 @@
   // Box-owned fields are set from the parse or dropped; everything else is kept.
   function emitFromText(text: string) {
     const parsed = parseQuery(text);
-    invalidTokens = parsed.invalidTokens;
+    setInvalidTokens(parsed.invalidTokens);
     const updated: NibFilter = { ...resolvedFilter };
     for (const key of BOX_FIELD_KEYS) {
       assignBoxField(updated, parsed.filter, key);
@@ -348,7 +357,7 @@
 
   function clearKeyword() {
     keywordText = "";
-    invalidTokens = [];
+    setInvalidTokens([]);
     completion = null;
     const updated: NibFilter = { ...resolvedFilter };
     for (const key of BOX_FIELD_KEYS) delete updated[key];
@@ -661,14 +670,14 @@
     <!-- Simple, non-overlay marker for known-field tokens with an invalid value
          (e.g. status:banana). The token stays in the box and results reflect only
          the valid tokens; the fancy overlay rendering is a later phase. -->
-    {#if invalidTokens.length > 0}
+    {#if resolvedInvalidTokens.length > 0}
       <div
         data-testid="filter-invalid"
         role="status"
         class="absolute left-0 top-full mt-0.5 flex items-center gap-1 text-caption text-warning"
       >
         <TriangleAlert size={12} />
-        <span>Unrecognized: {invalidTokens.join(" ")}</span>
+        <span>Unrecognized: {resolvedInvalidTokens.join(" ")}</span>
       </div>
     {/if}
   </div>

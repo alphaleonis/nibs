@@ -2,7 +2,7 @@ import { VIEW_LEVELS, MIN_DETAIL_PANEL_WIDTH, MIN_DETAIL_PANEL_HEIGHT, DETAIL_PA
 import type { FilterPreferences, RowDensity, ViewLevel, Theme, DetailPanelPosition, BlockedEmphasis, FontSize, NibFilter, TableSort } from "./types";
 import { ALL_COLUMN_KEYS, ALWAYS_VISIBLE_KEYS, SORTABLE_COLUMN_KEYS } from "./columns";
 import type { ColumnKey } from "./columns";
-import { STATUSES } from "./constants";
+import { serializeQuery } from "./query";
 
 const ALWAYS_VISIBLE_KEY_SET = new Set<ColumnKey>(ALWAYS_VISIBLE_KEYS);
 
@@ -11,29 +11,31 @@ const ALWAYS_VISIBLE_KEY_SET = new Set<ColumnKey>(ALWAYS_VISIBLE_KEYS);
 export const STORAGE_KEY = "nibs-filter-preferences";
 
 const DEFAULTS: FilterPreferences = {
-  filter: {},
+  query: "",
   viewLevel: "none",
   theme: DEFAULT_THEME,
 };
 
-// Sanitize/migrate a persisted filter. The legacy `excludeStatus` field (the
-// retired standalone hide-completed negative filter) is folded into
-// the single `status` include-list: with no explicit include-list present it is
-// translated to the equivalent one (every status except the excluded ones,
-// STATUSES order preserved); otherwise it is dropped, since `status` is now the
-// single source of truth for status visibility. Never crashes on old state.
-function parseFilter(raw: unknown): NibFilter {
-  if (typeof raw !== "object" || raw === null) return {};
-  const source = raw as Record<string, unknown> & { excludeStatus?: unknown };
-  const { excludeStatus, ...rest } = source;
-  const filter = rest as NibFilter;
-
-  const hasStatus = Array.isArray(filter.status) && filter.status.length > 0;
-  if (!hasStatus && Array.isArray(excludeStatus) && excludeStatus.length > 0) {
-    const excluded = new Set(excludeStatus.filter((s): s is string => typeof s === "string"));
-    filter.status = STATUSES.filter((s) => !excluded.has(s));
+// Resolve the persisted filter to a canonical query STRING. Two formats are
+// accepted so a returning user never loses their filter or crashes the load:
+//   - New: `q` is already a query string — returned verbatim (Preferences
+//     re-parses it, so a hand-edited/foreign value is tolerated downstream).
+//   - Legacy: an older build persisted the structured `filter: NibFilter`
+//     directly. It is serialized to the equivalent canonical string. This is a
+//     FAITHFUL translation — a persisted `excludeStatus` becomes `-status:…`
+//     (behaviorally identical to hiding those statuses), NOT rewritten into a
+//     status include-list. That old include-list rewrite was for the retired
+//     hide-completed toggle; folding it in here would mangle a `-status:X`
+//     negation on reload (see nibs-grvv Phase-2 note).
+// serializeQuery ignores non-box NibFilter fields (relationships/existence),
+// which were never settable from the box, so nothing shareable is dropped.
+function parseQueryField(parsed: Record<string, unknown>): string {
+  if (typeof parsed.q === "string") return parsed.q;
+  const legacy = parsed.filter;
+  if (typeof legacy === "object" && legacy !== null && !Array.isArray(legacy)) {
+    return serializeQuery({ filter: legacy as NibFilter });
   }
-  return filter;
+  return "";
 }
 
 const VALID_COLUMN_KEYS = new Set<string>(ALL_COLUMN_KEYS);
@@ -196,11 +198,11 @@ export function parseTheme(raw: unknown): Theme {
 export function loadPreferences(): FilterPreferences {
   try {
     const raw = localStorage.getItem(STORAGE_KEY);
-    if (!raw) return { ...DEFAULTS, filter: { ...DEFAULTS.filter } };
+    if (!raw) return { ...DEFAULTS };
     const parsed = JSON.parse(raw);
-    if (typeof parsed !== "object" || parsed === null) return { ...DEFAULTS, filter: { ...DEFAULTS.filter } };
+    if (typeof parsed !== "object" || parsed === null) return { ...DEFAULTS };
     return {
-      filter: parseFilter(parsed.filter),
+      query: parseQueryField(parsed),
       viewLevel: (VIEW_LEVELS as readonly string[]).includes(parsed.viewLevel)
         ? parsed.viewLevel
         : DEFAULTS.viewLevel,
@@ -218,13 +220,17 @@ export function loadPreferences(): FilterPreferences {
       tableSort: parseTableSort(parsed.tableSort),
     };
   } catch {
-    return { ...DEFAULTS, filter: { ...DEFAULTS.filter } };
+    return { ...DEFAULTS };
   }
 }
 
 export function savePreferences(prefs: FilterPreferences): void {
   try {
-    localStorage.setItem(STORAGE_KEY, JSON.stringify(prefs));
+    // Persist the canonical query STRING under `q` (mirroring the `?q=` URL
+    // param and marking the new format for loadPreferences); the remaining
+    // preferences persist structured, exactly as before.
+    const { query, ...rest } = prefs;
+    localStorage.setItem(STORAGE_KEY, JSON.stringify({ q: query, ...rest }));
   } catch {
     // Silently fail if localStorage is not available (SSR, privacy mode, etc.)
   }
