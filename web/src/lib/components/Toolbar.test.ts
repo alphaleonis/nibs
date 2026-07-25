@@ -919,3 +919,182 @@ describe("Toolbar — query box status sync", () => {
     expect((screen.getByTestId("filter-keyword") as HTMLInputElement).value).toBe("");
   });
 });
+
+// Phase 2: the full metadata grammar (type/priority/status/estimate/tags +
+// exclusions), the invalid-token sidecar + inline flag, all five dropdowns in
+// two-way sync with the box, and static autocomplete. A real `Preferences`
+// instance is used so an emitted filter round-trips back into `resolvedFilter`.
+describe("Toolbar — query box metadata grammar", () => {
+  it("typing a multi-field query sets every field and ticks each matching dropdown", async () => {
+    const prefs = new Preferences();
+    render(Toolbar, { prefs, oncreatenew: vi.fn(), availableTags: ["wip", "frontend"] });
+
+    await user.type(screen.getByTestId("filter-keyword"), "type:bug,task -tags:wip status:todo");
+
+    // Parsed into the canonical filter: comma OR, negation → excludeTags.
+    expect(prefs.filter.type).toEqual(["bug", "task"]);
+    expect(prefs.filter.excludeTags).toEqual(["wip"]);
+    expect(prefs.filter.status).toEqual(["todo"]);
+
+    // Type dropdown ticks both bug and task, not feature.
+    await user.click(screen.getByRole("button", { name: /type/i }));
+    expect(screen.getByRole("menuitemcheckbox", { name: "bug" })).toHaveAttribute("aria-checked", "true");
+    expect(screen.getByRole("menuitemcheckbox", { name: "task" })).toHaveAttribute("aria-checked", "true");
+    expect(screen.getByRole("menuitemcheckbox", { name: "feature" })).toHaveAttribute("aria-checked", "false");
+    await user.keyboard("{Escape}");
+
+    // State dropdown ticks todo.
+    await user.click(screen.getByRole("button", { name: /state/i }));
+    expect(screen.getByRole("menuitemcheckbox", { name: "todo" })).toHaveAttribute("aria-checked", "true");
+  });
+
+  it("typing a priority token ticks the Priority dropdown", async () => {
+    const prefs = new Preferences();
+    render(Toolbar, { prefs, oncreatenew: vi.fn() });
+
+    await user.type(screen.getByTestId("filter-keyword"), "priority:high");
+    expect(prefs.filter.priority).toEqual(["high"]);
+
+    await user.click(screen.getByRole("button", { name: /priority/i }));
+    expect(screen.getByRole("menuitemcheckbox", { name: "high" })).toHaveAttribute("aria-checked", "true");
+  });
+
+  it("typing an estimate token ticks the Effort dropdown", async () => {
+    const prefs = new Preferences();
+    render(Toolbar, { prefs, oncreatenew: vi.fn() });
+
+    await user.type(screen.getByTestId("filter-keyword"), "estimate:l");
+    expect(prefs.filter.estimate).toEqual(["l"]);
+
+    await user.click(screen.getByRole("button", { name: /effort/i }));
+    expect(screen.getByRole("menuitemcheckbox", { name: "l" })).toHaveAttribute("aria-checked", "true");
+  });
+
+  it("checking a Type dropdown box regenerates the query text while unfocused", async () => {
+    const prefs = new Preferences();
+    render(Toolbar, { prefs, oncreatenew: vi.fn() });
+
+    const input = screen.getByTestId("filter-keyword") as HTMLInputElement;
+    expect(input.value).toBe("");
+
+    await user.click(screen.getByRole("button", { name: /type/i }));
+    await user.click(screen.getByRole("menuitemcheckbox", { name: "bug" }));
+
+    expect(prefs.filter.type).toEqual(["bug"]);
+    // The unfocused box is rewritten to the canonical token form.
+    expect(input.value).toBe("type:bug");
+  });
+
+  it("serializes fields in canonical order when several dropdowns are set", async () => {
+    const prefs = new Preferences();
+    prefs.filter = { type: ["bug"], priority: ["high"], status: ["todo"], search: "login" };
+    render(Toolbar, { prefs, oncreatenew: vi.fn() });
+
+    // type, priority, status, then search last.
+    expect((screen.getByTestId("filter-keyword") as HTMLInputElement).value).toBe(
+      "type:bug priority:high status:todo login",
+    );
+  });
+});
+
+describe("Toolbar — invalid token handling", () => {
+  it("flags an invalid value, applies only the valid tokens, and preserves the invalid token across blur and a dropdown edit", async () => {
+    const prefs = new Preferences();
+    render(Toolbar, { prefs, oncreatenew: vi.fn() });
+
+    const input = screen.getByTestId("filter-keyword") as HTMLInputElement;
+    await user.type(input, "type:bug status:banana");
+
+    // Only the valid token reaches the filter.
+    expect(prefs.filter.type).toEqual(["bug"]);
+    expect(prefs.filter.status).toBeUndefined();
+
+    // The invalid token is flagged inline.
+    expect(screen.getByTestId("filter-invalid")).toHaveTextContent("status:banana");
+
+    // Survives blur (canonicalized, invalid appended at the end).
+    await user.tab();
+    expect(input.value).toBe("type:bug status:banana");
+    expect(screen.getByTestId("filter-invalid")).toBeInTheDocument();
+
+    // Survives a dropdown edit — invalid stays flagged and in the regenerated text.
+    await user.click(screen.getByRole("button", { name: /priority/i }));
+    await user.click(screen.getByRole("menuitemcheckbox", { name: "high" }));
+
+    expect(prefs.filter.priority).toEqual(["high"]);
+    expect(screen.getByTestId("filter-invalid")).toHaveTextContent("status:banana");
+    expect(input.value).toBe("type:bug priority:high status:banana");
+  });
+
+  it("does not render the invalid marker when all tokens are valid", async () => {
+    const prefs = new Preferences();
+    render(Toolbar, { prefs, oncreatenew: vi.fn() });
+
+    await user.type(screen.getByTestId("filter-keyword"), "type:bug");
+    expect(screen.queryByTestId("filter-invalid")).not.toBeInTheDocument();
+  });
+
+  it("clearing the box removes the invalid marker", async () => {
+    const prefs = new Preferences();
+    render(Toolbar, { prefs, oncreatenew: vi.fn() });
+
+    await user.type(screen.getByTestId("filter-keyword"), "status:banana");
+    expect(screen.getByTestId("filter-invalid")).toBeInTheDocument();
+
+    await user.click(screen.getByTestId("filter-keyword-clear"));
+    expect(screen.queryByTestId("filter-invalid")).not.toBeInTheDocument();
+  });
+});
+
+describe("Toolbar — static autocomplete", () => {
+  it("suggests field names for a partial token and inserts one on click", async () => {
+    const prefs = new Preferences();
+    render(Toolbar, { prefs, oncreatenew: vi.fn() });
+
+    const input = screen.getByTestId("filter-keyword") as HTMLInputElement;
+    await user.type(input, "ty");
+
+    const suggestions = screen.getByTestId("filter-suggestions");
+    expect(within(suggestions).getByText("type")).toBeInTheDocument();
+
+    await user.click(within(suggestions).getByText("type"));
+    expect(input.value).toBe("type:");
+  });
+
+  it("suggests enum values after a field colon and inserts via keyboard (ArrowDown+Enter)", async () => {
+    const prefs = new Preferences();
+    render(Toolbar, { prefs, oncreatenew: vi.fn() });
+
+    const input = screen.getByTestId("filter-keyword") as HTMLInputElement;
+    await user.type(input, "type:bu");
+
+    expect(within(screen.getByTestId("filter-suggestions")).getByText("bug")).toBeInTheDocument();
+
+    await user.type(input, "{ArrowDown}{Enter}");
+    expect(input.value).toBe("type:bug");
+    expect(prefs.filter.type).toEqual(["bug"]);
+  });
+
+  it("suggests existing tags for a tags: token and inserts on click", async () => {
+    const prefs = new Preferences();
+    render(Toolbar, { prefs, oncreatenew: vi.fn(), availableTags: ["frontend", "backend"] });
+
+    const input = screen.getByTestId("filter-keyword") as HTMLInputElement;
+    await user.type(input, "tags:fr");
+
+    const suggestions = screen.getByTestId("filter-suggestions");
+    expect(within(suggestions).getByText("frontend")).toBeInTheDocument();
+
+    await user.click(within(suggestions).getByText("frontend"));
+    expect(input.value).toBe("tags:frontend");
+    expect(prefs.filter.tags).toEqual(["frontend"]);
+  });
+
+  it("shows no suggestions for an unknown field", async () => {
+    const prefs = new Preferences();
+    render(Toolbar, { prefs, oncreatenew: vi.fn() });
+
+    await user.type(screen.getByTestId("filter-keyword"), "title:fo");
+    expect(screen.queryByTestId("filter-suggestions")).not.toBeInTheDocument();
+  });
+});

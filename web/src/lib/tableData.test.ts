@@ -218,6 +218,54 @@ describe("buildTableData", () => {
     });
   });
 
+  // The `-status:completed` negation routes to NibFilter.excludeStatus. Like the
+  // positive status include-list, the exclusion is applied CLIENT-side so an
+  // excluded ancestor of active children is kept + dimmed rather than dropped
+  // server-side (which would orphan the children and detach the tree). Reverting
+  // the filter.ts change (excludeStatus removed from CLIENT_FIELDS / matchesFilter
+  // / hasClientFilters) makes hasClientFilters return false here, so Stage-4
+  // dimming never runs and `parent.dimmed` is false — this test bites.
+  describe("excludeStatus client filter (`-status:completed` negation)", () => {
+    it("dims an excluded (completed) parent with an active child, keeping the child nested", () => {
+      const nibs = [
+        makeTreeTableNib({ id: "nibs-001", type: "milestone", status: "completed", title: "Done milestone" }),
+        makeTreeTableNib({ id: "nibs-002", type: "task", status: "in-progress", title: "Active task", parentId: "nibs-001" }),
+      ];
+      const filter: NibFilter = { excludeStatus: ["completed"] };
+      const result = buildTableData(nibs, filter, "milestones", noCollapsed);
+
+      // The excluded parent survives as a dimmed ancestor of its active child,
+      // rather than being dropped (which would re-root the orphaned child).
+      expect(result.rows).toHaveLength(2);
+
+      const parent = result.rows.find(r => r.nib.id === "nibs-001")!;
+      const child = result.rows.find(r => r.nib.id === "nibs-002")!;
+      expect(parent).toBeDefined();
+      expect(parent.dimmed).toBe(true);
+      // Tree stays attached: the child is still nested under (not promoted above)
+      // its dimmed parent.
+      expect(child).toBeDefined();
+      expect(child.dimmed).toBe(false);
+      expect(child.depth).toBe(1);
+      expect(child.parentNib?.id).toBe("nibs-001");
+    });
+
+    it("hides an excluded leaf with no active descendants", () => {
+      const nibs = [
+        makeTreeTableNib({ id: "nibs-001", type: "milestone", status: "in-progress", title: "Active milestone" }),
+        makeTreeTableNib({ id: "nibs-002", type: "task", status: "completed", title: "Done leaf", parentId: "nibs-001" }),
+      ];
+      const filter: NibFilter = { excludeStatus: ["completed"] };
+      const result = buildTableData(nibs, filter, "milestones", noCollapsed);
+
+      const ids = result.rows.map(r => r.nib.id);
+      expect(ids).toContain("nibs-001");
+      expect(ids).not.toContain("nibs-002");
+      // The active milestone dodges the exclusion, so it is not dimmed.
+      expect(result.rows.find(r => r.nib.id === "nibs-001")!.dimmed).toBe(false);
+    });
+  });
+
   describe("view levels", () => {
     const hierarchyNibs = [
       makeTreeTableNib({ id: "nibs-001", type: "milestone", title: "Milestone" }),

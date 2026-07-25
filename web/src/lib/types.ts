@@ -13,6 +13,7 @@ export interface NibSummary {
 export interface NibFilter {
   search?: string;
   status?: string[];
+  excludeStatus?: string[];
   type?: string[];
   excludeType?: string[];
   priority?: string[];

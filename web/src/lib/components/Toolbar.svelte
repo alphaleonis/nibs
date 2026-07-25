@@ -14,18 +14,21 @@
     ListTree,
     List,
     ListFilter,
+    TriangleAlert,
   } from "@lucide/svelte";
   import { typeIcons } from "../icons";
   import { priorityIndicators } from "../badges";
   import type { TypeIconInfo } from "../icons";
   import { resolveFilter, resolveViewLevel, resolveVisibleColumns, resolveColumnOrder, emitFilter as emitFilterHelper } from "../resolvePrefs";
-  import { parseQuery, serializeQuery } from "../query";
-  import { untrack } from "svelte";
+  import { parseQuery, serializeQuery, getCompletion } from "../query";
+  import type { Completion, QueryFilter } from "../query";
+  import { untrack, tick } from "svelte";
   import * as DropdownMenu from "$lib/components/ui/dropdown-menu/index.js";
   import { buttonVariants } from "$lib/components/ui/button/index.js";
   import { Input } from "$lib/components/ui/input/index.js";
   import StatusIcon from "./StatusIcon.svelte";
   import TypeIcon from "./TypeIcon.svelte";
+  import SuggestionList from "./SuggestionList.svelte";
   import SettingsSheet from "./SettingsSheet.svelte";
   import TooltipButton from "./TooltipButton.svelte";
   import TooltipDropdownTrigger from "./TooltipDropdownTrigger.svelte";
@@ -237,18 +240,45 @@
   let keywordInput = $state<HTMLInputElement | null>(null);
 
   // --- Query box ↔ NibFilter reconciliation ---
-  // The box parses its text into structured filter fields (status token + free
-  // text) on every keystroke, so the State dropdown ticks live. NibFilter stays
-  // canonical: `keywordText` is the LITERAL text the box shows, reconciled to the
-  // filter's canonical serialization ONLY while the box is unfocused — never
-  // rewritten under the cursor. Blur flips `keywordFocused` false, which re-runs
-  // the effect and snaps the box to canonical (whitespace + casing normalized).
+  // The box parses its text into structured filter fields (the five metadata
+  // facets + their exclusions + free text) on every keystroke, so every matching
+  // dropdown ticks live. NibFilter stays canonical: `keywordText` is the LITERAL
+  // text the box shows, reconciled to the filter's canonical serialization ONLY
+  // while the box is unfocused — never rewritten under the cursor. Blur flips
+  // `keywordFocused` false, which re-runs the effect and snaps the box to
+  // canonical (field order, casing, whitespace normalized).
+  //
+  // The box OWNS this slice of NibFilter; other fields (relationships/existence)
+  // are preserved untouched across box edits.
+  const BOX_FIELD_KEYS = [
+    "type", "excludeType",
+    "priority", "excludePriority",
+    "status", "excludeStatus",
+    "estimate", "excludeEstimate",
+    "tags", "excludeTags",
+    "search",
+  ] as const satisfies readonly (keyof QueryFilter)[];
+
+  // Copy one box field from the parsed slice onto a NibFilter, or delete it when
+  // the parse yields nothing for it. QueryFilter[K] === NibFilter[K] for these
+  // keys (QueryFilter is a Pick of NibFilter), so this stays fully typed.
+  function assignBoxField<K extends keyof QueryFilter>(target: NibFilter, source: QueryFilter, key: K) {
+    const value = source[key];
+    if (value !== undefined) target[key] = value;
+    else delete target[key];
+  }
+
+  // Invalid known-field tokens (e.g. `status:banana`) parsed out of the box text.
+  // They contribute nothing to the filter but are preserved here so the box can
+  // flag them and round-trip them across canonicalization and dropdown edits.
+  let invalidTokens = $state<string[]>([]);
+
   let keywordFocused = $state(false);
   // Seed from the canonical query so the clear button / placeholder state is
   // correct on first paint (before the effect runs). `untrack` makes the one-time
   // read explicit — the $effect below owns keeping it in sync thereafter.
-  let keywordText = $state(untrack(() => serializeQuery(resolvedFilter)));
-  let canonicalQuery = $derived(serializeQuery(resolvedFilter));
+  let keywordText = $state(untrack(() => serializeQuery({ filter: resolvedFilter, invalidTokens: [] })));
+  let canonicalQuery = $derived(serializeQuery({ filter: resolvedFilter, invalidTokens }));
   let hasKeyword = $derived(keywordText.length > 0);
 
   $effect(() => {
@@ -262,27 +292,96 @@
     }
   });
 
-  function handleKeyword(event: Event) {
-    const text = (event.target as HTMLInputElement).value;
-    keywordText = text;
+  // Parse the box text into the canonical filter + invalid sidecar, then emit.
+  // Box-owned fields are set from the parse or dropped; everything else is kept.
+  function emitFromText(text: string) {
     const parsed = parseQuery(text);
-    // The box OWNS status + search: set them from the parse, drop them when the
-    // parse yields none. Other facet fields (type/priority/...) are untouched.
+    invalidTokens = parsed.invalidTokens;
     const updated: NibFilter = { ...resolvedFilter };
-    if (parsed.status) updated.status = parsed.status;
-    else delete updated.status;
-    if (parsed.search) updated.search = parsed.search;
-    else delete updated.search;
+    for (const key of BOX_FIELD_KEYS) {
+      assignBoxField(updated, parsed.filter, key);
+    }
     emitFilter(updated);
+  }
+
+  function handleKeyword(event: Event) {
+    const input = event.target as HTMLInputElement;
+    keywordText = input.value;
+    emitFromText(input.value);
+    refreshCompletion();
   }
 
   function clearKeyword() {
     keywordText = "";
+    invalidTokens = [];
+    completion = null;
     const updated: NibFilter = { ...resolvedFilter };
-    delete updated.status;
-    delete updated.search;
+    for (const key of BOX_FIELD_KEYS) delete updated[key];
     emitFilter(updated);
     keywordInput?.focus();
+  }
+
+  // --- Static autocomplete (field names / enum values / existing tags) ---
+  let completion = $state<Completion | null>(null);
+  let suggestIndex = $state(-1);
+  let suggestBlurTimer: ReturnType<typeof setTimeout> | null = null;
+
+  // Recompute the caret-token suggestions from the input's current value + caret.
+  function refreshCompletion() {
+    if (!keywordInput) { completion = null; return; }
+    const caret = keywordInput.selectionStart ?? keywordInput.value.length;
+    completion = getCompletion(keywordInput.value, caret, availableTags);
+    suggestIndex = -1;
+  }
+
+  async function applyCompletion(item: string) {
+    if (!completion || !keywordInput) return;
+    const { text, caret } = completion.apply(item);
+    keywordText = text;
+    emitFromText(text);
+    await tick();
+    keywordInput.focus();
+    keywordInput.setSelectionRange(caret, caret);
+    // Re-suggest for the new caret (e.g. `type:` → its enum values).
+    refreshCompletion();
+  }
+
+  function handleKeywordKeydown(event: KeyboardEvent) {
+    if (!completion || completion.items.length === 0) return;
+    if (event.key === "ArrowDown") {
+      event.preventDefault();
+      suggestIndex = (suggestIndex + 1) % completion.items.length;
+    } else if (event.key === "ArrowUp") {
+      event.preventDefault();
+      suggestIndex = suggestIndex <= 0 ? completion.items.length - 1 : suggestIndex - 1;
+    } else if (event.key === "Enter") {
+      if (suggestIndex >= 0 && suggestIndex < completion.items.length) {
+        event.preventDefault();
+        applyCompletion(completion.items[suggestIndex]);
+      }
+    } else if (event.key === "Escape") {
+      event.preventDefault();
+      completion = null;
+      suggestIndex = -1;
+    }
+  }
+
+  function handleKeywordFocus() {
+    if (suggestBlurTimer) { clearTimeout(suggestBlurTimer); suggestBlurTimer = null; }
+    keywordFocused = true;
+    refreshCompletion();
+  }
+
+  function handleKeywordBlur() {
+    keywordFocused = false;
+    // Defer clearing so a suggestion click (which fires after blur) still lands;
+    // the option's mousedown preventDefault keeps focus for a keyboard/click pick.
+    if (suggestBlurTimer) clearTimeout(suggestBlurTimer);
+    suggestBlurTimer = setTimeout(() => {
+      suggestBlurTimer = null;
+      completion = null;
+      suggestIndex = -1;
+    }, 150);
   }
 
   function toggleArrayValue(arr: string[] | undefined, value: string): string[] | undefined {
@@ -464,11 +563,14 @@
     <Input
       bind:ref={keywordInput}
       type="text"
-      placeholder="Filter by keyword or status:todo"
+      placeholder="Filter by keyword, type:bug, -tags:wip"
       value={keywordText}
       oninput={handleKeyword}
-      onfocus={() => (keywordFocused = true)}
-      onblur={() => (keywordFocused = false)}
+      onkeydown={handleKeywordKeydown}
+      onfocus={handleKeywordFocus}
+      onblur={handleKeywordBlur}
+      autocomplete="off"
+      aria-autocomplete="list"
       data-testid="filter-keyword"
       class="pl-8 {hasKeyword ? 'pr-8' : ''}"
     />
@@ -491,6 +593,32 @@
       >
         <X size={14} />
       </TooltipButton>
+    {/if}
+
+    <!-- Static autocomplete popover, anchored below the input. Shown while the
+         box is focused and the caret token has suggestions. -->
+    {#if completion}
+      <SuggestionList
+        items={completion.items}
+        activeIndex={suggestIndex}
+        onselect={(item) => applyCompletion(item)}
+        testId="filter-suggestions"
+        itemTestId="filter-suggestion"
+      />
+    {/if}
+
+    <!-- Simple, non-overlay marker for known-field tokens with an invalid value
+         (e.g. status:banana). The token stays in the box and results reflect only
+         the valid tokens; the fancy overlay rendering is a later phase. -->
+    {#if invalidTokens.length > 0}
+      <div
+        data-testid="filter-invalid"
+        role="status"
+        class="absolute left-0 top-full mt-0.5 flex items-center gap-1 text-caption text-warning"
+      >
+        <TriangleAlert size={12} />
+        <span>Unrecognized: {invalidTokens.join(" ")}</span>
+      </div>
     {/if}
   </div>
 
