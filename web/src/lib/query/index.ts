@@ -14,3 +14,7 @@ export { serializeQuery } from "./serialize";
 export type { QueryFilter } from "./fields";
 export { getCompletion } from "./complete";
 export type { Completion, CompletionKind } from "./complete";
+// Syntax-highlight spans: a pure, read-only view over the same tokens for the
+// filter box's backdrop highlight layer.
+export { tokenizeSpans } from "./spans";
+export type { Span, SpanKind } from "./spans";

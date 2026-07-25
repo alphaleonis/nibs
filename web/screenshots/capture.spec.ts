@@ -69,6 +69,21 @@ test("table — flat view, sorted by Modified desc", async ({ page }) => {
   await shot(page, "table-flat-sorted-modified");
 });
 
+// Filter box syntax-highlight overlay: type a query mixing a VALID metadata token
+// (type:bug), an INVALID value (status:banana → red wavy underline), and a free-text
+// word (login), then crop to the filter band so per-token coloring + the inline
+// underline are visible. The box is left focused so the text stays exactly as typed
+// (the focus-guard skips canonicalization while focused).
+test("filter box — syntax-highlight overlay", async ({ page }) => {
+  await openApp(page);
+  const input = page.getByTestId("filter-keyword");
+  await input.click();
+  await input.fill("type:bug status:banana login");
+  await shot(page, "filter-highlight");
+  // Cropped to the filter band for a legible close-up of the token coloring.
+  await page.locator('[role="search"]').screenshot({ path: join(OUT, "filter-highlight-cropped.png") });
+});
+
 test("detail panel", async ({ page }) => {
   await openApp(page);
   await page.locator("tr[data-nib-id]").first().locator('[data-action="title"]').click();

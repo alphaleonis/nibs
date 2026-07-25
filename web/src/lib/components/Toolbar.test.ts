@@ -1046,6 +1046,92 @@ describe("Toolbar — invalid token handling", () => {
   });
 });
 
+// Phase 3: the syntax-highlight overlay. A colored backdrop layer renders each
+// token behind a transparent-text input. This is pure presentation — parsing,
+// sync and results are unchanged (covered above); here we pin that the backdrop
+// mirrors the box text contiguously and colors each token by kind, with a
+// red-underline on invalid values. Pixel alignment is proven by the screenshot,
+// not jsdom.
+describe("Toolbar — highlight overlay", () => {
+  it("renders the backdrop layer behind a transparent-text input", () => {
+    render(Toolbar, { ...defaultToolbarProps });
+
+    const input = screen.getByTestId("filter-keyword");
+    // The input hides its own glyphs so the colored backdrop shows through.
+    expect(input).toHaveClass("text-transparent");
+    // The backdrop exists and is hidden from assistive tech / pointer events.
+    const backdrop = screen.getByTestId("filter-highlight");
+    expect(backdrop).toHaveAttribute("aria-hidden", "true");
+    expect(backdrop).toHaveClass("pointer-events-none");
+    // The backdrop owns the box's raised surface fill, since the input above it
+    // is transparent — without this the field loses its --popover surface.
+    expect(backdrop).toHaveClass("bg-popover");
+  });
+
+  it("colors a field token: field name (link), colon (muted), value (foreground)", async () => {
+    const prefs = new Preferences();
+    render(Toolbar, { prefs, oncreatenew: vi.fn() });
+
+    await user.type(screen.getByTestId("filter-keyword"), "type:bug");
+
+    const backdrop = screen.getByTestId("filter-highlight");
+    const field = backdrop.querySelector('[data-kind="field"]');
+    const value = backdrop.querySelector('[data-kind="value"]');
+    const operator = backdrop.querySelector('[data-kind="operator"]');
+    expect(field).toHaveTextContent("type");
+    expect(field).toHaveClass("text-link");
+    expect(operator).toHaveTextContent(":");
+    expect(value).toHaveTextContent("bug");
+    expect(value).toHaveClass("text-foreground");
+    // No invalid span for an all-valid query.
+    expect(backdrop.querySelector('[data-kind="invalid"]')).toBeNull();
+  });
+
+  it("draws a red wavy underline on an invalid value (status:banana)", async () => {
+    const prefs = new Preferences();
+    render(Toolbar, { prefs, oncreatenew: vi.fn() });
+
+    await user.type(screen.getByTestId("filter-keyword"), "status:banana");
+
+    const backdrop = screen.getByTestId("filter-highlight");
+    const invalid = backdrop.querySelector('[data-kind="invalid"]');
+    expect(invalid).not.toBeNull();
+    expect(invalid).toHaveTextContent("banana");
+    expect(invalid).toHaveClass("underline");
+    expect(invalid).toHaveClass("decoration-wavy");
+    expect(invalid).toHaveClass("text-destructive");
+  });
+
+  it("mirrors the literal box text contiguously as the user types (valid + invalid + free text)", async () => {
+    const prefs = new Preferences();
+    render(Toolbar, { prefs, oncreatenew: vi.fn() });
+
+    const input = screen.getByTestId("filter-keyword") as HTMLInputElement;
+    await user.type(input, "type:bug status:banana login");
+
+    // Typing still updates the real input value...
+    expect(input.value).toBe("type:bug status:banana login");
+    // ...and the backdrop reproduces it character-for-character (whitespace kept),
+    // so every glyph aligns with the input.
+    const backdrop = screen.getByTestId("filter-highlight");
+    expect(backdrop.textContent).toBe("type:bug status:banana login");
+    // The free-text word is colored as free text, not as a value.
+    const freetext = [...backdrop.querySelectorAll('[data-kind="freetext"]')];
+    expect(freetext.map((n) => n.textContent)).toContain("login");
+  });
+
+  it("clears the backdrop when the box is cleared", async () => {
+    const prefs = new Preferences();
+    render(Toolbar, { prefs, oncreatenew: vi.fn() });
+
+    await user.type(screen.getByTestId("filter-keyword"), "type:bug");
+    expect(screen.getByTestId("filter-highlight").textContent).toBe("type:bug");
+
+    await user.click(screen.getByTestId("filter-keyword-clear"));
+    expect(screen.getByTestId("filter-highlight").textContent).toBe("");
+  });
+});
+
 describe("Toolbar — static autocomplete", () => {
   it("suggests field names for a partial token and inserts one on click", async () => {
     const prefs = new Preferences();

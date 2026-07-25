@@ -20,8 +20,8 @@
   import { priorityIndicators } from "../badges";
   import type { TypeIconInfo } from "../icons";
   import { resolveFilter, resolveViewLevel, resolveVisibleColumns, resolveColumnOrder, emitFilter as emitFilterHelper } from "../resolvePrefs";
-  import { parseQuery, serializeQuery, getCompletion } from "../query";
-  import type { Completion, QueryFilter } from "../query";
+  import { parseQuery, serializeQuery, getCompletion, tokenizeSpans } from "../query";
+  import type { Completion, QueryFilter, SpanKind } from "../query";
   import { untrack, tick } from "svelte";
   import * as DropdownMenu from "$lib/components/ui/dropdown-menu/index.js";
   import { buttonVariants } from "$lib/components/ui/button/index.js";
@@ -292,6 +292,41 @@
     }
   });
 
+  // --- Syntax-highlight backdrop (Phase 3) ---
+  // The box paints a colored, per-token backdrop layer BEHIND a transparent-text
+  // <input>: the input stays the editor (native caret, selection, paste, undo,
+  // horizontal scroll) and the backdrop is display-only (`aria-hidden`, no pointer
+  // events). `spans` tiles the literal box text contiguously so every glyph lines
+  // up with the input; `syncBackdropScroll` locks the backdrop's horizontal scroll
+  // to the input's so a long query stays aligned as it scrolls out of view.
+  let backdrop = $state<HTMLDivElement | null>(null);
+  let spans = $derived(tokenizeSpans(keywordText));
+
+  // Per-kind highlight colors, all shadcn semantic tokens (theme-aware): field
+  // names read as links, values as normal foreground, punctuation + free text
+  // muted, invalid values in the destructive color with a wavy red underline.
+  const SPAN_CLASS: Record<SpanKind, string> = {
+    field: "text-link",
+    operator: "text-muted-foreground",
+    value: "text-foreground",
+    invalid: "text-destructive underline decoration-wavy",
+    freetext: "text-muted-foreground",
+    whitespace: "",
+  };
+
+  function syncBackdropScroll() {
+    if (backdrop && keywordInput) backdrop.scrollLeft = keywordInput.scrollLeft;
+  }
+
+  // Re-sync after any value change (typing, completion insert, clear, or a
+  // dropdown-driven canonicalization). The input adjusts its own scrollLeft during
+  // layout, so read it on the next frame; the `onscroll` handler covers caret moves
+  // that scroll without changing the text.
+  $effect(() => {
+    keywordText;
+    requestAnimationFrame(syncBackdropScroll);
+  });
+
   // Parse the box text into the canonical filter + invalid sidecar, then emit.
   // Box-owned fields are set from the parse or dropped; everything else is kept.
   function emitFromText(text: string) {
@@ -555,11 +590,25 @@
        it in a relative container with an absolutely-positioned left icon and a
        right clear button, padding the input to make room for both. Capped at
        ~400px (no flex-1) so the facet dropdowns cluster next to it on the left. -->
-  <div class="relative w-[400px] max-w-full min-w-0">
+  <div class="relative isolate w-[400px] max-w-full min-w-0">
     <ListFilter
       size={16}
-      class="pointer-events-none absolute left-2.5 top-1/2 -translate-y-1/2 text-muted-foreground"
+      class="pointer-events-none absolute left-2.5 top-1/2 z-20 -translate-y-1/2 text-muted-foreground"
     />
+    <!-- Syntax-highlight backdrop: sits BEHIND the transparent-text input (z-0 vs
+         z-10) and mirrors its box exactly — same border width, padding, font-size
+         and line box — so the colored per-token spans line up glyph-for-glyph with
+         what the user types. `overflow-hidden` + scrollLeft sync keep it aligned as
+         a long query scrolls. Display-only: aria-hidden, no pointer events. -->
+    <div
+      bind:this={backdrop}
+      aria-hidden="true"
+      data-testid="filter-highlight"
+      class="pointer-events-none absolute inset-0 z-0 flex items-center overflow-hidden rounded-lg border border-transparent bg-popover pl-8 {hasKeyword ? 'pr-8' : 'pr-2.5'} text-sm"
+    >
+      <div class="shrink-0 whitespace-pre"
+        >{#each spans as s (s.start)}<span class={SPAN_CLASS[s.kind]} data-kind={s.kind}>{keywordText.slice(s.start, s.end)}</span>{/each}</div>
+    </div>
     <Input
       bind:ref={keywordInput}
       type="text"
@@ -569,10 +618,12 @@
       onkeydown={handleKeywordKeydown}
       onfocus={handleKeywordFocus}
       onblur={handleKeywordBlur}
+      onscroll={syncBackdropScroll}
       autocomplete="off"
       aria-autocomplete="list"
       data-testid="filter-keyword"
-      class="pl-8 {hasKeyword ? 'pr-8' : ''}"
+      style="caret-color: var(--foreground);"
+      class="relative z-10 bg-transparent text-transparent pl-8 {hasKeyword ? 'pr-8' : ''}"
     />
     {#if hasKeyword}
       <!-- Clear button. Plain action button: TooltipButton spreads the tooltip
@@ -588,7 +639,7 @@
         variant="ghost"
         size="icon-xs"
         data-testid="filter-keyword-clear"
-        class="absolute right-1 inset-y-0 my-auto text-muted-foreground"
+        class="absolute right-1 inset-y-0 z-20 my-auto text-muted-foreground"
         onclick={clearKeyword}
       >
         <X size={14} />

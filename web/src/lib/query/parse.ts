@@ -14,7 +14,9 @@ export interface ParsedQuery {
 // A `[-]field:value` token. Group 1 = optional negation, 2 = field name (letters
 // only, matched case-insensitively), 3 = the value list (`.+`, so `field:` with
 // no value never matches — it falls through to free text, as in phase 1).
-const FIELD_TOKEN = /^(-?)([A-Za-z]+):(.+)$/;
+// Exported so the highlight tokenizer (`spans.ts`) classifies exactly the tokens
+// `parseQuery` recognizes — one grammar, no drift.
+export const FIELD_TOKEN = /^(-?)([A-Za-z]+):(.+)$/;
 
 /**
  * Parse filter-box text into the structured fields the box owns plus the
