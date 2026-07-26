@@ -168,6 +168,11 @@
   /* Z-index scale */
   --z-dropdown: 10;
   --z-sticky: 20;
+  /* The toolbar/filter band is app chrome above the scrolling content, so its
+     absolutely-positioned popovers (the filter autocomplete + invalid marker)
+     must sit ABOVE the table's own sticky header (--z-sticky) — a tie there lets
+     the later-in-DOM header paint over the dropdown. Kept below the drag ghost. */
+  --z-toolbar: 25;
   /* The cursor-following column-drag ghost floats above the sticky header while a
      header is dragged, below modal surfaces. */
   --z-drag-ghost: 30;

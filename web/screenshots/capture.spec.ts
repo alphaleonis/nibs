@@ -96,6 +96,21 @@ test("filter box — completion dropdown over table rows", async ({ page }) => {
   await input.pressSequentially("status:draft,todo,");
   await expect(page.getByTestId("filter-suggestions")).toBeAttached();
   await expect(page.locator("tr[data-nib-id]").first()).toBeVisible();
+  // Regression guard: the tall completion dropdown must paint OVER the sticky
+  // table header. Both used z-index 20 (the header via --z-sticky, the filter band
+  // reusing it), so the later-in-DOM header won and covered the dropdown; the band
+  // now sits at --z-toolbar (above --z-sticky). Assert the dropdown is the topmost
+  // element at a point inside the dropdown∩header overlap.
+  const topmostAtHeaderOverlap = await page.evaluate(() => {
+    const drop = document.querySelector('[data-testid="filter-suggestions"]')?.getBoundingClientRect();
+    const thead = document.querySelector("thead")?.getBoundingClientRect();
+    if (!drop || !thead) return "missing";
+    const y = Math.max(drop.top, thead.top) + 4;
+    if (y >= Math.min(drop.bottom, thead.bottom)) return "no-overlap";
+    const el = document.elementFromPoint(drop.left + 8, y) as HTMLElement | null;
+    return el?.closest('[data-testid="filter-suggestions"]') ? "dropdown" : (el?.tagName ?? "unknown");
+  });
+  expect(topmostAtHeaderOverlap).toBe("dropdown");
   await shot(page, "filter-completion-over-table");
 });
 

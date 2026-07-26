@@ -752,7 +752,7 @@
      into a stacking context above the table, so the box's absolutely-positioned
      autocomplete dropdown and invalid marker paint OVER the rows below rather than
      behind them. Kept below --z-drag-ghost/--z-modal. -->
-<div class="relative flex flex-wrap items-center gap-2 border-b border-border px-6 py-2" role="search" aria-label="Filters" style="z-index: var(--z-sticky);">
+<div class="relative flex flex-wrap items-center gap-2 border-b border-border px-6 py-2" role="search" aria-label="Filters" style="z-index: var(--z-toolbar);">
   <!-- Keyword search. Input is a bare primitive with no adornment slot, so wrap
        it in a relative container with an absolutely-positioned left icon and a
        right clear button, padding the input to make room for both. Capped at
