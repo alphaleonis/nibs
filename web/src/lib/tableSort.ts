@@ -64,7 +64,7 @@ const KEY_EXTRACTORS: Record<SortField, (nib: SortableRow, byId: ReadonlyMap<str
   // ids are lexicographic (case-sensitive), unlike the case-folded text sorts.
   id: (n) => n.id || null,
   type: (n) => orderKey(TYPES, n.type),
-  state: (n) => orderKey(STATUSES, n.status),
+  status: (n) => orderKey(STATUSES, n.status),
   effort: (n) => orderKey(ESTIMATES, n.estimate?.trim().toLowerCase() ?? ""),
   created: (n) => dateKey(n.createdAt),
   modified: (n) => dateKey(n.updatedAt),

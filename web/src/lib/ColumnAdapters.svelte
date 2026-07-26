@@ -83,7 +83,7 @@
       parent: { header: headerParent, cell: cellParent },
       type: { header: headerType, cell: cellType },
       title: { header: headerTitle, cell: cellTitle },
-      state: { header: headerState, cell: cellState },
+      status: { header: headerStatus, cell: cellStatus },
       effort: { header: headerEffort, cell: cellEffort },
       tags: { header: headerTags, cell: cellTags },
       blocking: { header: headerBlocking, cell: cellBlocking },
@@ -118,7 +118,7 @@
 {#snippet headerParent()}Parent{/snippet}
 {#snippet headerType()}Type{/snippet}
 {#snippet headerTitle()}Title{/snippet}
-{#snippet headerState()}State{/snippet}
+{#snippet headerStatus()}Status{/snippet}
 {#snippet headerEffort()}Effort{/snippet}
 {#snippet headerTags()}Tags{/snippet}
 {#snippet headerBlocking()}Blocking{/snippet}
@@ -207,11 +207,11 @@
   </td>
 {/snippet}
 
-<!-- State column -->
-{#snippet cellState(ctx: RowContext)}
+<!-- Status column -->
+{#snippet cellStatus(ctx: RowContext)}
   {@const nib = ctx.nib}
   {@const statusDotColor = statusDotColors[nib.status] ?? "var(--muted-foreground)"}
-  <td data-testid="nib-state" class="text-body px-3 cell-truncate row-cell">
+  <td data-testid="nib-status" class="text-body px-3 cell-truncate row-cell">
     <StatusIcon status={nib.status} class="mr-1.5" />
     <span style="color: {statusDotColor};">{nib.status}</span>
   </td>

@@ -93,11 +93,11 @@ describe("Preferences", () => {
     store["nibs-filter-preferences"] = JSON.stringify({
       filter: {},
       viewLevel: "milestones",
-      columnVisibility: { milestones: ["id", "title", "state"] },
+      columnVisibility: { milestones: ["id", "title", "status"] },
     });
 
     const prefs = new Preferences();
-    expect(prefs.visibleColumns).toEqual(["id", "title", "state"]);
+    expect(prefs.visibleColumns).toEqual(["id", "title", "status"]);
   });
 
   it("currentColumnOrder returns the full canonical order when no per-viewLevel override", () => {
@@ -144,7 +144,7 @@ describe("Preferences", () => {
     expect(prefs.currentColumnWidths.title).toBe(600);
     // Non-overridden columns keep defaults
     expect(prefs.currentColumnWidths.type).toBe(DEFAULT_COLUMN_WIDTHS.type);
-    expect(prefs.currentColumnWidths.state).toBe(DEFAULT_COLUMN_WIDTHS.state);
+    expect(prefs.currentColumnWidths.status).toBe(DEFAULT_COLUMN_WIDTHS.status);
   });
 
   it("setColumnWidth updates per-viewLevel width without saving", () => {

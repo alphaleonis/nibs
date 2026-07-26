@@ -310,7 +310,7 @@ describe("Toolbar", () => {
     expect(labels).toContain("Parent");
     expect(labels).toContain("Type");
     expect(labels).toContain("Title");
-    expect(labels).toContain("State");
+    expect(labels).toContain("Status");
     expect(labels).toContain("Effort");
     expect(labels).toContain("Tags");
   });
@@ -408,7 +408,7 @@ describe("Toolbar", () => {
     expect(oncolumnschange).toHaveBeenCalledOnce();
     const callArg = oncolumnschange.mock.calls[0][0] as ColumnKey[];
     // created (canonical index 9) sorts before modified (index 10) in ALL_COLUMN_KEYS.
-    expect(callArg).toEqual(["id", "parent", "type", "title", "state", "effort", "tags", "created", "modified"]);
+    expect(callArg).toEqual(["id", "parent", "type", "title", "status", "effort", "tags", "created", "modified"]);
   });
 
   it("Blocking and Blocked by are unchecked when using the default-visible columns", async () => {
@@ -446,7 +446,7 @@ describe("Toolbar", () => {
     expect(oncolumnschange).toHaveBeenCalledOnce();
     const callArg = oncolumnschange.mock.calls[0][0] as ColumnKey[];
     // blocking (canonical index 7) slots in before the default-visible modified.
-    expect(callArg).toEqual(["id", "parent", "type", "title", "state", "effort", "tags", "blocking", "modified"]);
+    expect(callArg).toEqual(["id", "parent", "type", "title", "status", "effort", "tags", "blocking", "modified"]);
   });
 
   it("closes Columns dropdown on second click", async () => {
@@ -493,7 +493,7 @@ describe("Toolbar", () => {
     // Start with 'type' missing (columns in canonical order minus 'type')
     render(Toolbar, {
       ...defaultToolbarProps,
-      visibleColumns: ["id", "parent", "title", "state", "effort", "tags"] as ColumnKey[],
+      visibleColumns: ["id", "parent", "title", "status", "effort", "tags"] as ColumnKey[],
       oncolumnschange,
       viewLevel: "epics" as ViewLevel,
     });
@@ -509,16 +509,16 @@ describe("Toolbar", () => {
     expect(oncolumnschange).toHaveBeenCalledOnce();
     const callArg = oncolumnschange.mock.calls[0][0] as ColumnKey[];
     // 'type' should be inserted at its canonical position (index 2), not appended at the end
-    expect(callArg).toEqual(["id", "parent", "type", "title", "state", "effort", "tags"]);
+    expect(callArg).toEqual(["id", "parent", "type", "title", "status", "effort", "tags"]);
   });
 
   it("re-sorts the visible set by the per-view columnOrder on toggle (not the canonical order)", async () => {
     const oncolumnschange = vi.fn();
     // A custom order where state/title precede id — distinct from canonical.
-    const columnOrder: ColumnKey[] = ["state", "title", "id", "parent", "type", "effort", "tags", "blocking", "blockedBy", "created", "modified"];
+    const columnOrder: ColumnKey[] = ["status", "title", "id", "parent", "type", "effort", "tags", "blocking", "blockedBy", "created", "modified"];
     render(Toolbar, {
       ...defaultToolbarProps,
-      visibleColumns: ["title", "state"] as ColumnKey[],
+      visibleColumns: ["title", "status"] as ColumnKey[],
       columnOrder,
       oncolumnschange,
       viewLevel: "epics" as ViewLevel,
@@ -534,7 +534,7 @@ describe("Toolbar", () => {
     expect(oncolumnschange).toHaveBeenCalledOnce();
     const callArg = oncolumnschange.mock.calls[0][0] as ColumnKey[];
     // Sorted by columnOrder (state<title<id), NOT canonical (which would be id,title,state).
-    expect(callArg).toEqual(["state", "title", "id"]);
+    expect(callArg).toEqual(["status", "title", "id"]);
   });
 });
 
@@ -584,7 +584,7 @@ describe("Toolbar — filter dropdowns", () => {
     const onchange = vi.fn();
     render(Toolbar, { ...defaultToolbarProps, onchange });
 
-    await user.click(screen.getByRole("button", { name: /state/i }));
+    await user.click(screen.getByRole("button", { name: /status/i }));
     await user.click(screen.getByRole("menuitemcheckbox", { name: "in-progress" }));
 
     const lastCall = onchange.mock.calls[onchange.mock.calls.length - 1];
@@ -736,8 +736,8 @@ describe("Toolbar — filter dropdowns", () => {
     const onchange = vi.fn();
     render(Toolbar, { ...defaultToolbarProps, onchange });
 
-    await user.click(screen.getByRole("button", { name: /state/i }));
-    await user.click(screen.getByTestId("state-preset-open"));
+    await user.click(screen.getByRole("button", { name: /status/i }));
+    await user.click(screen.getByTestId("status-preset-open"));
 
     const lastCall = onchange.mock.calls[onchange.mock.calls.length - 1];
     expect(lastCall[0].status).toEqual([...OPEN_STATUSES]);
@@ -747,8 +747,8 @@ describe("Toolbar — filter dropdowns", () => {
     const onchange = vi.fn();
     render(Toolbar, { ...defaultToolbarProps, onchange });
 
-    await user.click(screen.getByRole("button", { name: /state/i }));
-    await user.click(screen.getByTestId("state-preset-open-deferred"));
+    await user.click(screen.getByRole("button", { name: /status/i }));
+    await user.click(screen.getByTestId("status-preset-open-deferred"));
 
     const lastCall = onchange.mock.calls[onchange.mock.calls.length - 1];
     expect(lastCall[0].status).toEqual([...OPEN_PLUS_DEFERRED_STATUSES]);
@@ -762,8 +762,8 @@ describe("Toolbar — filter dropdowns", () => {
       onchange,
     });
 
-    await user.click(screen.getByRole("button", { name: /state/i }));
-    await user.click(screen.getByTestId("state-preset-open"));
+    await user.click(screen.getByRole("button", { name: /status/i }));
+    await user.click(screen.getByTestId("status-preset-open"));
 
     const lastCall = onchange.mock.calls[onchange.mock.calls.length - 1];
     // "completed" is gone — the preset overwrites the whole include-list.
@@ -778,8 +778,8 @@ describe("Toolbar — filter dropdowns", () => {
       onchange,
     });
 
-    await user.click(screen.getByRole("button", { name: /state/i }));
-    await user.click(screen.getByTestId("state-preset-open-deferred"));
+    await user.click(screen.getByRole("button", { name: /status/i }));
+    await user.click(screen.getByTestId("status-preset-open-deferred"));
 
     const lastCall = onchange.mock.calls[onchange.mock.calls.length - 1];
     expect(lastCall[0]).toMatchObject({
@@ -793,7 +793,7 @@ describe("Toolbar — filter dropdowns", () => {
     const onchange = vi.fn();
     render(Toolbar, { ...defaultToolbarProps, filter: { status: ["todo"] }, onchange });
 
-    await user.click(screen.getByRole("button", { name: /state/i }));
+    await user.click(screen.getByRole("button", { name: /status/i }));
     await user.click(screen.getByRole("menuitemcheckbox", { name: "in-progress" }));
 
     const lastCall = onchange.mock.calls[onchange.mock.calls.length - 1];
@@ -811,7 +811,7 @@ describe("Toolbar — filter dropdowns", () => {
     expect(screen.getByRole("button", { name: /priority/i })).toHaveTextContent("1");
 
     // State and Effort badges are present but invisible (no active selections)
-    const stateBadge = screen.getByRole("button", { name: /state/i }).querySelector("span");
+    const stateBadge = screen.getByRole("button", { name: /status/i }).querySelector("span");
     expect(stateBadge?.classList.contains("invisible")).toBe(true);
 
     const effortBadge = screen.getByRole("button", { name: /effort/i }).querySelector("span");
@@ -837,7 +837,7 @@ describe("Toolbar — query box status sync", () => {
     expect(prefs.filter.search).toBeUndefined();
 
     // The State dropdown reflects it live.
-    await user.click(screen.getByRole("button", { name: /state/i }));
+    await user.click(screen.getByRole("button", { name: /status/i }));
     expect(screen.getByRole("menuitemcheckbox", { name: "todo" })).toHaveAttribute("aria-checked", "true");
   });
 
@@ -868,7 +868,7 @@ describe("Toolbar — query box status sync", () => {
     // Box starts empty and is never focused in this test.
     expect((screen.getByTestId("filter-keyword") as HTMLInputElement).value).toBe("");
 
-    await user.click(screen.getByRole("button", { name: /state/i }));
+    await user.click(screen.getByRole("button", { name: /status/i }));
     await user.click(screen.getByRole("menuitemcheckbox", { name: "todo" }));
 
     expect(prefs.filter.status).toEqual(["todo"]);
@@ -946,7 +946,7 @@ describe("Toolbar — query box metadata grammar", () => {
     await user.keyboard("{Escape}");
 
     // State dropdown ticks todo.
-    await user.click(screen.getByRole("button", { name: /state/i }));
+    await user.click(screen.getByRole("button", { name: /status/i }));
     expect(screen.getByRole("menuitemcheckbox", { name: "todo" })).toHaveAttribute("aria-checked", "true");
   });
 

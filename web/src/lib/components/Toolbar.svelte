@@ -222,7 +222,7 @@
 
   // --- Filter bar logic ---
   type FilterField = "type" | "priority" | "status" | "estimate" | "tags";
-  type DropdownId = "type" | "priority" | "state" | "effort" | "tags";
+  type DropdownId = "type" | "priority" | "status" | "effort" | "tags";
 
   interface DropdownConfig {
     id: DropdownId;
@@ -234,7 +234,7 @@
   let dropdowns = $derived<DropdownConfig[]>([
     { id: "type", label: "Type", field: "type", values: TYPES },
     { id: "priority", label: "Priority", field: "priority", values: PRIORITIES },
-    { id: "state", label: "State", field: "status", values: STATUSES },
+    { id: "status", label: "Status", field: "status", values: STATUSES },
     { id: "effort", label: "Effort", field: "estimate", values: ESTIMATES },
     ...(availableTags.length > 0 ? [{ id: "tags" as DropdownId, label: "Tags", field: "tags" as FilterField, values: availableTags }] : []),
   ]);
@@ -242,7 +242,7 @@
   let filterOpenStates = $state<Record<DropdownId, boolean>>({
     type: false,
     priority: false,
-    state: false,
+    status: false,
     effort: false,
     tags: false,
   });
@@ -606,7 +606,7 @@
   // per-status checkboxes below remain for precise tweaking afterward.
   function applyStatusPreset(statuses: readonly string[]) {
     emitFilter({ ...resolvedFilter, status: [...statuses] });
-    filterOpenStates.state = false;
+    filterOpenStates.status = false;
   }
 
   function handleClearField(field: FilterField, id: DropdownId) {
@@ -915,21 +915,21 @@
         <ChevronDown size={14} class="text-muted-foreground" />
       </DropdownMenu.Trigger>
       <DropdownMenu.Content align="start">
-        {#if dd.id === "state"}
+        {#if dd.id === "status"}
           <!-- Quick presets that OVERWRITE the status include-list. "Open" shows
                active work; "Open + deferred" shows everything except completed +
                scrapped. The per-status checkboxes below remain for precise
                tweaking. -->
           <DropdownMenu.Label class="text-label text-muted-foreground">Presets</DropdownMenu.Label>
           <DropdownMenu.Item
-            data-testid="state-preset-open"
+            data-testid="status-preset-open"
             onSelect={() => applyStatusPreset(OPEN_STATUSES)}
           >
             <Eye size={14} />
             Open
           </DropdownMenu.Item>
           <DropdownMenu.Item
-            data-testid="state-preset-open-deferred"
+            data-testid="status-preset-open-deferred"
             onSelect={() => applyStatusPreset(OPEN_PLUS_DEFERRED_STATUSES)}
           >
             <Eye size={14} />

@@ -193,7 +193,7 @@ describe("storage", () => {
       filter: {},
       viewLevel: "epics",
       columnWidths: {
-        epics: { id: -10, title: 0, type: Infinity, state: "not a number", effort: 80 },
+        epics: { id: -10, title: 0, type: Infinity, status: "not a number", effort: 80 },
       },
     });
     const loaded = loadPreferences();
@@ -475,7 +475,7 @@ describe("storage", () => {
   });
 
   it("accepts any widened sortable field (round-trips a non-date column sort)", () => {
-    for (const field of ["title", "id", "type", "state", "effort", "tags", "blocking", "blockedBy", "parent"]) {
+    for (const field of ["title", "id", "type", "status", "effort", "tags", "blocking", "blockedBy", "parent"]) {
       store["nibs-filter-preferences"] = JSON.stringify({
         filter: {},
         viewLevel: "flat",
@@ -540,6 +540,52 @@ describe("storage", () => {
     });
     expect(loadPreferences().theme).toBe("graphite");
   });
+
+  // One-time load migration for the status column's key rename (state → status).
+  // Preferences persisted before the rename stored the status column under the key
+  // "state" in the per-view visibility/order arrays, the per-view widths map, and
+  // the active tableSort's `field`. On load each occurrence must surface as
+  // "status" so the column keeps its persisted position, width, and sort — without
+  // the migration the now-unknown "state" is dropped by the validators (visibility
+  // / widths) or appended out of place (order), and a "state" tableSort is rejected.
+  it("migrates a persisted 'state' column key to 'status' across visibility, order, widths, and tableSort", () => {
+    store["nibs-filter-preferences"] = JSON.stringify({
+      filter: {},
+      viewLevel: "milestones",
+      columnVisibility: { milestones: ["id", "title", "state"] },
+      columnOrder: { milestones: ["state", "title", "id"] },
+      columnWidths: { milestones: { state: 140, title: 400 } },
+      tableSort: { field: "state", direction: "desc" },
+    });
+    const loaded = loadPreferences();
+    // Visibility: renamed element present, legacy key gone.
+    expect(loaded.columnVisibility?.milestones).toContain("status");
+    expect(loaded.columnVisibility?.milestones).not.toContain("state");
+    // Order: keeps the persisted POSITION (status stays first, not appended last).
+    expect(loaded.columnOrder?.milestones?.[0]).toBe("status");
+    expect(loaded.columnOrder?.milestones).not.toContain("state");
+    // Widths: value preserved under the renamed key.
+    expect(loaded.columnWidths?.milestones?.status).toBe(140);
+    expect(loaded.columnWidths?.milestones).not.toHaveProperty("state");
+    // tableSort: field renamed and still valid (status is a sortable column).
+    expect(loaded.tableSort).toEqual({ field: "status", direction: "desc" });
+  });
+
+  it("leaves preferences without a 'state' key untouched by the migration", () => {
+    store["nibs-filter-preferences"] = JSON.stringify({
+      filter: {},
+      viewLevel: "epics",
+      columnVisibility: { epics: ["id", "title", "status"] },
+      columnOrder: { epics: ["status", "title", "id"] },
+      columnWidths: { epics: { status: 120, title: 400 } },
+      tableSort: { field: "modified", direction: "asc" },
+    });
+    const loaded = loadPreferences();
+    expect(loaded.columnVisibility?.epics).toEqual(expect.arrayContaining(["id", "title", "status"]));
+    expect(loaded.columnOrder?.epics?.[0]).toBe("status");
+    expect(loaded.columnWidths?.epics).toEqual({ status: 120, title: 400 });
+    expect(loaded.tableSort).toEqual({ field: "modified", direction: "asc" });
+  });
 });
 
 // The shared per-view map parser: one VIEW_LEVELS loop with an injected
@@ -598,8 +644,8 @@ describe("parseColumnOrder", () => {
   });
 
   it("preserves a persisted partial order and appends the missing keys canonically", () => {
-    const rest = ALL_COLUMN_KEYS.filter((k) => k !== "state" && k !== "title");
-    expect(parseColumnOrder(["state", "title"])).toEqual(["state", "title", ...rest]);
+    const rest = ALL_COLUMN_KEYS.filter((k) => k !== "status" && k !== "title");
+    expect(parseColumnOrder(["status", "title"])).toEqual(["status", "title", ...rest]);
   });
 
   it("drops unknown keys before appending the missing ones", () => {

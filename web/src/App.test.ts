@@ -417,12 +417,12 @@ describe("App", () => {
     await user.type(searchInput, "bug");
     expect(searchInput).toHaveValue("bug");
 
-    // Hide completed via the State-facet "Open + deferred" preset: open the
-    // State dropdown, then click the preset. Anchor the name to the start so it
-    // targets the Toolbar's "State" facet trigger, not the table's new
-    // "Sort by State" header button (headers are now sortable in every view).
-    await user.click(screen.getByRole("button", { name: /^state/i }));
-    await user.click(screen.getByTestId("state-preset-open-deferred"));
+    // Hide completed via the Status-facet "Open + deferred" preset: open the
+    // Status dropdown, then click the preset. Anchor the name to the start so it
+    // targets the Toolbar's "Status" facet trigger, not the table's new
+    // "Sort by Status" header button (headers are now sortable in every view).
+    await user.click(screen.getByRole("button", { name: /^status/i }));
+    await user.click(screen.getByTestId("status-preset-open-deferred"));
 
     // With $derived(queryStore(...)), filter changes should trigger new queryStore calls
     expect(mockQueryStore.mock.calls.length).toBeGreaterThan(initialCallCount);

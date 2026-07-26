@@ -40,6 +40,66 @@ function parseQueryField(parsed: Record<string, unknown>): string {
 
 const VALID_COLUMN_KEYS = new Set<string>(ALL_COLUMN_KEYS);
 
+// One-time load migration for the status column's key rename (state → status).
+// Preferences persisted before the rename stored the status column under the key
+// "state" in the per-view visibility/order arrays, the per-view widths map, and
+// the active tableSort's `field`. Rewrite each occurrence to "status" on the RAW
+// parsed blob BEFORE the validators run, so the column keeps its persisted
+// position, width, and sort — otherwise the now-unknown "state" is dropped by the
+// visibility/widths validators, appended out of place by parseColumnOrder, and a
+// "state" tableSort field is rejected as invalid (sort silently lost).
+const LEGACY_COLUMN_KEY_RENAMES: Record<string, string> = { state: "status" };
+
+function renameLegacyColumnKey(key: string): string {
+  return LEGACY_COLUMN_KEY_RENAMES[key] ?? key;
+}
+
+// Rename legacy keys in one persisted per-view ARRAY map (columnVisibility /
+// columnOrder): each level's array has its string elements renamed in place.
+function migratePerViewArray(raw: unknown): void {
+  if (typeof raw !== "object" || raw === null) return;
+  for (const level of Object.values(raw as Record<string, unknown>)) {
+    if (!Array.isArray(level)) continue;
+    for (let i = 0; i < level.length; i++) {
+      if (typeof level[i] === "string") level[i] = renameLegacyColumnKey(level[i]);
+    }
+  }
+}
+
+// Rename legacy keys in the per-view WIDTHS map: each level is a {columnKey:
+// width} object whose KEYS are renamed in place. A pre-existing entry under the
+// new key wins (the legacy one is discarded) so a partial-migration blob can't
+// clobber a real "status" width.
+function migratePerViewWidths(raw: unknown): void {
+  if (typeof raw !== "object" || raw === null) return;
+  for (const level of Object.values(raw as Record<string, unknown>)) {
+    if (typeof level !== "object" || level === null || Array.isArray(level)) continue;
+    const widths = level as Record<string, unknown>;
+    for (const [key, value] of Object.entries(widths)) {
+      const renamed = renameLegacyColumnKey(key);
+      if (renamed === key) continue;
+      if (!(renamed in widths)) widths[renamed] = value;
+      delete widths[key];
+    }
+  }
+}
+
+// Rename a legacy tableSort.field in place.
+function migrateTableSortField(raw: unknown): void {
+  if (typeof raw !== "object" || raw === null) return;
+  const sort = raw as Record<string, unknown>;
+  if (typeof sort.field === "string") sort.field = renameLegacyColumnKey(sort.field);
+}
+
+// Apply the state → status rename across every persisted field that carries a
+// column key. Mutates the freshly-parsed blob owned by loadPreferences.
+function migrateLegacyColumnKeys(parsed: Record<string, unknown>): void {
+  migratePerViewArray(parsed.columnVisibility);
+  migratePerViewArray(parsed.columnOrder);
+  migratePerViewWidths(parsed.columnWidths);
+  migrateTableSortField(parsed.tableSort);
+}
+
 // Shared per-view map parser: one VIEW_LEVELS loop, with the concern-specific
 // per-level validator injected. A level is included only when the validator
 // returns a value; the whole map collapses to undefined when no level survives
@@ -201,6 +261,7 @@ export function loadPreferences(): FilterPreferences {
     if (!raw) return { ...DEFAULTS };
     const parsed = JSON.parse(raw);
     if (typeof parsed !== "object" || parsed === null) return { ...DEFAULTS };
+    migrateLegacyColumnKeys(parsed);
     return {
       query: parseQueryField(parsed),
       viewLevel: (VIEW_LEVELS as readonly string[]).includes(parsed.viewLevel)
