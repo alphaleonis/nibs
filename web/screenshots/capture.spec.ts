@@ -90,12 +90,23 @@ test("filter box — completion dropdown over table rows", async ({ page }) => {
   await openApp(page);
   const input = page.getByTestId("filter-keyword");
   await input.click();
-  // status:dra — an invalid value (no status filter → all rows stay visible) that
-  // also prefixes "draft", so the completion opens over the populated table.
-  await input.pressSequentially("status:dra");
+  // The user's exact multi-value scenario: draft,todo apply (rows stay visible),
+  // the trailing "in-progres" opens the completion over the populated table.
+  await input.pressSequentially("status:draft,todo,in-progres");
   await expect(page.getByTestId("filter-suggestions")).toBeAttached();
   await expect(page.locator("tr[data-nib-id]").first()).toBeVisible();
   await shot(page, "filter-completion-over-table");
+});
+
+// The hover-× on a token should be an adequately-sized, clearly-separated button.
+test("filter box — token remove button (hover)", async ({ page }) => {
+  await openApp(page);
+  const input = page.getByTestId("filter-keyword");
+  await input.click();
+  await input.pressSequentially("type:bug status:todo");
+  await page.getByTestId("filter-token").first().hover();
+  await expect(page.getByTestId("filter-token-remove").first()).toBeVisible();
+  await page.locator('[role="search"]').screenshot({ path: join(OUT, "filter-token-remove-hover.png") });
 });
 
 // Invalid-token marker must read as an attached element over the table, not as

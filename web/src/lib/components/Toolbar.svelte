@@ -826,10 +826,10 @@
                 tabindex="-1"
                 title="Remove"
                 data-testid="filter-token-remove"
-                class="pointer-events-none group-hover:pointer-events-auto absolute -right-1.5 top-1/2 flex size-3.5 -translate-y-1/2 items-center justify-center rounded-full bg-popover text-muted-foreground opacity-0 hover:text-foreground group-hover:opacity-100 focus-visible:pointer-events-auto focus-visible:opacity-100"
+                class="pointer-events-none group-hover:pointer-events-auto absolute right-0.5 top-1/2 flex size-4 -translate-y-1/2 items-center justify-center rounded-full bg-popover text-muted-foreground opacity-0 shadow-sm ring-1 ring-border hover:text-destructive group-hover:opacity-100 focus-visible:pointer-events-auto focus-visible:opacity-100"
                 onmousedown={(e) => e.preventDefault()}
                 onclick={(e) => { e.stopPropagation(); removeToken(seg.start, seg.end); }}
-              ><X size={10} /></button></span>{:else}<span>{keywordText.slice(seg.start, seg.end)}</span>{/if}{/each}</div>
+              ><X size={12} /></button></span>{:else}<span>{keywordText.slice(seg.start, seg.end)}</span>{/if}{/each}</div>
     </div>
     {#if hasKeyword}
       <!-- Clear button. Plain action button: TooltipButton spreads the tooltip
