@@ -84,6 +84,31 @@ test("filter box — syntax-highlight overlay", async ({ page }) => {
   await page.locator('[role="search"]').screenshot({ path: join(OUT, "filter-highlight-cropped.png") });
 });
 
+// Autocomplete dropdown must render ABOVE the table rows below it (not behind).
+// Viewport shot (not cropped) so the dropdown's stacking vs the table is visible.
+test("filter box — completion dropdown over table rows", async ({ page }) => {
+  await openApp(page);
+  const input = page.getByTestId("filter-keyword");
+  await input.click();
+  // status:dra — an invalid value (no status filter → all rows stay visible) that
+  // also prefixes "draft", so the completion opens over the populated table.
+  await input.pressSequentially("status:dra");
+  await expect(page.getByTestId("filter-suggestions")).toBeAttached();
+  await expect(page.locator("tr[data-nib-id]").first()).toBeVisible();
+  await shot(page, "filter-completion-over-table");
+});
+
+// Invalid-token marker must read as an attached element over the table, not as
+// bare "mid-air" text. status:xyz is invalid (and not a completion prefix).
+test("filter box — invalid token marker over table rows", async ({ page }) => {
+  await openApp(page);
+  const input = page.getByTestId("filter-keyword");
+  await input.click();
+  await input.pressSequentially("status:xyz");
+  await expect(page.getByTestId("filter-invalid")).toBeVisible();
+  await shot(page, "filter-invalid-marker-over-table");
+});
+
 test("detail panel", async ({ page }) => {
   await openApp(page);
   await page.locator("tr[data-nib-id]").first().locator('[data-action="title"]').click();

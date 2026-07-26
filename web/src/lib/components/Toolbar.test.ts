@@ -1049,6 +1049,24 @@ describe("Toolbar — invalid token handling", () => {
     expect(screen.queryByTestId("filter-invalid")).not.toBeInTheDocument();
   });
 
+  it("suppresses the invalid marker while a completion dropdown is open, then shows it once closed", async () => {
+    const prefs = new Preferences();
+    render(Toolbar, { prefs, oncreatenew: vi.fn() });
+
+    const input = screen.getByTestId("filter-keyword") as HTMLInputElement;
+    // `status:dra` is invalid ("dra" is not a status) but prefixes "draft", so the
+    // completion opens. Marker + dropdown both anchor below the box, so the marker
+    // is suppressed while the dropdown offers the valid value.
+    await user.type(input, "status:dra");
+    expect(screen.getByTestId("filter-suggestions")).toBeInTheDocument();
+    expect(screen.queryByTestId("filter-invalid")).not.toBeInTheDocument();
+
+    // Once the completion closes (Escape) the token is still invalid → marker shows.
+    await user.keyboard("{Escape}");
+    expect(screen.queryByTestId("filter-suggestions")).not.toBeInTheDocument();
+    expect(screen.getByTestId("filter-invalid")).toHaveTextContent("status:dra");
+  });
+
   it("clearing the box removes the invalid marker", async () => {
     const prefs = new Preferences();
     render(Toolbar, { prefs, oncreatenew: vi.fn() });

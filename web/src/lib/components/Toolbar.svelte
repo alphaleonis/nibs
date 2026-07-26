@@ -748,7 +748,11 @@
 
 <!-- Filter band: search + filters. role="search" restores a landmark for these
      controls, which sit between the <header> band and <main> (outside both). -->
-<div class="flex flex-wrap items-center gap-2 border-b border-border px-6 py-2" role="search" aria-label="Filters">
+<!-- `relative` + z-index lifts the whole filter band (a root sibling of <main>)
+     into a stacking context above the table, so the box's absolutely-positioned
+     autocomplete dropdown and invalid marker paint OVER the rows below rather than
+     behind them. Kept below --z-drag-ghost/--z-modal. -->
+<div class="relative flex flex-wrap items-center gap-2 border-b border-border px-6 py-2" role="search" aria-label="Filters" style="z-index: var(--z-sticky);">
   <!-- Keyword search. Input is a bare primitive with no adornment slot, so wrap
        it in a relative container with an absolutely-positioned left icon and a
        right clear button, padding the input to make room for both. Capped at
@@ -882,14 +886,16 @@
       </SuggestionList>
     {/if}
 
-    <!-- Simple, non-overlay marker for known-field tokens with an invalid value
-         (e.g. status:banana). The token stays in the box and results reflect only
-         the valid tokens; the fancy overlay rendering is a later phase. -->
-    {#if resolvedInvalidTokens.length > 0}
+    <!-- Attached warning chip for known-field tokens with an invalid value (e.g.
+         status:banana). The token stays in the box and results reflect only the
+         valid tokens. Suppressed while the autocomplete dropdown is open: both
+         anchor below the input, and offering the valid value already supersedes
+         the "unrecognized" nag (e.g. typing `status:dra` suggests `draft`). -->
+    {#if resolvedInvalidTokens.length > 0 && activeItemCount === 0}
       <div
         data-testid="filter-invalid"
         role="status"
-        class="absolute left-0 top-full mt-0.5 flex items-center gap-1 text-caption text-warning"
+        class="absolute left-0 top-full z-10 mt-1 flex max-w-full items-center gap-1 rounded-md border border-warning/40 bg-popover px-2 py-1 text-caption text-warning shadow-md"
       >
         <TriangleAlert size={12} />
         <span>Unrecognized: {resolvedInvalidTokens.join(" ")}</span>
