@@ -1190,6 +1190,10 @@ describe("Toolbar — token-click affordances", () => {
     const layer = screen.getByTestId("filter-tokens");
     expect(layer).toHaveAttribute("aria-hidden", "true");
     expect(layer).toHaveClass("pointer-events-none");
+    // The layer's own token text MUST be transparent — it sits above the colored
+    // highlight backdrop, so opaque text here would hide the field/value coloring
+    // (only the invalid underline, below the baseline, would peek through).
+    expect(layer).toHaveClass("text-transparent");
     expect(toks[0]).toHaveClass("pointer-events-auto");
     // The layer must reproduce the literal box text character-for-character (tokens
     // wrapped, gaps as inert text) so every glyph aligns with the input — no stray

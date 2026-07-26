@@ -90,9 +90,10 @@ test("filter box — completion dropdown over table rows", async ({ page }) => {
   await openApp(page);
   const input = page.getByTestId("filter-keyword");
   await input.click();
-  // The user's exact multi-value scenario: draft,todo apply (rows stay visible),
-  // the trailing "in-progres" opens the completion over the populated table.
-  await input.pressSequentially("status:draft,todo,in-progres");
+  // The user's exact repro: trailing comma → a TALL 4-item dropdown that extends
+  // down into the table, actually exercising the z-stacking (a short 1-item list
+  // fits in the gap and hides the bug).
+  await input.pressSequentially("status:draft,todo,");
   await expect(page.getByTestId("filter-suggestions")).toBeAttached();
   await expect(page.locator("tr[data-nib-id]").first()).toBeVisible();
   await shot(page, "filter-completion-over-table");

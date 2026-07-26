@@ -805,7 +805,7 @@
       bind:this={tokenLayer}
       aria-hidden="true"
       data-testid="filter-tokens"
-      class="pointer-events-none absolute inset-0 z-20 flex items-center overflow-hidden rounded-lg border border-transparent pl-8 {hasKeyword ? 'pr-8' : 'pr-2.5'} text-sm"
+      class="pointer-events-none absolute inset-0 z-20 flex items-center overflow-hidden rounded-lg border border-transparent pl-8 {hasKeyword ? 'pr-8' : 'pr-2.5'} text-sm text-transparent"
     >
       <!-- Token wrapper carries onclick (select the token). It is a pointer-only
            affordance layered over the accessible input — keyboard users edit the
@@ -819,7 +819,7 @@
               data-testid="filter-token"
               data-token-start={seg.start}
               data-token-end={seg.end}
-              class="group relative cursor-pointer pointer-events-auto"
+              class="group relative cursor-pointer rounded-sm pointer-events-auto hover:bg-accent/60"
               onclick={() => selectToken(seg.start, seg.end)}
             >{keywordText.slice(seg.start, seg.end)}<button
                 type="button"
