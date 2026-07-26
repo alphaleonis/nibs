@@ -19,6 +19,13 @@ func spaHandler(staticFS fs.FS) http.Handler {
 		// Clean and normalize the path (defense-in-depth against directory traversal)
 		urlPath := path.Clean(r.URL.Path)
 		if urlPath == "/" {
+			// The SPA entry (index.html) is never cached: it references the build's
+			// content-hashed assets by name, so serving a stale copy would load the
+			// old app. `no-store` guarantees a rebuilt UI is always picked up — which
+			// matters for `nibs serve`/`task demo`, where the embedded assets carry
+			// zero modtimes (no Last-Modified/ETag) and the browser would otherwise
+			// heuristically cache them.
+			w.Header().Set("Cache-Control", "no-store")
 			fileServer.ServeHTTP(w, r)
 			return
 		}
@@ -33,10 +40,21 @@ func spaHandler(staticFS fs.FS) http.Handler {
 				http.NotFound(w, r)
 				return
 			}
-			// SPA fallback: serve index.html for client-side routing
+			// SPA fallback: serve index.html for client-side routing (same no-cache
+			// reasoning as "/").
+			w.Header().Set("Cache-Control", "no-store")
 			r.URL.Path = "/"
 			fileServer.ServeHTTP(w, r)
 			return
+		}
+
+		// An existing file. Content-hashed build assets under /assets/ are immutable
+		// (their name changes when their bytes do), so they cache forever; everything
+		// else stays uncached so a rebuild is always reflected.
+		if strings.HasPrefix(urlPath, "/assets/") {
+			w.Header().Set("Cache-Control", "public, max-age=31536000, immutable")
+		} else {
+			w.Header().Set("Cache-Control", "no-store")
 		}
 
 		r.URL.Path = urlPath
