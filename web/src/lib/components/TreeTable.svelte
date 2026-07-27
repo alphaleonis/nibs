@@ -21,6 +21,10 @@
   import { useTableData } from "../composables/useTableData.svelte";
   import { untrack } from "svelte";
 
+  // Settle time before a filter-box change re-queries the server. Long enough to
+  // coalesce a burst of keystrokes, short enough to feel immediate once typing stops.
+  const LIST_REFETCH_DEBOUNCE_MS = 250;
+
   interface Props {
     prefs?: Preferences;
     filter?: NibFilter;
@@ -133,6 +137,10 @@
   const dataSource = useTableData({
     client,
     getServerFilter: () => prepared.serverFilter,
+    // Debounce the server refetch so typing free-text in the filter box re-queries
+    // once keystrokes settle, not on every character. The box stays live (dropdowns
+    // tick, highlighting updates) — only the network list query waits. See nibs-rv7c.
+    refetchDebounceMs: LIST_REFETCH_DEBOUNCE_MS,
   });
 
   // error is `unknown` from the source; the query surfaces urql's CombinedError,

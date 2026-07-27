@@ -2575,7 +2575,7 @@ describe("TreeTable", () => {
   });
 
   describe("reactive filter re-query", () => {
-    it("re-queries when filter changes", async () => {
+    it("re-queries when a server-side filter (search) changes, after the debounce", async () => {
       const nibs: TreeTableNib[] = [
         makeTreeTableNib({ id: "nibs-m1", title: "Milestone", type: "milestone" }),
         makeTreeTableNib({ id: "nibs-001", title: "Task", type: "task", parentId: "nibs-m1" }),
@@ -2591,17 +2591,36 @@ describe("TreeTable", () => {
       const initialCallCount = mockQueryStore.mock.calls.length;
       expect(initialCallCount).toBeGreaterThanOrEqual(1);
 
-      // Re-render with a different filter (simulating the "Open + deferred" preset)
-      await rerender({ filter: { status: [...OPEN_PLUS_DEFERRED_STATUSES] } });
-
-      // queryStore should have been called again with the updated filter
-      expect(mockQueryStore.mock.calls.length).toBeGreaterThan(initialCallCount);
-
-      // The status include-list is a client-side filter, so it is stripped from the
-      // server filter — the re-query fetches completed/scrapped nibs so their
-      // active descendants stay visible (with the ancestor dimmed in place).
+      // A `search` change is server-side, so it re-keys the list query — but the
+      // refetch is debounced (nibs-rv7c), so it lands shortly after, not
+      // synchronously. waitFor rides out the debounce window.
+      await rerender({ filter: { search: "login" } });
+      await waitFor(() => {
+        expect(mockQueryStore.mock.calls.length).toBeGreaterThan(initialCallCount);
+      });
       const latestCall = mockQueryStore.mock.calls[mockQueryStore.mock.calls.length - 1];
-      expect(latestCall[0].variables!.filter).not.toHaveProperty("status");
+      expect(latestCall[0].variables!.filter).toMatchObject({ search: "login" });
+    });
+
+    it("does NOT re-query when only a client-side facet (status) changes", async () => {
+      const nibs: TreeTableNib[] = [
+        makeTreeTableNib({ id: "nibs-m1", title: "Milestone", type: "milestone" }),
+        makeTreeTableNib({ id: "nibs-001", title: "Task", type: "task", parentId: "nibs-m1" }),
+      ];
+
+      mockQueryStore.mockReturnValue(
+        readable({ fetching: false, error: undefined, data: { nibs }, stale: false }) as any
+      );
+
+      const { rerender } = renderTreeTable({ filter: {} });
+      const initialCallCount = mockQueryStore.mock.calls.length;
+
+      // The status include-list is stripped from the server filter, so the server
+      // data is unchanged — status is applied client-side. No re-query fires, even
+      // after the debounce window elapses (the server filter is content-equal).
+      await rerender({ filter: { status: [...OPEN_PLUS_DEFERRED_STATUSES] } });
+      await new Promise((resolve) => setTimeout(resolve, 300)); // > the 250ms refetch debounce
+      expect(mockQueryStore.mock.calls.length).toBe(initialCallCount);
     });
 
     it("renders updated data after filter change", async () => {

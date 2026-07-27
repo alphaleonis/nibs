@@ -424,26 +424,21 @@ describe("App", () => {
     await user.click(screen.getByRole("button", { name: /^status/i }));
     await user.click(screen.getByTestId("status-preset-open-deferred"));
 
-    // With $derived(queryStore(...)), filter changes should trigger new queryStore calls
-    expect(mockQueryStore.mock.calls.length).toBeGreaterThan(initialCallCount);
-
-    // The latest nibs query call should contain the updated filter variables
-    // (find the last call that has variables with a filter property, skipping config queries)
-    const nibsCalls = mockQueryStore.mock.calls.filter(
-      (call) => call[0].variables?.filter !== undefined
-    );
-    expect(nibsCalls.length).toBeGreaterThan(0);
-    // Filtered above to calls whose variables.filter is defined, so variables exists.
-    const latestVars = nibsCalls[nibsCalls.length - 1][0].variables!;
-    // search stays server-side; the status include-list is applied client-side (so
-    // the server still returns completed/scrapped ancestors for in-place dimming)
-    // and must NOT be forwarded to the GraphQL server.
-    expect(latestVars.filter).toEqual(
-      expect.objectContaining({
-        search: "bug",
-      })
-    );
-    expect(latestVars.filter).not.toHaveProperty("status");
+    // `search` is server-side, so typing re-queries — but the list refetch is
+    // debounced (nibs-rv7c), landing shortly after typing rather than on each
+    // keystroke. waitFor rides out the debounce window.
+    await waitFor(() => {
+      expect(mockQueryStore.mock.calls.length).toBeGreaterThan(initialCallCount);
+      const nibsCalls = mockQueryStore.mock.calls.filter(
+        (call) => call[0].variables?.filter !== undefined
+      );
+      // search stays server-side; the status include-list is applied client-side (so
+      // the server still returns completed/scrapped ancestors for in-place dimming)
+      // and must NOT be forwarded to the GraphQL server.
+      const latestVars = nibsCalls[nibsCalls.length - 1][0].variables!;
+      expect(latestVars.filter).toEqual(expect.objectContaining({ search: "bug" }));
+      expect(latestVars.filter).not.toHaveProperty("status");
+    });
   });
 
   it("URL ?q= wins over a different stored query on load (shared link reproduces its filter)", () => {

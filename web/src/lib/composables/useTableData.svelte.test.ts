@@ -109,6 +109,82 @@ describe("useTableData", () => {
     dispose();
   });
 
+  it("debounces the refetch: the first value is immediate, rapid changes coalesce into one re-key", () => {
+    const q = makeFakeQuery();
+    const sub = makeFakeSub();
+    let filter = $state<{ search?: string }>({ search: "a" });
+
+    vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+    try {
+      const dispose = withRoot(() => {
+        useTableData({
+          client: {} as never,
+          getServerFilter: () => filter,
+          refetchDebounceMs: 250,
+          queryStore: q.queryStore,
+          subscriptionStore: sub.subscriptionStore,
+        });
+      });
+      flushSync();
+
+      // First value queries immediately — no initial-paint delay.
+      expect(q.calls).toHaveLength(1);
+      expect(q.calls[0].variables.filter).toEqual({ search: "a" });
+
+      // Three keystrokes inside the window — none re-keys yet.
+      filter = { search: "au" };
+      flushSync();
+      filter = { search: "aut" };
+      flushSync();
+      filter = { search: "auth" };
+      flushSync();
+      expect(q.calls).toHaveLength(1);
+
+      // After the delay, exactly ONE more query, for the final value.
+      vi.advanceTimersByTime(250);
+      flushSync();
+      expect(q.calls).toHaveLength(2);
+      expect(q.calls[1].variables.filter).toEqual({ search: "auth" });
+
+      dispose();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("debounce ignores a content-equal filter change (no refetch)", () => {
+    const q = makeFakeQuery();
+    const sub = makeFakeSub();
+    let filter = $state<{ search?: string }>({ search: "a" });
+
+    vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+    try {
+      const dispose = withRoot(() => {
+        useTableData({
+          client: {} as never,
+          getServerFilter: () => filter,
+          refetchDebounceMs: 250,
+          queryStore: q.queryStore,
+          subscriptionStore: sub.subscriptionStore,
+        });
+      });
+      flushSync();
+      expect(q.calls).toHaveLength(1);
+
+      // A NEW object with identical content (e.g. a client-only facet toggle
+      // rebuilt the filter) must not re-key the server query.
+      filter = { search: "a" };
+      flushSync();
+      vi.advanceTimersByTime(250);
+      flushSync();
+      expect(q.calls).toHaveLength(1);
+
+      dispose();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   it("routes a subscription change event into the core → refetches the current query", () => {
     const q = makeFakeQuery();
     const sub = makeFakeSub();
