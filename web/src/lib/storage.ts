@@ -40,15 +40,15 @@ function parseQueryField(parsed: Record<string, unknown>): string {
 
 const VALID_COLUMN_KEYS = new Set<string>(ALL_COLUMN_KEYS);
 
-// One-time load migration for the status column's key rename (state → status).
-// Preferences persisted before the rename stored the status column under the key
-// "state" in the per-view visibility/order arrays, the per-view widths map, and
-// the active tableSort's `field`. Rewrite each occurrence to "status" on the RAW
-// parsed blob BEFORE the validators run, so the column keeps its persisted
-// position, width, and sort — otherwise the now-unknown "state" is dropped by the
-// visibility/widths validators, appended out of place by parseColumnOrder, and a
-// "state" tableSort field is rejected as invalid (sort silently lost).
-const LEGACY_COLUMN_KEY_RENAMES: Record<string, string> = { state: "status" };
+// One-time load migration for column-key renames (state → status, effort →
+// estimate). Preferences persisted before a rename stored the column under its
+// old key in the per-view visibility/order arrays, the per-view widths map, and
+// the active tableSort's `field`. Rewrite each occurrence to the new key on the
+// RAW parsed blob BEFORE the validators run, so the column keeps its persisted
+// position, width, and sort — otherwise the now-unknown old key is dropped by the
+// visibility/widths validators, appended out of place by parseColumnOrder, and an
+// old tableSort field is rejected as invalid (sort silently lost).
+const LEGACY_COLUMN_KEY_RENAMES: Record<string, string> = { state: "status", effort: "estimate" };
 
 function renameLegacyColumnKey(key: string): string {
   return LEGACY_COLUMN_KEY_RENAMES[key] ?? key;
@@ -91,7 +91,7 @@ function migrateTableSortField(raw: unknown): void {
   if (typeof sort.field === "string") sort.field = renameLegacyColumnKey(sort.field);
 }
 
-// Apply the state → status rename across every persisted field that carries a
+// Apply the legacy column-key renames across every persisted field that carries a
 // column key. Mutates the freshly-parsed blob owned by loadPreferences.
 function migrateLegacyColumnKeys(parsed: Record<string, unknown>): void {
   migratePerViewArray(parsed.columnVisibility);

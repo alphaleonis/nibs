@@ -193,11 +193,11 @@ describe("storage", () => {
       filter: {},
       viewLevel: "epics",
       columnWidths: {
-        epics: { id: -10, title: 0, type: Infinity, status: "not a number", effort: 80 },
+        epics: { id: -10, title: 0, type: Infinity, status: "not a number", estimate: 80 },
       },
     });
     const loaded = loadPreferences();
-    expect(loaded.columnWidths?.epics).toEqual({ effort: 80 });
+    expect(loaded.columnWidths?.epics).toEqual({ estimate: 80 });
   });
 
   it("returns undefined columnWidths when stored value is not an object", () => {
@@ -475,7 +475,7 @@ describe("storage", () => {
   });
 
   it("accepts any widened sortable field (round-trips a non-date column sort)", () => {
-    for (const field of ["title", "id", "type", "status", "effort", "tags", "blocking", "blockedBy", "parent"]) {
+    for (const field of ["title", "id", "type", "status", "estimate", "tags", "blocking", "blockedBy", "parent"]) {
       store["nibs-filter-preferences"] = JSON.stringify({
         filter: {},
         viewLevel: "flat",
@@ -569,6 +569,34 @@ describe("storage", () => {
     expect(loaded.columnWidths?.milestones).not.toHaveProperty("state");
     // tableSort: field renamed and still valid (status is a sortable column).
     expect(loaded.tableSort).toEqual({ field: "status", direction: "desc" });
+  });
+
+  // Same class of rename for the estimate column (effort → estimate). Preferences
+  // persisted before the rename stored the estimate column under the key "effort"
+  // in the per-view visibility/order arrays, the per-view widths map, and the
+  // active tableSort's `field`. On load each occurrence must surface as "estimate"
+  // so the column keeps its persisted position, width, and sort.
+  it("migrates a persisted 'effort' column key to 'estimate' across visibility, order, widths, and tableSort", () => {
+    store["nibs-filter-preferences"] = JSON.stringify({
+      filter: {},
+      viewLevel: "milestones",
+      columnVisibility: { milestones: ["id", "title", "effort"] },
+      columnOrder: { milestones: ["effort", "title", "id"] },
+      columnWidths: { milestones: { effort: 70, title: 400 } },
+      tableSort: { field: "effort", direction: "desc" },
+    });
+    const loaded = loadPreferences();
+    // Visibility: renamed element present, legacy key gone.
+    expect(loaded.columnVisibility?.milestones).toContain("estimate");
+    expect(loaded.columnVisibility?.milestones).not.toContain("effort");
+    // Order: keeps the persisted POSITION (estimate stays first, not appended last).
+    expect(loaded.columnOrder?.milestones?.[0]).toBe("estimate");
+    expect(loaded.columnOrder?.milestones).not.toContain("effort");
+    // Widths: value preserved under the renamed key.
+    expect(loaded.columnWidths?.milestones?.estimate).toBe(70);
+    expect(loaded.columnWidths?.milestones).not.toHaveProperty("effort");
+    // tableSort: field renamed and still valid (estimate is a sortable column).
+    expect(loaded.tableSort).toEqual({ field: "estimate", direction: "desc" });
   });
 
   it("leaves preferences without a 'state' key untouched by the migration", () => {

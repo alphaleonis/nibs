@@ -19,7 +19,7 @@ function makePrefs(overrides: Partial<Preferences> = {}): Preferences {
     filter: { search: "default" },
     viewLevel: "epics" as ViewLevel,
     visibleColumns: ["id", "title"] as ColumnKey[],
-    currentColumnWidths: { id: 200, parent: 200, type: 200, title: 500, status: 200, effort: 200, tags: 200 } as Record<ColumnKey, number>,
+    currentColumnWidths: { id: 200, parent: 200, type: 200, title: 500, status: 200, estimate: 200, tags: 200 } as Record<ColumnKey, number>,
     currentColumnOrder: [...ALL_COLUMN_KEYS] as ColumnKey[],
     ...overrides,
   } as Preferences;
@@ -75,13 +75,13 @@ describe("resolveVisibleColumns", () => {
 
 describe("resolveColumnWidths", () => {
   it("returns prefs.currentColumnWidths when prefs is defined", () => {
-    const widths = { id: 200, parent: 200, type: 200, title: 500, status: 200, effort: 200, tags: 200 } as Record<ColumnKey, number>;
+    const widths = { id: 200, parent: 200, type: 200, title: 500, status: 200, estimate: 200, tags: 200 } as Record<ColumnKey, number>;
     const prefs = makePrefs({ currentColumnWidths: widths });
     expect(resolveColumnWidths(prefs, undefined)).toEqual(widths);
   });
 
   it("returns columnWidths prop when prefs is undefined", () => {
-    const widths = { id: 50, parent: 50, type: 50, title: 50, status: 50, effort: 50, tags: 50 } as Record<ColumnKey, number>;
+    const widths = { id: 50, parent: 50, type: 50, title: 50, status: 50, estimate: 50, tags: 50 } as Record<ColumnKey, number>;
     expect(resolveColumnWidths(undefined, widths)).toEqual(widths);
   });
 

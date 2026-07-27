@@ -65,7 +65,7 @@ const KEY_EXTRACTORS: Record<SortField, (nib: SortableRow, byId: ReadonlyMap<str
   id: (n) => n.id || null,
   type: (n) => orderKey(TYPES, n.type),
   status: (n) => orderKey(STATUSES, n.status),
-  effort: (n) => orderKey(ESTIMATES, n.estimate?.trim().toLowerCase() ?? ""),
+  estimate: (n) => orderKey(ESTIMATES, n.estimate?.trim().toLowerCase() ?? ""),
   created: (n) => dateKey(n.createdAt),
   modified: (n) => dateKey(n.updatedAt),
   blocking: (n) => n.blockingIds.length,

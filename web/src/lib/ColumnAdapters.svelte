@@ -84,7 +84,7 @@
       type: { header: headerType, cell: cellType },
       title: { header: headerTitle, cell: cellTitle },
       status: { header: headerStatus, cell: cellStatus },
-      effort: { header: headerEffort, cell: cellEffort },
+      estimate: { header: headerEstimate, cell: cellEstimate },
       tags: { header: headerTags, cell: cellTags },
       blocking: { header: headerBlocking, cell: cellBlocking },
       blockedBy: { header: headerBlockedBy, cell: cellBlockedBy },
@@ -119,7 +119,7 @@
 {#snippet headerType()}Type{/snippet}
 {#snippet headerTitle()}Title{/snippet}
 {#snippet headerStatus()}Status{/snippet}
-{#snippet headerEffort()}Effort{/snippet}
+{#snippet headerEstimate()}Estimate{/snippet}
 {#snippet headerTags()}Tags{/snippet}
 {#snippet headerBlocking()}Blocking{/snippet}
 {#snippet headerBlockedBy()}Blocked by{/snippet}
@@ -217,10 +217,10 @@
   </td>
 {/snippet}
 
-<!-- Effort column -->
-{#snippet cellEffort(ctx: RowContext)}
+<!-- Estimate column -->
+{#snippet cellEstimate(ctx: RowContext)}
   {@const nib = ctx.nib}
-  <td data-testid="nib-effort" class="text-body px-3 cell-truncate row-cell">
+  <td data-testid="nib-estimate" class="text-body px-3 cell-truncate row-cell">
     {#if nib.estimate?.trim()}
       {nib.estimate.toUpperCase()}
     {/if}

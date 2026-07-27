@@ -13,7 +13,7 @@ describe("column config: blocking / blockedBy columns", () => {
       "type",
       "title",
       "status",
-      "effort",
+      "estimate",
       "tags",
       "blocking",
       "blockedBy",
@@ -39,7 +39,7 @@ describe("column config: blocking / blockedBy columns", () => {
       "type",
       "title",
       "status",
-      "effort",
+      "estimate",
       "tags",
       "modified",
     ]);

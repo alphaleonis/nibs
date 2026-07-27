@@ -103,7 +103,7 @@ describe("TreeTable", () => {
     expect(screen.getByText("Second task")).toBeInTheDocument();
   });
 
-  it("renders column headers including ID, Type, Title, State, Effort, Tags", () => {
+  it("renders column headers including ID, Type, Title, Status, Estimate, Tags", () => {
     const nibs: TreeTableNib[] = [
       makeTreeTableNib({ id: "nibs-m1", title: "Milestone", type: "milestone" }),
       makeTreeTableNib({ id: "nibs-001", title: "A task", parentId: "nibs-m1" }),
@@ -122,7 +122,7 @@ describe("TreeTable", () => {
     expect(headers).toContain("Type");
     expect(headers).toContain("Title");
     expect(headers).toContain("Status");
-    expect(headers).toContain("Effort");
+    expect(headers).toContain("Estimate");
     expect(headers).toContain("Tags");
   });
 
@@ -821,7 +821,7 @@ describe("TreeTable", () => {
     expect(headers).toContain("Status");
     expect(headers).not.toContain("ID");
     expect(headers).not.toContain("Type");
-    expect(headers).not.toContain("Effort");
+    expect(headers).not.toContain("Estimate");
     expect(headers).not.toContain("Tags");
     expect(headers).not.toContain("Parent");
   });
@@ -845,7 +845,7 @@ describe("TreeTable", () => {
     // ID and type cells should not be rendered
     expect(container.querySelector("[data-testid='nib-id']")).not.toBeInTheDocument();
     expect(container.querySelector("[data-testid='nib-type']")).not.toBeInTheDocument();
-    expect(container.querySelector("[data-testid='nib-effort']")).not.toBeInTheDocument();
+    expect(container.querySelector("[data-testid='nib-estimate']")).not.toBeInTheDocument();
     expect(container.querySelector("[data-testid='nib-tags']")).not.toBeInTheDocument();
 
     // Title and state cells should be rendered
@@ -885,7 +885,7 @@ describe("TreeTable", () => {
     );
 
     // The default-visible set (no blocking / blockedBy).
-    const visibleColumns: ColumnKey[] = ["id", "parent", "type", "title", "status", "effort", "tags"];
+    const visibleColumns: ColumnKey[] = ["id", "parent", "type", "title", "status", "estimate", "tags"];
     const { container } = renderTreeTable({
       filter: {},
       viewLevel: "epics" as ViewLevel,
@@ -957,7 +957,7 @@ describe("TreeTable", () => {
     );
 
     // A visible set without created / modified.
-    const visibleColumns: ColumnKey[] = ["id", "parent", "type", "title", "status", "effort", "tags"];
+    const visibleColumns: ColumnKey[] = ["id", "parent", "type", "title", "status", "estimate", "tags"];
     const { container } = renderTreeTable({
       filter: {},
       viewLevel: "epics" as ViewLevel,
@@ -1008,7 +1008,7 @@ describe("TreeTable", () => {
     );
 
     // epics view does NOT hide parent, but visibleColumns excludes it
-    const visibleColumns: ColumnKey[] = ["id", "title", "type", "status", "effort", "tags"];
+    const visibleColumns: ColumnKey[] = ["id", "title", "type", "status", "estimate", "tags"];
     const { container } = renderTreeTable({
       filter: {},
       viewLevel: "epics" as ViewLevel,

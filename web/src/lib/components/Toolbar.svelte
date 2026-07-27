@@ -222,7 +222,7 @@
 
   // --- Filter bar logic ---
   type FilterField = "type" | "priority" | "status" | "estimate" | "tags";
-  type DropdownId = "type" | "priority" | "status" | "effort" | "tags";
+  type DropdownId = "type" | "priority" | "status" | "estimate" | "tags";
 
   interface DropdownConfig {
     id: DropdownId;
@@ -235,7 +235,7 @@
     { id: "type", label: "Type", field: "type", values: TYPES },
     { id: "priority", label: "Priority", field: "priority", values: PRIORITIES },
     { id: "status", label: "Status", field: "status", values: STATUSES },
-    { id: "effort", label: "Effort", field: "estimate", values: ESTIMATES },
+    { id: "estimate", label: "Estimate", field: "estimate", values: ESTIMATES },
     ...(availableTags.length > 0 ? [{ id: "tags" as DropdownId, label: "Tags", field: "tags" as FilterField, values: availableTags }] : []),
   ]);
 
@@ -243,7 +243,7 @@
     type: false,
     priority: false,
     status: false,
-    effort: false,
+    estimate: false,
     tags: false,
   });
 

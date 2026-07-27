@@ -569,7 +569,7 @@ describe("TreeTableRow", () => {
       dimmed: false,
     });
 
-    const estimateBadge = container.querySelector("[data-testid='nib-effort']");
+    const estimateBadge = container.querySelector("[data-testid='nib-estimate']");
     // Should have empty content or no estimate text
     if (estimateBadge) {
       expect(estimateBadge.textContent?.trim()).toBe("");
@@ -656,7 +656,7 @@ describe("TreeTableRow", () => {
   });
 
   it("hides ID cell when visibleColumns excludes 'id'", () => {
-    const visibleColumns: ColumnKey[] = ["title", "status", "type", "effort", "tags"];
+    const visibleColumns: ColumnKey[] = ["title", "status", "type", "estimate", "tags"];
     const { container } = renderRow({
       nib: makeTreeTableNib(),
       depth: 0,
@@ -669,7 +669,7 @@ describe("TreeTableRow", () => {
     expect(container.querySelector("[data-testid='nib-title']")).toBeInTheDocument();
   });
 
-  it("hides effort and tags cells when visibleColumns excludes them", () => {
+  it("hides estimate and tags cells when visibleColumns excludes them", () => {
     const visibleColumns: ColumnKey[] = ["id", "title", "status", "type"];
     const { container } = renderRow({
       nib: makeTreeTableNib({ tags: ["auth"], estimate: "m" }),
@@ -679,7 +679,7 @@ describe("TreeTableRow", () => {
       visibleColumns,
     });
 
-    expect(container.querySelector("[data-testid='nib-effort']")).not.toBeInTheDocument();
+    expect(container.querySelector("[data-testid='nib-estimate']")).not.toBeInTheDocument();
     expect(container.querySelector("[data-testid='nib-tags']")).not.toBeInTheDocument();
     // ID and title should still be there
     expect(container.querySelector("[data-testid='nib-id']")).toBeInTheDocument();
