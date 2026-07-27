@@ -100,9 +100,20 @@ For optional config fields with non-zero defaults, use pointer types (`*int`, `*
 
 ## Branching & Workflow
 
-- The default branch is `main`
-- We are not using pull requests currently — merge feature branches directly into `main` and push
+- **`develop` is where unreleased work lands.** Cut feature branches from it, merge them back into it. This is the branch to be on for normal development.
+- **`main` is the released branch.** `develop` merges into `main` at release time and not before — do not merge feature work into `main` directly.
+- We are not using pull requests currently — merge feature branches directly into `develop` and push
 - Create feature branches for non-trivial work, merge when done
+
+### Two epics shipping in one release
+
+Keep them on **separate feature branches and integrate through `develop`** — do not stack one epic's work onto the other's branch. Stacking makes them one inseparable unit that cannot be reviewed, reverted, or reordered at release time, and it hides a cross-cutting change under an unrelated branch name.
+
+When one epic depends on the other, merge `develop` into the dependent feature branch (a merge, not a rebase — rebasing replays every commit against a changed base, and intermediate commits often will not build).
+
+### Write CHANGELOG entries at merge time
+
+Add a feature branch's `[Unreleased]` entries **when merging it into `develop`**, not while the work is in progress. Parallel branches each editing the same `[Unreleased]` section conflict every time, and those conflicts are the expensive kind where both sides are correct.
 
 ### Sync before starting work
 
