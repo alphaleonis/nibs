@@ -40,11 +40,11 @@ Relationships (parent, blocking) are preserved in archived nibs.`,
 		app := getApp(cmd)
 		allNibs := app.Core.All()
 
-		// Find nibs with any archive status
+		// Find nibs in a closed status
 		var archiveNibs []*nib.Nib
 		archiveSet := make(map[string]bool)
 		for _, b := range allNibs {
-			if app.Config().IsArchiveStatus(b.Status) {
+			if app.Config().IsClosedStatus(b.Status) {
 				archiveNibs = append(archiveNibs, b)
 				archiveSet[b.ID] = true
 			}

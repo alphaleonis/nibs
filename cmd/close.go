@@ -8,7 +8,6 @@ import (
 
 	"github.com/alphaleonis/nibs/internal/graph/model"
 	"github.com/alphaleonis/nibs/internal/mdsection"
-	"github.com/alphaleonis/nibs/internal/nib"
 	"github.com/alphaleonis/nibs/internal/output"
 	"github.com/alphaleonis/nibs/internal/projection"
 	"github.com/spf13/cobra"
@@ -37,8 +36,8 @@ var closeCmd = &cobra.Command{
 			return cmdError(closeJSON, output.ErrNotFound, "nib not found: %s", args[0])
 		}
 
-		// Reject already-resolved nibs
-		if nib.IsResolvedStatus(b.Status) {
+		// Reject already-closed nibs
+		if app.Config().IsClosedStatus(b.Status) {
 			return cmdError(closeJSON, output.ErrValidation, "nib %s is already %s", b.ID, b.Status)
 		}
 
@@ -59,7 +58,7 @@ var closeCmd = &cobra.Command{
 		if len(children) > 0 && !closeForce {
 			var incomplete []string
 			for _, child := range children {
-				if !nib.IsResolvedStatus(child.Status) {
+				if !app.Config().IsClosedStatus(child.Status) {
 					incomplete = append(incomplete, child.ID)
 				}
 			}

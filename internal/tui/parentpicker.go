@@ -76,7 +76,7 @@ func (d parentItemDelegate) Render(w io.Writer, m list.Model, index int, listIte
 		// Format: [type] title (id)
 		typeBadge := ui.RenderTypeText(item.nib.EffectiveType(), colors.TypeColor)
 		title := item.nib.Title
-		if colors.IsArchive {
+		if colors.IsClosed {
 			title = ui.Muted.Render(title)
 		}
 		id := ui.Muted.Render(" (" + item.nib.ID + ")")
@@ -225,7 +225,7 @@ func hideCompletedHelpText(hiding bool) string {
 func (m *parentPickerModel) rebuildList() {
 	var filtered []*nib.Nib
 	for _, b := range m.allEligible {
-		if m.hideCompleted && m.cfg.IsArchiveStatus(b.Status) {
+		if m.hideCompleted && m.cfg.IsClosedStatus(b.Status) {
 			continue
 		}
 		filtered = append(filtered, b)

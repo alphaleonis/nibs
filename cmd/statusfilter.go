@@ -10,8 +10,8 @@ import (
 // Status group names. A group is accepted anywhere a concrete status is
 // accepted in -s/--status and --no-status on both `list` and `rel`, and
 // expands to its concrete member statuses:
-//   - open   → the non-archive statuses (config.OpenStatusNames)
-//   - closed → the archive statuses (config.ArchiveStatusNames)
+//   - open   → the non-closed statuses (config.OpenStatusNames)
+//   - closed → the closed/terminal statuses (config.ClosedStatusNames)
 //   - parked → the non-actionable-but-not-abandoned statuses (config.ParkedStatusNames)
 const (
 	statusGroupOpen   = "open"
@@ -36,24 +36,24 @@ type statusFilterInput struct {
 // behavior for free.
 //
 // Semantics ("base then subtract"):
-//   - No status token and no --all → default open: exclude the archive statuses
+//   - No status token and no --all → default open: exclude the closed statuses
 //     (completed, scrapped). include is nil so every non-excluded status passes.
 //   - --all → base is every status: include and the open-default exclusion are
 //     both empty.
 //   - Any explicit -s X… (after group expansion, including --open/--active which
 //     inject the open group) → include = union(X); this overrides the open
-//     default so `-s closed`/`-s completed` show archived nibs.
+//     default so `-s closed`/`-s completed` show closed nibs.
 //   - --no-status Y… (after group expansion) → added to exclude, subtracting Y
 //     from the current base.
 //
 // An unknown token (neither a concrete status nor a group) is a validation
 // error naming the offending token and the accepted values.
 //
-// openDefaultApplied reports whether the open-by-default archive exclusion was
-// added (no explicit -s/--open/--active and no --all). Callers use it to decide
-// whether to disclose the hidden completed/scrapped count: the open default is
-// the only path that silently drops rows, so a partial set is only unobservable
-// there.
+// openDefaultApplied reports whether the open-by-default closed-status
+// exclusion was added (no explicit -s/--open/--active and no --all). Callers
+// use it to decide whether to disclose the hidden completed/scrapped count: the
+// open default is the only path that silently drops rows, so a partial set is
+// only unobservable there.
 func resolveStatusFilter(cfg *config.Config, in statusFilterInput) (include, exclude []string, openDefaultApplied bool, err error) {
 	statusTokens := in.Status
 	if in.Open {
@@ -75,7 +75,7 @@ func resolveStatusFilter(cfg *config.Config, in statusFilterInput) (include, exc
 	// set and did not ask for --all. An explicit -s (even -s open) overrides it.
 	if len(include) == 0 && !in.All {
 		openDefaultApplied = true
-		exclude = appendMissingStatuses(exclude, cfg.ArchiveStatusNames())
+		exclude = appendMissingStatuses(exclude, cfg.ClosedStatusNames())
 	}
 
 	// A status filter that admits no status at all is a data-independent
@@ -91,12 +91,12 @@ func resolveStatusFilter(cfg *config.Config, in statusFilterInput) (include, exc
 	return include, exclude, openDefaultApplied, nil
 }
 
-// closedStatusLabel renders the archive ("closed") status names as a
+// closedStatusLabel renders the closed status names as a
 // slash-joined label ("completed/scrapped") for the hidden-count disclosure in
-// the TSV header. Derived from config so it stays correct if the archive set
+// the TSV header. Derived from config so it stays correct if the closed set
 // ever changes.
 func closedStatusLabel(cfg *config.Config) string {
-	return strings.Join(cfg.ArchiveStatusNames(), "/")
+	return strings.Join(cfg.ClosedStatusNames(), "/")
 }
 
 // statusFilterAdmitsNothing reports whether the (include, exclude) pair leaves
@@ -157,7 +157,7 @@ func statusGroupMembers(cfg *config.Config, token string) ([]string, error) {
 	case statusGroupOpen:
 		return cfg.OpenStatusNames(), nil
 	case statusGroupClosed:
-		return cfg.ArchiveStatusNames(), nil
+		return cfg.ClosedStatusNames(), nil
 	case statusGroupParked:
 		return cfg.ParkedStatusNames(), nil
 	}
@@ -174,8 +174,8 @@ func statusGroupNames() []string {
 }
 
 // appendMissingStatuses appends every name in add that is not already in base,
-// preserving order. Used to fold the open-default archive exclusion into an
-// existing --no-status set without duplicating members.
+// preserving order. Used to fold the open-default closed-status exclusion into
+// an existing --no-status set without duplicating members.
 func appendMissingStatuses(base, add []string) []string {
 	present := make(map[string]bool, len(base))
 	for _, s := range base {

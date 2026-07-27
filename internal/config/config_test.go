@@ -3,6 +3,7 @@ package config
 import (
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 )
@@ -108,32 +109,32 @@ func TestStatusNames(t *testing.T) {
 	}
 }
 
-func TestArchiveStatusNames(t *testing.T) {
+func TestClosedStatusNames(t *testing.T) {
 	cfg := Default()
-	got := cfg.ArchiveStatusNames()
+	got := cfg.ClosedStatusNames()
 
-	// Today the archive set is exactly {completed, scrapped}.
+	// Today the closed set is exactly {completed, scrapped}.
 	want := []string{"completed", "scrapped"}
 	if len(got) != len(want) {
-		t.Fatalf("len(ArchiveStatusNames()) = %d, want %d (%v)", len(got), len(want), got)
+		t.Fatalf("len(ClosedStatusNames()) = %d, want %d (%v)", len(got), len(want), got)
 	}
 	for i, name := range want {
 		if got[i] != name {
-			t.Errorf("ArchiveStatusNames()[%d] = %q, want %q", i, got[i], name)
+			t.Errorf("ClosedStatusNames()[%d] = %q, want %q", i, got[i], name)
 		}
 	}
 
-	// Every returned name must satisfy the canonical archive predicate.
+	// Every returned name must satisfy the canonical closed predicate.
 	for _, name := range got {
-		if !cfg.IsArchiveStatus(name) {
-			t.Errorf("ArchiveStatusNames() returned %q which is not IsArchiveStatus", name)
+		if !cfg.IsClosedStatus(name) {
+			t.Errorf("ClosedStatusNames() returned %q which is not IsClosedStatus", name)
 		}
 	}
 
-	// "deferred" is terminal-adjacent but NOT archived; it must be excluded.
+	// "deferred" is terminal-adjacent but NOT closed; it must be excluded.
 	for _, name := range got {
 		if name == "deferred" {
-			t.Errorf("ArchiveStatusNames() must not include %q", name)
+			t.Errorf("ClosedStatusNames() must not include %q", name)
 		}
 	}
 }
@@ -142,7 +143,7 @@ func TestOpenStatusNames(t *testing.T) {
 	cfg := Default()
 	got := cfg.OpenStatusNames()
 
-	// Today the open set is exactly the non-archive statuses.
+	// Today the open set is exactly the non-closed statuses.
 	want := []string{"in-progress", "todo", "draft", "deferred"}
 	if len(got) != len(want) {
 		t.Fatalf("len(OpenStatusNames()) = %d, want %d (%v)", len(got), len(want), got)
@@ -153,17 +154,17 @@ func TestOpenStatusNames(t *testing.T) {
 		}
 	}
 
-	// No open status may be an archive status.
+	// No open status may be a closed status.
 	for _, name := range got {
-		if cfg.IsArchiveStatus(name) {
-			t.Errorf("OpenStatusNames() returned archived status %q", name)
+		if cfg.IsClosedStatus(name) {
+			t.Errorf("OpenStatusNames() returned closed status %q", name)
 		}
 	}
 
-	// Open and archive together must cover every status exactly once.
-	if len(got)+len(cfg.ArchiveStatusNames()) != len(cfg.StatusNames()) {
-		t.Errorf("open (%d) + archive (%d) must equal all statuses (%d)",
-			len(got), len(cfg.ArchiveStatusNames()), len(cfg.StatusNames()))
+	// Open and closed together must cover every status exactly once.
+	if len(got)+len(cfg.ClosedStatusNames()) != len(cfg.StatusNames()) {
+		t.Errorf("open (%d) + closed (%d) must equal all statuses (%d)",
+			len(got), len(cfg.ClosedStatusNames()), len(cfg.StatusNames()))
 	}
 }
 
@@ -181,13 +182,13 @@ func TestParkedStatusNames(t *testing.T) {
 		}
 	}
 
-	// Parked statuses are valid, non-archive statuses (a subset of open).
+	// Parked statuses are valid, non-closed statuses (a subset of open).
 	for _, name := range got {
 		if !cfg.IsValidStatus(name) {
 			t.Errorf("ParkedStatusNames() returned unknown status %q", name)
 		}
-		if cfg.IsArchiveStatus(name) {
-			t.Errorf("ParkedStatusNames() returned archived status %q", name)
+		if cfg.IsClosedStatus(name) {
+			t.Errorf("ParkedStatusNames() returned closed status %q", name)
 		}
 	}
 
@@ -256,7 +257,7 @@ func TestGetDefaultType(t *testing.T) {
 	}
 }
 
-func TestIsArchiveStatus(t *testing.T) {
+func TestIsClosedStatus(t *testing.T) {
 	cfg := Default()
 
 	tests := []struct {
@@ -268,17 +269,63 @@ func TestIsArchiveStatus(t *testing.T) {
 		{"draft", false},
 		{"todo", false},
 		{"in-progress", false},
-		{"deferred", false}, // non-terminal: parked, not archived
+		{"deferred", false}, // parked, not closed
 		{"invalid", false},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.status, func(t *testing.T) {
-			got := cfg.IsArchiveStatus(tt.status)
+			got := cfg.IsClosedStatus(tt.status)
 			if got != tt.want {
-				t.Errorf("IsArchiveStatus(%q) = %v, want %v", tt.status, got, tt.want)
+				t.Errorf("IsClosedStatus(%q) = %v, want %v", tt.status, got, tt.want)
 			}
 		})
+	}
+}
+
+// TestClosedStatusSetUnchanged characterizes the closed/open split so a rename
+// or refactor of the status vocabulary cannot quietly move a status across the
+// boundary. Membership — not naming — is what every consumer depends on:
+// "closed" is exactly {completed, scrapped}, and "deferred" is open (parked,
+// still actionable later). Reclassifying deferred is a deliberate change that
+// must fail here first.
+func TestClosedStatusSetUnchanged(t *testing.T) {
+	cfg := Default()
+
+	tests := []struct {
+		status   string
+		wantOpen bool
+	}{
+		{"in-progress", true},
+		{"todo", true},
+		{"draft", true},
+		{"deferred", true},
+		{"completed", false},
+		{"scrapped", false},
+	}
+
+	closed := cfg.ClosedStatusNames()
+	open := cfg.OpenStatusNames()
+
+	for _, tt := range tests {
+		t.Run(tt.status, func(t *testing.T) {
+			group, want := closed, "closed"
+			if tt.wantOpen {
+				group, want = open, "open"
+			}
+			if !slices.Contains(group, tt.status) {
+				t.Errorf("%s is not in the %s group (closed=%v open=%v)", tt.status, want, closed, open)
+			}
+			if got := cfg.IsClosedStatus(tt.status); got == tt.wantOpen {
+				t.Errorf("IsClosedStatus(%q) = %v, want %v", tt.status, got, !tt.wantOpen)
+			}
+		})
+	}
+
+	// The closed group is exactly these two, in this order — nothing else may
+	// have been folded into it.
+	if want := []string{"completed", "scrapped"}; !slices.Equal(closed, want) {
+		t.Errorf("ClosedStatusNames() = %v, want %v", closed, want)
 	}
 }
 
@@ -393,15 +440,15 @@ func TestStatusesAreHardcoded(t *testing.T) {
 		}
 	}
 
-	// Archive statuses should be completed and scrapped
-	if !cfg.IsArchiveStatus("completed") {
-		t.Error("IsArchiveStatus(\"completed\") = false, want true")
+	// Closed statuses should be completed and scrapped
+	if !cfg.IsClosedStatus("completed") {
+		t.Error("IsClosedStatus(\"completed\") = false, want true")
 	}
-	if !cfg.IsArchiveStatus("scrapped") {
-		t.Error("IsArchiveStatus(\"scrapped\") = false, want true")
+	if !cfg.IsClosedStatus("scrapped") {
+		t.Error("IsClosedStatus(\"scrapped\") = false, want true")
 	}
-	if cfg.IsArchiveStatus("todo") {
-		t.Error("IsArchiveStatus(\"todo\") = true, want false")
+	if cfg.IsClosedStatus("todo") {
+		t.Error("IsClosedStatus(\"todo\") = true, want false")
 	}
 }
 

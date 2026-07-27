@@ -10,7 +10,7 @@ import (
 	"github.com/alphaleonis/nibs/internal/nibcore"
 )
 
-func TestFilterResolvedBlockersDoesNotMutateCore(t *testing.T) {
+func TestFilterClosedBlockersDoesNotMutateCore(t *testing.T) {
 	tmpDir := t.TempDir()
 	nibsDir := filepath.Join(tmpDir, ".nibs")
 	if err := os.MkdirAll(nibsDir, 0755); err != nil {
@@ -23,13 +23,13 @@ func TestFilterResolvedBlockersDoesNotMutateCore(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	// Create a blocker nib that is completed (resolved)
+	// Create a blocker nib that is completed (closed)
 	blocker := &nib.Nib{ID: "blocker-1", Slug: "blocker", Title: "Blocker", Status: "completed"}
 	if err := core.Create(blocker); err != nil {
 		t.Fatal(err)
 	}
 
-	// Create a nib blocked by the resolved blocker
+	// Create a nib blocked by the closed blocker
 	blocked := &nib.Nib{
 		ID:        "blocked-1",
 		Slug:      "blocked",
@@ -41,10 +41,10 @@ func TestFilterResolvedBlockersDoesNotMutateCore(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	// Call filterResolvedBlockersOne — this should NOT mutate the in-memory nib
-	result := filterResolvedBlockersOne(blocked, core)
+	// Call filterClosedBlockersOne — this should NOT mutate the in-memory nib
+	result := filterClosedBlockersOne(blocked, core)
 
-	// The returned copy should have the resolved blocker removed
+	// The returned copy should have the closed blocker removed
 	if len(result.BlockedBy) != 0 {
 		t.Errorf("returned nib should have empty BlockedBy, got %v", result.BlockedBy)
 	}

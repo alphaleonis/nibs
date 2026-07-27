@@ -191,7 +191,7 @@ func TestCatalogFiltersShowStatusGroups(t *testing.T) {
 	cfg := config.Default()
 	want := map[string][]string{
 		"open":   cfg.OpenStatusNames(),
-		"closed": cfg.ArchiveStatusNames(),
+		"closed": cfg.ClosedStatusNames(),
 		"parked": cfg.ParkedStatusNames(),
 	}
 	if len(got.StatusGroups) != len(want) {

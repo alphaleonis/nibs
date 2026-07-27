@@ -74,7 +74,7 @@ warned and those references will be removed after confirmation. Use -f to skip a
 
 		// Output results
 		if deleteJSON {
-			filtered := filterResolvedBlockers(deleted, app.Core)
+			filtered := filterClosedBlockers(deleted, app.Core)
 			if len(filtered) == 1 {
 				return output.Success(filtered[0], "Nib deleted")
 			}

@@ -684,15 +684,15 @@ func (r *nibResolver) ParentID(ctx context.Context, obj *nib.Nib) (*string, erro
 
 // BlockingIds is the resolver for the blockingIds field.
 // Computed: scans for active nibs that have this nib in their blockedBy list.
-// A resolved nib is not considered to be blocking anything.
+// A closed nib is not considered to be blocking anything.
 func (r *nibResolver) BlockingIds(ctx context.Context, obj *nib.Nib) ([]string, error) {
-	if isResolvedStatus(obj.Status) {
+	if r.isClosedStatus(obj.Status) {
 		return []string{}, nil
 	}
 	incoming := r.Reader.FindIncomingLinks(obj.ID)
 	var ids []string
 	for _, link := range incoming {
-		if link.LinkType == "blocked_by" && !isResolvedStatus(link.FromNib.Status) {
+		if link.LinkType == "blocked_by" && !r.isClosedStatus(link.FromNib.Status) {
 			ids = append(ids, link.FromNib.ID)
 		}
 	}
@@ -708,7 +708,7 @@ func (r *nibResolver) BlockedByIds(ctx context.Context, obj *nib.Nib) ([]string,
 	var ids []string
 	for _, blockerID := range obj.BlockedBy {
 		if blocker, err := r.Reader.Get(blockerID); err == nil {
-			if !isResolvedStatus(blocker.Status) {
+			if !r.isClosedStatus(blocker.Status) {
 				ids = append(ids, blockerID)
 			}
 		}
@@ -728,7 +728,7 @@ func (r *nibResolver) BlockedBy(ctx context.Context, obj *nib.Nib, filter *model
 	var result []*nib.Nib
 	for _, blockerID := range obj.BlockedBy {
 		if blocker, ok := r.Reader.GetSnapshot(blockerID); ok {
-			if !isResolvedStatus(blocker.Status) {
+			if !r.isClosedStatus(blocker.Status) {
 				result = append(result, blocker)
 			}
 		}
@@ -739,14 +739,14 @@ func (r *nibResolver) BlockedBy(ctx context.Context, obj *nib.Nib, filter *model
 
 // Blocking is the resolver for the blocking field.
 // Computed: returns active nibs whose BlockedBy field contains this nib's ID.
-// A resolved nib is not considered to be blocking anything.
+// A closed nib is not considered to be blocking anything.
 //
 // Returns detached snapshots via Reader.GetSnapshot (clone-under-lock), never
 // the live c.nibs pointers — gqlgen marshals their fields asynchronously. Only
 // the immutable link.FromNib.ID is read off the live pointer; the status filter
 // runs against the detached clone.
 func (r *nibResolver) Blocking(ctx context.Context, obj *nib.Nib, filter *model.NibFilter) ([]*nib.Nib, error) {
-	if isResolvedStatus(obj.Status) {
+	if r.isClosedStatus(obj.Status) {
 		return ApplyFilter(ctx, nil, filter, r.Reader, r.Resolver.Blocking), nil
 	}
 	incoming := r.Reader.FindIncomingLinks(obj.ID)
@@ -756,7 +756,7 @@ func (r *nibResolver) Blocking(ctx context.Context, obj *nib.Nib, filter *model.
 			continue
 		}
 		snap, ok := r.Reader.GetSnapshot(link.FromNib.ID)
-		if ok && !isResolvedStatus(snap.Status) {
+		if ok && !r.isClosedStatus(snap.Status) {
 			result = append(result, snap)
 		}
 	}

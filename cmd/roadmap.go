@@ -206,7 +206,7 @@ func buildRoadmap(allNibs []*nib.Nib, includeDone bool, statusFilter, noStatusFi
 			continue
 		}
 		// Apply done filter
-		if !includeDone && cfg.IsArchiveStatus(b.Status) {
+		if !includeDone && cfg.IsClosedStatus(b.Status) {
 			continue
 		}
 		orphanItems = append(orphanItems, b)
@@ -272,7 +272,7 @@ func buildMilestoneGroup(m *nib.Nib, children map[string][]*nib.Nib, includeDone
 		if child.Type == "epic" {
 			continue
 		}
-		if includeDone || !cfg.IsArchiveStatus(child.Status) {
+		if includeDone || !cfg.IsClosedStatus(child.Status) {
 			other = append(other, child)
 		}
 	}
@@ -310,7 +310,7 @@ func filterChildren(children []*nib.Nib, includeDone bool, cfg *config.Config) [
 
 	var filtered []*nib.Nib
 	for _, b := range children {
-		if !cfg.IsArchiveStatus(b.Status) {
+		if !cfg.IsClosedStatus(b.Status) {
 			filtered = append(filtered, b)
 		}
 	}

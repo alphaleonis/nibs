@@ -131,15 +131,15 @@ func (p *projectionResolver) Progress(id string) any {
 	return ComputeProgress(statuses)
 }
 
-// Ready reports whether the nib is startable: not already resolved
+// Ready reports whether the nib is startable: not already closed
 // (completed/scrapped) and with no active blockers. BlockedByIds already drops
-// resolved blockers, so a nib blocked only by finished work is ready.
+// closed blockers, so a nib blocked only by finished work is ready.
 func (p *projectionResolver) Ready(id string) bool {
 	b, err := p.r.Reader.Get(id)
 	if err != nil {
 		return false
 	}
-	if nib.IsResolvedStatus(b.Status) {
+	if p.r.isClosedStatus(b.Status) {
 		return false
 	}
 	blockers, err := p.nib.BlockedByIds(p.ctx, b)

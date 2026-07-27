@@ -20,15 +20,15 @@ const (
 // DefaultStatuses defines the hardcoded status configuration.
 // Statuses are not configurable - they are hardcoded like types.
 // Order determines sort priority: in-progress first (active work), then todo
-// and draft, then deferred (parked, non-terminal), and the archived terminal
-// states (completed, scrapped) last.
+// and draft, then deferred (parked, still open), and the closed statuses
+// (completed, scrapped) last.
 var DefaultStatuses = []StatusConfig{
 	{Name: "in-progress", Color: "yellow", Description: "Currently being worked on"},
 	{Name: "todo", Color: "green", Description: "Ready to be worked on"},
 	{Name: "draft", Color: "blue", Description: "Needs refinement before it can be worked on"},
 	{Name: "deferred", Color: "gray", Description: "Parked — not actionable now, but not abandoned (scrapped) or merely unrefined (draft)"},
-	{Name: "completed", Color: "gray", Archive: true, Description: "Finished successfully"},
-	{Name: "scrapped", Color: "gray", Archive: true, Description: "Will not be done"},
+	{Name: "completed", Color: "gray", Closed: true, Description: "Finished successfully"},
+	{Name: "scrapped", Color: "gray", Closed: true, Description: "Will not be done"},
 }
 
 // DefaultTypes defines the default type configuration.
@@ -67,10 +67,22 @@ type EstimateConfig struct {
 }
 
 // StatusConfig defines a single status with its display color.
+// Closed marks the status as terminal — the work is finished (completed) or
+// abandoned (scrapped); everything else is open.
+//
+// In Go this flag is the only definition of the closed set — consumers read it
+// through IsClosedStatus, ClosedStatusNames or OpenStatusNames — with one
+// exception: cmd/list.go's --ready exclusion list hardcodes its own copy
+// (nibs-xfh5). The web UI keeps a second hand-written copy in
+// web/src/lib/constants.ts as TERMINAL_STATUSES (nibs-nv05).
+//
+// Sites that name completed and scrapped individually — the progress rollups
+// in internal/graph and internal/nibcontext, and dedup's reason snippet — are
+// not rival definitions: they need the two apart, which one boolean cannot say.
 type StatusConfig struct {
 	Name        string `yaml:"name"`
 	Color       string `yaml:"color"`
-	Archive     bool   `yaml:"archive,omitempty"`
+	Closed      bool   `yaml:"closed,omitempty"`
 	Description string `yaml:"description,omitempty"`
 }
 
@@ -366,24 +378,28 @@ func (c *Config) GetDefaultType() string {
 	return c.Nibs.DefaultType
 }
 
-// IsArchiveStatus returns true if the given status is marked for archiving.
-// Statuses are hardcoded and not configurable.
-func (c *Config) IsArchiveStatus(name string) bool {
+// IsClosedStatus returns true if the given status is closed (terminal) — the
+// canonical answer to "is this nib finished", used by every package instead of
+// a local status list. Unknown statuses are open.
+// Statuses are hardcoded and not configurable, so the receiver is currently
+// never dereferenced — but callers should not depend on that: hand it a real
+// *Config (config.Default() if nothing better is in reach).
+func (c *Config) IsClosedStatus(name string) bool {
 	if s := c.GetStatus(name); s != nil {
-		return s.Archive
+		return s.Closed
 	}
 	return false
 }
 
-// ArchiveStatusNames returns the names of all statuses marked for archiving,
-// derived from DefaultStatuses (the single source of truth). Every returned
-// name satisfies IsArchiveStatus. Today this is {completed, scrapped}; deriving
-// it here keeps the set correct if the Archive flags ever change. This is the
-// "closed" status group.
-func (c *Config) ArchiveStatusNames() []string {
+// ClosedStatusNames returns the names of all closed statuses, derived from
+// DefaultStatuses (the single source of truth). Every returned name satisfies
+// IsClosedStatus. Today this is {completed, scrapped}; deriving it here keeps
+// the set correct if the Closed flags ever change. This is the "closed" status
+// group, and the exact complement of OpenStatusNames.
+func (c *Config) ClosedStatusNames() []string {
 	var names []string
 	for _, s := range DefaultStatuses {
-		if s.Archive {
+		if s.Closed {
 			names = append(names, s.Name)
 		}
 	}
@@ -391,19 +407,19 @@ func (c *Config) ArchiveStatusNames() []string {
 }
 
 // parkedStatuses is the single source of truth for the "parked" status group —
-// non-terminal statuses that are not actionable right now but not abandoned.
-// Unlike open/closed this cannot be derived from the Archive flag, so it is
-// enumerated here once. Today this is {deferred}.
+// open statuses that are not actionable right now but not abandoned. Unlike
+// open/closed this cannot be derived from the Closed flag, so it is enumerated
+// here once. Today this is {deferred}.
 var parkedStatuses = []string{"deferred"}
 
-// OpenStatusNames returns the names of all non-archive statuses — the "open"
-// status group. Derived from DefaultStatuses (Archive == false), so it stays
-// correct if the Archive flags ever change. Today this is
-// {in-progress, todo, draft, deferred}.
+// OpenStatusNames returns the names of all non-closed statuses — the "open"
+// status group, and the exact complement of ClosedStatusNames. Derived from
+// DefaultStatuses (Closed == false), so it stays correct if the Closed flags
+// ever change. Today this is {in-progress, todo, draft, deferred}.
 func (c *Config) OpenStatusNames() []string {
 	var names []string
 	for _, s := range DefaultStatuses {
-		if !s.Archive {
+		if !s.Closed {
 			names = append(names, s.Name)
 		}
 	}
@@ -412,7 +428,7 @@ func (c *Config) OpenStatusNames() []string {
 
 // ParkedStatusNames returns the names of the "parked" status group — a
 // defensive copy of the canonical parkedStatuses set so callers cannot mutate
-// the source. Parked statuses are non-archive (a subset of the open group).
+// the source. Parked statuses are open (a subset of the open group).
 func (c *Config) ParkedStatusNames() []string {
 	names := make([]string, len(parkedStatuses))
 	copy(names, parkedStatuses)
@@ -464,7 +480,7 @@ type NibColors struct {
 	StatusColor   string
 	TypeColor     string
 	PriorityColor string
-	IsArchive     bool
+	IsClosed      bool
 }
 
 // GetNibColors returns the resolved colors for a nib based on its status, type, and priority.
@@ -473,13 +489,13 @@ func (c *Config) GetNibColors(status, typeName, priority string) NibColors {
 		StatusColor:   "gray",
 		TypeColor:     "",
 		PriorityColor: "",
-		IsArchive:     false,
+		IsClosed:      false,
 	}
 
 	if statusCfg := c.GetStatus(status); statusCfg != nil {
 		colors.StatusColor = statusCfg.Color
 	}
-	colors.IsArchive = c.IsArchiveStatus(status)
+	colors.IsClosed = c.IsClosedStatus(status)
 
 	if typeCfg := c.GetType(typeName); typeCfg != nil {
 		colors.TypeColor = typeCfg.Color

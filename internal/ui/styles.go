@@ -159,14 +159,14 @@ var Header = lipgloss.NewStyle().
 	MarginBottom(1)
 
 // RenderStatusWithColor returns a styled status badge using the specified color.
-func RenderStatusWithColor(status, color string, isArchiveStatus bool) string {
+func RenderStatusWithColor(status, color string, isClosedStatus bool) string {
 	c := ResolveColor(color)
 	style := lipgloss.NewStyle().
 		Foreground(lipgloss.Color("#fff")).
 		Background(c).
 		Padding(0, 1)
 
-	if !isArchiveStatus {
+	if !isClosedStatus {
 		style = style.Bold(true)
 	}
 
@@ -174,11 +174,11 @@ func RenderStatusWithColor(status, color string, isArchiveStatus bool) string {
 }
 
 // RenderStatusTextWithColor returns styled status text (for tables) using the specified color.
-func RenderStatusTextWithColor(status, color string, isArchiveStatus bool) string {
+func RenderStatusTextWithColor(status, color string, isClosedStatus bool) string {
 	c := ResolveColor(color)
 	style := lipgloss.NewStyle().Foreground(c)
 
-	if !isArchiveStatus {
+	if !isClosedStatus {
 		style = style.Bold(true)
 	}
 
@@ -325,7 +325,7 @@ type NibRowConfig struct {
 	TypeColor     string
 	PriorityColor string
 	Priority      string // Priority value (critical, high, normal, low)
-	IsArchive     bool
+	IsClosed      bool
 	MaxTitleWidth int  // 0 means no truncation
 	ShowCursor    bool // Show selection cursor
 	IsSelected    bool
@@ -498,7 +498,7 @@ func RenderNibRow(id, status, typeName, title string, cfg NibRowConfig) string {
 	if cfg.Dimmed {
 		statusCol = statusStyle.Render(Muted.Render(statusStr))
 	} else {
-		statusCol = statusStyle.Render(RenderStatusTextWithColor(statusStr, cfg.StatusColor, cfg.IsArchive))
+		statusCol = statusStyle.Render(RenderStatusTextWithColor(statusStr, cfg.StatusColor, cfg.IsClosed))
 	}
 
 	// Tags column (optional)

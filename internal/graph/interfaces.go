@@ -113,12 +113,12 @@ type NibValidator interface {
 }
 
 // BlockingChecker provides blocking-relationship queries.
-// Both methods consider only active (non-completed, non-scrapped) blockers.
+// Both methods consider only open (non-closed) blockers.
 type BlockingChecker interface {
-	// IsBlocked returns true if the nib has active (non-completed, non-scrapped) blockers.
+	// IsBlocked returns true if the nib has open blockers.
 	IsBlocked(nibID string) bool
-	// IsBlocking returns true if the nib is actively blocking non-resolved nibs.
-	// The nib itself must also be non-resolved to be considered actively blocking.
+	// IsBlocking returns true if the nib is actively blocking open nibs.
+	// The nib itself must also be open to be considered actively blocking.
 	IsBlocking(nibID string) bool
 }
 

@@ -170,7 +170,7 @@ type statusGroupCatalog struct {
 func statusGroupCatalogEntries(cfg *config.Config) []statusGroupCatalog {
 	return []statusGroupCatalog{
 		{statusGroupOpen, cfg.OpenStatusNames()},
-		{statusGroupClosed, cfg.ArchiveStatusNames()},
+		{statusGroupClosed, cfg.ClosedStatusNames()},
 		{statusGroupParked, cfg.ParkedStatusNames()},
 	}
 }

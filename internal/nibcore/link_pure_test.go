@@ -3,8 +3,14 @@ package nibcore
 import (
 	"testing"
 
+	"github.com/alphaleonis/nibs/internal/config"
 	"github.com/alphaleonis/nibs/internal/nib"
 )
+
+// isClosedForTest is the closed-status predicate the pure map queries take. It
+// is the real config definition, so these tests exercise the same closed set
+// the Core wrappers supply instead of a private copy that could drift from it.
+var isClosedForTest = config.Default().IsClosedStatus
 
 func TestFindIncomingLinksInMap(t *testing.T) {
 	nibs := map[string]*nib.Nib{
@@ -16,7 +22,7 @@ func TestFindIncomingLinksInMap(t *testing.T) {
 
 	t.Run("finds blocked_by incoming links", func(t *testing.T) {
 		// "a" is in b's BlockedBy, so a has an incoming blocked_by link from b
-		links := FindIncomingLinksInMap(nibs, "a")
+		links := findIncomingLinksInMap(nibs, "a")
 		var blockedByLinks []nib.IncomingLink
 		for _, l := range links {
 			if l.LinkType == "blocked_by" {
@@ -33,7 +39,7 @@ func TestFindIncomingLinksInMap(t *testing.T) {
 
 	t.Run("finds parent incoming links", func(t *testing.T) {
 		// "a" has parent "c", so c has an incoming parent link from a
-		links := FindIncomingLinksInMap(nibs, "c")
+		links := findIncomingLinksInMap(nibs, "c")
 		if len(links) != 1 {
 			t.Fatalf("expected 1 incoming link to c, got %d", len(links))
 		}
@@ -43,14 +49,14 @@ func TestFindIncomingLinksInMap(t *testing.T) {
 	})
 
 	t.Run("returns empty for nib with no incoming links", func(t *testing.T) {
-		links := FindIncomingLinksInMap(nibs, "b")
+		links := findIncomingLinksInMap(nibs, "b")
 		if len(links) != 0 {
 			t.Errorf("expected 0 incoming links to b, got %d", len(links))
 		}
 	})
 
 	t.Run("returns empty for nonexistent target", func(t *testing.T) {
-		links := FindIncomingLinksInMap(nibs, "nonexistent")
+		links := findIncomingLinksInMap(nibs, "nonexistent")
 		if len(links) != 0 {
 			t.Errorf("expected 0 incoming links, got %d", len(links))
 		}
@@ -106,9 +112,9 @@ func TestIsBlockedInMap(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			got := IsBlockedInMap(nibs, tt.nibID)
+			got := isBlockedInMap(nibs, tt.nibID, isClosedForTest)
 			if got != tt.want {
-				t.Errorf("IsBlockedInMap(%q) = %v, want %v", tt.nibID, got, tt.want)
+				t.Errorf("isBlockedInMap(%q) = %v, want %v", tt.nibID, got, tt.want)
 			}
 		})
 	}
@@ -127,7 +133,7 @@ func TestFindActiveBlockersInMap(t *testing.T) {
 	}
 
 	t.Run("returns only active blockers", func(t *testing.T) {
-		blockers := FindActiveBlockersInMap(nibs, "target")
+		blockers := findActiveBlockersInMap(nibs, "target", isClosedForTest)
 		if len(blockers) != 2 {
 			t.Fatalf("expected 2 active blockers, got %d", len(blockers))
 		}
@@ -141,14 +147,14 @@ func TestFindActiveBlockersInMap(t *testing.T) {
 	})
 
 	t.Run("returns nil for nib with no blockers", func(t *testing.T) {
-		blockers := FindActiveBlockersInMap(nibs, "no-blockers")
+		blockers := findActiveBlockersInMap(nibs, "no-blockers", isClosedForTest)
 		if len(blockers) != 0 {
 			t.Errorf("expected 0 blockers, got %d", len(blockers))
 		}
 	})
 
 	t.Run("returns nil for nonexistent nib", func(t *testing.T) {
-		blockers := FindActiveBlockersInMap(nibs, "nonexistent")
+		blockers := findActiveBlockersInMap(nibs, "nonexistent", isClosedForTest)
 		if blockers != nil {
 			t.Errorf("expected nil, got %v", blockers)
 		}
@@ -183,9 +189,9 @@ func TestIsBlockingInMap(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			got := IsBlockingInMap(nibs, tt.nibID)
+			got := isBlockingInMap(nibs, tt.nibID, isClosedForTest)
 			if got != tt.want {
-				t.Errorf("IsBlockingInMap(%q) = %v, want %v", tt.nibID, got, tt.want)
+				t.Errorf("isBlockingInMap(%q) = %v, want %v", tt.nibID, got, tt.want)
 			}
 		})
 	}

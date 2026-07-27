@@ -109,7 +109,7 @@ func truncateSnippet(s string, max int) string {
 }
 
 // findPossibleDuplicates scans the full nib set for CLOSED nibs (completed or
-// scrapped, per cfg.IsArchiveStatus) that likely duplicate a just-created nib.
+// scrapped, per cfg.IsClosedStatus) that likely duplicate a just-created nib.
 // The new nib itself is excluded by id, and open nibs are never returned (the
 // day-to-day list already surfaces those). A match is an equal/contained
 // normalized title or an exact non-empty slug equality. Results are sorted by id
@@ -120,7 +120,7 @@ func findPossibleDuplicates(candidates []*nib.Nib, cfg *config.Config, newID, ne
 		if c == nil || c.ID == newID {
 			continue
 		}
-		if !cfg.IsArchiveStatus(c.Status) {
+		if !cfg.IsClosedStatus(c.Status) {
 			continue
 		}
 		slugMatch := newSlug != "" && c.Slug == newSlug

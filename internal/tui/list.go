@@ -86,7 +86,7 @@ func (d itemDelegate) Render(w io.Writer, m list.Model, index int, listItem list
 			TypeColor:     colors.TypeColor,
 			PriorityColor: colors.PriorityColor,
 			Priority:      item.nib.Priority,
-			IsArchive:     colors.IsArchive,
+			IsClosed:      colors.IsClosed,
 			MaxTitleWidth: maxTitleWidth,
 			ShowCursor:    true,
 			IsSelected:    index == m.Index(),
@@ -207,9 +207,9 @@ func (m listModel) loadNibs() tea.Msg {
 			filter.Tags = []string{m.tagFilter}
 		}
 		if m.hideCompleted {
-			// The hide-completed toggle is the *archive* set — derive it from
-			// the canonical archive predicate so it tracks config, not a literal.
-			filter.ExcludeStatus = m.config.ArchiveStatusNames()
+			// The hide-completed toggle is the *closed* set — derive it from
+			// the canonical closed predicate so it tracks config, not a literal.
+			filter.ExcludeStatus = m.config.ClosedStatusNames()
 		}
 	}
 

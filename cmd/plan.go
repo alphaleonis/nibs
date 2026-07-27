@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"strings"
 
+	"github.com/alphaleonis/nibs/internal/config"
 	"github.com/alphaleonis/nibs/internal/graph"
 	"github.com/alphaleonis/nibs/internal/mdsection"
 	"github.com/alphaleonis/nibs/internal/nib"
@@ -92,7 +93,7 @@ func buildPlan(ctx context.Context, resolver *graph.Resolver, parentID string, a
 
 	// Filter if active only
 	if activeOnly {
-		children = filterActive(children)
+		children = filterActive(children, resolver.Reader.Config())
 	}
 
 	// Build plan items
@@ -153,11 +154,11 @@ func checkboxMark(line string) (byte, bool) {
 	return t[3], true
 }
 
-// filterActive removes completed and scrapped nibs.
-func filterActive(nibs []*nib.Nib) []*nib.Nib {
+// filterActive removes closed (completed and scrapped) nibs.
+func filterActive(nibs []*nib.Nib, cfg *config.Config) []*nib.Nib {
 	var result []*nib.Nib
 	for _, b := range nibs {
-		if !nib.IsResolvedStatus(b.Status) {
+		if !cfg.IsClosedStatus(b.Status) {
 			result = append(result, b)
 		}
 	}

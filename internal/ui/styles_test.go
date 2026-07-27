@@ -425,7 +425,7 @@ func TestShortStatus_NoCollisions(t *testing.T) {
 
 // TestRenderNibRow_DeferredStatusCell locks in that a "deferred" nib renders a
 // visible, config-colored status cell — never blank, never the "?" unknown
-// marker, and never dimmed like an archived nib. This guards the full TUI render chain
+// marker, and never dimmed like a closed nib. This guards the full TUI render chain
 // (GetNibColors -> ShortStatus -> RenderStatusTextWithColor) against a
 // regression that would drop the status glyph.
 func TestRenderNibRow_DeferredStatusCell(t *testing.T) {
@@ -433,9 +433,9 @@ func TestRenderNibRow_DeferredStatusCell(t *testing.T) {
 	nc := cfg.GetNibColors("deferred", "task", "")
 
 	// Config drives the render inputs: deferred is a real (non-fallback) color
-	// and, crucially, is NOT an archive status (so the row is not dimmed).
-	if nc.IsArchive {
-		t.Fatal("deferred must be non-archive so its row is not dimmed")
+	// and, crucially, is NOT a closed status (so the row is not dimmed).
+	if nc.IsClosed {
+		t.Fatal("deferred must be open so its row is not dimmed")
 	}
 	if nc.StatusColor != "gray" {
 		t.Errorf("deferred status colour = %q, want %q", nc.StatusColor, "gray")
@@ -453,7 +453,7 @@ func TestRenderNibRow_DeferredStatusCell(t *testing.T) {
 			MaxTitleWidth: 60,
 			StatusColor:   nc.StatusColor,
 			TypeColor:     nc.TypeColor,
-			IsArchive:     nc.IsArchive,
+			IsClosed:      nc.IsClosed,
 		})
 		stripped := ansi.Strip(row)
 		if !strings.Contains(stripped, "F") {
@@ -469,7 +469,7 @@ func TestRenderNibRow_DeferredStatusCell(t *testing.T) {
 			MaxTitleWidth: 60,
 			StatusColor:   nc.StatusColor,
 			TypeColor:     nc.TypeColor,
-			IsArchive:     nc.IsArchive,
+			IsClosed:      nc.IsClosed,
 			UseFullNames:  true,
 		})
 		stripped := ansi.Strip(row)

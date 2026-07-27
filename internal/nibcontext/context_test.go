@@ -5,8 +5,14 @@ import (
 	"math"
 	"testing"
 
+	"github.com/alphaleonis/nibs/internal/config"
 	"github.com/alphaleonis/nibs/internal/nib"
 )
+
+// cfgForTest is the config BuildSummary takes. It is the real default config,
+// so these tests exercise the same closed set the CLI does instead of a private
+// copy that could drift from it.
+var cfgForTest = config.Default()
 
 // makeNib is a test helper for building nibs with common fields.
 func makeNib(id, typ, status, estimate, parent string) *nib.Nib {
@@ -152,7 +158,7 @@ func TestBuildSummary(t *testing.T) {
 	}
 
 	t.Run("scoped to milestone", func(t *testing.T) {
-		sum := BuildSummary(allNibs, "m1")
+		sum := BuildSummary(allNibs, "m1", cfgForTest)
 
 		// Milestone
 		if sum.Root == nil || sum.Root.ID != "m1" {
@@ -209,7 +215,7 @@ func TestBuildSummary(t *testing.T) {
 	})
 
 	t.Run("no arg shows overview with containers", func(t *testing.T) {
-		sum := BuildSummary(allNibs, "")
+		sum := BuildSummary(allNibs, "", cfgForTest)
 
 		if sum.Root != nil {
 			t.Errorf("expected nil root, got %v", sum.Root)
@@ -254,7 +260,7 @@ func TestBuildSummary_ResearchIsLeafWork(t *testing.T) {
 		makeNib("t1", "task", "todo", "s", "e1"),
 	}
 
-	sum := BuildSummary(allNibs, "m1")
+	sum := BuildSummary(allNibs, "m1", cfgForTest)
 
 	// Progress: r1(3) + r2(1) + t1(1) = 5 total, 0 completed
 	if sum.Progress.TotalWeight != 5 {
@@ -287,7 +293,7 @@ func TestBuildSummary_ResearchIsLeafWork(t *testing.T) {
 	}
 
 	// Container progress (overview mode) must also include research weight
-	overview := BuildSummary(allNibs, "")
+	overview := BuildSummary(allNibs, "", cfgForTest)
 	if len(overview.Containers) != 1 {
 		t.Fatalf("Containers count = %d, want 1", len(overview.Containers))
 	}
@@ -405,7 +411,7 @@ func TestBuildSummary_ActivePhaseByOrder(t *testing.T) {
 		makeNibWithOrder("epic-b", "epic", "in-progress", "", "ms", "a1"),
 	}
 
-	sum := BuildSummary(allNibs, "ms")
+	sum := BuildSummary(allNibs, "ms", cfgForTest)
 
 	if sum.ActivePhase == nil {
 		t.Fatal("ActivePhase is nil")
@@ -427,7 +433,7 @@ func TestBuildSummary_NextTasksSortedByOrder(t *testing.T) {
 		makeNibWithOrder("t-b", "task", "todo", "s", "ep", "a2"),
 	}
 
-	sum := BuildSummary(allNibs, "ms")
+	sum := BuildSummary(allNibs, "ms", cfgForTest)
 
 	ids := nibRefIDs(sum.NextTasks)
 	want := []string{"t-a", "t-b", "t-c"}
@@ -453,7 +459,7 @@ func TestBuildSummary_ActiveTasksSortedByOrder(t *testing.T) {
 		makeNibWithOrder("at-b", "bug", "in-progress", "s", "ep", "a2"),
 	}
 
-	sum := BuildSummary(allNibs, "ms")
+	sum := BuildSummary(allNibs, "ms", cfgForTest)
 
 	ids := nibRefIDs(sum.ActiveTasks)
 	want := []string{"at-a", "at-b", "at-c"}
@@ -481,7 +487,7 @@ func TestBuildSummary_JSONContract(t *testing.T) {
 	next := makeNib("t2", "task", "todo", "s", "ep")
 	next.Title = "Next Task"
 
-	sum := BuildSummary([]*nib.Nib{m, ep, task, next}, "ms")
+	sum := BuildSummary([]*nib.Nib{m, ep, task, next}, "ms", cfgForTest)
 
 	data, err := json.Marshal(sum)
 	if err != nil {
@@ -639,7 +645,7 @@ func TestBuildSummary_Overview(t *testing.T) {
 		makeNib("u1", "task", "in-progress", "m", ""),
 	}
 
-	sum := BuildSummary(allNibs, "")
+	sum := BuildSummary(allNibs, "", cfgForTest)
 
 	// Should have no root (overview mode)
 	if sum.Root != nil {
@@ -753,7 +759,7 @@ func TestBuildSummary_OverviewJSON(t *testing.T) {
 	m1 := makeNib("m1", "milestone", "in-progress", "", "")
 	t1 := makeNib("t1", "task", "todo", "s", "m1")
 
-	sum := BuildSummary([]*nib.Nib{m1, t1}, "")
+	sum := BuildSummary([]*nib.Nib{m1, t1}, "", cfgForTest)
 
 	data, err := json.Marshal(sum)
 	if err != nil {
@@ -809,7 +815,7 @@ func TestBuildSummary_NonMilestoneRoot(t *testing.T) {
 		makeNib("t3", "task", "todo", "l", "e1"),
 	}
 
-	sum := BuildSummary(allNibs, "e1")
+	sum := BuildSummary(allNibs, "e1", cfgForTest)
 
 	// Root should be the epic, not nil
 	if sum.Root == nil {

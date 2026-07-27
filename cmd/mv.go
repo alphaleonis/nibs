@@ -118,7 +118,7 @@ Use --children-of "" to reorder root-level (no-parent) siblings.`,
 				return cmdError(mvJSON, output.ErrFileError, "failed to reorder children: %v", err)
 			}
 			if mvJSON {
-				return output.SuccessMultiple(filterResolvedBlockers(results, app.Core))
+				return output.SuccessMultiple(filterClosedBlockers(results, app.Core))
 			}
 			fmt.Println(ui.Success.Render(fmt.Sprintf("Reordered %d children", len(results))))
 			return nil
@@ -153,7 +153,7 @@ Use --children-of "" to reorder root-level (no-parent) siblings.`,
 				return cmdError(mvJSON, output.ErrFileError, "failed to reorder siblings: %v", err)
 			}
 			if mvJSON {
-				return output.SuccessMultiple(filterResolvedBlockers(results, app.Core))
+				return output.SuccessMultiple(filterClosedBlockers(results, app.Core))
 			}
 			fmt.Println(ui.Success.Render(fmt.Sprintf("Reordered %d siblings", len(results))))
 			return nil

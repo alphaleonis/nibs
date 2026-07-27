@@ -3,6 +3,7 @@ package nibcore
 import (
 	"testing"
 
+	"github.com/alphaleonis/nibs/internal/config"
 	"github.com/alphaleonis/nibs/internal/nib"
 )
 
@@ -675,7 +676,11 @@ func TestFindActiveBlockers(t *testing.T) {
 	})
 }
 
-func TestIsResolvedStatus(t *testing.T) {
+// TestCoreClosedPredicate covers the seam the pure link queries depend on: the
+// Core wrappers hand them the config-derived closed set, never a list of their
+// own. It runs against a config-less Core too, since several tests build one
+// and the predicate must still answer (Config.IsClosedStatus is receiver-free).
+func TestCoreClosedPredicate(t *testing.T) {
 	tests := []struct {
 		status string
 		want   bool
@@ -685,14 +690,22 @@ func TestIsResolvedStatus(t *testing.T) {
 		{"todo", false},
 		{"in-progress", false},
 		{"draft", false},
+		{"deferred", false},
 		{"", false},
 	}
 
-	for _, tt := range tests {
-		t.Run(tt.status, func(t *testing.T) {
-			got := isResolvedStatus(tt.status)
-			if got != tt.want {
-				t.Errorf("isResolvedStatus(%q) = %v, want %v", tt.status, got, tt.want)
+	cores := map[string]*Core{
+		"with config": New(t.TempDir(), config.Default()),
+		"config-less": New(t.TempDir(), nil),
+	}
+
+	for name, core := range cores {
+		t.Run(name, func(t *testing.T) {
+			isClosed := core.closedPredicate()
+			for _, tt := range tests {
+				if got := isClosed(tt.status); got != tt.want {
+					t.Errorf("closedPredicate()(%q) = %v, want %v", tt.status, got, tt.want)
+				}
 			}
 		})
 	}

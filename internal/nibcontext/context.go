@@ -3,6 +3,7 @@ package nibcontext
 import (
 	"strings"
 
+	"github.com/alphaleonis/nibs/internal/config"
 	"github.com/alphaleonis/nibs/internal/estimate"
 	"github.com/alphaleonis/nibs/internal/mdsection"
 	"github.com/alphaleonis/nibs/internal/nib"
@@ -50,7 +51,15 @@ type Progress struct {
 // BuildSummary constructs a context summary for a specific nib and its descendants.
 // If rootID is non-empty, scopes to that nib's descendants (works for any type).
 // If empty, summarizes all active work with a warning.
-func BuildSummary(allNibs []*nib.Nib, rootID string) Summary {
+//
+// cfg supplies the closed-status definition (Config.IsClosedStatus) for the
+// active-milestone filter below, which is this file's only config-derived
+// status test. Everything else here names statuses directly: CalcProgress needs
+// completed and scrapped apart (scrapped leaves the denominator, completed
+// enters the numerator), which a boolean predicate cannot express, and the
+// epic/task selectors match "in-progress"/"todo", which are not closed statuses
+// at all.
+func BuildSummary(allNibs []*nib.Nib, rootID string, cfg *config.Config) Summary {
 	byID := indexByID(allNibs)
 
 	sum := Summary{
@@ -69,7 +78,7 @@ func BuildSummary(allNibs []*nib.Nib, rootID string) Summary {
 		var milestones []*nib.Nib
 		for _, n := range allNibs {
 			// Classification check — exempt: empty type is never milestone/epic.
-			if n.Type == "milestone" && !nib.IsResolvedStatus(n.Status) {
+			if n.Type == "milestone" && !cfg.IsClosedStatus(n.Status) {
 				milestones = append(milestones, n)
 			}
 		}

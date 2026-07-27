@@ -115,7 +115,7 @@ func (d linkDelegate) Render(w io.Writer, m list.Model, index int, listItem list
 			TypeColor:     colors.TypeColor,
 			PriorityColor: colors.PriorityColor,
 			Priority:      link.nib.Priority,
-			IsArchive:     colors.IsArchive,
+			IsClosed:      colors.IsClosed,
 			MaxTitleWidth: maxTitleWidth,
 			ShowCursor:    false,
 			IsSelected:    false,
@@ -535,8 +535,8 @@ func (m detailModel) renderHeader() string {
 	if statusCfg != nil {
 		statusColor = statusCfg.Color
 	}
-	isArchive := m.config.IsArchiveStatus(m.nib.Status)
-	status := ui.RenderStatusWithColor(m.nib.Status, statusColor, isArchive)
+	isClosed := m.config.IsClosedStatus(m.nib.Status)
+	status := ui.RenderStatusWithColor(m.nib.Status, statusColor, isClosed)
 
 	// Estimate badge
 	var estimate string
@@ -608,11 +608,11 @@ func (m detailModel) resolveAllLinks() []resolvedLink {
 	var links []resolvedLink
 	ctx := context.Background()
 
-	// Filter out resolved nibs (completed/scrapped) from blocking relationships.
-	// This is the *resolved/terminal* set — derive it from the canonical
-	// resolved predicate so it tracks nib semantics, not a literal.
+	// Filter out closed nibs (completed/scrapped) from blocking relationships.
+	// This is the *closed* set — derive it from config so it tracks the status
+	// model, not a literal.
 	activeOnly := &model.NibFilter{
-		ExcludeStatus: nib.ResolvedStatusNames(),
+		ExcludeStatus: m.config.ClosedStatusNames(),
 	}
 
 	// Resolve outgoing links via backend
