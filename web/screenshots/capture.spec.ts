@@ -136,6 +136,22 @@ test("filter box — invalid token marker over table rows", async ({ page }) => 
   await shot(page, "filter-invalid-marker-over-table");
 });
 
+// Responsive filter band: the query box should be wide, and below a breakpoint the
+// facet dropdowns should stack BELOW the box (box takes the full row) rather than
+// squeezing beside it. Captured at a wide, a mid, and a narrow viewport with a long
+// query filled so the box width is actually exercised. Cropped to the filter band.
+for (const w of [1280, 760, 560]) {
+  test(`filter band — responsive layout @${w}px`, async ({ page }) => {
+    await page.setViewportSize({ width: w, height: 760 });
+    await openApp(page);
+    const input = page.getByTestId("filter-keyword");
+    await input.click();
+    await input.fill("type:bug,task -tags:wip status:todo");
+    await page.keyboard.press("Escape"); // close the completion popover so stacked facets are visible
+    await page.locator('[role="search"]').screenshot({ path: join(OUT, `filter-band-${w}.png`) });
+  });
+}
+
 test("detail panel", async ({ page }) => {
   await openApp(page);
   await page.locator("tr[data-nib-id]").first().locator('[data-action="title"]').click();

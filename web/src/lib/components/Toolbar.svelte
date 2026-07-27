@@ -755,9 +755,15 @@
 <div class="relative flex flex-wrap items-center gap-2 border-b border-border px-6 py-2" role="search" aria-label="Filters" style="z-index: var(--z-toolbar);">
   <!-- Keyword search. Input is a bare primitive with no adornment slot, so wrap
        it in a relative container with an absolutely-positioned left icon and a
-       right clear button, padding the input to make room for both. Capped at
-       ~400px (no flex-1) so the facet dropdowns cluster next to it on the left. -->
-  <div class="relative isolate w-[400px] max-w-full min-w-0">
+       right clear button, padding the input to make room for both. The box now
+       holds full `field:value` condition strings, so it wants width: on md+ it
+       grows (flex-1, floored/capped so it stays readable without hogging the row)
+       and the facet dropdowns sit to its right, wrapping below only when they no
+       longer fit. Below md it takes the WHOLE row (w-full) so the dropdowns stack
+       onto the line(s) below instead of squeezing it. The overlay backdrop +
+       token layer are inset-0 on this wrapper, so they track its width at any
+       size (scroll-sync is width-independent). -->
+  <div class="relative isolate w-full min-w-0 md:w-auto md:flex-1 md:min-w-[22rem] md:max-w-[36rem]">
     <ListFilter
       size={16}
       class="pointer-events-none absolute left-2.5 top-1/2 z-20 -translate-y-1/2 text-muted-foreground"
