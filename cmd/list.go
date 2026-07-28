@@ -238,12 +238,14 @@ Search Syntax (--search/-S):
 		// The status half is shared: this filter and the projected `ready` field
 		// both read config.Startable, so they narrow by status from one
 		// definition rather than two — TestReadyProjectionAndFilterAgree holds
-		// them to it. The blocker half is NOT shared, and the two surfaces can
-		// still disagree there: the field walks BlockedByIds, which resolves
-		// each blocker through Reader.Get and so accepts a short id, while this
-		// filter goes through Core.IsBlocked, an exact map lookup that does not.
-		// A nib whose `blocked_by` names its blocker by short id projects
-		// ready:false and is still listed here.
+		// them to it. The blocker half reaches the same answer through two
+		// implementations of one rule: the field resolves each `blocked_by`
+		// entry through Reader.Get, this filter through Core.IsBlocked →
+		// findActiveBlockersInMap → normalizeIDInMap, and both take the exact id
+		// first and then the configured prefix prepended. So a nib whose
+		// `blocked_by` names its blocker by short id is withheld from both, and
+		// the same test drives a blocker under both spellings to keep the two
+		// copies of the rule together.
 		//
 		// An empty startable set is rejected below rather than filtered on: an
 		// empty include list makes filterByField a no-op

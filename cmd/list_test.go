@@ -484,6 +484,22 @@ func setupListCobraTest(t *testing.T, files map[string]string) string {
 	return nibsDir
 }
 
+// setupListCobraTestWithPrefix is setupListCobraTest plus a .nibs.yml carrying
+// an explicit prefix, written beside the data directory. Tests that need the
+// short (prefix-less) spelling of an id use it so the prefix under test is the
+// fixture's own rather than whatever project config the test cwd happens to sit
+// under. Returns the data directory and the config path to pass as --config.
+func setupListCobraTestWithPrefix(t *testing.T, prefix string, files map[string]string) (nibsDir, cfgPath string) {
+	t.Helper()
+	nibsDir = setupListCobraTest(t, files)
+	cfgPath = filepath.Join(filepath.Dir(nibsDir), ".nibs.yml")
+	body := fmt.Sprintf("nibs:\n  prefix: %s\n  id_length: 4\n", prefix)
+	if err := os.WriteFile(cfgPath, []byte(body), 0644); err != nil {
+		t.Fatal(err)
+	}
+	return nibsDir, cfgPath
+}
+
 // mentionsFixture returns a small nib-file map used by the list mention-flag
 // tests. a1 mentions b2 and c3; d4 mentions a1. Statuses vary so --status
 // composition can be exercised.
@@ -685,6 +701,20 @@ func projectionFixture() map[string]string {
 	}
 }
 
+// runListCmdWithConfig is runListCmd with an explicit --config, for tests whose
+// fixture supplies its own project config (see setupListCobraTestWithPrefix).
+// --nibs-path is still passed so the data directory does not depend on how the
+// config file resolves it.
+func runListCmdWithConfig(t *testing.T, cfgPath, nibsDir string, args ...string) (string, error) {
+	t.Helper()
+	rootCmd.SetArgs(append([]string{"--config", cfgPath, "--nibs-path", nibsDir, "list"}, args...))
+	var execErr error
+	out := captureStdout(t, func() {
+		execErr = rootCmd.Execute()
+	})
+	return out, execErr
+}
+
 // runListCmd drives `nibs list <args...>` through the full Cobra pipeline
 // against nibsDir and returns captured stdout plus the Execute error.
 func runListCmd(t *testing.T, nibsDir string, args ...string) (string, error) {
@@ -861,26 +891,40 @@ func readyAgreementFrontMatter(title, status, extra string) string {
 // both regressed together; comparing each to the table means reverting either
 // one on its own fails here.
 //
-// Each status gets an unblocked nib and a blocked twin, so the status half and
-// the blocker half are exercised for every status: the twin's blocker is open,
-// so it holds whatever the twin's own status is.
+// Each status gets an unblocked nib and two blocked twins, so the status half
+// and the blocker half are exercised for every status: the twins' blocker is
+// open, so it holds whatever the twins' own status is. The two twins differ
+// only in how they spell that one blocker — `nibs-bkr` in full and `bkr` in
+// short form — because the blocker half is where the two surfaces resolve ids,
+// and a table that only ever spelled the blocker in full could not tell an
+// exact map lookup from one that normalizes.
+//
+// The prefix is supplied by a fixture .nibs.yml passed as --config rather than
+// inherited from whatever project config the test cwd sits under, so "bkr" is
+// a genuinely short id here no matter where the suite runs.
 func TestReadyProjectionAndFilterAgree(t *testing.T) {
+	// Carries the configured prefix, so the same blocker has both a full and a
+	// short spelling.
+	const blockerID = "nibs-bkr"
 	fixture := map[string]string{
-		"bkr--blocker.md": "---\ntitle: Blocker\nstatus: todo\ntype: task\n---\n",
+		blockerID + "--blocker.md": "---\ntitle: Blocker\nstatus: todo\ntype: task\n---\n",
 	}
 	unblockedID := make([]string, len(readyAgreementCases))
 	blockedID := make([]string, len(readyAgreementCases))
+	shortBlockedID := make([]string, len(readyAgreementCases))
 	for i, tc := range readyAgreementCases {
 		unblockedID[i] = fmt.Sprintf("u%d", i)
 		blockedID[i] = fmt.Sprintf("b%d", i)
+		shortBlockedID[i] = fmt.Sprintf("s%d", i)
 		fixture[unblockedID[i]+"--unblocked.md"] = readyAgreementFrontMatter("Unblocked", tc.status, "")
-		fixture[blockedID[i]+"--blocked.md"] = readyAgreementFrontMatter("Blocked", tc.status, "blocked_by: [bkr]\n")
+		fixture[blockedID[i]+"--blocked.md"] = readyAgreementFrontMatter("Blocked", tc.status, "blocked_by: ["+blockerID+"]\n")
+		fixture[shortBlockedID[i]+"--short-blocked.md"] = readyAgreementFrontMatter("ShortBlocked", tc.status, "blocked_by: [bkr]\n")
 	}
-	nibsDir := setupListCobraTest(t, fixture)
+	nibsDir, cfgPath := setupListCobraTestWithPrefix(t, "nibs-", fixture)
 
 	// Surface 1: the projected `ready` field over every nib, whatever its
 	// status (--all, so the open default hides none of them).
-	projOut, err := runListCmd(t, nibsDir, "--all", "--json", "-f", "id,ready")
+	projOut, err := runListCmdWithConfig(t, cfgPath, nibsDir, "--all", "--json", "-f", "id,ready")
 	if err != nil {
 		t.Fatalf("list --all --json failed: %v\nout: %s", err, projOut)
 	}
@@ -906,7 +950,7 @@ func TestReadyProjectionAndFilterAgree(t *testing.T) {
 	// The flag state Cobra accumulated above has to be cleared first, or this
 	// run would inherit --all/--json/-f and stop being a --ready run.
 	resetListFlags()
-	filterOut, err := runListCmd(t, nibsDir, "--ready", "-q")
+	filterOut, err := runListCmdWithConfig(t, cfgPath, nibsDir, "--ready", "-q")
 	if err != nil {
 		t.Fatalf("list --ready failed: %v\nout: %s", err, filterOut)
 	}
@@ -928,9 +972,13 @@ func TestReadyProjectionAndFilterAgree(t *testing.T) {
 			}{
 				{unblockedID[i], tc.want, "unblocked"},
 				// An active blocker withholds the nib whatever its status, so
-				// the twin is never ready — including for todo, where the
+				// the twins are never ready — including for todo, where the
 				// status half alone would say yes.
 				{blockedID[i], false, "blocked by an open nib"},
+				// Same blocker, named by its short id. Both surfaces have to
+				// resolve it, or the nib is withheld by one and handed out by
+				// the other.
+				{shortBlockedID[i], false, "blocked by an open nib named by short id"},
 			} {
 				got, listed := projReady[probe.id], inFilter[probe.id]
 				if _, ok := projReady[probe.id]; !ok {

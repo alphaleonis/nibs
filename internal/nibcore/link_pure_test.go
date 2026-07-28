@@ -123,7 +123,7 @@ func TestIsBlockedInMap(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			got := isBlockedInMap(nibs, tt.nibID, releasesDependentsForTest)
+			got := isBlockedInMap(nibs, tt.nibID, "", releasesDependentsForTest)
 			if got != tt.want {
 				t.Errorf("isBlockedInMap(%q) = %v, want %v", tt.nibID, got, tt.want)
 			}
@@ -147,7 +147,7 @@ func TestFindActiveBlockersInMap(t *testing.T) {
 	// The deferred blocker is the discriminating case: it is closed, so the
 	// closed predicate would drop it, but it has not released its dependents.
 	t.Run("returns only active blockers, deferred included", func(t *testing.T) {
-		blockers := findActiveBlockersInMap(nibs, "target", releasesDependentsForTest)
+		blockers := findActiveBlockersInMap(nibs, "target", "", releasesDependentsForTest)
 		if len(blockers) != 3 {
 			t.Fatalf("expected 3 active blockers, got %d", len(blockers))
 		}
@@ -164,18 +164,70 @@ func TestFindActiveBlockersInMap(t *testing.T) {
 	})
 
 	t.Run("returns nil for nib with no blockers", func(t *testing.T) {
-		blockers := findActiveBlockersInMap(nibs, "no-blockers", releasesDependentsForTest)
+		blockers := findActiveBlockersInMap(nibs, "no-blockers", "", releasesDependentsForTest)
 		if len(blockers) != 0 {
 			t.Errorf("expected 0 blockers, got %d", len(blockers))
 		}
 	})
 
 	t.Run("returns nil for nonexistent nib", func(t *testing.T) {
-		blockers := findActiveBlockersInMap(nibs, "nonexistent", releasesDependentsForTest)
+		blockers := findActiveBlockersInMap(nibs, "nonexistent", "", releasesDependentsForTest)
 		if blockers != nil {
 			t.Errorf("expected nil, got %v", blockers)
 		}
 	})
+}
+
+// TestFindActiveBlockersInMapBlockerIDSpelling pins how a blockedBy entry is
+// resolved: exact match first, then the configured prefix prepended — the same
+// rule Core.Get applies, and so the same rule the projected `ready` field
+// reaches its blockers by. A bare map lookup here misses a blocker named by
+// short id, which is how `nibs list --ready` came to hand out a nib whose
+// `ready` field said it was blocked. A short spelling reaches the store by
+// hand-editing the file: the createNib/addBlockedBy resolvers every writing
+// surface routes through normalize a blocker id before storing it.
+func TestFindActiveBlockersInMapBlockerIDSpelling(t *testing.T) {
+	tests := []struct {
+		name     string
+		spelling string // what the dependent's blocked_by names
+		prefix   string
+		want     bool // is the blocker found, and so still blocking
+	}{
+		{"full id", "nibs-blk", "nibs-", true},
+		{"short id under the configured prefix", "blk", "nibs-", true},
+		// Nothing to prepend, so the short form names no nib — and Core.Get
+		// cannot resolve it either, so both surfaces agree it is unblocked.
+		{"short id with no configured prefix", "blk", "", false},
+		{"id that names no nib", "nope", "nibs-", false},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			nibs := map[string]*nib.Nib{
+				"nibs-blk": {ID: "nibs-blk", Status: "in-progress"},
+				"nibs-dep": {ID: "nibs-dep", Status: "todo", BlockedBy: []string{tt.spelling}},
+			}
+
+			blockers := findActiveBlockersInMap(nibs, "nibs-dep", tt.prefix, releasesDependentsForTest)
+			if got := len(blockers) > 0; got != tt.want {
+				t.Errorf("findActiveBlockersInMap found a blocker = %v, want %v (blocked_by: [%s], prefix %q)",
+					got, tt.want, tt.spelling, tt.prefix)
+			}
+			// However it was spelled, the blocker comes back under its own id.
+			if tt.want {
+				if len(blockers) != 1 {
+					t.Fatalf("got %d blockers, want 1", len(blockers))
+				}
+				if blockers[0].ID != "nibs-blk" {
+					t.Errorf("blocker id = %q, want %q", blockers[0].ID, "nibs-blk")
+				}
+			}
+			if got := isBlockedInMap(nibs, "nibs-dep", tt.prefix, releasesDependentsForTest); got != tt.want {
+				t.Errorf("isBlockedInMap = %v, want %v (blocked_by: [%s], prefix %q)",
+					got, tt.want, tt.spelling, tt.prefix)
+			}
+		})
+	}
 }
 
 func TestIsBlockingInMap(t *testing.T) {

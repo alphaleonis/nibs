@@ -676,6 +676,37 @@ func TestFindActiveBlockers(t *testing.T) {
 	})
 }
 
+// TestBlockerLookupResolvesShortID drives the short-id blocker through a real
+// prefixed Core, so the config prefix is the one the Core carries rather than a
+// literal handed to the pure function. Both blocking queries have to see the
+// blocker, and Get has to resolve the same short id to the same nib — that
+// agreement is what keeps `nibs list --ready` (which reaches IsBlocked) from
+// handing out a nib the projected `ready` field (which reaches Get) withholds.
+func TestBlockerLookupResolvesShortID(t *testing.T) {
+	core, _ := mustLoadPrefixedCore(t)
+
+	blocker := &nib.Nib{ID: "nibs-blk", Title: "Blocker", Status: "in-progress"}
+	// Spelled short, as a hand-edited nib file may spell it: the write
+	// resolvers normalize a blocker id before it reaches the store.
+	dep := &nib.Nib{ID: "nibs-dep", Title: "Dependent", Status: "todo", BlockedBy: []string{"blk"}}
+	for _, b := range []*nib.Nib{blocker, dep} {
+		if err := core.Create(b); err != nil {
+			t.Fatalf("Create(%s): %v", b.ID, err)
+		}
+	}
+
+	if got, err := core.Get("blk"); err != nil || got.ID != "nibs-blk" {
+		t.Fatalf(`Get("blk") = %v, %v; want nibs-blk, nil — the premise that the short id resolves at all`, got, err)
+	}
+	if !core.IsBlocked("nibs-dep") {
+		t.Error(`IsBlocked("nibs-dep") = false, want true — its blocker is named "blk", which resolves to the in-progress nibs-blk`)
+	}
+	blockers := core.FindActiveBlockers("nibs-dep")
+	if len(blockers) != 1 || blockers[0].ID != "nibs-blk" {
+		t.Errorf("FindActiveBlockers(\"nibs-dep\") = %v, want [nibs-blk]", blockers)
+	}
+}
+
 // TestCoreReleasesDependentsPredicate covers the seam the pure link queries
 // depend on: the Core wrappers hand them the config-derived releasing set,
 // never a list of their own. deferred is the case that separates this from the

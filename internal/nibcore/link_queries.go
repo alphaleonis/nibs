@@ -121,11 +121,11 @@ func (c *Core) releasesDependentsPredicate() func(string) bool {
 
 // isBlockedInMap returns true if the nib with the given ID is blocked by any
 // nib whose status has not released its dependents. releasesDependents is that
-// predicate, supplied by the caller because this is a pure function that
-// operates on a map of nibs without locking and so cannot reach the project
-// config itself.
-func isBlockedInMap(nibs map[string]*nib.Nib, nibID string, releasesDependents func(string) bool) bool {
-	return len(findActiveBlockersInMap(nibs, nibID, releasesDependents)) > 0
+// predicate, and configPrefix the id-resolution prefix, both supplied by the
+// caller because this is a pure function that operates on a map of nibs without
+// locking and so cannot reach the project config itself.
+func isBlockedInMap(nibs map[string]*nib.Nib, nibID, configPrefix string, releasesDependents func(string) bool) bool {
+	return len(findActiveBlockersInMap(nibs, nibID, configPrefix, releasesDependents)) > 0
 }
 
 // IsBlocked returns true if the nib with the given ID has any active blockers —
@@ -134,7 +134,7 @@ func isBlockedInMap(nibs map[string]*nib.Nib, nibID string, releasesDependents f
 func (c *Core) IsBlocked(nibID string) bool {
 	c.mu.RLock()
 	defer c.mu.RUnlock()
-	return isBlockedInMap(c.nibs, nibID, c.releasesDependentsPredicate())
+	return isBlockedInMap(c.nibs, nibID, c.configPrefix(), c.releasesDependentsPredicate())
 }
 
 // isBlockingInMap returns true if the nib with the given ID is actively blocking
@@ -181,7 +181,22 @@ func (c *Core) IsBlocking(nibID string) bool {
 // nibs without locking and so cannot reach the project config itself. Note this
 // is narrower than "not closed": a deferred blocker is closed and still active.
 // Single-side storage: only reads from the nib's blockedBy field.
-func findActiveBlockersInMap(nibs map[string]*nib.Nib, nibID string, releasesDependents func(string) bool) []*nib.Nib {
+//
+// Each blockedBy entry is resolved through normalizeIDInMap, so a hand-edited
+// nib naming its blocker by short id finds it — the same exact-then-prefixed
+// rule Core.Get applies, which is how the projected `ready` field reaches its
+// blockers. configPrefix is threaded in for the same reason releasesDependents
+// is: the function cannot reach the config. Resolution stays two map lookups at
+// worst plus the one that fetches the blocker, and never scans.
+//
+// nibID itself is looked up exactly, not normalized: it names the subject, and
+// every production call arrives through Core.IsBlocked carrying an id read off
+// a stored nib (the graph blocked-filter predicate and the TUI row builders).
+// The exported Core.FindActiveBlockers reaches here too and normalizes no more
+// than IsBlocked does; it simply has no production caller today. Either entry
+// point answers "not blocked" for a short subject id, so a caller holding one
+// should resolve it with Core.NormalizeID first.
+func findActiveBlockersInMap(nibs map[string]*nib.Nib, nibID, configPrefix string, releasesDependents func(string) bool) []*nib.Nib {
 	b, ok := nibs[nibID]
 	if !ok {
 		return nil
@@ -189,10 +204,12 @@ func findActiveBlockersInMap(nibs map[string]*nib.Nib, nibID string, releasesDep
 
 	var blockers []*nib.Nib
 	for _, blockerID := range b.BlockedBy {
-		if blocker, ok := nibs[blockerID]; ok {
-			if !releasesDependents(blocker.Status) {
-				blockers = append(blockers, blocker)
-			}
+		fullID, ok := normalizeIDInMap(nibs, blockerID, configPrefix)
+		if !ok {
+			continue
+		}
+		if blocker := nibs[fullID]; !releasesDependents(blocker.Status) {
+			blockers = append(blockers, blocker)
 		}
 	}
 
@@ -204,5 +221,5 @@ func findActiveBlockersInMap(nibs map[string]*nib.Nib, nibID string, releasesDep
 func (c *Core) FindActiveBlockers(nibID string) []*nib.Nib {
 	c.mu.RLock()
 	defer c.mu.RUnlock()
-	return findActiveBlockersInMap(c.nibs, nibID, c.releasesDependentsPredicate())
+	return findActiveBlockersInMap(c.nibs, nibID, c.configPrefix(), c.releasesDependentsPredicate())
 }

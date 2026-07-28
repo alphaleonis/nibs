@@ -174,12 +174,16 @@ func (p *projectionResolver) Progress(id string) any {
 // reads that same flag, so the field and the filter narrow by status from one
 // definition — pinned by TestReadyProjectionAndFilterAgree in cmd.
 //
-// Only the status half is shared. The blocker half resolves blocker ids two
-// ways: this field goes through BlockedByIds → Reader.Get, which normalizes a
-// short id, while the filter goes through Core.IsBlocked →
-// findActiveBlockersInMap, an exact map lookup. So a nib whose `blocked_by`
-// names its blocker by short id reports ready:false here and is still returned
-// by `nibs list --ready`.
+// The blocker half agrees as well, but on matching rules rather than on shared
+// code: this field walks BlockedByIds → Reader.Get, while the filter walks
+// Core.IsBlocked → findActiveBlockersInMap → normalizeIDInMap. Each spells out
+// the same resolution — the exact id, then the configured prefix prepended — so
+// a hand-edited nib naming its blocker by short id is withheld by both, and an
+// entry naming no nib at all is dropped by both. What a resolved blocker then
+// counts for is genuinely one definition: both ask
+// config.StatusReleasesDependents. TestReadyProjectionAndFilterAgree drives a
+// blocker under both spellings, so neither copy of the resolution rule can
+// drift alone.
 func (p *projectionResolver) Ready(id string) bool {
 	b, err := p.r.Reader.Get(id)
 	if err != nil {
