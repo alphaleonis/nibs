@@ -180,11 +180,21 @@ Search Syntax (--search/-S):
 		if listIsBlocked {
 			filter.IsBlocked = &listIsBlocked
 		}
-		// --ready: nibs available to start (not blocked, excludes
-		// in-progress/completed/scrapped/draft/deferred). Only todo nibs are
-		// startable: in-progress work is already underway, draft needs
-		// refinement, and the closed statuses (completed/scrapped/deferred) are
+		// --ready: nibs available to start — not blocked, and carrying none of
+		// the five statuses in the literal below. In-progress work is already
+		// underway, draft needs refinement, and deferred/completed/scrapped are
 		// off the board.
+		//
+		// Those five are a literal, not the derived closed set, and --ready
+		// suppresses the open default by setting All above — so
+		// resolveStatusFilter does not apply ClosedStatusNames on this path
+		// (cmd/statusfilter.go). A status added to DefaultStatuses lands in
+		// neither, so nothing excludes it here: an unblocked nib carrying a
+		// newly added *closed* status comes back from --ready as ready work.
+		// Adding one therefore means editing this literal and the three
+		// surfaces that mirror it in the same order — the --ready flag usage
+		// below, cmd/prompt.tmpl and cmd/prompt-full.tmpl. Deriving the
+		// exclusion from the Closed flags instead is nibs-xfh5.
 		if listReady {
 			isBlocked := false
 			filter.IsBlocked = &isBlocked

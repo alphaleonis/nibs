@@ -329,7 +329,7 @@ func catalogOpenWorkRecipes() []recipeInfo {
 		{"nibs rel <id> --rel descendants", "open work under a parent (add -t bug for open bugs only)"},
 		{"nibs list -s closed", "only closed nibs (an explicit -s overrides the open default)"},
 		{"nibs list --all", "every status, including the closed ones"},
-		{"nibs list --ready", "open, unblocked, actionable (excludes in-progress/draft/deferred)"},
+		{"nibs list --ready", flagUsage("list", "ready")},
 	}
 }
 

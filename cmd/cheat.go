@@ -30,6 +30,15 @@ var cheatCmd = &cobra.Command{
 // cheatSheet renders the one-screen grammar, interpolating the live enum sets.
 func cheatSheet(cfg *config.Config) string {
 	var b strings.Builder
+	// The STATUS line lists the statuses by group rather than in one flat run:
+	// the groups partition the vocabulary, so this names every status AND says
+	// which group it filters under, in the same space. The blocker note is
+	// derived too — and disappears if every closed status starts releasing its
+	// dependents, rather than lingering as a rule with no members.
+	blockerNote := ""
+	if holding := cfg.HoldingStatusNames(); len(holding) > 0 {
+		blockerNote = "; closed but still blocks: " + strings.Join(holding, ", ")
+	}
 	fmt.Fprintf(&b, `nibs — agentic issue tracker. One-screen grammar; detail: nibs catalog <topic> · nibs <cmd> --help
 
 READ   get <id…>          nib document (default); -f/--view id|ref|card|full; --json → {nib}
@@ -50,7 +59,7 @@ VIEWS  id < ref < card < full (leanest→fullest). -f adds exact fields, e.g. -f
 INPUT  prose/multi-line is ALWAYS '-' (stdin) or '@FILE', never inline — body, new -d, close --summary.
 EXIT   0 ok · 2 validation · 3 not-found · 4 conflict · 5 io.  --json error → {error:{code,message}}
 TYPE   %s   (hierarchy: nibs catalog hierarchy)
-STATUS %s   (-s/--no-status groups: open|closed; deferred is closed but still blocks)
+STATUS %s=%s · %s=%s   (-s/--no-status take either group%s)
 PRIO   %s (default normal)   EST  %s (s=1 m=3 l=5 xl=8; default m)
 FILTER list/rel show OPEN only by default (closed statuses hidden; header notes "N hidden — --all to include").
        -s overrides (-s closed = only closed); --all = every status. Open work under X: 'rel <id> --rel
@@ -58,7 +67,9 @@ FILTER list/rel show OPEN only by default (closed statuses hidden; header notes 
 RULE   On any nibs error: STOP, find the root cause, never silently retry.
 `,
 		strings.Join(cfg.TypeNames(), ", "),
-		strings.Join(cfg.StatusNames(), ", "),
+		statusGroupOpen, strings.Join(cfg.OpenStatusNames(), "/"),
+		statusGroupClosed, strings.Join(cfg.ClosedStatusNames(), "/"),
+		blockerNote,
 		strings.Join(cfg.PriorityNames(), ", "),
 		strings.Join(cfg.EstimateNames(), ", "),
 	)

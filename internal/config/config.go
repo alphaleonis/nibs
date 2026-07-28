@@ -90,11 +90,15 @@ type EstimateConfig struct {
 // them back into one flag would silently unblock deferred work.
 //
 // In Go these flags are the only definitions of their sets — consumers read
-// them through IsClosedStatus/ClosedStatusNames/OpenStatusNames and
-// StatusReleasesDependents/ReleasingStatusNames — with one exception:
-// cmd/list.go's --ready exclusion list hardcodes its own copy (nibs-xfh5). The
-// web UI keeps a second hand-written copy in web/src/lib/constants.ts as
-// TERMINAL_STATUSES (nibs-nv05).
+// them through IsClosedStatus/ClosedStatusNames/OpenStatusNames,
+// StatusReleasesDependents/ReleasingStatusNames, and HoldingStatusNames for the
+// closed-but-still-blocking difference — with one exception: cmd/list.go's
+// --ready exclusion list hardcodes its own copy, mirrored in prose by
+// cmd/prompt.tmpl and cmd/prompt-full.tmpl (nibs-xfh5). The web UI keeps a
+// second hand-written copy in web/src/lib/constants.ts as TERMINAL_STATUSES
+// (nibs-nv05). README.md's Data Model section is a third hand-written copy —
+// there is no render step behind it — held to these flags by cmd/readme_test.go
+// rather than by derivation.
 //
 // Sites that name one specific status are not rival definitions of these sets,
 // because a group predicate cannot single a member out — but renaming a status
@@ -457,6 +461,23 @@ func (c *Config) ReleasingStatusNames() []string {
 	var names []string
 	for _, s := range DefaultStatuses {
 		if s.ReleasesDependents {
+			names = append(names, s.Name)
+		}
+	}
+	return names
+}
+
+// HoldingStatusNames returns the closed statuses that do NOT release their
+// dependents — the statuses a blocker can carry while still holding up
+// everything that depends on it. It is the set difference ClosedStatusNames \
+// ReleasingStatusNames, derived from the same flags. Today this is {deferred}.
+// The agent-facing docs (cmd/cheat.go and the prime templates) state the
+// "closed but still blocks" rule from this set instead of naming a status in
+// prose; an empty result means no such rule exists and the docs drop it.
+func (c *Config) HoldingStatusNames() []string {
+	var names []string
+	for _, s := range DefaultStatuses {
+		if s.Closed && !s.ReleasesDependents {
 			names = append(names, s.Name)
 		}
 	}

@@ -434,6 +434,40 @@ func TestCatalogRecipesFromLiveCommands(t *testing.T) {
 	}
 }
 
+// TestCatalogReadyPurposeAgreesAcrossTopics pins that `catalog examples` and
+// `catalog recipes` describe `nibs list --ready` with the same words. Both
+// topics list the command, so an agent that reads one and an agent that reads
+// the other must learn the same exclusion set. That set is a literal in
+// cmd/list.go with no derivation behind it, so a second hand-written
+// description of the flag has nothing holding it in step.
+func TestCatalogReadyPurposeAgreesAcrossTopics(t *testing.T) {
+	purposes := map[string]string{}
+	for _, topic := range []string{"examples", "recipes"} {
+		out, err := execCatalog(t, "--json", topic)
+		if err != nil {
+			t.Fatalf("catalog --json %s: %v", topic, err)
+		}
+		var got struct {
+			Recipes []recipeInfo `json:"recipes"`
+		}
+		if err := json.Unmarshal([]byte(out), &got); err != nil {
+			t.Fatalf("decode %s JSON: %v\n%s", topic, err, out)
+		}
+		for _, r := range got.Recipes {
+			if r.Command == "nibs list --ready" {
+				purposes[topic] = r.Purpose
+			}
+		}
+		if _, ok := purposes[topic]; !ok {
+			t.Fatalf("catalog %s lists no 'nibs list --ready' recipe, so this guard compares nothing", topic)
+		}
+	}
+	if purposes["examples"] != purposes["recipes"] {
+		t.Errorf("catalog examples describes --ready as %q but catalog recipes says %q — the same flag, two answers",
+			purposes["examples"], purposes["recipes"])
+	}
+}
+
 // TestCatalogSchemaReusesGraphQL pins that catalog schema surfaces the exact
 // SDL 'nibs graphql --schema' prints (GetGraphQLSchema).
 func TestCatalogSchemaReusesGraphQL(t *testing.T) {

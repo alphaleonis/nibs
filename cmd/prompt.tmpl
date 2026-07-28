@@ -12,7 +12,7 @@ Do not guess syntax — read the grammar first.
 
 ## Workflow
 
-- BEFORE a task: find or create a nib (`nibs list --ready`, `nibs new "Title" -t <type>`), set it `in-progress` (`nibs set <id> -s in-progress`). `--ready` excludes blocked, in-progress, draft, and the closed statuses (completed, scrapped, deferred). Note that a **deferred** blocker still blocks — it is closed, but the work is coming back, so it does not release its dependents the way completed and scrapped do.
+- BEFORE a task: find or create a nib (`nibs list --ready`, `nibs new "Title" -t <type>`), set it `in-progress` (`nibs set <id> -s in-progress`). `--ready` excludes blocked nibs and the statuses in-progress/completed/scrapped/draft/deferred.{{if and .HoldingStatuses .ReleasingStatuses}} Note that a {{codes .HoldingStatuses "/"}} blocker still blocks — it is closed, but the work is coming back, so it does not release its dependents the way a {{codes .ReleasingStatuses "/"}} blocker does.{{end}}
 - DURING: keep the body's todo items current (`- [ ]` → `- [x]`) as work happens (`nibs body <id> --replace-old … --replace-new …`).
 - AFTER: mark `completed` only when no unchecked todos remain. Prefer `nibs close <id> --summary -` (appends a summary, propagates to the parent). When scrapping, add a `## Reasons for Scrapping` section: `nibs body <id> --section "## Reasons for Scrapping" --set - --create` (upsert), or `--append`.
 - COMMITS: include both code and nib files.

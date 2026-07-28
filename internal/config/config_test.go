@@ -240,6 +240,48 @@ func TestReleasingStatusNames(t *testing.T) {
 	}
 }
 
+// TestHoldingStatusNames pins the set difference the agent-facing docs state as
+// the "closed but still blocks" rule: closed, but not releasing. It must be
+// exactly the closed names that ReleasingStatusNames leaves out, so the rule
+// can never name a status that in fact frees its dependents.
+func TestHoldingStatusNames(t *testing.T) {
+	cfg := Default()
+	got := cfg.HoldingStatusNames()
+
+	// DefaultStatuses order. Today only "deferred" is closed without releasing.
+	want := []string{"deferred"}
+	if !slices.Equal(got, want) {
+		t.Errorf("HoldingStatusNames() = %v, want %v", got, want)
+	}
+
+	// Every returned name must be closed and must not release its dependents.
+	for _, name := range got {
+		if !cfg.IsClosedStatus(name) {
+			t.Errorf("HoldingStatusNames() returned %q which is not closed", name)
+		}
+		if cfg.StatusReleasesDependents(name) {
+			t.Errorf("HoldingStatusNames() returned %q which does release its dependents", name)
+		}
+	}
+
+	// Holding and releasing must partition the closed group: a closed status
+	// either settles its dependencies or keeps holding them, never both or
+	// neither. Asserted against DefaultStatuses rather than against the other
+	// helper, so it stays a real check if either stops reading the flags.
+	releasing := cfg.ReleasingStatusNames()
+	for _, s := range DefaultStatuses {
+		if !s.Closed {
+			continue
+		}
+		inHolding := slices.Contains(got, s.Name)
+		inReleasing := slices.Contains(releasing, s.Name)
+		if inHolding == inReleasing {
+			t.Errorf("closed status %q: holding=%v releasing=%v — a closed status must be in exactly one of the two",
+				s.Name, inHolding, inReleasing)
+		}
+	}
+}
+
 func TestGetStatus(t *testing.T) {
 	cfg := Default()
 

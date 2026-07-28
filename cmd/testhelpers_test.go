@@ -9,6 +9,8 @@ import (
 	"time"
 
 	"github.com/spf13/pflag"
+
+	"github.com/alphaleonis/nibs/internal/config"
 )
 
 // resetRootPersistentFlags restores rootCmd's persistent flag state
@@ -80,6 +82,33 @@ func TestResetRootPersistentFlagsClearsAllState(t *testing.T) {
 			t.Errorf("persistent flag %q Changed = true after reset, want false", f.Name)
 		}
 	})
+}
+
+// withStatuses swaps config.DefaultStatuses for the duration of the test and
+// restores the original set afterwards. It is how the vocabulary guards prove
+// they are derived rather than hand-transcribed: a surface rendered at call
+// time follows the swap, a surface that restates the vocabulary in prose does
+// not.
+//
+// It cannot reach surfaces built at package load: cmd/new.go and cmd/set.go
+// interpolate the status list into the -s flag's usage string inside func
+// init(), before any test body runs, so a guard written with this helper says
+// nothing about their flag help.
+//
+// Safe because the tests in this package never run in parallel — they share the
+// rootCmd singleton.
+func withStatuses(t *testing.T, statuses []config.StatusConfig) {
+	t.Helper()
+	original := config.DefaultStatuses
+	t.Cleanup(func() { config.DefaultStatuses = original })
+	config.DefaultStatuses = statuses
+}
+
+// withExtraStatus appends one status to config.DefaultStatuses for the duration
+// of the test.
+func withExtraStatus(t *testing.T, s config.StatusConfig) {
+	t.Helper()
+	withStatuses(t, append(append([]config.StatusConfig(nil), config.DefaultStatuses...), s))
 }
 
 // stdoutMu serializes global os.Stdout mutations across tests that need to
