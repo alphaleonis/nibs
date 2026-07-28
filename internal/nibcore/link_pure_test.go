@@ -7,10 +7,12 @@ import (
 	"github.com/alphaleonis/nibs/internal/nib"
 )
 
-// isClosedForTest is the closed-status predicate the pure map queries take. It
-// is the real config definition, so these tests exercise the same closed set
-// the Core wrappers supply instead of a private copy that could drift from it.
-var isClosedForTest = config.Default().IsClosedStatus
+// releasesDependentsForTest is the "does this blocker still count" predicate
+// the pure map queries take. It is the real config definition, so these tests
+// exercise the same releasing set the Core wrappers supply instead of a private
+// copy that could drift from it. Note it is narrower than the closed set:
+// deferred is closed but does not release, so it keeps blocking.
+var releasesDependentsForTest = config.Default().StatusReleasesDependents
 
 func TestFindIncomingLinksInMap(t *testing.T) {
 	nibs := map[string]*nib.Nib{
@@ -68,9 +70,14 @@ func TestIsBlockedInMap(t *testing.T) {
 		"active-blocker":    {ID: "active-blocker", Status: "todo"},
 		"completed-blocker": {ID: "completed-blocker", Status: "completed"},
 		"scrapped-blocker":  {ID: "scrapped-blocker", Status: "scrapped"},
+		"deferred-blocker":  {ID: "deferred-blocker", Status: "deferred"},
 		"blocked-by-active": {
 			ID: "blocked-by-active", Status: "todo",
 			BlockedBy: []string{"active-blocker"},
+		},
+		"blocked-by-deferred": {
+			ID: "blocked-by-deferred", Status: "todo",
+			BlockedBy: []string{"deferred-blocker"},
 		},
 		"blocked-by-completed": {
 			ID: "blocked-by-completed", Status: "todo",
@@ -103,6 +110,10 @@ func TestIsBlockedInMap(t *testing.T) {
 		{"blocked by active", "blocked-by-active", true},
 		{"blocked by completed", "blocked-by-completed", false},
 		{"blocked by scrapped", "blocked-by-scrapped", false},
+		// deferred is a closed status but does not satisfy the dependency —
+		// parked work is coming back, so its dependents stay blocked. Using the
+		// closed predicate here would report false.
+		{"blocked by deferred", "blocked-by-deferred", true},
 		{"not blocked", "not-blocked", false},
 		{"broken blocker link", "blocked-by-broken", false},
 		{"mixed blockers (one active)", "mixed-blockers", true},
@@ -112,7 +123,7 @@ func TestIsBlockedInMap(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			got := isBlockedInMap(nibs, tt.nibID, isClosedForTest)
+			got := isBlockedInMap(nibs, tt.nibID, releasesDependentsForTest)
 			if got != tt.want {
 				t.Errorf("isBlockedInMap(%q) = %v, want %v", tt.nibID, got, tt.want)
 			}
@@ -125,36 +136,42 @@ func TestFindActiveBlockersInMap(t *testing.T) {
 		"active-1":  {ID: "active-1", Status: "in-progress"},
 		"active-2":  {ID: "active-2", Status: "todo"},
 		"completed": {ID: "completed", Status: "completed"},
+		"deferred":  {ID: "deferred", Status: "deferred"},
 		"target": {
 			ID: "target", Status: "todo",
-			BlockedBy: []string{"active-1", "active-2", "completed"},
+			BlockedBy: []string{"active-1", "active-2", "completed", "deferred"},
 		},
 		"no-blockers": {ID: "no-blockers", Status: "todo"},
 	}
 
-	t.Run("returns only active blockers", func(t *testing.T) {
-		blockers := findActiveBlockersInMap(nibs, "target", isClosedForTest)
-		if len(blockers) != 2 {
-			t.Fatalf("expected 2 active blockers, got %d", len(blockers))
+	// The deferred blocker is the discriminating case: it is closed, so the
+	// closed predicate would drop it, but it has not released its dependents.
+	t.Run("returns only active blockers, deferred included", func(t *testing.T) {
+		blockers := findActiveBlockersInMap(nibs, "target", releasesDependentsForTest)
+		if len(blockers) != 3 {
+			t.Fatalf("expected 3 active blockers, got %d", len(blockers))
 		}
 		ids := map[string]bool{}
 		for _, b := range blockers {
 			ids[b.ID] = true
 		}
-		if !ids["active-1"] || !ids["active-2"] {
-			t.Errorf("expected active-1 and active-2, got %v", ids)
+		if !ids["active-1"] || !ids["active-2"] || !ids["deferred"] {
+			t.Errorf("expected active-1, active-2 and deferred, got %v", ids)
+		}
+		if ids["completed"] {
+			t.Errorf("completed blocker should have been released, got %v", ids)
 		}
 	})
 
 	t.Run("returns nil for nib with no blockers", func(t *testing.T) {
-		blockers := findActiveBlockersInMap(nibs, "no-blockers", isClosedForTest)
+		blockers := findActiveBlockersInMap(nibs, "no-blockers", releasesDependentsForTest)
 		if len(blockers) != 0 {
 			t.Errorf("expected 0 blockers, got %d", len(blockers))
 		}
 	})
 
 	t.Run("returns nil for nonexistent nib", func(t *testing.T) {
-		blockers := findActiveBlockersInMap(nibs, "nonexistent", isClosedForTest)
+		blockers := findActiveBlockersInMap(nibs, "nonexistent", releasesDependentsForTest)
 		if blockers != nil {
 			t.Errorf("expected nil, got %v", blockers)
 		}
@@ -163,11 +180,12 @@ func TestFindActiveBlockersInMap(t *testing.T) {
 
 func TestIsBlockingInMap(t *testing.T) {
 	nibs := map[string]*nib.Nib{
-		"active-blocker":   {ID: "active-blocker", Status: "todo"},
+		"active-blocker":    {ID: "active-blocker", Status: "todo"},
 		"completed-blocker": {ID: "completed-blocker", Status: "completed"},
+		"deferred-blocker":  {ID: "deferred-blocker", Status: "deferred"},
 		"active-target": {
 			ID: "active-target", Status: "todo",
-			BlockedBy: []string{"active-blocker", "completed-blocker"},
+			BlockedBy: []string{"active-blocker", "completed-blocker", "deferred-blocker"},
 		},
 		"completed-target": {
 			ID: "completed-target", Status: "completed",
@@ -183,13 +201,15 @@ func TestIsBlockingInMap(t *testing.T) {
 	}{
 		{"active nib blocking active target", "active-blocker", true},
 		{"completed nib cannot be blocking", "completed-blocker", false},
+		// Closed, but it never released active-target — so it still blocks.
+		{"deferred nib is still blocking", "deferred-blocker", true},
 		{"not blocking anything", "not-blocking", false},
 		{"nonexistent nib", "nonexistent", false},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			got := isBlockingInMap(nibs, tt.nibID, isClosedForTest)
+			got := isBlockingInMap(nibs, tt.nibID, releasesDependentsForTest)
 			if got != tt.want {
 				t.Errorf("isBlockingInMap(%q) = %v, want %v", tt.nibID, got, tt.want)
 			}

@@ -288,8 +288,9 @@ func (r *Resolver) removeBlockedByRelationships(b *nib.Nib, targetIDs []string) 
 // activateParentChain walks up the parent chain, setting any todo/draft
 // parents to in-progress. Those two statuses are the whole activation set: the
 // walk stops at a parent in any other status (or one with no parent), so an
-// in-progress ancestor is already active, a closed one stays finished, and a
-// deferred one stays parked — a child going in-progress does not un-park it.
+// in-progress ancestor is already active and a closed one — completed,
+// scrapped or deferred — stays closed. A child going in-progress never reopens
+// a closed parent.
 // Best-effort: warns on stderr and stops on any error. Mutates an owned clone
 // (from GetForUpdate) before each Update — as UpdateNib does — so a refused write
 // never corrupts the shared in-memory nib.
@@ -349,6 +350,14 @@ func (r *Resolver) activateParentChain(childID, parentID string) {
 // no status list of its own.
 func (r *Resolver) isClosedStatus(status string) bool {
 	return r.Reader.Config().IsClosedStatus(status)
+}
+
+// releasesDependents delegates to config.StatusReleasesDependents — the
+// canonical answer to "does a blocker in this status still count" — reached
+// through the reader's config so this package keeps no status list of its own.
+// Narrower than isClosedStatus: a deferred blocker is closed but still blocks.
+func (r *Resolver) releasesDependents(status string) bool {
+	return r.Reader.Config().StatusReleasesDependents(status)
 }
 
 // validateDocumentPaths checks that document paths are safe (no absolute paths or path traversal).

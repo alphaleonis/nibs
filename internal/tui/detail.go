@@ -608,11 +608,13 @@ func (m detailModel) resolveAllLinks() []resolvedLink {
 	var links []resolvedLink
 	ctx := context.Background()
 
-	// Filter out closed nibs (completed/scrapped) from blocking relationships.
-	// This is the *closed* set — derive it from config so it tracks the status
-	// model, not a literal.
+	// Drop satisfied blocking relationships. This is the *releasing* set
+	// (completed, scrapped) — narrower than closed, because a deferred nib is
+	// closed but still blocks. Derived from config so it tracks the status
+	// model, not a literal, and matches what the blockedBy/blocking resolvers
+	// already filter on.
 	activeOnly := &model.NibFilter{
-		ExcludeStatus: m.config.ClosedStatusNames(),
+		ExcludeStatus: m.config.ReleasingStatusNames(),
 	}
 
 	// Resolve outgoing links via backend

@@ -154,7 +154,7 @@ func checkboxMark(line string) (byte, bool) {
 	return t[3], true
 }
 
-// filterActive removes closed (completed and scrapped) nibs.
+// filterActive removes closed nibs (completed, scrapped, deferred).
 func filterActive(nibs []*nib.Nib, cfg *config.Config) []*nib.Nib {
 	var result []*nib.Nib
 	for _, b := range nibs {
@@ -228,7 +228,7 @@ func renderPlanHuman(plan *Plan) error {
 
 func init() {
 	planCmd.Flags().BoolVar(&planJSON, "json", false, "Output as JSON")
-	planCmd.Flags().BoolVar(&planActive, "active", false, "Show only active items (exclude completed/scrapped)")
+	planCmd.Flags().BoolVar(&planActive, "active", false, "Show only active items (exclude closed nibs)")
 	planCmd.Flags().BoolVar(&planWithOrder, "with-order", false, "Show each item's order key in the default (non-JSON) output (JSON always includes order)")
 	rootCmd.AddCommand(planCmd)
 }

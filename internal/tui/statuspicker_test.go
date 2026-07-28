@@ -57,9 +57,10 @@ func TestStatusPickerModel(t *testing.T) {
 		if deferred == nil {
 			t.Fatal("status picker does not offer \"deferred\"")
 		}
-		// deferred is parked, not closed — it must not render dimmed.
-		if deferred.isClosed {
-			t.Error("deferred item should have isClosed=false (open)")
+		// deferred is a close reason, so it renders dimmed like the other
+		// closed statuses.
+		if !deferred.isClosed {
+			t.Error("deferred item should have isClosed=true (closed)")
 		}
 		// Config color for deferred is deliberately gray.
 		if deferred.color != "gray" {

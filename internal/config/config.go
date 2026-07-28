@@ -19,16 +19,15 @@ const (
 
 // DefaultStatuses defines the hardcoded status configuration.
 // Statuses are not configurable - they are hardcoded like types.
-// Order determines sort priority: in-progress first (active work), then todo
-// and draft, then deferred (parked, still open), and the closed statuses
-// (completed, scrapped) last.
+// Order determines sort priority: the open statuses first (in-progress, todo,
+// draft), then the closed ones (deferred, completed, scrapped) last.
 var DefaultStatuses = []StatusConfig{
 	{Name: "in-progress", Color: "yellow", Description: "Currently being worked on"},
 	{Name: "todo", Color: "green", Description: "Ready to be worked on"},
 	{Name: "draft", Color: "blue", Description: "Needs refinement before it can be worked on"},
-	{Name: "deferred", Color: "gray", Description: "Parked — not actionable now, but not abandoned (scrapped) or merely unrefined (draft)"},
-	{Name: "completed", Color: "gray", Closed: true, Description: "Finished successfully"},
-	{Name: "scrapped", Color: "gray", Closed: true, Description: "Will not be done"},
+	{Name: "deferred", Color: "gray", Closed: true, Description: "Set aside — a good idea at the wrong time; closed, but kept as a seed rather than a dead end"},
+	{Name: "completed", Color: "gray", Closed: true, ReleasesDependents: true, Description: "Finished successfully"},
+	{Name: "scrapped", Color: "gray", Closed: true, ReleasesDependents: true, Description: "Will not be done"},
 }
 
 // DefaultTypes defines the default type configuration.
@@ -67,23 +66,50 @@ type EstimateConfig struct {
 }
 
 // StatusConfig defines a single status with its display color.
-// Closed marks the status as terminal — the work is finished (completed) or
-// abandoned (scrapped); everything else is open.
 //
-// In Go this flag is the only definition of the closed set — consumers read it
-// through IsClosedStatus, ClosedStatusNames or OpenStatusNames — with one
-// exception: cmd/list.go's --ready exclusion list hardcodes its own copy
-// (nibs-xfh5). The web UI keeps a second hand-written copy in
-// web/src/lib/constants.ts as TERMINAL_STATUSES (nibs-nv05).
+// Two booleans classify a status, because "is this nib finished" and "does this
+// nib still hold up the work that depends on it" are different questions:
 //
-// Sites that name completed and scrapped individually — the progress rollups
-// in internal/graph and internal/nibcontext, and dedup's reason snippet — are
-// not rival definitions: they need the two apart, which one boolean cannot say.
+//   - Closed marks the status as terminal — the work is no longer on the board,
+//     whether it was finished (completed), abandoned (scrapped) or set aside
+//     (deferred); everything else is open. Open and closed partition the
+//     declared statuses. A status outside that vocabulary — a hand-edited nib
+//     with no `status:` carries "" — is in neither group, and IsClosedStatus
+//     reads it as open.
+//   - ReleasesDependents marks a status that *satisfies* a dependency: closing a
+//     blocker this way frees everything it was gating. True for completed (the
+//     work happened) and scrapped (it never will), false for deferred — parked
+//     work is coming back, so the dependency is still unmet. Every open status
+//     is false too: an unfinished blocker blocks.
+//
+// The two questions are independent; the flags are not. ReleasesDependents is a
+// strict subset of Closed, since an open status that released its dependents
+// would hand out work that is still blocked. Nothing in the type enforces that —
+// TestStatusReleasesDependents is what holds it. The two sets are not
+// interchangeable either: deferred is closed and still blocks, so collapsing
+// them back into one flag would silently unblock parked work.
+//
+// In Go these flags are the only definitions of their sets — consumers read
+// them through IsClosedStatus/ClosedStatusNames/OpenStatusNames and
+// StatusReleasesDependents/ReleasingStatusNames — with one exception:
+// cmd/list.go's --ready exclusion list hardcodes its own copy (nibs-xfh5). The
+// web UI keeps a second hand-written copy in web/src/lib/constants.ts as
+// TERMINAL_STATUSES (nibs-nv05).
+//
+// Sites that name one specific status are not rival definitions of these sets,
+// because a group predicate cannot single a member out — but renaming a status
+// means visiting them. The progress rollups in internal/graph and
+// internal/nibcontext give "completed", "scrapped" and "deferred" three
+// different treatments (see graph.ProgressRollup); cmd/dedup.go names
+// "scrapped" to attach the scrap-reason snippet; cmd/close.go writes
+// "completed"; internal/ui abbreviates "deferred" to F so it does not collide
+// with draft.
 type StatusConfig struct {
-	Name        string `yaml:"name"`
-	Color       string `yaml:"color"`
-	Closed      bool   `yaml:"closed,omitempty"`
-	Description string `yaml:"description,omitempty"`
+	Name               string `yaml:"name"`
+	Color              string `yaml:"color"`
+	Closed             bool   `yaml:"closed,omitempty"`
+	ReleasesDependents bool   `yaml:"releases_dependents,omitempty"`
+	Description        string `yaml:"description,omitempty"`
 }
 
 // TypeConfig defines a single nib type with its display color.
@@ -393,9 +419,9 @@ func (c *Config) IsClosedStatus(name string) bool {
 
 // ClosedStatusNames returns the names of all closed statuses, derived from
 // DefaultStatuses (the single source of truth). Every returned name satisfies
-// IsClosedStatus. Today this is {completed, scrapped}; deriving it here keeps
-// the set correct if the Closed flags ever change. This is the "closed" status
-// group, and the exact complement of OpenStatusNames.
+// IsClosedStatus. Today this is {deferred, completed, scrapped}; deriving it
+// here keeps the set correct if the Closed flags ever change. This is the
+// "closed" status group, and the exact complement of OpenStatusNames.
 func (c *Config) ClosedStatusNames() []string {
 	var names []string
 	for _, s := range DefaultStatuses {
@@ -406,16 +432,48 @@ func (c *Config) ClosedStatusNames() []string {
 	return names
 }
 
+// StatusReleasesDependents returns true if closing a blocker with this status
+// satisfies the dependency — the canonical answer to "does this blocker still
+// count", used by the blocking graph instead of IsClosedStatus. Today this is
+// {completed, scrapped}: deferred is closed but still blocks, because parked
+// work is coming back. Unknown statuses do not release, so an unrecognized
+// blocker keeps blocking rather than silently freeing its dependents.
+// Like IsClosedStatus the receiver is currently never dereferenced, but callers
+// should hand it a real *Config anyway (config.Default() if nothing better).
+func (c *Config) StatusReleasesDependents(name string) bool {
+	if s := c.GetStatus(name); s != nil {
+		return s.ReleasesDependents
+	}
+	return false
+}
+
+// ReleasingStatusNames returns the names of the statuses that release their
+// dependents, derived from DefaultStatuses (the single source of truth). Every
+// returned name satisfies StatusReleasesDependents. Today this is {completed,
+// scrapped} — a strict subset of ClosedStatusNames, since deferred is closed
+// but keeps blocking.
+func (c *Config) ReleasingStatusNames() []string {
+	var names []string
+	for _, s := range DefaultStatuses {
+		if s.ReleasesDependents {
+			names = append(names, s.Name)
+		}
+	}
+	return names
+}
+
 // parkedStatuses is the single source of truth for the "parked" status group —
-// open statuses that are not actionable right now but not abandoned. Unlike
-// open/closed this cannot be derived from the Closed flag, so it is enumerated
-// here once. Today this is {deferred}.
+// work that was set aside rather than finished or abandoned. Enumerated once
+// here rather than derived, so the group's membership is a decision instead of a
+// side effect of the flags. Today this is {deferred}, which is also what
+// Closed ∧ ¬ReleasesDependents selects; that identity is today's arithmetic, not
+// a guarantee, so do not swap one for the other.
 var parkedStatuses = []string{"deferred"}
 
 // OpenStatusNames returns the names of all non-closed statuses — the "open"
 // status group, and the exact complement of ClosedStatusNames. Derived from
 // DefaultStatuses (Closed == false), so it stays correct if the Closed flags
-// ever change. Today this is {in-progress, todo, draft, deferred}.
+// ever change. Today this is {in-progress, todo, draft}.
 func (c *Config) OpenStatusNames() []string {
 	var names []string
 	for _, s := range DefaultStatuses {
@@ -428,7 +486,7 @@ func (c *Config) OpenStatusNames() []string {
 
 // ParkedStatusNames returns the names of the "parked" status group — a
 // defensive copy of the canonical parkedStatuses set so callers cannot mutate
-// the source. Parked statuses are open (a subset of the open group).
+// the source. Parked statuses are closed (a subset of the closed group).
 func (c *Config) ParkedStatusNames() []string {
 	names := make([]string, len(parkedStatuses))
 	copy(names, parkedStatuses)
@@ -607,7 +665,7 @@ func (c *Config) GetEstimate(name string) *EstimateConfig {
 	return nil
 }
 
-// HideCompleted returns whether completed/scrapped nibs should be hidden.
+// HideCompleted returns whether nibs in a closed status should be hidden.
 // Defaults to true when not explicitly set (nil).
 func (c *Config) HideCompleted() bool {
 	if c.Nibs.HideCompleted != nil {

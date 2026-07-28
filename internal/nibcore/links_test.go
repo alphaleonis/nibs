@@ -676,11 +676,13 @@ func TestFindActiveBlockers(t *testing.T) {
 	})
 }
 
-// TestCoreClosedPredicate covers the seam the pure link queries depend on: the
-// Core wrappers hand them the config-derived closed set, never a list of their
-// own. It runs against a config-less Core too, since several tests build one
-// and the predicate must still answer (Config.IsClosedStatus is receiver-free).
-func TestCoreClosedPredicate(t *testing.T) {
+// TestCoreReleasesDependentsPredicate covers the seam the pure link queries
+// depend on: the Core wrappers hand them the config-derived releasing set,
+// never a list of their own. deferred is the case that separates this from the
+// closed set — it is closed but must still block. It runs against a config-less
+// Core too, since several tests build one and the predicate must still answer
+// (Config.StatusReleasesDependents is receiver-free).
+func TestCoreReleasesDependentsPredicate(t *testing.T) {
 	tests := []struct {
 		status string
 		want   bool
@@ -701,10 +703,10 @@ func TestCoreClosedPredicate(t *testing.T) {
 
 	for name, core := range cores {
 		t.Run(name, func(t *testing.T) {
-			isClosed := core.closedPredicate()
+			releasesDependents := core.releasesDependentsPredicate()
 			for _, tt := range tests {
-				if got := isClosed(tt.status); got != tt.want {
-					t.Errorf("closedPredicate()(%q) = %v, want %v", tt.status, got, tt.want)
+				if got := releasesDependents(tt.status); got != tt.want {
+					t.Errorf("releasesDependentsPredicate()(%q) = %v, want %v", tt.status, got, tt.want)
 				}
 			}
 		})

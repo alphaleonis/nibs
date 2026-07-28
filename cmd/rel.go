@@ -302,7 +302,7 @@ func (f relFilterFlags) activeFilterNames() []string {
 //
 // openDefaultApplied reports whether the open-by-default archive exclusion was
 // applied (no explicit -s/--open/--active/--all/neighbours-active), so the
-// caller knows when to disclose the hidden completed/scrapped count.
+// caller knows when to disclose the hidden closed-status count.
 //
 // Returns nil when the resulting filter constrains nothing (only --all, no
 // other flag) so singular/nil-filter callers keep the resolver's fast path.
@@ -654,7 +654,7 @@ Output modes:
   --json                    The {"nibs":[…],"count":N,"truncated":<bool>} envelope
                             — byte-identical to 'nibs list --json'. Carries
                             "hidden_closed":N when the open default suppressed that
-                            many completed/scrapped related nibs.
+                            many closed related nibs.
   --limit N                 Project only the first N related nibs and set
                             "truncated":true in the envelope. N<=0 is unlimited.
 
@@ -663,8 +663,8 @@ Filters (--status, --type, --priority, --estimate, --tag, their --no-... pairs,
 filter is a validation error (parent is singular; ancestors is a chain).
 
 Status filtering (open by default):
-  With no status flag, only open related nibs are returned (completed and
-  scrapped are hidden). -s/--status and --no-status accept the status groups
+  With no status flag, only open related nibs are returned (the closed
+  statuses are hidden). -s/--status and --no-status accept the status groups
   open, closed, and parked anywhere a concrete status is accepted. Any explicit
   -s overrides the open default. --open (alias --active) is shorthand for
   -s open; --all disables the open default. Singular rels (parent) still bypass
@@ -825,7 +825,7 @@ filter-on-singular validation error does not fire here.`,
 			}
 		}
 
-		// hidden_closed: when the open default silently dropped completed/scrapped
+		// hidden_closed: when the open default silently dropped closed
 		// related nibs, disclose how many matched every OTHER filter so the caller
 		// can see the related set is partial. Re-run the same traversal with the
 		// archive exclusion dropped (every other filter identical) and subtract the

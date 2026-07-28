@@ -95,7 +95,7 @@ func runRmArchive(app *App, targets []nibWithLinks) error {
 	}
 
 	if rmJSON {
-		filtered := filterClosedBlockers(archived, app.Core)
+		filtered := filterReleasedBlockers(archived, app.Core)
 		if len(filtered) == 1 {
 			return output.Success(filtered[0], "Nib archived")
 		}
@@ -127,7 +127,7 @@ func runRmDelete(ctx context.Context, app *App, resolver *graph.Resolver, target
 	}
 
 	if rmJSON {
-		filtered := filterClosedBlockers(deleted, app.Core)
+		filtered := filterReleasedBlockers(deleted, app.Core)
 		if len(filtered) == 1 {
 			return output.Success(filtered[0], "Nib deleted")
 		}

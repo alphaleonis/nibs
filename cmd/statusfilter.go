@@ -12,7 +12,7 @@ import (
 // expands to its concrete member statuses:
 //   - open   → the non-closed statuses (config.OpenStatusNames)
 //   - closed → the closed/terminal statuses (config.ClosedStatusNames)
-//   - parked → the non-actionable-but-not-abandoned statuses (config.ParkedStatusNames)
+//   - parked → the set-aside statuses (config.ParkedStatusNames), a subset of closed
 const (
 	statusGroupOpen   = "open"
 	statusGroupClosed = "closed"
@@ -37,7 +37,8 @@ type statusFilterInput struct {
 //
 // Semantics ("base then subtract"):
 //   - No status token and no --all → default open: exclude the closed statuses
-//     (completed, scrapped). include is nil so every non-excluded status passes.
+//     (deferred, completed, scrapped). include is nil so every non-excluded
+//     status passes.
 //   - --all → base is every status: include and the open-default exclusion are
 //     both empty.
 //   - Any explicit -s X… (after group expansion, including --open/--active which
@@ -51,7 +52,7 @@ type statusFilterInput struct {
 //
 // openDefaultApplied reports whether the open-by-default closed-status
 // exclusion was added (no explicit -s/--open/--active and no --all). Callers
-// use it to decide whether to disclose the hidden completed/scrapped count: the
+// use it to decide whether to disclose the hidden closed-status count: the
 // open default is the only path that silently drops rows, so a partial set is
 // only unobservable there.
 func resolveStatusFilter(cfg *config.Config, in statusFilterInput) (include, exclude []string, openDefaultApplied bool, err error) {
@@ -91,10 +92,10 @@ func resolveStatusFilter(cfg *config.Config, in statusFilterInput) (include, exc
 	return include, exclude, openDefaultApplied, nil
 }
 
-// closedStatusLabel renders the closed status names as a
-// slash-joined label ("completed/scrapped") for the hidden-count disclosure in
-// the TSV header. Derived from config so it stays correct if the closed set
-// ever changes.
+// closedStatusLabel renders the closed status names as a slash-joined label
+// ("deferred/completed/scrapped") for the hidden-count disclosure in the TSV
+// header. Derived from config so it stays correct if the closed set ever
+// changes.
 func closedStatusLabel(cfg *config.Config) string {
 	return strings.Join(cfg.ClosedStatusNames(), "/")
 }

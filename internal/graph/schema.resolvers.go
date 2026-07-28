@@ -684,15 +684,16 @@ func (r *nibResolver) ParentID(ctx context.Context, obj *nib.Nib) (*string, erro
 
 // BlockingIds is the resolver for the blockingIds field.
 // Computed: scans for active nibs that have this nib in their blockedBy list.
-// A closed nib is not considered to be blocking anything.
+// A nib whose status released its dependents (completed, scrapped) is not
+// blocking anything; a deferred nib is closed but still blocks.
 func (r *nibResolver) BlockingIds(ctx context.Context, obj *nib.Nib) ([]string, error) {
-	if r.isClosedStatus(obj.Status) {
+	if r.releasesDependents(obj.Status) {
 		return []string{}, nil
 	}
 	incoming := r.Reader.FindIncomingLinks(obj.ID)
 	var ids []string
 	for _, link := range incoming {
-		if link.LinkType == "blocked_by" && !r.isClosedStatus(link.FromNib.Status) {
+		if link.LinkType == "blocked_by" && !r.releasesDependents(link.FromNib.Status) {
 			ids = append(ids, link.FromNib.ID)
 		}
 	}
@@ -703,12 +704,14 @@ func (r *nibResolver) BlockingIds(ctx context.Context, obj *nib.Nib) ([]string, 
 }
 
 // BlockedByIds is the resolver for the blockedByIds field.
-// Returns only IDs of active (non-completed, non-scrapped) blockers.
+// Returns only IDs of active blockers — those whose status has not released
+// its dependents. Completed and scrapped blockers drop out; a deferred blocker
+// stays, because parked work is coming back and the dependency is unmet.
 func (r *nibResolver) BlockedByIds(ctx context.Context, obj *nib.Nib) ([]string, error) {
 	var ids []string
 	for _, blockerID := range obj.BlockedBy {
 		if blocker, err := r.Reader.Get(blockerID); err == nil {
-			if !r.isClosedStatus(blocker.Status) {
+			if !r.releasesDependents(blocker.Status) {
 				ids = append(ids, blockerID)
 			}
 		}
@@ -720,7 +723,9 @@ func (r *nibResolver) BlockedByIds(ctx context.Context, obj *nib.Nib) ([]string,
 }
 
 // BlockedBy is the resolver for the blockedBy field.
-// Returns only active (non-completed, non-scrapped) blockers.
+// Returns only active blockers — those whose status has not released its
+// dependents. Completed and scrapped blockers drop out; a deferred blocker
+// stays.
 //
 // Returns detached snapshots via Reader.GetSnapshot (clone-under-lock), never
 // the live c.nibs pointers — gqlgen marshals their fields asynchronously.
@@ -728,7 +733,7 @@ func (r *nibResolver) BlockedBy(ctx context.Context, obj *nib.Nib, filter *model
 	var result []*nib.Nib
 	for _, blockerID := range obj.BlockedBy {
 		if blocker, ok := r.Reader.GetSnapshot(blockerID); ok {
-			if !r.isClosedStatus(blocker.Status) {
+			if !r.releasesDependents(blocker.Status) {
 				result = append(result, blocker)
 			}
 		}
@@ -739,14 +744,15 @@ func (r *nibResolver) BlockedBy(ctx context.Context, obj *nib.Nib, filter *model
 
 // Blocking is the resolver for the blocking field.
 // Computed: returns active nibs whose BlockedBy field contains this nib's ID.
-// A closed nib is not considered to be blocking anything.
+// A nib whose status released its dependents (completed, scrapped) is not
+// blocking anything; a deferred nib is closed but still blocks.
 //
 // Returns detached snapshots via Reader.GetSnapshot (clone-under-lock), never
 // the live c.nibs pointers — gqlgen marshals their fields asynchronously. Only
 // the immutable link.FromNib.ID is read off the live pointer; the status filter
 // runs against the detached clone.
 func (r *nibResolver) Blocking(ctx context.Context, obj *nib.Nib, filter *model.NibFilter) ([]*nib.Nib, error) {
-	if r.isClosedStatus(obj.Status) {
+	if r.releasesDependents(obj.Status) {
 		return ApplyFilter(ctx, nil, filter, r.Reader, r.Resolver.Blocking), nil
 	}
 	incoming := r.Reader.FindIncomingLinks(obj.ID)
@@ -756,7 +762,7 @@ func (r *nibResolver) Blocking(ctx context.Context, obj *nib.Nib, filter *model.
 			continue
 		}
 		snap, ok := r.Reader.GetSnapshot(link.FromNib.ID)
-		if ok && !r.isClosedStatus(snap.Status) {
+		if ok && !r.releasesDependents(snap.Status) {
 			result = append(result, snap)
 		}
 	}
@@ -804,9 +810,12 @@ func (r *nibResolver) Children(ctx context.Context, obj *nib.Nib, filter *model.
 // Returns the IDs of nibs mentioned via `#<id>` in this nib's body.
 //
 // Unlike BlockedBy/Blocking, mentions are informational and include nibs in
-// all statuses (archived, scrapped, completed). Callers who want active-only
-// should request the `mentions` field with a filter instead, e.g.
-// `mentions(filter: { excludeStatus: ["completed", "scrapped"] }) { id }`.
+// every status, the closed ones (deferred, completed, scrapped) included.
+// Callers who want open nibs only should request the `mentions` field with a
+// filter instead, e.g.
+// `mentions(filter: { status: ["draft", "todo", "in-progress"] }) { id }` —
+// status/excludeStatus match literal names, with no open/closed group
+// expansion at this layer.
 func (r *nibResolver) MentionIds(ctx context.Context, obj *nib.Nib) ([]string, error) {
 	return existingMentionIDs(r.Reader, cachedMentions(ctx, r.Reader, obj.ID)), nil
 }
@@ -815,9 +824,12 @@ func (r *nibResolver) MentionIds(ctx context.Context, obj *nib.Nib) ([]string, e
 // Returns the IDs of nibs whose bodies mention this nib via `#<id>`.
 //
 // Unlike BlockedBy/Blocking, mentions are informational and include nibs in
-// all statuses (archived, scrapped, completed). Callers who want active-only
-// should request the `mentionedBy` field with a filter, e.g.
-// `mentionedBy(filter: { excludeStatus: ["completed", "scrapped"] }) { id }`.
+// every status, the closed ones (deferred, completed, scrapped) included.
+// Callers who want open nibs only should request the `mentionedBy` field with a
+// filter, e.g.
+// `mentionedBy(filter: { status: ["draft", "todo", "in-progress"] }) { id }` —
+// status/excludeStatus match literal names, with no open/closed group
+// expansion at this layer.
 func (r *nibResolver) MentionedByIds(ctx context.Context, obj *nib.Nib) ([]string, error) {
 	return existingMentionIDs(r.Reader, cachedMentionedBy(ctx, r.Reader, obj.ID)), nil
 }
@@ -830,8 +842,10 @@ func (r *nibResolver) MentionedByIds(ctx context.Context, obj *nib.Nib) ([]strin
 // cached live pointers; a mention that vanished before the snapshot is skipped.
 //
 // Unlike BlockedBy/Blocking, mentions are informational and include nibs in
-// all statuses (archived, scrapped, completed). Callers who want active-only
-// should pass `filter: { excludeStatus: ["completed", "scrapped"] }`.
+// every status, the closed ones (deferred, completed, scrapped) included.
+// Callers who want open nibs only should pass
+// `filter: { status: ["draft", "todo", "in-progress"] }` — status/excludeStatus
+// match literal names, with no open/closed group expansion at this layer.
 func (r *nibResolver) Mentions(ctx context.Context, obj *nib.Nib, filter *model.NibFilter) ([]*nib.Nib, error) {
 	mentioned := cachedMentions(ctx, r.Reader, obj.ID)
 	result := make([]*nib.Nib, 0, len(mentioned))
@@ -851,8 +865,10 @@ func (r *nibResolver) Mentions(ctx context.Context, obj *nib.Nib, filter *model.
 // cached live pointers; a source that vanished before the snapshot is skipped.
 //
 // Unlike BlockedBy/Blocking, mentions are informational and include nibs in
-// all statuses (archived, scrapped, completed). Callers who want active-only
-// should pass `filter: { excludeStatus: ["completed", "scrapped"] }`.
+// every status, the closed ones (deferred, completed, scrapped) included.
+// Callers who want open nibs only should pass
+// `filter: { status: ["draft", "todo", "in-progress"] }` — status/excludeStatus
+// match literal names, with no open/closed group expansion at this layer.
 func (r *nibResolver) MentionedBy(ctx context.Context, obj *nib.Nib, filter *model.NibFilter) ([]*nib.Nib, error) {
 	mentionedBy := cachedMentionedBy(ctx, r.Reader, obj.ID)
 	result := make([]*nib.Nib, 0, len(mentionedBy))

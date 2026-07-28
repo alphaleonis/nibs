@@ -425,6 +425,92 @@ func runListCmd(t *testing.T, nibsDir string, args ...string) (string, error) {
 	return out, execErr
 }
 
+// deferredBlockerFixture pairs two todo nibs, each blocked by exactly one
+// closed blocker: one completed (the dependency happened) and one deferred (the
+// dependency was set aside and is coming back). Both blockers are closed, so
+// only a predicate narrower than IsClosedStatus tells them apart.
+func deferredBlockerFixture() map[string]string {
+	return map[string]string{
+		"bd--blocker-done.md":  "---\ntitle: BlockerDone\nstatus: completed\ntype: task\n---\n",
+		"bp--blocker-park.md":  "---\ntitle: BlockerParked\nstatus: deferred\ntype: task\n---\n",
+		"dd--dep-of-done.md":   "---\ntitle: DepOfDone\nstatus: todo\ntype: task\nblocked_by: [bd]\n---\n",
+		"dp--dep-of-parked.md": "---\ntitle: DepOfParked\nstatus: todo\ntype: task\nblocked_by: [bp]\n---\n",
+	}
+}
+
+// TestListCommand_DeferredBlockerStillBlocks pins the rule that separates
+// "closed" from "releases its dependents": deferring a blocker must NOT hand
+// its dependents out as startable work. --ready is the agent work queue, so a
+// nib blocked only by a deferred nib has to stay out of it and report
+// ready:false, while one blocked only by completed work is released.
+//
+// Both blockers are closed. Routing the blocking graph through IsClosedStatus
+// instead of StatusReleasesDependents makes dp ready and puts it in --ready.
+func TestListCommand_DeferredBlockerStillBlocks(t *testing.T) {
+	t.Run("--ready excludes a nib blocked by a deferred nib", func(t *testing.T) {
+		nibsDir := setupListCobraTest(t, deferredBlockerFixture())
+		out, err := runListCmd(t, nibsDir, "--ready", "-f", "id")
+		if err != nil {
+			t.Fatalf("list --ready failed: %v\nout: %s", err, out)
+		}
+		if strings.Contains(out, "dp") {
+			t.Errorf("--ready returned dp, which is blocked by a deferred nib\nout: %s", out)
+		}
+		if !strings.Contains(out, "dd") {
+			t.Errorf("--ready omitted dd, whose only blocker is completed\nout: %s", out)
+		}
+	})
+
+	t.Run("ready projection reports false and still lists the blocker", func(t *testing.T) {
+		nibsDir := setupListCobraTest(t, deferredBlockerFixture())
+		out, err := runListCmd(t, nibsDir, "--json", "-f", "id,ready,blocked-by")
+		if err != nil {
+			t.Fatalf("list --json failed: %v\nout: %s", err, out)
+		}
+		var env struct {
+			Nibs []struct {
+				ID        string   `json:"id"`
+				Ready     bool     `json:"ready"`
+				BlockedBy []string `json:"blocked_by"`
+			} `json:"nibs"`
+		}
+		if err := json.Unmarshal([]byte(out), &env); err != nil {
+			t.Fatalf("unmarshal envelope: %v\nraw: %s", err, out)
+		}
+		byID := map[string]struct {
+			ready     bool
+			blockedBy []string
+		}{}
+		for _, n := range env.Nibs {
+			byID[n.ID] = struct {
+				ready     bool
+				blockedBy []string
+			}{n.Ready, n.BlockedBy}
+		}
+		dp, ok := byID["dp"]
+		if !ok {
+			t.Fatalf("dp missing from the open-default listing\nraw: %s", out)
+		}
+		if dp.ready {
+			t.Errorf("dp ready = true, want false — its only blocker is deferred, not satisfied")
+		}
+		// blocked-by projects the declared list off the nib, unfiltered, so bp
+		// is reported whatever the blocking rule says. That is what made the old
+		// behavior self-contradictory: ready:true printed next to a live
+		// blocker. Pinned here so the pair stays coherent.
+		if len(dp.blockedBy) != 1 || dp.blockedBy[0] != "bp" {
+			t.Errorf("dp blocked_by = %v, want [bp]", dp.blockedBy)
+		}
+		dd, ok := byID["dd"]
+		if !ok {
+			t.Fatalf("dd missing from the open-default listing\nraw: %s", out)
+		}
+		if !dd.ready {
+			t.Errorf("dd ready = false, want true — its only blocker completed")
+		}
+	})
+}
+
 // TestListCommand_TSVDefault projects an explicit field set to TSV rows under
 // the "# <n> nibs" header, with no body column. -f given alone (no --view)
 // yields exactly the requested fields.

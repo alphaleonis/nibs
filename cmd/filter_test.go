@@ -41,8 +41,8 @@ func TestFilterClosedBlockersDoesNotMutateCore(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	// Call filterClosedBlockersOne — this should NOT mutate the in-memory nib
-	result := filterClosedBlockersOne(blocked, core)
+	// Call filterReleasedBlockersOne — this should NOT mutate the in-memory nib
+	result := filterReleasedBlockersOne(blocked, core)
 
 	// The returned copy should have the closed blocker removed
 	if len(result.BlockedBy) != 0 {

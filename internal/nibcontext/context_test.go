@@ -84,6 +84,42 @@ func TestCalcProgress(t *testing.T) {
 			wantPercentage: 50,
 		},
 		{
+			// deferred is closed, but the work is coming back — parked scope
+			// weighs on the denominator exactly like open work, so the estimate
+			// of a set-aside nib is still counted as outstanding.
+			name: "deferred counts toward total, not toward completed",
+			nibs: []*nib.Nib{
+				{ID: "a", Type: "task", Status: "completed", Estimate: "m"}, // 3
+				{ID: "b", Type: "task", Status: "deferred", Estimate: "xl"}, // 8, undone
+				{ID: "c", Type: "task", Status: "todo", Estimate: "m"},      // 3
+			},
+			wantCompleted:  3,
+			wantTotal:      14,
+			wantPercentage: 3.0 / 14.0 * 100,
+		},
+		{
+			name: "a deferred nib holds the set below 100%",
+			nibs: []*nib.Nib{
+				{ID: "a", Type: "task", Status: "completed", Estimate: "m"}, // 3
+				{ID: "b", Type: "task", Status: "deferred", Estimate: "m"},  // 3, undone
+			},
+			wantCompleted:  3,
+			wantTotal:      6,
+			wantPercentage: 50,
+		},
+		{
+			// Only scrapped work leaves the denominator, so a set whose
+			// remaining nibs are all scrapped does reach 100%.
+			name: "scrapped remainder reaches 100%",
+			nibs: []*nib.Nib{
+				{ID: "a", Type: "task", Status: "completed", Estimate: "m"}, // 3
+				{ID: "b", Type: "task", Status: "scrapped", Estimate: "m"},  // excluded
+			},
+			wantCompleted:  3,
+			wantTotal:      3,
+			wantPercentage: 100,
+		},
+		{
 			name: "epics/milestones excluded (only leaf work counts)",
 			nibs: []*nib.Nib{
 				{ID: "a", Status: "completed", Estimate: "m", Type: "task"},

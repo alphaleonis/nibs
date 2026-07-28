@@ -29,8 +29,8 @@ func sameStatusSet(got, want []string) bool {
 
 func TestResolveStatusFilter(t *testing.T) {
 	cfg := config.Default()
-	openSet := []string{"in-progress", "todo", "draft", "deferred"}
-	archive := []string{"completed", "scrapped"}
+	openSet := []string{"in-progress", "todo", "draft"}
+	closedSet := []string{"deferred", "completed", "scrapped"}
 
 	tests := []struct {
 		name           string
@@ -40,10 +40,10 @@ func TestResolveStatusFilter(t *testing.T) {
 		wantOpenApplie bool
 	}{
 		{
-			name:           "default open: no flags excludes archive statuses",
+			name:           "default open: no flags excludes the closed statuses",
 			in:             statusFilterInput{},
 			wantInclude:    nil,
-			wantExclude:    archive,
+			wantExclude:    closedSet,
 			wantOpenApplie: true,
 		},
 		{
@@ -75,9 +75,9 @@ func TestResolveStatusFilter(t *testing.T) {
 			wantOpenApplie: false,
 		},
 		{
-			name:           "group closed expands to the archive set",
+			name:           "group closed expands to the closed set",
 			in:             statusFilterInput{Status: []string{"closed"}},
-			wantInclude:    archive,
+			wantInclude:    closedSet,
 			wantExclude:    nil,
 			wantOpenApplie: false,
 		},
@@ -103,37 +103,40 @@ func TestResolveStatusFilter(t *testing.T) {
 			wantOpenApplie: false,
 		},
 		{
-			name:           "open with no-status parked subtracts deferred",
-			in:             statusFilterInput{Status: []string{"open"}, NoStatus: []string{"parked"}},
-			wantInclude:    openSet,
+			// parked is a subset of closed, so subtracting it from the closed
+			// group actually removes a member (it is a no-op against open).
+			name:           "closed with no-status parked subtracts deferred",
+			in:             statusFilterInput{Status: []string{"closed"}, NoStatus: []string{"parked"}},
+			wantInclude:    closedSet,
 			wantExclude:    []string{"deferred"},
 			wantOpenApplie: false,
 		},
 		{
-			name:           "default with no-status draft subtracts draft on top of archive",
+			name:           "default with no-status draft subtracts draft on top of the closed set",
 			in:             statusFilterInput{NoStatus: []string{"draft"}},
 			wantInclude:    nil,
-			wantExclude:    []string{"completed", "scrapped", "draft"},
+			wantExclude:    append(append([]string(nil), closedSet...), "draft"),
 			wantOpenApplie: true,
 		},
 		{
-			name:           "no-status closed under default dedups archive exclusion",
+			name:           "no-status closed under default dedups the closed exclusion",
 			in:             statusFilterInput{NoStatus: []string{"closed"}},
 			wantInclude:    nil,
-			wantExclude:    archive,
+			wantExclude:    closedSet,
 			wantOpenApplie: true,
 		},
 		{
-			name:           "all with no-status closed excludes archive only",
+			name:           "all with no-status closed excludes the closed set only",
 			in:             statusFilterInput{All: true, NoStatus: []string{"closed"}},
 			wantInclude:    nil,
-			wantExclude:    archive,
+			wantExclude:    closedSet,
 			wantOpenApplie: false,
 		},
 		{
+			// closed ∪ parked overlaps on deferred; the union must list it once.
 			name:           "status group union dedups overlapping members",
-			in:             statusFilterInput{Status: []string{"open", "parked"}},
-			wantInclude:    openSet,
+			in:             statusFilterInput{Status: []string{"closed", "parked"}},
+			wantInclude:    closedSet,
 			wantExclude:    nil,
 			wantOpenApplie: false,
 		},

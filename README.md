@@ -137,7 +137,7 @@ Or, if your agent framework supports startup hooks, wire `nibs prime` to run at 
 | `nibs web` | Start the web UI server |
 | `nibs tui` | Open the terminal UI |
 | `nibs prime` | Output the agent integration prompt (slim default; pass `--full` for the complete reference) |
-| `nibs archive` | Move completed/scrapped nibs to the archive |
+| `nibs archive` | Move closed nibs to the archive |
 | `nibs upgrade` | Update nibs to the latest release (checksum-verified, with rollback); `--check` to only check |
 
 Run `nibs <command> --help` for full usage details.
@@ -147,7 +147,7 @@ Run `nibs <command> --help` for full usage details.
 Each nib has:
 
 - **Type**: milestone, epic, feature, task, bug, or research
-- **Status**: draft, todo, in-progress, deferred, completed, or scrapped
+- **Status**: open (draft, todo, in-progress) or closed (completed, scrapped, deferred)
 - **Priority** (optional): critical, high, normal, or low
 - **Estimate** (optional): s, m, l, or xl (t-shirt sizes)
 - **Tags**: freeform labels for categorization

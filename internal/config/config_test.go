@@ -98,8 +98,14 @@ func TestStatusNames(t *testing.T) {
 	cfg := Default()
 	got := cfg.StatusNames()
 
+	// The guard a maintainer adding a status hits first, so it names the sites
+	// that need a decision. A status added without a Closed decision defaults to
+	// open, which silently enlarges the bare `nibs list` and the group filters.
 	if len(got) != 6 {
-		t.Fatalf("len(StatusNames()) = %d, want 6", len(got))
+		t.Fatalf("len(StatusNames()) = %d, want 6 — a status was added or removed. Classify it "+
+			"(Closed, ReleasesDependents), update the membership assertions in this file, and give it a "+
+			"progress bucket in graph.ComputeProgress and nibcontext.CalcProgress, which name statuses "+
+			"individually rather than reading a group predicate", len(got))
 	}
 	expected := []string{"in-progress", "todo", "draft", "deferred", "completed", "scrapped"}
 	for i, name := range expected {
@@ -113,8 +119,9 @@ func TestClosedStatusNames(t *testing.T) {
 	cfg := Default()
 	got := cfg.ClosedStatusNames()
 
-	// Today the closed set is exactly {completed, scrapped}.
-	want := []string{"completed", "scrapped"}
+	// Today the closed set is exactly {deferred, completed, scrapped} — three
+	// reasons a nib left the board, in DefaultStatuses order.
+	want := []string{"deferred", "completed", "scrapped"}
 	if len(got) != len(want) {
 		t.Fatalf("len(ClosedStatusNames()) = %d, want %d (%v)", len(got), len(want), got)
 	}
@@ -131,11 +138,9 @@ func TestClosedStatusNames(t *testing.T) {
 		}
 	}
 
-	// "deferred" is terminal-adjacent but NOT closed; it must be excluded.
-	for _, name := range got {
-		if name == "deferred" {
-			t.Errorf("ClosedStatusNames() must not include %q", name)
-		}
+	// "deferred" is a close reason, so it must be in the closed group.
+	if !slices.Contains(got, "deferred") {
+		t.Errorf("ClosedStatusNames() = %v, must include \"deferred\"", got)
 	}
 }
 
@@ -143,28 +148,33 @@ func TestOpenStatusNames(t *testing.T) {
 	cfg := Default()
 	got := cfg.OpenStatusNames()
 
-	// Today the open set is exactly the non-closed statuses.
-	want := []string{"in-progress", "todo", "draft", "deferred"}
-	if len(got) != len(want) {
-		t.Fatalf("len(OpenStatusNames()) = %d, want %d (%v)", len(got), len(want), got)
-	}
-	for i, name := range want {
-		if got[i] != name {
-			t.Errorf("OpenStatusNames()[%d] = %q, want %q", i, got[i], name)
-		}
+	// Today the open set is exactly the non-closed statuses — the three
+	// workflow positions. "deferred" is closed and must not appear.
+	want := []string{"in-progress", "todo", "draft"}
+	if !slices.Equal(got, want) {
+		t.Errorf("OpenStatusNames() = %v, want %v", got, want)
 	}
 
-	// No open status may be a closed status.
-	for _, name := range got {
-		if cfg.IsClosedStatus(name) {
-			t.Errorf("OpenStatusNames() returned closed status %q", name)
+	// Open and closed must partition the declared status vocabulary: every
+	// status appears in exactly one group, and neither group returns a name
+	// that is not declared. Asserted against DefaultStatuses rather than
+	// against the other helper, so it stays a real check if either helper
+	// stops deriving its set from the Closed flag — comparing the two to each
+	// other would only restate that they are complementary filters over one
+	// slice, which cannot fail.
+	closed := cfg.ClosedStatusNames()
+	for _, s := range DefaultStatuses {
+		inOpen := slices.Contains(got, s.Name)
+		inClosed := slices.Contains(closed, s.Name)
+		if inOpen == inClosed {
+			t.Errorf("status %q: open=%v closed=%v — every status must be in exactly one group",
+				s.Name, inOpen, inClosed)
 		}
 	}
-
-	// Open and closed together must cover every status exactly once.
-	if len(got)+len(cfg.ClosedStatusNames()) != len(cfg.StatusNames()) {
-		t.Errorf("open (%d) + closed (%d) must equal all statuses (%d)",
-			len(got), len(cfg.ClosedStatusNames()), len(cfg.StatusNames()))
+	if len(got)+len(closed) != len(DefaultStatuses) {
+		t.Errorf("OpenStatusNames() (%v) + ClosedStatusNames() (%v) = %d names, want %d — "+
+			"the two groups must cover the declared statuses exactly once between them",
+			got, closed, len(got)+len(closed), len(DefaultStatuses))
 	}
 }
 
@@ -182,13 +192,13 @@ func TestParkedStatusNames(t *testing.T) {
 		}
 	}
 
-	// Parked statuses are valid, non-closed statuses (a subset of open).
+	// Parked statuses are valid, closed statuses (a subset of closed).
 	for _, name := range got {
 		if !cfg.IsValidStatus(name) {
 			t.Errorf("ParkedStatusNames() returned unknown status %q", name)
 		}
-		if cfg.IsClosedStatus(name) {
-			t.Errorf("ParkedStatusNames() returned closed status %q", name)
+		if !cfg.IsClosedStatus(name) {
+			t.Errorf("ParkedStatusNames() returned open status %q", name)
 		}
 	}
 
@@ -196,6 +206,68 @@ func TestParkedStatusNames(t *testing.T) {
 	got[0] = "mutated"
 	if cfg.ParkedStatusNames()[0] != "deferred" {
 		t.Error("ParkedStatusNames() must return a defensive copy")
+	}
+}
+
+// TestStatusReleasesDependents pins the second per-status classification: which
+// statuses satisfy a dependency. It is deliberately narrower than the closed
+// set — deferred is closed but still blocks, since parked work is coming back —
+// so asserting it against IsClosedStatus is the whole point of the test.
+func TestStatusReleasesDependents(t *testing.T) {
+	cfg := Default()
+
+	tests := []struct {
+		status string
+		want   bool
+	}{
+		{"completed", true},
+		{"scrapped", true},
+		{"deferred", false}, // closed, but the dependency is unsatisfied
+		{"todo", false},
+		{"in-progress", false},
+		{"draft", false},
+		{"", false}, // unknown statuses keep blocking
+		{"bogus", false},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.status, func(t *testing.T) {
+			if got := cfg.StatusReleasesDependents(tt.status); got != tt.want {
+				t.Errorf("StatusReleasesDependents(%q) = %v, want %v", tt.status, got, tt.want)
+			}
+		})
+	}
+
+	// The two classifications must not collapse back into one: releasing is a
+	// STRICT subset of closed. If they ever coincide again, deferring a blocker
+	// silently unblocks everything it was gating.
+	closed := cfg.ClosedStatusNames()
+	releasing := cfg.ReleasingStatusNames()
+	for _, name := range releasing {
+		if !slices.Contains(closed, name) {
+			t.Errorf("%q releases dependents but is not closed", name)
+		}
+	}
+	if len(releasing) >= len(closed) {
+		t.Errorf("releasing (%v) must be a strict subset of closed (%v)", releasing, closed)
+	}
+}
+
+func TestReleasingStatusNames(t *testing.T) {
+	cfg := Default()
+	got := cfg.ReleasingStatusNames()
+
+	// DefaultStatuses order, and deliberately without "deferred".
+	want := []string{"completed", "scrapped"}
+	if !slices.Equal(got, want) {
+		t.Errorf("ReleasingStatusNames() = %v, want %v", got, want)
+	}
+
+	// Every returned name must satisfy the canonical predicate.
+	for _, name := range got {
+		if !cfg.StatusReleasesDependents(name) {
+			t.Errorf("ReleasingStatusNames() returned %q which does not release dependents", name)
+		}
 	}
 }
 
@@ -269,7 +341,7 @@ func TestIsClosedStatus(t *testing.T) {
 		{"draft", false},
 		{"todo", false},
 		{"in-progress", false},
-		{"deferred", false}, // parked, not closed
+		{"deferred", true}, // set aside is a close reason
 		{"invalid", false},
 	}
 
@@ -286,9 +358,9 @@ func TestIsClosedStatus(t *testing.T) {
 // TestClosedStatusSetUnchanged characterizes the closed/open split so a rename
 // or refactor of the status vocabulary cannot quietly move a status across the
 // boundary. Membership — not naming — is what every consumer depends on:
-// "closed" is exactly {completed, scrapped}, and "deferred" is open (parked,
-// still actionable later). Reclassifying deferred is a deliberate change that
-// must fail here first.
+// "open" is the workflow position {draft, todo, in-progress} and "closed" is
+// the close reason {deferred, completed, scrapped}. Moving a status across is a
+// deliberate change that must fail here first.
 func TestClosedStatusSetUnchanged(t *testing.T) {
 	cfg := Default()
 
@@ -299,7 +371,7 @@ func TestClosedStatusSetUnchanged(t *testing.T) {
 		{"in-progress", true},
 		{"todo", true},
 		{"draft", true},
-		{"deferred", true},
+		{"deferred", false},
 		{"completed", false},
 		{"scrapped", false},
 	}
@@ -322,9 +394,9 @@ func TestClosedStatusSetUnchanged(t *testing.T) {
 		})
 	}
 
-	// The closed group is exactly these two, in this order — nothing else may
+	// The closed group is exactly these three, in this order — nothing else may
 	// have been folded into it.
-	if want := []string{"completed", "scrapped"}; !slices.Equal(closed, want) {
+	if want := []string{"deferred", "completed", "scrapped"}; !slices.Equal(closed, want) {
 		t.Errorf("ClosedStatusNames() = %v, want %v", closed, want)
 	}
 }
@@ -644,7 +716,7 @@ func TestStatusDescriptions(t *testing.T) {
 			"draft":       "Needs refinement before it can be worked on",
 			"todo":        "Ready to be worked on",
 			"in-progress": "Currently being worked on",
-			"deferred":    "Parked — not actionable now, but not abandoned (scrapped) or merely unrefined (draft)",
+			"deferred":    "Set aside — a good idea at the wrong time; closed, but kept as a seed rather than a dead end",
 			"completed":   "Finished successfully",
 			"scrapped":    "Will not be done",
 		}

@@ -424,18 +424,18 @@ func TestShortStatus_NoCollisions(t *testing.T) {
 }
 
 // TestRenderNibRow_DeferredStatusCell locks in that a "deferred" nib renders a
-// visible, config-colored status cell — never blank, never the "?" unknown
-// marker, and never dimmed like a closed nib. This guards the full TUI render chain
-// (GetNibColors -> ShortStatus -> RenderStatusTextWithColor) against a
-// regression that would drop the status glyph.
+// visible, config-colored status cell — never blank and never the "?" unknown
+// marker, even though it is dimmed as a closed status. This guards the full TUI
+// render chain (GetNibColors -> ShortStatus -> RenderStatusTextWithColor)
+// against a regression that would drop the status glyph.
 func TestRenderNibRow_DeferredStatusCell(t *testing.T) {
 	cfg := config.Default()
 	nc := cfg.GetNibColors("deferred", "task", "")
 
 	// Config drives the render inputs: deferred is a real (non-fallback) color
-	// and, crucially, is NOT a closed status (so the row is not dimmed).
-	if nc.IsClosed {
-		t.Fatal("deferred must be open so its row is not dimmed")
+	// and a closed status, so the row is dimmed like completed/scrapped.
+	if !nc.IsClosed {
+		t.Fatal("deferred must be closed so its row is dimmed")
 	}
 	if nc.StatusColor != "gray" {
 		t.Errorf("deferred status colour = %q, want %q", nc.StatusColor, "gray")
@@ -446,7 +446,7 @@ func TestRenderNibRow_DeferredStatusCell(t *testing.T) {
 
 	// Title intentionally contains no "F" so the only "F" in the row is the
 	// ShortStatus glyph for deferred.
-	const title = "Parked work"
+	const title = "Set-aside work"
 
 	t.Run("single-char status column", func(t *testing.T) {
 		row := RenderNibRow("tnib-1", "deferred", "task", title, NibRowConfig{

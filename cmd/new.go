@@ -172,10 +172,10 @@ is used as-is — with --no-edit, with --json, or when stdin/stdout is not a ter
 			return cmdError(newJSON, output.ErrFileError, "failed to create nib: %v", err)
 		}
 
-		// Dedup safety net: before the card echo, scan CLOSED nibs (completed /
-		// scrapped — hidden from the day-to-day list) for a likely duplicate of
-		// this new title/slug. Warn-only and non-blocking; the create already
-		// succeeded. --no-dedup-check skips it entirely.
+		// Dedup safety net: before the card echo, scan the closed nibs — the ones
+		// hidden from the day-to-day list, per cfg.IsClosedStatus — for a likely
+		// duplicate of this new title/slug. Warn-only and non-blocking; the
+		// create already succeeded. --no-dedup-check skips it entirely.
 		var dups []possibleDuplicate
 		if !newNoDedupCheck {
 			dups = findPossibleDuplicates(app.Core.All(), app.Config(), b.ID, b.Title, b.Slug)
@@ -290,7 +290,7 @@ func init() {
 	newCmd.Flags().BoolVar(&newFirst, "first", false, "Insert before all siblings")
 	newCmd.Flags().BoolVar(&newJSON, "json", false, "Output as JSON (implies --no-edit)")
 	newCmd.Flags().BoolVar(&newNoEdit, "no-edit", false, "Never open $EDITOR; use the template body as-is")
-	newCmd.Flags().BoolVar(&newNoDedupCheck, "no-dedup-check", false, "Skip the closed-nib (completed/scrapped) duplicate check")
+	newCmd.Flags().BoolVar(&newNoDedupCheck, "no-dedup-check", false, "Skip the closed-nib duplicate check")
 	newCmd.MarkFlagsMutuallyExclusive("body", "body-file")
 	newCmd.MarkFlagsMutuallyExclusive("after", "before", "first")
 	rootCmd.AddCommand(newCmd)

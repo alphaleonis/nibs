@@ -53,12 +53,9 @@ type Progress struct {
 // If empty, summarizes all active work with a warning.
 //
 // cfg supplies the closed-status definition (Config.IsClosedStatus) for the
-// active-milestone filter below, which is this file's only config-derived
-// status test. Everything else here names statuses directly: CalcProgress needs
-// completed and scrapped apart (scrapped leaves the denominator, completed
-// enters the numerator), which a boolean predicate cannot express, and the
-// epic/task selectors match "in-progress"/"todo", which are not closed statuses
-// at all.
+// active-milestone filter below. The status literals here are not config-derived
+// on purpose: the epic/task selectors match "in-progress"/"todo" — single
+// statuses a group predicate cannot single out.
 func BuildSummary(allNibs []*nib.Nib, rootID string, cfg *config.Config) Summary {
 	byID := indexByID(allNibs)
 
@@ -161,9 +158,12 @@ func BuildSummary(allNibs []*nib.Nib, rootID string, cfg *config.Config) Summary
 
 // CalcProgress computes weighted progress across a set of nibs.
 // Only leaf work types (task, bug, feature) count — epics and milestones are excluded.
-// Scrapped nibs are excluded from both completed and total.
-// Draft nibs are intentionally included in the total — they represent planned scope
-// that hasn't been refined yet, so they count toward the denominator.
+// It applies the same three-way rule as graph.ComputeProgress, weighted by
+// estimate: "completed" is the numerator, "scrapped" work is no longer scope and
+// leaves the denominator, and everything else counts toward the denominator
+// without counting as done. Deferred nibs are in that last group — parked work
+// is coming back, so it is outstanding scope. Draft nibs are there too: planned
+// scope that hasn't been refined yet.
 func CalcProgress(nibs []*nib.Nib) Progress {
 	var completed, total int
 	for _, n := range nibs {

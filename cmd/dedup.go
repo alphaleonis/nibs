@@ -20,8 +20,8 @@ type possibleDuplicate struct {
 	Status string `json:"status"`
 	Title  string `json:"title"`
 	// Reason is a one-line snippet of a scrapped nib's "## Reasons for Scrapping"
-	// section (why the team decided against it). Empty for completed matches and
-	// for scrapped nibs without that section.
+	// section (why the team decided against it). Empty for every other closed
+	// status, and for scrapped nibs without that section.
 	Reason string `json:"reason,omitempty"`
 }
 
@@ -108,10 +108,11 @@ func truncateSnippet(s string, max int) string {
 	return strings.TrimRight(string(r[:max]), " ") + "…"
 }
 
-// findPossibleDuplicates scans the full nib set for CLOSED nibs (completed or
-// scrapped, per cfg.IsClosedStatus) that likely duplicate a just-created nib.
-// The new nib itself is excluded by id, and open nibs are never returned (the
-// day-to-day list already surfaces those). A match is an equal/contained
+// findPossibleDuplicates scans the full nib set for CLOSED nibs — whatever
+// cfg.IsClosedStatus covers, so a deferred nib counts as much as a completed or
+// scrapped one — that likely duplicate a just-created nib. The new nib itself is
+// excluded by id, and open nibs are not returned (the day-to-day list already
+// surfaces those). A match is an equal/contained
 // normalized title or an exact non-empty slug equality. Results are sorted by id
 // for deterministic output.
 func findPossibleDuplicates(candidates []*nib.Nib, cfg *config.Config, newID, newTitle, newSlug string) []possibleDuplicate {

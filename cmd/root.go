@@ -184,22 +184,23 @@ func Execute() {
 	}
 }
 
-// filterClosedBlockers returns shallow copies of the given nibs with
-// completed/scrapped IDs removed from BlockedBy for display purposes.
+// filterReleasedBlockers returns shallow copies of the given nibs with
+// satisfied blockers removed from BlockedBy for display purposes.
 // The original in-memory nibs from Core are not mutated. It applies the same
-// closed-status convention (config.IsClosedStatus) used across the mutation
-// commands' JSON responses.
-func filterClosedBlockers(nibs []*nib.Nib, reader graph.NibReader) []*nib.Nib {
+// convention (config.StatusReleasesDependents) the blocking graph uses, so a
+// completed or scrapped blocker drops out while a deferred one stays — parked
+// work is coming back, so it still blocks.
+func filterReleasedBlockers(nibs []*nib.Nib, reader graph.NibReader) []*nib.Nib {
 	result := make([]*nib.Nib, len(nibs))
 	for i, b := range nibs {
-		result[i] = filterClosedBlockersOne(b, reader)
+		result[i] = filterReleasedBlockersOne(b, reader)
 	}
 	return result
 }
 
-// filterClosedBlockersOne returns a shallow copy of the nib with closed
+// filterReleasedBlockersOne returns a shallow copy of the nib with satisfied
 // blockers removed from BlockedBy. The original nib is not mutated.
-func filterClosedBlockersOne(b *nib.Nib, reader graph.NibReader) *nib.Nib {
+func filterReleasedBlockersOne(b *nib.Nib, reader graph.NibReader) *nib.Nib {
 	if len(b.BlockedBy) == 0 {
 		clone := *b
 		return &clone
@@ -207,7 +208,7 @@ func filterClosedBlockersOne(b *nib.Nib, reader graph.NibReader) *nib.Nib {
 	active := make([]string, 0, len(b.BlockedBy))
 	for _, blockerID := range b.BlockedBy {
 		if blocker, err := reader.Get(blockerID); err == nil {
-			if !reader.Config().IsClosedStatus(blocker.Status) {
+			if !reader.Config().StatusReleasesDependents(blocker.Status) {
 				active = append(active, blockerID)
 			}
 		} else {

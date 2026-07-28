@@ -140,7 +140,8 @@ func buildRoadmap(allNibs []*nib.Nib, includeDone bool, statusFilter, noStatusFi
 	var milestoneGroups []milestoneGroup
 	for _, m := range milestones {
 		group := buildMilestoneGroup(m, children, includeDone, cfg)
-		// Only include milestones that have visible content
+		// A milestone earns its place by holding outstanding scope — the same
+		// rule as epics, one level up.
 		if len(group.Epics) > 0 || len(group.Other) > 0 {
 			milestoneGroups = append(milestoneGroups, group)
 		}
@@ -172,7 +173,7 @@ func buildRoadmap(allNibs []*nib.Nib, includeDone bool, statusFilter, noStatusFi
 		if underMilestone[b.ID] {
 			continue
 		}
-		// Build epic group if it has visible children
+		// Build the epic group if it still holds outstanding scope.
 		epicItems := filterChildren(children[b.ID], includeDone, cfg)
 		if len(epicItems) > 0 {
 			sortByTypeThenStatus(epicItems, cfg)
@@ -206,7 +207,7 @@ func buildRoadmap(allNibs []*nib.Nib, includeDone bool, statusFilter, noStatusFi
 			continue
 		}
 		// Apply done filter
-		if !includeDone && cfg.IsClosedStatus(b.Status) {
+		if !staysOnRoadmap(b.Status, includeDone, cfg) {
 			continue
 		}
 		orphanItems = append(orphanItems, b)
@@ -254,7 +255,9 @@ func buildMilestoneGroup(m *nib.Nib, children map[string][]*nib.Nib, includeDone
 	// Build epic groups
 	for _, epic := range epics {
 		epicItems := filterChildren(children[epic.ID], includeDone, cfg)
-		// Only include epics that have visible children
+		// Include epics that still hold outstanding scope. An epic that closed
+		// over a parked child keeps rendering it — closing the parent does not
+		// resolve the child.
 		if len(epicItems) > 0 {
 			sortByTypeThenStatus(epicItems, cfg)
 			group.Epics = append(group.Epics, epicGroup{
@@ -272,7 +275,7 @@ func buildMilestoneGroup(m *nib.Nib, children map[string][]*nib.Nib, includeDone
 		if child.Type == "epic" {
 			continue
 		}
-		if includeDone || !cfg.IsClosedStatus(child.Status) {
+		if staysOnRoadmap(child.Status, includeDone, cfg) {
 			other = append(other, child)
 		}
 	}
@@ -299,18 +302,28 @@ func childStatuses(children []*nib.Nib) []string {
 	return statuses
 }
 
-// filterChildren filters children based on done status.
-func filterChildren(children []*nib.Nib, includeDone bool, cfg *config.Config) []*nib.Nib {
-	if includeDone {
-		// Return a copy to avoid modifying the original
-		result := make([]*nib.Nib, len(children))
-		copy(result, children)
-		return result
-	}
+// staysOnRoadmap reports whether a nib is still outstanding scope and belongs on
+// the board. Work whose status released its dependents is finished with — it
+// either happened (completed) or it never will (scrapped), and nothing waits on
+// it — so the default view drops it. Everything else stays, including a deferred
+// nib: it is closed, but the work is coming back, so it still blocks its
+// dependents and it is still scope someone has to deal with. Roadmap has no
+// hidden-closed disclosure, so a parked nib that dropped out would be invisible
+// rather than merely collapsed.
+//
+// This is the visibility half of the seam with graph.ComputeProgress: without
+// includeDone, the nibs this keeps are exactly the ones that rollup counts in
+// Total but not in Done.
+func staysOnRoadmap(status string, includeDone bool, cfg *config.Config) bool {
+	return includeDone || !cfg.StatusReleasesDependents(status)
+}
 
+// filterChildren drops the children that are no longer outstanding scope, unless
+// includeDone asks for the full set. See staysOnRoadmap.
+func filterChildren(children []*nib.Nib, includeDone bool, cfg *config.Config) []*nib.Nib {
 	var filtered []*nib.Nib
 	for _, b := range children {
-		if !cfg.IsClosedStatus(b.Status) {
+		if staysOnRoadmap(b.Status, includeDone, cfg) {
 			filtered = append(filtered, b)
 		}
 	}

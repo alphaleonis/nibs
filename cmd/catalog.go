@@ -216,9 +216,10 @@ func catalogFilters() error {
 	}
 	_ = gtw.Flush()
 
-	b.WriteString("\n'nibs list' and 'nibs rel' show only open nibs by default (completed/scrapped\n")
-	b.WriteString("hidden). An explicit -s overrides that (-s closed shows only completed/scrapped),\n")
-	b.WriteString("--all includes every status, and --open/--active is shorthand for -s open.\n")
+	b.WriteString("\n'nibs list' and 'nibs rel' show only open nibs by default (the closed\n")
+	b.WriteString("statuses are hidden). An explicit -s overrides that (-s closed shows only\n")
+	b.WriteString("closed nibs), --all includes every status, and --open/--active is\n")
+	b.WriteString("shorthand for -s open.\n")
 	fmt.Print(b.String())
 	return nil
 }
@@ -315,14 +316,14 @@ func catalogExamples() error {
 
 // catalogOpenWorkRecipes returns the copy-paste command lines for the most
 // common open-work questions. They lean on the open-by-default status filter so
-// an agent never hand-rolls a '--json | python' post-filter to hide
-// completed/scrapped nibs — the incident that motivated the open default.
+// an agent never hand-rolls a '--json | python' post-filter to hide closed
+// nibs — the incident that motivated the open default.
 func catalogOpenWorkRecipes() []recipeInfo {
 	return []recipeInfo{
-		{"nibs list", "open work everywhere (completed/scrapped hidden by default)"},
+		{"nibs list", "open work everywhere (closed statuses hidden by default)"},
 		{"nibs rel <id> --rel descendants", "open work under a parent (add -t bug for open bugs only)"},
-		{"nibs list -s closed", "only completed/scrapped (an explicit -s overrides the open default)"},
-		{"nibs list --all", "every status, including completed/scrapped"},
+		{"nibs list -s closed", "only closed nibs (an explicit -s overrides the open default)"},
+		{"nibs list --all", "every status, including the closed ones"},
 		{"nibs list --ready", "open, unblocked, actionable (excludes in-progress/draft/deferred)"},
 	}
 }

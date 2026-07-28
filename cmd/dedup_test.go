@@ -108,6 +108,21 @@ func TestFindPossibleDuplicates(t *testing.T) {
 		}
 	})
 
+	t.Run("deferred match surfaces and has no reason", func(t *testing.T) {
+		// Deferred is a closed status, so a parked nib is exactly the kind of
+		// duplicate this warning exists for: the idea was kept, not rejected.
+		// The scrap-reason snippet is scrapped-only, so it stays empty.
+		deferred := mkNib("n-park", "slack-integration", "Slack integration", "deferred",
+			"## Reasons for Scrapping\nnot a scrapped nib\n")
+		got := findPossibleDuplicates([]*nib.Nib{deferred}, cfg, "new", "Slack integration", "slack-integration")
+		want := []possibleDuplicate{
+			{ID: "n-park", Status: "deferred", Title: "Slack integration"},
+		}
+		if !reflect.DeepEqual(got, want) {
+			t.Errorf("findPossibleDuplicates = %#v, want %#v", got, want)
+		}
+	})
+
 	t.Run("no match yields nil", func(t *testing.T) {
 		got := findPossibleDuplicates(candidates, cfg, "new", "A brand new distinct heading", "brand-new")
 		if len(got) != 0 {

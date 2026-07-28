@@ -123,7 +123,7 @@ type listModel struct {
 
 	// Active filters
 	tagFilter     string // if set, only show nibs with this tag
-	hideCompleted bool   // if true, hide completed and scrapped nibs
+	hideCompleted bool   // if true, hide nibs in a closed status
 
 	// Collapse state
 	collapsedIDs map[string]bool // set of collapsed node IDs
@@ -542,7 +542,7 @@ func (m listModel) Update(msg tea.Msg) (listModel, tea.Cmd) {
 					}
 				}
 			case "H":
-				// Toggle hide completed/scrapped nibs
+				// Toggle hiding nibs in a closed status
 				m.toggleHideCompleted()
 				return m, m.loadNibs
 			case "W":

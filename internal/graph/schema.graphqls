@@ -355,16 +355,20 @@ type Nib {
   Nibs mentioned in this nib's body (outbound, resolved from mentionIds).
 
   Unlike blockedBy/blocking, mentions are informational and include nibs in
-  all statuses (archived, scrapped, completed). Pass
-  `filter: { excludeStatus: ["completed", "scrapped"] }` for active-only.
+  every status, the closed ones (deferred, completed, scrapped) included. For
+  open nibs only, pass `filter: { status: ["draft", "todo", "in-progress"] }`.
+  status/excludeStatus match literal status names — there is no open/closed
+  group expansion at this layer, unlike the CLI's -s/--no-status.
   """
   mentions(filter: NibFilter): [Nib!]!
   """
   Nibs whose bodies mention this one (inbound, resolved from mentionedByIds).
 
   Unlike blockedBy/blocking, mentions are informational and include nibs in
-  all statuses (archived, scrapped, completed). Pass
-  `filter: { excludeStatus: ["completed", "scrapped"] }` for active-only.
+  every status, the closed ones (deferred, completed, scrapped) included. For
+  open nibs only, pass `filter: { status: ["draft", "todo", "in-progress"] }`.
+  status/excludeStatus match literal status names — there is no open/closed
+  group expansion at this layer, unlike the CLI's -s/--no-status.
   """
   mentionedBy(filter: NibFilter): [Nib!]!
 }
