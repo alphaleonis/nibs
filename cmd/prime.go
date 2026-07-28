@@ -26,16 +26,19 @@ type promptData struct {
 
 	// The status groups the guides teach, precomputed here rather than derived
 	// in the markup: both templates state the holding/releasing split and the
-	// full guide states all four sets, so computing them once avoids
-	// duplicating the same filter-and-join across two template files, and keeps
-	// {{if .HoldingStatuses}} a plain emptiness test rather than a
-	// re-derivation. Holding is the closed statuses that do NOT release their
-	// dependents, which lets the guides state the "closed but still blocks"
-	// rule without naming a status.
+	// --ready rule, and the full guide states all the sets, so computing them
+	// once avoids duplicating the same filter-and-join across two template
+	// files, and keeps {{if .HoldingStatuses}} a plain emptiness test rather
+	// than a re-derivation. Holding is the closed statuses that do NOT release
+	// their dependents, which lets the guides state the "closed but still
+	// blocks" rule without naming a status. Startable is the status half of
+	// `nibs list --ready`, so both guides describe that flag from the same set
+	// the flag filters by.
 	OpenStatuses      []string
 	ClosedStatuses    []string
 	ReleasingStatuses []string
 	HoldingStatuses   []string
+	StartableStatuses []string
 }
 
 // promptFuncs are the template helpers the guides need to state a derived set:
@@ -125,6 +128,7 @@ func renderPrompt(w io.Writer, name, text string) error {
 		ClosedStatuses:    cfg.ClosedStatusNames(),
 		ReleasingStatuses: cfg.ReleasingStatusNames(),
 		HoldingStatuses:   cfg.HoldingStatusNames(),
+		StartableStatuses: cfg.StartableStatusNames(),
 	}
 
 	return tmpl.Execute(w, data)

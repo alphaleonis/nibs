@@ -30,7 +30,7 @@ WHEN DELEGATING to subagents (auto-tdd, auto-dev, feature-dev, etc.):
 ## Finding work
 
 ```bash
-nibs list --ready                 # nibs ready to start (not blocked; excludes in-progress/completed/scrapped/draft/deferred)
+nibs list --ready                 # nibs ready to start (not blocked{{if .StartableStatuses}}; status {{join .StartableStatuses "/"}} — nothing else is startable{{end}})
 nibs list --ready --json          # same, as the {nibs,count,truncated} envelope
 nibs list                         # all OPEN nibs (the closed ones — {{join .ClosedStatuses "/"}} — hidden by default; --all to include them)
 nibs get <id> [id...]             # full detail of specific nibs (on-disk document by default)

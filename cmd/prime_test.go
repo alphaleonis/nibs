@@ -1,6 +1,7 @@
 package cmd
 
 import (
+	"fmt"
 	"regexp"
 	"strings"
 	"testing"
@@ -149,10 +150,12 @@ func TestCodeList(t *testing.T) {
 // the members config declares, in config's order, and the slim prompt's blocker
 // rule must name the holding set.
 //
-// Neither prompt's `--ready` sentence is asserted against config, deliberately:
-// cmd/list.go builds that exclusion from a literal, not from the Closed flags,
-// so a guard tying the sentence to ClosedStatusNames would certify a claim the
-// flag does not implement. The sentences name list.go's five literals instead.
+// The `--ready` sentence is deliberately NOT asserted here. Tying it to a
+// config-derived set would only prove the prose matches some list of statuses,
+// not the one the flag hands back — a sentence bound to the wrong derived set
+// self-updates into a confident lie while its guard stays green. It is bound to
+// the flag's observed output instead, in
+// TestPromptsStateTheStatusesReadyActuallyReturns.
 func TestPromptsStateConfiguredStatusGroups(t *testing.T) {
 	cfg := config.Default()
 	full := renderedFullPrompt(t)
@@ -204,6 +207,108 @@ func TestPromptsDeriveStatusVocabularyFromConfig(t *testing.T) {
 	}
 }
 
+// TestPromptsStateTheStatusesReadyActuallyReturns binds both guides' `--ready`
+// sentence to what the flag does, not to a config-derived list. The two are not
+// the same guarantee: a sentence rendered from some other derived set stays
+// green against config while telling agents the flag returns statuses it
+// withholds, which is how the claim went wrong before.
+//
+// So the expected sentence is built from the statuses `nibs list --ready`
+// actually hands back over a fixture holding one unblocked nib per declared
+// status. Both sentences end in a phrase that closes the list ("nothing else is
+// startable"), which is load-bearing here: without it a guide naming
+// `todo`/`draft` would still contain the substring for `todo` alone and pass.
+func TestPromptsStateTheStatusesReadyActuallyReturns(t *testing.T) {
+	cfg := config.Default()
+	declared := cfg.StatusNames()
+
+	fixture := map[string]string{}
+	idOf := map[string]string{}
+	for i, status := range declared {
+		id := fmt.Sprintf("s%d", i)
+		fixture[id+"--nib.md"] = fmt.Sprintf("---\ntitle: S\nstatus: %s\ntype: task\n---\n", status)
+		idOf[id] = status
+	}
+	nibsDir := setupListCobraTest(t, fixture)
+
+	out, err := runListCmd(t, nibsDir, "--ready", "-q")
+	if err != nil {
+		t.Fatalf("list --ready failed: %v\nout: %s", err, out)
+	}
+	returned := map[string]bool{}
+	for _, id := range strings.Fields(out) {
+		status, ok := idOf[id]
+		if !ok {
+			t.Fatalf("--ready returned unknown id %q\nout: %s", id, out)
+		}
+		returned[status] = true
+	}
+
+	// Ordered by the declared vocabulary, which is how both guides join the
+	// set — and which is independent of the flag being asserted.
+	var actual []string
+	for _, status := range declared {
+		if returned[status] {
+			actual = append(actual, status)
+		}
+	}
+	if len(actual) == 0 {
+		t.Fatal("--ready returned nothing over a fixture with one unblocked nib per status, so this guard compares nothing")
+	}
+
+	if want := "whose status is " + codeList(actual, "/") + " — nothing else is startable."; !strings.Contains(renderedSlimPrompt(t), want) {
+		t.Errorf("slim prompt does not state the statuses --ready returns; want %q", want)
+	}
+	if want := "status " + strings.Join(actual, "/") + " — nothing else is startable)"; !strings.Contains(renderedFullPrompt(t), want) {
+		t.Errorf("full guide does not state the statuses --ready returns; want %q", want)
+	}
+}
+
+// TestFullPromptHoldingBlockerRuleMatchesReady checks the one other `--ready`
+// claim in the guides: that a nib whose only blocker is a holding one stays out
+// of the flag's output. Also run against the flag rather than reasoned about,
+// because the sentence names a consequence, not a set.
+func TestFullPromptHoldingBlockerRuleMatchesReady(t *testing.T) {
+	cfg := config.Default()
+	holding := cfg.HoldingStatusNames()
+	if len(holding) == 0 {
+		t.Skip("no holding statuses declared, so the guides drop the rule entirely")
+	}
+	startable := cfg.StartableStatusNames()
+	if len(startable) == 0 {
+		t.Skip("nothing is startable, so no nib could be in --ready with or without the blocker")
+	}
+
+	// dep is startable and unblocked but for one blocker in a holding status;
+	// free is the same nib without the blocker, so the difference between them
+	// is the blocker and nothing else.
+	fixture := map[string]string{
+		"hld--holder.md": fmt.Sprintf("---\ntitle: Holder\nstatus: %s\ntype: task\n---\n", holding[0]),
+		"dep--blocked.md": fmt.Sprintf("---\ntitle: Dep\nstatus: %s\ntype: task\nblocked_by: [hld]\n---\n",
+			startable[0]),
+		"free--free.md": fmt.Sprintf("---\ntitle: Free\nstatus: %s\ntype: task\n---\n", startable[0]),
+	}
+	nibsDir := setupListCobraTest(t, fixture)
+	out, err := runListCmd(t, nibsDir, "--ready", "-q")
+	if err != nil {
+		t.Fatalf("list --ready failed: %v\nout: %s", err, out)
+	}
+	listed := map[string]bool{}
+	for _, id := range strings.Fields(out) {
+		listed[id] = true
+	}
+	if !listed["free"] {
+		t.Fatalf("--ready omitted free, so the comparison below shows nothing about the blocker\nout: %s", out)
+	}
+	if listed["dep"] {
+		t.Errorf("--ready returned dep, whose only blocker is %s — the guides claim it stays out\nout: %s", holding[0], out)
+	}
+
+	if want := "stays out of `nibs list --ready`"; !strings.Contains(renderedFullPrompt(t), want) {
+		t.Errorf("full guide no longer states %q, so the behavior above is unclaimed", want)
+	}
+}
+
 // emptyInterpolation matches one shape an empty derived set leaves behind: an
 // article or "as" with nothing left to introduce — "a  blocker still blocks",
 // "closing it as  does not". That is its whole coverage, and it is narrower
@@ -252,10 +357,11 @@ func excerpt(s string, loc []int) string {
 // TestPromptsGuardEmptyDerivedSets asserts neither guide ever interpolates an
 // empty derived set into prose. Every sentence naming a set must sit inside a
 // guard on THAT set: a sentence contrasting two sets needs both, which a guard
-// on one of them does not give it. So both directions are exercised — nothing
-// holding, where the blocker rule loses its subject, and nothing releasing,
-// where the contrast it draws loses its counterpart — and the affected
-// sentences must be dropped whole rather than rendered with a hole in them.
+// on one of them does not give it. So each way a set can empty is exercised —
+// nothing holding, where the blocker rule loses its subject; nothing releasing,
+// where the contrast it draws loses its counterpart; nothing startable, where
+// the --ready rule has no statuses left to name — and the affected sentences
+// must be dropped whole rather than rendered with a hole in them.
 func TestPromptsGuardEmptyDerivedSets(t *testing.T) {
 	// With the statuses as declared no set is empty, so a match here means the
 	// pattern is too broad rather than that a guard is missing.
@@ -266,20 +372,45 @@ func TestPromptsGuardEmptyDerivedSets(t *testing.T) {
 	}
 
 	for _, tc := range []struct {
-		name     string
-		releases bool // forced onto every closed status
-		emptied  func(*config.Config) []string
+		name    string
+		empty   func(*config.StatusConfig) // applied to every declared status
+		emptied func(*config.Config) []string
+		// The rule that has no subject left once the set is empty, and so must
+		// be dropped whole rather than rendered with a hole in it.
+		dropped string
 	}{
-		{"nothing holds", true, (*config.Config).HoldingStatusNames},
-		{"nothing releases", false, (*config.Config).ReleasingStatusNames},
+		{
+			"nothing holds",
+			func(s *config.StatusConfig) {
+				if s.Closed {
+					s.ReleasesDependents = true
+				}
+			},
+			(*config.Config).HoldingStatusNames,
+			"blocker still blocks",
+		},
+		{
+			"nothing releases",
+			func(s *config.StatusConfig) {
+				if s.Closed {
+					s.ReleasesDependents = false
+				}
+			},
+			(*config.Config).ReleasingStatusNames,
+			"blocker still blocks",
+		},
+		{
+			"nothing is startable",
+			func(s *config.StatusConfig) { s.Startable = false },
+			(*config.Config).StartableStatusNames,
+			"nothing else is startable",
+		},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			statuses := make([]config.StatusConfig, len(config.DefaultStatuses))
 			copy(statuses, config.DefaultStatuses)
 			for i := range statuses {
-				if statuses[i].Closed {
-					statuses[i].ReleasesDependents = tc.releases
-				}
+				tc.empty(&statuses[i])
 			}
 			withStatuses(t, statuses)
 
@@ -288,11 +419,11 @@ func TestPromptsGuardEmptyDerivedSets(t *testing.T) {
 			}
 
 			for name, out := range renderedPrompts(t) {
-				// The rule contrasts holding against releasing, so it teaches
-				// nothing when either side is empty: it must be dropped, not
-				// rendered with one side missing.
-				if strings.Contains(out, "blocker still blocks") {
-					t.Errorf("%s still states the closed-but-blocks rule", name)
+				// The closed-but-blocks rule contrasts holding against
+				// releasing, so it teaches nothing when either side is empty;
+				// the --ready rule names the startable set outright.
+				if strings.Contains(out, tc.dropped) {
+					t.Errorf("%s still states %q with the set it names empty", name, tc.dropped)
 				}
 				if loc := emptyInterpolation.FindStringIndex(out); loc != nil {
 					t.Errorf("%s rendered an empty status set into prose: %q", name, excerpt(out, loc))

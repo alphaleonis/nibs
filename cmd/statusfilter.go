@@ -107,6 +107,31 @@ func closedStatusLabel(cfg *config.Config) string {
 	return strings.Join(cfg.ClosedStatusNames(), "/")
 }
 
+// nonStartableStatusNames returns the declared statuses work cannot be picked
+// up from — the set difference StatusNames \ StartableStatusNames, derived from
+// the same Startable flag. `nibs list --ready` subtracts it from an explicit
+// -s so that filter cannot widen past the startable set. It names declared
+// statuses only, which is why --ready does not rely on it alone: a nib carrying
+// an undeclared status (front matter with no `status:` holds "") is not in it.
+func nonStartableStatusNames(cfg *config.Config) []string {
+	var names []string
+	for _, name := range cfg.StatusNames() {
+		if !cfg.IsStartableStatus(name) {
+			names = append(names, name)
+		}
+	}
+	return names
+}
+
+// readyFlagUsage renders the --ready flag's help text, naming the startable
+// statuses from config rather than restating them, so the flag cannot come to
+// describe a set it does not filter by. `nibs catalog` quotes this string
+// verbatim (cmd/catalog.go flagUsage), so the recipe listings follow it.
+func readyFlagUsage(cfg *config.Config) string {
+	return fmt.Sprintf("Filter nibs available to start (not blocked, and in a startable status: %s)",
+		strings.Join(cfg.StartableStatusNames(), "/"))
+}
+
 // statusFilterAdmitsNothing reports whether the (include, exclude) pair leaves
 // no status able to pass: the base set (include, or every status when include
 // is empty) is fully covered by exclude. Such a filter matches nothing

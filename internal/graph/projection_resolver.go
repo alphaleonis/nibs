@@ -163,17 +163,29 @@ func (p *projectionResolver) Progress(id string) any {
 	return ComputeProgress(statuses)
 }
 
-// Ready reports whether the nib is startable: not already closed and with no
-// active blockers. BlockedByIds drops blockers whose status released them, so a
-// nib blocked only by completed or scrapped work is ready — but one blocked by
-// a deferred nib is not: the set-aside work is coming back and the dependency
-// is unmet.
+// Ready reports whether the nib can be started: it carries a startable status
+// and has no active blockers. BlockedByIds drops blockers whose status released
+// them, so a nib blocked only by completed or scrapped work is ready — but one
+// blocked by a deferred nib is not: the set-aside work is coming back and the
+// dependency is unmet.
+//
+// The status half is config.IsStartableStatus, which is narrower than "not
+// closed": a draft or in-progress nib reports ready:false. `nibs list --ready`
+// reads that same flag, so the field and the filter narrow by status from one
+// definition — pinned by TestReadyProjectionAndFilterAgree in cmd.
+//
+// Only the status half is shared. The blocker half resolves blocker ids two
+// ways: this field goes through BlockedByIds → Reader.Get, which normalizes a
+// short id, while the filter goes through Core.IsBlocked →
+// findActiveBlockersInMap, an exact map lookup. So a nib whose `blocked_by`
+// names its blocker by short id reports ready:false here and is still returned
+// by `nibs list --ready`.
 func (p *projectionResolver) Ready(id string) bool {
 	b, err := p.r.Reader.Get(id)
 	if err != nil {
 		return false
 	}
-	if p.r.isClosedStatus(b.Status) {
+	if !p.r.isStartableStatus(b.Status) {
 		return false
 	}
 	blockers, err := p.nib.BlockedByIds(p.ctx, b)

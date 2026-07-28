@@ -23,7 +23,7 @@ const (
 // draft), then the closed ones (deferred, completed, scrapped) last.
 var DefaultStatuses = []StatusConfig{
 	{Name: "in-progress", Color: "yellow", Description: "Currently being worked on"},
-	{Name: "todo", Color: "green", Description: "Ready to be worked on"},
+	{Name: "todo", Color: "green", Startable: true, Description: "Ready to be worked on"},
 	{Name: "draft", Color: "blue", Description: "Needs refinement before it can be worked on"},
 	{Name: "deferred", Color: "gray", Closed: true, Description: "Set aside — a good idea at the wrong time; closed, but kept as a seed rather than a dead end"},
 	{Name: "completed", Color: "gray", Closed: true, ReleasesDependents: true, Description: "Finished successfully"},
@@ -67,8 +67,9 @@ type EstimateConfig struct {
 
 // StatusConfig defines a single status with its display color.
 //
-// Two booleans classify a status, because "is this nib finished" and "does this
-// nib still hold up the work that depends on it" are different questions:
+// Three booleans classify a status, because "is this nib finished", "does this
+// nib still hold up the work that depends on it" and "can this nib be picked
+// up" are different questions:
 //
 //   - Closed marks the status as terminal — the work is no longer on the board,
 //     whether it was finished (completed), abandoned (scrapped) or set aside
@@ -81,22 +82,35 @@ type EstimateConfig struct {
 //     work happened) and scrapped (it never will), false for deferred — the
 //     set-aside work is coming back, so the dependency is still unmet. Every
 //     open status is false too: an unfinished blocker blocks.
+//   - Startable marks a status work can be picked up from. It is the status half
+//     of "can I start this?"; the other half is having no active blockers, and
+//     the two are applied together by the `ready` projection and by
+//     `nibs list --ready`. True for todo alone: in-progress work is already
+//     underway, draft needs refinement first, and the closed statuses are off
+//     the board.
 //
-// The two questions are independent; the flags are not. ReleasesDependents is a
-// strict subset of Closed, since an open status that released its dependents
-// would hand out work that is still blocked. Nothing in the type enforces that —
-// TestStatusReleasesDependents is what holds it. The two sets are not
-// interchangeable either: deferred is closed and still blocks, so collapsing
-// them back into one flag would silently unblock deferred work.
+// The three questions are independent; the flags are not. ReleasesDependents is
+// a strict subset of Closed, since an open status that released its dependents
+// would hand out work that is still blocked. Startable relates to Closed the
+// other way round — the two are disjoint, because a startable closed status
+// would offer finished work as the next thing to pick up. Nothing in the type
+// enforces either constraint — both illegal combinations are representable, and
+// TestStatusFlagCombinationsAreLegal is what rules them out.
+//
+// None of the three sets is interchangeable with another. Deferred is closed
+// and still blocks, so collapsing Closed and ReleasesDependents back into one
+// flag would silently unblock deferred work. Startable is strictly narrower
+// than "not closed": draft and in-progress are open and not startable, so
+// reading Startable off the Closed flag would put work that is already underway
+// or not yet refined into the ready queue.
 //
 // In Go these flags are the only definitions of their sets — consumers read
 // them through IsClosedStatus/ClosedStatusNames/OpenStatusNames,
-// StatusReleasesDependents/ReleasingStatusNames, and HoldingStatusNames for the
-// closed-but-still-blocking difference — with one exception: cmd/list.go's
-// --ready exclusion list hardcodes its own copy, mirrored in prose by
-// cmd/prompt.tmpl and cmd/prompt-full.tmpl (nibs-xfh5). The web UI keeps a
-// second hand-written copy in web/src/lib/constants.ts as TERMINAL_STATUSES
-// (nibs-nv05). README.md's Data Model section is a third hand-written copy —
+// StatusReleasesDependents/ReleasingStatusNames, HoldingStatusNames for the
+// closed-but-still-blocking difference, and
+// IsStartableStatus/StartableStatusNames for the ready queue. The web UI keeps
+// a hand-written copy in web/src/lib/constants.ts as TERMINAL_STATUSES
+// (nibs-nv05). README.md's Data Model section is another hand-written copy —
 // there is no render step behind it — held to these flags by cmd/readme_test.go
 // rather than by derivation.
 //
@@ -113,6 +127,7 @@ type StatusConfig struct {
 	Color              string `yaml:"color"`
 	Closed             bool   `yaml:"closed,omitempty"`
 	ReleasesDependents bool   `yaml:"releases_dependents,omitempty"`
+	Startable          bool   `yaml:"startable,omitempty"`
 	Description        string `yaml:"description,omitempty"`
 }
 
@@ -492,6 +507,40 @@ func (c *Config) OpenStatusNames() []string {
 	var names []string
 	for _, s := range DefaultStatuses {
 		if !s.Closed {
+			names = append(names, s.Name)
+		}
+	}
+	return names
+}
+
+// IsStartableStatus returns true if work can be picked up from the given status
+// — the status half of "can I start this?", read by both the projected `ready`
+// field and `nibs list --ready` so the two answer it from one definition rather
+// than two. The other half is having no active blockers; this predicate says
+// nothing about blockers.
+// Unknown statuses are not startable, so a nib carrying a status outside the
+// declared vocabulary stays out of the work queue rather than being offered as
+// the next thing to do.
+// Like IsClosedStatus the receiver is currently never dereferenced, but callers
+// should hand it a real *Config anyway (config.Default() if nothing better).
+func (c *Config) IsStartableStatus(name string) bool {
+	if s := c.GetStatus(name); s != nil {
+		return s.Startable
+	}
+	return false
+}
+
+// StartableStatusNames returns the names of all startable statuses, derived from
+// DefaultStatuses (the single source of truth). Every returned name satisfies
+// IsStartableStatus. Today this is {todo} alone — narrower than OpenStatusNames,
+// which also holds draft and in-progress.
+// `nibs list --ready` builds its status filter from this set and the agent
+// guides state the --ready rule from it, so a status added to DefaultStatuses
+// reaches the ready queue only by declaring itself startable.
+func (c *Config) StartableStatusNames() []string {
+	var names []string
+	for _, s := range DefaultStatuses {
+		if s.Startable {
 			names = append(names, s.Name)
 		}
 	}

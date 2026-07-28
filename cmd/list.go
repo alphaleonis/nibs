@@ -113,10 +113,10 @@ Search Syntax (--search/-S):
 
 		// Resolve the status filter through the shared helper: expand status
 		// groups (open/closed), apply the open-by-default rule, and honor
-		// the -s/--no-status/--all/--open precedence. --ready is a stricter,
-		// self-contained status filter (below), so suppress the open default when
-		// it is set — the group expansion of any explicit -s/--no-status still
-		// applies.
+		// the -s/--no-status/--all/--open precedence. --ready narrows the status
+		// filter further (below), so suppress the open default when it is set —
+		// the group expansion of any explicit -s/--no-status still applies, and
+		// --ready narrows whatever this leaves behind.
 		includeStatus, excludeStatus, openDefaultApplied, err := resolveStatusFilter(app.Config(), statusFilterInput{
 			Status:   listStatus,
 			NoStatus: listNoStatus,
@@ -232,25 +232,60 @@ Search Syntax (--search/-S):
 		if isBlockedSet {
 			filter.IsBlocked = &listIsBlocked
 		}
-		// --ready: nibs available to start — not blocked, and carrying none of
-		// the five statuses in the literal below. In-progress work is already
-		// underway, draft needs refinement, and deferred/completed/scrapped are
-		// off the board.
+		// --ready: nibs available to start — no active blockers, and a startable
+		// status.
 		//
-		// Those five are a literal, not the derived closed set, and --ready
-		// suppresses the open default by setting All above — so
-		// resolveStatusFilter does not apply ClosedStatusNames on this path
-		// (cmd/statusfilter.go). A status added to DefaultStatuses lands in
-		// neither, so nothing excludes it here: an unblocked nib carrying a
-		// newly added *closed* status comes back from --ready as ready work.
-		// Adding one therefore means editing this literal and the three
-		// surfaces that mirror it in the same order — the --ready flag usage
-		// below, cmd/prompt.tmpl and cmd/prompt-full.tmpl. Deriving the
-		// exclusion from the Closed flags instead is nibs-xfh5.
+		// The status half is shared: this filter and the projected `ready` field
+		// both read config.Startable, so they narrow by status from one
+		// definition rather than two — TestReadyProjectionAndFilterAgree holds
+		// them to it. The blocker half is NOT shared, and the two surfaces can
+		// still disagree there: the field walks BlockedByIds, which resolves
+		// each blocker through Reader.Get and so accepts a short id, while this
+		// filter goes through Core.IsBlocked, an exact map lookup that does not.
+		// A nib whose `blocked_by` names its blocker by short id projects
+		// ready:false and is still listed here.
+		//
+		// An empty startable set is rejected below rather than filtered on: an
+		// empty include list makes filterByField a no-op
+		// (internal/graph/filters.go), so the bare-flag branch would fail open
+		// and hand back every unblocked nib of any status — completed and
+		// statusless ones included — as ready work. The explicit -s branch would
+		// meanwhile correctly yield nothing, so the error also keeps the two
+		// branches from disagreeing at exactly that boundary. Erroring on a
+		// filter that can admit nothing is what resolveStatusFilter already does
+		// (cmd/statusfilter.go).
+		//
+		// Which status field carries the narrowing depends on whether an
+		// explicit -s already populated one, because neither field alone can
+		// express it in both cases:
+		//   - No explicit -s (the common case, --all included): the startable
+		//     names become the whole base. An exclusion cannot stand in here,
+		//     because it can only name declared statuses — a nib whose front
+		//     matter omits `status:` carries "", which no exclusion mentions,
+		//     so only an include list shuts it out.
+		//   - An explicit -s already set the base: subtract every declared
+		//     non-startable status from it. Overwriting the base instead would
+		//     drop the -s without a word, and unioning the startable names into
+		//     it would widen `-s draft --ready` to every unblocked draft.
+		// Either way — given the guard above — every nib --ready returns carries
+		// a startable status.
+		//
+		// --ready suppresses the open default by setting All above, so
+		// resolveStatusFilter adds no closed-status exclusion of its own on
+		// this path (cmd/statusfilter.go) and nothing is hidden silently.
 		if listReady {
+			startable := app.Config().StartableStatusNames()
+			if len(startable) == 0 {
+				return reportErr(listJSON, output.ErrValidation,
+					fmt.Errorf("no status declares startable, so --ready cannot return anything"))
+			}
 			isBlocked := false
 			filter.IsBlocked = &isBlocked
-			filter.ExcludeStatus = append(filter.ExcludeStatus, "in-progress", "completed", "scrapped", "draft", "deferred")
+			if len(filter.Status) == 0 {
+				filter.Status = startable
+			} else {
+				filter.ExcludeStatus = appendMissingStatuses(filter.ExcludeStatus, nonStartableStatusNames(app.Config()))
+			}
 		}
 
 		// Compile the projection selection: --view first, then -f merged
@@ -459,7 +494,7 @@ func init() {
 	listCmd.Flags().BoolVar(&listIsBlocked, "is-blocked", false, "Filter nibs that are blocked by others")
 	listCmd.Flags().StringVar(&listMentions, "mentions", "", "Filter nibs whose bodies mention this ID (short or full)")
 	listCmd.Flags().StringVar(&listMentionedBy, "mentioned-by", "", "Filter nibs mentioned in the given ID's body (short or full)")
-	listCmd.Flags().BoolVar(&listReady, "ready", false, "Filter nibs available to start (not blocked, excludes in-progress/completed/scrapped/draft/deferred)")
+	listCmd.Flags().BoolVar(&listReady, "ready", false, readyFlagUsage(config.Default()))
 	listCmd.Flags().BoolVar(&listAll, "all", false, "Include every status (disable the open-by-default filter)")
 	listCmd.Flags().BoolVar(&listOpen, "open", false, "Show only open nibs — shorthand for -s open (the default when no status filter is given)")
 	listCmd.Flags().BoolVarP(&listQuiet, "quiet", "q", false, "Only output IDs, one per line (honors the open default; add --all to include closed nibs)")

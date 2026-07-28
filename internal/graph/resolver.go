@@ -345,17 +345,18 @@ func (r *Resolver) activateParentChain(childID, parentID string) {
 	}
 }
 
-// isClosedStatus delegates to config.IsClosedStatus — the canonical definition
-// of a finished nib — reached through the reader's config so this package keeps
-// no status list of its own.
-func (r *Resolver) isClosedStatus(status string) bool {
-	return r.Reader.Config().IsClosedStatus(status)
+// isStartableStatus delegates to config.IsStartableStatus — the canonical
+// status half of "can I start this?" — reached through the reader's config so
+// this package keeps no status list of its own.
+func (r *Resolver) isStartableStatus(status string) bool {
+	return r.Reader.Config().IsStartableStatus(status)
 }
 
 // releasesDependents delegates to config.StatusReleasesDependents — the
 // canonical answer to "does a blocker in this status still count" — reached
 // through the reader's config so this package keeps no status list of its own.
-// Narrower than isClosedStatus: a deferred blocker is closed but still blocks.
+// Narrower than config.IsClosedStatus: a deferred blocker is closed but still
+// blocks.
 func (r *Resolver) releasesDependents(status string) bool {
 	return r.Reader.Config().StatusReleasesDependents(status)
 }

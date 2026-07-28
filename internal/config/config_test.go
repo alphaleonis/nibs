@@ -282,6 +282,110 @@ func TestHoldingStatusNames(t *testing.T) {
 	}
 }
 
+// TestIsStartableStatus pins the third per-status classification: which
+// statuses work can be picked up from. It is strictly narrower than "not
+// closed" — draft and in-progress are open and still not startable — so
+// asserting it against IsClosedStatus is the whole point of the test.
+func TestIsStartableStatus(t *testing.T) {
+	cfg := Default()
+
+	tests := []struct {
+		status string
+		want   bool
+	}{
+		{"todo", true},
+		{"in-progress", false}, // already underway; not something to start
+		{"draft", false},       // needs refinement first
+		{"deferred", false},    // closed
+		{"completed", false},
+		{"scrapped", false},
+		{"", false},      // a hand-edited nib with no status: stays out of the queue
+		{"bogus", false}, // and so does an unrecognized one
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.status, func(t *testing.T) {
+			if got := cfg.IsStartableStatus(tt.status); got != tt.want {
+				t.Errorf("IsStartableStatus(%q) = %v, want %v", tt.status, got, tt.want)
+			}
+		})
+	}
+
+	// The startable set must stay a strict subset of the open set. Reading
+	// startability off the Closed flag instead would put draft and in-progress
+	// work into the ready queue.
+	//
+	// Membership is asserted before the count, because the count alone is not a
+	// subset test: a one-element startable set naming a status that is not open
+	// at all still satisfies len(startable) < len(open).
+	startable := cfg.StartableStatusNames()
+	open := cfg.OpenStatusNames()
+	for _, name := range startable {
+		if !slices.Contains(open, name) {
+			t.Errorf("startable status %q is not open (open = %v) — a closed status must never be startable", name, open)
+		}
+	}
+	if len(startable) >= len(open) {
+		t.Errorf("startable (%v) must be a strict subset of open (%v)", startable, open)
+	}
+}
+
+// TestStartableStatusNames pins the ready queue's status half: today `todo` is
+// the only status work can be picked up from. Every other status has a reason
+// not to be here, so adding one is a deliberate change that must fail here
+// first.
+func TestStartableStatusNames(t *testing.T) {
+	cfg := Default()
+	got := cfg.StartableStatusNames()
+
+	// DefaultStatuses order. Today `todo` alone.
+	want := []string{"todo"}
+	if !slices.Equal(got, want) {
+		t.Errorf("StartableStatusNames() = %v, want %v", got, want)
+	}
+
+	// Every returned name must satisfy the canonical predicate, and must be a
+	// status a nib can actually carry.
+	for _, name := range got {
+		if !cfg.IsStartableStatus(name) {
+			t.Errorf("StartableStatusNames() returned %q which is not IsStartableStatus", name)
+		}
+		if !cfg.IsValidStatus(name) {
+			t.Errorf("StartableStatusNames() returned %q which is not a declared status", name)
+		}
+	}
+
+	// Asserted against DefaultStatuses rather than against the helper, so this
+	// stays a real check if the helper stops reading the flag: exactly the
+	// statuses declaring Startable are returned, and no others.
+	for _, s := range DefaultStatuses {
+		if inSet := slices.Contains(got, s.Name); inSet != s.Startable {
+			t.Errorf("status %q: Startable=%v but StartableStatusNames() membership=%v",
+				s.Name, s.Startable, inSet)
+		}
+	}
+}
+
+// TestStatusFlagCombinationsAreLegal holds the two constraints the three
+// booleans have to satisfy but the type cannot express: ReleasesDependents
+// implies Closed (an open status that freed its dependents would hand out work
+// that is still blocked), and Startable excludes Closed (a startable closed
+// status would offer finished work as the next thing to pick up). The struct
+// makes both illegal combinations representable, so this test is what rules
+// them out.
+func TestStatusFlagCombinationsAreLegal(t *testing.T) {
+	for _, s := range DefaultStatuses {
+		t.Run(s.Name, func(t *testing.T) {
+			if s.ReleasesDependents && !s.Closed {
+				t.Errorf("status %q is {Closed:false, ReleasesDependents:true} — an open status must not release its dependents", s.Name)
+			}
+			if s.Startable && s.Closed {
+				t.Errorf("status %q is {Closed:true, Startable:true} — closed work must not be offered as startable", s.Name)
+			}
+		})
+	}
+}
+
 func TestGetStatus(t *testing.T) {
 	cfg := Default()
 

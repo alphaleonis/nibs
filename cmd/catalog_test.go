@@ -290,7 +290,7 @@ func TestCatalogStatusVocabularyIsPinned(t *testing.T) {
 		t.Fatalf("catalog filters publishes no \"status\" filter, so this guard compares nothing")
 	}
 	if !reflect.DeepEqual(statusValues, wantAll) {
-		t.Errorf("catalog filters status values = %v, want %v — a status change also touches cmd/list.go's --ready exclusion literal and its usage string, cmd/prompt.tmpl and cmd/prompt-full.tmpl (see the inventory at cmd/list.go:198-217)", statusValues, wantAll)
+		t.Errorf("catalog filters status values = %v, want %v — a status change means declaring its Closed/ReleasesDependents/Startable flags in config.DefaultStatuses and updating this pin; the --ready filter, its flag usage and both prime templates read those flags and follow on their own", statusValues, wantAll)
 	}
 
 	members := map[string][]string{}
@@ -304,7 +304,7 @@ func TestCatalogStatusVocabularyIsPinned(t *testing.T) {
 			continue
 		}
 		if !reflect.DeepEqual(gotMembers, want) {
-			t.Errorf("catalog filters %q group members = %v, want %v — a status change also touches cmd/list.go's --ready exclusion literal and its usage string, cmd/prompt.tmpl and cmd/prompt-full.tmpl (see the inventory at cmd/list.go:198-217)", group, gotMembers, want)
+			t.Errorf("catalog filters %q group members = %v, want %v — a status change means declaring its Closed/ReleasesDependents/Startable flags in config.DefaultStatuses and updating this pin; the --ready filter, its flag usage and both prime templates read those flags and follow on their own", group, gotMembers, want)
 		}
 	}
 }
