@@ -146,6 +146,21 @@ Search Syntax (--search/-S):
 		if listSearch != "" {
 			filter.Search = &listSearch
 		}
+		// An explicitly empty --parent is rejected rather than ignored: the
+		// `!= ""` test below is what decides whether the filter is applied, so
+		// `--parent ""` would otherwise be dropped without a word. It is not
+		// given the "move to root" meaning it carries on `nibs mv` and
+		// `nibs set` (both write an empty parent, detaching the nib), because
+		// --no-parent already selects the parentless nibs here.
+		//
+		// The other string filters below (--mentions, --mentioned-by, -S) still
+		// ignore an explicit empty value. Only --parent is guarded, because only
+		// --parent has a sibling flag whose meaning an empty value can be
+		// mistaken for.
+		if cmd.Flags().Changed("parent") && listParentID == "" {
+			return reportErr(listJSON, output.ErrValidation,
+				fmt.Errorf(`--parent was given an empty value; use --no-parent to select nibs that have no parent`))
+		}
 		if listParentID != "" {
 			filter.ParentID = &listParentID
 		}
@@ -163,6 +178,27 @@ Search Syntax (--search/-S):
 		}
 		if filter.HasBlocking, err = resolvePresenceFlag(cmd, "has-blocking", "no-blocking"); err != nil {
 			return reportErr(listJSON, output.ErrValidation, err)
+		}
+
+		// --parent <id> asks for a specific parent, so it cannot be met at the
+		// same time as a has-parent that resolved to false: no nib has parent
+		// <id> and no parent. ApplyFilter intersects the two and hands back the
+		// empty set, so without this the contradiction reads as "no matches".
+		//
+		// The guard keys on the resolved value, which is why it catches
+		// --no-parent and --has-parent=false alike, while the message names the
+		// flag the caller actually gave so it is something they can act on.
+		// --has-parent is reported with its resolved =false, because bare
+		// --has-parent is not rejected: only a has-parent of false contradicts
+		// --parent <id>. --parent <id> --has-parent is redundant instead, and
+		// is left to return what --parent <id> returns.
+		if filter.ParentID != nil && filter.HasParent != nil && !*filter.HasParent {
+			presence := "--has-parent=false"
+			if cmd.Flags().Changed("no-parent") {
+				presence = "--no-parent"
+			}
+			return reportErr(listJSON, output.ErrValidation,
+				fmt.Errorf("--parent and %s are mutually exclusive (no nib both has parent %q and has no parent)", presence, listParentID))
 		}
 
 		// MentionsID / MentionedByID accept short or full IDs; the GraphQL

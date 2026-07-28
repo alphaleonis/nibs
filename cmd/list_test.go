@@ -258,6 +258,85 @@ func TestListCommand_PresenceFlagMutualExclusion(t *testing.T) {
 	}
 }
 
+// TestListCommand_ParentIDVersusPresenceFlags drives the real command so the
+// assertions land on list.go's guards rather than a copy of them.
+//
+// --parent <id> and the has-parent field are separate constraints — "parent is
+// <id>" versus "has a parent at all" — so the rejection is not uniform the way
+// the two spellings of one field are. Only the combination nothing can satisfy
+// is rejected: --parent <id> alongside a has-parent that resolved to false,
+// however it was spelled. --parent <id> --has-parent is redundant but
+// satisfiable, and keeps returning what --parent <id> returns on its own.
+//
+// The empty --parent row is a separate guard: `--parent ""` used to fall
+// through the `!= ""` check that decides whether to set the filter, leaving the
+// flag with no effect and no diagnostic.
+func TestListCommand_ParentIDVersusPresenceFlags(t *testing.T) {
+	// pa's children in presenceFixture. This is the baseline `--parent pa`
+	// returns on its own, and what the redundant-but-satisfiable rows have to
+	// return too.
+	childrenOfPA := map[string]bool{"ca": true, "cb": true}
+
+	tests := []struct {
+		name string
+		args []string
+		// wantIDs is the id set the command must return when it is accepted.
+		wantIDs map[string]bool
+		// wantError marks the rows that must be rejected; wantText lists
+		// substrings the rejection message has to contain.
+		wantError bool
+		wantText  []string
+	}{
+		{"--parent alone", []string{"--parent", "pa"}, childrenOfPA, false, nil},
+		{"--parent with --has-parent", []string{"--parent", "pa", "--has-parent"}, childrenOfPA, false, nil},
+		{"--parent with --has-parent=true", []string{"--parent", "pa", "--has-parent=true"}, childrenOfPA, false, nil},
+		{"--parent with --no-parent=false", []string{"--parent", "pa", "--no-parent=false"}, childrenOfPA, false, nil},
+		{"--parent with --no-parent", []string{"--parent", "pa", "--no-parent"}, nil, true, []string{"--parent", "--no-parent"}},
+		{"--parent with --no-parent=true", []string{"--parent", "pa", "--no-parent=true"}, nil, true, []string{"--parent", "--no-parent"}},
+		{"--parent with --has-parent=false", []string{"--parent", "pa", "--has-parent=false"}, nil, true, []string{"--parent", "--has-parent"}},
+		// The empty --parent message points at --no-parent, the flag that does
+		// select root-level nibs.
+		{"empty --parent", []string{"--parent", ""}, nil, true, []string{"--parent", "--no-parent"}},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			nibsDir := setupListCobraTest(t, presenceFixture())
+			args := append([]string{"--json"}, tt.args...)
+			out, err := runListCmd(t, nibsDir, args...)
+
+			if !tt.wantError {
+				if err != nil {
+					t.Fatalf("list %v failed: %v\nout: %s", args, err, out)
+				}
+				got := envelopeIDs(parseListEnvelope(t, out))
+				if len(got) != len(tt.wantIDs) {
+					t.Fatalf("list %v: got %v (count=%d), want %v", args, got, len(got), tt.wantIDs)
+				}
+				for id := range tt.wantIDs {
+					if !got[id] {
+						t.Errorf("list %v: missing %q; got %v, want %v", args, id, got, tt.wantIDs)
+					}
+				}
+				return
+			}
+
+			if err == nil {
+				t.Fatalf("list %v: want a validation error, got nil\nout: %s", args, out)
+			}
+			var ce *output.CodedError
+			if !errors.As(err, &ce) || ce.Code != output.ErrValidation {
+				t.Errorf("list %v: want a VALIDATION coded error, got: %v", args, err)
+			}
+			for _, want := range tt.wantText {
+				if !strings.Contains(err.Error(), want) {
+					t.Errorf("list %v: error should name %s; got: %v", args, want, err)
+				}
+			}
+		})
+	}
+}
+
 // resetListFlags clears the package-level flag vars used by listCmd AND
 // Cobra's Changed-state tracking so tests don't pollute each other via
 // rootCmd's singleton state. Clearing Changed state is load-bearing today,
