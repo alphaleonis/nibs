@@ -54,7 +54,27 @@ func (r *LinkCheckResult) TotalIssues() int {
 // CheckAllLinksInMap validates all links across all nibs.
 // When projectRoot is empty, document filesystem checks are skipped.
 // This is a pure function that operates on a map of nibs without locking.
-func CheckAllLinksInMap(nibs map[string]*nib.Nib, projectRoot string) *LinkCheckResult {
+//
+// A parent or blockedBy target is resolved through normalizeIDInMap — the
+// exact id, then the configured prefix prepended — so it is broken only when
+// no nib answers to it under either spelling. That is the same rule Core.Get
+// and findActiveBlockersInMap apply, which matters because Core.FixBrokenLinks
+// repeats these checks and writes: a bare map lookup here called a resolvable
+// short-form target broken, and `nibs check --fix` then deleted it from the
+// file. configPrefix is threaded in because a pure map function cannot reach
+// the project config itself.
+//
+// Resolution also decides self versus broken: a target that resolves back to
+// the nib holding it is a self link however it was spelled.
+//
+// Only the forward direction resolves ids. The cycle pass below, the reverse
+// traversals (findIncomingLinksInMap, isBlockingInMap) and the setParent cycle
+// guard all walk exact map keys. So a short-form link resolves when followed
+// from the nib holding it and is invisible from the other end: the parent
+// query answers, the children query does not. This check reports nothing for
+// that nib, because the link is not broken — it is half-traversable, which is
+// a different defect and is tracked separately.
+func CheckAllLinksInMap(nibs map[string]*nib.Nib, projectRoot, configPrefix string) *LinkCheckResult {
 	result := &LinkCheckResult{
 		BrokenLinks:     []BrokenLink{},
 		SelfLinks:       []SelfLink{},
@@ -64,18 +84,21 @@ func CheckAllLinksInMap(nibs map[string]*nib.Nib, projectRoot string) *LinkCheck
 
 	// Check for broken links and self-references
 	for _, b := range nibs {
-		// Check parent link
+		// Check parent link. Target reports the spelling as stored, which is
+		// what `--fix` would drop.
 		if b.Parent != "" {
-			if b.Parent == b.ID {
-				result.SelfLinks = append(result.SelfLinks, SelfLink{
-					NibID:    b.ID,
-					LinkType: "parent",
-				})
-			} else if _, ok := nibs[b.Parent]; !ok {
+			fullID, ok := normalizeIDInMap(nibs, b.Parent, configPrefix)
+			switch {
+			case !ok:
 				result.BrokenLinks = append(result.BrokenLinks, BrokenLink{
 					NibID:    b.ID,
 					LinkType: "parent",
 					Target:   b.Parent,
+				})
+			case fullID == b.ID:
+				result.SelfLinks = append(result.SelfLinks, SelfLink{
+					NibID:    b.ID,
+					LinkType: "parent",
 				})
 			}
 		}
@@ -95,16 +118,18 @@ func CheckAllLinksInMap(nibs map[string]*nib.Nib, projectRoot string) *LinkCheck
 
 		// Check blocked_by links (single-side: blocking not persisted)
 		for _, blocker := range b.BlockedBy {
-			if blocker == b.ID {
-				result.SelfLinks = append(result.SelfLinks, SelfLink{
-					NibID:    b.ID,
-					LinkType: "blocked_by",
-				})
-			} else if _, ok := nibs[blocker]; !ok {
+			fullID, ok := normalizeIDInMap(nibs, blocker, configPrefix)
+			switch {
+			case !ok:
 				result.BrokenLinks = append(result.BrokenLinks, BrokenLink{
 					NibID:    b.ID,
 					LinkType: "blocked_by",
 					Target:   blocker,
+				})
+			case fullID == b.ID:
+				result.SelfLinks = append(result.SelfLinks, SelfLink{
+					NibID:    b.ID,
+					LinkType: "blocked_by",
 				})
 			}
 		}
@@ -126,7 +151,7 @@ func (c *Core) CheckAllLinks() *LinkCheckResult {
 	c.mu.RLock()
 	defer c.mu.RUnlock()
 	projectRoot := filepath.Dir(c.root)
-	return CheckAllLinksInMap(c.nibs, projectRoot)
+	return CheckAllLinksInMap(c.nibs, projectRoot, c.configPrefix())
 }
 
 // FindCyclesInMap detects all cycles for a specific link type using DFS.
@@ -287,6 +312,15 @@ func (c *Core) RemoveLinksTo(targetID string) (int, error) {
 // FixBrokenLinks removes all broken links (links to non-existent nibs) and self-references.
 // Returns the number of issues fixed.
 //
+// It restates the parent, blockedBy and document checks CheckAllLinksInMap
+// makes, resolving each link target through normalizeIDInMap the same way, so
+// `nibs check --fix` removes exactly the broken links, self links and broken
+// documents `nibs check` reported. Cycles are the one reported category left
+// untouched here; the command prints them as not auto-fixable instead.
+//
+// A link that resolves is left exactly as stored: nothing here rewrites a
+// short id into its full form.
+//
 // Copy-on-write for the same reason as RemoveLinksTo: mutate a clone and
 // reinstall it rather than editing the stored pointer in place, so no off-lock
 // reader ever sees a stored pointer's non-Path fields torn mid-write. See the
@@ -298,28 +332,26 @@ func (c *Core) FixBrokenLinks() (int, error) {
 	defer c.mu.Unlock()
 
 	projectRoot := filepath.Dir(c.root)
+	configPrefix := c.configPrefix()
 
 	fixed := 0
 	for id, b := range c.nibs {
 		// Detect changes by READING the stored pointer only — never mutate it.
 
-		// Parent is broken when it points at self or a nib no longer in the store.
+		// Parent is dropped when it resolves back to this nib (self) or
+		// resolves to nothing (broken).
 		fixParent := false
 		if b.Parent != "" {
-			if b.Parent == b.ID {
-				fixParent = true
-			} else if _, ok := c.nibs[b.Parent]; !ok {
-				fixParent = true
-			}
+			fullID, ok := normalizeIDInMap(c.nibs, b.Parent, configPrefix)
+			fixParent = !ok || fullID == b.ID
 		}
 
 		// Surviving blocked_by set (drop self-refs and links to missing nibs).
+		// Survivors keep the spelling they were stored with.
 		var newBlockedBy []string
 		for _, blocker := range b.BlockedBy {
-			if blocker == b.ID {
-				continue
-			}
-			if _, ok := c.nibs[blocker]; !ok {
+			fullID, ok := normalizeIDInMap(c.nibs, blocker, configPrefix)
+			if !ok || fullID == b.ID {
 				continue
 			}
 			newBlockedBy = append(newBlockedBy, blocker)
