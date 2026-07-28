@@ -232,6 +232,83 @@ func TestCatalogFiltersShowStatusGroups(t *testing.T) {
 	}
 }
 
+// TestCatalogStatusVocabularyIsPinned pins the status vocabulary that
+// `catalog filters` publishes — the full enum and the open/closed split — to
+// literal names. TestCatalogFiltersMatchConfig and
+// TestCatalogFiltersShowStatusGroups build their status expectation by calling
+// the same cfg.StatusNames/OpenStatusNames/ClosedStatusNames the renderer
+// calls, so they pass whenever the catalog and config agree — including when
+// the vocabulary itself changes underneath both. This guard does not move with
+// config: adding, removing or reclassifying a status fails here. That is the
+// point. `nibs prime` routes agents to `nibs catalog` (cmd/prompt.tmpl), so
+// this list is what an agent is told the statuses are, and changing it should
+// be a decision rather than a side effect.
+//
+// internal/config/config_test.go pins the same vocabulary to literals one layer
+// down, so this guard is a second copy: catalog == config and config == literals
+// already compose to catalog == literals, and adding a status fails there too.
+// It is kept anyway because it pins the *published payload* — what `catalog`
+// actually emits across the CLI boundary — rather than the config the renderer
+// reads. Both must be updated when the vocabulary changes; that is the cost of
+// checking the boundary rather than trusting the composition.
+func TestCatalogStatusVocabularyIsPinned(t *testing.T) {
+	wantAll := []string{"in-progress", "todo", "draft", "deferred", "completed", "scrapped"}
+	wantGroups := map[string][]string{
+		"open":   {"in-progress", "todo", "draft"},
+		"closed": {"deferred", "completed", "scrapped"},
+	}
+
+	out, err := execCatalog(t, "--json", "filters")
+	if err != nil {
+		t.Fatalf("catalog --json filters: %v", err)
+	}
+	var got struct {
+		Filters []struct {
+			Field  string   `json:"field"`
+			Values []string `json:"values"`
+		} `json:"filters"`
+		StatusGroups []struct {
+			Group   string   `json:"group"`
+			Members []string `json:"members"`
+		} `json:"status_groups"`
+	}
+	if err := json.Unmarshal([]byte(out), &got); err != nil {
+		t.Fatalf("decode filters JSON: %v\n%s", err, out)
+	}
+
+	var statusValues []string
+	found := false
+	for _, f := range got.Filters {
+		if f.Field == "status" {
+			if found {
+				t.Fatalf("catalog filters publishes two \"status\" entries; this guard would silently check only the last")
+			}
+			statusValues, found = f.Values, true
+		}
+	}
+	if !found {
+		t.Fatalf("catalog filters publishes no \"status\" filter, so this guard compares nothing")
+	}
+	if !reflect.DeepEqual(statusValues, wantAll) {
+		t.Errorf("catalog filters status values = %v, want %v — a status change also touches cmd/list.go's --ready exclusion literal and its usage string, cmd/prompt.tmpl and cmd/prompt-full.tmpl (see the inventory at cmd/list.go:198-217)", statusValues, wantAll)
+	}
+
+	members := map[string][]string{}
+	for _, g := range got.StatusGroups {
+		members[g.Group] = g.Members
+	}
+	for group, want := range wantGroups {
+		gotMembers, ok := members[group]
+		if !ok {
+			t.Errorf("catalog filters publishes no %q status group", group)
+			continue
+		}
+		if !reflect.DeepEqual(gotMembers, want) {
+			t.Errorf("catalog filters %q group members = %v, want %v — a status change also touches cmd/list.go's --ready exclusion literal and its usage string, cmd/prompt.tmpl and cmd/prompt-full.tmpl (see the inventory at cmd/list.go:198-217)", group, gotMembers, want)
+		}
+	}
+}
+
 // TestCatalogExamplesShowOpenWorkRecipes pins that catalog examples surfaces the
 // open-work recipes (open work under a parent, only-closed via -s closed,
 // everything via --all) so an agent finds them instead of hand-rolling a
@@ -248,8 +325,34 @@ func TestCatalogExamplesShowOpenWorkRecipes(t *testing.T) {
 	if err := json.Unmarshal([]byte(jsonOut), &got); err != nil {
 		t.Fatalf("decode examples JSON: %v\n%s", err, jsonOut)
 	}
-	if !reflect.DeepEqual(got.Recipes, catalogOpenWorkRecipes()) {
-		t.Errorf("examples recipes = %+v, want %+v", got.Recipes, catalogOpenWorkRecipes())
+	// The expectation is written out here rather than taken from
+	// catalogOpenWorkRecipes(): calling the function that built the payload
+	// asserts f() == f(), which holds whatever the recipes say. The --ready
+	// purpose is the one entry not written out: its text lives on the flag
+	// list.go registers, so the expectation reads it from there.
+	//
+	// That leaves this one entry's text unverified — both sides resolve the
+	// same *pflag.Flag, so rewriting the usage string to something wrong fails
+	// nothing. It pins that --ready still exists and still appears here, not
+	// what the flag says. Accepted deliberately: a fifth hand-written literal
+	// would add a mirror to the inventory at cmd/list.go:198-217 that this
+	// branch has been shrinking, and pinning exact help text breaks a test on
+	// every wording edit. Before this change all five entries were unverified;
+	// deriving the exclusion set, and with it a real check on this text, is
+	// nibs-xfh5.
+	readyFlag := listCmd.Flags().Lookup("ready")
+	if readyFlag == nil {
+		t.Fatal("list has no --ready flag, so the recipe purpose below pins against nothing")
+	}
+	want := []recipeInfo{
+		{"nibs list", "open work everywhere (closed statuses hidden by default)"},
+		{"nibs rel <id> --rel descendants", "open work under a parent (add -t bug for open bugs only)"},
+		{"nibs list -s closed", "only closed nibs (an explicit -s overrides the open default)"},
+		{"nibs list --all", "every status, including the closed ones"},
+		{"nibs list --ready", readyFlag.Usage},
+	}
+	if !reflect.DeepEqual(got.Recipes, want) {
+		t.Errorf("examples recipes = %+v, want %+v", got.Recipes, want)
 	}
 
 	// Text mode: the key open-work commands and the anti-post-filter note appear.
