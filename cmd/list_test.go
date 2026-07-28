@@ -2,12 +2,14 @@ package cmd
 
 import (
 	"encoding/json"
+	"errors"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
 
 	"github.com/alphaleonis/nibs/internal/graph/model"
+	"github.com/alphaleonis/nibs/internal/output"
 	"github.com/spf13/pflag"
 )
 
@@ -42,28 +44,94 @@ func TestBuildNibSort(t *testing.T) {
 	}
 }
 
+// TestListReadyFlagMutualExclusion drives the real command so the assertion is
+// on list.go's guard, not on a copy of it. --is-blocked=false is the case that
+// matters: it is a *set* --is-blocked, so pairing it with --ready must be
+// rejected even though the flag's value is false.
 func TestListReadyFlagMutualExclusion(t *testing.T) {
-	// Test that --ready and --is-blocked are mutually exclusive
-	// by checking the validation logic directly
 	tests := []struct {
-		name        string
-		ready       bool
-		isBlocked   bool
-		expectError bool
+		name      string
+		args      []string
+		wantError bool
 	}{
-		{"neither flag", false, false, false},
-		{"only --ready", true, false, false},
-		{"only --is-blocked", false, true, false},
-		{"both flags", true, true, true},
+		{"neither flag", nil, false},
+		{"only --ready", []string{"--ready"}, false},
+		{"only --is-blocked=true", []string{"--is-blocked=true"}, false},
+		{"only --is-blocked=false", []string{"--is-blocked=false"}, false},
+		{"--ready --is-blocked=true", []string{"--ready", "--is-blocked=true"}, true},
+		{"--ready --is-blocked=false", []string{"--ready", "--is-blocked=false"}, true},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			// This mirrors the validation logic in list.go
-			hasError := tt.ready && tt.isBlocked
-			if hasError != tt.expectError {
-				t.Errorf("ready=%v, isBlocked=%v: got error=%v, want error=%v",
-					tt.ready, tt.isBlocked, hasError, tt.expectError)
+			nibsDir := setupListCobraTest(t, isBlockedFixture())
+			out, err := runListCmd(t, nibsDir, append(append([]string{}, tt.args...), "-q")...)
+			if !tt.wantError {
+				if err != nil {
+					t.Fatalf("list %v failed: %v\nout: %s", tt.args, err, out)
+				}
+				return
+			}
+			if err == nil {
+				t.Fatalf("list %v: want a mutual-exclusion error, got nil\nout: %s", tt.args, out)
+			}
+			var ce *output.CodedError
+			if !errors.As(err, &ce) || ce.Code != output.ErrValidation {
+				t.Errorf("list %v: want a VALIDATION coded error, got: %v", tt.args, err)
+			}
+			if !strings.Contains(err.Error(), "mutually exclusive") {
+				t.Errorf("list %v: error should say the flags are mutually exclusive; got: %v", tt.args, err)
+			}
+		})
+	}
+}
+
+// isBlockedFixture splits four todo nibs cleanly into blocked and unblocked:
+// b1 and b2 are each blocked by bk, which is itself open (todo) and so still
+// blocking; bk and f1 have no blockers. Every nib is todo, so -s todo keeps
+// the whole set in play and the two --is-blocked answers are exact complements.
+func isBlockedFixture() map[string]string {
+	return map[string]string{
+		"bk--blocker.md":     "---\ntitle: Blocker\nstatus: todo\ntype: task\n---\n",
+		"b1--blocked-one.md": "---\ntitle: BlockedOne\nstatus: todo\ntype: task\nblocked_by: [bk]\n---\n",
+		"b2--blocked-two.md": "---\ntitle: BlockedTwo\nstatus: todo\ntype: task\nblocked_by: [bk]\n---\n",
+		"f1--free.md":        "---\ntitle: Free\nstatus: todo\ntype: task\n---\n",
+	}
+}
+
+// TestListCommand_IsBlockedFlag pins both answers of the --is-blocked
+// predicate. The =false case is the regression guard: the filter layer reads a
+// nil IsBlocked as "no blocked-filter", so a guard that tests the flag's value
+// instead of whether it was set turns --is-blocked=false into a no-op that
+// returns the entire set.
+func TestListCommand_IsBlockedFlag(t *testing.T) {
+	tests := []struct {
+		name string
+		args []string
+		want map[string]bool
+	}{
+		{"--is-blocked=false returns exactly the unblocked nibs", []string{"--is-blocked=false"}, map[string]bool{"bk": true, "f1": true}},
+		{"--is-blocked=true returns exactly the complement", []string{"--is-blocked=true"}, map[string]bool{"b1": true, "b2": true}},
+		{"no --is-blocked returns the union", nil, map[string]bool{"bk": true, "b1": true, "b2": true, "f1": true}},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			nibsDir := setupListCobraTest(t, isBlockedFixture())
+			args := append([]string{"-s", "todo", "--json"}, tt.args...)
+			out, err := runListCmd(t, nibsDir, args...)
+			if err != nil {
+				t.Fatalf("list %v failed: %v\nout: %s", args, err, out)
+			}
+			env := parseListEnvelope(t, out)
+			got := envelopeIDs(env)
+			if len(got) != len(tt.want) {
+				t.Fatalf("got %v (count=%d), want %v", got, env.Count, tt.want)
+			}
+			for id := range tt.want {
+				if !got[id] {
+					t.Errorf("missing %q; got %v, want %v", id, got, tt.want)
+				}
 			}
 		})
 	}

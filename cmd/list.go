@@ -173,11 +173,26 @@ Search Syntax (--search/-S):
 		}
 
 		// --ready and --is-blocked are mutually exclusive.
-		if listReady && listIsBlocked {
+		//
+		// --is-blocked is an unpaired boolean predicate: both of its values
+		// carry a filter, so what matters is whether it was given at all, not
+		// what it was set to. Testing the value instead would make
+		// --is-blocked=false a silent no-op (filter.IsBlocked left nil, which
+		// the filter layer reads as "no blocked-filter") and would let
+		// --ready --is-blocked=false through the mutex unchallenged.
+		//
+		// The presence flags above (--has-parent/--no-parent,
+		// --has-blocking/--no-blocking) are left testing their value, which is
+		// a scope decision, not a claim that they are correct: --has-parent=false
+		// is the same silent no-op this guard fixes. They are left alone because
+		// each has an explicit opposite, so no intent is unreachable — a caller
+		// wanting the negation passes the sibling flag. See nibs-qajd.
+		isBlockedSet := cmd.Flags().Changed("is-blocked")
+		if listReady && isBlockedSet {
 			return reportErr(listJSON, output.ErrValidation,
 				fmt.Errorf("--ready and --is-blocked are mutually exclusive"))
 		}
-		if listIsBlocked {
+		if isBlockedSet {
 			filter.IsBlocked = &listIsBlocked
 		}
 		// --ready: nibs available to start — not blocked, and carrying none of
