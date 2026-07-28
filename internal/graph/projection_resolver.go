@@ -28,8 +28,8 @@ import (
 //   - Percent  = round(Done/Total*100); 0 when Total == 0.
 //   - Scrapped = direct children with status "scrapped", disclosed so the
 //     children missing from Total are visible rather than silently dropped.
-//   - Deferred = direct children with status "deferred", disclosed so a parked
-//     child inside Total can be told apart from work still in flight.
+//   - Deferred = direct children with status "deferred", disclosed so a
+//     set-aside child inside Total can be told apart from work still in flight.
 //
 // The three closed statuses get three different treatments, so the rule names
 // them individually: no combination of the Closed/ReleasesDependents flags
@@ -45,7 +45,7 @@ import (
 // lists under a container are exactly the ones this rollup counts in Total but
 // not in Done, so a container cannot both list items and claim 100%. The rollup
 // is over direct children only, so a milestone can sit at 100% while an epic
-// below it still lists a task parked under a closed parent.
+// below it still lists a deferred task under a closed parent.
 type ProgressRollup struct {
 	Total    int `json:"total"`
 	Done     int `json:"done"`
@@ -73,7 +73,7 @@ func ComputeProgress(childStatuses []string) ProgressRollup {
 			// Not scope any more — out of the denominator entirely.
 			r.Scrapped++
 		case "deferred":
-			// Parked, not resolved: still scope, still not done.
+			// Set aside, not resolved: still scope, still not done.
 			r.Deferred++
 			r.Total++
 		default:
@@ -166,7 +166,8 @@ func (p *projectionResolver) Progress(id string) any {
 // Ready reports whether the nib is startable: not already closed and with no
 // active blockers. BlockedByIds drops blockers whose status released them, so a
 // nib blocked only by completed or scrapped work is ready — but one blocked by
-// a deferred nib is not: parked work is coming back and the dependency is unmet.
+// a deferred nib is not: the set-aside work is coming back and the dependency
+// is unmet.
 func (p *projectionResolver) Ready(id string) bool {
 	b, err := p.r.Reader.Get(id)
 	if err != nil {

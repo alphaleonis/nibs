@@ -36,7 +36,6 @@ var (
 	listReady       bool
 	listAll         bool
 	listOpen        bool
-	listActive      bool
 	listQuiet       bool
 	listSort        string
 	listView        string
@@ -58,10 +57,10 @@ shares one field-selection model with 'nibs get'.
 
 Status filtering (open by default):
   With no status flag, only open nibs are listed (the closed statuses are
-  hidden). -s/--status and --no-status accept the status groups open, closed,
-  and parked anywhere a concrete status is accepted. Any explicit -s overrides
-  the open default (so -s closed shows closed nibs). --open (alias --active) is
-  shorthand for -s open; --all disables the open default entirely.
+  hidden). -s/--status and --no-status accept the status groups open and
+  closed anywhere a concrete status is accepted. Any explicit -s overrides
+  the open default (so -s closed shows closed nibs). --open is shorthand for
+  -s open; --all disables the open default entirely.
 
   --view id|ref|card|full   Select a coarse field set (leanest to fullest).
                             Defaults to 'ref' when neither --view nor -f is
@@ -113,7 +112,7 @@ Search Syntax (--search/-S):
 		app := getApp(cmd)
 
 		// Resolve the status filter through the shared helper: expand status
-		// groups (open/closed/parked), apply the open-by-default rule, and honor
+		// groups (open/closed), apply the open-by-default rule, and honor
 		// the -s/--no-status/--all/--open precedence. --ready is a stricter,
 		// self-contained status filter (below), so suppress the open default when
 		// it is set — the group expansion of any explicit -s/--no-status still
@@ -122,7 +121,7 @@ Search Syntax (--search/-S):
 			Status:   listStatus,
 			NoStatus: listNoStatus,
 			All:      listAll || listReady,
-			Open:     listOpen || listActive,
+			Open:     listOpen,
 		})
 		if err != nil {
 			return reportErr(listJSON, output.ErrValidation, err)
@@ -238,7 +237,7 @@ Search Syntax (--search/-S):
 		// rows, disclose how many matched every OTHER filter so the caller can see
 		// the set is partial. Only meaningful when the open default is active (an
 		// explicit -s/--open/--all/--ready never hides silently). Computed
-		// pre-limit (like -c): re-run the same query with the archive exclusion
+		// pre-limit (like -c): re-run the same query with the closed-status exclusion
 		// removed and subtract the displayed count. Skipped after the -c/-q early
 		// returns, so the terse outputs stay bare.
 		hiddenClosed := 0
@@ -272,8 +271,8 @@ Search Syntax (--search/-S):
 	},
 }
 
-// countHiddenClosed returns how many nibs the open-by-default archive exclusion
-// removed from the displayed set. It re-runs the query with the archive
+// countHiddenClosed returns how many nibs the open-by-default closed-status
+// exclusion removed from the displayed set. It re-runs the query with that
 // exclusion dropped — every other filter identical, only the status resolution
 // widened to --all semantics (keeping any --no-status) — and subtracts the
 // displayed count. Both counts are pre-limit, so the result is the size of the
@@ -283,7 +282,7 @@ func countHiddenClosed(ctx context.Context, cfg *config.Config, resolver *graph.
 	widenedInclude, widenedExclude, _, err := resolveStatusFilter(cfg, statusFilterInput{
 		Status:   status.Status,
 		NoStatus: status.NoStatus,
-		All:      true, // drop the open-default archive exclusion; keep --no-status
+		All:      true, // drop the open-default closed-status exclusion; keep --no-status
 	})
 	if err != nil {
 		return 0, err
@@ -352,7 +351,6 @@ func init() {
 	listCmd.Flags().BoolVar(&listReady, "ready", false, "Filter nibs available to start (not blocked, excludes in-progress/completed/scrapped/draft/deferred)")
 	listCmd.Flags().BoolVar(&listAll, "all", false, "Include every status (disable the open-by-default filter)")
 	listCmd.Flags().BoolVar(&listOpen, "open", false, "Show only open nibs — shorthand for -s open (the default when no status filter is given)")
-	listCmd.Flags().BoolVar(&listActive, "active", false, "Alias for --open (show only open nibs)")
 	listCmd.Flags().BoolVarP(&listQuiet, "quiet", "q", false, "Only output IDs, one per line (honors the open default; add --all to include closed nibs)")
 	listCmd.Flags().StringVar(&listSort, "sort", "", "Sort by: created, updated, status, priority, status-priority, id (default: order key)")
 	listCmd.Flags().StringVar(&listView, "view", "", "View tier: id, ref, card, or full (default: ref)")

@@ -706,7 +706,7 @@ func (r *nibResolver) BlockingIds(ctx context.Context, obj *nib.Nib) ([]string, 
 // BlockedByIds is the resolver for the blockedByIds field.
 // Returns only IDs of active blockers — those whose status has not released
 // its dependents. Completed and scrapped blockers drop out; a deferred blocker
-// stays, because parked work is coming back and the dependency is unmet.
+// stays, because the set-aside work is coming back and the dependency is unmet.
 func (r *nibResolver) BlockedByIds(ctx context.Context, obj *nib.Nib) ([]string, error) {
 	var ids []string
 	for _, blockerID := range obj.BlockedBy {

@@ -91,7 +91,7 @@ func TestComputeProgress(t *testing.T) {
 			ProgressRollup{Total: 0, Done: 0, Percent: 0, Scrapped: 2},
 		},
 		{
-			// Deferred is closed, but the work is coming back — it is parked
+			// Deferred is closed, but the work is coming back — it is set aside
 			// scope, so it counts toward total and not toward done, exactly like
 			// the open statuses. Only scrapped leaves the denominator.
 			"draft and deferred both count toward total but not done",
@@ -99,9 +99,9 @@ func TestComputeProgress(t *testing.T) {
 			ProgressRollup{Total: 4, Done: 1, Percent: 25, Deferred: 1},
 		},
 		{
-			// A parked child holds the parent below 100%: there is still work
+			// A deferred child holds the parent below 100%: there is still work
 			// under it, and the roadmap still renders that child. Reporting 100%
-			// here would contradict a view that lists the parked item.
+			// here would contradict a view that lists the deferred item.
 			"a deferred child holds the parent below 100%",
 			[]string{"completed", "completed", "completed", "deferred"},
 			ProgressRollup{Total: 4, Done: 3, Percent: 75, Deferred: 1},
@@ -141,7 +141,7 @@ func TestProjectionResolver_Ready(t *testing.T) {
 	mustCreate(t, core, &nib.Nib{ID: "free", Slug: "f", Title: "Free", Status: "todo"})
 	mustCreate(t, core, &nib.Nib{ID: "blocked", Slug: "b", Title: "Blocked", Status: "todo", BlockedBy: []string{"blkactive"}})
 	mustCreate(t, core, &nib.Nib{ID: "softblocked", Slug: "sb", Title: "SoftBlocked", Status: "todo", BlockedBy: []string{"blkdone"}})
-	mustCreate(t, core, &nib.Nib{ID: "parkblocked", Slug: "pb", Title: "ParkBlocked", Status: "todo", BlockedBy: []string{"blkdefer"}})
+	mustCreate(t, core, &nib.Nib{ID: "deferblocked", Slug: "pb", Title: "DeferBlocked", Status: "todo", BlockedBy: []string{"blkdefer"}})
 	mustCreate(t, core, &nib.Nib{ID: "donenib", Slug: "d", Title: "Done", Status: "completed"})
 	pr := resolver.ProjectionResolver(context.Background())
 
@@ -149,12 +149,12 @@ func TestProjectionResolver_Ready(t *testing.T) {
 		id   string
 		want bool
 	}{
-		{"free", true},         // no blockers, active
-		{"blocked", false},     // active blocker
-		{"softblocked", true},  // only a released blocker -> still ready
-		{"parkblocked", false}, // deferred blocker: closed, but never released
-		{"donenib", false},     // closed status is never ready
-		{"missing", false},     // unknown id -> not ready
+		{"free", true},          // no blockers, active
+		{"blocked", false},      // active blocker
+		{"softblocked", true},   // only a released blocker -> still ready
+		{"deferblocked", false}, // deferred blocker: closed, but never released
+		{"donenib", false},      // closed status is never ready
+		{"missing", false},      // unknown id -> not ready
 	}
 	for _, tc := range cases {
 		if got := pr.Ready(tc.id); got != tc.want {

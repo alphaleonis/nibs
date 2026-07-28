@@ -165,9 +165,10 @@ func TestCatalogFiltersMatchConfig(t *testing.T) {
 }
 
 // TestCatalogFiltersShowStatusGroups pins that catalog filters documents the
-// status groups (open/closed/parked) with members derived from config, and
-// discloses the open-by-default behavior — the vocabulary the open default
-// depends on for discoverability.
+// status groups (open/closed) with members derived from config, and discloses
+// the open-by-default behavior — the vocabulary the open default depends on for
+// discoverability. The retired third group must not come back: an extra group
+// here would fail the length check below.
 func TestCatalogFiltersShowStatusGroups(t *testing.T) {
 	// JSON mode: status_groups decode with config-derived members, and
 	// open_by_default is advertised.
@@ -192,7 +193,6 @@ func TestCatalogFiltersShowStatusGroups(t *testing.T) {
 	want := map[string][]string{
 		"open":   cfg.OpenStatusNames(),
 		"closed": cfg.ClosedStatusNames(),
-		"parked": cfg.ParkedStatusNames(),
 	}
 	if len(got.StatusGroups) != len(want) {
 		t.Fatalf("got %d status groups, want %d", len(got.StatusGroups), len(want))
@@ -214,11 +214,20 @@ func TestCatalogFiltersShowStatusGroups(t *testing.T) {
 		t.Fatalf("catalog filters: %v", err)
 	}
 	for _, want := range []string{
-		"Status groups", "open", "closed", "parked",
+		"Status groups", "open", "closed",
 		"open nibs by default", "--all",
+		// The "closed but still blocks" subtlety is the one thing about the
+		// closed group an agent cannot infer from the member list.
+		"still blocks its dependents",
 	} {
 		if !strings.Contains(textOut, want) {
 			t.Errorf("catalog filters text missing %q", want)
+		}
+	}
+	// The retired vocabulary must not reappear in the text rendering either.
+	for _, gone := range []string{retiredStatusGroup, "--active"} {
+		if strings.Contains(textOut, gone) {
+			t.Errorf("catalog filters text still mentions retired %q", gone)
 		}
 	}
 }

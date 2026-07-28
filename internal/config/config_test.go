@@ -178,41 +178,10 @@ func TestOpenStatusNames(t *testing.T) {
 	}
 }
 
-func TestParkedStatusNames(t *testing.T) {
-	cfg := Default()
-	got := cfg.ParkedStatusNames()
-
-	want := []string{"deferred"}
-	if len(got) != len(want) {
-		t.Fatalf("len(ParkedStatusNames()) = %d, want %d (%v)", len(got), len(want), got)
-	}
-	for i, name := range want {
-		if got[i] != name {
-			t.Errorf("ParkedStatusNames()[%d] = %q, want %q", i, got[i], name)
-		}
-	}
-
-	// Parked statuses are valid, closed statuses (a subset of closed).
-	for _, name := range got {
-		if !cfg.IsValidStatus(name) {
-			t.Errorf("ParkedStatusNames() returned unknown status %q", name)
-		}
-		if !cfg.IsClosedStatus(name) {
-			t.Errorf("ParkedStatusNames() returned open status %q", name)
-		}
-	}
-
-	// The returned slice must be a copy — mutating it must not corrupt the source.
-	got[0] = "mutated"
-	if cfg.ParkedStatusNames()[0] != "deferred" {
-		t.Error("ParkedStatusNames() must return a defensive copy")
-	}
-}
-
 // TestStatusReleasesDependents pins the second per-status classification: which
 // statuses satisfy a dependency. It is deliberately narrower than the closed
-// set — deferred is closed but still blocks, since parked work is coming back —
-// so asserting it against IsClosedStatus is the whole point of the test.
+// set — deferred is closed but still blocks, since the set-aside work is coming
+// back — so asserting it against IsClosedStatus is the whole point of the test.
 func TestStatusReleasesDependents(t *testing.T) {
 	cfg := Default()
 

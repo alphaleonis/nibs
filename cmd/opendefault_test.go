@@ -6,6 +6,8 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/spf13/cobra"
+
 	"github.com/alphaleonis/nibs/internal/output"
 )
 
@@ -268,12 +270,12 @@ func TestRelCommand_HiddenClosed(t *testing.T) {
 // closed (deferred/completed/scrapped).
 func mixedStatusFixture() map[string]string {
 	return map[string]string{
-		"w1--wip.md":    "---\ntitle: Wip\nstatus: in-progress\ntype: task\n---\n",
-		"t1--todo.md":   "---\ntitle: Todo\nstatus: todo\ntype: task\n---\n",
-		"d1--draft.md":  "---\ntitle: Draft\nstatus: draft\ntype: task\n---\n",
-		"p1--parked.md": "---\ntitle: Parked\nstatus: deferred\ntype: task\n---\n",
-		"c1--done.md":   "---\ntitle: Done\nstatus: completed\ntype: task\n---\n",
-		"s1--scrap.md":  "---\ntitle: Scrap\nstatus: scrapped\ntype: task\n---\n",
+		"w1--wip.md":      "---\ntitle: Wip\nstatus: in-progress\ntype: task\n---\n",
+		"t1--todo.md":     "---\ntitle: Todo\nstatus: todo\ntype: task\n---\n",
+		"d1--draft.md":    "---\ntitle: Draft\nstatus: draft\ntype: task\n---\n",
+		"p1--deferred.md": "---\ntitle: Deferred\nstatus: deferred\ntype: task\n---\n",
+		"c1--done.md":     "---\ntitle: Done\nstatus: completed\ntype: task\n---\n",
+		"s1--scrap.md":    "---\ntitle: Scrap\nstatus: scrapped\ntype: task\n---\n",
 	}
 }
 
@@ -309,13 +311,10 @@ func TestListCommand_OpenByDefault(t *testing.T) {
 			wantIDs: []string{"w1", "t1", "d1"},
 		},
 		{
-			name:    "--active is a synonym for --open",
-			args:    []string{"--active", "--json"},
-			wantIDs: []string{"w1", "t1", "d1"},
-		},
-		{
-			name:    "-s parked shows deferred only",
-			args:    []string{"-s", "parked", "--json"},
+			// -s deferred is the only spelling of this query now that the
+			// retired one-member group is gone.
+			name:    "-s deferred shows deferred only",
+			args:    []string{"-s", "deferred", "--json"},
 			wantIDs: []string{"p1"},
 		},
 		{
@@ -324,13 +323,13 @@ func TestListCommand_OpenByDefault(t *testing.T) {
 			wantIDs: []string{"c1"},
 		},
 		{
-			name:    "--all --no-status parked subtracts deferred from the full set",
-			args:    []string{"--all", "--no-status", "parked", "--json"},
+			name:    "--all --no-status deferred subtracts deferred from the full set",
+			args:    []string{"--all", "--no-status", "deferred", "--json"},
 			wantIDs: []string{"w1", "t1", "d1", "c1", "s1"},
 		},
 		{
-			name:    "-s closed --no-status parked subtracts within the closed group",
-			args:    []string{"-s", "closed", "--no-status", "parked", "--json"},
+			name:    "-s closed --no-status deferred subtracts within the closed group",
+			args:    []string{"-s", "closed", "--no-status", "deferred", "--json"},
 			wantIDs: []string{"c1", "s1"},
 		},
 	}
@@ -350,13 +349,34 @@ func TestListCommand_OpenByDefault(t *testing.T) {
 	}
 }
 
-// TestListCommand_ActiveNoLongerUnknownFlag pins the asymmetry fix: --active
-// used to be a "unknown flag" error on list (it lived only on rel/plan).
-func TestListCommand_ActiveNoLongerUnknownFlag(t *testing.T) {
+// TestActiveFlagIsRetired pins the surviving spelling on every command that
+// offers the filter. "active" was wrong in both directions — a draft is open
+// but not active — and it read as "in-progress", which -s in-progress already
+// says. list and rel each registered both spellings and disagreed on which was
+// primary (--open on list, --active on rel); plan registered --active alone and
+// no --open at all. All three are checked here rather than one standing in for
+// the others.
+func TestActiveFlagIsRetired(t *testing.T) {
+	for _, c := range []*cobra.Command{listCmd, relCmd, planCmd} {
+		if f := c.Flags().Lookup("active"); f != nil {
+			t.Errorf("%s still registers --active (usage: %q)", c.Name(), f.Usage)
+		}
+		if c.Flags().Lookup("open") == nil {
+			t.Errorf("%s must register --open", c.Name())
+		}
+	}
+}
+
+// TestListCommand_ActiveIsUnknownFlag pins the retirement at the CLI boundary:
+// passing --active is now an error, not a silently accepted alias.
+func TestListCommand_ActiveIsUnknownFlag(t *testing.T) {
 	nibsDir := setupListCobraTest(t, mixedStatusFixture())
 	out, err := runListCmd(t, nibsDir, "--active", "--json")
-	if err != nil {
-		t.Fatalf("list --active should be accepted, got error: %v\nout: %s", err, out)
+	if err == nil {
+		t.Fatalf("list --active should be rejected; out: %s", out)
+	}
+	if !strings.Contains(err.Error(), "active") {
+		t.Errorf("error %q should name the unknown flag", err.Error())
 	}
 }
 
@@ -426,13 +446,8 @@ func TestRelCommand_OpenByDefault(t *testing.T) {
 			wantIDs: []string{"co"},
 		},
 		{
-			name:    "--active is a synonym for --open on rel",
-			args:    []string{"rel", "par", "--rel", "children", "--active", "--json"},
-			wantIDs: []string{"co"},
-		},
-		{
-			name:    "-s parked shows deferred child",
-			args:    []string{"rel", "par", "--rel", "children", "-s", "parked", "--json"},
+			name:    "-s deferred shows deferred child",
+			args:    []string{"rel", "par", "--rel", "children", "-s", "deferred", "--json"},
 			wantIDs: []string{"cf"},
 		},
 	}
@@ -448,12 +463,12 @@ func TestRelCommand_OpenByDefault(t *testing.T) {
 	}
 }
 
-// TestRelCommand_ActivePlusStatusIsUnion pins that --active (== -s open) unions
-// with an explicit -s rather than erroring: under the old semantics --active
-// with -s completed was rejected as "always empty".
-func TestRelCommand_ActivePlusExplicitStatus_Union(t *testing.T) {
+// TestRelCommand_OpenPlusExplicitStatus_Union pins that --open (== -s open)
+// unions with an explicit -s rather than erroring: under the old semantics the
+// open shorthand with -s completed was rejected as "always empty".
+func TestRelCommand_OpenPlusExplicitStatus_Union(t *testing.T) {
 	nibsDir := setupRelCobraTest(t, relStatusFixture)
-	out := runRelJSON(t, "--nibs-path", nibsDir, "rel", "par", "--rel", "children", "--active", "-s", "completed", "--json")
+	out := runRelJSON(t, "--nibs-path", nibsDir, "rel", "par", "--rel", "children", "--open", "-s", "completed", "--json")
 	got := relEnvIDs(decodeRelEnvelope(t, out))
 	// the open child (co) unioned with the explicitly requested completed (cd).
 	assertIDSet(t, got, []string{"co", "cd"})

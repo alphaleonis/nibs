@@ -64,7 +64,6 @@ func resetRelFlags() {
 	relTag = nil
 	relEstimate = nil
 	relNoEstimate = nil
-	relActive = false
 	relOpen = false
 	relAll = false
 	if relCmd != nil {
@@ -488,10 +487,10 @@ func TestRelCommand_Children_OrderTopo_SkipsFilteredSibling(t *testing.T) {
 		"c--c.md": "---\ntitle: C\nstatus: todo\ntype: task\nparent: p\norder: a2\nblocked_by:\n  - b\n---\n",
 	}
 	nibsDir := setupRelCobraTest(t, files)
-	out := runRelJSON(t, "--nibs-path", nibsDir, "rel", "p", "--rel", "children", "--order", "topo", "--active", "--json")
+	out := runRelJSON(t, "--nibs-path", nibsDir, "rel", "p", "--rel", "children", "--order", "topo", "--open", "--json")
 	env := decodeRelEnvelope(t, out)
 	if env.Count != 2 {
-		t.Fatalf("topo+active got %d items, want 2 (a, c; b filtered out)\nraw: %s", env.Count, out)
+		t.Fatalf("topo+open got %d items, want 2 (a, c; b filtered out)\nraw: %s", env.Count, out)
 	}
 	order := relEnvIDOrder(env)
 	// c's edge to b is dropped (b not in candidate set), so order falls back
@@ -690,7 +689,7 @@ func TestRelCommand_Parent_WithFilter_Errors(t *testing.T) {
 	}
 }
 
-func TestRelCommand_Siblings_ActiveAndType(t *testing.T) {
+func TestRelCommand_Siblings_OpenAndType(t *testing.T) {
 	files := map[string]string{
 		"p1--parent.md": "---\ntitle: Parent\nstatus: in-progress\ntype: epic\n---\n",
 		"c1--task1.md":  "---\ntitle: T1\nstatus: todo\ntype: task\nparent: p1\norder: a0\n---\n",
@@ -699,11 +698,11 @@ func TestRelCommand_Siblings_ActiveAndType(t *testing.T) {
 		"c4--task3.md":  "---\ntitle: T3\nstatus: completed\ntype: task\nparent: p1\norder: a3\n---\n",
 	}
 	nibsDir := setupRelCobraTest(t, files)
-	// c1's siblings with --active --type task → c2 only (c3 wrong type, c4 completed).
-	out := runRelJSON(t, "--nibs-path", nibsDir, "rel", "c1", "--rel", "siblings", "--active", "--type", "task", "--json")
+	// c1's siblings with --open --type task → c2 only (c3 wrong type, c4 completed).
+	out := runRelJSON(t, "--nibs-path", nibsDir, "rel", "c1", "--rel", "siblings", "--open", "--type", "task", "--json")
 	env := decodeRelEnvelope(t, out)
 	if env.Count != 1 || relEnvIDOrder(env)[0] != "c2" {
-		t.Errorf("siblings with --active --type task got %v, want [c2]", relEnvIDOrder(env))
+		t.Errorf("siblings with --open --type task got %v, want [c2]", relEnvIDOrder(env))
 	}
 }
 

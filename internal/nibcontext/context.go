@@ -161,9 +161,9 @@ func BuildSummary(allNibs []*nib.Nib, rootID string, cfg *config.Config) Summary
 // It applies the same three-way rule as graph.ComputeProgress, weighted by
 // estimate: "completed" is the numerator, "scrapped" work is no longer scope and
 // leaves the denominator, and everything else counts toward the denominator
-// without counting as done. Deferred nibs are in that last group — parked work
-// is coming back, so it is outstanding scope. Draft nibs are there too: planned
-// scope that hasn't been refined yet.
+// without counting as done. Deferred nibs are in that last group — the
+// set-aside work is coming back, so it is outstanding scope. Draft nibs are
+// there too: planned scope that hasn't been refined yet.
 func CalcProgress(nibs []*nib.Nib) Progress {
 	var completed, total int
 	for _, n := range nibs {

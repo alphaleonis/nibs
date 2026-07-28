@@ -147,7 +147,7 @@ Run `nibs <command> --help` for full usage details.
 Each nib has:
 
 - **Type**: milestone, epic, feature, task, bug, or research
-- **Status**: open (draft, todo, in-progress) or closed (completed, scrapped, deferred)
+- **Status**: open (draft, todo, in-progress) or closed (completed, scrapped, deferred). Open is a workflow position, closed a close reason. A `deferred` nib is closed but still blocks whatever depends on it — the work is coming back, so the dependency is unmet.
 - **Priority** (optional): critical, high, normal, or low
 - **Estimate** (optional): s, m, l, or xl (t-shirt sizes)
 - **Tags**: freeform labels for categorization

@@ -104,8 +104,8 @@ func (c *Core) FindIncomingLinks(targetID string) []nib.IncomingLink {
 
 // releasesDependentsPredicate returns the "does this blocker still count" test
 // the pure map functions need. Deliberately not the closed-status test: a
-// deferred nib is closed but still blocks, because parked work is coming back
-// and its dependency is unsatisfied. The definition lives in config
+// deferred nib is closed but still blocks, because the set-aside work is coming
+// back and its dependency is unsatisfied. The definition lives in config
 // (Config.StatusReleasesDependents) and is threaded in rather than duplicated
 // here, so nibcore has no status list of its own.
 //

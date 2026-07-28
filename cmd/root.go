@@ -188,8 +188,8 @@ func Execute() {
 // satisfied blockers removed from BlockedBy for display purposes.
 // The original in-memory nibs from Core are not mutated. It applies the same
 // convention (config.StatusReleasesDependents) the blocking graph uses, so a
-// completed or scrapped blocker drops out while a deferred one stays — parked
-// work is coming back, so it still blocks.
+// completed or scrapped blocker drops out while a deferred one stays — the
+// set-aside work is coming back, so it still blocks.
 func filterReleasedBlockers(nibs []*nib.Nib, reader graph.NibReader) []*nib.Nib {
 	result := make([]*nib.Nib, len(nibs))
 	for i, b := range nibs {

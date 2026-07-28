@@ -256,7 +256,7 @@ func buildMilestoneGroup(m *nib.Nib, children map[string][]*nib.Nib, includeDone
 	for _, epic := range epics {
 		epicItems := filterChildren(children[epic.ID], includeDone, cfg)
 		// Include epics that still hold outstanding scope. An epic that closed
-		// over a parked child keeps rendering it — closing the parent does not
+		// over a deferred child keeps rendering it — closing the parent does not
 		// resolve the child.
 		if len(epicItems) > 0 {
 			sortByTypeThenStatus(epicItems, cfg)
@@ -308,8 +308,8 @@ func childStatuses(children []*nib.Nib) []string {
 // it — so the default view drops it. Everything else stays, including a deferred
 // nib: it is closed, but the work is coming back, so it still blocks its
 // dependents and it is still scope someone has to deal with. Roadmap has no
-// hidden-closed disclosure, so a parked nib that dropped out would be invisible
-// rather than merely collapsed.
+// hidden-closed disclosure, so a deferred nib that dropped out would be
+// invisible rather than merely collapsed.
 //
 // This is the visibility half of the seam with graph.ComputeProgress: without
 // includeDone, the nibs this keeps are exactly the ones that rollup counts in

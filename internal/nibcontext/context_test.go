@@ -84,7 +84,7 @@ func TestCalcProgress(t *testing.T) {
 			wantPercentage: 50,
 		},
 		{
-			// deferred is closed, but the work is coming back — parked scope
+			// deferred is closed, but the work is coming back — set-aside scope
 			// weighs on the denominator exactly like open work, so the estimate
 			// of a set-aside nib is still counted as outstanding.
 			name: "deferred counts toward total, not toward completed",

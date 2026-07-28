@@ -1,6 +1,7 @@
 package cmd
 
 import (
+	"slices"
 	"sort"
 	"strings"
 	"testing"
@@ -82,13 +83,6 @@ func TestResolveStatusFilter(t *testing.T) {
 			wantOpenApplie: false,
 		},
 		{
-			name:           "group parked expands to deferred",
-			in:             statusFilterInput{Status: []string{"parked"}},
-			wantInclude:    []string{"deferred"},
-			wantExclude:    nil,
-			wantOpenApplie: false,
-		},
-		{
 			name:           "open flag equals -s open",
 			in:             statusFilterInput{Open: true},
 			wantInclude:    openSet,
@@ -103,10 +97,10 @@ func TestResolveStatusFilter(t *testing.T) {
 			wantOpenApplie: false,
 		},
 		{
-			// parked is a subset of closed, so subtracting it from the closed
+			// deferred is a member of closed, so subtracting it from the closed
 			// group actually removes a member (it is a no-op against open).
-			name:           "closed with no-status parked subtracts deferred",
-			in:             statusFilterInput{Status: []string{"closed"}, NoStatus: []string{"parked"}},
+			name:           "closed with no-status deferred subtracts deferred",
+			in:             statusFilterInput{Status: []string{"closed"}, NoStatus: []string{"deferred"}},
 			wantInclude:    closedSet,
 			wantExclude:    []string{"deferred"},
 			wantOpenApplie: false,
@@ -133,9 +127,9 @@ func TestResolveStatusFilter(t *testing.T) {
 			wantOpenApplie: false,
 		},
 		{
-			// closed ∪ parked overlaps on deferred; the union must list it once.
+			// closed ∪ deferred overlaps on deferred; the union must list it once.
 			name:           "status group union dedups overlapping members",
-			in:             statusFilterInput{Status: []string{"closed", "parked"}},
+			in:             statusFilterInput{Status: []string{"closed", "deferred"}},
 			wantInclude:    closedSet,
 			wantExclude:    nil,
 			wantOpenApplie: false,
@@ -164,12 +158,17 @@ func TestResolveStatusFilter(t *testing.T) {
 func TestResolveStatusFilter_InvalidToken(t *testing.T) {
 	cfg := config.Default()
 	tests := []struct {
-		name string
-		in   statusFilterInput
+		name  string
+		in    statusFilterInput
+		token string
 	}{
-		{"bad status include", statusFilterInput{Status: []string{"bogus"}}},
-		{"bad status exclude", statusFilterInput{NoStatus: []string{"bogus"}}},
-		{"bad among valid", statusFilterInput{Status: []string{"todo", "nope"}}},
+		{"bad status include", statusFilterInput{Status: []string{"bogus"}}, "bogus"},
+		{"bad status exclude", statusFilterInput{NoStatus: []string{"bogus"}}, "bogus"},
+		{"bad among valid", statusFilterInput{Status: []string{"todo", "nope"}}, "nope"},
+		// The retired group is now just an unknown token. It used to expand to
+		// {deferred}; -s deferred is the only spelling left.
+		{"retired group include", statusFilterInput{Status: []string{retiredStatusGroup}}, retiredStatusGroup},
+		{"retired group exclude", statusFilterInput{NoStatus: []string{retiredStatusGroup}}, retiredStatusGroup},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -177,14 +176,46 @@ func TestResolveStatusFilter_InvalidToken(t *testing.T) {
 			if err == nil {
 				t.Fatal("expected an error for an unknown status/group token, got nil")
 			}
-			// The error must name the offending token and list the accepted
-			// group names so a caller can recover.
-			for _, want := range []string{"open", "closed", "parked"} {
+			// The error must name the offending token, every concrete status,
+			// and the accepted group names so a caller can recover.
+			if !strings.Contains(err.Error(), tt.token) {
+				t.Errorf("error %q should name the offending token %q", err.Error(), tt.token)
+			}
+			for _, want := range append(cfg.StatusNames(), "open", "closed") {
 				if !strings.Contains(err.Error(), want) {
-					t.Errorf("error %q should list accepted group %q", err.Error(), want)
+					t.Errorf("error %q should list accepted value %q", err.Error(), want)
 				}
 			}
 		})
+	}
+}
+
+// retiredStatusGroup is the withdrawn status-group name, kept here as the one
+// literal the retirement guards need as an input — the group expanded to
+// exactly {deferred}, a second spelling of a concrete status rather than a
+// group. Referenced by the cheat-sheet and catalog guards too, so the token
+// appears in exactly one place in this package.
+const retiredStatusGroup = "parked"
+
+// TestStatusGroupNames pins the group vocabulary itself: exactly open and
+// closed. A one-member group is a second spelling of a concrete status, which
+// is what the retired group was (== {deferred}); this fails if one comes back.
+func TestStatusGroupNames(t *testing.T) {
+	want := []string{"open", "closed"}
+	if got := statusGroupNames(); !slices.Equal(got, want) {
+		t.Errorf("statusGroupNames() = %v, want %v", got, want)
+	}
+	// Every group must expand to more than one status, or it is a synonym.
+	cfg := config.Default()
+	for _, g := range statusGroupNames() {
+		members, err := statusGroupMembers(cfg, g)
+		if err != nil {
+			t.Fatalf("statusGroupMembers(%q): %v", g, err)
+		}
+		if len(members) < 2 {
+			t.Errorf("group %q expands to %v — a group with fewer than two members "+
+				"is a second spelling of a concrete status", g, members)
+		}
 	}
 }
 

@@ -78,16 +78,16 @@ type EstimateConfig struct {
 //     reads it as open.
 //   - ReleasesDependents marks a status that *satisfies* a dependency: closing a
 //     blocker this way frees everything it was gating. True for completed (the
-//     work happened) and scrapped (it never will), false for deferred — parked
-//     work is coming back, so the dependency is still unmet. Every open status
-//     is false too: an unfinished blocker blocks.
+//     work happened) and scrapped (it never will), false for deferred — the
+//     set-aside work is coming back, so the dependency is still unmet. Every
+//     open status is false too: an unfinished blocker blocks.
 //
 // The two questions are independent; the flags are not. ReleasesDependents is a
 // strict subset of Closed, since an open status that released its dependents
 // would hand out work that is still blocked. Nothing in the type enforces that —
 // TestStatusReleasesDependents is what holds it. The two sets are not
 // interchangeable either: deferred is closed and still blocks, so collapsing
-// them back into one flag would silently unblock parked work.
+// them back into one flag would silently unblock deferred work.
 //
 // In Go these flags are the only definitions of their sets — consumers read
 // them through IsClosedStatus/ClosedStatusNames/OpenStatusNames and
@@ -435,9 +435,10 @@ func (c *Config) ClosedStatusNames() []string {
 // StatusReleasesDependents returns true if closing a blocker with this status
 // satisfies the dependency — the canonical answer to "does this blocker still
 // count", used by the blocking graph instead of IsClosedStatus. Today this is
-// {completed, scrapped}: deferred is closed but still blocks, because parked
-// work is coming back. Unknown statuses do not release, so an unrecognized
-// blocker keeps blocking rather than silently freeing its dependents.
+// {completed, scrapped}: deferred is closed but still blocks, because the
+// set-aside work is coming back. Unknown statuses do not release, so an
+// unrecognized blocker keeps blocking rather than silently freeing its
+// dependents.
 // Like IsClosedStatus the receiver is currently never dereferenced, but callers
 // should hand it a real *Config anyway (config.Default() if nothing better).
 func (c *Config) StatusReleasesDependents(name string) bool {
@@ -462,14 +463,6 @@ func (c *Config) ReleasingStatusNames() []string {
 	return names
 }
 
-// parkedStatuses is the single source of truth for the "parked" status group —
-// work that was set aside rather than finished or abandoned. Enumerated once
-// here rather than derived, so the group's membership is a decision instead of a
-// side effect of the flags. Today this is {deferred}, which is also what
-// Closed ∧ ¬ReleasesDependents selects; that identity is today's arithmetic, not
-// a guarantee, so do not swap one for the other.
-var parkedStatuses = []string{"deferred"}
-
 // OpenStatusNames returns the names of all non-closed statuses — the "open"
 // status group, and the exact complement of ClosedStatusNames. Derived from
 // DefaultStatuses (Closed == false), so it stays correct if the Closed flags
@@ -481,15 +474,6 @@ func (c *Config) OpenStatusNames() []string {
 			names = append(names, s.Name)
 		}
 	}
-	return names
-}
-
-// ParkedStatusNames returns the names of the "parked" status group — a
-// defensive copy of the canonical parkedStatuses set so callers cannot mutate
-// the source. Parked statuses are closed (a subset of the closed group).
-func (c *Config) ParkedStatusNames() []string {
-	names := make([]string, len(parkedStatuses))
-	copy(names, parkedStatuses)
 	return names
 }
 

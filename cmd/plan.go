@@ -15,7 +15,7 @@ import (
 
 var (
 	planJSON      bool
-	planActive    bool
+	planOpen      bool
 	planWithOrder bool
 )
 
@@ -68,7 +68,7 @@ type Plan struct {
 // buildPlan fetches a parent nib and its ordered children, returning a Plan.
 // Uses the GraphQL resolver for parent lookup and child ordering, consistent
 // with the documented data flow (cmd -> graph -> nibcore -> nib).
-func buildPlan(ctx context.Context, resolver *graph.Resolver, parentID string, activeOnly bool) (*Plan, error) {
+func buildPlan(ctx context.Context, resolver *graph.Resolver, parentID string, openOnly bool) (*Plan, error) {
 	parent, err := resolver.Query().Nib(ctx, parentID)
 	if err != nil {
 		return nil, fmt.Errorf("failed to find nib: %w", err)
@@ -91,9 +91,9 @@ func buildPlan(ctx context.Context, resolver *graph.Resolver, parentID string, a
 	// backfilling order keys for legacy nibs without them.
 	children := resolver.Orderer.GetSortedSiblings(parent.ID)
 
-	// Filter if active only
-	if activeOnly {
-		children = filterActive(children, resolver.Reader.Config())
+	// Filter to open children only
+	if openOnly {
+		children = filterOpen(children, resolver.Reader.Config())
 	}
 
 	// Build plan items
@@ -154,8 +154,12 @@ func checkboxMark(line string) (byte, bool) {
 	return t[3], true
 }
 
-// filterActive removes closed nibs (completed, scrapped, deferred).
-func filterActive(nibs []*nib.Nib, cfg *config.Config) []*nib.Nib {
+// filterOpen removes closed nibs (deferred, completed, scrapped). This is the
+// open-*default* rule (exclude closed), not the open *group* (-s open) that
+// list/rel's --open selects: a nib whose status is outside the vocabulary (a
+// hand-edited file with no `status:` holds "") is kept here but dropped by
+// -s open — see cmd/statusfilter.go.
+func filterOpen(nibs []*nib.Nib, cfg *config.Config) []*nib.Nib {
 	var result []*nib.Nib
 	for _, b := range nibs {
 		if !cfg.IsClosedStatus(b.Status) {
@@ -185,7 +189,7 @@ var planCmd = &cobra.Command{
 			ctx = context.Background()
 		}
 
-		plan, err := buildPlan(ctx, resolver, args[0], planActive)
+		plan, err := buildPlan(ctx, resolver, args[0], planOpen)
 		if err != nil {
 			if planJSON {
 				return output.Error(output.ErrNotFound, err.Error())
@@ -228,7 +232,7 @@ func renderPlanHuman(plan *Plan) error {
 
 func init() {
 	planCmd.Flags().BoolVar(&planJSON, "json", false, "Output as JSON")
-	planCmd.Flags().BoolVar(&planActive, "active", false, "Show only active items (exclude closed nibs)")
+	planCmd.Flags().BoolVar(&planOpen, "open", false, "Exclude closed items (deferred/completed/scrapped) — unlike list/rel's --open this is exclude-closed, not -s open, so an item with no status is kept")
 	planCmd.Flags().BoolVar(&planWithOrder, "with-order", false, "Show each item's order key in the default (non-JSON) output (JSON always includes order)")
 	rootCmd.AddCommand(planCmd)
 }

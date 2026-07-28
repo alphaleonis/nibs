@@ -69,9 +69,9 @@ func waitForWatchLoops(want int, timeout time.Duration) (int, bool) {
 //
 // A single restart per cycle only exercises this on the very first cycle:
 // afterwards the caller's census poll hands every fresh loop the microseconds
-// it needs to park in select, and a parked loop has already evaluated its channel
-// operand, so closing it wakes the select and the loop returns without ever
-// re-reading the field. That is why a quiet restart proves nothing, and why
+// it needs to block in select, and a blocked loop has already evaluated its
+// channel operand, so closing it wakes the select and the loop returns without
+// ever re-reading the field. That is why a quiet restart proves nothing, and why
 // this helper never waits between the pair.
 func restartTwice(t *testing.T, core *Core, cycle int) {
 	t.Helper()

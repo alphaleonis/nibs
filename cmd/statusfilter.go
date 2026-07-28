@@ -12,11 +12,18 @@ import (
 // expands to its concrete member statuses:
 //   - open   → the non-closed statuses (config.OpenStatusNames)
 //   - closed → the closed/terminal statuses (config.ClosedStatusNames)
-//   - parked → the set-aside statuses (config.ParkedStatusNames), a subset of closed
+//
+// The two partition the declared status set. A nib whose status is outside that
+// vocabulary (a hand-edited file with no `status:` holds "") is in neither
+// group: the open default keeps it because IsClosedStatus reads it as open,
+// while `-s open` and `-s closed` both drop it — see config.StatusConfig.
+//
+// A group is worth a word only when it has more than one member and is not
+// spelled by a concrete status name — that is why there is no group for
+// {deferred} alone: `-s deferred` already selects it.
 const (
 	statusGroupOpen   = "open"
 	statusGroupClosed = "closed"
-	statusGroupParked = "parked"
 )
 
 // statusFilterInput captures the raw status-related flags shared by `list` and
@@ -26,7 +33,7 @@ type statusFilterInput struct {
 	Status   []string // -s / --status tokens (concrete statuses or group names)
 	NoStatus []string // --no-status tokens (concrete statuses or group names)
 	All      bool     // --all: base is every status (no open-by-default exclusion)
-	Open     bool     // --open / --active: shorthand for -s open
+	Open     bool     // --open: shorthand for -s open
 }
 
 // resolveStatusFilter expands status groups, applies the open-by-default rule,
@@ -41,9 +48,9 @@ type statusFilterInput struct {
 //     status passes.
 //   - --all → base is every status: include and the open-default exclusion are
 //     both empty.
-//   - Any explicit -s X… (after group expansion, including --open/--active which
-//     inject the open group) → include = union(X); this overrides the open
-//     default so `-s closed`/`-s completed` show closed nibs.
+//   - Any explicit -s X… (after group expansion, including --open which injects
+//     the open group) → include = union(X); this overrides the open default so
+//     `-s closed`/`-s completed` show closed nibs.
 //   - --no-status Y… (after group expansion) → added to exclude, subtracting Y
 //     from the current base.
 //
@@ -51,15 +58,15 @@ type statusFilterInput struct {
 // error naming the offending token and the accepted values.
 //
 // openDefaultApplied reports whether the open-by-default closed-status
-// exclusion was added (no explicit -s/--open/--active and no --all). Callers
+// exclusion was added (no explicit -s/--open and no --all). Callers
 // use it to decide whether to disclose the hidden closed-status count: the
 // open default is the only path that silently drops rows, so a partial set is
 // only unobservable there.
 func resolveStatusFilter(cfg *config.Config, in statusFilterInput) (include, exclude []string, openDefaultApplied bool, err error) {
 	statusTokens := in.Status
 	if in.Open {
-		// --open / --active is shorthand for -s open; append rather than
-		// replace so it unions with any explicit -s tokens.
+		// --open is shorthand for -s open; append rather than replace so it
+		// unions with any explicit -s tokens.
 		statusTokens = append(append([]string(nil), statusTokens...), statusGroupOpen)
 	}
 
@@ -159,8 +166,6 @@ func statusGroupMembers(cfg *config.Config, token string) ([]string, error) {
 		return cfg.OpenStatusNames(), nil
 	case statusGroupClosed:
 		return cfg.ClosedStatusNames(), nil
-	case statusGroupParked:
-		return cfg.ParkedStatusNames(), nil
 	}
 	if cfg.IsValidStatus(token) {
 		return []string{token}, nil
@@ -171,7 +176,7 @@ func statusGroupMembers(cfg *config.Config, token string) ([]string, error) {
 
 // statusGroupNames returns the accepted status-group names, for error messages.
 func statusGroupNames() []string {
-	return []string{statusGroupOpen, statusGroupClosed, statusGroupParked}
+	return []string{statusGroupOpen, statusGroupClosed}
 }
 
 // appendMissingStatuses appends every name in add that is not already in base,

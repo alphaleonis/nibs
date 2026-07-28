@@ -59,13 +59,14 @@ func TestCheatSheetShowsSectionCreate(t *testing.T) {
 }
 
 // TestCheatSheetShowsOpenDefaultAndGroups asserts the cheat sheet conveys the
-// status-group vocabulary (open/closed/parked as -s/--no-status values), the
+// status-group vocabulary (open/closed as -s/--no-status values), the
 // open-by-default behavior of list/rel, the "open work under X" recipe, and the
 // terse-output (-c/-q) caveat — the discoverability the open default depends on.
 func TestCheatSheetShowsOpenDefaultAndGroups(t *testing.T) {
 	got := cheatSheet(config.Default())
 	for _, want := range []string{
-		"open|closed|parked",           // the status-group vocabulary
+		"open|closed",                  // the status-group vocabulary
+		"deferred is closed but still", // the one non-obvious consequence
 		"OPEN only by default",         // list/rel are open by default
 		"--all",                        // --all shows everything
 		"descendants -t bug",           // the "open work under X" recipe
@@ -74,6 +75,12 @@ func TestCheatSheetShowsOpenDefaultAndGroups(t *testing.T) {
 	} {
 		if !strings.Contains(got, want) {
 			t.Errorf("cheat sheet missing %q", want)
+		}
+	}
+	// The retired vocabulary must not reappear on the one screen an agent reads.
+	for _, gone := range []string{retiredStatusGroup, "--active"} {
+		if strings.Contains(got, gone) {
+			t.Errorf("cheat sheet still mentions retired %q", gone)
 		}
 	}
 }

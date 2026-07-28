@@ -99,7 +99,6 @@ func resetListFlags() {
 	listReady = false
 	listAll = false
 	listOpen = false
-	listActive = false
 	listQuiet = false
 	listSort = ""
 	listView = ""
@@ -150,7 +149,6 @@ func TestResetListFlagsClearsAllState(t *testing.T) {
 		"ready":        "true",
 		"all":          "true",
 		"open":         "true",
-		"active":       "true",
 		"quiet":        "true",
 		"sort":         "created",
 		"view":         "card",
@@ -431,10 +429,10 @@ func runListCmd(t *testing.T, nibsDir string, args ...string) (string, error) {
 // only a predicate narrower than IsClosedStatus tells them apart.
 func deferredBlockerFixture() map[string]string {
 	return map[string]string{
-		"bd--blocker-done.md":  "---\ntitle: BlockerDone\nstatus: completed\ntype: task\n---\n",
-		"bp--blocker-park.md":  "---\ntitle: BlockerParked\nstatus: deferred\ntype: task\n---\n",
-		"dd--dep-of-done.md":   "---\ntitle: DepOfDone\nstatus: todo\ntype: task\nblocked_by: [bd]\n---\n",
-		"dp--dep-of-parked.md": "---\ntitle: DepOfParked\nstatus: todo\ntype: task\nblocked_by: [bp]\n---\n",
+		"bd--blocker-done.md":     "---\ntitle: BlockerDone\nstatus: completed\ntype: task\n---\n",
+		"bp--blocker-deferred.md": "---\ntitle: BlockerDeferred\nstatus: deferred\ntype: task\n---\n",
+		"dd--dep-of-done.md":      "---\ntitle: DepOfDone\nstatus: todo\ntype: task\nblocked_by: [bd]\n---\n",
+		"dp--dep-of-deferred.md":  "---\ntitle: DepOfDeferred\nstatus: todo\ntype: task\nblocked_by: [bp]\n---\n",
 	}
 }
 

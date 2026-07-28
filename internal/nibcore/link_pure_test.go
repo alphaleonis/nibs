@@ -111,7 +111,7 @@ func TestIsBlockedInMap(t *testing.T) {
 		{"blocked by completed", "blocked-by-completed", false},
 		{"blocked by scrapped", "blocked-by-scrapped", false},
 		// deferred is a closed status but does not satisfy the dependency —
-		// parked work is coming back, so its dependents stay blocked. Using the
+		// the set-aside work is coming back, so its dependents stay blocked. Using the
 		// closed predicate here would report false.
 		{"blocked by deferred", "blocked-by-deferred", true},
 		{"not blocked", "not-blocked", false},

@@ -171,14 +171,13 @@ func statusGroupCatalogEntries(cfg *config.Config) []statusGroupCatalog {
 	return []statusGroupCatalog{
 		{statusGroupOpen, cfg.OpenStatusNames()},
 		{statusGroupClosed, cfg.ClosedStatusNames()},
-		{statusGroupParked, cfg.ParkedStatusNames()},
 	}
 }
 
 // catalogFilters renders the enum-valued filter flags and their values,
 // generated from config (the single source of truth for the enums). The status
-// groups (open/closed/parked) are documented alongside the concrete statuses
-// because -s/--status and --no-status accept them anywhere a concrete status is
+// groups (open/closed) are documented alongside the concrete statuses because
+// -s/--status and --no-status accept them anywhere a concrete status is
 // accepted, and list/rel apply an open-by-default status filter.
 func catalogFilters() error {
 	cfg := config.Default()
@@ -218,8 +217,14 @@ func catalogFilters() error {
 
 	b.WriteString("\n'nibs list' and 'nibs rel' show only open nibs by default (the closed\n")
 	b.WriteString("statuses are hidden). An explicit -s overrides that (-s closed shows only\n")
-	b.WriteString("closed nibs), --all includes every status, and --open/--active is\n")
-	b.WriteString("shorthand for -s open.\n")
+	b.WriteString("closed nibs), --all includes every status, and --open is shorthand for\n")
+	b.WriteString("-s open.\n")
+	b.WriteString("\nThe groups partition the declared statuses: open is a workflow position,\n")
+	b.WriteString("closed a close reason. A nib carrying a status outside that vocabulary (a\n")
+	b.WriteString("hand-edited file with no 'status:' holds \"\") is in neither group — the open\n")
+	b.WriteString("default keeps it, but -s open and -s closed both drop it.\n")
+	b.WriteString("\nNote that deferred is closed but still blocks its dependents (unlike\n")
+	b.WriteString("completed and scrapped), because the work is coming back.\n")
 	fmt.Print(b.String())
 	return nil
 }

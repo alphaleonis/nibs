@@ -408,7 +408,7 @@ func TestBuildPlan_ActiveFlag(t *testing.T) {
 // rootCmd's singleton state.
 func resetPlanFlags() {
 	planJSON = false
-	planActive = false
+	planOpen = false
 	planWithOrder = false
 	planCmd.Flags().Visit(func(f *pflag.Flag) {
 		f.Changed = false
@@ -502,6 +502,72 @@ func TestPlanCommand_JSON_FlagDoesNotChangeShape(t *testing.T) {
 
 	if out1 != out2 {
 		t.Errorf("--with-order must not change --json output\n--json:\n%s\n--json --with-order:\n%s", out1, out2)
+	}
+}
+
+// planOpenFixtureFiles returns a parent epic and one child per side of the
+// --open filter: a todo child (open), a completed and a deferred child (both
+// closed), and a child with no `status:` key at all — the case where plan's
+// exclude-closed rule and list/rel's -s open include-list disagree.
+func planOpenFixtureFiles() map[string]string {
+	return map[string]string{
+		"e1--my-epic.md":        "---\ntitle: My Epic\nstatus: in-progress\ntype: epic\n---\n",
+		"t1--todo-task.md":      "---\ntitle: Todo Task\nstatus: todo\ntype: task\nparent: e1\norder: a0\n---\n",
+		"t2--done-task.md":      "---\ntitle: Done Task\nstatus: completed\ntype: task\nparent: e1\norder: a1\n---\n",
+		"t3--deferred-task.md":  "---\ntitle: Deferred Task\nstatus: deferred\ntype: task\nparent: e1\norder: a2\n---\n",
+		"t4--no-status-task.md": "---\ntitle: No Status Task\ntype: task\nparent: e1\norder: a3\n---\n",
+	}
+}
+
+// TestPlanCommand_Open_ExcludesClosedChildren drives --open through Cobra
+// rather than calling buildPlan with a bare bool, so it covers the wiring from
+// the registered flag to buildPlan's openOnly parameter — an unbound flag
+// leaves every child in the output and fails the closed-child assertions.
+//
+// It also pins the statusless child, which is where plan --open parts company
+// with list/rel's --open: filterOpen removes only known-closed statuses, so ""
+// survives here while -s open's include-list drops it. plan's --open usage
+// string states that, and this is what holds it.
+func TestPlanCommand_Open_ExcludesClosedChildren(t *testing.T) {
+	nibsDir := setupPlanCobraTest(t, planOpenFixtureFiles())
+
+	// Baseline: without --open every child is listed, so the "absent" checks
+	// below are about the filter and not about a missing fixture nib.
+	rootCmd.SetArgs([]string{"--nibs-path", nibsDir, "plan", "e1"})
+	var baseErr error
+	baseOut := captureStdout(t, func() { baseErr = rootCmd.Execute() })
+	if baseErr != nil {
+		t.Fatalf("plan e1: %v", baseErr)
+	}
+	for _, want := range []string{"Todo Task", "Done Task", "Deferred Task", "No Status Task"} {
+		if !strings.Contains(baseOut, want) {
+			t.Fatalf("baseline output missing %q; fixture is wrong\nfull output:\n%s", want, baseOut)
+		}
+	}
+
+	// Reset between runs (Cobra holds parsed-flag state on rootCmd).
+	resetPlanFlags()
+	rootCmd.SetArgs([]string{"--nibs-path", nibsDir, "plan", "e1", "--open"})
+	var openErr error
+	openOut := captureStdout(t, func() { openErr = rootCmd.Execute() })
+	if openErr != nil {
+		t.Fatalf("plan e1 --open: %v", openErr)
+	}
+
+	// Positions are renumbered over the surviving children.
+	wantLines := []string{
+		"1. [todo] Todo Task (t1)",
+		"2. [] No Status Task (t4)",
+	}
+	for _, want := range wantLines {
+		if !strings.Contains(openOut, want) {
+			t.Errorf("plan --open output missing line %q\nfull output:\n%s", want, openOut)
+		}
+	}
+	for _, unwanted := range []string{"Done Task", "Deferred Task"} {
+		if strings.Contains(openOut, unwanted) {
+			t.Errorf("plan --open should exclude closed child %q\nfull output:\n%s", unwanted, openOut)
+		}
 	}
 }
 
