@@ -28,8 +28,6 @@ export interface NibFilter {
   isBlocked?: boolean;
   hasBlockedBy?: boolean;
   blockedById?: string;
-  noParent?: boolean;
-  noBlocking?: boolean;
   noBlockedBy?: boolean;
 }
 

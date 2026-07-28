@@ -146,21 +146,25 @@ Search Syntax (--search/-S):
 		if listSearch != "" {
 			filter.Search = &listSearch
 		}
-		if listHasParent {
-			filter.HasParent = &listHasParent
-		}
-		if listNoParent {
-			filter.NoParent = &listNoParent
-		}
 		if listParentID != "" {
 			filter.ParentID = &listParentID
 		}
-		if listHasBlocking {
-			filter.HasBlocking = &listHasBlocking
+
+		// --has-parent/--no-parent and --has-blocking/--no-blocking are each
+		// two spellings of one tri-state filter field, folded onto that field
+		// by resolvePresenceFlag. Whether the field is set at all keys on
+		// whether a spelling was given; what gets written is that spelling's
+		// value, negated for the --no- form. So --has-parent=false and
+		// --no-parent both write HasParent=&false, while --has-parent=true and
+		// --no-parent=false both write &true. Giving both spellings of a pair
+		// is rejected there rather than resolved here.
+		if filter.HasParent, err = resolvePresenceFlag(cmd, "has-parent", "no-parent"); err != nil {
+			return reportErr(listJSON, output.ErrValidation, err)
 		}
-		if listNoBlocking {
-			filter.NoBlocking = &listNoBlocking
+		if filter.HasBlocking, err = resolvePresenceFlag(cmd, "has-blocking", "no-blocking"); err != nil {
+			return reportErr(listJSON, output.ErrValidation, err)
 		}
+
 		// MentionsID / MentionedByID accept short or full IDs; the GraphQL
 		// filter layer normalizes via NibReader.NormalizeID in ApplyFilter
 		// (internal/graph/filters.go:resolveFilterID). Do not normalize at
@@ -181,12 +185,9 @@ Search Syntax (--search/-S):
 		// the filter layer reads as "no blocked-filter") and would let
 		// --ready --is-blocked=false through the mutex unchallenged.
 		//
-		// The presence flags above (--has-parent/--no-parent,
-		// --has-blocking/--no-blocking) are left testing their value, which is
-		// a scope decision, not a claim that they are correct: --has-parent=false
-		// is the same silent no-op this guard fixes. They are left alone because
-		// each has an explicit opposite, so no intent is unreachable — a caller
-		// wanting the negation passes the sibling flag. See nibs-qajd.
+		// Unlike the paired presence flags above, --is-blocked has no sibling
+		// spelling, so there is nothing to fold and no pair to reject — only
+		// the mutex against --ready.
 		isBlockedSet := cmd.Flags().Changed("is-blocked")
 		if listReady && isBlockedSet {
 			return reportErr(listJSON, output.ErrValidation,
@@ -294,6 +295,55 @@ Search Syntax (--search/-S):
 		fmt.Print(output.FormatListTSV(pl.Rows(), !listNoHeader, hiddenClosed, closedStatusLabel(app.Config())))
 		return nil
 	},
+}
+
+// resolvePresenceFlag folds a pair of opposite boolean flag spellings onto the
+// one tri-state filter field they share. hasName is the positive spelling and
+// noName its negation, so --<noName>=v contributes !v to the field and bare
+// --<noName> contributes false.
+//
+// Whether the field is set at all keys on cmd.Flags().Changed, never on the
+// flag values: a nil return means neither spelling was given, which the filter
+// layer reads as "do not filter on this". Keying on the values instead would
+// collapse "not given" and "given as false" into the same nil, making
+// --<hasName>=false a silent no-op that returns the unfiltered set.
+//
+// Giving both spellings is rejected uniformly, including when their values
+// agree. Agreeing values are unambiguous — --<hasName>=false and --<noName>
+// select the identical set — but one filter concept spelled twice in a single
+// invocation is redundant and near-certainly a mistake, so the command rejects
+// the pair rather than special-casing the agreeing case.
+//
+// Values are read back through cmd.Flags().GetBool rather than passed in
+// alongside the names, so a name and the value it resolves to cannot drift
+// apart. Both lookups run before the Changed checks so an unregistered or
+// non-bool name is an error even on the paths that would not have used its
+// value — cmd.Flags().Changed reports false for a name it does not know, so
+// gating the lookups on it would let a misspelled name resolve to a silent
+// "not given" and drop the filter.
+func resolvePresenceFlag(cmd *cobra.Command, hasName, noName string) (*bool, error) {
+	hasValue, err := cmd.Flags().GetBool(hasName)
+	if err != nil {
+		return nil, err
+	}
+	noValue, err := cmd.Flags().GetBool(noName)
+	if err != nil {
+		return nil, err
+	}
+
+	hasSet := cmd.Flags().Changed(hasName)
+	noSet := cmd.Flags().Changed(noName)
+	switch {
+	case hasSet && noSet:
+		return nil, fmt.Errorf("--%s and --%s are mutually exclusive (they set the same filter)", hasName, noName)
+	case hasSet:
+		return &hasValue, nil
+	case noSet:
+		negated := !noValue
+		return &negated, nil
+	default:
+		return nil, nil
+	}
 }
 
 // countHiddenClosed returns how many nibs the open-by-default closed-status

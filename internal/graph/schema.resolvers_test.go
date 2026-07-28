@@ -622,11 +622,11 @@ func TestQueryNibsWithParentAndBlocks(t *testing.T) {
 		}
 	})
 
-	t.Run("filter noParent", func(t *testing.T) {
+	t.Run("filter hasParent false", func(t *testing.T) {
 		qr := resolver.Query()
-		noParentBool := true
+		hasParentBool := false
 		filter := &model.NibFilter{
-			NoParent: &noParentBool,
+			HasParent: &hasParentBool,
 		}
 		got, err := qr.Nibs(ctx, filter, nil)
 		if err != nil {

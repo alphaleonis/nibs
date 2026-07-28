@@ -137,24 +137,20 @@ type NibFilter struct {
 	Tags []string `json:"tags,omitempty"`
 	// Exclude nibs with any of these tags
 	ExcludeTags []string `json:"excludeTags,omitempty"`
-	// Include only nibs with a parent
+	// Tri-state: true keeps nibs with a parent, false keeps exactly the parentless ones, null does not filter
 	HasParent *bool `json:"hasParent,omitempty"`
 	// Include only nibs with this specific parent ID
 	ParentID *string `json:"parentId,omitempty"`
-	// Include only nibs that are blocking other nibs
+	// Tri-state: true keeps nibs that are blocking others, false keeps exactly the non-blocking ones, null does not filter
 	HasBlocking *bool `json:"hasBlocking,omitempty"`
 	// Include only nibs that are blocking this specific nib ID
 	BlockingID *string `json:"blockingId,omitempty"`
-	// Include only nibs that are blocked by others (via incoming blocking links or blocked_by field)
+	// Tri-state: true keeps nibs blocked by others (via incoming blocking links or blocked_by field), false keeps exactly the unblocked ones, null does not filter
 	IsBlocked *bool `json:"isBlocked,omitempty"`
 	// Include only nibs that have explicit blocked-by entries
 	HasBlockedBy *bool `json:"hasBlockedBy,omitempty"`
 	// Include only nibs blocked by this specific nib ID (via blocked_by field)
 	BlockedByID *string `json:"blockedById,omitempty"`
-	// Exclude nibs that have a parent
-	NoParent *bool `json:"noParent,omitempty"`
-	// Exclude nibs that are blocking other nibs
-	NoBlocking *bool `json:"noBlocking,omitempty"`
 	// Exclude nibs that have explicit blocked-by entries
 	NoBlockedBy *bool `json:"noBlockedBy,omitempty"`
 	// Include only nibs that mention this specific nib ID in their body

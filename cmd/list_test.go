@@ -137,12 +137,136 @@ func TestListCommand_IsBlockedFlag(t *testing.T) {
 	}
 }
 
+// presenceFixture gives both the parent and the blocking predicate a non-empty
+// answer on each side. pa is a root with two children (ca, cb); rb is a root
+// that blocks cb and is therefore the only blocking nib. Every nib is todo, so
+// list's open-by-default filter keeps the whole set in play and each pair of
+// answers is an exact complement.
+func presenceFixture() map[string]string {
+	return map[string]string{
+		"pa--parent-a.md": "---\ntitle: ParentA\nstatus: todo\ntype: task\n---\n",
+		"ca--child-a.md":  "---\ntitle: ChildA\nstatus: todo\ntype: task\nparent: pa\n---\n",
+		"cb--child-b.md":  "---\ntitle: ChildB\nstatus: todo\ntype: task\nparent: pa\nblocked_by: [rb]\n---\n",
+		"rb--root-b.md":   "---\ntitle: RootB\nstatus: todo\ntype: task\n---\n",
+	}
+}
+
+// TestListCommand_PresenceFlagsAreOneTriStateField pins that each flag pair is
+// two spellings of one tri-state filter field. --has-parent=false has to select
+// the parentless nibs and agree with --no-parent exactly; --no-parent=false has
+// to agree with --has-parent. A guard that reads the flag's value instead of
+// whether it was set leaves the field nil on the =false rows, which the filter
+// layer reads as "no filter" and hands back the entire set.
+func TestListCommand_PresenceFlagsAreOneTriStateField(t *testing.T) {
+	var (
+		withParent    = map[string]bool{"ca": true, "cb": true}
+		withoutParent = map[string]bool{"pa": true, "rb": true}
+		blocking      = map[string]bool{"rb": true}
+		notBlocking   = map[string]bool{"pa": true, "ca": true, "cb": true}
+	)
+
+	tests := []struct {
+		name string
+		args []string
+		want map[string]bool
+	}{
+		{"--has-parent", []string{"--has-parent"}, withParent},
+		{"--has-parent=true", []string{"--has-parent=true"}, withParent},
+		{"--has-parent=false", []string{"--has-parent=false"}, withoutParent},
+		{"--no-parent", []string{"--no-parent"}, withoutParent},
+		{"--no-parent=true", []string{"--no-parent=true"}, withoutParent},
+		{"--no-parent=false", []string{"--no-parent=false"}, withParent},
+		{"--has-blocking", []string{"--has-blocking"}, blocking},
+		{"--has-blocking=false", []string{"--has-blocking=false"}, notBlocking},
+		{"--no-blocking", []string{"--no-blocking"}, notBlocking},
+		{"--no-blocking=false", []string{"--no-blocking=false"}, blocking},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			nibsDir := setupListCobraTest(t, presenceFixture())
+			args := append([]string{"--json"}, tt.args...)
+			out, err := runListCmd(t, nibsDir, args...)
+			if err != nil {
+				t.Fatalf("list %v failed: %v\nout: %s", args, err, out)
+			}
+			got := envelopeIDs(parseListEnvelope(t, out))
+			if len(got) != len(tt.want) {
+				t.Fatalf("got %v (count=%d), want %v", got, len(got), tt.want)
+			}
+			for id := range tt.want {
+				if !got[id] {
+					t.Errorf("missing %q; got %v, want %v", id, got, tt.want)
+				}
+			}
+		})
+	}
+}
+
+// TestListCommand_PresenceFlagMutualExclusion drives the real command so the
+// assertion lands on list.go's guard rather than a copy of it. Both spellings
+// write the same field, so giving both spells one filter concept twice in a
+// single invocation — redundant and near-certainly a mistake. The rejection is
+// uniform rather than conditional on the values disagreeing, which is why the
+// agreeing-values rows are rejected too even though they are unambiguous.
+func TestListCommand_PresenceFlagMutualExclusion(t *testing.T) {
+	tests := []struct {
+		name      string
+		args      []string
+		wantError bool
+		wantFlags []string
+	}{
+		{"only --has-parent", []string{"--has-parent"}, false, nil},
+		{"only --no-parent=false", []string{"--no-parent=false"}, false, nil},
+		{"only --has-blocking=false", []string{"--has-blocking=false"}, false, nil},
+		{"only --no-blocking", []string{"--no-blocking"}, false, nil},
+		{"--has-parent --no-parent", []string{"--has-parent", "--no-parent"}, true, []string{"--has-parent", "--no-parent"}},
+		// Agreeing values: --has-parent=false and --no-parent both mean
+		// "parentless", so this pair has exactly one possible meaning — and is
+		// still rejected, because the rejection is uniform.
+		{"--has-parent=false --no-parent", []string{"--has-parent=false", "--no-parent"}, true, []string{"--has-parent", "--no-parent"}},
+		{"--has-blocking --no-blocking", []string{"--has-blocking", "--no-blocking"}, true, []string{"--has-blocking", "--no-blocking"}},
+		{"--has-blocking=false --no-blocking", []string{"--has-blocking=false", "--no-blocking"}, true, []string{"--has-blocking", "--no-blocking"}},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			nibsDir := setupListCobraTest(t, presenceFixture())
+			out, err := runListCmd(t, nibsDir, append(append([]string{}, tt.args...), "-q")...)
+			if !tt.wantError {
+				if err != nil {
+					t.Fatalf("list %v failed: %v\nout: %s", tt.args, err, out)
+				}
+				return
+			}
+			if err == nil {
+				t.Fatalf("list %v: want a mutual-exclusion error, got nil\nout: %s", tt.args, out)
+			}
+			var ce *output.CodedError
+			if !errors.As(err, &ce) || ce.Code != output.ErrValidation {
+				t.Errorf("list %v: want a VALIDATION coded error, got: %v", tt.args, err)
+			}
+			for _, flag := range tt.wantFlags {
+				if !strings.Contains(err.Error(), flag) {
+					t.Errorf("list %v: error should name %s; got: %v", tt.args, flag, err)
+				}
+			}
+			if !strings.Contains(err.Error(), "mutually exclusive") {
+				t.Errorf("list %v: error should say the flags are mutually exclusive; got: %v", tt.args, err)
+			}
+		})
+	}
+}
+
 // resetListFlags clears the package-level flag vars used by listCmd AND
 // Cobra's Changed-state tracking so tests don't pollute each other via
-// rootCmd's singleton state. Clearing Changed state future-proofs the
-// helper: listCmd's current --ready/--is-blocked mutex is implemented
-// manually in list.go, but if MarkFlagsMutuallyExclusive is ever adopted
-// it will read the Changed flag and would misbehave with stale state.
+// rootCmd's singleton state. Clearing Changed state is load-bearing today,
+// not future-proofing: list.go decides whether a filter applies from
+// cmd.Flags().Changed — once for --is-blocked and once per spelling inside
+// resolvePresenceFlag — so a flag left Changed makes a later test see flags
+// it never passed. Leaving it stale is what turns an earlier
+// --has-parent/--no-parent case into a mutual-exclusion error in the list
+// tests that run after it.
 func resetListFlags() {
 	listJSON = false
 	listSearch = ""
