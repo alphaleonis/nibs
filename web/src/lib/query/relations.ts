@@ -61,7 +61,11 @@ export const REL_ID_FIELDS: Record<string, RelIdKey> = {
 // `is:foo`) simply are not present. The `has:`/`no:` pair for one dimension
 // targets the SAME field with opposite values — writing them as two fields is
 // what the backend filter model retired.
-const EXISTENCE_TOKENS: Record<string, { field: ExistenceKey; value: boolean }> = {
+//
+// Exported for the parity test only (`relations.test.ts`): this and `REL_ID_FIELDS`
+// are what recognition reads, `REL_TOKEN_ORDER` is what completion and serialization
+// read, and nothing in the type system ties the three together.
+export const EXISTENCE_TOKENS: Record<string, { field: ExistenceKey; value: boolean }> = {
   "has:parent": { field: "hasParent", value: true },
   "no:parent": { field: "hasParent", value: false },
   "has:blocking": { field: "hasBlocking", value: true },
@@ -79,7 +83,17 @@ const EXISTENCE_TOKENS: Record<string, { field: ExistenceKey; value: boolean }> 
 // these tokens; moving an entry silently changes what counts as canonical.
 export type RelTokenSpec =
   | { kind: "id"; field: RelIdKey; name: string }
-  | { kind: "bool"; field: ExistenceKey; token: string; value: boolean };
+  | {
+      kind: "bool";
+      field: ExistenceKey;
+      /** The full existence token, and it must be exactly `word:value` with a single
+       *  colon: `complete.ts` splits on the first colon to derive the completable
+       *  existence words and the values each accepts. A colon-less token would put a
+       *  truncated word in the completion menu and insert something the parser
+       *  rejects. `relations.test.ts` pins every entry against `EXISTENCE_TOKENS`. */
+      token: string;
+      value: boolean;
+    };
 
 export const REL_TOKEN_ORDER: readonly RelTokenSpec[] = [
   { kind: "id", field: "parentId", name: "parent" },

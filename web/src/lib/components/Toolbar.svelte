@@ -429,6 +429,12 @@
   // Async rel-token typeahead: debounced search + in-flight/stale-response guard.
   const REL_SEARCH_DEBOUNCE_MS = 200;
   let relResults = $state<NibSuggestion[]>([]);
+  // The fragment `relResults` answers. Rows are deliberately HELD across a fragment
+  // change so the list does not flicker while the next query debounces — so what is
+  // on screen can lag the typed text. Every write to `relResults` sets this too, and
+  // the accept path refuses rows whose fragment no longer matches the caret's: the
+  // stale guard in `runRelSearch` protects the WRITE, this protects the COMMIT.
+  let relResultsFragment = $state("");
   let relDebounceTimer: ReturnType<typeof setTimeout> | null = null;
   // Bumped per fired query; a resolved response whose seq is no longer current is
   // dropped (a newer keystroke superseded it).
@@ -439,16 +445,30 @@
     !active ? 0 : active.kind === "static" ? active.completion.items.length : relResults.length,
   );
 
+  // Rel rows are committable only while they answer the fragment now under the caret.
+  let relResultsAreCurrent = $derived(
+    active?.kind === "rel" && relResultsFragment === active.ctx.fragment,
+  );
+
   function cancelRelSearch() {
     if (relDebounceTimer) { clearTimeout(relDebounceTimer); relDebounceTimer = null; }
   }
 
+  const sameItems = (a: readonly string[], b: readonly string[]) =>
+    a.length === b.length && a.every((v, i) => v === b[i]);
+
   // Recompute the caret-token suggestions. A rel-token value context routes to the
   // async path (debounced fetch); otherwise fall back to static completion.
-  function refreshCompletion() {
-    if (!keywordInput) { active = null; relResults = []; cancelRelSearch(); return; }
+  // `explicit` marks a Ctrl+Space request: only then does an empty token open the
+  // full field list. Typing (and focus) must leave an empty box alone.
+  function refreshCompletion(explicit = false) {
+    if (!keywordInput) { active = null; setRelResults([], ""); cancelRelSearch(); return; }
     const value = keywordInput.value;
     const caret = keywordInput.selectionStart ?? value.length;
+    // An explicit refresh over an unchanged list changes nothing, so the highlight
+    // survives it — wiping it there would silently redirect the next accept to row 0.
+    const heldItems = explicit && active?.kind === "static" ? active.completion.items : null;
+    const heldIndex = suggestIndex;
     suggestIndex = -1;
 
     const relCtx = relTokenValueContext(value, caret);
@@ -460,16 +480,23 @@
 
     // Left any rel context: drop stale rich rows + any pending fetch.
     cancelRelSearch();
-    relResults = [];
-    const c = getCompletion(value, caret, availableTags);
+    setRelResults([], "");
+    const c = getCompletion(value, caret, availableTags, { explicit });
     active = c ? { kind: "static", completion: c } : null;
+    if (heldItems && c && sameItems(heldItems, c.items)) suggestIndex = heldIndex;
+  }
+
+  // The rows and the fragment they answer move together — see `relResultsFragment`.
+  function setRelResults(results: NibSuggestion[], fragment: string) {
+    relResults = results;
+    relResultsFragment = fragment;
   }
 
   function scheduleRelSearch(fragment: string) {
     cancelRelSearch();
     // Empty fragment (`parent:` with nothing typed yet): don't query — show
     // nothing until the user types at least one character.
-    if (fragment === "") { relResults = []; return; }
+    if (fragment === "") { setRelResults([], fragment); return; }
     relDebounceTimer = setTimeout(() => {
       relDebounceTimer = null;
       void runRelSearch(fragment);
@@ -493,7 +520,7 @@
     // since left a rel context / moved to a different fragment.
     if (seq !== relRequestSeq) return;
     if (!active || active.kind !== "rel" || active.ctx.fragment !== fragment) return;
-    relResults = results;
+    setRelResults(results, fragment);
   }
 
   // Insert a chosen static suggestion (field name / enum value / tag).
@@ -512,6 +539,8 @@
   // Insert a chosen candidate nib's id, replacing the token's partial value run.
   async function applyRelSelection(nib: NibSuggestion) {
     if (!active || active.kind !== "rel" || !keywordInput) return;
+    // Never commit a row fetched for a fragment the user has since moved past.
+    if (!relResultsAreCurrent) return;
     const { start, end } = active.ctx;
     const text = keywordText.slice(0, start) + nib.id + keywordText.slice(end);
     const caret = start + nib.id.length;
@@ -523,7 +552,36 @@
     refreshCompletion();
   }
 
+  // The text accepting row `index` would produce, or `null` when there is nothing to
+  // accept. Two rows are not accepts: one that rewrites the text to what is already
+  // there (an inserted value substring-matches ITSELF, so the popover reopens holding
+  // it), and a rel row answering a superseded fragment. Tab consults this before
+  // swallowing the key, so a non-accept keeps its native focus move.
+  function acceptedText(index: number): string | null {
+    if (!active) return null;
+    let text: string;
+    if (active.kind === "static") {
+      text = active.completion.apply(active.completion.items[index]).text;
+    } else {
+      if (!relResultsAreCurrent) return null;
+      const { start, end } = active.ctx;
+      text = keywordText.slice(0, start) + relResults[index].id + keywordText.slice(end);
+    }
+    return text === keywordText ? null : text;
+  }
+
   function handleKeywordKeydown(event: KeyboardEvent) {
+    // Ctrl+Space sits ABOVE the early return: its whole job is opening a completion
+    // when none is active. Mid-token it recomputes the same filtered list, so
+    // pressing it over an open popover leaves it open, highlight and all. The chord
+    // is required EXACTLY: AltGr reports both Control and Alt on Windows, and
+    // AltGr+Space types a non-breaking space that must reach the box.
+    if (event.ctrlKey && !event.altKey && !event.shiftKey && !event.metaKey
+        && (event.key === " " || event.code === "Space")) {
+      event.preventDefault();
+      refreshCompletion(true);
+      return;
+    }
     if (!active || activeItemCount === 0) return;
     if (event.key === "ArrowDown") {
       event.preventDefault();
@@ -537,6 +595,20 @@
         if (active.kind === "static") applyCompletion(active.completion.items[suggestIndex]);
         else applyRelSelection(relResults[suggestIndex]);
       }
+    } else if (event.key === "Tab" && !event.shiftKey) {
+      // Accept in one keystroke: the highlighted row, or the first when none is
+      // (`suggestIndex === -1` — the state after every refresh). Taking a row rather
+      // than inserting the rows' common prefix is the decided design: values match by
+      // substring, where there often is no common prefix at all, and field names
+      // (which do match by prefix) follow the same rule for one behavior. Tab is only
+      // swallowed when accepting actually rewrites the text — otherwise forward Tab
+      // could never leave the box, since accepting reopens the popover on the
+      // inserted value. Shift+Tab is not intercepted at all.
+      const index = suggestIndex >= 0 && suggestIndex < activeItemCount ? suggestIndex : 0;
+      if (acceptedText(index) === null) return;
+      event.preventDefault();
+      if (active.kind === "static") applyCompletion(active.completion.items[index]);
+      else applyRelSelection(relResults[index]);
     } else if (event.key === "Escape") {
       event.preventDefault();
       clearCompletion();
@@ -546,7 +618,7 @@
   // Drop the active popover + any pending/held rel results.
   function clearCompletion() {
     active = null;
-    relResults = [];
+    setRelResults([], "");
     cancelRelSearch();
     suggestIndex = -1;
   }

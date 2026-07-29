@@ -1484,6 +1484,268 @@ describe("Toolbar — static autocomplete", () => {
   });
 });
 
+// Tab accepts the active completion in ONE keystroke: the highlighted row, or the
+// first row when nothing is highlighted (the state after every refresh). It is only
+// swallowed while a popover with rows is open — otherwise the box would be a
+// keyboard trap — and Shift+Tab is never intercepted.
+describe("Toolbar — Tab accepts the autocomplete completion", () => {
+  // Dispatch a real KeyboardEvent so the test can read `defaultPrevented`, which is
+  // what distinguishes "Tab was accepted" from "Tab moved focus".
+  async function pressKey(input: HTMLElement, init: KeyboardEventInit): Promise<KeyboardEvent> {
+    const event = new KeyboardEvent("keydown", { bubbles: true, cancelable: true, ...init });
+    input.dispatchEvent(event);
+    await tick();
+    return event;
+  }
+
+  const typeAndTab = async (typed: string, init: KeyboardEventInit = { key: "Tab" }) => {
+    const prefs = new Preferences();
+    render(Toolbar, { prefs, oncreatenew: vi.fn() });
+    const input = screen.getByTestId("filter-keyword") as HTMLInputElement;
+    await user.type(input, typed);
+    const event = await pressKey(input, init);
+    await tick();
+    return { prefs, input, event };
+  };
+
+  it("accepts the only match when nothing is highlighted (status:in → status:in-progress)", async () => {
+    const { input, prefs } = await typeAndTab("status:in");
+    expect(input.value).toBe("status:in-progress");
+    expect(prefs.filter.status).toEqual(["in-progress"]);
+  });
+
+  it("completes a field name and re-suggests its values (ty → type:)", async () => {
+    const { input } = await typeAndTab("ty");
+    expect(input.value).toBe("type:");
+    // The insert re-suggests, so the enum values are now offered.
+    expect(within(screen.getByTestId("filter-suggestions")).getByText("bug")).toBeInTheDocument();
+  });
+
+  it("takes the TOP row of several substring matches (status:ed → status:closed)", async () => {
+    // `closed`, `deferred`, `completed`, `scrapped` all contain "ed" and none starts
+    // with it — there is no common prefix to insert, so Tab takes the first row.
+    const { input } = await typeAndTab("status:ed");
+    expect(input.value).toBe("status:closed");
+  });
+
+  it("accepts the highlighted row after ArrowDown (status:ed ↓ → status:deferred)", async () => {
+    const prefs = new Preferences();
+    render(Toolbar, { prefs, oncreatenew: vi.fn() });
+    const input = screen.getByTestId("filter-keyword") as HTMLInputElement;
+
+    await user.type(input, "status:ed");
+    await user.type(input, "{ArrowDown}{ArrowDown}");
+    await pressKey(input, { key: "Tab" });
+
+    expect(input.value).toBe("status:deferred");
+  });
+
+  it("swallows Tab while a popover is open (preventDefault, so focus stays)", async () => {
+    const { event } = await typeAndTab("status:in");
+    expect(event.defaultPrevented).toBe(true);
+  });
+
+  // The focus-trap guard: with no popover open, Tab must keep its native
+  // focus-move behavior. Writing the Tab branch above the `!active` early return
+  // breaks exactly this.
+  it("does not preventDefault when no popover is open", async () => {
+    const prefs = new Preferences();
+    render(Toolbar, { prefs, oncreatenew: vi.fn() });
+    const input = screen.getByTestId("filter-keyword") as HTMLInputElement;
+
+    await user.type(input, "zzz");
+    expect(screen.queryByTestId("filter-suggestions")).not.toBeInTheDocument();
+
+    const event = await pressKey(input, { key: "Tab" });
+    expect(event.defaultPrevented).toBe(false);
+    expect(input.value).toBe("zzz");
+  });
+
+  it("never intercepts Shift+Tab, even with a popover open", async () => {
+    const { input, event } = await typeAndTab("status:in", { key: "Tab", shiftKey: true });
+    expect(event.defaultPrevented).toBe(false);
+    expect(input.value).toBe("status:in");
+  });
+
+  it("leaves Enter unchanged — it still needs a highlighted row", async () => {
+    const prefs = new Preferences();
+    render(Toolbar, { prefs, oncreatenew: vi.fn() });
+    const input = screen.getByTestId("filter-keyword") as HTMLInputElement;
+
+    await user.type(input, "status:in");
+    const event = await pressKey(input, { key: "Enter" });
+
+    expect(event.defaultPrevented).toBe(false);
+    expect(input.value).toBe("status:in");
+  });
+
+  // Accepting re-suggests for the new caret, and an inserted value substring-matches
+  // ITSELF — so the popover reopens holding exactly the text that is already there.
+  // Swallowing Tab for that row would consume every later Tab on a no-op insert and
+  // focus could never leave the box by the forward key.
+  it("lets a second Tab move focus — an accepted value must not trap the caret", async () => {
+    const { input, event: first } = await typeAndTab("status:in");
+    expect(first.defaultPrevented).toBe(true);
+    expect(input.value).toBe("status:in-progress");
+
+    const second = await pressKey(input, { key: "Tab" });
+    expect(second.defaultPrevented).toBe(false);
+    expect(input.value).toBe("status:in-progress");
+  });
+
+  // Same trap one keystroke later on the field-name path: `ty` completes to a field,
+  // whose value list is a genuine choice, and only the value insert self-matches.
+  it("lets Tab move focus after a field name then a value (ty → type: → type:milestone)", async () => {
+    const { input } = await typeAndTab("ty");
+    expect(input.value).toBe("type:");
+
+    const second = await pressKey(input, { key: "Tab" });
+    expect(second.defaultPrevented).toBe(true);
+    expect(input.value).toBe("type:milestone");
+
+    const third = await pressKey(input, { key: "Tab" });
+    expect(third.defaultPrevented).toBe(false);
+    expect(input.value).toBe("type:milestone");
+  });
+});
+
+// Ctrl+Space forces the completion open — the branch sits ABOVE the
+// `!active || activeItemCount === 0` early return, since its whole job is opening
+// a popover when none is active. The empty-token list is explicit-trigger only, so
+// merely focusing the empty box must not pop a dropdown over the table.
+describe("Toolbar — Ctrl+Space opens the autocomplete completion", () => {
+  const press = async (input: HTMLElement, init: KeyboardEventInit): Promise<KeyboardEvent> => {
+    const event = new KeyboardEvent("keydown", { bubbles: true, cancelable: true, ...init });
+    input.dispatchEvent(event);
+    await tick();
+    return event;
+  };
+
+  const ctrlSpace = (input: HTMLElement, extra: KeyboardEventInit = {}) =>
+    press(input, { key: " ", code: "Space", ctrlKey: true, ...extra });
+
+  it("opens the whole field vocabulary on an empty box", async () => {
+    const prefs = new Preferences();
+    render(Toolbar, { prefs, oncreatenew: vi.fn() });
+    const input = screen.getByTestId("filter-keyword") as HTMLInputElement;
+
+    fireEvent.focus(input);
+    await tick();
+    expect(screen.queryByTestId("filter-suggestions")).not.toBeInTheDocument();
+
+    const event = await ctrlSpace(input);
+    expect(event.defaultPrevented).toBe(true);
+
+    const suggestions = screen.getByTestId("filter-suggestions");
+    for (const name of ["type", "tags", "parent", "blocked-by", "has", "no", "is"]) {
+      expect(within(suggestions).getByText(name)).toBeInTheDocument();
+    }
+  });
+
+  it("does NOT open on focus alone (the explicit-only rule)", async () => {
+    const prefs = new Preferences();
+    render(Toolbar, { prefs, oncreatenew: vi.fn() });
+
+    fireEvent.focus(screen.getByTestId("filter-keyword"));
+    await tick();
+
+    expect(screen.queryByTestId("filter-suggestions")).not.toBeInTheDocument();
+  });
+
+  // Idempotent means the keystroke is CONSUMED and changes nothing observable —
+  // both halves are asserted here, since a handler that never ran would also leave
+  // an already-open list untouched. The highlight is part of "nothing observable":
+  // a refresh normally resets it, which would silently redirect the next Tab.
+  it("is idempotent — consumes the key and leaves the list and the highlight intact", async () => {
+    const prefs = new Preferences();
+    render(Toolbar, { prefs, oncreatenew: vi.fn() });
+    const input = screen.getByTestId("filter-keyword") as HTMLInputElement;
+
+    // `closed`, `deferred`, `completed`, `scrapped`; two ArrowDowns highlight row 1.
+    await user.type(input, "status:ed");
+    await user.type(input, "{ArrowDown}{ArrowDown}");
+
+    const event = await ctrlSpace(input);
+    expect(event.defaultPrevented).toBe(true);
+    expect(within(screen.getByTestId("filter-suggestions")).getByText("deferred")).toBeInTheDocument();
+
+    // The surviving highlight is what Tab takes — row 0 would give `status:closed`.
+    await press(input, { key: "Tab" });
+    expect(input.value).toBe("status:deferred");
+  });
+
+  // AltGr sets BOTH the Control and Alt modifier states on Windows, and AltGr+Space
+  // types a non-breaking space on several European layouts. Matching on ctrlKey
+  // alone would swallow that keystroke and pop the field list over the empty token.
+  it("ignores AltGr (Ctrl+Alt) and Ctrl+Shift+Space — the chord must be exact", async () => {
+    const prefs = new Preferences();
+    render(Toolbar, { prefs, oncreatenew: vi.fn() });
+    const input = screen.getByTestId("filter-keyword") as HTMLInputElement;
+    fireEvent.focus(input);
+    await tick();
+
+    for (const extra of [{ altKey: true }, { shiftKey: true }, { metaKey: true }]) {
+      const event = await ctrlSpace(input, extra);
+      expect(event.defaultPrevented).toBe(false);
+      expect(screen.queryByTestId("filter-suggestions")).not.toBeInTheDocument();
+    }
+  });
+
+  // The empty-token vocabulary is reachable at a caret that ABUTS the next token —
+  // only via this trigger, since typing never opens on an empty token. Inserting
+  // `type:` with no separator would glue the two tokens into one and drop a facet.
+  it("keeps the following token intact when completing at a caret jammed against it", async () => {
+    const prefs = new Preferences();
+    render(Toolbar, { prefs, oncreatenew: vi.fn() });
+    const input = screen.getByTestId("filter-keyword") as HTMLInputElement;
+
+    await user.type(input, "status:todo tags:wip");
+    input.setSelectionRange(0, 0);
+
+    await ctrlSpace(input);
+    // Row 0 of the full vocabulary is `type` (first of FIELD_SPECS).
+    await press(input, { key: "Tab" });
+
+    expect(input.value).toBe("type: status:todo tags:wip");
+    expect(prefs.filter.status).toEqual(["todo"]);
+    expect(prefs.filter.tags).toEqual(["wip"]);
+  });
+});
+
+// The widened vocabulary itself: relationship-id and existence field names became
+// completable in the same change. These reach it by ordinary typing — Ctrl+Space is
+// only one entry point to the same list, and is exercised in its own block above.
+describe("Toolbar — autocomplete vocabulary: relationship and existence field names", () => {
+  it("inserts a chosen relationship field name, then hands the value to the async typeahead", async () => {
+    const prefs = new Preferences();
+    render(Toolbar, { prefs, oncreatenew: vi.fn() });
+    const input = screen.getByTestId("filter-keyword") as HTMLInputElement;
+
+    await user.type(input, "blo");
+    const suggestions = screen.getByTestId("filter-suggestions");
+    expect(within(suggestions).getByText("blocking")).toBeInTheDocument();
+
+    await user.click(within(suggestions).getByText("blocked-by"));
+    expect(input.value).toBe("blocked-by:");
+    // `blocked-by:` with an empty value is a rel context: no static list, no query.
+    expect(screen.queryByTestId("filter-suggestions")).not.toBeInTheDocument();
+  });
+
+  it("completes an existence token end to end (ha → has: → has:blocking)", async () => {
+    const prefs = new Preferences();
+    render(Toolbar, { prefs, oncreatenew: vi.fn() });
+    const input = screen.getByTestId("filter-keyword") as HTMLInputElement;
+
+    await user.type(input, "ha");
+    await user.click(within(screen.getByTestId("filter-suggestions")).getByText("has"));
+    expect(input.value).toBe("has:");
+
+    await user.click(within(screen.getByTestId("filter-suggestions")).getByText("blocking"));
+    expect(input.value).toBe("has:blocking");
+    expect(prefs.filter.hasBlocking).toBe(true);
+  });
+});
+
 // Phase 6: async ID/title typeahead for relationship-id token values. The caret
 // inside `parent:<here>` / `blocking:<here>` / … fires a DEBOUNCED search against
 // an injected `searchNibs`; candidate nibs render as rich rows (type + title + id
@@ -1594,6 +1856,50 @@ describe("Toolbar — relationship-id async typeahead", () => {
 
     expect(input.value).toBe("parent:tnib-xyz9");
     expect(prefs.filter.parentId).toBe("tnib-xyz9");
+  });
+
+  it("Tab inserts the TOP candidate id with no highlight, on the rel path too", async () => {
+    const searchNibs = vi
+      .fn()
+      .mockResolvedValue([nib({ id: "tnib-aaa1", title: "First" }), nib({ id: "tnib-bbb2", title: "Second" })]);
+    const { prefs, input } = setup(searchNibs);
+
+    await typeInto(input, "blocking:tnib");
+    await vi.advanceTimersByTimeAsync(200);
+    await flush();
+
+    const event = new KeyboardEvent("keydown", { key: "Tab", bubbles: true, cancelable: true });
+    input.dispatchEvent(event);
+    await flush();
+
+    expect(event.defaultPrevented).toBe(true);
+    expect(input.value).toBe("blocking:tnib-aaa1");
+    expect(prefs.filter.blockingId).toBe("tnib-aaa1");
+  });
+
+  // Rows are deliberately held across a fragment change so the list does not flicker
+  // while the next query debounces — but they answer the OLD fragment. Committing
+  // one writes an id the user never typed, with no visual cue that it happened.
+  it("refuses to commit a candidate fetched for a superseded fragment", async () => {
+    const searchNibs = vi.fn().mockResolvedValue([nib({ id: "tnib-aaa1", title: "First" })]);
+    const { prefs, input } = setup(searchNibs);
+
+    await typeInto(input, "blocking:tnib-aaa");
+    await vi.advanceTimersByTimeAsync(200);
+    await flush();
+    expect(screen.getByTestId("filter-suggestions")).toBeInTheDocument();
+
+    // The user finishes typing a DIFFERENT id and Tabs inside the debounce window,
+    // while the rows for `tnib-aaa` are still the ones on screen.
+    await typeInto(input, "blocking:tnib-abc9");
+
+    const event = new KeyboardEvent("keydown", { key: "Tab", bubbles: true, cancelable: true });
+    input.dispatchEvent(event);
+    await flush();
+
+    expect(input.value).toBe("blocking:tnib-abc9");
+    expect(prefs.filter.blockingId).toBe("tnib-abc9");
+    expect(event.defaultPrevented).toBe(false);
   });
 
   it("ignores a stale (out-of-order) response — an older in-flight query cannot overwrite a newer one", async () => {
