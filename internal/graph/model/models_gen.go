@@ -147,12 +147,10 @@ type NibFilter struct {
 	BlockingID *string `json:"blockingId,omitempty"`
 	// Tri-state: true keeps nibs blocked by others (via incoming blocking links or blocked_by field), false keeps exactly the unblocked ones, null does not filter
 	IsBlocked *bool `json:"isBlocked,omitempty"`
-	// Include only nibs that have explicit blocked-by entries
+	// Tri-state: true keeps nibs that have explicit blocked_by entries, false keeps exactly those with none, null does not filter
 	HasBlockedBy *bool `json:"hasBlockedBy,omitempty"`
 	// Include only nibs blocked by this specific nib ID (via blocked_by field)
 	BlockedByID *string `json:"blockedById,omitempty"`
-	// Exclude nibs that have explicit blocked-by entries
-	NoBlockedBy *bool `json:"noBlockedBy,omitempty"`
 	// Include only nibs that mention this specific nib ID in their body
 	MentionsID *string `json:"mentionsId,omitempty"`
 	// Include only nibs mentioned in the given nib's body

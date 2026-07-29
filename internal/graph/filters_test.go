@@ -414,7 +414,10 @@ func TestApplyFilterDefaultAwarePriorityAndType(t *testing.T) {
 // the model contract those flags stand on.
 func TestApplyFilterPresenceTriState(t *testing.T) {
 	root := &nib.Nib{ID: "nibs-root", Title: "Root"}
-	child := &nib.Nib{ID: "nibs-child", Title: "Child", Parent: "nibs-root"}
+	// The child also carries a blocked_by entry, so the HasBlockedBy rows below
+	// have something to discriminate on. It is consistent with the blocking stub:
+	// root blocks the child, the child is blocked by root.
+	child := &nib.Nib{ID: "nibs-child", Title: "Child", Parent: "nibs-root", BlockedBy: []string{"nibs-root"}}
 
 	reader := &stubReader{
 		nibs: map[string]*nib.Nib{
@@ -438,6 +441,11 @@ func TestApplyFilterPresenceTriState(t *testing.T) {
 		{"HasParent false keeps exactly the parentless nibs", &model.NibFilter{HasParent: &no}, []string{"nibs-root"}},
 		{"HasBlocking true keeps blocking nibs", &model.NibFilter{HasBlocking: &yes}, []string{"nibs-root"}},
 		{"HasBlocking false keeps exactly the non-blocking nibs", &model.NibFilter{HasBlocking: &no}, []string{"nibs-child"}},
+		// HasBlockedBy had a NoBlockedBy twin until the pair was collapsed. These
+		// two rows are what stop the survivor regressing to an include-only
+		// filter, which is how the twin came to exist in the first place.
+		{"HasBlockedBy true keeps nibs with blocked_by entries", &model.NibFilter{HasBlockedBy: &yes}, []string{"nibs-child"}},
+		{"HasBlockedBy false keeps exactly those with none", &model.NibFilter{HasBlockedBy: &no}, []string{"nibs-root"}},
 	}
 
 	for _, tt := range tests {

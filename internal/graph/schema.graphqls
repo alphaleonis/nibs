@@ -432,12 +432,10 @@ input NibFilter {
   blockingId: String
   "Tri-state: true keeps nibs blocked by others (via incoming blocking links or blocked_by field), false keeps exactly the unblocked ones, null does not filter"
   isBlocked: Boolean
-  "Include only nibs that have explicit blocked-by entries"
+  "Tri-state: true keeps nibs that have explicit blocked_by entries, false keeps exactly those with none, null does not filter"
   hasBlockedBy: Boolean
   "Include only nibs blocked by this specific nib ID (via blocked_by field)"
   blockedById: String
-  "Exclude nibs that have explicit blocked-by entries"
-  noBlockedBy: Boolean
   "Include only nibs that mention this specific nib ID in their body"
   mentionsId: String
   "Include only nibs mentioned in the given nib's body"

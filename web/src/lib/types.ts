@@ -28,7 +28,6 @@ export interface NibFilter {
   isBlocked?: boolean;
   hasBlockedBy?: boolean;
   blockedById?: string;
-  noBlockedBy?: boolean;
 }
 
 export interface TreeNib extends NibSummary {

@@ -105,7 +105,6 @@ func ApplyFilter(ctx context.Context, nibs []*nib.Nib, filter *model.NibFilter, 
 
 	// Blocked-by filters (from direct blocked_by field)
 	result = filterByPredicate(result, filter.HasBlockedBy, func(b *nib.Nib) bool { return len(b.BlockedBy) > 0 })
-	result = filterByPredicate(result, filter.NoBlockedBy, func(b *nib.Nib) bool { return len(b.BlockedBy) == 0 })
 	if filter.BlockedByID != nil && *filter.BlockedByID != "" {
 		fullID, ok := resolveFilterID(reader, *filter.BlockedByID)
 		if !ok {
