@@ -4,7 +4,7 @@
   import { ALL_COLUMN_KEYS, COLUMNS } from "../columns";
   import type { ColumnKey } from "../columns";
   import type { Preferences } from "../preferences.svelte";
-  import { TYPES, STATUSES, PRIORITIES, ESTIMATES, ESTIMATE_LABELS, OPEN_STATUSES, OPEN_PLUS_DEFERRED_STATUSES } from "../constants";
+  import { TYPES, STATUSES, PRIORITIES, ESTIMATES, ESTIMATE_LABELS, OPEN_STATUSES } from "../constants";
   import {
     Plus,
     ChevronDown,
@@ -465,10 +465,11 @@
       </DropdownMenu.Trigger>
       <DropdownMenu.Content align="start">
         {#if dd.id === "state"}
-          <!-- Quick presets that OVERWRITE the status include-list. "Open" shows
-               active work; "Open + deferred" shows everything except completed +
-               scrapped. The per-status checkboxes below remain for precise
-               tweaking. -->
+          <!-- One quick preset that OVERWRITES the status include-list: "Open"
+               shows everything that is not closed. There is no second preset
+               because deferred is a closed status, so "open" and "not finished"
+               name the same set. The per-status checkboxes below remain for
+               precise tweaking, including showing deferred work on its own. -->
           <DropdownMenu.Label class="text-label text-muted-foreground">Presets</DropdownMenu.Label>
           <DropdownMenu.Item
             data-testid="state-preset-open"
@@ -476,13 +477,6 @@
           >
             <Eye size={14} />
             Open
-          </DropdownMenu.Item>
-          <DropdownMenu.Item
-            data-testid="state-preset-open-deferred"
-            onSelect={() => applyStatusPreset(OPEN_PLUS_DEFERRED_STATUSES)}
-          >
-            <Eye size={14} />
-            Open + deferred
           </DropdownMenu.Item>
           <DropdownMenu.Separator />
         {/if}

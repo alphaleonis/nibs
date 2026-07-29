@@ -7,7 +7,7 @@ import TreeTable from "./TreeTable.svelte";
 import type { TreeTableNib, ViewLevel, ColumnKey } from "../types";
 import { DEFAULT_COLUMN_WIDTHS } from "../types";
 import { bucketIdForItem, isBucketId } from "../tree";
-import { OPEN_PLUS_DEFERRED_STATUSES } from "../constants";
+import { OPEN_STATUSES } from "../constants";
 import { SelectionState } from "../selection.svelte";
 import { DragState } from "../drag.svelte";
 import { TreeViewState } from "../treeView.svelte";
@@ -2592,7 +2592,7 @@ describe("TreeTable", () => {
       expect(initialCallCount).toBeGreaterThanOrEqual(1);
 
       // Re-render with a different filter (simulating the "Open + deferred" preset)
-      await rerender({ filter: { status: [...OPEN_PLUS_DEFERRED_STATUSES] } });
+      await rerender({ filter: { status: [...OPEN_STATUSES] } });
 
       // queryStore should have been called again with the updated filter
       expect(mockQueryStore.mock.calls.length).toBeGreaterThan(initialCallCount);
@@ -2634,7 +2634,7 @@ describe("TreeTable", () => {
         readable({ fetching: false, error: undefined, data: { nibs: filteredNibs }, stale: false }) as any
       );
 
-      await rerender({ filter: { status: [...OPEN_PLUS_DEFERRED_STATUSES] } });
+      await rerender({ filter: { status: [...OPEN_STATUSES] } });
 
       // Should have 2 rows after filter change
       rows = container.querySelectorAll("[data-testid='tree-row']");

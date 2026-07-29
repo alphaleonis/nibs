@@ -183,3 +183,16 @@ for (const theme of ["daylight", "graphite"] as const) {
     });
   }
 }
+
+// The State facet dropdown: one "Open" preset plus the per-status checkboxes.
+// There used to be two presets ("Open" and "Open + deferred"); once deferred
+// became a closed status their sets became identical, so the second was removed
+// rather than relabeled. This capture is how that is checked visually — jsdom
+// asserts the preset count, but only a render shows the menu still reads well
+// and that all six statuses remain individually selectable.
+test("state facet — presets and per-status checkboxes", async ({ page }) => {
+  await openApp(page);
+  await page.getByRole("button", { name: /^state/i }).click();
+  await expect(page.getByTestId("state-preset-open")).toBeVisible({ timeout: 5_000 });
+  await shot(page, "state-facet-dropdown");
+});
