@@ -8,7 +8,9 @@
   import { isBucketId, bucketIdForItem, buildViewTree, collectDescendantIds } from "../tree";
   import { applySort, nextTableSort } from "../tableSort";
   import { prepareFilter, isDragAllowed, matchesFilter } from "../filter";
-  import { resolveFilter, resolveViewLevel, resolveVisibleColumns, resolveColumnWidths, resolveColumnOrder, resolveTableSort, emitTableSort, emitColumnOrder } from "../resolvePrefs";
+  import { resolveFilter, resolveViewLevel, resolveVisibleColumns, resolveColumnWidths, resolveColumnOrder, resolveTableSort, emitFilter, emitTableSort, emitColumnOrder } from "../resolvePrefs";
+  import { hierarchyTokens, clearHierarchyFilters } from "../query";
+  import { Button } from "$lib/components/ui/button/index.js";
   import TreeTableRow from "./TreeTableRow.svelte";
   import TableHeader from "./TableHeader.svelte";
   import type { DropZone } from "../drag.svelte";
@@ -34,6 +36,9 @@
     columnOrder?: ColumnKey[];
     tableSort?: TableSort | null;
     ontablesortchange?: (s: TableSort | null) => void;
+    /** Write path for the empty state's "clear hierarchy filters" action. Unused
+     *  when `prefs` is supplied — the write goes through the preference instead. */
+    onfilterchange?: (f: NibFilter) => void;
     oncolumnwidthschange?: (widths: Record<ColumnKey, number>) => void;
     oncolumnresizeend?: () => void;
     oncolumnorderchange?: (order: ColumnKey[]) => void;
@@ -54,6 +59,7 @@
     columnOrder = undefined as ColumnKey[] | undefined,
     tableSort = undefined as TableSort | null | undefined,
     ontablesortchange,
+    onfilterchange,
     oncolumnwidthschange,
     oncolumnresizeend,
     oncolumnorderchange,
@@ -78,6 +84,11 @@
 
   // Resolve values: prefs takes precedence over individual props
   let resolvedFilter = $derived(resolveFilter(prefs, filter));
+  // Canonical tokens for the tree-position constraints currently in force. Two or
+  // more of them ANDed together carve a very narrow slice out of an acyclic forest
+  // — `ancestor:<parent> descendant:<child>` can match nothing at all — so an empty
+  // result under them gets an explanation instead of the generic message.
+  let activeHierarchyTokens = $derived(hierarchyTokens(resolvedFilter));
   let resolvedViewLevel = $derived(resolveViewLevel(prefs, viewLevel));
   let resolvedVisibleColumns = $derived(resolveVisibleColumns(prefs, visibleColumns));
   let resolvedColumnWidths = $derived(resolveColumnWidths(prefs, columnWidths));
@@ -556,6 +567,13 @@
   function handleTableSortClick(field: SortField) {
     emitTableSort(prefs, ontablesortchange, nextTableSort(resolvedTableSort, field));
   }
+
+  // Escape hatch out of an over-constrained tree query: drop every hierarchy field
+  // and keep the rest of the filter, so the metadata facets and free text the user
+  // built up survive.
+  function clearHierarchy() {
+    emitFilter(prefs, onfilterchange, clearHierarchyFilters(resolvedFilter));
+  }
 </script>
 
 <div data-testid="tree-table" class="h-full">
@@ -571,6 +589,21 @@
 {:else if dataSource.error}
   <div class="rounded-lg bg-destructive/10 px-4 py-3 text-body text-destructive">
     Error: {errorMessage}
+  </div>
+{:else if rows.length === 0 && activeHierarchyTokens.length > 1}
+  <!-- Several tree constraints at once: the generic message leaves the user staring
+       at a dead end they cannot see the shape of. Name the relationships and offer
+       the way out. The wording states what is true (nothing matched a filter that
+       ANDs these together) without claiming the combination is contradictory —
+       `parent:x ancestor:x` is redundant yet perfectly matchable. -->
+  <div data-testid="empty-hierarchy" class="flex flex-col items-center gap-3 py-12 text-body text-muted-foreground">
+    <span class="text-foreground">No nibs match this filter</span>
+    <span class="max-w-md text-center">
+      It asks for {activeHierarchyTokens.length} hierarchy relationships at once —
+      {#each activeHierarchyTokens as token, i (token)}{#if i > 0}, {/if}<code class="rounded bg-muted px-1 py-0.5 text-foreground">{token}</code>{/each}. A nib
+      has to satisfy every one of them; removing one may help.
+    </span>
+    <Button variant="outline" size="sm" onclick={clearHierarchy}>Clear hierarchy filters</Button>
   </div>
 {:else if rows.length === 0}
   <div class="flex items-center justify-center py-12 text-body text-muted-foreground">

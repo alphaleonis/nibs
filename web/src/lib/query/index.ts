@@ -28,6 +28,10 @@ export type { TokenSegment } from "./tokens";
 // relationship-id NibFilter keys — the field the row context menu's "Filter
 // related" items compose onto the current filter.
 export type { RelIdKey, ExistenceKey } from "./relations";
+// The hierarchy subset of that vocabulary: the tokens naming a nib's tree position,
+// and the escape hatch that drops them. Used by the table's empty state to explain a
+// result emptied by several tree constraints at once.
+export { hierarchyTokens, clearHierarchyFilters } from "./relations";
 // Async ID/title typeahead for relationship-id token values (phase 6). The pure
 // caret-in-value detector + the candidate-row shape; the debounced fetch lives in
 // the Toolbar, the search fn in `../searchNibs`.

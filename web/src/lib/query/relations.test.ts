@@ -3,6 +3,8 @@ import {
   EXISTENCE_TOKENS,
   REL_ID_FIELDS,
   REL_TOKEN_ORDER,
+  clearHierarchyFilters,
+  hierarchyTokens,
   recognizeRelationship,
 } from "./relations";
 
@@ -70,5 +72,65 @@ describe("relations — the ordered vocabulary drives recognition", () => {
       expect(token.split(":")).toHaveLength(2);
       expect(token.split(":").every((part) => part !== "")).toBe(true);
     }
+  });
+});
+
+// The hierarchy subset: what the empty-result explanation names, and what its
+// escape hatch removes. Both walk the same vocabulary the box parses and
+// serializes, so the tokens shown are spelled the way the user could retype them.
+describe("relations — the hierarchy subset", () => {
+  it("names each active hierarchy filter with its canonical token, in vocabulary order", () => {
+    expect(hierarchyTokens({ descendantId: "tnib-2", ancestorId: "tnib-1" })).toEqual([
+      "ancestor:tnib-1",
+      "descendant:tnib-2",
+    ]);
+    expect(hierarchyTokens({ siblingId: "tnib-4", parentId: "tnib-3" })).toEqual([
+      "parent:tnib-3",
+      "sibling:tnib-4",
+    ]);
+  });
+
+  // `hasParent` is tri-state: the `no:` spelling is a set value, not an absent one,
+  // and it constrains tree position exactly as the id tokens do.
+  it("emits the spelling that matches the parent-existence value", () => {
+    expect(hierarchyTokens({ hasParent: false, ancestorId: "tnib-1" })).toEqual([
+      "no:parent",
+      "ancestor:tnib-1",
+    ]);
+    expect(hierarchyTokens({ hasParent: true })).toEqual(["has:parent"]);
+  });
+
+  it("ignores relationship fields outside the hierarchy dimension", () => {
+    expect(
+      hierarchyTokens({
+        blockingId: "tnib-8",
+        blockedById: "tnib-9",
+        mentionsId: "tnib-7",
+        isBlocked: true,
+        type: ["bug"],
+        search: "login",
+      }),
+    ).toEqual([]);
+  });
+
+  it("removes every hierarchy field and leaves the rest of the filter untouched", () => {
+    expect(
+      clearHierarchyFilters({
+        parentId: "tnib-1",
+        ancestorId: "tnib-2",
+        descendantId: "tnib-3",
+        siblingId: "tnib-4",
+        hasParent: false,
+        blockingId: "tnib-8",
+        type: ["bug"],
+        search: "login",
+      }),
+    ).toEqual({ blockingId: "tnib-8", type: ["bug"], search: "login" });
+  });
+
+  it("does not mutate the filter it clears", () => {
+    const filter = { ancestorId: "tnib-1", type: ["bug"] };
+    clearHierarchyFilters(filter);
+    expect(filter).toEqual({ ancestorId: "tnib-1", type: ["bug"] });
   });
 });

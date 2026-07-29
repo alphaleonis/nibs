@@ -146,6 +146,61 @@ export const EXISTENCE_TOKENS: Record<string, { field: ExistenceKey; value: bool
     ),
   );
 
+// --- The hierarchy subset ------------------------------------------------------
+
+/** The fields that constrain a nib's position in the tree, as opposed to the
+ *  blocking/mention dimensions. `REL_TOKEN_ORDER` covers ALL relationship fields,
+ *  so this subset is named here — the guard below keeps it from drifting away from
+ *  the vocabulary it selects from. */
+export type HierarchyKey = "parentId" | "ancestorId" | "descendantId" | "siblingId" | "hasParent";
+
+/** Membership set for the subset, used to filter `REL_TOKEN_ORDER`. `as const`
+ *  keeps the literal types so the guard below can check the array against the
+ *  union in both directions. */
+const HIERARCHY_FIELDS = [
+  "parentId",
+  "ancestorId",
+  "descendantId",
+  "siblingId",
+  "hasParent",
+] as const satisfies readonly HierarchyKey[];
+
+const HIERARCHY_FIELD_SET: ReadonlySet<string> = new Set(HIERARCHY_FIELDS);
+
+/**
+ * The canonical tokens for the hierarchy filters this filter has set, in
+ * `REL_TOKEN_ORDER` order.
+ *
+ * Rendered from the vocabulary rather than formatted ad hoc, so what a
+ * hierarchy-specific empty state shows the user is exactly what the box would
+ * serialize and re-parse. `hasParent` emits whichever of its two spellings matches
+ * the value, so an explicit `no:parent` is named rather than treated as unset.
+ */
+export function hierarchyTokens(filter: QueryFilter): string[] {
+  const tokens: string[] = [];
+  for (const spec of REL_TOKEN_ORDER) {
+    if (!HIERARCHY_FIELD_SET.has(spec.field)) continue;
+    if (spec.kind === "id") {
+      const id = filter[spec.field];
+      if (id) tokens.push(`${spec.name}:${id}`);
+    } else if (filter[spec.field] === spec.value) {
+      tokens.push(spec.token);
+    }
+  }
+  return tokens;
+}
+
+/** A copy of `filter` with every hierarchy field removed and everything else — the
+ *  metadata facets, free text, and the other relationship dimensions — kept. The
+ *  escape hatch out of a hierarchy combination that matches nothing. */
+export function clearHierarchyFilters<T extends QueryFilter>(filter: T): T {
+  const next = { ...filter };
+  for (const field of HIERARCHY_FIELDS) {
+    delete next[field];
+  }
+  return next;
+}
+
 /** Recognition result: a scalar-id assignment, a boolean-existence assignment, or
  *  a rejected token the caller must park in its invalid-token sidecar. */
 export type RelMatch =
@@ -235,3 +290,24 @@ void _pairsKeepHas;
 type _PairsKeepNo = PairedExistenceKey extends ExistenceFieldsWriting<false> ? true : never;
 const _pairsKeepNo: _PairsKeepNo = true;
 void _pairsKeepNo;
+
+// The hierarchy subset must name fields the vocabulary actually carries. Renaming
+// or dropping one of these upstream otherwise leaves `HierarchyKey` naming a field
+// no `REL_TOKEN_ORDER` entry has, and `hierarchyTokens` silently stops emitting it
+// — the filter would still be active while the empty-state explanation omits it.
+type _HierarchySubsetOfVocabulary = HierarchyKey extends
+  | OrderedSpec<"id">["field"]
+  | OrderedSpec<"bool">["field"]
+  ? true
+  : never;
+const _hierarchySubset: _HierarchySubsetOfVocabulary = true;
+void _hierarchySubset;
+
+// And the runtime array must cover the whole union: `satisfies` above rejects a
+// WRONG entry but not a MISSING one, and a missing entry drops that field from both
+// the explanation and the clear-hierarchy escape hatch.
+type _HierarchyArrayCoversUnion = HierarchyKey extends (typeof HIERARCHY_FIELDS)[number]
+  ? true
+  : never;
+const _hierarchyArrayCovers: _HierarchyArrayCoversUnion = true;
+void _hierarchyArrayCovers;

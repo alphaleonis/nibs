@@ -268,6 +268,63 @@ describe("TreeTable", () => {
     expect(screen.getByText(/no nibs found/i)).toBeInTheDocument();
   });
 
+  // An empty result under two or more hierarchy predicates is a dead end the generic
+  // message cannot explain: "Descendants of this" on a nib followed by "Ancestors of
+  // this" on one of its now-visible children yields `ancestor:<parent>
+  // descendant:<child>`, which nothing can satisfy (no node lies strictly between a
+  // direct parent and child). The replacement names the active relationships and
+  // offers a way back out.
+  describe("empty state", () => {
+    function renderEmpty(props: Record<string, unknown>) {
+      mockQueryStore.mockReturnValue(
+        readable({ fetching: false, error: undefined, data: { nibs: [] }, stale: false }) as any
+      );
+      return renderTreeTable(props);
+    }
+
+    it("names the active hierarchy relationships when two of them combine to nothing", () => {
+      renderEmpty({ filter: { ancestorId: "tnib-p", descendantId: "tnib-c" } });
+
+      const explanation = screen.getByTestId("empty-hierarchy");
+      expect(explanation).toHaveTextContent("ancestor:tnib-p");
+      expect(explanation).toHaveTextContent("descendant:tnib-c");
+      // The hierarchy-specific state REPLACES the generic one; both at once would
+      // read as two unrelated failures.
+      expect(screen.queryByText(/no nibs found/i)).not.toBeInTheDocument();
+    });
+
+    // Guard against the hierarchy message swallowing the generic one: an ordinary
+    // empty result must still say "No nibs found".
+    it("keeps the generic message when a non-hierarchy filter matches nothing", () => {
+      renderEmpty({ filter: { type: ["bug"] } });
+
+      expect(screen.getByText(/no nibs found/i)).toBeInTheDocument();
+      expect(screen.queryByTestId("empty-hierarchy")).not.toBeInTheDocument();
+    });
+
+    // One hierarchy predicate empties for ordinary reasons (a leaf has no
+    // descendants); there is no combination to explain.
+    it("keeps the generic message for a single hierarchy predicate", () => {
+      renderEmpty({ filter: { ancestorId: "tnib-p" } });
+
+      expect(screen.getByText(/no nibs found/i)).toBeInTheDocument();
+      expect(screen.queryByTestId("empty-hierarchy")).not.toBeInTheDocument();
+    });
+
+    it("clears only the hierarchy fields when the escape hatch is used", async () => {
+      const user = userEvent.setup();
+      const onfilterchange = vi.fn();
+      renderEmpty({
+        filter: { ancestorId: "tnib-p", descendantId: "tnib-c", type: ["bug"], search: "login" },
+        onfilterchange,
+      });
+
+      await user.click(screen.getByRole("button", { name: /clear hierarchy filters/i }));
+
+      expect(onfilterchange).toHaveBeenCalledWith({ type: ["bug"], search: "login" });
+    });
+  });
+
   it("shows error message when query fails", () => {
     mockQueryStore.mockReturnValue(
       readable({
