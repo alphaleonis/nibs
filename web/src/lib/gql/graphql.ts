@@ -58,10 +58,14 @@ export type CreateNibInput = {
 
 /** Filter options for querying nibs */
 export type NibFilter = {
+  /** Include only nibs with this specific nib ID somewhere in their parent chain (that nib's descendants at any depth). This filter excludes the nib itself, but combining it with search adds it back, because search completes the tree with every match's ancestors */
+  ancestorId?: string | null | undefined;
   /** Include only nibs blocked by this specific nib ID (via blocked_by field) */
   blockedById?: string | null | undefined;
   /** Include only nibs that are blocking this specific nib ID */
   blockingId?: string | null | undefined;
+  /** Include only nibs with this specific nib ID somewhere in their descendant subtree (that nib's ancestor chain, itself excluded) */
+  descendantId?: string | null | undefined;
   /** Include only nibs with these estimates (OR logic) */
   estimate?: Array<string> | null | undefined;
   /** Exclude nibs with these estimates */
@@ -115,6 +119,8 @@ export type NibFilter = {
    * - "5a8k" - also matches nibs whose ID contains "5a8k"
    */
   search?: string | null | undefined;
+  /** Include only nibs sharing this specific nib's parent, or the other root nibs when it has no parent (itself excluded). Combining it with search also brings in the shared parent, because search completes the tree with every match's ancestors */
+  siblingId?: string | null | undefined;
   /** Include only nibs with these statuses (OR logic) */
   status?: Array<string> | null | undefined;
   /** Include only nibs with any of these tags (OR logic) */

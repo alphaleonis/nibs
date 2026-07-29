@@ -426,6 +426,12 @@ input NibFilter {
   hasParent: Boolean
   "Include only nibs with this specific parent ID"
   parentId: String
+  "Include only nibs with this specific nib ID somewhere in their parent chain (that nib's descendants at any depth). This filter excludes the nib itself, but combining it with search adds it back, because search completes the tree with every match's ancestors"
+  ancestorId: String
+  "Include only nibs with this specific nib ID somewhere in their descendant subtree (that nib's ancestor chain, itself excluded)"
+  descendantId: String
+  "Include only nibs sharing this specific nib's parent, or the other root nibs when it has no parent (itself excluded). Combining it with search also brings in the shared parent, because search completes the tree with every match's ancestors"
+  siblingId: String
   "Tri-state: true keeps nibs that are blocking others, false keeps exactly the non-blocking ones, null does not filter"
   hasBlocking: Boolean
   "Include only nibs that are blocking this specific nib ID"

@@ -5732,7 +5732,7 @@ func (ec *executionContext) unmarshalInputNibFilter(ctx context.Context, obj any
 		asMap[k] = v
 	}
 
-	fieldsInOrder := [...]string{"search", "status", "excludeStatus", "type", "excludeType", "priority", "excludePriority", "estimate", "excludeEstimate", "tags", "excludeTags", "hasParent", "parentId", "hasBlocking", "blockingId", "isBlocked", "hasBlockedBy", "blockedById", "mentionsId", "mentionedById"}
+	fieldsInOrder := [...]string{"search", "status", "excludeStatus", "type", "excludeType", "priority", "excludePriority", "estimate", "excludeEstimate", "tags", "excludeTags", "hasParent", "parentId", "ancestorId", "descendantId", "siblingId", "hasBlocking", "blockingId", "isBlocked", "hasBlockedBy", "blockedById", "mentionsId", "mentionedById"}
 	for _, k := range fieldsInOrder {
 		v, ok := asMap[k]
 		if !ok {
@@ -5830,6 +5830,27 @@ func (ec *executionContext) unmarshalInputNibFilter(ctx context.Context, obj any
 				return it, err
 			}
 			it.ParentID = data
+		case "ancestorId":
+			ctx := graphql.WithPathContext(ctx, graphql.NewPathWithField("ancestorId"))
+			data, err := ec.unmarshalOString2ᚖstring(ctx, v)
+			if err != nil {
+				return it, err
+			}
+			it.AncestorID = data
+		case "descendantId":
+			ctx := graphql.WithPathContext(ctx, graphql.NewPathWithField("descendantId"))
+			data, err := ec.unmarshalOString2ᚖstring(ctx, v)
+			if err != nil {
+				return it, err
+			}
+			it.DescendantID = data
+		case "siblingId":
+			ctx := graphql.WithPathContext(ctx, graphql.NewPathWithField("siblingId"))
+			data, err := ec.unmarshalOString2ᚖstring(ctx, v)
+			if err != nil {
+				return it, err
+			}
+			it.SiblingID = data
 		case "hasBlocking":
 			ctx := graphql.WithPathContext(ctx, graphql.NewPathWithField("hasBlocking"))
 			data, err := ec.unmarshalOBoolean2ᚖbool(ctx, v)

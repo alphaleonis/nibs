@@ -27,11 +27,25 @@ type stubReader struct {
 	// mentionsIn, when populated, is returned by FindMentionedBy keyed on the
 	// target nib ID.
 	mentionsIn map[string][]*nib.Nib
+	// searchOut, when populated, is returned by Search keyed on the query
+	// string. Tests that need queryResolver.Nibs to take its search branch
+	// (and therefore its includeAncestors step) seed this directly.
+	searchOut map[string][]*nib.Nib
 }
 
+// Get mirrors nibcore.Core.Get: exact id first, then — if a prefix is
+// configured and the input does not already carry it — the prefix-prepended
+// form. Resolving here rather than doing a bare map lookup is what lets tests
+// exercise a short-form stored link (`parent: e1`), which Core follows but the
+// reverse traversals do not (see CheckAllLinksInMap on half-traversable links).
 func (s *stubReader) Get(id string) (*nib.Nib, error) {
 	if b, ok := s.nibs[id]; ok {
 		return b, nil
+	}
+	if s.prefix != "" && !strings.HasPrefix(id, s.prefix) {
+		if b, ok := s.nibs[s.prefix+id]; ok {
+			return b, nil
+		}
 	}
 	return nil, nib.ErrNotFound
 }
@@ -66,7 +80,7 @@ func (s *stubReader) All() []*nib.Nib {
 }
 
 func (s *stubReader) Search(query string) ([]*nib.Nib, error) {
-	return nil, nil
+	return s.searchOut[query], nil
 }
 
 // NormalizeID resolves an id to its full form. It mirrors

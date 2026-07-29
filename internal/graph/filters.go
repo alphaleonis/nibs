@@ -2,9 +2,10 @@ package graph
 
 import (
 	"context"
+	"slices"
 
-	"github.com/alphaleonis/nibs/internal/nib"
 	"github.com/alphaleonis/nibs/internal/graph/model"
+	"github.com/alphaleonis/nibs/internal/nib"
 )
 
 // resolveFilterID normalizes a single-ID filter argument via the reader's
@@ -17,15 +18,15 @@ import (
 //   - Semantic naming at call sites: inside ApplyFilter, `resolveFilterID`
 //     reads as "resolve a filter ID" rather than "normalize a generic ID",
 //     making intent explicit.
-//   - Future extension point: this is the single place where all four
-//     filter.*ID branches can gain shared behavior — e.g. the 128-char
+//   - Future extension point: this is the single place where every
+//     filter.*ID branch can gain shared behavior — e.g. the 128-char
 //     input-length cap — without touching each
 //     branch individually.
 //
 // Every filter.*ID branch in ApplyFilter pairs this call with an explicit
 // `if !ok { return nil }` so an unknown target short-circuits the whole
-// filter chain to nil. The pattern is repeated by design: four branches
-// keep it grep-findable and the set is stable.
+// filter chain to nil. The pattern is repeated by design rather than folded
+// into a loop: spelled out per branch it stays grep-findable.
 func resolveFilterID(reader NibReader, id string) (string, bool) {
 	return reader.NormalizeID(id)
 }
@@ -87,6 +88,62 @@ func ApplyFilter(ctx context.Context, nibs []*nib.Nib, filter *model.NibFilter, 
 			return nil
 		}
 		result = filterByField(result, []string{fullID}, func(b *nib.Nib) string { return b.Parent })
+	}
+
+	// Transitive hierarchy filters. Like every other *ID filter, each field
+	// names the relationship the MATCHED nib holds toward the supplied target:
+	// ancestorId keeps nibs whose ancestor is the target (its descendants),
+	// descendantId keeps nibs whose descendant is the target (its ancestors),
+	// siblingId keeps nibs sharing the target's parent. The target itself is
+	// none of those things to itself, so all three exclude it here.
+	//
+	// "Here" is load-bearing: queryResolver.Nibs runs includeAncestors AFTER
+	// ApplyFilter whenever search is set, re-adding every survivor's ancestors
+	// so the client can render a complete tree. For ancestorId that puts the
+	// target back into the response, and for siblingId it brings in the shared
+	// parent. The schema descriptions state this; it is not a bug to fix in
+	// this file — the web UI's tree rendering and ancestor dimming depend on
+	// that completion.
+	//
+	// Unknown target short-circuits to nil (shared contract for all *ID
+	// filters). Unlike the five pre-existing *ID branches, these three guards
+	// are not independently observable: resolveFilterID echoes the input back
+	// on a miss, and what the echoed string is then matched against can only
+	// hold ids that DO resolve — a parentChain banks fetched nibs' ids, and
+	// filterByDescendantID/filterBySiblingID open with a Get applying the same
+	// exact-then-prefix rule NormalizeID just failed. So an unresolvable target
+	// already matches nothing without them. They are kept anyway: the contract
+	// stays grep-findable across all eight branches, and they become
+	// load-bearing the moment NormalizeID stops echoing on a miss.
+	//
+	// Cost: filterByAncestorID walks each candidate's chain independently
+	// instead of sharing work between candidates, which is O(N x depth) reader
+	// lookups. Deliberate. Reader.Get is an in-memory map lookup under an
+	// RLock, so the walk is bounded by tree depth rather than I/O, and the
+	// obvious sharing is unsound: one seen set across candidates makes a later
+	// candidate's walk stop at an ancestor an earlier one already marked,
+	// truncating its chain before the target can be reached or ruled out. Any
+	// memoization must cache the per-id ANSWER, not the visited flag.
+	if filter.AncestorID != nil && *filter.AncestorID != "" {
+		fullID, ok := resolveFilterID(reader, *filter.AncestorID)
+		if !ok {
+			return nil
+		}
+		result = filterByAncestorID(result, fullID, reader)
+	}
+	if filter.DescendantID != nil && *filter.DescendantID != "" {
+		fullID, ok := resolveFilterID(reader, *filter.DescendantID)
+		if !ok {
+			return nil
+		}
+		result = filterByDescendantID(result, fullID, reader)
+	}
+	if filter.SiblingID != nil && *filter.SiblingID != "" {
+		fullID, ok := resolveFilterID(reader, *filter.SiblingID)
+		if !ok {
+			return nil
+		}
+		result = filterBySiblingID(result, fullID, reader)
 	}
 
 	// Blocking filters (computed via BlockingChecker)
@@ -166,6 +223,159 @@ func filterByMentionedByID(ctx context.Context, nibs []*nib.Nib, sourceID string
 	var result []*nib.Nib
 	for _, b := range nibs {
 		if outboundSet[b.ID] {
+			result = append(result, b)
+		}
+	}
+	return result
+}
+
+// parentChain returns the IDs on b's parent chain, nearest ancestor first,
+// walking up to the root.
+//
+// Every id in the chain is a RESOLVED id — the ID of a nib that was actually
+// fetched — never the spelling stored in the child's parent field. Reader.Get
+// follows a short-form link (`parent: e1`) by prepending the configured
+// prefix, so banking the raw spelling would put an id that no nib answers to
+// on the chain while the walk carried on past it, reporting a hierarchy with a
+// missing rung. That state is not hypothetical and not repairable from here:
+// the write paths always store the normalized form, but a hand-edited file can
+// hold a short one, and CheckAllLinksInMap deliberately does not report it (it
+// is half-traversable, not broken). By the same rule a parent that cannot be
+// fetched contributes nothing — the walk ends there and the chain stops,
+// rather than failing the query.
+//
+// Ancestry is always resolved through reader, never from the candidate slice
+// the caller is filtering. ApplyFilter runs over genuinely narrowed slices
+// from the relationship resolvers (Children, Blocking, Mentions, ...), so an
+// intermediate ancestor an earlier filter removed is still on the chain, and
+// `--status todo --ancestor <epic>` still reaches through a completed
+// intermediate. Any memoization added here must keep reader as the source of
+// ancestry: indexing the candidate slice instead would truncate every chain at
+// the first filtered-out ancestor, silently and with the suite still green.
+//
+// b's own ID is never in the result: the visited set is seeded with it, so a
+// cycle passing back through b stops there. Termination is a SEPARATE guard —
+// the seed alone does not provide it — and comes from the `seen[parent.ID]`
+// check-and-mark pair inside the loop: every iteration either records a new
+// resolved id or breaks, so the set strictly grows and the walk is bounded by
+// the number of nibs in the store. Cycles should not exist (the mutation
+// resolvers reject them), but a hand-edited nib file can still produce one,
+// and an unguarded `for parent != ""` walk hangs on it.
+func parentChain(b *nib.Nib, reader NibReader) []string {
+	var chain []string
+	seen := map[string]bool{b.ID: true}
+	parentID := b.Parent
+	for parentID != "" {
+		parent, err := reader.Get(parentID)
+		if err != nil {
+			break
+		}
+		if seen[parent.ID] {
+			break
+		}
+		seen[parent.ID] = true
+		chain = append(chain, parent.ID)
+		parentID = parent.Parent
+	}
+	return chain
+}
+
+// resolvedParentID returns b's parent as the rest of the GraphQL surface
+// presents it: the parent's resolved ID, or "" when b has no parent AND when
+// b's parent link does not resolve. nibResolver.Parent collapses those two
+// cases to nil for exactly the same reason, and fetchSiblings branches on that
+// nil to take its root-siblings path — so comparing raw b.Parent strings
+// instead would make a nib with a broken parent link present as a root
+// everywhere the object graph is walked while being invisible to a root-level
+// siblingId query.
+//
+// Resolving also means a short-form link is compared under its resolved
+// spelling. That closes half the gap to fetchSiblings, not all of it:
+// findIncomingLinksInMap (which backs GetSortedSiblings) still does exact
+// map-key matching, so the two surfaces remain out of step on short-form
+// links. Closing that is tracked in nibs-8fpg.
+func resolvedParentID(b *nib.Nib, reader NibReader) string {
+	if b.Parent == "" {
+		return ""
+	}
+	parent, err := reader.Get(b.Parent)
+	if err != nil {
+		return ""
+	}
+	return parent.ID
+}
+
+// filterByAncestorID keeps nibs with targetID somewhere in their parent chain —
+// the target's descendants at any depth, the target itself excluded.
+// targetID must already be a full (normalized) ID — callers resolve via
+// resolveFilterID before invoking.
+//
+// Unlike its two siblings this never fetches the target, so it has no
+// defensive nil return for a concurrent delete: matching is decided entirely
+// by the candidates' own chains. Since parentChain banks only resolved ids, a
+// target deleted between resolveFilterID and the walk simply stops appearing
+// on any chain, and its former descendants stop matching. Adding a Get here to
+// look symmetric would change behavior, not tidy it.
+func filterByAncestorID(nibs []*nib.Nib, targetID string, reader NibReader) []*nib.Nib {
+	var result []*nib.Nib
+	for _, b := range nibs {
+		if slices.Contains(parentChain(b, reader), targetID) {
+			result = append(result, b)
+		}
+	}
+	return result
+}
+
+// filterByDescendantID keeps nibs with targetID somewhere in their descendant
+// subtree — exactly the target's ancestor chain, the target itself excluded.
+// The chain is walked once up front rather than per candidate.
+// targetID must already be a full (normalized) ID — callers resolve via
+// resolveFilterID before invoking. Returns nil if the target nib cannot be
+// fetched (defensive: the caller already proved the ID resolves, but Get may
+// still fail on a concurrent delete).
+func filterByDescendantID(nibs []*nib.Nib, targetID string, reader NibReader) []*nib.Nib {
+	target, err := reader.Get(targetID)
+	if err != nil {
+		return nil
+	}
+	chain := parentChain(target, reader)
+	ancestors := make(map[string]bool, len(chain))
+	for _, id := range chain {
+		ancestors[id] = true
+	}
+
+	var result []*nib.Nib
+	for _, b := range nibs {
+		if ancestors[b.ID] {
+			result = append(result, b)
+		}
+	}
+	return result
+}
+
+// filterBySiblingID keeps nibs sharing the target's parent, the target itself
+// excluded. A parentless target selects the other root nibs — the root-level
+// branch fetchSiblings implements for `nibs rel siblings` — which falls out of
+// matching on the target's empty parent instead of needing its own case.
+// Both sides go through resolvedParentID, so root-ness means the same thing
+// here as it does to nibResolver.Parent and fetchSiblings; see that helper for
+// what the two surfaces still disagree on.
+// targetID must already be a full (normalized) ID — callers resolve via
+// resolveFilterID before invoking. Returns nil if the target nib cannot be
+// fetched (defensive: see filterByBlockingID).
+func filterBySiblingID(nibs []*nib.Nib, targetID string, reader NibReader) []*nib.Nib {
+	target, err := reader.Get(targetID)
+	if err != nil {
+		return nil
+	}
+	targetParentID := resolvedParentID(target, reader)
+
+	var result []*nib.Nib
+	for _, b := range nibs {
+		if b.ID == targetID {
+			continue
+		}
+		if resolvedParentID(b, reader) == targetParentID {
 			result = append(result, b)
 		}
 	}
