@@ -128,7 +128,7 @@ Or, if your agent framework supports startup hooks, wire `nibs prime` to run at 
 | `nibs set <id>` | Update a nib's metadata and links, or clear a field |
 | `nibs body <id>` | Edit a nib's Markdown body (set, append, or replace sections) |
 | `nibs mv <id>` | Reposition a nib among its siblings or reparent it |
-| `nibs close <id>` | Mark a nib completed with a summary |
+| `nibs close <id>` | Close a nib with a summary; `--as <closed status>` picks the close reason (default `completed`). Closing an existing nib goes through `close` — `nibs set -s <closed status>` is refused |
 | `nibs context` | Show project status summary with progress |
 | `nibs plan <id>` | View an ordered plan of a parent nib's children |
 | `nibs query` | Run a GraphQL query or mutation |
@@ -137,7 +137,7 @@ Or, if your agent framework supports startup hooks, wire `nibs prime` to run at 
 | `nibs web` | Start the web UI server |
 | `nibs tui` | Open the terminal UI |
 | `nibs prime` | Output the agent integration prompt (slim default; pass `--full` for the complete reference) |
-| `nibs archive` | Move completed/scrapped nibs to the archive |
+| `nibs archive` | Move closed nibs to the archive |
 | `nibs upgrade` | Update nibs to the latest release (checksum-verified, with rollback); `--check` to only check |
 
 Run `nibs <command> --help` for full usage details.
@@ -147,7 +147,7 @@ Run `nibs <command> --help` for full usage details.
 Each nib has:
 
 - **Type**: milestone, epic, feature, task, bug, or research
-- **Status**: draft, todo, in-progress, deferred, completed, or scrapped
+- **Status**: open (in-progress, todo, draft) or closed (deferred, completed, scrapped). Open is a workflow position, closed a close reason. A `deferred` nib is closed but still blocks whatever depends on it — the work is coming back, so the dependency is unmet.
 - **Priority** (optional): critical, high, normal, or low
 - **Estimate** (optional): s, m, l, or xl (t-shirt sizes)
 - **Tags**: freeform labels for categorization

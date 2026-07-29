@@ -34,8 +34,8 @@ func TestStatusPickerModel(t *testing.T) {
 			if item.color != s.Color {
 				t.Errorf("item %d (%s): got color %q, want %q", i, s.Name, item.color, s.Color)
 			}
-			if item.isArchive != s.Archive {
-				t.Errorf("item %d (%s): got isArchive %v, want %v", i, s.Name, item.isArchive, s.Archive)
+			if item.isClosed != s.Closed {
+				t.Errorf("item %d (%s): got isClosed %v, want %v", i, s.Name, item.isClosed, s.Closed)
 			}
 		}
 	})
@@ -57,9 +57,10 @@ func TestStatusPickerModel(t *testing.T) {
 		if deferred == nil {
 			t.Fatal("status picker does not offer \"deferred\"")
 		}
-		// deferred is parked, not archived — it must not render dimmed.
-		if deferred.isArchive {
-			t.Error("deferred item should have isArchive=false (non-archive)")
+		// deferred is a close reason, so it renders dimmed like the other
+		// closed statuses.
+		if !deferred.isClosed {
+			t.Error("deferred item should have isClosed=true (closed)")
 		}
 		// Config color for deferred is deliberately gray.
 		if deferred.color != "gray" {

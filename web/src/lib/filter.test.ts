@@ -5,7 +5,7 @@ import {
   prepareFilter,
   isDragAllowed,
 } from "./filter";
-import { OPEN_STATUSES, OPEN_PLUS_DEFERRED_STATUSES } from "./constants";
+import { OPEN_STATUSES, CLOSED_STATUSES } from "./constants";
 import type { NibSummary, NibFilter } from "./types";
 
 function makeNib(overrides: Partial<NibSummary> = {}): NibSummary {
@@ -24,33 +24,25 @@ function makeNib(overrides: Partial<NibSummary> = {}): NibSummary {
 }
 
 describe("status presets", () => {
-  it("Open preset is draft/todo/in-progress (hides deferred + terminal)", () => {
+  it("Open is the complement of the closed set", () => {
     expect(OPEN_STATUSES).toEqual(["draft", "todo", "in-progress"]);
   });
 
-  it("Open + deferred preset is everything except completed + scrapped", () => {
-    expect(OPEN_PLUS_DEFERRED_STATUSES).toEqual([
-      "draft",
-      "todo",
-      "in-progress",
-      "deferred",
-    ]);
+  it("deferred is closed, so there is no second preset to distinguish", () => {
+    // This is what collapsed the two presets into one: "open" and "not
+    // finished" used to name different sets, and now they do not.
+    expect(CLOSED_STATUSES).toEqual(["deferred", "completed", "scrapped"]);
+    expect(OPEN_STATUSES).not.toContain("deferred");
   });
 
-  it("the Open + deferred include-list hides completed and scrapped via matchesFilter", () => {
-    const filter: NibFilter = { status: [...OPEN_PLUS_DEFERRED_STATUSES] };
+  it("the Open include-list hides every closed status via matchesFilter", () => {
+    const filter: NibFilter = { status: [...OPEN_STATUSES] };
     expect(matchesFilter(makeNib({ status: "todo" }), filter)).toBe(true);
-    expect(matchesFilter(makeNib({ status: "deferred" }), filter)).toBe(true);
+    expect(matchesFilter(makeNib({ status: "deferred" }), filter)).toBe(false);
     expect(matchesFilter(makeNib({ status: "completed" }), filter)).toBe(false);
     expect(matchesFilter(makeNib({ status: "scrapped" }), filter)).toBe(false);
   });
 
-  it("the Open include-list also hides deferred via matchesFilter", () => {
-    const filter: NibFilter = { status: [...OPEN_STATUSES] };
-    expect(matchesFilter(makeNib({ status: "in-progress" }), filter)).toBe(true);
-    expect(matchesFilter(makeNib({ status: "deferred" }), filter)).toBe(false);
-    expect(matchesFilter(makeNib({ status: "completed" }), filter)).toBe(false);
-  });
 });
 
 describe("matchesFilter", () => {
@@ -145,7 +137,7 @@ describe("prepareFilter", () => {
   it("moves the status include-list out of serverFilter into the client-side filter", () => {
     const filter: NibFilter = {
       search: "hello",
-      status: [...OPEN_PLUS_DEFERRED_STATUSES],
+      status: [...OPEN_STATUSES],
     };
     const result = prepareFilter(filter);
 
@@ -241,7 +233,7 @@ describe("isDragAllowed", () => {
   });
 
   it("returns true when hide-filters are combined in any mix", () => {
-    expect(isDragAllowed({ type: ["bug"], status: [...OPEN_PLUS_DEFERRED_STATUSES] })).toBe(true);
+    expect(isDragAllowed({ type: ["bug"], status: [...OPEN_STATUSES] })).toBe(true);
     expect(
       isDragAllowed({
         type: ["bug"],

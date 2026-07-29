@@ -32,7 +32,7 @@ type statusItem struct {
 	name        string
 	description string
 	color       string
-	isArchive   bool
+	isClosed    bool
 	isCurrent   bool
 }
 
@@ -61,7 +61,7 @@ func (d statusItemDelegate) Render(w io.Writer, m list.Model, index int, listIte
 	}
 
 	// Render status with color (text only)
-	statusText := ui.RenderStatusTextWithColor(item.name, item.color, item.isArchive)
+	statusText := ui.RenderStatusTextWithColor(item.name, item.color, item.isClosed)
 
 	// Add current indicator
 	var currentIndicator string
@@ -101,7 +101,7 @@ func newStatusPickerModel(nibIDs []string, nibTitle, currentStatus string, cfg *
 			name:        s.Name,
 			description: s.Description,
 			color:       s.Color,
-			isArchive:   s.Archive,
+			isClosed:    s.Closed,
 			isCurrent:   isCurrent,
 		})
 	}

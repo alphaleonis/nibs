@@ -76,7 +76,7 @@ func (d parentItemDelegate) Render(w io.Writer, m list.Model, index int, listIte
 		// Format: [type] title (id)
 		typeBadge := ui.RenderTypeText(item.nib.EffectiveType(), colors.TypeColor)
 		title := item.nib.Title
-		if colors.IsArchive {
+		if colors.IsClosed {
 			title = ui.Muted.Render(title)
 		}
 		id := ui.Muted.Render(" (" + item.nib.ID + ")")
@@ -92,7 +92,7 @@ type parentPickerModel struct {
 	nibTitle       string   // display title (single title or "N selected nibs")
 	nibTypes       []string // types of the nibs (to filter eligible parents)
 	currentParent  string   // current parent ID (to highlight, only for single nib)
-	hideCompleted  bool     // whether to hide completed/scrapped nibs
+	hideCompleted  bool     // whether to hide nibs in a closed status
 	allEligible    []*nib.Nib // all eligible nibs before status filtering
 	width          int
 	height         int
@@ -207,7 +207,7 @@ func newParentPickerModel(nibIDs []string, nibTitle string, nibTypes []string, c
 	return m
 }
 
-// toggleHideCompleted flips the completed/scrapped filter and rebuilds the list.
+// toggleHideCompleted flips the closed-status filter and rebuilds the list.
 func (m *parentPickerModel) toggleHideCompleted() {
 	m.hideCompleted = !m.hideCompleted
 	m.rebuildList()
@@ -225,7 +225,7 @@ func hideCompletedHelpText(hiding bool) string {
 func (m *parentPickerModel) rebuildList() {
 	var filtered []*nib.Nib
 	for _, b := range m.allEligible {
-		if m.hideCompleted && m.cfg.IsArchiveStatus(b.Status) {
+		if m.hideCompleted && m.cfg.IsClosedStatus(b.Status) {
 			continue
 		}
 		filtered = append(filtered, b)

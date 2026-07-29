@@ -84,7 +84,7 @@ documents), or clears a clearable field (--clear priority|estimate|parent).`,
 		// Build and validate field updates. inputError maps a body input-channel
 		// I/O failure to FILE_ERROR (exit 5) while validation/usage errors stay
 		// VALIDATION (exit 2).
-		input, fieldChanges, err := buildSetInput(cmd, app.Config())
+		input, fieldChanges, err := buildSetInput(cmd, app.Config(), b.ID)
 		if err != nil {
 			return inputError(setJSON, err)
 		}
@@ -122,7 +122,10 @@ documents), or clears a clearable field (--clear priority|estimate|parent).`,
 // changed. Clearing a clearable field (--clear) sets its Omittable to an
 // explicit null (a nil inner pointer), which the UpdateNib resolver reads as
 // "clear this field" — distinct from setting a value.
-func buildSetInput(cmd *cobra.Command, cfg *config.Config) (model.UpdateNibInput, []string, error) {
+//
+// id is the nib being updated. It appears only in the closed-status refusal
+// below, to put this nib into the `close` line the message quotes.
+func buildSetInput(cmd *cobra.Command, cfg *config.Config, id string) (model.UpdateNibInput, []string, error) {
 	var input model.UpdateNibInput
 	var changes []string
 
@@ -141,7 +144,43 @@ func buildSetInput(cmd *cobra.Command, cfg *config.Config) (model.UpdateNibInput
 
 	if cmd.Flags().Changed("status") {
 		if !cfg.IsValidStatus(setStatus) {
-			return input, nil, fmt.Errorf("invalid status: %s (must be %s)", setStatus, cfg.StatusList())
+			// Name only the OPEN statuses, for the same reason the -s usage string
+			// does: the closed ones are refused by the check below, so listing them
+			// as the accepted set would answer one error with a second. The route
+			// to a closed status is named instead of its members. Derived from
+			// OpenStatusNames so this and the usage string stay the same set.
+			return input, nil, fmt.Errorf("invalid status: %s (must be %s; a closed status goes through `nibs close --as`)",
+				setStatus, strings.Join(cfg.OpenStatusNames(), ", "))
+		}
+		// Reaching a closed status belongs to `close`, not to `set`. Both write
+		// the same field, but only `close` requires a summary — so leaving this
+		// open would make the route that records no reason the shortest one, and
+		// the summary requirement decorative. Derived from IsClosedStatus, so a
+		// newly declared closed status is refused here without an edit.
+		//
+		// Two boundaries here are deliberate, not gaps to be closed:
+		//
+		//   - This is a rule about the `set` verb, not a model invariant. The web
+		//     UI and the TUI mutate through the GraphQL resolver and never call
+		//     this function, so they can still set a closed status directly — the
+		//     web's status dropdown offers every status and depends on that. The
+		//     same is true of `nibs graphql` and of `nibs new -s <closed status>`,
+		//     which creates a nib already closed. Enforcement is deliberately not
+		//     universal; what this closes is the shortcut that skips the summary
+		//     on an existing nib.
+		//   - Only transitions INTO a closed status are refused. There is no
+		//     `reopen` command, so `nibs set <id> -s todo` on a closed nib is how
+		//     work returns to the board and must keep working. That is why the
+		//     condition below reads the incoming status and never the nib's
+		//     current one.
+		if cfg.IsClosedStatus(setStatus) {
+			// One suggestion covers every nib, closed or not: `close` accepts a nib
+			// that is already closed and appends another entry to its ## Summary,
+			// so revising a close reason is the same single command as closing for
+			// the first time.
+			return input, nil, fmt.Errorf(
+				"%s is a closed status; `set` cannot close a nib — use `nibs close %s --as %s --summary -` instead (closing requires a summary, `set` does not, so this route would leave no record of why)",
+				setStatus, id, setStatus)
 		}
 		input.Status = &setStatus
 		changes = append(changes, "status")
@@ -318,11 +357,13 @@ func mutationError(jsonOutput bool, err error) error {
 }
 
 func init() {
-	// Build help text with allowed values from hardcoded config
-	statusNames := make([]string, len(config.DefaultStatuses))
-	for i, s := range config.DefaultStatuses {
-		statusNames[i] = s.Name
-	}
+	// Build help text with allowed values from hardcoded config. -s lists only
+	// the OPEN statuses: the closed ones are refused above, so advertising them
+	// here would send an agent straight into that error. The names come from
+	// OpenStatusNames rather than a literal list, so the two stay the same set.
+	// This is interpolated at package load; the refusal itself re-derives per
+	// invocation, and that check is what admits or rejects a value.
+	statusNames := config.Default().OpenStatusNames()
 	typeNames := make([]string, len(config.DefaultTypes))
 	for i, t := range config.DefaultTypes {
 		typeNames[i] = t.Name
@@ -332,7 +373,10 @@ func init() {
 		priorityNames[i] = p.Name
 	}
 
-	setCmd.Flags().StringVarP(&setStatus, "status", "s", "", "New status ("+strings.Join(statusNames, ", ")+")")
+	// No backticks in this usage string: pflag reads a backticked word as the
+	// flag's value placeholder, which would rename the arg in --help.
+	setCmd.Flags().StringVarP(&setStatus, "status", "s", "",
+		"New status ("+strings.Join(statusNames, ", ")+"; a closed status goes through 'nibs close --as')")
 	setCmd.Flags().StringVarP(&setType, "type", "t", "", "New type ("+strings.Join(typeNames, ", ")+")")
 	setCmd.Flags().StringVarP(&setPriority, "priority", "p", "", "New priority ("+strings.Join(priorityNames, ", ")+"; use --clear priority to clear)")
 	estimateNames := make([]string, len(config.DefaultEstimates))

@@ -2,9 +2,11 @@ package graph
 
 import (
 	"context"
+	"fmt"
 	"reflect"
 	"testing"
 
+	"github.com/alphaleonis/nibs/internal/config"
 	"github.com/alphaleonis/nibs/internal/nib"
 )
 
@@ -26,8 +28,8 @@ func TestProjectionResolver_NibByID(t *testing.T) {
 
 // TestProjectionResolver_ChildCountAndProgress pins the direct-children rollups:
 // ChildCount is the number of children; Progress is the canonical
-// child-completion rollup (done = completed only, total excludes scrapped,
-// scrapped surfaced separately). A leaf reports zeros.
+// child-completion rollup (done = completed only, total excludes children closed
+// without completing, those surfaced separately). A leaf reports zeros.
 func TestProjectionResolver_ChildCountAndProgress(t *testing.T) {
 	resolver, core := setupTestResolver(t)
 	mustCreate(t, core, &nib.Nib{ID: "par", Slug: "par", Title: "Parent", Status: "in-progress"})
@@ -58,8 +60,11 @@ func TestProjectionResolver_ChildCountAndProgress(t *testing.T) {
 }
 
 // TestComputeProgress pins the canonical progress rule directly, independent of
-// the store: done = completed only, total excludes scrapped, percent rounds, and
-// scrapped is reported for transparency.
+// the store: done = completed only, total excludes scrapped children and no
+// others, percent rounds, and the two closed-but-not-completed statuses are
+// disclosed by their own counters. The three closed statuses get three
+// treatments — completed counts as done, scrapped leaves the denominator,
+// deferred stays in it undone — so each is covered separately below.
 func TestComputeProgress(t *testing.T) {
 	cases := []struct {
 		name     string
@@ -88,9 +93,32 @@ func TestComputeProgress(t *testing.T) {
 			ProgressRollup{Total: 0, Done: 0, Percent: 0, Scrapped: 2},
 		},
 		{
-			"draft and deferred count toward total but not done",
+			// Deferred is closed, but the work is coming back — it is set aside
+			// scope, so it counts toward total and not toward done, exactly like
+			// the open statuses. Only scrapped leaves the denominator.
+			"draft and deferred both count toward total but not done",
 			[]string{"draft", "deferred", "in-progress", "completed"},
-			ProgressRollup{Total: 4, Done: 1, Percent: 25},
+			ProgressRollup{Total: 4, Done: 1, Percent: 25, Deferred: 1},
+		},
+		{
+			// A deferred child holds the parent below 100%: there is still work
+			// under it, and the roadmap still renders that child. Reporting 100%
+			// here would contradict a view that lists the deferred item.
+			"a deferred child holds the parent below 100%",
+			[]string{"completed", "completed", "completed", "deferred"},
+			ProgressRollup{Total: 4, Done: 3, Percent: 75, Deferred: 1},
+		},
+		{
+			"only deferred -> all scope outstanding, 0%",
+			[]string{"deferred", "deferred"},
+			ProgressRollup{Total: 2, Done: 0, Percent: 0, Deferred: 2},
+		},
+		{
+			// Unknown statuses (a hand-edited nib with no `status:`) are
+			// outstanding scope, so they cannot inflate the percentage.
+			"unknown status counts toward total but not done",
+			[]string{"completed", "", "bogus"},
+			ProgressRollup{Total: 3, Done: 1, Percent: 33},
 		},
 	}
 	for _, tc := range cases {
@@ -102,32 +130,86 @@ func TestComputeProgress(t *testing.T) {
 	}
 }
 
-// TestProjectionResolver_Ready pins the startability rule: not resolved and no
-// active blockers. A blocker that is itself resolved does not keep a nib
-// un-ready (mirroring BlockedByIds), and a resolved nib is never ready.
+// TestProjectionResolver_Ready pins the startability rule: a startable status
+// and no active blockers. A blocker that released its dependents does not keep
+// a nib un-ready (mirroring BlockedByIds). A deferred blocker is the
+// discriminating case for the blocker half: it is closed, so a closed-status
+// test would release it, but it has not satisfied the dependency.
+//
+// The status half is covered separately below, one unblocked nib per declared
+// status, because it is strictly narrower than "not closed": draft and
+// in-progress are open and still not ready. A predicate that only rejected
+// closed statuses would pass every other case in this test.
 func TestProjectionResolver_Ready(t *testing.T) {
 	resolver, core := setupTestResolver(t)
 	mustCreate(t, core, &nib.Nib{ID: "blkactive", Slug: "ba", Title: "BA", Status: "todo"})
 	mustCreate(t, core, &nib.Nib{ID: "blkdone", Slug: "bd", Title: "BD", Status: "completed"})
+	mustCreate(t, core, &nib.Nib{ID: "blkdefer", Slug: "bp", Title: "BP", Status: "deferred"})
 	mustCreate(t, core, &nib.Nib{ID: "free", Slug: "f", Title: "Free", Status: "todo"})
 	mustCreate(t, core, &nib.Nib{ID: "blocked", Slug: "b", Title: "Blocked", Status: "todo", BlockedBy: []string{"blkactive"}})
 	mustCreate(t, core, &nib.Nib{ID: "softblocked", Slug: "sb", Title: "SoftBlocked", Status: "todo", BlockedBy: []string{"blkdone"}})
-	mustCreate(t, core, &nib.Nib{ID: "donenib", Slug: "d", Title: "Done", Status: "completed"})
+	mustCreate(t, core, &nib.Nib{ID: "deferblocked", Slug: "pb", Title: "DeferBlocked", Status: "todo", BlockedBy: []string{"blkdefer"}})
 	pr := resolver.ProjectionResolver(context.Background())
 
 	cases := []struct {
 		id   string
 		want bool
 	}{
-		{"free", true},         // no blockers, active
-		{"blocked", false},     // active blocker
-		{"softblocked", true},  // only a resolved blocker -> still ready
-		{"donenib", false},     // resolved status is never ready
-		{"missing", false},     // unknown id -> not ready
+		{"free", true},          // no blockers, startable status
+		{"blocked", false},      // active blocker
+		{"softblocked", true},   // only a released blocker -> still ready
+		{"deferblocked", false}, // deferred blocker: closed, but never released
+		{"missing", false},      // unknown id -> not ready
 	}
 	for _, tc := range cases {
 		if got := pr.Ready(tc.id); got != tc.want {
 			t.Errorf("Ready(%s) = %v, want %v", tc.id, got, tc.want)
+		}
+	}
+}
+
+// TestProjectionResolver_ReadyStatusHalf walks every declared status with the
+// blocker half held constant (no blockers at all), so the only thing under test
+// is which statuses `ready` will start work from. Expectations are literal, not
+// derived from the Startable flag, so flipping that flag has to be restated
+// here deliberately rather than following along.
+func TestProjectionResolver_ReadyStatusHalf(t *testing.T) {
+	cases := []struct {
+		status string
+		want   bool
+	}{
+		{"todo", true},
+		{"in-progress", false}, // already underway; not something to start
+		{"draft", false},       // needs refinement first
+		{"deferred", false},    // closed
+		{"completed", false},
+		{"scrapped", false},
+		{"", false}, // no status: in front matter -> not offered as work
+	}
+
+	// Every declared status must appear above, so the table cannot quietly stop
+	// being exhaustive when the vocabulary grows.
+	covered := map[string]bool{}
+	for _, tc := range cases {
+		covered[tc.status] = true
+	}
+	for _, s := range config.DefaultStatuses {
+		if !covered[s.Name] {
+			t.Fatalf("status %q has no case in this table; add one", s.Name)
+		}
+	}
+
+	resolver, core := setupTestResolver(t)
+	ids := make([]string, len(cases))
+	for i, tc := range cases {
+		ids[i] = fmt.Sprintf("s%d", i)
+		mustCreate(t, core, &nib.Nib{ID: ids[i], Slug: ids[i], Title: "S", Status: tc.status})
+	}
+	pr := resolver.ProjectionResolver(context.Background())
+
+	for i, tc := range cases {
+		if got := pr.Ready(ids[i]); got != tc.want {
+			t.Errorf("Ready(%s) with status %q = %v, want %v", ids[i], tc.status, got, tc.want)
 		}
 	}
 }

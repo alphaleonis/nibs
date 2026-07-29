@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"strings"
 
+	"github.com/alphaleonis/nibs/internal/config"
 	"github.com/alphaleonis/nibs/internal/graph"
 	"github.com/alphaleonis/nibs/internal/mdsection"
 	"github.com/alphaleonis/nibs/internal/nib"
@@ -14,7 +15,7 @@ import (
 
 var (
 	planJSON      bool
-	planActive    bool
+	planOpen      bool
 	planWithOrder bool
 )
 
@@ -67,7 +68,7 @@ type Plan struct {
 // buildPlan fetches a parent nib and its ordered children, returning a Plan.
 // Uses the GraphQL resolver for parent lookup and child ordering, consistent
 // with the documented data flow (cmd -> graph -> nibcore -> nib).
-func buildPlan(ctx context.Context, resolver *graph.Resolver, parentID string, activeOnly bool) (*Plan, error) {
+func buildPlan(ctx context.Context, resolver *graph.Resolver, parentID string, openOnly bool) (*Plan, error) {
 	parent, err := resolver.Query().Nib(ctx, parentID)
 	if err != nil {
 		return nil, fmt.Errorf("failed to find nib: %w", err)
@@ -90,9 +91,9 @@ func buildPlan(ctx context.Context, resolver *graph.Resolver, parentID string, a
 	// backfilling order keys for legacy nibs without them.
 	children := resolver.Orderer.GetSortedSiblings(parent.ID)
 
-	// Filter if active only
-	if activeOnly {
-		children = filterActive(children)
+	// Filter to open children only
+	if openOnly {
+		children = filterOpen(children, resolver.Reader.Config())
 	}
 
 	// Build plan items
@@ -153,11 +154,27 @@ func checkboxMark(line string) (byte, bool) {
 	return t[3], true
 }
 
-// filterActive removes completed and scrapped nibs.
-func filterActive(nibs []*nib.Nib) []*nib.Nib {
+// filterOpen keeps the nibs carrying an open status — the same open *group*
+// that `-s open` expands to, which is what `--open` means on list and rel.
+//
+// It is membership in OpenStatusNames rather than !IsClosedStatus, and the two
+// differ on exactly one input: a nib whose status is outside the vocabulary (a
+// hand-edited file with no `status:` holds "") is in neither group, so it is
+// dropped here and would be kept by an exclude-closed rule. Matching list is
+// the point — one flag name meant two different memberships, and the narrow
+// case where they diverge is precisely the malformed data nobody checks.
+//
+// Note this is NOT list's open-by-*default* rule, which is exclude-closed and
+// therefore does keep a statusless nib. Passing --open is a narrowing on both
+// commands; see cmd/statusfilter.go.
+func filterOpen(nibs []*nib.Nib, cfg *config.Config) []*nib.Nib {
+	open := make(map[string]bool, len(cfg.OpenStatusNames()))
+	for _, name := range cfg.OpenStatusNames() {
+		open[name] = true
+	}
 	var result []*nib.Nib
 	for _, b := range nibs {
-		if !nib.IsResolvedStatus(b.Status) {
+		if open[b.Status] {
 			result = append(result, b)
 		}
 	}
@@ -184,7 +201,7 @@ var planCmd = &cobra.Command{
 			ctx = context.Background()
 		}
 
-		plan, err := buildPlan(ctx, resolver, args[0], planActive)
+		plan, err := buildPlan(ctx, resolver, args[0], planOpen)
 		if err != nil {
 			if planJSON {
 				return output.Error(output.ErrNotFound, err.Error())
@@ -227,7 +244,7 @@ func renderPlanHuman(plan *Plan) error {
 
 func init() {
 	planCmd.Flags().BoolVar(&planJSON, "json", false, "Output as JSON")
-	planCmd.Flags().BoolVar(&planActive, "active", false, "Show only active items (exclude completed/scrapped)")
+	planCmd.Flags().BoolVar(&planOpen, "open", false, "Show only open items — shorthand for the open status group, the same set list/rel's --open selects")
 	planCmd.Flags().BoolVar(&planWithOrder, "with-order", false, "Show each item's order key in the default (non-JSON) output (JSON always includes order)")
 	rootCmd.AddCommand(planCmd)
 }

@@ -18,7 +18,7 @@ import (
 type ProjectedList struct {
 	nibs      []*Projected
 	truncated bool
-	// hiddenClosed is the number of completed/scrapped nibs the open-by-default
+	// hiddenClosed is the number of closed nibs the open-by-default
 	// status filter silently removed (matching every other active filter). It is
 	// disclosed in the JSON envelope as "hidden_closed" and omitted when 0. It is
 	// set by the caller (SetHiddenClosed) after projection because it depends on a
@@ -57,12 +57,12 @@ func (pl *ProjectedList) Count() int { return len(pl.nibs) }
 // Truncated reports whether a limit dropped elements from the input.
 func (pl *ProjectedList) Truncated() bool { return pl.truncated }
 
-// SetHiddenClosed records how many completed/scrapped nibs the open-by-default
+// SetHiddenClosed records how many closed nibs the open-by-default
 // filter suppressed, for disclosure in the JSON envelope. A value <= 0 means
 // "not applicable" and is omitted from the envelope.
 func (pl *ProjectedList) SetHiddenClosed(n int) { pl.hiddenClosed = n }
 
-// HiddenClosed returns the suppressed completed/scrapped count (0 when none).
+// HiddenClosed returns the suppressed closed-nib count (0 when none).
 func (pl *ProjectedList) HiddenClosed() int { return pl.hiddenClosed }
 
 // Nibs returns a copy of the projected elements in input order (each with its
@@ -98,7 +98,7 @@ func (pl *ProjectedList) Rows() [][]string {
 // Each element reuses Projected.MarshalJSON (a flat, menu-ordered object). An
 // empty list marshals to "nibs":[] (never null) so a consumer can index it
 // unconditionally. hidden_closed is omitted when 0 (not applicable) so its
-// presence signals that the open default suppressed completed/scrapped rows.
+// presence signals that the open default suppressed closed rows.
 func (pl *ProjectedList) MarshalJSON() ([]byte, error) {
 	return json.Marshal(struct {
 		Nibs         []*Projected `json:"nibs"`

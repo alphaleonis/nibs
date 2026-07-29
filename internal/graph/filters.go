@@ -77,7 +77,6 @@ func ApplyFilter(ctx context.Context, nibs []*nib.Nib, filter *model.NibFilter, 
 
 	// Parent predicate filters
 	result = filterByPredicate(result, filter.HasParent, func(b *nib.Nib) bool { return b.Parent != "" })
-	result = filterByPredicate(result, filter.NoParent, func(b *nib.Nib) bool { return b.Parent == "" })
 	if filter.ParentID != nil && *filter.ParentID != "" {
 		// Normalize the parent id like every other *ID filter: the stored
 		// b.Parent is a full (prefixed) id, so a short --parent must be resolved
@@ -92,7 +91,6 @@ func ApplyFilter(ctx context.Context, nibs []*nib.Nib, filter *model.NibFilter, 
 
 	// Blocking filters (computed via BlockingChecker)
 	result = filterByPredicate(result, filter.HasBlocking, func(b *nib.Nib) bool { return blocking.IsBlocking(b.ID) })
-	result = filterByPredicate(result, filter.NoBlocking, func(b *nib.Nib) bool { return !blocking.IsBlocking(b.ID) })
 	result = filterByPredicate(result, filter.IsBlocked, func(b *nib.Nib) bool { return blocking.IsBlocked(b.ID) })
 
 	// BlockingID (special: needs reader to look up target nib).
@@ -107,7 +105,6 @@ func ApplyFilter(ctx context.Context, nibs []*nib.Nib, filter *model.NibFilter, 
 
 	// Blocked-by filters (from direct blocked_by field)
 	result = filterByPredicate(result, filter.HasBlockedBy, func(b *nib.Nib) bool { return len(b.BlockedBy) > 0 })
-	result = filterByPredicate(result, filter.NoBlockedBy, func(b *nib.Nib) bool { return len(b.BlockedBy) == 0 })
 	if filter.BlockedByID != nil && *filter.BlockedByID != "" {
 		fullID, ok := resolveFilterID(reader, *filter.BlockedByID)
 		if !ok {

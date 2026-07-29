@@ -1,22 +1,25 @@
 export const STATUSES = ["draft", "todo", "in-progress", "deferred", "completed", "scrapped"] as const;
 
-// Terminal statuses — a nib with one of these has no active work left. This is
-// the single source of truth for "done"; the State-facet presets below derive
-// their include-lists from its complement, so a NEW active status added to
-// STATUSES automatically flows into the presets instead of being silently
-// hidden (a hardcoded include-list goes stale the moment a status is added).
-export const TERMINAL_STATUSES = ["completed", "scrapped"] as const;
+// Closed statuses — a nib with one of these is off the board. `deferred` is one
+// of them: setting work aside is a way of closing it, not a state of being
+// open, so it is hidden by the Open preset alongside completed and scrapped.
+//
+// This is the single source of truth for "closed"; the State-facet preset below
+// derives its include-list from the complement, so a NEW open status added to
+// STATUSES automatically flows into the preset instead of being silently hidden
+// (a hardcoded include-list goes stale the moment a status is added).
+//
+// These names and this membership are pinned against the Go configuration by
+// TestWebConstantsMatchConfig — the vocabulary is duplicated here only because
+// GraphQL does not serve it, so the guard is what keeps the two from drifting.
+export const CLOSED_STATUSES = ["deferred", "completed", "scrapped"] as const;
 
-// Quick State-facet presets that set the `status` include-list in one click.
-// The include-list is the single source of truth for status
-// visibility, so these OVERWRITE the current selection.
-//   Open + deferred → everything except completed + scrapped
-//   Open           → active work only (also hides deferred)
-export const OPEN_PLUS_DEFERRED_STATUSES: readonly string[] = STATUSES.filter(
-  (s) => !(TERMINAL_STATUSES as readonly string[]).includes(s),
-);
-export const OPEN_STATUSES: readonly string[] = OPEN_PLUS_DEFERRED_STATUSES.filter(
-  (s) => s !== "deferred",
+// Quick State-facet preset that sets the `status` include-list in one click.
+// The include-list is the single source of truth for status visibility, so this
+// OVERWRITES the current selection.
+//   Open → everything that is not closed
+export const OPEN_STATUSES: readonly string[] = STATUSES.filter(
+  (s) => !(CLOSED_STATUSES as readonly string[]).includes(s),
 );
 
 export const TYPES = ["milestone", "epic", "bug", "feature", "task", "research"] as const;

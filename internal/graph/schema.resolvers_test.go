@@ -622,11 +622,11 @@ func TestQueryNibsWithParentAndBlocks(t *testing.T) {
 		}
 	})
 
-	t.Run("filter noParent", func(t *testing.T) {
+	t.Run("filter hasParent false", func(t *testing.T) {
 		qr := resolver.Query()
-		noParentBool := true
+		hasParentBool := false
 		filter := &model.NibFilter{
-			NoParent: &noParentBool,
+			HasParent: &hasParentBool,
 		}
 		got, err := qr.Nibs(ctx, filter, nil)
 		if err != nil {
@@ -4233,13 +4233,13 @@ func TestAutoActivationPropagatesInProgress(t *testing.T) {
 }
 
 // TestAutoActivationSkipsDeferredParent locks in that a deferred parent stays
-// parked: activateParentChain only promotes todo/draft parents, so a child
-// going in-progress must not un-park a deferred ancestor.
+// deferred: activateParentChain only promotes todo/draft parents, so a child
+// going in-progress must not reopen a deferred ancestor.
 func TestAutoActivationSkipsDeferredParent(t *testing.T) {
 	resolver, core := setupTestResolverWithAutoActivation(t)
 	ctx := context.Background()
 
-	// Parent epic is deferred (parked); child task is todo.
+	// Parent epic is deferred (set aside); child task is todo.
 	parent := createTestNib(t, core, "epic-def", "Deferred Epic", "deferred")
 	parent.Type = "epic"
 	if err := core.Update(parent, nil); err != nil {
@@ -4260,13 +4260,13 @@ func TestAutoActivationSkipsDeferredParent(t *testing.T) {
 		t.Fatalf("UpdateNib failed: %v", err)
 	}
 
-	// Parent must remain deferred (parked), not auto-activated.
+	// Parent must remain deferred, not auto-activated.
 	updatedParent, err := resolver.Query().Nib(ctx, "epic-def")
 	if err != nil {
 		t.Fatalf("Query parent failed: %v", err)
 	}
 	if updatedParent.Status != "deferred" {
-		t.Errorf("expected parent status 'deferred' (parked), got %q", updatedParent.Status)
+		t.Errorf("expected parent status 'deferred', got %q", updatedParent.Status)
 	}
 }
 

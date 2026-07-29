@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"testing"
 
@@ -408,7 +409,7 @@ func TestBuildPlan_ActiveFlag(t *testing.T) {
 // rootCmd's singleton state.
 func resetPlanFlags() {
 	planJSON = false
-	planActive = false
+	planOpen = false
 	planWithOrder = false
 	planCmd.Flags().Visit(func(f *pflag.Flag) {
 		f.Changed = false
@@ -505,6 +506,77 @@ func TestPlanCommand_JSON_FlagDoesNotChangeShape(t *testing.T) {
 	}
 }
 
+// planOpenFixtureFiles returns a parent epic and one child per side of the
+// --open filter: a todo child (open), a completed and a deferred child (both
+// closed), and a child with no `status:` key at all — the case where plan's
+// exclude-closed rule and list/rel's -s open include-list disagree.
+func planOpenFixtureFiles() map[string]string {
+	return map[string]string{
+		"e1--my-epic.md":        "---\ntitle: My Epic\nstatus: in-progress\ntype: epic\n---\n",
+		"t1--todo-task.md":      "---\ntitle: Todo Task\nstatus: todo\ntype: task\nparent: e1\norder: a0\n---\n",
+		"t2--done-task.md":      "---\ntitle: Done Task\nstatus: completed\ntype: task\nparent: e1\norder: a1\n---\n",
+		"t3--deferred-task.md":  "---\ntitle: Deferred Task\nstatus: deferred\ntype: task\nparent: e1\norder: a2\n---\n",
+		"t4--no-status-task.md": "---\ntitle: No Status Task\ntype: task\nparent: e1\norder: a3\n---\n",
+	}
+}
+
+// TestPlanCommand_Open_ExcludesClosedChildren drives --open through Cobra
+// rather than calling buildPlan with a bare bool, so it covers the wiring from
+// the registered flag to buildPlan's openOnly parameter — an unbound flag
+// leaves every child in the output and fails the closed-child assertions.
+//
+// It also pins the statusless child, which is where plan --open parts company
+// with list/rel's --open: filterOpen removes only known-closed statuses, so ""
+// survives here while -s open's include-list drops it. plan's --open usage
+// string states that, and this is what holds it.
+func TestPlanCommand_Open_ExcludesClosedChildren(t *testing.T) {
+	nibsDir := setupPlanCobraTest(t, planOpenFixtureFiles())
+
+	// Baseline: without --open every child is listed, so the "absent" checks
+	// below are about the filter and not about a missing fixture nib.
+	rootCmd.SetArgs([]string{"--nibs-path", nibsDir, "plan", "e1"})
+	var baseErr error
+	baseOut := captureStdout(t, func() { baseErr = rootCmd.Execute() })
+	if baseErr != nil {
+		t.Fatalf("plan e1: %v", baseErr)
+	}
+	for _, want := range []string{"Todo Task", "Done Task", "Deferred Task", "No Status Task"} {
+		if !strings.Contains(baseOut, want) {
+			t.Fatalf("baseline output missing %q; fixture is wrong\nfull output:\n%s", want, baseOut)
+		}
+	}
+
+	// Reset between runs (Cobra holds parsed-flag state on rootCmd).
+	resetPlanFlags()
+	rootCmd.SetArgs([]string{"--nibs-path", nibsDir, "plan", "e1", "--open"})
+	var openErr error
+	openOut := captureStdout(t, func() { openErr = rootCmd.Execute() })
+	if openErr != nil {
+		t.Fatalf("plan e1 --open: %v", openErr)
+	}
+
+	// Positions are renumbered over the surviving children.
+	wantLines := []string{
+		"1. [todo] Todo Task (t1)",
+	}
+	for _, want := range wantLines {
+		if !strings.Contains(openOut, want) {
+			t.Errorf("plan --open output missing line %q\nfull output:\n%s", want, openOut)
+		}
+	}
+	// "No Status Task" is excluded, and that is the behavior change: --open now
+	// selects the open status *group* on plan, the same set list's --open
+	// selects, rather than "everything not closed". A nib with no `status:`
+	// holds "" and is in neither group, so it is not open. Before this it was
+	// kept here and dropped by list, which made one flag name mean two
+	// memberships — see TestOpenFlagAgreesBetweenListAndPlan.
+	for _, unwanted := range []string{"Done Task", "Deferred Task", "No Status Task"} {
+		if strings.Contains(openOut, unwanted) {
+			t.Errorf("plan --open should exclude closed child %q\nfull output:\n%s", unwanted, openOut)
+		}
+	}
+}
+
 func TestPlanCommand_NoFlag_HumanOutputUnchanged(t *testing.T) {
 	// Regression guard: without --with-order, human rows must NOT include
 	// the `order=<key>` suffix. The default human format is
@@ -536,5 +608,59 @@ func TestPlanCommand_NoFlag_HumanOutputUnchanged(t *testing.T) {
 	// And the `order=` token must be absent entirely.
 	if strings.Contains(out, "order=") {
 		t.Errorf("human output should NOT contain 'order=' without --with-order, got:\n%s", out)
+	}
+}
+
+// TestOpenFlagAgreesBetweenListAndPlan pins the two commands to one meaning of
+// --open. They diverged on exactly one input — a nib whose front matter carries
+// no `status:`, which holds "" and is therefore in neither the open nor the
+// closed group: list's --open (an include-list) dropped it while plan's
+// exclude-closed rule kept it.
+//
+// The statusless row is the whole test. On well-formed data the include-list and
+// exclude-closed readings select identical sets, so nothing inside the declared
+// vocabulary can tell the two implementations apart.
+func TestOpenFlagAgreesBetweenListAndPlan(t *testing.T) {
+	cfg := config.Default()
+
+	statusless := &nib.Nib{ID: "zz00", Title: "Statusless", Type: "task"}
+	open := &nib.Nib{ID: "op01", Title: "Open", Type: "task", Status: "todo"}
+	closed := &nib.Nib{ID: "cl01", Title: "Closed", Type: "task", Status: "completed"}
+	all := []*nib.Nib{statusless, open, closed}
+
+	// What plan --open keeps.
+	gotPlan := map[string]bool{}
+	for _, b := range filterOpen(all, cfg) {
+		gotPlan[b.ID] = true
+	}
+
+	// What list --open keeps: the open group, exactly as resolveStatusFilter
+	// expands it for -s open.
+	include, _, _, err := resolveStatusFilter(cfg, statusFilterInput{Open: true})
+	if err != nil {
+		t.Fatalf("resolveStatusFilter: %v", err)
+	}
+	inList := map[string]bool{}
+	for _, name := range include {
+		inList[name] = true
+	}
+	gotList := map[string]bool{}
+	for _, b := range all {
+		if inList[b.Status] {
+			gotList[b.ID] = true
+		}
+	}
+
+	if !reflect.DeepEqual(gotPlan, gotList) {
+		t.Errorf("plan --open kept %v, list --open kept %v — one flag name, two memberships", gotPlan, gotList)
+	}
+	if gotPlan["zz00"] {
+		t.Errorf("plan --open kept the statusless nib; the open group does not contain %q", "")
+	}
+	if !gotPlan["op01"] {
+		t.Error("plan --open dropped an open nib — the filter is not merely agreeing by returning nothing")
+	}
+	if gotPlan["cl01"] {
+		t.Error("plan --open kept a closed nib")
 	}
 }
