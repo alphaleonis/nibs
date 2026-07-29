@@ -154,15 +154,27 @@ func checkboxMark(line string) (byte, bool) {
 	return t[3], true
 }
 
-// filterOpen removes closed nibs (deferred, completed, scrapped). This is the
-// open-*default* rule (exclude closed), not the open *group* (-s open) that
-// list/rel's --open selects: a nib whose status is outside the vocabulary (a
-// hand-edited file with no `status:` holds "") is kept here but dropped by
-// -s open — see cmd/statusfilter.go.
+// filterOpen keeps the nibs carrying an open status — the same open *group*
+// that `-s open` expands to, which is what `--open` means on list and rel.
+//
+// It is membership in OpenStatusNames rather than !IsClosedStatus, and the two
+// differ on exactly one input: a nib whose status is outside the vocabulary (a
+// hand-edited file with no `status:` holds "") is in neither group, so it is
+// dropped here and would be kept by an exclude-closed rule. Matching list is
+// the point — one flag name meant two different memberships, and the narrow
+// case where they diverge is precisely the malformed data nobody checks.
+//
+// Note this is NOT list's open-by-*default* rule, which is exclude-closed and
+// therefore does keep a statusless nib. Passing --open is a narrowing on both
+// commands; see cmd/statusfilter.go.
 func filterOpen(nibs []*nib.Nib, cfg *config.Config) []*nib.Nib {
+	open := make(map[string]bool, len(cfg.OpenStatusNames()))
+	for _, name := range cfg.OpenStatusNames() {
+		open[name] = true
+	}
 	var result []*nib.Nib
 	for _, b := range nibs {
-		if !cfg.IsClosedStatus(b.Status) {
+		if open[b.Status] {
 			result = append(result, b)
 		}
 	}
@@ -232,7 +244,7 @@ func renderPlanHuman(plan *Plan) error {
 
 func init() {
 	planCmd.Flags().BoolVar(&planJSON, "json", false, "Output as JSON")
-	planCmd.Flags().BoolVar(&planOpen, "open", false, "Exclude closed items (deferred/completed/scrapped) — unlike list/rel's --open this is exclude-closed, not -s open, so an item with no status is kept")
+	planCmd.Flags().BoolVar(&planOpen, "open", false, "Show only open items — shorthand for the open status group, the same set list/rel's --open selects")
 	planCmd.Flags().BoolVar(&planWithOrder, "with-order", false, "Show each item's order key in the default (non-JSON) output (JSON always includes order)")
 	rootCmd.AddCommand(planCmd)
 }

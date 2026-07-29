@@ -274,11 +274,10 @@ func TestListCommand_PresenceFlagMutualExclusion(t *testing.T) {
 // The empty --parent row is a separate guard: `--parent ""` used to fall
 // through the `!= ""` check that decides whether to set the filter, leaving the
 // flag with no effect and no diagnostic.
-// presenceFixtureOpenDefault is what `list` returns from presenceFixture when no
-// filter applies. It omits ns, whose front matter carries no `status:` — the
-// open-by-default status filter drops it, and that happens whether or not any
-// other filter is given.
-func presenceFixtureOpenDefault() map[string]bool {
+// presenceFixtureAll is every nib in presenceFixture — what `list` returns when
+// no filter applies. All four are todo, so the open-by-default status filter
+// keeps the whole set and this is also the unfiltered answer.
+func presenceFixtureAll() map[string]bool {
 	return map[string]bool{"pa": true, "ca": true, "cb": true, "rb": true}
 }
 
@@ -316,7 +315,7 @@ func TestListCommand_ParentIDVersusPresenceFlags(t *testing.T) {
 		// -S is deliberately NOT in that group: an empty search means "no keyword
 		// filter", which is a real thing to want, and the web reads it the same
 		// way. It must keep returning the unfiltered set rather than erroring.
-		{"empty -S is accepted as no search", []string{"-S", ""}, presenceFixtureOpenDefault(), false, nil},
+		{"empty -S is accepted as no search", []string{"-S", ""}, presenceFixtureAll(), false, nil},
 	}
 
 	for _, tt := range tests {
