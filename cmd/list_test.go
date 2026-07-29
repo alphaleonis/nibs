@@ -274,6 +274,14 @@ func TestListCommand_PresenceFlagMutualExclusion(t *testing.T) {
 // The empty --parent row is a separate guard: `--parent ""` used to fall
 // through the `!= ""` check that decides whether to set the filter, leaving the
 // flag with no effect and no diagnostic.
+// presenceFixtureOpenDefault is what `list` returns from presenceFixture when no
+// filter applies. It omits ns, whose front matter carries no `status:` — the
+// open-by-default status filter drops it, and that happens whether or not any
+// other filter is given.
+func presenceFixtureOpenDefault() map[string]bool {
+	return map[string]bool{"pa": true, "ca": true, "cb": true, "rb": true}
+}
+
 func TestListCommand_ParentIDVersusPresenceFlags(t *testing.T) {
 	// pa's children in presenceFixture. This is the baseline `--parent pa`
 	// returns on its own, and what the redundant-but-satisfiable rows have to
@@ -300,6 +308,15 @@ func TestListCommand_ParentIDVersusPresenceFlags(t *testing.T) {
 		// The empty --parent message points at --no-parent, the flag that does
 		// select root-level nibs.
 		{"empty --parent", []string{"--parent", ""}, nil, true, []string{"--parent", "--no-parent"}},
+		// The other id-valued filters reject an empty value for the same reason:
+		// there is no nib whose id is "", so the usual source is an unset shell
+		// variable, and returning every nib would be a lie about the result.
+		{"empty --mentions", []string{"--mentions", ""}, nil, true, []string{"--mentions", "nib id"}},
+		{"empty --mentioned-by", []string{"--mentioned-by", ""}, nil, true, []string{"--mentioned-by", "nib id"}},
+		// -S is deliberately NOT in that group: an empty search means "no keyword
+		// filter", which is a real thing to want, and the web reads it the same
+		// way. It must keep returning the unfiltered set rather than erroring.
+		{"empty -S is accepted as no search", []string{"-S", ""}, presenceFixtureOpenDefault(), false, nil},
 	}
 
 	for _, tt := range tests {

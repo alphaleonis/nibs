@@ -143,23 +143,38 @@ Search Syntax (--search/-S):
 			ExcludeTags:     listNoTag,
 		}
 
+		// -S "" is deliberately NOT rejected: an empty search string has a real
+		// meaning — "no keyword filter" — so `nibs list -S "$q"` with an empty q
+		// is a reasonable thing to write. The web reads it the same way
+		// (Toolbar.svelte sends `search: value || undefined`), so rejecting it
+		// here would make the CLI stricter than the UI for no gain.
 		if listSearch != "" {
 			filter.Search = &listSearch
 		}
-		// An explicitly empty --parent is rejected rather than ignored: the
-		// `!= ""` test below is what decides whether the filter is applied, so
-		// `--parent ""` would otherwise be dropped without a word. It is not
-		// given the "move to root" meaning it carries on `nibs mv` and
-		// `nibs set` (both write an empty parent, detaching the nib), because
-		// --no-parent already selects the parentless nibs here.
+		// The id-valued string filters reject an explicit empty value instead of
+		// ignoring it. Each is applied by a `!= ""` test, so an empty value would
+		// otherwise be dropped without a word — and the usual way one arrives is
+		// an unset shell variable (`--parent "$ID"`), where silently returning
+		// every nib is a lie about the result rather than a wider answer.
 		//
-		// The other string filters below (--mentions, --mentioned-by, -S) still
-		// ignore an explicit empty value. Only --parent is guarded, because only
-		// --parent has a sibling flag whose meaning an empty value can be
-		// mistaken for.
+		// Unlike -S above, an empty id has no benign reading: there is no nib
+		// whose id is "". That is the line between the two groups, not whether a
+		// sibling flag exists.
+		//
+		// --parent is not given the "move to root" meaning it carries on
+		// `nibs mv` and `nibs set` (both write an empty parent, detaching the
+		// nib), because --no-parent already selects the parentless nibs here.
 		if cmd.Flags().Changed("parent") && listParentID == "" {
 			return reportErr(listJSON, output.ErrValidation,
 				fmt.Errorf(`--parent was given an empty value; use --no-parent to select nibs that have no parent`))
+		}
+		if cmd.Flags().Changed("mentions") && listMentions == "" {
+			return reportErr(listJSON, output.ErrValidation,
+				fmt.Errorf(`--mentions was given an empty value; it takes a nib id`))
+		}
+		if cmd.Flags().Changed("mentioned-by") && listMentionedBy == "" {
+			return reportErr(listJSON, output.ErrValidation,
+				fmt.Errorf(`--mentioned-by was given an empty value; it takes a nib id`))
 		}
 		if listParentID != "" {
 			filter.ParentID = &listParentID
