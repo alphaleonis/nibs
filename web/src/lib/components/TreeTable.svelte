@@ -604,7 +604,7 @@
     <span class="text-foreground">No nibs match this filter</span>
     <span class="max-w-md text-center">
       It combines {activeHierarchyTokens.length} hierarchy relationships —
-      {#each activeHierarchyTokens as token, i (token)}{#if i > 0}, {/if}<code class="rounded bg-muted px-1 py-0.5 text-foreground">{token}</code>{/each}{" "}
+      {#each activeHierarchyTokens as token, i (token)}{#if i > 0}, {/if}<code class="whitespace-nowrap rounded bg-muted px-1 py-0.5 text-foreground">{token}</code>{/each}{" "}
       — and a nib has to satisfy every one of them. Clearing them is one way to
       widen the result.
     </span>

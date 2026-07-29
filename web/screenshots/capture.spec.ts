@@ -100,6 +100,25 @@ test("filter box — relationship token highlighting", async ({ page }) => {
   });
 });
 
+// Hierarchy-specific empty state: two tree predicates ANDed together can carve out
+// a slice nothing occupies, and the generic "No nibs found" left no way to see the
+// shape of the dead end. Names the active relationships and offers the escape hatch.
+// `ancestor:X descendant:X` is one of the measured zero-row combinations.
+test("table — hierarchy empty state", async ({ page }) => {
+  await page.addInitScript(() => {
+    localStorage.setItem(
+      "nibs-filter-preferences",
+      JSON.stringify({
+        filter: { ancestorId: "tnib-e001", descendantId: "tnib-e001" },
+        viewLevel: "milestones",
+      }),
+    );
+  });
+  await page.goto("/");
+  await expect(page.getByTestId("empty-hierarchy")).toBeVisible({ timeout: 10_000 });
+  await shot(page, "table-empty-hierarchy");
+});
+
 // Autocomplete dropdown must render ABOVE the table rows below it (not behind).
 // Viewport shot (not cropped) so the dropdown's stacking vs the table is visible.
 test("filter box — completion dropdown over table rows", async ({ page }) => {
