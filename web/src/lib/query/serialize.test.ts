@@ -1,5 +1,6 @@
 import { describe, it, expect } from "vitest";
 import { parseQuery, serializeQuery } from "./index";
+import { REL_TOKEN_ORDER } from "./relations";
 import type { NibFilter } from "../types";
 
 // Round-trip a canonical string through parse → serialize.
@@ -213,6 +214,21 @@ describe("serializeQuery — status group canonicalization", () => {
 });
 
 describe("round-trip identity — serializeQuery(parseQuery(s)) === s", () => {
+  // Every rel/existence spelling on its own, generated from REL_TOKEN_ORDER so a
+  // token added there is covered without anyone remembering to hand-author a string
+  // for it. These pin RECOGNITION ↔ SERIALIZATION per token. The multi-token strings
+  // in `canonical` below stay hand-authored on purpose: they are what pins the
+  // ORDER, and an expectation generated from the same array would agree with any
+  // order the array happened to be in.
+  const relSingles = REL_TOKEN_ORDER.map((t) => (t.kind === "id" ? `${t.name}:tnib-1` : t.token));
+
+  it("covers every ordered rel/existence token", () => {
+    // Guards the generated corpus against silently shrinking to nothing — an empty
+    // `relSingles` would emit zero `it` blocks and the suite would still pass.
+    expect(relSingles.length).toBe(REL_TOKEN_ORDER.length);
+    expect(relSingles.length).toBeGreaterThan(10);
+  });
+
   const canonical = [
     "",
     "type:bug",
@@ -249,24 +265,9 @@ describe("round-trip identity — serializeQuery(parseQuery(s)) === s", () => {
     "-ancestor:tnib-1",
     "-is:blocked",
     "type:bug login -ancestor:tnib-1",
-    // relationship-id scalars (incl. hyphenated field-names)
-    "parent:tnib-1",
-    // hierarchy scalars — no has/no spellings exist for these
-    "ancestor:tnib-1",
-    "descendant:tnib-1",
-    "sibling:tnib-1",
-    "blocking:tnib-1",
-    "blocked-by:tnib-1",
-    "mentions:tnib-1",
-    "mentioned-by:tnib-1",
-    // existence/state booleans (incl. hyphenated + is:blocked)
-    "has:parent",
-    "no:parent",
-    "has:blocking",
-    "no:blocking",
-    "has:blocked-by",
-    "no:blocked-by",
-    "is:blocked",
+    // every relationship-id scalar (incl. the hyphenated field-names) and every
+    // existence/state boolean, one token per string — see `relSingles` above
+    ...relSingles,
     // metadata + rel/existence + search interleaved, in canonical order
     "type:bug parent:tnib-1 has:blocking is:blocked mentions:tnib-2 login",
     // rel/existence "monster": every rel token in canonical dimension order

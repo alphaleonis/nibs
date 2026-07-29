@@ -7,11 +7,10 @@ export type CompletionKind = "field" | "value" | "tag";
 //
 // Completion offers the whole query language, not just the five metadata facets.
 // The relationship and existence halves are derived from `REL_TOKEN_ORDER`, which is
-// NOT what recognition reads: `recognizeRelationship` reads `REL_ID_FIELDS` and
-// `EXISTENCE_TOKENS`, two further hand-maintained literals. Parity between the three
-// is asserted by `relations.test.ts` — the type system does not enforce it, so adding
-// a spelling to one and not the others is a real (test-caught, not compile-caught)
-// mistake. They are deliberately NOT added to `FIELD_SPECS`: `has`/`no`/`is` are not
+// also what recognition reads: `recognizeRelationship` goes through `REL_ID_FIELDS`
+// and `EXISTENCE_TOKENS`, and both are built from that one array. Offering a
+// spelling the parser rejects therefore requires breaking `relations.ts` itself.
+// They are deliberately NOT added to `FIELD_SPECS`: `has`/`no`/`is` are not
 // metadata fields, and `parse.ts`, `serialize.ts` and `spans.ts` all read that
 // structure — a pseudo-field there would change parsing and highlighting too.
 

@@ -19,6 +19,14 @@ import type { QueryFilter } from "./fields";
 // - Negation is a metadata-only feature: a leading `-` disqualifies the token from
 //   rel/existence recognition. Such a token is PARKED as invalid rather than routed
 //   to free text — see `recognizeRelationship` for why free text is unsafe here.
+//
+// `REL_TOKEN_ORDER` below is the single source of truth for the whole vocabulary:
+// the two recognition lookups are derived from it, and compile-time guards at the
+// foot of this file make a missing entry a type error. Before that, the spellings
+// lived in three hand-maintained literals, and a token present in recognition but
+// absent from the ordered array was silently DROPPED on every canonicalization —
+// box blur, `localStorage`, and the `?q=` URL param all round-trip through
+// `serializeQuery`, which walks that array to decide what to emit.
 
 /** Scalar relationship-id fields, keyed by their token field-name. */
 export type RelIdKey =
@@ -31,58 +39,31 @@ export type RelIdKey =
   | "mentionsId"
   | "mentionedById";
 
+/** The existence dimensions that carry BOTH a `has:` and a `no:` spelling. Split
+ *  out of `ExistenceKey` (not duplicated from it) so a guard below can require
+ *  both halves — `is:blocked` has no `no:` twin and must not be held to that. */
+type PairedExistenceKey = "hasParent" | "hasBlocking" | "hasBlockedBy";
+
 /** Tri-state existence/state fields. Each is one field with two token
  *  spellings: `has:parent` writes true, `no:parent` writes false. The backend
  *  filter collapsed the `no*` twins into these same fields, so the grammar keeps
  *  both words while the model holds one value. */
-export type ExistenceKey = "hasParent" | "hasBlocking" | "hasBlockedBy" | "isBlocked";
+export type ExistenceKey = PairedExistenceKey | "isBlocked";
 
-// Token field-name → scalar-id NibFilter key. Includes the hyphenated names.
-// Exported so the rel-token typeahead detector (relComplete.ts) recognizes the
-// same field-names without duplicating the set.
-//
-// Each name states the relationship the MATCHED nib holds toward the supplied id,
-// never the reverse — so `ancestor:X` keeps nibs whose ancestor is X (X's
-// descendants at any depth) and `descendant:X` keeps nibs whose descendant is X
-// (X's ancestor chain). This mirrors the server `NibFilter` fields exactly.
-export const REL_ID_FIELDS: Record<string, RelIdKey> = {
-  parent: "parentId",
-  ancestor: "ancestorId",
-  descendant: "descendantId",
-  sibling: "siblingId",
-  blocking: "blockingId",
-  "blocked-by": "blockedById",
-  mentions: "mentionsId",
-  "mentioned-by": "mentionedById",
-};
-
-// Full (lowercased) existence token → the field it writes and the value it
-// writes there. Enumerated, so invalid combos (`has:mentions`, `no:mentions`,
-// `is:foo`) simply are not present. The `has:`/`no:` pair for one dimension
-// targets the SAME field with opposite values — writing them as two fields is
-// what the backend filter model retired.
-//
-// Exported for the parity test only (`relations.test.ts`): this and `REL_ID_FIELDS`
-// are what recognition reads, `REL_TOKEN_ORDER` is what completion and serialization
-// read, and nothing in the type system ties the three together.
-export const EXISTENCE_TOKENS: Record<string, { field: ExistenceKey; value: boolean }> = {
-  "has:parent": { field: "hasParent", value: true },
-  "no:parent": { field: "hasParent", value: false },
-  "has:blocking": { field: "hasBlocking", value: true },
-  "no:blocking": { field: "hasBlocking", value: false },
-  "has:blocked-by": { field: "hasBlockedBy", value: true },
-  "no:blocked-by": { field: "hasBlockedBy", value: false },
-  "is:blocked": { field: "isBlocked", value: true },
-};
-
-// Canonical serialization order for the rel/existence block. Grouped
-// by relationship dimension — hierarchy (parent + ancestor, descendant, sibling),
-// blocking, blocked-by (+ is:blocked), mentions, mentioned-by — with each
-// dimension's id token first, then its has/no existence tokens. This order is fixed
-// so `serializeQuery(parseQuery(s)) === s` holds for any canonical string containing
-// these tokens; moving an entry silently changes what counts as canonical.
+/** One entry of the rel/existence vocabulary: a relationship-id token
+ *  (`parent:<id>`), or one spelling of an existence token (`has:parent`). */
 export type RelTokenSpec =
-  | { kind: "id"; field: RelIdKey; name: string }
+  | {
+      kind: "id";
+      field: RelIdKey;
+      /** The token field-name, including the hyphenated ones (`blocked-by`).
+       *
+       *  Each name states the relationship the MATCHED nib holds toward the supplied
+       *  id, never the reverse — so `ancestor:X` keeps nibs whose ancestor is X (X's
+       *  descendants at any depth) and `descendant:X` keeps nibs whose descendant is
+       *  X (X's ancestor chain). This mirrors the server `NibFilter` fields exactly. */
+      name: string;
+    }
   | {
       kind: "bool";
       field: ExistenceKey;
@@ -90,12 +71,24 @@ export type RelTokenSpec =
        *  colon: `complete.ts` splits on the first colon to derive the completable
        *  existence words and the values each accepts. A colon-less token would put a
        *  truncated word in the completion menu and insert something the parser
-       *  rejects. `relations.test.ts` pins every entry against `EXISTENCE_TOKENS`. */
+       *  rejects. `relations.test.ts` pins the shape of every entry. */
       token: string;
       value: boolean;
     };
 
-export const REL_TOKEN_ORDER: readonly RelTokenSpec[] = [
+// Canonical serialization order for the rel/existence block, and the source the
+// recognition lookups below are built from. Grouped by relationship dimension —
+// hierarchy (parent + ancestor, descendant, sibling), blocking, blocked-by
+// (+ is:blocked), mentions, mentioned-by — with each dimension's id token first,
+// then its has/no existence tokens. This order is fixed so
+// `serializeQuery(parseQuery(s)) === s` holds for any canonical string containing
+// these tokens; moving an entry silently changes what counts as canonical.
+//
+// `as const` is load-bearing: it keeps each entry's literal types, which is what
+// lets the exhaustiveness guards at the foot of this file see WHICH fields the
+// array covers. `satisfies` still checks every entry against `RelTokenSpec`, so a
+// misspelled field name remains a compile error.
+export const REL_TOKEN_ORDER = [
   { kind: "id", field: "parentId", name: "parent" },
   { kind: "bool", field: "hasParent", token: "has:parent", value: true },
   { kind: "bool", field: "hasParent", token: "no:parent", value: false },
@@ -114,7 +107,44 @@ export const REL_TOKEN_ORDER: readonly RelTokenSpec[] = [
   { kind: "bool", field: "isBlocked", token: "is:blocked", value: true },
   { kind: "id", field: "mentionsId", name: "mentions" },
   { kind: "id", field: "mentionedById", name: "mentioned-by" },
-];
+] as const satisfies readonly RelTokenSpec[];
+
+/** The literal-preserving entry type of `REL_TOKEN_ORDER`, narrowed to one kind.
+ *  Reading `["field"]` off this yields exactly the fields the array covers, which
+ *  is what the exhaustiveness guards compare the unions against. */
+type OrderedSpec<K extends RelTokenSpec["kind"]> = Extract<
+  (typeof REL_TOKEN_ORDER)[number],
+  { kind: K }
+>;
+
+// Token field-name → scalar-id NibFilter key. Includes the hyphenated names.
+// Keyed by the BARE field-name (`blocked-by`), because `matchToken` splits the
+// token on its first colon and looks the left half up here.
+//
+// Derived from `REL_TOKEN_ORDER` rather than written out, so recognition accepts
+// exactly what completion offers and serialization emits. Exported so the rel-token
+// typeahead detector (relComplete.ts) recognizes the same field-names without
+// duplicating the set.
+export const REL_ID_FIELDS: Record<string, RelIdKey> = Object.fromEntries(
+  REL_TOKEN_ORDER.flatMap((spec): [string, RelIdKey][] =>
+    spec.kind === "id" ? [[spec.name, spec.field]] : [],
+  ),
+);
+
+// Full (lowercased) existence token → the field it writes and the value it
+// writes there. Keyed by the WHOLE token (`has:parent`), because `matchToken`
+// tries the untouched token here before falling back to the colon split.
+//
+// Enumerated by `REL_TOKEN_ORDER`, so invalid combos (`has:mentions`, `no:mentions`,
+// `is:foo`) simply are not present. The `has:`/`no:` pair for one dimension targets
+// the SAME field with opposite values — writing them as two fields is what the
+// backend filter model retired.
+export const EXISTENCE_TOKENS: Record<string, { field: ExistenceKey; value: boolean }> =
+  Object.fromEntries(
+    REL_TOKEN_ORDER.flatMap((spec): [string, { field: ExistenceKey; value: boolean }][] =>
+      spec.kind === "bool" ? [[spec.token, { field: spec.field, value: spec.value }]] : [],
+    ),
+  );
 
 /** Recognition result: a scalar-id assignment, a boolean-existence assignment, or
  *  a rejected token the caller must park in its invalid-token sidecar. */
@@ -171,8 +201,37 @@ function matchToken(token: string): Extract<RelMatch, { kind: "id" | "bool" }> |
   return undefined;
 }
 
-// Compile-time guard: every ordered token's field must be a key the box owns
+// --- Compile-time guards -------------------------------------------------------
+
+// Membership: every field the vocabulary names must be a key the box owns
 // (QueryFilter). If QueryFilter loses one of these keys, this fails to typecheck.
+// Note this constrains the two UNIONS, not `REL_TOKEN_ORDER` — the array's own
+// entries are checked against `RelTokenSpec` by its `satisfies` clause.
 type _RelKeysAreQueryFilterKeys = (RelIdKey | ExistenceKey) extends keyof QueryFilter ? true : never;
 const _relKeysCheck: _RelKeysAreQueryFilterKeys = true;
 void _relKeysCheck;
+
+// Exhaustiveness: every field in the two unions must appear in `REL_TOKEN_ORDER`.
+// This is the guard that closes the silent-drop hole. Deleting an entry from the
+// array otherwise compiles cleanly — recognition still accepts nothing extra,
+// nothing indexes the missing key — and the token then vanishes on every
+// canonicalization, because `serializeQuery` emits only what the array lists.
+type _OrderCoversRelIds = RelIdKey extends OrderedSpec<"id">["field"] ? true : never;
+const _orderCoversRelIds: _OrderCoversRelIds = true;
+void _orderCoversRelIds;
+
+type _OrderCoversExistence = ExistenceKey extends OrderedSpec<"bool">["field"] ? true : never;
+const _orderCoversExistence: _OrderCoversExistence = true;
+void _orderCoversExistence;
+
+// Both spellings of a paired dimension. The guard above matches on the FIELD, and
+// `has:parent`/`no:parent` share one — so dropping just the `no:` half slips past
+// it while still silently losing that spelling. These two check the halves apart.
+type ExistenceFieldsWriting<V extends boolean> = Extract<OrderedSpec<"bool">, { value: V }>["field"];
+type _PairsKeepHas = PairedExistenceKey extends ExistenceFieldsWriting<true> ? true : never;
+const _pairsKeepHas: _PairsKeepHas = true;
+void _pairsKeepHas;
+
+type _PairsKeepNo = PairedExistenceKey extends ExistenceFieldsWriting<false> ? true : never;
+const _pairsKeepNo: _PairsKeepNo = true;
+void _pairsKeepNo;
