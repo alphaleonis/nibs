@@ -27,8 +27,9 @@ const DEFAULTS: FilterPreferences = {
 //     status include-list. That old include-list rewrite was for the retired
 //     hide-completed toggle; folding it in here would mangle a `-status:X`
 //     negation on reload (see nibs-grvv Phase-2 note).
-// serializeQuery ignores non-box NibFilter fields (relationships/existence),
-// which were never settable from the box, so nothing shareable is dropped.
+// serializeQuery covers EVERY NibFilter field — the box has owned the
+// relationship and existence keys since phase 5 — so a legacy structured blob
+// translates in full, with nothing dropped.
 function parseQueryField(parsed: Record<string, unknown>): string {
   if (typeof parsed.q === "string") return parsed.q;
   const legacy = parsed.filter;

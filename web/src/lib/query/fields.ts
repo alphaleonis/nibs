@@ -21,6 +21,9 @@ export type QueryFilter = Pick<
   | "search"
   // Relationship-id scalars (phase 5).
   | "parentId"
+  | "ancestorId"
+  | "descendantId"
+  | "siblingId"
   | "blockingId"
   | "blockedById"
   | "mentionsId"

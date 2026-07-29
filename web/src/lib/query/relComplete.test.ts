@@ -28,6 +28,21 @@ describe("relTokenValueContext — recognizes a rel-id token value", () => {
     expect(at("mentions:foo")?.field).toBe("mentionsId");
   });
 
+  // The hierarchy tokens are ordinary rel-id tokens, so they get the same async
+  // id/title typeahead for free — the detector reads REL_ID_FIELDS.
+  it("ancestor:foo → ancestorId", () => {
+    expect(at("ancestor:foo")?.field).toBe("ancestorId");
+  });
+
+  it("descendant:foo → descendantId", () => {
+    expect(at("descendant:foo")?.field).toBe("descendantId");
+  });
+
+  it("sibling:tni → siblingId + fragment 'tni' + replace range", () => {
+    const ctx = relTokenValueContext("sibling:tni", 11);
+    expect(ctx).toEqual({ field: "siblingId", name: "sibling", fragment: "tni", start: 8, end: 11 });
+  });
+
   it("takes the WHOLE post-colon run as the fragment even when the caret is mid-value", () => {
     // Caret between 'b' and 'c' of "abcd"; the scalar value has no comma split.
     const ctx = relTokenValueContext("parent:abcd", 9);

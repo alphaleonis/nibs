@@ -12,14 +12,20 @@ import type { QueryFilter } from "./fields";
 //   non-empty (lowercased) value — pattern-only, no existence validation.
 // - Existence tokens (`has:parent`, `is:blocked`, …) set a BOOLEAN field to `true`.
 //   The valid set is fixed and enumerated (parent/blocking/blocked-by + is:blocked);
-//   anything else (`has:mentions`, `is:foo`) is NOT recognized and falls through to
-//   free-text `search` in the caller.
+//   anything else (`has:mentions`, `has:ancestor`, `is:foo`) is NOT recognized and
+//   falls through to free-text `search` in the caller. Existence spellings exist
+//   only where the server has a matching predicate, which is why the hierarchy
+//   tokens beyond `parent` have none.
 // - Negation is a metadata-only feature: a leading `-` disqualifies the token from
-//   rel/existence recognition (it routes to free text instead).
+//   rel/existence recognition. Such a token is PARKED as invalid rather than routed
+//   to free text — see `recognizeRelationship` for why free text is unsafe here.
 
 /** Scalar relationship-id fields, keyed by their token field-name. */
 export type RelIdKey =
   | "parentId"
+  | "ancestorId"
+  | "descendantId"
+  | "siblingId"
   | "blockingId"
   | "blockedById"
   | "mentionsId"
@@ -33,9 +39,17 @@ export type ExistenceKey = "hasParent" | "hasBlocking" | "hasBlockedBy" | "isBlo
 
 // Token field-name → scalar-id NibFilter key. Includes the hyphenated names.
 // Exported so the rel-token typeahead detector (relComplete.ts) recognizes the
-// same five field-names without duplicating the set.
+// same field-names without duplicating the set.
+//
+// Each name states the relationship the MATCHED nib holds toward the supplied id,
+// never the reverse — so `ancestor:X` keeps nibs whose ancestor is X (X's
+// descendants at any depth) and `descendant:X` keeps nibs whose descendant is X
+// (X's ancestor chain). This mirrors the server `NibFilter` fields exactly.
 export const REL_ID_FIELDS: Record<string, RelIdKey> = {
   parent: "parentId",
+  ancestor: "ancestorId",
+  descendant: "descendantId",
+  sibling: "siblingId",
   blocking: "blockingId",
   "blocked-by": "blockedById",
   mentions: "mentionsId",
@@ -57,11 +71,12 @@ const EXISTENCE_TOKENS: Record<string, { field: ExistenceKey; value: boolean }> 
   "is:blocked": { field: "isBlocked", value: true },
 };
 
-// Canonical serialization order for the rel/existence block (design 2.4). Grouped
-// by relationship dimension — parent, blocking, blocked-by (+ is:blocked), mentions,
-// mentioned-by — with each dimension's id token first, then its has/no existence
-// tokens. This order is fixed so `serializeQuery(parseQuery(s)) === s` holds for any
-// canonical string containing these tokens.
+// Canonical serialization order for the rel/existence block. Grouped
+// by relationship dimension — hierarchy (parent + ancestor, descendant, sibling),
+// blocking, blocked-by (+ is:blocked), mentions, mentioned-by — with each
+// dimension's id token first, then its has/no existence tokens. This order is fixed
+// so `serializeQuery(parseQuery(s)) === s` holds for any canonical string containing
+// these tokens; moving an entry silently changes what counts as canonical.
 export type RelTokenSpec =
   | { kind: "id"; field: RelIdKey; name: string }
   | { kind: "bool"; field: ExistenceKey; token: string; value: boolean };
@@ -70,6 +85,12 @@ export const REL_TOKEN_ORDER: readonly RelTokenSpec[] = [
   { kind: "id", field: "parentId", name: "parent" },
   { kind: "bool", field: "hasParent", token: "has:parent", value: true },
   { kind: "bool", field: "hasParent", token: "no:parent", value: false },
+  // The rest of the hierarchy dimension, kept adjacent to parent so the tree
+  // questions read together. None of these has a has/no spelling — the server has
+  // no matching existence predicate, and the grammar only offers what it can answer.
+  { kind: "id", field: "ancestorId", name: "ancestor" },
+  { kind: "id", field: "descendantId", name: "descendant" },
+  { kind: "id", field: "siblingId", name: "sibling" },
   { kind: "id", field: "blockingId", name: "blocking" },
   { kind: "bool", field: "hasBlocking", token: "has:blocking", value: true },
   { kind: "bool", field: "hasBlocking", token: "no:blocking", value: false },
@@ -81,22 +102,44 @@ export const REL_TOKEN_ORDER: readonly RelTokenSpec[] = [
   { kind: "id", field: "mentionedById", name: "mentioned-by" },
 ];
 
-/** Recognition result: a scalar-id assignment or a boolean-existence assignment. */
+/** Recognition result: a scalar-id assignment, a boolean-existence assignment, or
+ *  a rejected token the caller must park in its invalid-token sidecar. */
 export type RelMatch =
   | { kind: "id"; field: RelIdKey; value: string }
-  | { kind: "bool"; field: ExistenceKey; value: boolean };
+  | { kind: "bool"; field: ExistenceKey; value: boolean }
+  | { kind: "invalid"; token: string };
 
 /**
  * Recognize a single token as a relationship-id or existence/state token, or
  * `undefined` when it is neither (the caller then routes it to free text).
  *
- * A leading `-` (negation) is not a rel/existence feature, so such tokens are
- * rejected here and fall through to free text. Field-names and id values are
- * lowercased, matching the rest of the query language.
+ * A leading `-` (negation) is not a rel/existence feature — there is no server
+ * predicate for "not in this subtree". A negated token that would OTHERWISE be
+ * recognized is returned as `invalid` so the caller parks it: it must not reach
+ * free text, because free text is handed to the server's Bleve query string, where
+ * `-ancestor:x` is valid MUST-NOT syntax over a field Bleve does not index (only
+ * id/slug/title/body are). The clause then excludes nothing and the query silently
+ * degrades to match-all — `-ancestor:<id>` returns the entire dataset, and in a
+ * compound query like `type:bug -ancestor:<id>` the surviving `type` filter makes
+ * the result look plausible. Parked, it is flagged in the box and round-trips
+ * verbatim. A negated token that is NOT a rel/existence spelling (`-title:foo`,
+ * `-has:mentions`) still falls to free text, where Bleve's syntax is the point.
+ *
+ * Field-names and id values are lowercased, matching the rest of the query language.
  */
 export function recognizeRelationship(token: string): RelMatch | undefined {
-  if (token.startsWith("-")) return undefined;
+  if (token.startsWith("-")) {
+    return matchToken(token.slice(1))
+      ? { kind: "invalid", token: token.toLowerCase() }
+      : undefined;
+  }
+  return matchToken(token);
+}
 
+/** The positive half of recognition, shared by the plain and negated paths: the
+ *  negated path only needs to know WHETHER the rest of the token is a rel or
+ *  existence spelling, so this never yields an `invalid` result. */
+function matchToken(token: string): Extract<RelMatch, { kind: "id" | "bool" }> | undefined {
   const lower = token.toLowerCase();
   const existence = EXISTENCE_TOKENS[lower];
   if (existence) return { kind: "bool", field: existence.field, value: existence.value };

@@ -100,6 +100,37 @@ describe("serializeQuery — relationship + existence tokens (phase 5)", () => {
   });
 });
 
+describe("serializeQuery — hierarchy relationship tokens", () => {
+  it("emits each hierarchy scalar as its own token", () => {
+    expect(serializeQuery({ filter: { ancestorId: "tnib-1" } })).toBe("ancestor:tnib-1");
+    expect(serializeQuery({ filter: { descendantId: "tnib-2" } })).toBe("descendant:tnib-2");
+    expect(serializeQuery({ filter: { siblingId: "tnib-3" } })).toBe("sibling:tnib-3");
+  });
+
+  it("groups the hierarchy tokens with parent, before the blocking dimension", () => {
+    // Placement in REL_TOKEN_ORDER is what makes the round-trip identity hold, so
+    // pin it: the four hierarchy tokens form one contiguous block after parent's
+    // has/no pair, and blocking still follows them. Supplied out of order on
+    // purpose so only the fixed order can produce this string.
+    const filter: NibFilter = {
+      blockingId: "b1",
+      siblingId: "s1",
+      descendantId: "d1",
+      ancestorId: "a1",
+      hasParent: true,
+      parentId: "p1",
+    };
+    expect(serializeQuery({ filter })).toBe(
+      "parent:p1 has:parent ancestor:a1 descendant:d1 sibling:s1 blocking:b1",
+    );
+  });
+
+  it("places the hierarchy tokens after metadata and before free-text search", () => {
+    const filter: NibFilter = { status: ["todo"], ancestorId: "a1", search: "login" };
+    expect(serializeQuery({ filter })).toBe("status:todo ancestor:a1 login");
+  });
+});
+
 describe("round-trip identity — serializeQuery(parseQuery(s)) === s", () => {
   const canonical = [
     "",
@@ -124,8 +155,18 @@ describe("round-trip identity — serializeQuery(parseQuery(s)) === s", () => {
     "status:banana",
     "type:bug status:banana",
     "type:bug login status:banana",
+    // a negated rel/existence token is parked as invalid (negation is metadata-only)
+    // and preserved verbatim, so the user can see and edit what was rejected
+    "-parent:tnib-1",
+    "-ancestor:tnib-1",
+    "-is:blocked",
+    "type:bug login -ancestor:tnib-1",
     // relationship-id scalars (incl. hyphenated field-names)
     "parent:tnib-1",
+    // hierarchy scalars — no has/no spellings exist for these
+    "ancestor:tnib-1",
+    "descendant:tnib-1",
+    "sibling:tnib-1",
     "blocking:tnib-1",
     "blocked-by:tnib-1",
     "mentions:tnib-1",
@@ -146,6 +187,11 @@ describe("round-trip identity — serializeQuery(parseQuery(s)) === s", () => {
     // you write "has:parent no:parent", which was self-contradictory. One of each
     // spelling appears below so both directions round-trip.
     "parent:tnib-1 has:parent blocking:tnib-2 no:blocking blocked-by:tnib-3 has:blocked-by is:blocked mentions:tnib-4 mentioned-by:tnib-5",
+    // the same monster with the three hierarchy tokens in their canonical slot,
+    // which only round-trips if REL_TOKEN_ORDER groups them right after parent
+    "parent:tnib-1 has:parent ancestor:tnib-6 descendant:tnib-7 sibling:tnib-8 blocking:tnib-2 no:blocking blocked-by:tnib-3 has:blocked-by is:blocked mentions:tnib-4 mentioned-by:tnib-5",
+    // hierarchy tokens interleaved with metadata + search, in canonical order
+    "type:epic ancestor:tnib-1 descendant:tnib-2 sibling:tnib-3 login",
     // full monster: every field positive + negative, search, then two invalids
     "type:bug -type:task priority:high -priority:low status:todo -status:completed estimate:m -estimate:xl tags:auth -tags:wip login words status:banana -priority:pink",
   ];

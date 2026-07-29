@@ -279,7 +279,8 @@
     "tags", "excludeTags",
     "search",
     // Relationship-id scalars.
-    "parentId", "blockingId", "blockedById", "mentionsId", "mentionedById",
+    "parentId", "ancestorId", "descendantId", "siblingId",
+    "blockingId", "blockedById", "mentionsId", "mentionedById",
     // Existence/state booleans.
     "hasParent", "hasBlocking", "hasBlockedBy", "isBlocked",
   ] as const satisfies readonly (keyof QueryFilter)[];

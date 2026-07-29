@@ -70,6 +70,20 @@ describe("tokenizeSpans — per-token classification", () => {
     // --- unknown field → the whole token is free text ---
     { name: "title:foo (unknown field) is free text", input: "title:foo", expected: [{ start: 0, end: 9, kind: "freetext" }] },
 
+    // --- relationship tokens are not metadata fields, so the highlighter treats
+    // the whole token as free text and never marks it `invalid` — the red wavy
+    // underline is reserved for a KNOWN field's rejected value. The three hierarchy
+    // tokens share that treatment with parent:/blocking:/mentions:.
+    //
+    // CHARACTERIZATION, NOT A GUARD: these four cases record what the highlighter
+    // does today, not what it should do. A recognized relationship token rendering
+    // identically to unrecognized noise is the tracked display gap `nibs-kjug`;
+    // when that lands, these expectations change rather than break.
+    { name: "ancestor:tnib-1 is free text, never invalid", input: "ancestor:tnib-1", expected: [{ start: 0, end: 15, kind: "freetext" }] },
+    { name: "descendant:tnib-1 is free text, never invalid", input: "descendant:tnib-1", expected: [{ start: 0, end: 17, kind: "freetext" }] },
+    { name: "sibling:tnib-1 is free text, never invalid", input: "sibling:tnib-1", expected: [{ start: 0, end: 14, kind: "freetext" }] },
+    { name: "parent:tnib-1 is free text too (same rel-token treatment)", input: "parent:tnib-1", expected: [{ start: 0, end: 13, kind: "freetext" }] },
+
     // --- bare words → free text, separated by whitespace gaps ---
     {
       name: "bare words are free text with a whitespace gap",
@@ -163,6 +177,7 @@ describe("tokenizeSpans — full contiguous coverage", () => {
     "  leading and   inner   spaces  ",
     "-tags:wip,later status:todo login flow",
     "type:bug status:banana login",
+    "type:epic ancestor:tnib-1 descendant:tnib-2 sibling:tnib-3 login",
     "TYPE:BUG Priority:High -STATUS:Completed",
     "tags:frontend,1bad,backend",
   ];

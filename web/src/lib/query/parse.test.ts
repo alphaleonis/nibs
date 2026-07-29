@@ -198,10 +198,32 @@ describe("parseQuery — relationship + existence tokens (phase 5)", () => {
     { name: "has:mentioned-by is not a field → free text", input: "has:mentioned-by", expected: { filter: { search: "has:mentioned-by" }, invalidTokens: [] } },
     { name: "is:<other> is not a field → free text", input: "is:foo", expected: { filter: { search: "is:foo" }, invalidTokens: [] } },
 
-    // --- negation is metadata-only: negated rel/existence → free text ---
-    { name: "-blocking:x → free text (not a negation feature)", input: "-blocking:x", expected: { filter: { search: "-blocking:x" }, invalidTokens: [] } },
-    { name: "-has:parent → free text", input: "-has:parent", expected: { filter: { search: "-has:parent" }, invalidTokens: [] } },
-    { name: "-parent:x → free text", input: "-parent:x", expected: { filter: { search: "-parent:x" }, invalidTokens: [] } },
+    // --- negation is metadata-only: a negated rel/existence token is PARKED as
+    // invalid, not routed to free text. Free text reaches the server's Bleve query
+    // string, where `-parent:x` is valid syntax over a field Bleve does not index —
+    // the MUST-NOT clause excludes nothing and the query degrades to match-all, so
+    // the user gets the whole dataset back with no signal the token did nothing.
+    // Parking flags it in the box and round-trips it verbatim instead.
+    { name: "-blocking:x → invalid (not a negation feature)", input: "-blocking:x", expected: { filter: {}, invalidTokens: ["-blocking:x"] } },
+    { name: "-has:parent → invalid", input: "-has:parent", expected: { filter: {}, invalidTokens: ["-has:parent"] } },
+    { name: "-parent:x → invalid", input: "-parent:x", expected: { filter: {}, invalidTokens: ["-parent:x"] } },
+    { name: "-blocked-by:x → invalid (hyphenated field-name)", input: "-blocked-by:x", expected: { filter: {}, invalidTokens: ["-blocked-by:x"] } },
+    { name: "-mentions:x → invalid", input: "-mentions:x", expected: { filter: {}, invalidTokens: ["-mentions:x"] } },
+    { name: "-mentioned-by:x → invalid", input: "-mentioned-by:x", expected: { filter: {}, invalidTokens: ["-mentioned-by:x"] } },
+    { name: "-no:parent → invalid", input: "-no:parent", expected: { filter: {}, invalidTokens: ["-no:parent"] } },
+    { name: "-is:blocked → invalid", input: "-is:blocked", expected: { filter: {}, invalidTokens: ["-is:blocked"] } },
+    { name: "negated rel token is lowercased when parked", input: "-PARENT:TNIB-ABC", expected: { filter: {}, invalidTokens: ["-parent:tnib-abc"] } },
+    // A negated token that is NOT a rel/existence spelling still falls to free
+    // text — parking is scoped to tokens the grammar would otherwise recognize.
+    { name: "-has:mentions → free text (no such existence token)", input: "-has:mentions", expected: { filter: { search: "-has:mentions" }, invalidTokens: [] } },
+    { name: "-parent: (empty value) → free text", input: "-parent:", expected: { filter: { search: "-parent:" }, invalidTokens: [] } },
+    // The valid tokens around a parked one still apply, so the results narrow —
+    // they just do not carry the exclusion the user asked for.
+    {
+      name: "a parked negation leaves the rest of the query working",
+      input: "type:bug -ancestor:tnib-1 login",
+      expected: { filter: { type: ["bug"], search: "login" }, invalidTokens: ["-ancestor:tnib-1"] },
+    },
 
     // --- empty value is not a rel token (kept as free text, like metadata) ---
     { name: "blocking: with empty value is free text", input: "blocking:", expected: { filter: { search: "blocking:" }, invalidTokens: [] } },
@@ -234,4 +256,64 @@ describe("parseQuery — relationship + existence tokens (phase 5)", () => {
     // invalidTokens the way a bad enum value does.
     expect(parseQuery("blocking:whatever").invalidTokens).toEqual([]);
   });
+});
+
+describe("parseQuery — hierarchy relationship tokens", () => {
+  // Directions mirror the server `NibFilter` fields exactly: `ancestorId: X` keeps
+  // nibs with X in their parent chain (X's descendants), `descendantId: X` keeps
+  // nibs with X in their subtree (X's ancestor chain), `siblingId: X` keeps nibs
+  // sharing X's parent. The token name states the relationship the MATCHED nib
+  // holds toward the supplied id, same as `parent:`/`blocking:`/`mentions:`.
+  const cases: { name: string; input: string; expected: ParsedQuery }[] = [
+    // --- each token routes to its own scalar field, NOT to free-text search ---
+    { name: "ancestor:<id>", input: "ancestor:tnib-1", expected: { filter: { ancestorId: "tnib-1" }, invalidTokens: [] } },
+    { name: "descendant:<id>", input: "descendant:tnib-1", expected: { filter: { descendantId: "tnib-1" }, invalidTokens: [] } },
+    { name: "sibling:<id>", input: "sibling:tnib-1", expected: { filter: { siblingId: "tnib-1" }, invalidTokens: [] } },
+
+    // --- case-insensitive field-name, lowercased id value ---
+    { name: "uppercase hierarchy field + value lowercased", input: "ANCESTOR:TNIB-ABC", expected: { filter: { ancestorId: "tnib-abc" }, invalidTokens: [] } },
+
+    // --- scalar last-wins on repeat, like every other rel-id token ---
+    { name: "repeated sibling overwrites (last wins)", input: "sibling:a sibling:b", expected: { filter: { siblingId: "b" }, invalidTokens: [] } },
+
+    // --- NO existence spellings: the server has no has/no predicate for these, so
+    // the tokens must fall through to free text rather than invent a filter field.
+    { name: "has:ancestor is not a field → free text", input: "has:ancestor", expected: { filter: { search: "has:ancestor" }, invalidTokens: [] } },
+    { name: "no:ancestor is not a field → free text", input: "no:ancestor", expected: { filter: { search: "no:ancestor" }, invalidTokens: [] } },
+    { name: "has:descendant is not a field → free text", input: "has:descendant", expected: { filter: { search: "has:descendant" }, invalidTokens: [] } },
+    { name: "has:sibling is not a field → free text", input: "has:sibling", expected: { filter: { search: "has:sibling" }, invalidTokens: [] } },
+    { name: "no:sibling is not a field → free text", input: "no:sibling", expected: { filter: { search: "no:sibling" }, invalidTokens: [] } },
+
+    // --- negation is metadata-only: parked as invalid rather than sent to Bleve,
+    // where `-ancestor:x` silently matches everything (see the phase-5 block above)
+    { name: "-ancestor:x → invalid", input: "-ancestor:x", expected: { filter: {}, invalidTokens: ["-ancestor:x"] } },
+    { name: "-descendant:x → invalid", input: "-descendant:x", expected: { filter: {}, invalidTokens: ["-descendant:x"] } },
+    { name: "-sibling:x → invalid", input: "-sibling:x", expected: { filter: {}, invalidTokens: ["-sibling:x"] } },
+
+    // --- empty value is not a token ---
+    { name: "descendant: with empty value is free text", input: "descendant:", expected: { filter: { search: "descendant:" }, invalidTokens: [] } },
+
+    // --- all three coexist with metadata, the other rel tokens, and free text ---
+    {
+      name: "hierarchy tokens combine with metadata, parent, and free text",
+      input: "type:epic parent:tnib-0 ancestor:tnib-1 descendant:tnib-2 sibling:tnib-3 login",
+      expected: {
+        filter: {
+          type: ["epic"],
+          parentId: "tnib-0",
+          ancestorId: "tnib-1",
+          descendantId: "tnib-2",
+          siblingId: "tnib-3",
+          search: "login",
+        },
+        invalidTokens: [],
+      },
+    },
+  ];
+
+  for (const { name, input, expected } of cases) {
+    it(name, () => {
+      expect(parseQuery(input)).toEqual(expected);
+    });
+  }
 });

@@ -4,7 +4,7 @@ import { REL_ID_FIELDS, type RelIdKey } from "./relations";
 //
 // This is the PURE, synchronous half: given the box text + caret, decide whether
 // the caret sits inside a relationship-id token's VALUE (`parent:<here>`,
-// `blocking:<here>`, `blocked-by:<here>`, `mentions:<here>`, `mentioned-by:<here>`).
+// `ancestor:<here>`, `blocking:<here>`, … — every field-name in `REL_ID_FIELDS`).
 // The Toolbar uses the result to fire a debounced search and offer candidate nibs.
 //
 // Kept SEPARATE from `getCompletion` (which stays metadata-only) because the data

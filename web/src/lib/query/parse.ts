@@ -5,9 +5,11 @@ import type { RelIdKey, ExistenceKey } from "./relations";
 
 // The structured result of parsing filter-box text: the box-owned `filter` slice
 // plus an `invalidTokens` sidecar carrying known-field tokens whose value failed
-// validation (e.g. `status:banana`). Invalid tokens contribute nothing to the
-// filter but are preserved verbatim (lowercased, minus kept) so the box can flag
-// them and round-trip them through canonicalization and dropdown edits.
+// validation (e.g. `status:banana`) and negated rel/existence tokens, which the
+// grammar recognizes but cannot express (e.g. `-ancestor:x`). Invalid tokens
+// contribute nothing to the filter but are preserved verbatim (lowercased, minus
+// kept) so the box can flag them and round-trip them through canonicalization and
+// dropdown edits.
 export interface ParsedQuery {
   filter: QueryFilter;
   invalidTokens: string[];
@@ -35,7 +37,8 @@ export const FIELD_TOKEN = /^(-?)([A-Za-z]+):(.+)$/;
  *   last-wins on repeat; existence token (`has:parent`, `no:parent`, `is:blocked`,
  *   …) → a tri-state boolean field. `has:` writes true and `no:` writes false on
  *   the SAME field, so the pair is last-wins too. Neither is negatable — a
- *   leading `-` routes to free text.
+ *   leading `-` on an otherwise-recognized rel/existence token parks it in
+ *   `invalidTokens` (free text would reach Bleve and match everything).
  * - unknown `field:value` (including Bleve `title:`/`body:`) and bare words →
  *   free-text `search`.
  *
@@ -69,7 +72,11 @@ export function parseQuery(text: string): ParsedQuery {
       const rel = recognizeRelationship(token);
       if (rel) {
         if (rel.kind === "id") relIds.set(rel.field, rel.value);
-        else existence.set(rel.field, rel.value);
+        else if (rel.kind === "bool") existence.set(rel.field, rel.value);
+        // A negated rel/existence token. It contributes nothing to the filter and
+        // must NOT become free text (that would reach Bleve and silently match
+        // everything — see recognizeRelationship); park it so the box flags it.
+        else invalidTokens.push(rel.token);
       } else {
         words.push(token);
       }

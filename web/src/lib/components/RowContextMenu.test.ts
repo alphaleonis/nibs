@@ -774,6 +774,12 @@ describe("RowContextMenu", () => {
       { label: "Items blocking this", field: "blockingId" },
       { label: "Items this blocks", field: "blockedById" },
       { label: "Children of this", field: "parentId" },
+      // Hierarchy: the label names the RESULT set, the field names the relationship
+      // the results hold toward this row. `ancestorId` keeps nibs whose ancestor is
+      // this row — its descendants — and `descendantId` keeps this row's ancestors.
+      { label: "Descendants of this", field: "ancestorId" },
+      { label: "Ancestors of this", field: "descendantId" },
+      { label: "Siblings of this", field: "siblingId" },
       { label: "Items mentioning this", field: "mentionsId" },
       { label: "Items this mentions", field: "mentionedById" },
     ];
@@ -819,23 +825,37 @@ describe("RowContextMenu", () => {
       expect(filter).toEqual({ status: ["todo"], parentId: "nibs-target" });
     });
 
-    it("ANDs a different-kind rel filter without disturbing an existing status filter", async () => {
-      let filter: Record<string, unknown> = { status: ["todo"] };
-      const onfilterrelated = (field: RelIdKey, id: string) => {
-        filter = { ...filter, [field]: id };
-      };
+    // A different-dimension key survives the pick, so the item narrows the current
+    // query instead of resetting it. One blocking field and one hierarchy field
+    // share this case rather than repeating the pattern per dimension. The real
+    // composition lives in App.svelte's handler and is covered end-to-end in
+    // App.test.ts; this only pins the (field, id) pair the menu emits. Items are
+    // reached by LABEL TEXT, like directionCases, so a swapped mapping cannot hide
+    // behind a field-derived testid that moves with it.
+    const composeCases: { label: string; field: RelIdKey }[] = [
+      { label: "Items blocking this", field: "blockingId" },
+      { label: "Descendants of this", field: "ancestorId" },
+    ];
 
-      renderMenu({ nib: makeNib({ id: "nibs-target" }), onfilterrelated });
+    for (const { label, field } of composeCases) {
+      it(`"${label}" ANDs onto the current filter without disturbing other facets`, async () => {
+        let filter: Record<string, unknown> = { status: ["todo"], parentId: "old-parent" };
+        const onfilterrelated = (f: RelIdKey, id: string) => {
+          filter = { ...filter, [f]: id };
+        };
 
-      await waitFor(() => {
-        expect(screen.getByTestId("ctx-filter-related-trigger")).toBeInTheDocument();
+        renderMenu({ nib: makeNib({ id: "nibs-target" }), onfilterrelated });
+
+        await waitFor(() => {
+          expect(screen.getByTestId("ctx-filter-related-trigger")).toBeInTheDocument();
+        });
+
+        await user.pointer({ target: screen.getByTestId("ctx-filter-related-trigger") });
+        await user.click(await screen.findByText(label));
+
+        expect(filter).toEqual({ status: ["todo"], parentId: "old-parent", [field]: "nibs-target" });
       });
-
-      await user.pointer({ target: screen.getByTestId("ctx-filter-related-trigger") });
-      await user.click(await screen.findByTestId("ctx-filter-blockingId"));
-
-      expect(filter).toEqual({ status: ["todo"], blockingId: "nibs-target" });
-    });
+    }
   });
 
   // ─── Menu does not render when open=false or nib=null ─────────

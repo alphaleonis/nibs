@@ -498,6 +498,35 @@ describe("App", () => {
     }
   });
 
+  it("a 'Filter related' pick composes onto the live query rather than replacing it", async () => {
+    // The only test that drives the REAL handleFilterRelated: it right-clicks a row,
+    // opens the submenu, clicks a hierarchy item, and reads the outcome off the query
+    // box (which renders the canonical serialization of prefs.filter). RowContextMenu's
+    // own tests supply a composing handler of their own, so they stay green even if
+    // App's handler is rewritten to `prefs.filter = { [field]: id }` — this one turns
+    // red, because the seeded status facet and free text would be dropped.
+    const user = userEvent.setup({ pointerEventsCheck: 0 });
+    window.history.replaceState(null, "", "/?q=status%3Atodo+login");
+
+    const { container } = render(App);
+    const box = screen.getByTestId("filter-keyword") as HTMLInputElement;
+    expect(box.value).toBe("status:todo login");
+
+    // "Test nib" — a todo task, so the seeded status facet keeps its row visible.
+    const row = container.querySelector("tr[data-nib-id='nibs-abc1']") as HTMLElement;
+    await user.pointer({ target: row, keys: "[MouseRight]" });
+
+    // bits-ui opens the submenu on pointerenter of its trigger.
+    await user.pointer({ target: await screen.findByTestId("ctx-filter-related-trigger") });
+    await user.click(await screen.findByText("Descendants of this"));
+
+    // The picked token lands in its canonical slot BETWEEN the surviving status
+    // facet and the surviving free text — a replace would leave "ancestor:nibs-abc1".
+    await waitFor(() => {
+      expect(box.value).toBe("status:todo ancestor:nibs-abc1 login");
+    });
+  });
+
   it("opens detail panel when a title is clicked", async () => {
     const user = userEvent.setup();
     render(App);

@@ -6,14 +6,15 @@ import { REL_TOKEN_ORDER } from "./relations";
  * Render the box-owned filter fields plus the invalid-token sidecar to canonical
  * query text.
  *
- * Order (design 2.4):
+ * Order:
  *  1. Metadata — type, priority, status, estimate, tags — each emitting its
  *     positive `field:v1,v2` token then its negative `-field:v1,v2` token. Values
  *     are ordered canonically (enum-declaration order for the four enums,
  *     alphabetical for tags) and comma-joined.
  *  2. Relationship/existence tokens in the fixed `REL_TOKEN_ORDER` — grouped by
- *     relationship dimension (parent, blocking, blocked-by + is:blocked, mentions,
- *     mentioned-by), id token before has/no within each dimension.
+ *     relationship dimension (hierarchy: parent + ancestor/descendant/sibling, then
+ *     blocking, blocked-by + is:blocked, mentions, mentioned-by), id token before
+ *     has/no within each dimension.
  *  3. Free-text `search`.
  *  4. Preserved `invalidTokens`, flagged, at the very end.
  *

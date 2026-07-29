@@ -1002,6 +1002,86 @@ describe("Toolbar — query box metadata grammar", () => {
   });
 });
 
+// The three hierarchy tokens are ordinary rel-id scalars, so the box OWNS their
+// keys: typing one sets the field, clearing the box drops it, and a filter composed
+// by the row context menu's "Filter related" items snaps to canonical text.
+describe("Toolbar — query box hierarchy tokens", () => {
+  it("typing each hierarchy token sets its scalar filter field", async () => {
+    const prefs = new Preferences();
+    render(Toolbar, { prefs, oncreatenew: vi.fn() });
+
+    await user.type(
+      screen.getByTestId("filter-keyword"),
+      "ancestor:tnib-1 descendant:tnib-2 sibling:tnib-3",
+    );
+
+    expect(prefs.filter.ancestorId).toBe("tnib-1");
+    expect(prefs.filter.descendantId).toBe("tnib-2");
+    expect(prefs.filter.siblingId).toBe("tnib-3");
+    // Recognized as tokens, so none of them leaks into free text.
+    expect(prefs.filter.search).toBeUndefined();
+  });
+
+  it("the clear button drops the hierarchy fields (the box owns those keys)", async () => {
+    const prefs = new Preferences();
+    prefs.filter = { status: ["todo"], ancestorId: "tnib-1", descendantId: "tnib-2", siblingId: "tnib-3" };
+    render(Toolbar, { prefs, oncreatenew: vi.fn() });
+
+    expect((screen.getByTestId("filter-keyword") as HTMLInputElement).value).toBe(
+      "status:todo ancestor:tnib-1 descendant:tnib-2 sibling:tnib-3",
+    );
+
+    await user.click(screen.getByTestId("filter-keyword-clear"));
+
+    expect(prefs.filter.ancestorId).toBeUndefined();
+    expect(prefs.filter.descendantId).toBeUndefined();
+    expect(prefs.filter.siblingId).toBeUndefined();
+    expect((screen.getByTestId("filter-keyword") as HTMLInputElement).value).toBe("");
+  });
+
+  it("flags a negated hierarchy token instead of silently sending it to the server", async () => {
+    // `-ancestor:x` has no server predicate. Routed to free text it would reach
+    // Bleve's `-field:value` syntax over an unindexed field, excluding nothing and
+    // returning the whole dataset with no signal. It is parked as invalid instead:
+    // the filter stays clean, the warning chip names the token, and the text
+    // survives blur so the user can fix it.
+    const prefs = new Preferences();
+    render(Toolbar, { prefs, oncreatenew: vi.fn() });
+
+    const input = screen.getByTestId("filter-keyword") as HTMLInputElement;
+    await user.type(input, "type:bug -ancestor:tnib-1");
+
+    expect(prefs.filter.type).toEqual(["bug"]);
+    // Neither applied as a filter nor leaked into the free-text search.
+    expect(prefs.filter.ancestorId).toBeUndefined();
+    expect(prefs.filter.search).toBeUndefined();
+    expect(screen.getByTestId("filter-invalid")).toHaveTextContent("-ancestor:tnib-1");
+
+    await user.tab();
+    expect(input.value).toBe("type:bug -ancestor:tnib-1");
+  });
+
+  it("re-canonicalizes the box when prefs.filter gains a hierarchy key from outside", async () => {
+    // Scope: the Toolbar half only — that an externally-mutated prefs.filter is
+    // re-serialized into the box, with the new token in its canonical slot. It does
+    // NOT verify that the "Filter related" menu composes rather than replaces; that
+    // is App.svelte's handler, driven end-to-end by App.test.ts's "'Filter related'
+    // pick composes onto the live query" case. Assigning the composed object here
+    // would make the composition claim true by construction.
+    const prefs = new Preferences();
+    prefs.filter = { status: ["todo"], search: "login" };
+    render(Toolbar, { prefs, oncreatenew: vi.fn() });
+
+    const input = screen.getByTestId("filter-keyword") as HTMLInputElement;
+    expect(input.value).toBe("status:todo login");
+
+    prefs.filter = { ...prefs.filter, ancestorId: "tnib-9" };
+    await tick();
+
+    expect(input.value).toBe("status:todo ancestor:tnib-9 login");
+  });
+});
+
 describe("Toolbar — invalid token handling", () => {
   it("flags an invalid value, applies only the valid tokens, and preserves the invalid token across blur and a dropdown edit", async () => {
     const prefs = new Preferences();

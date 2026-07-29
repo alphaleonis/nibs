@@ -45,10 +45,22 @@
   // current filter (AND with existing filters; same-kind overwrites). Directions are
   // VERIFIED against the server schema: blockingId selects the row's blockers,
   // blockedById selects what the row blocks.
+  //
+  // Every LABEL names the RESULT set, while the FIELD names the relationship those
+  // results hold toward this row. For parent/ancestor/descendant/blocked-by/
+  // mentioned-by the label therefore reads as the field's inverse; for
+  // blocking/mentions/sibling it reads the SAME, because those field-names already
+  // state the relation from the result's side (and sibling is symmetric). Derive
+  // each label from the field, never from how the pair reads.
+  // `ancestorId` keeps nibs whose ancestor is this row, i.e. its descendants;
+  // `descendantId` keeps nibs whose descendant is this row, i.e. its ancestors.
   const FILTER_RELATIONS: { label: string; field: RelIdKey }[] = [
     { label: "Items blocking this", field: "blockingId" },
     { label: "Items this blocks", field: "blockedById" },
     { label: "Children of this", field: "parentId" },
+    { label: "Descendants of this", field: "ancestorId" },
+    { label: "Ancestors of this", field: "descendantId" },
+    { label: "Siblings of this", field: "siblingId" },
     { label: "Items mentioning this", field: "mentionsId" },
     { label: "Items this mentions", field: "mentionedById" },
   ];

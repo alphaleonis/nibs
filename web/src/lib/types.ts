@@ -24,6 +24,18 @@ export interface NibFilter {
   excludeTags?: string[];
   hasParent?: boolean;
   parentId?: string;
+  // Hierarchy predicates. Each names the relationship the MATCHED nib holds toward
+  // the supplied id, so `ancestorId` selects that nib's descendants and
+  // `descendantId` selects its ancestor chain. The target itself is excluded by the
+  // filter. When the query also carries free text, the server re-adds every match's
+  // ancestors afterwards, so an ancestorId target reappears and a siblingId query
+  // also brings in the shared parent — that completion is what the tree rendering
+  // relies on, not a bug.
+  // siblingId selects nibs sharing the target's parent; a parentless target selects
+  // the other root nibs, matching `nibs rel --rel siblings`.
+  ancestorId?: string;
+  descendantId?: string;
+  siblingId?: string;
   hasBlocking?: boolean;
   blockingId?: string;
   isBlocked?: boolean;
