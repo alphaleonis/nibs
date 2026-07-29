@@ -39,23 +39,3 @@ export function tokenSegments(text: string): TokenSegment[] {
   }
   return segs;
 }
-
-/**
- * Remove the token occupying `[start, end)` from `text` and collapse the now-adjacent
- * whitespace so no leading, trailing, or double space is left behind:
- *  - removing the FIRST token drops its trailing separator (no leading space),
- *  - removing a MIDDLE token leaves exactly one space between the neighbors,
- *  - removing the LAST token drops its leading separator (no trailing space),
- *  - removing the ONLY token yields the empty string.
- *
- * Pure: the caller feeds the result back through the box's parse/emit path, so an
- * invalid token (which lives in the query string like any other) drops out of the
- * invalid sidecar via the re-parse — no special casing here.
- */
-export function removeTokenRange(text: string, start: number, end: number): string {
-  const before = text.slice(0, start).replace(/\s+$/, "");
-  const after = text.slice(end).replace(/^\s+/, "");
-  if (before === "") return after;
-  if (after === "") return before;
-  return `${before} ${after}`;
-}

@@ -1310,10 +1310,12 @@ describe("Toolbar — highlight overlay", () => {
 
 // Phase 7: light token-click affordances over the overlay. A per-token hit-region
 // mirrors the backdrop; clicking a token selects its range in the (native) input,
-// and clicking a token's × splices it out of the query and re-filters. The input
-// stays the sole editor — no contenteditable, no chips. jsdom can't verify pixel
-// alignment (the screenshot does); these pin the behavior: selection offsets, the
-// re-derived filter, and the whitespace-collapse on removal.
+// and Delete then removes it. The input stays the sole editor — no contenteditable,
+// no chips, and deliberately no per-token remove button (the layer is
+// `overflow-hidden` and reserves no width, so an in-box × would overlap the token's
+// own trailing glyph). jsdom can't verify pixel alignment (the screenshot does);
+// these pin the behavior: selection offsets, the re-derived filter, and the absence
+// of any button inside a token.
 describe("Toolbar — token-click affordances", () => {
   // The token wrappers, in DOM/text order (one per non-whitespace filter token).
   function tokens(): HTMLElement[] {
@@ -1340,36 +1342,75 @@ describe("Toolbar — token-click affordances", () => {
     expect(toks[0]).toHaveClass("pointer-events-auto");
     // The layer must reproduce the literal box text character-for-character (tokens
     // wrapped, gaps as inert text) so every glyph aligns with the input — no stray
-    // whitespace text nodes from the markup. (The × icon svg contributes no text.)
+    // whitespace text nodes from the markup.
     expect(layer.textContent).toBe("type:bug status:todo login");
   });
 
-  it("the token × is excluded from the tab order (tabindex=-1)", async () => {
-    // The interaction layer is aria-hidden; the × must not be tabbable, or Tab
-    // from the input would land on invisible, unannounced buttons (one per token).
+  it("a token carries no button — no in-box control overlaps its glyphs", async () => {
+    // The affordance is the whole token span, never a nested control. A button here
+    // could only sit ON the token's own trailing character (the layer is
+    // `overflow-hidden` and reserves no width for one), which reads as corrupted
+    // text — `type:bug` as `type:b×g`. Asserted structurally rather than by a test
+    // id so no such control can reappear under a different name. jsdom applies no
+    // CSS `:hover`, so a hover-revealed button would still be in the DOM here; the
+    // point is that none exists at all.
     const prefs = new Preferences();
     render(Toolbar, { prefs, oncreatenew: vi.fn() });
 
-    await user.type(screen.getByTestId("filter-keyword"), "type:bug");
+    await user.type(screen.getByTestId("filter-keyword"), "type:bug status:banana login");
 
-    expect(within(tokens()[0]).getByTestId("filter-token-remove")).toHaveAttribute("tabindex", "-1");
+    const toks = tokens();
+    expect(toks).toHaveLength(3);
+    for (const tok of toks) {
+      await fireEvent.mouseOver(tok);
+      expect(tok.querySelectorAll("button")).toHaveLength(0);
+      // The surviving removal path is advertised on the token itself.
+      expect(tok).toHaveAttribute("title", "Click to select · Delete to remove");
+      expect(tok).toHaveClass("cursor-pointer");
+    }
   });
 
-  it("removing a token closes an open completion (no stale suggestion)", async () => {
+  it("click-select then Delete removes the token and re-derives the filter", async () => {
+    // The sole per-token removal path now that the × is gone: select the range,
+    // press Delete, and the normal input path re-parses. Covers the middle-token
+    // case, whose stray double space is harmless (the box re-canonicalizes on blur).
     const prefs = new Preferences();
     render(Toolbar, { prefs, oncreatenew: vi.fn() });
 
-    // Type so the last token opens value completion (its apply() closes over
-    // slices of the current text).
-    await user.type(screen.getByTestId("filter-keyword"), "status:todo type:");
-    expect(screen.getByTestId("filter-suggestions")).toBeInTheDocument();
+    const input = screen.getByTestId("filter-keyword") as HTMLInputElement;
+    await user.type(input, "type:bug priority:high status:todo");
 
-    // Remove a DIFFERENT token via its ×; the open completion's offsets are now
-    // stale, so it must be closed rather than left applicable.
-    fireEvent.click(within(tokens()[0]).getByTestId("filter-token-remove"));
+    fireEvent.click(tokens()[1]);
+    await tick();
+    await user.keyboard("{Delete}");
     await tick();
 
-    expect(screen.queryByTestId("filter-suggestions")).not.toBeInTheDocument();
+    expect(input.value).toBe("type:bug  status:todo");
+    expect(prefs.filter.priority).toBeUndefined();
+    expect(prefs.filter.type).toEqual(["bug"]);
+    expect(prefs.filter.status).toEqual(["todo"]);
+  });
+
+  it("click-select then Delete removes an invalid token and clears the invalid sidecar", async () => {
+    // The retired × was the only path that removed an INVALID token, so its
+    // deletion took the sidecar-clearing coverage with it. Removal is now purely
+    // native-input-then-reparse — setInvalidTokens runs unconditionally on every
+    // input event — so this pins the observable outcome rather than a branch.
+    const prefs = new Preferences();
+    render(Toolbar, { prefs, oncreatenew: vi.fn() });
+
+    const input = screen.getByTestId("filter-keyword") as HTMLInputElement;
+    await user.type(input, "type:bug status:banana");
+    expect(screen.getByTestId("filter-invalid")).toHaveTextContent("status:banana");
+
+    fireEvent.click(tokens()[1]);
+    await tick();
+    await user.keyboard("{Delete}");
+    await tick();
+
+    expect(prefs.invalidTokens).toEqual([]);
+    expect(screen.queryByTestId("filter-invalid")).not.toBeInTheDocument();
+    expect(prefs.filter.type).toEqual(["bug"]);
   });
 
   it("clicking a token selects its full range in the input and focuses it", async () => {
@@ -1387,87 +1428,6 @@ describe("Toolbar — token-click affordances", () => {
     expect(input.selectionEnd).toBe(20); // end of "status:todo"
     // The selected range is exactly that token's text.
     expect(input.value.slice(input.selectionStart!, input.selectionEnd!)).toBe("status:todo");
-  });
-
-  it("clicking a token's × removes the FIRST token and drops no leading space", async () => {
-    const prefs = new Preferences();
-    render(Toolbar, { prefs, oncreatenew: vi.fn() });
-
-    const input = screen.getByTestId("filter-keyword") as HTMLInputElement;
-    await user.type(input, "type:bug status:todo login");
-
-    fireEvent.click(within(tokens()[0]).getByTestId("filter-token-remove"));
-    await tick();
-
-    expect(input.value).toBe("status:todo login");
-    // The removed token's contribution is gone from the re-derived filter.
-    expect(prefs.filter.type).toBeUndefined();
-    expect(prefs.filter.status).toEqual(["todo"]);
-    expect(prefs.filter.search).toBe("login");
-  });
-
-  it("clicking a token's × removes a MIDDLE token leaving exactly one space", async () => {
-    const prefs = new Preferences();
-    render(Toolbar, { prefs, oncreatenew: vi.fn() });
-
-    const input = screen.getByTestId("filter-keyword") as HTMLInputElement;
-    await user.type(input, "type:bug priority:high status:todo");
-
-    fireEvent.click(within(tokens()[1]).getByTestId("filter-token-remove"));
-    await tick();
-
-    expect(input.value).toBe("type:bug status:todo");
-    expect(prefs.filter.priority).toBeUndefined();
-    expect(prefs.filter.type).toEqual(["bug"]);
-    expect(prefs.filter.status).toEqual(["todo"]);
-  });
-
-  it("clicking a token's × removes the LAST token leaving no trailing space", async () => {
-    const prefs = new Preferences();
-    render(Toolbar, { prefs, oncreatenew: vi.fn() });
-
-    const input = screen.getByTestId("filter-keyword") as HTMLInputElement;
-    await user.type(input, "type:bug status:todo");
-
-    fireEvent.click(within(tokens()[1]).getByTestId("filter-token-remove"));
-    await tick();
-
-    expect(input.value).toBe("type:bug");
-    expect(prefs.filter.status).toBeUndefined();
-    expect(prefs.filter.type).toEqual(["bug"]);
-  });
-
-  it("clicking an invalid token's × removes it from the box and the invalid sidecar", async () => {
-    const prefs = new Preferences();
-    render(Toolbar, { prefs, oncreatenew: vi.fn() });
-
-    const input = screen.getByTestId("filter-keyword") as HTMLInputElement;
-    await user.type(input, "type:bug status:banana");
-    expect(screen.getByTestId("filter-invalid")).toHaveTextContent("status:banana");
-
-    fireEvent.click(within(tokens()[1]).getByTestId("filter-token-remove"));
-    await tick();
-
-    expect(input.value).toBe("type:bug");
-    expect(prefs.invalidTokens).toEqual([]);
-    expect(screen.queryByTestId("filter-invalid")).not.toBeInTheDocument();
-    expect(prefs.filter.type).toEqual(["bug"]);
-  });
-
-  it("clicking a token's × does not also select the token (stopPropagation)", async () => {
-    const prefs = new Preferences();
-    render(Toolbar, { prefs, oncreatenew: vi.fn() });
-
-    const input = screen.getByTestId("filter-keyword") as HTMLInputElement;
-    await user.type(input, "type:bug status:todo");
-    // Collapse any prior selection so a stray select would be observable.
-    input.setSelectionRange(input.value.length, input.value.length);
-
-    fireEvent.click(within(tokens()[0]).getByTestId("filter-token-remove"));
-    await tick();
-
-    // The token was removed (not merely selected).
-    expect(input.value).toBe("status:todo");
   });
 });
 

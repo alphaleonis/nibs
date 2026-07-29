@@ -114,15 +114,19 @@ test("filter box — completion dropdown over table rows", async ({ page }) => {
   await shot(page, "filter-completion-over-table");
 });
 
-// The hover-× on a token should be an adequately-sized, clearly-separated button.
-test("filter box — token remove button (hover)", async ({ page }) => {
+// Hovering a token tints it as a chip and carries no in-box control: a remove
+// button could only overlap the token's own trailing glyph, so removal is
+// click-to-select + Delete. The screenshot keeps the visual record of the tint.
+test("filter box — token hover affordance", async ({ page }) => {
   await openApp(page);
   const input = page.getByTestId("filter-keyword");
   await input.click();
   await input.pressSequentially("type:bug status:todo");
-  await page.getByTestId("filter-token").first().hover();
-  await expect(page.getByTestId("filter-token-remove").first()).toBeVisible();
-  await page.locator('[role="search"]').screenshot({ path: join(OUT, "filter-token-remove-hover.png") });
+  const token = page.getByTestId("filter-token").first();
+  await token.hover();
+  await expect(token).toHaveAttribute("title", "Click to select · Delete to remove");
+  await expect(token.locator("button")).toHaveCount(0);
+  await page.locator('[role="search"]').screenshot({ path: join(OUT, "filter-token-hover.png") });
 });
 
 // Invalid-token marker must read as an attached element over the table, not as

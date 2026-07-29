@@ -20,9 +20,9 @@ export type { Completion, CompletionKind } from "./complete";
 // filter box's backdrop highlight layer.
 export { tokenizeSpans } from "./spans";
 export type { Span, SpanKind } from "./spans";
-// Token/gap segmentation + token-range removal: the pure boundary + string-mutation
-// helpers the box's click-affordance layer consumes (phase 7).
-export { tokenSegments, removeTokenRange } from "./tokens";
+// Token/gap segmentation: the pure boundary helper the box's click-affordance layer
+// consumes to give each filter token one hit-region (phase 7).
+export { tokenSegments } from "./tokens";
 export type { TokenSegment } from "./tokens";
 // Relationship/existence token support (phase 5). `RelIdKey` is the set of scalar
 // relationship-id NibFilter keys — the field the row context menu's "Filter

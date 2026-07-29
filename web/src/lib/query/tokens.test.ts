@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { tokenSegments, removeTokenRange } from "./index";
+import { tokenSegments } from "./index";
 import type { TokenSegment } from "./index";
 
 describe("tokenSegments — token/gap grouping", () => {
@@ -69,58 +69,4 @@ describe("tokenSegments — token/gap grouping", () => {
       expect(segs.map((s) => input.slice(s.start, s.end)).join("")).toBe(input);
     }
   });
-});
-
-describe("removeTokenRange — splice + whitespace collapse", () => {
-  // Each case removes the token at [start, end) and checks the collapsed result.
-  const cases: { name: string; input: string; start: number; end: number; expected: string }[] = [
-    {
-      name: "first token: no leading space is left",
-      input: "type:bug status:todo login",
-      start: 0,
-      end: 8,
-      expected: "status:todo login",
-    },
-    {
-      name: "middle token: exactly one space between the neighbors",
-      input: "type:bug priority:high status:todo",
-      start: 9,
-      end: 22,
-      expected: "type:bug status:todo",
-    },
-    {
-      name: "last token: no trailing space is left",
-      input: "type:bug status:todo",
-      start: 9,
-      end: 20,
-      expected: "type:bug",
-    },
-    {
-      name: "only token: yields the empty string",
-      input: "type:bug",
-      start: 0,
-      end: 8,
-      expected: "",
-    },
-    {
-      name: "an invalid token adjacent to a valid one collapses like any other",
-      input: "type:bug status:banana",
-      start: 9,
-      end: 22,
-      expected: "type:bug",
-    },
-    {
-      name: "removing the valid token before an invalid one leaves the invalid alone",
-      input: "type:bug status:banana",
-      start: 0,
-      end: 8,
-      expected: "status:banana",
-    },
-  ];
-
-  for (const { name, input, start, end, expected } of cases) {
-    it(name, () => {
-      expect(removeTokenRange(input, start, end)).toBe(expected);
-    });
-  }
 });
