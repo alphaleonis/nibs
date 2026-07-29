@@ -179,7 +179,7 @@ Each nib type has standard sections (pre-filled in the TUI):
 - **research**: `## Question`, `## Findings`, `## Decision`, `## Follow-ups`
 - **feature**: no standard template (features vary too widely)
 
-The closing record is not one of these: `nibs close` writes the summary into a `## Summary` section itself, for every close reason.
+The closing record is not one of these: `nibs close` writes the summary into a `## Summary` section itself, for every close reason, adding an entry rather than replacing what is already there.
 
 ## Editing body content
 
@@ -207,7 +207,7 @@ Use `--children-of ""` for root-level siblings. Position a NEW nib at creation w
 
 ## Closing
 
-`nibs close` takes a nib off the board: it checks children are done (error unless `--force`), writes a `## Summary` from the input channel, propagates to the parent's `## Current Focus`, merges any `## Key Decisions` into the parent, and sets a closed status.
+`nibs close` takes a nib off the board: it checks children are done (error unless `--force`), adds the summary to the nib's `## Summary` as a dated, reason-stamped entry, merges any `## Key Decisions` into the parent, and sets a closed status.
 ```bash
 nibs close <id> --summary -                 # {{.DefaultCloseStatus}} — summary via stdin (or --summary @file.md)
 nibs close <id> --as scrapped --summary -   # a different close reason: {{join .ClosedStatuses ", "}}
@@ -215,6 +215,16 @@ nibs close <id> --summary - --force         # close even if children are incompl
 nibs close <id> --summary - --json          # machine-readable result
 ```
 `--as` takes a **closed status** — the word it names is the word that lands in the nib's `status:`, so there is no second close-reason vocabulary. An open status is a validation error naming the closed ones. Omit `--as` and you get `{{.DefaultCloseStatus}}`.
+
+**`## Summary` accrues.** Each close adds an entry stamped with its reason and the date, so under the `## Summary` heading of a nib closed twice you find both records:
+```markdown
+**Deferred 2026-07-27** — waiting on the upstream provider release
+
+**Scrapped 2026-08-02** — superseded by nibs-abcd
+```
+**Closing an already-closed nib is allowed** — that is how a close reason is revised: the new entry is added beside the old one instead of overwriting it, so the first rationale survives the second close. What a revision does *not* do is retract what an earlier close wrote to the parent — the `Completed <id>: <summary>` line an earlier `--as {{.CompletionCloseStatus}}` close put in the parent's `## Current Focus` (see below) is left standing when the reason is later revised to a different one, so the parent still reads as though the work landed. Correct the parent's `## Current Focus` by hand when that matters. Re-closing under the *same* reason is allowed too: it is how a rationale gets updated.
+
+**What reaches the parent depends on the reason.** `## Key Decisions` merge upward for **every** close reason — why work was set aside is exactly what a later reader looks for in the parent. Only `--as {{.CompletionCloseStatus}}` rewrites the parent's `## Current Focus`: that section says what the latest progress is, and setting work aside or abandoning it is not progress, so overwriting it would erase the record of the last real progress and leave the parent reading as though nothing were happening.
 
 **`nibs set <id> -s <a closed status>` is refused**, and the error names the `close` line to run instead. `set` owns the open statuses; `close` owns the move to a closed one. The reason is the summary: `close` requires one and `set` does not, so allowing both would make the route that records nothing the shorter one. Two boundaries worth knowing:
 - It is a rule about the `set` verb, not about the data. The web UI and the TUI go through GraphQL and can still set any status directly, as can `nibs graphql` and `nibs new -s <a closed status>` (which creates a nib already closed). What the refusal closes is the shortcut that skips the summary on an existing nib.

@@ -7,8 +7,10 @@ import (
 	"slices"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/alphaleonis/nibs/internal/config"
+	"github.com/alphaleonis/nibs/internal/mdsection"
 	"github.com/alphaleonis/nibs/internal/output"
 )
 
@@ -48,6 +50,19 @@ func TestResetCloseFlagsClearsAllState(t *testing.T) {
 	if closeJSON {
 		t.Error("closeJSON not reset")
 	}
+}
+
+// withCloseNow pins the clock `close` stamps its ## Summary entries with, and
+// returns a setter so one test can advance the date between two closes — which
+// is what makes "both entries survived" readable as two distinct records rather
+// than one line repeated. The original clock is restored when the test ends.
+func withCloseNow(t *testing.T, at time.Time) func(time.Time) {
+	t.Helper()
+	original := closeNow
+	t.Cleanup(func() { closeNow = original })
+	now := at
+	closeNow = func() time.Time { return now }
+	return func(next time.Time) { now = next }
 }
 
 func setupCloseTest(t *testing.T, files map[string]string) string {
@@ -273,22 +288,36 @@ func TestCloseParentMissingSections(t *testing.T) {
 	}
 }
 
-func TestCloseAlreadyCompleted(t *testing.T) {
+// TestCloseOnAnAlreadyClosedNibChangesTheReason pins the guard drop: a nib that
+// is already closed can be closed again, and the second close writes the reason
+// asked for. It is only safe because the ## Summary write accrues — with a
+// replacing write this command would silently destroy the first rationale — so
+// the entries kept afterwards are asserted here too, not left to a sibling test.
+func TestCloseOnAnAlreadyClosedNibChangesTheReason(t *testing.T) {
 	nibsDir := setupCloseTest(t, map[string]string{
-		"done-1--finished.md": "---\ntitle: Finished\nstatus: completed\ntype: task\n---\n\nAlready done.\n",
+		"done-1--finished.md": "---\ntitle: Finished\nstatus: completed\ntype: task\n---\n\n## Summary\n\n**Completed 2026-07-20** — shipped it.\n",
 	})
+	withCloseNow(t, time.Date(2026, 7, 27, 9, 0, 0, 0, time.UTC))
 
+	withStdin(t, "Turned out to be wrong.\n")
 	rootCmd.SetArgs([]string{
 		"--nibs-path", nibsDir,
-		"close", "done-1", "--summary", "Closing again",
+		"close", "done-1", "--as", "scrapped", "--summary", "-",
 	})
 
-	err := rootCmd.Execute()
-	if err == nil {
-		t.Fatal("expected error when closing already completed nib")
+	if err := rootCmd.Execute(); err != nil {
+		t.Fatalf("closing an already-closed nib should succeed, got: %v", err)
 	}
-	if !strings.Contains(err.Error(), "already") {
-		t.Errorf("error should mention already completed, got: %s", err)
+
+	content := readNibFile(t, nibsDir, "done-1--finished.md")
+	if !strings.Contains(content, "status: scrapped") {
+		t.Errorf("expected the second close to write status scrapped, got:\n%s", content)
+	}
+	if !strings.Contains(content, "**Completed 2026-07-20** — shipped it.") {
+		t.Errorf("the second close destroyed the first rationale, got:\n%s", content)
+	}
+	if !strings.Contains(content, "**Scrapped 2026-07-27** — Turned out to be wrong.") {
+		t.Errorf("expected the new entry in ## Summary, got:\n%s", content)
 	}
 }
 
@@ -487,5 +516,394 @@ func TestCloseAsFollowsTheClosedFlag(t *testing.T) {
 	content := readNibFile(t, nibsDir, "drv-1--my-task.md")
 	if !strings.Contains(content, "status: abandoned") {
 		t.Errorf("expected status abandoned, got:\n%s", content)
+	}
+}
+
+// TestCloseSummaryEntryIsStampedWithReasonAndDate covers the first close on a
+// nib that has no ## Summary at all: the section is created and the summary
+// arrives as a dated, reason-stamped entry rather than as bare prose. Every
+// accrual guard below builds on this shape, so it is pinned here against a
+// literal — assembling the expectation with closeSummaryEntry would let the two
+// drift together and agree about the wrong thing.
+func TestCloseSummaryEntryIsStampedWithReasonAndDate(t *testing.T) {
+	nibsDir := setupCloseTest(t, map[string]string{
+		"stamp-1--task.md": "---\ntitle: Task\nstatus: in-progress\ntype: task\n---\n\nExisting body.\n",
+	})
+	withCloseNow(t, time.Date(2026, 7, 27, 14, 30, 0, 0, time.UTC))
+
+	withStdin(t, "waiting on the upstream provider release\n")
+	rootCmd.SetArgs([]string{
+		"--nibs-path", nibsDir,
+		"close", "stamp-1", "--as", "deferred", "--summary", "-",
+	})
+
+	if err := rootCmd.Execute(); err != nil {
+		t.Fatalf("close failed: %v", err)
+	}
+
+	content := readNibFile(t, nibsDir, "stamp-1--task.md")
+	if !strings.Contains(content, "## Summary") {
+		t.Errorf("expected a ## Summary section to be created, got:\n%s", content)
+	}
+	const want = "**Deferred 2026-07-27** — waiting on the upstream provider release"
+	if !strings.Contains(content, want) {
+		t.Errorf("expected the entry %q, got:\n%s", want, content)
+	}
+	if !strings.Contains(content, "Existing body.") {
+		t.Errorf("expected the original body to be preserved, got:\n%s", content)
+	}
+}
+
+// TestCloseSummaryAccruesAcrossReasons is the guard the accrual exists for: a
+// nib closed under one reason and then re-closed under another keeps BOTH
+// records. A replacing write passes every other close test in this file and
+// fails only here, because only here is there an earlier rationale to destroy.
+func TestCloseSummaryAccruesAcrossReasons(t *testing.T) {
+	nibsDir := setupCloseTest(t, map[string]string{
+		"acc-1--task.md": "---\ntitle: Task\nstatus: in-progress\ntype: task\n---\n\nBody.\n",
+	})
+	setNow := withCloseNow(t, time.Date(2026, 7, 27, 0, 0, 0, 0, time.UTC))
+
+	withStdin(t, "waiting on the upstream provider release\n")
+	rootCmd.SetArgs([]string{
+		"--nibs-path", nibsDir,
+		"close", "acc-1", "--as", "deferred", "--summary", "-",
+	})
+	if err := rootCmd.Execute(); err != nil {
+		t.Fatalf("first close failed: %v", err)
+	}
+
+	setNow(time.Date(2026, 8, 2, 0, 0, 0, 0, time.UTC))
+	resetCloseFlags()
+	withStdin(t, "superseded by nibs-abcd\n")
+	rootCmd.SetArgs([]string{
+		"--nibs-path", nibsDir,
+		"close", "acc-1", "--as", "scrapped", "--summary", "-",
+	})
+	if err := rootCmd.Execute(); err != nil {
+		t.Fatalf("second close failed: %v", err)
+	}
+
+	content := readNibFile(t, nibsDir, "acc-1--task.md")
+	const (
+		first  = "**Deferred 2026-07-27** — waiting on the upstream provider release"
+		second = "**Scrapped 2026-08-02** — superseded by nibs-abcd"
+	)
+	firstAt, secondAt := strings.Index(content, first), strings.Index(content, second)
+	if firstAt < 0 {
+		t.Errorf("the second close destroyed the first entry %q, got:\n%s", first, content)
+	}
+	if secondAt < 0 {
+		t.Errorf("expected the second entry %q, got:\n%s", second, content)
+	}
+	// Newest last: the section reads as a history, so an entry appended at the
+	// top would put the reasons in the reverse of the order they happened.
+	if firstAt >= 0 && secondAt >= 0 && firstAt > secondAt {
+		t.Errorf("entries are out of order — the later close should come after the earlier one, got:\n%s", content)
+	}
+	// One ## Summary heading, not a second one appended beside the first.
+	if n := strings.Count(content, "## Summary"); n != 1 {
+		t.Errorf("expected exactly 1 ## Summary heading, got %d:\n%s", n, content)
+	}
+}
+
+// TestCloseSummaryAccruesUnderTheSameReason pins re-closing under the reason the
+// nib already carries: that is a legitimate "the rationale changed" action, not
+// a no-op to be swallowed, so it appends a second entry like any other close.
+func TestCloseSummaryAccruesUnderTheSameReason(t *testing.T) {
+	nibsDir := setupCloseTest(t, map[string]string{
+		"same-1--task.md": "---\ntitle: Task\nstatus: in-progress\ntype: task\n---\n\nBody.\n",
+	})
+	setNow := withCloseNow(t, time.Date(2026, 7, 27, 0, 0, 0, 0, time.UTC))
+
+	withStdin(t, "blocked on the vendor\n")
+	rootCmd.SetArgs([]string{
+		"--nibs-path", nibsDir,
+		"close", "same-1", "--as", "deferred", "--summary", "-",
+	})
+	if err := rootCmd.Execute(); err != nil {
+		t.Fatalf("first close failed: %v", err)
+	}
+
+	setNow(time.Date(2026, 8, 2, 0, 0, 0, 0, time.UTC))
+	resetCloseFlags()
+	withStdin(t, "vendor replied, revisit next quarter\n")
+	rootCmd.SetArgs([]string{
+		"--nibs-path", nibsDir,
+		"close", "same-1", "--as", "deferred", "--summary", "-",
+	})
+	if err := rootCmd.Execute(); err != nil {
+		t.Fatalf("re-closing under the same reason should be allowed, got: %v", err)
+	}
+
+	content := readNibFile(t, nibsDir, "same-1--task.md")
+	for _, want := range []string{
+		"**Deferred 2026-07-27** — blocked on the vendor",
+		"**Deferred 2026-08-02** — vendor replied, revisit next quarter",
+	} {
+		if !strings.Contains(content, want) {
+			t.Errorf("expected entry %q, got:\n%s", want, content)
+		}
+	}
+}
+
+// TestCloseReasonStampFollowsTheStatusVocabulary proves the stamp is derived
+// from the status the close writes rather than from a second list of reason
+// words kept in close.go: a status declared closed for the duration of this test
+// stamps its own name, with no edit to the command. TestCloseAsFollowsTheClosedFlag
+// proves the same status is accepted; this one proves it is also spelled right
+// in the record.
+func TestCloseReasonStampFollowsTheStatusVocabulary(t *testing.T) {
+	withExtraStatus(t, config.StatusConfig{
+		Name:        "abandoned",
+		Color:       "gray",
+		Closed:      true,
+		Description: "Guard status: closed, declared only for this test",
+	})
+
+	nibsDir := setupCloseTest(t, map[string]string{
+		"stmp-1--task.md": "---\ntitle: Task\nstatus: in-progress\ntype: task\n---\n\nBody.\n",
+	})
+	withCloseNow(t, time.Date(2026, 8, 2, 0, 0, 0, 0, time.UTC))
+
+	withStdin(t, "walked away from it\n")
+	rootCmd.SetArgs([]string{
+		"--nibs-path", nibsDir,
+		"close", "stmp-1", "--as", "abandoned", "--summary", "-",
+	})
+	if err := rootCmd.Execute(); err != nil {
+		t.Fatalf("close --as abandoned failed: %v", err)
+	}
+
+	content := readNibFile(t, nibsDir, "stmp-1--task.md")
+	const want = "**Abandoned 2026-08-02** — walked away from it"
+	if !strings.Contains(content, want) {
+		t.Errorf("expected the stamp to be the status itself, capitalized (%q), got:\n%s", want, content)
+	}
+}
+
+// TestCloseParentPropagationDependsOnTheReason pins which half of the parent
+// write is reason-dependent. Key Decisions merge upward for EVERY close reason —
+// why work was set aside is exactly what a later reader looks for in the parent
+// — while Current Focus, which answers "what is the latest progress here", is
+// rewritten only by a completion. Rewriting it for a nib that was deferred or
+// scrapped would erase the last real progress and make the parent read as though
+// nothing were happening.
+//
+// The cases come from ClosedStatusNames, so a newly declared close reason is
+// covered here without an edit; the membership check keeps the loop from
+// silently going empty, and the completion case keeps the guard from passing on
+// a build that simply never writes Current Focus at all.
+func TestCloseParentPropagationDependsOnTheReason(t *testing.T) {
+	closed := config.Default().ClosedStatusNames()
+	for _, want := range []string{closeCompletionStatus, "deferred", "scrapped"} {
+		if !slices.Contains(closed, want) {
+			t.Fatalf("test setup: %q is not among the closed statuses %v, so this test no longer covers it", want, closed)
+		}
+	}
+
+	const originalFocus = "Working on phase 1."
+	for _, status := range closed {
+		t.Run(status, func(t *testing.T) {
+			nibsDir := setupCloseTest(t, map[string]string{
+				"pp-ms--milestone.md": "---\ntitle: Milestone\nstatus: in-progress\ntype: milestone\n---\n\n## Current Focus\n\n" + originalFocus + "\n\n## Key Decisions\n\n- Previous decision\n",
+				"pp-ch--child.md":     "---\ntitle: Child\nstatus: in-progress\ntype: epic\nparent: pp-ms\n---\n\n## Key Decisions\n\n- Chose mdsection for parsing\n",
+			})
+
+			withStdin(t, "the child is off the board\n")
+			rootCmd.SetArgs([]string{
+				"--nibs-path", nibsDir,
+				"close", "pp-ch", "--as", status, "--summary", "-",
+			})
+			if err := rootCmd.Execute(); err != nil {
+				t.Fatalf("close --as %s failed: %v", status, err)
+			}
+
+			milestone := readNibFile(t, nibsDir, "pp-ms--milestone.md")
+
+			// Key Decisions merge upward whatever the reason, and the parent's own
+			// decisions survive the merge.
+			for _, want := range []string{"Chose mdsection for parsing", "Previous decision"} {
+				if !strings.Contains(milestone, want) {
+					t.Errorf("close --as %s should have merged Key Decisions upward; %q missing from:\n%s", status, want, milestone)
+				}
+			}
+
+			focus, found := mdsection.Find(milestone, "Current Focus", mdsection.AnyLevel)
+			if !found {
+				t.Fatalf("close --as %s removed the parent's Current Focus section:\n%s", status, milestone)
+			}
+			if status == closeCompletionStatus {
+				if !strings.Contains(focus, "Completed pp-ch: the child is off the board") {
+					t.Errorf("close --as %s should have rewritten the parent's Current Focus, got: %q", status, focus)
+				}
+				return
+			}
+			if strings.TrimSpace(focus) != originalFocus {
+				t.Errorf("close --as %s must leave the parent's Current Focus alone (setting work aside is not progress), got: %q", status, focus)
+			}
+			// Naming the child in the focus is the specific damage: it would read
+			// as progress that never happened.
+			if strings.Contains(focus, "pp-ch") {
+				t.Errorf("close --as %s wrote the child into the parent's Current Focus: %q", status, focus)
+			}
+		})
+	}
+}
+
+// TestCloseMergesEachChildDecisionIntoTheParentOnce is the parent-side cost of
+// letting a closed nib be closed again: the Key Decisions merge runs on every
+// close, so a merge that re-copied the whole child section would leave the
+// parent holding one duplicate of it per close. Three closes here, because two
+// would also pass a merge that happened to skip the second write.
+func TestCloseMergesEachChildDecisionIntoTheParentOnce(t *testing.T) {
+	nibsDir := setupCloseTest(t, map[string]string{
+		"idm-ms--milestone.md": "---\ntitle: Milestone\nstatus: in-progress\ntype: milestone\n---\n\n## Key Decisions\n\n- Previous decision\n",
+		"idm-ch--child.md":     "---\ntitle: Child\nstatus: in-progress\ntype: epic\nparent: idm-ms\n---\n\n## Key Decisions\n\n- Chose mdsection for parsing\n",
+	})
+	setNow := withCloseNow(t, time.Date(2026, 7, 27, 0, 0, 0, 0, time.UTC))
+
+	for i, reason := range []string{"deferred", "scrapped", "scrapped"} {
+		setNow(time.Date(2026, 7, 27+i, 0, 0, 0, 0, time.UTC))
+		resetCloseFlags()
+		withStdin(t, "revised to "+reason+"\n")
+		rootCmd.SetArgs([]string{
+			"--nibs-path", nibsDir,
+			"close", "idm-ch", "--as", reason, "--summary", "-",
+		})
+		if err := rootCmd.Execute(); err != nil {
+			t.Fatalf("close #%d (--as %s) failed: %v", i+1, reason, err)
+		}
+	}
+
+	milestone := readNibFile(t, nibsDir, "idm-ms--milestone.md")
+	if n := strings.Count(milestone, "- Chose mdsection for parsing"); n != 1 {
+		t.Errorf("expected the child's decision in the parent exactly once, got %d:\n%s", n, milestone)
+	}
+	if n := strings.Count(milestone, "- Previous decision"); n != 1 {
+		t.Errorf("expected the parent's own decision exactly once, got %d:\n%s", n, milestone)
+	}
+}
+
+// TestCloseMergesADecisionTheChildGainedBetweenCloses is the other half of that
+// merge: skipping what the parent already carries must not degrade into skipping
+// everything after the first close. A child that records a new decision while it
+// sits closed still sends that line up when it is closed again — which is why the
+// comparison is per line rather than over the section as a whole.
+func TestCloseMergesADecisionTheChildGainedBetweenCloses(t *testing.T) {
+	nibsDir := setupCloseTest(t, map[string]string{
+		"gan-ms--milestone.md": "---\ntitle: Milestone\nstatus: in-progress\ntype: milestone\n---\n\n## Key Decisions\n\n- Previous decision\n",
+		"gan-ch--child.md":     "---\ntitle: Child\nstatus: in-progress\ntype: epic\nparent: gan-ms\n---\n\n## Key Decisions\n\n- Chose mdsection for parsing\n",
+	})
+	setNow := withCloseNow(t, time.Date(2026, 7, 27, 0, 0, 0, 0, time.UTC))
+
+	withStdin(t, "waiting on the vendor\n")
+	rootCmd.SetArgs([]string{
+		"--nibs-path", nibsDir,
+		"close", "gan-ch", "--as", "deferred", "--summary", "-",
+	})
+	if err := rootCmd.Execute(); err != nil {
+		t.Fatalf("first close failed: %v", err)
+	}
+
+	// The child learns something between the two closes.
+	const (
+		firstDecision = "- Chose mdsection for parsing"
+		gained        = "- Dropped the regex parser"
+	)
+	child := readNibFile(t, nibsDir, "gan-ch--child.md")
+	revised := strings.Replace(child, firstDecision+"\n", firstDecision+"\n"+gained+"\n", 1)
+	if revised == child {
+		t.Fatalf("test setup: %q not found in the child, so it gained no decision:\n%s", firstDecision, child)
+	}
+	if err := os.WriteFile(filepath.Join(nibsDir, "gan-ch--child.md"), []byte(revised), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	setNow(time.Date(2026, 8, 2, 0, 0, 0, 0, time.UTC))
+	resetCloseFlags()
+	withStdin(t, "superseded by another nib\n")
+	rootCmd.SetArgs([]string{
+		"--nibs-path", nibsDir,
+		"close", "gan-ch", "--as", "scrapped", "--summary", "-",
+	})
+	if err := rootCmd.Execute(); err != nil {
+		t.Fatalf("second close failed: %v", err)
+	}
+
+	milestone := readNibFile(t, nibsDir, "gan-ms--milestone.md")
+	if !strings.Contains(milestone, gained) {
+		t.Errorf("the decision the child gained between the two closes never reached the parent:\n%s", milestone)
+	}
+	if n := strings.Count(milestone, firstDecision); n != 1 {
+		t.Errorf("expected the decision merged by the first close to stay at one copy, got %d:\n%s", n, milestone)
+	}
+}
+
+// TestCloseSummaryEntryDatesInUTC pins the zone of the entry's date stamp
+// against the zone updated_at is written in. Both describe the same close, so a
+// stamp taken in the machine's local zone would date it a day off from the front
+// matter for anyone whose offset crosses midnight. The cases are one instant seen
+// from three zones; only the UTC day may reach the entry. The command-level tests
+// cannot catch this — withCloseNow pins UTC times, where the two zones agree.
+func TestCloseSummaryEntryDatesInUTC(t *testing.T) {
+	tests := []struct {
+		name string
+		when time.Time
+		want string
+	}{
+		{
+			name: "utc",
+			when: time.Date(2026, 7, 29, 1, 0, 0, 0, time.UTC),
+			want: "**Completed 2026-07-29** — shipped it",
+		},
+		{
+			// 18:00 on the 28th, 7 hours behind UTC: the local clock still reads
+			// the 28th while UTC has turned the page to the 29th.
+			name: "behind utc",
+			when: time.Date(2026, 7, 28, 18, 0, 0, 0, time.FixedZone("UTC-7", -7*60*60)),
+			want: "**Completed 2026-07-29** — shipped it",
+		},
+		{
+			// 08:00 on the 29th, 9 hours ahead: the local clock has turned the
+			// page while UTC is still on the 28th.
+			name: "ahead of utc",
+			when: time.Date(2026, 7, 29, 8, 0, 0, 0, time.FixedZone("UTC+9", 9*60*60)),
+			want: "**Completed 2026-07-28** — shipped it",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := closeSummaryEntry("completed", tt.when, "shipped it"); got != tt.want {
+				t.Errorf("closeSummaryEntry(%s) = %q, want %q", tt.when.Format(time.RFC3339), got, tt.want)
+			}
+		})
+	}
+}
+
+// TestCloseIntoAnEmptySummaryStub covers a ## Summary heading that exists with
+// nothing under it — a hand-written stub, or a template that laid the section
+// out in advance. The entry must land there like any other first entry, with no
+// stray blank line standing in for the record that was never written.
+func TestCloseIntoAnEmptySummaryStub(t *testing.T) {
+	nibsDir := setupCloseTest(t, map[string]string{
+		"stub-1--task.md": "---\ntitle: Task\nstatus: in-progress\ntype: task\n---\n\nBody.\n\n## Summary\n",
+	})
+	withCloseNow(t, time.Date(2026, 7, 27, 0, 0, 0, 0, time.UTC))
+
+	withStdin(t, "first record\n")
+	rootCmd.SetArgs([]string{
+		"--nibs-path", nibsDir,
+		"close", "stub-1", "--summary", "-",
+	})
+	if err := rootCmd.Execute(); err != nil {
+		t.Fatalf("close failed: %v", err)
+	}
+
+	content := readNibFile(t, nibsDir, "stub-1--task.md")
+	const want = "## Summary\n\n**Completed 2026-07-27** — first record\n"
+	if !strings.Contains(content, want) {
+		t.Errorf("expected %q, got:\n%s", want, content)
 	}
 }

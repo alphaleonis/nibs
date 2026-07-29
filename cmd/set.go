@@ -84,7 +84,7 @@ documents), or clears a clearable field (--clear priority|estimate|parent).`,
 		// Build and validate field updates. inputError maps a body input-channel
 		// I/O failure to FILE_ERROR (exit 5) while validation/usage errors stay
 		// VALIDATION (exit 2).
-		input, fieldChanges, err := buildSetInput(cmd, app.Config(), b.ID, b.Status)
+		input, fieldChanges, err := buildSetInput(cmd, app.Config(), b.ID)
 		if err != nil {
 			return inputError(setJSON, err)
 		}
@@ -123,11 +123,9 @@ documents), or clears a clearable field (--clear priority|estimate|parent).`,
 // explicit null (a nil inner pointer), which the UpdateNib resolver reads as
 // "clear this field" — distinct from setting a value.
 //
-// id and currentStatus describe the nib being updated. Both appear only in the
-// closed-status refusal below, which quotes the commands to run instead: id
-// puts this nib in them, and currentStatus decides whether one command is
-// enough, since `close` refuses a nib that is already closed.
-func buildSetInput(cmd *cobra.Command, cfg *config.Config, id, currentStatus string) (model.UpdateNibInput, []string, error) {
+// id is the nib being updated. It appears only in the closed-status refusal
+// below, to put this nib into the `close` line the message quotes.
+func buildSetInput(cmd *cobra.Command, cfg *config.Config, id string) (model.UpdateNibInput, []string, error) {
 	var input model.UpdateNibInput
 	var changes []string
 
@@ -176,15 +174,10 @@ func buildSetInput(cmd *cobra.Command, cfg *config.Config, id, currentStatus str
 		//     condition below reads the incoming status and never the nib's
 		//     current one.
 		if cfg.IsClosedStatus(setStatus) {
-			// `close` refuses a nib that is already closed, so on one of those the
-			// single-command suggestion would answer this error with a second one.
-			// Name the two-step route that works instead: back to an open status,
-			// then close again under the reason asked for.
-			if cfg.IsClosedStatus(currentStatus) {
-				return input, nil, fmt.Errorf(
-					"%s is a closed status; `set` cannot close a nib — and %s is already %s, which `close` refuses too. To close it again, put it back on the board first: `nibs set %s -s %s`, then `nibs close %s --as %s --summary -`",
-					setStatus, id, currentStatus, id, reopenStatus(cfg), id, setStatus)
-			}
+			// One suggestion covers every nib, closed or not: `close` accepts a nib
+			// that is already closed and appends another entry to its ## Summary,
+			// so revising a close reason is the same single command as closing for
+			// the first time.
 			return input, nil, fmt.Errorf(
 				"%s is a closed status; `set` cannot close a nib — use `nibs close %s --as %s --summary -` instead (closing requires a summary, `set` does not, so this route would leave no record of why)",
 				setStatus, id, setStatus)
@@ -284,22 +277,6 @@ func buildSetInput(cmd *cobra.Command, cfg *config.Config, id, currentStatus str
 	}
 
 	return input, changes, nil
-}
-
-// reopenStatus names the open status the closed-nib refusal tells a caller to
-// pass before closing again. It is the first startable status — the
-// vocabulary's own answer to "back on the board, ready to be picked up" —
-// falling back to the first open one when nothing is startable, so the quoted
-// command always names a value `set` will accept. Today both resolve to `todo`.
-// The open group is never empty in practice: TestStatusGroupNames requires at
-// least two members in each status group.
-func reopenStatus(cfg *config.Config) string {
-	for _, names := range [][]string{cfg.StartableStatusNames(), cfg.OpenStatusNames()} {
-		if len(names) > 0 {
-			return names[0]
-		}
-	}
-	return ""
 }
 
 // parseClearFields validates the --clear field names and returns a set of the

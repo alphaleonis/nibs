@@ -629,13 +629,18 @@ func runQuotedCommand(t *testing.T, nibsDir, quoted string) error {
 	return rootCmd.Execute()
 }
 
-// TestSetRefusalOnAClosedNibNamesAWorkingRoute pins the half of the refusal
-// that the target nib's own status decides. `close` rejects a nib that is
-// already closed, so suggesting it alone would route an agent revising a close
-// reason from one error straight into a second — and the CLI contract tells
-// agents to stop on the first. The guard runs the commands the message quotes,
-// in the order it quotes them, and requires the nib to end up in the status
-// that was asked for: a message whose route does not work fails here.
+// TestSetRefusalOnAClosedNibNamesAWorkingRoute pins the case that used to need
+// special handling: a nib that is ALREADY closed, whose reason an agent is
+// revising. `close` now accepts such a nib and appends another ## Summary entry,
+// so the one command the refusal quotes is the whole route — where it once had
+// to spell out a reopen-then-close detour, because suggesting `close` alone
+// would have answered one error with a second, against a CLI contract that tells
+// agents to stop on the first.
+//
+// The guard runs the command the message quotes and requires the nib to end up
+// in the status that was asked for: a message whose route does not work fails
+// here. Quoting more than one command fails here too — the detour coming back
+// would mean `close` had started refusing again.
 func TestSetRefusalOnAClosedNibNamesAWorkingRoute(t *testing.T) {
 	closed := config.Default().ClosedStatusNames()
 	if len(closed) < 2 {
@@ -657,24 +662,15 @@ func TestSetRefusalOnAClosedNibNamesAWorkingRoute(t *testing.T) {
 			if err == nil {
 				t.Fatalf("set -s %s should be refused, got nil", to)
 			}
-			// Say why one command is not enough. Without this the two-step route
-			// reads as ceremony an agent may well shorten back to the failing one.
-			if !strings.Contains(err.Error(), "already "+from) {
-				t.Errorf("refusal on a %s nib should say the nib is already closed, got: %s", from, err)
-			}
 
 			quoted := quotedNibsCommand.FindAllStringSubmatch(err.Error(), -1)
-			if len(quoted) != 2 {
-				t.Fatalf("refusal on a closed nib should quote two commands (reopen, then close); got %d in: %s", len(quoted), err)
+			if len(quoted) != 1 {
+				t.Fatalf("refusal should quote exactly one command (`close` takes an already-closed nib); got %d in: %s", len(quoted), err)
 			}
 
-			// One summary read for the `close` half; the `set` half never touches
-			// stdin.
 			withStdin(t, "Reason revised.\n")
-			for _, m := range quoted {
-				if runErr := runQuotedCommand(t, nibsDir, m[1]); runErr != nil {
-					t.Fatalf("the refusal quoted `%s`, which failed: %v", m[1], runErr)
-				}
+			if runErr := runQuotedCommand(t, nibsDir, quoted[0][1]); runErr != nil {
+				t.Fatalf("the refusal quoted `%s`, which failed: %v", quoted[0][1], runErr)
 			}
 
 			data, readErr := os.ReadFile(filepath.Join(nibsDir, id+"--test.md"))

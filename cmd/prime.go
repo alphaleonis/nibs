@@ -44,6 +44,15 @@ type promptData struct {
 	// --as flag's default rather than written out in the guides, so the two
 	// cannot disagree about which reason omitting --as records.
 	DefaultCloseStatus string
+
+	// CompletionCloseStatus is the close reason that rewrites the parent's
+	// `## Current Focus`; the others merge Key Decisions upward and leave the
+	// focus alone. Threaded from the same const the propagation branches on, so
+	// the guide cannot name a different reason than the one that gets the
+	// behavior. It is a separate field from DefaultCloseStatus even though both
+	// hold `completed` today: "the reason a bare close records" and "the reason
+	// that counts as progress on the parent" are different questions.
+	CompletionCloseStatus string
 }
 
 // promptFuncs are the template helpers the guides need to state a derived set:
@@ -125,16 +134,17 @@ func renderPrompt(w io.Writer, name, text string) error {
 
 	cfg := config.Default()
 	data := promptData{
-		GraphQLSchema:      GetGraphQLSchema(),
-		Types:              config.DefaultTypes,
-		Statuses:           config.DefaultStatuses,
-		Priorities:         config.DefaultPriorities,
-		OpenStatuses:       cfg.OpenStatusNames(),
-		ClosedStatuses:     cfg.ClosedStatusNames(),
-		ReleasingStatuses:  cfg.ReleasingStatusNames(),
-		HoldingStatuses:    cfg.HoldingStatusNames(),
-		StartableStatuses:  cfg.StartableStatusNames(),
-		DefaultCloseStatus: closeDefaultStatus,
+		GraphQLSchema:         GetGraphQLSchema(),
+		Types:                 config.DefaultTypes,
+		Statuses:              config.DefaultStatuses,
+		Priorities:            config.DefaultPriorities,
+		OpenStatuses:          cfg.OpenStatusNames(),
+		ClosedStatuses:        cfg.ClosedStatusNames(),
+		ReleasingStatuses:     cfg.ReleasingStatusNames(),
+		HoldingStatuses:       cfg.HoldingStatusNames(),
+		StartableStatuses:     cfg.StartableStatusNames(),
+		DefaultCloseStatus:    closeDefaultStatus,
+		CompletionCloseStatus: closeCompletionStatus,
 	}
 
 	return tmpl.Execute(w, data)
