@@ -593,15 +593,20 @@
 {:else if rows.length === 0 && activeHierarchyTokens.length > 1}
   <!-- Several tree constraints at once: the generic message leaves the user staring
        at a dead end they cannot see the shape of. Name the relationships and offer
-       the way out. The wording states what is true (nothing matched a filter that
-       ANDs these together) without claiming the combination is contradictory —
-       `parent:x ancestor:x` is redundant yet perfectly matchable. -->
+       the way out.
+       The wording asserts only what this branch has established — that the filter
+       ANDs these relationships together and matched nothing. It does NOT claim they
+       are the cause: `parent:x ancestor:x` is redundant yet perfectly matchable, and
+       a client-side facet (status, tags, …) or free text can be what actually
+       emptied the result. So the escape hatch is offered as one way to widen the
+       query rather than as the fix. -->
   <div data-testid="empty-hierarchy" class="flex flex-col items-center gap-3 py-12 text-body text-muted-foreground">
     <span class="text-foreground">No nibs match this filter</span>
     <span class="max-w-md text-center">
-      It asks for {activeHierarchyTokens.length} hierarchy relationships at once —
-      {#each activeHierarchyTokens as token, i (token)}{#if i > 0}, {/if}<code class="rounded bg-muted px-1 py-0.5 text-foreground">{token}</code>{/each}. A nib
-      has to satisfy every one of them; removing one may help.
+      It combines {activeHierarchyTokens.length} hierarchy relationships —
+      {#each activeHierarchyTokens as token, i (token)}{#if i > 0}, {/if}<code class="rounded bg-muted px-1 py-0.5 text-foreground">{token}</code>{/each}{" "}
+      — and a nib has to satisfy every one of them. Clearing them is one way to
+      widen the result.
     </span>
     <Button variant="outline" size="sm" onclick={clearHierarchy}>Clear hierarchy filters</Button>
   </div>

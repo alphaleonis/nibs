@@ -31,6 +31,7 @@ When modifying the GraphQL schema (`internal/graph/schema.graphqls`):
 1. Edit the schema file
 2. Run `task codegen` to regenerate `internal/graph/generated.go` and `internal/graph/model/models_gen.go`
 3. Implement any new resolvers in `internal/graph/schema.resolvers.go`
+4. If you changed the `NibFilter` input, mirror the field in the hand-written `NibFilter` in `web/src/lib/types.ts`. A compile-time guard there asserts the two key sets are **equal in both directions**, so adding or removing a schema field without touching the client type fails `npm run check` — which runs in `task test`, not `task build`.
 
 The code generation is configured in `gqlgen.yml`. The `nib.Nib` struct is autobound so the GraphQL `Nib` type maps directly to it.
 

@@ -125,7 +125,13 @@ type OrderedSpec<K extends RelTokenSpec["kind"]> = Extract<
 // exactly what completion offers and serialization emits. Exported so the rel-token
 // typeahead detector (relComplete.ts) recognizes the same field-names without
 // duplicating the set.
-export const REL_ID_FIELDS: Record<string, RelIdKey> = Object.fromEntries(
+// A `Map`, not a plain object, and the distinction is load-bearing: an object
+// literal (and anything `Object.fromEntries` builds) inherits `Object.prototype`,
+// so a lookup of `constructor` or `__proto__` returns an inherited member and
+// reads as a hit. That made `constructor:foo` parse as a relationship token whose
+// field was the `Object` constructor, and swallowed a bare `constructor` out of
+// free-text search. `fields.ts` already keys its own lookup this way.
+export const REL_ID_FIELDS: ReadonlyMap<string, RelIdKey> = new Map(
   REL_TOKEN_ORDER.flatMap((spec): [string, RelIdKey][] =>
     spec.kind === "id" ? [[spec.name, spec.field]] : [],
   ),
@@ -139,8 +145,9 @@ export const REL_ID_FIELDS: Record<string, RelIdKey> = Object.fromEntries(
 // `is:foo`) simply are not present. The `has:`/`no:` pair for one dimension targets
 // the SAME field with opposite values — writing them as two fields is what the
 // backend filter model retired.
-export const EXISTENCE_TOKENS: Record<string, { field: ExistenceKey; value: boolean }> =
-  Object.fromEntries(
+// A `Map` for the same prototype reason as `REL_ID_FIELDS` above.
+export const EXISTENCE_TOKENS: ReadonlyMap<string, { field: ExistenceKey; value: boolean }> =
+  new Map(
     REL_TOKEN_ORDER.flatMap((spec): [string, { field: ExistenceKey; value: boolean }][] =>
       spec.kind === "bool" ? [[spec.token, { field: spec.field, value: spec.value }]] : [],
     ),
@@ -240,7 +247,7 @@ export function recognizeRelationship(token: string): RelMatch | undefined {
  *  existence spelling, so this never yields an `invalid` result. */
 function matchToken(token: string): Extract<RelMatch, { kind: "id" | "bool" }> | undefined {
   const lower = token.toLowerCase();
-  const existence = EXISTENCE_TOKENS[lower];
+  const existence = EXISTENCE_TOKENS.get(lower);
   if (existence) return { kind: "bool", field: existence.field, value: existence.value };
 
   // Split on the FIRST colon so hyphenated field-names (`blocked-by`) are handled
@@ -250,7 +257,7 @@ function matchToken(token: string): Extract<RelMatch, { kind: "id" | "bool" }> |
   if (colon <= 0) return undefined;
   const name = token.slice(0, colon).toLowerCase();
   const value = token.slice(colon + 1).toLowerCase();
-  const idField = REL_ID_FIELDS[name];
+  const idField = REL_ID_FIELDS.get(name);
   if (idField && value !== "") return { kind: "id", field: idField, value };
 
   return undefined;

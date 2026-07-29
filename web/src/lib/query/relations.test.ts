@@ -49,20 +49,34 @@ describe("relations — the ordered vocabulary drives recognition", () => {
   // pre-colon half in `REL_ID_FIELDS`. Keying either the other way would make its
   // lookups miss silently, so pin both shapes.
   it("keys REL_ID_FIELDS by the bare field-name and EXISTENCE_TOKENS by the full token", () => {
-    expect(REL_ID_FIELDS["blocked-by"]).toBe("blockedById");
-    expect(REL_ID_FIELDS["has:parent"]).toBeUndefined();
-    expect(EXISTENCE_TOKENS["has:blocked-by"]).toEqual({ field: "hasBlockedBy", value: true });
-    expect(EXISTENCE_TOKENS["blocked-by"]).toBeUndefined();
+    expect(REL_ID_FIELDS.get("blocked-by")).toBe("blockedById");
+    expect(REL_ID_FIELDS.get("has:parent")).toBeUndefined();
+    expect(EXISTENCE_TOKENS.get("has:blocked-by")).toEqual({ field: "hasBlockedBy", value: true });
+    expect(EXISTENCE_TOKENS.get("blocked-by")).toBeUndefined();
   });
 
-  // A duplicate name or token collapses in the `Object.fromEntries` derivation —
-  // the later entry wins the lookup while both still serialize, which would emit a
-  // token the box then re-parses as something else.
+  // Both lookups must be `Map`s. A plain object inherits `Object.prototype`, so
+  // `REL_ID_FIELDS["constructor"]` returns the Object constructor and reads as a
+  // hit: `constructor:foo` parsed as a relationship token whose field was that
+  // function, and a bare `constructor` was swallowed out of free-text search —
+  // a real word to lose in a tracker for a codebase.
+  it("does not treat inherited Object.prototype members as vocabulary", () => {
+    for (const inherited of ["constructor", "__proto__", "toString", "valueOf", "hasOwnProperty"]) {
+      expect(REL_ID_FIELDS.get(inherited)).toBeUndefined();
+      expect(EXISTENCE_TOKENS.get(inherited)).toBeUndefined();
+      expect(recognizeRelationship(`${inherited}:foo`)).toBeUndefined();
+      expect(recognizeRelationship(inherited)).toBeUndefined();
+    }
+  });
+
+  // A duplicate name or token collapses in the derivation — the later entry wins
+  // the lookup while both still serialize, which would emit a token the box then
+  // re-parses as something else.
   it("lists no name or token twice", () => {
     expect(new Set(orderedIdNames).size).toBe(orderedIdNames.length);
     expect(new Set(orderedBoolTokens).size).toBe(orderedBoolTokens.length);
-    expect(Object.keys(REL_ID_FIELDS)).toHaveLength(orderedIdNames.length);
-    expect(Object.keys(EXISTENCE_TOKENS)).toHaveLength(orderedBoolTokens.length);
+    expect(REL_ID_FIELDS.size).toBe(orderedIdNames.length);
+    expect(EXISTENCE_TOKENS.size).toBe(orderedBoolTokens.length);
   });
 
   // `complete.ts` derives the completable existence words by splitting each token on

@@ -61,7 +61,7 @@ export function relTokenValueContext(text: string, caret: number): RelValueConte
   if (colon <= 0) return null;
 
   const name = token.slice(0, colon).toLowerCase();
-  const field = REL_ID_FIELDS[name];
+  const field = REL_ID_FIELDS.get(name);
   if (!field) return null;
 
   // The colon's absolute offset; the value region begins one past it. The caret
