@@ -30,6 +30,18 @@ const DEFAULTS: FilterPreferences = {
 // serializeQuery covers EVERY NibFilter field — the box has owned the
 // relationship and existence keys since phase 5 — so a legacy structured blob
 // translates in full, with nothing dropped.
+//
+// PERSISTED-FORMAT NOTE — a status group token stores a RULE, not a set.
+// serializeQuery collapses an exact group member match to the group name, so a
+// persisted `status:draft,todo,in-progress` is rewritten to `status:open` the
+// next time it is saved (same for the `?q=` link built from it). What was an
+// enumerated choice of three statuses becomes "everything not closed". Add a
+// status to STATUSES and every stored or shared `status:open` widens to include
+// it, and two clients on different versions resolve the same link differently.
+// That is the intended behavior — group membership is derived on purpose (see
+// constants.ts) — but it means the stored string is not a faithful record of
+// what the user ticked. CLOSED_STATUSES / OPEN_STATUSES are pinned verbatim by
+// filter.test.ts, so growing the vocabulary is a deliberate act, not a silent one.
 function parseQueryField(parsed: Record<string, unknown>): string {
   if (typeof parsed.q === "string") return parsed.q;
   const legacy = parsed.filter;

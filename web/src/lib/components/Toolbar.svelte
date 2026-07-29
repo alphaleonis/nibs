@@ -601,18 +601,39 @@
     emitFilter(updated);
   }
 
+  // The exclude-list twin of each dropdown's include-list. The dropdowns only
+  // ever WRITE include-lists, but the query box writes both (`-status:closed`),
+  // so a dropdown that touched one key alone could not undo what the box did.
+  const EXCLUDE_KEY = {
+    type: "excludeType",
+    priority: "excludePriority",
+    status: "excludeStatus",
+    estimate: "excludeEstimate",
+    tags: "excludeTags",
+  } as const satisfies Record<FilterField, keyof NibFilter>;
+
   // State-facet quick presets: OVERWRITE the status include-list in
   // one click. The include-list is the single source of truth for status
   // visibility, so a preset replaces (not merges with) the current selection; the
   // per-status checkboxes below remain for precise tweaking afterward.
+  //
+  // The exclusion goes with it: `status:open` alongside a surviving
+  // `-status:open` (one `-status:open` completion away in the box) is an empty
+  // result set, and the preset is the obvious thing to click to recover from it.
   function applyStatusPreset(statuses: readonly string[]) {
-    emitFilter({ ...resolvedFilter, status: [...statuses] });
+    const updated: NibFilter = { ...resolvedFilter, status: [...statuses] };
+    delete updated.excludeStatus;
+    emitFilter(updated);
     filterOpenStates.status = false;
   }
 
+  // Clear means "stop filtering on this facet", so it drops the exclude-list as
+  // well — otherwise a `-status:completed` typed in the box is unreachable from
+  // the dropdown that owns that facet.
   function handleClearField(field: FilterField, id: DropdownId) {
     const updated = { ...resolvedFilter };
     delete updated[field];
+    delete updated[EXCLUDE_KEY[field]];
     emitFilter(updated);
     filterOpenStates[id] = false;
   }
@@ -621,8 +642,16 @@
     return resolvedFilter[field]?.includes(value) ?? false;
   }
 
+  // The trigger badge counts TICKED boxes, so it stays include-only.
   function getCount(field: FilterField): number {
     return resolvedFilter[field]?.length ?? 0;
+  }
+
+  // What Clear would actually remove — include plus exclude. Kept separate from
+  // getCount so the badge does not claim an exclusion as a checked box, while
+  // Clear still enables itself when there is an exclusion to clear.
+  function getClearableCount(field: FilterField): number {
+    return getCount(field) + (resolvedFilter[EXCLUDE_KEY[field]]?.length ?? 0);
   }
 
 </script>
@@ -963,7 +992,7 @@
         {/each}
         <DropdownMenu.Separator />
         <DropdownMenu.Item
-          disabled={count === 0}
+          disabled={getClearableCount(dd.field) === 0}
           onSelect={() => handleClearField(dd.field, dd.id)}
         >
           <X size={13} />

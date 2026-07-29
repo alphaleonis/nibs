@@ -743,6 +743,66 @@ describe("Toolbar — filter dropdowns", () => {
     expect(lastCall[0].status).toEqual([...OPEN_STATUSES]);
   });
 
+  it("per-category Clear also removes the category's EXCLUSIONS", async () => {
+    // The dropdowns only write include-lists, but the query box writes both, so
+    // Clear has to reach the exclude-list too or a typed `-status:completed` is
+    // unreachable from the facet that owns it.
+    const onchange = vi.fn();
+    render(Toolbar, { ...defaultToolbarProps, filter: { excludeStatus: ["completed"] }, onchange });
+
+    await user.click(screen.getByRole("button", { name: /status/i }));
+    await user.click(screen.getByRole("menuitem", { name: /clear/i }));
+
+    const lastCall = onchange.mock.calls[onchange.mock.calls.length - 1];
+    expect(lastCall[0].excludeStatus).toBeUndefined();
+  });
+
+  it("per-category Clear is ENABLED when the category has only exclusions", async () => {
+    render(Toolbar, { ...defaultToolbarProps, filter: { excludeType: ["task"] } });
+
+    await user.click(screen.getByRole("button", { name: /type/i }));
+
+    // The trigger badge stays 0 (nothing is ticked), but there is something to
+    // clear, so the item must not be disabled.
+    expect(screen.getByRole("menuitem", { name: /clear/i })).not.toHaveAttribute("data-disabled");
+  });
+
+  it("the Open preset drops a status exclusion, so it cannot annihilate itself", async () => {
+    // `-status:open` is one completion away in the box, and include ∩ exclude is
+    // empty both client-side and in internal/graph/filters.go. Clicking Open is
+    // the obvious way to recover, so it must not leave the exclusion standing.
+    const onchange = vi.fn();
+    render(Toolbar, {
+      ...defaultToolbarProps,
+      filter: { excludeStatus: [...OPEN_STATUSES] },
+      onchange,
+    });
+
+    await user.click(screen.getByRole("button", { name: /status/i }));
+    await user.click(screen.getByTestId("status-preset-open"));
+
+    const lastCall = onchange.mock.calls[onchange.mock.calls.length - 1];
+    expect(lastCall[0].status).toEqual([...OPEN_STATUSES]);
+    expect(lastCall[0].excludeStatus).toBeUndefined();
+  });
+
+  it("the Open preset shows up in the query box as status:open (dropdown→box sync)", async () => {
+    // The one assertion that fails if ANY link in preset → filter → serialize →
+    // box breaks. Each link is guarded on its own elsewhere; nothing else fails
+    // when the chain breaks in the middle. Asserting it against a serializer
+    // fed OPEN_STATUSES would not do — STATUS_GROUPS.get("open") is that same
+    // reference, so the comparison would satisfy itself.
+    const prefs = new Preferences();
+    render(Toolbar, { prefs, oncreatenew: vi.fn() });
+
+    await user.click(screen.getByRole("button", { name: /status/i }));
+    await user.click(screen.getByTestId("status-preset-open"));
+    await tick();
+
+    expect(prefs.query).toBe("status:open");
+    expect((screen.getByTestId("filter-keyword") as HTMLInputElement).value).toBe("status:open");
+  });
+
   it("offers exactly one preset, because deferred is closed", async () => {
     // There used to be a second preset, "Open + deferred". Once deferred became
     // a closed status its set became identical to Open's, so the distinction —

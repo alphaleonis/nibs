@@ -131,6 +131,87 @@ describe("serializeQuery — hierarchy relationship tokens", () => {
   });
 });
 
+describe("serializeQuery — status group collapse", () => {
+  // The include-list is the single source of truth, so a group token would
+  // otherwise expand the moment the box lost focus. Collapsing an exact match
+  // back to the group name is what keeps `status:open` typed, shared, and
+  // re-read as `status:open`.
+  it("collapses the exact open set to status:open", () => {
+    expect(serializeQuery({ filter: { status: ["draft", "todo", "in-progress"] } })).toBe("status:open");
+  });
+
+  it("collapses the exact closed set to status:closed", () => {
+    expect(serializeQuery({ filter: { status: ["deferred", "completed", "scrapped"] } })).toBe("status:closed");
+  });
+
+  it("collapses regardless of the order the members arrive in", () => {
+    expect(serializeQuery({ filter: { status: ["in-progress", "draft", "todo"] } })).toBe("status:open");
+  });
+
+  // There is deliberately no `serializeQuery({ status: [...OPEN_STATUSES] })`
+  // case here: STATUS_GROUPS.get("open") IS the OPEN_STATUSES reference, so such
+  // a test compares the constant against itself and holds for whatever it
+  // contains — it would keep passing with OPEN_STATUSES defined wrongly, while
+  // the hardcoded case above correctly fails. The dropdown→box sync it was
+  // meant to cover is asserted end-to-end in Toolbar.test.ts instead ("the Open
+  // preset renders in the query box as status:open").
+
+  it("collapses the exclude-list too", () => {
+    expect(serializeQuery({ filter: { excludeStatus: ["deferred", "completed", "scrapped"] } })).toBe("-status:closed");
+  });
+
+  it("does NOT collapse a partial set", () => {
+    expect(serializeQuery({ filter: { status: ["draft", "todo"] } })).toBe("status:draft,todo");
+  });
+
+  it("does NOT collapse a same-sized set that is not a group", () => {
+    // Three statuses, like the open group has — but not those three. Matching a
+    // group by size alone would mislabel this as `status:open`.
+    expect(serializeQuery({ filter: { status: ["draft", "todo", "completed"] } })).toBe(
+      "status:draft,todo,completed",
+    );
+  });
+
+  it("does NOT collapse a superset of a group", () => {
+    expect(serializeQuery({ filter: { status: ["draft", "todo", "in-progress", "completed"] } })).toBe(
+      "status:draft,todo,in-progress,completed",
+    );
+  });
+
+  it("leaves a lone status alone — no group has a single member", () => {
+    // `parked` was dropped for exactly this reason: a one-member group would
+    // rewrite `status:deferred` into a second spelling of itself.
+    expect(serializeQuery({ filter: { status: ["deferred"] } })).toBe("status:deferred");
+  });
+
+  it("does not collapse fields that have no groups", () => {
+    expect(serializeQuery({ filter: { type: ["milestone", "epic", "bug", "feature", "task", "research"] } })).toBe(
+      "type:milestone,epic,bug,feature,task,research",
+    );
+  });
+});
+
+describe("serializeQuery — status group canonicalization", () => {
+  it("rewrites the spelled-out open set into the group name", () => {
+    // Not the identity round-trip: `status:draft,todo,in-progress` is no longer
+    // canonical form — `status:open` is the canonical spelling of that set.
+    expect(rt("status:draft,todo,in-progress")).toBe("status:open");
+    expect(rt("status:deferred,completed,scrapped")).toBe("status:closed");
+  });
+
+  it("keeps a partial set spelled out", () => {
+    expect(rt("status:draft,todo")).toBe("status:draft,todo");
+  });
+
+  it("loses BOTH group names when one token names two groups", () => {
+    // Collapse is exact SINGLE-group set equality, so a token spanning two
+    // groups is non-canonical too — and neither name survives. `open,closed` is
+    // every status, which is not either group's member set, so it comes back
+    // fully spelled out rather than partially collapsed.
+    expect(rt("status:open,closed")).toBe("status:draft,todo,in-progress,deferred,completed,scrapped");
+  });
+});
+
 describe("round-trip identity — serializeQuery(parseQuery(s)) === s", () => {
   const canonical = [
     "",
@@ -141,6 +222,13 @@ describe("round-trip identity — serializeQuery(parseQuery(s)) === s", () => {
     "priority:high",
     "status:todo,in-progress",
     "-status:completed",
+    // status group shortcuts survive the round-trip because serialize collapses
+    // an exact member match back to the group name
+    "status:open",
+    "status:closed",
+    "-status:open",
+    "-status:closed",
+    "status:open -status:draft",
     "estimate:m",
     "tags:apple,zebra",
     "-tags:wip",

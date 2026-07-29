@@ -317,3 +317,75 @@ describe("parseQuery — hierarchy relationship tokens", () => {
     });
   }
 });
+
+describe("parseQuery — status group shortcuts", () => {
+  // `status:open` / `status:closed` are shorthands the CLI already accepts
+  // (`nibs list -s open`). They expand to their member statuses at parse time,
+  // so NibFilter never carries a group name — only concrete statuses reach the
+  // backend.
+  const cases: { name: string; input: string; expected: ParsedQuery }[] = [
+    {
+      name: "status:open expands to the open statuses",
+      input: "status:open",
+      expected: { filter: { status: ["draft", "todo", "in-progress"] }, invalidTokens: [] },
+    },
+    {
+      name: "status:closed expands to the closed statuses",
+      input: "status:closed",
+      expected: { filter: { status: ["deferred", "completed", "scrapped"] }, invalidTokens: [] },
+    },
+    {
+      name: "group names are case-insensitive like every other value",
+      input: "STATUS:Open",
+      expected: { filter: { status: ["draft", "todo", "in-progress"] }, invalidTokens: [] },
+    },
+    {
+      name: "a negated group expands into the exclude list",
+      input: "-status:closed",
+      expected: { filter: { excludeStatus: ["deferred", "completed", "scrapped"] }, invalidTokens: [] },
+    },
+    {
+      name: "a group unions with concrete values in the same token, deduped",
+      input: "status:open,todo,completed",
+      expected: { filter: { status: ["draft", "todo", "in-progress", "completed"] }, invalidTokens: [] },
+    },
+    {
+      name: "the two groups partition the statuses, so together they are all of them",
+      input: "status:open,closed",
+      expected: {
+        filter: { status: ["draft", "todo", "in-progress", "deferred", "completed", "scrapped"] },
+        invalidTokens: [],
+      },
+    },
+    {
+      name: "a group unions across repeated tokens",
+      input: "status:open status:completed",
+      expected: { filter: { status: ["draft", "todo", "in-progress", "completed"] }, invalidTokens: [] },
+    },
+    {
+      name: "groups are a status-only vocabulary — `open` is not a type",
+      input: "type:open",
+      expected: { filter: {}, invalidTokens: ["type:open"] },
+    },
+    {
+      name: "there is no `parked` group — it would only spell `status:deferred`",
+      input: "status:parked",
+      expected: { filter: {}, invalidTokens: ["status:parked"] },
+    },
+  ];
+
+  for (const { name, input, expected } of cases) {
+    it(name, () => {
+      expect(parseQuery(input)).toEqual(expected);
+    });
+  }
+
+  it("does not resolve an Object prototype key as a group name", () => {
+    // Group lookup must not walk the prototype chain: `constructor` is not a
+    // status, so it belongs in the invalid sidecar like any other bad value.
+    expect(parseQuery("status:constructor")).toEqual({
+      filter: {},
+      invalidTokens: ["status:constructor"],
+    });
+  });
+});

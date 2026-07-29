@@ -1,4 +1,4 @@
-import { FIELD_SPECS, fieldSpec, isValidValue } from "./fields";
+import { FIELD_SPECS, expandValue, fieldSpec, isValidValue } from "./fields";
 import type { QueryFilter } from "./fields";
 import { recognizeRelationship } from "./relations";
 import type { RelIdKey, ExistenceKey } from "./relations";
@@ -28,7 +28,9 @@ export const FIELD_TOKEN = /^(-?)([A-Za-z]+):(.+)$/;
  *
  * Routing (design 2.2 + 2.4):
  * - known field + valid value → the positive include-list, or the `exclude*`
- *   list when the token is negated (`-field:value`).
+ *   list when the token is negated (`-field:value`). A group name is a valid
+ *   value and expands to its members (`status:open` → draft, todo, in-progress),
+ *   so the filter only ever carries concrete values.
  * - known field + invalid value → excluded from the filter, preserved (lowercased)
  *   in `invalidTokens`.
  * - comma splits a token into OR values; repeated same-field tokens union. Both
@@ -100,7 +102,11 @@ export function parseQuery(text: string): ParsedQuery {
 
     for (const value of values) {
       if (isValidValue(spec, value)) {
-        push(negated ? excludes : includes, spec.name, value);
+        // A group name stands for its members (`status:open` → draft, todo,
+        // in-progress); every other legal value stands for itself.
+        for (const member of expandValue(spec, value)) {
+          push(negated ? excludes : includes, spec.name, member);
+        }
       } else {
         // Preserve the exact (normalized) token so it survives round-trips.
         invalidTokens.push(`${negated ? "-" : ""}${spec.name}:${value}`);

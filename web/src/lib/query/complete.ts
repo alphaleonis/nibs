@@ -1,4 +1,4 @@
-import { FIELD_SPECS, fieldSpec } from "./fields";
+import { FIELD_SPECS, completionValues, fieldSpec } from "./fields";
 
 export type CompletionKind = "field" | "value" | "tag";
 
@@ -20,7 +20,8 @@ export interface Completion {
  * ending at the caret), or `null` when there is nothing to suggest:
  *
  * - a partial field name (`ty`, `-ty`) → matching field names (prefix match);
- * - `field:` / `field:partial` for a known enum → that field's values (substring);
+ * - `field:` / `field:partial` for a known enum → that field's group names, then
+ *   its values (substring);
  * - `tags:partial` → matching entries from `availableTags` (substring);
  * - an unknown field (`title:`) or an empty token → `null`.
  *
@@ -75,7 +76,7 @@ export function getCompletion(
       .filter((v) => v !== ""),
   );
 
-  const pool = spec.values === null ? availableTags : spec.values;
+  const pool = spec.values === null ? availableTags : completionValues(spec);
   const items = pool.filter((v) => !chosen.has(v) && v.includes(segment));
   if (items.length === 0) return null;
 

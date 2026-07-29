@@ -148,6 +148,46 @@ describe("tokenizeSpans — per-token classification", () => {
         { start: 23, end: 28, kind: "freetext" },
       ],
     },
+
+    // --- status group shortcuts are legal values, not errors ---
+    {
+      name: "status:open colors the group name as a value, not invalid",
+      input: "status:open",
+      expected: [
+        { start: 0, end: 6, kind: "field" },
+        { start: 6, end: 7, kind: "operator" },
+        { start: 7, end: 11, kind: "value" },
+      ],
+    },
+    {
+      name: "-status:closed keeps the negated group name a value",
+      input: "-status:closed",
+      expected: [
+        { start: 0, end: 7, kind: "field" },
+        { start: 7, end: 8, kind: "operator" },
+        { start: 8, end: 14, kind: "value" },
+      ],
+    },
+    {
+      name: "status:open,banana marks only the bad value invalid",
+      input: "status:open,banana",
+      expected: [
+        { start: 0, end: 6, kind: "field" },
+        { start: 6, end: 7, kind: "operator" },
+        { start: 7, end: 11, kind: "value" },
+        { start: 11, end: 12, kind: "operator" },
+        { start: 12, end: 18, kind: "invalid" },
+      ],
+    },
+    {
+      name: "type:open is invalid — groups are a status-only vocabulary",
+      input: "type:open",
+      expected: [
+        { start: 0, end: 4, kind: "field" },
+        { start: 4, end: 5, kind: "operator" },
+        { start: 5, end: 9, kind: "invalid" },
+      ],
+    },
   ];
 
   for (const { name, input, expected } of cases) {
@@ -169,6 +209,9 @@ describe("tokenizeSpans — full contiguous coverage", () => {
     "type:bug,feature,task",
     "type:bug,banana",
     "status:banana",
+    "status:open",
+    "-status:closed",
+    "status:open,banana",
     "title:foo",
     "login page",
     "type:",

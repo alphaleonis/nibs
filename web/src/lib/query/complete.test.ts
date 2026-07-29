@@ -86,3 +86,37 @@ describe("getCompletion — tags", () => {
     expect(c?.apply("backend")).toEqual({ text: "tags:backend", caret: 12 });
   });
 });
+
+describe("getCompletion — status group shortcuts", () => {
+  it("offers the group names ahead of the concrete statuses", () => {
+    const c = at("status:");
+    expect(c?.kind).toBe("value");
+    expect(c?.items).toEqual([
+      "open",
+      "closed",
+      "draft",
+      "todo",
+      "in-progress",
+      "deferred",
+      "completed",
+      "scrapped",
+    ]);
+  });
+
+  it("substring-filters the group names like any other value", () => {
+    expect(at("status:ope")?.items).toEqual(["open"]);
+    expect(at("status:clos")?.items).toEqual(["closed"]);
+  });
+
+  it("inserts the chosen group name", () => {
+    expect(at("status:op")?.apply("open")).toEqual({ text: "status:open", caret: 11 });
+  });
+
+  it("does not re-suggest a group already chosen in the token", () => {
+    expect(at("status:open,")?.items).not.toContain("open");
+  });
+
+  it("offers no group names for a field that has none", () => {
+    expect(at("type:")?.items).toEqual(["milestone", "epic", "bug", "feature", "task", "research"]);
+  });
+});
