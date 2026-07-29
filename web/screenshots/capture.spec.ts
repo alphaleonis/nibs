@@ -84,6 +84,22 @@ test("filter box — syntax-highlight overlay", async ({ page }) => {
   await page.locator('[role="search"]').screenshot({ path: join(OUT, "filter-highlight-cropped.png") });
 });
 
+// The relationship/existence half of the grammar, which the overlay learned to
+// color only once spans.ts started routing through `recognizeRelationship`. The
+// query deliberately mixes all four outcomes so they can be compared in one frame:
+// a metadata token (type:bug), a relationship-id token (ancestor:…), an existence
+// token (has:parent), an unrecognized field (foo:bar) and a bare word (login) —
+// the last two must stay visibly muted while the first three read as real tokens.
+test("filter box — relationship token highlighting", async ({ page }) => {
+  await openApp(page);
+  const input = page.getByTestId("filter-keyword");
+  await input.click();
+  await input.fill("type:bug ancestor:tnib-e001 has:parent foo:bar login");
+  await page.locator('[role="search"]').screenshot({
+    path: join(OUT, "filter-highlight-relationship-cropped.png"),
+  });
+});
+
 // Autocomplete dropdown must render ABOVE the table rows below it (not behind).
 // Viewport shot (not cropped) so the dropdown's stacking vs the table is visible.
 test("filter box — completion dropdown over table rows", async ({ page }) => {
@@ -271,15 +287,16 @@ for (const theme of ["daylight", "graphite"] as const) {
   }
 }
 
-// The State facet dropdown: one "Open" preset plus the per-status checkboxes.
+// The Status facet dropdown: one "Open" preset plus the per-status checkboxes.
 // There used to be two presets ("Open" and "Open + deferred"); once deferred
 // became a closed status their sets became identical, so the second was removed
 // rather than relabeled. This capture is how that is checked visually — jsdom
 // asserts the preset count, but only a render shows the menu still reads well
 // and that all six statuses remain individually selectable.
-test("state facet — presets and per-status checkboxes", async ({ page }) => {
+test("status facet — presets and per-status checkboxes", async ({ page }) => {
   await openApp(page);
-  await page.getByRole("button", { name: /^state/i }).click();
-  await expect(page.getByTestId("state-preset-open")).toBeVisible({ timeout: 5_000 });
-  await shot(page, "state-facet-dropdown");
+  await page.getByRole("button", { name: /^status/i }).click();
+  await expect(page.getByTestId("status-preset-open")).toBeVisible({ timeout: 5_000 });
+  await shot(page, "status-facet-dropdown");
 });
+
