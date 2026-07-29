@@ -45,6 +45,32 @@ export interface NibFilter {
   mentionedById?: string;
 }
 
+// Compile-time guard binding the hand-written NibFilter above to the codegen'd
+// one, so the two key sets cannot drift.
+//
+// The filter reaches the wire as a variable (`variables: { filter }` in
+// useTableData.svelte.ts), not an object literal, so TypeScript's
+// excess-property check never runs on it: an extra or misspelled client-side key
+// would type-check, ship, and be silently ignored by the server.
+//
+// BOTH directions are required. A one-way `extends` is satisfied by extra
+// properties, so it would miss exactly that misspelling case; the reverse
+// direction catches a key the schema gained that the client never picked up.
+//
+// The hand-written type is kept rather than replaced by the generated one
+// because the generated fields are spelled `T | null | undefined` where these
+// are optional `T?`, which every consumer (prefs.filter, QueryFilter,
+// parse/serialize) relies on. `import type` keeps this erased at compile time.
+import type { NibFilter as GeneratedNibFilter } from "./gql/graphql";
+
+type _ClientKeysExistOnGenerated = keyof NibFilter extends keyof GeneratedNibFilter ? true : never;
+const _clientKeysCheck: _ClientKeysExistOnGenerated = true;
+void _clientKeysCheck;
+
+type _GeneratedKeysExistOnClient = keyof GeneratedNibFilter extends keyof NibFilter ? true : never;
+const _generatedKeysCheck: _GeneratedKeysExistOnClient = true;
+void _generatedKeysCheck;
+
 export interface TreeNib extends NibSummary {
   parentId: string | null;
 }
