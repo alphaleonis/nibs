@@ -28,6 +28,9 @@ var cheatCmd = &cobra.Command{
 }
 
 // cheatSheet renders the one-screen grammar, interpolating the live enum sets.
+// The close line's default reason is interpolated from closeDefaultStatus — the
+// same const `nibs close --as` defaults to and `nibs prime` renders — so the
+// three agent-facing surfaces cannot disagree about what omitting --as records.
 func cheatSheet(cfg *config.Config) string {
 	var b strings.Builder
 	// The STATUS line lists the statuses by group rather than in one flat run:
@@ -51,7 +54,8 @@ WRITE  new "<title>" -t T create; also -s -p -e --parent --blocked-by --tag --af
        body <id>          --set | --append | --section "## H" --set [--create] | --replace-old T --replace-new U
        mv <id[…]>         --after|--before|--first <anchor> | --parent <id> | --children-of <p> <id…>
        rm <id…>           --archive (default) | --delete (irreversible); agents pass -f/--force
-       close <id> --summary -   mark completed, append summary, propagate to parent
+       close <id>         --summary - (required); --as <closed status> picks the close reason (default
+                          %s). Closing an existing nib goes through close — set -s <closed> errors.
 META   cheat · catalog <fields|filters|recipes|examples|hierarchy|schema> · prime[ --full] · query (GraphQL)
 
 VIEWS  id < ref < card < full (leanest→fullest). -f adds exact fields, e.g. -f "id,blocked-by(id,status)".
@@ -66,6 +70,7 @@ FILTER list/rel show OPEN only by default (closed statuses hidden; header notes 
        descendants -t bug' is already open — no post-filter. -c/-q honor the open default (--all for totals).
 RULE   On any nibs error: STOP, find the root cause, never silently retry.
 `,
+		closeDefaultStatus,
 		strings.Join(cfg.TypeNames(), ", "),
 		statusGroupOpen, strings.Join(cfg.OpenStatusNames(), "/"),
 		statusGroupClosed, strings.Join(cfg.ClosedStatusNames(), "/"),

@@ -128,7 +128,7 @@ Or, if your agent framework supports startup hooks, wire `nibs prime` to run at 
 | `nibs set <id>` | Update a nib's metadata and links, or clear a field |
 | `nibs body <id>` | Edit a nib's Markdown body (set, append, or replace sections) |
 | `nibs mv <id>` | Reposition a nib among its siblings or reparent it |
-| `nibs close <id>` | Mark a nib completed with a summary |
+| `nibs close <id>` | Close a nib with a summary; `--as <closed status>` picks the close reason (default `completed`). Closing an existing nib goes through `close` — `nibs set -s <closed status>` is refused |
 | `nibs context` | Show project status summary with progress |
 | `nibs plan <id>` | View an ordered plan of a parent nib's children |
 | `nibs query` | Run a GraphQL query or mutation |

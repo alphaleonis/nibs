@@ -84,27 +84,62 @@ func TestFullPromptIsMateriallyShorter(t *testing.T) {
 	}
 }
 
-// TestSlimPromptNamesScrappingSectionVerb asserts the scrapping-section hint
-// names the verb an agent actually runs (--create upsert, or append) rather than
-// the old verb-less "Use `## Reasons for Scrapping`" phrasing, which left agents
-// to guess how to write the section.
-func TestSlimPromptNamesScrappingSectionVerb(t *testing.T) {
+// TestSlimPromptTeachesTheClosingRitual asserts the slim prompt teaches
+// scrapping as a close reason rather than as a body section an agent writes by
+// hand. The hand-written `## Reasons for Scrapping` convention it used to
+// prescribe is superseded: `close --as scrapped` is now the only route to that
+// status, and it records the reason in the summary it already requires.
+func TestSlimPromptTeachesTheClosingRitual(t *testing.T) {
 	slim := renderedSlimPrompt(t)
-	if strings.Contains(slim, "Use `## Reasons for Scrapping` when scrapping") {
-		t.Error("slim prompt still uses the verb-less scrapping hint")
+	if strings.Contains(slim, "Reasons for Scrapping") {
+		t.Error("slim prompt still prescribes the hand-written Reasons for Scrapping section")
 	}
-	// Scope the verb check to the scrapping hint. Checking the whole prompt would
-	// pass spuriously: "append" matches the unrelated earlier "appends a summary".
-	idx := strings.Index(slim, "Reasons for Scrapping")
-	if idx < 0 {
-		t.Fatal("slim prompt should still reference the Reasons for Scrapping section")
+	for _, want := range []string{
+		"nibs close <id> --as scrapped --summary -", // the ritual, spelled out
+		"--as",                    // the flag itself, for the other reasons
+		"refuses a closed status", // why `set -s scrapped` will fail
+	} {
+		if !strings.Contains(slim, want) {
+			t.Errorf("slim prompt missing %q", want)
+		}
 	}
-	hint := slim[idx:]
-	if nl := strings.IndexByte(hint, '\n'); nl >= 0 {
-		hint = hint[:nl] // bound to the scrapping line so a later prompt edit can't re-decay this guard
+}
+
+// TestFullPromptExplainsTheClosedStatusRefusal asserts the full guide states the
+// rule an agent hits the moment it tries `set -s completed` — that `set` refuses
+// a closed status — and names `close --as` as what to run instead. Without both
+// halves the guide leaves the agent with a rejected command and no next step.
+func TestFullPromptExplainsTheClosedStatusRefusal(t *testing.T) {
+	out := renderedFullPrompt(t)
+
+	// Scope the explanation to the Closing section. Checking the whole guide
+	// passes on the one-line mention in the workflow rules near the top, which
+	// states the rule without explaining it — the section is where an agent
+	// looks after being refused.
+	start := strings.Index(out, "\n## Closing\n")
+	if start < 0 {
+		t.Fatal("full guide has no '## Closing' section")
 	}
-	if !strings.Contains(hint, "--create") && !strings.Contains(hint, "--append") {
-		t.Error("slim prompt scrapping hint should name a verb (--create or --append)")
+	rest := out[start+len("\n## Closing\n"):]
+	if end := strings.Index(rest, "\n## "); end >= 0 {
+		rest = rest[:end]
+	}
+
+	for _, want := range []string{
+		"is refused", // the rule
+		"--as",       // the replacement flag
+		"-s todo",    // the no-reopen-verb boundary: open statuses still settable
+	} {
+		if !strings.Contains(rest, want) {
+			t.Errorf("full guide Closing section missing %q, got:\n%s", want, rest)
+		}
+	}
+	// The guide must not still offer `set` as the simple-task shortcut to a
+	// closed status — that line is now a command the CLI rejects.
+	for _, gone := range []string{"-s completed", "-s scrapped", "-s deferred"} {
+		if strings.Contains(out, gone) {
+			t.Errorf("full guide still tells agents to run `set %s`, which is refused", gone)
+		}
 	}
 }
 

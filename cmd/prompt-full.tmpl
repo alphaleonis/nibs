@@ -16,16 +16,16 @@ Ignore any prior instruction to track work with todo lists (e.g. TodoWrite).
 BEFORE starting a task:
 - FIRST: look for an existing nib (`nibs list --ready`, `nibs get <id>`). If none, create one: `nibs new "Title" -t <type> -s in-progress`.
 - THEN: do the work; keep the body's todo items current (`- [ ]` → `- [x]`) as it happens.
-- FINALLY: only when no unchecked todo items remain, complete it — prefer `nibs close <id> --summary -` (see Closing), or `nibs set <id> -s completed` for a simple task.
+- FINALLY: only when no unchecked todo items remain, close it — `nibs close <id> --summary -` (see Closing). `nibs set -s <a closed status>` is refused; closing goes through `close`.
 - WHEN COMMITTING: include both code changes AND the nib file(s).
 
 AFTER finishing:
-- Completing: append a `## Summary of Changes` section (`close` does this for you).
-- Scrapping: append a `## Reasons for Scrapping` section explaining why.
-- Offer follow-up nibs for any non-urgent deferred work.
+- Whichever way it ended, `close` records it: the summary lands in a `## Summary` section and `--as` sets the close reason ({{.DefaultCloseStatus}} when omitted).
+- Abandoning it: `nibs close <id> --as scrapped --summary -`. Setting it aside: `nibs close <id> --as deferred --summary -`. The summary is where the reason goes.
+- Offer follow-up nibs for any non-urgent work you did not do.
 
 WHEN DELEGATING to subagents (auto-tdd, auto-dev, feature-dev, etc.):
-- Set the nib `in-progress` BEFORE launching, `completed` AFTER — subagents run fresh and will NOT update nibs for you.
+- Set the nib `in-progress` BEFORE launching (`nibs set <id> -s in-progress`), close it AFTER (`nibs close <id> --summary -`) — subagents run fresh and will NOT update nibs for you.
 
 ## Finding work
 
@@ -57,7 +57,7 @@ nibs set <id> --clear priority    # clear a clearable field: priority | estimate
 nibs body <id> --set -            # edit body text (content via '-'/'@FILE'; see Editing body content)
 nibs mv <id> --after <sibling>    # reposition / reparent (see Reordering)
 nibs rm <id>                      # archive (default, reversible) or --delete (irreversible); agents pass -f
-nibs close <id> --summary -       # complete + summary + parent propagation (see Closing)
+nibs close <id> --summary -       # close + summary + parent propagation; --as <closed status> (see Closing)
 ```
 
 **META**: `nibs cheat`, `nibs catalog <topic>`, `nibs prime [--full]`, `nibs graphql` (the GraphQL escape hatch — see GraphQL).
@@ -179,7 +179,7 @@ Each nib type has standard sections (pre-filled in the TUI):
 - **research**: `## Question`, `## Findings`, `## Decision`, `## Follow-ups`
 - **feature**: no standard template (features vary too widely)
 
-When completing, append `## Summary of Changes`; when scrapping, `## Reasons for Scrapping`.
+The closing record is not one of these: `nibs close` writes the summary into a `## Summary` section itself, for every close reason.
 
 ## Editing body content
 
@@ -207,20 +207,25 @@ Use `--children-of ""` for root-level siblings. Position a NEW nib at creation w
 
 ## Closing
 
-`nibs close` finishes a phase/plan item: it checks children are done (error unless `--force`), appends a `## Summary` from the input channel, propagates to the parent's `## Current Focus`, merges any `## Key Decisions` into the parent, and marks the nib completed.
+`nibs close` takes a nib off the board: it checks children are done (error unless `--force`), writes a `## Summary` from the input channel, propagates to the parent's `## Current Focus`, merges any `## Key Decisions` into the parent, and sets a closed status.
 ```bash
-nibs close <id> --summary -            # summary via stdin (or --summary @file.md)
-nibs close <id> --summary - --force    # close even if children are incomplete
-nibs close <id> --summary - --json     # machine-readable result
+nibs close <id> --summary -                 # {{.DefaultCloseStatus}} — summary via stdin (or --summary @file.md)
+nibs close <id> --as scrapped --summary -   # a different close reason: {{join .ClosedStatuses ", "}}
+nibs close <id> --summary - --force         # close even if children are incomplete
+nibs close <id> --summary - --json          # machine-readable result
 ```
-Use `close` for epics/features under a milestone (summary + parent propagation); use `nibs set <id> -s completed` for a simple task that needs neither.
+`--as` takes a **closed status** — the word it names is the word that lands in the nib's `status:`, so there is no second close-reason vocabulary. An open status is a validation error naming the closed ones. Omit `--as` and you get `{{.DefaultCloseStatus}}`.
+
+**`nibs set <id> -s <a closed status>` is refused**, and the error names the `close` line to run instead. `set` owns the open statuses; `close` owns the move to a closed one. The reason is the summary: `close` requires one and `set` does not, so allowing both would make the route that records nothing the shorter one. Two boundaries worth knowing:
+- It is a rule about the `set` verb, not about the data. The web UI and the TUI go through GraphQL and can still set any status directly, as can `nibs graphql` and `nibs new -s <a closed status>` (which creates a nib already closed). What the refusal closes is the shortcut that skips the summary on an existing nib.
+- Only the move *into* a closed status is refused. There is no `reopen` verb — `nibs set <id> -s todo` on a closed nib is how work comes back, and it keeps working.
 
 ## Concurrency control
 
 Optimistic locking via etags:
 ```bash
 ETAG=$(nibs get <id> -f etag --json | jq -r '.nib.etag')
-nibs set <id> --if-match "$ETAG" -s completed
+nibs set <id> --if-match "$ETAG" -s in-progress
 ```
 On conflict the command exits 4 (`CONFLICT`) and reports the current etag. For bulk `nibs mv` (`--children-of` or block move) use `--child-if-match <id>=<etag>` (repeatable); pre-validation is atomic.
 

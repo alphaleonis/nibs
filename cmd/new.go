@@ -269,6 +269,13 @@ func init() {
 		priorityNames[i] = p.Name
 	}
 
+	// -s lists every status, the closed ones included: `nibs new "…" -t task -s
+	// scrapped` deliberately creates an already-closed nib. The closed-status
+	// refusal in `nibs set` is not incomplete here — it governs transitions on an
+	// existing nib, where the point is that closing carries the summary `close`
+	// requires. A nib created closed has no prior state to summarize, and `close`
+	// has no create-and-close form, so refusing here would remove the only way to
+	// record work that was over before it started.
 	newCmd.Flags().StringVarP(&newStatus, "status", "s", "", "Initial status ("+strings.Join(statusNames, ", ")+")")
 	newCmd.Flags().StringVarP(&newType, "type", "t", "", "Nib type ("+strings.Join(typeNames, ", ")+")")
 	newCmd.Flags().StringVarP(&newPriority, "priority", "p", "", "Priority level ("+strings.Join(priorityNames, ", ")+")")

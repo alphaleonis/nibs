@@ -1,14 +1,24 @@
 package cmd
 
 import (
+	"errors"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
+
+	"github.com/alphaleonis/nibs/internal/config"
+	"github.com/alphaleonis/nibs/internal/output"
 )
 
 func resetCloseFlags() {
 	closeSummary = ""
+	// --as is the one close flag whose zero value is not its default: Cobra
+	// leaves the bound variable at whatever the last invocation parsed, so
+	// clearing it to "" would make the next bare `close` fail its own --as
+	// validation rather than produce the default close reason.
+	closeAs = closeDefaultStatus
 	closeForce = false
 	closeIfMatch = ""
 	closeJSON = false
@@ -16,6 +26,7 @@ func resetCloseFlags() {
 
 func TestResetCloseFlagsClearsAllState(t *testing.T) {
 	closeSummary = "dirty"
+	closeAs = "dirty"
 	closeForce = true
 	closeIfMatch = "dirty"
 	closeJSON = true
@@ -24,6 +35,9 @@ func TestResetCloseFlagsClearsAllState(t *testing.T) {
 
 	if closeSummary != "" {
 		t.Errorf("closeSummary not reset: %q", closeSummary)
+	}
+	if closeAs != closeDefaultStatus {
+		t.Errorf("closeAs = %q after reset, want the flag default %q", closeAs, closeDefaultStatus)
 	}
 	if closeForce {
 		t.Error("closeForce not reset")
@@ -116,9 +130,9 @@ func TestCloseSummaryAppended(t *testing.T) {
 
 func TestCloseFailsWithIncompleteChildren(t *testing.T) {
 	nibsDir := setupCloseTest(t, map[string]string{
-		"par-1--parent.md": "---\ntitle: Parent Epic\nstatus: in-progress\ntype: epic\n---\n\nEpic body.\n",
+		"par-1--parent.md":    "---\ntitle: Parent Epic\nstatus: in-progress\ntype: epic\n---\n\nEpic body.\n",
 		"ch-1--child-done.md": "---\ntitle: Child Done\nstatus: completed\ntype: task\nparent: par-1\n---\n\nDone.\n",
-		"ch-2--child-wip.md": "---\ntitle: Child WIP\nstatus: in-progress\ntype: task\nparent: par-1\n---\n\nStill working.\n",
+		"ch-2--child-wip.md":  "---\ntitle: Child WIP\nstatus: in-progress\ntype: task\nparent: par-1\n---\n\nStill working.\n",
 	})
 
 	withStdin(t, "Done\n")
@@ -187,7 +201,7 @@ func TestCloseUpdatesParentCurrentFocus(t *testing.T) {
 func TestCloseUpdatesParentKeyDecisions(t *testing.T) {
 	nibsDir := setupCloseTest(t, map[string]string{
 		"ms-2--milestone.md": "---\ntitle: Milestone\nstatus: in-progress\ntype: milestone\n---\n\n## Key Decisions\n\n- Previous decision\n",
-		"ph-2--phase.md": "---\ntitle: Phase 2\nstatus: in-progress\ntype: epic\nparent: ms-2\n---\n\n## Key Decisions\n\n- Used GraphQL instead of REST\n- Chose table-driven tests\n",
+		"ph-2--phase.md":     "---\ntitle: Phase 2\nstatus: in-progress\ntype: epic\nparent: ms-2\n---\n\n## Key Decisions\n\n- Used GraphQL instead of REST\n- Chose table-driven tests\n",
 	})
 
 	withStdin(t, "Phase 2 done.\n")
@@ -234,7 +248,7 @@ func TestCloseNoParent(t *testing.T) {
 func TestCloseParentMissingSections(t *testing.T) {
 	nibsDir := setupCloseTest(t, map[string]string{
 		"ms-3--milestone.md": "---\ntitle: Milestone\nstatus: in-progress\ntype: milestone\n---\n\nJust a goal.\n",
-		"ph-3--phase.md": "---\ntitle: Phase 3\nstatus: in-progress\ntype: epic\nparent: ms-3\n---\n\n## Key Decisions\n\n- Chose mdsection for parsing\n",
+		"ph-3--phase.md":     "---\ntitle: Phase 3\nstatus: in-progress\ntype: epic\nparent: ms-3\n---\n\n## Key Decisions\n\n- Chose mdsection for parsing\n",
 	})
 
 	withStdin(t, "Phase 3 completed.\n")
@@ -345,5 +359,133 @@ func TestCloseSucceedsWithAllChildrenCompleted(t *testing.T) {
 	}
 	if !strings.Contains(content, "## Summary") {
 		t.Errorf("expected summary section appended, got:\n%s", content)
+	}
+}
+
+// TestCloseAsSetsTheNamedClosedStatus asserts --as writes the status it names,
+// for every status config declares closed. The cases are derived from
+// ClosedStatusNames, so a status added to the vocabulary is covered here without
+// an edit; the membership check keeps the loop from silently going empty.
+func TestCloseAsSetsTheNamedClosedStatus(t *testing.T) {
+	closed := config.Default().ClosedStatusNames()
+	for _, want := range []string{"scrapped", "deferred"} {
+		if !slices.Contains(closed, want) {
+			t.Fatalf("test setup: %q is not among the closed statuses %v, so this test no longer covers it", want, closed)
+		}
+	}
+
+	for _, status := range closed {
+		t.Run(status, func(t *testing.T) {
+			nibsDir := setupCloseTest(t, map[string]string{
+				"as-1--my-task.md": "---\ntitle: My Task\nstatus: in-progress\ntype: task\n---\n\nBody.\n",
+			})
+
+			withStdin(t, "Closing as "+status+".\n")
+			rootCmd.SetArgs([]string{
+				"--nibs-path", nibsDir,
+				"close", "as-1", "--as", status, "--summary", "-",
+			})
+
+			if err := rootCmd.Execute(); err != nil {
+				t.Fatalf("close --as %s failed: %v", status, err)
+			}
+
+			content := readNibFile(t, nibsDir, "as-1--my-task.md")
+			if !strings.Contains(content, "status: "+status) {
+				t.Errorf("expected status %s, got:\n%s", status, content)
+			}
+			// The summary is the record the close reason exists to carry, so a
+			// reason written without one would defeat the point of the flag.
+			if !strings.Contains(content, "Closing as "+status+".") {
+				t.Errorf("expected the summary in the body, got:\n%s", content)
+			}
+		})
+	}
+}
+
+// TestCloseRejectsAnOpenStatusAs asserts --as refuses every open status, naming
+// the closed ones it would have accepted. Without this, `--as todo` would write
+// an open status through the closing ritual — the exact move the `set` refusal
+// exists to prevent, arriving by the other door.
+func TestCloseRejectsAnOpenStatusAs(t *testing.T) {
+	cfg := config.Default()
+	open := cfg.OpenStatusNames()
+	if len(open) == 0 {
+		t.Fatal("test setup: no open statuses declared, so this test asserts nothing")
+	}
+
+	for _, status := range open {
+		t.Run(status, func(t *testing.T) {
+			nibsDir := setupCloseTest(t, map[string]string{
+				"bad-1--my-task.md": "---\ntitle: My Task\nstatus: in-progress\ntype: task\n---\n\nBody.\n",
+			})
+
+			// Supply the summary so --as is the only thing wrong with this
+			// invocation. Without it the command fails on the missing summary
+			// whatever --as holds, and the test would pass with no --as check at
+			// all.
+			withStdin(t, "Should never be written.\n")
+			rootCmd.SetArgs([]string{
+				"--nibs-path", nibsDir,
+				"close", "bad-1", "--as", status, "--summary", "-",
+			})
+
+			err := rootCmd.Execute()
+			if err == nil {
+				t.Fatalf("close --as %s should be rejected, got nil", status)
+			}
+			var ce *output.CodedError
+			if !errors.As(err, &ce) {
+				t.Fatalf("error = %T, want *output.CodedError", err)
+			}
+			if output.ExitCode(ce.Code) != output.ExitValidation {
+				t.Errorf("close --as %s exit = %d, want %d (validation)", status, output.ExitCode(ce.Code), output.ExitValidation)
+			}
+			// The message has to name the choices, or an agent's only recovery is
+			// to guess a second time.
+			for _, name := range cfg.ClosedStatusNames() {
+				if !strings.Contains(err.Error(), name) {
+					t.Errorf("close --as %s error should name the valid choice %q, got: %s", status, name, err)
+				}
+			}
+
+			content := readNibFile(t, nibsDir, "bad-1--my-task.md")
+			if !strings.Contains(content, "status: in-progress") {
+				t.Errorf("rejected close --as %s still wrote the file:\n%s", status, content)
+			}
+		})
+	}
+}
+
+// TestCloseAsFollowsTheClosedFlag proves --as reads StatusConfig.Closed rather
+// than a list of names kept in close.go: a status declared closed for the
+// duration of this test is accepted with no edit to the command. The paired
+// half — an open status being rejected — is TestCloseRejectsAnOpenStatusAs,
+// which together with this rules out "accepts anything in the vocabulary".
+func TestCloseAsFollowsTheClosedFlag(t *testing.T) {
+	withExtraStatus(t, config.StatusConfig{
+		Name:        "abandoned",
+		Color:       "gray",
+		Closed:      true,
+		Description: "Guard status: closed, declared only for this test",
+	})
+
+	nibsDir := setupCloseTest(t, map[string]string{
+		"drv-1--my-task.md": "---\ntitle: My Task\nstatus: in-progress\ntype: task\n---\n\nBody.\n",
+	})
+
+	withStdin(t, "Walked away from it.\n")
+	rootCmd.SetArgs([]string{
+		"--nibs-path", nibsDir,
+		"close", "drv-1", "--as", "abandoned", "--summary", "-",
+	})
+
+	if err := rootCmd.Execute(); err != nil {
+		t.Fatalf("close --as abandoned should succeed once abandoned is declared closed, got: %v", err)
+	}
+
+	content := readNibFile(t, nibsDir, "drv-1--my-task.md")
+	if !strings.Contains(content, "status: abandoned") {
+		t.Errorf("expected status abandoned, got:\n%s", content)
 	}
 }

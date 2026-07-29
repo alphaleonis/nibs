@@ -6,6 +6,7 @@ import (
 	"os"
 	"strings"
 
+	"github.com/alphaleonis/nibs/internal/config"
 	"github.com/alphaleonis/nibs/internal/graph/model"
 	"github.com/alphaleonis/nibs/internal/mdsection"
 	"github.com/alphaleonis/nibs/internal/output"
@@ -13,8 +14,15 @@ import (
 	"github.com/spf13/cobra"
 )
 
+// closeDefaultStatus is the close reason a bare `nibs close` produces. It is
+// named here rather than derived, because "which closed status is the default"
+// is not recorded by any flag on config.StatusConfig — the Closed flag says a
+// status is a close reason, not that it is the usual one.
+const closeDefaultStatus = "completed"
+
 var (
 	closeSummary string
+	closeAs      string
 	closeForce   bool
 	closeIfMatch string
 	closeJSON    bool
@@ -22,13 +30,34 @@ var (
 
 var closeCmd = &cobra.Command{
 	Use:   "close <id>",
-	Short: "Close a nib by marking it completed with a summary",
-	Long:  `Closes a nib by marking it completed with a summary. If the nib has a parent, updates the parent's Current Focus and merges Key Decisions. The --if-match flag protects the target nib only; the parent update uses its own etag internally.`,
-	Args:  codedExactArgs(&closeJSON, 1),
+	Short: "Close a nib with a summary (completed, or --as another closed status)",
+	Long: `Closes a nib with a summary, recording why it left the board. --as picks the
+close reason from the closed statuses (` + closeDefaultStatus + ` when omitted); they are ordinary
+status names, not a separate close-reason vocabulary. An open status is a validation error.
+
+close is the verb that closes an existing nib: ` + "`nibs set -s <closed status>`" + ` is refused,
+because close requires a summary and set does not. Going the other way is not refused —
+there is no reopen command, so ` + "`nibs set -s todo`" + ` on a closed nib still works.
+
+If the nib has a parent, updates the parent's Current Focus and merges Key Decisions.
+The --if-match flag protects the target nib only; the parent update uses its own etag internally.`,
+	Args: codedExactArgs(&closeJSON, 1),
 	RunE: func(cmd *cobra.Command, args []string) error {
 		app := getApp(cmd)
 		ctx := context.Background()
 		resolver := app.newResolver()
+
+		// --as names a close reason out of the status vocabulary itself: the word
+		// it takes is the word that lands in the nib's `status:`, so there is no
+		// second set of reason names to keep in sync. Checking it against
+		// IsClosedStatus rather than a list kept here means a newly declared
+		// closed status is accepted without touching this command, and an open
+		// status is rejected without naming one.
+		if !app.Config().IsClosedStatus(closeAs) {
+			return cmdError(closeJSON, output.ErrValidation,
+				"invalid --as status: %s (must be a closed status: %s)",
+				closeAs, strings.Join(app.Config().ClosedStatusNames(), ", "))
+		}
 
 		// Find the nib
 		b, err := resolver.Query().Nib(ctx, args[0])
@@ -76,9 +105,9 @@ var closeCmd = &cobra.Command{
 		newBody, _ := mdsection.Set(b.Body, 2, "Summary", "\n"+summary+"\n")
 
 		// Build update input
-		completed := "completed"
+		status := closeAs
 		input := model.UpdateNibInput{
-			Status: &completed,
+			Status: &status,
 			Body:   &newBody,
 		}
 		if closeIfMatch != "" {
@@ -101,6 +130,8 @@ var closeCmd = &cobra.Command{
 
 				// Replace (not append) Current Focus: after closing a child, the milestone's
 				// focus should reflect the latest completed work, not accumulate history.
+				// The line reads "Completed" for every --as value; this propagation does
+				// not vary by close reason.
 				focusContent := fmt.Sprintf("\nCompleted %s: %s\n", b.ID, summary)
 				parentBody, _ = mdsection.Set(parentBody, 2, "Current Focus", focusContent)
 
@@ -135,6 +166,11 @@ var closeCmd = &cobra.Command{
 
 func init() {
 	closeCmd.Flags().StringVar(&closeSummary, "summary", "", "Summary input channel: '-' for stdin or '@FILE' for a file (no inline text)")
+	// The usage string is interpolated at package load, so it lists the closed
+	// statuses declared then; RunE re-derives the accepted set per invocation,
+	// and that check is what actually admits or rejects a value.
+	closeCmd.Flags().StringVar(&closeAs, "as", closeDefaultStatus,
+		"Close reason: which closed status to set ("+strings.Join(config.Default().ClosedStatusNames(), ", ")+")")
 	closeCmd.Flags().BoolVar(&closeForce, "force", false, "Close even if children are incomplete")
 	closeCmd.Flags().StringVar(&closeIfMatch, "if-match", "", "Only close if etag matches (optimistic locking)")
 	closeCmd.Flags().BoolVar(&closeJSON, "json", false, "Output as JSON")

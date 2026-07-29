@@ -7,8 +7,8 @@ import (
 	"strings"
 	"text/template"
 
-	"github.com/spf13/cobra"
 	"github.com/alphaleonis/nibs/internal/config"
+	"github.com/spf13/cobra"
 )
 
 //go:embed prompt.tmpl
@@ -39,6 +39,11 @@ type promptData struct {
 	ReleasingStatuses []string
 	HoldingStatuses   []string
 	StartableStatuses []string
+
+	// DefaultCloseStatus is what a bare `nibs close` produces — read from the
+	// --as flag's default rather than written out in the guides, so the two
+	// cannot disagree about which reason omitting --as records.
+	DefaultCloseStatus string
 }
 
 // promptFuncs are the template helpers the guides need to state a derived set:
@@ -120,15 +125,16 @@ func renderPrompt(w io.Writer, name, text string) error {
 
 	cfg := config.Default()
 	data := promptData{
-		GraphQLSchema:     GetGraphQLSchema(),
-		Types:             config.DefaultTypes,
-		Statuses:          config.DefaultStatuses,
-		Priorities:        config.DefaultPriorities,
-		OpenStatuses:      cfg.OpenStatusNames(),
-		ClosedStatuses:    cfg.ClosedStatusNames(),
-		ReleasingStatuses: cfg.ReleasingStatusNames(),
-		HoldingStatuses:   cfg.HoldingStatusNames(),
-		StartableStatuses: cfg.StartableStatusNames(),
+		GraphQLSchema:      GetGraphQLSchema(),
+		Types:              config.DefaultTypes,
+		Statuses:           config.DefaultStatuses,
+		Priorities:         config.DefaultPriorities,
+		OpenStatuses:       cfg.OpenStatusNames(),
+		ClosedStatuses:     cfg.ClosedStatusNames(),
+		ReleasingStatuses:  cfg.ReleasingStatusNames(),
+		HoldingStatuses:    cfg.HoldingStatusNames(),
+		StartableStatuses:  cfg.StartableStatusNames(),
+		DefaultCloseStatus: closeDefaultStatus,
 	}
 
 	return tmpl.Execute(w, data)

@@ -24,6 +24,9 @@ var (
 	// blocking their dependents. The capture spans a run of backticked names so
 	// the sentence can grow past one status without the guard going blind.
 	readmeStatusBlocker = regexp.MustCompile("A ((?:`[^`]+`(?:, | or |/)?)+) nib is closed but still blocks")
+	// readmeCloseDefault captures the close reason README's command table says a
+	// bare `nibs close` records.
+	readmeCloseDefault = regexp.MustCompile("picks the close reason \\(default `([^`]+)`\\)")
 	// statusNameSep splits a status enumeration written for humans. README is
 	// prose, so the separator is a wording choice, not a fact about config —
 	// accept the three the sentences use rather than failing on a reword.
@@ -125,5 +128,21 @@ func TestReadmeBlockerRuleMatchesConfig(t *testing.T) {
 	slices.Sort(want)
 	if !slices.Equal(got, want) {
 		t.Errorf("README names %v as closed-but-still-blocking; config declares %v", got, want)
+	}
+}
+
+// TestReadmeCloseDefaultMatchesCommand asserts README's command table names the
+// same default close reason `nibs close` applies. The table is static prose with
+// no render step, so this test is what binds it to closeDefaultStatus — the job
+// `nibs prime` and `nibs cheat` do by interpolating that const. Without it,
+// changing the default would leave README quoting the old word while both
+// generated surfaces moved.
+func TestReadmeCloseDefaultMatchesCommand(t *testing.T) {
+	m := readmeCloseDefault.FindStringSubmatch(readmeText(t))
+	if m == nil {
+		t.Fatalf("README.md has no \"picks the close reason (default `x`)\" phrase, so the close default is unguarded; `nibs close` records %q when --as is omitted — restore the phrase or update this test to match its new shape", closeDefaultStatus)
+	}
+	if m[1] != closeDefaultStatus {
+		t.Errorf("README says a bare `nibs close` records %q; the command records %q", m[1], closeDefaultStatus)
 	}
 }

@@ -204,6 +204,34 @@ func TestCheatSheetDerivesStatusGroups(t *testing.T) {
 	}
 }
 
+// TestCheatSheetCloseLineNamesTheCloseDefault asserts the close entry states
+// the reason a bare `nibs close` records by interpolating closeDefaultStatus,
+// not by spelling it out. `nibs prime` renders the same const and the CLI reads
+// it as the --as default, so a restated word here would make the one-screen
+// grammar the surface left lying after the default moved.
+func TestCheatSheetCloseLineNamesTheCloseDefault(t *testing.T) {
+	got := cheatSheet(config.Default())
+
+	// Scope to the close entry — it wraps onto a continuation line, and the
+	// sheet names statuses in several other places where a match would prove
+	// nothing about this one. The entry runs to the next section label.
+	start := strings.Index(got, "close <id>")
+	if start < 0 {
+		t.Fatalf("cheat sheet has no 'close <id>' entry, got:\n%s", got)
+	}
+	entry := got[start:]
+	if end := strings.Index(entry, "\nMETA"); end >= 0 {
+		entry = entry[:end]
+	}
+
+	if !strings.Contains(entry, "--as") {
+		t.Errorf("cheat sheet close entry should name --as, got: %q", entry)
+	}
+	if !strings.Contains(entry, closeDefaultStatus) {
+		t.Errorf("cheat sheet close entry should name the default close reason %q, got: %q", closeDefaultStatus, entry)
+	}
+}
+
 // TestCheatSheetDropsBlockerNoteWhenNothingHolds asserts the blocker note is
 // conditional on the ReleasesDependents flag: with every closed status
 // releasing its dependents the note has no members, so the sheet must drop it
