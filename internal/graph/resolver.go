@@ -286,10 +286,11 @@ func (r *Resolver) removeBlockedByRelationships(b *nib.Nib, targetIDs []string) 
 }
 
 // activateParentChain walks up the parent chain, setting any todo/draft
-// parents to in-progress. Stops when it reaches a parent that is already
-// in-progress, deferred, completed, or scrapped (or has no parent). A deferred
-// parent is parked, so it is left untouched — a child going in-progress does
-// not un-park it.
+// parents to in-progress. Those two statuses are the whole activation set: the
+// walk stops at a parent in any other status (or one with no parent), so an
+// in-progress ancestor is already active and a closed one — completed,
+// scrapped or deferred — stays closed. A child going in-progress never reopens
+// a closed parent.
 // Best-effort: warns on stderr and stops on any error. Mutates an owned clone
 // (from GetForUpdate) before each Update — as UpdateNib does — so a refused write
 // never corrupts the shared in-memory nib.
@@ -311,7 +312,7 @@ func (r *Resolver) activateParentChain(childID, parentID string) {
 			return
 		}
 		if parent.Status != "todo" && parent.Status != "draft" {
-			return // already active or resolved, stop
+			return // already active or closed, stop
 		}
 		nextParentID := parent.Parent
 		// Reader.Get above returns the SHARED in-memory pointer (nibcore.Core.Get
@@ -344,9 +345,20 @@ func (r *Resolver) activateParentChain(childID, parentID string) {
 	}
 }
 
-// isResolvedStatus delegates to nib.IsResolvedStatus — the canonical definition.
-func isResolvedStatus(status string) bool {
-	return nib.IsResolvedStatus(status)
+// isStartableStatus delegates to config.IsStartableStatus — the canonical
+// status half of "can I start this?" — reached through the reader's config so
+// this package keeps no status list of its own.
+func (r *Resolver) isStartableStatus(status string) bool {
+	return r.Reader.Config().IsStartableStatus(status)
+}
+
+// releasesDependents delegates to config.StatusReleasesDependents — the
+// canonical answer to "does a blocker in this status still count" — reached
+// through the reader's config so this package keeps no status list of its own.
+// Narrower than config.IsClosedStatus: a deferred blocker is closed but still
+// blocks.
+func (r *Resolver) releasesDependents(status string) bool {
+	return r.Reader.Config().StatusReleasesDependents(status)
 }
 
 // validateDocumentPaths checks that document paths are safe (no absolute paths or path traversal).

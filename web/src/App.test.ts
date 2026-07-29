@@ -417,12 +417,12 @@ describe("App", () => {
     await user.type(searchInput, "bug");
     expect(searchInput).toHaveValue("bug");
 
-    // Hide completed via the Status-facet "Open + deferred" preset: open the
-    // Status dropdown, then click the preset. Anchor the name to the start so it
-    // targets the Toolbar's "Status" facet trigger, not the table's new
-    // "Sort by Status" header button (headers are now sortable in every view).
+    // Hide closed work via the Status-facet "Open" preset: open the Status
+    // dropdown, then click the preset. Anchor the name to the start so it
+    // targets the Toolbar's "Status" facet trigger, not the table's
+    // "Sort by Status" header button (headers are sortable in every view).
     await user.click(screen.getByRole("button", { name: /^status/i }));
-    await user.click(screen.getByTestId("status-preset-open-deferred"));
+    await user.click(screen.getByTestId("status-preset-open"));
 
     // `search` is server-side, so typing re-queries — but the list refetch is
     // debounced (nibs-rv7c), landing shortly after typing rather than on each

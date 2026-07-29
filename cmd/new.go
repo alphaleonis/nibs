@@ -172,10 +172,10 @@ is used as-is — with --no-edit, with --json, or when stdin/stdout is not a ter
 			return cmdError(newJSON, output.ErrFileError, "failed to create nib: %v", err)
 		}
 
-		// Dedup safety net: before the card echo, scan CLOSED nibs (completed /
-		// scrapped — hidden from the day-to-day list) for a likely duplicate of
-		// this new title/slug. Warn-only and non-blocking; the create already
-		// succeeded. --no-dedup-check skips it entirely.
+		// Dedup safety net: before the card echo, scan the closed nibs — the ones
+		// hidden from the day-to-day list, per cfg.IsClosedStatus — for a likely
+		// duplicate of this new title/slug. Warn-only and non-blocking; the
+		// create already succeeded. --no-dedup-check skips it entirely.
 		var dups []possibleDuplicate
 		if !newNoDedupCheck {
 			dups = findPossibleDuplicates(app.Core.All(), app.Config(), b.ID, b.Title, b.Slug)
@@ -269,6 +269,13 @@ func init() {
 		priorityNames[i] = p.Name
 	}
 
+	// -s lists every status, the closed ones included: `nibs new "…" -t task -s
+	// scrapped` deliberately creates an already-closed nib. The closed-status
+	// refusal in `nibs set` is not incomplete here — it governs transitions on an
+	// existing nib, where the point is that closing carries the summary `close`
+	// requires. A nib created closed has no prior state to summarize, and `close`
+	// has no create-and-close form, so refusing here would remove the only way to
+	// record work that was over before it started.
 	newCmd.Flags().StringVarP(&newStatus, "status", "s", "", "Initial status ("+strings.Join(statusNames, ", ")+")")
 	newCmd.Flags().StringVarP(&newType, "type", "t", "", "Nib type ("+strings.Join(typeNames, ", ")+")")
 	newCmd.Flags().StringVarP(&newPriority, "priority", "p", "", "Priority level ("+strings.Join(priorityNames, ", ")+")")
@@ -290,7 +297,7 @@ func init() {
 	newCmd.Flags().BoolVar(&newFirst, "first", false, "Insert before all siblings")
 	newCmd.Flags().BoolVar(&newJSON, "json", false, "Output as JSON (implies --no-edit)")
 	newCmd.Flags().BoolVar(&newNoEdit, "no-edit", false, "Never open $EDITOR; use the template body as-is")
-	newCmd.Flags().BoolVar(&newNoDedupCheck, "no-dedup-check", false, "Skip the closed-nib (completed/scrapped) duplicate check")
+	newCmd.Flags().BoolVar(&newNoDedupCheck, "no-dedup-check", false, "Skip the closed-nib duplicate check")
 	newCmd.MarkFlagsMutuallyExclusive("body", "body-file")
 	newCmd.MarkFlagsMutuallyExclusive("after", "before", "first")
 	rootCmd.AddCommand(newCmd)

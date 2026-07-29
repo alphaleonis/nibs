@@ -5732,7 +5732,7 @@ func (ec *executionContext) unmarshalInputNibFilter(ctx context.Context, obj any
 		asMap[k] = v
 	}
 
-	fieldsInOrder := [...]string{"search", "status", "excludeStatus", "type", "excludeType", "priority", "excludePriority", "estimate", "excludeEstimate", "tags", "excludeTags", "hasParent", "parentId", "hasBlocking", "blockingId", "isBlocked", "hasBlockedBy", "blockedById", "noParent", "noBlocking", "noBlockedBy", "mentionsId", "mentionedById"}
+	fieldsInOrder := [...]string{"search", "status", "excludeStatus", "type", "excludeType", "priority", "excludePriority", "estimate", "excludeEstimate", "tags", "excludeTags", "hasParent", "parentId", "hasBlocking", "blockingId", "isBlocked", "hasBlockedBy", "blockedById", "mentionsId", "mentionedById"}
 	for _, k := range fieldsInOrder {
 		v, ok := asMap[k]
 		if !ok {
@@ -5865,27 +5865,6 @@ func (ec *executionContext) unmarshalInputNibFilter(ctx context.Context, obj any
 				return it, err
 			}
 			it.BlockedByID = data
-		case "noParent":
-			ctx := graphql.WithPathContext(ctx, graphql.NewPathWithField("noParent"))
-			data, err := ec.unmarshalOBoolean2ᚖbool(ctx, v)
-			if err != nil {
-				return it, err
-			}
-			it.NoParent = data
-		case "noBlocking":
-			ctx := graphql.WithPathContext(ctx, graphql.NewPathWithField("noBlocking"))
-			data, err := ec.unmarshalOBoolean2ᚖbool(ctx, v)
-			if err != nil {
-				return it, err
-			}
-			it.NoBlocking = data
-		case "noBlockedBy":
-			ctx := graphql.WithPathContext(ctx, graphql.NewPathWithField("noBlockedBy"))
-			data, err := ec.unmarshalOBoolean2ᚖbool(ctx, v)
-			if err != nil {
-				return it, err
-			}
-			it.NoBlockedBy = data
 		case "mentionsId":
 			ctx := graphql.WithPathContext(ctx, graphql.NewPathWithField("mentionsId"))
 			data, err := ec.unmarshalOString2ᚖstring(ctx, v)

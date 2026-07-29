@@ -5,7 +5,7 @@ import { tick } from "svelte";
 import Toolbar from "./Toolbar.svelte";
 import { Preferences } from "../preferences.svelte";
 import { ALL_COLUMN_KEYS, DEFAULT_VISIBLE_COLUMNS } from "../types";
-import { OPEN_STATUSES, OPEN_PLUS_DEFERRED_STATUSES } from "../constants";
+import { OPEN_STATUSES } from "../constants";
 import type { NibFilter, ViewLevel, ColumnKey } from "../types";
 import type { NibSuggestion } from "../query";
 
@@ -743,15 +743,18 @@ describe("Toolbar — filter dropdowns", () => {
     expect(lastCall[0].status).toEqual([...OPEN_STATUSES]);
   });
 
-  it("clicking the 'Open + deferred' preset overwrites status with that set", async () => {
-    const onchange = vi.fn();
-    render(Toolbar, { ...defaultToolbarProps, onchange });
+  it("offers exactly one preset, because deferred is closed", async () => {
+    // There used to be a second preset, "Open + deferred". Once deferred became
+    // a closed status its set became identical to Open's, so the distinction —
+    // and the relabeling problem that came with it — disappeared rather than
+    // being renamed. Per-status checkboxes still cover showing deferred alone.
+    render(Toolbar, { ...defaultToolbarProps });
 
     await user.click(screen.getByRole("button", { name: /status/i }));
-    await user.click(screen.getByTestId("status-preset-open-deferred"));
 
-    const lastCall = onchange.mock.calls[onchange.mock.calls.length - 1];
-    expect(lastCall[0].status).toEqual([...OPEN_PLUS_DEFERRED_STATUSES]);
+    expect(screen.getByTestId("status-preset-open")).toBeInTheDocument();
+    expect(screen.queryByTestId("status-preset-open-deferred")).toBeNull();
+    expect(screen.queryAllByTestId(/^status-preset-/)).toHaveLength(1);
   });
 
   it("a preset REPLACES an existing status selection (does not merge)", async () => {
@@ -779,13 +782,13 @@ describe("Toolbar — filter dropdowns", () => {
     });
 
     await user.click(screen.getByRole("button", { name: /status/i }));
-    await user.click(screen.getByTestId("status-preset-open-deferred"));
+    await user.click(screen.getByTestId("status-preset-open"));
 
     const lastCall = onchange.mock.calls[onchange.mock.calls.length - 1];
     expect(lastCall[0]).toMatchObject({
       search: "auth",
       type: ["bug"],
-      status: [...OPEN_PLUS_DEFERRED_STATUSES],
+      status: [...OPEN_STATUSES],
     });
   });
 

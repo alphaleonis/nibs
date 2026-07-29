@@ -173,13 +173,15 @@ describe("parseQuery — relationship + existence tokens (phase 5)", () => {
     { name: "mentions:<id>", input: "mentions:tnib-1", expected: { filter: { mentionsId: "tnib-1" }, invalidTokens: [] } },
     { name: "mentioned-by:<id> (hyphenated)", input: "mentioned-by:tnib-1", expected: { filter: { mentionedById: "tnib-1" }, invalidTokens: [] } },
 
-    // --- all seven existence tokens → the correct boolean = true ---
+    // --- all seven existence tokens → the correct tri-state value ---
+    // has:/no: for one dimension write the SAME field with opposite values;
+    // they are two spellings of one filter, not two filters.
     { name: "has:parent", input: "has:parent", expected: { filter: { hasParent: true }, invalidTokens: [] } },
-    { name: "no:parent", input: "no:parent", expected: { filter: { noParent: true }, invalidTokens: [] } },
+    { name: "no:parent", input: "no:parent", expected: { filter: { hasParent: false }, invalidTokens: [] } },
     { name: "has:blocking", input: "has:blocking", expected: { filter: { hasBlocking: true }, invalidTokens: [] } },
-    { name: "no:blocking", input: "no:blocking", expected: { filter: { noBlocking: true }, invalidTokens: [] } },
+    { name: "no:blocking", input: "no:blocking", expected: { filter: { hasBlocking: false }, invalidTokens: [] } },
     { name: "has:blocked-by (hyphenated)", input: "has:blocked-by", expected: { filter: { hasBlockedBy: true }, invalidTokens: [] } },
-    { name: "no:blocked-by (hyphenated)", input: "no:blocked-by", expected: { filter: { noBlockedBy: true }, invalidTokens: [] } },
+    { name: "no:blocked-by (hyphenated)", input: "no:blocked-by", expected: { filter: { hasBlockedBy: false }, invalidTokens: [] } },
     { name: "is:blocked", input: "is:blocked", expected: { filter: { isBlocked: true }, invalidTokens: [] } },
 
     // --- case-insensitive field-names + lowercased id values ---

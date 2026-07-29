@@ -32,8 +32,10 @@ export const FIELD_TOKEN = /^(-?)([A-Za-z]+):(.+)$/;
  * - comma splits a token into OR values; repeated same-field tokens union. Both
  *   are deduplicated (lenient-in).
  * - relationship-id token (`blocking:<id>`, `parent:<id>`, …) → a scalar id field,
- *   last-wins on repeat; existence token (`has:parent`, `is:blocked`, …) → a boolean
- *   field set `true`. Neither is negatable — a leading `-` routes to free text.
+ *   last-wins on repeat; existence token (`has:parent`, `no:parent`, `is:blocked`,
+ *   …) → a tri-state boolean field. `has:` writes true and `no:` writes false on
+ *   the SAME field, so the pair is last-wins too. Neither is negatable — a
+ *   leading `-` routes to free text.
  * - unknown `field:value` (including Bleve `title:`/`body:`) and bare words →
  *   free-text `search`.
  *
@@ -47,7 +49,8 @@ export function parseQuery(text: string): ParsedQuery {
   const words: string[] = [];
   // Relationship-id scalars (last write wins) + existence booleans.
   const relIds = new Map<RelIdKey, string>();
-  const existence = new Set<ExistenceKey>();
+  // Map, not Set: an existence token can write false (`no:parent`).
+  const existence = new Map<ExistenceKey, boolean>();
 
   const push = (map: Map<string, string[]>, key: string, value: string) => {
     const list = map.get(key);
@@ -66,7 +69,7 @@ export function parseQuery(text: string): ParsedQuery {
       const rel = recognizeRelationship(token);
       if (rel) {
         if (rel.kind === "id") relIds.set(rel.field, rel.value);
-        else existence.add(rel.field);
+        else existence.set(rel.field, rel.value);
       } else {
         words.push(token);
       }
@@ -108,8 +111,8 @@ export function parseQuery(text: string): ParsedQuery {
   for (const [field, value] of relIds) {
     filter[field] = value;
   }
-  for (const field of existence) {
-    filter[field] = true;
+  for (const [field, value] of existence) {
+    filter[field] = value;
   }
   const search = words.join(" ");
   if (search !== "") filter.search = search;

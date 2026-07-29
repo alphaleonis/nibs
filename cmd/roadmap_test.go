@@ -4,8 +4,9 @@ import (
 	"testing"
 	"time"
 
-	"github.com/alphaleonis/nibs/internal/nib"
 	"github.com/alphaleonis/nibs/internal/config"
+	"github.com/alphaleonis/nibs/internal/graph"
+	"github.com/alphaleonis/nibs/internal/nib"
 )
 
 func TestBuildRoadmap(t *testing.T) {
@@ -146,6 +147,188 @@ func TestBuildRoadmap_Progress(t *testing.T) {
 	}
 	if e2.Progress.Total != 2 || e2.Progress.Done != 1 || e2.Progress.Percent != 50 {
 		t.Errorf("epic e2 progress = %+v, want {Total:2, Done:1, Percent:50}", e2.Progress)
+	}
+}
+
+// TestBuildRoadmap_DeferredChildStaysVisible pins the visibility rule for a
+// container whose children are all closed. Finished work drops off the roadmap,
+// but a deferred child is set aside rather than resolved: it is scope someone
+// still has to deal with, and roadmap has no hidden-closed disclosure, so
+// dropping it would take live work off the board silently. The discriminator is
+// whether the child resolved (completed/scrapped) or is merely deferred — never
+// whether its parent is still open, because closing a parent does not resolve
+// what is set aside underneath it.
+//
+// Each case asserts on the rendered items AND on the progress rollup, because
+// the two are one seam: the items a group renders are exactly the children its
+// rollup counts in Total but not in Done. Asserting either alone let the two
+// disagree in the same rendered line.
+func TestBuildRoadmap_DeferredChildStaysVisible(t *testing.T) {
+	cfg := config.Default()
+	now := time.Now()
+
+	base := func(lastChildStatus string) []*nib.Nib {
+		return []*nib.Nib{
+			{ID: "m1", Type: "milestone", Title: "v1.0", Status: "in-progress", CreatedAt: &now},
+			{ID: "e1", Type: "epic", Title: "Epic", Status: "in-progress", Parent: "m1"},
+			{ID: "t1", Type: "task", Title: "T1", Status: "completed", Parent: "e1"},
+			{ID: "t2", Type: "task", Title: "T2", Status: "completed", Parent: "e1"},
+			{ID: "t3", Type: "task", Title: "T3", Status: "completed", Parent: "e1"},
+			{ID: "t4", Type: "task", Title: "T4", Status: lastChildStatus, Parent: "e1"},
+		}
+	}
+
+	t.Run("epic renders its deferred child and reports it as outstanding", func(t *testing.T) {
+		result := buildRoadmap(base("deferred"), false, nil, nil, cfg)
+		if len(result.Milestones) != 1 {
+			t.Fatalf("got %d milestones, want 1 — the milestone lost its only epic", len(result.Milestones))
+		}
+		epics := result.Milestones[0].Epics
+		if len(epics) != 1 || epics[0].Epic.ID != "e1" {
+			t.Fatalf("got epics %+v, want the in-progress epic e1 to still be rendered", epics)
+		}
+		if len(epics[0].Items) != 1 || epics[0].Items[0].ID != "t4" {
+			t.Fatalf("got items %+v, want the deferred child t4 named", epics[0].Items)
+		}
+		// 3 completed + 1 deferred: the deferred child is scope, so the epic is
+		// not finished. 100% here would assert there is nothing left while the
+		// line above it lists t4.
+		if got := epics[0].Progress; got.Total != 4 || got.Done != 3 || got.Percent != 75 || got.Deferred != 1 {
+			t.Errorf("epic progress = %+v, want {Total:4 Done:3 Percent:75 Deferred:1}", got)
+		}
+	})
+
+	t.Run("epic whose children all resolved still drops", func(t *testing.T) {
+		result := buildRoadmap(base("scrapped"), false, nil, nil, cfg)
+		if len(result.Milestones) != 0 {
+			t.Errorf("got %d milestones, want 0 — finished work drops off the roadmap", len(result.Milestones))
+		}
+	})
+
+	t.Run("closing the parent does not hide the deferred child", func(t *testing.T) {
+		// The reachable cascade: `nibs close e1` on an epic that still has a
+		// deferred child. Closing a parent over deferred children is sanctioned
+		// (no --force needed), so it must not take the whole milestone off the
+		// board — the deferred task is still unfinished scope.
+		nibs := base("deferred")
+		nibs[1].Status = "completed" // the epic itself is closed
+		result := buildRoadmap(nibs, false, nil, nil, cfg)
+		if len(result.Milestones) != 1 {
+			t.Fatalf("got %d milestones, want 1 — closing the epic removed the whole milestone", len(result.Milestones))
+		}
+		epics := result.Milestones[0].Epics
+		if len(epics) != 1 || len(epics[0].Items) != 1 || epics[0].Items[0].ID != "t4" {
+			t.Fatalf("got epics %+v, want the closed epic still naming its deferred child t4", epics)
+		}
+	})
+
+	t.Run("scrapped parent over a deferred child keeps it too", func(t *testing.T) {
+		nibs := base("deferred")
+		nibs[1].Status = "scrapped"
+		result := buildRoadmap(nibs, false, nil, nil, cfg)
+		if len(result.Milestones) != 1 {
+			t.Fatalf("got %d milestones, want 1 — scrapping the epic does not resolve its deferred child", len(result.Milestones))
+		}
+	})
+
+	t.Run("milestone keeps a deferred direct child", func(t *testing.T) {
+		nibs := []*nib.Nib{
+			{ID: "m1", Type: "milestone", Title: "v1.0", Status: "in-progress", CreatedAt: &now},
+			{ID: "t1", Type: "task", Title: "Set Aside", Status: "deferred", Parent: "m1"},
+		}
+		result := buildRoadmap(nibs, false, nil, nil, cfg)
+		if len(result.Milestones) != 1 {
+			t.Fatalf("got %d milestones, want 1 — the milestone still holds outstanding scope", len(result.Milestones))
+		}
+		other := result.Milestones[0].Other
+		if len(other) != 1 || other[0].ID != "t1" {
+			t.Errorf("got other %+v, want the deferred task t1 named", other)
+		}
+		if got := result.Milestones[0].Progress; got.Total != 1 || got.Done != 0 || got.Percent != 0 {
+			t.Errorf("milestone progress = %+v, want {Total:1 Done:0 Percent:0}", got)
+		}
+	})
+
+	t.Run("unscheduled epic keeps its deferred child", func(t *testing.T) {
+		// The third call site: an epic with no milestone parent. Same rule.
+		nibs := []*nib.Nib{
+			{ID: "e1", Type: "epic", Title: "Loose Epic", Status: "in-progress"},
+			{ID: "t1", Type: "task", Title: "T1", Status: "completed", Parent: "e1"},
+			{ID: "t2", Type: "task", Title: "Set Aside", Status: "deferred", Parent: "e1"},
+		}
+		result := buildRoadmap(nibs, false, nil, nil, cfg)
+		if result.Unscheduled == nil || len(result.Unscheduled.Epics) != 1 {
+			t.Fatalf("got unscheduled %+v, want the epic kept for its deferred child", result.Unscheduled)
+		}
+		epic := result.Unscheduled.Epics[0]
+		if len(epic.Items) != 1 || epic.Items[0].ID != "t2" {
+			t.Fatalf("got items %+v, want the deferred child t2 named", epic.Items)
+		}
+		if got := epic.Progress; got.Total != 2 || got.Done != 1 || got.Percent != 50 {
+			t.Errorf("epic progress = %+v, want {Total:2 Done:1 Percent:50}", got)
+		}
+	})
+
+	t.Run("deferred container reports the open work it still holds", func(t *testing.T) {
+		// A deferred container is not empty scope: its open descendants are
+		// rendered, so its rollup must not read 100%.
+		nibs := []*nib.Nib{
+			{ID: "m1", Type: "milestone", Title: "v1.0", Status: "in-progress", CreatedAt: &now},
+			{ID: "e1", Type: "epic", Title: "Done Epic", Status: "completed", Parent: "m1"},
+			{ID: "e2", Type: "epic", Title: "Deferred Epic", Status: "deferred", Parent: "m1"},
+			{ID: "t1", Type: "task", Title: "Open one", Status: "todo", Parent: "e2"},
+			{ID: "t2", Type: "task", Title: "Open two", Status: "todo", Parent: "e2"},
+		}
+		result := buildRoadmap(nibs, false, nil, nil, cfg)
+		if len(result.Milestones) != 1 {
+			t.Fatalf("got %d milestones, want 1", len(result.Milestones))
+		}
+		ms := result.Milestones[0]
+		// 1 completed epic + 1 deferred epic holding live work: 50%, not 100%.
+		if got := ms.Progress; got.Total != 2 || got.Done != 1 || got.Percent != 50 || got.Deferred != 1 {
+			t.Errorf("milestone progress = %+v, want {Total:2 Done:1 Percent:50 Deferred:1}", got)
+		}
+		if len(ms.Epics) != 1 || ms.Epics[0].Epic.ID != "e2" {
+			t.Fatalf("got epics %+v, want the deferred epic e2 rendered with its open tasks", ms.Epics)
+		}
+		if len(ms.Epics[0].Items) != 2 {
+			t.Errorf("got %d items under the deferred epic, want 2 open tasks", len(ms.Epics[0].Items))
+		}
+	})
+}
+
+// TestBuildRoadmap_VisibilityMatchesProgress pins the seam itself, over every
+// declared status rather than the handful the scenarios above happen to use: a
+// child is rendered by the default roadmap exactly when the progress rollup
+// counts it as outstanding (in Total, not in Done). If one side gains or loses a
+// status without the other, a group renders items while claiming 100%, or claims
+// outstanding scope while rendering nothing.
+func TestBuildRoadmap_VisibilityMatchesProgress(t *testing.T) {
+	cfg := config.Default()
+	now := time.Now()
+
+	for _, status := range append(cfg.StatusNames(), "", "bogus") {
+		t.Run("status="+status, func(t *testing.T) {
+			nibs := []*nib.Nib{
+				{ID: "m1", Type: "milestone", Title: "v1.0", Status: "in-progress", CreatedAt: &now},
+				{ID: "e1", Type: "epic", Title: "Epic", Status: "in-progress", Parent: "m1"},
+				{ID: "t1", Type: "task", Title: "T1", Status: status, Parent: "e1"},
+			}
+			result := buildRoadmap(nibs, false, nil, nil, cfg)
+
+			rendered := 0
+			if len(result.Milestones) == 1 && len(result.Milestones[0].Epics) == 1 {
+				rendered = len(result.Milestones[0].Epics[0].Items)
+			}
+			rollup := graph.ComputeProgress([]string{status})
+			outstanding := rollup.Total - rollup.Done
+
+			if rendered != outstanding {
+				t.Errorf("status %q: roadmap renders %d item(s) but the rollup reports %d outstanding (%+v) — "+
+					"the visibility filter and the progress denominator disagree",
+					status, rendered, outstanding, rollup)
+			}
+		})
 	}
 }
 

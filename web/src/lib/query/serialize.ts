@@ -40,7 +40,10 @@ export function serializeQuery(query: { filter: QueryFilter; invalidTokens?: str
     if (t.kind === "id") {
       const id = filter[t.field];
       if (id) parts.push(`${t.name}:${id}`);
-    } else if (filter[t.field]) {
+    } else if (filter[t.field] === t.value) {
+      // Compared by value, not truthiness: the field is tri-state, and `false` is
+      // a set value that emits the `no:` spelling rather than nothing. Exactly one
+      // of a dimension's two entries can match, so the roundtrip stays canonical.
       parts.push(t.token);
     }
   }

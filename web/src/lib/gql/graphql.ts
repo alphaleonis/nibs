@@ -74,24 +74,18 @@ export type NibFilter = {
   excludeTags?: Array<string> | null | undefined;
   /** Exclude nibs with these types */
   excludeType?: Array<string> | null | undefined;
-  /** Include only nibs that have explicit blocked-by entries */
+  /** Tri-state: true keeps nibs that have explicit blocked_by entries, false keeps exactly those with none, null does not filter */
   hasBlockedBy?: boolean | null | undefined;
-  /** Include only nibs that are blocking other nibs */
+  /** Tri-state: true keeps nibs that are blocking others, false keeps exactly the non-blocking ones, null does not filter */
   hasBlocking?: boolean | null | undefined;
-  /** Include only nibs with a parent */
+  /** Tri-state: true keeps nibs with a parent, false keeps exactly the parentless ones, null does not filter */
   hasParent?: boolean | null | undefined;
-  /** Include only nibs that are blocked by others (via incoming blocking links or blocked_by field) */
+  /** Tri-state: true keeps nibs blocked by others (via incoming blocking links or blocked_by field), false keeps exactly the unblocked ones, null does not filter */
   isBlocked?: boolean | null | undefined;
   /** Include only nibs mentioned in the given nib's body */
   mentionedById?: string | null | undefined;
   /** Include only nibs that mention this specific nib ID in their body */
   mentionsId?: string | null | undefined;
-  /** Exclude nibs that have explicit blocked-by entries */
-  noBlockedBy?: boolean | null | undefined;
-  /** Exclude nibs that are blocking other nibs */
-  noBlocking?: boolean | null | undefined;
-  /** Exclude nibs that have a parent */
-  noParent?: boolean | null | undefined;
   /** Include only nibs with this specific parent ID */
   parentId?: string | null | undefined;
   /** Include only nibs with these priorities (OR logic) */

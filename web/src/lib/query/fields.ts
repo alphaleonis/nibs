@@ -25,13 +25,11 @@ export type QueryFilter = Pick<
   | "blockedById"
   | "mentionsId"
   | "mentionedById"
-  // Existence/state booleans (phase 5).
+  // Existence/state booleans (phase 5). Tri-state: `has:`/`no:` token pairs
+  // write true/false on one field each.
   | "hasParent"
-  | "noParent"
   | "hasBlocking"
-  | "noBlocking"
   | "hasBlockedBy"
-  | "noBlockedBy"
   | "isBlocked"
 >;
 

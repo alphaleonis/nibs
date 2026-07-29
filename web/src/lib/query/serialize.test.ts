@@ -66,12 +66,18 @@ describe("serializeQuery — relationship + existence tokens (phase 5)", () => {
   it("emits an existence boolean as its fixed token", () => {
     expect(serializeQuery({ filter: { hasParent: true } })).toBe("has:parent");
     expect(serializeQuery({ filter: { isBlocked: true } })).toBe("is:blocked");
-    expect(serializeQuery({ filter: { noBlockedBy: true } })).toBe("no:blocked-by");
+    // false is a SET value on the tri-state field, so it emits the no: spelling
+    // rather than being omitted.
+    expect(serializeQuery({ filter: { hasBlockedBy: false } })).toBe("no:blocked-by");
   });
 
-  it("omits an existence boolean that is false/undefined", () => {
-    expect(serializeQuery({ filter: { hasParent: false } })).toBe("");
+  it("omits an existence field that is unset, but emits `no:` for an explicit false", () => {
+    // The field is tri-state: undefined means "do not filter", false means
+    // "filter for absence". Only the first is omitted — collapsing them would
+    // reinstate the silent no-op the backend filter model just removed.
     expect(serializeQuery({ filter: {} })).toBe("");
+    expect(serializeQuery({ filter: { hasParent: undefined } })).toBe("");
+    expect(serializeQuery({ filter: { hasParent: false } })).toBe("no:parent");
   });
 
   it("places rel/existence tokens AFTER metadata and BEFORE free-text search", () => {
@@ -135,7 +141,11 @@ describe("round-trip identity — serializeQuery(parseQuery(s)) === s", () => {
     // metadata + rel/existence + search interleaved, in canonical order
     "type:bug parent:tnib-1 has:blocking is:blocked mentions:tnib-2 login",
     // rel/existence "monster": every rel token in canonical dimension order
-    "parent:tnib-1 has:parent no:parent blocking:tnib-2 has:blocking no:blocking blocked-by:tnib-3 has:blocked-by no:blocked-by is:blocked mentions:tnib-4 mentioned-by:tnib-5",
+    // has: and no: for one dimension are two spellings of one tri-state field, so
+    // a canonical string carries at most one of each pair — the old grammar let
+    // you write "has:parent no:parent", which was self-contradictory. One of each
+    // spelling appears below so both directions round-trip.
+    "parent:tnib-1 has:parent blocking:tnib-2 no:blocking blocked-by:tnib-3 has:blocked-by is:blocked mentions:tnib-4 mentioned-by:tnib-5",
     // full monster: every field positive + negative, search, then two invalids
     "type:bug -type:task priority:high -priority:low status:todo -status:completed estimate:m -estimate:xl tags:auth -tags:wip login words status:banana -priority:pink",
   ];

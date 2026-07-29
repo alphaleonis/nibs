@@ -3,6 +3,7 @@ package nibcontext
 import (
 	"strings"
 
+	"github.com/alphaleonis/nibs/internal/config"
 	"github.com/alphaleonis/nibs/internal/estimate"
 	"github.com/alphaleonis/nibs/internal/mdsection"
 	"github.com/alphaleonis/nibs/internal/nib"
@@ -50,7 +51,12 @@ type Progress struct {
 // BuildSummary constructs a context summary for a specific nib and its descendants.
 // If rootID is non-empty, scopes to that nib's descendants (works for any type).
 // If empty, summarizes all active work with a warning.
-func BuildSummary(allNibs []*nib.Nib, rootID string) Summary {
+//
+// cfg supplies the closed-status definition (Config.IsClosedStatus) for the
+// active-milestone filter below. The status literals here are not config-derived
+// on purpose: the epic/task selectors match "in-progress"/"todo" — single
+// statuses a group predicate cannot single out.
+func BuildSummary(allNibs []*nib.Nib, rootID string, cfg *config.Config) Summary {
 	byID := indexByID(allNibs)
 
 	sum := Summary{
@@ -69,7 +75,7 @@ func BuildSummary(allNibs []*nib.Nib, rootID string) Summary {
 		var milestones []*nib.Nib
 		for _, n := range allNibs {
 			// Classification check — exempt: empty type is never milestone/epic.
-			if n.Type == "milestone" && !nib.IsResolvedStatus(n.Status) {
+			if n.Type == "milestone" && !cfg.IsClosedStatus(n.Status) {
 				milestones = append(milestones, n)
 			}
 		}
@@ -152,9 +158,12 @@ func BuildSummary(allNibs []*nib.Nib, rootID string) Summary {
 
 // CalcProgress computes weighted progress across a set of nibs.
 // Only leaf work types (task, bug, feature) count — epics and milestones are excluded.
-// Scrapped nibs are excluded from both completed and total.
-// Draft nibs are intentionally included in the total — they represent planned scope
-// that hasn't been refined yet, so they count toward the denominator.
+// It applies the same three-way rule as graph.ComputeProgress, weighted by
+// estimate: "completed" is the numerator, "scrapped" work is no longer scope and
+// leaves the denominator, and everything else counts toward the denominator
+// without counting as done. Deferred nibs are in that last group — the
+// set-aside work is coming back, so it is outstanding scope. Draft nibs are
+// there too: planned scope that hasn't been refined yet.
 func CalcProgress(nibs []*nib.Nib) Progress {
 	var completed, total int
 	for _, n := range nibs {

@@ -103,7 +103,7 @@ func (d blockingItemDelegate) Render(w io.Writer, m list.Model, index int, listI
 	// Format: [indicator] [type] title (id)
 	typeBadge := ui.RenderTypeText(item.nib.EffectiveType(), colors.TypeColor)
 	title := item.nib.Title
-	if colors.IsArchive {
+	if colors.IsClosed {
 		title = ui.Muted.Render(title)
 	}
 	id := ui.Muted.Render(" (" + item.nib.ID + ")")

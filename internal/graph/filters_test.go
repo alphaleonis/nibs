@@ -407,6 +407,64 @@ func TestApplyFilterDefaultAwarePriorityAndType(t *testing.T) {
 	}
 }
 
+// TestApplyFilterPresenceTriState pins HasParent and HasBlocking as tri-state
+// fields: nil filters nothing, &true keeps the nibs that have the thing, and
+// &false keeps exactly the complement. The &false rows are what let the CLI's
+// --no-parent/--no-blocking spellings route through a single field, so they are
+// the model contract those flags stand on.
+func TestApplyFilterPresenceTriState(t *testing.T) {
+	root := &nib.Nib{ID: "nibs-root", Title: "Root"}
+	// The child also carries a blocked_by entry, so the HasBlockedBy rows below
+	// have something to discriminate on. It is consistent with the blocking stub:
+	// root blocks the child, the child is blocked by root.
+	child := &nib.Nib{ID: "nibs-child", Title: "Child", Parent: "nibs-root", BlockedBy: []string{"nibs-root"}}
+
+	reader := &stubReader{
+		nibs: map[string]*nib.Nib{
+			"nibs-root":  root,
+			"nibs-child": child,
+		},
+		allNibs: []*nib.Nib{root, child},
+		prefix:  "nibs-",
+	}
+	// Only the root blocks anything, so each blocking answer is a singleton.
+	blocking := &stubBlockingChecker{blocking: map[string]bool{"nibs-root": true}}
+
+	yes, no := true, false
+	tests := []struct {
+		name    string
+		filter  *model.NibFilter
+		wantIDs []string
+	}{
+		{"HasParent nil filters nothing", &model.NibFilter{}, []string{"nibs-root", "nibs-child"}},
+		{"HasParent true keeps parented nibs", &model.NibFilter{HasParent: &yes}, []string{"nibs-child"}},
+		{"HasParent false keeps exactly the parentless nibs", &model.NibFilter{HasParent: &no}, []string{"nibs-root"}},
+		{"HasBlocking true keeps blocking nibs", &model.NibFilter{HasBlocking: &yes}, []string{"nibs-root"}},
+		{"HasBlocking false keeps exactly the non-blocking nibs", &model.NibFilter{HasBlocking: &no}, []string{"nibs-child"}},
+		// HasBlockedBy had a NoBlockedBy twin until the pair was collapsed. These
+		// two rows are what stop the survivor regressing to an include-only
+		// filter, which is how the twin came to exist in the first place.
+		{"HasBlockedBy true keeps nibs with blocked_by entries", &model.NibFilter{HasBlockedBy: &yes}, []string{"nibs-child"}},
+		{"HasBlockedBy false keeps exactly those with none", &model.NibFilter{HasBlockedBy: &no}, []string{"nibs-root"}},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := ApplyFilter(context.Background(), reader.allNibs, tt.filter, reader, blocking)
+			gotIDs := make([]string, 0, len(got))
+			for _, b := range got {
+				gotIDs = append(gotIDs, b.ID)
+			}
+			sort.Strings(gotIDs)
+			want := append([]string(nil), tt.wantIDs...)
+			sort.Strings(want)
+			if !reflect.DeepEqual(gotIDs, want) {
+				t.Errorf("got IDs %v, want %v", gotIDs, want)
+			}
+		})
+	}
+}
+
 func TestIncludeAncestors(t *testing.T) {
 	// Build a hierarchy: milestone -> epic -> task
 	milestone := &nib.Nib{ID: "m1", Title: "Release", Type: "milestone"}

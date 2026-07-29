@@ -3,7 +3,7 @@ import { buildTableData } from "./tableData";
 import { isBucketId } from "./tree";
 import { applySort } from "./tableSort";
 import { typeRank } from "./typeHierarchy";
-import { OPEN_PLUS_DEFERRED_STATUSES } from "./constants";
+import { OPEN_STATUSES } from "./constants";
 import type { TreeTableNib, NibFilter, TableSort } from "./types";
 
 function makeTreeTableNib(overrides: Partial<TreeTableNib> = {}): TreeTableNib {
@@ -155,7 +155,7 @@ describe("buildTableData", () => {
         makeTreeTableNib({ id: "nibs-001", type: "milestone", status: "completed", title: "Done milestone" }),
         makeTreeTableNib({ id: "nibs-002", type: "task", status: "in-progress", title: "Active task", parentId: "nibs-001" }),
       ];
-      const filter: NibFilter = { status: [...OPEN_PLUS_DEFERRED_STATUSES] };
+      const filter: NibFilter = { status: [...OPEN_STATUSES] };
       const result = buildTableData(nibs, filter, "milestones", noCollapsed);
 
       // Both rows present: the excluded (completed) parent survives as a dimmed
@@ -175,7 +175,7 @@ describe("buildTableData", () => {
         makeTreeTableNib({ id: "nibs-001", type: "milestone", status: "in-progress", title: "Active milestone" }),
         makeTreeTableNib({ id: "nibs-002", type: "task", status: "completed", title: "Done leaf", parentId: "nibs-001" }),
       ];
-      const filter: NibFilter = { status: [...OPEN_PLUS_DEFERRED_STATUSES] };
+      const filter: NibFilter = { status: [...OPEN_STATUSES] };
       const result = buildTableData(nibs, filter, "milestones", noCollapsed);
 
       const ids = result.rows.map(r => r.nib.id);
@@ -195,7 +195,7 @@ describe("buildTableData", () => {
         // "No epic" bucket, so a bucket header row is emitted.
         makeTreeTableNib({ id: "T2", type: "task", status: "in-progress", title: "Loose active task" }),
       ];
-      const filter: NibFilter = { status: [...OPEN_PLUS_DEFERRED_STATUSES] };
+      const filter: NibFilter = { status: [...OPEN_STATUSES] };
       const result = buildTableData(nibs, filter, "epics", noCollapsed);
 
       // Completed epic survives as a dimmed ancestor of its active child.

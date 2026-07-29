@@ -1020,7 +1020,7 @@ func nibIndexByID(nibs []*nib.Nib, id string) int {
 
 // TestNibsFilterRaceAgainstRemoveLinksTo reproduces the write-side data race in
 // nibs-pyei. The Nibs query pipeline reads b.Parent off the LIVE c.nibs pointers
-// off-lock (ApplyFilter's NoParent predicate, internal/graph/filters.go), while
+// off-lock (ApplyFilter's HasParent predicate, internal/graph/filters.go), while
 // Core.RemoveLinksTo mutates b.Parent under c.mu (internal/nibcore/link_health.go).
 // On the old in-place code those two accesses touch the same b.Parent word with
 // no synchronization between them, so `-race` fires (read at filters.go vs write
@@ -1043,8 +1043,8 @@ func TestNibsFilterRaceAgainstRemoveLinksTo(t *testing.T) {
 		childIDs = append(childIDs, id)
 	}
 
-	noParent := true
-	filter := &model.NibFilter{NoParent: &noParent}
+	hasParent := false
+	filter := &model.NibFilter{HasParent: &hasParent}
 
 	var wg sync.WaitGroup
 	for i := 0; i < 8; i++ {

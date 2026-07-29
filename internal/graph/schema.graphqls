@@ -355,16 +355,20 @@ type Nib {
   Nibs mentioned in this nib's body (outbound, resolved from mentionIds).
 
   Unlike blockedBy/blocking, mentions are informational and include nibs in
-  all statuses (archived, scrapped, completed). Pass
-  `filter: { excludeStatus: ["completed", "scrapped"] }` for active-only.
+  every status, the closed ones (deferred, completed, scrapped) included. For
+  open nibs only, pass `filter: { status: ["draft", "todo", "in-progress"] }`.
+  status/excludeStatus match literal status names — there is no open/closed
+  group expansion at this layer, unlike the CLI's -s/--no-status.
   """
   mentions(filter: NibFilter): [Nib!]!
   """
   Nibs whose bodies mention this one (inbound, resolved from mentionedByIds).
 
   Unlike blockedBy/blocking, mentions are informational and include nibs in
-  all statuses (archived, scrapped, completed). Pass
-  `filter: { excludeStatus: ["completed", "scrapped"] }` for active-only.
+  every status, the closed ones (deferred, completed, scrapped) included. For
+  open nibs only, pass `filter: { status: ["draft", "todo", "in-progress"] }`.
+  status/excludeStatus match literal status names — there is no open/closed
+  group expansion at this layer, unlike the CLI's -s/--no-status.
   """
   mentionedBy(filter: NibFilter): [Nib!]!
 }
@@ -418,26 +422,20 @@ input NibFilter {
   tags: [String!]
   "Exclude nibs with any of these tags"
   excludeTags: [String!]
-  "Include only nibs with a parent"
+  "Tri-state: true keeps nibs with a parent, false keeps exactly the parentless ones, null does not filter"
   hasParent: Boolean
   "Include only nibs with this specific parent ID"
   parentId: String
-  "Include only nibs that are blocking other nibs"
+  "Tri-state: true keeps nibs that are blocking others, false keeps exactly the non-blocking ones, null does not filter"
   hasBlocking: Boolean
   "Include only nibs that are blocking this specific nib ID"
   blockingId: String
-  "Include only nibs that are blocked by others (via incoming blocking links or blocked_by field)"
+  "Tri-state: true keeps nibs blocked by others (via incoming blocking links or blocked_by field), false keeps exactly the unblocked ones, null does not filter"
   isBlocked: Boolean
-  "Include only nibs that have explicit blocked-by entries"
+  "Tri-state: true keeps nibs that have explicit blocked_by entries, false keeps exactly those with none, null does not filter"
   hasBlockedBy: Boolean
   "Include only nibs blocked by this specific nib ID (via blocked_by field)"
   blockedById: String
-  "Exclude nibs that have a parent"
-  noParent: Boolean
-  "Exclude nibs that are blocking other nibs"
-  noBlocking: Boolean
-  "Exclude nibs that have explicit blocked-by entries"
-  noBlockedBy: Boolean
   "Include only nibs that mention this specific nib ID in their body"
   mentionsId: String
   "Include only nibs mentioned in the given nib's body"

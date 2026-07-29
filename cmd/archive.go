@@ -12,8 +12,8 @@ var archiveJSON bool
 
 var archiveCmd = &cobra.Command{
 	Use:   "archive",
-	Short: "Move completed/scrapped nibs to the archive",
-	Long: `Moves all nibs with status "completed" or "scrapped" to the archive directory (.nibs/archive/).
+	Short: "Move closed nibs to the archive",
+	Long: `Moves all nibs in a closed status (completed, scrapped, deferred) to the archive directory (.nibs/archive/).
 Archived nibs are preserved for project memory and remain visible in all queries.
 The archive keeps the main .nibs directory tidy while preserving project history.
 
@@ -22,7 +22,7 @@ Relationships (parent, blocking) are preserved in archived nibs.`,
 	// A custom validator (rather than the shared codedNoArgs helper) is used so
 	// the error names the id-taking alternative: an argument here was a caller
 	// reaching for `nibs rm <id>` (which archives by default). Without this, an
-	// id was silently discarded and every completed/scrapped nib archived. Flags
+	// id was silently discarded and every closed nib archived. Flags
 	// are parsed before Args validation, so archiveJSON is already set here and
 	// the coded cmdError routes through the --json envelope (exit 2). This
 	// bespoke message is the only thing that sets archive apart: the coded
@@ -31,7 +31,7 @@ Relationships (parent, blocking) are preserved in archived nibs.`,
 	Args: func(cmd *cobra.Command, args []string) error {
 		if len(args) > 0 {
 			return cmdError(archiveJSON, output.ErrValidation,
-				"nibs archive takes no arguments (it archives all completed/scrapped nibs).\n"+
+				"nibs archive takes no arguments (it archives all closed nibs).\n"+
 					"To archive specific nibs, use: nibs rm <id> [id...]")
 		}
 		return nil
@@ -40,11 +40,11 @@ Relationships (parent, blocking) are preserved in archived nibs.`,
 		app := getApp(cmd)
 		allNibs := app.Core.All()
 
-		// Find nibs with any archive status
+		// Find nibs in a closed status
 		var archiveNibs []*nib.Nib
 		archiveSet := make(map[string]bool)
 		for _, b := range allNibs {
-			if app.Config().IsArchiveStatus(b.Status) {
+			if app.Config().IsClosedStatus(b.Status) {
 				archiveNibs = append(archiveNibs, b)
 				archiveSet[b.ID] = true
 			}

@@ -84,7 +84,7 @@ over its direct children, plus active tasks, next tasks, and key decisions
 			}
 		}
 
-		sum := nibcontext.BuildSummary(allNibs, rootID)
+		sum := nibcontext.BuildSummary(allNibs, rootID, app.Config())
 		out := buildContextOutput(sum, rootID, directChildStatuses(allNibs))
 
 		if contextJSON {

@@ -349,7 +349,7 @@ func renderNode(sb *strings.Builder, node *TreeNode, depth int, isLast bool, anc
 		TypeColor:     colors.TypeColor,
 		PriorityColor: colors.PriorityColor,
 		Priority:      b.Priority,
-		IsArchive:     colors.IsArchive,
+		IsClosed:      colors.IsClosed,
 		MaxTitleWidth: renderCfg.titleWidth,
 		ShowCursor:    false,
 		Tags:          b.Tags,

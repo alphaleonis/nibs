@@ -6,6 +6,8 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/spf13/cobra"
+
 	"github.com/alphaleonis/nibs/internal/output"
 )
 
@@ -61,8 +63,8 @@ func allOpenFixture() map[string]string {
 }
 
 // TestListCommand_HiddenClosed_Header covers the TSV/view header disclosure: the
-// open default annotates "# N nibs (M hidden: completed/scrapped — --all to
-// include)" when it suppressed rows, and stays bare when the user asked
+// open default annotates "# N nibs (M hidden: deferred/completed/scrapped —
+// --all to include)" when it suppressed rows, and stays bare when the user asked
 // explicitly (-s/--all/--ready) or nothing was hidden.
 func TestListCommand_HiddenClosed_Header(t *testing.T) {
 	tests := []struct {
@@ -76,7 +78,7 @@ func TestListCommand_HiddenClosed_Header(t *testing.T) {
 			name:       "default annotates suppressed closed rows",
 			fixture:    mixedStatusFixture(),
 			args:       nil,
-			wantHeader: "# 4 nibs (2 hidden: completed/scrapped — --all to include)",
+			wantHeader: "# 3 nibs (3 hidden: deferred/completed/scrapped — --all to include)",
 		},
 		{
 			name:        "--all shows every status, no annotation",
@@ -96,7 +98,7 @@ func TestListCommand_HiddenClosed_Header(t *testing.T) {
 			name:        "-s open is explicit, no annotation",
 			fixture:     mixedStatusFixture(),
 			args:        []string{"-s", "open"},
-			wantHeader:  "# 4 nibs",
+			wantHeader:  "# 3 nibs",
 			wantNoteAbs: true,
 		},
 		{
@@ -116,13 +118,13 @@ func TestListCommand_HiddenClosed_Header(t *testing.T) {
 			name:       "hidden count respects a non-status filter",
 			fixture:    twoTypeStatusFixture(),
 			args:       []string{"-t", "bug"},
-			wantHeader: "# 1 nibs (1 hidden: completed/scrapped — --all to include)",
+			wantHeader: "# 1 nibs (1 hidden: deferred/completed/scrapped — --all to include)",
 		},
 		{
-			name:       "hidden count respects --no-status (only completed remains hidden)",
+			name:       "hidden count respects --no-status (deferred + completed remain hidden)",
 			fixture:    mixedStatusFixture(),
 			args:       []string{"--no-status", "scrapped"},
-			wantHeader: "# 4 nibs (1 hidden: completed/scrapped — --all to include)",
+			wantHeader: "# 3 nibs (2 hidden: deferred/completed/scrapped — --all to include)",
 		},
 	}
 
@@ -155,11 +157,11 @@ func TestListCommand_HiddenClosed_JSON(t *testing.T) {
 		wantHC   int  // expected hidden_closed
 		wantPres bool // whether the key should be present
 	}{
-		{"default discloses hidden count", []string{"--json"}, 2, true},
+		{"default discloses hidden count", []string{"--json"}, 3, true},
 		{"--all omits the key", []string{"--all", "--json"}, 0, false},
 		{"-s closed omits the key", []string{"-s", "closed", "--json"}, 0, false},
 		{"--ready omits the key", []string{"--ready", "--json"}, 0, false},
-		{"hidden_closed is pre-limit, not the limited page", []string{"--limit", "1", "--json"}, 2, true},
+		{"hidden_closed is pre-limit, not the limited page", []string{"--limit", "1", "--json"}, 3, true},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -188,8 +190,8 @@ func TestListCommand_TerseOutputs_StayBare(t *testing.T) {
 		if err != nil {
 			t.Fatalf("list -c failed: %v", err)
 		}
-		if strings.TrimSpace(out) != "4" {
-			t.Errorf("list -c = %q, want \"4\" (open default)", strings.TrimSpace(out))
+		if strings.TrimSpace(out) != "3" {
+			t.Errorf("list -c = %q, want \"3\" (open default)", strings.TrimSpace(out))
 		}
 		if strings.Contains(out, "hidden") || strings.Contains(out, "#") {
 			t.Errorf("list -c must stay bare, got %q", out)
@@ -217,8 +219,8 @@ func TestListCommand_TerseOutputs_StayBare(t *testing.T) {
 			t.Errorf("list -q must stay bare, got %q", out)
 		}
 		ids := strings.Fields(strings.TrimSpace(out))
-		if len(ids) != 4 {
-			t.Errorf("list -q emitted %d ids, want 4 (open default)\nraw: %s", len(ids), out)
+		if len(ids) != 3 {
+			t.Errorf("list -q emitted %d ids, want 3 (open default)\nraw: %s", len(ids), out)
 		}
 	})
 }
@@ -231,8 +233,8 @@ func TestRelCommand_HiddenClosed(t *testing.T) {
 		nibsDir := setupRelCobraTest(t, relStatusFixture)
 		out := runRelJSON(t, "--nibs-path", nibsDir, "rel", "par", "--rel", "children", "--json")
 		hc, present := jsonHiddenClosed(t, out)
-		if !present || hc != 2 {
-			t.Errorf("hidden_closed = (%d, present=%v), want (2, true)\nraw: %s", hc, present, out)
+		if !present || hc != 3 {
+			t.Errorf("hidden_closed = (%d, present=%v), want (3, true)\nraw: %s", hc, present, out)
 		}
 	})
 
@@ -240,7 +242,7 @@ func TestRelCommand_HiddenClosed(t *testing.T) {
 		nibsDir := setupRelCobraTest(t, relStatusFixture)
 		out := runRelJSON(t, "--nibs-path", nibsDir, "rel", "par", "--rel", "children", "-f", "id,status")
 		header := firstLine(out)
-		want := "# 2 nibs (2 hidden: completed/scrapped — --all to include)"
+		want := "# 1 nibs (3 hidden: deferred/completed/scrapped — --all to include)"
 		if header != want {
 			t.Errorf("rel header = %q, want %q", header, want)
 		}
@@ -264,16 +266,16 @@ func TestRelCommand_HiddenClosed(t *testing.T) {
 }
 
 // mixedStatusFixture covers every status so the open-by-default and status-group
-// behavior can be exercised. Four open (in-progress/todo/draft/deferred) and two
-// archived (completed/scrapped).
+// behavior can be exercised. Three open (in-progress/todo/draft) and three
+// closed (deferred/completed/scrapped).
 func mixedStatusFixture() map[string]string {
 	return map[string]string{
-		"w1--wip.md":    "---\ntitle: Wip\nstatus: in-progress\ntype: task\n---\n",
-		"t1--todo.md":   "---\ntitle: Todo\nstatus: todo\ntype: task\n---\n",
-		"d1--draft.md":  "---\ntitle: Draft\nstatus: draft\ntype: task\n---\n",
-		"p1--parked.md": "---\ntitle: Parked\nstatus: deferred\ntype: task\n---\n",
-		"c1--done.md":   "---\ntitle: Done\nstatus: completed\ntype: task\n---\n",
-		"s1--scrap.md":  "---\ntitle: Scrap\nstatus: scrapped\ntype: task\n---\n",
+		"w1--wip.md":      "---\ntitle: Wip\nstatus: in-progress\ntype: task\n---\n",
+		"t1--todo.md":     "---\ntitle: Todo\nstatus: todo\ntype: task\n---\n",
+		"d1--draft.md":    "---\ntitle: Draft\nstatus: draft\ntype: task\n---\n",
+		"p1--deferred.md": "---\ntitle: Deferred\nstatus: deferred\ntype: task\n---\n",
+		"c1--done.md":     "---\ntitle: Done\nstatus: completed\ntype: task\n---\n",
+		"s1--scrap.md":    "---\ntitle: Scrap\nstatus: scrapped\ntype: task\n---\n",
 	}
 }
 
@@ -284,9 +286,9 @@ func TestListCommand_OpenByDefault(t *testing.T) {
 		wantIDs []string
 	}{
 		{
-			name:    "no status flag hides completed and scrapped",
+			name:    "no status flag hides the closed statuses",
 			args:    []string{"--json"},
-			wantIDs: []string{"w1", "t1", "d1", "p1"},
+			wantIDs: []string{"w1", "t1", "d1"},
 		},
 		{
 			name:    "--all includes every status",
@@ -294,28 +296,25 @@ func TestListCommand_OpenByDefault(t *testing.T) {
 			wantIDs: []string{"w1", "t1", "d1", "p1", "c1", "s1"},
 		},
 		{
-			name:    "-s closed shows the archive group only",
+			name:    "-s closed shows the closed group only",
 			args:    []string{"-s", "closed", "--json"},
-			wantIDs: []string{"c1", "s1"},
+			wantIDs: []string{"p1", "c1", "s1"},
 		},
 		{
 			name:    "-s open shows the open group",
 			args:    []string{"-s", "open", "--json"},
-			wantIDs: []string{"w1", "t1", "d1", "p1"},
+			wantIDs: []string{"w1", "t1", "d1"},
 		},
 		{
 			name:    "--open is shorthand for -s open",
 			args:    []string{"--open", "--json"},
-			wantIDs: []string{"w1", "t1", "d1", "p1"},
+			wantIDs: []string{"w1", "t1", "d1"},
 		},
 		{
-			name:    "--active is a synonym for --open",
-			args:    []string{"--active", "--json"},
-			wantIDs: []string{"w1", "t1", "d1", "p1"},
-		},
-		{
-			name:    "-s parked shows deferred only",
-			args:    []string{"-s", "parked", "--json"},
+			// -s deferred is the only spelling of this query now that the
+			// retired one-member group is gone.
+			name:    "-s deferred shows deferred only",
+			args:    []string{"-s", "deferred", "--json"},
 			wantIDs: []string{"p1"},
 		},
 		{
@@ -324,14 +323,14 @@ func TestListCommand_OpenByDefault(t *testing.T) {
 			wantIDs: []string{"c1"},
 		},
 		{
-			name:    "--all --no-status parked subtracts deferred from the full set",
-			args:    []string{"--all", "--no-status", "parked", "--json"},
+			name:    "--all --no-status deferred subtracts deferred from the full set",
+			args:    []string{"--all", "--no-status", "deferred", "--json"},
 			wantIDs: []string{"w1", "t1", "d1", "c1", "s1"},
 		},
 		{
-			name:    "-s open --no-status parked subtracts within the open group",
-			args:    []string{"-s", "open", "--no-status", "parked", "--json"},
-			wantIDs: []string{"w1", "t1", "d1"},
+			name:    "-s closed --no-status deferred subtracts within the closed group",
+			args:    []string{"-s", "closed", "--no-status", "deferred", "--json"},
+			wantIDs: []string{"c1", "s1"},
 		},
 	}
 
@@ -350,13 +349,34 @@ func TestListCommand_OpenByDefault(t *testing.T) {
 	}
 }
 
-// TestListCommand_ActiveNoLongerUnknownFlag pins the asymmetry fix: --active
-// used to be a "unknown flag" error on list (it lived only on rel/plan).
-func TestListCommand_ActiveNoLongerUnknownFlag(t *testing.T) {
+// TestActiveFlagIsRetired pins the surviving spelling on every command that
+// offers the filter. "active" was wrong in both directions — a draft is open
+// but not active — and it read as "in-progress", which -s in-progress already
+// says. list and rel each registered both spellings and disagreed on which was
+// primary (--open on list, --active on rel); plan registered --active alone and
+// no --open at all. All three are checked here rather than one standing in for
+// the others.
+func TestActiveFlagIsRetired(t *testing.T) {
+	for _, c := range []*cobra.Command{listCmd, relCmd, planCmd} {
+		if f := c.Flags().Lookup("active"); f != nil {
+			t.Errorf("%s still registers --active (usage: %q)", c.Name(), f.Usage)
+		}
+		if c.Flags().Lookup("open") == nil {
+			t.Errorf("%s must register --open", c.Name())
+		}
+	}
+}
+
+// TestListCommand_ActiveIsUnknownFlag pins the retirement at the CLI boundary:
+// passing --active is now an error, not a silently accepted alias.
+func TestListCommand_ActiveIsUnknownFlag(t *testing.T) {
 	nibsDir := setupListCobraTest(t, mixedStatusFixture())
 	out, err := runListCmd(t, nibsDir, "--active", "--json")
-	if err != nil {
-		t.Fatalf("list --active should be accepted, got error: %v\nout: %s", err, out)
+	if err == nil {
+		t.Fatalf("list --active should be rejected; out: %s", out)
+	}
+	if !strings.Contains(err.Error(), "active") {
+		t.Errorf("error %q should name the unknown flag", err.Error())
 	}
 }
 
@@ -406,9 +426,9 @@ func TestRelCommand_OpenByDefault(t *testing.T) {
 		wantIDs []string
 	}{
 		{
-			name:    "children hides completed and scrapped by default",
+			name:    "children hides the closed statuses by default",
 			args:    []string{"rel", "par", "--rel", "children", "--json"},
-			wantIDs: []string{"co", "cf"},
+			wantIDs: []string{"co"},
 		},
 		{
 			name:    "--all shows every child",
@@ -416,23 +436,18 @@ func TestRelCommand_OpenByDefault(t *testing.T) {
 			wantIDs: []string{"co", "cd", "cs", "cf"},
 		},
 		{
-			name:    "-s closed shows archived children",
+			name:    "-s closed shows closed children",
 			args:    []string{"rel", "par", "--rel", "children", "-s", "closed", "--json"},
-			wantIDs: []string{"cd", "cs"},
+			wantIDs: []string{"cd", "cs", "cf"},
 		},
 		{
 			name:    "--open shows open children",
 			args:    []string{"rel", "par", "--rel", "children", "--open", "--json"},
-			wantIDs: []string{"co", "cf"},
+			wantIDs: []string{"co"},
 		},
 		{
-			name:    "--active is a synonym for --open on rel",
-			args:    []string{"rel", "par", "--rel", "children", "--active", "--json"},
-			wantIDs: []string{"co", "cf"},
-		},
-		{
-			name:    "-s parked shows deferred child",
-			args:    []string{"rel", "par", "--rel", "children", "-s", "parked", "--json"},
+			name:    "-s deferred shows deferred child",
+			args:    []string{"rel", "par", "--rel", "children", "-s", "deferred", "--json"},
 			wantIDs: []string{"cf"},
 		},
 	}
@@ -448,15 +463,15 @@ func TestRelCommand_OpenByDefault(t *testing.T) {
 	}
 }
 
-// TestRelCommand_ActivePlusStatusIsUnion pins that --active (== -s open) unions
-// with an explicit -s rather than erroring: under the old semantics --active
-// with -s completed was rejected as "always empty".
-func TestRelCommand_ActivePlusExplicitStatus_Union(t *testing.T) {
+// TestRelCommand_OpenPlusExplicitStatus_Union pins that --open (== -s open)
+// unions with an explicit -s rather than erroring: under the old semantics the
+// open shorthand with -s completed was rejected as "always empty".
+func TestRelCommand_OpenPlusExplicitStatus_Union(t *testing.T) {
 	nibsDir := setupRelCobraTest(t, relStatusFixture)
-	out := runRelJSON(t, "--nibs-path", nibsDir, "rel", "par", "--rel", "children", "--active", "-s", "completed", "--json")
+	out := runRelJSON(t, "--nibs-path", nibsDir, "rel", "par", "--rel", "children", "--open", "-s", "completed", "--json")
 	got := relEnvIDs(decodeRelEnvelope(t, out))
-	// open children (co, cf) unioned with the explicitly requested completed (cd).
-	assertIDSet(t, got, []string{"co", "cf", "cd"})
+	// the open child (co) unioned with the explicitly requested completed (cd).
+	assertIDSet(t, got, []string{"co", "cd"})
 }
 
 func TestRelCommand_BadStatus_Validation(t *testing.T) {

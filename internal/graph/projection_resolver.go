@@ -9,43 +9,75 @@ import (
 )
 
 // ProgressRollup is the value projected for the computed `progress` field, and
-// the ONE canonical child-completion rollup reused by the recipe views
-// (context, plan, roadmap) so `nibs get <id> -f progress` and those views can
-// never disagree. Build it only via ComputeProgress — do not fork the rule.
+// the canonical child-completion rollup the recipe views (context, roadmap)
+// reuse, so `nibs get <id> -f progress` and those views report the same number.
+// Build it only via ComputeProgress — do not fork the rule.
 //
-// Canonical definition (single source of truth):
-//   - Done     = direct children whose status is "completed". Scrapped work is
-//     canceled, not finished, so it is NOT counted as done.
-//   - Total    = direct children EXCLUDING scrapped ones. Scrapped work is
-//     abandoned — neither done nor pending — so it leaves the denominator
-//     entirely. draft/todo/in-progress/deferred children all count toward Total.
+// Canonical definition (single source of truth). Each child falls into exactly
+// one of three buckets:
+//   - Done    = children whose status is "completed" — the one status that means
+//     the work actually happened. They also count toward Total.
+//   - Dropped = children whose status is "scrapped". The work will not be done
+//     and is no longer scope, so it leaves the denominator entirely rather than
+//     pinning the percentage below 100 forever.
+//   - Pending = every other child, including "deferred". Counts toward Total,
+//     not toward Done. Deferred work is set aside, not resolved — it is coming
+//     back, so it is outstanding scope and the percentage must say so.
+//
+//   - Total    = Done + Pending; only scrapped children are excluded.
 //   - Percent  = round(Done/Total*100); 0 when Total == 0.
-//   - Scrapped = direct children with status "scrapped", surfaced purely for
-//     transparency (excluded from both Done and Total).
+//   - Scrapped = direct children with status "scrapped", disclosed so the
+//     children missing from Total are visible rather than silently dropped.
+//   - Deferred = direct children with status "deferred", disclosed so a
+//     set-aside child inside Total can be told apart from work still in flight.
 //
-// A leaf nib (no children) reports {total:0, done:0, percent:0, scrapped:0}:
-// progress is a rollup over children, not a reflection of the nib's own status.
+// The three closed statuses get three different treatments, so the rule names
+// them individually: no combination of the Closed/ReleasesDependents flags
+// separates completed from scrapped (both are closed and both release their
+// dependents), and each named status is a single member rather than a rival
+// definition of a status group. See config.StatusConfig.
+//
+// A leaf nib (no children) reports zeros across the board: progress is a rollup
+// over children, not a reflection of the nib's own status.
+//
+// This rule is one half of a seam with the roadmap's item filter
+// (cmd/roadmap.go filterChildren): the direct children a default `nibs roadmap`
+// lists under a container are exactly the ones this rollup counts in Total but
+// not in Done, so a container cannot both list items and claim 100%. The rollup
+// is over direct children only, so a milestone can sit at 100% while an epic
+// below it still lists a deferred task under a closed parent.
 type ProgressRollup struct {
 	Total    int `json:"total"`
 	Done     int `json:"done"`
 	Percent  int `json:"percent"`
 	Scrapped int `json:"scrapped"`
+	Deferred int `json:"deferred"`
 }
 
 // ComputeProgress builds the canonical ProgressRollup from a set of child
 // status strings. It is the single place the done/total/percent rule lives; the
 // projected `progress` field and every recipe view call it, so the rollup is
 // identical everywhere. See ProgressRollup for the exact definition.
+//
+// An unrecognized status (including the empty status of a nib whose front
+// matter omits it) lands in the default arm and counts as outstanding scope, so
+// a typo holds the percentage down rather than inflating it.
 func ComputeProgress(childStatuses []string) ProgressRollup {
 	var r ProgressRollup
 	for _, s := range childStatuses {
-		if s == "scrapped" {
-			r.Scrapped++
-			continue
-		}
-		r.Total++
-		if s == "completed" {
+		switch s {
+		case "completed":
+			r.Total++
 			r.Done++
+		case "scrapped":
+			// Not scope any more — out of the denominator entirely.
+			r.Scrapped++
+		case "deferred":
+			// Set aside, not resolved: still scope, still not done.
+			r.Deferred++
+			r.Total++
+		default:
+			r.Total++
 		}
 	}
 	if r.Total > 0 {
@@ -131,15 +163,33 @@ func (p *projectionResolver) Progress(id string) any {
 	return ComputeProgress(statuses)
 }
 
-// Ready reports whether the nib is startable: not already resolved
-// (completed/scrapped) and with no active blockers. BlockedByIds already drops
-// resolved blockers, so a nib blocked only by finished work is ready.
+// Ready reports whether the nib can be started: it carries a startable status
+// and has no active blockers. BlockedByIds drops blockers whose status released
+// them, so a nib blocked only by completed or scrapped work is ready — but one
+// blocked by a deferred nib is not: the set-aside work is coming back and the
+// dependency is unmet.
+//
+// The status half is config.IsStartableStatus, which is narrower than "not
+// closed": a draft or in-progress nib reports ready:false. `nibs list --ready`
+// reads that same flag, so the field and the filter narrow by status from one
+// definition — pinned by TestReadyProjectionAndFilterAgree in cmd.
+//
+// The blocker half agrees as well, but on matching rules rather than on shared
+// code: this field walks BlockedByIds → Reader.Get, while the filter walks
+// Core.IsBlocked → findActiveBlockersInMap → normalizeIDInMap. Each spells out
+// the same resolution — the exact id, then the configured prefix prepended — so
+// a hand-edited nib naming its blocker by short id is withheld by both, and an
+// entry naming no nib at all is dropped by both. What a resolved blocker then
+// counts for is genuinely one definition: both ask
+// config.StatusReleasesDependents. TestReadyProjectionAndFilterAgree drives a
+// blocker under both spellings, so neither copy of the resolution rule can
+// drift alone.
 func (p *projectionResolver) Ready(id string) bool {
 	b, err := p.r.Reader.Get(id)
 	if err != nil {
 		return false
 	}
-	if nib.IsResolvedStatus(b.Status) {
+	if !p.r.isStartableStatus(b.Status) {
 		return false
 	}
 	blockers, err := p.nib.BlockedByIds(p.ctx, b)

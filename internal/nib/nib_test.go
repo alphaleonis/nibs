@@ -2832,32 +2832,3 @@ priority: deferred
 		}
 	})
 }
-
-func TestResolvedStatusNames(t *testing.T) {
-	got := ResolvedStatusNames()
-
-	// Today the resolved (terminal) set is exactly {completed, scrapped}.
-	want := []string{"completed", "scrapped"}
-	if len(got) != len(want) {
-		t.Fatalf("len(ResolvedStatusNames()) = %d, want %d (%v)", len(got), len(want), got)
-	}
-	for i, name := range want {
-		if got[i] != name {
-			t.Errorf("ResolvedStatusNames()[%d] = %q, want %q", i, got[i], name)
-		}
-	}
-
-	// Every returned name must satisfy the canonical resolved predicate.
-	for _, name := range got {
-		if !IsResolvedStatus(name) {
-			t.Errorf("ResolvedStatusNames() returned %q which is not IsResolvedStatus", name)
-		}
-	}
-
-	// "deferred" is non-terminal; it must never be treated as resolved.
-	for _, name := range got {
-		if name == "deferred" {
-			t.Errorf("ResolvedStatusNames() must not include %q", name)
-		}
-	}
-}

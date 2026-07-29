@@ -25,15 +25,11 @@ export type RelIdKey =
   | "mentionsId"
   | "mentionedById";
 
-/** Boolean existence/state fields, keyed by their full token string. */
-export type ExistenceKey =
-  | "hasParent"
-  | "noParent"
-  | "hasBlocking"
-  | "noBlocking"
-  | "hasBlockedBy"
-  | "noBlockedBy"
-  | "isBlocked";
+/** Tri-state existence/state fields. Each is one field with two token
+ *  spellings: `has:parent` writes true, `no:parent` writes false. The backend
+ *  filter collapsed the `no*` twins into these same fields, so the grammar keeps
+ *  both words while the model holds one value. */
+export type ExistenceKey = "hasParent" | "hasBlocking" | "hasBlockedBy" | "isBlocked";
 
 // Token field-name → scalar-id NibFilter key. Includes the hyphenated names.
 // Exported so the rel-token typeahead detector (relComplete.ts) recognizes the
@@ -46,16 +42,19 @@ export const REL_ID_FIELDS: Record<string, RelIdKey> = {
   "mentioned-by": "mentionedById",
 };
 
-// Full (lowercased) existence token → boolean NibFilter key. Enumerated, so
-// invalid combos (`has:mentions`, `no:mentions`, `is:foo`) simply are not present.
-const EXISTENCE_TOKENS: Record<string, ExistenceKey> = {
-  "has:parent": "hasParent",
-  "no:parent": "noParent",
-  "has:blocking": "hasBlocking",
-  "no:blocking": "noBlocking",
-  "has:blocked-by": "hasBlockedBy",
-  "no:blocked-by": "noBlockedBy",
-  "is:blocked": "isBlocked",
+// Full (lowercased) existence token → the field it writes and the value it
+// writes there. Enumerated, so invalid combos (`has:mentions`, `no:mentions`,
+// `is:foo`) simply are not present. The `has:`/`no:` pair for one dimension
+// targets the SAME field with opposite values — writing them as two fields is
+// what the backend filter model retired.
+const EXISTENCE_TOKENS: Record<string, { field: ExistenceKey; value: boolean }> = {
+  "has:parent": { field: "hasParent", value: true },
+  "no:parent": { field: "hasParent", value: false },
+  "has:blocking": { field: "hasBlocking", value: true },
+  "no:blocking": { field: "hasBlocking", value: false },
+  "has:blocked-by": { field: "hasBlockedBy", value: true },
+  "no:blocked-by": { field: "hasBlockedBy", value: false },
+  "is:blocked": { field: "isBlocked", value: true },
 };
 
 // Canonical serialization order for the rel/existence block (design 2.4). Grouped
@@ -65,19 +64,19 @@ const EXISTENCE_TOKENS: Record<string, ExistenceKey> = {
 // canonical string containing these tokens.
 export type RelTokenSpec =
   | { kind: "id"; field: RelIdKey; name: string }
-  | { kind: "bool"; field: ExistenceKey; token: string };
+  | { kind: "bool"; field: ExistenceKey; token: string; value: boolean };
 
 export const REL_TOKEN_ORDER: readonly RelTokenSpec[] = [
   { kind: "id", field: "parentId", name: "parent" },
-  { kind: "bool", field: "hasParent", token: "has:parent" },
-  { kind: "bool", field: "noParent", token: "no:parent" },
+  { kind: "bool", field: "hasParent", token: "has:parent", value: true },
+  { kind: "bool", field: "hasParent", token: "no:parent", value: false },
   { kind: "id", field: "blockingId", name: "blocking" },
-  { kind: "bool", field: "hasBlocking", token: "has:blocking" },
-  { kind: "bool", field: "noBlocking", token: "no:blocking" },
+  { kind: "bool", field: "hasBlocking", token: "has:blocking", value: true },
+  { kind: "bool", field: "hasBlocking", token: "no:blocking", value: false },
   { kind: "id", field: "blockedById", name: "blocked-by" },
-  { kind: "bool", field: "hasBlockedBy", token: "has:blocked-by" },
-  { kind: "bool", field: "noBlockedBy", token: "no:blocked-by" },
-  { kind: "bool", field: "isBlocked", token: "is:blocked" },
+  { kind: "bool", field: "hasBlockedBy", token: "has:blocked-by", value: true },
+  { kind: "bool", field: "hasBlockedBy", token: "no:blocked-by", value: false },
+  { kind: "bool", field: "isBlocked", token: "is:blocked", value: true },
   { kind: "id", field: "mentionsId", name: "mentions" },
   { kind: "id", field: "mentionedById", name: "mentioned-by" },
 ];
@@ -85,7 +84,7 @@ export const REL_TOKEN_ORDER: readonly RelTokenSpec[] = [
 /** Recognition result: a scalar-id assignment or a boolean-existence assignment. */
 export type RelMatch =
   | { kind: "id"; field: RelIdKey; value: string }
-  | { kind: "bool"; field: ExistenceKey };
+  | { kind: "bool"; field: ExistenceKey; value: boolean };
 
 /**
  * Recognize a single token as a relationship-id or existence/state token, or
@@ -99,8 +98,8 @@ export function recognizeRelationship(token: string): RelMatch | undefined {
   if (token.startsWith("-")) return undefined;
 
   const lower = token.toLowerCase();
-  const boolField = EXISTENCE_TOKENS[lower];
-  if (boolField) return { kind: "bool", field: boolField };
+  const existence = EXISTENCE_TOKENS[lower];
+  if (existence) return { kind: "bool", field: existence.field, value: existence.value };
 
   // Split on the FIRST colon so hyphenated field-names (`blocked-by`) are handled
   // without the metadata FIELD_TOKEN regex. Value is everything after it, taken
