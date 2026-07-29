@@ -373,17 +373,59 @@ func TestStartableStatusNames(t *testing.T) {
 // status would offer finished work as the next thing to pick up). The struct
 // makes both illegal combinations representable, so this test is what rules
 // them out.
+// TestStatusFlagCombinationsAreLegal is the whole enforcement of the status flag
+// model. The three booleans can express eight states and only four are legal;
+// nothing in the type prevents the other four, deliberately, because statuses
+// are hardcoded in DefaultStatuses rather than user-configurable — so an illegal
+// combination can only arrive in the same commit that trips this test. See the
+// state table on StatusConfig.
+//
+// The messages name the rule rather than just reporting a mismatch, because a
+// developer adding a status meets this test before they meet the documentation.
 func TestStatusFlagCombinationsAreLegal(t *testing.T) {
 	for _, s := range DefaultStatuses {
 		t.Run(s.Name, func(t *testing.T) {
 			if s.ReleasesDependents && !s.Closed {
-				t.Errorf("status %q is {Closed:false, ReleasesDependents:true} — an open status must not release its dependents", s.Name)
+				t.Errorf("status %q is {Closed:false, ReleasesDependents:true} — an open status must not release its dependents, because that would hand out work that is still blocked", s.Name)
 			}
 			if s.Startable && s.Closed {
 				t.Errorf("status %q is {Closed:true, Startable:true} — closed work must not be offered as startable", s.Name)
 			}
 		})
 	}
+
+	// Each group must be non-empty. This is not tidiness: a derived set that
+	// empties out fails OPEN, not closed. Emptying Startable widened
+	// `nibs list --ready` from "only startable" to every unblocked nib (86 of 89
+	// on the sample fixture, including completed and scrapped work), because an
+	// empty include-list filters nothing.
+	groups := []struct {
+		name string
+		why  string
+		n    int
+	}{
+		{"open", "every nib would be closed, so nothing could be worked on", countStatuses(func(s StatusConfig) bool { return !s.Closed })},
+		{"closed", "nothing could ever leave the board", countStatuses(func(s StatusConfig) bool { return s.Closed })},
+		{"startable", "`nibs list --ready` could return nothing, and an empty include-list would make it return everything", countStatuses(func(s StatusConfig) bool { return s.Startable })},
+		{"releasing", "closing a blocker would never free the work it gates", countStatuses(func(s StatusConfig) bool { return s.Closed && s.ReleasesDependents })},
+	}
+	for _, g := range groups {
+		t.Run("at least one "+g.name+" status", func(t *testing.T) {
+			if g.n == 0 {
+				t.Errorf("no status is %s — %s", g.name, g.why)
+			}
+		})
+	}
+}
+
+func countStatuses(pred func(StatusConfig) bool) int {
+	n := 0
+	for _, s := range DefaultStatuses {
+		if pred(s) {
+			n++
+		}
+	}
+	return n
 }
 
 func TestGetStatus(t *testing.T) {

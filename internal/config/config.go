@@ -89,13 +89,35 @@ type EstimateConfig struct {
 //     underway, draft needs refinement first, and the closed statuses are off
 //     the board.
 //
-// The three questions are independent; the flags are not. ReleasesDependents is
-// a strict subset of Closed, since an open status that released its dependents
-// would hand out work that is still blocked. Startable relates to Closed the
-// other way round — the two are disjoint, because a startable closed status
-// would offer finished work as the next thing to pick up. Nothing in the type
-// enforces either constraint — both illegal combinations are representable, and
-// TestStatusFlagCombinationsAreLegal is what rules them out.
+// The three questions are independent; the flags are not. Of the eight states
+// three booleans can express, four are legal, and every declared status is one
+// of them:
+//
+//	Closed  Releases  Startable  meaning                       members
+//	false   false     false      open, not yet pickable        in-progress, draft
+//	false   false     true       open and pickable             todo
+//	true    false     false      closed, still blocking        deferred
+//	true    true      false      closed, dependency settled    completed, scrapped
+//
+// The other four are illegal. ReleasesDependents is a strict subset of Closed,
+// since an open status that released its dependents would hand out work that is
+// still blocked. Startable and Closed are disjoint, because a startable closed
+// status would offer finished work as the next thing to pick up.
+//
+// **Nothing in the type enforces this**, and that is a deliberate choice rather
+// than an oversight. Statuses are hardcoded in DefaultStatuses below and are not
+// user-configurable (see the note on Config), so an illegal combination can only
+// be written by a developer editing this file — and
+// TestStatusFlagCombinationsAreLegal fails in that same commit, naming the
+// offending status and the rule it broke. Making the states unrepresentable
+// would mean migrating every consumer of these three predicates to prevent a
+// state no user can reach.
+//
+// The same test also requires each of the four groups to be NON-EMPTY, which is
+// not a stylistic nicety: a derived set that empties out fails open rather than
+// closed. Emptying Startable made `nibs list --ready` widen from "only startable"
+// to every unblocked nib — 86 of 89 on the sample fixture, including completed
+// and scrapped work — because an empty include-list filters nothing.
 //
 // None of the three sets is interchangeable with another. Deferred is closed
 // and still blocks, so collapsing Closed and ReleasesDependents back into one
@@ -109,7 +131,7 @@ type EstimateConfig struct {
 // StatusReleasesDependents/ReleasingStatusNames, HoldingStatusNames for the
 // closed-but-still-blocking difference, and
 // IsStartableStatus/StartableStatusNames for the ready queue. The web UI keeps
-// a hand-written copy in web/src/lib/constants.ts as TERMINAL_STATUSES
+// a hand-written copy in web/src/lib/constants.ts as CLOSED_STATUSES
 // (nibs-nv05). README.md's Data Model section is another hand-written copy —
 // there is no render step behind it — held to these flags by cmd/readme_test.go
 // rather than by derivation.
