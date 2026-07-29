@@ -17,6 +17,7 @@ Do not guess syntax — read the grammar first.
 - AFTER: close it only when no unchecked todos remain — `nibs close <id> --summary -` (adds a dated entry to `## Summary`; merges `## Key Decisions` into the parent, and rewrites the parent's `## Current Focus` only when the reason is {{.CompletionCloseStatus}}). `--as <closed status>` picks the close reason ({{join .ClosedStatuses "/"}}; {{.DefaultCloseStatus}} when omitted), so abandoned work is `nibs close <id> --as scrapped --summary -` and work set aside is `--as deferred`. Closing an already-closed nib is allowed and appends another entry — that is how a reason gets revised. `nibs set -s` refuses a closed status: closing an existing nib goes through `close`, because only `close` requires the summary that records why.
 - COMMITS: include both code and nib files.
 - SUBAGENTS: `nibs set <id> -s in-progress` BEFORE launching, `nibs close <id> --summary -` AFTER — they run fresh and won't update nibs for you.
+- WAITING ON SOMETHING OUTSIDE NIBS (an upstream release, a vendor fix, someone's decision): make a nib for it and `nibs set <work> --blocked-by <that-nib>`. `--blocked-by` takes ids only — free text is rejected, because an external blocker needs a resolution event and only a nib can carry one.{{if .ReleasingStatuses}} Closing the tracking nib as {{codes .ReleasingStatuses " or "}} releases the work behind it.{{end}}
 
 ## Errors
 

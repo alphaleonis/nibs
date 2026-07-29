@@ -113,6 +113,14 @@ Set with `nibs set <id>` (or at creation with `nibs new`):
 - **Blocked-by** (`--blocked-by <id>`): THIS nib is blocked by another. **Prefer this when creating dependent work.**
 - **Mentions** (`#<id>` in body prose): weak informational references. Write `#<short-id>` (e.g. `#gx0f`) or `#<full-id>`; a bare id without `#` is NOT a mention. Mentions inside code spans/blocks, links, images, and HTML are skipped; heading text counts. Mentions are informational only — use `--blocked-by` for real dependencies.
 
+**Waiting on something outside the tracker? Make a nib for it.** `--blocked-by` takes nib ids only — free text is rejected (`blocker nib not found`). That is deliberate: **an external blocker needs a resolution event**, and only a nib can carry one. A free-text blocker could never be marked satisfied, so everything behind it would stay blocked forever and drop out of `--ready` permanently. So when work waits on an upstream release, a vendor fix, or someone's decision:
+
+1. `nibs new "Upstream: <the thing being waited on>" -t task -d -` — one nib standing for the external event.
+2. `nibs set <work> --blocked-by <tracking-nib>`.
+3. When it happens, close the tracking nib — everything behind it becomes ready automatically.
+
+{{if and .ReleasingStatuses .HoldingStatuses}}Close it as {{codes .ReleasingStatuses " or "}} at step 3. Closing it as {{codes .HoldingStatuses " or "}} does **not** release the work behind it — that reason means the dependency is still coming, not settled.{{end}}
+
 Query any relationship with `nibs rel <id> --rel <relation>`:
 ```bash
 nibs rel <id> --rel children --order topo        # children topologically sorted by blocked-by edges
