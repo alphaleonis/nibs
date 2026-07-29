@@ -7,6 +7,38 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Added
+- **`nibs close --as <closed status>`** — closing is now one verb that produces any closed status. `nibs close <id> --summary -` still records `completed`; `--as scrapped` and `--as deferred` record the other reasons. `--as` takes ordinary status names, so there is no separate close-reason vocabulary to keep in sync, and an open status name is a validation error.
+- **`## Summary` accrues instead of being replaced.** Each close appends a dated, reason-stamped entry (`**Deferred 2026-07-27** — waiting on the upstream release`), so a nib can be closed again to revise its reason without destroying the first rationale. Re-closing under the same reason is allowed too — that is how a rationale gets updated.
+- **The tracking-nib pattern is documented** in `nibs prime` and `nibs prime --full`: when work waits on something outside the tracker, make a nib for the external event and `--blocked-by` it. `--blocked-by` takes ids only, because an external blocker needs a resolution event and only a nib can carry one.
+- A guard test parses `web/src/lib/constants.ts` and pins its status names and closed set against the Go configuration, so the web's hand-written copy of the vocabulary can no longer drift unnoticed.
+
+### Changed
+- **BREAKING: `deferred` is now a closed status.** Setting work aside is a way of closing it, not a state of being open. `deferred` nibs are excluded from `--open` and `--ready`, included in `-s closed`, and hidden by the web's "Open" preset. A `deferred` blocker still blocks the work that depends on it — unlike `completed`/`scrapped`, the set-aside work is coming back, so the dependency is unmet. **No data migration:** `status: deferred` stays valid in front matter and no file is rewritten.
+- **BREAKING: `nibs set -s <a closed status>` is refused**, and the error names the `close` command to run instead. `close` requires a summary and `set` does not, so allowing both made the route that records nothing the shorter one. This governs the `set` verb, not the data — the web UI, TUI, `nibs graphql` and `nibs new -s <closed>` can still reach a closed status directly. Only the move *into* closed is refused; `nibs set <id> -s todo` on a closed nib is still how work comes back.
+- **BREAKING: the projected `ready` field now requires a startable status.** It previously meant "not closed and unblocked", so draft and in-progress nibs reported `ready: true` while `nibs list --ready` withheld them — 67 versus 38 on the sample fixture. Both now derive from one `Startable` flag (true for `todo` alone) and answer identically.
+- **BREAKING: `nibs plan --open` now selects the open status group**, the same set `list`'s and `rel`'s `--open` select, rather than "everything not closed". The two differ only on a nib whose front matter has no `status:`, which is in neither group and is no longer returned.
+- **BREAKING: the paired presence filters collapsed to one field each.** The GraphQL `noParent`, `noBlocking` and `noBlockedBy` filter inputs are retired; `hasParent`, `hasBlocking` and `hasBlockedBy` are tri-state and express all of it. The `--no-parent` and `--no-blocking` CLI flags are unchanged.
+- **BREAKING (web):** the `TERMINAL_STATUSES` constant is now `CLOSED_STATUSES` and includes `deferred`, and the Status facet's two presets collapse into a single **Open** — with `deferred` closed, "Open" and "Open + deferred" named the same set. All six statuses remain individually selectable.
+- Closing a child now propagates to its parent **by reason**: `## Key Decisions` merge upward for every close reason, but only a `completed` close rewrites the parent's `## Current Focus`. Setting work aside is not progress, and overwriting that section would erase the record of the last real progress. A revision does not retract an earlier `completed` close's parent line — correct it by hand with `nibs body <parent> --section "## Current Focus" --set -`.
+- `nibs archive` now moves `deferred` nibs too — it archives every nib in a closed status, and `deferred` is one. Archived nibs remain visible in all queries, as before.
+
+### Removed
+- **BREAKING: the `parked` status group** (`-s parked`, `--no-status parked`). It was a one-member group and a spelling variant of `-s deferred`; use `-s deferred`, or `-s closed` for every closed status.
+- **BREAKING: the `--active` flag** on `list` and `rel`. `--open` remains, and `-s in-progress` covers the other reading. With `open` meaning draft/todo/in-progress, "active" was wrong in both directions.
+
+### Fixed
+- **`nibs check --fix` deleted valid links.** A `blocked_by` or `parent` entry written in short form (`e001` rather than `nibs-e001`) was reported as a broken link and removed from the file on disk, after which the nib was handed out as ready work. Such links now resolve the same way everywhere, and a short-form self-reference is reported as a self link rather than a broken one.
+- **`--has-parent=false` and `--has-blocking=false` were silently ignored**, returning the unfiltered set — all 89 nibs on the sample fixture instead of the 24 parentless ones — because the flag's value was tested rather than whether it was given. `--is-blocked=false` had the same defect.
+- **Contradictory filter flags returned an empty set with exit 0 and no error.** `--has-parent --no-parent`, `--has-blocking --no-blocking` and `--parent <id> --no-parent` are now validation errors naming both flags.
+- **An explicitly empty id filter is no longer ignored.** `--parent ""`, `--mentions ""` and `--mentioned-by ""` returned every nib; they now error. `-S ""` is deliberately still accepted as "no keyword filter".
+- The projected `ready` field and `nibs list --ready` disagreed when a nib's `blocked_by` named its blocker by short id — the field withheld it, the filter handed it out.
+- Re-closing a nib appended a duplicate copy of its `## Key Decisions` to the parent on every close.
+- The `## Summary` date stamp used the machine's local timezone while `updated_at` is UTC, so one close could be recorded under two different dates.
+- The duplicate-title warning lost its `reason` for anything closed through `close --as`, because it read only the retired `## Reasons for Scrapping` section. It now reads the most recent `## Summary` entry, falls back to the old section for nibs closed before this change, and explains deferred nibs as well as scrapped ones.
+- `nibs list --ready` widened to every unblocked nib, of any status, if no status declared itself startable; that configuration is now a validation error rather than a silently wider answer.
+- `nibs catalog`'s `--ready` description no longer disagrees with `nibs list --help`, and the agent guides no longer describe the parent propagation or the closing rules in terms this release makes false.
+
 ## v0.7.0 - 2026-07-25
 
 ### Added
