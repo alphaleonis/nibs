@@ -32,12 +32,18 @@ const DEFAULTS: FilterPreferences = {
 // translates in full, with nothing dropped.
 //
 // PERSISTED-FORMAT NOTE — a status group token stores a RULE, not a set.
-// serializeQuery collapses an exact group member match to the group name, so a
+// serializeQuery collapses a group wherever all of its members are present, so a
 // persisted `status:draft,todo,in-progress` is rewritten to `status:open` the
 // next time it is saved (same for the `?q=` link built from it). What was an
 // enumerated choice of three statuses becomes "everything not closed". Add a
 // status to STATUSES and every stored or shared `status:open` widens to include
 // it, and two clients on different versions resolve the same link differently.
+//
+// Collapse is NOT limited to an exact whole-list match, so this applies to more
+// stored queries than it reads like: `status:draft,todo,in-progress,completed`
+// persists as `status:open,completed` and widens later too. The rule is per
+// group, not per token — a value outside every group (`completed` here) stays
+// an enumerated choice and never widens.
 // That is the intended behavior — group membership is derived on purpose (see
 // constants.ts) — but it means the stored string is not a faithful record of
 // what the user ticked. CLOSED_STATUSES / OPEN_STATUSES are pinned verbatim by

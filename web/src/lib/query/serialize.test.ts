@@ -173,9 +173,11 @@ describe("serializeQuery — status group collapse", () => {
     );
   });
 
-  it("does NOT collapse a superset of a group", () => {
+  it("collapses the group part of a superset and keeps the rest", () => {
+    // The extra value must survive: emitting a bare `status:open` here would
+    // silently drop `completed` from the filter.
     expect(serializeQuery({ filter: { status: ["draft", "todo", "in-progress", "completed"] } })).toBe(
-      "status:draft,todo,in-progress,completed",
+      "status:open,completed",
     );
   });
 
@@ -204,12 +206,33 @@ describe("serializeQuery — status group canonicalization", () => {
     expect(rt("status:draft,todo")).toBe("status:draft,todo");
   });
 
-  it("loses BOTH group names when one token names two groups", () => {
-    // Collapse is exact SINGLE-group set equality, so a token spanning two
-    // groups is non-canonical too — and neither name survives. `open,closed` is
-    // every status, which is not either group's member set, so it comes back
-    // fully spelled out rather than partially collapsed.
-    expect(rt("status:open,closed")).toBe("status:draft,todo,in-progress,deferred,completed,scrapped");
+  it("keeps BOTH group names when one token names two groups", () => {
+    expect(rt("status:open,closed")).toBe("status:open,closed");
+  });
+
+  // The reported case. A group name has to survive alongside values outside it,
+  // or the shorthand is lost the moment the box blurs and every shared `?q=`
+  // link carries the spelled-out member list instead.
+  it("keeps a group name beside a value outside the group", () => {
+    expect(rt("status:open,deferred")).toBe("status:open,deferred");
+    expect(rt("status:open,completed")).toBe("status:open,completed");
+    expect(rt("status:draft,closed")).toBe("status:draft,closed");
+  });
+
+  // Ordering is by the lowest index a token covers, so the canonical form does
+  // not depend on how the user happened to type it.
+  it("canonicalizes to one spelling regardless of input order", () => {
+    expect(rt("status:deferred,open")).toBe("status:open,deferred");
+    expect(rt("status:completed,draft,in-progress,todo")).toBe("status:open,completed");
+  });
+
+  it("still spells out a partial group", () => {
+    expect(rt("status:draft,todo")).toBe("status:draft,todo");
+  });
+
+  // Exclusion lists render through the same path, so the shorthand survives there too.
+  it("collapses inside a negated token", () => {
+    expect(rt("-status:open,deferred")).toBe("-status:open,deferred");
   });
 });
 

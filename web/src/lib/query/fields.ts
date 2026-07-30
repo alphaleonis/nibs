@@ -51,8 +51,9 @@ export interface FieldSpec {
   values: readonly string[] | null;
   /** Group names accepted as shorthand for a set of `values` (`status:open`).
    *  A group is legal wherever a concrete value is, expands to its members on
-   *  parse, and is re-collapsed on serialize when a value list matches one
-   *  exactly. Absent for fields with no groups. */
+   *  parse, and is re-collapsed on serialize wherever all of its members are
+   *  present — beside other values, not only as the whole list. Absent for
+   *  fields with no groups. */
   groups?: ReadonlyMap<string, readonly string[]>;
 }
 
@@ -97,23 +98,60 @@ export function expandValue(spec: FieldSpec, value: string): readonly string[] {
   return spec.groups?.get(value) ?? [value];
 }
 
-/** The name of the group whose members are exactly `values` as a set, or
- *  undefined when none matches. This is the serialize-side inverse of
- *  `expandValue`: it is what lets `status:open` survive a round-trip through
- *  the box instead of expanding into its members on blur. */
-export function matchingGroup(spec: FieldSpec, values: readonly string[]): string | undefined {
-  if (!spec.groups) return undefined;
-  const unique = new Set(values);
-  for (const [name, members] of spec.groups) {
-    // Both sides are deduplicated before the size comparison, so this is set
-    // equality by construction rather than by a precondition on the group
-    // declaration: a repeated member would otherwise inflate the member count
-    // and let a strict SUPERSET of the group satisfy both halves of the check,
-    // labeling it with a group name it does not have.
-    const uniqueMembers = new Set(members);
-    if (uniqueMembers.size === unique.size && members.every((m) => unique.has(m))) return name;
+/**
+ * Render `values` as the canonical token list for this field: every group whose
+ * members are ALL present collapses to the group name, and whatever is left over
+ * stays spelled out beside it.
+ *
+ * This is the serialize-side inverse of `expandValue`, and it collapses a group
+ * wherever its members appear rather than only when they are the entire list —
+ * so `status:open,deferred` survives a round-trip through the box instead of
+ * coming back as its four spelled-out members.
+ *
+ * Tokens are ordered by the LOWEST declaration index each one covers, which
+ * generalizes `orderValues`' enum ordering to a list that mixes group names with
+ * bare values: `open` covers index 0, so it precedes `completed` at index 4. Two
+ * tokens cannot tie, because a collapsed group's members are removed from what
+ * remains.
+ *
+ * Collapse is greedy in group-declaration order. The live status groups are
+ * disjoint (`OPEN_STATUSES` is derived as the complement of `CLOSED_STATUSES`),
+ * so there is no choice to make today; and greedy stays round-trip safe even if
+ * that stops holding, because a group name expands to exactly the members it
+ * consumed, leaving `parse(serialize(S)) === S` whatever order groups are taken in.
+ */
+export function collapseToTokens(spec: FieldSpec, values: readonly string[]): string[] {
+  const remaining = new Set(values);
+  const collapsed: { token: string; rank: number }[] = [];
+
+  if (spec.groups) {
+    for (const [name, members] of spec.groups) {
+      // `every` over the raw members tolerates a repeated declaration without a
+      // dedup step; an empty group is skipped so it cannot match vacuously and
+      // emit a name standing for nothing.
+      if (members.length === 0 || !members.every((m) => remaining.has(m))) continue;
+      collapsed.push({ token: name, rank: rankOf(spec, members) });
+      for (const m of members) remaining.delete(m);
+    }
   }
-  return undefined;
+
+  const rest = orderValues(spec, [...remaining]).map((v) => ({ token: v, rank: rankOf(spec, [v]) }));
+  // Array.prototype.sort is stable, so equal ranks keep insertion order — which
+  // is what preserves `orderValues`' alphabetical ordering for tags, where every
+  // rank is the unknown-value sentinel.
+  return [...collapsed, ...rest].sort((a, b) => a.rank - b.rank).map((t) => t.token);
+}
+
+/** The lowest index any of `members` occupies in the field's declared values —
+ *  the sort key for a token. Fields with free-form values (tags) and values not
+ *  in the enum share the sentinel, so they sort last and keep their relative order. */
+function rankOf(spec: FieldSpec, members: readonly string[]): number {
+  if (spec.values === null) return Number.MAX_SAFE_INTEGER;
+  const order = spec.values;
+  return members.reduce((lowest, m) => {
+    const i = order.indexOf(m);
+    return i === -1 ? lowest : Math.min(lowest, i);
+  }, Number.MAX_SAFE_INTEGER);
 }
 
 /** The values to offer as completions for this field: group names first — they

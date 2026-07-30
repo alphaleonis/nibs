@@ -1,4 +1,4 @@
-import { FIELD_SPECS, matchingGroup, orderValues } from "./fields";
+import { FIELD_SPECS, collapseToTokens } from "./fields";
 import type { FieldSpec, QueryFilter } from "./fields";
 import { REL_TOKEN_ORDER } from "./relations";
 
@@ -10,8 +10,8 @@ import { REL_TOKEN_ORDER } from "./relations";
  *  1. Metadata — type, priority, status, estimate, tags — each emitting its
  *     positive `field:v1,v2` token then its negative `-field:v1,v2` token. Values
  *     are ordered canonically (enum-declaration order for the four enums,
- *     alphabetical for tags) and comma-joined — unless they are exactly a group's
- *     members, which collapse to the group name (`status:open`).
+ *     alphabetical for tags) and comma-joined, with any group whose members are
+ *     all present collapsed to the group name (`status:open`).
  *  2. Relationship/existence tokens in the fixed `REL_TOKEN_ORDER` — grouped by
  *     relationship dimension (hierarchy: parent + ancestor/descendant/sibling, then
  *     blocking, blocked-by + is:blocked, mentions, mentioned-by), id token before
@@ -25,9 +25,11 @@ import { REL_TOKEN_ORDER } from "./relations";
  * member list OUTSIDE canonical form: `status:draft,todo,in-progress` canonicalizes
  * to `status:open`, and it is `status:open` that round-trips.
  *
- * Collapse is exact single-group set equality, so a token naming TWO groups is
- * also non-canonical — and loses both names rather than keeping one:
- * `status:open,closed` covers every status and serializes back spelled out.
+ * Collapse applies to a group's members wherever they appear, not only when they
+ * are the whole list, so a group name survives beside other values:
+ * `status:open,deferred` and `status:open,closed` are both canonical. A group only
+ * disappears when its members are not all present — `status:draft,todo` stays
+ * spelled out, because two thirds of `open` is not `open`.
  */
 export function serializeQuery(query: { filter: QueryFilter; invalidTokens?: string[] }): string {
   const { filter, invalidTokens = [] } = query;
@@ -67,9 +69,8 @@ export function serializeQuery(query: { filter: QueryFilter; invalidTokens?: str
   return parts.join(" ");
 }
 
-// Render one field's value list as the value part of its token: the group name
-// when the list is exactly a group's members, else the canonically ordered
-// values comma-joined.
+// Render one field's value list as the value part of its token: each group whose
+// members are all present as the group name, the rest spelled out, comma-joined.
 //
 // Collapsing is what makes a group name usable rather than a one-shot
 // expansion. The include-list is the single source of truth for the box's text,
@@ -77,5 +78,5 @@ export function serializeQuery(query: { filter: QueryFilter; invalidTokens?: str
 // moment the box lost focus, and no shared link would ever carry the shorthand.
 // It also gives the Status facet's Open preset the group spelling for free.
 function renderValues(spec: FieldSpec, values: readonly string[]): string {
-  return matchingGroup(spec, values) ?? orderValues(spec, values).join(",");
+  return collapseToTokens(spec, values).join(",");
 }
