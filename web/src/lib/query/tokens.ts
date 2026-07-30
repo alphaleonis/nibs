@@ -50,6 +50,21 @@ export interface TokenGroup extends TokenSegment {
   /** The spans this segment covers, in order. Concatenating every group's spans
    *  reproduces `tokenizeSpans(text)` exactly, so offsets are untouched. */
   spans: Span[];
+  /**
+   * Index into `spans` where the VALUE RUN begins — everything after the field's
+   * colon, to the end of the token. `-1` when there is no run.
+   *
+   * The backdrop recesses this range into a darker well and leaves the field name
+   * on the plain surface, so the fill marks exactly the part that carries meaning.
+   * It is a RUN rather than the individual value spans on purpose: filling those
+   * one by one breaks at the comma, and `status:todo,in-progress` then reads as two
+   * separate pills instead of one token.
+   *
+   * `-1` covers the cases that must not be marked at all — a gap, a bare word, and
+   * a parked whole-token invalid (`-ancestor:x`), which keeps its wavy underline
+   * without being dressed up as a working token.
+   */
+  valueRunStart: number;
 }
 
 /**
@@ -64,7 +79,14 @@ export function tokenGroups(text: string): TokenGroup[] {
   const groups: TokenGroup[] = [];
   for (const span of tokenizeSpans(text)) {
     if (span.kind === "whitespace") {
-      groups.push({ kind: "gap", start: span.start, end: span.end, structured: false, spans: [span] });
+      groups.push({
+        kind: "gap",
+        start: span.start,
+        end: span.end,
+        structured: false,
+        spans: [span],
+        valueRunStart: -1,
+      });
       continue;
     }
     const last = groups[groups.length - 1];
@@ -72,9 +94,28 @@ export function tokenGroups(text: string): TokenGroup[] {
       last.end = span.end;
       last.spans.push(span);
     } else {
-      groups.push({ kind: "token", start: span.start, end: span.end, structured: false, spans: [span] });
+      groups.push({
+        kind: "token",
+        start: span.start,
+        end: span.end,
+        structured: false,
+        spans: [span],
+        valueRunStart: -1,
+      });
     }
     if (span.kind === "field") groups[groups.length - 1].structured = true;
   }
+
+  // The run opens right after the FIRST operator — the field's colon. Later
+  // operators are the commas between values and belong inside the run, which is
+  // what keeps the fill continuous across a multi-value token. A structured token
+  // with nothing after its colon (not reachable through `classifyToken`, which
+  // routes an empty value to free text) leaves the run closed.
+  for (const g of groups) {
+    if (!g.structured) continue;
+    const colon = g.spans.findIndex((s) => s.kind === "operator");
+    if (colon >= 0 && colon + 1 < g.spans.length) g.valueRunStart = colon + 1;
+  }
+
   return groups;
 }

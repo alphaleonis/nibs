@@ -1292,26 +1292,42 @@ describe("Toolbar — highlight overlay", () => {
     expect(commas[0]).not.toHaveClass("text-muted-foreground");
   });
 
-  // A chip wraps each structured token so the token boundary is carried by a filled
-  // shape rather than by punctuation. Bare words get none — chipping free text would
-  // claim a structure it does not have.
-  it("chips structured tokens and leaves bare words unchipped", async () => {
+  // The well covers the VALUE RUN only — everything after the field's colon — so the
+  // field name stays on the plain surface and the fill marks the part that carries
+  // meaning. It must run through a comma, or one token reads as two pills.
+  it("wells the value run and leaves the field name outside it", async () => {
     const prefs = new Preferences();
     render(Toolbar, { prefs, oncreatenew: vi.fn() });
 
-    await user.type(screen.getByTestId("filter-keyword"), "type:bug login");
+    await user.type(screen.getByTestId("filter-keyword"), "status:todo,in-progress login");
 
     const backdrop = screen.getByTestId("filter-highlight");
-    const chipped = backdrop.querySelectorAll('[data-structured="true"]');
-    expect(chipped).toHaveLength(1);
-    expect(chipped[0]).toHaveTextContent("type:bug");
-    // The chip may not introduce metrics — padding or a border would shift the
-    // glyphs off the transparent input and drift the caret.
-    expect(chipped[0].className).not.toMatch(/\bp[xytblr]?-/);
-    expect(chipped[0].className).not.toMatch(/\bborder\b/);
+    const wells = backdrop.querySelectorAll('[data-testid="value-well"]');
+    expect(wells).toHaveLength(1);
+    // Continuous across the comma, and the field name is NOT inside it.
+    expect(wells[0]).toHaveTextContent("todo,in-progress");
+    expect(wells[0].textContent).not.toContain("status");
+    expect(wells[0]).toHaveClass("bg-query-well");
 
-    const unchipped = [...backdrop.querySelectorAll('[data-structured="false"]')];
-    expect(unchipped.some((n) => n.textContent === "login")).toBe(true);
+    // The well may not introduce metrics — padding or a border would shift the
+    // glyphs off the transparent input and drift the caret.
+    expect(wells[0].className).not.toMatch(/\bp[xytblr]?-/);
+    expect(wells[0].className).not.toMatch(/\bborder\b/);
+    // The outlined chip this replaced is gone.
+    expect(wells[0].className).not.toMatch(/\bring\b/);
+  });
+
+  // No structure to mark means no fill: a bare word, and a parked whole-token
+  // invalid which must keep its wavy underline without being dressed as a token.
+  it("gives a bare word and a parked invalid no well", async () => {
+    const prefs = new Preferences();
+    render(Toolbar, { prefs, oncreatenew: vi.fn() });
+
+    await user.type(screen.getByTestId("filter-keyword"), "login -ancestor:tnib-1");
+
+    const backdrop = screen.getByTestId("filter-highlight");
+    expect(backdrop.querySelectorAll('[data-testid="value-well"]')).toHaveLength(0);
+    expect(backdrop.querySelector('[data-kind="invalid"]')).toHaveTextContent("-ancestor:tnib-1");
   });
 
   it("draws a red wavy underline on an invalid value (status:banana)", async () => {
