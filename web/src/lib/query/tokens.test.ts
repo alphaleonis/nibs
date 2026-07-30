@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { tokenSegments } from "./index";
+import { tokenSegments, tokenGroups } from "./index";
 import type { TokenSegment } from "./index";
 
 describe("tokenSegments — token/gap grouping", () => {
@@ -67,6 +67,63 @@ describe("tokenSegments — token/gap grouping", () => {
       expect(segs[segs.length - 1].end).toBe(input.length);
       for (let i = 1; i < segs.length; i++) expect(segs[i].start).toBe(segs[i - 1].end);
       expect(segs.map((s) => input.slice(s.start, s.end)).join("")).toBe(input);
+    }
+  });
+});
+
+// The backdrop draws one chip per structured token, so it needs the spans grouped
+// by token AND a flag for which runs earned a chip. `tokenSegments` above is the
+// coarser view the click layer uses; both come from this one grouping.
+describe("tokenGroups — spans grouped per token, with the chip flag", () => {
+  it("marks a field:value token structured and carries its spans", () => {
+    const groups = tokenGroups("type:bug");
+    expect(groups).toHaveLength(1);
+    expect(groups[0].kind).toBe("token");
+    expect(groups[0].structured).toBe(true);
+    expect(groups[0].spans.map((s) => s.kind)).toEqual(["field", "operator", "value"]);
+  });
+
+  it("marks a bare word unstructured so it gets no chip", () => {
+    const groups = tokenGroups("login");
+    expect(groups[0].structured).toBe(false);
+    expect(groups[0].spans.map((s) => s.kind)).toEqual(["freetext"]);
+  });
+
+  // A known field with a bad value is still structure — it chips, and the wavy
+  // underline on the value is what marks it wrong.
+  it("marks a known field with an invalid value structured", () => {
+    const groups = tokenGroups("status:banana");
+    expect(groups[0].structured).toBe(true);
+    expect(groups[0].spans.map((s) => s.kind)).toEqual(["field", "operator", "invalid"]);
+  });
+
+  // A parked whole-token invalid (negated relationship) has no field span. It must
+  // NOT be chipped, or it would be dressed as a working token while doing nothing.
+  it("does not mark a parked whole-token invalid as structured", () => {
+    const groups = tokenGroups("-ancestor:tnib-1");
+    expect(groups[0].spans.map((s) => s.kind)).toEqual(["invalid"]);
+    expect(groups[0].structured).toBe(false);
+  });
+
+  it("never marks a gap structured", () => {
+    const groups = tokenGroups("type:bug login");
+    expect(groups.filter((g) => g.kind === "gap").every((g) => !g.structured)).toBe(true);
+  });
+
+  // Grouping must not disturb the offsets the backdrop aligns on: the spans it
+  // hands out still tile the whole string in order.
+  it("preserves the tiling identity across the grouped spans", () => {
+    const inputs = [
+      "type:bug,feature -tags:wip status:banana login flow",
+      "  spaced   out  tokens  ",
+      "blocking:tnib-1 has:parent -ancestor:tnib-2",
+    ];
+    for (const input of inputs) {
+      const spans = tokenGroups(input).flatMap((g) => g.spans);
+      expect(spans[0].start).toBe(0);
+      expect(spans[spans.length - 1].end).toBe(input.length);
+      for (let i = 1; i < spans.length; i++) expect(spans[i].start).toBe(spans[i - 1].end);
+      expect(spans.map((s) => input.slice(s.start, s.end)).join("")).toBe(input);
     }
   });
 });

@@ -1244,7 +1244,11 @@ describe("Toolbar — highlight overlay", () => {
     expect(backdrop).toHaveClass("bg-popover");
   });
 
-  it("colors a field token: field name (link), colon (muted), value (foreground)", async () => {
+  // Structure (field name + punctuation) is plain foreground; the accent is spent
+  // on the value. The punctuation color is the load-bearing part: as
+  // `text-muted-foreground` the comma was the lowest-contrast glyph in the string
+  // sitting between two of the brightest, and it disappeared.
+  it("colors a field token: field name and colon as structure, value accented", async () => {
     const prefs = new Preferences();
     render(Toolbar, { prefs, oncreatenew: vi.fn() });
 
@@ -1255,12 +1259,54 @@ describe("Toolbar — highlight overlay", () => {
     const value = backdrop.querySelector('[data-kind="value"]');
     const operator = backdrop.querySelector('[data-kind="operator"]');
     expect(field).toHaveTextContent("type");
-    expect(field).toHaveClass("text-link");
+    expect(field).toHaveClass("text-foreground");
     expect(operator).toHaveTextContent(":");
+    expect(operator).toHaveClass("text-foreground");
     expect(value).toHaveTextContent("bug");
-    expect(value).toHaveClass("text-foreground");
+    expect(value).toHaveClass("text-link");
     // No invalid span for an all-valid query.
     expect(backdrop.querySelector('[data-kind="invalid"]')).toBeNull();
+  });
+
+  // Punctuation must not share a color with free text: they did, so a comma inside
+  // a working token was indistinguishable from a word the parser ignored.
+  it("distinguishes punctuation from free text", async () => {
+    const prefs = new Preferences();
+    render(Toolbar, { prefs, oncreatenew: vi.fn() });
+
+    await user.type(screen.getByTestId("filter-keyword"), "status:todo,in-progress login");
+
+    const backdrop = screen.getByTestId("filter-highlight");
+    const commas = [...backdrop.querySelectorAll('[data-kind="operator"]')].filter(
+      (n) => n.textContent === ",",
+    );
+    expect(commas).toHaveLength(1);
+    const freetext = backdrop.querySelector('[data-kind="freetext"]');
+    expect(freetext).toHaveTextContent("login");
+    expect(freetext).toHaveClass("text-muted-foreground");
+    expect(commas[0]).not.toHaveClass("text-muted-foreground");
+  });
+
+  // A chip wraps each structured token so the token boundary is carried by a filled
+  // shape rather than by punctuation. Bare words get none — chipping free text would
+  // claim a structure it does not have.
+  it("chips structured tokens and leaves bare words unchipped", async () => {
+    const prefs = new Preferences();
+    render(Toolbar, { prefs, oncreatenew: vi.fn() });
+
+    await user.type(screen.getByTestId("filter-keyword"), "type:bug login");
+
+    const backdrop = screen.getByTestId("filter-highlight");
+    const chipped = backdrop.querySelectorAll('[data-structured="true"]');
+    expect(chipped).toHaveLength(1);
+    expect(chipped[0]).toHaveTextContent("type:bug");
+    // The chip may not introduce metrics — padding or a border would shift the
+    // glyphs off the transparent input and drift the caret.
+    expect(chipped[0].className).not.toMatch(/\bp[xytblr]?-/);
+    expect(chipped[0].className).not.toMatch(/\bborder\b/);
+
+    const unchipped = [...backdrop.querySelectorAll('[data-structured="false"]')];
+    expect(unchipped.some((n) => n.textContent === "login")).toBe(true);
   });
 
   it("draws a red wavy underline on an invalid value (status:banana)", async () => {

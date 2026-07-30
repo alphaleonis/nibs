@@ -94,7 +94,7 @@ test("filter box — relationship token highlighting", async ({ page }) => {
   await openApp(page);
   const input = page.getByTestId("filter-keyword");
   await input.click();
-  await input.fill("type:bug ancestor:tnib-e001 has:parent foo:bar login");
+  await input.fill("priority:normal status:todo,in-progress ancestor:tnib-e001 has:parent foo:bar login");
   await page.locator('[role="search"]').screenshot({
     path: join(OUT, "filter-highlight-relationship-cropped.png"),
   });
@@ -318,4 +318,5 @@ test("status facet — presets and per-status checkboxes", async ({ page }) => {
   await expect(page.getByTestId("status-preset-open")).toBeVisible({ timeout: 5_000 });
   await shot(page, "status-facet-dropdown");
 });
+
 

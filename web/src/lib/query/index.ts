@@ -22,8 +22,8 @@ export { tokenizeSpans } from "./spans";
 export type { Span, SpanKind } from "./spans";
 // Token/gap segmentation: the pure boundary helper the box's click-affordance layer
 // consumes to give each filter token one hit-region (phase 7).
-export { tokenSegments } from "./tokens";
-export type { TokenSegment } from "./tokens";
+export { tokenSegments, tokenGroups } from "./tokens";
+export type { TokenSegment, TokenGroup } from "./tokens";
 // Relationship/existence token support (phase 5). `RelIdKey` is the set of scalar
 // relationship-id NibFilter keys — the field the row context menu's "Filter
 // related" items compose onto the current filter.

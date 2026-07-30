@@ -20,7 +20,7 @@
   import { priorityIndicators } from "../badges";
   import type { TypeIconInfo } from "../icons";
   import { resolveFilter, resolveViewLevel, resolveVisibleColumns, resolveColumnOrder, emitFilter as emitFilterHelper } from "../resolvePrefs";
-  import { parseQuery, serializeQuery, getCompletion, tokenizeSpans, tokenSegments, relTokenValueContext } from "../query";
+  import { parseQuery, serializeQuery, getCompletion, tokenGroups, tokenSegments, relTokenValueContext } from "../query";
   import type { Completion, QueryFilter, SpanKind, RelValueContext, NibSuggestion } from "../query";
   import { createNibSearch, type SearchNibsFn } from "../searchNibs";
   import { getContextClient } from "@urql/svelte";
@@ -335,7 +335,10 @@
   // up with the input; `syncBackdropScroll` locks the backdrop's horizontal scroll
   // to the input's so a long query stays aligned as it scrolls out of view.
   let backdrop = $state<HTMLDivElement | null>(null);
-  let spans = $derived(tokenizeSpans(keywordText));
+  // Grouped per token so a chip can wrap field + operator + value as one unit. The
+  // flattened spans are identical to `tokenizeSpans(keywordText)`, so the glyph
+  // flow and offsets are unchanged by the grouping.
+  let highlightGroups = $derived(tokenGroups(keywordText));
 
   // --- Token-click affordances (Phase 7) ---
   // A thin interaction layer ABOVE the input mirrors the backdrop's token layout
@@ -356,17 +359,41 @@
     keywordInput.setSelectionRange(start, end);
   }
 
-  // Per-kind highlight colors, all shadcn semantic tokens (theme-aware): field
-  // names read as links, values as normal foreground, punctuation + free text
-  // muted, invalid values in the destructive color with a wavy red underline.
+  // Per-kind highlight colors, all shadcn semantic tokens (theme-aware).
+  //
+  // The split is STRUCTURE vs CONTENT: the field name and the punctuation that
+  // joins it to its value are plain foreground, and the accent is spent on the
+  // value. Free text stays muted, so it reads as the one thing the parser did not
+  // act on, and invalid values keep the destructive color plus a wavy underline.
+  //
+  // Punctuation is foreground rather than muted for a measured reason. Muted put
+  // the comma at 5.58:1 between two 14.88:1 values — the lowest-contrast glyph in
+  // the brightest neighborhood, and the smallest patch of ink in the string, so it
+  // vanished. It is now the brightest thing there instead of the dimmest.
+  //
+  // Sharing one color with `field` is intended: both are structure. What must stay
+  // distinct is structure vs `freetext` — those were previously the SAME muted
+  // color, so punctuation inside a working token looked like text the parser had
+  // ignored.
   const SPAN_CLASS: Record<SpanKind, string> = {
-    field: "text-link",
-    operator: "text-muted-foreground",
-    value: "text-foreground",
+    field: "text-foreground",
+    operator: "text-foreground",
+    value: "text-link",
     invalid: "text-destructive underline decoration-wavy",
     freetext: "text-muted-foreground",
     whitespace: "",
   };
+
+  // Chip drawn behind a structured token (see `TokenGroup.structured`). Metrics are
+  // locked to the transparent input glyph-for-glyph, so this may only use
+  // background/radius/ring: padding, borders and font-weight all change advance
+  // widths and would drift the caret off the text. `ring` compiles to a box-shadow
+  // spread, so it paints the chip WIDER than its text box while occupying no
+  // layout — that is what gives it breathing room without a single pixel of
+  // padding. The spread must stay under half a space or neighboring chips merge
+  // into one bar: the inter-token space measures 4.45px at 14px, so 1.5px a side
+  // leaves ~1.45px of dark between chips (2px a side left only 0.45px).
+  const TOKEN_CHIP = "rounded-[3px] bg-link/10 ring-[1.5px] ring-link/10";
 
   // Lock the display backdrop AND the token-affordance layer to the input's
   // horizontal scroll so both stay glyph-aligned as a long query scrolls.
@@ -870,8 +897,14 @@
       data-testid="filter-highlight"
       class="pointer-events-none absolute inset-0 z-0 flex items-center overflow-hidden rounded-lg border border-transparent bg-popover pl-8 {hasKeyword ? 'pr-8' : 'pr-2.5'} text-sm"
     >
+      <!-- One wrapper per token group so a chip can span field + operator + value;
+           the per-kind coloring stays on the spans inside. Wrappers add no metrics
+           (see TOKEN_CHIP), so the glyph flow is identical to the flat span list
+           this replaced. -->
       <div class="shrink-0 whitespace-pre"
-        >{#each spans as s (s.start)}<span class={SPAN_CLASS[s.kind]} data-kind={s.kind}>{keywordText.slice(s.start, s.end)}</span>{/each}</div>
+        >{#each highlightGroups as g (g.start)}<span class={g.structured ? TOKEN_CHIP : ""} data-structured={g.structured}
+          >{#each g.spans as s (s.start)}<span class={SPAN_CLASS[s.kind]} data-kind={s.kind}>{keywordText.slice(s.start, s.end)}</span>{/each}</span
+        >{/each}</div>
     </div>
     <Input
       bind:ref={keywordInput}
