@@ -13,6 +13,17 @@ import { extendTailwindMerge } from "tailwind-merge";
 // font-size / font-weight / line-height. This is intentionally one-directional:
 // a raw `font-bold` placed AFTER `text-body` must still win (partial override of
 // just the weight), so we do NOT make font-weight/size/leading drop the bundle.
+//
+// Scope note: since app.css re-points Tailwind's raw `--text-*` ladder at the
+// same `--font-scale` multiplier, `text-xs`/`text-sm` now compute to the same
+// size AND leading as `text-caption`/`text-body` at every setting. Only the
+// `font-size` half of the list below is touched by that: tailwind-merge files
+// `text-xs`/`text-sm` under `font-size` (never under `leading`), so dropping
+// them is now cosmetic for those two pairs — it still matters for MISMATCHED
+// pairs such as `text-xl` + `text-body`. The `font-weight` and `leading` halves
+// are unaffected: `font-*` and `leading-*` are fixed values app.css does not
+// re-point, so `cn("leading-6", "text-body")` must still drop `leading-6` for
+// the scaled `--text-body-leading` to apply. utils.test.ts guards all three.
 const twMerge = extendTailwindMerge<"text-scale">({
   extend: {
     classGroups: {

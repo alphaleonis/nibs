@@ -14,13 +14,18 @@
 				destructive: "bg-destructive/10 hover:bg-destructive/20 focus-visible:ring-destructive/20 dark:focus-visible:ring-destructive/40 dark:bg-destructive/20 text-destructive focus-visible:border-destructive/40 dark:hover:bg-destructive/30",
 				link: "text-primary underline-offset-4 hover:underline",
 			},
-			// `sm` deliberately uses an intermediate text-[0.8rem] (12.8px) to sit
-			// between `xs` (text-xs) and `default` (text-sm); it is a primitive-level
-			// size token, not app-level drift, so it stays as an arbitrary value.
+			// `sm` deliberately sits at an intermediate 0.8rem (12.8px at scale 1),
+			// between `xs` (text-xs, 0.75rem) and `default` (text-sm, 0.875rem). It is
+			// a primitive-level size token, not app-level drift, so it stays an
+			// arbitrary value — but it must carry `* var(--font-scale)` by hand: a bare
+			// arbitrary 0.8rem compiles to a literal font-size that the global
+			// font-size preference cannot reach, which inverted the size ladder
+			// (`sm` > `default` at Small, `xs` > `sm` at Large). See the
+			// `@theme` block in app.css (nibs-grbo).
 			size: {
 				default: "h-8 gap-1.5 px-2.5 has-data-[icon=inline-end]:pr-2 has-data-[icon=inline-start]:pl-2",
 				xs: "h-6 gap-1 rounded-[min(var(--radius-md),10px)] px-2 text-xs in-data-[slot=button-group]:rounded-lg has-data-[icon=inline-end]:pr-1.5 has-data-[icon=inline-start]:pl-1.5 [&_svg:not([class*='size-'])]:size-3",
-				sm: "h-7 gap-1 rounded-[min(var(--radius-md),12px)] px-2.5 text-[0.8rem] in-data-[slot=button-group]:rounded-lg has-data-[icon=inline-end]:pr-1.5 has-data-[icon=inline-start]:pl-1.5 [&_svg:not([class*='size-'])]:size-3.5",
+				sm: "h-7 gap-1 rounded-[min(var(--radius-md),12px)] px-2.5 text-[length:calc(0.8rem*var(--font-scale))] in-data-[slot=button-group]:rounded-lg has-data-[icon=inline-end]:pr-1.5 has-data-[icon=inline-start]:pl-1.5 [&_svg:not([class*='size-'])]:size-3.5",
 				lg: "h-9 gap-1.5 px-2.5 has-data-[icon=inline-end]:pr-3 has-data-[icon=inline-start]:pl-3",
 				icon: "size-8",
 				"icon-xs": "size-6 rounded-[min(var(--radius-md),10px)] in-data-[slot=button-group]:rounded-lg [&_svg:not([class*='size-'])]:size-3",

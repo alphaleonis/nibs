@@ -166,8 +166,14 @@ export const MIN_DETAIL_PANEL_HEIGHT = 150;
 export type RowDensity = "compact" | "comfortable";
 
 // Global font-size preference. Scales the whole UI type scale from one root CSS
-// variable (`--font-scale`) applied ONLY to the semantic type-size tokens, so
-// layout rem/spacing/row-density stay untouched. Decoupled from RowDensity.
+// variable (`--font-scale`). app.css multiplies the semantic type-size tokens
+// and Tailwind's raw `--text-*` ladder by it; several components then read it
+// directly for sizes no token covers — TreeTable's `--row-pad-y`,
+// ActiveNibView's title, ui/button's `sm` size, and the `max-w` cap on
+// ui/dropdown-menu's container primitives. Root font-size, the rem unit and the
+// spacing scale stay untouched. Row height and that dropdown cap are the two
+// dimensions beyond type that do move, so each box keeps tracking the text
+// inside it. Decoupled from RowDensity, which still picks the BASE row padding.
 export type FontSize = "small" | "medium" | "large";
 // Default is Medium = 1.0 so existing users see no change.
 export const DEFAULT_FONT_SIZE: FontSize = "medium";

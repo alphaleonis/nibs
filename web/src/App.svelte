@@ -91,8 +91,10 @@
   });
 
   // Live-apply the global font-size preference: writes the S/M/L multiplier onto
-  // --font-scale whenever prefs.fontSize changes, scaling the type scale only
-  // (not layout/spacing). No pre-paint FOUC guard needed (a tiny reflow is fine).
+  // --font-scale whenever prefs.fontSize changes, scaling the type scale plus
+  // the few boxes that must track it (row height, the dropdown width cap) while
+  // root font-size and the spacing scale stay put — see fontScale.ts for the
+  // full list. No pre-paint FOUC guard needed (a tiny reflow is fine).
   $effect(() => {
     applyFontScale(prefs.fontSize);
   });

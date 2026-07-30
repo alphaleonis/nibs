@@ -400,9 +400,81 @@
   --delete-bg-hover: oklch(0.52 0.21 27 / 0.1);
 }
 
+/* ── Tailwind text-size scale, wired to --font-scale (nibs-grbo) ─────
+   Overrides Tailwind's default `--text-*` font-size tokens so the raw `text-*`
+   size utilities (the whole xs→9xl ladder) honor the global font-size
+   preference, exactly like the semantic utilities below. The rungs are referred
+   to by size alone; the `--text-*` token names are the authoritative form, but
+   writing a full `text-*` class name in THIS comment would be harmless —
+   Tailwind v4 excludes .css files from source scanning, so nothing here reaches
+   the scanner. That does NOT generalize: .svelte and .ts sources are scanned as
+   plain text, comments included, and a class name mentioned only in one of
+   those comments IS emitted as a real utility (see fontScaleTokens.test.ts).
+
+   Why this is needed at all: the vendored shadcn primitives (ui/input,
+   ui/button, ui/dropdown-menu/*) hardcode these utilities and are re-synced
+   from upstream, so re-pointing the tokens keeps the DIFF against upstream
+   small — one token block here instead of a per-file fork onto the semantic
+   tokens. It does not make those files upstream-clean, and they never were:
+   ui/input, ui/button and ui/dropdown-menu/dropdown-menu-content each carry an
+   in-place deviation note of their own. Two local edits exist for THIS feature
+   and must survive any re-sync: the `sm` font-size in ui/button, and the
+   `max-w` cap carried by BOTH ui/dropdown-menu/dropdown-menu-content and
+   dropdown-menu-sub-content. Each is marked in place and all three files are
+   pinned by web/src/lib/fontScaleTokens.test.ts. Without
+   this block the filter query box, the facet trigger buttons and every dropdown
+   menu stayed a fixed size while the rest of the app scaled.
+
+   Forking IS possible and predates this block: ui/select/select-trigger and
+   ui/select/select-item carry `text-body` directly. That fork is now redundant
+   — `text-sm` and `--text-body-size` compute to the same size and leading — and
+   new primitives should be left on the raw utilities.
+
+   Division of labor: vendored `ui/**` stays on the raw scale (close to
+   upstream); app-owned components use the semantic `text-label/body/caption`
+   utilities below, which additionally pin a weight.
+
+   Plain `@theme` (not `inline`) so `--text-sm` is also emitted as a :root token
+   other rules can read, matching how Tailwind declares the scale. `--font-scale`
+   is only ever set on :root, so either form scales; `inline` would additionally
+   honor a SUBTREE override of `--font-scale`, which nothing does. (The separate
+   `@theme inline` block at the TOP of this file holds the color tokens plus the
+   shared radius scale — it is `inline` because those indirect through the
+   per-theme :root variables.)
+
+   Only the sizes are overridden — Tailwind v4's companion
+   `--text-*--line-height` values are UNITLESS ratios, so the leading scales
+   proportionally for free. Overriding them too would double-apply the scale.
+
+   The FULL ladder is covered on purpose: a partial one leaves a silent boundary
+   where the first use of an uncovered step (say a 2xl heading) reintroduces
+   this exact bug. `xs`/`sm` reference the semantic tokens instead of repeating
+   their literal, so retuning the semantic scale can never desynchronize the two
+   layers; the remaining rungs have no semantic counterpart and carry their own
+   calc(). Guarded by web/src/lib/fontScaleTokens.test.ts. */
+@theme {
+  --text-xs: var(--text-caption-size);                 /* 12px */
+  --text-sm: var(--text-body-size);                    /* 14px */
+  --text-base: calc(1rem * var(--font-scale));         /* 16px */
+  --text-lg: calc(1.125rem * var(--font-scale));       /* 18px */
+  --text-xl: calc(1.25rem * var(--font-scale));        /* 20px */
+  --text-2xl: calc(1.5rem * var(--font-scale));        /* 24px */
+  --text-3xl: calc(1.875rem * var(--font-scale));      /* 30px */
+  --text-4xl: calc(2.25rem * var(--font-scale));       /* 36px */
+  --text-5xl: calc(3rem * var(--font-scale));          /* 48px */
+  --text-6xl: calc(3.75rem * var(--font-scale));       /* 60px */
+  --text-7xl: calc(4.5rem * var(--font-scale));        /* 72px */
+  --text-8xl: calc(6rem * var(--font-scale));          /* 96px */
+  --text-9xl: calc(8rem * var(--font-scale));          /* 128px */
+}
+
 /* ── Semantic type-scale utilities ──────────────────────────────────
-   Bundled font-size + weight + line-height per semantic role. Prefer
-   these over ad-hoc `text-xs/sm` + `font-*` combinations. */
+   Bundled font-size + weight + line-height per semantic role. Prefer these in
+   app-owned components over ad-hoc `text-xs/sm` + `font-*` combinations: one
+   class instead of two, and the weight travels with the size. Since the block
+   above re-points Tailwind's raw scale at the same multiplier, the two layers
+   now agree on size and leading at every setting and differ only in the pinned
+   weight — so a raw `text-sm` in vendored `ui/**` is not drift. */
 
 /* Control labels, table headers, meta labels — 12px / 500 / tight */
 @utility text-label {
