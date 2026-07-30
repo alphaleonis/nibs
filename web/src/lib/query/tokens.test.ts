@@ -127,3 +127,59 @@ describe("tokenGroups — spans grouped per token, with the chip flag", () => {
     }
   });
 });
+
+// The backdrop recesses only the VALUE RUN into a darker well — the field name and
+// its colon stay on the plain surface. The run has to span the whole value region
+// rather than each value span, or a comma splits one token into two visual pills.
+describe("tokenGroups — where the value run starts", () => {
+  it("starts the run just after the field's colon", () => {
+    const g = tokenGroups("type:bug")[0];
+    expect(g.spans.map((s) => s.kind)).toEqual(["field", "operator", "value"]);
+    expect(g.valueRunStart).toBe(2);
+  });
+
+  // The whole point of the run: it must cover the comma so the fill is continuous.
+  it("covers commas and every following value", () => {
+    const g = tokenGroups("status:todo,in-progress")[0];
+    expect(g.spans.map((s) => s.kind)).toEqual(["field", "operator", "value", "operator", "value"]);
+    expect(g.valueRunStart).toBe(2);
+    expect(g.spans.slice(g.valueRunStart).map((s) => s.kind)).toEqual([
+      "value",
+      "operator",
+      "value",
+    ]);
+  });
+
+  it("covers a known field's invalid value", () => {
+    const g = tokenGroups("status:banana")[0];
+    expect(g.spans.slice(g.valueRunStart).map((s) => s.kind)).toEqual(["invalid"]);
+  });
+
+  it("negation stays outside the run — the minus belongs to the field", () => {
+    const g = tokenGroups("-type:bug")[0];
+    expect(g.spans[0].kind).toBe("field");
+    expect(g.valueRunStart).toBe(2);
+  });
+
+  // No run means no well. A bare word has no structure to mark, and a parked
+  // whole-token invalid must keep its wavy underline without being dressed up.
+  it("reports no run for a bare word, a parked invalid, or a gap", () => {
+    expect(tokenGroups("login")[0].valueRunStart).toBe(-1);
+    expect(tokenGroups("-ancestor:tnib-1")[0].valueRunStart).toBe(-1);
+    expect(tokenGroups("a b")[1].valueRunStart).toBe(-1);
+  });
+
+  it("keeps the run a contiguous tail of the token's spans", () => {
+    for (const q of ["type:bug,feature", "has:parent", "status:draft,todo login"]) {
+      for (const g of tokenGroups(q)) {
+        if (g.valueRunStart < 0) continue;
+        expect(g.valueRunStart).toBeGreaterThan(0);
+        expect(g.valueRunStart).toBeLessThan(g.spans.length);
+        // head + run reconstruct the group exactly
+        const head = g.spans.slice(0, g.valueRunStart);
+        const run = g.spans.slice(g.valueRunStart);
+        expect([...head, ...run]).toEqual(g.spans);
+      }
+    }
+  });
+});

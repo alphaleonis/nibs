@@ -22,6 +22,10 @@ export { tokenizeSpans } from "./spans";
 export type { Span, SpanKind } from "./spans";
 // Token/gap segmentation: the pure boundary helper the box's click-affordance layer
 // consumes to give each filter token one hit-region (phase 7).
+// The in-UI syntax reference, generated from FIELD_SPECS + REL_TOKEN_ORDER so it
+// cannot document a token the parser rejects or miss one it accepts.
+export { queryHelpSections } from "./help";
+export type { HelpSection, HelpRow } from "./help";
 export { tokenSegments, tokenGroups } from "./tokens";
 export type { TokenSegment, TokenGroup } from "./tokens";
 // Relationship/existence token support (phase 5). `RelIdKey` is the set of scalar

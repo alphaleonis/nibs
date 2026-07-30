@@ -31,6 +31,7 @@
   import StatusIcon from "./StatusIcon.svelte";
   import TypeIcon from "./TypeIcon.svelte";
   import SuggestionList from "./SuggestionList.svelte";
+  import QueryHelp from "./QueryHelp.svelte";
   import SettingsSheet from "./SettingsSheet.svelte";
   import TooltipButton from "./TooltipButton.svelte";
   import TooltipDropdownTrigger from "./TooltipDropdownTrigger.svelte";
@@ -366,6 +367,11 @@
   // value. Free text stays muted, so it reads as the one thing the parser did not
   // act on, and invalid values keep the destructive color plus a wavy underline.
   //
+  // The value accent is `--query-value`, an alias of the tag accent rather than
+  // `--link`: link is a step darker (indigo-400 vs 300) and graphite never
+  // overrides it, so values landed at 5.36:1 there — the dimmest blue in the
+  // palette carrying the part of a token you most need to read.
+  //
   // Punctuation is foreground rather than muted for a measured reason. Muted put
   // the comma at 5.58:1 between two 14.88:1 values — the lowest-contrast glyph in
   // the brightest neighborhood, and the smallest patch of ink in the string, so it
@@ -378,22 +384,28 @@
   const SPAN_CLASS: Record<SpanKind, string> = {
     field: "text-foreground",
     operator: "text-foreground",
-    value: "text-link",
+    value: "text-query-value",
     invalid: "text-destructive underline decoration-wavy",
     freetext: "text-muted-foreground",
     whitespace: "",
   };
 
-  // Chip drawn behind a structured token (see `TokenGroup.structured`). Metrics are
-  // locked to the transparent input glyph-for-glyph, so this may only use
-  // background/radius/ring: padding, borders and font-weight all change advance
-  // widths and would drift the caret off the text. `ring` compiles to a box-shadow
-  // spread, so it paints the chip WIDER than its text box while occupying no
-  // layout — that is what gives it breathing room without a single pixel of
-  // padding. The spread must stay under half a space or neighboring chips merge
-  // into one bar: the inter-token space measures 4.45px at 14px, so 1.5px a side
-  // leaves ~1.45px of dark between chips (2px a side left only 0.45px).
-  const TOKEN_CHIP = "rounded-[3px] bg-link/10 ring-[1.5px] ring-link/10";
+  // The well drawn behind a token's VALUE RUN (see `TokenGroup.valueRunStart`) —
+  // everything after the field's colon. The field name stays on the plain surface,
+  // so the fill marks exactly the part that carries meaning, and it runs THROUGH a
+  // comma rather than breaking at it (filling value spans one by one made
+  // `status:todo,in-progress` read as two separate pills).
+  //
+  // Metrics are locked to the transparent input glyph-for-glyph, so this may only
+  // use background and radius. Padding, borders and font-weight all change advance
+  // widths and would drift the caret off the text — which is why the outlined chip
+  // this replaces was abandoned: an outline wants padding it cannot be given, so it
+  // read as a border crowding the glyphs.
+  //
+  // `--query-well` is that theme's box surface darkened by a fixed OKLCH lightness
+  // step. Darkening is the point: the accent tint it replaces LIGHTENED the surface
+  // toward the value text, while a well pushes away from it and raises contrast.
+  const VALUE_WELL = "rounded-[3px] bg-query-well";
 
   // Lock the display backdrop AND the token-affordance layer to the input's
   // horizontal scroll so both stay glyph-aligned as a long query scrolls.
@@ -897,13 +909,18 @@
       data-testid="filter-highlight"
       class="pointer-events-none absolute inset-0 z-0 flex items-center overflow-hidden rounded-lg border border-transparent bg-popover pl-8 {hasKeyword ? 'pr-8' : 'pr-2.5'} text-sm"
     >
-      <!-- One wrapper per token group so a chip can span field + operator + value;
-           the per-kind coloring stays on the spans inside. Wrappers add no metrics
-           (see TOKEN_CHIP), so the glyph flow is identical to the flat span list
-           this replaced. -->
+      <!-- One wrapper per token group, with a second wrapper around the value run so
+           the well covers field-colon-onward as ONE shape rather than each value
+           separately. Neither wrapper adds metrics (see VALUE_WELL), so the glyph
+           flow is identical to the flat span list this replaced.
+           `head` is everything before the run; when there is no run (a gap, a bare
+           word, a parked whole-token invalid) it is the entire group and nothing is
+           filled. -->
       <div class="shrink-0 whitespace-pre"
-        >{#each highlightGroups as g (g.start)}<span class={g.structured ? TOKEN_CHIP : ""} data-structured={g.structured}
-          >{#each g.spans as s (s.start)}<span class={SPAN_CLASS[s.kind]} data-kind={s.kind}>{keywordText.slice(s.start, s.end)}</span>{/each}</span
+        >{#each highlightGroups as g (g.start)}{@const cut = g.valueRunStart < 0 ? g.spans.length : g.valueRunStart}<span data-structured={g.structured}
+          >{#each g.spans.slice(0, cut) as s (s.start)}<span class={SPAN_CLASS[s.kind]} data-kind={s.kind}>{keywordText.slice(s.start, s.end)}</span>{/each}{#if g.valueRunStart >= 0}<span class={VALUE_WELL} data-testid="value-well"
+            >{#each g.spans.slice(g.valueRunStart) as s (s.start)}<span class={SPAN_CLASS[s.kind]} data-kind={s.kind}>{keywordText.slice(s.start, s.end)}</span>{/each}</span
+          >{/if}</span
         >{/each}</div>
     </div>
     <Input
@@ -1094,4 +1111,9 @@
       </DropdownMenu.Content>
     </DropdownMenu.Root>
   {/each}
+  <!-- Syntax help sits at the END of the control row, after every facet, so it
+       reads as help for the whole band rather than as an adornment on the query
+       box — and it takes width from neither the box nor a facet when the row
+       wraps on a narrow screen. -->
+  <QueryHelp />
 </div>

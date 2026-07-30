@@ -60,6 +60,8 @@
   --color-tag-bg: var(--tag-bg);
   --color-tag-text: var(--tag-text);
   --color-tag-border: var(--tag-border);
+  --color-query-value: var(--query-value);
+  --color-query-well: var(--query-well);
   --color-archive: var(--archive);
   --color-archive-border: var(--archive-border);
   --color-archive-bg-hover: var(--archive-bg-hover);
@@ -157,6 +159,25 @@
   --tag-text: oklch(0.757 0.148 276);          /* indigo-300 */
   --tag-border: oklch(0.488 0.243 264 / 0.3); /* indigo-500 at 30% */
 
+  /* Filter-box value tokens (the accent half of the query highlight).
+     Deliberately an ALIAS of --tag-text, and declared only here: every theme
+     already overrides --tag-text, so this tracks each palette's accent for free
+     and cannot drift from it.
+     Why not --link: that is indigo-400 to --tag-text's indigo-300, a whole step
+     darker, and graphite never overrides --link at all — it inherits the value
+     :root picked against a much darker background, landing at 5.36:1 there
+     against --tag-text's 7.35:1. The tag accent is AAA in all four themes, and
+     it is the blue these tokens sit beside in the table. */
+  --query-value: var(--tag-text);
+
+  /* The recessed well the filter box draws under a token's VALUE RUN. A fixed
+     OKLCH lightness step of 0.05 BELOW that theme's --popover (the box surface),
+     written out per theme rather than derived: a proportional mix would be a
+     0.04 step on graphite but 0.15 on daylight, so light themes would go far too
+     dark. Darkening the surface raises the value text's contrast, where tinting
+     it with the accent lightened the surface toward the text. */
+  --query-well: oklch(0.155 0.01 264);   /* --popover 0.205, -0.05 L */
+
   /* Archive/delete action colors */
   --archive: oklch(0.831 0.153 84);            /* amber-300 */
   --archive-border: oklch(0.831 0.153 84 / 0.3);
@@ -236,6 +257,7 @@
   --background: oklch(0.234 0.006 75);       /* ~#1e1e1e, warm graphite */
   --card: oklch(0.268 0.006 75);
   --popover: oklch(0.29 0.007 75);
+  --query-well: oklch(0.24 0.007 75);   /* -0.05 L from --popover */
   --primary: oklch(0.55 0.155 250);         /* VSCode-ish azure blue */
   --primary-foreground: oklch(0.985 0.003 247);
   --secondary: oklch(0.32 0.007 75);
@@ -259,6 +281,7 @@
   --card: oklch(0.318 0.024 282);
   --card-foreground: oklch(0.97 0.005 100);
   --popover: oklch(0.338 0.025 282);
+  --query-well: oklch(0.288 0.025 282);   /* -0.05 L from --popover */
   --popover-foreground: oklch(0.97 0.005 100);
   --primary: oklch(0.70 0.17 300);          /* purple #bd93f9 */
   --primary-foreground: oklch(0.22 0.03 285);
@@ -298,6 +321,7 @@
   --card: oklch(0.995 0.002 85);
   --card-foreground: oklch(0.22 0.006 75);
   --popover: oklch(0.998 0.002 85);
+  --query-well: oklch(0.948 0.002 85);   /* -0.05 L from --popover */
   --popover-foreground: oklch(0.22 0.006 75);
   --primary: oklch(0.5 0.19 255);           /* azure, darkened to hold on white */
   --primary-foreground: oklch(0.99 0.005 250);

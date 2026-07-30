@@ -8,6 +8,8 @@ import { ALL_COLUMN_KEYS, DEFAULT_VISIBLE_COLUMNS } from "../types";
 import { OPEN_STATUSES } from "../constants";
 import type { NibFilter, ViewLevel, ColumnKey } from "../types";
 import type { NibSuggestion } from "../query";
+import { FIELD_SPECS } from "../query/fields";
+import { REL_TOKEN_ORDER } from "../query/relations";
 
 // bits-ui scroll lock sets pointer-events: none on <body>, so disable the check
 const user = userEvent.setup({ pointerEventsCheck: 0 });
@@ -1263,7 +1265,10 @@ describe("Toolbar — highlight overlay", () => {
     expect(operator).toHaveTextContent(":");
     expect(operator).toHaveClass("text-foreground");
     expect(value).toHaveTextContent("bug");
-    expect(value).toHaveClass("text-link");
+    // Not `text-link`: that is the palette's dimmest blue (5.36:1 in graphite,
+    // which never overrides it), and it carries the part of a token you most
+    // need to read. `--query-value` aliases the AAA tag accent.
+    expect(value).toHaveClass("text-query-value");
     // No invalid span for an all-valid query.
     expect(backdrop.querySelector('[data-kind="invalid"]')).toBeNull();
   });
@@ -1287,26 +1292,42 @@ describe("Toolbar — highlight overlay", () => {
     expect(commas[0]).not.toHaveClass("text-muted-foreground");
   });
 
-  // A chip wraps each structured token so the token boundary is carried by a filled
-  // shape rather than by punctuation. Bare words get none — chipping free text would
-  // claim a structure it does not have.
-  it("chips structured tokens and leaves bare words unchipped", async () => {
+  // The well covers the VALUE RUN only — everything after the field's colon — so the
+  // field name stays on the plain surface and the fill marks the part that carries
+  // meaning. It must run through a comma, or one token reads as two pills.
+  it("wells the value run and leaves the field name outside it", async () => {
     const prefs = new Preferences();
     render(Toolbar, { prefs, oncreatenew: vi.fn() });
 
-    await user.type(screen.getByTestId("filter-keyword"), "type:bug login");
+    await user.type(screen.getByTestId("filter-keyword"), "status:todo,in-progress login");
 
     const backdrop = screen.getByTestId("filter-highlight");
-    const chipped = backdrop.querySelectorAll('[data-structured="true"]');
-    expect(chipped).toHaveLength(1);
-    expect(chipped[0]).toHaveTextContent("type:bug");
-    // The chip may not introduce metrics — padding or a border would shift the
-    // glyphs off the transparent input and drift the caret.
-    expect(chipped[0].className).not.toMatch(/\bp[xytblr]?-/);
-    expect(chipped[0].className).not.toMatch(/\bborder\b/);
+    const wells = backdrop.querySelectorAll('[data-testid="value-well"]');
+    expect(wells).toHaveLength(1);
+    // Continuous across the comma, and the field name is NOT inside it.
+    expect(wells[0]).toHaveTextContent("todo,in-progress");
+    expect(wells[0].textContent).not.toContain("status");
+    expect(wells[0]).toHaveClass("bg-query-well");
 
-    const unchipped = [...backdrop.querySelectorAll('[data-structured="false"]')];
-    expect(unchipped.some((n) => n.textContent === "login")).toBe(true);
+    // The well may not introduce metrics — padding or a border would shift the
+    // glyphs off the transparent input and drift the caret.
+    expect(wells[0].className).not.toMatch(/\bp[xytblr]?-/);
+    expect(wells[0].className).not.toMatch(/\bborder\b/);
+    // The outlined chip this replaced is gone.
+    expect(wells[0].className).not.toMatch(/\bring\b/);
+  });
+
+  // No structure to mark means no fill: a bare word, and a parked whole-token
+  // invalid which must keep its wavy underline without being dressed as a token.
+  it("gives a bare word and a parked invalid no well", async () => {
+    const prefs = new Preferences();
+    render(Toolbar, { prefs, oncreatenew: vi.fn() });
+
+    await user.type(screen.getByTestId("filter-keyword"), "login -ancestor:tnib-1");
+
+    const backdrop = screen.getByTestId("filter-highlight");
+    expect(backdrop.querySelectorAll('[data-testid="value-well"]')).toHaveLength(0);
+    expect(backdrop.querySelector('[data-kind="invalid"]')).toHaveTextContent("-ancestor:tnib-1");
   });
 
   it("draws a red wavy underline on an invalid value (status:banana)", async () => {
@@ -2013,5 +2034,51 @@ describe("Toolbar — relationship-id async typeahead", () => {
     expect(warn).toHaveBeenCalled();
 
     warn.mockRestore();
+  });
+});
+
+// nibs-j01f: the query grammar is powerful but was undiscoverable — the placeholder
+// hints one token and the autocomplete only helps once you are already typing
+// something it recognizes. A `?` at the end of the filter band opens a reference.
+describe("Toolbar — query syntax help", () => {
+  it("opens a panel from the help button", async () => {
+    render(Toolbar, { ...defaultToolbarProps });
+
+    expect(screen.queryByTestId("query-help-panel")).not.toBeInTheDocument();
+    await user.click(screen.getByTestId("query-help-trigger"));
+    expect(await screen.findByTestId("query-help-panel")).toBeInTheDocument();
+  });
+
+  // The panel is GENERATED from the parser's vocabulary, so it cannot document a
+  // token the box rejects or miss one it accepts. Asserting against the source
+  // arrays is what makes that claim testable rather than aspirational: a token
+  // added to the vocabulary must appear here without anyone editing the panel.
+  it("documents every field and relationship token the parser accepts", async () => {
+    render(Toolbar, { ...defaultToolbarProps });
+    await user.click(screen.getByTestId("query-help-trigger"));
+    const panel = await screen.findByTestId("query-help-panel");
+
+    for (const spec of FIELD_SPECS) {
+      expect(panel, spec.name).toHaveTextContent(`${spec.name}:<value>`);
+    }
+    for (const t of REL_TOKEN_ORDER) {
+      const token = t.kind === "id" ? `${t.name}:<id>` : t.token;
+      expect(panel, token).toHaveTextContent(token);
+    }
+  });
+
+  it("names the operators and shows worked examples", async () => {
+    render(Toolbar, { ...defaultToolbarProps });
+    await user.click(screen.getByTestId("query-help-trigger"));
+    const panel = await screen.findByTestId("query-help-panel");
+
+    expect(panel).toHaveTextContent("-type:bug");
+    expect(panel).toHaveTextContent("status:todo,in-progress");
+    expect(panel).toHaveTextContent("Examples");
+  });
+
+  it("gives the trigger an accessible name", () => {
+    render(Toolbar, { ...defaultToolbarProps });
+    expect(screen.getByRole("button", { name: /query syntax help/i })).toBeInTheDocument();
   });
 });

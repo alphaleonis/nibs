@@ -63,6 +63,11 @@ export type RelTokenSpec =
        *  descendants at any depth) and `descendant:X` keeps nibs whose descendant is
        *  X (X's ancestor chain). This mirrors the server `NibFilter` fields exactly. */
       name: string;
+      /** One line of prose for the in-UI syntax help, phrased from the matched
+       *  nib's side to match `name`'s semantics. Required, so a token cannot enter
+       *  the vocabulary undocumented — the help panel is generated from this array
+       *  rather than hand-listed beside it. */
+      description: string;
     }
   | {
       kind: "bool";
@@ -74,6 +79,9 @@ export type RelTokenSpec =
        *  rejects. `relations.test.ts` pins the shape of every entry. */
       token: string;
       value: boolean;
+      /** One line of prose for the in-UI syntax help. Required for the same reason
+       *  as the id variant's. */
+      description: string;
     };
 
 // Canonical serialization order for the rel/existence block, and the source the
@@ -89,24 +97,24 @@ export type RelTokenSpec =
 // array covers. `satisfies` still checks every entry against `RelTokenSpec`, so a
 // misspelled field name remains a compile error.
 export const REL_TOKEN_ORDER = [
-  { kind: "id", field: "parentId", name: "parent" },
-  { kind: "bool", field: "hasParent", token: "has:parent", value: true },
-  { kind: "bool", field: "hasParent", token: "no:parent", value: false },
+  { kind: "id", field: "parentId", name: "parent", description: "Direct children of this nib" },
+  { kind: "bool", field: "hasParent", token: "has:parent", value: true, description: "Nibs that have a parent" },
+  { kind: "bool", field: "hasParent", token: "no:parent", value: false, description: "Root nibs, with no parent" },
   // The rest of the hierarchy dimension, kept adjacent to parent so the tree
   // questions read together. None of these has a has/no spelling — the server has
   // no matching existence predicate, and the grammar only offers what it can answer.
-  { kind: "id", field: "ancestorId", name: "ancestor" },
-  { kind: "id", field: "descendantId", name: "descendant" },
-  { kind: "id", field: "siblingId", name: "sibling" },
-  { kind: "id", field: "blockingId", name: "blocking" },
-  { kind: "bool", field: "hasBlocking", token: "has:blocking", value: true },
-  { kind: "bool", field: "hasBlocking", token: "no:blocking", value: false },
-  { kind: "id", field: "blockedById", name: "blocked-by" },
-  { kind: "bool", field: "hasBlockedBy", token: "has:blocked-by", value: true },
-  { kind: "bool", field: "hasBlockedBy", token: "no:blocked-by", value: false },
-  { kind: "bool", field: "isBlocked", token: "is:blocked", value: true },
-  { kind: "id", field: "mentionsId", name: "mentions" },
-  { kind: "id", field: "mentionedById", name: "mentioned-by" },
+  { kind: "id", field: "ancestorId", name: "ancestor", description: "Everything under this nib, at any depth" },
+  { kind: "id", field: "descendantId", name: "descendant", description: "This nib's ancestor chain, up to the root" },
+  { kind: "id", field: "siblingId", name: "sibling", description: "Nibs sharing this nib's parent" },
+  { kind: "id", field: "blockingId", name: "blocking", description: "Nibs that block this one" },
+  { kind: "bool", field: "hasBlocking", token: "has:blocking", value: true, description: "Nibs that block something" },
+  { kind: "bool", field: "hasBlocking", token: "no:blocking", value: false, description: "Nibs that block nothing" },
+  { kind: "id", field: "blockedById", name: "blocked-by", description: "Nibs this one blocks" },
+  { kind: "bool", field: "hasBlockedBy", token: "has:blocked-by", value: true, description: "Nibs listing a blocker" },
+  { kind: "bool", field: "hasBlockedBy", token: "no:blocked-by", value: false, description: "Nibs listing no blocker" },
+  { kind: "bool", field: "isBlocked", token: "is:blocked", value: true, description: "Nibs held up by an unmet blocker" },
+  { kind: "id", field: "mentionsId", name: "mentions", description: "Nibs whose body mentions this nib" },
+  { kind: "id", field: "mentionedById", name: "mentioned-by", description: "Nibs mentioned in this nib's body" },
 ] as const satisfies readonly RelTokenSpec[];
 
 /** The literal-preserving entry type of `REL_TOKEN_ORDER`, narrowed to one kind.
