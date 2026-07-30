@@ -11,6 +11,7 @@ import type {
 } from "$lib/composables/useConfirmDialog.svelte";
 import type { ActiveView } from "$lib/composables/useActiveView.svelte";
 import type { TreeTableNib } from "../types";
+import type { RelIdKey } from "$lib/query";
 
 // bits-ui scroll lock sets pointer-events: none on <body>, so disable the check
 const user = userEvent.setup({ pointerEventsCheck: 0 });
@@ -131,6 +132,7 @@ describe("RowContextMenu", () => {
       hasChildren?: boolean;
       onexpandchildren?: () => void;
       oncollapsechildren?: () => void;
+      onfilterrelated?: (field: RelIdKey, id: string) => void;
     } = {},
   ) {
     const nib = props.nib ?? makeNib();
@@ -143,6 +145,7 @@ describe("RowContextMenu", () => {
         hasChildren: props.hasChildren ?? false,
         onexpandchildren: props.onexpandchildren,
         oncollapsechildren: props.oncollapsechildren,
+        onfilterrelated: props.onfilterrelated,
       },
       context: makeTestContext(selection, new DragState(), {
         confirmDialog: mockConfirmDialog,
@@ -739,6 +742,120 @@ describe("RowContextMenu", () => {
       expect(selection.selectedIds.size).toBe(1);
       expect(selection.selectedIds.has("nibs-abc1")).toBe(true);
     });
+  });
+
+  // ─── Filter related submenu ───────────────────────────────────
+
+  describe("Filter related submenu", () => {
+    it("shows the submenu trigger in single mode", async () => {
+      renderMenu();
+
+      await waitFor(() => {
+        expect(screen.getByTestId("ctx-filter-related-trigger")).toBeInTheDocument();
+      });
+    });
+
+    it("hides the submenu in bulk mode (single-target gating)", async () => {
+      renderMenu({ selectedCount: 3 });
+
+      await waitFor(() => {
+        expect(screen.getByTestId("ctx-delete")).toBeInTheDocument();
+      });
+
+      expect(screen.queryByTestId("ctx-filter-related-trigger")).not.toBeInTheDocument();
+    });
+
+    // The visible-LABEL → field DIRECTION mapping is the known trap (blocking vs
+    // blocked-by was swapped in the original nib draft). Each case locates the item
+    // by its LABEL TEXT (NOT a field-derived testid, which would move with the field
+    // and mask a swap) and asserts the field it emits. Swapping any label↔field pair
+    // in FILTER_RELATIONS turns the matching row red.
+    const directionCases: { label: string; field: RelIdKey }[] = [
+      { label: "Items blocking this", field: "blockingId" },
+      { label: "Items this blocks", field: "blockedById" },
+      { label: "Children of this", field: "parentId" },
+      // Hierarchy: the label names the RESULT set, the field names the relationship
+      // the results hold toward this row. `ancestorId` keeps nibs whose ancestor is
+      // this row — its descendants — and `descendantId` keeps this row's ancestors.
+      { label: "Descendants of this", field: "ancestorId" },
+      { label: "Ancestors of this", field: "descendantId" },
+      { label: "Siblings of this", field: "siblingId" },
+      { label: "Items mentioning this", field: "mentionsId" },
+      { label: "Items this mentions", field: "mentionedById" },
+    ];
+
+    for (const { label, field } of directionCases) {
+      it(`"${label}" emits onfilterrelated(${field}, nib.id)`, async () => {
+        const onfilterrelated = vi.fn();
+        renderMenu({ nib: makeNib({ id: "nibs-target" }), onfilterrelated });
+
+        await waitFor(() => {
+          expect(screen.getByTestId("ctx-filter-related-trigger")).toBeInTheDocument();
+        });
+
+        // Open the submenu (bits-ui opens the sub on pointerenter of the trigger).
+        await user.pointer({ target: screen.getByTestId("ctx-filter-related-trigger") });
+
+        // Anchor on the human label so a swapped mapping is actually caught.
+        const item = await screen.findByText(label);
+        await user.click(item);
+
+        expect(onfilterrelated).toHaveBeenCalledExactlyOnceWith(field, "nibs-target");
+      });
+    }
+
+    it("composes onto the current filter (ANDs) and overwrites the same-kind field", async () => {
+      // Mirror App.svelte's composition contract: prefs.filter = { ...prefs.filter, [field]: id }.
+      let filter: Record<string, unknown> = { status: ["todo"], parentId: "old-parent" };
+      const onfilterrelated = (field: RelIdKey, id: string) => {
+        filter = { ...filter, [field]: id };
+      };
+
+      renderMenu({ nib: makeNib({ id: "nibs-target" }), onfilterrelated });
+
+      await waitFor(() => {
+        expect(screen.getByTestId("ctx-filter-related-trigger")).toBeInTheDocument();
+      });
+
+      await user.pointer({ target: screen.getByTestId("ctx-filter-related-trigger") });
+      await user.click(await screen.findByTestId("ctx-filter-parentId"));
+
+      // ANDs: the existing status filter is preserved (not replaced).
+      // Overwrites: the same-kind parentId is replaced with the row's id.
+      expect(filter).toEqual({ status: ["todo"], parentId: "nibs-target" });
+    });
+
+    // A different-dimension key survives the pick, so the item narrows the current
+    // query instead of resetting it. One blocking field and one hierarchy field
+    // share this case rather than repeating the pattern per dimension. The real
+    // composition lives in App.svelte's handler and is covered end-to-end in
+    // App.test.ts; this only pins the (field, id) pair the menu emits. Items are
+    // reached by LABEL TEXT, like directionCases, so a swapped mapping cannot hide
+    // behind a field-derived testid that moves with it.
+    const composeCases: { label: string; field: RelIdKey }[] = [
+      { label: "Items blocking this", field: "blockingId" },
+      { label: "Descendants of this", field: "ancestorId" },
+    ];
+
+    for (const { label, field } of composeCases) {
+      it(`"${label}" ANDs onto the current filter without disturbing other facets`, async () => {
+        let filter: Record<string, unknown> = { status: ["todo"], parentId: "old-parent" };
+        const onfilterrelated = (f: RelIdKey, id: string) => {
+          filter = { ...filter, [f]: id };
+        };
+
+        renderMenu({ nib: makeNib({ id: "nibs-target" }), onfilterrelated });
+
+        await waitFor(() => {
+          expect(screen.getByTestId("ctx-filter-related-trigger")).toBeInTheDocument();
+        });
+
+        await user.pointer({ target: screen.getByTestId("ctx-filter-related-trigger") });
+        await user.click(await screen.findByText(label));
+
+        expect(filter).toEqual({ status: ["todo"], parentId: "old-parent", [field]: "nibs-target" });
+      });
+    }
   });
 
   // ─── Menu does not render when open=false or nib=null ─────────

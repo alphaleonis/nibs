@@ -69,6 +69,128 @@ test("table — flat view, sorted by Modified desc", async ({ page }) => {
   await shot(page, "table-flat-sorted-modified");
 });
 
+// Filter box syntax-highlight overlay: type a query mixing a VALID metadata token
+// (type:bug), an INVALID value (status:banana → red wavy underline), and a free-text
+// word (login), then crop to the filter band so per-token coloring + the inline
+// underline are visible. The box is left focused so the text stays exactly as typed
+// (the focus-guard skips canonicalization while focused).
+test("filter box — syntax-highlight overlay", async ({ page }) => {
+  await openApp(page);
+  const input = page.getByTestId("filter-keyword");
+  await input.click();
+  await input.fill("type:bug status:banana login");
+  await shot(page, "filter-highlight");
+  // Cropped to the filter band for a legible close-up of the token coloring.
+  await page.locator('[role="search"]').screenshot({ path: join(OUT, "filter-highlight-cropped.png") });
+});
+
+// The relationship/existence half of the grammar, which the overlay learned to
+// color only once spans.ts started routing through `recognizeRelationship`. The
+// query deliberately mixes all four outcomes so they can be compared in one frame:
+// a metadata token (type:bug), a relationship-id token (ancestor:…), an existence
+// token (has:parent), an unrecognized field (foo:bar) and a bare word (login) —
+// the last two must stay visibly muted while the first three read as real tokens.
+test("filter box — relationship token highlighting", async ({ page }) => {
+  await openApp(page);
+  const input = page.getByTestId("filter-keyword");
+  await input.click();
+  await input.fill("priority:normal status:todo,in-progress ancestor:tnib-e001 has:parent foo:bar login");
+  await page.locator('[role="search"]').screenshot({
+    path: join(OUT, "filter-highlight-relationship-cropped.png"),
+  });
+});
+
+// Hierarchy-specific empty state: two tree predicates ANDed together can carve out
+// a slice nothing occupies, and the generic "No nibs found" left no way to see the
+// shape of the dead end. Names the active relationships and offers the escape hatch.
+// `ancestor:X descendant:X` is one of the measured zero-row combinations.
+test("table — hierarchy empty state", async ({ page }) => {
+  await page.addInitScript(() => {
+    localStorage.setItem(
+      "nibs-filter-preferences",
+      JSON.stringify({
+        filter: { ancestorId: "tnib-e001", descendantId: "tnib-e001" },
+        viewLevel: "milestones",
+      }),
+    );
+  });
+  await page.goto("/");
+  await expect(page.getByTestId("empty-hierarchy")).toBeVisible({ timeout: 10_000 });
+  await shot(page, "table-empty-hierarchy");
+});
+
+// Autocomplete dropdown must render ABOVE the table rows below it (not behind).
+// Viewport shot (not cropped) so the dropdown's stacking vs the table is visible.
+test("filter box — completion dropdown over table rows", async ({ page }) => {
+  await openApp(page);
+  const input = page.getByTestId("filter-keyword");
+  await input.click();
+  // The user's exact repro: trailing comma → a TALL 4-item dropdown that extends
+  // down into the table, actually exercising the z-stacking (a short 1-item list
+  // fits in the gap and hides the bug).
+  await input.pressSequentially("status:draft,todo,");
+  await expect(page.getByTestId("filter-suggestions")).toBeAttached();
+  await expect(page.locator("tr[data-nib-id]").first()).toBeVisible();
+  // Regression guard: the tall completion dropdown must paint OVER the sticky
+  // table header. Both used z-index 20 (the header via --z-sticky, the filter band
+  // reusing it), so the later-in-DOM header won and covered the dropdown; the band
+  // now sits at --z-toolbar (above --z-sticky). Assert the dropdown is the topmost
+  // element at a point inside the dropdown∩header overlap.
+  const topmostAtHeaderOverlap = await page.evaluate(() => {
+    const drop = document.querySelector('[data-testid="filter-suggestions"]')?.getBoundingClientRect();
+    const thead = document.querySelector("thead")?.getBoundingClientRect();
+    if (!drop || !thead) return "missing";
+    const y = Math.max(drop.top, thead.top) + 4;
+    if (y >= Math.min(drop.bottom, thead.bottom)) return "no-overlap";
+    const el = document.elementFromPoint(drop.left + 8, y) as HTMLElement | null;
+    return el?.closest('[data-testid="filter-suggestions"]') ? "dropdown" : (el?.tagName ?? "unknown");
+  });
+  expect(topmostAtHeaderOverlap).toBe("dropdown");
+  await shot(page, "filter-completion-over-table");
+});
+
+// Hovering a token tints it as a chip and carries no in-box control: a remove
+// button could only overlap the token's own trailing glyph, so removal is
+// click-to-select + Delete. The screenshot keeps the visual record of the tint.
+test("filter box — token hover affordance", async ({ page }) => {
+  await openApp(page);
+  const input = page.getByTestId("filter-keyword");
+  await input.click();
+  await input.pressSequentially("type:bug status:todo");
+  const token = page.getByTestId("filter-token").first();
+  await token.hover();
+  await expect(token).toHaveAttribute("title", "Click to select · Delete to remove");
+  await expect(token.locator("button")).toHaveCount(0);
+  await page.locator('[role="search"]').screenshot({ path: join(OUT, "filter-token-hover.png") });
+});
+
+// Invalid-token marker must read as an attached element over the table, not as
+// bare "mid-air" text. status:xyz is invalid (and not a completion prefix).
+test("filter box — invalid token marker over table rows", async ({ page }) => {
+  await openApp(page);
+  const input = page.getByTestId("filter-keyword");
+  await input.click();
+  await input.pressSequentially("status:xyz");
+  await expect(page.getByTestId("filter-invalid")).toBeVisible();
+  await shot(page, "filter-invalid-marker-over-table");
+});
+
+// Responsive filter band: the query box should be wide, and below a breakpoint the
+// facet dropdowns should stack BELOW the box (box takes the full row) rather than
+// squeezing beside it. Captured at a wide, a mid, and a narrow viewport with a long
+// query filled so the box width is actually exercised. Cropped to the filter band.
+for (const w of [1280, 760, 560]) {
+  test(`filter band — responsive layout @${w}px`, async ({ page }) => {
+    await page.setViewportSize({ width: w, height: 760 });
+    await openApp(page);
+    const input = page.getByTestId("filter-keyword");
+    await input.click();
+    await input.fill("type:bug,task -tags:wip status:todo");
+    await page.keyboard.press("Escape"); // close the completion popover so stacked facets are visible
+    await page.locator('[role="search"]').screenshot({ path: join(OUT, `filter-band-${w}.png`) });
+  });
+}
+
 test("detail panel", async ({ page }) => {
   await openApp(page);
   await page.locator("tr[data-nib-id]").first().locator('[data-action="title"]').click();
@@ -184,15 +306,17 @@ for (const theme of ["daylight", "graphite"] as const) {
   }
 }
 
-// The State facet dropdown: one "Open" preset plus the per-status checkboxes.
+// The Status facet dropdown: one "Open" preset plus the per-status checkboxes.
 // There used to be two presets ("Open" and "Open + deferred"); once deferred
 // became a closed status their sets became identical, so the second was removed
 // rather than relabeled. This capture is how that is checked visually — jsdom
 // asserts the preset count, but only a render shows the menu still reads well
 // and that all six statuses remain individually selectable.
-test("state facet — presets and per-status checkboxes", async ({ page }) => {
+test("status facet — presets and per-status checkboxes", async ({ page }) => {
   await openApp(page);
-  await page.getByRole("button", { name: /^state/i }).click();
-  await expect(page.getByTestId("state-preset-open")).toBeVisible({ timeout: 5_000 });
-  await shot(page, "state-facet-dropdown");
+  await page.getByRole("button", { name: /^status/i }).click();
+  await expect(page.getByTestId("status-preset-open")).toBeVisible({ timeout: 5_000 });
+  await shot(page, "status-facet-dropdown");
 });
+
+

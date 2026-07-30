@@ -154,6 +154,34 @@ func TestSPAHandler(t *testing.T) {
 			})
 		}
 	})
+
+	t.Run("cache-control: index/fallback no-store, hashed assets immutable", func(t *testing.T) {
+		h := spaHandler(testMapFS())
+		tests := []struct {
+			name string
+			path string
+			want string
+		}{
+			// The SPA entry must never be cached, or a rebuilt UI is masked by a
+			// stale index.html pointing at old asset hashes (the nibs serve /
+			// task demo staleness class).
+			{name: "root index", path: "/", want: "no-store"},
+			{name: "SPA fallback", path: "/some/client/route", want: "no-store"},
+			// Content-hashed build assets are immutable — safe to cache forever.
+			{name: "hashed JS asset", path: "/assets/main.js", want: "public, max-age=31536000, immutable"},
+			{name: "hashed CSS asset", path: "/assets/style.css", want: "public, max-age=31536000, immutable"},
+		}
+		for _, tt := range tests {
+			t.Run(tt.name, func(t *testing.T) {
+				req := httptest.NewRequest(http.MethodGet, tt.path, nil)
+				rec := httptest.NewRecorder()
+				h.ServeHTTP(rec, req)
+				if got := rec.Header().Get("Cache-Control"); got != tt.want {
+					t.Errorf("Cache-Control for %s = %q, want %q", tt.path, got, tt.want)
+				}
+			})
+		}
+	})
 }
 
 func TestServeMuxWithSPA(t *testing.T) {

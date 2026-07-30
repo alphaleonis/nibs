@@ -10,9 +10,9 @@ import (
 	"github.com/alphaleonis/nibs/internal/nib"
 )
 
-// TestResolveFilterID exercises the shared helper used by all four
-// filter.*ID branches in ApplyFilter. It must return the full ID for a
-// known short form and ("", false) for an unknown target.
+// TestResolveFilterID exercises the shared helper used by every filter.*ID
+// branch in ApplyFilter. It must return the full ID for a known short form
+// and the echoed input with ok=false for an unknown target.
 func TestResolveFilterID(t *testing.T) {
 	target := &nib.Nib{ID: "nibs-target", Title: "Target"}
 	reader := &stubReader{
@@ -124,9 +124,9 @@ func TestApplyFilterParentIDUnknownReturnsNil(t *testing.T) {
 	}
 }
 
-// TestApplyFilterUnknownIDReturnsNil verifies the "unknown target -> nil"
-// contract across all four single-ID filter branches. All four route through
-// resolveFilterID and short-circuit to nil on miss — the trap is a branch that
+// TestApplyFilterIDBranchesKnownAndUnknown verifies the "unknown target -> nil"
+// contract across the link-based single-ID filter branches. Each routes through
+// resolveFilterID and short-circuits to nil on miss — the trap is a branch that
 // passes a raw ID through and returns empty instead of nil.
 //
 // The table pairs a negative case (unknown → nil) with a positive control
@@ -207,6 +207,396 @@ func TestApplyFilterIDBranchesKnownAndUnknown(t *testing.T) {
 				t.Errorf("got IDs %v, want %v", gotIDs, want)
 			}
 		})
+	}
+}
+
+// hierarchyFixture builds the tree the hierarchy-predicate tests share:
+//
+//	nibs-m1 ── nibs-e1 ─┬─ nibs-f1 ── nibs-t1
+//	                    └─ nibs-t2
+//	nibs-r2 ── nibs-x1
+//	nibs-r3
+//
+// Three roots (m1, r2, r3) give siblingId a non-trivial root-level case, and
+// the m1→e1→f1→t1 chain is deep enough that a one-level-only implementation of
+// ancestorId/descendantId fails instead of accidentally passing.
+//
+// nibs-e1 is the one completed nib: it sits mid-chain, so a status filter can
+// remove it from the candidate slice while leaving its subtree in place. That
+// is what the "resolves ancestry through the store" row needs.
+func hierarchyFixture() *stubReader {
+	nibs := []*nib.Nib{
+		{ID: "nibs-m1", Title: "Milestone", Status: "todo"},
+		{ID: "nibs-e1", Title: "Epic", Parent: "nibs-m1", Status: "completed"},
+		{ID: "nibs-f1", Title: "Feature", Parent: "nibs-e1", Status: "todo"},
+		{ID: "nibs-t1", Title: "Task", Parent: "nibs-f1", Status: "todo"},
+		{ID: "nibs-t2", Title: "Second child of the epic", Parent: "nibs-e1", Status: "todo"},
+		{ID: "nibs-r2", Title: "Second root", Status: "todo"},
+		{ID: "nibs-x1", Title: "Only child of the second root", Parent: "nibs-r2", Status: "todo"},
+		{ID: "nibs-r3", Title: "Third root", Status: "todo"},
+	}
+	byID := make(map[string]*nib.Nib, len(nibs))
+	for _, b := range nibs {
+		byID[b.ID] = b
+	}
+	return &stubReader{nibs: byID, allNibs: nibs, prefix: "nibs-"}
+}
+
+// TestParentChain pins what parentChain banks for each shape of parent link.
+// It is the unit the three hierarchy predicates are built on, and the shapes
+// below are not reachable through ApplyFilter: a dangling or short-form link
+// can only be created by hand-editing a nib file, and an unresolvable filter
+// target short-circuits before any walk starts.
+//
+// The load-bearing rule: every id in the chain is a RESOLVED id, so the chain
+// only ever names nibs that exist. A link that resolves under a different
+// spelling is banked under the resolved one; a link that resolves to nothing
+// contributes nothing at all.
+func TestParentChain(t *testing.T) {
+	// f1's stored link is the short form "e1". Core.Get resolves it by
+	// prepending the prefix, so the walk continues through it — the chain must
+	// record "nibs-e1", the spelling every filter target is normalized to.
+	shortLinker := &nib.Nib{ID: "nibs-f1", Title: "Short-form parent link", Parent: "e1"}
+	orphan := &nib.Nib{ID: "nibs-orphan", Title: "Dangling parent link", Parent: "nibs-ghost"}
+	selfParent := &nib.Nib{ID: "nibs-self", Title: "Self-parented", Parent: "nibs-self"}
+	nibs := []*nib.Nib{
+		{ID: "nibs-m1", Title: "Milestone"},
+		{ID: "nibs-e1", Title: "Epic", Parent: "nibs-m1"},
+		shortLinker,
+		{ID: "nibs-t1", Title: "Task", Parent: "nibs-f1"},
+		orphan,
+		selfParent,
+		{ID: "nibs-c1", Title: "C1", Parent: "nibs-c2"},
+		{ID: "nibs-c2", Title: "C2", Parent: "nibs-c1"},
+	}
+	byID := make(map[string]*nib.Nib, len(nibs))
+	for _, b := range nibs {
+		byID[b.ID] = b
+	}
+	reader := &stubReader{nibs: byID, allNibs: nibs, prefix: "nibs-"}
+
+	tests := []struct {
+		name  string
+		nibID string
+		want  []string
+	}{
+		{"root has no chain", "nibs-m1", nil},
+		{"walks to the root, nearest ancestor first", "nibs-e1", []string{"nibs-m1"}},
+		{"records the resolved id for a short-form link, not the stored spelling",
+			"nibs-f1", []string{"nibs-e1", "nibs-m1"}},
+		{"a short-form rung stays resolved for chains passing through it",
+			"nibs-t1", []string{"nibs-f1", "nibs-e1", "nibs-m1"}},
+		{"a dangling link contributes nothing", "nibs-orphan", nil},
+		{"a self-parented nib yields an empty chain (the seed excludes it)", "nibs-self", nil},
+		{"a cycle terminates and never contains self", "nibs-c1", []string{"nibs-c2"}},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			b, err := reader.Get(tt.nibID)
+			if err != nil {
+				t.Fatalf("fixture nib %q missing: %v", tt.nibID, err)
+			}
+			got := parentChain(b, reader)
+			if len(got) == 0 && len(tt.want) == 0 {
+				return
+			}
+			if !reflect.DeepEqual(got, tt.want) {
+				t.Errorf("parentChain(%s) = %v, want %v", tt.nibID, got, tt.want)
+			}
+		})
+	}
+}
+
+// TestApplyFilterHierarchyShortFormParentLink is the end-to-end consequence of
+// parentChain banking resolved ids. A hand-edited `parent: e1` is followed by
+// Core.Get, so the tree is intact as far as the walk is concerned; if the raw
+// spelling were banked instead, the chain would name a nib that does not
+// exist and the predicates would report a hierarchy with a missing rung.
+func TestApplyFilterHierarchyShortFormParentLink(t *testing.T) {
+	m1 := &nib.Nib{ID: "nibs-m1", Title: "Milestone"}
+	e1 := &nib.Nib{ID: "nibs-e1", Title: "Epic", Parent: "nibs-m1"}
+	// Hand-edited short form; validateAndSetParent would have stored "nibs-e1".
+	f1 := &nib.Nib{ID: "nibs-f1", Title: "Feature", Parent: "e1"}
+	t1 := &nib.Nib{ID: "nibs-t1", Title: "Task", Parent: "nibs-f1"}
+
+	reader := &stubReader{
+		nibs: map[string]*nib.Nib{
+			"nibs-m1": m1, "nibs-e1": e1, "nibs-f1": f1, "nibs-t1": t1,
+		},
+		allNibs: []*nib.Nib{m1, e1, f1, t1},
+		prefix:  "nibs-",
+	}
+	blocking := &stubBlockingChecker{}
+
+	t.Run("AncestorID matches through a short-form rung", func(t *testing.T) {
+		got := ApplyFilter(context.Background(), reader.allNibs, &model.NibFilter{AncestorID: strPtr("e1")}, reader, blocking)
+		assertNibIDs(t, got, []string{"nibs-f1", "nibs-t1"})
+	})
+
+	t.Run("DescendantID reports the whole chain, not one with a hole in it", func(t *testing.T) {
+		got := ApplyFilter(context.Background(), reader.allNibs, &model.NibFilter{DescendantID: strPtr("t1")}, reader, blocking)
+		assertNibIDs(t, got, []string{"nibs-f1", "nibs-e1", "nibs-m1"})
+	})
+}
+
+// TestApplyFilterSiblingIDResolvesParentLinks pins that siblingId decides
+// "same parent" through the resolved parent, the way nibResolver.Parent and
+// fetchSiblings do, rather than by comparing the raw stored strings. Two stored
+// shapes make the two disagree, and both are reachable by hand-editing a nib
+// file or by a git merge in .nibs/:
+//
+//   - a dangling link presents as a root everywhere the object graph is
+//     walked, so it belongs in a root-level sibling set;
+//   - a short-form link names the same parent as its full-form spelling, so
+//     the two spellings are siblings.
+func TestApplyFilterSiblingIDResolvesParentLinks(t *testing.T) {
+	m1 := &nib.Nib{ID: "nibs-m1", Title: "Root"}
+	r2 := &nib.Nib{ID: "nibs-r2", Title: "Second root"}
+	orphan := &nib.Nib{ID: "nibs-orphan", Title: "Dangling parent link", Parent: "nibs-ghost"}
+	e1 := &nib.Nib{ID: "nibs-e1", Title: "Epic", Parent: "nibs-m1"}
+	// f1 and t2 are siblings: f1 spells the shared parent short, t2 spells it full.
+	f1 := &nib.Nib{ID: "nibs-f1", Title: "Short-form parent link", Parent: "e1"}
+	t2 := &nib.Nib{ID: "nibs-t2", Title: "Full-form parent link", Parent: "nibs-e1"}
+
+	all := []*nib.Nib{m1, r2, orphan, e1, f1, t2}
+	byID := make(map[string]*nib.Nib, len(all))
+	for _, b := range all {
+		byID[b.ID] = b
+	}
+	reader := &stubReader{nibs: byID, allNibs: all, prefix: "nibs-"}
+	blocking := &stubBlockingChecker{}
+
+	tests := []struct {
+		name    string
+		filter  *model.NibFilter
+		wantIDs []string
+	}{
+		{"a root's siblings include a nib whose parent link is dangling",
+			&model.NibFilter{SiblingID: strPtr("m1")}, []string{"nibs-r2", "nibs-orphan"}},
+		{"a dangling-parent nib is itself treated as a root",
+			&model.NibFilter{SiblingID: strPtr("orphan")}, []string{"nibs-m1", "nibs-r2"}},
+		{"a full-form spelling finds the short-form sibling",
+			&model.NibFilter{SiblingID: strPtr("t2")}, []string{"nibs-f1"}},
+		{"a short-form spelling finds the full-form sibling",
+			&model.NibFilter{SiblingID: strPtr("f1")}, []string{"nibs-t2"}},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			assertNibIDs(t, ApplyFilter(context.Background(), reader.allNibs, tt.filter, reader, blocking), tt.wantIDs)
+		})
+	}
+}
+
+// TestApplyFilterHierarchyPredicates covers the ancestorId / descendantId /
+// siblingId branches over a multi-level tree.
+//
+// Direction is the thing to get right and the easy thing to invert: like every
+// other *ID filter, each field names the relationship the MATCHED nib holds
+// toward the supplied target. ancestorId: X therefore keeps the nibs whose
+// ancestor is X (X's descendants), and descendantId: X keeps the nibs whose
+// descendant is X (X's ancestors). The table pins both directions against the
+// same fixture, so swapping the two branches fails rather than reshuffles.
+//
+// Most filter arguments are short IDs: the branches must normalize through
+// resolveFilterID, since the stored Parent links are full prefixed IDs. One
+// row per field passes the already-full form, which must resolve to the same
+// answer rather than being double-prefixed into a miss.
+//
+// The "unknown target matches nothing" rows pin user-facing behavior only.
+// They do NOT prove the `if !ok { return nil }` short-circuit in each branch:
+// that guard is not independently observable here (see the note on the
+// hierarchy branch block in ApplyFilter), so these rows would still pass with
+// it deleted. What they pin is that an id naming no nib cannot match anything,
+// which is the promise the API makes.
+func TestApplyFilterHierarchyPredicates(t *testing.T) {
+	reader := hierarchyFixture()
+	blocking := &stubBlockingChecker{}
+
+	tests := []struct {
+		name    string
+		filter  *model.NibFilter
+		wantIDs []string // expected nib IDs (empty → matched nothing)
+	}{
+		// ancestorId — "nibs that have the target among their ancestors".
+		{"AncestorID keeps descendants at every depth, target excluded",
+			&model.NibFilter{AncestorID: strPtr("e1")},
+			[]string{"nibs-f1", "nibs-t1", "nibs-t2"}},
+		{"AncestorID on the root keeps the whole subtree, root excluded",
+			&model.NibFilter{AncestorID: strPtr("m1")},
+			[]string{"nibs-e1", "nibs-f1", "nibs-t1", "nibs-t2"}},
+		{"AncestorID accepts the already-full form",
+			&model.NibFilter{AncestorID: strPtr("nibs-e1")},
+			[]string{"nibs-f1", "nibs-t1", "nibs-t2"}},
+		{"AncestorID on a leaf matches nothing",
+			&model.NibFilter{AncestorID: strPtr("t1")}, nil},
+		{"AncestorID unknown matches nothing",
+			&model.NibFilter{AncestorID: strPtr("nonexistent")}, nil},
+
+		// descendantId — "nibs that have the target among their descendants",
+		// i.e. exactly the target's ancestor chain.
+		{"DescendantID keeps the whole ancestor chain, target excluded",
+			&model.NibFilter{DescendantID: strPtr("t1")},
+			[]string{"nibs-f1", "nibs-e1", "nibs-m1"}},
+		{"DescendantID on a mid-level nib keeps only what is above it",
+			&model.NibFilter{DescendantID: strPtr("e1")},
+			[]string{"nibs-m1"}},
+		{"DescendantID accepts the already-full form",
+			&model.NibFilter{DescendantID: strPtr("nibs-t1")},
+			[]string{"nibs-f1", "nibs-e1", "nibs-m1"}},
+		{"DescendantID on a root matches nothing",
+			&model.NibFilter{DescendantID: strPtr("m1")}, nil},
+		{"DescendantID unknown matches nothing",
+			&model.NibFilter{DescendantID: strPtr("nonexistent")}, nil},
+
+		// siblingId — "nibs sharing the target's parent", root-level target
+		// included (matches fetchSiblings in cmd/rel.go).
+		{"SiblingID keeps the other children of the same parent, target excluded",
+			&model.NibFilter{SiblingID: strPtr("f1")},
+			[]string{"nibs-t2"}},
+		{"SiblingID on a root nib keeps the other roots, target excluded",
+			&model.NibFilter{SiblingID: strPtr("m1")},
+			[]string{"nibs-r2", "nibs-r3"}},
+		{"SiblingID accepts the already-full form",
+			&model.NibFilter{SiblingID: strPtr("nibs-f1")},
+			[]string{"nibs-t2"}},
+		{"SiblingID on an only child matches nothing",
+			&model.NibFilter{SiblingID: strPtr("x1")}, nil},
+		{"SiblingID unknown matches nothing",
+			&model.NibFilter{SiblingID: strPtr("nonexistent")}, nil},
+
+		// Two hierarchy predicates AND-composed: each is a pure per-element
+		// predicate, so the result is the intersection regardless of the order
+		// ApplyFilter runs the branches in. m1's subtree is {e1,f1,t1,t2} and
+		// t1's ancestor chain is {f1,e1,m1}.
+		{"AncestorID and DescendantID compose as an intersection",
+			&model.NibFilter{AncestorID: strPtr("m1"), DescendantID: strPtr("t1")},
+			[]string{"nibs-e1", "nibs-f1"}},
+
+		// Ancestry comes from the store, not from the candidate slice: the
+		// status filter runs first and drops the completed nibs-e1, but its
+		// subtree must still resolve through it up to m1. This row is what
+		// fails if a future optimization indexes the candidate slice instead
+		// of walking the reader.
+		{"AncestorID resolves ancestry through the store, not the candidate slice",
+			&model.NibFilter{AncestorID: strPtr("m1"), Status: []string{"todo"}},
+			[]string{"nibs-f1", "nibs-t1", "nibs-t2"}},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			assertNibIDs(t, ApplyFilter(context.Background(), reader.allNibs, tt.filter, reader, blocking), tt.wantIDs)
+		})
+	}
+}
+
+// TestApplyFilterHierarchyPredicatesCycleSafe pins that the parent-chain walks
+// behind ancestorId and descendantId terminate on a parent cycle, and that the
+// target stays out of its own result even when a cycle makes it structurally
+// reachable from itself. The mutation resolvers reject cycles, but a
+// hand-edited nib file can still create one, and an unguarded
+// `for parent != ""` walk hangs every query that uses these filters.
+func TestApplyFilterHierarchyPredicatesCycleSafe(t *testing.T) {
+	c1 := &nib.Nib{ID: "nibs-c1", Title: "C1", Parent: "nibs-c2"}
+	c2 := &nib.Nib{ID: "nibs-c2", Title: "C2", Parent: "nibs-c1"}
+	outside := &nib.Nib{ID: "nibs-out", Title: "Outside the cycle"}
+
+	reader := &stubReader{
+		nibs:    map[string]*nib.Nib{"nibs-c1": c1, "nibs-c2": c2, "nibs-out": outside},
+		allNibs: []*nib.Nib{c1, c2, outside},
+		prefix:  "nibs-",
+	}
+	blocking := &stubBlockingChecker{}
+
+	t.Run("AncestorID terminates and excludes the target itself", func(t *testing.T) {
+		got := ApplyFilter(context.Background(), reader.allNibs, &model.NibFilter{AncestorID: strPtr("c1")}, reader, blocking)
+		assertNibIDs(t, got, []string{"nibs-c2"})
+	})
+
+	t.Run("DescendantID terminates and excludes the target itself", func(t *testing.T) {
+		got := ApplyFilter(context.Background(), reader.allNibs, &model.NibFilter{DescendantID: strPtr("c1")}, reader, blocking)
+		assertNibIDs(t, got, []string{"nibs-c2"})
+	})
+}
+
+// TestQueryNibsSearchReAddsHierarchyTargets pins what queryResolver.Nibs
+// actually returns when a hierarchy predicate is combined with search, which
+// is not what ApplyFilter alone returns. The search branch runs
+// includeAncestors afterwards so the client can render a complete tree, and
+// that step re-adds ancestors of the survivors:
+//
+//   - ancestorId: the target comes back, contradicting "itself excluded" taken
+//     as an absolute promise. The schema description says so.
+//   - siblingId: the target stays out (it is nobody's ancestor), but the
+//     shared parent arrives.
+//   - descendantId: unaffected — every ancestor added is already on the
+//     target's ancestor chain, so it satisfies the predicate anyway.
+//
+// This is deliberate, not a defect to fix in ApplyFilter: the web UI's tree
+// rendering and ancestor dimming depend on the completion. The test exists so
+// that changing it is a conscious decision with a visible cost.
+func TestQueryNibsSearchReAddsHierarchyTargets(t *testing.T) {
+	reader := hierarchyFixture()
+	// Search is a wide net here so the hierarchy predicate, not the search
+	// term, is what narrows the result; includeAncestors then widens it again.
+	reader.searchOut = map[string][]*nib.Nib{"anything": reader.allNibs}
+
+	resolver := &Resolver{
+		Reader:    reader,
+		Writer:    &stubWriter{store: reader},
+		Validator: &stubValidator{},
+		Blocking:  &stubBlockingChecker{},
+		Orderer:   NewOrderer(reader, &stubWriter{store: reader}),
+	}
+
+	tests := []struct {
+		name    string
+		filter  *model.NibFilter
+		wantIDs []string
+	}{
+		{"ancestorId: the excluded target is added back as an ancestor",
+			&model.NibFilter{Search: strPtr("anything"), AncestorID: strPtr("e1")},
+			// ApplyFilter alone returns f1, t1, t2; completion adds e1 and m1.
+			[]string{"nibs-f1", "nibs-t1", "nibs-t2", "nibs-e1", "nibs-m1"}},
+		{"siblingId: the target stays out but the shared parent arrives",
+			&model.NibFilter{Search: strPtr("anything"), SiblingID: strPtr("f1")},
+			// ApplyFilter alone returns t2; completion adds e1 and m1.
+			[]string{"nibs-t2", "nibs-e1", "nibs-m1"}},
+		{"descendantId: completion adds nothing the predicate did not already keep",
+			&model.NibFilter{Search: strPtr("anything"), DescendantID: strPtr("t1")},
+			[]string{"nibs-f1", "nibs-e1", "nibs-m1"}},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got, err := resolver.Query().Nibs(context.Background(), tt.filter, nil)
+			if err != nil {
+				t.Fatalf("Nibs: %v", err)
+			}
+			assertNibIDs(t, got, tt.wantIDs)
+		})
+	}
+}
+
+// assertNibIDs compares the IDs of got against want, order-insensitively.
+// A nil result is treated as the empty set — ApplyFilter builds its results
+// with append, so "matched nothing" and "short-circuited" both surface as nil;
+// callers that care about the difference assert on nil-ness themselves.
+func assertNibIDs(t *testing.T, got []*nib.Nib, want []string) {
+	t.Helper()
+	gotIDs := make([]string, 0, len(got))
+	for _, b := range got {
+		gotIDs = append(gotIDs, b.ID)
+	}
+	wantIDs := append([]string(nil), want...)
+	sort.Strings(gotIDs)
+	sort.Strings(wantIDs)
+	if len(gotIDs) == 0 && len(wantIDs) == 0 {
+		return
+	}
+	if !reflect.DeepEqual(gotIDs, wantIDs) {
+		t.Errorf("got IDs %v, want %v", gotIDs, wantIDs)
 	}
 }
 

@@ -390,3 +390,71 @@ func TestSearch_DefaultLimit(t *testing.T) {
 		t.Errorf("Search with limit 0 (default) returned %d results, want 1", len(ids))
 	}
 }
+
+// Malformed/partial query strings — the transient states a user types on the way
+// to a valid query (`type:` before `type:bug`, a lone `-`, a leading `/`, an
+// unbalanced quote) — must NOT surface a query error. Bleve's query-string parser
+// rejects each with a syntax error (the `/` case from a recovered parser panic);
+// Search must fall back to a plain free-text match so any input degrades to a
+// best-effort search rather than failing. Guards nibs-rv7c.
+func TestSearch_MalformedQueryNeverErrors(t *testing.T) {
+	idx := setupTestIndex(t)
+	nibs := []*nib.Nib{
+		{ID: "aaa1", Title: "type checking", Body: "notes on the type system"},
+		{ID: "bbb2", Title: "unrelated", Body: "nothing here"},
+	}
+	if err := idx.IndexNibs(nibs); err != nil {
+		t.Fatalf("IndexNibs() error = %v", err)
+	}
+
+	// Each of these makes Bleve's query-string grammar error; none may propagate.
+	malformed := []string{"type:", "title:", "status:", "-", "/", "\"", "is:", "*", "AND"}
+	for _, q := range malformed {
+		if _, err := idx.Search(q, 10); err != nil {
+			t.Errorf("Search(%q) returned error %v, want nil (fall back to free-text match)", q, err)
+		}
+	}
+}
+
+// The free-text fallback still matches: a bare `type:` (rejected by the grammar)
+// falls back to matching the analyzed term "type", finding the doc that contains
+// that word and not the one that doesn't.
+func TestSearch_MalformedQueryFallsBackToFreeText(t *testing.T) {
+	idx := setupTestIndex(t)
+	nibs := []*nib.Nib{
+		{ID: "aaa1", Title: "type checking", Body: "notes on the type system"},
+		{ID: "bbb2", Title: "unrelated", Body: "nothing here"},
+	}
+	if err := idx.IndexNibs(nibs); err != nil {
+		t.Fatalf("IndexNibs() error = %v", err)
+	}
+
+	ids, err := idx.Search("type:", 10)
+	if err != nil {
+		t.Fatalf("Search(\"type:\") error = %v", err)
+	}
+	if len(ids) != 1 || ids[0] != "aaa1" {
+		t.Errorf("Search(\"type:\") = %v, want [aaa1] (free-text match on \"type\")", ids)
+	}
+}
+
+// A well-formed field query still uses the query-string path (not the fallback):
+// `title:` is a mapped field, so `title:checking` matches only via that field.
+func TestSearch_ValidFieldQueryStillWorks(t *testing.T) {
+	idx := setupTestIndex(t)
+	nibs := []*nib.Nib{
+		{ID: "aaa1", Title: "type checking", Body: "unrelated body"},
+		{ID: "bbb2", Title: "plain title", Body: "checking the body only"},
+	}
+	if err := idx.IndexNibs(nibs); err != nil {
+		t.Fatalf("IndexNibs() error = %v", err)
+	}
+
+	ids, err := idx.Search("title:checking", 10)
+	if err != nil {
+		t.Fatalf("Search(\"title:checking\") error = %v", err)
+	}
+	if len(ids) != 1 || ids[0] != "aaa1" {
+		t.Errorf("Search(\"title:checking\") = %v, want [aaa1] (field-scoped match)", ids)
+	}
+}

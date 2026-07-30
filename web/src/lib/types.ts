@@ -13,6 +13,7 @@ export interface NibSummary {
 export interface NibFilter {
   search?: string;
   status?: string[];
+  excludeStatus?: string[];
   type?: string[];
   excludeType?: string[];
   priority?: string[];
@@ -23,12 +24,52 @@ export interface NibFilter {
   excludeTags?: string[];
   hasParent?: boolean;
   parentId?: string;
+  // Hierarchy predicates. Each names the relationship the MATCHED nib holds toward
+  // the supplied id, so `ancestorId` selects that nib's descendants and
+  // `descendantId` selects its ancestor chain. The target itself is excluded by the
+  // filter. When the query also carries free text, the server re-adds every match's
+  // ancestors afterwards, so an ancestorId target reappears and a siblingId query
+  // also brings in the shared parent — that completion is what the tree rendering
+  // relies on, not a bug.
+  // siblingId selects nibs sharing the target's parent; a parentless target selects
+  // the other root nibs, matching `nibs rel --rel siblings`.
+  ancestorId?: string;
+  descendantId?: string;
+  siblingId?: string;
   hasBlocking?: boolean;
   blockingId?: string;
   isBlocked?: boolean;
   hasBlockedBy?: boolean;
   blockedById?: string;
+  mentionsId?: string;
+  mentionedById?: string;
 }
+
+// Compile-time guard binding the hand-written NibFilter above to the codegen'd
+// one, so the two key sets cannot drift.
+//
+// The filter reaches the wire as a variable (`variables: { filter }` in
+// useTableData.svelte.ts), not an object literal, so TypeScript's
+// excess-property check never runs on it: an extra or misspelled client-side key
+// would type-check, ship, and be silently ignored by the server.
+//
+// BOTH directions are required. A one-way `extends` is satisfied by extra
+// properties, so it would miss exactly that misspelling case; the reverse
+// direction catches a key the schema gained that the client never picked up.
+//
+// The hand-written type is kept rather than replaced by the generated one
+// because the generated fields are spelled `T | null | undefined` where these
+// are optional `T?`, which every consumer (prefs.filter, QueryFilter,
+// parse/serialize) relies on. `import type` keeps this erased at compile time.
+import type { NibFilter as GeneratedNibFilter } from "./gql/graphql";
+
+type _ClientKeysExistOnGenerated = keyof NibFilter extends keyof GeneratedNibFilter ? true : never;
+const _clientKeysCheck: _ClientKeysExistOnGenerated = true;
+void _clientKeysCheck;
+
+type _GeneratedKeysExistOnClient = keyof GeneratedNibFilter extends keyof NibFilter ? true : never;
+const _generatedKeysCheck: _GeneratedKeysExistOnClient = true;
+void _generatedKeysCheck;
 
 export interface TreeNib extends NibSummary {
   parentId: string | null;
@@ -190,7 +231,12 @@ export type Theme = (typeof THEMES)[number]["value"];
 export const DEFAULT_THEME: Theme = "graphite";
 
 export interface FilterPreferences {
-  filter: NibFilter;
+  // The filter is persisted as a canonical query STRING (the same human-readable
+  // form shared via the `?q=` URL param), NOT as a structured NibFilter. The
+  // structured filter + its invalid-token sidecar are DERIVED from this via
+  // parseQuery; serializeQuery renders them back. Only the query moves to string
+  // form — every other preference below stays personal and structured.
+  query: string;
   viewLevel: ViewLevel;
   columnVisibility?: Partial<Record<ViewLevel, ColumnKey[]>>;
   columnWidths?: Partial<Record<ViewLevel, Partial<Record<ColumnKey, number>>>>;

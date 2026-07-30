@@ -141,6 +141,12 @@ type NibFilter struct {
 	HasParent *bool `json:"hasParent,omitempty"`
 	// Include only nibs with this specific parent ID
 	ParentID *string `json:"parentId,omitempty"`
+	// Include only nibs with this specific nib ID somewhere in their parent chain (that nib's descendants at any depth). This filter excludes the nib itself, but combining it with search adds it back, because search completes the tree with every match's ancestors
+	AncestorID *string `json:"ancestorId,omitempty"`
+	// Include only nibs with this specific nib ID somewhere in their descendant subtree (that nib's ancestor chain, itself excluded)
+	DescendantID *string `json:"descendantId,omitempty"`
+	// Include only nibs sharing this specific nib's parent, or the other root nibs when it has no parent (itself excluded). Combining it with search also brings in the shared parent, because search completes the tree with every match's ancestors
+	SiblingID *string `json:"siblingId,omitempty"`
 	// Tri-state: true keeps nibs that are blocking others, false keeps exactly the non-blocking ones, null does not filter
 	HasBlocking *bool `json:"hasBlocking,omitempty"`
 	// Include only nibs that are blocking this specific nib ID

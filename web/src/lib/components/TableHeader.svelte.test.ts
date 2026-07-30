@@ -46,7 +46,7 @@ function renderHeader(props: Record<string, unknown> = {}) {
   const onCollapseAll = (props.onCollapseAll as (() => void) | undefined) ?? vi.fn();
   const result = render(TableHeader, {
     props: {
-      columns: ["id", "title", "state"] as ColumnKey[],
+      columns: ["id", "title", "status"] as ColumnKey[],
       columnWidths: DEFAULT_COLUMN_WIDTHS,
       activeSort: null as TableSort | null,
       showColumn: () => true,
@@ -64,12 +64,12 @@ function renderHeader(props: Record<string, unknown> = {}) {
 
 describe("TableHeader — render", () => {
   it("renders a <thead> with the actions column and one <th> per column, in order", () => {
-    const { container } = renderHeader({ columns: ["state", "title", "id"] as ColumnKey[] });
+    const { container } = renderHeader({ columns: ["status", "title", "id"] as ColumnKey[] });
     expect(container.querySelector("thead")).toBeInTheDocument();
     const keys = Array.from(container.querySelectorAll("thead th[data-col-key]")).map((th) =>
       th.getAttribute("data-col-key"),
     );
-    expect(keys).toEqual(["state", "title", "id"]);
+    expect(keys).toEqual(["status", "title", "id"]);
     // Actions column (expand/collapse-all) precedes the data columns.
     expect(container.querySelector("[data-testid='expand-all']")).toBeInTheDocument();
     expect(container.querySelector("[data-testid='collapse-all']")).toBeInTheDocument();
@@ -88,12 +88,12 @@ describe("TableHeader — render", () => {
   });
 
   it("reflects the active sort as aria-sort + a direction arrow; others report none", () => {
-    const { container } = renderHeader({ activeSort: { field: "state", direction: "desc" } as TableSort });
-    const stateTh = container.querySelector("thead th[data-col-key='state']") as HTMLElement;
+    const { container } = renderHeader({ activeSort: { field: "status", direction: "desc" } as TableSort });
+    const stateTh = container.querySelector("thead th[data-col-key='status']") as HTMLElement;
     const idTh = container.querySelector("thead th[data-col-key='id']") as HTMLElement;
     expect(stateTh.getAttribute("aria-sort")).toBe("descending");
     expect(idTh.getAttribute("aria-sort")).toBe("none");
-    expect(container.querySelector("[data-testid='table-sort-arrow-state']")).toBeInTheDocument();
+    expect(container.querySelector("[data-testid='table-sort-arrow-status']")).toBeInTheDocument();
     expect(container.querySelector("[data-testid='table-sort-arrow-id']")).not.toBeInTheDocument();
   });
 });
@@ -233,13 +233,13 @@ describe("TableHeader — column-drag ghost", () => {
 
   it("renders a fixed, pointer-events-none ghost at the pointer showing the dragged column's label + arrow", () => {
     const columnDrag = makeDragStub({
-      draggedKey: "state",
+      draggedKey: "status",
       isDragging: true,
-      ghost: { label: "State", sortKey: "state", width: 140, x: 200, y: 60 },
+      ghost: { label: "Status", sortKey: "status", width: 140, x: 200, y: 60 },
     });
     const { container } = renderHeader({
       columnDrag,
-      activeSort: { field: "state", direction: "desc" } as TableSort,
+      activeSort: { field: "status", direction: "desc" } as TableSort,
     });
     const ghost = container.querySelector("[data-testid='col-drag-ghost']") as HTMLElement;
     expect(ghost).toBeInTheDocument();
@@ -254,15 +254,15 @@ describe("TableHeader — column-drag ghost", () => {
     expect(ghost.style.top).toBe("68px"); // 60 + 8
     expect(ghost.style.width).toBe("140px");
     // Shows the dragged column's label...
-    expect(ghost.textContent?.trim()).toContain("State");
+    expect(ghost.textContent?.trim()).toContain("Status");
     // ...and its active sort-direction arrow (an <svg>), inlined WITHOUT the
     // real header's `table-sort-*` testids so the two can't collide during a drag.
     expect(ghost.querySelector("svg")).toBeInTheDocument();
-    expect(ghost.querySelector("[data-testid='table-sort-arrow-state']")).toBeNull();
-    expect(ghost.querySelector("[data-testid='table-sort-state']")).toBeNull();
+    expect(ghost.querySelector("[data-testid='table-sort-arrow-status']")).toBeNull();
+    expect(ghost.querySelector("[data-testid='table-sort-status']")).toBeNull();
     // The colliding testid lives ONLY on the real (dimmed) header now.
-    const stateTh = container.querySelector("thead th[data-col-key='state']") as HTMLElement;
-    expect(stateTh.querySelector("[data-testid='table-sort-arrow-state']")).toBeInTheDocument();
+    const stateTh = container.querySelector("thead th[data-col-key='status']") as HTMLElement;
+    expect(stateTh.querySelector("[data-testid='table-sort-arrow-status']")).toBeInTheDocument();
     // The original header stays dimmed IN PLACE — the ghost is IN ADDITION to it.
     expect(stateTh.classList.contains("col-dragging")).toBe(true);
   });
@@ -286,7 +286,7 @@ describe("TableHeader — column-drag ghost", () => {
     // Freezing pointerX/pointerY (dropping their `$state`) leaves the second move's
     // left/top equal to the first's and fails the change assertions below.
     document.elementFromPoint = () => null;
-    const order: ColumnKey[] = ["id", "title", "state"];
+    const order: ColumnKey[] = ["id", "title", "status"];
     let drag!: ColumnDrag;
     disposeGhostRoot = $effect.root(() => {
       drag = useColumnDrag({ getOrder: () => order, onReorder: vi.fn() });
@@ -344,9 +344,9 @@ describe("TableHeader — resize/reorder arbitration wiring", () => {
 
   it("double-clicking the resize handle auto-fits via onDblClick", () => {
     const { container, columnResize } = renderHeader();
-    const handle = container.querySelector("thead th[data-col-key='state'] .resize-handle") as HTMLElement;
+    const handle = container.querySelector("thead th[data-col-key='status'] .resize-handle") as HTMLElement;
     handle.dispatchEvent(new MouseEvent("dblclick", { bubbles: true }));
     expect(columnResize.onDblClick).toHaveBeenCalledTimes(1);
-    expect((columnResize.onDblClick as any).mock.calls[0][0]).toBe("state");
+    expect((columnResize.onDblClick as any).mock.calls[0][0]).toBe("status");
   });
 });

@@ -103,7 +103,7 @@ describe("TreeTable", () => {
     expect(screen.getByText("Second task")).toBeInTheDocument();
   });
 
-  it("renders column headers including ID, Type, Title, State, Effort, Tags", () => {
+  it("renders column headers including ID, Type, Title, Status, Estimate, Tags", () => {
     const nibs: TreeTableNib[] = [
       makeTreeTableNib({ id: "nibs-m1", title: "Milestone", type: "milestone" }),
       makeTreeTableNib({ id: "nibs-001", title: "A task", parentId: "nibs-m1" }),
@@ -121,8 +121,8 @@ describe("TreeTable", () => {
     expect(headers).toContain("ID");
     expect(headers).toContain("Type");
     expect(headers).toContain("Title");
-    expect(headers).toContain("State");
-    expect(headers).toContain("Effort");
+    expect(headers).toContain("Status");
+    expect(headers).toContain("Estimate");
     expect(headers).toContain("Tags");
   });
 
@@ -266,6 +266,63 @@ describe("TreeTable", () => {
     renderTreeTable({ filter: {} });
 
     expect(screen.getByText(/no nibs found/i)).toBeInTheDocument();
+  });
+
+  // An empty result under two or more hierarchy predicates is a dead end the generic
+  // message cannot explain: "Descendants of this" on a nib followed by "Ancestors of
+  // this" on one of its now-visible children yields `ancestor:<parent>
+  // descendant:<child>`, which nothing can satisfy (no node lies strictly between a
+  // direct parent and child). The replacement names the active relationships and
+  // offers a way back out.
+  describe("empty state", () => {
+    function renderEmpty(props: Record<string, unknown>) {
+      mockQueryStore.mockReturnValue(
+        readable({ fetching: false, error: undefined, data: { nibs: [] }, stale: false }) as any
+      );
+      return renderTreeTable(props);
+    }
+
+    it("names the active hierarchy relationships when two of them combine to nothing", () => {
+      renderEmpty({ filter: { ancestorId: "tnib-p", descendantId: "tnib-c" } });
+
+      const explanation = screen.getByTestId("empty-hierarchy");
+      expect(explanation).toHaveTextContent("ancestor:tnib-p");
+      expect(explanation).toHaveTextContent("descendant:tnib-c");
+      // The hierarchy-specific state REPLACES the generic one; both at once would
+      // read as two unrelated failures.
+      expect(screen.queryByText(/no nibs found/i)).not.toBeInTheDocument();
+    });
+
+    // Guard against the hierarchy message swallowing the generic one: an ordinary
+    // empty result must still say "No nibs found".
+    it("keeps the generic message when a non-hierarchy filter matches nothing", () => {
+      renderEmpty({ filter: { type: ["bug"] } });
+
+      expect(screen.getByText(/no nibs found/i)).toBeInTheDocument();
+      expect(screen.queryByTestId("empty-hierarchy")).not.toBeInTheDocument();
+    });
+
+    // One hierarchy predicate empties for ordinary reasons (a leaf has no
+    // descendants); there is no combination to explain.
+    it("keeps the generic message for a single hierarchy predicate", () => {
+      renderEmpty({ filter: { ancestorId: "tnib-p" } });
+
+      expect(screen.getByText(/no nibs found/i)).toBeInTheDocument();
+      expect(screen.queryByTestId("empty-hierarchy")).not.toBeInTheDocument();
+    });
+
+    it("clears only the hierarchy fields when the escape hatch is used", async () => {
+      const user = userEvent.setup();
+      const onfilterchange = vi.fn();
+      renderEmpty({
+        filter: { ancestorId: "tnib-p", descendantId: "tnib-c", type: ["bug"], search: "login" },
+        onfilterchange,
+      });
+
+      await user.click(screen.getByRole("button", { name: /clear hierarchy filters/i }));
+
+      expect(onfilterchange).toHaveBeenCalledWith({ type: ["bug"], search: "login" });
+    });
   });
 
   it("shows error message when query fails", () => {
@@ -808,7 +865,7 @@ describe("TreeTable", () => {
       readable({ fetching: false, error: undefined, data: { nibs }, stale: false }) as any
     );
 
-    const visibleColumns: ColumnKey[] = ["title", "state"];
+    const visibleColumns: ColumnKey[] = ["title", "status"];
     const { container } = renderTreeTable({
       filter: {},
       viewLevel: "epics" as ViewLevel,
@@ -818,10 +875,10 @@ describe("TreeTable", () => {
     const thead = container.querySelector("thead")!;
     const headers = Array.from(thead.querySelectorAll("th")).map(th => th.textContent?.trim());
     expect(headers).toContain("Title");
-    expect(headers).toContain("State");
+    expect(headers).toContain("Status");
     expect(headers).not.toContain("ID");
     expect(headers).not.toContain("Type");
-    expect(headers).not.toContain("Effort");
+    expect(headers).not.toContain("Estimate");
     expect(headers).not.toContain("Tags");
     expect(headers).not.toContain("Parent");
   });
@@ -835,7 +892,7 @@ describe("TreeTable", () => {
       readable({ fetching: false, error: undefined, data: { nibs }, stale: false }) as any
     );
 
-    const visibleColumns: ColumnKey[] = ["title", "state"];
+    const visibleColumns: ColumnKey[] = ["title", "status"];
     const { container } = renderTreeTable({
       filter: {},
       viewLevel: "epics" as ViewLevel,
@@ -845,12 +902,12 @@ describe("TreeTable", () => {
     // ID and type cells should not be rendered
     expect(container.querySelector("[data-testid='nib-id']")).not.toBeInTheDocument();
     expect(container.querySelector("[data-testid='nib-type']")).not.toBeInTheDocument();
-    expect(container.querySelector("[data-testid='nib-effort']")).not.toBeInTheDocument();
+    expect(container.querySelector("[data-testid='nib-estimate']")).not.toBeInTheDocument();
     expect(container.querySelector("[data-testid='nib-tags']")).not.toBeInTheDocument();
 
     // Title and state cells should be rendered
     expect(container.querySelector("[data-testid='nib-title']")).toBeInTheDocument();
-    expect(container.querySelector("[data-testid='nib-state']")).toBeInTheDocument();
+    expect(container.querySelector("[data-testid='nib-status']")).toBeInTheDocument();
   });
 
   it("renders Blocking and Blocked by headers when those columns are visible", () => {
@@ -885,7 +942,7 @@ describe("TreeTable", () => {
     );
 
     // The default-visible set (no blocking / blockedBy).
-    const visibleColumns: ColumnKey[] = ["id", "parent", "type", "title", "state", "effort", "tags"];
+    const visibleColumns: ColumnKey[] = ["id", "parent", "type", "title", "status", "estimate", "tags"];
     const { container } = renderTreeTable({
       filter: {},
       viewLevel: "epics" as ViewLevel,
@@ -957,7 +1014,7 @@ describe("TreeTable", () => {
     );
 
     // A visible set without created / modified.
-    const visibleColumns: ColumnKey[] = ["id", "parent", "type", "title", "state", "effort", "tags"];
+    const visibleColumns: ColumnKey[] = ["id", "parent", "type", "title", "status", "estimate", "tags"];
     const { container } = renderTreeTable({
       filter: {},
       viewLevel: "epics" as ViewLevel,
@@ -1008,7 +1065,7 @@ describe("TreeTable", () => {
     );
 
     // epics view does NOT hide parent, but visibleColumns excludes it
-    const visibleColumns: ColumnKey[] = ["id", "title", "type", "state", "effort", "tags"];
+    const visibleColumns: ColumnKey[] = ["id", "title", "type", "status", "estimate", "tags"];
     const { container } = renderTreeTable({
       filter: {},
       viewLevel: "epics" as ViewLevel,
@@ -1214,7 +1271,7 @@ describe("TreeTable", () => {
       return renderTreeTable({
         filter: {},
         viewLevel,
-        visibleColumns: ["title", "type", "state"] as ColumnKey[],
+        visibleColumns: ["title", "type", "status"] as ColumnKey[],
         ...props,
       });
     }
@@ -1223,7 +1280,7 @@ describe("TreeTable", () => {
       renderCols();
       expect(screen.getByRole("columnheader", { name: "Title" })).toBeInTheDocument();
       expect(screen.getByRole("columnheader", { name: "Type" })).toBeInTheDocument();
-      expect(screen.getByRole("columnheader", { name: "State" })).toBeInTheDocument();
+      expect(screen.getByRole("columnheader", { name: "Status" })).toBeInTheDocument();
     });
 
     it("clicking a non-date header (Type) with no active sort emits that field ascending", async () => {
@@ -1242,11 +1299,11 @@ describe("TreeTable", () => {
     });
 
     it("shows an arrow and aria-sort on a non-date header (State descending)", () => {
-      const { container } = renderCols({ tableSort: { field: "state", direction: "desc" } });
-      const arrow = container.querySelector("[data-testid='table-sort-arrow-state']");
+      const { container } = renderCols({ tableSort: { field: "status", direction: "desc" } });
+      const arrow = container.querySelector("[data-testid='table-sort-arrow-status']");
       expect(arrow).toBeInTheDocument();
       expect(arrow!.classList.contains("lucide-arrow-down")).toBe(true);
-      const stateTh = Array.from(container.querySelectorAll("th")).find((th) => th.textContent?.trim() === "State")!;
+      const stateTh = Array.from(container.querySelectorAll("th")).find((th) => th.textContent?.trim() === "Status")!;
       expect(stateTh.getAttribute("aria-sort")).toBe("descending");
       // A different sortable header reads "none" while inactive.
       const typeTh = Array.from(container.querySelectorAll("th")).find((th) => th.textContent?.trim() === "Type")!;
@@ -1256,7 +1313,7 @@ describe("TreeTable", () => {
     it("deactivates the sort when a NON-date sorted column (type) is hidden", () => {
       const { container } = renderCols({
         tableSort: { field: "type", direction: "asc" },
-        visibleColumns: ["title", "state"] as ColumnKey[],
+        visibleColumns: ["title", "status"] as ColumnKey[],
       });
       const titles = Array.from(container.querySelectorAll("[data-testid='title-text']")).map((e) => e.textContent);
       // Type column hidden → sort deactivates → manual order (Task, Milestone, Bug).
@@ -1291,7 +1348,7 @@ describe("TreeTable", () => {
       return renderTreeTable({
         filter: {},
         viewLevel,
-        visibleColumns: ["title", "state", "modified"] as ColumnKey[],
+        visibleColumns: ["title", "status", "modified"] as ColumnKey[],
         ...props,
       });
     }
@@ -1300,39 +1357,39 @@ describe("TreeTable", () => {
 
     it.each(ALL_VIEWS)("renders a click-to-sort columnheader in the %s view", (viewLevel) => {
       renderView(viewLevel);
-      expect(screen.getByRole("columnheader", { name: "State" })).toBeInTheDocument();
+      expect(screen.getByRole("columnheader", { name: "Status" })).toBeInTheDocument();
     });
 
     it.each(ALL_VIEWS)("clicking a header cycles off → asc in the %s view", async (viewLevel) => {
       const user = userEvent.setup();
       const ontablesortchange = vi.fn();
       renderView(viewLevel, { tableSort: null, ontablesortchange });
-      await user.click(screen.getByRole("columnheader", { name: "State" }));
-      expect(ontablesortchange).toHaveBeenLastCalledWith({ field: "state", direction: "asc" });
+      await user.click(screen.getByRole("columnheader", { name: "Status" }));
+      expect(ontablesortchange).toHaveBeenLastCalledWith({ field: "status", direction: "asc" });
     });
 
     it.each(ALL_VIEWS)("clicking asc → desc in the %s view", async (viewLevel) => {
       const user = userEvent.setup();
       const ontablesortchange = vi.fn();
-      renderView(viewLevel, { tableSort: { field: "state", direction: "asc" }, ontablesortchange });
-      await user.click(screen.getByRole("columnheader", { name: "State" }));
-      expect(ontablesortchange).toHaveBeenLastCalledWith({ field: "state", direction: "desc" });
+      renderView(viewLevel, { tableSort: { field: "status", direction: "asc" }, ontablesortchange });
+      await user.click(screen.getByRole("columnheader", { name: "Status" }));
+      expect(ontablesortchange).toHaveBeenLastCalledWith({ field: "status", direction: "desc" });
     });
 
     it.each(ALL_VIEWS)("clicking desc → off (null) in the %s view", async (viewLevel) => {
       const user = userEvent.setup();
       const ontablesortchange = vi.fn();
-      renderView(viewLevel, { tableSort: { field: "state", direction: "desc" }, ontablesortchange });
-      await user.click(screen.getByRole("columnheader", { name: "State" }));
+      renderView(viewLevel, { tableSort: { field: "status", direction: "desc" }, ontablesortchange });
+      await user.click(screen.getByRole("columnheader", { name: "Status" }));
       expect(ontablesortchange).toHaveBeenLastCalledWith(null);
     });
 
     it.each(ALL_VIEWS)("shows the direction arrow + aria-sort for the active field in the %s view", (viewLevel) => {
-      const { container } = renderView(viewLevel, { tableSort: { field: "state", direction: "desc" } });
-      const arrow = container.querySelector("[data-testid='table-sort-arrow-state']");
+      const { container } = renderView(viewLevel, { tableSort: { field: "status", direction: "desc" } });
+      const arrow = container.querySelector("[data-testid='table-sort-arrow-status']");
       expect(arrow).toBeInTheDocument();
       expect(arrow!.classList.contains("lucide-arrow-down")).toBe(true);
-      const stateTh = Array.from(container.querySelectorAll("th")).find((th) => th.textContent?.trim() === "State")!;
+      const stateTh = Array.from(container.querySelectorAll("th")).find((th) => th.textContent?.trim() === "Status")!;
       expect(stateTh.getAttribute("aria-sort")).toBe("descending");
     });
 
@@ -1389,7 +1446,7 @@ describe("TreeTable", () => {
       return renderTreeTable({
         filter: {},
         viewLevel,
-        visibleColumns: ["title", "state"] as ColumnKey[],
+        visibleColumns: ["title", "status"] as ColumnKey[],
         ...props,
       });
     }
@@ -1400,7 +1457,7 @@ describe("TreeTable", () => {
     });
 
     it("tree (none) view: drag DISABLED while a sort is active", () => {
-      const { container } = renderDrag("none" as ViewLevel, { tableSort: { field: "state", direction: "asc" } });
+      const { container } = renderDrag("none" as ViewLevel, { tableSort: { field: "status", direction: "asc" } });
       expect(container.querySelectorAll("tr.draggable")).toHaveLength(0);
     });
 
@@ -1410,7 +1467,7 @@ describe("TreeTable", () => {
     });
 
     it("grouping lens (milestones): drag DISABLED while a sort is active", () => {
-      const { container } = renderDrag("milestones" as ViewLevel, { tableSort: { field: "state", direction: "asc" } });
+      const { container } = renderDrag("milestones" as ViewLevel, { tableSort: { field: "status", direction: "asc" } });
       expect(container.querySelectorAll("tr.draggable")).toHaveLength(0);
     });
 
@@ -1420,7 +1477,7 @@ describe("TreeTable", () => {
       // EFFECTIVE (active) sort, not the raw preference.
       const { container } = renderDrag("none" as ViewLevel, {
         tableSort: { field: "created", direction: "asc" },
-        visibleColumns: ["title", "state"] as ColumnKey[],
+        visibleColumns: ["title", "status"] as ColumnKey[],
       });
       expect(container.querySelectorAll("tr.draggable").length).toBeGreaterThan(0);
     });
@@ -2575,7 +2632,7 @@ describe("TreeTable", () => {
   });
 
   describe("reactive filter re-query", () => {
-    it("re-queries when filter changes", async () => {
+    it("re-queries when a server-side filter (search) changes, after the debounce", async () => {
       const nibs: TreeTableNib[] = [
         makeTreeTableNib({ id: "nibs-m1", title: "Milestone", type: "milestone" }),
         makeTreeTableNib({ id: "nibs-001", title: "Task", type: "task", parentId: "nibs-m1" }),
@@ -2591,17 +2648,36 @@ describe("TreeTable", () => {
       const initialCallCount = mockQueryStore.mock.calls.length;
       expect(initialCallCount).toBeGreaterThanOrEqual(1);
 
-      // Re-render with a different filter (simulating the "Open + deferred" preset)
-      await rerender({ filter: { status: [...OPEN_STATUSES] } });
-
-      // queryStore should have been called again with the updated filter
-      expect(mockQueryStore.mock.calls.length).toBeGreaterThan(initialCallCount);
-
-      // The status include-list is a client-side filter, so it is stripped from the
-      // server filter — the re-query fetches completed/scrapped nibs so their
-      // active descendants stay visible (with the ancestor dimmed in place).
+      // A `search` change is server-side, so it re-keys the list query — but the
+      // refetch is debounced (nibs-rv7c), so it lands shortly after, not
+      // synchronously. waitFor rides out the debounce window.
+      await rerender({ filter: { search: "login" } });
+      await waitFor(() => {
+        expect(mockQueryStore.mock.calls.length).toBeGreaterThan(initialCallCount);
+      });
       const latestCall = mockQueryStore.mock.calls[mockQueryStore.mock.calls.length - 1];
-      expect(latestCall[0].variables!.filter).not.toHaveProperty("status");
+      expect(latestCall[0].variables!.filter).toMatchObject({ search: "login" });
+    });
+
+    it("does NOT re-query when only a client-side facet (status) changes", async () => {
+      const nibs: TreeTableNib[] = [
+        makeTreeTableNib({ id: "nibs-m1", title: "Milestone", type: "milestone" }),
+        makeTreeTableNib({ id: "nibs-001", title: "Task", type: "task", parentId: "nibs-m1" }),
+      ];
+
+      mockQueryStore.mockReturnValue(
+        readable({ fetching: false, error: undefined, data: { nibs }, stale: false }) as any
+      );
+
+      const { rerender } = renderTreeTable({ filter: {} });
+      const initialCallCount = mockQueryStore.mock.calls.length;
+
+      // The status include-list is stripped from the server filter, so the server
+      // data is unchanged — status is applied client-side. No re-query fires, even
+      // after the debounce window elapses (the server filter is content-equal).
+      await rerender({ filter: { status: [...OPEN_STATUSES] } });
+      await new Promise((resolve) => setTimeout(resolve, 300)); // > the 250ms refetch debounce
+      expect(mockQueryStore.mock.calls.length).toBe(initialCallCount);
     });
 
     it("renders updated data after filter change", async () => {
@@ -2844,43 +2920,43 @@ describe("TreeTable — per-view column order + reorder drag", () => {
     return renderTreeTable({
       filter: {},
       viewLevel: "flat" as ViewLevel,
-      visibleColumns: ["id", "title", "state"] as ColumnKey[],
-      columnOrder: ["id", "title", "state"] as ColumnKey[],
+      visibleColumns: ["id", "title", "status"] as ColumnKey[],
+      columnOrder: ["id", "title", "status"] as ColumnKey[],
       ...props,
     });
   }
 
   it("renders headers in the per-view columnOrder (not canonical)", () => {
-    const { container } = renderOrdered({ columnOrder: ["state", "title", "id"] as ColumnKey[] });
+    const { container } = renderOrdered({ columnOrder: ["status", "title", "id"] as ColumnKey[] });
     const headers = Array.from(container.querySelectorAll("thead th[data-col-key]")).map((th) => th.getAttribute("data-col-key"));
-    expect(headers).toEqual(["state", "title", "id"]);
+    expect(headers).toEqual(["status", "title", "id"]);
   });
 
   it("renders row cells in the same order as the reordered headers", () => {
-    const { container } = renderOrdered({ columnOrder: ["state", "title", "id"] as ColumnKey[] });
+    const { container } = renderOrdered({ columnOrder: ["status", "title", "id"] as ColumnKey[] });
     const row = container.querySelector("tr[data-testid='tree-row']")!;
     const cellTestids = Array.from(row.querySelectorAll("td[data-testid]")).map((td) => td.getAttribute("data-testid"));
-    expect(cellTestids).toEqual(["nib-state", "nib-title", "nib-id"]);
+    expect(cellTestids).toEqual(["nib-status", "nib-title", "nib-id"]);
   });
 
   it("tableWidth sums the visible column widths (actions 32px + widths), order-independent", () => {
-    const { container } = renderOrdered({ columnOrder: ["state", "title", "id"] as ColumnKey[] });
+    const { container } = renderOrdered({ columnOrder: ["status", "title", "id"] as ColumnKey[] });
     const width = parseInt((container.querySelector("table") as HTMLElement).style.width, 10);
-    expect(width).toBe(32 + DEFAULT_COLUMN_WIDTHS.id + DEFAULT_COLUMN_WIDTHS.title + DEFAULT_COLUMN_WIDTHS.state);
+    expect(width).toBe(32 + DEFAULT_COLUMN_WIDTHS.id + DEFAULT_COLUMN_WIDTHS.title + DEFAULT_COLUMN_WIDTHS.status);
   });
 
   it("dragging a header past the threshold writes the reordered columnOrder and suppresses the sort click", () => {
     const oncolumnorderchange = vi.fn();
     const ontablesortchange = vi.fn();
     const { container } = renderOrdered({
-      columnOrder: ["id", "title", "state"] as ColumnKey[],
+      columnOrder: ["id", "title", "status"] as ColumnKey[],
       oncolumnorderchange,
       ontablesortchange,
       tableSort: null,
     });
 
     const idTh = container.querySelector("thead th[data-col-key='id']") as HTMLElement;
-    const stateTh = container.querySelector("thead th[data-col-key='state']") as HTMLElement;
+    const stateTh = container.querySelector("thead th[data-col-key='status']") as HTMLElement;
     stateTh.getBoundingClientRect = () =>
       ({ top: 0, bottom: 40, left: 0, right: 100, width: 100, height: 40, x: 0, y: 0, toJSON: () => {} }) as DOMRect;
 
@@ -2894,7 +2970,7 @@ describe("TreeTable — per-view column order + reorder drag", () => {
       window.dispatchEvent(new PointerEvent("pointerup", { bubbles: true }));
 
       expect(oncolumnorderchange).toHaveBeenCalledTimes(1);
-      expect(oncolumnorderchange).toHaveBeenCalledWith(["title", "state", "id"]);
+      expect(oncolumnorderchange).toHaveBeenCalledWith(["title", "status", "id"]);
 
       // The click a browser fires right after the drag must NOT toggle the sort.
       const idSortBtn = container.querySelector("[data-testid='table-sort-id']") as HTMLElement;

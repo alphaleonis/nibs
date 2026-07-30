@@ -1,17 +1,11 @@
 package config_test
 
 import (
-	"os"
-	"path/filepath"
-	"regexp"
 	"testing"
 
 	"github.com/alphaleonis/nibs/internal/config"
+	"github.com/alphaleonis/nibs/internal/testsupport/webconstants"
 )
-
-// webConstantsPath is the TypeScript file that restates the status vocabulary
-// for the web UI.
-const webConstantsPath = "../../web/src/lib/constants.ts"
 
 // TestWebConstantsMatchConfig pins web/src/lib/constants.ts against the Go
 // configuration.
@@ -29,6 +23,10 @@ const webConstantsPath = "../../web/src/lib/constants.ts"
 // because that is the order the facet checkboxes read best in. Pinning order
 // here would fail on a correct codebase and invite someone to "fix" one of the
 // two orderings into being wrong for its own surface.
+//
+// The TypeScript scraping itself lives in internal/testsupport/webconstants,
+// shared with TestWebStatusGroupsMatchCLI, which layers the query language's
+// status groups on top of these names.
 func TestWebConstantsMatchConfig(t *testing.T) {
 	src := readWebConstants(t)
 	cfg := config.Default()
@@ -60,32 +58,20 @@ func TestWebConstantsMatchConfig(t *testing.T) {
 
 func readWebConstants(t *testing.T) string {
 	t.Helper()
-	b, err := os.ReadFile(filepath.FromSlash(webConstantsPath))
+	src, err := webconstants.Source()
 	if err != nil {
 		// A missing file means the guard silently stops guarding, so fail rather
 		// than skip — the whole point is that nobody notices this drifting.
-		t.Fatalf("reading %s: %v", webConstantsPath, err)
+		t.Fatal(err)
 	}
-	return string(b)
+	return src
 }
 
-// parseStringArray extracts the string literals from
-// `export const <name> = [...]` in the TypeScript source.
 func parseStringArray(t *testing.T, src, name string) []string {
 	t.Helper()
-	decl := regexp.MustCompile(`export const ` + regexp.QuoteMeta(name) + `\s*(?::[^=]*)?=\s*\[([^\]]*)\]`)
-	m := decl.FindStringSubmatch(src)
-	if m == nil {
-		t.Fatalf("no `export const %s = [...]` array literal in %s — if it was renamed or made derived, this guard needs updating, not deleting",
-			name, webConstantsPath)
-	}
-	items := regexp.MustCompile(`"([^"]*)"`).FindAllStringSubmatch(m[1], -1)
-	out := make([]string, 0, len(items))
-	for _, it := range items {
-		out = append(out, it[1])
-	}
-	if len(out) == 0 {
-		t.Fatalf("%s in %s parsed as empty; the guard would pass against anything", name, webConstantsPath)
+	out, err := webconstants.ParseStringArray(src, name)
+	if err != nil {
+		t.Fatal(err)
 	}
 	return out
 }
@@ -94,24 +80,13 @@ func parseStringArray(t *testing.T, src, name string) []string {
 // checked; see the note on TestWebConstantsMatchConfig.
 func assertSameMembers(t *testing.T, name string, got, want []string) {
 	t.Helper()
-	inGot := map[string]bool{}
-	for _, g := range got {
-		inGot[g] = true
+	missing, extra := webconstants.Diff(got, want)
+	for _, w := range missing {
+		t.Errorf("the Go config declares %q but %s in %s does not — the web and Go status vocabularies have drifted (web has %v)",
+			w, name, webconstants.Path, got)
 	}
-	inWant := map[string]bool{}
-	for _, w := range want {
-		inWant[w] = true
-	}
-	for _, w := range want {
-		if !inGot[w] {
-			t.Errorf("the Go config declares %q but %s in %s does not — the web and Go status vocabularies have drifted (web has %v)",
-				w, name, webConstantsPath, got)
-		}
-	}
-	for _, g := range got {
-		if !inWant[g] {
-			t.Errorf("%s in %s names %q but the Go config does not — the web and Go status vocabularies have drifted (Go has %v)",
-				name, webConstantsPath, g, want)
-		}
+	for _, g := range extra {
+		t.Errorf("%s in %s names %q but the Go config does not — the web and Go status vocabularies have drifted (Go has %v)",
+			name, webconstants.Path, g, want)
 	}
 }

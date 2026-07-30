@@ -1,12 +1,17 @@
 import { untrack } from "svelte";
 import { loadPreferences, savePreferences } from "./storage";
+import { parseQuery, serializeQuery } from "./query";
 import { PerViewColumnMap } from "./perViewColumnMap.svelte";
 import type { SaveMode } from "./perViewColumnMap.svelte";
 import { ALL_COLUMN_KEYS, DEFAULT_VISIBLE_COLUMNS, DEFAULT_COLUMN_WIDTHS, DEFAULT_DETAIL_PANEL_WIDTH, MIN_DETAIL_PANEL_WIDTH, DEFAULT_DETAIL_PANEL_HEIGHT, MIN_DETAIL_PANEL_HEIGHT, DEFAULT_DETAIL_PANEL_POSITION, DEFAULT_BLOCKED_EMPHASIS, DEFAULT_FONT_SIZE, DEFAULT_THEME, DEFAULT_PREVIEW_OPEN } from "./types";
 import type { NibFilter, ViewLevel, ColumnKey, RowDensity, Theme, DetailPanelPosition, BlockedEmphasis, FontSize, TableSort } from "./types";
 
 export class Preferences {
+  // The structured filter and its invalid-token sidecar. Together they ARE the
+  // query: `query` (below) serializes them to the canonical string that is the
+  // persisted + shared unit; `setQuery` reconstructs them from such a string.
   filter: NibFilter = $state({});
+  invalidTokens: string[] = $state([]);
   viewLevel: ViewLevel = $state("none");
 
   // Per-view column state, unified behind one primitive. Each concern stays a
@@ -65,6 +70,12 @@ export class Preferences {
   // auto-saved. Applied in every view (flat list in Flat, sibling-sort elsewhere).
   tableSort: TableSort | null = $state(null);
 
+  // The canonical query STRING — the persisted (localStorage) + shared (`?q=`)
+  // representation of the filter, derived from the structured filter + invalid
+  // sidecar. `serializeQuery(parseQuery(s)) === s` for any canonical `s`, so this
+  // round-trips through storage/URL and back into `filter`/`invalidTokens`.
+  query: string = $derived(serializeQuery({ filter: this.filter, invalidTokens: this.invalidTokens }));
+
   visibleColumns: ColumnKey[] = $derived(this.visibility.resolve(this.viewLevel));
 
   currentColumnWidths: Record<ColumnKey, number> = $derived(this.widths.resolve(this.viewLevel));
@@ -109,7 +120,7 @@ export class Preferences {
 
   constructor() {
     const initial = loadPreferences();
-    this.filter = initial.filter;
+    this.setQuery(initial.query);
     this.viewLevel = initial.viewLevel;
     this.visibility.hydrate(initial.columnVisibility);
     this.widths.hydrate(initial.columnWidths);
@@ -133,6 +144,10 @@ export class Preferences {
       $effect(() => {
         // Touch reactive fields to subscribe to them
         this.filter;
+        // Invalid tokens are part of the persisted query, and a token can change
+        // WITHOUT touching `filter` (e.g. typing `status:banana` while the filter
+        // is empty), so subscribe to them independently.
+        this.invalidTokens;
         this.viewLevel;
         // Subscribe only the "auto" per-view maps; "flush" maps stay untracked
         // so their mutations (width drags) don't trigger auto-save.
@@ -185,9 +200,17 @@ export class Preferences {
     this.save();
   }
 
+  /** Replace the filter + invalid sidecar from a canonical query string (as
+   *  loaded from localStorage or a shared `?q=` link). Inverse of `query`. */
+  setQuery(q: string): void {
+    const parsed = parseQuery(q);
+    this.filter = parsed.filter;
+    this.invalidTokens = parsed.invalidTokens;
+  }
+
   save(): void {
     savePreferences({
-      filter: this.filter,
+      query: this.query,
       viewLevel: this.viewLevel,
       columnVisibility: this.visibility.serialize(),
       columnWidths: this.widths.serialize(),

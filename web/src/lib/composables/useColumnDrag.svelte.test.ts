@@ -22,18 +22,18 @@ function makeTh(key: ColumnKey, rect: Partial<DOMRect> = {}): HTMLElement {
 }
 
 describe("moveColumn", () => {
-  const order: ColumnKey[] = ["id", "title", "state"];
+  const order: ColumnKey[] = ["id", "title", "status"];
 
   it("moves a column BEFORE the target", () => {
-    expect(moveColumn(order, "state", "id", "before")).toEqual(["state", "id", "title"]);
+    expect(moveColumn(order, "status", "id", "before")).toEqual(["status", "id", "title"]);
   });
 
   it("moves a column AFTER the target", () => {
-    expect(moveColumn(order, "id", "state", "after")).toEqual(["title", "state", "id"]);
+    expect(moveColumn(order, "id", "status", "after")).toEqual(["title", "status", "id"]);
   });
 
   it("moves a column BEFORE a middle target", () => {
-    expect(moveColumn(order, "id", "state", "before")).toEqual(["title", "id", "state"]);
+    expect(moveColumn(order, "id", "status", "before")).toEqual(["title", "id", "status"]);
   });
 
   it("is a no-op (fresh copy) when dragged === target", () => {
@@ -43,8 +43,8 @@ describe("moveColumn", () => {
   });
 
   it("returns the order unchanged when a key is missing", () => {
-    expect(moveColumn(["id", "title"], "state", "id", "before")).toEqual(["id", "title"]);
-    expect(moveColumn(["id", "title"], "id", "state", "after")).toEqual(["id", "title"]);
+    expect(moveColumn(["id", "title"], "status", "id", "before")).toEqual(["id", "title"]);
+    expect(moveColumn(["id", "title"], "id", "status", "after")).toEqual(["id", "title"]);
   });
 });
 
@@ -73,7 +73,7 @@ describe("useColumnDrag", () => {
     vi.useRealTimers();
   });
 
-  function setup(order: ColumnKey[] = ["id", "title", "state"]) {
+  function setup(order: ColumnKey[] = ["id", "title", "status"]) {
     const onReorder = vi.fn();
     let drag!: ColumnDrag;
     const dispose = $effect.root(() => {
@@ -96,8 +96,8 @@ describe("useColumnDrag", () => {
   }
 
   it("crossing the threshold over another header reorders and writes the new order on pointer up", () => {
-    const { drag, onReorder } = setup(["id", "title", "state"]);
-    const th = makeTh("state", { left: 0, right: 100, width: 100 });
+    const { drag, onReorder } = setup(["id", "title", "status"]);
+    const th = makeTh("status", { left: 0, right: 100, width: 100 });
     document.elementFromPoint = () => th;
 
     // Below threshold: still just pending, not dragging.
@@ -111,30 +111,30 @@ describe("useColumnDrag", () => {
     window.dispatchEvent(new PointerEvent("pointermove", { clientX: 80, clientY: 10, bubbles: true }));
     expect(drag.isDragging).toBe(true);
     expect(drag.draggedKey).toBe("id");
-    expect(drag.targetKey).toBe("state");
+    expect(drag.targetKey).toBe("status");
     expect(drag.targetSide).toBe("after");
 
     window.dispatchEvent(new PointerEvent("pointerup", { bubbles: true }));
 
     expect(onReorder).toHaveBeenCalledTimes(1);
-    expect(onReorder).toHaveBeenCalledWith(["title", "state", "id"]);
+    expect(onReorder).toHaveBeenCalledWith(["title", "status", "id"]);
     // Drag state resets after the gesture.
     expect(drag.isDragging).toBe(false);
     expect(drag.draggedKey).toBeNull();
   });
 
   it("computes the BEFORE side when the cursor is over the left half of the target", () => {
-    const { drag, onReorder } = setup(["id", "title", "state"]);
+    const { drag, onReorder } = setup(["id", "title", "status"]);
     const th = makeTh("id", { left: 0, right: 100, width: 100 });
     document.elementFromPoint = () => th;
 
-    // Drag "state" toward "id"; cursor x=20 (left half) → "before".
-    startDrag(drag, "state", { x: 20, y: 10 });
+    // Drag "status" toward "id"; cursor x=20 (left half) → "before".
+    startDrag(drag, "status", { x: 20, y: 10 });
     expect(drag.targetKey).toBe("id");
     expect(drag.targetSide).toBe("before");
 
     window.dispatchEvent(new PointerEvent("pointerup", { bubbles: true }));
-    expect(onReorder).toHaveBeenCalledWith(["state", "id", "title"]);
+    expect(onReorder).toHaveBeenCalledWith(["status", "id", "title"]);
   });
 
   it("a below-threshold gesture does NOT reorder and does NOT suppress the sort click", () => {
@@ -151,8 +151,8 @@ describe("useColumnDrag", () => {
   });
 
   it("a completed reorder-drag suppresses the next click exactly once (sort-click coordination)", () => {
-    const { drag } = setup(["id", "title", "state"]);
-    const th = makeTh("state", { left: 0, right: 100, width: 100 });
+    const { drag } = setup(["id", "title", "status"]);
+    const th = makeTh("status", { left: 0, right: 100, width: 100 });
     document.elementFromPoint = () => th;
 
     startDrag(drag, "id", { x: 80, y: 10 });
@@ -165,8 +165,8 @@ describe("useColumnDrag", () => {
   });
 
   it("Escape aborting a real drag reorders nothing but suppresses the trailing click", () => {
-    const { drag, onReorder } = setup(["id", "title", "state"]);
-    const th = makeTh("state", { left: 0, right: 100, width: 100 });
+    const { drag, onReorder } = setup(["id", "title", "status"]);
+    const th = makeTh("status", { left: 0, right: 100, width: 100 });
     document.elementFromPoint = () => th;
 
     startDrag(drag, "id", { x: 80, y: 10 });
@@ -189,11 +189,11 @@ describe("useColumnDrag", () => {
   });
 
   it("does not swallow a LATER keyboard sort after a cross-header reorder", () => {
-    const { drag, onReorder } = setup(["id", "title", "state"]);
-    const th = makeTh("state", { left: 0, right: 100, width: 100 });
+    const { drag, onReorder } = setup(["id", "title", "status"]);
+    const th = makeTh("status", { left: 0, right: 100, width: 100 });
     document.elementFromPoint = () => th;
 
-    // A real cross-header reorder: drag "id" past threshold and drop over "state".
+    // A real cross-header reorder: drag "id" past threshold and drop over "status".
     startDrag(drag, "id", { x: 80, y: 10 });
     expect(drag.isDragging).toBe(true);
     window.dispatchEvent(new PointerEvent("pointerup", { bubbles: true }));
@@ -211,8 +211,8 @@ describe("useColumnDrag", () => {
   });
 
   it("pointercancel mid-drag aborts, clears the drag cursor, and suppresses the trailing click", () => {
-    const { drag, onReorder } = setup(["id", "title", "state"]);
-    const th = makeTh("state", { left: 0, right: 100, width: 100 });
+    const { drag, onReorder } = setup(["id", "title", "status"]);
+    const th = makeTh("status", { left: 0, right: 100, width: 100 });
     document.elementFromPoint = () => th;
 
     startDrag(drag, "id", { x: 80, y: 10 });
@@ -234,7 +234,7 @@ describe("useColumnDrag", () => {
   });
 
   it("dragging a header onto itself (no distinct target) does not reorder", () => {
-    const { drag, onReorder } = setup(["id", "title", "state"]);
+    const { drag, onReorder } = setup(["id", "title", "status"]);
     const th = makeTh("id", { left: 0, right: 100, width: 100 });
     document.elementFromPoint = () => th;
 
@@ -250,13 +250,13 @@ describe("useColumnDrag", () => {
   });
 
   it("drives the cursor from drop validity: grabbing over a header, no-drop over a non-header, reset on drop", () => {
-    const { drag } = setup(["id", "title", "state"]);
-    const th = makeTh("state", { left: 0, right: 100, width: 100 });
+    const { drag } = setup(["id", "title", "status"]);
+    const th = makeTh("status", { left: 0, right: 100, width: 100 });
     document.elementFromPoint = () => th;
 
     // Past threshold, over the mocked header → droppable → grabbing.
     startDrag(drag, "id", { x: 80, y: 10 });
-    expect(drag.targetKey).toBe("state");
+    expect(drag.targetKey).toBe("status");
     expect(document.body.dataset.colDrag).toBe("grabbing");
 
     // Now over a non-header (elementFromPoint miss → target null) → no-drop.
@@ -281,11 +281,11 @@ describe("useColumnDrag", () => {
   });
 
   it("exposes ghost state (label + width + live pointer) during a real drag, cleared on drop", () => {
-    const { drag } = setup(["id", "title", "state"]);
+    const { drag } = setup(["id", "title", "status"]);
     // captureGhost reads the dragged column's live <th> width from the document.
     const idTh = makeTh("id", { width: 123 });
     document.body.appendChild(idTh);
-    const stateTh = makeTh("state", { left: 0, right: 100, width: 100 });
+    const stateTh = makeTh("status", { left: 0, right: 100, width: 100 });
     document.elementFromPoint = () => stateTh;
 
     expect(drag.ghost).toBeNull();
@@ -309,9 +309,9 @@ describe("useColumnDrag", () => {
   });
 
   it("clears the ghost on Escape (cancel)", () => {
-    const { drag } = setup(["id", "title", "state"]);
+    const { drag } = setup(["id", "title", "status"]);
     document.body.appendChild(makeTh("id", { width: 100 }));
-    const stateTh = makeTh("state", { left: 0, right: 100, width: 100 });
+    const stateTh = makeTh("status", { left: 0, right: 100, width: 100 });
     document.elementFromPoint = () => stateTh;
 
     startDrag(drag, "id", { x: 80, y: 10 });
@@ -324,9 +324,9 @@ describe("useColumnDrag", () => {
   });
 
   it("clears the ghost on pointercancel (abort)", () => {
-    const { drag } = setup(["id", "title", "state"]);
+    const { drag } = setup(["id", "title", "status"]);
     document.body.appendChild(makeTh("id", { width: 100 }));
-    const stateTh = makeTh("state", { left: 0, right: 100, width: 100 });
+    const stateTh = makeTh("status", { left: 0, right: 100, width: 100 });
     document.elementFromPoint = () => stateTh;
 
     startDrag(drag, "id", { x: 80, y: 10 });
@@ -338,7 +338,7 @@ describe("useColumnDrag", () => {
 
   it("tears down mid-drag when the host unmounts: clears the drag cursor, ghost, and window listeners", () => {
     const onReorder = vi.fn();
-    const order: ColumnKey[] = ["id", "title", "state"];
+    const order: ColumnKey[] = ["id", "title", "status"];
     let drag!: ColumnDrag;
     // Own root (not via setup) so this test controls the unmount and afterEach
     // doesn't double-dispose.
@@ -348,7 +348,7 @@ describe("useColumnDrag", () => {
     flushSync();
 
     document.body.appendChild(makeTh("id", { width: 100 }));
-    const stateTh = makeTh("state", { left: 0, right: 100, width: 100 });
+    const stateTh = makeTh("status", { left: 0, right: 100, width: 100 });
     document.elementFromPoint = () => stateTh;
 
     startDrag(drag, "id", { x: 80, y: 10 });
@@ -373,16 +373,16 @@ describe("useColumnDrag", () => {
   });
 
   it("tears down on lostpointercapture when no matching pointerup arrives: no stuck ghost/cursor/listeners and no phantom reorder", () => {
-    const { drag, onReorder } = setup(["id", "title", "state"]);
+    const { drag, onReorder } = setup(["id", "title", "status"]);
     document.body.appendChild(makeTh("id", { width: 100 }));
-    const stateTh = makeTh("state", { left: 0, right: 100, width: 100 });
+    const stateTh = makeTh("status", { left: 0, right: 100, width: 100 });
     document.elementFromPoint = () => stateTh;
 
     // Real drag armed over a distinct target (a reorder is pending on release).
     startDrag(drag, "id", { x: 80, y: 10 });
     expect(drag.isDragging).toBe(true);
     expect(drag.ghost).not.toBeNull();
-    expect(drag.targetKey).toBe("state");
+    expect(drag.targetKey).toBe("status");
     expect(document.body.dataset.colDrag).toBe("grabbing");
 
     const removeSpy = vi.spyOn(window, "removeEventListener");
@@ -414,14 +414,14 @@ describe("useColumnDrag", () => {
   });
 
   it("ignores a foreign pointerId: a non-active pointer cannot move, end, or commit the drag", () => {
-    const { drag, onReorder } = setup(["id", "title", "state"]);
-    const stateTh = makeTh("state", { left: 0, right: 100, width: 100 });
+    const { drag, onReorder } = setup(["id", "title", "status"]);
+    const stateTh = makeTh("status", { left: 0, right: 100, width: 100 });
     document.elementFromPoint = () => stateTh;
 
-    // Active drag started by the default pointer (pointerId 0), armed over "state".
+    // Active drag started by the default pointer (pointerId 0), armed over "status".
     startDrag(drag, "id", { x: 80, y: 10 });
     expect(drag.isDragging).toBe(true);
-    expect(drag.targetKey).toBe("state");
+    expect(drag.targetKey).toBe("status");
     expect(drag.targetSide).toBe("after");
 
     // A FOREIGN pointer (pointerId 999) moves over the origin header — must be
@@ -430,7 +430,7 @@ describe("useColumnDrag", () => {
     const idTh = makeTh("id", { left: 0, right: 100, width: 100 });
     document.elementFromPoint = () => idTh;
     window.dispatchEvent(new PointerEvent("pointermove", { clientX: 20, clientY: 10, pointerId: 999, bubbles: true }));
-    expect(drag.targetKey).toBe("state");
+    expect(drag.targetKey).toBe("status");
     expect(drag.targetSide).toBe("after");
 
     // A FOREIGN pointerup must NOT end or commit the drag.
@@ -442,12 +442,12 @@ describe("useColumnDrag", () => {
     window.dispatchEvent(new PointerEvent("pointerup", { pointerId: 0, bubbles: true }));
     expect(drag.isDragging).toBe(false);
     expect(onReorder).toHaveBeenCalledTimes(1);
-    expect(onReorder).toHaveBeenCalledWith(["title", "state", "id"]);
+    expect(onReorder).toHaveBeenCalledWith(["title", "status", "id"]);
   });
 
   it("ignores a non-primary (right) button pointerdown", () => {
     const { drag, onReorder } = setup();
-    const th = makeTh("state", { left: 0, right: 100, width: 100 });
+    const th = makeTh("status", { left: 0, right: 100, width: 100 });
     document.elementFromPoint = () => th;
 
     drag.onHeaderPointerDown("id", new PointerEvent("pointerdown", { clientX: 100, clientY: 10, button: 2, bubbles: true }));
