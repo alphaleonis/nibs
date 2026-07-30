@@ -119,6 +119,16 @@ test("table — hierarchy empty state", async ({ page }) => {
   await shot(page, "table-empty-hierarchy");
 });
 
+// Query syntax help: a `?` at the end of the filter band opens a generated
+// reference for the whole grammar. Captured open, so the panel's readability at its
+// max height (and the trigger's placement after every facet) can be checked.
+test("filter band — query syntax help panel", async ({ page }) => {
+  await openApp(page);
+  await page.getByTestId("query-help-trigger").click();
+  await expect(page.getByTestId("query-help-panel")).toBeVisible({ timeout: 5_000 });
+  await shot(page, "query-help-panel");
+});
+
 // Autocomplete dropdown must render ABOVE the table rows below it (not behind).
 // Viewport shot (not cropped) so the dropdown's stacking vs the table is visible.
 test("filter box — completion dropdown over table rows", async ({ page }) => {

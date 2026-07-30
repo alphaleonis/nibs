@@ -31,6 +31,7 @@
   import StatusIcon from "./StatusIcon.svelte";
   import TypeIcon from "./TypeIcon.svelte";
   import SuggestionList from "./SuggestionList.svelte";
+  import QueryHelp from "./QueryHelp.svelte";
   import SettingsSheet from "./SettingsSheet.svelte";
   import TooltipButton from "./TooltipButton.svelte";
   import TooltipDropdownTrigger from "./TooltipDropdownTrigger.svelte";
@@ -1094,4 +1095,9 @@
       </DropdownMenu.Content>
     </DropdownMenu.Root>
   {/each}
+  <!-- Syntax help sits at the END of the control row, after every facet, so it
+       reads as help for the whole band rather than as an adornment on the query
+       box — and it takes width from neither the box nor a facet when the row
+       wraps on a narrow screen. -->
+  <QueryHelp />
 </div>

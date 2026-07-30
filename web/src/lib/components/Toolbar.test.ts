@@ -8,6 +8,8 @@ import { ALL_COLUMN_KEYS, DEFAULT_VISIBLE_COLUMNS } from "../types";
 import { OPEN_STATUSES } from "../constants";
 import type { NibFilter, ViewLevel, ColumnKey } from "../types";
 import type { NibSuggestion } from "../query";
+import { FIELD_SPECS } from "../query/fields";
+import { REL_TOKEN_ORDER } from "../query/relations";
 
 // bits-ui scroll lock sets pointer-events: none on <body>, so disable the check
 const user = userEvent.setup({ pointerEventsCheck: 0 });
@@ -2013,5 +2015,51 @@ describe("Toolbar — relationship-id async typeahead", () => {
     expect(warn).toHaveBeenCalled();
 
     warn.mockRestore();
+  });
+});
+
+// nibs-j01f: the query grammar is powerful but was undiscoverable — the placeholder
+// hints one token and the autocomplete only helps once you are already typing
+// something it recognizes. A `?` at the end of the filter band opens a reference.
+describe("Toolbar — query syntax help", () => {
+  it("opens a panel from the help button", async () => {
+    render(Toolbar, { ...defaultToolbarProps });
+
+    expect(screen.queryByTestId("query-help-panel")).not.toBeInTheDocument();
+    await user.click(screen.getByTestId("query-help-trigger"));
+    expect(await screen.findByTestId("query-help-panel")).toBeInTheDocument();
+  });
+
+  // The panel is GENERATED from the parser's vocabulary, so it cannot document a
+  // token the box rejects or miss one it accepts. Asserting against the source
+  // arrays is what makes that claim testable rather than aspirational: a token
+  // added to the vocabulary must appear here without anyone editing the panel.
+  it("documents every field and relationship token the parser accepts", async () => {
+    render(Toolbar, { ...defaultToolbarProps });
+    await user.click(screen.getByTestId("query-help-trigger"));
+    const panel = await screen.findByTestId("query-help-panel");
+
+    for (const spec of FIELD_SPECS) {
+      expect(panel, spec.name).toHaveTextContent(`${spec.name}:<value>`);
+    }
+    for (const t of REL_TOKEN_ORDER) {
+      const token = t.kind === "id" ? `${t.name}:<id>` : t.token;
+      expect(panel, token).toHaveTextContent(token);
+    }
+  });
+
+  it("names the operators and shows worked examples", async () => {
+    render(Toolbar, { ...defaultToolbarProps });
+    await user.click(screen.getByTestId("query-help-trigger"));
+    const panel = await screen.findByTestId("query-help-panel");
+
+    expect(panel).toHaveTextContent("-type:bug");
+    expect(panel).toHaveTextContent("status:todo,in-progress");
+    expect(panel).toHaveTextContent("Examples");
+  });
+
+  it("gives the trigger an accessible name", () => {
+    render(Toolbar, { ...defaultToolbarProps });
+    expect(screen.getByRole("button", { name: /query syntax help/i })).toBeInTheDocument();
   });
 });
