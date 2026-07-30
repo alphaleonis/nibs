@@ -60,6 +60,7 @@
   --color-tag-bg: var(--tag-bg);
   --color-tag-text: var(--tag-text);
   --color-tag-border: var(--tag-border);
+  --color-query-value: var(--query-value);
   --color-archive: var(--archive);
   --color-archive-border: var(--archive-border);
   --color-archive-bg-hover: var(--archive-bg-hover);
@@ -156,6 +157,17 @@
   --tag-bg: oklch(0.488 0.243 264 / 0.15);    /* indigo-500 at 15% */
   --tag-text: oklch(0.757 0.148 276);          /* indigo-300 */
   --tag-border: oklch(0.488 0.243 264 / 0.3); /* indigo-500 at 30% */
+
+  /* Filter-box value tokens (the accent half of the query highlight).
+     Deliberately an ALIAS of --tag-text, and declared only here: every theme
+     already overrides --tag-text, so this tracks each palette's accent for free
+     and cannot drift from it.
+     Why not --link: that is indigo-400 to --tag-text's indigo-300, a whole step
+     darker, and graphite never overrides --link at all — it inherits the value
+     :root picked against a much darker background, landing at 5.36:1 there
+     against --tag-text's 7.35:1. The tag accent is AAA in all four themes, and
+     it is the blue these tokens sit beside in the table. */
+  --query-value: var(--tag-text);
 
   /* Archive/delete action colors */
   --archive: oklch(0.831 0.153 84);            /* amber-300 */

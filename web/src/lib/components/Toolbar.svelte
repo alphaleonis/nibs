@@ -367,6 +367,11 @@
   // value. Free text stays muted, so it reads as the one thing the parser did not
   // act on, and invalid values keep the destructive color plus a wavy underline.
   //
+  // The value accent is `--query-value`, an alias of the tag accent rather than
+  // `--link`: link is a step darker (indigo-400 vs 300) and graphite never
+  // overrides it, so values landed at 5.36:1 there — the dimmest blue in the
+  // palette carrying the part of a token you most need to read.
+  //
   // Punctuation is foreground rather than muted for a measured reason. Muted put
   // the comma at 5.58:1 between two 14.88:1 values — the lowest-contrast glyph in
   // the brightest neighborhood, and the smallest patch of ink in the string, so it
@@ -379,7 +384,7 @@
   const SPAN_CLASS: Record<SpanKind, string> = {
     field: "text-foreground",
     operator: "text-foreground",
-    value: "text-link",
+    value: "text-query-value",
     invalid: "text-destructive underline decoration-wavy",
     freetext: "text-muted-foreground",
     whitespace: "",
@@ -394,7 +399,7 @@
   // padding. The spread must stay under half a space or neighboring chips merge
   // into one bar: the inter-token space measures 4.45px at 14px, so 1.5px a side
   // leaves ~1.45px of dark between chips (2px a side left only 0.45px).
-  const TOKEN_CHIP = "rounded-[3px] bg-link/10 ring-[1.5px] ring-link/10";
+  const TOKEN_CHIP = "rounded-[3px] bg-query-value/12 ring-[1.5px] ring-query-value/25";
 
   // Lock the display backdrop AND the token-affordance layer to the input's
   // horizontal scroll so both stay glyph-aligned as a long query scrolls.

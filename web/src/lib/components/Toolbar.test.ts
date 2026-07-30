@@ -1265,7 +1265,10 @@ describe("Toolbar — highlight overlay", () => {
     expect(operator).toHaveTextContent(":");
     expect(operator).toHaveClass("text-foreground");
     expect(value).toHaveTextContent("bug");
-    expect(value).toHaveClass("text-link");
+    // Not `text-link`: that is the palette's dimmest blue (5.36:1 in graphite,
+    // which never overrides it), and it carries the part of a token you most
+    // need to read. `--query-value` aliases the AAA tag accent.
+    expect(value).toHaveClass("text-query-value");
     // No invalid span for an all-valid query.
     expect(backdrop.querySelector('[data-kind="invalid"]')).toBeNull();
   });
