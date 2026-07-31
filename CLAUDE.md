@@ -16,7 +16,7 @@ All commands use [Task](https://taskfile.dev/) (`go-task/task`) as the task runn
 - `task codegen` - Regenerate GraphQL code: Go server (gqlgen, `go generate ./...`) + web client types (graphql-codegen client preset). Runs `go:codegen` + `web:codegen`.
 - `task nibs` - Build and run the CLI in one step (`go run .`)
 - `go test ./internal/nib/` - Run tests for a specific package
-- `cd web && npx vitest run --reporter=agent` - Run web tests only
+- `task web:install && cd web && npx vitest run --reporter=agent` - Run web tests only
 - `task demo` - Serve the web UI with the sample-project fixture (temporary copy, safe to mutate)
 - `task demo:tui` - Run the TUI with the sample-project fixture
 - `task screenshots` - Capture web UI screenshots to `web/screenshots/output/` for visual verification
@@ -72,7 +72,7 @@ The GraphQL engine runs in-process for CLI commands (`cmd/graphql.go` executes q
 - **Use shadcn tokens for all UI colors** — never use hardcoded Tailwind color classes (`gray-700`, `blue-500`, etc.) in components. Use semantic tokens: `bg-popover`, `text-muted-foreground`, `border-border`, `bg-accent`, `text-foreground`, etc. Domain-specific tokens (`bg-warning`, `text-link`, `border-tag-border`) are also registered as Tailwind utilities.
 - **When migrating to shadcn components**, replace both the container AND the internal items/styling. Don't wrap old hand-rolled markup in shadcn containers — use shadcn's item components (e.g., `DropdownMenu.CheckboxItem` instead of raw `<label><input checkbox>`), which provide consistent padding, hover states, and ARIA roles.
 - **Bits UI portals in jsdom**: shadcn components render content via portals to `document.body`. `test-setup.ts` has polyfills (ResizeObserver, MutationObserver visibility fix) that make portaled content queryable. Tests use `screen.*` queries which search the full document. DropdownMenu items use roles like `menuitemcheckbox`, `menuitemradio`, `menuitem`.
-- `web/dist/` is gitignored — run `task build` (or `cd web && npm ci && npm run build`) to generate it before `go build`.
+- `web/dist/` is gitignored — run `task build` to generate it before `go build`.
 - Preferences (filter, view level, column widths, panel width) are persisted to localStorage via `web/src/lib/storage.ts`
 - The table uses `table-layout: fixed` with an explicit computed width — column widths are enforced regardless of content
 
@@ -150,7 +150,9 @@ Before starting any new work, run `git fetch` (and `git -C .nibs fetch`) and che
 - For manual CLI testing: `task nibs` compiles and runs the CLI
 - For manual CLI testing, `task demo` serves the web UI with a temporary copy of the sample-project fixture (safe to mutate), and `task demo:tui` does the same for the TUI
 - **Test fixture dataset**: `testdata/fixtures/sample-project/` has 89 curated nibs (prefix `tnib-`) covering all types, statuses, priorities, hierarchies, and relationships. Use `fixtures.CopySampleProject(t)` from `testdata/fixtures/` to get a temporary copy for write tests. Regenerate with `bash testdata/fixtures/gen-sample-project.sh`.
-- Web UI tests: `cd web && npm install && npx vitest run --reporter=agent` (Vitest + jsdom + @testing-library/svelte). Run `npm install` first — node_modules can go stale after branch switches.
+- Web UI tests: `task web:install && cd web && npx vitest run --reporter=agent` (Vitest + jsdom + @testing-library/svelte).
+- **Never run `npm install`/`npm ci` in `web/` by hand** — use `task web:install`, which reinstalls only when `package-lock.json` changed and repairs a tree npm left broken. A hand-run install overlapping a `task` run corrupts `node_modules` (`nibs-wcx3`), and `npm install` can rewrite `package-lock.json` on top of that.
+- **Never run two `task` invocations that install at the same time** — there is no lock, deliberately: `mkdir` is not atomic under uutils coreutils (this machine) and is reportedly a no-op on Windows, so a lock there would only look like protection. Installs are rare (lockfile changes only), so the rule is cheap. This also covers `goreleaser release --snapshot` from `RELEASING.md`, whose `.goreleaser.yaml` `before` hook runs `cd web && npm ci` outside the task.
 - Web test commands require `web/` as the working directory. If cwd has drifted, `cd` to the project root's `web/` directory first.
 - **Always use `--reporter=agent`** when running vitest — it keeps output concise. Never pipe vitest through grep; read the output once.
 - `task test` runs both Go and web tests. No need to run them separately unless debugging a specific failure.
