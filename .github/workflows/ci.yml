@@ -1,8 +1,11 @@
 name: CI
 
 on:
+  # develop carries unreleased work and is where feature branches land, so CI
+  # runs there too. Without it the first CI run on any change is the merge to
+  # main that releases it, and release.yml gates on that same run (nibs-9146).
   push:
-    branches: [main]
+    branches: [main, develop]
   pull_request:
     branches: [main]
 
