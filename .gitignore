@@ -20,3 +20,5 @@ web/dist/
 /web/screenshots/output/
 /.decaf/
 /web/.installed-lock.tmp
+__pycache__/
+*.pyc

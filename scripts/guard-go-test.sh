@@ -1,88 +1,42 @@
-#!/usr/bin/env python3
-"""PreToolUse guard: reject a bare `go test` in an agent Bash command.
+#!/bin/sh
+# Shim that runs the real PreToolUse guard, scripts/guard-go-test.py.
+#
+# The guard is Python, but `.claude/settings.json` registers a `.sh` path for it
+# and the hook runner may either honor a shebang or hand the file to `bash` as a
+# plain argument. A Python file with a `.sh` name survives only the first shape;
+# in the second the shebang is just a comment and bash executes the Python source
+# as shell commands. Keeping the `.sh` entry point as genuine POSIX sh makes both
+# shapes correct, so the settings entry does not have to change. See nibs-zvz3.
+#
+# The interpreter name cannot be hardcoded either: in Git Bash on this machine
+# `python3` is a Windows App Execution Alias stub that exits nonzero without
+# running anything, while `python` is real; under WSL it is the other way around
+# and `python` does not exist. So each candidate is probed by actually running
+# it, and the first one that works wins. Probe stdin comes from /dev/null so the
+# hook's JSON payload on stdin is left intact for the guard.
+#
+# The degraded paths below exit 1 — never 0, never 2. The hook contract reads 2
+# as "block", which would stop every Bash call; stderr on exit 0 is discarded, so
+# a warning there reaches nobody. Exit 1 is non-blocking and its stderr is
+# surfaced, the only combination that both lets the call through and says the
+# guard did not run. A shell-side regex fallback is deliberately omitted: a
+# second definition of "bare go test" would drift from the Python one.
 
-`go test` run outside a memory-capped cgroup has taken down the whole WSL VM
-twice (2026-07-06 nibs-mv0i, 2026-07-29 nibs-mlss). A runaway test allocates
-faster than any `-timeout` can help: the 2026-07-29 probe hit 14.7 GB in ~19s,
-exhausted RAM plus 4 GiB of swap, and the global OOM killer took every terminal
-in init.scope with it.
+DIR=$(dirname "$0")
+GUARD="$DIR/guard-go-test.py"
 
-`scripts/go-test-capped.sh` contains that blast radius, but it is opt-in, so a
-direct `go test ./pkg -run TestX` walks straight past it. That bypass is what
-caused both incidents. This hook makes the cap non-bypassable for agent Bash
-calls.
+if [ ! -r "$GUARD" ]; then
+	echo "warning: cannot read $GUARD; the bare 'go test' guard did NOT run for this call" >&2
+	exit 1
+fi
 
-Matches `go test` only at a COMMAND position (start of line, or after a pipe /
-`;` / `&&` / `||` / subshell), optionally behind env assignments or a `timeout`
-prefix -- so prose mentioning "go test" inside a heredoc or a quoted string does
-not trip it, while `timeout 30 go test ...` (the exact 2026-07-29 command shape)
-does.
+for PY in python3 python; do
+	if command -v "$PY" >/dev/null 2>&1 && "$PY" -c '' </dev/null >/dev/null 2>&1; then
+		# exec so the guard's stdin, stderr and exit code (0 allow, 2 block) pass
+		# through unchanged.
+		exec "$PY" "$GUARD"
+	fi
+done
 
-Deliberate override, for the rare case that genuinely needs it:
-    NIBS_ALLOW_BARE_GO_TEST=1 go test ./...
-
-Exit 0 = allow, exit 2 = block (stderr is fed back to the agent).
-"""
-import json
-import re
-import sys
-
-# `go test` at a command position: line start or after a shell separator,
-# allowing VAR=val prefixes and a `timeout <dur>` wrapper.
-# A backslash-escaped separator is not a shell separator: `\|` is regex
-# alternation inside a grep/rg pattern, and blocking on it was an over-block
-# found the moment this hook went live.
-BARE_GO_TEST = re.compile(
-    r"""(?:^|(?<!\\)[\n;&|(])            # command position, not an escaped one
-        \s*
-        (?:[A-Za-z_][A-Za-z0-9_]*=\S*\s+)*   # optional env assignments
-        (?:timeout\s+\S+\s+)?                # optional timeout wrapper
-        go\s+test\b
-    """,
-    re.VERBOSE | re.MULTILINE,
-)
-
-MESSAGE = """Blocked: bare `go test` is not allowed in this project.
-
-Run Go tests through the memory-capped harness instead:
-
-    task test                                      # the full gate
-    scripts/go-test-capped.sh ./internal/graph/ -run TestFoo -v    # targeted
-
-Why: an uncapped `go test` has killed the WSL VM twice by exhausting RAM and
-swap before any `-timeout` could fire (nibs-mv0i, nibs-mlss). The capped runner
-confines a runaway to its own cgroup (MemoryMax + MemorySwapMax=0), where an OOM
-is a clean exit 137 instead of a machine-wide teardown.
-
-This matters most for mutation probes that break a TERMINATION guard: the mutant
-does not fail an assertion, it allocates without bound.
-
-If you genuinely need to bypass it, prefix the command with
-NIBS_ALLOW_BARE_GO_TEST=1 and say why."""
-
-
-def main() -> int:
-    try:
-        payload = json.load(sys.stdin)
-    except (json.JSONDecodeError, ValueError):
-        return 0  # never block on a malformed payload
-
-    if payload.get("tool_name") != "Bash":
-        return 0
-
-    command = payload.get("tool_input", {}).get("command", "")
-    if not command:
-        return 0
-
-    if "NIBS_ALLOW_BARE_GO_TEST=1" in command:
-        return 0
-
-    if BARE_GO_TEST.search(command):
-        print(MESSAGE, file=sys.stderr)
-        return 2
-
-    return 0
-
-
-if __name__ == "__main__":
-    sys.exit(main())
+echo "warning: no working Python interpreter found (tried python3, python); the bare 'go test' guard did NOT run for this call" >&2
+exit 1
