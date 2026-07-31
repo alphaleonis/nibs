@@ -189,6 +189,12 @@ func (c *Core) IsBlocking(nibID string) bool {
 // is: the function cannot reach the config. Resolution stays two map lookups at
 // worst plus the one that fetches the blocker, and never scans.
 //
+// The loader now canonicalizes stored ids (canonicalize.go), so in practice
+// every entry arriving here is already full and the resolution is a single
+// exact hit. It is kept because this is a pure map function with no such
+// guarantee of its own: a caller assembling a map by hand, or Core.Create
+// invoked directly with a short id, still reaches it.
+//
 // nibID itself is looked up exactly, not normalized: it names the subject, and
 // every production call arrives through Core.IsBlocked carrying an id read off
 // a stored nib (the graph blocked-filter predicate and the TUI row builders).

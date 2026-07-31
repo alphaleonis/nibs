@@ -391,10 +391,14 @@ func TestFixBrokenLinks(t *testing.T) {
 // need a link spelled some particular way use it, because the writing
 // resolvers normalize an id before storing it — a short spelling only ever
 // reaches the store from a hand-edited file.
+// writeLinkNibFile writes a nib file by hand, the only way a short-form link id
+// reaches the store. The explicit `version: 1` keeps the v0->v1 migration from
+// rewriting the file during Load, so a test asserting the file's bytes is
+// asserting what the code under test did to it and nothing else.
 func writeLinkNibFile(t *testing.T, nibsDir, id, status, frontMatter string) string {
 	t.Helper()
 	path := filepath.Join(nibsDir, id+"--test.md")
-	body := "---\ntitle: " + id + "\nstatus: " + status + "\ntype: task\n" + frontMatter + "---\n\nBody.\n"
+	body := "---\nversion: 1\ntitle: " + id + "\nstatus: " + status + "\ntype: task\n" + frontMatter + "---\n\nBody.\n"
 	if err := os.WriteFile(path, []byte(body), 0644); err != nil {
 		t.Fatalf("write %s: %v", path, err)
 	}
@@ -419,8 +423,9 @@ func hashFile(t *testing.T, path string) [32]byte {
 // defect this pins was a write — --fix deleted a live blocked_by edge from the
 // file, after which the nib was handed out as ready work.
 //
-// The links are left spelled as they were written; a resolvable link is simply
-// not an issue, and --fix does not canonicalize stored ids.
+// The FILE keeps the spelling it was written with. The store resolves short
+// ids to their full form on load, but that is in-memory only — no read path,
+// and not --fix, may push it back to disk.
 func TestFixBrokenLinksLeavesResolvableShortIDsOnDisk(t *testing.T) {
 	core, nibsDir := mustLoadPrefixedCore(t)
 
@@ -460,11 +465,13 @@ func TestFixBrokenLinksLeavesResolvableShortIDsOnDisk(t *testing.T) {
 	if !core.IsBlocked("nibs-dep") {
 		t.Error(`IsBlocked("nibs-dep") = false, want true — its blocker "blk" resolves to the in-progress nibs-blk`)
 	}
+	// In memory the ids are canonical (nibs-lzch), which is what makes the edge
+	// visible from both ends — while the file above is untouched.
 	if dep, err := core.Get("nibs-dep"); err != nil {
 		t.Fatalf(`Get("nibs-dep"): %v`, err)
-	} else if dep.Parent != "par" || len(dep.BlockedBy) != 1 || dep.BlockedBy[0] != "blk" {
-		t.Errorf("stored links = parent %q, blocked_by %v; want them left as written (%q, %v)",
-			dep.Parent, dep.BlockedBy, "par", []string{"blk"})
+	} else if dep.Parent != "nibs-par" || len(dep.BlockedBy) != 1 || dep.BlockedBy[0] != "nibs-blk" {
+		t.Errorf("stored links = parent %q, blocked_by %v; want them resolved (%q, %v)",
+			dep.Parent, dep.BlockedBy, "nibs-par", []string{"nibs-blk"})
 	}
 }
 
@@ -530,8 +537,8 @@ func TestFixBrokenLinksStillRemovesUnresolvableLinks(t *testing.T) {
 	if err != nil {
 		t.Fatalf(`Get("nibs-dep"): %v`, err)
 	}
-	if len(dep.BlockedBy) != 1 || dep.BlockedBy[0] != "blk" {
-		t.Errorf("nibs-dep blocked_by = %v, want [blk] — only the resolvable entry survives", dep.BlockedBy)
+	if len(dep.BlockedBy) != 1 || dep.BlockedBy[0] != "nibs-blk" {
+		t.Errorf("nibs-dep blocked_by = %v, want [nibs-blk] — only the resolvable entry survives, in its canonical form", dep.BlockedBy)
 	}
 	if result := core.CheckAllLinks(); result.HasIssues() {
 		t.Errorf("issues remain after --fix: broken=%+v self=%+v", result.BrokenLinks, result.SelfLinks)
