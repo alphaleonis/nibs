@@ -932,3 +932,106 @@ func TestSignalOnlySkipPathRaceClean(t *testing.T) {
 	close(stop)  // signal the drainer to exit
 	drain.Wait() // join the drainer so it can't outlive the test
 }
+
+// The two tests below cover nibs-oakc: an external edit to a nib file must reach
+// watchers on every platform.
+//
+// Every nib write commits through atomicWriteFile, i.e. a rename over the
+// existing file. Windows reports that replacing rename on the TARGET path as
+// REMOVE followed by CREATE (verified with fsnotify v1.9.0 on Windows 11); both
+// halves land inside one 100 ms debounce window and are OR-ed into a single op.
+// So on Windows the routine shape of an ordinary edit is Remove|Create on a path
+// whose file is very much present — and a removal branch that swallows the whole
+// entry once it sees the file still there drops the edit on the floor, leaving
+// the TUI and web UI showing stale data until a full reload.
+
+// TestWatcherReplacingRenameBatchReportsUpdate drives the Windows batch shape
+// directly, so it pins the behavior on every platform rather than only where the
+// filesystem happens to produce it. The batch is fed as a single entry carrying
+// both bits, exactly as watchLoop's `pendingChanges[name] |= op` accumulates it.
+func TestWatcherReplacingRenameBatchReportsUpdate(t *testing.T) {
+	const nibID = "rrn1"
+	const newTitle = "Edited By Another Process"
+
+	core, nibsDir, filename := watchingCore(t, nibID)
+	abs := filepath.Join(nibsDir, filename)
+
+	// Precondition: the on-disk edit is a real change, so a handler that ignores
+	// the batch entirely cannot pass by accident.
+	before, err := core.Get(nibID)
+	if err != nil {
+		t.Fatalf("Get before: %v", err)
+	}
+	if before.Title == newTitle || before.Priority == "high" {
+		t.Fatalf("precondition: nib already matches the post-edit state (%+v)", before)
+	}
+
+	// The external edit itself, committed the way every writer commits: a temp
+	// file renamed over the target.
+	edited := fmt.Sprintf("---\ntitle: %s\nstatus: todo\npriority: high\n---\n\nbody\n", newTitle)
+	if err := atomicWriteFile(abs, []byte(edited), 0o644); err != nil {
+		t.Fatalf("atomic write: %v", err)
+	}
+
+	setWatching(core)
+	ch, unsub := core.Subscribe()
+	defer unsub()
+
+	core.handleChanges(map[string]fsnotify.Op{abs: fsnotify.Remove | fsnotify.Create})
+
+	got, err := core.Get(nibID)
+	if err != nil {
+		t.Fatalf("nib evicted by a replacing rename: Get(%q) = %v", nibID, err)
+	}
+	if got.Title != newTitle {
+		t.Errorf("stored Title = %q, want %q — the external edit never reached the store", got.Title, newTitle)
+	}
+	if got.Priority != "high" {
+		t.Errorf("stored Priority = %q, want %q — the external edit never reached the store", got.Priority, "high")
+	}
+
+	events := collectNibEvents(t, ch, nibID, 150*time.Millisecond)
+	assertNoTypeFor(t, events, nibID, EventDeleted)
+	assertHasTypeFor(t, events, nibID, EventUpdated)
+}
+
+// TestWatcherObservesExternalAtomicWrite is the end-to-end counterpart: a real
+// fsnotify watch over a real replacing rename. It asserts only what a subscriber
+// observes, so it reproduces natively on whichever platform emits the offending
+// event shape (Windows today) and stays a valid regression guard elsewhere.
+func TestWatcherObservesExternalAtomicWrite(t *testing.T) {
+	const nibID = "eaw1"
+	const newTitle = "Externally Edited"
+
+	core, nibsDir := setupTestCore(t)
+	b := createTestNib(t, core, nibID, "Original Title", "todo")
+	abs := filepath.Join(nibsDir, filepath.Base(b.Path))
+
+	if err := core.StartWatching(); err != nil {
+		t.Fatalf("StartWatching() error = %v", err)
+	}
+	defer func() { _ = core.StopWatching() }()
+
+	ch, unsub := core.Subscribe()
+	defer unsub()
+
+	// Stand in for a second process (`nibs set <id> -p high`) rewriting the file.
+	edited := fmt.Sprintf("---\ntitle: %s\nstatus: todo\npriority: high\n---\n\nbody\n", newTitle)
+	if err := atomicWriteFile(abs, []byte(edited), 0o644); err != nil {
+		t.Fatalf("atomic write: %v", err)
+	}
+
+	// Generous relative to the 100 ms debounce: the point is whether the edit ever
+	// arrives, not how promptly.
+	events := collectNibEvents(t, ch, nibID, 2*time.Second)
+	assertNoTypeFor(t, events, nibID, EventDeleted)
+	assertHasTypeFor(t, events, nibID, EventUpdated)
+
+	got, err := core.Get(nibID)
+	if err != nil {
+		t.Fatalf("Get after external write: %v", err)
+	}
+	if got.Title != newTitle {
+		t.Errorf("stored Title = %q, want %q — the watcher never applied the external edit", got.Title, newTitle)
+	}
+}

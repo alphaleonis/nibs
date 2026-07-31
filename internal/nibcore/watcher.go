@@ -422,15 +422,21 @@ func (c *Core) handleChanges(changes map[string]fsnotify.Op) {
 		// reporting watcher-level errors that today's callers don't expect.
 		id, _ := nib.ParseFilename(filename, c.configPrefix())
 
-		// Handle removes/renames (file is gone from this path)
-		if op&fsnotify.Remove != 0 || op&fsnotify.Rename != 0 {
+		// Handle removes/renames, but only where the file really is gone from this
+		// path. A removal bit on a path that still holds a file is not a removal at
+		// all, and must fall through to the create/write handling below.
+		//
+		// This is the common case on Windows, not a corner: every nib write commits
+		// through atomicWriteFile, i.e. a rename over the existing file, and
+		// ReadDirectoryChangesW reports that replacing rename on the TARGET path as
+		// REMOVE followed by CREATE. Both halves land in one debounce window and
+		// watchLoop ORs them into a single op, so an ordinary external edit arrives
+		// here as Remove|Create on a file that exists. Swallowing the entry on the
+		// removal branch dropped the edit entirely, leaving the TUI and web UI stale
+		// until a full reload (nibs-oakc).
+		if (op&fsnotify.Remove != 0 || op&fsnotify.Rename != 0) && !c.fileExists(path) {
 			stored, exists := c.nibs[id]
 			if !exists {
-				continue
-			}
-
-			// Check if the file actually exists (rename might be followed by create)
-			if c.fileExists(path) {
 				continue
 			}
 
