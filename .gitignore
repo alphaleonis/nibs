@@ -19,3 +19,4 @@ web/dist/
 
 /web/screenshots/output/
 /.decaf/
+/web/.installed-lock.tmp

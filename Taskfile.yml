@@ -33,27 +33,126 @@ tasks:
 
   web:codegen:
     desc: Regenerate the web GraphQL types (graphql-codegen client preset)
+    deps: [web:install]
     dir: web
     cmds:
-      # Self-heal a fresh checkout so `task codegen` works standalone (the
-      # normal build/test paths install via web:build first).
-      - '[ -x node_modules/.bin/graphql-codegen ] || npm ci'
       - npm run codegen
+
+  web:install:
+    desc: Install the web dependencies, but only when they are missing, stale, or broken
+    dir: web
+    # status: entries are ANDed — the install is skipped only when the tree was
+    # built from the lockfile we have now AND both health probes pass.
+    #
+    # node_modules/.installed-lock.json is a byte copy of the package-lock.json a
+    # completed, verified-healthy install was made from. Comparing against it
+    # answers "is this tree built from THIS lockfile?" rather than merely "is it
+    # intact?", and it answers it from evidence the install itself left behind.
+    # The stamp deliberately lives *inside* node_modules so it dies with the tree;
+    # a checksum cached outside it (Task's own sources: bookkeeping) survives
+    # `rm -rf node_modules` and can assert freshness about a tree that no longer
+    # exists. It also subsumes npm's own .package-lock.json marker, since it is
+    # written only after that install passed the health checks below.
+    #
+    # The health probes catch a tree npm left broken (nibs-wcx3): `npm ci` has
+    # been observed reporting success while leaving node_modules/.bin empty,
+    # which surfaces much later as `sh: 1: vite: not found` (exit 127).
+    #
+    # `cmp` has no Go-native fallback in Task's embedded shell, so on a machine
+    # without it (notably Windows without Git Bash) this probe fails rather than
+    # compares. That direction is the safe one: a failed probe means "not up to
+    # date", so the install runs. The cost is a redundant reinstall every build,
+    # never a stale tree.
+    status:
+      - cmp -s package-lock.json node_modules/.installed-lock.json
+      - test -f node_modules/.bin/vite
+      - test -f node_modules/.bin/graphql-codegen
+    # DO NOT run two `task` invocations that both install at the same time.
+    #
+    # There is deliberately no lock here. An earlier revision serialized installs
+    # with a `mkdir` lock directory, on the usual assumption that `mkdir` fails
+    # atomically when the directory exists. That assumption does not hold on the
+    # toolchains this project runs on:
+    #
+    #   * `/usr/bin/mkdir` on this machine is uutils coreutils 0.8.0 (the Ubuntu
+    #     26.04 default). Measured on ext4: 49 of 300 concurrent pairs had BOTH
+    #     processes exit 0, against 0 of 300 for the raw mkdir(2) syscall in the
+    #     same directory. The kernel is fine; the binary is not.
+    #   * [Unverified] On Windows, Task's Go-native `mkdir` reportedly prints
+    #     "file exists" and still exits 0, so the wait loop never engages at all.
+    #
+    # A lock that silently fails to exclude is worse than none: it invites exactly
+    # the false confidence that let a concurrent install corrupt a verification run
+    # while this fix was being developed. What actually keeps the gate reliable is
+    # the staleness stamp and the health probes above — they make installs rare
+    # (only when package-lock.json changes) and self-healing when npm leaves a
+    # broken tree. Concurrency is handled by not doing it. See nibs-wcx3.
+    cmds:
+      - cmd: |
+          # Snapshot the lockfile BEFORE installing, and stamp from the snapshot
+          # afterwards. `npm ci` reads package-lock.json at its start, so stamping
+          # from the file as it stands at the *end* would certify this tree as
+          # matching whatever the lockfile happens to say by then. A change landing
+          # mid-install (a branch switch, a rebase, a hand-run `npm install`) would
+          # be recorded as installed when it was not, and every later run would
+          # report "up to date" against dependencies it never installed. Stamping
+          # from the snapshot fails the other way: the stamp mismatches, and the
+          # next run reinstalls.
+          cp package-lock.json .installed-lock.tmp
+          # Delete node_modules ourselves before installing. `npm ci` discards it
+          # wholesale anyway, so nothing is lost. The failure being mitigated is
+          # `ENOTEMPTY: directory not empty, rmdir .../node_modules/...` raised from
+          # inside npm's own delete; nibs-wcx3 records that it occurs with no
+          # concurrency at all, just less often. [Unverified] The mechanism — npm's
+          # parallel delete racing itself, which one sequential pass cannot do — is
+          # conjecture rather than an established root cause; a third party creating
+          # entries during the walk (file watcher, editor, indexer) would raise the
+          # same error against a sequential delete too. Scope item 3 of nibs-wcx3 is
+          # closed as "trigger removed", not "cause identified".
+          rm -rf node_modules
+          # --loglevel=error silences npm's warn-level transitive-dep deprecation
+          # chatter (e.g. node-domexception, pulled 6 levels deep under
+          # @graphql-codegen/cli) so `task build`/`task test` output stays warning-free.
+          npm ci --no-audit --no-fund --loglevel=error
+          # Probe the same set status: declares healthy. Checking vite alone lets a
+          # tree missing graphql-codegen exit this task clean and die later in
+          # `npm run build`'s prebuild hook with `graphql-codegen: not found`
+          # (exit 127) — the exact confusing failure this task exists to prevent.
+          if [ ! -f node_modules/.bin/vite ] || [ ! -f node_modules/.bin/graphql-codegen ]; then
+            echo "task: npm ci left node_modules/.bin unpopulated; repairing with npm rebuild" >&2
+            npm rebuild --loglevel=error
+          fi
+          if [ ! -f node_modules/.bin/vite ] || [ ! -f node_modules/.bin/graphql-codegen ]; then
+            rm -f .installed-lock.tmp
+            echo "task: node_modules/.bin is still unpopulated after npm rebuild — the web toolchain is unusable" >&2
+            echo "task: retry from a clean tree with: rm -rf web/node_modules && task web:install" >&2
+            echo "task: if that fails too, investigate by hand with no other 'task' run active" >&2
+            exit 1
+          fi
+          # Stamp last, and only here. Every earlier exit leaves the tree unstamped,
+          # so a failed or still-broken install can never be mistaken for one built
+          # from this lockfile.
+          cp .installed-lock.tmp node_modules/.installed-lock.json
+          rm -f .installed-lock.tmp
 
   web:build:
     desc: Build the web UI (Svelte + Vite)
-    # Only the Go gqlgen step is a build-order dep here (it threads `go generate`
-    # into `task build`). The web GraphQL types are regenerated by `npm run
-    # build` itself via the `prebuild` npm hook (→ `npm run codegen`), after
-    # `npm ci` has installed the codegen toolchain — so no separate web:codegen
-    # dep is needed and node_modules is guaranteed present when it runs.
-    deps: [go:codegen]
+    # web:install guarantees a complete node_modules before anything is run out
+    # of it. go:codegen threads `go generate` into `task build`, but it is a
+    # command rather than a second dep because Task runs deps concurrently, and
+    # `go generate ./...` walks the whole repo — web/node_modules included — and
+    # was observed failing with
+    # `pattern ./...: open web/node_modules/@graphql-tools/wrap: no such file or directory`
+    # when run as a parallel dep alongside web:install's delete (nibs-wcx3).
+    # Sequencing it after the install removes the overlap.
+    #
+    # The web GraphQL types are regenerated by `npm run build` itself via the
+    # `prebuild` npm hook (→ `npm run codegen`), which finds the codegen
+    # toolchain already installed by web:install — so no web:codegen dep either.
+    deps: [web:install]
     dir: web
     cmds:
-      # --loglevel=error silences npm's warn-level transitive-dep deprecation
-      # chatter (e.g. node-domexception, pulled 6 levels deep under
-      # @graphql-codegen/cli) so `task build`/`task test` output stays warning-free.
-      - npm ci --no-audit --no-fund --loglevel=error
+      - task: go:codegen
       - npm run build
 
   web:check:
@@ -62,6 +161,7 @@ tasks:
     # GraphQL types itself via the `precheck` npm hook (→ `npm run codegen`)
     # before svelte-check runs, so the generated src/lib/gql/ types are always
     # fresh. Wired into the `test` gate (svelte-check is clean; see nibs-pg6i).
+    deps: [web:install]
     dir: web
     cmds:
       - npm run check
@@ -102,7 +202,7 @@ tasks:
       # clone-under-lock guard, the store-level freeze guard) are only meaningful
       # under the detector; a plain `go test` degrades them to trivial checks.
       - task: test:race
-      - cd web && npm run check
+      - task: web:check
       - cd web && npx vitest run --reporter=agent
 
   test:race:
