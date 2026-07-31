@@ -67,13 +67,14 @@ func (r *LinkCheckResult) TotalIssues() int {
 // Resolution also decides self versus broken: a target that resolves back to
 // the nib holding it is a self link however it was spelled.
 //
-// Only the forward direction resolves ids. The cycle pass below, the reverse
-// traversals (findIncomingLinksInMap, isBlockingInMap) and the setParent cycle
-// guard all walk exact map keys. So a short-form link resolves when followed
-// from the nib holding it and is invisible from the other end: the parent
-// query answers, the children query does not. This check reports nothing for
-// that nib, because the link is not broken — it is half-traversable, which is
-// a different defect and is tracked separately.
+// The cycle pass below, the reverse traversals (findIncomingLinksInMap,
+// isBlockingInMap) and the setParent cycle guard all walk exact map keys, and
+// are correct because every id in the store is already full: the loader
+// resolves short-form link ids once, at the disk-read boundary (see
+// canonicalize.go). Resolving again here is what keeps this check honest for
+// the ids canonicalization deliberately leaves verbatim — an id naming no nib
+// is broken however it is spelled, and the report names the spelling the file
+// holds, which is what `--fix` would drop.
 func CheckAllLinksInMap(nibs map[string]*nib.Nib, projectRoot, configPrefix string) *LinkCheckResult {
 	result := &LinkCheckResult{
 		BrokenLinks:     []BrokenLink{},

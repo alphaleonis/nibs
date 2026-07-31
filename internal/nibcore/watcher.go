@@ -413,6 +413,12 @@ func (c *Core) handleChanges(changes map[string]fsnotify.Op) {
 
 	var events []NibEvent
 
+	// Whether this batch put an id in the store that was not there before. A new
+	// id can make a previously-unresolvable short-form link elsewhere resolve, so
+	// it widens the canonicalization pass below from this batch's own nibs to the
+	// whole store. Nothing else in a batch can create that possibility.
+	var addedIDs bool
+
 	for path, op := range changes {
 		filename := filepath.Base(path)
 		// Intentionally ignore the parse error: an unparseable filename yields
@@ -586,6 +592,7 @@ func (c *Core) handleChanges(changes map[string]fsnotify.Op) {
 					NibID: newNib.ID,
 				})
 			} else {
+				addedIDs = true
 				events = append(events, NibEvent{
 					Type:  EventCreated,
 					Nib:   newNib,
@@ -594,6 +601,23 @@ func (c *Core) handleChanges(changes map[string]fsnotify.Op) {
 			}
 		}
 	}
+
+	// Resolve short-form link ids against the post-batch store (see
+	// canonicalize.go). This runs AFTER the whole batch, not per file as it is
+	// loaded: two files arriving together are visited in map order, so a
+	// dependent can be read before the target it names is in the store.
+	//
+	// The index maps each changed nib to every event carrying its payload, so a
+	// nib canonicalized as part of its own arrival has that event's payload
+	// swapped for the canonicalized pointer instead of collecting a second,
+	// contradictory event. It doubles as the candidate set for the narrow pass.
+	touched := make(map[string][]int, len(events))
+	for i, e := range events {
+		if e.Nib != nil {
+			touched[e.NibID] = append(touched[e.NibID], i)
+		}
+	}
+	events = c.canonicalizeLinksAfterBatchLocked(events, touched, addedIDs)
 
 	// Snapshot every payload while the lock is still held: each event carries a
 	// Clone, not the live c.nibs pointer, so a subscriber's payload fields cannot

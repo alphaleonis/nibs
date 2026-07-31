@@ -260,6 +260,13 @@ func (c *Core) loadFromDisk() error {
 		c.logWarn("migrated %d nib(s): priority 'deferred' -> 'low'", deferredMigrated)
 	}
 
+	// Resolve every short-form link id to its full form now that the whole map
+	// exists (see canonicalize.go for why this is the single normalization
+	// point). Runs BEFORE the v0 migration so that migration's exact
+	// c.nibs[targetID] lookup finds a legacy `blocking:` target named by short
+	// id instead of warning it out of existence.
+	c.canonicalizeAllLinksLocked()
+
 	// Migrate v0 nibs to v1 (single-side blocking). This runs after the walk so
 	// every blocking target is already in c.nibs. v0+deferred nibs are converged
 	// here rather than in loadNibReconciledLocked (which gates persistence on
@@ -938,6 +945,16 @@ func (c *Core) computeStoredETag(storedNib *nib.Nib) (string, error) {
 	// filename (not the front matter). Use the stored id so the render — and thus
 	// the etag — matches what the caller computed from the same stored nib.
 	b.ID = storedNib.ID
+	// Resolve short-form link ids the same way the store did when it loaded this
+	// file (see canonicalize.go). Without this the two renders diverge on every
+	// hand-edited short-form nib — the stored nib carries `parent: nibs-par`, the
+	// bare parse `parent: par` — and its if-match Update would conflict forever
+	// against an unchanged file. Resolving both sides keeps the two spellings
+	// canonically equivalent, in the same spirit as the `deferred`->`low`
+	// priority normalization, while genuine content divergence still mismatches.
+	if set := canonicalizeLinksInMap(c.nibs, b, c.configPrefix()); set.changed {
+		set.applyTo(b)
+	}
 	return b.ETag(), nil
 }
 
