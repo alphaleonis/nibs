@@ -1,8 +1,11 @@
 name: CI
 
 on:
+  # develop carries unreleased work and is where feature branches land, so CI
+  # runs there too. Without it the first CI run on any change is the merge to
+  # main that releases it, and release.yml gates on that same run (nibs-9146).
   push:
-    branches: [main]
+    branches: [main, develop]
   pull_request:
     branches: [main]
 
@@ -23,8 +26,25 @@ jobs:
       - uses: actions/setup-node@v6
         with:
           node-version: "22"
-      - run: go generate ./...
-      - run: cd web && npm ci && npm run build
+      # The web build runs through Task so the web:install gate executes on
+      # every CI run instead of being bypassed by a hand-written `npm ci`
+      # (nibs-9146). `task web:build` is web:install → go:codegen (which is
+      # `go generate ./...`) → `npm run build`, so it replaces both steps.
+      # A runner is always fresh, so this is the cold-install path only.
+      #
+      # Task comes from `go install` rather than a third-party action: setup-go
+      # above already supplies the toolchain and puts $(go env GOPATH)/bin on
+      # PATH on every runner OS (its addBinToPath, called unconditionally — if
+      # a future setup-go drops that, `task` stops resolving and this needs a
+      # $GITHUB_PATH step). `@latest` floats, matching mise.toml's
+      # `task = "latest"`; the v3 import path bounds it to that major line.
+      - run: go install github.com/go-task/task/v3/cmd/task@latest
+      - run: task web:build
+      # The Go steps stay direct instead of going through `task test`, which is
+      # not equivalent to this job: it runs -race on every OS (see below), runs
+      # web:check (the lint job owns that), and shells out to
+      # scripts/go-test-capped.sh, which needs bash and degrades to an uncapped
+      # run wherever there is no user systemd manager.
       - run: go build ./...
       - run: go test -count=1 ./...
       # Run the concurrency-critical packages under the race detector so a
@@ -45,7 +65,11 @@ jobs:
       - uses: actions/setup-node@v6
         with:
           node-version: "22"
-      - run: go generate ./...
-      - run: cd web && npm ci && npm run build
-      - run: cd web && npm run check
+      # Through Task for the same reason as the test job (nibs-9146). web:build
+      # is not only for coverage here: embed.go embeds web/dist, so the package
+      # does not load for golangci-lint without it. web:install is a dep of
+      # web:check too, but skips there — web:build's stamp is still fresh.
+      - run: go install github.com/go-task/task/v3/cmd/task@latest
+      - run: task web:build
+      - run: task web:check
       - uses: golangci/golangci-lint-action@v9

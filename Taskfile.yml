@@ -87,6 +87,17 @@ tasks:
     # the staleness stamp and the health probes above — they make installs rare
     # (only when package-lock.json changes) and self-healing when npm leaves a
     # broken tree. Concurrency is handled by not doing it. See nibs-wcx3.
+    #
+    # "Not doing it" includes not retrying a canceled run too soon. Signaling
+    # Task's PID alone does not stop it: the current command finishes, every
+    # remaining command still runs, and Task exits 0; signaling the process
+    # group does abort it (Task v3.50.0 on Linux/WSL; [Unverified] on Windows).
+    # A run canceled by subprocess.terminate() or child_process.kill(), which
+    # signal the PID by definition, can therefore still be inside `npm ci` here,
+    # and an immediate retry becomes the second concurrent install. [Unverified]
+    # Whether a CI step timeout or an agent harness signals the PID or the group
+    # is untested either way. Confirm the orphan has exited first — CLAUDE.md's
+    # Testing section carries the per-platform check. See nibs-uur9.
     cmds:
       - cmd: |
           # Snapshot the lockfile BEFORE installing, and stamp from the snapshot
