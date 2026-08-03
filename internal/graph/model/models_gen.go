@@ -137,7 +137,7 @@ type NibFilter struct {
 	Tags []string `json:"tags,omitempty"`
 	// Exclude nibs with any of these tags
 	ExcludeTags []string `json:"excludeTags,omitempty"`
-	// Tri-state: true keeps nibs with a parent, false keeps exactly the parentless ones, null does not filter
+	// Tri-state: true keeps nibs whose parent link resolves to a nib, false keeps exactly the ones with no parent, null does not filter. A nib whose parent link names no nib counts as parentless, matching how the parent field and siblingId treat it — parentId still reports the unresolvable stored id, so a nib selected by hasParent:false may have a non-null parentId
 	HasParent *bool `json:"hasParent,omitempty"`
 	// Include only nibs with this specific parent ID
 	ParentID *string `json:"parentId,omitempty"`

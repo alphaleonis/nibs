@@ -76,13 +76,26 @@ func ApplyFilter(ctx context.Context, nibs []*nib.Nib, filter *model.NibFilter, 
 	result = filterBySliceField(result, filter.Tags, func(b *nib.Nib) []string { return b.Tags })
 	result = excludeBySliceField(result, filter.ExcludeTags, func(b *nib.Nib) []string { return b.Tags })
 
-	// Parent predicate filters
-	result = filterByPredicate(result, filter.HasParent, func(b *nib.Nib) bool { return b.Parent != "" })
+	// Parent predicate filters. Parent-ness is "the link resolves", not "the
+	// field is non-empty" — see resolvedParentID for why, and for the surfaces
+	// this has to agree with.
+	result = filterByPredicate(result, filter.HasParent, func(b *nib.Nib) bool {
+		return resolvedParentID(b, reader) != ""
+	})
 	if filter.ParentID != nil && *filter.ParentID != "" {
-		// Normalize the parent id like every other *ID filter: the stored
-		// b.Parent is a full (prefixed) id, so a short --parent must be resolved
-		// first or it silently matches nothing. Unknown target short-circuits to
-		// nil (shared contract for all *ID filters).
+		// Normalize the parent id like every other *ID filter: the loader
+		// canonicalizes stored link ids, so b.Parent is a full (prefixed) id and
+		// a short --parent must be resolved first or it silently matches
+		// nothing. Unknown target short-circuits to nil (shared contract for all
+		// *ID filters).
+		//
+		// Matching the raw b.Parent agrees with resolvedParentID for any nib that
+		// came through that canonicalization pass: a resolvable link is stored in
+		// full form there, so only a link naming the resolved target can match.
+		// On a reader that skipped the pass the two part ways — a raw short-form
+		// link fails this comparison while resolvedParentID, and so hasParent:true,
+		// still resolves it. A link naming no nib matches neither, under either
+		// reading.
 		fullID, ok := resolveFilterID(reader, *filter.ParentID)
 		if !ok {
 			return nil
@@ -237,12 +250,12 @@ func filterByMentionedByID(ctx context.Context, nibs []*nib.Nib, sourceID string
 // follows a short-form link (`parent: e1`) by prepending the configured
 // prefix, so banking the raw spelling would put an id that no nib answers to
 // on the chain while the walk carried on past it, reporting a hierarchy with a
-// missing rung. That state is not hypothetical and not repairable from here:
-// the write paths always store the normalized form, but a hand-edited file can
-// hold a short one, and CheckAllLinksInMap deliberately does not report it (it
-// is half-traversable, not broken). By the same rule a parent that cannot be
-// fetched contributes nothing — the walk ends there and the chain stops,
-// rather than failing the query.
+// missing rung. Through a loaded store the loader has already canonicalized
+// every resolvable link id, so the raw and resolved spellings coincide; banking
+// the resolved one costs nothing there and keeps the walk correct for a reader
+// that has not run that pass. By the same rule a parent that cannot be fetched
+// contributes nothing — the walk ends there and the chain stops, rather than
+// failing the query.
 //
 // Ancestry is always resolved through reader, never from the candidate slice
 // the caller is filtering. ApplyFilter runs over genuinely narrowed slices
@@ -280,20 +293,35 @@ func parentChain(b *nib.Nib, reader NibReader) []string {
 	return chain
 }
 
-// resolvedParentID returns b's parent as the rest of the GraphQL surface
-// presents it: the parent's resolved ID, or "" when b has no parent AND when
-// b's parent link does not resolve. nibResolver.Parent collapses those two
-// cases to nil for exactly the same reason, and fetchSiblings branches on that
-// nil to take its root-siblings path — so comparing raw b.Parent strings
-// instead would make a nib with a broken parent link present as a root
-// everywhere the object graph is walked while being invisible to a root-level
-// siblingId query.
+// resolvedParentID returns b's parent as the rest of the nib surface presents
+// it: the parent's resolved ID, or "" when b has no parent AND when b's parent
+// link names no nib.
 //
-// Resolving also means a short-form link is compared under its resolved
-// spelling. That closes half the gap to fetchSiblings, not all of it:
-// findIncomingLinksInMap (which backs GetSortedSiblings) still does exact
-// map-key matching, so the two surfaces remain out of step on short-form
-// links. Closing that is tracked in nibs-8fpg.
+// This is the project's one definition of "has a parent". Every decision point
+// that needs the rule calls this function, so `grep resolvedParentID` is the
+// authoritative list of them — do not restate the rationale below at a call
+// site, and do not enumerate the call sites here. Both forms of duplication go
+// stale silently, since nothing couples prose to the code.
+//
+// The rule has one home because a surface that re-derives it from the raw
+// b.Parent string stays self-consistent while disagreeing with every other
+// surface. A dangling link is what separates the two readings: the stored field
+// is non-empty, but nothing can be fetched through it. Under the raw reading
+// such a nib presents as a root everywhere the object graph is walked, yet
+// reports as parented to a filter, is missing from a root-level sibling query,
+// and is offered as a root's sibling by one surface while being refused as that
+// root's reorder anchor by another.
+//
+// One caller is deliberately not routed through here: the parentId branch
+// matches the raw b.Parent, which agrees with this helper for any nib that came
+// through the loader's canonicalization pass. See that branch for what it does
+// on a reader that has not.
+//
+// Resolving is also what compares a short-form link under its resolved
+// spelling. Through a loaded store that case does not arise: the loader
+// canonicalizes every resolvable link id to its full form at the disk-read
+// boundary. Resolving anyway keeps the helper correct for a nib that has not
+// been through that pass.
 func resolvedParentID(b *nib.Nib, reader NibReader) string {
 	if b.Parent == "" {
 		return ""
@@ -359,7 +387,7 @@ func filterByDescendantID(nibs []*nib.Nib, targetID string, reader NibReader) []
 // matching on the target's empty parent instead of needing its own case.
 // Both sides go through resolvedParentID, so root-ness means the same thing
 // here as it does to nibResolver.Parent and fetchSiblings; see that helper for
-// what the two surfaces still disagree on.
+// the rule and why it has a single home.
 // targetID must already be a full (normalized) ID — callers resolve via
 // resolveFilterID before invoking. Returns nil if the target nib cannot be
 // fetched (defensive: see filterByBlockingID).
