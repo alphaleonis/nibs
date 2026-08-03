@@ -77,25 +77,27 @@ func ApplyFilter(ctx context.Context, nibs []*nib.Nib, filter *model.NibFilter, 
 	result = excludeBySliceField(result, filter.ExcludeTags, func(b *nib.Nib) []string { return b.Tags })
 
 	// Parent predicate filters. Parent-ness is "the link resolves", not "the
-	// field is non-empty" — see resolvedParentID for why, and for the surfaces
+	// field is non-empty" — see resolvedParent for why, and for the surfaces
 	// this has to agree with.
 	result = filterByPredicate(result, filter.HasParent, func(b *nib.Nib) bool {
 		return resolvedParentID(b, reader) != ""
 	})
 	if filter.ParentID != nil && *filter.ParentID != "" {
 		// Normalize the parent id like every other *ID filter: the loader
-		// canonicalizes stored link ids, so b.Parent is a full (prefixed) id and
+		// canonicalizes stored link ids, so b.Parent is normally a full (prefixed) id and
 		// a short --parent must be resolved first or it silently matches
 		// nothing. Unknown target short-circuits to nil (shared contract for all
 		// *ID filters).
 		//
-		// Matching the raw b.Parent agrees with resolvedParentID for any nib that
-		// came through that canonicalization pass: a resolvable link is stored in
-		// full form there, so only a link naming the resolved target can match.
-		// On a reader that skipped the pass the two part ways — a raw short-form
-		// link fails this comparison while resolvedParentID, and so hasParent:true,
-		// still resolves it. A link naming no nib matches neither, under either
-		// reading.
+		// Matching the raw b.Parent agrees with resolvedParentID for any nib whose
+		// link that pass rewrote: it is stored in full form afterwards, so only a
+		// link naming the resolved target can match. The two part ways wherever
+		// the pass left a resolvable link alone — a reader that never ran it, or a
+		// store state it does not cover, such as a short-form link the pass
+		// matched exactly whose target a later delete promoted to its prefixed
+		// twin. There a raw short-form link fails this comparison while
+		// resolvedParentID, and so hasParent:true, still resolves it. A link
+		// naming no nib matches neither, under either reading.
 		fullID, ok := resolveFilterID(reader, *filter.ParentID)
 		if !ok {
 			return nil
@@ -243,19 +245,16 @@ func filterByMentionedByID(ctx context.Context, nibs []*nib.Nib, sourceID string
 }
 
 // parentChain returns the IDs on b's parent chain, nearest ancestor first,
-// walking up to the root.
+// walking up to the root. Every id is a RESOLVED id — the ID of a nib that was
+// actually fetched — and a link that resolves to nothing ends the chain; see
+// WalkParentChain for both rules.
 //
-// Every id in the chain is a RESOLVED id — the ID of a nib that was actually
-// fetched — never the spelling stored in the child's parent field. Reader.Get
-// follows a short-form link (`parent: e1`) by prepending the configured
-// prefix, so banking the raw spelling would put an id that no nib answers to
-// on the chain while the walk carried on past it, reporting a hierarchy with a
-// missing rung. Through a loaded store the loader has already canonicalized
-// every resolvable link id, so the raw and resolved spellings coincide; banking
-// the resolved one costs nothing there and keeps the walk correct for a reader
-// that has not run that pass. By the same rule a parent that cannot be fetched
-// contributes nothing — the walk ends there and the chain stops, rather than
-// failing the query.
+// The visited set is per-call and seeded with b.ID, so each candidate gets an
+// independent walk and b's own ID is never in its result. Sharing one set
+// across candidates would be unsound here for a second reason beyond the
+// seeding: a later candidate's walk would stop at an ancestor an earlier one
+// banked, truncating its chain before the target could be reached or ruled out.
+// Any memoization must cache the per-id ANSWER, not the visited flag.
 //
 // Ancestry is always resolved through reader, never from the candidate slice
 // the caller is filtering. ApplyFilter runs over genuinely narrowed slices
@@ -265,48 +264,30 @@ func filterByMentionedByID(ctx context.Context, nibs []*nib.Nib, sourceID string
 // intermediate. Any memoization added here must keep reader as the source of
 // ancestry: indexing the candidate slice instead would truncate every chain at
 // the first filtered-out ancestor, silently and with the suite still green.
-//
-// b's own ID is never in the result: the visited set is seeded with it, so a
-// cycle passing back through b stops there. Termination is a SEPARATE guard —
-// the seed alone does not provide it — and comes from the `seen[parent.ID]`
-// check-and-mark pair inside the loop: every iteration either records a new
-// resolved id or breaks, so the set strictly grows and the walk is bounded by
-// the number of nibs in the store. Cycles should not exist (the mutation
-// resolvers reject them), but a hand-edited nib file can still produce one,
-// and an unguarded `for parent != ""` walk hangs on it.
 func parentChain(b *nib.Nib, reader NibReader) []string {
-	var chain []string
-	seen := map[string]bool{b.ID: true}
-	parentID := b.Parent
-	for parentID != "" {
-		parent, err := reader.Get(parentID)
-		if err != nil {
-			break
-		}
-		if seen[parent.ID] {
-			break
-		}
-		seen[parent.ID] = true
-		chain = append(chain, parent.ID)
-		parentID = parent.Parent
+	var ids []string
+	for _, ancestor := range liveParentChain(b, reader, map[string]bool{b.ID: true}) {
+		ids = append(ids, ancestor.ID)
 	}
-	return chain
+	return ids
 }
 
-// resolvedParentID returns b's parent as the rest of the nib surface presents
-// it: the parent's resolved ID, or "" when b has no parent AND when b's parent
-// link names no nib.
+// resolvedParent returns the nib b's parent link resolves to, or nil when b has
+// no parent AND when the link names no nib.
 //
-// This is the project's one definition of "has a parent". Every decision point
-// with a reader calls this function, so `grep resolvedParentID` is the
-// authoritative list of them — do not restate the rationale below at a call
-// site, and do not enumerate the call sites here. Both forms of duplication go
-// stale silently, since nothing couples prose to the code.
+// This function body is the project's one definition of "has a parent".
+// resolvedParentID is its ID-shaped wrapper, and is what most callers reach
+// for — so finding every decision point means asking for references to BOTH
+// names, not just this one. Do not restate the rationale below at a call site.
 //
-// One surface cannot call it: the TUI decides reorder scope from a tree it has
-// already fetched, with no reader in hand, so tui.treeResolvedParentID mirrors
-// the rule against tree membership. It is the only mirror, and it documents
-// what its equivalence depends on.
+// Deciding parent-ness from the raw b.Parent string instead is the mistake this
+// exists to prevent, and prose has not been able to prevent it: a surface that
+// needs the rule without a reader in hand has to re-derive it against whatever
+// it does have, and every such re-derivation is a place the rule can drift.
+// Each one is expected to say what its equivalence rests on. This comment
+// deliberately does not enumerate them — successive attempts to keep a list
+// here have each gone stale, which is why enforcement is being moved out of
+// prose entirely.
 //
 // The rule has one home because a surface that re-derives it from the raw
 // b.Parent string stays self-consistent while disagreeing with every other
@@ -318,21 +299,39 @@ func parentChain(b *nib.Nib, reader NibReader) []string {
 // root's reorder anchor by another.
 //
 // One caller is deliberately not routed through here: the parentId branch
-// matches the raw b.Parent, which agrees with this helper for any nib that came
-// through the loader's canonicalization pass. See that branch for what it does
-// on a reader that has not.
+// matches the raw b.Parent, which agrees with this helper for any nib whose
+// stored link the loader's canonicalization pass rewrote. See that branch for
+// the states where the two part ways.
 //
 // Resolving is also what compares a short-form link under its resolved
-// spelling. Through a loaded store that case does not arise: the loader
-// canonicalizes every resolvable link id to its full form at the disk-read
-// boundary. Resolving anyway keeps the helper correct for a nib that has not
-// been through that pass.
-func resolvedParentID(b *nib.Nib, reader NibReader) string {
+// spelling. Canonicalization makes the two spellings coincide for every link
+// that was resolvable at load or when its target arrived — but that is a
+// load-time and watcher-batch invariant, not a store invariant. Later store
+// mutations can reintroduce the divergence, notably a delete that promotes a
+// bare-token id to its prefixed twin. Resolving on every call is what keeps the
+// helper correct in that state, and on a reader that never ran the pass at all.
+//
+// The returned pointer is the reader's LIVE store pointer (see NibReader.Get):
+// a caller whose result outlives the store lock must snapshot it, see
+// NibReader.GetSnapshot for the copy-on-write invariant.
+func resolvedParent(b *nib.Nib, reader NibReader) *nib.Nib {
 	if b.Parent == "" {
-		return ""
+		return nil
 	}
 	parent, err := reader.Get(b.Parent)
 	if err != nil {
+		return nil
+	}
+	return parent
+}
+
+// resolvedParentID is resolvedParent in ID shape — the parent's resolved ID, or
+// "" when b has no parent AND when b's parent link names no nib — which is how
+// the rest of the nib surface presents parent-ness. See resolvedParent for the
+// rule itself, why it has one home, and how to audit the surfaces bound to it.
+func resolvedParentID(b *nib.Nib, reader NibReader) string {
+	parent := resolvedParent(b, reader)
+	if parent == nil {
 		return ""
 	}
 	return parent.ID
@@ -526,6 +525,16 @@ outer:
 // includeAncestors walks the parent chain for every nib in the result and adds
 // any missing ancestor nibs.  This ensures the client can always build a
 // complete tree hierarchy even when search or filters matched only leaves.
+//
+// One visited set spans the WHOLE batch, seeded with every input nib's ID: an
+// ancestor already in the result — or already added while completing an earlier
+// nib — is neither re-added nor walked through a second time. That batch-wide
+// lifetime is what keeps the output free of duplicates, and it is the opposite
+// of the per-call set parentChain needs; see WalkParentChain.
+//
+// The added ancestors are the reader's live store pointers, exactly as the
+// input nibs are. queryResolver.Nibs — this function's only caller — snapshots
+// the whole result before handing it to gqlgen, so nothing detaches here.
 func includeAncestors(nibs []*nib.Nib, reader NibReader) []*nib.Nib {
 	present := make(map[string]bool, len(nibs))
 	for _, b := range nibs {
@@ -534,16 +543,7 @@ func includeAncestors(nibs []*nib.Nib, reader NibReader) []*nib.Nib {
 
 	var extras []*nib.Nib
 	for _, b := range nibs {
-		parentID := b.Parent
-		for parentID != "" && !present[parentID] {
-			present[parentID] = true
-			parent, err := reader.Get(parentID)
-			if err != nil {
-				break
-			}
-			extras = append(extras, parent)
-			parentID = parent.Parent
-		}
+		extras = append(extras, liveParentChain(b, reader, present)...)
 	}
 
 	if len(extras) == 0 {

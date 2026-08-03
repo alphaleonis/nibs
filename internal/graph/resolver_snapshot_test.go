@@ -1021,8 +1021,9 @@ func nibIndexByID(nibs []*nib.Nib, id string) int {
 // TestNibsFilterRaceAgainstRemoveLinksTo reproduces the write-side data race in
 // nibs-pyei. The Nibs query pipeline reads b.Parent off the LIVE c.nibs pointers
 // off-lock — ApplyFilter's HasParent predicate, which reaches the field through
-// resolvedParentID's opening emptiness test (internal/graph/filters.go) — while
-// Core.RemoveLinksTo mutates b.Parent under c.mu (internal/nibcore/link_health.go).
+// the opening emptiness test of resolvedParent (internal/graph/filters.go), the
+// function resolvedParentID delegates to — while Core.RemoveLinksTo mutates
+// b.Parent under c.mu (internal/nibcore/link_health.go).
 // That unsynchronized read of b.Parent is what makes this a detector, so a
 // change removing it from the predicate's path retires the probe with it.
 // On the old in-place code those two accesses touch the same b.Parent word with

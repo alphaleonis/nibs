@@ -451,26 +451,19 @@ func fetchSiblings(ctx context.Context, resolver *graph.Resolver, b *nib.Nib, fi
 // bfsChainAncestors walks parent links up to `depth` steps and returns
 // the chain in encounter order (closest ancestor first). depth < 0 means
 // "until root".
+//
+// The step is the parent resolver, which decides three things for this walk
+// (see graph.ParentStep): a link naming no nib reports no parent, so the chain
+// ends at that rung exactly as it does for the hierarchy filters; the nibs it
+// yields are detached snapshots, safe to hand to the projection layer; and a
+// resolver error aborts the walk rather than truncating the chain silently.
+// The visited set is per-call and seeded with b.ID, so b is never reported as
+// its own ancestor and a cycle stops when it comes back around.
 func bfsChainAncestors(ctx context.Context, resolver *graph.Resolver, b *nib.Nib, depth int) ([]*nib.Nib, error) {
-	var out []*nib.Nib
-	seen := map[string]bool{b.ID: true}
-	cur := b
-	for steps := 0; depth < 0 || steps < depth; steps++ {
-		p, err := resolver.Nib().Parent(ctx, cur)
-		if err != nil {
-			return nil, err
-		}
-		if p == nil {
-			break
-		}
-		if seen[p.ID] {
-			break // cycle-safe: stop if loop
-		}
-		seen[p.ID] = true
-		out = append(out, p)
-		cur = p
+	step := func(cur *nib.Nib) (*nib.Nib, error) {
+		return resolver.Nib().Parent(ctx, cur)
 	}
-	return out, nil
+	return graph.WalkParentChain(b, step, map[string]bool{b.ID: true}, depth)
 }
 
 // bfsDescendants performs BFS over children edges from b up to depth.

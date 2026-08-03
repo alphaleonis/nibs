@@ -607,6 +607,44 @@ func TestRelCommand_Ancestors_Depth2(t *testing.T) {
 	}
 }
 
+// TestRelCommand_Ancestors_DanglingLinkEndsChain pins that a parent link naming
+// no nib ends the ancestor chain at that rung rather than being skipped over or
+// failing the command — the resolved-parent rule, applied by the same walk the
+// hierarchy filters use.
+func TestRelCommand_Ancestors_DanglingLinkEndsChain(t *testing.T) {
+	files := map[string]string{
+		"root--r.md": "---\ntitle: Root\nstatus: in-progress\ntype: milestone\n---\n",
+		// Hand-edited: mid's parent names a nib that does not exist, so the
+		// chain from leaf must stop at mid and never reach root.
+		"mid--m.md":  "---\ntitle: Mid\nstatus: in-progress\ntype: epic\nparent: ghost\norder: a0\n---\n",
+		"leaf--l.md": "---\ntitle: Leaf\nstatus: todo\ntype: task\nparent: mid\norder: a0\n---\n",
+	}
+	nibsDir := setupRelCobraTest(t, files)
+	out := runRelJSON(t, "--nibs-path", nibsDir, "rel", "leaf", "--rel", "ancestors", "--depth", "all", "--json")
+	env := decodeRelEnvelope(t, out)
+	order := relEnvIDOrder(env)
+	if len(order) != 1 || order[0] != "mid" {
+		t.Errorf("ancestors of leaf = %v, want [mid] (the chain ends at the dangling link)", order)
+	}
+}
+
+// TestRelCommand_Ancestors_CycleTerminates pins that a hand-edited parent cycle
+// terminates: the walk stops at the first rung it has already visited, and the
+// starting nib is never reported as its own ancestor.
+func TestRelCommand_Ancestors_CycleTerminates(t *testing.T) {
+	files := map[string]string{
+		"a--a.md": "---\ntitle: A\nstatus: todo\ntype: task\nparent: b\norder: a0\n---\n",
+		"b--b.md": "---\ntitle: B\nstatus: todo\ntype: task\nparent: a\norder: a0\n---\n",
+	}
+	nibsDir := setupRelCobraTest(t, files)
+	out := runRelJSON(t, "--nibs-path", nibsDir, "rel", "a", "--rel", "ancestors", "--depth", "all", "--json")
+	env := decodeRelEnvelope(t, out)
+	order := relEnvIDOrder(env)
+	if len(order) != 1 || order[0] != "b" {
+		t.Errorf("ancestors of a = %v, want [b] (the walk stops when it reaches a again)", order)
+	}
+}
+
 func TestRelCommand_Descendants_DepthAll(t *testing.T) {
 	nibsDir := setupRelCobraTest(t, ancestryFixture)
 	out := runRelJSON(t, "--nibs-path", nibsDir, "rel", "root", "--rel", "descendants", "--depth", "all", "--json")

@@ -243,10 +243,13 @@ func hierarchyFixture() *stubReader {
 }
 
 // TestParentChain pins what parentChain banks for each shape of parent link.
-// It is the unit the three hierarchy predicates are built on, and the shapes
-// below are not reachable through ApplyFilter: a dangling or short-form link
-// can only be created by hand-editing a nib file, and an unresolvable filter
-// target short-circuits before any walk starts.
+// It is the unit the three hierarchy predicates are built on. The dangling and
+// cyclic shapes reach a loaded store only by hand-editing a nib file, and an
+// unresolvable filter target short-circuits before any walk starts. The raw
+// short-form shape needs no hand-editing: canonicalization leaves a link that
+// already resolves exactly alone, so a bare-token nib sitting alongside its
+// prefixed twin keeps one, and deleting the bare token promotes that link to
+// the twin without rewriting the stored spelling.
 //
 // The load-bearing rule: every id in the chain is a RESOLVED id, so the chain
 // only ever names nibs that exist. A link that resolves under a different
@@ -265,6 +268,7 @@ func TestParentChain(t *testing.T) {
 		shortLinker,
 		{ID: "nibs-t1", Title: "Task", Parent: "nibs-f1"},
 		orphan,
+		{ID: "nibs-d1", Title: "Below a dangling link", Parent: "nibs-orphan"},
 		selfParent,
 		{ID: "nibs-c1", Title: "C1", Parent: "nibs-c2"},
 		{ID: "nibs-c2", Title: "C2", Parent: "nibs-c1"},
@@ -287,6 +291,10 @@ func TestParentChain(t *testing.T) {
 		{"a short-form rung stays resolved for chains passing through it",
 			"nibs-t1", []string{"nibs-f1", "nibs-e1", "nibs-m1"}},
 		{"a dangling link contributes nothing", "nibs-orphan", nil},
+		// The rung below the dangling link is still reported: the walk ends AT
+		// the unresolvable link rather than failing, so everything reached
+		// before it stands.
+		{"a dangling link mid-chain ends the chain there", "nibs-d1", []string{"nibs-orphan"}},
 		{"a self-parented nib yields an empty chain (the seed excludes it)", "nibs-self", nil},
 		{"a cycle terminates and never contains self", "nibs-c1", []string{"nibs-c2"}},
 	}
@@ -393,12 +401,13 @@ func TestApplyFilterHasParentResolvesParentLink(t *testing.T) {
 //     the two spellings are siblings.
 //
 // Both are injected straight into the reader here, which pins the filter's own
-// behavior rather than the loader's. Only the short form is a shape a loaded
-// store canonicalizes away before a filter can see it; a dangling link survives
-// load verbatim and does reach the filter through a real Load. The loaded-store
-// paths are covered separately — the dangling one by
-// TestDanglingParentClassifiedAlikeAcrossSurfaces, the short-form one by
-// cmd.TestSiblingSurfacesAgreeOnShortFormParentLink.
+// behavior rather than the loader's — the filter has to be right on either
+// shape regardless of how it arrived. Canonicalization rewrites a short-form
+// link whose target it can resolve, so that spelling is rarer through a real
+// Load than a dangling one, which survives verbatim; it is not impossible
+// there, since a link that already resolves exactly is left alone (see
+// resolvedParent). TestDanglingParentClassifiedAlikeAcrossSurfaces covers the
+// dangling shape through a real Load.
 func TestApplyFilterSiblingIDResolvesParentLinks(t *testing.T) {
 	m1 := &nib.Nib{ID: "nibs-m1", Title: "Root"}
 	r2 := &nib.Nib{ID: "nibs-r2", Title: "Second root"}
@@ -972,4 +981,68 @@ func TestIncludeAncestors(t *testing.T) {
 			t.Errorf("got %d nibs, want 1", len(got))
 		}
 	})
+}
+
+// TestIncludeAncestorsChainShapes pins how ancestor completion walks the
+// awkward link shapes — the same set TestParentChain pins for the filter walk —
+// plus the property unique to this site: its visited set spans the WHOLE batch,
+// so ancestry banked while completing one nib is neither re-walked nor re-added
+// while completing the next. assertNibIDs compares sorted id lists, so a
+// re-added ancestor fails as a length mismatch.
+//
+// As in TestParentChain, the dangling and cyclic shapes reach a loaded store
+// only by hand-editing a file, while the raw short-form one survives
+// canonicalization on its own — see there for the store state that keeps it.
+func TestIncludeAncestorsChainShapes(t *testing.T) {
+	m1 := &nib.Nib{ID: "nibs-m1", Title: "Milestone"}
+	e1 := &nib.Nib{ID: "nibs-e1", Title: "Epic", Parent: "nibs-m1"}
+	// Two children of the same epic: completing the first banks e1 and m1, and
+	// completing the second must find them already banked.
+	t1 := &nib.Nib{ID: "nibs-t1", Title: "Task 1", Parent: "nibs-e1"}
+	t2 := &nib.Nib{ID: "nibs-t2", Title: "Task 2", Parent: "nibs-e1"}
+	// f1 reaches that same epic through the short form `parent: e1`, so the
+	// batch only stays deduplicated if the walk banks the RESOLVED id.
+	f1 := &nib.Nib{ID: "nibs-f1", Title: "Short-form parent link", Parent: "e1"}
+	orphan := &nib.Nib{ID: "nibs-orphan", Title: "Dangling parent link", Parent: "nibs-ghost"}
+	d1 := &nib.Nib{ID: "nibs-d1", Title: "Below a dangling link", Parent: "nibs-orphan"}
+	selfParent := &nib.Nib{ID: "nibs-self", Title: "Self-parented", Parent: "nibs-self"}
+	c1 := &nib.Nib{ID: "nibs-c1", Title: "C1", Parent: "nibs-c2"}
+	c2 := &nib.Nib{ID: "nibs-c2", Title: "C2", Parent: "nibs-c1"}
+
+	all := []*nib.Nib{m1, e1, t1, t2, f1, orphan, d1, selfParent, c1, c2}
+	byID := make(map[string]*nib.Nib, len(all))
+	for _, b := range all {
+		byID[b.ID] = b
+	}
+	reader := &stubReader{nibs: byID, allNibs: all, prefix: "nibs-"}
+
+	tests := []struct {
+		name  string
+		input []*nib.Nib
+		want  []string
+	}{
+		{"adds the whole chain of a single leaf",
+			[]*nib.Nib{t1}, []string{"nibs-t1", "nibs-e1", "nibs-m1"}},
+		{"a chain shared by two nibs is added once for the batch",
+			[]*nib.Nib{t1, t2}, []string{"nibs-t1", "nibs-t2", "nibs-e1", "nibs-m1"}},
+		{"a short-form link does not re-add an ancestor banked under its resolved id",
+			[]*nib.Nib{t1, f1}, []string{"nibs-t1", "nibs-f1", "nibs-e1", "nibs-m1"}},
+		{"a short-form link banks the ancestor a later full-form link then finds",
+			[]*nib.Nib{f1, t1}, []string{"nibs-f1", "nibs-t1", "nibs-e1", "nibs-m1"}},
+		{"a dangling link adds nothing", []*nib.Nib{orphan}, []string{"nibs-orphan"}},
+		{"a dangling link mid-chain ends the chain there",
+			[]*nib.Nib{d1}, []string{"nibs-d1", "nibs-orphan"}},
+		{"a self-parented nib adds nothing", []*nib.Nib{selfParent}, []string{"nibs-self"}},
+		{"a cycle terminates and adds only the other rung",
+			[]*nib.Nib{c1}, []string{"nibs-c1", "nibs-c2"}},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			// Copy the input so the append inside includeAncestors can never
+			// write through into the shared fixture slice.
+			got := includeAncestors(append([]*nib.Nib(nil), tt.input...), reader)
+			assertNibIDs(t, got, tt.want)
+		})
+	}
 }
