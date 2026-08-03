@@ -62,6 +62,35 @@ func TestFullPromptTeachesNewSurface(t *testing.T) {
 	}
 }
 
+// relSynopsisLine matches the guide's verb-surface entry for rel — the one
+// written with the <relation> placeholder, as opposed to the worked examples
+// that name a concrete relation.
+var relSynopsisLine = regexp.MustCompile(`(?m)^nibs rel <id>.*<relation>.*$`)
+
+// TestFullPromptRelSynopsisMatchesRelArity holds the full guide to the same
+// rule as the cheat sheet: the verb surface brackets --rel exactly when
+// omitting it is legal, and the guide says which relation an omitted --rel
+// queries. The guide sits beside `nibs list [filters]` in the same code block,
+// so an unbracketed --rel there reads as a requirement.
+func TestFullPromptRelSynopsisMatchesRelArity(t *testing.T) {
+	out := renderedFullPrompt(t)
+	synopsis := relSynopsisLine.FindString(out)
+	if synopsis == "" {
+		t.Fatalf("full guide has no 'nibs rel <id> … <relation>' synopsis line:\n%s", out)
+	}
+	required := relRequiresRelFlag(t)
+	bracketed := strings.Contains(synopsis, "[--rel")
+
+	switch {
+	case required && bracketed:
+		t.Errorf("full guide brackets --rel as optional, but the rel command requires it: %q", synopsis)
+	case !required && !bracketed:
+		t.Errorf("full guide presents --rel as required, but omitting it queries %s; bracket it: %q", relDefaultKind, synopsis)
+	case !required && !statesRelDefault(out):
+		t.Errorf("full guide never names %q as what an omitted --rel returns", relDefaultKind)
+	}
+}
+
 // TestFullPromptEnumsRender asserts the config-driven enum loops populated (the
 // template rendered with real type/status/priority values, not an empty range).
 func TestFullPromptEnumsRender(t *testing.T) {

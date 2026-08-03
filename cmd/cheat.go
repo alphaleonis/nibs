@@ -31,6 +31,9 @@ var cheatCmd = &cobra.Command{
 // The close line's default reason is interpolated from closeDefaultStatus — the
 // same const `nibs close --as` defaults to and `nibs prime` renders — so the
 // three agent-facing surfaces cannot disagree about what omitting --as records.
+// The rel entry names relDefaultKind the same way, and brackets --rel because
+// omitting it is legal: a grammar that reads as required is how the bare form
+// gets run unawares, and its default answers plausibly rather than erroring.
 func cheatSheet(cfg *config.Config) string {
 	var b strings.Builder
 	// The STATUS line lists the statuses by group rather than in one flat run:
@@ -46,8 +49,8 @@ func cheatSheet(cfg *config.Config) string {
 
 READ   get <id…>          nib document (default); -f/--view id|ref|card|full; --json → {nib}
        list [filters]     TSV "# <n> nibs"; --json → {nibs,count,truncated}; -c count; -q ids only
-       rel <id> --rel R   related nibs, same envelope. R: parent,children,siblings,blocking,blocked-by,
-                          mentions-out/in,ancestors,descendants,*-transitive,neighbours[-active]
+       rel <id> [--rel R] related nibs, same envelope. R (default %s): parent,children,siblings,blocking,
+                          blocked-by,mentions-out/in,ancestors,descendants,*-transitive,neighbours[-active]
        recipes            context [id] · plan <id> · roadmap · list --ready
 WRITE  new "<title>" -t T create; also -s -p -e --parent --blocked-by --tag --after/--before/--first
        set <id>           metadata/links; --clear priority|estimate|parent; --remove-tag/-blocked-by/…
@@ -70,6 +73,7 @@ FILTER list/rel show OPEN only by default (closed statuses hidden; header notes 
        descendants -t bug' is already open — no post-filter. -c/-q honor the open default (--all for totals).
 RULE   On any nibs error: STOP, find the root cause, never silently retry.
 `,
+		relDefaultKind,
 		closeDefaultStatus,
 		strings.Join(cfg.TypeNames(), ", "),
 		statusGroupOpen, strings.Join(cfg.OpenStatusNames(), "/"),

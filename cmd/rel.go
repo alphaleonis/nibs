@@ -63,6 +63,11 @@ const (
 	relNeighboursActive      relKind = "neighbours-active"
 )
 
+// relDefaultKind is the relation an omitted --rel queries. It is one constant
+// because the flag's usage string, the long help, and the cheat sheet all state
+// it, and none of them may say something the parse does not do.
+const relDefaultKind = relNeighbours
+
 // directRels lists the 7 atomic direct relationships in the canonical
 // order used by --rel neighbours expansion.
 var directRels = []relKind{
@@ -120,10 +125,10 @@ var relTable = map[relKind]relSpec{
 // entries inside a single value. Returns the validated list (meta rels are
 // left intact; expandRels resolves them to their atomic constituents).
 //
-// When --rel is empty, default to `neighbours`.
+// When --rel is empty, default to relDefaultKind.
 func parseRels(raw []string) ([]relKind, error) {
 	if len(raw) == 0 {
-		raw = []string{string(relNeighbours)}
+		raw = []string{string(relDefaultKind)}
 	}
 	var out []relKind
 	seen := map[relKind]bool{}
@@ -638,6 +643,11 @@ through the shared field-set engine — the related set is rendered as the same
   mentions-out-transitive, mentions-in-transitive
   neighbours (= all 7 direct rels), neighbours-active (= neighbours with --open)
 
+--rel is optional. Omitting it applies the default neighbours, so a bare
+'nibs rel <id>' returns every directly related nib at once. That set includes
+siblings, and a root nib's siblings are every other root — name the relation
+explicitly whenever the question is about one direction.
+
 When several rels are requested the related nibs are unioned into one deduped
 list (first-encountered order across rels), then projected.
 
@@ -874,7 +884,8 @@ filter-on-singular validation error does not fire here.`,
 }
 
 func init() {
-	relCmd.Flags().StringArrayVar(&relKinds, "rel", nil, "Relationship to query (repeatable; comma-separated OK)")
+	relCmd.Flags().StringArrayVar(&relKinds, "rel", nil,
+		fmt.Sprintf("Relationship to query (repeatable; comma-separated OK) (default %s)", relDefaultKind))
 	relCmd.Flags().StringVar(&relDepth, "depth", "", "Depth for transitive rels: N (positive integer) or 'all' (default 1)")
 	relCmd.Flags().StringVar(&relOrder, "order", "", "Order the results (supports: topo)")
 	relCmd.Flags().BoolVar(&relFlat, "flat", false, "Deprecated no-op: the related set is always a single deduped list")

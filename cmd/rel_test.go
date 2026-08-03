@@ -6,11 +6,14 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"regexp"
+	"slices"
 	"sort"
 	"strings"
 	"testing"
 
 	"github.com/alphaleonis/nibs/internal/output"
+	"github.com/spf13/cobra"
 	"github.com/spf13/pflag"
 )
 
@@ -71,6 +74,38 @@ func resetRelFlags() {
 			f.Changed = false
 		})
 	}
+}
+
+// relRequiresRelFlag reports whether `nibs rel` genuinely demands --rel. Two
+// things would make it required: the flag marked required at registration, or a
+// parse that turns an omitted --rel into no relation at all. The grammar
+// surfaces are asserted against this rather than against a literal, so
+// documentation that says --rel is optional cannot outlive the arity it
+// describes.
+func relRequiresRelFlag(t *testing.T) bool {
+	t.Helper()
+	f := relCmd.Flags().Lookup("rel")
+	if f == nil {
+		t.Fatalf("rel command has no --rel flag")
+	}
+	if vals, ok := f.Annotations[cobra.BashCompOneRequiredFlag]; ok && slices.Contains(vals, "true") {
+		return true
+	}
+	rels, err := parseRels(nil)
+	return err != nil || len(rels) == 0
+}
+
+// relDefaultDoc matches text that names relDefaultKind AS the default: the word
+// "default" and the relation name in the same sentence, in either order. Mere
+// containment of the name would pass on every surface that lists the accepted
+// relations, which is exactly the state this guards against.
+var relDefaultDoc = regexp.MustCompile(`(?i)(?:default[^.\n]{0,60}` + regexp.QuoteMeta(string(relDefaultKind)) +
+	`|` + regexp.QuoteMeta(string(relDefaultKind)) + `[^.\n]{0,60}default)`)
+
+// statesRelDefault reports whether the given help text tells a caller what an
+// omitted --rel resolves to.
+func statesRelDefault(text string) bool {
+	return relDefaultDoc.MatchString(text)
 }
 
 // relFixture is the standard fixture for rel tests. It covers:
@@ -355,6 +390,54 @@ func TestRelCommand_NeighboursActive_ExcludesCompleted(t *testing.T) {
 	env := decodeRelEnvelope(t, out)
 	if relEnvIDs(env)["c3"] {
 		t.Errorf("neighbours-active should drop completed c3, got %v", relEnvIDOrder(env))
+	}
+}
+
+// --- The omitted --rel default ---
+
+// TestRelCommand_OmittedRel_RunsTheDocumentedDefault proves relDefaultKind is
+// the relation an omitted --rel actually queries, not merely the one the help
+// text claims: a bare invocation must return exactly what naming that kind
+// returns. The documentation surfaces are asserted against the same constant,
+// so a default changed in parseRels alone breaks this rather than leaving the
+// help quietly wrong.
+func TestRelCommand_OmittedRel_RunsTheDocumentedDefault(t *testing.T) {
+	nibsDir := setupRelCobraTest(t, hierarchyFixture)
+	// p1 is queried because it relates in more than one direction — three
+	// children plus one root-level sibling. A nib whose only relation is the
+	// default's would return the same set for several defaults, and the
+	// comparison would prove nothing about which one ran.
+	explicit := relEnvIDOrder(decodeRelEnvelope(t,
+		runRelJSON(t, "--nibs-path", nibsDir, "rel", "p1", "--rel", string(relDefaultKind), "--all", "--json")))
+	resetRelFlags()
+	bare := relEnvIDOrder(decodeRelEnvelope(t,
+		runRelJSON(t, "--nibs-path", nibsDir, "rel", "p1", "--all", "--json")))
+
+	if len(bare) == 0 {
+		t.Fatalf("bare 'nibs rel p1' returned nothing; the comparison below would be vacuous")
+	}
+	if !slices.Equal(bare, explicit) {
+		t.Errorf("bare 'nibs rel p1' = %v, but '--rel %s' = %v; the documented default is not the one the command applies",
+			bare, relDefaultKind, explicit)
+	}
+}
+
+// TestRelHelpDocumentsTheOmittedRelDefault asserts `nibs rel --help` says what
+// omitting --rel returns. Omitting it yields a plausible-looking related set
+// instead of an error, so a caller who never learns the default reads someone
+// else's relationships as this nib's. Every other default on the command
+// (--depth, --view, the output mode) is stated; this one is the least
+// guessable.
+func TestRelHelpDocumentsTheOmittedRelDefault(t *testing.T) {
+	if relRequiresRelFlag(t) {
+		t.Skip("--rel is required, so there is no omitted-flag default to document")
+	}
+	usage := relCmd.Flags().Lookup("rel").Usage
+	if !statesRelDefault(usage) {
+		t.Errorf("--rel usage string never names %q as the default: %q", relDefaultKind, usage)
+	}
+	if !statesRelDefault(relCmd.Long) {
+		t.Errorf("rel long help never names %q as the default an omitted --rel resolves to:\n%s", relDefaultKind, relCmd.Long)
 	}
 }
 

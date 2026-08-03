@@ -45,7 +45,7 @@ nibs get <id> [id...]             # the nib document (YAML front matter + body);
 nibs get <id> --view card --json  # {"nib":{…}} single-read contract (card fields); use --view full for everything
 nibs list [filters]               # TSV rows under a "# <n> nibs" header (ref fields)
 nibs list [filters] --json        # {"nibs":[…],"count":N,"truncated":<bool>} envelope
-nibs rel <id> --rel <relation>    # related nibs in the SAME envelope as list (see Relationships)
+nibs rel <id> [--rel <relation>]  # related nibs in the SAME envelope as list (see Relationships)
 ```
 Recipe / composite views: `nibs context [id]`, `nibs plan <id>`, `nibs roadmap`, `nibs list --ready`.
 
@@ -129,7 +129,7 @@ nibs rel <id> --rel children --order topo        # children topologically sorted
 nibs rel <id> --rel neighbours-active            # all 7 direct rels, open nibs only (= neighbours with --open)
 nibs rel <id> --rel mentions-in                  # nibs whose bodies mention <id>
 ```
-Relations: `parent, children, siblings, blocking, blocked-by, mentions-out, mentions-in`, their transitive forms (`ancestors, descendants, blockers-transitive, blocks-transitive, mentions-out-transitive, mentions-in-transitive`), and `neighbours` / `neighbours-active`. `--rel` is repeatable / comma-separated (results are unioned and deduped). Filters (`--status/--type/--priority/--estimate/--tag`, their `--no-…` pairs, `--open`/`--all`) apply where they make sense; like `list`, **`rel` is open by default** and `-s`/`--no-status` take the `open`/`closed` groups (see Statuses). Add `-f`/`--view` to project the related nibs. `nibs list --mentions <id>` / `--mentioned-by <id>` filter a *list* by mention relation.
+Relations: `parent, children, siblings, blocking, blocked-by, mentions-out, mentions-in`, their transitive forms (`ancestors, descendants, blockers-transitive, blocks-transitive, mentions-out-transitive, mentions-in-transitive`), and `neighbours` / `neighbours-active`. `--rel` is repeatable / comma-separated (results are unioned and deduped), and optional: omitting it applies the default `neighbours`, so a bare `nibs rel <id>` returns every directly related nib — including siblings, which for a root nib means every other root. Name the relation whenever the question is about one direction. Filters (`--status/--type/--priority/--estimate/--tag`, their `--no-…` pairs, `--open`/`--all`) apply where they make sense; like `list`, **`rel` is open by default** and `-s`/`--no-status` take the `open`/`closed` groups (see Statuses). Add `-f`/`--view` to project the related nibs. `nibs list --mentions <id>` / `--mentioned-by <id>` filter a *list* by mention relation.
 
 Topological ordering (`--order topo`, valid on children/descendants/blocking-family) reads each child's `blocked_by` to build a dependency graph: if B is `blocked_by: [a]` and A is a sibling, A comes before B. Edges outside the subtree are dropped; cycles raise an error naming the participants. `#<id>` mentions do NOT create ordering edges.
 
