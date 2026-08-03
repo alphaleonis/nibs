@@ -298,10 +298,15 @@ func parentChain(b *nib.Nib, reader NibReader) []string {
 // link names no nib.
 //
 // This is the project's one definition of "has a parent". Every decision point
-// that needs the rule calls this function, so `grep resolvedParentID` is the
+// with a reader calls this function, so `grep resolvedParentID` is the
 // authoritative list of them — do not restate the rationale below at a call
 // site, and do not enumerate the call sites here. Both forms of duplication go
 // stale silently, since nothing couples prose to the code.
+//
+// One surface cannot call it: the TUI decides reorder scope from a tree it has
+// already fetched, with no reader in hand, so tui.treeResolvedParentID mirrors
+// the rule against tree membership. It is the only mirror, and it documents
+// what its equivalence depends on.
 //
 // The rule has one home because a surface that re-derives it from the raw
 // b.Parent string stays self-consistent while disagreeing with every other

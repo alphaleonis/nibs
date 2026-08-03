@@ -118,6 +118,12 @@ type reorderBlockMsg struct {
 	focusID     string
 }
 
+// reorderRefusedMsg reports why a requested reorder cannot happen. Without it
+// a refused reorder is indistinguishable from a dropped keypress.
+type reorderRefusedMsg struct {
+	reason string
+}
+
 // openEditorMsg requests opening the editor for a nib
 type openEditorMsg struct {
 	nibID   string
@@ -234,6 +240,7 @@ func (a *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case tea.KeyMsg:
 		// Clear status messages on any keypress
 		a.list.statusMessage = ""
+		a.list.statusKind = statusOK
 		a.detail.statusMessage = ""
 
 		// Handle key chord sequences
@@ -575,6 +582,7 @@ func (a *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		result, err := a.backend.ReorderNib(context.Background(), msg.nibID, msg.afterID, msg.beforeID, msg.first)
 		if err != nil {
 			a.list.statusMessage = fmt.Sprintf("Reorder failed: %v", err)
+			a.list.statusKind = statusWarn
 			return a, nil
 		}
 		// Set selectByID synchronously before loadNibs to guarantee re-selection
@@ -590,11 +598,17 @@ func (a *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		_, err := a.backend.ReorderNib(context.Background(), msg.displacedID, msg.afterID, msg.beforeID, nil)
 		if err != nil {
 			a.list.statusMessage = fmt.Sprintf("Reorder failed: %v", err)
+			a.list.statusKind = statusWarn
 			return a, nil
 		}
 		// Preserve focus on the originally-focused row (not the displaced sibling).
 		a.list.selectByID = msg.focusID
 		return a, a.list.loadNibs
+
+	case reorderRefusedMsg:
+		a.list.statusMessage = msg.reason
+		a.list.statusKind = statusWarn
+		return a, nil
 
 	case openConfirmMsg:
 		a.previousState = a.state
@@ -619,6 +633,7 @@ func (a *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		a.state = viewList
 		if len(errs) > 0 {
 			a.list.statusMessage = fmt.Sprintf("%s failed for %d nib(s)", msg.action, len(errs))
+			a.list.statusKind = statusWarn
 		}
 		return a, a.list.loadNibs
 
@@ -662,6 +677,7 @@ func (a *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if err != nil {
 			a.state = a.previousState
 			a.list.statusMessage = fmt.Sprintf("Create failed: %v", err)
+			a.list.statusKind = statusWarn
 			return a, nil
 		}
 		// Return to list and open the new nib in editor
@@ -737,9 +753,11 @@ func (a *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case copyNibIDMsg:
 		var statusMsg string
+		statusMsgKind := statusOK
 		text := strings.Join(msg.ids, ", ")
 		if err := clipboard.WriteAll(text); err != nil {
 			statusMsg = fmt.Sprintf("Failed to copy: %v", err)
+			statusMsgKind = statusWarn
 		} else if len(msg.ids) == 1 {
 			statusMsg = fmt.Sprintf("Copied %s to clipboard", msg.ids[0])
 		} else {
@@ -750,6 +768,7 @@ func (a *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		switch a.state {
 		case viewList:
 			a.list.statusMessage = statusMsg
+			a.list.statusKind = statusMsgKind
 		case viewDetail:
 			a.detail.statusMessage = statusMsg
 		}
