@@ -340,16 +340,65 @@ func TestApplyFilterHierarchyShortFormParentLink(t *testing.T) {
 	})
 }
 
+// TestApplyFilterHasParentResolvesParentLink pins that hasParent decides
+// parent-ness the same way the rest of the surface does — through the resolved
+// parent, not the raw stored string. A dangling link is the shape that
+// separates the two: nibResolver.Parent collapses it to nil and fetchSiblings
+// puts the nib in the root set, so a raw emptiness check here would report a
+// parent that nothing else in the graph can show.
+func TestApplyFilterHasParentResolvesParentLink(t *testing.T) {
+	root := &nib.Nib{ID: "nibs-root", Title: "Root"}
+	par := &nib.Nib{ID: "nibs-par", Title: "Parent"}
+	child := &nib.Nib{ID: "nibs-chi", Title: "Child", Parent: "nibs-par"}
+	// Short form resolves, so this nib genuinely has a parent.
+	shortChild := &nib.Nib{ID: "nibs-sho", Title: "Short-form parent link", Parent: "par"}
+	// Names no nib under either spelling, so it has no parent to resolve to.
+	dangling := &nib.Nib{ID: "nibs-dng", Title: "Dangling parent link", Parent: "nibs-ghost"}
+
+	all := []*nib.Nib{root, par, child, shortChild, dangling}
+	byID := make(map[string]*nib.Nib, len(all))
+	for _, b := range all {
+		byID[b.ID] = b
+	}
+	reader := &stubReader{nibs: byID, allNibs: all, prefix: "nibs-"}
+	blocking := &stubBlockingChecker{}
+
+	tests := []struct {
+		name    string
+		want    bool
+		wantIDs []string
+	}{
+		{"true keeps only the nibs whose parent link resolves", true,
+			[]string{"nibs-chi", "nibs-sho"}},
+		{"false keeps the parentless and the dangling alike", false,
+			[]string{"nibs-root", "nibs-par", "nibs-dng"}},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			filter := &model.NibFilter{HasParent: &tt.want}
+			assertNibIDs(t, ApplyFilter(context.Background(), reader.allNibs, filter, reader, blocking), tt.wantIDs)
+		})
+	}
+}
+
 // TestApplyFilterSiblingIDResolvesParentLinks pins that siblingId decides
 // "same parent" through the resolved parent, the way nibResolver.Parent and
 // fetchSiblings do, rather than by comparing the raw stored strings. Two stored
-// shapes make the two disagree, and both are reachable by hand-editing a nib
-// file or by a git merge in .nibs/:
+// shapes make the two disagree:
 //
 //   - a dangling link presents as a root everywhere the object graph is
 //     walked, so it belongs in a root-level sibling set;
 //   - a short-form link names the same parent as its full-form spelling, so
 //     the two spellings are siblings.
+//
+// Both are injected straight into the reader here, which pins the filter's own
+// behavior rather than the loader's. Only the short form is a shape a loaded
+// store canonicalizes away before a filter can see it; a dangling link survives
+// load verbatim and does reach the filter through a real Load. The loaded-store
+// paths are covered separately — the dangling one by
+// TestDanglingParentClassifiedAlikeAcrossSurfaces, the short-form one by
+// cmd.TestSiblingSurfacesAgreeOnShortFormParentLink.
 func TestApplyFilterSiblingIDResolvesParentLinks(t *testing.T) {
 	m1 := &nib.Nib{ID: "nibs-m1", Title: "Root"}
 	r2 := &nib.Nib{ID: "nibs-r2", Title: "Second root"}

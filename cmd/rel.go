@@ -399,7 +399,13 @@ func fetchRel(ctx context.Context, resolver *graph.Resolver, b *nib.Nib, r relKi
 }
 
 // fetchSiblings returns siblings of b (same parent, self excluded). If b has
-// no parent, returns the set of other root nibs (Parent == "").
+// no parent, returns the set of other root nibs.
+//
+// Root-ness is decided for the candidates by the same call that decides it for
+// b — the parent resolver, which reports no parent both when the field is empty
+// and when the link names no nib. Testing the raw field instead would make the
+// relation asymmetric: a nib whose parent link is dangling would take the root
+// branch and see every root, while no root ever saw it back.
 func fetchSiblings(ctx context.Context, resolver *graph.Resolver, b *nib.Nib, filter *model.NibFilter) ([]*nib.Nib, error) {
 	parent, err := resolver.Nib().Parent(ctx, b)
 	if err != nil {
@@ -413,13 +419,16 @@ func fetchSiblings(ctx context.Context, resolver *graph.Resolver, b *nib.Nib, fi
 		}
 		candidates = sibs
 	} else {
-		// Root siblings: all nibs with no parent, minus self.
 		all, err := resolver.Query().Nibs(ctx, filter, nil)
 		if err != nil {
 			return nil, err
 		}
 		for _, n := range all {
-			if n.Parent == "" {
+			candidateParent, err := resolver.Nib().Parent(ctx, n)
+			if err != nil {
+				return nil, err
+			}
+			if candidateParent == nil {
 				candidates = append(candidates, n)
 			}
 		}

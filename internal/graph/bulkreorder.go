@@ -69,7 +69,7 @@ func (r *mutationResolver) reorderSiblingsImpl(siblingIDs []string, afterID *str
 	// Sorted siblings excluding the block — preserves the on-disk order of
 	// non-moved siblings so we can find the upper/lower bound around the
 	// anchor without colliding with about-to-be-moved keys.
-	allSiblings := r.sortedSiblings(parentID)
+	allSiblings := r.Orderer.siblingsForParent(parentID)
 	blockSet := make(map[string]struct{}, len(block))
 	for _, b := range block {
 		blockSet[b.ID] = struct{}{}
@@ -205,11 +205,14 @@ func (r *mutationResolver) validateBulkSiblings(siblingIDs []string, afterID *st
 			return nil, nil, "", fmt.Errorf("duplicate id in sibling list: %s (resolved to %s)", id, b.ID)
 		}
 		seen[b.ID] = struct{}{}
+		// Group on the resolved parent (see resolvedParentID) so the block matches
+		// the sibling set siblingsForParent enumerates below.
+		bParentID := resolvedParentID(b, r.Reader)
 		if i == 0 {
-			parentID = b.Parent
-		} else if b.Parent != parentID {
-			return nil, nil, "", fmt.Errorf("siblings span multiple parents: %s has parent %q, expected %q",
-				id, b.Parent, parentID)
+			parentID = bParentID
+		} else if bParentID != parentID {
+			return nil, nil, "", fmt.Errorf("siblings span multiple parents: %s has parent %s, expected %q",
+				id, describeParent(b, bParentID), parentID)
 		}
 		block = append(block, b)
 	}
@@ -228,9 +231,9 @@ func (r *mutationResolver) validateBulkSiblings(siblingIDs []string, afterID *st
 		if err != nil {
 			return nil, nil, "", fmt.Errorf("anchor nib not found: %s", notFoundDetail(anchorID, normalizedAnchor))
 		}
-		if a.Parent != parentID {
-			return nil, nil, "", fmt.Errorf("anchor %s is not a sibling (parent=%q, expected %q)",
-				anchorID, a.Parent, parentID)
+		if aParentID := resolvedParentID(a, r.Reader); aParentID != parentID {
+			return nil, nil, "", fmt.Errorf("anchor %s is not a sibling (parent=%s, expected %q)",
+				anchorID, describeParent(a, aParentID), parentID)
 		}
 		// Block membership is checked against resolved IDs so short/full
 		// forms in the input both surface as an error.
@@ -245,16 +248,6 @@ func (r *mutationResolver) validateBulkSiblings(siblingIDs []string, afterID *st
 	return block, anchor, parentID, nil
 }
 
-// sortedSiblings returns the children of parentID (or root-level siblings if
-// parentID == "") sorted by order key. Wraps the Orderer's two distinct entry
-// points so callers can pass parentID uniformly.
-func (r *mutationResolver) sortedSiblings(parentID string) []*nib.Nib {
-	if parentID == "" {
-		return r.Orderer.getRootSiblings()
-	}
-	return r.Orderer.GetSortedSiblings(parentID)
-}
-
 // validateBulkChildren resolves the child IDs against the parent's current
 // children and returns them in the requested order. Order of checks:
 // parent-existence -> per-child existence -> duplicate (on canonical ID) ->
@@ -264,11 +257,15 @@ func (r *mutationResolver) sortedSiblings(parentID string) []*nib.Nib {
 func (r *mutationResolver) validateBulkChildren(parentID string, childIDs []string) ([]*nib.Nib, error) {
 	// Validate the parent exists (empty parentID is the root sentinel and
 	// requires no lookup). Without this, a typo'd parent with empty childIDs
-	// would silently succeed as a no-op.
+	// would silently succeed as a no-op. The fetched id replaces the supplied
+	// one so membership below compares two resolved ids, the way the sibling
+	// set is enumerated.
 	if parentID != "" {
-		if _, err := r.Reader.Get(parentID); err != nil {
+		parent, err := r.Reader.Get(parentID)
+		if err != nil {
 			return nil, fmt.Errorf("parent nib not found: %s", parentID)
 		}
+		parentID = parent.ID
 	}
 
 	ordered := make([]*nib.Nib, 0, len(childIDs))
@@ -282,14 +279,20 @@ func (r *mutationResolver) validateBulkChildren(parentID string, childIDs []stri
 		if _, dup := requested[b.ID]; dup {
 			return nil, fmt.Errorf("duplicate id in reorder list: %s (resolved to %s)", id, b.ID)
 		}
-		if b.Parent != parentID {
-			return nil, fmt.Errorf("nib %s is not a child of %s (parent=%q)", id, parentID, b.Parent)
+		// Membership uses the resolved parent (see resolvedParentID) so it draws
+		// the same set the completeness loop below reads out of the ordering
+		// surface. If the two disagreed, a project holding a nib whose parent link
+		// names no nib could neither list that nib in a root-level reorder
+		// (rejected here) nor omit it (rejected as missing there).
+		if bParentID := resolvedParentID(b, r.Reader); bParentID != parentID {
+			return nil, fmt.Errorf("nib %s is not a child of %s (parent=%s)",
+				id, parentID, describeParent(b, bParentID))
 		}
 		ordered = append(ordered, b)
 		requested[b.ID] = struct{}{}
 	}
 
-	for _, b := range r.sortedSiblings(parentID) {
+	for _, b := range r.Orderer.siblingsForParent(parentID) {
 		if _, ok := requested[b.ID]; !ok {
 			return nil, fmt.Errorf("missing child in reorder list: %s", b.ID)
 		}
@@ -306,6 +309,18 @@ func notFoundDetail(raw, canonical string) string {
 		return raw
 	}
 	return fmt.Sprintf("%s (resolved to %s)", raw, canonical)
+}
+
+// describeParent formats a nib's parent for a same-parent error, naming the
+// resolved value that the comparison actually used and the stored spelling when
+// they differ. A dangling link is where the two part company: the file says
+// `parent: nibs-ghost` while the comparison sees a root, and reporting only the
+// resolved "" leaves nothing in .nibs/ to grep for.
+func describeParent(b *nib.Nib, resolved string) string {
+	if b.Parent == resolved {
+		return fmt.Sprintf("%q", b.Parent)
+	}
+	return fmt.Sprintf("%q (resolves to %q)", b.Parent, resolved)
 }
 
 // requireIfMatch reports whether the project config requires ifMatch on

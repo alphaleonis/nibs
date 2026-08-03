@@ -603,13 +603,10 @@ func (r *mutationResolver) ReorderNib(ctx context.Context, id string, afterID *s
 		}
 	}
 
-	// Get siblings from the (possibly new) parent
-	var siblings []*nib.Nib
-	if b.Parent == "" {
-		siblings = r.Orderer.getRootSiblings()
-	} else {
-		siblings = r.Orderer.GetSortedSiblings(b.Parent)
-	}
+	// Get siblings from the (possibly new) parent. siblingsOf resolves that
+	// parent first, so the set an anchor has to be found in is the same set the
+	// siblingId filter and `nibs rel --rel siblings` report for b.
+	siblings := r.Orderer.siblingsOf(b)
 
 	// Remove self from siblings list to avoid self-referencing
 	var filtered []*nib.Nib

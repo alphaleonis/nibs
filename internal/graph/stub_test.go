@@ -36,8 +36,8 @@ type stubReader struct {
 // Get mirrors nibcore.Core.Get: exact id first, then — if a prefix is
 // configured and the input does not already carry it — the prefix-prepended
 // form. Resolving here rather than doing a bare map lookup is what lets tests
-// exercise a short-form stored link (`parent: e1`), which Core follows but the
-// reverse traversals do not (see CheckAllLinksInMap on half-traversable links).
+// hand the filters a short-form stored link (`parent: e1`) directly, without
+// the loader pass that would have canonicalized it first.
 func (s *stubReader) Get(id string) (*nib.Nib, error) {
 	if b, ok := s.nibs[id]; ok {
 		return b, nil

@@ -403,10 +403,15 @@ func TestOrderer_PositionAfter(t *testing.T) {
 	})
 
 	t.Run("rejects non-sibling target", func(t *testing.T) {
+		// Both parents are in the reader: parent-ness is the resolved rule, so two
+		// links naming nibs that do NOT exist would resolve alike (to no parent at
+		// all) and the two nibs would be roots — and therefore siblings.
+		p1 := &nib.Nib{ID: "p-1", Title: "Parent one"}
+		p2 := &nib.Nib{ID: "p-2", Title: "Parent two"}
 		s1 := &nib.Nib{ID: "s-1", Title: "A", Parent: "p-1", Order: "a0"}
 		other := &nib.Nib{ID: "o-1", Title: "Other", Parent: "p-2", Order: "a0"}
 
-		reader := newOrdererReader(s1, other)
+		reader := newOrdererReader(p1, p2, s1, other)
 		orderer := NewOrderer(reader, &stubWriter{})
 
 		newNib := &nib.Nib{ID: "n-1", Parent: "p-1"}

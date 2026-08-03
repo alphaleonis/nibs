@@ -82,7 +82,7 @@ export type NibFilter = {
   hasBlockedBy?: boolean | null | undefined;
   /** Tri-state: true keeps nibs that are blocking others, false keeps exactly the non-blocking ones, null does not filter */
   hasBlocking?: boolean | null | undefined;
-  /** Tri-state: true keeps nibs with a parent, false keeps exactly the parentless ones, null does not filter */
+  /** Tri-state: true keeps nibs whose parent link resolves to a nib, false keeps exactly the ones with no parent, null does not filter. A nib whose parent link names no nib counts as parentless, matching how the parent field and siblingId treat it — parentId still reports the unresolvable stored id, so a nib selected by hasParent:false may have a non-null parentId */
   hasParent?: boolean | null | undefined;
   /** Tri-state: true keeps nibs blocked by others (via incoming blocking links or blocked_by field), false keeps exactly the unblocked ones, null does not filter */
   isBlocked?: boolean | null | undefined;

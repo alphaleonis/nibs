@@ -1586,18 +1586,6 @@ func TestBlockedByRoundtrip(t *testing.T) {
 }
 
 func TestNibRelationshipMethods(t *testing.T) {
-	t.Run("HasParent", func(t *testing.T) {
-		withParent := &Nib{Parent: "xyz789"}
-		if !withParent.HasParent() {
-			t.Error("expected HasParent() = true when parent is set")
-		}
-
-		withoutParent := &Nib{}
-		if withoutParent.HasParent() {
-			t.Error("expected HasParent() = false when parent is empty")
-		}
-	})
-
 	t.Run("IsBlocking", func(t *testing.T) {
 		b := &Nib{Blocking: []string{"abc", "def"}}
 		if !b.IsBlocking("abc") {

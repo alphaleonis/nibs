@@ -73,11 +73,6 @@ func (b *Nib) RemoveTag(tag string) {
 	b.Tags = result
 }
 
-// HasParent returns true if the nib has a parent.
-func (b *Nib) HasParent() bool {
-	return b.Parent != ""
-}
-
 // Deprecated: IsBlocking only reads the legacy Blocking field, which is no longer persisted in v1+.
 // Use Core.FindIncomingLinks or Core.IsBlocking instead.
 func (b *Nib) IsBlocking(id string) bool {

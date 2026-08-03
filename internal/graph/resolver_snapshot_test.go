@@ -883,7 +883,7 @@ func TestSnapshotResultsSkipsVanishedElements(t *testing.T) {
 
 // vanishingSnapshotReader wraps a NibReader and reports one id as vanished from
 // GetSnapshot ONLY, leaving every other accessor (Get, GetForUpdate, and the ids
-// the Orderer's sortedSiblings sees) intact. It is a deterministic stand-in for a
+// the Orderer's siblingsForParent sees) intact. It is a deterministic stand-in for a
 // nib deleted in the lock-free window between a bulk reorder's order-key write
 // committing and its post-write snapshot: the reorder validates and persists the
 // full block, then snapshotResults snapshots into the gap the delete left.
@@ -1020,8 +1020,11 @@ func nibIndexByID(nibs []*nib.Nib, id string) int {
 
 // TestNibsFilterRaceAgainstRemoveLinksTo reproduces the write-side data race in
 // nibs-pyei. The Nibs query pipeline reads b.Parent off the LIVE c.nibs pointers
-// off-lock (ApplyFilter's HasParent predicate, internal/graph/filters.go), while
+// off-lock — ApplyFilter's HasParent predicate, which reaches the field through
+// resolvedParentID's opening emptiness test (internal/graph/filters.go) — while
 // Core.RemoveLinksTo mutates b.Parent under c.mu (internal/nibcore/link_health.go).
+// That unsynchronized read of b.Parent is what makes this a detector, so a
+// change removing it from the predicate's path retires the probe with it.
 // On the old in-place code those two accesses touch the same b.Parent word with
 // no synchronization between them, so `-race` fires (read at filters.go vs write
 // at link_health.go). With RemoveLinksTo copy-on-write — it installs a fresh
