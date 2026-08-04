@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"testing"
 
+	"github.com/alphaleonis/nibs/internal/graph"
 	"github.com/alphaleonis/nibs/internal/nib"
 	"github.com/alphaleonis/nibs/internal/nibcore"
 )
@@ -125,6 +126,39 @@ func TestETagErrorPresenter_TagsNotFound(t *testing.T) {
 		if _, ok := gqlErr.Extensions["code"]; ok {
 			t.Errorf("generic 'not found' error was tagged with code %v; only errors.Is(err, nib.ErrNotFound) may be tagged",
 				gqlErr.Extensions["code"])
+		}
+	})
+
+	// The two filter-target classes reach the presenter over the READ path, not
+	// the mutation path the cases above cover: the web filter box sends
+	// user-typed ids straight into NibFilter, so a half-typed id refuses the
+	// whole query. NOT_FOUND is what lets the list treat that as an explainable
+	// empty state instead of flashing a failure while the user is still typing
+	// (see web/src/lib/components/TreeTable.svelte).
+	t.Run("tags an unknown filter target", func(t *testing.T) {
+		err := &graph.FilterTargetNotFoundError{Field: "parentId", ID: "zz"}
+
+		gqlErr := etagErrorPresenter(ctx, err)
+
+		if gqlErr.Extensions["code"] != "NOT_FOUND" {
+			t.Errorf("extensions.code = %v, want %q", gqlErr.Extensions["code"], "NOT_FOUND")
+		}
+		if gqlErr.Message != err.Error() {
+			t.Errorf("message = %q, want %q", gqlErr.Message, err.Error())
+		}
+	})
+
+	t.Run("does NOT tag a filter target that vanished mid-filter", func(t *testing.T) {
+		// A concurrent delete is not the caller's typo. Tagging it NOT_FOUND
+		// would tell the web to explain a wrong id that was never wrong, so it
+		// stays uncoded and lands in the generic error path with every other
+		// internal failure.
+		err := &graph.FilterTargetUnreadableError{Field: "siblingId", ID: "nibs-a", ReaderErr: nib.ErrNotFound}
+
+		gqlErr := etagErrorPresenter(ctx, err)
+
+		if code, ok := gqlErr.Extensions["code"]; ok {
+			t.Errorf("a mid-filter vanish was tagged with code %v; it must not classify as the caller's not-found", code)
 		}
 	})
 

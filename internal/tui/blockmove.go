@@ -113,12 +113,12 @@ func blockMovable(effective []*nib.Nib, tree []*ui.TreeNode) (siblings []*nib.Ni
 	return siblings, startIdx, endIdx, ""
 }
 
-// treeResolvedParentID applies internal/graph's resolvedParentID rule at the
+// treeResolvedParentID applies internal/graph's resolved-parent rule at the
 // presentation layer, deciding the sibling set a nib actually reorders within.
 // The TUI holds no NibReader at this point — only a tree already fetched from
 // the backend — so it answers "does this parent link resolve" by tree
-// membership. graph.resolvedParentID is the canonical rule and names the
-// surfaces that depend on it; keep the two in agreement.
+// membership. This is a re-derivation of graph.resolvedParent, which is the
+// canonical rule; keep the two in agreement.
 //
 // Membership is equivalent to resolution only while the tree is built from the
 // full, unfiltered nib set (see the loadNibs fetch that feeds ui.BuildTree).

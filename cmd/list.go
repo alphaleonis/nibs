@@ -55,6 +55,13 @@ The filtered set is projected and rendered as tab-separated rows under a
 "# <n> nibs" comment header (drop it with --no-header). Every output form
 shares one field-selection model with 'nibs get'.
 
+Id-valued filters (--parent, --mentions, --mentioned-by):
+  An id naming no nib is refused with a "not found" error (exit 3) rather than
+  listing zero rows, so a mistyped or stale id — --parent "$ID" with $ID unset
+  or wrong — stays distinguishable from a nib that genuinely has no children.
+  An empty value is rejected outright (use --no-parent to select the parentless
+  nibs).
+
 Status filtering (open by default):
   With no status flag, only open nibs are listed (the closed statuses are
   hidden). -s/--status and --no-status accept the status groups open and
@@ -328,6 +335,13 @@ Search Syntax (--search/-S):
 		resolver := app.newResolver()
 		nibs, err := resolver.Query().Nibs(context.Background(), filter, nibSort)
 		if err != nil {
+			// An id-valued filter flag naming no nib is reported as NOT_FOUND
+			// rather than as an empty listing, so `--parent "$ID"` with a stale
+			// or mistyped id is distinguishable from a parent that has no
+			// children. See filterTargetErrCode for the two classes.
+			if code, ok := filterTargetErrCode(err); ok {
+				return reportErr(listJSON, code, err)
+			}
 			return fmt.Errorf("querying nibs: %w", err)
 		}
 
@@ -359,6 +373,13 @@ Search Syntax (--search/-S):
 			hiddenClosed, err = countHiddenClosed(context.Background(), app.Config(), resolver, filter,
 				statusFilterInput{Status: listStatus, NoStatus: listNoStatus}, nibSort, len(nibs))
 			if err != nil {
+				// Same classification as the displayed query above: the widened
+				// re-run carries the identical id-valued filters, so a target
+				// deleted between the two runs must not be reported as a
+				// validation failure.
+				if code, ok := filterTargetErrCode(err); ok {
+					return reportErr(listJSON, code, err)
+				}
 				return reportErr(listJSON, output.ErrValidation, err)
 			}
 		}
@@ -505,12 +526,12 @@ func init() {
 	listCmd.Flags().StringArrayVar(&listNoTag, "no-tag", nil, "Exclude nibs with tag (can be repeated)")
 	listCmd.Flags().BoolVar(&listHasParent, "has-parent", false, "Filter nibs with a parent")
 	listCmd.Flags().BoolVar(&listNoParent, "no-parent", false, "Filter nibs without a parent")
-	listCmd.Flags().StringVar(&listParentID, "parent", "", "Filter by parent ID")
+	listCmd.Flags().StringVar(&listParentID, "parent", "", "Filter by parent ID (an id naming no nib is an error, not an empty listing)")
 	listCmd.Flags().BoolVar(&listHasBlocking, "has-blocking", false, "Filter nibs that are blocking others")
 	listCmd.Flags().BoolVar(&listNoBlocking, "no-blocking", false, "Filter nibs that aren't blocking others")
 	listCmd.Flags().BoolVar(&listIsBlocked, "is-blocked", false, "Filter nibs that are blocked by others")
-	listCmd.Flags().StringVar(&listMentions, "mentions", "", "Filter nibs whose bodies mention this ID (short or full)")
-	listCmd.Flags().StringVar(&listMentionedBy, "mentioned-by", "", "Filter nibs mentioned in the given ID's body (short or full)")
+	listCmd.Flags().StringVar(&listMentions, "mentions", "", "Filter nibs whose bodies mention this ID (short or full; an id naming no nib is an error, not an empty listing)")
+	listCmd.Flags().StringVar(&listMentionedBy, "mentioned-by", "", "Filter nibs mentioned in the given ID's body (short or full; an id naming no nib is an error, not an empty listing)")
 	listCmd.Flags().BoolVar(&listReady, "ready", false, readyFlagUsage(config.Default()))
 	listCmd.Flags().BoolVar(&listAll, "all", false, "Include every status (disable the open-by-default filter)")
 	listCmd.Flags().BoolVar(&listOpen, "open", false, "Show only open nibs — shorthand for -s open; slightly narrower than the open-by-default rule, which excludes the closed statuses and so keeps a nib with no status")

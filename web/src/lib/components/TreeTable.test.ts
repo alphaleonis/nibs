@@ -340,6 +340,92 @@ describe("TreeTable", () => {
     expect(screen.getByText(/network error/i)).toBeInTheDocument();
   });
 
+  // The server refuses a filter naming a nib that does not exist rather than
+  // answering it with an empty list — otherwise "nothing is under that nib" and
+  // "no such nib" are the same response. That refusal arrives on the read path as
+  // a NOT_FOUND-coded GraphQL error, and it arrives on EVERY keystroke while an
+  // id is being typed, so presenting it the way a network failure is presented
+  // would flash a red error through the list for ids that are merely incomplete.
+  describe("unknown filter id", () => {
+    // A CombinedError-shaped value: the code lives on graphQLErrors[].extensions,
+    // and urql's aggregate `message` carries a "[GraphQL] " prefix the user must
+    // never see. Both details are what the component has to get right.
+    function notFoundError(message: string) {
+      return {
+        message: `[GraphQL] ${message}`,
+        graphQLErrors: [{ message, extensions: { code: "NOT_FOUND" } }],
+      };
+    }
+
+    function renderWithError(error: unknown, props: Record<string, unknown> = { filter: {} }) {
+      mockQueryStore.mockReturnValue(
+        readable({ fetching: false, error, data: undefined, stale: false }) as any
+      );
+      return renderTreeTable(props);
+    }
+
+    it("explains a refused filter id inline instead of as an error", () => {
+      renderWithError(notFoundError('parentId filter: no nib with id "zz"'), {
+        filter: { parentId: "zz" },
+      });
+
+      const explanation = screen.getByTestId("empty-unknown-id");
+      expect(explanation).toHaveTextContent('parentId filter: no nib with id "zz"');
+      // The generic error branch must not also fire: it is the branch that
+      // renders the destructive styling and the raw transport prefix.
+      expect(screen.queryByText(/\[GraphQL\]/)).not.toBeInTheDocument();
+      expect(screen.queryByText(/^Error:/)).not.toBeInTheDocument();
+    });
+
+    it("offers the hierarchy escape hatch when a tree filter carried the id", async () => {
+      const user = userEvent.setup();
+      const onfilterchange = vi.fn();
+      renderWithError(notFoundError('ancestorId filter: no nib with id "zz"'), {
+        filter: { ancestorId: "zz", type: ["bug"] },
+        onfilterchange,
+      });
+
+      await user.click(screen.getByRole("button", { name: /clear hierarchy filters/i }));
+
+      expect(onfilterchange).toHaveBeenCalledWith({ type: ["bug"] });
+    });
+
+    // The escape hatch clears hierarchy fields only, so offering it when no
+    // hierarchy field is set would give the user a button that changes nothing.
+    it("omits the escape hatch when no hierarchy filter is set", () => {
+      renderWithError(notFoundError('mentionsId filter: no nib with id "zz"'), {
+        filter: { mentionsId: "zz" },
+      });
+
+      expect(screen.getByTestId("empty-unknown-id")).toBeInTheDocument();
+      expect(screen.queryByRole("button", { name: /clear hierarchy filters/i })).not.toBeInTheDocument();
+    });
+
+    // The calm treatment is earned by the NOT_FOUND code, not by being an error
+    // during filtering. An uncoded failure is still a failure.
+    it("keeps the destructive error state for an uncoded failure", () => {
+      renderWithError({ message: "Network error" }, { filter: { parentId: "zz" } });
+
+      expect(screen.queryByTestId("empty-unknown-id")).not.toBeInTheDocument();
+      expect(screen.getByText(/network error/i)).toBeInTheDocument();
+    });
+
+    // The destructive branch reads the server's message the same way the calm one
+    // does. A real failure is exactly when the user is most likely to read the
+    // text closely, so the "[GraphQL] " transport prefix belongs there least.
+    it("strips the transport prefix from an uncoded GraphQL failure", () => {
+      const message = "querying nibs: reading .nibs: permission denied";
+      renderWithError(
+        { message: `[GraphQL] ${message}`, graphQLErrors: [{ message, extensions: {} }] },
+        { filter: { parentId: "zz" } }
+      );
+
+      expect(screen.queryByTestId("empty-unknown-id")).not.toBeInTheDocument();
+      expect(screen.getByText(`Error: ${message}`)).toBeInTheDocument();
+      expect(screen.queryByText(/\[GraphQL\]/)).not.toBeInTheDocument();
+    });
+  });
+
   // Regression: urql's subscription store emits a fresh wrapper object on
   // every reactive cycle. Reference-based dedup inside the TreeTable
   // subscription effect used to fail, causing an infinite effect loop that

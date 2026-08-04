@@ -232,6 +232,56 @@ func TestCheatSheetCloseLineNamesTheCloseDefault(t *testing.T) {
 	}
 }
 
+// cheatEntry returns the sheet entry whose label line contains the given text,
+// with the continuation lines it wraps onto. A wrapped remainder is indented
+// past its label, so the entry ends at the first following line indented no
+// further — which scopes an assertion to one entry, on a sheet that names the
+// same verbs and relations in several other places.
+func cheatEntry(t *testing.T, sheet, label string) string {
+	t.Helper()
+	lines := strings.Split(sheet, "\n")
+	for i, line := range lines {
+		if !strings.Contains(line, label) {
+			continue
+		}
+		indent := len(line) - len(strings.TrimLeft(line, " "))
+		entry := []string{line}
+		for _, next := range lines[i+1:] {
+			if strings.TrimSpace(next) == "" {
+				break
+			}
+			if nextIndent := len(next) - len(strings.TrimLeft(next, " ")); nextIndent <= indent {
+				break
+			}
+			entry = append(entry, next)
+		}
+		return strings.Join(entry, "\n")
+	}
+	t.Fatalf("cheat sheet has no entry containing %q:\n%s", label, sheet)
+	return ""
+}
+
+// TestCheatSheetRelEntryMatchesRelArity ties the one-screen grammar to what the
+// rel command actually accepts: --rel is bracketed exactly when omitting it is
+// legal, and while it is legal the entry names the relation omitting it
+// returns. An unbracketed --rel on a sheet that brackets 'list [filters]' reads
+// as a requirement, which is how a caller runs the bare form unawares and takes
+// the default's output for a relationship it named.
+func TestCheatSheetRelEntryMatchesRelArity(t *testing.T) {
+	entry := cheatEntry(t, cheatSheet(config.Default()), "rel <id>")
+	required := relRequiresRelFlag(t)
+	bracketed := strings.Contains(entry, "[--rel")
+
+	switch {
+	case required && bracketed:
+		t.Errorf("cheat sheet brackets --rel as optional, but the rel command requires it:\n%s", entry)
+	case !required && !bracketed:
+		t.Errorf("cheat sheet presents --rel as required, but omitting it queries %s; bracket it:\n%s", relDefaultKind, entry)
+	case !required && !statesRelDefault(entry):
+		t.Errorf("cheat sheet never names %q as what an omitted --rel returns:\n%s", relDefaultKind, entry)
+	}
+}
+
 // TestCheatSheetDropsBlockerNoteWhenNothingHolds asserts the blocker note is
 // conditional on the ReleasesDependents flag: with every closed status
 // releasing its dependents the note has no members, so the sheet must drop it

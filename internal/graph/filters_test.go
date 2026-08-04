@@ -2,13 +2,29 @@ package graph
 
 import (
 	"context"
+	"errors"
 	"reflect"
 	"sort"
+	"strings"
 	"testing"
 
 	"github.com/alphaleonis/nibs/internal/graph/model"
 	"github.com/alphaleonis/nibs/internal/nib"
 )
+
+// applyFilterOK runs ApplyFilter and fails the test if it reports an error.
+// Every test whose subject is WHICH nibs come back uses it, so a filter that
+// fails where it should match cannot be mistaken for a filter that matched
+// nothing. The tests whose subject is the error itself call
+// ApplyFilter directly.
+func applyFilterOK(t *testing.T, ctx context.Context, nibs []*nib.Nib, filter *model.NibFilter, reader NibReader, blocking BlockingChecker) []*nib.Nib {
+	t.Helper()
+	got, err := ApplyFilter(ctx, nibs, filter, reader, blocking)
+	if err != nil {
+		t.Fatalf("ApplyFilter: unexpected error: %v", err)
+	}
+	return got
+}
 
 // TestResolveFilterID exercises the shared helper used by every filter.*ID
 // branch in ApplyFilter. It must return the full ID for a known short form
@@ -66,7 +82,7 @@ func TestApplyFilterBlockedByIDShortForm(t *testing.T) {
 	blocking := &stubBlockingChecker{}
 
 	filter := &model.NibFilter{BlockedByID: strPtr("target")}
-	got := ApplyFilter(context.Background(), reader.allNibs, filter, reader, blocking)
+	got := applyFilterOK(t, context.Background(), reader.allNibs, filter, reader, blocking)
 
 	if len(got) != 1 {
 		t.Fatalf("got %d nibs, want 1 (nibs-blocked)", len(got))
@@ -98,7 +114,7 @@ func TestApplyFilterParentIDShortForm(t *testing.T) {
 	blocking := &stubBlockingChecker{}
 
 	filter := &model.NibFilter{ParentID: strPtr("parent")}
-	got := ApplyFilter(context.Background(), reader.allNibs, filter, reader, blocking)
+	got := applyFilterOK(t, context.Background(), reader.allNibs, filter, reader, blocking)
 
 	if len(got) != 1 {
 		t.Fatalf("got %d nibs, want 1 (nibs-child); short ParentID was not normalized", len(got))
@@ -108,31 +124,322 @@ func TestApplyFilterParentIDShortForm(t *testing.T) {
 	}
 }
 
-// TestApplyFilterParentIDUnknownReturnsNil pins the "unknown target -> nil"
-// contract for ParentID, matching the other single-ID filter branches.
-func TestApplyFilterParentIDUnknownReturnsNil(t *testing.T) {
-	child := &nib.Nib{ID: "nibs-child", Title: "Child", Parent: "nibs-parent"}
-	reader := &stubReader{
-		nibs:    map[string]*nib.Nib{"nibs-child": child},
-		allNibs: []*nib.Nib{child},
-		prefix:  "nibs-",
+// TestApplyFilterUnknownTargetIsNotFound is the guard for the whole point of
+// ApplyFilter's error return: every filter field that names a single nib must
+// REFUSE an id no nib answers to, rather than answering it with the empty set.
+//
+// All eight *ID branches are covered in one table because the contract is
+// shared — a branch added without its guard, or a guard deleted from one, is
+// exactly the regression this catches. The assertions are on the CLASS, not on
+// message text: nib.ErrNotFound is what the GraphQL presenter and the CLI
+// boundary both key on, so a type that stopped carrying it would keep passing a
+// message-shaped assertion while silently losing its exit code.
+//
+// The Field payload is checked too: an error naming the wrong field is still a
+// not-found and still exits 3, and still leaves the caller unable to find the
+// typo. The ID is asserted for shape only — NormalizeID echoes its input on a
+// miss, so the supplied and normalized forms are identical on every error path
+// and these rows cannot tell them apart. Should resolveFilterID ever gain a
+// transform (trimming, case folding), "echo back what the caller typed" needs
+// its own row with a fixture where the two genuinely differ.
+func TestApplyFilterUnknownTargetIsNotFound(t *testing.T) {
+	reader := hierarchyFixture()
+	blocking := &stubBlockingChecker{}
+
+	tests := []struct {
+		name      string
+		filter    *model.NibFilter
+		wantField string
+	}{
+		{"parentId", &model.NibFilter{ParentID: strPtr("nonexistent")}, "parentId"},
+		{"ancestorId", &model.NibFilter{AncestorID: strPtr("nonexistent")}, "ancestorId"},
+		{"descendantId", &model.NibFilter{DescendantID: strPtr("nonexistent")}, "descendantId"},
+		{"siblingId", &model.NibFilter{SiblingID: strPtr("nonexistent")}, "siblingId"},
+		{"blockingId", &model.NibFilter{BlockingID: strPtr("nonexistent")}, "blockingId"},
+		{"blockedById", &model.NibFilter{BlockedByID: strPtr("nonexistent")}, "blockedById"},
+		{"mentionsId", &model.NibFilter{MentionsID: strPtr("nonexistent")}, "mentionsId"},
+		{"mentionedById", &model.NibFilter{MentionedByID: strPtr("nonexistent")}, "mentionedById"},
 	}
-	filter := &model.NibFilter{ParentID: strPtr("nonexistent")}
-	got := ApplyFilter(context.Background(), reader.allNibs, filter, reader, &stubBlockingChecker{})
-	if got != nil {
-		t.Errorf("unknown ParentID should short-circuit to nil, got %v", got)
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got, err := ApplyFilter(context.Background(), reader.allNibs, tt.filter, reader, blocking)
+			if err == nil {
+				t.Fatalf("%s with an unknown target returned %d nibs and no error; an unanswerable question must not read as an empty answer", tt.wantField, len(got))
+			}
+			if got != nil {
+				t.Errorf("result = %v, want nil alongside the error", got)
+			}
+			if !errors.Is(err, nib.ErrNotFound) {
+				t.Errorf("error does not carry nib.ErrNotFound, so the presenter cannot tag it NOT_FOUND and the CLI cannot exit 3: %v", err)
+			}
+			var notFound *FilterTargetNotFoundError
+			if !errors.As(err, &notFound) {
+				t.Fatalf("error = %T (%v), want *FilterTargetNotFoundError", err, err)
+			}
+			if notFound.Field != tt.wantField {
+				t.Errorf("Field = %q, want %q", notFound.Field, tt.wantField)
+			}
+			if notFound.ID != "nonexistent" {
+				t.Errorf("ID = %q, want the id as supplied (%q)", notFound.ID, "nonexistent")
+			}
+		})
 	}
 }
 
-// TestApplyFilterIDBranchesKnownAndUnknown verifies the "unknown target -> nil"
-// contract across the link-based single-ID filter branches. Each routes through
-// resolveFilterID and short-circuits to nil on miss — the trap is a branch that
-// passes a raw ID through and returns empty instead of nil.
+// TestEveryIDValuedFilterFieldHasAGuard derives the same contract from
+// model.NibFilter itself instead of restating it: every *string field whose json
+// tag ends in "Id", set alone to an id no nib answers to, must make ApplyFilter
+// refuse with a *FilterTargetNotFoundError naming that field.
 //
-// The table pairs a negative case (unknown → nil) with a positive control
+// The table above hand-lists the eight fields that exist today, so a NINTH one
+// shipped without its guard fails nothing: it resolves through resolveFilterID,
+// narrows silently to the empty set, and every existing row keeps passing. The
+// per-branch guards are otherwise enforced only by review, on a surface that is
+// not settled.
+//
+// The json tag is the whole selector, and it is applied BEFORE any check on the
+// field's shape — an id-named field this test cannot drive fails here rather
+// than being skipped, so a plural or differently-typed id filter cannot be
+// exempted by accident. Search is the only other *string field and does not end
+// in "Id"; every list facet is a []string whose tag does not either. A field
+// that genuinely should not refuse has to be excepted deliberately.
+func TestEveryIDValuedFilterFieldHasAGuard(t *testing.T) {
+	reader := hierarchyFixture()
+	blocking := &stubBlockingChecker{}
+
+	filterType := reflect.TypeOf(model.NibFilter{})
+	guarded := 0
+	for i := range filterType.NumField() {
+		field := filterType.Field(i)
+		name, _, _ := strings.Cut(field.Tag.Get("json"), ",")
+		if !strings.HasSuffix(name, "Id") && !strings.HasSuffix(name, "Ids") {
+			continue
+		}
+		// Shape is checked only after the NAME has selected the field. Selecting
+		// on shape first would exempt a plural id filter silently, since this
+		// walk can only drive a *string; failing here instead forces whoever
+		// adds one to extend the walk rather than slip past it.
+		if field.Type.Kind() != reflect.Pointer || field.Type.Elem().Kind() != reflect.String {
+			t.Fatalf("%s is id-named but %s, which this test cannot drive — extend it rather than exempting the field", name, field.Type)
+		}
+		guarded++
+
+		t.Run(name, func(t *testing.T) {
+			unknown := "nonexistent"
+			filter := &model.NibFilter{}
+			reflect.ValueOf(filter).Elem().Field(i).Set(reflect.ValueOf(&unknown))
+
+			got, err := ApplyFilter(context.Background(), reader.allNibs, filter, reader, blocking)
+			if err == nil {
+				t.Fatalf("%s naming no nib returned %d nibs and no error; that branch ships without its guard", name, len(got))
+			}
+			var notFound *FilterTargetNotFoundError
+			if !errors.As(err, &notFound) {
+				t.Fatalf("error = %T (%v), want *FilterTargetNotFoundError", err, err)
+			}
+			if notFound.Field != name {
+				t.Errorf("Field = %q, want the schema spelling %q", notFound.Field, name)
+			}
+		})
+	}
+
+	// Without this the walk is free to match nothing and report success — a
+	// renamed json tag or a change of field type would quietly empty the table.
+	if guarded == 0 {
+		t.Fatal("the reflective rule matched no field of model.NibFilter, so this test guards nothing")
+	}
+}
+
+// TestApplyFilterEmptyMatchIsNotAnError is the other half of the contract: a
+// filter whose target EXISTS and simply matches nothing returns an empty result
+// and no error. Without these rows, "make an unknown target fail" is satisfiable
+// by failing on every narrow filter, which would break every legitimate query
+// that happens to return nothing.
+//
+// Each *ID row names a real nib in the fixture that genuinely has no match for
+// that relationship — a leaf has no descendants, a root has no ancestors, an
+// only child has no siblings — so the empty answer is a fact rather than a
+// rejection.
+func TestApplyFilterEmptyMatchIsNotAnError(t *testing.T) {
+	reader := hierarchyFixture()
+	blocking := &stubBlockingChecker{}
+
+	tests := []struct {
+		name   string
+		filter *model.NibFilter
+	}{
+		{"parentId of a childless nib", &model.NibFilter{ParentID: strPtr("t1")}},
+		{"ancestorId of a leaf", &model.NibFilter{AncestorID: strPtr("t1")}},
+		{"descendantId of a root", &model.NibFilter{DescendantID: strPtr("m1")}},
+		{"siblingId of an only child", &model.NibFilter{SiblingID: strPtr("x1")}},
+		{"blockingId of a nib nothing blocks", &model.NibFilter{BlockingID: strPtr("t1")}},
+		{"blockedById of a nib that blocks nothing", &model.NibFilter{BlockedByID: strPtr("t1")}},
+		{"mentionsId of an unmentioned nib", &model.NibFilter{MentionsID: strPtr("t1")}},
+		{"mentionedById of a nib that mentions nothing", &model.NibFilter{MentionedByID: strPtr("t1")}},
+		{"a scalar filter matching no nib", &model.NibFilter{Status: []string{"scrapped"}}},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got, err := ApplyFilter(context.Background(), reader.allNibs, tt.filter, reader, blocking)
+			if err != nil {
+				t.Fatalf("a genuine empty match must not be an error: %v", err)
+			}
+			if len(got) != 0 {
+				t.Fatalf("got %d nibs, want an empty result", len(got))
+			}
+		})
+	}
+}
+
+// vanishingReader resolves an id through NormalizeID and then refuses to Get
+// it — the store state a concurrent delete produces between a filter branch
+// resolving its target and the same branch fetching it. Overriding only Get
+// keeps the rest of the stub's behavior, so the candidate nibs' own parent
+// lookups still work and the failure under test is exactly the target fetch.
+type vanishingReader struct {
+	*stubReader
+	vanished map[string]bool
+}
+
+func (r *vanishingReader) Get(id string) (*nib.Nib, error) {
+	if r.vanished[id] {
+		return nil, nib.ErrNotFound
+	}
+	return r.stubReader.Get(id)
+}
+
+// TestApplyFilterUnreadableTargetIsNotNotFound covers the third outcome: the
+// target resolved, so the caller's id was right, and the fetch failed anyway.
+//
+// The distinction is the assertion. Reporting this as a not-found would tell an
+// agent to fix an id that was never wrong, so the test pins that the error does
+// NOT satisfy errors.Is(err, nib.ErrNotFound) even though its cause does — that
+// is what routes it to the io/internal exit code instead of exit 3.
+//
+// Only the three branches that fetch their target defensively can reach this
+// state; the other five never Get the target at all.
+func TestApplyFilterUnreadableTargetIsNotNotFound(t *testing.T) {
+	tests := []struct {
+		name      string
+		target    string
+		filter    *model.NibFilter
+		wantField string
+	}{
+		{"descendantId", "nibs-t1", &model.NibFilter{DescendantID: strPtr("nibs-t1")}, "descendantId"},
+		{"siblingId", "nibs-f1", &model.NibFilter{SiblingID: strPtr("nibs-f1")}, "siblingId"},
+		{"blockingId", "nibs-t1", &model.NibFilter{BlockingID: strPtr("nibs-t1")}, "blockingId"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			base := hierarchyFixture()
+			// The target is present for NormalizeID and absent for Get, which
+			// is the whole point: the branch gets past its resolve step.
+			reader := &vanishingReader{stubReader: base, vanished: map[string]bool{tt.target: true}}
+
+			got, err := ApplyFilter(context.Background(), base.allNibs, tt.filter, reader, &stubBlockingChecker{})
+			if err == nil {
+				t.Fatalf("%s over a vanished target returned %d nibs and no error", tt.wantField, len(got))
+			}
+			if got != nil {
+				t.Errorf("result = %v, want nil alongside the error", got)
+			}
+			var unreadable *FilterTargetUnreadableError
+			if !errors.As(err, &unreadable) {
+				t.Fatalf("error = %T (%v), want *FilterTargetUnreadableError", err, err)
+			}
+			if unreadable.Field != tt.wantField {
+				t.Errorf("Field = %q, want %q", unreadable.Field, tt.wantField)
+			}
+			if !errors.Is(unreadable.ReaderErr, nib.ErrNotFound) {
+				t.Errorf("ReaderErr = %v, want the reader failure to be kept for diagnosis", unreadable.ReaderErr)
+			}
+			if errors.Is(err, nib.ErrNotFound) {
+				t.Error("a target that vanished mid-filter must not classify as NOT_FOUND — that would report a concurrent delete as the caller's typo")
+			}
+			var notFound *FilterTargetNotFoundError
+			if errors.As(err, &notFound) {
+				t.Error("errors.As matched *FilterTargetNotFoundError, so the two classes are not distinguishable")
+			}
+		})
+	}
+}
+
+// TestFilterErrorReachesEveryResolver pins that a refused filter reaches the
+// CALLER of every resolver that accepts one, rather than being swallowed into an
+// empty field.
+//
+// ApplyFilter refusing the query is only half of the fix: a resolver that
+// discards the error hands gqlgen an empty list, which is precisely the
+// indistinguishable answer the error exists to replace — and it does so on a
+// nested field, where it is even harder to notice. Each row names one resolver,
+// so a call site that stops propagating fails here by name.
+//
+// The blocking resolver appears twice on purpose: its status-released early
+// return filters a nil slice through a SECOND ApplyFilter call, a separate call
+// site from the one below it, and each needs its own propagation guard.
+func TestFilterErrorReachesEveryResolver(t *testing.T) {
+	resolver, core := setupTestResolver(t)
+	subject := createTestNib(t, core, "subj", "Subject", "todo")
+	released := createTestNib(t, core, "done", "Released", "completed")
+
+	// Every row uses the same unknown parentId: which field carries the bad
+	// target is ApplyFilter's business, already covered above. What is under
+	// test here is only whether the resolver passes the refusal on.
+	filter := &model.NibFilter{ParentID: strPtr("nonexistent")}
+	ctx := context.Background()
+
+	tests := []struct {
+		name string
+		call func() ([]*nib.Nib, error)
+	}{
+		{"Nib.children", func() ([]*nib.Nib, error) {
+			return resolver.Nib().Children(ctx, subject, filter, nil)
+		}},
+		{"Nib.blockedBy", func() ([]*nib.Nib, error) {
+			return resolver.Nib().BlockedBy(ctx, subject, filter)
+		}},
+		{"Nib.blocking", func() ([]*nib.Nib, error) {
+			return resolver.Nib().Blocking(ctx, subject, filter)
+		}},
+		{"Nib.blocking on a status-released nib", func() ([]*nib.Nib, error) {
+			return resolver.Nib().Blocking(ctx, released, filter)
+		}},
+		{"Nib.mentions", func() ([]*nib.Nib, error) {
+			return resolver.Nib().Mentions(ctx, subject, filter)
+		}},
+		{"Nib.mentionedBy", func() ([]*nib.Nib, error) {
+			return resolver.Nib().MentionedBy(ctx, subject, filter)
+		}},
+		{"Query.nibs", func() ([]*nib.Nib, error) {
+			return resolver.Query().Nibs(ctx, filter, nil)
+		}},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got, err := tt.call()
+			if err == nil {
+				t.Fatalf("returned %d nibs and no error; the refusal was swallowed into an empty field", len(got))
+			}
+			if !errors.Is(err, nib.ErrNotFound) {
+				t.Errorf("error does not carry nib.ErrNotFound: %v", err)
+			}
+		})
+	}
+}
+
+// TestApplyFilterIDBranchesKnownAndUnknown verifies the unknown-target contract
+// across the link-based single-ID filter branches. Each routes through
+// resolveFilterID and fails on miss — the trap is a branch that passes a raw ID
+// through and narrows to the empty set instead.
+//
+// The table pairs a negative case (unknown → error) with a positive control
 // (known → non-nil with a specific ID in the result). Without the positive
-// rows, a regression that short-circuited to nil unconditionally would
-// pass the unknown-only suite silently.
+// rows, a regression that failed unconditionally would pass the unknown-only
+// suite silently.
 func TestApplyFilterIDBranchesKnownAndUnknown(t *testing.T) {
 	// Fixture: four nibs wired so every *ID filter has a non-trivial
 	// positive case.
@@ -162,36 +469,41 @@ func TestApplyFilterIDBranchesKnownAndUnknown(t *testing.T) {
 	blocking := &stubBlockingChecker{}
 
 	tests := []struct {
-		name    string
-		filter  *model.NibFilter
-		wantNil bool     // true → short-circuited to nil
-		wantIDs []string // expected nib IDs in the result (when wantNil=false)
+		name      string
+		filter    *model.NibFilter
+		wantError bool     // true → the target names no nib, so the filter fails
+		wantIDs   []string // expected nib IDs in the result (when wantError=false)
 	}{
 		// BlockingID — "nibs blocking the target"; target's blocked_by lists them.
 		{"BlockingID known — returns target's blockers", &model.NibFilter{BlockingID: strPtr("a")}, false, []string{"nibs-b"}},
-		{"BlockingID unknown — short-circuits to nil", &model.NibFilter{BlockingID: strPtr("nonexistent")}, true, nil},
+		{"BlockingID unknown — fails", &model.NibFilter{BlockingID: strPtr("nonexistent")}, true, nil},
 
 		// BlockedByID — "nibs whose blocked_by contains target".
 		{"BlockedByID known — returns nibs blocked by target", &model.NibFilter{BlockedByID: strPtr("a")}, false, []string{"nibs-b"}},
-		{"BlockedByID unknown — short-circuits to nil", &model.NibFilter{BlockedByID: strPtr("nonexistent")}, true, nil},
+		{"BlockedByID unknown — fails", &model.NibFilter{BlockedByID: strPtr("nonexistent")}, true, nil},
 
 		// MentionsID — "nibs that mention the target in their body".
 		{"MentionsID known — returns inbound mentioners", &model.NibFilter{MentionsID: strPtr("a")}, false, []string{"nibs-d"}},
-		{"MentionsID unknown — short-circuits to nil", &model.NibFilter{MentionsID: strPtr("nonexistent")}, true, nil},
+		{"MentionsID unknown — fails", &model.NibFilter{MentionsID: strPtr("nonexistent")}, true, nil},
 
 		// MentionedByID — "nibs mentioned in the source's body".
 		{"MentionedByID known — returns source's outbound mentions", &model.NibFilter{MentionedByID: strPtr("a")}, false, []string{"nibs-c"}},
-		{"MentionedByID unknown — short-circuits to nil", &model.NibFilter{MentionedByID: strPtr("nonexistent")}, true, nil},
+		{"MentionedByID unknown — fails", &model.NibFilter{MentionedByID: strPtr("nonexistent")}, true, nil},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			got := ApplyFilter(context.Background(), reader.allNibs, tt.filter, reader, blocking)
-			if tt.wantNil {
-				if got != nil {
-					t.Errorf("got %d nibs, want nil (unknown target short-circuit)", len(got))
+			got, err := ApplyFilter(context.Background(), reader.allNibs, tt.filter, reader, blocking)
+			if tt.wantError {
+				if err == nil {
+					t.Errorf("got %d nibs and no error, want a not-found for the unknown target", len(got))
+				} else if !errors.Is(err, nib.ErrNotFound) {
+					t.Errorf("error does not carry nib.ErrNotFound: %v", err)
 				}
 				return
+			}
+			if err != nil {
+				t.Fatalf("unexpected error: %v", err)
 			}
 			if got == nil {
 				t.Fatalf("got nil, want non-nil result with %v", tt.wantIDs)
@@ -243,10 +555,13 @@ func hierarchyFixture() *stubReader {
 }
 
 // TestParentChain pins what parentChain banks for each shape of parent link.
-// It is the unit the three hierarchy predicates are built on, and the shapes
-// below are not reachable through ApplyFilter: a dangling or short-form link
-// can only be created by hand-editing a nib file, and an unresolvable filter
-// target short-circuits before any walk starts.
+// It is the unit the three hierarchy predicates are built on. The dangling and
+// cyclic shapes reach a loaded store only by hand-editing a nib file, and an
+// unresolvable filter target short-circuits before any walk starts. The raw
+// short-form shape needs no hand-editing: canonicalization leaves a link that
+// already resolves exactly alone, so a bare-token nib sitting alongside its
+// prefixed twin keeps one, and deleting the bare token promotes that link to
+// the twin without rewriting the stored spelling.
 //
 // The load-bearing rule: every id in the chain is a RESOLVED id, so the chain
 // only ever names nibs that exist. A link that resolves under a different
@@ -265,6 +580,7 @@ func TestParentChain(t *testing.T) {
 		shortLinker,
 		{ID: "nibs-t1", Title: "Task", Parent: "nibs-f1"},
 		orphan,
+		{ID: "nibs-d1", Title: "Below a dangling link", Parent: "nibs-orphan"},
 		selfParent,
 		{ID: "nibs-c1", Title: "C1", Parent: "nibs-c2"},
 		{ID: "nibs-c2", Title: "C2", Parent: "nibs-c1"},
@@ -287,6 +603,10 @@ func TestParentChain(t *testing.T) {
 		{"a short-form rung stays resolved for chains passing through it",
 			"nibs-t1", []string{"nibs-f1", "nibs-e1", "nibs-m1"}},
 		{"a dangling link contributes nothing", "nibs-orphan", nil},
+		// The rung below the dangling link is still reported: the walk ends AT
+		// the unresolvable link rather than failing, so everything reached
+		// before it stands.
+		{"a dangling link mid-chain ends the chain there", "nibs-d1", []string{"nibs-orphan"}},
 		{"a self-parented nib yields an empty chain (the seed excludes it)", "nibs-self", nil},
 		{"a cycle terminates and never contains self", "nibs-c1", []string{"nibs-c2"}},
 	}
@@ -330,12 +650,12 @@ func TestApplyFilterHierarchyShortFormParentLink(t *testing.T) {
 	blocking := &stubBlockingChecker{}
 
 	t.Run("AncestorID matches through a short-form rung", func(t *testing.T) {
-		got := ApplyFilter(context.Background(), reader.allNibs, &model.NibFilter{AncestorID: strPtr("e1")}, reader, blocking)
+		got := applyFilterOK(t, context.Background(), reader.allNibs, &model.NibFilter{AncestorID: strPtr("e1")}, reader, blocking)
 		assertNibIDs(t, got, []string{"nibs-f1", "nibs-t1"})
 	})
 
 	t.Run("DescendantID reports the whole chain, not one with a hole in it", func(t *testing.T) {
-		got := ApplyFilter(context.Background(), reader.allNibs, &model.NibFilter{DescendantID: strPtr("t1")}, reader, blocking)
+		got := applyFilterOK(t, context.Background(), reader.allNibs, &model.NibFilter{DescendantID: strPtr("t1")}, reader, blocking)
 		assertNibIDs(t, got, []string{"nibs-f1", "nibs-e1", "nibs-m1"})
 	})
 }
@@ -377,7 +697,7 @@ func TestApplyFilterHasParentResolvesParentLink(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			filter := &model.NibFilter{HasParent: &tt.want}
-			assertNibIDs(t, ApplyFilter(context.Background(), reader.allNibs, filter, reader, blocking), tt.wantIDs)
+			assertNibIDs(t, applyFilterOK(t, context.Background(), reader.allNibs, filter, reader, blocking), tt.wantIDs)
 		})
 	}
 }
@@ -393,12 +713,13 @@ func TestApplyFilterHasParentResolvesParentLink(t *testing.T) {
 //     the two spellings are siblings.
 //
 // Both are injected straight into the reader here, which pins the filter's own
-// behavior rather than the loader's. Only the short form is a shape a loaded
-// store canonicalizes away before a filter can see it; a dangling link survives
-// load verbatim and does reach the filter through a real Load. The loaded-store
-// paths are covered separately — the dangling one by
-// TestDanglingParentClassifiedAlikeAcrossSurfaces, the short-form one by
-// cmd.TestSiblingSurfacesAgreeOnShortFormParentLink.
+// behavior rather than the loader's — the filter has to be right on either
+// shape regardless of how it arrived. Canonicalization rewrites a short-form
+// link whose target it can resolve, so that spelling is rarer through a real
+// Load than a dangling one, which survives verbatim; it is not impossible
+// there, since a link that already resolves exactly is left alone (see
+// resolvedParent). TestDanglingParentClassifiedAlikeAcrossSurfaces covers the
+// dangling shape through a real Load.
 func TestApplyFilterSiblingIDResolvesParentLinks(t *testing.T) {
 	m1 := &nib.Nib{ID: "nibs-m1", Title: "Root"}
 	r2 := &nib.Nib{ID: "nibs-r2", Title: "Second root"}
@@ -433,7 +754,7 @@ func TestApplyFilterSiblingIDResolvesParentLinks(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			assertNibIDs(t, ApplyFilter(context.Background(), reader.allNibs, tt.filter, reader, blocking), tt.wantIDs)
+			assertNibIDs(t, applyFilterOK(t, context.Background(), reader.allNibs, tt.filter, reader, blocking), tt.wantIDs)
 		})
 	}
 }
@@ -453,12 +774,10 @@ func TestApplyFilterSiblingIDResolvesParentLinks(t *testing.T) {
 // row per field passes the already-full form, which must resolve to the same
 // answer rather than being double-prefixed into a miss.
 //
-// The "unknown target matches nothing" rows pin user-facing behavior only.
-// They do NOT prove the `if !ok { return nil }` short-circuit in each branch:
-// that guard is not independently observable here (see the note on the
-// hierarchy branch block in ApplyFilter), so these rows would still pass with
-// it deleted. What they pin is that an id naming no nib cannot match anything,
-// which is the promise the API makes.
+// Unknown targets are not in this table: they are not a matching outcome at
+// all, and are covered as errors by TestApplyFilterUnknownTargetIsNotFound. The
+// "matches nothing" rows here all name real nibs, so each empty answer is a fact
+// about the tree rather than a rejected question.
 func TestApplyFilterHierarchyPredicates(t *testing.T) {
 	reader := hierarchyFixture()
 	blocking := &stubBlockingChecker{}
@@ -480,8 +799,6 @@ func TestApplyFilterHierarchyPredicates(t *testing.T) {
 			[]string{"nibs-f1", "nibs-t1", "nibs-t2"}},
 		{"AncestorID on a leaf matches nothing",
 			&model.NibFilter{AncestorID: strPtr("t1")}, nil},
-		{"AncestorID unknown matches nothing",
-			&model.NibFilter{AncestorID: strPtr("nonexistent")}, nil},
 
 		// descendantId — "nibs that have the target among their descendants",
 		// i.e. exactly the target's ancestor chain.
@@ -496,8 +813,6 @@ func TestApplyFilterHierarchyPredicates(t *testing.T) {
 			[]string{"nibs-f1", "nibs-e1", "nibs-m1"}},
 		{"DescendantID on a root matches nothing",
 			&model.NibFilter{DescendantID: strPtr("m1")}, nil},
-		{"DescendantID unknown matches nothing",
-			&model.NibFilter{DescendantID: strPtr("nonexistent")}, nil},
 
 		// siblingId — "nibs sharing the target's parent", root-level target
 		// included (matches fetchSiblings in cmd/rel.go).
@@ -512,8 +827,6 @@ func TestApplyFilterHierarchyPredicates(t *testing.T) {
 			[]string{"nibs-t2"}},
 		{"SiblingID on an only child matches nothing",
 			&model.NibFilter{SiblingID: strPtr("x1")}, nil},
-		{"SiblingID unknown matches nothing",
-			&model.NibFilter{SiblingID: strPtr("nonexistent")}, nil},
 
 		// Two hierarchy predicates AND-composed: each is a pure per-element
 		// predicate, so the result is the intersection regardless of the order
@@ -535,7 +848,7 @@ func TestApplyFilterHierarchyPredicates(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			assertNibIDs(t, ApplyFilter(context.Background(), reader.allNibs, tt.filter, reader, blocking), tt.wantIDs)
+			assertNibIDs(t, applyFilterOK(t, context.Background(), reader.allNibs, tt.filter, reader, blocking), tt.wantIDs)
 		})
 	}
 }
@@ -559,12 +872,12 @@ func TestApplyFilterHierarchyPredicatesCycleSafe(t *testing.T) {
 	blocking := &stubBlockingChecker{}
 
 	t.Run("AncestorID terminates and excludes the target itself", func(t *testing.T) {
-		got := ApplyFilter(context.Background(), reader.allNibs, &model.NibFilter{AncestorID: strPtr("c1")}, reader, blocking)
+		got := applyFilterOK(t, context.Background(), reader.allNibs, &model.NibFilter{AncestorID: strPtr("c1")}, reader, blocking)
 		assertNibIDs(t, got, []string{"nibs-c2"})
 	})
 
 	t.Run("DescendantID terminates and excludes the target itself", func(t *testing.T) {
-		got := ApplyFilter(context.Background(), reader.allNibs, &model.NibFilter{DescendantID: strPtr("c1")}, reader, blocking)
+		got := applyFilterOK(t, context.Background(), reader.allNibs, &model.NibFilter{DescendantID: strPtr("c1")}, reader, blocking)
 		assertNibIDs(t, got, []string{"nibs-c2"})
 	})
 }
@@ -831,7 +1144,7 @@ func TestApplyFilterDefaultAwarePriorityAndType(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			got := ApplyFilter(context.Background(), reader.allNibs, tt.filter, reader, blocking)
+			got := applyFilterOK(t, context.Background(), reader.allNibs, tt.filter, reader, blocking)
 			gotIDs := make([]string, 0, len(got))
 			for _, b := range got {
 				gotIDs = append(gotIDs, b.ID)
@@ -889,7 +1202,7 @@ func TestApplyFilterPresenceTriState(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			got := ApplyFilter(context.Background(), reader.allNibs, tt.filter, reader, blocking)
+			got := applyFilterOK(t, context.Background(), reader.allNibs, tt.filter, reader, blocking)
 			gotIDs := make([]string, 0, len(got))
 			for _, b := range got {
 				gotIDs = append(gotIDs, b.ID)
@@ -972,4 +1285,68 @@ func TestIncludeAncestors(t *testing.T) {
 			t.Errorf("got %d nibs, want 1", len(got))
 		}
 	})
+}
+
+// TestIncludeAncestorsChainShapes pins how ancestor completion walks the
+// awkward link shapes — the same set TestParentChain pins for the filter walk —
+// plus the property unique to this site: its visited set spans the WHOLE batch,
+// so ancestry banked while completing one nib is neither re-walked nor re-added
+// while completing the next. assertNibIDs compares sorted id lists, so a
+// re-added ancestor fails as a length mismatch.
+//
+// As in TestParentChain, the dangling and cyclic shapes reach a loaded store
+// only by hand-editing a file, while the raw short-form one survives
+// canonicalization on its own — see there for the store state that keeps it.
+func TestIncludeAncestorsChainShapes(t *testing.T) {
+	m1 := &nib.Nib{ID: "nibs-m1", Title: "Milestone"}
+	e1 := &nib.Nib{ID: "nibs-e1", Title: "Epic", Parent: "nibs-m1"}
+	// Two children of the same epic: completing the first banks e1 and m1, and
+	// completing the second must find them already banked.
+	t1 := &nib.Nib{ID: "nibs-t1", Title: "Task 1", Parent: "nibs-e1"}
+	t2 := &nib.Nib{ID: "nibs-t2", Title: "Task 2", Parent: "nibs-e1"}
+	// f1 reaches that same epic through the short form `parent: e1`, so the
+	// batch only stays deduplicated if the walk banks the RESOLVED id.
+	f1 := &nib.Nib{ID: "nibs-f1", Title: "Short-form parent link", Parent: "e1"}
+	orphan := &nib.Nib{ID: "nibs-orphan", Title: "Dangling parent link", Parent: "nibs-ghost"}
+	d1 := &nib.Nib{ID: "nibs-d1", Title: "Below a dangling link", Parent: "nibs-orphan"}
+	selfParent := &nib.Nib{ID: "nibs-self", Title: "Self-parented", Parent: "nibs-self"}
+	c1 := &nib.Nib{ID: "nibs-c1", Title: "C1", Parent: "nibs-c2"}
+	c2 := &nib.Nib{ID: "nibs-c2", Title: "C2", Parent: "nibs-c1"}
+
+	all := []*nib.Nib{m1, e1, t1, t2, f1, orphan, d1, selfParent, c1, c2}
+	byID := make(map[string]*nib.Nib, len(all))
+	for _, b := range all {
+		byID[b.ID] = b
+	}
+	reader := &stubReader{nibs: byID, allNibs: all, prefix: "nibs-"}
+
+	tests := []struct {
+		name  string
+		input []*nib.Nib
+		want  []string
+	}{
+		{"adds the whole chain of a single leaf",
+			[]*nib.Nib{t1}, []string{"nibs-t1", "nibs-e1", "nibs-m1"}},
+		{"a chain shared by two nibs is added once for the batch",
+			[]*nib.Nib{t1, t2}, []string{"nibs-t1", "nibs-t2", "nibs-e1", "nibs-m1"}},
+		{"a short-form link does not re-add an ancestor banked under its resolved id",
+			[]*nib.Nib{t1, f1}, []string{"nibs-t1", "nibs-f1", "nibs-e1", "nibs-m1"}},
+		{"a short-form link banks the ancestor a later full-form link then finds",
+			[]*nib.Nib{f1, t1}, []string{"nibs-f1", "nibs-t1", "nibs-e1", "nibs-m1"}},
+		{"a dangling link adds nothing", []*nib.Nib{orphan}, []string{"nibs-orphan"}},
+		{"a dangling link mid-chain ends the chain there",
+			[]*nib.Nib{d1}, []string{"nibs-d1", "nibs-orphan"}},
+		{"a self-parented nib adds nothing", []*nib.Nib{selfParent}, []string{"nibs-self"}},
+		{"a cycle terminates and adds only the other rung",
+			[]*nib.Nib{c1}, []string{"nibs-c1", "nibs-c2"}},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			// Copy the input so the append inside includeAncestors can never
+			// write through into the shared fixture slice.
+			got := includeAncestors(append([]*nib.Nib(nil), tt.input...), reader)
+			assertNibIDs(t, got, tt.want)
+		})
+	}
 }

@@ -736,7 +736,7 @@ func (r *nibResolver) BlockedBy(ctx context.Context, obj *nib.Nib, filter *model
 		}
 	}
 
-	return ApplyFilter(ctx, result, filter, r.Reader, r.Resolver.Blocking), nil
+	return ApplyFilter(ctx, result, filter, r.Reader, r.Resolver.Blocking)
 }
 
 // Blocking is the resolver for the blocking field.
@@ -750,7 +750,7 @@ func (r *nibResolver) BlockedBy(ctx context.Context, obj *nib.Nib, filter *model
 // runs against the detached clone.
 func (r *nibResolver) Blocking(ctx context.Context, obj *nib.Nib, filter *model.NibFilter) ([]*nib.Nib, error) {
 	if r.releasesDependents(obj.Status) {
-		return ApplyFilter(ctx, nil, filter, r.Reader, r.Resolver.Blocking), nil
+		return ApplyFilter(ctx, nil, filter, r.Reader, r.Resolver.Blocking)
 	}
 	incoming := r.Reader.FindIncomingLinks(obj.ID)
 	var result []*nib.Nib
@@ -764,7 +764,7 @@ func (r *nibResolver) Blocking(ctx context.Context, obj *nib.Nib, filter *model.
 		}
 	}
 
-	return ApplyFilter(ctx, result, filter, r.Reader, r.Resolver.Blocking), nil
+	return ApplyFilter(ctx, result, filter, r.Reader, r.Resolver.Blocking)
 }
 
 // Parent is the resolver for the parent field.
@@ -798,7 +798,10 @@ func (r *nibResolver) Children(ctx context.Context, obj *nib.Nib, filter *model.
 			result = append(result, snap)
 		}
 	}
-	result = ApplyFilter(ctx, result, filter, r.Reader, r.Resolver.Blocking)
+	result, err := ApplyFilter(ctx, result, filter, r.Reader, r.Resolver.Blocking)
+	if err != nil {
+		return nil, err
+	}
 	ApplySorting(result, sort, r.Reader.Config())
 	return result, nil
 }
@@ -851,7 +854,7 @@ func (r *nibResolver) Mentions(ctx context.Context, obj *nib.Nib, filter *model.
 			result = append(result, snap)
 		}
 	}
-	return ApplyFilter(ctx, result, filter, r.Reader, r.Resolver.Blocking), nil
+	return ApplyFilter(ctx, result, filter, r.Reader, r.Resolver.Blocking)
 }
 
 // MentionedBy is the resolver for the mentionedBy field.
@@ -874,7 +877,7 @@ func (r *nibResolver) MentionedBy(ctx context.Context, obj *nib.Nib, filter *mod
 			result = append(result, snap)
 		}
 	}
-	return ApplyFilter(ctx, result, filter, r.Reader, r.Resolver.Blocking), nil
+	return ApplyFilter(ctx, result, filter, r.Reader, r.Resolver.Blocking)
 }
 
 // Nib is the resolver for the nib field.
@@ -915,7 +918,10 @@ func (r *queryResolver) Nibs(ctx context.Context, filter *model.NibFilter, sort 
 		nibs = r.Reader.All()
 	}
 
-	result := ApplyFilter(ctx, nibs, filter, r.Reader, r.Blocking)
+	result, err := ApplyFilter(ctx, nibs, filter, r.Reader, r.Blocking)
+	if err != nil {
+		return nil, err
+	}
 
 	// When search is active, include ancestors of matched nibs so the
 	// client can build complete tree hierarchies even when only leaf

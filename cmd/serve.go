@@ -362,8 +362,8 @@ func newGraphQLHandler(app *App) http.Handler {
 }
 
 // etagErrorPresenter is the gqlgen error presenter that attaches a stable,
-// machine-readable extensions.code to the two mutation failures the web client
-// must route structurally rather than by prose:
+// machine-readable extensions.code to the failures the web client must route
+// structurally rather than by prose:
 //
 //   - "ETAG_MISMATCH" on ONLY the typed *nibcore.ETagMismatchError — the
 //     reconcilable optimistic-concurrency conflict the web client routes into
@@ -387,11 +387,25 @@ func newGraphQLHandler(app *App) http.Handler {
 //     fields are later added to that input, a deleted BLOCKING target would also
 //     mint NOT_FOUND
 //     and misroute the still-alive edited nib to gone/deleted.
+//     NOT_FOUND also arrives on the READ path, which no other code does: a
+//     filter field naming one nib refuses an id no nib answers to
+//     (graph.FilterTargetNotFoundError), and the web filter box sends
+//     user-typed — so routinely half-typed — ids. The list keys on the code to
+//     explain that inline instead of rendering it as a failure.
+//     A filter refusal is the ONLY read-path source of this code, and
+//     web/src/lib/components/TreeTable.svelte routes ANY read-path NOT_FOUND to
+//     that calm inline empty state on the strength of it. What holds the
+//     invariant up is that every read resolver returns (nil, nil) on a miss
+//     (queryResolver.Nib, nibResolver.Parent) and only mutations wrap
+//     nib.ErrNotFound (snapshotResult). A new read resolver that carried it —
+//     nib(id:) erroring instead of resolving to null, say — would be presented
+//     as an empty result rather than as the failure it is.
 //
 // Every other error (the enum-validation errors, ETagRequiredError,
-// OnDiskUnparseableError, generic failures) is left EXACTLY as the default
-// presenter formats it: no code is added, so callers can't mistake a
-// non-reconcilable failure for a retryable conflict or a real deletion.
+// OnDiskUnparseableError, a filter target that vanished mid-query, generic
+// failures) is left EXACTLY as the default presenter formats it: no code is
+// added, so callers can't mistake a non-reconcilable failure for a retryable
+// conflict or a real deletion.
 //
 // The web classifiers key on these codes first; the "etag mismatch" substring
 // match is kept only as a fallback (see web/src/lib/nibForm.svelte.ts,

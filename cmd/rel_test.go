@@ -2,15 +2,23 @@ package cmd
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
+	"regexp"
+	"slices"
 	"sort"
 	"strings"
 	"testing"
 
+	"github.com/alphaleonis/nibs/internal/graph"
+	"github.com/alphaleonis/nibs/internal/graph/model"
+	"github.com/alphaleonis/nibs/internal/nib"
 	"github.com/alphaleonis/nibs/internal/output"
+	"github.com/spf13/cobra"
 	"github.com/spf13/pflag"
 )
 
@@ -71,6 +79,38 @@ func resetRelFlags() {
 			f.Changed = false
 		})
 	}
+}
+
+// relRequiresRelFlag reports whether `nibs rel` genuinely demands --rel. Two
+// things would make it required: the flag marked required at registration, or a
+// parse that turns an omitted --rel into no relation at all. The grammar
+// surfaces are asserted against this rather than against a literal, so
+// documentation that says --rel is optional cannot outlive the arity it
+// describes.
+func relRequiresRelFlag(t *testing.T) bool {
+	t.Helper()
+	f := relCmd.Flags().Lookup("rel")
+	if f == nil {
+		t.Fatalf("rel command has no --rel flag")
+	}
+	if vals, ok := f.Annotations[cobra.BashCompOneRequiredFlag]; ok && slices.Contains(vals, "true") {
+		return true
+	}
+	rels, err := parseRels(nil)
+	return err != nil || len(rels) == 0
+}
+
+// relDefaultDoc matches text that names relDefaultKind AS the default: the word
+// "default" and the relation name in the same sentence, in either order. Mere
+// containment of the name would pass on every surface that lists the accepted
+// relations, which is exactly the state this guards against.
+var relDefaultDoc = regexp.MustCompile(`(?i)(?:default[^.\n]{0,60}` + regexp.QuoteMeta(string(relDefaultKind)) +
+	`|` + regexp.QuoteMeta(string(relDefaultKind)) + `[^.\n]{0,60}default)`)
+
+// statesRelDefault reports whether the given help text tells a caller what an
+// omitted --rel resolves to.
+func statesRelDefault(text string) bool {
+	return relDefaultDoc.MatchString(text)
 }
 
 // relFixture is the standard fixture for rel tests. It covers:
@@ -358,6 +398,54 @@ func TestRelCommand_NeighboursActive_ExcludesCompleted(t *testing.T) {
 	}
 }
 
+// --- The omitted --rel default ---
+
+// TestRelCommand_OmittedRel_RunsTheDocumentedDefault proves relDefaultKind is
+// the relation an omitted --rel actually queries, not merely the one the help
+// text claims: a bare invocation must return exactly what naming that kind
+// returns. The documentation surfaces are asserted against the same constant,
+// so a default changed in parseRels alone breaks this rather than leaving the
+// help quietly wrong.
+func TestRelCommand_OmittedRel_RunsTheDocumentedDefault(t *testing.T) {
+	nibsDir := setupRelCobraTest(t, hierarchyFixture)
+	// p1 is queried because it relates in more than one direction — three
+	// children plus one root-level sibling. A nib whose only relation is the
+	// default's would return the same set for several defaults, and the
+	// comparison would prove nothing about which one ran.
+	explicit := relEnvIDOrder(decodeRelEnvelope(t,
+		runRelJSON(t, "--nibs-path", nibsDir, "rel", "p1", "--rel", string(relDefaultKind), "--all", "--json")))
+	resetRelFlags()
+	bare := relEnvIDOrder(decodeRelEnvelope(t,
+		runRelJSON(t, "--nibs-path", nibsDir, "rel", "p1", "--all", "--json")))
+
+	if len(bare) == 0 {
+		t.Fatalf("bare 'nibs rel p1' returned nothing; the comparison below would be vacuous")
+	}
+	if !slices.Equal(bare, explicit) {
+		t.Errorf("bare 'nibs rel p1' = %v, but '--rel %s' = %v; the documented default is not the one the command applies",
+			bare, relDefaultKind, explicit)
+	}
+}
+
+// TestRelHelpDocumentsTheOmittedRelDefault asserts `nibs rel --help` says what
+// omitting --rel returns. Omitting it yields a plausible-looking related set
+// instead of an error, so a caller who never learns the default reads someone
+// else's relationships as this nib's. Every other default on the command
+// (--depth, --view, the output mode) is stated; this one is the least
+// guessable.
+func TestRelHelpDocumentsTheOmittedRelDefault(t *testing.T) {
+	if relRequiresRelFlag(t) {
+		t.Skip("--rel is required, so there is no omitted-flag default to document")
+	}
+	usage := relCmd.Flags().Lookup("rel").Usage
+	if !statesRelDefault(usage) {
+		t.Errorf("--rel usage string never names %q as the default: %q", relDefaultKind, usage)
+	}
+	if !statesRelDefault(relCmd.Long) {
+		t.Errorf("rel long help never names %q as the default an omitted --rel resolves to:\n%s", relDefaultKind, relCmd.Long)
+	}
+}
+
 // --- --order topo ---
 
 func TestRelCommand_Children_OrderTopo(t *testing.T) {
@@ -521,6 +609,44 @@ func TestRelCommand_Ancestors_Depth2(t *testing.T) {
 	order := relEnvIDOrder(env)
 	if len(order) != 2 || order[0] != "leaf" || order[1] != "mid" {
 		t.Errorf("ancestors depth=2 order = %v, want [leaf, mid]", order)
+	}
+}
+
+// TestRelCommand_Ancestors_DanglingLinkEndsChain pins that a parent link naming
+// no nib ends the ancestor chain at that rung rather than being skipped over or
+// failing the command — the resolved-parent rule, applied by the same walk the
+// hierarchy filters use.
+func TestRelCommand_Ancestors_DanglingLinkEndsChain(t *testing.T) {
+	files := map[string]string{
+		"root--r.md": "---\ntitle: Root\nstatus: in-progress\ntype: milestone\n---\n",
+		// Hand-edited: mid's parent names a nib that does not exist, so the
+		// chain from leaf must stop at mid and never reach root.
+		"mid--m.md":  "---\ntitle: Mid\nstatus: in-progress\ntype: epic\nparent: ghost\norder: a0\n---\n",
+		"leaf--l.md": "---\ntitle: Leaf\nstatus: todo\ntype: task\nparent: mid\norder: a0\n---\n",
+	}
+	nibsDir := setupRelCobraTest(t, files)
+	out := runRelJSON(t, "--nibs-path", nibsDir, "rel", "leaf", "--rel", "ancestors", "--depth", "all", "--json")
+	env := decodeRelEnvelope(t, out)
+	order := relEnvIDOrder(env)
+	if len(order) != 1 || order[0] != "mid" {
+		t.Errorf("ancestors of leaf = %v, want [mid] (the chain ends at the dangling link)", order)
+	}
+}
+
+// TestRelCommand_Ancestors_CycleTerminates pins that a hand-edited parent cycle
+// terminates: the walk stops at the first rung it has already visited, and the
+// starting nib is never reported as its own ancestor.
+func TestRelCommand_Ancestors_CycleTerminates(t *testing.T) {
+	files := map[string]string{
+		"a--a.md": "---\ntitle: A\nstatus: todo\ntype: task\nparent: b\norder: a0\n---\n",
+		"b--b.md": "---\ntitle: B\nstatus: todo\ntype: task\nparent: a\norder: a0\n---\n",
+	}
+	nibsDir := setupRelCobraTest(t, files)
+	out := runRelJSON(t, "--nibs-path", nibsDir, "rel", "a", "--rel", "ancestors", "--depth", "all", "--json")
+	env := decodeRelEnvelope(t, out)
+	order := relEnvIDOrder(env)
+	if len(order) != 1 || order[0] != "b" {
+		t.Errorf("ancestors of a = %v, want [b] (the walk stops when it reaches a again)", order)
 	}
 }
 
@@ -1031,6 +1157,69 @@ func TestRelCommand_TextMode_FailingCommand_NoUsageNoAutoError(t *testing.T) {
 	}
 	if got := cobraStderr.String(); strings.Contains(got, "Usage:") || strings.Contains(got, "Error:") {
 		t.Errorf("rootCmd OutOrStderr contains Usage:/Error: in text mode; got:\n%s", got)
+	}
+}
+
+// TestBfsTraverseReportsRefusedFilter pins the eighth ApplyFilter call site —
+// the one inside the rel traversal — against swallowing a refused filter.
+//
+// No rel flag populates an id-valued filter field today (buildNibFilter fills
+// only the metadata facets), so this is not reachable from the command line and
+// is exercised directly. That is the reason to write it rather than to skip it:
+// the day a rel flag gains one, a swallow here would hand back a plausible
+// subtree listing for a target that does not exist, and nothing else in the
+// suite would notice.
+func TestBfsTraverseReportsRefusedFilter(t *testing.T) {
+	resolver, core := setupParentLinkTest(t, map[string]string{
+		"nibs-par": "",
+		"nibs-chi": "parent: nibs-par\n",
+	})
+
+	parent := mustGet(t, core, "nibs-par")
+	unknown := "nonexistent"
+	got, err := bfsDescendants(context.Background(), resolver,
+		parent, &model.NibFilter{ParentID: &unknown}, -1)
+	if err == nil {
+		t.Fatalf("returned %d nibs and no error; the traversal swallowed the refusal", len(got))
+	}
+	if !errors.Is(err, nib.ErrNotFound) {
+		t.Errorf("error does not carry nib.ErrNotFound: %v", err)
+	}
+}
+
+// TestRelFetchErrCodeClassifiesFilterRefusals pins the exit code the traversal's
+// error sites give a refused filter. bfsTraverse propagating the refusal (above)
+// is only half of it: RunE sees an opaque error, and the code it picks is what
+// an agent branching on $? reads as "no such nib" (3) versus "the tracker broke"
+// (5). Reporting a mistyped id as a file error is the miscategorization the
+// error classes exist to remove, so the fallback must be consulted last.
+//
+// The rows are wrapped exactly as the call sites wrap them, because a classifier
+// that only worked on the bare error would pass an unwrapped table and still
+// misclassify everything RunE actually hands it.
+func TestRelFetchErrCodeClassifiesFilterRefusals(t *testing.T) {
+	notFound := &graph.FilterTargetNotFoundError{Field: "parentId", ID: "nonexistent"}
+	unreadable := &graph.FilterTargetUnreadableError{Field: "siblingId", ID: "nibs-a", ReaderErr: nib.ErrNotFound}
+
+	tests := []struct {
+		name string
+		err  error
+		want string
+	}{
+		{"unknown filter target", notFound, output.ErrNotFound},
+		{"unknown filter target, wrapped by the fetch site", fmt.Errorf("fetching descendants: %w", notFound), output.ErrNotFound},
+		{"target that vanished mid-filter", unreadable, output.ErrFileError},
+		{"target that vanished mid-filter, wrapped", fmt.Errorf("fetching siblings: %w", unreadable), output.ErrFileError},
+		{"dependency cycle", fmt.Errorf("%w detected: a, b", errRelCycle), output.ErrValidation},
+		{"anything else", errors.New("reading nibs directory"), output.ErrFileError},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := relFetchErrCode(tt.err); got != tt.want {
+				t.Errorf("relFetchErrCode(%v) = %q, want %q", tt.err, got, tt.want)
+			}
+		})
 	}
 }
 

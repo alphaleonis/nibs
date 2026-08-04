@@ -63,6 +63,11 @@ const (
 	relNeighboursActive      relKind = "neighbours-active"
 )
 
+// relDefaultKind is the relation an omitted --rel queries. It is one constant
+// because the flag's usage string, the long help, and the cheat sheet all state
+// it, and none of them may say something the parse does not do.
+const relDefaultKind = relNeighbours
+
 // directRels lists the 7 atomic direct relationships in the canonical
 // order used by --rel neighbours expansion.
 var directRels = []relKind{
@@ -85,6 +90,28 @@ var (
 	errRelInvalidDepth       = errors.New("invalid --depth value")
 	errRelCycle              = errors.New("dependency cycle")
 )
+
+// relFetchErrCode maps a traversal failure onto the CLI's structured error
+// code. A refused id-valued filter keeps the class ApplyFilter assigned it (see
+// filterTargetErrCode), a dependency cycle is a validation failure, and
+// everything else falls back to the io/internal class.
+//
+// The filter classes are not reachable from `nibs rel` as it stands:
+// relFilterFlags.buildNibFilter populates only status/type/priority/tags/
+// estimate, and none of those name a single nib. They are classified here
+// because the traversal routes every graph.ApplyFilter call site through this
+// function — bfsTraverse's included — so a rel flag that later carries an id
+// reports a mistyped id as not-found (exit 3) rather than as a file error,
+// matching what `nibs list --parent` already does.
+func relFetchErrCode(err error) string {
+	if code, ok := filterTargetErrCode(err); ok {
+		return code
+	}
+	if errors.Is(err, errRelCycle) {
+		return output.ErrValidation
+	}
+	return output.ErrFileError
+}
 
 // relSpec describes per-rel capabilities used for flag validation and
 // expansion. Meta rels have non-nil ExpandsTo and delegate to their
@@ -120,10 +147,10 @@ var relTable = map[relKind]relSpec{
 // entries inside a single value. Returns the validated list (meta rels are
 // left intact; expandRels resolves them to their atomic constituents).
 //
-// When --rel is empty, default to `neighbours`.
+// When --rel is empty, default to relDefaultKind.
 func parseRels(raw []string) ([]relKind, error) {
 	if len(raw) == 0 {
-		raw = []string{string(relNeighbours)}
+		raw = []string{string(relDefaultKind)}
 	}
 	var out []relKind
 	seen := map[relKind]bool{}
@@ -446,26 +473,19 @@ func fetchSiblings(ctx context.Context, resolver *graph.Resolver, b *nib.Nib, fi
 // bfsChainAncestors walks parent links up to `depth` steps and returns
 // the chain in encounter order (closest ancestor first). depth < 0 means
 // "until root".
+//
+// The step is the parent resolver, which decides three things for this walk
+// (see graph.ParentStep): a link naming no nib reports no parent, so the chain
+// ends at that rung exactly as it does for the hierarchy filters; the nibs it
+// yields are detached snapshots, safe to hand to the projection layer; and a
+// resolver error aborts the walk rather than truncating the chain silently.
+// The visited set is per-call and seeded with b.ID, so b is never reported as
+// its own ancestor and a cycle stops when it comes back around.
 func bfsChainAncestors(ctx context.Context, resolver *graph.Resolver, b *nib.Nib, depth int) ([]*nib.Nib, error) {
-	var out []*nib.Nib
-	seen := map[string]bool{b.ID: true}
-	cur := b
-	for steps := 0; depth < 0 || steps < depth; steps++ {
-		p, err := resolver.Nib().Parent(ctx, cur)
-		if err != nil {
-			return nil, err
-		}
-		if p == nil {
-			break
-		}
-		if seen[p.ID] {
-			break // cycle-safe: stop if loop
-		}
-		seen[p.ID] = true
-		out = append(out, p)
-		cur = p
+	step := func(cur *nib.Nib) (*nib.Nib, error) {
+		return resolver.Nib().Parent(ctx, cur)
 	}
-	return out, nil
+	return graph.WalkParentChain(b, step, map[string]bool{b.ID: true}, depth)
 }
 
 // bfsDescendants performs BFS over children edges from b up to depth.
@@ -518,7 +538,7 @@ func bfsTraverse(ctx context.Context, resolver *graph.Resolver, start *nib.Nib, 
 		frontier = next
 		level++
 	}
-	return graph.ApplyFilter(ctx, reached, filter, resolver.Reader, resolver.Blocking), nil
+	return graph.ApplyFilter(ctx, reached, filter, resolver.Reader, resolver.Blocking)
 }
 
 // topoSortNibs reorders `candidates` using `blocked_by` edges among the set.
@@ -637,6 +657,11 @@ through the shared field-set engine — the related set is rendered as the same
   ancestors, descendants, blockers-transitive, blocks-transitive,
   mentions-out-transitive, mentions-in-transitive
   neighbours (= all 7 direct rels), neighbours-active (= neighbours with --open)
+
+--rel is optional. Omitting it applies the default neighbours, so a bare
+'nibs rel <id>' returns every directly related nib at once. That set includes
+siblings, and a root nib's siblings are every other root — name the relation
+explicitly whenever the question is about one direction.
 
 When several rels are requested the related nibs are unioned into one deduped
 list (first-encountered order across rels), then projected.
@@ -806,21 +831,13 @@ filter-on-singular validation error does not fire here.`,
 
 			got, ferr := fetchRel(ctx, resolver, b, fetchKind, perRelFilter, depthVal)
 			if ferr != nil {
-				code := output.ErrFileError
-				if errors.Is(ferr, errRelCycle) {
-					code = output.ErrValidation
-				}
-				return reportErr(relJSON, code,
+				return reportErr(relJSON, relFetchErrCode(ferr),
 					fmt.Errorf("fetching %s: %w", fetchKind, ferr))
 			}
 			if relOrder == "topo" && relTable[fetchKind].AllowsOrder {
 				ordered, oerr := topoSortNibs(got)
 				if oerr != nil {
-					code := output.ErrFileError
-					if errors.Is(oerr, errRelCycle) {
-						code = output.ErrValidation
-					}
-					return reportErr(relJSON, code, oerr)
+					return reportErr(relJSON, relFetchErrCode(oerr), oerr)
 				}
 				got = ordered
 			}
@@ -843,11 +860,7 @@ filter-on-singular validation error does not fire here.`,
 		if openDefaultApplied {
 			hiddenClosed, err = relCountHiddenClosed(ctx, resolver, b, fetched, filterFlags, app.Config(), depthVal, len(results))
 			if err != nil {
-				code := output.ErrFileError
-				if errors.Is(err, errRelCycle) {
-					code = output.ErrValidation
-				}
-				return reportErr(relJSON, code, err)
+				return reportErr(relJSON, relFetchErrCode(err), err)
 			}
 		}
 
@@ -874,7 +887,8 @@ filter-on-singular validation error does not fire here.`,
 }
 
 func init() {
-	relCmd.Flags().StringArrayVar(&relKinds, "rel", nil, "Relationship to query (repeatable; comma-separated OK)")
+	relCmd.Flags().StringArrayVar(&relKinds, "rel", nil,
+		fmt.Sprintf("Relationship to query (repeatable; comma-separated OK) (default %s)", relDefaultKind))
 	relCmd.Flags().StringVar(&relDepth, "depth", "", "Depth for transitive rels: N (positive integer) or 'all' (default 1)")
 	relCmd.Flags().StringVar(&relOrder, "order", "", "Order the results (supports: topo)")
 	relCmd.Flags().BoolVar(&relFlat, "flat", false, "Deprecated no-op: the related set is always a single deduped list")

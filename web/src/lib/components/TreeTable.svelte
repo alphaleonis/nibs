@@ -10,6 +10,7 @@
   import { prepareFilter, isDragAllowed, matchesFilter } from "../filter";
   import { resolveFilter, resolveViewLevel, resolveVisibleColumns, resolveColumnWidths, resolveColumnOrder, resolveTableSort, emitFilter, emitTableSort, emitColumnOrder } from "../resolvePrefs";
   import { hierarchyTokens, clearHierarchyFilters } from "../query";
+  import { graphqlErrorCode, graphqlErrorMessage } from "../graphqlError";
   import { Button } from "$lib/components/ui/button/index.js";
   import TreeTableRow from "./TreeTableRow.svelte";
   import TableHeader from "./TableHeader.svelte";
@@ -155,8 +156,31 @@
   });
 
   // error is `unknown` from the source; the query surfaces urql's CombinedError,
-  // which carries a `.message`. Narrow it for display.
-  let errorMessage = $derived((dataSource.error as { message?: string } | undefined)?.message ?? "");
+  // whose aggregate `.message` carries a "[GraphQL] " transport prefix no user
+  // should read. graphqlErrorMessage prefers the server's own message, and this
+  // text is rendered rather than logged.
+  let errorMessage = $derived(graphqlErrorMessage(dataSource.error));
+
+  // A filter naming a nib that does not exist is the user's own half-typed or
+  // stale id, not a fault. The server refuses such a query rather than answering
+  // it with an empty list — it cannot tell "nothing is under that nib" from "no
+  // such nib" otherwise — and tags the refusal NOT_FOUND so this side can tell
+  // them apart in turn.
+  //
+  // It reaches here on every keystroke of an id being typed, so presenting it as
+  // a red failure would flash an error through the list for ids that are merely
+  // incomplete. Routed to a calm inline state instead, alongside the other empty
+  // results, with the escape hatch offered when tree filters are what is set.
+  //
+  // This keys on the code alone, which is safe only while a filter refusal is
+  // the sole read-path source of NOT_FOUND. That constraint lives with the
+  // server that mints the code — see etagErrorPresenter in cmd/serve.go — and a
+  // read resolver that started carrying it would be muted here.
+  let notFoundMessage = $derived(
+    dataSource.error && graphqlErrorCode(dataSource.error) === "NOT_FOUND"
+      ? graphqlErrorMessage(dataSource.error)
+      : ""
+  );
 
   let allNibs = $derived(dataSource.allNibs);
 
@@ -585,6 +609,17 @@
        position survive; rows update in place via the useTableData live path. -->
   <div class="flex items-center justify-center py-12 text-body text-muted-foreground">
     <span>Loading...</span>
+  </div>
+{:else if notFoundMessage}
+  <!-- Ordered before the generic error branch: a refused filter id is an empty
+       result the user can act on, not a failure, so it must not be styled or
+       worded as one. -->
+  <div data-testid="empty-unknown-id" class="flex flex-col items-center gap-3 py-12 text-body text-muted-foreground">
+    <span class="text-foreground">No nibs match this filter</span>
+    <span class="max-w-md text-center">{notFoundMessage}</span>
+    {#if activeHierarchyTokens.length > 0}
+      <Button variant="outline" size="sm" onclick={clearHierarchy}>Clear hierarchy filters</Button>
+    {/if}
   </div>
 {:else if dataSource.error}
   <div class="rounded-lg bg-destructive/10 px-4 py-3 text-body text-destructive">

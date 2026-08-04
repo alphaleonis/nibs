@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"slices"
@@ -682,29 +683,73 @@ func TestListCommand_MentionsFlag_ShortIDNormalisation(t *testing.T) {
 	}
 }
 
-func TestListCommand_MentionsFlag_UnknownID(t *testing.T) {
-	// Unknown target should yield an empty envelope, not an error. The nibs
-	// array must be [] (never null) so agent consumers can index it
-	// unconditionally — the empty-array convention shared by the get and rel
-	// contracts.
-	nibsDir := setupListCobraTest(t, mentionsFixture())
-
-	rootCmd.SetArgs([]string{"--nibs-path", nibsDir, "list", "--mentions", "nope", "--json"})
-
-	var execErr error
-	out := captureStdout(t, func() {
-		execErr = rootCmd.Execute()
-	})
-	if execErr != nil {
-		t.Fatalf("list --mentions <unknown> failed: %v", execErr)
+// TestListCommand_UnknownFilterTargetIsNotFound is the CLI end of the
+// filter-target contract. Every id-valued list flag names one nib, so an id no
+// nib answers to is a question the command cannot answer — it must say so and
+// exit 3, not print an empty listing and exit 0.
+//
+// Exit 0 with zero rows would be worse than a plain error here: an agent
+// scripting `--parent "$ID"` reads an empty exit-0 listing as "that nib has no
+// children" and moves on, so a stale or mistyped id never surfaces.
+//
+// The assertion is on the exit status via the real boundary (reportExitError),
+// not merely on err != nil: the whole value of the change is that a caller can
+// branch on $? without parsing text.
+func TestListCommand_UnknownFilterTargetIsNotFound(t *testing.T) {
+	tests := []struct {
+		name string
+		args []string
+	}{
+		{"--parent", []string{"--parent", "nope"}},
+		{"--mentions", []string{"--mentions", "nope"}},
+		{"--mentioned-by", []string{"--mentioned-by", "nope"}},
 	}
-	env := parseListEnvelope(t, out)
-	if env.Count != 0 || len(env.Nibs) != 0 || env.Truncated {
-		t.Errorf("got count=%d nibs=%+v truncated=%v, want an empty envelope", env.Count, env.Nibs, env.Truncated)
-	}
-	// The nibs field must serialize as [] (not null) for stable indexing.
-	if !strings.Contains(out, "\"nibs\": []") {
-		t.Errorf("empty list --json must render \"nibs\": [], got:\n%s", out)
+
+	for _, tt := range tests {
+		t.Run(tt.name+" --json", func(t *testing.T) {
+			nibsDir := setupListCobraTest(t, mentionsFixture())
+			out, err := runListCmd(t, nibsDir, append(append([]string{}, tt.args...), "--json")...)
+			if err == nil {
+				t.Fatalf("list %v --json returned no error; out: %q", tt.args, out)
+			}
+			if code := reportExitError(io.Discard, err); code != output.ExitNotFound {
+				t.Errorf("exit code = %d, want %d (NOT_FOUND)", code, output.ExitNotFound)
+			}
+			var env struct {
+				Error struct {
+					Code    string `json:"code"`
+					Message string `json:"message"`
+				} `json:"error"`
+			}
+			if uerr := json.Unmarshal([]byte(out), &env); uerr != nil {
+				t.Fatalf("stdout is not a JSON error envelope: %v\nraw: %s", uerr, out)
+			}
+			if env.Error.Code != output.ErrNotFound {
+				t.Errorf("envelope error.code=%q, want %q", env.Error.Code, output.ErrNotFound)
+			}
+			if !strings.Contains(env.Error.Message, "nope") {
+				t.Errorf("envelope error.message %q does not echo the id that was not found", env.Error.Message)
+			}
+			// A rejected query must not also emit a listing: an agent parsing
+			// stdout would otherwise see a valid-looking empty result.
+			if strings.Contains(out, `"nibs"`) {
+				t.Errorf("error envelope must not carry a nibs listing:\n%s", out)
+			}
+		})
+
+		t.Run(tt.name+" text", func(t *testing.T) {
+			nibsDir := setupListCobraTest(t, mentionsFixture())
+			out, err := runListCmd(t, nibsDir, tt.args...)
+			if err == nil {
+				t.Fatalf("list %v returned no error; out: %q", tt.args, out)
+			}
+			if code := reportExitError(io.Discard, err); code != output.ExitNotFound {
+				t.Errorf("exit code = %d, want %d (NOT_FOUND)", code, output.ExitNotFound)
+			}
+			if strings.Contains(out, "nibs") {
+				t.Errorf("text mode must not print the TSV header for a rejected query:\n%s", out)
+			}
+		})
 	}
 }
 

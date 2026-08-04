@@ -1021,8 +1021,9 @@ func nibIndexByID(nibs []*nib.Nib, id string) int {
 // TestNibsFilterRaceAgainstRemoveLinksTo reproduces the write-side data race in
 // nibs-pyei. The Nibs query pipeline reads b.Parent off the LIVE c.nibs pointers
 // off-lock — ApplyFilter's HasParent predicate, which reaches the field through
-// resolvedParentID's opening emptiness test (internal/graph/filters.go) — while
-// Core.RemoveLinksTo mutates b.Parent under c.mu (internal/nibcore/link_health.go).
+// the opening emptiness test of resolvedParent (internal/graph/filters.go), the
+// function resolvedParentID delegates to — while Core.RemoveLinksTo mutates
+// b.Parent under c.mu (internal/nibcore/link_health.go).
 // That unsynchronized read of b.Parent is what makes this a detector, so a
 // change removing it from the predicate's path retires the probe with it.
 // On the old in-place code those two accesses touch the same b.Parent word with
@@ -1056,7 +1057,12 @@ func TestNibsFilterRaceAgainstRemoveLinksTo(t *testing.T) {
 			defer wg.Done()
 			for j := 0; j < 200; j++ {
 				// Reads b.Parent off the live store pointers, off-lock.
-				_ = ApplyFilter(context.Background(), core.All(), filter, resolver.Reader, resolver.Blocking)
+				//
+				// The error return is discarded rather than asserted: the filter
+				// carries no *ID field, so it is structurally nil on every
+				// iteration, and an assertion that cannot fire would only slow
+				// the loop the detector depends on running hot.
+				_, _ = ApplyFilter(context.Background(), core.All(), filter, resolver.Reader, resolver.Blocking)
 			}
 		}()
 	}

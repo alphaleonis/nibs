@@ -219,16 +219,29 @@ func executeQuery(app *App, query string, variables map[string]any, operationNam
 }
 
 // formatGraphQLErrors formats GraphQL errors into a single error.
+//
+// Repeated messages are collapsed to their first occurrence. One refused filter
+// inside a nested resolver raises its own error per matched parent — a single
+// bad children(filter:{parentId:"zz"}) under an unfiltered outer query emits one
+// identical sentence per nib in the store — and every copy after the first says
+// nothing the first did not, while all of them land in one --json message string
+// and in an agent's context. First-encountered order is kept so what survives
+// still reads in the order gqlgen reported it.
 func formatGraphQLErrors(errs gqlerror.List) error {
 	if len(errs) == 0 {
 		return nil
 	}
-	if len(errs) == 1 {
-		return fmt.Errorf("graphql: %s", errs[0].Message)
-	}
+	seen := make(map[string]bool, len(errs))
 	var msgs []string
 	for _, e := range errs {
+		if seen[e.Message] {
+			continue
+		}
+		seen[e.Message] = true
 		msgs = append(msgs, e.Message)
+	}
+	if len(msgs) == 1 {
+		return fmt.Errorf("graphql: %s", msgs[0])
 	}
 	return fmt.Errorf("graphql errors:\n  %s", strings.Join(msgs, "\n  "))
 }
