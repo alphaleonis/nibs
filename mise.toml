@@ -1,4 +1,30 @@
+# Exact versions, deliberately not "latest".
+#
+# "latest" is resolved separately on every machine — once per `mise install`
+# locally, once per workflow run in CI — so two checkouts of the same commit can
+# be linted by different golangci-lint releases. That is not hypothetical here:
+# two such resolutions landed on different minor versions and disagreed about
+# this codebase, one reporting six SA5011 possible-nil-dereference issues in test
+# files that the other did not. Under the "never commit with lint failures" rule
+# that is a gate nobody can reproduce.
+#
+# These versions are mirrored in .github/workflows/ci.yml — BOTH setup-go
+# `go-version` keys, BOTH `go install .../task@` steps, and golangci-lint-action's
+# `version`, which needs a leading `v` — and in .github/workflows/release.yml
+# (`go-version`). Bump them together, and re-run `task lint` when moving
+# golangci-lint: a new release can add or retire checks and move the clean
+# baseline.
+#
+# The `go` pin also has to stay at or above go.mod's `go` directive. With
+# GOTOOLCHAIN=auto, a directive higher than the invoked toolchain makes the go
+# command fetch and switch to a newer one, overriding this pin while every
+# comment still names the version here.
+#
+# Pinning has a cost worth naming: these pins alone decide which Go compiles
+# published binaries, and nothing bumps them on its own. A floating `stable`
+# picks up Go security releases automatically; an exact pin does not, so these
+# need bumping periodically — not only when a bump is otherwise convenient.
 [tools]
-go = "latest"
-golangci-lint = "latest"
-task = "latest"
+go = "1.26.5"
+golangci-lint = "2.12.2"
+task = "3.50.0"

@@ -172,10 +172,13 @@
   // incomplete. Routed to a calm inline state instead, alongside the other empty
   // results, with the escape hatch offered when tree filters are what is set.
   //
-  // This keys on the code alone, which is safe only while a filter refusal is
-  // the sole read-path source of NOT_FOUND. That constraint lives with the
-  // server that mints the code — see etagErrorPresenter in cmd/serve.go — and a
-  // read resolver that started carrying it would be muted here.
+  // This keys on the code alone, which is safe only while an UNRESOLVABLE-ID
+  // filter refusal is the sole read-path source of NOT_FOUND. Not every filter
+  // refusal qualifies: an id-valued field given the EMPTY STRING is refused too
+  // and deliberately carries no code, so it lands in the generic error branch
+  // below and stays visible as the client bug it is. That constraint lives with
+  // the server that mints the code — see etagErrorPresenter in cmd/serve.go —
+  // and a read resolver that started carrying it would be muted here.
   let notFoundMessage = $derived(
     dataSource.error && graphqlErrorCode(dataSource.error) === "NOT_FOUND"
       ? graphqlErrorMessage(dataSource.error)

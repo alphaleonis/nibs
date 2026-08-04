@@ -22,7 +22,10 @@ jobs:
       - uses: actions/checkout@v6
       - uses: actions/setup-go@v6
         with:
-          go-version: stable
+          # Exact version rather than `stable`, so this job compiles with the
+          # same toolchain a mise-provisioned checkout does. Keep in sync with
+          # mise.toml, which carries the rationale.
+          go-version: "1.26.5"
       - uses: actions/setup-node@v6
         with:
           node-version: "22"
@@ -36,9 +39,10 @@ jobs:
       # above already supplies the toolchain and puts $(go env GOPATH)/bin on
       # PATH on every runner OS (its addBinToPath, called unconditionally — if
       # a future setup-go drops that, `task` stops resolving and this needs a
-      # $GITHUB_PATH step). `@latest` floats, matching mise.toml's
-      # `task = "latest"`; the v3 import path bounds it to that major line.
-      - run: go install github.com/go-task/task/v3/cmd/task@latest
+      # $GITHUB_PATH step). The version is the one mise.toml pins, so CI runs the
+      # Taskfile through the Task release mise provisions. Contributors only match
+      # it if mise's tools are on PATH — nothing enforces that locally.
+      - run: go install github.com/go-task/task/v3/cmd/task@v3.50.0
       - run: task web:build
       # The Go steps stay direct instead of going through `task test`, which is
       # not equivalent to this job: it runs -race on every OS (see below), runs
@@ -61,7 +65,10 @@ jobs:
       - uses: actions/checkout@v6
       - uses: actions/setup-go@v6
         with:
-          go-version: stable
+          # Pinned for the same reason as the test job, and it matters more here:
+          # golangci-lint's analyzers key off the Go version they run under, so a
+          # floating toolchain can move the lint baseline on untouched code.
+          go-version: "1.26.5"
       - uses: actions/setup-node@v6
         with:
           node-version: "22"
@@ -69,7 +76,14 @@ jobs:
       # is not only for coverage here: embed.go embeds web/dist, so the package
       # does not load for golangci-lint without it. web:install is a dep of
       # web:check too, but skips there — web:build's stamp is still fresh.
-      - run: go install github.com/go-task/task/v3/cmd/task@latest
+      # The Task version is the one mise.toml pins, as in the test job.
+      - run: go install github.com/go-task/task/v3/cmd/task@v3.50.0
       - run: task web:build
       - run: task web:check
       - uses: golangci/golangci-lint-action@v9
+        with:
+          # The version mise.toml pins, so `task lint` locally and this job reach
+          # the same verdict. Without it the action resolves `latest` per run, and
+          # CI silently starts disagreeing with contributors about untouched code.
+          # The action requires the leading `v`.
+          version: "v2.12.2"

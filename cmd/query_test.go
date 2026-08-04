@@ -3,11 +3,14 @@ package cmd
 import (
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/vektah/gqlparser/v2/gqlerror"
 
 	"github.com/alphaleonis/nibs/internal/config"
 	"github.com/alphaleonis/nibs/internal/input"
@@ -846,6 +849,40 @@ func TestExecuteQueryNestedFilterRefusalIsReportedOnce(t *testing.T) {
 	t.Fatal("a nested filter naming no nib returned no error")
 }
 
+// TestExecuteQueryEmptyFilterTargetIsAValidationError covers the surface that
+// is the ONLY one for five of the eight id-valued filter fields. cmd/list.go
+// refuses --parent "", --mentions "" and --mentioned-by "" on the flag layer,
+// but ancestorId, descendantId, siblingId, blockingId and blockedById have no
+// flag, so a query is the only way an empty value reaches ApplyFilter at all.
+//
+// ancestorId is the representative because it takes the GENERIC message branch,
+// unlike the parentId every other construction in this package builds. A pass
+// says the refusal survives the whole path — resolver, executor, gqlgen's error
+// wrapping, classifier — and arrives as exit 2 rather than the exit 3 a
+// not-found would give or the exit 0 the dropped branch used to.
+func TestExecuteQueryEmptyFilterTargetIsAValidationError(t *testing.T) {
+	app := setupQueryTestApp(t)
+	createQueryTestNib(t, app.Core, "eft-1", "Nib one", "todo")
+
+	_, err := executeQuery(app, `{ nibs(filter: {ancestorId: ""}) { id } }`, nil, "")
+	if err == nil {
+		t.Fatal(`an ancestorId of "" returned no error; the branch was dropped instead of refused`)
+	}
+	var ce *output.CodedError
+	if !errors.As(err, &ce) {
+		t.Fatalf("expected *output.CodedError, got %T: %v", err, err)
+	}
+	if ce.Code != output.ErrValidation {
+		t.Errorf("code = %q, want %q — an empty id is malformed input, not a missing nib", ce.Code, output.ErrValidation)
+	}
+	if got := output.ExitCode(ce.Code); got != output.ExitValidation {
+		t.Errorf("exit code = %d, want %d (ExitValidation)", got, output.ExitValidation)
+	}
+	if !strings.Contains(ce.Error(), "ancestorId") {
+		t.Errorf("the message does not name the field the caller wrote: %s", ce.Error())
+	}
+}
+
 func TestQueryCommandGraphqlErrorIsCoded(t *testing.T) {
 	t.Cleanup(resetQueryFlags)
 	resetQueryFlags()
@@ -863,5 +900,410 @@ func TestQueryCommandGraphqlErrorIsCoded(t *testing.T) {
 	}
 	if got := output.ExitCode(ce.Code); got != output.ExitValidation {
 		t.Errorf("exit code = %d, want %d (ExitValidation)", got, output.ExitValidation)
+	}
+}
+
+// TestFormatGraphQLErrorsCarriesTheCode pins that the code decided from the
+// gqlerror.List reaches the caller: the list does not outlive formatGraphQLErrors,
+// so the returned error is the only channel left. The message contract
+// (dedup to one sentence) is asserted alongside it because both ride on the
+// same returned value.
+func TestFormatGraphQLErrorsCarriesTheCode(t *testing.T) {
+	err := formatGraphQLErrors(gqlerror.List{notFoundErr(), notFoundErr()})
+	var ce *output.CodedError
+	if !errors.As(err, &ce) {
+		t.Fatalf("formatGraphQLErrors returned %T, want *output.CodedError", err)
+	}
+	if ce.Code != output.ErrNotFound {
+		t.Errorf("code = %q, want %q", ce.Code, output.ErrNotFound)
+	}
+	if got := strings.Count(ce.Error(), `no nib with id "zz"`); got != 1 {
+		t.Errorf("the refusal is reported %d times, want 1:\n%s", got, ce.Error())
+	}
+	// TWO classified failures, so no cause may be attributed — even though dedup
+	// collapsed them to one sentence. The cause scan runs over the raw list for
+	// exactly this reason; reusing the deduped one would see a sole failure here
+	// and hand back a repair hint that speaks for only one of two lost races.
+	if cause := ce.Unwrap(); cause != nil {
+		t.Errorf("two identical-message refusals attributed a cause: %v", cause)
+	}
+	if formatGraphQLErrors(gqlerror.List{}) != nil {
+		t.Error("an empty error list must format to nil, not to a coded failure")
+	}
+}
+
+// TestFormatGraphQLErrorsCarriesASoleClassifiedCause pins WHICH responses hand a
+// usable cause back to the caller, because that is what decides whether the
+// query envelope can carry a repair hint like currentEtag.
+//
+// The rule is "exactly one classified error". Zero means there is nothing to
+// attribute; two or more means attributing to any one of them would be a guess,
+// and a single top-level currentEtag genuinely cannot represent N per-mutation
+// etags in a batch. Every boundary of that condition is a row here: none, one
+// that is a mismatch, one that is not, two mismatches, and a mismatch beside an
+// unclassified failure.
+func TestFormatGraphQLErrorsCarriesASoleClassifiedCause(t *testing.T) {
+	tests := []struct {
+		name         string
+		errs         gqlerror.List
+		wantCode     string
+		wantCause    bool
+		wantMismatch bool
+	}{
+		{
+			name:     "no classified error carries no cause",
+			errs:     gqlerror.List{gqlerror.Errorf("one"), gqlerror.Errorf("two")},
+			wantCode: output.ErrValidation,
+		},
+		{
+			name:         "a sole etag mismatch stays reachable",
+			errs:         gqlerror.List{conflictErr()},
+			wantCode:     output.ErrConflict,
+			wantCause:    true,
+			wantMismatch: true,
+		},
+		{
+			// Classified, but not a conflict — the cause is carried all the same;
+			// it is the CODE, not the cause, that gates the currentEtag enrichment.
+			name:      "a sole non-conflict refusal is carried too",
+			errs:      gqlerror.List{notFoundErr()},
+			wantCode:  output.ErrNotFound,
+			wantCause: true,
+		},
+		{
+			// Both agree on CONFLICT, so the response IS a conflict — but neither
+			// mismatch may speak for the other, so no cause is offered and the
+			// envelope stays a bare CONFLICT.
+			name:     "two etag mismatches carry neither",
+			errs:     gqlerror.List{conflictErr(), otherConflictErr()},
+			wantCode: output.ErrConflict,
+		},
+		{
+			// Exactly one classified error, so "sole" is satisfied — but its own
+			// class (CONFLICT) is not the response's (UNCATEGORIZED), so it may
+			// not speak for the response. Withholding it here is what makes a
+			// cause that contradicts its own code unrepresentable, rather than
+			// merely unreachable because the RunE happens to gate on the code.
+			name:     "a mismatch whose class is not the response's is not the response's cause",
+			errs:     gqlerror.List{conflictErr(), gqlerror.Errorf("resolver blew up")},
+			wantCode: output.ErrUncategorized,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			err := formatGraphQLErrors(tt.errs)
+			var ce *output.CodedError
+			if !errors.As(err, &ce) {
+				t.Fatalf("formatGraphQLErrors returned %T, want *output.CodedError", err)
+			}
+			if ce.Code != tt.wantCode {
+				t.Errorf("code = %q, want %q", ce.Code, tt.wantCode)
+			}
+			if got := ce.Unwrap() != nil; got != tt.wantCause {
+				t.Errorf("carries a cause = %v, want %v (cause: %v)", got, tt.wantCause, ce.Unwrap())
+			}
+			var mismatch *nibcore.ETagMismatchError
+			if got := errors.As(err, &mismatch); got != tt.wantMismatch {
+				t.Errorf("errors.As finds an ETagMismatchError = %v, want %v", got, tt.wantMismatch)
+			}
+		})
+	}
+}
+
+// runQueryCmd drives `nibs query <args...>` through the full Cobra pipeline
+// against nibsDir and returns captured stdout plus the Execute error, so the
+// exit status can be asserted through the real boundary (reportExitError).
+func runQueryCmd(t *testing.T, nibsDir string, args ...string) (string, error) {
+	t.Helper()
+	rootCmd.SetArgs(append([]string{"--nibs-path", nibsDir, "query"}, args...))
+	var execErr error
+	out := captureStdout(t, func() {
+		execErr = rootCmd.Execute()
+	})
+	return out, execErr
+}
+
+// conflictEnvelope is the {code,message,currentEtag} shape a CONFLICT emits, used
+// to compare `nibs query`'s envelope against `nibs set`'s for the same failure.
+type conflictEnvelope struct {
+	Error struct {
+		Code        string `json:"code"`
+		Message     string `json:"message"`
+		CurrentEtag string `json:"currentEtag"`
+	} `json:"error"`
+}
+
+// writeStaleEtagNib creates a nib, computes its etag, then advances the nib past
+// that etag with one un-guarded mutation. It returns the nibs dir, the id, and
+// the now-stale token — the setup every reconcilable-conflict assertion needs.
+func writeStaleEtagNib(t *testing.T, id string) (string, string, string) {
+	t.Helper()
+	nibsDir := filepath.Join(t.TempDir(), ".nibs")
+	if err := os.MkdirAll(nibsDir, 0755); err != nil {
+		t.Fatal(err)
+	}
+	// version: 1 and the `# id` comment match Render() output, so the etag
+	// computed from the file agrees with the one the core computes.
+	content := "---\n# " + id + "\nversion: 1\ntitle: Test\nstatus: todo\ntype: task\norder: a0\n---\n\n"
+	path := filepath.Join(nibsDir, id+"--test.md")
+	if err := os.WriteFile(path, []byte(content), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	f, err := os.Open(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	parsed, err := nib.Parse(f)
+	_ = f.Close()
+	if err != nil {
+		t.Fatal(err)
+	}
+	parsed.ID = id
+	stale := parsed.ETag()
+
+	resetSetFlags()
+	rootCmd.SetArgs([]string{"--nibs-path", nibsDir, "set", id, "--status", "in-progress"})
+	if err := rootCmd.Execute(); err != nil {
+		t.Fatalf("priming mutation should succeed, got: %v", err)
+	}
+	return nibsDir, id, stale
+}
+
+// TestQueryConflictEnvelopeMatchesTheDirectCommand pins that a CONFLICT reported
+// through `nibs query` carries the same reconcile token as the same conflict
+// reported through `nibs set`.
+//
+// The exit status alone is not the contract. internal/output documents an absent
+// currentEtag on a CONFLICT as a POSITIVE signal — "no reusable token, this
+// conflict cannot be reconciled" — so a query claiming exit 4 while omitting the
+// field would steer an agent past a retry that would have worked. Both commands
+// run against one nib and one stale token, and the two envelopes are compared
+// field for field.
+func TestQueryConflictEnvelopeMatchesTheDirectCommand(t *testing.T) {
+	t.Cleanup(resetQueryFlags)
+	t.Cleanup(resetSetFlags)
+
+	nibsDir, id, stale := writeStaleEtagNib(t, "q-cnf")
+
+	resetSetFlags()
+	rootCmd.SetArgs([]string{"--nibs-path", nibsDir, "set", id, "--status", "todo", "--if-match", stale, "--json"})
+	var setErr error
+	setOut := captureStdout(t, func() { setErr = rootCmd.Execute() })
+	if setErr == nil {
+		t.Fatal("`set --if-match <stale>` returned no error")
+	}
+	var setEnv conflictEnvelope
+	if err := json.Unmarshal([]byte(setOut), &setEnv); err != nil {
+		t.Fatalf("set output is not a JSON error envelope: %v\nraw: %s", err, setOut)
+	}
+	if setEnv.Error.CurrentEtag == "" {
+		t.Fatalf("precondition failed: `set` emitted no currentEtag: %s", setOut)
+	}
+
+	resetQueryFlags()
+	query := `mutation { updateNib(id: "` + id + `", input: {title: "x", ifMatch: "` + stale + `"}) { id } }`
+	queryOut, queryErr := runQueryCmd(t, nibsDir, query, "--json")
+	if queryErr == nil {
+		t.Fatalf("query with a stale ifMatch returned no error; out: %q", queryOut)
+	}
+	if code := reportExitError(io.Discard, queryErr); code != output.ExitConflict {
+		t.Errorf("query exit = %d, want %d (conflict)", code, output.ExitConflict)
+	}
+	var queryEnv conflictEnvelope
+	if err := json.Unmarshal([]byte(queryOut), &queryEnv); err != nil {
+		t.Fatalf("query output is not a JSON error envelope: %v\nraw: %s", err, queryOut)
+	}
+	if queryEnv.Error.Code != output.ErrConflict {
+		t.Errorf("query envelope code = %q, want %q", queryEnv.Error.Code, output.ErrConflict)
+	}
+	if queryEnv.Error.CurrentEtag != setEnv.Error.CurrentEtag {
+		t.Errorf("query currentEtag = %q, want %q (the token `set` reports for the same conflict)",
+			queryEnv.Error.CurrentEtag, setEnv.Error.CurrentEtag)
+	}
+	if queryEnv.Error.CurrentEtag == stale {
+		t.Errorf("currentEtag must differ from the stale token; both were %q", stale)
+	}
+	// The refusal still reads as one sentence prefixed by the transport, exactly
+	// as the non-enriched path rendered it.
+	if !strings.HasPrefix(queryEnv.Error.Message, "graphql: ") {
+		t.Errorf("query message lost its transport prefix: %q", queryEnv.Error.Message)
+	}
+}
+
+// TestQueryConflictEnrichmentIsWithheld pins the two command-level cases where a
+// real, reachable ETagMismatchError must NOT produce a currentEtag. Each isolates
+// one of the two conditions guarding the enrichment, so neither can be dropped
+// without a failure here.
+//
+// A partial retry token is worse than none: an agent handed one etag for a
+// two-mutation batch would retry believing it had reconciled the whole document.
+func TestQueryConflictEnrichmentIsWithheld(t *testing.T) {
+	tests := []struct {
+		name     string
+		mutation func(id, stale string) string
+		wantCode string
+		wantExit int
+	}{
+		{
+			// Both errors agree on CONFLICT, so the response IS a conflict — but
+			// two mismatches mean no single etag speaks for the document. Guards
+			// soleClassifiedErr's "more than one" arm.
+			name: "two conflicting mutations offer no single etag",
+			mutation: func(id, stale string) string {
+				return `mutation { a: updateNib(id: "` + id + `", input: {title: "x", ifMatch: "` + stale + `"}) { id } ` +
+					`b: updateNib(id: "` + id + `", input: {title: "y", ifMatch: "also-stale"}) { id } }`
+			},
+			wantCode: output.ErrConflict,
+			wantExit: output.ExitConflict,
+		},
+		{
+			// Exactly ONE classified error, and it IS a mismatch — so the cause is
+			// reachable — but an unclassified failure beside it makes the codes
+			// disagree, so the response never claims CONFLICT and must not offer a
+			// conflict's repair hint. Guards the code gate in the query RunE.
+			name: "a mismatch beside an unclassified failure is not a conflict claim",
+			mutation: func(id, stale string) string {
+				return `mutation { a: updateNib(id: "` + id + `", input: {title: "x", ifMatch: "` + stale + `"}) { id } ` +
+					`b: updateNib(id: "` + id + `", input: {status: "banana"}) { id } }`
+			},
+			wantCode: output.ErrUncategorized,
+			wantExit: output.ExitError,
+		},
+	}
+
+	for i, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Cleanup(resetQueryFlags)
+			t.Cleanup(resetSetFlags)
+
+			nibsDir, id, stale := writeStaleEtagNib(t, fmt.Sprintf("q-wh%d", i))
+
+			resetQueryFlags()
+			out, err := runQueryCmd(t, nibsDir, tt.mutation(id, stale), "--json")
+			if err == nil {
+				t.Fatalf("mutation returned no error; out: %q", out)
+			}
+			if code := reportExitError(io.Discard, err); code != tt.wantExit {
+				t.Errorf("exit = %d, want %d (%s)", code, tt.wantExit, tt.wantCode)
+			}
+			var env conflictEnvelope
+			if uerr := json.Unmarshal([]byte(out), &env); uerr != nil {
+				t.Fatalf("output is not a JSON error envelope: %v\nraw: %s", uerr, out)
+			}
+			if env.Error.Code != tt.wantCode {
+				t.Errorf("envelope code = %q, want %q", env.Error.Code, tt.wantCode)
+			}
+			if env.Error.CurrentEtag != "" {
+				t.Errorf("no currentEtag may be offered here, got %q", env.Error.CurrentEtag)
+			}
+		})
+	}
+}
+
+// TestQueryCommandRefusalExitsLikeTheDirectCommand pins that `nibs query`
+// reports the same structured class as the direct command that raises the same
+// failure. `nibs list --parent nope` exits 3 and `nibs set --if-match stale`
+// exits 4; routing the identical refusal through the general-purpose query
+// surface used to flatten both to 2, so an agent branching on $? — which
+// cmd/prompt-full.tmpl tells it to do — lost the distinction on the surface
+// most likely to be scripted.
+//
+// The assertion is on the exit status via the real boundary, not merely on
+// err != nil, and it runs in both output modes because the code has to survive
+// the JSON envelope as well as the stderr path.
+func TestQueryCommandRefusalExitsLikeTheDirectCommand(t *testing.T) {
+	tests := []struct {
+		name     string
+		query    string
+		wantCode string
+		wantExit int
+	}{
+		{
+			name:     "unknown filter target is not-found",
+			query:    `{ nibs(filter: {parentId: "zz"}) { id } }`,
+			wantCode: output.ErrNotFound,
+			wantExit: output.ExitNotFound,
+		},
+		{
+			name:     "unknown mutation target is not-found",
+			query:    `mutation { updateNib(id: "nosuch", input: {title: "x"}) { id } }`,
+			wantCode: output.ErrNotFound,
+			wantExit: output.ExitNotFound,
+		},
+		{
+			name:     "stale if-match is a conflict",
+			query:    `mutation { updateNib(id: "q-etag", input: {title: "x", ifMatch: "stale"}) { id } }`,
+			wantCode: output.ErrConflict,
+			wantExit: output.ExitConflict,
+		},
+		{
+			// Two refusals of the same class agree, so the class survives.
+			name:     "two agreeing refusals keep the code",
+			query:    `{ a: nibs(filter: {parentId: "zz"}) { id } b: nibs(filter: {ancestorId: "yy"}) { id } }`,
+			wantCode: output.ErrNotFound,
+			wantExit: output.ExitNotFound,
+		},
+		{
+			// Codes disagree (CONFLICT + NOT_FOUND), so neither may be claimed —
+			// and neither may VALIDATION_ERROR, which asserts a caller-input fault
+			// no error here reports. The response is uncategorized (exit 1).
+			name: "mixed codes are uncategorized",
+			query: `mutation { a: updateNib(id: "q-etag", input: {title: "x", ifMatch: "stale"}) { id } ` +
+				`b: updateNib(id: "nosuch", input: {title: "y"}) { id } }`,
+			wantCode: output.ErrUncategorized,
+			wantExit: output.ExitError,
+		},
+		{
+			// gqlgen's own validation failure is a mistake in the caller's
+			// document, not a nib-level refusal: it must stay exit 2.
+			name:     "unknown field stays validation",
+			query:    `{ notAField { id } }`,
+			wantCode: output.ErrValidation,
+			wantExit: output.ExitValidation,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name+" --json", func(t *testing.T) {
+			t.Cleanup(resetQueryFlags)
+			resetQueryFlags()
+			nibsDir, _ := writeSetNib(t, "q-etag", "body")
+
+			out, err := runQueryCmd(t, nibsDir, tt.query, "--json")
+			if err == nil {
+				t.Fatalf("query %s --json returned no error; out: %q", tt.query, out)
+			}
+			if code := reportExitError(io.Discard, err); code != tt.wantExit {
+				t.Errorf("exit code = %d, want %d (%s)", code, tt.wantExit, tt.wantCode)
+			}
+			var env struct {
+				Error struct {
+					Code    string `json:"code"`
+					Message string `json:"message"`
+				} `json:"error"`
+			}
+			if uerr := json.Unmarshal([]byte(out), &env); uerr != nil {
+				t.Fatalf("stdout is not a JSON error envelope: %v\nraw: %s", uerr, out)
+			}
+			if env.Error.Code != tt.wantCode {
+				t.Errorf("envelope error.code=%q, want %q", env.Error.Code, tt.wantCode)
+			}
+		})
+
+		t.Run(tt.name+" text", func(t *testing.T) {
+			t.Cleanup(resetQueryFlags)
+			resetQueryFlags()
+			nibsDir, _ := writeSetNib(t, "q-etag", "body")
+
+			out, err := runQueryCmd(t, nibsDir, tt.query)
+			if err == nil {
+				t.Fatalf("query %s returned no error; out: %q", tt.query, out)
+			}
+			if code := reportExitError(io.Discard, err); code != tt.wantExit {
+				t.Errorf("exit code = %d, want %d (%s)", code, tt.wantExit, tt.wantCode)
+			}
+		})
 	}
 }

@@ -159,14 +159,19 @@ Search Syntax (--search/-S):
 			filter.Search = &listSearch
 		}
 		// The id-valued string filters reject an explicit empty value instead of
-		// ignoring it. Each is applied by a `!= ""` test, so an empty value would
-		// otherwise be dropped without a word — and the usual way one arrives is
-		// an unset shell variable (`--parent "$ID"`), where silently returning
-		// every nib is a lie about the result rather than a wider answer.
+		// ignoring it, and these checks are the only thing that refuses it on
+		// this surface: filter.ParentID, filter.MentionsID and
+		// filter.MentionedByID are each assigned only when the flag is
+		// non-empty, so an empty value never reaches ApplyFilter from this
+		// command and the graph layer's own refusal never runs for it.
+		// Rejecting here also keeps the message flag-shaped — the --parent one
+		// names --no-parent, a flag the graph layer cannot know about. The usual
+		// way an empty value arrives is an unset shell variable
+		// (`--parent "$ID"`), where silently returning every nib is a lie about
+		// the result rather than a wider answer.
 		//
-		// Unlike -S above, an empty id has no benign reading: there is no nib
-		// whose id is "". That is the line between the two groups, not whether a
-		// sibling flag exists.
+		// Unlike -S, an empty id has no benign reading: there is no nib whose id
+		// is "". That is what separates them, not whether a sibling flag exists.
 		//
 		// --parent is not given the "move to root" meaning it carries on
 		// `nibs mv` and `nibs set` (both write an empty parent, detaching the
@@ -338,7 +343,7 @@ Search Syntax (--search/-S):
 			// An id-valued filter flag naming no nib is reported as NOT_FOUND
 			// rather than as an empty listing, so `--parent "$ID"` with a stale
 			// or mistyped id is distinguishable from a parent that has no
-			// children. See filterTargetErrCode for the two classes.
+			// children. See filterTargetErrCode for the classes it tells apart.
 			if code, ok := filterTargetErrCode(err); ok {
 				return reportErr(listJSON, code, err)
 			}

@@ -116,6 +116,11 @@ type NibFilter struct {
 	// - "title:login" - search only title field
 	// - "body:auth" - search only body field
 	// - "5a8k" - also matches nibs whose ID contains "5a8k"
+	//
+	// An empty string leaves it unfiltered, the opposite of the id-valued fields
+	// such as parentId: "no keyword filter" is a real meaning, so `search: "$q"`
+	// with an empty q is a reasonable thing to write. There is no nib whose id is
+	// "", which is why the same value is a refusal there.
 	Search *string `json:"search,omitempty"`
 	// Include only nibs with these statuses (OR logic)
 	Status []string `json:"status,omitempty"`
@@ -143,7 +148,11 @@ type NibFilter struct {
 	//
 	// An id naming no nib is refused with a NOT_FOUND error rather than matching
 	// nothing, so a mistyped or stale id stays distinguishable from a genuine empty
-	// result.
+	// result. An empty string is refused as a malformed argument: it names no nib
+	// and never could. Unlike the not-found refusal above it carries no
+	// extensions.code, so a GraphQL client sees a generic error; the CLI reports
+	// VALIDATION_ERROR (exit 2). Omit the field to leave it unfiltered, or use
+	// hasParent: false to select the nibs that have no parent.
 	ParentID *string `json:"parentId,omitempty"`
 	// Include only nibs with this specific nib ID somewhere in their parent chain
 	// (that nib's descendants at any depth). This filter excludes the nib itself,
@@ -152,14 +161,20 @@ type NibFilter struct {
 	//
 	// An id naming no nib is refused with a NOT_FOUND error rather than matching
 	// nothing, so a mistyped or stale id stays distinguishable from a genuine empty
-	// result.
+	// result. An empty string is refused as a malformed argument: it names no nib
+	// and never could. Unlike the not-found refusal above it carries no
+	// extensions.code, so a GraphQL client sees a generic error; the CLI reports
+	// VALIDATION_ERROR (exit 2). Omit the field to leave it unfiltered.
 	AncestorID *string `json:"ancestorId,omitempty"`
 	// Include only nibs with this specific nib ID somewhere in their descendant
 	// subtree (that nib's ancestor chain, itself excluded).
 	//
 	// An id naming no nib is refused with a NOT_FOUND error rather than matching
 	// nothing, so a mistyped or stale id stays distinguishable from a genuine empty
-	// result.
+	// result. An empty string is refused as a malformed argument: it names no nib
+	// and never could. Unlike the not-found refusal above it carries no
+	// extensions.code, so a GraphQL client sees a generic error; the CLI reports
+	// VALIDATION_ERROR (exit 2). Omit the field to leave it unfiltered.
 	DescendantID *string `json:"descendantId,omitempty"`
 	// Include only nibs sharing this specific nib's parent, or the other root nibs
 	// when it has no parent (itself excluded). Combining it with search also brings
@@ -168,7 +183,10 @@ type NibFilter struct {
 	//
 	// An id naming no nib is refused with a NOT_FOUND error rather than matching
 	// nothing, so a mistyped or stale id stays distinguishable from a genuine empty
-	// result.
+	// result. An empty string is refused as a malformed argument: it names no nib
+	// and never could. Unlike the not-found refusal above it carries no
+	// extensions.code, so a GraphQL client sees a generic error; the CLI reports
+	// VALIDATION_ERROR (exit 2). Omit the field to leave it unfiltered.
 	SiblingID *string `json:"siblingId,omitempty"`
 	// Tri-state: true keeps nibs that are blocking others, false keeps exactly the non-blocking ones, null does not filter
 	HasBlocking *bool `json:"hasBlocking,omitempty"`
@@ -176,7 +194,10 @@ type NibFilter struct {
 	//
 	// An id naming no nib is refused with a NOT_FOUND error rather than matching
 	// nothing, so a mistyped or stale id stays distinguishable from a genuine empty
-	// result.
+	// result. An empty string is refused as a malformed argument: it names no nib
+	// and never could. Unlike the not-found refusal above it carries no
+	// extensions.code, so a GraphQL client sees a generic error; the CLI reports
+	// VALIDATION_ERROR (exit 2). Omit the field to leave it unfiltered.
 	BlockingID *string `json:"blockingId,omitempty"`
 	// Tri-state: true keeps nibs blocked by others (via incoming blocking links or blocked_by field), false keeps exactly the unblocked ones, null does not filter
 	IsBlocked *bool `json:"isBlocked,omitempty"`
@@ -186,19 +207,28 @@ type NibFilter struct {
 	//
 	// An id naming no nib is refused with a NOT_FOUND error rather than matching
 	// nothing, so a mistyped or stale id stays distinguishable from a genuine empty
-	// result.
+	// result. An empty string is refused as a malformed argument: it names no nib
+	// and never could. Unlike the not-found refusal above it carries no
+	// extensions.code, so a GraphQL client sees a generic error; the CLI reports
+	// VALIDATION_ERROR (exit 2). Omit the field to leave it unfiltered.
 	BlockedByID *string `json:"blockedById,omitempty"`
 	// Include only nibs that mention this specific nib ID in their body.
 	//
 	// An id naming no nib is refused with a NOT_FOUND error rather than matching
 	// nothing, so a mistyped or stale id stays distinguishable from a genuine empty
-	// result.
+	// result. An empty string is refused as a malformed argument: it names no nib
+	// and never could. Unlike the not-found refusal above it carries no
+	// extensions.code, so a GraphQL client sees a generic error; the CLI reports
+	// VALIDATION_ERROR (exit 2). Omit the field to leave it unfiltered.
 	MentionsID *string `json:"mentionsId,omitempty"`
 	// Include only nibs mentioned in the given nib's body.
 	//
 	// An id naming no nib is refused with a NOT_FOUND error rather than matching
 	// nothing, so a mistyped or stale id stays distinguishable from a genuine empty
-	// result.
+	// result. An empty string is refused as a malformed argument: it names no nib
+	// and never could. Unlike the not-found refusal above it carries no
+	// extensions.code, so a GraphQL client sees a generic error; the CLI reports
+	// VALIDATION_ERROR (exit 2). Omit the field to leave it unfiltered.
 	MentionedByID *string `json:"mentionedById,omitempty"`
 }
 

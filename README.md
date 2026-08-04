@@ -45,14 +45,19 @@ Installs to `~/.local/bin` by default.
 
 ### From Source
 
-Requires Node.js and [mise](https://mise.jdx.dev/) (mise installs Go, Task, and golangci-lint automatically from `mise.toml`):
+Requires Node.js and [mise](https://mise.jdx.dev/), which installs the pinned Go, Task, and golangci-lint from `mise.toml`:
 
 ```bash
 git clone https://github.com/alphaleonis/nibs.git
 cd nibs
-mise install      # installs pinned Go, Task, golangci-lint
-task build
+mise trust                # fresh clone: let mise read this checkout's mise.toml
+mise install              # installs pinned Go, Task, golangci-lint
+mise exec -- task build   # or put mise's tools on PATH first — see below
 ```
+
+`mise trust` is needed once per fresh clone: mise refuses to read a `mise.toml` it has not been told to trust. A terminal offers to trust it interactively, but a non-interactive run — CI, a pre-commit hook, a coding agent — only sees the refusal.
+
+`mise install` downloads the tools but does not put them on your PATH. Either add its shims directory to PATH — `~/.local/share/mise/shims`, or `%LOCALAPPDATA%\mise\shims` ([Unverified] on Windows) — or activate mise in your shell profile. `mise activate <shell>` only prints the activation script, so eval it: `eval "$(mise activate zsh)"`; see [mise's docs](https://mise.jdx.dev/getting-started.html) for other shells. Without one of those, `go` and `task` fall back to whatever is installed system-wide instead of the pinned versions. Any pinned tool can also be run as a one-off without touching PATH: `mise exec -- go version`. For the linter, use `task lint` — it already runs through mise and checks its prerequisites first. `task lint` fetches the pinned golangci-lint over the network on first use if `mise install` has not already cached it, so run `mise install` ahead of time in network-restricted environments.
 
 Prebuilt binaries are also available on the [Releases](https://github.com/alphaleonis/nibs/releases) page.
 

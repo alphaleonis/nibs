@@ -129,7 +129,7 @@ func TestETagErrorPresenter_TagsNotFound(t *testing.T) {
 		}
 	})
 
-	// The two filter-target classes reach the presenter over the READ path, not
+	// The three filter-target classes reach the presenter over the READ path, not
 	// the mutation path the cases above cover: the web filter box sends
 	// user-typed ids straight into NibFilter, so a half-typed id refuses the
 	// whole query. NOT_FOUND is what lets the list treat that as an explainable
@@ -159,6 +159,27 @@ func TestETagErrorPresenter_TagsNotFound(t *testing.T) {
 
 		if code, ok := gqlErr.Extensions["code"]; ok {
 			t.Errorf("a mid-filter vanish was tagged with code %v; it must not classify as the caller's not-found", code)
+		}
+	})
+
+	t.Run("does NOT tag a filter field given an empty id", func(t *testing.T) {
+		// The other read-path filter refusal, and the one that must NOT reach
+		// the web as NOT_FOUND. TreeTable.svelte routes any read-path NOT_FOUND
+		// to a calm inline empty state, which is right for a half-typed id and
+		// wrong for a malformed query: an empty id is what a client sends when
+		// a variable did not interpolate, so explaining it away as "nothing
+		// matched" would hide the client bug behind the same confident empty
+		// answer the refusal exists to replace. Untagged, it lands in the
+		// generic error path and shows as the failure it is.
+		err := &graph.FilterTargetEmptyError{Field: "parentId"}
+
+		gqlErr := etagErrorPresenter(ctx, err)
+
+		if code, ok := gqlErr.Extensions["code"]; ok {
+			t.Errorf("an empty filter id was tagged with code %v; it must not be presented as a not-found or any other routable class", code)
+		}
+		if gqlErr.Message != err.Error() {
+			t.Errorf("message = %q, want %q", gqlErr.Message, err.Error())
 		}
 	})
 

@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -109,7 +110,29 @@ More examples:
 		if err != nil {
 			// A GraphQL parse/validation/execution failure — route it through
 			// the coded boundary so both modes get a structured, non-zero exit.
-			return cmdError(queryJSON, output.ErrValidation, "%s", err)
+			// formatGraphQLErrors already decided the class the response
+			// supports; re-homing it onto this mode's output path (envelope vs
+			// stderr) must not discard it, or `query` would report a refusal
+			// the direct commands classify as not-found or conflict as a bare
+			// validation error.
+			code := output.ErrValidation
+			var coded *output.CodedError
+			if errors.As(err, &coded) {
+				code = coded.Code
+			}
+			// A CONFLICT the response pins on ONE etag mismatch reconciles like
+			// the direct command's: the envelope carries the server's current
+			// etag. Without it, exit 4 plus an absent currentEtag reads — per the
+			// documented envelope contract — as "conflict with no reusable token",
+			// steering an agent away from a retry that would have worked. The code
+			// gates this, not the cause alone: a mismatch inside a response whose
+			// codes disagree is not a conflict claim to enrich.
+			if code == output.ErrConflict {
+				if conflict, ok := etagConflictError(queryJSON, err); ok {
+					return conflict
+				}
+			}
+			return cmdError(queryJSON, code, "%s", err)
 		}
 
 		// Output (both modes are prettified, but --json skips color)
@@ -218,7 +241,7 @@ func executeQuery(app *App, query string, variables map[string]any, operationNam
 	return resp.Data, nil
 }
 
-// formatGraphQLErrors formats GraphQL errors into a single error.
+// formatGraphQLErrors formats GraphQL errors into a single coded error.
 //
 // Repeated messages are collapsed to their first occurrence. One refused filter
 // inside a nested resolver raises its own error per matched parent — a single
@@ -227,6 +250,22 @@ func executeQuery(app *App, query string, variables map[string]any, operationNam
 // nothing the first did not, while all of them land in one --json message string
 // and in an agent's context. First-encountered order is kept so what survives
 // still reads in the order gqlgen reported it.
+//
+// The structured code rides along on the returned *output.CodedError because it
+// can only be read from the gqlerror.List, which does not outlive this call —
+// see graphQLResponseCode for how a response's code is decided. Err carries the
+// response's ONE classified failure when it has exactly one, so a caller can
+// errors.As down to it for a repair hint (the current etag on a conflict); it is
+// nil when the response holds no classified failure or several, because then no
+// single cause could be attributed to it. See soleClassifiedErr.
+//
+// Code and Err are decided by two different rules — agreement among all errors
+// versus exactly one classified error — so the response's code is passed into
+// soleClassifiedErr to reconcile them: Err is set only when the cause's own
+// class IS Code. That is the invariant the two fields are read under. A caller
+// that finds an *nibcore.ETagMismatchError under Err therefore knows the whole
+// response is a CONFLICT, and cannot mint a retry token for a response that
+// reports something else.
 func formatGraphQLErrors(errs gqlerror.List) error {
 	if len(errs) == 0 {
 		return nil
@@ -240,10 +279,16 @@ func formatGraphQLErrors(errs gqlerror.List) error {
 		seen[e.Message] = true
 		msgs = append(msgs, e.Message)
 	}
-	if len(msgs) == 1 {
-		return fmt.Errorf("graphql: %s", msgs[0])
+	msg := fmt.Sprintf("graphql: %s", msgs[0])
+	if len(msgs) > 1 {
+		msg = fmt.Sprintf("graphql errors:\n  %s", strings.Join(msgs, "\n  "))
 	}
-	return fmt.Errorf("graphql errors:\n  %s", strings.Join(msgs, "\n  "))
+	code := graphQLResponseCode(errs)
+	return &output.CodedError{
+		Code: code,
+		Msg:  msg,
+		Err:  soleClassifiedErr(errs, code),
+	}
 }
 
 // printSchema outputs the GraphQL schema.

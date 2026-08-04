@@ -1200,6 +1200,7 @@ func TestBfsTraverseReportsRefusedFilter(t *testing.T) {
 func TestRelFetchErrCodeClassifiesFilterRefusals(t *testing.T) {
 	notFound := &graph.FilterTargetNotFoundError{Field: "parentId", ID: "nonexistent"}
 	unreadable := &graph.FilterTargetUnreadableError{Field: "siblingId", ID: "nibs-a", ReaderErr: nib.ErrNotFound}
+	empty := &graph.FilterTargetEmptyError{Field: "parentId"}
 
 	tests := []struct {
 		name string
@@ -1210,6 +1211,11 @@ func TestRelFetchErrCodeClassifiesFilterRefusals(t *testing.T) {
 		{"unknown filter target, wrapped by the fetch site", fmt.Errorf("fetching descendants: %w", notFound), output.ErrNotFound},
 		{"target that vanished mid-filter", unreadable, output.ErrFileError},
 		{"target that vanished mid-filter, wrapped", fmt.Errorf("fetching siblings: %w", unreadable), output.ErrFileError},
+		// An empty id is the caller's malformed input, so it is exit 2 like
+		// every other bad argument — not the exit 5 the fallback would give it,
+		// which claims the tracker broke.
+		{"empty filter target", empty, output.ErrValidation},
+		{"empty filter target, wrapped by the fetch site", fmt.Errorf("fetching descendants: %w", empty), output.ErrValidation},
 		{"dependency cycle", fmt.Errorf("%w detected: a, b", errRelCycle), output.ErrValidation},
 		{"anything else", errors.New("reading nibs directory"), output.ErrFileError},
 	}
