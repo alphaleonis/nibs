@@ -265,7 +265,7 @@ func (c *Core) loadFromDisk() error {
 	// point). Runs BEFORE the v0 migration so that migration's exact
 	// c.nibs[targetID] lookup finds a legacy `blocking:` target named by short
 	// id instead of warning it out of existence.
-	c.canonicalizeAllLinksLocked()
+	c.canonicalizeAllLinksUnpublishedLocked()
 
 	// Migrate v0 nibs to v1 (single-side blocking). This runs after the walk so
 	// every blocking target is already in c.nibs. v0+deferred nibs are converged
@@ -1105,6 +1105,33 @@ func (c *Core) Delete(id string) error {
 
 	// Remove from in-memory map
 	delete(c.nibs, targetID)
+
+	// Removing a key can re-point a link that already resolved: a stored
+	// `parent: e1` matched the bare-token nib exactly, and with that key gone the
+	// same spelling falls through to the prefixed twin `nibs-e1`. Re-resolve so
+	// the stored spelling, the reverse traversals and Get all name the same nib,
+	// rather than leaving the store saying one thing while Get answers another
+	// (see canonicalize.go). Gated because the sweep is O(N) over the store and
+	// no other removal shape can re-point anything.
+	//
+	// Defense in depth on this path rather than the primary mechanism: the only
+	// production caller, the GraphQL DeleteNib resolver, runs RemoveLinksTo(id)
+	// first, which clears any Parent/BlockedBy matching the caller's spelling
+	// literally — so for a bare-token id the links this sweep would rebind are
+	// usually already empty by the time it runs, leaving only the legacy Blocking
+	// field. The watcher's removal branch (an external delete, a pull in the
+	// separate .nibs repo) is not masked at all and is where the sweep earns its
+	// keep. Which mechanism fires will shift once RemoveLinksTo normalizes its
+	// target id.
+	//
+	// Warn per rebind: a delete moving a THIRD nib's link is invisible otherwise
+	// — no event is published from any direct Core mutator, and no file changes,
+	// yet the next unrelated write to that bystander persists the new spelling.
+	if c.removalCanRebindLinksLocked(targetID) {
+		for _, rebind := range c.canonicalizeStoreLocked() {
+			c.logWarn("deleting %s re-pointed %s", targetID, rebind)
+		}
+	}
 
 	// Drop the source from the reverse-mention index.
 	c.mentionIdx.Remove(targetID)

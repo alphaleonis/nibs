@@ -172,6 +172,36 @@ func freezeGuardCases() []freezeGuardCase {
 			},
 		},
 		{
+			name:   "Delete-unmasks-prefixed-twin", // Re-points a link on a BYSTANDER nib: copy-on-write.
+			covers: []string{"Delete"},
+			// Deleting a bare-token nib whose prefixed twin is still stored re-resolves
+			// the links that named the bare spelling, and the nib holding such a link
+			// has been published for a while — Parent is a non-Path field, so the
+			// rewrite must install a fresh pointer rather than edit the one an off-lock
+			// reader may still hold. The default core configures no id prefix, so the
+			// bare/prefixed pair cannot exist there.
+			newCore: mustLoadPrefixedCore,
+			setup: func(t *testing.T, c *Core, dir string) {
+				writeLinkNibFile(t, dir, "e1", "todo", "")
+				writeLinkNibFile(t, dir, "nibs-e1", "todo", "")
+				writeLinkNibFile(t, dir, "nibs-t1", "todo", "parent: e1\n")
+				if err := c.Load(); err != nil {
+					t.Fatalf("Load: %v", err)
+				}
+				if b, _ := c.Get("nibs-t1"); b == nil || b.Parent != "e1" {
+					t.Fatalf("setup premise failed: parent = %+v, want the bare spelling %q", b, "e1")
+				}
+			},
+			mutate: func(t *testing.T, c *Core, _ string) {
+				if err := c.Delete("e1"); err != nil {
+					t.Fatalf("Delete: %v", err)
+				}
+				if b, _ := c.Get("nibs-t1"); b == nil || b.Parent != "nibs-e1" {
+					t.Fatalf("mutation did not fire: parent = %+v, want nibs-e1", b)
+				}
+			},
+		},
+		{
 			name:   "Archive", // Rewrites Path in place — the sanctioned exception.
 			covers: []string{"Archive"},
 			setup: func(t *testing.T, c *Core, _ string) {

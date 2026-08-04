@@ -1,9 +1,11 @@
 package nibcore
 
 import (
+	"bytes"
 	"os"
 	"path/filepath"
 	"slices"
+	"strings"
 	"testing"
 	"time"
 
@@ -352,6 +354,204 @@ func TestWatcherCanonicalizationPublishesOneEventPerNib(t *testing.T) {
 	}
 	if events[0].Nib == nil || events[0].Nib.Parent != "nibs-par" {
 		t.Errorf("published payload parent = %+v, want the canonicalized nibs-par", events[0].Nib)
+	}
+}
+
+// TestDeleteBareTokenIDRecanonicalizesLinks is the removal half of the
+// canonicalization sweep. A store can hold a bare-token nib `e1` alongside its
+// prefixed twin `nibs-e1`: nib.ParseFilename derives a bare id from any filename
+// that does not carry the configured prefix. A link spelled `parent: e1` then
+// resolves EXACTLY, so canonicalization correctly leaves it as written — until
+// `e1` is deleted, when the exact key is gone and resolution falls through to
+// the prefixed twin.
+//
+// Without a sweep on removal the stored spelling still reads `e1` while Get
+// answers `nibs-e1`: the nib is re-parented with no event and no file change,
+// and every reverse traversal disagrees with the forward resolver. The
+// assertions therefore pin the STORED spelling and the reverse traversal — an
+// assertion through Get alone passes on the broken code.
+func TestDeleteBareTokenIDRecanonicalizesLinks(t *testing.T) {
+	core, nibsDir := mustLoadPrefixedCore(t)
+
+	writeLinkNibFile(t, nibsDir, "e1", "todo", "")
+	writeLinkNibFile(t, nibsDir, "nibs-e1", "todo", "")
+	writeLinkNibFile(t, nibsDir, "nibs-t1", "todo", "parent: e1\n")
+	if err := core.Load(); err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+
+	// Premise: the bare spelling resolves exactly, so load canonicalization
+	// leaves it verbatim and it points at the bare-token nib. Without this the
+	// assertions below could pass for the wrong reason.
+	dep, err := core.Get("nibs-t1")
+	if err != nil {
+		t.Fatalf(`Get("nibs-t1"): %v`, err)
+	}
+	if dep.Parent != "e1" {
+		t.Fatalf("premise failed: stored parent = %q, want the bare spelling %q to survive load", dep.Parent, "e1")
+	}
+	if got := linkTargets(t, core, "e1", "parent"); !slices.Equal(got, []string{"nibs-t1"}) {
+		t.Fatalf("premise failed: FindIncomingLinks(e1) parent sources = %v, want [nibs-t1]", got)
+	}
+
+	if err := core.Delete("e1"); err != nil {
+		t.Fatalf(`Delete("e1"): %v`, err)
+	}
+
+	dep, err = core.Get("nibs-t1")
+	if err != nil {
+		t.Fatalf(`Get("nibs-t1") after delete: %v`, err)
+	}
+	if dep.Parent != "nibs-e1" {
+		t.Errorf("stored parent = %q, want %q — deleting the bare-token nib must re-resolve the link, not leave the store saying one thing while Get answers another", dep.Parent, "nibs-e1")
+	}
+	if got := linkTargets(t, core, "nibs-e1", "parent"); !slices.Equal(got, []string{"nibs-t1"}) {
+		t.Errorf("FindIncomingLinks(nibs-e1) parent sources = %v, want [nibs-t1] — the reverse traversal must agree with the resolver", got)
+	}
+}
+
+// TestDeleteBareTokenIDRecanonicalizesBlockedBy drives the removal sweep through
+// a LIST field. BlockedBy is a slice header, so a rewrite editing it in place
+// would be memory-unsafe for an off-lock reader in a way the Parent case is not.
+//
+// `blocked_by: [e1, nibs-e1]` names two DISTINCT stored nibs before the delete,
+// so load leaves both spellings exactly as written; afterwards both resolve to
+// nibs-e1 and the duplicate-collapse branch fires through this trigger.
+func TestDeleteBareTokenIDRecanonicalizesBlockedBy(t *testing.T) {
+	core, nibsDir := mustLoadPrefixedCore(t)
+
+	writeLinkNibFile(t, nibsDir, "e1", "in-progress", "")
+	writeLinkNibFile(t, nibsDir, "nibs-e1", "in-progress", "")
+	writeLinkNibFile(t, nibsDir, "nibs-t1", "todo", "blocked_by: [e1, nibs-e1]\n")
+	if err := core.Load(); err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+
+	// Premise: the two spellings name two different nibs, so load canonicalization
+	// has nothing to rewrite and both survive verbatim.
+	published, err := core.Get("nibs-t1")
+	if err != nil {
+		t.Fatalf(`Get("nibs-t1"): %v`, err)
+	}
+	if !slices.Equal(published.BlockedBy, []string{"e1", "nibs-e1"}) {
+		t.Fatalf("premise failed: blocked_by = %v, want both spellings to survive load", published.BlockedBy)
+	}
+	if got := linkTargets(t, core, "e1", "blocked_by"); !slices.Equal(got, []string{"nibs-t1"}) {
+		t.Fatalf("premise failed: FindIncomingLinks(e1) blocked_by sources = %v, want [nibs-t1]", got)
+	}
+
+	if err := core.Delete("e1"); err != nil {
+		t.Fatalf(`Delete("e1"): %v`, err)
+	}
+
+	dep, err := core.Get("nibs-t1")
+	if err != nil {
+		t.Fatalf(`Get("nibs-t1") after delete: %v`, err)
+	}
+	if !slices.Equal(dep.BlockedBy, []string{"nibs-e1"}) {
+		t.Errorf("blocked_by = %v, want [nibs-e1] — both spellings now name the same nib", dep.BlockedBy)
+	}
+	// The pointer a reader took before the delete must be untouched: the rewrite
+	// lands on a fresh nib rather than writing through a published slice.
+	if !slices.Equal(published.BlockedBy, []string{"e1", "nibs-e1"}) {
+		t.Errorf("the pre-delete pointer's blocked_by is now %v, want it left as [e1 nibs-e1]", published.BlockedBy)
+	}
+	if got := linkTargets(t, core, "nibs-e1", "blocked_by"); !slices.Equal(got, []string{"nibs-t1"}) {
+		t.Errorf("FindIncomingLinks(nibs-e1) blocked_by sources = %v, want [nibs-t1] exactly once", got)
+	}
+	if !core.IsBlocked("nibs-t1") {
+		t.Error(`IsBlocked("nibs-t1") = false, want true — nibs-e1 is in progress and still blocks it`)
+	}
+}
+
+// TestDeleteWarnsAboutTheLinksItRepointed pins the announcement half of the
+// removal sweep. Re-pointing a THIRD nib's link changes no file and publishes no
+// event (no direct Core mutator publishes one), so the warning is the only
+// signal a direct Core.Delete gives that it moved something else. Through the
+// CLI this fires only for a legacy Blocking entry, since DeleteNib clears
+// exact-match Parent/BlockedBy first (see Core.Delete).
+func TestDeleteWarnsAboutTheLinksItRepointed(t *testing.T) {
+	core, nibsDir := mustLoadPrefixedCore(t)
+
+	writeLinkNibFile(t, nibsDir, "e1", "todo", "")
+	writeLinkNibFile(t, nibsDir, "nibs-e1", "todo", "")
+	writeLinkNibFile(t, nibsDir, "nibs-t1", "todo", "parent: e1\n")
+	writeLinkNibFile(t, nibsDir, "nibs-t2", "todo", "")
+	if err := core.Load(); err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+
+	// Attached after Load so a load-time warning cannot be mistaken for one.
+	var warnings bytes.Buffer
+	core.SetWarnWriter(&warnings)
+
+	if err := core.Delete("e1"); err != nil {
+		t.Fatalf(`Delete("e1"): %v`, err)
+	}
+
+	got := warnings.String()
+	for _, want := range []string{"e1", "nibs-t1.parent", "e1 -> nibs-e1"} {
+		if !strings.Contains(got, want) {
+			t.Errorf("delete warnings = %q, want them to mention %q", got, want)
+		}
+	}
+	// Only the nib the sweep actually moved is named.
+	if strings.Contains(got, "nibs-t2") {
+		t.Errorf("delete warnings = %q, want no mention of the untouched nibs-t2", got)
+	}
+}
+
+// TestWatcherCanonicalizesAfterRemoval is the watcher's counterpart: the sweep
+// gate has to fire on a removal, not only on a create. An external delete of the
+// bare-token nib (a `git pull` in the separate nibs repo, another process's
+// `nibs delete`) reaches the store through handleChanges' removal branch, which
+// used to leave the batch's canonicalization pass narrow — so the bystander
+// holding the bare spelling was never revisited.
+//
+// It also pins that the rebind is ANNOUNCED: the bystander's new spelling
+// reaches subscribers as an update rather than appearing out of nowhere on their
+// next read.
+func TestWatcherCanonicalizesAfterRemoval(t *testing.T) {
+	core, nibsDir := mustLoadPrefixedCore(t)
+
+	barePath := writeLinkNibFile(t, nibsDir, "e1", "todo", "")
+	writeLinkNibFile(t, nibsDir, "nibs-e1", "todo", "")
+	writeLinkNibFile(t, nibsDir, "nibs-t1", "todo", "parent: e1\n")
+	if err := core.Load(); err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if dep, _ := core.Get("nibs-t1"); dep == nil || dep.Parent != "e1" {
+		t.Fatalf("premise failed: parent = %+v, want the bare spelling \"e1\" to survive load", dep)
+	}
+	setWatching(core)
+	ch, unsub := core.Subscribe()
+	defer unsub()
+
+	if err := os.Remove(barePath); err != nil {
+		t.Fatalf("removing the bare-token file: %v", err)
+	}
+	core.handleChanges(map[string]fsnotify.Op{barePath: fsnotify.Remove})
+
+	dep, err := core.Get("nibs-t1")
+	if err != nil {
+		t.Fatalf(`Get("nibs-t1") after watcher removal: %v`, err)
+	}
+	if dep.Parent != "nibs-e1" {
+		t.Errorf("stored parent = %q, want %q once the bare-token nib is gone", dep.Parent, "nibs-e1")
+	}
+	if got := linkTargets(t, core, "nibs-e1", "parent"); !slices.Equal(got, []string{"nibs-t1"}) {
+		t.Errorf("FindIncomingLinks(nibs-e1) parent sources = %v, want [nibs-t1]", got)
+	}
+
+	events := collectNibEvents(t, ch, "nibs-t1", 150*time.Millisecond)
+	if len(events) != 1 {
+		t.Fatalf("got %d events for the bystander nibs-t1, want exactly 1 announcing the rebind: %+v", len(events), events)
+	}
+	if events[0].Type != EventUpdated {
+		t.Errorf("event type = %s, want %s", events[0].Type, EventUpdated)
+	}
+	if events[0].Nib == nil || events[0].Nib.Parent != "nibs-e1" {
+		t.Errorf("published payload parent = %+v, want the re-resolved nibs-e1", events[0].Nib)
 	}
 }
 

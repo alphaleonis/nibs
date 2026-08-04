@@ -413,11 +413,20 @@ func (c *Core) handleChanges(changes map[string]fsnotify.Op) {
 
 	var events []NibEvent
 
-	// Whether this batch put an id in the store that was not there before. A new
-	// id can make a previously-unresolvable short-form link elsewhere resolve, so
-	// it widens the canonicalization pass below from this batch's own nibs to the
-	// whole store. Nothing else in a batch can create that possibility.
-	var addedIDs bool
+	// Whether this batch changed the set of stored ids in a way that can re-point
+	// a link held by a nib the batch never touched, which widens the
+	// canonicalization pass below from this batch's own nibs to the whole store.
+	// Two shapes do that, and only those two:
+	//
+	//   - An id ARRIVING that was not in the store before. A short-form link
+	//     written before the nib it names was unresolvable at load and correctly
+	//     left verbatim; only the target's arrival can resolve it.
+	//   - A bare-token id LEAVING while its prefixed twin remains. Resolution
+	//     tries an exact map key before the prefix-prepended form, so a link
+	//     stored with the bare spelling starts answering for the twin instead.
+	//
+	// A batch that only edits existing nibs pays the cheap touched-only pass.
+	var scanAll bool
 
 	for path, op := range changes {
 		filename := filepath.Base(path)
@@ -537,6 +546,26 @@ func (c *Core) handleChanges(changes map[string]fsnotify.Op) {
 			// and it exists at neither the archive nor the main location now).
 			delete(c.nibs, id)
 
+			// Evaluated per removal against the store as it stands, so a batch
+			// deleting BOTH spellings of one id can set this from an intermediate
+			// state that the final map no longer justifies (map iteration order
+			// decides). Harmless in the direction that matters: the sweep re-resolves
+			// against the post-batch map, so a spurious widening costs one pass and
+			// rewrites nothing.
+			//
+			// The opposite direction — reading false here because the twin is not in
+			// the map YET, while the final map does hold it — cannot happen, and it
+			// is worth saying why because the reason lives in another branch: the
+			// only key INSERTION in this loop is the create/write branch below, which
+			// sets scanAll itself whenever the id was not already stored. A twin
+			// appearing later in the batch is therefore covered by the arrival shape,
+			// whatever the iteration order. Any future branch that installs a new key
+			// (an unarchive discovering an unstored nib, a re-keying rename) must
+			// preserve that bookkeeping or this gate silently stops firing.
+			if c.removalCanRebindLinksLocked(id) {
+				scanAll = true
+			}
+
 			// Drop from reverse-mention index.
 			c.mentionIdx.Remove(id)
 
@@ -592,7 +621,7 @@ func (c *Core) handleChanges(changes map[string]fsnotify.Op) {
 					NibID: newNib.ID,
 				})
 			} else {
-				addedIDs = true
+				scanAll = true
 				events = append(events, NibEvent{
 					Type:  EventCreated,
 					Nib:   newNib,
@@ -617,7 +646,7 @@ func (c *Core) handleChanges(changes map[string]fsnotify.Op) {
 			touched[e.NibID] = append(touched[e.NibID], i)
 		}
 	}
-	events = c.canonicalizeLinksAfterBatchLocked(events, touched, addedIDs)
+	events = c.canonicalizeLinksAfterBatchLocked(events, touched, scanAll)
 
 	// Snapshot every payload while the lock is still held: each event carries a
 	// Clone, not the live c.nibs pointer, so a subscriber's payload fields cannot
