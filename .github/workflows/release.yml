@@ -101,7 +101,10 @@ jobs:
 
       - uses: actions/setup-go@v6
         with:
-          go-version: stable
+          # The same toolchain CI built and tested this commit with, so the
+          # published binaries are not compiled by a Go release nothing verified.
+          # Keep in sync with mise.toml and ci.yml.
+          go-version: "1.26.5"
 
       - uses: actions/setup-node@v6
         with:

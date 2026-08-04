@@ -287,8 +287,86 @@ tasks:
 
   lint:
     desc: Run golangci-lint
+    # The linter runs through `mise exec`, not as a bare `golangci-lint`, so the
+    # version mise.toml pins is the one that lints regardless of what else a
+    # machine has first on PATH. A bare invocation resolves by PATH order, and a
+    # different golangci-lint release disagrees about this codebase — that drift
+    # is what mise.toml's header records. mise is the one tool contributors
+    # install by hand (see CLAUDE.md), so routing through it rules out no other
+    # provisioning path, and it keeps the pinned version in mise.toml alone
+    # rather than restating it here.
+    #
+    # web/dist is the second prerequisite: embed.go embeds it, so without it the
+    # package does not load and golangci-lint reports a type-check error about a
+    # missing embed pattern rather than anything to do with the code. That only
+    # shows up on a cold lint cache — a warm one answers "0 issues" from results
+    # it computed when web/dist was still there — so a passing local run is no
+    # evidence the checkout is actually lintable. The check is, and it is cheap.
+    #
+    # Deliberately a precondition rather than `deps: [web:build]`, which is how
+    # the other tasks needing web/dist get it: linting should stay fast and not
+    # pull in a web build, so this one reports the gap instead of closing it.
+    # The mise, mise.toml and web/dist checks are shell builtins in Task's
+    # embedded interpreter; the trust check is the one extra process on the
+    # success path.
+    #
+    # Trust is checked separately because `command -v mise` passes on an
+    # untrusted checkout — mise is installed and on PATH, it just refuses to read
+    # mise.toml. A terminal would get mise's interactive trust prompt here; a CI
+    # step, a pre-commit hook or a coding agent gets only the refusal, which is
+    # the case this covers. Redirecting mise's output keeps the check from
+    # prompting, so both paths get the guided message instead.
+    #
+    # The 2>&1 is load-bearing, not noise: mise draws the trust prompt on
+    # stderr, so >/dev/null alone still prompts on a terminal. Keep both.
+    #
+    # The check is "mise can load its config", not "the config is trusted" — a
+    # malformed mise.toml fails it too, which is why the message names
+    # mise config ls as the fallback. It is also not specific to this checkout:
+    # `mise config ls` exits 0 on the user's global config alone, so an absent
+    # mise.toml would report all-clear while `mise exec` resolves golangci-lint
+    # from PATH and the pin goes unapplied. The preceding `test -f` closes that,
+    # and stays its own precondition so each message names one cause — folded
+    # into the trust check with `&&`, a missing file would be answered by a
+    # message whose first advice is `mise trust`, and mise config ls then exits
+    # 0 with nothing to show.
+    preconditions:
+      - sh: command -v mise >/dev/null
+        msg: |
+          mise is not on PATH.
+
+          golangci-lint is pinned in mise.toml and this task runs it through mise,
+          so the pinned version is used whatever else provides a golangci-lint.
+          Install mise, then run `mise trust` and `mise install` in this checkout:
+            https://mise.jdx.dev/getting-started.html
+      - sh: test -f mise.toml
+        msg: |
+          mise.toml is missing from the repo root, so nothing pins golangci-lint
+          for this checkout. `mise exec` would fall back to whatever golangci-lint
+          PATH provides — a different release disagrees about this codebase, and
+          CI would reach a different verdict. Restore mise.toml from git.
+      - sh: mise config ls >/dev/null 2>&1
+        msg: |
+          mise cannot load this checkout's mise.toml.
+
+          Almost always this means the checkout is not trusted — mise refuses an
+          untrusted config, and this task runs golangci-lint through mise. This
+          check runs non-interactively, so it reports the refusal rather than
+          showing mise's trust prompt — which a CI step, a pre-commit hook or a
+          coding agent would never see either. Trust this checkout once:
+            mise trust
+
+          If that prints "No untrusted config files found", the config is trusted
+          but unreadable for another reason — a malformed mise.toml fails this
+          check too. This check discards mise's own error; run `mise config ls`
+          to see it.
+
+      - sh: test -d web/dist
+        msg: |
+          web/dist is missing, and embed.go embeds it — the Go packages will not
+          load for the linter. Build the web assets first: task web:build
     cmds:
-      - golangci-lint run ./...
+      - mise exec -- golangci-lint run ./...
 
   licenses:
     desc: Collect third-party dependency licenses
