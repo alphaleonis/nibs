@@ -66,7 +66,10 @@ export type NibFilter = {
    *
    * An id naming no nib is refused with a NOT_FOUND error rather than matching
    * nothing, so a mistyped or stale id stays distinguishable from a genuine empty
-   * result.
+   * result. An empty string is refused as a malformed argument: it names no nib
+   * and never could. Unlike the not-found refusal above it carries no
+   * extensions.code, so a GraphQL client sees a generic error; the CLI reports
+   * VALIDATION_ERROR (exit 2). Omit the field to leave it unfiltered.
    */
   ancestorId?: string | null | undefined;
   /**
@@ -74,7 +77,10 @@ export type NibFilter = {
    *
    * An id naming no nib is refused with a NOT_FOUND error rather than matching
    * nothing, so a mistyped or stale id stays distinguishable from a genuine empty
-   * result.
+   * result. An empty string is refused as a malformed argument: it names no nib
+   * and never could. Unlike the not-found refusal above it carries no
+   * extensions.code, so a GraphQL client sees a generic error; the CLI reports
+   * VALIDATION_ERROR (exit 2). Omit the field to leave it unfiltered.
    */
   blockedById?: string | null | undefined;
   /**
@@ -82,7 +88,10 @@ export type NibFilter = {
    *
    * An id naming no nib is refused with a NOT_FOUND error rather than matching
    * nothing, so a mistyped or stale id stays distinguishable from a genuine empty
-   * result.
+   * result. An empty string is refused as a malformed argument: it names no nib
+   * and never could. Unlike the not-found refusal above it carries no
+   * extensions.code, so a GraphQL client sees a generic error; the CLI reports
+   * VALIDATION_ERROR (exit 2). Omit the field to leave it unfiltered.
    */
   blockingId?: string | null | undefined;
   /**
@@ -91,7 +100,10 @@ export type NibFilter = {
    *
    * An id naming no nib is refused with a NOT_FOUND error rather than matching
    * nothing, so a mistyped or stale id stays distinguishable from a genuine empty
-   * result.
+   * result. An empty string is refused as a malformed argument: it names no nib
+   * and never could. Unlike the not-found refusal above it carries no
+   * extensions.code, so a GraphQL client sees a generic error; the CLI reports
+   * VALIDATION_ERROR (exit 2). Omit the field to leave it unfiltered.
    */
   descendantId?: string | null | undefined;
   /** Include only nibs with these estimates (OR logic) */
@@ -119,7 +131,10 @@ export type NibFilter = {
    *
    * An id naming no nib is refused with a NOT_FOUND error rather than matching
    * nothing, so a mistyped or stale id stays distinguishable from a genuine empty
-   * result.
+   * result. An empty string is refused as a malformed argument: it names no nib
+   * and never could. Unlike the not-found refusal above it carries no
+   * extensions.code, so a GraphQL client sees a generic error; the CLI reports
+   * VALIDATION_ERROR (exit 2). Omit the field to leave it unfiltered.
    */
   mentionedById?: string | null | undefined;
   /**
@@ -127,7 +142,10 @@ export type NibFilter = {
    *
    * An id naming no nib is refused with a NOT_FOUND error rather than matching
    * nothing, so a mistyped or stale id stays distinguishable from a genuine empty
-   * result.
+   * result. An empty string is refused as a malformed argument: it names no nib
+   * and never could. Unlike the not-found refusal above it carries no
+   * extensions.code, so a GraphQL client sees a generic error; the CLI reports
+   * VALIDATION_ERROR (exit 2). Omit the field to leave it unfiltered.
    */
   mentionsId?: string | null | undefined;
   /**
@@ -135,7 +153,11 @@ export type NibFilter = {
    *
    * An id naming no nib is refused with a NOT_FOUND error rather than matching
    * nothing, so a mistyped or stale id stays distinguishable from a genuine empty
-   * result.
+   * result. An empty string is refused as a malformed argument: it names no nib
+   * and never could. Unlike the not-found refusal above it carries no
+   * extensions.code, so a GraphQL client sees a generic error; the CLI reports
+   * VALIDATION_ERROR (exit 2). Omit the field to leave it unfiltered, or use
+   * hasParent: false to select the nibs that have no parent.
    */
   parentId?: string | null | undefined;
   /** Include only nibs with these priorities (OR logic) */
@@ -163,6 +185,11 @@ export type NibFilter = {
    * - "title:login" - search only title field
    * - "body:auth" - search only body field
    * - "5a8k" - also matches nibs whose ID contains "5a8k"
+   *
+   * An empty string leaves it unfiltered, the opposite of the id-valued fields
+   * such as parentId: "no keyword filter" is a real meaning, so `search: "$q"`
+   * with an empty q is a reasonable thing to write. There is no nib whose id is
+   * "", which is why the same value is a refusal there.
    */
   search?: string | null | undefined;
   /**
@@ -173,7 +200,10 @@ export type NibFilter = {
    *
    * An id naming no nib is refused with a NOT_FOUND error rather than matching
    * nothing, so a mistyped or stale id stays distinguishable from a genuine empty
-   * result.
+   * result. An empty string is refused as a malformed argument: it names no nib
+   * and never could. Unlike the not-found refusal above it carries no
+   * extensions.code, so a GraphQL client sees a generic error; the CLI reports
+   * VALIDATION_ERROR (exit 2). Omit the field to leave it unfiltered.
    */
   siblingId?: string | null | undefined;
   /** Include only nibs with these statuses (OR logic) */

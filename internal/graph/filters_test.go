@@ -208,8 +208,57 @@ func TestEveryIDValuedFilterFieldHasAGuard(t *testing.T) {
 	reader := hierarchyFixture()
 	blocking := &stubBlockingChecker{}
 
+	for _, field := range idValuedFilterFields(t) {
+		t.Run(field.name, func(t *testing.T) {
+			got, err := ApplyFilter(context.Background(), reader.allNibs, field.filterWith("nonexistent"), reader, blocking)
+			if err == nil {
+				t.Fatalf("%s naming no nib returned %d nibs and no error; that branch ships without its guard", field.name, len(got))
+			}
+			var notFound *FilterTargetNotFoundError
+			if !errors.As(err, &notFound) {
+				t.Fatalf("error = %T (%v), want *FilterTargetNotFoundError", err, err)
+			}
+			if notFound.Field != field.name {
+				t.Errorf("Field = %q, want the schema spelling %q", notFound.Field, field.name)
+			}
+		})
+	}
+}
+
+// idFilterField is one id-valued field of model.NibFilter, paired with a
+// constructor that builds a filter setting only that field. Driving the field
+// through the constructor rather than through a raw reflect.Value keeps the
+// reflection in one place.
+type idFilterField struct {
+	name  string
+	index int
+}
+
+// filterWith returns a NibFilter with this field — and only this field — set to
+// value.
+func (f idFilterField) filterWith(value string) *model.NibFilter {
+	filter := &model.NibFilter{}
+	reflect.ValueOf(filter).Elem().Field(f.index).Set(reflect.ValueOf(&value))
+	return filter
+}
+
+// idValuedFilterFields selects every *string field of model.NibFilter whose json
+// tag ends in "Id", which is the set every "all the id filters behave alike"
+// test derives its rows from instead of restating them. A NINTH id field shipped
+// without its guards therefore fails those tests rather than passing them by
+// omission.
+//
+// The json tag is the whole selector, and it is applied BEFORE any check on the
+// field's shape — an id-named field these tests cannot drive fails here rather
+// than being skipped, so a plural or differently-typed id filter cannot be
+// exempted by accident. Search is the only other *string field and does not end
+// in "Id"; every list facet is a []string whose tag does not either. A field
+// that genuinely should not refuse has to be excepted deliberately.
+func idValuedFilterFields(t *testing.T) []idFilterField {
+	t.Helper()
+
 	filterType := reflect.TypeOf(model.NibFilter{})
-	guarded := 0
+	var fields []idFilterField
 	for i := range filterType.NumField() {
 		field := filterType.Field(i)
 		name, _, _ := strings.Cut(field.Tag.Get("json"), ",")
@@ -217,37 +266,168 @@ func TestEveryIDValuedFilterFieldHasAGuard(t *testing.T) {
 			continue
 		}
 		// Shape is checked only after the NAME has selected the field. Selecting
-		// on shape first would exempt a plural id filter silently, since this
-		// walk can only drive a *string; failing here instead forces whoever
-		// adds one to extend the walk rather than slip past it.
+		// on shape first would exempt a plural id filter silently, since these
+		// tests can only drive a *string; failing here instead forces whoever
+		// adds one to extend them rather than slip past.
 		if field.Type.Kind() != reflect.Pointer || field.Type.Elem().Kind() != reflect.String {
-			t.Fatalf("%s is id-named but %s, which this test cannot drive — extend it rather than exempting the field", name, field.Type)
+			t.Fatalf("%s is id-named but %s, which these tests cannot drive — extend them rather than exempting the field", name, field.Type)
 		}
-		guarded++
-
-		t.Run(name, func(t *testing.T) {
-			unknown := "nonexistent"
-			filter := &model.NibFilter{}
-			reflect.ValueOf(filter).Elem().Field(i).Set(reflect.ValueOf(&unknown))
-
-			got, err := ApplyFilter(context.Background(), reader.allNibs, filter, reader, blocking)
-			if err == nil {
-				t.Fatalf("%s naming no nib returned %d nibs and no error; that branch ships without its guard", name, len(got))
-			}
-			var notFound *FilterTargetNotFoundError
-			if !errors.As(err, &notFound) {
-				t.Fatalf("error = %T (%v), want *FilterTargetNotFoundError", err, err)
-			}
-			if notFound.Field != name {
-				t.Errorf("Field = %q, want the schema spelling %q", notFound.Field, name)
-			}
-		})
+		fields = append(fields, idFilterField{name: name, index: i})
 	}
 
 	// Without this the walk is free to match nothing and report success — a
-	// renamed json tag or a change of field type would quietly empty the table.
-	if guarded == 0 {
-		t.Fatal("the reflective rule matched no field of model.NibFilter, so this test guards nothing")
+	// renamed json tag or a change of field type would quietly empty every
+	// table derived from it.
+	if len(fields) == 0 {
+		t.Fatal("the reflective rule matched no field of model.NibFilter, so the tests derived from it guard nothing")
+	}
+	return fields
+}
+
+// TestEveryIDValuedFilterFieldRefusesAnEmptyValue is the guard for the
+// strongest form of the silent-widening bug: an id-valued filter set to the
+// EMPTY STRING must be refused as a validation error, not dropped.
+//
+// An empty id must never be read as "unset": dropping the branch answers
+// `nibs(filter:{parentId:""})` with the WHOLE STORE. That is the worst possible
+// answer for the input that produces it — an empty id is what a client sends
+// when a variable did not interpolate (`--parent "$ID"` with ID unset), so the
+// query that most needs refusing is the one that would widen to everything.
+//
+// Empty is a distinct class from unknown, not a NOT_FOUND: there is no nib
+// whose id is "", so nothing was mistyped and no store lookup could ever
+// succeed. The CLI flag layer already answers this the same way
+// (cmd/list.go rejects `--parent ""` as a validation error), and the two
+// surfaces must not disagree about one user error.
+//
+// Derived reflectively for the same reason the unknown-target guard is: a ninth
+// id field added without the check fails here instead of shipping silent.
+func TestEveryIDValuedFilterFieldRefusesAnEmptyValue(t *testing.T) {
+	reader := hierarchyFixture()
+	blocking := &stubBlockingChecker{}
+
+	for _, field := range idValuedFilterFields(t) {
+		t.Run(field.name, func(t *testing.T) {
+			got, err := ApplyFilter(context.Background(), reader.allNibs, field.filterWith(""), reader, blocking)
+			if err == nil {
+				t.Fatalf("%s set to the empty string returned %d of %d nibs and no error; the branch was dropped instead of refused",
+					field.name, len(got), len(reader.allNibs))
+			}
+			if got != nil {
+				t.Errorf("result = %v, want nil alongside the error", got)
+			}
+			var empty *FilterTargetEmptyError
+			if !errors.As(err, &empty) {
+				t.Fatalf("error = %T (%v), want *FilterTargetEmptyError", err, err)
+			}
+			if empty.Field != field.name {
+				t.Errorf("Field = %q, want the schema spelling %q", empty.Field, field.name)
+			}
+			// The class must stay validation, not not-found: exit 2 says the
+			// caller's input was malformed, exit 3 says a real id named a
+			// missing nib. Carrying the sentinel would collapse the two at
+			// every classifier that keys on it.
+			if errors.Is(err, nib.ErrNotFound) {
+				t.Error("an empty id carries nib.ErrNotFound, so it classifies as NOT_FOUND (exit 3) — an empty string names no nib to be missing")
+			}
+			var notFound *FilterTargetNotFoundError
+			if errors.As(err, &notFound) {
+				t.Error("errors.As matched *FilterTargetNotFoundError, so the empty and unknown classes are not distinguishable")
+			}
+		})
+	}
+}
+
+// TestApplyFilterIDTargetBoundaries walks one id-valued branch across every
+// value an id-valued filter field can hold, INCLUDING the values between the
+// interesting cases. The branch is a decision point with four outcomes and the
+// boundaries between them are where it breaks: a guard written only against nil
+// and a valid id ships broken for "" and for " ".
+//
+// The whitespace-only row is the deliberate one. " " is NOT treated as empty:
+// the emptiness test is an exact `== ""`, so a whitespace-only value travels
+// into NormalizeID like any other id, resolves to nothing and is refused as
+// NOT_FOUND. That matches cmd/list.go, which tests its flags the same exact way
+// — trimming here would make the graph layer stricter than the flag surface
+// feeding it, and would mean resolveFilterID silently rewrote the id the
+// not-found error echoes back.
+//
+// parentId is the representative branch; the two reflective tests above cover
+// the empty and unknown cases on all eight.
+func TestApplyFilterIDTargetBoundaries(t *testing.T) {
+	reader := hierarchyFixture()
+	blocking := &stubBlockingChecker{}
+
+	// outcome names the four answers a branch can give, so a row states its
+	// expectation rather than a tangle of booleans.
+	type outcome int
+	const (
+		unfiltered outcome = iota // no filtering applied at all
+		matched                   // the branch ran and selected
+		refusedEmpty              // *FilterTargetEmptyError, validation class
+		refusedUnknown            // *FilterTargetNotFoundError, not-found class
+	)
+
+	tests := []struct {
+		name    string
+		value   *string
+		want    outcome
+		wantIDs []string
+	}{
+		{"nil leaves the field unfiltered", nil, unfiltered, nil},
+		{"the empty string is refused as malformed input", strPtr(""), refusedEmpty, nil},
+		{"a whitespace-only id is an unresolvable id, not an empty one", strPtr(" "), refusedUnknown, nil},
+		{"a short id resolves and selects", strPtr("e1"), matched, []string{"nibs-f1", "nibs-t2"}},
+		{"a full id resolves and selects", strPtr("nibs-e1"), matched, []string{"nibs-f1", "nibs-t2"}},
+		{"an unknown id is refused as not-found", strPtr("nonexistent"), refusedUnknown, nil},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got, err := ApplyFilter(context.Background(), reader.allNibs, &model.NibFilter{ParentID: tt.value}, reader, blocking)
+
+			switch tt.want {
+			case refusedEmpty:
+				var empty *FilterTargetEmptyError
+				if !errors.As(err, &empty) {
+					t.Fatalf("error = %T (%v) over %d nibs, want *FilterTargetEmptyError", err, err, len(got))
+				}
+			case refusedUnknown:
+				var notFound *FilterTargetNotFoundError
+				if !errors.As(err, &notFound) {
+					t.Fatalf("error = %T (%v) over %d nibs, want *FilterTargetNotFoundError", err, err, len(got))
+				}
+				if notFound.ID != *tt.value {
+					t.Errorf("ID = %q, want the id as supplied (%q) — the error echoes what the caller typed", notFound.ID, *tt.value)
+				}
+			case unfiltered:
+				if err != nil {
+					t.Fatalf("a nil field must not filter or fail: %v", err)
+				}
+				if len(got) != len(reader.allNibs) {
+					t.Errorf("got %d nibs, want all %d — a nil field filters nothing", len(got), len(reader.allNibs))
+				}
+			case matched:
+				if err != nil {
+					t.Fatalf("unexpected error: %v", err)
+				}
+				gotIDs := make([]string, 0, len(got))
+				for _, b := range got {
+					gotIDs = append(gotIDs, b.ID)
+				}
+				sort.Strings(gotIDs)
+				want := append([]string(nil), tt.wantIDs...)
+				sort.Strings(want)
+				if !reflect.DeepEqual(gotIDs, want) {
+					t.Errorf("got IDs %v, want %v", gotIDs, want)
+				}
+			default:
+				// A row naming an outcome no case handles would run zero
+				// assertions and pass whatever ApplyFilter did — the vacuous
+				// pass this enum exists to make impossible.
+				t.Fatalf("unhandled outcome %v", tt.want)
+			}
+		})
 	}
 }
 

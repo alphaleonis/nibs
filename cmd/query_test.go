@@ -849,6 +849,40 @@ func TestExecuteQueryNestedFilterRefusalIsReportedOnce(t *testing.T) {
 	t.Fatal("a nested filter naming no nib returned no error")
 }
 
+// TestExecuteQueryEmptyFilterTargetIsAValidationError covers the surface that
+// is the ONLY one for five of the eight id-valued filter fields. cmd/list.go
+// refuses --parent "", --mentions "" and --mentioned-by "" on the flag layer,
+// but ancestorId, descendantId, siblingId, blockingId and blockedById have no
+// flag, so a query is the only way an empty value reaches ApplyFilter at all.
+//
+// ancestorId is the representative because it takes the GENERIC message branch,
+// unlike the parentId every other construction in this package builds. A pass
+// says the refusal survives the whole path — resolver, executor, gqlgen's error
+// wrapping, classifier — and arrives as exit 2 rather than the exit 3 a
+// not-found would give or the exit 0 the dropped branch used to.
+func TestExecuteQueryEmptyFilterTargetIsAValidationError(t *testing.T) {
+	app := setupQueryTestApp(t)
+	createQueryTestNib(t, app.Core, "eft-1", "Nib one", "todo")
+
+	_, err := executeQuery(app, `{ nibs(filter: {ancestorId: ""}) { id } }`, nil, "")
+	if err == nil {
+		t.Fatal(`an ancestorId of "" returned no error; the branch was dropped instead of refused`)
+	}
+	var ce *output.CodedError
+	if !errors.As(err, &ce) {
+		t.Fatalf("expected *output.CodedError, got %T: %v", err, err)
+	}
+	if ce.Code != output.ErrValidation {
+		t.Errorf("code = %q, want %q — an empty id is malformed input, not a missing nib", ce.Code, output.ErrValidation)
+	}
+	if got := output.ExitCode(ce.Code); got != output.ExitValidation {
+		t.Errorf("exit code = %d, want %d (ExitValidation)", got, output.ExitValidation)
+	}
+	if !strings.Contains(ce.Error(), "ancestorId") {
+		t.Errorf("the message does not name the field the caller wrote: %s", ce.Error())
+	}
+}
+
 func TestQueryCommandGraphqlErrorIsCoded(t *testing.T) {
 	t.Cleanup(resetQueryFlags)
 	resetQueryFlags()

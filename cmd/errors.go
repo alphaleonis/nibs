@@ -33,7 +33,7 @@ func reportErr(jsonMode bool, code string, err error) error {
 	return &output.CodedError{Code: code, Msg: err.Error(), Err: err}
 }
 
-// filterTargetErrCode maps the two filter-target failures graph.ApplyFilter
+// filterTargetErrCode maps the filter-target failures graph.ApplyFilter
 // distinguishes onto the CLI's structured error codes, so a query that could
 // not be answered exits differently from one that was answered with nothing.
 // It reports ok=false for every other error, leaving the caller's own fallback
@@ -46,10 +46,23 @@ func reportErr(jsonMode bool, code string, err error) error {
 //   - A target that resolved and then could not be read is FILE_ERROR (exit 5)
 //     — the io/internal class. Reporting a concurrent delete as a not-found
 //     would tell an agent it typed the wrong id when it did not.
+//   - An id-valued field given the EMPTY STRING is VALIDATION_ERROR (exit 2):
+//     the caller's input is malformed, nothing was mistyped, and no store state
+//     would make the same query succeed. That is the exit cmd/list.go already
+//     gives `--parent ""` on the flag surface, so the graph layer and the flag
+//     layer agree about one user error instead of splitting it across two exits.
 //
-// The two branches are independent, not ordered: graph.FilterTargetUnreadable
-// Error deliberately does not carry nib.ErrNotFound (see its doc comment), so
-// neither test can claim the other's error.
+// Reusing VALIDATION_ERROR rather than minting a code is deliberate, and
+// graphQLResponseCode's PRECONDITION is why: it compares codes but decides an
+// exit status, and output.ExitCode is many-to-one. A new code would map to exit
+// 2 alongside the VALIDATION_ERROR that unclassified errors already default to,
+// and a response carrying both would report UNCATEGORIZED for two failures the
+// direct commands agree exit 2 for.
+//
+// The branches are independent, not ordered: neither
+// graph.FilterTargetUnreadableError nor graph.FilterTargetEmptyError carries
+// nib.ErrNotFound (see their doc comments — the absent Unwrap is the whole
+// safety property in both), so no test can claim another's error.
 //
 // This is the READ path's classifier: cmd/list.go and cmd/rel.go call it
 // directly with a graph.ApplyFilter failure. It is NOT what classifies a
@@ -60,6 +73,10 @@ func filterTargetErrCode(err error) (string, bool) {
 	var unreadable *graph.FilterTargetUnreadableError
 	if errors.As(err, &unreadable) {
 		return output.ErrFileError, true
+	}
+	var empty *graph.FilterTargetEmptyError
+	if errors.As(err, &empty) {
+		return output.ErrValidation, true
 	}
 	if errors.Is(err, nib.ErrNotFound) {
 		return output.ErrNotFound, true
@@ -102,10 +119,10 @@ func filterTargetErrCode(err error) (string, bool) {
 // The two calls do not overlap on any reachable value, so their order here is
 // inert. mutationErrCode's sentinel test claims every not-found cause, including
 // *graph.FilterTargetNotFoundError's (it Unwraps to nib.ErrNotFound), which
-// leaves filterTargetErrCode to classify *graph.FilterTargetUnreadableError —
-// a type that implements no Unwrap and so carries no sentinel. Swapping the two
-// calls breaks no test today; what holds the classes apart is mutationErrCode's
-// own branch order, documented there.
+// leaves filterTargetErrCode to classify the refusal types that implement no
+// Unwrap and so carry no sentinel. Swapping the two calls breaks no test today;
+// what holds the classes apart is mutationErrCode's own branch order,
+// documented there.
 //
 // Everything unrecognized reports ok=false and keeps the caller's
 // VALIDATION_ERROR. gqlgen's own parse and validation failures land there and
@@ -141,6 +158,17 @@ func graphQLErrCode(err error) (string, bool) {
 //     currentEtag as the fix for a document whose other failure it does not
 //     touch. Passing code in makes a cause that contradicts its own response
 //     unrepresentable rather than merely unreached.
+//
+// VALIDATION_ERROR is the one class where the two conditions together do NOT
+// establish that the response holds a single failure. It is both a classified
+// code (filterTargetErrCode returns it for an empty filter target) and the code
+// graphQLResponseCode defaults an UNCLASSIFIED error to, so an empty filter
+// target beside an unrelated resolver failure agrees on VALIDATION_ERROR and
+// this function hands back the classified one. For that class Err attributes
+// only the failure it names — it does not imply the response carries no other.
+// Every other classified code differs from the default, so for those the
+// stronger reading holds. The one consumer today (cmd/graphql.go) gates on
+// output.ErrConflict, which is in the second group.
 //
 // The scan runs over the FULL list for the same reason graphQLResponseCode's
 // does: dedup keys on message text, which nothing ties to the cause, so a

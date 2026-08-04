@@ -15,25 +15,63 @@ import (
 // interchangeably without surprise.
 //
 // Why this wrapper exists despite being a straight passthrough today:
-//   - Semantic naming at call sites: inside ApplyFilter, `resolveFilterID`
-//     reads as "resolve a filter ID" rather than "normalize a generic ID",
-//     making intent explicit.
+//   - Semantic naming at the call site: `resolveFilterID` reads as "resolve a
+//     filter ID" rather than "normalize a generic ID", making intent explicit.
 //   - Future extension point: this is the single place where every
-//     filter.*ID branch can gain shared behavior — trimming, case folding, an
-//     input-length cap, should any of those ever be wanted — without touching
-//     each branch individually. None is implemented: filter ids are unbounded
-//     in length, and an unresolvable one travels verbatim into
-//     FilterTargetNotFoundError.ID and out through the error message. This is
-//     where a cap would go, though the request body gqlgen reads is unbounded
-//     too, so capping the id alone bounds nothing.
+//     filter.*ID branch can gain a shared id TRANSFORM — trimming, case
+//     folding, an input-length cap, should any of those ever be wanted —
+//     without touching each branch individually. None is implemented: filter
+//     ids are unbounded in length, and an unresolvable one travels verbatim
+//     into FilterTargetNotFoundError.ID and out through the error message.
+//     This is where a cap would go, and it would bound something the request
+//     body does not: a relationship field echoes the refused id once per nib,
+//     so the response grows as N x the id while the body bounds the input at
+//     1x. Measured on the 89-nib sample fixture, a 100 KB id in a nested
+//     children(filter:) returned an 8.9 MB response.
 //
-// Every filter.*ID branch in ApplyFilter pairs this call with an explicit
-// `if !ok { return nil, &FilterTargetNotFoundError{...} }` so an unknown target
-// fails the whole filter chain instead of narrowing it. The pattern is repeated
-// by design rather than folded into a loop: spelled out per branch it stays
-// grep-findable, and each branch names its own schema field in the error.
+// Its sole caller is resolveFilterTarget, which owns the refusal policy layered
+// on top: this function reports whether an id resolves, that one decides what an
+// id that does not resolve — or that is not an id at all — means. A transform
+// added here therefore runs AFTER the emptiness test, so a trim would turn a
+// whitespace-only id into an empty one this layer then hands to NormalizeID; a
+// trim meant to read as "empty" has to go above the test, in resolveFilterTarget.
 func resolveFilterID(reader NibReader, id string) (string, bool) {
 	return reader.NormalizeID(id)
+}
+
+// resolveFilterTarget turns one id-valued filter field into the full id its
+// branch matches on, or reports why the branch cannot run. It is the single
+// place both refusals are decided, and every filter.*ID branch in ApplyFilter
+// goes through it:
+//
+//   - The empty string is *FilterTargetEmptyError — malformed input, not a
+//     question about the store.
+//   - An id no nib answers to is *FilterTargetNotFoundError, so an unknown
+//     target fails the whole filter chain instead of narrowing it.
+//
+// Both decisions live here rather than being spelled out per branch because a
+// per-branch copy of the emptiness test can be half-applied, and a branch that
+// reads an empty id as "unset" skips itself and silently widens the query to
+// the whole store. One copy cannot be half-applied. What stays per branch is the
+// field name and the `if err != nil` return, so each branch still names its own
+// schema field in the error and the refusal stays grep-findable at the call
+// site.
+//
+// The two cases are ordered, and the order is the whitespace policy: emptiness
+// is an EXACT test that runs first, so only "" is malformed input and every
+// other value — including a whitespace-only one — is an id that gets its lookup
+// and is reported as not-found if it misses. Trimming here would contradict the
+// id FilterTargetNotFoundError echoes back, and would make this layer stricter
+// than cmd/list.go's flag checks, which test for "" the same exact way.
+func resolveFilterTarget(reader NibReader, field, id string) (string, error) {
+	if id == "" {
+		return "", &FilterTargetEmptyError{Field: field}
+	}
+	fullID, ok := resolveFilterID(reader, id)
+	if !ok {
+		return "", &FilterTargetNotFoundError{Field: field, ID: id}
+	}
+	return fullID, nil
 }
 
 // ApplyFilter applies NibFilter to a slice of nibs and returns filtered results.
@@ -51,24 +89,29 @@ func resolveFilterID(reader NibReader, id string) (string, bool) {
 // branch runs to completion.
 //
 // Callers threading filter.MentionsID / filter.MentionedByID must let
-// ApplyFilter handle ID resolution via resolveFilterID. Pre-normalizing in
+// ApplyFilter handle ID resolution via resolveFilterTarget. Pre-normalizing in
 // the caller is not required for correctness, but mixing short and full
 // forms across resolvers within the same request will desync the cache
 // keys (keyed on the full normalized ID) and silently degrade memoization.
 //
-// Three outcomes are kept distinct, and the error return exists to separate the
-// first two from the third:
+// Four outcomes are kept distinct, and the error return exists to separate the
+// first three from the fourth:
 //
+//   - A filter field naming a single nib was given the empty string:
+//     *FilterTargetEmptyError, the validation class — malformed input rather
+//     than a question about the store.
 //   - A filter field naming a single nib was given an id no nib answers to:
 //     *FilterTargetNotFoundError, carrying nib.ErrNotFound.
 //   - A target that resolved could not then be fetched:
 //     *FilterTargetUnreadableError, deliberately not a not-found.
 //   - Nothing matched: an empty result and a nil error.
 //
-// Folding the first into the third is what this signature exists to prevent.
-// "What is under nibs-abc1?" answered with an empty list is a factual claim
-// about the store, and a caller that mistyped the id cannot tell it apart from
-// the truth.
+// Folding any of the three refusals into the last is what this signature exists
+// to prevent. "What is under nibs-abc1?" answered with an empty list is a
+// factual claim about the store, and a caller that mistyped the id cannot tell
+// it apart from the truth. An empty id is worse still: read as "unset" it drops
+// its branch outright, so the query widens to every nib in the store and
+// answers a question nobody asked.
 func ApplyFilter(ctx context.Context, nibs []*nib.Nib, filter *model.NibFilter, reader NibReader, blocking BlockingChecker) ([]*nib.Nib, error) {
 	if filter == nil {
 		return nibs, nil
@@ -101,7 +144,7 @@ func ApplyFilter(ctx context.Context, nibs []*nib.Nib, filter *model.NibFilter, 
 	result = filterByPredicate(result, filter.HasParent, func(b *nib.Nib) bool {
 		return resolvedParentID(b, reader) != ""
 	})
-	if filter.ParentID != nil && *filter.ParentID != "" {
+	if filter.ParentID != nil {
 		// Normalize the parent id like every other *ID filter: the loader
 		// canonicalizes stored link ids, so b.Parent is normally a full (prefixed) id and
 		// a short --parent must be resolved first or it silently matches
@@ -117,9 +160,9 @@ func ApplyFilter(ctx context.Context, nibs []*nib.Nib, filter *model.NibFilter, 
 		// twin. There a raw short-form link fails this comparison while
 		// resolvedParentID, and so hasParent:true, still resolves it. A link
 		// naming no nib matches neither, under either reading.
-		fullID, ok := resolveFilterID(reader, *filter.ParentID)
-		if !ok {
-			return nil, &FilterTargetNotFoundError{Field: "parentId", ID: *filter.ParentID}
+		fullID, err := resolveFilterTarget(reader, "parentId", *filter.ParentID)
+		if err != nil {
+			return nil, err
 		}
 		result = filterByField(result, []string{fullID}, func(b *nib.Nib) string { return b.Parent })
 	}
@@ -161,29 +204,27 @@ func ApplyFilter(ctx context.Context, nibs []*nib.Nib, filter *model.NibFilter, 
 	// candidate's walk stop at an ancestor an earlier one already marked,
 	// truncating its chain before the target can be reached or ruled out. Any
 	// memoization must cache the per-id ANSWER, not the visited flag.
-	if filter.AncestorID != nil && *filter.AncestorID != "" {
-		fullID, ok := resolveFilterID(reader, *filter.AncestorID)
-		if !ok {
-			return nil, &FilterTargetNotFoundError{Field: "ancestorId", ID: *filter.AncestorID}
+	if filter.AncestorID != nil {
+		fullID, err := resolveFilterTarget(reader, "ancestorId", *filter.AncestorID)
+		if err != nil {
+			return nil, err
 		}
 		result = filterByAncestorID(result, fullID, reader)
 	}
-	if filter.DescendantID != nil && *filter.DescendantID != "" {
-		fullID, ok := resolveFilterID(reader, *filter.DescendantID)
-		if !ok {
-			return nil, &FilterTargetNotFoundError{Field: "descendantId", ID: *filter.DescendantID}
+	if filter.DescendantID != nil {
+		fullID, err := resolveFilterTarget(reader, "descendantId", *filter.DescendantID)
+		if err != nil {
+			return nil, err
 		}
-		var err error
 		if result, err = filterByDescendantID(result, fullID, reader); err != nil {
 			return nil, err
 		}
 	}
-	if filter.SiblingID != nil && *filter.SiblingID != "" {
-		fullID, ok := resolveFilterID(reader, *filter.SiblingID)
-		if !ok {
-			return nil, &FilterTargetNotFoundError{Field: "siblingId", ID: *filter.SiblingID}
+	if filter.SiblingID != nil {
+		fullID, err := resolveFilterTarget(reader, "siblingId", *filter.SiblingID)
+		if err != nil {
+			return nil, err
 		}
-		var err error
 		if result, err = filterBySiblingID(result, fullID, reader); err != nil {
 			return nil, err
 		}
@@ -195,12 +236,11 @@ func ApplyFilter(ctx context.Context, nibs []*nib.Nib, filter *model.NibFilter, 
 
 	// BlockingID (special: needs reader to look up target nib).
 	// An unknown target fails the filter (shared contract for all *ID filters).
-	if filter.BlockingID != nil && *filter.BlockingID != "" {
-		fullID, ok := resolveFilterID(reader, *filter.BlockingID)
-		if !ok {
-			return nil, &FilterTargetNotFoundError{Field: "blockingId", ID: *filter.BlockingID}
+	if filter.BlockingID != nil {
+		fullID, err := resolveFilterTarget(reader, "blockingId", *filter.BlockingID)
+		if err != nil {
+			return nil, err
 		}
-		var err error
 		if result, err = filterByBlockingID(result, fullID, reader); err != nil {
 			return nil, err
 		}
@@ -208,10 +248,10 @@ func ApplyFilter(ctx context.Context, nibs []*nib.Nib, filter *model.NibFilter, 
 
 	// Blocked-by filters (from direct blocked_by field)
 	result = filterByPredicate(result, filter.HasBlockedBy, func(b *nib.Nib) bool { return len(b.BlockedBy) > 0 })
-	if filter.BlockedByID != nil && *filter.BlockedByID != "" {
-		fullID, ok := resolveFilterID(reader, *filter.BlockedByID)
-		if !ok {
-			return nil, &FilterTargetNotFoundError{Field: "blockedById", ID: *filter.BlockedByID}
+	if filter.BlockedByID != nil {
+		fullID, err := resolveFilterTarget(reader, "blockedById", *filter.BlockedByID)
+		if err != nil {
+			return nil, err
 		}
 		result = filterBySliceField(result, []string{fullID}, func(b *nib.Nib) []string { return b.BlockedBy })
 	}
@@ -219,17 +259,17 @@ func ApplyFilter(ctx context.Context, nibs []*nib.Nib, filter *model.NibFilter, 
 	// Mention filters (computed via FindMentions/FindMentionedBy on the reader,
 	// routed through the per-request cache so repeated lookups within one
 	// GraphQL operation don't re-run the reader).
-	if filter.MentionsID != nil && *filter.MentionsID != "" {
-		fullID, ok := resolveFilterID(reader, *filter.MentionsID)
-		if !ok {
-			return nil, &FilterTargetNotFoundError{Field: "mentionsId", ID: *filter.MentionsID}
+	if filter.MentionsID != nil {
+		fullID, err := resolveFilterTarget(reader, "mentionsId", *filter.MentionsID)
+		if err != nil {
+			return nil, err
 		}
 		result = filterByMentionsID(ctx, result, fullID, reader)
 	}
-	if filter.MentionedByID != nil && *filter.MentionedByID != "" {
-		fullID, ok := resolveFilterID(reader, *filter.MentionedByID)
-		if !ok {
-			return nil, &FilterTargetNotFoundError{Field: "mentionedById", ID: *filter.MentionedByID}
+	if filter.MentionedByID != nil {
+		fullID, err := resolveFilterTarget(reader, "mentionedById", *filter.MentionedByID)
+		if err != nil {
+			return nil, err
 		}
 		result = filterByMentionedByID(ctx, result, fullID, reader)
 	}
@@ -239,7 +279,7 @@ func ApplyFilter(ctx context.Context, nibs []*nib.Nib, filter *model.NibFilter, 
 
 // filterByMentionsID keeps nibs that mention the given target in their body.
 // targetID must already be a full (normalized) ID — callers resolve via
-// resolveFilterID before invoking. Routes through the per-request mention
+// resolveFilterTarget before invoking. Routes through the per-request mention
 // cache attached to ctx (if any).
 func filterByMentionsID(ctx context.Context, nibs []*nib.Nib, targetID string, reader NibReader) []*nib.Nib {
 	inbound := cachedMentionedBy(ctx, reader, targetID)
@@ -258,7 +298,7 @@ func filterByMentionsID(ctx context.Context, nibs []*nib.Nib, targetID string, r
 
 // filterByMentionedByID keeps nibs that are mentioned in the given source's body.
 // sourceID must already be a full (normalized) ID — callers resolve via
-// resolveFilterID before invoking. Routes through the per-request mention
+// resolveFilterTarget before invoking. Routes through the per-request mention
 // cache attached to ctx (if any).
 func filterByMentionedByID(ctx context.Context, nibs []*nib.Nib, sourceID string, reader NibReader) []*nib.Nib {
 	outbound := cachedMentions(ctx, reader, sourceID)
@@ -371,7 +411,7 @@ func resolvedParentID(b *nib.Nib, reader NibReader) string {
 // filterByAncestorID keeps nibs with targetID somewhere in their parent chain —
 // the target's descendants at any depth, the target itself excluded.
 // targetID must already be a full (normalized) ID — callers resolve via
-// resolveFilterID before invoking.
+// resolveFilterTarget before invoking.
 //
 // Unlike its two siblings this never fetches the target, so it has no
 // defensive nil return for a concurrent delete: matching is decided entirely
@@ -393,7 +433,7 @@ func filterByAncestorID(nibs []*nib.Nib, targetID string, reader NibReader) []*n
 // subtree — exactly the target's ancestor chain, the target itself excluded.
 // The chain is walked once up front rather than per candidate.
 // targetID must already be a full (normalized) ID — callers resolve via
-// resolveFilterID before invoking. Reports *FilterTargetUnreadableError if the
+// resolveFilterTarget before invoking. Reports *FilterTargetUnreadableError if the
 // target nib cannot be fetched (defensive: the caller already proved the ID
 // resolves, but Get may still fail on a concurrent delete — which is why that
 // is its own class and not a not-found).
@@ -425,7 +465,7 @@ func filterByDescendantID(nibs []*nib.Nib, targetID string, reader NibReader) ([
 // here as it does to nibResolver.Parent and fetchSiblings; see that helper for
 // the rule and why it has a single home.
 // targetID must already be a full (normalized) ID — callers resolve via
-// resolveFilterID before invoking. Reports *FilterTargetUnreadableError if the
+// resolveFilterTarget before invoking. Reports *FilterTargetUnreadableError if the
 // target nib cannot be fetched (defensive: see filterByBlockingID).
 func filterBySiblingID(nibs []*nib.Nib, targetID string, reader NibReader) ([]*nib.Nib, error) {
 	target, err := reader.Get(targetID)
@@ -587,7 +627,7 @@ func includeAncestors(nibs []*nib.Nib, reader NibReader) []*nib.Nib {
 // filterByBlockingID filters nibs that are blocking a specific nib ID.
 // Computed: checks if targetID has this nib in its blockedBy.
 // targetID must already be a full (normalized) ID — callers resolve via
-// resolveFilterID before invoking. Reports *FilterTargetUnreadableError if the
+// resolveFilterTarget before invoking. Reports *FilterTargetUnreadableError if the
 // target nib cannot be fetched (defensive: the caller already proved the ID
 // resolves, but Get may still fail on a concurrent delete — which is why that
 // is its own class and not a not-found).

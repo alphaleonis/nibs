@@ -40,6 +40,60 @@ func (e *FilterTargetNotFoundError) Error() string {
 // the class is decided by NormalizeID missing, not by a failed fetch.
 func (e *FilterTargetNotFoundError) Unwrap() error { return nib.ErrNotFound }
 
+// FilterTargetEmptyError reports that a filter field naming a single nib was
+// given the empty string — `nibs(filter:{parentId:""})`. It is the caller's
+// input that is malformed, so this is the validation class (exit 2), not a
+// not-found.
+//
+// The distinction from FilterTargetNotFoundError is that nothing was mistyped.
+// An unknown id is a plausible id that happens to name no nib, and the repair is
+// to correct it; the empty string names no nib and never could, so no store
+// state would make the same query succeed. The way it arrives says the same
+// thing: an empty id is what a client sends when a variable did not interpolate
+// (`--parent "$ID"` with ID unset), which is a bug in the caller rather than a
+// question about the store.
+//
+// Refusing it at all is the point. Nothing else in a *ID branch rejects an empty
+// id — read as "unset" it would drop the branch and widen the query to the WHOLE
+// STORE, a confident factual answer to a question that was never asked.
+// cmd/list.go already refuses the same input on the flag surface (`--parent ""`),
+// and the two surfaces must not disagree about one user error.
+//
+// Only the EXACT empty string is this class. A whitespace-only value is an id
+// like any other: it travels into NormalizeID, resolves to nothing, and is
+// reported as FilterTargetNotFoundError. That keeps resolveFilterID free of a
+// trimming policy the not-found error's echoed id would otherwise contradict,
+// and matches cmd/list.go's own exact `== ""` tests.
+//
+// Like FilterTargetUnreadableError it implements NO Unwrap, and for the same
+// reason: unwrapping to nib.ErrNotFound would make errors.Is(err,
+// nib.ErrNotFound) true and collapse this back into the not-found class at every
+// classifier keyed on that channel — reporting exit 3 ("that id names no nib")
+// for input that names nothing at all. cmd/errors.go's filterTargetErrCode
+// recognizes the concrete type instead and maps it to VALIDATION_ERROR.
+type FilterTargetEmptyError struct {
+	// Field is the GraphQL filter field that was given the empty value, e.g.
+	// "parentId" — the same spelling in the schema. There is no ID field: the
+	// value is empty by definition of the type.
+	Field string
+}
+
+func (e *FilterTargetEmptyError) Error() string {
+	if e.Field == "parentId" {
+		// Named here because cmd/list.go gives --parent "" the very same
+		// redirection, so the flag surface and the graph surface answer one
+		// user error with one hint. parentId is not the only field with a
+		// presence-filter twin, and it is not even the closest one: hasBlockedBy
+		// and blockedById read the same raw blocked_by field, which hasParent
+		// and parentId do not (hasParent asks whether the link RESOLVES — see
+		// the parentId branch in filters.go for that divergence and why it is
+		// deliberate). blockedById has no flag to agree with, though, so a hint
+		// there would exist on one surface only.
+		return "parentId filter: empty id; it takes a nib id — use hasParent: false to select nibs that have no parent"
+	}
+	return fmt.Sprintf("%s filter: empty id; it takes a nib id", e.Field)
+}
+
 // FilterTargetUnreadableError reports that a filter target resolved and then
 // could not be fetched — the reader answered NormalizeID for the id and refused
 // Get for it moments later. The concurrent-delete window between the two is how

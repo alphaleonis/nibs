@@ -392,20 +392,30 @@ func newGraphQLHandler(app *App) http.Handler {
 //     (graph.FilterTargetNotFoundError), and the web filter box sends
 //     user-typed — so routinely half-typed — ids. The list keys on the code to
 //     explain that inline instead of rendering it as a failure.
-//     A filter refusal is the ONLY read-path source of this code, and
-//     web/src/lib/components/TreeTable.svelte routes ANY read-path NOT_FOUND to
-//     that calm inline empty state on the strength of it. What holds the
-//     invariant up is that every read resolver returns (nil, nil) on a miss
-//     (queryResolver.Nib, nibResolver.Parent) and only mutations wrap
-//     nib.ErrNotFound (snapshotResult). A new read resolver that carried it —
-//     nib(id:) erroring instead of resolving to null, say — would be presented
-//     as an empty result rather than as the failure it is.
+//     An UNRESOLVABLE-ID filter refusal is the ONLY read-path source of this
+//     code, and web/src/lib/components/TreeTable.svelte routes ANY read-path
+//     NOT_FOUND to that calm inline empty state on the strength of it. Not every
+//     filter refusal qualifies: an id-valued field given the EMPTY STRING is
+//     refused too (graph.FilterTargetEmptyError) and deliberately carries no
+//     code, below. What holds the invariant up is that every read resolver
+//     returns (nil, nil) on a miss (queryResolver.Nib, nibResolver.Parent) and
+//     only mutations wrap nib.ErrNotFound (snapshotResult). A new read resolver
+//     that carried it — nib(id:) erroring instead of resolving to null, say —
+//     would be presented as an empty result rather than as the failure it is.
 //
 // Every other error (the enum-validation errors, ETagRequiredError,
-// OnDiskUnparseableError, a filter target that vanished mid-query, generic
-// failures) is left EXACTLY as the default presenter formats it: no code is
-// added, so callers can't mistake a non-reconcilable failure for a retryable
-// conflict or a real deletion.
+// OnDiskUnparseableError, a filter target that vanished mid-query, a filter
+// field given an empty id, generic failures) is left EXACTLY as the default
+// presenter formats it: no code is added, so callers can't mistake a
+// non-reconcilable failure for a retryable conflict or a real deletion.
+//
+// The empty-id refusal is the case where that default is a decision rather than
+// an omission. It is a malformed query — an empty id is what a client sends when
+// a variable did not interpolate — so it must surface as a failure. Tagging it
+// NOT_FOUND would route it to the inline "nothing matched" state and hide a
+// client bug behind exactly the confident empty answer the refusal exists to
+// replace; the CLI keys on the Go error chain instead and gives it exit 2 (see
+// filterTargetErrCode).
 //
 // The web classifiers key on these codes first; the "etag mismatch" substring
 // match is kept only as a fallback (see web/src/lib/nibForm.svelte.ts,
