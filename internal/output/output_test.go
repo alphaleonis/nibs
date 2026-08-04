@@ -140,6 +140,7 @@ func TestExitCode(t *testing.T) {
 		{ErrConflict, ExitConflict},        // 4
 		{ErrFileError, ExitIO},             // 5
 		{ErrNoNibsDir, ExitIO},             // 5
+		{ErrUncategorized, ExitError},      // 1
 		{"SOMETHING_ELSE", ExitError},      // 1
 		{"", ExitError},                    // 1
 	}

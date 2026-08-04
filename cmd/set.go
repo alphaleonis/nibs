@@ -9,6 +9,7 @@ import (
 	"github.com/99designs/gqlgen/graphql"
 	"github.com/alphaleonis/nibs/internal/config"
 	"github.com/alphaleonis/nibs/internal/graph/model"
+	"github.com/alphaleonis/nibs/internal/nib"
 	"github.com/alphaleonis/nibs/internal/nibcore"
 	"github.com/alphaleonis/nibs/internal/output"
 	"github.com/alphaleonis/nibs/internal/projection"
@@ -322,36 +323,105 @@ func isConflictError(err error) bool {
 	return errors.As(err, &mismatchErr) || errors.As(err, &requiredErr)
 }
 
+// etagConflictError reports a reconcilable ETag mismatch as CONFLICT enriched
+// with the server's current etag, so an agent can retry with it: in --json the
+// envelope carries currentEtag (the "409 → retry with the server etag"
+// reconcile). It reports ok=false for every other error, leaving the caller's own
+// classification in charge — notably an ETagRequiredError, which has no
+// comparison etag and so belongs on the generic CONFLICT path.
+//
+// It is split out from setMutationError for the same reason mutationErrCode is:
+// so the direct commands and `nibs query` enrich one conflict identically rather
+// than each growing its own version. err is rendered as-is, so the caller's
+// message text (a transport prefix, say) survives.
+//
+// PRECONDITION: err must represent exactly ONE mismatch — the caller owns
+// establishing that. errors.As stops at the first *ETagMismatchError it reaches,
+// so handing it a failure covering several writes would emit one token as though
+// it reconciled all of them. The direct commands satisfy this trivially (one
+// mutation, one error); `nibs query` establishes it through formatGraphQLErrors,
+// which sets Err only for a response with a single classified failure of the
+// response's own class.
+func etagConflictError(jsonOutput bool, err error) (error, bool) {
+	var mismatch *nibcore.ETagMismatchError
+	if !errors.As(err, &mismatch) {
+		return nil, false
+	}
+	if jsonOutput {
+		return output.ErrorConflict(err.Error(), mismatch.Current), true
+	}
+	return &output.CodedError{Code: output.ErrConflict, Msg: err.Error()}, true
+}
+
 // setMutationError maps a mutation error to a CLI error. It mirrors
 // mutationError but enriches a reconcilable ETag mismatch with the server's
-// current etag so an agent can retry with it: in --json the envelope carries
-// currentEtag (the "409 → retry with the server etag" reconcile). An
-// ETagRequiredError has no comparison etag, so it falls through to the generic
-// CONFLICT (no currentEtag).
+// current etag.
 func setMutationError(jsonOutput bool, err error) error {
-	var mismatch *nibcore.ETagMismatchError
-	if errors.As(err, &mismatch) {
-		if jsonOutput {
-			return output.ErrorConflict(err.Error(), mismatch.Current)
-		}
-		return &output.CodedError{Code: output.ErrConflict, Msg: err.Error()}
+	if conflict, ok := etagConflictError(jsonOutput, err); ok {
+		return conflict
 	}
 	return mutationError(jsonOutput, err)
 }
 
-// mutationError returns a cmdError with the appropriate error code based on the error type.
-func mutationError(jsonOutput bool, err error) error {
+// mutationErrCode maps a mutation failure onto the CLI's structured error codes,
+// reporting ok=false for the failures that carry no class of their own (the
+// caller supplies the VALIDATION_ERROR fallback). It is split out from
+// mutationError so the direct commands and `nibs query` classify one mutation
+// failure identically — the query path reaches it through graphQLErrCode.
+//
+//   - An on-disk file that cannot be certified (corrupt/unreadable) is a
+//     FILE_ERROR, not a retryable CONFLICT: the file must be repaired by hand —
+//     retrying cannot resolve it. The error message already spells this out;
+//     stopping (non-zero exit) is the correct behavior per the AI-agent
+//     "stop on error" contract.
+//   - A reconcilable ETag conflict is CONFLICT, the "409 → re-read and retry"
+//     class.
+//   - A mutation whose SUBJECT id no nib answers to is NOT_FOUND (exit 3), the
+//     class every id-resolving command already reports. `nibs set`, `close` and
+//     `body` resolve the id up front and reach here with it only in the delete
+//     race between that check and their write; `nibs mv` has no such pre-check,
+//     so GetForUpdate's bare nib.ErrNotFound arrives here on any unknown id and
+//     would otherwise ride the caller's VALIDATION_ERROR fallback — exit 2, a
+//     claim that the caller's INPUT was malformed rather than that the id does
+//     not exist. Recognized through the sentinel rather than a concrete type,
+//     which is the same channel cmd/serve.go's presenter keys on, so the CLI and
+//     the HTTP server classify one missing nib the same way.
+//
+// A SECONDARY id — a parent, a blocking or blocked-by target, a bulk-reorder
+// member or anchor — does NOT normally arrive as a sentinel: the graph layer
+// refuses an unknown one with a non-wrapping fmt.Errorf formatting the id as %s
+// (internal/graph/resolver.go, schema.resolvers.go, bulkreorder.go), so nothing
+// errors.Is can see survives and it stays validation-class. The exception is the
+// same delete race as above — updateTargetClone re-fetches a blocking target
+// after its existence check and wraps that miss with %w — which is exactly the
+// case worth calling NOT_FOUND. So "unknown id" splits across two exit statuses
+// on that line, and it splits the SAME way for `nibs query` and for the direct
+// commands, which is what parity requires.
+//
+// The sentinel test runs LAST so a concrete-typed failure that also carries a
+// not-found cause keeps its own class. That ordering is load-bearing for
+// OnDiskUnparseableError, the one classified type here with an Unwrap; it is
+// inert today because both of its construction sites carry an OS read error or a
+// YAML parse error. ETagMismatchError and ETagRequiredError implement no Unwrap
+// at all, so the conflict branch cannot be claimed by the sentinel either way.
+func mutationErrCode(err error) (string, bool) {
 	var unparseableErr *nibcore.OnDiskUnparseableError
 	if errors.As(err, &unparseableErr) {
-		// The current on-disk file cannot be certified (corrupt/unreadable). This
-		// is a FILE_ERROR, not a retryable CONFLICT: the file must be repaired by
-		// hand — retrying cannot resolve it. The error message already spells this
-		// out; stopping (non-zero exit) is the correct behavior per the AI-agent
-		// "stop on error" contract.
-		return cmdError(jsonOutput, output.ErrFileError, "%s", err)
+		return output.ErrFileError, true
 	}
 	if isConflictError(err) {
-		return cmdError(jsonOutput, output.ErrConflict, "%s", err)
+		return output.ErrConflict, true
+	}
+	if errors.Is(err, nib.ErrNotFound) {
+		return output.ErrNotFound, true
+	}
+	return "", false
+}
+
+// mutationError returns a cmdError with the appropriate error code based on the error type.
+func mutationError(jsonOutput bool, err error) error {
+	if code, ok := mutationErrCode(err); ok {
+		return cmdError(jsonOutput, code, "%s", err)
 	}
 	return cmdError(jsonOutput, output.ErrValidation, "%s", err)
 }

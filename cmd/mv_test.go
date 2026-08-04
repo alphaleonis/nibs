@@ -3,6 +3,7 @@ package cmd
 import (
 	"encoding/json"
 	"errors"
+	"io"
 	"os"
 	"path/filepath"
 	"strings"
@@ -709,6 +710,84 @@ func TestMvIfMatchConflict(t *testing.T) {
 	}
 	if env.Error.CurrentEtag == "" {
 		t.Errorf("conflict envelope missing currentEtag: %s", out)
+	}
+}
+
+// TestMvUnknownIdIsNotFound pins `nibs mv` on the same class every other direct
+// command reports for an id no nib answers to: NOT_FOUND, exit 3.
+//
+// Of the four commands that route a mutation failure through mutationErrCode,
+// mv is the only one with no id pre-check — set, close and body resolve the id
+// themselves and emit NOT_FOUND before any mutation, while mv hands the id
+// straight to updateNib/reorderNib. What reaches the classifier is
+// therefore GetForUpdate's bare nib.ErrNotFound, and without a branch that
+// recognizes the sentinel it falls to the VALIDATION_ERROR default. Exit 2
+// claims the CALLER'S INPUT was at fault, so an agent that mistypes an id here
+// does not take the id-correction path it takes for every other command.
+//
+// Both single-nib routes are covered because they fail through different
+// resolvers: --first reaches reorderNib, --parent reaches updateNib.
+//
+// The assertion is on the exit status through the real boundary
+// (reportExitError), not merely on err != nil: what a caller branches on is $?.
+func TestMvUnknownIdIsNotFound(t *testing.T) {
+	tests := []struct {
+		name string
+		args []string
+	}{
+		{"reposition", []string{"mv", "nosuch", "--first"}},
+		{"reparent", []string{"mv", "nosuch", "--parent", "alsonosuch"}},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name+" --json", func(t *testing.T) {
+			nibsDir := setupMvCobraTest(t, reorderFixture())
+			args := []string{"--nibs-path", nibsDir}
+			args = append(args, tt.args...)
+			rootCmd.SetArgs(append(args, "--json"))
+			var execErr error
+			out := captureStdout(t, func() { execErr = rootCmd.Execute() })
+			if execErr == nil {
+				t.Fatalf("mv %v --json returned no error; out: %q", tt.args, out)
+			}
+			if code := reportExitError(io.Discard, execErr); code != output.ExitNotFound {
+				t.Errorf("exit code = %d, want %d (NOT_FOUND)", code, output.ExitNotFound)
+			}
+			var env struct {
+				Error struct {
+					Code    string `json:"code"`
+					Message string `json:"message"`
+				} `json:"error"`
+			}
+			if err := json.Unmarshal([]byte(out), &env); err != nil {
+				t.Fatalf("stdout is not a JSON error envelope: %v\nraw: %s", err, out)
+			}
+			if env.Error.Code != output.ErrNotFound {
+				t.Errorf("envelope error.code = %q, want %q", env.Error.Code, output.ErrNotFound)
+			}
+		})
+
+		t.Run(tt.name+" text", func(t *testing.T) {
+			nibsDir := setupMvCobraTest(t, reorderFixture())
+			args := []string{"--nibs-path", nibsDir}
+			args = append(args, tt.args...)
+			rootCmd.SetArgs(args)
+			var execErr error
+			out := captureStdout(t, func() { execErr = rootCmd.Execute() })
+			if execErr == nil {
+				t.Fatalf("mv %v returned no error; out: %q", tt.args, out)
+			}
+			if code := reportExitError(io.Discard, execErr); code != output.ExitNotFound {
+				t.Errorf("exit code = %d, want %d (NOT_FOUND)", code, output.ExitNotFound)
+			}
+			var ce *output.CodedError
+			if !errors.As(execErr, &ce) {
+				t.Fatalf("expected *output.CodedError, got %T: %v", execErr, execErr)
+			}
+			if ce.Code != output.ErrNotFound {
+				t.Errorf("code = %q, want %q", ce.Code, output.ErrNotFound)
+			}
+		})
 	}
 }
 

@@ -21,5 +21,5 @@ Do not guess syntax — read the grammar first.
 
 ## Errors
 
-Every command uses stable exit codes (0 ok / 2 validation / 3 not-found / 4 conflict / 5 io); with `--json`, errors come back as `{"error":{"code","message"}}`. If a `nibs` command errors, STOP. Find the root cause and suggest a mitigation (code fix, follow-up nib, workaround). Never silently retry.
+Every command uses stable exit codes (0 ok / 1 uncategorized / 2 validation / 3 not-found / 4 conflict / 5 io); with `--json`, errors come back as `{"error":{"code","message"}}`. If a `nibs` command errors, STOP. Find the root cause and suggest a mitigation (code fix, follow-up nib, workaround). Never silently retry.
 </EXTREMELY_IMPORTANT>
