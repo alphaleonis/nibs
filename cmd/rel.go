@@ -91,6 +91,28 @@ var (
 	errRelCycle              = errors.New("dependency cycle")
 )
 
+// relFetchErrCode maps a traversal failure onto the CLI's structured error
+// code. A refused id-valued filter keeps the class ApplyFilter assigned it (see
+// filterTargetErrCode), a dependency cycle is a validation failure, and
+// everything else falls back to the io/internal class.
+//
+// The filter classes are not reachable from `nibs rel` as it stands:
+// relFilterFlags.buildNibFilter populates only status/type/priority/tags/
+// estimate, and none of those name a single nib. They are classified here
+// because the traversal routes every graph.ApplyFilter call site through this
+// function — bfsTraverse's included — so a rel flag that later carries an id
+// reports a mistyped id as not-found (exit 3) rather than as a file error,
+// matching what `nibs list --parent` already does.
+func relFetchErrCode(err error) string {
+	if code, ok := filterTargetErrCode(err); ok {
+		return code
+	}
+	if errors.Is(err, errRelCycle) {
+		return output.ErrValidation
+	}
+	return output.ErrFileError
+}
+
 // relSpec describes per-rel capabilities used for flag validation and
 // expansion. Meta rels have non-nil ExpandsTo and delegate to their
 // atomic constituents.
@@ -516,7 +538,7 @@ func bfsTraverse(ctx context.Context, resolver *graph.Resolver, start *nib.Nib, 
 		frontier = next
 		level++
 	}
-	return graph.ApplyFilter(ctx, reached, filter, resolver.Reader, resolver.Blocking), nil
+	return graph.ApplyFilter(ctx, reached, filter, resolver.Reader, resolver.Blocking)
 }
 
 // topoSortNibs reorders `candidates` using `blocked_by` edges among the set.
@@ -809,21 +831,13 @@ filter-on-singular validation error does not fire here.`,
 
 			got, ferr := fetchRel(ctx, resolver, b, fetchKind, perRelFilter, depthVal)
 			if ferr != nil {
-				code := output.ErrFileError
-				if errors.Is(ferr, errRelCycle) {
-					code = output.ErrValidation
-				}
-				return reportErr(relJSON, code,
+				return reportErr(relJSON, relFetchErrCode(ferr),
 					fmt.Errorf("fetching %s: %w", fetchKind, ferr))
 			}
 			if relOrder == "topo" && relTable[fetchKind].AllowsOrder {
 				ordered, oerr := topoSortNibs(got)
 				if oerr != nil {
-					code := output.ErrFileError
-					if errors.Is(oerr, errRelCycle) {
-						code = output.ErrValidation
-					}
-					return reportErr(relJSON, code, oerr)
+					return reportErr(relJSON, relFetchErrCode(oerr), oerr)
 				}
 				got = ordered
 			}
@@ -846,11 +860,7 @@ filter-on-singular validation error does not fire here.`,
 		if openDefaultApplied {
 			hiddenClosed, err = relCountHiddenClosed(ctx, resolver, b, fetched, filterFlags, app.Config(), depthVal, len(results))
 			if err != nil {
-				code := output.ErrFileError
-				if errors.Is(err, errRelCycle) {
-					code = output.ErrValidation
-				}
-				return reportErr(relJSON, code, err)
+				return reportErr(relJSON, relFetchErrCode(err), err)
 			}
 		}
 

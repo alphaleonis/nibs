@@ -2,8 +2,10 @@ package cmd
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -12,6 +14,9 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/alphaleonis/nibs/internal/graph"
+	"github.com/alphaleonis/nibs/internal/graph/model"
+	"github.com/alphaleonis/nibs/internal/nib"
 	"github.com/alphaleonis/nibs/internal/output"
 	"github.com/spf13/cobra"
 	"github.com/spf13/pflag"
@@ -1152,6 +1157,69 @@ func TestRelCommand_TextMode_FailingCommand_NoUsageNoAutoError(t *testing.T) {
 	}
 	if got := cobraStderr.String(); strings.Contains(got, "Usage:") || strings.Contains(got, "Error:") {
 		t.Errorf("rootCmd OutOrStderr contains Usage:/Error: in text mode; got:\n%s", got)
+	}
+}
+
+// TestBfsTraverseReportsRefusedFilter pins the eighth ApplyFilter call site —
+// the one inside the rel traversal — against swallowing a refused filter.
+//
+// No rel flag populates an id-valued filter field today (buildNibFilter fills
+// only the metadata facets), so this is not reachable from the command line and
+// is exercised directly. That is the reason to write it rather than to skip it:
+// the day a rel flag gains one, a swallow here would hand back a plausible
+// subtree listing for a target that does not exist, and nothing else in the
+// suite would notice.
+func TestBfsTraverseReportsRefusedFilter(t *testing.T) {
+	resolver, core := setupParentLinkTest(t, map[string]string{
+		"nibs-par": "",
+		"nibs-chi": "parent: nibs-par\n",
+	})
+
+	parent := mustGet(t, core, "nibs-par")
+	unknown := "nonexistent"
+	got, err := bfsDescendants(context.Background(), resolver,
+		parent, &model.NibFilter{ParentID: &unknown}, -1)
+	if err == nil {
+		t.Fatalf("returned %d nibs and no error; the traversal swallowed the refusal", len(got))
+	}
+	if !errors.Is(err, nib.ErrNotFound) {
+		t.Errorf("error does not carry nib.ErrNotFound: %v", err)
+	}
+}
+
+// TestRelFetchErrCodeClassifiesFilterRefusals pins the exit code the traversal's
+// error sites give a refused filter. bfsTraverse propagating the refusal (above)
+// is only half of it: RunE sees an opaque error, and the code it picks is what
+// an agent branching on $? reads as "no such nib" (3) versus "the tracker broke"
+// (5). Reporting a mistyped id as a file error is the miscategorization the
+// error classes exist to remove, so the fallback must be consulted last.
+//
+// The rows are wrapped exactly as the call sites wrap them, because a classifier
+// that only worked on the bare error would pass an unwrapped table and still
+// misclassify everything RunE actually hands it.
+func TestRelFetchErrCodeClassifiesFilterRefusals(t *testing.T) {
+	notFound := &graph.FilterTargetNotFoundError{Field: "parentId", ID: "nonexistent"}
+	unreadable := &graph.FilterTargetUnreadableError{Field: "siblingId", ID: "nibs-a", ReaderErr: nib.ErrNotFound}
+
+	tests := []struct {
+		name string
+		err  error
+		want string
+	}{
+		{"unknown filter target", notFound, output.ErrNotFound},
+		{"unknown filter target, wrapped by the fetch site", fmt.Errorf("fetching descendants: %w", notFound), output.ErrNotFound},
+		{"target that vanished mid-filter", unreadable, output.ErrFileError},
+		{"target that vanished mid-filter, wrapped", fmt.Errorf("fetching siblings: %w", unreadable), output.ErrFileError},
+		{"dependency cycle", fmt.Errorf("%w detected: a, b", errRelCycle), output.ErrValidation},
+		{"anything else", errors.New("reading nibs directory"), output.ErrFileError},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := relFetchErrCode(tt.err); got != tt.want {
+				t.Errorf("relFetchErrCode(%v) = %q, want %q", tt.err, got, tt.want)
+			}
+		})
 	}
 }
 

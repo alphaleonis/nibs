@@ -819,6 +819,33 @@ func TestQueryCommandMissingFileIsFileError(t *testing.T) {
 
 // TestQueryCommandGraphqlErrorIsCoded verifies a GraphQL validation failure
 // routes through the coded boundary with a validation exit (2).
+// TestExecuteQueryNestedFilterRefusalIsReportedOnce pins that one mistake
+// produces one sentence.
+//
+// A nested resolver runs ApplyFilter per matched parent and each call raises its
+// own error, so a single bad id in children(filter:) yields one error per nib the
+// outer query matched — the whole store when the outer query is unfiltered. The
+// copies are byte-identical and all of them land in one --json error.message, in
+// front of an agent whose context is the scarce resource. The count of nibs is
+// what varies here, so the assertion is on the count of occurrences, not on the
+// text.
+func TestExecuteQueryNestedFilterRefusalIsReportedOnce(t *testing.T) {
+	app := setupQueryTestApp(t)
+	for _, id := range []string{"dup-1", "dup-2", "dup-3", "dup-4"} {
+		createQueryTestNib(t, app.Core, id, "Nib "+id, "todo")
+	}
+
+	_, err := executeQuery(app, `{ nibs { id children(filter: {parentId: "zz"}) { id } } }`, nil, "")
+	if err != nil {
+		msg := err.Error()
+		if got := strings.Count(msg, `no nib with id "zz"`); got != 1 {
+			t.Errorf("the refusal is reported %d times, want 1:\n%s", got, msg)
+		}
+		return
+	}
+	t.Fatal("a nested filter naming no nib returned no error")
+}
+
 func TestQueryCommandGraphqlErrorIsCoded(t *testing.T) {
 	t.Cleanup(resetQueryFlags)
 	resetQueryFlags()

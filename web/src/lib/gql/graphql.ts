@@ -58,13 +58,41 @@ export type CreateNibInput = {
 
 /** Filter options for querying nibs */
 export type NibFilter = {
-  /** Include only nibs with this specific nib ID somewhere in their parent chain (that nib's descendants at any depth). This filter excludes the nib itself, but combining it with search adds it back, because search completes the tree with every match's ancestors */
+  /**
+   * Include only nibs with this specific nib ID somewhere in their parent chain
+   * (that nib's descendants at any depth). This filter excludes the nib itself,
+   * but combining it with search adds it back, because search completes the tree
+   * with every match's ancestors.
+   *
+   * An id naming no nib is refused with a NOT_FOUND error rather than matching
+   * nothing, so a mistyped or stale id stays distinguishable from a genuine empty
+   * result.
+   */
   ancestorId?: string | null | undefined;
-  /** Include only nibs blocked by this specific nib ID (via blocked_by field) */
+  /**
+   * Include only nibs blocked by this specific nib ID (via blocked_by field).
+   *
+   * An id naming no nib is refused with a NOT_FOUND error rather than matching
+   * nothing, so a mistyped or stale id stays distinguishable from a genuine empty
+   * result.
+   */
   blockedById?: string | null | undefined;
-  /** Include only nibs that are blocking this specific nib ID */
+  /**
+   * Include only nibs that are blocking this specific nib ID.
+   *
+   * An id naming no nib is refused with a NOT_FOUND error rather than matching
+   * nothing, so a mistyped or stale id stays distinguishable from a genuine empty
+   * result.
+   */
   blockingId?: string | null | undefined;
-  /** Include only nibs with this specific nib ID somewhere in their descendant subtree (that nib's ancestor chain, itself excluded) */
+  /**
+   * Include only nibs with this specific nib ID somewhere in their descendant
+   * subtree (that nib's ancestor chain, itself excluded).
+   *
+   * An id naming no nib is refused with a NOT_FOUND error rather than matching
+   * nothing, so a mistyped or stale id stays distinguishable from a genuine empty
+   * result.
+   */
   descendantId?: string | null | undefined;
   /** Include only nibs with these estimates (OR logic) */
   estimate?: Array<string> | null | undefined;
@@ -86,11 +114,29 @@ export type NibFilter = {
   hasParent?: boolean | null | undefined;
   /** Tri-state: true keeps nibs blocked by others (via incoming blocking links or blocked_by field), false keeps exactly the unblocked ones, null does not filter */
   isBlocked?: boolean | null | undefined;
-  /** Include only nibs mentioned in the given nib's body */
+  /**
+   * Include only nibs mentioned in the given nib's body.
+   *
+   * An id naming no nib is refused with a NOT_FOUND error rather than matching
+   * nothing, so a mistyped or stale id stays distinguishable from a genuine empty
+   * result.
+   */
   mentionedById?: string | null | undefined;
-  /** Include only nibs that mention this specific nib ID in their body */
+  /**
+   * Include only nibs that mention this specific nib ID in their body.
+   *
+   * An id naming no nib is refused with a NOT_FOUND error rather than matching
+   * nothing, so a mistyped or stale id stays distinguishable from a genuine empty
+   * result.
+   */
   mentionsId?: string | null | undefined;
-  /** Include only nibs with this specific parent ID */
+  /**
+   * Include only nibs with this specific parent ID.
+   *
+   * An id naming no nib is refused with a NOT_FOUND error rather than matching
+   * nothing, so a mistyped or stale id stays distinguishable from a genuine empty
+   * result.
+   */
   parentId?: string | null | undefined;
   /** Include only nibs with these priorities (OR logic) */
   priority?: Array<string> | null | undefined;
@@ -119,7 +165,16 @@ export type NibFilter = {
    * - "5a8k" - also matches nibs whose ID contains "5a8k"
    */
   search?: string | null | undefined;
-  /** Include only nibs sharing this specific nib's parent, or the other root nibs when it has no parent (itself excluded). Combining it with search also brings in the shared parent, because search completes the tree with every match's ancestors */
+  /**
+   * Include only nibs sharing this specific nib's parent, or the other root nibs
+   * when it has no parent (itself excluded). Combining it with search also brings
+   * in the shared parent, because search completes the tree with every match's
+   * ancestors.
+   *
+   * An id naming no nib is refused with a NOT_FOUND error rather than matching
+   * nothing, so a mistyped or stale id stays distinguishable from a genuine empty
+   * result.
+   */
   siblingId?: string | null | undefined;
   /** Include only nibs with these statuses (OR logic) */
   status?: Array<string> | null | undefined;

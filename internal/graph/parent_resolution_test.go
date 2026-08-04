@@ -106,16 +106,16 @@ func TestDanglingParentClassifiedAlikeAcrossSurfaces(t *testing.T) {
 
 	t.Run("hasParent puts it with the parentless", func(t *testing.T) {
 		yes, no := true, false
-		got := ApplyFilter(ctx, all, &model.NibFilter{HasParent: &yes}, core, blocking)
+		got := applyFilterOK(t, ctx, all, &model.NibFilter{HasParent: &yes}, core, blocking)
 		assertNibIDs(t, got, []string{"nibs-chi"})
-		got = ApplyFilter(ctx, all, &model.NibFilter{HasParent: &no}, core, blocking)
+		got = applyFilterOK(t, ctx, all, &model.NibFilter{HasParent: &no}, core, blocking)
 		assertNibIDs(t, got, []string{"nibs-rt1", "nibs-rt2", "nibs-dng", "nibs-par"})
 	})
 
 	t.Run("siblingId puts it in the root sibling set, both directions", func(t *testing.T) {
-		got := ApplyFilter(ctx, all, &model.NibFilter{SiblingID: strPtr("nibs-dng")}, core, blocking)
+		got := applyFilterOK(t, ctx, all, &model.NibFilter{SiblingID: strPtr("nibs-dng")}, core, blocking)
 		assertNibIDs(t, got, []string{"nibs-rt1", "nibs-rt2", "nibs-par"})
-		got = ApplyFilter(ctx, all, &model.NibFilter{SiblingID: strPtr("nibs-rt1")}, core, blocking)
+		got = applyFilterOK(t, ctx, all, &model.NibFilter{SiblingID: strPtr("nibs-rt1")}, core, blocking)
 		assertNibIDs(t, got, []string{"nibs-rt2", "nibs-dng", "nibs-par"})
 	})
 }
@@ -146,7 +146,7 @@ func TestParentIDMatchesShortFormStoredLink(t *testing.T) {
 	all := core.All()
 	for _, arg := range []string{"nibs-par", "par"} {
 		t.Run("parentId="+arg+" finds both spellings", func(t *testing.T) {
-			got := ApplyFilter(ctx, all, &model.NibFilter{ParentID: strPtr(arg)}, core, resolver.Blocking)
+			got := applyFilterOK(t, ctx, all, &model.NibFilter{ParentID: strPtr(arg)}, core, resolver.Blocking)
 			assertNibIDs(t, got, []string{"nibs-sho", "nibs-ful"})
 		})
 	}
@@ -251,7 +251,7 @@ func TestDanglingLinksToTheSameMissingNibAreRootSiblings(t *testing.T) {
 	})
 
 	t.Run("siblingId puts them in the root set together", func(t *testing.T) {
-		got := ApplyFilter(context.Background(), core.All(), &model.NibFilter{SiblingID: strPtr("nibs-dg1")}, core, resolver.Blocking)
+		got := applyFilterOK(t, context.Background(), core.All(), &model.NibFilter{SiblingID: strPtr("nibs-dg1")}, core, resolver.Blocking)
 		assertNibIDs(t, got, []string{"nibs-dg2", "nibs-rt1"})
 	})
 

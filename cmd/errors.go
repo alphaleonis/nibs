@@ -1,6 +1,10 @@
 package cmd
 
 import (
+	"errors"
+
+	"github.com/alphaleonis/nibs/internal/graph"
+	"github.com/alphaleonis/nibs/internal/nib"
 	"github.com/alphaleonis/nibs/internal/output"
 )
 
@@ -25,4 +29,32 @@ func reportErr(jsonMode bool, code string, err error) error {
 	// Wrap the cause (Err) so callers' errors.Is/As chains survive; the
 	// boundary recovers the code via errors.As and prints Msg to stderr.
 	return &output.CodedError{Code: code, Msg: err.Error(), Err: err}
+}
+
+// filterTargetErrCode maps the two filter-target failures graph.ApplyFilter
+// distinguishes onto the CLI's structured error codes, so a query that could
+// not be answered exits differently from one that was answered with nothing.
+// It reports ok=false for every other error, leaving the caller's own fallback
+// in charge.
+//
+//   - An id no nib answers to is NOT_FOUND (exit 3). It is recognized through
+//     nib.ErrNotFound rather than the concrete type, which is the same channel
+//     the GraphQL error presenter keys on (cmd/serve.go), so the CLI and the
+//     HTTP server classify one filter failure the same way.
+//   - A target that resolved and then could not be read is FILE_ERROR (exit 5)
+//     — the io/internal class. Reporting a concurrent delete as a not-found
+//     would tell an agent it typed the wrong id when it did not.
+//
+// The two branches are independent, not ordered: graph.FilterTargetUnreadable
+// Error deliberately does not carry nib.ErrNotFound (see its doc comment), so
+// neither test can claim the other's error.
+func filterTargetErrCode(err error) (string, bool) {
+	var unreadable *graph.FilterTargetUnreadableError
+	if errors.As(err, &unreadable) {
+		return output.ErrFileError, true
+	}
+	if errors.Is(err, nib.ErrNotFound) {
+		return output.ErrNotFound, true
+	}
+	return "", false
 }

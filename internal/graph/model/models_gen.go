@@ -139,27 +139,66 @@ type NibFilter struct {
 	ExcludeTags []string `json:"excludeTags,omitempty"`
 	// Tri-state: true keeps nibs whose parent link resolves to a nib, false keeps exactly the ones with no parent, null does not filter. A nib whose parent link names no nib counts as parentless, matching how the parent field and siblingId treat it — parentId still reports the unresolvable stored id, so a nib selected by hasParent:false may have a non-null parentId
 	HasParent *bool `json:"hasParent,omitempty"`
-	// Include only nibs with this specific parent ID
+	// Include only nibs with this specific parent ID.
+	//
+	// An id naming no nib is refused with a NOT_FOUND error rather than matching
+	// nothing, so a mistyped or stale id stays distinguishable from a genuine empty
+	// result.
 	ParentID *string `json:"parentId,omitempty"`
-	// Include only nibs with this specific nib ID somewhere in their parent chain (that nib's descendants at any depth). This filter excludes the nib itself, but combining it with search adds it back, because search completes the tree with every match's ancestors
+	// Include only nibs with this specific nib ID somewhere in their parent chain
+	// (that nib's descendants at any depth). This filter excludes the nib itself,
+	// but combining it with search adds it back, because search completes the tree
+	// with every match's ancestors.
+	//
+	// An id naming no nib is refused with a NOT_FOUND error rather than matching
+	// nothing, so a mistyped or stale id stays distinguishable from a genuine empty
+	// result.
 	AncestorID *string `json:"ancestorId,omitempty"`
-	// Include only nibs with this specific nib ID somewhere in their descendant subtree (that nib's ancestor chain, itself excluded)
+	// Include only nibs with this specific nib ID somewhere in their descendant
+	// subtree (that nib's ancestor chain, itself excluded).
+	//
+	// An id naming no nib is refused with a NOT_FOUND error rather than matching
+	// nothing, so a mistyped or stale id stays distinguishable from a genuine empty
+	// result.
 	DescendantID *string `json:"descendantId,omitempty"`
-	// Include only nibs sharing this specific nib's parent, or the other root nibs when it has no parent (itself excluded). Combining it with search also brings in the shared parent, because search completes the tree with every match's ancestors
+	// Include only nibs sharing this specific nib's parent, or the other root nibs
+	// when it has no parent (itself excluded). Combining it with search also brings
+	// in the shared parent, because search completes the tree with every match's
+	// ancestors.
+	//
+	// An id naming no nib is refused with a NOT_FOUND error rather than matching
+	// nothing, so a mistyped or stale id stays distinguishable from a genuine empty
+	// result.
 	SiblingID *string `json:"siblingId,omitempty"`
 	// Tri-state: true keeps nibs that are blocking others, false keeps exactly the non-blocking ones, null does not filter
 	HasBlocking *bool `json:"hasBlocking,omitempty"`
-	// Include only nibs that are blocking this specific nib ID
+	// Include only nibs that are blocking this specific nib ID.
+	//
+	// An id naming no nib is refused with a NOT_FOUND error rather than matching
+	// nothing, so a mistyped or stale id stays distinguishable from a genuine empty
+	// result.
 	BlockingID *string `json:"blockingId,omitempty"`
 	// Tri-state: true keeps nibs blocked by others (via incoming blocking links or blocked_by field), false keeps exactly the unblocked ones, null does not filter
 	IsBlocked *bool `json:"isBlocked,omitempty"`
 	// Tri-state: true keeps nibs that have explicit blocked_by entries, false keeps exactly those with none, null does not filter
 	HasBlockedBy *bool `json:"hasBlockedBy,omitempty"`
-	// Include only nibs blocked by this specific nib ID (via blocked_by field)
+	// Include only nibs blocked by this specific nib ID (via blocked_by field).
+	//
+	// An id naming no nib is refused with a NOT_FOUND error rather than matching
+	// nothing, so a mistyped or stale id stays distinguishable from a genuine empty
+	// result.
 	BlockedByID *string `json:"blockedById,omitempty"`
-	// Include only nibs that mention this specific nib ID in their body
+	// Include only nibs that mention this specific nib ID in their body.
+	//
+	// An id naming no nib is refused with a NOT_FOUND error rather than matching
+	// nothing, so a mistyped or stale id stays distinguishable from a genuine empty
+	// result.
 	MentionsID *string `json:"mentionsId,omitempty"`
-	// Include only nibs mentioned in the given nib's body
+	// Include only nibs mentioned in the given nib's body.
+	//
+	// An id naming no nib is refused with a NOT_FOUND error rather than matching
+	// nothing, so a mistyped or stale id stays distinguishable from a genuine empty
+	// result.
 	MentionedByID *string `json:"mentionedById,omitempty"`
 }
 

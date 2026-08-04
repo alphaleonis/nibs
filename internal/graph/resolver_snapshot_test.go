@@ -1057,7 +1057,12 @@ func TestNibsFilterRaceAgainstRemoveLinksTo(t *testing.T) {
 			defer wg.Done()
 			for j := 0; j < 200; j++ {
 				// Reads b.Parent off the live store pointers, off-lock.
-				_ = ApplyFilter(context.Background(), core.All(), filter, resolver.Reader, resolver.Blocking)
+				//
+				// The error return is discarded rather than asserted: the filter
+				// carries no *ID field, so it is structurally nil on every
+				// iteration, and an assertion that cannot fire would only slow
+				// the loop the detector depends on running hot.
+				_, _ = ApplyFilter(context.Background(), core.All(), filter, resolver.Reader, resolver.Blocking)
 			}
 		}()
 	}
