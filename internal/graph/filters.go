@@ -20,14 +20,15 @@ import (
 //   - Future extension point: this is the single place where every
 //     filter.*ID branch can gain a shared id TRANSFORM — trimming, case
 //     folding, an input-length cap, should any of those ever be wanted —
-//     without touching each branch individually. None is implemented: filter
-//     ids are unbounded in length, and an unresolvable one travels verbatim
-//     into FilterTargetNotFoundError.ID and out through the error message.
-//     This is where a cap would go, and it would bound something the request
-//     body does not: a relationship field echoes the refused id once per nib,
-//     so the response grows as N x the id while the body bounds the input at
-//     1x. Measured on the 89-nib sample fixture, a 100 KB id in a nested
-//     children(filter:) returned an 8.9 MB response.
+//     without touching each branch individually. None is implemented: a filter
+//     id is whatever length the caller sends, and an unresolvable one travels
+//     verbatim into FilterTargetNotFoundError.ID. It does not reach the response
+//     in full — that error's Error() caps the echo at maxEchoedIDBytes, and the
+//     echo is where the amplification lives, since a relationship field refuses
+//     once per nib while the request body bounds the input at 1x. See echoID for
+//     the measurement. A cap HERE would be a
+//     different thing from that one: it would change which ids RESOLVE, not
+//     what a refusal prints.
 //
 // Its sole caller is resolveFilterTarget, which owns the refusal policy layered
 // on top: this function reports whether an id resolves, that one decides what an

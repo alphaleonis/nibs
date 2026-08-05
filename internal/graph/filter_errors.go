@@ -2,9 +2,73 @@ package graph
 
 import (
 	"fmt"
+	"strconv"
+	"unicode/utf8"
 
 	"github.com/alphaleonis/nibs/internal/nib"
 )
+
+// maxEchoedIDBytes caps how much of a caller-supplied id a refusal message
+// repeats.
+//
+// 64 bytes is chosen to be far above every id this project mints and far below
+// the sizes that make the echo cost anything. An id is config.Nibs.Prefix plus
+// config.Nibs.IDLength characters, and IDLength defaults to 4 — "nibs-5k9b" is
+// nine bytes — so the cap holds an ordinary id several times over and still
+// leaves room for a long project prefix or for the recognizable head of a
+// mistyped one. What it excludes is the case the cap exists for: a body or a
+// description blob interpolated into an id slot, which is diagnostic in its
+// first line and merely large after that.
+const maxEchoedIDBytes = 64
+
+// echoID renders one caller-supplied id for a refusal message — quoted whole
+// when it fits maxEchoedIDBytes, and an abbreviated form carrying the original
+// length when it does not.
+//
+// The abbreviation is what bounds the response, and it has to be the RENDERING
+// rather than the ID field, because the rendering is what a refusal repeats. A
+// relationship-field filter runs once per parent nib, so a single refused
+// `children(filter:{parentId:...})` mints one error object per nib in the store
+// and each carries its own copy of this message, while their ID fields all share
+// the one string the filter argument parsed to. Measured on the 89-nib sample
+// fixture, a 100 KB id returned an 8.9 MB response. The field itself stays whole
+// so a caller can still correlate the error against the id it sent.
+//
+// The cut is measured in BYTES and taken on a RUNE boundary. Bytes because the
+// response size is a byte count and a cap of N runes would let N four-byte runes
+// reach 4N bytes. On a boundary because splitting a rune renders a character the
+// caller really sent as a bogus \xNN escape, pointing the diagnosis at an
+// encoding fault that does not exist. Backing off at most utf8.UTFMax-1 bytes
+// reaches a rune start for any valid UTF-8; input that is already invalid there
+// exhausts the backoff and gets sliced anyway, which strconv.Quote then escapes
+// like any other invalid byte.
+//
+// Quoting happens HERE rather than at each caller's format verb, so both
+// branches quote alike and the abbreviation marker sits outside the quotes where
+// it cannot be mistaken for id content. Quoting is also why the bound on the
+// MESSAGE is wider than the cap: an unprintable or invalid byte escapes to \xNN,
+// four characters for one byte, so the echoed fragment can reach four times
+// maxEchoedIDBytes.
+//
+// Two oversized ids render alike only if they share both the prefix and the
+// exact length. The ID field carries the exact value for a Go caller holding the
+// error; it is not serialized into a GraphQL response, so a remote caller
+// correlates against the id it sent plus the length this message reports.
+func echoID(id string) string {
+	if len(id) <= maxEchoedIDBytes {
+		return strconv.Quote(id)
+	}
+	// cut indexes the first EXCLUDED byte, so the slice ends on a boundary
+	// exactly when that byte starts a rune.
+	cut := maxEchoedIDBytes
+	for range utf8.UTFMax - 1 {
+		if utf8.RuneStart(id[cut]) {
+			break
+		}
+		cut--
+	}
+	return fmt.Sprintf("%s... (truncated from %d bytes)", strconv.Quote(id[:cut]), len(id))
+}
 
 // FilterTargetNotFoundError reports that a filter field naming a single nib was
 // given an id no nib answers to — `--parent nibs-typo`, `ancestorId: "gone"`.
@@ -27,12 +91,14 @@ type FilterTargetNotFoundError struct {
 	// points at something the caller can look up.
 	Field string
 	// ID is the target exactly as supplied, before normalization: echoing back
-	// what was typed is what makes a typo visible.
+	// what was typed is what makes a typo visible. It is held in full however
+	// long it is — only Error() abbreviates, and only past maxEchoedIDBytes —
+	// so a caller matching it against the id it sent gets the value it sent.
 	ID string
 }
 
 func (e *FilterTargetNotFoundError) Error() string {
-	return fmt.Sprintf("%s filter: no nib with id %q", e.Field, e.ID)
+	return fmt.Sprintf("%s filter: no nib with id %s", e.Field, echoID(e.ID))
 }
 
 // Unwrap reports nib.ErrNotFound so this error travels the project's existing
@@ -122,6 +188,10 @@ type FilterTargetUnreadableError struct {
 	Field string
 	// ID is the normalized (full) target id — unlike the not-found case there
 	// is nothing wrong with the spelling, so the resolved form is the useful one.
+	// It reaches resolveFilterTarget's callers only after NormalizeID answered
+	// for it, so it is a real store id rather than caller text; Error() puts it
+	// through the same maxEchoedIDBytes cap anyway, so the two id-echoing
+	// refusals cannot drift apart on a property either might later need.
 	ID string
 	// ReaderErr is the reader failure, kept for diagnosis only. It is not
 	// exposed via Unwrap; see the type comment for why that must stay true.
@@ -129,5 +199,5 @@ type FilterTargetUnreadableError struct {
 }
 
 func (e *FilterTargetUnreadableError) Error() string {
-	return fmt.Sprintf("%s filter: target %q became unreadable while filtering: %v", e.Field, e.ID, e.ReaderErr)
+	return fmt.Sprintf("%s filter: target %s became unreadable while filtering: %v", e.Field, echoID(e.ID), e.ReaderErr)
 }
