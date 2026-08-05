@@ -6,8 +6,12 @@ on:
   # main that releases it, and release.yml gates on that same run (nibs-9146).
   push:
     branches: [main, develop]
+  # `develop` is here as well because Renovate targets it (see
+  # .github/renovate.json5). Its `renovate/*` branches are not covered by the
+  # push trigger above, so with `main` alone a toolchain pull request would
+  # reach the merge button without CI having run on it once.
   pull_request:
-    branches: [main]
+    branches: [main, develop]
 
 permissions:
   contents: read
