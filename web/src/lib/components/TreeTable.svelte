@@ -9,7 +9,7 @@
   import { applySort, nextTableSort } from "../tableSort";
   import { prepareFilter, isDragAllowed, matchesFilter } from "../filter";
   import { resolveFilter, resolveViewLevel, resolveVisibleColumns, resolveColumnWidths, resolveColumnOrder, resolveTableSort, emitFilter, emitTableSort, emitColumnOrder } from "../resolvePrefs";
-  import { hierarchyTokens, clearHierarchyFilters } from "../query";
+  import { hierarchyTokens, clearHierarchyFilters, contradictionTokens } from "../query";
   import { graphqlErrorCode, graphqlErrorMessage } from "../graphqlError";
   import { Button } from "$lib/components/ui/button/index.js";
   import TreeTableRow from "./TreeTableRow.svelte";
@@ -183,6 +183,25 @@
     dataSource.error && graphqlErrorCode(dataSource.error) === "NOT_FOUND"
       ? graphqlErrorMessage(dataSource.error)
       : ""
+  );
+
+  // An id-valued filter field ANDed with the `no:` token for the same
+  // relationship is a query no store state can answer, and the server refuses it
+  // rather than replying with an empty list. The box offers the two halves as
+  // independent tokens, and "Children of this" on the context menu ANDs a
+  // `parent:` onto whatever is already set — so a user browsing root nibs reaches
+  // the pair without typing it.
+  //
+  // Named from the FILTER rather than from the server's message, because the two
+  // speak different languages: the refusal says `hasParent: false` where the box
+  // says `no:parent`, and the user can only edit what the box spells. When the
+  // filter in hand holds no pair to name — it moved on since the refused query —
+  // this stays empty and the generic error branch shows the server's own sentence
+  // instead of an explanation with nothing in it.
+  let contradictionPairs = $derived(
+    dataSource.error && graphqlErrorCode(dataSource.error) === "FILTER_CONTRADICTION"
+      ? contradictionTokens(resolvedFilter)
+      : []
   );
 
   let allNibs = $derived(dataSource.allNibs);
@@ -620,6 +639,28 @@
   <div data-testid="empty-unknown-id" class="flex flex-col items-center gap-3 py-12 text-body text-muted-foreground">
     <span class="text-foreground">No nibs match this filter</span>
     <span class="max-w-md text-center">{notFoundMessage}</span>
+    {#if activeHierarchyTokens.length > 0}
+      <Button variant="outline" size="sm" onclick={clearHierarchy}>Clear hierarchy filters</Button>
+    {/if}
+  </div>
+{:else if contradictionPairs.length > 0}
+  <!-- Ordered before the generic error branch for the same reason the unknown-id
+       branch is: the user wrote a query that cannot be answered, which is a thing
+       to fix rather than a failure to report. The escape hatch is offered on the
+       same condition as there — some hierarchy field is set — so it clears the
+       parent pair outright and merely widens the query otherwise. It is not
+       offered at all for a lone blocking-dimension pair, which it cannot reach. -->
+  <div data-testid="empty-contradiction" class="flex flex-col items-center gap-3 py-12 text-body text-muted-foreground">
+    <span class="text-foreground">No nibs match this filter</span>
+    <span class="max-w-md text-center">
+      {#each contradictionPairs as [idToken, noToken] (idToken)}
+        <code class="whitespace-nowrap rounded bg-muted px-1 py-0.5 text-foreground">{idToken}</code>{" "}
+        and{" "}
+        <code class="whitespace-nowrap rounded bg-muted px-1 py-0.5 text-foreground">{noToken}</code>{" "}
+        ask for opposite things — a nib cannot both have that relationship and have none.{" "}
+      {/each}
+      Dropping either half of a pair makes the query answerable.
+    </span>
     {#if activeHierarchyTokens.length > 0}
       <Button variant="outline" size="sm" onclick={clearHierarchy}>Clear hierarchy filters</Button>
     {/if}

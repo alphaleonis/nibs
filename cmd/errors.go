@@ -51,6 +51,9 @@ func reportErr(jsonMode bool, code string, err error) error {
 //     would make the same query succeed. That is the exit cmd/list.go already
 //     gives `--parent ""` on the flag surface, so the graph layer and the flag
 //     layer agree about one user error instead of splitting it across two exits.
+//   - An id-valued field combined with its presence twin set to false is
+//     VALIDATION_ERROR (exit 2) for the same reason, and to agree with the same
+//     surface: cmd/list.go gives `--parent X --no-parent` exit 2 too.
 //
 // Reusing VALIDATION_ERROR rather than minting a code is deliberate, and
 // graphQLResponseCode's PRECONDITION is why: it compares codes but decides an
@@ -59,10 +62,11 @@ func reportErr(jsonMode bool, code string, err error) error {
 // and a response carrying both would report UNCATEGORIZED for two failures the
 // direct commands agree exit 2 for.
 //
-// The branches are independent, not ordered: neither
-// graph.FilterTargetUnreadableError nor graph.FilterTargetEmptyError carries
-// nib.ErrNotFound (see their doc comments — the absent Unwrap is the whole
-// safety property in both), so no test can claim another's error.
+// The branches are independent, not ordered: none of
+// graph.FilterTargetUnreadableError, graph.FilterTargetEmptyError and
+// graph.FilterTargetContradictionError carries nib.ErrNotFound (see their doc
+// comments — the absent Unwrap is the whole safety property in each), so no test
+// can claim another's error.
 //
 // This is the READ path's classifier: cmd/list.go and cmd/rel.go call it
 // directly with a graph.ApplyFilter failure. It is NOT what classifies a
@@ -78,6 +82,10 @@ func filterTargetErrCode(err error) (string, bool) {
 	if errors.As(err, &empty) {
 		return output.ErrValidation, true
 	}
+	var contradiction *graph.FilterTargetContradictionError
+	if errors.As(err, &contradiction) {
+		return output.ErrValidation, true
+	}
 	if errors.Is(err, nib.ErrNotFound) {
 		return output.ErrNotFound, true
 	}
@@ -91,10 +99,11 @@ func filterTargetErrCode(err error) (string, bool) {
 // must not flatten either to a bare validation error.
 //
 // The classification runs over the Go error chain, NOT over extensions.code. The
-// nib-level codes (NOT_FOUND, ETAG_MISMATCH) are stamped only by the error
-// presenter installed on the HTTP handler (cmd/serve.go); the in-process executor
-// behind `nibs query` runs gqlgen's default presenter, which stamps nothing, so
-// extensions is empty for every resolver-raised error here. It is NOT empty in
+// project's own codes (NOT_FOUND, ETAG_MISMATCH, FILTER_CONTRADICTION) are
+// stamped only by the error presenter installed on the HTTP handler
+// (cmd/serve.go); the in-process executor behind `nibs query` runs gqlgen's
+// default presenter, which stamps nothing, so extensions is empty for every
+// resolver-raised error here. It is NOT empty in
 // general: gqlgen's executor calls errcode.Set itself for its own parse and
 // validation failures, so extensions.code carries GRAPHQL_PARSE_FAILED /
 // GRAPHQL_VALIDATION_FAILED on this path too — codes that are not output.Err*

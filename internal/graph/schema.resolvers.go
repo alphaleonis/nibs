@@ -904,16 +904,34 @@ func (r *queryResolver) Nib(ctx context.Context, id string) (*nib.Nib, error) {
 // escapes to async marshaling. Only the immutable ID is read off the live
 // pointers at the snapshot step; a nib that vanished before the snapshot is
 // skipped. This one conversion covers both the All and the Search branches.
+//
+// Search SEEDS the input here rather than being left to the intersection branch
+// ApplyFilter runs, and the seeding is what carries the ORDER the schema
+// promises for an unsorted search: id matches first, then full-text hits by
+// relevance. Intersecting All() instead would answer with the store's own order.
+// ApplyFilter is then handed a copy of the filter with the term cleared, because
+// the seeded set already IS the term's answer: leaving it set would query the
+// index a second time only to intersect that answer with itself.
 func (r *queryResolver) Nibs(ctx context.Context, filter *model.NibFilter, sort *model.NibSort) ([]*nib.Nib, error) {
 	var nibs []*nib.Nib
 
 	// If search filter is provided, start with search results
-	if filter != nil && filter.Search != nil && *filter.Search != "" {
+	searched := filter != nil && filter.Search != nil && *filter.Search != ""
+	if searched {
 		searchResults, err := r.Reader.Search(*filter.Search)
 		if err != nil {
 			return nil, err
 		}
 		nibs = searchResults
+
+		// Nothing else in ApplyFilter reads Search, so clearing it skips the
+		// redundant branch and changes nothing else. The clear lands on a LOCAL
+		// copy: writing it back through the caller's pointer would strip the
+		// term from a filter the caller still holds and reuses, as cmd/list.go
+		// does for its hidden-closed count.
+		unsearched := *filter
+		unsearched.Search = nil
+		filter = &unsearched
 	} else {
 		nibs = r.Reader.All()
 	}
@@ -926,7 +944,7 @@ func (r *queryResolver) Nibs(ctx context.Context, filter *model.NibFilter, sort 
 	// When search is active, include ancestors of matched nibs so the
 	// client can build complete tree hierarchies even when only leaf
 	// nodes match the search query.
-	if filter != nil && filter.Search != nil && *filter.Search != "" {
+	if searched {
 		result = includeAncestors(result, r.Reader)
 	}
 

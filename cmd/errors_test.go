@@ -140,6 +140,12 @@ func emptyFilterErr() *gqlerror.Error {
 	return gqlerror.Wrap(&graph.FilterTargetEmptyError{Field: "parentId"})
 }
 
+func contradictionErr() *gqlerror.Error {
+	return gqlerror.Wrap(&graph.FilterTargetContradictionError{
+		Field: "parentId", PresenceField: "hasParent", ID: "zz",
+	})
+}
+
 func conflictErr() *gqlerror.Error {
 	return gqlerror.Wrap(&nibcore.ETagMismatchError{Provided: "stale", Current: "fresh"})
 }
@@ -322,6 +328,14 @@ func TestGraphQLErrCodeCodesHaveDistinctExitStatuses(t *testing.T) {
 			// would report a malformed argument as a broken tracker.
 			"filter target empty",
 			emptyFilterErr(),
+			output.ErrValidation,
+		},
+		{
+			// Also the unclassified default's own code, and deliberately so:
+			// minting one for the contradictory pairs would add a second code
+			// on exit 2 and make a response carrying both report UNCATEGORIZED.
+			"contradictory filter pair",
+			contradictionErr(),
 			output.ErrValidation,
 		},
 		{"mutation etag mismatch", conflictErr(), output.ErrConflict},
@@ -558,6 +572,10 @@ func TestFilterTargetErrCodeClassifiesEveryRefusalClass(t *testing.T) {
 		},
 		"FilterTargetEmptyError": {
 			&graph.FilterTargetEmptyError{Field: "parentId"},
+			output.ErrValidation,
+		},
+		"FilterTargetContradictionError": {
+			&graph.FilterTargetContradictionError{Field: "parentId", PresenceField: "hasParent", ID: "zz"},
 			output.ErrValidation,
 		},
 	}

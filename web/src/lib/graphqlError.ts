@@ -4,11 +4,13 @@
  * store's `error` arrives as `unknown`).
  *
  * The server tags the failures a client must route STRUCTURALLY with a stable
- * `extensions.code` — "ETAG_MISMATCH", "NOT_FOUND" — and leaves every other
- * error uncoded (see `etagErrorPresenter` in cmd/serve.go). Reading the code is
- * therefore the difference between "the user asked for something that isn't
- * there" and "something broke", and the two want opposite presentation: an
- * inline, calm explanation versus a real error.
+ * `extensions.code` and leaves every other error uncoded. `etagErrorPresenter`
+ * in cmd/serve.go is the single source of truth for which those are — it is
+ * deliberately not restated here, because a list in two places drifts and this
+ * is where a maintainer looks to learn the vocabulary. Reading the code is what
+ * separates the failures the user can act on — "there is no such nib", "this
+ * query contradicts itself" — from "something broke", and the two groups want
+ * opposite presentation: a calm inline explanation versus a real error.
  *
  * Both accessors take `unknown` and narrow defensively rather than requiring a
  * `CombinedError`, because the read path never has that type in hand.

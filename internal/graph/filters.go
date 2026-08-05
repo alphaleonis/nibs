@@ -75,8 +75,53 @@ func resolveFilterTarget(reader NibReader, field, id string) (string, error) {
 	return fullID, nil
 }
 
+// refuseContradiction reports *FilterTargetContradictionError when an id-valued
+// filter field is combined with the presence field covering the same
+// relationship, set to false. Two pairs qualify, and each is empty by
+// construction rather than by store state:
+//
+//   - parentId + hasParent. parentId matches the stored b.Parent against a
+//     target that already resolved, so a nib it matches has a link reader.Get
+//     answers for — which is what hasParent asks (see resolvedParent).
+//   - blockedById + hasBlockedBy. blockedById requires the target in
+//     b.BlockedBy, which forces len(b.BlockedBy) > 0, which is hasBlockedBy.
+//
+// blockingId + hasBlocking looks like a third and is NOT one. hasBlocking asks
+// BlockingChecker.IsBlocking, which means ACTIVELY blocking — nibcore's
+// isBlockingInMap applies releasesDependentsPredicate to BOTH ends of the edge,
+// so a candidate reports false when its own status released its dependents, and
+// equally when every nib listing it in blocked_by has itself been released —
+// while blockingId matches anything in the target's blocked_by
+// regardless of status. The pair therefore selects the blockers the target
+// still lists that are no longer blocking anything, by either route. That
+// second route is why it is not a status filter in disguise: with the target's
+// own status released and its blocker listed nowhere else, an OPEN blocker is
+// in the answer. The status-released ones alone are reachable as blockingId +
+// status: ["completed", "scrapped"]; this pair asks the wider question, and a
+// real one.
+//
+// An id that is the EMPTY STRING is not treated as a contradiction. It names no
+// nib, so there is nothing for the presence field to contradict; it is malformed
+// input, and FilterTargetEmptyError reports it as that — for parentId with a
+// hint redirecting to hasParent: false, the filter that does select parentless
+// nibs. Both classes exit 2, so the two surfaces still agree on the verdict and
+// only the message differs.
+//
+// A presence field set to TRUE is merely redundant and is left alone, as
+// cmd/list.go leaves `--parent X --has-parent` alone.
+func refuseContradiction(field string, id *string, presenceField string, presence *bool) error {
+	if id == nil || *id == "" || presence == nil || *presence {
+		return nil
+	}
+	return &FilterTargetContradictionError{Field: field, PresenceField: presenceField, ID: *id}
+}
+
 // ApplyFilter applies NibFilter to a slice of nibs and returns filtered results.
 // This is used by both the top-level nibs query and relationship field resolvers.
+//
+// Every branch NARROWS the slice it was handed and none of them widens it,
+// search included — see the search branch for what that means where the input is
+// a relationship's members rather than the whole store.
 //
 // ctx carries an optional per-request RequestCache (see request_cache.go); the
 // mention filter branches route through it so duplicate mention lookups
@@ -95,12 +140,15 @@ func resolveFilterTarget(reader NibReader, field, id string) (string, error) {
 // forms across resolvers within the same request will desync the cache
 // keys (keyed on the full normalized ID) and silently degrade memoization.
 //
-// Four outcomes are kept distinct, and the error return exists to separate the
-// first three from the fourth:
+// Five outcomes are kept distinct, and the error return exists to separate the
+// first four from the last:
 //
 //   - A filter field naming a single nib was given the empty string:
 //     *FilterTargetEmptyError, the validation class — malformed input rather
 //     than a question about the store.
+//   - An id-valued field was combined with its presence twin set to false:
+//     *FilterTargetContradictionError, also the validation class — a pair no
+//     store state could satisfy.
 //   - A filter field naming a single nib was given an id no nib answers to:
 //     *FilterTargetNotFoundError, carrying nib.ErrNotFound.
 //   - A target that resolved could not then be fetched:
@@ -116,6 +164,18 @@ func resolveFilterTarget(reader NibReader, field, id string) (string, error) {
 func ApplyFilter(ctx context.Context, nibs []*nib.Nib, filter *model.NibFilter, reader NibReader, blocking BlockingChecker) ([]*nib.Nib, error) {
 	if filter == nil {
 		return nibs, nil
+	}
+
+	// Contradictory pairs are refused before anything else runs. They cost no
+	// store access, and deciding them first is what makes an unresolvable id in
+	// a contradictory pair report the contradiction rather than the not-found —
+	// see refuseContradiction for why that is the useful verdict, and for why
+	// these two pairs and not the third that looks like one.
+	if err := refuseContradiction("parentId", filter.ParentID, "hasParent", filter.HasParent); err != nil {
+		return nil, err
+	}
+	if err := refuseContradiction("blockedById", filter.BlockedByID, "hasBlockedBy", filter.HasBlockedBy); err != nil {
+		return nil, err
 	}
 
 	result := nibs
@@ -275,6 +335,76 @@ func ApplyFilter(ctx context.Context, nibs []*nib.Nib, filter *model.NibFilter, 
 		result = filterByMentionedByID(ctx, result, fullID, reader)
 	}
 
+	// Search INTERSECTS the working set rather than choosing it. Every caller
+	// but queryResolver.Nibs hands this function a set some relationship
+	// already determined — the children of X, the nibs blocking X — so on those
+	// a term can only mean "of those, the ones matching". A hit outside the
+	// relation is not a child of X, so admitting it would answer a different
+	// question. queryResolver.Nibs seeds its input with Search() instead, and
+	// says there why it keeps doing so.
+	//
+	// The branch runs LAST. It is the only one that queries the search index, so
+	// placing it here means a filter that is going to be refused — an empty id,
+	// an unknown target, a contradictory pair — never pays for that query, and
+	// the refusal rather than an index failure is what reaches the caller. It
+	// also runs its membership loop over the narrowest set the rest of the chain
+	// produces.
+	//
+	// An empty term leaves the set unfiltered, matching every other surface that
+	// takes one (cmd/list.go only sets the field for a non-empty -S): "no
+	// keyword filter" is a real meaning, unlike an empty id, which names no nib
+	// and is refused above.
+	if filter.Search != nil && *filter.Search != "" {
+		var err error
+		if result, err = filterBySearch(result, *filter.Search, reader); err != nil {
+			return nil, err
+		}
+	}
+
+	return result, nil
+}
+
+// filterBySearch keeps the nibs the search index matched, in the input's own
+// order. An index that cannot answer is reported rather than read as "nothing
+// matched" — the reader's error travels out as it is, which is what
+// queryResolver.Nibs does with the same failure from its seeding call.
+//
+// On a relationship field that failure costs the WHOLE response: every such
+// field is [Nib!]!, so nothing between it and the response root is nullable and
+// GraphQL's null propagation carries the failure all the way up, discarding
+// every other nib's successful result. That is accepted rather than overlooked.
+// Degrading to "no match" would put this branch back in the business of
+// answering a question it could not evaluate — the confident empty answer the
+// refusal classes above exist to eliminate — and a malformed term is not what
+// gets here: a query string the parser rejects degrades to a plain match query
+// instead of failing (see search.Index.Search). The sibling id-valued branches
+// bubble the same way on FilterTargetUnreadableError, so one broken read behaves
+// alike across the filter.
+//
+// Membership is decided by ID. The relationship resolvers hand ApplyFilter
+// detached snapshots (see NibReader.GetSnapshot) while the reader hands back its
+// own store pointers, so comparing pointers would match nothing.
+//
+// The index is queried ONCE per call, never per candidate. That is still once
+// per parent nib for a relationship field selected across many of them: unlike
+// the mention lookups there is no per-request memoization for search (see
+// request_cache.go).
+func filterBySearch(nibs []*nib.Nib, query string, reader NibReader) ([]*nib.Nib, error) {
+	matches, err := reader.Search(query)
+	if err != nil {
+		return nil, err
+	}
+	matched := make(map[string]bool, len(matches))
+	for _, b := range matches {
+		matched[b.ID] = true
+	}
+
+	var result []*nib.Nib
+	for _, b := range nibs {
+		if matched[b.ID] {
+			result = append(result, b)
+		}
+	}
 	return result, nil
 }
 

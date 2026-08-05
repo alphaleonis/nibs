@@ -1227,6 +1227,21 @@ func TestQueryCommandRefusalExitsLikeTheDirectCommand(t *testing.T) {
 			wantExit: output.ExitNotFound,
 		},
 		{
+			// The contradictory pair, driven through gqlgen's own parsing and
+			// argument binding. Every other test of this class either builds the
+			// error value by hand (errors_test.go, serve_errorpresenter_test.go)
+			// or calls ApplyFilter with an already-built model.NibFilter
+			// (internal/graph), so a regression in how parentId/hasParent bind
+			// from query text would leave all of them green while this surface
+			// stopped refusing. The id need not resolve: the pair is refused
+			// before any lookup, which is why this row wants VALIDATION_ERROR
+			// where the row above wants NOT_FOUND on the same id.
+			name:     "contradictory filter pair is a validation error",
+			query:    `{ nibs(filter: {parentId: "zz", hasParent: false}) { id } }`,
+			wantCode: output.ErrValidation,
+			wantExit: output.ExitValidation,
+		},
+		{
 			name:     "unknown mutation target is not-found",
 			query:    `mutation { updateNib(id: "nosuch", input: {title: "x"}) { id } }`,
 			wantCode: output.ErrNotFound,

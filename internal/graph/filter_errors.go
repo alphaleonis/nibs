@@ -160,6 +160,46 @@ func (e *FilterTargetEmptyError) Error() string {
 	return fmt.Sprintf("%s filter: empty id; it takes a nib id", e.Field)
 }
 
+// FilterTargetContradictionError reports that an id-valued filter field was
+// combined with the presence field covering the same relationship, set to false
+// — `nibs(filter:{parentId:"nibs-9kvw", hasParent:false})`. No nib can satisfy
+// both halves, so the query is unanswerable as written rather than answered by
+// the empty set.
+//
+// It is the validation class (exit 2) for the same reason FilterTargetEmptyError
+// is: nothing was mistyped and no store state would make the same query succeed.
+// The empty list it replaces is what makes it worth a class at all — "that
+// parent has no children" is a factual claim about the store, and a caller who
+// contradicted itself receives it as the answer to a question it never asked.
+// cmd/list.go refuses the flag spelling (`--parent X --no-parent`) already, so
+// the graph surface agreeing is what keeps one user error from carrying two
+// verdicts.
+//
+// Like FilterTargetEmptyError it implements NO Unwrap: unwrapping to
+// nib.ErrNotFound would collapse it into the not-found class at every classifier
+// keyed on that sentinel, reporting exit 3 — "that id names no nib" — for a pair
+// whose ids may both be perfectly good.
+type FilterTargetContradictionError struct {
+	// Field is the id-valued GraphQL filter field, e.g. "parentId" — the same
+	// spelling as in the schema.
+	Field string
+	// PresenceField is the tri-state field it contradicts, e.g. "hasParent".
+	// Naming both is what makes the message actionable: either half can be the
+	// one the caller meant to keep.
+	PresenceField string
+	// ID is the target exactly as supplied. It is never the empty string:
+	// refuseContradiction skips an empty id so it keeps FilterTargetEmptyError,
+	// which reports the value as the malformed input it is — and for parentId
+	// redirects to hasParent: false, the filter that does select parentless
+	// nibs.
+	ID string
+}
+
+func (e *FilterTargetContradictionError) Error() string {
+	return fmt.Sprintf("%s filter: contradicts %s: false — every nib matching %s %s satisfies %s: true, so nothing can match both",
+		e.Field, e.PresenceField, e.Field, echoID(e.ID), e.PresenceField)
+}
+
 // FilterTargetUnreadableError reports that a filter target resolved and then
 // could not be fetched — the reader answered NormalizeID for the id and refused
 // Get for it moments later. The concurrent-delete window between the two is how

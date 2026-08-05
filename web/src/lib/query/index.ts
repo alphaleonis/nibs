@@ -36,6 +36,9 @@ export type { RelIdKey, ExistenceKey } from "./relations";
 // and the escape hatch that drops them. Used by the table's empty state to explain a
 // result emptied by several tree constraints at once.
 export { hierarchyTokens, clearHierarchyFilters } from "./relations";
+// The pairs the server refuses as unanswerable, spelled the way the box spells
+// them. Used by the table's empty state to explain a refusal the user typed.
+export { contradictionTokens } from "./relations";
 // Async ID/title typeahead for relationship-id token values (phase 6). The pure
 // caret-in-value detector + the candidate-row shape; the debounced fetch lives in
 // the Toolbar, the search fn in `../searchNibs`.

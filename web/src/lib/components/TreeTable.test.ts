@@ -426,6 +426,89 @@ describe("TreeTable", () => {
     });
   });
 
+  // `parent:<id>` and `no:parent` are independent tokens in the query box and
+  // nothing client-side rejects the combination, so the pair reaches the server,
+  // which refuses it. It is reachable by hand-typing and in two clicks — drilling
+  // into "Children of this" from a `no:parent` view ANDs a parentId onto the
+  // existing filter. That is a query the user can fix, not a failure, and it had a
+  // recoverable empty state before the server started refusing it.
+  describe("contradictory filter pair", () => {
+    function contradictionError(message: string) {
+      return {
+        message: `[GraphQL] ${message}`,
+        graphQLErrors: [{ message, extensions: { code: "FILTER_CONTRADICTION" } }],
+      };
+    }
+
+    function renderWithError(error: unknown, props: Record<string, unknown>) {
+      mockQueryStore.mockReturnValue(
+        readable({ fetching: false, error, data: undefined, stale: false }) as any
+      );
+      return renderTreeTable(props);
+    }
+
+    // The backend speaks GraphQL field names (`hasParent: false`); the box the
+    // user typed into speaks tokens (`no:parent`). Naming the pair the user can
+    // actually see and edit is the whole point of routing this branch by code.
+    it("names the pair in the query box's vocabulary, not the schema's", () => {
+      renderWithError(
+        contradictionError(
+          'parentId filter: contradicts hasParent: false — every nib matching parentId "nibs-a" satisfies hasParent: true, so nothing can match both'
+        ),
+        { filter: { parentId: "nibs-a", hasParent: false } }
+      );
+
+      const explanation = screen.getByTestId("empty-contradiction");
+      expect(explanation).toHaveTextContent("parent:nibs-a");
+      expect(explanation).toHaveTextContent("no:parent");
+      expect(explanation).not.toHaveTextContent("hasParent");
+      // The generic error branch renders the destructive box and the raw
+      // transport prefix; it must not fire alongside this one.
+      expect(screen.queryByText(/^Error:/)).not.toBeInTheDocument();
+      expect(screen.queryByText(/\[GraphQL\]/)).not.toBeInTheDocument();
+    });
+
+    it("offers the hierarchy escape hatch, which clears both halves", async () => {
+      const user = userEvent.setup();
+      const onfilterchange = vi.fn();
+      renderWithError(contradictionError("parentId filter: contradicts hasParent: false"), {
+        filter: { parentId: "nibs-a", hasParent: false, type: ["bug"] },
+        onfilterchange,
+      });
+
+      await user.click(screen.getByRole("button", { name: /clear hierarchy filters/i }));
+
+      expect(onfilterchange).toHaveBeenCalledWith({ type: ["bug"] });
+    });
+
+    // The blocking dimension contradicts too, and the escape hatch does not reach
+    // it — offering a button that leaves the query exactly as refused would be
+    // worse than offering none.
+    it("names a blocked-by pair but omits the hierarchy escape hatch", () => {
+      renderWithError(contradictionError("blockedById filter: contradicts hasBlockedBy: false"), {
+        filter: { blockedById: "nibs-b", hasBlockedBy: false },
+      });
+
+      const explanation = screen.getByTestId("empty-contradiction");
+      expect(explanation).toHaveTextContent("blocked-by:nibs-b");
+      expect(explanation).toHaveTextContent("no:blocked-by");
+      expect(screen.queryByRole("button", { name: /clear hierarchy filters/i })).not.toBeInTheDocument();
+    });
+
+    // The calm treatment is earned by the code AND by the client being able to
+    // name the pair. If the two disagree — a filter that no longer holds the pair
+    // the server refused — falling through to the generic error shows the server's
+    // own sentence rather than an empty explanation.
+    it("falls through to the generic error when the filter holds no pair to name", () => {
+      renderWithError(contradictionError("parentId filter: contradicts hasParent: false"), {
+        filter: { type: ["bug"] },
+      });
+
+      expect(screen.queryByTestId("empty-contradiction")).not.toBeInTheDocument();
+      expect(screen.getByText(/^Error: parentId filter: contradicts/)).toBeInTheDocument();
+    });
+  });
+
   // Regression: urql's subscription store emits a fresh wrapper object on
   // every reactive cycle. Reference-based dedup inside the TreeTable
   // subscription effect used to fail, causing an infinite effect loop that

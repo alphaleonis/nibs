@@ -183,6 +183,27 @@ func TestETagErrorPresenter_TagsNotFound(t *testing.T) {
 		}
 	})
 
+	t.Run("tags a contradictory filter pair with its own code, not NOT_FOUND", func(t *testing.T) {
+		// The third read-path refusal, and the one that needs a code of its own.
+		// NOT_FOUND is wrong: it routes to the "no such nib" empty state, whose
+		// wording blames an id when both ids may be perfectly good. Uncoded is
+		// wrong too: the web list then renders the backend's raw sentence in a
+		// destructive box for a query the user wrote and can edit — and for the
+		// parent pair that replaces an inline empty state whose button cleared it
+		// in one click. A distinct code is what lets TreeTable.svelte explain the
+		// pair in the query box's own vocabulary and keep that button.
+		err := &graph.FilterTargetContradictionError{Field: "parentId", PresenceField: "hasParent", ID: "nibs-a"}
+
+		gqlErr := etagErrorPresenter(ctx, err)
+
+		if gqlErr.Extensions["code"] != "FILTER_CONTRADICTION" {
+			t.Errorf("extensions.code = %v, want %q", gqlErr.Extensions["code"], "FILTER_CONTRADICTION")
+		}
+		if gqlErr.Message != err.Error() {
+			t.Errorf("message = %q, want %q", gqlErr.Message, err.Error())
+		}
+	})
+
 	t.Run("does NOT tag the typed ETagMismatchError as NOT_FOUND (stays ETAG_MISMATCH)", func(t *testing.T) {
 		// Symmetric to TagsOnlyTypedEtagError's negative case: the two typed errors
 		// are mutually exclusive. A reconcilable etag conflict must route into the
