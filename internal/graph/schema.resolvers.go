@@ -16,6 +16,12 @@ import (
 )
 
 // CreateNib is the resolver for the createNib field.
+//
+// Applies to this whole file: never put a comment directive (//nolint:…,
+// //go:noinline) on a resolver's DOC comment. gqlgen deletes it on the next
+// codegen while keeping prose like this paragraph, so the directive silently
+// stops taking effect. Put directives inside the function body, which is copied
+// through verbatim. Full explanation: internal/graph/resolver.go.
 func (r *mutationResolver) CreateNib(ctx context.Context, input model.CreateNibInput) (*nib.Nib, error) {
 	b := &nib.Nib{
 		Slug:    nib.Slugify(input.Title),
