@@ -10,10 +10,18 @@ export function buildTree<T extends TreeNib>(nibs: T[]): TreeNode<T>[] {
     nodeMap.set(nib.id, { nib, children: [], depth: 0 });
   }
 
-  // Second pass: link children to parents
+  // One member of every parent cycle is promoted to a root; without that, no
+  // member of a cycle qualifies as a root and the whole cycle is dropped.
+  const promoted = promotedCycleRoots(nodeMap);
+
+  // Second pass: link children to parents. Severing a promoted nib's edge and
+  // making it a root are the same decision here, so a promoted node is always
+  // detached and the erasure this guards against cannot come back half-applied.
+  // (The Go side splits the two, where severing is what makes its recursion
+  // terminate — see promotedCycleRoots in internal/ui/tree.go.)
   for (const nib of nibs) {
     const node = nodeMap.get(nib.id)!;
-    if (nib.parentId !== null && nodeMap.has(nib.parentId)) {
+    if (nib.parentId !== null && nodeMap.has(nib.parentId) && !promoted.has(nib.id)) {
       const parent = nodeMap.get(nib.parentId)!;
       parent.children.push(node);
     } else {
@@ -25,6 +33,64 @@ export function buildTree<T extends TreeNib>(nibs: T[]): TreeNode<T>[] {
   setDepths(roots, 0);
 
   return roots;
+}
+
+/**
+ * Picks one member of every parent cycle lying wholly inside `nodeMap`. Every
+ * member of such a cycle has its parent present, so none satisfies the ordinary
+ * root rule and the cycle would render nowhere at all; promoting one member and
+ * severing its parent edge turns the cycle into an ordinary chain, so a
+ * malformed hierarchy shows up as an oddity instead of a disappearance.
+ *
+ * The member with the lowest id wins, matching `promotedCycleRoots` in
+ * internal/ui/tree.go — so both views promote the same member and nest a cycle
+ * identically. Sibling order still follows each view's own arrangement.
+ *
+ * Comparison is over UTF-16 code units here and bytes there. Those orders differ
+ * only for supplementary-plane characters, which generated ids never contain —
+ * but an imported file can carry one, in which case the two views root the cycle
+ * at different members and nothing else breaks.
+ *
+ * A nib has at most one parent, so cycles are disjoint and each is discovered
+ * exactly once. Every node is walked once — unseen -> onPath -> settled —
+ * making the pass linear in the size of the map.
+ */
+function promotedCycleRoots<T extends TreeNib>(nodeMap: Map<string, TreeNode<T>>): Set<string> {
+  const state = new Map<string, "onPath" | "settled">();
+  const promoted = new Set<string>();
+
+  for (const startId of nodeMap.keys()) {
+    if (state.has(startId)) continue;
+    // Follow this node's parent chain until it leaves the map, ends, or
+    // re-enters itself.
+    const path: string[] = [];
+    let current: string | null = startId;
+    while (current !== null) {
+      const seen = state.get(current);
+      if (seen === "onPath") {
+        // The chain closed on itself: the cycle is the path from this node
+        // onward. Anything before it merely leads into the cycle.
+        const start = path.indexOf(current);
+        let lowest = path[start];
+        for (let i = start + 1; i < path.length; i++) {
+          if (path[i] < lowest) lowest = path[i];
+        }
+        promoted.add(lowest);
+        break;
+      }
+      // "settled" means already fully explored, along with any cycle beyond it.
+      if (seen === "settled") break;
+      state.set(current, "onPath");
+      path.push(current);
+      // Annotated rather than inferred: `current` is assigned from `parentId`
+      // below, so inference would be circular.
+      const parentId: string | null = nodeMap.get(current)!.nib.parentId;
+      current = parentId !== null && nodeMap.has(parentId) ? parentId : null;
+    }
+    for (const id of path) state.set(id, "settled");
+  }
+
+  return promoted;
 }
 
 function setDepths<T extends TreeNib>(nodes: TreeNode<T>[], depth: number): void {
