@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 
@@ -1438,6 +1439,138 @@ func TestMutationDeleteNib(t *testing.T) {
 			t.Error("DeleteNib() expected error for nonexistent nib")
 		}
 	})
+}
+
+// TestMutationDeleteNibStripsLinksWhateverIDSpelling pins that the two halves of
+// one delete act on the SAME nib: whichever spelling of the id the caller uses,
+// the incoming links stripped are those of the nib actually removed. A prefixed
+// project accepts a short id everywhere (Core.Get prepends the configured
+// prefix), so `deleteNib(id: "tgt")` and `deleteNib(id: "nibs-tgt")` must be
+// indistinguishable in their effect on other nibs.
+func TestMutationDeleteNibStripsLinksWhateverIDSpelling(t *testing.T) {
+	tests := []struct {
+		name     string
+		deleteID string
+	}{
+		{name: "full id", deleteID: "nibs-tgt"},
+		{name: "short id", deleteID: "tgt"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			resolver, core := setupTestResolverWithPrefix(t, "nibs-")
+			ctx := context.Background()
+
+			mustCreate(t, core, &nib.Nib{ID: "nibs-tgt", Title: "Target", Status: "todo", Type: "task"})
+			// Three incoming shapes: parent only, blocked_by only, and both.
+			mustCreate(t, core, &nib.Nib{ID: "nibs-kid", Title: "Child", Status: "todo", Type: "task", Parent: "nibs-tgt"})
+			mustCreate(t, core, &nib.Nib{ID: "nibs-dep", Title: "Dependent", Status: "todo", Type: "task", BlockedBy: []string{"nibs-tgt"}})
+			mustCreate(t, core, &nib.Nib{ID: "nibs-both", Title: "Both", Status: "todo", Type: "task", Parent: "nibs-tgt", BlockedBy: []string{"nibs-tgt"}})
+			// A bystander whose links name a different nib must be left alone.
+			mustCreate(t, core, &nib.Nib{ID: "nibs-oth", Title: "Other", Status: "todo", Type: "task"})
+			mustCreate(t, core, &nib.Nib{ID: "nibs-by", Title: "Bystander", Status: "todo", Type: "task", Parent: "nibs-oth", BlockedBy: []string{"nibs-oth"}})
+
+			if _, err := resolver.Mutation().DeleteNib(ctx, tt.deleteID); err != nil {
+				t.Fatalf("DeleteNib(%q) error = %v", tt.deleteID, err)
+			}
+
+			if _, err := core.Get("nibs-tgt"); err == nil {
+				t.Errorf("nibs-tgt still present after DeleteNib(%q)", tt.deleteID)
+			}
+
+			kid := mustGet(t, core, "nibs-kid")
+			if kid.Parent != "" {
+				t.Errorf("nibs-kid.Parent = %q, want %q (link to the deleted nib)", kid.Parent, "")
+			}
+			dep := mustGet(t, core, "nibs-dep")
+			if len(dep.BlockedBy) != 0 {
+				t.Errorf("nibs-dep.BlockedBy = %v, want empty (link to the deleted nib)", dep.BlockedBy)
+			}
+			both := mustGet(t, core, "nibs-both")
+			if both.Parent != "" || len(both.BlockedBy) != 0 {
+				t.Errorf("nibs-both = {parent: %q, blocked_by: %v}, want both cleared", both.Parent, both.BlockedBy)
+			}
+
+			bystander := mustGet(t, core, "nibs-by")
+			if bystander.Parent != "nibs-oth" || !slices.Equal(bystander.BlockedBy, []string{"nibs-oth"}) {
+				t.Errorf("nibs-by = {parent: %q, blocked_by: %v}, want links to nibs-oth untouched",
+					bystander.Parent, bystander.BlockedBy)
+			}
+		})
+	}
+}
+
+// TestMutationDeleteNibAmbiguousTwin covers the store shape where a bare token
+// and its prefixed twin both exist: `tgt` names the bare nib exactly, so only
+// links spelled that way point at it, and the twin's own incoming links must
+// survive the delete untouched.
+//
+// It guards the OVER-matching direction: a delete must not conflate the twins.
+// Under-matching — a short id leaving incoming links behind — is
+// TestMutationDeleteNibStripsLinksWhateverIDSpelling's.
+func TestMutationDeleteNibAmbiguousTwin(t *testing.T) {
+	resolver, core := setupTestResolverWithPrefix(t, "nibs-")
+	ctx := context.Background()
+
+	mustCreate(t, core, &nib.Nib{ID: "tgt", Title: "Bare", Status: "todo", Type: "task"})
+	mustCreate(t, core, &nib.Nib{ID: "nibs-tgt", Title: "Twin", Status: "todo", Type: "task"})
+	mustCreate(t, core, &nib.Nib{ID: "nibs-bare", Title: "Names bare", Status: "todo", Type: "task", Parent: "tgt", BlockedBy: []string{"tgt"}})
+	mustCreate(t, core, &nib.Nib{ID: "nibs-twin", Title: "Names twin", Status: "todo", Type: "task", Parent: "nibs-tgt", BlockedBy: []string{"nibs-tgt"}})
+
+	if _, err := resolver.Mutation().DeleteNib(ctx, "tgt"); err != nil {
+		t.Fatalf("DeleteNib(tgt) error = %v", err)
+	}
+
+	if _, err := core.Get("nibs-tgt"); err != nil {
+		t.Fatalf("nibs-tgt was removed by DeleteNib(tgt): %v", err)
+	}
+
+	bare := mustGet(t, core, "nibs-bare")
+	if bare.Parent != "" || len(bare.BlockedBy) != 0 {
+		t.Errorf("nibs-bare = {parent: %q, blocked_by: %v}, want both cleared", bare.Parent, bare.BlockedBy)
+	}
+
+	// The links naming the surviving twin must be neither cleared nor re-pointed:
+	// RemoveLinksTo runs before the removal, so Delete's canonicalization sweep
+	// finds nothing spelled `tgt` left to rebind onto `nibs-tgt`.
+	twin := mustGet(t, core, "nibs-twin")
+	if twin.Parent != "nibs-tgt" || !slices.Equal(twin.BlockedBy, []string{"nibs-tgt"}) {
+		t.Errorf("nibs-twin = {parent: %q, blocked_by: %v}, want links to nibs-tgt untouched",
+			twin.Parent, twin.BlockedBy)
+	}
+}
+
+// TestMutationDeleteNibUnresolvableID pins that an id naming no nib is refused
+// the same way whatever its shape, and that a refused delete strips nothing.
+func TestMutationDeleteNibUnresolvableID(t *testing.T) {
+	tests := []struct {
+		name     string
+		deleteID string
+	}{
+		{name: "short id", deleteID: "nope"},
+		{name: "full id", deleteID: "nibs-nope"},
+		{name: "empty id", deleteID: ""},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			resolver, core := setupTestResolverWithPrefix(t, "nibs-")
+			ctx := context.Background()
+
+			mustCreate(t, core, &nib.Nib{ID: "nibs-tgt", Title: "Target", Status: "todo", Type: "task"})
+			mustCreate(t, core, &nib.Nib{ID: "nibs-kid", Title: "Child", Status: "todo", Type: "task", Parent: "nibs-tgt", BlockedBy: []string{"nibs-tgt"}})
+
+			if _, err := resolver.Mutation().DeleteNib(ctx, tt.deleteID); err == nil {
+				t.Fatalf("DeleteNib(%q) error = nil, want not-found", tt.deleteID)
+			}
+
+			kid := mustGet(t, core, "nibs-kid")
+			if kid.Parent != "nibs-tgt" || !slices.Equal(kid.BlockedBy, []string{"nibs-tgt"}) {
+				t.Errorf("nibs-kid = {parent: %q, blocked_by: %v}, want untouched by a refused delete",
+					kid.Parent, kid.BlockedBy)
+			}
+		})
+	}
 }
 
 func TestRelationshipFieldsWithFilter(t *testing.T) {

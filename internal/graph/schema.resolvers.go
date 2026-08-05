@@ -359,20 +359,37 @@ func (r *mutationResolver) UpdateNib(ctx context.Context, id string, input model
 }
 
 // DeleteNib is the resolver for the deleteNib field.
+//
+// Both halves of the delete are driven by the RESOLVED id rather than the
+// caller's spelling: a prefixed project accepts a short id (Core.Get prepends
+// the configured prefix), and the two halves have to name the same nib, or
+// `deleteNib(id: "tgt")` removes nibs-tgt while unlinking something else. Only
+// the immutable ID is read off the live pointer Get returns, which is what the
+// live-pointer invariant permits (see NibReader.GetSnapshot in interfaces.go).
+//
+// Order is load-bearing. Unlinking runs FIRST, while the target is still in the
+// store, so RemoveLinksTo resolves its target against the same key set the
+// stored links resolve against. Afterwards it would not: with a bare-token id
+// gone, its prefixed twin answers to that token, so the links this delete should
+// have CLEARED would instead be re-pointed onto the twin by Core.Delete's
+// canonicalization sweep, and the twin's own incoming links would then be
+// stripped in their place. Clearing incoming links is RemoveLinksTo's job alone;
+// the sweep only re-resolves the links that remain.
 func (r *mutationResolver) DeleteNib(ctx context.Context, id string) (bool, error) {
-	// Verify nib exists
-	_, err := r.Reader.Get(id)
+	// Verify nib exists, and take the resolved id from the nib it found.
+	target, err := r.Reader.Get(id)
 	if err != nil {
 		return false, err
 	}
+	resolvedID := target.ID
 
 	// Remove incoming links first
-	if _, err := r.Writer.RemoveLinksTo(id); err != nil {
+	if _, err := r.Writer.RemoveLinksTo(resolvedID); err != nil {
 		return false, err
 	}
 
 	// Delete the nib
-	if err := r.Writer.Delete(id); err != nil {
+	if err := r.Writer.Delete(resolvedID); err != nil {
 		return false, err
 	}
 

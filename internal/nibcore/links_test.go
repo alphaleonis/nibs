@@ -4,6 +4,7 @@ import (
 	"crypto/sha256"
 	"os"
 	"path/filepath"
+	"slices"
 	"testing"
 
 	"github.com/alphaleonis/nibs/internal/config"
@@ -338,6 +339,286 @@ func TestRemoveLinksTo(t *testing.T) {
 	if len(loadedB.BlockedBy) != 0 {
 		t.Errorf("Nib B still has %d blocked_by, want 0", len(loadedB.BlockedBy))
 	}
+}
+
+// linkedNibs is the shared fixture for the RemoveLinksTo target-resolution
+// tests: one target, one nib per incoming link shape (parent only, blocked_by
+// only, both), and a bystander pair whose links name a different nib.
+func linkedNibs(t *testing.T, core *Core) {
+	t.Helper()
+	for _, b := range []*nib.Nib{
+		{ID: "nibs-tgt", Title: "Target", Status: "todo"},
+		{ID: "nibs-kid", Title: "Child", Status: "todo", Parent: "nibs-tgt"},
+		{ID: "nibs-dep", Title: "Dependent", Status: "todo", BlockedBy: []string{"nibs-tgt"}},
+		{ID: "nibs-both", Title: "Both", Status: "todo", Parent: "nibs-tgt", BlockedBy: []string{"nibs-tgt"}},
+		{ID: "nibs-oth", Title: "Other", Status: "todo"},
+		{ID: "nibs-by", Title: "Bystander", Status: "todo", Parent: "nibs-oth", BlockedBy: []string{"nibs-oth"}},
+	} {
+		if err := core.Create(b); err != nil {
+			t.Fatalf("create %s: %v", b.ID, err)
+		}
+	}
+}
+
+// TestRemoveLinksToResolvesTarget pins that RemoveLinksTo resolves its target id
+// the way Core.Get and Core.Delete do, so every spelling that names one nib
+// strips the same links. Without it the method answers (0, nil) for a short id —
+// a silent no-op, the shape that leaves a deleted nib's children dangling.
+func TestRemoveLinksToResolvesTarget(t *testing.T) {
+	tests := []struct {
+		name    string
+		target  string
+		removed int
+	}{
+		{name: "full id", target: "nibs-tgt", removed: 4},
+		{name: "short id", target: "tgt", removed: 4},
+		{name: "unlinked target", target: "nibs-oth2", removed: 0},
+		{name: "full id naming no nib", target: "nibs-ghost", removed: 0},
+		{name: "short id naming no nib", target: "ghost", removed: 0},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			core, _ := mustLoadPrefixedCore(t)
+			linkedNibs(t, core)
+			if err := core.Create(&nib.Nib{ID: "nibs-oth2", Title: "Unlinked", Status: "todo"}); err != nil {
+				t.Fatalf("create nibs-oth2: %v", err)
+			}
+
+			removed, err := core.RemoveLinksTo(tt.target)
+			if err != nil {
+				t.Fatalf("RemoveLinksTo(%q): %v", tt.target, err)
+			}
+			if removed != tt.removed {
+				t.Errorf("RemoveLinksTo(%q) removed = %d, want %d", tt.target, removed, tt.removed)
+			}
+
+			wantCleared := tt.removed > 0
+			kid := mustGetNib(t, core, "nibs-kid")
+			if cleared := kid.Parent == ""; cleared != wantCleared {
+				t.Errorf("nibs-kid.Parent = %q, cleared = %v, want cleared = %v", kid.Parent, cleared, wantCleared)
+			}
+			dep := mustGetNib(t, core, "nibs-dep")
+			if cleared := len(dep.BlockedBy) == 0; cleared != wantCleared {
+				t.Errorf("nibs-dep.BlockedBy = %v, cleared = %v, want cleared = %v", dep.BlockedBy, cleared, wantCleared)
+			}
+			both := mustGetNib(t, core, "nibs-both")
+			if cleared := both.Parent == "" && len(both.BlockedBy) == 0; cleared != wantCleared {
+				t.Errorf("nibs-both = {parent: %q, blocked_by: %v}, cleared = %v, want cleared = %v",
+					both.Parent, both.BlockedBy, cleared, wantCleared)
+			}
+
+			bystander := mustGetNib(t, core, "nibs-by")
+			if bystander.Parent != "nibs-oth" || !slices.Equal(bystander.BlockedBy, []string{"nibs-oth"}) {
+				t.Errorf("nibs-by = {parent: %q, blocked_by: %v}, want links to nibs-oth untouched",
+					bystander.Parent, bystander.BlockedBy)
+			}
+		})
+	}
+}
+
+// TestRemoveLinksToAmbiguousTwin covers the store shape where a bare token and
+// its prefixed twin both exist. Resolution tries the exact key first, so the
+// bare token names the bare nib and only links spelled that way point at it —
+// the twin's incoming links are a different edge and must survive.
+//
+// It guards the OVER-matching direction: resolution must not conflate the twins.
+// Under-matching — a short id stripping nothing — is TestRemoveLinksToResolvesTarget's.
+func TestRemoveLinksToAmbiguousTwin(t *testing.T) {
+	// wantLinks is one nib's expected link fields after the call.
+	type wantLinks struct {
+		id        string
+		parent    string
+		blockedBy []string
+	}
+
+	tests := []struct {
+		name        string
+		target      string
+		wantRemoved int
+		want        []wantLinks
+	}{
+		{
+			name: "bare token", target: "tgt", wantRemoved: 2,
+			want: []wantLinks{
+				{id: "nibs-bare"},
+				{id: "nibs-twin", parent: "nibs-tgt", blockedBy: []string{"nibs-tgt"}},
+			},
+		},
+		{
+			name: "prefixed twin", target: "nibs-tgt", wantRemoved: 2,
+			want: []wantLinks{
+				{id: "nibs-bare", parent: "tgt", blockedBy: []string{"tgt"}},
+				{id: "nibs-twin"},
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			core, _ := mustLoadPrefixedCore(t)
+			for _, b := range []*nib.Nib{
+				{ID: "tgt", Title: "Bare", Status: "todo"},
+				{ID: "nibs-tgt", Title: "Twin", Status: "todo"},
+				{ID: "nibs-bare", Title: "Names bare", Status: "todo", Parent: "tgt", BlockedBy: []string{"tgt"}},
+				{ID: "nibs-twin", Title: "Names twin", Status: "todo", Parent: "nibs-tgt", BlockedBy: []string{"nibs-tgt"}},
+			} {
+				if err := core.Create(b); err != nil {
+					t.Fatalf("create %s: %v", b.ID, err)
+				}
+			}
+
+			removed, err := core.RemoveLinksTo(tt.target)
+			if err != nil {
+				t.Fatalf("RemoveLinksTo(%q): %v", tt.target, err)
+			}
+			if removed != tt.wantRemoved {
+				t.Errorf("RemoveLinksTo(%q) removed = %d, want %d", tt.target, removed, tt.wantRemoved)
+			}
+
+			for _, want := range tt.want {
+				b := mustGetNib(t, core, want.id)
+				if b.Parent != want.parent || !slices.Equal(b.BlockedBy, want.blockedBy) {
+					t.Errorf("%s = {parent: %q, blocked_by: %v}, want {parent: %q, blocked_by: %v}",
+						want.id, b.Parent, b.BlockedBy, want.parent, want.blockedBy)
+				}
+			}
+		})
+	}
+}
+
+// TestRemoveLinksToStripsShortFormStoredLink covers a link STORED in short form
+// while only its prefixed target exists. That link resolves to the target, so it
+// points at the nib being unlinked and has to go — matching on the resolved
+// spelling alone would leave it dangling.
+//
+// Core.Create is what puts such a spelling in the store: it stores link ids
+// exactly as given, with none of the canonicalization the disk-read boundary
+// applies (see canonicalize.go).
+func TestRemoveLinksToStripsShortFormStoredLink(t *testing.T) {
+	core, _ := mustLoadPrefixedCore(t)
+	for _, b := range []*nib.Nib{
+		{ID: "nibs-tgt", Title: "Target", Status: "todo"},
+		{ID: "nibs-kid", Title: "Child", Status: "todo", Parent: "tgt", BlockedBy: []string{"tgt"}},
+	} {
+		if err := core.Create(b); err != nil {
+			t.Fatalf("create %s: %v", b.ID, err)
+		}
+	}
+
+	removed, err := core.RemoveLinksTo("nibs-tgt")
+	if err != nil {
+		t.Fatalf("RemoveLinksTo(nibs-tgt): %v", err)
+	}
+	if removed != 2 {
+		t.Errorf("removed = %d, want 2", removed)
+	}
+
+	kid := mustGetNib(t, core, "nibs-kid")
+	if kid.Parent != "" || len(kid.BlockedBy) != 0 {
+		t.Errorf("nibs-kid = {parent: %q, blocked_by: %v}, want both cleared", kid.Parent, kid.BlockedBy)
+	}
+}
+
+// TestRemoveLinksToUnresolvableTarget covers a target that resolves to nothing
+// while links are stored naming it verbatim. Resolution has no nib to match
+// against, so the literal compare is the only thing that can strip those links —
+// without it a dangling link would survive a call that names it exactly.
+func TestRemoveLinksToUnresolvableTarget(t *testing.T) {
+	core, _ := mustLoadPrefixedCore(t)
+	for _, b := range []*nib.Nib{
+		{ID: "nibs-kid", Title: "Child", Status: "todo", Parent: "nibs-ghost", BlockedBy: []string{"nibs-ghost"}},
+		{ID: "nibs-by", Title: "Bystander", Status: "todo", Parent: "nibs-kid", BlockedBy: []string{"nibs-kid"}},
+	} {
+		if err := core.Create(b); err != nil {
+			t.Fatalf("create %s: %v", b.ID, err)
+		}
+	}
+
+	removed, err := core.RemoveLinksTo("nibs-ghost")
+	if err != nil {
+		t.Fatalf("RemoveLinksTo(nibs-ghost): %v", err)
+	}
+	if removed != 2 {
+		t.Errorf("removed = %d, want 2", removed)
+	}
+
+	kid := mustGetNib(t, core, "nibs-kid")
+	if kid.Parent != "" || len(kid.BlockedBy) != 0 {
+		t.Errorf("nibs-kid = {parent: %q, blocked_by: %v}, want both cleared", kid.Parent, kid.BlockedBy)
+	}
+
+	bystander := mustGetNib(t, core, "nibs-by")
+	if bystander.Parent != "nibs-kid" || !slices.Equal(bystander.BlockedBy, []string{"nibs-kid"}) {
+		t.Errorf("nibs-by = {parent: %q, blocked_by: %v}, want links to nibs-kid untouched",
+			bystander.Parent, bystander.BlockedBy)
+	}
+}
+
+// TestRemoveLinksToEmptyTargetIsNoOp pins that an empty target strips nothing in
+// an ordinary store, where nothing resolves it: an empty link id is not a link,
+// so a nib whose Parent is unset is not an incoming link to it. Matched
+// literally instead, every such nib would count as removed and have its file
+// rewritten — the count is the observable witness, since the rewrites persist
+// unchanged content. TestRemoveLinksToEmptyTargetIgnoresPrefixKeyedNib covers
+// the store shape where the early return is what produces the no-op.
+func TestRemoveLinksToEmptyTargetIsNoOp(t *testing.T) {
+	core, _ := mustLoadPrefixedCore(t)
+	linkedNibs(t, core)
+
+	removed, err := core.RemoveLinksTo("")
+	if err != nil {
+		t.Fatalf("RemoveLinksTo(\"\"): %v", err)
+	}
+	if removed != 0 {
+		t.Errorf("RemoveLinksTo(\"\") removed = %d, want 0", removed)
+	}
+}
+
+// TestRemoveLinksToEmptyTargetIgnoresPrefixKeyedNib pins the early return on an
+// empty target in a store where that target resolves: a nib whose id is exactly
+// the configured prefix, which Get("") answers with. An empty id names no nib to
+// this method, so that nib's incoming links stay.
+func TestRemoveLinksToEmptyTargetIgnoresPrefixKeyedNib(t *testing.T) {
+	core, _ := mustLoadPrefixedCore(t)
+	for _, b := range []*nib.Nib{
+		{ID: "nibs-", Title: "Prefix keyed", Status: "todo"},
+		{ID: "nibs-kid", Title: "Child", Status: "todo", Parent: "nibs-", BlockedBy: []string{"nibs-"}},
+	} {
+		if err := core.Create(b); err != nil {
+			t.Fatalf("create %q: %v", b.ID, err)
+		}
+	}
+
+	// The premise this test rests on: an empty id resolves in this store, so the
+	// early return is the only thing standing between it and a match.
+	if resolved := mustGetNib(t, core, ""); resolved.ID != "nibs-" {
+		t.Fatalf("Get(\"\") = %q, want %q", resolved.ID, "nibs-")
+	}
+
+	removed, err := core.RemoveLinksTo("")
+	if err != nil {
+		t.Fatalf("RemoveLinksTo(\"\"): %v", err)
+	}
+	if removed != 0 {
+		t.Errorf("RemoveLinksTo(\"\") removed = %d, want 0", removed)
+	}
+
+	kid := mustGetNib(t, core, "nibs-kid")
+	if kid.Parent != "nibs-" || !slices.Equal(kid.BlockedBy, []string{"nibs-"}) {
+		t.Errorf("nibs-kid = {parent: %q, blocked_by: %v}, want links to nibs- untouched",
+			kid.Parent, kid.BlockedBy)
+	}
+}
+
+// mustGetNib fetches a nib the test's premise depends on.
+func mustGetNib(t *testing.T, core *Core, id string) *nib.Nib {
+	t.Helper()
+	b, err := core.Get(id)
+	if err != nil {
+		t.Fatalf("Get(%q): %v", id, err)
+	}
+	return b
 }
 
 func TestFixBrokenLinks(t *testing.T) {

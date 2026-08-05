@@ -103,6 +103,11 @@ type NibWriter interface {
 	Update(b *nib.Nib, ifMatch *string) error
 	Delete(id string) error
 	Archive(id string) error
+	// RemoveLinksTo strips every parent/blockedBy link that RESOLVES to the
+	// target and returns how many it removed. Target and stored link ids are both
+	// resolved the way Get resolves an id, so no caller has to pre-normalize a
+	// short id — and a delete that unlinks must run this BEFORE removing the nib,
+	// while the target is still resolvable (see nibcore.Core.RemoveLinksTo).
 	RemoveLinksTo(targetID string) (int, error)
 }
 
