@@ -28,9 +28,9 @@ func TestIsIDChar(t *testing.T) {
 		{"underscore", '_'},
 		{"slash", '/'},
 		{"digit boundary below zero", '/'}, // '/' is '0'-1
-		{"alpha boundary below a", '`'},     // '`' is 'a'-1
-		{"alpha boundary above z", '{'},     // '{' is 'z'+1
-		{"high-bit non-ASCII", 0xE9},        // 'é' in latin-1
+		{"alpha boundary below a", '`'},    // '`' is 'a'-1
+		{"alpha boundary above z", '{'},    // '{' is 'z'+1
+		{"high-bit non-ASCII", 0xE9},       // 'é' in latin-1
 		{"NUL", 0x00},
 	}
 	for _, tt := range rejects {

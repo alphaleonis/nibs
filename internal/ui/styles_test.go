@@ -113,9 +113,9 @@ func TestRenderNibRow_IndicatorsRightAligned(t *testing.T) {
 	}
 
 	tests := []struct {
-		name      string
-		cfg       NibRowConfig
-		wantCol   string // expected 4-rune indicator column
+		name    string
+		cfg     NibRowConfig
+		wantCol string // expected 4-rune indicator column
 	}{
 		{"no indicators", NibRowConfig{}, "    "},
 		{"priority only", NibRowConfig{Priority: "low", PriorityColor: "blue"}, "  ↓ "},

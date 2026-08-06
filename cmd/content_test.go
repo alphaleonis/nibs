@@ -191,4 +191,3 @@ func TestResolveAppendFlag(t *testing.T) {
 		t.Errorf("resolveAppendFlag(inline) error = %v, want ErrInlineProse", err)
 	}
 }
-

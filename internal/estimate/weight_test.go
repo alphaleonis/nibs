@@ -11,7 +11,7 @@ func TestWeight(t *testing.T) {
 		{"m", 3},
 		{"l", 5},
 		{"xl", 8},
-		{"", 3},       // default to M weight
+		{"", 3},        // default to M weight
 		{"unknown", 3}, // unknown defaults to M weight
 	}
 

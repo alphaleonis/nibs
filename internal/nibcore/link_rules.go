@@ -42,4 +42,3 @@ func (c *Core) ValidateParent(b *nib.Nib, parentID string) error {
 	}
 	return ValidateParentInMap(c.nibs, b, normalizedID)
 }
-

@@ -562,7 +562,7 @@ func assertPublishedPointersFrozenExceptPath(t *testing.T, c *Core, snaps []froz
 		// same normalization. An in-place non-Path write still surfaces: Clone()
 		// copies the pointer's current field values.
 		before := *s.before     // deep, independent capture-time clone
-		after := *s.ptr.Clone()  // deep clone of the SAME captured pointer, post-mutation
+		after := *s.ptr.Clone() // deep clone of the SAME captured pointer, post-mutation
 		before.Path = ""
 		after.Path = ""
 		if !reflect.DeepEqual(before, after) {

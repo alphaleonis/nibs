@@ -4,11 +4,11 @@ import (
 	"fmt"
 	"io"
 
+	"github.com/alphaleonis/nibs/internal/config"
+	"github.com/alphaleonis/nibs/internal/ui"
 	"github.com/charmbracelet/bubbles/list"
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
-	"github.com/alphaleonis/nibs/internal/config"
-	"github.com/alphaleonis/nibs/internal/ui"
 )
 
 // estimateSelectedMsg is sent when an estimate is selected from the picker

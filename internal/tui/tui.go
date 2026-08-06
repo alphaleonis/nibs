@@ -10,15 +10,15 @@ import (
 	"time"
 
 	"github.com/99designs/gqlgen/graphql"
+	"github.com/alphaleonis/nibs/internal/bodytemplate"
+	"github.com/alphaleonis/nibs/internal/config"
+	"github.com/alphaleonis/nibs/internal/graph/model"
+	"github.com/alphaleonis/nibs/internal/nib"
+	"github.com/alphaleonis/nibs/internal/nibtypes"
+	"github.com/alphaleonis/nibs/internal/updatecheck"
 	"github.com/atotto/clipboard"
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
-	"github.com/alphaleonis/nibs/internal/bodytemplate"
-	"github.com/alphaleonis/nibs/internal/nib"
-	"github.com/alphaleonis/nibs/internal/nibtypes"
-	"github.com/alphaleonis/nibs/internal/config"
-	"github.com/alphaleonis/nibs/internal/graph/model"
-	"github.com/alphaleonis/nibs/internal/updatecheck"
 )
 
 // viewState represents which view is currently active
@@ -137,9 +137,9 @@ type editorFinishedMsg struct {
 
 // openParentPickerMsg requests opening the parent picker for nib(s)
 type openParentPickerMsg struct {
-	nibIDs       []string // IDs of nibs to update
-	nibTitle     string   // Display title (single title or "N selected nibs")
-	nibTypes     []string // Types of the nibs (to filter eligible parents)
+	nibIDs        []string // IDs of nibs to update
+	nibTitle      string   // Display title (single title or "N selected nibs")
+	nibTypes      []string // Types of the nibs (to filter eligible parents)
 	currentParent string   // Only meaningful for single nib
 }
 
@@ -154,11 +154,11 @@ type App struct {
 	statusPicker   statusPickerModel
 	typePicker     typePickerModel
 	blockingPicker blockingPickerModel
-	priorityPicker  priorityPickerModel
-	estimatePicker  estimatePickerModel
-	createModal     createModalModel
-	confirmDialog   confirmDialog
-	helpExpanded   bool // help panel expanded (non-modal, toggles with ?)
+	priorityPicker priorityPickerModel
+	estimatePicker estimatePickerModel
+	createModal    createModalModel
+	confirmDialog  confirmDialog
+	helpExpanded   bool          // help panel expanded (non-modal, toggles with ?)
 	history        []detailModel // stack of previous detail views for back navigation
 	backend        Backend
 	config         *config.Config

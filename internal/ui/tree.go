@@ -5,31 +5,31 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/charmbracelet/lipgloss"
-	"github.com/alphaleonis/nibs/internal/nib"
 	"github.com/alphaleonis/nibs/internal/config"
+	"github.com/alphaleonis/nibs/internal/nib"
+	"github.com/charmbracelet/lipgloss"
 )
 
 // TreeNode represents a node in the nib tree hierarchy.
 type TreeNode struct {
-	Nib     *nib.Nib
+	Nib      *nib.Nib
 	Children []*TreeNode
 	Matched  bool // true if this nib matched the filter (vs. shown for context)
 }
 
 // TreeNodeJSON is the JSON-serializable version of TreeNode.
 type TreeNodeJSON struct {
-	ID        string          `json:"id"`
-	Slug      string          `json:"slug,omitempty"`
-	Path      string          `json:"path"`
-	Title     string          `json:"title"`
-	Status    string          `json:"status"`
-	Type      string          `json:"type,omitempty"`
-	Priority  string          `json:"priority,omitempty"`
-	Tags      []string        `json:"tags,omitempty"`
-	Body      string          `json:"body,omitempty"`
-	Matched   bool            `json:"matched"`
-	Children  []*TreeNodeJSON `json:"children,omitempty"`
+	ID       string          `json:"id"`
+	Slug     string          `json:"slug,omitempty"`
+	Path     string          `json:"path"`
+	Title    string          `json:"title"`
+	Status   string          `json:"status"`
+	Type     string          `json:"type,omitempty"`
+	Priority string          `json:"priority,omitempty"`
+	Tags     []string        `json:"tags,omitempty"`
+	Body     string          `json:"body,omitempty"`
+	Matched  bool            `json:"matched"`
+	Children []*TreeNodeJSON `json:"children,omitempty"`
 }
 
 // ToJSON converts a TreeNode to its JSON-serializable form.
@@ -228,7 +228,7 @@ func buildNodes(nibs []*nib.Nib, children map[string][]*nib.Nib, matchedSet map[
 	nodes := make([]*TreeNode, len(nibs))
 	for i, b := range nibs {
 		nodes[i] = &TreeNode{
-			Nib:     b,
+			Nib:      b,
 			Matched:  matchedSet[b.ID],
 			Children: buildNodes(children[b.ID], children, matchedSet),
 		}
@@ -455,7 +455,7 @@ func renderNode(sb *strings.Builder, node *TreeNode, depth int, isLast bool, anc
 // FlatItem represents a flattened tree node with rendering context.
 // Used by TUI to render tree structure in a flat list.
 type FlatItem struct {
-	Nib        *nib.Nib
+	Nib         *nib.Nib
 	Depth       int    // 0 = root, 1+ = nested
 	IsLast      bool   // last child at this level
 	Matched     bool   // true if nib matched filter (vs. shown for context)
@@ -498,7 +498,7 @@ func flattenNodes(nodes []*TreeNode, depth int, ancestry []bool, items *[]FlatIt
 		}
 
 		*items = append(*items, FlatItem{
-			Nib:        node.Nib,
+			Nib:         node.Nib,
 			Depth:       depth,
 			IsLast:      isLast,
 			Matched:     node.Matched,
@@ -579,7 +579,7 @@ func flattenNodesFiltered(nodes []*TreeNode, depth int, ancestry []bool, collaps
 		}
 
 		*items = append(*items, FlatItem{
-			Nib:        node.Nib,
+			Nib:         node.Nib,
 			Depth:       depth,
 			IsLast:      isLast,
 			Matched:     node.Matched,

@@ -4,8 +4,8 @@ import (
 	"testing"
 	"time"
 
-	tea "github.com/charmbracelet/bubbletea"
 	"github.com/alphaleonis/nibs/internal/nib"
+	tea "github.com/charmbracelet/bubbletea"
 )
 
 func TestDefaultTypeForContext(t *testing.T) {
@@ -19,7 +19,7 @@ func TestDefaultTypeForContext(t *testing.T) {
 		{"bug", "task"},
 		{"task", "task"},
 		{"research", "task"},
-		{"", "feature"},       // no selection → feature
+		{"", "feature"},        // no selection → feature
 		{"unknown", "feature"}, // unknown type → feature
 	}
 

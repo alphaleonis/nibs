@@ -362,10 +362,10 @@ func TestApplyFilterIDTargetBoundaries(t *testing.T) {
 	// expectation rather than a tangle of booleans.
 	type outcome int
 	const (
-		unfiltered outcome = iota // no filtering applied at all
-		matched                   // the branch ran and selected
-		refusedEmpty              // *FilterTargetEmptyError, validation class
-		refusedUnknown            // *FilterTargetNotFoundError, not-found class
+		unfiltered     outcome = iota // no filtering applied at all
+		matched                       // the branch ran and selected
+		refusedEmpty                  // *FilterTargetEmptyError, validation class
+		refusedUnknown                // *FilterTargetNotFoundError, not-found class
 	)
 
 	tests := []struct {

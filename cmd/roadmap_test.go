@@ -15,16 +15,16 @@ func TestBuildRoadmap(t *testing.T) {
 	now := time.Now()
 
 	tests := []struct {
-		name                  string
+		name                 string
 		nibs                 []*nib.Nib
-		includeDone           bool
-		wantMilestones        int
-		wantUnscheduledEpics  int
-		wantUnscheduledOther  int
+		includeDone          bool
+		wantMilestones       int
+		wantUnscheduledEpics int
+		wantUnscheduledOther int
 	}{
 		{
 			name:           "empty nibs",
-			nibs:          []*nib.Nib{},
+			nibs:           []*nib.Nib{},
 			wantMilestones: 0,
 		},
 		{
@@ -334,9 +334,9 @@ func TestBuildRoadmap_VisibilityMatchesProgress(t *testing.T) {
 
 func TestFirstParagraph(t *testing.T) {
 	tests := []struct {
-		name  string
-		body  string
-		want  string
+		name string
+		body string
+		want string
 	}{
 		{
 			name: "empty body",
@@ -383,34 +383,34 @@ func TestFirstParagraph(t *testing.T) {
 func TestRenderNibRef(t *testing.T) {
 	tests := []struct {
 		name       string
-		nib       *nib.Nib
+		nib        *nib.Nib
 		asLink     bool
 		linkPrefix string
 		want       string
 	}{
 		{
 			name:   "no link - just ID",
-			nib:   &nib.Nib{ID: "abc", Path: "abc--milestone.md"},
+			nib:    &nib.Nib{ID: "abc", Path: "abc--milestone.md"},
 			asLink: false,
 			want:   "(abc)",
 		},
 		{
 			name:       "link without prefix",
-			nib:       &nib.Nib{ID: "abc", Path: "abc--milestone.md"},
+			nib:        &nib.Nib{ID: "abc", Path: "abc--milestone.md"},
 			asLink:     true,
 			linkPrefix: "",
 			want:       "([abc](abc--milestone.md))",
 		},
 		{
 			name:       "link with prefix",
-			nib:       &nib.Nib{ID: "abc", Path: "abc--milestone.md"},
+			nib:        &nib.Nib{ID: "abc", Path: "abc--milestone.md"},
 			asLink:     true,
 			linkPrefix: "https://example.com/nibs/",
 			want:       "([abc](https://example.com/nibs/abc--milestone.md))",
 		},
 		{
 			name:       "link with prefix without trailing slash",
-			nib:       &nib.Nib{ID: "abc", Path: "abc--milestone.md"},
+			nib:        &nib.Nib{ID: "abc", Path: "abc--milestone.md"},
 			asLink:     true,
 			linkPrefix: ".nibs",
 			want:       "([abc](.nibs/abc--milestone.md))",

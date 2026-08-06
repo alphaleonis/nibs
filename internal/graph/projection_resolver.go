@@ -15,19 +15,25 @@ import (
 //
 // Canonical definition (single source of truth). Each child falls into exactly
 // one of three buckets:
+//
 //   - Done    = children whose status is "completed" — the one status that means
 //     the work actually happened. They also count toward Total.
+//
 //   - Dropped = children whose status is "scrapped". The work will not be done
 //     and is no longer scope, so it leaves the denominator entirely rather than
 //     pinning the percentage below 100 forever.
+//
 //   - Pending = every other child, including "deferred". Counts toward Total,
 //     not toward Done. Deferred work is set aside, not resolved — it is coming
 //     back, so it is outstanding scope and the percentage must say so.
 //
 //   - Total    = Done + Pending; only scrapped children are excluded.
+//
 //   - Percent  = round(Done/Total*100); 0 when Total == 0.
+//
 //   - Scrapped = direct children with status "scrapped", disclosed so the
 //     children missing from Total are visible rather than silently dropped.
+//
 //   - Deferred = direct children with status "deferred", disclosed so a
 //     set-aside child inside Total can be told apart from work still in flight.
 //

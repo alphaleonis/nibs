@@ -1,0 +1,38 @@
+# golangci-lint configuration.
+#
+# This file exists mainly to enable a formatting check. Without it golangci-lint
+# runs on its defaults, which enable no formatter at all, so `task lint` reported
+# "0 issues." on a tree with 53 unformatted files. CLAUDE.md's "never commit with
+# lint failures" reads as covering formatting, and it did not — a reviewer's eye
+# was the only thing catching misaligned struct fields and unsorted imports.
+#
+# gofmt, not gofumpt or goimports:
+#   - gofmt is what `go fmt` and every editor's format-on-save produce, so the
+#     gate agrees with the tooling contributors already have.
+#   - goimports was measured byte-identical to gofmt across this tree (both 53
+#     files); its extra work is grouping std from third-party imports, and every
+#     import block here is already grouped. It would only diverge on a block that
+#     lost that split.
+#   - gofumpt would have cost 84 files instead of 53, for opinions beyond the
+#     standard.
+# Note that gofmt already sorts imports *within* a group — the unsorted
+# third-party block in cmd/graphql.go was a plain gofmt violation, not something
+# that needed goimports.
+#
+# `linters` is deliberately absent: that leaves v2's default `standard` set
+# (errcheck, govet, ineffassign, staticcheck, unused), which is what this repo
+# has always been linted with and which is clean. Enabling a wider family is a
+# separate decision with its own tree-wide cost.
+version: "2"
+
+issues:
+  # Defaults are max-issues-per-linter: 50 and max-same-issues: 3. A formatter
+  # reports one identically-worded issue per file, so the defaults would print 3
+  # of 53 and hide the rest. The run still fails either way; this is so the
+  # output names every file that needs fixing.
+  max-issues-per-linter: 0
+  max-same-issues: 0
+
+formatters:
+  enable:
+    - gofmt

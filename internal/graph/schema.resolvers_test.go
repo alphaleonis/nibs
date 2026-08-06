@@ -11,10 +11,10 @@ import (
 	"testing"
 
 	"github.com/99designs/gqlgen/graphql"
-	"github.com/alphaleonis/nibs/internal/nib"
-	"github.com/alphaleonis/nibs/internal/nibcore"
 	"github.com/alphaleonis/nibs/internal/config"
 	"github.com/alphaleonis/nibs/internal/graph/model"
+	"github.com/alphaleonis/nibs/internal/nib"
+	"github.com/alphaleonis/nibs/internal/nibcore"
 )
 
 func setupTestResolver(t *testing.T) (*Resolver, *nibcore.Core) {
@@ -5051,4 +5051,3 @@ func TestAtomicValidateAndAddBlocking(t *testing.T) {
 		}
 	})
 }
-

@@ -5,10 +5,10 @@ import (
 	"io"
 	"sort"
 
+	"github.com/alphaleonis/nibs/internal/ui"
 	"github.com/charmbracelet/bubbles/list"
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
-	"github.com/alphaleonis/nibs/internal/ui"
 )
 
 // tagWithCount holds a tag and its usage count

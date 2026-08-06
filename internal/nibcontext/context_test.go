@@ -28,11 +28,11 @@ func makeNib(id, typ, status, estimate, parent string) *nib.Nib {
 
 func TestCalcProgress(t *testing.T) {
 	tests := []struct {
-		name            string
-		nibs            []*nib.Nib
-		wantCompleted   int
-		wantTotal       int
-		wantPercentage  float64
+		name           string
+		nibs           []*nib.Nib
+		wantCompleted  int
+		wantTotal      int
+		wantPercentage float64
 	}{
 		{
 			name:           "empty list",
@@ -44,8 +44,8 @@ func TestCalcProgress(t *testing.T) {
 		{
 			name: "all completed",
 			nibs: []*nib.Nib{
-				{ID: "a", Type: "task", Status: "completed", Estimate: "s"},  // 1
-				{ID: "b", Type: "task", Status: "completed", Estimate: "m"},  // 3
+				{ID: "a", Type: "task", Status: "completed", Estimate: "s"}, // 1
+				{ID: "b", Type: "task", Status: "completed", Estimate: "m"}, // 3
 			},
 			wantCompleted:  4,
 			wantTotal:      4,
@@ -54,9 +54,9 @@ func TestCalcProgress(t *testing.T) {
 		{
 			name: "mixed statuses",
 			nibs: []*nib.Nib{
-				{ID: "a", Type: "task", Status: "completed", Estimate: "xl"}, // 8
+				{ID: "a", Type: "task", Status: "completed", Estimate: "xl"},     // 8
 				{ID: "b", Type: "feature", Status: "in-progress", Estimate: "l"}, // 5
-				{ID: "c", Type: "bug", Status: "todo", Estimate: "s"},        // 1
+				{ID: "c", Type: "bug", Status: "todo", Estimate: "s"},            // 1
 			},
 			wantCompleted:  8,
 			wantTotal:      14,
@@ -65,8 +65,8 @@ func TestCalcProgress(t *testing.T) {
 		{
 			name: "unestimated defaults to M weight",
 			nibs: []*nib.Nib{
-				{ID: "a", Type: "task", Status: "completed"},  // default 3
-				{ID: "b", Type: "task", Status: "todo"},        // default 3
+				{ID: "a", Type: "task", Status: "completed"}, // default 3
+				{ID: "b", Type: "task", Status: "todo"},      // default 3
 			},
 			wantCompleted:  3,
 			wantTotal:      6,
@@ -124,8 +124,8 @@ func TestCalcProgress(t *testing.T) {
 			nibs: []*nib.Nib{
 				{ID: "a", Status: "completed", Estimate: "m", Type: "task"},
 				{ID: "b", Status: "todo", Estimate: "l", Type: "feature"},
-				{ID: "c", Status: "in-progress", Estimate: "xl", Type: "epic"},       // excluded
-				{ID: "d", Status: "completed", Estimate: "xl", Type: "milestone"},     // excluded
+				{ID: "c", Status: "in-progress", Estimate: "xl", Type: "epic"},    // excluded
+				{ID: "d", Status: "completed", Estimate: "xl", Type: "milestone"}, // excluded
 			},
 			wantCompleted:  3,
 			wantTotal:      8,

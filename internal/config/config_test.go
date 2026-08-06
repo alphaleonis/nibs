@@ -1358,7 +1358,7 @@ func TestIsValidEstimate(t *testing.T) {
 		{"m", true},
 		{"l", true},
 		{"xl", true},
-		{"", true},  // empty is valid (means unestimated)
+		{"", true},   // empty is valid (means unestimated)
 		{"S", false}, // case sensitive
 		{"M", false},
 		{"small", false},

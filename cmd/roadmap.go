@@ -33,14 +33,14 @@ var (
 
 // roadmapData holds the structured roadmap for JSON output.
 type roadmapData struct {
-	Milestones  []milestoneGroup `json:"milestones"`
+	Milestones  []milestoneGroup  `json:"milestones"`
 	Unscheduled *unscheduledGroup `json:"unscheduled,omitempty"`
 }
 
 // unscheduledGroup represents items not assigned to any milestone.
 type unscheduledGroup struct {
-	Epics []epicGroup  `json:"epics,omitempty"`
-	Other []*nib.Nib `json:"other,omitempty"`
+	Epics []epicGroup `json:"epics,omitempty"`
+	Other []*nib.Nib  `json:"other,omitempty"`
 }
 
 // milestoneGroup represents a milestone and its contents. Progress is the
@@ -61,7 +61,6 @@ type epicGroup struct {
 	Progress graph.ProgressRollup `json:"progress"`
 	Items    []*nib.Nib           `json:"items,omitempty"`
 }
-
 
 var roadmapCmd = &cobra.Command{
 	Use:   "roadmap",

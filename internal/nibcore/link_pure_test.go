@@ -475,7 +475,7 @@ func TestCheckAllLinksInMap(t *testing.T) {
 			"a": {
 				ID: "a", Status: "todo",
 				BlockedBy: []string{"b", "a"}, // b valid, a self-ref
-				Parent:    "nonexistent",       // broken
+				Parent:    "nonexistent",      // broken
 			},
 			"b": {
 				ID: "b", Status: "todo",

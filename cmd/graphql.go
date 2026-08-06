@@ -12,14 +12,14 @@ import (
 
 	"github.com/99designs/gqlgen/graphql"
 	"github.com/99designs/gqlgen/graphql/executor"
+	"github.com/alphaleonis/nibs/internal/graph"
+	"github.com/alphaleonis/nibs/internal/input"
+	"github.com/alphaleonis/nibs/internal/output"
 	"github.com/spf13/cobra"
 	"github.com/tidwall/pretty"
 	"github.com/vektah/gqlparser/v2/ast"
 	"github.com/vektah/gqlparser/v2/formatter"
 	"github.com/vektah/gqlparser/v2/gqlerror"
-	"github.com/alphaleonis/nibs/internal/graph"
-	"github.com/alphaleonis/nibs/internal/input"
-	"github.com/alphaleonis/nibs/internal/output"
 )
 
 var (
