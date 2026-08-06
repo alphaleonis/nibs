@@ -1,6 +1,7 @@
 package cmd
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -11,9 +12,13 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/99designs/gqlgen/graphql"
+	"github.com/99designs/gqlgen/graphql/executor"
+	"github.com/vektah/gqlparser/v2/ast"
 	"github.com/vektah/gqlparser/v2/gqlerror"
 
 	"github.com/alphaleonis/nibs/internal/config"
+	"github.com/alphaleonis/nibs/internal/graph"
 	"github.com/alphaleonis/nibs/internal/input"
 	"github.com/alphaleonis/nibs/internal/nib"
 	"github.com/alphaleonis/nibs/internal/nibcore"
@@ -910,7 +915,7 @@ func TestQueryCommandGraphqlErrorIsCoded(t *testing.T) {
 // (dedup to one sentence) is asserted alongside it because both ride on the
 // same returned value.
 func TestFormatGraphQLErrorsCarriesTheCode(t *testing.T) {
-	err := formatGraphQLErrors(gqlerror.List{notFoundErr(), notFoundErr()})
+	err := formatGraphQLErrors(gqlerror.List{notFoundErr(), notFoundErr()}, rootFieldOutcome{})
 	var ce *output.CodedError
 	if !errors.As(err, &ce) {
 		t.Fatalf("formatGraphQLErrors returned %T, want *output.CodedError", err)
@@ -928,7 +933,7 @@ func TestFormatGraphQLErrorsCarriesTheCode(t *testing.T) {
 	if cause := ce.Unwrap(); cause != nil {
 		t.Errorf("two identical-message refusals attributed a cause: %v", cause)
 	}
-	if formatGraphQLErrors(gqlerror.List{}) != nil {
+	if formatGraphQLErrors(gqlerror.List{}, rootFieldOutcome{}) != nil {
 		t.Error("an empty error list must format to nil, not to a coded failure")
 	}
 }
@@ -993,7 +998,7 @@ func TestFormatGraphQLErrorsCarriesASoleClassifiedCause(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			err := formatGraphQLErrors(tt.errs)
+			err := formatGraphQLErrors(tt.errs, rootFieldOutcome{})
 			var ce *output.CodedError
 			if !errors.As(err, &ce) {
 				t.Fatalf("formatGraphQLErrors returned %T, want *output.CodedError", err)
@@ -1200,6 +1205,92 @@ func TestQueryConflictEnrichmentIsWithheld(t *testing.T) {
 				t.Errorf("no currentEtag may be offered here, got %q", env.Error.CurrentEtag)
 			}
 		})
+	}
+}
+
+// TestQueryConflictCarriesTheCommittedClauseThroughTheEnrichment pins the
+// ifMatch retry hazard end to end, at the command boundary rather than at
+// executeQuery.
+//
+// A CONFLICT is the one class that does not reach the caller as executeQuery's
+// own error: the query RunE routes it through etagConflictError, which mints a
+// FRESH output.ErrorConflict from err.Error() so the currentEtag can ride along.
+// The clause naming what committed survives that re-wrap only because the re-wrap
+// reuses the rendered message. An etagConflictError that composed its own
+// sentence instead would drop it silently, leaving the caller to resend a batch
+// whose first half already landed — with no test failing.
+//
+// The reported currentEtag is asserted to differ from the token `a` consumed,
+// which is the churn in one line: `a`'s write moved the nib past the etag the
+// caller held, so a blind resend of the whole batch loses the race again.
+func TestQueryConflictCarriesTheCommittedClauseThroughTheEnrichment(t *testing.T) {
+	t.Cleanup(resetQueryFlags)
+	t.Cleanup(resetSetFlags)
+
+	nibsDir, id, stale := writeStaleEtagNib(t, "q-cmt")
+
+	readEtagAndTitle := func() (string, string) {
+		t.Helper()
+		resetQueryFlags()
+		out, err := runQueryCmd(t, nibsDir, `{ nib(id: "`+id+`") { etag title } }`, "--json")
+		if err != nil {
+			t.Fatalf("reading the nib back failed: %v", err)
+		}
+		var read struct {
+			Nib struct {
+				Etag  string `json:"etag"`
+				Title string `json:"title"`
+			} `json:"nib"`
+		}
+		if uerr := json.Unmarshal([]byte(out), &read); uerr != nil {
+			t.Fatalf("read-back is not JSON: %v\nraw: %s", uerr, out)
+		}
+		return read.Nib.Etag, read.Nib.Title
+	}
+
+	fresh, _ := readEtagAndTitle()
+	if fresh == "" || fresh == stale {
+		t.Fatalf("precondition failed: fresh etag %q must be non-empty and differ from the stale one %q", fresh, stale)
+	}
+
+	resetQueryFlags()
+	mutation := `mutation { a: updateNib(id: "` + id + `", input: {title: "A2", ifMatch: "` + fresh + `"}) { id } ` +
+		`b: updateNib(id: "` + id + `", input: {title: "B2", ifMatch: "` + stale + `"}) { id } }`
+	out, err := runQueryCmd(t, nibsDir, mutation, "--json")
+	if err == nil {
+		t.Fatalf("a batch holding a stale ifMatch returned no error; out: %q", out)
+	}
+
+	// The premise, asserted before the message: `a` really landed, so naming it
+	// is not a vacuous claim — and `b` really did not.
+	if _, title := readEtagAndTitle(); title != "A2" {
+		t.Fatalf("premise broken: title = %q, want %q (a must have committed and b must not have)", title, "A2")
+	}
+
+	if code := reportExitError(io.Discard, err); code != output.ExitConflict {
+		t.Errorf("exit = %d, want %d (conflict)", code, output.ExitConflict)
+	}
+	var env conflictEnvelope
+	if uerr := json.Unmarshal([]byte(out), &env); uerr != nil {
+		t.Fatalf("output is not a JSON error envelope: %v\nraw: %s", uerr, out)
+	}
+	if env.Error.Code != output.ErrConflict {
+		t.Errorf("envelope code = %q, want %q", env.Error.Code, output.ErrConflict)
+	}
+	if env.Error.CurrentEtag == "" {
+		t.Fatalf("the conflict offered no currentEtag, so no retry is reconcilable: %s", out)
+	}
+	if env.Error.CurrentEtag == fresh {
+		t.Errorf("currentEtag = %q, the token `a` consumed — `a`'s write must have moved it past that", fresh)
+	}
+	if !strings.Contains(env.Error.Message, "a succeeded") {
+		t.Errorf("the enrichment dropped the committed clause: %q", env.Error.Message)
+	}
+	if !strings.Contains(env.Error.Message, "b failed") {
+		t.Errorf("the enrichment dropped the failure attribution: %q", env.Error.Message)
+	}
+	if !strings.HasPrefix(env.Error.Message, "graphql: ") {
+		t.Errorf("the enrichment lost the transport prefix: %q", env.Error.Message)
 	}
 }
 
@@ -1509,6 +1600,436 @@ func TestQueryHierarchyBatchExitsLikeTheDirectCommands(t *testing.T) {
 			}
 			if !slices.Equal(env.Error.AllowedParentTypes, tt.wantHint) {
 				t.Errorf("allowedParentTypes = %v, want %v", env.Error.AllowedParentTypes, tt.wantHint)
+			}
+		})
+	}
+}
+
+// TestExecuteQueryBatchNamesTheMutationsThatCommitted pins the reproduction the
+// whole change exists for: three deletes, the middle id unknown, and the two
+// real files gone by the time the response is built.
+//
+// gqlgen runs root mutation fields serially and does NOT stop at the first
+// failure — the _Mutation loop in internal/graph/generated.go assigns every
+// out.Values[i] — and each resolver commits to disk on its own. So the response
+// is a refusal that has already destroyed two files, and the message has to say
+// which. The store assertions run ahead of the message assertions because they
+// are the premise: without them a passing message would prove nothing about what
+// landed.
+func TestExecuteQueryBatchNamesTheMutationsThatCommitted(t *testing.T) {
+	app := setupQueryTestApp(t)
+	for _, id := range []string{"p-igir", "p-rxbx"} {
+		createQueryTestNib(t, app.Core, id, "Nib "+id, "todo")
+	}
+
+	_, err := executeQuery(app,
+		`mutation { d1: deleteNib(id:"p-igir") d2: deleteNib(id:"p-zzzz") d3: deleteNib(id:"p-rxbx") }`,
+		nil, "")
+	if err == nil {
+		t.Fatal("a batch naming an unknown id returned no error")
+	}
+
+	for _, id := range []string{"p-igir", "p-rxbx"} {
+		if _, getErr := app.Core.Get(id); getErr == nil {
+			t.Fatalf("premise broken: %s survived the batch, so nothing was silently committed", id)
+		}
+	}
+
+	var ce *output.CodedError
+	if !errors.As(err, &ce) {
+		t.Fatalf("expected *output.CodedError, got %T: %v", err, err)
+	}
+	if ce.Code != output.ErrNotFound {
+		t.Errorf("code = %q, want %q — naming what committed must not change the class", ce.Code, output.ErrNotFound)
+	}
+	if got := output.ExitCode(ce.Code); got != output.ExitNotFound {
+		t.Errorf("exit code = %d, want %d (ExitNotFound)", got, output.ExitNotFound)
+	}
+	const want = "graphql: nib not found; d1, d3 succeeded; d2 failed"
+	if ce.Error() != want {
+		t.Errorf("message = %q, want %q", ce.Error(), want)
+	}
+}
+
+// TestExecuteQueryCommittedFieldNaming walks every boundary of "which root
+// fields does this response claim committed, and which does it blame".
+//
+// The claim is derived from the OPERATION DOCUMENT split by the root keys named
+// by error paths, never from resp.Data. Data cannot answer it here: every field of
+// the Mutation type is non-null, so one failed root field nullifies the whole
+// object and resp.Data is the literal `null` — measured, not assumed. Error
+// paths, by contrast, are populated on this path (gqlgen presents
+// gqlerror.WrapPath(graphql.GetPath(ctx), err)) and their first element is the
+// response key: the alias when the caller wrote one, the field name otherwise.
+//
+// Order comes from the document, not from the error list, so nothing here rests
+// on an order gqlgen does not guarantee — root QUERY fields are dispatched
+// concurrently and their error order is not stable (see graphQLResponseCode).
+func TestExecuteQueryCommittedFieldNaming(t *testing.T) {
+	// wroteTitle asserts a nib carries the title a committed update would have
+	// left; survived and deleted assert a nib is still in, or gone from, the
+	// store. Rows whose reason rests on what actually landed on disk carry one,
+	// so the claim is measured rather than inferred from the message alone.
+	wroteTitle := func(id, title string) func(*testing.T, *App) {
+		return func(t *testing.T, app *App) {
+			t.Helper()
+			b, err := app.Core.Get(id)
+			if err != nil {
+				t.Fatalf("%s is gone: %v", id, err)
+			}
+			if b.Title != title {
+				t.Errorf("%s title = %q, want %q", id, b.Title, title)
+			}
+		}
+	}
+	survived := func(id string) func(*testing.T, *App) {
+		return func(t *testing.T, app *App) {
+			t.Helper()
+			if _, err := app.Core.Get(id); err != nil {
+				t.Errorf("%s was deleted: %v", id, err)
+			}
+		}
+	}
+	deleted := func(id string) func(*testing.T, *App) {
+		return func(t *testing.T, app *App) {
+			t.Helper()
+			if _, err := app.Core.Get(id); err == nil {
+				t.Errorf("%s survived, so nothing was committed for it", id)
+			}
+		}
+	}
+
+	tests := []struct {
+		name     string
+		query    string
+		wantOK   bool
+		wantMsg  string
+		wantCode string
+		check    func(*testing.T, *App)
+	}{
+		{
+			// The common path: one root field, and it failed. Naming a
+			// "0 succeeded" list here would be noise on every single-mutation
+			// failure an agent makes.
+			name:     "a lone failing mutation names nothing",
+			query:    `mutation { deleteNib(id:"p-none") }`,
+			wantMsg:  "graphql: nib not found",
+			wantCode: output.ErrNotFound,
+		},
+		{
+			name:     "two fields, one committing, names the one that landed",
+			query:    `mutation { d1: deleteNib(id:"p-a") d2: deleteNib(id:"p-none") }`,
+			wantMsg:  "graphql: nib not found; d1 succeeded; d2 failed",
+			wantCode: output.ErrNotFound,
+		},
+		{
+			// A type condition on the mutation root — inline here, named in the
+			// row below — is what makes CollectFields consult the implementor
+			// set; plain field selections never reach that branch. Collecting
+			// against the wrong set would drop d1 from the document's root
+			// fields, so this is where a drifted implementor list would show.
+			name:     "an inline fragment on Mutation contributes its fields",
+			query:    `mutation { ... on Mutation { d1: deleteNib(id:"p-a") } d2: deleteNib(id:"p-none") }`,
+			wantMsg:  "graphql: nib not found; d1 succeeded; d2 failed",
+			wantCode: output.ErrNotFound,
+			check:    deleted("p-a"),
+		},
+		{
+			// The named-fragment form of the row above: the spread branch of
+			// CollectFields consults the same implementor set.
+			name:     "a named fragment spread on Mutation contributes its fields",
+			query:    `mutation { ...F d2: deleteNib(id:"p-none") } fragment F on Mutation { d1: deleteNib(id:"p-a") }`,
+			wantMsg:  "graphql: nib not found; d1 succeeded; d2 failed",
+			wantCode: output.ErrNotFound,
+			check:    deleted("p-a"),
+		},
+		{
+			// Two refusals that do NOT dedup, so the message takes its
+			// multi-error form and the outcome has to land on its own line
+			// rather than trailing the last refusal. Their exit classes differ
+			// (3 and 2), so the response is uncategorized — which the outcome
+			// clause must not perturb.
+			name: "distinct refusals put the outcome on its own line",
+			query: `mutation { d1: deleteNib(id:"p-a") d2: deleteNib(id:"p-none") ` +
+				`d3: updateNib(id:"p-b", input:{status:"bogus"}) { id } }`,
+			wantMsg: "graphql errors:\n  nib not found\n  " +
+				`invalid status "bogus": must be one of in-progress, todo, draft, deferred, completed, scrapped` +
+				"\nd1 succeeded; d2, d3 failed",
+			wantCode: output.ErrUncategorized,
+			check:    deleted("p-a"),
+		},
+		{
+			// Nothing landed, so no clause is added — and the two identical
+			// refusals still dedup to one sentence.
+			name:     "a batch where nothing commits is unchanged",
+			query:    `mutation { d1: deleteNib(id:"p-x") d2: deleteNib(id:"p-y") }`,
+			wantMsg:  "graphql: nib not found",
+			wantCode: output.ErrNotFound,
+		},
+		{
+			name:   "a batch where everything commits raises no error at all",
+			query:  `mutation { d1: deleteNib(id:"p-a") d2: deleteNib(id:"p-b") }`,
+			wantOK: true,
+		},
+		{
+			// No alias, so the response key IS the field name — which is what
+			// the error path would have carried had it failed.
+			name:     "an unaliased committing field is named by its field name",
+			query:    `mutation { deleteNib(id:"p-a") z: deleteNib(id:"p-none") }`,
+			wantMsg:  "graphql: nib not found; deleteNib succeeded; z failed",
+			wantCode: output.ErrNotFound,
+		},
+		{
+			// p-a has no parent, so `parent` resolves to null with no error.
+			// A null in the selection is not a failure, and keying off error
+			// paths rather than data is what keeps the two apart. The title
+			// assertion is the premise: without it a resolver that reported
+			// success without persisting would leave this row green.
+			name:     "a legitimately null selection is not a failure",
+			query:    `mutation { u1: updateNib(id:"p-a", input:{title:"A2"}) { id parent { id } } d2: deleteNib(id:"p-none") }`,
+			wantMsg:  "graphql: nib not found; u1 succeeded; d2 failed",
+			wantCode: output.ErrNotFound,
+			check:    wroteTitle("p-a", "A2"),
+		},
+		{
+			// A failing query commits nothing, so there is nothing to name even
+			// though the `a` field resolved.
+			name:     "a query names nothing even when a root field resolved",
+			query:    `{ a: nib(id:"p-a") { id } b: nibs(filter:{parentId:"zz"}) { id } }`,
+			wantMsg:  `graphql: parentId filter: no nib with id "zz"`,
+			wantCode: output.ErrNotFound,
+		},
+		{
+			// The update committed — the title assertion proves it — and only
+			// its nested read failed, but the error path is rooted at u1, so u1
+			// is reported failed. This deliberately declines to separate the
+			// two: calling it committed would claim a write landed on the
+			// strength of an inference about where gqlgen rooted the error.
+			// It is also why "failed" never means "wrote nothing".
+			name:     "a nested failure reports the field it sits under as failed",
+			query:    `mutation { u1: updateNib(id:"p-a", input:{title:"A2"}) { children(filter:{parentId:"zz"}) { id } } d2: deleteNib(id:"p-b") }`,
+			wantMsg:  `graphql: parentId filter: no nib with id "zz"; d2 succeeded; u1 failed`,
+			wantCode: output.ErrNotFound,
+			check:    wroteTitle("p-a", "A2"),
+		},
+		{
+			// An introspection meta-field is collected alongside the mutations
+			// and never fails, so it would otherwise be reported as a write
+			// that landed. It commits nothing, so it belongs to neither list.
+			name:     "__typename is never named as a mutation that committed",
+			query:    `mutation { __typename d1: deleteNib(id:"p-a") d2: deleteNib(id:"p-none") }`,
+			wantMsg:  "graphql: nib not found; d1 succeeded; d2 failed",
+			wantCode: output.ErrNotFound,
+		},
+		{
+			// @skip(if: true) removes the field before execution, so k1 never
+			// ran and no id was deleted. Naming it would be a fabricated write.
+			name:     "a skipped field never ran and is never named",
+			query:    `mutation { k1: deleteNib(id:"p-a") @skip(if: true) k2: deleteNib(id:"p-none") }`,
+			wantMsg:  "graphql: nib not found",
+			wantCode: output.ErrNotFound,
+			check:    survived("p-a"),
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			app := setupQueryTestApp(t)
+			for _, id := range []string{"p-a", "p-b", "p-c"} {
+				createQueryTestNib(t, app.Core, id, "Nib "+id, "todo")
+			}
+
+			_, err := executeQuery(app, tt.query, nil, "")
+			if tt.check != nil {
+				tt.check(t, app)
+			}
+			if tt.wantOK {
+				if err != nil {
+					t.Fatalf("executeQuery() error = %v, want none", err)
+				}
+				return
+			}
+			if err == nil {
+				t.Fatal("executeQuery() returned no error")
+			}
+			var ce *output.CodedError
+			if !errors.As(err, &ce) {
+				t.Fatalf("expected *output.CodedError, got %T: %v", err, err)
+			}
+			if ce.Code != tt.wantCode {
+				t.Errorf("code = %q, want %q", ce.Code, tt.wantCode)
+			}
+			if ce.Error() != tt.wantMsg {
+				t.Errorf("message = %q, want %q", ce.Error(), tt.wantMsg)
+			}
+		})
+	}
+}
+
+// TestFormatGraphQLErrorsCommittedNamesStayOutOfCodeAndDedup pins that naming
+// what committed composes with the two rules that already run over the same
+// error list, neither of which may see the added text.
+//
+// Dedup keys on each error's own Message and the class is decided by
+// graphQLResponseCode scanning the errors themselves, so the names are appended
+// to the FINISHED message and touch neither. The rows are the two shapes that
+// would break if they did: N identical refusals that must still collapse to one
+// sentence, and a same-exit mixture that must still generalize to its class
+// rather than fall to UNCATEGORIZED.
+//
+// The last two rows fix the gate on the whole clause: it is the COMMITTED list
+// that opens it, so a response with only failed names renders the bare refusal
+// and nothing more.
+func TestFormatGraphQLErrorsCommittedNamesStayOutOfCodeAndDedup(t *testing.T) {
+	tests := []struct {
+		name      string
+		errs      gqlerror.List
+		outcome   rootFieldOutcome
+		wantCode  string
+		wantMsg   string
+		wantCause bool
+	}{
+		{
+			// Two byte-identical refusals dedup to one sentence, and the names
+			// ride once at the end rather than once per copy.
+			name:     "identical refusals still dedup with names appended",
+			errs:     gqlerror.List{notFoundErr(), notFoundErr()},
+			outcome:  rootFieldOutcome{committed: []string{"d1", "d3"}, failed: []string{"d2"}},
+			wantCode: output.ErrNotFound,
+			wantMsg:  `graphql: parentId filter: no nib with id "zz"; d1, d3 succeeded; d2 failed`,
+		},
+		{
+			// A HIERARCHY beside an unclassified failure shares exit 2, so the
+			// response generalizes to VALIDATION_ERROR. The names must not
+			// perturb that, and the multi-error rendering puts them on their own
+			// line so they cannot read as part of the last refusal.
+			name:     "a same-exit mixture still generalizes to its class",
+			errs:     gqlerror.List{hierarchyErr(), gqlerror.Errorf("resolver blew up")},
+			outcome:  rootFieldOutcome{committed: []string{"a"}, failed: []string{"b"}},
+			wantCode: output.ErrValidation,
+			wantMsg: "graphql errors:\n  " + hierarchyErr().Message +
+				"\n  resolver blew up\na succeeded; b failed",
+		},
+		{
+			// A sole classified failure still hands its cause back, so the
+			// repair hint (currentEtag) survives alongside the names. No failed
+			// key was attributable here, so only the succeeded clause renders.
+			name:      "a sole classified cause is still attributable",
+			errs:      gqlerror.List{conflictErr()},
+			outcome:   rootFieldOutcome{committed: []string{"a", "b"}},
+			wantCode:  output.ErrConflict,
+			wantMsg:   "graphql: " + conflictErr().Message + "; a, b succeeded",
+			wantCause: true,
+		},
+		{
+			// The no-commit baseline: with no names to add, the rendering is
+			// the plain refusal and nothing else.
+			name:     "no committed names renders the plain refusal",
+			errs:     gqlerror.List{notFoundErr(), notFoundErr()},
+			wantCode: output.ErrNotFound,
+			wantMsg:  `graphql: parentId filter: no nib with id "zz"`,
+		},
+		{
+			// Every root field failed, so there is no partial outcome to
+			// attribute — the failed names would only restate the refusal the
+			// caller already has, once per field.
+			name:     "failed names alone add nothing to the refusal",
+			errs:     gqlerror.List{notFoundErr(), notFoundErr()},
+			outcome:  rootFieldOutcome{failed: []string{"d1", "d2"}},
+			wantCode: output.ErrNotFound,
+			wantMsg:  `graphql: parentId filter: no nib with id "zz"`,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			err := formatGraphQLErrors(tt.errs, tt.outcome)
+			var ce *output.CodedError
+			if !errors.As(err, &ce) {
+				t.Fatalf("formatGraphQLErrors returned %T, want *output.CodedError", err)
+			}
+			if ce.Code != tt.wantCode {
+				t.Errorf("code = %q, want %q — the names must not reach the code decision", ce.Code, tt.wantCode)
+			}
+			if ce.Error() != tt.wantMsg {
+				t.Errorf("message = %q, want %q", ce.Error(), tt.wantMsg)
+			}
+			if got := ce.Unwrap() != nil; got != tt.wantCause {
+				t.Errorf("carries a cause = %v, want %v (cause: %v)", got, tt.wantCause, ce.Unwrap())
+			}
+		})
+	}
+}
+
+// operationContextFor builds the gqlgen operation context for a document
+// without executing it, so classifyRootFields can be driven against a real
+// parsed document paired with a hand-built error list.
+func operationContextFor(t *testing.T, app *App, query string) *graphql.OperationContext {
+	t.Helper()
+	es := graph.NewExecutableSchema(graph.Config{Resolvers: app.newResolver()})
+	opCtx, errs := executor.New(es).CreateOperationContext(
+		graphql.StartOperationTrace(context.Background()),
+		&graphql.RawParams{Query: query},
+	)
+	if errs != nil {
+		t.Fatalf("building the operation context for %q failed: %v", query, errs)
+	}
+	return opCtx
+}
+
+// TestClassifyRootFieldsRequiresEveryErrorToBeAttributable drives the guard the
+// end-to-end rows above cannot reach: an error gqlgen did not root at a response
+// key. Every resolver failure on that path carries one, so the list is built by
+// hand.
+//
+// The whole claim is a split — the document's root fields, partitioned by the
+// ones an error names — so an error that names nothing could belong to any of
+// them. Calling the rest committed would assert a write landed on a field that
+// had in fact just failed, and calling them failed would assert the mirror
+// image. Reporting nothing is the only answer the evidence supports.
+func TestClassifyRootFieldsRequiresEveryErrorToBeAttributable(t *testing.T) {
+	rooted := func(key string) *gqlerror.Error {
+		return &gqlerror.Error{Message: "boom", Path: ast.Path{ast.PathName(key)}}
+	}
+
+	tests := []struct {
+		name string
+		errs gqlerror.List
+		want rootFieldOutcome
+	}{
+		{
+			// The baseline the guards are measured against: the named field is
+			// the failure, the other one committed.
+			name: "an error rooted at a response key splits the document",
+			errs: gqlerror.List{rooted("d2")},
+			want: rootFieldOutcome{committed: []string{"d1"}, failed: []string{"d2"}},
+		},
+		{
+			name: "an error with no path names nothing",
+			errs: gqlerror.List{{Message: "boom"}},
+		},
+		{
+			name: "an error rooted at a list index names nothing",
+			errs: gqlerror.List{{Message: "boom", Path: ast.Path{ast.PathIndex(0)}}},
+		},
+		{
+			// One unattributable error poisons the whole split, even beside an
+			// error that IS attributable.
+			name: "one unattributable error suppresses both lists",
+			errs: gqlerror.List{rooted("d2"), {Message: "boom"}},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			app := setupQueryTestApp(t)
+			opCtx := operationContextFor(t, app, `mutation { d1: deleteNib(id:"p-a") d2: deleteNib(id:"p-b") }`)
+			got := classifyRootFields(opCtx, tt.errs)
+			if !slices.Equal(got.committed, tt.want.committed) {
+				t.Errorf("classifyRootFields().committed = %v, want %v", got.committed, tt.want.committed)
+			}
+			if !slices.Equal(got.failed, tt.want.failed) {
+				t.Errorf("classifyRootFields().failed = %v, want %v", got.failed, tt.want.failed)
 			}
 		})
 	}
