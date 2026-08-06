@@ -48,3 +48,24 @@ go = "1.26.5"
 golangci-lint = "2.12.2"
 node = "22"
 task = "3.50.0"
+
+# Release-path tools. These two are not needed to build or test the project —
+# only to produce a release — but they are the highest-privilege things it runs:
+# release.yml holds `contents: write` and publishes the binaries end users
+# install via install.sh / install.ps1 and auto-update into via `nibs upgrade`,
+# so whatever executes there is inside the trust boundary of every nibs user
+# (nibs-ag7i).
+#
+# Both used to float. goreleaser was a `~> v2` constraint on the goreleaser
+# action, which let a minor release change build flags, archive layout or
+# checksum handling between two releases of the same nibs commit; go-licenses
+# was `go install …@latest`, so an arbitrary newest upstream release ran as code
+# in that job with no human in the loop. GOSUMDB verifies a module is
+# authentically what its author published — not that anyone reviewed it.
+#
+# Pinning them here rather than in the workflow is what makes a local
+# `goreleaser release --snapshot --clean` (see RELEASING.md) reproduce what the
+# release job does, and it keeps them inside Renovate's mise manager instead of
+# needing a custom manager per site.
+goreleaser = "2.17.1"
+"go:github.com/google/go-licenses" = "1.6.0"

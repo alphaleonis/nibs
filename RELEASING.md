@@ -60,11 +60,21 @@ Each release archive contains:
 
 To test the release build locally:
 
+`go-licenses` and `goreleaser` are pinned in `mise.toml`, so `mise install`
+provides both at the same versions the release job uses — there is nothing to
+install by hand.
+
 ```bash
-# Collect licenses (requires go-licenses)
-go install github.com/google/go-licenses@latest
-mise licenses
+mise install
+
+# Collect licenses
+task licenses
 
 # Dry-run GoReleaser
 goreleaser release --snapshot --clean
 ```
+
+Run `goreleaser` through `mise exec -- goreleaser …` if mise's shims are not on
+your PATH. Note the dry run executes `.goreleaser.yaml`'s `before` hooks, which
+include `cd web && npm ci` — so do not start it while a `task` run is
+installing (see CLAUDE.md).

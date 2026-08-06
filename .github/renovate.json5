@@ -25,12 +25,17 @@
   // releases, so a grouped pull request could carry only the half one source
   // could see and land the two back out of sync.
   //
-  // mise.toml is the covered set for those four, not the whole published-binary
-  // path. Two versions on that path stay outside it and float per release run:
+  // The two release-path tools that used to float outside that set —
   // release.yml's goreleaser CLI constraint (`version: "~> v2"`) and
-  // `go install github.com/google/go-licenses@latest`. The github-actions
-  // manager reads the goreleaser *action* ref but not its `version` input, so
-  // pinning the CLI would need a custom manager. nibs-ag7i owns pinning both.
+  // `go install github.com/google/go-licenses@latest` — are pinned in
+  // mise.toml too, so the mise manager covers them as well and no custom
+  // manager is needed (nibs-ag7i). That was the reason to pin them there
+  // rather than in the workflow: the github-actions manager reads the
+  // goreleaser *action* ref but not its `version` input.
+  //
+  // Every `uses:` ref is a full commit SHA with the tag as a trailing comment.
+  // The github-actions manager maintains that form — it rewrites the SHA and
+  // the comment together — so pinning does not freeze the actions in place.
 
   "packageRules": [
     {
