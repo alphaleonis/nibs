@@ -481,6 +481,28 @@ tasks:
     cmds:
       - bash scripts/vulncheck.sh
 
+  release:prep:
+    desc: Build everything a release archive needs (web assets, generated code, license notices)
+    # This used to live in .goreleaser.yaml's `before.hooks`, and moving it out
+    # is a security fix rather than tidying. The release job sets
+    # NIBS_SIGNING_KEY on the step that runs goreleaser, and goreleaser's before
+    # hooks inherit that environment — so `npm ci`, which executes install and
+    # postinstall scripts for every package in web/package-lock.json, ran with
+    # the release signing key readable in its environment. Any hostile package
+    # in that tree could have taken a key that cannot be revoked for binaries
+    # already shipped.
+    #
+    # Running the same work as its own step, before the key is ever in scope,
+    # means the key-bearing process has no third-party children at all.
+    #
+    # It also closes a hazard CLAUDE.md already recorded: the old hook ran a
+    # bare `cd web && npm ci`, outside the web:install gate, which is exactly
+    # the hand-run install that has corrupted node_modules here before. Going
+    # through web:build routes it back through that gate.
+    cmds:
+      - task: web:build
+      - task: licenses
+
   licenses:
     desc: Collect third-party dependency licenses
     # Through `mise exec` for the same reason as lint above: go-licenses is
