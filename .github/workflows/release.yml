@@ -99,16 +99,14 @@ jobs:
           git tag "${{ inputs.version }}"
           git push origin "${{ inputs.version }}"
 
-      - uses: actions/setup-go@v6
+      # go and node come from mise.toml, the same file ci.yml reads, so the
+      # published binaries are compiled by the toolchain CI built and tested
+      # this commit with — enforced by both jobs reading one file rather than by
+      # a comment asking that three hand-written copies be bumped together
+      # (nibs-23f0).
+      - uses: jdx/mise-action@v4
         with:
-          # The same toolchain CI built and tested this commit with, so the
-          # published binaries are not compiled by a Go release nothing verified.
-          # Keep in sync with mise.toml and ci.yml.
-          go-version: "1.26.5"
-
-      - uses: actions/setup-node@v6
-        with:
-          node-version: "22"
+          github_token: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Install go-licenses
         run: go install github.com/google/go-licenses@latest
