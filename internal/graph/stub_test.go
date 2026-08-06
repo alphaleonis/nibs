@@ -31,6 +31,14 @@ type stubReader struct {
 	// string. Tests that need queryResolver.Nibs to take its search branch
 	// (and therefore its includeAncestors step) seed this directly.
 	searchOut map[string][]*nib.Nib
+	// searchErr, when set, is what Search reports for every query — the
+	// index failure Core.Search surfaces when Bleve cannot answer.
+	searchErr error
+	// searchCalls counts Search invocations. Core.Search is the expensive read
+	// on these paths (a write lock for lazy init, a Bleve query, then a full
+	// scan of the store for id matches), so a test can pin how many of them one
+	// resolver call costs.
+	searchCalls int
 }
 
 // Get mirrors nibcore.Core.Get: exact id first, then — if a prefix is
@@ -80,6 +88,10 @@ func (s *stubReader) All() []*nib.Nib {
 }
 
 func (s *stubReader) Search(query string) ([]*nib.Nib, error) {
+	s.searchCalls++
+	if s.searchErr != nil {
+		return nil, s.searchErr
+	}
 	return s.searchOut[query], nil
 }
 

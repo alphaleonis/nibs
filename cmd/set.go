@@ -11,6 +11,7 @@ import (
 	"github.com/alphaleonis/nibs/internal/graph/model"
 	"github.com/alphaleonis/nibs/internal/nib"
 	"github.com/alphaleonis/nibs/internal/nibcore"
+	"github.com/alphaleonis/nibs/internal/nibtypes"
 	"github.com/alphaleonis/nibs/internal/output"
 	"github.com/alphaleonis/nibs/internal/projection"
 	"github.com/spf13/cobra"
@@ -353,10 +354,62 @@ func etagConflictError(jsonOutput bool, err error) (error, bool) {
 	return &output.CodedError{Code: output.ErrConflict, Msg: err.Error()}, true
 }
 
+// hierarchyError reports an illegal parent-type refusal as HIERARCHY enriched
+// with the parent types that WOULD be legal, so an agent can pick one instead of
+// re-deriving the rule or scraping the message: in --json the envelope carries
+// allowedParentTypes. It reports ok=false for every other error, leaving the
+// caller's own classification in charge.
+//
+// This is the ONE place a hierarchy envelope is built. Every CLI surface that
+// builds a --json error envelope reaches it: `nibs mv` and `nibs set` through
+// setMutationError (which `nibs close` and `nibs body` share, though neither
+// writes a parent or a type and so cannot raise this), `nibs query` through its
+// coded boundary (cmd/graphql.go), and `nibs new` by calling it directly — new
+// cannot share setMutationError because its fallback for an unclassified create
+// failure is FILE_ERROR, not validation.
+//
+// Two surfaces deliberately do not: the TUI issues UpdateNib directly and drops
+// the refusal, and cmd/serve.go's presenter stamps only the codes it enumerates,
+// so a hierarchy refusal reaches a web client uncoded.
+//
+// err is rendered as-is rather than the HierarchyError's own message, so
+// whatever context the caller's text carries survives. Two cases need it: the
+// transport prefix `nibs query` puts on every failure, and the graph layer's own
+// "type change would invalidate child <id>: …" wrapper, which names WHICH child
+// a `--type` change would orphan — the HierarchyError alone knows only the
+// types. The unwrapped case (a refused `--parent`, where Core.ValidateParent
+// returns nibtypes.ValidateParentType's error as-is) renders identically either
+// way.
+//
+// PRECONDITION: err must represent exactly ONE refused link — the caller owns
+// establishing that, exactly as for etagConflictError. errors.As stops at the
+// first *HierarchyError it reaches, so a failure covering several refusals would
+// hand back one allowed set as though it answered all of them. The direct
+// commands satisfy this trivially (one mutation, one error); `nibs query`
+// establishes it through formatGraphQLErrors, which sets Err only for a response
+// with a single classified failure of the response's own class.
+func hierarchyError(jsonOutput bool, err error) (error, bool) {
+	var he *nibtypes.HierarchyError
+	if !errors.As(err, &he) {
+		return nil, false
+	}
+	if jsonOutput {
+		return output.ErrorHierarchy(err.Error(), he.Allowed), true
+	}
+	return &output.CodedError{Code: output.ErrHierarchy, Msg: err.Error()}, true
+}
+
 // setMutationError maps a mutation error to a CLI error. It mirrors
-// mutationError but enriches a reconcilable ETag mismatch with the server's
-// current etag.
+// mutationError but enriches the two failures that carry a repair hint: an
+// illegal parent link with the parent types that would be legal, and a
+// reconcilable ETag mismatch with the server's current etag.
+//
+// The order of the two is inert — *nibtypes.HierarchyError implements no Unwrap
+// and neither ETag type wraps one, so no error can satisfy both.
 func setMutationError(jsonOutput bool, err error) error {
+	if hierarchy, ok := hierarchyError(jsonOutput, err); ok {
+		return hierarchy
+	}
 	if conflict, ok := etagConflictError(jsonOutput, err); ok {
 		return conflict
 	}
@@ -376,6 +429,13 @@ func setMutationError(jsonOutput bool, err error) error {
 //     "stop on error" contract.
 //   - A reconcilable ETag conflict is CONFLICT, the "409 → re-read and retry"
 //     class.
+//   - An illegal parent link — a child type under a parent type the hierarchy
+//     rule forbids — is HIERARCHY. It shares exit 2 with the VALIDATION_ERROR
+//     fallback, so what the code buys is not the exit but the allowedParentTypes
+//     repair hint the envelope carries with it (see hierarchyError), and the
+//     ability to tell a rule violation from a malformed argument. Sharing an
+//     exit is safe for a batched `nibs query` response because
+//     graphQLResponseCode compares exit statuses, not code strings.
 //   - A mutation whose SUBJECT id no nib answers to is NOT_FOUND (exit 3), the
 //     class every id-resolving command already reports. `nibs set`, `close` and
 //     `body` resolve the id up front and reach here with it only in the delete
@@ -402,8 +462,10 @@ func setMutationError(jsonOutput bool, err error) error {
 // not-found cause keeps its own class. That ordering is load-bearing for
 // OnDiskUnparseableError, the one classified type here with an Unwrap; it is
 // inert today because both of its construction sites carry an OS read error or a
-// YAML parse error. ETagMismatchError and ETagRequiredError implement no Unwrap
-// at all, so the conflict branch cannot be claimed by the sentinel either way.
+// YAML parse error. ETagMismatchError, ETagRequiredError and HierarchyError
+// implement no Unwrap at all, so neither the conflict nor the hierarchy branch
+// can be claimed by the sentinel either way, and their order among the
+// concrete-type tests is inert.
 func mutationErrCode(err error) (string, bool) {
 	var unparseableErr *nibcore.OnDiskUnparseableError
 	if errors.As(err, &unparseableErr) {
@@ -411,6 +473,10 @@ func mutationErrCode(err error) (string, bool) {
 	}
 	if isConflictError(err) {
 		return output.ErrConflict, true
+	}
+	var hierarchyErr *nibtypes.HierarchyError
+	if errors.As(err, &hierarchyErr) {
+		return output.ErrHierarchy, true
 	}
 	if errors.Is(err, nib.ErrNotFound) {
 		return output.ErrNotFound, true

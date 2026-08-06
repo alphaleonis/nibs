@@ -402,6 +402,22 @@ func newGraphQLHandler(app *App) http.Handler {
 //     only mutations wrap nib.ErrNotFound (snapshotResult). A new read resolver
 //     that carried it — nib(id:) erroring instead of resolving to null, say —
 //     would be presented as an empty result rather than as the failure it is.
+//   - "FILTER_CONTRADICTION" on the typed *graph.FilterTargetContradictionError —
+//     an id-valued filter field combined with its presence twin set to false
+//     (parentId + hasParent:false, blockedById + hasBlockedBy:false). It is a
+//     read-path refusal like the two above and needs a code of its own because
+//     both alternatives misinform. NOT_FOUND would route it to the "no such nib"
+//     empty state, whose wording blames an id when both halves of the pair may
+//     name real nibs — the type's own doc comment refuses that collapse for the
+//     same reason on the CLI side. Leaving it uncoded lands it in the web list's
+//     destructive error box, which is where the web client's query box can reach
+//     it in two clicks: it registers `parent:<id>` and `no:parent` as independent
+//     tokens, and "Children of this" on the row context menu ANDs a parentId onto
+//     whatever is already set, so a `no:parent` view reaches the pair without
+//     anyone typing it. Its own code lets TreeTable.svelte name the two tokens in
+//     the box's own vocabulary and, for the hierarchy pair, keep the "Clear
+//     hierarchy filters" button the empty state offered before the refusal
+//     existed.
 //
 // Every other error (the enum-validation errors, ETagRequiredError,
 // OnDiskUnparseableError, a filter target that vanished mid-query, a filter
@@ -425,9 +441,12 @@ func etagErrorPresenter(ctx context.Context, err error) *gqlerror.Error {
 	gqlErr := graphql.DefaultErrorPresenter(ctx, err)
 
 	var etagErr *nibcore.ETagMismatchError
+	var contradiction *graph.FilterTargetContradictionError
 	switch {
 	case errors.As(err, &etagErr):
 		setErrorCode(gqlErr, "ETAG_MISMATCH")
+	case errors.As(err, &contradiction):
+		setErrorCode(gqlErr, "FILTER_CONTRADICTION")
 	case errors.Is(err, nib.ErrNotFound):
 		setErrorCode(gqlErr, "NOT_FOUND")
 	}

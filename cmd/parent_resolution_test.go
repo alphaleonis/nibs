@@ -12,6 +12,7 @@ import (
 	"github.com/alphaleonis/nibs/internal/graph/model"
 	"github.com/alphaleonis/nibs/internal/nib"
 	"github.com/alphaleonis/nibs/internal/nibcore"
+	"github.com/alphaleonis/nibs/internal/ui"
 )
 
 // setupParentLinkTest builds a Resolver over a Core loaded from hand-written nib
@@ -198,4 +199,63 @@ func TestRootSurfacesAgreeOnDanglingParentLink(t *testing.T) {
 			assertSameIDs(t, "fetchSiblings", siblingsByTraversal(t, resolver, core, target), want)
 		})
 	}
+}
+
+// TestDeletedBareTokenCycleStaysVisibleInTree is the end-to-end half of the
+// cycle-tolerant tree builder: it drives a REAL cycle into a real Core through
+// the removal sweep, then renders it.
+//
+// `nibs-t1` names its parent by the bare token `e1`, which resolves exactly to
+// the bare-token nib while that nib exists. Deleting it re-canonicalizes the
+// link onto the prefixed twin `nibs-e1` — which already names `nibs-t1` as its
+// own parent, so the rebind closes a parent cycle with no writer having
+// validated one. Both nibs then have a parent inside the store and used to
+// disappear from the tree entirely.
+//
+// It lives in cmd because that is the composition root already depending on
+// both nibcore (to drive the sweep) and ui (to render), so neither layer has to
+// learn about the other.
+func TestDeletedBareTokenCycleStaysVisibleInTree(t *testing.T) {
+	_, core := setupParentLinkTest(t, map[string]string{
+		"e1":      "",
+		"nibs-e1": "parent: nibs-t1\n",
+		"nibs-t1": "parent: e1\n",
+	})
+
+	// Premise: the bare spelling resolves exactly, so load leaves it verbatim
+	// and no cycle exists yet. Without this the assertions below could pass for
+	// the wrong reason.
+	if got := mustGet(t, core, "nibs-t1"); got.Parent != "e1" {
+		t.Fatalf("premise failed: stored parent = %q, want the bare spelling %q to survive load", got.Parent, "e1")
+	}
+	if cycles := core.CheckAllLinks().Cycles; len(cycles) != 0 {
+		t.Fatalf("premise failed: cycles before the delete = %+v, want none", cycles)
+	}
+
+	if err := core.Delete("e1"); err != nil {
+		t.Fatalf(`Delete("e1"): %v`, err)
+	}
+
+	// The rebind closed the cycle: this is the state the tree must survive.
+	if got := mustGet(t, core, "nibs-t1"); got.Parent != "nibs-e1" {
+		t.Fatalf("stored parent = %q, want %q — the removal sweep must rebind onto the prefixed twin", got.Parent, "nibs-e1")
+	}
+	if cycles := core.CheckAllLinks().Cycles; len(cycles) == 0 {
+		t.Fatalf("no cycle after the delete; the scenario under test did not reproduce")
+	}
+
+	all := core.All()
+	assertSameIDs(t, "store contents", all, []string{"nibs-e1", "nibs-t1"})
+
+	tree := ui.BuildTree(all, all, nib.SortByOrder)
+	var rendered []*nib.Nib
+	var walk func(nodes []*ui.TreeNode)
+	walk = func(nodes []*ui.TreeNode) {
+		for _, n := range nodes {
+			rendered = append(rendered, n.Nib)
+			walk(n.Children)
+		}
+	}
+	walk(tree)
+	assertSameIDs(t, "BuildTree over a store holding a parent cycle", rendered, []string{"nibs-e1", "nibs-t1"})
 }

@@ -205,6 +205,69 @@ export function hierarchyTokens(filter: QueryFilter): string[] {
   return tokens;
 }
 
+// --- Contradictory pairs -------------------------------------------------------
+
+/**
+ * The id-valued field / existence-field combinations the server refuses outright:
+ * an id names a relationship the nib must HAVE, while the paired `no:` token
+ * requires it to have none, so no store state satisfies both.
+ *
+ * `blockingId` + `no:blocking` is deliberately absent and is not an oversight.
+ * `has:blocking` asks whether a nib is ACTIVELY blocking something — false both
+ * when the nib's own status released its dependents and when every nib listing
+ * it as a blocker has itself been released — while `blocking:<id>` matches
+ * membership in the target's blocked_by whatever the candidate's status. The
+ * pair therefore selects the blockers the target still lists that are no longer
+ * blocking anything, an open one included when the target is the only nib that
+ * listed it and the target's own status has released it. The server answers
+ * that rather than refusing it.
+ *
+ * This mirrors `refuseContradiction` in internal/graph/filters.go. The server
+ * decides; this table only lets the UI name what it refused in the box's own
+ * words, so an entry missing here costs an explanation, never a wrong result.
+ */
+const CONTRADICTORY_PAIRS = [
+  { idField: "parentId", existenceField: "hasParent" },
+  { idField: "blockedById", existenceField: "hasBlockedBy" },
+] as const satisfies readonly { idField: RelIdKey; existenceField: PairedExistenceKey }[];
+
+/** Scalar-id NibFilter key → the token field-name that writes it — the reverse of
+ *  `REL_ID_FIELDS`. Derived from `REL_TOKEN_ORDER` so a renamed token renames here
+ *  too. */
+const REL_ID_NAMES: ReadonlyMap<string, string> = new Map(
+  REL_TOKEN_ORDER.flatMap((spec): [string, string][] =>
+    spec.kind === "id" ? [[spec.field, spec.name]] : [],
+  ),
+);
+
+/** Existence field → its `no:` spelling, for every dimension that has one.
+ *  Derived for the same reason as `REL_ID_NAMES`. */
+const NEGATIVE_EXISTENCE_TOKENS: ReadonlyMap<string, string> = new Map(
+  REL_TOKEN_ORDER.flatMap((spec): [string, string][] =>
+    spec.kind === "bool" && !spec.value ? [[spec.field, spec.token]] : [],
+  ),
+);
+
+/**
+ * The contradictory token pairs this filter holds, each as `[idToken, noToken]`
+ * in canonical spelling — `[["parent:tnib-1", "no:parent"]]`.
+ *
+ * Empty when the filter holds none, which is what an empty-state branch should
+ * treat as "cannot name the refusal": the server refuses on the filter it
+ * received, and the one in hand may already have moved on.
+ */
+export function contradictionTokens(filter: QueryFilter): string[][] {
+  const pairs: string[][] = [];
+  for (const { idField, existenceField } of CONTRADICTORY_PAIRS) {
+    const id = filter[idField];
+    const name = REL_ID_NAMES.get(idField);
+    const noToken = NEGATIVE_EXISTENCE_TOKENS.get(existenceField);
+    if (!id || filter[existenceField] !== false || !name || !noToken) continue;
+    pairs.push([`${name}:${id}`, noToken]);
+  }
+  return pairs;
+}
+
 /** A copy of `filter` with every hierarchy field removed and everything else — the
  *  metadata facets, free text, and the other relationship dimensions — kept. The
  *  escape hatch out of a hierarchy combination that matches nothing. */

@@ -109,6 +109,49 @@ func ExitCode(code string) int {
 	}
 }
 
+// GeneralCode returns the most general member of code's exit class — the code to
+// report when a failure's class is established but its kind is not. It is the
+// counterpart of the many-to-one ExitCode: every code sharing an exit status
+// generalizes to the same answer, and ExitCode(GeneralCode(c)) == ExitCode(c) —
+// an invariant TestGeneralCode and TestGeneralCodeCoversEveryDeclaredCode enforce,
+// including for a string this package never declared.
+//
+// It exists because a single error report can cover SEVERAL failures — the
+// GraphQL error response `nibs query` renders — and those failures can share an
+// exit status while differing in kind. HIERARCHY and VALIDATION_ERROR both exit
+// 2, so a response holding one of each supports that exit but neither specific
+// claim; the general member is the claim it does support. See
+// graphQLResponseCode in cmd/errors.go, which is what needs it.
+//
+// The general member of a class is the code whose meaning is the class's own, as
+// the exit-code table in cmd/prompt-full.tmpl states it: exit 2 reads "validation
+// error (bad input, hierarchy violation, text-not-found/ambiguous)" — that is
+// VALIDATION_ERROR's meaning with its specializations spelled out — while exits
+// 3, 4 and 5 each have one member naming the class outright and any others are
+// narrower (NO_BEANS_DIR is one kind of FILE_ERROR). A specialization must never
+// be the answer: reporting HIERARCHY for a mixed exit-2 response would assert an
+// illegal parent type about a failure that is not one.
+func GeneralCode(code string) string {
+	switch ExitCode(code) {
+	case ExitValidation:
+		return ErrValidation
+	case ExitNotFound:
+		return ErrNotFound
+	case ExitConflict:
+		return ErrConflict
+	case ExitIO:
+		return ErrFileError
+	case ExitError:
+		// Enumerated rather than left to the default, matching ExitCode: exit 1 is
+		// the class that makes no positive claim, so it is its own general member.
+		return ErrUncategorized
+	default:
+		// Unreachable while ExitCode returns only the Exit* constants. A new exit
+		// class reaches here, which TestGeneralCodeCoversEveryDeclaredCode catches.
+		return ErrUncategorized
+	}
+}
+
 // Response is the standard JSON response envelope.
 type Response struct {
 	Success  bool       `json:"success"`

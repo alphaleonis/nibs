@@ -4,8 +4,13 @@ import (
 	"bytes"
 	"encoding/json"
 	"errors"
+	"go/ast"
+	"go/parser"
+	"go/token"
 	"io"
 	"os"
+	"slices"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -151,4 +156,167 @@ func TestExitCode(t *testing.T) {
 			}
 		})
 	}
+}
+
+// TestGeneralCode pins the code a caller reports when it knows a failure's exit
+// class but not its kind — the answer cmd/errors.go's graphQLResponseCode needs
+// for a response holding several failures that share an exit status.
+//
+// The named expectations are the load-bearing half: the general member of a
+// class must be the code whose meaning is the class's own, never a
+// specialization. HIERARCHY generalizing to VALIDATION_ERROR is the case the
+// aggregation rule depends on — reporting HIERARCHY for a mixed exit-2 response
+// would assert an illegal parent type about a failure that is not one — and
+// NO_BEANS_DIR generalizing to FILE_ERROR is the same shape one class over.
+//
+// Two properties are then asserted over every row, because they are what the
+// caller relies on and neither is visible from a single mapping:
+//
+//   - It stays inside the class: ExitCode(GeneralCode(c)) == ExitCode(c). A
+//     general member that exited elsewhere would change the answer of a
+//     response every one of whose failures agreed on the exit.
+//   - It is idempotent: generalizing an already-general code is a no-op, so a
+//     caller cannot drift further from the class by asking twice.
+func TestGeneralCode(t *testing.T) {
+	// Every code this package declares, with the general member of its class.
+	// TestGeneralCodeCoversEveryDeclaredCode reads the source to prove no
+	// declared code is missing from this table.
+	general := map[string]string{
+		ErrValidation:    ErrValidation,
+		ErrInvalidStatus: ErrValidation,
+		ErrHierarchy:     ErrValidation,
+		ErrTextNotFound:  ErrValidation,
+		ErrTextAmbiguous: ErrValidation,
+		ErrNotFound:      ErrNotFound,
+		ErrConflict:      ErrConflict,
+		ErrFileError:     ErrFileError,
+		ErrNoNibsDir:     ErrFileError,
+		ErrUncategorized: ErrUncategorized,
+	}
+	// A string ExitCode does not know exits 1, so its class is the one that
+	// makes no claim.
+	unknown := map[string]string{
+		"SOMETHING_ELSE": ErrUncategorized,
+		"":               ErrUncategorized,
+	}
+
+	for code, want := range general {
+		t.Run(code, func(t *testing.T) {
+			assertGeneralCode(t, code, want)
+		})
+	}
+	for code, want := range unknown {
+		t.Run("unknown "+code, func(t *testing.T) {
+			assertGeneralCode(t, code, want)
+		})
+	}
+}
+
+func assertGeneralCode(t *testing.T, code, want string) {
+	t.Helper()
+	got := GeneralCode(code)
+	if got != want {
+		t.Errorf("GeneralCode(%q) = %q, want %q", code, got, want)
+	}
+	if ExitCode(got) != ExitCode(code) {
+		t.Errorf("GeneralCode(%q) = %q, which exits %d while %q exits %d — the general "+
+			"member must stay inside its own class",
+			code, got, ExitCode(got), code, ExitCode(code))
+	}
+	if again := GeneralCode(got); again != got {
+		t.Errorf("GeneralCode(%q) = %q, but GeneralCode(%q) = %q — generalizing must be "+
+			"idempotent", code, got, got, again)
+	}
+}
+
+// TestGeneralCodeCoversEveryDeclaredCode is the totality guard for the table
+// above. The code names are read out of this package's SOURCE rather than
+// listed, because a list is exactly what cannot notice a constant it was never
+// told about: GeneralCode switches on the exit status, so a NEW code lands in
+// some class silently, and the question worth failing on is whether anyone
+// decided which class it belongs to and whether that class's general member is
+// a claim the new code supports.
+func TestGeneralCodeCoversEveryDeclaredCode(t *testing.T) {
+	covered := map[string]bool{
+		"ErrValidation": true, "ErrInvalidStatus": true, "ErrHierarchy": true,
+		"ErrTextNotFound": true, "ErrTextAmbiguous": true, "ErrNotFound": true,
+		"ErrConflict": true, "ErrFileError": true, "ErrNoNibsDir": true,
+		"ErrUncategorized": true,
+	}
+
+	declared := errorCodeConstNames(t)
+	for _, name := range declared {
+		if !covered[name] {
+			t.Errorf("%s is a declared error code with no row in TestGeneralCode, so nothing "+
+				"says which class it generalizes to — add one", name)
+		}
+	}
+	for name := range covered {
+		if !slices.Contains(declared, name) {
+			t.Errorf("%s has a row in TestGeneralCode but the source walk did not find it, so "+
+				"the walk is not reading what it is meant to", name)
+		}
+	}
+}
+
+// errorCodeConstNames reads this package's non-test sources and returns every
+// declared constant whose name starts with "Err" and whose value is a string
+// literal — the error-code vocabulary. The sentinel ErrAlreadyReported is a var
+// holding an error, not a const, so it is not reported.
+func errorCodeConstNames(t *testing.T) []string {
+	t.Helper()
+
+	entries, err := os.ReadDir(".")
+	if err != nil {
+		t.Fatalf("read package dir: %v", err)
+	}
+
+	fset := token.NewFileSet()
+	var names []string
+	for _, entry := range entries {
+		name := entry.Name()
+		if entry.IsDir() || !strings.HasSuffix(name, ".go") || strings.HasSuffix(name, "_test.go") {
+			continue
+		}
+		file, err := parser.ParseFile(fset, name, nil, parser.SkipObjectResolution)
+		if err != nil {
+			t.Fatalf("parse %s: %v", name, err)
+		}
+		for _, decl := range file.Decls {
+			gen, ok := decl.(*ast.GenDecl)
+			if !ok || gen.Tok != token.CONST {
+				continue
+			}
+			for _, spec := range gen.Specs {
+				vs, ok := spec.(*ast.ValueSpec)
+				if !ok {
+					continue
+				}
+				for i, ident := range vs.Names {
+					if !strings.HasPrefix(ident.Name, "Err") {
+						continue
+					}
+					// A spec with no RHS inherits the previous one's value, which is
+					// legal Go but would silently drop the name from this walk — the
+					// exact case this guard exists to catch. Fail instead of skipping.
+					if i >= len(vs.Values) {
+						t.Fatalf("%s has no explicit value; this walk cannot read it, so GeneralCode's coverage would go unchecked for it", ident.Name)
+					}
+					lit, ok := vs.Values[i].(*ast.BasicLit)
+					if !ok || lit.Kind != token.STRING {
+						continue
+					}
+					names = append(names, ident.Name)
+				}
+			}
+		}
+	}
+
+	// Without this a wrong directory or a changed naming convention would empty
+	// the walk and leave the guard reporting success over nothing.
+	if len(names) == 0 {
+		t.Fatal("no Err* string constant found in this package, so this guard checks nothing")
+	}
+	slices.Sort(names)
+	return names
 }

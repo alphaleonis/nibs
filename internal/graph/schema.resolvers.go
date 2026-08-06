@@ -16,6 +16,12 @@ import (
 )
 
 // CreateNib is the resolver for the createNib field.
+//
+// Applies to this whole file: never put a comment directive (//nolint:…,
+// //go:noinline) on a resolver's DOC comment. gqlgen deletes it on the next
+// codegen while keeping prose like this paragraph, so the directive silently
+// stops taking effect. Put directives inside the function body, which is copied
+// through verbatim. Full explanation: internal/graph/resolver.go.
 func (r *mutationResolver) CreateNib(ctx context.Context, input model.CreateNibInput) (*nib.Nib, error) {
 	b := &nib.Nib{
 		Slug:    nib.Slugify(input.Title),
@@ -359,20 +365,37 @@ func (r *mutationResolver) UpdateNib(ctx context.Context, id string, input model
 }
 
 // DeleteNib is the resolver for the deleteNib field.
+//
+// Both halves of the delete are driven by the RESOLVED id rather than the
+// caller's spelling: a prefixed project accepts a short id (Core.Get prepends
+// the configured prefix), and the two halves have to name the same nib, or
+// `deleteNib(id: "tgt")` removes nibs-tgt while unlinking something else. Only
+// the immutable ID is read off the live pointer Get returns, which is what the
+// live-pointer invariant permits (see NibReader.GetSnapshot in interfaces.go).
+//
+// Order is load-bearing. Unlinking runs FIRST, while the target is still in the
+// store, so RemoveLinksTo resolves its target against the same key set the
+// stored links resolve against. Afterwards it would not: with a bare-token id
+// gone, its prefixed twin answers to that token, so the links this delete should
+// have CLEARED would instead be re-pointed onto the twin by Core.Delete's
+// canonicalization sweep, and the twin's own incoming links would then be
+// stripped in their place. Clearing incoming links is RemoveLinksTo's job alone;
+// the sweep only re-resolves the links that remain.
 func (r *mutationResolver) DeleteNib(ctx context.Context, id string) (bool, error) {
-	// Verify nib exists
-	_, err := r.Reader.Get(id)
+	// Verify nib exists, and take the resolved id from the nib it found.
+	target, err := r.Reader.Get(id)
 	if err != nil {
 		return false, err
 	}
+	resolvedID := target.ID
 
 	// Remove incoming links first
-	if _, err := r.Writer.RemoveLinksTo(id); err != nil {
+	if _, err := r.Writer.RemoveLinksTo(resolvedID); err != nil {
 		return false, err
 	}
 
 	// Delete the nib
-	if err := r.Writer.Delete(id); err != nil {
+	if err := r.Writer.Delete(resolvedID); err != nil {
 		return false, err
 	}
 
@@ -904,16 +927,34 @@ func (r *queryResolver) Nib(ctx context.Context, id string) (*nib.Nib, error) {
 // escapes to async marshaling. Only the immutable ID is read off the live
 // pointers at the snapshot step; a nib that vanished before the snapshot is
 // skipped. This one conversion covers both the All and the Search branches.
+//
+// Search SEEDS the input here rather than being left to the intersection branch
+// ApplyFilter runs, and the seeding is what carries the ORDER the schema
+// promises for an unsorted search: id matches first, then full-text hits by
+// relevance. Intersecting All() instead would answer with the store's own order.
+// ApplyFilter is then handed a copy of the filter with the term cleared, because
+// the seeded set already IS the term's answer: leaving it set would query the
+// index a second time only to intersect that answer with itself.
 func (r *queryResolver) Nibs(ctx context.Context, filter *model.NibFilter, sort *model.NibSort) ([]*nib.Nib, error) {
 	var nibs []*nib.Nib
 
 	// If search filter is provided, start with search results
-	if filter != nil && filter.Search != nil && *filter.Search != "" {
+	searched := filter != nil && filter.Search != nil && *filter.Search != ""
+	if searched {
 		searchResults, err := r.Reader.Search(*filter.Search)
 		if err != nil {
 			return nil, err
 		}
 		nibs = searchResults
+
+		// Nothing else in ApplyFilter reads Search, so clearing it skips the
+		// redundant branch and changes nothing else. The clear lands on a LOCAL
+		// copy: writing it back through the caller's pointer would strip the
+		// term from a filter the caller still holds and reuses, as cmd/list.go
+		// does for its hidden-closed count.
+		unsearched := *filter
+		unsearched.Search = nil
+		filter = &unsearched
 	} else {
 		nibs = r.Reader.All()
 	}
@@ -926,7 +967,7 @@ func (r *queryResolver) Nibs(ctx context.Context, filter *model.NibFilter, sort 
 	// When search is active, include ancestors of matched nibs so the
 	// client can build complete tree hierarchies even when only leaf
 	// nodes match the search query.
-	if filter != nil && filter.Search != nil && *filter.Search != "" {
+	if searched {
 		result = includeAncestors(result, r.Reader)
 	}
 

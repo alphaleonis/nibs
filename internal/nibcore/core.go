@@ -1114,15 +1114,19 @@ func (c *Core) Delete(id string) error {
 	// (see canonicalize.go). Gated because the sweep is O(N) over the store and
 	// no other removal shape can re-point anything.
 	//
-	// Defense in depth on this path rather than the primary mechanism: the only
-	// production caller, the GraphQL DeleteNib resolver, runs RemoveLinksTo(id)
-	// first, which clears any Parent/BlockedBy matching the caller's spelling
-	// literally — so for a bare-token id the links this sweep would rebind are
-	// usually already empty by the time it runs, leaving only the legacy Blocking
-	// field. The watcher's removal branch (an external delete, a pull in the
-	// separate .nibs repo) is not masked at all and is where the sweep earns its
-	// keep. Which mechanism fires will shift once RemoveLinksTo normalizes its
-	// target id.
+	// Re-pointing is NOT how a link to the removed nib gets cleared, and must not
+	// become it: a link that named the nib being deleted has to go, not migrate to
+	// whatever twin happens to answer to the same token. Clearing is owned by
+	// RemoveLinksTo, which the only production caller — the GraphQL DeleteNib
+	// resolver — runs BEFORE this, while the target is still in the store. So on
+	// that path the Parent/BlockedBy links spelled with the removed token are
+	// already gone, leaving the legacy Blocking field (which RemoveLinksTo does
+	// not touch) as the one thing THIS REMOVAL can re-point. The sweep itself is
+	// store-wide and re-resolves every nib's links, so it also rewrites short-form
+	// links naming other nibs — spellings Core.Create can leave behind, unrelated
+	// to what was removed. The watcher's removal branch (an external
+	// delete, a pull in the separate .nibs repo) has no such partner and is where
+	// the sweep earns its keep.
 	//
 	// Warn per rebind: a delete moving a THIRD nib's link is invisible otherwise
 	// — no event is published from any direct Core mutator, and no file changes,

@@ -4,6 +4,7 @@ import {
   REL_ID_FIELDS,
   REL_TOKEN_ORDER,
   clearHierarchyFilters,
+  contradictionTokens,
   hierarchyTokens,
   recognizeRelationship,
 } from "./relations";
@@ -146,5 +147,51 @@ describe("relations — the hierarchy subset", () => {
     const filter = { ancestorId: "tnib-1", type: ["bug"] };
     clearHierarchyFilters(filter);
     expect(filter).toEqual({ ancestorId: "tnib-1", type: ["bug"] });
+  });
+});
+
+// The pairs the server refuses as unanswerable. The table lives here rather than
+// in the component so the refusal is explained in the same spellings the box
+// parses and serializes — the user can only edit what the box shows.
+describe("relations — contradictory pairs", () => {
+  it("names each refused pair in canonical token spelling", () => {
+    expect(contradictionTokens({ parentId: "tnib-1", hasParent: false })).toEqual([
+      ["parent:tnib-1", "no:parent"],
+    ]);
+    expect(contradictionTokens({ blockedById: "tnib-9", hasBlockedBy: false })).toEqual([
+      ["blocked-by:tnib-9", "no:blocked-by"],
+    ]);
+  });
+
+  it("names both pairs when both are set", () => {
+    expect(
+      contradictionTokens({
+        parentId: "tnib-1",
+        hasParent: false,
+        blockedById: "tnib-9",
+        hasBlockedBy: false,
+      }),
+    ).toEqual([
+      ["parent:tnib-1", "no:parent"],
+      ["blocked-by:tnib-9", "no:blocked-by"],
+    ]);
+  });
+
+  // Only the `false` half contradicts. `has:parent` alongside `parent:<id>` is
+  // redundant, which the server answers rather than refuses, and an unset
+  // existence field constrains nothing at all.
+  it("reports nothing for a redundant or unset existence half", () => {
+    expect(contradictionTokens({ parentId: "tnib-1", hasParent: true })).toEqual([]);
+    expect(contradictionTokens({ parentId: "tnib-1" })).toEqual([]);
+    expect(contradictionTokens({ hasParent: false })).toEqual([]);
+  });
+
+  // `blocking:<id>` selects membership in the target's blocked_by whatever the
+  // candidate's status, while `no:blocking` selects the nibs not ACTIVELY blocking
+  // anything — so the pair asks for the blockers the target still lists that block
+  // nothing, which the server answers. Calling it a contradiction here would
+  // explain away a working query.
+  it("does not treat the blocking pair as a contradiction", () => {
+    expect(contradictionTokens({ blockingId: "tnib-8", hasBlocking: false })).toEqual([]);
   });
 });

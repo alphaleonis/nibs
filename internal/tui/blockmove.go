@@ -97,8 +97,11 @@ func blockMovable(effective []*nib.Nib, tree []*ui.TreeNode) (siblings []*nib.Ni
 		}
 	}
 	if len(indices) != len(effective) {
-		// Defensive: every effective item is drawn from the tree and shares the
-		// resolved parent, so it should appear among that parent's children.
+		// Reachable for a nib promoted out of a parent cycle: BuildTree severs its
+		// parent edge to break the cycle, so it renders as a root while its stored
+		// parent link still resolves and treeResolvedParentID still returns it.
+		// Refusing is correct — a reorder is only meaningful within one real
+		// parent's sibling list, and this nib is in none.
 		return nil, 0, 0, reorderReasonNotAmongSiblings
 	}
 

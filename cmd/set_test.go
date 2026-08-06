@@ -3,6 +3,7 @@ package cmd
 import (
 	"encoding/json"
 	"errors"
+	"io"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -136,6 +137,161 @@ func writeSetNib(t *testing.T, id, body string) (string, string) {
 		t.Fatal(err)
 	}
 	return nibsDir, id
+}
+
+// writeIllegalReparentFixture creates a nibs dir holding one epic and one task —
+// the smallest store in which a reparent is refused by the hierarchy rule, since
+// an epic's only legal parent is a milestone. It returns (nibsDir, epicID,
+// taskID).
+//
+// The surfaces that must agree about that one refusal — `set`, `mv` and
+// `query` — all build from this helper, so a difference between them can only
+// come from the code under test and never from the fixture.
+func writeIllegalReparentFixture(t *testing.T) (string, string, string) {
+	t.Helper()
+	nibsDir := filepath.Join(t.TempDir(), ".nibs")
+	if err := os.MkdirAll(nibsDir, 0755); err != nil {
+		t.Fatal(err)
+	}
+	files := map[string]string{
+		"ep--epic.md": "---\nversion: 1\ntitle: Epic\nstatus: todo\ntype: epic\norder: a0\n---\n",
+		"tk--task.md": "---\nversion: 1\ntitle: Task\nstatus: todo\ntype: task\norder: b0\n---\n",
+	}
+	for name, content := range files {
+		if err := os.WriteFile(filepath.Join(nibsDir, name), []byte(content), 0644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	return nibsDir, "ep", "tk"
+}
+
+// hierarchyEnvelope is the {code,message,allowedParentTypes} shape a HIERARCHY
+// refusal emits, used to compare the envelopes `set`, `mv` and `query` build for
+// one illegal reparent.
+type hierarchyEnvelope struct {
+	Error struct {
+		Code               string   `json:"code"`
+		Message            string   `json:"message"`
+		AllowedParentTypes []string `json:"allowedParentTypes"`
+	} `json:"error"`
+}
+
+// TestSetIllegalReparentIsHierarchy pins that `nibs set --parent` reports an
+// illegal reparent as HIERARCHY carrying the parent types that WOULD be legal.
+//
+// The exit status is not the whole contract: HIERARCHY and VALIDATION_ERROR both
+// exit 2, so a caller branching on $? alone cannot tell them apart. What differs
+// is allowedParentTypes — the field that turns a refusal into a next action by
+// naming the parent type that would be accepted. `nibs mv` has always provided
+// it; `set` writes the same field through the same resolver, so reaching for the
+// other verb must not yield a weaker answer.
+func TestSetIllegalReparentIsHierarchy(t *testing.T) {
+	t.Run("json", func(t *testing.T) {
+		t.Cleanup(resetSetFlags)
+		resetSetFlags()
+		nibsDir, epicID, taskID := writeIllegalReparentFixture(t)
+
+		rootCmd.SetArgs([]string{"--nibs-path", nibsDir, "set", epicID, "--parent", taskID, "--json"})
+		var execErr error
+		out := captureStdout(t, func() { execErr = rootCmd.Execute() })
+		if execErr == nil {
+			t.Fatalf("set --parent on an illegal reparent returned no error; out: %q", out)
+		}
+		if code := reportExitError(io.Discard, execErr); code != output.ExitValidation {
+			t.Errorf("exit = %d, want %d (validation)", code, output.ExitValidation)
+		}
+
+		var env hierarchyEnvelope
+		if err := json.Unmarshal([]byte(out), &env); err != nil {
+			t.Fatalf("stdout is not a JSON error envelope: %v\nraw: %s", err, out)
+		}
+		if env.Error.Code != output.ErrHierarchy {
+			t.Errorf("envelope code = %q, want %q", env.Error.Code, output.ErrHierarchy)
+		}
+		want := []string{"milestone"}
+		if !slices.Equal(env.Error.AllowedParentTypes, want) {
+			t.Errorf("allowedParentTypes = %v, want %v", env.Error.AllowedParentTypes, want)
+		}
+		if !strings.Contains(env.Error.Message, "milestone") {
+			t.Errorf("message %q should name the allowed parent type", env.Error.Message)
+		}
+	})
+
+	t.Run("text", func(t *testing.T) {
+		t.Cleanup(resetSetFlags)
+		resetSetFlags()
+		nibsDir, epicID, taskID := writeIllegalReparentFixture(t)
+
+		rootCmd.SetArgs([]string{"--nibs-path", nibsDir, "set", epicID, "--parent", taskID})
+		var execErr error
+		out := captureStdout(t, func() { execErr = rootCmd.Execute() })
+		if execErr == nil {
+			t.Fatalf("set --parent on an illegal reparent returned no error; out: %q", out)
+		}
+		var ce *output.CodedError
+		if !errors.As(execErr, &ce) {
+			t.Fatalf("error = %T, want *output.CodedError", execErr)
+		}
+		if ce.Code != output.ErrHierarchy {
+			t.Errorf("code = %q, want %q", ce.Code, output.ErrHierarchy)
+		}
+		if code := reportExitError(io.Discard, execErr); code != output.ExitValidation {
+			t.Errorf("exit = %d, want %d (validation)", code, output.ExitValidation)
+		}
+	})
+}
+
+// TestSetTypeChangeOrphaningAChildIsHierarchy covers the other way `nibs set`
+// can violate the hierarchy rule: changing a nib's TYPE so that an existing
+// child's parent link becomes illegal. The graph layer wraps that refusal with
+// the child's id (`fmt.Errorf("… child %s: %w")`), which is the case that
+// decides how the shared envelope renders its message — carrying the wrapper's
+// text keeps the id of the child that blocks the change, while the
+// HierarchyError alone knows only the two types.
+func TestSetTypeChangeOrphaningAChildIsHierarchy(t *testing.T) {
+	t.Cleanup(resetSetFlags)
+	resetSetFlags()
+
+	nibsDir := filepath.Join(t.TempDir(), ".nibs")
+	if err := os.MkdirAll(nibsDir, 0755); err != nil {
+		t.Fatal(err)
+	}
+	files := map[string]string{
+		"ep--epic.md":    "---\nversion: 1\ntitle: Epic\nstatus: todo\ntype: epic\norder: a0\n---\n",
+		"ft--feature.md": "---\nversion: 1\ntitle: Feature\nstatus: todo\ntype: feature\nparent: ep\norder: a0\n---\n",
+	}
+	for name, content := range files {
+		if err := os.WriteFile(filepath.Join(nibsDir, name), []byte(content), 0644); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	// A feature may sit under a milestone or an epic — not under a task.
+	rootCmd.SetArgs([]string{"--nibs-path", nibsDir, "set", "ep", "--type", "task", "--json"})
+	var execErr error
+	out := captureStdout(t, func() { execErr = rootCmd.Execute() })
+	if execErr == nil {
+		t.Fatalf("set --type on a change that orphans a child returned no error; out: %q", out)
+	}
+	if code := reportExitError(io.Discard, execErr); code != output.ExitValidation {
+		t.Errorf("exit = %d, want %d (validation)", code, output.ExitValidation)
+	}
+
+	var env hierarchyEnvelope
+	if err := json.Unmarshal([]byte(out), &env); err != nil {
+		t.Fatalf("stdout is not a JSON error envelope: %v\nraw: %s", err, out)
+	}
+	if env.Error.Code != output.ErrHierarchy {
+		t.Errorf("envelope code = %q, want %q", env.Error.Code, output.ErrHierarchy)
+	}
+	want := []string{"milestone", "epic"}
+	if !slices.Equal(env.Error.AllowedParentTypes, want) {
+		t.Errorf("allowedParentTypes = %v, want %v (the CHILD's legal parents)",
+			env.Error.AllowedParentTypes, want)
+	}
+	if !strings.Contains(env.Error.Message, "ft") {
+		t.Errorf("message %q should name the child that blocks the change", env.Error.Message)
+	}
 }
 
 // TestSetStatusEchoesLeanCard verifies `set --status --json` echoes the lean

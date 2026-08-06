@@ -1142,6 +1142,29 @@ func assertNibIDs(t *testing.T, got []*nib.Nib, want []string) {
 	}
 }
 
+// assertNibIDsInOrder compares the IDs of got against want as a SEQUENCE —
+// neither side is sorted — for the assertions whose subject is the order itself.
+//
+// Two contracts need it and cannot be expressed with assertNibIDs. On a
+// relationship field the schema promises the term selects rather than ranks, so
+// the field keeps its own order; at the top level queryResolver.Nibs promises
+// the search seeding's order (id matches first, then relevance) survives the
+// pipeline. Both are membership-identical to the orders they must NOT produce,
+// so a set comparison cannot see either one break.
+func assertNibIDsInOrder(t *testing.T, got []*nib.Nib, want []string) {
+	t.Helper()
+	gotIDs := make([]string, 0, len(got))
+	for _, b := range got {
+		gotIDs = append(gotIDs, b.ID)
+	}
+	if len(gotIDs) == 0 && len(want) == 0 {
+		return
+	}
+	if !reflect.DeepEqual(gotIDs, want) {
+		t.Errorf("got IDs %v, want %v (in this order)", gotIDs, want)
+	}
+}
+
 func TestFilterByPredicate(t *testing.T) {
 	nibs := []*nib.Nib{
 		{ID: "a", Parent: "p1"},
@@ -1527,6 +1550,561 @@ func TestIncludeAncestorsChainShapes(t *testing.T) {
 			// write through into the shared fixture slice.
 			got := includeAncestors(append([]*nib.Nib(nil), tt.input...), reader)
 			assertNibIDs(t, got, tt.want)
+		})
+	}
+}
+
+// pickNibs returns the fixture nibs with the given ids, in the order named. It
+// fails the test on an id the fixture does not hold, so a row naming a nib that
+// was renamed out of the fixture fails loudly instead of quietly narrowing the
+// set it was meant to describe.
+func pickNibs(t *testing.T, reader *stubReader, ids ...string) []*nib.Nib {
+	t.Helper()
+	picked := make([]*nib.Nib, 0, len(ids))
+	for _, id := range ids {
+		b, ok := reader.nibs[id]
+		if !ok {
+			t.Fatalf("fixture has no nib %q", id)
+		}
+		picked = append(picked, b)
+	}
+	return picked
+}
+
+// TestApplyFilterSearchIntersectsTheWorkingSet pins what a search term means to
+// ApplyFilter: it NARROWS the candidates it was handed and never reaches outside
+// them.
+//
+// That is a different job from the one search does in queryResolver.Nibs, which
+// SEEDS its input with Search() in place of All() — there the term decides which
+// nibs are considered at all. Every other caller hands ApplyFilter a set some
+// relationship already determined (the children of X, the nibs blocking X), and
+// on those the same term can only mean "of those, the ones matching": a hit
+// outside the relation is not a child of X, so admitting it would answer a
+// question nobody asked.
+//
+// The rows walk the space between the two extremes. A branch that only ever saw
+// a term matching part of the working set would pass while widening on any term
+// that also matches something outside it, which is why the whole-store and
+// outside-only rows are here.
+func TestApplyFilterSearchIntersectsTheWorkingSet(t *testing.T) {
+	reader := hierarchyFixture()
+	blocking := &stubBlockingChecker{}
+	reader.searchOut = map[string][]*nib.Nib{
+		"whole-store": reader.allNibs,
+		"the-pair":    pickNibs(t, reader, "nibs-f1", "nibs-t2"),
+		"one-inside":  pickNibs(t, reader, "nibs-t2"),
+		"outside":     pickNibs(t, reader, "nibs-m1", "nibs-x1"),
+		"no-nib":      nil,
+	}
+
+	// The children of nibs-e1 — the set nibResolver.Children hands ApplyFilter.
+	children := []string{"nibs-f1", "nibs-t2"}
+
+	tests := []struct {
+		name       string
+		workingIDs []string
+		filter     *model.NibFilter
+		wantIDs    []string
+	}{
+		{"an unset search leaves the set unfiltered",
+			children, &model.NibFilter{}, children},
+		{"an empty search leaves the set unfiltered",
+			children, &model.NibFilter{Search: strPtr("")}, children},
+		{"a term matching every nib keeps the set and adds none of the rest",
+			children, &model.NibFilter{Search: strPtr("whole-store")}, children},
+		{"a term matching exactly the set keeps all of it",
+			children, &model.NibFilter{Search: strPtr("the-pair")}, children},
+		{"a term matching part of the set keeps that part",
+			children, &model.NibFilter{Search: strPtr("one-inside")}, []string{"nibs-t2"}},
+		{"a term matching only nibs outside the set keeps nothing",
+			children, &model.NibFilter{Search: strPtr("outside")}, nil},
+		{"a term matching no nib at all keeps nothing",
+			children, &model.NibFilter{Search: strPtr("no-nib")}, nil},
+
+		// Composed with an id-valued branch: each narrows independently, so the
+		// answer is the intersection of the two, whichever order they run in.
+		{"a wide term leaves an id filter's answer alone",
+			nil, &model.NibFilter{Search: strPtr("whole-store"), AncestorID: strPtr("e1")},
+			[]string{"nibs-f1", "nibs-t1", "nibs-t2"}},
+		{"a term and an id filter intersect",
+			nil, &model.NibFilter{Search: strPtr("one-inside"), AncestorID: strPtr("e1")},
+			[]string{"nibs-t2"}},
+		{"a term disjoint from an id filter's answer keeps nothing",
+			nil, &model.NibFilter{Search: strPtr("outside"), AncestorID: strPtr("e1")}, nil},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			working := reader.allNibs
+			if tt.workingIDs != nil {
+				working = pickNibs(t, reader, tt.workingIDs...)
+			}
+			got := applyFilterOK(t, context.Background(), working, tt.filter, reader, blocking)
+			assertNibIDs(t, got, tt.wantIDs)
+		})
+	}
+}
+
+// TestSearchKeepsTheOrderItsSurfacePromises pins the ORDER each surface
+// promises, which is the justification the rest of the design rests on and the
+// one thing a set comparison cannot see.
+//
+// On a relationship field the term selects rather than ranks, so the answer
+// keeps the relation's own order. That holds because filterBySearch walks the
+// nibs it was handed and consults the match set, rather than walking the matches
+// and consulting the input — the two produce the same MEMBERS and different
+// SEQUENCES, so every membership assertion in this file passes either way.
+//
+// At the top level the opposite is promised: queryResolver.Nibs seeds from
+// Search(), and the seeding is what carries relevance order — Core.Search hands
+// back its id matches first, then its full-text hits — so the pipeline must
+// leave that sequence alone.
+func TestSearchKeepsTheOrderItsSurfacePromises(t *testing.T) {
+	t.Run("a relationship field keeps the relation's order, not the index's", func(t *testing.T) {
+		reader := hierarchyFixture()
+		// The index answers in the opposite order to the one the relation is in,
+		// so the two sequences are distinguishable and the members are identical.
+		reader.searchOut = map[string][]*nib.Nib{
+			"reversed": pickNibs(t, reader, "nibs-t2", "nibs-f1"),
+		}
+
+		// The working set, standing in for the members a relationship resolver
+		// hands over. Its order is the one the answer has to keep.
+		children := pickNibs(t, reader, "nibs-f1", "nibs-t2")
+
+		got := applyFilterOK(t, context.Background(), children, &model.NibFilter{Search: strPtr("reversed")}, reader, &stubBlockingChecker{})
+		assertNibIDsInOrder(t, got, []string{"nibs-f1", "nibs-t2"})
+	})
+
+	t.Run("the top-level query keeps the seeding order: id matches, then relevance", func(t *testing.T) {
+		resolver, core := setupTestResolver(t)
+		// "zebra" reaches each nib through a different leg of Core.Search: one by
+		// ID substring, one by its indexed title. The ID leg is the one that must
+		// come first, and neither nib has a parent, so tree completion cannot
+		// reorder the pair.
+		mustCreate(t, core, &nib.Nib{ID: "zebra1", Title: "Ordinary chore", Status: "todo"})
+		mustCreate(t, core, &nib.Nib{ID: "t1", Title: "Zebra migration", Status: "todo"})
+		ctx := context.Background()
+
+		// Premise: the store itself answers in that order, so what the assertion
+		// below tests is that the resolver preserved it rather than re-derived it.
+		matched, err := core.Search("zebra")
+		if err != nil {
+			t.Fatalf("Search: %v", err)
+		}
+		assertNibIDsInOrder(t, matched, []string{"zebra1", "t1"})
+
+		got, err := resolver.Query().Nibs(ctx, &model.NibFilter{Search: strPtr("zebra")}, nil)
+		if err != nil {
+			t.Fatalf("Nibs: %v", err)
+		}
+		assertNibIDsInOrder(t, got, []string{"zebra1", "t1"})
+	})
+}
+
+// TestTopLevelSearchQueriesTheIndexOnce pins the cost of one top-level search:
+// a single Core.Search, not two.
+//
+// queryResolver.Nibs seeds its input from the term, so the set it hands
+// ApplyFilter already IS the term's answer. Leaving Search set on that filter
+// makes ApplyFilter's intersection branch query the identical term again only to
+// intersect that answer with itself — invisible in the result, and Core.Search
+// is the expensive read here (a write lock for lazy init, a Bleve query, then a
+// full store scan for id matches).
+//
+// The second assertion covers the half that is not about cost: the term is
+// cleared on a COPY, so the caller's filter still carries it afterwards. A
+// caller that reuses the filter for a second query — cmd/list.go's hidden-closed
+// count does exactly that — would otherwise silently run it unsearched.
+func TestTopLevelSearchQueriesTheIndexOnce(t *testing.T) {
+	reader := hierarchyFixture()
+	reader.searchOut = map[string][]*nib.Nib{"anything": reader.allNibs}
+
+	resolver := &Resolver{
+		Reader:    reader,
+		Writer:    &stubWriter{store: reader},
+		Validator: &stubValidator{},
+		Blocking:  &stubBlockingChecker{},
+		Orderer:   NewOrderer(reader, &stubWriter{store: reader}),
+	}
+
+	filter := &model.NibFilter{Search: strPtr("anything")}
+	if _, err := resolver.Query().Nibs(context.Background(), filter, nil); err != nil {
+		t.Fatalf("Nibs: %v", err)
+	}
+
+	if reader.searchCalls != 1 {
+		t.Errorf("Core.Search called %d times, want 1", reader.searchCalls)
+	}
+	if filter.Search == nil || *filter.Search != "anything" {
+		t.Errorf("caller's filter.Search = %v, want it left carrying the term", filter.Search)
+	}
+}
+
+// TestApplyFilterSearchFailureIsReported pins that an index that cannot answer
+// is reported rather than read as "nothing matched". The reader's own error
+// travels out unwrapped, exactly as queryResolver.Nibs already propagates it
+// from its seeding call, so both surfaces report one index failure alike.
+func TestApplyFilterSearchFailureIsReported(t *testing.T) {
+	reader := hierarchyFixture()
+	indexDown := errors.New("search index unavailable")
+	reader.searchErr = indexDown
+
+	got, err := ApplyFilter(context.Background(), reader.allNibs, &model.NibFilter{Search: strPtr("anything")}, reader, &stubBlockingChecker{})
+	if err == nil {
+		t.Fatalf("got %d nibs and no error; an index failure must not read as an empty match", len(got))
+	}
+	if !errors.Is(err, indexDown) {
+		t.Errorf("error = %v, want the reader's own failure", err)
+	}
+	if got != nil {
+		t.Errorf("result = %v, want nil alongside the error", got)
+	}
+}
+
+// TestSearchOnARelationshipFieldDoesNotCompleteTheTree pins the one place the
+// two search surfaces deliberately differ. Both narrow to the matching nibs;
+// only the top-level one then adds every match's ancestors.
+//
+// That completion exists so a client can render a whole tree from a sparse
+// match (see includeAncestors and the schema descriptions that promise it), and
+// it belongs to a query over the whole store. On a relationship field the caller
+// named the relation — "the children of this epic" — so an ancestor that is not
+// a child of it is not part of the answer, however useful it would be for
+// drawing a tree.
+//
+// Both halves are asserted against one fixture, because what is under test is
+// the CONTRAST: a change that moved either surface onto the other's rule would
+// leave a single-surface test passing.
+func TestSearchOnARelationshipFieldDoesNotCompleteTheTree(t *testing.T) {
+	resolver, core := setupTestResolver(t)
+	mustCreate(t, core, &nib.Nib{ID: "m1", Title: "Milestone", Status: "todo"})
+	mustCreate(t, core, &nib.Nib{ID: "e1", Title: "Epic", Status: "todo", Parent: "m1"})
+	// Only this child carries the search term, so the term genuinely narrows the
+	// epic's children instead of keeping all of them.
+	mustCreate(t, core, &nib.Nib{ID: "t1", Title: "Zebra migration", Status: "todo", Parent: "e1"})
+	mustCreate(t, core, &nib.Nib{ID: "t2", Title: "Ordinary chore", Status: "todo", Parent: "e1"})
+	ctx := context.Background()
+
+	epic, err := core.Get("e1")
+	if err != nil {
+		t.Fatalf("Get(e1): %v", err)
+	}
+
+	// Premise: the term matches exactly one nib in the store, so anything else
+	// in either answer got there by a rule and not by the search.
+	matched, err := core.Search("zebra")
+	if err != nil {
+		t.Fatalf("Search: %v", err)
+	}
+	assertNibIDs(t, matched, []string{"t1"})
+
+	t.Run("children narrow to the match and gain no ancestors", func(t *testing.T) {
+		got, err := resolver.Nib().Children(ctx, epic, &model.NibFilter{Search: strPtr("zebra")}, nil)
+		if err != nil {
+			t.Fatalf("Children: %v", err)
+		}
+		assertNibIDs(t, got, []string{"t1"})
+	})
+
+	t.Run("the top-level query still completes the tree", func(t *testing.T) {
+		got, err := resolver.Query().Nibs(ctx, &model.NibFilter{Search: strPtr("zebra")}, nil)
+		if err != nil {
+			t.Fatalf("Nibs: %v", err)
+		}
+		assertNibIDs(t, got, []string{"t1", "e1", "m1"})
+	})
+}
+
+// contradictionFixture builds the smallest store in which each half of a
+// contradictory pair has something real to match, so a row that is supposed to
+// be answered has a non-empty answer and cannot pass by accident:
+//
+//	nibs-par ── nibs-chi   (nibs-chi is also blocked_by nibs-par)
+//	nibs-oth               (a second root, with no parent and no blocker)
+func contradictionFixture() *stubReader {
+	par := &nib.Nib{ID: "nibs-par", Title: "Parent and blocker", Status: "todo"}
+	chi := &nib.Nib{ID: "nibs-chi", Title: "Child", Status: "todo", Parent: "nibs-par", BlockedBy: []string{"nibs-par"}}
+	oth := &nib.Nib{ID: "nibs-oth", Title: "Unrelated root", Status: "todo"}
+
+	all := []*nib.Nib{par, chi, oth}
+	byID := make(map[string]*nib.Nib, len(all))
+	for _, b := range all {
+		byID[b.ID] = b
+	}
+	return &stubReader{nibs: byID, allNibs: all, prefix: "nibs-"}
+}
+
+// TestApplyFilterRefusesContradictoryPairs pins the two combinations that no
+// store state can satisfy. Each pairs an id-valued field with the presence field
+// covering the same relationship, set to false:
+//
+//   - parentId + hasParent: false. parentId matches the stored b.Parent against
+//     a target that already resolved, so a nib it matches has a parent link that
+//     reader.Get answers for — which is what hasParent asks (resolvedParentID).
+//   - blockedById + hasBlockedBy: false. blockedById requires the target in
+//     b.BlockedBy, which forces len(b.BlockedBy) > 0, which is hasBlockedBy.
+//
+// Answering either with an empty list is the failure the refusal classes exist
+// to remove: it is a factual claim about the store ("that parent has no
+// children") for a question that was never answerable. cmd/list.go already
+// refuses the flag spelling of the first pair, so without this the two surfaces
+// disagree about one user error.
+//
+// The unresolvable-target rows pin the ORDER of the two refusals, which is a
+// decision and not an accident: the contradiction is decided first, so an id
+// that names no nib still reports the contradiction. The pair cannot be
+// satisfied whatever the id is, so telling the caller to fix the id would send
+// them to repair the half of the query that is not the problem — and cmd/list.go
+// makes the same call, rejecting `--parent zzz --no-parent` as mutually
+// exclusive rather than as an unknown id.
+//
+// The empty-id row is the deliberate exception. "" is not a target that would
+// contradict the presence filter, it is a malformed argument, and
+// FilterTargetEmptyError says so with the hint that names hasParent: false as
+// the thing the caller probably wanted. Both classes exit 2, so the surfaces
+// still agree on the exit; only the message differs, and this row keeps the more
+// useful one.
+func TestApplyFilterRefusesContradictoryPairs(t *testing.T) {
+	reader := contradictionFixture()
+	blocking := &stubBlockingChecker{}
+	no := false
+
+	tests := []struct {
+		name          string
+		filter        *model.NibFilter
+		wantField     string
+		wantPresence  string
+		wantEmptyOnly bool // the empty-id class rather than the contradiction
+	}{
+		{"parentId with hasParent false",
+			&model.NibFilter{ParentID: strPtr("par"), HasParent: &no}, "parentId", "hasParent", false},
+		{"blockedById with hasBlockedBy false",
+			&model.NibFilter{BlockedByID: strPtr("par"), HasBlockedBy: &no}, "blockedById", "hasBlockedBy", false},
+		{"parentId naming no nib with hasParent false",
+			&model.NibFilter{ParentID: strPtr("nonexistent"), HasParent: &no}, "parentId", "hasParent", false},
+		{"blockedById naming no nib with hasBlockedBy false",
+			&model.NibFilter{BlockedByID: strPtr("nonexistent"), HasBlockedBy: &no}, "blockedById", "hasBlockedBy", false},
+		{"an empty parentId with hasParent false keeps the empty-id refusal",
+			&model.NibFilter{ParentID: strPtr(""), HasParent: &no}, "parentId", "", true},
+		{"an empty blockedById with hasBlockedBy false keeps the empty-id refusal",
+			&model.NibFilter{BlockedByID: strPtr(""), HasBlockedBy: &no}, "blockedById", "", true},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got, err := ApplyFilter(context.Background(), reader.allNibs, tt.filter, reader, blocking)
+			if err == nil {
+				t.Fatalf("got %d nibs and no error; an unsatisfiable pair answered with a list is indistinguishable from an empty store", len(got))
+			}
+			if got != nil {
+				t.Errorf("result = %v, want nil alongside the error", got)
+			}
+			// Both classes are the validation class, so neither may carry the
+			// not-found sentinel: exit 3 would tell the caller to fix an id
+			// when the pair, not the id, is what cannot be answered.
+			if errors.Is(err, nib.ErrNotFound) {
+				t.Error("the refusal carries nib.ErrNotFound, so it classifies as NOT_FOUND (exit 3) instead of the caller's malformed query (exit 2)")
+			}
+
+			var contradiction *FilterTargetContradictionError
+			if tt.wantEmptyOnly {
+				var empty *FilterTargetEmptyError
+				if !errors.As(err, &empty) {
+					t.Fatalf("error = %T (%v), want *FilterTargetEmptyError — an empty id is malformed input, not a contradiction", err, err)
+				}
+				if empty.Field != tt.wantField {
+					t.Errorf("Field = %q, want %q", empty.Field, tt.wantField)
+				}
+				if errors.As(err, &contradiction) {
+					t.Error("errors.As matched *FilterTargetContradictionError, so the empty and contradictory classes are not distinguishable")
+				}
+				return
+			}
+
+			if !errors.As(err, &contradiction) {
+				t.Fatalf("error = %T (%v), want *FilterTargetContradictionError", err, err)
+			}
+			if contradiction.Field != tt.wantField {
+				t.Errorf("Field = %q, want the schema spelling %q", contradiction.Field, tt.wantField)
+			}
+			if contradiction.PresenceField != tt.wantPresence {
+				t.Errorf("PresenceField = %q, want the schema spelling %q", contradiction.PresenceField, tt.wantPresence)
+			}
+			var notFound *FilterTargetNotFoundError
+			if errors.As(err, &notFound) {
+				t.Error("errors.As matched *FilterTargetNotFoundError, so an unsatisfiable pair reads as a mistyped id")
+			}
+		})
+	}
+}
+
+// TestApplyFilterAnswersSatisfiablePairs is the other half of the refusal: every
+// neighboring combination must still be answered, because a guard written one
+// value too wide silently deletes working queries.
+//
+// The true rows are the closest neighbors — `parentId X, hasParent: true` is
+// merely redundant, and cmd/list.go leaves the flag spelling of it alone for the
+// same reason.
+//
+// blockingId + hasBlocking: false is the row that looks like a third
+// contradictory pair and is not. hasBlocking asks BlockingChecker.IsBlocking,
+// which is ACTIVE blocking — false when the candidate's own status released its
+// dependents, and equally when every nib listing it as a blocker has itself
+// been released — while blockingId matches anything in the target's blocked_by
+// regardless of status. The combination therefore selects the blockers the
+// target still lists that block nothing, by either route.
+// TestBlockingIDWithHasBlockingFalseSelectsReleasedBlockers pins the same row
+// against the real checker, since a stub is only as honest as the test that
+// seeds it.
+func TestApplyFilterAnswersSatisfiablePairs(t *testing.T) {
+	reader := contradictionFixture()
+	// The checker reports nothing as actively blocking, which is what a real
+	// store shows once a blocker's status has released its dependents — the
+	// state the blockingId row below is about, pinned against nibcore's own
+	// IsBlocking by TestBlockingIDWithHasBlockingFalseSelectsReleasedBlockers.
+	blocking := &stubBlockingChecker{}
+	yes, no := true, false
+
+	tests := []struct {
+		name    string
+		filter  *model.NibFilter
+		wantIDs []string
+	}{
+		{"parentId with hasParent true is redundant, not contradictory",
+			&model.NibFilter{ParentID: strPtr("par"), HasParent: &yes}, []string{"nibs-chi"}},
+		{"blockedById with hasBlockedBy true is redundant, not contradictory",
+			&model.NibFilter{BlockedByID: strPtr("par"), HasBlockedBy: &yes}, []string{"nibs-chi"}},
+		{"parentId alone",
+			&model.NibFilter{ParentID: strPtr("par")}, []string{"nibs-chi"}},
+		{"blockedById alone",
+			&model.NibFilter{BlockedByID: strPtr("par")}, []string{"nibs-chi"}},
+		{"hasParent false alone keeps the roots",
+			&model.NibFilter{HasParent: &no}, []string{"nibs-par", "nibs-oth"}},
+		{"hasBlockedBy false alone keeps the nibs listing no blocker",
+			&model.NibFilter{HasBlockedBy: &no}, []string{"nibs-par", "nibs-oth"}},
+		{"blockingId with hasBlocking false selects the target's released blockers",
+			&model.NibFilter{BlockingID: strPtr("chi"), HasBlocking: &no}, []string{"nibs-par"}},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := applyFilterOK(t, context.Background(), reader.allNibs, tt.filter, reader, blocking)
+			assertNibIDs(t, got, tt.wantIDs)
+		})
+	}
+}
+
+// TestBlockingIDWithHasBlockingFalseSelectsReleasedBlockers is why blockingId +
+// hasBlocking: false is NOT refused alongside the other two pairs. The claim
+// rests on nibcore.Core's own IsBlocking rather than on a stub, because the
+// exclusion is only correct if "blocking" really is narrower than "named in a
+// blocked_by list" in the implementation the CLI runs.
+//
+// The store: x1 lists both b1 and b2 as blockers, and b1 is completed — a status
+// that releases its dependents (config.Config.StatusReleasesDependents). So b1 is
+// a resolved blocker of x1 that blocks nothing, which is exactly the nib the
+// combination selects. b1 reaches that false by its own status; the other route
+// into the same set — a still-open blocker every one of whose dependents has
+// itself been released — is not seeded here.
+func TestBlockingIDWithHasBlockingFalseSelectsReleasedBlockers(t *testing.T) {
+	resolver, core := setupTestResolver(t)
+	mustCreate(t, core, &nib.Nib{ID: "b1", Title: "Released blocker", Status: "completed"})
+	mustCreate(t, core, &nib.Nib{ID: "b2", Title: "Active blocker", Status: "todo"})
+	mustCreate(t, core, &nib.Nib{ID: "x1", Title: "Blocked nib", Status: "todo", BlockedBy: []string{"b1", "b2"}})
+	ctx := context.Background()
+
+	// Premise: the two blockers differ exactly where the exclusion says they do.
+	if core.IsBlocking("b1") {
+		t.Fatalf("premise failed: a completed blocker reports as actively blocking, so the pair really would be contradictory")
+	}
+	if !core.IsBlocking("b2") {
+		t.Fatalf("premise failed: an open blocker reports as blocking nothing")
+	}
+
+	yes, no := true, false
+	tests := []struct {
+		name    string
+		filter  *model.NibFilter
+		wantIDs []string
+	}{
+		{"blockingId alone reports every blocker the nib names",
+			&model.NibFilter{BlockingID: strPtr("x1")}, []string{"b1", "b2"}},
+		{"blockingId with hasBlocking false narrows to the released ones",
+			&model.NibFilter{BlockingID: strPtr("x1"), HasBlocking: &no}, []string{"b1"}},
+		{"blockingId with hasBlocking true narrows to the active ones",
+			&model.NibFilter{BlockingID: strPtr("x1"), HasBlocking: &yes}, []string{"b2"}},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := applyFilterOK(t, ctx, core.All(), tt.filter, core, resolver.Blocking)
+			assertNibIDs(t, got, tt.wantIDs)
+		})
+	}
+}
+
+// TestARefusalShortCircuitsBeforeTheSearchIndex pins the ordering the search
+// branch's placement rests on: within ApplyFilter, a filter that is going to be
+// refused never queries the index.
+//
+// The reader here fails every Search, so a term that reached the index would
+// surface that failure in place of the refusal — which is the wrong answer
+// twice over. It names an infrastructure problem for a malformed query, and it
+// hides the one thing the caller can act on.
+//
+// The scope is ApplyFilter itself, and with it every caller that hands over a
+// filter untouched — the five relationship resolvers and cmd/rel.go's
+// traversal. It is NOT the whole top-level nibs query: queryResolver.Nibs seeds
+// from Search() before calling ApplyFilter and returns that error directly, so
+// on a down index a contradictory top-level query reports the index failure
+// rather than the refusal. Hoisting the refusal checks ahead of the seeding
+// call would close that gap at the cost of running the same validation in two
+// places.
+func TestARefusalShortCircuitsBeforeTheSearchIndex(t *testing.T) {
+	reader := contradictionFixture()
+	indexDown := errors.New("search index unavailable")
+	reader.searchErr = indexDown
+	no := false
+
+	tests := []struct {
+		name   string
+		filter *model.NibFilter
+		wantAs func(error) bool
+	}{
+		{"a contradictory pair",
+			&model.NibFilter{ParentID: strPtr("par"), HasParent: &no, Search: strPtr("anything")},
+			func(err error) bool {
+				var e *FilterTargetContradictionError
+				return errors.As(err, &e)
+			}},
+		{"an empty id",
+			&model.NibFilter{ParentID: strPtr(""), Search: strPtr("anything")},
+			func(err error) bool {
+				var e *FilterTargetEmptyError
+				return errors.As(err, &e)
+			}},
+		{"an unknown target",
+			&model.NibFilter{ParentID: strPtr("nonexistent"), Search: strPtr("anything")},
+			func(err error) bool {
+				var e *FilterTargetNotFoundError
+				return errors.As(err, &e)
+			}},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			_, err := ApplyFilter(context.Background(), reader.allNibs, tt.filter, reader, &stubBlockingChecker{})
+			if err == nil {
+				t.Fatal("want a refusal, got none")
+			}
+			if errors.Is(err, indexDown) {
+				t.Fatalf("the index was queried for a filter that was going to be refused: %v", err)
+			}
+			if !tt.wantAs(err) {
+				t.Errorf("error = %T (%v), want the refusal class this row names", err, err)
+			}
 		})
 	}
 }

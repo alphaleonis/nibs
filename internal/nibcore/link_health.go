@@ -261,8 +261,50 @@ func canonicalCycleKey(path []string) string {
 	return key
 }
 
-// RemoveLinksTo removes all links pointing to the given target ID from all nibs.
-// Returns the number of links removed.
+// RemoveLinksTo removes every parent and blockedBy link that RESOLVES to the
+// given target from all nibs. Returns the number of links removed.
+//
+// Both ends of the comparison are spelling-independent, because neither end is
+// under a caller's control:
+//
+//   - The TARGET is resolved through the same exact-id-then-prefix-prepended
+//     rule as Core.Get and Core.Delete (normalizeIDInMap), so a short id names
+//     the nib it names everywhere else. Requiring callers to pass a resolved id
+//     would make this the only id-taking Core mutator to do so, and its failure
+//     mode is silent — (0, nil), no error, links left dangling behind a delete.
+//   - A STORED link matches when IT resolves to that same nib, by the same rule.
+//     Canonicalization resolves stored link ids to their full form at the
+//     disk-read boundary, but Core.Create stores a nib's links exactly as given
+//     and runs no such pass (see canonicalize.go), so a short-form link can sit
+//     in the store while its prefixed target is the only nib answering to it.
+//
+// A literal equality against the id AS GIVEN matches as well, which is what
+// strips links to a target that resolves to nothing — an unresolvable id is
+// carried verbatim by design, so verbatim is the only way to name it. That leg
+// serves a direct Core caller repairing links left behind by a nib that is
+// already gone; no production caller reaches it, since the GraphQL DeleteNib
+// resolver resolves its target before calling and so always passes one that
+// resolves.
+//
+// A store holding BOTH a bare token `tgt` and its prefixed twin `nibs-tgt` keeps
+// them as separate edges throughout: `tgt` resolves to itself by exact match, so
+// unlinking either twin leaves the other's incoming links alone.
+//
+// The legacy v0 Blocking field is deliberately untouched, matching the rest of
+// the link-health family (CheckAllLinksInMap, FixBrokenLinks): in v1+ blocking
+// is derived from other nibs' BlockedBy, and Blocking is not a link source. In a
+// loaded store it survives only where the v0→v1 migration was deferred, and
+// there it is a faithful record of the file's own bytes — Render re-emits it so
+// the canonical etag matches (see nib.Nib.Blocking). Clearing it belongs to that
+// migration, not here.
+//
+// An empty target names no nib and is refused up front. The early return is
+// load-bearing, not a shortcut for the O(N) walk: `""` DOES resolve in a store
+// holding a nib whose id is exactly the configured prefix — a hand-written
+// `nibs-.md`, which Get("") answers with — so without the refusal an empty
+// target would strip that nib's incoming links. Separately, pointsAtTarget
+// rejects an empty LINK id, so a nib whose Parent is unset is never an incoming
+// link to anything.
 //
 // Copy-on-write: for every nib that actually changes we clone it, mutate the
 // clone, persist the clone, and reinstall it under c.nibs[id] — the stored
@@ -277,12 +319,35 @@ func (c *Core) RemoveLinksTo(targetID string) (int, error) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 
+	if targetID == "" {
+		return 0, nil
+	}
+
+	configPrefix := c.configPrefix()
+	fullID, resolved := c.normalizeIDForLookupLocked(targetID)
+
+	// Resolving the link costs a map lookup, so it runs only for a link the
+	// literal compare already rejected, and only when the target resolves at all.
+	pointsAtTarget := func(linkID string) bool {
+		if linkID == "" {
+			return false // an unset Parent is not a link
+		}
+		if linkID == targetID {
+			return true
+		}
+		if !resolved {
+			return false
+		}
+		linkFullID, ok := normalizeIDInMap(c.nibs, linkID, configPrefix)
+		return ok && linkFullID == fullID
+	}
+
 	removed := 0
 	for id, b := range c.nibs {
 		// Detect changes by READING the stored pointer only — never mutate it,
 		// so an unchanged nib skips the Clone() below.
-		removeParent := b.Parent == targetID
-		removeBlocker := slices.Contains(b.BlockedBy, targetID)
+		removeParent := pointsAtTarget(b.Parent)
+		removeBlocker := slices.ContainsFunc(b.BlockedBy, pointsAtTarget)
 
 		if !removeParent && !removeBlocker {
 			continue
@@ -294,10 +359,10 @@ func (c *Core) RemoveLinksTo(targetID string) (int, error) {
 			removed++
 		}
 		if removeBlocker {
-			// RemoveBlockedBy strips every occurrence of targetID; count the
-			// drops via the length delta (matching FixBrokenLinks).
+			// Every occurrence of every matching spelling goes; count the drops
+			// via the length delta (matching FixBrokenLinks).
 			before := len(clone.BlockedBy)
-			clone.RemoveBlockedBy(targetID)
+			clone.BlockedBy = slices.DeleteFunc(clone.BlockedBy, pointsAtTarget)
 			removed += before - len(clone.BlockedBy)
 		}
 

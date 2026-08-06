@@ -121,6 +121,25 @@ type NibFilter struct {
 	// such as parentId: "no keyword filter" is a real meaning, so `search: "$q"`
 	// with an empty q is a reasonable thing to write. There is no nib whose id is
 	// "", which is why the same value is a refusal there.
+	//
+	// On a relationship field (children, blockedBy, blocking, mentions,
+	// mentionedBy) the term INTERSECTS that relationship instead of choosing the
+	// nibs to consider: `children(filter: {search: "auth"})` means "the children of
+	// this nib that match auth", and a match that is not a child of it is not in
+	// the answer. Two consequences follow from that, both differences from the
+	// top-level nibs query. A relationship field never returns a nib outside the
+	// relation, so it does not add the ancestors of its matches — tree completion
+	// belongs to a query over the whole store. And relevance ordering does not
+	// apply: the field keeps its own order (children stay in order key order),
+	// since the term selects rather than ranks.
+	//
+	// The index answers with at most 1000 hits per leg (id matches and full-text
+	// hits are capped separately), and BOTH surfaces read that same store-wide
+	// answer. At the top level the cap is the answer — the top hits for the term. On
+	// a relationship field it is applied to the whole store before the intersection,
+	// so in a store large enough for a term to reach the cap, a member of the
+	// relation that matches the term but falls outside those hits is not in the
+	// result.
 	Search *string `json:"search,omitempty"`
 	// Include only nibs with these statuses (OR logic)
 	Status []string `json:"status,omitempty"`
@@ -142,7 +161,14 @@ type NibFilter struct {
 	Tags []string `json:"tags,omitempty"`
 	// Exclude nibs with any of these tags
 	ExcludeTags []string `json:"excludeTags,omitempty"`
-	// Tri-state: true keeps nibs whose parent link resolves to a nib, false keeps exactly the ones with no parent, null does not filter. A nib whose parent link names no nib counts as parentless, matching how the parent field and siblingId treat it — parentId still reports the unresolvable stored id, so a nib selected by hasParent:false may have a non-null parentId
+	// Tri-state: true keeps nibs whose parent link resolves to a nib, false keeps
+	// exactly the ones with no parent, null does not filter. A nib whose parent link
+	// names no nib counts as parentless, matching how the parent field and siblingId
+	// treat it — parentId still reports the unresolvable stored id, so a nib
+	// selected by hasParent:false may have a non-null parentId.
+	//
+	// Combining false with the parentId FILTER is refused: no nib both has a given
+	// parent and has none. See parentId.
 	HasParent *bool `json:"hasParent,omitempty"`
 	// Include only nibs with this specific parent ID.
 	//
@@ -153,11 +179,25 @@ type NibFilter struct {
 	// extensions.code, so a GraphQL client sees a generic error; the CLI reports
 	// VALIDATION_ERROR (exit 2). Omit the field to leave it unfiltered, or use
 	// hasParent: false to select the nibs that have no parent.
+	//
+	// Combining it with hasParent: false is refused as a malformed argument
+	// (VALIDATION_ERROR, exit 2), and refused BEFORE the id is looked up, so the
+	// pair is reported even when the id also names no nib: every nib this field
+	// matches has a parent, so no store state satisfies both halves and correcting
+	// the id would not make the query answerable. Unlike the empty-id refusal above
+	// it carries extensions.code = "FILTER_CONTRADICTION", so a GraphQL client can
+	// route it structurally rather than on message text. The exception is the EMPTY
+	// string, which keeps the empty-id refusal above — the same class and exit, but
+	// uncoded, and its message redirects to hasParent: false, the filter that does
+	// select parentless nibs. The flag surface refuses
+	// `nibs list --parent X --no-parent` with the same exit status.
 	ParentID *string `json:"parentId,omitempty"`
 	// Include only nibs with this specific nib ID somewhere in their parent chain
-	// (that nib's descendants at any depth). This filter excludes the nib itself,
-	// but combining it with search adds it back, because search completes the tree
-	// with every match's ancestors.
+	// (that nib's descendants at any depth). This filter excludes the nib itself.
+	// On the top-level nibs query, combining it with search adds it back, because
+	// that query completes the tree with every match's ancestors. A relationship
+	// field does not complete the tree, so there the target stays excluded — see
+	// search.
 	//
 	// An id naming no nib is refused with a NOT_FOUND error rather than matching
 	// nothing, so a mistyped or stale id stays distinguishable from a genuine empty
@@ -177,9 +217,10 @@ type NibFilter struct {
 	// VALIDATION_ERROR (exit 2). Omit the field to leave it unfiltered.
 	DescendantID *string `json:"descendantId,omitempty"`
 	// Include only nibs sharing this specific nib's parent, or the other root nibs
-	// when it has no parent (itself excluded). Combining it with search also brings
-	// in the shared parent, because search completes the tree with every match's
-	// ancestors.
+	// when it has no parent (itself excluded). On the top-level nibs query,
+	// combining it with search also brings in the shared parent, because that query
+	// completes the tree with every match's ancestors. A relationship field does not
+	// complete the tree, so there the shared parent stays out — see search.
 	//
 	// An id naming no nib is refused with a NOT_FOUND error rather than matching
 	// nothing, so a mistyped or stale id stays distinguishable from a genuine empty
@@ -188,9 +229,24 @@ type NibFilter struct {
 	// extensions.code, so a GraphQL client sees a generic error; the CLI reports
 	// VALIDATION_ERROR (exit 2). Omit the field to leave it unfiltered.
 	SiblingID *string `json:"siblingId,omitempty"`
-	// Tri-state: true keeps nibs that are blocking others, false keeps exactly the non-blocking ones, null does not filter
+	// Tri-state: true keeps nibs that are ACTIVELY blocking others, false keeps
+	// exactly the rest, null does not filter. A blocker whose status released its
+	// dependents (completed, scrapped) is not actively blocking anything, so it is
+	// in the false set even while other nibs still list it in their blocked_by.
+	//
+	// Combining false with blockingId is therefore a real query rather than a
+	// contradiction — see blockingId.
 	HasBlocking *bool `json:"hasBlocking,omitempty"`
 	// Include only nibs that are blocking this specific nib ID.
+	//
+	// Membership is the target's stored blocked_by, whatever the candidate's status,
+	// which is what makes `blockingId: X, hasBlocking: false` meaningful: it selects
+	// the blockers X still lists that are no longer blocking anything — either
+	// because their own status released their dependents, or because every nib that
+	// listed them, X included, has itself been released. The second case is why the
+	// pair can return an OPEN blocker: X completed, its todo blocker listed nowhere
+	// else, and that blocker is in the answer. That pair is answered, not refused;
+	// hasBlocking: true selects the ones still blocking.
 	//
 	// An id naming no nib is refused with a NOT_FOUND error rather than matching
 	// nothing, so a mistyped or stale id stays distinguishable from a genuine empty
@@ -201,7 +257,11 @@ type NibFilter struct {
 	BlockingID *string `json:"blockingId,omitempty"`
 	// Tri-state: true keeps nibs blocked by others (via incoming blocking links or blocked_by field), false keeps exactly the unblocked ones, null does not filter
 	IsBlocked *bool `json:"isBlocked,omitempty"`
-	// Tri-state: true keeps nibs that have explicit blocked_by entries, false keeps exactly those with none, null does not filter
+	// Tri-state: true keeps nibs that have explicit blocked_by entries, false keeps
+	// exactly those with none, null does not filter.
+	//
+	// Combining false with the blockedById FILTER is refused: no nib both lists a
+	// given blocker and lists none. See blockedById.
 	HasBlockedBy *bool `json:"hasBlockedBy,omitempty"`
 	// Include only nibs blocked by this specific nib ID (via blocked_by field).
 	//
@@ -211,6 +271,16 @@ type NibFilter struct {
 	// and never could. Unlike the not-found refusal above it carries no
 	// extensions.code, so a GraphQL client sees a generic error; the CLI reports
 	// VALIDATION_ERROR (exit 2). Omit the field to leave it unfiltered.
+	//
+	// Combining it with hasBlockedBy: false is refused as a malformed argument
+	// (VALIDATION_ERROR, exit 2), and refused BEFORE the id is looked up, so the
+	// pair is reported even when the id also names no nib: matching this field
+	// requires a blocked_by entry, so no store state satisfies both halves. Unlike
+	// the empty-id refusal above it carries extensions.code = "FILTER_CONTRADICTION",
+	// so a GraphQL client can route it structurally rather than on message text. The
+	// exception is the EMPTY string, which keeps the empty-id refusal above — the
+	// same class and exit, but uncoded, reported as malformed input rather than as
+	// the pair.
 	BlockedByID *string `json:"blockedById,omitempty"`
 	// Include only nibs that mention this specific nib ID in their body.
 	//

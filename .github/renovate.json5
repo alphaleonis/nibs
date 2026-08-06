@@ -1,0 +1,138 @@
+{
+  "$schema": "https://docs.renovatebot.com/renovate-schema.json",
+  "extends": ["config:recommended"],
+
+  // Renovate reads its own config from the default branch (`main`) regardless
+  // of this setting — `useBaseBranchConfig` stays "none". Work lands on
+  // `develop`, so toolchain pull requests must target it; this file must still
+  // reach `main` before any of it takes effect.
+  "baseBranchPatterns": ["develop"],
+
+  // Why this file exists: mise.toml pins go, golangci-lint and task to exact
+  // versions and node to a major, and an exact pin does not pick up an upstream
+  // security release on its own. Nothing else in this repo watches those
+  // versions, so without a bot the toolchain that compiles published binaries
+  // only moves when someone remembers to move it.
+  //
+  // The pins are mirrored, because CI does not run through mise. The same
+  // version appears in more than one place for every tool:
+  //
+  //   go             mise.toml, ci.yml (both setup-go steps), release.yml
+  //   node           mise.toml, ci.yml (both setup-node steps), release.yml
+  //   golangci-lint  mise.toml, ci.yml (golangci-lint-action `version`)
+  //   task           mise.toml, ci.yml (both `go install .../task@` steps)
+  //
+  // That table is the covered set, not the whole published-binary path. Two
+  // versions on that path stay outside it and float per release run:
+  // release.yml's goreleaser CLI constraint (`version: "~> v2"`) and
+  // `go install github.com/google/go-licenses@latest`. The github-actions
+  // manager reads the goreleaser *action* ref but not its `version` input, so
+  // pinning the CLI would need another custom manager. nibs-ag7i owns pinning
+  // both.
+  //
+  // A pull request that moved mise.toml alone would leave CI on the old pin —
+  // the drift the pinning was meant to end — so the rules below group every
+  // mirror of a tool into one pull request.
+  //
+  // Grouping puts the mirrors in one branch; it does not make them resolve
+  // from one source. mise.toml's `go` reads golang/go tags while the workflows'
+  // `go-version` reads the actions/go-versions releases setup-go installs from,
+  // and `node` splits the same way. When one source has a release the other
+  // does not yet, the group pull request carries only the half it can see, and
+  // merging it in that state puts mise.toml and the workflow mirrors back out
+  // of sync — the drift this was meant to end. CI stays green when that
+  // happens, because each workflow reads its own literal string and nothing in
+  // this repo cross-checks the copies, so catching it means reading the pull
+  // request's file list before merging. nibs-23f0 proposes deriving the
+  // workflow versions from mise.toml instead of mirroring them, which would
+  // retire both the grouping rules and the split-source lag with them.
+
+  "customManagers": [
+    {
+      // The github-actions manager reads `uses:` refs plus a known set of
+      // `with:` inputs — which covers setup-go, setup-node and
+      // golangci-lint-action, but not Task, which CI installs from a shell
+      // step. github-tags on go-task/task is the source mise resolves `task`
+      // to (registry entry `aqua:go-task/task`), so both files are offered the
+      // same versions.
+      //
+      // The pattern covers the GitHub-hosted slice of what the built-in
+      // manager reads — `.github/workflows` and `.github/actions`, `.yml` or
+      // `.yaml` — rather than narrowing to today's two `.yml` workflows. A file
+      // the built-in manager reads but this one does not is partially covered,
+      // and a partially covered file is worse than an uncovered one because the
+      // resulting pull request looks complete, while Renovate reports nothing
+      // when a custom manager matches zero files. The built-in default is wider
+      // still (`workflow-templates/`, the gitea and forgejo directories, and an
+      // `action.yml`/`action.yaml` at any depth); none of those exist here, so widen this
+      // pattern too if one ever does.
+      "customType": "regex",
+      "managerFilePatterns": ["/(^|/)\\.github/(workflows|actions)/.+\\.ya?ml$/"],
+      "matchStrings": [
+        "go install github\\.com/go-task/task/v3/cmd/task@(?<currentValue>\\S+)"
+      ],
+      "depNameTemplate": "task",
+      "packageNameTemplate": "go-task/task",
+      "datasourceTemplate": "github-tags"
+    }
+  ],
+
+  "packageRules": [
+    {
+      // mise.toml's pin and the three setup-go `go-version` keys.
+      "matchManagers": ["mise", "github-actions"],
+      "matchDepNames": ["go"],
+      "groupName": "go toolchain"
+    },
+    {
+      // mise.toml's pin and the three setup-node `node-version` keys.
+      "matchManagers": ["mise", "github-actions"],
+      "matchDepNames": ["node"],
+      "groupName": "node toolchain"
+    },
+    {
+      // A node major is a deliberate decision, not a routine bump: 22 is the
+      // major CI is green on (nibs-g4a9), and moving off it means running the
+      // web suite on the new one first. Left alone this would be the first
+      // thing Renovate proposed here — every node site pins a bare major, so
+      // releases inside that major need no bump at all and the only update on
+      // offer is the jump to the next one. Dashboard approval keeps it visible
+      // without opening it as a pull request; ticking the box there still
+      // produces the one grouped pull request the rule above defines.
+      "matchManagers": ["mise", "github-actions"],
+      "matchDepNames": ["node"],
+      "matchUpdateTypes": ["major"],
+      "dependencyDashboardApproval": true
+    },
+    {
+      // mise.toml names the tool `golangci-lint`; golangci-lint-action's
+      // `version` input resolves to `golangci/golangci-lint`. Same tool, two
+      // names, so both are listed. The workflow value keeps its leading `v` —
+      // the action requires it — and Renovate rewrites each string in place.
+      "matchManagers": ["mise", "github-actions"],
+      "matchDepNames": ["golangci-lint", "golangci/golangci-lint"],
+      "groupName": "golangci-lint"
+    },
+    {
+      // mise.toml's pin and the two `go install .../task@` steps the custom
+      // manager above extracts under the same name.
+      "matchManagers": ["mise", "custom.regex"],
+      "matchDepNames": ["task"],
+      "groupName": "task runner"
+    },
+    {
+      // go.mod's `go` directive is not a toolchain pin: it declares the
+      // language version every consumer of this module must have. Raising it
+      // is a compatibility decision, and with GOTOOLCHAIN=auto a directive
+      // above mise.toml's pin makes the go command fetch and switch to a newer
+      // toolchain, overriding that pin. `toolchain` is listed beside it as
+      // forward-proofing — go.mod carries no `toolchain` directive today, and
+      // the gomod manager would extract one under that depType if it gained
+      // one. Module dependencies in go.mod stay covered; only the language
+      // version is left to a human.
+      "matchManagers": ["gomod"],
+      "matchDepTypes": ["golang", "toolchain"],
+      "enabled": false
+    }
+  ]
+}

@@ -1253,8 +1253,9 @@ func singleReorderCmd(target *nib.Nib, siblings []*nib.Nib, up bool) tea.Cmd {
 		}
 	}
 	if idx < 0 {
-		// Defensive: both callers source the target and the siblings from the
-		// same tree, so the target is always present.
+		// Reachable for a nib promoted out of a parent cycle: its parent edge is
+		// severed in the tree, so it is absent from the sibling list its stored
+		// parent still names. Refusing is correct — see blockmove.go.
 		return refuseReorderCmd(reorderReasonNotInList)
 	}
 	if up {
