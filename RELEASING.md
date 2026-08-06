@@ -56,6 +56,20 @@ Each release archive contains:
 - `LICENSE.md` (project license, Apache 2.0, with upstream attribution)
 - `third_party_licenses/` directory with license files for all dependencies
 
+## Verifying a download
+
+Every release asset carries a [build provenance attestation](https://docs.github.com/en/actions/security-for-github-actions/using-artifact-attestations/using-artifact-attestations-to-establish-provenance-for-builds) — a signed statement that those exact bytes were built by this repository's release workflow, at a specific commit. Verify a downloaded asset with:
+
+```bash
+gh attestation verify nibs_linux_amd64.tar.gz --repo alphaleonis/nibs
+```
+
+It exits `0` on success and non-zero on failure, so it is safe to use in a script — **but check the exit code directly rather than piping it into something else.** A pipeline reports only its last command's status, which is how rclone's published verification one-liner came to report success on a bad signature ([rclone#8024](https://github.com/rclone/rclone/issues/8024)). Use `&&`, or test `$?`.
+
+This is anchored in Sigstore and GitHub's OIDC identity rather than a key this project holds, so there is no public key to distribute and nothing to rotate.
+
+What it does **not** cover: `nibs upgrade`. That path verifies `checksums.txt`, which lives in the same release as the archives it vouches for, so it detects corruption in transit but not a compromised release. Closing that is tracked separately.
+
 ## Local testing
 
 To test the release build locally:

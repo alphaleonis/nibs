@@ -10,8 +10,15 @@ on:
         type: string
 
 permissions:
-  contents: write # push tags and create the release
-  actions: read   # read the CI run conclusion for the release commit
+  contents: write     # push tags and create the release
+  actions: read       # read the CI run conclusion for the release commit
+  # Both are for actions/attest-build-provenance below. id-token mints the
+  # short-lived OIDC token that identifies this workflow to Sigstore; the
+  # attestation is signed against that identity, so there is no key to store or
+  # rotate. Neither grants anything to the rest of the job that it did not
+  # already have — attestations: write only writes to the attestations API.
+  id-token: write
+  attestations: write
 
 jobs:
   release:
@@ -118,6 +125,28 @@ jobs:
         run: goreleaser release --clean --release-notes=${{ runner.temp }}/release-notes.md
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      # Provenance for what was just published: a signed statement that these
+      # exact bytes were built by this workflow, from this repository, at this
+      # commit. checksums.txt alone cannot say that — it lives in the same
+      # release as the archives it vouches for, so it catches corruption in
+      # transit but not anyone able to write that release (nibs-bw1u).
+      #
+      # Anchored in Sigstore and GitHub's OIDC identity rather than a key we
+      # hold, so there is nothing to store, protect or rotate. `nibs upgrade`
+      # does not consume this — go-selfupdate verifies a checksum file, not an
+      # attestation — so this covers humans and install.sh; the self-update
+      # path is the other half of nibs-bw1u.
+      #
+      # Verify a downloaded asset with:
+      #   gh attestation verify nibs_linux_amd64.tar.gz --repo alphaleonis/nibs
+      - name: Attest build provenance
+        uses: actions/attest-build-provenance@0f67c3f4856b2e3261c31976d6725780e5e4c373 # v4.1.1
+        with:
+          subject-path: |
+            dist/*.tar.gz
+            dist/*.zip
+            dist/checksums.txt
 
       - name: Delete tag on failure
         if: failure()
