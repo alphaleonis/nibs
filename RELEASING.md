@@ -64,7 +64,13 @@ Every release asset carries a [build provenance attestation](https://docs.github
 gh attestation verify nibs_linux_amd64.tar.gz --repo alphaleonis/nibs
 ```
 
+**Requires GitHub CLI 2.49 or newer** — the `attestation` subcommand does not exist before that, and older versions fail with `unknown command "attestation"` rather than anything resembling a verification failure.
+
 It exits `0` on success and non-zero on failure, so it is safe to use in a script — **but check the exit code directly rather than piping it into something else.** A pipeline reports only its last command's status, which is how rclone's published verification one-liner came to report success on a bad signature ([rclone#8024](https://github.com/rclone/rclone/issues/8024)). Use `&&`, or test `$?`.
+
+Checking the exit code is not optional advice here: **on success outside a terminal the command prints nothing at all.** The human-readable summary is TTY-only, so a script that judges success by output rather than status sees the same empty output for "verified" as it would for a command that never ran. Add `--format json` when you want the details programmatically — it reports the source repository, the workflow that built the artifact, and the signing identity.
+
+A modified artifact fails as `HTTP 404: Not Found` on the attestations lookup rather than as a signature error. That is the expected shape: attestations are indexed by artifact digest, so altering a single byte means no attestation exists for it. Exit status is still non-zero.
 
 This is anchored in Sigstore and GitHub's OIDC identity rather than a key this project holds, so there is no public key to distribute and nothing to rotate.
 
