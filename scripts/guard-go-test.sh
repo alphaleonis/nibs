@@ -21,6 +21,14 @@
 # surfaced, the only combination that both lets the call through and says the
 # guard did not run. A shell-side regex fallback is deliberately omitted: a
 # second definition of "bare go test" would drift from the Python one.
+#
+# Failing open here is a deliberate asymmetry with scripts/go-test-capped.sh,
+# which refuses rather than running uncapped (nibs-oz2e). That script gates one
+# command, so refusing costs one test run. This shim gates *every* Bash call, so
+# failing closed costs the whole session — for a missing-interpreter state no
+# machine in this project has ever been in. The two guards degrade differently
+# because they stand in front of very different amounts of surface, not because
+# this one was overlooked.
 
 DIR=$(dirname "$0")
 GUARD="$DIR/guard-go-test.py"
