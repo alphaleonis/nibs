@@ -74,7 +74,34 @@ A modified artifact fails as `HTTP 404: Not Found` on the attestations lookup ra
 
 This is anchored in Sigstore and GitHub's OIDC identity rather than a key this project holds, so there is no public key to distribute and nothing to rotate.
 
-What it does **not** cover: `nibs upgrade`. That path verifies `checksums.txt`, which lives in the same release as the archives it vouches for, so it detects corruption in transit but not a compromised release. Closing that is tracked separately.
+### The signed checksum file
+
+Releases also publish `checksums.txt.sig`, a detached Ed25519 signature over `checksums.txt`, produced in the release job from a key held in the `release` environment. Verify it with the matching public key from `internal/signing/keys/`:
+
+```bash
+openssl pkeyutl -verify -pubin -inkey nibs-signing-1.pub \
+  -rawin -in checksums.txt -sigfile checksums.txt.sig
+```
+
+Unlike the attestation, this anchor is a key compiled into every nibs binary, which is what lets `nibs upgrade` check it without contacting an external service.
+
+**`nibs upgrade` does not require this signature yet.** It still verifies `checksums.txt` alone. The signature is being published first, on its own, so that at least one release has produced a valid one before any binary depends on it — otherwise the first release where signing matters would also be the first where it had ever run, and a release that failed to sign would strand every user on the version demanding a signature.
+
+### Rotating the signing key
+
+Three keypairs were generated up front and all three public keys ship in every binary; **key 1 is currently active**. A binary can only verify against keys it already carries, so this headroom cannot be extended later — a fourth key would be invisible to everything already installed.
+
+To rotate, replace the `NIBS_SIGNING_KEY` secret in the `release` environment with the next private key and update the note above. No client change is needed: the verifier accepts a signature from any embedded key.
+
+The release job checks this for you before it tags or publishes anything:
+
+```bash
+NIBS_SIGNING_KEY="$(cat nibs-signing-2.key)" go run ./internal/signing/cmd/verify -check-key
+```
+
+If the secret is ever set to a key whose public half is not embedded, that step fails the release rather than publishing a signature no binary can verify. Run it yourself after rotating if you want confirmation without dispatching a release — it prints only a yes/no and never the key.
+
+Rotation limits future exposure; it cannot un-trust a stolen key on binaries already shipped, because revocation has no way to reach them.
 
 ## Local testing
 
@@ -87,12 +114,24 @@ install by hand.
 ```bash
 mise install
 
-# Collect licenses
-task licenses
+# Build what the archives need: generated code, web assets, license notices
+task release:prep
 
 # Dry-run GoReleaser
-goreleaser release --snapshot --clean
+goreleaser release --snapshot --clean --skip=sign
 ```
+
+`task release:prep` is required, and is not merely a convenience: `.goreleaser.yaml`
+deliberately has **no `before.hooks`**, because before-hooks inherit the environment
+of the goreleaser process — which in CI holds the signing key. Running `npm ci` there
+would expose the key to install scripts from every package in the web dependency tree.
+Forgetting the prep step fails loudly rather than producing a broken archive
+(`embed.go:5:12: pattern all:web/dist: no matching files found`).
+
+`--skip=sign` is not optional locally: the release signs `checksums.txt` with the
+Ed25519 key held in the `release` environment, and there is no key on a developer
+machine. Without the flag the dry run fails at the signing stage — deliberately,
+because a release that cannot sign must fail rather than publish unsigned.
 
 Run `goreleaser` through `mise exec -- goreleaser …` if mise's shims are not on
 your PATH. Note the dry run executes `.goreleaser.yaml`'s `before` hooks, which
