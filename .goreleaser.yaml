@@ -44,6 +44,15 @@ checksum:
 
 release:
   draft: true
+  # `auto` marks the GitHub release as a pre-release when the tag carries a
+  # pre-release indicator (v0.8.0-alpha.1, v1.0.0-rc1). GoReleaser's default is
+  # `false`, which is not merely cosmetic here: `nibs upgrade` filters on
+  # GitHub's prerelease flag, not on the tag's semver suffix
+  # (go-selfupdate detect.go — `rel.GetPrerelease() && !up.prerelease`), so an
+  # unmarked pre-release is offered to every user as a routine stable upgrade.
+  # Found by cutting v0.8.0-alpha.1, whose draft came out with
+  # isPrerelease: false.
+  prerelease: auto
 
 # Do NOT set `changelog.disable: true`: the release workflow passes
 # `--release-notes` (from CHANGELOG.md), which GoReleaser loads inside the
