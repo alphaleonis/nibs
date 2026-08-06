@@ -4,16 +4,16 @@ import (
 	"fmt"
 	"io"
 
+	"github.com/alphaleonis/nibs/internal/config"
+	"github.com/alphaleonis/nibs/internal/ui"
 	"github.com/charmbracelet/bubbles/list"
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
-	"github.com/alphaleonis/nibs/internal/config"
-	"github.com/alphaleonis/nibs/internal/ui"
 )
 
 // prioritySelectedMsg is sent when a priority is selected from the picker
 type prioritySelectedMsg struct {
-	nibIDs  []string
+	nibIDs   []string
 	priority string
 }
 
@@ -22,8 +22,8 @@ type closePriorityPickerMsg struct{}
 
 // openPriorityPickerMsg requests opening the priority picker for nib(s)
 type openPriorityPickerMsg struct {
-	nibIDs         []string // IDs of nibs to update
-	nibTitle       string   // Display title (single title or "N nibs")
+	nibIDs          []string // IDs of nibs to update
+	nibTitle        string   // Display title (single title or "N nibs")
 	currentPriority string   // Only meaningful for single nib
 }
 
@@ -75,8 +75,8 @@ func (d priorityItemDelegate) Render(w io.Writer, m list.Model, index int, listI
 // priorityPickerModel is the model for the priority picker view
 type priorityPickerModel struct {
 	list            list.Model
-	nibIDs         []string
-	nibTitle       string
+	nibIDs          []string
+	nibTitle        string
 	currentPriority string
 	width           int
 	height          int
@@ -129,8 +129,8 @@ func newPriorityPickerModel(nibIDs []string, nibTitle, currentPriority string, c
 
 	return priorityPickerModel{
 		list:            l,
-		nibIDs:         nibIDs,
-		nibTitle:       nibTitle,
+		nibIDs:          nibIDs,
+		nibTitle:        nibTitle,
 		currentPriority: currentPriority,
 		width:           width,
 		height:          height,
@@ -202,8 +202,8 @@ func (m priorityPickerModel) View() string {
 
 	return renderPickerModal(pickerModalConfig{
 		Title:       "Select Priority",
-		NibTitle:   m.nibTitle,
-		NibID:      nibID,
+		NibTitle:    m.nibTitle,
+		NibID:       nibID,
 		ListContent: m.list.View(),
 		Description: description,
 		Width:       m.width,

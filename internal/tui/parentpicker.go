@@ -7,18 +7,18 @@ import (
 	"sort"
 	"strings"
 
+	"github.com/alphaleonis/nibs/internal/config"
+	"github.com/alphaleonis/nibs/internal/nib"
+	"github.com/alphaleonis/nibs/internal/nibtypes"
+	"github.com/alphaleonis/nibs/internal/ui"
 	"github.com/charmbracelet/bubbles/list"
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
-	"github.com/alphaleonis/nibs/internal/nib"
-	"github.com/alphaleonis/nibs/internal/nibtypes"
-	"github.com/alphaleonis/nibs/internal/config"
-	"github.com/alphaleonis/nibs/internal/ui"
 )
 
 // parentSelectedMsg is sent when a parent is selected from the picker
 type parentSelectedMsg struct {
-	nibIDs  []string // the nibs being modified
+	nibIDs   []string // the nibs being modified
 	parentID string   // the new parent ID (empty string to clear parent)
 }
 
@@ -28,7 +28,7 @@ type closeParentPickerMsg struct{}
 // parentItem wraps a nib to implement list.Item for the parent picker
 type parentItem struct {
 	nib *nib.Nib
-	cfg  *config.Config
+	cfg *config.Config
 }
 
 func (i parentItem) Title() string       { return i.nib.Title }
@@ -87,16 +87,16 @@ func (d parentItemDelegate) Render(w io.Writer, m list.Model, index int, listIte
 
 // parentPickerModel is the model for the parent picker view
 type parentPickerModel struct {
-	list           list.Model
-	nibIDs         []string // the nibs we're setting the parent for
-	nibTitle       string   // display title (single title or "N selected nibs")
-	nibTypes       []string // types of the nibs (to filter eligible parents)
-	currentParent  string   // current parent ID (to highlight, only for single nib)
-	hideCompleted  bool     // whether to hide nibs in a closed status
-	allEligible    []*nib.Nib // all eligible nibs before status filtering
-	width          int
-	height         int
-	cfg            *config.Config
+	list          list.Model
+	nibIDs        []string   // the nibs we're setting the parent for
+	nibTitle      string     // display title (single title or "N selected nibs")
+	nibTypes      []string   // types of the nibs (to filter eligible parents)
+	currentParent string     // current parent ID (to highlight, only for single nib)
+	hideCompleted bool       // whether to hide nibs in a closed status
+	allEligible   []*nib.Nib // all eligible nibs before status filtering
+	width         int
+	height        int
+	cfg           *config.Config
 }
 
 func newParentPickerModel(nibIDs []string, nibTitle string, nibTypes []string, currentParent string, backend Backend, cfg *config.Config, width, height int) parentPickerModel {
@@ -356,8 +356,8 @@ func (m parentPickerModel) View() string {
 	}
 
 	return renderPickerModal(pickerModalConfig{
-		NibTitle:   m.nibTitle,
-		NibID:      nibID,
+		NibTitle:    m.nibTitle,
+		NibID:       nibID,
 		ListContent: m.list.View(),
 		ExtraHelp:   []helpEntry{{"H", hideCompletedHelpText(m.hideCompleted)}},
 		Width:       m.width,

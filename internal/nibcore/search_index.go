@@ -37,6 +37,6 @@ type NoOpSearchIndex struct{}
 
 func (NoOpSearchIndex) IndexNib(*nib.Nib) error              { return nil }
 func (NoOpSearchIndex) IndexNibs([]*nib.Nib) error           { return nil }
-func (NoOpSearchIndex) DeleteNib(string) error                { return nil }
-func (NoOpSearchIndex) Search(string, int) ([]string, error)  { return nil, nil }
-func (NoOpSearchIndex) Close() error                          { return nil }
+func (NoOpSearchIndex) DeleteNib(string) error               { return nil }
+func (NoOpSearchIndex) Search(string, int) ([]string, error) { return nil, nil }
+func (NoOpSearchIndex) Close() error                         { return nil }

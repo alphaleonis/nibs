@@ -3,9 +3,9 @@ package tui
 import (
 	"testing"
 
-	tea "github.com/charmbracelet/bubbletea"
 	"github.com/alphaleonis/nibs/internal/nib"
 	"github.com/alphaleonis/nibs/internal/ui"
+	tea "github.com/charmbracelet/bubbletea"
 )
 
 // blockTestNibs returns a flat set of root-level nibs A, B, C, D for block-move

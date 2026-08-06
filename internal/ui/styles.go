@@ -357,7 +357,7 @@ type ResponsiveColumns struct {
 	Status            int
 	Type              int
 	Tags              int
-	MaxTags           int  // How many tags to show
+	MaxTags           int // How many tags to show
 	ShowTags          bool
 	UseFullTypeStatus bool // Use full names instead of single-char abbreviations
 }

@@ -134,9 +134,9 @@ func TestValidateParentType(t *testing.T) {
 	allTypes := []string{"milestone", "epic", "feature", "task", "bug", "research"}
 
 	tests := []struct {
-		childType  string
-		parentType string
-		wantErr    bool
+		childType   string
+		parentType  string
+		wantErr     bool
 		errContains string // substring expected in error message
 	}{
 		// Valid combinations

@@ -6,18 +6,18 @@ import (
 	"io"
 	"strings"
 
-	"github.com/charmbracelet/bubbles/list"
-	tea "github.com/charmbracelet/bubbletea"
-	"github.com/charmbracelet/lipgloss"
 	"github.com/alphaleonis/nibs/internal/config"
 	"github.com/alphaleonis/nibs/internal/graph/model"
 	"github.com/alphaleonis/nibs/internal/nib"
 	"github.com/alphaleonis/nibs/internal/ui"
+	"github.com/charmbracelet/bubbles/list"
+	tea "github.com/charmbracelet/bubbletea"
+	"github.com/charmbracelet/lipgloss"
 )
 
 // nibItem wraps a Nib to implement list.Item, with tree context
 type nibItem struct {
-	nib        *nib.Nib
+	nib         *nib.Nib
 	cfg         *config.Config
 	treePrefix  string // tree prefix for rendering (e.g., "├─" or "  └─")
 	matched     bool   // true if nib matched filter (vs. ancestor shown for context)
@@ -33,11 +33,11 @@ func (i nibItem) FilterValue() string { return i.nib.Title + " " + i.nib.ID }
 
 // itemDelegate handles rendering of list items
 type itemDelegate struct {
-	cfg           *config.Config
-	hasTags       bool
-	width         int
-	cols          ui.ResponsiveColumns // cached responsive columns
-	idColWidth    int                  // ID column width (accounts for tree prefix)
+	cfg          *config.Config
+	hasTags      bool
+	width        int
+	cols         ui.ResponsiveColumns // cached responsive columns
+	idColWidth   int                  // ID column width (accounts for tree prefix)
 	selectedNibs *map[string]bool     // pointer to marked nibs for multi-select
 }
 
@@ -109,12 +109,12 @@ func (d itemDelegate) Render(w io.Writer, m list.Model, index int, listItem list
 
 // listModel is the model for the nib list view
 type listModel struct {
-	list     list.Model
-	backend  Backend
-	config   *config.Config
-	width    int
-	height   int
-	err      error
+	list    list.Model
+	backend Backend
+	config  *config.Config
+	width   int
+	height  int
+	err     error
 
 	// Responsive column state
 	hasTags    bool                 // whether any nibs have tags
@@ -171,7 +171,7 @@ func newListModel(backend Backend, cfg *config.Config) listModel {
 		config:        cfg,
 		hideCompleted: cfg.HideCompleted(),
 		wideMode:      cfg.WideMode(),
-		selectedNibs: selectedNibs,
+		selectedNibs:  selectedNibs,
 		collapsedIDs:  make(map[string]bool),
 	}
 	m.updateTitle()
@@ -319,7 +319,7 @@ func (m listModel) Update(msg tea.Msg) (listModel, tea.Cmd) {
 		m.hasTags = false
 		for i, flatItem := range msg.items {
 			items[i] = nibItem{
-				nib:        flatItem.Nib,
+				nib:         flatItem.Nib,
 				cfg:         m.config,
 				treePrefix:  flatItem.TreePrefix,
 				matched:     flatItem.Matched,
@@ -402,9 +402,9 @@ func (m listModel) Update(msg tea.Msg) (listModel, tea.Cmd) {
 				} else if item, ok := m.list.SelectedItem().(nibItem); ok {
 					return m, func() tea.Msg {
 						return openParentPickerMsg{
-							nibIDs:       []string{item.nib.ID},
-							nibTitle:     item.nib.Title,
-							nibTypes:     []string{item.nib.EffectiveType()},
+							nibIDs:        []string{item.nib.ID},
+							nibTitle:      item.nib.Title,
+							nibTypes:      []string{item.nib.EffectiveType()},
 							currentParent: item.nib.Parent,
 						}
 					}
@@ -426,8 +426,8 @@ func (m listModel) Update(msg tea.Msg) (listModel, tea.Cmd) {
 				} else if item, ok := m.list.SelectedItem().(nibItem); ok {
 					return m, func() tea.Msg {
 						return openStatusPickerMsg{
-							nibIDs:       []string{item.nib.ID},
-							nibTitle:     item.nib.Title,
+							nibIDs:        []string{item.nib.ID},
+							nibTitle:      item.nib.Title,
 							currentStatus: item.nib.Status,
 						}
 					}
@@ -486,8 +486,8 @@ func (m listModel) Update(msg tea.Msg) (listModel, tea.Cmd) {
 				} else if item, ok := m.list.SelectedItem().(nibItem); ok {
 					return m, func() tea.Msg {
 						return openPriorityPickerMsg{
-							nibIDs:         []string{item.nib.ID},
-							nibTitle:       item.nib.Title,
+							nibIDs:          []string{item.nib.ID},
+							nibTitle:        item.nib.Title,
 							currentPriority: item.nib.EffectivePriority(),
 						}
 					}
@@ -748,11 +748,11 @@ func (m listModel) Update(msg tea.Msg) (listModel, tea.Cmd) {
 // updateDelegate updates the list delegate with current responsive columns
 func (m *listModel) updateDelegate() {
 	delegate := itemDelegate{
-		cfg:           m.config,
-		hasTags:       m.hasTags,
-		width:         m.width,
-		cols:          m.cols,
-		idColWidth:    m.idColWidth,
+		cfg:          m.config,
+		hasTags:      m.hasTags,
+		width:        m.width,
+		cols:         m.cols,
+		idColWidth:   m.idColWidth,
 		selectedNibs: &m.selectedNibs,
 	}
 	m.list.SetDelegate(delegate)
@@ -788,7 +788,7 @@ func (m *listModel) reflattenTree() {
 	m.hasTags = false
 	for i, flatItem := range flatItems {
 		items[i] = nibItem{
-			nib:        flatItem.Nib,
+			nib:         flatItem.Nib,
 			cfg:         m.config,
 			treePrefix:  flatItem.TreePrefix,
 			matched:     flatItem.Matched,

@@ -630,7 +630,7 @@ func TestFixBrokenLinks(t *testing.T) {
 		Title:     "Nib A",
 		Status:    "todo",
 		BlockedBy: []string{"bbb2", "aaa1"}, // bbb2 is valid, aaa1 is self-reference
-		Parent:    "nonexistent",             // broken
+		Parent:    "nonexistent",            // broken
 	}
 	nibB := &nib.Nib{
 		ID:     "bbb2",
@@ -1227,4 +1227,3 @@ func TestCoreReleasesDependentsPredicate(t *testing.T) {
 		})
 	}
 }
-

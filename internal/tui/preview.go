@@ -3,22 +3,22 @@ package tui
 import (
 	"strings"
 
-	"github.com/charmbracelet/lipgloss"
 	"github.com/alphaleonis/nibs/internal/nib"
 	"github.com/alphaleonis/nibs/internal/ui"
+	"github.com/charmbracelet/lipgloss"
 )
 
 // previewModel is a read-only detail preview for the two-column layout.
 // It has no focus, no interaction - just renders nib details.
 type previewModel struct {
-	nib   *nib.Nib
+	nib    *nib.Nib
 	width  int
 	height int
 }
 
 func newPreviewModel(b *nib.Nib, width, height int) previewModel {
 	return previewModel{
-		nib:   b,
+		nib:    b,
 		width:  width,
 		height: height,
 	}

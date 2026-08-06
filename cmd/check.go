@@ -5,10 +5,10 @@ import (
 	"fmt"
 	"os"
 
-	"github.com/spf13/cobra"
-	"github.com/alphaleonis/nibs/internal/nibcore"
 	"github.com/alphaleonis/nibs/internal/config"
+	"github.com/alphaleonis/nibs/internal/nibcore"
 	"github.com/alphaleonis/nibs/internal/ui"
+	"github.com/spf13/cobra"
 )
 
 var (
@@ -17,10 +17,10 @@ var (
 )
 
 type checkResult struct {
-	Success      bool                      `json:"success"`
-	ConfigErrors []string                  `json:"config_errors"`
-	NibIssues   *nibcore.LinkCheckResult `json:"nib_issues,omitempty"`
-	Fixed        int                       `json:"fixed,omitempty"`
+	Success      bool                     `json:"success"`
+	ConfigErrors []string                 `json:"config_errors"`
+	NibIssues    *nibcore.LinkCheckResult `json:"nib_issues,omitempty"`
+	Fixed        int                      `json:"fixed,omitempty"`
 }
 
 var checkCmd = &cobra.Command{
@@ -179,7 +179,7 @@ Note: Cycles cannot be auto-fixed and require manual intervention.`,
 			result := checkResult{
 				Success:      totalIssues == 0,
 				ConfigErrors: configErrors,
-				NibIssues:   linkResult,
+				NibIssues:    linkResult,
 				Fixed:        fixed,
 			}
 			data, _ := json.MarshalIndent(result, "", "  ")

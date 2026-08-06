@@ -8,15 +8,15 @@ import (
 	"strings"
 	"sync"
 
+	"github.com/alphaleonis/nibs/internal/config"
+	"github.com/alphaleonis/nibs/internal/graph/model"
+	"github.com/alphaleonis/nibs/internal/nib"
+	"github.com/alphaleonis/nibs/internal/ui"
 	"github.com/charmbracelet/bubbles/list"
 	"github.com/charmbracelet/bubbles/viewport"
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/glamour"
 	"github.com/charmbracelet/lipgloss"
-	"github.com/alphaleonis/nibs/internal/nib"
-	"github.com/alphaleonis/nibs/internal/config"
-	"github.com/alphaleonis/nibs/internal/graph/model"
-	"github.com/alphaleonis/nibs/internal/ui"
 )
 
 // Cached glamour renderer - initialized once per width
@@ -44,17 +44,17 @@ type backToListMsg struct{}
 // resolvedLink represents a link with the target nib resolved
 type resolvedLink struct {
 	linkType string
-	nib     *nib.Nib
+	nib      *nib.Nib
 	incoming bool // true if another nib links TO this one
 }
 
 // linkItem wraps a resolvedLink to implement list.Item
 type linkItem struct {
-	link   resolvedLink
-	cfg    *config.Config
-	width  int
-	cols   ui.ResponsiveColumns
-	label  string // pre-computed label like "Blocks:" or "Blocked by:"
+	link  resolvedLink
+	cfg   *config.Config
+	width int
+	cols  ui.ResponsiveColumns
+	label string // pre-computed label like "Blocks:" or "Blocked by:"
 }
 
 func (i linkItem) Title() string       { return i.link.nib.Title }
@@ -133,7 +133,7 @@ func (d linkDelegate) Render(w io.Writer, m list.Model, index int, listItem list
 // detailModel displays a single nib's details
 type detailModel struct {
 	viewport      viewport.Model
-	nib          *nib.Nib
+	nib           *nib.Nib
 	backend       Backend
 	config        *config.Config
 	width         int
@@ -149,7 +149,7 @@ type detailModel struct {
 
 func newDetailModel(b *nib.Nib, backend Backend, cfg *config.Config, width, height int) detailModel {
 	m := detailModel{
-		nib:        b,
+		nib:         b,
 		backend:     backend,
 		config:      cfg,
 		width:       width,
@@ -333,9 +333,9 @@ func (m detailModel) Update(msg tea.Msg) (detailModel, tea.Cmd) {
 			// Open parent picker
 			return m, func() tea.Msg {
 				return openParentPickerMsg{
-					nibIDs:       []string{m.nib.ID},
-					nibTitle:     m.nib.Title,
-					nibTypes:     []string{m.nib.EffectiveType()},
+					nibIDs:        []string{m.nib.ID},
+					nibTitle:      m.nib.Title,
+					nibTypes:      []string{m.nib.EffectiveType()},
 					currentParent: m.nib.Parent,
 				}
 			}
@@ -344,8 +344,8 @@ func (m detailModel) Update(msg tea.Msg) (detailModel, tea.Cmd) {
 			// Open status picker
 			return m, func() tea.Msg {
 				return openStatusPickerMsg{
-					nibIDs:       []string{m.nib.ID},
-					nibTitle:     m.nib.Title,
+					nibIDs:        []string{m.nib.ID},
+					nibTitle:      m.nib.Title,
 					currentStatus: m.nib.Status,
 				}
 			}
@@ -366,8 +366,8 @@ func (m detailModel) Update(msg tea.Msg) (detailModel, tea.Cmd) {
 			// Open priority picker
 			return m, func() tea.Msg {
 				return openPriorityPickerMsg{
-					nibIDs:         []string{m.nib.ID},
-					nibTitle:       m.nib.Title,
+					nibIDs:          []string{m.nib.ID},
+					nibTitle:        m.nib.Title,
 					currentPriority: m.nib.EffectivePriority(),
 				}
 			}
@@ -701,7 +701,6 @@ func compareNibsByStatusPriorityAndType(a, b *nib.Nib, statusNames, typeNames []
 	// Quaternary: title (case-insensitive)
 	return strings.ToLower(a.Title) < strings.ToLower(b.Title)
 }
-
 
 func (m detailModel) renderBody(_ int) string {
 	if m.nib.Body == "" {

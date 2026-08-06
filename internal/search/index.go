@@ -2,10 +2,10 @@
 package search
 
 import (
+	"github.com/alphaleonis/nibs/internal/nib"
 	"github.com/blevesearch/bleve/v2"
 	"github.com/blevesearch/bleve/v2/mapping"
 	"github.com/blevesearch/bleve/v2/search/query"
-	"github.com/alphaleonis/nibs/internal/nib"
 )
 
 // Index wraps a Bleve in-memory index for searching nibs.

@@ -138,9 +138,9 @@ func TestBlockingIdsFiltersResolved(t *testing.T) {
 	reader := &stubReaderWithLinks{
 		stubReader: stubReader{
 			nibs: map[string]*nib.Nib{
-				"blocker":         blocker,
-				"blockee-active":  activeBlockee,
-				"blockee-done":    doneBlockee,
+				"blocker":        blocker,
+				"blockee-active": activeBlockee,
+				"blockee-done":   doneBlockee,
 			},
 		},
 		links: map[string][]nib.IncomingLink{

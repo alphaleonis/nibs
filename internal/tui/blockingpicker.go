@@ -7,12 +7,12 @@ import (
 	"sort"
 	"strings"
 
+	"github.com/alphaleonis/nibs/internal/config"
+	"github.com/alphaleonis/nibs/internal/nib"
+	"github.com/alphaleonis/nibs/internal/ui"
 	"github.com/charmbracelet/bubbles/list"
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
-	"github.com/alphaleonis/nibs/internal/nib"
-	"github.com/alphaleonis/nibs/internal/config"
-	"github.com/alphaleonis/nibs/internal/ui"
 )
 
 // computeCurrentBlocking returns the IDs of nibs that this nib is blocking.
@@ -35,9 +35,9 @@ func computeCurrentBlocking(backend Backend, nibID string) []string {
 
 // blockingConfirmedMsg is sent when blocking changes are confirmed
 type blockingConfirmedMsg struct {
-	nibID  string            // the nib we're modifying
-	toAdd   []string          // IDs to add to blocking
-	toRemove []string         // IDs to remove from blocking
+	nibID    string   // the nib we're modifying
+	toAdd    []string // IDs to add to blocking
+	toRemove []string // IDs to remove from blocking
 }
 
 // closeBlockingPickerMsg is sent when the blocking picker is canceled
@@ -45,15 +45,15 @@ type closeBlockingPickerMsg struct{}
 
 // openBlockingPickerMsg requests opening the blocking picker for a nib
 type openBlockingPickerMsg struct {
-	nibID          string
-	nibTitle       string
+	nibID           string
+	nibTitle        string
 	currentBlocking []string // IDs of nibs currently being blocked
 }
 
 // blockingItem wraps a nib to implement list.Item for the blocking picker
 type blockingItem struct {
 	nib *nib.Nib
-	cfg  *config.Config
+	cfg *config.Config
 }
 
 func (i blockingItem) Title() string       { return i.nib.Title }
@@ -114,10 +114,10 @@ func (d blockingItemDelegate) Render(w io.Writer, m list.Model, index int, listI
 // blockingPickerModel is the model for the blocking picker view
 type blockingPickerModel struct {
 	list             list.Model
-	nibID           string           // the nib we're setting blocking for
-	nibTitle        string           // the nib's title
-	originalBlocking map[string]bool  // original state (for computing diff)
-	pendingBlocking  map[string]bool  // pending state (toggled by space)
+	nibID            string          // the nib we're setting blocking for
+	nibTitle         string          // the nib's title
+	originalBlocking map[string]bool // original state (for computing diff)
+	pendingBlocking  map[string]bool // pending state (toggled by space)
 	cfg              *config.Config
 	width            int
 	height           int
@@ -162,7 +162,7 @@ func newBlockingPickerModel(nibID, nibTitle string, currentBlocking []string, ba
 	for _, b := range eligibleNibs {
 		items = append(items, blockingItem{
 			nib: b,
-			cfg:  cfg,
+			cfg: cfg,
 		})
 	}
 
@@ -189,8 +189,8 @@ func newBlockingPickerModel(nibID, nibTitle string, currentBlocking []string, ba
 
 	return blockingPickerModel{
 		list:             l,
-		nibID:           nibID,
-		nibTitle:        nibTitle,
+		nibID:            nibID,
+		nibTitle:         nibTitle,
 		originalBlocking: originalBlocking,
 		pendingBlocking:  pendingBlocking,
 		cfg:              cfg,
@@ -252,7 +252,7 @@ func (m blockingPickerModel) Update(msg tea.Msg) (blockingPickerModel, tea.Cmd) 
 
 				return m, func() tea.Msg {
 					return blockingConfirmedMsg{
-						nibID:   m.nibID,
+						nibID:    m.nibID,
 						toAdd:    toAdd,
 						toRemove: toRemove,
 					}
@@ -278,8 +278,8 @@ func (m blockingPickerModel) View() string {
 
 	return renderPickerModal(pickerModalConfig{
 		Title:       "Manage Blocking",
-		NibTitle:   m.nibTitle,
-		NibID:      m.nibID,
+		NibTitle:    m.nibTitle,
+		NibID:       m.nibID,
 		ListContent: m.list.View(),
 		Description: "space toggle, enter confirm, esc cancel",
 		Width:       m.width,

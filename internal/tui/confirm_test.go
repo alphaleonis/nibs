@@ -3,9 +3,9 @@ package tui
 import (
 	"testing"
 
-	tea "github.com/charmbracelet/bubbletea"
 	"github.com/alphaleonis/nibs/internal/config"
 	"github.com/alphaleonis/nibs/internal/nib"
+	tea "github.com/charmbracelet/bubbletea"
 )
 
 // helper: creates a test App with stub backend, sends a window size, loads nibs,

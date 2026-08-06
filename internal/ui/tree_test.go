@@ -308,11 +308,11 @@ func TestTreeNodeToJSON(t *testing.T) {
 	}
 
 	node := &TreeNode{
-		Nib:    b,
+		Nib:     b,
 		Matched: true,
 		Children: []*TreeNode{
 			{
-				Nib:    &nib.Nib{ID: "child-id", Title: "Child"},
+				Nib:     &nib.Nib{ID: "child-id", Title: "Child"},
 				Matched: false,
 			},
 		},

@@ -15,8 +15,8 @@ import (
 // invocations. Used to verify per-request memoization behavior.
 type countingReader struct {
 	*stubReader
-	mentionsCalls        int32
-	mentionedByCalls     int32
+	mentionsCalls    int32
+	mentionedByCalls int32
 }
 
 func (c *countingReader) FindMentions(fromID string) []*nib.Nib {

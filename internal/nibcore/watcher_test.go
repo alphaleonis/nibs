@@ -885,8 +885,8 @@ func TestSignalOnlySkipPathRaceClean(t *testing.T) {
 	abs := filepath.Join(nibsDir, filename)
 
 	stop := make(chan struct{})
-	var wg sync.WaitGroup      // producer + readers: finite work
-	var drain sync.WaitGroup   // drainer: runs until stop is closed
+	var wg sync.WaitGroup    // producer + readers: finite work
+	var drain sync.WaitGroup // drainer: runs until stop is closed
 
 	// Consume ticks concurrently with the producer so a reader races the signal
 	// sends under -race. (fanOut's tick send is non-blocking — select with a

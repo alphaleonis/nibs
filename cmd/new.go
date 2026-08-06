@@ -14,20 +14,20 @@ import (
 )
 
 var (
-	newStatus    string
-	newType      string
-	newPriority  string
-	newBody      string
-	newBodyFile  string
-	newTag       []string
-	newParent    string
-	newBlocking  []string
-	newBlockedBy []string
-	newDocument  []string
-	newEstimate  string
-	newPrefix    string
-	newAfter     string
-	newBefore    string
+	newStatus       string
+	newType         string
+	newPriority     string
+	newBody         string
+	newBodyFile     string
+	newTag          []string
+	newParent       string
+	newBlocking     []string
+	newBlockedBy    []string
+	newDocument     []string
+	newEstimate     string
+	newPrefix       string
+	newAfter        string
+	newBefore       string
 	newFirst        bool
 	newJSON         bool
 	newNoEdit       bool

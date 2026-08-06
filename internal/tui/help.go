@@ -3,8 +3,8 @@ package tui
 import (
 	"strings"
 
-	"github.com/charmbracelet/lipgloss"
 	"github.com/alphaleonis/nibs/internal/ui"
+	"github.com/charmbracelet/lipgloss"
 )
 
 // helpEntry represents a single keybinding for the help panel.
