@@ -89,6 +89,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 - **Every refused reorder in the TUI now says why.** Selecting nibs under different parents, selecting rows that are not next to each other, or pressing the key at the top or bottom of a list previously did nothing at all; each now reports its reason in the footer.
 - Refusals and failures in the TUI footer no longer render in the same green as a success.
 
+### Security
+- **Two vulnerable dependencies reachable from nibs' own code were updated.** goldmark `1.7.13` → `1.7.17` closes a cross-site scripting issue ([GO-2026-5320](https://pkg.go.dev/vuln/GO-2026-5320)) reachable from mention extraction, which matters because nibs renders that Markdown into the web UI; `golang.org/x/text` `0.38.0` → `0.39.0` closes an infinite loop on invalid UTF-8 ([GO-2026-5970](https://pkg.go.dev/vuln/GO-2026-5970)) reachable from GraphQL enum marshaling. Both were found by `govulncheck`, which reports reachability rather than version matches; it now reports one remaining advisory, [GO-2026-5932](https://pkg.go.dev/vuln/GO-2026-5932), for which no fixed version exists.
+
 ## v0.7.0 - 2026-07-25
 
 ### Added
