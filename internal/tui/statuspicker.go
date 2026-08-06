@@ -4,17 +4,17 @@ import (
 	"fmt"
 	"io"
 
+	"github.com/alphaleonis/nibs/internal/config"
+	"github.com/alphaleonis/nibs/internal/ui"
 	"github.com/charmbracelet/bubbles/list"
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
-	"github.com/alphaleonis/nibs/internal/config"
-	"github.com/alphaleonis/nibs/internal/ui"
 )
 
 // statusSelectedMsg is sent when a status is selected from the picker
 type statusSelectedMsg struct {
 	nibIDs []string
-	status  string
+	status string
 }
 
 // closeStatusPickerMsg is sent when the status picker is canceled
@@ -22,8 +22,8 @@ type closeStatusPickerMsg struct{}
 
 // openStatusPickerMsg requests opening the status picker for nib(s)
 type openStatusPickerMsg struct {
-	nibIDs       []string // IDs of nibs to update
-	nibTitle     string   // Display title (single title or "N nibs")
+	nibIDs        []string // IDs of nibs to update
+	nibTitle      string   // Display title (single title or "N nibs")
 	currentStatus string   // Only meaningful for single nib
 }
 
@@ -32,7 +32,7 @@ type statusItem struct {
 	name        string
 	description string
 	color       string
-	isArchive   bool
+	isClosed    bool
 	isCurrent   bool
 }
 
@@ -61,7 +61,7 @@ func (d statusItemDelegate) Render(w io.Writer, m list.Model, index int, listIte
 	}
 
 	// Render status with color (text only)
-	statusText := ui.RenderStatusTextWithColor(item.name, item.color, item.isArchive)
+	statusText := ui.RenderStatusTextWithColor(item.name, item.color, item.isClosed)
 
 	// Add current indicator
 	var currentIndicator string
@@ -75,8 +75,8 @@ func (d statusItemDelegate) Render(w io.Writer, m list.Model, index int, listIte
 // statusPickerModel is the model for the status picker view
 type statusPickerModel struct {
 	list          list.Model
-	nibIDs       []string
-	nibTitle     string
+	nibIDs        []string
+	nibTitle      string
 	currentStatus string
 	width         int
 	height        int
@@ -101,7 +101,7 @@ func newStatusPickerModel(nibIDs []string, nibTitle, currentStatus string, cfg *
 			name:        s.Name,
 			description: s.Description,
 			color:       s.Color,
-			isArchive:   s.Archive,
+			isClosed:    s.Closed,
 			isCurrent:   isCurrent,
 		})
 	}
@@ -130,8 +130,8 @@ func newStatusPickerModel(nibIDs []string, nibTitle, currentStatus string, cfg *
 
 	return statusPickerModel{
 		list:          l,
-		nibIDs:       nibIDs,
-		nibTitle:     nibTitle,
+		nibIDs:        nibIDs,
+		nibTitle:      nibTitle,
 		currentStatus: currentStatus,
 		width:         width,
 		height:        height,
@@ -204,8 +204,8 @@ func (m statusPickerModel) View() string {
 
 	return renderPickerModal(pickerModalConfig{
 		Title:       "Select Status",
-		NibTitle:   m.nibTitle,
-		NibID:      nibID,
+		NibTitle:    m.nibTitle,
+		NibID:       nibID,
 		ListContent: m.list.View(),
 		Description: description,
 		Width:       m.width,

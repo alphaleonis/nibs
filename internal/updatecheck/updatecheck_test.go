@@ -187,12 +187,12 @@ func TestCheck_NoCacheDirDisabled(t *testing.T) {
 
 func TestIsNewer(t *testing.T) {
 	cases := []struct {
-		current, latest    string
-		newer, comparable  bool
+		current, latest   string
+		newer, comparable bool
 	}{
 		{"v0.5.0", "v0.6.0", true, true},
-		{"0.5.0", "0.6.0", true, true},   // missing "v" normalized on both sides
-		{"v0.5.0", "0.6.0", true, true},  // mixed
+		{"0.5.0", "0.6.0", true, true},  // missing "v" normalized on both sides
+		{"v0.5.0", "0.6.0", true, true}, // mixed
 		{"v0.6.0", "v0.6.0", false, true},
 		{"v0.7.0", "v0.6.0", false, true},
 		{"v0.6.0-rc.1", "v0.6.0", true, true}, // prerelease < release

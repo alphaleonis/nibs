@@ -34,10 +34,25 @@ export interface UseTableDataOptions {
   /** Reactive getter for the server filter (`prepareFilter(...).serverFilter`);
    *  the query re-keys whenever its result changes. */
   getServerFilter: () => ServerFilter;
+  /** Debounce (ms) before a server-filter change re-keys the list query. Typing
+   *  in the filter box changes `search` on every keystroke; debouncing here makes
+   *  the GraphQL list refetch wait for typing to settle instead of firing per
+   *  character. The first value applies immediately; later changes apply through
+   *  a single re-key once they settle. 0 (the default) is fully synchronous. */
+  refetchDebounceMs?: number;
   /** Test seam; defaults to urql's `queryStore`. */
   queryStore?: typeof urqlQueryStore;
   /** Test seam; defaults to urql's `subscriptionStore`. */
   subscriptionStore?: typeof urqlSubscriptionStore;
+}
+
+/** Order-independent content key for a server filter, so a rebuilt filter object
+ *  with identical fields (e.g. from a client-only facet toggle) is recognized as
+ *  unchanged and never re-keys the query. */
+function filterKey(filter: ServerFilter): string {
+  const record = filter as Record<string, unknown>;
+  const keys = Object.keys(record).sort();
+  return JSON.stringify(keys.map((k) => [k, record[k]]));
 }
 
 /** Read-only, per-row live-change state (highlight/fade), delegated to the
@@ -70,13 +85,42 @@ export function useTableData(opts: UseTableDataOptions): TableDataView {
   // to the render. The core touches it only via the `applyChange` port.
   const changeTracker = new NibChangeTracker();
 
-  // Re-keyed reactively: a fresh query store is created whenever the server
-  // filter changes. Read lazily by the value bridge below and by requestRefetch.
+  // Debounced view of the server filter that actually re-keys the query. Typing
+  // in the filter box updates the live filter (and the box's dropdowns/highlight)
+  // on every keystroke, but the list query — which re-keys on every server-filter
+  // change — waits `refetchDebounceMs` for changes to settle, so a large project
+  // refetches once typing pauses rather than per character. The first value is
+  // applied immediately; content-equal churn (a new object with the same server
+  // fields) never re-keys. A debounce of 0 stays fully synchronous.
+  const refetchDebounceMs = opts.refetchDebounceMs ?? 0;
+  const liveFilter = $derived(opts.getServerFilter());
+  let debouncedFilter = $state(untrack(() => opts.getServerFilter()));
+  let appliedKey = untrack(() => filterKey(debouncedFilter));
+  let debounceTimer: ReturnType<typeof setTimeout> | null = null;
+  $effect(() => {
+    const next = liveFilter;
+    const nextKey = filterKey(next);
+    if (nextKey === appliedKey) return; // no meaningful change to the server query
+    if (refetchDebounceMs <= 0) {
+      appliedKey = nextKey;
+      debouncedFilter = next;
+      return;
+    }
+    if (debounceTimer) clearTimeout(debounceTimer);
+    debounceTimer = setTimeout(() => {
+      debounceTimer = null;
+      appliedKey = nextKey;
+      debouncedFilter = next;
+    }, refetchDebounceMs);
+  });
+
+  // Re-keyed reactively: a fresh query store is created whenever the (debounced)
+  // server filter changes. Read lazily by the value bridge below and by requestRefetch.
   const result = $derived(
     makeQuery({
       client: opts.client,
       query: TREE_TABLE_QUERY,
-      variables: { filter: opts.getServerFilter() },
+      variables: { filter: debouncedFilter },
     }),
   );
 
@@ -125,6 +169,7 @@ export function useTableData(opts: UseTableDataOptions): TableDataView {
   // highlight timers. An effect-cleanup (not `onDestroy`) so this composable is
   // usable under `$effect.root` in tests, matching `liveNib.svelte.ts`.
   $effect(() => () => {
+    if (debounceTimer) clearTimeout(debounceTimer);
     source.destroy();
     changeTracker.destroy();
   });

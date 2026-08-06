@@ -1,6 +1,9 @@
 package ui
 
 import (
+	"slices"
+	"sort"
+	"strconv"
 	"strings"
 	"testing"
 
@@ -164,6 +167,133 @@ func TestBuildTree(t *testing.T) {
 	})
 }
 
+// treeShape flattens a forest depth-first into "depth:id" entries, so a test can
+// assert both which nibs rendered and where they sat.
+func treeShape(nodes []*TreeNode) []string {
+	var out []string
+	var walk func(ns []*TreeNode, depth int)
+	walk = func(ns []*TreeNode, depth int) {
+		for _, n := range ns {
+			out = append(out, strconv.Itoa(depth)+":"+n.Nib.ID)
+			walk(n.Children, depth+1)
+		}
+	}
+	walk(nodes, 0)
+	return out
+}
+
+// sortByID orders nibs by id, making the forest fully deterministic even though
+// BuildTree ranges a map internally.
+func sortByID(bs []*nib.Nib) {
+	sort.Slice(bs, func(i, j int) bool { return bs[i].ID < bs[j].ID })
+}
+
+// The fixture table below is mirrored verbatim in web/src/lib/tree.test.ts
+// ("parent cycles degrade to a visible oddity"): same names, same inputs, same
+// "depth:id" wants. Adding or changing a case here means changing it there too —
+// that duplication is the only thing that catches a Go/TS divergence.
+//
+// TestBuildTreeParentCycle pins that a parent cycle degrades to a visible
+// oddity. Every member of a cycle has a parent inside the needed set, so the
+// ordinary "root = no parent, or parent outside the set" rule finds no root and
+// the entire cycle used to vanish from the tree. One member is promoted to a
+// root instead, and the rest of the cycle hangs off it as an ordinary chain.
+func TestBuildTreeParentCycle(t *testing.T) {
+	tests := []struct {
+		name string
+		nibs []*nib.Nib
+		want []string
+	}{
+		{
+			name: "self cycle renders once",
+			nibs: []*nib.Nib{{ID: "a", Parent: "a"}},
+			want: []string{"0:a"},
+		},
+		{
+			name: "two-cycle renders both members",
+			nibs: []*nib.Nib{{ID: "a", Parent: "b"}, {ID: "b", Parent: "a"}},
+			want: []string{"0:a", "1:b"},
+		},
+		{
+			// The lowest id is promoted, not the first one seen: "m" is second in
+			// the input and still becomes the root.
+			name: "promotion picks the lowest id, not the input order",
+			nibs: []*nib.Nib{{ID: "z", Parent: "m"}, {ID: "m", Parent: "z"}},
+			want: []string{"0:m", "1:z"},
+		},
+		{
+			name: "three-cycle renders all members as a chain",
+			nibs: []*nib.Nib{{ID: "a", Parent: "c"}, {ID: "b", Parent: "a"}, {ID: "c", Parent: "b"}},
+			want: []string{"0:a", "1:b", "2:c"},
+		},
+		{
+			name: "two disjoint cycles each get their own root",
+			nibs: []*nib.Nib{
+				{ID: "a", Parent: "b"}, {ID: "b", Parent: "a"},
+				{ID: "x", Parent: "y"}, {ID: "y", Parent: "x"},
+			},
+			want: []string{"0:a", "1:b", "0:x", "1:y"},
+		},
+		{
+			// A nib whose parent chain reaches a cycle but that is not itself in
+			// it keeps rendering under its real parent.
+			name: "child hanging off a cycle stays under its parent",
+			nibs: []*nib.Nib{
+				{ID: "a", Parent: "b"}, {ID: "b", Parent: "a"},
+				{ID: "d", Parent: "b"}, {ID: "g", Parent: "d"},
+			},
+			want: []string{"0:a", "1:b", "2:d", "3:g"},
+		},
+		{
+			name: "cycle alongside an ordinary tree",
+			nibs: []*nib.Nib{
+				{ID: "a", Parent: "b"}, {ID: "b", Parent: "a"},
+				{ID: "m1"}, {ID: "m2", Parent: "m1"},
+			},
+			want: []string{"0:a", "1:b", "0:m1", "1:m2"},
+		},
+		{
+			// Must-not-regress: an ordinary tree plus a root-level orphan is
+			// unaffected by cycle handling.
+			name: "ordinary tree with no cycle is unchanged",
+			nibs: []*nib.Nib{
+				{ID: "m1"}, {ID: "m2", Parent: "m1"}, {ID: "m3", Parent: "m2"}, {ID: "z1"},
+			},
+			want: []string{"0:m1", "1:m2", "2:m3", "0:z1"},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := treeShape(BuildTree(tt.nibs, tt.nibs, sortByID))
+			if !slices.Equal(got, tt.want) {
+				t.Errorf("BuildTree rendered %v, want %v", got, tt.want)
+			}
+		})
+	}
+}
+
+// TestBuildTreeCycleReachedByAncestorWalk covers the filtered path: only one
+// cycle member matched, so the rest arrive through the ancestor walk. The
+// promoted root can then be a nib that is shown purely for context.
+func TestBuildTreeCycleReachedByAncestorWalk(t *testing.T) {
+	a := &nib.Nib{ID: "a", Parent: "b"}
+	b := &nib.Nib{ID: "b", Parent: "a"}
+	all := []*nib.Nib{a, b}
+
+	tree := BuildTree([]*nib.Nib{b}, all, sortByID)
+
+	if got, want := treeShape(tree), []string{"0:a", "1:b"}; !slices.Equal(got, want) {
+		t.Fatalf("BuildTree rendered %v, want %v", got, want)
+	}
+	if tree[0].Matched {
+		t.Error("a is an ancestor shown for context; it should not be marked matched")
+	}
+	if !tree[0].Children[0].Matched {
+		t.Error("b matched the filter; it should be marked matched")
+	}
+}
+
 func TestTreeNodeToJSON(t *testing.T) {
 	b := &nib.Nib{
 		ID:       "test-id",
@@ -178,11 +308,11 @@ func TestTreeNodeToJSON(t *testing.T) {
 	}
 
 	node := &TreeNode{
-		Nib:    b,
+		Nib:     b,
 		Matched: true,
 		Children: []*TreeNode{
 			{
-				Nib:    &nib.Nib{ID: "child-id", Title: "Child"},
+				Nib:     &nib.Nib{ID: "child-id", Title: "Child"},
 				Matched: false,
 			},
 		},

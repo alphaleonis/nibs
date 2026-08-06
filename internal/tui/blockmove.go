@@ -33,26 +33,56 @@ func walkEffective(nodes []*ui.TreeNode, marked map[string]bool, ancestorMarked 
 	}
 }
 
+// statusKind selects how the footer colors a status message. It rides
+// alongside the message rather than being inferred from its text, so a
+// rewording cannot silently turn a refusal green.
+type statusKind int
+
+const (
+	statusOK statusKind = iota
+	statusWarn
+)
+
+// Reasons a reorder is refused. They are shown verbatim in the list footer, so
+// they describe the selection in the user's terms rather than the code's.
+//
+// The last three are defensive: every nib a reorder can reach is drawn from the
+// tree and therefore appears under its own resolved parent, so no selection the
+// UI can produce reaches them. They are kept because they guard the assumption
+// rather than restate it — reaching one means the tree and the sibling lookup
+// have diverged, which is worth saying out loud instead of moving nothing.
+const (
+	reorderReasonNothingSelected  = "Nothing to move"
+	reorderReasonDifferentParents = "Can't move: selected nibs have different parents"
+	reorderReasonNotContiguous    = "Can't move: select nibs that are next to each other"
+	reorderReasonAtTop            = "Already at the top"
+	reorderReasonAtBottom         = "Already at the bottom"
+
+	reorderReasonNoSiblings       = "Can't move: that nib has no siblings to move among"
+	reorderReasonNotAmongSiblings = "Can't move: the selection does not match its parent's list"
+	reorderReasonNotInList        = "Can't move: that nib is not in its parent's list"
+)
+
 // blockMovable checks whether the effective selection can move as a contiguous
 // block. Returns the parent's ordered sibling slice and the inclusive
-// [startIdx, endIdx] range of the block within it. ok=false when the selection
-// spans multiple parents, has gaps between selected items, or is empty.
-func blockMovable(effective []*nib.Nib, tree []*ui.TreeNode) (siblings []*nib.Nib, startIdx, endIdx int, ok bool) {
+// [startIdx, endIdx] range of the block within it. reason is empty when the
+// block can move; otherwise it explains the refusal.
+func blockMovable(effective []*nib.Nib, tree []*ui.TreeNode) (siblings []*nib.Nib, startIdx, endIdx int, reason string) {
 	if len(effective) == 0 {
-		return nil, 0, 0, false
+		return nil, 0, 0, reorderReasonNothingSelected
 	}
 
-	parentID := effective[0].Parent
-	// All effective items must share the same Parent (same parent scope).
+	parentID := treeResolvedParentID(effective[0], tree)
+	// All effective items must share the same parent scope.
 	for _, n := range effective[1:] {
-		if n.Parent != parentID {
-			return nil, 0, 0, false
+		if treeResolvedParentID(n, tree) != parentID {
+			return nil, 0, 0, reorderReasonDifferentParents
 		}
 	}
 
 	siblings = siblingsFromTree(tree, parentID)
 	if len(siblings) == 0 {
-		return nil, 0, 0, false
+		return nil, 0, 0, reorderReasonNoSiblings
 	}
 
 	// Locate each effective item's index in the sibling slice.
@@ -67,8 +97,12 @@ func blockMovable(effective []*nib.Nib, tree []*ui.TreeNode) (siblings []*nib.Ni
 		}
 	}
 	if len(indices) != len(effective) {
-		// Some effective item wasn't found among siblings — scope mismatch.
-		return nil, 0, 0, false
+		// Reachable for a nib promoted out of a parent cycle: BuildTree severs its
+		// parent edge to break the cycle, so it renders as a root while its stored
+		// parent link still resolves and treeResolvedParentID still returns it.
+		// Refusing is correct — a reorder is only meaningful within one real
+		// parent's sibling list, and this nib is in none.
+		return nil, 0, 0, reorderReasonNotAmongSiblings
 	}
 
 	// Indices come out sorted because we iterate siblings in order. Check
@@ -76,10 +110,29 @@ func blockMovable(effective []*nib.Nib, tree []*ui.TreeNode) (siblings []*nib.Ni
 	startIdx = indices[0]
 	endIdx = indices[len(indices)-1]
 	if endIdx-startIdx+1 != len(indices) {
-		return nil, 0, 0, false
+		return nil, 0, 0, reorderReasonNotContiguous
 	}
 
-	return siblings, startIdx, endIdx, true
+	return siblings, startIdx, endIdx, ""
+}
+
+// treeResolvedParentID applies internal/graph's resolved-parent rule at the
+// presentation layer, deciding the sibling set a nib actually reorders within.
+// The TUI holds no NibReader at this point — only a tree already fetched from
+// the backend — so it answers "does this parent link resolve" by tree
+// membership. This is a re-derivation of graph.resolvedParent, which is the
+// canonical rule; keep the two in agreement.
+//
+// Membership is equivalent to resolution only while the tree is built from the
+// full, unfiltered nib set (see the loadNibs fetch that feeds ui.BuildTree).
+// Under a filtered set a hidden parent would be indistinguishable from one
+// that does not exist, and its children would be offered for reorder among
+// unrelated roots.
+func treeResolvedParentID(n *nib.Nib, tree []*ui.TreeNode) string {
+	if n.Parent == "" || ui.FindNode(tree, n.Parent) == nil {
+		return ""
+	}
+	return n.Parent
 }
 
 // siblingsFromTree returns the ordered siblings under the given parent ID.

@@ -5,31 +5,31 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/charmbracelet/lipgloss"
-	"github.com/alphaleonis/nibs/internal/nib"
 	"github.com/alphaleonis/nibs/internal/config"
+	"github.com/alphaleonis/nibs/internal/nib"
+	"github.com/charmbracelet/lipgloss"
 )
 
 // TreeNode represents a node in the nib tree hierarchy.
 type TreeNode struct {
-	Nib     *nib.Nib
+	Nib      *nib.Nib
 	Children []*TreeNode
 	Matched  bool // true if this nib matched the filter (vs. shown for context)
 }
 
 // TreeNodeJSON is the JSON-serializable version of TreeNode.
 type TreeNodeJSON struct {
-	ID        string          `json:"id"`
-	Slug      string          `json:"slug,omitempty"`
-	Path      string          `json:"path"`
-	Title     string          `json:"title"`
-	Status    string          `json:"status"`
-	Type      string          `json:"type,omitempty"`
-	Priority  string          `json:"priority,omitempty"`
-	Tags      []string        `json:"tags,omitempty"`
-	Body      string          `json:"body,omitempty"`
-	Matched   bool            `json:"matched"`
-	Children  []*TreeNodeJSON `json:"children,omitempty"`
+	ID       string          `json:"id"`
+	Slug     string          `json:"slug,omitempty"`
+	Path     string          `json:"path"`
+	Title    string          `json:"title"`
+	Status   string          `json:"status"`
+	Type     string          `json:"type,omitempty"`
+	Priority string          `json:"priority,omitempty"`
+	Tags     []string        `json:"tags,omitempty"`
+	Body     string          `json:"body,omitempty"`
+	Matched  bool            `json:"matched"`
+	Children []*TreeNodeJSON `json:"children,omitempty"`
 }
 
 // ToJSON converts a TreeNode to its JSON-serializable form.
@@ -86,10 +86,16 @@ func BuildTree(matchedNibs []*nib.Nib, allNibs []*nib.Nib, sortFn func([]*nib.Ni
 		addAncestors(b, nibByID, neededNibs)
 	}
 
+	// One member of every parent cycle is promoted to a root; without that, no
+	// member of a cycle qualifies as a root and the whole cycle is dropped.
+	promoted := promotedCycleRoots(neededNibs)
+
 	// Build children index (parent ID -> children)
 	children := make(map[string][]*nib.Nib)
 	for _, b := range neededNibs {
-		if b.Parent != "" {
+		// A promoted nib's edge to its parent is severed — that is what breaks
+		// the cycle, so the recursive walk below terminates.
+		if b.Parent != "" && !promoted[b.ID] {
 			// Only add as child if parent is in our needed set
 			if _, ok := neededNibs[b.Parent]; ok {
 				children[b.Parent] = append(children[b.Parent], b)
@@ -102,10 +108,10 @@ func BuildTree(matchedNibs []*nib.Nib, allNibs []*nib.Nib, sortFn func([]*nib.Ni
 		sortFn(children[parentID])
 	}
 
-	// Find root nibs (no parent or parent not in needed set)
+	// Find root nibs (no parent, parent not in needed set, or promoted out of a cycle)
 	var roots []*nib.Nib
 	for _, b := range neededNibs {
-		if b.Parent == "" {
+		if b.Parent == "" || promoted[b.ID] {
 			roots = append(roots, b)
 		} else {
 			// Check if parent is in the tree
@@ -118,6 +124,87 @@ func BuildTree(matchedNibs []*nib.Nib, allNibs []*nib.Nib, sortFn func([]*nib.Ni
 
 	// Build tree nodes recursively
 	return buildNodes(roots, children, matchedSet)
+}
+
+// promotedCycleRoots picks one member of every parent cycle lying wholly inside
+// nibs. Every member of such a cycle has its parent present, so none satisfies
+// the ordinary root rule and the cycle would render nowhere at all; promoting
+// one member and severing its parent edge turns the cycle into an ordinary
+// chain, so a malformed hierarchy shows up as an oddity instead of a
+// disappearance.
+//
+// The member with the lowest id wins. That keeps the choice independent of Go's
+// randomized map iteration order, and matches web/src/lib/tree.ts, which applies
+// the same rule — so both views promote the same member and nest a cycle
+// identically. Sibling ORDER still follows each view's own sort, as it does for
+// ordinary trees.
+//
+// Comparison is over bytes here and UTF-16 code units there. Those orders differ
+// only for supplementary-plane characters, which ids drawn from idAlphabet never
+// contain — but ParseFilename applies no charset gate, so an imported file can
+// carry one. If that ever happens the two views root the cycle at different
+// members; nothing else breaks.
+//
+// A nib has at most one parent, so cycles are disjoint and each is discovered
+// exactly once. Every nib is walked once — unseen -> onPath -> settled — making
+// the pass linear in the size of the set.
+func promotedCycleRoots(nibs map[string]*nib.Nib) map[string]bool {
+	const (
+		unseen = iota
+		onPath
+		settled
+	)
+	state := make(map[string]int, len(nibs))
+	promoted := make(map[string]bool)
+
+	for id := range nibs {
+		if state[id] != unseen {
+			continue
+		}
+		// Follow this nib's parent chain until it leaves the set, ends, or
+		// re-enters itself.
+		var path []string
+		for cur := id; ; {
+			if state[cur] == onPath {
+				// The chain closed on itself: the cycle is the path from this
+				// nib onward. Anything before it merely leads into the cycle.
+				start := 0
+				for i, m := range path {
+					if m == cur {
+						start = i
+						break
+					}
+				}
+				lowest := path[start]
+				for _, m := range path[start+1:] {
+					if m < lowest {
+						lowest = m
+					}
+				}
+				promoted[lowest] = true
+				break
+			}
+			if state[cur] == settled {
+				// Already fully explored, along with any cycle beyond it.
+				break
+			}
+			state[cur] = onPath
+			path = append(path, cur)
+			b := nibs[cur]
+			if b.Parent == "" {
+				break
+			}
+			if _, ok := nibs[b.Parent]; !ok {
+				break
+			}
+			cur = b.Parent
+		}
+		for _, m := range path {
+			state[m] = settled
+		}
+	}
+
+	return promoted
 }
 
 // addAncestors recursively adds all ancestors of a nib to the needed set.
@@ -141,7 +228,7 @@ func buildNodes(nibs []*nib.Nib, children map[string][]*nib.Nib, matchedSet map[
 	nodes := make([]*TreeNode, len(nibs))
 	for i, b := range nibs {
 		nodes[i] = &TreeNode{
-			Nib:     b,
+			Nib:      b,
 			Matched:  matchedSet[b.ID],
 			Children: buildNodes(children[b.ID], children, matchedSet),
 		}
@@ -349,7 +436,7 @@ func renderNode(sb *strings.Builder, node *TreeNode, depth int, isLast bool, anc
 		TypeColor:     colors.TypeColor,
 		PriorityColor: colors.PriorityColor,
 		Priority:      b.Priority,
-		IsArchive:     colors.IsArchive,
+		IsClosed:      colors.IsClosed,
 		MaxTitleWidth: renderCfg.titleWidth,
 		ShowCursor:    false,
 		Tags:          b.Tags,
@@ -368,7 +455,7 @@ func renderNode(sb *strings.Builder, node *TreeNode, depth int, isLast bool, anc
 // FlatItem represents a flattened tree node with rendering context.
 // Used by TUI to render tree structure in a flat list.
 type FlatItem struct {
-	Nib        *nib.Nib
+	Nib         *nib.Nib
 	Depth       int    // 0 = root, 1+ = nested
 	IsLast      bool   // last child at this level
 	Matched     bool   // true if nib matched filter (vs. shown for context)
@@ -411,7 +498,7 @@ func flattenNodes(nodes []*TreeNode, depth int, ancestry []bool, items *[]FlatIt
 		}
 
 		*items = append(*items, FlatItem{
-			Nib:        node.Nib,
+			Nib:         node.Nib,
 			Depth:       depth,
 			IsLast:      isLast,
 			Matched:     node.Matched,
@@ -492,7 +579,7 @@ func flattenNodesFiltered(nodes []*TreeNode, depth int, ancestry []bool, collaps
 		}
 
 		*items = append(*items, FlatItem{
-			Nib:        node.Nib,
+			Nib:         node.Nib,
 			Depth:       depth,
 			IsLast:      isLast,
 			Matched:     node.Matched,

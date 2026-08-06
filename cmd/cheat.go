@@ -28,37 +28,58 @@ var cheatCmd = &cobra.Command{
 }
 
 // cheatSheet renders the one-screen grammar, interpolating the live enum sets.
+// The close line's default reason is interpolated from closeDefaultStatus — the
+// same const `nibs close --as` defaults to and `nibs prime` renders — so the
+// three agent-facing surfaces cannot disagree about what omitting --as records.
+// The rel entry names relDefaultKind the same way, and brackets --rel because
+// omitting it is legal: a grammar that reads as required is how the bare form
+// gets run unawares, and its default answers plausibly rather than erroring.
 func cheatSheet(cfg *config.Config) string {
 	var b strings.Builder
+	// The STATUS line lists the statuses by group rather than in one flat run:
+	// the groups partition the vocabulary, so this names every status AND says
+	// which group it filters under, in the same space. The blocker note is
+	// derived too — and disappears if every closed status starts releasing its
+	// dependents, rather than lingering as a rule with no members.
+	blockerNote := ""
+	if holding := cfg.HoldingStatusNames(); len(holding) > 0 {
+		blockerNote = "; closed but still blocks: " + strings.Join(holding, ", ")
+	}
 	fmt.Fprintf(&b, `nibs — agentic issue tracker. One-screen grammar; detail: nibs catalog <topic> · nibs <cmd> --help
 
 READ   get <id…>          nib document (default); -f/--view id|ref|card|full; --json → {nib}
        list [filters]     TSV "# <n> nibs"; --json → {nibs,count,truncated}; -c count; -q ids only
-       rel <id> --rel R   related nibs, same envelope. R: parent,children,siblings,blocking,blocked-by,
-                          mentions-out/in,ancestors,descendants,*-transitive,neighbours[-active]
+       rel <id> [--rel R] related nibs, same envelope. R (default %s): parent,children,siblings,blocking,
+                          blocked-by,mentions-out/in,ancestors,descendants,*-transitive,neighbours[-active]
        recipes            context [id] · plan <id> · roadmap · list --ready
 WRITE  new "<title>" -t T create; also -s -p -e --parent --blocked-by --tag --after/--before/--first
        set <id>           metadata/links; --clear priority|estimate|parent; --remove-tag/-blocked-by/…
        body <id>          --set | --append | --section "## H" --set [--create] | --replace-old T --replace-new U
        mv <id[…]>         --after|--before|--first <anchor> | --parent <id> | --children-of <p> <id…>
        rm <id…>           --archive (default) | --delete (irreversible); agents pass -f/--force
-       close <id> --summary -   mark completed, append summary, propagate to parent
+       close <id>         --summary - (required); --as <closed status> picks the close reason (default
+                          %s). Closing an existing nib goes through close — set -s <closed> errors.
 META   cheat · catalog <fields|filters|recipes|examples|hierarchy|schema> · prime[ --full] · query (GraphQL)
 
 VIEWS  id < ref < card < full (leanest→fullest). -f adds exact fields, e.g. -f "id,blocked-by(id,status)".
        get → full document · list/rel → ref TSV · --json → card. body & etag are opt-in (-f body/etag).
 INPUT  prose/multi-line is ALWAYS '-' (stdin) or '@FILE', never inline — body, new -d, close --summary.
-EXIT   0 ok · 2 validation · 3 not-found · 4 conflict · 5 io.  --json error → {error:{code,message}}
+EXIT   0 ok · 1 uncategorized · 2 validation · 3 not-found · 4 conflict · 5 io.
+       --json error → {error:{code,message}}
 TYPE   %s   (hierarchy: nibs catalog hierarchy)
-STATUS %s   (-s/--no-status groups: open|closed|parked; deferred=parked, excl. --ready)
+STATUS %s=%s · %s=%s   (-s/--no-status take either group%s)
 PRIO   %s (default normal)   EST  %s (s=1 m=3 l=5 xl=8; default m)
-FILTER list/rel show OPEN only by default (completed/scrapped hidden; header notes "N hidden — --all to include").
+FILTER list/rel show OPEN only by default (closed statuses hidden; header notes "N hidden — --all to include").
        -s overrides (-s closed = only closed); --all = every status. Open work under X: 'rel <id> --rel
        descendants -t bug' is already open — no post-filter. -c/-q honor the open default (--all for totals).
 RULE   On any nibs error: STOP, find the root cause, never silently retry.
 `,
+		relDefaultKind,
+		closeDefaultStatus,
 		strings.Join(cfg.TypeNames(), ", "),
-		strings.Join(cfg.StatusNames(), ", "),
+		statusGroupOpen, strings.Join(cfg.OpenStatusNames(), "/"),
+		statusGroupClosed, strings.Join(cfg.ClosedStatusNames(), "/"),
+		blockerNote,
 		strings.Join(cfg.PriorityNames(), ", "),
 		strings.Join(cfg.EstimateNames(), ", "),
 	)

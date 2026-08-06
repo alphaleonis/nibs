@@ -24,11 +24,25 @@ import (
 // Pure function operating on the given map without locking. Callers passing
 // a Core.nibs map must hold Core.mu.RLock for the duration of the call.
 //
-// nib.NewID always prepends the configured prefix today, so a bare token
-// and its prefixed form cannot both exist in the map — if that invariant
-// is ever broken (e.g. importing externally generated nibs), the ordering
-// here (exact-first, prefix-prepended-second) becomes user-visible and
-// needs revisiting.
+// nib.NewID always prepends the configured prefix, so nothing this program
+// CREATES can put a bare token and its prefixed form in the map at once. The
+// loader can: nib.ParseFilename derives a bare id from any filename that does
+// not carry the prefix, so a hand-added or imported `e1.md` sitting next to
+// `nibs-e1.md` makes the ordering below user-visible — `e1` names the bare nib,
+// and the prefixed twin is reachable only by its full id.
+//
+// That makes what an id resolves to a property of the current key set. The store
+// copes by re-resolving stored link ids on every removal (Core.Delete and the
+// watcher's removal branch) and on every id arriving through the watcher — see
+// canonicalize.go, in particular removalCanRebindLinksLocked for the removal
+// that unmasks a prefixed twin.
+//
+// Core.Create is the gap: it inserts a key without re-resolving, and because it
+// inserts BEFORE the watcher sees the file, the watcher's arrival sweep does not
+// fire for it either. A dangling link whose prefixed form equals a newly created
+// id therefore keeps its bare spelling while this function answers with the new
+// nib. Reachable only when a generated id collides that way, so it is recorded
+// rather than closed — do not read the coverage above as universal.
 func normalizeIDInMap(nibs map[string]*nib.Nib, id, configPrefix string) (string, bool) {
 	if _, ok := nibs[id]; ok {
 		return id, true

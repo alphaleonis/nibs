@@ -2,12 +2,18 @@ package cmd
 
 import (
 	"encoding/json"
+	"errors"
+	"fmt"
+	"io"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 
+	"github.com/alphaleonis/nibs/internal/config"
 	"github.com/alphaleonis/nibs/internal/graph/model"
+	"github.com/alphaleonis/nibs/internal/output"
 	"github.com/spf13/pflag"
 )
 
@@ -42,28 +48,310 @@ func TestBuildNibSort(t *testing.T) {
 	}
 }
 
+// TestListReadyFlagMutualExclusion drives the real command so the assertion is
+// on list.go's guard, not on a copy of it. --is-blocked=false is the case that
+// matters: it is a *set* --is-blocked, so pairing it with --ready must be
+// rejected even though the flag's value is false.
 func TestListReadyFlagMutualExclusion(t *testing.T) {
-	// Test that --ready and --is-blocked are mutually exclusive
-	// by checking the validation logic directly
 	tests := []struct {
-		name        string
-		ready       bool
-		isBlocked   bool
-		expectError bool
+		name      string
+		args      []string
+		wantError bool
 	}{
-		{"neither flag", false, false, false},
-		{"only --ready", true, false, false},
-		{"only --is-blocked", false, true, false},
-		{"both flags", true, true, true},
+		{"neither flag", nil, false},
+		{"only --ready", []string{"--ready"}, false},
+		{"only --is-blocked=true", []string{"--is-blocked=true"}, false},
+		{"only --is-blocked=false", []string{"--is-blocked=false"}, false},
+		{"--ready --is-blocked=true", []string{"--ready", "--is-blocked=true"}, true},
+		{"--ready --is-blocked=false", []string{"--ready", "--is-blocked=false"}, true},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			// This mirrors the validation logic in list.go
-			hasError := tt.ready && tt.isBlocked
-			if hasError != tt.expectError {
-				t.Errorf("ready=%v, isBlocked=%v: got error=%v, want error=%v",
-					tt.ready, tt.isBlocked, hasError, tt.expectError)
+			nibsDir := setupListCobraTest(t, isBlockedFixture())
+			out, err := runListCmd(t, nibsDir, append(append([]string{}, tt.args...), "-q")...)
+			if !tt.wantError {
+				if err != nil {
+					t.Fatalf("list %v failed: %v\nout: %s", tt.args, err, out)
+				}
+				return
+			}
+			if err == nil {
+				t.Fatalf("list %v: want a mutual-exclusion error, got nil\nout: %s", tt.args, out)
+			}
+			var ce *output.CodedError
+			if !errors.As(err, &ce) || ce.Code != output.ErrValidation {
+				t.Errorf("list %v: want a VALIDATION coded error, got: %v", tt.args, err)
+			}
+			if !strings.Contains(err.Error(), "mutually exclusive") {
+				t.Errorf("list %v: error should say the flags are mutually exclusive; got: %v", tt.args, err)
+			}
+		})
+	}
+}
+
+// isBlockedFixture splits four todo nibs cleanly into blocked and unblocked:
+// b1 and b2 are each blocked by bk, which is itself open (todo) and so still
+// blocking; bk and f1 have no blockers. Every nib is todo, so -s todo keeps
+// the whole set in play and the two --is-blocked answers are exact complements.
+func isBlockedFixture() map[string]string {
+	return map[string]string{
+		"bk--blocker.md":     "---\ntitle: Blocker\nstatus: todo\ntype: task\n---\n",
+		"b1--blocked-one.md": "---\ntitle: BlockedOne\nstatus: todo\ntype: task\nblocked_by: [bk]\n---\n",
+		"b2--blocked-two.md": "---\ntitle: BlockedTwo\nstatus: todo\ntype: task\nblocked_by: [bk]\n---\n",
+		"f1--free.md":        "---\ntitle: Free\nstatus: todo\ntype: task\n---\n",
+	}
+}
+
+// TestListCommand_IsBlockedFlag pins both answers of the --is-blocked
+// predicate. The =false case is the regression guard: the filter layer reads a
+// nil IsBlocked as "no blocked-filter", so a guard that tests the flag's value
+// instead of whether it was set turns --is-blocked=false into a no-op that
+// returns the entire set.
+func TestListCommand_IsBlockedFlag(t *testing.T) {
+	tests := []struct {
+		name string
+		args []string
+		want map[string]bool
+	}{
+		{"--is-blocked=false returns exactly the unblocked nibs", []string{"--is-blocked=false"}, map[string]bool{"bk": true, "f1": true}},
+		{"--is-blocked=true returns exactly the complement", []string{"--is-blocked=true"}, map[string]bool{"b1": true, "b2": true}},
+		{"no --is-blocked returns the union", nil, map[string]bool{"bk": true, "b1": true, "b2": true, "f1": true}},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			nibsDir := setupListCobraTest(t, isBlockedFixture())
+			args := append([]string{"-s", "todo", "--json"}, tt.args...)
+			out, err := runListCmd(t, nibsDir, args...)
+			if err != nil {
+				t.Fatalf("list %v failed: %v\nout: %s", args, err, out)
+			}
+			env := parseListEnvelope(t, out)
+			got := envelopeIDs(env)
+			if len(got) != len(tt.want) {
+				t.Fatalf("got %v (count=%d), want %v", got, env.Count, tt.want)
+			}
+			for id := range tt.want {
+				if !got[id] {
+					t.Errorf("missing %q; got %v, want %v", id, got, tt.want)
+				}
+			}
+		})
+	}
+}
+
+// presenceFixture gives both the parent and the blocking predicate a non-empty
+// answer on each side. pa is a root with two children (ca, cb); rb is a root
+// that blocks cb and is therefore the only blocking nib. Every nib is todo, so
+// list's open-by-default filter keeps the whole set in play and each pair of
+// answers is an exact complement.
+func presenceFixture() map[string]string {
+	return map[string]string{
+		"pa--parent-a.md": "---\ntitle: ParentA\nstatus: todo\ntype: task\n---\n",
+		"ca--child-a.md":  "---\ntitle: ChildA\nstatus: todo\ntype: task\nparent: pa\n---\n",
+		"cb--child-b.md":  "---\ntitle: ChildB\nstatus: todo\ntype: task\nparent: pa\nblocked_by: [rb]\n---\n",
+		"rb--root-b.md":   "---\ntitle: RootB\nstatus: todo\ntype: task\n---\n",
+	}
+}
+
+// TestListCommand_PresenceFlagsAreOneTriStateField pins that each flag pair is
+// two spellings of one tri-state filter field. --has-parent=false has to select
+// the parentless nibs and agree with --no-parent exactly; --no-parent=false has
+// to agree with --has-parent. A guard that reads the flag's value instead of
+// whether it was set leaves the field nil on the =false rows, which the filter
+// layer reads as "no filter" and hands back the entire set.
+func TestListCommand_PresenceFlagsAreOneTriStateField(t *testing.T) {
+	var (
+		withParent    = map[string]bool{"ca": true, "cb": true}
+		withoutParent = map[string]bool{"pa": true, "rb": true}
+		blocking      = map[string]bool{"rb": true}
+		notBlocking   = map[string]bool{"pa": true, "ca": true, "cb": true}
+	)
+
+	tests := []struct {
+		name string
+		args []string
+		want map[string]bool
+	}{
+		{"--has-parent", []string{"--has-parent"}, withParent},
+		{"--has-parent=true", []string{"--has-parent=true"}, withParent},
+		{"--has-parent=false", []string{"--has-parent=false"}, withoutParent},
+		{"--no-parent", []string{"--no-parent"}, withoutParent},
+		{"--no-parent=true", []string{"--no-parent=true"}, withoutParent},
+		{"--no-parent=false", []string{"--no-parent=false"}, withParent},
+		{"--has-blocking", []string{"--has-blocking"}, blocking},
+		{"--has-blocking=false", []string{"--has-blocking=false"}, notBlocking},
+		{"--no-blocking", []string{"--no-blocking"}, notBlocking},
+		{"--no-blocking=false", []string{"--no-blocking=false"}, blocking},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			nibsDir := setupListCobraTest(t, presenceFixture())
+			args := append([]string{"--json"}, tt.args...)
+			out, err := runListCmd(t, nibsDir, args...)
+			if err != nil {
+				t.Fatalf("list %v failed: %v\nout: %s", args, err, out)
+			}
+			got := envelopeIDs(parseListEnvelope(t, out))
+			if len(got) != len(tt.want) {
+				t.Fatalf("got %v (count=%d), want %v", got, len(got), tt.want)
+			}
+			for id := range tt.want {
+				if !got[id] {
+					t.Errorf("missing %q; got %v, want %v", id, got, tt.want)
+				}
+			}
+		})
+	}
+}
+
+// TestListCommand_PresenceFlagMutualExclusion drives the real command so the
+// assertion lands on list.go's guard rather than a copy of it. Both spellings
+// write the same field, so giving both spells one filter concept twice in a
+// single invocation — redundant and near-certainly a mistake. The rejection is
+// uniform rather than conditional on the values disagreeing, which is why the
+// agreeing-values rows are rejected too even though they are unambiguous.
+func TestListCommand_PresenceFlagMutualExclusion(t *testing.T) {
+	tests := []struct {
+		name      string
+		args      []string
+		wantError bool
+		wantFlags []string
+	}{
+		{"only --has-parent", []string{"--has-parent"}, false, nil},
+		{"only --no-parent=false", []string{"--no-parent=false"}, false, nil},
+		{"only --has-blocking=false", []string{"--has-blocking=false"}, false, nil},
+		{"only --no-blocking", []string{"--no-blocking"}, false, nil},
+		{"--has-parent --no-parent", []string{"--has-parent", "--no-parent"}, true, []string{"--has-parent", "--no-parent"}},
+		// Agreeing values: --has-parent=false and --no-parent both mean
+		// "parentless", so this pair has exactly one possible meaning — and is
+		// still rejected, because the rejection is uniform.
+		{"--has-parent=false --no-parent", []string{"--has-parent=false", "--no-parent"}, true, []string{"--has-parent", "--no-parent"}},
+		{"--has-blocking --no-blocking", []string{"--has-blocking", "--no-blocking"}, true, []string{"--has-blocking", "--no-blocking"}},
+		{"--has-blocking=false --no-blocking", []string{"--has-blocking=false", "--no-blocking"}, true, []string{"--has-blocking", "--no-blocking"}},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			nibsDir := setupListCobraTest(t, presenceFixture())
+			out, err := runListCmd(t, nibsDir, append(append([]string{}, tt.args...), "-q")...)
+			if !tt.wantError {
+				if err != nil {
+					t.Fatalf("list %v failed: %v\nout: %s", tt.args, err, out)
+				}
+				return
+			}
+			if err == nil {
+				t.Fatalf("list %v: want a mutual-exclusion error, got nil\nout: %s", tt.args, out)
+			}
+			var ce *output.CodedError
+			if !errors.As(err, &ce) || ce.Code != output.ErrValidation {
+				t.Errorf("list %v: want a VALIDATION coded error, got: %v", tt.args, err)
+			}
+			for _, flag := range tt.wantFlags {
+				if !strings.Contains(err.Error(), flag) {
+					t.Errorf("list %v: error should name %s; got: %v", tt.args, flag, err)
+				}
+			}
+			if !strings.Contains(err.Error(), "mutually exclusive") {
+				t.Errorf("list %v: error should say the flags are mutually exclusive; got: %v", tt.args, err)
+			}
+		})
+	}
+}
+
+// TestListCommand_ParentIDVersusPresenceFlags drives the real command so the
+// assertions land on list.go's guards rather than a copy of them.
+//
+// --parent <id> and the has-parent field are separate constraints — "parent is
+// <id>" versus "has a parent at all" — so the rejection is not uniform the way
+// the two spellings of one field are. Only the combination nothing can satisfy
+// is rejected: --parent <id> alongside a has-parent that resolved to false,
+// however it was spelled. --parent <id> --has-parent is redundant but
+// satisfiable, and keeps returning what --parent <id> returns on its own.
+//
+// The empty --parent row is a separate guard: `--parent ""` used to fall
+// through the `!= ""` check that decides whether to set the filter, leaving the
+// flag with no effect and no diagnostic.
+// presenceFixtureAll is every nib in presenceFixture — what `list` returns when
+// no filter applies. All four are todo, so the open-by-default status filter
+// keeps the whole set and this is also the unfiltered answer.
+func presenceFixtureAll() map[string]bool {
+	return map[string]bool{"pa": true, "ca": true, "cb": true, "rb": true}
+}
+
+func TestListCommand_ParentIDVersusPresenceFlags(t *testing.T) {
+	// pa's children in presenceFixture. This is the baseline `--parent pa`
+	// returns on its own, and what the redundant-but-satisfiable rows have to
+	// return too.
+	childrenOfPA := map[string]bool{"ca": true, "cb": true}
+
+	tests := []struct {
+		name string
+		args []string
+		// wantIDs is the id set the command must return when it is accepted.
+		wantIDs map[string]bool
+		// wantError marks the rows that must be rejected; wantText lists
+		// substrings the rejection message has to contain.
+		wantError bool
+		wantText  []string
+	}{
+		{"--parent alone", []string{"--parent", "pa"}, childrenOfPA, false, nil},
+		{"--parent with --has-parent", []string{"--parent", "pa", "--has-parent"}, childrenOfPA, false, nil},
+		{"--parent with --has-parent=true", []string{"--parent", "pa", "--has-parent=true"}, childrenOfPA, false, nil},
+		{"--parent with --no-parent=false", []string{"--parent", "pa", "--no-parent=false"}, childrenOfPA, false, nil},
+		{"--parent with --no-parent", []string{"--parent", "pa", "--no-parent"}, nil, true, []string{"--parent", "--no-parent"}},
+		{"--parent with --no-parent=true", []string{"--parent", "pa", "--no-parent=true"}, nil, true, []string{"--parent", "--no-parent"}},
+		{"--parent with --has-parent=false", []string{"--parent", "pa", "--has-parent=false"}, nil, true, []string{"--parent", "--has-parent"}},
+		// The empty --parent message points at --no-parent, the flag that does
+		// select root-level nibs.
+		{"empty --parent", []string{"--parent", ""}, nil, true, []string{"--parent", "--no-parent"}},
+		// The other id-valued filters reject an empty value for the same reason:
+		// there is no nib whose id is "", so the usual source is an unset shell
+		// variable, and returning every nib would be a lie about the result.
+		{"empty --mentions", []string{"--mentions", ""}, nil, true, []string{"--mentions", "nib id"}},
+		{"empty --mentioned-by", []string{"--mentioned-by", ""}, nil, true, []string{"--mentioned-by", "nib id"}},
+		// -S is deliberately NOT in that group: an empty search means "no keyword
+		// filter", which is a real thing to want, and the web reads it the same
+		// way. It must keep returning the unfiltered set rather than erroring.
+		{"empty -S is accepted as no search", []string{"-S", ""}, presenceFixtureAll(), false, nil},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			nibsDir := setupListCobraTest(t, presenceFixture())
+			args := append([]string{"--json"}, tt.args...)
+			out, err := runListCmd(t, nibsDir, args...)
+
+			if !tt.wantError {
+				if err != nil {
+					t.Fatalf("list %v failed: %v\nout: %s", args, err, out)
+				}
+				got := envelopeIDs(parseListEnvelope(t, out))
+				if len(got) != len(tt.wantIDs) {
+					t.Fatalf("list %v: got %v (count=%d), want %v", args, got, len(got), tt.wantIDs)
+				}
+				for id := range tt.wantIDs {
+					if !got[id] {
+						t.Errorf("list %v: missing %q; got %v, want %v", args, id, got, tt.wantIDs)
+					}
+				}
+				return
+			}
+
+			if err == nil {
+				t.Fatalf("list %v: want a validation error, got nil\nout: %s", args, out)
+			}
+			var ce *output.CodedError
+			if !errors.As(err, &ce) || ce.Code != output.ErrValidation {
+				t.Errorf("list %v: want a VALIDATION coded error, got: %v", args, err)
+			}
+			for _, want := range tt.wantText {
+				if !strings.Contains(err.Error(), want) {
+					t.Errorf("list %v: error should name %s; got: %v", args, want, err)
+				}
 			}
 		})
 	}
@@ -71,10 +359,13 @@ func TestListReadyFlagMutualExclusion(t *testing.T) {
 
 // resetListFlags clears the package-level flag vars used by listCmd AND
 // Cobra's Changed-state tracking so tests don't pollute each other via
-// rootCmd's singleton state. Clearing Changed state future-proofs the
-// helper: listCmd's current --ready/--is-blocked mutex is implemented
-// manually in list.go, but if MarkFlagsMutuallyExclusive is ever adopted
-// it will read the Changed flag and would misbehave with stale state.
+// rootCmd's singleton state. Clearing Changed state is load-bearing today,
+// not future-proofing: list.go decides whether a filter applies from
+// cmd.Flags().Changed — once for --is-blocked and once per spelling inside
+// resolvePresenceFlag — so a flag left Changed makes a later test see flags
+// it never passed. Leaving it stale is what turns an earlier
+// --has-parent/--no-parent case into a mutual-exclusion error in the list
+// tests that run after it.
 func resetListFlags() {
 	listJSON = false
 	listSearch = ""
@@ -99,7 +390,6 @@ func resetListFlags() {
 	listReady = false
 	listAll = false
 	listOpen = false
-	listActive = false
 	listQuiet = false
 	listSort = ""
 	listView = ""
@@ -150,7 +440,6 @@ func TestResetListFlagsClearsAllState(t *testing.T) {
 		"ready":        "true",
 		"all":          "true",
 		"open":         "true",
-		"active":       "true",
 		"quiet":        "true",
 		"sort":         "created",
 		"view":         "card",
@@ -210,6 +499,22 @@ func setupListCobraTest(t *testing.T, files map[string]string) string {
 		}
 	}
 	return nibsDir
+}
+
+// setupListCobraTestWithPrefix is setupListCobraTest plus a .nibs.yml carrying
+// an explicit prefix, written beside the data directory. Tests that need the
+// short (prefix-less) spelling of an id use it so the prefix under test is the
+// fixture's own rather than whatever project config the test cwd happens to sit
+// under. Returns the data directory and the config path to pass as --config.
+func setupListCobraTestWithPrefix(t *testing.T, prefix string, files map[string]string) (nibsDir, cfgPath string) {
+	t.Helper()
+	nibsDir = setupListCobraTest(t, files)
+	cfgPath = filepath.Join(filepath.Dir(nibsDir), ".nibs.yml")
+	body := fmt.Sprintf("nibs:\n  prefix: %s\n  id_length: 4\n", prefix)
+	if err := os.WriteFile(cfgPath, []byte(body), 0644); err != nil {
+		t.Fatal(err)
+	}
+	return nibsDir, cfgPath
 }
 
 // mentionsFixture returns a small nib-file map used by the list mention-flag
@@ -378,29 +683,73 @@ func TestListCommand_MentionsFlag_ShortIDNormalisation(t *testing.T) {
 	}
 }
 
-func TestListCommand_MentionsFlag_UnknownID(t *testing.T) {
-	// Unknown target should yield an empty envelope, not an error. The nibs
-	// array must be [] (never null) so agent consumers can index it
-	// unconditionally — the empty-array convention shared by the get and rel
-	// contracts.
-	nibsDir := setupListCobraTest(t, mentionsFixture())
-
-	rootCmd.SetArgs([]string{"--nibs-path", nibsDir, "list", "--mentions", "nope", "--json"})
-
-	var execErr error
-	out := captureStdout(t, func() {
-		execErr = rootCmd.Execute()
-	})
-	if execErr != nil {
-		t.Fatalf("list --mentions <unknown> failed: %v", execErr)
+// TestListCommand_UnknownFilterTargetIsNotFound is the CLI end of the
+// filter-target contract. Every id-valued list flag names one nib, so an id no
+// nib answers to is a question the command cannot answer — it must say so and
+// exit 3, not print an empty listing and exit 0.
+//
+// Exit 0 with zero rows would be worse than a plain error here: an agent
+// scripting `--parent "$ID"` reads an empty exit-0 listing as "that nib has no
+// children" and moves on, so a stale or mistyped id never surfaces.
+//
+// The assertion is on the exit status via the real boundary (reportExitError),
+// not merely on err != nil: the whole value of the change is that a caller can
+// branch on $? without parsing text.
+func TestListCommand_UnknownFilterTargetIsNotFound(t *testing.T) {
+	tests := []struct {
+		name string
+		args []string
+	}{
+		{"--parent", []string{"--parent", "nope"}},
+		{"--mentions", []string{"--mentions", "nope"}},
+		{"--mentioned-by", []string{"--mentioned-by", "nope"}},
 	}
-	env := parseListEnvelope(t, out)
-	if env.Count != 0 || len(env.Nibs) != 0 || env.Truncated {
-		t.Errorf("got count=%d nibs=%+v truncated=%v, want an empty envelope", env.Count, env.Nibs, env.Truncated)
-	}
-	// The nibs field must serialize as [] (not null) for stable indexing.
-	if !strings.Contains(out, "\"nibs\": []") {
-		t.Errorf("empty list --json must render \"nibs\": [], got:\n%s", out)
+
+	for _, tt := range tests {
+		t.Run(tt.name+" --json", func(t *testing.T) {
+			nibsDir := setupListCobraTest(t, mentionsFixture())
+			out, err := runListCmd(t, nibsDir, append(append([]string{}, tt.args...), "--json")...)
+			if err == nil {
+				t.Fatalf("list %v --json returned no error; out: %q", tt.args, out)
+			}
+			if code := reportExitError(io.Discard, err); code != output.ExitNotFound {
+				t.Errorf("exit code = %d, want %d (NOT_FOUND)", code, output.ExitNotFound)
+			}
+			var env struct {
+				Error struct {
+					Code    string `json:"code"`
+					Message string `json:"message"`
+				} `json:"error"`
+			}
+			if uerr := json.Unmarshal([]byte(out), &env); uerr != nil {
+				t.Fatalf("stdout is not a JSON error envelope: %v\nraw: %s", uerr, out)
+			}
+			if env.Error.Code != output.ErrNotFound {
+				t.Errorf("envelope error.code=%q, want %q", env.Error.Code, output.ErrNotFound)
+			}
+			if !strings.Contains(env.Error.Message, "nope") {
+				t.Errorf("envelope error.message %q does not echo the id that was not found", env.Error.Message)
+			}
+			// A rejected query must not also emit a listing: an agent parsing
+			// stdout would otherwise see a valid-looking empty result.
+			if strings.Contains(out, `"nibs"`) {
+				t.Errorf("error envelope must not carry a nibs listing:\n%s", out)
+			}
+		})
+
+		t.Run(tt.name+" text", func(t *testing.T) {
+			nibsDir := setupListCobraTest(t, mentionsFixture())
+			out, err := runListCmd(t, nibsDir, tt.args...)
+			if err == nil {
+				t.Fatalf("list %v returned no error; out: %q", tt.args, out)
+			}
+			if code := reportExitError(io.Discard, err); code != output.ExitNotFound {
+				t.Errorf("exit code = %d, want %d (NOT_FOUND)", code, output.ExitNotFound)
+			}
+			if strings.Contains(out, "nibs") {
+				t.Errorf("text mode must not print the TSV header for a rejected query:\n%s", out)
+			}
+		})
 	}
 }
 
@@ -413,6 +762,20 @@ func projectionFixture() map[string]string {
 	}
 }
 
+// runListCmdWithConfig is runListCmd with an explicit --config, for tests whose
+// fixture supplies its own project config (see setupListCobraTestWithPrefix).
+// --nibs-path is still passed so the data directory does not depend on how the
+// config file resolves it.
+func runListCmdWithConfig(t *testing.T, cfgPath, nibsDir string, args ...string) (string, error) {
+	t.Helper()
+	rootCmd.SetArgs(append([]string{"--config", cfgPath, "--nibs-path", nibsDir, "list"}, args...))
+	var execErr error
+	out := captureStdout(t, func() {
+		execErr = rootCmd.Execute()
+	})
+	return out, execErr
+}
+
 // runListCmd drives `nibs list <args...>` through the full Cobra pipeline
 // against nibsDir and returns captured stdout plus the Execute error.
 func runListCmd(t *testing.T, nibsDir string, args ...string) (string, error) {
@@ -423,6 +786,520 @@ func runListCmd(t *testing.T, nibsDir string, args ...string) (string, error) {
 		execErr = rootCmd.Execute()
 	})
 	return out, execErr
+}
+
+// deferredBlockerFixture pairs two todo nibs, each blocked by exactly one
+// closed blocker: one completed (the dependency happened) and one deferred (the
+// dependency was set aside and is coming back). Both blockers are closed, so
+// only a predicate narrower than IsClosedStatus tells them apart.
+func deferredBlockerFixture() map[string]string {
+	return map[string]string{
+		"bd--blocker-done.md":     "---\ntitle: BlockerDone\nstatus: completed\ntype: task\n---\n",
+		"bp--blocker-deferred.md": "---\ntitle: BlockerDeferred\nstatus: deferred\ntype: task\n---\n",
+		"dd--dep-of-done.md":      "---\ntitle: DepOfDone\nstatus: todo\ntype: task\nblocked_by: [bd]\n---\n",
+		"dp--dep-of-deferred.md":  "---\ntitle: DepOfDeferred\nstatus: todo\ntype: task\nblocked_by: [bp]\n---\n",
+	}
+}
+
+// TestListCommand_DeferredBlockerStillBlocks pins the rule that separates
+// "closed" from "releases its dependents": deferring a blocker must NOT hand
+// its dependents out as startable work. --ready is the agent work queue, so a
+// nib blocked only by a deferred nib has to stay out of it and report
+// ready:false, while one blocked only by completed work is released.
+//
+// Both blockers are closed. Routing the blocking graph through IsClosedStatus
+// instead of StatusReleasesDependents makes dp ready and puts it in --ready.
+func TestListCommand_DeferredBlockerStillBlocks(t *testing.T) {
+	t.Run("--ready excludes a nib blocked by a deferred nib", func(t *testing.T) {
+		nibsDir := setupListCobraTest(t, deferredBlockerFixture())
+		out, err := runListCmd(t, nibsDir, "--ready", "-f", "id")
+		if err != nil {
+			t.Fatalf("list --ready failed: %v\nout: %s", err, out)
+		}
+		if strings.Contains(out, "dp") {
+			t.Errorf("--ready returned dp, which is blocked by a deferred nib\nout: %s", out)
+		}
+		if !strings.Contains(out, "dd") {
+			t.Errorf("--ready omitted dd, whose only blocker is completed\nout: %s", out)
+		}
+	})
+
+	t.Run("ready projection reports false and still lists the blocker", func(t *testing.T) {
+		nibsDir := setupListCobraTest(t, deferredBlockerFixture())
+		out, err := runListCmd(t, nibsDir, "--json", "-f", "id,ready,blocked-by")
+		if err != nil {
+			t.Fatalf("list --json failed: %v\nout: %s", err, out)
+		}
+		var env struct {
+			Nibs []struct {
+				ID        string   `json:"id"`
+				Ready     bool     `json:"ready"`
+				BlockedBy []string `json:"blocked_by"`
+			} `json:"nibs"`
+		}
+		if err := json.Unmarshal([]byte(out), &env); err != nil {
+			t.Fatalf("unmarshal envelope: %v\nraw: %s", err, out)
+		}
+		byID := map[string]struct {
+			ready     bool
+			blockedBy []string
+		}{}
+		for _, n := range env.Nibs {
+			byID[n.ID] = struct {
+				ready     bool
+				blockedBy []string
+			}{n.Ready, n.BlockedBy}
+		}
+		dp, ok := byID["dp"]
+		if !ok {
+			t.Fatalf("dp missing from the open-default listing\nraw: %s", out)
+		}
+		if dp.ready {
+			t.Errorf("dp ready = true, want false — its only blocker is deferred, not satisfied")
+		}
+		// blocked-by projects the declared list off the nib, unfiltered, so bp
+		// is reported whatever the blocking rule says. That is what made the old
+		// behavior self-contradictory: ready:true printed next to a live
+		// blocker. Pinned here so the pair stays coherent.
+		if len(dp.blockedBy) != 1 || dp.blockedBy[0] != "bp" {
+			t.Errorf("dp blocked_by = %v, want [bp]", dp.blockedBy)
+		}
+		dd, ok := byID["dd"]
+		if !ok {
+			t.Fatalf("dd missing from the open-default listing\nraw: %s", out)
+		}
+		if !dd.ready {
+			t.Errorf("dd ready = false, want true — its only blocker completed")
+		}
+	})
+}
+
+// readyAgreementCases is the expectation table for "can I start this?": every
+// declared status plus the out-of-vocabulary one, with the single answer both
+// surfaces owe a nib carrying it. The values are literal rather than read back
+// from config.Startable, so flipping that flag has to be restated here
+// deliberately instead of quietly carrying both surfaces with it.
+//
+// The "" row is not decoration. On the declared statuses the old spelling of
+// --ready (exclude in-progress/draft/deferred/completed/scrapped) picks out the
+// same nibs the startable set does — that equivalence is why the two were worth
+// unifying at all — so nothing inside the vocabulary can tell the two spellings
+// apart. Only a status neither one names can: an exclusion list cannot mention
+// "", so it hands the nib back as ready work, while a startable include list
+// leaves it out.
+var readyAgreementCases = []struct {
+	status string
+	want   bool
+}{
+	{"todo", true},
+	{"in-progress", false}, // already underway; not something to start
+	{"draft", false},       // needs refinement first
+	{"deferred", false},    // closed
+	{"completed", false},
+	{"scrapped", false},
+	{"", false}, // front matter with no status: — outside the vocabulary
+}
+
+// TestReadyAgreementCasesCoverEveryStatus fails when a status is added to the
+// vocabulary without an entry in the table above, so the agreement guard cannot
+// quietly stop being exhaustive — and fails on a case naming something that is
+// neither a declared status nor the deliberate "" probe, so the table cannot
+// drift into testing statuses a nib could never carry.
+func TestReadyAgreementCasesCoverEveryStatus(t *testing.T) {
+	cfg := config.Default()
+	covered := map[string]bool{}
+	for _, tc := range readyAgreementCases {
+		covered[tc.status] = true
+	}
+	for _, name := range cfg.StatusNames() {
+		if !covered[name] {
+			t.Errorf("status %q has no case in readyAgreementCases; add one", name)
+		}
+	}
+	for status := range covered {
+		if status == "" {
+			continue // the deliberate out-of-vocabulary probe
+		}
+		if !cfg.IsValidStatus(status) {
+			t.Errorf("readyAgreementCases names %q, which is not a declared status", status)
+		}
+	}
+	if !covered[""] {
+		t.Error(`readyAgreementCases lost its "" case — without it the table cannot tell a startable include list from a non-startable exclusion list`)
+	}
+}
+
+// readyAgreementFrontMatter renders one fixture nib's front matter. A case with
+// no status omits the key entirely rather than writing `status: ""`, because
+// that is how a hand-edited nib actually carries no status.
+func readyAgreementFrontMatter(title, status, extra string) string {
+	line := ""
+	if status != "" {
+		line = fmt.Sprintf("status: %s\n", status)
+	}
+	return fmt.Sprintf("---\ntitle: %s\n%stype: task\n%s---\n", title, line, extra)
+}
+
+// TestReadyProjectionAndFilterAgree is the agreement guard between the two
+// surfaces that answer "can I start this?": the projected `ready` field and the
+// `nibs list --ready` filter. They used to give different answers — the
+// projection asked only whether a nib was unfinished, so it reported drafts and
+// work already in progress as ready while the filter withheld them.
+//
+// Both surfaces are driven for real, through separate `nibs list` invocations
+// against the same store, and each is compared to the literal table above
+// rather than to the other. Comparing them only to each other would pass if
+// both regressed together; comparing each to the table means reverting either
+// one on its own fails here.
+//
+// Each status gets an unblocked nib and two blocked twins, so the status half
+// and the blocker half are exercised for every status: the twins' blocker is
+// open, so it holds whatever the twins' own status is. The two twins differ
+// only in how they spell that one blocker — `nibs-bkr` in full and `bkr` in
+// short form — because the blocker half is where the two surfaces resolve ids,
+// and a table that only ever spelled the blocker in full could not tell an
+// exact map lookup from one that normalizes.
+//
+// The prefix is supplied by a fixture .nibs.yml passed as --config rather than
+// inherited from whatever project config the test cwd sits under, so "bkr" is
+// a genuinely short id here no matter where the suite runs.
+func TestReadyProjectionAndFilterAgree(t *testing.T) {
+	// Carries the configured prefix, so the same blocker has both a full and a
+	// short spelling.
+	const blockerID = "nibs-bkr"
+	fixture := map[string]string{
+		blockerID + "--blocker.md": "---\ntitle: Blocker\nstatus: todo\ntype: task\n---\n",
+	}
+	unblockedID := make([]string, len(readyAgreementCases))
+	blockedID := make([]string, len(readyAgreementCases))
+	shortBlockedID := make([]string, len(readyAgreementCases))
+	for i, tc := range readyAgreementCases {
+		unblockedID[i] = fmt.Sprintf("u%d", i)
+		blockedID[i] = fmt.Sprintf("b%d", i)
+		shortBlockedID[i] = fmt.Sprintf("s%d", i)
+		fixture[unblockedID[i]+"--unblocked.md"] = readyAgreementFrontMatter("Unblocked", tc.status, "")
+		fixture[blockedID[i]+"--blocked.md"] = readyAgreementFrontMatter("Blocked", tc.status, "blocked_by: ["+blockerID+"]\n")
+		fixture[shortBlockedID[i]+"--short-blocked.md"] = readyAgreementFrontMatter("ShortBlocked", tc.status, "blocked_by: [bkr]\n")
+	}
+	nibsDir, cfgPath := setupListCobraTestWithPrefix(t, "nibs-", fixture)
+
+	// Surface 1: the projected `ready` field over every nib, whatever its
+	// status (--all, so the open default hides none of them).
+	projOut, err := runListCmdWithConfig(t, cfgPath, nibsDir, "--all", "--json", "-f", "id,ready")
+	if err != nil {
+		t.Fatalf("list --all --json failed: %v\nout: %s", err, projOut)
+	}
+	var projEnv struct {
+		Nibs []struct {
+			ID    string `json:"id"`
+			Ready bool   `json:"ready"`
+		} `json:"nibs"`
+	}
+	if err := json.Unmarshal([]byte(projOut), &projEnv); err != nil {
+		t.Fatalf("unmarshal projection envelope: %v\nraw: %s", err, projOut)
+	}
+	if len(projEnv.Nibs) != len(fixture) {
+		t.Fatalf("projection returned %d nibs, want all %d — the two surfaces must see the same store",
+			len(projEnv.Nibs), len(fixture))
+	}
+	projReady := make(map[string]bool, len(projEnv.Nibs))
+	for _, n := range projEnv.Nibs {
+		projReady[n.ID] = n.Ready
+	}
+
+	// Surface 2: the --ready filter, as a second run against the same store.
+	// The flag state Cobra accumulated above has to be cleared first, or this
+	// run would inherit --all/--json/-f and stop being a --ready run.
+	resetListFlags()
+	filterOut, err := runListCmdWithConfig(t, cfgPath, nibsDir, "--ready", "-q")
+	if err != nil {
+		t.Fatalf("list --ready failed: %v\nout: %s", err, filterOut)
+	}
+	inFilter := map[string]bool{}
+	for _, id := range strings.Fields(filterOut) {
+		inFilter[id] = true
+	}
+
+	for i, tc := range readyAgreementCases {
+		name := tc.status
+		if name == "" {
+			name = "no-status"
+		}
+		t.Run(name, func(t *testing.T) {
+			for _, probe := range []struct {
+				id   string
+				want bool
+				why  string
+			}{
+				{unblockedID[i], tc.want, "unblocked"},
+				// An active blocker withholds the nib whatever its status, so
+				// the twins are never ready — including for todo, where the
+				// status half alone would say yes.
+				{blockedID[i], false, "blocked by an open nib"},
+				// Same blocker, named by its short id. Both surfaces have to
+				// resolve it, or the nib is withheld by one and handed out by
+				// the other.
+				{shortBlockedID[i], false, "blocked by an open nib named by short id"},
+			} {
+				got, listed := projReady[probe.id], inFilter[probe.id]
+				if _, ok := projReady[probe.id]; !ok {
+					t.Fatalf("%s (%s, %s) missing from the projection listing", probe.id, tc.status, probe.why)
+				}
+				if got != listed {
+					t.Errorf("%s (%s, %s): projection ready=%v but --ready listed=%v — the two answers disagree",
+						probe.id, tc.status, probe.why, got, listed)
+				}
+				if got != probe.want {
+					t.Errorf("%s (%s, %s): projection ready=%v, want %v", probe.id, tc.status, probe.why, got, probe.want)
+				}
+				if listed != probe.want {
+					t.Errorf("%s (%s, %s): --ready listed=%v, want %v", probe.id, tc.status, probe.why, listed, probe.want)
+				}
+			}
+		})
+	}
+}
+
+// TestListCommand_ReadyStatusFiltering pins how --ready composes with the
+// status flags. --ready narrows the status filter to the startable statuses,
+// and the two cases below are the two ways it has to do that: with no explicit
+// -s it supplies the base itself (which is also what keeps a nib carrying an
+// undeclared status out, since no exclusion can name one), and against an
+// explicit -s it subtracts the non-startable statuses so the include list
+// cannot widen it. The last row covers the degenerate vocabulary where neither
+// way can work, because the branches part company there: the explicit -s branch
+// yields nothing on its own, while the bare-flag branch would fail open.
+func TestListCommand_ReadyStatusFiltering(t *testing.T) {
+	// nostatus's front matter omits `status:` entirely, so it carries "" — a
+	// status no group and no exclusion list names.
+	fixture := map[string]string{
+		"td--todo.md":      "---\ntitle: Todo\nstatus: todo\ntype: task\n---\n",
+		"dr--draft.md":     "---\ntitle: Draft\nstatus: draft\ntype: task\n---\n",
+		"ip--in-prog.md":   "---\ntitle: InProgress\nstatus: in-progress\ntype: task\n---\n",
+		"cm--completed.md": "---\ntitle: Completed\nstatus: completed\ntype: task\n---\n",
+		"ns--no-status.md": "---\ntitle: NoStatus\ntype: task\n---\n",
+	}
+
+	tests := []struct {
+		name string
+		// setup runs before the command, for rows that need a different status
+		// vocabulary than the declared one.
+		setup func(*testing.T)
+		args  []string
+		want  []string
+		// wantErr is a substring of the validation error the row must produce;
+		// empty means the row must succeed.
+		wantErr string
+	}{
+		{name: "bare --ready keeps only the startable status", args: []string{"--ready"}, want: []string{"td"}},
+		{name: "--all does not widen --ready", args: []string{"--ready", "--all"}, want: []string{"td"}},
+		{name: "--open does not widen --ready", args: []string{"--ready", "--open"}, want: []string{"td"}},
+		{name: "an explicit -s loses its open non-startable members", args: []string{"--ready", "-s", "todo", "-s", "draft"}, want: []string{"td"}},
+		{name: "-s with no startable member yields nothing", args: []string{"--ready", "-s", "draft"}, want: nil},
+		// The sibling row above covers an open non-startable status. A closed
+		// one takes a different route to the same place: --ready sets All, so
+		// resolveStatusFilter adds no closed-status exclusion here and the
+		// explicit include list is the only reason `cm` is in the base at all.
+		// Only --ready's own subtraction removes it. (The previous row here ran
+		// `--ready -s todo` and asserted [td], which the include list alone
+		// already produces — `-s todo` without --ready returns the same.)
+		{name: "an explicit -s naming a closed status does not let it in", args: []string{"--ready", "-s", "todo", "-s", "completed"}, want: []string{"td"}},
+		// With nothing startable the flag cannot select anything, and an empty
+		// include list would be a no-op filter rather than an empty result — so
+		// the bare flag has to fail loudly instead of returning every unblocked
+		// nib of any status.
+		{
+			name: "no status declaring startable is a validation error",
+			setup: func(t *testing.T) {
+				statuses := make([]config.StatusConfig, len(config.DefaultStatuses))
+				copy(statuses, config.DefaultStatuses)
+				for i := range statuses {
+					statuses[i].Startable = false
+				}
+				withStatuses(t, statuses)
+			},
+			args:    []string{"--ready"},
+			wantErr: "no status declares startable",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if tt.setup != nil {
+				tt.setup(t)
+			}
+			nibsDir := setupListCobraTest(t, fixture)
+			out, err := runListCmd(t, nibsDir, append(append([]string{}, tt.args...), "-q")...)
+			if tt.wantErr != "" {
+				if err == nil {
+					t.Fatalf("list %v succeeded and returned %v, want an error containing %q",
+						tt.args, strings.Fields(out), tt.wantErr)
+				}
+				if !strings.Contains(err.Error(), tt.wantErr) {
+					t.Fatalf("list %v error = %v, want it to contain %q", tt.args, err, tt.wantErr)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("list %v failed: %v\nout: %s", tt.args, err, out)
+			}
+			got := strings.Fields(out)
+			if len(got) != len(tt.want) {
+				t.Fatalf("list %v returned %v, want %v", tt.args, got, tt.want)
+			}
+			for i, id := range tt.want {
+				if got[i] != id {
+					t.Errorf("list %v returned %v, want %v", tt.args, got, tt.want)
+					break
+				}
+			}
+		})
+	}
+}
+
+// TestListCommand_ReadyRequiresDeclaredStartability pins the durable half of
+// deriving --ready from the flag: a status added to the vocabulary does not
+// join the ready queue by default — it has to declare Startable, and until it
+// does an unblocked nib carrying it stays out of both surfaces. The old
+// exclusion literal failed exactly here: a status it did not name was never
+// excluded, so a newly added one arrived as ready work.
+func TestListCommand_ReadyRequiresDeclaredStartability(t *testing.T) {
+	withExtraStatus(t, config.StatusConfig{
+		Name:        "parked",
+		Color:       "gray",
+		Description: "Guard status: declared, and not startable",
+	})
+	if config.Default().IsStartableStatus("parked") {
+		t.Fatal("test setup: the added status declares Startable, so it proves nothing")
+	}
+
+	fixture := map[string]string{
+		"td--todo.md":   "---\ntitle: Todo\nstatus: todo\ntype: task\n---\n",
+		"pk--parked.md": "---\ntitle: Parked\nstatus: parked\ntype: task\n---\n",
+	}
+	nibsDir := setupListCobraTest(t, fixture)
+
+	// Each row asserts a positive control before the negative one, so a --ready
+	// that returned nothing at all could not pass this test by vacuously
+	// omitting pk. The bare flag must still hand back td; the `-s parked` row
+	// has no startable member to return, so its control is that the result is
+	// empty rather than merely pk-free.
+	for _, tc := range []struct {
+		args []string
+		want []string // the exact result, so "returned nothing" fails here
+	}{
+		{[]string{"--ready", "-q"}, []string{"td"}},
+		// Asking for it by name does not let it in — and since parked is the
+		// only status named, nothing is left to return.
+		{[]string{"--ready", "-s", "parked", "-q"}, nil},
+	} {
+		out, err := runListCmd(t, nibsDir, tc.args...)
+		if err != nil {
+			t.Fatalf("list %v failed: %v\nout: %s", tc.args, err, out)
+		}
+		got := strings.Fields(out)
+		if slices.Contains(got, "pk") {
+			t.Errorf("list %v returned %v — the added status never declared Startable", tc.args, got)
+		}
+		if !slices.Equal(got, tc.want) {
+			t.Errorf("list %v returned %v, want %v", tc.args, got, tc.want)
+		}
+		resetListFlags()
+	}
+
+	// The projection has to withhold it too, or the two surfaces part company
+	// the moment the vocabulary grows.
+	out, err := runListCmd(t, nibsDir, "--all", "--json", "-f", "id,ready")
+	if err != nil {
+		t.Fatalf("list --all --json failed: %v\nout: %s", err, out)
+	}
+	var env struct {
+		Nibs []struct {
+			ID    string `json:"id"`
+			Ready bool   `json:"ready"`
+		} `json:"nibs"`
+	}
+	if err := json.Unmarshal([]byte(out), &env); err != nil {
+		t.Fatalf("unmarshal envelope: %v\nraw: %s", err, out)
+	}
+	seen := false
+	for _, n := range env.Nibs {
+		if n.ID != "pk" {
+			continue
+		}
+		seen = true
+		if n.Ready {
+			t.Error("pk projects ready=true — the added status never declared Startable")
+		}
+	}
+	if !seen {
+		t.Fatalf("pk missing from the --all listing, so the assertion above ran on nothing\nraw: %s", out)
+	}
+}
+
+// TestReadyFlagUsageStatesTheStatusesReadyActuallyReturns binds the --ready
+// flag's help text to what the flag hands back. That string reaches agents:
+// `nibs catalog examples` and `nibs catalog recipes` quote it verbatim
+// (cmd/catalog.go flagUsage), and the catalog guards pin that propagation — but
+// none of them looked at its content, so swapping StartableStatusNames() for
+// OpenStatusNames() inside readyFlagUsage advertised in-progress/todo/draft
+// while the flag still filtered on todo, with the whole suite green.
+//
+// The expectation is built from the statuses `nibs list --ready` actually
+// returns over a fixture holding one unblocked nib per declared status, and
+// deliberately NOT from a second config-derived list — that is the trap here. A
+// sentence rendered from the wrong derived set self-updates into a confident lie
+// while a guard tied to the same derived set stays green.
+//
+// readyFlagUsage runs in func init(), before any test body, so withStatuses
+// cannot reach it: this guard works against the declared vocabulary only, and
+// reads the string back through the same flagUsage accessor catalog uses rather
+// than calling readyFlagUsage directly, so a flag that stopped using the helper
+// still fails here.
+//
+// The trailing ")" is load-bearing — it closes the list, so a usage string
+// naming todo/draft cannot satisfy an expectation built for todo alone.
+func TestReadyFlagUsageStatesTheStatusesReadyActuallyReturns(t *testing.T) {
+	declared := config.Default().StatusNames()
+
+	fixture := map[string]string{}
+	idOf := map[string]string{}
+	for i, status := range declared {
+		id := fmt.Sprintf("s%d", i)
+		fixture[id+"--nib.md"] = fmt.Sprintf("---\ntitle: S\nstatus: %s\ntype: task\n---\n", status)
+		idOf[id] = status
+	}
+	nibsDir := setupListCobraTest(t, fixture)
+
+	out, err := runListCmd(t, nibsDir, "--ready", "-q")
+	if err != nil {
+		t.Fatalf("list --ready failed: %v\nout: %s", err, out)
+	}
+	returned := map[string]bool{}
+	for _, id := range strings.Fields(out) {
+		status, ok := idOf[id]
+		if !ok {
+			t.Fatalf("--ready returned unknown id %q\nout: %s", id, out)
+		}
+		returned[status] = true
+	}
+
+	// Ordered by the declared vocabulary, which is the order readyFlagUsage
+	// joins in and is independent of the flag being asserted.
+	var actual []string
+	for _, status := range declared {
+		if returned[status] {
+			actual = append(actual, status)
+		}
+	}
+	if len(actual) == 0 {
+		t.Fatal("--ready returned nothing over a fixture with one unblocked nib per status, so this guard compares nothing")
+	}
+
+	usage := flagUsage("list", "ready")
+	if want := "startable status: " + strings.Join(actual, "/") + ")"; !strings.Contains(usage, want) {
+		t.Errorf("--ready usage = %q does not state the statuses the flag returns; want it to contain %q", usage, want)
+	}
 }
 
 // TestListCommand_TSVDefault projects an explicit field set to TSV rows under

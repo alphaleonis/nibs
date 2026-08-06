@@ -103,6 +103,11 @@ type NibWriter interface {
 	Update(b *nib.Nib, ifMatch *string) error
 	Delete(id string) error
 	Archive(id string) error
+	// RemoveLinksTo strips every parent/blockedBy link that RESOLVES to the
+	// target and returns how many it removed. Target and stored link ids are both
+	// resolved the way Get resolves an id, so no caller has to pre-normalize a
+	// short id — and a delete that unlinks must run this BEFORE removing the nib,
+	// while the target is still resolvable (see nibcore.Core.RemoveLinksTo).
 	RemoveLinksTo(targetID string) (int, error)
 }
 
@@ -113,12 +118,12 @@ type NibValidator interface {
 }
 
 // BlockingChecker provides blocking-relationship queries.
-// Both methods consider only active (non-completed, non-scrapped) blockers.
+// Both methods consider only open (non-closed) blockers.
 type BlockingChecker interface {
-	// IsBlocked returns true if the nib has active (non-completed, non-scrapped) blockers.
+	// IsBlocked returns true if the nib has open blockers.
 	IsBlocked(nibID string) bool
-	// IsBlocking returns true if the nib is actively blocking non-resolved nibs.
-	// The nib itself must also be non-resolved to be considered actively blocking.
+	// IsBlocking returns true if the nib is actively blocking open nibs.
+	// The nib itself must also be open to be considered actively blocking.
 	IsBlocking(nibID string) bool
 }
 

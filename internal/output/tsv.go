@@ -31,9 +31,9 @@ func FormatTSV(rows [][]string) string {
 // includeHeader=false drops the comment line — the --no-header form.
 //
 // When hiddenClosed > 0 the header is annotated to disclose that the open
-// default silently suppressed that many completed/scrapped rows, e.g.
-// "# 8 nibs (43 hidden: completed/scrapped — --all to include)". hiddenLabel
-// names the suppressed statuses ("completed/scrapped"). The caller passes
+// default silently suppressed that many closed rows, e.g.
+// "# 8 nibs (43 hidden: deferred/completed/scrapped — --all to include)".
+// hiddenLabel names the suppressed statuses ("deferred/completed/scrapped"). The caller passes
 // hiddenClosed = 0 whenever the annotation does not apply (an explicit status
 // selection, --all, --ready, or nothing hidden), which suppresses the note.
 //

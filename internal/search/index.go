@@ -2,9 +2,10 @@
 package search
 
 import (
+	"github.com/alphaleonis/nibs/internal/nib"
 	"github.com/blevesearch/bleve/v2"
 	"github.com/blevesearch/bleve/v2/mapping"
-	"github.com/alphaleonis/nibs/internal/nib"
+	"github.com/blevesearch/bleve/v2/search/query"
 )
 
 // Index wraps a Bleve in-memory index for searching nibs.
@@ -88,20 +89,36 @@ const defaultSearchLimit = 1000
 
 // Search executes a search query and returns matching nib IDs.
 // The limit parameter controls the maximum number of results (0 uses a default of 1000).
+//
+// The query string is first parsed with Bleve's query-string grammar, which
+// supports:
+//   - Simple terms: "authentication"
+//   - Boolean operators: "user AND password"
+//   - Wildcards: "auth*"
+//   - Phrases: "\"user login\""
+//   - Field-specific: "title:login"
+//
+// That grammar rejects transient/partial input the caller is still typing — a
+// bare field (`type:`), a lone `-`, an unbalanced quote, a leading `/` — with a
+// syntax error (the last even from a recovered parser panic). Rather than surface
+// that as an error, fall back to matching the raw text as plain free-text terms:
+// any input degrades to a best-effort search instead of failing. A genuine
+// backend failure (closed/broken index) fails both attempts and still propagates.
 func (idx *Index) Search(queryStr string, limit int) ([]string, error) {
 	if limit <= 0 {
 		limit = defaultSearchLimit
 	}
 
-	// Use query string syntax which supports:
-	// - Simple terms: "authentication"
-	// - Boolean operators: "user AND password"
-	// - Wildcards: "auth*"
-	// - Phrases: "\"user login\""
-	// - Field-specific: "title:login"
-	query := bleve.NewQueryStringQuery(queryStr)
+	ids, err := idx.runQuery(bleve.NewQueryStringQuery(queryStr), limit)
+	if err != nil {
+		return idx.runQuery(bleve.NewMatchQuery(queryStr), limit)
+	}
+	return ids, nil
+}
 
-	searchRequest := bleve.NewSearchRequest(query)
+// runQuery executes a single Bleve query and returns the matching nib IDs.
+func (idx *Index) runQuery(q query.Query, limit int) ([]string, error) {
+	searchRequest := bleve.NewSearchRequest(q)
 	searchRequest.Size = limit
 	searchRequest.Fields = []string{"id"} // Only return ID field
 

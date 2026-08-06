@@ -260,6 +260,13 @@ func (c *Core) loadFromDisk() error {
 		c.logWarn("migrated %d nib(s): priority 'deferred' -> 'low'", deferredMigrated)
 	}
 
+	// Resolve every short-form link id to its full form now that the whole map
+	// exists (see canonicalize.go for why this is the single normalization
+	// point). Runs BEFORE the v0 migration so that migration's exact
+	// c.nibs[targetID] lookup finds a legacy `blocking:` target named by short
+	// id instead of warning it out of existence.
+	c.canonicalizeAllLinksUnpublishedLocked()
+
 	// Migrate v0 nibs to v1 (single-side blocking). This runs after the walk so
 	// every blocking target is already in c.nibs. v0+deferred nibs are converged
 	// here rather than in loadNibReconciledLocked (which gates persistence on
@@ -938,6 +945,16 @@ func (c *Core) computeStoredETag(storedNib *nib.Nib) (string, error) {
 	// filename (not the front matter). Use the stored id so the render — and thus
 	// the etag — matches what the caller computed from the same stored nib.
 	b.ID = storedNib.ID
+	// Resolve short-form link ids the same way the store did when it loaded this
+	// file (see canonicalize.go). Without this the two renders diverge on every
+	// hand-edited short-form nib — the stored nib carries `parent: nibs-par`, the
+	// bare parse `parent: par` — and its if-match Update would conflict forever
+	// against an unchanged file. Resolving both sides keeps the two spellings
+	// canonically equivalent, in the same spirit as the `deferred`->`low`
+	// priority normalization, while genuine content divergence still mismatches.
+	if set := canonicalizeLinksInMap(c.nibs, b, c.configPrefix()); set.changed {
+		set.applyTo(b)
+	}
 	return b.ETag(), nil
 }
 
@@ -1088,6 +1105,37 @@ func (c *Core) Delete(id string) error {
 
 	// Remove from in-memory map
 	delete(c.nibs, targetID)
+
+	// Removing a key can re-point a link that already resolved: a stored
+	// `parent: e1` matched the bare-token nib exactly, and with that key gone the
+	// same spelling falls through to the prefixed twin `nibs-e1`. Re-resolve so
+	// the stored spelling, the reverse traversals and Get all name the same nib,
+	// rather than leaving the store saying one thing while Get answers another
+	// (see canonicalize.go). Gated because the sweep is O(N) over the store and
+	// no other removal shape can re-point anything.
+	//
+	// Re-pointing is NOT how a link to the removed nib gets cleared, and must not
+	// become it: a link that named the nib being deleted has to go, not migrate to
+	// whatever twin happens to answer to the same token. Clearing is owned by
+	// RemoveLinksTo, which the only production caller — the GraphQL DeleteNib
+	// resolver — runs BEFORE this, while the target is still in the store. So on
+	// that path the Parent/BlockedBy links spelled with the removed token are
+	// already gone, leaving the legacy Blocking field (which RemoveLinksTo does
+	// not touch) as the one thing THIS REMOVAL can re-point. The sweep itself is
+	// store-wide and re-resolves every nib's links, so it also rewrites short-form
+	// links naming other nibs — spellings Core.Create can leave behind, unrelated
+	// to what was removed. The watcher's removal branch (an external
+	// delete, a pull in the separate .nibs repo) has no such partner and is where
+	// the sweep earns its keep.
+	//
+	// Warn per rebind: a delete moving a THIRD nib's link is invisible otherwise
+	// — no event is published from any direct Core mutator, and no file changes,
+	// yet the next unrelated write to that bystander persists the new spelling.
+	if c.removalCanRebindLinksLocked(targetID) {
+		for _, rebind := range c.canonicalizeStoreLocked() {
+			c.logWarn("deleting %s re-pointed %s", targetID, rebind)
+		}
+	}
 
 	// Drop the source from the reverse-mention index.
 	c.mentionIdx.Remove(targetID)

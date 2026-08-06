@@ -16,23 +16,23 @@ Ignore any prior instruction to track work with todo lists (e.g. TodoWrite).
 BEFORE starting a task:
 - FIRST: look for an existing nib (`nibs list --ready`, `nibs get <id>`). If none, create one: `nibs new "Title" -t <type> -s in-progress`.
 - THEN: do the work; keep the body's todo items current (`- [ ]` → `- [x]`) as it happens.
-- FINALLY: only when no unchecked todo items remain, complete it — prefer `nibs close <id> --summary -` (see Closing), or `nibs set <id> -s completed` for a simple task.
+- FINALLY: only when no unchecked todo items remain, close it — `nibs close <id> --summary -` (see Closing). `nibs set -s <a closed status>` is refused; closing goes through `close`.
 - WHEN COMMITTING: include both code changes AND the nib file(s).
 
 AFTER finishing:
-- Completing: append a `## Summary of Changes` section (`close` does this for you).
-- Scrapping: append a `## Reasons for Scrapping` section explaining why.
-- Offer follow-up nibs for any non-urgent deferred work.
+- Whichever way it ended, `close` records it: the summary lands in a `## Summary` section and `--as` sets the close reason ({{.DefaultCloseStatus}} when omitted).
+- Abandoning it: `nibs close <id> --as scrapped --summary -`. Setting it aside: `nibs close <id> --as deferred --summary -`. The summary is where the reason goes.
+- Offer follow-up nibs for any non-urgent work you did not do.
 
 WHEN DELEGATING to subagents (auto-tdd, auto-dev, feature-dev, etc.):
-- Set the nib `in-progress` BEFORE launching, `completed` AFTER — subagents run fresh and will NOT update nibs for you.
+- Set the nib `in-progress` BEFORE launching (`nibs set <id> -s in-progress`), close it AFTER (`nibs close <id> --summary -`) — subagents run fresh and will NOT update nibs for you.
 
 ## Finding work
 
 ```bash
-nibs list --ready                 # nibs ready to start (not blocked; excludes in-progress/completed/scrapped/draft/deferred)
+nibs list --ready                 # nibs ready to start (not blocked{{if .StartableStatuses}}; status {{join .StartableStatuses "/"}} — nothing else is startable{{end}})
 nibs list --ready --json          # same, as the {nibs,count,truncated} envelope
-nibs list                         # all OPEN nibs (completed/scrapped hidden by default; --all to include them)
+nibs list                         # all OPEN nibs (the closed ones — {{join .ClosedStatuses "/"}} — hidden by default; --all to include them)
 nibs get <id> [id...]             # full detail of specific nibs (on-disk document by default)
 ```
 </EXTREMELY_IMPORTANT>
@@ -45,7 +45,7 @@ nibs get <id> [id...]             # the nib document (YAML front matter + body);
 nibs get <id> --view card --json  # {"nib":{…}} single-read contract (card fields); use --view full for everything
 nibs list [filters]               # TSV rows under a "# <n> nibs" header (ref fields)
 nibs list [filters] --json        # {"nibs":[…],"count":N,"truncated":<bool>} envelope
-nibs rel <id> --rel <relation>    # related nibs in the SAME envelope as list (see Relationships)
+nibs rel <id> [--rel <relation>]  # related nibs in the SAME envelope as list (see Relationships)
 ```
 Recipe / composite views: `nibs context [id]`, `nibs plan <id>`, `nibs roadmap`, `nibs list --ready`.
 
@@ -57,7 +57,7 @@ nibs set <id> --clear priority    # clear a clearable field: priority | estimate
 nibs body <id> --set -            # edit body text (content via '-'/'@FILE'; see Editing body content)
 nibs mv <id> --after <sibling>    # reposition / reparent (see Reordering)
 nibs rm <id>                      # archive (default, reversible) or --delete (irreversible); agents pass -f
-nibs close <id> --summary -       # complete + summary + parent propagation (see Closing)
+nibs close <id> --summary -       # close + summary + parent propagation; --as <closed status> (see Closing)
 ```
 
 **META**: `nibs cheat`, `nibs catalog <topic>`, `nibs prime [--full]`, `nibs graphql` (the GraphQL escape hatch — see GraphQL).
@@ -113,15 +113,23 @@ Set with `nibs set <id>` (or at creation with `nibs new`):
 - **Blocked-by** (`--blocked-by <id>`): THIS nib is blocked by another. **Prefer this when creating dependent work.**
 - **Mentions** (`#<id>` in body prose): weak informational references. Write `#<short-id>` (e.g. `#gx0f`) or `#<full-id>`; a bare id without `#` is NOT a mention. Mentions inside code spans/blocks, links, images, and HTML are skipped; heading text counts. Mentions are informational only — use `--blocked-by` for real dependencies.
 
+**Waiting on something outside the tracker? Make a nib for it.** `--blocked-by` takes nib ids only — free text is rejected (`blocker nib not found`). That is deliberate: **an external blocker needs a resolution event**, and only a nib can carry one. A free-text blocker could never be marked satisfied, so everything behind it would stay blocked forever and drop out of `--ready` permanently. So when work waits on an upstream release, a vendor fix, or someone's decision:
+
+1. `nibs new "Upstream: <the thing being waited on>" -t task -d -` — one nib standing for the external event.
+2. `nibs set <work> --blocked-by <tracking-nib>`.
+3. When it happens, close the tracking nib — everything behind it becomes ready automatically.
+
+{{if and .ReleasingStatuses .HoldingStatuses}}Close it as {{codes .ReleasingStatuses " or "}} at step 3. Closing it as {{codes .HoldingStatuses " or "}} does **not** release the work behind it — that reason means the dependency is still coming, not settled.{{end}}
+
 Query any relationship with `nibs rel <id> --rel <relation>`:
 ```bash
 nibs rel <id> --rel children --order topo        # children topologically sorted by blocked-by edges
-nibs rel <id> --rel blocked-by --active          # active (not completed/scrapped) blockers
-nibs rel <id> --rel descendants --depth all      # full descendant tree (transitive)
-nibs rel <id> --rel neighbours-active            # all 7 direct rels, excluding completed/scrapped
+{{if .HoldingStatuses}}nibs rel <id> --rel blocked-by --all             # adds back the {{join .HoldingStatuses "/"}} blockers{{if .ReleasingStatuses}} ({{join .ReleasingStatuses "/"}} never appear here){{end}}
+{{end}}nibs rel <id> --rel descendants --depth all      # full descendant tree (transitive)
+nibs rel <id> --rel neighbours-active            # all 7 direct rels, open nibs only (= neighbours with --open)
 nibs rel <id> --rel mentions-in                  # nibs whose bodies mention <id>
 ```
-Relations: `parent, children, siblings, blocking, blocked-by, mentions-out, mentions-in`, their transitive forms (`ancestors, descendants, blockers-transitive, blocks-transitive, mentions-out-transitive, mentions-in-transitive`), and `neighbours` / `neighbours-active`. `--rel` is repeatable / comma-separated (results are unioned and deduped). Filters (`--status/--type/--priority/--estimate/--tag`, their `--no-…` pairs, `--active`/`--all`) apply where they make sense; like `list`, **`rel` is open by default** and `-s`/`--no-status` take the `open`/`closed`/`parked` groups (see Statuses). Add `-f`/`--view` to project the related nibs. `nibs list --mentions <id>` / `--mentioned-by <id>` filter a *list* by mention relation.
+Relations: `parent, children, siblings, blocking, blocked-by, mentions-out, mentions-in`, their transitive forms (`ancestors, descendants, blockers-transitive, blocks-transitive, mentions-out-transitive, mentions-in-transitive`), and `neighbours` / `neighbours-active`. `--rel` is repeatable / comma-separated (results are unioned and deduped), and optional: omitting it applies the default `neighbours`, so a bare `nibs rel <id>` returns every directly related nib — including siblings, which for a root nib means every other root. Name the relation whenever the question is about one direction. Filters (`--status/--type/--priority/--estimate/--tag`, their `--no-…` pairs, `--open`/`--all`) apply where they make sense; like `list`, **`rel` is open by default** and `-s`/`--no-status` take the `open`/`closed` groups (see Statuses). Add `-f`/`--view` to project the related nibs. `nibs list --mentions <id>` / `--mentioned-by <id>` filter a *list* by mention relation.
 
 Topological ordering (`--order topo`, valid on children/descendants/blocking-family) reads each child's `blocked_by` to build a dependency graph: if B is `blocked_by: [a]` and A is a sibling, A comes before B. Edges outside the subtree are dropped; cycles raise an error naming the participants. `#<id>` mentions do NOT create ordering edges.
 
@@ -139,14 +147,19 @@ Configured statuses:
 - **{{.Name}}**{{if .Description}}: {{.Description}}{{end}}
 {{- end}}
 
-**`deferred` = parked**: intentionally not-now but not abandoned. Non-terminal, not archived (stays visible in listings), but **excluded from `nibs list --ready`**. Choosing among the not-active states: **draft** = needs refinement before it can be worked; **deferred** = ready but parked for later; **scrapped** = will not be done (terminal, archived). `deferred` is a status, not a priority.
+The statuses split into two groups, and the split is **workflow position vs close reason** — they partition the declared statuses, so every nib carrying one of them is in exactly one group (a hand-edited nib with no `status:` is in neither: the open default keeps it, but `-s open` and `-s closed` both drop it):
+- **open** = {{join .OpenStatuses ", "}} — where the work sits while it is still on the board.
+- **closed** = {{join .ClosedStatuses ", "}} — *why* it left the board; each one's reason is its description above.
 
-**Status filtering (`nibs list` / `nibs rel`) is open by default.** With no status flag both commands list only **open** nibs (completed and scrapped hidden), and the header discloses how many were hidden — `# 12 nibs (3 hidden: completed/scrapped — --all to include)`. `-s`/`--status` and `--no-status` accept status **groups** as well as concrete statuses:
-- **open** = in-progress, todo, draft, deferred (every non-archived status)
-- **closed** = completed, scrapped (the archived statuses)
-- **parked** = deferred
+**`deferred` is a close reason**, not a waiting room: a good idea at the wrong time, closed but kept as a seed rather than a dead end. Compare with **draft**, which is open — a draft nib is still on the board, it just needs refinement before it can be worked. `deferred` is a status, not a priority.
+{{if and .HoldingStatuses .ReleasingStatuses}}
+**A {{codes .HoldingStatuses "/"}} blocker still blocks its dependents.** This is the one place the two ideas come apart: closing a blocker as {{codes .ReleasingStatuses " or "}} settles the dependency and frees everything it was gating, but closing it as {{codes .HoldingStatuses " or "}} does not — the work is coming back, so the dependency is still unmet, and a nib blocked only by such a blocker stays out of `nibs list --ready`. That blocker is itself closed, so the open default hides it: use `nibs rel <id> --rel blocked-by --all` to see every blocker that still blocks. The relation only ever returns unreleased blockers, so no status flag surfaces a {{codes .ReleasingStatuses " or "}} one — read the raw list with `nibs get <id> -f "blocked-by(id,status)"`.
+{{end}}
+Archiving is **not** a status. `nibs rm <id>` moves the file to `.nibs/archive/`; the nib keeps its status and stays visible in every query.
 
-An explicit `-s` overrides the open default (`-s closed` shows only completed/scrapped); `--all` includes every status; `--open`/`--active` is shorthand for `-s open`. So **open work under a parent needs no post-filtering** — `nibs rel <id> --rel descendants -t bug` already returns only open bugs; don't hand-roll a `--json | python` status filter. `-c`/`-q` honor the open default too; add `--all` for true totals. (A filter that admits no status, e.g. `--no-status open`, is a validation error rather than a silent empty result.)
+**Status filtering (`nibs list` / `nibs rel`) is open by default.** With no status flag both commands list only **open** nibs (the closed statuses hidden), and the header discloses how many were hidden — `# 12 nibs (3 hidden: {{join .ClosedStatuses "/"}} — --all to include)`. `-s`/`--status` and `--no-status` accept the two group names, `open` and `closed`, anywhere a concrete status is accepted.
+
+An explicit `-s` overrides the open default (`-s closed` shows only the closed ones); `--all` includes every status; `--open` is shorthand for `-s open`. So **open work under a parent needs no post-filtering** — `nibs rel <id> --rel descendants -t bug` already returns only open bugs; don't hand-roll a `--json | python` status filter. `-c`/`-q` honor the open default too; add `--all` for true totals. (A filter that admits no status, e.g. `--no-status open`, is a validation error rather than a silent empty result.)
 
 ## Priorities
 
@@ -174,7 +187,7 @@ Each nib type has standard sections (pre-filled in the TUI):
 - **research**: `## Question`, `## Findings`, `## Decision`, `## Follow-ups`
 - **feature**: no standard template (features vary too widely)
 
-When completing, append `## Summary of Changes`; when scrapping, `## Reasons for Scrapping`.
+The closing record is not one of these: `nibs close` writes the summary into a `## Summary` section itself, for every close reason, adding an entry rather than replacing what is already there.
 
 ## Editing body content
 
@@ -202,20 +215,35 @@ Use `--children-of ""` for root-level siblings. Position a NEW nib at creation w
 
 ## Closing
 
-`nibs close` finishes a phase/plan item: it checks children are done (error unless `--force`), appends a `## Summary` from the input channel, propagates to the parent's `## Current Focus`, merges any `## Key Decisions` into the parent, and marks the nib completed.
+`nibs close` takes a nib off the board: it checks children are done (error unless `--force`), adds the summary to the nib's `## Summary` as a dated, reason-stamped entry, merges any `## Key Decisions` into the parent, and sets a closed status.
 ```bash
-nibs close <id> --summary -            # summary via stdin (or --summary @file.md)
-nibs close <id> --summary - --force    # close even if children are incomplete
-nibs close <id> --summary - --json     # machine-readable result
+nibs close <id> --summary -                 # {{.DefaultCloseStatus}} — summary via stdin (or --summary @file.md)
+nibs close <id> --as scrapped --summary -   # a different close reason: {{join .ClosedStatuses ", "}}
+nibs close <id> --summary - --force         # close even if children are incomplete
+nibs close <id> --summary - --json          # machine-readable result
 ```
-Use `close` for epics/features under a milestone (summary + parent propagation); use `nibs set <id> -s completed` for a simple task that needs neither.
+`--as` takes a **closed status** — the word it names is the word that lands in the nib's `status:`, so there is no second close-reason vocabulary. An open status is a validation error naming the closed ones. Omit `--as` and you get `{{.DefaultCloseStatus}}`.
+
+**`## Summary` accrues.** Each close adds an entry stamped with its reason and the date, so under the `## Summary` heading of a nib closed twice you find both records:
+```markdown
+**Deferred 2026-07-27** — waiting on the upstream provider release
+
+**Scrapped 2026-08-02** — superseded by nibs-abcd
+```
+**Closing an already-closed nib is allowed** — that is how a close reason is revised: the new entry is added beside the old one instead of overwriting it, so the first rationale survives the second close. What a revision does *not* do is retract what an earlier close wrote to the parent — the `Completed <id>: <summary>` line an earlier `--as {{.CompletionCloseStatus}}` close put in the parent's `## Current Focus` (see below) is left standing when the reason is later revised to a different one, so the parent still reads as though the work landed. When that matters, rewrite it yourself: `nibs body <parent-id> --section "## Current Focus" --set -`. Re-closing under the *same* reason is allowed too: it is how a rationale gets updated.
+
+**What reaches the parent depends on the reason.** `## Key Decisions` merge upward for **every** close reason — why work was set aside is exactly what a later reader looks for in the parent. Only `--as {{.CompletionCloseStatus}}` rewrites the parent's `## Current Focus`: that section says what the latest progress is, and setting work aside or abandoning it is not progress, so overwriting it would erase the record of the last real progress and leave the parent reading as though nothing were happening.
+
+**`nibs set <id> -s <a closed status>` is refused**, and the error names the `close` line to run instead. `set` owns the open statuses; `close` owns the move to a closed one. The reason is the summary: `close` requires one and `set` does not, so allowing both would make the route that records nothing the shorter one. Two boundaries worth knowing:
+- It is a rule about the `set` verb, not about the data. The web UI and the TUI go through GraphQL and can still set any status directly, as can `nibs graphql` and `nibs new -s <a closed status>` (which creates a nib already closed). What the refusal closes is the shortcut that skips the summary on an existing nib.
+- Only the move *into* a closed status is refused. There is no `reopen` verb — `nibs set <id> -s todo` on a closed nib is how work comes back, and it keeps working.
 
 ## Concurrency control
 
 Optimistic locking via etags:
 ```bash
 ETAG=$(nibs get <id> -f etag --json | jq -r '.nib.etag')
-nibs set <id> --if-match "$ETAG" -s completed
+nibs set <id> --if-match "$ETAG" -s in-progress
 ```
 On conflict the command exits 4 (`CONFLICT`) and reports the current etag. For bulk `nibs mv` (`--children-of` or block move) use `--child-if-match <id>=<etag>` (repeatable); pre-validation is atomic.
 
@@ -235,4 +263,8 @@ nibs graphql 'mutation {
   } }) { id etag }
 }'
 ```
+A failing query exits like the direct command that raises the same failure (a bad filter target exits 3, a stale `ifMatch` exits 4, an illegal parent exits 2 with `allowedParentTypes` when one refusal speaks for the whole response). A batch whose failures agree on a code keeps that code; failures that differ in kind but share an exit status keep the exit, reported under that class's general code (`HIERARCHY` beside a plain validation error reports `VALIDATION_ERROR`, exit 2). A batch whose failures span *different* exit classes supports no single claim, so it reports `UNCATEGORIZED` and exits 1 — every message is still on the wire; read them rather than branching on the code.
+
+A batch mutation is **not atomic**: root mutation fields run in document order, execution does not stop at the first failure, and each one writes on its own. So a failed batch can still have committed real edits. After the refusal the message reports how the root fields ended — `graphql: nib not found; d1, d3 succeeded; d2 failed` means `d1` and `d3` completed without raising an error while `d2` raised the refusal. Never resend a `succeeded` alias. But `succeeded` is a **lower bound** on what landed, not a full accounting, and `failed` does not mean nothing was written: an error anywhere inside a field's own selection marks that whole field failed even when its write committed, and a failed `updateNib` persists its blocking targets before it ever reaches its own `ifMatch` guard. When neither list appears, the message claims nothing either way. Re-read any nib the batch named instead of trusting an etag you cached before it.
+
 `nibs graphql --schema` prints the full SDL (also `nibs catalog schema`). `nibs graphql --help` for input syntax.

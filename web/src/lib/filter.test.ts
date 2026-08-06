@@ -5,7 +5,7 @@ import {
   prepareFilter,
   isDragAllowed,
 } from "./filter";
-import { OPEN_STATUSES, OPEN_PLUS_DEFERRED_STATUSES } from "./constants";
+import { OPEN_STATUSES, CLOSED_STATUSES } from "./constants";
 import type { NibSummary, NibFilter } from "./types";
 
 function makeNib(overrides: Partial<NibSummary> = {}): NibSummary {
@@ -24,33 +24,25 @@ function makeNib(overrides: Partial<NibSummary> = {}): NibSummary {
 }
 
 describe("status presets", () => {
-  it("Open preset is draft/todo/in-progress (hides deferred + terminal)", () => {
+  it("Open is the complement of the closed set", () => {
     expect(OPEN_STATUSES).toEqual(["draft", "todo", "in-progress"]);
   });
 
-  it("Open + deferred preset is everything except completed + scrapped", () => {
-    expect(OPEN_PLUS_DEFERRED_STATUSES).toEqual([
-      "draft",
-      "todo",
-      "in-progress",
-      "deferred",
-    ]);
+  it("deferred is closed, so there is no second preset to distinguish", () => {
+    // This is what collapsed the two presets into one: "open" and "not
+    // finished" used to name different sets, and now they do not.
+    expect(CLOSED_STATUSES).toEqual(["deferred", "completed", "scrapped"]);
+    expect(OPEN_STATUSES).not.toContain("deferred");
   });
 
-  it("the Open + deferred include-list hides completed and scrapped via matchesFilter", () => {
-    const filter: NibFilter = { status: [...OPEN_PLUS_DEFERRED_STATUSES] };
+  it("the Open include-list hides every closed status via matchesFilter", () => {
+    const filter: NibFilter = { status: [...OPEN_STATUSES] };
     expect(matchesFilter(makeNib({ status: "todo" }), filter)).toBe(true);
-    expect(matchesFilter(makeNib({ status: "deferred" }), filter)).toBe(true);
+    expect(matchesFilter(makeNib({ status: "deferred" }), filter)).toBe(false);
     expect(matchesFilter(makeNib({ status: "completed" }), filter)).toBe(false);
     expect(matchesFilter(makeNib({ status: "scrapped" }), filter)).toBe(false);
   });
 
-  it("the Open include-list also hides deferred via matchesFilter", () => {
-    const filter: NibFilter = { status: [...OPEN_STATUSES] };
-    expect(matchesFilter(makeNib({ status: "in-progress" }), filter)).toBe(true);
-    expect(matchesFilter(makeNib({ status: "deferred" }), filter)).toBe(false);
-    expect(matchesFilter(makeNib({ status: "completed" }), filter)).toBe(false);
-  });
 });
 
 describe("matchesFilter", () => {
@@ -96,6 +88,45 @@ describe("matchesFilter", () => {
     expect(matchesFilter(nib, { status: ["in-progress", "todo"] })).toBe(true);
     expect(matchesFilter(nib, { status: ["completed"] })).toBe(false);
   });
+
+  // Exclusion (`-field:value` negation) — a nib whose field value is in the
+  // exclude list is a non-match. One case per field proves each guard bites.
+  it("excludeType: non-match when nib type is excluded", () => {
+    expect(matchesFilter(makeNib({ type: "bug" }), { excludeType: ["bug"] })).toBe(false);
+    expect(matchesFilter(makeNib({ type: "task" }), { excludeType: ["bug"] })).toBe(true);
+  });
+
+  it("excludePriority: non-match when nib priority is excluded", () => {
+    expect(matchesFilter(makeNib({ priority: "high" }), { excludePriority: ["high"] })).toBe(false);
+    expect(matchesFilter(makeNib({ priority: "low" }), { excludePriority: ["high"] })).toBe(true);
+  });
+
+  it("excludeStatus: non-match when nib status is excluded", () => {
+    expect(matchesFilter(makeNib({ status: "completed" }), { excludeStatus: ["completed"] })).toBe(false);
+    expect(matchesFilter(makeNib({ status: "todo" }), { excludeStatus: ["completed"] })).toBe(true);
+  });
+
+  it("excludeEstimate: non-match when nib estimate is excluded", () => {
+    expect(matchesFilter(makeNib({ estimate: "xl" }), { excludeEstimate: ["xl"] })).toBe(false);
+    expect(matchesFilter(makeNib({ estimate: "m" }), { excludeEstimate: ["xl"] })).toBe(true);
+  });
+
+  it("excludeTags: non-match when nib has ANY excluded tag (overlap rule)", () => {
+    // any overlap between nib.tags and excludeTags removes the nib
+    expect(matchesFilter(makeNib({ tags: ["wip", "auth"] }), { excludeTags: ["wip"] })).toBe(false);
+    // no overlap → still a match
+    expect(matchesFilter(makeNib({ tags: ["auth"] }), { excludeTags: ["wip"] })).toBe(true);
+    // untagged nib is never excluded by a tag list
+    expect(matchesFilter(makeNib({ tags: [] }), { excludeTags: ["wip"] })).toBe(true);
+  });
+
+  it("exclusion ANDs with includes: an include-matching nib is still removed by an exclusion", () => {
+    const filter: NibFilter = { type: ["bug"], excludeStatus: ["completed"] };
+    // matches the type include-list but its status is excluded → non-match
+    expect(matchesFilter(makeNib({ type: "bug", status: "completed" }), filter)).toBe(false);
+    // matches the include-list and dodges the exclusion → match
+    expect(matchesFilter(makeNib({ type: "bug", status: "todo" }), filter)).toBe(true);
+  });
 });
 
 describe("hasClientFilters", () => {
@@ -119,6 +150,14 @@ describe("hasClientFilters", () => {
     expect(hasClientFilters({ status: ["todo"] })).toBe(true);
   });
 
+  it("returns true when any exclude filter is active", () => {
+    expect(hasClientFilters({ excludeType: ["bug"] })).toBe(true);
+    expect(hasClientFilters({ excludePriority: ["high"] })).toBe(true);
+    expect(hasClientFilters({ excludeStatus: ["completed"] })).toBe(true);
+    expect(hasClientFilters({ excludeEstimate: ["xl"] })).toBe(true);
+    expect(hasClientFilters({ excludeTags: ["wip"] })).toBe(true);
+  });
+
   it("returns false for search-only filter (not advanced)", () => {
     expect(hasClientFilters({ search: "test" })).toBe(false);
   });
@@ -129,6 +168,10 @@ describe("hasClientFilters", () => {
 
   it("returns false for empty arrays", () => {
     expect(hasClientFilters({ type: [], priority: [] })).toBe(false);
+  });
+
+  it("returns false for empty exclude arrays", () => {
+    expect(hasClientFilters({ excludeType: [], excludeStatus: [] })).toBe(false);
   });
 });
 
@@ -145,7 +188,7 @@ describe("prepareFilter", () => {
   it("moves the status include-list out of serverFilter into the client-side filter", () => {
     const filter: NibFilter = {
       search: "hello",
-      status: [...OPEN_PLUS_DEFERRED_STATUSES],
+      status: [...OPEN_STATUSES],
     };
     const result = prepareFilter(filter);
 
@@ -186,6 +229,31 @@ describe("prepareFilter", () => {
     expect(result.serverFilter).not.toHaveProperty("estimate");
     expect(result.serverFilter).not.toHaveProperty("tags");
     expect(result.clientFiltersActive).toBe(true);
+  });
+
+  it("strips exclude* fields from serverFilter and applies them client-side", () => {
+    const filter: NibFilter = {
+      search: "hello",
+      excludeType: ["bug"],
+      excludePriority: ["low"],
+      excludeStatus: ["completed"],
+      excludeEstimate: ["xl"],
+      excludeTags: ["wip"],
+    };
+    const result = prepareFilter(filter);
+
+    // The exclusions are applied client-side (so an excluded ancestor of active
+    // children is fetched and dimmed rather than dropped server-side), so none
+    // are forwarded to the server.
+    expect(result.serverFilter).toEqual({ search: "hello" });
+    expect(result.serverFilter).not.toHaveProperty("excludeType");
+    expect(result.serverFilter).not.toHaveProperty("excludePriority");
+    expect(result.serverFilter).not.toHaveProperty("excludeStatus");
+    expect(result.serverFilter).not.toHaveProperty("excludeEstimate");
+    expect(result.serverFilter).not.toHaveProperty("excludeTags");
+    expect(result.clientFiltersActive).toBe(true);
+    expect(result.matchesClient(makeNib({ status: "completed" }))).toBe(false);
+    expect(result.matchesClient(makeNib({ status: "todo" }))).toBe(true);
   });
 
   it("matchesClient returns true when nib matches the client-side filter", () => {
@@ -241,7 +309,7 @@ describe("isDragAllowed", () => {
   });
 
   it("returns true when hide-filters are combined in any mix", () => {
-    expect(isDragAllowed({ type: ["bug"], status: [...OPEN_PLUS_DEFERRED_STATUSES] })).toBe(true);
+    expect(isDragAllowed({ type: ["bug"], status: [...OPEN_STATUSES] })).toBe(true);
     expect(
       isDragAllowed({
         type: ["bug"],

@@ -58,10 +58,75 @@ export type CreateNibInput = {
 
 /** Filter options for querying nibs */
 export type NibFilter = {
-  /** Include only nibs blocked by this specific nib ID (via blocked_by field) */
+  /**
+   * Include only nibs with this specific nib ID somewhere in their parent chain
+   * (that nib's descendants at any depth). This filter excludes the nib itself.
+   * On the top-level nibs query, combining it with search adds it back, because
+   * that query completes the tree with every match's ancestors. A relationship
+   * field does not complete the tree, so there the target stays excluded — see
+   * search.
+   *
+   * An id naming no nib is refused with a NOT_FOUND error rather than matching
+   * nothing, so a mistyped or stale id stays distinguishable from a genuine empty
+   * result. An empty string is refused as a malformed argument: it names no nib
+   * and never could. Unlike the not-found refusal above it carries no
+   * extensions.code, so a GraphQL client sees a generic error; the CLI reports
+   * VALIDATION_ERROR (exit 2). Omit the field to leave it unfiltered.
+   */
+  ancestorId?: string | null | undefined;
+  /**
+   * Include only nibs blocked by this specific nib ID (via blocked_by field).
+   *
+   * An id naming no nib is refused with a NOT_FOUND error rather than matching
+   * nothing, so a mistyped or stale id stays distinguishable from a genuine empty
+   * result. An empty string is refused as a malformed argument: it names no nib
+   * and never could. Unlike the not-found refusal above it carries no
+   * extensions.code, so a GraphQL client sees a generic error; the CLI reports
+   * VALIDATION_ERROR (exit 2). Omit the field to leave it unfiltered.
+   *
+   * Combining it with hasBlockedBy: false is refused as a malformed argument
+   * (VALIDATION_ERROR, exit 2), and refused BEFORE the id is looked up, so the
+   * pair is reported even when the id also names no nib: matching this field
+   * requires a blocked_by entry, so no store state satisfies both halves. Unlike
+   * the empty-id refusal above it carries extensions.code = "FILTER_CONTRADICTION",
+   * so a GraphQL client can route it structurally rather than on message text. The
+   * exception is the EMPTY string, which keeps the empty-id refusal above — the
+   * same class and exit, but uncoded, reported as malformed input rather than as
+   * the pair.
+   */
   blockedById?: string | null | undefined;
-  /** Include only nibs that are blocking this specific nib ID */
+  /**
+   * Include only nibs that are blocking this specific nib ID.
+   *
+   * Membership is the target's stored blocked_by, whatever the candidate's status,
+   * which is what makes `blockingId: X, hasBlocking: false` meaningful: it selects
+   * the blockers X still lists that are no longer blocking anything — either
+   * because their own status released their dependents, or because every nib that
+   * listed them, X included, has itself been released. The second case is why the
+   * pair can return an OPEN blocker: X completed, its todo blocker listed nowhere
+   * else, and that blocker is in the answer. That pair is answered, not refused;
+   * hasBlocking: true selects the ones still blocking.
+   *
+   * An id naming no nib is refused with a NOT_FOUND error rather than matching
+   * nothing, so a mistyped or stale id stays distinguishable from a genuine empty
+   * result. An empty string is refused as a malformed argument: it names no nib
+   * and never could. Unlike the not-found refusal above it carries no
+   * extensions.code, so a GraphQL client sees a generic error; the CLI reports
+   * VALIDATION_ERROR (exit 2). Omit the field to leave it unfiltered.
+   */
   blockingId?: string | null | undefined;
+  /**
+   * Include only nibs with this specific nib ID somewhere in their descendant
+   * subtree (that nib's ancestor chain, itself excluded).
+   *
+   * An id naming no nib is refused with a NOT_FOUND error rather than matching
+   * nothing, so a mistyped or stale id stays distinguishable from a genuine empty
+   * result. An empty string is refused as a malformed argument: it names no nib
+   * and never could. Unlike the not-found refusal above it carries no
+   * extensions.code, so a GraphQL client sees a generic error; the CLI reports
+   * VALIDATION_ERROR (exit 2). Omit the field to leave it unfiltered.
+   */
+  descendantId?: string | null | undefined;
   /** Include only nibs with these estimates (OR logic) */
   estimate?: Array<string> | null | undefined;
   /** Exclude nibs with these estimates */
@@ -74,25 +139,82 @@ export type NibFilter = {
   excludeTags?: Array<string> | null | undefined;
   /** Exclude nibs with these types */
   excludeType?: Array<string> | null | undefined;
-  /** Include only nibs that have explicit blocked-by entries */
+  /**
+   * Tri-state: true keeps nibs that have explicit blocked_by entries, false keeps
+   * exactly those with none, null does not filter.
+   *
+   * Combining false with the blockedById FILTER is refused: no nib both lists a
+   * given blocker and lists none. See blockedById.
+   */
   hasBlockedBy?: boolean | null | undefined;
-  /** Include only nibs that are blocking other nibs */
+  /**
+   * Tri-state: true keeps nibs that are ACTIVELY blocking others, false keeps
+   * exactly the rest, null does not filter. A blocker whose status released its
+   * dependents (completed, scrapped) is not actively blocking anything, so it is
+   * in the false set even while other nibs still list it in their blocked_by.
+   *
+   * Combining false with blockingId is therefore a real query rather than a
+   * contradiction — see blockingId.
+   */
   hasBlocking?: boolean | null | undefined;
-  /** Include only nibs with a parent */
+  /**
+   * Tri-state: true keeps nibs whose parent link resolves to a nib, false keeps
+   * exactly the ones with no parent, null does not filter. A nib whose parent link
+   * names no nib counts as parentless, matching how the parent field and siblingId
+   * treat it — parentId still reports the unresolvable stored id, so a nib
+   * selected by hasParent:false may have a non-null parentId.
+   *
+   * Combining false with the parentId FILTER is refused: no nib both has a given
+   * parent and has none. See parentId.
+   */
   hasParent?: boolean | null | undefined;
-  /** Include only nibs that are blocked by others (via incoming blocking links or blocked_by field) */
+  /** Tri-state: true keeps nibs blocked by others (via incoming blocking links or blocked_by field), false keeps exactly the unblocked ones, null does not filter */
   isBlocked?: boolean | null | undefined;
-  /** Include only nibs mentioned in the given nib's body */
+  /**
+   * Include only nibs mentioned in the given nib's body.
+   *
+   * An id naming no nib is refused with a NOT_FOUND error rather than matching
+   * nothing, so a mistyped or stale id stays distinguishable from a genuine empty
+   * result. An empty string is refused as a malformed argument: it names no nib
+   * and never could. Unlike the not-found refusal above it carries no
+   * extensions.code, so a GraphQL client sees a generic error; the CLI reports
+   * VALIDATION_ERROR (exit 2). Omit the field to leave it unfiltered.
+   */
   mentionedById?: string | null | undefined;
-  /** Include only nibs that mention this specific nib ID in their body */
+  /**
+   * Include only nibs that mention this specific nib ID in their body.
+   *
+   * An id naming no nib is refused with a NOT_FOUND error rather than matching
+   * nothing, so a mistyped or stale id stays distinguishable from a genuine empty
+   * result. An empty string is refused as a malformed argument: it names no nib
+   * and never could. Unlike the not-found refusal above it carries no
+   * extensions.code, so a GraphQL client sees a generic error; the CLI reports
+   * VALIDATION_ERROR (exit 2). Omit the field to leave it unfiltered.
+   */
   mentionsId?: string | null | undefined;
-  /** Exclude nibs that have explicit blocked-by entries */
-  noBlockedBy?: boolean | null | undefined;
-  /** Exclude nibs that are blocking other nibs */
-  noBlocking?: boolean | null | undefined;
-  /** Exclude nibs that have a parent */
-  noParent?: boolean | null | undefined;
-  /** Include only nibs with this specific parent ID */
+  /**
+   * Include only nibs with this specific parent ID.
+   *
+   * An id naming no nib is refused with a NOT_FOUND error rather than matching
+   * nothing, so a mistyped or stale id stays distinguishable from a genuine empty
+   * result. An empty string is refused as a malformed argument: it names no nib
+   * and never could. Unlike the not-found refusal above it carries no
+   * extensions.code, so a GraphQL client sees a generic error; the CLI reports
+   * VALIDATION_ERROR (exit 2). Omit the field to leave it unfiltered, or use
+   * hasParent: false to select the nibs that have no parent.
+   *
+   * Combining it with hasParent: false is refused as a malformed argument
+   * (VALIDATION_ERROR, exit 2), and refused BEFORE the id is looked up, so the
+   * pair is reported even when the id also names no nib: every nib this field
+   * matches has a parent, so no store state satisfies both halves and correcting
+   * the id would not make the query answerable. Unlike the empty-id refusal above
+   * it carries extensions.code = "FILTER_CONTRADICTION", so a GraphQL client can
+   * route it structurally rather than on message text. The exception is the EMPTY
+   * string, which keeps the empty-id refusal above — the same class and exit, but
+   * uncoded, and its message redirects to hasParent: false, the filter that does
+   * select parentless nibs. The flag surface refuses
+   * `nibs list --parent X --no-parent` with the same exit status.
+   */
   parentId?: string | null | undefined;
   /** Include only nibs with these priorities (OR logic) */
   priority?: Array<string> | null | undefined;
@@ -119,8 +241,47 @@ export type NibFilter = {
    * - "title:login" - search only title field
    * - "body:auth" - search only body field
    * - "5a8k" - also matches nibs whose ID contains "5a8k"
+   *
+   * An empty string leaves it unfiltered, the opposite of the id-valued fields
+   * such as parentId: "no keyword filter" is a real meaning, so `search: "$q"`
+   * with an empty q is a reasonable thing to write. There is no nib whose id is
+   * "", which is why the same value is a refusal there.
+   *
+   * On a relationship field (children, blockedBy, blocking, mentions,
+   * mentionedBy) the term INTERSECTS that relationship instead of choosing the
+   * nibs to consider: `children(filter: {search: "auth"})` means "the children of
+   * this nib that match auth", and a match that is not a child of it is not in
+   * the answer. Two consequences follow from that, both differences from the
+   * top-level nibs query. A relationship field never returns a nib outside the
+   * relation, so it does not add the ancestors of its matches — tree completion
+   * belongs to a query over the whole store. And relevance ordering does not
+   * apply: the field keeps its own order (children stay in order key order),
+   * since the term selects rather than ranks.
+   *
+   * The index answers with at most 1000 hits per leg (id matches and full-text
+   * hits are capped separately), and BOTH surfaces read that same store-wide
+   * answer. At the top level the cap is the answer — the top hits for the term. On
+   * a relationship field it is applied to the whole store before the intersection,
+   * so in a store large enough for a term to reach the cap, a member of the
+   * relation that matches the term but falls outside those hits is not in the
+   * result.
    */
   search?: string | null | undefined;
+  /**
+   * Include only nibs sharing this specific nib's parent, or the other root nibs
+   * when it has no parent (itself excluded). On the top-level nibs query,
+   * combining it with search also brings in the shared parent, because that query
+   * completes the tree with every match's ancestors. A relationship field does not
+   * complete the tree, so there the shared parent stays out — see search.
+   *
+   * An id naming no nib is refused with a NOT_FOUND error rather than matching
+   * nothing, so a mistyped or stale id stays distinguishable from a genuine empty
+   * result. An empty string is refused as a malformed argument: it names no nib
+   * and never could. Unlike the not-found refusal above it carries no
+   * extensions.code, so a GraphQL client sees a generic error; the CLI reports
+   * VALIDATION_ERROR (exit 2). Omit the field to leave it unfiltered.
+   */
+  siblingId?: string | null | undefined;
   /** Include only nibs with these statuses (OR logic) */
   status?: Array<string> | null | undefined;
   /** Include only nibs with any of these tags (OR logic) */
@@ -275,6 +436,13 @@ export type TreeTableQueryVariables = Exact<{
 
 export type TreeTableQuery = { nibs: Array<{ id: string, title: string, status: string, type: string, priority: string, estimate: string, tags: Array<string>, createdAt: string, updatedAt: string, parentId: string | null, blockingIds: Array<string>, blockedByIds: Array<string> }> };
 
+export type SearchNibsQueryVariables = Exact<{
+  search: string;
+}>;
+
+
+export type SearchNibsQuery = { nibs: Array<{ id: string, title: string, type: string, status: string }> };
+
 export type NibChangedSubscriptionVariables = Exact<{
   id?: string | number | null | undefined;
 }>;
@@ -294,4 +462,5 @@ export const CreateNibDocument = {"kind":"Document","definitions":[{"kind":"Oper
 export const SetParentDocument = {"kind":"Document","definitions":[{"kind":"OperationDefinition","operation":"mutation","name":{"kind":"Name","value":"SetParent"},"variableDefinitions":[{"kind":"VariableDefinition","variable":{"kind":"Variable","name":{"kind":"Name","value":"id"}},"type":{"kind":"NonNullType","type":{"kind":"NamedType","name":{"kind":"Name","value":"ID"}}}},{"kind":"VariableDefinition","variable":{"kind":"Variable","name":{"kind":"Name","value":"parentId"}},"type":{"kind":"NamedType","name":{"kind":"Name","value":"String"}}}],"selectionSet":{"kind":"SelectionSet","selections":[{"kind":"Field","name":{"kind":"Name","value":"setParent"},"arguments":[{"kind":"Argument","name":{"kind":"Name","value":"id"},"value":{"kind":"Variable","name":{"kind":"Name","value":"id"}}},{"kind":"Argument","name":{"kind":"Name","value":"parentId"},"value":{"kind":"Variable","name":{"kind":"Name","value":"parentId"}}}],"selectionSet":{"kind":"SelectionSet","selections":[{"kind":"Field","name":{"kind":"Name","value":"id"}},{"kind":"Field","name":{"kind":"Name","value":"title"}},{"kind":"Field","name":{"kind":"Name","value":"status"}},{"kind":"Field","name":{"kind":"Name","value":"type"}},{"kind":"Field","name":{"kind":"Name","value":"priority"}},{"kind":"Field","name":{"kind":"Name","value":"estimate"}},{"kind":"Field","name":{"kind":"Name","value":"tags"}},{"kind":"Field","name":{"kind":"Name","value":"etag"}},{"kind":"Field","name":{"kind":"Name","value":"parentId"}}]}}]}}]} as unknown as DocumentNode<SetParentMutation, SetParentMutationVariables>;
 export const ReorderNibDocument = {"kind":"Document","definitions":[{"kind":"OperationDefinition","operation":"mutation","name":{"kind":"Name","value":"ReorderNib"},"variableDefinitions":[{"kind":"VariableDefinition","variable":{"kind":"Variable","name":{"kind":"Name","value":"id"}},"type":{"kind":"NonNullType","type":{"kind":"NamedType","name":{"kind":"Name","value":"ID"}}}},{"kind":"VariableDefinition","variable":{"kind":"Variable","name":{"kind":"Name","value":"afterId"}},"type":{"kind":"NamedType","name":{"kind":"Name","value":"ID"}}},{"kind":"VariableDefinition","variable":{"kind":"Variable","name":{"kind":"Name","value":"beforeId"}},"type":{"kind":"NamedType","name":{"kind":"Name","value":"ID"}}},{"kind":"VariableDefinition","variable":{"kind":"Variable","name":{"kind":"Name","value":"first"}},"type":{"kind":"NamedType","name":{"kind":"Name","value":"Boolean"}}},{"kind":"VariableDefinition","variable":{"kind":"Variable","name":{"kind":"Name","value":"parentId"}},"type":{"kind":"NamedType","name":{"kind":"Name","value":"String"}}}],"selectionSet":{"kind":"SelectionSet","selections":[{"kind":"Field","name":{"kind":"Name","value":"reorderNib"},"arguments":[{"kind":"Argument","name":{"kind":"Name","value":"id"},"value":{"kind":"Variable","name":{"kind":"Name","value":"id"}}},{"kind":"Argument","name":{"kind":"Name","value":"afterId"},"value":{"kind":"Variable","name":{"kind":"Name","value":"afterId"}}},{"kind":"Argument","name":{"kind":"Name","value":"beforeId"},"value":{"kind":"Variable","name":{"kind":"Name","value":"beforeId"}}},{"kind":"Argument","name":{"kind":"Name","value":"first"},"value":{"kind":"Variable","name":{"kind":"Name","value":"first"}}},{"kind":"Argument","name":{"kind":"Name","value":"parentId"},"value":{"kind":"Variable","name":{"kind":"Name","value":"parentId"}}}],"selectionSet":{"kind":"SelectionSet","selections":[{"kind":"Field","name":{"kind":"Name","value":"id"}},{"kind":"Field","name":{"kind":"Name","value":"title"}},{"kind":"Field","name":{"kind":"Name","value":"status"}},{"kind":"Field","name":{"kind":"Name","value":"type"}},{"kind":"Field","name":{"kind":"Name","value":"priority"}},{"kind":"Field","name":{"kind":"Name","value":"estimate"}},{"kind":"Field","name":{"kind":"Name","value":"tags"}},{"kind":"Field","name":{"kind":"Name","value":"etag"}},{"kind":"Field","name":{"kind":"Name","value":"parentId"}},{"kind":"Field","name":{"kind":"Name","value":"order"}}]}}]}}]} as unknown as DocumentNode<ReorderNibMutation, ReorderNibMutationVariables>;
 export const TreeTableDocument = {"kind":"Document","definitions":[{"kind":"OperationDefinition","operation":"query","name":{"kind":"Name","value":"TreeTable"},"variableDefinitions":[{"kind":"VariableDefinition","variable":{"kind":"Variable","name":{"kind":"Name","value":"filter"}},"type":{"kind":"NamedType","name":{"kind":"Name","value":"NibFilter"}}}],"selectionSet":{"kind":"SelectionSet","selections":[{"kind":"Field","name":{"kind":"Name","value":"nibs"},"arguments":[{"kind":"Argument","name":{"kind":"Name","value":"filter"},"value":{"kind":"Variable","name":{"kind":"Name","value":"filter"}}},{"kind":"Argument","name":{"kind":"Name","value":"sort"},"value":{"kind":"ObjectValue","fields":[{"kind":"ObjectField","name":{"kind":"Name","value":"field"},"value":{"kind":"EnumValue","value":"ORDER"}},{"kind":"ObjectField","name":{"kind":"Name","value":"direction"},"value":{"kind":"EnumValue","value":"ASC"}}]}}],"selectionSet":{"kind":"SelectionSet","selections":[{"kind":"Field","name":{"kind":"Name","value":"id"}},{"kind":"Field","name":{"kind":"Name","value":"title"}},{"kind":"Field","name":{"kind":"Name","value":"status"}},{"kind":"Field","name":{"kind":"Name","value":"type"}},{"kind":"Field","name":{"kind":"Name","value":"priority"}},{"kind":"Field","name":{"kind":"Name","value":"estimate"}},{"kind":"Field","name":{"kind":"Name","value":"tags"}},{"kind":"Field","name":{"kind":"Name","value":"createdAt"}},{"kind":"Field","name":{"kind":"Name","value":"updatedAt"}},{"kind":"Field","name":{"kind":"Name","value":"parentId"}},{"kind":"Field","name":{"kind":"Name","value":"blockingIds"}},{"kind":"Field","name":{"kind":"Name","value":"blockedByIds"}}]}}]}}]} as unknown as DocumentNode<TreeTableQuery, TreeTableQueryVariables>;
+export const SearchNibsDocument = {"kind":"Document","definitions":[{"kind":"OperationDefinition","operation":"query","name":{"kind":"Name","value":"SearchNibs"},"variableDefinitions":[{"kind":"VariableDefinition","variable":{"kind":"Variable","name":{"kind":"Name","value":"search"}},"type":{"kind":"NonNullType","type":{"kind":"NamedType","name":{"kind":"Name","value":"String"}}}}],"selectionSet":{"kind":"SelectionSet","selections":[{"kind":"Field","name":{"kind":"Name","value":"nibs"},"arguments":[{"kind":"Argument","name":{"kind":"Name","value":"filter"},"value":{"kind":"ObjectValue","fields":[{"kind":"ObjectField","name":{"kind":"Name","value":"search"},"value":{"kind":"Variable","name":{"kind":"Name","value":"search"}}}]}}],"selectionSet":{"kind":"SelectionSet","selections":[{"kind":"Field","name":{"kind":"Name","value":"id"}},{"kind":"Field","name":{"kind":"Name","value":"title"}},{"kind":"Field","name":{"kind":"Name","value":"type"}},{"kind":"Field","name":{"kind":"Name","value":"status"}}]}}]}}]} as unknown as DocumentNode<SearchNibsQuery, SearchNibsQueryVariables>;
 export const NibChangedDocument = {"kind":"Document","definitions":[{"kind":"OperationDefinition","operation":"subscription","name":{"kind":"Name","value":"NibChanged"},"variableDefinitions":[{"kind":"VariableDefinition","variable":{"kind":"Variable","name":{"kind":"Name","value":"id"}},"type":{"kind":"NamedType","name":{"kind":"Name","value":"ID"}}}],"selectionSet":{"kind":"SelectionSet","selections":[{"kind":"Field","name":{"kind":"Name","value":"nibChanged"},"arguments":[{"kind":"Argument","name":{"kind":"Name","value":"id"},"value":{"kind":"Variable","name":{"kind":"Name","value":"id"}}}],"selectionSet":{"kind":"SelectionSet","selections":[{"kind":"Field","name":{"kind":"Name","value":"type"}},{"kind":"Field","name":{"kind":"Name","value":"nibId"}},{"kind":"Field","name":{"kind":"Name","value":"nib"},"selectionSet":{"kind":"SelectionSet","selections":[{"kind":"Field","name":{"kind":"Name","value":"id"}},{"kind":"Field","name":{"kind":"Name","value":"title"}},{"kind":"Field","name":{"kind":"Name","value":"status"}},{"kind":"Field","name":{"kind":"Name","value":"type"}},{"kind":"Field","name":{"kind":"Name","value":"priority"}},{"kind":"Field","name":{"kind":"Name","value":"estimate"}},{"kind":"Field","name":{"kind":"Name","value":"tags"}},{"kind":"Field","name":{"kind":"Name","value":"body"}},{"kind":"Field","name":{"kind":"Name","value":"etag"}},{"kind":"Field","name":{"kind":"Name","value":"updatedAt"}},{"kind":"Field","name":{"kind":"Name","value":"parentId"}},{"kind":"Field","name":{"kind":"Name","value":"blockingIds"}},{"kind":"Field","name":{"kind":"Name","value":"blockedByIds"}}]}}]}}]}}]} as unknown as DocumentNode<NibChangedSubscription, NibChangedSubscriptionVariables>;

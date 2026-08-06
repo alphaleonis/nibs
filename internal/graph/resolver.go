@@ -10,6 +10,37 @@ import (
 	"github.com/alphaleonis/nibs/internal/nib"
 )
 
+// schema.resolvers.go is generated but not disposable: gqlgen rewrites it on
+// every codegen and carries parts of the existing file into the new one. Which
+// parts is the whole subtlety. Resolver bodies survive as raw source; a
+// resolver's doc-comment PROSE survives (UpdateNib and DeleteNib carry
+// hand-written paragraphs that outlive codegen); and the import block survives
+// (internal/nibtypes is imported solely for a hand-written resolver body and
+// appears nowhere in generated.go). Three things do not: a comment DIRECTIVE in
+// doc position, a free-standing comment, and a non-resolver declaration.
+//
+// The directive is the dangerous one, because it fails silently. gqlgen rebuilds
+// each resolver's doc comment through go/ast's CommentGroup.Text(), which
+// discards directives (//nolint:…, //go:noinline — the //<tool>:<directive> form
+// of go/ast's isDirective rule) and keeps the prose around them. The comment
+// still reads the same afterwards; the effect — a lint suppression, say — is
+// gone. So a directive belongs INSIDE the function, where the body is copied
+// through verbatim. The go:codegen task greps for one before running gqlgen and
+// fails the build, but that check is best-effort: it is skipped on a machine
+// without grep and on a resolver file it cannot read.
+//
+// The other two go quietly too: a free-standing comment (attached to no
+// declaration) is dropped outright, and a non-resolver declaration is moved into
+// a commented-out block at the end with its own doc comment discarded. So a
+// durable note about that file needs a surviving home — a resolver's doc
+// comment, which is where the pointer at the top of schema.resolvers.go sits, or
+// this file, which gqlgen writes once when it is absent and never regenerates.
+//
+// gqlgen v0.17.86 stops routing resolver doc comments through
+// CommentGroup.Text(); on that version this restriction and its guard should
+// both be deleted. go:codegen fails with that instruction once go.mod reaches
+// it.
+
 //go:generate go tool gqlgen generate
 
 // Resolver is the root resolver for the GraphQL schema.
@@ -286,10 +317,11 @@ func (r *Resolver) removeBlockedByRelationships(b *nib.Nib, targetIDs []string) 
 }
 
 // activateParentChain walks up the parent chain, setting any todo/draft
-// parents to in-progress. Stops when it reaches a parent that is already
-// in-progress, deferred, completed, or scrapped (or has no parent). A deferred
-// parent is parked, so it is left untouched — a child going in-progress does
-// not un-park it.
+// parents to in-progress. Those two statuses are the whole activation set: the
+// walk stops at a parent in any other status (or one with no parent), so an
+// in-progress ancestor is already active and a closed one — completed,
+// scrapped or deferred — stays closed. A child going in-progress never reopens
+// a closed parent.
 // Best-effort: warns on stderr and stops on any error. Mutates an owned clone
 // (from GetForUpdate) before each Update — as UpdateNib does — so a refused write
 // never corrupts the shared in-memory nib.
@@ -311,7 +343,7 @@ func (r *Resolver) activateParentChain(childID, parentID string) {
 			return
 		}
 		if parent.Status != "todo" && parent.Status != "draft" {
-			return // already active or resolved, stop
+			return // already active or closed, stop
 		}
 		nextParentID := parent.Parent
 		// Reader.Get above returns the SHARED in-memory pointer (nibcore.Core.Get
@@ -344,9 +376,20 @@ func (r *Resolver) activateParentChain(childID, parentID string) {
 	}
 }
 
-// isResolvedStatus delegates to nib.IsResolvedStatus — the canonical definition.
-func isResolvedStatus(status string) bool {
-	return nib.IsResolvedStatus(status)
+// isStartableStatus delegates to config.IsStartableStatus — the canonical
+// status half of "can I start this?" — reached through the reader's config so
+// this package keeps no status list of its own.
+func (r *Resolver) isStartableStatus(status string) bool {
+	return r.Reader.Config().IsStartableStatus(status)
+}
+
+// releasesDependents delegates to config.StatusReleasesDependents — the
+// canonical answer to "does a blocker in this status still count" — reached
+// through the reader's config so this package keeps no status list of its own.
+// Narrower than config.IsClosedStatus: a deferred blocker is closed but still
+// blocks.
+func (r *Resolver) releasesDependents(status string) bool {
+	return r.Reader.Config().StatusReleasesDependents(status)
 }
 
 // validateDocumentPaths checks that document paths are safe (no absolute paths or path traversal).

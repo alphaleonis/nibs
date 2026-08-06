@@ -4,9 +4,9 @@ import (
 	"context"
 	"fmt"
 
+	"github.com/alphaleonis/nibs/internal/ui"
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
-	"github.com/alphaleonis/nibs/internal/ui"
 )
 
 // confirmDialog holds the state for an archive/delete confirmation modal.

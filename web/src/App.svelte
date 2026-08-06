@@ -19,6 +19,7 @@
   import { TreeViewState } from "./lib/treeView.svelte";
   import { provideSelection, provideDrag, provideTreeView, provideConfirmDialog, provideActiveView, provideHistoryNav } from "./lib/contexts";
   import { createHistoryNav } from "./lib/composables/useHistoryNav.svelte";
+  import { createQueryUrl } from "./lib/composables/useQueryUrl.svelte";
   import { createConfirmDialog } from "./lib/composables/useConfirmDialog.svelte";
   import { createActiveView } from "./lib/composables/useActiveView.svelte";
   import type { ActiveView, DetailView, DetailNib, ConfirmChoice } from "./lib/composables/useActiveView.svelte";
@@ -32,6 +33,7 @@
   import { createLiveNib } from "./lib/liveNib.svelte";
   import type { LiveNib } from "./lib/liveNib.svelte";
   import type { TreeTableNib, RowSubtreeActions } from "./lib/types";
+  import type { RelIdKey } from "./lib/query";
   import * as Resizable from "./lib/components/ui/resizable";
   import type ResizablePane from "./lib/components/ui/resizable/resizable-pane.svelte";
   import { Toaster } from "./lib/components/ui/sonner";
@@ -61,6 +63,26 @@
 
   const prefs = new Preferences();
 
+  // Filter query ↔ URL (`?q=`). Independent of useHistoryNav's `?nib=`; both
+  // preserve each other's param. Load precedence: a `?q=` in the initial URL
+  // WINS over the localStorage-restored filter (so a shared link reproduces its
+  // filtered view, including parked invalid tokens). Applied synchronously here
+  // — before first paint — so the table renders the shared filter immediately.
+  const queryUrl = createQueryUrl();
+  const initialUrlQuery = queryUrl.currentQuery();
+  if (initialUrlQuery !== null) prefs.setQuery(initialUrlQuery);
+
+  // Mirror the canonical query back into `?q=` on every change (debounced
+  // replaceState, no Back-stack spam). Runs on mount too, so the address bar
+  // reflects the active filter — whether it came from the URL or localStorage —
+  // and normalizes a hand-typed shared link to canonical form. Empty query
+  // removes the param. The cleanup cancels any pending write so a still-scheduled
+  // replaceState can't fire after unmount.
+  $effect(() => {
+    queryUrl.push(prefs.query);
+    return () => queryUrl.cancel();
+  });
+
   // Live-apply the selected palette: repaints the app whenever prefs.theme
   // changes (no reload). The FOUC guard in index.html sets the initial
   // data-theme before first paint; this keeps it in sync thereafter.
@@ -69,8 +91,10 @@
   });
 
   // Live-apply the global font-size preference: writes the S/M/L multiplier onto
-  // --font-scale whenever prefs.fontSize changes, scaling the type scale only
-  // (not layout/spacing). No pre-paint FOUC guard needed (a tiny reflow is fine).
+  // --font-scale whenever prefs.fontSize changes, scaling the type scale plus
+  // the few boxes that must track it (row height, the dropdown width cap) while
+  // root font-size and the spacing scale stay put — see fontScale.ts for the
+  // full list. No pre-paint FOUC guard needed (a tiny reflow is fine).
   $effect(() => {
     applyFontScale(prefs.fontSize);
   });
@@ -297,6 +321,15 @@
     // would arrive too late to prevent the navigation it asks about.
     nav.handlePopState(e);
     view.syncTo(selection.selectedNibId);
+    // Re-sync the filter query from the just-restored URL, mirroring how
+    // handlePopState re-syncs `?nib=`. The URL is the source of truth for the
+    // query on history navigation, exactly as on initial load (URL-wins). An
+    // ABSENT `?q=` clears the query (empty string) rather than preserving the
+    // current filter — the writer removes the param whenever the query is empty,
+    // so a restored entry without `?q=` genuinely means "empty filter". This
+    // re-derives prefs.query, so the writer $effect debounces a replaceState of
+    // the same value onto the current entry: idempotent, no popstate, no loop.
+    prefs.setQuery(queryUrl.currentQuery() ?? "");
   }
 
   // A viewed nib that resolves to nothing (deleted / archived / stale link).
@@ -416,6 +449,14 @@
     contextMenuSubtree = subtree;
     contextMenuPosition = { x: event.clientX, y: event.clientY };
     contextMenuOpen = true;
+  }
+
+  // "Filter related" composition: AND the chosen scalar relationship-id onto the
+  // CURRENT filter (spread preserves other facets; same-kind key overwrites). No
+  // navigation — this only re-filters the table. The box, being unfocused, snaps
+  // to the canonical serialization of the updated filter.
+  function handleFilterRelated(field: RelIdKey, id: string) {
+    prefs.filter = { ...prefs.filter, [field]: id };
   }
 
   // --- Global keyboard shortcuts ---
@@ -635,6 +676,7 @@
   hasChildren={contextMenuSubtree?.hasChildren ?? false}
   onexpandchildren={() => contextMenuSubtree?.expandChildren()}
   oncollapsechildren={() => contextMenuSubtree?.collapseChildren()}
+  onfilterrelated={handleFilterRelated}
 />
 
 <!-- Hand the whole composable to the dialog. The dialog reads its display state

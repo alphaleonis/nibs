@@ -231,6 +231,40 @@ describe("useHistoryNav", () => {
     ]);
   });
 
+  // Coexistence with useQueryUrl's `?q=` param: nib navigation must MERGE into
+  // the current search (touch only `nib`), never wipe a sibling `?q=`.
+  it("navigateToNib preserves an existing ?q= param (merges, keeps the shared query)", () => {
+    const { nav, history } = setup({ location: { search: "?q=type%3Abug", pathname: "/" } });
+
+    nav.navigateToNib("tnib-1");
+
+    expect(history.calls).toEqual([
+      { kind: "push", state: { nibId: "tnib-1" }, url: "?q=type%3Abug&nib=tnib-1" },
+    ]);
+  });
+
+  it("closePanel drops only ?nib=, keeping a sibling ?q= param", () => {
+    const selection = new SelectionState();
+    selection.select("tnib-9");
+    const { nav, history } = setup({ selection, location: { search: "?nib=tnib-9&q=type%3Abug", pathname: "/" } });
+
+    nav.closePanel();
+
+    expect(history.calls).toEqual([
+      { kind: "push", state: { nibId: null }, url: "/?q=type%3Abug" },
+    ]);
+  });
+
+  it("replaceClosed heals ?nib= while preserving a sibling ?q= param", () => {
+    const { nav, history } = setup({ location: { search: "?nib=gone&q=status%3Atodo", pathname: "/" } });
+
+    nav.replaceClosed();
+
+    expect(history.calls).toEqual([
+      { kind: "replace", state: { nibId: null }, url: "/?q=status%3Atodo" },
+    ]);
+  });
+
   it("syncFromUrl with ?nib=d selects d + ensureVisible and replaceState, no pushState", () => {
     const { nav, selection, history } = setup({ location: { search: "?nib=d", pathname: "/" } });
 

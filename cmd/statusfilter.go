@@ -10,13 +10,20 @@ import (
 // Status group names. A group is accepted anywhere a concrete status is
 // accepted in -s/--status and --no-status on both `list` and `rel`, and
 // expands to its concrete member statuses:
-//   - open   → the non-archive statuses (config.OpenStatusNames)
-//   - closed → the archive statuses (config.ArchiveStatusNames)
-//   - parked → the non-actionable-but-not-abandoned statuses (config.ParkedStatusNames)
+//   - open   → the non-closed statuses (config.OpenStatusNames)
+//   - closed → the closed/terminal statuses (config.ClosedStatusNames)
+//
+// The two partition the declared status set. A nib whose status is outside that
+// vocabulary (a hand-edited file with no `status:` holds "") is in neither
+// group: the open default keeps it because IsClosedStatus reads it as open,
+// while `-s open` and `-s closed` both drop it — see config.StatusConfig.
+//
+// A group is worth a word only when it has more than one member and is not
+// spelled by a concrete status name — that is why there is no group for
+// {deferred} alone: `-s deferred` already selects it.
 const (
 	statusGroupOpen   = "open"
 	statusGroupClosed = "closed"
-	statusGroupParked = "parked"
 )
 
 // statusFilterInput captures the raw status-related flags shared by `list` and
@@ -26,7 +33,7 @@ type statusFilterInput struct {
 	Status   []string // -s / --status tokens (concrete statuses or group names)
 	NoStatus []string // --no-status tokens (concrete statuses or group names)
 	All      bool     // --all: base is every status (no open-by-default exclusion)
-	Open     bool     // --open / --active: shorthand for -s open
+	Open     bool     // --open: shorthand for -s open
 }
 
 // resolveStatusFilter expands status groups, applies the open-by-default rule,
@@ -36,29 +43,30 @@ type statusFilterInput struct {
 // behavior for free.
 //
 // Semantics ("base then subtract"):
-//   - No status token and no --all → default open: exclude the archive statuses
-//     (completed, scrapped). include is nil so every non-excluded status passes.
+//   - No status token and no --all → default open: exclude the closed statuses
+//     (deferred, completed, scrapped). include is nil so every non-excluded
+//     status passes.
 //   - --all → base is every status: include and the open-default exclusion are
 //     both empty.
-//   - Any explicit -s X… (after group expansion, including --open/--active which
-//     inject the open group) → include = union(X); this overrides the open
-//     default so `-s closed`/`-s completed` show archived nibs.
+//   - Any explicit -s X… (after group expansion, including --open which injects
+//     the open group) → include = union(X); this overrides the open default so
+//     `-s closed`/`-s completed` show closed nibs.
 //   - --no-status Y… (after group expansion) → added to exclude, subtracting Y
 //     from the current base.
 //
 // An unknown token (neither a concrete status nor a group) is a validation
 // error naming the offending token and the accepted values.
 //
-// openDefaultApplied reports whether the open-by-default archive exclusion was
-// added (no explicit -s/--open/--active and no --all). Callers use it to decide
-// whether to disclose the hidden completed/scrapped count: the open default is
-// the only path that silently drops rows, so a partial set is only unobservable
-// there.
+// openDefaultApplied reports whether the open-by-default closed-status
+// exclusion was added (no explicit -s/--open and no --all). Callers
+// use it to decide whether to disclose the hidden closed-status count: the
+// open default is the only path that silently drops rows, so a partial set is
+// only unobservable there.
 func resolveStatusFilter(cfg *config.Config, in statusFilterInput) (include, exclude []string, openDefaultApplied bool, err error) {
 	statusTokens := in.Status
 	if in.Open {
-		// --open / --active is shorthand for -s open; append rather than
-		// replace so it unions with any explicit -s tokens.
+		// --open is shorthand for -s open; append rather than replace so it
+		// unions with any explicit -s tokens.
 		statusTokens = append(append([]string(nil), statusTokens...), statusGroupOpen)
 	}
 
@@ -75,7 +83,7 @@ func resolveStatusFilter(cfg *config.Config, in statusFilterInput) (include, exc
 	// set and did not ask for --all. An explicit -s (even -s open) overrides it.
 	if len(include) == 0 && !in.All {
 		openDefaultApplied = true
-		exclude = appendMissingStatuses(exclude, cfg.ArchiveStatusNames())
+		exclude = appendMissingStatuses(exclude, cfg.ClosedStatusNames())
 	}
 
 	// A status filter that admits no status at all is a data-independent
@@ -91,12 +99,37 @@ func resolveStatusFilter(cfg *config.Config, in statusFilterInput) (include, exc
 	return include, exclude, openDefaultApplied, nil
 }
 
-// closedStatusLabel renders the archive ("closed") status names as a
-// slash-joined label ("completed/scrapped") for the hidden-count disclosure in
-// the TSV header. Derived from config so it stays correct if the archive set
-// ever changes.
+// closedStatusLabel renders the closed status names as a slash-joined label
+// ("deferred/completed/scrapped") for the hidden-count disclosure in the TSV
+// header. Derived from config so it stays correct if the closed set ever
+// changes.
 func closedStatusLabel(cfg *config.Config) string {
-	return strings.Join(cfg.ArchiveStatusNames(), "/")
+	return strings.Join(cfg.ClosedStatusNames(), "/")
+}
+
+// nonStartableStatusNames returns the declared statuses work cannot be picked
+// up from — the set difference StatusNames \ StartableStatusNames, derived from
+// the same Startable flag. `nibs list --ready` subtracts it from an explicit
+// -s so that filter cannot widen past the startable set. It names declared
+// statuses only, which is why --ready does not rely on it alone: a nib carrying
+// an undeclared status (front matter with no `status:` holds "") is not in it.
+func nonStartableStatusNames(cfg *config.Config) []string {
+	var names []string
+	for _, name := range cfg.StatusNames() {
+		if !cfg.IsStartableStatus(name) {
+			names = append(names, name)
+		}
+	}
+	return names
+}
+
+// readyFlagUsage renders the --ready flag's help text, naming the startable
+// statuses from config rather than restating them, so the flag cannot come to
+// describe a set it does not filter by. `nibs catalog` quotes this string
+// verbatim (cmd/catalog.go flagUsage), so the recipe listings follow it.
+func readyFlagUsage(cfg *config.Config) string {
+	return fmt.Sprintf("Filter nibs available to start (not blocked, and in a startable status: %s)",
+		strings.Join(cfg.StartableStatusNames(), "/"))
 }
 
 // statusFilterAdmitsNothing reports whether the (include, exclude) pair leaves
@@ -157,9 +190,7 @@ func statusGroupMembers(cfg *config.Config, token string) ([]string, error) {
 	case statusGroupOpen:
 		return cfg.OpenStatusNames(), nil
 	case statusGroupClosed:
-		return cfg.ArchiveStatusNames(), nil
-	case statusGroupParked:
-		return cfg.ParkedStatusNames(), nil
+		return cfg.ClosedStatusNames(), nil
 	}
 	if cfg.IsValidStatus(token) {
 		return []string{token}, nil
@@ -170,12 +201,12 @@ func statusGroupMembers(cfg *config.Config, token string) ([]string, error) {
 
 // statusGroupNames returns the accepted status-group names, for error messages.
 func statusGroupNames() []string {
-	return []string{statusGroupOpen, statusGroupClosed, statusGroupParked}
+	return []string{statusGroupOpen, statusGroupClosed}
 }
 
 // appendMissingStatuses appends every name in add that is not already in base,
-// preserving order. Used to fold the open-default archive exclusion into an
-// existing --no-status set without duplicating members.
+// preserving order. Used to fold the open-default closed-status exclusion into
+// an existing --no-status set without duplicating members.
 func appendMissingStatuses(base, add []string) []string {
 	present := make(map[string]bool, len(base))
 	for _, s := range base {

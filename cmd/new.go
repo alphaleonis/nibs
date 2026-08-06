@@ -2,34 +2,32 @@ package cmd
 
 import (
 	"context"
-	"errors"
 	"strings"
 
 	"github.com/alphaleonis/nibs/internal/bodytemplate"
 	"github.com/alphaleonis/nibs/internal/config"
 	"github.com/alphaleonis/nibs/internal/graph/model"
 	"github.com/alphaleonis/nibs/internal/nib"
-	"github.com/alphaleonis/nibs/internal/nibtypes"
 	"github.com/alphaleonis/nibs/internal/output"
 	"github.com/alphaleonis/nibs/internal/projection"
 	"github.com/spf13/cobra"
 )
 
 var (
-	newStatus    string
-	newType      string
-	newPriority  string
-	newBody      string
-	newBodyFile  string
-	newTag       []string
-	newParent    string
-	newBlocking  []string
-	newBlockedBy []string
-	newDocument  []string
-	newEstimate  string
-	newPrefix    string
-	newAfter     string
-	newBefore    string
+	newStatus       string
+	newType         string
+	newPriority     string
+	newBody         string
+	newBodyFile     string
+	newTag          []string
+	newParent       string
+	newBlocking     []string
+	newBlockedBy    []string
+	newDocument     []string
+	newEstimate     string
+	newPrefix       string
+	newAfter        string
+	newBefore       string
 	newFirst        bool
 	newJSON         bool
 	newNoEdit       bool
@@ -161,21 +159,18 @@ is used as-is — with --no-edit, with --json, or when stdin/stdout is not a ter
 		if err != nil {
 			// An illegal parent type (e.g. a task under a milestone) is surfaced as
 			// a structured HIERARCHY error carrying the allowed parent types, not a
-			// generic file error. The rule itself lives in internal/nibtypes.
-			var he *nibtypes.HierarchyError
-			if errors.As(err, &he) {
-				if newJSON {
-					return output.ErrorHierarchy(he.Error(), he.Allowed)
-				}
-				return cmdError(false, output.ErrHierarchy, "%s", he.Error())
+			// generic file error. The rule itself lives in internal/nibtypes, and
+			// the envelope is built where every other write surface builds it.
+			if hierarchy, ok := hierarchyError(newJSON, err); ok {
+				return hierarchy
 			}
 			return cmdError(newJSON, output.ErrFileError, "failed to create nib: %v", err)
 		}
 
-		// Dedup safety net: before the card echo, scan CLOSED nibs (completed /
-		// scrapped — hidden from the day-to-day list) for a likely duplicate of
-		// this new title/slug. Warn-only and non-blocking; the create already
-		// succeeded. --no-dedup-check skips it entirely.
+		// Dedup safety net: before the card echo, scan the closed nibs — the ones
+		// hidden from the day-to-day list, per cfg.IsClosedStatus — for a likely
+		// duplicate of this new title/slug. Warn-only and non-blocking; the
+		// create already succeeded. --no-dedup-check skips it entirely.
 		var dups []possibleDuplicate
 		if !newNoDedupCheck {
 			dups = findPossibleDuplicates(app.Core.All(), app.Config(), b.ID, b.Title, b.Slug)
@@ -269,6 +264,13 @@ func init() {
 		priorityNames[i] = p.Name
 	}
 
+	// -s lists every status, the closed ones included: `nibs new "…" -t task -s
+	// scrapped` deliberately creates an already-closed nib. The closed-status
+	// refusal in `nibs set` is not incomplete here — it governs transitions on an
+	// existing nib, where the point is that closing carries the summary `close`
+	// requires. A nib created closed has no prior state to summarize, and `close`
+	// has no create-and-close form, so refusing here would remove the only way to
+	// record work that was over before it started.
 	newCmd.Flags().StringVarP(&newStatus, "status", "s", "", "Initial status ("+strings.Join(statusNames, ", ")+")")
 	newCmd.Flags().StringVarP(&newType, "type", "t", "", "Nib type ("+strings.Join(typeNames, ", ")+")")
 	newCmd.Flags().StringVarP(&newPriority, "priority", "p", "", "Priority level ("+strings.Join(priorityNames, ", ")+")")
@@ -290,7 +292,7 @@ func init() {
 	newCmd.Flags().BoolVar(&newFirst, "first", false, "Insert before all siblings")
 	newCmd.Flags().BoolVar(&newJSON, "json", false, "Output as JSON (implies --no-edit)")
 	newCmd.Flags().BoolVar(&newNoEdit, "no-edit", false, "Never open $EDITOR; use the template body as-is")
-	newCmd.Flags().BoolVar(&newNoDedupCheck, "no-dedup-check", false, "Skip the closed-nib (completed/scrapped) duplicate check")
+	newCmd.Flags().BoolVar(&newNoDedupCheck, "no-dedup-check", false, "Skip the closed-nib duplicate check")
 	newCmd.MarkFlagsMutuallyExclusive("body", "body-file")
 	newCmd.MarkFlagsMutuallyExclusive("after", "before", "first")
 	rootCmd.AddCommand(newCmd)

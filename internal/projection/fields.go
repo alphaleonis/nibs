@@ -99,7 +99,7 @@ func (k fieldKind) String() string {
 type fieldDef struct {
 	name    Field
 	kind    fieldKind
-	jsonKey string             // JSON output key; defaults to string(name) when empty
+	jsonKey string               // JSON output key; defaults to string(name) when empty
 	extract func(n *nib.Nib) any // scalar value accessor; nil for computed/relation
 }
 

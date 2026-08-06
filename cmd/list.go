@@ -36,7 +36,6 @@ var (
 	listReady       bool
 	listAll         bool
 	listOpen        bool
-	listActive      bool
 	listQuiet       bool
 	listSort        string
 	listView        string
@@ -56,12 +55,19 @@ The filtered set is projected and rendered as tab-separated rows under a
 "# <n> nibs" comment header (drop it with --no-header). Every output form
 shares one field-selection model with 'nibs get'.
 
+Id-valued filters (--parent, --mentions, --mentioned-by):
+  An id naming no nib is refused with a "not found" error (exit 3) rather than
+  listing zero rows, so a mistyped or stale id — --parent "$ID" with $ID unset
+  or wrong — stays distinguishable from a nib that genuinely has no children.
+  An empty value is rejected outright (use --no-parent to select the parentless
+  nibs).
+
 Status filtering (open by default):
-  With no status flag, only open nibs are listed (completed and scrapped are
-  hidden). -s/--status and --no-status accept the status groups open, closed,
-  and parked anywhere a concrete status is accepted. Any explicit -s overrides
-  the open default (so -s closed shows completed/scrapped). --open (alias
-  --active) is shorthand for -s open; --all disables the open default entirely.
+  With no status flag, only open nibs are listed (the closed statuses are
+  hidden). -s/--status and --no-status accept the status groups open and
+  closed anywhere a concrete status is accepted. Any explicit -s overrides
+  the open default (so -s closed shows closed nibs). --open is shorthand for
+  -s open; --all disables the open default entirely.
 
   --view id|ref|card|full   Select a coarse field set (leanest to fullest).
                             Defaults to 'ref' when neither --view nor -f is
@@ -78,9 +84,9 @@ Output modes:
   --json                    The {"nibs":[…],"count":N,"truncated":<bool>}
                             envelope — the same shape rel and the recipe views
                             emit. Carries "hidden_closed":N when the open default
-                            suppressed that many completed/scrapped nibs.
+                            suppressed that many closed nibs.
   -q, --quiet               Ids only, one per line (the 'id' view, unwrapped).
-                            Honors the open default (completed/scrapped hidden);
+                            Honors the open default (closed statuses hidden);
                             add --all to include them. Never annotated.
   -c, --count               The true count of the filtered set as a bare
                             integer (pre-limit; ignores --view/-f/--json).
@@ -113,16 +119,16 @@ Search Syntax (--search/-S):
 		app := getApp(cmd)
 
 		// Resolve the status filter through the shared helper: expand status
-		// groups (open/closed/parked), apply the open-by-default rule, and honor
-		// the -s/--no-status/--all/--open precedence. --ready is a stricter,
-		// self-contained status filter (below), so suppress the open default when
-		// it is set — the group expansion of any explicit -s/--no-status still
-		// applies.
+		// groups (open/closed), apply the open-by-default rule, and honor
+		// the -s/--no-status/--all/--open precedence. --ready narrows the status
+		// filter further (below), so suppress the open default when it is set —
+		// the group expansion of any explicit -s/--no-status still applies, and
+		// --ready narrows whatever this leaves behind.
 		includeStatus, excludeStatus, openDefaultApplied, err := resolveStatusFilter(app.Config(), statusFilterInput{
 			Status:   listStatus,
 			NoStatus: listNoStatus,
 			All:      listAll || listReady,
-			Open:     listOpen || listActive,
+			Open:     listOpen,
 		})
 		if err != nil {
 			return reportErr(listJSON, output.ErrValidation, err)
@@ -144,24 +150,84 @@ Search Syntax (--search/-S):
 			ExcludeTags:     listNoTag,
 		}
 
+		// -S "" is deliberately NOT rejected: an empty search string has a real
+		// meaning — "no keyword filter" — so `nibs list -S "$q"` with an empty q
+		// is a reasonable thing to write. The web reads it the same way
+		// (Toolbar.svelte sends `search: value || undefined`), so rejecting it
+		// here would make the CLI stricter than the UI for no gain.
 		if listSearch != "" {
 			filter.Search = &listSearch
 		}
-		if listHasParent {
-			filter.HasParent = &listHasParent
+		// The id-valued string filters reject an explicit empty value instead of
+		// ignoring it, and these checks are the only thing that refuses it on
+		// this surface: filter.ParentID, filter.MentionsID and
+		// filter.MentionedByID are each assigned only when the flag is
+		// non-empty, so an empty value never reaches ApplyFilter from this
+		// command and the graph layer's own refusal never runs for it.
+		// Rejecting here also keeps the message flag-shaped — the --parent one
+		// names --no-parent, a flag the graph layer cannot know about. The usual
+		// way an empty value arrives is an unset shell variable
+		// (`--parent "$ID"`), where silently returning every nib is a lie about
+		// the result rather than a wider answer.
+		//
+		// Unlike -S, an empty id has no benign reading: there is no nib whose id
+		// is "". That is what separates them, not whether a sibling flag exists.
+		//
+		// --parent is not given the "move to root" meaning it carries on
+		// `nibs mv` and `nibs set` (both write an empty parent, detaching the
+		// nib), because --no-parent already selects the parentless nibs here.
+		if cmd.Flags().Changed("parent") && listParentID == "" {
+			return reportErr(listJSON, output.ErrValidation,
+				fmt.Errorf(`--parent was given an empty value; use --no-parent to select nibs that have no parent`))
 		}
-		if listNoParent {
-			filter.NoParent = &listNoParent
+		if cmd.Flags().Changed("mentions") && listMentions == "" {
+			return reportErr(listJSON, output.ErrValidation,
+				fmt.Errorf(`--mentions was given an empty value; it takes a nib id`))
+		}
+		if cmd.Flags().Changed("mentioned-by") && listMentionedBy == "" {
+			return reportErr(listJSON, output.ErrValidation,
+				fmt.Errorf(`--mentioned-by was given an empty value; it takes a nib id`))
 		}
 		if listParentID != "" {
 			filter.ParentID = &listParentID
 		}
-		if listHasBlocking {
-			filter.HasBlocking = &listHasBlocking
+
+		// --has-parent/--no-parent and --has-blocking/--no-blocking are each
+		// two spellings of one tri-state filter field, folded onto that field
+		// by resolvePresenceFlag. Whether the field is set at all keys on
+		// whether a spelling was given; what gets written is that spelling's
+		// value, negated for the --no- form. So --has-parent=false and
+		// --no-parent both write HasParent=&false, while --has-parent=true and
+		// --no-parent=false both write &true. Giving both spellings of a pair
+		// is rejected there rather than resolved here.
+		if filter.HasParent, err = resolvePresenceFlag(cmd, "has-parent", "no-parent"); err != nil {
+			return reportErr(listJSON, output.ErrValidation, err)
 		}
-		if listNoBlocking {
-			filter.NoBlocking = &listNoBlocking
+		if filter.HasBlocking, err = resolvePresenceFlag(cmd, "has-blocking", "no-blocking"); err != nil {
+			return reportErr(listJSON, output.ErrValidation, err)
 		}
+
+		// --parent <id> asks for a specific parent, so it cannot be met at the
+		// same time as a has-parent that resolved to false: no nib has parent
+		// <id> and no parent. ApplyFilter intersects the two and hands back the
+		// empty set, so without this the contradiction reads as "no matches".
+		//
+		// The guard keys on the resolved value, which is why it catches
+		// --no-parent and --has-parent=false alike, while the message names the
+		// flag the caller actually gave so it is something they can act on.
+		// --has-parent is reported with its resolved =false, because bare
+		// --has-parent is not rejected: only a has-parent of false contradicts
+		// --parent <id>. --parent <id> --has-parent is redundant instead, and
+		// is left to return what --parent <id> returns.
+		if filter.ParentID != nil && filter.HasParent != nil && !*filter.HasParent {
+			presence := "--has-parent=false"
+			if cmd.Flags().Changed("no-parent") {
+				presence = "--no-parent"
+			}
+			return reportErr(listJSON, output.ErrValidation,
+				fmt.Errorf("--parent and %s are mutually exclusive (no nib both has parent %q and has no parent)", presence, listParentID))
+		}
+
 		// MentionsID / MentionedByID accept short or full IDs; the GraphQL
 		// filter layer normalizes via NibReader.NormalizeID in ApplyFilter
 		// (internal/graph/filters.go:resolveFilterID). Do not normalize at
@@ -174,21 +240,81 @@ Search Syntax (--search/-S):
 		}
 
 		// --ready and --is-blocked are mutually exclusive.
-		if listReady && listIsBlocked {
+		//
+		// --is-blocked is an unpaired boolean predicate: both of its values
+		// carry a filter, so what matters is whether it was given at all, not
+		// what it was set to. Testing the value instead would make
+		// --is-blocked=false a silent no-op (filter.IsBlocked left nil, which
+		// the filter layer reads as "no blocked-filter") and would let
+		// --ready --is-blocked=false through the mutex unchallenged.
+		//
+		// Unlike the paired presence flags above, --is-blocked has no sibling
+		// spelling, so there is nothing to fold and no pair to reject — only
+		// the mutex against --ready.
+		isBlockedSet := cmd.Flags().Changed("is-blocked")
+		if listReady && isBlockedSet {
 			return reportErr(listJSON, output.ErrValidation,
 				fmt.Errorf("--ready and --is-blocked are mutually exclusive"))
 		}
-		if listIsBlocked {
+		if isBlockedSet {
 			filter.IsBlocked = &listIsBlocked
 		}
-		// --ready: nibs available to start (not blocked, excludes
-		// in-progress/completed/scrapped/draft/deferred). Deferred nibs are
-		// parked (non-terminal but not actionable now), so they stay out of the
-		// ready queue.
+		// --ready: nibs available to start — no active blockers, and a startable
+		// status.
+		//
+		// The status half is shared: this filter and the projected `ready` field
+		// both read config.Startable, so they narrow by status from one
+		// definition rather than two — TestReadyProjectionAndFilterAgree holds
+		// them to it. The blocker half reaches the same answer through two
+		// implementations of one rule: the field resolves each `blocked_by`
+		// entry through Reader.Get, this filter through Core.IsBlocked →
+		// findActiveBlockersInMap → normalizeIDInMap, and both take the exact id
+		// first and then the configured prefix prepended. So a nib whose
+		// `blocked_by` names its blocker by short id is withheld from both, and
+		// the same test drives a blocker under both spellings to keep the two
+		// copies of the rule together.
+		//
+		// An empty startable set is rejected below rather than filtered on: an
+		// empty include list makes filterByField a no-op
+		// (internal/graph/filters.go), so the bare-flag branch would fail open
+		// and hand back every unblocked nib of any status — completed and
+		// statusless ones included — as ready work. The explicit -s branch would
+		// meanwhile correctly yield nothing, so the error also keeps the two
+		// branches from disagreeing at exactly that boundary. Erroring on a
+		// filter that can admit nothing is what resolveStatusFilter already does
+		// (cmd/statusfilter.go).
+		//
+		// Which status field carries the narrowing depends on whether an
+		// explicit -s already populated one, because neither field alone can
+		// express it in both cases:
+		//   - No explicit -s (the common case, --all included): the startable
+		//     names become the whole base. An exclusion cannot stand in here,
+		//     because it can only name declared statuses — a nib whose front
+		//     matter omits `status:` carries "", which no exclusion mentions,
+		//     so only an include list shuts it out.
+		//   - An explicit -s already set the base: subtract every declared
+		//     non-startable status from it. Overwriting the base instead would
+		//     drop the -s without a word, and unioning the startable names into
+		//     it would widen `-s draft --ready` to every unblocked draft.
+		// Either way — given the guard above — every nib --ready returns carries
+		// a startable status.
+		//
+		// --ready suppresses the open default by setting All above, so
+		// resolveStatusFilter adds no closed-status exclusion of its own on
+		// this path (cmd/statusfilter.go) and nothing is hidden silently.
 		if listReady {
+			startable := app.Config().StartableStatusNames()
+			if len(startable) == 0 {
+				return reportErr(listJSON, output.ErrValidation,
+					fmt.Errorf("no status declares startable, so --ready cannot return anything"))
+			}
 			isBlocked := false
 			filter.IsBlocked = &isBlocked
-			filter.ExcludeStatus = append(filter.ExcludeStatus, "in-progress", "completed", "scrapped", "draft", "deferred")
+			if len(filter.Status) == 0 {
+				filter.Status = startable
+			} else {
+				filter.ExcludeStatus = appendMissingStatuses(filter.ExcludeStatus, nonStartableStatusNames(app.Config()))
+			}
 		}
 
 		// Compile the projection selection: --view first, then -f merged
@@ -214,6 +340,13 @@ Search Syntax (--search/-S):
 		resolver := app.newResolver()
 		nibs, err := resolver.Query().Nibs(context.Background(), filter, nibSort)
 		if err != nil {
+			// An id-valued filter flag naming no nib is reported as NOT_FOUND
+			// rather than as an empty listing, so `--parent "$ID"` with a stale
+			// or mistyped id is distinguishable from a parent that has no
+			// children. See filterTargetErrCode for the classes it tells apart.
+			if code, ok := filterTargetErrCode(err); ok {
+				return reportErr(listJSON, code, err)
+			}
 			return fmt.Errorf("querying nibs: %w", err)
 		}
 
@@ -233,11 +366,11 @@ Search Syntax (--search/-S):
 			return nil
 		}
 
-		// hidden_closed: when the open default silently dropped completed/scrapped
+		// hidden_closed: when the open default silently dropped closed
 		// rows, disclose how many matched every OTHER filter so the caller can see
 		// the set is partial. Only meaningful when the open default is active (an
 		// explicit -s/--open/--all/--ready never hides silently). Computed
-		// pre-limit (like -c): re-run the same query with the archive exclusion
+		// pre-limit (like -c): re-run the same query with the closed-status exclusion
 		// removed and subtract the displayed count. Skipped after the -c/-q early
 		// returns, so the terse outputs stay bare.
 		hiddenClosed := 0
@@ -245,6 +378,13 @@ Search Syntax (--search/-S):
 			hiddenClosed, err = countHiddenClosed(context.Background(), app.Config(), resolver, filter,
 				statusFilterInput{Status: listStatus, NoStatus: listNoStatus}, nibSort, len(nibs))
 			if err != nil {
+				// Same classification as the displayed query above: the widened
+				// re-run carries the identical id-valued filters, so a target
+				// deleted between the two runs must not be reported as a
+				// validation failure.
+				if code, ok := filterTargetErrCode(err); ok {
+					return reportErr(listJSON, code, err)
+				}
 				return reportErr(listJSON, output.ErrValidation, err)
 			}
 		}
@@ -271,18 +411,67 @@ Search Syntax (--search/-S):
 	},
 }
 
-// countHiddenClosed returns how many nibs the open-by-default archive exclusion
-// removed from the displayed set. It re-runs the query with the archive
+// resolvePresenceFlag folds a pair of opposite boolean flag spellings onto the
+// one tri-state filter field they share. hasName is the positive spelling and
+// noName its negation, so --<noName>=v contributes !v to the field and bare
+// --<noName> contributes false.
+//
+// Whether the field is set at all keys on cmd.Flags().Changed, never on the
+// flag values: a nil return means neither spelling was given, which the filter
+// layer reads as "do not filter on this". Keying on the values instead would
+// collapse "not given" and "given as false" into the same nil, making
+// --<hasName>=false a silent no-op that returns the unfiltered set.
+//
+// Giving both spellings is rejected uniformly, including when their values
+// agree. Agreeing values are unambiguous — --<hasName>=false and --<noName>
+// select the identical set — but one filter concept spelled twice in a single
+// invocation is redundant and near-certainly a mistake, so the command rejects
+// the pair rather than special-casing the agreeing case.
+//
+// Values are read back through cmd.Flags().GetBool rather than passed in
+// alongside the names, so a name and the value it resolves to cannot drift
+// apart. Both lookups run before the Changed checks so an unregistered or
+// non-bool name is an error even on the paths that would not have used its
+// value — cmd.Flags().Changed reports false for a name it does not know, so
+// gating the lookups on it would let a misspelled name resolve to a silent
+// "not given" and drop the filter.
+func resolvePresenceFlag(cmd *cobra.Command, hasName, noName string) (*bool, error) {
+	hasValue, err := cmd.Flags().GetBool(hasName)
+	if err != nil {
+		return nil, err
+	}
+	noValue, err := cmd.Flags().GetBool(noName)
+	if err != nil {
+		return nil, err
+	}
+
+	hasSet := cmd.Flags().Changed(hasName)
+	noSet := cmd.Flags().Changed(noName)
+	switch {
+	case hasSet && noSet:
+		return nil, fmt.Errorf("--%s and --%s are mutually exclusive (they set the same filter)", hasName, noName)
+	case hasSet:
+		return &hasValue, nil
+	case noSet:
+		negated := !noValue
+		return &negated, nil
+	default:
+		return nil, nil
+	}
+}
+
+// countHiddenClosed returns how many nibs the open-by-default closed-status
+// exclusion removed from the displayed set. It re-runs the query with that
 // exclusion dropped — every other filter identical, only the status resolution
 // widened to --all semantics (keeping any --no-status) — and subtracts the
 // displayed count. Both counts are pre-limit, so the result is the size of the
-// full matching completed/scrapped set independent of --limit. Only call this
+// full matching closed set independent of --limit. Only call this
 // when the open default was applied; otherwise nothing was hidden.
 func countHiddenClosed(ctx context.Context, cfg *config.Config, resolver *graph.Resolver, displayed *model.NibFilter, status statusFilterInput, sort *model.NibSort, displayedCount int) (int, error) {
 	widenedInclude, widenedExclude, _, err := resolveStatusFilter(cfg, statusFilterInput{
 		Status:   status.Status,
 		NoStatus: status.NoStatus,
-		All:      true, // drop the open-default archive exclusion; keep --no-status
+		All:      true, // drop the open-default closed-status exclusion; keep --no-status
 	})
 	if err != nil {
 		return 0, err
@@ -342,17 +531,16 @@ func init() {
 	listCmd.Flags().StringArrayVar(&listNoTag, "no-tag", nil, "Exclude nibs with tag (can be repeated)")
 	listCmd.Flags().BoolVar(&listHasParent, "has-parent", false, "Filter nibs with a parent")
 	listCmd.Flags().BoolVar(&listNoParent, "no-parent", false, "Filter nibs without a parent")
-	listCmd.Flags().StringVar(&listParentID, "parent", "", "Filter by parent ID")
+	listCmd.Flags().StringVar(&listParentID, "parent", "", "Filter by parent ID (an id naming no nib is an error, not an empty listing)")
 	listCmd.Flags().BoolVar(&listHasBlocking, "has-blocking", false, "Filter nibs that are blocking others")
 	listCmd.Flags().BoolVar(&listNoBlocking, "no-blocking", false, "Filter nibs that aren't blocking others")
 	listCmd.Flags().BoolVar(&listIsBlocked, "is-blocked", false, "Filter nibs that are blocked by others")
-	listCmd.Flags().StringVar(&listMentions, "mentions", "", "Filter nibs whose bodies mention this ID (short or full)")
-	listCmd.Flags().StringVar(&listMentionedBy, "mentioned-by", "", "Filter nibs mentioned in the given ID's body (short or full)")
-	listCmd.Flags().BoolVar(&listReady, "ready", false, "Filter nibs available to start (not blocked, excludes in-progress/completed/scrapped/draft/deferred)")
+	listCmd.Flags().StringVar(&listMentions, "mentions", "", "Filter nibs whose bodies mention this ID (short or full; an id naming no nib is an error, not an empty listing)")
+	listCmd.Flags().StringVar(&listMentionedBy, "mentioned-by", "", "Filter nibs mentioned in the given ID's body (short or full; an id naming no nib is an error, not an empty listing)")
+	listCmd.Flags().BoolVar(&listReady, "ready", false, readyFlagUsage(config.Default()))
 	listCmd.Flags().BoolVar(&listAll, "all", false, "Include every status (disable the open-by-default filter)")
-	listCmd.Flags().BoolVar(&listOpen, "open", false, "Show only open nibs — shorthand for -s open (the default when no status filter is given)")
-	listCmd.Flags().BoolVar(&listActive, "active", false, "Alias for --open (show only open nibs)")
-	listCmd.Flags().BoolVarP(&listQuiet, "quiet", "q", false, "Only output IDs, one per line (honors the open default; add --all to include completed/scrapped)")
+	listCmd.Flags().BoolVar(&listOpen, "open", false, "Show only open nibs — shorthand for -s open; slightly narrower than the open-by-default rule, which excludes the closed statuses and so keeps a nib with no status")
+	listCmd.Flags().BoolVarP(&listQuiet, "quiet", "q", false, "Only output IDs, one per line (honors the open default; add --all to include closed nibs)")
 	listCmd.Flags().StringVar(&listSort, "sort", "", "Sort by: created, updated, status, priority, status-priority, id (default: order key)")
 	listCmd.Flags().StringVar(&listView, "view", "", "View tier: id, ref, card, or full (default: ref)")
 	listCmd.Flags().StringVarP(&listFields, "fields", "f", "", "Field selection (additive over --view), e.g. \"status,priority\" or \"id,blocked-by(id,status)\"")

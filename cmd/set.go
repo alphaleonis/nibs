@@ -9,7 +9,9 @@ import (
 	"github.com/99designs/gqlgen/graphql"
 	"github.com/alphaleonis/nibs/internal/config"
 	"github.com/alphaleonis/nibs/internal/graph/model"
+	"github.com/alphaleonis/nibs/internal/nib"
 	"github.com/alphaleonis/nibs/internal/nibcore"
+	"github.com/alphaleonis/nibs/internal/nibtypes"
 	"github.com/alphaleonis/nibs/internal/output"
 	"github.com/alphaleonis/nibs/internal/projection"
 	"github.com/spf13/cobra"
@@ -84,7 +86,7 @@ documents), or clears a clearable field (--clear priority|estimate|parent).`,
 		// Build and validate field updates. inputError maps a body input-channel
 		// I/O failure to FILE_ERROR (exit 5) while validation/usage errors stay
 		// VALIDATION (exit 2).
-		input, fieldChanges, err := buildSetInput(cmd, app.Config())
+		input, fieldChanges, err := buildSetInput(cmd, app.Config(), b.ID)
 		if err != nil {
 			return inputError(setJSON, err)
 		}
@@ -122,7 +124,10 @@ documents), or clears a clearable field (--clear priority|estimate|parent).`,
 // changed. Clearing a clearable field (--clear) sets its Omittable to an
 // explicit null (a nil inner pointer), which the UpdateNib resolver reads as
 // "clear this field" — distinct from setting a value.
-func buildSetInput(cmd *cobra.Command, cfg *config.Config) (model.UpdateNibInput, []string, error) {
+//
+// id is the nib being updated. It appears only in the closed-status refusal
+// below, to put this nib into the `close` line the message quotes.
+func buildSetInput(cmd *cobra.Command, cfg *config.Config, id string) (model.UpdateNibInput, []string, error) {
 	var input model.UpdateNibInput
 	var changes []string
 
@@ -141,7 +146,43 @@ func buildSetInput(cmd *cobra.Command, cfg *config.Config) (model.UpdateNibInput
 
 	if cmd.Flags().Changed("status") {
 		if !cfg.IsValidStatus(setStatus) {
-			return input, nil, fmt.Errorf("invalid status: %s (must be %s)", setStatus, cfg.StatusList())
+			// Name only the OPEN statuses, for the same reason the -s usage string
+			// does: the closed ones are refused by the check below, so listing them
+			// as the accepted set would answer one error with a second. The route
+			// to a closed status is named instead of its members. Derived from
+			// OpenStatusNames so this and the usage string stay the same set.
+			return input, nil, fmt.Errorf("invalid status: %s (must be %s; a closed status goes through `nibs close --as`)",
+				setStatus, strings.Join(cfg.OpenStatusNames(), ", "))
+		}
+		// Reaching a closed status belongs to `close`, not to `set`. Both write
+		// the same field, but only `close` requires a summary — so leaving this
+		// open would make the route that records no reason the shortest one, and
+		// the summary requirement decorative. Derived from IsClosedStatus, so a
+		// newly declared closed status is refused here without an edit.
+		//
+		// Two boundaries here are deliberate, not gaps to be closed:
+		//
+		//   - This is a rule about the `set` verb, not a model invariant. The web
+		//     UI and the TUI mutate through the GraphQL resolver and never call
+		//     this function, so they can still set a closed status directly — the
+		//     web's status dropdown offers every status and depends on that. The
+		//     same is true of `nibs graphql` and of `nibs new -s <closed status>`,
+		//     which creates a nib already closed. Enforcement is deliberately not
+		//     universal; what this closes is the shortcut that skips the summary
+		//     on an existing nib.
+		//   - Only transitions INTO a closed status are refused. There is no
+		//     `reopen` command, so `nibs set <id> -s todo` on a closed nib is how
+		//     work returns to the board and must keep working. That is why the
+		//     condition below reads the incoming status and never the nib's
+		//     current one.
+		if cfg.IsClosedStatus(setStatus) {
+			// One suggestion covers every nib, closed or not: `close` accepts a nib
+			// that is already closed and appends another entry to its ## Summary,
+			// so revising a close reason is the same single command as closing for
+			// the first time.
+			return input, nil, fmt.Errorf(
+				"%s is a closed status; `set` cannot close a nib — use `nibs close %s --as %s --summary -` instead (closing requires a summary, `set` does not, so this route would leave no record of why)",
+				setStatus, id, setStatus)
 		}
 		input.Status = &setStatus
 		changes = append(changes, "status")
@@ -283,46 +324,182 @@ func isConflictError(err error) bool {
 	return errors.As(err, &mismatchErr) || errors.As(err, &requiredErr)
 }
 
-// setMutationError maps a mutation error to a CLI error. It mirrors
-// mutationError but enriches a reconcilable ETag mismatch with the server's
-// current etag so an agent can retry with it: in --json the envelope carries
-// currentEtag (the "409 → retry with the server etag" reconcile). An
-// ETagRequiredError has no comparison etag, so it falls through to the generic
-// CONFLICT (no currentEtag).
-func setMutationError(jsonOutput bool, err error) error {
+// etagConflictError reports a reconcilable ETag mismatch as CONFLICT enriched
+// with the server's current etag, so an agent can retry with it: in --json the
+// envelope carries currentEtag (the "409 → retry with the server etag"
+// reconcile). It reports ok=false for every other error, leaving the caller's own
+// classification in charge — notably an ETagRequiredError, which has no
+// comparison etag and so belongs on the generic CONFLICT path.
+//
+// It is split out from setMutationError for the same reason mutationErrCode is:
+// so the direct commands and `nibs query` enrich one conflict identically rather
+// than each growing its own version. err is rendered as-is, so the caller's
+// message text (a transport prefix, say) survives.
+//
+// PRECONDITION: err must represent exactly ONE mismatch — the caller owns
+// establishing that. errors.As stops at the first *ETagMismatchError it reaches,
+// so handing it a failure covering several writes would emit one token as though
+// it reconciled all of them. The direct commands satisfy this trivially (one
+// mutation, one error); `nibs query` establishes it through formatGraphQLErrors,
+// which sets Err only for a response with a single classified failure of the
+// response's own class.
+func etagConflictError(jsonOutput bool, err error) (error, bool) {
 	var mismatch *nibcore.ETagMismatchError
-	if errors.As(err, &mismatch) {
-		if jsonOutput {
-			return output.ErrorConflict(err.Error(), mismatch.Current)
-		}
-		return &output.CodedError{Code: output.ErrConflict, Msg: err.Error()}
+	if !errors.As(err, &mismatch) {
+		return nil, false
+	}
+	if jsonOutput {
+		return output.ErrorConflict(err.Error(), mismatch.Current), true
+	}
+	return &output.CodedError{Code: output.ErrConflict, Msg: err.Error()}, true
+}
+
+// hierarchyError reports an illegal parent-type refusal as HIERARCHY enriched
+// with the parent types that WOULD be legal, so an agent can pick one instead of
+// re-deriving the rule or scraping the message: in --json the envelope carries
+// allowedParentTypes. It reports ok=false for every other error, leaving the
+// caller's own classification in charge.
+//
+// This is the ONE place a hierarchy envelope is built. Every CLI surface that
+// builds a --json error envelope reaches it: `nibs mv` and `nibs set` through
+// setMutationError (which `nibs close` and `nibs body` share, though neither
+// writes a parent or a type and so cannot raise this), `nibs query` through its
+// coded boundary (cmd/graphql.go), and `nibs new` by calling it directly — new
+// cannot share setMutationError because its fallback for an unclassified create
+// failure is FILE_ERROR, not validation.
+//
+// Two surfaces deliberately do not: the TUI issues UpdateNib directly and drops
+// the refusal, and cmd/serve.go's presenter stamps only the codes it enumerates,
+// so a hierarchy refusal reaches a web client uncoded.
+//
+// err is rendered as-is rather than the HierarchyError's own message, so
+// whatever context the caller's text carries survives. Two cases need it: the
+// transport prefix `nibs query` puts on every failure, and the graph layer's own
+// "type change would invalidate child <id>: …" wrapper, which names WHICH child
+// a `--type` change would orphan — the HierarchyError alone knows only the
+// types. The unwrapped case (a refused `--parent`, where Core.ValidateParent
+// returns nibtypes.ValidateParentType's error as-is) renders identically either
+// way.
+//
+// PRECONDITION: err must represent exactly ONE refused link — the caller owns
+// establishing that, exactly as for etagConflictError. errors.As stops at the
+// first *HierarchyError it reaches, so a failure covering several refusals would
+// hand back one allowed set as though it answered all of them. The direct
+// commands satisfy this trivially (one mutation, one error); `nibs query`
+// establishes it through formatGraphQLErrors, which sets Err only for a response
+// with a single classified failure of the response's own class.
+func hierarchyError(jsonOutput bool, err error) (error, bool) {
+	var he *nibtypes.HierarchyError
+	if !errors.As(err, &he) {
+		return nil, false
+	}
+	if jsonOutput {
+		return output.ErrorHierarchy(err.Error(), he.Allowed), true
+	}
+	return &output.CodedError{Code: output.ErrHierarchy, Msg: err.Error()}, true
+}
+
+// setMutationError maps a mutation error to a CLI error. It mirrors
+// mutationError but enriches the two failures that carry a repair hint: an
+// illegal parent link with the parent types that would be legal, and a
+// reconcilable ETag mismatch with the server's current etag.
+//
+// The order of the two is inert — *nibtypes.HierarchyError implements no Unwrap
+// and neither ETag type wraps one, so no error can satisfy both.
+func setMutationError(jsonOutput bool, err error) error {
+	if hierarchy, ok := hierarchyError(jsonOutput, err); ok {
+		return hierarchy
+	}
+	if conflict, ok := etagConflictError(jsonOutput, err); ok {
+		return conflict
 	}
 	return mutationError(jsonOutput, err)
 }
 
-// mutationError returns a cmdError with the appropriate error code based on the error type.
-func mutationError(jsonOutput bool, err error) error {
+// mutationErrCode maps a mutation failure onto the CLI's structured error codes,
+// reporting ok=false for the failures that carry no class of their own (the
+// caller supplies the VALIDATION_ERROR fallback). It is split out from
+// mutationError so the direct commands and `nibs query` classify one mutation
+// failure identically — the query path reaches it through graphQLErrCode.
+//
+//   - An on-disk file that cannot be certified (corrupt/unreadable) is a
+//     FILE_ERROR, not a retryable CONFLICT: the file must be repaired by hand —
+//     retrying cannot resolve it. The error message already spells this out;
+//     stopping (non-zero exit) is the correct behavior per the AI-agent
+//     "stop on error" contract.
+//   - A reconcilable ETag conflict is CONFLICT, the "409 → re-read and retry"
+//     class.
+//   - An illegal parent link — a child type under a parent type the hierarchy
+//     rule forbids — is HIERARCHY. It shares exit 2 with the VALIDATION_ERROR
+//     fallback, so what the code buys is not the exit but the allowedParentTypes
+//     repair hint the envelope carries with it (see hierarchyError), and the
+//     ability to tell a rule violation from a malformed argument. Sharing an
+//     exit is safe for a batched `nibs query` response because
+//     graphQLResponseCode compares exit statuses, not code strings.
+//   - A mutation whose SUBJECT id no nib answers to is NOT_FOUND (exit 3), the
+//     class every id-resolving command already reports. `nibs set`, `close` and
+//     `body` resolve the id up front and reach here with it only in the delete
+//     race between that check and their write; `nibs mv` has no such pre-check,
+//     so GetForUpdate's bare nib.ErrNotFound arrives here on any unknown id and
+//     would otherwise ride the caller's VALIDATION_ERROR fallback — exit 2, a
+//     claim that the caller's INPUT was malformed rather than that the id does
+//     not exist. Recognized through the sentinel rather than a concrete type,
+//     which is the same channel cmd/serve.go's presenter keys on, so the CLI and
+//     the HTTP server classify one missing nib the same way.
+//
+// A SECONDARY id — a parent, a blocking or blocked-by target, a bulk-reorder
+// member or anchor — does NOT normally arrive as a sentinel: the graph layer
+// refuses an unknown one with a non-wrapping fmt.Errorf formatting the id as %s
+// (internal/graph/resolver.go, schema.resolvers.go, bulkreorder.go), so nothing
+// errors.Is can see survives and it stays validation-class. The exception is the
+// same delete race as above — updateTargetClone re-fetches a blocking target
+// after its existence check and wraps that miss with %w — which is exactly the
+// case worth calling NOT_FOUND. So "unknown id" splits across two exit statuses
+// on that line, and it splits the SAME way for `nibs query` and for the direct
+// commands, which is what parity requires.
+//
+// The sentinel test runs LAST so a concrete-typed failure that also carries a
+// not-found cause keeps its own class. That ordering is load-bearing for
+// OnDiskUnparseableError, the one classified type here with an Unwrap; it is
+// inert today because both of its construction sites carry an OS read error or a
+// YAML parse error. ETagMismatchError, ETagRequiredError and HierarchyError
+// implement no Unwrap at all, so neither the conflict nor the hierarchy branch
+// can be claimed by the sentinel either way, and their order among the
+// concrete-type tests is inert.
+func mutationErrCode(err error) (string, bool) {
 	var unparseableErr *nibcore.OnDiskUnparseableError
 	if errors.As(err, &unparseableErr) {
-		// The current on-disk file cannot be certified (corrupt/unreadable). This
-		// is a FILE_ERROR, not a retryable CONFLICT: the file must be repaired by
-		// hand — retrying cannot resolve it. The error message already spells this
-		// out; stopping (non-zero exit) is the correct behavior per the AI-agent
-		// "stop on error" contract.
-		return cmdError(jsonOutput, output.ErrFileError, "%s", err)
+		return output.ErrFileError, true
 	}
 	if isConflictError(err) {
-		return cmdError(jsonOutput, output.ErrConflict, "%s", err)
+		return output.ErrConflict, true
+	}
+	var hierarchyErr *nibtypes.HierarchyError
+	if errors.As(err, &hierarchyErr) {
+		return output.ErrHierarchy, true
+	}
+	if errors.Is(err, nib.ErrNotFound) {
+		return output.ErrNotFound, true
+	}
+	return "", false
+}
+
+// mutationError returns a cmdError with the appropriate error code based on the error type.
+func mutationError(jsonOutput bool, err error) error {
+	if code, ok := mutationErrCode(err); ok {
+		return cmdError(jsonOutput, code, "%s", err)
 	}
 	return cmdError(jsonOutput, output.ErrValidation, "%s", err)
 }
 
 func init() {
-	// Build help text with allowed values from hardcoded config
-	statusNames := make([]string, len(config.DefaultStatuses))
-	for i, s := range config.DefaultStatuses {
-		statusNames[i] = s.Name
-	}
+	// Build help text with allowed values from hardcoded config. -s lists only
+	// the OPEN statuses: the closed ones are refused above, so advertising them
+	// here would send an agent straight into that error. The names come from
+	// OpenStatusNames rather than a literal list, so the two stay the same set.
+	// This is interpolated at package load; the refusal itself re-derives per
+	// invocation, and that check is what admits or rejects a value.
+	statusNames := config.Default().OpenStatusNames()
 	typeNames := make([]string, len(config.DefaultTypes))
 	for i, t := range config.DefaultTypes {
 		typeNames[i] = t.Name
@@ -332,7 +509,10 @@ func init() {
 		priorityNames[i] = p.Name
 	}
 
-	setCmd.Flags().StringVarP(&setStatus, "status", "s", "", "New status ("+strings.Join(statusNames, ", ")+")")
+	// No backticks in this usage string: pflag reads a backticked word as the
+	// flag's value placeholder, which would rename the arg in --help.
+	setCmd.Flags().StringVarP(&setStatus, "status", "s", "",
+		"New status ("+strings.Join(statusNames, ", ")+"; a closed status goes through 'nibs close --as')")
 	setCmd.Flags().StringVarP(&setType, "type", "t", "", "New type ("+strings.Join(typeNames, ", ")+")")
 	setCmd.Flags().StringVarP(&setPriority, "priority", "p", "", "New priority ("+strings.Join(priorityNames, ", ")+"; use --clear priority to clear)")
 	estimateNames := make([]string, len(config.DefaultEstimates))

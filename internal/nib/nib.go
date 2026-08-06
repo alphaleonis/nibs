@@ -73,11 +73,6 @@ func (b *Nib) RemoveTag(tag string) {
 	b.Tags = result
 }
 
-// HasParent returns true if the nib has a parent.
-func (b *Nib) HasParent() bool {
-	return b.Parent != ""
-}
-
 // Deprecated: IsBlocking only reads the legacy Blocking field, which is no longer persisted in v1+.
 // Use Core.FindIncomingLinks or Core.IsBlocking instead.
 func (b *Nib) IsBlocking(id string) bool {
@@ -406,32 +401,6 @@ func (b *Nib) EffectivePriority() string {
 		return DefaultPriority
 	}
 	return b.Priority
-}
-
-// resolvedStatuses is the single source of truth for the "resolved" (done)
-// status set — statuses that mean the nib is finished. Both IsResolvedStatus
-// and ResolvedStatusNames derive from it, so the set has exactly one definition.
-var resolvedStatuses = []string{"completed", "scrapped"}
-
-// IsResolvedStatus returns true if the status means the nib is "done"
-// (either completed or scrapped). This is the canonical definition used
-// by all packages for filtering resolved blockers and blocking relationships.
-func IsResolvedStatus(status string) bool {
-	for _, s := range resolvedStatuses {
-		if status == s {
-			return true
-		}
-	}
-	return false
-}
-
-// ResolvedStatusNames returns the names of all statuses considered "resolved"
-// (done) — a defensive copy of the canonical resolvedStatuses set, so callers
-// cannot mutate the source. Today this is {completed, scrapped}.
-func ResolvedStatusNames() []string {
-	names := make([]string, len(resolvedStatuses))
-	copy(names, resolvedStatuses)
-	return names
 }
 
 // Parse reads a nib from a reader (markdown with YAML front matter).

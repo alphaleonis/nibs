@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -11,13 +12,14 @@ import (
 
 	"github.com/99designs/gqlgen/graphql"
 	"github.com/99designs/gqlgen/graphql/executor"
-	"github.com/spf13/cobra"
-	"github.com/tidwall/pretty"
-	"github.com/vektah/gqlparser/v2/formatter"
-	"github.com/vektah/gqlparser/v2/gqlerror"
 	"github.com/alphaleonis/nibs/internal/graph"
 	"github.com/alphaleonis/nibs/internal/input"
 	"github.com/alphaleonis/nibs/internal/output"
+	"github.com/spf13/cobra"
+	"github.com/tidwall/pretty"
+	"github.com/vektah/gqlparser/v2/ast"
+	"github.com/vektah/gqlparser/v2/formatter"
+	"github.com/vektah/gqlparser/v2/gqlerror"
 )
 
 var (
@@ -109,7 +111,42 @@ More examples:
 		if err != nil {
 			// A GraphQL parse/validation/execution failure — route it through
 			// the coded boundary so both modes get a structured, non-zero exit.
-			return cmdError(queryJSON, output.ErrValidation, "%s", err)
+			// formatGraphQLErrors already decided the class the response
+			// supports; re-homing it onto this mode's output path (envelope vs
+			// stderr) must not discard it, or `query` would report a refusal
+			// the direct commands classify as not-found or conflict as a bare
+			// validation error.
+			code := output.ErrValidation
+			var coded *output.CodedError
+			if errors.As(err, &coded) {
+				code = coded.Code
+			}
+			// A response the code pins on ONE classified failure reconciles like
+			// the direct command's: the envelope carries that failure's repair
+			// hint. Without it, the exit status plus an absent hint reads — per the
+			// documented envelope contract — as "this class of failure with nothing
+			// to act on", steering an agent away from a fix that was available. A
+			// CONFLICT offers the server's current etag; a HIERARCHY offers the
+			// parent types that would be accepted.
+			//
+			// The response CODE gates each, not the cause alone: a mismatch inside a
+			// response whose classes disagree is not a conflict claim to enrich, and
+			// a refused parent link inside a response generalized to
+			// VALIDATION_ERROR is not a hierarchy claim to enrich. formatGraphQLErrors
+			// sets Err only for a single classified failure of the response's own
+			// class, so the helper below sees at most one — the precondition each
+			// states.
+			switch code {
+			case output.ErrConflict:
+				if conflict, ok := etagConflictError(queryJSON, err); ok {
+					return conflict
+				}
+			case output.ErrHierarchy:
+				if hierarchy, ok := hierarchyError(queryJSON, err); ok {
+					return hierarchy
+				}
+			}
+			return cmdError(queryJSON, code, "%s", err)
 		}
 
 		// Output (both modes are prettified, but --json skips color)
@@ -204,7 +241,9 @@ func executeQuery(app *App, query string, variables map[string]any, operationNam
 
 	opCtx, errs := exec.CreateOperationContext(ctx, params)
 	if errs != nil {
-		return nil, formatGraphQLErrors(errs)
+		// A parse/validation failure — the document never executed, so nothing
+		// committed and there is nothing to name.
+		return nil, formatGraphQLErrors(errs, rootFieldOutcome{})
 	}
 
 	ctx = graphql.WithOperationContext(ctx, opCtx)
@@ -212,25 +251,186 @@ func executeQuery(app *App, query string, variables map[string]any, operationNam
 	resp := handler(ctx)
 
 	if len(resp.Errors) > 0 {
-		return nil, formatGraphQLErrors(resp.Errors)
+		return nil, formatGraphQLErrors(resp.Errors, classifyRootFields(opCtx, resp.Errors))
 	}
 
 	return resp.Data, nil
 }
 
-// formatGraphQLErrors formats GraphQL errors into a single error.
-func formatGraphQLErrors(errs gqlerror.List) error {
+// rootFieldOutcome is how a failed response's root MUTATION fields ended, split
+// by whether an error was rooted at each one. Both lists are empty when no sound
+// split exists, and an empty committed list renders no clause at all.
+type rootFieldOutcome struct {
+	// committed holds the root fields that raised no error of their own — the
+	// writes that landed while the response as a whole reads as a refusal. It is
+	// a LOWER BOUND on what the document wrote, never a full accounting.
+	committed []string
+	// failed holds the root fields an error was rooted at. A failed field is not
+	// a field that wrote nothing: an error anywhere inside a root field's
+	// selection is rooted at that field even when its own write committed, and
+	// updateNib persists its blocking targets before reaching its own ifMatch
+	// guard, so a refused update can still have moved another nib's etag.
+	failed []string
+}
+
+// classifyRootFields splits the root MUTATION fields of a failed response by
+// whether an error names them. It reports an empty outcome for everything else,
+// and an empty outcome renders no clause at all.
+//
+// WHY THE DOCUMENT AND NOT resp.Data. Every field of the Mutation type is
+// non-null (Nib!, Boolean!, [Nib!]!), so one failed root field nullifies the
+// object that holds them all and resp.Data arrives as the literal `null` —
+// gqlgen's _Mutation returns graphql.Null once out.Invalids > 0. There is no
+// per-alias survivor in the data to read. The document, by contrast, still lists
+// every root field the operation asked for, and graphql.CollectFields resolves
+// it exactly as the executor did: same fragment expansion, same @skip/@include
+// handling, same response keys, same order. A field @skip'd out never executed
+// and is correctly absent from both.
+//
+// WHY ERROR PATHS ARE THE FAILURE SIGNAL. gqlgen presents every resolver error
+// as gqlerror.WrapPath(graphql.GetPath(ctx), err), so Path[0] is the failing
+// field's response key — the alias when the caller wrote one, the field name
+// otherwise, which is the same key CollectFields reports. A field that
+// legitimately resolves to null raises no error and so is never mistaken for a
+// failure; a data-shaped test could not tell the two apart.
+//
+// The committed claim is deliberately conservative: a root field is called
+// committed only when NO error anywhere beneath it was reported. An error at
+// path ["u1","children"] means the updateNib DID commit and only its nested read
+// failed, yet u1 is reported as failed. Splitting on path depth would move it,
+// at the cost of asserting a write landed on the strength of an inference about
+// where gqlgen rooted the error. Understating what committed leaves a caller no
+// worse off than a bare refusal; overstating it would tell an agent not to
+// resend something it must.
+//
+// An error that cannot be attributed to a root key at all — an empty path, or a
+// list index where an object key belongs — makes the whole split unsound, since
+// the unnamed failure could belong to any field. Reporting nothing is the only
+// honest answer there.
+//
+// Ordering is the document's, which for root mutation fields is also the
+// execution order (the serial _Mutation loop). It deliberately does not follow
+// resp.Errors, whose order is not stable for root QUERY fields — see
+// graphQLResponseCode — though the mutation gate above already excludes those.
+func classifyRootFields(opCtx *graphql.OperationContext, errs gqlerror.List) rootFieldOutcome {
+	// A query commits nothing, so a resolved root field there is not a write to
+	// warn about.
+	if opCtx == nil || opCtx.Operation == nil || opCtx.Operation.Operation != ast.Mutation {
+		return rootFieldOutcome{}
+	}
+
+	failedKeys := make(map[string]bool, len(errs))
+	for _, e := range errs {
+		if len(e.Path) == 0 {
+			return rootFieldOutcome{}
+		}
+		key, ok := e.Path[0].(ast.PathName)
+		if !ok {
+			return rootFieldOutcome{}
+		}
+		failedKeys[string(key)] = true
+	}
+
+	var outcome rootFieldOutcome
+	for _, f := range graphql.CollectFields(opCtx, opCtx.Operation.SelectionSet, graph.MutationImplementors) {
+		// Introspection meta-fields (__typename) sit in the same selection set
+		// and never fail, but they write nothing, so they belong to neither list.
+		if strings.HasPrefix(f.Name, "__") {
+			continue
+		}
+		if failedKeys[f.Alias] {
+			outcome.failed = append(outcome.failed, f.Alias)
+			continue
+		}
+		outcome.committed = append(outcome.committed, f.Alias)
+	}
+	return outcome
+}
+
+// formatGraphQLErrors formats GraphQL errors into a single coded error.
+//
+// outcome reports how the root mutation fields ended (see classifyRootFields);
+// it is appended to the rendered message and otherwise inert. Nothing about the
+// envelope, the code or the exit status changes when it is populated — the point
+// is to say WHAT LANDED inside the refusal the caller already gets, not to
+// soften the refusal. An empty committed list adds nothing at all, which is what
+// keeps the common path — one root field, one error, nothing committed — free of
+// a "0 succeeded" clause.
+//
+// The failed names ride along only when there is a committed name beside them,
+// because attribution is what the caller cannot reconstruct on a PARTIAL batch:
+// a field missing from the succeeded list may be missing because it failed or
+// because @skip removed it, and those demand different responses. With nothing
+// committed there is no partial outcome to attribute — either every root field
+// failed, or the response supports no attribution at all — and the bare refusal
+// already says so.
+//
+// It is appended to the FINISHED message rather than woven into the per-error
+// text, and that placement is load-bearing twice over: dedup keys on each
+// error's own Message, and graphQLResponseCode scans the errors themselves, so
+// neither can see this text. Prefixing each message with its alias would have
+// defeated the dedup outright, since the N identical sentences one nested
+// refusal raises would then differ by alias.
+//
+// Repeated messages are collapsed to their first occurrence. One refused filter
+// inside a nested resolver raises its own error per matched parent — a single
+// bad children(filter:{parentId:"zz"}) under an unfiltered outer query emits one
+// identical sentence per nib in the store — and every copy after the first says
+// nothing the first did not, while all of them land in one --json message string
+// and in an agent's context. First-encountered order is kept so what survives
+// still reads in the order gqlgen reported it.
+//
+// The structured code rides along on the returned *output.CodedError because it
+// can only be read from the gqlerror.List, which does not outlive this call —
+// see graphQLResponseCode for how a response's code is decided. Err carries the
+// response's ONE classified failure when it has exactly one, so a caller can
+// errors.As down to it for a repair hint (the current etag on a conflict); it is
+// nil when the response holds no classified failure or several, because then no
+// single cause could be attributed to it. See soleClassifiedErr.
+//
+// Code and Err are decided by two different rules — agreement among all errors
+// versus exactly one classified error — so the response's code is passed into
+// soleClassifiedErr to reconcile them: Err is set only when the cause's own
+// class IS Code. That is the invariant the two fields are read under. A caller
+// that finds an *nibcore.ETagMismatchError under Err therefore knows the whole
+// response is a CONFLICT, and cannot mint a retry token for a response that
+// reports something else.
+func formatGraphQLErrors(errs gqlerror.List, outcome rootFieldOutcome) error {
 	if len(errs) == 0 {
 		return nil
 	}
-	if len(errs) == 1 {
-		return fmt.Errorf("graphql: %s", errs[0].Message)
-	}
+	seen := make(map[string]bool, len(errs))
 	var msgs []string
 	for _, e := range errs {
+		if seen[e.Message] {
+			continue
+		}
+		seen[e.Message] = true
 		msgs = append(msgs, e.Message)
 	}
-	return fmt.Errorf("graphql errors:\n  %s", strings.Join(msgs, "\n  "))
+	msg := fmt.Sprintf("graphql: %s", msgs[0])
+	if len(msgs) > 1 {
+		msg = fmt.Sprintf("graphql errors:\n  %s", strings.Join(msgs, "\n  "))
+	}
+	if len(outcome.committed) > 0 {
+		// The one-line form takes a clause; the already-indented multi-error
+		// form takes a line of its own, so the names cannot be misread as part
+		// of the last refusal.
+		sep := "; "
+		if len(msgs) > 1 {
+			sep = "\n"
+		}
+		msg += sep + strings.Join(outcome.committed, ", ") + " succeeded"
+		if len(outcome.failed) > 0 {
+			msg += "; " + strings.Join(outcome.failed, ", ") + " failed"
+		}
+	}
+	code := graphQLResponseCode(errs)
+	return &output.CodedError{
+		Code: code,
+		Msg:  msg,
+		Err:  soleClassifiedErr(errs, code),
+	}
 }
 
 // printSchema outputs the GraphQL schema.

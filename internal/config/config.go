@@ -19,16 +19,15 @@ const (
 
 // DefaultStatuses defines the hardcoded status configuration.
 // Statuses are not configurable - they are hardcoded like types.
-// Order determines sort priority: in-progress first (active work), then todo
-// and draft, then deferred (parked, non-terminal), and the archived terminal
-// states (completed, scrapped) last.
+// Order determines sort priority: the open statuses first (in-progress, todo,
+// draft), then the closed ones (deferred, completed, scrapped) last.
 var DefaultStatuses = []StatusConfig{
 	{Name: "in-progress", Color: "yellow", Description: "Currently being worked on"},
-	{Name: "todo", Color: "green", Description: "Ready to be worked on"},
+	{Name: "todo", Color: "green", Startable: true, Description: "Ready to be worked on"},
 	{Name: "draft", Color: "blue", Description: "Needs refinement before it can be worked on"},
-	{Name: "deferred", Color: "gray", Description: "Parked — not actionable now, but not abandoned (scrapped) or merely unrefined (draft)"},
-	{Name: "completed", Color: "gray", Archive: true, Description: "Finished successfully"},
-	{Name: "scrapped", Color: "gray", Archive: true, Description: "Will not be done"},
+	{Name: "deferred", Color: "gray", Closed: true, Description: "Set aside — a good idea at the wrong time; closed, but kept as a seed rather than a dead end"},
+	{Name: "completed", Color: "gray", Closed: true, ReleasesDependents: true, Description: "Finished successfully"},
+	{Name: "scrapped", Color: "gray", Closed: true, ReleasesDependents: true, Description: "Will not be done"},
 }
 
 // DefaultTypes defines the default type configuration.
@@ -67,11 +66,91 @@ type EstimateConfig struct {
 }
 
 // StatusConfig defines a single status with its display color.
+//
+// Three booleans classify a status, because "is this nib finished", "does this
+// nib still hold up the work that depends on it" and "can this nib be picked
+// up" are different questions:
+//
+//   - Closed marks the status as terminal — the work is no longer on the board,
+//     whether it was finished (completed), abandoned (scrapped) or set aside
+//     (deferred); everything else is open. Open and closed partition the
+//     declared statuses. A status outside that vocabulary — a hand-edited nib
+//     with no `status:` carries "" — is in neither group, and IsClosedStatus
+//     reads it as open.
+//   - ReleasesDependents marks a status that *satisfies* a dependency: closing a
+//     blocker this way frees everything it was gating. True for completed (the
+//     work happened) and scrapped (it never will), false for deferred — the
+//     set-aside work is coming back, so the dependency is still unmet. Every
+//     open status is false too: an unfinished blocker blocks.
+//   - Startable marks a status work can be picked up from. It is the status half
+//     of "can I start this?"; the other half is having no active blockers, and
+//     the two are applied together by the `ready` projection and by
+//     `nibs list --ready`. True for todo alone: in-progress work is already
+//     underway, draft needs refinement first, and the closed statuses are off
+//     the board.
+//
+// The three questions are independent; the flags are not. Of the eight states
+// three booleans can express, four are legal, and every declared status is one
+// of them:
+//
+//	Closed  Releases  Startable  meaning                       members
+//	false   false     false      open, not yet pickable        in-progress, draft
+//	false   false     true       open and pickable             todo
+//	true    false     false      closed, still blocking        deferred
+//	true    true      false      closed, dependency settled    completed, scrapped
+//
+// The other four are illegal. ReleasesDependents is a strict subset of Closed,
+// since an open status that released its dependents would hand out work that is
+// still blocked. Startable and Closed are disjoint, because a startable closed
+// status would offer finished work as the next thing to pick up.
+//
+// **Nothing in the type enforces this**, and that is a deliberate choice rather
+// than an oversight. Statuses are hardcoded in DefaultStatuses below and are not
+// user-configurable (see the note on Config), so an illegal combination can only
+// be written by a developer editing this file — and
+// TestStatusFlagCombinationsAreLegal fails in that same commit, naming the
+// offending status and the rule it broke. Making the states unrepresentable
+// would mean migrating every consumer of these three predicates to prevent a
+// state no user can reach.
+//
+// The same test also requires each of the four groups to be NON-EMPTY, which is
+// not a stylistic nicety: a derived set that empties out fails open rather than
+// closed. Emptying Startable made `nibs list --ready` widen from "only startable"
+// to every unblocked nib — 86 of 89 on the sample fixture, including completed
+// and scrapped work — because an empty include-list filters nothing.
+//
+// None of the three sets is interchangeable with another. Deferred is closed
+// and still blocks, so collapsing Closed and ReleasesDependents back into one
+// flag would silently unblock deferred work. Startable is strictly narrower
+// than "not closed": draft and in-progress are open and not startable, so
+// reading Startable off the Closed flag would put work that is already underway
+// or not yet refined into the ready queue.
+//
+// In Go these flags are the only definitions of their sets — consumers read
+// them through IsClosedStatus/ClosedStatusNames/OpenStatusNames,
+// StatusReleasesDependents/ReleasingStatusNames, HoldingStatusNames for the
+// closed-but-still-blocking difference, and
+// IsStartableStatus/StartableStatusNames for the ready queue. The web UI keeps
+// a hand-written copy in web/src/lib/constants.ts as CLOSED_STATUSES
+// (nibs-nv05). README.md's Data Model section is another hand-written copy —
+// there is no render step behind it — held to these flags by cmd/readme_test.go
+// rather than by derivation.
+//
+// Sites that name one specific status are not rival definitions of these sets,
+// because a group predicate cannot single a member out — but renaming a status
+// means visiting them. The progress rollups in internal/graph and
+// internal/nibcontext give "completed", "scrapped" and "deferred" three
+// different treatments (see graph.ProgressRollup); cmd/dedup.go names
+// "scrapped" to attach the scrap-reason snippet; cmd/close.go writes
+// "completed"; internal/ui abbreviates "deferred" to F so it does not collide
+// with draft.
 type StatusConfig struct {
-	Name        string `yaml:"name"`
-	Color       string `yaml:"color"`
-	Archive     bool   `yaml:"archive,omitempty"`
-	Description string `yaml:"description,omitempty"`
+	Name               string `yaml:"name"`
+	Color              string `yaml:"color"`
+	Closed             bool   `yaml:"closed,omitempty"`
+	ReleasesDependents bool   `yaml:"releases_dependents,omitempty"`
+	Startable          bool   `yaml:"startable,omitempty"`
+	Description        string `yaml:"description,omitempty"`
 }
 
 // TypeConfig defines a single nib type with its display color.
@@ -366,56 +445,127 @@ func (c *Config) GetDefaultType() string {
 	return c.Nibs.DefaultType
 }
 
-// IsArchiveStatus returns true if the given status is marked for archiving.
-// Statuses are hardcoded and not configurable.
-func (c *Config) IsArchiveStatus(name string) bool {
+// IsClosedStatus returns true if the given status is closed (terminal) — the
+// canonical answer to "is this nib finished", used by every package instead of
+// a local status list. Unknown statuses are open.
+// Statuses are hardcoded and not configurable, so the receiver is currently
+// never dereferenced — but callers should not depend on that: hand it a real
+// *Config (config.Default() if nothing better is in reach).
+func (c *Config) IsClosedStatus(name string) bool {
 	if s := c.GetStatus(name); s != nil {
-		return s.Archive
+		return s.Closed
 	}
 	return false
 }
 
-// ArchiveStatusNames returns the names of all statuses marked for archiving,
-// derived from DefaultStatuses (the single source of truth). Every returned
-// name satisfies IsArchiveStatus. Today this is {completed, scrapped}; deriving
-// it here keeps the set correct if the Archive flags ever change. This is the
-// "closed" status group.
-func (c *Config) ArchiveStatusNames() []string {
+// ClosedStatusNames returns the names of all closed statuses, derived from
+// DefaultStatuses (the single source of truth). Every returned name satisfies
+// IsClosedStatus. Today this is {deferred, completed, scrapped}; deriving it
+// here keeps the set correct if the Closed flags ever change. This is the
+// "closed" status group, and the exact complement of OpenStatusNames.
+func (c *Config) ClosedStatusNames() []string {
 	var names []string
 	for _, s := range DefaultStatuses {
-		if s.Archive {
+		if s.Closed {
 			names = append(names, s.Name)
 		}
 	}
 	return names
 }
 
-// parkedStatuses is the single source of truth for the "parked" status group —
-// non-terminal statuses that are not actionable right now but not abandoned.
-// Unlike open/closed this cannot be derived from the Archive flag, so it is
-// enumerated here once. Today this is {deferred}.
-var parkedStatuses = []string{"deferred"}
+// StatusReleasesDependents returns true if closing a blocker with this status
+// satisfies the dependency — the canonical answer to "does this blocker still
+// count", used by the blocking graph instead of IsClosedStatus. Today this is
+// {completed, scrapped}: deferred is closed but still blocks, because the
+// set-aside work is coming back. Unknown statuses do not release, so an
+// unrecognized blocker keeps blocking rather than silently freeing its
+// dependents.
+// Like IsClosedStatus the receiver is currently never dereferenced, but callers
+// should hand it a real *Config anyway (config.Default() if nothing better).
+func (c *Config) StatusReleasesDependents(name string) bool {
+	if s := c.GetStatus(name); s != nil {
+		return s.ReleasesDependents
+	}
+	return false
+}
 
-// OpenStatusNames returns the names of all non-archive statuses — the "open"
-// status group. Derived from DefaultStatuses (Archive == false), so it stays
-// correct if the Archive flags ever change. Today this is
-// {in-progress, todo, draft, deferred}.
+// ReleasingStatusNames returns the names of the statuses that release their
+// dependents, derived from DefaultStatuses (the single source of truth). Every
+// returned name satisfies StatusReleasesDependents. Today this is {completed,
+// scrapped} — a strict subset of ClosedStatusNames, since deferred is closed
+// but keeps blocking.
+func (c *Config) ReleasingStatusNames() []string {
+	var names []string
+	for _, s := range DefaultStatuses {
+		if s.ReleasesDependents {
+			names = append(names, s.Name)
+		}
+	}
+	return names
+}
+
+// HoldingStatusNames returns the closed statuses that do NOT release their
+// dependents — the statuses a blocker can carry while still holding up
+// everything that depends on it. It is the set difference ClosedStatusNames \
+// ReleasingStatusNames, derived from the same flags. Today this is {deferred}.
+// The agent-facing docs (cmd/cheat.go and the prime templates) state the
+// "closed but still blocks" rule from this set instead of naming a status in
+// prose; an empty result means no such rule exists and the docs drop it.
+func (c *Config) HoldingStatusNames() []string {
+	var names []string
+	for _, s := range DefaultStatuses {
+		if s.Closed && !s.ReleasesDependents {
+			names = append(names, s.Name)
+		}
+	}
+	return names
+}
+
+// OpenStatusNames returns the names of all non-closed statuses — the "open"
+// status group, and the exact complement of ClosedStatusNames. Derived from
+// DefaultStatuses (Closed == false), so it stays correct if the Closed flags
+// ever change. Today this is {in-progress, todo, draft}.
 func (c *Config) OpenStatusNames() []string {
 	var names []string
 	for _, s := range DefaultStatuses {
-		if !s.Archive {
+		if !s.Closed {
 			names = append(names, s.Name)
 		}
 	}
 	return names
 }
 
-// ParkedStatusNames returns the names of the "parked" status group — a
-// defensive copy of the canonical parkedStatuses set so callers cannot mutate
-// the source. Parked statuses are non-archive (a subset of the open group).
-func (c *Config) ParkedStatusNames() []string {
-	names := make([]string, len(parkedStatuses))
-	copy(names, parkedStatuses)
+// IsStartableStatus returns true if work can be picked up from the given status
+// — the status half of "can I start this?", read by both the projected `ready`
+// field and `nibs list --ready` so the two answer it from one definition rather
+// than two. The other half is having no active blockers; this predicate says
+// nothing about blockers.
+// Unknown statuses are not startable, so a nib carrying a status outside the
+// declared vocabulary stays out of the work queue rather than being offered as
+// the next thing to do.
+// Like IsClosedStatus the receiver is currently never dereferenced, but callers
+// should hand it a real *Config anyway (config.Default() if nothing better).
+func (c *Config) IsStartableStatus(name string) bool {
+	if s := c.GetStatus(name); s != nil {
+		return s.Startable
+	}
+	return false
+}
+
+// StartableStatusNames returns the names of all startable statuses, derived from
+// DefaultStatuses (the single source of truth). Every returned name satisfies
+// IsStartableStatus. Today this is {todo} alone — narrower than OpenStatusNames,
+// which also holds draft and in-progress.
+// `nibs list --ready` builds its status filter from this set and the agent
+// guides state the --ready rule from it, so a status added to DefaultStatuses
+// reaches the ready queue only by declaring itself startable.
+func (c *Config) StartableStatusNames() []string {
+	var names []string
+	for _, s := range DefaultStatuses {
+		if s.Startable {
+			names = append(names, s.Name)
+		}
+	}
 	return names
 }
 
@@ -464,7 +614,7 @@ type NibColors struct {
 	StatusColor   string
 	TypeColor     string
 	PriorityColor string
-	IsArchive     bool
+	IsClosed      bool
 }
 
 // GetNibColors returns the resolved colors for a nib based on its status, type, and priority.
@@ -473,13 +623,13 @@ func (c *Config) GetNibColors(status, typeName, priority string) NibColors {
 		StatusColor:   "gray",
 		TypeColor:     "",
 		PriorityColor: "",
-		IsArchive:     false,
+		IsClosed:      false,
 	}
 
 	if statusCfg := c.GetStatus(status); statusCfg != nil {
 		colors.StatusColor = statusCfg.Color
 	}
-	colors.IsArchive = c.IsArchiveStatus(status)
+	colors.IsClosed = c.IsClosedStatus(status)
 
 	if typeCfg := c.GetType(typeName); typeCfg != nil {
 		colors.TypeColor = typeCfg.Color
@@ -591,7 +741,7 @@ func (c *Config) GetEstimate(name string) *EstimateConfig {
 	return nil
 }
 
-// HideCompleted returns whether completed/scrapped nibs should be hidden.
+// HideCompleted returns whether nibs in a closed status should be hidden.
 // Defaults to true when not explicitly set (nil).
 func (c *Config) HideCompleted() bool {
 	if c.Nibs.HideCompleted != nil {

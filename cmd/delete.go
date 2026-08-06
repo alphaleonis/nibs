@@ -19,7 +19,7 @@ var (
 
 // nibWithLinks holds a nib and its incoming links for batch processing
 type nibWithLinks struct {
-	nib  *nib.Nib
+	nib   *nib.Nib
 	links []nib.IncomingLink
 }
 
@@ -47,7 +47,7 @@ warned and those references will be removed after confirmation. Use -f to skip a
 				return cmdError(deleteJSON, output.ErrNotFound, "nib not found: %s", id)
 			}
 			targets = append(targets, nibWithLinks{
-				nib:  b,
+				nib:   b,
 				links: app.Core.FindIncomingLinks(b.ID),
 			})
 		}
@@ -74,13 +74,13 @@ warned and those references will be removed after confirmation. Use -f to skip a
 
 		// Output results
 		if deleteJSON {
-			filtered := filterResolvedBlockers(deleted, app.Core)
+			filtered := filterReleasedBlockers(deleted, app.Core)
 			if len(filtered) == 1 {
 				return output.Success(filtered[0], "Nib deleted")
 			}
 			return output.JSON(output.Response{
 				Success: true,
-				Nibs:   filtered,
+				Nibs:    filtered,
 				Count:   len(deleted),
 				Message: fmt.Sprintf("%d nibs deleted", len(deleted)),
 			})

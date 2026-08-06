@@ -1,8 +1,8 @@
 package tui
 
 import (
-	"github.com/charmbracelet/lipgloss"
 	"github.com/alphaleonis/nibs/internal/ui"
+	"github.com/charmbracelet/lipgloss"
 )
 
 var (

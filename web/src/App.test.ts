@@ -417,33 +417,114 @@ describe("App", () => {
     await user.type(searchInput, "bug");
     expect(searchInput).toHaveValue("bug");
 
-    // Hide completed via the State-facet "Open + deferred" preset: open the
-    // State dropdown, then click the preset. Anchor the name to the start so it
-    // targets the Toolbar's "State" facet trigger, not the table's new
-    // "Sort by State" header button (headers are now sortable in every view).
-    await user.click(screen.getByRole("button", { name: /^state/i }));
-    await user.click(screen.getByTestId("state-preset-open-deferred"));
+    // Hide closed work via the Status-facet "Open" preset: open the Status
+    // dropdown, then click the preset. Anchor the name to the start so it
+    // targets the Toolbar's "Status" facet trigger, not the table's
+    // "Sort by Status" header button (headers are sortable in every view).
+    await user.click(screen.getByRole("button", { name: /^status/i }));
+    await user.click(screen.getByTestId("status-preset-open"));
 
-    // With $derived(queryStore(...)), filter changes should trigger new queryStore calls
-    expect(mockQueryStore.mock.calls.length).toBeGreaterThan(initialCallCount);
+    // `search` is server-side, so typing re-queries — but the list refetch is
+    // debounced (nibs-rv7c), landing shortly after typing rather than on each
+    // keystroke. waitFor rides out the debounce window.
+    await waitFor(() => {
+      expect(mockQueryStore.mock.calls.length).toBeGreaterThan(initialCallCount);
+      const nibsCalls = mockQueryStore.mock.calls.filter(
+        (call) => call[0].variables?.filter !== undefined
+      );
+      // search stays server-side; the status include-list is applied client-side (so
+      // the server still returns completed/scrapped ancestors for in-place dimming)
+      // and must NOT be forwarded to the GraphQL server.
+      const latestVars = nibsCalls[nibsCalls.length - 1][0].variables!;
+      expect(latestVars.filter).toEqual(expect.objectContaining({ search: "bug" }));
+      expect(latestVars.filter).not.toHaveProperty("status");
+    });
+  });
 
-    // The latest nibs query call should contain the updated filter variables
-    // (find the last call that has variables with a filter property, skipping config queries)
-    const nibsCalls = mockQueryStore.mock.calls.filter(
-      (call) => call[0].variables?.filter !== undefined
-    );
-    expect(nibsCalls.length).toBeGreaterThan(0);
-    // Filtered above to calls whose variables.filter is defined, so variables exists.
-    const latestVars = nibsCalls[nibsCalls.length - 1][0].variables!;
-    // search stays server-side; the status include-list is applied client-side (so
-    // the server still returns completed/scrapped ancestors for in-place dimming)
-    // and must NOT be forwarded to the GraphQL server.
-    expect(latestVars.filter).toEqual(
-      expect.objectContaining({
-        search: "bug",
-      })
-    );
-    expect(latestVars.filter).not.toHaveProperty("status");
+  it("URL ?q= wins over a different stored query on load (shared link reproduces its filter)", () => {
+    // localStorage holds one filter; the URL carries a DIFFERENT one. The shared
+    // `?q=` link must win, so the box (and thus the filter) reflects the URL.
+    const savedStorage = globalThis.localStorage;
+    const mockStore: Record<string, string> = {
+      "nibs-filter-preferences": JSON.stringify({ q: "type:feature", viewLevel: "none" }),
+    };
+    Object.defineProperty(globalThis, "localStorage", {
+      value: {
+        getItem: (key: string) => mockStore[key] ?? null,
+        setItem: (key: string, value: string) => { mockStore[key] = value; },
+        removeItem: (key: string) => { delete mockStore[key]; },
+      },
+      writable: true,
+      configurable: true,
+    });
+    window.history.replaceState(null, "", "/?q=type%3Abug");
+
+    try {
+      render(App);
+      const box = screen.getByTestId("filter-keyword") as HTMLInputElement;
+      // URL query (type:bug) wins over the stored one (type:feature).
+      expect(box.value).toBe("type:bug");
+    } finally {
+      Object.defineProperty(globalThis, "localStorage", {
+        value: savedStorage, writable: true, configurable: true,
+      });
+    }
+  });
+
+  it("uses the stored query when the URL has no ?q= (falls back to localStorage)", () => {
+    const savedStorage = globalThis.localStorage;
+    const mockStore: Record<string, string> = {
+      "nibs-filter-preferences": JSON.stringify({ q: "type:feature", viewLevel: "none" }),
+    };
+    Object.defineProperty(globalThis, "localStorage", {
+      value: {
+        getItem: (key: string) => mockStore[key] ?? null,
+        setItem: (key: string, value: string) => { mockStore[key] = value; },
+        removeItem: (key: string) => { delete mockStore[key]; },
+      },
+      writable: true,
+      configurable: true,
+    });
+    // No ?q= in the URL — the stored query is used.
+    window.history.replaceState(null, "", "/");
+
+    try {
+      render(App);
+      expect((screen.getByTestId("filter-keyword") as HTMLInputElement).value).toBe("type:feature");
+    } finally {
+      Object.defineProperty(globalThis, "localStorage", {
+        value: savedStorage, writable: true, configurable: true,
+      });
+    }
+  });
+
+  it("a 'Filter related' pick composes onto the live query rather than replacing it", async () => {
+    // The only test that drives the REAL handleFilterRelated: it right-clicks a row,
+    // opens the submenu, clicks a hierarchy item, and reads the outcome off the query
+    // box (which renders the canonical serialization of prefs.filter). RowContextMenu's
+    // own tests supply a composing handler of their own, so they stay green even if
+    // App's handler is rewritten to `prefs.filter = { [field]: id }` — this one turns
+    // red, because the seeded status facet and free text would be dropped.
+    const user = userEvent.setup({ pointerEventsCheck: 0 });
+    window.history.replaceState(null, "", "/?q=status%3Atodo+login");
+
+    const { container } = render(App);
+    const box = screen.getByTestId("filter-keyword") as HTMLInputElement;
+    expect(box.value).toBe("status:todo login");
+
+    // "Test nib" — a todo task, so the seeded status facet keeps its row visible.
+    const row = container.querySelector("tr[data-nib-id='nibs-abc1']") as HTMLElement;
+    await user.pointer({ target: row, keys: "[MouseRight]" });
+
+    // bits-ui opens the submenu on pointerenter of its trigger.
+    await user.pointer({ target: await screen.findByTestId("ctx-filter-related-trigger") });
+    await user.click(await screen.findByText("Descendants of this"));
+
+    // The picked token lands in its canonical slot BETWEEN the surviving status
+    // facet and the surviving free text — a replace would leave "ancestor:nibs-abc1".
+    await waitFor(() => {
+      expect(box.value).toBe("status:todo ancestor:nibs-abc1 login");
+    });
   });
 
   it("opens detail panel when a title is clicked", async () => {
@@ -1174,5 +1255,49 @@ describe("App", () => {
       expect(screen.getByTestId("anv-id")).toHaveTextContent(target);
     });
     expect(screen.getAllByTestId("active-nib-view")).toHaveLength(1);
+  });
+
+  it("Back/Forward (popstate) re-syncs the filter query from the restored URL", async () => {
+    // The filter query lives in `?q=` and is written with replaceState onto the
+    // CURRENT history entry, while nib navigation pushState-snapshots whatever `?q=`
+    // was in the address bar at that moment. Back/Forward restores an entry whose
+    // `?q=` can differ from the in-memory filter, so onPopState must re-sync the
+    // query from the just-restored URL (URL-wins, exactly as on initial load) — not
+    // just the `?nib=` selection.
+    window.history.replaceState(null, "", "/?q=type%3Abug");
+    render(App);
+
+    // Sanity: the initial `?q=` seeds the box.
+    expect((screen.getByTestId("filter-keyword") as HTMLInputElement).value).toBe("type:bug");
+
+    // Simulate Back to a history entry carrying a DIFFERENT `?q=`. jsdom does not
+    // update location.search on a synthetic popstate, so set it first (mirrors what
+    // a real browser restores), then dispatch the event.
+    window.history.replaceState({ nibId: null }, "", "/?q=type%3Afeature");
+    window.dispatchEvent(new PopStateEvent("popstate", { state: { nibId: null } }));
+
+    // The box (and thus prefs.query) now reflects the RESTORED entry's query.
+    await waitFor(() => {
+      expect((screen.getByTestId("filter-keyword") as HTMLInputElement).value).toBe("type:feature");
+    });
+  });
+
+  it("Back/Forward (popstate) to an entry with NO ?q= clears the filter to empty", async () => {
+    // The `?q=` writer removes the param entirely when the query is empty, so a
+    // restored entry WITHOUT `?q=` genuinely means "empty filter". onPopState must
+    // clear the query (not preserve the current filter) — the `?? ""` fallback, not
+    // `?? prefs.query`.
+    window.history.replaceState(null, "", "/?q=type%3Abug");
+    render(App);
+
+    expect((screen.getByTestId("filter-keyword") as HTMLInputElement).value).toBe("type:bug");
+
+    // Back to a no-filter entry (no `?q=` param).
+    window.history.replaceState({ nibId: null }, "", "/");
+    window.dispatchEvent(new PopStateEvent("popstate", { state: { nibId: null } }));
+
+    await waitFor(() => {
+      expect((screen.getByTestId("filter-keyword") as HTMLInputElement).value).toBe("");
+    });
   });
 });

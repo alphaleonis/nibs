@@ -2,13 +2,11 @@ package cmd
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"strings"
 
 	"github.com/99designs/gqlgen/graphql"
 	"github.com/alphaleonis/nibs/internal/graph/model"
-	"github.com/alphaleonis/nibs/internal/nibtypes"
 	"github.com/alphaleonis/nibs/internal/output"
 	"github.com/alphaleonis/nibs/internal/projection"
 	"github.com/alphaleonis/nibs/internal/ui"
@@ -118,7 +116,7 @@ Use --children-of "" to reorder root-level (no-parent) siblings.`,
 				return cmdError(mvJSON, output.ErrFileError, "failed to reorder children: %v", err)
 			}
 			if mvJSON {
-				return output.SuccessMultiple(filterResolvedBlockers(results, app.Core))
+				return output.SuccessMultiple(filterReleasedBlockers(results, app.Core))
 			}
 			fmt.Println(ui.Success.Render(fmt.Sprintf("Reordered %d children", len(results))))
 			return nil
@@ -153,7 +151,7 @@ Use --children-of "" to reorder root-level (no-parent) siblings.`,
 				return cmdError(mvJSON, output.ErrFileError, "failed to reorder siblings: %v", err)
 			}
 			if mvJSON {
-				return output.SuccessMultiple(filterResolvedBlockers(results, app.Core))
+				return output.SuccessMultiple(filterReleasedBlockers(results, app.Core))
 			}
 			fmt.Println(ui.Success.Render(fmt.Sprintf("Reordered %d siblings", len(results))))
 			return nil
@@ -186,7 +184,7 @@ Use --children-of "" to reorder root-level (no-parent) siblings.`,
 			}
 			moved, err := resolver.Mutation().UpdateNib(ctx, args[0], input)
 			if err != nil {
-				return mvMutationError(mvJSON, err)
+				return setMutationError(mvJSON, err)
 			}
 			return echoCard(mvJSON, moved, resolver.ProjectionResolver(ctx), card)
 		}
@@ -211,26 +209,10 @@ Use --children-of "" to reorder root-level (no-parent) siblings.`,
 
 		moved, err := resolver.Mutation().ReorderNib(ctx, args[0], afterID, beforeID, first, parentID, ifMatch)
 		if err != nil {
-			return mvMutationError(mvJSON, err)
+			return setMutationError(mvJSON, err)
 		}
 		return echoCard(mvJSON, moved, resolver.ProjectionResolver(ctx), card)
 	},
-}
-
-// mvMutationError maps a move mutation error to a structured CLI error. An
-// illegal reparent (e.g. a task under a milestone) surfaces as a HIERARCHY error
-// carrying the allowed parent types — mirroring `nibs new`. Everything else
-// (reconcilable ETag conflict → CONFLICT with the server etag, corrupt file →
-// FILE_ERROR, generic validation) delegates to set's shared mapping.
-func mvMutationError(jsonOutput bool, err error) error {
-	var he *nibtypes.HierarchyError
-	if errors.As(err, &he) {
-		if jsonOutput {
-			return output.ErrorHierarchy(he.Error(), he.Allowed)
-		}
-		return cmdError(false, output.ErrHierarchy, "%s", he.Error())
-	}
-	return setMutationError(jsonOutput, err)
 }
 
 func init() {

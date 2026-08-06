@@ -1,4 +1,71 @@
+# Pinned versions, deliberately not "latest".
+#
+# "latest" is resolved separately on every machine — once per `mise install`
+# locally, once per workflow run in CI — so two checkouts of the same commit can
+# be linted by different golangci-lint releases. That is not hypothetical here:
+# two such resolutions landed on different minor versions and disagreed about
+# this codebase, one reporting six SA5011 possible-nil-dereference issues in test
+# files that the other did not. Under the "never commit with lint failures" rule
+# that is a gate nobody can reproduce.
+#
+# This file is the only place these versions appear. Both workflows install
+# their tools with jdx/mise-action, which reads this `[tools]` table directly,
+# so a bump here reaches CI without a second edit. That was not always true:
+# the versions used to be restated in nine places across ci.yml and
+# release.yml, held together by a comment asking that they be bumped together,
+# and nothing cross-checked the copies — CI stayed green while a workflow and
+# this file disagreed (nibs-23f0).
+#
+# Still re-run `task lint` when moving golangci-lint: a new release can add or
+# retire checks and move the clean baseline.
+#
+# The `go` pin also has to stay at or above go.mod's `go` directive. With
+# GOTOOLCHAIN=auto, a directive higher than the invoked toolchain makes the go
+# command fetch and switch to a newer one, overriding this pin while every
+# comment still names the version here.
+#
+# Pinning has a cost worth naming: these pins alone decide which Go compiles
+# published binaries, and an exact pin does not pick up an upstream security
+# release the way a floating `stable` does. .github/renovate.json5 is meant to
+# supply the missing signal — it configures Renovate to watch this file, which
+# is now the whole covered set for these four tools. Two things have to be true
+# before any of that happens: the
+# Renovate GitHub App has to be installed on the repository, and that config has
+# to be on the default branch (`main`), which is where Renovate reads its own
+# config from. Its liveness signal is the "Dependency Dashboard" issue Renovate
+# opens once it runs — no such issue means these pins are going stale unwatched.
+# Renovate only proposes: nothing merges on its own.
+#
+# `node` is a major rather than an exact version, so it resolves the newest
+# release inside that major on every machine. The divergence worth closing here
+# is the major — without this entry a global mise config supplies whatever Node
+# the machine happens to have while CI builds the web assets on the pinned one.
+# Moving to the next major is a deliberate decision, not a routine bump, so
+# renovate.json5 holds node majors behind dependency-dashboard approval rather
+# than opening them as pull requests.
 [tools]
-go = "latest"
-golangci-lint = "latest"
-task = "latest"
+go = "1.26.5"
+golangci-lint = "2.12.2"
+node = "22"
+task = "3.50.0"
+
+# Release-path tools. These two are not needed to build or test the project —
+# only to produce a release — but they are the highest-privilege things it runs:
+# release.yml holds `contents: write` and publishes the binaries end users
+# install via install.sh / install.ps1 and auto-update into via `nibs upgrade`,
+# so whatever executes there is inside the trust boundary of every nibs user
+# (nibs-ag7i).
+#
+# Both used to float. goreleaser was a `~> v2` constraint on the goreleaser
+# action, which let a minor release change build flags, archive layout or
+# checksum handling between two releases of the same nibs commit; go-licenses
+# was `go install …@latest`, so an arbitrary newest upstream release ran as code
+# in that job with no human in the loop. GOSUMDB verifies a module is
+# authentically what its author published — not that anyone reviewed it.
+#
+# Pinning them here rather than in the workflow is what makes a local
+# `goreleaser release --snapshot --clean` (see RELEASING.md) reproduce what the
+# release job does, and it keeps them inside Renovate's mise manager instead of
+# needing a custom manager per site.
+goreleaser = "2.17.1"
+"go:github.com/google/go-licenses" = "1.6.0"

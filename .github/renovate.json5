@@ -1,0 +1,69 @@
+{
+  "$schema": "https://docs.renovatebot.com/renovate-schema.json",
+  "extends": ["config:recommended"],
+
+  // Renovate reads its own config from the default branch (`main`) regardless
+  // of this setting — `useBaseBranchConfig` stays "none". Work lands on
+  // `develop`, so toolchain pull requests must target it; this file must still
+  // reach `main` before any of it takes effect.
+  "baseBranchPatterns": ["develop"],
+
+  // Why this file exists: mise.toml pins go, golangci-lint and task to exact
+  // versions and node to a major, and an exact pin does not pick up an upstream
+  // security release on its own. Nothing else in this repo watches those
+  // versions, so without a bot the toolchain that compiles published binaries
+  // only moves when someone remembers to move it.
+  //
+  // Each of those four tools now appears in exactly one place. Both workflows
+  // install them with jdx/mise-action, which reads mise.toml's `[tools]` table,
+  // so the mise manager alone covers them and a bump needs no second edit
+  // (nibs-23f0). This config used to carry four grouping rules and a custom
+  // manager whose only job was to keep nine copies of those versions moving
+  // together; deriving the versions retired all of it, along with the
+  // split-source lag that grouping could not fix — mise.toml's `go` reads
+  // golang/go tags while setup-go's `go-version` read the actions/go-versions
+  // releases, so a grouped pull request could carry only the half one source
+  // could see and land the two back out of sync.
+  //
+  // The two release-path tools that used to float outside that set —
+  // release.yml's goreleaser CLI constraint (`version: "~> v2"`) and
+  // `go install github.com/google/go-licenses@latest` — are pinned in
+  // mise.toml too, so the mise manager covers them as well and no custom
+  // manager is needed (nibs-ag7i). That was the reason to pin them there
+  // rather than in the workflow: the github-actions manager reads the
+  // goreleaser *action* ref but not its `version` input.
+  //
+  // Every `uses:` ref is a full commit SHA with the tag as a trailing comment.
+  // The github-actions manager maintains that form — it rewrites the SHA and
+  // the comment together — so pinning does not freeze the actions in place.
+
+  "packageRules": [
+    {
+      // A node major is a deliberate decision, not a routine bump: 22 is the
+      // major CI is green on (nibs-g4a9), and moving off it means running the
+      // web suite on the new one first. Left alone this would be the first
+      // thing Renovate proposed here — mise.toml pins a bare major, so releases
+      // inside that major need no bump at all and the only update on offer is
+      // the jump to the next one. Dashboard approval keeps it visible without
+      // opening it as a pull request.
+      "matchManagers": ["mise"],
+      "matchDepNames": ["node"],
+      "matchUpdateTypes": ["major"],
+      "dependencyDashboardApproval": true
+    },
+    {
+      // go.mod's `go` directive is not a toolchain pin: it declares the
+      // language version every consumer of this module must have. Raising it
+      // is a compatibility decision, and with GOTOOLCHAIN=auto a directive
+      // above mise.toml's pin makes the go command fetch and switch to a newer
+      // toolchain, overriding that pin. `toolchain` is listed beside it as
+      // forward-proofing — go.mod carries no `toolchain` directive today, and
+      // the gomod manager would extract one under that depType if it gained
+      // one. Module dependencies in go.mod stay covered; only the language
+      // version is left to a human.
+      "matchManagers": ["gomod"],
+      "matchDepTypes": ["golang", "toolchain"],
+      "enabled": false
+    }
+  ]
+}

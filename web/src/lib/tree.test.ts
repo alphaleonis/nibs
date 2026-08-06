@@ -165,6 +165,122 @@ describe("buildTree", () => {
     expect(result[0].children[0].children[0].depth).toBe(2);
   });
 
+  // A parent cycle used to erase every member: each one has a parent present in
+  // the node map, so the "root = no parent, or parent missing" rule matched none
+  // of them and the whole cycle vanished. One member is promoted to a root
+  // instead — the same rule the Go builder (internal/ui/tree.go) applies, over
+  // the same fixtures, so a divergence fails one of the two suites.
+  describe("parent cycles degrade to a visible oddity", () => {
+    /** Flattens a forest depth-first into "depth:id" entries. */
+    function shape<T extends TreeNib>(nodes: TreeNode<T>[]): string[] {
+      const out: string[] = [];
+      const walk = (ns: TreeNode<T>[], depth: number) => {
+        for (const n of ns) {
+          out.push(`${depth}:${n.nib.id}`);
+          walk(n.children, depth + 1);
+        }
+      };
+      walk(nodes, 0);
+      return out;
+    }
+
+    const cases: { name: string; nibs: TreeNib[]; want: string[] }[] = [
+      {
+        name: "self cycle renders once",
+        nibs: [makeTreeNib({ id: "a", parentId: "a" })],
+        want: ["0:a"],
+      },
+      {
+        name: "two-cycle renders both members",
+        nibs: [
+          makeTreeNib({ id: "a", parentId: "b" }),
+          makeTreeNib({ id: "b", parentId: "a" }),
+        ],
+        want: ["0:a", "1:b"],
+      },
+      {
+        // The lowest id is promoted, not the first one seen: "m" is second in
+        // the input and still becomes the root.
+        name: "promotion picks the lowest id, not the input order",
+        nibs: [
+          makeTreeNib({ id: "z", parentId: "m" }),
+          makeTreeNib({ id: "m", parentId: "z" }),
+        ],
+        want: ["0:m", "1:z"],
+      },
+      {
+        name: "three-cycle renders all members as a chain",
+        nibs: [
+          makeTreeNib({ id: "a", parentId: "c" }),
+          makeTreeNib({ id: "b", parentId: "a" }),
+          makeTreeNib({ id: "c", parentId: "b" }),
+        ],
+        want: ["0:a", "1:b", "2:c"],
+      },
+      {
+        name: "two disjoint cycles each get their own root",
+        nibs: [
+          makeTreeNib({ id: "a", parentId: "b" }),
+          makeTreeNib({ id: "b", parentId: "a" }),
+          makeTreeNib({ id: "x", parentId: "y" }),
+          makeTreeNib({ id: "y", parentId: "x" }),
+        ],
+        want: ["0:a", "1:b", "0:x", "1:y"],
+      },
+      {
+        // A nib whose parent chain reaches a cycle but that is not itself in it
+        // keeps rendering under its real parent.
+        name: "child hanging off a cycle stays under its parent",
+        nibs: [
+          makeTreeNib({ id: "a", parentId: "b" }),
+          makeTreeNib({ id: "b", parentId: "a" }),
+          makeTreeNib({ id: "d", parentId: "b" }),
+          makeTreeNib({ id: "g", parentId: "d" }),
+        ],
+        want: ["0:a", "1:b", "2:d", "3:g"],
+      },
+      {
+        name: "cycle alongside an ordinary tree",
+        nibs: [
+          makeTreeNib({ id: "a", parentId: "b" }),
+          makeTreeNib({ id: "b", parentId: "a" }),
+          makeTreeNib({ id: "m1" }),
+          makeTreeNib({ id: "m2", parentId: "m1" }),
+        ],
+        want: ["0:a", "1:b", "0:m1", "1:m2"],
+      },
+      {
+        // Must-not-regress: an ordinary tree plus a root-level orphan is
+        // unaffected by cycle handling.
+        name: "ordinary tree with no cycle is unchanged",
+        nibs: [
+          makeTreeNib({ id: "m1" }),
+          makeTreeNib({ id: "m2", parentId: "m1" }),
+          makeTreeNib({ id: "m3", parentId: "m2" }),
+          makeTreeNib({ id: "z1" }),
+        ],
+        want: ["0:m1", "1:m2", "2:m3", "0:z1"],
+      },
+    ];
+
+    for (const c of cases) {
+      it(c.name, () => {
+        expect(shape(buildTree(c.nibs))).toEqual(c.want);
+      });
+    }
+
+    it("keeps a cycle visible through buildViewTree's grouping lenses", () => {
+      // The lenses classify the forest buildTree produces, so an erased cycle
+      // stays erased downstream too.
+      const nibs: TreeNib[] = [
+        makeTreeNib({ id: "a", type: "epic", parentId: "b" }),
+        makeTreeNib({ id: "b", type: "task", parentId: "a" }),
+      ];
+      const ids = collectIds(buildViewTree(nibs, "epics")).filter((id) => !isBucketId(id));
+      expect(ids.sort()).toEqual(["a", "b"]);
+    });
+  });
+
   it("preserves input order among siblings", () => {
     const nibs: TreeNib[] = [
       makeTreeNib({ id: "nibs-parent", title: "Parent" }),

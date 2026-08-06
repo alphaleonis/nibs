@@ -63,6 +63,15 @@ const (
 	// count so an agent can branch on it. See ErrorText and body.go.
 	ErrTextNotFound  = "TEXT_NOT_FOUND"
 	ErrTextAmbiguous = "TEXT_AMBIGUOUS"
+	// ErrUncategorized is the honest "this failure fits no class" code, mapping to
+	// the generic exit 1. It exists because every other constant here is a
+	// positive claim about what went wrong — VALIDATION_ERROR in particular
+	// asserts the CALLER's input was at fault — so a failure that supports no such
+	// claim had no code to report. Reach for it only when no class fits, never as
+	// a default: a caller branching on $? learns nothing from exit 1 beyond
+	// "stop". See graphQLResponseCode in cmd/errors.go for the case that needs
+	// it — a response whose several failures belong to different classes.
+	ErrUncategorized = "UNCATEGORIZED"
 )
 
 // Process exit codes. The CLI boundary maps every error's structured CODE to
@@ -90,8 +99,56 @@ func ExitCode(code string) int {
 		return ExitConflict
 	case ErrFileError, ErrNoNibsDir:
 		return ExitIO
+	case ErrUncategorized:
+		// Listed explicitly rather than left to the default so the switch
+		// enumerates the whole vocabulary: a deliberately uncategorized failure
+		// is distinguishable here from a string this function does not know.
+		return ExitError
 	default:
 		return ExitError
+	}
+}
+
+// GeneralCode returns the most general member of code's exit class — the code to
+// report when a failure's class is established but its kind is not. It is the
+// counterpart of the many-to-one ExitCode: every code sharing an exit status
+// generalizes to the same answer, and ExitCode(GeneralCode(c)) == ExitCode(c) —
+// an invariant TestGeneralCode and TestGeneralCodeCoversEveryDeclaredCode enforce,
+// including for a string this package never declared.
+//
+// It exists because a single error report can cover SEVERAL failures — the
+// GraphQL error response `nibs query` renders — and those failures can share an
+// exit status while differing in kind. HIERARCHY and VALIDATION_ERROR both exit
+// 2, so a response holding one of each supports that exit but neither specific
+// claim; the general member is the claim it does support. See
+// graphQLResponseCode in cmd/errors.go, which is what needs it.
+//
+// The general member of a class is the code whose meaning is the class's own, as
+// the exit-code table in cmd/prompt-full.tmpl states it: exit 2 reads "validation
+// error (bad input, hierarchy violation, text-not-found/ambiguous)" — that is
+// VALIDATION_ERROR's meaning with its specializations spelled out — while exits
+// 3, 4 and 5 each have one member naming the class outright and any others are
+// narrower (NO_BEANS_DIR is one kind of FILE_ERROR). A specialization must never
+// be the answer: reporting HIERARCHY for a mixed exit-2 response would assert an
+// illegal parent type about a failure that is not one.
+func GeneralCode(code string) string {
+	switch ExitCode(code) {
+	case ExitValidation:
+		return ErrValidation
+	case ExitNotFound:
+		return ErrNotFound
+	case ExitConflict:
+		return ErrConflict
+	case ExitIO:
+		return ErrFileError
+	case ExitError:
+		// Enumerated rather than left to the default, matching ExitCode: exit 1 is
+		// the class that makes no positive claim, so it is its own general member.
+		return ErrUncategorized
+	default:
+		// Unreachable while ExitCode returns only the Exit* constants. A new exit
+		// class reaches here, which TestGeneralCodeCoversEveryDeclaredCode catches.
+		return ErrUncategorized
 	}
 }
 
@@ -182,8 +239,22 @@ type errorBody struct {
 	AllowedParentTypes []string `json:"allowedParentTypes,omitempty"`
 	// CurrentEtag carries the server's current etag for a reconcilable CONFLICT so
 	// an agent can retry with it (the textbook "409 → retry with the server etag"
-	// reconcile). Omitted for every other error code, and for a CONFLICT with no
-	// reusable token (e.g. an ETagRequiredError, which has no comparison etag).
+	// reconcile). Present only when ONE token reconciles the whole failure, which
+	// leaves three omission cases:
+	//
+	//   - Every other error code.
+	//   - A CONFLICT with no reusable token at all (e.g. an ETagRequiredError,
+	//     which has no comparison etag).
+	//   - A CONFLICT the response cannot pin on a single mismatch — a batched
+	//     mutation in which several writes each lost a different race. Reusable
+	//     tokens exist here, but no ONE of them speaks for the response, and a
+	//     token that reconciles part of a batch is worse than none: an agent
+	//     retrying on it believes it reconciled the whole document. The
+	//     per-failure tokens are still in the message.
+	//
+	// So an absent currentEtag means "no single token reconciles this", never
+	// "this conflict is unreconcilable" — read the message before concluding a
+	// retry is impossible.
 	CurrentEtag string `json:"currentEtag,omitempty"`
 	// Occurrences carries the number of times the surgical replace's search text
 	// matched: 0 for TEXT_NOT_FOUND, N (>1) for TEXT_AMBIGUOUS. It is a pointer so
@@ -231,8 +302,10 @@ func ErrorHierarchy(message string, allowedParentTypes []string) error {
 // returns a reported CodedError coded ErrConflict. An agent following the
 // "409 → re-read the server etag → retry with it" reconcile pattern reads
 // currentEtag structurally rather than parsing it out of the message. A blank
-// currentEtag is omitted (a CONFLICT with no reusable token, e.g. a required
-// but missing etag). Like Error, the returned error satisfies
+// currentEtag is omitted — either the conflict has no reusable token (a required
+// but missing etag) or no single token speaks for it (several mismatches in one
+// batch); see errorBody.CurrentEtag for the full omission contract. Like Error,
+// the returned error satisfies
 // errors.Is(err, ErrAlreadyReported) so the boundary suppresses its duplicate
 // stderr line.
 func ErrorConflict(message, currentEtag string) error {

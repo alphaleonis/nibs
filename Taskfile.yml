@@ -29,31 +29,218 @@ tasks:
   go:codegen:
     desc: Regenerate the Go GraphQL server code (gqlgen)
     cmds:
+      # Expiry alarm for the directive guard below. That guard exists only
+      # because the pinned gqlgen (v0.17.84, and still v0.17.85) rebuilds
+      # resolver doc comments through go/ast's CommentGroup.Text(); v0.17.86
+      # iterates the comment list instead and preserves directives. Past that
+      # version the guard rejects a pattern that is legal again, and the notes it
+      # points at describe a bug that is gone. Nothing else here is
+      # version-aware, and Renovate's gomod manager is enabled for module
+      # dependencies (.github/renovate.json5 disables it only for the `golang`
+      # and `toolchain` depTypes), so that bump arrives as a pull request and no
+      # other check in this repo would notice the guard had gone stale. Failing
+      # rather than warning is the point: a warning scrolls past in a build log,
+      # while a failure means the bump cannot land green until the guard and its
+      # prose copies are retired with it. v0.17.85 does not trip this — it is
+      # still affected.
+      - |
+        if grep -qE 'github\.com/99designs/gqlgen v(0\.17\.(8[6-9]|9[0-9]|[1-9][0-9]{2,})|0\.(1[89]|[2-9][0-9]|[1-9][0-9]{2,})\.|[1-9][0-9]*\.)' go.mod; then
+          echo "" >&2
+          echo "error: go.mod is on gqlgen v0.17.86 or later, where the upstream fix landed —" >&2
+          echo "resolver doc-comment directives survive codegen again. Delete the directive" >&2
+          echo "guard below, the note at the top of internal/graph/resolver.go, and the" >&2
+          echo "CLAUDE.md paragraph that repeats it, then delete this alarm." >&2
+          exit 1
+        fi
+      # Refuse to run gqlgen while a comment directive sits on a resolver's doc
+      # comment. gqlgen rebuilds those comments through go/ast's
+      # CommentGroup.Text(), which discards directives and keeps the prose, so
+      # the directive vanishes and whatever it was doing silently stops. This is
+      # the last moment the build can see the mistake: the gates that matter —
+      # `task build`, `task test`, `task nibs` and both CI jobs — all run this
+      # task before any Go code compiles or any test runs, so afterwards the
+      # directive is gone from the file and no later gate can tell it was ever
+      # written. (Two documented paths skip it: `task test:race` declares no deps
+      # of its own, and a direct `scripts/go-test-capped.sh` run bypasses Task
+      # altogether. Neither is a gate anything merges on, and under `task test`
+      # the web:build dep has already run this task before test:race starts.)
+      # Resolver bodies are copied through as raw source, so the fix is always to
+      # move the directive inside the function.
+      #
+      # Column 0 is what makes this a doc-position test rather than a body one:
+      # gofmt indents every *comment* inside a function — directives included —
+      # so an unindented one is in doc or file position, both of which gqlgen
+      # destroys. Raw string literals are the exception, since gofmt leaves their
+      # contents byte-identical; a column-0 directive-shaped line inside one
+      # matches too. That is this check's one false-positive vector, and the
+      # message names it instead of asserting a diagnosis the pattern cannot
+      # support. Excluding it would take a Go parser to tell a comment from a
+      # string operand — disproportionate against indenting one line inside the
+      # literal. The pattern is the //<tool>:<directive> form of go/ast's
+      # isDirective rule, //[a-z0-9]+:[a-z0-9] — a space after // disqualifies a
+      # directive, which is why prose like `// TODO: x` does not match, and why
+      # isDirective's three other forms (`//line `, `//extern `, `//export `) are
+      # not matched either; none of them is plausible on a GraphQL resolver.
+      #
+      # Best-effort by design, in two directions. A machine without grep (Windows
+      # without Git Bash) makes the if-condition false and the check passes; so
+      # does a missing or unreadable file, which exits grep 2 while this `if`
+      # reads any non-zero as clean. The cost either way is a skipped check on
+      # that run, never a codegen that refuses to run — so renaming the resolver
+      # file, or changing gqlgen's resolver.layout, degrades this to a no-op
+      # rather than blocking the build. The glob covers every *.resolvers.go that
+      # layout: follow-schema generates (one per schema file; one today), so a
+      # second schema file extends the check without touching this. Task's
+      # embedded shell leaves a glob that matches nothing literal, so grep always
+      # gets a file operand and never falls through to reading stdin.
+      - |
+        if grep -nE '^//[a-z0-9]+:[a-z0-9]' internal/graph/*.resolvers.go; then
+          echo "" >&2
+          echo "error: the line(s) above match a Go comment directive at column 0 in a" >&2
+          echo "generated resolver file. gqlgen deletes a directive that sits on a resolver's" >&2
+          echo "DOC comment on every codegen, so it would disappear and stop taking effect." >&2
+          echo "Move each directive inside the resolver body, where gqlgen copies it through" >&2
+          echo "as raw source." >&2
+          echo "If the match is instead inside a raw string literal, indent that line — gofmt" >&2
+          echo "does not reindent raw-string contents, so this check cannot tell the two apart." >&2
+          echo "Full explanation: internal/graph/resolver.go (top of file)." >&2
+          exit 1
+        fi
       - go generate ./...
 
   web:codegen:
     desc: Regenerate the web GraphQL types (graphql-codegen client preset)
+    deps: [web:install]
     dir: web
     cmds:
-      # Self-heal a fresh checkout so `task codegen` works standalone (the
-      # normal build/test paths install via web:build first).
-      - '[ -x node_modules/.bin/graphql-codegen ] || npm ci'
       - npm run codegen
+
+  web:install:
+    desc: Install the web dependencies, but only when they are missing, stale, or broken
+    dir: web
+    # status: entries are ANDed — the install is skipped only when the tree was
+    # built from the lockfile we have now AND both health probes pass.
+    #
+    # node_modules/.installed-lock.json is a byte copy of the package-lock.json a
+    # completed, verified-healthy install was made from. Comparing against it
+    # answers "is this tree built from THIS lockfile?" rather than merely "is it
+    # intact?", and it answers it from evidence the install itself left behind.
+    # The stamp deliberately lives *inside* node_modules so it dies with the tree;
+    # a checksum cached outside it (Task's own sources: bookkeeping) survives
+    # `rm -rf node_modules` and can assert freshness about a tree that no longer
+    # exists. It also subsumes npm's own .package-lock.json marker, since it is
+    # written only after that install passed the health checks below.
+    #
+    # The health probes catch a tree npm left broken (nibs-wcx3): `npm ci` has
+    # been observed reporting success while leaving node_modules/.bin empty,
+    # which surfaces much later as `sh: 1: vite: not found` (exit 127).
+    #
+    # `cmp` has no Go-native fallback in Task's embedded shell, so on a machine
+    # without it (notably Windows without Git Bash) this probe fails rather than
+    # compares. That direction is the safe one: a failed probe means "not up to
+    # date", so the install runs. The cost is a redundant reinstall every build,
+    # never a stale tree.
+    status:
+      - cmp -s package-lock.json node_modules/.installed-lock.json
+      - test -f node_modules/.bin/vite
+      - test -f node_modules/.bin/graphql-codegen
+    # DO NOT run two `task` invocations that both install at the same time.
+    #
+    # There is deliberately no lock here. An earlier revision serialized installs
+    # with a `mkdir` lock directory, on the usual assumption that `mkdir` fails
+    # atomically when the directory exists. That assumption does not hold on the
+    # toolchains this project runs on:
+    #
+    #   * `/usr/bin/mkdir` on this machine is uutils coreutils 0.8.0 (the Ubuntu
+    #     26.04 default). Measured on ext4: 49 of 300 concurrent pairs had BOTH
+    #     processes exit 0, against 0 of 300 for the raw mkdir(2) syscall in the
+    #     same directory. The kernel is fine; the binary is not.
+    #   * [Unverified] On Windows, Task's Go-native `mkdir` reportedly prints
+    #     "file exists" and still exits 0, so the wait loop never engages at all.
+    #
+    # A lock that silently fails to exclude is worse than none: it invites exactly
+    # the false confidence that let a concurrent install corrupt a verification run
+    # while this fix was being developed. What actually keeps the gate reliable is
+    # the staleness stamp and the health probes above — they make installs rare
+    # (only when package-lock.json changes) and self-healing when npm leaves a
+    # broken tree. Concurrency is handled by not doing it. See nibs-wcx3.
+    #
+    # "Not doing it" includes not retrying a canceled run too soon. Signaling
+    # Task's PID alone does not stop it: the current command finishes, every
+    # remaining command still runs, and Task exits 0; signaling the process
+    # group does abort it (Task v3.50.0 on Linux/WSL; [Unverified] on Windows).
+    # A run canceled by subprocess.terminate() or child_process.kill(), which
+    # signal the PID by definition, can therefore still be inside `npm ci` here,
+    # and an immediate retry becomes the second concurrent install. [Unverified]
+    # Whether a CI step timeout or an agent harness signals the PID or the group
+    # is untested either way. Confirm the orphan has exited first — CLAUDE.md's
+    # Testing section carries the per-platform check. See nibs-uur9.
+    cmds:
+      - cmd: |
+          # Snapshot the lockfile BEFORE installing, and stamp from the snapshot
+          # afterwards. `npm ci` reads package-lock.json at its start, so stamping
+          # from the file as it stands at the *end* would certify this tree as
+          # matching whatever the lockfile happens to say by then. A change landing
+          # mid-install (a branch switch, a rebase, a hand-run `npm install`) would
+          # be recorded as installed when it was not, and every later run would
+          # report "up to date" against dependencies it never installed. Stamping
+          # from the snapshot fails the other way: the stamp mismatches, and the
+          # next run reinstalls.
+          cp package-lock.json .installed-lock.tmp
+          # Delete node_modules ourselves before installing. `npm ci` discards it
+          # wholesale anyway, so nothing is lost. The failure being mitigated is
+          # `ENOTEMPTY: directory not empty, rmdir .../node_modules/...` raised from
+          # inside npm's own delete; nibs-wcx3 records that it occurs with no
+          # concurrency at all, just less often. [Unverified] The mechanism — npm's
+          # parallel delete racing itself, which one sequential pass cannot do — is
+          # conjecture rather than an established root cause; a third party creating
+          # entries during the walk (file watcher, editor, indexer) would raise the
+          # same error against a sequential delete too. Scope item 3 of nibs-wcx3 is
+          # closed as "trigger removed", not "cause identified".
+          rm -rf node_modules
+          # --loglevel=error silences npm's warn-level transitive-dep deprecation
+          # chatter (e.g. node-domexception, pulled 6 levels deep under
+          # @graphql-codegen/cli) so `task build`/`task test` output stays warning-free.
+          npm ci --no-audit --no-fund --loglevel=error
+          # Probe the same set status: declares healthy. Checking vite alone lets a
+          # tree missing graphql-codegen exit this task clean and die later in
+          # `npm run build`'s prebuild hook with `graphql-codegen: not found`
+          # (exit 127) — the exact confusing failure this task exists to prevent.
+          if [ ! -f node_modules/.bin/vite ] || [ ! -f node_modules/.bin/graphql-codegen ]; then
+            echo "task: npm ci left node_modules/.bin unpopulated; repairing with npm rebuild" >&2
+            npm rebuild --loglevel=error
+          fi
+          if [ ! -f node_modules/.bin/vite ] || [ ! -f node_modules/.bin/graphql-codegen ]; then
+            rm -f .installed-lock.tmp
+            echo "task: node_modules/.bin is still unpopulated after npm rebuild — the web toolchain is unusable" >&2
+            echo "task: retry from a clean tree with: rm -rf web/node_modules && task web:install" >&2
+            echo "task: if that fails too, investigate by hand with no other 'task' run active" >&2
+            exit 1
+          fi
+          # Stamp last, and only here. Every earlier exit leaves the tree unstamped,
+          # so a failed or still-broken install can never be mistaken for one built
+          # from this lockfile.
+          cp .installed-lock.tmp node_modules/.installed-lock.json
+          rm -f .installed-lock.tmp
 
   web:build:
     desc: Build the web UI (Svelte + Vite)
-    # Only the Go gqlgen step is a build-order dep here (it threads `go generate`
-    # into `task build`). The web GraphQL types are regenerated by `npm run
-    # build` itself via the `prebuild` npm hook (→ `npm run codegen`), after
-    # `npm ci` has installed the codegen toolchain — so no separate web:codegen
-    # dep is needed and node_modules is guaranteed present when it runs.
-    deps: [go:codegen]
+    # web:install guarantees a complete node_modules before anything is run out
+    # of it. go:codegen threads `go generate` into `task build`, but it is a
+    # command rather than a second dep because Task runs deps concurrently, and
+    # `go generate ./...` walks the whole repo — web/node_modules included — and
+    # was observed failing with
+    # `pattern ./...: open web/node_modules/@graphql-tools/wrap: no such file or directory`
+    # when run as a parallel dep alongside web:install's delete (nibs-wcx3).
+    # Sequencing it after the install removes the overlap.
+    #
+    # The web GraphQL types are regenerated by `npm run build` itself via the
+    # `prebuild` npm hook (→ `npm run codegen`), which finds the codegen
+    # toolchain already installed by web:install — so no web:codegen dep either.
+    deps: [web:install]
     dir: web
     cmds:
-      # --loglevel=error silences npm's warn-level transitive-dep deprecation
-      # chatter (e.g. node-domexception, pulled 6 levels deep under
-      # @graphql-codegen/cli) so `task build`/`task test` output stays warning-free.
-      - npm ci --no-audit --no-fund --loglevel=error
+      - task: go:codegen
       - npm run build
 
   web:check:
@@ -62,6 +249,7 @@ tasks:
     # GraphQL types itself via the `precheck` npm hook (→ `npm run codegen`)
     # before svelte-check runs, so the generated src/lib/gql/ types are always
     # fresh. Wired into the `test` gate (svelte-check is clean; see nibs-pg6i).
+    deps: [web:install]
     dir: web
     cmds:
       - npm run check
@@ -102,7 +290,7 @@ tasks:
       # clone-under-lock guard, the store-level freeze guard) are only meaningful
       # under the detector; a plain `go test` degrades them to trivial checks.
       - task: test:race
-      - cd web && npm run check
+      - task: web:check
       - cd web && npx vitest run --reporter=agent
 
   test:race:
@@ -176,11 +364,95 @@ tasks:
 
   lint:
     desc: Run golangci-lint
+    # The linter runs through `mise exec`, not as a bare `golangci-lint`, so the
+    # version mise.toml pins is the one that lints regardless of what else a
+    # machine has first on PATH. A bare invocation resolves by PATH order, and a
+    # different golangci-lint release disagrees about this codebase — that drift
+    # is what mise.toml's header records. mise is the one tool contributors
+    # install by hand (see CLAUDE.md), so routing through it rules out no other
+    # provisioning path, and it keeps the pinned version in mise.toml alone
+    # rather than restating it here.
+    #
+    # web/dist is the second prerequisite: embed.go embeds it, so without it the
+    # package does not load and golangci-lint reports a type-check error about a
+    # missing embed pattern rather than anything to do with the code. That only
+    # shows up on a cold lint cache — a warm one answers "0 issues" from results
+    # it computed when web/dist was still there — so a passing local run is no
+    # evidence the checkout is actually lintable. The check is, and it is cheap.
+    #
+    # Deliberately a precondition rather than `deps: [web:build]`, which is how
+    # the other tasks needing web/dist get it: linting should stay fast and not
+    # pull in a web build, so this one reports the gap instead of closing it.
+    # The mise, mise.toml and web/dist checks are shell builtins in Task's
+    # embedded interpreter; the trust check is the one extra process on the
+    # success path.
+    #
+    # Trust is checked separately because `command -v mise` passes on an
+    # untrusted checkout — mise is installed and on PATH, it just refuses to read
+    # mise.toml. A terminal would get mise's interactive trust prompt here; a CI
+    # step, a pre-commit hook or a coding agent gets only the refusal, which is
+    # the case this covers. Redirecting mise's output keeps the check from
+    # prompting, so both paths get the guided message instead.
+    #
+    # The 2>&1 is load-bearing, not noise: mise draws the trust prompt on
+    # stderr, so >/dev/null alone still prompts on a terminal. Keep both.
+    #
+    # The check is "mise can load its config", not "the config is trusted" — a
+    # malformed mise.toml fails it too, which is why the message names
+    # mise config ls as the fallback. It is also not specific to this checkout:
+    # `mise config ls` exits 0 on the user's global config alone, so an absent
+    # mise.toml would report all-clear while `mise exec` resolves golangci-lint
+    # from PATH and the pin goes unapplied. The preceding `test -f` closes that,
+    # and stays its own precondition so each message names one cause — folded
+    # into the trust check with `&&`, a missing file would be answered by a
+    # message whose first advice is `mise trust`, and mise config ls then exits
+    # 0 with nothing to show.
+    preconditions:
+      - sh: command -v mise >/dev/null
+        msg: |
+          mise is not on PATH.
+
+          golangci-lint is pinned in mise.toml and this task runs it through mise,
+          so the pinned version is used whatever else provides a golangci-lint.
+          Install mise, then run `mise trust` and `mise install` in this checkout:
+            https://mise.jdx.dev/getting-started.html
+      - sh: test -f mise.toml
+        msg: |
+          mise.toml is missing from the repo root, so nothing pins golangci-lint
+          for this checkout. `mise exec` would fall back to whatever golangci-lint
+          PATH provides — a different release disagrees about this codebase, and
+          CI would reach a different verdict. Restore mise.toml from git.
+      - sh: mise config ls >/dev/null 2>&1
+        msg: |
+          mise cannot load this checkout's mise.toml.
+
+          Almost always this means the checkout is not trusted — mise refuses an
+          untrusted config, and this task runs golangci-lint through mise. This
+          check runs non-interactively, so it reports the refusal rather than
+          showing mise's trust prompt — which a CI step, a pre-commit hook or a
+          coding agent would never see either. Trust this checkout once:
+            mise trust
+
+          If that prints "No untrusted config files found", the config is trusted
+          but unreadable for another reason — a malformed mise.toml fails this
+          check too. This check discards mise's own error; run `mise config ls`
+          to see it.
+
+      - sh: test -d web/dist
+        msg: |
+          web/dist is missing, and embed.go embeds it — the Go packages will not
+          load for the linter. Build the web assets first: task web:build
     cmds:
-      - golangci-lint run ./...
+      - mise exec -- golangci-lint run ./...
 
   licenses:
     desc: Collect third-party dependency licenses
+    # Through `mise exec` for the same reason as lint above: go-licenses is
+    # pinned in mise.toml, and mise is the one tool contributors install by
+    # hand, so this resolves the pinned version whether or not mise's shims are
+    # on PATH. It also removes the `go install …@latest` this task used to
+    # assume — the version that writes third_party_licenses/ into every
+    # published archive is now the one the release job runs (nibs-ag7i).
     cmds:
-      - go-licenses save ./... --save_path=./third_party_licenses --force --ignore github.com/alphaleonis/nibs
-      - go-licenses report ./... --ignore github.com/alphaleonis/nibs > ./third_party_licenses/NOTICES.csv 2>/dev/null
+      - mise exec -- go-licenses save ./... --save_path=./third_party_licenses --force --ignore github.com/alphaleonis/nibs
+      - mise exec -- go-licenses report ./... --ignore github.com/alphaleonis/nibs > ./third_party_licenses/NOTICES.csv 2>/dev/null

@@ -1,10 +1,17 @@
 name: CI
 
 on:
+  # develop carries unreleased work and is where feature branches land, so CI
+  # runs there too. Without it the first CI run on any change is the merge to
+  # main that releases it, and release.yml gates on that same run (nibs-9146).
   push:
-    branches: [main]
+    branches: [main, develop]
+  # `develop` is here as well because Renovate targets it (see
+  # .github/renovate.json5). Its `renovate/*` branches are not covered by the
+  # push trigger above, so with `main` alone a toolchain pull request would
+  # reach the merge button without CI having run on it once.
   pull_request:
-    branches: [main]
+    branches: [main, develop]
 
 permissions:
   contents: read
@@ -16,15 +23,55 @@ jobs:
         os: [ubuntu-latest, windows-latest]
     runs-on: ${{ matrix.os }}
     steps:
-      - uses: actions/checkout@v6
-      - uses: actions/setup-go@v6
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+      # Every tool this job runs — go, node, task — is installed by mise from
+      # mise.toml, so the versions are read rather than restated. The previous
+      # shape hand-copied each one into a setup-go `go-version`, a setup-node
+      # `node-version` and a `go install .../task@` step; nine such copies
+      # existed across this file and release.yml, and nothing cross-checked
+      # them, so a bump that missed one left CI on the old pin silently
+      # (nibs-23f0). mise.toml is now the only place any of these versions
+      # appear.
+      #
+      # On Windows mise works through shims rather than shell activation, which
+      # is what `add_shims_to_path` (default true) provides — so `go`, `node`
+      # and `task` resolve on both matrix legs without a $GITHUB_PATH step.
+      #
+      # github_token is not optional in practice: mise resolves these tools from
+      # GitHub releases, and the action warns that unauthenticated runs can hit
+      # the API rate limit. The token is the job's own read-only one.
+      - uses: jdx/mise-action@7e36c90d9ab29c415a2384db3006f3ec8a8cc654 # v4.2.4
         with:
-          go-version: stable
-      - uses: actions/setup-node@v6
+          github_token: ${{ secrets.GITHUB_TOKEN }}
+      # mise-action caches the tools it installs, not Go's module and build
+      # caches — setup-go used to supply those, so without this the change
+      # would trade the version drift for a cold Go cache on every run. Paths
+      # come from `go env` because GOMODCACHE and GOCACHE differ per OS and
+      # this job is a two-OS matrix.
+      - name: Locate Go caches
+        id: go-cache
+        shell: bash
+        run: |
+          echo "mod=$(go env GOMODCACHE)" >> "$GITHUB_OUTPUT"
+          echo "build=$(go env GOCACHE)" >> "$GITHUB_OUTPUT"
+      - uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
         with:
-          node-version: "22"
-      - run: go generate ./...
-      - run: cd web && npm ci && npm run build
+          path: |
+            ${{ steps.go-cache.outputs.mod }}
+            ${{ steps.go-cache.outputs.build }}
+          key: go-${{ matrix.os }}-${{ hashFiles('go.sum') }}
+          restore-keys: go-${{ matrix.os }}-
+      # The web build runs through Task so the web:install gate executes on
+      # every CI run instead of being bypassed by a hand-written `npm ci`
+      # (nibs-9146). `task web:build` is web:install → go:codegen (which is
+      # `go generate ./...`) → `npm run build`, so it replaces both steps.
+      # A runner is always fresh, so this is the cold-install path only.
+      - run: task web:build
+      # The Go steps stay direct instead of going through `task test`, which is
+      # not equivalent to this job: it runs -race on every OS (see below), runs
+      # web:check (the lint job owns that), and shells out to
+      # scripts/go-test-capped.sh, which needs bash and degrades to an uncapped
+      # run wherever there is no user systemd manager.
       - run: go build ./...
       - run: go test -count=1 ./...
       # Run the concurrency-critical packages under the race detector so a
@@ -38,14 +85,24 @@ jobs:
   lint:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v6
-      - uses: actions/setup-go@v6
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+      # As in the test job: go, node, task and golangci-lint all come from
+      # mise.toml. golangci-lint matters most here — its analyzers key off the
+      # Go version they run under, so a floating toolchain can move the lint
+      # baseline on untouched code.
+      - uses: jdx/mise-action@7e36c90d9ab29c415a2384db3006f3ec8a8cc654 # v4.2.4
         with:
-          go-version: stable
-      - uses: actions/setup-node@v6
-        with:
-          node-version: "22"
-      - run: go generate ./...
-      - run: cd web && npm ci && npm run build
-      - run: cd web && npm run check
-      - uses: golangci/golangci-lint-action@v9
+          github_token: ${{ secrets.GITHUB_TOKEN }}
+      # Through Task for the same reason as the test job (nibs-9146). web:build
+      # is not only for coverage here: embed.go embeds web/dist, so the package
+      # does not load for golangci-lint without it. web:install is a dep of
+      # web:check too, but skips there — web:build's stamp is still fresh.
+      - run: task web:build
+      - run: task web:check
+      # `task lint` rather than golangci-lint-action, which needed its own
+      # `version:` input and was the last site restating a pinned version. The
+      # task runs the linter through `mise exec`, so this job and a contributor
+      # running `task lint` locally reach the same binary by the same path —
+      # the agreement the pin exists to produce, rather than two mechanisms
+      # that have to be kept saying the same thing.
+      - run: task lint

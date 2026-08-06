@@ -179,7 +179,7 @@ describe("TreeTableRow", () => {
       dimmed: false,
     });
 
-    const stateCell = container.querySelector("[data-testid='nib-state']") as HTMLElement;
+    const stateCell = container.querySelector("[data-testid='nib-status']") as HTMLElement;
     expect(stateCell.textContent).toContain("deferred");
     expect(stateCell.querySelector("[data-testid='status-icon']")).toBeInTheDocument();
   });
@@ -541,7 +541,7 @@ describe("TreeTableRow", () => {
       dimmed: false,
     });
 
-    const stateCell = container.querySelector("[data-testid='nib-state']") as HTMLElement;
+    const stateCell = container.querySelector("[data-testid='nib-status']") as HTMLElement;
     expect(stateCell).toBeInTheDocument();
     expect(stateCell.textContent).toContain("in-progress");
 
@@ -569,7 +569,7 @@ describe("TreeTableRow", () => {
       dimmed: false,
     });
 
-    const estimateBadge = container.querySelector("[data-testid='nib-effort']");
+    const estimateBadge = container.querySelector("[data-testid='nib-estimate']");
     // Should have empty content or no estimate text
     if (estimateBadge) {
       expect(estimateBadge.textContent?.trim()).toBe("");
@@ -656,7 +656,7 @@ describe("TreeTableRow", () => {
   });
 
   it("hides ID cell when visibleColumns excludes 'id'", () => {
-    const visibleColumns: ColumnKey[] = ["title", "state", "type", "effort", "tags"];
+    const visibleColumns: ColumnKey[] = ["title", "status", "type", "estimate", "tags"];
     const { container } = renderRow({
       nib: makeTreeTableNib(),
       depth: 0,
@@ -669,8 +669,8 @@ describe("TreeTableRow", () => {
     expect(container.querySelector("[data-testid='nib-title']")).toBeInTheDocument();
   });
 
-  it("hides effort and tags cells when visibleColumns excludes them", () => {
-    const visibleColumns: ColumnKey[] = ["id", "title", "state", "type"];
+  it("hides estimate and tags cells when visibleColumns excludes them", () => {
+    const visibleColumns: ColumnKey[] = ["id", "title", "status", "type"];
     const { container } = renderRow({
       nib: makeTreeTableNib({ tags: ["auth"], estimate: "m" }),
       depth: 0,
@@ -679,7 +679,7 @@ describe("TreeTableRow", () => {
       visibleColumns,
     });
 
-    expect(container.querySelector("[data-testid='nib-effort']")).not.toBeInTheDocument();
+    expect(container.querySelector("[data-testid='nib-estimate']")).not.toBeInTheDocument();
     expect(container.querySelector("[data-testid='nib-tags']")).not.toBeInTheDocument();
     // ID and title should still be there
     expect(container.querySelector("[data-testid='nib-id']")).toBeInTheDocument();
@@ -687,7 +687,7 @@ describe("TreeTableRow", () => {
   });
 
   it("hides title cell when visibleColumns excludes 'title'", () => {
-    const visibleColumns: ColumnKey[] = ["id", "state"];
+    const visibleColumns: ColumnKey[] = ["id", "status"];
     const { container } = renderRow({
       nib: makeTreeTableNib({ title: "My Task" }),
       depth: 0,
@@ -698,10 +698,10 @@ describe("TreeTableRow", () => {
 
     expect(container.querySelector("[data-testid='nib-title']")).not.toBeInTheDocument();
     expect(container.querySelector("[data-testid='nib-id']")).toBeInTheDocument();
-    expect(container.querySelector("[data-testid='nib-state']")).toBeInTheDocument();
+    expect(container.querySelector("[data-testid='nib-status']")).toBeInTheDocument();
   });
 
-  it("hides state cell when visibleColumns excludes 'state'", () => {
+  it("hides status cell when visibleColumns excludes 'status'", () => {
     const visibleColumns: ColumnKey[] = ["id", "title"];
     const { container } = renderRow({
       nib: makeTreeTableNib({ status: "in-progress" }),
@@ -711,14 +711,14 @@ describe("TreeTableRow", () => {
       visibleColumns,
     });
 
-    expect(container.querySelector("[data-testid='nib-state']")).not.toBeInTheDocument();
+    expect(container.querySelector("[data-testid='nib-status']")).not.toBeInTheDocument();
     expect(container.querySelector("[data-testid='nib-id']")).toBeInTheDocument();
     expect(container.querySelector("[data-testid='nib-title']")).toBeInTheDocument();
   });
 
   it("hides parent cell when visibleColumns excludes 'parent'", () => {
     const parentNib = makeTreeTableNib({ id: "nibs-p001", title: "Parent", type: "epic" });
-    const visibleColumns: ColumnKey[] = ["id", "title", "state"];
+    const visibleColumns: ColumnKey[] = ["id", "title", "status"];
     const { container } = renderRow({
       nib: makeTreeTableNib({ parentId: "nibs-p001" }),
       depth: 1,

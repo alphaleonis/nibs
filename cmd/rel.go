@@ -38,7 +38,6 @@ var (
 	relTag        []string
 	relEstimate   []string
 	relNoEstimate []string
-	relActive     bool
 	relOpen       bool
 	relAll        bool
 )
@@ -64,6 +63,11 @@ const (
 	relNeighboursActive      relKind = "neighbours-active"
 )
 
+// relDefaultKind is the relation an omitted --rel queries. It is one constant
+// because the flag's usage string, the long help, and the cheat sheet all state
+// it, and none of them may say something the parse does not do.
+const relDefaultKind = relNeighbours
+
 // directRels lists the 7 atomic direct relationships in the canonical
 // order used by --rel neighbours expansion.
 var directRels = []relKind{
@@ -87,15 +91,37 @@ var (
 	errRelCycle              = errors.New("dependency cycle")
 )
 
+// relFetchErrCode maps a traversal failure onto the CLI's structured error
+// code. A refused id-valued filter keeps the class ApplyFilter assigned it (see
+// filterTargetErrCode), a dependency cycle is a validation failure, and
+// everything else falls back to the io/internal class.
+//
+// The filter classes are not reachable from `nibs rel` as it stands:
+// relFilterFlags.buildNibFilter populates only status/type/priority/tags/
+// estimate, and none of those name a single nib. They are classified here
+// because the traversal routes every graph.ApplyFilter call site through this
+// function — bfsTraverse's included — so a rel flag that later carries an id
+// reports a mistyped id as not-found (exit 3) rather than as a file error,
+// matching what `nibs list --parent` already does.
+func relFetchErrCode(err error) string {
+	if code, ok := filterTargetErrCode(err); ok {
+		return code
+	}
+	if errors.Is(err, errRelCycle) {
+		return output.ErrValidation
+	}
+	return output.ErrFileError
+}
+
 // relSpec describes per-rel capabilities used for flag validation and
 // expansion. Meta rels have non-nil ExpandsTo and delegate to their
 // atomic constituents.
 type relSpec struct {
-	IsSingular      bool      // parent / ancestors chain — filters are not applicable
-	AllowsDepth     bool      // transitive rels only
-	AllowsOrder     bool      // topo-sortable rels
-	ExpandsTo       []relKind // non-nil for meta rels (neighbours, neighbours-active)
-	NeighbourActive bool      // neighbours-active adds --active on top of neighbours expansion
+	IsSingular    bool      // parent / ancestors chain — filters are not applicable
+	AllowsDepth   bool      // transitive rels only
+	AllowsOrder   bool      // topo-sortable rels
+	ExpandsTo     []relKind // non-nil for meta rels (neighbours, neighbours-active)
+	NeighbourOpen bool      // neighbours-active adds --open on top of neighbours expansion
 }
 
 // relTable describes the capabilities of every rel.
@@ -114,17 +140,17 @@ var relTable = map[relKind]relSpec{
 	relMentionsOutTransitive: {AllowsDepth: true},
 	relMentionsInTransitive:  {AllowsDepth: true},
 	relNeighbours:            {ExpandsTo: directRels},
-	relNeighboursActive:      {ExpandsTo: directRels, NeighbourActive: true},
+	relNeighboursActive:      {ExpandsTo: directRels, NeighbourOpen: true},
 }
 
 // parseRels parses the repeated --rel values, splitting comma-separated
 // entries inside a single value. Returns the validated list (meta rels are
 // left intact; expandRels resolves them to their atomic constituents).
 //
-// When --rel is empty, default to `neighbours`.
+// When --rel is empty, default to relDefaultKind.
 func parseRels(raw []string) ([]relKind, error) {
 	if len(raw) == 0 {
-		raw = []string{string(relNeighbours)}
+		raw = []string{string(relDefaultKind)}
 	}
 	var out []relKind
 	seen := map[relKind]bool{}
@@ -165,14 +191,14 @@ func allRelNames() []string {
 // is deduped across rels.
 // Returns:
 //   - fetched: the ordered, deduped list of atomic rels to traverse
-//   - applyActive: true when neighbours-active is present — the caller
-//     must OR --active into the filter for the expanded rels.
-func expandRels(in []relKind) (fetched []relKind, applyActive bool) {
+//   - applyOpen: true when neighbours-active is present — the caller
+//     must OR --open into the filter for the expanded rels.
+func expandRels(in []relKind) (fetched []relKind, applyOpen bool) {
 	seen := map[relKind]bool{}
 	for _, r := range in {
 		spec := relTable[r]
-		if spec.NeighbourActive {
-			applyActive = true
+		if spec.NeighbourOpen {
+			applyOpen = true
 		}
 		if len(spec.ExpandsTo) > 0 {
 			for _, sub := range spec.ExpandsTo {
@@ -190,7 +216,7 @@ func expandRels(in []relKind) (fetched []relKind, applyActive bool) {
 		seen[r] = true
 		fetched = append(fetched, r)
 	}
-	return fetched, applyActive
+	return fetched, applyOpen
 }
 
 // relFilterFlags is the single source of truth for which CLI filter flags
@@ -214,8 +240,7 @@ type relFilterFlags struct {
 	Tag        []string
 	Estimate   []string
 	NoEstimate []string
-	Active     bool // --active / --open: shorthand for -s open (a constraint)
-	Open       bool // --open (alias of --active); tracked separately for reset/labels
+	Open       bool // --open: shorthand for -s open (a constraint)
 	All        bool // --all: widen to every status; NOT a constraint (see isEmpty)
 }
 
@@ -233,7 +258,6 @@ func readRelFilterFlags() relFilterFlags {
 		Tag:        relTag,
 		Estimate:   relEstimate,
 		NoEstimate: relNoEstimate,
-		Active:     relActive,
 		Open:       relOpen,
 		All:        relAll,
 	}
@@ -242,10 +266,10 @@ func readRelFilterFlags() relFilterFlags {
 // isEmpty reports whether the caller set no *constraining* filter flag. It
 // gates the filters-on-singular validation: passing a real filter to a singular
 // rel (parent/ancestors) is an error, but the open-by-default status filter and
-// --all (a widener, not a constraint) must not trip it. --active/--open are
-// shorthand for -s open, so they DO count as constraints.
+// --all (a widener, not a constraint) must not trip it. --open is shorthand
+// for -s open, so it DOES count as a constraint.
 func (f relFilterFlags) isEmpty() bool {
-	return !f.Active && !f.Open &&
+	return !f.Open &&
 		len(f.Status) == 0 && len(f.NoStatus) == 0 &&
 		len(f.Type) == 0 && len(f.NoType) == 0 &&
 		len(f.Priority) == 0 && len(f.NoPriority) == 0 &&
@@ -259,9 +283,6 @@ func (f relFilterFlags) activeFilterNames() []string {
 	var names []string
 	// --all is intentionally omitted: it widens rather than constrains, so it
 	// never triggers the filters-on-singular error (see isEmpty).
-	if f.Active {
-		names = append(names, "--active")
-	}
 	if f.Open {
 		names = append(names, "--open")
 	}
@@ -297,21 +318,21 @@ func (f relFilterFlags) activeFilterNames() []string {
 
 // buildNibFilter translates the struct into a *model.NibFilter, resolving the
 // status filter through the shared helper (group expansion + open-by-default +
-// precedence). forceActive is set by the neighbours-active meta rel and folds
+// precedence). forceOpen is set by the neighbours-active meta rel and folds
 // the open group into the include set (== -s open) for the expanded rels.
 //
-// openDefaultApplied reports whether the open-by-default archive exclusion was
-// applied (no explicit -s/--open/--active/--all/neighbours-active), so the
-// caller knows when to disclose the hidden completed/scrapped count.
+// openDefaultApplied reports whether the open-by-default closed-status
+// exclusion was applied (no explicit -s/--open/--all/neighbours-active), so the
+// caller knows when to disclose the hidden closed-status count.
 //
 // Returns nil when the resulting filter constrains nothing (only --all, no
 // other flag) so singular/nil-filter callers keep the resolver's fast path.
-func (f relFilterFlags) buildNibFilter(cfg *config.Config, forceActive bool) (*model.NibFilter, bool, error) {
+func (f relFilterFlags) buildNibFilter(cfg *config.Config, forceOpen bool) (*model.NibFilter, bool, error) {
 	includeStatus, excludeStatus, openDefaultApplied, err := resolveStatusFilter(cfg, statusFilterInput{
 		Status:   f.Status,
 		NoStatus: f.NoStatus,
 		All:      f.All,
-		Open:     f.Active || f.Open || forceActive,
+		Open:     f.Open || forceOpen,
 	})
 	if err != nil {
 		return nil, false, err
@@ -405,7 +426,13 @@ func fetchRel(ctx context.Context, resolver *graph.Resolver, b *nib.Nib, r relKi
 }
 
 // fetchSiblings returns siblings of b (same parent, self excluded). If b has
-// no parent, returns the set of other root nibs (Parent == "").
+// no parent, returns the set of other root nibs.
+//
+// Root-ness is decided for the candidates by the same call that decides it for
+// b — the parent resolver, which reports no parent both when the field is empty
+// and when the link names no nib. Testing the raw field instead would make the
+// relation asymmetric: a nib whose parent link is dangling would take the root
+// branch and see every root, while no root ever saw it back.
 func fetchSiblings(ctx context.Context, resolver *graph.Resolver, b *nib.Nib, filter *model.NibFilter) ([]*nib.Nib, error) {
 	parent, err := resolver.Nib().Parent(ctx, b)
 	if err != nil {
@@ -419,13 +446,16 @@ func fetchSiblings(ctx context.Context, resolver *graph.Resolver, b *nib.Nib, fi
 		}
 		candidates = sibs
 	} else {
-		// Root siblings: all nibs with no parent, minus self.
 		all, err := resolver.Query().Nibs(ctx, filter, nil)
 		if err != nil {
 			return nil, err
 		}
 		for _, n := range all {
-			if n.Parent == "" {
+			candidateParent, err := resolver.Nib().Parent(ctx, n)
+			if err != nil {
+				return nil, err
+			}
+			if candidateParent == nil {
 				candidates = append(candidates, n)
 			}
 		}
@@ -443,26 +473,19 @@ func fetchSiblings(ctx context.Context, resolver *graph.Resolver, b *nib.Nib, fi
 // bfsChainAncestors walks parent links up to `depth` steps and returns
 // the chain in encounter order (closest ancestor first). depth < 0 means
 // "until root".
+//
+// The step is the parent resolver, which decides three things for this walk
+// (see graph.ParentStep): a link naming no nib reports no parent, so the chain
+// ends at that rung exactly as it does for the hierarchy filters; the nibs it
+// yields are detached snapshots, safe to hand to the projection layer; and a
+// resolver error aborts the walk rather than truncating the chain silently.
+// The visited set is per-call and seeded with b.ID, so b is never reported as
+// its own ancestor and a cycle stops when it comes back around.
 func bfsChainAncestors(ctx context.Context, resolver *graph.Resolver, b *nib.Nib, depth int) ([]*nib.Nib, error) {
-	var out []*nib.Nib
-	seen := map[string]bool{b.ID: true}
-	cur := b
-	for steps := 0; depth < 0 || steps < depth; steps++ {
-		p, err := resolver.Nib().Parent(ctx, cur)
-		if err != nil {
-			return nil, err
-		}
-		if p == nil {
-			break
-		}
-		if seen[p.ID] {
-			break // cycle-safe: stop if loop
-		}
-		seen[p.ID] = true
-		out = append(out, p)
-		cur = p
+	step := func(cur *nib.Nib) (*nib.Nib, error) {
+		return resolver.Nib().Parent(ctx, cur)
 	}
-	return out, nil
+	return graph.WalkParentChain(b, step, map[string]bool{b.ID: true}, depth)
 }
 
 // bfsDescendants performs BFS over children edges from b up to depth.
@@ -515,7 +538,7 @@ func bfsTraverse(ctx context.Context, resolver *graph.Resolver, start *nib.Nib, 
 		frontier = next
 		level++
 	}
-	return graph.ApplyFilter(ctx, reached, filter, resolver.Reader, resolver.Blocking), nil
+	return graph.ApplyFilter(ctx, reached, filter, resolver.Reader, resolver.Blocking)
 }
 
 // topoSortNibs reorders `candidates` using `blocked_by` edges among the set.
@@ -566,18 +589,18 @@ func topoSortNibs(candidates []*nib.Nib) ([]*nib.Nib, error) {
 	return out, nil
 }
 
-// relCountHiddenClosed returns how many related nibs the open-by-default archive
-// exclusion removed from the displayed union. It rebuilds the filter with --all
-// semantics (dropping the archive exclusion, keeping every other constraint),
-// re-runs the traversal, and subtracts the displayed union size. Both counts are
-// pre-limit, so the result is the full hidden set independent of --limit. Only
-// call this when the open default was applied; otherwise nothing was hidden.
+// relCountHiddenClosed returns how many related nibs the open-by-default
+// closed-status exclusion removed from the displayed union. It rebuilds the
+// filter with --all semantics (dropping that exclusion, keeping every other
+// constraint), re-runs the traversal, and subtracts the displayed union size.
+// Both counts are pre-limit, so the result is the full hidden set independent
+// of --limit. Only call this when the open default was applied; otherwise
+// nothing was hidden.
 func relCountHiddenClosed(ctx context.Context, resolver *graph.Resolver, b *nib.Nib, fetched []relKind, flags relFilterFlags, cfg *config.Config, depth, displayedCount int) (int, error) {
 	widenedFlags := flags
 	widenedFlags.All = true
-	widenedFlags.Active = false
 	widenedFlags.Open = false
-	// forceActive is false: neighbours-active implies -s open, which suppresses
+	// forceOpen is false: neighbours-active implies -s open, which suppresses
 	// the open default, so this path is never reached for it.
 	widenedFilter, _, err := widenedFlags.buildNibFilter(cfg, false)
 	if err != nil {
@@ -633,7 +656,12 @@ through the shared field-set engine — the related set is rendered as the same
   mentions-out, mentions-in, parent, children, siblings, blocking, blocked-by
   ancestors, descendants, blockers-transitive, blocks-transitive,
   mentions-out-transitive, mentions-in-transitive
-  neighbours (= all 7 direct rels), neighbours-active (= neighbours with --active)
+  neighbours (= all 7 direct rels), neighbours-active (= neighbours with --open)
+
+--rel is optional. Omitting it applies the default neighbours, so a bare
+'nibs rel <id>' returns every directly related nib at once. That set includes
+siblings, and a root nib's siblings are every other root — name the relation
+explicitly whenever the question is about one direction.
 
 When several rels are requested the related nibs are unioned into one deduped
 list (first-encountered order across rels), then projected.
@@ -654,21 +682,26 @@ Output modes:
   --json                    The {"nibs":[…],"count":N,"truncated":<bool>} envelope
                             — byte-identical to 'nibs list --json'. Carries
                             "hidden_closed":N when the open default suppressed that
-                            many completed/scrapped related nibs.
+                            many closed related nibs.
   --limit N                 Project only the first N related nibs and set
                             "truncated":true in the envelope. N<=0 is unlimited.
 
 Filters (--status, --type, --priority, --estimate, --tag, their --no-... pairs,
---active) apply only to rels where they make sense — passing an inapplicable
+--open) apply only to rels where they make sense — passing an inapplicable
 filter is a validation error (parent is singular; ancestors is a chain).
 
 Status filtering (open by default):
-  With no status flag, only open related nibs are returned (completed and
-  scrapped are hidden). -s/--status and --no-status accept the status groups
-  open, closed, and parked anywhere a concrete status is accepted. Any explicit
-  -s overrides the open default. --open (alias --active) is shorthand for
-  -s open; --all disables the open default. Singular rels (parent) still bypass
-  the filter, so a completed parent is always shown.
+  With no status flag, only open related nibs are returned (the closed
+  statuses are hidden). -s/--status and --no-status accept the status groups
+  open and closed anywhere a concrete status is accepted. Any explicit
+  -s overrides the open default. --open is shorthand for -s open; --all
+  disables the open default. Singular rels (parent) still bypass the filter,
+  so a completed parent is always shown.
+
+  Note for --rel blocked-by: released blockers (completed/scrapped) are dropped
+  by the relation itself and no status flag brings them back. A deferred blocker
+  is not released, but it is closed, so the open default hides it — pass --all
+  to see it.
 
 For transitive rels (descendants, blockers-transitive, blocks-transitive,
 mentions-*-transitive), filtering is match-only: the walk follows the full
@@ -703,7 +736,7 @@ filter-on-singular validation error does not fire here.`,
 			return reportErr(relJSON, output.ErrValidation, err)
 		}
 
-		fetched, forceActive := expandRels(rels)
+		fetched, forceOpen := expandRels(rels)
 
 		depthVal, depthSet, err := parseDepth(relDepth)
 		if err != nil {
@@ -757,7 +790,7 @@ filter-on-singular validation error does not fire here.`,
 		}
 
 		app := getApp(cmd)
-		filter, openDefaultApplied, err := filterFlags.buildNibFilter(app.Config(), forceActive)
+		filter, openDefaultApplied, err := filterFlags.buildNibFilter(app.Config(), forceOpen)
 		if err != nil {
 			return reportErr(relJSON, output.ErrValidation, err)
 		}
@@ -798,21 +831,13 @@ filter-on-singular validation error does not fire here.`,
 
 			got, ferr := fetchRel(ctx, resolver, b, fetchKind, perRelFilter, depthVal)
 			if ferr != nil {
-				code := output.ErrFileError
-				if errors.Is(ferr, errRelCycle) {
-					code = output.ErrValidation
-				}
-				return reportErr(relJSON, code,
+				return reportErr(relJSON, relFetchErrCode(ferr),
 					fmt.Errorf("fetching %s: %w", fetchKind, ferr))
 			}
 			if relOrder == "topo" && relTable[fetchKind].AllowsOrder {
 				ordered, oerr := topoSortNibs(got)
 				if oerr != nil {
-					code := output.ErrFileError
-					if errors.Is(oerr, errRelCycle) {
-						code = output.ErrValidation
-					}
-					return reportErr(relJSON, code, oerr)
+					return reportErr(relJSON, relFetchErrCode(oerr), oerr)
 				}
 				got = ordered
 			}
@@ -825,21 +850,17 @@ filter-on-singular validation error does not fire here.`,
 			}
 		}
 
-		// hidden_closed: when the open default silently dropped completed/scrapped
+		// hidden_closed: when the open default silently dropped closed
 		// related nibs, disclose how many matched every OTHER filter so the caller
 		// can see the related set is partial. Re-run the same traversal with the
-		// archive exclusion dropped (every other filter identical) and subtract the
-		// displayed union size. Both counts are pre-limit, so the result is the full
-		// hidden set independent of --limit.
+		// closed-status exclusion dropped (every other filter identical) and
+		// subtract the displayed union size. Both counts are pre-limit, so the
+		// result is the full hidden set independent of --limit.
 		hiddenClosed := 0
 		if openDefaultApplied {
 			hiddenClosed, err = relCountHiddenClosed(ctx, resolver, b, fetched, filterFlags, app.Config(), depthVal, len(results))
 			if err != nil {
-				code := output.ErrFileError
-				if errors.Is(err, errRelCycle) {
-					code = output.ErrValidation
-				}
-				return reportErr(relJSON, code, err)
+				return reportErr(relJSON, relFetchErrCode(err), err)
 			}
 		}
 
@@ -866,7 +887,8 @@ filter-on-singular validation error does not fire here.`,
 }
 
 func init() {
-	relCmd.Flags().StringArrayVar(&relKinds, "rel", nil, "Relationship to query (repeatable; comma-separated OK)")
+	relCmd.Flags().StringArrayVar(&relKinds, "rel", nil,
+		fmt.Sprintf("Relationship to query (repeatable; comma-separated OK) (default %s)", relDefaultKind))
 	relCmd.Flags().StringVar(&relDepth, "depth", "", "Depth for transitive rels: N (positive integer) or 'all' (default 1)")
 	relCmd.Flags().StringVar(&relOrder, "order", "", "Order the results (supports: topo)")
 	relCmd.Flags().BoolVar(&relFlat, "flat", false, "Deprecated no-op: the related set is always a single deduped list")
@@ -885,8 +907,7 @@ func init() {
 	relCmd.Flags().StringArrayVar(&relTag, "tag", nil, "Filter by tag (repeatable)")
 	relCmd.Flags().StringArrayVarP(&relEstimate, "estimate", "e", nil, "Filter by estimate (repeatable)")
 	relCmd.Flags().StringArrayVar(&relNoEstimate, "no-estimate", nil, "Exclude by estimate (repeatable)")
-	relCmd.Flags().BoolVar(&relActive, "active", false, "Show only open related nibs — shorthand for -s open")
-	relCmd.Flags().BoolVar(&relOpen, "open", false, "Alias for --active (show only open related nibs)")
+	relCmd.Flags().BoolVar(&relOpen, "open", false, "Show only open related nibs — shorthand for -s open")
 	relCmd.Flags().BoolVar(&relAll, "all", false, "Include every status (disable the open-by-default filter)")
 	rootCmd.AddCommand(relCmd)
 }

@@ -413,6 +413,21 @@ func (c *Core) handleChanges(changes map[string]fsnotify.Op) {
 
 	var events []NibEvent
 
+	// Whether this batch changed the set of stored ids in a way that can re-point
+	// a link held by a nib the batch never touched, which widens the
+	// canonicalization pass below from this batch's own nibs to the whole store.
+	// Two shapes do that, and only those two:
+	//
+	//   - An id ARRIVING that was not in the store before. A short-form link
+	//     written before the nib it names was unresolvable at load and correctly
+	//     left verbatim; only the target's arrival can resolve it.
+	//   - A bare-token id LEAVING while its prefixed twin remains. Resolution
+	//     tries an exact map key before the prefix-prepended form, so a link
+	//     stored with the bare spelling starts answering for the twin instead.
+	//
+	// A batch that only edits existing nibs pays the cheap touched-only pass.
+	var scanAll bool
+
 	for path, op := range changes {
 		filename := filepath.Base(path)
 		// Intentionally ignore the parse error: an unparseable filename yields
@@ -422,15 +437,21 @@ func (c *Core) handleChanges(changes map[string]fsnotify.Op) {
 		// reporting watcher-level errors that today's callers don't expect.
 		id, _ := nib.ParseFilename(filename, c.configPrefix())
 
-		// Handle removes/renames (file is gone from this path)
-		if op&fsnotify.Remove != 0 || op&fsnotify.Rename != 0 {
+		// Handle removes/renames, but only where the file really is gone from this
+		// path. A removal bit on a path that still holds a file is not a removal at
+		// all, and must fall through to the create/write handling below.
+		//
+		// This is the common case on Windows, not a corner: every nib write commits
+		// through atomicWriteFile, i.e. a rename over the existing file, and
+		// ReadDirectoryChangesW reports that replacing rename on the TARGET path as
+		// REMOVE followed by CREATE. Both halves land in one debounce window and
+		// watchLoop ORs them into a single op, so an ordinary external edit arrives
+		// here as Remove|Create on a file that exists. Swallowing the entry on the
+		// removal branch dropped the edit entirely, leaving the TUI and web UI stale
+		// until a full reload (nibs-oakc).
+		if (op&fsnotify.Remove != 0 || op&fsnotify.Rename != 0) && !c.fileExists(path) {
 			stored, exists := c.nibs[id]
 			if !exists {
-				continue
-			}
-
-			// Check if the file actually exists (rename might be followed by create)
-			if c.fileExists(path) {
 				continue
 			}
 
@@ -525,6 +546,26 @@ func (c *Core) handleChanges(changes map[string]fsnotify.Op) {
 			// and it exists at neither the archive nor the main location now).
 			delete(c.nibs, id)
 
+			// Evaluated per removal against the store as it stands, so a batch
+			// deleting BOTH spellings of one id can set this from an intermediate
+			// state that the final map no longer justifies (map iteration order
+			// decides). Harmless in the direction that matters: the sweep re-resolves
+			// against the post-batch map, so a spurious widening costs one pass and
+			// rewrites nothing.
+			//
+			// The opposite direction — reading false here because the twin is not in
+			// the map YET, while the final map does hold it — cannot happen, and it
+			// is worth saying why because the reason lives in another branch: the
+			// only key INSERTION in this loop is the create/write branch below, which
+			// sets scanAll itself whenever the id was not already stored. A twin
+			// appearing later in the batch is therefore covered by the arrival shape,
+			// whatever the iteration order. Any future branch that installs a new key
+			// (an unarchive discovering an unstored nib, a re-keying rename) must
+			// preserve that bookkeeping or this gate silently stops firing.
+			if c.removalCanRebindLinksLocked(id) {
+				scanAll = true
+			}
+
 			// Drop from reverse-mention index.
 			c.mentionIdx.Remove(id)
 
@@ -580,6 +621,7 @@ func (c *Core) handleChanges(changes map[string]fsnotify.Op) {
 					NibID: newNib.ID,
 				})
 			} else {
+				scanAll = true
 				events = append(events, NibEvent{
 					Type:  EventCreated,
 					Nib:   newNib,
@@ -588,6 +630,23 @@ func (c *Core) handleChanges(changes map[string]fsnotify.Op) {
 			}
 		}
 	}
+
+	// Resolve short-form link ids against the post-batch store (see
+	// canonicalize.go). This runs AFTER the whole batch, not per file as it is
+	// loaded: two files arriving together are visited in map order, so a
+	// dependent can be read before the target it names is in the store.
+	//
+	// The index maps each changed nib to every event carrying its payload, so a
+	// nib canonicalized as part of its own arrival has that event's payload
+	// swapped for the canonicalized pointer instead of collecting a second,
+	// contradictory event. It doubles as the candidate set for the narrow pass.
+	touched := make(map[string][]int, len(events))
+	for i, e := range events {
+		if e.Nib != nil {
+			touched[e.NibID] = append(touched[e.NibID], i)
+		}
+	}
+	events = c.canonicalizeLinksAfterBatchLocked(events, touched, scanAll)
 
 	// Snapshot every payload while the lock is still held: each event carries a
 	// Clone, not the live c.nibs pointer, so a subscriber's payload fields cannot

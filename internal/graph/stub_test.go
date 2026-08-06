@@ -27,11 +27,33 @@ type stubReader struct {
 	// mentionsIn, when populated, is returned by FindMentionedBy keyed on the
 	// target nib ID.
 	mentionsIn map[string][]*nib.Nib
+	// searchOut, when populated, is returned by Search keyed on the query
+	// string. Tests that need queryResolver.Nibs to take its search branch
+	// (and therefore its includeAncestors step) seed this directly.
+	searchOut map[string][]*nib.Nib
+	// searchErr, when set, is what Search reports for every query — the
+	// index failure Core.Search surfaces when Bleve cannot answer.
+	searchErr error
+	// searchCalls counts Search invocations. Core.Search is the expensive read
+	// on these paths (a write lock for lazy init, a Bleve query, then a full
+	// scan of the store for id matches), so a test can pin how many of them one
+	// resolver call costs.
+	searchCalls int
 }
 
+// Get mirrors nibcore.Core.Get: exact id first, then — if a prefix is
+// configured and the input does not already carry it — the prefix-prepended
+// form. Resolving here rather than doing a bare map lookup is what lets tests
+// hand the filters a short-form stored link (`parent: e1`) directly, without
+// the loader pass that would have canonicalized it first.
 func (s *stubReader) Get(id string) (*nib.Nib, error) {
 	if b, ok := s.nibs[id]; ok {
 		return b, nil
+	}
+	if s.prefix != "" && !strings.HasPrefix(id, s.prefix) {
+		if b, ok := s.nibs[s.prefix+id]; ok {
+			return b, nil
+		}
 	}
 	return nil, nib.ErrNotFound
 }
@@ -66,7 +88,11 @@ func (s *stubReader) All() []*nib.Nib {
 }
 
 func (s *stubReader) Search(query string) ([]*nib.Nib, error) {
-	return nil, nil
+	s.searchCalls++
+	if s.searchErr != nil {
+		return nil, s.searchErr
+	}
+	return s.searchOut[query], nil
 }
 
 // NormalizeID resolves an id to its full form. It mirrors

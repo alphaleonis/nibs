@@ -45,14 +45,19 @@ Installs to `~/.local/bin` by default.
 
 ### From Source
 
-Requires Node.js and [mise](https://mise.jdx.dev/) (mise installs Go, Task, and golangci-lint automatically from `mise.toml`):
+Requires [mise](https://mise.jdx.dev/), which installs the pinned Go, Node, Task, and golangci-lint from `mise.toml`:
 
 ```bash
 git clone https://github.com/alphaleonis/nibs.git
 cd nibs
-mise install      # installs pinned Go, Task, golangci-lint
-task build
+mise trust                # fresh clone: let mise read this checkout's mise.toml
+mise install              # installs pinned Go, Node, Task, golangci-lint
+mise exec -- task build   # or put mise's tools on PATH first — see below
 ```
+
+`mise trust` is needed once per fresh clone: mise refuses to read a `mise.toml` it has not been told to trust. A terminal offers to trust it interactively, but a non-interactive run — CI, a pre-commit hook, a coding agent — only sees the refusal.
+
+`mise install` downloads the tools but does not put them on your PATH. Either add its shims directory to PATH — `~/.local/share/mise/shims`, or `%LOCALAPPDATA%\mise\shims` ([Unverified] on Windows) — or activate mise in your shell profile. `mise activate <shell>` only prints the activation script, so eval it: `eval "$(mise activate zsh)"`; see [mise's docs](https://mise.jdx.dev/getting-started.html) for other shells. Without one of those, `go`, `task` and `node` fall back to whatever is installed system-wide instead of the pinned versions. Any pinned tool can also be run as a one-off without touching PATH: `mise exec -- go version`. For the linter, use `task lint` — it already runs through mise and checks its prerequisites first. `task lint` fetches the pinned golangci-lint over the network on first use if `mise install` has not already cached it, so run `mise install` ahead of time in network-restricted environments.
 
 Prebuilt binaries are also available on the [Releases](https://github.com/alphaleonis/nibs/releases) page.
 
@@ -128,7 +133,7 @@ Or, if your agent framework supports startup hooks, wire `nibs prime` to run at 
 | `nibs set <id>` | Update a nib's metadata and links, or clear a field |
 | `nibs body <id>` | Edit a nib's Markdown body (set, append, or replace sections) |
 | `nibs mv <id>` | Reposition a nib among its siblings or reparent it |
-| `nibs close <id>` | Mark a nib completed with a summary |
+| `nibs close <id>` | Close a nib with a summary; `--as <closed status>` picks the close reason (default `completed`). Closing an existing nib goes through `close` — `nibs set -s <closed status>` is refused |
 | `nibs context` | Show project status summary with progress |
 | `nibs plan <id>` | View an ordered plan of a parent nib's children |
 | `nibs query` | Run a GraphQL query or mutation |
@@ -137,7 +142,7 @@ Or, if your agent framework supports startup hooks, wire `nibs prime` to run at 
 | `nibs web` | Start the web UI server |
 | `nibs tui` | Open the terminal UI |
 | `nibs prime` | Output the agent integration prompt (slim default; pass `--full` for the complete reference) |
-| `nibs archive` | Move completed/scrapped nibs to the archive |
+| `nibs archive` | Move closed nibs to the archive |
 | `nibs upgrade` | Update nibs to the latest release (checksum-verified, with rollback); `--check` to only check |
 
 Run `nibs <command> --help` for full usage details.
@@ -147,7 +152,7 @@ Run `nibs <command> --help` for full usage details.
 Each nib has:
 
 - **Type**: milestone, epic, feature, task, bug, or research
-- **Status**: draft, todo, in-progress, deferred, completed, or scrapped
+- **Status**: open (in-progress, todo, draft) or closed (deferred, completed, scrapped). Open is a workflow position, closed a close reason. A `deferred` nib is closed but still blocks whatever depends on it — the work is coming back, so the dependency is unmet.
 - **Priority** (optional): critical, high, normal, or low
 - **Estimate** (optional): s, m, l, or xl (t-shirt sizes)
 - **Tags**: freeform labels for categorization

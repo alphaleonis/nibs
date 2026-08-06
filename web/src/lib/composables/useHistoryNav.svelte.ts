@@ -46,8 +46,24 @@ export function createHistoryNav(opts: {
   const getLocation = opts.getLocation ?? (() => window.location);
   const isBlocked = opts.isBlocked ?? (() => false);
 
-  const nibUrl = (id: string) => `?nib=${encodeURIComponent(id)}`;
-  const closeUrl = () => getLocation().pathname || "/";
+  // Build the selection URLs by merging into the CURRENT search params rather
+  // than from scratch, so a sibling param (notably `?q=`, owned by useQueryUrl)
+  // survives a nib navigation / panel close. Only the `nib` key is touched.
+  // With no other params present this reproduces the historical forms exactly:
+  // `nibUrl` → `?nib=<id>` (relative, no path prefix) and `closeUrl` → the
+  // pathname — so existing history entries and tests are unaffected.
+  const nibUrl = (id: string) => {
+    const params = new URLSearchParams(getLocation().search);
+    params.set("nib", id);
+    return `?${params.toString()}`;
+  };
+  const closeUrl = () => {
+    const params = new URLSearchParams(getLocation().search);
+    params.delete("nib");
+    const qs = params.toString();
+    const path = getLocation().pathname || "/";
+    return qs ? `${path}?${qs}` : path;
+  };
 
   function navigateToNib(id: string) {
     // A synthetic grouping-bucket id ("No X") can route here via view.open on a

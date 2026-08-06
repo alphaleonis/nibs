@@ -109,7 +109,7 @@ func TestCodedArgsValidatorsAreWired(t *testing.T) {
 		cmd     *cobra.Command
 		bad     []string // a violating arg count
 		good    []string // a valid arg count (must be accepted)
-		jsonVar *bool     // the command's own --json flag var, or nil if it has none
+		jsonVar *bool    // the command's own --json flag var, or nil if it has none
 	}{
 		// 9 NoArgs (4 --json-bearing, 5 without)
 		{"version", versionCmd, []string{"x"}, nil, nil},

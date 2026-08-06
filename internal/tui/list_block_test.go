@@ -3,8 +3,9 @@ package tui
 import (
 	"testing"
 
-	tea "github.com/charmbracelet/bubbletea"
 	"github.com/alphaleonis/nibs/internal/nib"
+	"github.com/alphaleonis/nibs/internal/ui"
+	tea "github.com/charmbracelet/bubbletea"
 )
 
 // blockTestNibs returns a flat set of root-level nibs A, B, C, D for block-move
@@ -202,8 +203,8 @@ func TestCtrlUp_Block_PreservesSelectionAndFocus(t *testing.T) {
 	}
 }
 
-// Behavior 15: block at top of sibling set + Ctrl-Up → silent no-op.
-func TestCtrlUp_BlockAtTop_SilentNoOp(t *testing.T) {
+// Behavior 15: block at top of sibling set + Ctrl-Up → no move, footer says so.
+func TestCtrlUp_BlockAtTop_ReportsAtTop(t *testing.T) {
 	app, stub := setupTestApp(t, blockTestNibs())
 	// Mark A,B (top two).
 	if !focusOn(app, "A") {
@@ -217,13 +218,13 @@ func TestCtrlUp_BlockAtTop_SilentNoOp(t *testing.T) {
 	if got := len(stub.ReorderCalls); got != 0 {
 		t.Errorf("expected 0 reorder calls (no-op), got %d", got)
 	}
-	if app.list.statusMessage != "" {
-		t.Errorf("expected empty status (silent), got %q", app.list.statusMessage)
+	if got := app.list.statusMessage; got != reorderReasonAtTop {
+		t.Errorf("expected status %q, got %q", reorderReasonAtTop, got)
 	}
 }
 
-// Behavior 16: block at bottom + Ctrl-Down → silent no-op.
-func TestCtrlDown_BlockAtBottom_SilentNoOp(t *testing.T) {
+// Behavior 16: block at bottom + Ctrl-Down → no move, footer says so.
+func TestCtrlDown_BlockAtBottom_ReportsAtBottom(t *testing.T) {
 	app, stub := setupTestApp(t, blockTestNibs())
 	// Mark C,D (bottom two).
 	if !focusOn(app, "C") {
@@ -237,13 +238,13 @@ func TestCtrlDown_BlockAtBottom_SilentNoOp(t *testing.T) {
 	if got := len(stub.ReorderCalls); got != 0 {
 		t.Errorf("expected 0 reorder calls (no-op), got %d", got)
 	}
-	if app.list.statusMessage != "" {
-		t.Errorf("expected empty status (silent), got %q", app.list.statusMessage)
+	if got := app.list.statusMessage; got != reorderReasonAtBottom {
+		t.Errorf("expected status %q, got %q", reorderReasonAtBottom, got)
 	}
 }
 
-// Behavior 17: 2 marked with a gap, Ctrl-Up → silent no-op.
-func TestCtrlUp_MarkedWithGap_SilentNoOp(t *testing.T) {
+// Behavior 17: 2 marked with a gap, Ctrl-Up → no move, and the footer says why.
+func TestCtrlUp_MarkedWithGap_ReportsReason(t *testing.T) {
 	app, stub := setupTestApp(t, blockTestNibs())
 	// Mark A and C (gap at B).
 	if !focusOn(app, "A") {
@@ -258,13 +259,13 @@ func TestCtrlUp_MarkedWithGap_SilentNoOp(t *testing.T) {
 	if got := len(stub.ReorderCalls); got != 0 {
 		t.Errorf("expected 0 reorder calls for non-contiguous selection, got %d", got)
 	}
-	if app.list.statusMessage != "" {
-		t.Errorf("expected empty status (silent), got %q", app.list.statusMessage)
+	if got := app.list.statusMessage; got != reorderReasonNotContiguous {
+		t.Errorf("expected status %q, got %q", reorderReasonNotContiguous, got)
 	}
 }
 
-// Behavior 18: multi-parent marked, Ctrl-Up → silent no-op.
-func TestCtrlUp_MultiParent_SilentNoOp(t *testing.T) {
+// Behavior 18: multi-parent marked, Ctrl-Up → no move, and the footer says why.
+func TestCtrlUp_MultiParent_ReportsReason(t *testing.T) {
 	// Hierarchy: P1 -> [X1, X2]; P2 -> [Y1, Y2]
 	nibs := []*nib.Nib{
 		{ID: "P1", Title: "P1", Type: "epic", Status: "todo", Order: "1"},
@@ -290,6 +291,9 @@ func TestCtrlUp_MultiParent_SilentNoOp(t *testing.T) {
 
 	if got := len(stub.ReorderCalls); got != 0 {
 		t.Errorf("expected 0 reorder calls for multi-parent selection, got %d", got)
+	}
+	if got := app.list.statusMessage; got != reorderReasonDifferentParents {
+		t.Errorf("expected status %q, got %q", reorderReasonDifferentParents, got)
 	}
 }
 
@@ -324,5 +328,161 @@ func TestCtrlUp_ParentAndDescendantMarked_MovesParentOnly(t *testing.T) {
 	// C's prev root sibling is B.
 	if call.BeforeID == nil || *call.BeforeID != "B" {
 		t.Errorf("expected beforeID=B, got %v", call.BeforeID)
+	}
+}
+
+// danglingParentNibs returns root-level nibs where G carries a parent link
+// naming a nib that does not exist. The tree therefore shows G at root level,
+// and reordering must treat it as a root sibling.
+func danglingParentNibs() []*nib.Nib {
+	return []*nib.Nib{
+		{ID: "A", Title: "A", Type: "task", Status: "todo", Order: "1"},
+		{ID: "G", Title: "G", Type: "task", Status: "todo", Order: "2", Parent: "ghost"},
+		{ID: "C", Title: "C", Type: "task", Status: "todo", Order: "3"},
+	}
+}
+
+// assertDanglingRootShape fails unless the loaded tree really is three roots
+// with G still carrying its unresolvable parent link. Without this the reorder
+// assertions could pass on a fixture where G is trivially parentless.
+func assertDanglingRootShape(t *testing.T, app *App) {
+	t.Helper()
+	if got := len(app.list.tree); got != 3 {
+		t.Fatalf("expected 3 root nodes, got %d", got)
+	}
+	node := ui.FindNode(app.list.tree, "G")
+	if node == nil {
+		t.Fatal("G not present in tree")
+	}
+	if node.Nib.Parent != "ghost" {
+		t.Fatalf("expected G to keep parent %q, got %q", "ghost", node.Nib.Parent)
+	}
+	if ui.FindNode(app.list.tree, "ghost") != nil {
+		t.Fatal("expected G's parent to be absent from the tree")
+	}
+}
+
+// Behavior 21: a refusal is reported, and does not outlive the next successful
+// move.
+//
+// Only the first half discriminates this change. The clearing is the generic
+// per-keypress reset every status message already gets, so that assertion holds
+// even with the reorder success path gutted — it is here to pin the end-to-end
+// sequence a user actually sees, not as a guard on the success path.
+func TestCtrlUp_AfterRefusal_SuccessfulMoveClearsStatus(t *testing.T) {
+	app, stub := setupTestApp(t, blockTestNibs())
+
+	// Refuse first: A is already at the top.
+	if !focusOn(app, "A") {
+		t.Fatal("could not focus A")
+	}
+	sendKey(app, tea.KeyMsg{Type: tea.KeyCtrlUp})
+	if app.list.statusMessage != reorderReasonAtTop {
+		t.Fatalf("expected the refusal to be reported, got %q", app.list.statusMessage)
+	}
+
+	// The very next keypress moves A the other way, with no navigation between.
+	sendKey(app, tea.KeyMsg{Type: tea.KeyCtrlDown})
+
+	if got := len(stub.ReorderCalls); got != 1 {
+		t.Fatalf("expected 1 reorder call, got %d", got)
+	}
+	if app.list.statusMessage != "" {
+		t.Errorf("expected the stale refusal to be cleared, got %q", app.list.statusMessage)
+	}
+}
+
+// Behavior 24: a refusal is colored as a warning, a success is not. The kind
+// rides alongside the message, so this fails if a writer sets one without the
+// other — which is how a refusal would silently render in the success green.
+func TestReorderRefusal_IsStyledAsAWarning(t *testing.T) {
+	app, _ := setupTestApp(t, blockTestNibs())
+
+	if !focusOn(app, "A") {
+		t.Fatal("could not focus A")
+	}
+	sendKey(app, tea.KeyMsg{Type: tea.KeyCtrlUp})
+	if app.list.statusMessage != reorderReasonAtTop {
+		t.Fatalf("premise failed: expected the refusal to be reported, got %q", app.list.statusMessage)
+	}
+	if app.list.statusKind != statusWarn {
+		t.Errorf("refusal statusKind = %v, want statusWarn — it would render in the success color", app.list.statusKind)
+	}
+
+	// A successful move must not inherit the warning styling.
+	sendKey(app, tea.KeyMsg{Type: tea.KeyCtrlDown})
+	if app.list.statusKind != statusOK {
+		t.Errorf("statusKind after a successful move = %v, want statusOK", app.list.statusKind)
+	}
+}
+
+// Behavior 20: Ctrl-Up with nothing in the list → no move, footer says so.
+func TestCtrlUp_EmptyList_ReportsNothingToMove(t *testing.T) {
+	app, stub := setupTestApp(t, nil)
+
+	sendKey(app, tea.KeyMsg{Type: tea.KeyCtrlUp})
+
+	if got := len(stub.ReorderCalls); got != 0 {
+		t.Errorf("expected 0 reorder calls for an empty list, got %d", got)
+	}
+	if got := app.list.statusMessage; got != reorderReasonNothingSelected {
+		t.Errorf("expected status %q, got %q", reorderReasonNothingSelected, got)
+	}
+}
+
+// Behavior 22: a nib whose parent link names no nib sits at root level,
+// so Ctrl-Up moves it among the root siblings.
+func TestCtrlUp_DanglingParent_MovesAmongRootSiblings(t *testing.T) {
+	app, stub := setupTestApp(t, danglingParentNibs())
+	assertDanglingRootShape(t, app)
+
+	if !focusOn(app, "G") {
+		t.Fatal("could not focus G")
+	}
+
+	sendKey(app, tea.KeyMsg{Type: tea.KeyCtrlUp})
+
+	if got := len(stub.ReorderCalls); got != 1 {
+		t.Fatalf("expected 1 reorder call, got %d", got)
+	}
+	call := stub.ReorderCalls[0]
+	if call.ID != "G" {
+		t.Errorf("expected ID=G, got %q", call.ID)
+	}
+	if call.BeforeID == nil || *call.BeforeID != "A" {
+		t.Errorf("expected beforeID=A, got %v", call.BeforeID)
+	}
+}
+
+// Behavior 23: a dangling-parent nib and a genuine root are siblings on screen,
+// so marking both moves them as one block.
+func TestCtrlUp_DanglingParentWithRoot_MovesAsBlock(t *testing.T) {
+	app, stub := setupTestApp(t, danglingParentNibs())
+	assertDanglingRootShape(t, app)
+
+	if !focusOn(app, "G") {
+		t.Fatal("could not focus G")
+	}
+	sendKey(app, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{' '}}) // mark G, cursor→C
+	sendKey(app, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{' '}}) // mark C
+	if !app.list.selectedNibs["G"] || !app.list.selectedNibs["C"] {
+		t.Fatalf("expected G,C marked: %v", app.list.selectedNibs)
+	}
+
+	sendKey(app, tea.KeyMsg{Type: tea.KeyCtrlUp})
+
+	if got := len(stub.ReorderCalls); got != 1 {
+		t.Fatalf("expected exactly 1 backend reorder call, got %d", got)
+	}
+	call := stub.ReorderCalls[0]
+	// Block = [G, C]; prev sibling A moves past the block to after C.
+	if call.ID != "A" {
+		t.Errorf("expected displacedID=A, got %q", call.ID)
+	}
+	if call.AfterID == nil || *call.AfterID != "C" {
+		t.Errorf("expected afterID=C, got %v", call.AfterID)
+	}
+	if call.BeforeID != nil {
+		t.Errorf("expected nil beforeID, got %v", *call.BeforeID)
 	}
 }

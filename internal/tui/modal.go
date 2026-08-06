@@ -3,16 +3,16 @@ package tui
 import (
 	"strings"
 
-	"github.com/charmbracelet/lipgloss"
 	"github.com/alphaleonis/nibs/internal/ui"
+	"github.com/charmbracelet/lipgloss"
 )
 
 // pickerModalConfig holds configuration for rendering a picker modal
 type pickerModalConfig struct {
-	Title       string // e.g., "Select Status"
-	NibTitle   string // the nib's title
-	NibID      string // the nib's ID
-	ListContent string // the rendered list
+	Title       string      // e.g., "Select Status"
+	NibTitle    string      // the nib's title
+	NibID       string      // the nib's ID
+	ListContent string      // the rendered list
 	Description string      // optional description shown below list
 	ExtraHelp   []helpEntry // additional help entries shown before esc/cancel
 	Width       int         // screen width

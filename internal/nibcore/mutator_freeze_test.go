@@ -50,7 +50,11 @@ import (
 func TestCoreMutators_FreezeGuard(t *testing.T) {
 	for _, tt := range freezeGuardCases() {
 		t.Run(tt.name, func(t *testing.T) {
-			c, dir := setupTestCore(t)
+			newCore := tt.newCore
+			if newCore == nil {
+				newCore = setupTestCore
+			}
+			c, dir := newCore(t)
 			tt.setup(t, c, dir)
 
 			snaps := snapshotPublishedPointers(c)
@@ -71,6 +75,10 @@ func TestCoreMutators_FreezeGuard(t *testing.T) {
 // exercised by a subtest.
 type freezeGuardCase struct {
 	name string
+	// newCore builds the Core under guard. Defaults to setupTestCore; a case
+	// needs its own only when the default's configuration cannot express the
+	// state it guards (short-form link ids require a configured id prefix).
+	newCore func(t *testing.T) (*Core, string)
 	// setup arranges already-published nibs and any pre-state (e.g. archiving a
 	// nib, enabling the watcher). It runs BEFORE the pointers are snapshotted.
 	setup func(t *testing.T, c *Core, dir string)
@@ -160,6 +168,36 @@ func freezeGuardCases() []freezeGuardCase {
 			mutate: func(t *testing.T, c *Core, _ string) {
 				if err := c.Delete("drop"); err != nil {
 					t.Fatalf("Delete: %v", err)
+				}
+			},
+		},
+		{
+			name:   "Delete-unmasks-prefixed-twin", // Re-points a link on a BYSTANDER nib: copy-on-write.
+			covers: []string{"Delete"},
+			// Deleting a bare-token nib whose prefixed twin is still stored re-resolves
+			// the links that named the bare spelling, and the nib holding such a link
+			// has been published for a while — Parent is a non-Path field, so the
+			// rewrite must install a fresh pointer rather than edit the one an off-lock
+			// reader may still hold. The default core configures no id prefix, so the
+			// bare/prefixed pair cannot exist there.
+			newCore: mustLoadPrefixedCore,
+			setup: func(t *testing.T, c *Core, dir string) {
+				writeLinkNibFile(t, dir, "e1", "todo", "")
+				writeLinkNibFile(t, dir, "nibs-e1", "todo", "")
+				writeLinkNibFile(t, dir, "nibs-t1", "todo", "parent: e1\n")
+				if err := c.Load(); err != nil {
+					t.Fatalf("Load: %v", err)
+				}
+				if b, _ := c.Get("nibs-t1"); b == nil || b.Parent != "e1" {
+					t.Fatalf("setup premise failed: parent = %+v, want the bare spelling %q", b, "e1")
+				}
+			},
+			mutate: func(t *testing.T, c *Core, _ string) {
+				if err := c.Delete("e1"); err != nil {
+					t.Fatalf("Delete: %v", err)
+				}
+				if b, _ := c.Get("nibs-t1"); b == nil || b.Parent != "nibs-e1" {
+					t.Fatalf("mutation did not fire: parent = %+v, want nibs-e1", b)
 				}
 			},
 		},
@@ -311,6 +349,32 @@ func freezeGuardCases() []freezeGuardCase {
 					t.Fatalf("Rename: %v", err)
 				}
 				c.handleChanges(map[string]fsnotify.Op{oldPath: fsnotify.Rename})
+			},
+		},
+		{
+			name: "watcher-canonicalize-late-target", // Resolves a link on a BYSTANDER nib: copy-on-write.
+			// The batch's own file is not the one that changes here. A nib loaded
+			// with an unresolvable short-form parent is rewritten when the nib it
+			// names finally arrives, and that nib has been published for a while —
+			// Parent is a non-Path field, so the rewrite must install a fresh
+			// pointer rather than edit the one an off-lock reader may still hold.
+			newCore: mustLoadPrefixedCore,
+			setup: func(t *testing.T, c *Core, dir string) {
+				writeLinkNibFile(t, dir, "nibs-wlate", "todo", "parent: wtarget\n")
+				if err := c.Load(); err != nil {
+					t.Fatalf("Load: %v", err)
+				}
+				if b, _ := c.Get("nibs-wlate"); b == nil || b.Parent != "wtarget" {
+					t.Fatalf("setup premise failed: parent = %+v, want it unresolved", b)
+				}
+				setWatching(c)
+			},
+			mutate: func(t *testing.T, c *Core, dir string) {
+				path := writeLinkNibFile(t, dir, "nibs-wtarget", "todo", "")
+				c.handleChanges(map[string]fsnotify.Op{path: fsnotify.Create})
+				if b, _ := c.Get("nibs-wlate"); b == nil || b.Parent != "nibs-wtarget" {
+					t.Fatalf("mutation did not fire: parent = %+v, want nibs-wtarget", b)
+				}
 			},
 		},
 	}
@@ -498,7 +562,7 @@ func assertPublishedPointersFrozenExceptPath(t *testing.T, c *Core, snaps []froz
 		// same normalization. An in-place non-Path write still surfaces: Clone()
 		// copies the pointer's current field values.
 		before := *s.before     // deep, independent capture-time clone
-		after := *s.ptr.Clone()  // deep clone of the SAME captured pointer, post-mutation
+		after := *s.ptr.Clone() // deep clone of the SAME captured pointer, post-mutation
 		before.Path = ""
 		after.Path = ""
 		if !reflect.DeepEqual(before, after) {

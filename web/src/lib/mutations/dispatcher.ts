@@ -1,6 +1,7 @@
 import { toast } from "svelte-sonner";
 import type { DocumentNode } from "graphql";
-import type { Client, CombinedError } from "@urql/core";
+import type { Client } from "@urql/core";
+import { graphqlErrorCode } from "../graphqlError";
 import {
   UPDATE_NIB_MUTATION,
   DELETE_NIB_MUTATION,
@@ -44,20 +45,6 @@ function getMutationDoc(kind: LeafCommand["kind"]): DocumentNode {
 
 /** Kinds that need cache invalidation via additionalTypenames. */
 const INVALIDATING_KINDS = new Set<string>(["create-nib", "delete-nib", "archive-nib", "set-parent", "reorder-nib"]);
-
-/**
- * Lift the first string `extensions.code` off a urql CombinedError's GraphQL
- * errors (e.g. "ETAG_MISMATCH", set by the backend error presenter). Returns
- * undefined when no GraphQL error carried a string code — the caller then falls
- * back to substring-matching the message.
- */
-function errorCodeOf(error: CombinedError): string | undefined {
-  for (const gqlErr of error.graphQLErrors ?? []) {
-    const code = gqlErr.extensions?.code;
-    if (typeof code === "string") return code;
-  }
-  return undefined;
-}
 
 /** Maps a leaf command to the GraphQL variables. */
 function getVariables(cmd: LeafCommand): Record<string, unknown> {
@@ -129,7 +116,7 @@ export class MutationDispatcher {
       // The caller can opt to OWN the messaging for this call (e.g. save()
       // routing a 409 into the inline resolver); otherwise toast the error here.
       if (!suppressToast) toast.error(res.error.message);
-      return { ok: false, error: res.error.message, errorCode: errorCodeOf(res.error) };
+      return { ok: false, error: res.error.message, errorCode: graphqlErrorCode(res.error) };
     }
     return { ok: true, data: res.data };
   }

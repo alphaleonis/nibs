@@ -1586,18 +1586,6 @@ func TestBlockedByRoundtrip(t *testing.T) {
 }
 
 func TestNibRelationshipMethods(t *testing.T) {
-	t.Run("HasParent", func(t *testing.T) {
-		withParent := &Nib{Parent: "xyz789"}
-		if !withParent.HasParent() {
-			t.Error("expected HasParent() = true when parent is set")
-		}
-
-		withoutParent := &Nib{}
-		if withoutParent.HasParent() {
-			t.Error("expected HasParent() = false when parent is empty")
-		}
-	})
-
 	t.Run("IsBlocking", func(t *testing.T) {
 		b := &Nib{Blocking: []string{"abc", "def"}}
 		if !b.IsBlocking("abc") {
@@ -2831,33 +2819,4 @@ priority: deferred
 			t.Errorf("nil Extra should stay nil after Clone")
 		}
 	})
-}
-
-func TestResolvedStatusNames(t *testing.T) {
-	got := ResolvedStatusNames()
-
-	// Today the resolved (terminal) set is exactly {completed, scrapped}.
-	want := []string{"completed", "scrapped"}
-	if len(got) != len(want) {
-		t.Fatalf("len(ResolvedStatusNames()) = %d, want %d (%v)", len(got), len(want), got)
-	}
-	for i, name := range want {
-		if got[i] != name {
-			t.Errorf("ResolvedStatusNames()[%d] = %q, want %q", i, got[i], name)
-		}
-	}
-
-	// Every returned name must satisfy the canonical resolved predicate.
-	for _, name := range got {
-		if !IsResolvedStatus(name) {
-			t.Errorf("ResolvedStatusNames() returned %q which is not IsResolvedStatus", name)
-		}
-	}
-
-	// "deferred" is non-terminal; it must never be treated as resolved.
-	for _, name := range got {
-		if name == "deferred" {
-			t.Errorf("ResolvedStatusNames() must not include %q", name)
-		}
-	}
 }

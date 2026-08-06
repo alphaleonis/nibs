@@ -8,7 +8,9 @@ Nibs is a file-based issue tracker for AI-first workflows. Issues ("nibs") are s
 
 ## Build & Dev Commands
 
-All commands use [Task](https://taskfile.dev/) (`go-task/task`) as the task runner. Tool version pinning (Go, golangci-lint, Task itself) is handled by [mise](https://mise.jdx.dev/) via `mise.toml`, so the only thing contributors need to install manually is mise.
+All commands use [Task](https://taskfile.dev/) (`go-task/task`) as the task runner. Go, golangci-lint, Task, and Node are pinned in `mise.toml` (Node to a major, the rest to exact versions), and [mise](https://mise.jdx.dev/) is the only thing to install by hand — but installing mise is not enough on its own. A fresh checkout needs `mise trust` once — mise refuses to read a `mise.toml` it has not been told to trust, and while a terminal offers to trust it interactively, a non-interactive run (CI, a pre-commit hook, a coding agent) only sees the refusal. Then run `mise install` and make mise's tools reachable, either by putting its shims directory on PATH (`~/.local/share/mise/shims`; `%LOCALAPPDATA%\mise\shims` — [Unverified] on Windows) or by activating mise in your shell profile. Note that `mise activate <shell>` only *prints* the activation script, so it has to be eval'd: `eval "$(mise activate zsh)"`, and see [mise's getting-started guide](https://mise.jdx.dev/getting-started.html) for other shells. Skip the reachability step and `go`, `task` and `node` silently resolve to whatever is installed system-wide rather than the pinned versions, while golangci-lint — which normally exists only inside mise — is absent entirely. `task lint` is the exception: it invokes `mise exec -- golangci-lint`, so it uses the pin whether or not the shims are on PATH, and it fails with a guided message when mise is missing or mise cannot load this checkout's config (usually because it is untrusted). It also fetches the pinned golangci-lint over the network on first use if `mise install` has not already cached it — run `mise install` ahead of time in network-restricted environments.
+
+CI reads those same pins from `mise.toml`: both workflows provision their tools with `jdx/mise-action`, so `mise.toml` is the only place any of these versions appear and a bump there reaches CI with no second edit. Still re-run `task lint` after moving golangci-lint — a new release can add or retire checks and move the clean baseline.
 
 - `task build` - Build the `./nibs` executable (runs codegen first)
 - `task test` - Run all tests: Go + web (runs codegen and web:build first); includes the `-race` gate on `internal/nibcore` + `internal/graph`
@@ -16,7 +18,7 @@ All commands use [Task](https://taskfile.dev/) (`go-task/task`) as the task runn
 - `task codegen` - Regenerate GraphQL code: Go server (gqlgen, `go generate ./...`) + web client types (graphql-codegen client preset). Runs `go:codegen` + `web:codegen`.
 - `task nibs` - Build and run the CLI in one step (`go run .`)
 - `go test ./internal/nib/` - Run tests for a specific package
-- `cd web && npx vitest run --reporter=agent` - Run web tests only
+- `task web:install && cd web && npx vitest run --reporter=agent` - Run web tests only
 - `task demo` - Serve the web UI with the sample-project fixture (temporary copy, safe to mutate)
 - `task demo:tui` - Run the TUI with the sample-project fixture
 - `task screenshots` - Capture web UI screenshots to `web/screenshots/output/` for visual verification
@@ -31,8 +33,13 @@ When modifying the GraphQL schema (`internal/graph/schema.graphqls`):
 1. Edit the schema file
 2. Run `task codegen` to regenerate `internal/graph/generated.go` and `internal/graph/model/models_gen.go`
 3. Implement any new resolvers in `internal/graph/schema.resolvers.go`
+4. If you changed the `NibFilter` input, mirror the field in the hand-written `NibFilter` in `web/src/lib/types.ts`. A compile-time guard there asserts the two key sets are **equal in both directions**, so adding or removing a schema field without touching the client type fails `npm run check` — which runs in `task test`, not `task build`.
 
 The code generation is configured in `gqlgen.yml`. The `nib.Nib` struct is autobound so the GraphQL `Nib` type maps directly to it.
+
+**Never put a comment directive on a resolver's doc comment.** gqlgen rewrites `internal/graph/schema.resolvers.go` on every codegen, and the pinned version (see `go.mod`) rebuilds each resolver's doc comment through `go/ast`'s `CommentGroup.Text()`, which discards comment directives — `//nolint:…`, `//go:noinline`, the `//<tool>:<directive>` form of `go/ast`'s `isDirective` rule — while keeping the prose around them. The directive is gone on the next `task codegen` and whatever it was doing silently stops. Resolver *bodies* are copied through as raw source, so put the directive **inside the function**. `task go:codegen` greps for one before running gqlgen and fails the build, but that check is best-effort: it is skipped on a machine without `grep` on PATH, and on a resolver file it cannot read (a rename or a `resolver.layout` change degrades it to a no-op rather than blocking codegen).
+
+Which parts of that file survive a regeneration and which do not is written up in full at the top of `internal/graph/resolver.go` — read it before assuming a note will last in `schema.resolvers.go`. In short: resolver bodies, resolver doc-comment prose and the import block survive; a free-standing comment and a non-resolver declaration do not. gqlgen v0.17.86 fixes the directive behavior upstream, and `task go:codegen` fails with removal instructions once `go.mod` reaches that version.
 
 ## Architecture
 
@@ -71,7 +78,7 @@ The GraphQL engine runs in-process for CLI commands (`cmd/graphql.go` executes q
 - **Use shadcn tokens for all UI colors** — never use hardcoded Tailwind color classes (`gray-700`, `blue-500`, etc.) in components. Use semantic tokens: `bg-popover`, `text-muted-foreground`, `border-border`, `bg-accent`, `text-foreground`, etc. Domain-specific tokens (`bg-warning`, `text-link`, `border-tag-border`) are also registered as Tailwind utilities.
 - **When migrating to shadcn components**, replace both the container AND the internal items/styling. Don't wrap old hand-rolled markup in shadcn containers — use shadcn's item components (e.g., `DropdownMenu.CheckboxItem` instead of raw `<label><input checkbox>`), which provide consistent padding, hover states, and ARIA roles.
 - **Bits UI portals in jsdom**: shadcn components render content via portals to `document.body`. `test-setup.ts` has polyfills (ResizeObserver, MutationObserver visibility fix) that make portaled content queryable. Tests use `screen.*` queries which search the full document. DropdownMenu items use roles like `menuitemcheckbox`, `menuitemradio`, `menuitem`.
-- `web/dist/` is gitignored — run `task build` (or `cd web && npm ci && npm run build`) to generate it before `go build`.
+- `web/dist/` is gitignored — run `task build` to generate it before `go build`.
 - Preferences (filter, view level, column widths, panel width) are persisted to localStorage via `web/src/lib/storage.ts`
 - The table uses `table-layout: fixed` with an explicit computed width — column widths are enforced regardless of content
 
@@ -100,9 +107,20 @@ For optional config fields with non-zero defaults, use pointer types (`*int`, `*
 
 ## Branching & Workflow
 
-- The default branch is `main`
-- We are not using pull requests currently — merge feature branches directly into `main` and push
+- **`develop` is where unreleased work lands.** Cut feature branches from it, merge them back into it. This is the branch to be on for normal development.
+- **`main` is the released branch.** `develop` merges into `main` at release time and not before — do not merge feature work into `main` directly.
+- We are not using pull requests currently — merge feature branches directly into `develop` and push. Renovate is the exception: it opens PRs against `develop` for the pinned toolchain, and those are reviewed and merged as PRs.
 - Create feature branches for non-trivial work, merge when done
+
+### Two epics shipping in one release
+
+Keep them on **separate feature branches and integrate through `develop`** — do not stack one epic's work onto the other's branch. Stacking makes them one inseparable unit that cannot be reviewed, reverted, or reordered at release time, and it hides a cross-cutting change under an unrelated branch name.
+
+When one epic depends on the other, merge `develop` into the dependent feature branch (a merge, not a rebase — rebasing replays every commit against a changed base, and intermediate commits often will not build).
+
+### Write CHANGELOG entries at merge time
+
+Add a feature branch's `[Unreleased]` entries **when merging it into `develop`**, not while the work is in progress. Parallel branches each editing the same `[Unreleased]` section conflict every time, and those conflicts are the expensive kind where both sides are correct.
 
 ### Sync before starting work
 
@@ -131,13 +149,17 @@ Before starting any new work, run `git fetch` (and `git -C .nibs fetch`) and che
 ## Testing
 
 - Always write or update tests for changes
-- **Prove a new guard bites**: break the behavior it guards and confirm the test fails. A test that passes while its target is broken is decoration. This keeps happening here — guards placed after an assert that throws first (so they never run), and a mutation that survived the entire 1240-test suite.
+- **NEVER invoke `go test` directly — use `task test`, or `scripts/go-test-capped.sh <args>` for a targeted run.** A bare `go test` runs uncapped in `init.scope`, where a runaway test exhausts RAM and swap and triggers a *global* OOM that tears down the whole WSL VM and SIGKILLs every terminal. This has happened twice (`nibs-mv0i` 2026-07-06, `nibs-mlss` 2026-07-29); both times the capped runner existed and was simply bypassed. This is a WSL failure mode specifically — on native Linux, macOS and Windows the same runaway is an ordinary process-level OOM that kills the test binary and nothing else — so `go-test-capped.sh` caps on WSL and refuses to run there when it cannot (`GO_TEST_UNCAPPED=1` overrides, deliberately), while off WSL it is a plain `go test`. A `PreToolUse` hook (`scripts/guard-go-test.sh`, a shim over `guard-go-test.py`) rejects bare `go test` in agent Bash calls — but it needs a working Python, and warns and allows the call when it finds none, so do not lean on it as a backstop. **`-timeout` is not a substitute** — it bounds time, not allocation, and a runaway can allocate ~770 MB/s, so the machine dies long before the timeout fires. Pass this rule down to every subagent brief.
+- **Prove a new guard bites**: break the behavior it guards and confirm the test fails. A test that passes while its target is broken is decoration. This keeps happening here — guards placed after an assert that throws first (so they never run), and a mutation that survived the entire 1240-test suite. **When the guard protects *termination*, the mutant does not fail an assertion — it allocates without bound**, so run that probe only through the capped runner (an OOM-killed cgroup exits 137 and is itself a valid "the guard bites" signal). A probe killed mid-run leaves its mutation in the working tree: snapshot with `git stash create` first, and after any crash diff against that snapshot *before* re-running anything.
 - Use table-driven tests following Go conventions
 - Never hardcode `/` or `\` in path assertions — use `filepath.Join` for OS paths and forward slashes for nib `Path` fields
 - For manual CLI testing: `task nibs` compiles and runs the CLI
 - For manual CLI testing, `task demo` serves the web UI with a temporary copy of the sample-project fixture (safe to mutate), and `task demo:tui` does the same for the TUI
 - **Test fixture dataset**: `testdata/fixtures/sample-project/` has 89 curated nibs (prefix `tnib-`) covering all types, statuses, priorities, hierarchies, and relationships. Use `fixtures.CopySampleProject(t)` from `testdata/fixtures/` to get a temporary copy for write tests. Regenerate with `bash testdata/fixtures/gen-sample-project.sh`.
-- Web UI tests: `cd web && npm install && npx vitest run --reporter=agent` (Vitest + jsdom + @testing-library/svelte). Run `npm install` first — node_modules can go stale after branch switches.
+- Web UI tests: `task web:install && cd web && npx vitest run --reporter=agent` (Vitest + jsdom + @testing-library/svelte).
+- **Never run `npm install`/`npm ci` in `web/` by hand** — use `task web:install`, which reinstalls only when `package-lock.json` changed and repairs a tree npm left broken. A hand-run install overlapping a `task` run corrupts `node_modules` (`nibs-wcx3`), and `npm install` can rewrite `package-lock.json` on top of that.
+- **Never run two `task` invocations that install at the same time** — there is no lock, deliberately: `mkdir` is not atomic under uutils coreutils (this machine) and is reportedly a no-op on Windows, so a lock there would only look like protection. Installs are rare (lockfile changes only), so the rule is cheap. This also covers `goreleaser release --snapshot` from `RELEASING.md`, whose `.goreleaser.yaml` `before` hook runs `cd web && npm ci` outside the task.
+- **A `task` run canceled by PID may still be running — do not immediately re-run it** (`nibs-uur9`). Signaling Task's PID *alone* does not abort it: Task lets the current command finish, then runs **every remaining command** and exits 0. Signaling the process **group** does abort it — that is how to cancel a `task` run correctly. (PID-alone reproduced 3x on Task v3.50.0 with SIGTERM and SIGINT on Linux/WSL; the group result measured in the same runs. [Unverified] on Windows.) [Inference] On Linux/WSL an interactive Ctrl+C signals the foreground process group, so it lands on the safe side of that distinction; [Unverified] Windows has no POSIX foreground group and its console Ctrl+C is untested here, so run the check below there regardless. The hazard is *programmatic* cancellation — `subprocess.terminate()` and `child_process.kill()` signal the PID by definition, and [Unverified] whether a CI step timeout or an agent harness's Bash-tool timeout does. Before retrying, confirm nothing is still installing: `Get-Process task -ErrorAction SilentlyContinue` (PowerShell) or `pgrep -af '\btask\b'` (Linux/WSL). Look for `task`, not `node` — unrelated `node` processes are always running. A kill that takes Task down outright is the exception: it leaves `npm ci` reparented and invisible to this check, so on a hard kill skip to the `rm -rf` recovery below rather than trusting a clear result. Otherwise, once the check is clear, a plain `task web:install` is enough: if the orphan's install completed, `cmp -s` reports the tree up to date and this is a no-op; if it died first, the tree is unstamped and this reinstalls it. Reach for `rm -rf web/node_modules && task web:install` (`Remove-Item -Recurse -Force web/node_modules` in PowerShell, no other `task` run active) on any known overlap or a tree still broken after `npm rebuild` — not only on visible corruption, since the stamp and `.bin` probes cannot see damage deeper in the tree.
 - Web test commands require `web/` as the working directory. If cwd has drifted, `cd` to the project root's `web/` directory first.
 - **Always use `--reporter=agent`** when running vitest — it keeps output concise. Never pipe vitest through grep; read the output once.
 - `task test` runs both Go and web tests. No need to run them separately unless debugging a specific failure.

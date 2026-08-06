@@ -20,17 +20,20 @@
 	<!-- DEVIATION from the bits/shadcn default (`w-(--bits-dropdown-menu-anchor-width)` → `w-auto`):
 	     the menu sizes to its content so narrow `buttonVariants` filter triggers (Toolbar) don't clip
 	     their item labels. This REQUIRES `whitespace-nowrap` on the item files
-	     (dropdown-menu-item/checkbox-item/radio-item) — change the pair together. `max-w-[min(20rem,
-	     calc(100vw-1rem))]` + `overflow-x-hidden` bound size-to-content so an unbounded user-defined tag
-	     can't push the menu past the viewport; an over-long label is hard-clipped (no ellipsis). Keep
-	     this override on any shadcn re-sync. -->
+	     (dropdown-menu-item/checkbox-item/radio-item) — change the pair together. The
+	     `max-w-[min(calc(20rem*var(--font-scale)),calc(100vw-1rem))]` + `overflow-x-hidden` pair bounds
+	     size-to-content so an unbounded user-defined tag can't push the menu past the viewport; an
+	     over-long label is hard-clipped (no ellipsis). The cap carries `* var(--font-scale)` because
+	     `rem` ignores the global font-size preference: a fixed 20rem cap against items that grow 15% at
+	     Large would clip labels that fit at Medium (nibs-grbo). Keep this override on any shadcn
+	     re-sync. -->
 	<DropdownMenuPrimitive.Content
 		bind:ref
 		data-slot="dropdown-menu-content"
 		{sideOffset}
 		{align}
 		class={cn(
-			"data-open:animate-in data-closed:animate-out data-closed:fade-out-0 data-open:fade-in-0 data-closed:zoom-out-95 data-open:zoom-in-95 data-[side=bottom]:slide-in-from-top-2 data-[side=left]:slide-in-from-right-2 data-[side=right]:slide-in-from-left-2 data-[side=top]:slide-in-from-bottom-2 ring-foreground/10 bg-popover text-popover-foreground min-w-32 max-w-[min(20rem,calc(100vw-1rem))] rounded-lg p-1 shadow-md ring-1 duration-100 data-[side=inline-start]:slide-in-from-right-2 data-[side=inline-end]:slide-in-from-left-2 z-50 w-auto overflow-x-hidden overflow-y-auto outline-none data-closed:overflow-hidden",
+			"data-open:animate-in data-closed:animate-out data-closed:fade-out-0 data-open:fade-in-0 data-closed:zoom-out-95 data-open:zoom-in-95 data-[side=bottom]:slide-in-from-top-2 data-[side=left]:slide-in-from-right-2 data-[side=right]:slide-in-from-left-2 data-[side=top]:slide-in-from-bottom-2 ring-foreground/10 bg-popover text-popover-foreground min-w-32 max-w-[min(calc(20rem*var(--font-scale)),calc(100vw-1rem))] rounded-lg p-1 shadow-md ring-1 duration-100 data-[side=inline-start]:slide-in-from-right-2 data-[side=inline-end]:slide-in-from-left-2 z-50 w-auto overflow-x-hidden overflow-y-auto outline-none data-closed:overflow-hidden",
 			className
 		)}
 		{...restProps}

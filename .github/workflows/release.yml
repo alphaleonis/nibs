@@ -10,8 +10,15 @@ on:
         type: string
 
 permissions:
-  contents: write # push tags and create the release
-  actions: read   # read the CI run conclusion for the release commit
+  contents: write     # push tags and create the release
+  actions: read       # read the CI run conclusion for the release commit
+  # Both are for actions/attest-build-provenance below. id-token mints the
+  # short-lived OIDC token that identifies this workflow to Sigstore; the
+  # attestation is signed against that identity, so there is no key to store or
+  # rotate. Neither grants anything to the rest of the job that it did not
+  # already have — attestations: write only writes to the attestations API.
+  id-token: write
+  attestations: write
 
 jobs:
   release:
@@ -63,7 +70,7 @@ jobs:
           fi
           echo "CI passed for $SHA — proceeding to tag and release."
 
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
         with:
           fetch-depth: 0
 
@@ -99,23 +106,47 @@ jobs:
           git tag "${{ inputs.version }}"
           git push origin "${{ inputs.version }}"
 
-      - uses: actions/setup-go@v6
+      # Every tool this job runs — go, node, goreleaser, go-licenses — comes
+      # from mise.toml, the same file ci.yml reads. That makes the published
+      # binaries the work of the toolchain CI built and tested this commit
+      # with (nibs-23f0), and it puts the two release-path tools under an exact
+      # pin instead of `~> v2` and `@latest` (nibs-ag7i).
+      - uses: jdx/mise-action@7e36c90d9ab29c415a2384db3006f3ec8a8cc654 # v4.2.4
         with:
-          go-version: stable
+          github_token: ${{ secrets.GITHUB_TOKEN }}
 
-      - uses: actions/setup-node@v6
-        with:
-          node-version: "22"
-
-      - name: Install go-licenses
-        run: go install github.com/google/go-licenses@latest
-
-      - uses: goreleaser/goreleaser-action@v7.0.0
-        with:
-          version: "~> v2"
-          args: release --clean --release-notes=${{ runner.temp }}/release-notes.md
+      # GoReleaser runs as the pinned binary mise installed rather than through
+      # goreleaser-action, so the version that assembles the archives and
+      # generates checksums.txt is the one mise.toml names — the action's
+      # `version:` input was a second, separately-floating copy that Renovate's
+      # github-actions manager does not read. It also removes a third-party
+      # action from a job holding `contents: write`.
+      - name: Release
+        run: goreleaser release --clean --release-notes=${{ runner.temp }}/release-notes.md
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      # Provenance for what was just published: a signed statement that these
+      # exact bytes were built by this workflow, from this repository, at this
+      # commit. checksums.txt alone cannot say that — it lives in the same
+      # release as the archives it vouches for, so it catches corruption in
+      # transit but not anyone able to write that release (nibs-bw1u).
+      #
+      # Anchored in Sigstore and GitHub's OIDC identity rather than a key we
+      # hold, so there is nothing to store, protect or rotate. `nibs upgrade`
+      # does not consume this — go-selfupdate verifies a checksum file, not an
+      # attestation — so this covers humans and install.sh; the self-update
+      # path is the other half of nibs-bw1u.
+      #
+      # Verify a downloaded asset with:
+      #   gh attestation verify nibs_linux_amd64.tar.gz --repo alphaleonis/nibs
+      - name: Attest build provenance
+        uses: actions/attest-build-provenance@0f67c3f4856b2e3261c31976d6725780e5e4c373 # v4.1.1
+        with:
+          subject-path: |
+            dist/*.tar.gz
+            dist/*.zip
+            dist/checksums.txt
 
       - name: Delete tag on failure
         if: failure()

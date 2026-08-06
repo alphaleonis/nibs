@@ -265,8 +265,11 @@ func TestGet_JSONComputedFields(t *testing.T) {
 	if nibObj["children"] != float64(2) {
 		t.Errorf("children = %v, want 2", nibObj["children"])
 	}
-	if nibObj["ready"] != true {
-		t.Errorf("ready = %v, want true", nibObj["ready"])
+	// par1 is in-progress and unblocked. `ready` answers "can I start this?",
+	// and work already underway is not something to start, so it is false —
+	// this is the field's answer for every status but the startable ones.
+	if nibObj["ready"] != false {
+		t.Errorf("ready = %v, want false (par1 is in-progress)", nibObj["ready"])
 	}
 	prog, ok := nibObj["progress"].(map[string]any)
 	if !ok {
@@ -275,6 +278,20 @@ func TestGet_JSONComputedFields(t *testing.T) {
 	// child1 completed of 2 -> total 2, done 1, percent 50.
 	if prog["total"] != float64(2) || prog["done"] != float64(1) || prog["percent"] != float64(50) {
 		t.Errorf("progress = %v, want {total:2,done:1,percent:50}", prog)
+	}
+
+	// child2 is todo and unblocked, so the field is not stuck at false: both
+	// answers render through the same projection path.
+	out, err = runGetCmd(t, dir, "child2", "--json", "-f", "ready")
+	if err != nil {
+		t.Fatalf("get child2 failed: %v", err)
+	}
+	childObj, ok := parseJSONObject(t, out)["nib"].(map[string]any)
+	if !ok {
+		t.Fatalf("child2 response has no \"nib\" object: %v", out)
+	}
+	if childObj["ready"] != true {
+		t.Errorf("child2 ready = %v, want true (todo, unblocked)", childObj["ready"])
 	}
 }
 

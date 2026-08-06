@@ -5,8 +5,14 @@ import (
 	"math"
 	"testing"
 
+	"github.com/alphaleonis/nibs/internal/config"
 	"github.com/alphaleonis/nibs/internal/nib"
 )
+
+// cfgForTest is the config BuildSummary takes. It is the real default config,
+// so these tests exercise the same closed set the CLI does instead of a private
+// copy that could drift from it.
+var cfgForTest = config.Default()
 
 // makeNib is a test helper for building nibs with common fields.
 func makeNib(id, typ, status, estimate, parent string) *nib.Nib {
@@ -22,11 +28,11 @@ func makeNib(id, typ, status, estimate, parent string) *nib.Nib {
 
 func TestCalcProgress(t *testing.T) {
 	tests := []struct {
-		name            string
-		nibs            []*nib.Nib
-		wantCompleted   int
-		wantTotal       int
-		wantPercentage  float64
+		name           string
+		nibs           []*nib.Nib
+		wantCompleted  int
+		wantTotal      int
+		wantPercentage float64
 	}{
 		{
 			name:           "empty list",
@@ -38,8 +44,8 @@ func TestCalcProgress(t *testing.T) {
 		{
 			name: "all completed",
 			nibs: []*nib.Nib{
-				{ID: "a", Type: "task", Status: "completed", Estimate: "s"},  // 1
-				{ID: "b", Type: "task", Status: "completed", Estimate: "m"},  // 3
+				{ID: "a", Type: "task", Status: "completed", Estimate: "s"}, // 1
+				{ID: "b", Type: "task", Status: "completed", Estimate: "m"}, // 3
 			},
 			wantCompleted:  4,
 			wantTotal:      4,
@@ -48,9 +54,9 @@ func TestCalcProgress(t *testing.T) {
 		{
 			name: "mixed statuses",
 			nibs: []*nib.Nib{
-				{ID: "a", Type: "task", Status: "completed", Estimate: "xl"}, // 8
+				{ID: "a", Type: "task", Status: "completed", Estimate: "xl"},     // 8
 				{ID: "b", Type: "feature", Status: "in-progress", Estimate: "l"}, // 5
-				{ID: "c", Type: "bug", Status: "todo", Estimate: "s"},        // 1
+				{ID: "c", Type: "bug", Status: "todo", Estimate: "s"},            // 1
 			},
 			wantCompleted:  8,
 			wantTotal:      14,
@@ -59,8 +65,8 @@ func TestCalcProgress(t *testing.T) {
 		{
 			name: "unestimated defaults to M weight",
 			nibs: []*nib.Nib{
-				{ID: "a", Type: "task", Status: "completed"},  // default 3
-				{ID: "b", Type: "task", Status: "todo"},        // default 3
+				{ID: "a", Type: "task", Status: "completed"}, // default 3
+				{ID: "b", Type: "task", Status: "todo"},      // default 3
 			},
 			wantCompleted:  3,
 			wantTotal:      6,
@@ -78,12 +84,48 @@ func TestCalcProgress(t *testing.T) {
 			wantPercentage: 50,
 		},
 		{
+			// deferred is closed, but the work is coming back — set-aside scope
+			// weighs on the denominator exactly like open work, so the estimate
+			// of a set-aside nib is still counted as outstanding.
+			name: "deferred counts toward total, not toward completed",
+			nibs: []*nib.Nib{
+				{ID: "a", Type: "task", Status: "completed", Estimate: "m"}, // 3
+				{ID: "b", Type: "task", Status: "deferred", Estimate: "xl"}, // 8, undone
+				{ID: "c", Type: "task", Status: "todo", Estimate: "m"},      // 3
+			},
+			wantCompleted:  3,
+			wantTotal:      14,
+			wantPercentage: 3.0 / 14.0 * 100,
+		},
+		{
+			name: "a deferred nib holds the set below 100%",
+			nibs: []*nib.Nib{
+				{ID: "a", Type: "task", Status: "completed", Estimate: "m"}, // 3
+				{ID: "b", Type: "task", Status: "deferred", Estimate: "m"},  // 3, undone
+			},
+			wantCompleted:  3,
+			wantTotal:      6,
+			wantPercentage: 50,
+		},
+		{
+			// Only scrapped work leaves the denominator, so a set whose
+			// remaining nibs are all scrapped does reach 100%.
+			name: "scrapped remainder reaches 100%",
+			nibs: []*nib.Nib{
+				{ID: "a", Type: "task", Status: "completed", Estimate: "m"}, // 3
+				{ID: "b", Type: "task", Status: "scrapped", Estimate: "m"},  // excluded
+			},
+			wantCompleted:  3,
+			wantTotal:      3,
+			wantPercentage: 100,
+		},
+		{
 			name: "epics/milestones excluded (only leaf work counts)",
 			nibs: []*nib.Nib{
 				{ID: "a", Status: "completed", Estimate: "m", Type: "task"},
 				{ID: "b", Status: "todo", Estimate: "l", Type: "feature"},
-				{ID: "c", Status: "in-progress", Estimate: "xl", Type: "epic"},       // excluded
-				{ID: "d", Status: "completed", Estimate: "xl", Type: "milestone"},     // excluded
+				{ID: "c", Status: "in-progress", Estimate: "xl", Type: "epic"},    // excluded
+				{ID: "d", Status: "completed", Estimate: "xl", Type: "milestone"}, // excluded
 			},
 			wantCompleted:  3,
 			wantTotal:      8,
@@ -152,7 +194,7 @@ func TestBuildSummary(t *testing.T) {
 	}
 
 	t.Run("scoped to milestone", func(t *testing.T) {
-		sum := BuildSummary(allNibs, "m1")
+		sum := BuildSummary(allNibs, "m1", cfgForTest)
 
 		// Milestone
 		if sum.Root == nil || sum.Root.ID != "m1" {
@@ -209,7 +251,7 @@ func TestBuildSummary(t *testing.T) {
 	})
 
 	t.Run("no arg shows overview with containers", func(t *testing.T) {
-		sum := BuildSummary(allNibs, "")
+		sum := BuildSummary(allNibs, "", cfgForTest)
 
 		if sum.Root != nil {
 			t.Errorf("expected nil root, got %v", sum.Root)
@@ -254,7 +296,7 @@ func TestBuildSummary_ResearchIsLeafWork(t *testing.T) {
 		makeNib("t1", "task", "todo", "s", "e1"),
 	}
 
-	sum := BuildSummary(allNibs, "m1")
+	sum := BuildSummary(allNibs, "m1", cfgForTest)
 
 	// Progress: r1(3) + r2(1) + t1(1) = 5 total, 0 completed
 	if sum.Progress.TotalWeight != 5 {
@@ -287,7 +329,7 @@ func TestBuildSummary_ResearchIsLeafWork(t *testing.T) {
 	}
 
 	// Container progress (overview mode) must also include research weight
-	overview := BuildSummary(allNibs, "")
+	overview := BuildSummary(allNibs, "", cfgForTest)
 	if len(overview.Containers) != 1 {
 		t.Fatalf("Containers count = %d, want 1", len(overview.Containers))
 	}
@@ -405,7 +447,7 @@ func TestBuildSummary_ActivePhaseByOrder(t *testing.T) {
 		makeNibWithOrder("epic-b", "epic", "in-progress", "", "ms", "a1"),
 	}
 
-	sum := BuildSummary(allNibs, "ms")
+	sum := BuildSummary(allNibs, "ms", cfgForTest)
 
 	if sum.ActivePhase == nil {
 		t.Fatal("ActivePhase is nil")
@@ -427,7 +469,7 @@ func TestBuildSummary_NextTasksSortedByOrder(t *testing.T) {
 		makeNibWithOrder("t-b", "task", "todo", "s", "ep", "a2"),
 	}
 
-	sum := BuildSummary(allNibs, "ms")
+	sum := BuildSummary(allNibs, "ms", cfgForTest)
 
 	ids := nibRefIDs(sum.NextTasks)
 	want := []string{"t-a", "t-b", "t-c"}
@@ -453,7 +495,7 @@ func TestBuildSummary_ActiveTasksSortedByOrder(t *testing.T) {
 		makeNibWithOrder("at-b", "bug", "in-progress", "s", "ep", "a2"),
 	}
 
-	sum := BuildSummary(allNibs, "ms")
+	sum := BuildSummary(allNibs, "ms", cfgForTest)
 
 	ids := nibRefIDs(sum.ActiveTasks)
 	want := []string{"at-a", "at-b", "at-c"}
@@ -481,7 +523,7 @@ func TestBuildSummary_JSONContract(t *testing.T) {
 	next := makeNib("t2", "task", "todo", "s", "ep")
 	next.Title = "Next Task"
 
-	sum := BuildSummary([]*nib.Nib{m, ep, task, next}, "ms")
+	sum := BuildSummary([]*nib.Nib{m, ep, task, next}, "ms", cfgForTest)
 
 	data, err := json.Marshal(sum)
 	if err != nil {
@@ -639,7 +681,7 @@ func TestBuildSummary_Overview(t *testing.T) {
 		makeNib("u1", "task", "in-progress", "m", ""),
 	}
 
-	sum := BuildSummary(allNibs, "")
+	sum := BuildSummary(allNibs, "", cfgForTest)
 
 	// Should have no root (overview mode)
 	if sum.Root != nil {
@@ -753,7 +795,7 @@ func TestBuildSummary_OverviewJSON(t *testing.T) {
 	m1 := makeNib("m1", "milestone", "in-progress", "", "")
 	t1 := makeNib("t1", "task", "todo", "s", "m1")
 
-	sum := BuildSummary([]*nib.Nib{m1, t1}, "")
+	sum := BuildSummary([]*nib.Nib{m1, t1}, "", cfgForTest)
 
 	data, err := json.Marshal(sum)
 	if err != nil {
@@ -809,7 +851,7 @@ func TestBuildSummary_NonMilestoneRoot(t *testing.T) {
 		makeNib("t3", "task", "todo", "l", "e1"),
 	}
 
-	sum := BuildSummary(allNibs, "e1")
+	sum := BuildSummary(allNibs, "e1", cfgForTest)
 
 	// Root should be the epic, not nil
 	if sum.Root == nil {

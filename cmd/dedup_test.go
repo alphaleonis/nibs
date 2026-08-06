@@ -57,15 +57,58 @@ func TestTitlesMatch(t *testing.T) {
 	}
 }
 
-func TestScrapReasonSnippet(t *testing.T) {
-	body := "## Description\nSomething.\n\n## Reasons for Scrapping\n- Too risky to implement now\n- Superseded by another approach\n"
-	got := scrapReasonSnippet(body)
-	if got != "Too risky to implement now" {
-		t.Errorf("scrapReasonSnippet = %q, want first bullet without marker", got)
-	}
-
-	if s := scrapReasonSnippet("## Description\nno reasons section here\n"); s != "" {
-		t.Errorf("scrapReasonSnippet with no section = %q, want empty", s)
+// TestCloseReasonSnippet covers both sources: the ## Summary entries `close`
+// writes today, and the "## Reasons for Scrapping" convention that predated
+// them. Nibs closed the old way still have to explain themselves, because this
+// project does no data migration.
+func TestCloseReasonSnippet(t *testing.T) {
+	cases := []struct {
+		name string
+		body string
+		want string
+	}{{
+		name: "legacy section, first bullet without its marker",
+		body: "## Description\nSomething.\n\n## Reasons for Scrapping\n- Too risky to implement now\n- Superseded by another approach\n",
+		want: "Too risky to implement now",
+	}, {
+		name: "no reason anywhere",
+		body: "## Description\nno reasons section here\n",
+		want: "",
+	}, {
+		name: "a single close entry",
+		body: "## Summary\n\n**Scrapped 2026-08-02** — superseded by the new pipeline\n",
+		want: "superseded by the new pipeline",
+	}, {
+		name: "the LAST entry wins, because a reason can be revised",
+		body: "## Summary\n\n**Deferred 2026-07-27** — waiting on the upstream release\n\n**Scrapped 2026-08-02** — superseded by the new pipeline\n",
+		want: "superseded by the new pipeline",
+	}, {
+		name: "a deferred nib explains itself too",
+		body: "## Summary\n\n**Deferred 2026-07-27** — waiting on the upstream release\n",
+		want: "waiting on the upstream release",
+	}, {
+		// The Summary is checked first, so a nib carrying both must not have its
+		// current reason shadowed by the stale legacy section.
+		name: "close entries win over a stale legacy section",
+		body: "## Summary\n\n**Scrapped 2026-08-02** — the real, current reason\n\n## Reasons for Scrapping\n- the stale one\n",
+		want: "the real, current reason",
+	}, {
+		// Bold text at the start of a hand-written summary is not a close entry;
+		// requiring the date stamp is what tells them apart.
+		name: "hand-written summary is not mistaken for an entry",
+		body: "## Summary\n\n**Note** — this was written by hand, not by close\n",
+		want: "",
+	}, {
+		name: "hand-written summary falls back to the legacy section",
+		body: "## Summary\n\nplain prose\n\n## Reasons for Scrapping\n- the legacy reason\n",
+		want: "the legacy reason",
+	}}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := closeReasonSnippet(tc.body); got != tc.want {
+				t.Errorf("closeReasonSnippet = %q, want %q", got, tc.want)
+			}
+		})
 	}
 }
 
@@ -98,10 +141,29 @@ func TestFindPossibleDuplicates(t *testing.T) {
 		}
 	})
 
-	t.Run("completed match has no reason", func(t *testing.T) {
+	t.Run("a match with no recorded reason carries none", func(t *testing.T) {
+		// n-done's body holds neither close entries nor a legacy section, so the
+		// field stays empty. Emptiness tracks what the nib recorded, not which
+		// closed status it carries.
 		got := findPossibleDuplicates(candidates, cfg, "new", "Add dark mode", "add-dark-mode")
 		want := []possibleDuplicate{
 			{ID: "n-done", Status: "completed", Title: "Add dark mode"},
+		}
+		if !reflect.DeepEqual(got, want) {
+			t.Errorf("findPossibleDuplicates = %#v, want %#v", got, want)
+		}
+	})
+
+	t.Run("deferred match surfaces and explains itself", func(t *testing.T) {
+		// Deferred is a closed status, so a set-aside nib is exactly the kind of
+		// duplicate this warning exists for: the idea was kept, not rejected.
+		// That is also why the reason is not scrapped-only — "we set this aside
+		// until X" is the most useful thing to tell someone about to redo it.
+		deferred := mkNib("n-defer", "slack-integration", "Slack integration", "deferred",
+			"## Summary\n\n**Deferred 2026-07-27** — waiting on the upstream release\n")
+		got := findPossibleDuplicates([]*nib.Nib{deferred}, cfg, "new", "Slack integration", "slack-integration")
+		want := []possibleDuplicate{
+			{ID: "n-defer", Status: "deferred", Title: "Slack integration", Reason: "waiting on the upstream release"},
 		}
 		if !reflect.DeepEqual(got, want) {
 			t.Errorf("findPossibleDuplicates = %#v, want %#v", got, want)

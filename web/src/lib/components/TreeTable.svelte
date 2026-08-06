@@ -8,7 +8,10 @@
   import { isBucketId, bucketIdForItem, buildViewTree, collectDescendantIds } from "../tree";
   import { applySort, nextTableSort } from "../tableSort";
   import { prepareFilter, isDragAllowed, matchesFilter } from "../filter";
-  import { resolveFilter, resolveViewLevel, resolveVisibleColumns, resolveColumnWidths, resolveColumnOrder, resolveTableSort, emitTableSort, emitColumnOrder } from "../resolvePrefs";
+  import { resolveFilter, resolveViewLevel, resolveVisibleColumns, resolveColumnWidths, resolveColumnOrder, resolveTableSort, emitFilter, emitTableSort, emitColumnOrder } from "../resolvePrefs";
+  import { hierarchyTokens, clearHierarchyFilters, contradictionTokens } from "../query";
+  import { graphqlErrorCode, graphqlErrorMessage } from "../graphqlError";
+  import { Button } from "$lib/components/ui/button/index.js";
   import TreeTableRow from "./TreeTableRow.svelte";
   import TableHeader from "./TableHeader.svelte";
   import type { DropZone } from "../drag.svelte";
@@ -21,6 +24,10 @@
   import { useTableData } from "../composables/useTableData.svelte";
   import { untrack } from "svelte";
 
+  // Settle time before a filter-box change re-queries the server. Long enough to
+  // coalesce a burst of keystrokes, short enough to feel immediate once typing stops.
+  const LIST_REFETCH_DEBOUNCE_MS = 250;
+
   interface Props {
     prefs?: Preferences;
     filter?: NibFilter;
@@ -30,6 +37,9 @@
     columnOrder?: ColumnKey[];
     tableSort?: TableSort | null;
     ontablesortchange?: (s: TableSort | null) => void;
+    /** Write path for the empty state's "clear hierarchy filters" action. Unused
+     *  when `prefs` is supplied — the write goes through the preference instead. */
+    onfilterchange?: (f: NibFilter) => void;
     oncolumnwidthschange?: (widths: Record<ColumnKey, number>) => void;
     oncolumnresizeend?: () => void;
     oncolumnorderchange?: (order: ColumnKey[]) => void;
@@ -50,6 +60,7 @@
     columnOrder = undefined as ColumnKey[] | undefined,
     tableSort = undefined as TableSort | null | undefined,
     ontablesortchange,
+    onfilterchange,
     oncolumnwidthschange,
     oncolumnresizeend,
     oncolumnorderchange,
@@ -74,6 +85,11 @@
 
   // Resolve values: prefs takes precedence over individual props
   let resolvedFilter = $derived(resolveFilter(prefs, filter));
+  // Canonical tokens for the tree-position constraints currently in force. Two or
+  // more of them ANDed together carve a very narrow slice out of an acyclic forest
+  // — `ancestor:<parent> descendant:<child>` can match nothing at all — so an empty
+  // result under them gets an explanation instead of the generic message.
+  let activeHierarchyTokens = $derived(hierarchyTokens(resolvedFilter));
   let resolvedViewLevel = $derived(resolveViewLevel(prefs, viewLevel));
   let resolvedVisibleColumns = $derived(resolveVisibleColumns(prefs, visibleColumns));
   let resolvedColumnWidths = $derived(resolveColumnWidths(prefs, columnWidths));
@@ -133,11 +149,60 @@
   const dataSource = useTableData({
     client,
     getServerFilter: () => prepared.serverFilter,
+    // Debounce the server refetch so typing free-text in the filter box re-queries
+    // once keystrokes settle, not on every character. The box stays live (dropdowns
+    // tick, highlighting updates) — only the network list query waits. See nibs-rv7c.
+    refetchDebounceMs: LIST_REFETCH_DEBOUNCE_MS,
   });
 
   // error is `unknown` from the source; the query surfaces urql's CombinedError,
-  // which carries a `.message`. Narrow it for display.
-  let errorMessage = $derived((dataSource.error as { message?: string } | undefined)?.message ?? "");
+  // whose aggregate `.message` carries a "[GraphQL] " transport prefix no user
+  // should read. graphqlErrorMessage prefers the server's own message, and this
+  // text is rendered rather than logged.
+  let errorMessage = $derived(graphqlErrorMessage(dataSource.error));
+
+  // A filter naming a nib that does not exist is the user's own half-typed or
+  // stale id, not a fault. The server refuses such a query rather than answering
+  // it with an empty list — it cannot tell "nothing is under that nib" from "no
+  // such nib" otherwise — and tags the refusal NOT_FOUND so this side can tell
+  // them apart in turn.
+  //
+  // It reaches here on every keystroke of an id being typed, so presenting it as
+  // a red failure would flash an error through the list for ids that are merely
+  // incomplete. Routed to a calm inline state instead, alongside the other empty
+  // results, with the escape hatch offered when tree filters are what is set.
+  //
+  // This keys on the code alone, which is safe only while an UNRESOLVABLE-ID
+  // filter refusal is the sole read-path source of NOT_FOUND. Not every filter
+  // refusal qualifies: an id-valued field given the EMPTY STRING is refused too
+  // and deliberately carries no code, so it lands in the generic error branch
+  // below and stays visible as the client bug it is. That constraint lives with
+  // the server that mints the code — see etagErrorPresenter in cmd/serve.go —
+  // and a read resolver that started carrying it would be muted here.
+  let notFoundMessage = $derived(
+    dataSource.error && graphqlErrorCode(dataSource.error) === "NOT_FOUND"
+      ? graphqlErrorMessage(dataSource.error)
+      : ""
+  );
+
+  // An id-valued filter field ANDed with the `no:` token for the same
+  // relationship is a query no store state can answer, and the server refuses it
+  // rather than replying with an empty list. The box offers the two halves as
+  // independent tokens, and "Children of this" on the context menu ANDs a
+  // `parent:` onto whatever is already set — so a user browsing root nibs reaches
+  // the pair without typing it.
+  //
+  // Named from the FILTER rather than from the server's message, because the two
+  // speak different languages: the refusal says `hasParent: false` where the box
+  // says `no:parent`, and the user can only edit what the box spells. When the
+  // filter in hand holds no pair to name — it moved on since the refused query —
+  // this stays empty and the generic error branch shows the server's own sentence
+  // instead of an explanation with nothing in it.
+  let contradictionPairs = $derived(
+    dataSource.error && graphqlErrorCode(dataSource.error) === "FILTER_CONTRADICTION"
+      ? contradictionTokens(resolvedFilter)
+      : []
+  );
 
   let allNibs = $derived(dataSource.allNibs);
 
@@ -548,6 +613,13 @@
   function handleTableSortClick(field: SortField) {
     emitTableSort(prefs, ontablesortchange, nextTableSort(resolvedTableSort, field));
   }
+
+  // Escape hatch out of an over-constrained tree query: drop every hierarchy field
+  // and keep the rest of the filter, so the metadata facets and free text the user
+  // built up survive.
+  function clearHierarchy() {
+    emitFilter(prefs, onfilterchange, clearHierarchyFilters(resolvedFilter));
+  }
 </script>
 
 <div data-testid="tree-table" class="h-full">
@@ -560,9 +632,62 @@
   <div class="flex items-center justify-center py-12 text-body text-muted-foreground">
     <span>Loading...</span>
   </div>
+{:else if notFoundMessage}
+  <!-- Ordered before the generic error branch: a refused filter id is an empty
+       result the user can act on, not a failure, so it must not be styled or
+       worded as one. -->
+  <div data-testid="empty-unknown-id" class="flex flex-col items-center gap-3 py-12 text-body text-muted-foreground">
+    <span class="text-foreground">No nibs match this filter</span>
+    <span class="max-w-md text-center">{notFoundMessage}</span>
+    {#if activeHierarchyTokens.length > 0}
+      <Button variant="outline" size="sm" onclick={clearHierarchy}>Clear hierarchy filters</Button>
+    {/if}
+  </div>
+{:else if contradictionPairs.length > 0}
+  <!-- Ordered before the generic error branch for the same reason the unknown-id
+       branch is: the user wrote a query that cannot be answered, which is a thing
+       to fix rather than a failure to report. The escape hatch is offered on the
+       same condition as there — some hierarchy field is set — so it clears the
+       parent pair outright and merely widens the query otherwise. It is not
+       offered at all for a lone blocking-dimension pair, which it cannot reach. -->
+  <div data-testid="empty-contradiction" class="flex flex-col items-center gap-3 py-12 text-body text-muted-foreground">
+    <span class="text-foreground">No nibs match this filter</span>
+    <span class="max-w-md text-center">
+      {#each contradictionPairs as [idToken, noToken] (idToken)}
+        <code class="whitespace-nowrap rounded bg-muted px-1 py-0.5 text-foreground">{idToken}</code>{" "}
+        and{" "}
+        <code class="whitespace-nowrap rounded bg-muted px-1 py-0.5 text-foreground">{noToken}</code>{" "}
+        ask for opposite things — a nib cannot both have that relationship and have none.{" "}
+      {/each}
+      Dropping either half of a pair makes the query answerable.
+    </span>
+    {#if activeHierarchyTokens.length > 0}
+      <Button variant="outline" size="sm" onclick={clearHierarchy}>Clear hierarchy filters</Button>
+    {/if}
+  </div>
 {:else if dataSource.error}
   <div class="rounded-lg bg-destructive/10 px-4 py-3 text-body text-destructive">
     Error: {errorMessage}
+  </div>
+{:else if rows.length === 0 && activeHierarchyTokens.length > 1}
+  <!-- Several tree constraints at once: the generic message leaves the user staring
+       at a dead end they cannot see the shape of. Name the relationships and offer
+       the way out.
+       The wording asserts only what this branch has established — that the filter
+       ANDs these relationships together and matched nothing. It does NOT claim they
+       are the cause: `parent:x ancestor:x` is redundant yet perfectly matchable, and
+       a client-side facet (status, tags, …) or free text can be what actually
+       emptied the result. So the escape hatch is offered as one way to widen the
+       query rather than as the fix. -->
+  <div data-testid="empty-hierarchy" class="flex flex-col items-center gap-3 py-12 text-body text-muted-foreground">
+    <span class="text-foreground">No nibs match this filter</span>
+    <span class="max-w-md text-center">
+      It combines {activeHierarchyTokens.length} hierarchy relationships —
+      {#each activeHierarchyTokens as token, i (token)}{#if i > 0}, {/if}<code class="whitespace-nowrap rounded bg-muted px-1 py-0.5 text-foreground">{token}</code>{/each}{" "}
+      — and a nib has to satisfy every one of them. Clearing them is one way to
+      widen the result.
+    </span>
+    <Button variant="outline" size="sm" onclick={clearHierarchy}>Clear hierarchy filters</Button>
   </div>
 {:else if rows.length === 0}
   <div class="flex items-center justify-center py-12 text-body text-muted-foreground">

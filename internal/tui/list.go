@@ -6,18 +6,18 @@ import (
 	"io"
 	"strings"
 
-	"github.com/charmbracelet/bubbles/list"
-	tea "github.com/charmbracelet/bubbletea"
-	"github.com/charmbracelet/lipgloss"
 	"github.com/alphaleonis/nibs/internal/config"
 	"github.com/alphaleonis/nibs/internal/graph/model"
 	"github.com/alphaleonis/nibs/internal/nib"
 	"github.com/alphaleonis/nibs/internal/ui"
+	"github.com/charmbracelet/bubbles/list"
+	tea "github.com/charmbracelet/bubbletea"
+	"github.com/charmbracelet/lipgloss"
 )
 
 // nibItem wraps a Nib to implement list.Item, with tree context
 type nibItem struct {
-	nib        *nib.Nib
+	nib         *nib.Nib
 	cfg         *config.Config
 	treePrefix  string // tree prefix for rendering (e.g., "├─" or "  └─")
 	matched     bool   // true if nib matched filter (vs. ancestor shown for context)
@@ -33,11 +33,11 @@ func (i nibItem) FilterValue() string { return i.nib.Title + " " + i.nib.ID }
 
 // itemDelegate handles rendering of list items
 type itemDelegate struct {
-	cfg           *config.Config
-	hasTags       bool
-	width         int
-	cols          ui.ResponsiveColumns // cached responsive columns
-	idColWidth    int                  // ID column width (accounts for tree prefix)
+	cfg          *config.Config
+	hasTags      bool
+	width        int
+	cols         ui.ResponsiveColumns // cached responsive columns
+	idColWidth   int                  // ID column width (accounts for tree prefix)
 	selectedNibs *map[string]bool     // pointer to marked nibs for multi-select
 }
 
@@ -86,7 +86,7 @@ func (d itemDelegate) Render(w io.Writer, m list.Model, index int, listItem list
 			TypeColor:     colors.TypeColor,
 			PriorityColor: colors.PriorityColor,
 			Priority:      item.nib.Priority,
-			IsArchive:     colors.IsArchive,
+			IsClosed:      colors.IsClosed,
 			MaxTitleWidth: maxTitleWidth,
 			ShowCursor:    true,
 			IsSelected:    index == m.Index(),
@@ -109,12 +109,12 @@ func (d itemDelegate) Render(w io.Writer, m list.Model, index int, listItem list
 
 // listModel is the model for the nib list view
 type listModel struct {
-	list     list.Model
-	backend  Backend
-	config   *config.Config
-	width    int
-	height   int
-	err      error
+	list    list.Model
+	backend Backend
+	config  *config.Config
+	width   int
+	height  int
+	err     error
 
 	// Responsive column state
 	hasTags    bool                 // whether any nibs have tags
@@ -123,7 +123,7 @@ type listModel struct {
 
 	// Active filters
 	tagFilter     string // if set, only show nibs with this tag
-	hideCompleted bool   // if true, hide completed and scrapped nibs
+	hideCompleted bool   // if true, hide nibs in a closed status
 
 	// Collapse state
 	collapsedIDs map[string]bool // set of collapsed node IDs
@@ -138,8 +138,9 @@ type listModel struct {
 	// Border title (rendered into top border line)
 	borderTitle string
 
-	// Status message to display in footer
+	// Status message to display in footer, and how to color it
 	statusMessage string
+	statusKind    statusKind
 
 	// After reorder, select this nib ID when the list reloads
 	selectByID string
@@ -170,7 +171,7 @@ func newListModel(backend Backend, cfg *config.Config) listModel {
 		config:        cfg,
 		hideCompleted: cfg.HideCompleted(),
 		wideMode:      cfg.WideMode(),
-		selectedNibs: selectedNibs,
+		selectedNibs:  selectedNibs,
 		collapsedIDs:  make(map[string]bool),
 	}
 	m.updateTitle()
@@ -207,9 +208,9 @@ func (m listModel) loadNibs() tea.Msg {
 			filter.Tags = []string{m.tagFilter}
 		}
 		if m.hideCompleted {
-			// The hide-completed toggle is the *archive* set — derive it from
-			// the canonical archive predicate so it tracks config, not a literal.
-			filter.ExcludeStatus = m.config.ArchiveStatusNames()
+			// The hide-completed toggle is the *closed* set — derive it from
+			// the canonical closed predicate so it tracks config, not a literal.
+			filter.ExcludeStatus = m.config.ClosedStatusNames()
 		}
 	}
 
@@ -219,7 +220,11 @@ func (m listModel) loadNibs() tea.Msg {
 		return errMsg{err}
 	}
 
-	// Query all nibs for tree context (ancestors)
+	// Query all nibs for tree context (ancestors). The nil filter is load-bearing
+	// beyond display: because every existing ancestor is therefore present,
+	// "absent from the tree" means "does not exist", which is what
+	// treeResolvedParentID relies on to decide reorder scope. Filtering here
+	// would make a hidden parent look like a missing one.
 	allNibs, err := m.backend.ListNibs(context.Background(), nil)
 	if err != nil {
 		return errMsg{err}
@@ -314,7 +319,7 @@ func (m listModel) Update(msg tea.Msg) (listModel, tea.Cmd) {
 		m.hasTags = false
 		for i, flatItem := range msg.items {
 			items[i] = nibItem{
-				nib:        flatItem.Nib,
+				nib:         flatItem.Nib,
 				cfg:         m.config,
 				treePrefix:  flatItem.TreePrefix,
 				matched:     flatItem.Matched,
@@ -397,9 +402,9 @@ func (m listModel) Update(msg tea.Msg) (listModel, tea.Cmd) {
 				} else if item, ok := m.list.SelectedItem().(nibItem); ok {
 					return m, func() tea.Msg {
 						return openParentPickerMsg{
-							nibIDs:       []string{item.nib.ID},
-							nibTitle:     item.nib.Title,
-							nibTypes:     []string{item.nib.EffectiveType()},
+							nibIDs:        []string{item.nib.ID},
+							nibTitle:      item.nib.Title,
+							nibTypes:      []string{item.nib.EffectiveType()},
 							currentParent: item.nib.Parent,
 						}
 					}
@@ -421,8 +426,8 @@ func (m listModel) Update(msg tea.Msg) (listModel, tea.Cmd) {
 				} else if item, ok := m.list.SelectedItem().(nibItem); ok {
 					return m, func() tea.Msg {
 						return openStatusPickerMsg{
-							nibIDs:       []string{item.nib.ID},
-							nibTitle:     item.nib.Title,
+							nibIDs:        []string{item.nib.ID},
+							nibTitle:      item.nib.Title,
 							currentStatus: item.nib.Status,
 						}
 					}
@@ -481,8 +486,8 @@ func (m listModel) Update(msg tea.Msg) (listModel, tea.Cmd) {
 				} else if item, ok := m.list.SelectedItem().(nibItem); ok {
 					return m, func() tea.Msg {
 						return openPriorityPickerMsg{
-							nibIDs:         []string{item.nib.ID},
-							nibTitle:       item.nib.Title,
+							nibIDs:          []string{item.nib.ID},
+							nibTitle:        item.nib.Title,
 							currentPriority: item.nib.EffectivePriority(),
 						}
 					}
@@ -542,7 +547,7 @@ func (m listModel) Update(msg tea.Msg) (listModel, tea.Cmd) {
 					}
 				}
 			case "H":
-				// Toggle hide completed/scrapped nibs
+				// Toggle hiding nibs in a closed status
 				m.toggleHideCompleted()
 				return m, m.loadNibs
 			case "W":
@@ -743,11 +748,11 @@ func (m listModel) Update(msg tea.Msg) (listModel, tea.Cmd) {
 // updateDelegate updates the list delegate with current responsive columns
 func (m *listModel) updateDelegate() {
 	delegate := itemDelegate{
-		cfg:           m.config,
-		hasTags:       m.hasTags,
-		width:         m.width,
-		cols:          m.cols,
-		idColWidth:    m.idColWidth,
+		cfg:          m.config,
+		hasTags:      m.hasTags,
+		width:        m.width,
+		cols:         m.cols,
+		idColWidth:   m.idColWidth,
 		selectedNibs: &m.selectedNibs,
 	}
 	m.list.SetDelegate(delegate)
@@ -783,7 +788,7 @@ func (m *listModel) reflattenTree() {
 	m.hasTags = false
 	for i, flatItem := range flatItems {
 		items[i] = nibItem{
-			nib:        flatItem.Nib,
+			nib:         flatItem.Nib,
 			cfg:         m.config,
 			treePrefix:  flatItem.TreePrefix,
 			matched:     flatItem.Matched,
@@ -1044,7 +1049,11 @@ func (m listModel) Footer() string {
 	// Show status message if present, otherwise show help
 	footer := selectionPrefix
 	if m.statusMessage != "" {
-		statusStyle := lipgloss.NewStyle().Foreground(ui.ColorSuccess).Bold(true)
+		color := ui.ColorSuccess
+		if m.statusKind == statusWarn {
+			color = ui.ColorWarning
+		}
+		statusStyle := lipgloss.NewStyle().Foreground(color).Bold(true)
 		footer += statusStyle.Render(m.statusMessage)
 	} else {
 		footer += help
@@ -1136,12 +1145,13 @@ func (m *listModel) findNextSibling(n *nib.Nib) *nib.Nib {
 }
 
 // findSiblings returns all siblings (children of the same parent) from the tree.
-// For root-level nibs (no parent), returns the top-level tree nodes.
+// For root-level nibs (no parent, or a parent link the tree cannot resolve),
+// returns the top-level tree nodes.
 func (m *listModel) findSiblings(n *nib.Nib) []*nib.Nib {
 	if m.tree == nil {
 		return nil
 	}
-	return siblingsFromTree(m.tree, n.Parent)
+	return siblingsFromTree(m.tree, treeResolvedParentID(n, m.tree))
 }
 
 // dispatchBlockMove selects the correct reorder strategy based on the
@@ -1150,7 +1160,10 @@ func (m *listModel) findSiblings(n *nib.Nib) []*nib.Nib {
 //   - 0 effective items: fall back to the legacy focused-row reorder.
 //   - 1 effective item: single-item reorder sourced from the selection.
 //   - ≥2 contiguous, same-parent items: block move via reorderBlockMsg.
-//   - ≥2 with gaps or multiple parents: silent no-op.
+//   - ≥2 with gaps or multiple parents: refusal reported in the footer.
+//
+// No path returns nil: a reorder that cannot happen says why, so a refusal is
+// never mistaken for a dropped keypress.
 //
 // up=true means Ctrl-Up (toward previous sibling); up=false means Ctrl-Down.
 func (m listModel) dispatchBlockMove(up bool) tea.Cmd {
@@ -1161,7 +1174,7 @@ func (m listModel) dispatchBlockMove(up bool) tea.Cmd {
 	// Case 1: no multi-selection → today's focused-row behavior.
 	if len(effective) == 0 {
 		if focused.nib == nil {
-			return nil
+			return refuseReorderCmd(reorderReasonNothingSelected)
 		}
 		return singleReorderCmd(focused.nib, m.findSiblings(focused.nib), up)
 	}
@@ -1174,14 +1187,14 @@ func (m listModel) dispatchBlockMove(up bool) tea.Cmd {
 	}
 
 	// Case 3+: 2 or more effective items — block move if valid.
-	siblings, startIdx, endIdx, ok := blockMovable(effective, m.tree)
-	if !ok {
-		return nil // silent no-op
+	siblings, startIdx, endIdx, reason := blockMovable(effective, m.tree)
+	if reason != "" {
+		return refuseReorderCmd(reason)
 	}
 
 	if up {
 		if startIdx == 0 {
-			return nil // at top, no room
+			return refuseReorderCmd(reorderReasonAtTop)
 		}
 		displaced := siblings[startIdx-1]
 		after := siblings[endIdx].ID
@@ -1199,7 +1212,7 @@ func (m listModel) dispatchBlockMove(up bool) tea.Cmd {
 	}
 
 	if endIdx == len(siblings)-1 {
-		return nil // at bottom, no room
+		return refuseReorderCmd(reorderReasonAtBottom)
 	}
 	displaced := siblings[endIdx+1]
 	before := siblings[startIdx].ID
@@ -1216,12 +1229,20 @@ func (m listModel) dispatchBlockMove(up bool) tea.Cmd {
 	}
 }
 
+// refuseReorderCmd reports a refused reorder so the footer can explain it.
+func refuseReorderCmd(reason string) tea.Cmd {
+	return func() tea.Msg {
+		return reorderRefusedMsg{reason: reason}
+	}
+}
+
 // singleReorderCmd emits a reorderNibMsg for a single nib, moving it up or
-// down among its siblings. Returns nil if the target is already at the
-// boundary in that direction.
+// down among its siblings. When the move cannot happen — no target, target
+// missing from the siblings, or already at the boundary in that direction —
+// it emits the reason instead.
 func singleReorderCmd(target *nib.Nib, siblings []*nib.Nib, up bool) tea.Cmd {
 	if target == nil {
-		return nil
+		return refuseReorderCmd(reorderReasonNothingSelected)
 	}
 	// Locate target in siblings.
 	idx := -1
@@ -1232,11 +1253,14 @@ func singleReorderCmd(target *nib.Nib, siblings []*nib.Nib, up bool) tea.Cmd {
 		}
 	}
 	if idx < 0 {
-		return nil
+		// Reachable for a nib promoted out of a parent cycle: its parent edge is
+		// severed in the tree, so it is absent from the sibling list its stored
+		// parent still names. Refusing is correct — see blockmove.go.
+		return refuseReorderCmd(reorderReasonNotInList)
 	}
 	if up {
 		if idx == 0 {
-			return nil
+			return refuseReorderCmd(reorderReasonAtTop)
 		}
 		before := siblings[idx-1].ID
 		return func() tea.Msg {
@@ -1244,7 +1268,7 @@ func singleReorderCmd(target *nib.Nib, siblings []*nib.Nib, up bool) tea.Cmd {
 		}
 	}
 	if idx == len(siblings)-1 {
-		return nil
+		return refuseReorderCmd(reorderReasonAtBottom)
 	}
 	after := siblings[idx+1].ID
 	return func() tea.Msg {

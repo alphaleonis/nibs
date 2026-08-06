@@ -86,7 +86,7 @@ describe("applySort — enum columns (canonical rank, not string order)", () => 
     expect(ids(applySort(rows, { field: "type", direction: "desc" }))).toEqual(["research", "bug", "milestone"]);
   });
 
-  it("state: STATUSES order ascending (draft → todo → in-progress → deferred → completed → scrapped)", () => {
+  it("status: STATUSES order ascending (draft → todo → in-progress → deferred → completed → scrapped)", () => {
     const rows = [
       row({ id: "completed", status: "completed" }),
       row({ id: "draft", status: "draft" }),
@@ -95,17 +95,17 @@ describe("applySort — enum columns (canonical rank, not string order)", () => 
       row({ id: "todo", status: "todo" }),
       row({ id: "deferred", status: "deferred" }),
     ];
-    expect(ids(applySort(rows, { field: "state", direction: "asc" }))).toEqual([
+    expect(ids(applySort(rows, { field: "status", direction: "asc" }))).toEqual([
       "draft", "todo", "in-progress", "deferred", "completed", "scrapped",
     ]);
   });
 
-  it("state: descending reverses STATUSES order", () => {
+  it("status: descending reverses STATUSES order", () => {
     const rows = [row({ id: "todo", status: "todo" }), row({ id: "draft", status: "draft" }), row({ id: "scrapped", status: "scrapped" })];
-    expect(ids(applySort(rows, { field: "state", direction: "desc" }))).toEqual(["scrapped", "todo", "draft"]);
+    expect(ids(applySort(rows, { field: "status", direction: "desc" }))).toEqual(["scrapped", "todo", "draft"]);
   });
 
-  it("effort: ESTIMATES order ascending with NO estimate last", () => {
+  it("estimate: ESTIMATES order ascending with NO estimate last", () => {
     const rows = [
       row({ id: "l", estimate: "l" }),
       row({ id: "none", estimate: "" }),
@@ -113,17 +113,17 @@ describe("applySort — enum columns (canonical rank, not string order)", () => 
       row({ id: "xl", estimate: "xl" }),
       row({ id: "m", estimate: "m" }),
     ];
-    expect(ids(applySort(rows, { field: "effort", direction: "asc" }))).toEqual(["s", "m", "l", "xl", "none"]);
+    expect(ids(applySort(rows, { field: "estimate", direction: "asc" }))).toEqual(["s", "m", "l", "xl", "none"]);
   });
 
-  it("effort: descending keeps NO estimate last (empties never lead)", () => {
+  it("estimate: descending keeps NO estimate last (empties never lead)", () => {
     const rows = [
       row({ id: "l", estimate: "l" }),
       row({ id: "none", estimate: "" }),
       row({ id: "s", estimate: "s" }),
       row({ id: "xl", estimate: "xl" }),
     ];
-    expect(ids(applySort(rows, { field: "effort", direction: "desc" }))).toEqual(["xl", "l", "s", "none"]);
+    expect(ids(applySort(rows, { field: "estimate", direction: "desc" }))).toEqual(["xl", "l", "s", "none"]);
   });
 });
 
@@ -230,11 +230,11 @@ describe("nextTableSort — tri-state cycle (field-agnostic)", () => {
   });
 
   it("cycles ascending → descending on the same field", () => {
-    expect(nextTableSort({ field: "state", direction: "asc" }, "state")).toEqual({ field: "state", direction: "desc" });
+    expect(nextTableSort({ field: "status", direction: "asc" }, "status")).toEqual({ field: "status", direction: "desc" });
   });
 
   it("cycles descending → off on the same field", () => {
-    expect(nextTableSort({ field: "state", direction: "desc" }, "state")).toBeNull();
+    expect(nextTableSort({ field: "status", direction: "desc" }, "status")).toBeNull();
   });
 
   it("starts a NEW field at ascending regardless of the current field's direction", () => {
@@ -244,11 +244,11 @@ describe("nextTableSort — tri-state cycle (field-agnostic)", () => {
 
   it("completes the full asc → desc → off cycle for one field", () => {
     let s: TableSort | null = null;
-    s = nextTableSort(s, "effort");
-    expect(s).toEqual({ field: "effort", direction: "asc" });
-    s = nextTableSort(s, "effort");
-    expect(s).toEqual({ field: "effort", direction: "desc" });
-    s = nextTableSort(s, "effort");
+    s = nextTableSort(s, "estimate");
+    expect(s).toEqual({ field: "estimate", direction: "asc" });
+    s = nextTableSort(s, "estimate");
+    expect(s).toEqual({ field: "estimate", direction: "desc" });
+    s = nextTableSort(s, "estimate");
     expect(s).toBeNull();
   });
 });
