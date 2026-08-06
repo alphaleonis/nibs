@@ -1,0 +1,27 @@
+# Vulnerability IDs this repository knowingly ships with.
+#
+# scripts/vulncheck.sh fails on any govulncheck finding NOT listed here, and
+# fails just as loudly on an entry here that no longer matches anything — a
+# suppression that outlives its reason is worse than no suppression, because it
+# reads as "reviewed" while covering nothing.
+#
+# One ID per line. Everything after # is a comment. Every entry must say what it
+# is, why it is accepted, and what would retire it.
+
+# The golang.org/x/crypto/openpgp package is unmaintained and unsafe by design.
+#
+# Why accepted: the advisory has `introduced: 0` and no fixed version, because
+# the finding is the package's status rather than a specific defect. nibs does
+# not choose the dependency — it arrives transitively through
+# github.com/creativeprojects/go-selfupdate, whose validate.go imports openpgp
+# at file scope, so all six openpgp subpackages link into every binary that
+# imports selfupdate even though cmd/upgrade.go only ever configures
+# ChecksumValidator. There are no build tags to opt out of it, and v1.6.0 is
+# already the newest release.
+#
+# What retires it: upstream PR #58 replaces the import with the maintained
+# ProtonMail fork. The maintainer accepted it in principle but will not ship it
+# as a patch, because PGPValidator.KeyRing is a public field whose type changes
+# — so it arrives as go-selfupdate/v2, a new module path. Migrating is tracked
+# by nibs-npid; deleting this line is part of that work.
+GO-2026-5932

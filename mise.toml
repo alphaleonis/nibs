@@ -69,3 +69,10 @@ task = "3.50.0"
 # needing a custom manager per site.
 goreleaser = "2.17.1"
 "go:github.com/google/go-licenses" = "1.6.0"
+
+# govulncheck reports known vulnerabilities in dependencies, gated by
+# scripts/vulncheck.sh. Pinned like everything else here so a CI run and a local
+# `task vulncheck` reach the same verdict — and because the gate parses
+# govulncheck's JSON output, which is a version-dependent contract rather than a
+# stable one.
+"go:golang.org/x/vuln/cmd/govulncheck" = "1.6.0"
