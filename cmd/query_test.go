@@ -7,6 +7,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 
@@ -1318,6 +1319,196 @@ func TestQueryCommandRefusalExitsLikeTheDirectCommand(t *testing.T) {
 			}
 			if code := reportExitError(io.Discard, err); code != tt.wantExit {
 				t.Errorf("exit code = %d, want %d (%s)", code, tt.wantExit, tt.wantCode)
+			}
+		})
+	}
+}
+
+// addFeatureNib writes a second illegal-reparent subject into an existing
+// fixture dir: a feature, whose legal parents (milestone, epic) differ from an
+// epic's (milestone alone). Two refusals carrying DIFFERENT allowed sets are
+// what makes a single-valued repair hint unrepresentable for a batch.
+func addFeatureNib(t *testing.T, nibsDir, id string) string {
+	t.Helper()
+	content := "---\nversion: 1\ntitle: Feature\nstatus: todo\ntype: feature\norder: c0\n---\n"
+	if err := os.WriteFile(filepath.Join(nibsDir, id+"--feature.md"), []byte(content), 0644); err != nil {
+		t.Fatal(err)
+	}
+	return id
+}
+
+// TestHierarchyEnvelopeIsTheSameOnEveryWriteSurface pins that the four surfaces
+// that can attempt an illegal parent link — `nibs new`, `nibs mv`, `nibs set` and
+// `nibs query` — refuse one identically: same code, same exit status, and the
+// same allowedParentTypes repair hint.
+//
+// Comparing the envelopes rather than asserting four independent expectations is
+// the point: the hint is the field that turns a refusal into a next action, and
+// a surface that omits it leaves an agent to re-derive the hierarchy rule. All
+// four run against one fixture and one refusal (an epic under a task), so any
+// difference is the code under test.
+//
+// `query` is compared on code, exit and hint but not on message text: it renders
+// every failure through the transport prefix its own contract documents, so the
+// assertion is that its message is that prefix plus the sentence the direct
+// commands print.
+func TestHierarchyEnvelopeIsTheSameOnEveryWriteSurface(t *testing.T) {
+	t.Cleanup(resetQueryFlags)
+	t.Cleanup(resetSetFlags)
+	t.Cleanup(resetMvFlags)
+	t.Cleanup(resetNewFlags)
+	t.Setenv("EDITOR", "")
+	t.Setenv("VISUAL", "")
+
+	nibsDir, epicID, taskID := writeIllegalReparentFixture(t)
+
+	run := func(t *testing.T, reset func(), args ...string) hierarchyEnvelope {
+		t.Helper()
+		reset()
+		rootCmd.SetArgs(append([]string{"--nibs-path", nibsDir}, args...))
+		var execErr error
+		out := captureStdout(t, func() { execErr = rootCmd.Execute() })
+		if execErr == nil {
+			t.Fatalf("%v returned no error; out: %q", args, out)
+		}
+		if code := reportExitError(io.Discard, execErr); code != output.ExitValidation {
+			t.Errorf("%v exit = %d, want %d (validation)", args, code, output.ExitValidation)
+		}
+		var env hierarchyEnvelope
+		if err := json.Unmarshal([]byte(out), &env); err != nil {
+			t.Fatalf("%v stdout is not a JSON error envelope: %v\nraw: %s", args, err, out)
+		}
+		return env
+	}
+
+	// `new` creates a fresh epic under the task rather than moving one, but the
+	// refused link — and so the hint — is the same.
+	newEnv := run(t, resetNewFlags, "new", "New Epic", "-t", "epic", "--parent", taskID, "--json")
+	mvEnv := run(t, resetMvFlags, "mv", epicID, "--parent", taskID, "--json")
+	setEnv := run(t, resetSetFlags, "set", epicID, "--parent", taskID, "--json")
+	queryEnv := run(t, resetQueryFlags, "query", "--json",
+		`mutation { updateNib(id: "`+epicID+`", input: {parent: "`+taskID+`"}) { id } }`)
+
+	surfaces := map[string]hierarchyEnvelope{"new": newEnv, "mv": mvEnv, "set": setEnv, "query": queryEnv}
+	for name, env := range surfaces {
+		if env.Error.Code != output.ErrHierarchy {
+			t.Errorf("%s envelope code = %q, want %q", name, env.Error.Code, output.ErrHierarchy)
+		}
+		want := []string{"milestone"}
+		if !slices.Equal(env.Error.AllowedParentTypes, want) {
+			t.Errorf("%s allowedParentTypes = %v, want %v", name, env.Error.AllowedParentTypes, want)
+		}
+	}
+	if mvEnv.Error.Message != setEnv.Error.Message || mvEnv.Error.Message != newEnv.Error.Message {
+		t.Errorf("direct commands disagree on the refusal sentence:\n  new: %q\n  mv:  %q\n  set: %q",
+			newEnv.Error.Message, mvEnv.Error.Message, setEnv.Error.Message)
+	}
+	if want := "graphql: " + mvEnv.Error.Message; queryEnv.Error.Message != want {
+		t.Errorf("query message = %q, want %q", queryEnv.Error.Message, want)
+	}
+}
+
+// TestQueryHierarchyBatchExitsLikeTheDirectCommands pins how a response holding
+// an illegal reparent aggregates, which is where classifying HIERARCHY at all
+// could have cost more than it bought.
+//
+// HIERARCHY and VALIDATION_ERROR are different codes that share exit 2, so a
+// rule comparing code strings reports UNCATEGORIZED — exit 1 — for a batch whose
+// every failure the direct commands exit 2 for. The rows below fix each
+// aggregation outcome at the command surface: alone the refusal keeps its own
+// code and its hint; beside another exit-2 failure it generalizes to the class's
+// code and withholds the hint; beside a different exit class it is uncategorized.
+func TestQueryHierarchyBatchExitsLikeTheDirectCommands(t *testing.T) {
+	tests := []struct {
+		name       string
+		mutation   func(epicID, featureID, taskID string) string
+		wantCode   string
+		wantExit   int
+		wantHint   []string
+		wantNoHint bool
+	}{
+		{
+			// One refusal, one allowed set: the hint is representable and the
+			// specific code survives.
+			name: "a lone illegal reparent keeps HIERARCHY and its hint",
+			mutation: func(epicID, _, taskID string) string {
+				return `mutation { updateNib(id: "` + epicID + `", input: {parent: "` + taskID + `"}) { id } }`
+			},
+			wantCode: output.ErrHierarchy,
+			wantExit: output.ExitValidation,
+			wantHint: []string{"milestone"},
+		},
+		{
+			// Two refusals of the same class agree on the code, so it survives —
+			// but their allowed sets differ (milestone for an epic, milestone or
+			// epic for a feature) and one field cannot speak for both.
+			name: "two illegal reparents keep HIERARCHY but offer no single hint",
+			mutation: func(epicID, featureID, taskID string) string {
+				return `mutation { a: updateNib(id: "` + epicID + `", input: {parent: "` + taskID + `"}) { id } ` +
+					`b: updateNib(id: "` + featureID + `", input: {parent: "` + taskID + `"}) { id } }`
+			},
+			wantCode:   output.ErrHierarchy,
+			wantExit:   output.ExitValidation,
+			wantNoHint: true,
+		},
+		{
+			// The measured regression: both failures are caller-input faults the
+			// direct commands exit 2 for (`nibs mv` HIERARCHY, `nibs set -s bogus`
+			// VALIDATION_ERROR), so the batch must stay exit 2. The code
+			// generalizes to the class rather than claiming either specific
+			// refusal about the other's failure.
+			name: "an illegal reparent beside a bad status stays exit 2",
+			mutation: func(epicID, _, taskID string) string {
+				return `mutation { a: updateNib(id: "` + epicID + `", input: {parent: "` + taskID + `"}) { id } ` +
+					`b: updateNib(id: "` + taskID + `", input: {status: "bogus"}) { id } }`
+			},
+			wantCode:   output.ErrValidation,
+			wantExit:   output.ExitValidation,
+			wantNoHint: true,
+		},
+		{
+			// Different exit classes: exit 2 asserts the caller's input was at
+			// fault, which the missing id beside it does not support.
+			name: "an illegal reparent beside an unknown id is uncategorized",
+			mutation: func(epicID, _, taskID string) string {
+				return `mutation { a: updateNib(id: "` + epicID + `", input: {parent: "` + taskID + `"}) { id } ` +
+					`b: updateNib(id: "nosuch", input: {title: "x"}) { id } }`
+			},
+			wantCode:   output.ErrUncategorized,
+			wantExit:   output.ExitError,
+			wantNoHint: true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Cleanup(resetQueryFlags)
+			resetQueryFlags()
+			nibsDir, epicID, taskID := writeIllegalReparentFixture(t)
+			featureID := addFeatureNib(t, nibsDir, "ft")
+
+			out, err := runQueryCmd(t, nibsDir, tt.mutation(epicID, featureID, taskID), "--json")
+			if err == nil {
+				t.Fatalf("mutation returned no error; out: %q", out)
+			}
+			if code := reportExitError(io.Discard, err); code != tt.wantExit {
+				t.Errorf("exit = %d, want %d (%s)", code, tt.wantExit, tt.wantCode)
+			}
+			var env hierarchyEnvelope
+			if uerr := json.Unmarshal([]byte(out), &env); uerr != nil {
+				t.Fatalf("stdout is not a JSON error envelope: %v\nraw: %s", uerr, out)
+			}
+			if env.Error.Code != tt.wantCode {
+				t.Errorf("envelope code = %q, want %q", env.Error.Code, tt.wantCode)
+			}
+			if tt.wantNoHint {
+				if len(env.Error.AllowedParentTypes) != 0 {
+					t.Errorf("no allowedParentTypes may be offered here, got %v", env.Error.AllowedParentTypes)
+				}
+				return
+			}
+			if !slices.Equal(env.Error.AllowedParentTypes, tt.wantHint) {
+				t.Errorf("allowedParentTypes = %v, want %v", env.Error.AllowedParentTypes, tt.wantHint)
 			}
 		})
 	}

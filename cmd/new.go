@@ -2,14 +2,12 @@ package cmd
 
 import (
 	"context"
-	"errors"
 	"strings"
 
 	"github.com/alphaleonis/nibs/internal/bodytemplate"
 	"github.com/alphaleonis/nibs/internal/config"
 	"github.com/alphaleonis/nibs/internal/graph/model"
 	"github.com/alphaleonis/nibs/internal/nib"
-	"github.com/alphaleonis/nibs/internal/nibtypes"
 	"github.com/alphaleonis/nibs/internal/output"
 	"github.com/alphaleonis/nibs/internal/projection"
 	"github.com/spf13/cobra"
@@ -161,13 +159,10 @@ is used as-is — with --no-edit, with --json, or when stdin/stdout is not a ter
 		if err != nil {
 			// An illegal parent type (e.g. a task under a milestone) is surfaced as
 			// a structured HIERARCHY error carrying the allowed parent types, not a
-			// generic file error. The rule itself lives in internal/nibtypes.
-			var he *nibtypes.HierarchyError
-			if errors.As(err, &he) {
-				if newJSON {
-					return output.ErrorHierarchy(he.Error(), he.Allowed)
-				}
-				return cmdError(false, output.ErrHierarchy, "%s", he.Error())
+			// generic file error. The rule itself lives in internal/nibtypes, and
+			// the envelope is built where every other write surface builds it.
+			if hierarchy, ok := hierarchyError(newJSON, err); ok {
+				return hierarchy
 			}
 			return cmdError(newJSON, output.ErrFileError, "failed to create nib: %v", err)
 		}

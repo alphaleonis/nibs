@@ -120,16 +120,29 @@ More examples:
 			if errors.As(err, &coded) {
 				code = coded.Code
 			}
-			// A CONFLICT the response pins on ONE etag mismatch reconciles like
-			// the direct command's: the envelope carries the server's current
-			// etag. Without it, exit 4 plus an absent currentEtag reads — per the
-			// documented envelope contract — as "conflict with no reusable token",
-			// steering an agent away from a retry that would have worked. The code
-			// gates this, not the cause alone: a mismatch inside a response whose
-			// codes disagree is not a conflict claim to enrich.
-			if code == output.ErrConflict {
+			// A response the code pins on ONE classified failure reconciles like
+			// the direct command's: the envelope carries that failure's repair
+			// hint. Without it, the exit status plus an absent hint reads — per the
+			// documented envelope contract — as "this class of failure with nothing
+			// to act on", steering an agent away from a fix that was available. A
+			// CONFLICT offers the server's current etag; a HIERARCHY offers the
+			// parent types that would be accepted.
+			//
+			// The response CODE gates each, not the cause alone: a mismatch inside a
+			// response whose classes disagree is not a conflict claim to enrich, and
+			// a refused parent link inside a response generalized to
+			// VALIDATION_ERROR is not a hierarchy claim to enrich. formatGraphQLErrors
+			// sets Err only for a single classified failure of the response's own
+			// class, so the helper below sees at most one — the precondition each
+			// states.
+			switch code {
+			case output.ErrConflict:
 				if conflict, ok := etagConflictError(queryJSON, err); ok {
 					return conflict
+				}
+			case output.ErrHierarchy:
+				if hierarchy, ok := hierarchyError(queryJSON, err); ok {
+					return hierarchy
 				}
 			}
 			return cmdError(queryJSON, code, "%s", err)

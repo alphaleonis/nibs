@@ -125,7 +125,7 @@ func TestReportErr_JSONMode_DifferentCodes(t *testing.T) {
 // others. Each is wrapped the way gqlgen wraps a resolver error (gqlerror.Wrap
 // sets Err, and *gqlerror.Error implements Unwrap) so the classifier is
 // exercised through the same chain the executor produces.
-// TestGraphQLErrCodeCodesHaveDistinctExitStatuses has the full corpus.
+// TestGraphQLErrCodeCodesAggregateWithinTheirExitClass has the full corpus.
 func notFoundErr() *gqlerror.Error {
 	return gqlerror.Wrap(&graph.FilterTargetNotFoundError{Field: "parentId", ID: "zz"})
 }
@@ -164,14 +164,36 @@ func unparseableErr() *gqlerror.Error {
 	})
 }
 
+func hierarchyErr() *gqlerror.Error {
+	return gqlerror.Wrap(&nibtypes.HierarchyError{
+		ChildType: "epic", ParentType: "task", Allowed: []string{"milestone"},
+	})
+}
+
+// otherHierarchyErr is a SECOND, distinct illegal parent link — a different
+// child type, so its allowed set and its message both differ. A response
+// carrying both is the case a single top-level allowedParentTypes cannot
+// represent.
+func otherHierarchyErr() *gqlerror.Error {
+	return gqlerror.Wrap(&nibtypes.HierarchyError{
+		ChildType: "feature", ParentType: "task", Allowed: []string{"milestone", "epic"},
+	})
+}
+
 // TestGraphQLResponseCode pins the rule that decides a whole response's exit
-// class: all errors agreeing on a code yields that code, any disagreement
-// yields UNCATEGORIZED (exit 1). The mixed cases are the point — a response is
-// one exit status, and claiming NOT_FOUND for a response that also reports an IO
-// failure would tell an agent it typed a bad id when the store is what broke.
-// Claiming VALIDATION_ERROR instead would be just as wrong in the other
-// direction: exit 2 asserts the caller's input was at fault, which a mixed
-// not-found/conflict pair does not support.
+// class: errors agreeing on a code yield that code, errors that merely agree on
+// an exit STATUS yield that class's general member, and anything else yields
+// UNCATEGORIZED (exit 1). The mixed cases are the point — a response is one exit
+// status, and claiming NOT_FOUND for a response that also reports an IO failure
+// would tell an agent it typed a bad id when the store is what broke. Claiming
+// VALIDATION_ERROR instead would be just as wrong in the other direction: exit 2
+// asserts the caller's input was at fault, which a mixed not-found/conflict pair
+// does not support.
+//
+// The middle tier is what keeps HIERARCHY classifiable. It and VALIDATION_ERROR
+// are different claims about the same caller-input fault class, so a batch
+// holding one of each still supports exit 2 — while neither specific claim
+// survives being asserted about the other's failure.
 //
 // Both orderings of a mixed pair are covered: a rule that only inspected the
 // first error, or only the last, would pass one of them.
@@ -193,14 +215,17 @@ func TestGraphQLResponseCode(t *testing.T) {
 		// TestFilterTargetErrCodeClassifiesEveryRefusalClass — the totality
 		// guard, which drives every refusal class it finds in internal/graph
 		// through filterTargetErrCode — along with
-		// TestGraphQLErrCodeCodesHaveDistinctExitStatuses and
+		// TestGraphQLErrCodeCodesAggregateWithinTheirExitClass and
 		// TestRelFetchErrCodeClassifiesFilterRefusals. Reach for those when
 		// changing the classification, and for these rows when changing how a
 		// response's single code is decided.
 		{"single empty filter target", gqlerror.List{emptyFilterErr()}, output.ErrValidation},
 		{
-			// Agreement, not a collapse to UNCATEGORIZED: reusing ErrValidation
-			// rather than minting a code is what buys this row its answer.
+			// Agreement, not generalization: both sides carry the same code, so
+			// the first tier answers. Minting a distinct code for the empty target
+			// would still land here through the second tier — both are exit 2 —
+			// but would change the row above, where a lone refusal reports its own
+			// code.
 			"empty filter target beside an unrecognized failure agree",
 			gqlerror.List{emptyFilterErr(), gqlerror.Errorf("resolver blew up")},
 			output.ErrValidation,
@@ -277,6 +302,67 @@ func TestGraphQLResponseCode(t *testing.T) {
 			gqlerror.List{gqlerror.Errorf("one"), gqlerror.Errorf("two")},
 			output.ErrValidation,
 		},
+		// The HIERARCHY rows below walk the boundary the middle tier draws: the
+		// specific code survives only where every error agrees on it. Keeping it
+		// is what makes an allowedParentTypes hint reachable at all — though
+		// reaching it also needs a single failure to attribute, which is
+		// soleClassifiedErr's condition, not this function's.
+		{"single illegal parent type", gqlerror.List{hierarchyErr()}, output.ErrHierarchy},
+		{
+			// Two of a kind agree, so the code survives even though their allowed
+			// sets differ; withholding the single-valued hint is soleClassifiedErr's
+			// job, not this function's.
+			"two illegal parent types agree",
+			gqlerror.List{hierarchyErr(), otherHierarchyErr()},
+			output.ErrHierarchy,
+		},
+		{
+			// Different codes, one exit class: the response generalizes rather than
+			// claiming an illegal parent type about the unrecognized failure — and
+			// rather than collapsing to exit 1, which is the regression comparing
+			// code strings would produce here.
+			"illegal parent type beside an unrecognized failure generalizes",
+			gqlerror.List{hierarchyErr(), gqlerror.Errorf("resolver blew up")},
+			output.ErrValidation,
+		},
+		{
+			// The same pair in the other order. Generalization must not depend on
+			// which member the scan met first.
+			"unrecognized failure beside an illegal parent type generalizes",
+			gqlerror.List{gqlerror.Errorf("resolver blew up"), hierarchyErr()},
+			output.ErrValidation,
+		},
+		{
+			// Both are CLASSIFIED and both exit 2, which is the case the old
+			// code-string comparison could not express at all.
+			"illegal parent type beside an empty filter target generalizes",
+			gqlerror.List{hierarchyErr(), emptyFilterErr()},
+			output.ErrValidation,
+		},
+		{
+			"illegal parent type then not-found disagree",
+			gqlerror.List{hierarchyErr(), notFoundErr()},
+			output.ErrUncategorized,
+		},
+		{
+			"illegal parent type then conflict disagree",
+			gqlerror.List{hierarchyErr(), conflictErr()},
+			output.ErrUncategorized,
+		},
+		{
+			// A third member of the same class after generalization has already
+			// happened must not un-generalize the answer back to a specific code.
+			"generalization survives an agreeing tail",
+			gqlerror.List{hierarchyErr(), emptyFilterErr(), hierarchyErr()},
+			output.ErrValidation,
+		},
+		{
+			// …and must not survive a disagreeing one: the scan has to keep
+			// comparing exits after it generalizes, not stop at the first mixture.
+			"generalization then a disagreeing tail",
+			gqlerror.List{hierarchyErr(), emptyFilterErr(), notFoundErr()},
+			output.ErrUncategorized,
+		},
 	}
 
 	for _, tt := range tests {
@@ -289,51 +375,53 @@ func TestGraphQLResponseCode(t *testing.T) {
 	}
 }
 
-// TestGraphQLErrCodeCodesHaveDistinctExitStatuses pins graphQLResponseCode's
-// stated precondition: no two codes graphQLErrCode can return may share an exit
-// status, and none may share one with the VALIDATION_ERROR an unclassified
-// error defaults to.
+// TestGraphQLErrCodeCodesAggregateWithinTheirExitClass pins graphQLResponseCode's
+// stated precondition, and pins it by running the aggregation rather than a
+// proxy for it.
 //
-// graphQLResponseCode compares CODE STRINGS but decides an EXIT STATUS, and
-// output.ExitCode is many-to-one — ErrHierarchy, ErrInvalidStatus,
-// ErrTextNotFound and ErrTextAmbiguous all collapse onto ErrValidation's exit 2.
-// The moment a classifier branch returns one of those, a batch whose failures
-// the direct commands all exit 2 for starts exiting 1 as UNCATEGORIZED, and
-// nothing else in the suite notices: every existing assertion is written in
-// codes, so a code-level disagreement that is an exit-level agreement reads as
-// correct everywhere.
+// It replaces a guard that required no two classified codes to share an exit
+// status. That requirement was satisfiable only while the classifier happened to
+// produce four codes on four exits: HIERARCHY shares exit 2 with the
+// VALIDATION_ERROR an unclassified error defaults to, so keeping the requirement
+// would have meant declining to classify the one refusal that carries a repair
+// hint. What replaces it is the behavior the old rule was a proxy FOR — for every
+// pair the corpus can build, a shared exit status must survive aggregation, a
+// split one must not, and the reported code must be the shared code or a claim no
+// stronger than the class. The old regression (a same-exit pair reporting
+// UNCATEGORIZED, exit 1) fails the second property below; nothing about the
+// widened classifier hides it.
 //
 // classified names one representative of every failure graphQLErrCode is
-// expected to recognize; unclassified names the ones that must keep the
-// caller's VALIDATION_ERROR. The claim is bounded by that corpus: a new branch
-// is caught from whichever side it lands on as long as some row's type reaches
-// it — a new code sharing an exit status fails the distinctness check, and a
-// corpus member changing class fails its own row. A branch matching a type
-// named by neither list trips nothing, because no row calls the classifier with
-// one and the exits map never sees the duplicate. Adding a branch means adding
-// a row.
-func TestGraphQLErrCodeCodesHaveDistinctExitStatuses(t *testing.T) {
+// expected to recognize; unclassified names the ones that must keep the caller's
+// VALIDATION_ERROR. The claim is bounded by that corpus: a new branch is caught
+// from whichever side it lands on as long as some row's type reaches it — its
+// code is checked against output.ExitCode's vocabulary, its class against the
+// row's want, and its aggregation against every other row. A branch matching a
+// type named by neither list trips nothing, because no row calls the classifier
+// with one. Adding a branch means adding a row.
+func TestGraphQLErrCodeCodesAggregateWithinTheirExitClass(t *testing.T) {
 	classified := []struct {
 		name string
-		err  error
+		err  *gqlerror.Error
 		want string
 	}{
 		{"filter target not found", notFoundErr(), output.ErrNotFound},
 		{"filter target unreadable", unreadableErr(), output.ErrFileError},
 		{
-			// Deliberately the SAME code the unclassified default uses, so it
-			// adds no exit status to the distinctness map above. Classifying it
-			// at all is what the direct commands need: relFetchErrCode's
-			// fallback is FILE_ERROR (exit 5), so an unclassified empty id
-			// would report a malformed argument as a broken tracker.
+			// Deliberately the SAME code the unclassified default uses, so a
+			// response holding both reports it rather than generalizing.
+			// Classifying it at all is what the direct commands need:
+			// relFetchErrCode's fallback is FILE_ERROR (exit 5), so an
+			// unclassified empty id would report a malformed argument as a
+			// broken tracker.
 			"filter target empty",
 			emptyFilterErr(),
 			output.ErrValidation,
 		},
 		{
 			// Also the unclassified default's own code, and deliberately so:
-			// minting one for the contradictory pairs would add a second code
-			// on exit 2 and make a response carrying both report UNCATEGORIZED.
+			// minting one for the contradictory pairs would buy a second name
+			// for the same class and nothing an agent could act on.
 			"contradictory filter pair",
 			contradictionErr(),
 			output.ErrValidation,
@@ -346,6 +434,14 @@ func TestGraphQLErrCodeCodesHaveDistinctExitStatuses(t *testing.T) {
 		},
 		{"on-disk nib unparseable", unparseableErr(), output.ErrFileError},
 		{
+			// Shares exit 2 with the VALIDATION_ERROR default, which is legal
+			// only because aggregation compares exits. What the separate code
+			// buys is the allowedParentTypes hint the envelope carries with it.
+			"an illegal parent type",
+			hierarchyErr(),
+			output.ErrHierarchy,
+		},
+		{
 			// A mutation aimed at an unknown subject id arrives as a bare
 			// sentinel, not as a filter-target type — mutationErrCode's
 			// errors.Is tail is what classifies it.
@@ -356,18 +452,9 @@ func TestGraphQLErrCodeCodesHaveDistinctExitStatuses(t *testing.T) {
 	}
 	unclassified := []struct {
 		name string
-		err  error
+		err  *gqlerror.Error
 	}{
 		{"a resolver failure with no nib-level class", gqlerror.Errorf("resolver blew up")},
-		{
-			// The already-planned classifier extension: today an illegal parent
-			// type reaches `nibs query` unclassified and rides the
-			// VALIDATION_ERROR default, which is exit 2 — the same exit
-			// nibs mv reports for it. Classifying it as HIERARCHY would keep
-			// that exit for a lone failure and break it for a batch.
-			"an illegal parent type",
-			gqlerror.Wrap(&nibtypes.HierarchyError{ChildType: "milestone", ParentType: "task"}),
-		},
 		{
 			// gqlgen's own protocol failures carry extensions.code but no Go
 			// cause; the classifier reads the chain, so they stay unclassified.
@@ -379,9 +466,16 @@ func TestGraphQLErrCodeCodesHaveDistinctExitStatuses(t *testing.T) {
 		},
 	}
 
-	// The unclassified default is part of the comparison graphQLResponseCode
-	// runs, so it has to be part of the distinctness claim too.
-	exits := map[int]string{output.ExitCode(output.ErrValidation): output.ErrValidation}
+	// corpus pairs every representative with the code graphQLResponseCode sees
+	// for it: the classified code, or the VALIDATION_ERROR an unclassified error
+	// defaults to. The default is part of the comparison the rule runs, so it has
+	// to be part of the claim.
+	type member struct {
+		name string
+		err  *gqlerror.Error
+		code string
+	}
+	var corpus []member
 
 	for _, tt := range classified {
 		t.Run(tt.name, func(t *testing.T) {
@@ -392,20 +486,28 @@ func TestGraphQLErrCodeCodesHaveDistinctExitStatuses(t *testing.T) {
 			if got != tt.want {
 				t.Fatalf("graphQLErrCode() = %q, want %q", got, tt.want)
 			}
+			// A code output.ExitCode does not know falls through to the
+			// uncategorized exit, where it exits 1 alone and disagrees with
+			// everything beside it — strictly less than staying unclassified.
+			if output.ExitCode(got) == output.ExitError && got != output.ErrUncategorized {
+				t.Fatalf("graphQLErrCode() = %q, which output.ExitCode does not recognize "+
+					"(exit %d); classifying a failure into it reports less than leaving it "+
+					"unclassified — see graphQLResponseCode's PRECONDITION",
+					got, output.ExitError)
+			}
+			if got == output.ErrUncategorized {
+				t.Fatalf("graphQLErrCode() = %q; a classified failure has a class by "+
+					"definition, so it must not report the code reserved for having none",
+					got)
+			}
+			// A lone failure keeps its own code, which is what makes a repair
+			// hint reachable: formatGraphQLErrors attributes a cause only when
+			// its class IS the response's.
+			if got := graphQLResponseCode(gqlerror.List{tt.err}); got != tt.want {
+				t.Errorf("graphQLResponseCode(one %s) = %q, want %q", tt.name, got, tt.want)
+			}
 		})
-		code, ok := graphQLErrCode(tt.err)
-		if !ok {
-			continue
-		}
-		exit := output.ExitCode(code)
-		if prior, dup := exits[exit]; dup && prior != code {
-			t.Errorf("graphQLErrCode can return both %q and %q, which share exit %d — "+
-				"graphQLResponseCode compares codes, so a response carrying both reports "+
-				"UNCATEGORIZED (exit 1) for failures the direct commands agree exit %d; "+
-				"see its PRECONDITION",
-				prior, code, exit, exit)
-		}
-		exits[exit] = code
+		corpus = append(corpus, member{tt.name, tt.err, tt.want})
 	}
 
 	for _, tt := range unclassified {
@@ -417,14 +519,72 @@ func TestGraphQLErrCodeCodesHaveDistinctExitStatuses(t *testing.T) {
 					code, output.ExitCode(code))
 			}
 		})
+		corpus = append(corpus, member{tt.name, tt.err, output.ErrValidation})
+	}
+
+	// Every unordered pair the corpus can build, aggregated. The properties are
+	// stated in terms of the pair's own codes and exits, not by recomputing the
+	// rule, so a rewrite of graphQLResponseCode is judged by what it must deliver:
+	//
+	//   - Split exit statuses → UNCATEGORIZED. No single claim covers the pair.
+	//   - Shared exit status → the response exits there too. This is the parity
+	//     `nibs query` exists to hold, and the one a code-string comparison breaks
+	//     the moment two classified codes share an exit.
+	//   - Equal codes → that code, so a specific refusal is still reported as
+	//     one.
+	//   - Different codes on one exit → a code that is its own class's general
+	//     member, so the response asserts nothing beyond the class. (Which code
+	//     that is per class is output.GeneralCode's contract, pinned in
+	//     internal/output.)
+	//   - Either order → the same answer. Root query fields complete in
+	//     nondeterministic order, so an order-sensitive rule would be flaky rather
+	//     than merely wrong.
+	for i, a := range corpus {
+		for _, b := range corpus[i:] {
+			t.Run(a.name+" + "+b.name, func(t *testing.T) {
+				got := graphQLResponseCode(gqlerror.List{a.err, b.err})
+				if reversed := graphQLResponseCode(gqlerror.List{b.err, a.err}); reversed != got {
+					t.Errorf("order decides the response: %q one way, %q the other", got, reversed)
+				}
+				exitA, exitB := output.ExitCode(a.code), output.ExitCode(b.code)
+				if exitA != exitB {
+					if got != output.ErrUncategorized {
+						t.Errorf("graphQLResponseCode() = %q for %q (exit %d) beside %q (exit %d), "+
+							"want %q — no single class covers the pair",
+							got, a.code, exitA, b.code, exitB, output.ErrUncategorized)
+					}
+					return
+				}
+				if output.ExitCode(got) != exitA {
+					t.Errorf("graphQLResponseCode() = %q (exit %d) for two failures the direct "+
+						"commands both exit %d for; the exit status every error in the response "+
+						"supports must survive aggregation",
+						got, output.ExitCode(got), exitA)
+				}
+				if a.code == b.code {
+					if got != a.code {
+						t.Errorf("graphQLResponseCode() = %q, want %q — agreeing failures keep "+
+							"their code, which is what keeps a repair hint attributable",
+							got, a.code)
+					}
+					return
+				}
+				if general := output.GeneralCode(got); general != got {
+					t.Errorf("graphQLResponseCode() = %q for %q beside %q, which is a "+
+						"specialization of %q — a mixed class must not assert one member's "+
+						"refusal about the other's failure",
+						got, a.code, b.code, general)
+				}
+			})
+		}
 	}
 }
 
 // TestMutationErrCodeBoundaries pins mutationErrCode at every boundary its
 // branches touch, including the values that sit BETWEEN two of them. It is the
 // direct-command end of the classification: `nibs mv` reaches it through
-// mvMutationError → setMutationError → mutationError, and `nibs query` reaches
-// the same function through graphQLErrCode, so one table covers both surfaces.
+// setMutationError → mutationError, and `nibs query` reaches the same function
+// through graphQLErrCode, so one table covers both surfaces.
 //
 // The rows carrying a not-found cause under a concrete type are the point, and
 // the two error types split on Unwrap. OnDiskUnparseableError implements it, so
@@ -476,6 +636,20 @@ func TestMutationErrCodeBoundaries(t *testing.T) {
 			"filter target not found",
 			&graph.FilterTargetNotFoundError{Field: "parentId", ID: "zz"},
 			output.ErrNotFound,
+		},
+		{
+			"an illegal parent link",
+			&nibtypes.HierarchyError{ChildType: "epic", ParentType: "task", Allowed: []string{"milestone"}},
+			output.ErrHierarchy,
+		},
+		{
+			// The graph layer wraps the child-orphaning half of the rule with %w,
+			// so this row is what says the branch reads the chain rather than the
+			// concrete top-level type.
+			"a type change orphaning a child, reported with %w",
+			fmt.Errorf("type change would invalidate child %s: %w", "ch",
+				&nibtypes.HierarchyError{ChildType: "feature", ParentType: "task", Allowed: []string{"milestone", "epic"}}),
+			output.ErrHierarchy,
 		},
 		{
 			"unreadable filter target holding a not-found reader error",

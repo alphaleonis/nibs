@@ -55,12 +55,13 @@ func reportErr(jsonMode bool, code string, err error) error {
 //     VALIDATION_ERROR (exit 2) for the same reason, and to agree with the same
 //     surface: cmd/list.go gives `--parent X --no-parent` exit 2 too.
 //
-// Reusing VALIDATION_ERROR rather than minting a code is deliberate, and
-// graphQLResponseCode's PRECONDITION is why: it compares codes but decides an
-// exit status, and output.ExitCode is many-to-one. A new code would map to exit
-// 2 alongside the VALIDATION_ERROR that unclassified errors already default to,
-// and a response carrying both would report UNCATEGORIZED for two failures the
-// direct commands agree exit 2 for.
+// Reusing VALIDATION_ERROR rather than minting a code for those last two is
+// deliberate: a distinct code is worth minting only when it carries something an
+// agent can act on that the exit status does not. HIERARCHY earns its own — the
+// envelope carries the parent types that would be accepted with it — while a
+// refused filter argument has no repair beyond the field name, which the message
+// already gives. Minting one would also change what a LONE such refusal reports
+// (see graphQLResponseCode's first tier), for no gain.
 //
 // The branches are independent, not ordered: none of
 // graph.FilterTargetUnreadableError, graph.FilterTargetEmptyError and
@@ -168,16 +169,29 @@ func graphQLErrCode(err error) (string, bool) {
 //     touch. Passing code in makes a cause that contradicts its own response
 //     unrepresentable rather than merely unreached.
 //
+// The code check also disposes of the GENERALIZED response, where
+// graphQLResponseCode reports a class rather than a kind: a lone HIERARCHY
+// beside an unrelated failure makes the response VALIDATION_ERROR, which is not
+// the cause's own code, so nothing is attributed and no allowedParentTypes hint
+// escapes onto a response that is not claiming one.
+//
 // VALIDATION_ERROR is the one class where the two conditions together do NOT
-// establish that the response holds a single failure. It is both a classified
-// code (filterTargetErrCode returns it for an empty filter target) and the code
-// graphQLResponseCode defaults an UNCLASSIFIED error to, so an empty filter
-// target beside an unrelated resolver failure agrees on VALIDATION_ERROR and
-// this function hands back the classified one. For that class Err attributes
-// only the failure it names — it does not imply the response carries no other.
-// Every other classified code differs from the default, so for those the
-// stronger reading holds. The one consumer today (cmd/graphql.go) gates on
-// output.ErrConflict, which is in the second group.
+// establish that the response holds a single failure, and three routes now reach
+// it: it is a classified code (filterTargetErrCode returns it for an empty
+// filter target), it is the code an UNCLASSIFIED error defaults to, and it is
+// what a mixture within exit 2 generalizes to. So an empty filter target beside
+// an unrelated resolver failure agrees on VALIDATION_ERROR and this function
+// hands back the classified one. For that class Err attributes only the failure
+// it names — it does not imply the response carries no other.
+//
+// For every OTHER code the stronger reading holds, and generalizing did not
+// weaken it. A second error here would be unclassified (only one is classified,
+// by the first condition), so it counts as VALIDATION_ERROR, and a response
+// mixing that with a non-VALIDATION_ERROR code reports either UNCATEGORIZED or
+// the class's general member — never the classified code itself. So a non-
+// VALIDATION_ERROR code plus a non-nil Err means the response held exactly one
+// error. Both consumers today (cmd/graphql.go) gate on such a code:
+// output.ErrConflict and output.ErrHierarchy.
 //
 // The scan runs over the FULL list for the same reason graphQLResponseCode's
 // does: dedup keys on message text, which nothing ties to the cause, so a
@@ -204,13 +218,28 @@ func soleClassifiedErr(errs gqlerror.List, code string) error {
 }
 
 // graphQLResponseCode decides the single structured code for a whole GraphQL
-// error response: if every error agrees on a code, that code is the response's;
-// otherwise the response is UNCATEGORIZED (exit 1).
+// error response, in three tiers:
+//
+//   - Every error agrees on a code → that code. One refusal, or N of the same
+//     kind, is reported as exactly what it is, which is what keeps a lone
+//     failure's repair hint attributable (see soleClassifiedErr).
+//   - The codes differ but share an EXIT STATUS → the general member of that
+//     class (output.GeneralCode). A HIERARCHY beside a plain VALIDATION_ERROR is
+//     the case: both are caller-input faults exiting 2, so the class is
+//     well-supported while neither specific claim is.
+//   - Otherwise → UNCATEGORIZED (exit 1).
 //
 // Agreement is the rule because an exit status is a claim about the response as
 // a whole, and a mixed response supports no single one. A NOT_FOUND alongside a
 // FILE_ERROR exiting 3 would tell an agent it typed a bad id while the message
 // beside it reports an IO failure it must not retry past.
+//
+// The comparison runs over the exit STATUS rather than the code STRING because
+// the exit status is what this function ultimately decides, and output.ExitCode
+// is many-to-one: ErrValidation, ErrInvalidStatus, ErrHierarchy, ErrTextNotFound
+// and ErrTextAmbiguous all collapse to exit 2. Comparing strings would report
+// UNCATEGORIZED — exit 1 — for a response whose failures the direct commands all
+// exit 2 for, destroying the parity `nibs query` exists to hold.
 //
 // The disagreement code is UNCATEGORIZED, not VALIDATION_ERROR, because exit 2
 // is not this CLI's generic class — it is a specific claim that the CALLER's
@@ -219,8 +248,8 @@ func soleClassifiedErr(errs gqlerror.List, code string) error {
 // missing id reports no input fault at all. Exit 1 is the one documented as the
 // uncategorized failure, which is exactly what a mixed response is.
 //
-// Two alternatives were rejected, both because they turn a response that
-// supports no single claim into a confident one:
+// Rejected alternatives, all of which turn a response that supports no single
+// claim into a confident one:
 //
 //   - Most-severe-wins. It needs a severity ranking over the code set that
 //     nothing else in the CLI defines, and the winning class would still be
@@ -239,6 +268,19 @@ func soleClassifiedErr(errs gqlerror.List, code string) error {
 //     graphql/errcode/codes.go registers exactly two kinds and reports
 //     KindProtocol if ANY error in the list carries a protocol code, so its
 //     answer does not depend on order.
+//   - Keeping one of the SPECIFIC codes for a same-exit mixture (HIERARCHY for a
+//     hierarchy-plus-validation batch). It asserts an illegal parent type about a
+//     failure that is not one, and choosing which of the two to keep is
+//     first-error-wins again, with the order problem above.
+//   - UNCATEGORIZED for a same-exit mixture — which is what comparing code
+//     strings amounts to once two classified codes share an exit. It discards an
+//     exit status every failure in the response supports; measured, it turns the
+//     exit-2 batch above into exit 1.
+//   - Generalizing unconditionally, dropping the first tier. A lone HIERARCHY
+//     would then report VALIDATION_ERROR, and with it the allowedParentTypes
+//     repair hint: soleClassifiedErr attributes a cause only when its class IS
+//     the response's, so generalizing the code withholds the hint. That hint is
+//     the whole reason this failure is classified at all.
 //
 // Declining to classify costs an exit status an agent can branch on, and that
 // cost is bounded: the contract for every non-zero code is "STOP, diagnose,
@@ -246,9 +288,9 @@ func soleClassifiedErr(errs gqlerror.List, code string) error {
 // rendered, so what actually failed is still on the wire.
 //
 // An unrecognized error counts as VALIDATION_ERROR for the comparison, so a
-// recognized error paired with an unrecognized one also disagrees. The empty
-// list is VALIDATION_ERROR by the same defaulting; formatGraphQLErrors never
-// calls it with one.
+// recognized error paired with an unrecognized one either generalizes (when it
+// shares exit 2) or disagrees. The empty list is VALIDATION_ERROR by the same
+// defaulting; formatGraphQLErrors never calls it with one.
 //
 // The scan runs over the FULL list, not the message-deduplicated one that
 // formatGraphQLErrors renders. Dedup is a message concern — it exists to keep N
@@ -256,22 +298,20 @@ func soleClassifiedErr(errs gqlerror.List, code string) error {
 // nothing ties to the code. Scanning the full list cannot miss a code that
 // dedup happened to drop behind an identical message.
 //
-// PRECONDITION: graphQLErrCode must never return two codes that share an exit
-// status, nor one that shares an exit status with the VALIDATION_ERROR default
-// above. Agreement is compared on the CODE, but what it decides is an EXIT
-// STATUS, and output.ExitCode is many-to-one (ErrValidation, ErrInvalidStatus,
-// ErrHierarchy, ErrTextNotFound and ErrTextAmbiguous all collapse to exit 2).
-// Two codes sharing an exit status would make this report UNCATEGORIZED — exit
-// 1 — for a response whose failures the direct commands all classify alike,
-// which is the parity `nibs query` exists to hold. Adding such a classifier
-// branch therefore has to change this comparison to run over output.ExitCode,
-// which needs a notion of "the generic member of an exit class" that does not
-// exist yet. TestGraphQLErrCodeCodesHaveDistinctExitStatuses pins the
-// precondition for every failure the corpus names. A branch classifying a type
-// absent from both its classified and unclassified lists is not covered — add a
-// row for it.
+// PRECONDITION: every code graphQLErrCode returns must name a class — one
+// output.ExitCode recognizes, and not ErrUncategorized itself. A code landing on
+// the uncategorized exit would exit 1 on its own and disagree with everything
+// beside it, so classifying a failure into one reports strictly less than
+// leaving it unclassified. Sharing an exit status with another code is fine and is what the
+// second tier is for; what must hold there is that generalizing lands on a claim
+// the response supports, which is output.GeneralCode's contract.
+// TestGraphQLErrCodeCodesAggregateWithinTheirExitClass pins both, by running
+// this function over every pair its corpus can build. A branch classifying a
+// type absent from both that test's classified and unclassified lists is not
+// covered — add a row for it.
 func graphQLResponseCode(errs gqlerror.List) string {
 	code := output.ErrValidation
+	sameCode := true
 	for i, e := range errs {
 		c, ok := graphQLErrCode(e)
 		if !ok {
@@ -281,9 +321,19 @@ func graphQLResponseCode(errs gqlerror.List) string {
 			code = c
 			continue
 		}
-		if c != code {
+		if c == code {
+			continue
+		}
+		if output.ExitCode(c) != output.ExitCode(code) {
 			return output.ErrUncategorized
 		}
+		sameCode = false
 	}
-	return code
+	if sameCode {
+		return code
+	}
+	// code is the FIRST error's, but every later one reached here sharing its
+	// exit status, so the class — and with it the general member — is the same
+	// whichever member code happens to be.
+	return output.GeneralCode(code)
 }

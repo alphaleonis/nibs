@@ -263,6 +263,6 @@ nibs graphql 'mutation {
   } }) { id etag }
 }'
 ```
-A failing query exits like the direct command that raises the same failure (a bad filter target exits 3, a stale `ifMatch` exits 4). A batch whose failures belong to *different* classes supports no single claim, so it reports `UNCATEGORIZED` and exits 1 — every message is still on the wire; read them rather than branching on the code.
+A failing query exits like the direct command that raises the same failure (a bad filter target exits 3, a stale `ifMatch` exits 4, an illegal parent exits 2 with `allowedParentTypes` when one refusal speaks for the whole response). A batch whose failures agree on a code keeps that code; failures that differ in kind but share an exit status keep the exit, reported under that class's general code (`HIERARCHY` beside a plain validation error reports `VALIDATION_ERROR`, exit 2). A batch whose failures span *different* exit classes supports no single claim, so it reports `UNCATEGORIZED` and exits 1 — every message is still on the wire; read them rather than branching on the code.
 
 `nibs graphql --schema` prints the full SDL (also `nibs catalog schema`). `nibs graphql --help` for input syntax.
