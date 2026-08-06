@@ -23,7 +23,7 @@ jobs:
         os: [ubuntu-latest, windows-latest]
     runs-on: ${{ matrix.os }}
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
       # Every tool this job runs — go, node, task — is installed by mise from
       # mise.toml, so the versions are read rather than restated. The previous
       # shape hand-copied each one into a setup-go `go-version`, a setup-node
@@ -40,7 +40,7 @@ jobs:
       # github_token is not optional in practice: mise resolves these tools from
       # GitHub releases, and the action warns that unauthenticated runs can hit
       # the API rate limit. The token is the job's own read-only one.
-      - uses: jdx/mise-action@v4
+      - uses: jdx/mise-action@7e36c90d9ab29c415a2384db3006f3ec8a8cc654 # v4.2.4
         with:
           github_token: ${{ secrets.GITHUB_TOKEN }}
       # mise-action caches the tools it installs, not Go's module and build
@@ -54,7 +54,7 @@ jobs:
         run: |
           echo "mod=$(go env GOMODCACHE)" >> "$GITHUB_OUTPUT"
           echo "build=$(go env GOCACHE)" >> "$GITHUB_OUTPUT"
-      - uses: actions/cache@v4
+      - uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
         with:
           path: |
             ${{ steps.go-cache.outputs.mod }}
@@ -85,12 +85,12 @@ jobs:
   lint:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
       # As in the test job: go, node, task and golangci-lint all come from
       # mise.toml. golangci-lint matters most here — its analyzers key off the
       # Go version they run under, so a floating toolchain can move the lint
       # baseline on untouched code.
-      - uses: jdx/mise-action@v4
+      - uses: jdx/mise-action@7e36c90d9ab29c415a2384db3006f3ec8a8cc654 # v4.2.4
         with:
           github_token: ${{ secrets.GITHUB_TOKEN }}
       # Through Task for the same reason as the test job (nibs-9146). web:build

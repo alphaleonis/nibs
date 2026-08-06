@@ -447,6 +447,12 @@ tasks:
 
   licenses:
     desc: Collect third-party dependency licenses
+    # Through `mise exec` for the same reason as lint above: go-licenses is
+    # pinned in mise.toml, and mise is the one tool contributors install by
+    # hand, so this resolves the pinned version whether or not mise's shims are
+    # on PATH. It also removes the `go install …@latest` this task used to
+    # assume — the version that writes third_party_licenses/ into every
+    # published archive is now the one the release job runs (nibs-ag7i).
     cmds:
-      - go-licenses save ./... --save_path=./third_party_licenses --force --ignore github.com/alphaleonis/nibs
-      - go-licenses report ./... --ignore github.com/alphaleonis/nibs > ./third_party_licenses/NOTICES.csv 2>/dev/null
+      - mise exec -- go-licenses save ./... --save_path=./third_party_licenses --force --ignore github.com/alphaleonis/nibs
+      - mise exec -- go-licenses report ./... --ignore github.com/alphaleonis/nibs > ./third_party_licenses/NOTICES.csv 2>/dev/null

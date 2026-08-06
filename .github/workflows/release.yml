@@ -63,7 +63,7 @@ jobs:
           fi
           echo "CI passed for $SHA — proceeding to tag and release."
 
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
         with:
           fetch-depth: 0
 
@@ -99,22 +99,23 @@ jobs:
           git tag "${{ inputs.version }}"
           git push origin "${{ inputs.version }}"
 
-      # go and node come from mise.toml, the same file ci.yml reads, so the
-      # published binaries are compiled by the toolchain CI built and tested
-      # this commit with — enforced by both jobs reading one file rather than by
-      # a comment asking that three hand-written copies be bumped together
-      # (nibs-23f0).
-      - uses: jdx/mise-action@v4
+      # Every tool this job runs — go, node, goreleaser, go-licenses — comes
+      # from mise.toml, the same file ci.yml reads. That makes the published
+      # binaries the work of the toolchain CI built and tested this commit
+      # with (nibs-23f0), and it puts the two release-path tools under an exact
+      # pin instead of `~> v2` and `@latest` (nibs-ag7i).
+      - uses: jdx/mise-action@7e36c90d9ab29c415a2384db3006f3ec8a8cc654 # v4.2.4
         with:
           github_token: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Install go-licenses
-        run: go install github.com/google/go-licenses@latest
-
-      - uses: goreleaser/goreleaser-action@v7.0.0
-        with:
-          version: "~> v2"
-          args: release --clean --release-notes=${{ runner.temp }}/release-notes.md
+      # GoReleaser runs as the pinned binary mise installed rather than through
+      # goreleaser-action, so the version that assembles the archives and
+      # generates checksums.txt is the one mise.toml names — the action's
+      # `version:` input was a second, separately-floating copy that Renovate's
+      # github-actions manager does not read. It also removes a third-party
+      # action from a job holding `contents: write`.
+      - name: Release
+        run: goreleaser release --clean --release-notes=${{ runner.temp }}/release-notes.md
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
