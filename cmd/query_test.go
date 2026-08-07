@@ -1605,6 +1605,232 @@ func TestQueryHierarchyBatchExitsLikeTheDirectCommands(t *testing.T) {
 	}
 }
 
+// writeReplaceFixture creates a nibs dir holding two nibs with bodies chosen so
+// every surgical-replace outcome is reachable from one store: the subject's
+// "dup" occurs twice and the other's "trip" three times, so an ambiguous replace
+// on each carries a DIFFERENT count, and any absent text is a zero-match on
+// either. Two counts that differ are what makes a single-valued occurrences
+// field unrepresentable for a batch. It returns (nibsDir, subjectID, otherID).
+func writeReplaceFixture(t *testing.T) (string, string, string) {
+	t.Helper()
+	nibsDir, subjectID := writeSetNib(t, "rp", "dup here\nand dup there\n")
+	content := "---\ntitle: Other\nstatus: todo\ntype: task\n---\ntrip\ntrip\ntrip\n"
+	if err := os.WriteFile(filepath.Join(nibsDir, "ot--other.md"), []byte(content), 0644); err != nil {
+		t.Fatal(err)
+	}
+	return nibsDir, subjectID, "ot"
+}
+
+// replaceMutation builds a single-alias updateNib carrying one bodyMod.replace.
+func replaceMutation(alias, id, old string) string {
+	return alias + `: updateNib(id: "` + id + `", input: {bodyMod: {replace: [{old: "` + old + `", new: "x"}]}}) { id }`
+}
+
+// TestQueryTextMatchEnvelopeMatchesTheDirectCommand pins that the two surfaces
+// that can refuse a surgical replace — `nibs body` and `nibs query` — refuse one
+// identically: same code, same exit status, and the same occurrences count.
+//
+// Comparing the envelopes rather than asserting two independent expectations is
+// the point: occurrences is the field an agent branches on to tell "your text
+// was not there" (retry with different text) from "your text was ambiguous"
+// (extend the search text), and both refusals exit 2, so a caller reading $?
+// alone cannot tell them apart. cmd/prompt-full.tmpl steers agents at the query
+// route specifically, so it is the surface that must not answer more weakly.
+//
+// `query` is compared on code, exit and count but not on message text: it
+// renders every failure through the transport prefix its own contract
+// documents, so the assertion is that its message is that prefix plus the
+// sentence `nibs body` prints.
+func TestQueryTextMatchEnvelopeMatchesTheDirectCommand(t *testing.T) {
+	tests := []struct {
+		name            string
+		old             string
+		wantCode        string
+		wantOccurrences int
+	}{
+		{"a zero-match replace", "absent-text", output.ErrTextNotFound, 0},
+		{"an ambiguous replace", "dup", output.ErrTextAmbiguous, 2},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Cleanup(resetQueryFlags)
+			t.Cleanup(resetBodyFlags)
+			nibsDir, subjectID, _ := writeReplaceFixture(t)
+
+			run := func(reset func(), args ...string) textMatchEnvelope {
+				t.Helper()
+				reset()
+				rootCmd.SetArgs(append([]string{"--nibs-path", nibsDir}, args...))
+				var execErr error
+				out := captureStdout(t, func() { execErr = rootCmd.Execute() })
+				if execErr == nil {
+					t.Fatalf("%v returned no error; out: %q", args, out)
+				}
+				if code := reportExitError(io.Discard, execErr); code != output.ExitValidation {
+					t.Errorf("%v exit = %d, want %d (validation)", args, code, output.ExitValidation)
+				}
+				var env textMatchEnvelope
+				if err := json.Unmarshal([]byte(out), &env); err != nil {
+					t.Fatalf("%v stdout is not a JSON error envelope: %v\nraw: %s", args, err, out)
+				}
+				return env
+			}
+
+			bodyEnv := run(resetBodyFlags, "body", subjectID,
+				"--replace-old", tt.old, "--replace-new", "x", "--json")
+			queryEnv := run(resetQueryFlags, "query", "--json",
+				`mutation { `+replaceMutation("a", subjectID, tt.old)+` }`)
+
+			for name, env := range map[string]textMatchEnvelope{"body": bodyEnv, "query": queryEnv} {
+				if env.Error.Code != tt.wantCode {
+					t.Errorf("%s envelope code = %q, want %q", name, env.Error.Code, tt.wantCode)
+				}
+				if env.Error.Occurrences == nil {
+					t.Errorf("%s envelope omits occurrences, want %d", name, tt.wantOccurrences)
+					continue
+				}
+				if *env.Error.Occurrences != tt.wantOccurrences {
+					t.Errorf("%s envelope occurrences = %d, want %d",
+						name, *env.Error.Occurrences, tt.wantOccurrences)
+				}
+			}
+			if want := "graphql: " + bodyEnv.Error.Message; queryEnv.Error.Message != want {
+				t.Errorf("query message = %q, want %q", queryEnv.Error.Message, want)
+			}
+		})
+	}
+}
+
+// TestQueryTextMatchBatchExitsLikeTheDirectCommands pins how a response holding
+// a refused surgical replace aggregates.
+//
+// TEXT_NOT_FOUND, TEXT_AMBIGUOUS and VALIDATION_ERROR are three different codes
+// on one exit status, so a rule comparing code strings reports UNCATEGORIZED —
+// exit 1 — for a batch whose every failure `nibs body` exits 2 for. The rows fix
+// each aggregation outcome at the command surface: alone the refusal keeps its
+// own code and its count; beside another exit-2 failure it generalizes to the
+// class's code and withholds the count; beside a different exit class it is
+// uncategorized.
+func TestQueryTextMatchBatchExitsLikeTheDirectCommands(t *testing.T) {
+	tests := []struct {
+		name            string
+		mutation        func(subjectID, otherID string) string
+		wantCode        string
+		wantExit        int
+		wantOccurrences int
+		wantNoCount     bool
+	}{
+		{
+			// One refusal, one count: it is representable and the specific code
+			// survives.
+			name: "a lone zero-match keeps TEXT_NOT_FOUND and its count",
+			mutation: func(subjectID, _ string) string {
+				return replaceMutation("a", subjectID, "absent-text")
+			},
+			wantCode:        output.ErrTextNotFound,
+			wantExit:        output.ExitValidation,
+			wantOccurrences: 0,
+		},
+		{
+			name: "a lone ambiguous match keeps TEXT_AMBIGUOUS and its count",
+			mutation: func(subjectID, _ string) string {
+				return replaceMutation("a", subjectID, "dup")
+			},
+			wantCode:        output.ErrTextAmbiguous,
+			wantExit:        output.ExitValidation,
+			wantOccurrences: 2,
+		},
+		{
+			// Two refusals of the same kind agree on the code, so it survives —
+			// but their counts differ (2 and 3) and one field cannot speak for
+			// both.
+			name: "two ambiguous matches keep TEXT_AMBIGUOUS but offer no single count",
+			mutation: func(subjectID, otherID string) string {
+				return replaceMutation("a", subjectID, "dup") + " " +
+					replaceMutation("b", otherID, "trip")
+			},
+			wantCode:    output.ErrTextAmbiguous,
+			wantExit:    output.ExitValidation,
+			wantNoCount: true,
+		},
+		{
+			// Both are CLASSIFIED and both exit 2 — the case a code-string
+			// comparison cannot express at all. Neither specific claim covers
+			// the other's failure, so the response reports the class.
+			name: "a zero-match beside an ambiguous match generalizes",
+			mutation: func(subjectID, otherID string) string {
+				return replaceMutation("a", subjectID, "absent-text") + " " +
+					replaceMutation("b", otherID, "trip")
+			},
+			wantCode:    output.ErrValidation,
+			wantExit:    output.ExitValidation,
+			wantNoCount: true,
+		},
+		{
+			// Both failures are caller-input faults the direct commands exit 2
+			// for (`nibs body --replace-old` TEXT_NOT_FOUND, `nibs set -s bogus`
+			// VALIDATION_ERROR), so the batch must stay exit 2 while asserting
+			// neither specific claim.
+			name: "a zero-match beside a bad status stays exit 2",
+			mutation: func(subjectID, otherID string) string {
+				return replaceMutation("a", subjectID, "absent-text") + " " +
+					`b: updateNib(id: "` + otherID + `", input: {status: "bogus"}) { id }`
+			},
+			wantCode:    output.ErrValidation,
+			wantExit:    output.ExitValidation,
+			wantNoCount: true,
+		},
+		{
+			// Different exit classes: exit 2 asserts the caller's input was at
+			// fault, which the missing id beside it does not support.
+			name: "a zero-match beside an unknown id is uncategorized",
+			mutation: func(subjectID, _ string) string {
+				return replaceMutation("a", subjectID, "absent-text") + " " +
+					`b: updateNib(id: "nosuch", input: {title: "x"}) { id }`
+			},
+			wantCode:    output.ErrUncategorized,
+			wantExit:    output.ExitError,
+			wantNoCount: true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Cleanup(resetQueryFlags)
+			resetQueryFlags()
+			nibsDir, subjectID, otherID := writeReplaceFixture(t)
+
+			out, err := runQueryCmd(t, nibsDir, "mutation { "+tt.mutation(subjectID, otherID)+" }", "--json")
+			if err == nil {
+				t.Fatalf("mutation returned no error; out: %q", out)
+			}
+			if code := reportExitError(io.Discard, err); code != tt.wantExit {
+				t.Errorf("exit = %d, want %d (%s)", code, tt.wantExit, tt.wantCode)
+			}
+			var env textMatchEnvelope
+			if uerr := json.Unmarshal([]byte(out), &env); uerr != nil {
+				t.Fatalf("stdout is not a JSON error envelope: %v\nraw: %s", uerr, out)
+			}
+			if env.Error.Code != tt.wantCode {
+				t.Errorf("envelope code = %q, want %q", env.Error.Code, tt.wantCode)
+			}
+			if tt.wantNoCount {
+				if env.Error.Occurrences != nil {
+					t.Errorf("no occurrences count may be offered here, got %d", *env.Error.Occurrences)
+				}
+				return
+			}
+			if env.Error.Occurrences == nil {
+				t.Fatalf("envelope omits occurrences, want %d", tt.wantOccurrences)
+			}
+			if *env.Error.Occurrences != tt.wantOccurrences {
+				t.Errorf("occurrences = %d, want %d", *env.Error.Occurrences, tt.wantOccurrences)
+			}
+		})
+	}
+}
+
 // TestExecuteQueryBatchNamesTheMutationsThatCommitted pins the reproduction the
 // whole change exists for: three deletes, the middle id unknown, and the two
 // real files gone by the time the response is built.
