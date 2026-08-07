@@ -50,6 +50,23 @@ func setupTestCoreWithRequireIfMatch(t *testing.T) (*Core, string) {
 	return core, nibsDir
 }
 
+// writeNibFileAtomic writes a nib file the way production does — a temp file in
+// the same directory, then a rename over the target — so a reader can never
+// observe the file mid-write. Any test that writes a .md file while a watcher is
+// live must use this rather than os.WriteFile.
+//
+// os.WriteFile truncates before it writes, leaving a window in which the file is
+// empty. fsnotify reports the truncate, so a debounce batch firing inside that
+// window loads a nib parsed from bytes that do not carry the title yet. The
+// watcher recovers on the next event, but a test asserting on the first batch it
+// receives sees the empty read and fails (nibs-6wdq).
+func writeNibFileAtomic(t *testing.T, path, content string) {
+	t.Helper()
+	if err := atomicWriteFile(path, []byte(content), 0644); err != nil {
+		t.Fatalf("failed to write nib file %s: %v", path, err)
+	}
+}
+
 func createTestNib(t *testing.T, core *Core, id, title, status string) *nib.Nib {
 	t.Helper()
 	b := &nib.Nib{
@@ -672,9 +689,7 @@ title: External Nib
 status: open
 ---
 `
-	if err := os.WriteFile(filepath.Join(nibsDir, "ext1--external.md"), []byte(content), 0644); err != nil {
-		t.Fatalf("failed to write test file: %v", err)
-	}
+	writeNibFileAtomic(t, filepath.Join(nibsDir, "ext1--external.md"), content)
 
 	// Wait for the watcher to report the change
 	select {
@@ -782,9 +797,7 @@ title: New Nib
 status: todo
 ---
 `
-	if err := os.WriteFile(filepath.Join(nibsDir, "new1--new.md"), []byte(content), 0644); err != nil {
-		t.Fatalf("failed to write test file: %v", err)
-	}
+	writeNibFileAtomic(t, filepath.Join(nibsDir, "new1--new.md"), content)
 
 	// Wait for events
 	select {
@@ -832,9 +845,7 @@ title: Multi Test
 status: todo
 ---
 `
-	if err := os.WriteFile(filepath.Join(nibsDir, "mult--multi.md"), []byte(content), 0644); err != nil {
-		t.Fatalf("failed to write test file: %v", err)
-	}
+	writeNibFileAtomic(t, filepath.Join(nibsDir, "mult--multi.md"), content)
 
 	// Both subscribers should receive events
 	received1, received2 := false, false
@@ -894,9 +905,7 @@ title: Updated Title
 status: in-progress
 ---
 `
-		if err := os.WriteFile(filepath.Join(nibsDir, "evt1--event-test.md"), []byte(content), 0644); err != nil {
-			t.Fatalf("failed to write test file: %v", err)
-		}
+		writeNibFileAtomic(t, filepath.Join(nibsDir, "evt1--event-test.md"), content)
 
 		select {
 		case events := <-ch:
@@ -1171,9 +1180,7 @@ title: New Nib
 status: todo
 ---
 `
-	if err := os.WriteFile(filepath.Join(nibsDir, "new1--new.md"), []byte(content1), 0644); err != nil {
-		t.Fatal(err)
-	}
+	writeNibFileAtomic(t, filepath.Join(nibsDir, "new1--new.md"), content1)
 
 	// 2. Update existing nib
 	content2 := `---
@@ -1181,14 +1188,10 @@ title: Updated Nib
 status: in-progress
 ---
 `
-	if err := os.WriteFile(filepath.Join(nibsDir, "upd1--to-update.md"), []byte(content2), 0644); err != nil {
-		t.Fatal(err)
-	}
+	writeNibFileAtomic(t, filepath.Join(nibsDir, "upd1--to-update.md"), content2)
 
 	// 3. Create another nib then delete it (net effect: nothing)
-	if err := os.WriteFile(filepath.Join(nibsDir, "tmp1--temp.md"), []byte(content1), 0644); err != nil {
-		t.Fatal(err)
-	}
+	writeNibFileAtomic(t, filepath.Join(nibsDir, "tmp1--temp.md"), content1)
 	_ = os.Remove(filepath.Join(nibsDir, "tmp1--temp.md"))
 
 	// Wait for debounced events
@@ -1259,9 +1262,7 @@ title: [unclosed bracket
 status: {broken yaml
 ---
 `
-	if err := os.WriteFile(filepath.Join(nibsDir, "bad1--invalid.md"), []byte(invalidContent), 0644); err != nil {
-		t.Fatal(err)
-	}
+	writeNibFileAtomic(t, filepath.Join(nibsDir, "bad1--invalid.md"), invalidContent)
 
 	// Also create a valid nib to verify processing continues
 	validContent := `---
@@ -1269,9 +1270,7 @@ title: Another Valid
 status: todo
 ---
 `
-	if err := os.WriteFile(filepath.Join(nibsDir, "val2--another.md"), []byte(validContent), 0644); err != nil {
-		t.Fatal(err)
-	}
+	writeNibFileAtomic(t, filepath.Join(nibsDir, "val2--another.md"), validContent)
 
 	// Wait for events
 	select {
@@ -1318,42 +1317,81 @@ func TestRapidUpdatesToSameFile(t *testing.T) {
 	time.Sleep(50 * time.Millisecond)
 
 	// Write to the same file multiple times rapidly
-	for i := 1; i <= 5; i++ {
+	const writes = 5
+	const finalTitle = "Update 5"
+	path := filepath.Join(nibsDir, "rap1--rapid-updates.md")
+	for i := 1; i <= writes; i++ {
 		content := fmt.Sprintf(`---
 title: Update %d
 status: todo
 ---
 `, i)
-		if err := os.WriteFile(filepath.Join(nibsDir, "rap1--rapid-updates.md"), []byte(content), 0644); err != nil {
-			t.Fatal(err)
-		}
+		writeNibFileAtomic(t, path, content)
 		time.Sleep(10 * time.Millisecond) // Small delay but within debounce
 	}
 
-	// Should get a single batch of events (debounced)
-	select {
-	case events := <-ch:
-		// Count events for rap1 - should be exactly one
-		rap1Count := 0
+	// Collect batches until the settled value arrives, rather than asserting on
+	// whichever batch happens to land first. Debouncing coalesces the writes, but
+	// nothing pins WHICH window each write falls into: a runner that stalls this
+	// goroutine for longer than debounceDelay mid-loop publishes an intermediate
+	// value in one batch and the final one in a later batch. Both are correct
+	// watcher behavior, so the settled state is what this can assert on.
+	rap1Events := 0
+	deadline := time.After(5 * time.Second)
+	for {
+		var events []NibEvent
+		select {
+		case events = <-ch:
+		case <-deadline:
+			t.Fatalf("timeout waiting for a batch carrying title %q (saw %d events for rap1)",
+				finalTitle, rap1Events)
+		}
+
+		// One event per file per batch is the coalescing property, and it holds
+		// however the writes fall across windows: pendingChanges is keyed by path,
+		// so repeated writes to one file collapse into a single entry.
+		inBatch := 0
 		var lastEvent NibEvent
 		for _, e := range events {
 			if e.NibID == "rap1" {
-				rap1Count++
+				inBatch++
 				lastEvent = e
 			}
 		}
-		if rap1Count != 1 {
-			t.Errorf("expected 1 event for rap1, got %d", rap1Count)
+		if inBatch == 0 {
+			continue
 		}
+		if inBatch != 1 {
+			t.Fatalf("batch carries %d events for rap1, want 1 — writes to one file must coalesce", inBatch)
+		}
+		rap1Events++
+
 		if lastEvent.Type != EventUpdated {
 			t.Errorf("expected EventUpdated, got %v", lastEvent.Type)
 		}
-		// Should have the final value
-		if lastEvent.Nib != nil && lastEvent.Nib.Title != "Update 5" {
-			t.Errorf("expected title 'Update 5', got %q", lastEvent.Nib.Title)
+		if lastEvent.Nib == nil {
+			t.Fatal("EventUpdated must carry a Nib")
 		}
-	case <-time.After(500 * time.Millisecond):
-		t.Error("timeout waiting for events")
+		if lastEvent.Nib.Title == finalTitle {
+			break
+		}
+	}
+
+	// Debouncing must actually have coalesced something. Five writes spanning
+	// ~40ms against a 100ms window cannot each earn their own batch unless the
+	// watcher idled a full window four times over — so one event per write means
+	// debouncing has stopped working, which the settle loop alone would not catch.
+	if rap1Events >= writes {
+		t.Errorf("got %d events for %d rapid writes — writes were not debounced", rap1Events, writes)
+	}
+
+	// The store settles on the final value too, not just the event stream.
+	stored, err := core.Get("rap1")
+	if err != nil {
+		t.Fatalf("Get(rap1) error = %v", err)
+	}
+	if stored.Title != finalTitle {
+		t.Errorf("stored title = %q, want %q", stored.Title, finalTitle)
 	}
 }
 
