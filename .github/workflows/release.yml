@@ -23,6 +23,14 @@ permissions:
 jobs:
   release:
     runs-on: ubuntu-latest
+    # The `release` environment is what holds NIBS_SIGNING_KEY. Scoping the
+    # secret to an environment rather than the repository means it is handed
+    # only to a run that satisfies that environment's protection rules
+    # (required reviewers, branch restriction), instead of to anything able to
+    # trigger a workflow. The key is decrypted onto the runner for the duration
+    # of the job, which is inherent — SHA-pinning every action above is what
+    # keeps third-party code from being repointed at something that reads it.
+    environment: release
     steps:
       - name: Validate version format
         id: version
@@ -115,6 +123,29 @@ jobs:
         with:
           github_token: ${{ secrets.GITHUB_TOKEN }}
 
+      # Everything the archives need — generated code, web assets, license
+      # notices — is built HERE rather than in .goreleaser.yaml's before-hooks,
+      # and the ordering is a security boundary. Before-hooks inherit the
+      # environment of the goreleaser process, so hooks running `npm ci` (which
+      # executes install scripts for every package in web/package-lock.json)
+      # would run with NIBS_SIGNING_KEY readable. Running the work before the
+      # key is ever in scope means the key-bearing step has no third-party
+      # children. See the note in .goreleaser.yaml before adding a hook there.
+      - name: Build release inputs
+        run: task release:prep
+
+      # Fail before anything is tagged or published if the signing secret does
+      # not correspond to a public key shipped in nibs binaries. Signing with a
+      # key no binary carries produces a perfectly valid-looking signature, so
+      # nothing downstream would notice — until signature verification is
+      # required, at which point every install refuses to upgrade and has to be
+      # reinstalled by hand. Producing a signature is only evidence of anything
+      # if it is checked against the keys that will do the checking.
+      - name: Verify the signing key is one binaries trust
+        run: go run ./internal/signing/cmd/verify -check-key
+        env:
+          NIBS_SIGNING_KEY: ${{ secrets.NIBS_SIGNING_KEY }}
+
       # GoReleaser runs as the pinned binary mise installed rather than through
       # goreleaser-action, so the version that assembles the archives and
       # generates checksums.txt is the one mise.toml names — the action's
@@ -125,6 +156,23 @@ jobs:
         run: goreleaser release --clean --release-notes=${{ runner.temp }}/release-notes.md
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          # Signs checksums.txt via .goreleaser.yaml's `signs` stage. GoReleaser
+          # passes its own environment to that command, so this reaches the
+          # signer without being named again there. Empty or absent fails the
+          # release rather than publishing unsigned — see internal/signing.
+          NIBS_SIGNING_KEY: ${{ secrets.NIBS_SIGNING_KEY }}
+
+      # The -check-key step above proves the key is trusted; this proves the
+      # file actually published is the one that got signed. Different failures:
+      # a wrong key, versus a signature over the wrong bytes.
+      #
+      # This runs after publishing, so a failure here leaves a draft release to
+      # delete by hand — the tag is removed by the failure step below. That is
+      # the accepted cost of checking the real artifact: goreleaser signs and
+      # uploads within one command, so there is no point between them to stand.
+      # The draft is never public, and -check-key catches the likely cause first.
+      - name: Verify the published signature
+        run: go run ./internal/signing/cmd/verify -in dist/checksums.txt -sig dist/checksums.txt.sig
 
       # Provenance for what was just published: a signed statement that these
       # exact bytes were built by this workflow, from this repository, at this
@@ -147,6 +195,7 @@ jobs:
             dist/*.tar.gz
             dist/*.zip
             dist/checksums.txt
+            dist/checksums.txt.sig
 
       - name: Delete tag on failure
         if: failure()

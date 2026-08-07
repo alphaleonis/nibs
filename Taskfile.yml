@@ -445,6 +445,64 @@ tasks:
     cmds:
       - mise exec -- golangci-lint run ./...
 
+  vulncheck:
+    desc: Report known vulnerabilities in dependencies (govulncheck, allowlisted)
+    # Runs scripts/vulncheck.sh rather than govulncheck directly, because the
+    # decision cannot come from govulncheck's exit status: `-format json`, which
+    # the gate needs in order to filter, exits 0 even when it reports findings.
+    # The gate also fails on an allowlist entry that no longer matches anything,
+    # so a suppression cannot quietly outlive its reason.
+    #
+    # web/dist is a prerequisite for the same reason as lint: embed.go embeds it,
+    # so without it the package does not load and govulncheck reports a missing
+    # embed pattern rather than anything about dependencies. Kept as a
+    # precondition rather than `deps: [web:build]` so the task stays fast and
+    # reports the gap instead of silently closing it.
+    preconditions:
+      - sh: command -v mise >/dev/null
+        msg: |
+          mise is not on PATH.
+
+          govulncheck is pinned in mise.toml and this task runs it through mise,
+          so the pinned version is used whatever else provides a govulncheck.
+          Install mise, then run `mise trust` and `mise install` in this checkout:
+            https://mise.jdx.dev/getting-started.html
+      - sh: command -v jq >/dev/null
+        msg: |
+          jq is not on PATH. The gate parses govulncheck's JSON output with it.
+          A missing jq fails rather than passing: "could not check" and "nothing
+          to report" must not look alike.
+      - sh: test -d web/dist
+        msg: |
+          web/dist is missing, so the package embed.go embeds does not load and
+          govulncheck would report a missing embed pattern rather than scanning
+          dependencies. Build the web assets first:
+            task web:build
+    cmds:
+      - bash scripts/vulncheck.sh
+
+  release:prep:
+    desc: Build everything a release archive needs (web assets, generated code, license notices)
+    # This used to live in .goreleaser.yaml's `before.hooks`, and moving it out
+    # is a security fix rather than tidying. The release job sets
+    # NIBS_SIGNING_KEY on the step that runs goreleaser, and goreleaser's before
+    # hooks inherit that environment — so `npm ci`, which executes install and
+    # postinstall scripts for every package in web/package-lock.json, ran with
+    # the release signing key readable in its environment. Any hostile package
+    # in that tree could have taken a key that cannot be revoked for binaries
+    # already shipped.
+    #
+    # Running the same work as its own step, before the key is ever in scope,
+    # means the key-bearing process has no third-party children at all.
+    #
+    # It also closes a hazard CLAUDE.md already recorded: the old hook ran a
+    # bare `cd web && npm ci`, outside the web:install gate, which is exactly
+    # the hand-run install that has corrupted node_modules here before. Going
+    # through web:build routes it back through that gate.
+    cmds:
+      - task: web:build
+      - task: licenses
+
   licenses:
     desc: Collect third-party dependency licenses
     # Through `mise exec` for the same reason as lint above: go-licenses is

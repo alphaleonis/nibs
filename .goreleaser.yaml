@@ -1,11 +1,23 @@
 version: 2
 
-before:
-  hooks:
-    - go generate ./...
-    - bash -c "cd web && npm ci && npm run build"
-    - go-licenses save ./... --save_path=./third_party_licenses --force --ignore github.com/alphaleonis/nibs
-    - bash -c "go-licenses report ./... --ignore github.com/alphaleonis/nibs > ./third_party_licenses/NOTICES.csv 2>/dev/null"
+# There are deliberately NO `before.hooks` here. Everything a release archive
+# needs — generated code, web assets, third-party license notices — is built by
+# `task release:prep`, which must run BEFORE goreleaser.
+#
+# This is a security boundary, not a preference. The release job sets
+# NIBS_SIGNING_KEY on the step that runs goreleaser, and before-hooks inherit
+# that environment (verified against goreleaser 2.17.1). The old hooks ran
+# `cd web && npm ci`, which executes install/postinstall scripts for every
+# package in web/package-lock.json — so the release signing key was readable by
+# hundreds of third-party packages, and a key taken that way cannot be revoked
+# for binaries already shipped.
+#
+# Adding a hook here puts third-party code back inside the key-bearing process.
+# Do not add one. If a release needs another build step, add it to
+# `task release:prep`, which runs before the key is in scope.
+#
+# Consequence to know: without `task release:prep` the Go build fails rather
+# than producing a broken archive, because embed.go embeds web/dist.
 
 builds:
   - env:
@@ -41,6 +53,39 @@ archives:
 # (UniqueFilename: "checksums.txt") verifies downloads without templating.
 checksum:
   name_template: "checksums.txt"
+
+# Sign the checksum file, not each archive: checksums.txt already covers every
+# archive by digest, so one signature anchors all of them. This is the shape
+# rclone and restic both ship, and the one go-selfupdate's own PatternValidator
+# example documents.
+#
+# `nibs upgrade` does NOT require this signature yet — it still runs
+# ChecksumValidator alone. That is deliberate. Producing the signature has to
+# come first and stand on its own for at least one release: if the validator
+# shipped at the same time, the first release where signing matters would also
+# be the first release where it had ever run, and a later release that failed
+# to sign would strand every user on the version demanding a signature, with no
+# route back but a manual reinstall (nibs-bw1u).
+#
+# The signer is `go run`, not a prebuilt binary, because the release job already
+# has the pinned Go toolchain and this avoids a second build artifact to publish
+# and version. The private key reaches it through NIBS_SIGNING_KEY in the
+# environment — never an argument, which would be visible in the process list.
+#
+# For a local dry run there is no key, so skip this stage rather than inventing
+# one: goreleaser release --snapshot --clean --skip=sign
+signs:
+  - id: checksums
+    artifacts: checksum
+    signature: "${artifact}.sig"
+    cmd: go
+    args:
+      - run
+      - ./internal/signing/cmd/sign
+      - -in
+      - "${artifact}"
+      - -out
+      - "${signature}"
 
 release:
   draft: true

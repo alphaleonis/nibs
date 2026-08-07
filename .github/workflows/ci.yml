@@ -106,3 +106,12 @@ jobs:
       # the agreement the pin exists to produce, rather than two mechanisms
       # that have to be kept saying the same thing.
       - run: task lint
+      # Rides in the lint job rather than a job of its own: govulncheck needs the
+      # module to load, so it needs web/dist (embed.go), which this job has
+      # already built. A separate job would give a cleaner signal but would
+      # duplicate the web build on every push to gain it.
+      #
+      # This covers changed code. Advisories are also published against code that
+      # has not changed, which no push-triggered run can catch — vulncheck.yml
+      # runs on a schedule for those.
+      - run: task vulncheck

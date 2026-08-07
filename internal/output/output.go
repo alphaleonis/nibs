@@ -154,14 +154,22 @@ func GeneralCode(code string) string {
 
 // Response is the standard JSON response envelope.
 type Response struct {
-	Success  bool       `json:"success"`
-	Nib      *nib.Nib   `json:"nib,omitempty"`
-	Nibs     []*nib.Nib `json:"nibs,omitempty"`
-	Count    int        `json:"count,omitempty"`
-	Message  string     `json:"message,omitempty"`
-	Warnings []string   `json:"warnings,omitempty"`
-	Path     string     `json:"path,omitempty"`
+	Success bool       `json:"success"`
+	Nib     *nib.Nib   `json:"nib,omitempty"`
+	Nibs    []*nib.Nib `json:"nibs,omitempty"`
+	Count   int        `json:"count,omitempty"`
+	Message string     `json:"message,omitempty"`
+	Path    string     `json:"path,omitempty"`
 }
+
+// There is deliberately no `Warnings` field here, and no SuccessWithWarnings
+// helper. Warnings in this codebase travel as a typed field on the specific
+// result type, carried by the command that owns it — see nibcontext.Summary's
+// Warnings and how cmd/context.go renders it in both the text and --json
+// branches. A generic single-nib envelope helper does not fit the shape any
+// warning-producing path actually has, and having one here read as "the success
+// envelope supports warnings", so the next caller would wire into a path
+// nothing renders.
 
 // JSON outputs a response as JSON to stdout.
 func JSON(resp Response) error {
@@ -176,16 +184,6 @@ func Success(b *nib.Nib, message string) error {
 		Success: true,
 		Nib:     b,
 		Message: message,
-	})
-}
-
-// SuccessWithWarnings outputs a successful single-nib response with warnings.
-func SuccessWithWarnings(b *nib.Nib, message string, warnings []string) error {
-	return JSON(Response{
-		Success:  true,
-		Nib:      b,
-		Message:  message,
-		Warnings: warnings,
 	})
 }
 

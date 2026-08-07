@@ -2,6 +2,7 @@ package nibcore
 
 import (
 	"bytes"
+	"maps"
 	"os"
 	"path/filepath"
 	"slices"
@@ -9,6 +10,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/alphaleonis/nibs/internal/config"
 	"github.com/alphaleonis/nibs/internal/nib"
 	"github.com/fsnotify/fsnotify"
 )
@@ -552,6 +554,279 @@ func TestWatcherCanonicalizesAfterRemoval(t *testing.T) {
 	}
 	if events[0].Nib == nil || events[0].Nib.Parent != "nibs-e1" {
 		t.Errorf("published payload parent = %+v, want the re-resolved nibs-e1", events[0].Nib)
+	}
+}
+
+// storedLinkSpellings renders every stored nib's link fields in the exact
+// spelling the store holds them in. Two cores over the same directory must agree
+// on this map — an assertion through Get alone would not notice a divergence,
+// because the forward resolver normalizes both spellings to the same nib.
+func storedLinkSpellings(t *testing.T, core *Core) map[string]string {
+	t.Helper()
+	out := make(map[string]string)
+	for _, b := range core.All() {
+		out[b.ID] = "parent=" + b.Parent +
+			" blocked_by=[" + strings.Join(b.BlockedBy, " ") + "]" +
+			// Blocking is included because canonicalizeLinksInMap resolves it too,
+			// and it is the one field RemoveLinksTo deliberately does NOT clear — so
+			// a live/fresh divergence confined to `blocking:` would otherwise pass.
+			" blocking=[" + strings.Join(b.Blocking, " ") + "]"
+	}
+	return out
+}
+
+// loadFreshCore loads a SECOND, independent Core over an existing data directory
+// — the `nibs list` a user runs while `nibs serve` holds the first one.
+func loadFreshCore(t *testing.T, nibsDir string) *Core {
+	t.Helper()
+	fresh := New(nibsDir, config.DefaultWithPrefix("nibs-"))
+	fresh.SetWarnWriter(nil)
+	if err := fresh.Load(); err != nil {
+		t.Fatalf("loading a fresh core over %s: %v", nibsDir, err)
+	}
+	return fresh
+}
+
+// TestCanonicalizationSurvivesADeleteAndRestore is the primary guard for
+// nibs-4al1: a sweep must re-resolve from the FILE's spelling, never from the
+// previous sweep's output.
+//
+// Deleting the bare-token nib `e1` re-points a bystander's `parent: e1` to the
+// prefixed twin `nibs-e1` in memory, leaving the file untouched. Restoring the
+// file — a `git checkout` or revert in the separately-versioned .nibs repo, or a
+// re-create — fires the arrival sweep. Re-resolving from the STORED `nibs-e1`
+// finds it already exact and changes nothing, so the live store keeps answering
+// `nibs-e1` while the untouched file (and therefore any fresh load) says `e1`.
+// The divergence is stable and permanent: a running `nibs serve` and a fresh
+// `nibs list` answer differently for the same edge, indefinitely.
+//
+// The comparison is against a freshly-loaded core rather than a literal, because
+// what the two must agree on is the whole store, not one hand-picked field.
+func TestCanonicalizationSurvivesADeleteAndRestore(t *testing.T) {
+	core, nibsDir := mustLoadPrefixedCore(t)
+
+	barePath := writeLinkNibFile(t, nibsDir, "e1", "in-progress", "")
+	writeLinkNibFile(t, nibsDir, "nibs-e1", "in-progress", "")
+	writeLinkNibFile(t, nibsDir, "nibs-t1", "todo", "parent: e1\nblocked_by: [e1]\n")
+	if err := core.Load(); err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+
+	// Premise: the bare spelling resolves EXACTLY while `e1` is stored, so load
+	// canonicalization correctly leaves it verbatim.
+	dep, err := core.Get("nibs-t1")
+	if err != nil {
+		t.Fatalf(`Get("nibs-t1"): %v`, err)
+	}
+	if dep.Parent != "e1" {
+		t.Fatalf("premise failed: stored parent = %q, want the bare spelling %q to survive load", dep.Parent, "e1")
+	}
+
+	setWatching(core)
+
+	if err := core.Delete("e1"); err != nil {
+		t.Fatalf(`Delete("e1"): %v`, err)
+	}
+	// Premise: the removal sweep re-pointed the bystander in memory only.
+	if dep, _ := core.Get("nibs-t1"); dep == nil || dep.Parent != "nibs-e1" {
+		t.Fatalf("premise failed: parent = %+v, want the removal sweep to re-point it to nibs-e1", dep)
+	}
+
+	// Restore the file byte-for-byte and let the watcher see it arrive.
+	writeLinkNibFile(t, nibsDir, "e1", "in-progress", "")
+	core.handleChanges(map[string]fsnotify.Op{barePath: fsnotify.Create})
+
+	live := storedLinkSpellings(t, core)
+	want := storedLinkSpellings(t, loadFreshCore(t, nibsDir))
+	if !maps.Equal(live, want) {
+		t.Errorf("the live store and a fresh load of the same directory disagree:\n  live:  %v\n  fresh: %v", live, want)
+	}
+}
+
+// TestCanonicalizationSweepIsIdempotent pins the other half of resolving from
+// the file: a second sweep over an unchanged store must be a complete no-op.
+//
+// Resolving from the file spelling makes it tempting to report "changed"
+// whenever the resolved id differs from the RAW one — but after the first sweep
+// the stored value is ALREADY resolved, so that comparison stays true forever and
+// every later sweep reinstalls a fresh clone. Nothing about the nib would look
+// wrong; the cost lands downstream, where the watcher's batch pass turns each
+// clone into a spurious EventUpdated for a nib nothing touched. The assertion is
+// therefore on pointer IDENTITY, which is what a needless clone breaks.
+func TestCanonicalizationSweepIsIdempotent(t *testing.T) {
+	core, nibsDir := mustLoadPrefixedCore(t)
+
+	writeLinkNibFile(t, nibsDir, "e1", "in-progress", "")
+	writeLinkNibFile(t, nibsDir, "nibs-e1", "in-progress", "")
+	writeLinkNibFile(t, nibsDir, "nibs-t1", "todo", "parent: e1\nblocked_by: [e1, nibs-e1]\n")
+	if err := core.Load(); err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+
+	// Sweep #1, driven by a real key-set change so it genuinely re-points.
+	if err := core.Delete("e1"); err != nil {
+		t.Fatalf(`Delete("e1"): %v`, err)
+	}
+	if dep, _ := core.Get("nibs-t1"); dep == nil || dep.Parent != "nibs-e1" {
+		t.Fatalf("premise failed: parent = %+v, want the first sweep to re-point it to nibs-e1", dep)
+	}
+
+	core.mu.RLock()
+	before := maps.Clone(core.nibs)
+	core.mu.RUnlock()
+
+	// Sweep #2 over the very same store.
+	core.mu.Lock()
+	rebinds := core.canonicalizeStoreLocked()
+	core.mu.Unlock()
+
+	if len(rebinds) != 0 {
+		t.Errorf("the second sweep re-pointed %v; re-resolving an unchanged store must change nothing", rebinds)
+	}
+
+	core.mu.RLock()
+	defer core.mu.RUnlock()
+	for id, b := range core.nibs {
+		if b != before[id] {
+			t.Errorf("the second sweep replaced the stored pointer for %q; a re-resolution that changes nothing must not clone (each clone becomes a spurious event on the watcher path)", id)
+		}
+	}
+}
+
+// TestCanonicalizationKeepsAnUpdatedLinkThroughALaterSweep guards the regression
+// this design must not introduce. The file spelling a sweep resolves from is a
+// MIRROR of the disk, not a load-time snapshot: Update writes a new link spelling
+// without re-reading the file, so a mirror refreshed only on read goes stale, and
+// the next sweep — fired by an unrelated create or delete — re-resolves the nib
+// from its pre-Update spelling and silently reverts the user's edit in memory. A
+// watcher would eventually repair it; a one-shot CLI run would not.
+func TestCanonicalizationKeepsAnUpdatedLinkThroughALaterSweep(t *testing.T) {
+	core, nibsDir := mustLoadPrefixedCore(t)
+
+	writeLinkNibFile(t, nibsDir, "nibs-par", "todo", "")
+	writeLinkNibFile(t, nibsDir, "nibs-alt", "todo", "")
+	writeLinkNibFile(t, nibsDir, "nibs-t1", "todo", "parent: par\n")
+	if err := core.Load(); err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+
+	// Premise: the file's short spelling was resolved at load, so the stored
+	// value and the file already disagree before the update.
+	dep, err := core.Get("nibs-t1")
+	if err != nil {
+		t.Fatalf(`Get("nibs-t1"): %v`, err)
+	}
+	if dep.Parent != "nibs-par" {
+		t.Fatalf("premise failed: stored parent = %q, want the load-canonicalized %q", dep.Parent, "nibs-par")
+	}
+
+	edited := dep.Clone()
+	edited.Parent = "nibs-alt"
+	if err := core.Update(edited, nil); err != nil {
+		t.Fatalf("Update re-parenting nibs-t1: %v", err)
+	}
+
+	// An unrelated create: it changes the key set, so it sweeps the whole store.
+	if err := core.Create(&nib.Nib{ID: "nibs-new1", Version: 1, Title: "New", Status: "todo", Type: "task"}); err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+
+	got, err := core.Get("nibs-t1")
+	if err != nil {
+		t.Fatalf(`Get("nibs-t1") after the sweep: %v`, err)
+	}
+	if got.Parent != "nibs-alt" {
+		t.Errorf("parent = %q, want %q — an unrelated sweep reverted the update to the pre-update file spelling", got.Parent, "nibs-alt")
+	}
+	// And a fresh load agrees, because the update reached disk.
+	fresh, err := loadFreshCore(t, nibsDir).Get("nibs-t1")
+	if err != nil {
+		t.Fatalf(`fresh Get("nibs-t1"): %v`, err)
+	}
+	if fresh.Parent != got.Parent {
+		t.Errorf("fresh load parent = %q, live store parent = %q; they must agree", fresh.Parent, got.Parent)
+	}
+}
+
+// TestCreateResolvesLinksNamingTheNewNib covers the arrival-direction hole
+// Core.Create left open: it inserts a key without re-resolving, and the watcher
+// cannot compensate because the in-process insert happens FIRST — by the time
+// fsnotify reports the new file the id is already stored, so the batch pass sees
+// it as an ordinary edit and runs the narrow touched-only sweep.
+//
+// A short-form link naming an id that does not exist yet is left verbatim by
+// design, so only the target's arrival can resolve it. The assertions pin the
+// stored spelling and the reverse traversal — through Get alone both spellings
+// already answer with the same nib.
+func TestCreateResolvesLinksNamingTheNewNib(t *testing.T) {
+	core, nibsDir := mustLoadPrefixedCore(t)
+
+	writeLinkNibFile(t, nibsDir, "nibs-t1", "todo", "parent: zz9\nblocked_by: [zz9]\n")
+	if err := core.Load(); err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+
+	// Premise: nothing named zz9 exists, so the link is unresolvable and stays
+	// exactly as written.
+	dep, err := core.Get("nibs-t1")
+	if err != nil {
+		t.Fatalf(`Get("nibs-t1"): %v`, err)
+	}
+	if dep.Parent != "zz9" {
+		t.Fatalf("premise failed: parent = %q, want it left verbatim as %q", dep.Parent, "zz9")
+	}
+
+	if err := core.Create(&nib.Nib{ID: "nibs-zz9", Version: 1, Title: "Arrived", Status: "in-progress", Type: "task"}); err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+
+	dep, err = core.Get("nibs-t1")
+	if err != nil {
+		t.Fatalf(`Get("nibs-t1") after Create: %v`, err)
+	}
+	if dep.Parent != "nibs-zz9" {
+		t.Errorf("stored parent = %q, want %q — creating the nib a dangling link names must resolve it", dep.Parent, "nibs-zz9")
+	}
+	if !slices.Equal(dep.BlockedBy, []string{"nibs-zz9"}) {
+		t.Errorf("blocked_by = %v, want [nibs-zz9]", dep.BlockedBy)
+	}
+	if got := linkTargets(t, core, "nibs-zz9", "parent"); !slices.Equal(got, []string{"nibs-t1"}) {
+		t.Errorf("FindIncomingLinks(nibs-zz9) parent sources = %v, want [nibs-t1] — the reverse traversal must agree with the resolver", got)
+	}
+	if !core.IsBlocked("nibs-t1") {
+		t.Error(`IsBlocked("nibs-t1") = false, want true — nibs-zz9 is in progress and now blocks it`)
+	}
+}
+
+// TestCreateWarnsAboutTheLinksItRepointed is the arrival counterpart to
+// TestDeleteWarnsAboutTheLinksItRepointed: a create that re-points a THIRD nib's
+// link changes no file and publishes no event, so the warning is the only signal
+// a direct Core.Create gives that it moved something else.
+func TestCreateWarnsAboutTheLinksItRepointed(t *testing.T) {
+	core, nibsDir := mustLoadPrefixedCore(t)
+
+	writeLinkNibFile(t, nibsDir, "nibs-t1", "todo", "parent: zz9\n")
+	writeLinkNibFile(t, nibsDir, "nibs-t2", "todo", "")
+	if err := core.Load(); err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+
+	// Attached after Load so a load-time warning cannot be mistaken for one.
+	var warnings bytes.Buffer
+	core.SetWarnWriter(&warnings)
+
+	if err := core.Create(&nib.Nib{ID: "nibs-zz9", Version: 1, Title: "Arrived", Status: "todo", Type: "task"}); err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+
+	got := warnings.String()
+	for _, want := range []string{"nibs-zz9", "nibs-t1.parent", "zz9 -> nibs-zz9"} {
+		if !strings.Contains(got, want) {
+			t.Errorf("create warnings = %q, want them to mention %q", got, want)
+		}
+	}
+	if strings.Contains(got, "nibs-t2") {
+		t.Errorf("create warnings = %q, want no mention of the untouched nibs-t2", got)
 	}
 }
 
