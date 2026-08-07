@@ -77,6 +77,19 @@ type CreateNibInput struct {
 	First *bool `json:"first,omitempty"`
 }
 
+// A batch is not atomic. Root mutation fields execute serially in document
+// order, execution does not stop at the first failure, and each field commits
+// on its own — so a response that reports failure can still have written
+// durable edits. Re-read any nib the batch named rather than trusting an etag
+// cached before the call.
+//
+// Which fields committed is not carried on the wire. The `nibs graphql` CLI
+// renders it into the failure message when it can name at least one, but that
+// `succeeded` list is a lower bound on what landed rather than an accounting:
+// an error anywhere inside a field's own selection marks that field failed even
+// when its write committed. Over HTTP there is no such list at all — read the
+// error paths against the fields the document sent. The fuller treatment is in
+// the agent guide (`nibs prime --full`, cmd/prompt-full.tmpl).
 type Mutation struct {
 }
 

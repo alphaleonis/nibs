@@ -1651,6 +1651,136 @@ func TestExecuteQueryBatchNamesTheMutationsThatCommitted(t *testing.T) {
 	}
 }
 
+// TestExecuteQueryBatchHalfCommitsDurably pins the contract the Mutation type
+// documents: root mutation fields run serially in document order, execution
+// does not stop at the first failure, and each field commits on its own. So a
+// document whose one alias is refused leaves the other alias's write DURABLE —
+// on disk, not merely agreed to by the store that issued it.
+//
+// That is why every assertion here reads the nibs directory instead of
+// app.Core. The neighboring naming tests read the store on purpose, because
+// what they pin is the message; a store-only assertion cannot tell a write that
+// reached the filesystem from one that only updated the map beside it, and
+// durability is the whole of what this contract promises.
+//
+// Rows come in pairs — the committing field before the refusal and after it —
+// because those are different claims. Only the "after" rows can fail if
+// execution ever stops at the first failure.
+func TestExecuteQueryBatchHalfCommitsDurably(t *testing.T) {
+	// nibFiles lists what the nibs directory holds for an id. It globs the id
+	// prefix rather than reading the Path the store reports, because asking the
+	// store where to look would be asking the store — the very thing these
+	// assertions exist to avoid. Globbing also stays correct if a write ever does
+	// relocate a file; today none does, since saveToDisk rebuilds a filename only
+	// when Path is empty and a nib from GetForUpdate always carries one.
+	nibFiles := func(t *testing.T, root, id string) []string {
+		t.Helper()
+		matches, err := filepath.Glob(filepath.Join(root, id+"*.md"))
+		if err != nil {
+			t.Fatalf("globbing for %s under %s: %v", id, root, err)
+		}
+		return matches
+	}
+	goneFromDisk := func(id string) func(*testing.T, string) {
+		return func(t *testing.T, root string) {
+			t.Helper()
+			if files := nibFiles(t, root, id); len(files) != 0 {
+				t.Errorf("%s still has a file on disk (%v), so its delete did not commit", id, files)
+			}
+		}
+	}
+	titleOnDisk := func(id, want string) func(*testing.T, string) {
+		return func(t *testing.T, root string) {
+			t.Helper()
+			files := nibFiles(t, root, id)
+			if len(files) != 1 {
+				t.Fatalf("want exactly one file on disk for %s, got %v", id, files)
+			}
+			f, err := os.Open(files[0])
+			if err != nil {
+				t.Fatalf("opening %s: %v", files[0], err)
+			}
+			defer func() { _ = f.Close() }()
+			b, err := nib.Parse(f)
+			if err != nil {
+				t.Fatalf("parsing %s: %v", files[0], err)
+			}
+			if b.Title != want {
+				t.Errorf("%s on disk has title %q, want %q — its update did not commit", id, b.Title, want)
+			}
+		}
+	}
+
+	const committedTitle = "Committed to disk"
+
+	tests := []struct {
+		name  string
+		query string
+		check func(*testing.T, string)
+	}{
+		{
+			name:  "a delete before the refusal is gone from disk",
+			query: `mutation { d1: deleteNib(id:"p-a") d2: deleteNib(id:"p-none") }`,
+			check: goneFromDisk("p-a"),
+		},
+		{
+			// The row that separates "does not stop at the first failure" from
+			// "stops at the first failure": d2 only runs if the refusal ahead of
+			// it did not end the operation.
+			name:  "a delete after the refusal is gone from disk too",
+			query: `mutation { d1: deleteNib(id:"p-none") d2: deleteNib(id:"p-b") }`,
+			check: goneFromDisk("p-b"),
+		},
+		{
+			// A rewrite rather than an unlink, so the other persistence path is
+			// covered: the file survives and has to carry the new title.
+			name: "an update before the refusal has its new title on disk",
+			query: `mutation { u1: updateNib(id:"p-a", input:{title:"` + committedTitle + `"}) { id } ` +
+				`d2: deleteNib(id:"p-none") }`,
+			check: titleOnDisk("p-a", committedTitle),
+		},
+		{
+			name: "an update after the refusal has its new title on disk",
+			query: `mutation { d1: deleteNib(id:"p-none") ` +
+				`u2: updateNib(id:"p-b", input:{title:"` + committedTitle + `"}) { id } }`,
+			check: titleOnDisk("p-b", committedTitle),
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			app := setupQueryTestApp(t)
+			for _, id := range []string{"p-a", "p-b"} {
+				createQueryTestNib(t, app.Core, id, "Nib "+id, "todo")
+			}
+			// A lookup that found nothing would make every "gone from disk"
+			// assertion below pass without measuring anything, so establish
+			// that it finds the files while they are still there.
+			for _, id := range []string{"p-a", "p-b"} {
+				if files := nibFiles(t, app.Core.Root(), id); len(files) != 1 {
+					t.Fatalf("setup: want exactly one file on disk for %s, got %v", id, files)
+				}
+			}
+
+			_, err := executeQuery(app, tt.query, nil, "")
+			// The premise: the batch was refused as a whole. Without a refusal
+			// there is no half-commit to be durable about.
+			if err == nil {
+				t.Fatal("the batch returned no error, so nothing here is a partial outcome")
+			}
+			var ce *output.CodedError
+			if !errors.As(err, &ce) {
+				t.Fatalf("expected *output.CodedError, got %T: %v", err, err)
+			}
+			if ce.Code != output.ErrNotFound {
+				t.Errorf("code = %q, want %q", ce.Code, output.ErrNotFound)
+			}
+
+			tt.check(t, app.Core.Root())
+		})
+	}
+}
+
 // TestExecuteQueryCommittedFieldNaming walks every boundary of "which root
 // fields does this response claim committed, and which does it blame".
 //
