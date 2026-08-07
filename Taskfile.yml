@@ -244,15 +244,41 @@ tasks:
       - npm run build
 
   web:check:
-    desc: Type-check the web UI (svelte-check)
+    desc: Type-check the web UI (svelte-check for src/, tsc for everything else)
     # No Task-level codegen dep needed: `npm run check` regenerates the web
     # GraphQL types itself via the `precheck` npm hook (→ `npm run codegen`)
     # before svelte-check runs, so the generated src/lib/gql/ types are always
     # fresh. Wired into the `test` gate (svelte-check is clean; see nibs-pg6i).
+    #
+    # web:check-tooling rides here rather than in `test` because this task is the
+    # one thing both gates already call: `task test` runs it, and CI's lint job
+    # runs `task web:check` directly (the test job deliberately does not go
+    # through `task test`). Adding it to `test` alone would leave CI unguarded,
+    # and adding it to CI as well would mean editing the workflow to say what
+    # this task already says.
     deps: [web:install]
     dir: web
     cmds:
       - npm run check
+      - task: web:check-tooling
+
+  web:check-tooling:
+    desc: Type-check the web TypeScript outside src/ (Playwright suites, tool configs)
+    # tsc rather than svelte-check: nothing outside src/ is a .svelte file, and
+    # svelte-check takes a single --tsconfig, which is already spent on the app.
+    # web/tsconfig.tooling.json records why the two configs stay separate rather
+    # than one widened include.
+    #
+    # Ordering, not a dep, supplies the generated types: the Playwright specs
+    # import src/lib types that src/lib/gql/ feeds, and every caller arrives
+    # through web:check, whose `npm run check` runs the precheck codegen hook
+    # first. Invoked standalone on a checkout that has never generated, this can
+    # fail on a missing src/lib/gql/ — `task web:codegen` is the fix. Declaring
+    # the dep instead would regenerate on the common path to serve the rare one.
+    deps: [web:install]
+    dir: web
+    cmds:
+      - npx tsc --noEmit -p tsconfig.tooling.json
 
   build:
     desc: Build the nibs CLI executable
@@ -359,7 +385,7 @@ tasks:
       - go run . tui --config "{{.TMP}}/.nibs.yml"
 
   check:
-    desc: Type-check the web UI (svelte-check)
+    desc: Type-check the web UI (svelte-check for src/, tsc for everything else)
     deps: [web:check]
 
   lint:

@@ -13,7 +13,8 @@ All commands use [Task](https://taskfile.dev/) (`go-task/task`) as the task runn
 CI reads those same pins from `mise.toml`: both workflows provision their tools with `jdx/mise-action`, so `mise.toml` is the only place any of these versions appear and a bump there reaches CI with no second edit. Still re-run `task lint` after moving golangci-lint — a new release can add or retire checks and move the clean baseline.
 
 - `task build` - Build the `./nibs` executable (runs codegen first)
-- `task test` - Run all tests: Go + web (runs codegen and web:build first); includes the `-race` gate on `internal/nibcore` + `internal/graph`
+- `task test` - Run all tests: Go + web (runs codegen and web:build first); includes the `-race` gate on `internal/nibcore` + `internal/graph`, and both web type-check gates via `task web:check`
+- `task check` / `task web:check` - Type-check the web UI. Two passes over two disjoint file sets: `svelte-check` against `web/tsconfig.json` for `src/`, then `tsc` against `web/tsconfig.tooling.json` for everything outside it (the Playwright suites in `screenshots/` and `e2e/`, plus the top-level vite/vitest/playwright/codegen configs). The split exists because the second set runs in Node and needs `types: ["node"]`, which would leak Node's globals into browser code if merged into the app config. CI's lint job calls `task web:check`, so both passes gate CI as well — its test job deliberately does not go through `task test`.
 - `task test:race` - Run the `-race` detector on the concurrency-critical packages (`internal/nibcore` + `internal/graph`) only
 - `task codegen` - Regenerate GraphQL code: Go server (gqlgen, `go generate ./...`) + web client types (graphql-codegen client preset). Runs `go:codegen` + `web:codegen`.
 - `task nibs` - Build and run the CLI in one step (`go run .`)

@@ -1,0 +1,31 @@
+{
+  // Type-checks the TypeScript that tsconfig.json does not: everything outside
+  // src/. That is the Playwright suites (screenshots/, e2e/) and the top-level
+  // tool configs (vite, vitest, playwright, graphql-codegen).
+  //
+  // These files were checked by nothing at all. `npm run check` runs svelte-check
+  // against tsconfig.json, whose include is src/ only, and Playwright and Vite
+  // both strip types to run a file rather than verifying them — so a stale
+  // literal here compiled happily and surfaced much later as a confusing runtime
+  // assertion failure, in a suite (`task screenshots`) that is not part of
+  // `task test`.
+  //
+  // Kept separate from tsconfig.json rather than widening its include, because
+  // these run in Node and the app does not. Giving them Node's globals means
+  // `types: ["node"]`, and folding that into the app's config would put those
+  // globals in scope for browser code too — `setTimeout` typed as returning
+  // NodeJS.Timeout instead of number, `process` resolving where it does not
+  // exist at runtime. Splitting keeps each side's type environment honest about
+  // where its code actually runs.
+  //
+  // Membership is by LOCATION, not by filename: `*.ts` covers every top-level
+  // config, so a tool added later is checked without editing this list.
+  "extends": "./tsconfig.node.json",
+  "compilerOptions": {
+    "moduleResolution": "bundler",
+    "resolveJsonModule": true,
+    "noEmit": true,
+    "types": ["node"]
+  },
+  "include": ["*.ts", "screenshots/**/*.ts", "e2e/**/*.ts"]
+}
