@@ -259,7 +259,10 @@ tasks:
     deps: [web:install]
     dir: web
     cmds:
-      - npm run check
+      # Capped for the same reason as the vitest lane in `test`: svelte-check
+      # holds the whole project graph in one node process, and it should pay for
+      # that out of its own cgroup rather than the caller's (nibs-0kip).
+      - bash ../scripts/run-capped.sh npm run check
       - task: web:check-tooling
 
   web:check-tooling:
@@ -278,7 +281,7 @@ tasks:
     deps: [web:install]
     dir: web
     cmds:
-      - npx tsc --noEmit -p tsconfig.tooling.json
+      - bash ../scripts/run-capped.sh npx tsc --noEmit -p tsconfig.tooling.json
 
   build:
     desc: Build the nibs CLI executable
@@ -307,7 +310,7 @@ tasks:
       # Go tests run memory-capped so a runaway test is OOM-killed inside its own
       # cgroup instead of triggering a global OOM that takes down the WSL VM
       # (nibs-mv0i). Falls back to plain `go test` where systemd --user scopes
-      # aren't available. Override the cap with GO_TEST_MEM_MAX (default 4G).
+      # aren't available. Override the cap with NIBS_CAP_MEM_MAX (default 4G).
       - bash scripts/go-test-capped.sh ./...
       # Run the concurrency-critical packages a second time under -race, so a
       # reintroduced data race fails the default gate rather than only when
@@ -317,7 +320,13 @@ tasks:
       # under the detector; a plain `go test` degrades them to trivial checks.
       - task: test:race
       - task: web:check
-      - cd web && npx vitest run --reporter=agent
+      # Capped for a different reason than the go lane above: vitest has never
+      # run away, but it fans out across cores, and an uncapped fleet is charged
+      # to whatever cgroup launched `task test`. When that is a long-lived agent
+      # session, the kernel's memcg OOM killer picks the session over any single
+      # worker and the supervisor dies instead of the tests (nibs-0kip). The
+      # scope makes the lane pay for its own memory.
+      - cd web && bash ../scripts/run-capped.sh npx vitest run --reporter=agent
 
   test:race:
     desc: Run the -race detector on the concurrency-critical packages (nibcore + graph)
