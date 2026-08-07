@@ -80,9 +80,10 @@ func resolveFilterTarget(reader NibReader, field, id string) (string, error) {
 // relationship, set to false. Two pairs qualify, and each is empty by
 // construction rather than by store state:
 //
-//   - parentId + hasParent. parentId matches the stored b.Parent against a
-//     target that already resolved, so a nib it matches has a link reader.Get
-//     answers for — which is what hasParent asks (see resolvedParent).
+//   - parentId + hasParent. Both read the resolved parent, so a nib parentId
+//     matches has a link reader.Get answers for — which is exactly what
+//     hasParent asks (see resolvedParent). No nib both has parent X and has
+//     none.
 //   - blockedById + hasBlockedBy. blockedById requires the target in
 //     b.BlockedBy, which forces len(b.BlockedBy) > 0, which is hasBlockedBy.
 //
@@ -206,26 +207,25 @@ func ApplyFilter(ctx context.Context, nibs []*nib.Nib, filter *model.NibFilter, 
 		return resolvedParentID(b, reader) != ""
 	})
 	if filter.ParentID != nil {
-		// Normalize the parent id like every other *ID filter: the loader
-		// canonicalizes stored link ids, so b.Parent is normally a full (prefixed) id and
-		// a short --parent must be resolved first or it silently matches
-		// nothing. An unknown target fails the filter (shared contract for all
-		// *ID filters).
+		// Normalize the target id like every other *ID filter, so a short
+		// --parent and a full one reach the same answer. An unknown target fails
+		// the filter (shared contract for all *ID filters).
 		//
-		// Matching the raw b.Parent agrees with resolvedParentID for any nib whose
-		// link that pass rewrote: it is stored in full form afterwards, so only a
-		// link naming the resolved target can match. The two part ways wherever
-		// the pass left a resolvable link alone — a reader that never ran it, or a
-		// store state it does not cover, such as a short-form link the pass
-		// matched exactly whose target a later delete promoted to its prefixed
-		// twin. There a raw short-form link fails this comparison while
-		// resolvedParentID, and so hasParent:true, still resolves it. A link
-		// naming no nib matches neither, under either reading.
+		// Each candidate is then compared by its RESOLVED parent, not its stored
+		// spelling — the same reading hasParent and the parentId field give, which
+		// is what lets refuseContradiction treat this field and hasParent:false as
+		// jointly empty by construction. Comparing the stored string would agree
+		// on every link the loader's canonicalization pass rewrote and disagree on
+		// one it never saw, which is a property of the reader rather than of the
+		// data. A link naming no nib resolves to "" and matches nothing here,
+		// since resolveFilterTarget has already refused an unresolvable target.
 		fullID, err := resolveFilterTarget(reader, "parentId", *filter.ParentID)
 		if err != nil {
 			return nil, err
 		}
-		result = filterByField(result, []string{fullID}, func(b *nib.Nib) string { return b.Parent })
+		result = filterByField(result, []string{fullID}, func(b *nib.Nib) string {
+			return resolvedParentID(b, reader)
+		})
 	}
 
 	// Transitive hierarchy filters. Like every other *ID filter, each field
@@ -500,18 +500,20 @@ func parentChain(b *nib.Nib, reader NibReader) []string {
 // and is offered as a root's sibling by one surface while being refused as that
 // root's reorder anchor by another.
 //
-// One caller is deliberately not routed through here: the parentId branch
-// matches the raw b.Parent, which agrees with this helper for any nib whose
-// stored link the loader's canonicalization pass rewrote. See that branch for
-// the states where the two part ways.
+// Every surface that decides parent-ness is routed through here; none reads the
+// raw b.Parent to answer that question. The stored string is still reachable —
+// the storedParentId GraphQL field and the `-f stored_parent` CLI field report
+// it verbatim — but as an inspection value, so a broken link stays diagnosable,
+// never as an answer to "does this nib have a parent".
 //
 // Resolving is also what compares a short-form link under its resolved
-// spelling. Canonicalization makes the two spellings coincide for every link
-// that was resolvable at load or when its target arrived — but that is a
-// load-time and watcher-batch invariant, not a store invariant. Later store
-// mutations can reintroduce the divergence, notably a delete that promotes a
-// bare-token id to its prefixed twin. Resolving on every call is what keeps the
-// helper correct in that state, and on a reader that never ran the pass at all.
+// spelling. Canonicalization makes the two spellings coincide, and every
+// mutation that can change the key set now re-runs it — Load, Core.Create,
+// Core.Delete (gated on removalCanRebindLinksLocked) and the watcher's batch
+// (its scanAll branch) — so a Core-backed reader is not expected to hold an
+// unresolved short-form link. Resolving here does not lean on that: it keeps
+// the helper correct on any reader, including one that never ran the pass, so
+// the rule is a property of this package rather than of the store's history.
 //
 // The returned pointer is the reader's LIVE store pointer (see NibReader.Get):
 // a caller whose result outlives the store lock must snapshot it, see

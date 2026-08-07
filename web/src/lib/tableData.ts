@@ -56,6 +56,13 @@ export function buildTableData(
   const allTags = [...tagSet].sort();
 
   // Stage 3: Compute parentIds (which nibs have children)
+  //
+  // parentId is the server's RESOLVED parent — null when the stored link names
+  // no nib — so it already answers "does this nib have a parent" the way every
+  // other server surface does. The nibMap.has guard stays as defense: this map
+  // holds the nibs in the CURRENT response, which a filter can narrow to a set
+  // that excludes a real parent, so a present-and-resolvable id can still be
+  // absent here.
   const parentIds = new Set<string>();
   for (const nib of allNibs) {
     if (nib.parentId && nibMap.has(nib.parentId)) {

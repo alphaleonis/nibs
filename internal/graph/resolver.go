@@ -169,10 +169,20 @@ func (r *Resolver) snapshotResults(nibs []*nib.Nib) ([]*nib.Nib, error) {
 // When the parent changes, the order key is recalculated to avoid collisions
 // with existing siblings in the new parent group.
 //
+// "Changes" is decided from the RESOLVED old parent, not the stored string —
+// see resolvedParent for the rule. Both readings agree on a link that names a
+// nib; they part ways on one that does not, and there the raw reading counts
+// dangling -> cleared as a change and recalculates. That relocates a nib which
+// was ALREADY a root by every surface bound to the rule, to the end of the root
+// order, for a repair that changes nothing semantically. Core.FixBrokenLinks
+// repairs the identical link without touching Order, so the raw reading also
+// puts the two repair paths (`nibs set --clear parent` and `nibs check --fix`)
+// at odds over where the nib lands. Resolving settles both.
+//
 // Caller must pass a nib it owns (a clone), not a shared Reader.Get pointer —
 // this mutates b (b.Parent and, via RecalculateOrder, b.Order) in place.
 func (r *Resolver) validateAndSetParent(b *nib.Nib, parentID string) error {
-	oldParent := b.Parent
+	oldParent := resolvedParentID(b, r.Reader)
 
 	if parentID == "" {
 		b.Parent = ""

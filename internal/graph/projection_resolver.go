@@ -133,6 +133,18 @@ func (p *projectionResolver) NibByID(id string) (*nib.Nib, bool) {
 	return b, true
 }
 
+// ParentID returns the nib's resolved parent id — the same reading the GraphQL
+// parentId field and the hasParent filter give, so `-f parent` cannot drift
+// from them (see resolvedParent). A nib that has since been deleted resolves to
+// no parent, which is the honest answer for a nib that is no longer there.
+func (p *projectionResolver) ParentID(id string) string {
+	b, err := p.r.Reader.Get(id)
+	if err != nil {
+		return ""
+	}
+	return resolvedParentID(b, p.r.Reader)
+}
+
 // ChildCount returns the number of direct children of the nib, counting the
 // parent links that point at it — the same child set GetSortedSiblings derives,
 // without the ordering-key backfill a count does not need.

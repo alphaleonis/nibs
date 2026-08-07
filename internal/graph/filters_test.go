@@ -882,6 +882,73 @@ func TestApplyFilterHasParentResolvesParentLink(t *testing.T) {
 	}
 }
 
+// TestParentIDFilterAndFieldResolveShortFormLinks pins that the parentId FILTER
+// and the parentId FIELD both read the resolved parent rather than the raw
+// stored string, on the shape that separates the two readings: a link stored in
+// short form that resolves to a prefixed nib.
+//
+// It uses a stub reader deliberately. Every mutation that can change the store's
+// key set runs the canonicalization sweep — Load, Core.Create, Core.Delete and
+// the watcher's batch — so a real store never holds an unresolved short-form
+// link, and a test over one would pass whichever reading the code took. What is
+// pinned here is the filter and the field agreeing WITHOUT that pass, which is
+// the property that makes them independent of it.
+//
+// The dangling half of the same rule is reachable over a real Load and lives in
+// parent_resolution_test.go.
+func TestParentIDFilterAndFieldResolveShortFormLinks(t *testing.T) {
+	par := &nib.Nib{ID: "nibs-par", Title: "Parent"}
+	full := &nib.Nib{ID: "nibs-ful", Title: "Full-form parent link", Parent: "nibs-par"}
+	// Short form resolves through the prefix, so this nib's parent IS nibs-par.
+	short := &nib.Nib{ID: "nibs-sho", Title: "Short-form parent link", Parent: "par"}
+	dangling := &nib.Nib{ID: "nibs-dng", Title: "Dangling parent link", Parent: "nibs-ghost"}
+	other := &nib.Nib{ID: "nibs-oth", Title: "Unrelated root"}
+
+	all := []*nib.Nib{par, full, short, dangling, other}
+	byID := make(map[string]*nib.Nib, len(all))
+	for _, b := range all {
+		byID[b.ID] = b
+	}
+	reader := &stubReader{nibs: byID, allNibs: all, prefix: "nibs-"}
+	blocking := &stubBlockingChecker{}
+	ctx := context.Background()
+	resolver := &Resolver{Reader: reader, Blocking: blocking}
+
+	// Both spellings of the filter argument, since a short --parent and a full one
+	// must reach the same answer.
+	for _, arg := range []string{"nibs-par", "par"} {
+		t.Run("the filter parentId="+arg+" matches both stored spellings", func(t *testing.T) {
+			got := applyFilterOK(t, ctx, all, &model.NibFilter{ParentID: strPtr(arg)}, reader, blocking)
+			assertNibIDs(t, got, []string{"nibs-ful", "nibs-sho"})
+		})
+	}
+
+	t.Run("the field reports the resolved id for both stored spellings", func(t *testing.T) {
+		for _, b := range []*nib.Nib{full, short} {
+			got, err := resolver.Nib().ParentID(ctx, b)
+			if err != nil {
+				t.Fatalf("ParentID(%s): %v", b.ID, err)
+			}
+			if got == nil || *got != "nibs-par" {
+				t.Errorf("ParentID(%s) = %v, want %q", b.ID, got, "nibs-par")
+			}
+		}
+	})
+
+	t.Run("storedParentId keeps the two spellings distinguishable", func(t *testing.T) {
+		want := map[string]string{"nibs-ful": "nibs-par", "nibs-sho": "par", "nibs-dng": "nibs-ghost"}
+		for id, wantStored := range want {
+			got, err := resolver.Nib().StoredParentID(ctx, byID[id])
+			if err != nil {
+				t.Fatalf("StoredParentID(%s): %v", id, err)
+			}
+			if got == nil || *got != wantStored {
+				t.Errorf("StoredParentID(%s) = %v, want %q", id, got, wantStored)
+			}
+		}
+	})
+}
+
 // TestApplyFilterSiblingIDResolvesParentLinks pins that siblingId decides
 // "same parent" through the resolved parent, the way nibResolver.Parent and
 // fetchSiblings do, rather than by comparing the raw stored strings. Two stored
