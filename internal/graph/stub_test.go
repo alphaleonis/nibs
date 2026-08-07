@@ -448,3 +448,83 @@ func TestStubReaderNormalizeIDMirrorsCoreContract(t *testing.T) {
 		})
 	}
 }
+
+// exactOnlySnapshotReader is a NibReader whose GetSnapshot resolves by EXACT id
+// only, dropping the prefix fallback Core.GetSnapshot performs. Everything else
+// is the ordinary stub.
+//
+// It exists to make one undocumented dependency observable. See
+// TestParentResolverDependsOnGetSnapshotIDResolution.
+type exactOnlySnapshotReader struct {
+	*stubReader
+}
+
+func (r exactOnlySnapshotReader) GetSnapshot(id string) (*nib.Nib, bool) {
+	b, ok := r.nibs[id]
+	if !ok {
+		return nil, false
+	}
+	return b.Clone(), true
+}
+
+// TestParentResolverDependsOnGetSnapshotIDResolution pins a dependency that is
+// invisible at its call site. nibResolver.Parent hands the RAW stored link to
+// Reader.GetSnapshot and returns whatever comes back, so it resolves a
+// short-form link only because Core.GetSnapshot resolves ids the way Get does —
+// exact id, then the configured prefix prepended. Nothing at that call site says
+// so, and NibReader.GetSnapshot's doc runs at length on the copy-on-write
+// invariant while (before this test) never mentioning id resolution at all.
+//
+// Drop that fallback — editing Core.GetSnapshot, or writing a second NibReader
+// that does the obvious map lookup — and nibResolver.Parent alone starts
+// answering null for a link every other surface resolves, which is the
+// cross-surface split the resolved-parent rule exists to prevent. That is a
+// silent break today: stubReader.GetSnapshot mirrors the fallback, so the whole
+// suite passes either way.
+//
+// Both readers are driven from one fixture so the assertion is a DIFFERENCE
+// between them, not a property of one. If a future change makes the resolver
+// resolve the link itself, the exact-only half fails and this test should be
+// retired rather than adjusted — the dependency it guards would be gone.
+func TestParentResolverDependsOnGetSnapshotIDResolution(t *testing.T) {
+	par := &nib.Nib{ID: "nibs-par", Title: "Parent"}
+	// Stored in short form: "par" is not a key in the map, only "nibs-par" is.
+	short := &nib.Nib{ID: "nibs-sho", Title: "Short-form parent link", Parent: "par"}
+
+	nibMap := map[string]*nib.Nib{par.ID: par, short.ID: short}
+	base := &stubReader{nibs: nibMap, allNibs: []*nib.Nib{par, short}, prefix: "nibs-"}
+	ctx := context.Background()
+
+	t.Run("with the prefix fallback, the short-form link resolves", func(t *testing.T) {
+		resolver := &Resolver{Reader: base}
+		got, err := resolver.Nib().Parent(ctx, short)
+		if err != nil {
+			t.Fatalf("Parent: %v", err)
+		}
+		if got == nil || got.ID != "nibs-par" {
+			t.Fatalf("Parent = %v, want the nibs-par nib — without this the case below proves nothing", got)
+		}
+	})
+
+	t.Run("without it, the same link reads as no parent at all", func(t *testing.T) {
+		resolver := &Resolver{Reader: exactOnlySnapshotReader{stubReader: base}}
+		got, err := resolver.Nib().Parent(ctx, short)
+		if err != nil {
+			t.Fatalf("Parent: %v", err)
+		}
+		if got != nil {
+			t.Fatalf("Parent = %q, want nil — this reader's GetSnapshot does not resolve, so the "+
+				"stub no longer models the dependency this test documents", got.ID)
+		}
+		// The exact-form link is unaffected, so the divergence is specifically about
+		// resolution rather than the reader being broken outright.
+		exact := &nib.Nib{ID: "nibs-exa", Title: "Full-form parent link", Parent: "nibs-par"}
+		got, err = resolver.Nib().Parent(ctx, exact)
+		if err != nil {
+			t.Fatalf("Parent(exact form): %v", err)
+		}
+		if got == nil || got.ID != "nibs-par" {
+			t.Errorf("Parent(exact form) = %v, want the nibs-par nib", got)
+		}
+	})
+}

@@ -26,6 +26,19 @@ type NibReader interface {
 	// field (notably Path) is read off-lock. This is the blessed READ accessor
 	// for values that outlive the lock.
 	//
+	// ID RESOLUTION IS PART OF THIS CONTRACT, not an implementation detail of
+	// Core. It mirrors Get: exact id first, then — when a prefix is configured and
+	// the id does not already carry it — the prefix-prepended form. An
+	// implementation that does the obvious map lookup instead satisfies the
+	// copy-on-write half of this doc and still breaks internal/graph, because
+	// nibResolver.Parent hands it a RAW stored parent link and returns whatever
+	// comes back. Drop the fallback and that one resolver answers null for a
+	// short-form link every other surface resolves — the cross-surface split the
+	// resolved-parent rule exists to prevent (see resolvedParent). The dependency
+	// is pinned by TestParentResolverDependsOnGetSnapshotIDResolution, which drives
+	// one fixture through a reader with the fallback and one without; change this
+	// behavior and that test fails rather than the break going quiet.
+	//
 	// CANONICAL INVARIANT (the live-pointer / copy-on-write rule). This doc is its
 	// single authoritative statement; sibling comments across internal/nibcore and
 	// internal/graph defer here rather than re-derive it. A Core mutator may change

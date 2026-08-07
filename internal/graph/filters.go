@@ -506,6 +506,13 @@ func parentChain(b *nib.Nib, reader NibReader) []string {
 // it verbatim — but as an inspection value, so a broken link stays diagnosable,
 // never as an answer to "does this nib have a parent".
 //
+// The sites that DO touch the stored field directly, and why each is entitled
+// to, are recorded in approvedParentReads (parent_read_guard_test.go). That list
+// is derived from this package's source and compared against the source in both
+// directions, so it cannot go stale the way a count in this comment did — the
+// sentence it replaces said "one caller" when there were nine. Do not restate
+// the set here; a second copy is a second thing to be wrong.
+//
 // Resolving is also what compares a short-form link under its resolved
 // spelling. Canonicalization makes the two spellings coincide, and every
 // mutation that can change the key set now re-runs it — Load, Core.Create,
