@@ -38,6 +38,27 @@ func buildTestTree() []*ui.TreeNode {
 	}
 }
 
+// buildCycleTree builds a tree from nibs the way loadNibs does — the real
+// ui.BuildTree over the full set, sorted by order — so the promotion that
+// breaks a parent cycle is the production one rather than a hand-shaped
+// stand-in.
+func buildCycleTree(nibs ...*nib.Nib) []*ui.TreeNode {
+	return ui.BuildTree(nibs, nibs, nib.SortByOrder)
+}
+
+// isTopLevel reports whether id is one of the tree's roots. The cycle tests
+// rest on BuildTree having promoted their target to root level; asserting it
+// keeps a change in that promotion from quietly turning them into tests of
+// something else.
+func isTopLevel(tree []*ui.TreeNode, id string) bool {
+	for _, node := range tree {
+		if node.Nib.ID == id {
+			return true
+		}
+	}
+	return false
+}
+
 func idsOf(nibs []*nib.Nib) []string {
 	out := make([]string, len(nibs))
 	for i, n := range nibs {
@@ -207,9 +228,11 @@ func TestBlockMovable_NoSiblings(t *testing.T) {
 }
 
 // Behavior 8c: every single-item refusal names its reason instead of dropping
-// the keypress.
+// the keypress. The tree is passed as the caller passes it, so a nib whose
+// parent link is ordinary keeps the ordinary reason.
 func TestSingleReorderCmd_RefusalsReportReason(t *testing.T) {
 	siblings := []*nib.Nib{{ID: "A"}, {ID: "B"}}
+	tree := buildTestTree()
 
 	tests := []struct {
 		name    string
@@ -219,13 +242,16 @@ func TestSingleReorderCmd_RefusalsReportReason(t *testing.T) {
 	}{
 		{"no nib to move", nil, true, reorderReasonNothingSelected},
 		{"nib absent from siblings", &nib.Nib{ID: "Z"}, true, reorderReasonNotInList},
+		// In the tree with a parent that resolves — but resolves upward, not into
+		// its own subtree — so this is absence from a list, not a cycle.
+		{"nib in the tree but not in the list it was handed", tree[0].Children[0].Nib, true, reorderReasonNotInList},
 		{"first sibling moving up", siblings[0], true, reorderReasonAtTop},
 		{"last sibling moving down", siblings[1], false, reorderReasonAtBottom},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			cmd := singleReorderCmd(tt.target, siblings, tt.up)
+			cmd := singleReorderCmd(tt.target, siblings, tree, tt.up)
 			if cmd == nil {
 				t.Fatal("expected a command reporting the refusal, got nil")
 			}
@@ -238,6 +264,220 @@ func TestSingleReorderCmd_RefusalsReportReason(t *testing.T) {
 			}
 		})
 	}
+}
+
+// cycleCase describes a nib set containing a parent cycle, the member
+// ui.BuildTree is expected to promote to a root, and the selection under test.
+type cycleCase struct {
+	name         string
+	nibs         []*nib.Nib
+	promoted     string
+	effectiveIDs []string
+}
+
+// promotedCycleCases are the shapes a promoted cycle root can take. They are
+// shared by the block-move and single-move refusal tests so both paths answer
+// for the same trees.
+var promotedCycleCases = []cycleCase{
+	{
+		// Previously refused as reorderReasonNoSiblings: the promoted root's
+		// stored parent is its own only child, which has no children at all.
+		name:         "two-member cycle",
+		nibs:         []*nib.Nib{{ID: "a", Parent: "b"}, {ID: "b", Parent: "a"}},
+		promoted:     "a",
+		effectiveIDs: []string{"a"},
+	},
+	{
+		// Previously refused as reorderReasonNotAmongSiblings: the stored parent
+		// does have children, but the promoted root is not among them.
+		name:         "cycle whose other member has a child",
+		nibs:         []*nib.Nib{{ID: "a", Parent: "b"}, {ID: "b", Parent: "a"}, {ID: "d", Parent: "b"}},
+		promoted:     "a",
+		effectiveIDs: []string{"a"},
+	},
+	{
+		// The degenerate one-member cycle: a nib parented to itself.
+		name:         "nib parented to itself",
+		nibs:         []*nib.Nib{{ID: "s", Parent: "s"}, {ID: "r"}},
+		promoted:     "s",
+		effectiveIDs: []string{"s"},
+	},
+	{
+		// A promoted root renders alongside ordinary roots, so it is selectable
+		// with them. The cycle is the reason the block cannot move, not the
+		// disagreement about parents that the selection also shows.
+		name:         "cycle root selected with an ordinary root",
+		nibs:         []*nib.Nib{{ID: "a", Parent: "b"}, {ID: "b", Parent: "a"}, {ID: "r"}},
+		promoted:     "a",
+		effectiveIDs: []string{"a", "r"},
+	},
+}
+
+// Behavior: a block move whose selection includes a nib promoted out of a
+// parent cycle is refused with the cycle named, rather than with a description
+// of the sibling list the severed parent edge left behind.
+func TestBlockMovable_PromotedCycleRootNamesTheCycle(t *testing.T) {
+	for _, tt := range promotedCycleCases {
+		t.Run(tt.name, func(t *testing.T) {
+			tree := requireCycleTree(t, tt)
+
+			_, _, _, reason := blockMovable(nibsByID(tt.nibs, tt.effectiveIDs...), tree)
+			if reason != reorderReasonInParentCycle {
+				t.Errorf("expected %q, got %q", reorderReasonInParentCycle, reason)
+			}
+		})
+	}
+}
+
+// Behavior: the single-item path refuses the same selection with the same
+// reason. It reaches the refusal through a different route — absent from the
+// sibling list rather than absent from an index scan — so it is asserted
+// separately.
+func TestSingleReorderCmd_PromotedCycleRootNamesTheCycle(t *testing.T) {
+	// The table is shared, so an edit made for the block test could leave nothing
+	// here to run. Counting the survivors keeps that from passing silently.
+	ran := 0
+	for _, tt := range promotedCycleCases {
+		// The single-item path moves one nib; the mixed selection belongs to the
+		// block test only.
+		if len(tt.effectiveIDs) != 1 {
+			continue
+		}
+		ran++
+		t.Run(tt.name, func(t *testing.T) {
+			tree := requireCycleTree(t, tt)
+			target := nibsByID(tt.nibs, tt.effectiveIDs...)[0]
+			// Mirror listModel.findSiblings, the caller's sibling source.
+			siblings := siblingsFromTree(tree, treeResolvedParentID(target, tree))
+
+			for _, up := range []bool{true, false} {
+				cmd := singleReorderCmd(target, siblings, tree, up)
+				if cmd == nil {
+					t.Fatalf("up=%v: expected a command reporting the refusal, got nil", up)
+				}
+				msg, ok := cmd().(reorderRefusedMsg)
+				if !ok {
+					t.Fatalf("up=%v: expected reorderRefusedMsg, got %T", up, cmd())
+				}
+				if msg.reason != reorderReasonInParentCycle {
+					t.Errorf("up=%v: expected reason %q, got %q", up, reorderReasonInParentCycle, msg.reason)
+				}
+			}
+		})
+	}
+	if ran == 0 {
+		t.Fatal("no single-item cases in promotedCycleCases; this test asserted nothing")
+	}
+}
+
+// Behavior: the refusal holds under the filtered tree the list actually builds.
+// loadNibs hands ui.BuildTree the matched nibs plus the full set, and
+// addAncestors closes that set upward — so a cycle reached only as ancestor
+// context of a matched nib is still whole, still promoted, and still named as
+// the cause. The cases above all build trees where matched == all, which is the
+// one shape that cannot exercise this.
+func TestPromotedCycleRoot_EntersAsAncestorContext(t *testing.T) {
+	x := &nib.Nib{ID: "x", Parent: "a"}
+	a := &nib.Nib{ID: "a", Parent: "b"}
+	b := &nib.Nib{ID: "b", Parent: "a"}
+	all := []*nib.Nib{x, a, b}
+
+	// Only x matches; a and b are pulled in as x's ancestors.
+	tree := ui.BuildTree([]*nib.Nib{x}, all, nib.SortByOrder)
+	if !isTopLevel(tree, "a") {
+		t.Fatalf("BuildTree did not promote %q to root level; roots are %v", "a", rootIDs(tree))
+	}
+	// Pins the premise: a is here as context, not as a filter match. Without
+	// this, a change making BuildTree ignore the filter would leave the test
+	// asserting the same thing the cases above already do.
+	if node := ui.FindNode(tree, "a"); node == nil || node.Matched {
+		t.Fatalf("expected %q to be present as unmatched ancestor context, got %+v", "a", node)
+	}
+
+	if _, _, _, reason := blockMovable([]*nib.Nib{a}, tree); reason != reorderReasonInParentCycle {
+		t.Errorf("blockMovable: expected %q, got %q", reorderReasonInParentCycle, reason)
+	}
+
+	// Mirror listModel.findSiblings, the caller's sibling source.
+	siblings := siblingsFromTree(tree, treeResolvedParentID(a, tree))
+	for _, up := range []bool{true, false} {
+		cmd := singleReorderCmd(a, siblings, tree, up)
+		if cmd == nil {
+			t.Fatalf("up=%v: expected a command reporting the refusal, got nil", up)
+		}
+		msg, ok := cmd().(reorderRefusedMsg)
+		if !ok {
+			t.Fatalf("up=%v: expected reorderRefusedMsg, got %T", up, cmd())
+		}
+		if msg.reason != reorderReasonInParentCycle {
+			t.Errorf("up=%v: expected reason %q, got %q", up, reorderReasonInParentCycle, msg.reason)
+		}
+	}
+}
+
+// Behavior: only the promoted member is scoped out. A cycle member that kept
+// its parent edge still sits among that parent's children, and reordering it
+// there still produces a move rather than a refusal.
+func TestSingleReorderCmd_UnpromotedCycleMemberStillMoves(t *testing.T) {
+	// a <-> b is the cycle; c is an ordinary child of a. BuildTree promotes a,
+	// leaving b and c as a's children — a real sibling list b can move within.
+	nibs := []*nib.Nib{{ID: "a", Parent: "b"}, {ID: "b", Parent: "a"}, {ID: "c", Parent: "a"}}
+	tree := buildCycleTree(nibs...)
+	if !isTopLevel(tree, "a") {
+		t.Fatalf("BuildTree did not promote %q to root level; roots are %v", "a", rootIDs(tree))
+	}
+	target := nibsByID(nibs, "b")[0]
+	siblings := siblingsFromTree(tree, treeResolvedParentID(target, tree))
+	if want := []string{"b", "c"}; !equalStrings(idsOf(siblings), want) {
+		t.Fatalf("siblings = %v, want %v", idsOf(siblings), want)
+	}
+
+	cmd := singleReorderCmd(target, siblings, tree, false)
+	if cmd == nil {
+		t.Fatal("expected a reorder command, got nil")
+	}
+	msg, ok := cmd().(reorderNibMsg)
+	if !ok {
+		t.Fatalf("expected reorderNibMsg, got %T (%v)", cmd(), cmd())
+	}
+	if msg.nibID != "b" || msg.afterID == nil || *msg.afterID != "c" {
+		t.Errorf("expected b to move after c, got %+v", msg)
+	}
+}
+
+// requireCycleTree builds the case's tree and asserts BuildTree promoted the
+// expected member, so a change in the promotion rule fails loudly here instead
+// of silently retargeting the test.
+func requireCycleTree(t *testing.T, tt cycleCase) []*ui.TreeNode {
+	t.Helper()
+	tree := buildCycleTree(tt.nibs...)
+	if !isTopLevel(tree, tt.promoted) {
+		t.Fatalf("BuildTree did not promote %q to root level; roots are %v", tt.promoted, rootIDs(tree))
+	}
+	return tree
+}
+
+// nibsByID returns the nibs with the given ids, in the order requested.
+func nibsByID(nibs []*nib.Nib, ids ...string) []*nib.Nib {
+	out := make([]*nib.Nib, 0, len(ids))
+	for _, id := range ids {
+		for _, n := range nibs {
+			if n.ID == id {
+				out = append(out, n)
+				break
+			}
+		}
+	}
+	return out
+}
+
+// rootIDs returns the ids of the tree's top-level nodes, for failure messages.
+func rootIDs(tree []*ui.TreeNode) []string {
+	out := make([]string, len(tree))
+	for i, node := range tree {
+		out[i] = node.Nib.ID
+	}
+	return out
 }
 
 // Behavior 9: empty effective set → refused as nothing to move.
