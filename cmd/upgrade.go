@@ -65,8 +65,19 @@ func runUpgrade(cmd *cobra.Command, _ []string) error {
 		return nil
 	}
 
+	// checksums.txt is verified against a signature made by a key compiled into
+	// this binary, and the archives are then verified against that checksums.txt
+	// — see newUpgradeValidator. The signing key is not in the release, so this
+	// is an anchor a compromised release cannot forge; checksums.txt alone could
+	// only ever prove the download was not corrupted in transit.
+	validator, err := newUpgradeValidator()
+	if err != nil {
+		return cmdError(false, output.ErrFileError,
+			"loading the release signing keys this binary trusts: %v", err)
+	}
+
 	updater, err := selfupdate.NewUpdater(selfupdate.Config{
-		Validator: &selfupdate.ChecksumValidator{UniqueFilename: "checksums.txt"},
+		Validator: validator,
 		// Prerelease defaults to false: `nibs upgrade` only considers stable
 		// releases unless a specific tag is requested via --version.
 	})
