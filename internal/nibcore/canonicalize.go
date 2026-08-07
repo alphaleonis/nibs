@@ -47,18 +47,34 @@ import (
 // before it. An id LEAVING can re-point one that resolved exactly — a store
 // holding both a bare token `e1` and its prefixed twin `nibs-e1` keeps a raw
 // `parent: e1` verbatim (it resolves exactly), and removing `e1` makes that same
-// spelling fall through to `nibs-e1`. Whoever removes a key therefore re-runs the
-// sweep (see removalCanRebindLinksLocked); skipping it leaves the stored spelling
-// naming one nib while Get answers with another, invisibly.
+// spelling fall through to `nibs-e1`. Whoever changes the key set therefore
+// re-runs the sweep — Core.Delete gated on removalCanRebindLinksLocked,
+// Core.Create unconditionally, the watcher via canonicalizeLinksAfterBatchLocked's
+// scanAll; skipping it leaves the stored spelling naming one nib while Get
+// answers with another, invisibly.
 //
-// The two directions do NOT have the same owner. An id ARRIVING is swept only on
-// the watcher path (handleChanges sets scanAll when the id was not already
-// stored); Core.Create inserts its key without sweeping, and since it inserts
-// before the watcher sees the file, the arrival sweep does not cover for it.
+// Because the sweep re-points a link that was already resolved, it must resolve
+// from the FILE's spelling and not from the value the store now holds. The
+// stored value is the previous sweep's output, so feeding it back in makes the
+// pass one-way and the two directions asymmetric: `parent: e1` re-pointed to
+// `nibs-e1` by a delete resolves to itself forever, and restoring `e1.md` — a
+// `git checkout` in the separately-versioned .nibs repo, or a re-create — leaves
+// the live store answering `nibs-e1` while the untouched file, and therefore
+// every fresh load, says `e1`. Resolving from the file spelling instead
+// (nib.RawLinks, mirrored on every read AND every write) makes each pass a pure
+// function of the file: idempotent, reversible, and identical in both
+// directions without the sweep having to know which one occurred.
 
 // canonicalLinks holds the resolved link fields for one nib. changed reports
 // whether any of them differs from what the nib currently holds, so callers can
 // skip the write (and, on published pointers, the clone) entirely.
+//
+// changed is deliberately measured against the nib's CURRENT values, not against
+// the file spelling resolution reads from. Those two differ permanently on every
+// hand-edited short-form nib — the file says `par`, the store says `nibs-par` —
+// so comparing against the file would report a change on every sweep forever,
+// installing a fresh clone each time and turning each into a spurious
+// EventUpdated on the watcher path.
 //
 // A list field is nil when it did not change, which is distinguishable from a
 // changed value because resolution never empties a non-empty list: it rewrites
@@ -89,6 +105,16 @@ func (s canonicalLinks) applyTo(b *nib.Nib) {
 // prepended rule as Core.Get (normalizeIDInMap). Targets that resolve to no nib
 // are carried through unchanged.
 //
+// Resolution reads b's FILE spelling (nib.RawLinks), never the values b
+// currently holds — those are the previous resolution's own output, and feeding
+// them back in makes the pass one-way: `nibs-par` resolves to itself, so a link
+// re-pointed while its target was missing can never follow the file back when
+// the target returns. See RawLinks for the full argument.
+//
+// A file spelling that is EMPTY where b holds a link is left alone rather than
+// cleared: this pass rewrites how a link is spelled and never invents or erases
+// one, so a nib whose in-memory links have run ahead of its file keeps them.
+//
 // It does NOT mutate b — the result is returned so the caller can decide where
 // it lands. That matters for already-published nibs, which must be updated
 // copy-on-write (see NibReader.GetSnapshot in internal/graph/interfaces.go).
@@ -111,9 +137,11 @@ func canonicalizeLinksInMap(nibs map[string]*nib.Nib, b *nib.Nib, configPrefix s
 		return target
 	}
 
+	raw := b.RawLinks()
+
 	set := canonicalLinks{parent: b.Parent}
-	if b.Parent != "" {
-		if resolved := resolve(b.Parent); resolved != b.Parent {
+	if raw.Parent != "" {
+		if resolved := resolve(raw.Parent); resolved != b.Parent {
 			set.parent = resolved
 			set.changed = true
 		}
@@ -122,33 +150,32 @@ func canonicalizeLinksInMap(nibs map[string]*nib.Nib, b *nib.Nib, configPrefix s
 	// Resolving can collapse two spellings of one target onto the same id
 	// (`blocked_by: [blk, nibs-blk]`). Drop the later duplicate: keeping it would
 	// render a duplicated entry on the next save and double-count the edge in
-	// every reverse traversal. Returns nil when nothing changed.
-	canonicalList := func(ids []string) []string {
-		out := make([]string, 0, len(ids))
-		seen := make(map[string]bool, len(ids))
-		changed := false
-		for _, id := range ids {
+	// every reverse traversal. Returns nil when the resolved list matches what the
+	// nib already holds.
+	canonicalList := func(rawIDs, current []string) []string {
+		if len(rawIDs) == 0 {
+			return nil
+		}
+		out := make([]string, 0, len(rawIDs))
+		seen := make(map[string]bool, len(rawIDs))
+		for _, id := range rawIDs {
 			resolved := resolve(id)
 			if seen[resolved] {
-				changed = true
 				continue
 			}
 			seen[resolved] = true
-			if resolved != id {
-				changed = true
-			}
 			out = append(out, resolved)
 		}
-		if !changed {
+		if slices.Equal(out, current) {
 			return nil
 		}
 		return out
 	}
 
-	if set.blockedBy = canonicalList(b.BlockedBy); set.blockedBy != nil {
+	if set.blockedBy = canonicalList(raw.BlockedBy, b.BlockedBy); set.blockedBy != nil {
 		set.changed = true
 	}
-	if set.blocking = canonicalList(b.Blocking); set.blocking != nil {
+	if set.blocking = canonicalList(raw.Blocking, b.Blocking); set.blocking != nil {
 		set.changed = true
 	}
 

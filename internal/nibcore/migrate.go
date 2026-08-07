@@ -78,6 +78,17 @@ func (c *Core) migrateV0ToV1(skipped map[string]bool) error {
 		if b, ok := c.nibs[id]; ok {
 			if err := c.saveToDisk(b); err != nil {
 				c.logWarn("could not persist v0→v1 migration for %s: %v", id, err)
+				// saveToDisk refreshes the raw-link mirror only on a SUCCESSFUL
+				// write, so that a failed write leaves the mirror describing the
+				// bytes still on disk. That is right everywhere except here: this
+				// is the one path that deliberately keeps an in-memory link change
+				// after a failed write (see the posture above). Leaving the mirror
+				// on the pre-migration spelling means the next canonicalization
+				// sweep — Core.Create fires one on every create — resolves from it
+				// and RESTORES the legacy `blocking:` list onto a version-1 nib,
+				// which the next successful Update then persists. Capture here so
+				// the mirror describes what memory is authoritative for.
+				b.CaptureRawLinks()
 			}
 		}
 	}

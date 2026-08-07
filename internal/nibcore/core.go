@@ -94,6 +94,16 @@ type Core struct {
 	// internally synchronized.
 	mentionIdx *mentionIndex
 
+	// Load-time integrity diagnostics from the last loadFromDisk, guarded by
+	// c.mu alongside c.nibs and rebuilt from scratch on every load. Both record
+	// a file that IS on disk but is not answerable through the store — a skipped
+	// unparseable file, and the loser of an id collision — so neither is
+	// recoverable from c.nibs afterwards. Retaining them is what lets
+	// CheckAllLinks report what previously reached only logWarn's stderr, which
+	// no production code redirects.
+	unparseableFiles []UnparseableFile
+	duplicateIDs     []DuplicateID
+
 	// Search index (optional, lazy-initialized)
 	searchIndex SearchIndex
 
@@ -193,6 +203,12 @@ func (c *Core) loadFromDisk() error {
 	// Clear existing nibs
 	c.nibs = make(map[string]*nib.Nib)
 
+	// Both diagnostics describe THIS load only, so a repaired file stops being
+	// reported the moment it loads cleanly. Cleared here rather than appended to
+	// so a reload never accumulates stale accusations.
+	c.unparseableFiles = nil
+	c.duplicateIDs = nil
+
 	// Count of nibs whose legacy `priority: deferred` was normalized to `low`
 	// and persisted during this load, so we can log a single summary.
 	var deferredMigrated int
@@ -225,10 +241,21 @@ func (c *Core) loadFromDisk() error {
 			// nib instead of a dead store, matching the fsnotify watcher's per-file
 			// "log and continue" posture. The file's bytes are left untouched
 			// (skip = not loaded into memory; never delete/rewrite).
+			//
+			// Retained as a diagnostic as well as logged: the warning goes to a
+			// writer nothing in production redirects, while the skipped nib is
+			// missing from every query with nothing to explain it. `nibs check`
+			// reads these back (see Core.CheckAllLinks).
 			c.logWarn("skipping unparseable nib file %s: %v", path, loadErr)
-			if id, _ := nib.ParseFilename(filepath.Base(path), c.configPrefix()); id != "" {
+			id, _ := nib.ParseFilename(filepath.Base(path), c.configPrefix())
+			if id != "" {
 				skipped[id] = true
 			}
+			c.unparseableFiles = append(c.unparseableFiles, UnparseableFile{
+				NibID:  id,
+				Path:   c.relPathFromRoot(path),
+				Reason: loadErr.Error(),
+			})
 			return nil
 		}
 		if migrated {
@@ -244,9 +271,18 @@ func (c *Core) loadFromDisk() error {
 		// warning beats refusing to load the entire store. Both paths are logged
 		// in the walk's absolute form (like the skip warning above) so the
 		// operator can go straight to the offending files.
+		//
+		// The same event is also retained as a diagnostic so `nibs check` can
+		// report it (see Core.CheckAllLinks); there the two files are named in
+		// nib.Path form, which is how every other nibs surface spells a path.
 		if existing, ok := c.nibs[b.ID]; ok {
 			c.logWarn("duplicate nib id %q on disk: %s shadows %s (last file loaded wins; resolve the duplicate)",
 				b.ID, path, filepath.Join(c.root, existing.Path))
+			c.duplicateIDs = append(c.duplicateIDs, DuplicateID{
+				NibID:    b.ID,
+				Loaded:   b.Path,
+				Shadowed: existing.Path,
+			})
 		}
 
 		c.nibs[b.ID] = b
@@ -295,6 +331,22 @@ func (c *Core) loadFromDisk() error {
 	}
 
 	return nil
+}
+
+// relPathFromRoot renders an absolute path from the load walk the way loadNib
+// renders nib.Path — relative to the .nibs root, forward slashes — so a
+// diagnostic about a file that never became a nib still names it the way every
+// other nibs surface spells a path.
+//
+// A path that cannot be made relative (a different Windows volume, which the
+// walk of c.root should never produce) falls back to the absolute form: naming
+// the file at all matters more than the shape it is named in.
+func (c *Core) relPathFromRoot(path string) string {
+	rel, err := filepath.Rel(c.root, path)
+	if err != nil {
+		return filepath.ToSlash(path)
+	}
+	return filepath.ToSlash(rel)
 }
 
 // loadNib reads and parses a single nib file.
@@ -798,6 +850,44 @@ func (c *Core) Create(b *nib.Nib) error {
 	// Add to in-memory map
 	c.nibs[b.ID] = b
 
+	// An id ARRIVING can re-point a link that another nib already holds: a short
+	// form left verbatim because nothing answered to it starts resolving, and a
+	// bare token arriving alongside its prefixed twin takes a link the twin was
+	// answering (normalizeIDInMap tries the exact key first). The watcher cannot
+	// cover for this one — the in-process insert above happens BEFORE fsnotify
+	// reports the file, so by then the id is already stored and the batch pass sees
+	// an ordinary edit rather than an arrival. Ungated, unlike the removal sweep:
+	// there is no cheap test for "some stored link spelling names this new id" that
+	// is not itself the sweep. See canonicalize.go.
+	//
+	// Copy-on-write, like every other mutator that rewrites a non-Path field.
+	//
+	// An in-place edit would be safe HERE in isolation — b is published for the
+	// length of a few statements under an exclusive c.mu, so no off-lock reader
+	// can hold it — but the copy-on-write rule is stated as an invariant with an
+	// exhaustively enumerated exception list (see NibReader.GetSnapshot in
+	// internal/graph/interfaces.go), and the whole off-lock read pipeline's
+	// safety argument rests on that list being closed. Adding a member costs one
+	// allocation here and a permanent hazard there: the next person to move this
+	// line past a lock release, or to let a caller publish b beforehand, would
+	// read the invariant, see "never rewritten in place on a published pointer",
+	// and be wrong.
+	//
+	// The caller's own pointer keeps the spelling it passed in, which matches
+	// every sibling mutator: they rewrite the STORE, not the caller's object.
+	if set := canonicalizeLinksInMap(c.nibs, b, c.configPrefix()); set.changed {
+		resolved := b.Clone()
+		set.applyTo(resolved)
+		c.nibs[b.ID] = resolved
+	}
+	// Warn per rebind for the same reason Core.Delete does: a create moving a THIRD
+	// nib's link changes no file and publishes no event, yet the next unrelated
+	// write to that bystander persists the new spelling. b's stored entry is
+	// already resolved above, so it never appears here.
+	for _, rebind := range c.canonicalizeStoreLocked() {
+		c.logWarn("creating %s re-pointed %s", b.ID, rebind)
+	}
+
 	// Update reverse-mention index with this source's outbound edges.
 	c.mentionIdx.Add(b.ID, b.Body)
 
@@ -1063,6 +1153,19 @@ func (c *Core) saveToDisk(b *nib.Nib) error {
 	if err := atomicWriteFile(path, content, 0644); err != nil {
 		return fmt.Errorf("writing file: %w", err)
 	}
+
+	// The bytes just written ARE b's link spelling, so this is the one write path
+	// where the nib and its file are known to agree. Canonicalization re-resolves
+	// every stored nib from the file's spelling (see nib.RawLinks and
+	// canonicalize.go), so that mirror has to be refreshed by whoever last touched
+	// the disk — including a write, which never re-reads. Miss it and a nib whose
+	// link was changed by an Update keeps answering with its PRE-update spelling,
+	// and the next sweep — fired by an unrelated create or delete — reverts the
+	// user's edit in memory. Every persisting caller funnels through here, so the
+	// obligation lives in exactly one place; keep it that way. Deliberately AFTER
+	// the write: a failed write leaves the old bytes on disk, and the mirror must
+	// keep describing them.
+	b.CaptureRawLinks()
 
 	return nil
 }

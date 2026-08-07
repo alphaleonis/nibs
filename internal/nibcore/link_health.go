@@ -33,22 +33,71 @@ type BrokenDocument struct {
 	Path  string `json:"path"`
 }
 
-// LinkCheckResult contains all link validation issues found.
+// UnparseableFile is a .md file under the nibs root that failed to parse (or
+// could not be read) during the last load and was therefore SKIPPED: the nib is
+// absent from every query, and no query result hints at why. Reporting it is
+// the only way a user learns that `nibs list` is under-reporting.
+type UnparseableFile struct {
+	// NibID is derived from the FILENAME (which parses whatever the contents
+	// are), so it names the nib that went missing. Empty when the filename
+	// yields no id.
+	NibID string `json:"nib_id"`
+	// Path is relative to the nibs root with forward slashes, the same shape as
+	// nib.Path, so a diagnostic names a file the way every other nibs surface
+	// does.
+	Path string `json:"path"`
+	// Reason is the underlying parse/read error, verbatim — the user has to
+	// repair the file by hand, so the report has to say what is wrong with it.
+	Reason string `json:"reason"`
+}
+
+// DuplicateID is two on-disk files whose filenames parse to the SAME nib id.
+// The load keeps only one of them, so the other's contents sit on disk
+// reachable through no query, and which one wins depends on walk order.
+//
+// N files sharing one id produce N-1 entries, chained in load order
+// (b shadows a, then c shadows b), so only the LAST entry's Loaded file is the
+// final occupant of the id.
+type DuplicateID struct {
+	NibID string `json:"nib_id"`
+	// Loaded and Shadowed are relative to the nibs root with forward slashes,
+	// like UnparseableFile.Path.
+	Loaded   string `json:"loaded"`
+	Shadowed string `json:"shadowed"`
+}
+
+// LinkCheckResult contains all nib integrity issues found: the link issues
+// derivable from the loaded nibs, plus the load-time integrity issues that are
+// derivable only from what did NOT make it into the store.
 type LinkCheckResult struct {
 	BrokenLinks     []BrokenLink     `json:"broken_links"`
 	SelfLinks       []SelfLink       `json:"self_links"`
 	Cycles          []Cycle          `json:"cycles"`
 	BrokenDocuments []BrokenDocument `json:"broken_documents"`
+
+	// Load-time integrity. Populated only by Core.CheckAllLinks, which can read
+	// what the last load retained; CheckAllLinksInMap sees a map of nibs that
+	// loaded successfully and so has no evidence of either condition.
+	UnparseableFiles []UnparseableFile `json:"unparseable_files"`
+	DuplicateIDs     []DuplicateID     `json:"duplicate_ids"`
 }
 
-// HasIssues returns true if any link issues were found.
+// HasIssues returns true if any issues were found.
 func (r *LinkCheckResult) HasIssues() bool {
-	return len(r.BrokenLinks) > 0 || len(r.SelfLinks) > 0 || len(r.Cycles) > 0 || len(r.BrokenDocuments) > 0
+	return r.TotalIssues() > 0
 }
 
 // TotalIssues returns the total count of all issues.
 func (r *LinkCheckResult) TotalIssues() int {
-	return len(r.BrokenLinks) + len(r.SelfLinks) + len(r.Cycles) + len(r.BrokenDocuments)
+	return len(r.BrokenLinks) + len(r.SelfLinks) + len(r.Cycles) + len(r.BrokenDocuments) + r.LoadIssues()
+}
+
+// LoadIssues returns the count of load-time integrity issues alone. Callers
+// that report the two kinds separately — `nibs check` renders them under their
+// own heading, and neither is auto-fixable — need to count them apart from the
+// link categories.
+func (r *LinkCheckResult) LoadIssues() int {
+	return len(r.UnparseableFiles) + len(r.DuplicateIDs)
 }
 
 // CheckAllLinksInMap validates all links across all nibs.
@@ -77,10 +126,12 @@ func (r *LinkCheckResult) TotalIssues() int {
 // holds, which is what `--fix` would drop.
 func CheckAllLinksInMap(nibs map[string]*nib.Nib, projectRoot, configPrefix string) *LinkCheckResult {
 	result := &LinkCheckResult{
-		BrokenLinks:     []BrokenLink{},
-		SelfLinks:       []SelfLink{},
-		Cycles:          []Cycle{},
-		BrokenDocuments: []BrokenDocument{},
+		BrokenLinks:      []BrokenLink{},
+		SelfLinks:        []SelfLink{},
+		Cycles:           []Cycle{},
+		BrokenDocuments:  []BrokenDocument{},
+		UnparseableFiles: []UnparseableFile{},
+		DuplicateIDs:     []DuplicateID{},
 	}
 
 	// Check for broken links and self-references
@@ -146,13 +197,27 @@ func CheckAllLinksInMap(nibs map[string]*nib.Nib, projectRoot, configPrefix stri
 	return result
 }
 
-// CheckAllLinks validates all links across all nibs.
-// Thread-safe wrapper around CheckAllLinksInMap.
+// CheckAllLinks validates all links across all nibs and adds the load-time
+// integrity problems retained from the last Load.
+//
+// Those two categories cannot be derived from c.nibs — their evidence is the
+// files that did NOT make it in — so they are read from the Core rather than
+// recomputed by CheckAllLinksInMap. They describe the last load: a CLI command
+// loads once and then checks, so what it reports is the state it is querying.
+// A long-lived process whose watcher has since reconciled an individual file
+// keeps reporting what its Load saw, until the next Load.
+//
+// The retained slices are copied out rather than shared: this holds only a read
+// lock, so handing out the stored backing array would let a caller mutate Core
+// state without one.
 func (c *Core) CheckAllLinks() *LinkCheckResult {
 	c.mu.RLock()
 	defer c.mu.RUnlock()
 	projectRoot := filepath.Dir(c.root)
-	return CheckAllLinksInMap(c.nibs, projectRoot, c.configPrefix())
+	result := CheckAllLinksInMap(c.nibs, projectRoot, c.configPrefix())
+	result.UnparseableFiles = append(result.UnparseableFiles, c.unparseableFiles...)
+	result.DuplicateIDs = append(result.DuplicateIDs, c.duplicateIDs...)
+	return result
 }
 
 // FindCyclesInMap detects all cycles for a specific link type using DFS.
@@ -381,8 +446,11 @@ func (c *Core) RemoveLinksTo(targetID string) (int, error) {
 // It restates the parent, blockedBy and document checks CheckAllLinksInMap
 // makes, resolving each link target through normalizeIDInMap the same way, so
 // `nibs check --fix` removes exactly the broken links, self links and broken
-// documents `nibs check` reported. Cycles are the one reported category left
-// untouched here; the command prints them as not auto-fixable instead.
+// documents `nibs check` reported. The other reported categories are left
+// untouched here and the command prints them as not auto-fixable instead:
+// cycles, and the two load-time conditions (an unparseable file, whose repair
+// means editing YAML the user wrote, and a duplicate id, whose resolution means
+// choosing which file to lose).
 //
 // A link that resolves is left exactly as stored: nothing here rewrites a
 // short id into its full form.
@@ -393,23 +461,66 @@ func (c *Core) RemoveLinksTo(targetID string) (int, error) {
 // canonical live-pointer / copy-on-write invariant at NibReader.GetSnapshot
 // (internal/graph/interfaces.go). Documents is made copy-on-write here too, for
 // the same discipline, so any future off-lock reader of it is safe as well.
+// skippedIDSet holds the ids whose file is present on disk but was not loaded
+// this pass, so a link naming one of them is unresolvable-for-now rather than
+// broken.
+type skippedIDSet map[string]bool
+
+// has reports whether linkID names a skipped nib, testing the id as written and
+// as prefixed — the same two spellings normalizeIDInMap resolves, so a
+// short-form link to a skipped nib is recognized too.
+func (s skippedIDSet) has(linkID, configPrefix string) bool {
+	if len(s) == 0 || linkID == "" {
+		return false
+	}
+	return s[linkID] || (configPrefix != "" && s[configPrefix+linkID])
+}
+
+// skippedIDsLocked returns the ids of files that failed to load this pass.
+//
+// Their nibs are absent from c.nibs, so every link naming one resolves to
+// nothing and CheckAllLinks reports it broken. That report is correct — the
+// link genuinely cannot be followed right now — but "fixing" it by deletion is
+// not: the target is sitting on disk needing a YAML repair, and repairing it
+// does NOT bring back an edge already erased. migrateV0ToV1 takes the same
+// posture for the same reason (see the skipped-set note at the top of
+// migrate.go), deferring rather than destroying.
+//
+// This became urgent when `nibs check` started REPORTING unparseable files
+// (nibs-968i): the user is now told a file is broken, and the obvious next step
+// is --fix. Must be called with c.mu held.
+func (c *Core) skippedIDsLocked() skippedIDSet {
+	if len(c.unparseableFiles) == 0 {
+		return nil
+	}
+	skipped := make(skippedIDSet, len(c.unparseableFiles))
+	for _, uf := range c.unparseableFiles {
+		if uf.NibID != "" {
+			skipped[uf.NibID] = true
+		}
+	}
+	return skipped
+}
+
 func (c *Core) FixBrokenLinks() (int, error) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 
 	projectRoot := filepath.Dir(c.root)
 	configPrefix := c.configPrefix()
+	skipped := c.skippedIDsLocked()
 
 	fixed := 0
 	for id, b := range c.nibs {
 		// Detect changes by READING the stored pointer only — never mutate it.
 
 		// Parent is dropped when it resolves back to this nib (self) or
-		// resolves to nothing (broken).
+		// resolves to nothing (broken) — but NOT when it names a nib whose file
+		// is on disk and merely failed to load (see skippedIDsLocked).
 		fixParent := false
 		if b.Parent != "" {
 			fullID, ok := normalizeIDInMap(c.nibs, b.Parent, configPrefix)
-			fixParent = !ok || fullID == b.ID
+			fixParent = (!ok && !skipped.has(b.Parent, configPrefix)) || fullID == b.ID
 		}
 
 		// Surviving blocked_by set (drop self-refs and links to missing nibs).
@@ -417,7 +528,7 @@ func (c *Core) FixBrokenLinks() (int, error) {
 		var newBlockedBy []string
 		for _, blocker := range b.BlockedBy {
 			fullID, ok := normalizeIDInMap(c.nibs, blocker, configPrefix)
-			if !ok || fullID == b.ID {
+			if (!ok && !skipped.has(blocker, configPrefix)) || fullID == b.ID {
 				continue
 			}
 			newBlockedBy = append(newBlockedBy, blocker)
