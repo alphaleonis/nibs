@@ -94,6 +94,16 @@ type Core struct {
 	// internally synchronized.
 	mentionIdx *mentionIndex
 
+	// Load-time integrity diagnostics from the last loadFromDisk, guarded by
+	// c.mu alongside c.nibs and rebuilt from scratch on every load. Both record
+	// a file that IS on disk but is not answerable through the store — a skipped
+	// unparseable file, and the loser of an id collision — so neither is
+	// recoverable from c.nibs afterwards. Retaining them is what lets
+	// CheckAllLinks report what previously reached only logWarn's stderr, which
+	// no production code redirects.
+	unparseableFiles []UnparseableFile
+	duplicateIDs     []DuplicateID
+
 	// Search index (optional, lazy-initialized)
 	searchIndex SearchIndex
 
@@ -193,6 +203,12 @@ func (c *Core) loadFromDisk() error {
 	// Clear existing nibs
 	c.nibs = make(map[string]*nib.Nib)
 
+	// Both diagnostics describe THIS load only, so a repaired file stops being
+	// reported the moment it loads cleanly. Cleared here rather than appended to
+	// so a reload never accumulates stale accusations.
+	c.unparseableFiles = nil
+	c.duplicateIDs = nil
+
 	// Count of nibs whose legacy `priority: deferred` was normalized to `low`
 	// and persisted during this load, so we can log a single summary.
 	var deferredMigrated int
@@ -225,10 +241,21 @@ func (c *Core) loadFromDisk() error {
 			// nib instead of a dead store, matching the fsnotify watcher's per-file
 			// "log and continue" posture. The file's bytes are left untouched
 			// (skip = not loaded into memory; never delete/rewrite).
+			//
+			// Retained as a diagnostic as well as logged: the warning goes to a
+			// writer nothing in production redirects, while the skipped nib is
+			// missing from every query with nothing to explain it. `nibs check`
+			// reads these back (see Core.CheckAllLinks).
 			c.logWarn("skipping unparseable nib file %s: %v", path, loadErr)
-			if id, _ := nib.ParseFilename(filepath.Base(path), c.configPrefix()); id != "" {
+			id, _ := nib.ParseFilename(filepath.Base(path), c.configPrefix())
+			if id != "" {
 				skipped[id] = true
 			}
+			c.unparseableFiles = append(c.unparseableFiles, UnparseableFile{
+				NibID:  id,
+				Path:   c.relPathFromRoot(path),
+				Reason: loadErr.Error(),
+			})
 			return nil
 		}
 		if migrated {
@@ -244,9 +271,18 @@ func (c *Core) loadFromDisk() error {
 		// warning beats refusing to load the entire store. Both paths are logged
 		// in the walk's absolute form (like the skip warning above) so the
 		// operator can go straight to the offending files.
+		//
+		// The same event is also retained as a diagnostic so `nibs check` can
+		// report it (see Core.CheckAllLinks); there the two files are named in
+		// nib.Path form, which is how every other nibs surface spells a path.
 		if existing, ok := c.nibs[b.ID]; ok {
 			c.logWarn("duplicate nib id %q on disk: %s shadows %s (last file loaded wins; resolve the duplicate)",
 				b.ID, path, filepath.Join(c.root, existing.Path))
+			c.duplicateIDs = append(c.duplicateIDs, DuplicateID{
+				NibID:    b.ID,
+				Loaded:   b.Path,
+				Shadowed: existing.Path,
+			})
 		}
 
 		c.nibs[b.ID] = b
@@ -295,6 +331,22 @@ func (c *Core) loadFromDisk() error {
 	}
 
 	return nil
+}
+
+// relPathFromRoot renders an absolute path from the load walk the way loadNib
+// renders nib.Path — relative to the .nibs root, forward slashes — so a
+// diagnostic about a file that never became a nib still names it the way every
+// other nibs surface spells a path.
+//
+// A path that cannot be made relative (a different Windows volume, which the
+// walk of c.root should never produce) falls back to the absolute form: naming
+// the file at all matters more than the shape it is named in.
+func (c *Core) relPathFromRoot(path string) string {
+	rel, err := filepath.Rel(c.root, path)
+	if err != nil {
+		return filepath.ToSlash(path)
+	}
+	return filepath.ToSlash(rel)
 }
 
 // loadNib reads and parses a single nib file.
