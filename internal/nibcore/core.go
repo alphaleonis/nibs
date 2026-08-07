@@ -850,6 +850,44 @@ func (c *Core) Create(b *nib.Nib) error {
 	// Add to in-memory map
 	c.nibs[b.ID] = b
 
+	// An id ARRIVING can re-point a link that another nib already holds: a short
+	// form left verbatim because nothing answered to it starts resolving, and a
+	// bare token arriving alongside its prefixed twin takes a link the twin was
+	// answering (normalizeIDInMap tries the exact key first). The watcher cannot
+	// cover for this one — the in-process insert above happens BEFORE fsnotify
+	// reports the file, so by then the id is already stored and the batch pass sees
+	// an ordinary edit rather than an arrival. Ungated, unlike the removal sweep:
+	// there is no cheap test for "some stored link spelling names this new id" that
+	// is not itself the sweep. See canonicalize.go.
+	//
+	// Copy-on-write, like every other mutator that rewrites a non-Path field.
+	//
+	// An in-place edit would be safe HERE in isolation — b is published for the
+	// length of a few statements under an exclusive c.mu, so no off-lock reader
+	// can hold it — but the copy-on-write rule is stated as an invariant with an
+	// exhaustively enumerated exception list (see NibReader.GetSnapshot in
+	// internal/graph/interfaces.go), and the whole off-lock read pipeline's
+	// safety argument rests on that list being closed. Adding a member costs one
+	// allocation here and a permanent hazard there: the next person to move this
+	// line past a lock release, or to let a caller publish b beforehand, would
+	// read the invariant, see "never rewritten in place on a published pointer",
+	// and be wrong.
+	//
+	// The caller's own pointer keeps the spelling it passed in, which matches
+	// every sibling mutator: they rewrite the STORE, not the caller's object.
+	if set := canonicalizeLinksInMap(c.nibs, b, c.configPrefix()); set.changed {
+		resolved := b.Clone()
+		set.applyTo(resolved)
+		c.nibs[b.ID] = resolved
+	}
+	// Warn per rebind for the same reason Core.Delete does: a create moving a THIRD
+	// nib's link changes no file and publishes no event, yet the next unrelated
+	// write to that bystander persists the new spelling. b's stored entry is
+	// already resolved above, so it never appears here.
+	for _, rebind := range c.canonicalizeStoreLocked() {
+		c.logWarn("creating %s re-pointed %s", b.ID, rebind)
+	}
+
 	// Update reverse-mention index with this source's outbound edges.
 	c.mentionIdx.Add(b.ID, b.Body)
 
@@ -1115,6 +1153,19 @@ func (c *Core) saveToDisk(b *nib.Nib) error {
 	if err := atomicWriteFile(path, content, 0644); err != nil {
 		return fmt.Errorf("writing file: %w", err)
 	}
+
+	// The bytes just written ARE b's link spelling, so this is the one write path
+	// where the nib and its file are known to agree. Canonicalization re-resolves
+	// every stored nib from the file's spelling (see nib.RawLinks and
+	// canonicalize.go), so that mirror has to be refreshed by whoever last touched
+	// the disk — including a write, which never re-reads. Miss it and a nib whose
+	// link was changed by an Update keeps answering with its PRE-update spelling,
+	// and the next sweep — fired by an unrelated create or delete — reverts the
+	// user's edit in memory. Every persisting caller funnels through here, so the
+	// obligation lives in exactly one place; keep it that way. Deliberately AFTER
+	// the write: a failed write leaves the old bytes on disk, and the mirror must
+	// keep describing them.
+	b.CaptureRawLinks()
 
 	return nil
 }

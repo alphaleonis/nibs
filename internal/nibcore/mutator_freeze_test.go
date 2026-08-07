@@ -172,6 +172,37 @@ func freezeGuardCases() []freezeGuardCase {
 			},
 		},
 		{
+			name:   "Create-resolves-a-dangling-link", // Re-points a link on a BYSTANDER nib: copy-on-write.
+			covers: []string{"Create"},
+			// Creating the nib that a dangling short-form link names re-resolves that
+			// link on a nib published long before. Parent is a non-Path field, so the
+			// rewrite must install a fresh pointer rather than edit the one an off-lock
+			// reader may still hold.
+			//
+			// The prefixed core is load-bearing, not incidental: canonicalizeLinksInMap
+			// and canonicalizeStoreLocked both early-return when no id prefix is
+			// configured, so under the default core NONE of the code this case exists to
+			// guard would run and the case would pass vacuously.
+			newCore: mustLoadPrefixedCore,
+			setup: func(t *testing.T, c *Core, dir string) {
+				writeLinkNibFile(t, dir, "nibs-t1", "todo", "parent: zz9\n")
+				if err := c.Load(); err != nil {
+					t.Fatalf("Load: %v", err)
+				}
+				if b, _ := c.Get("nibs-t1"); b == nil || b.Parent != "zz9" {
+					t.Fatalf("setup premise failed: parent = %+v, want the verbatim %q", b, "zz9")
+				}
+			},
+			mutate: func(t *testing.T, c *Core, _ string) {
+				if err := c.Create(&nib.Nib{ID: "nibs-zz9", Version: 1, Title: "Arrived", Status: "todo", Type: "task"}); err != nil {
+					t.Fatalf("Create: %v", err)
+				}
+				if b, _ := c.Get("nibs-t1"); b == nil || b.Parent != "nibs-zz9" {
+					t.Fatalf("mutation did not fire: parent = %+v, want nibs-zz9", b)
+				}
+			},
+		},
+		{
 			name:   "Delete-unmasks-prefixed-twin", // Re-points a link on a BYSTANDER nib: copy-on-write.
 			covers: []string{"Delete"},
 			// Deleting a bare-token nib whose prefixed twin is still stored re-resolves

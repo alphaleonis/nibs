@@ -9,6 +9,7 @@ import (
 	"io"
 	"reflect"
 	"regexp"
+	"slices"
 	"sort"
 	"strings"
 	"time"
@@ -224,6 +225,13 @@ type Nib struct {
 	// nib ever migrated" state: Clone() clears it, so it is meaningful only on a
 	// freshly-parsed nib.
 	priorityMigrated bool
+
+	// rawLinks records the link ids exactly as the nib's FILE spells them,
+	// independent of whatever the modeled fields above were later resolved to.
+	// Never serialized. See RawLinks for what it is for and CaptureRawLinks for
+	// who maintains it; nil means "no file spelling has been recorded", which
+	// RawLinks answers from the live fields instead.
+	rawLinks *LinkSpelling
 }
 
 // PriorityMigrated reports whether Parse normalized a legacy `priority: deferred`
@@ -232,6 +240,55 @@ type Nib struct {
 // would break if-match updates). See the migration note in Parse.
 func (b *Nib) PriorityMigrated() bool {
 	return b.priorityMigrated
+}
+
+// LinkSpelling carries a nib's three link fields as one value — the ids as some
+// particular source spells them, which is not necessarily how the nib holds them.
+type LinkSpelling struct {
+	Parent    string
+	BlockedBy []string
+	Blocking  []string
+}
+
+// RawLinks returns the link ids as the nib's FILE spells them.
+//
+// A store may resolve a short-form link id (`parent: par`) to its full form
+// (`nibs-par`) in memory while leaving the file alone, and what such an id
+// resolves to is a property of the whole id set, so it has to be recomputed
+// every time that set changes. Recomputing it from the ALREADY-RESOLVED value
+// reads the previous resolution's own output: `nibs-par` resolves to itself, so
+// the answer freezes at whatever the first resolution decided and can never
+// follow the file back. Resolving from this spelling instead makes each pass a
+// pure function of the file, hence idempotent and reversible.
+//
+// A nib that has never been read from or written to a file has no recorded
+// spelling; it answers with its live fields, which is exactly what a
+// caller resolving "the spelling of record" wants for a nib that has none.
+//
+// The returned slices alias the recorded spelling — read them, do not mutate them.
+func (b *Nib) RawLinks() LinkSpelling {
+	if b.rawLinks == nil {
+		return LinkSpelling{Parent: b.Parent, BlockedBy: b.BlockedBy, Blocking: b.Blocking}
+	}
+	return *b.rawLinks
+}
+
+// CaptureRawLinks records the nib's CURRENT link ids as the spelling now on
+// disk. Callers are the two places a nib and its file are known to agree: Parse
+// (having just read those bytes) and the store's save path (having just written
+// them).
+//
+// The obligation is per-WRITE, not per-read: a nib whose link is changed and
+// persisted without being re-read would otherwise keep answering RawLinks with
+// its pre-write spelling, and the next re-resolution would revert the change in
+// memory. Slices are copied so a later in-place edit of the nib's own lists
+// cannot reach back into the recorded spelling.
+func (b *Nib) CaptureRawLinks() {
+	b.rawLinks = &LinkSpelling{
+		Parent:    b.Parent,
+		BlockedBy: slices.Clone(b.BlockedBy),
+		Blocking:  slices.Clone(b.Blocking),
+	}
 }
 
 // yamlFrontMatterFormats parses nib front matter with yaml.v3 (the same YAML
@@ -478,7 +535,7 @@ func Parse(r io.Reader) (*Nib, error) {
 		}
 	}
 
-	return &Nib{
+	b := &Nib{
 		Version:          fm.Version,
 		Title:            fm.Title,
 		Status:           fm.Status,
@@ -496,7 +553,11 @@ func Parse(r io.Reader) (*Nib, error) {
 		Order:            fm.Order,
 		Extra:            fm.Extra,
 		priorityMigrated: priorityMigrated,
-	}, nil
+	}
+	// The link fields as they stand right now ARE the file's spelling. Record it
+	// before anything downstream resolves them to their full form (see RawLinks).
+	b.CaptureRawLinks()
+	return b, nil
 }
 
 // maxExtraAliasNodes bounds how many nodes anchor/alias resolution may
@@ -724,6 +785,18 @@ func (b *Nib) Clone() *Nib {
 	// freshly-parsed nib, so clear it here rather than let a stale `true` ride
 	// along through every Clone/Update cycle.
 	clone.priorityMigrated = false
+
+	// rawLinks is the other transient, parse-set field, and its semantics are the
+	// INVERSE: it must SURVIVE the clone. Re-resolution applies its result to a
+	// Clone of the stored nib, so a shadow dropped here would leave the very next
+	// pass reading the previous pass's output — the divergence RawLinks exists to
+	// close. Deep-copied for the same reason as the exported lists below.
+	if b.rawLinks != nil {
+		raw := *b.rawLinks
+		raw.BlockedBy = slices.Clone(b.rawLinks.BlockedBy)
+		raw.Blocking = slices.Clone(b.rawLinks.Blocking)
+		clone.rawLinks = &raw
+	}
 
 	// Deep-copy slice fields
 	if b.Tags != nil {

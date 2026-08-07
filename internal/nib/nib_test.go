@@ -2786,6 +2786,58 @@ priority: deferred
 		}
 	})
 
+	t.Run("clone carries the raw link spelling", func(t *testing.T) {
+		// rawLinks is the other transient, parse-set field — but its semantics are
+		// the INVERSE of priorityMigrated's. Canonicalization re-resolves a stored
+		// nib from the file's spelling and applies the result to a Clone, so a
+		// shadow that did not survive cloning would leave every later sweep reading
+		// its own output. It must therefore ride along, deep-copied so a mutated
+		// clone cannot corrupt the original's recorded spelling.
+		parsed, err := Parse(strings.NewReader(`---
+version: 1
+title: Short Form Links
+status: todo
+parent: par
+blocked_by: [blk]
+blocking: [blg]
+---
+`))
+		if err != nil {
+			t.Fatalf("Parse() error: %v", err)
+		}
+
+		// Canonicalization's effect: the stored values move to the full form while
+		// the file — and therefore the shadow — keeps the short one.
+		parsed.Parent = "nibs-par"
+		parsed.BlockedBy = []string{"nibs-blk"}
+		parsed.Blocking = []string{"nibs-blg"}
+
+		cloned := parsed.Clone()
+		raw := cloned.RawLinks()
+		if raw.Parent != "par" {
+			t.Errorf("cloned.RawLinks().Parent = %q, want %q — the clone must carry the file's spelling, not the resolved one", raw.Parent, "par")
+		}
+		if !reflect.DeepEqual(raw.BlockedBy, []string{"blk"}) {
+			t.Errorf("cloned.RawLinks().BlockedBy = %v, want [blk]", raw.BlockedBy)
+		}
+		if !reflect.DeepEqual(raw.Blocking, []string{"blg"}) {
+			t.Errorf("cloned.RawLinks().Blocking = %v, want [blg]", raw.Blocking)
+		}
+
+		// Deep copy: mutating the clone's recorded lists must not reach the original.
+		raw.BlockedBy[0] = "mutated"
+		if got := parsed.RawLinks().BlockedBy[0]; got != "blk" {
+			t.Errorf("original RawLinks().BlockedBy[0] = %q after mutating the clone's copy, want %q", got, "blk")
+		}
+
+		// A nib that has never seen a file reports its live values, so a
+		// hand-built nib canonicalizes exactly as it did before the shadow existed.
+		bare := &Nib{ID: "nibs-x", Parent: "par", BlockedBy: []string{"blk"}}
+		if got := bare.RawLinks().Parent; got != "par" {
+			t.Errorf("RawLinks().Parent on a never-parsed nib = %q, want the live value %q", got, "par")
+		}
+	})
+
 	t.Run("clone deep-copies the Extra map", func(t *testing.T) {
 		// Clone must deep-copy the unknown-key passthrough so a mutated clone can't
 		// alias (and corrupt) the original's Extra. Without the copy the clone would
