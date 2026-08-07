@@ -161,7 +161,10 @@ test("filter box — completion dropdown over table rows", async ({ page }) => {
 
 // Hovering a token tints it as a chip and carries no in-box control: a remove
 // button could only overlap the token's own trailing glyph, so removal is
-// click-to-select + Delete. The screenshot keeps the visual record of the tint.
+// click-to-select + Delete, advertised by the app's styled tooltip. The screenshot
+// keeps the visual record of the tint AND of the tooltip, which is the only way to
+// check it reads like its siblings in the band — jsdom has no layout, hover timing
+// or theming, and Playwright can assert the tooltip exists but not that it matches.
 test("filter box — token hover affordance", async ({ page }) => {
   await openApp(page);
   const input = page.getByTestId("filter-keyword");
@@ -169,9 +172,30 @@ test("filter box — token hover affordance", async ({ page }) => {
   await input.pressSequentially("type:bug status:todo");
   const token = page.getByTestId("filter-token").first();
   await token.hover();
-  await expect(token).toHaveAttribute("title", "Click to select · Delete to remove");
+  const tip = page.locator('[data-slot="tooltip-content"]', {
+    hasText: "Click to select · Delete to remove",
+  });
+  await expect(tip).toBeVisible();
+  await expect(token).not.toHaveAttribute("title", /./);
   await expect(token.locator("button")).toHaveCount(0);
-  await page.locator('[role="search"]').screenshot({ path: join(OUT, "filter-token-hover.png") });
+  // The tooltip is portaled to <body>, so it renders OUTSIDE the search band and an
+  // element-scoped screenshot of the band would crop it away. Clip to the union of
+  // the two boxes instead, so both land in one frame whichever side it opens on.
+  const band = await page.locator('[role="search"]').boundingBox();
+  const tipBox = await tip.boundingBox();
+  if (!band || !tipBox) throw new Error("filter band or tooltip is not laid out");
+  const x = Math.min(band.x, tipBox.x);
+  const y = Math.min(band.y, tipBox.y);
+  await page.screenshot({
+    path: join(OUT, "filter-token-hover.png"),
+    clip: {
+      x,
+      y,
+      width: Math.max(band.x + band.width, tipBox.x + tipBox.width) - x,
+      height: Math.max(band.y + band.height, tipBox.y + tipBox.height) - y,
+    },
+    animations: "disabled",
+  });
 });
 
 // Invalid-token marker must read as an attached element over the table, not as
