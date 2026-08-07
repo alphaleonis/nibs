@@ -569,9 +569,7 @@ func TestCoreWatcher_WriteReparsesMentionEdges(t *testing.T) {
 	// Rewrite src on disk to mention t2 instead of t1.
 	srcPath := filepath.Join(nibsDir, "nibs-src--src.md")
 	newContent := "---\ntitle: Src\nstatus: todo\n---\nRef #nibs-t2.\n"
-	if err := os.WriteFile(srcPath, []byte(newContent), 0644); err != nil {
-		t.Fatalf("rewrite src: %v", err)
-	}
+	writeNibFileAtomic(t, srcPath, newContent)
 
 	// Wait for the watcher to deliver the update event.
 	select {

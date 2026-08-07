@@ -161,9 +161,7 @@ func TestRestartWatchingDoesNotDuplicateEvents(t *testing.T) {
 
 		path := filepath.Join(nibsDir, fmt.Sprintf("dup%d--duplicate.md", round))
 		body := fmt.Sprintf("---\ntitle: Duplicate %d\nstatus: todo\n---\n", round)
-		if err := os.WriteFile(path, []byte(body), 0o644); err != nil {
-			t.Fatalf("round %d: writing nib to drive the watch: %v", round, err)
-		}
+		writeNibFileAtomic(t, path, body)
 
 		// Presence, on a generous timeout, recording when the first batch lands. A
 		// round that never sees the write has tested nothing and must say so rather
