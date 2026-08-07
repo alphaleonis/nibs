@@ -236,8 +236,16 @@ func (r *mutationResolver) UpdateNib(ctx context.Context, id string, input model
 		if b.EffectiveType() != oldEffectiveType {
 			// Re-validate existing parent against the new type (when parent isn't also
 			// being changed — i.e. the parent field was omitted, not set to null/id).
-			if b.Parent != "" && !input.Parent.IsSet() {
-				if err := r.validateAndSetParent(b, b.Parent); err != nil {
+			//
+			// "Existing parent" is the RESOLVED link, not the stored string — see
+			// resolvedParent for the rule. A link naming no nib names no parent, so
+			// there is no parent-type constraint to check and the type change stands.
+			// Testing the stored string instead sends the unresolvable id through
+			// NormalizeID and aborts the whole mutation with "parent nib not found",
+			// naming a field the caller never touched — which dead-ends every type
+			// change on such a nib while leaving every other field editable.
+			if parentID := resolvedParentID(b, r.Reader); parentID != "" && !input.Parent.IsSet() {
+				if err := r.validateAndSetParent(b, parentID); err != nil {
 					return nil, err
 				}
 			}
@@ -719,7 +727,25 @@ func (r *nibResolver) Priority(ctx context.Context, obj *nib.Nib) (string, error
 }
 
 // ParentID is the resolver for the parentId field.
+//
+// Reports the RESOLVED parent id — the project's one definition of "has a
+// parent", see resolvedParent. Null for a nib with no parent AND for one whose
+// stored link names no nib, so this field, the parent field, hasParent and
+// siblingId all answer alike. The raw stored link is storedParentId.
 func (r *nibResolver) ParentID(ctx context.Context, obj *nib.Nib) (*string, error) {
+	id := resolvedParentID(obj, r.Reader)
+	if id == "" {
+		return nil, nil
+	}
+	return &id, nil
+}
+
+// StoredParentID is the resolver for the storedParentId field.
+//
+// The counterweight to ParentID reporting the resolved reading: the raw stored
+// link, unresolved, so a broken one stays inspectable instead of reading as
+// absent. Null only when the field is genuinely empty.
+func (r *nibResolver) StoredParentID(ctx context.Context, obj *nib.Nib) (*string, error) {
 	if obj.Parent == "" {
 		return nil, nil
 	}

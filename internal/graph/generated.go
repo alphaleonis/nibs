@@ -94,6 +94,7 @@ type ComplexityRoot struct {
 		Priority       func(childComplexity int) int
 		Slug           func(childComplexity int) int
 		Status         func(childComplexity int) int
+		StoredParentID func(childComplexity int) int
 		Tags           func(childComplexity int) int
 		Title          func(childComplexity int) int
 		Type           func(childComplexity int) int
@@ -144,6 +145,7 @@ type NibResolver interface {
 	Priority(ctx context.Context, obj *nib.Nib) (string, error)
 
 	ParentID(ctx context.Context, obj *nib.Nib) (*string, error)
+	StoredParentID(ctx context.Context, obj *nib.Nib) (*string, error)
 	BlockingIds(ctx context.Context, obj *nib.Nib) ([]string, error)
 	BlockedByIds(ctx context.Context, obj *nib.Nib) ([]string, error)
 	BlockedBy(ctx context.Context, obj *nib.Nib, filter *model.NibFilter) ([]*nib.Nib, error)
@@ -487,6 +489,12 @@ func (e *executableSchema) Complexity(ctx context.Context, typeName, field strin
 		}
 
 		return e.complexity.Nib.Status(childComplexity), true
+	case "Nib.storedParentId":
+		if e.complexity.Nib.StoredParentID == nil {
+			break
+		}
+
+		return e.complexity.Nib.StoredParentID(childComplexity), true
 	case "Nib.tags":
 		if e.complexity.Nib.Tags == nil {
 			break
@@ -1261,6 +1269,8 @@ func (ec *executionContext) fieldContext_Mutation_createNib(ctx context.Context,
 				return ec.fieldContext_Nib_order(ctx, field)
 			case "parentId":
 				return ec.fieldContext_Nib_parentId(ctx, field)
+			case "storedParentId":
+				return ec.fieldContext_Nib_storedParentId(ctx, field)
 			case "blockingIds":
 				return ec.fieldContext_Nib_blockingIds(ctx, field)
 			case "blockedByIds":
@@ -1358,6 +1368,8 @@ func (ec *executionContext) fieldContext_Mutation_updateNib(ctx context.Context,
 				return ec.fieldContext_Nib_order(ctx, field)
 			case "parentId":
 				return ec.fieldContext_Nib_parentId(ctx, field)
+			case "storedParentId":
+				return ec.fieldContext_Nib_storedParentId(ctx, field)
 			case "blockingIds":
 				return ec.fieldContext_Nib_blockingIds(ctx, field)
 			case "blockedByIds":
@@ -1537,6 +1549,8 @@ func (ec *executionContext) fieldContext_Mutation_setParent(ctx context.Context,
 				return ec.fieldContext_Nib_order(ctx, field)
 			case "parentId":
 				return ec.fieldContext_Nib_parentId(ctx, field)
+			case "storedParentId":
+				return ec.fieldContext_Nib_storedParentId(ctx, field)
 			case "blockingIds":
 				return ec.fieldContext_Nib_blockingIds(ctx, field)
 			case "blockedByIds":
@@ -1634,6 +1648,8 @@ func (ec *executionContext) fieldContext_Mutation_addBlocking(ctx context.Contex
 				return ec.fieldContext_Nib_order(ctx, field)
 			case "parentId":
 				return ec.fieldContext_Nib_parentId(ctx, field)
+			case "storedParentId":
+				return ec.fieldContext_Nib_storedParentId(ctx, field)
 			case "blockingIds":
 				return ec.fieldContext_Nib_blockingIds(ctx, field)
 			case "blockedByIds":
@@ -1731,6 +1747,8 @@ func (ec *executionContext) fieldContext_Mutation_removeBlocking(ctx context.Con
 				return ec.fieldContext_Nib_order(ctx, field)
 			case "parentId":
 				return ec.fieldContext_Nib_parentId(ctx, field)
+			case "storedParentId":
+				return ec.fieldContext_Nib_storedParentId(ctx, field)
 			case "blockingIds":
 				return ec.fieldContext_Nib_blockingIds(ctx, field)
 			case "blockedByIds":
@@ -1828,6 +1846,8 @@ func (ec *executionContext) fieldContext_Mutation_addBlockedBy(ctx context.Conte
 				return ec.fieldContext_Nib_order(ctx, field)
 			case "parentId":
 				return ec.fieldContext_Nib_parentId(ctx, field)
+			case "storedParentId":
+				return ec.fieldContext_Nib_storedParentId(ctx, field)
 			case "blockingIds":
 				return ec.fieldContext_Nib_blockingIds(ctx, field)
 			case "blockedByIds":
@@ -1925,6 +1945,8 @@ func (ec *executionContext) fieldContext_Mutation_removeBlockedBy(ctx context.Co
 				return ec.fieldContext_Nib_order(ctx, field)
 			case "parentId":
 				return ec.fieldContext_Nib_parentId(ctx, field)
+			case "storedParentId":
+				return ec.fieldContext_Nib_storedParentId(ctx, field)
 			case "blockingIds":
 				return ec.fieldContext_Nib_blockingIds(ctx, field)
 			case "blockedByIds":
@@ -2022,6 +2044,8 @@ func (ec *executionContext) fieldContext_Mutation_reorderNib(ctx context.Context
 				return ec.fieldContext_Nib_order(ctx, field)
 			case "parentId":
 				return ec.fieldContext_Nib_parentId(ctx, field)
+			case "storedParentId":
+				return ec.fieldContext_Nib_storedParentId(ctx, field)
 			case "blockingIds":
 				return ec.fieldContext_Nib_blockingIds(ctx, field)
 			case "blockedByIds":
@@ -2119,6 +2143,8 @@ func (ec *executionContext) fieldContext_Mutation_reorderChildren(ctx context.Co
 				return ec.fieldContext_Nib_order(ctx, field)
 			case "parentId":
 				return ec.fieldContext_Nib_parentId(ctx, field)
+			case "storedParentId":
+				return ec.fieldContext_Nib_storedParentId(ctx, field)
 			case "blockingIds":
 				return ec.fieldContext_Nib_blockingIds(ctx, field)
 			case "blockedByIds":
@@ -2216,6 +2242,8 @@ func (ec *executionContext) fieldContext_Mutation_reorderSiblings(ctx context.Co
 				return ec.fieldContext_Nib_order(ctx, field)
 			case "parentId":
 				return ec.fieldContext_Nib_parentId(ctx, field)
+			case "storedParentId":
+				return ec.fieldContext_Nib_storedParentId(ctx, field)
 			case "blockingIds":
 				return ec.fieldContext_Nib_blockingIds(ctx, field)
 			case "blockedByIds":
@@ -2747,6 +2775,35 @@ func (ec *executionContext) fieldContext_Nib_parentId(_ context.Context, field g
 	return fc, nil
 }
 
+func (ec *executionContext) _Nib_storedParentId(ctx context.Context, field graphql.CollectedField, obj *nib.Nib) (ret graphql.Marshaler) {
+	return graphql.ResolveField(
+		ctx,
+		ec.OperationContext,
+		field,
+		ec.fieldContext_Nib_storedParentId,
+		func(ctx context.Context) (any, error) {
+			return ec.resolvers.Nib().StoredParentID(ctx, obj)
+		},
+		nil,
+		ec.marshalOString2ᚖstring,
+		true,
+		false,
+	)
+}
+
+func (ec *executionContext) fieldContext_Nib_storedParentId(_ context.Context, field graphql.CollectedField) (fc *graphql.FieldContext, err error) {
+	fc = &graphql.FieldContext{
+		Object:     "Nib",
+		Field:      field,
+		IsMethod:   true,
+		IsResolver: true,
+		Child: func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+			return nil, errors.New("field of type String does not have child fields")
+		},
+	}
+	return fc, nil
+}
+
 func (ec *executionContext) _Nib_blockingIds(ctx context.Context, field graphql.CollectedField, obj *nib.Nib) (ret graphql.Marshaler) {
 	return graphql.ResolveField(
 		ctx,
@@ -2864,6 +2921,8 @@ func (ec *executionContext) fieldContext_Nib_blockedBy(ctx context.Context, fiel
 				return ec.fieldContext_Nib_order(ctx, field)
 			case "parentId":
 				return ec.fieldContext_Nib_parentId(ctx, field)
+			case "storedParentId":
+				return ec.fieldContext_Nib_storedParentId(ctx, field)
 			case "blockingIds":
 				return ec.fieldContext_Nib_blockingIds(ctx, field)
 			case "blockedByIds":
@@ -2961,6 +3020,8 @@ func (ec *executionContext) fieldContext_Nib_blocking(ctx context.Context, field
 				return ec.fieldContext_Nib_order(ctx, field)
 			case "parentId":
 				return ec.fieldContext_Nib_parentId(ctx, field)
+			case "storedParentId":
+				return ec.fieldContext_Nib_storedParentId(ctx, field)
 			case "blockingIds":
 				return ec.fieldContext_Nib_blockingIds(ctx, field)
 			case "blockedByIds":
@@ -3057,6 +3118,8 @@ func (ec *executionContext) fieldContext_Nib_parent(_ context.Context, field gra
 				return ec.fieldContext_Nib_order(ctx, field)
 			case "parentId":
 				return ec.fieldContext_Nib_parentId(ctx, field)
+			case "storedParentId":
+				return ec.fieldContext_Nib_storedParentId(ctx, field)
 			case "blockingIds":
 				return ec.fieldContext_Nib_blockingIds(ctx, field)
 			case "blockedByIds":
@@ -3143,6 +3206,8 @@ func (ec *executionContext) fieldContext_Nib_children(ctx context.Context, field
 				return ec.fieldContext_Nib_order(ctx, field)
 			case "parentId":
 				return ec.fieldContext_Nib_parentId(ctx, field)
+			case "storedParentId":
+				return ec.fieldContext_Nib_storedParentId(ctx, field)
 			case "blockingIds":
 				return ec.fieldContext_Nib_blockingIds(ctx, field)
 			case "blockedByIds":
@@ -3298,6 +3363,8 @@ func (ec *executionContext) fieldContext_Nib_mentions(ctx context.Context, field
 				return ec.fieldContext_Nib_order(ctx, field)
 			case "parentId":
 				return ec.fieldContext_Nib_parentId(ctx, field)
+			case "storedParentId":
+				return ec.fieldContext_Nib_storedParentId(ctx, field)
 			case "blockingIds":
 				return ec.fieldContext_Nib_blockingIds(ctx, field)
 			case "blockedByIds":
@@ -3395,6 +3462,8 @@ func (ec *executionContext) fieldContext_Nib_mentionedBy(ctx context.Context, fi
 				return ec.fieldContext_Nib_order(ctx, field)
 			case "parentId":
 				return ec.fieldContext_Nib_parentId(ctx, field)
+			case "storedParentId":
+				return ec.fieldContext_Nib_storedParentId(ctx, field)
 			case "blockingIds":
 				return ec.fieldContext_Nib_blockingIds(ctx, field)
 			case "blockedByIds":
@@ -3549,6 +3618,8 @@ func (ec *executionContext) fieldContext_NibChangeEvent_nib(_ context.Context, f
 				return ec.fieldContext_Nib_order(ctx, field)
 			case "parentId":
 				return ec.fieldContext_Nib_parentId(ctx, field)
+			case "storedParentId":
+				return ec.fieldContext_Nib_storedParentId(ctx, field)
 			case "blockingIds":
 				return ec.fieldContext_Nib_blockingIds(ctx, field)
 			case "blockedByIds":
@@ -3635,6 +3706,8 @@ func (ec *executionContext) fieldContext_Query_nib(ctx context.Context, field gr
 				return ec.fieldContext_Nib_order(ctx, field)
 			case "parentId":
 				return ec.fieldContext_Nib_parentId(ctx, field)
+			case "storedParentId":
+				return ec.fieldContext_Nib_storedParentId(ctx, field)
 			case "blockingIds":
 				return ec.fieldContext_Nib_blockingIds(ctx, field)
 			case "blockedByIds":
@@ -3732,6 +3805,8 @@ func (ec *executionContext) fieldContext_Query_nibs(ctx context.Context, field g
 				return ec.fieldContext_Nib_order(ctx, field)
 			case "parentId":
 				return ec.fieldContext_Nib_parentId(ctx, field)
+			case "storedParentId":
+				return ec.fieldContext_Nib_storedParentId(ctx, field)
 			case "blockingIds":
 				return ec.fieldContext_Nib_blockingIds(ctx, field)
 			case "blockedByIds":
@@ -6469,6 +6544,39 @@ func (ec *executionContext) _Nib(ctx context.Context, sel ast.SelectionSet, obj 
 					}
 				}()
 				res = ec._Nib_parentId(ctx, field, obj)
+				return res
+			}
+
+			if field.Deferrable != nil {
+				dfs, ok := deferred[field.Deferrable.Label]
+				di := 0
+				if ok {
+					dfs.AddField(field)
+					di = len(dfs.Values) - 1
+				} else {
+					dfs = graphql.NewFieldSet([]graphql.CollectedField{field})
+					deferred[field.Deferrable.Label] = dfs
+				}
+				dfs.Concurrently(di, func(ctx context.Context) graphql.Marshaler {
+					return innerFunc(ctx, dfs)
+				})
+
+				// don't run the out.Concurrently() call below
+				out.Values[i] = graphql.Null
+				continue
+			}
+
+			out.Concurrently(i, func(ctx context.Context) graphql.Marshaler { return innerFunc(ctx, out) })
+		case "storedParentId":
+			field := field
+
+			innerFunc := func(ctx context.Context, _ *graphql.FieldSet) (res graphql.Marshaler) {
+				defer func() {
+					if r := recover(); r != nil {
+						ec.Error(ctx, ec.Recover(ctx, r))
+					}
+				}()
+				res = ec._Nib_storedParentId(ctx, field, obj)
 				return res
 			}
 

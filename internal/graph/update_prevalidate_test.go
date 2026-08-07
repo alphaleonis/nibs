@@ -207,14 +207,12 @@ func TestUpdateNibPreValidatesSubjectBeforeSiblingOrderBackfill(t *testing.T) {
 }
 
 // shortParentReader hands updateNib a working clone whose parent is spelled
-// SHORT, so NormalizeID moves it and validateAndSetParent reaches
-// RecalculateOrder. The store itself cannot be put in that state — the loader
-// canonicalizes every link id to its full form on the way in
-// (nibcore/canonicalize.go) — but the resolver does not know that, and the
-// type-change branch's call to validateAndSetParent is written as if it could
-// happen. Forcing it here is the only way to exercise that branch's foreign
-// write; everything else defers to the real Core, so the sibling backfill it
-// triggers is a genuine write to a genuine file.
+// SHORT — the shape that separates a raw parent-change comparison from a
+// resolved one. The store itself cannot be put in that state (the loader
+// canonicalizes every link id on the way in, nibcore/canonicalize.go), but the
+// resolver does not know that, so forcing it here is what makes the difference
+// observable. Everything else defers to the real Core, so any sibling backfill
+// this provokes is a genuine write to a genuine file.
 type shortParentReader struct {
 	*nibcore.Core
 	subjectID   string
@@ -236,77 +234,89 @@ func shortParentResolver(core *nibcore.Core, subjectID, shortParent string) *Res
 	return &Resolver{Reader: reader, Writer: core, Validator: core, Blocking: core, Orderer: NewOrderer(reader, core)}
 }
 
-// TestUpdateNibPreValidatesSubjectBeforeTypeChangeParentRecalc covers the SECOND
-// call into validateAndSetParent — the one in the type-change branch. It is the
-// reason updateNib applies all four enum fields before the pre-check and defers
-// the type-change branch until after it: with the check placed anywhere below
-// that branch, a refused update persists an order key to a sibling it never
-// named.
-func TestUpdateNibPreValidatesSubjectBeforeTypeChangeParentRecalc(t *testing.T) {
-	_, core := setupTestResolverWithPrefix(t, "nibs-")
-	mustCreate(t, core, &nib.Nib{ID: "nibs-epic", Title: "Epic", Status: "todo", Type: "epic", Order: "a0"})
-	// No order key — this is the sibling a recalculation would backfill.
-	mustCreate(t, core, &nib.Nib{ID: "nibs-child", Title: "Child", Status: "todo", Type: "task", Parent: "nibs-epic"})
-	mustCreate(t, core, &nib.Nib{ID: "nibs-subject", Title: "Subject", Status: "todo", Type: "task", Parent: "nibs-epic", Order: "a2"})
-	resolver := shortParentResolver(core, "nibs-subject", "epic")
-
-	if snap, ok := core.GetSnapshot("nibs-child"); !ok || snap.Order != "" {
-		t.Fatalf("child order = %q, want it unset so the backfill path is reachable", snap.Order)
-	}
-	before := readNibFileBytes(t, core, "nibs-child")
-
-	// A real type change (task -> bug) so the branch runs, an invalid ESTIMATE so
-	// the refusal comes from the enum field applied LAST — the one a pre-check
-	// placed above the type block could not have seen.
-	_, err := resolver.Mutation().UpdateNib(context.Background(), "nibs-subject", model.UpdateNibInput{
-		Type:     stringPtr("bug"),
-		Estimate: graphql.OmittableOf(stringPtr("2h")),
-	})
-	if err == nil || !strings.Contains(err.Error(), `invalid estimate "2h"`) {
-		t.Fatalf("UpdateNib() error = %v, want an invalid estimate \"2h\" validation error", err)
+// TestTypeChangeBranchMakesNoForeignWrite covers the SECOND call into
+// validateAndSetParent — the one in the type-change branch. That call re-checks
+// the subject's EXISTING parent, which by definition is not changing, so it must
+// never reach RecalculateOrder and therefore never reach the sibling order-key
+// backfill that recalculation performs. A type change is not a move.
+//
+// The subject's working clone carries a SHORT-form parent, which is what makes
+// the guard bite: deciding "did the parent change?" from the raw stored string
+// sees "epic" become "nibs-epic" and recalculates, backfilling an order key onto
+// a sibling this update never named. Deciding it from the resolved parent sees
+// no change. Both outcomes are asserted against the sibling's on-disk bytes.
+//
+// The refused case additionally pins why updateNib applies all four enum fields
+// before the pre-check and defers this branch until after it.
+func TestTypeChangeBranchMakesNoForeignWrite(t *testing.T) {
+	// A real type change (task -> bug) so the branch runs at all.
+	tests := []struct {
+		name    string
+		input   model.UpdateNibInput
+		wantErr string
+	}{
+		// An invalid ESTIMATE, so the refusal comes from the enum field applied
+		// LAST — the one a pre-check placed above the type block could not see.
+		{"refused", model.UpdateNibInput{Type: stringPtr("bug"), Estimate: graphql.OmittableOf(stringPtr("2h"))}, `invalid estimate "2h"`},
+		{"accepted", model.UpdateNibInput{Type: stringPtr("bug")}, ""},
 	}
 
-	if after := readNibFileBytes(t, core, "nibs-child"); !bytes.Equal(before, after) {
-		t.Errorf("refused update rewrote the sibling file\nbefore:\n%s\nafter:\n%s", before, after)
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			_, core := setupTestResolverWithPrefix(t, "nibs-")
+			mustCreate(t, core, &nib.Nib{ID: "nibs-epic", Title: "Epic", Status: "todo", Type: "epic", Order: "a0"})
+			// No order key — this is the sibling a recalculation would backfill.
+			mustCreate(t, core, &nib.Nib{ID: "nibs-child", Title: "Child", Status: "todo", Type: "task", Parent: "nibs-epic"})
+			mustCreate(t, core, &nib.Nib{ID: "nibs-subject", Title: "Subject", Status: "todo", Type: "task", Parent: "nibs-epic", Order: "a2"})
+			resolver := shortParentResolver(core, "nibs-subject", "epic")
+
+			if snap, ok := core.GetSnapshot("nibs-child"); !ok || snap.Order != "" {
+				t.Fatalf("child order = %q, want it unset so the backfill path is reachable", snap.Order)
+			}
+			before := readNibFileBytes(t, core, "nibs-child")
+
+			got, err := resolver.Mutation().UpdateNib(context.Background(), "nibs-subject", tt.input)
+			if tt.wantErr != "" {
+				if err == nil || !strings.Contains(err.Error(), tt.wantErr) {
+					t.Fatalf("UpdateNib() error = %v, want one containing %q", err, tt.wantErr)
+				}
+			} else {
+				if err != nil {
+					t.Fatalf("UpdateNib() error = %v", err)
+				}
+				// The subject's own position is untouched too — a type change is
+				// not a move, whichever way its parent link happens to be spelled.
+				if got.Order != "a2" {
+					t.Errorf("subject order = %q, want it unmoved at %q", got.Order, "a2")
+				}
+			}
+
+			if after := readNibFileBytes(t, core, "nibs-child"); !bytes.Equal(before, after) {
+				t.Errorf("type change rewrote the sibling file\nbefore:\n%s\nafter:\n%s", before, after)
+			}
+		})
 	}
 }
 
-// TestUpdateNibRecalcUsesNewPriorityOnBothPaths pins the ordering consequence of
-// applying priority before the type-change branch rather than after it.
+// TestUpdateNibRecalcUsesNewPriority pins the ordering consequence of applying
+// priority before the parent block rather than after it.
 //
 // RecalculateOrder positions a child among its siblings by PRIORITY
-// (positionDefaultByPriority). Both routes into it now read the priority this
-// same mutation is setting, where the type-change branch used to run early
-// enough to read the old one — so a single update that changes type and priority
-// together placed the nib by its outgoing priority on one path and its incoming
-// priority on the other. Both cases below assert the incoming priority wins.
+// (positionDefaultByPriority), and it reads the priority this same mutation is
+// setting — so a single update that changes parent and priority together places
+// the nib by its incoming priority, not its outgoing one.
 //
 // The subject is "low" and moves to "critical"; the sibling group holds one
 // "critical" anchor at a0 and one "low" nib at a2. By the NEW priority the nib
 // lands between them; by the OLD one it lands after a2. Every sibling carries an
 // order key so no backfill runs — an unordered one would be assigned a key past
 // a2 and join the comparison, which decides nothing about priority.
-func TestUpdateNibRecalcUsesNewPriorityOnBothPaths(t *testing.T) {
-	t.Run("type-change path", func(t *testing.T) {
-		_, core := setupTestResolverWithPrefix(t, "nibs-")
-		mustCreate(t, core, &nib.Nib{ID: "nibs-epic", Title: "Epic", Status: "todo", Type: "epic", Order: "a0"})
-		mustCreate(t, core, &nib.Nib{ID: "nibs-anchor", Title: "Anchor", Status: "todo", Type: "task", Priority: "critical", Parent: "nibs-epic", Order: "a0"})
-		mustCreate(t, core, &nib.Nib{ID: "nibs-tail", Title: "Tail", Status: "todo", Type: "task", Priority: "low", Parent: "nibs-epic", Order: "a2"})
-		mustCreate(t, core, &nib.Nib{ID: "nibs-subject", Title: "Subject", Status: "todo", Type: "task", Priority: "low", Parent: "nibs-epic", Order: "a6"})
-		resolver := shortParentResolver(core, "nibs-subject", "epic")
-
-		got, err := resolver.Mutation().UpdateNib(context.Background(), "nibs-subject", model.UpdateNibInput{
-			Type:     stringPtr("bug"),
-			Priority: graphql.OmittableOf(stringPtr("critical")),
-		})
-		if err != nil {
-			t.Fatalf("UpdateNib() error = %v", err)
-		}
-		if got.Order <= "a0" || got.Order >= "a2" {
-			t.Errorf("order = %q, want it between the critical anchor (a0) and the low sibling (a2) — positioned by the NEW priority", got.Order)
-		}
-	})
-
+//
+// There is only one route into RecalculateOrder from updateNib. The type-change
+// branch used to be a second one, reachable when the subject's stored parent was
+// spelled short, and is not anymore: it compares the RESOLVED parent, which a
+// type change never moves. TestTypeChangeBranchMakesNoForeignWrite guards that.
+func TestUpdateNibRecalcUsesNewPriority(t *testing.T) {
 	t.Run("parent-change path", func(t *testing.T) {
 		resolver, core := setupTestResolverWithPrefix(t, "nibs-")
 		mustCreate(t, core, &nib.Nib{ID: "nibs-epic", Title: "Epic", Status: "todo", Type: "epic", Order: "a0"})

@@ -356,8 +356,28 @@ type Nib {
   order: String!
 
   # Direct link fields
-  "Parent nib ID (optional, type-restricted)"
+  """
+  Parent nib ID (optional, type-restricted), under the project's one definition
+  of "has a parent": the id the stored link RESOLVES to. Null when the nib has
+  no parent AND when its stored link names no nib, matching the parent field,
+  the hasParent filter and siblingId. A link stored in short form reports the
+  full id it resolves to.
+
+  Use storedParentId to see the link as written on disk — the two differ only
+  where the stored link is unresolvable or short-form.
+  """
   parentId: String
+  """
+  The parent link exactly as stored on disk, unresolved: null when the field is
+  empty, otherwise the raw id — including one that names no nib, and a short
+  form that has not been canonicalized.
+
+  This is the inspection field. parentId answers "who is the parent", which is
+  null for a link naming nothing; this answers "what does the file say", so a
+  broken link stays diagnosable instead of reading as absent. `nibs check`
+  reports and repairs such links.
+  """
+  storedParentId: String
   "IDs of nibs this nib is blocking"
   blockingIds: [String!]!
   "IDs of nibs that are blocking this nib (direct field)"
@@ -476,9 +496,9 @@ input NibFilter {
   """
   Tri-state: true keeps nibs whose parent link resolves to a nib, false keeps
   exactly the ones with no parent, null does not filter. A nib whose parent link
-  names no nib counts as parentless, matching how the parent field and siblingId
-  treat it — parentId still reports the unresolvable stored id, so a nib
-  selected by hasParent:false may have a non-null parentId.
+  names no nib counts as parentless, matching how the parent field, parentId and
+  siblingId treat it. Such a nib still reports its unresolvable link under
+  storedParentId, which is not a parent and does not affect this filter.
 
   Combining false with the parentId FILTER is refused: no nib both has a given
   parent and has none. See parentId.
@@ -486,6 +506,12 @@ input NibFilter {
   hasParent: Boolean
   """
   Include only nibs with this specific parent ID.
+
+  Matches on the RESOLVED parent, the same reading the parentId field and
+  hasParent give: a nib whose link is stored in short form matches the full id
+  it resolves to, and a link naming no nib matches nothing. Filtering on the
+  raw stored spelling is not offered — storedParentId is an inspection field,
+  not a filter.
 
   An id naming no nib is refused with a NOT_FOUND error rather than matching
   nothing, so a mistyped or stale id stays distinguishable from a genuine empty

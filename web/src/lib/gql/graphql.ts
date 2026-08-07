@@ -160,9 +160,9 @@ export type NibFilter = {
   /**
    * Tri-state: true keeps nibs whose parent link resolves to a nib, false keeps
    * exactly the ones with no parent, null does not filter. A nib whose parent link
-   * names no nib counts as parentless, matching how the parent field and siblingId
-   * treat it — parentId still reports the unresolvable stored id, so a nib
-   * selected by hasParent:false may have a non-null parentId.
+   * names no nib counts as parentless, matching how the parent field, parentId and
+   * siblingId treat it. Such a nib still reports its unresolvable link under
+   * storedParentId, which is not a parent and does not affect this filter.
    *
    * Combining false with the parentId FILTER is refused: no nib both has a given
    * parent and has none. See parentId.
@@ -194,6 +194,12 @@ export type NibFilter = {
   mentionsId?: string | null | undefined;
   /**
    * Include only nibs with this specific parent ID.
+   *
+   * Matches on the RESOLVED parent, the same reading the parentId field and
+   * hasParent give: a nib whose link is stored in short form matches the full id
+   * it resolves to, and a link naming no nib matches nothing. Filtering on the
+   * raw stored spelling is not offered — storedParentId is an inspection field,
+   * not a filter.
    *
    * An id naming no nib is refused with a NOT_FOUND error rather than matching
    * nothing, so a mistyped or stale id stays distinguishable from a genuine empty
