@@ -127,7 +127,8 @@ More examples:
 			// documented envelope contract — as "this class of failure with nothing
 			// to act on", steering an agent away from a fix that was available. A
 			// CONFLICT offers the server's current etag; a HIERARCHY offers the
-			// parent types that would be accepted.
+			// parent types that would be accepted; a TEXT_NOT_FOUND or
+			// TEXT_AMBIGUOUS offers the number of times the search text was found.
 			//
 			// The response CODE gates each, not the cause alone: a mismatch inside a
 			// response whose classes disagree is not a conflict claim to enrich, and
@@ -144,6 +145,10 @@ More examples:
 			case output.ErrHierarchy:
 				if hierarchy, ok := hierarchyError(queryJSON, err); ok {
 					return hierarchy
+				}
+			case output.ErrTextNotFound, output.ErrTextAmbiguous:
+				if textMatch, ok := textMatchError(queryJSON, err); ok {
+					return textMatch
 				}
 			}
 			return cmdError(queryJSON, code, "%s", err)

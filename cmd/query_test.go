@@ -1605,6 +1605,232 @@ func TestQueryHierarchyBatchExitsLikeTheDirectCommands(t *testing.T) {
 	}
 }
 
+// writeReplaceFixture creates a nibs dir holding two nibs with bodies chosen so
+// every surgical-replace outcome is reachable from one store: the subject's
+// "dup" occurs twice and the other's "trip" three times, so an ambiguous replace
+// on each carries a DIFFERENT count, and any absent text is a zero-match on
+// either. Two counts that differ are what makes a single-valued occurrences
+// field unrepresentable for a batch. It returns (nibsDir, subjectID, otherID).
+func writeReplaceFixture(t *testing.T) (string, string, string) {
+	t.Helper()
+	nibsDir, subjectID := writeSetNib(t, "rp", "dup here\nand dup there\n")
+	content := "---\ntitle: Other\nstatus: todo\ntype: task\n---\ntrip\ntrip\ntrip\n"
+	if err := os.WriteFile(filepath.Join(nibsDir, "ot--other.md"), []byte(content), 0644); err != nil {
+		t.Fatal(err)
+	}
+	return nibsDir, subjectID, "ot"
+}
+
+// replaceMutation builds a single-alias updateNib carrying one bodyMod.replace.
+func replaceMutation(alias, id, old string) string {
+	return alias + `: updateNib(id: "` + id + `", input: {bodyMod: {replace: [{old: "` + old + `", new: "x"}]}}) { id }`
+}
+
+// TestQueryTextMatchEnvelopeMatchesTheDirectCommand pins that the two surfaces
+// that can refuse a surgical replace — `nibs body` and `nibs query` — refuse one
+// identically: same code, same exit status, and the same occurrences count.
+//
+// Comparing the envelopes rather than asserting two independent expectations is
+// the point: occurrences is the field an agent branches on to tell "your text
+// was not there" (retry with different text) from "your text was ambiguous"
+// (extend the search text), and both refusals exit 2, so a caller reading $?
+// alone cannot tell them apart. cmd/prompt-full.tmpl steers agents at the query
+// route specifically, so it is the surface that must not answer more weakly.
+//
+// `query` is compared on code, exit and count but not on message text: it
+// renders every failure through the transport prefix its own contract
+// documents, so the assertion is that its message is that prefix plus the
+// sentence `nibs body` prints.
+func TestQueryTextMatchEnvelopeMatchesTheDirectCommand(t *testing.T) {
+	tests := []struct {
+		name            string
+		old             string
+		wantCode        string
+		wantOccurrences int
+	}{
+		{"a zero-match replace", "absent-text", output.ErrTextNotFound, 0},
+		{"an ambiguous replace", "dup", output.ErrTextAmbiguous, 2},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Cleanup(resetQueryFlags)
+			t.Cleanup(resetBodyFlags)
+			nibsDir, subjectID, _ := writeReplaceFixture(t)
+
+			run := func(reset func(), args ...string) textMatchEnvelope {
+				t.Helper()
+				reset()
+				rootCmd.SetArgs(append([]string{"--nibs-path", nibsDir}, args...))
+				var execErr error
+				out := captureStdout(t, func() { execErr = rootCmd.Execute() })
+				if execErr == nil {
+					t.Fatalf("%v returned no error; out: %q", args, out)
+				}
+				if code := reportExitError(io.Discard, execErr); code != output.ExitValidation {
+					t.Errorf("%v exit = %d, want %d (validation)", args, code, output.ExitValidation)
+				}
+				var env textMatchEnvelope
+				if err := json.Unmarshal([]byte(out), &env); err != nil {
+					t.Fatalf("%v stdout is not a JSON error envelope: %v\nraw: %s", args, err, out)
+				}
+				return env
+			}
+
+			bodyEnv := run(resetBodyFlags, "body", subjectID,
+				"--replace-old", tt.old, "--replace-new", "x", "--json")
+			queryEnv := run(resetQueryFlags, "query", "--json",
+				`mutation { `+replaceMutation("a", subjectID, tt.old)+` }`)
+
+			for name, env := range map[string]textMatchEnvelope{"body": bodyEnv, "query": queryEnv} {
+				if env.Error.Code != tt.wantCode {
+					t.Errorf("%s envelope code = %q, want %q", name, env.Error.Code, tt.wantCode)
+				}
+				if env.Error.Occurrences == nil {
+					t.Errorf("%s envelope omits occurrences, want %d", name, tt.wantOccurrences)
+					continue
+				}
+				if *env.Error.Occurrences != tt.wantOccurrences {
+					t.Errorf("%s envelope occurrences = %d, want %d",
+						name, *env.Error.Occurrences, tt.wantOccurrences)
+				}
+			}
+			if want := "graphql: " + bodyEnv.Error.Message; queryEnv.Error.Message != want {
+				t.Errorf("query message = %q, want %q", queryEnv.Error.Message, want)
+			}
+		})
+	}
+}
+
+// TestQueryTextMatchBatchExitsLikeTheDirectCommands pins how a response holding
+// a refused surgical replace aggregates.
+//
+// TEXT_NOT_FOUND, TEXT_AMBIGUOUS and VALIDATION_ERROR are three different codes
+// on one exit status, so a rule comparing code strings reports UNCATEGORIZED —
+// exit 1 — for a batch whose every failure `nibs body` exits 2 for. The rows fix
+// each aggregation outcome at the command surface: alone the refusal keeps its
+// own code and its count; beside another exit-2 failure it generalizes to the
+// class's code and withholds the count; beside a different exit class it is
+// uncategorized.
+func TestQueryTextMatchBatchExitsLikeTheDirectCommands(t *testing.T) {
+	tests := []struct {
+		name            string
+		mutation        func(subjectID, otherID string) string
+		wantCode        string
+		wantExit        int
+		wantOccurrences int
+		wantNoCount     bool
+	}{
+		{
+			// One refusal, one count: it is representable and the specific code
+			// survives.
+			name: "a lone zero-match keeps TEXT_NOT_FOUND and its count",
+			mutation: func(subjectID, _ string) string {
+				return replaceMutation("a", subjectID, "absent-text")
+			},
+			wantCode:        output.ErrTextNotFound,
+			wantExit:        output.ExitValidation,
+			wantOccurrences: 0,
+		},
+		{
+			name: "a lone ambiguous match keeps TEXT_AMBIGUOUS and its count",
+			mutation: func(subjectID, _ string) string {
+				return replaceMutation("a", subjectID, "dup")
+			},
+			wantCode:        output.ErrTextAmbiguous,
+			wantExit:        output.ExitValidation,
+			wantOccurrences: 2,
+		},
+		{
+			// Two refusals of the same kind agree on the code, so it survives —
+			// but their counts differ (2 and 3) and one field cannot speak for
+			// both.
+			name: "two ambiguous matches keep TEXT_AMBIGUOUS but offer no single count",
+			mutation: func(subjectID, otherID string) string {
+				return replaceMutation("a", subjectID, "dup") + " " +
+					replaceMutation("b", otherID, "trip")
+			},
+			wantCode:    output.ErrTextAmbiguous,
+			wantExit:    output.ExitValidation,
+			wantNoCount: true,
+		},
+		{
+			// Both are CLASSIFIED and both exit 2 — the case a code-string
+			// comparison cannot express at all. Neither specific claim covers
+			// the other's failure, so the response reports the class.
+			name: "a zero-match beside an ambiguous match generalizes",
+			mutation: func(subjectID, otherID string) string {
+				return replaceMutation("a", subjectID, "absent-text") + " " +
+					replaceMutation("b", otherID, "trip")
+			},
+			wantCode:    output.ErrValidation,
+			wantExit:    output.ExitValidation,
+			wantNoCount: true,
+		},
+		{
+			// Both failures are caller-input faults the direct commands exit 2
+			// for (`nibs body --replace-old` TEXT_NOT_FOUND, `nibs set -s bogus`
+			// VALIDATION_ERROR), so the batch must stay exit 2 while asserting
+			// neither specific claim.
+			name: "a zero-match beside a bad status stays exit 2",
+			mutation: func(subjectID, otherID string) string {
+				return replaceMutation("a", subjectID, "absent-text") + " " +
+					`b: updateNib(id: "` + otherID + `", input: {status: "bogus"}) { id }`
+			},
+			wantCode:    output.ErrValidation,
+			wantExit:    output.ExitValidation,
+			wantNoCount: true,
+		},
+		{
+			// Different exit classes: exit 2 asserts the caller's input was at
+			// fault, which the missing id beside it does not support.
+			name: "a zero-match beside an unknown id is uncategorized",
+			mutation: func(subjectID, _ string) string {
+				return replaceMutation("a", subjectID, "absent-text") + " " +
+					`b: updateNib(id: "nosuch", input: {title: "x"}) { id }`
+			},
+			wantCode:    output.ErrUncategorized,
+			wantExit:    output.ExitError,
+			wantNoCount: true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Cleanup(resetQueryFlags)
+			resetQueryFlags()
+			nibsDir, subjectID, otherID := writeReplaceFixture(t)
+
+			out, err := runQueryCmd(t, nibsDir, "mutation { "+tt.mutation(subjectID, otherID)+" }", "--json")
+			if err == nil {
+				t.Fatalf("mutation returned no error; out: %q", out)
+			}
+			if code := reportExitError(io.Discard, err); code != tt.wantExit {
+				t.Errorf("exit = %d, want %d (%s)", code, tt.wantExit, tt.wantCode)
+			}
+			var env textMatchEnvelope
+			if uerr := json.Unmarshal([]byte(out), &env); uerr != nil {
+				t.Fatalf("stdout is not a JSON error envelope: %v\nraw: %s", uerr, out)
+			}
+			if env.Error.Code != tt.wantCode {
+				t.Errorf("envelope code = %q, want %q", env.Error.Code, tt.wantCode)
+			}
+			if tt.wantNoCount {
+				if env.Error.Occurrences != nil {
+					t.Errorf("no occurrences count may be offered here, got %d", *env.Error.Occurrences)
+				}
+				return
+			}
+			if env.Error.Occurrences == nil {
+				t.Fatalf("envelope omits occurrences, want %d", tt.wantOccurrences)
+			}
+			if *env.Error.Occurrences != tt.wantOccurrences {
+				t.Errorf("occurrences = %d, want %d", *env.Error.Occurrences, tt.wantOccurrences)
+			}
+		})
+	}
+}
+
 // TestExecuteQueryBatchNamesTheMutationsThatCommitted pins the reproduction the
 // whole change exists for: three deletes, the middle id unknown, and the two
 // real files gone by the time the response is built.
@@ -1648,6 +1874,136 @@ func TestExecuteQueryBatchNamesTheMutationsThatCommitted(t *testing.T) {
 	const want = "graphql: nib not found; d1, d3 succeeded; d2 failed"
 	if ce.Error() != want {
 		t.Errorf("message = %q, want %q", ce.Error(), want)
+	}
+}
+
+// TestExecuteQueryBatchHalfCommitsDurably pins the contract the Mutation type
+// documents: root mutation fields run serially in document order, execution
+// does not stop at the first failure, and each field commits on its own. So a
+// document whose one alias is refused leaves the other alias's write DURABLE —
+// on disk, not merely agreed to by the store that issued it.
+//
+// That is why every assertion here reads the nibs directory instead of
+// app.Core. The neighboring naming tests read the store on purpose, because
+// what they pin is the message; a store-only assertion cannot tell a write that
+// reached the filesystem from one that only updated the map beside it, and
+// durability is the whole of what this contract promises.
+//
+// Rows come in pairs — the committing field before the refusal and after it —
+// because those are different claims. Only the "after" rows can fail if
+// execution ever stops at the first failure.
+func TestExecuteQueryBatchHalfCommitsDurably(t *testing.T) {
+	// nibFiles lists what the nibs directory holds for an id. It globs the id
+	// prefix rather than reading the Path the store reports, because asking the
+	// store where to look would be asking the store — the very thing these
+	// assertions exist to avoid. Globbing also stays correct if a write ever does
+	// relocate a file; today none does, since saveToDisk rebuilds a filename only
+	// when Path is empty and a nib from GetForUpdate always carries one.
+	nibFiles := func(t *testing.T, root, id string) []string {
+		t.Helper()
+		matches, err := filepath.Glob(filepath.Join(root, id+"*.md"))
+		if err != nil {
+			t.Fatalf("globbing for %s under %s: %v", id, root, err)
+		}
+		return matches
+	}
+	goneFromDisk := func(id string) func(*testing.T, string) {
+		return func(t *testing.T, root string) {
+			t.Helper()
+			if files := nibFiles(t, root, id); len(files) != 0 {
+				t.Errorf("%s still has a file on disk (%v), so its delete did not commit", id, files)
+			}
+		}
+	}
+	titleOnDisk := func(id, want string) func(*testing.T, string) {
+		return func(t *testing.T, root string) {
+			t.Helper()
+			files := nibFiles(t, root, id)
+			if len(files) != 1 {
+				t.Fatalf("want exactly one file on disk for %s, got %v", id, files)
+			}
+			f, err := os.Open(files[0])
+			if err != nil {
+				t.Fatalf("opening %s: %v", files[0], err)
+			}
+			defer func() { _ = f.Close() }()
+			b, err := nib.Parse(f)
+			if err != nil {
+				t.Fatalf("parsing %s: %v", files[0], err)
+			}
+			if b.Title != want {
+				t.Errorf("%s on disk has title %q, want %q — its update did not commit", id, b.Title, want)
+			}
+		}
+	}
+
+	const committedTitle = "Committed to disk"
+
+	tests := []struct {
+		name  string
+		query string
+		check func(*testing.T, string)
+	}{
+		{
+			name:  "a delete before the refusal is gone from disk",
+			query: `mutation { d1: deleteNib(id:"p-a") d2: deleteNib(id:"p-none") }`,
+			check: goneFromDisk("p-a"),
+		},
+		{
+			// The row that separates "does not stop at the first failure" from
+			// "stops at the first failure": d2 only runs if the refusal ahead of
+			// it did not end the operation.
+			name:  "a delete after the refusal is gone from disk too",
+			query: `mutation { d1: deleteNib(id:"p-none") d2: deleteNib(id:"p-b") }`,
+			check: goneFromDisk("p-b"),
+		},
+		{
+			// A rewrite rather than an unlink, so the other persistence path is
+			// covered: the file survives and has to carry the new title.
+			name: "an update before the refusal has its new title on disk",
+			query: `mutation { u1: updateNib(id:"p-a", input:{title:"` + committedTitle + `"}) { id } ` +
+				`d2: deleteNib(id:"p-none") }`,
+			check: titleOnDisk("p-a", committedTitle),
+		},
+		{
+			name: "an update after the refusal has its new title on disk",
+			query: `mutation { d1: deleteNib(id:"p-none") ` +
+				`u2: updateNib(id:"p-b", input:{title:"` + committedTitle + `"}) { id } }`,
+			check: titleOnDisk("p-b", committedTitle),
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			app := setupQueryTestApp(t)
+			for _, id := range []string{"p-a", "p-b"} {
+				createQueryTestNib(t, app.Core, id, "Nib "+id, "todo")
+			}
+			// A lookup that found nothing would make every "gone from disk"
+			// assertion below pass without measuring anything, so establish
+			// that it finds the files while they are still there.
+			for _, id := range []string{"p-a", "p-b"} {
+				if files := nibFiles(t, app.Core.Root(), id); len(files) != 1 {
+					t.Fatalf("setup: want exactly one file on disk for %s, got %v", id, files)
+				}
+			}
+
+			_, err := executeQuery(app, tt.query, nil, "")
+			// The premise: the batch was refused as a whole. Without a refusal
+			// there is no half-commit to be durable about.
+			if err == nil {
+				t.Fatal("the batch returned no error, so nothing here is a partial outcome")
+			}
+			var ce *output.CodedError
+			if !errors.As(err, &ce) {
+				t.Fatalf("expected *output.CodedError, got %T: %v", err, err)
+			}
+			if ce.Code != output.ErrNotFound {
+				t.Errorf("code = %q, want %q", ce.Code, output.ErrNotFound)
+			}
+
+			tt.check(t, app.Core.Root())
+		})
 	}
 }
 

@@ -436,6 +436,14 @@ func setMutationError(jsonOutput bool, err error) error {
 //     ability to tell a rule violation from a malformed argument. Sharing an
 //     exit is safe for a batched `nibs query` response because
 //     graphQLResponseCode compares exit statuses, not code strings.
+//   - A surgical body-replace whose search text did not match exactly once is
+//     TEXT_NOT_FOUND (zero matches) or TEXT_AMBIGUOUS (more than one). Both share
+//     exit 2 with the VALIDATION_ERROR fallback, so as with HIERARCHY what the
+//     codes buy is not the exit but the occurrences count the envelope carries
+//     with them (see textMatchError) and the ability to tell "your text was not
+//     there" from "your text was ambiguous" — two refusals with different
+//     repairs. `nibs body --replace-old` and the batched bodyMod.replace a
+//     `nibs query` runs raise the same failure, so both report the same code.
 //   - A mutation whose SUBJECT id no nib answers to is NOT_FOUND (exit 3), the
 //     class every id-resolving command already reports. `nibs set`, `close` and
 //     `body` resolve the id up front and reach here with it only in the delete
@@ -462,10 +470,10 @@ func setMutationError(jsonOutput bool, err error) error {
 // not-found cause keeps its own class. That ordering is load-bearing for
 // OnDiskUnparseableError, the one classified type here with an Unwrap; it is
 // inert today because both of its construction sites carry an OS read error or a
-// YAML parse error. ETagMismatchError, ETagRequiredError and HierarchyError
-// implement no Unwrap at all, so neither the conflict nor the hierarchy branch
-// can be claimed by the sentinel either way, and their order among the
-// concrete-type tests is inert.
+// YAML parse error. ETagMismatchError, ETagRequiredError, HierarchyError and
+// ReplaceMatchError implement no Unwrap at all, so none of the conflict, the
+// hierarchy and the text-match branches can be claimed by the sentinel either
+// way, and their order among the concrete-type tests is inert.
 func mutationErrCode(err error) (string, bool) {
 	var unparseableErr *nibcore.OnDiskUnparseableError
 	if errors.As(err, &unparseableErr) {
@@ -477,6 +485,13 @@ func mutationErrCode(err error) (string, bool) {
 	var hierarchyErr *nibtypes.HierarchyError
 	if errors.As(err, &hierarchyErr) {
 		return output.ErrHierarchy, true
+	}
+	var matchErr *nib.ReplaceMatchError
+	if errors.As(err, &matchErr) {
+		if matchErr.Count == 0 {
+			return output.ErrTextNotFound, true
+		}
+		return output.ErrTextAmbiguous, true
 	}
 	if errors.Is(err, nib.ErrNotFound) {
 		return output.ErrNotFound, true

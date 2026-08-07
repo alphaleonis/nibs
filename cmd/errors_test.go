@@ -180,6 +180,18 @@ func otherHierarchyErr() *gqlerror.Error {
 	})
 }
 
+// textNotFoundErr and textAmbiguousErr are the two surgical-replace refusals,
+// each wrapped in the "replacement N failed" sentence nib.ApplyBodyMod puts
+// around it with %w — the shape the resolver actually returns, so the classifier
+// is exercised against a ReplaceMatchError it has to reach through a wrapper.
+func textNotFoundErr() *gqlerror.Error {
+	return gqlerror.Wrap(fmt.Errorf("replacement 0 failed: %w", &nib.ReplaceMatchError{Count: 0}))
+}
+
+func textAmbiguousErr() *gqlerror.Error {
+	return gqlerror.Wrap(fmt.Errorf("replacement 0 failed: %w", &nib.ReplaceMatchError{Count: 2}))
+}
+
 // TestGraphQLResponseCode pins the rule that decides a whole response's exit
 // class: errors agreeing on a code yield that code, errors that merely agree on
 // an exit STATUS yield that class's general member, and anything else yields
@@ -448,6 +460,22 @@ func TestGraphQLErrCodeCodesAggregateWithinTheirExitClass(t *testing.T) {
 			"mutation target not found",
 			gqlerror.Wrap(nib.ErrNotFound),
 			output.ErrNotFound,
+		},
+		{
+			// The two surgical-replace refusals share exit 2 with each other
+			// AND with the VALIDATION_ERROR default — three codes on one exit,
+			// which only an exit-comparing aggregation can express. What the
+			// separate codes buy is the occurrences count the envelope carries
+			// with them, and the ability to tell "your text was not there" from
+			// "your text was ambiguous".
+			"a surgical replace that matched nothing",
+			textNotFoundErr(),
+			output.ErrTextNotFound,
+		},
+		{
+			"a surgical replace that matched more than once",
+			textAmbiguousErr(),
+			output.ErrTextAmbiguous,
 		},
 	}
 	unclassified := []struct {

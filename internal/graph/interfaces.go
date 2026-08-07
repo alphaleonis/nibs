@@ -115,6 +115,13 @@ type NibWriter interface {
 type NibValidator interface {
 	ValidateParent(b *nib.Nib, parentID string) error
 	DetectCycle(fromID, linkType, toID string) []string
+	// ValidateEnums reports whether the nib's type/status/priority/estimate hold
+	// values the project config accepts (the empty "use the default" sentinel
+	// always passes). NibWriter.Update repeats this check under its write lock, so
+	// nothing depends on a resolver calling it — it is exposed so a resolver whose
+	// later steps write to OTHER nibs can refuse a doomed subject first (see
+	// mutationResolver.preValidateSubject).
+	ValidateEnums(b *nib.Nib) error
 }
 
 // BlockingChecker provides blocking-relationship queries.

@@ -8,6 +8,7 @@ import (
 	"strings"
 
 	"github.com/alphaleonis/nibs/internal/nib"
+	"github.com/alphaleonis/nibs/internal/nibcore"
 )
 
 // schema.resolvers.go is generated but not disposable: gqlgen rewrites it on
@@ -200,6 +201,65 @@ func (r *Resolver) validateAndSetParent(b *nib.Nib, parentID string) error {
 	b.Parent = normalizedParent
 	if normalizedParent != oldParent {
 		r.Orderer.RecalculateOrder(b)
+	}
+	return nil
+}
+
+// preValidateSubject runs the subject's write-free guards — enum validity, a
+// missing ifMatch under require_if_match, and an ifMatch that disagrees with the
+// on-disk content — so a caller that will be told the mutation failed has not
+// already had it write to some OTHER nib's file.
+//
+// updateNib has two kinds of foreign write, and this one call precedes both. The
+// blocking handlers persist each target immediately (single-side storage puts
+// the edge in the target's blocked_by). And a parent change recalculates the
+// subject's order key, which reads the sibling set — a read that repairs lazily:
+// Orderer.backfillOrderKeys PERSISTS an order key to any sibling that has none,
+// so an ordinary read path leaves a durable edit on a nib the mutation never
+// named. That second one is reachable from BOTH calls to validateAndSetParent —
+// the type-change branch as well as the parent block — which is why updateNib
+// applies all four enum fields before this check and defers the type-change
+// branch until after it. Every one of these runs before Writer.Update applies
+// these same guards to the subject.
+//
+// This mirrors validateIfMatchETags in bulkreorder.go, which pre-checks each
+// listed nib's etag against on-disk content before the batch writes anything.
+// Reader.CurrentETag and NibWriter.Update both derive their etag through
+// nibcore.Core.computeStoredETag, so the pre-check compares the same notion of
+// etag the write will and cannot pass here only to fail there for a mismatched
+// derivation.
+//
+// It narrows the failure surface rather than closing it, exactly as the reorder
+// family documents for its own pre-validation. The guards that need the write
+// lock stay inside Writer.Update — flock acquisition, a concurrent delete, and
+// the subject's own write I/O — and a concurrent write to the subject landing
+// between this check and Writer.Update still surfaces as an ETagMismatchError
+// with the targets already persisted. Closing that window would mean staging the
+// target writes until after the subject commits, which diverges from the
+// established pattern and changes what a failed target write means once the
+// subject is already durable.
+func (r *mutationResolver) preValidateSubject(b *nib.Nib, ifMatch *string) error {
+	if err := r.Validator.ValidateEnums(b); err != nil {
+		return err
+	}
+
+	if ifMatch == nil || *ifMatch == "" {
+		if r.requireIfMatch() {
+			return &nibcore.ETagRequiredError{}
+		}
+		return nil
+	}
+
+	current, err := r.Reader.CurrentETag(b.ID)
+	if err != nil {
+		// An uncertifiable on-disk file (unparseable/unreadable) surfaces the
+		// distinct, NON-RECONCILABLE OnDiskUnparseableError, which carries no etag
+		// token a reconcile-retry could echo back. Propagate it unwrapped, as
+		// Core.Update does, so the classification survives to the client.
+		return err
+	}
+	if current != *ifMatch {
+		return &nibcore.ETagMismatchError{Provided: *ifMatch, Current: current}
 	}
 	return nil
 }

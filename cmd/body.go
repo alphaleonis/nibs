@@ -389,22 +389,74 @@ func echoCardWithWarning(cmd *cobra.Command, jsonMode bool, b *nib.Nib, r projec
 	return nil
 }
 
-// bodyMutationError maps a body-mutation error to a CLI error. A surgical
-// replace that did not match exactly once surfaces as a typed
-// *nib.ReplaceMatchError: 0 occurrences → TEXT_NOT_FOUND, N>1 → TEXT_AMBIGUOUS,
-// each carrying the occurrence count. Everything else (etag conflicts,
-// corrupt-file, generic validation) delegates to set's shared mapping.
-func bodyMutationError(jsonOutput bool, err error) error {
+// textMatchError reports a surgical replace that did not match exactly once as
+// TEXT_NOT_FOUND (zero matches) or TEXT_AMBIGUOUS (more than one), enriched with
+// the number of times the search text was found, so an agent can pick its next
+// move — different text for a zero-match, more surrounding context for an
+// ambiguous one — without scraping the message: in --json the envelope carries
+// occurrences. It reports ok=false for every other error, leaving the caller's
+// own classification in charge.
+//
+// This is the ONE place a text-match envelope is built. Every CLI surface that
+// builds a --json error envelope reaches it: `nibs body --replace-old` through
+// bodyMutationError, and `nibs query`'s batched bodyMod.replace through its
+// coded boundary (cmd/graphql.go) — the route cmd/prompt-full.tmpl sends agents
+// down for several replacements in one atomic write.
+//
+// One surface deliberately does not: cmd/serve.go's presenter stamps only the
+// codes it enumerates, so a bodyMod.replace refusal reaches a web client uncoded
+// and without a count. Unlike the hierarchy pair this mirrors, the TUI is not a
+// second exception — it writes no bodyMod at all, so it cannot raise this
+// refusal.
+//
+// A count of 0 is emitted, not omitted, which is what output.ErrorText's *int
+// buys: a bare int would be dropped by the field's omitempty, and an absent
+// occurrences already means something else — that no single count speaks for the
+// response, the batched case cmd/graphql.go withholds it for.
+//
+// The 0-vs-everything-else split matches mutationErrCode's, so one refusal
+// classifies the same whichever surface raises it. Neither splits on N>1
+// specifically because a count of 1 cannot be constructed — nib.ReplaceOnce
+// raises the error only for a count that is not 1 — and agreeing on the same
+// boundary keeps the two from disagreeing about a value neither can see.
+//
+// err is rendered as-is rather than the ReplaceMatchError's own message, so
+// whatever context the caller's text carries survives. Two cases need it: the
+// "replacement N failed" prefix nib.ApplyBodyMod adds, which names WHICH
+// operation of a multi-replace modification was refused, and the transport
+// prefix `nibs query` puts on every failure.
+//
+// PRECONDITION: err must represent exactly ONE refused replace — the caller owns
+// establishing that, exactly as for hierarchyError and etagConflictError.
+// errors.As stops at the first *ReplaceMatchError it reaches, so a failure
+// covering several would hand back one count as though it answered all of them.
+// The direct command satisfies this trivially (one mutation, one error, and
+// ApplyBodyMod returns at its first refused replacement); `nibs query`
+// establishes it through formatGraphQLErrors, which sets Err only for a response
+// with a single classified failure of the response's own class.
+func textMatchError(jsonOutput bool, err error) (error, bool) {
 	var matchErr *nib.ReplaceMatchError
-	if errors.As(err, &matchErr) {
-		code := output.ErrTextAmbiguous
-		if matchErr.Count == 0 {
-			code = output.ErrTextNotFound
-		}
-		if jsonOutput {
-			return output.ErrorText(code, err.Error(), matchErr.Count)
-		}
-		return &output.CodedError{Code: code, Msg: err.Error()}
+	if !errors.As(err, &matchErr) {
+		return nil, false
+	}
+	code := output.ErrTextAmbiguous
+	if matchErr.Count == 0 {
+		code = output.ErrTextNotFound
+	}
+	if jsonOutput {
+		return output.ErrorText(code, err.Error(), matchErr.Count), true
+	}
+	return &output.CodedError{Code: code, Msg: err.Error()}, true
+}
+
+// bodyMutationError maps a body-mutation error to a CLI error. A surgical
+// replace that did not match exactly once goes to textMatchError, the shared
+// classifier `nibs query` reaches for the same failure. Everything else (etag
+// conflicts, corrupt-file, generic validation) delegates to set's shared
+// mapping.
+func bodyMutationError(jsonOutput bool, err error) error {
+	if textMatch, ok := textMatchError(jsonOutput, err); ok {
+		return textMatch
 	}
 	return setMutationError(jsonOutput, err)
 }
