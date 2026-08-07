@@ -211,6 +211,7 @@ func (s *stubWriter) RemoveLinksTo(targetID string) (int, error) {
 type stubValidator struct {
 	validateParentErr error
 	detectCycleResult []string
+	validateEnumsErr  error
 }
 
 func (s *stubValidator) ValidateParent(b *nib.Nib, parentID string) error {
@@ -219,6 +220,10 @@ func (s *stubValidator) ValidateParent(b *nib.Nib, parentID string) error {
 
 func (s *stubValidator) DetectCycle(fromID, linkType, toID string) []string {
 	return s.detectCycleResult
+}
+
+func (s *stubValidator) ValidateEnums(b *nib.Nib) error {
+	return s.validateEnumsErr
 }
 
 // stubBlockingChecker implements BlockingChecker for testing.

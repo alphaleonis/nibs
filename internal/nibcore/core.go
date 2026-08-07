@@ -779,7 +779,7 @@ func (c *Core) NormalizeID(id string) (string, bool) {
 	return id, false
 }
 
-// validateEnums checks that the nib's enum fields (type, status, priority,
+// ValidateEnums checks that the nib's enum fields (type, status, priority,
 // estimate) hold either the empty "unset -> use default" sentinel (always
 // accepted) or a value valid under the current config. This is the single
 // write-path chokepoint that gives every entry point — CLI, GraphQL, MCP (which
@@ -789,7 +789,21 @@ func (c *Core) NormalizeID(id string) (string, bool) {
 // only non-empty values are checked, so the empty sentinel that means "apply the
 // default" (EffectiveType/EffectivePriority) is never rejected. No-ops when no
 // config is set (several test setups run config-less).
-func (c *Core) validateEnums(b *nib.Nib) error {
+//
+// It reads no store state — only the nib passed in and the config's enum
+// tables, and those tables are the package-level DefaultStatuses/DefaultTypes/
+// DefaultPriorities/DefaultEstimates rather than anything held per-config. So it
+// takes no lock and is safe to call from outside the store — Create and Update
+// call it while holding c.mu, and the GraphQL updateNib pre-check calls it
+// off-lock through NibValidator to refuse a doomed update before its later steps
+// write to another nib's file.
+//
+// The immutability that matters here is the enum tables', not the config's: the
+// c.config POINTER is fixed at construction, but the struct behind it is live
+// and writable — `nibs config set-prefix` assigns cfg.Nibs.Prefix in place. A
+// future read of a per-config field from this method would therefore need its
+// own argument for going off-lock; the one below does not.
+func (c *Core) ValidateEnums(b *nib.Nib) error {
 	if c.config == nil {
 		return nil
 	}
@@ -820,7 +834,7 @@ func (c *Core) Create(b *nib.Nib) error {
 	defer func() { _ = unlock() }()
 
 	// Reject invalid enum values before touching any state.
-	if err := c.validateEnums(b); err != nil {
+	if err := c.ValidateEnums(b); err != nil {
 		return err
 	}
 
@@ -1069,7 +1083,7 @@ func (c *Core) Update(b *nib.Nib, ifMatch *string) error {
 
 	// Reject invalid enum values before the concurrency guard or any write
 	// — input validity is independent of the etag precondition.
-	if err := c.validateEnums(b); err != nil {
+	if err := c.ValidateEnums(b); err != nil {
 		return err
 	}
 

@@ -48,7 +48,7 @@ func TestETagErrorPresenter_TagsOnlyTypedEtagError(t *testing.T) {
 	})
 
 	t.Run("does NOT tag the enum-validation error", func(t *testing.T) {
-		// Mirrors the plain fmt.Errorf validation errors from nibcore.validateEnums.
+		// Mirrors the plain fmt.Errorf validation errors from nibcore.Core.ValidateEnums.
 		err := fmt.Errorf("invalid status %q: must be one of draft, todo", "bogus")
 
 		gqlErr := etagErrorPresenter(ctx, err)

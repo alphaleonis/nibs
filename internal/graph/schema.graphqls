@@ -50,7 +50,19 @@ type Mutation {
   createNib(input: CreateNibInput!): Nib!
 
   """
-  Update an existing nib
+  Update an existing nib.
+
+  The subject's write-free guards — enum validity, an ifMatch that is required
+  by config but missing, and an ifMatch that disagrees with the on-disk content
+  — are pre-checked before any step that can write to another nib's file, so an
+  update refused for one of those reasons leaves every other nib untouched: the
+  addBlocking/removeBlocking targets, and any sibling whose missing order key a
+  parent or type change would otherwise backfill.
+
+  The remaining guards run under the write lock, and a concurrent modification
+  of the subject between pre-validation and its own write surfaces as
+  ETagMismatchError with this call's writes to other nibs already persisted
+  (matching the bulk-reorder semantics).
   """
   updateNib(id: ID!, input: UpdateNibInput!): Nib!
 

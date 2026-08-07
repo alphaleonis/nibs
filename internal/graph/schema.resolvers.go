@@ -172,16 +172,57 @@ func (r *mutationResolver) UpdateNib(ctx context.Context, id string, input model
 		return nil, err
 	}
 
-	// Update fields if provided
+	// Update fields if provided.
+	//
+	// All four enum fields land in this block, ABOVE the type-change branch that
+	// follows, so preValidateSubject between them sees the final subject and still
+	// precedes every step that writes to another nib's file. Priority and estimate
+	// used to sit below that branch; moving them up also makes the branch position
+	// by the same priority the parent block further down already uses (see the
+	// pre-check comment).
 	if input.Title != nil {
 		b.Title = *input.Title
 	}
 	if input.Status != nil {
 		b.Status = *input.Status
 	}
+	oldEffectiveType := b.EffectiveType()
 	if input.Type != nil {
-		oldEffectiveType := b.EffectiveType()
 		b.Type = *input.Type
+	}
+	// priority/estimate are graphql.Omittable[*string] so an explicit JSON
+	// `null` (IsSet with a nil inner pointer → clear the field) is distinct from
+	// an omitted field (not set → leave unchanged). See gqlgen.yml.
+	if p, ok := input.Priority.ValueOK(); ok {
+		if p != nil {
+			b.Priority = *p
+		} else {
+			b.Priority = "" // explicit null clears the priority
+		}
+	}
+	if e, ok := input.Estimate.ValueOK(); ok {
+		if e != nil {
+			b.Estimate = *e
+		} else {
+			b.Estimate = "" // explicit null clears the estimate
+		}
+	}
+
+	// Everything above assigns to b, the owned clone, and reads nothing off disk.
+	// Every step BELOW can reach a write to another nib's file, so the subject's
+	// write-free guards run here — a doomed update must not leave a durable edit on
+	// a nib it then reports as failed. Two routes get there, and this one call
+	// precedes both: the blocking handlers persist each target directly, and both
+	// calls to validateAndSetParent (the type-change branch immediately below, and
+	// the parent block further down) recalculate the order key on a real parent
+	// change, which reads the sibling set through Orderer.backfillOrderKeys — a
+	// lazy read-path repair that PERSISTS an order key to any sibling that has
+	// none. See preValidateSubject for the window Writer.Update still owns.
+	if err := r.preValidateSubject(b, input.IfMatch); err != nil {
+		return nil, err
+	}
+
+	if input.Type != nil {
 		// Only re-validate relationships when the EFFECTIVE type ACTUALLY changed.
 		// The web edit form always sends `type` unconditionally, so a title-only
 		// edit arrives with type PRESENT but equal to the current value — a no-op.
@@ -208,23 +249,6 @@ func (r *mutationResolver) UpdateNib(ctx context.Context, id string, input model
 					}
 				}
 			}
-		}
-	}
-	// priority/estimate are graphql.Omittable[*string] so an explicit JSON
-	// `null` (IsSet with a nil inner pointer → clear the field) is distinct from
-	// an omitted field (not set → leave unchanged). See gqlgen.yml.
-	if p, ok := input.Priority.ValueOK(); ok {
-		if p != nil {
-			b.Priority = *p
-		} else {
-			b.Priority = "" // explicit null clears the priority
-		}
-	}
-	if e, ok := input.Estimate.ValueOK(); ok {
-		if e != nil {
-			b.Estimate = *e
-		} else {
-			b.Estimate = "" // explicit null clears the estimate
 		}
 	}
 	if input.Body != nil {
