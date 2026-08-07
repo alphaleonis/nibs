@@ -1409,7 +1409,10 @@ describe("Toolbar — token-click affordances", () => {
     expect(toks[0]).toHaveClass("pointer-events-auto");
     // The layer must reproduce the literal box text character-for-character (tokens
     // wrapped, gaps as inert text) so every glyph aligns with the input — no stray
-    // whitespace text nodes from the markup.
+    // whitespace text nodes from the markup. This is the guard for every component
+    // rendering into that flow, WithTooltip included: its trigger/content tags are
+    // deliberately jammed onto one line, and a hand reformat there lands newlines
+    // in this character stream and fails right here.
     expect(layer.textContent).toBe("type:bug status:todo login");
   });
 
@@ -1429,12 +1432,108 @@ describe("Toolbar — token-click affordances", () => {
     const toks = tokens();
     expect(toks).toHaveLength(3);
     for (const tok of toks) {
-      await fireEvent.mouseOver(tok);
+      await user.hover(tok);
       expect(tok.querySelectorAll("button")).toHaveLength(0);
-      // The surviving removal path is advertised on the token itself.
-      expect(tok).toHaveAttribute("title", "Click to select · Delete to remove");
       expect(tok).toHaveClass("cursor-pointer");
     }
+    // The surviving removal path is still advertised — by the hover tooltip now,
+    // whose content is portaled to <body>, so it stays outside the token rather
+    // than becoming a control inside it. Queried after the loop so only the
+    // last-hovered token's tooltip is open.
+    expect(
+      await screen.findByText("Click to select · Delete to remove", {
+        selector: '[data-slot="tooltip-content"]',
+      }),
+    ).toBeInTheDocument();
+  });
+
+  // The token is the last control in the filter band that hinted through the
+  // browser's native tooltip; its siblings (New / Group by / Columns / clear-×) all
+  // use the app's styled one. bits-ui's tooltip content carries no role="tooltip",
+  // so it is matched by its data-slot rather than by role.
+  it("hints a token with the styled tooltip, not a native title", async () => {
+    const prefs = new Preferences();
+    render(Toolbar, { prefs, oncreatenew: vi.fn() });
+
+    await user.type(screen.getByTestId("filter-keyword"), "type:bug login");
+
+    const tok = tokens()[0];
+    await user.hover(tok);
+
+    expect(
+      await screen.findByText("Click to select · Delete to remove", {
+        selector: '[data-slot="tooltip-content"]',
+      }),
+    ).toBeInTheDocument();
+    expect(tok).not.toHaveAttribute("title");
+  });
+
+  // The content is portaled to <body>, so it lands OUTSIDE the aria-hidden token
+  // layer its trigger sits in and inherits none of that hiding. Left alone it would
+  // be the one piece of this pointer-only overlay that AT can reach — describing a
+  // token that, to AT, does not exist.
+  it("hides the token tooltip from AT, matching the layer it describes", async () => {
+    const prefs = new Preferences();
+    render(Toolbar, { prefs, oncreatenew: vi.fn() });
+
+    await user.type(screen.getByTestId("filter-keyword"), "type:bug login");
+    await user.hover(tokens()[0]);
+
+    const content = await screen.findByText("Click to select · Delete to remove", {
+      selector: '[data-slot="tooltip-content"]',
+    });
+    // Guards the premise: if the content rendered inside the layer it would already
+    // inherit aria-hidden and the assertion below would be vacuous.
+    expect(screen.getByTestId("filter-tokens").contains(content)).toBe(false);
+    expect(content).toHaveAttribute("aria-hidden", "true");
+  });
+
+  // The tooltip trigger merges in the attributes it would give a <button>, but this
+  // trigger is a <span> in a pointer-only, aria-hidden layer. `type` is invalid on a
+  // non-button element, and the trigger's default `tabindex="0"` would drop a
+  // focusable node into a subtree AT cannot see — a tab stop that announces nothing.
+  // The span's own attributes have to win over the merged ones.
+  it("keeps a token unfocusable and free of button-only attributes", async () => {
+    const prefs = new Preferences();
+    render(Toolbar, { prefs, oncreatenew: vi.fn() });
+
+    await user.type(screen.getByTestId("filter-keyword"), "type:bug login");
+
+    const toks = tokens();
+    expect(toks).toHaveLength(2);
+    for (const tok of toks) {
+      expect(tok).toHaveAttribute("tabindex", "-1");
+      expect(tok).not.toHaveAttribute("type");
+    }
+  });
+
+  // The hint names the next step ("Delete to remove") but does not survive the click
+  // that makes that step available. The trigger's own close-on-click is inert here
+  // (the Tooltip.Provider sets disableCloseOnTriggerClick), so the closing path is
+  // focus: the click focuses the tabindex="-1" span, selectToken() moves focus to
+  // the input, and bits-ui's spread onblur closes the tooltip. Pinned because the
+  // markup comment documents exactly this, and a comment with no test behind it is
+  // the kind that quietly stops being true.
+  it("closes the token hint when the token is clicked", async () => {
+    const prefs = new Preferences();
+    render(Toolbar, { prefs, oncreatenew: vi.fn() });
+
+    await user.type(screen.getByTestId("filter-keyword"), "type:bug login");
+
+    const tok = tokens()[0];
+    await user.hover(tok);
+    // Guards the premise: with no tooltip open to begin with, the assertion after
+    // the click would pass for the wrong reason.
+    expect(
+      await screen.findByText("Click to select · Delete to remove", {
+        selector: '[data-slot="tooltip-content"]',
+      }),
+    ).toBeInTheDocument();
+
+    await user.click(tok);
+    await tick();
+
+    expect(document.querySelectorAll('[data-slot="tooltip-content"]')).toHaveLength(0);
   });
 
   it("click-select then Delete removes the token and re-derives the filter", async () => {
@@ -2080,5 +2179,21 @@ describe("Toolbar — query syntax help", () => {
   it("gives the trigger an accessible name", () => {
     render(Toolbar, { ...defaultToolbarProps });
     expect(screen.getByRole("button", { name: /query syntax help/i })).toBeInTheDocument();
+  });
+
+  // The `?` sits in the same band as New / Group by / Columns / clear-×, which all
+  // hover through the app's styled tooltip. A native `title` here would read with a
+  // different delay, placement and theming. bits-ui's tooltip content carries no
+  // role="tooltip", so it is matched by its data-slot rather than by role.
+  it("hints the trigger with the styled tooltip, not a native title", async () => {
+    render(Toolbar, { ...defaultToolbarProps });
+
+    const trigger = screen.getByTestId("query-help-trigger");
+    await user.hover(trigger);
+
+    expect(
+      await screen.findByText("Query syntax help", { selector: '[data-slot="tooltip-content"]' }),
+    ).toBeInTheDocument();
+    expect(trigger).not.toHaveAttribute("title");
   });
 });

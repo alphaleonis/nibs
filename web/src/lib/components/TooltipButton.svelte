@@ -40,8 +40,8 @@
            those handlers can never be clobbered by a forwarded prop, then our
            explicit attributes, and `onclick` LAST so an explicit click action
            OVERRIDES the tooltip's own (inert, close-on-click) handler — the
-           button's action always wins. (Contrast TooltipDropdownTrigger, which
-           CHAINS via the dropdown trigger's internal mergeProps.) The tooltip
+           button's action always wins. (Contrast WithTooltip's CHAIN mode, where
+           a bits-ui trigger merges the tooltip's handlers with its own.) The tooltip
            still opens on hover/focus because those handlers live in props and are
            not overridden. -->
       <button
