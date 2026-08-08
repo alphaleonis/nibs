@@ -516,6 +516,37 @@ tasks:
     cmds:
       - bash scripts/vulncheck.sh
 
+  web:vulncheck:
+    desc: Report known advisories in the npm dependency tree (npm audit, allowlisted)
+    # The npm-tree half of `vulncheck`, and deliberately its twin: an allowlist
+    # with a written rationale per entry, a decision made from parsed JSON, and
+    # failure in both directions so a suppression cannot outlive its reason.
+    #
+    # It exists because the two trees are both shipped surface — embed.go embeds
+    # web/dist into the binary, so dompurify, marked, bits-ui, codemirror and the
+    # compiled svelte runtime all reach a user's browser — and only one of them
+    # had a gate (nibs-uilw).
+    #
+    # No web:build or web:install precondition, unlike `vulncheck`: npm audit
+    # resolves the tree from package-lock.json and queries the registry, so it
+    # needs neither node_modules nor a build. That makes it cheap enough to run
+    # anywhere, and keeps it off the install path this repo guards carefully.
+    preconditions:
+      - sh: command -v npm >/dev/null
+        msg: |
+          npm is not on PATH.
+
+          node is pinned in mise.toml. Install mise, then run `mise trust` and
+          `mise install` in this checkout, and make its shims reachable:
+            https://mise.jdx.dev/getting-started.html
+      - sh: command -v jq >/dev/null
+        msg: |
+          jq is not on PATH. The gate parses `npm audit --json` with it.
+          A missing jq fails rather than passing: "could not check" and "nothing
+          to report" must not look alike.
+    cmds:
+      - bash scripts/web-vulncheck.sh
+
   release:prep:
     desc: Build everything a release archive needs (web assets, generated code, license notices)
     # This used to live in .goreleaser.yaml's `before.hooks`, and moving it out

@@ -31,3 +31,9 @@ jobs:
       # so this job builds it itself.
       - run: task web:build
       - run: task vulncheck
+      # The npm tree has the same problem this whole workflow exists for, and
+      # more acutely: its advisory volume is dominated by transitive packages
+      # nobody here ever edits, so "nothing changed" is the normal case rather
+      # than the exception (nibs-uilw). Needs no web/dist of its own — npm audit
+      # reads package-lock.json.
+      - run: task web:vulncheck
