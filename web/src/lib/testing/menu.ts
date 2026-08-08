@@ -30,5 +30,18 @@ export async function openSubmenu(user: User, trigger: HTMLElement): Promise<voi
     if (trigger.getAttribute("data-state") !== "open") {
       throw new Error("submenu did not open");
     }
+    // Wait for the open to SETTLE, not merely to have happened. bits-ui
+    // announces an opening menu to the others so they can close themselves, and
+    // that announcement is deferred — it can still be in flight at the moment
+    // the trigger first reads `open`. The next `await` in the calling test is
+    // then where it lands, which closes this submenu and detaches the element
+    // the test just queried; the click that follows dispatches into a node no
+    // longer in the document and reaches no handler. Yielding to the macrotask
+    // queue here gives a pending announcement its chance to land while we can
+    // still see it, so the retry re-opens instead of the caller failing.
+    await new Promise(resolve => setTimeout(resolve, 0));
+    if (trigger.getAttribute("data-state") !== "open") {
+      throw new Error("submenu closed again after opening");
+    }
   });
 }

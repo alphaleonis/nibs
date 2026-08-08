@@ -122,10 +122,24 @@ function readonlyInput(): HTMLInputElement {
   return input;
 }
 
+/** The physical-key name a real keyboard reports alongside `key`: letters come
+ *  through as `KeyX`, named keys carry their own name. tinykeys discards any
+ *  event whose `code` is empty, so an event without one is not merely
+ *  incomplete — it never reaches a handler, and every assertion built on it
+ *  passes or fails for the wrong reason. */
+function codeFor(key: string): string {
+  return /^[a-z]$/i.test(key) ? `Key${key.toUpperCase()}` : key;
+}
+
 /** Dispatch a real keydown from `from` (bubbles to the window listener). */
 function press(key: string, from: HTMLElement): void {
   from.dispatchEvent(
-    new KeyboardEvent("keydown", { key, bubbles: true, cancelable: true }),
+    new KeyboardEvent("keydown", {
+      key,
+      code: codeFor(key),
+      bubbles: true,
+      cancelable: true,
+    }),
   );
 }
 
@@ -213,7 +227,7 @@ describe("useKeyboardShortcuts · confirm-dialog gate (nibs-an5d)", () => {
     // same confirmOpen() check as bare 'n', but that path is separately bound.
     const button = focusEl(document.createElement("button"));
     button.dispatchEvent(
-      new KeyboardEvent("keydown", { key: "n", ctrlKey: true, bubbles: true, cancelable: true }),
+      new KeyboardEvent("keydown", { key: "n", code: "KeyN", ctrlKey: true, bubbles: true, cancelable: true }),
     );
 
     expect(h.startCreate).not.toHaveBeenCalled();
@@ -225,7 +239,7 @@ describe("useKeyboardShortcuts · confirm-dialog gate (nibs-an5d)", () => {
 
     const button = focusEl(document.createElement("button"));
     button.dispatchEvent(
-      new KeyboardEvent("keydown", { key: "n", ctrlKey: true, bubbles: true, cancelable: true }),
+      new KeyboardEvent("keydown", { key: "n", code: "KeyN", ctrlKey: true, bubbles: true, cancelable: true }),
     );
 
     expect(h.startCreate).toHaveBeenCalledTimes(1);
@@ -330,5 +344,27 @@ describe("useKeyboardShortcuts · bucket target guard (nibs-oxaq)", () => {
 
       expect(h.showConfirm).toHaveBeenCalledTimes(1);
     });
+  });
+});
+
+describe("useKeyboardShortcuts · Escape survives a focused input", () => {
+  // Escape is the one global shortcut deliberately NOT gated by
+  // `isInputFocused()`: closing an open view while the caret is still sitting in
+  // its editor is the entire point of the Escape hierarchy. tinykeys' own target
+  // filter would drop a keypress made from an input before any handler ran, so
+  // `keyboard.ts` turns that filter off — and this test is what holds that
+  // decision in place. Its negative counterpart is the readonly-input gate
+  // above, where suppression IS the wanted behavior; together they pin that the
+  // choice is made per shortcut rather than for all of them at once.
+
+  it("closes an open view when Escape comes from a focused text input", () => {
+    const h = makeHarness({ isOpen: true });
+    mount(h);
+
+    const input = document.createElement("input");
+    input.type = "text";
+    press("Escape", focusEl(input));
+
+    expect(h.requestClose).toHaveBeenCalledTimes(1);
   });
 });

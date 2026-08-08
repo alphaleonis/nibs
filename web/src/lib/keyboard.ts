@@ -1,6 +1,21 @@
 import { tinykeys } from "tinykeys";
 
 /**
+ * Disables tinykeys' own target filtering, which otherwise drops key events
+ * whose target matches `[contenteditable],input,select,textarea` unless that
+ * target is also the listener's element — so for these window-bound bindings
+ * every keypress made while an input holds focus.
+ *
+ * Which shortcuts yield to a focused input is this app's decision to make one
+ * at a time, not the library's to make for all of them: `n` and `e` opt out
+ * while typing via `isInputFocused()`, whereas `Escape` deliberately does not,
+ * because the Escape hierarchy (close view -> deselect -> clear focus) has to
+ * close an open editor while the caret is still in it. A blanket filter
+ * underneath those guards would silently override that choice.
+ */
+const NO_IGNORE = () => false;
+
+/**
  * A mapping from key combo strings (tinykeys format) to handler functions.
  * Examples: "Escape", "$mod+k", "Control+Shift+N"
  */
@@ -54,7 +69,7 @@ export function bindShortcuts(
     }
   }
 
-  const unsubscribe = tinykeys(target, shortcuts);
+  const unsubscribe = tinykeys(target, shortcuts, { ignore: NO_IGNORE });
 
   return () => {
     unsubscribe();
@@ -100,7 +115,7 @@ export function shortcuts(
   node: HTMLElement,
   shortcutMap: ShortcutMap,
 ): { destroy: () => void } {
-  const unsubscribe = tinykeys(node, shortcutMap);
+  const unsubscribe = tinykeys(node, shortcutMap, { ignore: NO_IGNORE });
   return {
     destroy: unsubscribe,
   };
