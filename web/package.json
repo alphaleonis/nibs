@@ -24,7 +24,7 @@
     "@lucide/svelte": "^1.7.0",
     "@playwright/test": "^1.58.2",
     "@sveltejs/vite-plugin-svelte": "^7.0.0",
-    "@tailwindcss/vite": "^4.2.2",
+    "@tailwindcss/vite": "^4.3.3",
     "@testing-library/jest-dom": "^6.9.1",
     "@testing-library/svelte": "^5.3.1",
     "@testing-library/user-event": "^14.6.3",
@@ -33,8 +33,8 @@
     "svelte-check": "^4.7.5",
     "svelte-sonner": "^1.1.1",
     "svelte2tsx": "^0.7.58",
-    "tailwind-variants": "^3.2.2",
-    "tailwindcss": "^4.2.2",
+    "tailwind-variants": "^3.3.1",
+    "tailwindcss": "^4.3.3",
     "typescript": "^6.0.2",
     "vite": "^8.2.1",
     "vitest": "^4.1.10"
@@ -53,7 +53,7 @@
     "graphql-ws": "^6.0.7",
     "marked": "^17.0.5",
     "paneforge": "^1.0.2",
-    "tailwind-merge": "^3.5.0",
+    "tailwind-merge": "^3.6.0",
     "tinykeys": "^3.0.0"
   }
 }
