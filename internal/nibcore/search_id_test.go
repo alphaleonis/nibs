@@ -204,7 +204,8 @@ func TestIDMatchesLocked_CappedAtDefaultSearchLimit(t *testing.T) {
 	}
 
 	core.mu.RLock()
-	matches := core.idMatchesLocked("aa")
+	matches := core.idMatchesLocked("aa", DefaultSearchLimit)
+	uncapped := core.idMatchesLocked("aa", 0)
 	core.mu.RUnlock()
 
 	if len(matches) != DefaultSearchLimit {
@@ -214,6 +215,13 @@ func TestIDMatchesLocked_CappedAtDefaultSearchLimit(t *testing.T) {
 	wantLast := fmt.Sprintf("nibs-aa%04d", DefaultSearchLimit-1)
 	if got := matches[len(matches)-1].ID; got != wantLast {
 		t.Errorf("last kept match = %s, want %s", got, wantLast)
+	}
+
+	// limit <= 0 means no cap — the bound SearchAll asks for, so that an
+	// intersection against an already-bounded working set is not fed a
+	// store-wide top-N.
+	if len(uncapped) != DefaultSearchLimit+5 {
+		t.Errorf("idMatchesLocked(limit 0) returned %d matches, want all %d", len(uncapped), DefaultSearchLimit+5)
 	}
 }
 
@@ -251,7 +259,7 @@ func TestIDMatchesLocked_ForeignPrefixIDs(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			core.mu.RLock()
-			matches := core.idMatchesLocked(tt.query)
+			matches := core.idMatchesLocked(tt.query, DefaultSearchLimit)
 			core.mu.RUnlock()
 
 			got := rawIDList(matches)

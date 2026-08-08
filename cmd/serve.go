@@ -338,12 +338,13 @@ func handleHealth(w http.ResponseWriter, r *http.Request) {
 }
 
 // newGraphQLHandler creates a gqlgen HTTP handler with GET, POST, and WebSocket transports.
-// The returned handler is wrapped in requestCacheMiddleware so every incoming
-// HTTP request gets its own graph.RequestCache in context — resolver helpers
-// (cachedMentions / cachedMentionedBy) use it to memoize per-request mention
-// lookups. The in-process CLI executor (cmd/graphql.go) does NOT route
-// through this middleware and intentionally runs without a cache: a single
-// CLI invocation issues one query, so there's nothing to dedup.
+// Every operation it executes gets its own graph.RequestCache in context via
+// requestCacheAroundOperations — resolver helpers (cachedMentions /
+// cachedMentionedBy / cachedSearchAllIDs) use it to memoize reader lookups that
+// one operation would otherwise repeat once per parent. The in-process CLI
+// executor (cmd/graphql.go) registers no middleware; it attaches an equivalent
+// cache itself in newQueryContext, because one invocation issuing one operation
+// still fans a relationship field out across every parent it selects.
 func newGraphQLHandler(app *App) http.Handler {
 	es := graph.NewExecutableSchema(graph.Config{
 		Resolvers: app.newResolver(),
@@ -357,8 +358,9 @@ func newGraphQLHandler(app *App) http.Handler {
 		KeepAlivePingInterval: 10 * time.Second,
 	})
 	srv.SetErrorPresenter(etagErrorPresenter)
+	srv.AroundOperations(requestCacheAroundOperations)
 
-	return requestCacheMiddleware(srv)
+	return srv
 }
 
 // etagErrorPresenter is the gqlgen error presenter that attaches a stable,
@@ -463,15 +465,20 @@ func setErrorCode(gqlErr *gqlerror.Error, code string) {
 	gqlErr.Extensions["code"] = code
 }
 
-// requestCacheMiddleware installs a fresh graph.RequestCache on each
-// incoming HTTP request's context. Downstream resolvers read it via
-// graph.RequestCacheFrom to coalesce duplicate mention lookups within the
-// request. A new cache per request is essential — sharing across requests
-// would serve stale data after a mutation, since the cache holds direct
-// *nib.Nib slice references.
-func requestCacheMiddleware(next http.Handler) http.Handler {
-	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		ctx := graph.WithRequestCache(r.Context(), graph.NewRequestCache())
-		next.ServeHTTP(w, r.WithContext(ctx))
-	})
+// requestCacheAroundOperations installs a fresh graph.RequestCache on each
+// GraphQL OPERATION's context. Downstream resolvers read it via
+// graph.RequestCacheFrom to coalesce duplicate mention and search lookups
+// within the operation.
+//
+// A new cache per operation is essential — sharing one across operations serves
+// stale data after a mutation, since every entry is derived from live store
+// state. That is also why this is an operation middleware and not an
+// http.Handler wrapper: gqlgen's WebSocket transport stores the upgrade
+// request's context once and derives every later operation from it, so an
+// http.Handler wrapper would install exactly one cache for the whole connection
+// and hold a search answer computed at connect time for as long as the socket
+// lives. AroundOperations runs once per POST, once per GET and once per
+// WebSocket message alike, so all three transports get the same scope.
+func requestCacheAroundOperations(ctx context.Context, next graphql.OperationHandler) graphql.ResponseHandler {
+	return next(graph.WithRequestCache(ctx, graph.NewRequestCache()))
 }

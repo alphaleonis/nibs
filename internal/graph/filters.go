@@ -124,16 +124,15 @@ func refuseContradiction(field string, id *string, presenceField string, presenc
 // search included — see the search branch for what that means where the input is
 // a relationship's members rather than the whole store.
 //
-// ctx carries an optional per-request RequestCache (see request_cache.go); the
-// mention filter branches route through it so duplicate mention lookups
-// within a single GraphQL operation hit the cache instead of the reader.
-// CLI callers or pure unit tests may pass context.Background(); the cache is
-// keyed on ctx values only.
+// ctx carries an optional per-operation RequestCache (see request_cache.go); the
+// mention filter branches and the search branch route through it so a duplicate
+// mention lookup or a repeated search term within a single GraphQL operation
+// hits the cache instead of the reader. CLI callers or pure unit tests may pass
+// context.Background(); the cache is keyed on ctx values only.
 //
-// ctx is currently consulted only by the mention-filter branches (for
-// RequestCache lookup). ApplyFilter does not check cancellation or honor
-// deadlines — passing a canceled ctx will not short-circuit; every filter
-// branch runs to completion.
+// ctx is currently consulted only for that RequestCache lookup. ApplyFilter does
+// not check cancellation or honor deadlines — passing a canceled ctx will not
+// short-circuit; every filter branch runs to completion.
 //
 // Callers threading filter.MentionsID / filter.MentionedByID must let
 // ApplyFilter handle ID resolution via resolveFilterTarget. Pre-normalizing in
@@ -318,7 +317,7 @@ func ApplyFilter(ctx context.Context, nibs []*nib.Nib, filter *model.NibFilter, 
 	}
 
 	// Mention filters (computed via FindMentions/FindMentionedBy on the reader,
-	// routed through the per-request cache so repeated lookups within one
+	// routed through the per-operation cache so repeated lookups within one
 	// GraphQL operation don't re-run the reader).
 	if filter.MentionsID != nil {
 		fullID, err := resolveFilterTarget(reader, "mentionsId", *filter.MentionsID)
@@ -356,7 +355,7 @@ func ApplyFilter(ctx context.Context, nibs []*nib.Nib, filter *model.NibFilter, 
 	// and is refused above.
 	if filter.Search != nil && *filter.Search != "" {
 		var err error
-		if result, err = filterBySearch(result, *filter.Search, reader); err != nil {
+		if result, err = filterBySearch(ctx, result, *filter.Search, reader); err != nil {
 			return nil, err
 		}
 	}
@@ -385,23 +384,29 @@ func ApplyFilter(ctx context.Context, nibs []*nib.Nib, filter *model.NibFilter, 
 // detached snapshots (see NibReader.GetSnapshot) while the reader hands back its
 // own store pointers, so comparing pointers would match nothing.
 //
-// The index is queried ONCE per call, never per candidate. That is still once
-// per parent nib for a relationship field selected across many of them: unlike
-// the mention lookups there is no per-request memoization for search (see
-// request_cache.go).
-func filterBySearch(nibs []*nib.Nib, query string, reader NibReader) ([]*nib.Nib, error) {
-	matches, err := reader.Search(query)
+// It reads the UNCAPPED answer (SearchAll), not the top hits Search returns.
+// The working set here is already bounded by the relation the caller named, so
+// the store-wide cap would truncate the wrong population — "the children of X
+// matching q" would quietly become "the children of X that are also among the
+// store's global top hits for q", dropping a real member that ranks below the
+// cutoff. That is the top level's answer, and it is wrong here; see
+// NibReader.SearchAll.
+//
+// The index is queried ONCE per call, never per candidate, and — through the
+// per-operation cache (request_cache.go) — once per TERM per operation rather
+// than once per parent nib when a relationship field is selected across many of
+// them. The membership set lives in that same memo rather than being rebuilt
+// here, so the per-parent cost is |relation| lookups and nothing proportional to
+// the match set.
+func filterBySearch(ctx context.Context, nibs []*nib.Nib, query string, reader NibReader) ([]*nib.Nib, error) {
+	matched, err := cachedSearchAllIDs(ctx, reader, query)
 	if err != nil {
 		return nil, err
-	}
-	matched := make(map[string]bool, len(matches))
-	for _, b := range matches {
-		matched[b.ID] = true
 	}
 
 	var result []*nib.Nib
 	for _, b := range nibs {
-		if matched[b.ID] {
+		if _, ok := matched[b.ID]; ok {
 			result = append(result, b)
 		}
 	}

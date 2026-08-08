@@ -485,6 +485,7 @@ func TestCoreMutators_FreezePartition(t *testing.T) {
 		"NormalizeID":        true,
 		"Root":               true,
 		"Search":             true,
+		"SearchAll":          true,
 		"SetSearchIndex":     true,
 		"SetWarnWriter":      true,
 		"StartWatching":      true,

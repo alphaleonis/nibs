@@ -1,6 +1,7 @@
 package nibcore
 
 import (
+	"fmt"
 	"os"
 	"testing"
 
@@ -412,4 +413,61 @@ func TestSearch_WithInjectedNoOpIndex(t *testing.T) {
 // Helper to write test files
 func writeTestFile(dir, name, content string) error {
 	return os.WriteFile(dir+"/"+name, []byte(content), 0644)
+}
+
+// TestSearchAll_IsNotBoundedByDefaultSearchLimit pins the difference between the
+// two search entry points, through the real Bleve index rather than a stub.
+//
+// Search answers with the TOP DefaultSearchLimit hits — for a top-level query
+// that truncation is the answer, and it is what keeps a one-word query over a
+// large store from materializing it. SearchAll answers with every match, for the
+// callers that intersect the result with a working set they already bounded:
+// there a store-wide cap truncates the wrong population and drops genuine
+// members with no error and no signal.
+//
+// Both legs are exercised. The term matches every nib's title (the full-text
+// leg) and the shared "aa" id fragment matches every id (the id leg), so a cap
+// that survived on either one shows up as a short answer here.
+func TestSearchAll_IsNotBoundedByDefaultSearchLimit(t *testing.T) {
+	core, _ := setupTestCore(t)
+	defer func() { _ = core.Close() }()
+
+	const total = DefaultSearchLimit + 5
+	for i := range total {
+		id := fmt.Sprintf("aa%04d", i)
+		if err := core.Create(&nib.Nib{ID: id, Slug: id, Title: "quarkfoo entry", Status: "todo"}); err != nil {
+			t.Fatalf("Create(%s) error = %v", id, err)
+		}
+	}
+
+	tests := []struct {
+		name  string
+		query string
+		// leg names which half of Core.Search the query reaches, so a failure
+		// says which one regained a cap.
+		leg string
+	}{
+		{"full-text leg", "quarkfoo", "index"},
+		{"id-match leg", "aa", "id"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			capped, err := core.Search(tt.query)
+			if err != nil {
+				t.Fatalf("Search(%q) error = %v", tt.query, err)
+			}
+			if len(capped) != DefaultSearchLimit {
+				t.Errorf("Search(%q) returned %d nibs, want the top %d (%s leg)", tt.query, len(capped), DefaultSearchLimit, tt.leg)
+			}
+
+			all, err := core.SearchAll(tt.query)
+			if err != nil {
+				t.Fatalf("SearchAll(%q) error = %v", tt.query, err)
+			}
+			if len(all) != total {
+				t.Errorf("SearchAll(%q) returned %d nibs, want all %d (%s leg still capped)", tt.query, len(all), total, tt.leg)
+			}
+		})
+	}
 }

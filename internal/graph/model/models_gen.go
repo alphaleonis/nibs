@@ -146,13 +146,13 @@ type NibFilter struct {
 	// apply: the field keeps its own order (children stay in order key order),
 	// since the term selects rather than ranks.
 	//
-	// The index answers with at most 1000 hits per leg (id matches and full-text
-	// hits are capped separately), and BOTH surfaces read that same store-wide
-	// answer. At the top level the cap is the answer — the top hits for the term. On
-	// a relationship field it is applied to the whole store before the intersection,
-	// so in a store large enough for a term to reach the cap, a member of the
-	// relation that matches the term but falls outside those hits is not in the
-	// result.
+	// The two surfaces read differently bounded answers, because a cap means
+	// different things to them. At the top level the index answers with at most 1000
+	// hits per leg (id matches and full-text hits are capped separately) and that
+	// truncation IS the answer — the top hits for the term. A relationship field is
+	// already bounded by the relation it names, so it reads the UNCAPPED answer and
+	// intersects that: every member of the relation matching the term is in the
+	// result, however it ranks store-wide.
 	Search *string `json:"search,omitempty"`
 	// Include only nibs with these statuses (OR logic)
 	Status []string `json:"status,omitempty"`
