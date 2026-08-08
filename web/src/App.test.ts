@@ -3,6 +3,7 @@ import { userEvent } from "@testing-library/user-event";
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import App from "./App.svelte";
 import { CONFIG_QUERY, NIB_DETAIL_QUERY } from "./lib/queries";
+import { openSubmenu } from "./lib/testing/menu";
 
 // The detail query for a nib that exists NOW but can be made to vanish mid-session
 // (deleted / archived while the user has it open). Hoisted so the mock factory and
@@ -516,8 +517,7 @@ describe("App", () => {
     const row = container.querySelector("tr[data-nib-id='nibs-abc1']") as HTMLElement;
     await user.pointer({ target: row, keys: "[MouseRight]" });
 
-    // bits-ui opens the submenu on pointerenter of its trigger.
-    await user.pointer({ target: await screen.findByTestId("ctx-filter-related-trigger") });
+    await openSubmenu(user, await screen.findByTestId("ctx-filter-related-trigger"));
     await user.click(await screen.findByText("Descendants of this"));
 
     // The picked token lands in its canonical slot BETWEEN the surviving status

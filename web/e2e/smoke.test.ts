@@ -20,7 +20,7 @@ test.describe("smoke", () => {
     const titleBtn = rows.first().locator('[data-action="title"]');
     await titleBtn.click();
 
-    const detailPanel = page.locator('[data-testid="detail-panel"]');
+    const detailPanel = page.locator('[data-testid="active-nib-view"]');
     await expect(detailPanel).toBeVisible({ timeout: 5_000 });
   });
 });
@@ -31,12 +31,12 @@ test.describe("multi-select", () => {
 
     // Click first row (non-action area → select)
     const firstRow = rows.first();
-    await firstRow.locator('[data-testid="nib-state"]').click();
+    await firstRow.locator('[data-testid="nib-type"]').click();
     await expect(firstRow).toHaveClass(/active/);
 
     // Ctrl+click second row (→ toggleSelect)
     const secondRow = rows.nth(1);
-    await secondRow.locator('[data-testid="nib-state"]').click({ modifiers: ["ControlOrMeta"] });
+    await secondRow.locator('[data-testid="nib-type"]').click({ modifiers: ["ControlOrMeta"] });
 
     // Both should be selected
     await expect(firstRow).toHaveClass(/active/);
@@ -47,11 +47,11 @@ test.describe("multi-select", () => {
     const rows = await waitForTable(page);
 
     // Click first row to anchor
-    await rows.first().locator('[data-testid="nib-state"]').click();
+    await rows.first().locator('[data-testid="nib-type"]').click();
     await expect(rows.first()).toHaveClass(/active/);
 
     // Shift+click third row (→ rangeSelect: rows 0, 1, 2)
-    await rows.nth(2).locator('[data-testid="nib-state"]').click({ modifiers: ["Shift"] });
+    await rows.nth(2).locator('[data-testid="nib-type"]').click({ modifiers: ["Shift"] });
 
     // All three should be selected
     await expect(rows.first()).toHaveClass(/active/);
@@ -115,7 +115,7 @@ test.describe("keyboard navigation", () => {
 
     // Click title to open detail panel
     await rows.first().locator('[data-action="title"]').click();
-    const detailPanel = page.locator('[data-testid="detail-panel"]');
+    const detailPanel = page.locator('[data-testid="active-nib-view"]');
     await expect(detailPanel).toBeVisible({ timeout: 5_000 });
 
     // Escape closes detail panel
