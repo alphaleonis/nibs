@@ -17,15 +17,19 @@ describe("StatusSelect", () => {
     // Open dropdown
     await user.click(trigger);
 
-    // All statuses should be present as options
+    // Every status is offered, in transition order — the order the work
+    // actually moves through, matching the TUI's picker. It deliberately
+    // differs from the STATUSES order that sorting and the facets use.
     const options = screen.getAllByRole("option");
     const labels = options.map((o) => o.textContent?.trim());
-    expect(labels).toContain("draft");
-    expect(labels).toContain("todo");
-    expect(labels).toContain("in-progress");
-    expect(labels).toContain("deferred");
-    expect(labels).toContain("completed");
-    expect(labels).toContain("scrapped");
+    expect(labels).toEqual([
+      "draft",
+      "todo",
+      "in-progress",
+      "completed",
+      "deferred",
+      "scrapped",
+    ]);
 
     // Select a different status
     await user.click(screen.getByRole("option", { name: "in-progress" }));

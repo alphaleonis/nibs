@@ -285,6 +285,27 @@ test("context menu", async ({ page }) => {
   await shot(page, "context-menu");
 });
 
+test("context menu — status submenu", async ({ page }) => {
+  // The status list reads as the transition flow (draft → todo → in-progress →
+  // completed → deferred → scrapped), not the most-active-first order the table
+  // sorts by. Only a rendered list shows that, so it gets its own capture.
+  await openApp(page);
+  await page.locator("tr[data-nib-id]").first().click({ button: "right" });
+  await expect(page.locator('[data-testid="context-menu"]')).toBeVisible({ timeout: 3_000 });
+  await page.locator('[data-testid="ctx-status-trigger"]').hover();
+  await expect(page.locator('[data-testid="ctx-status-draft"]')).toBeVisible({ timeout: 3_000 });
+  await shot(page, "context-menu-status");
+});
+
+test("status select — open, in the active nib view", async ({ page }) => {
+  await openApp(page);
+  await page.locator("tr[data-nib-id]").first().locator('[data-action="title"]').click();
+  await expect(page.locator('[data-testid="active-nib-view"]')).toBeVisible({ timeout: 5_000 });
+  await page.locator('[data-testid="anv-status"]').click();
+  await expect(page.getByRole("option", { name: "draft" })).toBeVisible({ timeout: 3_000 });
+  await shot(page, "status-select-open");
+});
+
 test("add-child type picker — anchored, over an open detail view", async ({ page }) => {
   // The picker is an anchored popover (with type icons) that overlays
   // the app; opening it must NOT hide the detail view. Use an epic (>=2 valid

@@ -83,8 +83,10 @@ type statusPickerModel struct {
 }
 
 func newStatusPickerModel(nibIDs []string, nibTitle, currentStatus string, cfg *config.Config, width, height int) statusPickerModel {
-	// Get all statuses (hardcoded in config package)
-	statuses := config.DefaultStatuses
+	// All statuses (hardcoded in config package), in transition order rather
+	// than the sort order of DefaultStatuses — a picker reads as the path the
+	// work takes, not as the list's most-active-first ranking.
+	statuses := cfg.WorkflowStatuses()
 
 	delegate := statusItemDelegate{}
 
