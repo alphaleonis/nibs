@@ -5,9 +5,9 @@ import (
 	"strconv"
 	"strings"
 
+	"charm.land/lipgloss/v2"
 	"github.com/alphaleonis/nibs/internal/config"
 	"github.com/alphaleonis/nibs/internal/nib"
-	"github.com/charmbracelet/lipgloss"
 )
 
 // TreeNode represents a node in the nib tree hierarchy.

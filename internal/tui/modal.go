@@ -3,8 +3,8 @@ package tui
 import (
 	"strings"
 
+	"charm.land/lipgloss/v2"
 	"github.com/alphaleonis/nibs/internal/ui"
-	"github.com/charmbracelet/lipgloss"
 )
 
 // pickerModalConfig holds configuration for rendering a picker modal
@@ -61,8 +61,8 @@ func reservePickerDescription(selected string, all []string, modalWidth int) str
 	// right margin), so the description aligns under the list items and the
 	// pre-wrapped block fits inside the modal without being re-wrapped. The -6
 	// must stay within renderPickerModal's chrome budget (its Border + Padding(0,1)
-	// on Width(modalWidth)) — if that padding/border ever widens, this must track
-	// it or the pre-wrapped block gets re-wrapped and the height-jump bug returns.
+	// around modalWidth of content) — if that padding/border ever widens, this must
+	// track it or the pre-wrapped block gets re-wrapped and the height-jump bug returns.
 	// See the matching note at renderPickerModal's border block.
 	descWidth := modalWidth - 6
 	style := lipgloss.NewStyle().Width(descWidth)
@@ -121,7 +121,7 @@ func renderPickerModal(cfg pickerModalConfig) string {
 		Border(lipgloss.RoundedBorder()).
 		BorderForeground(ui.ColorPrimary).
 		Padding(0, 1).
-		Width(modalWidth)
+		Width(withBorder(modalWidth))
 
 	// Assemble content
 	var parts []string

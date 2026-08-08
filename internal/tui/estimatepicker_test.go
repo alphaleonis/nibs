@@ -3,8 +3,8 @@ package tui
 import (
 	"testing"
 
-	tea "github.com/charmbracelet/bubbletea"
-	"github.com/charmbracelet/lipgloss"
+	tea "charm.land/bubbletea/v2"
+	"charm.land/lipgloss/v2"
 
 	"github.com/alphaleonis/nibs/internal/config"
 	"github.com/alphaleonis/nibs/internal/nib"
@@ -91,7 +91,7 @@ func TestEstimatePickerModel(t *testing.T) {
 		)
 
 		// Press enter on the pre-selected item ("m")
-		_, cmd := m.Update(tea.KeyMsg{Type: tea.KeyEnter})
+		_, cmd := m.Update(tea.KeyPressMsg{Code: tea.KeyEnter})
 		if cmd == nil {
 			t.Fatal("expected a command from enter key")
 		}
@@ -115,7 +115,7 @@ func TestEstimatePickerModel(t *testing.T) {
 			cfg, 80, 24,
 		)
 
-		_, cmd := m.Update(tea.KeyMsg{Type: tea.KeyEscape})
+		_, cmd := m.Update(tea.KeyPressMsg{Code: tea.KeyEscape})
 		if cmd == nil {
 			t.Fatal("expected a command from esc key")
 		}
@@ -190,7 +190,7 @@ func TestAppEstimatePickerWiring(t *testing.T) {
 		testNib := &nib.Nib{ID: "nib-1", Title: "Test", Status: "todo", Type: "task", Estimate: "m"}
 		app.detail = newDetailModel(testNib, stub, cfg, 80, 24)
 
-		_, cmd := app.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'E'}})
+		_, cmd := app.Update(tea.KeyPressMsg{Code: 'E', Text: "E"})
 		if cmd == nil {
 			t.Fatal("expected a command from E key in detail view")
 		}

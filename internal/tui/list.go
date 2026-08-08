@@ -6,13 +6,13 @@ import (
 	"io"
 	"strings"
 
+	"charm.land/bubbles/v2/list"
+	tea "charm.land/bubbletea/v2"
+	"charm.land/lipgloss/v2"
 	"github.com/alphaleonis/nibs/internal/config"
 	"github.com/alphaleonis/nibs/internal/graph/model"
 	"github.com/alphaleonis/nibs/internal/nib"
 	"github.com/alphaleonis/nibs/internal/ui"
-	"github.com/charmbracelet/bubbles/list"
-	tea "github.com/charmbracelet/bubbletea"
-	"github.com/charmbracelet/lipgloss"
 )
 
 // nibItem wraps a Nib to implement list.Item, with tree context
@@ -162,8 +162,7 @@ func newListModel(backend Backend, cfg *config.Config) listModel {
 	l.SetShowStatusBar(false)
 	l.SetFilteringEnabled(true)
 	l.SetShowHelp(false)
-	l.Styles.FilterPrompt = lipgloss.NewStyle().Foreground(ui.ColorPrimary)
-	l.Styles.FilterCursor = lipgloss.NewStyle().Foreground(ui.ColorPrimary)
+	applyFilterStyles(&l.Styles)
 
 	m := listModel{
 		list:          l,
@@ -356,10 +355,10 @@ func (m listModel) Update(msg tea.Msg) (listModel, tea.Cmd) {
 		m.err = msg.err
 		return m, nil
 
-	case tea.KeyMsg:
+	case tea.KeyPressMsg:
 		if m.list.FilterState() != list.Filtering {
 			switch msg.String() {
-			case " ":
+			case "space":
 				// Toggle selection for multi-select, then move to next item
 				if item, ok := m.list.SelectedItem().(nibItem); ok {
 					if m.selectedNibs[item.nib.ID] {
@@ -692,9 +691,9 @@ func (m listModel) Update(msg tea.Msg) (listModel, tea.Cmd) {
 
 			// PgUp: if not on first line of page, snap to first line;
 			// otherwise fall through to default page-change behavior.
-			// Use msg.Type directly because bubbles disables PrevPage/NextPage
+			// Use msg.Code directly because bubbles disables PrevPage/NextPage
 			// bindings on single-page lists, making key.Matches() return false.
-			if msg.Type == tea.KeyPgUp && m.list.Cursor() > 0 {
+			if msg.Code == tea.KeyPgUp && m.list.Cursor() > 0 {
 				firstOnPage := m.list.Paginator.Page * m.list.Paginator.PerPage
 				m.list.Select(firstOnPage)
 				if m.list.Index() != prevIndex {
@@ -709,7 +708,7 @@ func (m listModel) Update(msg tea.Msg) (listModel, tea.Cmd) {
 
 			// PgDn: if not on last line of page, snap to last line;
 			// otherwise fall through to default page-change behavior.
-			if msg.Type == tea.KeyPgDown {
+			if msg.Code == tea.KeyPgDown {
 				itemsOnPage := m.list.Paginator.ItemsOnPage(len(m.list.VisibleItems()))
 				if m.list.Cursor() < itemsOnPage-1 {
 					lastOnPage := m.list.Paginator.Page*m.list.Paginator.PerPage + itemsOnPage - 1
@@ -900,8 +899,8 @@ func (m listModel) viewContent(innerHeight int) string {
 	border := lipgloss.NewStyle().
 		Border(lipgloss.RoundedBorder()).
 		BorderForeground(ui.ColorMuted).
-		Width(m.width - 2).
-		Height(innerHeight)
+		Width(withBorder(m.width - 2)).
+		Height(withBorder(innerHeight))
 
 	rendered := border.Render(m.list.View())
 

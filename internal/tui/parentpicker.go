@@ -7,13 +7,13 @@ import (
 	"sort"
 	"strings"
 
+	"charm.land/bubbles/v2/list"
+	tea "charm.land/bubbletea/v2"
+	"charm.land/lipgloss/v2"
 	"github.com/alphaleonis/nibs/internal/config"
 	"github.com/alphaleonis/nibs/internal/nib"
 	"github.com/alphaleonis/nibs/internal/nibtypes"
 	"github.com/alphaleonis/nibs/internal/ui"
-	"github.com/charmbracelet/bubbles/list"
-	tea "github.com/charmbracelet/bubbletea"
-	"github.com/charmbracelet/lipgloss"
 )
 
 // parentSelectedMsg is sent when a parent is selected from the picker
@@ -187,8 +187,7 @@ func newParentPickerModel(nibIDs []string, nibTitle string, nibTypes []string, c
 	l.SetShowPagination(false)
 	l.Styles.Title = listTitleStyle
 	l.Styles.TitleBar = lipgloss.NewStyle().Padding(0, 0, 0, 0)
-	l.Styles.FilterPrompt = lipgloss.NewStyle().Foreground(ui.ColorPrimary)
-	l.Styles.FilterCursor = lipgloss.NewStyle().Foreground(ui.ColorPrimary)
+	applyFilterStyles(&l.Styles)
 
 	m := parentPickerModel{
 		list:          l,
@@ -314,7 +313,7 @@ func (m parentPickerModel) Update(msg tea.Msg) (parentPickerModel, tea.Cmd) {
 		listHeight := modalHeight - 7
 		m.list.SetSize(listWidth, listHeight)
 
-	case tea.KeyMsg:
+	case tea.KeyPressMsg:
 		if m.list.FilterState() != list.Filtering {
 			switch msg.String() {
 			case "enter":

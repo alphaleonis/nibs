@@ -128,7 +128,7 @@ Use --children-of "" to reorder root-level (no-parent) siblings.`,
 			if mvJSON {
 				return output.SuccessMultiple(filterReleasedBlockers(results, app.Core))
 			}
-			fmt.Println(ui.Success.Render(fmt.Sprintf("Reordered %d children", len(results))))
+			ui.Println(ui.Success.Render(fmt.Sprintf("Reordered %d children", len(results))))
 			return nil
 		}
 
@@ -168,7 +168,7 @@ Use --children-of "" to reorder root-level (no-parent) siblings.`,
 			if mvJSON {
 				return output.SuccessMultiple(filterReleasedBlockers(results, app.Core))
 			}
-			fmt.Println(ui.Success.Render(fmt.Sprintf("Reordered %d siblings", len(results))))
+			ui.Println(ui.Success.Render(fmt.Sprintf("Reordered %d siblings", len(results))))
 			return nil
 		}
 

@@ -3,8 +3,8 @@ package tui
 import (
 	"testing"
 
-	tea "github.com/charmbracelet/bubbletea"
-	"github.com/charmbracelet/lipgloss"
+	tea "charm.land/bubbletea/v2"
+	"charm.land/lipgloss/v2"
 
 	"github.com/alphaleonis/nibs/internal/config"
 )
@@ -130,7 +130,7 @@ func TestStatusPickerModel(t *testing.T) {
 		)
 
 		// Pre-selected item is "deferred"; press enter.
-		_, cmd := m.Update(tea.KeyMsg{Type: tea.KeyEnter})
+		_, cmd := m.Update(tea.KeyPressMsg{Code: tea.KeyEnter})
 		if cmd == nil {
 			t.Fatal("expected a command from enter key")
 		}

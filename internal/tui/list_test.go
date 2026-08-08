@@ -5,11 +5,11 @@ import (
 	"strings"
 	"testing"
 
+	tea "charm.land/bubbletea/v2"
+	"charm.land/lipgloss/v2"
 	"github.com/alphaleonis/nibs/internal/config"
 	"github.com/alphaleonis/nibs/internal/nib"
 	"github.com/alphaleonis/nibs/internal/ui"
-	tea "github.com/charmbracelet/bubbletea"
-	"github.com/charmbracelet/lipgloss"
 )
 
 // makeTestNibs creates n nibs with sequential IDs and titles, all todo/task.
@@ -33,14 +33,14 @@ func TestPgUpSnapsToFirstLineOfPage(t *testing.T) {
 
 	// Move cursor down so we're mid-page
 	for range 5 {
-		sendKey(app, tea.KeyMsg{Type: tea.KeyDown})
+		sendKey(app, tea.KeyPressMsg{Code: tea.KeyDown})
 	}
 	if app.list.list.Cursor() == 0 {
 		t.Fatal("expected cursor to not be on first line")
 	}
 
 	// PgUp should snap to first line of current page, NOT change page
-	sendKey(app, tea.KeyMsg{Type: tea.KeyPgUp})
+	sendKey(app, tea.KeyPressMsg{Code: tea.KeyPgUp})
 
 	if app.list.list.Cursor() != 0 {
 		t.Errorf("expected page-local cursor 0 after PgUp, got %d", app.list.list.Cursor())
@@ -56,8 +56,8 @@ func TestPgUpOnFirstLineChangesPrevPage(t *testing.T) {
 
 	// Navigate to page 1 (cursor lands on last line of page 0, then page change)
 	// First PgDn snaps to last line of page 0, second PgDn goes to page 1
-	sendKey(app, tea.KeyMsg{Type: tea.KeyPgDown})
-	sendKey(app, tea.KeyMsg{Type: tea.KeyPgDown})
+	sendKey(app, tea.KeyPressMsg{Code: tea.KeyPgDown})
+	sendKey(app, tea.KeyPressMsg{Code: tea.KeyPgDown})
 	if app.list.list.Paginator.Page != 1 {
 		t.Fatalf("expected page 1, got %d", app.list.list.Paginator.Page)
 	}
@@ -66,9 +66,9 @@ func TestPgUpOnFirstLineChangesPrevPage(t *testing.T) {
 	// PgUp while on first line should go back to previous page
 	if app.list.list.Cursor() != 0 {
 		// Snap to first line first
-		sendKey(app, tea.KeyMsg{Type: tea.KeyPgUp})
+		sendKey(app, tea.KeyPressMsg{Code: tea.KeyPgUp})
 	}
-	sendKey(app, tea.KeyMsg{Type: tea.KeyPgUp})
+	sendKey(app, tea.KeyPressMsg{Code: tea.KeyPgUp})
 
 	if app.list.list.Paginator.Page != 0 {
 		t.Errorf("expected page 0 after PgUp from first line of page 1, got %d", app.list.list.Paginator.Page)
@@ -85,7 +85,7 @@ func TestPgDnSnapsToLastLineOfPage(t *testing.T) {
 	}
 
 	// PgDn should snap to last line of current page, NOT change page
-	sendKey(app, tea.KeyMsg{Type: tea.KeyPgDown})
+	sendKey(app, tea.KeyPressMsg{Code: tea.KeyPgDown})
 
 	perPage := app.list.list.Paginator.PerPage
 	if app.list.list.Cursor() != perPage-1 {
@@ -101,13 +101,13 @@ func TestPgDnOnLastLineChangesNextPage(t *testing.T) {
 	app, _ := setupTestApp(t, testNibs)
 
 	// First PgDn snaps to last line
-	sendKey(app, tea.KeyMsg{Type: tea.KeyPgDown})
+	sendKey(app, tea.KeyPressMsg{Code: tea.KeyPgDown})
 	if app.list.list.Paginator.Page != 0 {
 		t.Fatalf("expected to still be on page 0 after first PgDn, got %d", app.list.list.Paginator.Page)
 	}
 
 	// Second PgDn should change page since we're on the last line
-	sendKey(app, tea.KeyMsg{Type: tea.KeyPgDown})
+	sendKey(app, tea.KeyPressMsg{Code: tea.KeyPgDown})
 	if app.list.list.Paginator.Page != 1 {
 		t.Errorf("expected page 1 after PgDn from last line, got %d", app.list.list.Paginator.Page)
 	}
@@ -119,7 +119,7 @@ func TestPgDnOnLastPageLastLineStaysOnLastItem(t *testing.T) {
 
 	// Navigate to end: keep pressing PgDn until we can't go further
 	for range 20 {
-		sendKey(app, tea.KeyMsg{Type: tea.KeyPgDown})
+		sendKey(app, tea.KeyPressMsg{Code: tea.KeyPgDown})
 	}
 
 	lastIndex := len(app.list.list.VisibleItems()) - 1
@@ -137,7 +137,7 @@ func TestPgDnSinglePageSnapsToLastItem(t *testing.T) {
 		t.Fatalf("expected 1 page, got %d", app.list.list.Paginator.TotalPages)
 	}
 
-	sendKey(app, tea.KeyMsg{Type: tea.KeyPgDown})
+	sendKey(app, tea.KeyPressMsg{Code: tea.KeyPgDown})
 
 	if app.list.list.Index() != 4 {
 		t.Errorf("expected cursor at last item 4, got %d", app.list.list.Index())
@@ -150,10 +150,10 @@ func TestPgUpSinglePageSnapsToFirstItem(t *testing.T) {
 
 	// Move cursor down
 	for range 3 {
-		sendKey(app, tea.KeyMsg{Type: tea.KeyDown})
+		sendKey(app, tea.KeyPressMsg{Code: tea.KeyDown})
 	}
 
-	sendKey(app, tea.KeyMsg{Type: tea.KeyPgUp})
+	sendKey(app, tea.KeyPressMsg{Code: tea.KeyPgUp})
 
 	if app.list.list.Index() != 0 {
 		t.Errorf("expected cursor at index 0, got %d", app.list.list.Index())

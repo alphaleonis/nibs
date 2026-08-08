@@ -3,9 +3,9 @@ package tui
 import (
 	"strings"
 
+	"charm.land/lipgloss/v2"
 	"github.com/alphaleonis/nibs/internal/nib"
 	"github.com/alphaleonis/nibs/internal/ui"
-	"github.com/charmbracelet/lipgloss"
 )
 
 // previewModel is a read-only detail preview for the two-column layout.
@@ -100,8 +100,8 @@ func (m previewModel) renderNib() string {
 		Border(lipgloss.RoundedBorder()).
 		BorderForeground(ui.ColorMuted).
 		Padding(0, 1).
-		Width(m.width - 2).
-		Height(innerHeight)
+		Width(withBorder(m.width - 2)).
+		Height(withBorder(innerHeight))
 
 	result := borderStyle.Render(content)
 

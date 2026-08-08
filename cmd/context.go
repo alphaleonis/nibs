@@ -140,58 +140,58 @@ func directChildStatuses(allNibs []*nib.Nib) map[string][]string {
 
 func renderContextPretty(out contextOutput) error {
 	for _, w := range out.Warnings {
-		fmt.Println(ui.Warning.Render("⚠ " + w))
+		ui.Println(ui.Warning.Render("⚠ " + w))
 	}
 
 	// Overview mode: active milestones with rollups.
 	if len(out.Milestones) > 0 {
-		fmt.Println(ui.Header.Render("Milestones"))
+		ui.Println(ui.Header.Render("Milestones"))
 		for _, m := range out.Milestones {
 			renderMilestoneLine(m)
 		}
-		fmt.Println()
+		ui.Println()
 		return nil
 	}
 
 	// Detail mode.
 	if out.Root != nil {
-		fmt.Println(ui.Header.Render("Root"))
-		fmt.Printf("  %s  %s\n\n", ui.ID.Render(out.Root.ID), ui.Title.Render(out.Root.Title))
+		ui.Println(ui.Header.Render("Root"))
+		ui.Printf("  %s  %s\n\n", ui.ID.Render(out.Root.ID), ui.Title.Render(out.Root.Title))
 	}
 
 	if out.ActivePhase != nil {
-		fmt.Println(ui.Header.Render("Active Phase"))
-		fmt.Printf("  %s  %s\n\n", ui.ID.Render(out.ActivePhase.ID), out.ActivePhase.Title)
+		ui.Println(ui.Header.Render("Active Phase"))
+		ui.Printf("  %s  %s\n\n", ui.ID.Render(out.ActivePhase.ID), out.ActivePhase.Title)
 	}
 
 	if out.Progress != nil {
-		fmt.Println(ui.Header.Render("Progress"))
+		ui.Println(ui.Header.Render("Progress"))
 		renderProgressBar(*out.Progress)
-		fmt.Println()
+		ui.Println()
 	}
 
 	if len(out.ActiveTasks) > 0 {
-		fmt.Println(ui.Header.Render("Active Tasks"))
+		ui.Println(ui.Header.Render("Active Tasks"))
 		for _, n := range out.ActiveTasks {
-			fmt.Printf("  %s  %s\n", ui.ID.Render(n.ID), n.Title)
+			ui.Printf("  %s  %s\n", ui.ID.Render(n.ID), n.Title)
 		}
-		fmt.Println()
+		ui.Println()
 	}
 
 	if len(out.NextTasks) > 0 {
-		fmt.Println(ui.Header.Render("Next Tasks"))
+		ui.Println(ui.Header.Render("Next Tasks"))
 		for _, n := range out.NextTasks {
-			fmt.Printf("  %s  %s\n", ui.ID.Render(n.ID), n.Title)
+			ui.Printf("  %s  %s\n", ui.ID.Render(n.ID), n.Title)
 		}
-		fmt.Println()
+		ui.Println()
 	}
 
 	if len(out.Decisions) > 0 {
-		fmt.Println(ui.Header.Render("Key Decisions"))
+		ui.Println(ui.Header.Render("Key Decisions"))
 		for _, d := range out.Decisions {
-			fmt.Printf("  • %s\n", d)
+			ui.Printf("  • %s\n", d)
 		}
-		fmt.Println()
+		ui.Println()
 	}
 
 	return nil
@@ -210,13 +210,13 @@ func renderMilestoneLine(m milestoneContext) {
 	if m.ActivePhase != nil {
 		line += fmt.Sprintf("  %s %s", ui.Muted.Render("phase:"), m.ActivePhase.Title)
 	}
-	fmt.Println(line)
+	ui.Println(line)
 }
 
 // renderProgressBar renders the detail-mode progress bar for a rollup.
 func renderProgressBar(p graph.ProgressRollup) {
 	const barWidth = 30
-	fmt.Printf("  %s %s %s\n",
+	ui.Printf("  %s %s %s\n",
 		progressBar(p, barWidth),
 		ui.Bold.Render(fmt.Sprintf("%d%%", p.Percent)),
 		ui.Muted.Render(fmt.Sprintf("(%d/%d)", p.Done, p.Total)))
