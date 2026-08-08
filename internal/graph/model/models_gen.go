@@ -32,10 +32,12 @@ type BodyModification struct {
 // ETagMismatchError for that nib, leaving prior writes in this batch
 // persisted (matching single-nib reorderNib semantics).
 //
-// The two mismatches differ on the wire. That racing mismatch carries
-// extensions.code = "ETAG_MISMATCH", so a GraphQL client can route it
-// structurally rather than on message text; the pre-validation mismatch carries
-// no extensions.code and must be recognized by message text today.
+// Both mismatches — the pre-validation one and the racing one — carry
+// extensions.code = "ETAG_MISMATCH", so a GraphQL client can route either
+// conflict structurally rather than on message text. The code does NOT
+// distinguish them, and they differ in durability (see above): a client that
+// must know whether part of the batch landed has to re-read the affected nibs
+// rather than infer it from the code.
 type ChildEtag struct {
 	ID   string `json:"id"`
 	Etag string `json:"etag"`

@@ -113,6 +113,16 @@ Use --children-of "" to reorder root-level (no-parent) siblings.`,
 			// is the right flag for Mode A: it carries per-id etags.
 			results, err := resolver.Mutation().ReorderChildren(ctx, mvChildrenOf, args, childIfMatch)
 			if err != nil {
+				// A stale --child-if-match is the same reconcilable conflict a stale
+				// --if-match raises in single-nib mode, so it reports the same class:
+				// CONFLICT/exit 4 carrying the server's current etag, not FILE_ERROR/
+				// exit 5, which tells an agent to stop rather than re-read and retry.
+				// The error names the offending nib, and pre-validation aborts at the
+				// first mismatch before any write, so the one token speaks for the
+				// whole refusal.
+				if conflict, ok := etagConflictError(mvJSON, err); ok {
+					return conflict
+				}
 				return cmdError(mvJSON, output.ErrFileError, "failed to reorder children: %v", err)
 			}
 			if mvJSON {
@@ -148,6 +158,11 @@ Use --children-of "" to reorder root-level (no-parent) siblings.`,
 			}
 			results, err := resolver.Mutation().ReorderSiblings(ctx, args, afterID, beforeID, first, childIfMatch)
 			if err != nil {
+				// Same reconcile contract as Mode A above: a stale --child-if-match is
+				// a CONFLICT with a reusable etag, not an IO failure.
+				if conflict, ok := etagConflictError(mvJSON, err); ok {
+					return conflict
+				}
 				return cmdError(mvJSON, output.ErrFileError, "failed to reorder siblings: %v", err)
 			}
 			if mvJSON {

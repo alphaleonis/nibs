@@ -16,6 +16,7 @@ import (
 	"testing"
 
 	"github.com/alphaleonis/nibs/internal/graph"
+	"github.com/alphaleonis/nibs/internal/graph/model"
 	"github.com/alphaleonis/nibs/internal/nib"
 	"github.com/alphaleonis/nibs/internal/nibcore"
 )
@@ -226,6 +227,48 @@ func TestETagErrorPresenter_TagsNotFound(t *testing.T) {
 				gqlErr.Extensions["code"], "ETAG_MISMATCH")
 		}
 	})
+}
+
+// TestETagErrorPresenter_TagsBulkReorderPreValidationConflict runs the REAL
+// bulk-reorder pre-validation refusal through the presenter, rather than a
+// hand-built ETagMismatchError. Both of a bulk reorder's etag refusals — the
+// pre-validation one raised before any write, and the racing one raised by the
+// per-nib write — are reconcilable conflicts, so both must reach the web client
+// as extensions.code = "ETAG_MISMATCH"; the pre-validation one is also the
+// COMMON case, firing whenever the caller's ifMatch is already stale on entry.
+// Constructing it through the resolver is what makes this bite: the guard is
+// that the graph layer emits a TYPED error, and only an end-to-end error can
+// witness that.
+func TestETagErrorPresenter_TagsBulkReorderPreValidationConflict(t *testing.T) {
+	ctx := context.Background()
+
+	// Two root-level siblings; the reorder lists both, so it is complete.
+	resolver, _ := setupParentLinkTest(t, map[string]string{
+		"nibs-a": "order: a0\n",
+		"nibs-b": "order: b0\n",
+	})
+
+	const stale = "deadbeefdeadbeef"
+	ifMatch := []*model.ChildEtag{{ID: "nibs-a", Etag: stale}}
+	_, err := resolver.Mutation().ReorderChildren(ctx, "", []string{"nibs-b", "nibs-a"}, ifMatch)
+	if err == nil {
+		t.Fatal("expected a pre-validation refusal for the stale etag")
+	}
+
+	gqlErr := etagErrorPresenter(ctx, err)
+
+	if gqlErr.Extensions["code"] != "ETAG_MISMATCH" {
+		t.Errorf("extensions.code = %v, want %q (a bulk-reorder pre-validation conflict is reconcilable and must be routable structurally); error was %T: %v",
+			gqlErr.Extensions["code"], "ETAG_MISMATCH", err, err)
+	}
+	// The message keeps naming the offending nib, and keeps the "etag mismatch"
+	// wording the web classifier retains as its substring fallback.
+	if !strings.Contains(gqlErr.Message, "nibs-a") {
+		t.Errorf("message = %q, want it to name the nib whose etag was stale", gqlErr.Message)
+	}
+	if !strings.Contains(gqlErr.Message, "etag mismatch") {
+		t.Errorf("message = %q, want it to keep the %q wording the web fallback keys on", gqlErr.Message, "etag mismatch")
+	}
 }
 
 // TestEveryMintableWireErrorCodeIsNamedInTheSchema pins the half of the code
