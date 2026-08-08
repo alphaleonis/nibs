@@ -36,6 +36,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 - `nibs archive` now moves `deferred` nibs too — it archives every nib in a closed status.
 - The web UI settled on one name per field: **Status** (previously "State" in places) and **Estimate** (previously "Effort"), matching the words the query language and the CLI use.
 - The status pickers in the TUI and the web now list statuses in transition order — draft, todo, in-progress, completed, deferred, scrapped — while lists and the status column keep sorting most-active-first.
+- **The web table distinguishes the row the detail panel is showing from the rows a bulk action would affect** — a leading accent bar marks the open row, the background fill marks the selection set, and every row now exposes `aria-selected`.
 - Deleting or archiving from the web table now closes the detail panel only when it removed the nib the panel was showing, instead of closing it every time.
 - `nibs serve` sends SPA cache headers, so a rebuilt UI is picked up instead of being served stale from the browser cache.
 - The TUI's Charm stack (Bubble Tea, Bubbles, Lip Gloss, Glamour) moved to v2 with no intended behavior change — 22 screens were diffed against the pre-migration build to confirm none landed.
