@@ -446,15 +446,42 @@ func etagErrorPresenter(ctx context.Context, err error) *gqlerror.Error {
 	var contradiction *graph.FilterTargetContradictionError
 	switch {
 	case errors.As(err, &etagErr):
-		setErrorCode(gqlErr, "ETAG_MISMATCH")
+		setErrorCode(gqlErr, wireCodeETagMismatch)
 	case errors.As(err, &contradiction):
-		setErrorCode(gqlErr, "FILTER_CONTRADICTION")
+		setErrorCode(gqlErr, wireCodeFilterContradiction)
 	case errors.Is(err, nib.ErrNotFound):
-		setErrorCode(gqlErr, "NOT_FOUND")
+		setErrorCode(gqlErr, wireCodeNotFound)
 	}
 
 	return gqlErr
 }
+
+// The extensions.code values the presenter above can mint. They are a vocabulary
+// of their own, deliberately NOT internal/output's Err* block: those are CLI
+// codes the process maps to an exit status (an etag conflict is CONFLICT there,
+// exit 4), while these are the wire codes a GraphQL client routes on. NOT_FOUND
+// is spelled the same in both by coincidence of meaning, not because one set
+// derives from the other, and merging them would claim the CLI can report
+// ETAG_MISMATCH and the wire can report FILE_ERROR.
+//
+// Each of these is a shipped contract: it must be NAMED in
+// internal/graph/schema.graphqls wherever the refusal that carries it is
+// described, because those descriptions are what a client is given — the SDL
+// itself, the doc comments codegen copies into model/models_gen.go and
+// web/src/lib/gql/graphql.ts, and `nibs catalog schema`, which an agent reads.
+// A code the presenter mints but the SDL never names is one no client can
+// discover.
+//
+// Only the weaker half of that is mechanized: adding a code here that the SDL
+// never spells AT ALL fails TestEveryMintableWireErrorCodeIsNamedInTheSchema.
+// That a code is named at every site whose refusal really carries it — and at
+// no site whose refusal does not — remains a review obligation; no test can
+// see it.
+const (
+	wireCodeETagMismatch        = "ETAG_MISMATCH"
+	wireCodeFilterContradiction = "FILTER_CONTRADICTION"
+	wireCodeNotFound            = "NOT_FOUND"
+)
 
 // setErrorCode attaches a stable extensions.code to a presented GraphQL error,
 // allocating the extensions map on first use.

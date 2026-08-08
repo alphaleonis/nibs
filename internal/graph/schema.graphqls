@@ -78,6 +78,10 @@ type Mutation {
   of the subject between pre-validation and its own write surfaces as
   ETagMismatchError with this call's writes to other nibs already persisted
   (matching the bulk-reorder semantics).
+
+  Every ETagMismatchError this field raises — the pre-checked one and the racing
+  one alike — carries extensions.code = "ETAG_MISMATCH", so a GraphQL client can
+  route the conflict structurally rather than on message text.
   """
   updateNib(id: ID!, input: UpdateNibInput!): Nib!
 
@@ -147,6 +151,11 @@ type Mutation {
   ETagMismatchError for that nib, leaving prior writes in this batch
   persisted (matching single-nib reorderNib semantics). Under
   require_if_match: true, every listed child must appear in ifMatch.
+
+  The two mismatches differ on the wire. That racing mismatch carries
+  extensions.code = "ETAG_MISMATCH", so a GraphQL client can route it
+  structurally rather than on message text; the pre-validation mismatch carries
+  no extensions.code and must be recognized by message text today.
   """
   reorderChildren(parentId: String!, childIds: [ID!]!, ifMatch: [ChildEtag!]): [Nib!]!
 
@@ -168,6 +177,11 @@ type Mutation {
   ETagMismatchError for that nib, leaving prior writes in this batch
   persisted (matching single-nib reorderNib semantics). Under
   require_if_match: true, every listed sibling must appear in ifMatch.
+
+  The two mismatches differ on the wire. That racing mismatch carries
+  extensions.code = "ETAG_MISMATCH", so a GraphQL client can route it
+  structurally rather than on message text; the pre-validation mismatch carries
+  no extensions.code and must be recognized by message text today.
   """
   reorderSiblings(siblingIds: [ID!]!, afterId: ID, beforeId: ID, first: Boolean, ifMatch: [ChildEtag!]): [Nib!]!
 }
@@ -180,6 +194,11 @@ atomically. Per-nib writes are then issued sequentially; a concurrent
 modification between pre-validation and the per-nib write surfaces as
 ETagMismatchError for that nib, leaving prior writes in this batch
 persisted (matching single-nib reorderNib semantics).
+
+The two mismatches differ on the wire. That racing mismatch carries
+extensions.code = "ETAG_MISMATCH", so a GraphQL client can route it
+structurally rather than on message text; the pre-validation mismatch carries
+no extensions.code and must be recognized by message text today.
 """
 input ChildEtag {
   id: ID!

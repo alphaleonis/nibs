@@ -4,6 +4,15 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"go/ast"
+	"go/parser"
+	"go/token"
+	"os"
+	"path/filepath"
+	"regexp"
+	"slices"
+	"strconv"
+	"strings"
 	"testing"
 
 	"github.com/alphaleonis/nibs/internal/graph"
@@ -217,4 +226,227 @@ func TestETagErrorPresenter_TagsNotFound(t *testing.T) {
 				gqlErr.Extensions["code"], "ETAG_MISMATCH")
 		}
 	})
+}
+
+// TestEveryMintableWireErrorCodeIsNamedInTheSchema pins the half of the code
+// contract the tests above cannot reach: that every extensions.code this
+// presenter can mint is also SPELLED in internal/graph/schema.graphqls. The SDL
+// is the shipped contract — its descriptions propagate verbatim into
+// internal/graph/model/models_gen.go, into web/src/lib/gql/graphql.ts (what a web
+// developer reads on hover) and into `nibs catalog schema` (what an agent is
+// told) — so a code the presenter mints but the SDL never names is a code no
+// client can discover by reading the contract. ETAG_MISMATCH was exactly that:
+// minted here twice, absent from the SDL entirely, while
+// web/src/lib/nibForm.svelte.ts already routed conflict recovery on it and
+// documented it as the primary conflict signal.
+//
+// The claim runs presenter -> SDL and ONLY that direction. The reverse (every
+// code the SDL names must be mintable) is deliberately not asserted: the SDL's
+// SCREAMING_SNAKE token space is mostly enum members (UPDATED_AT, DESC) and prose
+// emphasis (EMPTY, BOTH), with no notation separating a wire code from a CLI code
+// from a capitalized word, so that direction needs a notation convention first —
+// without one it needs an allowlist, and an allowlist rots.
+//
+// The rows are read out of the presenter's own call sites rather than listed
+// here, for the reason filterRefusalTypeNames gives in errors_test.go: a list
+// cannot report the code nobody remembered to add to it. That is what makes this
+// fail CLOSED — a new setErrorCode call with an undocumented code is caught by
+// construction, not by anyone remembering this test exists.
+func TestEveryMintableWireErrorCodeIsNamedInTheSchema(t *testing.T) {
+	schemaPath := filepath.Join("..", "internal", "graph", "schema.graphqls")
+	sdl, err := os.ReadFile(schemaPath)
+	if err != nil {
+		t.Fatalf("read %s: %v", schemaPath, err)
+	}
+
+	for _, code := range mintableWireErrorCodes(t) {
+		t.Run(code, func(t *testing.T) {
+			// A whole-word match, not a parse: the claim is only that the contract
+			// SPELLS the code, which is what a client greps for and what survives
+			// any rewording of the sentence around it. RE2 counts _ as a word
+			// character, so \b refuses a longer token that merely contains the
+			// code (NOT_FOUND_ANYWHERE, X_NOT_FOUND) while still matching both
+			// spellings in live use — prose ("refused with a NOT_FOUND error")
+			// and quoted (extensions.code = "NOT_FOUND").
+			if !regexp.MustCompile(`\b` + regexp.QuoteMeta(code) + `\b`).Match(sdl) {
+				t.Errorf("the error presenter can mint extensions.code = %q, but %s never spells it, "+
+					"so a client reading the shipped contract has nothing to branch on for this refusal — "+
+					"name the code in the description of every field whose refusal carries it",
+					code, schemaPath)
+			}
+		})
+	}
+}
+
+// mintableWireErrorCodes reads package cmd's non-test sources and returns every
+// extensions.code passed to setErrorCode, sorted and deduplicated.
+//
+// It resolves the two forms the ARGUMENT can take: a string literal, and an
+// identifier declared as a string constant in this package. An argument it
+// cannot evaluate statically — a selector such as output.ErrNotFound, a
+// variable, a concatenation — FAILS the walk rather than being dropped from it,
+// because a code this cannot read is a code the guard above would silently stop
+// checking.
+//
+// The CALLEE is a separate matter, and a weaker one. The code walk reads
+// call.Fun.(*ast.Ident) only, so a call reached any other way is not seen as a
+// call site at all — it is dropped rather than failing. Two escapes from that
+// are cheap to recognize and are flagged below instead:
+//   - A qualified call, graph.setErrorCode(...), which is what a move of the
+//     helper to another package looks like from here.
+//   - Any mention of setErrorCode that is not a bare call and not its own
+//     declaration — assigned to a variable (set := setErrorCode; set(...)),
+//     passed as an argument, deferred. Inside package cmd the function value
+//     cannot be obtained without naming it, so flagging the name in a non-callee
+//     position covers the whole family.
+//
+// What remains genuinely uncovered, so the guard's reach is not overstated:
+//   - Calls outside package cmd. The walk is os.ReadDir("."), so a presenter
+//     that moves elsewhere while any call stays behind keeps this green over a
+//     shrunken set; only a TOTAL move trips the emptiness fatal below.
+//   - A direct gqlErr.Extensions["code"] = … assignment, which bypasses the
+//     helper entirely and so is invisible to a walk keyed on its name.
+func mintableWireErrorCodes(t *testing.T) []string {
+	t.Helper()
+
+	entries, err := os.ReadDir(".")
+	if err != nil {
+		t.Fatalf("read package directory: %v", err)
+	}
+
+	fset := token.NewFileSet()
+	var files []*ast.File
+	for _, entry := range entries {
+		name := entry.Name()
+		if entry.IsDir() || !strings.HasSuffix(name, ".go") || strings.HasSuffix(name, "_test.go") {
+			continue
+		}
+		file, err := parser.ParseFile(fset, name, nil, parser.SkipObjectResolution)
+		if err != nil {
+			t.Fatalf("parse %s: %v", name, err)
+		}
+		files = append(files, file)
+	}
+
+	// Package-level string constants first, so an identifier argument below can
+	// be resolved to the code it stands for.
+	consts := map[string]string{}
+	for _, file := range files {
+		for _, decl := range file.Decls {
+			gen, ok := decl.(*ast.GenDecl)
+			if !ok || gen.Tok != token.CONST {
+				continue
+			}
+			for _, spec := range gen.Specs {
+				vs, ok := spec.(*ast.ValueSpec)
+				if !ok {
+					continue
+				}
+				for i, name := range vs.Names {
+					if i >= len(vs.Values) {
+						continue
+					}
+					if lit, ok := stringLiteral(vs.Values[i]); ok {
+						consts[name.Name] = lit
+					}
+				}
+			}
+		}
+	}
+
+	// Every escape from the bare-call shape the code walk below reads. Inside
+	// package cmd the function value cannot be obtained without naming it, so a
+	// mention of setErrorCode that is neither its declaration nor the callee of a
+	// bare call is a call site this guard is about to stop seeing.
+	for _, file := range files {
+		// Positions the walks already account for: a callee (bare or qualified —
+		// the qualified one is reported by the selector arm below) and the
+		// helper's own declaration.
+		accounted := map[token.Pos]bool{}
+		ast.Inspect(file, func(n ast.Node) bool {
+			switch n := n.(type) {
+			case *ast.CallExpr:
+				switch fun := n.Fun.(type) {
+				case *ast.Ident:
+					accounted[fun.Pos()] = true
+				case *ast.SelectorExpr:
+					accounted[fun.Sel.Pos()] = true
+				}
+			case *ast.FuncDecl:
+				accounted[n.Name.Pos()] = true
+			}
+			return true
+		})
+		ast.Inspect(file, func(n ast.Node) bool {
+			ident, ok := n.(*ast.Ident)
+			if !ok || ident.Name != "setErrorCode" || accounted[ident.Pos()] {
+				return true
+			}
+			t.Errorf("%s: setErrorCode is referenced as a VALUE rather than called directly, "+
+				"so any code it mints through that value goes unchecked against the schema — "+
+				"call it as a bare identifier in package cmd, or widen this walk",
+				fset.Position(ident.Pos()))
+			return true
+		})
+	}
+
+	var codes []string
+	for _, file := range files {
+		ast.Inspect(file, func(n ast.Node) bool {
+			call, ok := n.(*ast.CallExpr)
+			if !ok {
+				return true
+			}
+			fn, ok := call.Fun.(*ast.Ident)
+			if !ok || fn.Name != "setErrorCode" || len(call.Args) != 2 {
+				// A qualified call — graph.setErrorCode(...) after a move, or a
+				// method value — reads as a call site to a human but not to the
+				// *ast.Ident match above, so say so instead of dropping it.
+				if sel, ok := call.Fun.(*ast.SelectorExpr); ok && sel.Sel.Name == "setErrorCode" {
+					t.Errorf("%s: setErrorCode is reached through a selector, but this guard only reads "+
+						"bare calls, so the code it mints goes unchecked against the schema — call it "+
+						"as a bare identifier in package cmd, or widen this walk",
+						fset.Position(call.Pos()))
+				}
+				return true
+			}
+			arg := call.Args[1]
+			if lit, ok := stringLiteral(arg); ok {
+				codes = append(codes, lit)
+				return true
+			}
+			if ident, ok := arg.(*ast.Ident); ok {
+				if lit, ok := consts[ident.Name]; ok {
+					codes = append(codes, lit)
+					return true
+				}
+			}
+			t.Errorf("%s: setErrorCode is passed a code this guard cannot evaluate statically, "+
+				"so the code it mints goes unchecked against the schema — pass a string literal or a "+
+				"string constant declared in package cmd", fset.Position(arg.Pos()))
+			return true
+		})
+	}
+
+	// Without this a renamed helper, a changed signature or a wrong directory
+	// would empty the walk and leave the guard above reporting success over
+	// nothing.
+	if len(codes) == 0 {
+		t.Fatalf("no setErrorCode call found in package cmd, so this guard checks nothing")
+	}
+	slices.Sort(codes)
+	return slices.Compact(codes)
+}
+
+// stringLiteral reports the value of an untyped string literal expression.
+func stringLiteral(expr ast.Expr) (string, bool) {
+	lit, ok := expr.(*ast.BasicLit)
+	if !ok || lit.Kind != token.STRING {
+		return "", false
+	}
+	value, err := strconv.Unquote(lit.Value)
+	if err != nil {
+		return "", false
+	}
+	return value, true
 }
