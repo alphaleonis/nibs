@@ -7,12 +7,12 @@ import (
 	"sort"
 	"strings"
 
+	"charm.land/bubbles/v2/list"
+	tea "charm.land/bubbletea/v2"
+	"charm.land/lipgloss/v2"
 	"github.com/alphaleonis/nibs/internal/config"
 	"github.com/alphaleonis/nibs/internal/nib"
 	"github.com/alphaleonis/nibs/internal/ui"
-	"github.com/charmbracelet/bubbles/list"
-	tea "github.com/charmbracelet/bubbletea"
-	"github.com/charmbracelet/lipgloss"
 )
 
 // computeCurrentBlocking returns the IDs of nibs that this nib is blocking.
@@ -184,8 +184,7 @@ func newBlockingPickerModel(nibID, nibTitle string, currentBlocking []string, ba
 	l.SetShowPagination(false)
 	l.Styles.Title = listTitleStyle
 	l.Styles.TitleBar = lipgloss.NewStyle().Padding(0, 0, 0, 0)
-	l.Styles.FilterPrompt = lipgloss.NewStyle().Foreground(ui.ColorPrimary)
-	l.Styles.FilterCursor = lipgloss.NewStyle().Foreground(ui.ColorPrimary)
+	applyFilterStyles(&l.Styles)
 
 	return blockingPickerModel{
 		list:             l,
@@ -216,10 +215,10 @@ func (m blockingPickerModel) Update(msg tea.Msg) (blockingPickerModel, tea.Cmd) 
 		listHeight := modalHeight - 9 // Account for description line
 		m.list.SetSize(listWidth, listHeight)
 
-	case tea.KeyMsg:
+	case tea.KeyPressMsg:
 		if m.list.FilterState() != list.Filtering {
 			switch msg.String() {
-			case " ":
+			case "space":
 				// Toggle the selected item's pending state
 				// The delegate reads from pendingBlocking directly, so no need to update items
 				if item, ok := m.list.SelectedItem().(blockingItem); ok {

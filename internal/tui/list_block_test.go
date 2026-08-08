@@ -3,9 +3,9 @@ package tui
 import (
 	"testing"
 
+	tea "charm.land/bubbletea/v2"
 	"github.com/alphaleonis/nibs/internal/nib"
 	"github.com/alphaleonis/nibs/internal/ui"
-	tea "github.com/charmbracelet/bubbletea"
 )
 
 // blockTestNibs returns a flat set of root-level nibs A, B, C, D for block-move
@@ -29,7 +29,7 @@ func focusOn(app *App, targetID string) bool {
 				return true
 			}
 		}
-		sendKey(app, tea.KeyMsg{Type: tea.KeyDown})
+		sendKey(app, tea.KeyPressMsg{Code: tea.KeyDown})
 	}
 	return false
 }
@@ -42,7 +42,7 @@ func TestCtrlUp_NoSelection_FocusedRowReorders(t *testing.T) {
 		t.Fatal("could not focus C")
 	}
 
-	sendKey(app, tea.KeyMsg{Type: tea.KeyCtrlUp})
+	sendKey(app, tea.KeyPressMsg{Code: tea.KeyUp, Mod: tea.ModCtrl})
 
 	if got := len(stub.ReorderCalls); got != 1 {
 		t.Fatalf("expected 1 reorder call, got %d", got)
@@ -67,7 +67,7 @@ func TestCtrlUp_OneMarkedDifferentFromFocus_MovesMarked(t *testing.T) {
 	if !focusOn(app, "C") {
 		t.Fatal("could not focus C")
 	}
-	sendKey(app, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{' '}}) // mark C, cursor moves to D
+	sendKey(app, tea.KeyPressMsg{Code: ' ', Text: " "}) // mark C, cursor moves to D
 	// Cursor is now on D.
 	if item, ok := app.list.list.SelectedItem().(nibItem); !ok || item.nib.ID != "D" {
 		t.Fatalf("expected focus on D after space, got %v", item.nib.ID)
@@ -76,7 +76,7 @@ func TestCtrlUp_OneMarkedDifferentFromFocus_MovesMarked(t *testing.T) {
 		t.Fatal("expected C marked")
 	}
 
-	sendKey(app, tea.KeyMsg{Type: tea.KeyCtrlUp})
+	sendKey(app, tea.KeyPressMsg{Code: tea.KeyUp, Mod: tea.ModCtrl})
 
 	if got := len(stub.ReorderCalls); got != 1 {
 		t.Fatalf("expected 1 reorder call, got %d", got)
@@ -98,9 +98,9 @@ func TestCtrlUp_TwoContiguousMarked_SwapsPrevSiblingPastBlock(t *testing.T) {
 	if !focusOn(app, "B") {
 		t.Fatal("could not focus B")
 	}
-	sendKey(app, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{' '}}) // mark B → D
+	sendKey(app, tea.KeyPressMsg{Code: ' ', Text: " "}) // mark B → D
 	// cursor now on C
-	sendKey(app, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{' '}}) // mark C → D
+	sendKey(app, tea.KeyPressMsg{Code: ' ', Text: " "}) // mark C → D
 	// cursor now on D
 	if !app.list.selectedNibs["B"] || !app.list.selectedNibs["C"] {
 		t.Fatalf("expected B,C marked: %v", app.list.selectedNibs)
@@ -110,13 +110,13 @@ func TestCtrlUp_TwoContiguousMarked_SwapsPrevSiblingPastBlock(t *testing.T) {
 		if item, ok := app.list.list.SelectedItem().(nibItem); ok && item.nib.ID == "C" {
 			break
 		}
-		sendKey(app, tea.KeyMsg{Type: tea.KeyUp})
+		sendKey(app, tea.KeyPressMsg{Code: tea.KeyUp})
 	}
 	if item, ok := app.list.list.SelectedItem().(nibItem); !ok || item.nib.ID != "C" {
 		t.Fatalf("expected focus on C for test, got %v", item.nib.ID)
 	}
 
-	sendKey(app, tea.KeyMsg{Type: tea.KeyCtrlUp})
+	sendKey(app, tea.KeyPressMsg{Code: tea.KeyUp, Mod: tea.ModCtrl})
 
 	if got := len(stub.ReorderCalls); got != 1 {
 		t.Fatalf("expected exactly 1 backend reorder call, got %d", got)
@@ -141,10 +141,10 @@ func TestCtrlDown_TwoContiguousMarked_SwapsNextSiblingBeforeBlock(t *testing.T) 
 	if !focusOn(app, "B") {
 		t.Fatal("could not focus B")
 	}
-	sendKey(app, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{' '}}) // mark B, cursor→C
-	sendKey(app, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{' '}}) // mark C, cursor→D
+	sendKey(app, tea.KeyPressMsg{Code: ' ', Text: " "}) // mark B, cursor→C
+	sendKey(app, tea.KeyPressMsg{Code: ' ', Text: " "}) // mark C, cursor→D
 
-	sendKey(app, tea.KeyMsg{Type: tea.KeyCtrlDown})
+	sendKey(app, tea.KeyPressMsg{Code: tea.KeyDown, Mod: tea.ModCtrl})
 
 	if got := len(stub.ReorderCalls); got != 1 {
 		t.Fatalf("expected exactly 1 backend reorder call, got %d", got)
@@ -169,10 +169,10 @@ func TestCtrlUp_Block_PreservesSelectionAndFocus(t *testing.T) {
 	if !focusOn(app, "B") {
 		t.Fatal("could not focus B")
 	}
-	sendKey(app, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{' '}}) // mark B, cursor→C
-	sendKey(app, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{' '}}) // mark C, cursor→D
+	sendKey(app, tea.KeyPressMsg{Code: ' ', Text: " "}) // mark B, cursor→C
+	sendKey(app, tea.KeyPressMsg{Code: ' ', Text: " "}) // mark C, cursor→D
 	// Refocus C.
-	sendKey(app, tea.KeyMsg{Type: tea.KeyUp})
+	sendKey(app, tea.KeyPressMsg{Code: tea.KeyUp})
 	if item, ok := app.list.list.SelectedItem().(nibItem); !ok || item.nib.ID != "C" {
 		t.Fatalf("expected focus on C, got %v", item.nib.ID)
 	}
@@ -183,7 +183,7 @@ func TestCtrlUp_Block_PreservesSelectionAndFocus(t *testing.T) {
 		selBefore[k] = v
 	}
 
-	sendKey(app, tea.KeyMsg{Type: tea.KeyCtrlUp})
+	sendKey(app, tea.KeyPressMsg{Code: tea.KeyUp, Mod: tea.ModCtrl})
 
 	// Selection map unchanged — same keys present after.
 	if len(app.list.selectedNibs) != len(selBefore) {
@@ -210,10 +210,10 @@ func TestCtrlUp_BlockAtTop_ReportsAtTop(t *testing.T) {
 	if !focusOn(app, "A") {
 		t.Fatal("could not focus A")
 	}
-	sendKey(app, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{' '}}) // mark A, cursor→B
-	sendKey(app, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{' '}}) // mark B, cursor→C
+	sendKey(app, tea.KeyPressMsg{Code: ' ', Text: " "}) // mark A, cursor→B
+	sendKey(app, tea.KeyPressMsg{Code: ' ', Text: " "}) // mark B, cursor→C
 
-	sendKey(app, tea.KeyMsg{Type: tea.KeyCtrlUp})
+	sendKey(app, tea.KeyPressMsg{Code: tea.KeyUp, Mod: tea.ModCtrl})
 
 	if got := len(stub.ReorderCalls); got != 0 {
 		t.Errorf("expected 0 reorder calls (no-op), got %d", got)
@@ -230,10 +230,10 @@ func TestCtrlDown_BlockAtBottom_ReportsAtBottom(t *testing.T) {
 	if !focusOn(app, "C") {
 		t.Fatal("could not focus C")
 	}
-	sendKey(app, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{' '}}) // mark C, cursor→D
-	sendKey(app, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{' '}}) // mark D, cursor→D (last)
+	sendKey(app, tea.KeyPressMsg{Code: ' ', Text: " "}) // mark C, cursor→D
+	sendKey(app, tea.KeyPressMsg{Code: ' ', Text: " "}) // mark D, cursor→D (last)
 
-	sendKey(app, tea.KeyMsg{Type: tea.KeyCtrlDown})
+	sendKey(app, tea.KeyPressMsg{Code: tea.KeyDown, Mod: tea.ModCtrl})
 
 	if got := len(stub.ReorderCalls); got != 0 {
 		t.Errorf("expected 0 reorder calls (no-op), got %d", got)
@@ -250,11 +250,11 @@ func TestCtrlUp_MarkedWithGap_ReportsReason(t *testing.T) {
 	if !focusOn(app, "A") {
 		t.Fatal("could not focus A")
 	}
-	sendKey(app, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{' '}}) // mark A, cursor→B
-	sendKey(app, tea.KeyMsg{Type: tea.KeyDown})                      // skip B (cursor→C)
-	sendKey(app, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{' '}}) // mark C, cursor→D
+	sendKey(app, tea.KeyPressMsg{Code: ' ', Text: " "}) // mark A, cursor→B
+	sendKey(app, tea.KeyPressMsg{Code: tea.KeyDown})    // skip B (cursor→C)
+	sendKey(app, tea.KeyPressMsg{Code: ' ', Text: " "}) // mark C, cursor→D
 
-	sendKey(app, tea.KeyMsg{Type: tea.KeyCtrlUp})
+	sendKey(app, tea.KeyPressMsg{Code: tea.KeyUp, Mod: tea.ModCtrl})
 
 	if got := len(stub.ReorderCalls); got != 0 {
 		t.Errorf("expected 0 reorder calls for non-contiguous selection, got %d", got)
@@ -281,13 +281,13 @@ func TestCtrlUp_MultiParent_ReportsReason(t *testing.T) {
 	if !focusOn(app, "X1") {
 		t.Fatal("could not focus X1")
 	}
-	sendKey(app, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{' '}}) // mark X1
+	sendKey(app, tea.KeyPressMsg{Code: ' ', Text: " "}) // mark X1
 	if !focusOn(app, "Y1") {
 		t.Fatal("could not focus Y1")
 	}
-	sendKey(app, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{' '}}) // mark Y1
+	sendKey(app, tea.KeyPressMsg{Code: ' ', Text: " "}) // mark Y1
 
-	sendKey(app, tea.KeyMsg{Type: tea.KeyCtrlUp})
+	sendKey(app, tea.KeyPressMsg{Code: tea.KeyUp, Mod: tea.ModCtrl})
 
 	if got := len(stub.ReorderCalls); got != 0 {
 		t.Errorf("expected 0 reorder calls for multi-parent selection, got %d", got)
@@ -313,10 +313,10 @@ func TestCtrlUp_ParentAndDescendantMarked_MovesParentOnly(t *testing.T) {
 	if !focusOn(app, "C") {
 		t.Fatal("could not focus C")
 	}
-	sendKey(app, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{' '}}) // mark C, cursor→C1
-	sendKey(app, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{' '}}) // mark C1, cursor moves down
+	sendKey(app, tea.KeyPressMsg{Code: ' ', Text: " "}) // mark C, cursor→C1
+	sendKey(app, tea.KeyPressMsg{Code: ' ', Text: " "}) // mark C1, cursor moves down
 
-	sendKey(app, tea.KeyMsg{Type: tea.KeyCtrlUp})
+	sendKey(app, tea.KeyPressMsg{Code: tea.KeyUp, Mod: tea.ModCtrl})
 
 	if got := len(stub.ReorderCalls); got != 1 {
 		t.Fatalf("expected 1 reorder call (single-item path), got %d", got)
@@ -404,10 +404,10 @@ func assertPromotedCycleShape(t *testing.T, app *App) {
 func TestCtrlUpDown_PromotedCycleRoot_ReportsTheCycle(t *testing.T) {
 	for _, tc := range []struct {
 		name string
-		key  tea.KeyType
+		key  tea.KeyPressMsg
 	}{
-		{"up", tea.KeyCtrlUp},
-		{"down", tea.KeyCtrlDown},
+		{"up", tea.KeyPressMsg{Code: tea.KeyUp, Mod: tea.ModCtrl}},
+		{"down", tea.KeyPressMsg{Code: tea.KeyDown, Mod: tea.ModCtrl}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			app, stub := setupTestApp(t, cycleParentNibs())
@@ -416,7 +416,7 @@ func TestCtrlUpDown_PromotedCycleRoot_ReportsTheCycle(t *testing.T) {
 			if !focusOn(app, "X") {
 				t.Fatal("could not focus X")
 			}
-			sendKey(app, tea.KeyMsg{Type: tc.key})
+			sendKey(app, tc.key)
 
 			if got := len(stub.ReorderCalls); got != 0 {
 				t.Errorf("expected no backend reorder for a nib in a parent cycle, got %d", got)
@@ -442,13 +442,13 @@ func TestCtrlUp_AfterRefusal_SuccessfulMoveClearsStatus(t *testing.T) {
 	if !focusOn(app, "A") {
 		t.Fatal("could not focus A")
 	}
-	sendKey(app, tea.KeyMsg{Type: tea.KeyCtrlUp})
+	sendKey(app, tea.KeyPressMsg{Code: tea.KeyUp, Mod: tea.ModCtrl})
 	if app.list.statusMessage != reorderReasonAtTop {
 		t.Fatalf("expected the refusal to be reported, got %q", app.list.statusMessage)
 	}
 
 	// The very next keypress moves A the other way, with no navigation between.
-	sendKey(app, tea.KeyMsg{Type: tea.KeyCtrlDown})
+	sendKey(app, tea.KeyPressMsg{Code: tea.KeyDown, Mod: tea.ModCtrl})
 
 	if got := len(stub.ReorderCalls); got != 1 {
 		t.Fatalf("expected 1 reorder call, got %d", got)
@@ -467,7 +467,7 @@ func TestReorderRefusal_IsStyledAsAWarning(t *testing.T) {
 	if !focusOn(app, "A") {
 		t.Fatal("could not focus A")
 	}
-	sendKey(app, tea.KeyMsg{Type: tea.KeyCtrlUp})
+	sendKey(app, tea.KeyPressMsg{Code: tea.KeyUp, Mod: tea.ModCtrl})
 	if app.list.statusMessage != reorderReasonAtTop {
 		t.Fatalf("premise failed: expected the refusal to be reported, got %q", app.list.statusMessage)
 	}
@@ -476,7 +476,7 @@ func TestReorderRefusal_IsStyledAsAWarning(t *testing.T) {
 	}
 
 	// A successful move must not inherit the warning styling.
-	sendKey(app, tea.KeyMsg{Type: tea.KeyCtrlDown})
+	sendKey(app, tea.KeyPressMsg{Code: tea.KeyDown, Mod: tea.ModCtrl})
 	if app.list.statusKind != statusOK {
 		t.Errorf("statusKind after a successful move = %v, want statusOK", app.list.statusKind)
 	}
@@ -486,7 +486,7 @@ func TestReorderRefusal_IsStyledAsAWarning(t *testing.T) {
 func TestCtrlUp_EmptyList_ReportsNothingToMove(t *testing.T) {
 	app, stub := setupTestApp(t, nil)
 
-	sendKey(app, tea.KeyMsg{Type: tea.KeyCtrlUp})
+	sendKey(app, tea.KeyPressMsg{Code: tea.KeyUp, Mod: tea.ModCtrl})
 
 	if got := len(stub.ReorderCalls); got != 0 {
 		t.Errorf("expected 0 reorder calls for an empty list, got %d", got)
@@ -506,7 +506,7 @@ func TestCtrlUp_DanglingParent_MovesAmongRootSiblings(t *testing.T) {
 		t.Fatal("could not focus G")
 	}
 
-	sendKey(app, tea.KeyMsg{Type: tea.KeyCtrlUp})
+	sendKey(app, tea.KeyPressMsg{Code: tea.KeyUp, Mod: tea.ModCtrl})
 
 	if got := len(stub.ReorderCalls); got != 1 {
 		t.Fatalf("expected 1 reorder call, got %d", got)
@@ -529,13 +529,13 @@ func TestCtrlUp_DanglingParentWithRoot_MovesAsBlock(t *testing.T) {
 	if !focusOn(app, "G") {
 		t.Fatal("could not focus G")
 	}
-	sendKey(app, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{' '}}) // mark G, cursor→C
-	sendKey(app, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{' '}}) // mark C
+	sendKey(app, tea.KeyPressMsg{Code: ' ', Text: " "}) // mark G, cursor→C
+	sendKey(app, tea.KeyPressMsg{Code: ' ', Text: " "}) // mark C
 	if !app.list.selectedNibs["G"] || !app.list.selectedNibs["C"] {
 		t.Fatalf("expected G,C marked: %v", app.list.selectedNibs)
 	}
 
-	sendKey(app, tea.KeyMsg{Type: tea.KeyCtrlUp})
+	sendKey(app, tea.KeyPressMsg{Code: tea.KeyUp, Mod: tea.ModCtrl})
 
 	if got := len(stub.ReorderCalls); got != 1 {
 		t.Fatalf("expected exactly 1 backend reorder call, got %d", got)

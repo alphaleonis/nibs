@@ -3,7 +3,7 @@ package ui
 import (
 	"testing"
 
-	"github.com/charmbracelet/lipgloss"
+	"charm.land/lipgloss/v2"
 )
 
 // withASCIIGlyphs forces useASCIIGlyphs() to return the given value for the

@@ -3,9 +3,9 @@ package tui
 import (
 	"testing"
 
+	tea "charm.land/bubbletea/v2"
 	"github.com/alphaleonis/nibs/internal/config"
 	"github.com/alphaleonis/nibs/internal/nib"
-	tea "github.com/charmbracelet/bubbletea"
 )
 
 // helper: creates a test App with stub backend, sends a window size, loads nibs,
@@ -40,7 +40,7 @@ func setupTestApp(t *testing.T, nibs []*nib.Nib) (*App, *StubBackend) {
 
 // sendKey sends a key message to the app and processes any returned commands.
 // This simulates the Bubbletea runtime executing commands synchronously.
-func sendKey(app *App, key tea.KeyMsg) {
+func sendKey(app *App, key tea.KeyPressMsg) {
 	_, cmd := app.Update(key)
 	processCmd(app, cmd)
 }
@@ -74,7 +74,7 @@ func TestAKeyArchivesNibAfterConfirmation(t *testing.T) {
 	app, stub := setupTestApp(t, testNibs)
 
 	// Press A key on the selected nib
-	sendKey(app, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'A'}})
+	sendKey(app, tea.KeyPressMsg{Code: 'A', Text: "A"})
 
 	// Should be in confirm dialog state
 	if app.state != viewConfirmDialog {
@@ -83,12 +83,12 @@ func TestAKeyArchivesNibAfterConfirmation(t *testing.T) {
 
 	// The confirm dialog should show the nib title
 	view := app.View()
-	if view == "" {
-		t.Fatal("View() returned empty string in confirm state")
+	if view.Content == "" {
+		t.Fatal("View() returned empty content in confirm state")
 	}
 
 	// Press 'y' to confirm
-	sendKey(app, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'y'}})
+	sendKey(app, tea.KeyPressMsg{Code: 'y', Text: "y"})
 
 	// ArchiveNib should have been called
 	if len(stub.ArchiveCalls) == 0 {
@@ -112,7 +112,7 @@ func TestDelKeyPermanentlyDeletesNib(t *testing.T) {
 	app, stub := setupTestApp(t, testNibs)
 
 	// Press Del key to permanently delete
-	sendKey(app, tea.KeyMsg{Type: tea.KeyDelete})
+	sendKey(app, tea.KeyPressMsg{Code: tea.KeyDelete})
 
 	if app.state != viewConfirmDialog {
 		t.Fatalf("expected viewConfirmDialog state, got %d", app.state)
@@ -122,7 +122,7 @@ func TestDelKeyPermanentlyDeletesNib(t *testing.T) {
 	}
 
 	// Press 'y' to confirm
-	sendKey(app, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'y'}})
+	sendKey(app, tea.KeyPressMsg{Code: 'y', Text: "y"})
 
 	// DeleteNib should have been called (not ArchiveNib)
 	if len(stub.DeleteCalls) == 0 {
@@ -151,7 +151,7 @@ func TestAKeyOnNibWithChildrenArchivesAll(t *testing.T) {
 	app, stub := setupTestApp(t, testNibs)
 
 	// Press A on the parent nib (cursor should be on first item)
-	sendKey(app, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'A'}})
+	sendKey(app, tea.KeyPressMsg{Code: 'A', Text: "A"})
 
 	// Should be in confirm dialog state
 	if app.state != viewConfirmDialog {
@@ -164,7 +164,7 @@ func TestAKeyOnNibWithChildrenArchivesAll(t *testing.T) {
 	}
 
 	// Confirm
-	sendKey(app, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'y'}})
+	sendKey(app, tea.KeyPressMsg{Code: 'y', Text: "y"})
 
 	// ArchiveNib should have been called 3 times (parent + 2 children)
 	if len(stub.ArchiveCalls) != 3 {
@@ -199,7 +199,7 @@ func TestDelKeyOnNibWithChildrenDeletesAll(t *testing.T) {
 	app, stub := setupTestApp(t, testNibs)
 
 	// Press Del on the parent nib
-	sendKey(app, tea.KeyMsg{Type: tea.KeyDelete})
+	sendKey(app, tea.KeyPressMsg{Code: tea.KeyDelete})
 
 	if app.state != viewConfirmDialog {
 		t.Fatalf("expected viewConfirmDialog state, got %d", app.state)
@@ -211,7 +211,7 @@ func TestDelKeyOnNibWithChildrenDeletesAll(t *testing.T) {
 	}
 
 	// Confirm
-	sendKey(app, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'y'}})
+	sendKey(app, tea.KeyPressMsg{Code: 'y', Text: "y"})
 
 	// DeleteNib should have been called 4 times
 	if len(stub.DeleteCalls) != 4 {
@@ -239,7 +239,7 @@ func TestSelectionMovesAfterArchive(t *testing.T) {
 		app, stub := setupTestApp(t, testNibs)
 
 		// Move cursor to second item (Beta)
-		sendKey(app, tea.KeyMsg{Type: tea.KeyDown})
+		sendKey(app, tea.KeyPressMsg{Code: tea.KeyDown})
 
 		// Verify cursor is on nib-2
 		if item, ok := app.list.list.SelectedItem().(nibItem); !ok || item.nib.ID != "nib-2" {
@@ -247,8 +247,8 @@ func TestSelectionMovesAfterArchive(t *testing.T) {
 		}
 
 		// Archive nib-2
-		sendKey(app, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'A'}})
-		sendKey(app, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'y'}})
+		sendKey(app, tea.KeyPressMsg{Code: 'A', Text: "A"})
+		sendKey(app, tea.KeyPressMsg{Code: 'y', Text: "y"})
 
 		if len(stub.ArchiveCalls) != 1 || stub.ArchiveCalls[0] != "nib-2" {
 			t.Fatalf("expected ArchiveNib('nib-2'), got %v", stub.ArchiveCalls)
@@ -276,7 +276,7 @@ func TestSelectionMovesAfterArchive(t *testing.T) {
 		app, stub := setupTestApp(t, testNibs)
 
 		// Move cursor to last item
-		sendKey(app, tea.KeyMsg{Type: tea.KeyDown})
+		sendKey(app, tea.KeyPressMsg{Code: tea.KeyDown})
 
 		// Verify cursor is on nib-2
 		if item, ok := app.list.list.SelectedItem().(nibItem); !ok || item.nib.ID != "nib-2" {
@@ -284,8 +284,8 @@ func TestSelectionMovesAfterArchive(t *testing.T) {
 		}
 
 		// Archive nib-2
-		sendKey(app, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'A'}})
-		sendKey(app, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'y'}})
+		sendKey(app, tea.KeyPressMsg{Code: 'A', Text: "A"})
+		sendKey(app, tea.KeyPressMsg{Code: 'y', Text: "y"})
 
 		if len(stub.ArchiveCalls) != 1 || stub.ArchiveCalls[0] != "nib-2" {
 			t.Fatalf("expected ArchiveNib('nib-2'), got %v", stub.ArchiveCalls)
@@ -300,10 +300,10 @@ func TestSelectionMovesAfterArchive(t *testing.T) {
 func TestCancelArchiveConfirmationDoesNothing(t *testing.T) {
 	tests := []struct {
 		name string
-		key  tea.KeyMsg
+		key  tea.KeyPressMsg
 	}{
-		{"press n", tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'n'}}},
-		{"press Esc", tea.KeyMsg{Type: tea.KeyEscape}},
+		{"press n", tea.KeyPressMsg{Code: 'n', Text: "n"}},
+		{"press Esc", tea.KeyPressMsg{Code: tea.KeyEscape}},
 	}
 
 	for _, tt := range tests {
@@ -314,7 +314,7 @@ func TestCancelArchiveConfirmationDoesNothing(t *testing.T) {
 			app, stub := setupTestApp(t, testNibs)
 
 			// Press A to open archive confirm dialog
-			sendKey(app, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'A'}})
+			sendKey(app, tea.KeyPressMsg{Code: 'A', Text: "A"})
 
 			if app.state != viewConfirmDialog {
 				t.Fatalf("expected viewConfirmDialog state, got %d", app.state)

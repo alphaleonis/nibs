@@ -4,12 +4,12 @@ import (
 	"context"
 	"strings"
 
+	tea "charm.land/bubbletea/v2"
+	"charm.land/lipgloss/v2"
 	"github.com/alphaleonis/nibs/internal/config"
 	"github.com/alphaleonis/nibs/internal/nib"
 	"github.com/alphaleonis/nibs/internal/nibtypes"
 	"github.com/alphaleonis/nibs/internal/ui"
-	tea "github.com/charmbracelet/bubbletea"
-	"github.com/charmbracelet/lipgloss"
 )
 
 // validTypesForNib computes the valid types a nib can be changed to,
@@ -125,7 +125,7 @@ func (m typePickerModel) Update(msg tea.Msg) (typePickerModel, tea.Cmd) {
 		m.width = msg.Width
 		m.height = msg.Height
 
-	case tea.KeyMsg:
+	case tea.KeyPressMsg:
 		switch msg.String() {
 		case "up", "k":
 			if m.cursor > 0 {

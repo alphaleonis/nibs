@@ -2,9 +2,10 @@ package ui
 
 import (
 	"fmt"
+	"image/color"
 	"strings"
 
-	"github.com/charmbracelet/lipgloss"
+	"charm.land/lipgloss/v2"
 
 	"github.com/alphaleonis/nibs/internal/config"
 )
@@ -22,8 +23,8 @@ var (
 	ColorCyan      = lipgloss.Color("14")      // Bright Cyan (ANSI)
 )
 
-// NamedColors maps color names to lipgloss colors.
-var NamedColors = map[string]lipgloss.Color{
+// NamedColors maps color names to colors.
+var NamedColors = map[string]color.Color{
 	"green":  ColorSuccess,
 	"yellow": ColorWarning,
 	"red":    ColorDanger,
@@ -34,12 +35,12 @@ var NamedColors = map[string]lipgloss.Color{
 	"cyan":   ColorCyan,
 }
 
-// ResolveColor converts a color name or hex code to a lipgloss.Color.
-func ResolveColor(color string) lipgloss.Color {
-	if strings.HasPrefix(color, "#") {
-		return lipgloss.Color(color)
+// ResolveColor converts a color name or hex code to a color.
+func ResolveColor(name string) color.Color {
+	if strings.HasPrefix(name, "#") {
+		return lipgloss.Color(name)
 	}
-	if c, ok := NamedColors[strings.ToLower(color)]; ok {
+	if c, ok := NamedColors[strings.ToLower(name)]; ok {
 		return c
 	}
 	return ColorMuted
