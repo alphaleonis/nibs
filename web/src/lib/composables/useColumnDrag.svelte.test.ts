@@ -360,8 +360,16 @@ describe("useColumnDrag", () => {
     // Host unmounts mid-drag → the composable's $effect cleanup runs cleanup().
     dispose();
 
-    // Global cursor + ghost cleared even though no drop/Escape/pointercancel fired.
-    expect(drag.ghost).toBeNull();
+    // Ghost and global cursor cleared even though no drop/Escape/pointercancel
+    // fired. The ghost is asserted through `isDragging`/`draggedKey` rather than
+    // by reading `drag.ghost`: `ghost` is a `$derived`, and reading a derived
+    // whose owning effect has been destroyed returns its last cached value
+    // instead of recomputing (svelte's `execute_derived` short-circuits on a
+    // DESTROYED parent and warns `derived_inert`). Since `ghost` is null exactly
+    // when `!dragging || draggedKey == null`, these two assertions are equivalent
+    // to it — and unlike the direct read, they observe the post-teardown state.
+    expect(drag.isDragging).toBe(false);
+    expect(drag.draggedKey).toBeNull();
     expect(document.body.dataset.colDrag).toBeUndefined();
     // All four gesture listeners removed — no stale window listeners survive to
     // replay a stale reorder on a later unrelated release.
