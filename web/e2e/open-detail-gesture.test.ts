@@ -3,9 +3,9 @@ import { test, expect, type Page } from "@playwright/test";
 // The "open detail on double-click" preference is a real-browser gesture: jsdom's
 // dblclick is synthesized by the test library rather than produced by the
 // browser's own click/dblclick sequencing, so this is the only place the actual
-// gesture is exercised. The open-row marker is checked here too, because its
-// second visual channel is a border the pointer must not erase — hover
-// specificity and computed style are things jsdom cannot answer.
+// gesture is exercised. The open-row marker is checked here too, because it is a
+// border the pointer must not erase and the fill beside it belongs to a different
+// state — hover specificity and computed style are things jsdom cannot answer.
 
 // Seed the preference before navigation. The localStorage key and blob shape
 // mirror savePreferences (which persists the query under `q` and the rest of the
@@ -108,6 +108,50 @@ test.describe("open detail gesture", () => {
     expect(offsets.cells).toEqual(offsets.headers);
   });
 
+  test("double mode: the open row loses its fill when the selection moves to another row", async ({ page }) => {
+    // The two-gesture divergence this marker split exists for: after opening A and
+    // then plain-clicking B, a delete consumes B alone. B must carry the fill and A
+    // must not — a judgement about painted background that only a real browser can
+    // make, since the two rules are resolved by the cascade.
+    const rows = await openAppWithGesture(page, "double");
+    const opened = rows.first();
+    const selected = rows.nth(1);
+
+    await opened.locator('[data-action="title"]').dblclick();
+    await expect(page.locator('[data-testid="active-nib-view"]')).toBeVisible({ timeout: 5_000 });
+    await selected.locator('[data-action="title"]').click();
+
+    await expect(opened).toHaveClass(/opened/);
+    await expect(opened).not.toHaveClass(/active/);
+    await expect(opened).toHaveAttribute("aria-selected", "false");
+    await expect(selected).toHaveClass(/active/);
+    await expect(selected).not.toHaveClass(/opened/);
+    await expect(selected).toHaveAttribute("aria-selected", "true");
+
+    // Park the pointer off every row: hover repaints the background and would make
+    // whichever row it sits on look filled.
+    await page.mouse.move(0, 0);
+    const paint = (row: typeof opened) =>
+      row.evaluate((el) => {
+        const s = getComputedStyle(el);
+        return { background: s.backgroundColor, accent: s.borderInlineStartColor };
+      });
+
+    const openedPaint = await paint(opened);
+    const selectedPaint = await paint(selected);
+    const plainPaint = await paint(rows.nth(4));
+
+    // Fill is the action set's channel and nothing else's: the open row must paint
+    // EXACTLY like an untouched row, not merely differently from the selected one.
+    // A weaker "the two differ" check passes just as happily on a `.opened` rule
+    // that keeps a deeper fill of its own — which is the thing being removed.
+    expect(openedPaint.background).toBe(plainPaint.background);
+    expect(selectedPaint.background).not.toBe(plainPaint.background);
+    // The accent is the open row's alone, and no other row reserves a colored one.
+    expect(openedPaint.accent).not.toBe(plainPaint.accent);
+    expect(selectedPaint.accent).toBe(plainPaint.accent);
+  });
+
   test("single mode: a single click opens the detail panel", async ({ page }) => {
     const rows = await openAppWithGesture(page, "single");
     const detailPanel = page.locator('[data-testid="active-nib-view"]');
@@ -116,11 +160,11 @@ test.describe("open detail gesture", () => {
     await firstRow.locator('[data-action="title"]').click();
 
     await expect(detailPanel).toBeVisible({ timeout: 5_000 });
-    // The open-row marker is gated on "double": in single mode the selection and
-    // the panel are always the same row, so today's `.active`-only appearance is
-    // unchanged for every profile that never opts in.
+    // In single mode a click writes both sets, so the row is at once the action
+    // set and the panel's target and carries both channels.
     await expect(firstRow).toHaveClass(/active/);
-    await expect(firstRow).not.toHaveClass(/opened/);
-    await expect(firstRow).not.toHaveAttribute("aria-current", "true");
+    await expect(firstRow).toHaveClass(/opened/);
+    await expect(firstRow).toHaveAttribute("aria-selected", "true");
+    await expect(firstRow).toHaveAttribute("aria-current", "true");
   });
 });
