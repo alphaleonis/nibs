@@ -338,12 +338,13 @@ func handleHealth(w http.ResponseWriter, r *http.Request) {
 }
 
 // newGraphQLHandler creates a gqlgen HTTP handler with GET, POST, and WebSocket transports.
-// The returned handler is wrapped in requestCacheMiddleware so every incoming
-// HTTP request gets its own graph.RequestCache in context — resolver helpers
-// (cachedMentions / cachedMentionedBy) use it to memoize per-request mention
-// lookups. The in-process CLI executor (cmd/graphql.go) does NOT route
-// through this middleware and intentionally runs without a cache: a single
-// CLI invocation issues one query, so there's nothing to dedup.
+// Every operation it executes gets its own graph.RequestCache in context via
+// requestCacheAroundOperations — resolver helpers (cachedMentions /
+// cachedMentionedBy / cachedSearchAllIDs) use it to memoize reader lookups that
+// one operation would otherwise repeat once per parent. The in-process CLI
+// executor (cmd/graphql.go) registers no middleware; it attaches an equivalent
+// cache itself in newQueryContext, because one invocation issuing one operation
+// still fans a relationship field out across every parent it selects.
 func newGraphQLHandler(app *App) http.Handler {
 	es := graph.NewExecutableSchema(graph.Config{
 		Resolvers: app.newResolver(),
@@ -357,8 +358,9 @@ func newGraphQLHandler(app *App) http.Handler {
 		KeepAlivePingInterval: 10 * time.Second,
 	})
 	srv.SetErrorPresenter(etagErrorPresenter)
+	srv.AroundOperations(requestCacheAroundOperations)
 
-	return requestCacheMiddleware(srv)
+	return srv
 }
 
 // etagErrorPresenter is the gqlgen error presenter that attaches a stable,
@@ -444,15 +446,42 @@ func etagErrorPresenter(ctx context.Context, err error) *gqlerror.Error {
 	var contradiction *graph.FilterTargetContradictionError
 	switch {
 	case errors.As(err, &etagErr):
-		setErrorCode(gqlErr, "ETAG_MISMATCH")
+		setErrorCode(gqlErr, wireCodeETagMismatch)
 	case errors.As(err, &contradiction):
-		setErrorCode(gqlErr, "FILTER_CONTRADICTION")
+		setErrorCode(gqlErr, wireCodeFilterContradiction)
 	case errors.Is(err, nib.ErrNotFound):
-		setErrorCode(gqlErr, "NOT_FOUND")
+		setErrorCode(gqlErr, wireCodeNotFound)
 	}
 
 	return gqlErr
 }
+
+// The extensions.code values the presenter above can mint. They are a vocabulary
+// of their own, deliberately NOT internal/output's Err* block: those are CLI
+// codes the process maps to an exit status (an etag conflict is CONFLICT there,
+// exit 4), while these are the wire codes a GraphQL client routes on. NOT_FOUND
+// is spelled the same in both by coincidence of meaning, not because one set
+// derives from the other, and merging them would claim the CLI can report
+// ETAG_MISMATCH and the wire can report FILE_ERROR.
+//
+// Each of these is a shipped contract: it must be NAMED in
+// internal/graph/schema.graphqls wherever the refusal that carries it is
+// described, because those descriptions are what a client is given — the SDL
+// itself, the doc comments codegen copies into model/models_gen.go and
+// web/src/lib/gql/graphql.ts, and `nibs catalog schema`, which an agent reads.
+// A code the presenter mints but the SDL never names is one no client can
+// discover.
+//
+// Only the weaker half of that is mechanized: adding a code here that the SDL
+// never spells AT ALL fails TestEveryMintableWireErrorCodeIsNamedInTheSchema.
+// That a code is named at every site whose refusal really carries it — and at
+// no site whose refusal does not — remains a review obligation; no test can
+// see it.
+const (
+	wireCodeETagMismatch        = "ETAG_MISMATCH"
+	wireCodeFilterContradiction = "FILTER_CONTRADICTION"
+	wireCodeNotFound            = "NOT_FOUND"
+)
 
 // setErrorCode attaches a stable extensions.code to a presented GraphQL error,
 // allocating the extensions map on first use.
@@ -463,15 +492,20 @@ func setErrorCode(gqlErr *gqlerror.Error, code string) {
 	gqlErr.Extensions["code"] = code
 }
 
-// requestCacheMiddleware installs a fresh graph.RequestCache on each
-// incoming HTTP request's context. Downstream resolvers read it via
-// graph.RequestCacheFrom to coalesce duplicate mention lookups within the
-// request. A new cache per request is essential — sharing across requests
-// would serve stale data after a mutation, since the cache holds direct
-// *nib.Nib slice references.
-func requestCacheMiddleware(next http.Handler) http.Handler {
-	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		ctx := graph.WithRequestCache(r.Context(), graph.NewRequestCache())
-		next.ServeHTTP(w, r.WithContext(ctx))
-	})
+// requestCacheAroundOperations installs a fresh graph.RequestCache on each
+// GraphQL OPERATION's context. Downstream resolvers read it via
+// graph.RequestCacheFrom to coalesce duplicate mention and search lookups
+// within the operation.
+//
+// A new cache per operation is essential — sharing one across operations serves
+// stale data after a mutation, since every entry is derived from live store
+// state. That is also why this is an operation middleware and not an
+// http.Handler wrapper: gqlgen's WebSocket transport stores the upgrade
+// request's context once and derives every later operation from it, so an
+// http.Handler wrapper would install exactly one cache for the whole connection
+// and hold a search answer computed at connect time for as long as the socket
+// lives. AroundOperations runs once per POST, once per GET and once per
+// WebSocket message alike, so all three transports get the same scope.
+func requestCacheAroundOperations(ctx context.Context, next graphql.OperationHandler) graphql.ResponseHandler {
+	return next(graph.WithRequestCache(ctx, graph.NewRequestCache()))
 }

@@ -5,7 +5,22 @@ import "github.com/alphaleonis/nibs/internal/nib"
 // DefaultSearchLimit caps each leg of Core.Search independently: the
 // full-text index query and the direct ID match are each limited to this
 // many results, so a combined result may hold up to twice this many nibs.
+//
+// It bounds Core.Search only. Core.SearchAll answers the same query with no cap
+// at all, for the callers that intersect the answer with an already-bounded
+// working set — see its doc for why a store-wide cap is the wrong bound there.
 const DefaultSearchLimit = 1000
+
+// Unlimited is the SearchIndex.Search limit that means "no cap — every match".
+//
+// It exists because the sentinel is an INVERSION of the usual convention: the
+// obvious reading of a zero limit is "unset, substitute a default", and an
+// implementation that reads it that way compiles, passes every existing test,
+// and silently reinstates the cap Core.SearchAll exists to avoid. Naming the
+// value puts that meaning at each call site instead of only in prose, so
+// `idx.Search(query, Unlimited)` cannot be misread the way `idx.Search(query, 0)`
+// can. Negative limits mean the same thing; this is the spelling to use.
+const Unlimited = 0
 
 // SearchIndex abstracts full-text search so that nibcore.Core can work with
 // pluggable implementations (real Bleve index, no-op for tests, etc.).
@@ -23,7 +38,15 @@ type SearchIndex interface {
 	IndexNibs(nibs []*nib.Nib) error
 	// DeleteNib removes a nib by ID. Must be idempotent (no error if absent).
 	DeleteNib(id string) error
-	// Search returns IDs of nibs matching the query, up to limit results.
+	// Search returns IDs of nibs matching the query, in relevance order, up to
+	// limit results. A limit <= 0 (spelled Unlimited) means NO cap — every
+	// match, however many that is. An implementation whose backend needs a
+	// concrete size must express "no cap" as a size larger than any answer it
+	// can produce, NOT by substituting a default and not by measuring the
+	// backing store in a separate operation: substituting a default makes
+	// Core.SearchAll silently regain the cap it exists to avoid, and a separate
+	// measuring operation lets a concurrent write invalidate the size before the
+	// search runs, truncating the answer just as silently.
 	Search(query string, limit int) ([]string, error)
 	// Close releases resources held by the index.
 	Close() error

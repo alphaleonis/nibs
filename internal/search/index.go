@@ -2,6 +2,8 @@
 package search
 
 import (
+	"math"
+
 	"github.com/alphaleonis/nibs/internal/nib"
 	"github.com/blevesearch/bleve/v2"
 	"github.com/blevesearch/bleve/v2/mapping"
@@ -85,10 +87,25 @@ func (idx *Index) DeleteNib(id string) error {
 	return idx.index.Delete(id)
 }
 
-const defaultSearchLimit = 1000
-
 // Search executes a search query and returns matching nib IDs.
-// The limit parameter controls the maximum number of results (0 uses a default of 1000).
+//
+// limit caps the number of results. A limit <= 0 means NO cap: every matching
+// document is returned, in relevance order. Callers that want the top N ask for
+// N; callers that must not silently drop a match (an intersection against an
+// already-bounded working set, where the cap would truncate the wrong
+// population) ask for 0.
+//
+// Bleve needs a concrete Size, so "no cap" is expressed as math.MaxInt32 rather
+// than measured against the index. Asking the index for its document count first
+// would be both useless and wrong: useless because Bleve's top-N collector caps
+// its own backing allocation at PreAllocSizeSkipCap (1000) and grows from there
+// with the hits actually collected, so a huge Size costs nothing; wrong because
+// the count and the search would be two unsynchronized index operations, and a
+// document written between them would leave Size stale and silently truncate the
+// "uncapped" answer — the exact failure a limit of 0 exists to rule out. One
+// index operation, sized past anything an in-memory index can hold, has neither
+// problem. (MaxInt32, not MaxInt: Size is an int, and a 32-bit build must not
+// overflow it.)
 //
 // The query string is first parsed with Bleve's query-string grammar, which
 // supports:
@@ -106,7 +123,7 @@ const defaultSearchLimit = 1000
 // backend failure (closed/broken index) fails both attempts and still propagates.
 func (idx *Index) Search(queryStr string, limit int) ([]string, error) {
 	if limit <= 0 {
-		limit = defaultSearchLimit
+		limit = math.MaxInt32
 	}
 
 	ids, err := idx.runQuery(bleve.NewQueryStringQuery(queryStr), limit)

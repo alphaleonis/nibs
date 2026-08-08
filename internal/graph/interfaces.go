@@ -85,7 +85,18 @@ type NibReader interface {
 	// false when the nib is absent.
 	GetSnapshot(id string) (*nib.Nib, bool)
 	All() []*nib.Nib
+	// Search returns the TOP hits for the query — id matches first, then
+	// full-text hits by relevance — each leg capped at
+	// nibcore.DefaultSearchLimit. queryResolver.Nibs seeds from this: at the top
+	// level the truncation is the answer.
 	Search(query string) ([]*nib.Nib, error)
+	// SearchAll returns EVERY match for the query, in the same order, uncapped.
+	// It is the accessor for intersecting a term with a working set some
+	// relationship already bounded (see filterBySearch): capping there would
+	// truncate the store rather than the answer, dropping a genuine member that
+	// ranks below the store-wide cutoff. Bounded by the store — a query cannot
+	// match more nibs than exist.
+	SearchAll(query string) ([]*nib.Nib, error)
 	NormalizeID(id string) (string, bool)
 	FindIncomingLinks(targetID string) []nib.IncomingLink
 	FindMentions(fromID string) []*nib.Nib

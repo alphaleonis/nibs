@@ -1804,6 +1804,13 @@ func TestTopLevelSearchQueriesTheIndexOnce(t *testing.T) {
 	if reader.searchCalls != 1 {
 		t.Errorf("Core.Search called %d times, want 1", reader.searchCalls)
 	}
+	// The uncapped entry point belongs to the relationship fields. Reaching it
+	// from the top level would quietly replace "the top hits for the term" — the
+	// answer this surface promises, and the bound that keeps a one-word query
+	// over a large store from materializing it — with the whole match set.
+	if reader.searchAllCalls != 0 {
+		t.Errorf("Core.SearchAll called %d times, want 0 — the top level answers with the capped search", reader.searchAllCalls)
+	}
 	if filter.Search == nil || *filter.Search != "anything" {
 		t.Errorf("caller's filter.Search = %v, want it left carrying the term", filter.Search)
 	}

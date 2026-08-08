@@ -1,6 +1,7 @@
 package search
 
 import (
+	"fmt"
 	"testing"
 
 	"github.com/alphaleonis/nibs/internal/nib"
@@ -368,26 +369,37 @@ func TestSearch_Limit(t *testing.T) {
 	}
 }
 
-func TestSearch_DefaultLimit(t *testing.T) {
+// TestSearch_NegativeLimitReturnsEveryMatch covers the other half of the
+// sentinel. The contract is `limit <= 0` means no cap, not `limit == 0`, so a
+// negative value must behave exactly like zero — an implementation that special-
+// cases only zero would hand Bleve a negative Size, and the answer would come
+// back empty rather than complete.
+//
+// The "no default substitution" half of the contract is pinned by
+// TestSearch_ZeroLimitReturnsEveryMatch, whose fixture is sized past the old
+// default; this one only has to be larger than any positive cap could be
+// mistaken for.
+func TestSearch_NegativeLimitReturnsEveryMatch(t *testing.T) {
 	idx := setupTestIndex(t)
 
-	b := &nib.Nib{
-		ID:    "abc1",
-		Title: "Test",
-		Body:  "",
+	const total = 20
+	nibs := make([]*nib.Nib, 0, total)
+	for i := range total {
+		nibs = append(nibs, &nib.Nib{
+			ID:    fmt.Sprintf("nn%04d", i),
+			Title: "quarkfoo entry",
+		})
 	}
-	if err := idx.IndexNib(b); err != nil {
-		t.Fatalf("IndexNib() error = %v", err)
+	if err := idx.IndexNibs(nibs); err != nil {
+		t.Fatalf("IndexNibs() error = %v", err)
 	}
 
-	// Search with 0 limit should use default
-	ids, err := idx.Search("Test", 0)
+	ids, err := idx.Search("quarkfoo", -1)
 	if err != nil {
-		t.Fatalf("Search() error = %v", err)
+		t.Fatalf("Search(limit -1) error = %v", err)
 	}
-
-	if len(ids) != 1 {
-		t.Errorf("Search with limit 0 (default) returned %d results, want 1", len(ids))
+	if len(ids) != total {
+		t.Errorf("Search(limit -1) returned %d ids, want all %d", len(ids), total)
 	}
 }
 
@@ -456,5 +468,64 @@ func TestSearch_ValidFieldQueryStillWorks(t *testing.T) {
 	}
 	if len(ids) != 1 || ids[0] != "aaa1" {
 		t.Errorf("Search(\"title:checking\") = %v, want [aaa1] (field-scoped match)", ids)
+	}
+}
+
+// TestSearch_ZeroLimitReturnsEveryMatch pins what limit <= 0 means: no cap.
+//
+// It used to mean "substitute a default of 1000", which is a cap wearing the
+// sentinel for its absence. nibcore.Core.SearchAll asks for 0 precisely because
+// it must not silently drop a match, so a default here would reinstate the very
+// bound that call exists to avoid — and would do it invisibly, since the caller
+// asked for everything and got a plausible-looking 1000.
+//
+// The fixture is deliberately just past that old default, so the assertion fails
+// if the substitution ever returns.
+func TestSearch_ZeroLimitReturnsEveryMatch(t *testing.T) {
+	idx := setupTestIndex(t)
+
+	const total = 1005
+	nibs := make([]*nib.Nib, 0, total)
+	for i := range total {
+		nibs = append(nibs, &nib.Nib{
+			ID:    fmt.Sprintf("zz%04d", i),
+			Title: "quarkfoo entry",
+		})
+	}
+	if err := idx.IndexNibs(nibs); err != nil {
+		t.Fatalf("IndexNibs() error = %v", err)
+	}
+
+	all, err := idx.Search("quarkfoo", 0)
+	if err != nil {
+		t.Fatalf("Search(limit 0) error = %v", err)
+	}
+	if len(all) != total {
+		t.Errorf("Search(limit 0) returned %d ids, want all %d", len(all), total)
+	}
+
+	// A positive limit still caps, so "no cap" is a property of the sentinel
+	// rather than of the index having become unbounded.
+	capped, err := idx.Search("quarkfoo", 1000)
+	if err != nil {
+		t.Fatalf("Search(limit 1000) error = %v", err)
+	}
+	if len(capped) != 1000 {
+		t.Errorf("Search(limit 1000) returned %d ids, want 1000", len(capped))
+	}
+}
+
+// TestSearch_ZeroLimitOnEmptyIndex covers the degenerate store: "everything"
+// over an index holding nothing is nothing, reported as an empty result rather
+// than as an error.
+func TestSearch_ZeroLimitOnEmptyIndex(t *testing.T) {
+	idx := setupTestIndex(t)
+
+	ids, err := idx.Search("anything", 0)
+	if err != nil {
+		t.Fatalf("Search(limit 0) on empty index error = %v", err)
+	}
+	if len(ids) != 0 {
+		t.Errorf("Search(limit 0) on empty index = %v, want no ids", ids)
 	}
 }

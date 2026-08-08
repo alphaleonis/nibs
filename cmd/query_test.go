@@ -2390,3 +2390,27 @@ func TestClassifyRootFieldsRequiresEveryErrorToBeAttributable(t *testing.T) {
 		})
 	}
 }
+
+// TestNewQueryContextCarriesARequestCache pins that a CLI GraphQL invocation
+// runs under a per-operation cache, not a bare context.
+//
+// The resolver helpers treat a missing cache as "fall straight through to the
+// reader" — the right default for a helper, and silent when it is wrong. One CLI
+// document selecting `children(filter: {search: q})` across N parents evaluates
+// the term N times without this, and a relationship-field search reads the
+// UNCAPPED answer, so each of those is a full index query over the store. The
+// dedup itself is pinned in internal/graph
+// (TestNestedRelationshipSearchQueriesTheIndexOncePerRequest); what this test
+// pins is that the CLI installs the mechanism at all.
+func TestNewQueryContextCarriesARequestCache(t *testing.T) {
+	ctx := newQueryContext()
+
+	if graph.RequestCacheFrom(ctx) == nil {
+		t.Error("newQueryContext() produced a context with no RequestCache; every relationship-field search in one CLI document would re-query the index per parent")
+	}
+	// The cache is layered ONTO the traced context rather than replacing it:
+	// the operation context is still the executor's to install afterwards.
+	if graphql.HasOperationContext(ctx) {
+		t.Error("newQueryContext() should not carry an operation context yet; the executor installs one")
+	}
+}

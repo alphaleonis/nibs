@@ -1176,14 +1176,14 @@ func (m listModel) dispatchBlockMove(up bool) tea.Cmd {
 		if focused.nib == nil {
 			return refuseReorderCmd(reorderReasonNothingSelected)
 		}
-		return singleReorderCmd(focused.nib, m.findSiblings(focused.nib), up)
+		return singleReorderCmd(focused.nib, m.findSiblings(focused.nib), m.tree, up)
 	}
 
 	// Case 2: exactly one effective item → single-item reorder sourced from
 	// the selection rather than the focus.
 	if len(effective) == 1 {
 		target := effective[0]
-		return singleReorderCmd(target, m.findSiblings(target), up)
+		return singleReorderCmd(target, m.findSiblings(target), m.tree, up)
 	}
 
 	// Case 3+: 2 or more effective items — block move if valid.
@@ -1240,7 +1240,12 @@ func refuseReorderCmd(reason string) tea.Cmd {
 // down among its siblings. When the move cannot happen — no target, target
 // missing from the siblings, or already at the boundary in that direction —
 // it emits the reason instead.
-func singleReorderCmd(target *nib.Nib, siblings []*nib.Nib, up bool) tea.Cmd {
+//
+// tree is the same tree siblings were drawn from. It is what lets a refusal
+// distinguish a nib promoted out of a parent cycle, which belongs to no sibling
+// list, from a nib merely absent from the one it was handed; pass nil when
+// there is no tree to consult and the refusal falls back to the latter.
+func singleReorderCmd(target *nib.Nib, siblings []*nib.Nib, tree []*ui.TreeNode, up bool) tea.Cmd {
 	if target == nil {
 		return refuseReorderCmd(reorderReasonNothingSelected)
 	}
@@ -1253,9 +1258,14 @@ func singleReorderCmd(target *nib.Nib, siblings []*nib.Nib, up bool) tea.Cmd {
 		}
 	}
 	if idx < 0 {
-		// Reachable for a nib promoted out of a parent cycle: its parent edge is
-		// severed in the tree, so it is absent from the sibling list its stored
-		// parent still names. Refusing is correct — see blockmove.go.
+		if inParentCycle(target, tree) {
+			// BuildTree severed this nib's parent edge to break a cycle, so it
+			// renders at root level while the sibling list its stored parent names
+			// no longer holds it. Name the cycle: the sibling list is a symptom.
+			return refuseReorderCmd(reorderReasonInParentCycle)
+		}
+		// Defensive: the tree and the sibling lookup disagree. Refusing is
+		// correct — see blockmove.go.
 		return refuseReorderCmd(reorderReasonNotInList)
 	}
 	if up {

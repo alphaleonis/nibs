@@ -27,18 +27,24 @@ type stubReader struct {
 	// mentionsIn, when populated, is returned by FindMentionedBy keyed on the
 	// target nib ID.
 	mentionsIn map[string][]*nib.Nib
-	// searchOut, when populated, is returned by Search keyed on the query
-	// string. Tests that need queryResolver.Nibs to take its search branch
-	// (and therefore its includeAncestors step) seed this directly.
+	// searchOut, when populated, is returned by Search and SearchAll keyed on
+	// the query string. Tests that need queryResolver.Nibs to take its search
+	// branch (and therefore its includeAncestors step) seed this directly.
+	//
+	// One map serves both because the stub's store is far below any cap: the
+	// two differ only in the bound they apply to a large store, so a fixture
+	// that models them separately would be modeling a fiction.
 	searchOut map[string][]*nib.Nib
-	// searchErr, when set, is what Search reports for every query — the
-	// index failure Core.Search surfaces when Bleve cannot answer.
+	// searchErr, when set, is what Search and SearchAll report for every query
+	// — the index failure Core.Search surfaces when Bleve cannot answer.
 	searchErr error
-	// searchCalls counts Search invocations. Core.Search is the expensive read
-	// on these paths (a write lock for lazy init, a Bleve query, then a full
-	// scan of the store for id matches), so a test can pin how many of them one
-	// resolver call costs.
-	searchCalls int
+	// searchCalls counts Search invocations, searchAllCalls counts SearchAll.
+	// Either is the expensive read on these paths (a write lock for lazy init,
+	// a Bleve query, then a full scan of the store for id matches), so a test
+	// can pin how many of them one resolver call costs — and keeping them apart
+	// also pins WHICH bound a surface asked for.
+	searchCalls    int
+	searchAllCalls int
 }
 
 // Get mirrors nibcore.Core.Get: exact id first, then — if a prefix is
@@ -89,6 +95,14 @@ func (s *stubReader) All() []*nib.Nib {
 
 func (s *stubReader) Search(query string) ([]*nib.Nib, error) {
 	s.searchCalls++
+	if s.searchErr != nil {
+		return nil, s.searchErr
+	}
+	return s.searchOut[query], nil
+}
+
+func (s *stubReader) SearchAll(query string) ([]*nib.Nib, error) {
+	s.searchAllCalls++
 	if s.searchErr != nil {
 		return nil, s.searchErr
 	}

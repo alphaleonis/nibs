@@ -362,6 +362,72 @@ func assertDanglingRootShape(t *testing.T, app *App) {
 	}
 }
 
+// cycleParentNibs returns a root A alongside a two-member parent cycle X <-> Y.
+// BuildTree promotes the lowest id, X, so X renders as a root next to A while Y
+// nests underneath it.
+func cycleParentNibs() []*nib.Nib {
+	return []*nib.Nib{
+		{ID: "A", Title: "A", Type: "task", Status: "todo", Order: "1"},
+		{ID: "X", Title: "X", Type: "task", Status: "todo", Order: "2", Parent: "Y"},
+		{ID: "Y", Title: "Y", Type: "task", Status: "todo", Order: "3", Parent: "X"},
+	}
+}
+
+// assertPromotedCycleShape fails unless the loaded tree really is the promoted
+// shape the refusal is about: X at root level, still carrying its parent link,
+// with that parent rendered as its own child.
+func assertPromotedCycleShape(t *testing.T, app *App) {
+	t.Helper()
+	if got := len(app.list.tree); got != 2 {
+		t.Fatalf("expected 2 root nodes (A and the promoted X), got %d", got)
+	}
+	var x *ui.TreeNode
+	for _, node := range app.list.tree {
+		if node.Nib.ID == "X" {
+			x = node
+		}
+	}
+	if x == nil {
+		t.Fatal("expected X promoted to root level")
+	}
+	if x.Nib.Parent != "Y" {
+		t.Fatalf("expected X to keep parent %q, got %q", "Y", x.Nib.Parent)
+	}
+	if len(x.Children) != 1 || x.Children[0].Nib.ID != "Y" {
+		t.Fatalf("expected X's stored parent Y to render as its child, got %v", x.Children)
+	}
+}
+
+// Behavior 25: a nib promoted out of a parent cycle renders at root level, so a
+// user reaches for Ctrl-Up on it like any other row. The refusal names the
+// cycle rather than the sibling list its severed parent edge left behind.
+func TestCtrlUpDown_PromotedCycleRoot_ReportsTheCycle(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		key  tea.KeyType
+	}{
+		{"up", tea.KeyCtrlUp},
+		{"down", tea.KeyCtrlDown},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			app, stub := setupTestApp(t, cycleParentNibs())
+			assertPromotedCycleShape(t, app)
+
+			if !focusOn(app, "X") {
+				t.Fatal("could not focus X")
+			}
+			sendKey(app, tea.KeyMsg{Type: tc.key})
+
+			if got := len(stub.ReorderCalls); got != 0 {
+				t.Errorf("expected no backend reorder for a nib in a parent cycle, got %d", got)
+			}
+			if got := app.list.statusMessage; got != reorderReasonInParentCycle {
+				t.Errorf("expected status %q, got %q", reorderReasonInParentCycle, got)
+			}
+		})
+	}
+}
+
 // Behavior 21: a refusal is reported, and does not outlive the next successful
 // move.
 //
