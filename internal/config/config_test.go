@@ -418,6 +418,89 @@ func TestStatusFlagCombinationsAreLegal(t *testing.T) {
 	}
 }
 
+// TestWorkflowStatusOrderCoversEveryStatus is the membership half of the two
+// status orders: workflowStatusOrder may list the same names in a different
+// sequence than DefaultStatuses, but it may not hold a name that is not a
+// status, and it may not forget one. Forgetting one is the failure that
+// matters — orderStatusesBy appends the missing status so no picker hides it,
+// which means the mistake is invisible at runtime and this test is the only
+// thing that reports it.
+func TestWorkflowStatusOrderCoversEveryStatus(t *testing.T) {
+	declared := Default().StatusNames()
+
+	for _, name := range workflowStatusOrder {
+		if !slices.Contains(declared, name) {
+			t.Errorf("workflowStatusOrder lists %q, which is not a declared status (%s)", name, Default().StatusList())
+		}
+	}
+	for _, name := range declared {
+		if !slices.Contains(workflowStatusOrder, name) {
+			t.Errorf("status %q is missing from workflowStatusOrder — pickers will show it last instead of in the flow", name)
+		}
+	}
+	if len(workflowStatusOrder) != len(declared) {
+		t.Errorf("workflowStatusOrder has %d entries, DefaultStatuses has %d — a duplicate?", len(workflowStatusOrder), len(declared))
+	}
+}
+
+// TestWorkflowStatuses pins the order pickers show, and that each entry carries
+// the same StatusConfig the rest of the config serves for that name.
+func TestWorkflowStatuses(t *testing.T) {
+	cfg := Default()
+
+	want := []string{"draft", "todo", "in-progress", "completed", "deferred", "scrapped"}
+	if got := cfg.WorkflowStatusNames(); !slices.Equal(got, want) {
+		t.Errorf("WorkflowStatusNames() = %v, want %v (transition order)", got, want)
+	}
+
+	for _, s := range cfg.WorkflowStatuses() {
+		declared := cfg.GetStatus(s.Name)
+		if declared == nil {
+			t.Errorf("WorkflowStatuses() offers %q, which GetStatus does not know", s.Name)
+			continue
+		}
+		if s != *declared {
+			t.Errorf("WorkflowStatuses() entry %q = %+v, want %+v — the flags and color must come from DefaultStatuses", s.Name, s, *declared)
+		}
+	}
+}
+
+// TestOrderStatusesByKeepsEveryStatus proves the fail-safe in orderStatusesBy:
+// an order that forgets a status still yields every status, with the forgotten
+// one last. A picker built on a lossy reorder would silently stop offering a
+// status work can legitimately be set to.
+func TestOrderStatusesByKeepsEveryStatus(t *testing.T) {
+	t.Run("forgotten status is appended", func(t *testing.T) {
+		got := namesOf(orderStatusesBy([]string{"todo", "draft"}))
+		if len(got) != len(DefaultStatuses) {
+			t.Fatalf("orderStatusesBy dropped statuses: got %v, want all %d", got, len(DefaultStatuses))
+		}
+		if got[0] != "todo" || got[1] != "draft" {
+			t.Errorf("named statuses came out as %v, want todo, draft first", got[:2])
+		}
+		for _, s := range DefaultStatuses {
+			if !slices.Contains(got, s.Name) {
+				t.Errorf("status %q is missing from %v", s.Name, got)
+			}
+		}
+	})
+
+	t.Run("unknown and duplicate names do not add entries", func(t *testing.T) {
+		got := namesOf(orderStatusesBy([]string{"todo", "todo", "nonesuch"}))
+		if len(got) != len(DefaultStatuses) {
+			t.Errorf("orderStatusesBy = %v (%d entries), want %d — each status exactly once", got, len(got), len(DefaultStatuses))
+		}
+	})
+}
+
+func namesOf(statuses []StatusConfig) []string {
+	names := make([]string, len(statuses))
+	for i, s := range statuses {
+		names[i] = s.Name
+	}
+	return names
+}
+
 func countStatuses(pred func(StatusConfig) bool) int {
 	n := 0
 	for _, s := range DefaultStatuses {

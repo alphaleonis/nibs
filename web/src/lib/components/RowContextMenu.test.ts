@@ -513,6 +513,33 @@ describe("RowContextMenu", () => {
         );
       });
     });
+
+    it("lists statuses in transition order", async () => {
+      // Same order as the status select and the TUI picker: the path work
+      // takes, not the STATUSES order that sorting and the facets use.
+      renderMenu();
+
+      await waitFor(() => {
+        expect(screen.getByTestId("ctx-status-trigger")).toBeInTheDocument();
+      });
+
+      await openSubmenu(user, screen.getByTestId("ctx-status-trigger"));
+      await screen.findByTestId("ctx-status-draft");
+
+      const labels = Array.from(
+        document.querySelectorAll<HTMLElement>('[data-testid^="ctx-status-"]'),
+      )
+        .filter((el) => el.dataset.testid !== "ctx-status-trigger")
+        .map((item) => item.textContent?.trim());
+      expect(labels).toEqual([
+        "draft",
+        "todo",
+        "in-progress",
+        "completed",
+        "deferred",
+        "scrapped",
+      ]);
+    });
   });
 
   // ─── Priority submenu interaction ─────────────────────────────

@@ -1,7 +1,7 @@
 <script lang="ts">
   import type { TreeTableNib } from "../types";
   import type { RelIdKey } from "$lib/query";
-  import { STATUSES, PRIORITIES } from "../constants";
+  import { STATUS_WORKFLOW, PRIORITIES } from "../constants";
   import { canHaveChildren } from "../typeHierarchy";
   import * as DropdownMenu from "$lib/components/ui/dropdown-menu/index.js";
   import { useSelection, useConfirmDialog, useActiveView, useHistoryNav } from "$lib/contexts";
@@ -290,7 +290,7 @@
         <DropdownMenu.Separator />
       {/if}
 
-      {@render metadataSubmenu("Status", STATUSES, nib.status, handleStatusChange, "status")}
+      {@render metadataSubmenu("Status", STATUS_WORKFLOW, nib.status, handleStatusChange, "status")}
 
       {@render metadataSubmenu("Priority", PRIORITIES, nib.priority, handlePriorityChange, "priority")}
 

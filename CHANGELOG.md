@@ -34,6 +34,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 - Closing a child now propagates to its parent **by reason**: `## Key Decisions` merge upward for every close reason, but only a `completed` close rewrites the parent's `## Current Focus`.
 - `nibs archive` now moves `deferred` nibs too — it archives every nib in a closed status.
 - The web UI settled on one name per field: **Status** (previously "State" in places) and **Estimate** (previously "Effort"), matching the words the query language and the CLI use.
+- The status pickers in the TUI and the web now list statuses in transition order — draft, todo, in-progress, completed, deferred, scrapped — while lists and the status column keep sorting most-active-first.
 - `nibs serve` sends SPA cache headers, so a rebuilt UI is picked up instead of being served stale from the browser cache.
 - The TUI's Charm stack (Bubble Tea, Bubbles, Lip Gloss, Glamour) moved to v2 with no intended behavior change — 22 screens were diffed against the pre-migration build to confirm none landed.
 - The web dependency tree moved forward: dompurify, the Svelte runtime, bits-ui, CodeMirror, Tailwind, Playwright and `@lucide/svelte`, plus `tinykeys` 4, `marked` 18 and `@testing-library/jest-dom` 7.
