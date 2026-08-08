@@ -21,6 +21,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 - **GraphQL `NibFilter` gains `ancestorId`, `descendantId` and `siblingId`** — subtree, ancestor-chain and sibling predicates, each excluding the target nib itself.
 - **The GraphQL schema now documents that a batch mutation is not atomic** — root fields execute serially, execution does not stop at the first failure, and each field commits on its own — and it names the wire error codes `nibs serve` can return, including `ETAG_MISMATCH`.
 - **The tracking-nib pattern is documented** in `nibs prime`: when work waits on something outside the tracker, make a nib for the external event and `--blocked-by` it.
+- **A web setting for which click opens a nib** (Settings → Behavior): with "Double click" selected, a single click selects a row without opening the detail panel, so browsing and multi-select no longer pop it open.
 
 ### Changed
 - **BREAKING: `parentId` reports the resolved parent, not the raw stored link.** A `parent:` naming no nib now reports `parentId: null` — matching `parent`, `hasParent` and `siblingId`, which always read it that way — and the `parentId` filter and the CLI's `-f parent` follow; the raw link moved to `storedParentId` / `-f stored_parent`.
@@ -35,6 +36,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 - `nibs archive` now moves `deferred` nibs too — it archives every nib in a closed status.
 - The web UI settled on one name per field: **Status** (previously "State" in places) and **Estimate** (previously "Effort"), matching the words the query language and the CLI use.
 - The status pickers in the TUI and the web now list statuses in transition order — draft, todo, in-progress, completed, deferred, scrapped — while lists and the status column keep sorting most-active-first.
+- Deleting or archiving from the web table now closes the detail panel only when it removed the nib the panel was showing, instead of closing it every time.
 - `nibs serve` sends SPA cache headers, so a rebuilt UI is picked up instead of being served stale from the browser cache.
 - The TUI's Charm stack (Bubble Tea, Bubbles, Lip Gloss, Glamour) moved to v2 with no intended behavior change — 22 screens were diffed against the pre-migration build to confirm none landed.
 - The web dependency tree moved forward: dompurify, the Svelte runtime, bits-ui, CodeMirror, Tailwind, Playwright and `@lucide/svelte`, plus `tinykeys` 4, `marked` 18 and `@testing-library/jest-dom` 7.
