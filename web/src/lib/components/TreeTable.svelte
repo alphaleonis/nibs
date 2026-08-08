@@ -745,7 +745,6 @@
           highlighted={dataSource.changed.isHighlighted(row.nib.id)}
           fading={dataSource.changed.isFading(row.nib.id)}
           {blockedEmphasis}
-          openDetailOn={resolvedOpenDetailOn}
         />
       {/each}
     </tbody>

@@ -1,6 +1,6 @@
 <script lang="ts">
-  import { DEFAULT_BLOCKED_EMPHASIS, DEFAULT_OPEN_DETAIL_ON } from "../types";
-  import type { TreeTableNib, BlockedEmphasis, OpenDetailGesture } from "../types";
+  import { DEFAULT_BLOCKED_EMPHASIS } from "../types";
+  import type { TreeTableNib, BlockedEmphasis } from "../types";
   import { ALL_COLUMN_KEYS } from "../columns";
   import type { ColumnKey, RowContext } from "../columns";
   import { Plus } from "@lucide/svelte";
@@ -23,10 +23,6 @@
     highlighted?: boolean;
     fading?: boolean;
     blockedEmphasis?: BlockedEmphasis;
-    /** The resolved open-detail preference, passed down by TreeTable. Only
-     *  "double" can put the selection and the detail panel on different rows,
-     *  so it is also the only mode that renders the open-row marker. */
-    openDetailOn?: OpenDetailGesture;
   }
 
   let {
@@ -42,7 +38,6 @@
     highlighted = false,
     fading = false,
     blockedEmphasis = DEFAULT_BLOCKED_EMPHASIS,
-    openDetailOn = DEFAULT_OPEN_DETAIL_ON,
   }: Props = $props();
 
   const selection = useSelection();
@@ -61,16 +56,25 @@
   // touch no selection/drag context — so ambient row state stays on the <tr>.
   let rowCtx: RowContext = $derived({ nib, depth, parentNib, hasChildren, collapsed, blockedEmphasis });
 
-  // Computed from context + nib.id
-  let selected = $derived(selection.selectedNibId === nib.id || selection.selectedIds.has(nib.id));
-  // The row currently showing in the detail panel, marked only where that can
-  // differ from the selection. Under "open on double-click" the two point at
-  // different rows, so the open row needs a marker of its own on top of
-  // `.active`; under "single" they are always the same row, so a marker would
-  // add no information while silently restyling every existing profile's
-  // selected row. Gating it here is what keeps "single" byte-identical to the
-  // pre-preference behavior.
-  let opened = $derived(openDetailOn === "double" && selection.selectedNibId === nib.id);
+  // Computed from context + nib.id. `selectedIds` and `selectedNibId` are two
+  // independent facts, so they get two independent channels here:
+  //
+  //   inSelection — the row is in the bulk-action set, i.e. what a delete or a
+  //     bulk status change would consume. Drives the `.active` fill and
+  //     `aria-selected`, so the destructive target set is legible in both the
+  //     visual and the assistive channel. Reading `selectedNibId` here too would
+  //     make the two-row and one-row action sets render identically.
+  //   opened — the detail panel is showing this row. Drives the `.opened`
+  //     leading accent and `aria-current`.
+  let inSelection = $derived(selection.selectedIds.has(nib.id));
+  // Marked in every open-detail mode, not only "double": a row can be open while
+  // outside the action set in "single" too, and with `.active` tracking
+  // `selectedIds` alone a mode gate here would leave that row unmarked entirely.
+  // Two paths reach it: `clearAfterMutation` deselects everything and closes the
+  // panel only when the mutation hit the panel's nib, so deleting a different row
+  // empties the set while the panel stays open; and `retainOnly` prunes
+  // `selectedIds` on a filter change while leaving `selectedNibId` alone.
+  let opened = $derived(selection.selectedNibId === nib.id);
   let focused = $derived(selection.focusedNibId === nib.id);
   let isDragged = $derived(drag.isDraggedItem(nib.id));
   let anyDragging = $derived(drag.isDragging);
@@ -114,7 +118,7 @@
 <tr
   data-testid="tree-row"
   class="tree-row"
-  class:active={selected}
+  class:active={inSelection}
   class:opened={opened}
   class:focused={focused}
   class:draggable={draggable}
@@ -128,6 +132,7 @@
   class:nib-fading={fading}
   class:blocked-dim={blockedDim}
   data-nib-id={nib.id}
+  aria-selected={inSelection}
   aria-current={opened ? "true" : undefined}
   style={rowOpacity < 1 ? `opacity: ${rowOpacity};` : ""}
 >
@@ -181,26 +186,24 @@
     background-color: oklch(0.488 0.243 264 / 0.15);
   }
 
-  /* The row open in the detail panel: a stronger fill of the SAME hue as
-     `.active`, so "open" reads as a deeper version of "selected" rather than a
-     second, competing color. Declared after `.active` (which it must override)
-     and before the `.drop-*` rules, so a drag target still wins over it.
+  /* The row open in the detail panel: the leading-edge accent ONLY, no fill.
+     Fill is `.active`'s channel and means "in the bulk-action set", so an open
+     row that a delete would not consume must not carry one — a fill here would
+     also render it more prominently than the rows the action actually targets.
+     Shape rather than alpha keeps the two states independently readable when a
+     row is both (see also `aria-current` / `aria-selected` on the row). Every
+     row reserves the 3px gutter transparent, so coloring it shifts nothing.
 
-     Deliberately a background-color and NOT a box-shadow ring: the keyboard
-     focus ring (`.tree-row.focused` in app.css) and all three drop-zone
-     indicators are box-shadows, and a component-scoped rule outranks the global
-     one — a ring here would silently swallow the focus ring on the row that is
-     both open and focused, which is the common case. Background composes with
-     all of them; do not convert this to a ring.
+     Deliberately not a box-shadow ring: the keyboard focus ring
+     (`.tree-row.focused` in app.css) and all three drop-zone indicators are
+     box-shadows, and a component-scoped rule outranks the global one — a ring
+     here would silently swallow the focus ring on the row that is both open and
+     focused, which is the common case. Do not convert this to a ring.
 
-     The leading-edge accent is the second channel. `.tree-row:hover` carries
-     higher specificity than this rule and repaints the background, so the fill
-     alone disappears under the pointer — which in "double" mode is exactly where
-     the pointer sits after a click. Hover touches no border property, so the
-     accent survives it, and it distinguishes open from selected by shape rather
-     than by alpha alone (see also `aria-current` on the row). */
+     Declared before the `.drop-*` rules so a drag target still wins over it, and
+     the accent survives `.tree-row:hover` (which repaints only the background)
+     — the case where the pointer parks on the row it just opened. */
   .tree-row.opened {
-    background-color: oklch(0.488 0.243 264 / 0.28);
     border-inline-start-color: var(--ring);
   }
 

@@ -278,6 +278,45 @@ test("detail panel — bottom dock", async ({ page }) => {
   await shot(page, "detail-panel-bottom");
 });
 
+// The two row-state channels side by side, per palette: a fill means "a bulk
+// action would consume this row" and the leading accent means "the detail panel
+// is showing it". Reaching the state needs the double-click preference — open one
+// row, then plain-click another — so the frame holds an open-but-unselected row,
+// a selected-but-not-open row, and plain rows. Whether those three read as
+// distinct is a pixel judgement no jsdom test can make.
+for (const { value } of THEMES) {
+  test(`row states — open vs selected — ${value}`, async ({ page }) => {
+    await page.addInitScript((t) => {
+      localStorage.setItem(
+        "nibs-filter-preferences",
+        JSON.stringify({ filter: {}, viewLevel: "flat", theme: t, openDetailOn: "double" }),
+      );
+    }, value);
+    await page.goto("/");
+    const rows = page.locator("tr[data-nib-id]");
+    await expect(rows.first()).toBeVisible({ timeout: 10_000 });
+
+    await rows.first().locator('[data-action="title"]').dblclick();
+    await expect(page.locator('[data-testid="active-nib-view"]')).toBeVisible({ timeout: 5_000 });
+    await rows.nth(2).locator('[data-action="title"]').click();
+    // Park the pointer off the table: hover repaints a row background and would
+    // put a fourth, misleading fill in the frame.
+    await page.mouse.move(0, 0);
+    await shot(page, `row-states-open-vs-selected-${value}`);
+    // Close-up of the rows' leading edge, where the 3px accent gutter lives. The
+    // full-viewport shot above already carries the whole-row fill; at that scale
+    // the accent is a few pixels wide and effectively unreadable.
+    const first = await rows.first().boundingBox();
+    const last = await rows.nth(4).boundingBox();
+    if (!first || !last) throw new Error("table rows are not laid out");
+    await page.screenshot({
+      path: join(OUT, `row-states-open-vs-selected-${value}-cropped.png`),
+      clip: { x: first.x, y: first.y - 4, width: 240, height: last.y + last.height - first.y + 8 },
+      animations: "disabled",
+    });
+  });
+}
+
 test("context menu", async ({ page }) => {
   await openApp(page);
   await page.locator("tr[data-nib-id]").first().click({ button: "right" });
