@@ -1,20 +1,18 @@
 import { isBucketId } from "./tree";
 
-/** Options shared by the two bulk-selection writers.
+/** Whether the detail panel follows the selection when a bulk gesture collapses
+ *  it to exactly one row. Required at every bulk call site: a caller that omits
+ *  it is a compile error rather than a silent fall back to the historical
+ *  behavior, which is wrong under the "open on double-click" preference.
  *
- *  `retargetPanel` controls the ONE thing those writers do beyond building the
- *  selection set: following the set into `selectedNibId` when it collapses to
- *  exactly one id, and nulling it otherwise. It defaults to true — the
- *  historical behavior, where the panel tracks a collapsed selection.
- *
- *  Pass `false` when the detail panel is decoupled from the selection (the
- *  "open on double-click" preference). There `selectedNibId` means "what the
- *  panel is showing" and has exactly one writer path — the explicit open
- *  gestures — so a bulk gesture must neither open the panel, close it, nor
- *  retarget it at the swept rows. */
-export interface BulkSelectOptions {
-  retargetPanel?: boolean;
-}
+ *   - "follow": the panel opens on the collapsed id and closes when the set is
+ *     empty or multi — the historical behavior, and what `openDetailOn: "single"`
+ *     wants.
+ *   - "detach": `selectedNibId` is left untouched. Under `openDetailOn: "double"`
+ *     it means "what the panel is showing" and has exactly one writer path (the
+ *     explicit open gestures), so a bulk gesture must neither open the panel,
+ *     close it, nor retarget it at the swept rows. */
+export type PanelPolicy = "follow" | "detach";
 
 export class SelectionState {
   selectedNibId: string | null = $state(null);
@@ -81,8 +79,9 @@ export class SelectionState {
    *  invariant.
    *  This guard also covers the keyboard path, where a bucket row can be focused
    *  (arrow) and Space-toggled, which the range slice does not reach.
-   *  `opts.retargetPanel` — see BulkSelectOptions. */
-  toggleSelect(nibId: string, opts: BulkSelectOptions = {}): void {
+   *  `panel` — whether the detail panel follows a collapse to exactly one row;
+   *  see PanelPolicy. */
+  toggleSelect(nibId: string, panel: PanelPolicy): void {
     if (isBucketId(nibId)) return;
     const next = new Set(this.selectedIds);
     if (next.has(nibId)) {
@@ -93,7 +92,7 @@ export class SelectionState {
     this.selectedIds = next;
     this.anchorId = nibId;
     this.focusedNibId = nibId;
-    if (opts.retargetPanel === false) return;
+    if (panel === "detach") return;
     // If we end up with exactly one selected, also set it as the detail-panel selection
     if (next.size === 1) {
       this.selectedNibId = [...next][0];
@@ -123,9 +122,10 @@ export class SelectionState {
    * `focusedNibId` or a right-click target directly — e.g. the Delete dispatch;
    * that is a separate concern outside SelectionState.)
    *
-   * `opts.retargetPanel` — see BulkSelectOptions.
+   * `panel` — whether the detail panel follows a collapse to exactly one row;
+   * see PanelPolicy.
    */
-  rangeSelect(nibId: string, visibleIds: string[], opts: BulkSelectOptions = {}): void {
+  rangeSelect(nibId: string, visibleIds: string[], panel: PanelPolicy): void {
     const anchor = this.anchorId ?? nibId;
     const startIndex = visibleIds.indexOf(anchor);
     const endIndex = visibleIds.indexOf(nibId);
@@ -138,7 +138,7 @@ export class SelectionState {
     this.selectedIds = new Set(rangeIds);
     this.focusedNibId = nibId;
     // Don't change anchorId — it stays at the original click point
-    if (opts.retargetPanel === false) return;
+    if (panel === "detach") return;
     if (rangeIds.length === 1) {
       this.selectedNibId = rangeIds[0];
     } else {

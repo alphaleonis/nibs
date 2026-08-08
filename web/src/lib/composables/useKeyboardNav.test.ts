@@ -225,7 +225,7 @@ describe("useKeyboardNav", () => {
   // The shift+arrow twins of the Space case below. A range that collapses to
   // exactly one row is an ordinary gesture (shift+ArrowDown then shift+ArrowUp
   // returns to the anchor), and in single mode the panel must follow it — the
-  // pre-existing behavior the retargetPanel flag must not regress.
+  // pre-existing behavior the panel policy must not regress.
   it("single mode: Shift+ArrowDown collapsing to one row still opens the panel", () => {
     const selection = new SelectionState();
     selection.anchorId = "nibs-002";

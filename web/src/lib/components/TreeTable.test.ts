@@ -2416,7 +2416,7 @@ describe("TreeTable", () => {
       // Seed a pre-existing multi-select (003) and a STALE virtual focus on a
       // DIFFERENT row (001) than the one we tab to. The row that Space acts on must
       // come from the DOM event, not this stale focusedNibId.
-      sel.toggleSelect("nibs-003");
+      sel.toggleSelect("nibs-003", "follow");
       sel.focus("nibs-001");
 
       // Tab lands DOM focus on row 002's title.
@@ -3356,9 +3356,9 @@ describe("TreeTable", () => {
 
     it("drops selected nibs that no longer match the active client filter", async () => {
       const sel = new SelectionState();
-      sel.toggleSelect("nibs-t1");
-      sel.toggleSelect("nibs-t2");
-      sel.toggleSelect("nibs-b1");
+      sel.toggleSelect("nibs-t1", "follow");
+      sel.toggleSelect("nibs-t2", "follow");
+      sel.toggleSelect("nibs-b1", "follow");
 
       mockQueryStore.mockReturnValue(
         readable({ fetching: false, error: undefined, data: { nibs: makeNibs() }, stale: false }) as any
@@ -3385,8 +3385,8 @@ describe("TreeTable", () => {
 
     it("resets anchor/focus that fall out of the filter", async () => {
       const sel = new SelectionState();
-      sel.toggleSelect("nibs-t1");
-      sel.toggleSelect("nibs-b1"); // anchor + focus land on the bug
+      sel.toggleSelect("nibs-t1", "follow");
+      sel.toggleSelect("nibs-b1", "follow"); // anchor + focus land on the bug
 
       mockQueryStore.mockReturnValue(
         readable({ fetching: false, error: undefined, data: { nibs: makeNibs() }, stale: false }) as any
@@ -3410,8 +3410,8 @@ describe("TreeTable", () => {
     it("keeps the multi-selection intact when a parent row is collapsed (no filter)", async () => {
       const user = userEvent.setup();
       const sel = new SelectionState();
-      sel.toggleSelect("nibs-t1");
-      sel.toggleSelect("nibs-t2");
+      sel.toggleSelect("nibs-t1", "follow");
+      sel.toggleSelect("nibs-t2", "follow");
 
       mockQueryStore.mockReturnValue(
         readable({ fetching: false, error: undefined, data: { nibs: makeNibs() }, stale: false }) as any
@@ -3440,7 +3440,7 @@ describe("TreeTable", () => {
     it("does not prune while the query is still fetching (cold deep-link guard)", async () => {
       const sel = new SelectionState();
       sel.select("nibs-deep");
-      sel.toggleSelect("nibs-deep2");
+      sel.toggleSelect("nibs-deep2", "follow");
 
       // Query in flight: fetching, no data yet.
       mockQueryStore.mockReturnValue(

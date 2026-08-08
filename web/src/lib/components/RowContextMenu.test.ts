@@ -344,7 +344,7 @@ describe("RowContextMenu", () => {
   describe("getActionTargetIds priority chain", () => {
     it("targets selectedIds when multi-select is active", async () => {
       selection.select("nibs-abc1");
-      selection.toggleSelect("nibs-def2");
+      selection.toggleSelect("nibs-def2", "follow");
       // Now hasMultiSelect = true, selectedIds = {nibs-abc1, nibs-def2}
 
       renderMenu({ nib: makeNib(), selectedCount: 2 });
@@ -434,8 +434,8 @@ describe("RowContextMenu", () => {
 
     it("triggers showConfirm with correct bulk delete message", async () => {
       selection.select("nibs-abc1");
-      selection.toggleSelect("nibs-def2");
-      selection.toggleSelect("nibs-ghi3");
+      selection.toggleSelect("nibs-def2", "follow");
+      selection.toggleSelect("nibs-ghi3", "follow");
 
       renderMenu({ selectedCount: 3 });
 
@@ -477,7 +477,7 @@ describe("RowContextMenu", () => {
 
     it("triggers showConfirm with correct bulk archive message", async () => {
       selection.select("nibs-abc1");
-      selection.toggleSelect("nibs-def2");
+      selection.toggleSelect("nibs-def2", "follow");
 
       renderMenu({ selectedCount: 2 });
 
@@ -575,7 +575,7 @@ describe("RowContextMenu", () => {
 
     it("a bulk delete that includes the open nib still closes the panel", async () => {
       selection.select("nibs-open");
-      selection.toggleSelect("nibs-abc1"); // set is now { nibs-open, nibs-abc1 }
+      selection.toggleSelect("nibs-abc1", "follow"); // set is now { nibs-open, nibs-abc1 }
       const replaceClosed = vi.fn();
       renderMenu({ selectedCount: 2, historyNav: makeHistoryNav(replaceClosed) });
 
