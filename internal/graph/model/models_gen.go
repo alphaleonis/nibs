@@ -34,7 +34,9 @@ type BodyModification struct {
 //
 // Both mismatches — the pre-validation one and the racing one — carry
 // extensions.code = "ETAG_MISMATCH", so a GraphQL client can route either
-// conflict structurally rather than on message text. The code does NOT
+// conflict structurally rather than on message text, and both name the
+// offending nib the same way ("failed to reorder <id>: etag mismatch: …") so
+// the conflict's current etag is attributable to one nib. The code does NOT
 // distinguish them, and they differ in durability (see above): a client that
 // must know whether part of the batch landed has to re-read the affected nibs
 // rather than infer it from the code.

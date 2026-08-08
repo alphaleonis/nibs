@@ -38,7 +38,13 @@ func (r *mutationResolver) reorderChildrenImpl(parentID string, childIDs []strin
 		}
 		clone.Order = keys[i]
 		if err := r.Writer.Update(clone, ifMatchPtr(etagByID, b.ID)); err != nil {
-			return nil, err
+			// Name the nib, exactly as the pre-validation refusal does
+			// (validateIfMatchETags). A racing write's raw ETagMismatchError reads
+			// "etag mismatch: provided X, current is Y" and names nothing, so the
+			// currentEtag reconcile token it carries is unattributable in a bulk
+			// mutation — the client cannot tell which of the listed nibs it holds a
+			// token for. Wrapping with %w keeps errors.As routing intact.
+			return nil, fmt.Errorf("failed to reorder %s: %w", b.ID, err)
 		}
 		// The write installed the clone as the new c.nibs[id]; reflect it in the
 		// returned slice so callers see the persisted order.
@@ -129,7 +135,9 @@ func (r *mutationResolver) reorderSiblingsImpl(siblingIDs []string, afterID *str
 		}
 		clone.Order = newKey
 		if err := r.Writer.Update(clone, ifMatchPtr(etagByID, b.ID)); err != nil {
-			return nil, err
+			// Same identification contract as the reorderChildren arm above: a
+			// racing mismatch must name its nib so its currentEtag is attributable.
+			return nil, fmt.Errorf("failed to reorder %s: %w", b.ID, err)
 		}
 		// The write installed the clone as the new c.nibs[id]; reflect it in the
 		// returned slice so callers see the persisted order.
