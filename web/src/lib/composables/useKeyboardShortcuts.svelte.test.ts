@@ -368,3 +368,75 @@ describe("useKeyboardShortcuts · Escape survives a focused input", () => {
     expect(h.requestClose).toHaveBeenCalledTimes(1);
   });
 });
+
+describe("useKeyboardShortcuts · post-delete cleanup", () => {
+  // The Delete handler clears the selection after the mutation resolves. What it
+  // may clear is narrower than "everything": `selectedNibId` (the detail panel)
+  // and the action target can be different rows — the "open on double-click"
+  // preference moves selection and focus without moving the panel, and arrow-key
+  // nav moves focus alone — so a nib that was not deleted must keep its panel and
+  // its `?nib=` URL.
+
+  /** Press Delete and run the confirm dialog's action, i.e. confirm the delete. */
+  async function deleteAndConfirm(h: ReturnType<typeof makeHarness>): Promise<void> {
+    press("Delete", focusEl(document.createElement("button")));
+    const opts = h.showConfirm.mock.calls[0]?.[0] as { action: () => Promise<void> } | undefined;
+    expect(opts).toBeDefined();
+    await opts!.action();
+  }
+
+  it("deleting the focused row leaves a panel showing a different nib open", async () => {
+    const h = makeHarness();
+    h.selection.select("tnib-open");     // panel on tnib-open
+    h.selection.selectOnly("tnib-abcd"); // selection/focus move; panel does not
+    mount(h);
+
+    await deleteAndConfirm(h);
+
+    expect(h.execute).toHaveBeenCalledTimes(1);
+    expect(h.selection.selectedNibId).toBe("tnib-open");
+    expect(h.selection.selectedIds.size).toBe(0);
+    expect(h.selection.focusedNibId).toBeNull();
+    expect(h.nav.replaceClosed).not.toHaveBeenCalled();
+  });
+
+  it("single mode: deleting the arrow-focused row leaves an unrelated panel open", async () => {
+    // The same divergence without the "open on double-click" preference: plain
+    // ArrowDown calls focus() alone, so the panel keeps showing the row the user
+    // opened while the delete targets the focused one.
+    const h = makeHarness();
+    h.selection.select("tnib-open"); // panel + selection on tnib-open
+    h.selection.focus("tnib-abcd");  // plain ArrowDown — no selectOnly
+    mount(h);
+
+    await deleteAndConfirm(h);
+
+    expect(h.execute).toHaveBeenCalledTimes(1);
+    expect(h.selection.selectedNibId).toBe("tnib-open");
+    expect(h.nav.replaceClosed).not.toHaveBeenCalled();
+  });
+
+  it("deleting the nib the panel is showing closes it and heals the URL", async () => {
+    const h = makeHarness();
+    h.selection.select("tnib-abcd"); // panel and target are the same row
+    mount(h);
+
+    await deleteAndConfirm(h);
+
+    expect(h.selection.selectedNibId).toBeNull();
+    expect(h.nav.replaceClosed).toHaveBeenCalledTimes(1);
+  });
+
+  it("a failed delete clears nothing", async () => {
+    const h = makeHarness();
+    h.execute.mockResolvedValue({ ok: false } as never);
+    h.selection.select("tnib-abcd");
+    mount(h);
+
+    await deleteAndConfirm(h);
+
+    expect(h.selection.selectedNibId).toBe("tnib-abcd");
+    expect(h.selection.selectedIds.has("tnib-abcd")).toBe(true);
+    expect(h.nav.replaceClosed).not.toHaveBeenCalled();
+  });
+});

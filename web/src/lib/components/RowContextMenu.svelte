@@ -13,7 +13,7 @@
     archiveBatch,
   } from "$lib/mutations/commands";
   import { copyToClipboard } from "$lib/clipboard";
-  import { getActionTargetIds } from "$lib/actionTarget";
+  import { getActionTargetIds, clearAfterMutation } from "$lib/actionTarget";
 
   interface Props {
     open: boolean;
@@ -139,8 +139,7 @@
         confirmDialog.close();
         const result = await mutations.execute(deleteBatch(ids));
         if (result.ok) {
-          selection.clearAll();
-          nav.replaceClosed(); // heal a stale ?nib=<deleted> URL
+          clearAfterMutation(selection, nav, ids);
         }
       },
     });
@@ -162,8 +161,7 @@
         confirmDialog.close();
         const result = await mutations.execute(archiveBatch(ids));
         if (result.ok) {
-          selection.clearAll();
-          nav.replaceClosed(); // heal a stale ?nib=<archived> URL
+          clearAfterMutation(selection, nav, ids);
         }
       },
     });

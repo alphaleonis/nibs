@@ -1,6 +1,6 @@
 <script lang="ts">
-  import { VIEW_LEVELS, DEFAULT_THEME, DEFAULT_DETAIL_PANEL_POSITION, DEFAULT_BLOCKED_EMPHASIS, DEFAULT_FONT_SIZE } from "../types";
-  import type { NibFilter, ViewLevel, RowDensity, FontSize, Theme, DetailPanelPosition, BlockedEmphasis } from "../types";
+  import { VIEW_LEVELS, DEFAULT_THEME, DEFAULT_DETAIL_PANEL_POSITION, DEFAULT_OPEN_DETAIL_ON, DEFAULT_BLOCKED_EMPHASIS, DEFAULT_FONT_SIZE } from "../types";
+  import type { NibFilter, ViewLevel, RowDensity, FontSize, Theme, DetailPanelPosition, OpenDetailGesture, BlockedEmphasis } from "../types";
   import { ALL_COLUMN_KEYS, COLUMNS } from "../columns";
   import type { ColumnKey } from "../columns";
   import type { Preferences } from "../preferences.svelte";
@@ -56,6 +56,8 @@
     onthemechange = undefined as ((theme: Theme) => void) | undefined,
     detailPanelPosition = undefined as DetailPanelPosition | undefined,
     onpositionchange = undefined as ((p: DetailPanelPosition) => void) | undefined,
+    openDetailOn = undefined as OpenDetailGesture | undefined,
+    onopendetailchange = undefined as ((g: OpenDetailGesture) => void) | undefined,
     availableTags = [],
     projectName = "",
     searchNibs = undefined,
@@ -79,6 +81,8 @@
     onthemechange?: (theme: Theme) => void;
     detailPanelPosition?: DetailPanelPosition;
     onpositionchange?: (p: DetailPanelPosition) => void;
+    openDetailOn?: OpenDetailGesture;
+    onopendetailchange?: (g: OpenDetailGesture) => void;
     availableTags?: string[];
     projectName?: string;
     searchNibs?: SearchNibsFn;
@@ -147,6 +151,16 @@
       prefs.detailPanelPosition = p;
     } else {
       onpositionchange?.(p);
+    }
+  }
+
+  let resolvedOpenDetailOn = $derived(prefs ? prefs.openDetailOn : (openDetailOn ?? DEFAULT_OPEN_DETAIL_ON));
+
+  function handleSetOpenDetailOn(g: OpenDetailGesture) {
+    if (prefs) {
+      prefs.openDetailOn = g;
+    } else {
+      onopendetailchange?.(g);
     }
   }
 
@@ -877,6 +891,8 @@
       onthemechange={handleSetTheme}
       detailPanelPosition={resolvedPosition}
       onpositionchange={handleSetPosition}
+      openDetailOn={resolvedOpenDetailOn}
+      onopendetailchange={handleSetOpenDetailOn}
     />
   </div>
 </header>

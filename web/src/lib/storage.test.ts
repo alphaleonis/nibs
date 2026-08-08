@@ -355,6 +355,32 @@ describe("storage", () => {
     expect(loaded.detailPanelPosition).toBeUndefined();
   });
 
+  it("saves and loads openDetailOn", () => {
+    savePreferences({
+      query: "",
+      viewLevel: "milestones",
+      openDetailOn: "double",
+    });
+    const loaded = loadPreferences();
+    expect(loaded.openDetailOn).toBe("double");
+  });
+
+  it("returns undefined openDetailOn when not set", () => {
+    savePreferences({ query: "", viewLevel: "milestones" });
+    const loaded = loadPreferences();
+    expect(loaded.openDetailOn).toBeUndefined();
+  });
+
+  it("returns undefined openDetailOn for an invalid stored value", () => {
+    store["nibs-filter-preferences"] = JSON.stringify({
+      filter: {},
+      viewLevel: "milestones",
+      openDetailOn: "triple",
+    });
+    const loaded = loadPreferences();
+    expect(loaded.openDetailOn).toBeUndefined();
+  });
+
   it("saves and loads detailPanelHeight", () => {
     savePreferences({
       query: "",

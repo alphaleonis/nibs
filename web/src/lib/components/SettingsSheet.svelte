@@ -4,7 +4,7 @@
 </script>
 
 <script lang="ts">
-  import type { RowDensity, FontSize, Theme, DetailPanelPosition, BlockedEmphasis } from "../types";
+  import type { RowDensity, FontSize, Theme, DetailPanelPosition, OpenDetailGesture, BlockedEmphasis } from "../types";
   import SegmentedControl from "./SegmentedControl.svelte";
   import ThemeSelect from "./ThemeSelect.svelte";
   import { Button } from "$lib/components/ui/button/index.js";
@@ -27,6 +27,8 @@
     onthemechange,
     detailPanelPosition,
     onpositionchange,
+    openDetailOn,
+    onopendetailchange,
   }: {
     open?: boolean;
     rowDensity: RowDensity;
@@ -39,6 +41,8 @@
     onthemechange: (t: Theme) => void;
     detailPanelPosition: DetailPanelPosition;
     onpositionchange: (p: DetailPanelPosition) => void;
+    openDetailOn: OpenDetailGesture;
+    onopendetailchange: (g: OpenDetailGesture) => void;
   } = $props();
 
   const densityOptions: { value: RowDensity; label: string }[] = [
@@ -63,6 +67,11 @@
     { value: "bottom", label: "Bottom" },
   ];
 
+  const openDetailOptions: { value: OpenDetailGesture; label: string }[] = [
+    { value: "single", label: "Single click" },
+    { value: "double", label: "Double click" },
+  ];
+
   // Static label shared by the gear trigger's aria-label and its Tooltip.Content,
   // defined once so the accessible name and the visible tooltip can't drift apart.
   const settingsLabel = "Settings";
@@ -71,6 +80,7 @@
   const titleId = `settings-title-${uid}`;
   const descId = `settings-desc-${uid}`;
   const appearanceId = `settings-appearance-${uid}`;
+  const behaviorId = `settings-behavior-${uid}`;
   const panelId = `settings-panel-${uid}`;
 
   let triggerEl = $state<HTMLButtonElement | null>(null);
@@ -251,6 +261,25 @@
               options={positionOptions}
               ariaLabel="Detail panel position"
               onchange={(v) => onpositionchange(v as DetailPanelPosition)}
+            />
+          </div>
+        </section>
+
+        <section aria-labelledby={behaviorId} class="flex flex-col gap-3">
+          <h3
+            id={behaviorId}
+            class="text-caption font-medium text-muted-foreground"
+          >
+            Behavior
+          </h3>
+
+          <div class="flex items-center justify-between gap-3">
+            <span class="text-sm text-foreground">Open detail on</span>
+            <SegmentedControl
+              value={openDetailOn}
+              options={openDetailOptions}
+              ariaLabel="Open detail on"
+              onchange={(v) => onopendetailchange(v as OpenDetailGesture)}
             />
           </div>
         </section>

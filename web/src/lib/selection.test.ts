@@ -171,6 +171,105 @@ describe("SelectionState", () => {
       expect([...state.selectedIds].sort()).toEqual(["nibs-abc1", "nibs-xyz2"]);
     });
 
+    it("selectOnly() selects and focuses WITHOUT opening the panel", () => {
+      const state = new SelectionState();
+      state.select("nibs-aaa"); // panel on aaa
+      state.selectOnly("nibs-bbb");
+      expect(state.selectedNibId).toBe("nibs-aaa"); // panel unmoved
+      expect(state.panelOpen).toBe(true);
+      expect([...state.selectedIds]).toEqual(["nibs-bbb"]);
+      expect(state.focusedNibId).toBe("nibs-bbb");
+      expect(state.anchorId).toBe("nibs-bbb");
+    });
+
+    it("selectOnly() on a closed panel leaves it closed", () => {
+      const state = new SelectionState();
+      state.selectOnly("nibs-aaa");
+      expect(state.selectedNibId).toBeNull();
+      expect(state.panelOpen).toBe(false);
+      expect([...state.selectedIds]).toEqual(["nibs-aaa"]);
+    });
+
+    it("selectOnly() replaces a multi-selection with exactly one id", () => {
+      const state = new SelectionState();
+      state.toggleSelect("nibs-aaa");
+      state.toggleSelect("nibs-bbb");
+      state.selectOnly("nibs-ccc");
+      expect([...state.selectedIds]).toEqual(["nibs-ccc"]);
+    });
+
+    it("selectOnly() ignores a synthetic bucket id (right-click on a bucket header)", () => {
+      const state = new SelectionState();
+      state.selectOnly("nibs-aaa");
+      state.selectOnly("__no_milestone__");
+      // A guarded write is a no-op, not a destructive clear of a live selection.
+      expect([...state.selectedIds]).toEqual(["nibs-aaa"]);
+      expect(state.focusedNibId).toBe("nibs-aaa");
+      expect(state.anchorId).toBe("nibs-aaa");
+    });
+
+    // `retargetPanel: false` is what decouples the detail panel from the
+    // selection under the "open on double-click" preference: the set, focus and
+    // anchor still move, but `selectedNibId` is left entirely alone.
+    it("toggleSelect({ retargetPanel: false }) collapsing to one does not open the panel", () => {
+      const state = new SelectionState();
+      state.toggleSelect("nibs-aaa", { retargetPanel: false });
+      expect([...state.selectedIds]).toEqual(["nibs-aaa"]);
+      expect(state.focusedNibId).toBe("nibs-aaa");
+      expect(state.anchorId).toBe("nibs-aaa");
+      expect(state.selectedNibId).toBeNull();
+    });
+
+    it("toggleSelect({ retargetPanel: false }) collapsing to many does not close the panel", () => {
+      const state = new SelectionState();
+      state.select("nibs-open");
+      state.deselectAll();
+      state.toggleSelect("nibs-aaa", { retargetPanel: false });
+      state.toggleSelect("nibs-bbb", { retargetPanel: false });
+      expect(state.selectedIds.size).toBe(2);
+      expect(state.selectedNibId).toBe("nibs-open");
+    });
+
+    it("toggleSelect({ retargetPanel: false }) collapsing to zero does not close the panel", () => {
+      const state = new SelectionState();
+      state.select("nibs-open");
+      state.deselectAll();
+      state.toggleSelect("nibs-aaa", { retargetPanel: false });
+      state.toggleSelect("nibs-aaa", { retargetPanel: false });
+      expect(state.selectedIds.size).toBe(0);
+      expect(state.selectedNibId).toBe("nibs-open");
+    });
+
+    it("rangeSelect({ retargetPanel: false }) collapsing to one does not open the panel", () => {
+      const state = new SelectionState();
+      const visibleIds = ["nibs-001", "nibs-002", "nibs-003"];
+      state.anchorId = "nibs-002";
+      state.rangeSelect("nibs-002", visibleIds, { retargetPanel: false });
+      expect([...state.selectedIds]).toEqual(["nibs-002"]);
+      expect(state.selectedNibId).toBeNull();
+    });
+
+    it("rangeSelect({ retargetPanel: false }) over many rows does not close the panel", () => {
+      const state = new SelectionState();
+      const visibleIds = ["nibs-001", "nibs-002", "nibs-003"];
+      state.select("nibs-open");
+      state.anchorId = "nibs-001";
+      state.rangeSelect("nibs-003", visibleIds, { retargetPanel: false });
+      expect(state.selectedIds.size).toBe(3);
+      expect(state.selectedNibId).toBe("nibs-open");
+    });
+
+    it("the default (no options) still retargets the panel, for both bulk writers", () => {
+      const state = new SelectionState();
+      state.toggleSelect("nibs-aaa");
+      expect(state.selectedNibId).toBe("nibs-aaa");
+
+      const visibleIds = ["nibs-001", "nibs-002", "nibs-003"];
+      state.anchorId = "nibs-001";
+      state.rangeSelect("nibs-003", visibleIds);
+      expect(state.selectedNibId).toBeNull();
+    });
+
     it("rangeSelect() selects range from anchor to target", () => {
       const state = new SelectionState();
       const visibleIds = ["nibs-001", "nibs-002", "nibs-003", "nibs-004", "nibs-005"];

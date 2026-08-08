@@ -11,6 +11,7 @@ import type {
   ConfirmDialogOptions,
 } from "$lib/composables/useConfirmDialog.svelte";
 import type { ActiveView } from "$lib/composables/useActiveView.svelte";
+import type { HistoryNav } from "$lib/composables/useHistoryNav.svelte";
 import type { TreeTableNib } from "../types";
 import type { RelIdKey } from "$lib/query";
 
@@ -95,6 +96,18 @@ function makeMockActiveView(selection: SelectionState) {
   };
 }
 
+/** A HistoryNav stub whose `replaceClosed` is observable — the URL-healing call
+ *  that must fire only when the mutation took out the nib the panel is showing. */
+function makeHistoryNav(replaceClosed: () => void): HistoryNav {
+  return {
+    navigateToNib: vi.fn(),
+    closePanel: vi.fn(),
+    replaceClosed,
+    handlePopState: vi.fn(),
+    syncFromUrl: vi.fn(),
+  } satisfies HistoryNav;
+}
+
 function makeNib(overrides: Partial<TreeTableNib> = {}): TreeTableNib {
   return {
     id: "nibs-abc1",
@@ -134,6 +147,7 @@ describe("RowContextMenu", () => {
       onexpandchildren?: () => void;
       oncollapsechildren?: () => void;
       onfilterrelated?: (field: RelIdKey, id: string) => void;
+      historyNav?: HistoryNav;
     } = {},
   ) {
     const nib = props.nib ?? makeNib();
@@ -151,6 +165,7 @@ describe("RowContextMenu", () => {
       context: makeTestContext(selection, new DragState(), {
         confirmDialog: mockConfirmDialog,
         activeView: mockView as unknown as ActiveView,
+        historyNav: props.historyNav,
       }),
     });
   }
@@ -480,6 +495,114 @@ describe("RowContextMenu", () => {
         }),
       );
       expect(mockConfirmDialog.lastOpts?.message).toContain("2 items");
+    });
+  });
+
+  // ─── What a completed mutation clears ─────────────────────────
+  //
+  // `selectedNibId` (the detail panel) and the action target can point at
+  // different rows once "open on double-click" is on: `selectOnly` moves the
+  // selection and focus while the panel stays where it was. A mutation must
+  // therefore clear only what it actually invalidated — the selection set and
+  // focus always, the panel and the `?nib=` URL only when the mutated ids
+  // include the nib the panel is showing.
+  describe("post-mutation cleanup", () => {
+    /** Run the confirm dialog's action, i.e. what happens after the user confirms. */
+    async function confirmAction() {
+      await mockConfirmDialog.lastOpts!.action!();
+    }
+
+    it("deleting the focused row leaves a panel showing a different nib open", async () => {
+      selection.select("nibs-open");      // panel on nibs-open
+      selection.selectOnly("nibs-abc1");  // selection/focus move; panel does not
+      const replaceClosed = vi.fn();
+      renderMenu({ historyNav: makeHistoryNav(replaceClosed) });
+
+      await waitFor(() => expect(screen.getByTestId("ctx-delete")).toBeInTheDocument());
+      await user.click(screen.getByTestId("ctx-delete"));
+      await confirmAction();
+
+      expect(mockExecute).toHaveBeenCalled();
+      expect(selection.selectedNibId).toBe("nibs-open");
+      expect(selection.panelOpen).toBe(true);
+      expect(selection.selectedIds.size).toBe(0);
+      expect(selection.focusedNibId).toBeNull();
+      expect(replaceClosed).not.toHaveBeenCalled();
+    });
+
+    it("deleting the nib the panel is showing closes it and heals the URL", async () => {
+      selection.select("nibs-abc1"); // panel and target are the same row
+      const replaceClosed = vi.fn();
+      renderMenu({ historyNav: makeHistoryNav(replaceClosed) });
+
+      await waitFor(() => expect(screen.getByTestId("ctx-delete")).toBeInTheDocument());
+      await user.click(screen.getByTestId("ctx-delete"));
+      await confirmAction();
+
+      expect(selection.selectedNibId).toBeNull();
+      expect(selection.panelOpen).toBe(false);
+      expect(replaceClosed).toHaveBeenCalled();
+    });
+
+    it("archiving the focused row leaves a panel showing a different nib open", async () => {
+      selection.select("nibs-open");
+      selection.selectOnly("nibs-abc1");
+      const replaceClosed = vi.fn();
+      renderMenu({ historyNav: makeHistoryNav(replaceClosed) });
+
+      await waitFor(() => expect(screen.getByTestId("ctx-archive")).toBeInTheDocument());
+      await user.click(screen.getByTestId("ctx-archive"));
+      await confirmAction();
+
+      expect(mockExecute).toHaveBeenCalled();
+      expect(selection.selectedNibId).toBe("nibs-open");
+      expect(selection.selectedIds.size).toBe(0);
+      expect(replaceClosed).not.toHaveBeenCalled();
+    });
+
+    it("archiving the nib the panel is showing closes it and heals the URL", async () => {
+      selection.select("nibs-abc1");
+      const replaceClosed = vi.fn();
+      renderMenu({ historyNav: makeHistoryNav(replaceClosed) });
+
+      await waitFor(() => expect(screen.getByTestId("ctx-archive")).toBeInTheDocument());
+      await user.click(screen.getByTestId("ctx-archive"));
+      await confirmAction();
+
+      expect(selection.selectedNibId).toBeNull();
+      expect(replaceClosed).toHaveBeenCalled();
+    });
+
+    it("a bulk delete that includes the open nib still closes the panel", async () => {
+      selection.select("nibs-open");
+      selection.toggleSelect("nibs-abc1"); // set is now { nibs-open, nibs-abc1 }
+      const replaceClosed = vi.fn();
+      renderMenu({ selectedCount: 2, historyNav: makeHistoryNav(replaceClosed) });
+
+      await waitFor(() => expect(screen.getByTestId("ctx-delete")).toBeInTheDocument());
+      await user.click(screen.getByTestId("ctx-delete"));
+      // toggleSelect nulled selectedNibId on the collapse to two; put the panel
+      // back on one of the doomed rows to model the mid-mutation state.
+      selection.selectedNibId = "nibs-open";
+      await confirmAction();
+
+      expect(selection.selectedNibId).toBeNull();
+      expect(replaceClosed).toHaveBeenCalled();
+    });
+
+    it("a failed mutation clears nothing", async () => {
+      mockExecute.mockResolvedValue({ ok: false, error: new Error("nope") });
+      selection.select("nibs-abc1");
+      const replaceClosed = vi.fn();
+      renderMenu({ historyNav: makeHistoryNav(replaceClosed) });
+
+      await waitFor(() => expect(screen.getByTestId("ctx-delete")).toBeInTheDocument());
+      await user.click(screen.getByTestId("ctx-delete"));
+      await confirmAction();
+
+      expect(selection.selectedNibId).toBe("nibs-abc1");
+      expect(selection.selectedIds.has("nibs-abc1")).toBe(true);
+      expect(replaceClosed).not.toHaveBeenCalled();
     });
   });
 

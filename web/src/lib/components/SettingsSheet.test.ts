@@ -21,6 +21,8 @@ const defaultProps = () => ({
   onthemechange: vi.fn(),
   detailPanelPosition: "right" as const,
   onpositionchange: vi.fn(),
+  openDetailOn: "single" as const,
+  onopendetailchange: vi.fn(),
 });
 
 describe("SettingsSheet", () => {
@@ -358,6 +360,54 @@ describe("SettingsSheet", () => {
     await user.click(within(group).getByRole("radio", { name: /right/i }));
 
     expect(onpositionchange).toHaveBeenCalledWith("right");
+  });
+
+  it("shows a Behavior section with an Open detail on radiogroup", async () => {
+    render(SettingsSheet, { ...defaultProps() });
+
+    await user.click(screen.getByRole("button", { name: "Settings" }));
+
+    expect(screen.getByText("Behavior")).toBeInTheDocument();
+
+    const group = screen.getByRole("radiogroup", { name: /open detail on/i });
+    expect(group).toBeInTheDocument();
+
+    const options = within(group).getAllByRole("radio");
+    expect(options).toHaveLength(2);
+    expect(within(group).getByRole("radio", { name: /single click/i })).toBeInTheDocument();
+    expect(within(group).getByRole("radio", { name: /double click/i })).toBeInTheDocument();
+  });
+
+  it("marks the option matching openDetailOn as aria-checked", async () => {
+    render(SettingsSheet, { ...defaultProps(), openDetailOn: "double" });
+
+    await user.click(screen.getByRole("button", { name: "Settings" }));
+
+    const group = screen.getByRole("radiogroup", { name: /open detail on/i });
+    expect(within(group).getByRole("radio", { name: /double click/i })).toHaveAttribute("aria-checked", "true");
+    expect(within(group).getByRole("radio", { name: /single click/i })).toHaveAttribute("aria-checked", "false");
+  });
+
+  it("clicking Double click calls onopendetailchange with 'double'", async () => {
+    const onopendetailchange = vi.fn();
+    render(SettingsSheet, { ...defaultProps(), openDetailOn: "single", onopendetailchange });
+
+    await user.click(screen.getByRole("button", { name: "Settings" }));
+    const group = screen.getByRole("radiogroup", { name: /open detail on/i });
+    await user.click(within(group).getByRole("radio", { name: /double click/i }));
+
+    expect(onopendetailchange).toHaveBeenCalledWith("double");
+  });
+
+  it("clicking from double back to Single click calls onopendetailchange with 'single'", async () => {
+    const onopendetailchange = vi.fn();
+    render(SettingsSheet, { ...defaultProps(), openDetailOn: "double", onopendetailchange });
+
+    await user.click(screen.getByRole("button", { name: "Settings" }));
+    const group = screen.getByRole("radiogroup", { name: /open detail on/i });
+    await user.click(within(group).getByRole("radio", { name: /single click/i }));
+
+    expect(onopendetailchange).toHaveBeenCalledWith("single");
   });
 
   it("shows a Font size radiogroup with Small, Medium, and Large options", async () => {
