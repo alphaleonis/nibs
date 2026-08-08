@@ -5,6 +5,7 @@ import RowContextMenu from "./RowContextMenu.svelte";
 import { SelectionState } from "../selection.svelte";
 import { DragState } from "../drag.svelte";
 import { makeTestContext } from "$lib/contexts";
+import { openSubmenu } from "$lib/testing/menu";
 import type {
   ConfirmDialogState,
   ConfirmDialogOptions,
@@ -492,10 +493,7 @@ describe("RowContextMenu", () => {
         expect(screen.getByTestId("ctx-status-trigger")).toBeInTheDocument();
       });
 
-      // Hover over the status sub-trigger to open the submenu (bits-ui opens on pointerenter)
-      await user.pointer({
-        target: screen.getByTestId("ctx-status-trigger"),
-      });
+      await openSubmenu(user, screen.getByTestId("ctx-status-trigger"));
 
       // Wait for submenu items to appear and click one
       const completedItem = await screen.findByTestId("ctx-status-completed");
@@ -527,10 +525,7 @@ describe("RowContextMenu", () => {
         expect(screen.getByTestId("ctx-priority-trigger")).toBeInTheDocument();
       });
 
-      // Hover over the priority sub-trigger to open the submenu (bits-ui opens on pointerenter)
-      await user.pointer({
-        target: screen.getByTestId("ctx-priority-trigger"),
-      });
+      await openSubmenu(user, screen.getByTestId("ctx-priority-trigger"));
 
       // Wait for submenu items to appear and click one
       const criticalItem = await screen.findByTestId("ctx-priority-critical");
@@ -793,8 +788,7 @@ describe("RowContextMenu", () => {
           expect(screen.getByTestId("ctx-filter-related-trigger")).toBeInTheDocument();
         });
 
-        // Open the submenu (bits-ui opens the sub on pointerenter of the trigger).
-        await user.pointer({ target: screen.getByTestId("ctx-filter-related-trigger") });
+        await openSubmenu(user, screen.getByTestId("ctx-filter-related-trigger"));
 
         // Anchor on the human label so a swapped mapping is actually caught.
         const item = await screen.findByText(label);
@@ -817,7 +811,7 @@ describe("RowContextMenu", () => {
         expect(screen.getByTestId("ctx-filter-related-trigger")).toBeInTheDocument();
       });
 
-      await user.pointer({ target: screen.getByTestId("ctx-filter-related-trigger") });
+      await openSubmenu(user, screen.getByTestId("ctx-filter-related-trigger"));
       await user.click(await screen.findByTestId("ctx-filter-parentId"));
 
       // ANDs: the existing status filter is preserved (not replaced).
@@ -850,7 +844,7 @@ describe("RowContextMenu", () => {
           expect(screen.getByTestId("ctx-filter-related-trigger")).toBeInTheDocument();
         });
 
-        await user.pointer({ target: screen.getByTestId("ctx-filter-related-trigger") });
+        await openSubmenu(user, screen.getByTestId("ctx-filter-related-trigger"));
         await user.click(await screen.findByText(label));
 
         expect(filter).toEqual({ status: ["todo"], parentId: "old-parent", [field]: "nibs-target" });
