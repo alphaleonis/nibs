@@ -176,18 +176,16 @@ func treeResolvedParentID(n *nib.Nib, tree []*ui.TreeNode) string {
 // parent's children, where a reorder is meaningful; it is deliberately not
 // caught here.
 //
-// This reads the same under the filtered tree loadNibs builds, and not by
-// accident: BuildTree's addAncestors closes the built set upward, so a cycle is
-// never partially present — any member that enters drags the rest in along its
-// parent chain, whether it matched the filter or came in as ancestor context.
-// That is a narrower guarantee than the one treeResolvedParentID relies on
-// above: outside a cycle, a filtered-out parent is still indistinguishable from
-// one that does not exist.
+// The tree properties this rests on — one promoted member per cycle, promotion
+// severing the tree edge while the stored Nib.Parent survives, and the upward
+// closure that keeps a cycle from ever being partially present under a filtered
+// tree — belong to ui.BuildTree, which states them and pins them in
+// TestBuildTreeCyclePromotionContract. Read them there rather than trusting a
+// restatement here.
 //
-// Two BuildTree properties are load-bearing here: exactly one member per cycle
-// is promoted, and promotion severs the tree edge while leaving the stored
-// Nib.Parent intact. Change either and this detection answers false, sending
-// the refusal back to describing a sibling list instead of naming the cycle.
+// Worth noting locally: that closure is a narrower guarantee than the one
+// treeResolvedParentID relies on above. Outside a cycle, a filtered-out parent
+// is still indistinguishable from one that does not exist.
 func inParentCycle(n *nib.Nib, tree []*ui.TreeNode) bool {
 	if n == nil || n.Parent == "" {
 		return false

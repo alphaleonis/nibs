@@ -61,6 +61,27 @@ func (n *TreeNode) ToJSON(includeFull bool) *TreeNodeJSON {
 // matchedNibs: nibs that matched the filter
 // allNibs: all nibs (needed to find ancestors)
 // sortFn: function to sort nibs at each level
+//
+// A parent cycle is the one place where the rendered tree deliberately departs
+// from the stored hierarchy, and three properties of that departure are a
+// contract other packages read the tree through:
+//
+//  1. Exactly one member of every parent cycle is promoted to a root
+//     (promotedCycleRoots picks the lowest id).
+//  2. Promotion severs the tree edge only. The promoted nib keeps its stored
+//     Nib.Parent, and the rest of the cycle nests underneath it — so the stored
+//     parent lies inside the promoted nib's own subtree.
+//  3. addAncestors closes the built set upward, so a cycle is never partially
+//     present: any member that enters drags the rest in along its parent chain,
+//     whether it matched the filter or arrived as ancestor context.
+//
+// The known consumer is internal/tui's reorder scoping (inParentCycle in
+// blockmove.go), which reads (2) as its tell that a nib belongs to no parent's
+// sibling list and refuses the reorder by naming the cycle. Break any of the
+// three and that detection quietly answers false, sending the refusal back to
+// describing a sibling list — which is why TestBuildTreeCyclePromotionContract
+// pins all three here, next to the code that produces them, rather than leaving
+// the failure to surface a package away in the TUI's message assertions.
 func BuildTree(matchedNibs []*nib.Nib, allNibs []*nib.Nib, sortFn func([]*nib.Nib)) []*TreeNode {
 	// Build index of all nibs by ID
 	nibByID := make(map[string]*nib.Nib)
