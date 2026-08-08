@@ -32,10 +32,12 @@ type BodyModification struct {
 // ETagMismatchError for that nib, leaving prior writes in this batch
 // persisted (matching single-nib reorderNib semantics).
 //
-// The two mismatches differ on the wire. That racing mismatch carries
-// extensions.code = "ETAG_MISMATCH", so a GraphQL client can route it
-// structurally rather than on message text; the pre-validation mismatch carries
-// no extensions.code and must be recognized by message text today.
+// Both mismatches — the pre-validation one and the racing one — carry
+// extensions.code = "ETAG_MISMATCH", so a GraphQL client can route either
+// conflict structurally rather than on message text. The code does NOT
+// distinguish them, and they differ in durability (see above): a client that
+// must know whether part of the batch landed has to re-read the affected nibs
+// rather than infer it from the code.
 type ChildEtag struct {
 	ID   string `json:"id"`
 	Etag string `json:"etag"`
@@ -151,13 +153,29 @@ type NibFilter struct {
 	// apply: the field keeps its own order (children stay in order key order),
 	// since the term selects rather than ranks.
 	//
-	// The two surfaces read differently bounded answers, because a cap means
-	// different things to them. At the top level the index answers with at most 1000
-	// hits per leg (id matches and full-text hits are capped separately) and that
-	// truncation IS the answer — the top hits for the term. A relationship field is
-	// already bounded by the relation it names, so it reads the UNCAPPED answer and
-	// intersects that: every member of the relation matching the term is in the
-	// result, however it ranks store-wide.
+	// WHICH answer the index is asked for follows from what bounds the query, not
+	// from which surface asks. A term selecting from the whole store is CAPPED: the
+	// index answers with at most 1000 hits per leg (id matches and full-text hits are
+	// capped separately) and that truncation IS the answer — the top hits for the
+	// term. A term intersected with a set something else already bounds is UNCAPPED,
+	// because a store-wide cap there would truncate the store rather than the answer,
+	// dropping a genuine member that ranks below the global cutoff.
+	//
+	// Concretely, on the top-level nibs query: the term alone is capped, and so is
+	// the term alongside any of the list and tri-state facets — status, excludeStatus,
+	// type, excludeType, priority, excludePriority, estimate, excludeEstimate, tags,
+	// excludeTags, hasParent, hasBlocking, isBlocked, hasBlockedBy. None of those
+	// names a nib, so the population they narrow is still the store. Combining the
+	// term with a field that DOES name one — parentId, ancestorId, descendantId,
+	// siblingId, blockingId, blockedById, mentionsId, mentionedById — makes the read
+	// uncapped. Every relationship field (children, blockedBy, blocking, mentions,
+	// mentionedBy) is uncapped for the same reason: the relation it names is the
+	// bound.
+	//
+	// So `nibs(filter: {search: q, parentId: X})` and
+	// `nib(id: X) { children(filter: {search: q}) }` agree on the MATCHES. They are
+	// still not the same response: the top-level query completes the tree with those
+	// matches' ancestors, X included, and a relationship field does not.
 	Search *string `json:"search,omitempty"`
 	// Include only nibs with these statuses (OR logic)
 	Status []string `json:"status,omitempty"`

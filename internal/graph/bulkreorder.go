@@ -415,7 +415,17 @@ func (r *mutationResolver) validateIfMatchETags(listed []*nib.Nib, ifMatch []*mo
 			return nil, fmt.Errorf("failed to read current etag for %s: %w", b.ID, err)
 		}
 		if current != want {
-			return nil, fmt.Errorf("etag mismatch for %s: provided %s, current is %s", b.ID, want, current)
+			// The TYPED, reconcilable conflict — the same error a racing per-nib
+			// write raises — wrapped only to name the offending nib. Both surfaces
+			// that route a conflict structurally read it with errors.As: the wire
+			// code extensions.code = "ETAG_MISMATCH" (cmd/serve.go) and the CLI's
+			// CONFLICT exit status with its currentEtag reconcile token (cmd/set.go
+			// for single-nib writes, cmd/mv.go for the bulk arms).
+			// A bare fmt.Errorf here would present the COMMON bulk-reorder conflict —
+			// a caller whose ifMatch was already stale on entry — as a generic
+			// failure that only message text could identify.
+			return nil, fmt.Errorf("failed to reorder %s: %w", b.ID,
+				&nibcore.ETagMismatchError{Provided: want, Current: current})
 		}
 	}
 	return etags, nil

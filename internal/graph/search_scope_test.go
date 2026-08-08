@@ -4,6 +4,9 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"reflect"
+	"slices"
+	"sort"
 	"strings"
 	"sync"
 	"testing"
@@ -83,6 +86,181 @@ func TestRelationshipSearchIsNotBoundedByTheStoreWideLimit(t *testing.T) {
 		t.Fatalf("Children: %v", err)
 	}
 	assertNibIDs(t, got, []string{child.ID})
+}
+
+// capExceedingStore builds a store in which the store-wide search cap bites,
+// and returns the resolver plus the three ids of a grandparent -> parent ->
+// child chain.
+//
+// DefaultSearchLimit+200 short, high-scoring nibs match searchScopeTerm, so the
+// cap is reached before the chain's child can be considered; the child matches
+// the same term buried in a long body, so BM25's length normalization ranks it
+// beneath every one of them. The chain is three deep so a test can tell the
+// MATCHES apart from the ancestors tree completion adds on top of them.
+//
+// The premise assertion here proves the fixture still exercises the cap, so a
+// test derived from it cannot pass for a reason that has nothing to do with the
+// bound.
+func capExceedingStore(t *testing.T) (resolver *Resolver, grandparentID, parentID, childID string) {
+	t.Helper()
+	resolver, core := setupTestResolver(t)
+
+	for i := range nibcore.DefaultSearchLimit + 200 {
+		id := fmt.Sprintf("nz%04d", i)
+		mustCreate(t, core, &nib.Nib{
+			ID:     id,
+			Slug:   id,
+			Title:  searchScopeTerm + " noise",
+			Status: "todo",
+		})
+	}
+
+	grandparent := &nib.Nib{ID: "gpa1", Slug: "grandparent", Title: "Grandparent", Status: "todo"}
+	mustCreate(t, core, grandparent)
+	parent := &nib.Nib{ID: "par1", Slug: "parent", Title: "Parent", Status: "todo", Parent: grandparent.ID}
+	mustCreate(t, core, parent)
+	child := &nib.Nib{
+		ID:     "kid1",
+		Slug:   "child",
+		Title:  "Child",
+		Status: "todo",
+		Parent: parent.ID,
+		Body:   strings.Repeat("filler ", 4000) + searchScopeTerm,
+	}
+	mustCreate(t, core, child)
+
+	topHits, err := core.Search(searchScopeTerm)
+	if err != nil {
+		t.Fatalf("core.Search: %v", err)
+	}
+	for _, b := range topHits {
+		if b.ID == child.ID {
+			t.Fatalf("fixture no longer exercises the cap: the child is inside the store-wide top %d hits (%d returned), so tests built on it would pass without the bound being fixed",
+				nibcore.DefaultSearchLimit, len(topHits))
+		}
+	}
+
+	return resolver, grandparent.ID, parent.ID, child.ID
+}
+
+// TestTopLevelSearchWithABoundingFilterIsNotBoundedByTheStoreWideLimit pins
+// which population the top-level intersection truncates once the filter names a
+// relationship as well as a term.
+//
+// `nibs(filter: {search: q, parentId: X})` asks the same question
+// `nib(id: X) { children(filter: {search: q}) }` asks, and the working set is
+// bounded by X's children either way. Seeding it from the store-wide TOP-N
+// answers a different question — "the children of X that are also among the
+// store's global top-N hits for q" — and drops a genuine child that ranks below
+// the cutoff, silently, at exit 0.
+//
+// The result carries the parent and grandparent too: search is active, so
+// queryResolver.Nibs completes the tree with every match's ancestors. That is
+// the documented top-level behavior, not part of what this test is about.
+func TestTopLevelSearchWithABoundingFilterIsNotBoundedByTheStoreWideLimit(t *testing.T) {
+	resolver, grandparentID, parentID, childID := capExceedingStore(t)
+
+	got, err := resolver.Query().Nibs(context.Background(), &model.NibFilter{
+		Search:   strPtr(searchScopeTerm),
+		ParentID: strPtr(parentID),
+	}, nil)
+	if err != nil {
+		t.Fatalf("Nibs: %v", err)
+	}
+	assertNibIDs(t, got, []string{childID, parentID, grandparentID})
+}
+
+// TestTopLevelSearchWithoutABoundingFilterKeepsTheStoreWideCap is the other half
+// of the rule: when the term is the only selector, the truncation IS the answer.
+//
+// `nibs(filter: {search: q})` asks "the top hits for q" over the whole store,
+// and nothing else in the filter narrows the population, so lifting the cap here
+// would hand back every match in a store of any size rather than the top ones.
+// Without this guard the fix for the bounded case could be "always read the
+// uncapped answer", which passes its own test and quietly removes the bound the
+// unbounded query relies on.
+func TestTopLevelSearchWithoutABoundingFilterKeepsTheStoreWideCap(t *testing.T) {
+	resolver, _, _, childID := capExceedingStore(t)
+
+	got, err := resolver.Query().Nibs(context.Background(), &model.NibFilter{
+		Search: strPtr(searchScopeTerm),
+	}, nil)
+	if err != nil {
+		t.Fatalf("Nibs: %v", err)
+	}
+
+	// The noise nibs are parentless, so tree completion adds nothing and the
+	// count is the cap itself.
+	if len(got) != nibcore.DefaultSearchLimit {
+		t.Errorf("got %d nibs, want exactly %d — an unbounded search must still answer with the store-wide top hits",
+			len(got), nibcore.DefaultSearchLimit)
+	}
+	for _, b := range got {
+		if b.ID == childID {
+			t.Errorf("the lowest-ranked match %s is in the result of a term-only search; the store-wide cap is gone", childID)
+		}
+	}
+}
+
+// TestTopLevelAndRelationshipSearchAgreeOnTheMatches holds the two surfaces
+// expressing the same question to the same answer.
+//
+// They are not identical responses and cannot be: `nibs(filter: {search: q,
+// parentId: X})` completes the tree with every match's ancestors, which a
+// relationship field deliberately does not do (see the search description in
+// schema.graphqls). So the property asserted is the strongest true one — the two
+// return the same MATCHES, and everything the top level adds on top is exactly
+// the ancestor chain of those matches, computed here by walking parent links
+// rather than through the pipeline's own helper.
+func TestTopLevelAndRelationshipSearchAgreeOnTheMatches(t *testing.T) {
+	resolver, grandparentID, parentID, childID := capExceedingStore(t)
+	ctx := context.Background()
+
+	parent, ok := resolver.Reader.GetSnapshot(parentID)
+	if !ok {
+		t.Fatalf("GetSnapshot(%s): not found", parentID)
+	}
+
+	rel, err := resolver.Nib().Children(ctx, parent, &model.NibFilter{Search: strPtr(searchScopeTerm)}, nil)
+	if err != nil {
+		t.Fatalf("Children: %v", err)
+	}
+	top, err := resolver.Query().Nibs(ctx, &model.NibFilter{
+		Search:   strPtr(searchScopeTerm),
+		ParentID: strPtr(parentID),
+	}, nil)
+	if err != nil {
+		t.Fatalf("Nibs: %v", err)
+	}
+
+	// Premise: the relationship field really does answer with the match the cap
+	// would have dropped, so the comparison below is about agreement rather than
+	// about two surfaces both returning nothing.
+	assertNibIDs(t, rel, []string{childID})
+
+	relIDs := make(map[string]bool, len(rel))
+	for _, b := range rel {
+		relIDs[b.ID] = true
+	}
+	var extra []string
+	for _, b := range top {
+		if !relIDs[b.ID] {
+			extra = append(extra, b.ID)
+		}
+	}
+	for id := range relIDs {
+		if !slices.ContainsFunc(top, func(b *nib.Nib) bool { return b.ID == id }) {
+			t.Errorf("%s is a match on the relationship field but missing from the top-level answer; the two surfaces disagree about the same question", id)
+		}
+	}
+
+	// The ancestor chain of the one match, by construction of the fixture.
+	sort.Strings(extra)
+	wantExtra := []string{grandparentID, parentID}
+	sort.Strings(wantExtra)
+	if !reflect.DeepEqual(extra, wantExtra) {
+		t.Errorf("the top-level answer adds %v beyond the matches, want exactly the matches' ancestor chain %v", extra, wantExtra)
+	}
 }
 
 // countingSearchReader counts every index query a request costs, whichever

@@ -1294,6 +1294,61 @@ func TestQueryConflictCarriesTheCommittedClauseThroughTheEnrichment(t *testing.T
 	}
 }
 
+// TestQueryBulkReorderPreValidationConflictIsAConflict pins that a bulk reorder
+// refused by its PRE-VALIDATION etag check reports CONFLICT (exit 4) with the
+// server's current etag, exactly as a stale single-nib `updateNib` does.
+//
+// It is the common bulk-reorder conflict — it fires whenever the caller's ifMatch
+// is already stale on entry, while the racing per-nib mismatch needs the narrow
+// window between pre-validation and the write — so an agent scripting `nibs query`
+// against $? sees this one, not the racing one. Reporting it as a plain
+// VALIDATION_ERROR would tell that agent its INPUT was malformed, when the repair
+// is to re-read the etags and retry.
+func TestQueryBulkReorderPreValidationConflictIsAConflict(t *testing.T) {
+	t.Cleanup(resetQueryFlags)
+	t.Cleanup(resetSetFlags)
+
+	nibsDir, id, stale := writeStaleEtagNib(t, "q-brc")
+
+	// A second root-level nib, so childIds can list every root sibling —
+	// reorderChildren refuses an incomplete list before it ever checks an etag.
+	const sibling = "q-brs"
+	content := "---\n# " + sibling + "\nversion: 1\ntitle: Sibling\nstatus: todo\ntype: task\norder: b0\n---\n\n"
+	if err := os.WriteFile(filepath.Join(nibsDir, sibling+"--test.md"), []byte(content), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	resetQueryFlags()
+	mutation := `mutation { reorderChildren(parentId: "", childIds: ["` + sibling + `", "` + id + `"], ` +
+		`ifMatch: [{id: "` + id + `", etag: "` + stale + `"}]) { id } }`
+	out, err := runQueryCmd(t, nibsDir, mutation, "--json")
+	if err == nil {
+		t.Fatalf("a bulk reorder holding a stale ifMatch returned no error; out: %q", out)
+	}
+
+	if code := reportExitError(io.Discard, err); code != output.ExitConflict {
+		t.Errorf("exit = %d, want %d (conflict)", code, output.ExitConflict)
+	}
+	var env conflictEnvelope
+	if uerr := json.Unmarshal([]byte(out), &env); uerr != nil {
+		t.Fatalf("output is not a JSON error envelope: %v\nraw: %s", uerr, out)
+	}
+	if env.Error.Code != output.ErrConflict {
+		t.Errorf("envelope code = %q, want %q", env.Error.Code, output.ErrConflict)
+	}
+	// The reconcile token: an agent retries the reorder with it. It comes off the
+	// typed error's Current field, so its presence also witnesses the type.
+	if env.Error.CurrentEtag == "" {
+		t.Fatalf("the conflict offered no currentEtag, so no retry is reconcilable: %s", out)
+	}
+	if env.Error.CurrentEtag == stale {
+		t.Errorf("currentEtag = %q, the stale token the caller sent", env.Error.CurrentEtag)
+	}
+	if !strings.Contains(env.Error.Message, id) {
+		t.Errorf("message = %q, want it to name the nib whose etag was stale", env.Error.Message)
+	}
+}
+
 // TestQueryCommandRefusalExitsLikeTheDirectCommand pins that `nibs query`
 // reports the same structured class as the direct command that raises the same
 // failure. `nibs list --parent nope` exits 3 and `nibs set --if-match stale`
