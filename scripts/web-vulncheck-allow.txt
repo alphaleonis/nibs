@@ -1,0 +1,20 @@
+# Advisory ids the web dependency tree knowingly ships with.
+#
+# scripts/web-vulncheck.sh fails on any npm audit advisory NOT listed here, and
+# fails just as loudly on an entry here that no longer matches anything — a
+# suppression that outlives its reason is worse than no suppression, because it
+# reads as "reviewed" while covering nothing.
+#
+# One GHSA id per line (the id alone, not the advisory URL). Everything after #
+# is a comment. Every entry must say what it is, why it is accepted, and what
+# would retire it.
+#
+# "Tooling only, never reaches a browser" is a legitimate reason to accept an
+# advisory — but it has to be written here as a claim someone made, not applied
+# wholesale by an --omit=dev flag. Several packages in devDependencies (svelte,
+# svelte-sonner, tailwindcss, tailwind-variants, @lucide/svelte) compile into
+# web/dist and do ship, so the dependency section a package is declared in does
+# not decide the question.
+#
+# Empty as of 2026-08-08: npm audit reports no advisories at any severity across
+# the whole tree, dev included.

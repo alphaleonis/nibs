@@ -134,3 +134,17 @@ jobs:
       # has not changed, which no push-triggered run can catch — vulncheck.yml
       # runs on a schedule for those.
       - run: task vulncheck
+      # The npm half of the same gate (nibs-uilw). It rides in this job for a
+      # different reason than the line above: npm audit resolves the tree from
+      # package-lock.json and needs no node_modules and no web/dist, so nothing
+      # is being shared with it — it is here because the job already has node,
+      # and one more cheap step beats a second runner.
+      #
+      # It is not redundant with Dependabot alerts, for two reasons measured on
+      # 2026-08-08. Those alerts are computed from the *default branch* only, so
+      # they are blind to `develop`, where every change lands first: `main` had
+      # 36 alerts that day while `develop`'s lockfile audited clean. And the two
+      # sources disagree on content — npm audit reported a high-severity
+      # brace-expansion advisory (GHSA-rgw5-rvv9-x895) that the alert list did
+      # not carry at all. An alert is also a banner, not a build failure.
+      - run: task web:vulncheck
