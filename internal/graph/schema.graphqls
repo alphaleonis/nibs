@@ -489,13 +489,29 @@ input NibFilter {
   apply: the field keeps its own order (children stay in order key order),
   since the term selects rather than ranks.
 
-  The two surfaces read differently bounded answers, because a cap means
-  different things to them. At the top level the index answers with at most 1000
-  hits per leg (id matches and full-text hits are capped separately) and that
-  truncation IS the answer — the top hits for the term. A relationship field is
-  already bounded by the relation it names, so it reads the UNCAPPED answer and
-  intersects that: every member of the relation matching the term is in the
-  result, however it ranks store-wide.
+  WHICH answer the index is asked for follows from what bounds the query, not
+  from which surface asks. A term selecting from the whole store is CAPPED: the
+  index answers with at most 1000 hits per leg (id matches and full-text hits are
+  capped separately) and that truncation IS the answer — the top hits for the
+  term. A term intersected with a set something else already bounds is UNCAPPED,
+  because a store-wide cap there would truncate the store rather than the answer,
+  dropping a genuine member that ranks below the global cutoff.
+
+  Concretely, on the top-level nibs query: the term alone is capped, and so is
+  the term alongside any of the list and tri-state facets — status, excludeStatus,
+  type, excludeType, priority, excludePriority, estimate, excludeEstimate, tags,
+  excludeTags, hasParent, hasBlocking, isBlocked, hasBlockedBy. None of those
+  names a nib, so the population they narrow is still the store. Combining the
+  term with a field that DOES name one — parentId, ancestorId, descendantId,
+  siblingId, blockingId, blockedById, mentionsId, mentionedById — makes the read
+  uncapped. Every relationship field (children, blockedBy, blocking, mentions,
+  mentionedBy) is uncapped for the same reason: the relation it names is the
+  bound.
+
+  So `nibs(filter: {search: q, parentId: X})` and
+  `nib(id: X) { children(filter: {search: q}) }` agree on the MATCHES. They are
+  still not the same response: the top-level query completes the tree with those
+  matches' ancestors, X included, and a relationship field does not.
   """
   search: String
   "Include only nibs with these statuses (OR logic)"

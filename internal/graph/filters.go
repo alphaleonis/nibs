@@ -117,6 +117,53 @@ func refuseContradiction(field string, id *string, presenceField string, presenc
 	return &FilterTargetContradictionError{Field: field, PresenceField: presenceField, ID: *id}
 }
 
+// hasBoundingFilter reports whether the filter names a nib whose relationships
+// already bound the set a search term can select from.
+//
+// It decides which population queryResolver.Nibs truncates. A term on its own
+// chooses from the whole store, so the store-wide cap IS the answer there — "the
+// top hits for q", which is what the caller asked for. Add one of these fields
+// and the question becomes an intersection over a set the store's link structure
+// already bounds — "the children of X matching q" — and a store-wide cap
+// truncates the wrong population, dropping a genuine member that ranks below the
+// global cutoff with no error and no signal. That is the same reading
+// filterBySearch gives on a relationship field, which is what lets the two
+// surfaces expressing one question reach one answer.
+//
+// The fields are ENUMERATED rather than derived from a naming rule, so the
+// classification is readable where it is made and cannot shift under a rename.
+// What keeps the list from going stale is
+// TestEveryNibFilterFieldIsClassifiedAsBoundingOrNot, which reflects over
+// model.NibFilter and requires every field to be classified: a new bounding
+// filter fails a test instead of quietly missing this list.
+//
+// The list-valued and tri-state fields (status, tags, hasParent, isBlocked, ...)
+// are deliberately excluded. The test is whether the field NAMES A NIB, not how
+// large the set it selects turns out to be: siblingId on a root and ancestorId
+// on the tree root can each select most of the store and are still bounding,
+// because the question is "of X's siblings/descendants, which match q" and a
+// store-wide cap truncates the wrong population there too. A field that names no
+// nib leaves the question one about the store's top hits, so capping it is right.
+//
+// A field set to the EMPTY STRING counts here, even though ApplyFilter goes on
+// to refuse it. Presence is the whole test: the refusal still happens, one
+// uncapped search earlier than it would otherwise, and reading emptiness as
+// "absent" would put a second copy of the emptiness rule here to disagree with
+// resolveFilterTarget's.
+func hasBoundingFilter(filter *model.NibFilter) bool {
+	if filter == nil {
+		return false
+	}
+	return filter.ParentID != nil ||
+		filter.AncestorID != nil ||
+		filter.DescendantID != nil ||
+		filter.SiblingID != nil ||
+		filter.BlockingID != nil ||
+		filter.BlockedByID != nil ||
+		filter.MentionsID != nil ||
+		filter.MentionedByID != nil
+}
+
 // ApplyFilter applies NibFilter to a slice of nibs and returns filtered results.
 // This is used by both the top-level nibs query and relationship field resolvers.
 //

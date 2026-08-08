@@ -1804,15 +1804,90 @@ func TestTopLevelSearchQueriesTheIndexOnce(t *testing.T) {
 	if reader.searchCalls != 1 {
 		t.Errorf("Core.Search called %d times, want 1", reader.searchCalls)
 	}
-	// The uncapped entry point belongs to the relationship fields. Reaching it
-	// from the top level would quietly replace "the top hits for the term" — the
-	// answer this surface promises, and the bound that keeps a one-word query
-	// over a large store from materializing it — with the whole match set.
+	// A term that is the ONLY selector must read the capped entry point.
+	// Reaching the uncapped one here would quietly replace "the top hits for the
+	// term" — the answer this surface promises, and the bound that keeps a
+	// one-word query over a large store from materializing it — with the whole
+	// match set. The uncapped one belongs to the shapes hasBoundingFilter names;
+	// see TestTopLevelSearchWithABoundingFilterReadsTheUncappedIndex.
 	if reader.searchAllCalls != 0 {
-		t.Errorf("Core.SearchAll called %d times, want 0 — the top level answers with the capped search", reader.searchAllCalls)
+		t.Errorf("Core.SearchAll called %d times, want 0 — an unbounded top-level search answers with the capped search", reader.searchAllCalls)
 	}
 	if filter.Search == nil || *filter.Search != "anything" {
 		t.Errorf("caller's filter.Search = %v, want it left carrying the term", filter.Search)
+	}
+}
+
+// boundingFilterFieldsUnderTest resolves the ENUMERATED classification into the
+// drivable fields the entry-point walk needs, so boundingFilterFields stays the
+// one authority on what is bounding. Deriving the walk from the reflective
+// id-naming rule instead would hard-require every *Id field to be bounding, and
+// a maintainer who classified an id-named field as non-bounding — a choice
+// TestEveryNibFilterFieldIsClassifiedAsBoundingOrNot invites — would pass the
+// classification tests and then be failed here by a test that never mentions
+// them.
+//
+// A bounding field these tests cannot drive fails rather than being skipped, so
+// the walk cannot quietly shrink.
+func boundingFilterFieldsUnderTest(t *testing.T) []idFilterField {
+	t.Helper()
+
+	drivable := make(map[string]idFilterField)
+	for _, field := range idValuedFilterFields(t) {
+		drivable[field.name] = field
+	}
+
+	fields := make([]idFilterField, 0, len(boundingFilterFields))
+	for _, name := range boundingFilterFields {
+		field, ok := drivable[name]
+		if !ok {
+			t.Fatalf("%s is classified bounding but these tests can only drive a *string id-named field — extend them rather than letting the walk drop it", name)
+		}
+		fields = append(fields, field)
+	}
+	return fields
+}
+
+// TestTopLevelSearchWithABoundingFilterReadsTheUncappedIndex pins the entry
+// point directly, at the seam TestTopLevelSearchQueriesTheIndexOnce guards from
+// the other side.
+//
+// The behavioral consequence is asserted over a real store in
+// TestTopLevelSearchWithABoundingFilterIsNotBoundedByTheStoreWideLimit; this
+// says the same thing about the CHOICE, so a regression is legible as "the wrong
+// search entry point" rather than only as a missing nib in a 1200-nib fixture.
+// It also runs the whole bounding set, which the store-backed test does not.
+func TestTopLevelSearchWithABoundingFilterReadsTheUncappedIndex(t *testing.T) {
+	for _, field := range boundingFilterFieldsUnderTest(t) {
+		t.Run(field.name, func(t *testing.T) {
+			reader := hierarchyFixture()
+			reader.searchOut = map[string][]*nib.Nib{"anything": reader.allNibs}
+
+			resolver := &Resolver{
+				Reader:    reader,
+				Writer:    &stubWriter{store: reader},
+				Validator: &stubValidator{},
+				Blocking:  &stubBlockingChecker{},
+				Orderer:   NewOrderer(reader, &stubWriter{store: reader}),
+			}
+
+			// Every branch resolves its target, so it has to name a nib the
+			// fixture holds; what the branch then matches is irrelevant here.
+			filter := field.filterWith("nibs-m1")
+			filter.Search = strPtr("anything")
+			if _, err := resolver.Query().Nibs(context.Background(), filter, nil); err != nil {
+				t.Fatalf("Nibs: %v", err)
+			}
+
+			if reader.searchAllCalls != 1 {
+				t.Errorf("Core.SearchAll called %d times, want 1 — %s bounds the working set, so the term must be read uncapped",
+					reader.searchAllCalls, field.name)
+			}
+			if reader.searchCalls != 0 {
+				t.Errorf("Core.Search called %d times, want 0 — the store-wide cap truncates the wrong population once %s bounds the query",
+					reader.searchCalls, field.name)
+			}
+		})
 	}
 }
 

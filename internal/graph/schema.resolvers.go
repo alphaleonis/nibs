@@ -985,13 +985,29 @@ func (r *queryResolver) Nib(ctx context.Context, id string) (*nib.Nib, error) {
 // ApplyFilter is then handed a copy of the filter with the term cleared, because
 // the seeded set already IS the term's answer: leaving it set would query the
 // index a second time only to intersect that answer with itself.
+//
+// WHICH search entry point seeds depends on the rest of the filter, because the
+// two shapes ask different questions. A term alone selects from the whole store,
+// so Search's store-wide cap is the answer — the top hits. A term alongside a
+// field naming a nib's relationships is an intersection over a set that field
+// already bounds, so it seeds from the UNCAPPED SearchAll: capping there would
+// truncate the store rather than the answer, dropping a genuine member ranking
+// below the global cutoff. hasBoundingFilter draws that line and says why.
+// SearchAll returns the same order Search does, so the seeding's ordering
+// promise holds either way — and that order is why the seed reads the reader
+// directly rather than through cachedSearchAllIDs, whose memo keeps a membership
+// set with the ranking discarded.
 func (r *queryResolver) Nibs(ctx context.Context, filter *model.NibFilter, sort *model.NibSort) ([]*nib.Nib, error) {
 	var nibs []*nib.Nib
 
 	// If search filter is provided, start with search results
 	searched := filter != nil && filter.Search != nil && *filter.Search != ""
 	if searched {
-		searchResults, err := r.Reader.Search(*filter.Search)
+		search := r.Reader.Search
+		if hasBoundingFilter(filter) {
+			search = r.Reader.SearchAll
+		}
+		searchResults, err := search(*filter.Search)
 		if err != nil {
 			return nil, err
 		}
