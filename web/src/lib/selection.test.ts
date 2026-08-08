@@ -1,6 +1,13 @@
 import { describe, it, expect } from "vitest";
 import { SelectionState } from "./selection.svelte";
 
+// The panel policy is required: omitting it must be a compile error, not a
+// silent fall back to "follow", which is wrong under the double-click preference.
+// @ts-expect-error - panel policy is required
+() => new SelectionState().toggleSelect("nibs-aaa");
+// @ts-expect-error - panel policy is required
+() => new SelectionState().rangeSelect("nibs-aaa", ["nibs-aaa"]);
+
 describe("SelectionState", () => {
   it("starts with no selection and panel closed", () => {
     const state = new SelectionState();
@@ -91,8 +98,8 @@ describe("SelectionState", () => {
 
     it("select() clears previous multi-selection", () => {
       const state = new SelectionState();
-      state.toggleSelect("nibs-abc1");
-      state.toggleSelect("nibs-xyz2");
+      state.toggleSelect("nibs-abc1", "follow");
+      state.toggleSelect("nibs-xyz2", "follow");
       expect(state.selectedIds.size).toBe(2);
       expect(state.hasMultiSelect).toBe(true);
 
@@ -105,7 +112,7 @@ describe("SelectionState", () => {
     it("toggleSelect() adds a nib to selectedIds", () => {
       const state = new SelectionState();
       state.select("nibs-abc1");
-      state.toggleSelect("nibs-xyz2");
+      state.toggleSelect("nibs-xyz2", "follow");
       expect(state.selectedIds.has("nibs-abc1")).toBe(true);
       expect(state.selectedIds.has("nibs-xyz2")).toBe(true);
       expect(state.selectedIds.size).toBe(2);
@@ -115,8 +122,8 @@ describe("SelectionState", () => {
     it("toggleSelect() removes a nib from selectedIds if already present", () => {
       const state = new SelectionState();
       state.select("nibs-abc1");
-      state.toggleSelect("nibs-xyz2");
-      state.toggleSelect("nibs-abc1"); // remove it
+      state.toggleSelect("nibs-xyz2", "follow");
+      state.toggleSelect("nibs-abc1", "follow"); // remove it
       expect(state.selectedIds.has("nibs-abc1")).toBe(false);
       expect(state.selectedIds.has("nibs-xyz2")).toBe(true);
       expect(state.selectedIds.size).toBe(1);
@@ -124,22 +131,22 @@ describe("SelectionState", () => {
 
     it("toggleSelect() updates anchor and focus", () => {
       const state = new SelectionState();
-      state.toggleSelect("nibs-abc1");
+      state.toggleSelect("nibs-abc1", "follow");
       expect(state.anchorId).toBe("nibs-abc1");
       expect(state.focusedNibId).toBe("nibs-abc1");
     });
 
     it("toggleSelect() with single remaining item sets selectedNibId", () => {
       const state = new SelectionState();
-      state.toggleSelect("nibs-abc1");
+      state.toggleSelect("nibs-abc1", "follow");
       expect(state.selectedNibId).toBe("nibs-abc1");
       expect(state.panelOpen).toBe(true);
     });
 
     it("toggleSelect() with multiple items clears selectedNibId", () => {
       const state = new SelectionState();
-      state.toggleSelect("nibs-abc1");
-      state.toggleSelect("nibs-xyz2");
+      state.toggleSelect("nibs-abc1", "follow");
+      state.toggleSelect("nibs-xyz2", "follow");
       expect(state.selectedNibId).toBeNull();
       expect(state.panelOpen).toBe(false);
     });
@@ -149,7 +156,7 @@ describe("SelectionState", () => {
       // Reachable via keyboard: a bucket row can be arrow-focused, and Space
       // resolves the row from the DOM and calls toggleSelect(bucketId). The
       // rangeSelect slice filter does not cover this path.
-      state.toggleSelect("__no_milestone__");
+      state.toggleSelect("__no_milestone__", "follow");
       expect(state.selectedIds.has("__no_milestone__")).toBe(false);
       expect(state.selectedIds.size).toBe(0);
       // The bucket must not become an anchor or focus for selection either.
@@ -160,11 +167,11 @@ describe("SelectionState", () => {
       // The guards must reject the bucket WITHOUT wiping an existing real
       // selection — a virgin-state test can't tell a correct no-op from a clear.
       const state = new SelectionState();
-      state.toggleSelect("nibs-abc1");
-      state.toggleSelect("nibs-xyz2");
+      state.toggleSelect("nibs-abc1", "follow");
+      state.toggleSelect("nibs-xyz2", "follow");
       expect(state.selectedIds.size).toBe(2);
 
-      state.toggleSelect("__no_milestone__"); // guarded: must not touch the set
+      state.toggleSelect("__no_milestone__", "follow"); // guarded: must not touch the set
       expect([...state.selectedIds].sort()).toEqual(["nibs-abc1", "nibs-xyz2"]);
 
       state.select("__no_milestone__"); // guarded: must not clear selectedIds either
@@ -192,8 +199,8 @@ describe("SelectionState", () => {
 
     it("selectOnly() replaces a multi-selection with exactly one id", () => {
       const state = new SelectionState();
-      state.toggleSelect("nibs-aaa");
-      state.toggleSelect("nibs-bbb");
+      state.toggleSelect("nibs-aaa", "follow");
+      state.toggleSelect("nibs-bbb", "follow");
       state.selectOnly("nibs-ccc");
       expect([...state.selectedIds]).toEqual(["nibs-ccc"]);
     });
@@ -208,65 +215,65 @@ describe("SelectionState", () => {
       expect(state.anchorId).toBe("nibs-aaa");
     });
 
-    // `retargetPanel: false` is what decouples the detail panel from the
+    // The "detach" panel policy is what decouples the detail panel from the
     // selection under the "open on double-click" preference: the set, focus and
     // anchor still move, but `selectedNibId` is left entirely alone.
-    it("toggleSelect({ retargetPanel: false }) collapsing to one does not open the panel", () => {
+    it("toggleSelect('detach') collapsing to one does not open the panel", () => {
       const state = new SelectionState();
-      state.toggleSelect("nibs-aaa", { retargetPanel: false });
+      state.toggleSelect("nibs-aaa", "detach");
       expect([...state.selectedIds]).toEqual(["nibs-aaa"]);
       expect(state.focusedNibId).toBe("nibs-aaa");
       expect(state.anchorId).toBe("nibs-aaa");
       expect(state.selectedNibId).toBeNull();
     });
 
-    it("toggleSelect({ retargetPanel: false }) collapsing to many does not close the panel", () => {
+    it("toggleSelect('detach') collapsing to many does not close the panel", () => {
       const state = new SelectionState();
       state.select("nibs-open");
       state.deselectAll();
-      state.toggleSelect("nibs-aaa", { retargetPanel: false });
-      state.toggleSelect("nibs-bbb", { retargetPanel: false });
+      state.toggleSelect("nibs-aaa", "detach");
+      state.toggleSelect("nibs-bbb", "detach");
       expect(state.selectedIds.size).toBe(2);
       expect(state.selectedNibId).toBe("nibs-open");
     });
 
-    it("toggleSelect({ retargetPanel: false }) collapsing to zero does not close the panel", () => {
+    it("toggleSelect('detach') collapsing to zero does not close the panel", () => {
       const state = new SelectionState();
       state.select("nibs-open");
       state.deselectAll();
-      state.toggleSelect("nibs-aaa", { retargetPanel: false });
-      state.toggleSelect("nibs-aaa", { retargetPanel: false });
+      state.toggleSelect("nibs-aaa", "detach");
+      state.toggleSelect("nibs-aaa", "detach");
       expect(state.selectedIds.size).toBe(0);
       expect(state.selectedNibId).toBe("nibs-open");
     });
 
-    it("rangeSelect({ retargetPanel: false }) collapsing to one does not open the panel", () => {
+    it("rangeSelect('detach') collapsing to one does not open the panel", () => {
       const state = new SelectionState();
       const visibleIds = ["nibs-001", "nibs-002", "nibs-003"];
       state.anchorId = "nibs-002";
-      state.rangeSelect("nibs-002", visibleIds, { retargetPanel: false });
+      state.rangeSelect("nibs-002", visibleIds, "detach");
       expect([...state.selectedIds]).toEqual(["nibs-002"]);
       expect(state.selectedNibId).toBeNull();
     });
 
-    it("rangeSelect({ retargetPanel: false }) over many rows does not close the panel", () => {
+    it("rangeSelect('detach') over many rows does not close the panel", () => {
       const state = new SelectionState();
       const visibleIds = ["nibs-001", "nibs-002", "nibs-003"];
       state.select("nibs-open");
       state.anchorId = "nibs-001";
-      state.rangeSelect("nibs-003", visibleIds, { retargetPanel: false });
+      state.rangeSelect("nibs-003", visibleIds, "detach");
       expect(state.selectedIds.size).toBe(3);
       expect(state.selectedNibId).toBe("nibs-open");
     });
 
-    it("the default (no options) still retargets the panel, for both bulk writers", () => {
+    it("'follow' retargets the panel, for both bulk writers", () => {
       const state = new SelectionState();
-      state.toggleSelect("nibs-aaa");
+      state.toggleSelect("nibs-aaa", "follow");
       expect(state.selectedNibId).toBe("nibs-aaa");
 
       const visibleIds = ["nibs-001", "nibs-002", "nibs-003"];
       state.anchorId = "nibs-001";
-      state.rangeSelect("nibs-003", visibleIds);
+      state.rangeSelect("nibs-003", visibleIds, "follow");
       expect(state.selectedNibId).toBeNull();
     });
 
@@ -275,7 +282,7 @@ describe("SelectionState", () => {
       const visibleIds = ["nibs-001", "nibs-002", "nibs-003", "nibs-004", "nibs-005"];
       state.select("nibs-002"); // sets anchor to nibs-002
 
-      state.rangeSelect("nibs-004", visibleIds);
+      state.rangeSelect("nibs-004", visibleIds, "follow");
       expect(state.selectedIds.size).toBe(3);
       expect(state.selectedIds.has("nibs-002")).toBe(true);
       expect(state.selectedIds.has("nibs-003")).toBe(true);
@@ -287,7 +294,7 @@ describe("SelectionState", () => {
       const visibleIds = ["nibs-001", "nibs-002", "nibs-003", "nibs-004", "nibs-005"];
       state.select("nibs-004"); // sets anchor to nibs-004
 
-      state.rangeSelect("nibs-002", visibleIds);
+      state.rangeSelect("nibs-002", visibleIds, "follow");
       expect(state.selectedIds.size).toBe(3);
       expect(state.selectedIds.has("nibs-002")).toBe(true);
       expect(state.selectedIds.has("nibs-003")).toBe(true);
@@ -298,7 +305,7 @@ describe("SelectionState", () => {
       const state = new SelectionState();
       const visibleIds = ["nibs-001", "nibs-002", "nibs-003"];
       state.select("nibs-001");
-      state.rangeSelect("nibs-003", visibleIds);
+      state.rangeSelect("nibs-003", visibleIds, "follow");
       expect(state.anchorId).toBe("nibs-001"); // anchor unchanged
     });
 
@@ -306,14 +313,14 @@ describe("SelectionState", () => {
       const state = new SelectionState();
       const visibleIds = ["nibs-001", "nibs-002", "nibs-003"];
       state.select("nibs-001");
-      state.rangeSelect("nibs-003", visibleIds);
+      state.rangeSelect("nibs-003", visibleIds, "follow");
       expect(state.focusedNibId).toBe("nibs-003");
     });
 
     it("rangeSelect() with no anchor uses target as anchor", () => {
       const state = new SelectionState();
       const visibleIds = ["nibs-001", "nibs-002", "nibs-003"];
-      state.rangeSelect("nibs-002", visibleIds);
+      state.rangeSelect("nibs-002", visibleIds, "follow");
       expect(state.selectedIds.size).toBe(1);
       expect(state.selectedIds.has("nibs-002")).toBe(true);
     });
@@ -322,7 +329,7 @@ describe("SelectionState", () => {
       const state = new SelectionState();
       const visibleIds = ["nibs-001", "nibs-002", "nibs-003"];
       state.select("nibs-001");
-      state.rangeSelect("nibs-003", visibleIds);
+      state.rangeSelect("nibs-003", visibleIds, "follow");
       expect(state.selectedNibId).toBeNull();
       expect(state.hasMultiSelect).toBe(true);
     });
@@ -331,7 +338,7 @@ describe("SelectionState", () => {
       const state = new SelectionState();
       const visibleIds = ["nibs-001", "nibs-002", "nibs-003"];
       state.select("nibs-002");
-      state.rangeSelect("nibs-002", visibleIds);
+      state.rangeSelect("nibs-002", visibleIds, "follow");
       expect(state.selectedNibId).toBe("nibs-002");
       expect(state.selectedIds.size).toBe(1);
     });
@@ -343,7 +350,7 @@ describe("SelectionState", () => {
       const state = new SelectionState();
       const visibleIds = ["nibs-m1", "nibs-e1", "__no_milestone__", "nibs-loose"];
       state.select("nibs-e1"); // anchor before the bucket
-      state.rangeSelect("nibs-loose", visibleIds); // target after the bucket
+      state.rangeSelect("nibs-loose", visibleIds, "follow"); // target after the bucket
 
       expect(state.selectedIds.has("nibs-e1")).toBe(true);
       expect(state.selectedIds.has("nibs-loose")).toBe(true);
@@ -355,7 +362,7 @@ describe("SelectionState", () => {
       const state = new SelectionState();
       const visibleIds = ["nibs-m1", "nibs-e1", "__no_milestone__", "nibs-loose"];
       state.select("nibs-m1");
-      state.rangeSelect("__no_milestone__", visibleIds);
+      state.rangeSelect("__no_milestone__", visibleIds, "follow");
 
       expect(state.selectedIds.has("nibs-m1")).toBe(true);
       expect(state.selectedIds.has("nibs-e1")).toBe(true);
@@ -369,7 +376,7 @@ describe("SelectionState", () => {
       // Defensive: no live path sets anchorId to a bucket (the add-writers guard
       // it), but rangeSelect must still resolve sanely if one ever does.
       state.anchorId = "__no_milestone__";
-      state.rangeSelect("nibs-e1", visibleIds);
+      state.rangeSelect("nibs-e1", visibleIds, "follow");
 
       expect(state.selectedIds.has("nibs-e1")).toBe(true);
       expect(state.selectedIds.has("__no_milestone__")).toBe(false);
@@ -380,7 +387,7 @@ describe("SelectionState", () => {
       const state = new SelectionState();
       const visibleIds = ["nibs-m1", "nibs-e1", "__no_milestone__", "nibs-loose"];
       state.anchorId = "__no_milestone__";
-      state.rangeSelect("__no_milestone__", visibleIds);
+      state.rangeSelect("__no_milestone__", visibleIds, "follow");
 
       expect(state.selectedIds.size).toBe(0);
       expect(state.selectedNibId).toBeNull();
@@ -396,7 +403,7 @@ describe("SelectionState", () => {
     it("deselectAll() clears selectedIds and anchor", () => {
       const state = new SelectionState();
       state.select("nibs-abc1");
-      state.toggleSelect("nibs-xyz2");
+      state.toggleSelect("nibs-xyz2", "follow");
       state.deselectAll();
       expect(state.selectedIds.size).toBe(0);
       expect(state.anchorId).toBeNull();
@@ -407,7 +414,7 @@ describe("SelectionState", () => {
     it("clearAll() clears everything", () => {
       const state = new SelectionState();
       state.select("nibs-abc1");
-      state.toggleSelect("nibs-xyz2");
+      state.toggleSelect("nibs-xyz2", "follow");
       state.ensureVisible("nibs-abc1");
       state.clearAll();
       expect(state.selectedIds.size).toBe(0);
@@ -421,8 +428,8 @@ describe("SelectionState", () => {
 
     it("select() clears multi-selection and resets to single item", () => {
       const state = new SelectionState();
-      state.toggleSelect("nibs-abc1");
-      state.toggleSelect("nibs-xyz2");
+      state.toggleSelect("nibs-abc1", "follow");
+      state.toggleSelect("nibs-xyz2", "follow");
 
       state.select("nibs-new1");
       expect(state.selectedIds.size).toBe(1);
@@ -436,7 +443,7 @@ describe("SelectionState", () => {
       const state = new SelectionState();
       const visibleIds = ["nibs-001", "nibs-002"];
       state.select("nibs-001");
-      state.rangeSelect("nibs-not-found", visibleIds);
+      state.rangeSelect("nibs-not-found", visibleIds, "follow");
       // Selection unchanged — still just the anchor
       expect(state.selectedIds.size).toBe(1);
       expect(state.selectedIds.has("nibs-001")).toBe(true);
@@ -446,9 +453,9 @@ describe("SelectionState", () => {
   describe("retainOnly (prune to matching set)", () => {
     it("drops selectedIds that are not in the matching set", () => {
       const state = new SelectionState();
-      state.toggleSelect("nibs-a");
-      state.toggleSelect("nibs-b");
-      state.toggleSelect("nibs-c");
+      state.toggleSelect("nibs-a", "follow");
+      state.toggleSelect("nibs-b", "follow");
+      state.toggleSelect("nibs-c", "follow");
 
       state.retainOnly(new Set(["nibs-a", "nibs-c"]));
 
@@ -460,8 +467,8 @@ describe("SelectionState", () => {
 
     it("is a no-op when every selected id still matches", () => {
       const state = new SelectionState();
-      state.toggleSelect("nibs-a");
-      state.toggleSelect("nibs-b");
+      state.toggleSelect("nibs-a", "follow");
+      state.toggleSelect("nibs-b", "follow");
       const before = state.selectedIds;
 
       state.retainOnly(new Set(["nibs-a", "nibs-b", "nibs-extra"]));
@@ -473,8 +480,8 @@ describe("SelectionState", () => {
 
     it("resets anchorId to null when the anchor falls out of the set", () => {
       const state = new SelectionState();
-      state.toggleSelect("nibs-a"); // anchor = nibs-a
-      state.toggleSelect("nibs-b"); // anchor = nibs-b
+      state.toggleSelect("nibs-a", "follow"); // anchor = nibs-a
+      state.toggleSelect("nibs-b", "follow"); // anchor = nibs-b
 
       state.retainOnly(new Set(["nibs-a"]));
 
@@ -483,8 +490,8 @@ describe("SelectionState", () => {
 
     it("preserves anchorId when the anchor still matches", () => {
       const state = new SelectionState();
-      state.toggleSelect("nibs-a");
-      state.toggleSelect("nibs-b"); // anchor = nibs-b
+      state.toggleSelect("nibs-a", "follow");
+      state.toggleSelect("nibs-b", "follow"); // anchor = nibs-b
 
       state.retainOnly(new Set(["nibs-a", "nibs-b"]));
 
@@ -493,8 +500,8 @@ describe("SelectionState", () => {
 
     it("resets focusedNibId to null when the focused row falls out", () => {
       const state = new SelectionState();
-      state.toggleSelect("nibs-a");
-      state.toggleSelect("nibs-b"); // focus = nibs-b
+      state.toggleSelect("nibs-a", "follow");
+      state.toggleSelect("nibs-b", "follow"); // focus = nibs-b
 
       state.retainOnly(new Set(["nibs-a"]));
 
@@ -503,8 +510,8 @@ describe("SelectionState", () => {
 
     it("preserves focusedNibId when the focused row still matches", () => {
       const state = new SelectionState();
-      state.toggleSelect("nibs-a");
-      state.toggleSelect("nibs-b"); // focus = nibs-b
+      state.toggleSelect("nibs-a", "follow");
+      state.toggleSelect("nibs-b", "follow"); // focus = nibs-b
 
       state.retainOnly(new Set(["nibs-a", "nibs-b"]));
 
@@ -527,8 +534,8 @@ describe("SelectionState", () => {
 
     it("clears the whole multi-select set when nothing matches", () => {
       const state = new SelectionState();
-      state.toggleSelect("nibs-a");
-      state.toggleSelect("nibs-b");
+      state.toggleSelect("nibs-a", "follow");
+      state.toggleSelect("nibs-b", "follow");
 
       state.retainOnly(new Set());
 

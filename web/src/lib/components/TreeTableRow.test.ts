@@ -853,7 +853,7 @@ describe("TreeTableRow context-based state", () => {
   it("applies .active class when nib is in multi-select selectedIds via context", () => {
     const selection = new SelectionState();
     selection.select("nibs-abc1");
-    selection.toggleSelect("nibs-other");
+    selection.toggleSelect("nibs-other", "follow");
 
     const { container } = renderRowWithContext(
       { nib: makeTreeTableNib({ id: "nibs-abc1" }) },

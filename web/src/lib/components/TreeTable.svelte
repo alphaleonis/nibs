@@ -15,6 +15,7 @@
   import TreeTableRow from "./TreeTableRow.svelte";
   import TableHeader from "./TableHeader.svelte";
   import type { DropZone } from "../drag.svelte";
+  import type { PanelPolicy } from "../selection.svelte";
   import { useSelection, useDrag, useActiveView, useTreeView } from "../contexts";
   import { useColumnResize } from "../composables/useColumnResize.svelte";
   import { useColumnDrag } from "../composables/useColumnDrag.svelte";
@@ -565,20 +566,20 @@
     // bulk gesture, not detail-panel navigation.
     //
     // In "double" mode the panel is decoupled from the selection, so a bulk
-    // gesture must not touch it at all: `retargetPanel: false` keeps
+    // gesture must not touch it at all: the "detach" policy keeps
     // `selectedNibId` where it is (a ctrl+click is a SINGLE click and must not
     // open the panel; a sweep across unrelated rows must not tear down the nib
     // the user is reading), and there is correspondingly nothing to sync.
     // Only a plain click is treated as navigation.
-    const retargetPanel = resolvedOpenDetailOn !== "double";
+    const panelPolicy: PanelPolicy = resolvedOpenDetailOn === "double" ? "detach" : "follow";
     if (e.shiftKey) {
-      selection.rangeSelect(nibId, visibleRowIds, { retargetPanel });
+      selection.rangeSelect(nibId, visibleRowIds, panelPolicy);
       // Multi-select desync: let the view follow the (possibly collapsed-to-one)
       // selection without a dirty-prompt — the documented guard-bypass path.
-      if (retargetPanel) view.syncTo(selection.selectedNibId);
+      if (panelPolicy === "follow") view.syncTo(selection.selectedNibId);
     } else if (e.ctrlKey || e.metaKey) {
-      selection.toggleSelect(nibId, { retargetPanel });
-      if (retargetPanel) view.syncTo(selection.selectedNibId);
+      selection.toggleSelect(nibId, panelPolicy);
+      if (panelPolicy === "follow") view.syncTo(selection.selectedNibId);
     } else if (resolvedOpenDetailOn === "double") {
       // Select-without-open: the plain single click focuses and selects the row
       // but leaves `selectedNibId` (and therefore the panel) alone, so whatever
