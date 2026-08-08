@@ -13,6 +13,7 @@ import { DragState } from "../drag.svelte";
 import { TreeViewState } from "../treeView.svelte";
 import { makeTestContext } from "../contexts";
 import { NibChangeTracker } from "../changeTracker.svelte";
+import { Preferences } from "../preferences.svelte";
 
 function makeTreeTableNib(overrides: Partial<TreeTableNib> = {}): TreeTableNib {
   return {
@@ -2636,6 +2637,396 @@ describe("TreeTable", () => {
       const titleText = container.querySelector("tr[data-nib-id='nibs-m1'] [data-action='title']") as HTMLElement;
       await user.click(titleText);
       expect(sel.selectedNibId).toBe("nibs-m1");
+    });
+  });
+
+  describe("openDetailOn gesture", () => {
+    function setupWithNibs(
+      nibs: TreeTableNib[],
+      extraProps: Record<string, unknown> = {},
+      opts?: { selection?: SelectionState; drag?: DragState },
+    ) {
+      mockQueryStore.mockReturnValue(
+        readable({ fetching: false, error: undefined, data: { nibs }, stale: false }) as any
+      );
+      return renderTreeTable(
+        { filter: {}, viewLevel: "milestones" as ViewLevel, ...extraProps },
+        opts,
+      );
+    }
+
+    function makeTestNibs(): TreeTableNib[] {
+      return [
+        makeTreeTableNib({ id: "nibs-m1", title: "Milestone", type: "milestone" }),
+        makeTreeTableNib({ id: "nibs-001", title: "Child Task", type: "task", parentId: "nibs-m1" }),
+        makeTreeTableNib({ id: "nibs-002", title: "Other Task", type: "task", parentId: "nibs-m1" }),
+      ];
+    }
+
+    it("double mode: a plain single click selects and focuses without opening the panel", async () => {
+      const user = userEvent.setup();
+      const sel = new SelectionState();
+      const nibs = makeTestNibs();
+
+      const { container } = setupWithNibs(nibs, { openDetailOn: "double" }, { selection: sel });
+
+      const row = container.querySelector("tr[data-nib-id='nibs-001']") as HTMLElement;
+      await user.click(row);
+
+      expect(sel.selectedNibId).toBeNull();
+      expect(sel.panelOpen).toBe(false);
+      expect(sel.selectedIds.has("nibs-001")).toBe(true);
+      expect(sel.focusedNibId).toBe("nibs-001");
+      expect(sel.anchorId).toBe("nibs-001");
+    });
+
+    it("double mode: a single click on the title text also selects without opening", async () => {
+      const user = userEvent.setup();
+      const sel = new SelectionState();
+      const nibs = makeTestNibs();
+
+      const { container } = setupWithNibs(nibs, { openDetailOn: "double" }, { selection: sel });
+
+      const titleText = container.querySelector(
+        "tr[data-nib-id='nibs-001'] [data-action='title']",
+      ) as HTMLElement;
+      await user.click(titleText);
+
+      expect(sel.selectedNibId).toBeNull();
+      expect(sel.selectedIds.has("nibs-001")).toBe(true);
+    });
+
+    it("double mode: a double-click opens the nib", async () => {
+      const user = userEvent.setup();
+      const sel = new SelectionState();
+      const nibs = makeTestNibs();
+
+      const { container } = setupWithNibs(nibs, { openDetailOn: "double" }, { selection: sel });
+
+      const row = container.querySelector("tr[data-nib-id='nibs-001']") as HTMLElement;
+      await user.dblClick(row);
+
+      expect(sel.selectedNibId).toBe("nibs-001");
+    });
+
+    it("double mode: an already-open nib survives a single click on a different row", async () => {
+      const user = userEvent.setup();
+      const sel = new SelectionState();
+      sel.select("nibs-001");
+      const nibs = makeTestNibs();
+
+      const { container } = setupWithNibs(nibs, { openDetailOn: "double" }, { selection: sel });
+
+      const otherRow = container.querySelector("tr[data-nib-id='nibs-002']") as HTMLElement;
+      await user.click(otherRow);
+
+      // The panel keeps showing what the user was reading; only the selection moves.
+      expect(sel.selectedNibId).toBe("nibs-001");
+      expect(sel.selectedIds.has("nibs-002")).toBe(true);
+      expect(sel.selectedIds.has("nibs-001")).toBe(false);
+      expect(sel.focusedNibId).toBe("nibs-002");
+    });
+
+    it("double mode: a single click on a bucket row still toggles its group", async () => {
+      const user = userEvent.setup();
+      const sel = new SelectionState();
+      const nibs: TreeTableNib[] = [
+        makeTreeTableNib({ id: "nibs-001", title: "Loose Task", type: "task", parentId: null }),
+      ];
+      mockQueryStore.mockReturnValue(
+        readable({ fetching: false, error: undefined, data: { nibs }, stale: false }) as any
+      );
+      const { container } = renderTreeTable(
+        { filter: {}, viewLevel: "milestones" as ViewLevel, openDetailOn: "double" },
+        { selection: sel },
+      );
+
+      const bucketRow = Array.from(container.querySelectorAll("tr[data-nib-id]")).find((tr) =>
+        isBucketId(tr.getAttribute("data-nib-id")!),
+      ) as HTMLElement;
+      expect(bucketRow).toBeTruthy();
+      expect(screen.getByText("Loose Task")).toBeInTheDocument();
+
+      await user.click(bucketRow);
+
+      expect(screen.queryByText("Loose Task")).not.toBeInTheDocument();
+      expect(sel.selectedIds.size).toBe(0);
+      expect(sel.selectedNibId).toBeNull();
+    });
+
+    it("double mode: shift+click still range-selects (unchanged by the gate)", async () => {
+      const user = userEvent.setup();
+      const sel = new SelectionState();
+      sel.select("nibs-m1");
+      const nibs = makeTestNibs();
+
+      const { container } = setupWithNibs(nibs, { openDetailOn: "double" }, { selection: sel });
+
+      const row = container.querySelector("tr[data-nib-id='nibs-002']") as HTMLElement;
+      await user.keyboard("{Shift>}");
+      await user.click(row);
+      await user.keyboard("{/Shift}");
+
+      expect(sel.selectedIds.has("nibs-m1")).toBe(true);
+      expect(sel.selectedIds.has("nibs-001")).toBe(true);
+      expect(sel.selectedIds.has("nibs-002")).toBe(true);
+    });
+
+    it("single mode (default): a single click opens the nib", async () => {
+      const user = userEvent.setup();
+      const sel = new SelectionState();
+      const nibs = makeTestNibs();
+
+      const { container } = setupWithNibs(nibs, { openDetailOn: "single" }, { selection: sel });
+
+      const row = container.querySelector("tr[data-nib-id='nibs-001']") as HTMLElement;
+      await user.click(row);
+
+      expect(sel.selectedNibId).toBe("nibs-001");
+    });
+
+    it("single mode (default): a double-click also opens the nib", async () => {
+      const user = userEvent.setup();
+      const sel = new SelectionState();
+      const nibs = makeTestNibs();
+
+      const { container } = setupWithNibs(nibs, { openDetailOn: "single" }, { selection: sel });
+
+      const row = container.querySelector("tr[data-nib-id='nibs-001']") as HTMLElement;
+      await user.dblClick(row);
+
+      expect(sel.selectedNibId).toBe("nibs-001");
+    });
+
+    // App always passes `prefs`, so `resolvedOpenDetailOn` takes the prefs arm in
+    // production and the `openDetailOn` prop arm exists only for tests. These two
+    // cases drive the real path — persisted blob → Preferences → resolver → click
+    // branch — inside the automated gate, where the prop-based cases above cannot
+    // reach it.
+    describe("via prefs (the production path)", () => {
+      function withPersistedPreferences<T>(blob: Record<string, unknown>, body: (prefs: Preferences) => T): T {
+        localStorage.setItem("nibs-filter-preferences", JSON.stringify(blob));
+        try {
+          return body(new Preferences());
+        } finally {
+          localStorage.removeItem("nibs-filter-preferences");
+        }
+      }
+
+      it("double mode: a single click selects without opening the panel", async () => {
+        const user = userEvent.setup();
+        const sel = new SelectionState();
+
+        await withPersistedPreferences(
+          { q: "", viewLevel: "milestones", openDetailOn: "double" },
+          async (prefs) => {
+            expect(prefs.openDetailOn).toBe("double");
+            const { container } = setupWithNibs(makeTestNibs(), { prefs }, { selection: sel });
+
+            await user.click(container.querySelector("tr[data-nib-id='nibs-001']") as HTMLElement);
+
+            expect(sel.selectedNibId).toBeNull();
+            expect(sel.selectedIds.has("nibs-001")).toBe(true);
+          },
+        );
+      });
+
+      it("single mode: a single click opens the panel", async () => {
+        const user = userEvent.setup();
+        const sel = new SelectionState();
+
+        await withPersistedPreferences(
+          { q: "", viewLevel: "milestones", openDetailOn: "single" },
+          async (prefs) => {
+            const { container } = setupWithNibs(makeTestNibs(), { prefs }, { selection: sel });
+
+            await user.click(container.querySelector("tr[data-nib-id='nibs-001']") as HTMLElement);
+
+            expect(sel.selectedNibId).toBe("nibs-001");
+          },
+        );
+      });
+
+      it("prefs wins over the prop, so the prop cannot mask a broken prefs read", async () => {
+        const user = userEvent.setup();
+        const sel = new SelectionState();
+
+        await withPersistedPreferences(
+          { q: "", viewLevel: "milestones", openDetailOn: "double" },
+          async (prefs) => {
+            const { container } = setupWithNibs(
+              makeTestNibs(),
+              { prefs, openDetailOn: "single" },
+              { selection: sel },
+            );
+
+            await user.click(container.querySelector("tr[data-nib-id='nibs-001']") as HTMLElement);
+
+            expect(sel.selectedNibId).toBeNull();
+          },
+        );
+      });
+    });
+
+    // Bulk-selection gestures (ctrl/meta+click, shift+click) collapse to exactly
+    // one id often enough that, left alone, they become a second way for a SINGLE
+    // click to open the panel — and a collapse to zero-or-many tears down a panel
+    // showing an unrelated nib. In "double" mode the panel has exactly one writer
+    // path (the explicit open gestures), so these cases pin that it stays put.
+    describe("double mode: bulk gestures never move the detail panel", () => {
+      async function ctrlClick(user: ReturnType<typeof userEvent.setup>, row: HTMLElement) {
+        await user.keyboard("{Control>}");
+        await user.click(row);
+        await user.keyboard("{/Control}");
+      }
+
+      async function shiftClick(user: ReturnType<typeof userEvent.setup>, row: HTMLElement) {
+        await user.keyboard("{Shift>}");
+        await user.click(row);
+        await user.keyboard("{/Shift}");
+      }
+
+      it("ctrl+click with nothing selected selects without opening the panel", async () => {
+        const user = userEvent.setup();
+        const sel = new SelectionState();
+
+        const { container } = setupWithNibs(makeTestNibs(), { openDetailOn: "double" }, { selection: sel });
+
+        await ctrlClick(user, container.querySelector("tr[data-nib-id='nibs-001']") as HTMLElement);
+
+        expect(sel.selectedNibId).toBeNull();
+        expect(sel.panelOpen).toBe(false);
+        expect(sel.selectedIds.has("nibs-001")).toBe(true);
+        expect(sel.focusedNibId).toBe("nibs-001");
+      });
+
+      it("shift+click on the anchor row itself selects without opening the panel", async () => {
+        const user = userEvent.setup();
+        const sel = new SelectionState();
+
+        const { container } = setupWithNibs(makeTestNibs(), { openDetailOn: "double" }, { selection: sel });
+
+        const row = container.querySelector("tr[data-nib-id='nibs-001']") as HTMLElement;
+        // A plain click sets the anchor; shift-clicking the same row makes the
+        // range collapse to exactly one id.
+        await user.click(row);
+        await shiftClick(user, row);
+
+        expect(sel.selectedNibId).toBeNull();
+        expect(sel.selectedIds.has("nibs-001")).toBe(true);
+      });
+
+      it("ctrl+clicking two other rows leaves an open panel on its own nib", async () => {
+        const user = userEvent.setup();
+        const sel = new SelectionState();
+        sel.select("nibs-m1");
+
+        const { container } = setupWithNibs(makeTestNibs(), { openDetailOn: "double" }, { selection: sel });
+
+        await ctrlClick(user, container.querySelector("tr[data-nib-id='nibs-001']") as HTMLElement);
+        await ctrlClick(user, container.querySelector("tr[data-nib-id='nibs-002']") as HTMLElement);
+
+        expect(sel.selectedNibId).toBe("nibs-m1");
+        expect(sel.selectedIds.has("nibs-001")).toBe(true);
+        expect(sel.selectedIds.has("nibs-002")).toBe(true);
+      });
+
+      it("a ctrl+click that collapses the selection to zero leaves the panel alone", async () => {
+        const user = userEvent.setup();
+        const sel = new SelectionState();
+        sel.select("nibs-m1");
+        sel.deselectAll(); // panel still on nibs-m1, nothing selected
+
+        const { container } = setupWithNibs(makeTestNibs(), { openDetailOn: "double" }, { selection: sel });
+
+        const row = container.querySelector("tr[data-nib-id='nibs-001']") as HTMLElement;
+        await ctrlClick(user, row); // in
+        await ctrlClick(user, row); // back out — selection is now empty
+
+        expect(sel.selectedIds.size).toBe(0);
+        expect(sel.selectedNibId).toBe("nibs-m1");
+      });
+
+      it("a shift+click range spanning several rows leaves an open panel alone", async () => {
+        const user = userEvent.setup();
+        const sel = new SelectionState();
+        sel.select("nibs-m1");
+
+        const { container } = setupWithNibs(makeTestNibs(), { openDetailOn: "double" }, { selection: sel });
+
+        await user.click(container.querySelector("tr[data-nib-id='nibs-001']") as HTMLElement);
+        await shiftClick(user, container.querySelector("tr[data-nib-id='nibs-002']") as HTMLElement);
+
+        expect(sel.selectedIds.has("nibs-001")).toBe(true);
+        expect(sel.selectedIds.has("nibs-002")).toBe(true);
+        expect(sel.selectedNibId).toBe("nibs-m1");
+      });
+
+      it("single mode is unchanged: ctrl+click collapsing to one still opens the panel", async () => {
+        const user = userEvent.setup();
+        const sel = new SelectionState();
+
+        const { container } = setupWithNibs(makeTestNibs(), { openDetailOn: "single" }, { selection: sel });
+
+        await ctrlClick(user, container.querySelector("tr[data-nib-id='nibs-001']") as HTMLElement);
+
+        expect(sel.selectedNibId).toBe("nibs-001");
+      });
+
+      it("single mode is unchanged: a multi-row ctrl+click still closes the panel", async () => {
+        const user = userEvent.setup();
+        const sel = new SelectionState();
+        sel.select("nibs-m1");
+
+        const { container } = setupWithNibs(makeTestNibs(), { openDetailOn: "single" }, { selection: sel });
+
+        await ctrlClick(user, container.querySelector("tr[data-nib-id='nibs-001']") as HTMLElement);
+
+        expect(sel.selectedNibId).toBeNull();
+      });
+
+      it("single mode is unchanged: shift+click on the anchor row still opens the panel", async () => {
+        const user = userEvent.setup();
+        const sel = new SelectionState();
+
+        const { container } = setupWithNibs(makeTestNibs(), { openDetailOn: "single" }, { selection: sel });
+
+        const row = container.querySelector("tr[data-nib-id='nibs-001']") as HTMLElement;
+        await user.click(row);
+        await shiftClick(user, row);
+
+        expect(sel.selectedNibId).toBe("nibs-001");
+      });
+
+      it("shift+ArrowDown collapsing to one row does not open the panel", async () => {
+        const user = userEvent.setup();
+        const sel = new SelectionState();
+        sel.focus("nibs-m1");
+        sel.anchorId = "nibs-001";
+
+        setupWithNibs(makeTestNibs(), { openDetailOn: "double" }, { selection: sel });
+
+        screen.getByRole("grid").focus();
+        await user.keyboard("{Shift>}{ArrowDown}{/Shift}");
+
+        expect(sel.focusedNibId).toBe("nibs-001");
+        expect(sel.selectedIds.has("nibs-001")).toBe(true);
+        expect(sel.selectedNibId).toBeNull();
+      });
+
+      it("Space on a focused row does not open the panel", async () => {
+        const user = userEvent.setup();
+        const sel = new SelectionState();
+        sel.focus("nibs-001");
+
+        setupWithNibs(makeTestNibs(), { openDetailOn: "double" }, { selection: sel });
+
+        screen.getByRole("grid").focus();
+        await user.keyboard("{ }");
+
+        expect(sel.selectedIds.has("nibs-001")).toBe(true);
+        expect(sel.selectedNibId).toBeNull();
+      });
     });
   });
 

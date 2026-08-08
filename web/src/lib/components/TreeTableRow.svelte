@@ -1,6 +1,6 @@
 <script lang="ts">
-  import { DEFAULT_BLOCKED_EMPHASIS } from "../types";
-  import type { TreeTableNib, BlockedEmphasis } from "../types";
+  import { DEFAULT_BLOCKED_EMPHASIS, DEFAULT_OPEN_DETAIL_ON } from "../types";
+  import type { TreeTableNib, BlockedEmphasis, OpenDetailGesture } from "../types";
   import { ALL_COLUMN_KEYS } from "../columns";
   import type { ColumnKey, RowContext } from "../columns";
   import { Plus } from "@lucide/svelte";
@@ -23,6 +23,10 @@
     highlighted?: boolean;
     fading?: boolean;
     blockedEmphasis?: BlockedEmphasis;
+    /** The resolved open-detail preference, passed down by TreeTable. Only
+     *  "double" can put the selection and the detail panel on different rows,
+     *  so it is also the only mode that renders the open-row marker. */
+    openDetailOn?: OpenDetailGesture;
   }
 
   let {
@@ -38,6 +42,7 @@
     highlighted = false,
     fading = false,
     blockedEmphasis = DEFAULT_BLOCKED_EMPHASIS,
+    openDetailOn = DEFAULT_OPEN_DETAIL_ON,
   }: Props = $props();
 
   const selection = useSelection();
@@ -58,6 +63,14 @@
 
   // Computed from context + nib.id
   let selected = $derived(selection.selectedNibId === nib.id || selection.selectedIds.has(nib.id));
+  // The row currently showing in the detail panel, marked only where that can
+  // differ from the selection. Under "open on double-click" the two point at
+  // different rows, so the open row needs a marker of its own on top of
+  // `.active`; under "single" they are always the same row, so a marker would
+  // add no information while silently restyling every existing profile's
+  // selected row. Gating it here is what keeps "single" byte-identical to the
+  // pre-preference behavior.
+  let opened = $derived(openDetailOn === "double" && selection.selectedNibId === nib.id);
   let focused = $derived(selection.focusedNibId === nib.id);
   let isDragged = $derived(drag.isDraggedItem(nib.id));
   let anyDragging = $derived(drag.isDragging);
@@ -102,6 +115,7 @@
   data-testid="tree-row"
   class="tree-row"
   class:active={selected}
+  class:opened={opened}
   class:focused={focused}
   class:draggable={draggable}
   class:any-dragging={anyDragging}
@@ -114,6 +128,7 @@
   class:nib-fading={fading}
   class:blocked-dim={blockedDim}
   data-nib-id={nib.id}
+  aria-current={opened ? "true" : undefined}
   style={rowOpacity < 1 ? `opacity: ${rowOpacity};` : ""}
 >
   <!-- Actions column -->
@@ -148,6 +163,10 @@
   .tree-row {
     user-select: none;
     position: relative;
+    /* Gutter for the open-row accent below. Reserved on EVERY row (transparent
+       here) so switching a row to "open" only recolors it — turning the border
+       on per-row would shift the first column by its width. */
+    border-inline-start: 3px solid transparent;
   }
 
   .tree-row.draggable {
@@ -160,6 +179,29 @@
 
   .tree-row.active {
     background-color: oklch(0.488 0.243 264 / 0.15);
+  }
+
+  /* The row open in the detail panel: a stronger fill of the SAME hue as
+     `.active`, so "open" reads as a deeper version of "selected" rather than a
+     second, competing color. Declared after `.active` (which it must override)
+     and before the `.drop-*` rules, so a drag target still wins over it.
+
+     Deliberately a background-color and NOT a box-shadow ring: the keyboard
+     focus ring (`.tree-row.focused` in app.css) and all three drop-zone
+     indicators are box-shadows, and a component-scoped rule outranks the global
+     one — a ring here would silently swallow the focus ring on the row that is
+     both open and focused, which is the common case. Background composes with
+     all of them; do not convert this to a ring.
+
+     The leading-edge accent is the second channel. `.tree-row:hover` carries
+     higher specificity than this rule and repaints the background, so the fill
+     alone disappears under the pointer — which in "double" mode is exactly where
+     the pointer sits after a click. Hover touches no border property, so the
+     accent survives it, and it distinguishes open from selected by shape rather
+     than by alpha alone (see also `aria-current` on the row). */
+  .tree-row.opened {
+    background-color: oklch(0.488 0.243 264 / 0.28);
+    border-inline-start-color: var(--ring);
   }
 
   /* Drag / pill-dim state markers — no styling here; opacity is single-sourced by

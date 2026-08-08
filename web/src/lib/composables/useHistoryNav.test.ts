@@ -133,7 +133,8 @@ describe("useHistoryNav", () => {
     // Used after deleting/archiving the open nib, or when landing on a nib that
     // no longer exists: heal the current entry in place (replace, no Back-stop),
     // so a stale ?nib=<gone> doesn't survive reload/Back. Selection is the
-    // caller's responsibility (clearAll / close), so replaceClosed must not touch it.
+    // caller's responsibility (clearAfterMutation / close), so replaceClosed
+    // must not touch it.
     const selection = new SelectionState();
     selection.select("gone");
     const { nav, history } = setup({ selection, location: { search: "?nib=gone", pathname: "/" } });

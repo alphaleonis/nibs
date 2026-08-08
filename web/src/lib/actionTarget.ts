@@ -34,3 +34,34 @@ export function getActionTargetIds(
   }
   return [];
 }
+
+/**
+ * Clears the selection state that a completed delete/archive invalidated, and
+ * heals a now-stale `?nib=<mutated>` URL. The counterpart of getActionTargetIds:
+ * that resolves what the action hit, this retires what the action consumed.
+ *
+ * `selectedIds`, the anchor and the focused row all pointed at the mutated rows,
+ * so they always go. The detail panel is separate: `selectedNibId` and the action
+ * target can be DIFFERENT rows (the "open on double-click" preference selects and
+ * focuses a row without moving the panel, and arrow-key nav moves focus alone), so
+ * it is closed only when the mutation actually took out the nib it is showing.
+ * Closing it otherwise would tear down a nib that was neither targeted nor
+ * mutated — and discard any unsaved edits in its buffer, since nothing on this
+ * path runs the dirty guard.
+ *
+ * @param selection - Selection state to clear.
+ * @param nav - History nav, for healing the URL when the panel closes.
+ * @param mutatedIds - The ids the mutation actually applied to.
+ */
+export function clearAfterMutation(
+  selection: SelectionState,
+  nav: { replaceClosed: () => void },
+  mutatedIds: readonly string[],
+): void {
+  selection.deselectAll();
+  selection.clearFocus();
+  if (selection.selectedNibId !== null && mutatedIds.includes(selection.selectedNibId)) {
+    selection.close();
+    nav.replaceClosed();
+  }
+}

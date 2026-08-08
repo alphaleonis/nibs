@@ -3,8 +3,8 @@ import { loadPreferences, savePreferences } from "./storage";
 import { parseQuery, serializeQuery } from "./query";
 import { PerViewColumnMap } from "./perViewColumnMap.svelte";
 import type { SaveMode } from "./perViewColumnMap.svelte";
-import { ALL_COLUMN_KEYS, DEFAULT_VISIBLE_COLUMNS, DEFAULT_COLUMN_WIDTHS, DEFAULT_DETAIL_PANEL_WIDTH, MIN_DETAIL_PANEL_WIDTH, DEFAULT_DETAIL_PANEL_HEIGHT, MIN_DETAIL_PANEL_HEIGHT, DEFAULT_DETAIL_PANEL_POSITION, DEFAULT_BLOCKED_EMPHASIS, DEFAULT_FONT_SIZE, DEFAULT_THEME, DEFAULT_PREVIEW_OPEN } from "./types";
-import type { NibFilter, ViewLevel, ColumnKey, RowDensity, Theme, DetailPanelPosition, BlockedEmphasis, FontSize, TableSort } from "./types";
+import { ALL_COLUMN_KEYS, DEFAULT_VISIBLE_COLUMNS, DEFAULT_COLUMN_WIDTHS, DEFAULT_DETAIL_PANEL_WIDTH, MIN_DETAIL_PANEL_WIDTH, DEFAULT_DETAIL_PANEL_HEIGHT, MIN_DETAIL_PANEL_HEIGHT, DEFAULT_DETAIL_PANEL_POSITION, DEFAULT_OPEN_DETAIL_ON, DEFAULT_BLOCKED_EMPHASIS, DEFAULT_FONT_SIZE, DEFAULT_THEME, DEFAULT_PREVIEW_OPEN } from "./types";
+import type { NibFilter, ViewLevel, ColumnKey, RowDensity, Theme, DetailPanelPosition, OpenDetailGesture, BlockedEmphasis, FontSize, TableSort } from "./types";
 
 export class Preferences {
   // The structured filter and its invalid-token sidecar. Together they ARE the
@@ -56,6 +56,8 @@ export class Preferences {
   #detailPanelWidth: number | undefined = $state(undefined);
   // Discrete toggle → auto-saved (like theme/rowDensity).
   detailPanelPosition: DetailPanelPosition = $state(DEFAULT_DETAIL_PANEL_POSITION);
+  // Which row gesture opens the detail panel. Discrete toggle → auto-saved.
+  openDetailOn: OpenDetailGesture = $state(DEFAULT_OPEN_DETAIL_ON);
   // Pointer-pattern → excluded from auto-save, flushed like width.
   #detailPanelHeight: number | undefined = $state(undefined);
   rowDensity: RowDensity = $state("compact");
@@ -127,6 +129,7 @@ export class Preferences {
     this.order.hydrate(initial.columnOrder);
     this.#detailPanelWidth = initial.detailPanelWidth;
     this.detailPanelPosition = initial.detailPanelPosition ?? DEFAULT_DETAIL_PANEL_POSITION;
+    this.openDetailOn = initial.openDetailOn ?? DEFAULT_OPEN_DETAIL_ON;
     this.#detailPanelHeight = initial.detailPanelHeight;
     this.rowDensity = initial.rowDensity ?? "compact";
     this.fontSize = initial.fontSize ?? DEFAULT_FONT_SIZE;
@@ -159,6 +162,7 @@ export class Preferences {
         this.blockedEmphasis;
         this.theme;
         this.detailPanelPosition;
+        this.openDetailOn;
         this.previewOpen;
         this.tableSort;
         // Skip the initial save that fires on construction (we just loaded these values)
@@ -217,6 +221,7 @@ export class Preferences {
       columnOrder: this.order.serialize(),
       detailPanelWidth: this.#detailPanelWidth,
       detailPanelPosition: this.detailPanelPosition,
+      openDetailOn: this.openDetailOn,
       detailPanelHeight: this.#detailPanelHeight,
       rowDensity: this.rowDensity,
       fontSize: this.fontSize,

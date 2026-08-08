@@ -67,3 +67,60 @@ describe("Preferences — per-view save-timing split (auto vs flush)", () => {
     dispose();
   });
 });
+
+describe("Preferences — openDetailOn", () => {
+  beforeEach(() => {
+    for (const key of Object.keys(store)) delete store[key];
+    vi.clearAllMocks();
+  });
+
+  it("defaults to 'single' when nothing is persisted", () => {
+    const prefs = new Preferences();
+    expect(prefs.openDetailOn).toBe("single");
+  });
+
+  it("hydrates from the persisted value", () => {
+    store["nibs-filter-preferences"] = JSON.stringify({
+      q: "",
+      viewLevel: "none",
+      openDetailOn: "double",
+    });
+    const prefs = new Preferences();
+    expect(prefs.openDetailOn).toBe("double");
+  });
+
+  it("falls back to 'single' for a bogus persisted value", () => {
+    store["nibs-filter-preferences"] = JSON.stringify({
+      q: "",
+      viewLevel: "none",
+      openDetailOn: "triple",
+    });
+    const prefs = new Preferences();
+    expect(prefs.openDetailOn).toBe("single");
+  });
+
+  it("is included in save()", () => {
+    const prefs = new Preferences();
+    prefs.openDetailOn = "double";
+    prefs.save();
+    expect(JSON.parse(store["nibs-filter-preferences"]).openDetailOn).toBe("double");
+  });
+
+  it("auto-saves on change (discrete toggle, not flush-saved)", () => {
+    let prefs!: Preferences;
+    const dispose = withRoot(() => {
+      prefs = new Preferences();
+    });
+    // Run the auto-save effect's initial (skipped) pass so later saves are real.
+    flushSync();
+    mockStorage.setItem.mockClear();
+
+    prefs.openDetailOn = "double";
+    flushSync();
+
+    expect(mockStorage.setItem).toHaveBeenCalledTimes(1);
+    expect(JSON.parse(store["nibs-filter-preferences"]).openDetailOn).toBe("double");
+
+    dispose();
+  });
+});
