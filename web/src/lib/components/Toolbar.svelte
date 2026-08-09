@@ -28,6 +28,7 @@
   import * as DropdownMenu from "$lib/components/ui/dropdown-menu/index.js";
   import { buttonVariants } from "$lib/components/ui/button/index.js";
   import { Input } from "$lib/components/ui/input/index.js";
+  import NibsLogo from "./NibsLogo.svelte";
   import StatusIcon from "./StatusIcon.svelte";
   import TypeIcon from "./TypeIcon.svelte";
   import SuggestionList from "./SuggestionList.svelte";
@@ -780,7 +781,20 @@
      single gapped container (a gap-y there would insert a visible gap between two bands that
      read as one chrome unit). -->
 <header class="flex flex-wrap items-center justify-between gap-3 border-b border-border px-6 py-3">
-  <h1 class="min-w-0 max-w-[28ch] lg:max-w-none truncate text-xl font-semibold">Nibs{projectName ? ` - ${projectName}` : ""}</h1>
+  <!-- The banner carries the "Nibs" half of the title, so only the project name
+       is text here. Its height is in `em` rather than a fixed rung so it tracks
+       the font-scale setting along with the h1 it sits in.
+       The mark fills the banner's full height, so the rendered height set here —
+       nothing inside the SVG — is what decides how large the mark reads. 1.6em
+       is the largest value that leaves the header at its natural height; above
+       it the banner outgrows the row and drags the header taller. -->
+  <h1 class="flex min-w-0 items-center gap-2.5 text-xl font-semibold">
+    <NibsLogo class="h-[1.6em] w-auto shrink-0" />
+    {#if projectName}
+      <span aria-hidden="true" class="shrink-0 text-muted-foreground">·</span>
+      <span class="min-w-0 max-w-[28ch] lg:max-w-none truncate">{projectName}</span>
+    {/if}
+  </h1>
 
   <div class="flex shrink-0 items-center gap-1">
     <!-- New button. WithTooltip wraps the tooltip; the DropdownMenu.Trigger

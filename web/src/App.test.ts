@@ -219,8 +219,9 @@ describe("App", () => {
     // `.dark` to <html> — index.html does not hardcode it.
     expect(document.documentElement.classList.contains("dark")).toBe(true);
 
-    // Dark theme shell: has the app title with project name
-    expect(screen.getByText("Nibs - test-project")).toBeInTheDocument();
+    // Dark theme shell: has the app title. "Nibs" is the banner image and the
+    // project name is text, so assert the heading's accessible name.
+    expect(screen.getByRole("heading", { level: 1 })).toHaveAccessibleName("Nibs test-project");
 
     // Toolbar is rendered with controls
     expect(screen.getByRole("button", { name: "Settings" })).toBeInTheDocument();

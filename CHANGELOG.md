@@ -7,6 +7,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Added
+- **The web UI carries the Nibs logo** — a banner in the header in place of the plain title, and a favicon in the browser tab.
+
 ## v0.8.0 - 2026-08-09
 
 ### Added
