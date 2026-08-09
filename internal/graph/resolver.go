@@ -14,33 +14,19 @@ import (
 // schema.resolvers.go is generated but not disposable: gqlgen rewrites it on
 // every codegen and carries parts of the existing file into the new one. Which
 // parts is the whole subtlety. Resolver bodies survive as raw source; a
-// resolver's doc-comment PROSE survives (UpdateNib and DeleteNib carry
-// hand-written paragraphs that outlive codegen); and the import block survives
+// resolver's doc-comment prose survives (UpdateNib and DeleteNib carry
+// hand-written paragraphs that outlive codegen); the import block survives
 // (internal/nibtypes is imported solely for a hand-written resolver body and
-// appears nowhere in generated.go). Three things do not: a comment DIRECTIVE in
-// doc position, a free-standing comment, and a non-resolver declaration.
+// appears nowhere in generated.go); and a comment directive in doc position
+// survives too, since gqlgen iterates the comment list rather than flattening it
+// through go/ast's CommentGroup.Text().
 //
-// The directive is the dangerous one, because it fails silently. gqlgen rebuilds
-// each resolver's doc comment through go/ast's CommentGroup.Text(), which
-// discards directives (//nolint:…, //go:noinline — the //<tool>:<directive> form
-// of go/ast's isDirective rule) and keeps the prose around them. The comment
-// still reads the same afterwards; the effect — a lint suppression, say — is
-// gone. So a directive belongs INSIDE the function, where the body is copied
-// through verbatim. The go:codegen task greps for one before running gqlgen and
-// fails the build, but that check is best-effort: it is skipped on a machine
-// without grep and on a resolver file it cannot read.
-//
-// The other two go quietly too: a free-standing comment (attached to no
-// declaration) is dropped outright, and a non-resolver declaration is moved into
-// a commented-out block at the end with its own doc comment discarded. So a
+// Two things do not survive, both quietly: a free-standing comment (attached to
+// no declaration) is dropped outright, and a non-resolver declaration is moved
+// into a commented-out block at the end with its own doc comment discarded. So a
 // durable note about that file needs a surviving home — a resolver's doc
-// comment, which is where the pointer at the top of schema.resolvers.go sits, or
-// this file, which gqlgen writes once when it is absent and never regenerates.
-//
-// gqlgen v0.17.86 stops routing resolver doc comments through
-// CommentGroup.Text(); on that version this restriction and its guard should
-// both be deleted. go:codegen fails with that instruction once go.mod reaches
-// it.
+// comment, or this file, which gqlgen writes once when it is absent and never
+// regenerates.
 
 //go:generate go tool gqlgen generate
 
