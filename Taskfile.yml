@@ -285,6 +285,15 @@ tasks:
     cmds:
       - npx playwright test --config=playwright.screenshots.config.ts
 
+  favicon:
+    desc: Regenerate web/public/favicon.ico from favicon.svg (run after editing the SVG)
+    # Deliberately not wired into `build`: rasterizing needs a browser, and the
+    # normal build must not depend on one. The .ico is committed instead.
+    deps: [web:install]
+    dir: web
+    cmds:
+      - node scripts/gen-favicon.ts
+
   demo:
     desc: Serve the web UI with the sample project fixture (temporary copy)
     # Task's built-in u-root mktemp defaults to /tmp (which doesn't exist on

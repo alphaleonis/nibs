@@ -51,8 +51,24 @@ The mark does not have this problem: its gradients run `#4D4D4D` through
 
 ## Where these are used
 
-The web header does **not** load any of these files. It renders
-`web/src/lib/components/NibsLogo.svelte`, which carries the same geometry as
-inline SVG with the wordmark set to `currentColor` so it inherits each theme's
-foreground. Geometry changes here need to be mirrored there — `NibsLogo` was
-derived from `banner-white-text.svg`, and its test pins the corrected viewBox.
+Nothing loads these files directly. Two derived assets carry the geometry, and
+a change here has to be mirrored into both:
+
+**`web/src/lib/components/NibsLogo.svelte`** — the header banner, derived from
+`banner-white-text.svg`. Inline SVG so the wordmark can be `currentColor` and
+inherit each theme's foreground. Its test pins the corrected viewBox.
+
+**`web/public/favicon.svg`** — derived from `logo-only.svg` with the two
+orbiting-ring paths (the ones carrying the `0.517282` transform) removed, on a
+square canvas with a 4% margin.
+
+The ring is dropped because it does not survive small sizes: it is a thin arc
+around mostly empty space, so at 16px it rasterizes to an orange smear that
+swallows the checkmark. The nib and blade alone stay legible from 16px up. That
+is a favicon-specific simplification, not a change to the mark — everywhere the
+logo is shown larger, the ring stays.
+
+`web/public/favicon.ico` (16/32/48) is generated from `favicon.svg` by
+`task favicon` and committed. It is not built, because rasterizing needs a
+browser and the normal build must not depend on one. Re-run `task favicon`
+after editing `favicon.svg`.
