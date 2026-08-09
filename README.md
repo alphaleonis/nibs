@@ -1,3 +1,14 @@
+<p align="center">
+  <picture>
+    <!-- Two variants rather than one, because no single wordmark color works on
+         both of GitHub's backdrops: white is 1.00:1 on the light theme and the
+         gray-gradient wordmark is 2.24:1 on the dark one. See
+         assets/logo/README.md. -->
+    <source media="(prefers-color-scheme: dark)" srcset="assets/logo/banner-white-text.svg">
+    <img src="assets/logo/banner-dark-text.svg" alt="Nibs" width="420">
+  </picture>
+</p>
+
 # Nibs
 
 A file-based issue tracker designed for AI-first workflows. Track tasks, bugs, and features as plain Markdown files right alongside your code — readable by humans, queryable by coding agents.

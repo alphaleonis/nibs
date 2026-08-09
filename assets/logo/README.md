@@ -51,8 +51,17 @@ The mark does not have this problem: its gradients run `#4D4D4D` through
 
 ## Where these are used
 
-Nothing loads these files directly. Two derived assets carry the geometry, and
-a change here has to be mirrored into both:
+The project `README.md` is the one place that loads these files directly. It
+uses **both** banner variants behind a `<picture>`, because no single wordmark
+color works on both of GitHub's backdrops — white is 1.00:1 on the light theme,
+and the gray-gradient wordmark is 2.24:1 on the dark one. There is no gray that
+clears 4.5:1 against both `#ffffff` and `#0d1117` at all; only the 3:1
+large-text threshold admits one (roughly `#7a7a7a`), and that reads dull. GitHub
+markdown allows no CSS, so the `currentColor` trick used in the app is not
+available there.
+
+Everything else uses a derived asset, and a geometry change here has to be
+mirrored into both:
 
 **`web/src/lib/components/NibsLogo.svelte`** — the header banner, derived from
 `banner-white-text.svg`. Inline SVG so the wordmark can be `currentColor` and
