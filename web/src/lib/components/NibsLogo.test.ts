@@ -20,9 +20,9 @@ describe("NibsLogo", () => {
   });
 
   it("passes class through to the svg", () => {
-    const { container } = render(NibsLogo, { class: "h-[1.4em] w-auto" });
+    const { container } = render(NibsLogo, { class: "h-10 w-auto" });
 
-    expect(container.querySelector("svg")).toHaveClass("h-[1.4em]", "w-auto");
+    expect(container.querySelector("svg")).toHaveClass("h-10", "w-auto");
   });
 
   // The reason this component exists rather than an <img> to one of the exported

@@ -783,9 +783,13 @@
 <header class="flex flex-wrap items-center justify-between gap-3 border-b border-border px-6 py-3">
   <!-- The banner carries the "Nibs" half of the title, so only the project name
        is text here. Its height is in `em` rather than a fixed rung so it tracks
-       the font-scale setting along with the h1 it sits in. -->
+       the font-scale setting along with the h1 it sits in.
+       1.8em, not the 1.4em that would match the text line box exactly: the mark
+       fills 99.9% of the banner's height, so it is the banner's rendered height
+       — nothing inside the SVG — that sets how large the mark reads. That makes
+       the banner taller than the line box and the header ~8px taller with it. -->
   <h1 class="flex min-w-0 items-center gap-2.5 text-xl font-semibold">
-    <NibsLogo class="h-[1.4em] w-auto shrink-0" />
+    <NibsLogo class="h-[1.8em] w-auto shrink-0" />
     {#if projectName}
       <span aria-hidden="true" class="shrink-0 text-muted-foreground">·</span>
       <span class="min-w-0 max-w-[28ch] lg:max-w-none truncate">{projectName}</span>
