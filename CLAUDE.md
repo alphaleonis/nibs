@@ -123,11 +123,16 @@ Add a feature branch's `[Unreleased]` entries **when merging it into `develop`**
 
 **What belongs in an entry** — three tests, all three of which the v0.8.0 cycle failed:
 
-- **One sentence.** Two only for a BREAKING change needing a migration note. Rationale, alternatives considered and verification evidence belong in the nib and the commit message.
+- **One sentence.** Two only for a BREAKING change needing a migration note. Rationale, alternatives considered and verification evidence belong in the nib and the commit message. Evidence hides in plausible-looking forms — "22 screens were diffed against the pre-migration build", "38 nibs on the fixture, where the field previously reported 67", "a 100 KB id returned an 8.9 MB response" — all describing what was done to verify rather than what a user gets.
 - **Only what changed since the last release.** A bug introduced *and* fixed inside the same unreleased cycle is not a change — no user saw the round trip. Verify rather than assume the behavior predates the tag: `git show v0.7.0:cmd/close.go`, `git grep <symbol> v0.7.0 -- internal/`.
 - **Only what a user of the released binary can observe.** Build/CI/lint/test-infrastructure work stays out, as do "now guarded by a test" entries and anything deliberately *not* done. Release-security changes (signing, provenance, advisory gates) stay in — they govern what users download.
 
-Match the terseness of `v0.7.0` and earlier, not the section above it.
+**Two more the second trim added**, after the first pass shortened entries but left these:
+
+- **One entry per change, not per facet.** A feature split across five bullets is one entry; in `Fixed`, the knock-on effects of a single bug fold into the fix they follow from. If consecutive entries all elaborate the first, they are one entry. The other three tests govern how *long* an entry is, none of them how many entries a change gets — which is how one feature occupied five bullets while each bullet passed the one-sentence test.
+- **The bold lead is usually the whole entry.** Token grammars, flag lists and field enumerations are reference material `nibs catalog`, `nibs cheat` and the in-app help already carry.
+
+Match the terseness of `v0.7.0` and earlier, not the section above it. At merge time re-read the **whole** section, not only your own entry: later work in the same cycle falsifies earlier ones, and version numbers are the usual casualty — a v0.8.0 security entry credited goldmark `1.7.13 → 1.7.17` after a later bump had already carried it to 1.8.5.
 
 ### Sync before starting work
 
