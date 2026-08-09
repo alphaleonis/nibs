@@ -13,7 +13,7 @@ import type { ConfirmDialogState } from "./useConfirmDialog.svelte";
 import type { ActiveView } from "./useActiveView.svelte";
 import type { MutationStore } from "../mutations/store.svelte";
 import { deleteBatch } from "../mutations/commands";
-import { getActionTargetIds } from "../actionTarget";
+import { getActionTargetIds, clearAfterMutation } from "../actionTarget";
 
 /** Returns true if focus is inside an input/textarea/select/contenteditable */
 function isInputFocused(): boolean {
@@ -80,8 +80,7 @@ export function useKeyboardShortcuts(opts: {
         confirmDialog.close();
         const result = await mutations.execute(deleteBatch(ids));
         if (result.ok) {
-          selection.clearAll();
-          nav.replaceClosed(); // heal a stale ?nib=<deleted> URL (nibs-etk3)
+          clearAfterMutation(selection, nav, ids);
         }
       },
     });

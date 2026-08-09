@@ -5,10 +5,10 @@ import (
 	"io"
 	"sort"
 
+	"charm.land/bubbles/v2/list"
+	tea "charm.land/bubbletea/v2"
+	"charm.land/lipgloss/v2"
 	"github.com/alphaleonis/nibs/internal/ui"
-	"github.com/charmbracelet/bubbles/list"
-	tea "github.com/charmbracelet/bubbletea"
-	"github.com/charmbracelet/lipgloss"
 )
 
 // tagWithCount holds a tag and its usage count
@@ -84,8 +84,7 @@ func newTagPickerModel(tags []tagWithCount, width, height int) tagPickerModel {
 	l.SetShowHelp(false)
 	l.Styles.Title = listTitleStyle
 	l.Styles.TitleBar = lipgloss.NewStyle().Padding(0, 0, 1, 1)
-	l.Styles.FilterPrompt = lipgloss.NewStyle().Foreground(ui.ColorPrimary)
-	l.Styles.FilterCursor = lipgloss.NewStyle().Foreground(ui.ColorPrimary)
+	applyFilterStyles(&l.Styles)
 
 	return tagPickerModel{
 		list:   l,
@@ -108,7 +107,7 @@ func (m tagPickerModel) Update(msg tea.Msg) (tagPickerModel, tea.Cmd) {
 		m.height = msg.Height
 		m.list.SetSize(msg.Width-4, msg.Height-6)
 
-	case tea.KeyMsg:
+	case tea.KeyPressMsg:
 		if m.list.FilterState() != list.Filtering {
 			switch msg.String() {
 			case "enter":
@@ -139,8 +138,8 @@ func (m tagPickerModel) View() string {
 	border := lipgloss.NewStyle().
 		Border(lipgloss.RoundedBorder()).
 		BorderForeground(ui.ColorPrimary).
-		Width(m.width - 2).
-		Height(m.height - 4)
+		Width(withBorder(m.width - 2)).
+		Height(withBorder(m.height - 4))
 
 	content := border.Render(m.list.View())
 

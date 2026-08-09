@@ -1,7 +1,8 @@
 import { describe, it, expect, vi } from "vitest";
 import { SelectionState } from "../selection.svelte";
 import type { RowData } from "../tableData";
-import type { TreeTableNib } from "../types";
+import type { TreeTableNib, OpenDetailGesture } from "../types";
+import { DEFAULT_OPEN_DETAIL_ON } from "../types";
 import { useKeyboardNav } from "./useKeyboardNav.svelte";
 
 function makeNib(overrides: Partial<TreeTableNib> = {}): TreeTableNib {
@@ -42,6 +43,7 @@ describe("useKeyboardNav", () => {
     toggleNode?: (id: string) => void;
     onDragKeyDown?: (e: KeyboardEvent) => void;
     navigateToNib?: (id: string) => void;
+    openDetailOn?: OpenDetailGesture;
   } = {}) {
     const selection = overrides.selection ?? new SelectionState();
     const rows = overrides.rows ?? [];
@@ -61,6 +63,7 @@ describe("useKeyboardNav", () => {
       getScrollContainer: () => scrollContainer,
       onDragKeyDown,
       navigateToNib,
+      getOpenDetailOn: () => overrides.openDetailOn ?? DEFAULT_OPEN_DETAIL_ON,
     });
 
     return { ...result, selection, toggleNode, onDragKeyDown, navigateToNib };
@@ -188,6 +191,76 @@ describe("useKeyboardNav", () => {
     expect(selection.selectedIds.has("nibs-e1")).toBe(true);
     expect(selection.selectedIds.has("nibs-loose")).toBe(true);
     expect(selection.selectedIds.has("__no_milestone__")).toBe(false);
+  });
+
+  it("double mode: Shift+ArrowDown collapsing to one row leaves the detail panel alone", () => {
+    const selection = new SelectionState();
+    selection.select("nibs-001"); // panel opens on nibs-001
+    selection.deselectAll();
+    selection.anchorId = "nibs-002";
+    selection.focus("nibs-001");
+    const rows = [makeRow(makeNib({ id: "nibs-001" })), makeRow(makeNib({ id: "nibs-002" }))];
+    const { handleKeydown } = setup({ selection, rows, openDetailOn: "double" });
+
+    handleKeydown(keydown("ArrowDown", { shiftKey: true }));
+
+    expect(selection.selectedIds.has("nibs-002")).toBe(true);
+    expect(selection.selectedNibId).toBe("nibs-001");
+  });
+
+  it("double mode: Space toggling a row leaves the detail panel alone", () => {
+    const selection = new SelectionState();
+    selection.select("nibs-001");
+    selection.deselectAll();
+    selection.focus("nibs-002");
+    const rows = [makeRow(makeNib({ id: "nibs-001" })), makeRow(makeNib({ id: "nibs-002" }))];
+    const { handleKeydown } = setup({ selection, rows, openDetailOn: "double" });
+
+    handleKeydown(keydown(" "));
+
+    expect(selection.selectedIds.has("nibs-002")).toBe(true);
+    expect(selection.selectedNibId).toBe("nibs-001");
+  });
+
+  // The shift+arrow twins of the Space case below. A range that collapses to
+  // exactly one row is an ordinary gesture (shift+ArrowDown then shift+ArrowUp
+  // returns to the anchor), and in single mode the panel must follow it — the
+  // pre-existing behavior the panel policy must not regress.
+  it("single mode: Shift+ArrowDown collapsing to one row still opens the panel", () => {
+    const selection = new SelectionState();
+    selection.anchorId = "nibs-002";
+    selection.focus("nibs-001");
+    const rows = [makeRow(makeNib({ id: "nibs-001" })), makeRow(makeNib({ id: "nibs-002" }))];
+    const { handleKeydown } = setup({ selection, rows }); // default mode = "single"
+
+    handleKeydown(keydown("ArrowDown", { shiftKey: true }));
+
+    expect(selection.selectedIds.has("nibs-002")).toBe(true);
+    expect(selection.selectedNibId).toBe("nibs-002");
+  });
+
+  it("single mode: Shift+ArrowUp collapsing to one row still opens the panel", () => {
+    const selection = new SelectionState();
+    selection.anchorId = "nibs-001";
+    selection.focus("nibs-002");
+    const rows = [makeRow(makeNib({ id: "nibs-001" })), makeRow(makeNib({ id: "nibs-002" }))];
+    const { handleKeydown } = setup({ selection, rows }); // default mode = "single"
+
+    handleKeydown(keydown("ArrowUp", { shiftKey: true }));
+
+    expect(selection.selectedIds.has("nibs-001")).toBe(true);
+    expect(selection.selectedNibId).toBe("nibs-001");
+  });
+
+  it("single mode: Space toggling a single row still opens it in the panel", () => {
+    const selection = new SelectionState();
+    selection.focus("nibs-002");
+    const rows = [makeRow(makeNib({ id: "nibs-001" })), makeRow(makeNib({ id: "nibs-002" }))];
+    const { handleKeydown } = setup({ selection, rows });
+
+    handleKeydown(keydown(" "));
+
+    expect(selection.selectedNibId).toBe("nibs-002");
   });
 
   it("Enter on focused row selects it", () => {

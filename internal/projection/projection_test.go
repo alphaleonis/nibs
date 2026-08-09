@@ -13,6 +13,7 @@ import (
 // map and returns pre-seeded computed/relation values keyed by nib ID.
 type fakeResolver struct {
 	nibs        map[string]*nib.Nib
+	parentID    map[string]string
 	childCount  map[string]int
 	progress    map[string]any
 	ready       map[string]bool
@@ -22,6 +23,7 @@ type fakeResolver struct {
 }
 
 func (f *fakeResolver) NibByID(id string) (*nib.Nib, bool) { n, ok := f.nibs[id]; return n, ok }
+func (f *fakeResolver) ParentID(id string) string          { return f.parentID[id] }
 func (f *fakeResolver) ChildCount(id string) int           { return f.childCount[id] }
 func (f *fakeResolver) Progress(id string) any             { return f.progress[id] }
 func (f *fakeResolver) Ready(id string) bool               { return f.ready[id] }
@@ -55,10 +57,12 @@ func TestViewFields(t *testing.T) {
 			FieldID, FieldTitle, FieldStatus, FieldType, FieldPriority,
 			FieldEstimate, FieldTags, FieldParent, FieldOrder, FieldUpdatedAt, FieldBlockedBy,
 		}},
+		// full carries stored_parent alongside parent: it is the diagnostic view,
+		// and parent alone cannot show a link that resolves to nothing.
 		{"full", []Field{
 			FieldID, FieldSlug, FieldTitle, FieldStatus, FieldType, FieldPriority,
-			FieldEstimate, FieldTags, FieldParent, FieldOrder, FieldCreatedAt, FieldUpdatedAt,
-			FieldPath, FieldBody, FieldETag,
+			FieldEstimate, FieldTags, FieldParent, FieldStoredParent, FieldOrder,
+			FieldCreatedAt, FieldUpdatedAt, FieldPath, FieldBody, FieldETag,
 			FieldBlocking, FieldBlockedBy, FieldMentions, FieldMentionedBy,
 		}},
 	}

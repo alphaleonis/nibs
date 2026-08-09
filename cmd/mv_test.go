@@ -713,6 +713,67 @@ func TestMvIfMatchConflict(t *testing.T) {
 	}
 }
 
+// TestMvChildIfMatchConflict pins both BULK arms of `nibs mv` on the same class
+// the single-nib arm reports for a stale etag: CONFLICT, exit 4, with the
+// server's current etag as the reconcile token.
+//
+// The two arms fail through different resolvers — --children-of reaches
+// reorderChildren, the block move reaches reorderSiblings — and both refuse in
+// pre-validation, before any write. A caller branching on $? must not read that
+// as exit 5 (io/filesystem), which the agent-facing prompt documents as "do not
+// silently retry": the correct repair for a stale etag is to re-read it and
+// retry, and the token to do so is in the envelope.
+func TestMvChildIfMatchConflict(t *testing.T) {
+	tests := []struct {
+		name string
+		args []string
+	}{
+		{
+			name: "children-of",
+			args: []string{"mv", "--children-of", "epic1", "c", "a", "b",
+				"--child-if-match", "a=deadbeefdeadbeef", "--json"},
+		},
+		{
+			name: "block move",
+			args: []string{"mv", "a", "b", "--first",
+				"--child-if-match", "a=deadbeefdeadbeef", "--json"},
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			nibsDir := setupMvCobraTest(t, reorderFixture())
+			rootCmd.SetArgs(append([]string{"--nibs-path", nibsDir}, tt.args...))
+
+			var execErr error
+			out := captureStdout(t, func() { execErr = rootCmd.Execute() })
+			if execErr == nil {
+				t.Fatal("expected CONFLICT error with a stale --child-if-match")
+			}
+			if code := reportExitError(io.Discard, execErr); code != output.ExitConflict {
+				t.Errorf("exit = %d, want %d (conflict)", code, output.ExitConflict)
+			}
+			var env struct {
+				Error struct {
+					Code        string `json:"code"`
+					CurrentEtag string `json:"currentEtag"`
+				} `json:"error"`
+			}
+			if err := json.Unmarshal([]byte(out), &env); err != nil {
+				t.Fatalf("unmarshal conflict envelope: %v\nraw: %s", err, out)
+			}
+			if env.Error.Code != output.ErrConflict {
+				t.Errorf("envelope code = %q, want %q", env.Error.Code, output.ErrConflict)
+			}
+			if env.Error.CurrentEtag == "" {
+				t.Errorf("conflict envelope missing currentEtag: %s", out)
+			}
+			if env.Error.CurrentEtag == "deadbeefdeadbeef" {
+				t.Errorf("currentEtag echoes the provided (stale) etag: %s", out)
+			}
+		})
+	}
+}
+
 // TestMvUnknownIdIsNotFound pins `nibs mv` on the same class every other direct
 // command reports for an id no nib answers to: NOT_FOUND, exit 3.
 //

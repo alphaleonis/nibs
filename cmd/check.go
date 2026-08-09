@@ -63,17 +63,17 @@ func runCheck(app *App) (int, error) {
 
 	// === Configuration checks ===
 	if !checkJSON {
-		fmt.Println(ui.Bold.Render("Configuration"))
+		ui.Println(ui.Bold.Render("Configuration"))
 	}
 
 	// 1. Check statuses are defined (always true since hardcoded)
 	if !checkJSON {
-		fmt.Printf("  %s Statuses defined (%d hardcoded)\n", ui.Success.Render("✓"), len(config.DefaultStatuses))
+		ui.Printf("  %s Statuses defined (%d hardcoded)\n", ui.Success.Render("✓"), len(config.DefaultStatuses))
 	}
 
 	// 2. Check default_status exists in statuses (always true since hardcoded)
 	if !checkJSON {
-		fmt.Printf("  %s Default status '%s' exists\n", ui.Success.Render("✓"), app.Config().GetDefaultStatus())
+		ui.Printf("  %s Default status '%s' exists\n", ui.Success.Render("✓"), app.Config().GetDefaultStatus())
 	}
 
 	// 2b. Check default_type is a valid hardcoded type
@@ -81,7 +81,7 @@ func runCheck(app *App) (int, error) {
 		configErrors = append(configErrors, fmt.Sprintf("default_type '%s' is not a valid type", app.Config().GetDefaultType()))
 	} else if app.Config().GetDefaultType() != "" {
 		if !checkJSON {
-			fmt.Printf("  %s Default type '%s' is valid\n", ui.Success.Render("✓"), app.Config().GetDefaultType())
+			ui.Printf("  %s Default type '%s' is valid\n", ui.Success.Render("✓"), app.Config().GetDefaultType())
 		}
 	}
 
@@ -99,7 +99,7 @@ func runCheck(app *App) (int, error) {
 			}
 		}
 		if colorErrors == 0 {
-			fmt.Printf("  %s All status colors valid\n", ui.Success.Render("✓"))
+			ui.Printf("  %s All status colors valid\n", ui.Success.Render("✓"))
 		}
 	}
 
@@ -117,14 +117,14 @@ func runCheck(app *App) (int, error) {
 			}
 		}
 		if typeColorErrors == 0 {
-			fmt.Printf("  %s All type colors valid\n", ui.Success.Render("✓"))
+			ui.Printf("  %s All type colors valid\n", ui.Success.Render("✓"))
 		}
 	}
 
 	// Print config errors in human-readable mode
 	if !checkJSON {
 		for _, e := range configErrors {
-			fmt.Printf("  %s %s\n", ui.Danger.Render("✗"), e)
+			ui.Printf("  %s %s\n", ui.Danger.Render("✗"), e)
 		}
 	}
 
@@ -136,21 +136,21 @@ func runCheck(app *App) (int, error) {
 	// look broken, and a shadowed duplicate means the links being checked are
 	// the surviving file's.
 	if !checkJSON {
-		fmt.Println()
-		fmt.Println(ui.Bold.Render("Nib Files"))
+		ui.Println()
+		ui.Println(ui.Bold.Render("Nib Files"))
 		renderLoadDiagnostics(linkResult)
 	}
 
 	// === Nib link checks ===
 	if !checkJSON {
-		fmt.Println()
-		fmt.Println(ui.Bold.Render("Nib Links"))
+		ui.Println()
+		ui.Println(ui.Bold.Render("Nib Links"))
 	}
 
 	// Report broken documents
 	if !checkJSON && !checkFix {
 		for _, bd := range linkResult.BrokenDocuments {
-			fmt.Printf("  %s %s: broken document link %s\n", ui.Danger.Render("✗"), bd.NibID, bd.Path)
+			ui.Printf("  %s %s: broken document link %s\n", ui.Danger.Render("✗"), bd.NibID, bd.Path)
 		}
 	}
 
@@ -171,17 +171,17 @@ func runCheck(app *App) (int, error) {
 
 		if !checkJSON {
 			for _, bl := range removed {
-				fmt.Printf("  %s %s: removed broken link %s:%s\n", ui.Success.Render("✓"), bl.NibID, bl.LinkType, bl.Target)
+				ui.Printf("  %s %s: removed broken link %s:%s\n", ui.Success.Render("✓"), bl.NibID, bl.LinkType, bl.Target)
 			}
 			for _, bl := range kept {
-				fmt.Printf("  %s %s: kept %s:%s — its target's file failed to load, so the link is unresolvable for now, not broken\n",
+				ui.Printf("  %s %s: kept %s:%s — its target's file failed to load, so the link is unresolvable for now, not broken\n",
 					ui.Warning.Render("!"), bl.NibID, bl.LinkType, bl.Target)
 			}
 			for _, sl := range linkResult.SelfLinks {
-				fmt.Printf("  %s %s: removed self-reference in %s link\n", ui.Success.Render("✓"), sl.NibID, sl.LinkType)
+				ui.Printf("  %s %s: removed self-reference in %s link\n", ui.Success.Render("✓"), sl.NibID, sl.LinkType)
 			}
 			for _, bd := range linkResult.BrokenDocuments {
-				fmt.Printf("  %s %s: removed broken document link %s\n", ui.Success.Render("✓"), bd.NibID, bd.Path)
+				ui.Printf("  %s %s: removed broken document link %s\n", ui.Success.Render("✓"), bd.NibID, bd.Path)
 			}
 		}
 
@@ -193,10 +193,10 @@ func runCheck(app *App) (int, error) {
 	} else if !checkJSON {
 		// Report issues without fixing
 		for _, bl := range linkResult.BrokenLinks {
-			fmt.Printf("  %s %s: broken link %s:%s\n", ui.Danger.Render("✗"), bl.NibID, bl.LinkType, bl.Target)
+			ui.Printf("  %s %s: broken link %s:%s\n", ui.Danger.Render("✗"), bl.NibID, bl.LinkType, bl.Target)
 		}
 		for _, sl := range linkResult.SelfLinks {
-			fmt.Printf("  %s %s: self-reference in %s link\n", ui.Danger.Render("✗"), sl.NibID, sl.LinkType)
+			ui.Printf("  %s %s: self-reference in %s link\n", ui.Danger.Render("✗"), sl.NibID, sl.LinkType)
 		}
 	}
 
@@ -204,9 +204,9 @@ func runCheck(app *App) (int, error) {
 	if !checkJSON {
 		for _, c := range linkResult.Cycles {
 			if checkFix {
-				fmt.Printf("  %s Cannot auto-fix cycle: %s (via %s)\n", ui.Warning.Render("!"), formatCycle(c.Path), c.LinkType)
+				ui.Printf("  %s Cannot auto-fix cycle: %s (via %s)\n", ui.Warning.Render("!"), formatCycle(c.Path), c.LinkType)
 			} else {
-				fmt.Printf("  %s Circular dependency: %s (via %s)\n", ui.Danger.Render("✗"), formatCycle(c.Path), c.LinkType)
+				ui.Printf("  %s Circular dependency: %s (via %s)\n", ui.Danger.Render("✗"), formatCycle(c.Path), c.LinkType)
 			}
 		}
 	}
@@ -215,7 +215,7 @@ func runCheck(app *App) (int, error) {
 	// store whose only problems are load-time still has clean links, and
 	// HasIssues() covers both kinds.
 	if !checkJSON && linkResult.TotalIssues()-linkResult.LoadIssues() == 0 && fixed == 0 {
-		fmt.Printf("  %s No link issues found\n", ui.Success.Render("✓"))
+		ui.Printf("  %s No link issues found\n", ui.Success.Render("✓"))
 	}
 
 	// === Summary ===
@@ -229,20 +229,20 @@ func runCheck(app *App) (int, error) {
 			Fixed:        fixed,
 		}
 		data, _ := json.MarshalIndent(result, "", "  ")
-		fmt.Println(string(data))
+		ui.Println(string(data))
 	} else {
-		fmt.Println()
+		ui.Println()
 		if totalIssues == 0 && fixed == 0 {
-			fmt.Println(ui.Success.Render("All checks passed"))
+			ui.Println(ui.Success.Render("All checks passed"))
 		} else if totalIssues == 0 && fixed > 0 {
-			fmt.Println(ui.Success.Render(fmt.Sprintf("Fixed %d issue(s)", fixed)))
+			ui.Println(ui.Success.Render(fmt.Sprintf("Fixed %d issue(s)", fixed)))
 		} else if fixed > 0 {
 			// Some issues fixed, some remain (cycles, unparseable files, duplicate ids)
-			fmt.Println(ui.Warning.Render(fmt.Sprintf("Fixed %d issue(s), %d require manual intervention", fixed, totalIssues)))
+			ui.Println(ui.Warning.Render(fmt.Sprintf("Fixed %d issue(s), %d require manual intervention", fixed, totalIssues)))
 		} else if totalIssues == 1 {
-			fmt.Println(ui.Danger.Render("1 issue found"))
+			ui.Println(ui.Danger.Render("1 issue found"))
 		} else {
-			fmt.Println(ui.Danger.Render(fmt.Sprintf("%d issues found", totalIssues)))
+			ui.Println(ui.Danger.Render(fmt.Sprintf("%d issues found", totalIssues)))
 		}
 	}
 
@@ -261,24 +261,24 @@ func renderLoadDiagnostics(result *nibcore.LinkCheckResult) {
 		// The reason is carried through: the user has to repair the file by
 		// hand, so the report has to say what is wrong with it.
 		if checkFix {
-			fmt.Printf("  %s Cannot auto-fix unparseable nib file %s (repair it by hand): %s\n",
+			ui.Printf("  %s Cannot auto-fix unparseable nib file %s (repair it by hand): %s\n",
 				ui.Warning.Render("!"), uf.Path, flattenReason(uf.Reason))
 		} else {
-			fmt.Printf("  %s Unparseable nib file %s (skipped at load, so %s is missing from every query): %s\n",
+			ui.Printf("  %s Unparseable nib file %s (skipped at load, so %s is missing from every query): %s\n",
 				ui.Danger.Render("✗"), uf.Path, describeMissingNib(uf.NibID), flattenReason(uf.Reason))
 		}
 	}
 	for _, d := range result.DuplicateIDs {
 		if checkFix {
-			fmt.Printf("  %s Cannot auto-fix duplicate id %q: %s shadows %s (choose which file to keep)\n",
+			ui.Printf("  %s Cannot auto-fix duplicate id %q: %s shadows %s (choose which file to keep)\n",
 				ui.Warning.Render("!"), d.NibID, d.Loaded, d.Shadowed)
 		} else {
-			fmt.Printf("  %s Duplicate id %q: %s shadows %s (the shadowed file is unreachable)\n",
+			ui.Printf("  %s Duplicate id %q: %s shadows %s (the shadowed file is unreachable)\n",
 				ui.Danger.Render("✗"), d.NibID, d.Loaded, d.Shadowed)
 		}
 	}
 	if result.LoadIssues() == 0 {
-		fmt.Printf("  %s All nib files loaded\n", ui.Success.Render("✓"))
+		ui.Printf("  %s All nib files loaded\n", ui.Success.Render("✓"))
 	}
 }
 

@@ -21,7 +21,7 @@ jobs:
   vulncheck:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
       - uses: jdx/mise-action@7e36c90d9ab29c415a2384db3006f3ec8a8cc654 # v4.2.4
         with:
           github_token: ${{ secrets.GITHUB_TOKEN }}
@@ -31,3 +31,9 @@ jobs:
       # so this job builds it itself.
       - run: task web:build
       - run: task vulncheck
+      # The npm tree has the same problem this whole workflow exists for, and
+      # more acutely: its advisory volume is dominated by transitive packages
+      # nobody here ever edits, so "nothing changed" is the normal case rather
+      # than the exception (nibs-uilw). Needs no web/dist of its own — npm audit
+      # reads package-lock.json.
+      - run: task web:vulncheck

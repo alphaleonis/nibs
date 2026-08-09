@@ -29,83 +29,6 @@ tasks:
   go:codegen:
     desc: Regenerate the Go GraphQL server code (gqlgen)
     cmds:
-      # Expiry alarm for the directive guard below. That guard exists only
-      # because the pinned gqlgen (v0.17.84, and still v0.17.85) rebuilds
-      # resolver doc comments through go/ast's CommentGroup.Text(); v0.17.86
-      # iterates the comment list instead and preserves directives. Past that
-      # version the guard rejects a pattern that is legal again, and the notes it
-      # points at describe a bug that is gone. Nothing else here is
-      # version-aware, and Renovate's gomod manager is enabled for module
-      # dependencies (.github/renovate.json5 disables it only for the `golang`
-      # and `toolchain` depTypes), so that bump arrives as a pull request and no
-      # other check in this repo would notice the guard had gone stale. Failing
-      # rather than warning is the point: a warning scrolls past in a build log,
-      # while a failure means the bump cannot land green until the guard and its
-      # prose copies are retired with it. v0.17.85 does not trip this — it is
-      # still affected.
-      - |
-        if grep -qE 'github\.com/99designs/gqlgen v(0\.17\.(8[6-9]|9[0-9]|[1-9][0-9]{2,})|0\.(1[89]|[2-9][0-9]|[1-9][0-9]{2,})\.|[1-9][0-9]*\.)' go.mod; then
-          echo "" >&2
-          echo "error: go.mod is on gqlgen v0.17.86 or later, where the upstream fix landed —" >&2
-          echo "resolver doc-comment directives survive codegen again. Delete the directive" >&2
-          echo "guard below, the note at the top of internal/graph/resolver.go, and the" >&2
-          echo "CLAUDE.md paragraph that repeats it, then delete this alarm." >&2
-          exit 1
-        fi
-      # Refuse to run gqlgen while a comment directive sits on a resolver's doc
-      # comment. gqlgen rebuilds those comments through go/ast's
-      # CommentGroup.Text(), which discards directives and keeps the prose, so
-      # the directive vanishes and whatever it was doing silently stops. This is
-      # the last moment the build can see the mistake: the gates that matter —
-      # `task build`, `task test`, `task nibs` and both CI jobs — all run this
-      # task before any Go code compiles or any test runs, so afterwards the
-      # directive is gone from the file and no later gate can tell it was ever
-      # written. (Two documented paths skip it: `task test:race` declares no deps
-      # of its own, and a direct `scripts/go-test-capped.sh` run bypasses Task
-      # altogether. Neither is a gate anything merges on, and under `task test`
-      # the web:build dep has already run this task before test:race starts.)
-      # Resolver bodies are copied through as raw source, so the fix is always to
-      # move the directive inside the function.
-      #
-      # Column 0 is what makes this a doc-position test rather than a body one:
-      # gofmt indents every *comment* inside a function — directives included —
-      # so an unindented one is in doc or file position, both of which gqlgen
-      # destroys. Raw string literals are the exception, since gofmt leaves their
-      # contents byte-identical; a column-0 directive-shaped line inside one
-      # matches too. That is this check's one false-positive vector, and the
-      # message names it instead of asserting a diagnosis the pattern cannot
-      # support. Excluding it would take a Go parser to tell a comment from a
-      # string operand — disproportionate against indenting one line inside the
-      # literal. The pattern is the //<tool>:<directive> form of go/ast's
-      # isDirective rule, //[a-z0-9]+:[a-z0-9] — a space after // disqualifies a
-      # directive, which is why prose like `// TODO: x` does not match, and why
-      # isDirective's three other forms (`//line `, `//extern `, `//export `) are
-      # not matched either; none of them is plausible on a GraphQL resolver.
-      #
-      # Best-effort by design, in two directions. A machine without grep (Windows
-      # without Git Bash) makes the if-condition false and the check passes; so
-      # does a missing or unreadable file, which exits grep 2 while this `if`
-      # reads any non-zero as clean. The cost either way is a skipped check on
-      # that run, never a codegen that refuses to run — so renaming the resolver
-      # file, or changing gqlgen's resolver.layout, degrades this to a no-op
-      # rather than blocking the build. The glob covers every *.resolvers.go that
-      # layout: follow-schema generates (one per schema file; one today), so a
-      # second schema file extends the check without touching this. Task's
-      # embedded shell leaves a glob that matches nothing literal, so grep always
-      # gets a file operand and never falls through to reading stdin.
-      - |
-        if grep -nE '^//[a-z0-9]+:[a-z0-9]' internal/graph/*.resolvers.go; then
-          echo "" >&2
-          echo "error: the line(s) above match a Go comment directive at column 0 in a" >&2
-          echo "generated resolver file. gqlgen deletes a directive that sits on a resolver's" >&2
-          echo "DOC comment on every codegen, so it would disappear and stop taking effect." >&2
-          echo "Move each directive inside the resolver body, where gqlgen copies it through" >&2
-          echo "as raw source." >&2
-          echo "If the match is instead inside a raw string literal, indent that line — gofmt" >&2
-          echo "does not reindent raw-string contents, so this check cannot tell the two apart." >&2
-          echo "Full explanation: internal/graph/resolver.go (top of file)." >&2
-          exit 1
-        fi
       - go generate ./...
 
   web:codegen:
@@ -244,15 +167,44 @@ tasks:
       - npm run build
 
   web:check:
-    desc: Type-check the web UI (svelte-check)
+    desc: Type-check the web UI (svelte-check for src/, tsc for everything else)
     # No Task-level codegen dep needed: `npm run check` regenerates the web
     # GraphQL types itself via the `precheck` npm hook (→ `npm run codegen`)
     # before svelte-check runs, so the generated src/lib/gql/ types are always
     # fresh. Wired into the `test` gate (svelte-check is clean; see nibs-pg6i).
+    #
+    # web:check-tooling rides here rather than in `test` because this task is the
+    # one thing both gates already call: `task test` runs it, and CI's lint job
+    # runs `task web:check` directly (the test job deliberately does not go
+    # through `task test`). Adding it to `test` alone would leave CI unguarded,
+    # and adding it to CI as well would mean editing the workflow to say what
+    # this task already says.
     deps: [web:install]
     dir: web
     cmds:
-      - npm run check
+      # Capped for the same reason as the vitest lane in `test`: svelte-check
+      # holds the whole project graph in one node process, and it should pay for
+      # that out of its own cgroup rather than the caller's (nibs-0kip).
+      - bash ../scripts/run-capped.sh npm run check
+      - task: web:check-tooling
+
+  web:check-tooling:
+    desc: Type-check the web TypeScript outside src/ (Playwright suites, tool configs)
+    # tsc rather than svelte-check: nothing outside src/ is a .svelte file, and
+    # svelte-check takes a single --tsconfig, which is already spent on the app.
+    # web/tsconfig.tooling.json records why the two configs stay separate rather
+    # than one widened include.
+    #
+    # Ordering, not a dep, supplies the generated types: the Playwright specs
+    # import src/lib types that src/lib/gql/ feeds, and every caller arrives
+    # through web:check, whose `npm run check` runs the precheck codegen hook
+    # first. Invoked standalone on a checkout that has never generated, this can
+    # fail on a missing src/lib/gql/ — `task web:codegen` is the fix. Declaring
+    # the dep instead would regenerate on the common path to serve the rare one.
+    deps: [web:install]
+    dir: web
+    cmds:
+      - bash ../scripts/run-capped.sh npx tsc --noEmit -p tsconfig.tooling.json
 
   build:
     desc: Build the nibs CLI executable
@@ -281,7 +233,7 @@ tasks:
       # Go tests run memory-capped so a runaway test is OOM-killed inside its own
       # cgroup instead of triggering a global OOM that takes down the WSL VM
       # (nibs-mv0i). Falls back to plain `go test` where systemd --user scopes
-      # aren't available. Override the cap with GO_TEST_MEM_MAX (default 4G).
+      # aren't available. Override the cap with NIBS_CAP_MEM_MAX (default 4G).
       - bash scripts/go-test-capped.sh ./...
       # Run the concurrency-critical packages a second time under -race, so a
       # reintroduced data race fails the default gate rather than only when
@@ -291,7 +243,13 @@ tasks:
       # under the detector; a plain `go test` degrades them to trivial checks.
       - task: test:race
       - task: web:check
-      - cd web && npx vitest run --reporter=agent
+      # Capped for a different reason than the go lane above: vitest has never
+      # run away, but it fans out across cores, and an uncapped fleet is charged
+      # to whatever cgroup launched `task test`. When that is a long-lived agent
+      # session, the kernel's memcg OOM killer picks the session over any single
+      # worker and the supervisor dies instead of the tests (nibs-0kip). The
+      # scope makes the lane pay for its own memory.
+      - cd web && bash ../scripts/run-capped.sh npx vitest run --reporter=agent
 
   test:race:
     desc: Run the -race detector on the concurrency-critical packages (nibcore + graph)
@@ -359,7 +317,7 @@ tasks:
       - go run . tui --config "{{.TMP}}/.nibs.yml"
 
   check:
-    desc: Type-check the web UI (svelte-check)
+    desc: Type-check the web UI (svelte-check for src/, tsc for everything else)
     deps: [web:check]
 
   lint:
@@ -480,6 +438,37 @@ tasks:
             task web:build
     cmds:
       - bash scripts/vulncheck.sh
+
+  web:vulncheck:
+    desc: Report known advisories in the npm dependency tree (npm audit, allowlisted)
+    # The npm-tree half of `vulncheck`, and deliberately its twin: an allowlist
+    # with a written rationale per entry, a decision made from parsed JSON, and
+    # failure in both directions so a suppression cannot outlive its reason.
+    #
+    # It exists because the two trees are both shipped surface — embed.go embeds
+    # web/dist into the binary, so dompurify, marked, bits-ui, codemirror and the
+    # compiled svelte runtime all reach a user's browser — and only one of them
+    # had a gate (nibs-uilw).
+    #
+    # No web:build or web:install precondition, unlike `vulncheck`: npm audit
+    # resolves the tree from package-lock.json and queries the registry, so it
+    # needs neither node_modules nor a build. That makes it cheap enough to run
+    # anywhere, and keeps it off the install path this repo guards carefully.
+    preconditions:
+      - sh: command -v npm >/dev/null
+        msg: |
+          npm is not on PATH.
+
+          node is pinned in mise.toml. Install mise, then run `mise trust` and
+          `mise install` in this checkout, and make its shims reachable:
+            https://mise.jdx.dev/getting-started.html
+      - sh: command -v jq >/dev/null
+        msg: |
+          jq is not on PATH. The gate parses `npm audit --json` with it.
+          A missing jq fails rather than passing: "could not check" and "nothing
+          to report" must not look alike.
+    cmds:
+      - bash scripts/web-vulncheck.sh
 
   release:prep:
     desc: Build everything a release archive needs (web assets, generated code, license notices)

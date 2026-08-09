@@ -4,8 +4,8 @@ import (
 	"testing"
 	"time"
 
+	tea "charm.land/bubbletea/v2"
 	"github.com/alphaleonis/nibs/internal/nib"
-	tea "github.com/charmbracelet/bubbletea"
 )
 
 func TestDefaultTypeForContext(t *testing.T) {
@@ -35,7 +35,7 @@ func TestDefaultTypeForContext(t *testing.T) {
 
 // sendKeyCreateFlow sends a key and processes commands, but skips blocking
 // commands like textinput.Blink that would hang in tests.
-func sendKeyCreateFlow(app *App, key tea.KeyMsg) {
+func sendKeyCreateFlow(app *App, key tea.KeyPressMsg) {
 	_, cmd := app.Update(key)
 	processCmdNonBlocking(app, cmd)
 }
@@ -83,7 +83,7 @@ func TestCreateFlowOpensTypePickerOnC(t *testing.T) {
 	app, _ := setupTestApp(t, testNibs)
 
 	// Press 'c' to start creation flow
-	sendKeyCreateFlow(app, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'c'}})
+	sendKeyCreateFlow(app, tea.KeyPressMsg{Code: 'c', Text: "c"})
 
 	// Should be in type picker state (for creation), not create modal
 	if app.state != viewCreateTypePicker {
@@ -98,14 +98,14 @@ func TestCreateFlowFullCycle(t *testing.T) {
 	app, stub := setupTestApp(t, testNibs)
 
 	// Press 'c' to start creation flow
-	sendKeyCreateFlow(app, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'c'}})
+	sendKeyCreateFlow(app, tea.KeyPressMsg{Code: 'c', Text: "c"})
 
 	if app.state != viewCreateTypePicker {
 		t.Fatalf("expected viewCreateTypePicker state, got %d", app.state)
 	}
 
 	// Press enter to select the default type (should be "feature" since selected is epic)
-	sendKeyCreateFlow(app, tea.KeyMsg{Type: tea.KeyEnter})
+	sendKeyCreateFlow(app, tea.KeyPressMsg{Code: tea.KeyEnter})
 
 	// Should now be in create modal (title input)
 	if app.state != viewCreateModal {
@@ -114,9 +114,9 @@ func TestCreateFlowFullCycle(t *testing.T) {
 
 	// Type a title and press enter
 	for _, r := range "My new feature" {
-		sendKeyCreateFlow(app, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{r}})
+		sendKeyCreateFlow(app, tea.KeyPressMsg{Code: r, Text: string(r)})
 	}
-	sendKeyCreateFlow(app, tea.KeyMsg{Type: tea.KeyEnter})
+	sendKeyCreateFlow(app, tea.KeyPressMsg{Code: tea.KeyEnter})
 
 	// Verify a nib was created with the correct type
 	if len(stub.CreateCalls) != 1 {
@@ -143,17 +143,17 @@ func TestCreateFlowSiblingInference(t *testing.T) {
 	app, stub := setupTestApp(t, testNibs)
 
 	// Move to task-1
-	sendKeyCreateFlow(app, tea.KeyMsg{Type: tea.KeyDown})
+	sendKeyCreateFlow(app, tea.KeyPressMsg{Code: tea.KeyDown})
 
 	// Press 'c' to start creation
-	sendKeyCreateFlow(app, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'c'}})
+	sendKeyCreateFlow(app, tea.KeyPressMsg{Code: 'c', Text: "c"})
 
 	if app.state != viewCreateTypePicker {
 		t.Fatalf("expected viewCreateTypePicker, got %d", app.state)
 	}
 
 	// Default should be "task" (since selected is a task). Press enter to accept.
-	sendKeyCreateFlow(app, tea.KeyMsg{Type: tea.KeyEnter})
+	sendKeyCreateFlow(app, tea.KeyPressMsg{Code: tea.KeyEnter})
 
 	if app.state != viewCreateModal {
 		t.Fatalf("expected viewCreateModal, got %d", app.state)
@@ -161,9 +161,9 @@ func TestCreateFlowSiblingInference(t *testing.T) {
 
 	// Type title and enter
 	for _, r := range "Sibling task" {
-		sendKeyCreateFlow(app, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{r}})
+		sendKeyCreateFlow(app, tea.KeyPressMsg{Code: r, Text: string(r)})
 	}
-	sendKeyCreateFlow(app, tea.KeyMsg{Type: tea.KeyEnter})
+	sendKeyCreateFlow(app, tea.KeyPressMsg{Code: tea.KeyEnter})
 
 	if len(stub.CreateCalls) != 1 {
 		t.Fatalf("expected 1 CreateNib call, got %d", len(stub.CreateCalls))
@@ -188,7 +188,7 @@ func TestCreateFlowHigherLevelNoParent(t *testing.T) {
 	app, stub := setupTestApp(t, testNibs)
 
 	// Press 'c', then navigate to select "milestone"
-	sendKeyCreateFlow(app, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'c'}})
+	sendKeyCreateFlow(app, tea.KeyPressMsg{Code: 'c', Text: "c"})
 
 	if app.state != viewCreateTypePicker {
 		t.Fatalf("expected viewCreateTypePicker, got %d", app.state)
@@ -198,20 +198,20 @@ func TestCreateFlowHigherLevelNoParent(t *testing.T) {
 	// Default cursor is on "task" (since selected nib is task).
 	// We need to navigate to "milestone" which is at the top.
 	// Move up from task to milestone: task(4) -> feature(3) -> bug(2) -> epic(1) -> milestone(0)
-	sendKeyCreateFlow(app, tea.KeyMsg{Type: tea.KeyUp})
-	sendKeyCreateFlow(app, tea.KeyMsg{Type: tea.KeyUp})
-	sendKeyCreateFlow(app, tea.KeyMsg{Type: tea.KeyUp})
-	sendKeyCreateFlow(app, tea.KeyMsg{Type: tea.KeyUp})
-	sendKeyCreateFlow(app, tea.KeyMsg{Type: tea.KeyEnter})
+	sendKeyCreateFlow(app, tea.KeyPressMsg{Code: tea.KeyUp})
+	sendKeyCreateFlow(app, tea.KeyPressMsg{Code: tea.KeyUp})
+	sendKeyCreateFlow(app, tea.KeyPressMsg{Code: tea.KeyUp})
+	sendKeyCreateFlow(app, tea.KeyPressMsg{Code: tea.KeyUp})
+	sendKeyCreateFlow(app, tea.KeyPressMsg{Code: tea.KeyEnter})
 
 	if app.state != viewCreateModal {
 		t.Fatalf("expected viewCreateModal, got %d", app.state)
 	}
 
 	for _, r := range "A milestone" {
-		sendKeyCreateFlow(app, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{r}})
+		sendKeyCreateFlow(app, tea.KeyPressMsg{Code: r, Text: string(r)})
 	}
-	sendKeyCreateFlow(app, tea.KeyMsg{Type: tea.KeyEnter})
+	sendKeyCreateFlow(app, tea.KeyPressMsg{Code: tea.KeyEnter})
 
 	if len(stub.CreateCalls) != 1 {
 		t.Fatalf("expected 1 CreateNib call, got %d", len(stub.CreateCalls))
@@ -232,14 +232,14 @@ func TestCreateFlowCancelTypePicker(t *testing.T) {
 	}
 	app, stub := setupTestApp(t, testNibs)
 
-	sendKeyCreateFlow(app, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'c'}})
+	sendKeyCreateFlow(app, tea.KeyPressMsg{Code: 'c', Text: "c"})
 
 	if app.state != viewCreateTypePicker {
 		t.Fatalf("expected viewCreateTypePicker, got %d", app.state)
 	}
 
 	// Press Esc to cancel
-	sendKeyCreateFlow(app, tea.KeyMsg{Type: tea.KeyEscape})
+	sendKeyCreateFlow(app, tea.KeyPressMsg{Code: tea.KeyEscape})
 
 	// Should return to list, no nib created
 	if app.state != viewList {
@@ -257,14 +257,14 @@ func TestCreateFlowCancelTitleInput(t *testing.T) {
 	app, stub := setupTestApp(t, testNibs)
 
 	// Open type picker, select type, then cancel title input
-	sendKeyCreateFlow(app, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'c'}})
-	sendKeyCreateFlow(app, tea.KeyMsg{Type: tea.KeyEnter}) // select default type
+	sendKeyCreateFlow(app, tea.KeyPressMsg{Code: 'c', Text: "c"})
+	sendKeyCreateFlow(app, tea.KeyPressMsg{Code: tea.KeyEnter}) // select default type
 
 	if app.state != viewCreateModal {
 		t.Fatalf("expected viewCreateModal, got %d", app.state)
 	}
 
-	sendKeyCreateFlow(app, tea.KeyMsg{Type: tea.KeyEscape})
+	sendKeyCreateFlow(app, tea.KeyPressMsg{Code: tea.KeyEscape})
 
 	if app.state != viewList {
 		t.Errorf("expected viewList after cancel title, got %d", app.state)

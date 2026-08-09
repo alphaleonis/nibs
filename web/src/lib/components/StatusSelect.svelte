@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { STATUSES } from "../constants";
+  import { STATUS_WORKFLOW } from "../constants";
   import * as Select from "$lib/components/ui/select/index.js";
   import StatusIcon from "./StatusIcon.svelte";
 
@@ -19,7 +19,7 @@
     {value}
   </Select.Trigger>
   <Select.Content>
-    {#each STATUSES as s}
+    {#each STATUS_WORKFLOW as s}
       <Select.Item value={s}>
         <StatusIcon status={s} />
         {s}

@@ -85,7 +85,12 @@ openssl pkeyutl -verify -pubin -inkey nibs-signing-1.pub \
 
 Unlike the attestation, this anchor is a key compiled into every nibs binary, which is what lets `nibs upgrade` check it without contacting an external service.
 
-**`nibs upgrade` does not require this signature yet.** It still verifies `checksums.txt` alone. The signature is being published first, on its own, so that at least one release has produced a valid one before any binary depends on it — otherwise the first release where signing matters would also be the first where it had ever run, and a release that failed to sign would strand every user on the version demanding a signature.
+**`nibs upgrade` requires this signature.** It verifies `checksums.txt` against a key compiled into the binary, then verifies each archive against that checksums file.
+
+This makes signing mandatory for every future release, in a stronger sense than it first appears: go-selfupdate fetches the validation asset during **detection**, so a release published without a `checksums.txt.sig` is not merely rejected — it is not seen at all. Two consequences:
+
+- The release workflow must never publish unsigned. It doesn't: a missing key fails the run before tagging, and the signature is verified against these same public keys before the job finishes.
+- `nibs upgrade --version <tag>` cannot reach a release that predates signing.
 
 ### Rotating the signing key
 

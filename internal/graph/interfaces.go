@@ -26,6 +26,19 @@ type NibReader interface {
 	// field (notably Path) is read off-lock. This is the blessed READ accessor
 	// for values that outlive the lock.
 	//
+	// ID RESOLUTION IS PART OF THIS CONTRACT, not an implementation detail of
+	// Core. It mirrors Get: exact id first, then — when a prefix is configured and
+	// the id does not already carry it — the prefix-prepended form. An
+	// implementation that does the obvious map lookup instead satisfies the
+	// copy-on-write half of this doc and still breaks internal/graph, because
+	// nibResolver.Parent hands it a RAW stored parent link and returns whatever
+	// comes back. Drop the fallback and that one resolver answers null for a
+	// short-form link every other surface resolves — the cross-surface split the
+	// resolved-parent rule exists to prevent (see resolvedParent). The dependency
+	// is pinned by TestParentResolverDependsOnGetSnapshotIDResolution, which drives
+	// one fixture through a reader with the fallback and one without; change this
+	// behavior and that test fails rather than the break going quiet.
+	//
 	// CANONICAL INVARIANT (the live-pointer / copy-on-write rule). This doc is its
 	// single authoritative statement; sibling comments across internal/nibcore and
 	// internal/graph defer here rather than re-derive it. A Core mutator may change
@@ -72,7 +85,18 @@ type NibReader interface {
 	// false when the nib is absent.
 	GetSnapshot(id string) (*nib.Nib, bool)
 	All() []*nib.Nib
+	// Search returns the TOP hits for the query — id matches first, then
+	// full-text hits by relevance — each leg capped at
+	// nibcore.DefaultSearchLimit. queryResolver.Nibs seeds from this: at the top
+	// level the truncation is the answer.
 	Search(query string) ([]*nib.Nib, error)
+	// SearchAll returns EVERY match for the query, in the same order, uncapped.
+	// It is the accessor for intersecting a term with a working set some
+	// relationship already bounded (see filterBySearch): capping there would
+	// truncate the store rather than the answer, dropping a genuine member that
+	// ranks below the store-wide cutoff. Bounded by the store — a query cannot
+	// match more nibs than exist.
+	SearchAll(query string) ([]*nib.Nib, error)
 	NormalizeID(id string) (string, bool)
 	FindIncomingLinks(targetID string) []nib.IncomingLink
 	FindMentions(fromID string) []*nib.Nib
@@ -115,6 +139,13 @@ type NibWriter interface {
 type NibValidator interface {
 	ValidateParent(b *nib.Nib, parentID string) error
 	DetectCycle(fromID, linkType, toID string) []string
+	// ValidateEnums reports whether the nib's type/status/priority/estimate hold
+	// values the project config accepts (the empty "use the default" sentinel
+	// always passes). NibWriter.Update repeats this check under its write lock, so
+	// nothing depends on a resolver calling it — it is exposed so a resolver whose
+	// later steps write to OTHER nibs can refuse a doomed subject first (see
+	// mutationResolver.preValidateSubject).
+	ValidateEnums(b *nib.Nib) error
 }
 
 // BlockingChecker provides blocking-relationship queries.

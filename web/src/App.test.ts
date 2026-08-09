@@ -3,6 +3,7 @@ import { userEvent } from "@testing-library/user-event";
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import App from "./App.svelte";
 import { CONFIG_QUERY, NIB_DETAIL_QUERY } from "./lib/queries";
+import { openSubmenu } from "./lib/testing/menu";
 
 // The detail query for a nib that exists NOW but can be made to vanish mid-session
 // (deleted / archived while the user has it open). Hoisted so the mock factory and
@@ -516,8 +517,7 @@ describe("App", () => {
     const row = container.querySelector("tr[data-nib-id='nibs-abc1']") as HTMLElement;
     await user.pointer({ target: row, keys: "[MouseRight]" });
 
-    // bits-ui opens the submenu on pointerenter of its trigger.
-    await user.pointer({ target: await screen.findByTestId("ctx-filter-related-trigger") });
+    await openSubmenu(user, await screen.findByTestId("ctx-filter-related-trigger"));
     await user.click(await screen.findByText("Descendants of this"));
 
     // The picked token lands in its canonical slot BETWEEN the surviving status
@@ -540,6 +540,77 @@ describe("App", () => {
 
     // Detail panel should appear
     expect(screen.getByTestId("active-nib-view")).toBeInTheDocument();
+  });
+
+  // The right-click branch in handleRowContextMenu is the only production caller
+  // that can hand `selectOnly` an id the click path never sees, and the only place
+  // the open-detail preference decides between "select it" and "open it". Both
+  // arms are driven here through the real App wiring (persisted pref → Preferences
+  // → handler), not through a prop.
+  async function withSeededPreferences(prefs: Record<string, unknown>, body: () => Promise<void>): Promise<void> {
+    const savedStorage = globalThis.localStorage;
+    const mockStore: Record<string, string> = {
+      "nibs-filter-preferences": JSON.stringify(prefs),
+    };
+    Object.defineProperty(globalThis, "localStorage", {
+      value: {
+        getItem: (key: string) => mockStore[key] ?? null,
+        setItem: (key: string, value: string) => { mockStore[key] = value; },
+        removeItem: (key: string) => { delete mockStore[key]; },
+      },
+      writable: true,
+      configurable: true,
+    });
+    try {
+      await body();
+    } finally {
+      Object.defineProperty(globalThis, "localStorage", {
+        value: savedStorage,
+        writable: true,
+        configurable: true,
+      });
+    }
+  }
+
+  it("double mode: right-clicking an unselected row opens the menu without opening the panel", async () => {
+    const user = userEvent.setup({ pointerEventsCheck: 0 });
+
+    await withSeededPreferences(
+      { q: "", viewLevel: "flat", openDetailOn: "double" },
+      async () => {
+        const { container } = render(App);
+        expect(screen.queryByTestId("active-nib-view")).not.toBeInTheDocument();
+
+        const row = container.querySelector("tr[data-nib-id='nibs-abc1']") as HTMLElement;
+        await user.pointer({ target: row, keys: "[MouseRight]" });
+
+        // The menu is up and has a target (its per-nib items rendered)...
+        expect(await screen.findByTestId("context-menu")).toBeInTheDocument();
+        expect(screen.getByTestId("ctx-open")).toBeInTheDocument();
+        // ...the right-clicked row became the selection...
+        expect(row.classList.contains("active")).toBe(true);
+        // ...but nothing opened over what the user was reading.
+        expect(screen.queryByTestId("active-nib-view")).not.toBeInTheDocument();
+      },
+    );
+  });
+
+  it("single mode: right-clicking an unselected row opens it in the detail panel", async () => {
+    const user = userEvent.setup({ pointerEventsCheck: 0 });
+
+    await withSeededPreferences(
+      { q: "", viewLevel: "flat", openDetailOn: "single" },
+      async () => {
+        const { container } = render(App);
+        expect(screen.queryByTestId("active-nib-view")).not.toBeInTheDocument();
+
+        const row = container.querySelector("tr[data-nib-id='nibs-abc1']") as HTMLElement;
+        await user.pointer({ target: row, keys: "[MouseRight]" });
+
+        expect(await screen.findByTestId("context-menu")).toBeInTheDocument();
+        expect(await screen.findByTestId("active-nib-view")).toBeInTheDocument();
+      },
+    );
   });
 
   it("closes detail panel when close button is clicked", async () => {

@@ -1,5 +1,6 @@
-import type { SelectionState } from "../selection.svelte";
+import type { PanelPolicy, SelectionState } from "../selection.svelte";
 import type { RowData } from "../tableData";
+import type { OpenDetailGesture } from "../types";
 import { isBucketId } from "../tree";
 
 export function useKeyboardNav(opts: {
@@ -11,10 +12,21 @@ export function useKeyboardNav(opts: {
   getScrollContainer: () => HTMLElement | null;
   onDragKeyDown: (e: KeyboardEvent) => void;
   navigateToNib: (id: string) => void;
+  /** The resolved open-detail preference. Read at keypress time so a settings
+   *  change takes effect without rebuilding the composable. */
+  getOpenDetailOn: () => OpenDetailGesture;
 }): {
   handleKeydown: (e: KeyboardEvent) => void;
 } {
   const { selection } = opts;
+
+  /** Whether a bulk-selection gesture may move the detail panel. "detach" under
+   *  the "open on double-click" preference, where the panel is decoupled from the
+   *  selection and only an explicit open gesture writes it — the keyboard twin of
+   *  the shift/ctrl-click rule in TreeTable's click handler. */
+  function panelPolicy(): PanelPolicy {
+    return opts.getOpenDetailOn() === "double" ? "detach" : "follow";
+  }
 
   function scrollFocusedRowIntoView(nibId: string) {
     const scrollContainer = opts.getScrollContainer();
@@ -83,7 +95,7 @@ export function useKeyboardNav(opts: {
         } else if (focusedIndex < currentRows.length - 1) {
           const nibId = currentRows[focusedIndex + 1].nib.id;
           selection.focus(nibId);
-          if (event.shiftKey) selection.rangeSelect(nibId, opts.getVisibleRowIds());
+          if (event.shiftKey) selection.rangeSelect(nibId, opts.getVisibleRowIds(), panelPolicy());
           requestAnimationFrame(() => scrollFocusedRowIntoView(nibId));
         }
         break;
@@ -97,7 +109,7 @@ export function useKeyboardNav(opts: {
         } else if (focusedIndex > 0) {
           const nibId = currentRows[focusedIndex - 1].nib.id;
           selection.focus(nibId);
-          if (event.shiftKey) selection.rangeSelect(nibId, opts.getVisibleRowIds());
+          if (event.shiftKey) selection.rangeSelect(nibId, opts.getVisibleRowIds(), panelPolicy());
           requestAnimationFrame(() => scrollFocusedRowIntoView(nibId));
         }
         break;
@@ -153,7 +165,7 @@ export function useKeyboardNav(opts: {
         // the toggled row — matching mouse Ctrl/Cmd-click — so the Space-toggled
         // row becomes the focused row.
         if (isBucketId(targetId)) break;
-        selection.toggleSelect(targetId);
+        selection.toggleSelect(targetId, panelPolicy());
         break;
       }
       default:

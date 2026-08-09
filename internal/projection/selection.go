@@ -21,9 +21,13 @@ const (
 var viewOrder = []View{ViewID, ViewRef, ViewCard, ViewFull}
 
 // viewSets maps each view tier to its field list (§5.2). All fields are in
-// id-list form for relations. `full` is every scalar plus every relation (as id
-// lists); the computed fields (children/progress/ready) are never in a tier and
-// are reachable only via an explicit `-f`.
+// id-list form for relations. `full` is every field except the opt-in rollups
+// (children/progress/ready), which are never in a tier and are reachable only
+// via an explicit `-f`.
+//
+// `parent` is in card and full and is a COMPUTED field (it resolves the stored
+// link through the store), so both tiers require a non-nil Resolver — see
+// Project.
 var viewSets = map[View][]Field{
 	ViewID:  {FieldID},
 	ViewRef: {FieldID, FieldTitle, FieldStatus, FieldType, FieldPriority},
@@ -34,12 +38,17 @@ var viewSets = map[View][]Field{
 	ViewFull: fullViewFields(),
 }
 
-// fullViewFields is every scalar + relation field, in menu order (excludes the
-// computed fields, which are opt-in).
+// rollupFields are the fields no view tier carries: each costs a store walk and
+// is wanted only when named explicitly. Membership is by NAME rather than by
+// kind because `parent` is computed too — it resolves its stored link — yet is a
+// plain identifying field that belongs in a full read.
+var rollupFields = map[Field]bool{FieldChildren: true, FieldProgress: true, FieldReady: true}
+
+// fullViewFields is every field except the opt-in rollups, in menu order.
 func fullViewFields() []Field {
 	out := make([]Field, 0, len(registry))
 	for _, d := range registry {
-		if d.kind == kindScalar || d.kind == kindRelation {
+		if !rollupFields[d.name] {
 			out = append(out, d.name)
 		}
 	}

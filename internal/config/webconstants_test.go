@@ -1,6 +1,7 @@
 package config_test
 
 import (
+	"slices"
 	"testing"
 
 	"github.com/alphaleonis/nibs/internal/config"
@@ -17,12 +18,19 @@ import (
 // fail loudly instead of drifting unnoticed. Serving the vocabulary from the
 // schema is the real fix.
 //
-// It asserts MEMBERSHIP, not order. The two orders differ deliberately and must
-// be allowed to: Go lists most-active-first (in-progress, todo, draft) for its
-// help text, while the web lists workflow progression (draft, todo, in-progress)
-// because that is the order the facet checkboxes read best in. Pinning order
-// here would fail on a correct codebase and invite someone to "fix" one of the
-// two orderings into being wrong for its own surface.
+// For STATUSES it asserts MEMBERSHIP, not order. Those two orders differ
+// deliberately and must be allowed to: Go lists most-active-first (in-progress,
+// todo, draft) because that order is its sort priority, while the web lists
+// draft-first because that is the order the facet checkboxes and the status
+// column read best in. Pinning that order here would fail on a correct codebase
+// and invite someone to "fix" one of the two into being wrong for its surface.
+//
+// STATUS_WORKFLOW_ORDER is the opposite case and is pinned name-for-name AND
+// position-for-position: it is the order status *pickers* list, and a picker
+// that walks the transition flow on one surface and a different flow on the
+// other is a bug on whichever surface is second. Both sides read it from a
+// literal (Go's config.workflowStatusOrder) and both derive their actual list
+// from it with the same fail-safe, so this equality is the whole agreement.
 //
 // The TypeScript scraping itself lives in internal/testsupport/webconstants,
 // shared with TestWebStatusGroupsMatchCLI, which layers the query language's
@@ -35,6 +43,15 @@ func TestWebConstantsMatchConfig(t *testing.T) {
 		got := parseStringArray(t, src, "STATUSES")
 		want := cfg.StatusNames()
 		assertSameMembers(t, "STATUSES", got, want)
+	})
+
+	t.Run("picker order matches", func(t *testing.T) {
+		got := parseStringArray(t, src, "STATUS_WORKFLOW_ORDER")
+		want := cfg.WorkflowStatusNames()
+		if !slices.Equal(got, want) {
+			t.Errorf("STATUS_WORKFLOW_ORDER in %s = %v, want %v — the status pickers would walk a different transition flow in the web than in the TUI",
+				webconstants.Path, got, want)
+		}
 	})
 
 	t.Run("closed set matches", func(t *testing.T) {

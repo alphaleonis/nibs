@@ -1,5 +1,40 @@
 export const STATUSES = ["draft", "todo", "in-progress", "deferred", "completed", "scrapped"] as const;
 
+// The order status *choosers* list in — the transition order, the path work
+// takes from draft to a closed state. STATUSES above is the ordering everything
+// else uses: the status-column sort in tableSort.ts, the facet checkboxes and
+// the query-language value lists, where the closed statuses read best in the
+// same sequence the Go side ranks them.
+//
+// Only the two closed statuses differ between the lists (completed before
+// deferred here), which is exactly why this is a separate constant rather than
+// a reorder of STATUSES: swapping them in STATUSES would quietly re-sort the
+// status column.
+//
+// STATUS_WORKFLOW_ORDER is the literal sequence, pinned name-for-name and
+// position-for-position against Go's config.workflowStatusOrder by
+// TestWebConstantsMatchConfig — a stricter pin than the membership-only one it
+// applies to STATUSES, whose order differs from Go's on purpose.
+//
+// STATUS_WORKFLOW is what components read, and it is built from STATUSES rather
+// than used verbatim: a status the sequence forgets is appended instead of
+// dropped, so an ordering mistake makes a picker read oddly and never hides a
+// status a nib can be set to. Same fail-safe as config.orderStatusesBy on the
+// Go side.
+export const STATUS_WORKFLOW_ORDER = [
+  "draft",
+  "todo",
+  "in-progress",
+  "completed",
+  "deferred",
+  "scrapped",
+] as const;
+
+export const STATUS_WORKFLOW: readonly string[] = [
+  ...STATUS_WORKFLOW_ORDER.filter((s) => (STATUSES as readonly string[]).includes(s)),
+  ...STATUSES.filter((s) => !(STATUS_WORKFLOW_ORDER as readonly string[]).includes(s)),
+];
+
 // Closed statuses — a nib with one of these is off the board. `deferred` is one
 // of them: setting work aside is a way of closing it, not a state of being
 // open, so it is hidden by the Open preset alongside completed and scrapped.

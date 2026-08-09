@@ -370,3 +370,32 @@ func TestCheckFixKeepsLinksToSkippedNibs(t *testing.T) {
 		t.Errorf("report does not mention removing the dangling link:\n%s", out)
 	}
 }
+
+// TestCheckDoesNotLeakANSIToRedirectedOutput pins the color-downsampling
+// contract for every command that renders a style.
+//
+// Lip Gloss v2 dropped the global renderer that used to strip color inside
+// Style.Render: Render now always emits truecolor ANSI, and downsampling
+// happens at the writer. Printing a rendered string with the fmt helpers
+// therefore dumps raw escape sequences into a pipe or a file, where v1 emitted
+// clean text. The ui.Print* helpers exist to route that output through Lip
+// Gloss instead; this fails if a command goes back to fmt.
+//
+// captureStdout hands the command an os.Pipe, which is not a terminal, so a
+// correctly-routed report carries no escape sequences at all.
+func TestCheckDoesNotLeakANSIToRedirectedOutput(t *testing.T) {
+	app, _ := setupCheckTest(t, loadDiagnosticFiles())
+
+	out := captureStdout(t, func() {
+		if _, err := runCheck(app); err != nil {
+			t.Errorf("runCheck error = %v", err)
+		}
+	})
+
+	if out == "" {
+		t.Fatal("check produced no output; the assertion below would pass vacuously")
+	}
+	if strings.ContainsRune(out, '\x1b') {
+		t.Errorf("check leaked ANSI escapes into non-terminal output:\n%q", out)
+	}
+}

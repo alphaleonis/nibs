@@ -1,6 +1,7 @@
 package ui
 
 import (
+	"maps"
 	"slices"
 	"sort"
 	"strconv"
@@ -291,6 +292,127 @@ func TestBuildTreeCycleReachedByAncestorWalk(t *testing.T) {
 	}
 	if !tree[0].Children[0].Matched {
 		t.Error("b matched the filter; it should be marked matched")
+	}
+}
+
+// subtreeIDs collects the ids of a node and everything below it.
+func subtreeIDs(n *TreeNode) map[string]bool {
+	ids := map[string]bool{n.Nib.ID: true}
+	for _, c := range n.Children {
+		for id := range subtreeIDs(c) {
+			ids[id] = true
+		}
+	}
+	return ids
+}
+
+// TestBuildTreeCyclePromotionContract pins the three cycle-promotion properties
+// that callers outside this package read the tree through; they are stated on
+// BuildTree's doc comment. The known consumer is internal/tui's reorder scoping
+// (inParentCycle in blockmove.go), which uses property 2 as its tell that a nib
+// belongs to no parent's sibling list.
+//
+// The properties are pinned here rather than left to the consumer's tests
+// because breaking one fails silently on this side: promote differently and the
+// TUI reverts to describing a sibling list instead of naming the cycle, with
+// every test in this package still green and the failure surfacing a package
+// away, in message assertions.
+func TestBuildTreeCyclePromotionContract(t *testing.T) {
+	tests := []struct {
+		name   string
+		nibs   []*nib.Nib
+		cycles [][]string // ids forming each parent cycle in nibs
+	}{
+		{
+			name:   "self cycle",
+			nibs:   []*nib.Nib{{ID: "a", Parent: "a"}},
+			cycles: [][]string{{"a"}},
+		},
+		{
+			name:   "two-cycle",
+			nibs:   []*nib.Nib{{ID: "a", Parent: "b"}, {ID: "b", Parent: "a"}},
+			cycles: [][]string{{"a", "b"}},
+		},
+		{
+			name:   "three-cycle",
+			nibs:   []*nib.Nib{{ID: "a", Parent: "c"}, {ID: "b", Parent: "a"}, {ID: "c", Parent: "b"}},
+			cycles: [][]string{{"a", "b", "c"}},
+		},
+		{
+			// A non-member child hanging off the cycle must not be mistaken for
+			// a second promotion, nor suppress the real one.
+			name: "cycle with a non-member child hanging off it",
+			nibs: []*nib.Nib{
+				{ID: "a", Parent: "b"}, {ID: "b", Parent: "a"},
+				{ID: "d", Parent: "b"},
+			},
+			cycles: [][]string{{"a", "b"}},
+		},
+		{
+			name: "two disjoint cycles alongside an ordinary tree",
+			nibs: []*nib.Nib{
+				{ID: "a", Parent: "b"}, {ID: "b", Parent: "a"},
+				{ID: "x", Parent: "y"}, {ID: "y", Parent: "x"},
+				{ID: "m1"}, {ID: "m2", Parent: "m1"},
+			},
+			cycles: [][]string{{"a", "b"}, {"x", "y"}},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			nibByID := make(map[string]*nib.Nib, len(tt.nibs))
+			for _, b := range tt.nibs {
+				nibByID[b.ID] = b
+			}
+
+			tree := BuildTree(tt.nibs, tt.nibs, sortByID)
+			roots := make(map[string]*TreeNode, len(tree))
+			for _, r := range tree {
+				roots[r.Nib.ID] = r
+			}
+
+			for _, cycle := range tt.cycles {
+				// (1) Exactly one member of the cycle is promoted to a root.
+				var promoted []*TreeNode
+				for _, id := range cycle {
+					if r, ok := roots[id]; ok {
+						promoted = append(promoted, r)
+					}
+				}
+				if len(promoted) != 1 {
+					t.Fatalf("cycle %v: %d members promoted to roots, want exactly 1", cycle, len(promoted))
+				}
+				p := promoted[0]
+
+				// (2) Promotion severs the tree edge only — the stored parent
+				// link survives, and the rest of the cycle nests underneath the
+				// promoted member, so the stored parent lies in its own subtree.
+				// That containment is the exact tell internal/tui reads.
+				if p.Nib.Parent == "" {
+					t.Fatalf("promoted root %s: Parent was cleared; promotion must leave the stored link intact", p.Nib.ID)
+				}
+				if FindNode(tree, p.Nib.Parent) == nil {
+					t.Fatalf("promoted root %s: stored parent %s is absent from the tree", p.Nib.ID, p.Nib.Parent)
+				}
+				if sub := subtreeIDs(p); !sub[p.Nib.Parent] {
+					t.Errorf("promoted root %s: stored parent %s lies outside its own subtree %v; the rest of the cycle must nest below the promoted member",
+						p.Nib.ID, p.Nib.Parent, slices.Sorted(maps.Keys(sub)))
+				}
+
+				// (3) addAncestors closes the built set upward, so a cycle is
+				// never partially present: filtering down to any single member
+				// still drags the whole cycle in.
+				for _, id := range cycle {
+					filtered := BuildTree([]*nib.Nib{nibByID[id]}, tt.nibs, sortByID)
+					for _, want := range cycle {
+						if FindNode(filtered, want) == nil {
+							t.Errorf("filtered to %s: cycle member %s is missing from the tree", id, want)
+						}
+					}
+				}
+			}
+		})
 	}
 }
 

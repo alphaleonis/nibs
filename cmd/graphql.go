@@ -127,7 +127,8 @@ More examples:
 			// documented envelope contract — as "this class of failure with nothing
 			// to act on", steering an agent away from a fix that was available. A
 			// CONFLICT offers the server's current etag; a HIERARCHY offers the
-			// parent types that would be accepted.
+			// parent types that would be accepted; a TEXT_NOT_FOUND or
+			// TEXT_AMBIGUOUS offers the number of times the search text was found.
 			//
 			// The response CODE gates each, not the cause alone: a mismatch inside a
 			// response whose classes disagree is not a conflict claim to enrich, and
@@ -144,6 +145,10 @@ More examples:
 			case output.ErrHierarchy:
 				if hierarchy, ok := hierarchyError(queryJSON, err); ok {
 					return hierarchy
+				}
+			case output.ErrTextNotFound, output.ErrTextAmbiguous:
+				if textMatch, ok := textMatchError(queryJSON, err); ok {
+					return textMatch
 				}
 			}
 			return cmdError(queryJSON, code, "%s", err)
@@ -222,6 +227,21 @@ func readFromStdin() (string, error) {
 	return strings.TrimSpace(string(data)), nil
 }
 
+// newQueryContext builds the context one CLI GraphQL invocation runs under. It
+// carries a graph.RequestCache, the same per-operation memo
+// requestCacheAroundOperations attaches to a served operation in serve.go.
+//
+// One invocation issues one operation, which is not the same as one reader
+// lookup: a single document can select a relationship field across many parents,
+// and each of those evaluates the same mention lookup or the same search term
+// again. The search case is the expensive one — a relationship-field search reads
+// the UNCAPPED answer (see NibReader.SearchAll) — so an N-parent document without
+// this costs N full index queries. The cache dies with the process, so the
+// staleness window is one operation, matching the server exactly.
+func newQueryContext() context.Context {
+	return graph.WithRequestCache(graphql.StartOperationTrace(context.Background()), graph.NewRequestCache())
+}
+
 // executeQuery runs a GraphQL query against the nibs core.
 // On success, it returns just the data portion of the response.
 // On error, it returns an error so the CLI can handle it appropriately.
@@ -232,7 +252,7 @@ func executeQuery(app *App, query string, variables map[string]any, operationNam
 
 	exec := executor.New(es)
 
-	ctx := graphql.StartOperationTrace(context.Background())
+	ctx := newQueryContext()
 	params := &graphql.RawParams{
 		Query:         query,
 		Variables:     variables,

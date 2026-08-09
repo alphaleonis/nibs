@@ -853,7 +853,7 @@ describe("TreeTableRow context-based state", () => {
   it("applies .active class when nib is in multi-select selectedIds via context", () => {
     const selection = new SelectionState();
     selection.select("nibs-abc1");
-    selection.toggleSelect("nibs-other");
+    selection.toggleSelect("nibs-other", "follow");
 
     const { container } = renderRowWithContext(
       { nib: makeTreeTableNib({ id: "nibs-abc1" }) },
@@ -862,6 +862,186 @@ describe("TreeTableRow context-based state", () => {
 
     const row = container.querySelector("tr") as HTMLElement;
     expect(row.classList.contains("active")).toBe(true);
+  });
+
+  it("marks the open row with the accent under the double-click preference", () => {
+    const selection = new SelectionState();
+    selection.select("nibs-abc1");
+
+    const { container } = renderRowWithContext(
+      { nib: makeTreeTableNib({ id: "nibs-abc1" }), openDetailOn: "double" },
+      { selection },
+    );
+
+    const row = container.querySelector("tr") as HTMLElement;
+    expect(row.classList.contains("opened")).toBe(true);
+    expect(row).toHaveAttribute("aria-current", "true");
+  });
+
+  it("single mode omits the accent but still reports the panel row to assistive tech", () => {
+    // Under "single" the panel follows the selection, so on an ordinary click the
+    // open row is also the selected row and the accent would only repeat what the
+    // fill already says. The visual channel is gated; `aria-current` is not,
+    // because it costs nothing on screen and still answers "which row is open?".
+    const selection = new SelectionState();
+    selection.select("nibs-abc1");
+
+    const { container } = renderRowWithContext(
+      { nib: makeTreeTableNib({ id: "nibs-abc1" }), openDetailOn: "single" },
+      { selection },
+    );
+
+    const row = container.querySelector("tr") as HTMLElement;
+    expect(row.classList.contains("opened")).toBe(false);
+    expect(row.classList.contains("active")).toBe(true);
+    expect(row).toHaveAttribute("aria-selected", "true");
+    expect(row).toHaveAttribute("aria-current", "true");
+  });
+
+  it("defaults to the single-mode treatment when no preference is passed", () => {
+    const selection = new SelectionState();
+    selection.select("nibs-abc1");
+
+    const { container } = renderRowWithContext(
+      { nib: makeTreeTableNib({ id: "nibs-abc1" }) },
+      { selection },
+    );
+
+    const row = container.querySelector("tr") as HTMLElement;
+    expect(row.classList.contains("opened")).toBe(false);
+  });
+
+  it("a merely-selected row keeps .active without .opened", () => {
+    // The select-without-open path (the double-click preference): the selection
+    // moves to this row while the panel keeps showing another nib.
+    const selection = new SelectionState();
+    selection.select("nibs-other");
+    selection.selectOnly("nibs-abc1");
+
+    const { container } = renderRowWithContext(
+      { nib: makeTreeTableNib({ id: "nibs-abc1" }) },
+      { selection },
+    );
+
+    const row = container.querySelector("tr") as HTMLElement;
+    expect(row.classList.contains("active")).toBe(true);
+    expect(row.classList.contains("opened")).toBe(false);
+    expect(row).toHaveAttribute("aria-selected", "true");
+    expect(row).not.toHaveAttribute("aria-current");
+  });
+
+  it("the open row loses .active when the selection moves off it", () => {
+    // `selectOnly` rewrites `selectedIds` and leaves `selectedNibId` alone, so the
+    // panel's row is no longer a delete target and must stop carrying the fill —
+    // the fill is the action set, and this row is not in it.
+    const selection = new SelectionState();
+    selection.select("nibs-abc1");
+    selection.selectOnly("nibs-other");
+
+    const { container } = renderRowWithContext(
+      { nib: makeTreeTableNib({ id: "nibs-abc1" }), openDetailOn: "double" },
+      { selection },
+    );
+
+    const row = container.querySelector("tr") as HTMLElement;
+    expect(selection.selectedIds.has("nibs-abc1")).toBe(false);
+    expect(row.classList.contains("opened")).toBe(true);
+    expect(row.classList.contains("active")).toBe(false);
+    expect(row).toHaveAttribute("aria-selected", "false");
+  });
+
+  it("deselectAll() leaves the open row .opened without .active in double mode", () => {
+    // The post-mutation divergence: `clearAfterMutation` calls deselectAll()
+    // unconditionally and closes the panel only when the mutation hit the panel's
+    // nib, so deleting some OTHER row empties the action set while this row stays
+    // open. It keeps the accent and drops the fill — nothing here would be deleted.
+    const selection = new SelectionState();
+    selection.select("nibs-abc1");
+    selection.deselectAll();
+
+    const { container } = renderRowWithContext(
+      { nib: makeTreeTableNib({ id: "nibs-abc1" }), openDetailOn: "double" },
+      { selection },
+    );
+
+    const row = container.querySelector("tr") as HTMLElement;
+    expect(row.classList.contains("opened")).toBe(true);
+    expect(row.classList.contains("active")).toBe(false);
+    expect(row).toHaveAttribute("aria-selected", "false");
+    expect(row).toHaveAttribute("aria-current", "true");
+  });
+
+  it("single mode leaves a post-mutation open row visually unmarked — the accepted gap", () => {
+    // Same divergence as above, under the default preference. Gating the accent on
+    // "double" means this row carries no visual marker at all: no fill (it is not
+    // in the action set) and no accent (the gate). Accepted because the detail
+    // panel itself names the nib it is showing. `aria-current` still reports it.
+    // Pinned so the trade-off is a decision on record, not a surprise.
+    const selection = new SelectionState();
+    selection.select("nibs-abc1");
+    selection.deselectAll();
+
+    const { container } = renderRowWithContext(
+      { nib: makeTreeTableNib({ id: "nibs-abc1" }), openDetailOn: "single" },
+      { selection },
+    );
+
+    const row = container.querySelector("tr") as HTMLElement;
+    expect(row.classList.contains("opened")).toBe(false);
+    expect(row.classList.contains("active")).toBe(false);
+    expect(row).toHaveAttribute("aria-current", "true");
+  });
+
+  it("retainOnly() pruning a row out of the action set leaves it .opened without .active", () => {
+    // The other route to open-but-unselected: a filter change prunes `selectedIds`
+    // down to the still-matching rows and leaves `selectedNibId` untouched.
+    const selection = new SelectionState();
+    selection.select("nibs-abc1");
+    selection.retainOnly(new Set(["nibs-other"]));
+
+    const { container } = renderRowWithContext(
+      { nib: makeTreeTableNib({ id: "nibs-abc1" }), openDetailOn: "double" },
+      { selection },
+    );
+
+    const row = container.querySelector("tr") as HTMLElement;
+    expect(row.classList.contains("opened")).toBe(true);
+    expect(row.classList.contains("active")).toBe(false);
+  });
+
+  it("a multi-select row is .active with no .opened anywhere", () => {
+    // Three rows selected collapses `selectedNibId` to null, so no row is the
+    // panel's — every member carries the fill and none carries the accent.
+    const selection = new SelectionState();
+    selection.select("nibs-abc1");
+    selection.toggleSelect("nibs-b", "follow");
+    selection.toggleSelect("nibs-c", "follow");
+
+    const { container } = renderRowWithContext(
+      { nib: makeTreeTableNib({ id: "nibs-abc1" }) },
+      { selection },
+    );
+
+    const row = container.querySelector("tr") as HTMLElement;
+    expect(selection.selectedNibId).toBeNull();
+    expect(row.classList.contains("active")).toBe(true);
+    expect(row.classList.contains("opened")).toBe(false);
+    expect(row).toHaveAttribute("aria-selected", "true");
+  });
+
+  it("exposes aria-selected=\"false\" on a row outside the action set", () => {
+    // Emitted on every row rather than omitted, so an unselected row reads as
+    // selectable-but-not-selected instead of not selectable at all.
+    const selection = new SelectionState();
+    selection.select("nibs-other");
+
+    const { container } = renderRowWithContext(
+      { nib: makeTreeTableNib({ id: "nibs-abc1" }) },
+      { selection },
+    );
+
+    const row = container.querySelector("tr") as HTMLElement;
+    expect(row).toHaveAttribute("aria-selected", "false");
   });
 
   it("applies .focused class when nib is focused via context", () => {

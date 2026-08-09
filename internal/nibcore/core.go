@@ -520,7 +520,32 @@ func (c *Core) ensureSearchIndexLocked() error {
 // ID), followed by full-text hits in relevance order. A nib matching both
 // appears once, in the ID-match position. Each leg is independently capped
 // at DefaultSearchLimit. The search index is lazily initialized on first use.
+//
+// This is the TOP-LEVEL answer to a term — "the best hits for q" — where
+// truncation IS the answer and the cap is what keeps a one-word query over a
+// large store from materializing it. A caller that intersects the answer with a
+// working set it already bounded wants SearchAll instead.
 func (c *Core) Search(query string) ([]*nib.Nib, error) {
+	return c.search(query, DefaultSearchLimit)
+}
+
+// SearchAll returns every nib matching the query, in the same order Search
+// uses, with neither leg capped.
+//
+// It exists because DefaultSearchLimit bounds the wrong population for an
+// INTERSECTION. "The children of X matching q" is already bounded by the
+// relation; feeding that intersection from the store's global top-N answers a
+// different question — "the children of X that are also among the store's top N
+// hits for q" — and drops a genuine member that ranks below the cutoff with no
+// error and no signal. The result is still bounded, by the store: a query can
+// match no more nibs than exist.
+func (c *Core) SearchAll(query string) ([]*nib.Nib, error) {
+	return c.search(query, Unlimited)
+}
+
+// search is the shared body of Search and SearchAll. limit caps each leg
+// independently; a limit <= 0 (Unlimited) means no cap on either.
+func (c *Core) search(query string, limit int) ([]*nib.Nib, error) {
 	// Ensure index is initialized (needs write lock for lazy init)
 	c.mu.Lock()
 	if err := c.ensureSearchIndexLocked(); err != nil {
@@ -532,7 +557,7 @@ func (c *Core) Search(query string) ([]*nib.Nib, error) {
 	c.mu.Unlock()
 
 	// Perform search outside the lock (Bleve is thread-safe)
-	ids, err := idx.Search(query, DefaultSearchLimit)
+	ids, err := idx.Search(query, limit)
 	if err != nil {
 		return nil, err
 	}
@@ -541,7 +566,7 @@ func (c *Core) Search(query string) ([]*nib.Nib, error) {
 	c.mu.RLock()
 	defer c.mu.RUnlock()
 
-	idMatches := c.idMatchesLocked(query)
+	idMatches := c.idMatchesLocked(query, limit)
 	seen := make(map[string]bool, len(idMatches))
 	for _, b := range idMatches {
 		seen[b.ID] = true
@@ -561,11 +586,12 @@ func (c *Core) Search(query string) ([]*nib.Nib, error) {
 }
 
 // idMatchesLocked returns nibs whose IDs match the query, sorted by ID and
-// capped at DefaultSearchLimit.
+// capped at limit (a limit <= 0, i.e. Unlimited, means uncapped, mirroring the
+// full-text leg).
 // This complements the full-text index: the Bleve `id` field is a keyword
 // (unanalyzed) field, so query-string terms never match it there.
 // Must be called with at least a read lock held.
-func (c *Core) idMatchesLocked(query string) []*nib.Nib {
+func (c *Core) idMatchesLocked(query string, limit int) []*nib.Nib {
 	m := prepareIDQuery(query, c.configPrefix())
 	var matches []*nib.Nib
 	for id, b := range c.nibs {
@@ -576,8 +602,8 @@ func (c *Core) idMatchesLocked(query string) []*nib.Nib {
 	sort.Slice(matches, func(i, j int) bool { return matches[i].ID < matches[j].ID })
 	// Cap after sorting so the kept set is deterministic, mirroring the
 	// full-text leg's limit.
-	if len(matches) > DefaultSearchLimit {
-		matches = matches[:DefaultSearchLimit]
+	if limit > 0 && len(matches) > limit {
+		matches = matches[:limit]
 	}
 	return matches
 }
@@ -779,7 +805,7 @@ func (c *Core) NormalizeID(id string) (string, bool) {
 	return id, false
 }
 
-// validateEnums checks that the nib's enum fields (type, status, priority,
+// ValidateEnums checks that the nib's enum fields (type, status, priority,
 // estimate) hold either the empty "unset -> use default" sentinel (always
 // accepted) or a value valid under the current config. This is the single
 // write-path chokepoint that gives every entry point — CLI, GraphQL, MCP (which
@@ -789,7 +815,21 @@ func (c *Core) NormalizeID(id string) (string, bool) {
 // only non-empty values are checked, so the empty sentinel that means "apply the
 // default" (EffectiveType/EffectivePriority) is never rejected. No-ops when no
 // config is set (several test setups run config-less).
-func (c *Core) validateEnums(b *nib.Nib) error {
+//
+// It reads no store state — only the nib passed in and the config's enum
+// tables, and those tables are the package-level DefaultStatuses/DefaultTypes/
+// DefaultPriorities/DefaultEstimates rather than anything held per-config. So it
+// takes no lock and is safe to call from outside the store — Create and Update
+// call it while holding c.mu, and the GraphQL updateNib pre-check calls it
+// off-lock through NibValidator to refuse a doomed update before its later steps
+// write to another nib's file.
+//
+// The immutability that matters here is the enum tables', not the config's: the
+// c.config POINTER is fixed at construction, but the struct behind it is live
+// and writable — `nibs config set-prefix` assigns cfg.Nibs.Prefix in place. A
+// future read of a per-config field from this method would therefore need its
+// own argument for going off-lock; the one below does not.
+func (c *Core) ValidateEnums(b *nib.Nib) error {
 	if c.config == nil {
 		return nil
 	}
@@ -820,7 +860,7 @@ func (c *Core) Create(b *nib.Nib) error {
 	defer func() { _ = unlock() }()
 
 	// Reject invalid enum values before touching any state.
-	if err := c.validateEnums(b); err != nil {
+	if err := c.ValidateEnums(b); err != nil {
 		return err
 	}
 
@@ -1069,7 +1109,7 @@ func (c *Core) Update(b *nib.Nib, ifMatch *string) error {
 
 	// Reject invalid enum values before the concurrency guard or any write
 	// — input validity is independent of the etag precondition.
-	if err := c.validateEnums(b); err != nil {
+	if err := c.ValidateEnums(b); err != nil {
 		return err
 	}
 

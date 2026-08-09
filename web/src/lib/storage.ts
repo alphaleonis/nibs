@@ -1,5 +1,5 @@
-import { VIEW_LEVELS, MIN_DETAIL_PANEL_WIDTH, MIN_DETAIL_PANEL_HEIGHT, DETAIL_PANEL_POSITIONS, BLOCKED_EMPHASES, THEMES, DEFAULT_THEME, FONT_SCALES } from "./types";
-import type { FilterPreferences, RowDensity, ViewLevel, Theme, DetailPanelPosition, BlockedEmphasis, FontSize, NibFilter, TableSort } from "./types";
+import { VIEW_LEVELS, MIN_DETAIL_PANEL_WIDTH, MIN_DETAIL_PANEL_HEIGHT, DETAIL_PANEL_POSITIONS, OPEN_DETAIL_GESTURES, BLOCKED_EMPHASES, THEMES, DEFAULT_THEME, FONT_SCALES } from "./types";
+import type { FilterPreferences, RowDensity, ViewLevel, Theme, DetailPanelPosition, OpenDetailGesture, BlockedEmphasis, FontSize, NibFilter, TableSort } from "./types";
 import { ALL_COLUMN_KEYS, ALWAYS_VISIBLE_KEYS, SORTABLE_COLUMN_KEYS } from "./columns";
 import type { ColumnKey } from "./columns";
 import { serializeQuery } from "./query";
@@ -205,6 +205,15 @@ function parseDetailPanelPosition(raw: unknown): DetailPanelPosition | undefined
   return undefined;
 }
 
+const VALID_OPEN_DETAIL_GESTURES = new Set<string>(OPEN_DETAIL_GESTURES);
+
+// Optional like detailPanelPosition: return undefined for missing/garbage so
+// Preferences supplies the concrete default ("single", today's behavior).
+function parseOpenDetailOn(raw: unknown): OpenDetailGesture | undefined {
+  if (typeof raw === "string" && VALID_OPEN_DETAIL_GESTURES.has(raw)) return raw as OpenDetailGesture;
+  return undefined;
+}
+
 function parseDetailPanelHeight(raw: unknown): number | undefined {
   if (typeof raw !== "number" || !isFinite(raw) || raw <= 0) return undefined;
   return Math.max(MIN_DETAIL_PANEL_HEIGHT, raw);
@@ -291,6 +300,7 @@ export function loadPreferences(): FilterPreferences {
       columnOrder: parsePerViewMap(parsed.columnOrder, parseColumnOrder),
       detailPanelWidth: parseDetailPanelWidth(parsed.detailPanelWidth),
       detailPanelPosition: parseDetailPanelPosition(parsed.detailPanelPosition),
+      openDetailOn: parseOpenDetailOn(parsed.openDetailOn),
       detailPanelHeight: parseDetailPanelHeight(parsed.detailPanelHeight),
       rowDensity: parseRowDensity(parsed.rowDensity),
       fontSize: parseFontSize(parsed.fontSize),

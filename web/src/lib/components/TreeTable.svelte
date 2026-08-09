@@ -1,7 +1,7 @@
 <script lang="ts">
   import { getContextClient } from "@urql/svelte";
-  import { DEFAULT_BLOCKED_EMPHASIS } from "../types";
-  import type { NibFilter, ViewLevel, RowDensity, BlockedEmphasis, RowSubtreeActions, TreeTableNib, TableSort, SortField } from "../types";
+  import { DEFAULT_BLOCKED_EMPHASIS, DEFAULT_OPEN_DETAIL_ON } from "../types";
+  import type { NibFilter, ViewLevel, RowDensity, BlockedEmphasis, OpenDetailGesture, RowSubtreeActions, TreeTableNib, TableSort, SortField } from "../types";
   import type { ColumnKey } from "../columns";
   import type { Preferences } from "../preferences.svelte";
   import { buildTableData } from "../tableData";
@@ -15,6 +15,7 @@
   import TreeTableRow from "./TreeTableRow.svelte";
   import TableHeader from "./TableHeader.svelte";
   import type { DropZone } from "../drag.svelte";
+  import type { PanelPolicy } from "../selection.svelte";
   import { useSelection, useDrag, useActiveView, useTreeView } from "../contexts";
   import { useColumnResize } from "../composables/useColumnResize.svelte";
   import { useColumnDrag } from "../composables/useColumnDrag.svelte";
@@ -48,6 +49,8 @@
     onaddchild?: (nibId: string, nibType: string, anchor: DOMRect) => void;
     rowDensity?: RowDensity;
     blockedEmphasis?: BlockedEmphasis;
+    /** Which row gesture opens the detail panel. Unused when `prefs` is supplied. */
+    openDetailOn?: OpenDetailGesture;
     ondrop?: (targetNibId: string, zone: DropZone, targetParentId: string | null) => void;
   }
 
@@ -69,6 +72,7 @@
     onaddchild,
     rowDensity = "compact" as RowDensity,
     blockedEmphasis = DEFAULT_BLOCKED_EMPHASIS as BlockedEmphasis,
+    openDetailOn = undefined as OpenDetailGesture | undefined,
     ondrop,
   }: Props = $props();
 
@@ -106,6 +110,9 @@
   // source of truth for the row order, the header sort indicator, AND the drag
   // gate, so they can never disagree.
   let resolvedTableSort = $derived(resolveTableSort(prefs, tableSort));
+  // Which mouse gesture opens a row in the detail panel. Resolved from prefs with
+  // a prop fallback, like the resolvers above.
+  let resolvedOpenDetailOn = $derived(prefs ? prefs.openDetailOn : (openDetailOn ?? DEFAULT_OPEN_DETAIL_ON));
   let activeSort = $derived(
     resolvedTableSort && resolvedVisibleColumns.includes(resolvedTableSort.field)
       ? resolvedTableSort
@@ -475,6 +482,7 @@
     getScrollContainer: () => scrollContainerEl ?? null,
     onDragKeyDown: treeDrag.onDragKeyDown,
     navigateToNib: (id) => openOrToggleBucket(id),
+    getOpenDetailOn: () => resolvedOpenDetailOn,
   });
 
   // --- Event delegation helpers ---
@@ -551,20 +559,34 @@
     // toggle and add-child controls return above without reading modifiers —
     // they are their own affordances, not part of the row's gesture surface.
     // Shift/Ctrl-Cmd are bulk-selection gestures — intentionally NOT routed
-    // through nav, so they record no Back/Forward history entry. Note that a
-    // collapse-to-exactly-one still opens the single-nib panel (and collapse-to-
-    // zero closes it) without a history push, so URL/history can lag selection
-    // after these gestures; that's accepted because multi-select is a bulk
-    // gesture, not detail-panel navigation.
+    // through nav, so they record no Back/Forward history entry. In "single"
+    // mode a collapse-to-exactly-one still opens the single-nib panel (and
+    // collapse-to-zero closes it) without a history push, so URL/history can lag
+    // selection after these gestures; that's accepted because multi-select is a
+    // bulk gesture, not detail-panel navigation.
+    //
+    // In "double" mode the panel is decoupled from the selection, so a bulk
+    // gesture must not touch it at all: the "detach" policy keeps
+    // `selectedNibId` where it is (a ctrl+click is a SINGLE click and must not
+    // open the panel; a sweep across unrelated rows must not tear down the nib
+    // the user is reading), and there is correspondingly nothing to sync.
     // Only a plain click is treated as navigation.
+    const panelPolicy: PanelPolicy = resolvedOpenDetailOn === "double" ? "detach" : "follow";
     if (e.shiftKey) {
-      selection.rangeSelect(nibId, visibleRowIds);
+      selection.rangeSelect(nibId, visibleRowIds, panelPolicy);
       // Multi-select desync: let the view follow the (possibly collapsed-to-one)
       // selection without a dirty-prompt — the documented guard-bypass path.
-      view.syncTo(selection.selectedNibId);
+      if (panelPolicy === "follow") view.syncTo(selection.selectedNibId);
     } else if (e.ctrlKey || e.metaKey) {
-      selection.toggleSelect(nibId);
-      view.syncTo(selection.selectedNibId);
+      selection.toggleSelect(nibId, panelPolicy);
+      if (panelPolicy === "follow") view.syncTo(selection.selectedNibId);
+    } else if (resolvedOpenDetailOn === "double") {
+      // Select-without-open: the plain single click focuses and selects the row
+      // but leaves `selectedNibId` (and therefore the panel) alone, so whatever
+      // the user is reading stays on screen. The open moves to
+      // handleDelegatedDblClick below. No view.syncTo here — syncing would
+      // retarget the panel, which is exactly what this mode exists to prevent.
+      selection.selectOnly(nibId);
     } else {
       openOrToggleBucket(nibId);
     }
@@ -723,6 +745,7 @@
           highlighted={dataSource.changed.isHighlighted(row.nib.id)}
           fading={dataSource.changed.isFading(row.nib.id)}
           {blockedEmphasis}
+          openDetailOn={resolvedOpenDetailOn}
         />
       {/each}
     </tbody>

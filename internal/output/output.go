@@ -253,6 +253,26 @@ type errorBody struct {
 	// So an absent currentEtag means "no single token reconciles this", never
 	// "this conflict is unreconcilable" — read the message before concluding a
 	// retry is impossible.
+	//
+	// A token that IS present belongs to exactly one nib, which the caller must
+	// account for when the mutation covered several. A bulk reorder submitted
+	// with per-nib ifMatch entries can refuse in two places, and both name their
+	// nib with the same "failed to reorder <id>: " prefix:
+	//
+	//   - Pre-validation checks the listed entries in turn and aborts at the
+	//     FIRST mismatch, before any write. The token reconciles that one nib;
+	//     the remaining entries were never checked and may be stale too.
+	//   - A per-nib write that loses a race after pre-validation passed. The
+	//     token reconciles that one nib; writes earlier in the batch are already
+	//     persisted.
+	//
+	// Recover the id from that prefix before reusing the token — the envelope
+	// carries no structural owner for it. A structural conflictId field was
+	// considered and declined: the id is already recoverable from a fixed prefix
+	// rather than free prose, and misapplying the token costs a failed pre-check
+	// on the retry, not a lost write — too small a payoff for a wire field that
+	// only one error code could ever populate, and for threading an owner id
+	// through nibcore's typed conflict to reach this envelope.
 	CurrentEtag string `json:"currentEtag,omitempty"`
 	// Occurrences carries the number of times the surgical replace's search text
 	// matched: 0 for TEXT_NOT_FOUND, N (>1) for TEXT_AMBIGUOUS. It is a pointer so

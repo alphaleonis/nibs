@@ -13,12 +13,12 @@ import (
 	"github.com/alphaleonis/nibs/internal/nib"
 )
 
-// writeNibFile writes a raw nib markdown file to disk for testing migration.
+// writeNibFile writes a raw nib markdown file to disk for testing migration. It
+// writes atomically because one of its callers drives a live watcher, which must
+// never observe a half-written file (see writeNibFileAtomic).
 func writeNibFile(t *testing.T, dir, filename, content string) {
 	t.Helper()
-	if err := os.WriteFile(filepath.Join(dir, filename), []byte(content), 0644); err != nil {
-		t.Fatalf("failed to write nib file %s: %v", filename, err)
-	}
+	writeNibFileAtomic(t, filepath.Join(dir, filename), content)
 }
 
 func TestCheckBrokenDocuments(t *testing.T) {

@@ -161,7 +161,10 @@ test("filter box — completion dropdown over table rows", async ({ page }) => {
 
 // Hovering a token tints it as a chip and carries no in-box control: a remove
 // button could only overlap the token's own trailing glyph, so removal is
-// click-to-select + Delete. The screenshot keeps the visual record of the tint.
+// click-to-select + Delete, advertised by the app's styled tooltip. The screenshot
+// keeps the visual record of the tint AND of the tooltip, which is the only way to
+// check it reads like its siblings in the band — jsdom has no layout, hover timing
+// or theming, and Playwright can assert the tooltip exists but not that it matches.
 test("filter box — token hover affordance", async ({ page }) => {
   await openApp(page);
   const input = page.getByTestId("filter-keyword");
@@ -169,9 +172,30 @@ test("filter box — token hover affordance", async ({ page }) => {
   await input.pressSequentially("type:bug status:todo");
   const token = page.getByTestId("filter-token").first();
   await token.hover();
-  await expect(token).toHaveAttribute("title", "Click to select · Delete to remove");
+  const tip = page.locator('[data-slot="tooltip-content"]', {
+    hasText: "Click to select · Delete to remove",
+  });
+  await expect(tip).toBeVisible();
+  await expect(token).not.toHaveAttribute("title", /./);
   await expect(token.locator("button")).toHaveCount(0);
-  await page.locator('[role="search"]').screenshot({ path: join(OUT, "filter-token-hover.png") });
+  // The tooltip is portaled to <body>, so it renders OUTSIDE the search band and an
+  // element-scoped screenshot of the band would crop it away. Clip to the union of
+  // the two boxes instead, so both land in one frame whichever side it opens on.
+  const band = await page.locator('[role="search"]').boundingBox();
+  const tipBox = await tip.boundingBox();
+  if (!band || !tipBox) throw new Error("filter band or tooltip is not laid out");
+  const x = Math.min(band.x, tipBox.x);
+  const y = Math.min(band.y, tipBox.y);
+  await page.screenshot({
+    path: join(OUT, "filter-token-hover.png"),
+    clip: {
+      x,
+      y,
+      width: Math.max(band.x + band.width, tipBox.x + tipBox.width) - x,
+      height: Math.max(band.y + band.height, tipBox.y + tipBox.height) - y,
+    },
+    animations: "disabled",
+  });
 });
 
 // Invalid-token marker must read as an attached element over the table, not as
@@ -254,11 +278,71 @@ test("detail panel — bottom dock", async ({ page }) => {
   await shot(page, "detail-panel-bottom");
 });
 
+// The two row-state channels side by side, per palette: a fill means "a bulk
+// action would consume this row" and the leading accent means "the detail panel
+// is showing it". Reaching the state needs the double-click preference — open one
+// row, then plain-click another — so the frame holds an open-but-unselected row,
+// a selected-but-not-open row, and plain rows. Whether those three read as
+// distinct is a pixel judgement no jsdom test can make.
+for (const { value } of THEMES) {
+  test(`row states — open vs selected — ${value}`, async ({ page }) => {
+    await page.addInitScript((t) => {
+      localStorage.setItem(
+        "nibs-filter-preferences",
+        JSON.stringify({ filter: {}, viewLevel: "flat", theme: t, openDetailOn: "double" }),
+      );
+    }, value);
+    await page.goto("/");
+    const rows = page.locator("tr[data-nib-id]");
+    await expect(rows.first()).toBeVisible({ timeout: 10_000 });
+
+    await rows.first().locator('[data-action="title"]').dblclick();
+    await expect(page.locator('[data-testid="active-nib-view"]')).toBeVisible({ timeout: 5_000 });
+    await rows.nth(2).locator('[data-action="title"]').click();
+    // Park the pointer off the table: hover repaints a row background and would
+    // put a fourth, misleading fill in the frame.
+    await page.mouse.move(0, 0);
+    await shot(page, `row-states-open-vs-selected-${value}`);
+    // Close-up of the rows' leading edge, where the 3px accent gutter lives. The
+    // full-viewport shot above already carries the whole-row fill; at that scale
+    // the accent is a few pixels wide and effectively unreadable.
+    const first = await rows.first().boundingBox();
+    const last = await rows.nth(4).boundingBox();
+    if (!first || !last) throw new Error("table rows are not laid out");
+    await page.screenshot({
+      path: join(OUT, `row-states-open-vs-selected-${value}-cropped.png`),
+      clip: { x: first.x, y: first.y - 4, width: 240, height: last.y + last.height - first.y + 8 },
+      animations: "disabled",
+    });
+  });
+}
+
 test("context menu", async ({ page }) => {
   await openApp(page);
   await page.locator("tr[data-nib-id]").first().click({ button: "right" });
   await expect(page.locator('[data-testid="context-menu"]')).toBeVisible({ timeout: 3_000 });
   await shot(page, "context-menu");
+});
+
+test("context menu — status submenu", async ({ page }) => {
+  // The status list reads as the transition flow (draft → todo → in-progress →
+  // completed → deferred → scrapped), not the most-active-first order the table
+  // sorts by. Only a rendered list shows that, so it gets its own capture.
+  await openApp(page);
+  await page.locator("tr[data-nib-id]").first().click({ button: "right" });
+  await expect(page.locator('[data-testid="context-menu"]')).toBeVisible({ timeout: 3_000 });
+  await page.locator('[data-testid="ctx-status-trigger"]').hover();
+  await expect(page.locator('[data-testid="ctx-status-draft"]')).toBeVisible({ timeout: 3_000 });
+  await shot(page, "context-menu-status");
+});
+
+test("status select — open, in the active nib view", async ({ page }) => {
+  await openApp(page);
+  await page.locator("tr[data-nib-id]").first().locator('[data-action="title"]').click();
+  await expect(page.locator('[data-testid="active-nib-view"]')).toBeVisible({ timeout: 5_000 });
+  await page.locator('[data-testid="anv-status"]').click();
+  await expect(page.getByRole("option", { name: "draft" })).toBeVisible({ timeout: 3_000 });
+  await shot(page, "status-select-open");
 });
 
 test("add-child type picker — anchored, over an open detail view", async ({ page }) => {

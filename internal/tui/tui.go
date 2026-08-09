@@ -9,6 +9,8 @@ import (
 	"strings"
 	"time"
 
+	tea "charm.land/bubbletea/v2"
+	"charm.land/lipgloss/v2"
 	"github.com/99designs/gqlgen/graphql"
 	"github.com/alphaleonis/nibs/internal/bodytemplate"
 	"github.com/alphaleonis/nibs/internal/config"
@@ -17,8 +19,6 @@ import (
 	"github.com/alphaleonis/nibs/internal/nibtypes"
 	"github.com/alphaleonis/nibs/internal/updatecheck"
 	"github.com/atotto/clipboard"
-	tea "github.com/charmbracelet/bubbletea"
-	"github.com/charmbracelet/lipgloss"
 )
 
 // viewState represents which view is currently active
@@ -237,7 +237,7 @@ func (a *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			a.preview.height = a.height - 2
 		}
 
-	case tea.KeyMsg:
+	case tea.KeyPressMsg:
 		// Clear status messages on any keypress
 		a.list.statusMessage = ""
 		a.list.statusKind = statusOK
@@ -883,7 +883,17 @@ func (a *App) renderTwoColumnView() string {
 }
 
 // View renders the current view
-func (a *App) View() string {
+// View renders the current screen. Terminal features that v1 set once at
+// program construction are declared here instead, so the alt screen is
+// re-asserted on every frame rather than by a NewProgram option.
+func (a *App) View() tea.View {
+	v := tea.NewView(a.render())
+	v.AltScreen = true
+	return v
+}
+
+// render produces the screen content for the active state.
+func (a *App) render() string {
 	switch a.state {
 	case viewList:
 		if a.isTwoColumnMode() {
@@ -959,7 +969,7 @@ func getEditor() string {
 // binary version, used for the best-effort update-available indicator.
 func Run(backend Backend, cfg *config.Config, version string) error {
 	app := New(backend, cfg, version)
-	p := tea.NewProgram(app, tea.WithAltScreen())
+	p := tea.NewProgram(app)
 
 	// Store reference to program for sending messages from watcher
 	app.program = p

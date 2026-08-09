@@ -485,6 +485,19 @@ func TestReorderSiblings_IfMatch_StaleEtagAtomic(t *testing.T) {
 	if !strings.Contains(err.Error(), "e") {
 		t.Errorf("error should mention stale sibling 'e'; got: %v", err)
 	}
+	// Same typed-conflict contract as reorderChildren: the pre-validation refusal
+	// is a reconcilable *nibcore.ETagMismatchError, so both the wire code and the
+	// CLI exit status can be routed structurally.
+	var mismatch *nibcore.ETagMismatchError
+	if !errors.As(err, &mismatch) {
+		t.Fatalf("got %T: %v, want a wrapped *nibcore.ETagMismatchError", err, err)
+	}
+	if mismatch.Provided != "deadbeefdeadbeef" {
+		t.Errorf("mismatch.Provided = %q, want the stale token the caller sent", mismatch.Provided)
+	}
+	if mismatch.Current == "" {
+		t.Error("mismatch.Current is empty, want the server's current etag (a token a retry can echo back)")
+	}
 
 	// Atomicity — order unchanged.
 	siblings := resolver.Orderer.GetSortedSiblings(parentID)
@@ -1038,6 +1051,19 @@ func TestReorderChildren_IfMatch_StaleEtagAtomic(t *testing.T) {
 	}
 	if !strings.Contains(err.Error(), "b") {
 		t.Errorf("error should mention stale child 'b'; got: %v", err)
+	}
+	// The refusal must be the TYPED, reconcilable conflict — that is what carries
+	// extensions.code = "ETAG_MISMATCH" on the wire (cmd/serve.go's presenter) and
+	// exit 4 (CONFLICT) on the CLI. Both key on errors.As, not on message text.
+	var mismatch *nibcore.ETagMismatchError
+	if !errors.As(err, &mismatch) {
+		t.Fatalf("got %T: %v, want a wrapped *nibcore.ETagMismatchError", err, err)
+	}
+	if mismatch.Provided != "deadbeefdeadbeef" {
+		t.Errorf("mismatch.Provided = %q, want the stale token the caller sent", mismatch.Provided)
+	}
+	if mismatch.Current == "" {
+		t.Error("mismatch.Current is empty, want the server's current etag (a token a retry can echo back)")
 	}
 	if !strings.Contains(err.Error(), "etag mismatch") {
 		t.Errorf("error should mention etag mismatch; got: %v", err)

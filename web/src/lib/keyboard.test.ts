@@ -138,7 +138,7 @@ describe("keyboard", () => {
         cleanups.push(unbind);
 
         el.dispatchEvent(
-          new KeyboardEvent("keydown", { key: "Escape", bubbles: true }),
+          new KeyboardEvent("keydown", { key: "Escape", code: "Escape", bubbles: true }),
         );
         expect(handler).toHaveBeenCalledOnce();
       } finally {

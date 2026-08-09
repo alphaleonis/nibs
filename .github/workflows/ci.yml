@@ -23,7 +23,7 @@ jobs:
         os: [ubuntu-latest, windows-latest]
     runs-on: ${{ matrix.os }}
     steps:
-      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
       # Every tool this job runs — go, node, task — is installed by mise from
       # mise.toml, so the versions are read rather than restated. The previous
       # shape hand-copied each one into a setup-go `go-version`, a setup-node
@@ -52,9 +52,28 @@ jobs:
         id: go-cache
         shell: bash
         run: |
-          echo "mod=$(go env GOMODCACHE)" >> "$GITHUB_OUTPUT"
-          echo "build=$(go env GOCACHE)" >> "$GITHUB_OUTPUT"
-      - uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
+          mod="$(go env GOMODCACHE)"
+          build="$(go env GOCACHE)"
+          echo "mod=$mod" >> "$GITHUB_OUTPUT"
+          echo "build=$build" >> "$GITHUB_OUTPUT"
+
+          # Make anything already in those directories writable, or the restore
+          # below fails with `/usr/bin/tar ... exit code 2`.
+          #
+          # mise.toml pins two tools through mise's `go:` backend (go-licenses,
+          # govulncheck), and mise installs those by running `go install` — which
+          # populates GOMODCACHE with files Go deliberately creates read-only
+          # (0444). mise-action runs BEFORE this step, so on a mise cache MISS
+          # the module cache is already non-empty and read-only by the time
+          # actions/cache untars over it.
+          #
+          # That is why the failure is intermittent: on a mise cache HIT nothing
+          # is installed, the directories are empty, and the restore succeeds.
+          # The restore failing is not fatal — it warns and continues — so the
+          # only symptom is a silently cold Go cache, which is the entire point
+          # of this step.
+          chmod -R u+w "$mod" "$build" 2>/dev/null || true
+      - uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: |
             ${{ steps.go-cache.outputs.mod }}
@@ -85,7 +104,7 @@ jobs:
   lint:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
       # As in the test job: go, node, task and golangci-lint all come from
       # mise.toml. golangci-lint matters most here — its analyzers key off the
       # Go version they run under, so a floating toolchain can move the lint
@@ -115,3 +134,17 @@ jobs:
       # has not changed, which no push-triggered run can catch — vulncheck.yml
       # runs on a schedule for those.
       - run: task vulncheck
+      # The npm half of the same gate (nibs-uilw). It rides in this job for a
+      # different reason than the line above: npm audit resolves the tree from
+      # package-lock.json and needs no node_modules and no web/dist, so nothing
+      # is being shared with it — it is here because the job already has node,
+      # and one more cheap step beats a second runner.
+      #
+      # It is not redundant with Dependabot alerts, for two reasons measured on
+      # 2026-08-08. Those alerts are computed from the *default branch* only, so
+      # they are blind to `develop`, where every change lands first: `main` had
+      # 36 alerts that day while `develop`'s lockfile audited clean. And the two
+      # sources disagree on content — npm audit reported a high-severity
+      # brace-expansion advisory (GHSA-rgw5-rvv9-x895) that the alert list did
+      # not carry at all. An alert is also a banner, not a build failure.
+      - run: task web:vulncheck

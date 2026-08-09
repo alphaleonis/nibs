@@ -882,6 +882,73 @@ func TestApplyFilterHasParentResolvesParentLink(t *testing.T) {
 	}
 }
 
+// TestParentIDFilterAndFieldResolveShortFormLinks pins that the parentId FILTER
+// and the parentId FIELD both read the resolved parent rather than the raw
+// stored string, on the shape that separates the two readings: a link stored in
+// short form that resolves to a prefixed nib.
+//
+// It uses a stub reader deliberately. Every mutation that can change the store's
+// key set runs the canonicalization sweep — Load, Core.Create, Core.Delete and
+// the watcher's batch — so a real store never holds an unresolved short-form
+// link, and a test over one would pass whichever reading the code took. What is
+// pinned here is the filter and the field agreeing WITHOUT that pass, which is
+// the property that makes them independent of it.
+//
+// The dangling half of the same rule is reachable over a real Load and lives in
+// parent_resolution_test.go.
+func TestParentIDFilterAndFieldResolveShortFormLinks(t *testing.T) {
+	par := &nib.Nib{ID: "nibs-par", Title: "Parent"}
+	full := &nib.Nib{ID: "nibs-ful", Title: "Full-form parent link", Parent: "nibs-par"}
+	// Short form resolves through the prefix, so this nib's parent IS nibs-par.
+	short := &nib.Nib{ID: "nibs-sho", Title: "Short-form parent link", Parent: "par"}
+	dangling := &nib.Nib{ID: "nibs-dng", Title: "Dangling parent link", Parent: "nibs-ghost"}
+	other := &nib.Nib{ID: "nibs-oth", Title: "Unrelated root"}
+
+	all := []*nib.Nib{par, full, short, dangling, other}
+	byID := make(map[string]*nib.Nib, len(all))
+	for _, b := range all {
+		byID[b.ID] = b
+	}
+	reader := &stubReader{nibs: byID, allNibs: all, prefix: "nibs-"}
+	blocking := &stubBlockingChecker{}
+	ctx := context.Background()
+	resolver := &Resolver{Reader: reader, Blocking: blocking}
+
+	// Both spellings of the filter argument, since a short --parent and a full one
+	// must reach the same answer.
+	for _, arg := range []string{"nibs-par", "par"} {
+		t.Run("the filter parentId="+arg+" matches both stored spellings", func(t *testing.T) {
+			got := applyFilterOK(t, ctx, all, &model.NibFilter{ParentID: strPtr(arg)}, reader, blocking)
+			assertNibIDs(t, got, []string{"nibs-ful", "nibs-sho"})
+		})
+	}
+
+	t.Run("the field reports the resolved id for both stored spellings", func(t *testing.T) {
+		for _, b := range []*nib.Nib{full, short} {
+			got, err := resolver.Nib().ParentID(ctx, b)
+			if err != nil {
+				t.Fatalf("ParentID(%s): %v", b.ID, err)
+			}
+			if got == nil || *got != "nibs-par" {
+				t.Errorf("ParentID(%s) = %v, want %q", b.ID, got, "nibs-par")
+			}
+		}
+	})
+
+	t.Run("storedParentId keeps the two spellings distinguishable", func(t *testing.T) {
+		want := map[string]string{"nibs-ful": "nibs-par", "nibs-sho": "par", "nibs-dng": "nibs-ghost"}
+		for id, wantStored := range want {
+			got, err := resolver.Nib().StoredParentID(ctx, byID[id])
+			if err != nil {
+				t.Fatalf("StoredParentID(%s): %v", id, err)
+			}
+			if got == nil || *got != wantStored {
+				t.Errorf("StoredParentID(%s) = %v, want %q", id, got, wantStored)
+			}
+		}
+	})
+}
+
 // TestApplyFilterSiblingIDResolvesParentLinks pins that siblingId decides
 // "same parent" through the resolved parent, the way nibResolver.Parent and
 // fetchSiblings do, rather than by comparing the raw stored strings. Two stored
@@ -1737,8 +1804,90 @@ func TestTopLevelSearchQueriesTheIndexOnce(t *testing.T) {
 	if reader.searchCalls != 1 {
 		t.Errorf("Core.Search called %d times, want 1", reader.searchCalls)
 	}
+	// A term that is the ONLY selector must read the capped entry point.
+	// Reaching the uncapped one here would quietly replace "the top hits for the
+	// term" — the answer this surface promises, and the bound that keeps a
+	// one-word query over a large store from materializing it — with the whole
+	// match set. The uncapped one belongs to the shapes hasBoundingFilter names;
+	// see TestTopLevelSearchWithABoundingFilterReadsTheUncappedIndex.
+	if reader.searchAllCalls != 0 {
+		t.Errorf("Core.SearchAll called %d times, want 0 — an unbounded top-level search answers with the capped search", reader.searchAllCalls)
+	}
 	if filter.Search == nil || *filter.Search != "anything" {
 		t.Errorf("caller's filter.Search = %v, want it left carrying the term", filter.Search)
+	}
+}
+
+// boundingFilterFieldsUnderTest resolves the ENUMERATED classification into the
+// drivable fields the entry-point walk needs, so boundingFilterFields stays the
+// one authority on what is bounding. Deriving the walk from the reflective
+// id-naming rule instead would hard-require every *Id field to be bounding, and
+// a maintainer who classified an id-named field as non-bounding — a choice
+// TestEveryNibFilterFieldIsClassifiedAsBoundingOrNot invites — would pass the
+// classification tests and then be failed here by a test that never mentions
+// them.
+//
+// A bounding field these tests cannot drive fails rather than being skipped, so
+// the walk cannot quietly shrink.
+func boundingFilterFieldsUnderTest(t *testing.T) []idFilterField {
+	t.Helper()
+
+	drivable := make(map[string]idFilterField)
+	for _, field := range idValuedFilterFields(t) {
+		drivable[field.name] = field
+	}
+
+	fields := make([]idFilterField, 0, len(boundingFilterFields))
+	for _, name := range boundingFilterFields {
+		field, ok := drivable[name]
+		if !ok {
+			t.Fatalf("%s is classified bounding but these tests can only drive a *string id-named field — extend them rather than letting the walk drop it", name)
+		}
+		fields = append(fields, field)
+	}
+	return fields
+}
+
+// TestTopLevelSearchWithABoundingFilterReadsTheUncappedIndex pins the entry
+// point directly, at the seam TestTopLevelSearchQueriesTheIndexOnce guards from
+// the other side.
+//
+// The behavioral consequence is asserted over a real store in
+// TestTopLevelSearchWithABoundingFilterIsNotBoundedByTheStoreWideLimit; this
+// says the same thing about the CHOICE, so a regression is legible as "the wrong
+// search entry point" rather than only as a missing nib in a 1200-nib fixture.
+// It also runs the whole bounding set, which the store-backed test does not.
+func TestTopLevelSearchWithABoundingFilterReadsTheUncappedIndex(t *testing.T) {
+	for _, field := range boundingFilterFieldsUnderTest(t) {
+		t.Run(field.name, func(t *testing.T) {
+			reader := hierarchyFixture()
+			reader.searchOut = map[string][]*nib.Nib{"anything": reader.allNibs}
+
+			resolver := &Resolver{
+				Reader:    reader,
+				Writer:    &stubWriter{store: reader},
+				Validator: &stubValidator{},
+				Blocking:  &stubBlockingChecker{},
+				Orderer:   NewOrderer(reader, &stubWriter{store: reader}),
+			}
+
+			// Every branch resolves its target, so it has to name a nib the
+			// fixture holds; what the branch then matches is irrelevant here.
+			filter := field.filterWith("nibs-m1")
+			filter.Search = strPtr("anything")
+			if _, err := resolver.Query().Nibs(context.Background(), filter, nil); err != nil {
+				t.Fatalf("Nibs: %v", err)
+			}
+
+			if reader.searchAllCalls != 1 {
+				t.Errorf("Core.SearchAll called %d times, want 1 — %s bounds the working set, so the term must be read uncapped",
+					reader.searchAllCalls, field.name)
+			}
+			if reader.searchCalls != 0 {
+				t.Errorf("Core.Search called %d times, want 0 — the store-wide cap truncates the wrong population once %s bounds the query",
+					reader.searchCalls, field.name)
+			}
+		})
 	}
 }
 

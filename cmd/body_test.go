@@ -818,6 +818,19 @@ func TestBodyReplaceExactOnce(t *testing.T) {
 	}
 }
 
+// textMatchEnvelope is the {code,message,occurrences} shape a surgical-replace
+// refusal emits, used to compare the envelopes `nibs body` and `nibs query`
+// build for one replace that did not match exactly once. occurrences is a
+// pointer so an absent field is distinguishable from a real count of 0 — the
+// distinction the whole contract rests on.
+type textMatchEnvelope struct {
+	Error struct {
+		Code        string `json:"code"`
+		Message     string `json:"message"`
+		Occurrences *int   `json:"occurrences"`
+	} `json:"error"`
+}
+
 // TestBodyReplaceNotFound verifies a zero-match surgical replace yields
 // TEXT_NOT_FOUND with occurrences 0 and exit 2, and leaves the nib untouched.
 func TestBodyReplaceNotFound(t *testing.T) {
@@ -843,12 +856,7 @@ func TestBodyReplaceNotFound(t *testing.T) {
 		t.Errorf("exit = %d, want %d (validation)", output.ExitCode(ce.Code), output.ExitValidation)
 	}
 
-	var envelope struct {
-		Error struct {
-			Code        string `json:"code"`
-			Occurrences *int   `json:"occurrences"`
-		} `json:"error"`
-	}
+	var envelope textMatchEnvelope
 	if err := json.Unmarshal([]byte(out), &envelope); err != nil {
 		t.Fatalf("error output is not valid JSON: %v\n%s", err, out)
 	}
@@ -891,12 +899,7 @@ func TestBodyReplaceAmbiguous(t *testing.T) {
 		t.Errorf("exit = %d, want %d (validation)", output.ExitCode(ce.Code), output.ExitValidation)
 	}
 
-	var envelope struct {
-		Error struct {
-			Code        string `json:"code"`
-			Occurrences *int   `json:"occurrences"`
-		} `json:"error"`
-	}
+	var envelope textMatchEnvelope
 	if err := json.Unmarshal([]byte(out), &envelope); err != nil {
 		t.Fatalf("error output is not valid JSON: %v\n%s", err, out)
 	}

@@ -34,23 +34,31 @@ type Field string
 // The closed field menu. Kept in menu order in the registry below.
 const (
 	// Scalars — read directly off the nib.
-	FieldID        Field = "id"
-	FieldSlug      Field = "slug"
-	FieldTitle     Field = "title"
-	FieldStatus    Field = "status"
-	FieldType      Field = "type"
-	FieldPriority  Field = "priority"
-	FieldEstimate  Field = "estimate"
-	FieldTags      Field = "tags"
-	FieldParent    Field = "parent"
-	FieldOrder     Field = "order"
-	FieldCreatedAt Field = "created_at"
-	FieldUpdatedAt Field = "updated_at"
-	FieldPath      Field = "path"
-	FieldBody      Field = "body"
-	FieldETag      Field = "etag"
+	FieldID       Field = "id"
+	FieldSlug     Field = "slug"
+	FieldTitle    Field = "title"
+	FieldStatus   Field = "status"
+	FieldType     Field = "type"
+	FieldPriority Field = "priority"
+	FieldEstimate Field = "estimate"
+	FieldTags     Field = "tags"
+	// The parent link exactly as stored on disk, unresolved — including one
+	// naming no nib. The inspection counterpart to FieldParent, which reports
+	// who the parent actually is; see the registry entry for FieldParent.
+	FieldStoredParent Field = "stored_parent"
+	FieldOrder        Field = "order"
+	FieldCreatedAt    Field = "created_at"
+	FieldUpdatedAt    Field = "updated_at"
+	FieldPath         Field = "path"
+	FieldBody         Field = "body"
+	FieldETag         Field = "etag"
 
 	// Computed scalars — need the Resolver; not nestable.
+	//
+	// FieldParent is computed rather than scalar because "the parent" is the
+	// RESOLVED link, which no accessor on a single nib can answer — a stored id
+	// has to be looked up in the store before it counts as a parent.
+	FieldParent   Field = "parent"
 	FieldChildren Field = "children"
 	FieldProgress Field = "progress"
 	FieldReady    Field = "ready"
@@ -126,7 +134,13 @@ var registry = []fieldDef{
 	{name: FieldPriority, kind: kindScalar, extract: func(n *nib.Nib) any { return n.EffectivePriority() }},
 	{name: FieldEstimate, kind: kindScalar, extract: func(n *nib.Nib) any { return n.Estimate }},
 	{name: FieldTags, kind: kindScalar, extract: func(n *nib.Nib) any { return normStrings(n.Tags) }},
-	{name: FieldParent, kind: kindScalar, extract: func(n *nib.Nib) any { return n.Parent }},
+	// parent is computed, not scalar: it reports the RESOLVED parent id (empty
+	// when the stored link names no nib), which needs the store. It keeps its
+	// position here — the registry is MENU order, not an ordering by kind — so
+	// existing output layouts are unchanged. stored_parent sits beside it as the
+	// raw stored link, the field that keeps a broken one diagnosable.
+	{name: FieldParent, kind: kindComputed},
+	{name: FieldStoredParent, kind: kindScalar, extract: func(n *nib.Nib) any { return n.Parent }},
 	{name: FieldOrder, kind: kindScalar, extract: func(n *nib.Nib) any { return n.Order }},
 	{name: FieldCreatedAt, kind: kindScalar, extract: func(n *nib.Nib) any { return n.CreatedAt }},
 	{name: FieldUpdatedAt, kind: kindScalar, extract: func(n *nib.Nib) any { return n.UpdatedAt }},

@@ -160,9 +160,9 @@ export type NibFilter = {
   /**
    * Tri-state: true keeps nibs whose parent link resolves to a nib, false keeps
    * exactly the ones with no parent, null does not filter. A nib whose parent link
-   * names no nib counts as parentless, matching how the parent field and siblingId
-   * treat it — parentId still reports the unresolvable stored id, so a nib
-   * selected by hasParent:false may have a non-null parentId.
+   * names no nib counts as parentless, matching how the parent field, parentId and
+   * siblingId treat it. Such a nib still reports its unresolvable link under
+   * storedParentId, which is not a parent and does not affect this filter.
    *
    * Combining false with the parentId FILTER is refused: no nib both has a given
    * parent and has none. See parentId.
@@ -194,6 +194,12 @@ export type NibFilter = {
   mentionsId?: string | null | undefined;
   /**
    * Include only nibs with this specific parent ID.
+   *
+   * Matches on the RESOLVED parent, the same reading the parentId field and
+   * hasParent give: a nib whose link is stored in short form matches the full id
+   * it resolves to, and a link naming no nib matches nothing. Filtering on the
+   * raw stored spelling is not offered — storedParentId is an inspection field,
+   * not a filter.
    *
    * An id naming no nib is refused with a NOT_FOUND error rather than matching
    * nothing, so a mistyped or stale id stays distinguishable from a genuine empty
@@ -258,13 +264,29 @@ export type NibFilter = {
    * apply: the field keeps its own order (children stay in order key order),
    * since the term selects rather than ranks.
    *
-   * The index answers with at most 1000 hits per leg (id matches and full-text
-   * hits are capped separately), and BOTH surfaces read that same store-wide
-   * answer. At the top level the cap is the answer — the top hits for the term. On
-   * a relationship field it is applied to the whole store before the intersection,
-   * so in a store large enough for a term to reach the cap, a member of the
-   * relation that matches the term but falls outside those hits is not in the
-   * result.
+   * WHICH answer the index is asked for follows from what bounds the query, not
+   * from which surface asks. A term selecting from the whole store is CAPPED: the
+   * index answers with at most 1000 hits per leg (id matches and full-text hits are
+   * capped separately) and that truncation IS the answer — the top hits for the
+   * term. A term intersected with a set something else already bounds is UNCAPPED,
+   * because a store-wide cap there would truncate the store rather than the answer,
+   * dropping a genuine member that ranks below the global cutoff.
+   *
+   * Concretely, on the top-level nibs query: the term alone is capped, and so is
+   * the term alongside any of the list and tri-state facets — status, excludeStatus,
+   * type, excludeType, priority, excludePriority, estimate, excludeEstimate, tags,
+   * excludeTags, hasParent, hasBlocking, isBlocked, hasBlockedBy. None of those
+   * names a nib, so the population they narrow is still the store. Combining the
+   * term with a field that DOES name one — parentId, ancestorId, descendantId,
+   * siblingId, blockingId, blockedById, mentionsId, mentionedById — makes the read
+   * uncapped. Every relationship field (children, blockedBy, blocking, mentions,
+   * mentionedBy) is uncapped for the same reason: the relation it names is the
+   * bound.
+   *
+   * So `nibs(filter: {search: q, parentId: X})` and
+   * `nib(id: X) { children(filter: {search: q}) }` agree on the MATCHES. They are
+   * still not the same response: the top-level query completes the tree with those
+   * matches' ancestors, X included, and a relationship field does not.
    */
   search?: string | null | undefined;
   /**

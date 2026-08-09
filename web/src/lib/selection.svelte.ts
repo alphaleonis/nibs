@@ -1,5 +1,19 @@
 import { isBucketId } from "./tree";
 
+/** Whether the detail panel follows the selection when a bulk gesture collapses
+ *  it to exactly one row. Required at every bulk call site: a caller that omits
+ *  it is a compile error rather than a silent fall back to the historical
+ *  behavior, which is wrong under the "open on double-click" preference.
+ *
+ *   - "follow": the panel opens on the collapsed id and closes when the set is
+ *     empty or multi — the historical behavior, and what `openDetailOn: "single"`
+ *     wants.
+ *   - "detach": `selectedNibId` is left untouched. Under `openDetailOn: "double"`
+ *     it means "what the panel is showing" and has exactly one writer path (the
+ *     explicit open gestures), so a bulk gesture must neither open the panel,
+ *     close it, nor retarget it at the swept rows. */
+export type PanelPolicy = "follow" | "detach";
+
 export class SelectionState {
   selectedNibId: string | null = $state(null);
   focusedNibId: string | null = $state(null);
@@ -11,14 +25,34 @@ export class SelectionState {
 
   /** Select a single nib and open it in the detail panel. A synthetic
    *  grouping-bucket id has no detail and is unresolvable for any bulk action,
-   *  so it is never admitted — this is the third and last `selectedIds` writer
-   *  that adds ids, alongside `toggleSelect` and `rangeSelect`. Reachable with a
-   *  bucket id via `view.open` on an arrow-focused bucket (keyboard `e`), a
-   *  right-click, or a stale `?nib=<bucket>` URL; the mouse row-click path is
+   *  so it is never admitted — one of the four `selectedIds` writers that add
+   *  ids, alongside `selectOnly`, `toggleSelect` and `rangeSelect`. Reachable
+   *  with a bucket id via `view.open` on an arrow-focused bucket (keyboard `e`),
+   *  a right-click, or a stale `?nib=<bucket>` URL; the mouse row-click path is
    *  already intercepted by TreeTable's `openOrToggleBucket`. */
   select(nibId: string): void {
     if (isBucketId(nibId)) return;
     this.selectedNibId = nibId;
+    this.focusedNibId = nibId;
+    this.selectedIds = new Set([nibId]);
+    this.anchorId = nibId;
+  }
+
+  /** Select a single nib WITHOUT opening it in the detail panel — the
+   *  select-without-open contract behind the "open on double-click" preference,
+   *  and the right-click-an-unselected-row path under it.
+   *
+   *  `selectedNibId` is deliberately left untouched: `panelOpen` is derived from
+   *  it, so not writing it is exactly what keeps the panel from opening — and
+   *  keeps an already-open nib on screen instead of retargeting the panel to the
+   *  clicked row. Selection and the panel are allowed to point at different rows
+   *  as a result; TreeTableRow renders those two states distinctly.
+   *
+   *  A synthetic grouping-bucket id is never admitted, same as `select` /
+   *  `toggleSelect` / `rangeSelect` — one of the four `selectedIds` add-writers
+   *  that enforce that invariant. */
+  selectOnly(nibId: string): void {
+    if (isBucketId(nibId)) return;
     this.focusedNibId = nibId;
     this.selectedIds = new Set([nibId]);
     this.anchorId = nibId;
@@ -40,11 +74,14 @@ export class SelectionState {
 
   /** Ctrl/Cmd+click, or Space on a focused row: toggle nib in/out of
    *  selectedIds, update anchor. A synthetic grouping-bucket id is unresolvable
-   *  for any bulk action, so it is never admitted — one of the three `selectedIds`
-   *  add-writers (with `select` and `rangeSelect`) that enforce the invariant.
+   *  for any bulk action, so it is never admitted — one of the four `selectedIds`
+   *  add-writers (with `select`, `selectOnly` and `rangeSelect`) that enforce the
+   *  invariant.
    *  This guard also covers the keyboard path, where a bucket row can be focused
-   *  (arrow) and Space-toggled, which the range slice does not reach. */
-  toggleSelect(nibId: string): void {
+   *  (arrow) and Space-toggled, which the range slice does not reach.
+   *  `panel` — whether the detail panel follows a collapse to exactly one row;
+   *  see PanelPolicy. */
+  toggleSelect(nibId: string, panel: PanelPolicy): void {
     if (isBucketId(nibId)) return;
     const next = new Set(this.selectedIds);
     if (next.has(nibId)) {
@@ -55,6 +92,7 @@ export class SelectionState {
     this.selectedIds = next;
     this.anchorId = nibId;
     this.focusedNibId = nibId;
+    if (panel === "detach") return;
     // If we end up with exactly one selected, also set it as the detail-panel selection
     if (next.size === 1) {
       this.selectedNibId = [...next][0];
@@ -78,13 +116,16 @@ export class SelectionState {
    * contributes no id while the surrounding nib range still resolves; a range
    * containing only bucket rows collapses to an empty selection. Both range
    * callers — the mouse path (TreeTable) and the keyboard path (useKeyboardNav
-   * shift+arrow) — funnel through here. This is one of the three `selectedIds`
+   * shift+arrow) — funnel through here. This is one of the four `selectedIds`
    * add-writers that enforce "no synthetic id in `selectedIds`"; see also
-   * `select` and `toggleSelect`. (This does NOT cover consumers that read
+   * `select`, `selectOnly` and `toggleSelect`. (This does NOT cover consumers that read
    * `focusedNibId` or a right-click target directly — e.g. the Delete dispatch;
    * that is a separate concern outside SelectionState.)
+   *
+   * `panel` — whether the detail panel follows a collapse to exactly one row;
+   * see PanelPolicy.
    */
-  rangeSelect(nibId: string, visibleIds: string[]): void {
+  rangeSelect(nibId: string, visibleIds: string[], panel: PanelPolicy): void {
     const anchor = this.anchorId ?? nibId;
     const startIndex = visibleIds.indexOf(anchor);
     const endIndex = visibleIds.indexOf(nibId);
@@ -97,6 +138,7 @@ export class SelectionState {
     this.selectedIds = new Set(rangeIds);
     this.focusedNibId = nibId;
     // Don't change anchorId — it stays at the original click point
+    if (panel === "detach") return;
     if (rangeIds.length === 1) {
       this.selectedNibId = rangeIds[0];
     } else {
@@ -147,7 +189,19 @@ export class SelectionState {
     this.anchorId = null;
   }
 
-  /** Clears everything: selectedIds, selectedNibId, focusedNibId, anchor, pendingEnsureVisibleId */
+  /** Clears everything: selectedIds, selectedNibId, focusedNibId, anchor,
+   *  pendingEnsureVisibleId.
+   *
+   *  NOT for post-mutation cleanup, despite reading like the obvious call for
+   *  it: `selectedNibId` and the action target can be different rows (the "open
+   *  on double-click" preference, and plain arrow-key nav in either mode), so
+   *  nulling `selectedNibId` here tears down a panel showing a nib the mutation
+   *  never touched — and discards its unsaved edits, since nothing on that path
+   *  runs the dirty guard. Use `clearAfterMutation` in `actionTarget.ts`, which
+   *  retires only what the mutation consumed.
+   *
+   *  The two are not interchangeable in the other direction either: this clears
+   *  `pendingEnsureVisibleId` and `clearAfterMutation` does not. */
   clearAll(): void {
     this.selectedIds = new Set();
     this.selectedNibId = null;

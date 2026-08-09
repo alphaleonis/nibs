@@ -4,11 +4,11 @@ import (
 	"fmt"
 	"io"
 
+	"charm.land/bubbles/v2/list"
+	tea "charm.land/bubbletea/v2"
+	"charm.land/lipgloss/v2"
 	"github.com/alphaleonis/nibs/internal/config"
 	"github.com/alphaleonis/nibs/internal/ui"
-	"github.com/charmbracelet/bubbles/list"
-	tea "github.com/charmbracelet/bubbletea"
-	"github.com/charmbracelet/lipgloss"
 )
 
 // statusSelectedMsg is sent when a status is selected from the picker
@@ -83,8 +83,10 @@ type statusPickerModel struct {
 }
 
 func newStatusPickerModel(nibIDs []string, nibTitle, currentStatus string, cfg *config.Config, width, height int) statusPickerModel {
-	// Get all statuses (hardcoded in config package)
-	statuses := config.DefaultStatuses
+	// All statuses (hardcoded in config package), in transition order rather
+	// than the sort order of DefaultStatuses — a picker reads as the path the
+	// work takes, not as the list's most-active-first ranking.
+	statuses := cfg.WorkflowStatuses()
 
 	delegate := statusItemDelegate{}
 
@@ -120,8 +122,7 @@ func newStatusPickerModel(nibIDs []string, nibTitle, currentStatus string, cfg *
 	l.SetShowPagination(false)
 	l.Styles.Title = listTitleStyle
 	l.Styles.TitleBar = lipgloss.NewStyle().Padding(0, 0, 0, 0)
-	l.Styles.FilterPrompt = lipgloss.NewStyle().Foreground(ui.ColorPrimary)
-	l.Styles.FilterCursor = lipgloss.NewStyle().Foreground(ui.ColorPrimary)
+	applyFilterStyles(&l.Styles)
 
 	// Select the current status
 	if selectedIndex < len(items) {
@@ -155,7 +156,7 @@ func (m statusPickerModel) Update(msg tea.Msg) (statusPickerModel, tea.Cmd) {
 		listHeight := modalHeight - 7
 		m.list.SetSize(listWidth, listHeight)
 
-	case tea.KeyMsg:
+	case tea.KeyPressMsg:
 		if m.list.FilterState() != list.Filtering {
 			switch msg.String() {
 			case "enter":

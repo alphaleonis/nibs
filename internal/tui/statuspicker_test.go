@@ -1,16 +1,41 @@
 package tui
 
 import (
+	"slices"
 	"testing"
 
-	tea "github.com/charmbracelet/bubbletea"
-	"github.com/charmbracelet/lipgloss"
+	tea "charm.land/bubbletea/v2"
+	"charm.land/lipgloss/v2"
 
 	"github.com/alphaleonis/nibs/internal/config"
 )
 
 func TestStatusPickerModel(t *testing.T) {
 	cfg := config.Default()
+
+	// The picker lists statuses in transition order (draft → todo →
+	// in-progress → closed), NOT in the most-active-first order of
+	// config.DefaultStatuses that lists and sorting use. Asserting the literal
+	// sequence rather than deferring to WorkflowStatuses is the point: reading
+	// the order from the same helper the code reads it from would pass whatever
+	// that helper returned.
+	t.Run("lists statuses in transition order", func(t *testing.T) {
+		m := newStatusPickerModel(
+			[]string{"nib-1"}, "Test Nib", "todo",
+			cfg, 80, 24,
+		)
+
+		want := []string{"draft", "todo", "in-progress", "completed", "deferred", "scrapped"}
+		var got []string
+		for _, li := range m.list.Items() {
+			if item, ok := li.(statusItem); ok {
+				got = append(got, item.name)
+			}
+		}
+		if !slices.Equal(got, want) {
+			t.Errorf("picker order = %v, want %v", got, want)
+		}
+	})
 
 	t.Run("shows all config statuses", func(t *testing.T) {
 		m := newStatusPickerModel(
@@ -23,7 +48,7 @@ func TestStatusPickerModel(t *testing.T) {
 			t.Fatalf("expected %d items, got %d", len(config.DefaultStatuses), len(items))
 		}
 
-		for i, s := range config.DefaultStatuses {
+		for i, s := range cfg.WorkflowStatuses() {
 			item, ok := items[i].(statusItem)
 			if !ok {
 				t.Fatalf("item %d is not statusItem", i)
@@ -130,7 +155,7 @@ func TestStatusPickerModel(t *testing.T) {
 		)
 
 		// Pre-selected item is "deferred"; press enter.
-		_, cmd := m.Update(tea.KeyMsg{Type: tea.KeyEnter})
+		_, cmd := m.Update(tea.KeyPressMsg{Code: tea.KeyEnter})
 		if cmd == nil {
 			t.Fatal("expected a command from enter key")
 		}

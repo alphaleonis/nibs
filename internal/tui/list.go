@@ -6,13 +6,13 @@ import (
 	"io"
 	"strings"
 
+	"charm.land/bubbles/v2/list"
+	tea "charm.land/bubbletea/v2"
+	"charm.land/lipgloss/v2"
 	"github.com/alphaleonis/nibs/internal/config"
 	"github.com/alphaleonis/nibs/internal/graph/model"
 	"github.com/alphaleonis/nibs/internal/nib"
 	"github.com/alphaleonis/nibs/internal/ui"
-	"github.com/charmbracelet/bubbles/list"
-	tea "github.com/charmbracelet/bubbletea"
-	"github.com/charmbracelet/lipgloss"
 )
 
 // nibItem wraps a Nib to implement list.Item, with tree context
@@ -162,8 +162,7 @@ func newListModel(backend Backend, cfg *config.Config) listModel {
 	l.SetShowStatusBar(false)
 	l.SetFilteringEnabled(true)
 	l.SetShowHelp(false)
-	l.Styles.FilterPrompt = lipgloss.NewStyle().Foreground(ui.ColorPrimary)
-	l.Styles.FilterCursor = lipgloss.NewStyle().Foreground(ui.ColorPrimary)
+	applyFilterStyles(&l.Styles)
 
 	m := listModel{
 		list:          l,
@@ -356,10 +355,10 @@ func (m listModel) Update(msg tea.Msg) (listModel, tea.Cmd) {
 		m.err = msg.err
 		return m, nil
 
-	case tea.KeyMsg:
+	case tea.KeyPressMsg:
 		if m.list.FilterState() != list.Filtering {
 			switch msg.String() {
-			case " ":
+			case "space":
 				// Toggle selection for multi-select, then move to next item
 				if item, ok := m.list.SelectedItem().(nibItem); ok {
 					if m.selectedNibs[item.nib.ID] {
@@ -692,9 +691,9 @@ func (m listModel) Update(msg tea.Msg) (listModel, tea.Cmd) {
 
 			// PgUp: if not on first line of page, snap to first line;
 			// otherwise fall through to default page-change behavior.
-			// Use msg.Type directly because bubbles disables PrevPage/NextPage
+			// Use msg.Code directly because bubbles disables PrevPage/NextPage
 			// bindings on single-page lists, making key.Matches() return false.
-			if msg.Type == tea.KeyPgUp && m.list.Cursor() > 0 {
+			if msg.Code == tea.KeyPgUp && m.list.Cursor() > 0 {
 				firstOnPage := m.list.Paginator.Page * m.list.Paginator.PerPage
 				m.list.Select(firstOnPage)
 				if m.list.Index() != prevIndex {
@@ -709,7 +708,7 @@ func (m listModel) Update(msg tea.Msg) (listModel, tea.Cmd) {
 
 			// PgDn: if not on last line of page, snap to last line;
 			// otherwise fall through to default page-change behavior.
-			if msg.Type == tea.KeyPgDown {
+			if msg.Code == tea.KeyPgDown {
 				itemsOnPage := m.list.Paginator.ItemsOnPage(len(m.list.VisibleItems()))
 				if m.list.Cursor() < itemsOnPage-1 {
 					lastOnPage := m.list.Paginator.Page*m.list.Paginator.PerPage + itemsOnPage - 1
@@ -900,8 +899,8 @@ func (m listModel) viewContent(innerHeight int) string {
 	border := lipgloss.NewStyle().
 		Border(lipgloss.RoundedBorder()).
 		BorderForeground(ui.ColorMuted).
-		Width(m.width - 2).
-		Height(innerHeight)
+		Width(withBorder(m.width - 2)).
+		Height(withBorder(innerHeight))
 
 	rendered := border.Render(m.list.View())
 
@@ -1176,14 +1175,14 @@ func (m listModel) dispatchBlockMove(up bool) tea.Cmd {
 		if focused.nib == nil {
 			return refuseReorderCmd(reorderReasonNothingSelected)
 		}
-		return singleReorderCmd(focused.nib, m.findSiblings(focused.nib), up)
+		return singleReorderCmd(focused.nib, m.findSiblings(focused.nib), m.tree, up)
 	}
 
 	// Case 2: exactly one effective item → single-item reorder sourced from
 	// the selection rather than the focus.
 	if len(effective) == 1 {
 		target := effective[0]
-		return singleReorderCmd(target, m.findSiblings(target), up)
+		return singleReorderCmd(target, m.findSiblings(target), m.tree, up)
 	}
 
 	// Case 3+: 2 or more effective items — block move if valid.
@@ -1240,7 +1239,12 @@ func refuseReorderCmd(reason string) tea.Cmd {
 // down among its siblings. When the move cannot happen — no target, target
 // missing from the siblings, or already at the boundary in that direction —
 // it emits the reason instead.
-func singleReorderCmd(target *nib.Nib, siblings []*nib.Nib, up bool) tea.Cmd {
+//
+// tree is the same tree siblings were drawn from. It is what lets a refusal
+// distinguish a nib promoted out of a parent cycle, which belongs to no sibling
+// list, from a nib merely absent from the one it was handed; pass nil when
+// there is no tree to consult and the refusal falls back to the latter.
+func singleReorderCmd(target *nib.Nib, siblings []*nib.Nib, tree []*ui.TreeNode, up bool) tea.Cmd {
 	if target == nil {
 		return refuseReorderCmd(reorderReasonNothingSelected)
 	}
@@ -1253,9 +1257,14 @@ func singleReorderCmd(target *nib.Nib, siblings []*nib.Nib, up bool) tea.Cmd {
 		}
 	}
 	if idx < 0 {
-		// Reachable for a nib promoted out of a parent cycle: its parent edge is
-		// severed in the tree, so it is absent from the sibling list its stored
-		// parent still names. Refusing is correct — see blockmove.go.
+		if inParentCycle(target, tree) {
+			// BuildTree severed this nib's parent edge to break a cycle, so it
+			// renders at root level while the sibling list its stored parent names
+			// no longer holds it. Name the cycle: the sibling list is a symptom.
+			return refuseReorderCmd(reorderReasonInParentCycle)
+		}
+		// Defensive: the tree and the sibling lookup disagree. Refusing is
+		// correct — see blockmove.go.
 		return refuseReorderCmd(reorderReasonNotInList)
 	}
 	if up {

@@ -190,8 +190,9 @@ func graphQLErrCode(err error) (string, bool) {
 // mixing that with a non-VALIDATION_ERROR code reports either UNCATEGORIZED or
 // the class's general member — never the classified code itself. So a non-
 // VALIDATION_ERROR code plus a non-nil Err means the response held exactly one
-// error. Both consumers today (cmd/graphql.go) gate on such a code:
-// output.ErrConflict and output.ErrHierarchy.
+// error. Every consumer today (cmd/graphql.go) gates on such a code:
+// output.ErrConflict, output.ErrHierarchy, output.ErrTextNotFound and
+// output.ErrTextAmbiguous.
 //
 // The scan runs over the FULL list for the same reason graphQLResponseCode's
 // does: dedup keys on message text, which nothing ties to the cause, so a

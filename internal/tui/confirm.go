@@ -4,9 +4,9 @@ import (
 	"context"
 	"fmt"
 
+	tea "charm.land/bubbletea/v2"
+	"charm.land/lipgloss/v2"
 	"github.com/alphaleonis/nibs/internal/ui"
-	tea "github.com/charmbracelet/bubbletea"
-	"github.com/charmbracelet/lipgloss"
 )
 
 // confirmDialog holds the state for an archive/delete confirmation modal.
@@ -33,7 +33,7 @@ type cancelConfirmMsg struct{}
 
 func (d confirmDialog) Update(msg tea.Msg) (confirmDialog, tea.Cmd) {
 	switch msg := msg.(type) {
-	case tea.KeyMsg:
+	case tea.KeyPressMsg:
 		switch msg.String() {
 		case "y", "Y":
 			return d, func() tea.Msg {
@@ -67,7 +67,7 @@ func (d confirmDialog) View(width, height int) string {
 		Border(lipgloss.RoundedBorder()).
 		BorderForeground(borderColor).
 		Padding(0, 1).
-		Width(modalWidth)
+		Width(withBorder(modalWidth))
 
 	content := fmt.Sprintf("%s\n\n%s\n\n%s", header, d.message, help)
 	modal := border.Render(content)

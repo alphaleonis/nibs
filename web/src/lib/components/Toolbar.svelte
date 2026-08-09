@@ -1,6 +1,6 @@
 <script lang="ts">
-  import { VIEW_LEVELS, DEFAULT_THEME, DEFAULT_DETAIL_PANEL_POSITION, DEFAULT_BLOCKED_EMPHASIS, DEFAULT_FONT_SIZE } from "../types";
-  import type { NibFilter, ViewLevel, RowDensity, FontSize, Theme, DetailPanelPosition, BlockedEmphasis } from "../types";
+  import { VIEW_LEVELS, DEFAULT_THEME, DEFAULT_DETAIL_PANEL_POSITION, DEFAULT_OPEN_DETAIL_ON, DEFAULT_BLOCKED_EMPHASIS, DEFAULT_FONT_SIZE } from "../types";
+  import type { NibFilter, ViewLevel, RowDensity, FontSize, Theme, DetailPanelPosition, OpenDetailGesture, BlockedEmphasis } from "../types";
   import { ALL_COLUMN_KEYS, COLUMNS } from "../columns";
   import type { ColumnKey } from "../columns";
   import type { Preferences } from "../preferences.svelte";
@@ -34,7 +34,7 @@
   import QueryHelp from "./QueryHelp.svelte";
   import SettingsSheet from "./SettingsSheet.svelte";
   import TooltipButton from "./TooltipButton.svelte";
-  import TooltipDropdownTrigger from "./TooltipDropdownTrigger.svelte";
+  import WithTooltip from "./WithTooltip.svelte";
 
   let {
     prefs = undefined as Preferences | undefined,
@@ -56,6 +56,8 @@
     onthemechange = undefined as ((theme: Theme) => void) | undefined,
     detailPanelPosition = undefined as DetailPanelPosition | undefined,
     onpositionchange = undefined as ((p: DetailPanelPosition) => void) | undefined,
+    openDetailOn = undefined as OpenDetailGesture | undefined,
+    onopendetailchange = undefined as ((g: OpenDetailGesture) => void) | undefined,
     availableTags = [],
     projectName = "",
     searchNibs = undefined,
@@ -79,6 +81,8 @@
     onthemechange?: (theme: Theme) => void;
     detailPanelPosition?: DetailPanelPosition;
     onpositionchange?: (p: DetailPanelPosition) => void;
+    openDetailOn?: OpenDetailGesture;
+    onopendetailchange?: (g: OpenDetailGesture) => void;
     availableTags?: string[];
     projectName?: string;
     searchNibs?: SearchNibsFn;
@@ -150,6 +154,16 @@
     }
   }
 
+  let resolvedOpenDetailOn = $derived(prefs ? prefs.openDetailOn : (openDetailOn ?? DEFAULT_OPEN_DETAIL_ON));
+
+  function handleSetOpenDetailOn(g: OpenDetailGesture) {
+    if (prefs) {
+      prefs.openDetailOn = g;
+    } else {
+      onopendetailchange?.(g);
+    }
+  }
+
   const VIEW_LEVEL_ICON_INFO: Record<ViewLevel, TypeIconInfo> = {
     none: { icon: ListTree, color: "var(--muted-foreground)" },
     flat: { icon: List, color: "var(--muted-foreground)" },
@@ -173,6 +187,11 @@
   const groupByLabel = "Group by";
   const columnsLabel = "Columns";
   const clearKeywordLabel = "Clear keyword";
+  // The token hint is tooltip text only, never an accessible name: the layer it
+  // lives in is aria-hidden, so AT users reach the tokens through the input instead.
+  // Held here rather than inline because the token markup is whitespace-sensitive.
+  const tokenHint = "Click to select · Delete to remove";
+
   let addMenuOpen = $state(false);
   let viewLevelOpen = $state(false);
   let columnsOpen = $state(false);
@@ -764,10 +783,10 @@
   <h1 class="min-w-0 max-w-[28ch] lg:max-w-none truncate text-xl font-semibold">Nibs{projectName ? ` - ${projectName}` : ""}</h1>
 
   <div class="flex shrink-0 items-center gap-1">
-    <!-- New button. TooltipDropdownTrigger wraps the tooltip; the DropdownMenu.Trigger
+    <!-- New button. WithTooltip wraps the tooltip; the DropdownMenu.Trigger
          it renders CHAINS the tooltip's handlers with the menu's open handlers. -->
     <DropdownMenu.Root bind:open={addMenuOpen}>
-      <TooltipDropdownTrigger tooltip={newItemLabel}>
+      <WithTooltip tooltip={newItemLabel}>
         {#snippet trigger({ props })}
           <DropdownMenu.Trigger
             {...props}
@@ -779,7 +798,7 @@
             New
           </DropdownMenu.Trigger>
         {/snippet}
-      </TooltipDropdownTrigger>
+      </WithTooltip>
 
       <DropdownMenu.Content align="start" class="w-40">
         {#each TYPES as nibType}
@@ -802,7 +821,7 @@
 
     <!-- View selector (group-by) -->
     <DropdownMenu.Root bind:open={viewLevelOpen}>
-      <TooltipDropdownTrigger tooltip={groupByLabel}>
+      <WithTooltip tooltip={groupByLabel}>
         {#snippet trigger({ props })}
           <DropdownMenu.Trigger
             {...props}
@@ -814,7 +833,7 @@
             <ChevronDown size={14} />
           </DropdownMenu.Trigger>
         {/snippet}
-      </TooltipDropdownTrigger>
+      </WithTooltip>
 
       <DropdownMenu.Content align="end" class="w-40">
         <DropdownMenu.RadioGroup value={resolvedViewLevel} onValueChange={(v) => { if (v) handleSelectViewLevel(v as ViewLevel); }}>
@@ -832,7 +851,7 @@
 
     <!-- Columns dropdown -->
     <DropdownMenu.Root bind:open={columnsOpen}>
-      <TooltipDropdownTrigger tooltip={columnsLabel}>
+      <WithTooltip tooltip={columnsLabel}>
         {#snippet trigger({ props })}
           <DropdownMenu.Trigger
             {...props}
@@ -843,7 +862,7 @@
             <Columns3 size={16} />
           </DropdownMenu.Trigger>
         {/snippet}
-      </TooltipDropdownTrigger>
+      </WithTooltip>
 
       <DropdownMenu.Content align="end" class="w-44">
         {#each columnOptions as col}
@@ -872,6 +891,8 @@
       onthemechange={handleSetTheme}
       detailPanelPosition={resolvedPosition}
       onpositionchange={handleSetPosition}
+      openDetailOn={resolvedOpenDetailOn}
+      onopendetailchange={handleSetOpenDetailOn}
     />
   </div>
 </header>
@@ -964,18 +985,47 @@
            horizontal scroll) and reserves no width, so any in-box remove control
            would have to overlap the token's own trailing glyph — `type:bug` reading
            as `type:b×g`. Removal is therefore click-to-select + Delete, advertised
-           by the chip tint, the pointer cursor and the `title`. -->
+           by the chip tint, the pointer cursor and the hover tooltip.
+
+           WithTooltip in OVERRIDE mode: the spread comes first so the span's own
+           attributes win over the ones bits-ui merges in for a <button> trigger.
+           `tabindex` stays -1 that way (the merged 0 would make this focusable
+           inside an aria-hidden layer, a tab stop that announces nothing); `type`
+           has no valid value to override it with on a <span>, so `triggerElement`
+           has WithTooltip strip it before the snippet runs.
+
+           The hint does not survive the click it invites. The tooltip's own
+           close-on-click handler is already inert — the shared Tooltip.Provider
+           sets `disableCloseOnTriggerClick` — so the span's `onclick` overriding it
+           is a no-op. It closes by a different path: clicking this `tabindex="-1"`
+           span focuses it, selectToken() then moves focus to the input, and
+           bits-ui's spread `onblur` closes the tooltip. Accepted, because the hint
+           has been read by the time the click lands, and one that outlives its own
+           trigger's focus is its own oddity.
+
+           Each token mounts its own Tooltip.Root, and this repo's Root wraps a
+           per-instance Provider that registers a window scroll listener — so those
+           listeners scale with the token count, and any non-tail edit shifts the
+           `seg.start` keys below it and rebuilds every downstream Root. Accepted: a
+           query holds a handful of tokens, and appending (the common edit) leaves
+           the keys stable. bits-ui's tooltip tether — one shared Root behind many
+           triggers — is the primitive to reach for if that stops holding.
+
+           Every tag below is jammed against its neighbor: this is a
+           `whitespace-pre` flow that must reproduce the input's character stream
+           glyph-for-glyph, and any newline between tags would become a stray text
+           node. -->
       <div class="shrink-0 whitespace-pre"
-        >{#each tokenSegs as seg (seg.start)}{#if seg.kind === "token"}<!-- svelte-ignore a11y_click_events_have_key_events --><span
+        >{#each tokenSegs as seg (seg.start)}{#if seg.kind === "token"}<WithTooltip tooltip={tokenHint} ariaHidden triggerElement="other">{#snippet trigger({ props })}<!-- svelte-ignore a11y_click_events_have_key_events --><span
+              {...props}
               role="button"
               tabindex="-1"
-              title="Click to select · Delete to remove"
               data-testid="filter-token"
               data-token-start={seg.start}
               data-token-end={seg.end}
               class="cursor-pointer rounded-sm pointer-events-auto hover:bg-accent/60"
               onclick={() => selectToken(seg.start, seg.end)}
-            >{keywordText.slice(seg.start, seg.end)}</span>{:else}<span>{keywordText.slice(seg.start, seg.end)}</span>{/if}{/each}</div>
+            >{keywordText.slice(seg.start, seg.end)}</span>{/snippet}</WithTooltip>{:else}<span>{keywordText.slice(seg.start, seg.end)}</span>{/if}{/each}</div>
     </div>
     {#if hasKeyword}
       <!-- Clear button. Plain action button: TooltipButton spreads the tooltip

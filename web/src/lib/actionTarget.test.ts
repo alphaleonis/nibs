@@ -10,7 +10,7 @@ describe("getActionTargetIds", () => {
   it("returns the multi-select set when hasMultiSelect", () => {
     const s = new SelectionState();
     s.select("a");
-    s.toggleSelect("b");
+    s.toggleSelect("b", "follow");
     expect(s.hasMultiSelect).toBe(true);
     expect(getActionTargetIds(s, null).sort()).toEqual(["a", "b"]);
   });
@@ -18,7 +18,7 @@ describe("getActionTargetIds", () => {
   it("filters bucket ids out of the multi-select set (defense-in-depth)", () => {
     const s = new SelectionState();
     s.select("a");
-    s.toggleSelect("b");
+    s.toggleSelect("b", "follow");
     // Inject a bucket id directly — SelectionState's writers normally reject it
     // (nibs-mn0t), so this forces the helper's own filter to be exercised.
     s.selectedIds = new Set(["a", "__no_milestone__", "b"]);

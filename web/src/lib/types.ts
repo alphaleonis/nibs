@@ -163,6 +163,21 @@ export const DEFAULT_DETAIL_PANEL_POSITION: DetailPanelPosition = "right";
 export const DEFAULT_DETAIL_PANEL_HEIGHT = 300;
 export const MIN_DETAIL_PANEL_HEIGHT = 150;
 
+// Which mouse gesture on a table row opens the nib in the detail panel. With
+// "double", a plain single click selects and focuses the row WITHOUT opening the
+// panel (so a stray click never replaces what the user is reading) and the open
+// moves to the double-click path. "single" is the default because it keeps the
+// open gesture and the row styling every existing profile already has.
+// Post-mutation cleanup is narrower in BOTH modes, independently of this
+// preference: a delete/archive now closes the detail panel only when it took out
+// the nib the panel was showing (see clearAfterMutation in actionTarget.ts),
+// where it used to close it unconditionally. That is reachable in "single" too,
+// because plain arrow-key nav moves focus — and with it the action target —
+// without moving the panel.
+export const OPEN_DETAIL_GESTURES = ["single", "double"] as const;
+export type OpenDetailGesture = (typeof OPEN_DETAIL_GESTURES)[number];
+export const DEFAULT_OPEN_DETAIL_ON: OpenDetailGesture = "single";
+
 export type RowDensity = "compact" | "comfortable";
 
 // Global font-size preference. Scales the whole UI type scale from one root CSS
@@ -249,6 +264,7 @@ export interface FilterPreferences {
   columnOrder?: Partial<Record<ViewLevel, ColumnKey[]>>;
   detailPanelWidth?: number;
   detailPanelPosition?: DetailPanelPosition;
+  openDetailOn?: OpenDetailGesture;
   detailPanelHeight?: number;
   rowDensity?: RowDensity;
   fontSize?: FontSize;

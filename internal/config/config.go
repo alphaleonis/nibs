@@ -20,7 +20,8 @@ const (
 // DefaultStatuses defines the hardcoded status configuration.
 // Statuses are not configurable - they are hardcoded like types.
 // Order determines sort priority: the open statuses first (in-progress, todo,
-// draft), then the closed ones (deferred, completed, scrapped) last.
+// draft), then the closed ones (deferred, completed, scrapped) last. Pickers
+// list statuses in a different order — see workflowStatusOrder.
 var DefaultStatuses = []StatusConfig{
 	{Name: "in-progress", Color: "yellow", Description: "Currently being worked on"},
 	{Name: "todo", Color: "green", Startable: true, Description: "Ready to be worked on"},
@@ -29,6 +30,28 @@ var DefaultStatuses = []StatusConfig{
 	{Name: "completed", Color: "gray", Closed: true, ReleasesDependents: true, Description: "Finished successfully"},
 	{Name: "scrapped", Color: "gray", Closed: true, ReleasesDependents: true, Description: "Will not be done"},
 }
+
+// workflowStatusOrder lists the statuses in transition order — the path work
+// actually takes, from draft through to a closed state. It exists because the
+// two ways a status list gets shown want opposite orders: a *chooser* reads
+// best as the flow (what comes next?), while a *list* reads best with the work
+// that is underway at the top. DefaultStatuses is the second one, and its order
+// is the primary sort key of nib.SortByStatusPriorityAndType, so reordering it
+// into a workflow would push in-progress work off the top of every list,
+// archive and roadmap. Two orders, one vocabulary.
+//
+// Read through WorkflowStatuses/WorkflowStatusNames by the TUI status picker
+// (internal/tui/statuspicker.go) and, via the hand-written STATUS_WORKFLOW copy
+// in web/src/lib/constants.ts, by the web's status select and row context menu.
+// The web copy is pinned to this order by TestWebConstantsMatchConfig — unlike
+// the STATUSES/DefaultStatuses pair, where only membership is pinned because
+// the orders differ on purpose.
+//
+// Membership is not restated: TestWorkflowStatusOrderCoversEveryStatus requires
+// this list and DefaultStatuses to hold the same names, and orderStatusesBy
+// appends anything missing rather than dropping it, so a status added to
+// DefaultStatuses and forgotten here is still offered by every picker.
+var workflowStatusOrder = []string{"draft", "todo", "in-progress", "completed", "deferred", "scrapped"}
 
 // DefaultTypes defines the default type configuration.
 var DefaultTypes = []TypeConfig{
@@ -419,6 +442,55 @@ func (c *Config) StatusNames() []string {
 		names[i] = s.Name
 	}
 	return names
+}
+
+// WorkflowStatuses returns every hardcoded status in transition order — what a
+// status picker offers, and in what sequence. Same members as DefaultStatuses,
+// different order; see workflowStatusOrder for why the two differ.
+func (c *Config) WorkflowStatuses() []StatusConfig {
+	return orderStatusesBy(workflowStatusOrder)
+}
+
+// WorkflowStatusNames returns the status names in transition order — the name
+// half of WorkflowStatuses, and the order the web's STATUS_WORKFLOW is pinned
+// against.
+func (c *Config) WorkflowStatusNames() []string {
+	statuses := orderStatusesBy(workflowStatusOrder)
+	names := make([]string, len(statuses))
+	for i, s := range statuses {
+		names[i] = s.Name
+	}
+	return names
+}
+
+// orderStatusesBy returns DefaultStatuses rearranged into the given name order.
+// A declared status the order forgets is appended (keeping its
+// DefaultStatuses-relative position), and a name that is not a declared status
+// is skipped, so the result always holds every status exactly once whatever the
+// order says. That is deliberate: an ordering mistake should make a picker read
+// oddly, never hide a status a nib can be set to.
+func orderStatusesBy(order []string) []StatusConfig {
+	out := make([]StatusConfig, 0, len(DefaultStatuses))
+	taken := make(map[string]bool, len(DefaultStatuses))
+	for _, name := range order {
+		if taken[name] {
+			continue
+		}
+		for _, s := range DefaultStatuses {
+			if s.Name == name {
+				out = append(out, s)
+				taken[name] = true
+				break
+			}
+		}
+	}
+	for _, s := range DefaultStatuses {
+		if !taken[s.Name] {
+			out = append(out, s)
+			taken[s.Name] = true
+		}
+	}
+	return out
 }
 
 // GetStatus returns the StatusConfig for a given status name, or nil if not found.

@@ -12,6 +12,7 @@ import (
 	"github.com/alphaleonis/nibs/internal/graph/model"
 	"github.com/alphaleonis/nibs/internal/nib"
 	"github.com/alphaleonis/nibs/internal/nibcore"
+	"github.com/alphaleonis/nibs/internal/projection"
 )
 
 // writeParentLinkNib writes a nib file by hand and returns its path. Hand-writing
@@ -22,7 +23,13 @@ import (
 func writeParentLinkNib(t *testing.T, nibsDir, id, frontMatter string) string {
 	t.Helper()
 	path := filepath.Join(nibsDir, id+"--test.md")
-	body := "---\nversion: 1\ntitle: " + id + "\nstatus: todo\ntype: task\n" + frontMatter + "---\n\nBody.\n"
+	head := "---\nversion: 1\ntitle: " + id + "\nstatus: todo\n"
+	// A fixture that declares its own type REPLACES the default rather than
+	// adding a second `type:` key, which YAML would reject as a duplicate.
+	if !strings.Contains(frontMatter, "type:") {
+		head += "type: task\n"
+	}
+	body := head + frontMatter + "---\n\nBody.\n"
 	if err := os.WriteFile(path, []byte(body), 0644); err != nil {
 		t.Fatalf("write %s: %v", path, err)
 	}
@@ -65,15 +72,18 @@ func mustGet(t *testing.T, core *nibcore.Core, id string) *nib.Nib {
 }
 
 // TestDanglingParentClassifiedAlikeAcrossSurfaces settles one definition of
-// "has a parent". Three surfaces answer that question independently — the
-// nib.parent resolver, the hasParent filter, and the siblingId filter — and a
-// nib whose parent link names no nib is the shape that pulls them apart: the
-// stored field is non-empty, but nothing can be fetched through it.
+// "has a parent". Four surfaces answer that question independently — the
+// nib.parent resolver, the parentId field, the hasParent filter, and the
+// siblingId filter — and a nib whose parent link names no nib is the shape that
+// pulls them apart: the stored field is non-empty, but nothing can be fetched
+// through it.
 //
-// The three are asserted together rather than in separate tests because what is
+// The four are asserted together rather than in separate tests because what is
 // being pinned is their AGREEMENT, not any one verdict. Whichever way the
 // project settles the rule, a change that moves one surface without the others
-// has to fail here.
+// has to fail here. storedParentId rides along as the counterweight: it is the
+// one field that must NOT follow the rule, so that adopting the resolved
+// reading everywhere else does not make a broken link unreadable.
 func TestDanglingParentClassifiedAlikeAcrossSurfaces(t *testing.T) {
 	resolver, core := mustLoadResolverFromFiles(t, map[string]string{
 		"nibs-rt1": "",                     // a genuine root
@@ -104,6 +114,42 @@ func TestDanglingParentClassifiedAlikeAcrossSurfaces(t *testing.T) {
 		}
 	})
 
+	t.Run("the parentId field reports no parent", func(t *testing.T) {
+		got, err := resolver.Nib().ParentID(ctx, dangling)
+		if err != nil {
+			t.Fatalf("ParentID: %v", err)
+		}
+		if got != nil {
+			t.Errorf("ParentID = %q, want nil — the link resolves to nothing", *got)
+		}
+		// The control still reports its parent, so "nil" is not the field going blind.
+		child, err := resolver.Nib().ParentID(ctx, mustGet(t, core, "nibs-chi"))
+		if err != nil {
+			t.Fatalf("ParentID(nibs-chi): %v", err)
+		}
+		if child == nil || *child != "nibs-par" {
+			t.Errorf("ParentID(nibs-chi) = %v, want %q", child, "nibs-par")
+		}
+	})
+
+	t.Run("storedParentId keeps the broken link inspectable", func(t *testing.T) {
+		got, err := resolver.Nib().StoredParentID(ctx, dangling)
+		if err != nil {
+			t.Fatalf("StoredParentID: %v", err)
+		}
+		if got == nil || *got != "nibs-ghost" {
+			t.Errorf("StoredParentID = %v, want %q — parentId went null, so this is the only way to see the link", got, "nibs-ghost")
+		}
+		// A nib with no link at all reports nothing, not an empty string.
+		root, err := resolver.Nib().StoredParentID(ctx, mustGet(t, core, "nibs-rt1"))
+		if err != nil {
+			t.Fatalf("StoredParentID(nibs-rt1): %v", err)
+		}
+		if root != nil {
+			t.Errorf("StoredParentID(nibs-rt1) = %q, want nil", *root)
+		}
+	})
+
 	t.Run("hasParent puts it with the parentless", func(t *testing.T) {
 		yes, no := true, false
 		got := applyFilterOK(t, ctx, all, &model.NibFilter{HasParent: &yes}, core, blocking)
@@ -120,14 +166,19 @@ func TestDanglingParentClassifiedAlikeAcrossSurfaces(t *testing.T) {
 	})
 }
 
-// TestParentIDMatchesShortFormStoredLink pins parentId against a stored parent
-// link written in short form. The filter compares the stored spelling against
-// one normalized id, which is only sound because canonicalization already
-// rewrote every resolvable link to its full form at the disk-read boundary — so
-// this is a guard on that guarantee holding from a filter's point of view, and
-// it has to run over a real Load to exercise it. Both spellings of the filter
-// argument are driven, since a short --parent and a full one must reach the
-// same answer.
+// TestParentIDMatchesShortFormStoredLink pins the parentId FILTER against a
+// stored parent link written in short form, over a real Load — so what it
+// guards is canonicalization reaching the filter: both spellings are rewritten
+// to one full id at the disk-read boundary, and the filter finds both. Both
+// spellings of the filter ARGUMENT are driven too, since a short --parent and a
+// full one must reach the same answer.
+//
+// It no longer guards the filter's own resolution, which is what it did while
+// the filter compared the raw stored string and depended on that pass for
+// soundness. The filter now resolves each candidate itself; coverage for that
+// is TestParentIDFilterAndFieldResolveShortFormLinks in filters_test.go, which
+// injects an unresolved short form through a stub reader — a state no real Load
+// produces.
 func TestParentIDMatchesShortFormStoredLink(t *testing.T) {
 	resolver, core := mustLoadResolverFromFiles(t, map[string]string{
 		"nibs-par": "",
@@ -371,4 +422,203 @@ func TestChildrenResolverSeesShortFormParentLink(t *testing.T) {
 		t.Fatalf("Children: %v", err)
 	}
 	assertNibIDs(t, children, []string{"nibs-sho", "nibs-ful"})
+}
+
+// TestTypeChangeIgnoresAStoredParentLinkThatResolvesToNothing carries the one
+// parent-ness rule onto the write path. Changing a nib's type re-validates its
+// EXISTING parent link against the new type, and a link naming no nib has no
+// parent to constrain the type — so the revalidation has nothing to check and
+// the change must go through. Reading the raw stored field instead makes the
+// mutation abort with "parent nib not found", naming a field the caller never
+// touched and dead-ending every type change on such a nib.
+//
+// The illegal-hierarchy case rides along because the fix must not be "skip the
+// revalidation": a link that DOES resolve still constrains the new type.
+func TestTypeChangeIgnoresAStoredParentLinkThatResolvesToNothing(t *testing.T) {
+	newFixture := func(t *testing.T) (*Resolver, *nibcore.Core) {
+		return mustLoadResolverFromFiles(t, map[string]string{
+			"nibs-dng": "parent: nibs-ghost\n",           // names no nib under either spelling
+			"nibs-epc": "type: epic\n",                   // a real parent, the control
+			"nibs-chi": "parent: nibs-epc\ntype: task\n", // legal today: epic parents a task
+		})
+	}
+
+	t.Run("a type change goes through when the link resolves to nothing", func(t *testing.T) {
+		resolver, core := newFixture(t)
+
+		// Premise: the link survived load verbatim, so the divergence is present.
+		if got := mustGet(t, core, "nibs-dng").Parent; got != "nibs-ghost" {
+			t.Fatalf("premise failed: stored parent = %q, want it left verbatim as %q", got, "nibs-ghost")
+		}
+
+		bug := "bug"
+		got, err := resolver.Mutation().UpdateNib(context.Background(), "nibs-dng", model.UpdateNibInput{Type: &bug})
+		if err != nil {
+			t.Fatalf("UpdateNib(type: bug) on a nib whose parent link names no nib: %v", err)
+		}
+		if got.EffectiveType() != "bug" {
+			t.Errorf("type after update = %q, want %q", got.EffectiveType(), "bug")
+		}
+		// The stored link is untouched — the mutation ignored it, it did not repair it.
+		if stored := mustGet(t, core, "nibs-dng").Parent; stored != "nibs-ghost" {
+			t.Errorf("stored parent after update = %q, want it left alone as %q", stored, "nibs-ghost")
+		}
+	})
+
+	t.Run("a type change still fails when the link resolves and the new type is illegal under it", func(t *testing.T) {
+		resolver, core := newFixture(t)
+
+		// milestone is the one type that may not have a parent at all, so an epic
+		// parent makes this change illegal however the hierarchy is spelled.
+		milestone := "milestone"
+		_, err := resolver.Mutation().UpdateNib(context.Background(), "nibs-chi", model.UpdateNibInput{Type: &milestone})
+		if err == nil {
+			t.Fatal("UpdateNib(type: milestone) under an epic parent succeeded, want it refused on the hierarchy")
+		}
+		if strings.Contains(err.Error(), "not found") {
+			t.Errorf("error = %v, want a hierarchy refusal, not a lookup failure", err)
+		}
+		if got := mustGet(t, core, "nibs-chi").EffectiveType(); got != "task" {
+			t.Errorf("type after the refused update = %q, want it unchanged at %q", got, "task")
+		}
+	})
+}
+
+// TestClearingAParentLinkThatResolvesToNothingLeavesTheNibInPlace settles the
+// second write-path half. validateAndSetParent decides "did the parent change?"
+// so it can recalculate the order key, and deciding it from the raw stored
+// string counts dangling -> cleared as a change — sending a nib that was ALREADY
+// a root by every surface using the rule to the end of the root order. It is a
+// repair that changes nothing semantically yet relocates the nib.
+//
+// Core.FixBrokenLinks repairs the identical link without touching Order, so the
+// two repair paths for one broken link are asserted against each other: `nibs
+// set <id> --clear parent` and `nibs check --fix` must leave the nib in the
+// same place.
+func TestClearingAParentLinkThatResolvesToNothingLeavesTheNibInPlace(t *testing.T) {
+	// The fixture puts nibs-dng in the MIDDLE of the root order (nibs-par sorts
+	// after it), so "went to the end" and "stayed put" are distinguishable —
+	// against a last-place nib OrderLast is indistinguishable from a no-op.
+	const danglingOrder = "c0"
+
+	t.Run("setParent(null) leaves the order key byte-identical", func(t *testing.T) {
+		resolver, core := mustLoadResolverFromFiles(t, orderingFixture())
+
+		// Premise: the nib is already a root by the rule, so the repair is
+		// semantically a no-op and any relocation is pure damage.
+		dangling := mustGet(t, core, "nibs-dng")
+		if got := resolvedParentID(dangling, core); got != "" {
+			t.Fatalf("premise failed: resolvedParentID = %q, want %q", got, "")
+		}
+		if dangling.Order != danglingOrder {
+			t.Fatalf("premise failed: order = %q, want the seeded %q", dangling.Order, danglingOrder)
+		}
+
+		if _, err := resolver.Mutation().SetParent(context.Background(), "nibs-dng", nil, nil); err != nil {
+			t.Fatalf("SetParent(nibs-dng, null): %v", err)
+		}
+		after := mustGet(t, core, "nibs-dng")
+		if after.Parent != "" {
+			t.Errorf("stored parent after the clear = %q, want it cleared", after.Parent)
+		}
+		if after.Order != danglingOrder {
+			t.Errorf("order after clearing a link that resolves to nothing = %q, want it unmoved at %q", after.Order, danglingOrder)
+		}
+	})
+
+	t.Run("setParent(null) and FixBrokenLinks agree on where the nib ends up", func(t *testing.T) {
+		viaSetParent, core := mustLoadResolverFromFiles(t, orderingFixture())
+		if _, err := viaSetParent.Mutation().SetParent(context.Background(), "nibs-dng", nil, nil); err != nil {
+			t.Fatalf("SetParent(nibs-dng, null): %v", err)
+		}
+
+		// A second, independent store from the same fixture — a shared one would
+		// let the first repair decide the second's starting state.
+		_, fixCore := mustLoadResolverFromFiles(t, orderingFixture())
+		fixed, err := fixCore.FixBrokenLinks()
+		if err != nil {
+			t.Fatalf("FixBrokenLinks: %v", err)
+		}
+		if fixed == 0 {
+			t.Fatal("premise failed: FixBrokenLinks repaired nothing, so it never touched the link under test")
+		}
+
+		want := mustGet(t, fixCore, "nibs-dng")
+		got := mustGet(t, core, "nibs-dng")
+		if got.Order != want.Order {
+			t.Errorf("order via setParent(null) = %q, via FixBrokenLinks = %q — the two repair paths disagree", got.Order, want.Order)
+		}
+	})
+
+	t.Run("clearing a link that DOES resolve still recalculates the order key", func(t *testing.T) {
+		resolver, core := mustLoadResolverFromFiles(t, orderingFixture())
+
+		// nibs-ch1 is a real child at "a0"; promoting it to a root has to place it
+		// among the roots rather than leave it colliding with nibs-rt1's key.
+		before := mustGet(t, core, "nibs-ch1")
+		if resolvedParentID(before, core) == "" {
+			t.Fatal("premise failed: nibs-ch1's parent link does not resolve, so this is not the control case")
+		}
+
+		if _, err := resolver.Mutation().SetParent(context.Background(), "nibs-ch1", nil, nil); err != nil {
+			t.Fatalf("SetParent(nibs-ch1, null): %v", err)
+		}
+		after := mustGet(t, core, "nibs-ch1")
+		if after.Order == before.Order {
+			t.Errorf("order after clearing a resolvable parent = %q, want it recalculated away from the child key", after.Order)
+		}
+		// It lands at the end of the root set, which is what RecalculateOrder does.
+		if ids := rootIDsInOrder(t, resolver); len(ids) == 0 || ids[len(ids)-1] != "nibs-ch1" {
+			t.Errorf("root order after the promotion = %v, want nibs-ch1 last", ids)
+		}
+	})
+}
+
+// TestProjectionSplitsResolvedAndStoredParent carries the one parent-ness rule
+// onto the CLI's `-f` surface, which is the other place a client reads a parent
+// id from. `-f parent` gives the resolved reading, matching the GraphQL
+// parentId field it is the CLI spelling of; `-f stored_parent` gives the raw
+// stored link, so `nibs get <id> -f stored_parent` is how a broken link is
+// diagnosed once `parent` stops showing it.
+//
+// It runs over a real Load for the same reason the rest of this file does: the
+// projection reads through the store, and the shape under test only exists in
+// one a canonicalization pass could not repair.
+func TestProjectionSplitsResolvedAndStoredParent(t *testing.T) {
+	resolver, core := mustLoadResolverFromFiles(t, map[string]string{
+		"nibs-dng": "parent: nibs-ghost\n", // names no nib under either spelling
+		"nibs-par": "",
+		"nibs-chi": "parent: nibs-par\n", // a real parent, the control
+		"nibs-rt1": "",                   // no link at all
+	})
+
+	sel, err := projection.ParseFields("parent,stored_parent")
+	if err != nil {
+		t.Fatalf("ParseFields: %v", err)
+	}
+	pr := resolver.ProjectionResolver(context.Background())
+
+	tests := []struct {
+		id               string
+		wantParent       string
+		wantStoredParent string
+	}{
+		{"nibs-dng", "", "nibs-ghost"}, // resolves to nothing; the link stays readable
+		{"nibs-chi", "nibs-par", "nibs-par"},
+		{"nibs-rt1", "", ""},
+	}
+	for _, tt := range tests {
+		t.Run(tt.id, func(t *testing.T) {
+			p, err := projection.Project(mustGet(t, core, tt.id), sel, pr)
+			if err != nil {
+				t.Fatalf("Project: %v", err)
+			}
+			if got, _ := p.Get("parent"); got != tt.wantParent {
+				t.Errorf("-f parent = %v, want %q", got, tt.wantParent)
+			}
+			if got, _ := p.Get("stored_parent"); got != tt.wantStoredParent {
+				t.Errorf("-f stored_parent = %v, want %q", got, tt.wantStoredParent)
+			}
+		})
+	}
 }

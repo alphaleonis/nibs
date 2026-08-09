@@ -22,6 +22,10 @@ type Resolver interface {
 	// NibByID returns the nib with the given ID and whether it exists. Used to
 	// expand a nested relation sub-selection.
 	NibByID(id string) (*nib.Nib, bool)
+	// ParentID returns the nib's RESOLVED parent id, or "" when it has no parent
+	// — including when its stored link names no nib. Reading the stored link
+	// instead is the `stored_parent` field, which needs no resolver.
+	ParentID(id string) string
 	// ChildCount returns the number of direct children of the nib.
 	ChildCount(id string) int
 	// Progress returns the progress rollup value for the nib. The engine treats
@@ -60,6 +64,10 @@ type Projected struct {
 // which is read directly off the nib); a computed field, a resolver-backed
 // relation, or any nested relation with a nil Resolver returns an error rather
 // than silently omitting data.
+//
+// `parent` is computed, so the card and full view tiers both need a Resolver.
+// Only `stored_parent` reads a parent link without one, and it reads the raw
+// stored id rather than the parent.
 func Project(n *nib.Nib, sel Selection, r Resolver) (*Projected, error) {
 	if n == nil {
 		return nil, fmt.Errorf("cannot project a nil nib")
@@ -97,6 +105,8 @@ func projectComputed(n *nib.Nib, f Field, r Resolver) (any, error) {
 		return nil, resolverRequired(f)
 	}
 	switch f {
+	case FieldParent:
+		return r.ParentID(n.ID), nil
 	case FieldChildren:
 		return r.ChildCount(n.ID), nil
 	case FieldProgress:

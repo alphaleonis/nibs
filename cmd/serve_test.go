@@ -14,37 +14,39 @@ import (
 	"path/filepath"
 	"regexp"
 	"strings"
+	"sync"
 	"testing"
 	"testing/fstest"
 	"time"
 
+	"github.com/99designs/gqlgen/graphql"
 	"github.com/gorilla/websocket"
 
 	"github.com/alphaleonis/nibs/internal/config"
 	"github.com/alphaleonis/nibs/internal/graph"
 	"github.com/alphaleonis/nibs/internal/nib"
 	"github.com/alphaleonis/nibs/internal/nibcore"
+	"github.com/alphaleonis/nibs/internal/search"
 )
 
-// TestRequestCacheMiddleware_FreshCachePerRequest pins Behavior 15: each
-// HTTP request receives its own graph.RequestCache in context. Two requests
-// must see two *distinct* caches. The middleware is transport-agnostic, so
-// the test wraps it around a tiny handler that captures the cache pointer
-// from r.Context() — no gqlgen plumbing involved.
-func TestRequestCacheMiddleware_FreshCachePerRequest(t *testing.T) {
+// TestRequestCacheAroundOperations_FreshCachePerOperation pins Behavior 15:
+// each executed GraphQL OPERATION receives its own graph.RequestCache in
+// context. Two operations must see two *distinct* caches. The middleware is
+// transport-agnostic, so the test calls it directly with a tiny operation
+// handler that captures the cache pointer — no gqlgen server plumbing involved.
+func TestRequestCacheAroundOperations_FreshCachePerOperation(t *testing.T) {
 	var caches []*graph.RequestCache
-	inner := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		caches = append(caches, graph.RequestCacheFrom(r.Context()))
-		w.WriteHeader(http.StatusOK)
-	})
-	h := requestCacheMiddleware(inner)
+	inner := func(ctx context.Context) graphql.ResponseHandler {
+		caches = append(caches, graph.RequestCacheFrom(ctx))
+		return graphql.OneShot(&graphql.Response{})
+	}
 
+	// Both operations start from ONE parent context, the way every operation on
+	// a single WebSocket connection derives from the upgrade request's context.
+	parent := context.Background()
 	for i := 0; i < 2; i++ {
-		req := httptest.NewRequest(http.MethodGet, "/graphql", nil)
-		rec := httptest.NewRecorder()
-		h.ServeHTTP(rec, req)
-		if rec.Code != http.StatusOK {
-			t.Fatalf("request %d: unexpected status %d", i, rec.Code)
+		if h := requestCacheAroundOperations(parent, inner); h == nil {
+			t.Fatalf("operation %d: middleware returned a nil response handler", i)
 		}
 	}
 
@@ -53,21 +55,170 @@ func TestRequestCacheMiddleware_FreshCachePerRequest(t *testing.T) {
 	}
 	for i, c := range caches {
 		if c == nil {
-			t.Errorf("request %d: cache is nil", i)
+			t.Errorf("operation %d: cache is nil", i)
 		}
 	}
 	if caches[0] == caches[1] {
-		t.Errorf("both requests got the same cache pointer; want per-request isolation")
+		t.Errorf("both operations got the same cache pointer; want per-operation isolation")
 	}
 }
 
-// The intra-request dedup pin lives in the graph package — see
-// TestRequestCacheMiddleware_DedupsWithinOneRequest in
+// The intra-operation dedup pin lives in the graph package — see
+// TestRequestCacheOperationMiddleware_DedupsWithinOneOperation in
 // internal/graph/request_cache_test.go. It has to be there because the
 // cachedMentions helper the middleware threads through is unexported;
 // proving the middleware dedups end-to-end requires direct access to it.
-// Here in cmd we only own the `graph.WithRequestCache` wiring, which
-// TestRequestCacheMiddleware_FreshCachePerRequest above already pins.
+// Here in cmd we own the `graph.WithRequestCache` wiring and its SCOPE, which
+// the test above and TestWebSocketOperationsDoNotShareARequestCache pin.
+
+// countingSearchIndex counts how many times the full-text index is consulted,
+// delegating everything to a real index so the answers stay real.
+type countingSearchIndex struct {
+	nibcore.SearchIndex
+	mu      sync.Mutex
+	queries int
+}
+
+func (c *countingSearchIndex) Search(query string, limit int) ([]string, error) {
+	c.mu.Lock()
+	c.queries++
+	c.mu.Unlock()
+	return c.SearchIndex.Search(query, limit)
+}
+
+func (c *countingSearchIndex) count() int {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return c.queries
+}
+
+// TestWebSocketOperationsDoNotShareARequestCache pins the SCOPE of the request
+// cache on the transport that can actually get it wrong.
+//
+// gqlgen's WebSocket transport captures the upgrade request's context once and
+// derives every later operation from it, so a cache attached by an http.Handler
+// wrapper is installed once and then serves every operation for the life of the
+// socket. The search memo makes that visible: a term answered on the first
+// message would still be answered from that snapshot minutes later, including
+// inside subscription payloads whose whole purpose is to report that the store
+// changed.
+//
+// Two identical operations over ONE connection must therefore cost two index
+// queries. One means the memo outlived its operation.
+func TestWebSocketOperationsDoNotShareARequestCache(t *testing.T) {
+	const term = "quarkfoo"
+
+	app := setupServeTestApp(t)
+	realIndex, err := search.NewIndex()
+	if err != nil {
+		t.Fatalf("search.NewIndex: %v", err)
+	}
+	counter := &countingSearchIndex{SearchIndex: realIndex}
+	// Set before creating any nib: Core.Create indexes synchronously through
+	// whatever index is installed, so the fixture below populates the counter's
+	// delegate without the bulk-load path having to run.
+	app.Core.SetSearchIndex(counter)
+
+	for p := range 2 {
+		pid := fmt.Sprintf("par%d", p)
+		if err := app.Core.Create(&nib.Nib{ID: pid, Slug: pid, Title: "Parent", Status: "todo"}); err != nil {
+			t.Fatalf("create parent: %v", err)
+		}
+		cid := fmt.Sprintf("kid%d", p)
+		if err := app.Core.Create(&nib.Nib{ID: cid, Slug: cid, Title: term + " child", Status: "todo", Parent: pid}); err != nil {
+			t.Fatalf("create child: %v", err)
+		}
+	}
+
+	server := httptest.NewServer(newServeMux(app, nil))
+	defer server.Close()
+
+	dialer := &websocket.Dialer{}
+	header := http.Header{}
+	header.Set("Sec-WebSocket-Protocol", "graphql-transport-ws")
+	conn, _, err := dialer.Dial("ws"+strings.TrimPrefix(server.URL, "http")+"/graphql", header)
+	if err != nil {
+		t.Fatalf("WebSocket dial failed: %v", err)
+	}
+	defer func() { _ = conn.Close() }()
+	if err := conn.SetReadDeadline(time.Now().Add(10 * time.Second)); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := conn.WriteJSON(map[string]any{"type": "connection_init"}); err != nil {
+		t.Fatalf("connection_init: %v", err)
+	}
+	var ack map[string]any
+	if err := conn.ReadJSON(&ack); err != nil {
+		t.Fatalf("read connection_ack: %v", err)
+	}
+	if ack["type"] != "connection_ack" {
+		t.Fatalf("expected connection_ack, got %v", ack["type"])
+	}
+
+	query := `query { nibs(filter: {status: ["todo"]}) { id children(filter: {search: "` + term + `"}) { id } } }`
+	const operations = 2
+	for i := range operations {
+		id := fmt.Sprintf("op%d", i)
+		if err := conn.WriteJSON(map[string]any{
+			"id":      id,
+			"type":    "subscribe",
+			"payload": map[string]any{"query": query},
+		}); err != nil {
+			t.Fatalf("operation %d: subscribe: %v", i, err)
+		}
+
+		matched := 0
+		for {
+			var msg struct {
+				ID      string          `json:"id"`
+				Type    string          `json:"type"`
+				Payload json.RawMessage `json:"payload"`
+			}
+			if err := conn.ReadJSON(&msg); err != nil {
+				t.Fatalf("operation %d: read: %v", i, err)
+			}
+			if msg.Type == "error" {
+				t.Fatalf("operation %d: server returned an error: %s", i, msg.Payload)
+			}
+			if msg.Type == "next" {
+				var body struct {
+					Errors []any `json:"errors"`
+					Data   struct {
+						Nibs []struct {
+							Children []struct {
+								ID string `json:"id"`
+							} `json:"children"`
+						} `json:"nibs"`
+					} `json:"data"`
+				}
+				if err := json.Unmarshal(msg.Payload, &body); err != nil {
+					t.Fatalf("operation %d: unmarshal payload: %v", i, err)
+				}
+				if len(body.Errors) > 0 {
+					t.Fatalf("operation %d: query returned errors: %v", i, body.Errors)
+				}
+				for _, b := range body.Data.Nibs {
+					matched += len(b.Children)
+				}
+				continue
+			}
+			if msg.Type == "complete" {
+				break
+			}
+		}
+
+		// Guard the query SHAPE: the count below means nothing unless each
+		// operation really did evaluate the term against the store.
+		if matched != 2 {
+			t.Fatalf("operation %d matched %d children, want 2 — the fixture no longer exercises a relationship search", i, matched)
+		}
+	}
+
+	if got := counter.count(); got != operations {
+		t.Errorf("%d operations over one WebSocket connection cost %d index queries, want %d — a shared cache means the memo outlived its operation", operations, got, operations)
+	}
+}
 
 const maxBodySize = 1 << 20 // 1 MB — mirrors gqlgen's default POST limit for test assertions
 

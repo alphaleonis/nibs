@@ -1,61 +1,27 @@
 #!/usr/bin/env bash
-# Run `go test` inside a memory-capped systemd --user scope so a runaway test
-# (unbounded allocation) is OOM-killed inside its own cgroup instead of taking
-# down the machine.
+# Run `go test` under the shared memory cap (scripts/run-capped.sh), with the
+# strict policy: on WSL, an unavailable cap is a refusal rather than a silently
+# uncapped run. The go lane is the one with the runaway history — twice a bare
+# `go test` has torn down the whole WSL VM (nibs-mv0i, nibs-mlss) — so it is the
+# lane that would rather fail than run unprotected.
 #
-# The cap matters on WSL and, as far as we have seen, only there. On WSL a
-# runaway test has twice escalated from "the test dies" to a teardown of every
-# terminal in the VM (2026-07-06 nibs-mv0i, 2026-07-29 nibs-mlss). On native
-# Linux, macOS and Windows the same runaway is an ordinary process-level OOM:
-# the test binary is killed, the run fails, and nothing else is disturbed. So
-# off WSL this script is a plain `go test` with no ceremony, and no attempt is
-# made to cap or guard a platform where the problem has never appeared.
+# All arguments are forwarded to `go test`, e.g.
+#   scripts/go-test-capped.sh ./...
+#   scripts/go-test-capped.sh -run TestFoo ./pkg
 #
-# On WSL, an unavailable cap is a refusal rather than a silently uncapped run.
-# Warning and running anyway put the protection at its weakest exactly when the
-# environment was unusual enough to need it, and the warning scrolls past in
-# `task test` output nobody reads (nibs-oz2e).
-#
-# Override the cap size with GO_TEST_MEM_MAX (default 4G). To run uncapped on
-# WSL anyway, accepting the risk, set GO_TEST_UNCAPPED=1. All arguments are
-# forwarded to `go test`, e.g.  scripts/go-test-capped.sh ./...  or
-# ... -run TestFoo ./pkg
+# The ceiling and the opt-out are run-capped.sh's: NIBS_CAP_MEM_MAX (default 4G)
+# and NIBS_UNCAPPED=1. Measured headroom, for whoever is tempted to raise it: the
+# -race lane peaks at ~222 MB, 5% of the default (nibs-0kip).
 set -euo pipefail
 
-LIMIT="${GO_TEST_MEM_MAX:-4G}"
-
-if systemd-run --user --scope --quiet true >/dev/null 2>&1; then
-	exec systemd-run --user --scope --quiet \
-		-p MemoryMax="$LIMIT" -p MemorySwapMax=0 -p MemoryAccounting=yes \
-		go test "$@"
+# Resolve the sibling script with bash's own parameter expansion rather than
+# dirname, for the same reason run-capped.sh reads osrelease without grep: this
+# must not break on a machine missing a coreutil. An unqualified $0 (invoked as
+# `bash go-test-capped.sh` from scripts/) leaves the name untouched, which means
+# the directory is the current one.
+here=${BASH_SOURCE[0]%/*}
+if [[ $here == "${BASH_SOURCE[0]}" ]]; then
+	here=.
 fi
 
-# A WSL kernel names itself in osrelease, e.g. 6.18.33.2-microsoft-standard-WSL2.
-# Read with bash's own builtins rather than grep: bash is already required, and
-# the check must not turn into a no-op on a machine missing a coreutil. The path
-# is overridable so the tests can exercise both branches on one machine.
-osrelease=""
-osrelease_file="${NIBS_OSRELEASE_FILE:-/proc/sys/kernel/osrelease}"
-if [[ -r $osrelease_file ]]; then
-	read -r osrelease <"$osrelease_file" || true
-fi
-
-if [[ ${osrelease,,} == *microsoft* && ${GO_TEST_UNCAPPED:-} != 1 ]]; then
-	# printf, not a `cat` heredoc, for the same reason the check above avoids
-	# grep: the refusal must not depend on a binary that might not be there.
-	printf '%s\n' \
-		"error: refusing to run 'go test' uncapped on WSL." \
-		"" \
-		"No memory cap is available: 'systemd-run --user --scope' does not work" \
-		"here, so a runaway test could not be confined to its own cgroup. On WSL" \
-		"that has twice taken down the whole VM and every terminal in it" \
-		"(nibs-mv0i, nibs-mlss) — a bounded test failure elsewhere, but not here." \
-		"" \
-		"Fix the cap (a user systemd manager, i.e. systemd=true in /etc/wsl.conf)," \
-		"or accept the risk explicitly:" \
-		"" \
-		"    GO_TEST_UNCAPPED=1 $0 $*" >&2
-	exit 1
-fi
-
-exec go test "$@"
+exec bash "$here/run-capped.sh" --refuse-on-wsl go test "$@"

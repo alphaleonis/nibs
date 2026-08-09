@@ -122,10 +122,24 @@ function readonlyInput(): HTMLInputElement {
   return input;
 }
 
+/** The physical-key name a real keyboard reports alongside `key`: letters come
+ *  through as `KeyX`, named keys carry their own name. tinykeys discards any
+ *  event whose `code` is empty, so an event without one is not merely
+ *  incomplete — it never reaches a handler, and every assertion built on it
+ *  passes or fails for the wrong reason. */
+function codeFor(key: string): string {
+  return /^[a-z]$/i.test(key) ? `Key${key.toUpperCase()}` : key;
+}
+
 /** Dispatch a real keydown from `from` (bubbles to the window listener). */
 function press(key: string, from: HTMLElement): void {
   from.dispatchEvent(
-    new KeyboardEvent("keydown", { key, bubbles: true, cancelable: true }),
+    new KeyboardEvent("keydown", {
+      key,
+      code: codeFor(key),
+      bubbles: true,
+      cancelable: true,
+    }),
   );
 }
 
@@ -213,7 +227,7 @@ describe("useKeyboardShortcuts · confirm-dialog gate (nibs-an5d)", () => {
     // same confirmOpen() check as bare 'n', but that path is separately bound.
     const button = focusEl(document.createElement("button"));
     button.dispatchEvent(
-      new KeyboardEvent("keydown", { key: "n", ctrlKey: true, bubbles: true, cancelable: true }),
+      new KeyboardEvent("keydown", { key: "n", code: "KeyN", ctrlKey: true, bubbles: true, cancelable: true }),
     );
 
     expect(h.startCreate).not.toHaveBeenCalled();
@@ -225,7 +239,7 @@ describe("useKeyboardShortcuts · confirm-dialog gate (nibs-an5d)", () => {
 
     const button = focusEl(document.createElement("button"));
     button.dispatchEvent(
-      new KeyboardEvent("keydown", { key: "n", ctrlKey: true, bubbles: true, cancelable: true }),
+      new KeyboardEvent("keydown", { key: "n", code: "KeyN", ctrlKey: true, bubbles: true, cancelable: true }),
     );
 
     expect(h.startCreate).toHaveBeenCalledTimes(1);
@@ -330,5 +344,99 @@ describe("useKeyboardShortcuts · bucket target guard (nibs-oxaq)", () => {
 
       expect(h.showConfirm).toHaveBeenCalledTimes(1);
     });
+  });
+});
+
+describe("useKeyboardShortcuts · Escape survives a focused input", () => {
+  // Escape is the one global shortcut deliberately NOT gated by
+  // `isInputFocused()`: closing an open view while the caret is still sitting in
+  // its editor is the entire point of the Escape hierarchy. tinykeys' own target
+  // filter would drop a keypress made from an input before any handler ran, so
+  // `keyboard.ts` turns that filter off — and this test is what holds that
+  // decision in place. Its negative counterpart is the readonly-input gate
+  // above, where suppression IS the wanted behavior; together they pin that the
+  // choice is made per shortcut rather than for all of them at once.
+
+  it("closes an open view when Escape comes from a focused text input", () => {
+    const h = makeHarness({ isOpen: true });
+    mount(h);
+
+    const input = document.createElement("input");
+    input.type = "text";
+    press("Escape", focusEl(input));
+
+    expect(h.requestClose).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe("useKeyboardShortcuts · post-delete cleanup", () => {
+  // The Delete handler clears the selection after the mutation resolves. What it
+  // may clear is narrower than "everything": `selectedNibId` (the detail panel)
+  // and the action target can be different rows — the "open on double-click"
+  // preference moves selection and focus without moving the panel, and arrow-key
+  // nav moves focus alone — so a nib that was not deleted must keep its panel and
+  // its `?nib=` URL.
+
+  /** Press Delete and run the confirm dialog's action, i.e. confirm the delete. */
+  async function deleteAndConfirm(h: ReturnType<typeof makeHarness>): Promise<void> {
+    press("Delete", focusEl(document.createElement("button")));
+    const opts = h.showConfirm.mock.calls[0]?.[0] as { action: () => Promise<void> } | undefined;
+    expect(opts).toBeDefined();
+    await opts!.action();
+  }
+
+  it("deleting the focused row leaves a panel showing a different nib open", async () => {
+    const h = makeHarness();
+    h.selection.select("tnib-open");     // panel on tnib-open
+    h.selection.selectOnly("tnib-abcd"); // selection/focus move; panel does not
+    mount(h);
+
+    await deleteAndConfirm(h);
+
+    expect(h.execute).toHaveBeenCalledTimes(1);
+    expect(h.selection.selectedNibId).toBe("tnib-open");
+    expect(h.selection.selectedIds.size).toBe(0);
+    expect(h.selection.focusedNibId).toBeNull();
+    expect(h.nav.replaceClosed).not.toHaveBeenCalled();
+  });
+
+  it("single mode: deleting the arrow-focused row leaves an unrelated panel open", async () => {
+    // The same divergence without the "open on double-click" preference: plain
+    // ArrowDown calls focus() alone, so the panel keeps showing the row the user
+    // opened while the delete targets the focused one.
+    const h = makeHarness();
+    h.selection.select("tnib-open"); // panel + selection on tnib-open
+    h.selection.focus("tnib-abcd");  // plain ArrowDown — no selectOnly
+    mount(h);
+
+    await deleteAndConfirm(h);
+
+    expect(h.execute).toHaveBeenCalledTimes(1);
+    expect(h.selection.selectedNibId).toBe("tnib-open");
+    expect(h.nav.replaceClosed).not.toHaveBeenCalled();
+  });
+
+  it("deleting the nib the panel is showing closes it and heals the URL", async () => {
+    const h = makeHarness();
+    h.selection.select("tnib-abcd"); // panel and target are the same row
+    mount(h);
+
+    await deleteAndConfirm(h);
+
+    expect(h.selection.selectedNibId).toBeNull();
+    expect(h.nav.replaceClosed).toHaveBeenCalledTimes(1);
+  });
+
+  it("a failed delete clears nothing", async () => {
+    const h = makeHarness();
+    h.execute.mockResolvedValue({ ok: false } as never);
+    h.selection.select("tnib-abcd");
+    mount(h);
+
+    await deleteAndConfirm(h);
+
+    expect(h.selection.selectedNibId).toBe("tnib-abcd");
+    expect(h.selection.selectedIds.has("tnib-abcd")).toBe(true);
+    expect(h.nav.replaceClosed).not.toHaveBeenCalled();
   });
 });

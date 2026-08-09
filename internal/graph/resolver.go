@@ -8,38 +8,25 @@ import (
 	"strings"
 
 	"github.com/alphaleonis/nibs/internal/nib"
+	"github.com/alphaleonis/nibs/internal/nibcore"
 )
 
 // schema.resolvers.go is generated but not disposable: gqlgen rewrites it on
 // every codegen and carries parts of the existing file into the new one. Which
 // parts is the whole subtlety. Resolver bodies survive as raw source; a
-// resolver's doc-comment PROSE survives (UpdateNib and DeleteNib carry
-// hand-written paragraphs that outlive codegen); and the import block survives
+// resolver's doc-comment prose survives (UpdateNib and DeleteNib carry
+// hand-written paragraphs that outlive codegen); the import block survives
 // (internal/nibtypes is imported solely for a hand-written resolver body and
-// appears nowhere in generated.go). Three things do not: a comment DIRECTIVE in
-// doc position, a free-standing comment, and a non-resolver declaration.
+// appears nowhere in generated.go); and a comment directive in doc position
+// survives too, since gqlgen iterates the comment list rather than flattening it
+// through go/ast's CommentGroup.Text().
 //
-// The directive is the dangerous one, because it fails silently. gqlgen rebuilds
-// each resolver's doc comment through go/ast's CommentGroup.Text(), which
-// discards directives (//nolint:…, //go:noinline — the //<tool>:<directive> form
-// of go/ast's isDirective rule) and keeps the prose around them. The comment
-// still reads the same afterwards; the effect — a lint suppression, say — is
-// gone. So a directive belongs INSIDE the function, where the body is copied
-// through verbatim. The go:codegen task greps for one before running gqlgen and
-// fails the build, but that check is best-effort: it is skipped on a machine
-// without grep and on a resolver file it cannot read.
-//
-// The other two go quietly too: a free-standing comment (attached to no
-// declaration) is dropped outright, and a non-resolver declaration is moved into
-// a commented-out block at the end with its own doc comment discarded. So a
+// Two things do not survive, both quietly: a free-standing comment (attached to
+// no declaration) is dropped outright, and a non-resolver declaration is moved
+// into a commented-out block at the end with its own doc comment discarded. So a
 // durable note about that file needs a surviving home — a resolver's doc
-// comment, which is where the pointer at the top of schema.resolvers.go sits, or
-// this file, which gqlgen writes once when it is absent and never regenerates.
-//
-// gqlgen v0.17.86 stops routing resolver doc comments through
-// CommentGroup.Text(); on that version this restriction and its guard should
-// both be deleted. go:codegen fails with that instruction once go.mod reaches
-// it.
+// comment, or this file, which gqlgen writes once when it is absent and never
+// regenerates.
 
 //go:generate go tool gqlgen generate
 
@@ -168,10 +155,20 @@ func (r *Resolver) snapshotResults(nibs []*nib.Nib) ([]*nib.Nib, error) {
 // When the parent changes, the order key is recalculated to avoid collisions
 // with existing siblings in the new parent group.
 //
+// "Changes" is decided from the RESOLVED old parent, not the stored string —
+// see resolvedParent for the rule. Both readings agree on a link that names a
+// nib; they part ways on one that does not, and there the raw reading counts
+// dangling -> cleared as a change and recalculates. That relocates a nib which
+// was ALREADY a root by every surface bound to the rule, to the end of the root
+// order, for a repair that changes nothing semantically. Core.FixBrokenLinks
+// repairs the identical link without touching Order, so the raw reading also
+// puts the two repair paths (`nibs set --clear parent` and `nibs check --fix`)
+// at odds over where the nib lands. Resolving settles both.
+//
 // Caller must pass a nib it owns (a clone), not a shared Reader.Get pointer —
 // this mutates b (b.Parent and, via RecalculateOrder, b.Order) in place.
 func (r *Resolver) validateAndSetParent(b *nib.Nib, parentID string) error {
-	oldParent := b.Parent
+	oldParent := resolvedParentID(b, r.Reader)
 
 	if parentID == "" {
 		b.Parent = ""
@@ -200,6 +197,65 @@ func (r *Resolver) validateAndSetParent(b *nib.Nib, parentID string) error {
 	b.Parent = normalizedParent
 	if normalizedParent != oldParent {
 		r.Orderer.RecalculateOrder(b)
+	}
+	return nil
+}
+
+// preValidateSubject runs the subject's write-free guards — enum validity, a
+// missing ifMatch under require_if_match, and an ifMatch that disagrees with the
+// on-disk content — so a caller that will be told the mutation failed has not
+// already had it write to some OTHER nib's file.
+//
+// updateNib has two kinds of foreign write, and this one call precedes both. The
+// blocking handlers persist each target immediately (single-side storage puts
+// the edge in the target's blocked_by). And a parent change recalculates the
+// subject's order key, which reads the sibling set — a read that repairs lazily:
+// Orderer.backfillOrderKeys PERSISTS an order key to any sibling that has none,
+// so an ordinary read path leaves a durable edit on a nib the mutation never
+// named. That second one is reachable from BOTH calls to validateAndSetParent —
+// the type-change branch as well as the parent block — which is why updateNib
+// applies all four enum fields before this check and defers the type-change
+// branch until after it. Every one of these runs before Writer.Update applies
+// these same guards to the subject.
+//
+// This mirrors validateIfMatchETags in bulkreorder.go, which pre-checks each
+// listed nib's etag against on-disk content before the batch writes anything.
+// Reader.CurrentETag and NibWriter.Update both derive their etag through
+// nibcore.Core.computeStoredETag, so the pre-check compares the same notion of
+// etag the write will and cannot pass here only to fail there for a mismatched
+// derivation.
+//
+// It narrows the failure surface rather than closing it, exactly as the reorder
+// family documents for its own pre-validation. The guards that need the write
+// lock stay inside Writer.Update — flock acquisition, a concurrent delete, and
+// the subject's own write I/O — and a concurrent write to the subject landing
+// between this check and Writer.Update still surfaces as an ETagMismatchError
+// with the targets already persisted. Closing that window would mean staging the
+// target writes until after the subject commits, which diverges from the
+// established pattern and changes what a failed target write means once the
+// subject is already durable.
+func (r *mutationResolver) preValidateSubject(b *nib.Nib, ifMatch *string) error {
+	if err := r.Validator.ValidateEnums(b); err != nil {
+		return err
+	}
+
+	if ifMatch == nil || *ifMatch == "" {
+		if r.requireIfMatch() {
+			return &nibcore.ETagRequiredError{}
+		}
+		return nil
+	}
+
+	current, err := r.Reader.CurrentETag(b.ID)
+	if err != nil {
+		// An uncertifiable on-disk file (unparseable/unreadable) surfaces the
+		// distinct, NON-RECONCILABLE OnDiskUnparseableError, which carries no etag
+		// token a reconcile-retry could echo back. Propagate it unwrapped, as
+		// Core.Update does, so the classification survives to the client.
+		return err
+	}
+	if current != *ifMatch {
+		return &nibcore.ETagMismatchError{Provided: *ifMatch, Current: current}
 	}
 	return nil
 }

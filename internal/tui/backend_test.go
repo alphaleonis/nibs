@@ -238,7 +238,7 @@ func TestNewAppWithBackend(t *testing.T) {
 	}
 
 	view := app.View()
-	if view == "" {
-		t.Error("View() returned empty string")
+	if view.Content == "" {
+		t.Error("View() returned empty content")
 	}
 }

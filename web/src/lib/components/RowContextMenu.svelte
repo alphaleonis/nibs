@@ -1,7 +1,7 @@
 <script lang="ts">
   import type { TreeTableNib } from "../types";
   import type { RelIdKey } from "$lib/query";
-  import { STATUSES, PRIORITIES } from "../constants";
+  import { STATUS_WORKFLOW, PRIORITIES } from "../constants";
   import { canHaveChildren } from "../typeHierarchy";
   import * as DropdownMenu from "$lib/components/ui/dropdown-menu/index.js";
   import { useSelection, useConfirmDialog, useActiveView, useHistoryNav } from "$lib/contexts";
@@ -13,7 +13,7 @@
     archiveBatch,
   } from "$lib/mutations/commands";
   import { copyToClipboard } from "$lib/clipboard";
-  import { getActionTargetIds } from "$lib/actionTarget";
+  import { getActionTargetIds, clearAfterMutation } from "$lib/actionTarget";
 
   interface Props {
     open: boolean;
@@ -139,8 +139,7 @@
         confirmDialog.close();
         const result = await mutations.execute(deleteBatch(ids));
         if (result.ok) {
-          selection.clearAll();
-          nav.replaceClosed(); // heal a stale ?nib=<deleted> URL
+          clearAfterMutation(selection, nav, ids);
         }
       },
     });
@@ -162,8 +161,7 @@
         confirmDialog.close();
         const result = await mutations.execute(archiveBatch(ids));
         if (result.ok) {
-          selection.clearAll();
-          nav.replaceClosed(); // heal a stale ?nib=<archived> URL
+          clearAfterMutation(selection, nav, ids);
         }
       },
     });
@@ -290,7 +288,7 @@
         <DropdownMenu.Separator />
       {/if}
 
-      {@render metadataSubmenu("Status", STATUSES, nib.status, handleStatusChange, "status")}
+      {@render metadataSubmenu("Status", STATUS_WORKFLOW, nib.status, handleStatusChange, "status")}
 
       {@render metadataSubmenu("Priority", PRIORITIES, nib.priority, handlePriorityChange, "priority")}
 

@@ -439,10 +439,20 @@
   let contextMenuSubtree: RowSubtreeActions | null = $state(null);
 
   function handleRowContextMenu(nibId: string, event: MouseEvent, nib: TreeTableNib, subtree: RowSubtreeActions) {
-    // If the right-clicked nib is not in the selection, open it first — route
-    // through the view so the dirty-guard + URL/history stay in sync.
+    // The right-clicked nib needs to become the menu's target when it is not
+    // already in the selection. How that happens follows the open-detail
+    // preference:
+    //   "single" — open it, routed through the view so the dirty-guard +
+    //              URL/history stay in sync.
+    //   "double" — select it WITHOUT opening, so a right-click never pops the
+    //              detail panel over whatever the user is reading. The menu still
+    //              gets a target because it reads the selection.
     if (!selection.isSelected(nibId)) {
-      view.open(nibId);
+      if (prefs.openDetailOn === "double") {
+        selection.selectOnly(nibId);
+      } else {
+        view.open(nibId);
+      }
     }
     contextMenuNibId = nibId;
     contextMenuNib = nib;

@@ -1,9 +1,9 @@
 package tui
 
 import (
-	"github.com/charmbracelet/bubbles/textinput"
-	tea "github.com/charmbracelet/bubbletea"
-	"github.com/charmbracelet/lipgloss"
+	"charm.land/bubbles/v2/textinput"
+	tea "charm.land/bubbletea/v2"
+	"charm.land/lipgloss/v2"
 
 	"github.com/alphaleonis/nibs/internal/config"
 	"github.com/alphaleonis/nibs/internal/ui"
@@ -31,11 +31,15 @@ func newCreateModalModel(nibType string, cfg *config.Config, width, height int) 
 	ti := textinput.New()
 	ti.Placeholder = "Enter nib title..."
 	ti.CharLimit = 200
-	ti.Width = 50
+	ti.SetWidth(50)
 	ti.Focus()
-	ti.PromptStyle = lipgloss.NewStyle().Foreground(ui.ColorPrimary)
-	ti.TextStyle = lipgloss.NewStyle()
-	ti.PlaceholderStyle = lipgloss.NewStyle().Foreground(ui.ColorMuted)
+	// The modal is drawn on the dark palette the whole TUI assumes, so start
+	// from the dark defaults rather than probing the terminal background.
+	tiStyles := textinput.DefaultDarkStyles()
+	tiStyles.Focused.Prompt = lipgloss.NewStyle().Foreground(ui.ColorPrimary)
+	tiStyles.Focused.Text = lipgloss.NewStyle()
+	tiStyles.Focused.Placeholder = lipgloss.NewStyle().Foreground(ui.ColorMuted)
+	ti.SetStyles(tiStyles)
 	ti.Prompt = ""
 
 	var typeColor string
@@ -64,8 +68,8 @@ func (m createModalModel) Update(msg tea.Msg) (createModalModel, tea.Cmd) {
 		m.width = msg.Width
 		m.height = msg.Height
 
-	case tea.KeyMsg:
-		switch msg.Type {
+	case tea.KeyPressMsg:
+		switch msg.Code {
 		case tea.KeyEnter:
 			title := m.textInput.Value()
 			if title != "" {
@@ -105,7 +109,7 @@ func (m createModalModel) View() string {
 		Border(lipgloss.RoundedBorder()).
 		BorderForeground(ui.ColorMuted).
 		Padding(0, 1).
-		Width(modalWidth - 6).
+		Width(withBorder(modalWidth - 6)).
 		Render(m.textInput.View())
 
 	// Help text
@@ -120,7 +124,7 @@ func (m createModalModel) View() string {
 		Border(lipgloss.RoundedBorder()).
 		BorderForeground(ui.ColorPrimary).
 		Padding(1, 2).
-		Width(modalWidth)
+		Width(withBorder(modalWidth))
 
 	return border.Render(content)
 }
