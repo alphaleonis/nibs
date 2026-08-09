@@ -60,8 +60,16 @@ func newUpgradeValidator() (selfupdate.Validator, error) {
 	if err != nil {
 		return nil, err
 	}
+	return newUpgradeValidatorFor(verifier), nil
+}
+
+// newUpgradeValidatorFor builds the chain around an arbitrary Verifier. Split
+// out so a test can exercise the whole chain against a keypair it generated —
+// the release signing key exists only in the `release` environment, so a test
+// trusting the embedded keys could never produce a signature that passes.
+func newUpgradeValidatorFor(verifier *signing.Verifier) selfupdate.Validator {
 	return new(selfupdate.PatternValidator).
 		Add("checksums.txt", signatureValidator{verifier: verifier}).
 		SkipValidation("*.sig").
-		Add("*", &selfupdate.ChecksumValidator{UniqueFilename: "checksums.txt"}), nil
+		Add("*", &selfupdate.ChecksumValidator{UniqueFilename: "checksums.txt"})
 }
