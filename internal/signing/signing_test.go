@@ -39,9 +39,9 @@ func verifierWith(t *testing.T, pems ...[]byte) *Verifier {
 	for name, f := range fsys {
 		nested["keys/"+name] = f
 	}
-	v, err := newVerifierFromFS(nested, "keys")
+	v, err := NewVerifierFromFS(nested, "keys")
 	if err != nil {
-		t.Fatalf("newVerifierFromFS: %v", err)
+		t.Fatalf("NewVerifierFromFS: %v", err)
 	}
 	return v
 }
@@ -150,8 +150,8 @@ func TestNewVerifierRejectsBadKeyMaterial(t *testing.T) {
 			for name, data := range tt.files {
 				fsys["keys/"+name] = &fstest.MapFile{Data: data}
 			}
-			if _, err := newVerifierFromFS(fsys, "keys"); err == nil {
-				t.Fatal("newVerifierFromFS succeeded, want error")
+			if _, err := NewVerifierFromFS(fsys, "keys"); err == nil {
+				t.Fatal("NewVerifierFromFS succeeded, want error")
 			}
 		})
 	}

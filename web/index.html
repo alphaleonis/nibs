@@ -4,6 +4,17 @@
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>Nibs</title>
+    <!-- Favicons. Both are served from web/public, which Vite copies to the
+         root of web/dist, so they ship inside the binary via embed.go and
+         cmd/spa.go serves them (.svg and .ico are both in its asset allowlist).
+         The ICO is listed first and the SVG second, which is the ordering that
+         lets a browser without SVG-favicon support fall back cleanly; anything
+         current prefers the SVG regardless of order. The artwork is the logo
+         mark WITHOUT its ring — see web/public/favicon.svg for why.
+         favicon.ico is generated from the SVG by `task favicon`, not by the
+         build, since rasterizing it needs a browser. -->
+    <link rel="icon" href="/favicon.ico" sizes="32x32" />
+    <link rel="icon" href="/favicon.svg" type="image/svg+xml" />
     <!-- FOUC guard (nibs-vmaq): pick the saved palette AND its light/dark class
          BEFORE first paint so the app never flashes the wrong theme. This runs
          before any module loads, so it must stay self-contained — no imports. It

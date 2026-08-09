@@ -1058,7 +1058,7 @@
     color: var(--destructive-foreground);
     border-radius: var(--radius-md);
     font-size: var(--text-body-size);
-    font-weight: 500;
+    font-weight: 400;
   }
 
   .anv-gone-actions {
@@ -1085,7 +1085,7 @@
     color: var(--warning-foreground, white);
     border-radius: var(--radius-md);
     font-size: var(--text-body-size);
-    font-weight: 500;
+    font-weight: 400;
   }
 
   .anv-conflict-actions {

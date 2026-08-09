@@ -25,17 +25,32 @@ const defaultToolbarProps = {
 };
 
 describe("Toolbar", () => {
-  it("renders the title with the project name when projectName is provided", () => {
+  // The "Nibs" half of the title is the banner image, not text, so these assert
+  // the ACCESSIBLE NAME rather than textContent — swapping text for an image is
+  // exactly the change that can silently drop the app name for a screen reader.
+  it("names the app and the project when projectName is provided", () => {
     render(Toolbar, { ...defaultToolbarProps, projectName: "test-project" });
 
-    expect(screen.getByText("Nibs - test-project")).toBeInTheDocument();
+    const heading = screen.getByRole("heading", { level: 1 });
+    expect(heading).toHaveAccessibleName("Nibs test-project");
+    expect(screen.getByText("test-project")).toBeInTheDocument();
   });
 
-  it("renders the bare 'Nibs' title when no projectName is provided", () => {
+  it("still names the app when no projectName is provided", () => {
     render(Toolbar, { ...defaultToolbarProps });
 
     const heading = screen.getByRole("heading", { level: 1 });
-    expect(heading).toHaveTextContent(/^Nibs$/);
+    expect(heading).toHaveAccessibleName("Nibs");
+    // Nothing but the banner: no stray separator left behind.
+    expect(heading).toHaveTextContent(/^$/);
+  });
+
+  it("renders the banner once, as an image named Nibs", () => {
+    render(Toolbar, { ...defaultToolbarProps, projectName: "test-project" });
+
+    const banners = screen.getAllByRole("img", { name: "Nibs" });
+    expect(banners).toHaveLength(1);
+    expect(banners[0].tagName.toLowerCase()).toBe("svg");
   });
 
   it("renders New button, keyword input, filter dropdowns, and view controls", () => {

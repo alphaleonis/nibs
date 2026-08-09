@@ -219,8 +219,9 @@ describe("App", () => {
     // `.dark` to <html> — index.html does not hardcode it.
     expect(document.documentElement.classList.contains("dark")).toBe(true);
 
-    // Dark theme shell: has the app title with project name
-    expect(screen.getByText("Nibs - test-project")).toBeInTheDocument();
+    // Dark theme shell: has the app title. "Nibs" is the banner image and the
+    // project name is text, so assert the heading's accessible name.
+    expect(screen.getByRole("heading", { level: 1 })).toHaveAccessibleName("Nibs test-project");
 
     // Toolbar is rendered with controls
     expect(screen.getByRole("button", { name: "Settings" })).toBeInTheDocument();
@@ -525,6 +526,21 @@ describe("App", () => {
     await waitFor(() => {
       expect(box.value).toBe("status:todo ancestor:nibs-abc1 login");
     });
+  });
+
+  // Deliberately placed straight after the test above, which leaves a filter in
+  // localStorage. App restores a stored filter on mount and mirrors it into `?q=`
+  // through a 300ms debounced replaceState, so without a per-test localStorage
+  // reset that query reappears in a later test's URL — losing a race against the
+  // debounce rather than failing outright, which is how it reached CI as a
+  // Windows-only flake in an otherwise green suite.
+  it("starts from a clean page: no filter leaks out of an earlier test's localStorage", async () => {
+    render(App);
+
+    // Past the 300ms debounce, so a pending write has had its chance to land.
+    await new Promise((resolve) => setTimeout(resolve, 400));
+
+    expect(window.location.search).toBe("");
   });
 
   it("opens detail panel when a title is clicked", async () => {

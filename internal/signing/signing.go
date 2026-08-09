@@ -64,10 +64,14 @@ type Verifier struct {
 
 // NewVerifier builds a Verifier from the embedded public keys.
 func NewVerifier() (*Verifier, error) {
-	return newVerifierFromFS(keyFS, "keys")
+	return NewVerifierFromFS(keyFS, "keys")
 }
 
-func newVerifierFromFS(fsys fs.FS, dir string) (*Verifier, error) {
+// NewVerifierFromFS builds a Verifier from every `*.pub` in dir of fsys.
+// NewVerifier is the production caller, reading the embedded keys; taking an
+// fs.FS lets a test trust a keypair it generated, which is what makes the
+// upgrade path testable end to end without the release signing key.
+func NewVerifierFromFS(fsys fs.FS, dir string) (*Verifier, error) {
 	entries, err := fs.ReadDir(fsys, dir)
 	if err != nil {
 		return nil, fmt.Errorf("signing: reading key directory: %w", err)

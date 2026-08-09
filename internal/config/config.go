@@ -18,6 +18,13 @@ const (
 )
 
 // DefaultStatuses defines the hardcoded status configuration.
+//
+// The three closed statuses carry distinct colours: they were all "gray", which
+// left deferred, completed and scrapped indistinguishable in the TUI and the CLI
+// even though they mean different things. Deferred is magenta because it is the
+// odd one out — the work is coming back — while completed and scrapped share a
+// gray ramp with scrapped the dimmer of the two. See the closed-status ramp in
+// internal/ui/styles.go for why those two grays sit where they do.
 // Statuses are not configurable - they are hardcoded like types.
 // Order determines sort priority: the open statuses first (in-progress, todo,
 // draft), then the closed ones (deferred, completed, scrapped) last. Pickers
@@ -26,9 +33,9 @@ var DefaultStatuses = []StatusConfig{
 	{Name: "in-progress", Color: "yellow", Description: "Currently being worked on"},
 	{Name: "todo", Color: "green", Startable: true, Description: "Ready to be worked on"},
 	{Name: "draft", Color: "blue", Description: "Needs refinement before it can be worked on"},
-	{Name: "deferred", Color: "gray", Closed: true, Description: "Set aside — a good idea at the wrong time; closed, but kept as a seed rather than a dead end"},
-	{Name: "completed", Color: "gray", Closed: true, ReleasesDependents: true, Description: "Finished successfully"},
-	{Name: "scrapped", Color: "gray", Closed: true, ReleasesDependents: true, Description: "Will not be done"},
+	{Name: "deferred", Color: "magenta", Closed: true, Description: "Set aside — a good idea at the wrong time; closed, but kept as a seed rather than a dead end"},
+	{Name: "completed", Color: "lightgray", Closed: true, ReleasesDependents: true, Description: "Finished successfully"},
+	{Name: "scrapped", Color: "dimgray", Closed: true, ReleasesDependents: true, Description: "Will not be done"},
 }
 
 // workflowStatusOrder lists the statuses in transition order — the path work

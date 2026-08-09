@@ -1,5 +1,21 @@
 import "@testing-library/jest-dom/vitest";
-import { afterEach, afterAll } from "vitest";
+import { afterEach, afterAll, beforeEach } from "vitest";
+
+// jsdom shares one localStorage across every test in a file, and the app
+// persists filter preferences there. App restores a stored filter on mount and
+// mirrors it into `?q=` via a debounced replaceState, so a filter left behind by
+// one test reappears in a later test's URL — a race against the debounce rather
+// than an outright failure, which is how it reached CI as a Windows-only flake.
+// Clearing here (before any hook a test file registers) makes every test the
+// fresh page load it reads as.
+//
+// Skipped when `clear` is missing: several files install their own partial
+// localStorage via vi.stubGlobal, and a stub outlives the test that set it, so
+// this hook sees the mock on every later test in that file. Those files own
+// their isolation — the guard defers to them rather than throwing.
+beforeEach(() => {
+  if (typeof localStorage?.clear === "function") localStorage.clear();
+});
 
 // Polyfill ResizeObserver missing in jsdom (used by Floating UI / bits-ui portaled content)
 if (typeof globalThis.ResizeObserver === "undefined") {
