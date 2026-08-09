@@ -41,6 +41,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 - `nibs serve` sends SPA cache headers, so a rebuilt UI is picked up instead of being served stale from the browser cache.
 - The TUI's Charm stack (Bubble Tea, Bubbles, Lip Gloss, Glamour) moved to v2 with no intended behavior change — 22 screens were diffed against the pre-migration build to confirm none landed.
 - The web dependency tree moved forward: dompurify, the Svelte runtime, bits-ui, CodeMirror, Tailwind, Playwright and `@lucide/svelte`, plus `tinykeys` 4, `marked` 18 and `@testing-library/jest-dom` 7.
+- The Go dependency tree moved forward: bleve 2.6, gqlgen 0.17.94, goldmark 1.8.5, fsnotify 1.10 and the `golang.org/x` packages, with no intended behavior change.
 
 ### Removed
 - **BREAKING: the `parked` status group** (`-s parked`, `--no-status parked`) — a one-member group and a spelling variant of `-s deferred`; use `-s deferred`, or `-s closed` for every closed status.
