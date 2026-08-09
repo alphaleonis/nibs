@@ -527,6 +527,21 @@ describe("App", () => {
     });
   });
 
+  // Deliberately placed straight after the test above, which leaves a filter in
+  // localStorage. App restores a stored filter on mount and mirrors it into `?q=`
+  // through a 300ms debounced replaceState, so without a per-test localStorage
+  // reset that query reappears in a later test's URL — losing a race against the
+  // debounce rather than failing outright, which is how it reached CI as a
+  // Windows-only flake in an otherwise green suite.
+  it("starts from a clean page: no filter leaks out of an earlier test's localStorage", async () => {
+    render(App);
+
+    // Past the 300ms debounce, so a pending write has had its chance to land.
+    await new Promise((resolve) => setTimeout(resolve, 400));
+
+    expect(window.location.search).toBe("");
+  });
+
   it("opens detail panel when a title is clicked", async () => {
     const user = userEvent.setup();
     render(App);
