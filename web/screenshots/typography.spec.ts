@@ -1,4 +1,6 @@
 import { test, expect, type Page } from "@playwright/test";
+import { readFileSync } from "node:fs";
+import { join } from "node:path";
 
 // Proves the typeface setup has its intended EFFECT in a real browser.
 //
@@ -12,6 +14,13 @@ import { test, expect, type Page } from "@playwright/test";
 // The CSS declarations are pinned in src/lib/typography.test.ts (`task test`).
 // Only assertions needing a renderer live here.
 
+// Derived from app.css rather than hardcoded: which family the app uses is a
+// design choice, and a test that has to be edited to swap fonts is friction
+// without value. What matters is that the rendered font IS the declared one.
+const FAMILY = readFileSync(join(import.meta.dirname, "..", "src", "app.css"), "utf8").match(
+  /@font-face\s*\{[^}]*font-family:\s*"([^"]+)"/,
+)?.[1];
+
 async function open(page: Page) {
   await page.addInitScript(() => {
     localStorage.setItem("nibs-filter-preferences", JSON.stringify({ filter: {}, viewLevel: "flat" }));
@@ -22,16 +31,20 @@ async function open(page: Page) {
 }
 
 test.describe("typeface", () => {
-  test("the row title actually renders in Inter", async ({ page }) => {
+  test("the row title actually renders in the self-hosted family", async ({ page }) => {
     await open(page);
+    expect(FAMILY, "no @font-face family found in app.css").toBeTruthy();
 
     const family = await page
       .locator('button[data-testid="title-text"]')
       .first()
       .evaluate((el) => getComputedStyle(el).fontFamily.split(",")[0].replace(/["']/g, ""));
 
-    expect(family).toBe("Inter");
-    expect(await page.evaluate(() => document.fonts.check("500 14px Inter"))).toBe(true);
+    // Computed family is not enough on its own — it reports what was ASKED for.
+    // fonts.check reports whether that face actually loaded, which is the half
+    // that fails silently when a url or subset is wrong.
+    expect(family).toBe(FAMILY);
+    expect(await page.evaluate((f) => document.fonts.check(`500 14px "${f}"`), FAMILY)).toBe(true);
   });
 
   // No rule currently asks for 500 — the UI settled on 400 throughout. This
@@ -44,7 +57,7 @@ test.describe("typeface", () => {
 
     // Ink density rather than advance width: a font lacking a Medium can still
     // shift metrics slightly, but it cannot get meaningfully darker.
-    const ink = await page.evaluate(() => {
+    const ink = await page.evaluate((family) => {
       const measure = (weight: number) => {
         const cv = document.createElement("canvas");
         cv.width = 420;
@@ -53,7 +66,7 @@ test.describe("typeface", () => {
         c.fillStyle = "#fff";
         c.fillRect(0, 0, cv.width, cv.height);
         c.fillStyle = "#000";
-        c.font = `${weight} 14px Inter`;
+        c.font = `${weight} 14px "${family}"`;
         c.fillText("Implement bcrypt password hashing", 2, 20);
         const d = c.getImageData(0, 0, cv.width, cv.height).data;
         let sum = 0;
@@ -61,7 +74,7 @@ test.describe("typeface", () => {
         return sum / 1000;
       };
       return { w400: measure(400), w500: measure(500), w600: measure(600) };
-    });
+    }, FAMILY);
 
     // Strictly increasing: 500 must sit between 400 and 600, not on top of either.
     expect(ink.w500, `500 (${ink.w500.toFixed(1)}) must be darker than 400 (${ink.w400.toFixed(1)})`).toBeGreaterThan(

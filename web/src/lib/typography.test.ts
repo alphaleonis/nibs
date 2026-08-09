@@ -25,7 +25,7 @@ const css = read("../app.css");
 // face. Each engine substituted differently, so the same page rendered heavier
 // in Edge than in Firefox with identical computed styles and no error anywhere.
 //
-// Self-hosting a variable Inter removes the class of problem: every weight the
+// Self-hosting a variable font removes the class of problem: every weight the
 // design might ask for exists, on every browser and OS. The declarations below
 // are silent when broken — dropping --font-sans makes the @font-face rules
 // inert with no warning — which is what makes them worth pinning.
@@ -35,15 +35,20 @@ const css = read("../app.css");
 
 describe("app typeface", () => {
   const faces = [...css.matchAll(/@font-face\s*\{[^}]*\}/g)].map((m) => m[0]);
+  const familyOf = (face: string) => face.match(/font-family:\s*"([^"]+)"/)?.[1];
 
-  it("self-hosts Inter in both upright and italic", () => {
-    const inter = faces.filter((f) => /font-family:\s*"Inter"/.test(f));
-    expect(inter).toHaveLength(2);
-    expect(inter.some((f) => /font-style:\s*normal/.test(f))).toBe(true);
+  // Deliberately NOT pinned to a family name. Which typeface the app uses is a
+  // design choice that may change; what must hold is that the pieces agree with
+  // each other, which is what actually breaks silently.
+  it("self-hosts one family, in both upright and italic", () => {
+    expect(faces).toHaveLength(2);
+    const families = new Set(faces.map(familyOf));
+    expect(families.size, `faces disagree on family: ${[...families].join(", ")}`).toBe(1);
+    expect(faces.some((f) => /font-style:\s*normal/.test(f))).toBe(true);
     // Markdown emphasis in the nib body and the editor both use italic; with no
-    // real face the browser synthesizes a slanted upright, which is not Inter's
-    // drawn italic.
-    expect(inter.some((f) => /font-style:\s*italic/.test(f))).toBe(true);
+    // real face the browser synthesizes a slanted upright rather than the
+    // family's drawn italic.
+    expect(faces.some((f) => /font-style:\s*italic/.test(f))).toBe(true);
   });
 
   it("declares the full variable weight axis on every face", () => {
@@ -62,14 +67,16 @@ describe("app typeface", () => {
     }
   });
 
-  it("points --font-sans at Inter first, with a fallback tail", () => {
+  it("points --font-sans at the self-hosted family first, with a fallback tail", () => {
     // Tailwind's preflight sets html's font-family from --default-font-family,
     // which is var(--font-sans) — so this declaration is what actually applies
-    // Inter to the app. Without it the @font-face rules above are inert.
+    // the font. Without it, or naming a family no @font-face declares, the
+    // rules above are inert and the app silently falls back to system fonts:
+    // exactly the state this whole guard exists to prevent.
     const m = css.match(/--font-sans:\s*([^;]+);/);
     expect(m, "--font-sans is not declared").not.toBeNull();
     const stack = m![1].split(",").map((s) => s.trim().replace(/^["']|["']$/g, ""));
-    expect(stack[0]).toBe("Inter");
+    expect(stack[0]).toBe(familyOf(faces[0]));
     // A tail matters for the pre-load frame and for glyphs outside the subset.
     expect(stack.length).toBeGreaterThan(1);
     expect(stack).toContain("sans-serif");
