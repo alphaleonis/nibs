@@ -23,7 +23,7 @@ jobs:
         os: [ubuntu-latest, windows-latest]
     runs-on: ${{ matrix.os }}
     steps:
-      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
       # Every tool this job runs — go, node, task — is installed by mise from
       # mise.toml, so the versions are read rather than restated. The previous
       # shape hand-copied each one into a setup-go `go-version`, a setup-node
@@ -104,7 +104,7 @@ jobs:
   lint:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
       # As in the test job: go, node, task and golangci-lint all come from
       # mise.toml. golangci-lint matters most here — its analyzers key off the
       # Go version they run under, so a floating toolchain can move the lint

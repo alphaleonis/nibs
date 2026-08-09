@@ -47,7 +47,7 @@
 go = "1.26.5"
 golangci-lint = "2.12.2"
 node = "22"
-task = "3.50.0"
+task = "3.52.0"
 
 # Release-path tools. These two are not needed to build or test the project —
 # only to produce a release — but they are the highest-privilege things it runs:
