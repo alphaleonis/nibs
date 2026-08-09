@@ -2,6 +2,61 @@
 
 @custom-variant dark (&:is(.dark *));
 
+/* ── Typeface (nibs-hinq) ────────────────────────────────────────────
+   Inter, self-hosted, as the single source of truth for what the UI is set in.
+
+   Before this the app declared NO font-family at all and inherited Tailwind's
+   default system stack, which ends at "whatever the OS happens to have". That
+   made the table render differently in Edge and Firefox on the same machine:
+   several rules asked for weight 500, and Segoe UI — what the stack resolved to
+   on Windows — ships 300/350/400/600/700 with NO Medium. With no 500 face to
+   use, each engine substituted on its own and they disagreed. Verified on Linux
+   that both engines resolve 500 identically there, so this was about which
+   faces the platform offers, not an engine bug.
+
+   Those rules are now 400, which every family has — but that alone would only
+   have dodged one weight. Pinning the typeface is what removes the class of
+   problem: Inter carries a continuous 100-900 axis, so any weight the design
+   asks for later exists, on every browser and OS, instead of silently landing
+   on whatever the platform substitutes. Both files are latin-subset variable
+   woff2, ~100 KB the pair — negligible next to the 50 MB binary they are
+   embedded in, and `nibs serve` hands them over loopback, so there is no
+   network cost.
+
+   The italic face is shipped rather than left to synthesis because markdown
+   emphasis in the nib body and the editor both use it, and a synthesized
+   oblique is a slanted upright, not Inter's drawn italic.
+
+   Latin subset only: a title in a script Inter's subset does not cover falls
+   back to the stack below. Add more subsets here if that ever matters.
+
+   Licence: SIL OFL 1.1 — see src/assets/fonts/LICENSE. */
+@font-face {
+  font-family: "Inter";
+  font-style: normal;
+  font-weight: 100 900;
+  font-display: swap;
+  src: url("./assets/fonts/inter-latin-wght-normal.woff2") format("woff2-variations");
+}
+
+@font-face {
+  font-family: "Inter";
+  font-style: italic;
+  font-weight: 100 900;
+  font-display: swap;
+  src: url("./assets/fonts/inter-latin-wght-italic.woff2") format("woff2-variations");
+}
+
+/* Tailwind's preflight sets `font-family: var(--default-font-family)` on html,
+   and --default-font-family is var(--font-sans) — so defining --font-sans here
+   is what actually points the whole app at Inter. The tail is a fallback for
+   the moment before the font loads and for glyphs outside the latin subset. */
+@theme {
+  --font-sans:
+    "Inter", ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif,
+    "Apple Color Emoji", "Segoe UI Emoji";
+}
+
 @theme inline {
   --color-background: var(--background);
   --color-foreground: var(--foreground);
@@ -227,7 +282,7 @@
      (nibs-gymz). */
   --font-scale: 1;
   --text-label-size: calc(0.75rem * var(--font-scale));    /* 12px */
-  --text-label-weight: 500;
+  --text-label-weight: 400;
   --text-label-leading: calc(1rem * var(--font-scale));    /* 16px — tight */
   --text-body-size: calc(0.875rem * var(--font-scale));    /* 14px */
   --text-body-weight: 400;

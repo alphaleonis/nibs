@@ -325,10 +325,12 @@
     border: none;
     padding: 0;
     font: inherit;
-    /* Join the row's type scale (14px) instead of inheriting the 16px root;
-       the title stays the primary column via weight, not size. */
+    /* Join the row's type scale (14px) instead of inheriting the 16px root.
+       The title is the primary column by COLOR — var(--foreground) against the
+       --text-secondary / --muted-foreground of every other cell — deliberately
+       not by weight, so the table reads evenly rather than half-bold. */
     font-size: var(--text-body-size);
-    font-weight: 500;
+    font-weight: 400;
     line-height: var(--text-body-leading);
     text-align: left;
   }
