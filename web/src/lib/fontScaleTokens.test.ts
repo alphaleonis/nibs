@@ -89,13 +89,18 @@ const MULTIPLIES_SCALE = /\*\s*var\(--font-scale\)|var\(--font-scale\)\s*\*/;
 const ALIASES_SCALED_TOKEN = new RegExp(`^var\\((?:${SCALED_SEMANTIC_TOKENS.join("|")})\\)$`);
 
 /**
- * Extract the body of the LAST `@theme {` block (the non-inline one that owns the
- * text ladder). The `@theme inline` block at the top of the file is excluded by
- * matching `@theme` followed directly by `{`.
+ * Extract the body of the plain `@theme {` block that owns the text ladder. The
+ * `@theme inline` block at the top of the file is excluded by matching `@theme`
+ * followed directly by `{`.
+ *
+ * Identified by CONTENT rather than by position or by being the only one: app.css
+ * has more than one plain `@theme` block (the typeface pins --font-sans in its
+ * own), so "the last one" and "there is exactly one" are both wrong, and the
+ * latter fails in a way that looks like a ladder bug rather than a new block.
  */
 function themeBlock(): string {
-  const matches = [...css.matchAll(/@theme\s*\{([^}]*)\}/g)];
-  expect(matches.length, "expected exactly one plain `@theme { ... }` block in app.css").toBe(1);
+  const matches = [...css.matchAll(/@theme\s*\{([^}]*)\}/g)].filter(([, body]) => body.includes("--text-base"));
+  expect(matches.length, "expected exactly one plain `@theme` block declaring the --text-* ladder").toBe(1);
   return matches[0][1];
 }
 

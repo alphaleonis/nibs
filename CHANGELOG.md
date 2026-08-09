@@ -10,6 +10,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 ### Added
 - **The web UI carries the Nibs logo** — a banner in the header in place of the plain title, and a favicon in the browser tab.
 
+### Changed
+- **The web UI is set in Mona Sans, bundled with the app**, so text no longer renders differently between browsers depending on which weights the system font happens to ship.
+
 ## v0.8.0 - 2026-08-09
 
 ### Added
