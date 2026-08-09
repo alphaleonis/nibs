@@ -134,7 +134,7 @@ func verifierTrusting(t *testing.T, pubPEM []byte) *signing.Verifier {
 // answers the two calls go-selfupdate makes: list the releases, then fetch an
 // asset by id. Paths are matched by suffix so the go-github enterprise "/api/v3"
 // prefix does not have to be modeled.
-func serveRelease(t *testing.T, assets *releaseAssets) string {
+func serveRelease(t *testing.T, assets *releaseAssets, tag string, prerelease bool) string {
 	t.Helper()
 
 	var baseURL string
@@ -144,11 +144,11 @@ func serveRelease(t *testing.T, assets *releaseAssets) string {
 		case strings.HasSuffix(r.URL.Path, "/releases"):
 			list := []map[string]any{{
 				"id":           int64(1),
-				"tag_name":     testUpgradeTag,
-				"name":         testUpgradeTag,
+				"tag_name":     tag,
+				"name":         tag,
 				"body":         "test release",
 				"draft":        false,
-				"prerelease":   false,
+				"prerelease":   prerelease,
 				"published_at": "2026-08-09T00:00:00Z",
 				"assets":       assetsJSON(assets, baseURL),
 			}}
@@ -198,10 +198,24 @@ func assetsJSON(assets *releaseAssets, baseURL string) []map[string]any {
 	return out
 }
 
+// stageOptions varies the release a test serves. The zero value is a correctly
+// signed stable release tagged testUpgradeTag.
+type stageOptions struct {
+	corrupt    string
+	tag        string // defaults to testUpgradeTag
+	prerelease bool
+}
+
 // stageRelease assembles a release, applies the named corruption, and serves it.
 // Returns the server URL and the Verifier the "running binary" trusts.
-func stageRelease(t *testing.T, corrupt string) (string, *signing.Verifier) {
+func stageRelease(t *testing.T, opts stageOptions) (string, *signing.Verifier) {
 	t.Helper()
+
+	corrupt := opts.corrupt
+	tag := opts.tag
+	if tag == "" {
+		tag = testUpgradeTag
+	}
 
 	priv, pubPEM := generateKey(t)
 	verifier := verifierTrusting(t, pubPEM)
@@ -233,13 +247,13 @@ func stageRelease(t *testing.T, corrupt string) (string, *signing.Verifier) {
 		assets.add("checksums.txt.sig", sig)
 	}
 
-	return serveRelease(t, assets), verifier
+	return serveRelease(t, assets, tag, opts.prerelease), verifier
 }
 
 // attemptUpgrade runs the real detect+update path against the staged release,
 // returning whether the release was detected and any update error. The target
 // file starts as oldBinaryContent so the caller can assert it was left alone.
-func attemptUpgrade(t *testing.T, baseURL string, verifier *signing.Verifier) (found bool, target string, err error) {
+func attemptUpgrade(t *testing.T, baseURL string, verifier *signing.Verifier, tag string) (found bool, target string, err error) {
 	t.Helper()
 
 	target = filepath.Join(t.TempDir(), commandName())
@@ -260,7 +274,7 @@ func attemptUpgrade(t *testing.T, baseURL string, verifier *signing.Verifier) (f
 	}
 
 	ctx := context.Background()
-	rel, found, err := updater.DetectVersion(ctx, selfupdate.ParseSlug(upgradeRepoSlug), testUpgradeTag)
+	rel, found, err := updater.DetectVersion(ctx, selfupdate.ParseSlug(upgradeRepoSlug), tag)
 	if err != nil {
 		return false, target, err
 	}
@@ -283,9 +297,9 @@ func targetContent(t *testing.T, path string) string {
 // signed release is detected, validated and installed, and the binary on disk
 // is actually replaced.
 func TestUpgradeAcceptsASignedRelease(t *testing.T) {
-	baseURL, verifier := stageRelease(t, "")
+	baseURL, verifier := stageRelease(t, stageOptions{})
 
-	found, target, err := attemptUpgrade(t, baseURL, verifier)
+	found, target, err := attemptUpgrade(t, baseURL, verifier, testUpgradeTag)
 	if err != nil {
 		t.Fatalf("upgrade against a correctly signed release failed: %v", err)
 	}
@@ -303,20 +317,30 @@ func TestUpgradeAcceptsASignedRelease(t *testing.T) {
 // both are asserted every time.
 func TestUpgradeRefusesUnsignedOrTamperedReleases(t *testing.T) {
 	tests := []struct {
-		name    string
-		corrupt string
+		name string
+		opts stageOptions
 	}{
-		{"signature does not verify", "corrupt-sig"},
-		{"signature from a key the binary does not trust", "untrusted-key"},
-		{"release publishes no signature at all", "missing-sig"},
-		{"archive does not match the signed checksums", "tampered-archive"},
+		{"signature does not verify", stageOptions{corrupt: "corrupt-sig"}},
+		{"signature from a key the binary does not trust", stageOptions{corrupt: "untrusted-key"}},
+		{"release publishes no signature at all", stageOptions{corrupt: "missing-sig"}},
+		{"archive does not match the signed checksums", stageOptions{corrupt: "tampered-archive"}},
+		// A pre-release reached by an explicit --version, which skips the
+		// pre-release filter — so the signature is the only thing standing
+		// between it and the running binary.
+		{"pre-release named by --version with a bad signature", stageOptions{
+			corrupt: "corrupt-sig", tag: "v0.0.1-sigtest.1", prerelease: true,
+		}},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			baseURL, verifier := stageRelease(t, tt.corrupt)
+			baseURL, verifier := stageRelease(t, tt.opts)
 
-			found, target, err := attemptUpgrade(t, baseURL, verifier)
+			tag := tt.opts.tag
+			if tag == "" {
+				tag = testUpgradeTag
+			}
+			found, target, err := attemptUpgrade(t, baseURL, verifier, tag)
 
 			// Either outcome is a refusal: a missing signature makes the
 			// release undetectable (the ValidationChain cannot be built),
