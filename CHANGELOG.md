@@ -8,84 +8,78 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 ## [Unreleased]
 
 ### Added
-- **A GitHub-style query language in the web filter box** — `field:value` tokens alongside bare-word full-text search, with `-` for negation, commas for OR-within-a-field, space for AND across fields, and `status:open` / `status:closed` group shorthands.
-- **Relationship and hierarchy filtering from the box**: `parent:`, `ancestor:`, `descendant:`, `sibling:`, `blocking:`, `blocked-by:`, `mentions:`, `mentioned-by:`, plus the tri-state `has:` / `no:` existence tokens and `is:blocked`. Each name states the relationship the *matched* nib holds toward the given id, so `ancestor:X` selects X's descendants.
-- **Syntax highlighting, autocomplete and a `?` syntax reference** in the filter band — per-token coloring with a wavy underline on an illegal value, <kbd>Tab</kbd> / <kbd>Ctrl</kbd>+<kbd>Space</kbd> completion over the whole vocabulary (including an async id/title typeahead for relationship tokens), and a generated reference panel covering every field, token and operator.
-- **The filter box and the facet dropdowns stay in sync in both directions** — typing a token ticks the matching dropdown, and toggling a dropdown rewrites the box text.
-- **Filtered views are shareable** — the canonical query is mirrored into a `?q=` URL parameter and persisted as the filter preference; the URL wins over the stored value on load, and existing stored filters are translated automatically.
-- **"Filter related" on the row context menu** composes a relationship filter for the nib under the cursor — its blockers, its children, its ancestors, its siblings, its mentions — without needing to know or type its id.
-- **`nibs check` now reports unparseable nib files and duplicate ids on disk.** Both were detected all along but written only to stderr, so they were invisible in `--json`, in `nibs serve` and in the TUI; neither is auto-fixable, and `--fix` says so rather than skipping them silently.
-- **`nibs close --as <closed status>`** — closing is one verb that produces any closed status: `--as scrapped` and `--as deferred` alongside the default `completed`.
-- **`## Summary` accrues instead of being replaced** — each close appends a dated, reason-stamped entry, so a nib can be closed again to revise its reason without destroying the first rationale.
-- **`storedParentId` (GraphQL) and `-f stored_parent` (CLI)** — the parent link exactly as written on disk, unresolved, so a link naming no nib stays visible and diagnosable.
-- **GraphQL `NibFilter` gains `ancestorId`, `descendantId` and `siblingId`** — subtree, ancestor-chain and sibling predicates, each excluding the target nib itself.
-- **The GraphQL schema now documents that a batch mutation is not atomic** — root fields execute serially, execution does not stop at the first failure, and each field commits on its own — and it names the wire error codes `nibs serve` can return, including `ETAG_MISMATCH`.
+- **A GitHub-style query language in the web filter box** — `field:value` tokens alongside full-text search, covering every field plus relationship and hierarchy predicates, with syntax highlighting, autocomplete, a built-in reference, two-way sync with the facet dropdowns, and a shareable `?q=` URL.
+- **"Filter related" on the row context menu** — filter to a nib's blockers, children, ancestors, siblings or mentions without knowing or typing its id.
+- **`nibs check` now reports unparseable nib files and duplicate ids on disk**, which were written only to stderr before and so invisible to `--json`, `nibs serve` and the TUI.
+- **`nibs close --as <closed status>`** — `--as scrapped` and `--as deferred` alongside the default `completed`.
+- **`## Summary` accrues instead of being replaced**, so a nib can be closed again to revise its reason without destroying the first.
+- **`storedParentId` (GraphQL) and `-f stored_parent` (CLI)** — the parent link exactly as written on disk, so a link naming no nib stays visible and diagnosable.
+- **GraphQL `NibFilter` gains `ancestorId`, `descendantId` and `siblingId`**, each excluding the target nib itself.
+- **The GraphQL schema now documents that a batch mutation is not atomic**, and names the wire error codes `nibs serve` can return, including `ETAG_MISMATCH`.
 - **The tracking-nib pattern is documented** in `nibs prime`: when work waits on something outside the tracker, make a nib for the external event and `--blocked-by` it.
-- **A web setting for which click opens a nib** (Settings → Behavior): with "Double click" selected, a single click selects a row without opening the detail panel, so browsing and multi-select no longer pop it open.
+- **A web setting for which click opens a nib** (Settings → Behavior): with "Double click" selected, a single click selects a row without opening the detail panel.
 
 ### Changed
-- **BREAKING: `parentId` reports the resolved parent, not the raw stored link.** A `parent:` naming no nib now reports `parentId: null` — matching `parent`, `hasParent` and `siblingId`, which always read it that way — and the `parentId` filter and the CLI's `-f parent` follow; the raw link moved to `storedParentId` / `-f stored_parent`.
+- **BREAKING: `parentId` reports the resolved parent, not the raw stored link.** A `parent:` naming no nib now reports `parentId: null`, matching `parent`, `hasParent` and `siblingId`; the raw link moved to `storedParentId` / `-f stored_parent`.
 - **BREAKING: `deferred` is now a closed status** — excluded from `--open` and `--ready`, included in `-s closed`, and hidden by the web's "Open" preset, though a `deferred` blocker still blocks. No data migration: `status: deferred` stays valid in front matter and no file is rewritten.
-- **BREAKING: `nibs set -s <a closed status>` is refused**, and the error names `close` instead, because `close` requires a summary and `set` does not. Only the move *into* closed is governed; `nibs set <id> -s todo` is still how work comes back.
-- **BREAKING: the projected `ready` field now requires a startable status** (`todo` alone), so it and `nibs list --ready` answer identically — 38 nibs on the sample fixture, where the field previously reported 67.
+- **BREAKING: `nibs set -s <a closed status>` is refused**, and the error names `close` instead. Only the move *into* closed is governed; `nibs set <id> -s todo` is still how work comes back.
+- **BREAKING: the projected `ready` field now requires a startable status** (`todo` alone), so it and `nibs list --ready` answer identically.
 - **BREAKING: `nibs plan --open` selects the open status group**, the same set `list` and `rel` select, rather than "everything not closed".
-- **BREAKING: the paired presence filters collapsed to one field each.** The GraphQL `noParent`, `noBlocking` and `noBlockedBy` inputs are retired; the tri-state `hasParent`, `hasBlocking` and `hasBlockedBy` express all of it, and the `--no-parent` / `--no-blocking` CLI flags are unchanged.
-- **BREAKING: a filter naming a nib that does not exist is refused instead of answered with an empty list.** `nibs list --parent <unknown-id>` exits 3 and the equivalent GraphQL query returns an error; a target that exists and simply matches nothing is unchanged.
-- **BREAKING (web): the Status facet's two presets collapse into a single "Open"** — with `deferred` closed, "Open" and "Open + deferred" named the same set. All six statuses remain individually selectable.
+- **BREAKING: the paired presence filters collapsed to one field each.** The GraphQL `noParent`, `noBlocking` and `noBlockedBy` inputs are retired in favor of the tri-state `hasParent`, `hasBlocking` and `hasBlockedBy`; the `--no-parent` / `--no-blocking` CLI flags are unchanged.
+- **BREAKING: a filter naming a nib that does not exist is refused instead of answered with an empty list** — `nibs list --parent <unknown-id>` exits 3, and the equivalent GraphQL query returns an error; a target that exists and simply matches nothing is unchanged.
+- **BREAKING (web): the Status facet's two presets collapse into a single "Open"**, with all six statuses still individually selectable.
 - Closing a child now propagates to its parent **by reason**: `## Key Decisions` merge upward for every close reason, but only a `completed` close rewrites the parent's `## Current Focus`.
 - `nibs archive` now moves `deferred` nibs too — it archives every nib in a closed status.
 - The web UI settled on one name per field: **Status** (previously "State" in places) and **Estimate** (previously "Effort"), matching the words the query language and the CLI use.
-- The status pickers in the TUI and the web now list statuses in transition order — draft, todo, in-progress, completed, deferred, scrapped — while lists and the status column keep sorting most-active-first.
-- **The web table distinguishes the row the detail panel is showing from the rows a bulk action would affect** — the background fill now marks the selection set alone, an amber leading bar marks the open row under the double-click preference, and every row exposes `aria-selected`.
+- The status pickers in the TUI and the web now list statuses in transition order, while lists and the status column keep sorting most-active-first.
+- **The web table distinguishes the row the detail panel is showing from the rows a bulk action would affect** — the background fill marks the selection set alone, an amber leading bar marks the open row under the double-click preference, and every row exposes `aria-selected`.
 - Deleting or archiving from the web table now closes the detail panel only when it removed the nib the panel was showing, instead of closing it every time.
 - `nibs serve` sends SPA cache headers, so a rebuilt UI is picked up instead of being served stale from the browser cache.
-- The TUI's Charm stack (Bubble Tea, Bubbles, Lip Gloss, Glamour) moved to v2 with no intended behavior change — 22 screens were diffed against the pre-migration build to confirm none landed.
+- The TUI's Charm stack (Bubble Tea, Bubbles, Lip Gloss, Glamour) moved to v2 with no intended behavior change.
 - The web dependency tree moved forward: dompurify, the Svelte runtime, bits-ui, CodeMirror, Tailwind, Playwright and `@lucide/svelte`, plus `tinykeys` 4, `marked` 18 and `@testing-library/jest-dom` 7.
-- The Go dependency tree moved forward: bleve 2.6, gqlgen 0.17.94, goldmark 1.8.5, fsnotify 1.10 and the `golang.org/x` packages, with no intended behavior change.
+- The Go dependency tree moved forward: bleve 2.6, gqlgen 0.17.94, goldmark 1.8.5, fsnotify 1.10 and the `golang.org/x` packages.
 
 ### Removed
 - **BREAKING: the `parked` status group** (`-s parked`, `--no-status parked`) — a one-member group and a spelling variant of `-s deferred`; use `-s deferred`, or `-s closed` for every closed status.
 - **BREAKING: the `--active` flag** on `list` and `rel` — `--open` remains, and `-s in-progress` covers the other reading.
 
 ### Fixed
-- **A nib whose `parent:` names a nib that does not exist is now a root everywhere**, instead of being a root to some surfaces and parented to others; the filters, the `children` / `parent` resolvers, `nibs rel`, `nibs mv` and bulk reorder all decide the question one way, and `nibs check` still reports the link as broken.
-- Changing the type of such a nib no longer fails with `parent nib not found`, and `nibs set <id> --clear parent` on it no longer sends it to the end of the root order.
-- Root-level bulk reorder is possible again in a project holding such a nib — listing it was rejected as "not a child" and omitting it as "missing child", leaving no accepted input.
-- In the TUI, such a nib now moves among the roots it is displayed with, instead of the keypress doing nothing at all.
-- **BREAKING: a parent cycle renders instead of erasing every nib in it.** Both tree builders treated a nib as a root only when it had no parent, so in a cycle none qualified and a store holding two nibs rendered nothing; the lowest-id member is now promoted to a root and the rest nest beneath it.
+- **A nib whose `parent:` names a nib that does not exist is now a root everywhere**, instead of being a root to some surfaces and parented to others; `nibs check` still reports the link as broken.
+- The knock-on effects of that bug went with it: changing such a nib's type no longer fails, `--clear parent` no longer sends it to the end of the root order, root-level bulk reorder works again in a project holding one, and the TUI can move it among the roots it is displayed with.
+- **BREAKING: a parent cycle renders instead of erasing every nib in it** — the lowest-id member is promoted to a root and the rest nest beneath it.
 - **BREAKING: a `search` term now filters relationship fields, where it was silently dropped** — `children(filter:{search:"foo"})` returned every child regardless of the term.
 - **BREAKING: two unsatisfiable filter combinations are refused instead of answered with an empty list** — `parentId` with `hasParent: false`, and `blockedById` with `hasBlockedBy: false`. `blockingId` with `hasBlocking: false` is *not* refused: it selects the blockers a nib still lists that no longer block anything.
-- **BREAKING: an explicitly empty id-valued filter value is refused instead of being ignored.** `nibs(filter:{parentId:""})` and `nibs list --parent ""` returned the whole store; all eight id-valued fields now report a validation error, while an empty `search` still means "no keyword filter".
-- **BREAKING: `nibs query` reports the same exit codes as the direct commands** — not-found exits 3, an unreadable target 5, and a stale `if-match` 4 with the server's `currentEtag`. A response whose errors span different exit classes reports the new `UNCATEGORIZED` code and exits 1, and `nibs mv <unknown-id>` now exits 3 like every other command.
-- **On Windows, the TUI and the web UI did not pick up external nib changes.** Every nib write commits as a rename, which Windows reports as a remove followed by a create; the watcher read the remove bit as "the file is gone" and discarded the whole batch instead of reloading it.
+- **BREAKING: an explicitly empty id-valued filter value is refused instead of being ignored.** `nibs list --parent ""` returned the whole store; all eight id-valued fields now report a validation error, while an empty `search` still means "no keyword filter".
+- **BREAKING: `nibs query` reports the same exit codes as the direct commands** — not-found 3, an unreadable target 5, a stale `if-match` 4 with the server's `currentEtag`. A response whose errors span different exit classes reports the new `UNCATEGORIZED` code and exits 1.
+- `nibs mv <unknown-id>` exits 3, like every other command.
+- **On Windows, the TUI and the web UI now pick up external nib changes**, where the watcher previously discarded the whole batch.
 - **`nibs check --fix` deleted valid links.** A `blocked_by` or `parent` entry written in short form (`e001` rather than `nibs-e001`) was reported as broken and removed from the file on disk, after which the nib was handed out as ready work.
-- **A link written in short form was only half traversable** — `parent: par` answered when followed from the nib holding it, but the nib it named listed no such child, and the same asymmetry hid `blocked_by` edges from `--rel blocking` and short-form parent cycles from `nibs check`. Link ids are now resolved to their full form when a nib is read from disk; files are not rewritten, but the next ordinary write persists the full form.
-- `nibs check --fix` no longer removes links whose target file merely failed to parse — such a target is unresolvable-for-now rather than missing.
-- **A refused `updateNib` no longer leaves durable edits on other nibs.** The subject's write-free guards — enum validity, and an `ifMatch` that is missing or disagrees with disk — now run ahead of every step that can touch another nib.
-- **A failing batch mutation names what it committed.** Root mutation fields run in document order and do not stop at the first failure, so a batch could delete two nibs, fail on a third, and report a bare "nib not found" naming neither deletion.
-- **`deleteNib` deletes and unlinks the same nib.** It resolved its target through a normalizing lookup but passed the caller's raw spelling on, so `deleteNib(id: "tgt")` removed `nibs-tgt` while stripping zero incoming links; `nibs rm` and `nibs delete` were never affected.
+- **A link written in short form is now traversable from both ends** — it answered from the nib holding it, but the nib it named listed no such child.
+- `nibs check --fix` no longer removes links whose target file merely failed to parse.
+- **A refused `updateNib` no longer leaves durable edits on other nibs** — the subject's write-free guards now run ahead of every step that can touch another nib.
+- **A failing batch mutation names what it committed** — a batch could delete two nibs, fail on a third, and report a bare "nib not found" naming neither deletion.
+- **`deleteNib` deletes and unlinks the same nib**, where it removed the target while stripping zero incoming links; `nibs rm` and `nibs delete` were never affected.
 - **A stale etag on a bulk reorder is now a retryable conflict** — `ETAG_MISMATCH` on the wire and exit 4 with the server's current etag, rather than a generic IO failure — and both refusal paths name the nib they refused on.
 - Bulk-reorder errors reported a parent that was not the one compared; the message now names the resolved value, and the stored spelling alongside it when the two differ.
-- **`--has-parent=false`, `--has-blocking=false` and `--is-blocked=false` were silently ignored**, returning the unfiltered set, because the flag's value was tested rather than whether it was given.
+- **`--has-parent=false`, `--has-blocking=false` and `--is-blocked=false` were silently ignored**, returning the unfiltered set.
 - **Contradictory filter flags returned an empty set with exit 0** — `--has-parent --no-parent`, `--has-blocking --no-blocking` and `--parent <id> --no-parent` are now validation errors naming both flags.
-- **`nibs rel <id>` silently defaulted to `--rel neighbours`** without saying so in the help, the flag usage or `nibs cheat`; for a root nib that default returns every other root, so the failure mode was a plausible wrong answer rather than an error.
+- **`nibs rel <id>` silently defaulted to `--rel neighbours`** without saying so in the help, the flag usage or `nibs cheat`.
 - **`nibs set --parent` and `nibs query` report an illegal reparent as a hierarchy error**, with the `allowedParentTypes` hint `nibs mv` and `nibs new` already gave, and a `--type` change that would orphan a child now names which child.
-- **`nibs query` reports the `occurrences` count when a surgical replace is refused** — `TEXT_NOT_FOUND` or `TEXT_AMBIGUOUS` with the count, which separates "your text was not there" from "your text was ambiguous".
-- **An oversized filter id no longer amplifies the response by the size of the store** — a 100 KB id returned an 8.9 MB response on an 89-nib fixture; the echo is now capped, with the original length reported.
+- **`nibs query` reports the `occurrences` count when a surgical replace is refused** — `TEXT_NOT_FOUND` or `TEXT_AMBIGUOUS` with the count.
+- **An oversized filter id no longer amplifies the response by the size of the store** — the echo is capped, with the original length reported.
 - A search result could repeat an ancestor when two nibs named the same parent with different spellings of its id.
-- **The font-size preference now reaches the filter box, buttons and dropdown menus** — Small/Medium/Large moved the table and detail text but left those controls pinned at one size.
-- Every refused reorder in the TUI now says why: selecting nibs under different parents, selecting rows that are not next to each other, or pressing the key at the end of a list previously did nothing at all.
+- **The font-size preference now reaches the filter box, buttons and dropdown menus**, which stayed pinned at one size while the table and detail text moved.
+- Every refused reorder in the TUI now says why — nibs under different parents, rows that are not adjacent, or the end of a list — instead of doing nothing at all.
 - Refusals and failures in the TUI footer no longer render in the same green as a success.
 - **Pre-release versions are marked as pre-releases on GitHub**, so `nibs upgrade` no longer offers them as routine stable upgrades.
 
 ### Security
-- **BREAKING: `nibs upgrade` now requires releases to be signed.** It verifies `checksums.txt` against an Ed25519 key compiled into the binary, then verifies the downloaded archive against that file; because the signature is fetched during release *detection*, `nibs upgrade --version <tag>` cannot reach any release predating signing, though upgrading *to* the first signed release is unaffected.
-- **Releases publish `checksums.txt.sig`**, a detached Ed25519 signature over the checksum file produced from a key held in a protected `release` environment, and three public keys are compiled into every binary so the signing key can be rotated later without stranding installs.
+- **BREAKING: `nibs upgrade` now requires releases to be signed.** It verifies `checksums.txt` against an Ed25519 key compiled into the binary, then the archive against that file; because the signature is fetched during release *detection*, `nibs upgrade --version <tag>` cannot reach any release predating signing, though upgrading *to* the first signed release is unaffected.
+- **Releases publish `checksums.txt.sig`**, a detached Ed25519 signature over the checksum file produced from a key held in a protected `release` environment, with three public keys compiled into every binary so the signing key can be rotated later without stranding installs.
 - **Release assets carry a build provenance attestation** — verifiable with `gh attestation verify nibs_linux_amd64.tar.gz --repo alphaleonis/nibs`, anchored in Sigstore and GitHub's OIDC identity rather than a key the project holds.
 - **Every input to the release job is pinned** — GoReleaser and `go-licenses` to exact versions, and every `uses:` reference to a full commit SHA — so no arbitrary upstream release can run as code in a job holding `contents: write`.
 - **CI now fails on a dependency with a known vulnerability.** `task vulncheck` (govulncheck) and `task web:vulncheck` (`npm audit`) run in the lint job and on a weekly schedule, each gated by an explicit allowlist that fails both on an unreviewed advisory and on an entry that no longer matches anything.
-- **Two vulnerable Go dependencies reachable from nibs' own code were updated**: goldmark `1.7.13` → `1.7.17`, closing a cross-site scripting issue ([GO-2026-5320](https://pkg.go.dev/vuln/GO-2026-5320)) reachable from mention extraction, and `golang.org/x/text` `0.38.0` → `0.39.0`, closing an infinite loop on invalid UTF-8 ([GO-2026-5970](https://pkg.go.dev/vuln/GO-2026-5970)).
-- **The web dependency tree carries no known advisories** — thirty-six open Dependabot alerts closed by eight in-range updates, of which only `dompurify` and the compiled `svelte` runtime reach a shipped artifact.
+- **Two vulnerable Go dependencies reachable from nibs' own code were updated**: goldmark, closing a cross-site scripting issue ([GO-2026-5320](https://pkg.go.dev/vuln/GO-2026-5320)) reachable from mention extraction, and `golang.org/x/text`, closing an infinite loop on invalid UTF-8 ([GO-2026-5970](https://pkg.go.dev/vuln/GO-2026-5970)).
 
 ## v0.7.0 - 2026-07-25
 
