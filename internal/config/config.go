@@ -23,8 +23,8 @@ const (
 // left deferred, completed and scrapped indistinguishable in the TUI and the CLI
 // even though they mean different things. Deferred is magenta because it is the
 // odd one out — the work is coming back — while completed and scrapped share a
-// grey ramp with scrapped the dimmer of the two. See the closed-status ramp in
-// internal/ui/styles.go for why those two greys sit where they do.
+// gray ramp with scrapped the dimmer of the two. See the closed-status ramp in
+// internal/ui/styles.go for why those two grays sit where they do.
 // Statuses are not configurable - they are hardcoded like types.
 // Order determines sort priority: the open statuses first (in-progress, todo,
 // draft), then the closed ones (deferred, completed, scrapped) last. Pickers

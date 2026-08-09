@@ -87,7 +87,7 @@ func TestStatusPickerModel(t *testing.T) {
 		if !deferred.isClosed {
 			t.Error("deferred item should have isClosed=true (closed)")
 		}
-		// Deferred is magenta, not grey: it is the one closed status whose work
+		// Deferred is magenta, not gray: it is the one closed status whose work
 		// is coming back, so it reads differently from completed and scrapped.
 		if deferred.color != "magenta" {
 			t.Errorf("deferred color = %q, want %q", deferred.color, "magenta")

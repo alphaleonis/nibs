@@ -446,7 +446,7 @@ func TestRenderNibRow_DeferredStatusCell(t *testing.T) {
 	}
 
 	// The point of the closed-status ramp: the three closed statuses used to
-	// share one grey, which made them indistinguishable on screen. Naming three
+	// share one gray, which made them indistinguishable on screen. Naming three
 	// colours is not enough — they have to RESOLVE to three different ones, and
 	// a typo in NamedColors would silently collapse them back to the fallback.
 	closed := map[string]string{}
@@ -454,7 +454,7 @@ func TestRenderNibRow_DeferredStatusCell(t *testing.T) {
 		name := cfg.GetNibColors(status, "task", "").StatusColor
 		// ResolveColor returns ColorMuted for anything it does not recognise, so
 		// a misspelled name ("dimgrey") is not an error — it silently renders the
-		// fallback. That reads as a plausible grey, which is exactly how it would
+		// fallback. That reads as a plausible gray, which is exactly how it would
 		// survive review.
 		if ResolveColor(name) == ColorMuted {
 			t.Errorf("%s colour %q is not a known name — it resolved to the fallback", status, name)
