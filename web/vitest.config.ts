@@ -25,6 +25,15 @@ export default defineConfig({
     // and a percentage scales the fleet up on exactly the machines where that
     // overshoots.
     maxWorkers: 4,
+    // Console output from passing tests is dropped; failing tests keep theirs
+    // in full. bits-ui's dismissible-layer reads a svelte-toolbelt box after
+    // its owning effect is destroyed, and Svelte's dev build warns every time
+    // — 21,130 `derived_inert` lines from Toolbar.test.ts alone, which buried
+    // real failures in the CI log. The warning comes entirely from
+    // node_modules (18 unique stacks, none through web/src), so there is
+    // nothing here to fix; suppressing it for green runs only keeps the signal
+    // for the runs that need it.
+    silent: "passed-only",
     environment: "jsdom",
     include: ["src/**/*.test.ts"],
     globals: true,
