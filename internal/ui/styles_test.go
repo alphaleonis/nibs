@@ -1,6 +1,7 @@
 package ui
 
 import (
+	"fmt"
 	"strings"
 	"testing"
 
@@ -437,11 +438,32 @@ func TestRenderNibRow_DeferredStatusCell(t *testing.T) {
 	if !nc.IsClosed {
 		t.Fatal("deferred must be closed so its row is dimmed")
 	}
-	if nc.StatusColor != "gray" {
-		t.Errorf("deferred status colour = %q, want %q", nc.StatusColor, "gray")
+	if nc.StatusColor != "magenta" {
+		t.Errorf("deferred status colour = %q, want %q", nc.StatusColor, "magenta")
 	}
 	if ResolveColor(nc.StatusColor) == ColorMuted {
 		t.Error("deferred status colour resolved to the unknown-colour fallback (ColorMuted)")
+	}
+
+	// The point of the closed-status ramp: the three closed statuses used to
+	// share one grey, which made them indistinguishable on screen. Naming three
+	// colours is not enough — they have to RESOLVE to three different ones, and
+	// a typo in NamedColors would silently collapse them back to the fallback.
+	closed := map[string]string{}
+	for _, status := range []string{"deferred", "completed", "scrapped"} {
+		name := cfg.GetNibColors(status, "task", "").StatusColor
+		// ResolveColor returns ColorMuted for anything it does not recognise, so
+		// a misspelled name ("dimgrey") is not an error — it silently renders the
+		// fallback. That reads as a plausible grey, which is exactly how it would
+		// survive review.
+		if ResolveColor(name) == ColorMuted {
+			t.Errorf("%s colour %q is not a known name — it resolved to the fallback", status, name)
+		}
+		resolved := fmt.Sprintf("%v", ResolveColor(name))
+		if prev, clash := closed[resolved]; clash {
+			t.Errorf("%s and %s both resolve to %v — closed statuses must be distinguishable", prev, status, resolved)
+		}
+		closed[resolved] = status
 	}
 
 	// Title intentionally contains no "F" so the only "F" in the row is the

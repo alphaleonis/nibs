@@ -21,6 +21,24 @@ var (
 	ColorSubtle    = lipgloss.Color("#555555") // Dark gray (for tree lines)
 	ColorBlue      = lipgloss.Color("#3B82F6") // Blue
 	ColorCyan      = lipgloss.Color("14")      // Bright Cyan (ANSI)
+
+	// The closed-status ramp. These three exist to tell deferred, completed and
+	// scrapped apart, which all rendered as the same gray before.
+	//
+	// They sit where they do because the TUI has ONE color per status for every
+	// terminal, light or dark, unlike the web which carries a value per theme.
+	// Measured against #1c1c1c, #000000, #fdfdfd and #ffffff, neutral grays
+	// clearing 3:1 on all four span only #67 to #93 — so completed and scrapped
+	// are near the ends of that band, which is as far apart as they can be while
+	// both stay legible either way. Their order matches the web's: completed is
+	// the lighter of the two, scrapped the dimmer.
+	//
+	// The web's own values are close but not identical (its completed is
+	// #99A1AF), because with a separate light-theme value it can afford a
+	// lighter gray than a single-value palette can.
+	ColorMagenta   = lipgloss.Color("#AA6693") // Deferred — set aside, not finished
+	ColorGrayLight = lipgloss.Color("#90939B") // Completed
+	ColorGrayDim   = lipgloss.Color("#64676F") // Scrapped — dimmer than completed
 )
 
 // NamedColors maps color names to colors.
@@ -33,6 +51,11 @@ var NamedColors = map[string]color.Color{
 	"blue":   ColorBlue,
 	"purple": ColorPrimary,
 	"cyan":   ColorCyan,
+	// "gray" stays #6B7280: the `low` priority uses it, so the closed-status
+	// ramp gets its own names rather than redefining it out from under them.
+	"magenta":   ColorMagenta,
+	"lightgray": ColorGrayLight,
+	"dimgray":   ColorGrayDim,
 }
 
 // ResolveColor converts a color name or hex code to a color.

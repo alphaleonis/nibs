@@ -12,6 +12,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ### Changed
 - **The web UI is set in Mona Sans, bundled with the app**, so text no longer renders differently between browsers depending on which weights the system font happens to ship.
+- **The TUI tells the three closed statuses apart** — `deferred` is magenta, and `completed` and `scrapped` sit at different points on a grey ramp, where all three previously shared one grey.
 
 ## v0.8.0 - 2026-08-09
 
