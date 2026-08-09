@@ -13,8 +13,10 @@
    * The mark keeps its gradients: those run #4D4D4D through #D0D0D0 and back, so
    * some part of the mark always has contrast whatever sits behind it.
    *
-   * Geometry comes from assets/logo/banner-white-text.svg — read the README
-   * there before re-exporting from Affinity.
+   * Geometry and viewBox come from assets/logo/banner-white-text.svg, whose
+   * artboard is tight to the rendered ink. Do not re-derive the viewBox from
+   * getBBox(): the ring path reports geometry ~165 units left of anything it
+   * actually draws, and padding to that bbox pushes the artwork off-centre.
    */
   interface Props {
     /** Classes for the <svg>; set a height and let the width follow. */
@@ -37,7 +39,7 @@
 
 <svg
   class={className}
-  viewBox="-167 -203 2956 1371"
+  viewBox="0 0 2789 984"
   xmlns="http://www.w3.org/2000/svg"
   fill-rule="evenodd"
   clip-rule="evenodd"

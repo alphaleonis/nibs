@@ -74,11 +74,13 @@ describe("NibsLogo", () => {
     for (const id of referenced) expect(defined).toContain(id);
   });
 
-  // The Affinity artboard cropped the ring and swoosh; the viewBox here is the
-  // measured content bbox, so a re-export that reintroduces the crop is caught.
-  it("uses the uncropped viewBox", () => {
+  // Pinned to the artboard, which is tight to the rendered ink. Deriving this
+  // from getBBox() instead adds ~165 units of dead margin on the left (the ring
+  // path's bbox extends well past anything it draws), which reads as the banner
+  // sitting right of centre wherever it is centred.
+  it("uses the artboard viewBox, with no dead margin", () => {
     const { container } = render(NibsLogo);
 
-    expect(container.querySelector("svg")).toHaveAttribute("viewBox", "-167 -203 2956 1371");
+    expect(container.querySelector("svg")).toHaveAttribute("viewBox", "0 0 2789 984");
   });
 });

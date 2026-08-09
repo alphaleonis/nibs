@@ -1,8 +1,8 @@
 <svg
   xmlns="http://www.w3.org/2000/svg"
-  viewBox="149 -359 1732 1732"
-  width="1732"
-  height="1732"
+  viewBox="211 -78 1362 1362"
+  width="1362"
+  height="1362"
   fill-rule="evenodd"
   clip-rule="evenodd"
   stroke-linejoin="round"
@@ -21,6 +21,11 @@
 
     Geometry and the transform chain come from assets/logo/logo-only.svg; the
     gradients are unchanged, so this matches the mark used everywhere else.
+
+    The viewBox is centred on the RENDERED INK, measured by rasterizing and
+    scanning the alpha channel. It cannot be derived from getBBox(): SVG path
+    bounding boxes here extend well past anything the path draws, and centring
+    on one leaves the mark visibly off-centre in the tab.
   -->
   <g transform="matrix(1,0,0,1,-850.542,-90.487)">
     <g transform="matrix(5.95339,0,0,5.95339,-2251.08,-7988.84)">

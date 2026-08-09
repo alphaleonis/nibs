@@ -5,33 +5,36 @@ ring; the wordmark is "NIBS".
 
 | file | contents | aspect |
 | --- | --- | --- |
-| `logo-only.svg` | mark alone | 1.03:1 |
-| `banner-dark-text.svg` | mark + wordmark, side by side, gray-gradient wordmark | 2.16:1 |
-| `banner-white-text.svg` | same, flat white wordmark | 2.16:1 |
-| `logo-and-dark-text.svg` | mark above wordmark, gray-gradient wordmark | 0.79:1 |
-| `logo-and-white-text.svg` | same, flat white wordmark | 0.79:1 |
+| `logo-only.svg` | mark alone | 1.10:1 |
+| `banner-dark-text.svg` | mark + wordmark, side by side, gray-gradient wordmark | 2.83:1 |
+| `banner-white-text.svg` | same, flat white wordmark | 2.83:1 |
+| `logo-and-dark-text.svg` | mark above wordmark, gray-gradient wordmark | 0.68:1 |
+| `logo-and-white-text.svg` | same, flat white wordmark | 0.68:1 |
 
-## Two things to know before re-exporting
+The artboards are correct: each viewBox is tight to the rendered artwork, which
+touches all four edges. The only change made to the exports is the intrinsic
+`width`/`height`, from Affinity's `100%`/`100%` — which gives an `<img>` no
+aspect ratio to work from — to the viewBox dimensions in px.
 
-**1. The artboard crops the artwork.** Every file as originally exported had a
-viewBox tighter than its own geometry, slicing the left of the orange ring and
-the top of the gray swoosh flat. The paths were all present — only the viewBox
-was wrong — so the files here were patched in place to the measured content
-bounding box:
+## Two things to know before changing these
 
-| file | exported viewBox | corrected |
-| --- | --- | --- |
-| `banner-*.svg` | `0 0 2789 984` | `-167 -203 2956 1371` |
-| `logo-and-*.svg` | `0 0 1571 2325` | `-243 -295 2061 2620` |
-| `logo-only.svg` | `0 0 1571 1433` | `-243 -295 2061 1996` |
+**1. Never derive a viewBox from `getBBox()`.** SVG bounding boxes here extend
+well past anything the path actually draws: the ring path in the banner reports
+a bbox starting 165 units left of its leftmost ink, and ~200 units above and
+below the visible artwork. Padding a viewBox out to that bbox adds dead margin —
+asymmetrically, since the overhang is almost entirely on the left and top — and
+the result is artwork that renders visibly off-centre wherever it is centred,
+and smaller than expected wherever it is sized by height.
 
-A fresh export will reintroduce the crop unless the Affinity artboard is
-widened to contain the whole drawing. After any re-export, check that no
-geometry falls outside the viewBox before committing.
+This already happened once: all five files were "corrected" to their bboxes,
+which added 166/202/0/184 units of dead margin to the banner and pushed it 3.2%
+right of centre in the README, while shrinking the mark in the app header by
+28%. The exports were right; the measurement was wrong.
 
-The intrinsic `width`/`height` were likewise changed from Affinity's
-`100%`/`100%`, which gives an `<img>` no aspect ratio to work from, to the
-viewBox dimensions in px.
+**Measure ink, not geometry.** Rasterize the file and scan the alpha channel for
+the true bounds. `getBBox()` is not a substitute, and neither is eyeballing a
+render — artwork that *touches* a viewBox edge looks identical to artwork that
+is *clipped* by it, and that is exactly how the mistake above was made.
 
 **2. Neither wordmark color works on every theme.** Measured against the four
 app backgrounds:
@@ -65,7 +68,8 @@ mirrored into both:
 
 **`web/src/lib/components/NibsLogo.svelte`** — the header banner, derived from
 `banner-white-text.svg`. Inline SVG so the wordmark can be `currentColor` and
-inherit each theme's foreground. Its test pins the corrected viewBox.
+inherit each theme's foreground. Its test pins the viewBox, which must stay
+equal to this file's.
 
 **`web/public/favicon.svg`** — derived from `logo-only.svg` with the two
 orbiting-ring paths (the ones carrying the `0.517282` transform) removed, on a
