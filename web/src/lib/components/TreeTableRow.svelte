@@ -1,6 +1,6 @@
 <script lang="ts">
-  import { DEFAULT_BLOCKED_EMPHASIS } from "../types";
-  import type { TreeTableNib, BlockedEmphasis } from "../types";
+  import { DEFAULT_BLOCKED_EMPHASIS, DEFAULT_OPEN_DETAIL_ON } from "../types";
+  import type { TreeTableNib, BlockedEmphasis, OpenDetailGesture } from "../types";
   import { ALL_COLUMN_KEYS } from "../columns";
   import type { ColumnKey, RowContext } from "../columns";
   import { Plus } from "@lucide/svelte";
@@ -23,6 +23,7 @@
     highlighted?: boolean;
     fading?: boolean;
     blockedEmphasis?: BlockedEmphasis;
+    openDetailOn?: OpenDetailGesture;
   }
 
   let {
@@ -38,6 +39,7 @@
     highlighted = false,
     fading = false,
     blockedEmphasis = DEFAULT_BLOCKED_EMPHASIS,
+    openDetailOn = DEFAULT_OPEN_DETAIL_ON,
   }: Props = $props();
 
   const selection = useSelection();
@@ -67,14 +69,21 @@
   //   opened — the detail panel is showing this row. Drives the `.opened`
   //     leading accent and `aria-current`.
   let inSelection = $derived(selection.selectedIds.has(nib.id));
-  // Marked in every open-detail mode, not only "double": a row can be open while
-  // outside the action set in "single" too, and with `.active` tracking
-  // `selectedIds` alone a mode gate here would leave that row unmarked entirely.
-  // Two paths reach it: `clearAfterMutation` deselects everything and closes the
-  // panel only when the mutation hit the panel's nib, so deleting a different row
-  // empties the set while the panel stays open; and `retainOnly` prunes
-  // `selectedIds` on a filter change while leaving `selectedNibId` alone.
   let opened = $derived(selection.selectedNibId === nib.id);
+  // The VISUAL accent is "double"-only, while `opened` above stays true in both
+  // modes. Under "single" the panel follows the selection, so on an ordinary
+  // click the open row is also the selected row and the bar would repeat what
+  // the fill already says on every click — redundant chrome for the default
+  // mode. The two channels are allowed to disagree because they cost different
+  // things: `aria-current` is free and still tells assistive tech which row the
+  // panel is showing, so it is NOT gated.
+  //
+  // Accepted gap: "single" can still put an open row outside the action set —
+  // `clearAfterMutation` empties the set while leaving a panel open on a nib the
+  // mutation did not touch, and `retainOnly` prunes the set on a filter change.
+  // Such a row carries no visual marker at all. Tolerated because the detail
+  // panel itself names the nib it is showing.
+  let showOpenAccent = $derived(openDetailOn === "double" && opened);
   let focused = $derived(selection.focusedNibId === nib.id);
   let isDragged = $derived(drag.isDraggedItem(nib.id));
   let anyDragging = $derived(drag.isDragging);
@@ -119,7 +128,7 @@
   data-testid="tree-row"
   class="tree-row"
   class:active={inSelection}
-  class:opened={opened}
+  class:opened={showOpenAccent}
   class:focused={focused}
   class:draggable={draggable}
   class:any-dragging={anyDragging}
@@ -170,8 +179,10 @@
     position: relative;
     /* Gutter for the open-row accent below. Reserved on EVERY row (transparent
        here) so switching a row to "open" only recolors it — turning the border
-       on per-row would shift the first column by its width. */
-    border-inline-start: 3px solid transparent;
+       on per-row would shift the first column by its width. Sized so the accent
+       still reads as a row state at the table's outer edge, where it competes
+       with the focus ring for attention rather than sitting beside it. */
+    border-inline-start: 5px solid transparent;
   }
 
   .tree-row.draggable {
@@ -192,7 +203,13 @@
      also render it more prominently than the rows the action actually targets.
      Shape rather than alpha keeps the two states independently readable when a
      row is both (see also `aria-current` / `aria-selected` on the row). Every
-     row reserves the 3px gutter transparent, so coloring it shifts nothing.
+     row reserves the gutter transparent, so coloring it shifts nothing.
+
+     The color is `--row-open` (amber), NOT `--ring`. `--ring` paints the
+     keyboard focus outline, which follows the last click; in the same blue this
+     accent read as a weaker copy of that outline, so the row the panel was
+     actually showing looked unmarked while the clicked row looked open. Amber is
+     the one accent no theme uses for focus. Keep it off the focus hue.
 
      Deliberately not a box-shadow ring: the keyboard focus ring
      (`.tree-row.focused` in app.css) and all three drop-zone indicators are
@@ -204,7 +221,7 @@
      the accent survives `.tree-row:hover` (which repaints only the background)
      — the case where the pointer parks on the row it just opened. */
   .tree-row.opened {
-    border-inline-start-color: var(--ring);
+    border-inline-start-color: var(--row-open);
   }
 
   /* Drag / pill-dim state markers — no styling here; opacity is single-sourced by

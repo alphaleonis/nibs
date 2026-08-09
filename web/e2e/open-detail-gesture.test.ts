@@ -161,9 +161,11 @@ test.describe("open detail gesture", () => {
 
     await expect(detailPanel).toBeVisible({ timeout: 5_000 });
     // In single mode a click writes both sets, so the row is at once the action
-    // set and the panel's target and carries both channels.
+    // set and the panel's target. The fill says so; the accent is gated off here
+    // because it would only repeat that on every click. `aria-current` is not
+    // gated — it still answers "which row is the panel showing?" for free.
     await expect(firstRow).toHaveClass(/active/);
-    await expect(firstRow).toHaveClass(/opened/);
+    await expect(firstRow).not.toHaveClass(/opened/);
     await expect(firstRow).toHaveAttribute("aria-selected", "true");
     await expect(firstRow).toHaveAttribute("aria-current", "true");
   });

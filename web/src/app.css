@@ -60,6 +60,7 @@
   --color-tag-bg: var(--tag-bg);
   --color-tag-text: var(--tag-text);
   --color-tag-border: var(--tag-border);
+  --color-row-open: var(--row-open);
   --color-query-value: var(--query-value);
   --color-query-well: var(--query-well);
   --color-archive: var(--archive);
@@ -158,6 +159,15 @@
   --tag-bg: oklch(0.488 0.243 264 / 0.15);    /* indigo-500 at 15% */
   --tag-text: oklch(0.757 0.148 276);          /* indigo-300 */
   --tag-border: oklch(0.488 0.243 264 / 0.3); /* indigo-500 at 30% */
+
+  /* Leading bar on the table row the detail panel is showing. Deliberately far
+     from --ring in hue: --ring paints the keyboard focus outline, which follows
+     the last click, and the two sat side by side in the same blue made the open
+     row read as "just another selected row". Every theme's --ring is blue or
+     purple (264 / 250 / 300 / 255), so amber is the one accent that cannot be
+     mistaken for it in any of them. Not an alias of --warning: this marks a
+     location, not a problem, and the two must be free to diverge. */
+  --row-open: oklch(0.78 0.16 65);             /* amber-400 */
 
   /* Filter-box value tokens (the accent half of the query highlight).
      Deliberately an ALIAS of --tag-text, and declared only here: every theme
@@ -304,6 +314,7 @@
   --tag-bg: oklch(0.70 0.17 300 / 0.15);
   --tag-text: oklch(0.82 0.13 300);
   --tag-border: oklch(0.70 0.17 300 / 0.35);
+  --row-open: oklch(0.82 0.115 68);         /* #ffb86c, Dracula orange */
 }
 
 /* Daylight — the first LIGHT palette. `.dark` is absent for this
@@ -390,6 +401,9 @@
   --tag-bg: oklch(0.5 0.19 255 / 0.1);
   --tag-text: oklch(0.46 0.19 276);
   --tag-border: oklch(0.5 0.19 255 / 0.3);
+  /* Darker than the dark-theme amber: a 0.78-lightness bar washes out against
+     this near-white background. */
+  --row-open: oklch(0.60 0.17 55);
 
   /* Archive/delete action colors */
   --archive: oklch(0.58 0.13 66);
