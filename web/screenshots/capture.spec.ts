@@ -378,6 +378,17 @@ for (const { value } of THEMES) {
   });
 }
 
+// The brand banner, cropped to the header band, per palette. The wordmark is
+// `currentColor`, so these are the shots that show whether it actually tracks
+// each theme's foreground — the shipped assets bake in a color that fails either
+// the dark palettes or Daylight, which is why the banner is inline SVG.
+for (const { value } of THEMES) {
+  test(`theme ${value} — header banner`, async ({ page }) => {
+    await openApp(page, "milestones", value);
+    await page.locator("header").first().screenshot({ path: join(OUT, `banner-${value}.png`), animations: "disabled" });
+  });
+}
+
 // Settings sheet open with the Theme dropdown visible, per palette.
 for (const { value } of THEMES) {
   test(`theme ${value} — settings sheet`, async ({ page }) => {

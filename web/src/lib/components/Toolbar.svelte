@@ -28,6 +28,7 @@
   import * as DropdownMenu from "$lib/components/ui/dropdown-menu/index.js";
   import { buttonVariants } from "$lib/components/ui/button/index.js";
   import { Input } from "$lib/components/ui/input/index.js";
+  import NibsLogo from "./NibsLogo.svelte";
   import StatusIcon from "./StatusIcon.svelte";
   import TypeIcon from "./TypeIcon.svelte";
   import SuggestionList from "./SuggestionList.svelte";
@@ -780,7 +781,16 @@
      single gapped container (a gap-y there would insert a visible gap between two bands that
      read as one chrome unit). -->
 <header class="flex flex-wrap items-center justify-between gap-3 border-b border-border px-6 py-3">
-  <h1 class="min-w-0 max-w-[28ch] lg:max-w-none truncate text-xl font-semibold">Nibs{projectName ? ` - ${projectName}` : ""}</h1>
+  <!-- The banner carries the "Nibs" half of the title, so only the project name
+       is text here. Its height is in `em` rather than a fixed rung so it tracks
+       the font-scale setting along with the h1 it sits in. -->
+  <h1 class="flex min-w-0 items-center gap-2.5 text-xl font-semibold">
+    <NibsLogo class="h-[1.4em] w-auto shrink-0" />
+    {#if projectName}
+      <span aria-hidden="true" class="shrink-0 text-muted-foreground">·</span>
+      <span class="min-w-0 max-w-[28ch] lg:max-w-none truncate">{projectName}</span>
+    {/if}
+  </h1>
 
   <div class="flex shrink-0 items-center gap-1">
     <!-- New button. WithTooltip wraps the tooltip; the DropdownMenu.Trigger
