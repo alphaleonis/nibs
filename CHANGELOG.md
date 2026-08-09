@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## v0.8.0 - 2026-08-09
+
 ### Added
 - **A GitHub-style query language in the web filter box** — `field:value` tokens alongside full-text search, covering every field plus relationship and hierarchy predicates, with syntax highlighting, autocomplete, a built-in reference, two-way sync with the facet dropdowns, and a shareable `?q=` URL.
 - **"Filter related" on the row context menu** — filter to a nib's blockers, children, ancestors, siblings or mentions without knowing or typing its id.
