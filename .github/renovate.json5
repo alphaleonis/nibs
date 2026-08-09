@@ -39,9 +39,9 @@
 
   "packageRules": [
     {
-      // A node major is a deliberate decision, not a routine bump: 22 is the
-      // major CI is green on (nibs-g4a9), and moving off it means running the
-      // web suite on the new one first. Left alone this would be the first
+      // A node major is a deliberate decision, not a routine bump: 24 is the
+      // major CI is green on, and moving off it means running the web suite on
+      // the new one first. Left alone this would be the first
       // thing Renovate proposed here — mise.toml pins a bare major, so releases
       // inside that major need no bump at all and the only update on offer is
       // the jump to the next one. Dashboard approval keeps it visible without

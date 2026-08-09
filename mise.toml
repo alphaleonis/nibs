@@ -46,8 +46,8 @@
 [tools]
 go = "1.26.5"
 golangci-lint = "2.12.2"
-node = "22"
-task = "3.50.0"
+node = "24"
+task = "3.52.0"
 
 # Release-path tools. These two are not needed to build or test the project —
 # only to produce a release — but they are the highest-privilege things it runs:
@@ -68,6 +68,16 @@ task = "3.50.0"
 # release job does, and it keeps them inside Renovate's mise manager instead of
 # needing a custom manager per site.
 goreleaser = "2.17.1"
+# Held at 1.x deliberately — do NOT take go-licenses v2 (module path
+# github.com/google/go-licenses/v2) until it stops losing sub-package licenses.
+# We link github.com/creativeprojects/go-selfupdate/update, whose LICENSE is
+# Apache-2.0 while its parent module is MIT. v1 reports it and saves it; v2.0.1
+# reports only the parent and writes no update/LICENSE into third_party_licenses
+# at all, so a release built with it would ship archives missing an attribution
+# we are required to carry. Measured by running `task licenses` on both against
+# the same go.mod. v2 is better in two smaller ways — it catches
+# RoaringBitmap/roaring/v2, which v1 misses, and it emits a well-formed GitLab
+# license URL — so re-test rather than assume when a later v2 appears.
 "go:github.com/google/go-licenses" = "1.6.0"
 
 # govulncheck reports known vulnerabilities in dependencies, gated by

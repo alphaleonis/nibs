@@ -38,9 +38,7 @@ When modifying the GraphQL schema (`internal/graph/schema.graphqls`):
 
 The code generation is configured in `gqlgen.yml`. The `nib.Nib` struct is autobound so the GraphQL `Nib` type maps directly to it.
 
-**Never put a comment directive on a resolver's doc comment.** gqlgen rewrites `internal/graph/schema.resolvers.go` on every codegen, and the pinned version (see `go.mod`) rebuilds each resolver's doc comment through `go/ast`'s `CommentGroup.Text()`, which discards comment directives — `//nolint:…`, `//go:noinline`, the `//<tool>:<directive>` form of `go/ast`'s `isDirective` rule — while keeping the prose around them. The directive is gone on the next `task codegen` and whatever it was doing silently stops. Resolver *bodies* are copied through as raw source, so put the directive **inside the function**. `task go:codegen` greps for one before running gqlgen and fails the build, but that check is best-effort: it is skipped on a machine without `grep` on PATH, and on a resolver file it cannot read (a rename or a `resolver.layout` change degrades it to a no-op rather than blocking codegen).
-
-Which parts of that file survive a regeneration and which do not is written up in full at the top of `internal/graph/resolver.go` — read it before assuming a note will last in `schema.resolvers.go`. In short: resolver bodies, resolver doc-comment prose and the import block survive; a free-standing comment and a non-resolver declaration do not. gqlgen v0.17.86 fixes the directive behavior upstream, and `task go:codegen` fails with removal instructions once `go.mod` reaches that version.
+Which parts of that file survive a regeneration and which do not is written up in full at the top of `internal/graph/resolver.go` — read it before assuming a note will last in `schema.resolvers.go`. In short: resolver bodies, resolver doc-comment prose (including a comment directive), and the import block survive; a free-standing comment and a non-resolver declaration do not.
 
 ## Architecture
 
