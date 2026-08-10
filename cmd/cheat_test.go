@@ -76,12 +76,88 @@ func TestCheatSheetCoversTheSurface(t *testing.T) {
 	for _, want := range []string{
 		"get", "list", "rel", "new", "set", "body", "mv", "rm", "close",
 		"catalog", "cheat", "prime",
-		"@FILE", // the '-'/@FILE prose-input rule
+		"context", "plan", "roadmap", // the composite views
+		"--ready", // the startable filter, the only route to it on this sheet
+		"@FILE",   // the '-'/@FILE prose-input rule
 		"{nib}", "{nibs,count,truncated}",
 		"never silently retry",
 	} {
 		if !strings.Contains(got, want) {
 			t.Errorf("cheat sheet missing %q", want)
+		}
+	}
+}
+
+// cheatEntryLabels returns the first token of every entry in the sheet's command
+// sections (READ/WRITE) — the "verb column". A section opens with its label in
+// column 0 and its first entry at column 7; later entries are indented to that
+// same column 7, and a wrapped remainder is indented far past it. So an entry is
+// exactly a line with seven leading spaces and a non-space at column 7, plus the
+// section-label line itself.
+func cheatEntryLabels(t *testing.T, sheet string, sections ...string) []string {
+	t.Helper()
+	var labels []string
+	inSection := false
+	for _, line := range strings.Split(sheet, "\n") {
+		switch {
+		case len(line) > 0 && line[0] != ' ':
+			// A line starting in column 0 opens a section and ends the previous one.
+			inSection = false
+			for _, name := range sections {
+				if after, ok := strings.CutPrefix(line, name); ok && strings.HasPrefix(after, " ") {
+					inSection = true
+					line = strings.TrimLeft(after, " ")
+				}
+			}
+			if !inSection {
+				continue
+			}
+		case inSection && strings.HasPrefix(line, "       ") && len(line) > 7 && line[7] != ' ':
+			line = line[7:]
+		default:
+			continue
+		}
+		if label := strings.Fields(line); len(label) > 0 {
+			labels = append(labels, label[0])
+		}
+	}
+	if len(labels) == 0 {
+		t.Fatalf("no entries parsed from sections %v; the sheet's layout changed:\n%s", sections, sheet)
+	}
+	return labels
+}
+
+// TestCheatSheetVerbColumnHoldsOnlyRealCommands is the guard for nibs-mslb: the
+// READ and WRITE sections list one command per line with its name in the verb
+// column, so EVERY name in that column must be runnable exactly as written.
+//
+// It regressed once by holding a category label instead. `recipes` sat in the
+// column beside get/list/rel and read as a fourth command, but named a group
+// whose members (context, plan, roadmap) are the actual commands — so `nibs
+// recipes` exited 1. That is expensive precisely here: CLAUDE.md sends agents to
+// `nibs cheat` FIRST to avoid guessing syntax, and the project rule is to STOP on
+// any nibs error, so following the sheet correctly halts the run.
+//
+// Membership is checked against the command tree rather than a hand-listed set,
+// which is what makes this catch a label nobody thought to exclude.
+func TestCheatSheetVerbColumnHoldsOnlyRealCommands(t *testing.T) {
+	registered := map[string]bool{}
+	for _, c := range rootCmd.Commands() {
+		registered[c.Name()] = true
+		for _, alias := range c.Aliases {
+			registered[alias] = true
+		}
+	}
+	// Tripwire: if the command tree comes back empty the loop below passes
+	// vacuously, reporting a clean sheet no matter what it holds.
+	if len(registered) == 0 {
+		t.Fatal("rootCmd has no subcommands; the membership check would be vacuous")
+	}
+
+	for _, label := range cheatEntryLabels(t, cheatSheet(config.Default()), "READ", "WRITE") {
+		if !registered[label] {
+			t.Errorf("cheat sheet verb column lists %q, which is not a runnable command; "+
+				"the column must hold commands, not category labels", label)
 		}
 	}
 }

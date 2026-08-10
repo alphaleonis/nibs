@@ -48,10 +48,12 @@ func cheatSheet(cfg *config.Config) string {
 	fmt.Fprintf(&b, `nibs — agentic issue tracker. One-screen grammar; detail: nibs catalog <topic> · nibs <cmd> --help
 
 READ   get <id…>          nib document (default); -f/--view id|ref|card|full; --json → {nib}
-       list [filters]     TSV "# <n> nibs"; --json → {nibs,count,truncated}; -c count; -q ids only
+       list [filters]     TSV "# <n> nibs"; --json → {nibs,count,truncated}; -c count; -q ids only; --ready unblocked+todo
        rel <id> [--rel R] related nibs, same envelope. R (default %s): parent,children,siblings,blocking,
                           blocked-by,mentions-out/in,ancestors,descendants,*-transitive,neighbours[-active]
-       recipes            context [id] · plan <id> · roadmap · list --ready
+       context [id]       project context summary
+       plan <id>          plan view: a parent nib and its children
+       roadmap            Markdown roadmap from milestones and epics
 WRITE  new "<title>" -t T create; also -s -p -e --parent --blocked-by --tag --after/--before/--first
        set <id>           metadata/links; --clear priority|estimate|parent; --remove-tag/-blocked-by/…
        body <id>          --set | --append | --section "## H" --set [--create] | --replace-old T --replace-new U

@@ -95,19 +95,38 @@ test("Priority submenu: hover opens it and clicking a priority applies it", asyn
 // Menus are opened and thrown away over and over in a real session, and the
 // jsdom breakage only showed up after a handful of them had come and gone in one
 // document — so repeat the whole open -> hover -> click cycle rather than
-// trusting a single pass.
+// trusting a single pass. What is under test is the SUBMENU LIFECYCLE, not any
+// particular menu item, so the item is chosen for leaving the row set alone.
+//
+// It must not be a "Filter related" item (nibs-f980). Applying a relationship
+// filter re-renders the table to the matching rows — `ancestor:<a task>` matches
+// nothing, taking 89 rows to 0 — which destroys the very list the loop indexes
+// with .nth(). The old version survived only by OUTRUNNING the debounced
+// re-render on all 20 iterations: it read the table before the filter landed, so
+// the row count never appeared to change. Losing that race even once left
+// .nth(1) resolving against an empty table, and since a Playwright action has no
+// timeout of its own it blocked until the 30 s test timeout — a bimodal 4.1 s or
+// 30 s, roughly 1 run in 15. Setting a priority mutates one row's data and
+// nothing about which rows are listed, so every iteration is deterministic;
+// `order identical: true` across 20 iterations was measured before choosing it.
+// The Filter-related submenu keeps its own single-pass coverage above.
 test("repeated submenu use in one session keeps working", async ({ page }) => {
   await openApp(page);
+  const rows = page.locator("tr[data-nib-id]");
 
   for (let i = 0; i < 20; i++) {
-    const row = page.locator("tr[data-nib-id]").nth(i % 5);
+    const row = rows.nth(i % 5);
+    // Read the id BEFORE acting, the way the single-pass tests above do. A
+    // locator is lazy, so re-resolving .nth() after the click would report
+    // whatever occupies that index afterwards rather than the row acted on.
+    const nibId = (await row.getAttribute("data-nib-id"))!;
     await openContextMenu(page, row);
 
-    const trigger = page.locator('[data-testid="ctx-filter-related-trigger"]');
+    const trigger = page.locator('[data-testid="ctx-priority-trigger"]');
     await expect(trigger).toBeVisible();
     await trigger.hover();
 
-    const item = page.locator('[data-testid="ctx-filter-ancestorId"]');
+    const item = page.locator('[data-testid="ctx-priority-high"]');
     await expect(item, `iteration ${i}: submenu never opened`).toBeVisible({ timeout: 5_000 });
     await item.click();
 
@@ -115,10 +134,13 @@ test("repeated submenu use in one session keeps working", async ({ page }) => {
       page.locator('[data-testid="context-menu"]'),
       `iteration ${i}: menu still open after item click`,
     ).toBeHidden();
-    const tokens = await page.locator('[data-testid="filter-token"]').allTextContents();
-    const nibId = (await row.getAttribute("data-nib-id"))!;
-    expect(tokens.join(" | "), `iteration ${i}: filter not applied`).toContain(
-      nibId.replace(/^tnib-/, ""),
-    );
+
+    // Address the row by id rather than by index: an assertion on .nth(i % 5)
+    // would still pass if the table reordered under it, by checking a row the
+    // iteration never touched.
+    await expect(
+      page.locator(`tr[data-nib-id="${nibId}"] [data-testid="priority-icon"]`),
+      `iteration ${i}: priority not applied to ${nibId}`,
+    ).toBeVisible({ timeout: 10_000 });
   }
 });
