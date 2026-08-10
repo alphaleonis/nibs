@@ -134,6 +134,24 @@
 }
 
 :root {
+  /* Tells the BROWSER which way the theme leans. Tailwind's `dark:` variant
+     keys off the `.dark` class, which is invisible to the UA — so without this
+     every native control (scrollbars, `<select>` popups, spellcheck underlines,
+     the canvas behind the page) paints as a light-mode widget on the dark
+     palettes. Declared here so all three dark themes inherit it; `daylight`
+     overrides it to `light`, and its higher specificity wins.
+     Chromium honours this only via `color-scheme` — a dark surface alone does
+     not darken a native widget. */
+  color-scheme: dark;
+
+  /* Theme the scrollbar itself, which `color-scheme` alone would leave at the
+     UA's generic dark gray. Both properties are per-theme by construction: the
+     tokens are redefined in each palette block, so this one declaration follows
+     all four (Dracula's thumb reads purple-tinted, Graphite's warm). A
+     transparent track lets each scroll container's own surface show through,
+     since they sit variously on --background, --card and --popover. */
+  scrollbar-color: var(--muted-foreground) transparent;
+
   /* ── shadcn theme tokens (dark theme) ──────────────────────── */
   --background: oklch(0.145 0 0);           /* gray-950 */
   --foreground: oklch(0.96 0.005 286);      /* gray-100 */
@@ -387,6 +405,11 @@
    hold contrast on light surfaces, and re-tints the subtle *-bg / alpha tokens
    that were built to glow on dark. Typography tokens stay invariant. */
 :root[data-theme="daylight"] {
+  /* The only palette that leans light — see the `color-scheme` note in :root.
+     This selector outranks the bare `:root` there, so native controls flip back
+     to their light-mode rendering here. */
+  color-scheme: light;
+
   /* Chrome / surface */
   --background: oklch(0.985 0.004 85);      /* soft warm off-white */
   --foreground: oklch(0.22 0.006 75);       /* warm near-black */
@@ -680,10 +703,10 @@ body[data-col-drag="no-drop"] * {
 
 /* Rendered task-list checkboxes (`- [ ]` / `- [x]`). These are the only inputs
    that survive sanitization, so `.prose-nib input[type="checkbox"]` targets
-   exactly them. The native UA control was rendered gray: it ignores the active
-   palette AND — because no theme sets `color-scheme: dark` (the light/dark axis
-   is the `.dark` class only) — a native checkbox paints as a LIGHT-mode control
-   even on the dark themes. So style a custom box from theme tokens instead
+   exactly them. The native UA control renders gray because it ignores the active
+   palette: `color-scheme` (declared in :root) gets a native checkbox as far as
+   dark-mode gray, but no further — it cannot pick up the theme's accent. So
+   style a custom box from theme tokens instead
    (nibs-y6aq): mirrors the shadcn Checkbox — `--input` border, `--primary` fill
    + `--primary-foreground` check when checked, `--ring` focus ring. Size/margin
    match the former inline checkbox so there is no layout shift. */
