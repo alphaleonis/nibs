@@ -7,6 +7,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Fixed
+- **The web UI's scrollbars and other native controls follow the active theme**, instead of rendering as light-mode widgets on the dark palettes in Chromium-based browsers such as Edge.
+
 ## v0.8.1 - 2026-08-09
 
 ### Added
