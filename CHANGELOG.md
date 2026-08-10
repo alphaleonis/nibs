@@ -9,6 +9,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ### Fixed
 - **The web UI's scrollbars and other native controls follow the active theme**, instead of rendering as light-mode widgets on the dark palettes in Chromium-based browsers such as Edge.
+- **`nibs cheat` lists `context`, `plan` and `roadmap` as the commands they are**, instead of grouping them under a `recipes` label that read as a command but could not be run.
 
 ## v0.8.1 - 2026-08-09
 
