@@ -1157,6 +1157,58 @@ func TestSubscribersClosedOnStopWatching(t *testing.T) {
 	}
 }
 
+// awaitEvents drains debounced batches until every wanted nib id has been seen
+// carrying its wanted event type, or the ceiling expires.
+//
+// Draining rather than reading ONE batch is the whole point (nibs-cke5). The
+// watcher's debounce timer RESETS on each event, so a burst of writes coalesces
+// into a single batch only while every gap stays under debounceDelay. That holds
+// easily under inotify, where a back-to-back burst arrives in microseconds — but
+// Windows' ReadDirectoryChangesW delivers more coarsely, and a gap wider than the
+// window splits the burst in two. A test that consumed one batch then asserted on
+// both events was therefore correct only by luck, and failed on Windows CI.
+//
+// The ceiling is generous because it is a backstop against a genuine hang, not a
+// timing assertion: the old fixed 500ms deadline was tight enough to look like the
+// cause, and it was not — the CI failure landed on the missing-event assertion,
+// never on the timeout branch.
+//
+// State is safe to read once this returns: handleChanges commits to the store
+// under the lock BEFORE fanning out, an ordering that watcher.go marks as
+// load-bearing.
+//
+// Distinct from collectNibEvents below, which always waits out its whole window
+// and gathers every event for ONE nib id — the right tool when the question is
+// "what did the settled set contain", as the archive-vs-delete tests ask. Reach
+// for awaitEvents when the question is "have these arrived yet", across several
+// ids: it returns as soon as they have, and cannot be used twice on one channel
+// the way two collectNibEvents calls would race for the same batches.
+func awaitEvents(t *testing.T, ch <-chan []NibEvent, want map[string]EventType) {
+	t.Helper()
+
+	pending := make(map[string]EventType, len(want))
+	for id, typ := range want {
+		pending[id] = typ
+	}
+	if len(pending) == 0 {
+		t.Fatal("awaitEvents called with nothing to wait for; the assertion would be vacuous")
+	}
+
+	deadline := time.After(5 * time.Second)
+	for len(pending) > 0 {
+		select {
+		case events := <-ch:
+			for _, e := range events {
+				if typ, ok := pending[e.NibID]; ok && e.Type == typ {
+					delete(pending, e.NibID)
+				}
+			}
+		case <-deadline:
+			t.Fatalf("timed out waiting for events; still missing %v", pending)
+		}
+	}
+}
+
 func TestMultipleChangesInDebounceWindow(t *testing.T) {
 	core, nibsDir := setupTestCore(t)
 
@@ -1194,30 +1246,11 @@ status: in-progress
 	writeNibFileAtomic(t, filepath.Join(nibsDir, "tmp1--temp.md"), content1)
 	_ = os.Remove(filepath.Join(nibsDir, "tmp1--temp.md"))
 
-	// Wait for debounced events
-	select {
-	case events := <-ch:
-		// Should have events for new1 (created) and upd1 (updated)
-		// tmp1 might or might not appear depending on timing
-		foundNew := false
-		foundUpd := false
-		for _, e := range events {
-			if e.NibID == "new1" && e.Type == EventCreated {
-				foundNew = true
-			}
-			if e.NibID == "upd1" && e.Type == EventUpdated {
-				foundUpd = true
-			}
-		}
-		if !foundNew {
-			t.Error("expected EventCreated for new1")
-		}
-		if !foundUpd {
-			t.Error("expected EventUpdated for upd1")
-		}
-	case <-time.After(500 * time.Millisecond):
-		t.Error("timeout waiting for events")
-	}
+	// tmp1 might or might not appear depending on timing, so it is not awaited.
+	awaitEvents(t, ch, map[string]EventType{
+		"new1": EventCreated,
+		"upd1": EventUpdated,
+	})
 
 	// Verify state is correct
 	_, err := core.Get("new1")
@@ -1237,6 +1270,68 @@ status: in-progress
 	_, err = core.Get("tmp1")
 	if err != ErrNotFound {
 		t.Error("tmp1 should not exist (was created then deleted)")
+	}
+}
+
+// TestChangesSpanningDebounceWindows pins the failure mode behind nibs-cke5 and
+// makes it deterministic on every platform, rather than leaving it to whether an
+// OS happens to deliver events coarsely enough to expose it.
+//
+// The sibling test above writes its changes back-to-back, so they land in ONE
+// debounced batch under inotify. Windows delivered the same burst with a wider
+// gap, splitting it across two batches, and the single-batch read there missed
+// the second half — failing roughly one run in some tens on Windows CI while
+// passing forever on Linux. Sleeping past debounceDelay reproduces that split
+// deliberately, so the drain in awaitEvents is exercised on the machine of
+// whoever runs the suite, not only on the CI leg that happened to be unlucky.
+//
+// The sleep is deliberately a multiple of the real debounceDelay const rather
+// than a hardcoded duration, so retuning the window cannot silently turn this
+// back into a same-batch test that proves nothing.
+func TestChangesSpanningDebounceWindows(t *testing.T) {
+	core, nibsDir := setupTestCore(t)
+
+	createTestNib(t, core, "upd1", "To Update", "todo")
+
+	if err := core.StartWatching(); err != nil {
+		t.Fatalf("StartWatching() error = %v", err)
+	}
+	defer func() { _ = core.StopWatching() }()
+
+	ch, unsub := core.Subscribe()
+	defer unsub()
+
+	time.Sleep(50 * time.Millisecond)
+
+	writeNibFileAtomic(t, filepath.Join(nibsDir, "new1--new.md"), `---
+title: New Nib
+status: todo
+---
+`)
+
+	// Wide enough that the first batch has certainly fired before the next write.
+	time.Sleep(3 * debounceDelay)
+
+	writeNibFileAtomic(t, filepath.Join(nibsDir, "upd1--to-update.md"), `---
+title: Updated Nib
+status: in-progress
+---
+`)
+
+	awaitEvents(t, ch, map[string]EventType{
+		"new1": EventCreated,
+		"upd1": EventUpdated,
+	})
+
+	if _, err := core.Get("new1"); err != nil {
+		t.Errorf("new1 should exist: %v", err)
+	}
+	upd, err := core.Get("upd1")
+	if err != nil {
+		t.Fatalf("upd1 should exist: %v", err)
+	}
+	if upd.Title != "Updated Nib" {
+		t.Errorf("upd1 title = %q, want %q", upd.Title, "Updated Nib")
 	}
 }
 
