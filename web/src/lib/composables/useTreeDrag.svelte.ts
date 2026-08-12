@@ -4,6 +4,7 @@ import type { RowData } from "../tableData";
 import type { TreeTableNib } from "../types";
 import { computeDropZone, isValidDropTarget, isValidCrossParentDrop, collectDescendantIds } from "../dropZone";
 import { canHaveChildren } from "../typeHierarchy";
+import type { DragBlock } from "../dragBlock";
 
 const DRAG_THRESHOLD = 5;
 const AUTO_SCROLL_EDGE = 50;
@@ -14,7 +15,11 @@ export function useTreeDrag(opts: {
   drag: DragState;
   getRows: () => RowData[];
   getScrollContainer: () => HTMLElement | null;
+  /** The gate currently suppressing drag-reorder, or null when drag is available. */
+  getDragBlock?: () => DragBlock | null;
   ondrop?: (targetNibId: string, zone: DropZone, targetParentId: string | null) => void;
+  /** A drag was attempted on a blocked row — raise the explanation to the user. */
+  onblockeddrag?: (block: DragBlock) => void;
 }): {
   onRowPointerDown: (nibId: string, e: PointerEvent) => void;
   onDragKeyDown: (e: KeyboardEvent) => void;
@@ -150,6 +155,16 @@ export function useTreeDrag(opts: {
       const dy = e.clientY - dragStartY;
       if (Math.sqrt(dx * dx + dy * dy) < DRAG_THRESHOLD) return;
       dragPending = false;
+      // Crossing the threshold is what separates a drag ATTEMPT from a click, so
+      // it is the only moment a blocked row should explain itself — reporting on
+      // pointerdown would fire on every row selection. Cleanup first: it detaches
+      // the pointer listeners, so the report happens once per gesture.
+      const block = opts.getDragBlock?.() ?? null;
+      if (block) {
+        cleanupDrag();
+        opts.onblockeddrag?.(block);
+        return;
+      }
       if (dragStartNibId) {
         startDrag(dragStartNibId);
       }
@@ -336,7 +351,12 @@ export function useTreeDrag(opts: {
   }
 
   function onRowPointerDown(nibId: string, e: PointerEvent) {
-    e.preventDefault();
+    // A blocked row keeps its native pointer defaults: this gesture can only ever
+    // explain the block, never move a row, so it must not alter how the row
+    // selects or opens.
+    if (!opts.getDragBlock?.()) {
+      e.preventDefault();
+    }
 
     dragPending = true;
     dragStartX = e.clientX;

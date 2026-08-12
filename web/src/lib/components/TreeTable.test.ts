@@ -43,6 +43,17 @@ vi.mock("@urql/svelte", async () => {
   };
 });
 
+// jsdom doesn't implement elementFromPoint, which the drag move handler calls.
+if (typeof document.elementFromPoint !== "function") {
+  document.elementFromPoint = () => null;
+}
+
+const { mockToastInfo } = vi.hoisted(() => ({ mockToastInfo: vi.fn() }));
+vi.mock("svelte-sonner", async () => {
+  const actual = await vi.importActual<typeof import("svelte-sonner")>("svelte-sonner");
+  return { ...actual, toast: { ...actual.toast, info: mockToastInfo } };
+});
+
 import { queryStore, subscriptionStore } from "@urql/svelte";
 const mockQueryStore = vi.mocked(queryStore);
 const mockSubscriptionStore = vi.mocked(subscriptionStore);
@@ -1650,6 +1661,119 @@ describe("TreeTable", () => {
         visibleColumns: ["title", "status"] as ColumnKey[],
       });
       expect(container.querySelectorAll("tr.draggable").length).toBeGreaterThan(0);
+    });
+
+    // The gate above is deliberate but was entirely silent: a blocked row just
+    // refused to move, which reads as a broken app (and, because the sort is
+    // persisted per browser profile, survives a restart and differs between
+    // browsers). Attempting a drag must now say why.
+    describe("blocked-drag explanation", () => {
+      /** Press on a row and move past the 5px drag threshold. */
+      function attemptDrag(container: HTMLElement) {
+        const row = container.querySelector("tr[data-nib-id]") as HTMLElement;
+        row.dispatchEvent(new PointerEvent("pointerdown", {
+          clientX: 100, clientY: 100, bubbles: true, button: 0,
+        }));
+        window.dispatchEvent(new PointerEvent("pointermove", {
+          clientX: 130, clientY: 100, bubbles: true,
+        }));
+        window.dispatchEvent(new PointerEvent("pointerup", { bubbles: true }));
+      }
+
+      beforeEach(() => mockToastInfo.mockReset());
+
+      it("explains the active sort when a drag is attempted", () => {
+        const { container } = renderDrag("none" as ViewLevel, {
+          tableSort: { field: "status", direction: "asc" },
+        });
+        attemptDrag(container);
+
+        expect(mockToastInfo).toHaveBeenCalledTimes(1);
+        expect(mockToastInfo.mock.calls[0][0]).toBe("Reordering is off while sorted by Status");
+      });
+
+      it("offers an action that clears the sort", () => {
+        const ontablesortchange = vi.fn();
+        const { container } = renderDrag("none" as ViewLevel, {
+          tableSort: { field: "status", direction: "asc" },
+          ontablesortchange,
+        });
+        attemptDrag(container);
+
+        const action = mockToastInfo.mock.calls[0][1]?.action;
+        expect(action?.label).toBe("Clear sort");
+        action.onClick(new MouseEvent("click"));
+        expect(ontablesortchange).toHaveBeenCalledWith(null);
+      });
+
+      it("explains the Flat view when a drag is attempted there", () => {
+        const { container } = renderDrag("flat" as ViewLevel, { tableSort: null });
+        attemptDrag(container);
+
+        expect(mockToastInfo.mock.calls[0][0]).toBe("Reordering is off in the Flat view");
+      });
+
+      it("offers an action that leaves the Flat view", () => {
+        const onviewlevelchange = vi.fn();
+        const { container } = renderDrag("flat" as ViewLevel, { tableSort: null, onviewlevelchange });
+        attemptDrag(container);
+
+        const action = mockToastInfo.mock.calls[0][1]?.action;
+        expect(action?.label).toBe("Switch to Tree");
+        action.onClick(new MouseEvent("click"));
+        expect(onviewlevelchange).toHaveBeenCalledWith("none");
+      });
+
+      it("stays silent on a right-click, which never begins a drag", () => {
+        const { container } = renderDrag("none" as ViewLevel, {
+          tableSort: { field: "status", direction: "asc" },
+        });
+        const row = container.querySelector("tr[data-nib-id]") as HTMLElement;
+        row.dispatchEvent(new PointerEvent("pointerdown", {
+          clientX: 100, clientY: 100, bubbles: true, button: 2,
+        }));
+        window.dispatchEvent(new PointerEvent("pointermove", {
+          clientX: 130, clientY: 100, bubbles: true,
+        }));
+
+        expect(mockToastInfo).not.toHaveBeenCalled();
+      });
+
+      it("offers an action that clears the search", () => {
+        const onfilterchange = vi.fn();
+        const { container } = renderDrag("none" as ViewLevel, {
+          tableSort: null,
+          filter: { search: "api", type: ["task"] },
+          onfilterchange,
+        });
+        attemptDrag(container);
+
+        const action = mockToastInfo.mock.calls[0][1]?.action;
+        expect(action?.label).toBe("Clear search");
+        action.onClick(new MouseEvent("click"));
+        // Only the search term is dropped — the token filters the user built up survive.
+        expect(onfilterchange).toHaveBeenCalledWith({ type: ["task"] });
+      });
+
+      it("stays silent when a row is merely clicked", () => {
+        const { container } = renderDrag("none" as ViewLevel, {
+          tableSort: { field: "status", direction: "asc" },
+        });
+        const row = container.querySelector("tr[data-nib-id]") as HTMLElement;
+        row.dispatchEvent(new PointerEvent("pointerdown", {
+          clientX: 100, clientY: 100, bubbles: true, button: 0,
+        }));
+        window.dispatchEvent(new PointerEvent("pointerup", { bubbles: true }));
+
+        expect(mockToastInfo).not.toHaveBeenCalled();
+      });
+
+      it("stays silent when drag is available", () => {
+        const { container } = renderDrag("none" as ViewLevel, { tableSort: null });
+        attemptDrag(container);
+
+        expect(mockToastInfo).not.toHaveBeenCalled();
+      });
     });
 
     it("flat view stays browse-only even with the sort off", () => {
