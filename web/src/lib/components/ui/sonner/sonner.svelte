@@ -9,10 +9,14 @@
 	let { ...restProps }: SonnerProps = $props();
 </script>
 
+<!-- font-family is set here, not just the color vars: sonner declares its own
+	 stack on [data-sonner-toaster], so a toast never inherits the app's
+	 --font-sans and would render in the platform UI font. This style string is
+	 spread onto that same element, so an inline value wins without !important. -->
 <Sonner
 	theme="dark"
 	class="toaster group"
-	style="--normal-bg: var(--color-popover); --normal-text: var(--color-popover-foreground); --normal-border: var(--color-border);"
+	style="--normal-bg: var(--color-popover); --normal-text: var(--color-popover-foreground); --normal-border: var(--color-border); font-family: var(--font-sans);"
 	{...restProps}
 >
 	{#snippet loadingIcon()}
