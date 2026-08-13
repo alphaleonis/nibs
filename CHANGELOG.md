@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Fixed
+- **The web table now explains why a row will not drag** — a sort, a search, or the Flat view suppresses reorder, and attempting a drag names the one in effect with a one-click action to clear it.
+- **Toasts are set in the app's font**, instead of falling back to the platform's UI font.
+
 ## v0.8.2 - 2026-08-10
 
 ### Fixed
