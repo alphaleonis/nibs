@@ -2,6 +2,17 @@ import { COLUMNS } from "./columns";
 import { isDragAllowed } from "./filter";
 import type { NibFilter, ViewLevel, TableSort } from "./types";
 
+/**
+ * Toast id shared by every drag-block explanation, so repeated blocked attempts
+ * replace the live toast instead of stacking up copies (svelte-sonner dedupes by
+ * id and restarts the dismissed timer on update).
+ *
+ * ONE id covers all three reasons on purpose: dragBlockFor reports a single gate
+ * at a time by precedence, so switching gates mid-toast should rewrite the
+ * message in place rather than leave a stale one behind.
+ */
+export const DRAG_BLOCK_TOAST_ID = "drag-block";
+
 /** Which gate is currently suppressing drag-reorder. */
 export type DragBlockReason = "flat" | "search" | "sort";
 

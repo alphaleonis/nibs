@@ -8,7 +8,7 @@
   import { isBucketId, bucketIdForItem, buildViewTree, collectDescendantIds } from "../tree";
   import { applySort, nextTableSort } from "../tableSort";
   import { prepareFilter, matchesFilter } from "../filter";
-  import { dragBlockFor } from "../dragBlock";
+  import { dragBlockFor, DRAG_BLOCK_TOAST_ID } from "../dragBlock";
   import type { DragBlock } from "../dragBlock";
   import { toast } from "svelte-sonner";
   import { resolveFilter, resolveViewLevel, resolveVisibleColumns, resolveColumnWidths, resolveColumnOrder, resolveTableSort, emitFilter, emitTableSort, emitColumnOrder, emitViewLevel } from "../resolvePrefs";
@@ -485,6 +485,7 @@
     ondrop: (targetNibId, zone, targetParentId) => ondrop?.(targetNibId, zone, targetParentId),
     onblockeddrag: (block) => {
       toast.info(block.message, {
+        id: DRAG_BLOCK_TOAST_ID,
         action: { label: block.actionLabel, onClick: () => liftDragBlock(block) },
       });
     },

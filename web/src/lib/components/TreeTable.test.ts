@@ -1755,6 +1755,22 @@ describe("TreeTable", () => {
         expect(onfilterchange).toHaveBeenCalledWith({ type: ["task"] });
       });
 
+      // The collapsing itself happens inside svelte-sonner (it dedupes by id), so
+      // this can only guard that a STABLE id is handed over — e2e/drag-block-toast
+      // proves the toasts actually stop stacking.
+      it("reuses one toast id across attempts, so repeats replace rather than stack", () => {
+        const { container } = renderDrag("none" as ViewLevel, {
+          tableSort: { field: "status", direction: "asc" },
+        });
+        attemptDrag(container);
+        attemptDrag(container);
+
+        expect(mockToastInfo).toHaveBeenCalledTimes(2);
+        const [first, second] = mockToastInfo.mock.calls.map((c) => c[1]?.id);
+        expect(first).toBeDefined();
+        expect(second).toBe(first);
+      });
+
       it("stays silent when a row is merely clicked", () => {
         const { container } = renderDrag("none" as ViewLevel, {
           tableSort: { field: "status", direction: "asc" },
