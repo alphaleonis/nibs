@@ -1293,6 +1293,61 @@ describe("createActiveView · async edit-form seed", () => {
 
     dispose();
   });
+
+  // After a gap in the live subscription the buffer's baseline is untrustworthy:
+  // the changes that would have refreshed it were delivered while nobody was
+  // listening. The one-shot seed guard has to be re-armed, or a refetch lands in
+  // the detail query and the panel keeps rendering its pre-gap content
+  // (nibs-1seo).
+  describe("re-seeding after a dropped connection", () => {
+    it("adopts a fresh detail snapshot once the seed is invalidated", async () => {
+      const h = makeDeps();
+      const { view, dispose } = mount(h.deps);
+
+      await view.open("n1");
+      flushSync();
+      const f = h.editForms.get("n1")!;
+      h.detailInsts.get("n1")!.nib = { id: "n1", title: "Loaded", etag: "e1" };
+      h.detailInsts.get("n1")!.fetching = false;
+      flushSync();
+      expect(f.applyExternal).toHaveBeenCalledTimes(1);
+
+      view.invalidateDetailSeed();
+      h.detailInsts.get("n1")!.nib = { id: "n1", title: "Changed while offline", etag: "e2" };
+      flushSync();
+
+      expect(f.applyExternal).toHaveBeenCalledTimes(2);
+      expect(f.applyExternal).toHaveBeenLastCalledWith(
+        expect.objectContaining({ title: "Changed while offline", etag: "e2" }),
+      );
+
+      dispose();
+    });
+
+    // Recovering from a network gap must never cost the user work they have not
+    // saved; the dirty buffer keeps its precedence exactly as during first load.
+    it("leaves a dirty buffer alone", async () => {
+      const h = makeDeps();
+      const { view, dispose } = mount(h.deps);
+
+      await view.open("n1");
+      flushSync();
+      const f = h.editForms.get("n1")!;
+      h.detailInsts.get("n1")!.nib = { id: "n1", title: "Loaded", etag: "e1" };
+      h.detailInsts.get("n1")!.fetching = false;
+      flushSync();
+      f.applyExternal.mockClear();
+      f.dirty = true;
+
+      view.invalidateDetailSeed();
+      h.detailInsts.get("n1")!.nib = { id: "n1", title: "Changed while offline", etag: "e2" };
+      flushSync();
+
+      expect(f.applyExternal).not.toHaveBeenCalled();
+
+      dispose();
+    });
+  });
 });
 
 describe("createActiveView · live bridge · unarchive", () => {

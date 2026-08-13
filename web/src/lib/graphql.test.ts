@@ -87,7 +87,7 @@ describe("createClient", () => {
     const { createClient: createGqlWsClient } = await import("graphql-ws");
     const { createClient } = await import("./graphql");
 
-    const client = createClient();
+    const { client } = createClient();
 
     // Verify the urql client was created and has subscription support
     expect(client).toBeDefined();
@@ -97,17 +97,49 @@ describe("createClient", () => {
     expect(createGqlWsClient).toHaveBeenCalled();
   });
 
-  it("configures graphql-ws with retryAttempts for reconnection", async () => {
+  it("configures graphql-ws with reconnection options", async () => {
     const { createClient: createGqlWsClient } = await import("graphql-ws");
     const { createClient } = await import("./graphql");
 
     createClient();
 
-    // graphql-ws should be configured with retryAttempts option
     expect(createGqlWsClient).toHaveBeenCalledWith(
       expect.objectContaining({
         retryAttempts: expect.anything(),
       }),
     );
+  });
+});
+
+// The socket must survive the events that killed it in the field (nibs-1seo).
+// These assert the OPTIONS rather than a live socket, because the two defaults
+// that caused the outage are both plain configuration.
+describe("wsClientOptions", () => {
+  it("retries indefinitely rather than giving up after graphql-ws's default 5", async () => {
+    const { wsClientOptions } = await import("./graphql");
+    expect(wsClientOptions("ws://x/graphql", {}).retryAttempts).toBe(Infinity);
+  });
+
+  // graphql-ws's default shouldRetry is "only CloseEvents": ANY non-CloseEvent
+  // connection problem is fatal and stops reconnection outright. The reported
+  // failure was exactly that — `CombinedError: [Network] undefined` — so the
+  // client never retried at all.
+  it("treats a non-CloseEvent connection problem as retryable", async () => {
+    const { wsClientOptions } = await import("./graphql");
+    const opts = wsClientOptions("ws://x/graphql", {});
+    expect(opts.shouldRetry?.(new Error("[Network] undefined"))).toBe(true);
+  });
+
+  it("reports socket up and down to the hooks", async () => {
+    const { wsClientOptions } = await import("./graphql");
+    const onConnected = vi.fn();
+    const onClosed = vi.fn();
+    const opts = wsClientOptions("ws://x/graphql", { onConnected, onClosed });
+
+    opts.on?.connected?.({} as never, undefined, false);
+    opts.on?.closed?.({});
+
+    expect(onConnected).toHaveBeenCalledTimes(1);
+    expect(onClosed).toHaveBeenCalledTimes(1);
   });
 });
