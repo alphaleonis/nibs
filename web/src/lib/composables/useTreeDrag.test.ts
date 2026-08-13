@@ -56,18 +56,23 @@ describe("useTreeDrag", () => {
     rows?: RowData[];
     ondrop?: (targetNibId: string, zone: import("../drag.svelte").DropZone) => void;
     scrollContainer?: HTMLElement | null;
+    dragBlock?: import("../dragBlock").DragBlock | null;
+    onblockeddrag?: (block: import("../dragBlock").DragBlock) => void;
   } = {}) {
     const selection = overrides.selection ?? new SelectionState();
     const drag = overrides.drag ?? new DragState();
     const ondrop = overrides.ondrop ?? vi.fn();
     const rows = overrides.rows ?? [];
+    const onblockeddrag = overrides.onblockeddrag ?? vi.fn();
 
     const result = useTreeDrag({
       selection,
       drag,
       getRows: () => rows,
       getScrollContainer: () => overrides.scrollContainer ?? null,
+      getDragBlock: () => overrides.dragBlock ?? null,
       ondrop,
+      onblockeddrag,
     });
 
     // Provide a way for tests to trigger cleanup via pointerup
@@ -76,7 +81,7 @@ describe("useTreeDrag", () => {
       window.dispatchEvent(upEvent);
     };
 
-    return { ...result, selection, drag, ondrop };
+    return { ...result, selection, drag, ondrop, onblockeddrag };
   }
 
   it("pointer down sets pending state, move past threshold starts drag", () => {
@@ -719,6 +724,97 @@ describe("useTreeDrag", () => {
       expect(preview.style.left).toBe("110px");
       expect(preview.style.top).toBe("110px");
 
+      cleanup?.();
+    });
+  });
+
+  // A gate (Flat view / search / active sort) suppresses drag deliberately, but
+  // silently — the row simply refuses to move. The composable owns the drag
+  // threshold, so it is what can tell a real drag ATTEMPT from a plain click and
+  // report only the former; a per-click toast would fire on every row selection.
+  describe("blocked drag attempts", () => {
+    const SORT_BLOCK = {
+      reason: "sort",
+      message: "Reordering is off while sorted by Title",
+      actionLabel: "Clear sort",
+    } as const;
+
+    it("reports the block once the pointer passes the drag threshold", () => {
+      const rows = [makeRow(makeNib({ id: "nibs-001" }))];
+      const { onRowPointerDown, onblockeddrag } = setup({ rows, dragBlock: SORT_BLOCK });
+
+      onRowPointerDown("nibs-001", new PointerEvent("pointerdown", {
+        clientX: 100, clientY: 100, bubbles: true,
+      }));
+      window.dispatchEvent(new PointerEvent("pointermove", {
+        clientX: 106, clientY: 100, bubbles: true,
+      }));
+
+      expect(onblockeddrag).toHaveBeenCalledWith(SORT_BLOCK);
+      cleanup?.();
+    });
+
+    it("does not start a drag when blocked", () => {
+      const rows = [makeRow(makeNib({ id: "nibs-001" }))];
+      const { onRowPointerDown, drag } = setup({ rows, dragBlock: SORT_BLOCK });
+
+      onRowPointerDown("nibs-001", new PointerEvent("pointerdown", {
+        clientX: 100, clientY: 100, bubbles: true,
+      }));
+      window.dispatchEvent(new PointerEvent("pointermove", {
+        clientX: 106, clientY: 100, bubbles: true,
+      }));
+
+      expect(drag.isDragging).toBe(false);
+      expect(document.querySelector("[data-testid='drag-preview']")).toBeNull();
+      cleanup?.();
+    });
+
+    it("stays silent on a plain click that never crosses the threshold", () => {
+      const rows = [makeRow(makeNib({ id: "nibs-001" }))];
+      const { onRowPointerDown, onblockeddrag } = setup({ rows, dragBlock: SORT_BLOCK });
+
+      onRowPointerDown("nibs-001", new PointerEvent("pointerdown", {
+        clientX: 100, clientY: 100, bubbles: true,
+      }));
+      window.dispatchEvent(new PointerEvent("pointermove", {
+        clientX: 102, clientY: 101, bubbles: true,
+      }));
+      window.dispatchEvent(new PointerEvent("pointerup", { bubbles: true }));
+
+      expect(onblockeddrag).not.toHaveBeenCalled();
+    });
+
+    it("reports once per gesture, not once per pointermove", () => {
+      const rows = [makeRow(makeNib({ id: "nibs-001" }))];
+      const { onRowPointerDown, onblockeddrag } = setup({ rows, dragBlock: SORT_BLOCK });
+
+      onRowPointerDown("nibs-001", new PointerEvent("pointerdown", {
+        clientX: 100, clientY: 100, bubbles: true,
+      }));
+      for (const x of [106, 120, 140, 180]) {
+        window.dispatchEvent(new PointerEvent("pointermove", {
+          clientX: x, clientY: 100, bubbles: true,
+        }));
+      }
+
+      expect(onblockeddrag).toHaveBeenCalledTimes(1);
+      cleanup?.();
+    });
+
+    it("stays silent and drags normally when nothing blocks", () => {
+      const rows = [makeRow(makeNib({ id: "nibs-001" }))];
+      const { onRowPointerDown, drag, onblockeddrag } = setup({ rows, dragBlock: null });
+
+      onRowPointerDown("nibs-001", new PointerEvent("pointerdown", {
+        clientX: 100, clientY: 100, bubbles: true,
+      }));
+      window.dispatchEvent(new PointerEvent("pointermove", {
+        clientX: 106, clientY: 100, bubbles: true,
+      }));
+
+      expect(onblockeddrag).not.toHaveBeenCalled();
+      expect(drag.isDragging).toBe(true);
       cleanup?.();
     });
   });

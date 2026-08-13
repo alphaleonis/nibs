@@ -57,11 +57,22 @@ Verify with the workflow's own logic before proceeding:
 Pre-releases skip the changelog-entry requirement (the workflow generates a placeholder).
 
 ### 4. Merge to `main`
-Releases cut from `main`. Merge `develop` into it and commit the changelog there:
+Releases cut from `main`, but the changelog is stamped on `develop` FIRST and reaches
+`main` through the merge:
+
+    git switch develop
+    # stamp the dated section from step 3, then:
+    git commit -m "docs: stamp CHANGELOG <version> - <YYYY-MM-DD> for release"
+    git push origin develop
 
     git switch main && git merge --ff-only origin/main
-    git merge --no-ff develop -m "Merge develop into main: <summary>"
-    # edit / commit CHANGELOG.md on main
+    git merge --no-ff develop -m "Merge develop into main: <version>"
+
+Stamping on `develop` rather than on `main` is what both v0.8.1 and v0.8.2 did, and it
+leaves the two branches carrying identical content — so step 10's `--ff-only` is a genuine
+fast-forward rather than a merge that could conflict. Committing the changelog on `main`
+instead puts a commit there that `develop` never sees, and the next cycle edits the same
+`## [Unreleased]` region from a base that disagrees with it.
 
 Resolve any conflict carefully; **stop if unsure**.
 
@@ -73,6 +84,18 @@ Resolve any conflict carefully; **stop if unsure**.
       --jq "[.[] | select(.headSha==\"$SHA\")] | first | .databaseId")
     gh run watch "$RUN" --exit-status
 
+The run is not registered the instant the push returns, so that lookup yields an empty
+result for the first few seconds — retry it a handful of times before concluding anything
+is wrong.
+
+`gh run watch` blocks for as long as CI takes, which for this repo is longer than an
+agent's Bash-tool timeout allows (the Windows leg alone runs several minutes). If the watch
+is killed by a timeout, that is NOT a CI failure — do not treat it as one, and do not
+re-push. Poll instead, and read the conclusion rather than the exit status of the watch:
+
+    gh run view "$RUN" --json status,conclusion,jobs \
+      --jq '{status, conclusion, jobs: [.jobs[] | {name, conclusion}]}'
+
 If CI is anything but `success`, **stop** — do not release from a red or unverified commit.
 
 ### 6. Dispatch the release
@@ -80,8 +103,22 @@ Confirm the tag is free (`git tag -l <version>`), then:
 
     gh workflow run release.yml --ref main -f version=<version>
 
-Find the new run (`gh run list --workflow=release.yml --limit 1 --json databaseId`) and
-`gh run watch <id> --exit-status`. If it fails at the gate or any step, stop and report.
+Find the new run (`gh run list --workflow=release.yml --limit 1 --json databaseId`) and poll
+it the same way as step 5. If it fails at the gate or any step, stop and report.
+
+**The run will sit at `status: waiting` until a human approves it.** `release.yml` targets
+the `release` environment, which requires a reviewer — this is not a hang and not something
+to work around. Confirm that is what it is waiting on, then hand the run URL to the user and
+ask them to approve:
+
+    gh api repos/alphaleonis/nibs/actions/runs/<id>/pending_deployments \
+      --jq '.[] | {environment: .environment.name, current_user_can_approve, reviewers: [.reviewers[]? | .reviewer.login]}'
+
+**Never approve it yourself.** That query may report `current_user_can_approve: true`,
+because the token in use can belong to the same account that owns the repo — so the ability
+is not the permission. The gate exists so a human authorizes the build that gets published;
+clicking it on the user's behalf removes exactly the control it was added for, for the same
+reason step 9 stops at a draft instead of publishing. Approval is theirs, every time.
 
 ### 7. Verify the draft
 
@@ -89,7 +126,16 @@ Find the new run (`gh run list --workflow=release.yml --limit 1 --json databaseI
 
 Confirm: `isDraft=true`; the body (notes) is non-empty and matches the changelog entry;
 all six platform archives (`nibs_{darwin,linux,windows}_{amd64,arm64}`) plus
-`checksums.txt` are attached (7 assets).
+`checksums.txt` **and `checksums.txt.sig`** are attached (8 assets).
+
+Check the signature by NAME, not by the count alone. `.goreleaser.yaml` signs the checksum
+file on every release — one signature anchors every archive, since `checksums.txt` already
+covers them all by digest — so a draft missing `checksums.txt.sig` means the signing step
+did not run, even though the release otherwise looks complete. That matters more than it
+appears: `nibs upgrade` deliberately does not verify the signature yet, precisely so
+signing can prove itself over several releases first, which only works if every release
+actually produces one. A silently unsigned release breaks that record with nothing failing
+at the time. Treat a missing `.sig` as a halt, not a warning.
 
 ### 8. Revise the release notes — required, do not skip
 Review the draft's rendered notes against our standards: Keep a Changelog structure, clear

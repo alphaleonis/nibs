@@ -5,6 +5,7 @@ import { TreeViewState } from './treeView.svelte';
 import type { ConfirmDialogState } from './composables/useConfirmDialog.svelte';
 import type { HistoryNav } from './composables/useHistoryNav.svelte';
 import type { ActiveView } from './composables/useActiveView.svelte';
+import type { ConnectionRecovery } from './connectionRecovery';
 import { COLUMN_ADAPTERS_KEY, columnAdapters } from './ColumnAdapters.svelte';
 
 export const SELECTION_KEY = 'nibs:selection';
@@ -13,6 +14,7 @@ export const TREE_VIEW_KEY = 'nibs:tree-view';
 export const CONFIRM_DIALOG_KEY = 'nibs:confirm-dialog';
 export const HISTORY_NAV_KEY = 'nibs:history-nav';
 export const ACTIVE_VIEW_KEY = 'nibs:active-view';
+export const CONNECTION_KEY = 'nibs:connection';
 
 export function provideSelection(s: SelectionState) { setContext(SELECTION_KEY, s); }
 export function useSelection(): SelectionState {
@@ -25,6 +27,19 @@ export function useDrag(): DragState {
   const d = getContext<DragState>(DRAG_KEY);
   if (!d) throw new Error('useDrag() called outside provider — call provideDrag() in a parent component');
   return d;
+}
+
+export function provideConnection(c: ConnectionRecovery) { setContext(CONNECTION_KEY, c); }
+/**
+ * The live-socket recovery handle, or undefined outside a provider.
+ *
+ * Deliberately optional where its siblings throw: a region reads this only to
+ * re-read its query after a reconnect, which is a no-op in a test that never
+ * disconnects. Requiring it would force every existing render site to supply
+ * one to test behavior unrelated to connectivity.
+ */
+export function useConnection(): ConnectionRecovery | undefined {
+  return getContext<ConnectionRecovery | undefined>(CONNECTION_KEY);
 }
 
 export function provideTreeView(t: TreeViewState) { setContext(TREE_VIEW_KEY, t); }
@@ -102,6 +117,7 @@ export function makeTestContext(
     requestClose: async () => { selection.close(); },
     syncTo: () => {},
     noteMissing: () => "closed",
+    invalidateDetailSeed: () => {},
     dispose: () => {},
   } satisfies ActiveView);
   // Always provide a history-nav so components that read it work in tests without extra setup.

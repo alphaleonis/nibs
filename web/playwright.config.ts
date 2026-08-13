@@ -15,6 +15,18 @@ export default defineConfig({
   testDir: "./e2e",
   timeout: 30_000,
   retries: 0,
+  // One worker, deliberately. Every test shares ONE server over ONE fixture copy,
+  // and the web UI holds a live GraphQL subscription — so a test that mutates a
+  // nib (context-menu.test.ts changes status and priority) repaints rows in every
+  // OTHER test's page, where NibChangeTracker paints a 1s highlight animation over
+  // the changed row. Any assertion comparing painted backgrounds then depends on
+  // which files happen to share a worker: open-detail-gesture's "loses its fill"
+  // case fails reproducibly when scheduled alongside context-menu, and passes
+  // alongside a non-mutating file. Serializing removes the whole class of
+  // interference; the suite runs in ~15s, so the parallelism buys nothing worth
+  // the flakiness. Restoring parallelism means giving mutating tests their own
+  // server or fixture first, not just raising this number.
+  workers: 1,
   use: {
     baseURL: "http://127.0.0.1:3131",
     headless: true,

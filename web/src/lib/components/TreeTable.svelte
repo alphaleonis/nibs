@@ -7,8 +7,11 @@
   import { buildTableData } from "../tableData";
   import { isBucketId, bucketIdForItem, buildViewTree, collectDescendantIds } from "../tree";
   import { applySort, nextTableSort } from "../tableSort";
-  import { prepareFilter, isDragAllowed, matchesFilter } from "../filter";
-  import { resolveFilter, resolveViewLevel, resolveVisibleColumns, resolveColumnWidths, resolveColumnOrder, resolveTableSort, emitFilter, emitTableSort, emitColumnOrder } from "../resolvePrefs";
+  import { prepareFilter, matchesFilter } from "../filter";
+  import { dragBlockFor, DRAG_BLOCK_TOAST_ID } from "../dragBlock";
+  import type { DragBlock } from "../dragBlock";
+  import { toast } from "svelte-sonner";
+  import { resolveFilter, resolveViewLevel, resolveVisibleColumns, resolveColumnWidths, resolveColumnOrder, resolveTableSort, emitFilter, emitTableSort, emitColumnOrder, emitViewLevel } from "../resolvePrefs";
   import { hierarchyTokens, clearHierarchyFilters, contradictionTokens } from "../query";
   import { graphqlErrorCode, graphqlErrorMessage } from "../graphqlError";
   import { Button } from "$lib/components/ui/button/index.js";
@@ -16,7 +19,7 @@
   import TableHeader from "./TableHeader.svelte";
   import type { DropZone } from "../drag.svelte";
   import type { PanelPolicy } from "../selection.svelte";
-  import { useSelection, useDrag, useActiveView, useTreeView } from "../contexts";
+  import { useSelection, useDrag, useActiveView, useTreeView, useConnection } from "../contexts";
   import { useColumnResize } from "../composables/useColumnResize.svelte";
   import { useColumnDrag } from "../composables/useColumnDrag.svelte";
   import { useTreeDrag } from "../composables/useTreeDrag.svelte";
@@ -41,6 +44,9 @@
     /** Write path for the empty state's "clear hierarchy filters" action. Unused
      *  when `prefs` is supplied — the write goes through the preference instead. */
     onfilterchange?: (f: NibFilter) => void;
+    /** Write path for the blocked-drag toast's "Switch to Tree" action. Unused
+     *  when `prefs` is supplied — the write goes through the preference instead. */
+    onviewlevelchange?: (v: ViewLevel) => void;
     oncolumnwidthschange?: (widths: Record<ColumnKey, number>) => void;
     oncolumnresizeend?: () => void;
     oncolumnorderchange?: (order: ColumnKey[]) => void;
@@ -64,6 +70,7 @@
     tableSort = undefined as TableSort | null | undefined,
     ontablesortchange,
     onfilterchange,
+    onviewlevelchange,
     oncolumnwidthschange,
     oncolumnresizeend,
     oncolumnorderchange,
@@ -125,7 +132,12 @@
   // key, so dropping a row would fight the sorted display. Turning the sort off
   // (`activeSort == null`, which also covers the sorted-column-hidden case)
   // restores the exact manual order and re-enables drag.
-  let dragAllowed = $derived(isDragAllowed(resolvedFilter) && resolvedViewLevel !== "flat" && activeSort == null);
+  //
+  // dragBlockFor is the single source of truth for BOTH the gate and the
+  // explanation raised on a blocked drag attempt, so the row's affordance and the
+  // toast can never disagree about which gate is shut.
+  let dragBlock = $derived(dragBlockFor(resolvedFilter, resolvedViewLevel, activeSort));
+  let dragAllowed = $derived(dragBlock === null);
   let showColumn = $derived((key: ColumnKey) => resolvedVisibleColumns.includes(key));
 
   // Visible columns in the per-view order. Drives the <th> loop so the header
@@ -161,6 +173,13 @@
     // tick, highlighting updates) — only the network list query waits. See nibs-rv7c.
     refetchDebounceMs: LIST_REFETCH_DEBOUNCE_MS,
   });
+
+  // While the live socket is down the list misses every change event, so its
+  // cached result is stale by an unknown amount the moment the socket returns.
+  // Re-read it then (nibs-1seo). Optional by design — absent outside the app,
+  // e.g. in component tests that never disconnect.
+  const connection = useConnection();
+  $effect(() => connection?.onRecovered(() => dataSource.refetch()));
 
   // error is `unknown` from the source; the query surfaces urql's CombinedError,
   // whose aggregate `.message` carries a "[GraphQL] " transport prefix no user
@@ -469,8 +488,36 @@
     drag,
     getRows: () => rows,
     getScrollContainer: () => scrollContainerEl ?? null,
+    getDragBlock: () => dragBlock,
     ondrop: (targetNibId, zone, targetParentId) => ondrop?.(targetNibId, zone, targetParentId),
+    onblockeddrag: (block) => {
+      toast.info(block.message, {
+        id: DRAG_BLOCK_TOAST_ID,
+        action: { label: block.actionLabel, onClick: () => liftDragBlock(block) },
+      });
+    },
   });
+
+  // Lift the gate the toast named. Each branch writes through the same path the
+  // corresponding UI control uses, so clearing from the toast and clearing from
+  // the header/toolbar/filter box are the same operation.
+  function liftDragBlock(block: DragBlock) {
+    switch (block.reason) {
+      case "sort":
+        emitTableSort(prefs, ontablesortchange, null);
+        break;
+      case "search": {
+        // Drop only the free-text term; the token filters the user built up are
+        // not what blocks drag and must survive.
+        const { search: _search, ...rest } = resolvedFilter;
+        emitFilter(prefs, onfilterchange, rest);
+        break;
+      }
+      case "flat":
+        emitViewLevel(prefs, onviewlevelchange, "none");
+        break;
+    }
+  }
 
   // --- Keyboard navigation (composable) ---
   const keyboardNav = useKeyboardNav({
@@ -623,8 +670,11 @@
     const nibId = getNibIdFromEvent(e);
     if (!nibId) return;
 
-    // Only draggable rows can initiate drag
-    if (isBucketId(nibId) || !dragAllowed) return;
+    // Bucket rows are synthetic containers with nothing to reorder. A row blocked
+    // by a gate still goes through, so attempting a drag on it can explain why
+    // nothing moves — useTreeDrag only reports once the gesture passes the drag
+    // threshold, so a plain click stays silent.
+    if (isBucketId(nibId)) return;
 
     treeDrag.onRowPointerDown(nibId, e);
   }

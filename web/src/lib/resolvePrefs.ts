@@ -51,6 +51,17 @@ export function emitTableSort(prefs: Preferences | undefined, onchange: ((s: Tab
   }
 }
 
+// View-level write path, mirroring emitFilter/emitTableSort. Toolbar owns the
+// primary view switcher and writes `prefs.viewLevel` directly; this exists so a
+// component holding only the prop contract (no prefs) can switch views too.
+export function emitViewLevel(prefs: Preferences | undefined, onchange: ((v: ViewLevel) => void) | undefined, viewLevel: ViewLevel): void {
+  if (prefs) {
+    prefs.viewLevel = viewLevel;
+  } else {
+    onchange?.(viewLevel);
+  }
+}
+
 // Column-reorder write path: with prefs present, write the new full order for the
 // current view (auto-saved via the `order` per-view map); otherwise emit via the
 // callback. Mirrors the visibility write (Toolbar's prefs.visibility.setLevel).
