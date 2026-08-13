@@ -17,7 +17,9 @@
   import { DragState } from "./lib/drag.svelte";
   import type { DropZone } from "./lib/drag.svelte";
   import { TreeViewState } from "./lib/treeView.svelte";
-  import { provideSelection, provideDrag, provideTreeView, provideConfirmDialog, provideActiveView, provideHistoryNav } from "./lib/contexts";
+  import { provideSelection, provideDrag, provideTreeView, provideConfirmDialog, provideActiveView, provideHistoryNav, provideConnection } from "./lib/contexts";
+  import { useConnectionRecovery } from "./lib/composables/useConnectionRecovery.svelte";
+  import type { ConnectionRecovery } from "./lib/connectionRecovery";
   import { createHistoryNav } from "./lib/composables/useHistoryNav.svelte";
   import { createQueryUrl } from "./lib/composables/useQueryUrl.svelte";
   import { createConfirmDialog } from "./lib/composables/useConfirmDialog.svelte";
@@ -48,8 +50,22 @@
     reparentAndReorder,
   } from "./lib/mutations/commands";
 
-  const client = createClient();
+  // The socket's up/down events feed the recovery policy, which in turn drives
+  // the reconnect — mutually referential, since the client needs the hooks at
+  // construction while the recovery needs the client's `reconnect` to act. Held
+  // in a const object rather than a reassigned `let` (same reason as `holder`
+  // below): the template reads `recovery.status`, and a reassigned binding is
+  // not reactive. Every read through the holder is lazy, after construction.
+  const socket: { recovery: ConnectionRecovery | null } = { recovery: null };
+  const live = createClient({
+    onConnected: () => socket.recovery?.onConnected(),
+    onClosed: () => socket.recovery?.onClosed(),
+  });
+  const client = live.client;
   setContextClient(client);
+  const recovery = useConnectionRecovery({ reconnect: () => live.reconnect() });
+  socket.recovery = recovery;
+  provideConnection(recovery);
   const mutations = initMutationStore(client);
 
   const configResult = queryStore({ client, query: CONFIG_QUERY });
@@ -136,6 +152,21 @@
       pause: !detailTargetId,
     }),
   );
+  // While the socket was down the panel missed every change to the nib it is
+  // showing, so its cached result is stale by an unknown amount the moment the
+  // socket returns — re-read it from the network then (nibs-1seo). Registered
+  // once; the listener reads the CURRENT store each time it fires.
+  $effect(() => recovery.onRecovered(() => {
+    if (!detailTargetId) return;
+    // Both halves are needed. The refetch gets fresh bytes from the server, and
+    // invalidating the seed lets them actually reach the buffer — the seed is
+    // one-shot per buffer, so without this the fresh result is discarded as
+    // already-seeded and the panel keeps rendering its pre-gap content. A dirty
+    // buffer still wins; unsaved edits are never dropped.
+    holder.view?.invalidateDetailSeed();
+    detailStore.reexecute({ requestPolicy: "network-only" });
+  }));
+
   // No cast: `$detailStore.data` is typed by NIB_DETAIL_QUERY's generated result,
   // and `DetailNib` is derived from that same type, so `?? null` yields exactly
   // `DetailNib | null`. Dropping a selected field from the query therefore breaks
@@ -569,6 +600,7 @@
     {prefs}
     {projectName}
     {availableTags}
+    connectionStatus={recovery.status}
     oncreatenew={(type) => view.startCreate({ type })}
   />
 

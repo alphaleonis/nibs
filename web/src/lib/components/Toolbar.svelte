@@ -36,6 +36,8 @@
   import SettingsSheet from "./SettingsSheet.svelte";
   import TooltipButton from "./TooltipButton.svelte";
   import WithTooltip from "./WithTooltip.svelte";
+  import ConnectionStatus from "./ConnectionStatus.svelte";
+  import type { ConnectionStatus as ConnectionStatusValue } from "../connectionRecovery";
 
   let {
     prefs = undefined as Preferences | undefined,
@@ -47,6 +49,7 @@
     oncolumnschange = undefined as ((columns: ColumnKey[]) => void) | undefined,
     columnOrder = undefined as ColumnKey[] | undefined,
     oncreatenew = undefined as ((type: string) => void) | undefined,
+    connectionStatus = "connected" as ConnectionStatusValue,
     rowDensity = "compact" as RowDensity,
     ondensitychange = undefined as ((density: RowDensity) => void) | undefined,
     fontSize = DEFAULT_FONT_SIZE as FontSize,
@@ -72,6 +75,8 @@
     oncolumnschange?: (columns: ColumnKey[]) => void;
     columnOrder?: ColumnKey[];
     oncreatenew?: (type: string) => void;
+    /** Live-socket state; drives the disconnected chip beside the project name. */
+    connectionStatus?: ConnectionStatusValue;
     rowDensity?: RowDensity;
     ondensitychange?: (density: RowDensity) => void;
     fontSize?: FontSize;
@@ -794,6 +799,7 @@
       <span aria-hidden="true" class="shrink-0 text-muted-foreground">·</span>
       <span class="min-w-0 max-w-[28ch] lg:max-w-none truncate">{projectName}</span>
     {/if}
+    <ConnectionStatus status={connectionStatus} />
   </h1>
 
   <div class="flex shrink-0 items-center gap-1">

@@ -19,7 +19,7 @@
   import TableHeader from "./TableHeader.svelte";
   import type { DropZone } from "../drag.svelte";
   import type { PanelPolicy } from "../selection.svelte";
-  import { useSelection, useDrag, useActiveView, useTreeView } from "../contexts";
+  import { useSelection, useDrag, useActiveView, useTreeView, useConnection } from "../contexts";
   import { useColumnResize } from "../composables/useColumnResize.svelte";
   import { useColumnDrag } from "../composables/useColumnDrag.svelte";
   import { useTreeDrag } from "../composables/useTreeDrag.svelte";
@@ -173,6 +173,13 @@
     // tick, highlighting updates) — only the network list query waits. See nibs-rv7c.
     refetchDebounceMs: LIST_REFETCH_DEBOUNCE_MS,
   });
+
+  // While the live socket is down the list misses every change event, so its
+  // cached result is stale by an unknown amount the moment the socket returns.
+  // Re-read it then (nibs-1seo). Optional by design — absent outside the app,
+  // e.g. in component tests that never disconnect.
+  const connection = useConnection();
+  $effect(() => connection?.onRecovered(() => dataSource.refetch()));
 
   // error is `unknown` from the source; the query surfaces urql's CombinedError,
   // whose aggregate `.message` carries a "[GraphQL] " transport prefix no user

@@ -68,6 +68,12 @@ export interface TableDataView {
   readonly fetching: boolean;
   readonly error: unknown;
   readonly changed: ChangedState;
+  /**
+   * Re-read the list from the network, bypassing the cache. For recovering from
+   * a gap in the live subscription, whose missed events left the cached result
+   * silently behind (nibs-1seo).
+   */
+  refetch(): void;
 }
 
 interface QueryValue {
@@ -194,6 +200,9 @@ export function useTableData(opts: UseTableDataOptions): TableDataView {
     },
     get changed() {
       return changed;
+    },
+    refetch() {
+      result.reexecute({ requestPolicy: "network-only" });
     },
   };
 }

@@ -171,6 +171,17 @@ export interface ActiveView {
   readonly typePicker: TypePickerState | null;
   /** True while Back/Forward must be frozen: dirty buffer or an open type picker. */
   readonly blocksHistoryNav: boolean;
+  /**
+   * Re-arm the one-shot detail seed, so the next detail result rebaselines a
+   * pristine buffer instead of being ignored as already-seeded.
+   *
+   * For recovering from a gap in the live subscription (nibs-1seo): the changes
+   * that would normally have reached the buffer through the live bridge were
+   * delivered while nothing was listening, so the baseline cannot be trusted and
+   * the refetched snapshot has to be allowed to land. A dirty buffer still wins
+   * — this re-opens the seed, it does not force it.
+   */
+  invalidateDetailSeed(): void;
   /** True while the active edit form's null-remote conflict fallback is
    *  in flight. `EditForm.save()` resets `form.saving` to false BEFORE the
    *  presenter's fallback fetch begins, so the Save control (keyed on
@@ -707,6 +718,9 @@ export function createActiveView(deps: ActiveViewDeps): ActiveView {
     },
     get typePicker() {
       return typePicker;
+    },
+    invalidateDetailSeed() {
+      seededKey = null;
     },
     get blocksHistoryNav() {
       return Boolean(form?.dirty) || typePicker !== null;
