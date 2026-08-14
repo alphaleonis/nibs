@@ -9,6 +9,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ### Fixed
 - **The web UI now notices a live connection that dies without closing**, such as going offline or waking from sleep, instead of holding an apparently-healthy socket and serving a stale view indefinitely.
+- **The server now notices a live-updates client that vanishes without closing** and reclaims its connection, instead of holding it until the OS TCP timeout.
 
 ## v0.8.3 - 2026-08-13
 
