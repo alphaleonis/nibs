@@ -1,4 +1,4 @@
-import { describe, it, expect, vi, beforeEach } from "vitest";
+import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { Kind, print } from "graphql";
 import { NIB_CHANGED_SUBSCRIPTION } from "./queries";
 import { getWebSocketUrl } from "./graphql";
@@ -117,7 +117,7 @@ describe("createClient", () => {
 describe("wsClientOptions", () => {
   it("retries indefinitely rather than giving up after graphql-ws's default 5", async () => {
     const { wsClientOptions } = await import("./graphql");
-    expect(wsClientOptions("ws://x/graphql", {}).retryAttempts).toBe(Infinity);
+    expect(wsClientOptions("ws://x/graphql", {}, () => {}).retryAttempts).toBe(Infinity);
   });
 
   // graphql-ws's default shouldRetry is "only CloseEvents": ANY non-CloseEvent
@@ -126,7 +126,7 @@ describe("wsClientOptions", () => {
   // client never retried at all.
   it("treats a non-CloseEvent connection problem as retryable", async () => {
     const { wsClientOptions } = await import("./graphql");
-    const opts = wsClientOptions("ws://x/graphql", {});
+    const opts = wsClientOptions("ws://x/graphql", {}, () => {});
     expect(opts.shouldRetry?.(new Error("[Network] undefined"))).toBe(true);
   });
 
@@ -134,12 +134,103 @@ describe("wsClientOptions", () => {
     const { wsClientOptions } = await import("./graphql");
     const onConnected = vi.fn();
     const onClosed = vi.fn();
-    const opts = wsClientOptions("ws://x/graphql", { onConnected, onClosed });
+    const opts = wsClientOptions("ws://x/graphql", { onConnected, onClosed }, () => {});
 
     opts.on?.connected?.({} as never, undefined, false);
     opts.on?.closed?.({});
 
     expect(onConnected).toHaveBeenCalledTimes(1);
     expect(onClosed).toHaveBeenCalledTimes(1);
+  });
+});
+
+// The liveness probe (nibs-bcif). A socket can die without a close frame — go
+// offline, or sleep a laptop — and then nothing the client waits on ever fires.
+// Writing a ping is the only thing that turns that silence into an event, and
+// graphql-ws deliberately does NOTHING when a pong fails to arrive, so the
+// timeout that acts on the silence is ours to arm.
+describe("wsClientOptions liveness probe", () => {
+  beforeEach(() => {
+    vi.useFakeTimers();
+  });
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  async function probe() {
+    const { wsClientOptions, KEEP_ALIVE_MS, PONG_TIMEOUT_MS } = await import("./graphql");
+    const terminate = vi.fn();
+    const onClosed = vi.fn();
+    return {
+      opts: wsClientOptions("ws://x/graphql", { onClosed }, terminate),
+      terminate,
+      onClosed,
+      KEEP_ALIVE_MS,
+      PONG_TIMEOUT_MS,
+    };
+  }
+
+  it("pings often enough to notice death, rarely enough to leave an idle tab alone", async () => {
+    const { opts, KEEP_ALIVE_MS } = await probe();
+    expect(opts.keepAlive).toBe(KEEP_ALIVE_MS);
+    // graphql-ws's default is 0 — disabled — which is the bug.
+    expect(opts.keepAlive).toBeGreaterThan(0);
+    expect(opts.keepAlive).toBeGreaterThanOrEqual(5_000);
+  });
+
+  it("terminates a socket that never answers our ping", async () => {
+    const { opts, terminate, PONG_TIMEOUT_MS } = await probe();
+
+    opts.on?.ping?.(false, undefined);
+    expect(terminate).not.toHaveBeenCalled();
+
+    vi.advanceTimersByTime(PONG_TIMEOUT_MS);
+    expect(terminate).toHaveBeenCalledTimes(1);
+  });
+
+  it("leaves a socket alone when the pong comes back", async () => {
+    const { opts, terminate, PONG_TIMEOUT_MS } = await probe();
+
+    opts.on?.ping?.(false, undefined);
+    opts.on?.pong?.(true, undefined);
+
+    vi.advanceTimersByTime(PONG_TIMEOUT_MS * 10);
+    expect(terminate).not.toHaveBeenCalled();
+  });
+
+  // A ping FROM the server says nothing about whether our writes land — the
+  // client auto-pongs it. Arming on it would start a countdown no pong of ours
+  // can ever clear, killing a healthy socket every server keep-alive.
+  it("ignores a ping sent by the server", async () => {
+    const { opts, terminate, PONG_TIMEOUT_MS } = await probe();
+
+    opts.on?.ping?.(true, undefined);
+
+    vi.advanceTimersByTime(PONG_TIMEOUT_MS * 10);
+    expect(terminate).not.toHaveBeenCalled();
+  });
+
+  // The pending timeout belongs to the socket that was open when the ping went
+  // out. Once that socket is gone, firing it would terminate whatever
+  // replaced it — turning one dead connection into an endless kill loop.
+  it("retires a pending timeout when the socket goes away", async () => {
+    const { opts, terminate, onClosed, PONG_TIMEOUT_MS } = await probe();
+
+    opts.on?.ping?.(false, undefined);
+    opts.on?.closed?.({});
+
+    vi.advanceTimersByTime(PONG_TIMEOUT_MS * 10);
+    expect(terminate).not.toHaveBeenCalled();
+    expect(onClosed).toHaveBeenCalledTimes(1);
+  });
+
+  it("retires a pending timeout when a new socket comes up", async () => {
+    const { opts, terminate, PONG_TIMEOUT_MS } = await probe();
+
+    opts.on?.ping?.(false, undefined);
+    opts.on?.connected?.({} as never, undefined, true);
+
+    vi.advanceTimersByTime(PONG_TIMEOUT_MS * 10);
+    expect(terminate).not.toHaveBeenCalled();
   });
 });
