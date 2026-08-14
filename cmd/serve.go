@@ -169,7 +169,7 @@ func openBrowser(url string) error {
 func newServeMux(app *App, staticFS fs.FS) http.Handler {
 	mux := http.NewServeMux()
 	mux.HandleFunc("/health", handleHealth)
-	mux.Handle("/graphql", newGraphQLHandler(app))
+	mux.Handle("/graphql", newGraphQLHandler(app, wsPingPongInterval))
 	if staticFS != nil {
 		mux.Handle("/", spaHandler(staticFS))
 	}
@@ -337,6 +337,14 @@ func handleHealth(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
+// wsPingPongInterval is how often the WebSocket transport pings a live-updates
+// client and, transitively, how fast a vanished one is reaped: gqlgen arms a
+// read deadline of twice this value, so a client that stops answering is closed
+// within 2x–3x the interval instead of lingering until the OS TCP timeout. It
+// mirrors the client's own 10s keep-alive (web/src/lib/graphql.ts), giving both
+// ends the same detection bound.
+const wsPingPongInterval = 10 * time.Second
+
 // newGraphQLHandler creates a gqlgen HTTP handler with GET, POST, and WebSocket transports.
 // Every operation it executes gets its own graph.RequestCache in context via
 // requestCacheAroundOperations — resolver helpers (cachedMentions /
@@ -345,7 +353,7 @@ func handleHealth(w http.ResponseWriter, r *http.Request) {
 // executor (cmd/graphql.go) registers no middleware; it attaches an equivalent
 // cache itself in newQueryContext, because one invocation issuing one operation
 // still fans a relationship field out across every parent it selects.
-func newGraphQLHandler(app *App) http.Handler {
+func newGraphQLHandler(app *App, wsPingPong time.Duration) http.Handler {
 	es := graph.NewExecutableSchema(graph.Config{
 		Resolvers: app.newResolver(),
 	})
@@ -354,8 +362,17 @@ func newGraphQLHandler(app *App) http.Handler {
 	srv.AddTransport(transport.Options{})
 	srv.AddTransport(transport.GET{})
 	srv.AddTransport(transport.POST{})
+	// PingPongInterval, not KeepAlivePingInterval (nibs-y59n): the latter
+	// applies only to the legacy graphql-ws subprotocol, which no nibs client
+	// speaks — the web client is graphql-ws v6, i.e. graphql-transport-ws, so
+	// with it the server sent nothing and a vanished client was never reaped
+	// (measured: zero server-initiated frames in 60s). PingPongInterval is the
+	// graphql-transport-ws equivalent, and the default websocket adapter
+	// enforces the missed-pong read deadline that actually closes dead
+	// connections. The legacy setting is dropped rather than kept alongside:
+	// a setting that no real connection reads is a trap for the next reader.
 	srv.AddTransport(transport.Websocket{
-		KeepAlivePingInterval: 10 * time.Second,
+		PingPongInterval: wsPingPong,
 	})
 	srv.SetErrorPresenter(etagErrorPresenter)
 	srv.AroundOperations(requestCacheAroundOperations)
