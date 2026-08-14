@@ -28,6 +28,39 @@ import { test, expect } from "@playwright/test";
 
 const MARKER = "EDITED-WHILE-DISCONNECTED";
 
+// A socket that dies WITHOUT a close frame is the case the keep-alive probe
+// exists for (nibs-bcif). Going offline leaves an established WebSocket open
+// from the client's point of view: nothing writes to it, so nothing fails, so
+// `closed` never fires and the page goes on believing it is live. Only a real
+// engine can show this — jsdom has no socket to leave half-open.
+//
+// Removing `keepAlive` from wsClientOptions fails it: with no ping there is
+// nothing to go unanswered, and the chip never appears.
+test("a connection that dies without a close frame still raises the chip", async ({
+  page,
+  context,
+}) => {
+  // Detection is bounded by one ping interval plus the pong wait, so this test
+  // deliberately outlives the 30s default.
+  test.setTimeout(60_000);
+
+  await page.goto("/");
+  await expect(page.locator("tr[data-nib-id]").first()).toBeVisible({ timeout: 10_000 });
+
+  const chip = page.locator('[data-testid="connection-status"]');
+  await expect(chip).toHaveCount(0);
+
+  // No close frame reaches the client here — unlike stopping the server, which
+  // the page already notices immediately.
+  await context.setOffline(true);
+
+  await expect(chip).toBeVisible({ timeout: 25_000 });
+
+  // And it clears itself once the network returns, without a reload.
+  await context.setOffline(false);
+  await expect(chip).toHaveCount(0, { timeout: 25_000 });
+});
+
 test("the detail panel catches up after the connection drops and returns", async ({
   page,
   context,
