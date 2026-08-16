@@ -1,6 +1,7 @@
 package cmd
 
 import (
+	"context"
 	"encoding/json"
 	"os"
 	"path/filepath"
@@ -93,6 +94,25 @@ func setupCheckTest(t *testing.T, files map[string]string) (*App, string) {
 	return &App{Core: core}, nibsDir
 }
 
+// checkAppPastTheGate runs the root command's pre-run gate for `nibs check`
+// against the store at storeDir and returns the App it built, so a test can
+// assert BOTH that the gate let check through and what check then reports.
+//
+// It drives PersistentPreRunE directly rather than rootCmd.Execute because
+// checkCmd's RunE exits the process whenever the report is non-empty — and
+// every store the exemption exists for now reports something.
+func checkAppPastTheGate(t *testing.T, storeDir string) *App {
+	t.Helper()
+	t.Cleanup(resetRootPersistentFlags)
+	nibsPath = storeDir
+	checkCmd.SetContext(context.Background())
+	t.Cleanup(func() { checkCmd.SetContext(context.Background()) })
+	if err := rootCmd.PersistentPreRunE(checkCmd, nil); err != nil {
+		t.Fatalf("the pre-run gate refused plain check on %s: %v", storeDir, err)
+	}
+	return getApp(checkCmd)
+}
+
 // loadDiagnosticFiles is the fixture both load-time conditions need: one file
 // that fails to parse (so its nib is missing from every query) and two files
 // claiming one id (so one silently shadows the other).
@@ -125,11 +145,17 @@ func TestCheckReportsInvalidEnumValues(t *testing.T) {
 		if runErr != nil {
 			t.Fatalf("runCheck error = %v", runErr)
 		}
-		if total != 1 {
-			t.Errorf("total issues = %d, want 1", total)
+		// Two findings, not one: the out-of-enum value on the nib, and the
+		// store-level fact that `priority-deferred` is pending so every other
+		// command refuses this store.
+		if total != 2 {
+			t.Errorf("total issues = %d, want 2", total)
 		}
 		if !strings.Contains(out, "chk-leg1") || !strings.Contains(out, "deferred") {
 			t.Errorf("report should name the nib and value, got:\n%s", out)
+		}
+		if !strings.Contains(out, "priority-deferred") {
+			t.Errorf("report should name the pending migration step, got:\n%s", out)
 		}
 	})
 
@@ -196,8 +222,11 @@ func TestCheckNewerStore(t *testing.T) {
 		if runErr != nil {
 			t.Fatalf("runCheck error = %v", runErr)
 		}
-		if total != 1 {
-			t.Errorf("total issues = %d, want 1 (the out-of-enum finding)", total)
+		// The out-of-enum finding, plus the store-level refusal the migration
+		// probe raises on a newer-format file — check is the one command that
+		// reports that refusal instead of being stopped by it.
+		if total != 2 {
+			t.Errorf("total issues = %d, want 2 (the out-of-enum finding and the newer-store refusal)", total)
 		}
 		if !strings.Contains(out, "newer nibs") || !strings.Contains(out, "upgrade nibs") {
 			t.Errorf("diagnostic should say the file was written by a newer nibs and to upgrade, got:\n%s", out)
@@ -207,18 +236,27 @@ func TestCheckNewerStore(t *testing.T) {
 		}
 	})
 
-	t.Run("plain check runs end to end through the CLI gate", func(t *testing.T) {
-		// A CLEAN newer-version store: checkCmd's os.Exit(1)-on-issues branch
-		// is not reached, so the full Cobra pipeline is safe to drive. This is
-		// the exemption pin: list/migrate refuse this store, check runs.
+	t.Run("plain check gets past the CLI gate and names the refusal", func(t *testing.T) {
+		// The exemption pin: list/migrate refuse this store, check runs — and
+		// then reports the very refusal it was let past, rather than passing
+		// silently over a store this build must not touch.
 		nibsDir := setupListCobraTest(t, map[string]string{
 			"chk-fut1--future.md": "---\nversion: 99\ntitle: Future\nstatus: todo\n---\n\nBody.\n",
 		})
 		t.Cleanup(resetCheckFlags)
 		resetCheckFlags()
-		out, err := runRootWith(t, "--nibs-path", nibsDir, "check")
-		if err != nil {
-			t.Fatalf("plain check on a newer-version store refused: %v\nout: %s", err, out)
+		app := checkAppPastTheGate(t, nibsDir)
+		var total int
+		var runErr error
+		out := captureStdout(t, func() { total, runErr = runCheck(app) })
+		if runErr != nil {
+			t.Fatalf("runCheck error = %v", runErr)
+		}
+		if total != 1 {
+			t.Errorf("total issues = %d, want 1 (the newer-store refusal)", total)
+		}
+		if !strings.Contains(out, "newer nibs") {
+			t.Errorf("report should name the newer-store refusal, got:\n%s", out)
 		}
 	})
 

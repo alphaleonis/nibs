@@ -91,6 +91,81 @@ func TestFindStore(t *testing.T) {
 	})
 }
 
+// TestFindLegacyProjectConfig pins the locator that lets a failed store search
+// explain itself. It is the pre-layout `.nibs.yml` FILE, found by the same
+// upward walk (and the same ceiling) as the store itself.
+func TestFindLegacyProjectConfig(t *testing.T) {
+	writeLegacy := func(t *testing.T, dir string) string {
+		t.Helper()
+		p := filepath.Join(dir, LegacyProjectConfigFileName)
+		if err := os.WriteFile(p, []byte("nibs:\n  prefix: leg-\n"), 0644); err != nil {
+			t.Fatalf("WriteFile error = %v", err)
+		}
+		return p
+	}
+
+	t.Run("finds the config in an ancestor directory", func(t *testing.T) {
+		tmpDir := t.TempDir()
+		t.Setenv("NIBS_CONFIG_ROOT", tmpDir)
+		want := writeLegacy(t, tmpDir)
+		subDir := mkSub(t, tmpDir, filepath.Join("sub", "dir"))
+
+		found, err := FindLegacyProjectConfig(subDir)
+		if err != nil {
+			t.Fatalf("FindLegacyProjectConfig() error = %v", err)
+		}
+		if found != want {
+			t.Errorf("FindLegacyProjectConfig() = %q, want %q", found, want)
+		}
+	})
+
+	t.Run("returns empty when no legacy config exists", func(t *testing.T) {
+		tmpDir := t.TempDir()
+		t.Setenv("NIBS_CONFIG_ROOT", tmpDir)
+
+		found, err := FindLegacyProjectConfig(tmpDir)
+		if err != nil {
+			t.Fatalf("FindLegacyProjectConfig() error = %v", err)
+		}
+		if found != "" {
+			t.Errorf("FindLegacyProjectConfig() = %q, want empty string", found)
+		}
+	})
+
+	// A `.nibs.yml` DIRECTORY is not a config, mirroring FindStore's insistence
+	// that a `.nibs` FILE is not a store.
+	t.Run("a .nibs.yml directory does not stop the walk", func(t *testing.T) {
+		tmpDir := t.TempDir()
+		t.Setenv("NIBS_CONFIG_ROOT", tmpDir)
+		want := writeLegacy(t, tmpDir)
+		decoy := mkSub(t, tmpDir, "decoy")
+		mkSub(t, decoy, LegacyProjectConfigFileName)
+
+		found, err := FindLegacyProjectConfig(decoy)
+		if err != nil {
+			t.Fatalf("FindLegacyProjectConfig() error = %v", err)
+		}
+		if found != want {
+			t.Errorf("FindLegacyProjectConfig() = %q, want %q", found, want)
+		}
+	})
+
+	t.Run("respects the NIBS_CONFIG_ROOT ceiling", func(t *testing.T) {
+		root := t.TempDir()
+		ceiling := mkSub(t, root, "ceiling")
+		writeLegacy(t, root)
+		t.Setenv("NIBS_CONFIG_ROOT", ceiling)
+
+		found, err := FindLegacyProjectConfig(ceiling)
+		if err != nil {
+			t.Fatalf("FindLegacyProjectConfig() error = %v", err)
+		}
+		if found != "" {
+			t.Errorf("FindLegacyProjectConfig() = %q, want empty (the config sits above the ceiling)", found)
+		}
+	})
+}
+
 // TestFindStore_RespectsCeiling pins the NIBS_CONFIG_ROOT sandbox: the walk
 // checks the ceiling directory itself but never ascends above it, so a stray
 // ancestor store cannot leak into a test that expects none.

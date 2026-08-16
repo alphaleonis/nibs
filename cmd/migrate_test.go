@@ -1117,16 +1117,23 @@ func TestCheckRunsOnPendingStore(t *testing.T) {
 		t.Fatal("list on a v0 store succeeded; fixture should be pending or this test is vacuous")
 	}
 
-	// Plain check runs. The fixture is clean apart from being v0, so the
-	// report is empty and RunE's os.Exit(1)-on-issues branch is not reached.
-	out, err := runRootWith(t, "--nibs-path", nibsDir, "check")
-	if err != nil {
-		t.Fatalf("plain `nibs check` on a pending store refused: %v\nout: %s", err, out)
+	// Plain check gets past the gate — and then reports the pending migration
+	// rather than certifying a store no other command will touch. (The report
+	// is driven directly because RunE exits the process on a non-empty one.)
+	app := checkAppPastTheGate(t, nibsDir)
+	var runErr error
+	out := captureStdout(t, func() { _, runErr = runCheck(app) })
+	if runErr != nil {
+		t.Fatalf("runCheck on a pending store: %v", runErr)
+	}
+	if !strings.Contains(out, "v0-blocking") {
+		t.Errorf("check should name the pending migration step, got:\n%s", out)
 	}
 
 	// check --fix writes, so it stays behind the gate.
+	resetRootPersistentFlags()
 	resetCheckFlags()
-	_, err = runRootWith(t, "--nibs-path", nibsDir, "check", "--fix")
+	_, err := runRootWith(t, "--nibs-path", nibsDir, "check", "--fix")
 	if err == nil {
 		t.Fatal("`nibs check --fix` on a pending store succeeded, want the migration refusal")
 	}

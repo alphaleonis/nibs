@@ -261,6 +261,69 @@ func TestInit_ExplicitPrefix_InvalidCharset(t *testing.T) {
 	}
 }
 
+// TestInit_RefusesToCreateASecondConfig pins the guard that keeps `nibs init`
+// from wedging a project. init is skip-listed from the pre-run migration gate,
+// so it is one of the few commands that runs on a store nothing else will
+// touch — and it used to write <store>/config.yml unconditionally.
+//
+// On a pre-layout project that produces a SECOND config carrying a derived
+// prefix, and `nibs migrate` then refuses forever with two configs it must not
+// choose between. The two disagree on the load-bearing fields, so deleting the
+// wrong one silently re-prefixes the project. Refusing up front is what stops
+// users reaching that state at all.
+func TestInit_RefusesToCreateASecondConfig(t *testing.T) {
+	tests := []struct {
+		name    string
+		build   func(t *testing.T, projectDir, nibsDir string)
+		wantMsg string
+	}{
+		{
+			name: "a pre-layout project is sent to migrate",
+			build: func(t *testing.T, projectDir, _ string) {
+				writeFileT(t, filepath.Join(projectDir, store.LegacyProjectConfigFileName), "nibs:\n  prefix: real-\n  id_length: 6\n")
+			},
+			wantMsg: "nibs migrate",
+		},
+		{
+			name: "an initialized store is not overwritten",
+			build: func(t *testing.T, _, nibsDir string) {
+				mkdirAllT(t, nibsDir)
+				writeFileT(t, filepath.Join(nibsDir, store.ConfigFileName), "nibs:\n  prefix: real-\n")
+			},
+			wantMsg: store.ConfigFileName,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			projectDir, nibsDir := setupInitTest(t, "myproj")
+			tt.build(t, projectDir, nibsDir)
+
+			err := runInitCmd(t, nibsDir, "--json")
+			if err == nil {
+				t.Fatal("init overwrote or duplicated an existing project config")
+			}
+			if !strings.Contains(err.Error(), tt.wantMsg) {
+				t.Errorf("refusal = %v, want it to mention %q", err, tt.wantMsg)
+			}
+		})
+	}
+
+	t.Run("the pre-layout project keeps its one config", func(t *testing.T) {
+		projectDir, nibsDir := setupInitTest(t, "myproj")
+		legacy := filepath.Join(projectDir, store.LegacyProjectConfigFileName)
+		writeFileT(t, legacy, "nibs:\n  prefix: real-\n  id_length: 6\n")
+
+		if err := runInitCmd(t, nibsDir, "--json"); err == nil {
+			t.Fatal("expected a refusal")
+		}
+		assertNoConfigFile(t, projectDir)
+		if _, err := os.Stat(legacy); err != nil {
+			t.Errorf("init disturbed the pre-layout config: %v", err)
+		}
+	})
+}
+
 // assertNoConfigFile helps a handful of failure-mode tests verify that a
 // rejected init did NOT leave a partial config behind.
 func assertNoConfigFile(t *testing.T, projectDir string) {

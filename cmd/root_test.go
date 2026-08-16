@@ -11,6 +11,7 @@ import (
 	"testing"
 
 	"github.com/alphaleonis/nibs/internal/output"
+	"github.com/alphaleonis/nibs/internal/store"
 )
 
 func TestResolveStoreDir(t *testing.T) {
@@ -146,6 +147,250 @@ func TestResolveStoreDir(t *testing.T) {
 			t.Errorf("expected 'does not exist' error, got %q", err.Error())
 		}
 	})
+}
+
+// TestResolveStoreDirRefusesTheLegacyProjectConfig pins the first of the two
+// guards that keep a mis-aimed --config from turning a project directory into
+// a store. `--config <project>/.nibs.yml` was the DOCUMENTED way to work
+// against another project before the layout inversion, and its directory is
+// the project, not the store — so accepting it would point every command
+// (`nibs migrate` above all) at the project tree. The refusal names the
+// replacement rather than merely rejecting.
+func TestResolveStoreDirRefusesTheLegacyProjectConfig(t *testing.T) {
+	t.Cleanup(resetRootPersistentFlags)
+	resetRootPersistentFlags()
+	t.Setenv("NIBS_PATH", "")
+
+	projectDir := t.TempDir()
+	storeDir := filepath.Join(projectDir, store.DirName)
+	if err := os.MkdirAll(storeDir, 0755); err != nil {
+		t.Fatalf("mkdir store: %v", err)
+	}
+	legacy := filepath.Join(projectDir, store.LegacyProjectConfigFileName)
+	if err := os.WriteFile(legacy, []byte("nibs:\n  prefix: leg-\n"), 0644); err != nil {
+		t.Fatalf("write legacy config: %v", err)
+	}
+	configPath = legacy
+
+	_, err := resolveStoreDir()
+	if err == nil {
+		t.Fatal("resolveStoreDir accepted --config at the pre-layout .nibs.yml; that path names the PROJECT, not the store")
+	}
+	for _, want := range []string{"--nibs-path", storeDir, store.ConfigFileName} {
+		if !strings.Contains(err.Error(), want) {
+			t.Errorf("refusal = %q, want it to mention %q", err.Error(), want)
+		}
+	}
+}
+
+// TestResolveStoreDirRequiresStoreEvidence pins the second guard: a directory
+// named EXPLICITLY — by --nibs-path, by NIBS_PATH, or through --config's
+// containing directory — must carry positive evidence that it is a store.
+// Without it, a path aimed one level too high (`--nibs-path <project>`)
+// resolves to the project tree, and `nibs migrate` relocates and rewrites
+// every front-mattered .md it finds there.
+//
+// The legacy shape (a top-level *.md beside a `.nibs.yml`) counts as evidence
+// on purpose: a pre-layout store must stay resolvable, or `nibs migrate` could
+// never reach the stores it exists to convert.
+func TestResolveStoreDirRequiresStoreEvidence(t *testing.T) {
+	tests := []struct {
+		name   string
+		build  func(t *testing.T, tmp string) string
+		accept bool
+	}{
+		{
+			name: "a .nibs store holding data/",
+			build: func(t *testing.T, tmp string) string {
+				dir := filepath.Join(tmp, "proj", store.DirName)
+				mkdirAllT(t, filepath.Join(dir, store.DataDirName))
+				return dir
+			},
+			accept: true,
+		},
+		{
+			name: "an empty directory named .nibs",
+			build: func(t *testing.T, tmp string) string {
+				dir := filepath.Join(tmp, "proj", store.DirName)
+				mkdirAllT(t, dir)
+				return dir
+			},
+			accept: true,
+		},
+		{
+			name: "a differently named store holding only config.yml",
+			build: func(t *testing.T, tmp string) string {
+				dir := filepath.Join(tmp, "proj", "nibdata")
+				mkdirAllT(t, dir)
+				writeFileT(t, filepath.Join(dir, store.ConfigFileName), "nibs:\n  prefix: nd-\n")
+				return dir
+			},
+			accept: true,
+		},
+		{
+			name: "a differently named store holding only archive/",
+			build: func(t *testing.T, tmp string) string {
+				dir := filepath.Join(tmp, "proj", "nibdata")
+				mkdirAllT(t, filepath.Join(dir, store.ArchiveDirName))
+				return dir
+			},
+			accept: true,
+		},
+		{
+			name: "the legacy shape: a top-level nib file beside a .nibs.yml",
+			build: func(t *testing.T, tmp string) string {
+				dir := filepath.Join(tmp, "proj", "nibdata")
+				mkdirAllT(t, dir)
+				writeFileT(t, filepath.Join(dir, "leg-a1--one.md"), layoutNib)
+				writeFileT(t, filepath.Join(tmp, "proj", store.LegacyProjectConfigFileName), "nibs:\n  prefix: leg-\n")
+				return dir
+			},
+			accept: true,
+		},
+		{
+			name: "a project directory with neither shape",
+			build: func(t *testing.T, tmp string) string {
+				dir := filepath.Join(tmp, "proj")
+				mkdirAllT(t, filepath.Join(dir, "docs"))
+				writeFileT(t, filepath.Join(dir, "docs", "post.md"), "---\ntitle: A post\n---\n\nBody.\n")
+				return dir
+			},
+		},
+		{
+			name: "markdown at the top level but no .nibs.yml beside it",
+			build: func(t *testing.T, tmp string) string {
+				dir := filepath.Join(tmp, "proj", "notes")
+				mkdirAllT(t, dir)
+				writeFileT(t, filepath.Join(dir, "README.md"), "# Notes\n")
+				return dir
+			},
+		},
+		{
+			name: "a .nibs.yml beside it but no markdown at the top level",
+			build: func(t *testing.T, tmp string) string {
+				dir := filepath.Join(tmp, "proj", "notes")
+				mkdirAllT(t, dir)
+				writeFileT(t, filepath.Join(tmp, "proj", store.LegacyProjectConfigFileName), "nibs:\n  prefix: leg-\n")
+				return dir
+			},
+		},
+	}
+
+	// The guard must cover every route to an explicitly named directory, not
+	// just the flag: NIBS_PATH and --config's containing directory reach the
+	// same branch.
+	routes := []struct {
+		name  string
+		apply func(t *testing.T, dir string)
+	}{
+		{"--nibs-path", func(t *testing.T, dir string) { nibsPath = dir }},
+		{"NIBS_PATH", func(t *testing.T, dir string) { t.Setenv("NIBS_PATH", dir) }},
+		{"--config", func(t *testing.T, dir string) {
+			configPath = filepath.Join(dir, store.ConfigFileName)
+		}},
+	}
+
+	for _, tt := range tests {
+		for _, route := range routes {
+			t.Run(tt.name+" via "+route.name, func(t *testing.T) {
+				t.Cleanup(resetRootPersistentFlags)
+				resetRootPersistentFlags()
+				t.Setenv("NIBS_PATH", "")
+				dir := tt.build(t, t.TempDir())
+				route.apply(t, dir)
+
+				got, err := resolveStoreDir()
+				if tt.accept {
+					if err != nil {
+						t.Fatalf("resolveStoreDir() error = %v, want the store %s", err, dir)
+					}
+					if got != dir {
+						t.Errorf("resolveStoreDir() = %q, want %q", got, dir)
+					}
+					return
+				}
+				if err == nil {
+					t.Fatalf("resolveStoreDir() = %q with no error; %s carries no evidence of being a store", got, dir)
+				}
+				if !strings.Contains(err.Error(), "not a nibs store") {
+					t.Errorf("refusal = %q, want it to say the directory is not a nibs store", err.Error())
+				}
+			})
+		}
+	}
+}
+
+// TestResolveStoreDirExplainsAPreLayoutProject pins the discovery message for
+// the population the layout inversion is hardest on: a project whose data
+// lived outside `.nibs` via the retired `nibs.path` key. It has no `.nibs`
+// DIRECTORY, so the upward walk finds nothing — and the generic "run nibs
+// init" answer is the one action that strands its data, creating an empty
+// store with a derived prefix beside the real files.
+func TestResolveStoreDirExplainsAPreLayoutProject(t *testing.T) {
+	tests := []struct {
+		name       string
+		configBody string
+		want       []string
+		notWant    []string
+	}{
+		{
+			name:       "nibs.path names the real data directory",
+			configBody: "nibs:\n  prefix: leg-\n  path: nibdata\n",
+			want:       []string{"nibs.path", "nibdata", ".nibs", "nibs migrate"},
+			notWant:    []string{"run 'nibs init' to create one"},
+		},
+		{
+			name:       "a pre-layout config with no nibs.path",
+			configBody: "nibs:\n  prefix: leg-\n",
+			want:       []string{".nibs.yml", "nibs migrate"},
+			notWant:    []string{"run 'nibs init' to create one"},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Cleanup(resetRootPersistentFlags)
+			resetRootPersistentFlags()
+			t.Setenv("NIBS_PATH", "")
+
+			tmp := t.TempDir()
+			t.Setenv("NIBS_CONFIG_ROOT", tmp)
+			projectDir := filepath.Join(tmp, "proj")
+			mkdirAllT(t, filepath.Join(projectDir, "nibdata"))
+			writeFileT(t, filepath.Join(projectDir, "nibdata", "leg-a1--one.md"), layoutNib)
+			writeFileT(t, filepath.Join(projectDir, store.LegacyProjectConfigFileName), tt.configBody)
+			t.Chdir(projectDir)
+
+			_, err := resolveStoreDir()
+			if err == nil {
+				t.Fatal("resolveStoreDir found a store where there is no .nibs directory")
+			}
+			for _, want := range tt.want {
+				if !strings.Contains(err.Error(), want) {
+					t.Errorf("message = %q, want it to mention %q", err.Error(), want)
+				}
+			}
+			for _, notWant := range tt.notWant {
+				if strings.Contains(err.Error(), notWant) {
+					t.Errorf("message = %q, must not suggest %q — that is what strands the data", err.Error(), notWant)
+				}
+			}
+		})
+	}
+}
+
+func mkdirAllT(t *testing.T, dir string) {
+	t.Helper()
+	if err := os.MkdirAll(dir, 0755); err != nil {
+		t.Fatalf("mkdir %s: %v", dir, err)
+	}
+}
+
+func writeFileT(t *testing.T, path, content string) {
+	t.Helper()
+	if err := os.WriteFile(path, []byte(content), 0644); err != nil {
+		t.Fatalf("write %s: %v", path, err)
+	}
 }
 
 // TestReportExitError pins the CLI error boundary's contract. It is the ONE

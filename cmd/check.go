@@ -9,6 +9,7 @@ import (
 	"github.com/alphaleonis/nibs/internal/config"
 	"github.com/alphaleonis/nibs/internal/nib"
 	"github.com/alphaleonis/nibs/internal/nibcore"
+	"github.com/alphaleonis/nibs/internal/store"
 	"github.com/alphaleonis/nibs/internal/ui"
 	"github.com/spf13/cobra"
 )
@@ -23,6 +24,9 @@ type checkResult struct {
 	ConfigErrors []string                 `json:"config_errors"`
 	NibIssues    *nibcore.LinkCheckResult `json:"nib_issues,omitempty"`
 	Fixed        int                      `json:"fixed,omitempty"`
+	// Migration describes a pending store migration, empty when the store is
+	// current. See storeMigrationIssue.
+	Migration string `json:"migration,omitempty"`
 }
 
 var checkCmd = &cobra.Command{
@@ -130,6 +134,7 @@ func runCheck(app *App) (int, error) {
 	}
 
 	linkResult := app.Core.CheckAllLinks()
+	migration := storeMigrationIssue(app)
 
 	// === Nib file checks ===
 	// Reported BEFORE the link checks because a load-time problem explains link
@@ -139,6 +144,11 @@ func runCheck(app *App) (int, error) {
 	if !checkJSON {
 		ui.Println()
 		ui.Println(ui.Bold.Render("Nib Files"))
+		// First of all, because it explains everything under it: a store with
+		// a pending migration loads only part of itself (or none of itself).
+		if migration != "" {
+			ui.Printf("  %s %s\n", ui.Danger.Render("✗"), migration)
+		}
 		renderLoadDiagnostics(linkResult)
 		renderFieldDiagnostics(app, linkResult)
 	}
@@ -222,6 +232,9 @@ func runCheck(app *App) (int, error) {
 
 	// === Summary ===
 	totalIssues := len(configErrors) + linkResult.TotalIssues()
+	if migration != "" {
+		totalIssues++
+	}
 
 	if checkJSON {
 		result := checkResult{
@@ -229,6 +242,7 @@ func runCheck(app *App) (int, error) {
 			ConfigErrors: configErrors,
 			NibIssues:    linkResult,
 			Fixed:        fixed,
+			Migration:    migration,
 		}
 		data, _ := json.MarshalIndent(result, "", "  ")
 		ui.Println(string(data))
@@ -249,6 +263,46 @@ func runCheck(app *App) (int, error) {
 	}
 
 	return totalIssues, nil
+}
+
+// storeMigrationIssue describes a pending store migration, or "" when the
+// store is current.
+//
+// Plain `nibs check` is exempt from the pre-run migration gate precisely so it
+// can diagnose the store states that gate creates (see cmd/root.go). But
+// Core.Load walks data/ and archive/ only, and on a pre-layout store every nib
+// file sits at the store ROOT — so every check below runs over a store that
+// loaded NOTHING and would report it healthy while every other command refuses
+// it. That is the same circle the exemption exists to break, closed from the
+// other side, so a pending migration is reported and counted as an issue.
+//
+// The probe's own refusals (a store written by a newer nibs, a directory that
+// cannot be enumerated) are surfaced the same way: they are exactly what a
+// diagnostic is for, and swallowing them would restore the silent pass.
+func storeMigrationIssue(app *App) string {
+	pending, err := pendingMigrations(newMigrateEnv(app.Core.Root()))
+	if err != nil {
+		return flattenReason(err.Error())
+	}
+	if len(pending) == 0 {
+		return ""
+	}
+	names := make([]string, len(pending))
+	shapePending := false
+	for i, step := range pending {
+		names[i] = step.name
+		if !step.isContent() {
+			shapePending = true
+		}
+	}
+	msg := fmt.Sprintf("Store needs migration (pending: %s) — run `nibs migrate`", strings.Join(names, ", "))
+	if shapePending {
+		// A shape step means the store's directories are not where Load looks,
+		// so the checks below spoke for a store that loaded nothing.
+		msg += fmt.Sprintf("; until then only %s/ and %s/ are loaded, so nib files outside them are missing from the checks below",
+			store.DataDirName, store.ArchiveDirName)
+	}
+	return msg
 }
 
 // renderLoadDiagnostics prints the load-time integrity section in text mode.

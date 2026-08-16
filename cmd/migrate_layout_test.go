@@ -94,6 +94,13 @@ func TestLegacyStoreRefusesEveryCommand(t *testing.T) {
 // carries: plain `nibs check` is the read-only diagnostic built for exactly
 // the store states the refusal creates, so gating it would send the user in a
 // circle. --fix writes, so --fix stays gated.
+//
+// The exemption is only worth having if check REPORTS those states. Core.Load
+// walks data/ and archive/, so on a pre-layout store — where every nib sits at
+// the store root — it loads nothing, and a report that speaks only for what it
+// loaded certifies the store as healthy while every other command refuses it.
+// So the content of the report is pinned here too, not just the absence of a
+// refusal.
 func TestLegacyStoreCheckStaysExempt(t *testing.T) {
 	t.Cleanup(resetRootPersistentFlags)
 	t.Cleanup(resetCheckFlags)
@@ -102,8 +109,23 @@ func TestLegacyStoreCheckStaysExempt(t *testing.T) {
 		"leg-a1--one.md": layoutNib,
 	})
 
-	if _, err := runRootWith(t, "--nibs-path", storeDir, "check"); err != nil {
-		t.Errorf("plain check refused on a legacy store: %v", err)
+	app := checkAppPastTheGate(t, storeDir)
+	var total int
+	var runErr error
+	out := captureStdout(t, func() { total, runErr = runCheck(app) })
+	if runErr != nil {
+		t.Fatalf("runCheck error = %v", runErr)
+	}
+	if total == 0 {
+		t.Errorf("check counted 0 issues on a store no other command will touch:\n%s", out)
+	}
+	if strings.Contains(out, "All checks passed") {
+		t.Errorf("check certified an unmigrated store as healthy:\n%s", out)
+	}
+	for _, want := range []string{"nibs migrate", "layout", store.DataDirName} {
+		if !strings.Contains(out, want) {
+			t.Errorf("check report does not mention %q:\n%s", want, out)
+		}
 	}
 
 	resetRootPersistentFlags()
@@ -112,6 +134,30 @@ func TestLegacyStoreCheckStaysExempt(t *testing.T) {
 	t.Cleanup(func() { checkFix = false })
 	if _, err := runRootWith(t, "--nibs-path", storeDir, "check", "--fix"); err == nil {
 		t.Error("check --fix ran on a legacy store; only the read-only check is exempt")
+	}
+}
+
+// TestCheckOnACurrentStoreSaysNothingAboutMigration is the other half of the
+// boundary: the migration line must appear only when something is pending, or
+// every healthy store grows a permanent warning.
+func TestCheckOnACurrentStoreSaysNothingAboutMigration(t *testing.T) {
+	t.Cleanup(resetRootPersistentFlags)
+	t.Cleanup(resetCheckFlags)
+	resetCheckFlags()
+
+	storeDir := writeStore(t, filepath.Join(t.TempDir(), "proj"), "nibs:\n  prefix: chk-\n", map[string]string{
+		"chk-a1--one.md": layoutNib,
+	})
+
+	out, err := runRootWith(t, "--nibs-path", storeDir, "check")
+	if err != nil {
+		t.Fatalf("check on a current store: %v", err)
+	}
+	if !strings.Contains(out, "All checks passed") {
+		t.Errorf("check on a healthy, current store did not pass:\n%s", out)
+	}
+	if strings.Contains(out, "nibs migrate") {
+		t.Errorf("check warned about migration on an already-migrated store:\n%s", out)
 	}
 }
 
@@ -267,6 +313,90 @@ func TestMigrateLayoutConverges(t *testing.T) {
 	})
 }
 
+// TestMigrateConfigRelocationConverges pins the crash-recovery half of the
+// engine's idempotency contract over the one step that writes a file and then
+// removes another. `relocateProjectConfig` writes <store>/config.yml and THEN
+// deletes the legacy `.nibs.yml`; a crash between those two leaves both on
+// disk, and a re-run must finish the job rather than refusing forever — every
+// command refuses a store in that state, `nibs migrate` included, so a
+// non-converging refusal is terminal.
+//
+// Convergence is deliberately narrow: only a config.yml BYTE-IDENTICAL to what
+// this step would write is treated as its own interrupted write. Anything else
+// is a genuine "which one did you mean?" and still refuses.
+func TestMigrateConfigRelocationConverges(t *testing.T) {
+	const legacyBody = "nibs:\n  prefix: leg-\n  id_length: 4\n"
+
+	// migrateOnce runs a full migration and returns the project and store dirs,
+	// leaving the store in the current layout.
+	migrateOnce := func(t *testing.T) (projectDir, storeDir string) {
+		t.Helper()
+		t.Cleanup(resetRootPersistentFlags)
+		t.Cleanup(resetMigrateFlags)
+		resetMigrateFlags()
+		projectDir, storeDir = writeLegacyStore(t, legacyBody, map[string]string{
+			"leg-a1--one.md": layoutNib,
+		})
+		if _, err := runRootWith(t, "--nibs-path", storeDir, "migrate"); err != nil {
+			t.Fatalf("first migrate: %v", err)
+		}
+		return projectDir, storeDir
+	}
+
+	t.Run("an interrupted write finishes on the next run", func(t *testing.T) {
+		projectDir, storeDir := migrateOnce(t)
+		// Recreate the crash state: config.yml is exactly what the step wrote,
+		// and the legacy file it should have removed is still there.
+		legacy := filepath.Join(projectDir, store.LegacyProjectConfigFileName)
+		if err := os.WriteFile(legacy, []byte(legacyBody), 0644); err != nil {
+			t.Fatal(err)
+		}
+		before, err := os.ReadFile(store.NewLayout(storeDir).ConfigPath())
+		if err != nil {
+			t.Fatal(err)
+		}
+
+		resetRootPersistentFlags()
+		resetMigrateFlags()
+		if _, err := runRootWith(t, "--nibs-path", storeDir, "migrate", "--allow-dirty"); err != nil {
+			t.Fatalf("the re-run did not converge: %v", err)
+		}
+		if _, statErr := os.Stat(legacy); !os.IsNotExist(statErr) {
+			t.Errorf("the legacy config survived the resumed run (stat err = %v)", statErr)
+		}
+		after, err := os.ReadFile(store.NewLayout(storeDir).ConfigPath())
+		if err != nil {
+			t.Fatalf("the store config vanished: %v", err)
+		}
+		if string(after) != string(before) {
+			t.Errorf("the resumed run rewrote the store config:\nbefore:\n%s\nafter:\n%s", before, after)
+		}
+	})
+
+	t.Run("two genuinely different configs still refuse", func(t *testing.T) {
+		projectDir, storeDir := migrateOnce(t)
+		legacy := filepath.Join(projectDir, store.LegacyProjectConfigFileName)
+		// A second config that is NOT this step's own write: the two disagree
+		// on the load-bearing field, so picking one is the user's call.
+		if err := os.WriteFile(legacy, []byte("nibs:\n  prefix: other-\n"), 0644); err != nil {
+			t.Fatal(err)
+		}
+
+		resetRootPersistentFlags()
+		resetMigrateFlags()
+		_, err := runRootWith(t, "--nibs-path", storeDir, "migrate", "--allow-dirty")
+		if err == nil {
+			t.Fatal("migrate silently discarded one of two differing configs")
+		}
+		if !strings.Contains(err.Error(), "both") {
+			t.Errorf("refusal = %v, want it to say both configs exist", err)
+		}
+		if _, statErr := os.Stat(legacy); statErr != nil {
+			t.Errorf("the refusal deleted the legacy config anyway: %v", statErr)
+		}
+	})
+}
+
 // TestMigrateLayoutRunsBeforeContentStepsAgainstTheRelocatedConfig pins
 // behavior 11 — the ordering constraint that makes a doubly-legacy store
 // convert correctly in ONE pass.
@@ -370,6 +500,197 @@ func gitCommitAll(t *testing.T, repo string) {
 		if out, err := exec.Command("git", full...).CombinedOutput(); err != nil {
 			t.Skipf("git %v failed: %v\n%s", args, err, out)
 		}
+	}
+}
+
+// TestMigrateScopesTheFailLoudGateToStoreContent pins the deviation that makes
+// `.nibs/README.md` a legal place for a readme, end to end and on BOTH sides of
+// the decision — the real run's refusal and --dry-run's preview of it.
+//
+// The gate exists because a CONTENT step rewrites edges and must see every file
+// that could hold one. The files it will load are data/ and archive/, not the
+// whole store tree the scans walk — so a fence-less .md at the store ROOT, which
+// the layout step deliberately leaves behind and Core.Load then never sees,
+// cannot endanger anything. Blocking on it wedges the CLI (every command
+// refuses, and the one command that could fix it refuses too) over a file the
+// new layout stops caring about.
+func TestMigrateScopesTheFailLoudGateToStoreContent(t *testing.T) {
+	const readme = "# Store notes\n\nNo front matter here.\n"
+	const v0Nib = "---\ntitle: One\nstatus: todo\n---\n\nBody.\n"
+
+	t.Run("a content step runs past a fence-less file at the store root", func(t *testing.T) {
+		t.Cleanup(resetRootPersistentFlags)
+		t.Cleanup(resetMigrateFlags)
+		resetMigrateFlags()
+		_, storeDir := writeLegacyStore(t, "", map[string]string{
+			"leg-a1--one.md": v0Nib,
+			"README.md":      readme,
+		})
+
+		out, err := runRootWith(t, "--nibs-path", storeDir, "migrate", "--allow-dirty")
+		if err != nil {
+			t.Fatalf("migrate refused over a fence-less file the new layout leaves behind: %v\nout: %s", err, out)
+		}
+		// The readme stays where it is, unmodified and outside store content.
+		after, readErr := os.ReadFile(filepath.Join(storeDir, "README.md"))
+		if readErr != nil {
+			t.Fatalf("the readme was moved or removed: %v", readErr)
+		}
+		if string(after) != readme {
+			t.Errorf("migrate rewrote the readme:\n%s", after)
+		}
+		if _, statErr := os.Stat(filepath.Join(store.NewLayout(storeDir).DataDir(), "leg-a1--one.md")); statErr != nil {
+			t.Errorf("the nib did not reach data/: %v", statErr)
+		}
+	})
+
+	t.Run("--dry-run predicts that same run instead of announcing a refusal", func(t *testing.T) {
+		t.Cleanup(resetRootPersistentFlags)
+		t.Cleanup(resetMigrateFlags)
+		resetMigrateFlags()
+		// Only the layout step is pending here, so no content step is involved
+		// at all — the run cannot refuse, and the preview must not say it will.
+		_, storeDir := writeLegacyStore(t, "", map[string]string{
+			"leg-a1--one.md": layoutNib,
+			"README.md":      readme,
+		})
+
+		out, err := runRootWith(t, "--nibs-path", storeDir, "migrate", "--dry-run")
+		if err != nil {
+			t.Fatalf("--dry-run must preview, not fail: %v\nout: %s", err, out)
+		}
+		if strings.Contains(out, "refuse") {
+			t.Errorf("dry-run announced a refusal the real run does not raise:\n%s", out)
+		}
+
+		resetRootPersistentFlags()
+		resetMigrateFlags()
+		if _, err := runRootWith(t, "--nibs-path", storeDir, "migrate", "--allow-dirty"); err != nil {
+			t.Fatalf("the real run refused after a preview that promised success: %v", err)
+		}
+	})
+
+	t.Run("an UNREADABLE root file still blocks a content step", func(t *testing.T) {
+		t.Cleanup(resetRootPersistentFlags)
+		t.Cleanup(resetMigrateFlags)
+		resetMigrateFlags()
+		// The boundary the scoping must not cross: unlike a fence-less file,
+		// an unreadable one cannot be proven not to be a nib, so the layout
+		// step moves it INTO data/ — where the content step would then have to
+		// migrate around it, silently dropping edges pointing at it.
+		_, storeDir := writeLegacyStore(t, "", map[string]string{
+			"leg-a1--one.md": v0Nib,
+		})
+		link := filepath.Join(storeDir, ".#leg-a1--one.md")
+		if err := os.Symlink(filepath.Join(storeDir, "no-such-target"), link); err != nil {
+			t.Skipf("symlinks unavailable: %v", err)
+		}
+
+		out, err := runRootWith(t, "--nibs-path", storeDir, "migrate", "--allow-dirty")
+		if err == nil {
+			t.Fatalf("migrate ran past an unreadable file bound for data/\nout: %s", out)
+		}
+		if !strings.Contains(err.Error(), ".#leg-a1--one.md") {
+			t.Errorf("refusal should name the unreadable file, got: %v", err)
+		}
+		// And it refuses BEFORE any step writes: the gate's whole posture is
+		// that a store it will not finish migrating is left exactly as it was,
+		// so repairing the file and re-running is one clean pass. (The content
+		// step's own load gate would eventually catch this file too — but only
+		// after the layout step had already moved the store.)
+		if _, statErr := os.Stat(filepath.Join(storeDir, "leg-a1--one.md")); statErr != nil {
+			t.Errorf("the refusal came after the layout step had already moved files: %v", statErr)
+		}
+	})
+}
+
+// TestMigrateRefusesAMisAimedLegacyConfig is the end-to-end guard for the one
+// invocation the pre-layout docs recommended: `--config <project>/.nibs.yml`.
+// Its directory is the PROJECT, so a migrate run that accepted it would walk
+// the project tree, move every front-mattered .md into a freshly created
+// <project>/data/ and rewrite each one as a nib render — while the real store
+// at .nibs/ stayed untouched and unmigrated.
+func TestMigrateRefusesAMisAimedLegacyConfig(t *testing.T) {
+	t.Cleanup(resetRootPersistentFlags)
+	t.Cleanup(resetMigrateFlags)
+	resetMigrateFlags()
+
+	projectDir, storeDir := writeLegacyStore(t, "nibs:\n  prefix: leg-\n", map[string]string{
+		"leg-a1--one.md": layoutNib,
+	})
+	// An ordinary front-mattered document in the project tree: not a nib, and
+	// the blast radius of resolving the store to the project directory.
+	post := filepath.Join(projectDir, "docs", "post.md")
+	if err := os.MkdirAll(filepath.Dir(post), 0755); err != nil {
+		t.Fatal(err)
+	}
+	postBody := "---\ntitle: My blog post\nlayout: default\n---\n\nPost body.\n"
+	if err := os.WriteFile(post, []byte(postBody), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	legacy := filepath.Join(projectDir, store.LegacyProjectConfigFileName)
+	out, err := runRootWith(t, "--config", legacy, "migrate", "--allow-dirty")
+	if err == nil {
+		t.Fatalf("migrate accepted --config at the pre-layout config\nout: %s", out)
+	}
+	if !strings.Contains(err.Error(), "--nibs-path") {
+		t.Errorf("refusal = %v, want it to name --nibs-path as the replacement", err)
+	}
+
+	// Nothing was created outside the store, and the unrelated document is
+	// byte-identical.
+	if _, statErr := os.Stat(filepath.Join(projectDir, store.DataDirName)); !os.IsNotExist(statErr) {
+		t.Errorf("migrate created %s in the project directory (stat err = %v)", store.DataDirName, statErr)
+	}
+	got, readErr := os.ReadFile(post)
+	if readErr != nil {
+		t.Fatalf("the unrelated document was moved or removed: %v", readErr)
+	}
+	if string(got) != postBody {
+		t.Errorf("the unrelated document was rewritten:\n%s", got)
+	}
+	// And the real store is still where it was, still unmigrated.
+	if _, statErr := os.Stat(filepath.Join(storeDir, "leg-a1--one.md")); statErr != nil {
+		t.Errorf("the real store's nib file moved: %v", statErr)
+	}
+}
+
+// TestLegacyStoreOutsideDotNibsStaysResolvable pins the escape hatch the
+// store-evidence guard must leave open: a pre-layout project whose data lived
+// somewhere other than `.nibs` (the retired `nibs.path` key) has no `.nibs`
+// directory, so --nibs-path is the only way to name its store — and the guard
+// must recognize the legacy shape rather than refusing the very stores
+// `nibs migrate` exists to convert.
+func TestLegacyStoreOutsideDotNibsStaysResolvable(t *testing.T) {
+	t.Cleanup(resetRootPersistentFlags)
+	t.Cleanup(resetListFlags)
+	resetListFlags()
+
+	projectDir := t.TempDir()
+	storeDir := filepath.Join(projectDir, "nibdata")
+	if err := os.MkdirAll(storeDir, 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(storeDir, "leg-a1--one.md"), []byte(layoutNib), 0644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(projectDir, store.LegacyProjectConfigFileName),
+		[]byte("nibs:\n  prefix: leg-\n  path: nibdata\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	_, err := runRootWith(t, "--nibs-path", storeDir, "list")
+	if err == nil {
+		t.Fatal("list returned no error on a legacy store; every command must refuse until it is migrated")
+	}
+	// The refusal must be the MIGRATION gate, not the store-evidence guard:
+	// the store resolved, it simply needs converting.
+	if strings.Contains(err.Error(), "not a nibs store") {
+		t.Errorf("the store-evidence guard rejected a genuine legacy store: %v", err)
+	}
+	if !strings.Contains(err.Error(), "nibs migrate") {
+		t.Errorf("refusal = %v, want the migration gate naming `nibs migrate`", err)
 	}
 }
 

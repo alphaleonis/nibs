@@ -2,6 +2,7 @@ package cmd
 
 import (
 	"bufio"
+	"bytes"
 	"errors"
 	"fmt"
 	"io"
@@ -54,16 +55,17 @@ func (e migrateEnv) legacyConfigPath() string {
 func (e migrateEnv) config() (*config.Config, error) { return e.loadCfg() }
 
 // migrateConfig reads the project config from wherever it currently lives: an
-// explicit --config file while that file still exists (a legacy `.nibs.yml`
-// stops existing the instant the layout step relocates it), otherwise the
-// store's own config.yml. A store with no config at all resolves to the
-// defaults, which is the normal state of a pre-layout store and must not be an
-// error — the refusal gate has to work before the config has moved.
+// explicit --config file, otherwise the store's own config.yml. --config can
+// only name a config INSIDE the store — resolveStoreDir refuses one pointed at
+// the pre-layout `.nibs.yml` — so the file the layout step relocates is never
+// the one read here, and this stays the same derivation resolveCLIStore uses.
+//
+// A store with no config at all resolves to the defaults, which is the normal
+// state of a pre-layout store and must not be an error: the refusal gate has to
+// work before the config has moved into the store.
 func migrateConfig(nibsRoot string) (*config.Config, error) {
 	if configPath != "" {
-		if _, err := os.Stat(configPath); err == nil {
-			return config.LoadFromExplicitPathWithUserConfig(configPath)
-		}
+		return config.LoadFromExplicitPathWithUserConfig(configPath)
 	}
 	return config.LoadStoreWithUserConfig(nibsRoot)
 }
@@ -317,14 +319,19 @@ func applyLayout(env migrateEnv, _ *nibcore.StoreLock, log logf) error {
 // refused rather than silently dropped: the data lives in a directory this
 // build can no longer address, and quietly discarding the only record of where
 // it is would strand it.
+//
+// The write and the removal are two operations, so a crash between them leaves
+// BOTH files on disk. That state is terminal if it is simply refused — every
+// command refuses a store with a pending layout step, `nibs migrate` included
+// — which would break the engine's crash-recovery contract (see runMigrations).
+// So a config.yml BYTE-IDENTICAL to what this step would write is recognized as
+// its own interrupted write and finished. Anything else is a genuine second
+// config the tool must not choose between, and still refuses: the two differ in
+// the load-bearing fields, and picking the wrong one silently re-prefixes the
+// project.
 func relocateProjectConfig(env migrateEnv, log logf) error {
 	l := env.layout()
 	legacy := env.legacyConfigPath()
-
-	if _, err := os.Stat(l.ConfigPath()); err == nil {
-		return fmt.Errorf("both %s and %s exist; keep the one you want and delete the other, then re-run `nibs migrate`",
-			legacy, l.ConfigPath())
-	}
 
 	data, err := os.ReadFile(legacy)
 	if err != nil {
@@ -334,6 +341,20 @@ func relocateProjectConfig(env migrateEnv, log logf) error {
 	if err != nil {
 		return err
 	}
+
+	if _, statErr := os.Stat(l.ConfigPath()); statErr == nil {
+		existing, readErr := os.ReadFile(l.ConfigPath())
+		if readErr != nil || !bytes.Equal(existing, rewritten) {
+			return fmt.Errorf("both %s and %s exist; keep the one you want and delete the other, then re-run `nibs migrate`",
+				legacy, l.ConfigPath())
+		}
+		if err := os.Remove(legacy); err != nil {
+			return fmt.Errorf("removing %s after relocating it: %w", legacy, err)
+		}
+		log("layout: finished an interrupted relocation of the project config to %s", l.ConfigPath())
+		return nil
+	}
+
 	if err := os.MkdirAll(env.nibsRoot, 0755); err != nil {
 		return fmt.Errorf("creating %s: %w", env.nibsRoot, err)
 	}
@@ -376,8 +397,11 @@ func stripRetiredNibsPath(data []byte, env migrateEnv) ([]byte, error) {
 		declared = filepath.Join(env.layout().ProjectDir(), declared)
 	}
 	if !sameDir(declared, env.nibsRoot) {
-		return nil, fmt.Errorf("%s sets `nibs.path: %s`, which is not the store being migrated (%s); move that directory to %s and re-run `nibs migrate`",
-			env.legacyConfigPath(), pathNode.Value, env.nibsRoot, env.nibsRoot)
+		// "Move its CONTENTS into" rather than "move that directory to": the
+		// store being migrated usually already exists, and moving the declared
+		// directory onto it would nest the data one level too deep.
+		return nil, fmt.Errorf("%s sets `nibs.path: %s`, which is not the store being migrated (%s); move the contents of %s into %s/ and re-run `nibs migrate`",
+			env.legacyConfigPath(), pathNode.Value, env.nibsRoot, declared, env.nibsRoot)
 	}
 
 	deleteMappingKey(nibs, "path")
@@ -485,6 +509,13 @@ type storeScan struct {
 type scanProblem struct {
 	path   string // store-relative, forward slashes (storeRelPath)
 	reason string
+	// unreadable distinguishes the two kinds, which the layout step treats
+	// differently: a file whose header could not be READ cannot be proven not
+	// to be a nib, so it MOVES into data/ with the rest, while a fence-less
+	// .md is provably not a nib and stays where it is. That difference decides
+	// whether the file can still endanger a content step — see
+	// blockingScanProblems.
+	unreadable bool
 }
 
 // pending returns the steps whose predicate matched at least one file, in
@@ -507,11 +538,16 @@ type newerStoreError struct{ msg string }
 
 func (e *newerStoreError) Error() string { return e.msg }
 
-// scanStore walks the store ONCE, reading each file's front-matter header a
-// single time and evaluating the newer-store refusal plus every chain step's
-// predicate against it. One walk regardless of how many steps the chain grows
-// — this probe runs on every command, so its cost must stay O(files), not
-// O(files × steps). A file with a version above nib.CurrentVersion refuses
+// scanStore reads each file's front-matter header ONCE and evaluates the
+// newer-store refusal plus every CONTENT step's predicate against it — one
+// header walk regardless of how many content steps the chain grows. This probe
+// runs on every command, so its cost must stay O(files), not O(files × steps).
+//
+// SHAPE steps are outside that budget: each answers a directory-structure
+// question no per-file header can express, so each performs its own pass —
+// today one, layoutPendingCount's, whose directory-prefix check short-circuits
+// before reading any file. A chain that grew several shape steps would owe this
+// note a rethink. A file with a version above nib.CurrentVersion refuses
 // the whole scan (error): it was written by a newer nibs and this build must
 // not touch the store. The refusal is raised AFTER the walk completes rather
 // than aborting at the first such file, so it can name every newer file and
@@ -539,7 +575,7 @@ func scanStore(env migrateEnv) (*storeScan, error) {
 		if err != nil {
 			// Per-file degradation, matching Core.Load: skip with the file's
 			// name kept, never abort the probe for every command.
-			scan.problems = append(scan.problems, scanProblem{path: storeRelPath(env, path), reason: err.Error()})
+			scan.problems = append(scan.problems, scanProblem{path: storeRelPath(env, path), reason: err.Error(), unreadable: true})
 			return nil
 		}
 		if !h.hasFrontMatter {
@@ -633,23 +669,12 @@ func runMigrations(env migrateEnv, log logf) error {
 	// silently loses edges pointing at it. (A fence-less document once LOADED
 	// as an empty v0 "nib" the v0 step rewrote into a nib render; nib.Parse
 	// now refuses it, so this gate plus the load gate are two layers of the
-	// same refusal.) Refuse while a CONTENT step is actually pending; a store
-	// with nothing to apply never reaches here (the command reports up-to-date
-	// first).
-	//
-	// Scoped to content steps because the danger it names is a link-rewrite
-	// danger: a step that rewrites edges must see every file that could hold
-	// one. A shape step only MOVES files, and moves nothing it could not
-	// classify (see layoutMovableFiles), so blocking a relayout on an
-	// unrelated `.nibs/README.md` would refuse a safe migration over a file
-	// the new layout stops caring about anyway.
-	if anyContentPending(pending) && len(scan.problems) > 0 {
-		lines := make([]string, len(scan.problems))
-		for i, p := range scan.problems {
-			lines[i] = fmt.Sprintf("%s: %s", p.path, p.reason)
-		}
+	// same refusal.) A store with nothing to apply never reaches here (the
+	// command reports up-to-date first). What counts as endangering is
+	// blockingScanProblems' decision, shared with --dry-run's preview.
+	if blocking := blockingScanProblems(env, scan); len(blocking) > 0 {
 		return fmt.Errorf("refusing to migrate around %d file(s) that cannot be read as nibs (move them out of the store or repair them, then re-run `nibs migrate`):\n  %s",
-			len(scan.problems), strings.Join(lines, "\n  "))
+			len(blocking), describeScanProblems(blocking))
 	}
 
 	for _, step := range pending {
@@ -680,6 +705,52 @@ func anyContentPending(pending []migrationStep) bool {
 		}
 	}
 	return false
+}
+
+// blockingScanProblems returns the scan problems that must stop a run: the
+// files a pending CONTENT step would otherwise be forced to migrate AROUND.
+//
+// runMigrations' fail-loud gate and reportDryRun's preview of it are ONE
+// decision seen from two sides, and they must answer identically or the preview
+// predicts an outcome the run does not produce. They have already diverged
+// twice by being written twice; sharing this function is what stops a third.
+//
+// The scoping (deviation #7) is what makes `.nibs/README.md` a legal place for
+// a readme. The danger the gate names is a link-rewrite danger — a step that
+// rewrites edges must see every file that could hold one — so a problem blocks
+// exactly when it is, or is about to become, store CONTENT:
+//
+//   - already under data/ or archive/: the content steps load it;
+//   - unreadable, wherever it sits: the layout step cannot prove it is not a
+//     nib, so it moves it into data/ (see layoutMovableFiles) and the content
+//     steps meet it there;
+//   - fence-less at the store root: provably not a nib, never moved, and
+//     invisible to Core.Load once the relayout lands — so it blocks nothing.
+//
+// A shape step alone can never be blocked: it only MOVES files, and moves
+// nothing it could not classify.
+func blockingScanProblems(env migrateEnv, scan *storeScan) []scanProblem {
+	if !anyContentPending(scan.pending()) {
+		return nil
+	}
+	l := env.layout()
+	var blocking []scanProblem
+	for _, p := range scan.problems {
+		if p.unreadable || l.IsDataRel(p.path) || l.IsArchivedRel(p.path) {
+			blocking = append(blocking, p)
+		}
+	}
+	return blocking
+}
+
+// describeScanProblems renders one indented "path: reason" line per problem,
+// the shape both the refusal and its preview list them in.
+func describeScanProblems(problems []scanProblem) string {
+	lines := make([]string, len(problems))
+	for i, p := range problems {
+		lines[i] = fmt.Sprintf("%s: %s", p.path, p.reason)
+	}
+	return strings.Join(lines, "\n  ")
 }
 
 // stillPending re-runs a step's detection after its apply and describes
@@ -744,11 +815,17 @@ func refuseIfMigrationPending(nibsRoot string) error {
 		strings.Join(names, ", "))
 }
 
-// forEachNibFile walks every store .md file through the SHARED store-content
-// definition (nibcore.WalkStoreFiles — subdirectories included so archived
-// nibs migrate too, dot directories pruned). Core.Load walks through the same
-// function, so what the scans probe and what loads can never disagree; only
-// the enumeration-failure posture is this walk's own.
+// forEachNibFile walks every .md file under the store ROOT through the shared
+// per-file classification (nibcore.WalkStoreFiles — subdirectories included so
+// archived nibs migrate too, dot directories pruned).
+//
+// Core.Load walks the same function but from DIFFERENT roots: data/ and
+// archive/ only, via nibcore.WalkStoreContent. So the two agree on what any
+// individual file IS and deliberately disagree on which directories are in
+// scope — a scan restricted to data/ would never see the root-level files the
+// layout step exists to move. Every caller that compares a scan result against
+// what will LOAD has to bridge that gap itself (see blockingScanProblems).
+// Only the enumeration-failure posture is this walk's own.
 func forEachNibFile(env migrateEnv, fn func(path string) error) error {
 	return nibcore.WalkStoreFiles(env.nibsRoot, func(path string, err error) error {
 		if err != nil {
@@ -943,7 +1020,7 @@ applied without modifying anything.`,
 		}
 		pending := scan.pending()
 		if migrateDryRun {
-			return reportDryRun(scan)
+			return reportDryRun(env, scan)
 		}
 		if len(pending) == 0 {
 			ui.Println("Store is up to date; no migrations pending.")
@@ -1040,12 +1117,12 @@ func migrateCmdError(err error) error {
 
 // reportDryRun lists each pending step with its per-file count, modifying
 // nothing. The counts come from the caller's scan — the same single walk that
-// decided what is pending. When scan problems coexist with the pending steps,
-// the preview also announces the refusal the real run will raise (see
-// runMigrations' fail-loud gate) — without it, the pending counts plus an
-// unconnected skip note read as "the skipped file is harmlessly excluded",
-// and the real run's refusal comes as a surprise.
-func reportDryRun(scan *storeScan) error {
+// decided what is pending. When the run WOULD refuse, the preview announces it
+// — without that, the pending counts plus an unconnected skip note read as
+// "the skipped file is harmlessly excluded", and the refusal comes as a
+// surprise. Which files those are is blockingScanProblems' decision, shared
+// with the gate it previews, so the two cannot predict different outcomes.
+func reportDryRun(env migrateEnv, scan *storeScan) error {
 	if len(scan.pending()) == 0 {
 		ui.Println("Store is up to date; no migrations pending.")
 		return nil
@@ -1057,13 +1134,9 @@ func reportDryRun(scan *storeScan) error {
 		}
 		ui.Printf("  %s — %s: %d file(s)\n", step.name, step.title, scan.counts[i])
 	}
-	if len(scan.problems) > 0 {
-		lines := make([]string, len(scan.problems))
-		for i, p := range scan.problems {
-			lines[i] = fmt.Sprintf("%s: %s", p.path, p.reason)
-		}
+	if blocking := blockingScanProblems(env, scan); len(blocking) > 0 {
 		ui.Printf("Warning: the real run will refuse to migrate around %d file(s) that cannot be read as nibs; move them out of the store or repair them first:\n  %s\n",
-			len(scan.problems), strings.Join(lines, "\n  "))
+			len(blocking), describeScanProblems(blocking))
 	}
 	ui.Println("Stop any running `nibs serve` before migrating.")
 	return nil

@@ -45,6 +45,17 @@ var initCmd = &cobra.Command{
 		projectDir := filepath.Dir(nibsDir)
 		dirName := filepath.Base(projectDir)
 
+		// init is skip-listed from the pre-run migration gate, so it is one of
+		// the few commands that runs on a store nothing else will touch — which
+		// makes it the one command that can give a project a SECOND config.
+		// A derived prefix beside a real one wedges `nibs migrate` (it refuses
+		// two configs it must not choose between) and the two disagree on the
+		// load-bearing fields, so deleting the wrong one silently re-prefixes
+		// the project. Both checks run before anything is created.
+		if err := refuseExistingProjectConfig(nibsDir, projectDir); err != nil {
+			return err
+		}
+
 		// Core.Init creates the store's directories BEFORE prefix validation
 		// runs further down. If validation fails, the empty store remains on
 		// disk but no config is written. Rerunning `nibs init --prefix <valid>`
@@ -107,6 +118,26 @@ var initCmd = &cobra.Command{
 		fmt.Println("Initialized nibs project")
 		return nil
 	},
+}
+
+// refuseExistingProjectConfig stops `nibs init` from adding a config to a
+// project that already has one, in either layout: inside the store
+// (<store>/config.yml), or beside it as the pre-layout `.nibs.yml`. The
+// pre-layout case names `nibs migrate` rather than init, because migrating is
+// what that project actually needs.
+func refuseExistingProjectConfig(nibsDir, projectDir string) error {
+	storeConfig := store.NewLayout(nibsDir).ConfigPath()
+	if _, err := os.Stat(storeConfig); err == nil {
+		return cmdError(initJSON, output.ErrValidation,
+			"%s already exists; nibs init will not overwrite a project's %s", storeConfig, store.ConfigFileName)
+	}
+	legacy := filepath.Join(projectDir, store.LegacyProjectConfigFileName)
+	if _, err := os.Stat(legacy); err == nil {
+		return cmdError(initJSON, output.ErrValidation,
+			"%s already has a pre-layout config (%s); run `nibs migrate` to move it into the store rather than `nibs init`, which would create a second config with a derived prefix",
+			projectDir, legacy)
+	}
+	return nil
 }
 
 func init() {

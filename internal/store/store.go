@@ -129,6 +129,37 @@ func (l Layout) WatchableDirs() []string {
 // test-isolation knob — it keeps a stray ancestor store (e.g. /tmp/.nibs) from
 // leaking into tests that expect no store to be found.
 func FindStore(startDir string) (string, error) {
+	return findUpward(startDir, func(dir string) (string, bool) {
+		candidate := filepath.Join(dir, DirName)
+		info, err := os.Stat(candidate)
+		return candidate, err == nil && info.IsDir()
+	})
+}
+
+// FindLegacyProjectConfig searches upward from startDir for a pre-layout
+// `.nibs.yml` FILE and returns its absolute path, or an empty string when none
+// is found. It walks and bounds itself exactly as FindStore does.
+//
+// No command reads a store through this file. It exists so a FAILED store
+// search can explain itself: a project whose data lived outside `.nibs` (the
+// retired `nibs.path` key) has no store directory for FindStore to find, and
+// the generic "run nibs init" answer would tell it to create an empty store
+// beside its real data.
+func FindLegacyProjectConfig(startDir string) (string, error) {
+	return findUpward(startDir, func(dir string) (string, bool) {
+		candidate := filepath.Join(dir, LegacyProjectConfigFileName)
+		info, err := os.Stat(candidate)
+		return candidate, err == nil && !info.IsDir()
+	})
+}
+
+// findUpward walks from startDir toward the filesystem root, returning the
+// first path match reports, or an empty string when the walk finds none.
+//
+// The NIBS_CONFIG_ROOT ceiling is applied here, once, for every locator: each
+// directory up to and including the ceiling is checked, but the walk never
+// ascends above it.
+func findUpward(startDir string, match func(dir string) (string, bool)) (string, error) {
 	dir, err := filepath.Abs(startDir)
 	if err != nil {
 		return "", err
@@ -143,9 +174,8 @@ func FindStore(startDir string) (string, error) {
 	}
 
 	for {
-		candidate := filepath.Join(dir, DirName)
-		if info, statErr := os.Stat(candidate); statErr == nil && info.IsDir() {
-			return candidate, nil
+		if found, ok := match(dir); ok {
+			return found, nil
 		}
 
 		// Stop at the ceiling: this dir was checked, but do not ascend above it.
