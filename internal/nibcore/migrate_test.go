@@ -1,13 +1,12 @@
 package nibcore
 
 import (
-	"bytes"
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
-	"time"
 
 	"github.com/alphaleonis/nibs/internal/config"
 	"github.com/alphaleonis/nibs/internal/nib"
@@ -19,6 +18,64 @@ import (
 func writeNibFile(t *testing.T, dir, filename, content string) {
 	t.Helper()
 	writeNibFileAtomic(t, filepath.Join(dir, filename), content)
+}
+
+// TestLoadNeverWrites pins the inverse invariant the explicit-migration design
+// bought: Load() reads. Loading a legacy-shaped store — v0 files with
+// `blocking:` edges, a `priority: deferred` file, plus a canonical v1 control —
+// leaves every file byte-identical. Silent load-time migration is gone; the
+// only path that rewrites store files is `nibs migrate`.
+func TestLoadNeverWrites(t *testing.T) {
+	tmpDir := t.TempDir()
+	nibsDir := filepath.Join(tmpDir, NibsDir)
+	if err := os.MkdirAll(nibsDir, 0755); err != nil {
+		t.Fatal(err)
+	}
+
+	files := map[string]string{
+		"v0a--blocker.md": "---\ntitle: Blocker\nstatus: todo\nblocking:\n    - v0b\n---\n\nBody A.\n",
+		"v0b--target.md":  "---\ntitle: Target\nstatus: todo\n---\n\nBody B.\n",
+		"def1--legacy.md": "---\nversion: 1\ntitle: Legacy Deferred\nstatus: todo\npriority: deferred\n---\n\nBody D.\n",
+		"cur1--modern.md": "---\nversion: 1\ntitle: Modern\nstatus: todo\ntype: task\n---\n\nBody C.\n",
+	}
+	for name, content := range files {
+		writeNibFile(t, nibsDir, name, content)
+	}
+
+	cfg := config.Default()
+	core := New(nibsDir, cfg)
+	core.SetWarnWriter(nil)
+	if err := core.Load(); err != nil {
+		t.Fatalf("Load() error: %v", err)
+	}
+
+	for name, before := range files {
+		after, err := os.ReadFile(filepath.Join(nibsDir, name))
+		if err != nil {
+			t.Fatalf("re-reading %s: %v", name, err)
+		}
+		if string(after) != before {
+			t.Errorf("Load() rewrote %s; Load must never write.\nbefore:\n%s\nafter:\n%s", name, before, after)
+		}
+	}
+
+	// The legacy shapes load AS THEY ARE: no in-memory migration either. The
+	// store is only ever in this state under `nibs migrate` itself (every other
+	// command refuses pre-load), so what Load reports must be what disk holds.
+	v0a, err := core.Get("v0a")
+	if err != nil {
+		t.Fatalf("Get(v0a): %v", err)
+	}
+	if v0a.Version != 0 || len(v0a.Blocking) != 1 {
+		t.Errorf("v0 nib loaded as version=%d blocking=%v, want the on-disk v0 shape", v0a.Version, v0a.Blocking)
+	}
+	def1, err := core.Get("def1")
+	if err != nil {
+		t.Fatalf("Get(def1): %v", err)
+	}
+	if def1.Priority != "deferred" {
+		t.Errorf("def1.Priority = %q, want the on-disk %q (parse-time normalization is retired)", def1.Priority, "deferred")
+	}
 }
 
 func TestCheckBrokenDocuments(t *testing.T) {
@@ -83,228 +140,52 @@ func TestCheckBrokenDocuments(t *testing.T) {
 	})
 }
 
-// assertDeferredConverged checks that the nib loaded under id has been
-// normalized to priority "low" both in memory and on disk (file at
-// nibsDir/filename), and that a read-etag → if-match Update round-trips without
-// an ETagMismatchError. The on-disk and etag checks are the real
-// regression-catchers: the in-memory check alone passes even with the
-// persistence reverted, since nib.Parse normalizes in memory regardless.
-func assertDeferredConverged(t *testing.T, core *Core, id, nibsDir, filename string) {
+// loadMigrationCore writes the given files into a fresh .nibs dir, loads a
+// Core over it (which, per TestLoadNeverWrites, changes nothing), acquires the
+// store-wide lock the migration methods require as proof-of-lock, and returns
+// all three. Migration tests then call MigrateV0ToV1 explicitly — the way the
+// migrate command drives it: lock held for the whole test (released via
+// cleanup), token passed to every migration call against this store.
+func loadMigrationCore(t *testing.T, files map[string]string) (*Core, string, *StoreLock) {
 	t.Helper()
-
-	b, err := core.Get(id)
+	nibsDir := filepath.Join(t.TempDir(), NibsDir)
+	if err := os.MkdirAll(nibsDir, 0755); err != nil {
+		t.Fatal(err)
+	}
+	for name, content := range files {
+		writeNibFile(t, nibsDir, name, content)
+	}
+	core := New(nibsDir, config.Default())
+	core.SetWarnWriter(nil)
+	if err := core.Load(); err != nil {
+		t.Fatalf("Load() error: %v", err)
+	}
+	lock, err := AcquireStoreLock(nibsDir)
 	if err != nil {
-		t.Fatalf("Get(%q) error: %v", id, err)
+		t.Fatalf("AcquireStoreLock: %v", err)
 	}
-	if b.Priority != "low" {
-		t.Errorf("in-memory Priority = %q, want %q", b.Priority, "low")
-	}
-
-	// On disk: the normalization must be persisted (not deferred to the next
-	// write), so disk == memory immediately.
-	diskBytes, err := os.ReadFile(filepath.Join(nibsDir, filename))
-	if err != nil {
-		t.Fatalf("reading migrated file: %v", err)
-	}
-	disk := string(diskBytes)
-	if strings.Contains(disk, "deferred") {
-		t.Errorf("on-disk file still contains 'deferred':\n%s", disk)
-	}
-	if !strings.Contains(disk, "priority: low") {
-		t.Errorf("on-disk file missing 'priority: low':\n%s", disk)
-	}
-
-	// Read etag → if-match Update round-trip must succeed (no ETagMismatchError).
-	// The read path exposes the in-memory nib's ETag(); the write path validates
-	// against the on-disk etag. Persisting the normalization makes them agree.
-	readETag := b.ETag()
-	updated := b.Clone()
-	updated.Title = b.Title + " (edited)"
-	if err := core.Update(updated, &readETag); err != nil {
-		var mismatch *ETagMismatchError
-		if errors.As(err, &mismatch) {
-			t.Fatalf("if-match Update returned ETagMismatchError (etag divergence not fixed): provided=%s current=%s",
-				mismatch.Provided, mismatch.Current)
-		}
-		t.Fatalf("if-match Update failed: %v", err)
-	}
-}
-
-func TestDeferredPriorityReconcile(t *testing.T) {
-	t.Run("persists deferred->low at load and converges if-match etag", func(t *testing.T) {
-		tmpDir := t.TempDir()
-		nibsDir := filepath.Join(tmpDir, NibsDir)
-		if err := os.MkdirAll(nibsDir, 0755); err != nil {
-			t.Fatal(err)
-		}
-
-		// A canonically-formatted v1 nib carrying the removed `priority: deferred`.
-		const filename = "def1--legacy.md"
-		writeNibFile(t, nibsDir, filename, `---
-version: 1
-title: Legacy Deferred
-status: todo
-priority: deferred
----
-`)
-
-		// A control sibling with a valid priority: the load-time persistence must
-		// rewrite ONLY the migrated nib. Capture its exact bytes now — if the
-		// PriorityMigrated() guard were dropped/inverted (rewrite every nib on
-		// load), loading would re-render this file (adding the `# sib2` id line),
-		// changing its bytes and failing the assertion below.
-		const siblingFile = "sib2--control.md"
-		writeNibFile(t, nibsDir, siblingFile, `---
-version: 1
-title: Control Sibling
-status: todo
-priority: normal
----
-`)
-		siblingBefore, err := os.ReadFile(filepath.Join(nibsDir, siblingFile))
-		if err != nil {
-			t.Fatalf("reading sibling file: %v", err)
-		}
-
-		cfg := config.Default()
-		core := New(nibsDir, cfg)
-		core.SetWarnWriter(nil)
-		if err := core.Load(); err != nil {
-			t.Fatalf("Load() error: %v", err)
-		}
-
-		assertDeferredConverged(t, core, "def1", nibsDir, filename)
-
-		// The control sibling must be byte-for-byte untouched on disk.
-		siblingAfter, err := os.ReadFile(filepath.Join(nibsDir, siblingFile))
-		if err != nil {
-			t.Fatalf("re-reading sibling file: %v", err)
-		}
-		if !bytes.Equal(siblingBefore, siblingAfter) {
-			t.Errorf("control sibling was rewritten at load (only migrated nibs should be persisted)\nbefore:\n%s\nafter:\n%s",
-				siblingBefore, siblingAfter)
-		}
-		if sib, err := core.Get("sib2"); err != nil {
-			t.Fatalf("Get(sib2) error: %v", err)
-		} else if sib.Priority != "normal" {
-			t.Errorf("control sibling Priority = %q, want %q", sib.Priority, "normal")
-		}
-	})
-
-	t.Run("normalizes deferred->low in memory on the watcher path without persisting", func(t *testing.T) {
-		core, nibsDir := setupTestCore(t)
-
-		if err := core.StartWatching(); err != nil {
-			t.Fatalf("StartWatching() error: %v", err)
-		}
-		defer func() { _ = core.StopWatching() }()
-
-		ch, unsub := core.Subscribe()
-		defer unsub()
-
-		// Give the watcher time to start.
-		time.Sleep(50 * time.Millisecond)
-
-		// A legacy `priority: deferred` file that first appears AFTER the initial
-		// Load (e.g. a git pull in the separate .nibs repo). This never goes
-		// through loadFromDisk, only through handleChanges — which reconciles in
-		// memory only and must NOT write to disk (an unguarded self-write would
-		// clobber external writes, dirty the separate .nibs git tree, and emit a
-		// spurious content-free event).
-		const filename = "wdf1--watched.md"
-		const raw = `---
-version: 1
-title: Watched Deferred
-status: todo
-priority: deferred
----
-`
-		writeNibFile(t, nibsDir, filename, raw)
-
-		// Wait for the watcher to ingest the file (exactly one batch: a Created
-		// event carrying the in-memory-normalized nib).
-		var batch []NibEvent
-		select {
-		case batch = <-ch:
-		case <-time.After(2 * time.Second):
-			t.Fatal("timeout waiting for watcher event")
-		}
-		if len(batch) != 1 {
-			t.Fatalf("first event batch has %d events, want 1: %+v", len(batch), batch)
-		}
-		if batch[0].Type != EventCreated {
-			t.Errorf("event type = %v, want EventCreated", batch[0].Type)
-		}
-		if batch[0].Nib == nil || batch[0].Nib.Priority != "low" {
-			t.Errorf("event nib priority = %+v, want in-memory normalization to low", batch[0].Nib)
-		}
-
-		// No SECOND batch: a self-write (persisting the migration) would fire a
-		// spurious content-free Updated event. Assert none arrives within a
-		// debounce window plus margin.
-		select {
-		case extra := <-ch:
-			t.Fatalf("unexpected second event batch (watcher self-write?): %+v", extra)
-		case <-time.After(300 * time.Millisecond):
-		}
-
-		// In memory: normalized to low.
-		b, err := core.Get("wdf1")
-		if err != nil {
-			t.Fatalf("Get(wdf1) error: %v", err)
-		}
-		if b.Priority != "low" {
-			t.Errorf("in-memory Priority = %q, want %q", b.Priority, "low")
-		}
-
-		// On disk: UNCHANGED. The watcher path does not persist, so the raw
-		// `deferred` bytes remain until the next explicit Update/Load.
-		diskBytes, err := os.ReadFile(filepath.Join(nibsDir, filename))
-		if err != nil {
-			t.Fatalf("reading watched file: %v", err)
-		}
-		if string(diskBytes) != raw {
-			t.Errorf("on-disk file was rewritten by the watcher path; want unchanged bytes.\n got:\n%s\nwant:\n%s", diskBytes, raw)
-		}
-	})
+	t.Cleanup(func() { _ = lock.Release() })
+	return core, nibsDir, lock
 }
 
 func TestMigrateV0ToV1(t *testing.T) {
-	t.Run("converts blocking to blockedBy on targets", func(t *testing.T) {
-		tmpDir := t.TempDir()
-		nibsDir := filepath.Join(tmpDir, NibsDir)
-		if err := os.MkdirAll(nibsDir, 0755); err != nil {
-			t.Fatal(err)
+	t.Run("converts blocking to blockedBy on targets and persists", func(t *testing.T) {
+		core, nibsDir, lock := loadMigrationCore(t, map[string]string{
+			"aaa1--blocker.md": "---\ntitle: Blocker\nstatus: todo\nblocking:\n    - bbb2\n---\n",
+			"bbb2--blocked.md": "---\ntitle: Blocked\nstatus: todo\n---\n",
+		})
+
+		n, err := core.MigrateV0ToV1(lock)
+		if err != nil {
+			t.Fatalf("MigrateV0ToV1() error: %v", err)
+		}
+		if n != 2 {
+			t.Errorf("migrated count = %d, want 2", n)
 		}
 
-		// Write v0 nib A that blocks B
-		writeNibFile(t, nibsDir, "aaa1--blocker.md", `---
-title: Blocker
-status: todo
-blocking:
-    - bbb2
----
-`)
-		// Write v0 nib B (no blocking)
-		writeNibFile(t, nibsDir, "bbb2--blocked.md", `---
-title: Blocked
-status: todo
----
-`)
-
-		cfg := config.Default()
-		core := New(nibsDir, cfg)
-		core.SetWarnWriter(nil)
-		if err := core.Load(); err != nil {
-			t.Fatalf("Load() error: %v", err)
-		}
-
-		// After migration:
-		// - A should have version 1, no blocking field
-		// - B should have version 1, blockedBy=[aaa1]
+		// In memory: A is v1 with blocking cleared; B is v1 with blockedBy=[aaa1].
 		a, _ := core.Get("aaa1")
 		b, _ := core.Get("bbb2")
-
 		if a.Version != 1 {
 			t.Errorf("A.Version = %d, want 1", a.Version)
 		}
@@ -318,8 +199,8 @@ status: todo
 			t.Errorf("B.BlockedBy should contain aaa1, got %v", b.BlockedBy)
 		}
 
-		// Verify persisted to disk
-		core2 := New(nibsDir, cfg)
+		// Persisted: a fresh Load sees the converted store.
+		core2 := New(nibsDir, config.Default())
 		core2.SetWarnWriter(nil)
 		if err := core2.Load(); err != nil {
 			t.Fatalf("second Load() error: %v", err)
@@ -334,37 +215,18 @@ status: todo
 	})
 
 	t.Run("handles both blocking and blockedBy present", func(t *testing.T) {
-		tmpDir := t.TempDir()
-		nibsDir := filepath.Join(tmpDir, NibsDir)
-		if err := os.MkdirAll(nibsDir, 0755); err != nil {
-			t.Fatal(err)
-		}
+		// A blocks B, and B already has blockedBy=[A] (dual-side legacy):
+		// the transfer must deduplicate.
+		core, _, lock := loadMigrationCore(t, map[string]string{
+			"aaa1.md": "---\ntitle: Blocker\nstatus: todo\nblocking:\n    - bbb2\n---\n",
+			"bbb2.md": "---\ntitle: Blocked\nstatus: todo\nblocked_by:\n    - aaa1\n---\n",
+		})
 
-		// A blocks B, and B already has blockedBy=[A] (dual-side legacy)
-		writeNibFile(t, nibsDir, "aaa1.md", `---
-title: Blocker
-status: todo
-blocking:
-    - bbb2
----
-`)
-		writeNibFile(t, nibsDir, "bbb2.md", `---
-title: Blocked
-status: todo
-blocked_by:
-    - aaa1
----
-`)
-
-		cfg := config.Default()
-		core := New(nibsDir, cfg)
-		core.SetWarnWriter(nil)
-		if err := core.Load(); err != nil {
-			t.Fatalf("Load() error: %v", err)
+		if _, err := core.MigrateV0ToV1(lock); err != nil {
+			t.Fatalf("MigrateV0ToV1() error: %v", err)
 		}
 
 		b, _ := core.Get("bbb2")
-		// Should deduplicate: aaa1 appears only once
 		count := 0
 		for _, id := range b.BlockedBy {
 			if id == "aaa1" {
@@ -376,27 +238,15 @@ blocked_by:
 		}
 	})
 
-	t.Run("handles blocking references nonexistent nib", func(t *testing.T) {
-		tmpDir := t.TempDir()
-		nibsDir := filepath.Join(tmpDir, NibsDir)
-		if err := os.MkdirAll(nibsDir, 0755); err != nil {
-			t.Fatal(err)
-		}
-
+	t.Run("drops a blocking reference to a nonexistent nib with a warning", func(t *testing.T) {
+		core, _, lock := loadMigrationCore(t, map[string]string{
+			"aaa1.md": "---\ntitle: Blocker\nstatus: todo\nblocking:\n    - nonexistent\n---\n",
+		})
 		var warnings strings.Builder
-		writeNibFile(t, nibsDir, "aaa1.md", `---
-title: Blocker
-status: todo
-blocking:
-    - nonexistent
----
-`)
-
-		cfg := config.Default()
-		core := New(nibsDir, cfg)
 		core.SetWarnWriter(&warnings)
-		if err := core.Load(); err != nil {
-			t.Fatalf("Load() error: %v", err)
+
+		if _, err := core.MigrateV0ToV1(lock); err != nil {
+			t.Fatalf("MigrateV0ToV1() error: %v", err)
 		}
 
 		a, _ := core.Get("aaa1")
@@ -412,421 +262,369 @@ blocking:
 	})
 
 	t.Run("bumps version on nibs with no blocking", func(t *testing.T) {
-		tmpDir := t.TempDir()
-		nibsDir := filepath.Join(tmpDir, NibsDir)
-		if err := os.MkdirAll(nibsDir, 0755); err != nil {
-			t.Fatal(err)
+		core, _, lock := loadMigrationCore(t, map[string]string{
+			"aaa1.md": "---\ntitle: Simple Nib\nstatus: todo\n---\n",
+		})
+
+		if _, err := core.MigrateV0ToV1(lock); err != nil {
+			t.Fatalf("MigrateV0ToV1() error: %v", err)
 		}
-
-		writeNibFile(t, nibsDir, "aaa1.md", `---
-title: Simple Nib
-status: todo
----
-`)
-
-		cfg := config.Default()
-		core := New(nibsDir, cfg)
-		core.SetWarnWriter(nil)
-		if err := core.Load(); err != nil {
-			t.Fatalf("Load() error: %v", err)
-		}
-
 		a, _ := core.Get("aaa1")
 		if a.Version != 1 {
 			t.Errorf("Version = %d, want 1", a.Version)
 		}
 	})
 
-	t.Run("idempotent: v1 nibs not re-migrated", func(t *testing.T) {
-		tmpDir := t.TempDir()
-		nibsDir := filepath.Join(tmpDir, NibsDir)
-		if err := os.MkdirAll(nibsDir, 0755); err != nil {
-			t.Fatal(err)
+	t.Run("idempotent: an all-v1 store is untouched", func(t *testing.T) {
+		files := map[string]string{
+			"aaa1.md": "---\nversion: 1\ntitle: Already Migrated\nstatus: todo\nblocked_by:\n    - bbb2\n---\n",
+			"bbb2.md": "---\nversion: 1\ntitle: Other Nib\nstatus: todo\n---\n",
 		}
+		core, nibsDir, lock := loadMigrationCore(t, files)
 
-		writeNibFile(t, nibsDir, "aaa1.md", `---
-version: 1
-title: Already Migrated
-status: todo
-blocked_by:
-    - bbb2
----
-`)
-		writeNibFile(t, nibsDir, "bbb2.md", `---
-version: 1
-title: Other Nib
-status: todo
----
-`)
-
-		cfg := config.Default()
-		core := New(nibsDir, cfg)
-		core.SetWarnWriter(nil)
-		if err := core.Load(); err != nil {
-			t.Fatalf("Load() error: %v", err)
+		n, err := core.MigrateV0ToV1(lock)
+		if err != nil {
+			t.Fatalf("MigrateV0ToV1() error: %v", err)
 		}
-
+		if n != 0 {
+			t.Errorf("migrated count = %d, want 0 on an all-v1 store", n)
+		}
+		for name, before := range files {
+			after, err := os.ReadFile(filepath.Join(nibsDir, name))
+			if err != nil {
+				t.Fatalf("re-reading %s: %v", name, err)
+			}
+			if string(after) != before {
+				t.Errorf("MigrateV0ToV1 rewrote already-migrated file %s:\n%s", name, after)
+			}
+		}
 		a, _ := core.Get("aaa1")
-		if a.Version != 1 {
-			t.Errorf("Version = %d, want 1", a.Version)
-		}
 		if len(a.BlockedBy) != 1 || a.BlockedBy[0] != "bbb2" {
 			t.Errorf("BlockedBy = %v, want [bbb2]", a.BlockedBy)
 		}
 	})
 
-	t.Run("best-effort persistence: Load succeeds when the migration cannot be written", func(t *testing.T) {
-		tmpDir := t.TempDir()
-		nibsDir := filepath.Join(tmpDir, NibsDir)
-		if err := os.MkdirAll(nibsDir, 0755); err != nil {
-			t.Fatal(err)
-		}
+	t.Run("fail-loud: a persistence failure aborts with an error", func(t *testing.T) {
+		core, _, lock := loadMigrationCore(t, map[string]string{
+			"leg1--legacy.md": "---\ntitle: Legacy V0\nstatus: todo\n---\n",
+		})
 
-		// A legacy v0 nib (no `version:` field). Loading migrates it to v1 in
-		// memory and marks it dirty for persistence.
-		const filename = "leg1--legacy.md"
-		const raw = `---
-title: Legacy V0
-status: todo
----
-`
-		writeNibFile(t, nibsDir, filename, raw)
-		path := filepath.Join(nibsDir, filename)
-
-		// Force the persistence failure via the atomic-write rename seam.
-		// saveToDisk now writes a temp file and renames it over the target, so a
-		// read-only target file no longer blocks the write (the rename needs only
-		// a writable directory). Failing the rename simulates a genuinely
-		// un-persistable .nibs (full disk, unwritable dir, torn rename)
-		// deterministically and independent of uid/OS.
+		// Force the persistence failure via the atomic-write rename seam
+		// (saveToDisk writes a temp file and renames it over the target), which
+		// simulates an un-persistable .nibs — full disk, unwritable dir, torn
+		// rename — deterministically and independent of uid/OS.
 		orig := renameFn
 		renameFn = func(_, _ string) error { return errors.New("simulated persistence failure") }
 		t.Cleanup(func() { renameFn = orig })
 
-		var warnings strings.Builder
-		cfg := config.Default()
-		core := New(nibsDir, cfg)
-		core.SetWarnWriter(&warnings)
-
-		// Load must SUCCEED even though the migration cannot be persisted: a
-		// legacy nib on a read-only/full/permission-restricted .nibs must not
-		// brick every command.
-		if err := core.Load(); err != nil {
-			t.Fatalf("Load() returned error on unwritable .nibs; load-time migration persistence must be best-effort: %v", err)
-		}
-
-		// In memory: migrated to v1 regardless of the persistence failure.
-		b, err := core.Get("leg1")
-		if err != nil {
-			t.Fatalf("Get(leg1) error: %v", err)
-		}
-		if b.Version != 1 {
-			t.Errorf("in-memory Version = %d, want 1", b.Version)
-		}
-
-		// On disk: UNCHANGED. The write failed, so the original v0 bytes remain;
-		// on-disk convergence waits for the next successful write.
-		diskBytes, err := os.ReadFile(path)
-		if err != nil {
-			t.Fatalf("reading nib file: %v", err)
-		}
-		if string(diskBytes) != raw {
-			t.Errorf("on-disk file changed despite an unwritable target:\n got:\n%s\nwant:\n%s", diskBytes, raw)
-		}
-
-		// A warning about the failed persistence should have been logged.
-		if !strings.Contains(warnings.String(), "leg1") {
-			t.Errorf("expected a warning mentioning the un-persisted nib, got %q", warnings.String())
-		}
-	})
-
-	t.Run("defers migration when a blocking target's file was skipped (no edge loss)", func(t *testing.T) {
-		// A v0 nib A with blocking:[B] must NOT lose that edge when B's file is
-		// unparseable at load time. The trap: loadFromDisk skips B, and migrating A
-		// anyway would clear+persist it with `blocking:` erased — irrecoverable.
-		// A must instead stay v0 with Blocking intact (memory AND
-		// disk) so a later clean Load completes the migration.
-		tmpDir := t.TempDir()
-		nibsDir := filepath.Join(tmpDir, NibsDir)
-		if err := os.MkdirAll(nibsDir, 0755); err != nil {
-			t.Fatal(err)
-		}
-
-		const aRaw = `---
-title: Blocker A
-status: todo
-blocking:
-    - bbb2
----
-
-Body A.
-`
-		writeNibFile(t, nibsDir, "aaa1--blocker.md", aRaw)
-		// B is present on disk but UNPARSEABLE (duplicate modeled key), so
-		// loadFromDisk skips it. Its ID (bbb2) is still derivable from the filename.
-		writeNibFile(t, nibsDir, "bbb2--blocked.md", `---
-title: First
-title: Second
-status: todo
----
-
-Body B.
-`)
-
-		cfg := config.Default()
-		core := New(nibsDir, cfg)
-		core.SetWarnWriter(nil)
-		if err := core.Load(); err != nil {
-			t.Fatalf("Load() error: %v", err)
-		}
-
-		// A must remain UNMIGRATED: still v0 with its blocking edge intact in memory.
-		a, err := core.Get("aaa1")
-		if err != nil {
-			t.Fatalf("Get(aaa1) error: %v", err)
-		}
-		if a.Version != 0 {
-			t.Errorf("A.Version = %d, want 0 (migration must be deferred while target skipped)", a.Version)
-		}
-		if len(a.Blocking) != 1 || a.Blocking[0] != "bbb2" {
-			t.Errorf("A.Blocking = %v, want [bbb2] (edge must not be dropped)", a.Blocking)
-		}
-
-		// On disk: A's file must be byte-for-byte untouched (the `blocking:` line
-		// must NOT have been erased by a clear+persist).
-		aDisk, err := os.ReadFile(filepath.Join(nibsDir, "aaa1--blocker.md"))
-		if err != nil {
-			t.Fatalf("reading A file: %v", err)
-		}
-		if string(aDisk) != aRaw {
-			t.Errorf("A's file was rewritten (edge at risk); want unchanged bytes.\n got:\n%s\nwant:\n%s", aDisk, aRaw)
-		}
-
-		// Repair B, then a fresh Load must complete the deferred migration: the edge
-		// lands on B (B.blockedBy contains aaa1) and A becomes v1.
-		writeNibFile(t, nibsDir, "bbb2--blocked.md", `---
-title: Blocked B
-status: todo
----
-
-Body B.
-`)
-		core2 := New(nibsDir, cfg)
-		core2.SetWarnWriter(nil)
-		if err := core2.Load(); err != nil {
-			t.Fatalf("second Load() error: %v", err)
-		}
-		a2, err := core2.Get("aaa1")
-		if err != nil {
-			t.Fatalf("Get(aaa1) after repair: %v", err)
-		}
-		if a2.Version != 1 {
-			t.Errorf("after repair A.Version = %d, want 1 (deferred migration must complete)", a2.Version)
-		}
-		if len(a2.Blocking) != 0 {
-			t.Errorf("after repair A.Blocking = %v, want cleared", a2.Blocking)
-		}
-		b2, err := core2.Get("bbb2")
-		if err != nil {
-			t.Fatalf("Get(bbb2) after repair: %v", err)
-		}
-		if !b2.IsBlockedBy("aaa1") {
-			t.Errorf("after repair B.BlockedBy = %v, want to contain aaa1 (edge landed)", b2.BlockedBy)
-		}
-	})
-
-	t.Run("chain A->B->C: deferred middle nib still receives sibling blockedBy transfer (lossless convergence)", func(t *testing.T) {
-		// In a v0 chain A blocking:[B],
-		// B blocking:[C] where only C's file is skipped, B is deferred for its OWN
-		// edge (B→C) yet A's migration still transfers A→B onto B and re-persists
-		// B. This contradicts a naive "deferred nib's file is untouched" reading,
-		// but it is CORRECT and lossless: the A→B edge survives on disk, B's own
-		// blocking:[C] stays intact, and a later clean Load converges. This test
-		// pins that actual behavior so a future refactor of the dirty-tracking loop
-		// (e.g. "exclude deferred targets from dirty") that would silently drop the
-		// A→B edge fails CI.
-		tmpDir := t.TempDir()
-		nibsDir := filepath.Join(tmpDir, NibsDir)
-		if err := os.MkdirAll(nibsDir, 0755); err != nil {
-			t.Fatal(err)
-		}
-
-		// A --blocking--> B (bbb2)
-		writeNibFile(t, nibsDir, "aaa1--chain-a.md", `---
-title: Chain A
-status: todo
-blocking:
-    - bbb2
----
-
-Body A.
-`)
-		// B --blocking--> C (ccc3)
-		const bRaw = `---
-title: Chain B
-status: todo
-blocking:
-    - ccc3
----
-
-Body B.
-`
-		writeNibFile(t, nibsDir, "bbb2--chain-b.md", bRaw)
-		// C is present on disk but UNPARSEABLE (duplicate modeled key), so
-		// loadFromDisk skips it. Its ID (ccc3) is still derivable from the filename,
-		// so B's blocking:[ccc3] target is in the skipped set → B is deferred.
-		writeNibFile(t, nibsDir, "ccc3--chain-c.md", `---
-title: First
-title: Second
-status: todo
----
-
-Body C.
-`)
-
-		cfg := config.Default()
-		core := New(nibsDir, cfg)
-		core.SetWarnWriter(nil)
-		if err := core.Load(); err != nil {
-			t.Fatalf("Load() error: %v", err)
-		}
-
-		// A migrated: v1, blocking cleared, and its edge landed on B.
-		a, err := core.Get("aaa1")
-		if err != nil {
-			t.Fatalf("Get(aaa1) error: %v", err)
-		}
-		if a.Version != 1 {
-			t.Errorf("A.Version = %d, want 1 (A's target B loaded fine, so A migrates)", a.Version)
-		}
-		if len(a.Blocking) != 0 {
-			t.Errorf("A.Blocking = %v, want cleared", a.Blocking)
-		}
-
-		// B deferred for its OWN edge: still v0 with blocking:[C] intact...
-		b, err := core.Get("bbb2")
-		if err != nil {
-			t.Fatalf("Get(bbb2) error: %v", err)
-		}
-		if b.Version != 0 {
-			t.Errorf("B.Version = %d, want 0 (B's target C skipped, so B's own migration is deferred)", b.Version)
-		}
-		if len(b.Blocking) != 1 || b.Blocking[0] != "ccc3" {
-			t.Errorf("B.Blocking = %v, want [ccc3] (deferred edge must stay intact)", b.Blocking)
-		}
-		// ...yet B carries the A->B transfer from A's completed migration.
-		if !b.IsBlockedBy("aaa1") {
-			t.Errorf("B.BlockedBy = %v, want to contain aaa1 (A's edge transfer)", b.BlockedBy)
-		}
-
-		// On disk, B was re-persisted by A's migration: version:0, blocking:[ccc3]
-		// intact, PLUS the new blocked_by:[aaa1]. This is the "extra persist" the
-		// method doc describes — lossless, and the thing that preserves A->B.
-		bDiskBytes, err := os.ReadFile(filepath.Join(nibsDir, "bbb2--chain-b.md"))
-		if err != nil {
-			t.Fatalf("reading B file: %v", err)
-		}
-		bDisk := string(bDiskBytes)
-		if !strings.Contains(bDisk, "blocked_by:") || !strings.Contains(bDisk, "aaa1") {
-			t.Errorf("B's on-disk file missing the transferred blocked_by:[aaa1] (A->B edge would be lost on restart):\n%s", bDisk)
-		}
-		if !strings.Contains(bDisk, "blocking:") || !strings.Contains(bDisk, "ccc3") {
-			t.Errorf("B's on-disk file lost its own blocking:[ccc3] edge:\n%s", bDisk)
-		}
-		if !strings.Contains(bDisk, "version: 0") {
-			t.Errorf("B's on-disk file should remain version: 0 (own migration deferred):\n%s", bDisk)
-		}
-
-		// Repair C, then a fresh Load must complete B's deferred migration WITHOUT
-		// losing A->B: B->v1 with blocking cleared, C.blockedBy gains B, and
-		// B.blockedBy still contains A throughout.
-		writeNibFile(t, nibsDir, "ccc3--chain-c.md", `---
-title: Chain C
-status: todo
----
-
-Body C.
-`)
-		core2 := New(nibsDir, cfg)
-		core2.SetWarnWriter(nil)
-		if err := core2.Load(); err != nil {
-			t.Fatalf("second Load() error: %v", err)
-		}
-
-		a2, err := core2.Get("aaa1")
-		if err != nil {
-			t.Fatalf("Get(aaa1) after repair: %v", err)
-		}
-		if a2.Version != 1 {
-			t.Errorf("after repair A.Version = %d, want 1 (unchanged)", a2.Version)
-		}
-
-		b2, err := core2.Get("bbb2")
-		if err != nil {
-			t.Fatalf("Get(bbb2) after repair: %v", err)
-		}
-		if b2.Version != 1 {
-			t.Errorf("after repair B.Version = %d, want 1 (deferred migration completes)", b2.Version)
-		}
-		if len(b2.Blocking) != 0 {
-			t.Errorf("after repair B.Blocking = %v, want cleared", b2.Blocking)
-		}
-		if !b2.IsBlockedBy("aaa1") {
-			t.Errorf("after repair B.BlockedBy = %v, want to still contain aaa1 (A->B preserved throughout)", b2.BlockedBy)
-		}
-
-		c2, err := core2.Get("ccc3")
-		if err != nil {
-			t.Fatalf("Get(ccc3) after repair: %v", err)
-		}
-		if !c2.IsBlockedBy("bbb2") {
-			t.Errorf("after repair C.BlockedBy = %v, want to contain bbb2 (B->C edge landed)", c2.BlockedBy)
+		if _, err := core.MigrateV0ToV1(lock); err == nil {
+			t.Fatal("MigrateV0ToV1() = nil error on an unwritable store, want fail-loud error")
+		} else if !strings.Contains(err.Error(), "leg1") {
+			t.Errorf("error should name the nib that failed to persist, got: %v", err)
 		}
 	})
 
 	t.Run("mixed v0 and v1 directory", func(t *testing.T) {
-		tmpDir := t.TempDir()
-		nibsDir := filepath.Join(tmpDir, NibsDir)
-		if err := os.MkdirAll(nibsDir, 0755); err != nil {
-			t.Fatal(err)
+		core, _, lock := loadMigrationCore(t, map[string]string{
+			"v0nib.md": "---\ntitle: V0 Nib\nstatus: todo\nblocking:\n    - v1nib\n---\n",
+			"v1nib.md": "---\nversion: 1\ntitle: V1 Nib\nstatus: todo\n---\n",
+		})
+
+		n, err := core.MigrateV0ToV1(lock)
+		if err != nil {
+			t.Fatalf("MigrateV0ToV1() error: %v", err)
+		}
+		if n != 1 {
+			t.Errorf("migrated count = %d, want 1 (only the v0 nib)", n)
 		}
 
-		// v0 nib that blocks a v1 nib
-		writeNibFile(t, nibsDir, "v0nib.md", `---
-title: V0 Nib
-status: todo
-blocking:
-    - v1nib
----
-`)
-		// v1 nib (already migrated)
-		writeNibFile(t, nibsDir, "v1nib.md", `---
-version: 1
-title: V1 Nib
-status: todo
----
-`)
-
-		cfg := config.Default()
-		core := New(nibsDir, cfg)
-		core.SetWarnWriter(nil)
-		if err := core.Load(); err != nil {
-			t.Fatalf("Load() error: %v", err)
-		}
-
-		// All nibs should be v1 after load
 		v0, _ := core.Get("v0nib")
 		v1, _ := core.Get("v1nib")
-
 		if v0.Version != 1 {
 			t.Errorf("v0nib.Version = %d, want 1", v0.Version)
 		}
 		if v1.Version != 1 {
 			t.Errorf("v1nib.Version = %d, want 1", v1.Version)
 		}
-		// v1nib should have v0nib in its blockedBy (from migration)
 		if !v1.IsBlockedBy("v0nib") {
 			t.Errorf("v1nib.BlockedBy should contain v0nib, got %v", v1.BlockedBy)
+		}
+	})
+}
+
+// TestMigrateV0ToV1CrashResumeKeepsEdges pins the persist-ordering contract:
+// a write failure at ANY point mid-run must leave the store in a state a
+// re-run converges from with EVERY legacy blocking edge present. The dangerous
+// ordering is a source id sorting before its target's: a single-phase
+// sorted-id persist writes the source (blocking cleared, version stamped —
+// the resume signal) before the target holds the transferred edge, so a crash
+// between the two loses the edge while the store reports fully migrated.
+//
+// Each scenario is probed at every write index: fail the Nth write, then
+// re-run over a fresh Core (the crashed process is gone; the files alone say
+// what is left) and require full convergence. The loop stops at the first N
+// the run never reaches, so every crash point of the implementation is
+// exercised no matter how many writes it performs.
+func TestMigrateV0ToV1CrashResumeKeepsEdges(t *testing.T) {
+	scenarios := []struct {
+		name  string
+		files map[string]string
+		// edges[target] lists the blockers the target must carry after
+		// convergence.
+		edges map[string][]string
+	}{
+		{
+			name: "source sorts before target",
+			files: map[string]string{
+				"aaa1--source.md": "---\ntitle: Source\nstatus: todo\nblocking:\n    - zzz1\n---\n",
+				"zzz1--target.md": "---\nversion: 1\ntitle: Target\nstatus: todo\n---\n",
+			},
+			edges: map[string][]string{"zzz1": {"aaa1"}},
+		},
+		{
+			name: "v0 chain: targets are sources too",
+			files: map[string]string{
+				"aaa1--head.md": "---\ntitle: Head\nstatus: todo\nblocking:\n    - bbb2\n---\n",
+				"bbb2--mid.md":  "---\ntitle: Mid\nstatus: todo\nblocking:\n    - ccc3\n---\n",
+				"ccc3--tail.md": "---\ntitle: Tail\nstatus: todo\n---\n",
+			},
+			edges: map[string][]string{"bbb2": {"aaa1"}, "ccc3": {"bbb2"}},
+		},
+		{
+			name: "v0 blocking cycle",
+			files: map[string]string{
+				"aaa1--one.md": "---\ntitle: One\nstatus: todo\nblocking:\n    - bbb2\n---\n",
+				"bbb2--two.md": "---\ntitle: Two\nstatus: todo\nblocking:\n    - aaa1\n---\n",
+			},
+			edges: map[string][]string{"aaa1": {"bbb2"}, "bbb2": {"aaa1"}},
+		},
+	}
+
+	verifyConverged := func(t *testing.T, nibsDir string, edges map[string][]string) {
+		t.Helper()
+		final := New(nibsDir, config.Default())
+		final.SetWarnWriter(nil)
+		if err := final.Load(); err != nil {
+			t.Fatalf("verification Load: %v", err)
+		}
+		for _, b := range final.All() {
+			if b.Version != 1 {
+				t.Errorf("nib %s converged at version %d, want 1", b.ID, b.Version)
+			}
+			if len(b.Blocking) != 0 {
+				t.Errorf("nib %s still carries blocking %v after convergence", b.ID, b.Blocking)
+			}
+		}
+		for target, blockers := range edges {
+			b, err := final.Get(target)
+			if err != nil {
+				t.Fatalf("Get(%s): %v", target, err)
+			}
+			for _, blocker := range blockers {
+				if !b.IsBlockedBy(blocker) {
+					t.Errorf("edge %s -> %s lost: %s.BlockedBy = %v", blocker, target, target, b.BlockedBy)
+				}
+			}
+		}
+	}
+
+	for _, sc := range scenarios {
+		t.Run(sc.name, func(t *testing.T) {
+			const maxProbes = 20 // safety bound; every scenario completes in far fewer writes
+			completed := false
+			for failAt := 1; failAt <= maxProbes; failAt++ {
+				core, nibsDir, lock := loadMigrationCore(t, sc.files)
+
+				orig := renameFn
+				writes := 0
+				renameFn = func(oldpath, newpath string) error {
+					writes++
+					if writes == failAt {
+						return errors.New("injected crash")
+					}
+					return orig(oldpath, newpath)
+				}
+				_, err := core.MigrateV0ToV1(lock)
+				renameFn = orig
+
+				if err == nil {
+					// The run finished before reaching write #failAt: every
+					// crash point has been probed. Verify the clean run too.
+					verifyConverged(t, nibsDir, sc.edges)
+					completed = true
+					break
+				}
+
+				// Crashed mid-run: a fresh process re-runs; the files alone
+				// must say what is left, and convergence must restore every
+				// edge.
+				resumed := New(nibsDir, config.Default())
+				resumed.SetWarnWriter(nil)
+				if err := resumed.Load(); err != nil {
+					t.Fatalf("failAt=%d: resume Load: %v", failAt, err)
+				}
+				if _, err := resumed.MigrateV0ToV1(lock); err != nil {
+					t.Fatalf("failAt=%d: resumed MigrateV0ToV1: %v", failAt, err)
+				}
+				t.Run(fmt.Sprintf("crash at write %d", failAt), func(t *testing.T) {
+					verifyConverged(t, nibsDir, sc.edges)
+				})
+			}
+			if !completed {
+				t.Fatalf("migration still failing after %d write probes; runaway write count?", maxProbes)
+			}
+		})
+	}
+}
+
+// TestMigrationMethodsRequireLockToken pins the proof-of-lock contract: the
+// token must prove CURRENT possession of THIS store's lock, so each way a
+// token can fail to prove that is refused before any state is touched — nil
+// (never acquired), acquired for a different store (holds the wrong lock),
+// and already released (holds nothing anymore). A future direct caller
+// (serve auto-migrate, the TUI) is exactly who could release early or cross
+// stores, silently.
+func TestMigrationMethodsRequireLockToken(t *testing.T) {
+	files := map[string]string{
+		"v0a--one.md": "---\ntitle: One\nstatus: todo\n---\n",
+	}
+	core, nibsDir, lock := loadMigrationCore(t, files)
+
+	if _, err := core.MigrateV0ToV1(nil); err == nil || !strings.Contains(err.Error(), "AcquireStoreLock") {
+		t.Errorf("MigrateV0ToV1(nil) = %v, want a refusal naming AcquireStoreLock", err)
+	}
+	if _, err := core.NormalizeLegacyPriorities(nil); err == nil || !strings.Contains(err.Error(), "AcquireStoreLock") {
+		t.Errorf("NormalizeLegacyPriorities(nil) = %v, want a refusal naming AcquireStoreLock", err)
+	}
+
+	// A token acquired for a DIFFERENT store holds the wrong lock. Acquiring
+	// it while this store's own lock is held is safe — the two flocks are
+	// different files.
+	otherRoot := filepath.Join(t.TempDir(), NibsDir)
+	if err := os.MkdirAll(otherRoot, 0755); err != nil {
+		t.Fatal(err)
+	}
+	otherLock, err := AcquireStoreLock(otherRoot)
+	if err != nil {
+		t.Fatalf("AcquireStoreLock(other store): %v", err)
+	}
+	t.Cleanup(func() { _ = otherLock.Release() })
+	if _, err := core.MigrateV0ToV1(otherLock); err == nil || !strings.Contains(err.Error(), "different store") {
+		t.Errorf("MigrateV0ToV1(other store's lock) = %v, want a different-store refusal", err)
+	}
+	if _, err := core.NormalizeLegacyPriorities(otherLock); err == nil || !strings.Contains(err.Error(), "different store") {
+		t.Errorf("NormalizeLegacyPriorities(other store's lock) = %v, want a different-store refusal", err)
+	}
+
+	// A released token no longer proves possession.
+	if err := lock.Release(); err != nil {
+		t.Fatalf("Release: %v", err)
+	}
+	if _, err := core.MigrateV0ToV1(lock); err == nil || !strings.Contains(err.Error(), "released") {
+		t.Errorf("MigrateV0ToV1(released lock) = %v, want a released-token refusal", err)
+	}
+	if _, err := core.NormalizeLegacyPriorities(lock); err == nil || !strings.Contains(err.Error(), "released") {
+		t.Errorf("NormalizeLegacyPriorities(released lock) = %v, want a released-token refusal", err)
+	}
+
+	// Every refusal above fired BEFORE touching state: the store is
+	// byte-identical.
+	for name, before := range files {
+		after, err := os.ReadFile(filepath.Join(nibsDir, name))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if string(after) != before {
+			t.Errorf("lock-token refusal modified %s:\n%s", name, after)
+		}
+	}
+}
+
+func TestNormalizeLegacyPriorities(t *testing.T) {
+	t.Run("rewrites deferred to low on disk without touching the version", func(t *testing.T) {
+		control := "---\nversion: 1\ntitle: Control\nstatus: todo\npriority: normal\n---\n"
+		core, nibsDir, lock := loadMigrationCore(t, map[string]string{
+			"def1--legacy.md": "---\nversion: 1\ntitle: Set Aside\nstatus: todo\npriority: deferred\n---\n",
+			"v0d2--old.md":    "---\ntitle: Old Deferred\nstatus: todo\npriority: deferred\n---\n",
+			"ctl3--normal.md": control,
+		})
+
+		n, err := core.NormalizeLegacyPriorities(lock)
+		if err != nil {
+			t.Fatalf("NormalizeLegacyPriorities() error: %v", err)
+		}
+		if n != 2 {
+			t.Errorf("rewritten count = %d, want 2", n)
+		}
+
+		for _, name := range []string{"def1--legacy.md", "v0d2--old.md"} {
+			disk, err := os.ReadFile(filepath.Join(nibsDir, name))
+			if err != nil {
+				t.Fatalf("re-reading %s: %v", name, err)
+			}
+			s := string(disk)
+			if strings.Contains(s, "deferred") {
+				t.Errorf("%s still contains 'deferred':\n%s", name, s)
+			}
+			if !strings.Contains(s, "priority: low") {
+				t.Errorf("%s missing 'priority: low':\n%s", name, s)
+			}
+		}
+
+		// The already-v1 file keeps its version; the v0 file must NOT be
+		// stamped `version: 1`: the stamp is MigrateV0ToV1's completion
+		// record, and writing it here would mark the file's `blocking:` edges
+		// migrated without transferring them — permanently, since v0 detection
+		// keys on the version. The rewrite renders `version: 0`, which stays
+		// detectably v0.
+		v1Disk, err := os.ReadFile(filepath.Join(nibsDir, "def1--legacy.md"))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if !strings.Contains(string(v1Disk), "version: 1") {
+			t.Errorf("already-v1 file lost its version key:\n%s", v1Disk)
+		}
+		v0Disk, err := os.ReadFile(filepath.Join(nibsDir, "v0d2--old.md"))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if strings.Contains(string(v0Disk), "version: 1") {
+			t.Errorf("still-v0 file was version-stamped by the priority step:\n%s", v0Disk)
+		}
+		reloaded := New(nibsDir, config.Default())
+		reloaded.SetWarnWriter(nil)
+		if err := reloaded.Load(); err != nil {
+			t.Fatalf("reload after normalize: %v", err)
+		}
+		if b, err := reloaded.Get("v0d2"); err != nil || b.Version != 0 {
+			t.Errorf("rewritten v0 file must remain version 0 for the v0 step to find, got Version=%d (err %v)", b.Version, err)
+		}
+
+		// Control untouched, and a second run is a no-op.
+		ctl, err := os.ReadFile(filepath.Join(nibsDir, "ctl3--normal.md"))
+		if err != nil {
+			t.Fatalf("re-reading control: %v", err)
+		}
+		if string(ctl) != control {
+			t.Errorf("control file was rewritten:\n%s", ctl)
+		}
+		if n, err := core.NormalizeLegacyPriorities(lock); err != nil || n != 0 {
+			t.Errorf("second run = (%d, %v), want (0, nil)", n, err)
+		}
+	})
+
+	t.Run("fail-loud: a persistence failure aborts with an error", func(t *testing.T) {
+		core, _, lock := loadMigrationCore(t, map[string]string{
+			"def1--legacy.md": "---\nversion: 1\ntitle: Set Aside\nstatus: todo\npriority: deferred\n---\n",
+		})
+		orig := renameFn
+		renameFn = func(_, _ string) error { return errors.New("simulated persistence failure") }
+		t.Cleanup(func() { renameFn = orig })
+
+		if _, err := core.NormalizeLegacyPriorities(lock); err == nil {
+			t.Fatal("NormalizeLegacyPriorities() = nil error on an unwritable store, want fail-loud error")
+		} else if !strings.Contains(err.Error(), "def1") {
+			t.Errorf("error should name the nib that failed to persist, got: %v", err)
 		}
 	})
 }

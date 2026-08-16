@@ -54,9 +54,9 @@ func setupContextCobraTest(t *testing.T, files map[string]string) (cfgPath, nibs
 //   - nibs-bbbb task child (in-progress, estimate M)
 func contextFixture() map[string]string {
 	return map[string]string{
-		"nibs-din3--milestone.md": "---\ntitle: Alpha Milestone\nstatus: in-progress\ntype: milestone\n---\n\nRoot container.\n",
-		"nibs-aaaa--done.md":      "---\ntitle: Done Task\nstatus: completed\ntype: task\nestimate: M\nparent: nibs-din3\n---\n\nDone.\n",
-		"nibs-bbbb--active.md":    "---\ntitle: Active Task\nstatus: in-progress\ntype: task\nestimate: M\nparent: nibs-din3\n---\n\nActive.\n",
+		"nibs-din3--milestone.md": "---\nversion: 1\ntitle: Alpha Milestone\nstatus: in-progress\ntype: milestone\n---\n\nRoot container.\n",
+		"nibs-aaaa--done.md":      "---\nversion: 1\ntitle: Done Task\nstatus: completed\ntype: task\nestimate: M\nparent: nibs-din3\n---\n\nDone.\n",
+		"nibs-bbbb--active.md":    "---\nversion: 1\ntitle: Active Task\nstatus: in-progress\ntype: task\nestimate: M\nparent: nibs-din3\n---\n\nActive.\n",
 	}
 }
 

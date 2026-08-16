@@ -180,10 +180,102 @@ Body.
 	}
 }
 
+// TestLoadClassifiesFencelessFileAsDiagnostic pins the single classification
+// of a fence-less .md: it is an UnparseableFile load diagnostic ("no front
+// matter — not a nib file"), never an empty v0 nib. The phantom-nib class it
+// retires: a README in the store appeared in every query, an ungated `nibs
+// set` could rewrite it into a nib render, and `nibs check` reported all
+// clear while the migration scan called the same file a problem.
+func TestLoadClassifiesFencelessFileAsDiagnostic(t *testing.T) {
+	nibsDir := setupNibsDir(t)
+	const readme = "# Store notes\n\nNo front matter here.\n"
+	writeNibFile(t, nibsDir, "README.md", readme)
+	writeNibFile(t, nibsDir, "good1--ok.md", "---\nversion: 1\ntitle: Good\nstatus: todo\n---\n\nBody.\n")
+
+	core := New(nibsDir, config.Default())
+	core.SetWarnWriter(nil)
+	if err := core.Load(); err != nil {
+		t.Fatalf("Load() error; a fence-less file must degrade per file, not fail the load: %v", err)
+	}
+	if _, err := core.Get("good1"); err != nil {
+		t.Errorf("valid nib missing after load: %v", err)
+	}
+	if _, err := core.Get("README"); err == nil {
+		t.Error("fence-less README.md loaded as a nib; it must be a diagnostic only")
+	}
+
+	unparseable, _ := core.LoadDiagnostics()
+	if len(unparseable) != 1 || unparseable[0].Path != "README.md" {
+		t.Fatalf("LoadDiagnostics unparseable = %+v, want exactly README.md", unparseable)
+	}
+	if !strings.Contains(unparseable[0].Reason, "no front matter") {
+		t.Errorf("diagnostic reason = %q, want it to name the missing front matter", unparseable[0].Reason)
+	}
+
+	// Classification never writes: the document's bytes stay untouched.
+	got, err := os.ReadFile(filepath.Join(nibsDir, "README.md"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(got) != readme {
+		t.Errorf("load modified the fence-less file:\n%s", got)
+	}
+}
+
+// TestLoadSkipsDotDirectories pins Core.Load's walk scope to the shared
+// store-content definition (WalkStoreFiles): a .md file inside a dot
+// directory (`.git` of a store repo, editor state like `.obsidian`/`.trash`)
+// is not store content and must not load as a nib — the migration scans skip
+// those directories, so a file loading here would be invisible to every
+// pre-migration gate yet visible to every query. Boundary pins: archive/
+// stays included, and a top-level dot FILE is still store content (the dot
+// rule prunes directories only; files are classified per file like any other).
+func TestLoadSkipsDotDirectories(t *testing.T) {
+	nibsDir := setupNibsDir(t)
+
+	const nibBody = `---
+version: 1
+title: A Nib
+status: todo
+---
+
+Body.
+`
+	writeNibFile(t, nibsDir, "top1--one.md", nibBody)
+	if err := os.MkdirAll(filepath.Join(nibsDir, "archive"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	writeNibFile(t, nibsDir, filepath.Join("archive", "arc1--old.md"), nibBody)
+	if err := os.MkdirAll(filepath.Join(nibsDir, ".obsidian", "cache"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	writeNibFile(t, nibsDir, filepath.Join(".obsidian", "cache", "note1--x.md"), nibBody)
+	writeNibFile(t, nibsDir, ".dot1--lockish.md", nibBody)
+
+	core := New(nibsDir, config.Default())
+	core.SetWarnWriter(nil)
+	if err := core.Load(); err != nil {
+		t.Fatalf("Load() error: %v", err)
+	}
+
+	if _, err := core.Get("top1"); err != nil {
+		t.Errorf("top-level nib missing after load: %v", err)
+	}
+	if _, err := core.Get("arc1"); err != nil {
+		t.Errorf("archived nib missing after load (archive/ is store content): %v", err)
+	}
+	if _, err := core.Get("note1"); err == nil {
+		t.Error("dot-directory file loaded as a nib; dot directories are not store content")
+	}
+	if _, err := core.Get(".dot1"); err != nil {
+		t.Errorf("top-level dot FILE missing after load (only dot directories are pruned): %v", err)
+	}
+}
+
 // TestLoadPropagatesWalkDirIOError pins that a WalkDir-LEVEL I/O error (an
 // unreadable subdirectory surfaced through the callback's err parameter) still
 // hard-fails Load() and is NOT swallowed by the per-file unparseable-skip. The
-// per-file skip only catches loadNibReconciledLocked (read/parse) errors; the
+// per-file skip only catches loadNib (read/parse) errors; the
 // callback's own `if err != nil { return err }` must keep aborting the walk. This
 // guards that seam against a future over-broad "simplify both branches" refactor.
 func TestLoadPropagatesWalkDirIOError(t *testing.T) {

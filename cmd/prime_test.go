@@ -290,7 +290,7 @@ func TestPromptsStateTheStatusesReadyActuallyReturns(t *testing.T) {
 	idOf := map[string]string{}
 	for i, status := range declared {
 		id := fmt.Sprintf("s%d", i)
-		fixture[id+"--nib.md"] = fmt.Sprintf("---\ntitle: S\nstatus: %s\ntype: task\n---\n", status)
+		fixture[id+"--nib.md"] = fmt.Sprintf("---\nversion: 1\ntitle: S\nstatus: %s\ntype: task\n---\n", status)
 		idOf[id] = status
 	}
 	nibsDir := setupListCobraTest(t, fixture)
@@ -347,10 +347,10 @@ func TestFullPromptHoldingBlockerRuleMatchesReady(t *testing.T) {
 	// free is the same nib without the blocker, so the difference between them
 	// is the blocker and nothing else.
 	fixture := map[string]string{
-		"hld--holder.md": fmt.Sprintf("---\ntitle: Holder\nstatus: %s\ntype: task\n---\n", holding[0]),
-		"dep--blocked.md": fmt.Sprintf("---\ntitle: Dep\nstatus: %s\ntype: task\nblocked_by: [hld]\n---\n",
+		"hld--holder.md": fmt.Sprintf("---\nversion: 1\ntitle: Holder\nstatus: %s\ntype: task\n---\n", holding[0]),
+		"dep--blocked.md": fmt.Sprintf("---\nversion: 1\ntitle: Dep\nstatus: %s\ntype: task\nblocked_by: [hld]\n---\n",
 			startable[0]),
-		"free--free.md": fmt.Sprintf("---\ntitle: Free\nstatus: %s\ntype: task\n---\n", startable[0]),
+		"free--free.md": fmt.Sprintf("---\nversion: 1\ntitle: Free\nstatus: %s\ntype: task\n---\n", startable[0]),
 	}
 	nibsDir := setupListCobraTest(t, fixture)
 	out, err := runListCmd(t, nibsDir, "--ready", "-q")

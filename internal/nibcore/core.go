@@ -189,7 +189,19 @@ func (c *Core) Config() *config.Config {
 	return c.config
 }
 
-// Load reads all nibs from disk into memory.
+// Load reads all nibs from disk into memory. It NEVER writes: every load-time
+// normalization that used to persist (the v0→v1 blocking migration, the
+// `priority: deferred` write-back) is retired in favor of the explicit
+// `nibs migrate` command. The CLI's pre-run gate refuses other commands while
+// a migration is pending, so AT STARTUP a legacy shape reaching a loaded
+// store is only ever observed by migrate itself — but the gate fires once per
+// process: a legacy file arriving through the watcher into a live serve (a
+// `git pull` in .nibs) still loads exactly as written (see handleChanges in
+// watcher.go) and is observed by every query until `nibs migrate` runs.
+// Legacy tolerance elsewhere (e.g. Render re-emitting a v0 `blocking:` so the
+// etag stays faithful) exists for that window and must not be removed on the
+// strength of the startup gate alone. Either way, what Load reports is what
+// disk holds.
 func (c *Core) Load() error {
 	c.mu.Lock()
 	defer c.mu.Unlock()
@@ -209,29 +221,18 @@ func (c *Core) loadFromDisk() error {
 	c.unparseableFiles = nil
 	c.duplicateIDs = nil
 
-	// Count of nibs whose legacy `priority: deferred` was normalized to `low`
-	// and persisted during this load, so we can log a single summary.
-	var deferredMigrated int
-
-	// IDs of files present on disk but skipped this load (unparseable/unreadable).
-	// The ID is derived from the filename (which parses regardless of content), so
-	// migrateV0ToV1 can tell "target's file was skipped this load" apart from
-	// "target genuinely does not exist" and DEFER a v0 nib's migration rather than
-	// erasing its `blocking:` edge to a skipped target.
-	skipped := make(map[string]bool)
-
-	// Walk the entire .nibs directory tree, loading all .md files
-	err := filepath.WalkDir(c.root, func(path string, d os.DirEntry, err error) error {
+	// Walk the store tree through the SHARED store-content definition
+	// (WalkStoreFiles): every .md file, subdirectories included, dot
+	// directories pruned. cmd/migrate's scans walk through the same function,
+	// so what loads here and what the migration gates probe can never
+	// disagree — a dot-directory .md loading as a nib while the scan skipped
+	// it is exactly how `nibs migrate` once rewrote non-store files.
+	err := WalkStoreFiles(c.root, func(path string, err error) error {
 		if err != nil {
 			return err
 		}
 
-		// Skip non-.md files
-		if d.IsDir() || !strings.HasSuffix(d.Name(), ".md") {
-			return nil
-		}
-
-		b, migrated, loadErr := c.loadNibReconciledLocked(path)
+		b, loadErr := c.loadNib(path)
 		if loadErr != nil {
 			// Log-and-skip a single unparseable/unreadable file rather than
 			// aborting the whole walk: yaml.v3 hard-errors on a duplicate
@@ -248,18 +249,12 @@ func (c *Core) loadFromDisk() error {
 			// reads these back (see Core.CheckAllLinks).
 			c.logWarn("skipping unparseable nib file %s: %v", path, loadErr)
 			id, _ := nib.ParseFilename(filepath.Base(path), c.configPrefix())
-			if id != "" {
-				skipped[id] = true
-			}
 			c.unparseableFiles = append(c.unparseableFiles, UnparseableFile{
 				NibID:  id,
 				Path:   c.relPathFromRoot(path),
 				Reason: loadErr.Error(),
 			})
 			return nil
-		}
-		if migrated {
-			deferredMigrated++
 		}
 
 		// Two on-disk files can parse to the same id (e.g. a slugged and a
@@ -285,6 +280,18 @@ func (c *Core) loadFromDisk() error {
 			})
 		}
 
+		// Out-of-enum diagnostic, DELIBERATELY not a normalization: the value
+		// loads exactly as written (rewriting — in memory or on disk — belongs
+		// to `nibs migrate`, and an in-memory-only fix would diverge the etag
+		// from the on-disk bytes). The pre-run migration gate is a header-scan
+		// heuristic, so a legacy or hand-edited value can reach a load; this
+		// warning plus the `nibs check` finding (see CheckAllLinks) are the
+		// authoritative backstop that makes such a value visible instead of
+		// silently flowing into ranking, filters, and the web UI.
+		if enumErr := c.ValidateEnums(b); enumErr != nil {
+			c.logWarn("nib %s: %v — value loads as written; `nibs migrate` rewrites known legacy values, `nibs check` reports the rest", b.ID, enumErr)
+		}
+
 		c.nibs[b.ID] = b
 		return nil
 	})
@@ -292,27 +299,14 @@ func (c *Core) loadFromDisk() error {
 		return err
 	}
 
-	if deferredMigrated > 0 {
-		c.logWarn("migrated %d nib(s): priority 'deferred' -> 'low'", deferredMigrated)
-	}
-
 	// Resolve every short-form link id to its full form now that the whole map
 	// exists (see canonicalize.go for why this is the single normalization
-	// point). Runs BEFORE the v0 migration so that migration's exact
-	// c.nibs[targetID] lookup finds a legacy `blocking:` target named by short
-	// id instead of warning it out of existence.
+	// point). This also serves MigrateV0ToV1, whose exact c.nibs[targetID]
+	// lookup relies on a legacy `blocking:` target named by short id having
+	// been resolved here.
 	c.canonicalizeAllLinksUnpublishedLocked()
 
-	// Migrate v0 nibs to v1 (single-side blocking). This runs after the walk so
-	// every blocking target is already in c.nibs. v0+deferred nibs are converged
-	// here rather than in loadNibReconciledLocked (which gates persistence on
-	// Version >= 1 to avoid the lossy v0 render — see its doc comment).
-	if err := c.migrateV0ToV1(skipped); err != nil {
-		return fmt.Errorf("migration v0→v1: %w", err)
-	}
-
-	// Rebuild the reverse-mention index from the loaded bodies. Must run
-	// after migration so the index sees the final body state.
+	// Rebuild the reverse-mention index from the loaded bodies.
 	c.mentionIdx.Rebuild(c.nibs)
 
 	// Re-populate search index if it was active (best-effort, don't fail load).
@@ -426,68 +420,6 @@ func (c *Core) loadNib(path string) (*nib.Nib, error) {
 	}
 
 	return b, nil
-}
-
-// loadNibReconciledLocked loads and parses a single nib file (via loadNib) and,
-// for the bulk load path only, persists any load-time normalization back to
-// disk so the on-disk bytes converge with the in-memory value immediately. It
-// returns whether such a migration was persisted so the caller can log an
-// aggregate count. Only loadFromDisk funnels through here — startup Load, where
-// the file watcher is inactive.
-//
-// The incremental watcher path (handleChanges) deliberately does NOT call this:
-// it uses the read-only loadNib and reconciles in memory only. nib.Parse already
-// normalizes `deferred` → `low` in memory, so a legacy file arriving via the
-// watcher is still correct in memory; persisting from the always-on fsnotify
-// path is avoided because that write would be an unguarded read-modify-write
-// that could clobber a concurrent external write (git checkout / editor / second
-// instance), dirty the separate .nibs git tree (breaking the prescribed
-// `git -C .nibs pull --rebase`), and fire a spurious content-free self-write
-// event. On the watcher path disk converges on the next explicit Update/Load.
-//
-// The upshot for consistency: the bulk Load path persists migrations, so disk
-// and memory agree immediately; the watcher path leaves disk untouched, so a
-// legacy `deferred` (or v0) file that first appears post-startup stays diverged
-// on disk (memory is correct) until the next explicit Update or full Load.
-//
-// Today the only such normalization is the legacy `priority: deferred` → `low`
-// migration: nib.Parse rewrites the value in memory and flags the nib via
-// PriorityMigrated(). The etag layer no longer depends on this write-back:
-// computeStoredETag parses the on-disk file and hashes its canonical Render(),
-// so a legacy `deferred` file yields the same etag as the in-memory `low` value
-// and an if-match Update matches either way. The write-back is retained purely
-// to converge the raw on-disk bytes with the in-memory value, so external
-// consumers (git diffs, editors, other tooling) see the migrated `low` promptly
-// rather than only after the next explicit Update.
-//
-// The write is gated on Version >= 1 to leave legacy v0 nibs to migrateV0ToV1,
-// which performs the COMPLETE v0->v1 conversion (blocking -> blocked_by on
-// targets, clear blocking, bump version) and persists it; the bulk path always
-// runs that pass after the walk. Persisting a v0 nib here would write a
-// half-migrated file (priority normalized but still version 0 with `blocking:`
-// intact — nib.Render now preserves that field rather than dropping it) and then
-// migrateV0ToV1 would rewrite it again: a redundant double-write of a transiently
-// inconsistent shape. Gating on Version >= 1 avoids both.
-//
-// Persistence is best-effort: on a write failure (read-only mount, disk full,
-// restricted permissions) it logs, returns migrated=false, and continues,
-// leaving the nib correct in memory — on-disk convergence then waits for the
-// next successful write. This mirrors the "don't fail load" posture of the
-// search-index re-population in loadFromDisk. Must be called with c.mu held (it
-// may saveToDisk).
-func (c *Core) loadNibReconciledLocked(path string) (*nib.Nib, bool, error) {
-	b, err := c.loadNib(path)
-	if err != nil {
-		return nil, false, err
-	}
-	if b.PriorityMigrated() && b.Version >= 1 {
-		if err := c.saveToDisk(b); err != nil {
-			c.logWarn("could not persist priority migration for %s: %v", b.ID, err)
-			return b, false, nil
-		}
-		return b, true, nil
-	}
-	return b, false, nil
 }
 
 // ensureSearchIndexLocked initializes the in-memory search index if not already created.
@@ -944,7 +876,7 @@ func (c *Core) Create(b *nib.Nib) error {
 // CurrentETag returns the canonical ETag for the nib's on-disk content — a hash
 // of the parsed file's canonical Render() (see computeStoredETag), so it agrees
 // with the in-memory nib.ETag() across benign formatting drift (reordered YAML
-// keys, whitespace, the `deferred`->`low` priority normalization). loadNib keeps
+// keys, whitespace). loadNib keeps
 // the stored Nib's Type/Priority empty when the file omits them (the "task"/
 // "normal" defaults are applied only at the consumption boundary via
 // nib.EffectiveType()/EffectivePriority()), so a priority/type-less file no longer
@@ -982,14 +914,14 @@ func (c *Core) CurrentETag(id string) (string, error) {
 // canonical render (rather than the bytes) makes the stored etag equal the
 // in-memory nib.ETag() whenever the on-disk content is canonically equivalent,
 // so an ETag()-derived if-match (a) survives benign round-trip/formatting drift
-// (reordered YAML keys, whitespace, the `deferred`->`low` priority
-// normalization) yet (b) still fails with ETagMismatchError on genuine content
-// divergence — including divergence in content outside Render()'s modeled fields
+// (reordered YAML keys, whitespace) yet (b) still fails with ETagMismatchError
+// on genuine content divergence — including divergence in content outside
+// Render()'s modeled fields
 // (unknown/extra YAML keys, a legacy v0 `blocking:` line), which nib.Render now
 // preserves. Caller must hold c.mu (read or write lock).
 //
-// Parsing is done with the bare nib.Parse (which already normalizes the legacy
-// `deferred` priority to `low`) and only the ID is copied over from the stored
+// Parsing is done with the bare nib.Parse and only the ID is copied over from
+// the stored
 // nib so the rendered `# <id>` header line matches. It deliberately does NOT go
 // through loadNib, but the two agree on Type/Priority: loadNib keeps them
 // empty when the file omits them (the "task"/"normal" presentation defaults are
@@ -1080,8 +1012,7 @@ func (c *Core) computeStoredETag(storedNib *nib.Nib) (string, error) {
 	// hand-edited short-form nib — the stored nib carries `parent: nibs-par`, the
 	// bare parse `parent: par` — and its if-match Update would conflict forever
 	// against an unchanged file. Resolving both sides keeps the two spellings
-	// canonically equivalent, in the same spirit as the `deferred`->`low`
-	// priority normalization, while genuine content divergence still mismatches.
+	// canonically equivalent, while genuine content divergence still mismatches.
 	if set := canonicalizeLinksInMap(c.nibs, b, c.configPrefix()); set.changed {
 		set.applyTo(b)
 	}
@@ -1091,6 +1022,22 @@ func (c *Core) computeStoredETag(storedNib *nib.Nib) (string, error) {
 // Update modifies an existing nib and writes it to disk.
 // If ifMatch is provided, validates the current on-disk version's etag matches before updating.
 // This provides optimistic concurrency control to prevent lost updates.
+//
+// KNOWN RESIDUAL RACE (migrate under a live serve, nibs-7ist): the caller's b
+// was built from a snapshot taken BEFORE this call, and Update takes c.mu and
+// then parks on the store flock while holding it. If `nibs migrate` holds
+// that flock (AcquireStoreLock), the whole wait happens with c.mu held — so
+// the watcher, which needs c.mu, cannot refresh c.nibs with the migrated
+// files first. When migrate releases, an Update WITH ifMatch fails safe (the
+// stored etag no longer matches), but an Update with NO ifMatch — the web
+// UI's batch mutations call updateNib without one — writes b's pre-migration
+// render straight back, erasing e.g. a freshly transferred blocked_by edge;
+// the source file is already stamped v1, so no migration detect ever fires
+// again and the loss is silent and permanent. This is precisely why migrate
+// prints "stop any running `nibs serve`" (see AcquireStoreLock's doc);
+// enforcement instead of advice is deferred to nibs-7ist. Note the residual
+// is THIS stale-in-memory-clone chain, not the watcher or any layout move —
+// the watcher is a bystander that c.mu keeps parked.
 func (c *Core) Update(b *nib.Nib, ifMatch *string) error {
 	c.mu.Lock()
 	defer c.mu.Unlock()

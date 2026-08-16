@@ -53,8 +53,8 @@ func setupArchiveTest(t *testing.T, files map[string]string) string {
 // "returns an error" and the "done--task.md not archived" assertions fail.
 func TestArchiveRejectsArgAndArchivesNothing(t *testing.T) {
 	nibsDir := setupArchiveTest(t, map[string]string{
-		"done--task.md": "---\ntitle: Done\nstatus: completed\ntype: task\n---\n\nBody.\n",
-		"open--task.md": "---\ntitle: Open\nstatus: todo\ntype: task\n---\n\nBody.\n",
+		"done--task.md": "---\nversion: 1\ntitle: Done\nstatus: completed\ntype: task\n---\n\nBody.\n",
+		"open--task.md": "---\nversion: 1\ntitle: Open\nstatus: todo\ntype: task\n---\n\nBody.\n",
 	})
 
 	rootCmd.SetArgs([]string{"--nibs-path", nibsDir, "archive", "done"})
@@ -90,7 +90,7 @@ func TestArchiveRejectsArgAndArchivesNothing(t *testing.T) {
 // other validation errors, and still archives nothing.
 func TestArchiveRejectsArgJSON(t *testing.T) {
 	nibsDir := setupArchiveTest(t, map[string]string{
-		"done--task.md": "---\ntitle: Done\nstatus: completed\ntype: task\n---\n\nBody.\n",
+		"done--task.md": "---\nversion: 1\ntitle: Done\nstatus: completed\ntype: task\n---\n\nBody.\n",
 	})
 
 	rootCmd.SetArgs([]string{"--nibs-path", nibsDir, "archive", "done", "--json"})
@@ -133,9 +133,9 @@ func TestArchiveRejectsArgJSON(t *testing.T) {
 // rest alone.
 func TestArchiveNoArgsArchivesAllEligible(t *testing.T) {
 	nibsDir := setupArchiveTest(t, map[string]string{
-		"done--task.md":  "---\ntitle: Done\nstatus: completed\ntype: task\n---\n\nBody.\n",
-		"scrap--task.md": "---\ntitle: Scrapped\nstatus: scrapped\ntype: task\n---\n\nBody.\n",
-		"open--task.md":  "---\ntitle: Open\nstatus: todo\ntype: task\n---\n\nBody.\n",
+		"done--task.md":  "---\nversion: 1\ntitle: Done\nstatus: completed\ntype: task\n---\n\nBody.\n",
+		"scrap--task.md": "---\nversion: 1\ntitle: Scrapped\nstatus: scrapped\ntype: task\n---\n\nBody.\n",
+		"open--task.md":  "---\nversion: 1\ntitle: Open\nstatus: todo\ntype: task\n---\n\nBody.\n",
 	})
 
 	rootCmd.SetArgs([]string{"--nibs-path", nibsDir, "archive"})

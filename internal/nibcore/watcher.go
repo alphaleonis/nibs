@@ -586,19 +586,36 @@ func (c *Core) handleChanges(changes map[string]fsnotify.Op) {
 
 		// Handle creates/writes (file exists or was created)
 		if op&fsnotify.Create != 0 || op&fsnotify.Write != 0 {
-			// Read-only load (loadNib, NOT the persisting loadNibReconciledLocked):
-			// a legacy `priority: deferred` file arriving here (e.g. a git pull in
-			// the separate .nibs repo) is normalized to `low` in memory by
-			// nib.Parse, but we deliberately do NOT persist from the always-on
-			// watcher path. Writing back here would be an unguarded
-			// read-modify-write racing an external writer, would dirty the
-			// separate .nibs git tree, and would fire a spurious self-write event.
-			// Disk converges on the next explicit Update/Load; bulk-Load
-			// persistence lives in loadNibReconciledLocked (loadFromDisk).
+			// Read-only load: like every load path, the watcher NEVER writes. A
+			// write here would be an unguarded read-modify-write racing an
+			// external writer (git checkout / editor / second instance), would
+			// dirty the separate .nibs git tree, and would fire a spurious
+			// self-write event. A legacy-shaped file arriving here (e.g. a git
+			// pull in the separate .nibs repo) loads exactly as written;
+			// rewriting it is `nibs migrate`'s job.
 			newNib, err := c.loadNib(path)
 			if err != nil {
 				c.logWarn("failed to load nib from %s: %v", path, err)
 				continue
+			}
+
+			// One visible breadcrumb when the arriving file carries a shape
+			// only `nibs migrate` (or a newer nibs) may rewrite. The pre-run
+			// migration gate fired once at process start, so this ingress is
+			// the one path a legacy or newer file takes into a LIVE store —
+			// it loads as written (see above) and every query observes it
+			// until migrate runs, which without this line happens with no
+			// signal anywhere.
+			// "Legacy shape" here restates the migration chain's detection
+			// (migrationSteps in cmd/migrate.go): below-current version for
+			// the version-keyed steps, plus each value-keyed step's condition
+			// (today: the priority-deferred step). A future step not keyed on
+			// the version must be mirrored into this condition, or a file it
+			// pends arrives into a live serve with no breadcrumb at all.
+			if newNib.Version > nib.CurrentVersion {
+				c.logWarn("nib file %s arrived with format version %d, newer than this build supports (%d); leave it to a newer nibs", path, newNib.Version, nib.CurrentVersion)
+			} else if newNib.Version < nib.CurrentVersion || newNib.Priority == "deferred" {
+				c.logWarn("nib file %s arrived with a legacy shape; it loads as written until `nibs migrate` runs (stop serve first)", path)
 			}
 
 			_, existed := c.nibs[newNib.ID]

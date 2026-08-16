@@ -132,7 +132,7 @@ func writeSetNib(t *testing.T, id, body string) (string, string) {
 	if err := os.MkdirAll(nibsDir, 0755); err != nil {
 		t.Fatal(err)
 	}
-	content := "---\ntitle: Test\nstatus: todo\ntype: task\n---\n" + body
+	content := "---\nversion: 1\ntitle: Test\nstatus: todo\ntype: task\n---\n" + body
 	if err := os.WriteFile(filepath.Join(nibsDir, id+"--test.md"), []byte(content), 0644); err != nil {
 		t.Fatal(err)
 	}
@@ -338,7 +338,7 @@ func TestSetClearPriority(t *testing.T) {
 	if err := os.MkdirAll(nibsDir, 0755); err != nil {
 		t.Fatal(err)
 	}
-	content := "---\ntitle: Test\nstatus: todo\ntype: task\npriority: critical\n---\n"
+	content := "---\nversion: 1\ntitle: Test\nstatus: todo\ntype: task\npriority: critical\n---\n"
 	if err := os.WriteFile(filepath.Join(nibsDir, "clr-1--test.md"), []byte(content), 0644); err != nil {
 		t.Fatal(err)
 	}
@@ -366,7 +366,7 @@ func TestSetClearEstimate(t *testing.T) {
 	if err := os.MkdirAll(nibsDir, 0755); err != nil {
 		t.Fatal(err)
 	}
-	content := "---\ntitle: Test\nstatus: todo\ntype: task\nestimate: xl\n---\n"
+	content := "---\nversion: 1\ntitle: Test\nstatus: todo\ntype: task\nestimate: xl\n---\n"
 	if err := os.WriteFile(filepath.Join(nibsDir, "clr-2--test.md"), []byte(content), 0644); err != nil {
 		t.Fatal(err)
 	}
@@ -391,8 +391,8 @@ func TestSetClearParent(t *testing.T) {
 	if err := os.MkdirAll(nibsDir, 0755); err != nil {
 		t.Fatal(err)
 	}
-	parent := "---\ntitle: Parent\nstatus: todo\ntype: epic\n---\n"
-	child := "---\ntitle: Child\nstatus: todo\ntype: task\nparent: par-1\n---\n"
+	parent := "---\nversion: 1\ntitle: Parent\nstatus: todo\ntype: epic\n---\n"
+	child := "---\nversion: 1\ntitle: Child\nstatus: todo\ntype: task\nparent: par-1\n---\n"
 	if err := os.WriteFile(filepath.Join(nibsDir, "par-1--parent.md"), []byte(parent), 0644); err != nil {
 		t.Fatal(err)
 	}
@@ -421,7 +421,7 @@ func TestSetRejectsSetAndClearSameField(t *testing.T) {
 	if err := os.MkdirAll(nibsDir, 0755); err != nil {
 		t.Fatal(err)
 	}
-	content := "---\ntitle: Test\nstatus: todo\ntype: task\n---\n"
+	content := "---\nversion: 1\ntitle: Test\nstatus: todo\ntype: task\n---\n"
 	if err := os.WriteFile(filepath.Join(nibsDir, "clr-3--test.md"), []byte(content), 0644); err != nil {
 		t.Fatal(err)
 	}
@@ -571,7 +571,7 @@ func writeSetNibWithStatus(t *testing.T, id, status string) (string, string) {
 	if err := os.MkdirAll(nibsDir, 0755); err != nil {
 		t.Fatal(err)
 	}
-	content := "---\ntitle: Test\nstatus: " + status + "\ntype: task\n---\nbody\n"
+	content := "---\nversion: 1\ntitle: Test\nstatus: " + status + "\ntype: task\n---\nbody\n"
 	if err := os.WriteFile(filepath.Join(nibsDir, id+"--test.md"), []byte(content), 0644); err != nil {
 		t.Fatal(err)
 	}

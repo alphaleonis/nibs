@@ -1,9 +1,11 @@
 package nib
 
 import (
+	"bufio"
 	"bytes"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"hash/fnv"
 	"io"
@@ -140,6 +142,15 @@ func (b *Nib) RemoveBlockedBy(id string) bool {
 	return found
 }
 
+// CurrentVersion is the file format version this build reads and writes. New
+// nibs are stamped with it, and a file carrying a HIGHER version refuses to be
+// operated on (it was written by a newer nibs). Migration steps deliberately do
+// NOT use this constant for the version they write: each step's output version
+// is a fixed property of that step (v0→v1 always writes 1), so bumping
+// CurrentVersion for a future format must never change an existing step's
+// output.
+const CurrentVersion = 1
+
 // Nib represents an issue stored as a markdown file with front matter.
 type Nib struct {
 	// ID is the unique NanoID identifier (from filename).
@@ -217,29 +228,12 @@ type Nib struct {
 	// Go map iteration order.
 	Extra map[string]yaml.Node `yaml:"-" json:"-"`
 
-	// priorityMigrated is a transient, load-boundary-only flag (never
-	// serialized) set by Parse when a legacy `priority: deferred` value was
-	// normalized to `low`. The loader reads it via PriorityMigrated()
-	// immediately after Parse to persist the normalization so the on-disk value
-	// converges with memory at load time. It is not general-purpose "was this
-	// nib ever migrated" state: Clone() clears it, so it is meaningful only on a
-	// freshly-parsed nib.
-	priorityMigrated bool
-
 	// rawLinks records the link ids exactly as the nib's FILE spells them,
 	// independent of whatever the modeled fields above were later resolved to.
 	// Never serialized. See RawLinks for what it is for and CaptureRawLinks for
 	// who maintains it; nil means "no file spelling has been recorded", which
 	// RawLinks answers from the live fields instead.
 	rawLinks *LinkSpelling
-}
-
-// PriorityMigrated reports whether Parse normalized a legacy `priority: deferred`
-// value to `low` for this nib. The loader persists such nibs so the on-disk
-// value converges with the in-memory value (avoiding an etag divergence that
-// would break if-match updates). See the migration note in Parse.
-func (b *Nib) PriorityMigrated() bool {
-	return b.priorityMigrated
 }
 
 // LinkSpelling carries a nib's three link fields as one value — the ids as some
@@ -319,9 +313,16 @@ var yamlFrontMatterFormats = []*frontmatter.Format{
 // cost to a couple of milliseconds. Exceeding either returns a normal parse
 // error, so loadFromDisk log-and-skips the file instead of blocking on it.
 const (
-	// maxFrontMatterBytes bounds the raw YAML front-matter block (the bytes
+	// MaxFrontMatterBytes bounds the raw YAML front-matter block (the bytes
 	// between the `---` fences, excluding the markdown body). 256 KiB.
-	maxFrontMatterBytes = 256 * 1024
+	//
+	// Exported (unlike MaxFrontMatterKeys' sibling below) because
+	// cmd/migrate's streamed header scan caps its read at this same boundary:
+	// the scan's safety argument — "a header too large to scan is a file the
+	// load-time diagnostics will name anyway" — is true only while the two
+	// caps are one constant, so the scan derives its cap from here rather
+	// than duplicating the number and drifting.
+	MaxFrontMatterBytes = 256 * 1024
 	// maxFrontMatterKeys bounds the total number of mapping keys in the
 	// front-matter block. The top-level key count is the direct O(N²) driver
 	// (the inline Extra map + modeled fields); counting recursively also caps any
@@ -330,7 +331,7 @@ const (
 )
 
 // boundedYAMLUnmarshal is the frontmatter UnmarshalFunc registered for nib front
-// matter. It enforces maxFrontMatterBytes / maxFrontMatterKeys BEFORE delegating
+// matter. It enforces MaxFrontMatterBytes / maxFrontMatterKeys BEFORE delegating
 // to the real yaml.Unmarshal, so a crafted many-key block is rejected with a fast
 // normal error rather than paying yaml.v3's O(N²) map decode.
 //
@@ -342,8 +343,8 @@ const (
 // through to the real yaml.Unmarshal so it produces the canonical parse error
 // (duplicate key, type mismatch, syntax) unchanged.
 func boundedYAMLUnmarshal(data []byte, v any) error {
-	if len(data) > maxFrontMatterBytes {
-		return fmt.Errorf("front matter is %d bytes, exceeding the %d-byte limit", len(data), maxFrontMatterBytes)
+	if len(data) > MaxFrontMatterBytes {
+		return fmt.Errorf("front matter is %d bytes, exceeding the %d-byte limit", len(data), MaxFrontMatterBytes)
 	}
 	var root yaml.Node
 	if err := yaml.Unmarshal(data, &root); err == nil {
@@ -461,10 +462,51 @@ func (b *Nib) EffectivePriority() string {
 }
 
 // Parse reads a nib from a reader (markdown with YAML front matter).
+//
+// A nib file OPENS with a front-matter fence (`---` or `---yaml` as its first
+// line) — the same first-line rule the migration header scan applies
+// (cmd/migrate's readFrontMatterHeader), so every consumer of this parse
+// (Core.Load, the watcher, computeStoredETag, the scans) shares ONE
+// definition of "not a nib file". Fence-less content used to parse into an
+// empty v0 nib: a README in the store became a phantom row every query
+// surfaced, writers could rewrite the document into a nib render, and the
+// migration scan called the same file "not a nib file" while check reported
+// all clear. Refusing here retires that class at the root; loaders degrade
+// per file (log-and-skip into diagnostics), so one document never fails a
+// store.
+//
+// A line IS a fence iff strings.TrimSpace(line) equals the fence token —
+// whitespace padding is tolerated, `----` is not a fence. The TrimSpace rule
+// is pinned to the frontmatter library this delegates to: its line handling
+// is a fixed bytes.TrimSpace (not overridable), so its closing-fence compare
+// accepts padded fences no matter what we do here, and TrimSpace-equivalence
+// is the only rule all four fence comparisons (this pre-check, the scan's
+// opening and closing compares, the library's closing compare) can share.
+// Tightening any one of them re-opens the scan/parse divergence where the
+// two classify the same file differently.
 func Parse(r io.Reader) (*Nib, error) {
+	br := bufio.NewReader(r)
+	firstLine, err := br.ReadString('\n')
+	if err != nil && err != io.EOF {
+		return nil, fmt.Errorf("parsing front matter: %w", err)
+	}
+	if fence := strings.TrimSpace(firstLine); fence != "---" && fence != "---yaml" {
+		// Also covers a BOM or leading blank line before a fence: TrimSpace
+		// does not trim a BOM (U+FEFF is not Unicode whitespace), and a blank
+		// first line trims to "" — the header scan's line compare refuses
+		// both the same way, so neither counts as a nib shape here.
+		return nil, fmt.Errorf("no front matter — not a nib file")
+	}
+
 	var fm frontMatter
-	body, err := frontmatter.Parse(r, &fm, yamlFrontMatterFormats...)
+	body, err := frontmatter.MustParse(io.MultiReader(strings.NewReader(firstLine), br), &fm, yamlFrontMatterFormats...)
 	if err != nil {
+		if errors.Is(err, frontmatter.ErrNotFound) {
+			// The first line IS a fence (checked above), so "not found" can
+			// only mean the closing fence never came: a torn or half-written
+			// file, not a nib whose body is the whole document.
+			return nil, fmt.Errorf("front matter never closed (missing the closing --- fence)")
+		}
 		return nil, fmt.Errorf("parsing front matter: %w", err)
 	}
 
@@ -475,27 +517,11 @@ func Parse(r io.Reader) (*Nib, error) {
 		return nil, fmt.Errorf("invalid order key: %w", err)
 	}
 
-	// Migration: "deferred" was removed as a priority and reintroduced as a
-	// status. Files written before the change may still carry
-	// `priority: deferred`. Priority was never validated at parse time, so such
-	// a file already loaded; the point of this normalization is to produce a
-	// valid, sanely-sortable value on the current (deferred-free) priority axis.
-	// We target "low" because "deferred" was the *lowest* priority — ranked
-	// below "low" in the old enum — so mapping it to "low" preserves its
-	// relative rank. (Do not "tidy" this to "normal": that would silently
-	// re-rank legacy nibs upward.) The value is normalized in memory here so it
-	// is always valid even without a Core; when loaded through a Core's bulk
-	// Load, the loader persists it (see Core.loadNibReconciledLocked) so the raw
-	// on-disk bytes converge with the in-memory value immediately. This is no
-	// longer required for etag correctness — Core.computeStoredETag parses the
-	// on-disk file and hashes its canonical Render(), so a legacy `deferred` file
-	// already yields the same etag as the in-memory `low` value — but it keeps
-	// disk and memory in sync for external consumers (git diffs, editors).
-	priorityMigrated := false
-	if fm.Priority == "deferred" {
-		fm.Priority = "low"
-		priorityMigrated = true
-	}
+	// Note on the legacy `priority: deferred` value: "deferred" was removed as a
+	// priority (it is now a status), but Parse does NOT rewrite it — a file's
+	// content loads exactly as written. Rewriting legacy values is `nibs
+	// migrate`'s job (the priority-deferred step maps it to "low" ON DISK), and
+	// the CLI refuses to run other commands while that migration is pending.
 
 	// Resolve any YAML anchors/aliases captured in Extra to their concrete value.
 	// A cross-boundary anchor/alias — an anchor on a MODELED field (which decodes
@@ -536,23 +562,22 @@ func Parse(r io.Reader) (*Nib, error) {
 	}
 
 	b := &Nib{
-		Version:          fm.Version,
-		Title:            fm.Title,
-		Status:           fm.Status,
-		Type:             fm.Type,
-		Priority:         fm.Priority,
-		Estimate:         fm.Estimate,
-		Tags:             fm.Tags,
-		CreatedAt:        fm.CreatedAt,
-		UpdatedAt:        fm.UpdatedAt,
-		Body:             bodyStr,
-		Parent:           fm.Parent,
-		Blocking:         fm.Blocking,
-		BlockedBy:        fm.BlockedBy,
-		Documents:        fm.Documents,
-		Order:            fm.Order,
-		Extra:            fm.Extra,
-		priorityMigrated: priorityMigrated,
+		Version:   fm.Version,
+		Title:     fm.Title,
+		Status:    fm.Status,
+		Type:      fm.Type,
+		Priority:  fm.Priority,
+		Estimate:  fm.Estimate,
+		Tags:      fm.Tags,
+		CreatedAt: fm.CreatedAt,
+		UpdatedAt: fm.UpdatedAt,
+		Body:      bodyStr,
+		Parent:    fm.Parent,
+		Blocking:  fm.Blocking,
+		BlockedBy: fm.BlockedBy,
+		Documents: fm.Documents,
+		Order:     fm.Order,
+		Extra:     fm.Extra,
 	}
 	// The link fields as they stand right now ARE the file's spelling. Record it
 	// before anything downstream resolves them to their full form (see RawLinks).
@@ -639,9 +664,9 @@ func resolveExtraAliasesGuarded(node *yaml.Node, active map[*yaml.Node]bool, bud
 // Blocking carries omitempty: for a v1+ nib it is always nil (blocking is
 // single-side, computed at query time from other nibs' BlockedBy), so it is
 // absent from the render — the normal case is unchanged. It is emitted ONLY for
-// a legacy v0 nib parsed straight from disk (before migrateV0ToV1 clears it), so
-// the canonical render — and thus the etag — stays a faithful witness of a v0
-// file's on-disk `blocking:` content rather than silently dropping it.
+// a legacy v0 nib parsed straight from disk (before `nibs migrate` clears it),
+// so the canonical render — and thus the etag — stays a faithful witness of a
+// v0 file's on-disk `blocking:` content rather than silently dropping it.
 //
 // Extra is a yaml inline catch-all mirroring frontMatter.Extra: unknown keys
 // captured on Parse are re-emitted here. yaml.v3 sorts inline-map keys, so the
@@ -780,17 +805,11 @@ func (b *Nib) Render() ([]byte, error) {
 func (b *Nib) Clone() *Nib {
 	clone := *b // shallow copy of all value fields
 
-	// priorityMigrated is a load-boundary-only signal (consumed by the loader
-	// right after Parse). A clone is a working copy for mutation/update, never a
-	// freshly-parsed nib, so clear it here rather than let a stale `true` ride
-	// along through every Clone/Update cycle.
-	clone.priorityMigrated = false
-
-	// rawLinks is the other transient, parse-set field, and its semantics are the
-	// INVERSE: it must SURVIVE the clone. Re-resolution applies its result to a
-	// Clone of the stored nib, so a shadow dropped here would leave the very next
-	// pass reading the previous pass's output — the divergence RawLinks exists to
-	// close. Deep-copied for the same reason as the exported lists below.
+	// rawLinks is the transient, parse-set field, and it must SURVIVE the
+	// clone. Re-resolution applies its result to a Clone of the stored nib, so
+	// a shadow dropped here would leave the very next pass reading the previous
+	// pass's output — the divergence RawLinks exists to close. Deep-copied for
+	// the same reason as the exported lists below.
 	if b.rawLinks != nil {
 		raw := *b.rawLinks
 		raw.BlockedBy = slices.Clone(b.rawLinks.BlockedBy)

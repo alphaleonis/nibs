@@ -50,7 +50,7 @@ func TestParseRejectsManyKeyFrontMatter(t *testing.T) {
 	var sb strings.Builder
 	sb.WriteString("---\nversion: 1\ntitle: t\nstatus: todo\n")
 	// Well above maxFrontMatterKeys, but short keys keep the raw block under
-	// maxFrontMatterBytes so this exercises the KEY-count bound (not the byte bound).
+	// MaxFrontMatterBytes so this exercises the KEY-count bound (not the byte bound).
 	for i := 0; i < maxFrontMatterKeys+2000; i++ {
 		fmt.Fprintf(&sb, "k%06d: v\n", i)
 	}
@@ -65,14 +65,14 @@ func TestParseRejectsManyKeyFrontMatter(t *testing.T) {
 	}
 }
 
-// A front-matter block whose raw bytes exceed maxFrontMatterBytes must be
+// A front-matter block whose raw bytes exceed MaxFrontMatterBytes must be
 // rejected before the decode even runs, regardless of key count.
 func TestParseRejectsOversizedFrontMatter(t *testing.T) {
 	var sb strings.Builder
 	sb.WriteString("---\nversion: 1\ntitle: t\nstatus: todo\n")
 	// A single unknown key with a value larger than the byte bound.
 	sb.WriteString("blob: ")
-	sb.WriteString(strings.Repeat("x", maxFrontMatterBytes+1024))
+	sb.WriteString(strings.Repeat("x", MaxFrontMatterBytes+1024))
 	sb.WriteString("\n---\n\nBody.\n")
 
 	_, err := Parse(strings.NewReader(sb.String()))

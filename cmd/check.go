@@ -7,6 +7,7 @@ import (
 	"strings"
 
 	"github.com/alphaleonis/nibs/internal/config"
+	"github.com/alphaleonis/nibs/internal/nib"
 	"github.com/alphaleonis/nibs/internal/nibcore"
 	"github.com/alphaleonis/nibs/internal/ui"
 	"github.com/spf13/cobra"
@@ -139,6 +140,7 @@ func runCheck(app *App) (int, error) {
 		ui.Println()
 		ui.Println(ui.Bold.Render("Nib Files"))
 		renderLoadDiagnostics(linkResult)
+		renderFieldDiagnostics(app, linkResult)
 	}
 
 	// === Nib link checks ===
@@ -212,9 +214,9 @@ func runCheck(app *App) (int, error) {
 	}
 
 	// Show success if no issues. This speaks only for the LINK categories: a
-	// store whose only problems are load-time still has clean links, and
-	// HasIssues() covers both kinds.
-	if !checkJSON && linkResult.TotalIssues()-linkResult.LoadIssues() == 0 && fixed == 0 {
+	// store whose only problems are load-time or field-level still has clean
+	// links, and HasIssues() covers all kinds.
+	if !checkJSON && linkResult.TotalIssues()-linkResult.LoadIssues()-linkResult.EnumIssues() == 0 && fixed == 0 {
 		ui.Printf("  %s No link issues found\n", ui.Success.Render("✓"))
 	}
 
@@ -282,6 +284,61 @@ func renderLoadDiagnostics(result *nibcore.LinkCheckResult) {
 	}
 }
 
+// renderFieldDiagnostics prints the out-of-enum field findings in text mode,
+// under the Nib Files heading (they are per-file integrity, reported next to
+// the other conditions --fix cannot repair). Not auto-fixable by design, so
+// --fix names them like the cycle branch does instead of skipping them
+// silently. The remediation is per finding — see fieldRemediation.
+func renderFieldDiagnostics(app *App, result *nibcore.LinkCheckResult) {
+	for _, ie := range result.InvalidEnums {
+		remedy := fieldRemediation(app, ie)
+		if checkFix {
+			ui.Printf("  %s Cannot auto-fix %s: %s (%s)\n",
+				ui.Warning.Render("!"), ie.NibID, ie.Reason, remedy)
+		} else {
+			ui.Printf("  %s %s: %s (loads as written; %s)\n",
+				ui.Danger.Render("✗"), ie.NibID, ie.Reason, remedy)
+		}
+	}
+}
+
+// fieldRemediation names the right next step for one out-of-enum finding.
+// Plain check is exempt from the pre-run migration gate (see cmd/root.go), so
+// its store may hold files no other command would even load — the remediation
+// must not send the user somewhere that cannot help:
+//
+//   - A file with a version above nib.CurrentVersion was written by a newer
+//     nibs; its values may be perfectly valid there, and hand-"repairing" them
+//     to this build's enums would corrupt a newer store. Upgrading is the fix.
+//   - A known legacy value (`priority: deferred`, the one value
+//     NormalizeLegacyPriorities rewrites) is migrate-fixable only if the
+//     migration HEADER SCAN sees it — detection reads the raw header line, not
+//     the parsed store, so a folded/quoted spelling parses to the legacy value
+//     while the scan reads something else, migrate reports nothing pending,
+//     and a migrate pointer would loop forever. Re-probe the file the way the
+//     gate does (readFrontMatterHeader + the step predicate) before pointing
+//     at migrate; when the scan cannot see it, say so and name the way out.
+//   - Any other value is a hand edit no migration step rewrites — pointing at
+//     migrate would be the same no-op loop.
+func fieldRemediation(app *App, ie nibcore.InvalidEnum) string {
+	b, err := app.Core.Get(ie.NibID)
+	if err != nil {
+		// The finding came from a loaded nib, so this cannot ordinarily
+		// happen; the hand-repair wording is the safe generic answer.
+		return "repair the file by hand"
+	}
+	if b.Version > nib.CurrentVersion {
+		return fmt.Sprintf("file format version %d — written by a newer nibs; upgrade nibs", b.Version)
+	}
+	if b.Priority == "deferred" && strings.HasPrefix(ie.Reason, "invalid priority") {
+		if h, scanErr := readFrontMatterHeader(app.Core.FullPath(b)); scanErr == nil && hasDeferredPriorityHeader(h) {
+			return "`nibs migrate` rewrites this legacy value"
+		}
+		return "legacy value in a spelling the migration scan cannot see — re-save the file with a plain scalar, or fix it by hand"
+	}
+	return "repair the file by hand"
+}
+
 // flattenReason collapses a parse error onto a single line so it stays inside
 // the report's bullet list. yaml.v3 always wraps its message across two lines
 // ("unmarshal errors:" then an indented "line N: ..."), which otherwise breaks
@@ -311,25 +368,17 @@ func init() {
 // is merely SKIPPED this load (kept — the file is on disk and needs repair) and
 // those whose target genuinely does not exist (removed).
 //
-// It mirrors Core.FixBrokenLinks' rule rather than sharing it, because the two
-// answer different questions: the core decides what to write, this decides what
-// to say. They must agree, which is what TestCheckFixKeepsLinksToSkippedNibs
-// pins — a report claiming a removal that did not happen is its own defect.
-//
-// Both spellings are tested (as stored, and prefixed) because a link may name
-// its target short-form, exactly as normalizeIDInMap resolves it.
+// The skipped set is nibcore.SkippedIDSet — the SAME builder Core.FixBrokenLinks
+// gates its writes on — because the two answer two halves of one question: the
+// core decides what to write, this decides what to say, and a report claiming a
+// removal that did not happen is its own defect
+// (TestCheckFixKeepsLinksToSkippedNibs pins the agreement end to end).
 func partitionLinksToSkipped(result *nibcore.LinkCheckResult, configPrefix string) (kept, removed []nibcore.BrokenLink) {
-	skipped := make(map[string]bool, len(result.UnparseableFiles))
-	for _, uf := range result.UnparseableFiles {
-		if uf.NibID != "" {
-			skipped[uf.NibID] = true
-		}
-	}
+	skipped := nibcore.SkippedIDSet(result.UnparseableFiles, configPrefix)
 
 	kept = []nibcore.BrokenLink{}
 	for _, bl := range result.BrokenLinks {
-		isSkipped := skipped[bl.Target] || (configPrefix != "" && skipped[configPrefix+bl.Target])
-		if isSkipped {
+		if skipped[bl.Target] {
 			kept = append(kept, bl)
 			continue
 		}

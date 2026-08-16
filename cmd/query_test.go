@@ -1669,7 +1669,7 @@ func TestQueryHierarchyBatchExitsLikeTheDirectCommands(t *testing.T) {
 func writeReplaceFixture(t *testing.T) (string, string, string) {
 	t.Helper()
 	nibsDir, subjectID := writeSetNib(t, "rp", "dup here\nand dup there\n")
-	content := "---\ntitle: Other\nstatus: todo\ntype: task\n---\ntrip\ntrip\ntrip\n"
+	content := "---\nversion: 1\ntitle: Other\nstatus: todo\ntype: task\n---\ntrip\ntrip\ntrip\n"
 	if err := os.WriteFile(filepath.Join(nibsDir, "ot--other.md"), []byte(content), 0644); err != nil {
 		t.Fatal(err)
 	}

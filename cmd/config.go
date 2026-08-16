@@ -2,6 +2,7 @@ package cmd
 
 import (
 	"bytes"
+	"errors"
 	"fmt"
 	"os"
 	"os/exec"
@@ -178,6 +179,64 @@ func printPlan(plan *reprefix.RenamePlan, jsonMode bool) error {
 		fmt.Printf("  %s -> %s\n", fp.OldPath, fp.NewPath)
 	}
 	return nil
+}
+
+// storeGitStateFn reports the git protection state of the nibs store for the
+// migrate command's safety net. Tests override it to exercise the paths real
+// git cannot produce on demand (a genuine git failure). It belongs to the same
+// helper family as gitIsDirtyFn above: one seam per git question, backed by
+// shared exec conventions.
+var storeGitStateFn = realStoreGitState
+
+// realStoreGitState reports whether the store at nibsRoot is protected by a
+// git repository (isRepo) and whether that repository has uncommitted changes
+// under the store (dirty).
+//
+// "Inside a repo" is not enough for isRepo: a store directory gitignored by an
+// enclosing repository is invisible to it — `git status` lists nothing and
+// `git add` refuses outright — so that repository can neither review nor roll
+// back a migration. `git check-ignore -q .` discriminates the two layouts:
+// exit 0 means the store directory itself is ignored (no safety net; report
+// isRepo=false so the caller falls back to the backup suggestion), exit 1
+// means the repository genuinely covers the store. A store with its own
+// nested .git is never ignored by itself, so it reports isRepo=true.
+//
+// Error contract: "not a repo at all" (or git missing) is a normal state,
+// reported as (false, false, nil). A genuine git failure inside a repo
+// (check-ignore or status crashing) is returned as err so the caller can tell
+// the user the safety net could not be evaluated instead of silently
+// downgrading to "clean".
+func realStoreGitState(nibsRoot string) (dirty, isRepo bool, err error) {
+	inside := exec.Command("git", "rev-parse", "--is-inside-work-tree")
+	inside.Dir = nibsRoot
+	inside.Env = append(os.Environ(), "LC_ALL=C", "GIT_OPTIONAL_LOCKS=0")
+	if err := inside.Run(); err != nil {
+		// Not a git repo, git missing, or otherwise unreachable — nothing to
+		// guard; the caller suggests a backup instead.
+		return false, false, nil
+	}
+
+	ignored := exec.Command("git", "check-ignore", "-q", ".")
+	ignored.Dir = nibsRoot
+	ignored.Env = append(os.Environ(), "LC_ALL=C", "GIT_OPTIONAL_LOCKS=0")
+	if runErr := ignored.Run(); runErr == nil {
+		// Exit 0: the store directory is gitignored by the repository around it
+		// — untracked, unrestorable, no rollback net.
+		return false, false, nil
+	} else {
+		var ee *exec.ExitError
+		if !errors.As(runErr, &ee) || ee.ExitCode() != 1 {
+			// Exit 1 means "not ignored" (the covered case, handled below);
+			// anything else is a genuine git failure.
+			return false, true, fmt.Errorf("git check-ignore: %w", runErr)
+		}
+	}
+
+	dirty, derr := realGitIsDirty(nibsRoot, ".")
+	if derr != nil {
+		return false, true, derr
+	}
+	return dirty, true, nil
 }
 
 // realGitIsDirty shells out to git to check for uncommitted changes, running

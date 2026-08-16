@@ -150,9 +150,12 @@ Externally rewritten body.
 		}
 	})
 
-	// Case 3: legacy `priority: deferred` on disk (memory normalizes to `low`)
-	// no longer causes a false etag mismatch.
-	t.Run("priority deferred on disk matches low in memory", func(t *testing.T) {
+	// Case 3: with parse-time normalization retired, a `priority: deferred`
+	// landing on disk is a GENUINE content divergence, exactly like any other
+	// external value edit — the canonical etag must witness it. (An unmigrated
+	// store never reaches a running command anyway: the pre-run refusal sends
+	// it to `nibs migrate` first.)
+	t.Run("priority deferred on disk diverges from low in memory", func(t *testing.T) {
 		nibsDir := setupNibsDir(t)
 		// Start from a canonical `low` nib so the in-memory value is low.
 		const file = "defcanon1--legacy.md"
@@ -172,13 +175,9 @@ updated_at: 2026-01-02T03:04:05Z
 		if err != nil {
 			t.Fatalf("Get() error: %v", err)
 		}
-		if b.Priority != "low" {
-			t.Fatalf("in-memory Priority = %q, want low", b.Priority)
-		}
-		want := b.ETag()
+		inMemory := b.ETag()
 
-		// Overwrite disk with the legacy `deferred` value (bypassing the
-		// load-time write-back, so disk genuinely carries `deferred`).
+		// Externally rewrite the value to the legacy `deferred` spelling.
 		writeNibFile(t, nibsDir, file, `---
 version: 1
 title: Legacy Deferred
@@ -189,20 +188,13 @@ created_at: 2026-01-02T03:04:05Z
 updated_at: 2026-01-02T03:04:05Z
 ---
 `)
-		diskBytes, err := os.ReadFile(filepath.Join(nibsDir, file))
-		if err != nil {
-			t.Fatalf("reading file: %v", err)
-		}
-		if !strings.Contains(string(diskBytes), "deferred") {
-			t.Fatalf("precondition: on-disk file should contain 'deferred'")
-		}
 
 		got, err := core.CurrentETag("defcanon1")
 		if err != nil {
 			t.Fatalf("CurrentETag() error: %v", err)
 		}
-		if got != want {
-			t.Errorf("stored etag for legacy `deferred` disk file = %s, want %s (in-memory `low` ETag)", got, want)
+		if got == inMemory {
+			t.Errorf("stored etag for a `deferred` disk file equals the in-memory `low` etag; Parse must not normalize the value away")
 		}
 	})
 
@@ -621,9 +613,8 @@ Body.
 		nibsDir := setupNibsDir(t)
 		// Seed with a canonical v1 file so Load produces a stable in-memory nib.
 		// The two on-disk states below are v0 files that differ ONLY in their
-		// `blocking:` target, so the etag comparison isolates the out-of-projection
-		// content (writing them after Load avoids migrateV0ToV1 rewriting the file
-		// and changing `version`, which would confound the comparison).
+		// `blocking:` target, so the etag comparison isolates the
+		// out-of-projection content.
 		const file = "v0block1--legacy.md"
 		writeNibFile(t, nibsDir, file, `---
 version: 1

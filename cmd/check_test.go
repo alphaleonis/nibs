@@ -106,6 +106,204 @@ func loadDiagnosticFiles() map[string]string {
 	}
 }
 
+// TestCheckReportsInvalidEnumValues pins the field-integrity finding end to
+// end: a loaded nib carrying an out-of-enum value (here the legacy
+// `priority: deferred`) is reported by `nibs check` in text and counted as an
+// issue, in --json it rides the invalid_enums array, and --fix does NOT touch
+// it (rewriting is `nibs migrate`'s job for known legacy values).
+func TestCheckReportsInvalidEnumValues(t *testing.T) {
+	files := map[string]string{
+		"chk-good1--ok.md": chkValidNib,
+		"chk-leg1--old.md": "---\nversion: 1\ntitle: Legacy\nstatus: todo\ntype: task\npriority: deferred\n---\n\nBody.\n",
+	}
+
+	t.Run("text report names the nib and counts the issue", func(t *testing.T) {
+		app, _ := setupCheckTest(t, files)
+		var total int
+		var runErr error
+		out := captureStdout(t, func() { total, runErr = runCheck(app) })
+		if runErr != nil {
+			t.Fatalf("runCheck error = %v", runErr)
+		}
+		if total != 1 {
+			t.Errorf("total issues = %d, want 1", total)
+		}
+		if !strings.Contains(out, "chk-leg1") || !strings.Contains(out, "deferred") {
+			t.Errorf("report should name the nib and value, got:\n%s", out)
+		}
+	})
+
+	t.Run("json envelope carries invalid_enums", func(t *testing.T) {
+		app, _ := setupCheckTest(t, files)
+		checkJSON = true
+		var runErr error
+		out := captureStdout(t, func() { _, runErr = runCheck(app) })
+		if runErr != nil {
+			t.Fatalf("runCheck error = %v", runErr)
+		}
+		var got checkResult
+		if err := json.Unmarshal([]byte(out), &got); err != nil {
+			t.Fatalf("unmarshal: %v\noutput: %s", err, out)
+		}
+		if got.Success {
+			t.Error("success = true; want false with an out-of-enum value")
+		}
+		if got.NibIssues == nil || len(got.NibIssues.InvalidEnums) != 1 {
+			t.Fatalf("invalid_enums = %+v, want exactly 1 entry", got.NibIssues)
+		}
+		if id := got.NibIssues.InvalidEnums[0].NibID; id != "chk-leg1" {
+			t.Errorf("invalid_enums[0].nib_id = %q, want %q", id, "chk-leg1")
+		}
+	})
+
+	t.Run("--fix leaves the value alone", func(t *testing.T) {
+		app, nibsDir := setupCheckTest(t, files)
+		checkFix = true
+		var runErr error
+		_ = captureStdout(t, func() { _, runErr = runCheck(app) })
+		if runErr != nil {
+			t.Fatalf("runCheck error = %v", runErr)
+		}
+		raw, err := os.ReadFile(filepath.Join(nibsDir, "chk-leg1--old.md"))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if !strings.Contains(string(raw), "priority: deferred") {
+			t.Errorf("--fix rewrote the out-of-enum value; that is migrate's job:\n%s", raw)
+		}
+	})
+}
+
+// TestCheckNewerStore pins plain check's behavior on a store written by a
+// newer nibs. The pre-run gate deliberately exempts plain check (it is the
+// read-only diagnostic the newer-store refusal points users toward), which
+// also bypasses the newer-store refusal — so check loads the newer files as
+// written and may find values that are only "invalid" under THIS build's
+// enums. Its field diagnostics must then say to upgrade nibs, not steer the
+// user into hand-"repairing" (or migrating) values a newer format considers
+// valid. Only --fix writes, so only --fix stays behind the refusal.
+func TestCheckNewerStore(t *testing.T) {
+	const futureNib = "---\nversion: 99\ntitle: Future\nstatus: superseded\n---\n\nBody.\n"
+
+	t.Run("plain check proceeds with version-aware wording", func(t *testing.T) {
+		app, _ := setupCheckTest(t, map[string]string{
+			"chk-good1--ok.md":    chkValidNib,
+			"chk-fut1--future.md": futureNib,
+		})
+		var total int
+		var runErr error
+		out := captureStdout(t, func() { total, runErr = runCheck(app) })
+		if runErr != nil {
+			t.Fatalf("runCheck error = %v", runErr)
+		}
+		if total != 1 {
+			t.Errorf("total issues = %d, want 1 (the out-of-enum finding)", total)
+		}
+		if !strings.Contains(out, "newer nibs") || !strings.Contains(out, "upgrade nibs") {
+			t.Errorf("diagnostic should say the file was written by a newer nibs and to upgrade, got:\n%s", out)
+		}
+		if strings.Contains(out, "nibs migrate") {
+			t.Errorf("a newer-format value must not carry the legacy-value remediation, got:\n%s", out)
+		}
+	})
+
+	t.Run("plain check runs end to end through the CLI gate", func(t *testing.T) {
+		// A CLEAN newer-version store: checkCmd's os.Exit(1)-on-issues branch
+		// is not reached, so the full Cobra pipeline is safe to drive. This is
+		// the exemption pin: list/migrate refuse this store, check runs.
+		nibsDir := setupListCobraTest(t, map[string]string{
+			"chk-fut1--future.md": "---\nversion: 99\ntitle: Future\nstatus: todo\n---\n\nBody.\n",
+		})
+		t.Cleanup(resetCheckFlags)
+		resetCheckFlags()
+		out, err := runRootWith(t, "--nibs-path", nibsDir, "check")
+		if err != nil {
+			t.Fatalf("plain check on a newer-version store refused: %v\nout: %s", err, out)
+		}
+	})
+
+	t.Run("check --fix stays behind the newer-store refusal", func(t *testing.T) {
+		nibsDir := setupListCobraTest(t, map[string]string{
+			"chk-fut1--future.md": futureNib,
+		})
+		t.Cleanup(resetCheckFlags)
+		resetCheckFlags()
+		_, err := runRootWith(t, "--nibs-path", nibsDir, "check", "--fix")
+		if err == nil || !strings.Contains(err.Error(), "upgrade nibs") {
+			t.Fatalf("check --fix on a newer-version store should refuse with the upgrade guidance, got: %v", err)
+		}
+	})
+}
+
+// TestCheckLegacyValueRemediation pins the remediation text for out-of-enum
+// values against what `nibs migrate` can actually do, so check can never point
+// at a command that no-ops (the circular-remediation loop: check exits 1
+// naming migrate, migrate reports nothing pending, forever):
+//
+//   - a plain-scalar legacy value is exactly what the migration scan detects,
+//     so the migrate pointer stays;
+//   - the SAME legacy value in a spelling the header scan cannot see (a folded
+//     scalar) gets the re-save-or-hand-fix wording instead;
+//   - an arbitrary unknown value gets no migrate pointer at all — no step
+//     rewrites it.
+func TestCheckLegacyValueRemediation(t *testing.T) {
+	runCheckOn := func(t *testing.T, files map[string]string) string {
+		t.Helper()
+		app, _ := setupCheckTest(t, files)
+		var runErr error
+		out := captureStdout(t, func() { _, runErr = runCheck(app) })
+		if runErr != nil {
+			t.Fatalf("runCheck error = %v", runErr)
+		}
+		return out
+	}
+
+	t.Run("plain-scalar legacy value keeps the migrate pointer", func(t *testing.T) {
+		out := runCheckOn(t, map[string]string{
+			"chk-leg1--old.md": "---\nversion: 1\ntitle: Legacy\nstatus: todo\npriority: deferred\n---\n\nBody.\n",
+		})
+		if !strings.Contains(out, "nibs migrate") {
+			t.Errorf("plain-scalar deferred is migrate-fixable; the pointer must stay, got:\n%s", out)
+		}
+	})
+
+	t.Run("legacy value in a scan-invisible spelling says so", func(t *testing.T) {
+		// A folded scalar parses to the known legacy value "deferred", but the
+		// migration header scan reads the literal `>-` — the gate never fires
+		// and migrate reports nothing pending.
+		app, nibsDir := setupCheckTest(t, map[string]string{
+			"chk-fold1--folded.md": "---\nversion: 1\ntitle: Folded\nstatus: todo\npriority: >-\n    deferred\n---\n\nBody.\n",
+		})
+		// The circularity evidence: the scan genuinely cannot see it.
+		if got := pendingNames(t, nibsDir); len(got) != 0 {
+			t.Fatalf("scan sees the folded spelling (%v); fixture no longer reproduces the case", got)
+		}
+		var runErr error
+		out := captureStdout(t, func() { _, runErr = runCheck(app) })
+		if runErr != nil {
+			t.Fatalf("runCheck error = %v", runErr)
+		}
+		if !strings.Contains(out, "migration scan cannot see") || !strings.Contains(out, "plain scalar") {
+			t.Errorf("scan-invisible legacy value should get the re-save wording, got:\n%s", out)
+		}
+		if strings.Contains(out, "nibs migrate") {
+			t.Errorf("pointing at migrate here is the circular-remediation loop, got:\n%s", out)
+		}
+	})
+
+	t.Run("unknown value gets no migrate pointer", func(t *testing.T) {
+		out := runCheckOn(t, map[string]string{
+			"chk-odd1--odd.md": "---\nversion: 1\ntitle: Odd\nstatus: todo\npriority: made-up-nonsense\n---\n\nBody.\n",
+		})
+		if strings.Contains(out, "nibs migrate") {
+			t.Errorf("no migration step rewrites an unknown value; the pointer must go, got:\n%s", out)
+		}
+		if !strings.Contains(out, "by hand") {
+			t.Errorf("unknown value should say to repair the file by hand, got:\n%s", out)
+		}
+	})
+}
+
 // TestCheckJSONReportsLoadDiagnostics pins that both load-time conditions reach
 // the --json envelope. JSON is where they were most invisible before: the
 // stderr warning is not part of the document, so a scripted consumer had no way
