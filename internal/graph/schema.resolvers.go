@@ -21,7 +21,7 @@ func (r *mutationResolver) CreateNib(ctx context.Context, input model.CreateNibI
 		Slug:    nib.Slugify(input.Title),
 		Title:   input.Title,
 		Type:    "task", // default
-		Version: 1,
+		Version: nib.CurrentVersion,
 	}
 
 	// Optional fields with defaults documented in schema

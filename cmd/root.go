@@ -31,38 +31,40 @@ a full view of your project.`,
 		// Skip core initialization for commands that don't need App state.
 		// These commands must NOT call getApp(). If adding a command here,
 		// ensure it never accesses the App.
+		// migrate is skip-listed because it must run on the very stores this
+		// hook refuses below; it resolves config and the store root itself.
 		if cmd.Name() == "init" || cmd.Name() == "prime" || cmd.Name() == "version" ||
 			cmd.Name() == "catalog" || cmd.Name() == "cheat" || cmd.Name() == "upgrade" ||
+			cmd.Name() == "migrate" ||
 			(cmd.Name() == "query" && querySchemaOnly) {
 			return nil
 		}
 
-		var cfg *config.Config
-		var err error
-
-		// Load configuration (user config provides defaults in both paths)
-		if configPath != "" {
-			// Use explicit config path, with user config layered underneath
-			cfg, err = config.LoadFromExplicitPathWithUserConfig(configPath)
-			if err != nil {
-				return fmt.Errorf("loading config from %s: %w", configPath, err)
-			}
-		} else {
-			// Search upward for .nibs.yml, with user config providing defaults
-			cwd, err := os.Getwd()
-			if err != nil {
-				return fmt.Errorf("getting current directory: %w", err)
-			}
-			cfg, err = config.LoadWithUserConfig(cwd)
-			if err != nil {
-				return fmt.Errorf("loading config: %w", err)
-			}
+		cfg, err := loadCLIConfig()
+		if err != nil {
+			return err
 		}
 
 		// Determine nibs directory
 		root, err := resolveNibsPath(nibsPath, cfg)
 		if err != nil {
 			return err
+		}
+
+		// Refuse to touch a store with pending migrations (or one written by a
+		// newer nibs) BEFORE Load ever sees it: migration is explicit, so no
+		// command may operate on — let alone rewrite — an unmigrated store.
+		//
+		// Plain `nibs check` is exempt: it is the read-only diagnostic built
+		// for exactly the store states this refusal creates (migrate's own
+		// unclean-store refusal points at it), so gating it would send the
+		// user in a circle — migrate says "run check", check says "run
+		// migrate" — with no working diagnostic for the stores that most need
+		// one. Only --fix writes, so only --fix stays gated.
+		if cmd.Name() != "check" || checkFix {
+			if err := refuseIfMigrationPending(root, cfg); err != nil {
+				return err
+			}
 		}
 
 		core := nibcore.New(root, cfg)
@@ -93,6 +95,30 @@ func init() {
 	rootCmd.PersistentFlags().StringVar(&nibsPath, "nibs-path", "", "Path to data directory (overrides config and NIBS_PATH env var)")
 	rootCmd.PersistentFlags().StringVar(&configPath, "config", "", "Path to config file (default: searches upward for .nibs.yml)")
 	installFlagSuggestions(rootCmd)
+}
+
+// loadCLIConfig loads the project configuration the way every command sees it:
+// an explicit --config path when given, otherwise an upward search from the
+// cwd, with the user config layered underneath in both paths. Shared by
+// PersistentPreRunE and the skip-listed migrate command so the two can never
+// resolve a different config.
+func loadCLIConfig() (*config.Config, error) {
+	if configPath != "" {
+		cfg, err := config.LoadFromExplicitPathWithUserConfig(configPath)
+		if err != nil {
+			return nil, fmt.Errorf("loading config from %s: %w", configPath, err)
+		}
+		return cfg, nil
+	}
+	cwd, err := os.Getwd()
+	if err != nil {
+		return nil, fmt.Errorf("getting current directory: %w", err)
+	}
+	cfg, err := config.LoadWithUserConfig(cwd)
+	if err != nil {
+		return nil, fmt.Errorf("loading config: %w", err)
+	}
+	return cfg, nil
 }
 
 // resolveNibsPath determines the nibs data directory path.

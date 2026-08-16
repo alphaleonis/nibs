@@ -4,6 +4,8 @@ import (
 	"os"
 	"path/filepath"
 	"slices"
+	"sort"
+	"strings"
 
 	"github.com/alphaleonis/nibs/internal/nib"
 )
@@ -66,6 +68,19 @@ type DuplicateID struct {
 	Shadowed string `json:"shadowed"`
 }
 
+// InvalidEnum is a loaded nib carrying an out-of-enum field value (an unknown
+// status/type/priority/estimate — e.g. the legacy `priority: deferred` on a
+// store whose migration has not run, or a hand-edited typo). The value loads
+// exactly as written (see loadFromDisk's diagnostic warning) — this finding is
+// what makes it visible: filters, ranking and the web UI all assume enum
+// validity, and nothing else authoritatively re-checks it after load.
+type InvalidEnum struct {
+	NibID string `json:"nib_id"`
+	// Reason is ValidateEnums' message, naming the field, the value, and the
+	// accepted enum members.
+	Reason string `json:"reason"`
+}
+
 // LinkCheckResult contains all nib integrity issues found: the link issues
 // derivable from the loaded nibs, plus the load-time integrity issues that are
 // derivable only from what did NOT make it into the store.
@@ -80,6 +95,11 @@ type LinkCheckResult struct {
 	// loaded successfully and so has no evidence of either condition.
 	UnparseableFiles []UnparseableFile `json:"unparseable_files"`
 	DuplicateIDs     []DuplicateID     `json:"duplicate_ids"`
+
+	// Field integrity. Populated only by Core.CheckAllLinks — enum validity
+	// needs the config's enum tables, which the pure map function does not
+	// carry.
+	InvalidEnums []InvalidEnum `json:"invalid_enums"`
 }
 
 // HasIssues returns true if any issues were found.
@@ -89,7 +109,7 @@ func (r *LinkCheckResult) HasIssues() bool {
 
 // TotalIssues returns the total count of all issues.
 func (r *LinkCheckResult) TotalIssues() int {
-	return len(r.BrokenLinks) + len(r.SelfLinks) + len(r.Cycles) + len(r.BrokenDocuments) + r.LoadIssues()
+	return len(r.BrokenLinks) + len(r.SelfLinks) + len(r.Cycles) + len(r.BrokenDocuments) + r.LoadIssues() + r.EnumIssues()
 }
 
 // LoadIssues returns the count of load-time integrity issues alone. Callers
@@ -98,6 +118,12 @@ func (r *LinkCheckResult) TotalIssues() int {
 // link categories.
 func (r *LinkCheckResult) LoadIssues() int {
 	return len(r.UnparseableFiles) + len(r.DuplicateIDs)
+}
+
+// EnumIssues returns the count of out-of-enum field findings alone, for the
+// same render-them-apart reason as LoadIssues.
+func (r *LinkCheckResult) EnumIssues() int {
+	return len(r.InvalidEnums)
 }
 
 // CheckAllLinksInMap validates all links across all nibs.
@@ -132,6 +158,7 @@ func CheckAllLinksInMap(nibs map[string]*nib.Nib, projectRoot, configPrefix stri
 		BrokenDocuments:  []BrokenDocument{},
 		UnparseableFiles: []UnparseableFile{},
 		DuplicateIDs:     []DuplicateID{},
+		InvalidEnums:     []InvalidEnum{},
 	}
 
 	// Check for broken links and self-references
@@ -217,7 +244,36 @@ func (c *Core) CheckAllLinks() *LinkCheckResult {
 	result := CheckAllLinksInMap(c.nibs, projectRoot, c.configPrefix())
 	result.UnparseableFiles = append(result.UnparseableFiles, c.unparseableFiles...)
 	result.DuplicateIDs = append(result.DuplicateIDs, c.duplicateIDs...)
+
+	// Field integrity: re-validate enums against the config here (not in the
+	// pure map function, which carries no config). Values load as written —
+	// see loadFromDisk — so this is the report that makes an out-of-enum value
+	// actionable. Sorted by id: map order would shuffle the report run to run.
+	ids := make([]string, 0, len(c.nibs))
+	for id := range c.nibs {
+		ids = append(ids, id)
+	}
+	sort.Strings(ids)
+	for _, id := range ids {
+		if err := c.ValidateEnums(c.nibs[id]); err != nil {
+			result.InvalidEnums = append(result.InvalidEnums, InvalidEnum{NibID: id, Reason: err.Error()})
+		}
+	}
 	return result
+}
+
+// LoadDiagnostics returns the load-time integrity problems retained from the
+// last Load: files on disk that are NOT answerable through the store (skipped
+// unparseable files, and losers of id collisions). It exists for callers that
+// must know whether the loaded store is a faithful picture of the whole
+// directory before acting on it — the migrate command refuses to rewrite a
+// store that did not load cleanly, since migrating around a skipped file can
+// silently drop edges to it. Slices are copied out, matching CheckAllLinks.
+func (c *Core) LoadDiagnostics() ([]UnparseableFile, []DuplicateID) {
+	c.mu.RLock()
+	defer c.mu.RUnlock()
+	return append([]UnparseableFile(nil), c.unparseableFiles...),
+		append([]DuplicateID(nil), c.duplicateIDs...)
 }
 
 // FindCyclesInMap detects all cycles for a specific link type using DFS.
@@ -461,45 +517,49 @@ func (c *Core) RemoveLinksTo(targetID string) (int, error) {
 // canonical live-pointer / copy-on-write invariant at NibReader.GetSnapshot
 // (internal/graph/interfaces.go). Documents is made copy-on-write here too, for
 // the same discipline, so any future off-lock reader of it is safe as well.
-// skippedIDSet holds the ids whose file is present on disk but was not loaded
-// this pass, so a link naming one of them is unresolvable-for-now rather than
-// broken.
-type skippedIDSet map[string]bool
-
-// has reports whether linkID names a skipped nib, testing the id as written and
-// as prefixed — the same two spellings normalizeIDInMap resolves, so a
-// short-form link to a skipped nib is recognized too.
-func (s skippedIDSet) has(linkID, configPrefix string) bool {
-	if len(s) == 0 || linkID == "" {
-		return false
+// SkippedIDSet builds the set of ids whose file is present on disk but was
+// not loaded (unparseable/unreadable — see UnparseableFile), so a link naming
+// one of them is unresolvable-for-now rather than broken. Each skipped id is
+// entered under BOTH spellings a link may hold — as the filename derives it,
+// and with the configured prefix trimmed — the same two spellings
+// normalizeIDInMap resolves, so consumers test a link target with one plain
+// map probe of the spelling the file holds.
+//
+// It is the ONE builder for this rule: Core.FixBrokenLinks' keep-don't-erase
+// gate and cmd/check's report partition both build from it, so what --fix
+// preserves and what the report claims can never disagree by construction.
+func SkippedIDSet(unparseable []UnparseableFile, prefix string) map[string]bool {
+	if len(unparseable) == 0 {
+		return nil
 	}
-	return s[linkID] || (configPrefix != "" && s[configPrefix+linkID])
+	skipped := make(map[string]bool, 2*len(unparseable))
+	for _, uf := range unparseable {
+		if uf.NibID == "" {
+			continue // filename yields no id, so no link can name it
+		}
+		skipped[uf.NibID] = true
+		if short := strings.TrimPrefix(uf.NibID, prefix); short != "" {
+			skipped[short] = true
+		}
+	}
+	return skipped
 }
 
-// skippedIDsLocked returns the ids of files that failed to load this pass.
+// skippedIDsLocked returns SkippedIDSet for the files that failed THIS load.
 //
 // Their nibs are absent from c.nibs, so every link naming one resolves to
 // nothing and CheckAllLinks reports it broken. That report is correct — the
 // link genuinely cannot be followed right now — but "fixing" it by deletion is
 // not: the target is sitting on disk needing a YAML repair, and repairing it
-// does NOT bring back an edge already erased. migrateV0ToV1 takes the same
-// posture for the same reason (see the skipped-set note at the top of
-// migrate.go), deferring rather than destroying.
+// does NOT bring back an edge already erased. The migrate command takes the
+// same posture for the same reason, refusing to run while a file is
+// unparseable rather than destroying edges around it.
 //
 // This became urgent when `nibs check` started REPORTING unparseable files
 // (nibs-968i): the user is now told a file is broken, and the obvious next step
 // is --fix. Must be called with c.mu held.
-func (c *Core) skippedIDsLocked() skippedIDSet {
-	if len(c.unparseableFiles) == 0 {
-		return nil
-	}
-	skipped := make(skippedIDSet, len(c.unparseableFiles))
-	for _, uf := range c.unparseableFiles {
-		if uf.NibID != "" {
-			skipped[uf.NibID] = true
-		}
-	}
-	return skipped
+func (c *Core) skippedIDsLocked() map[string]bool {
+	return SkippedIDSet(c.unparseableFiles, c.configPrefix())
 }
 
 func (c *Core) FixBrokenLinks() (int, error) {
@@ -520,7 +580,7 @@ func (c *Core) FixBrokenLinks() (int, error) {
 		fixParent := false
 		if b.Parent != "" {
 			fullID, ok := normalizeIDInMap(c.nibs, b.Parent, configPrefix)
-			fixParent = (!ok && !skipped.has(b.Parent, configPrefix)) || fullID == b.ID
+			fixParent = (!ok && !skipped[b.Parent]) || fullID == b.ID
 		}
 
 		// Surviving blocked_by set (drop self-refs and links to missing nibs).
@@ -528,7 +588,7 @@ func (c *Core) FixBrokenLinks() (int, error) {
 		var newBlockedBy []string
 		for _, blocker := range b.BlockedBy {
 			fullID, ok := normalizeIDInMap(c.nibs, blocker, configPrefix)
-			if (!ok && !skipped.has(blocker, configPrefix)) || fullID == b.ID {
+			if (!ok && !skipped[blocker]) || fullID == b.ID {
 				continue
 			}
 			newBlockedBy = append(newBlockedBy, blocker)

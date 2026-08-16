@@ -753,7 +753,7 @@ func TestStartServerReflectsExternalFileEdits(t *testing.T) {
 	// learn about this is through filesystem watching.
 	root := app.Core.Root()
 	externalFile := filepath.Join(root, "ext-1--external.md")
-	content := "---\ntitle: External Nib\nstatus: todo\ntype: task\n---\n\nBody.\n"
+	content := "---\nversion: 1\ntitle: External Nib\nstatus: todo\ntype: task\n---\n\nBody.\n"
 	if err := os.WriteFile(externalFile, []byte(content), 0644); err != nil {
 		t.Fatalf("failed to write external nib file: %v", err)
 	}

@@ -446,10 +446,10 @@ func setupPlanCobraTest(t *testing.T, files map[string]string) string {
 // so ParseFilename treats the prefix segment (e.g. `e1`, `t1`) as the ID.
 func planFixtureFiles() map[string]string {
 	return map[string]string{
-		"e1--my-epic.md":     "---\ntitle: My Epic\nstatus: in-progress\ntype: epic\n---\n",
-		"t1--first-task.md":  "---\ntitle: First Task\nstatus: todo\ntype: task\nparent: e1\norder: a0\n---\n",
-		"t2--second-task.md": "---\ntitle: Second Task\nstatus: in-progress\ntype: task\nparent: e1\norder: a1\n---\n",
-		"t3--third-task.md":  "---\ntitle: Third Task\nstatus: completed\ntype: task\nparent: e1\norder: a2\n---\n",
+		"e1--my-epic.md":     "---\nversion: 1\ntitle: My Epic\nstatus: in-progress\ntype: epic\n---\n",
+		"t1--first-task.md":  "---\nversion: 1\ntitle: First Task\nstatus: todo\ntype: task\nparent: e1\norder: a0\n---\n",
+		"t2--second-task.md": "---\nversion: 1\ntitle: Second Task\nstatus: in-progress\ntype: task\nparent: e1\norder: a1\n---\n",
+		"t3--third-task.md":  "---\nversion: 1\ntitle: Third Task\nstatus: completed\ntype: task\nparent: e1\norder: a2\n---\n",
 	}
 }
 
@@ -512,11 +512,11 @@ func TestPlanCommand_JSON_FlagDoesNotChangeShape(t *testing.T) {
 // exclude-closed rule and list/rel's -s open include-list disagree.
 func planOpenFixtureFiles() map[string]string {
 	return map[string]string{
-		"e1--my-epic.md":        "---\ntitle: My Epic\nstatus: in-progress\ntype: epic\n---\n",
-		"t1--todo-task.md":      "---\ntitle: Todo Task\nstatus: todo\ntype: task\nparent: e1\norder: a0\n---\n",
-		"t2--done-task.md":      "---\ntitle: Done Task\nstatus: completed\ntype: task\nparent: e1\norder: a1\n---\n",
-		"t3--deferred-task.md":  "---\ntitle: Deferred Task\nstatus: deferred\ntype: task\nparent: e1\norder: a2\n---\n",
-		"t4--no-status-task.md": "---\ntitle: No Status Task\ntype: task\nparent: e1\norder: a3\n---\n",
+		"e1--my-epic.md":        "---\nversion: 1\ntitle: My Epic\nstatus: in-progress\ntype: epic\n---\n",
+		"t1--todo-task.md":      "---\nversion: 1\ntitle: Todo Task\nstatus: todo\ntype: task\nparent: e1\norder: a0\n---\n",
+		"t2--done-task.md":      "---\nversion: 1\ntitle: Done Task\nstatus: completed\ntype: task\nparent: e1\norder: a1\n---\n",
+		"t3--deferred-task.md":  "---\nversion: 1\ntitle: Deferred Task\nstatus: deferred\ntype: task\nparent: e1\norder: a2\n---\n",
+		"t4--no-status-task.md": "---\nversion: 1\ntitle: No Status Task\ntype: task\nparent: e1\norder: a3\n---\n",
 	}
 }
 

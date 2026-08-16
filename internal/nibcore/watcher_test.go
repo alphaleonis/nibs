@@ -6,6 +6,7 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -226,6 +227,70 @@ func TestRestartWatchingDoesNotDuplicateEvents(t *testing.T) {
 // so the flag is set directly instead of via StartWatching: a real fsnotify loop
 // would compete to deliver these same events with an uncontrolled order and
 // defeat the point of the test.
+
+// TestWatcherWarnsOnLegacyOrNewerArrival pins the one visible breadcrumb for
+// the live-serve ingress window: the pre-run migration gate fires once at
+// process start, so a legacy or newer-format file arriving through the
+// watcher (a `git pull` in the separate .nibs repo) loads as written into a
+// LIVE store — and must log ONE warning saying so, because nothing else
+// signals the state until `nibs migrate` runs. A current-format arrival must
+// stay silent (the control, or the log would cry wolf on every save).
+func TestWatcherWarnsOnLegacyOrNewerArrival(t *testing.T) {
+	tests := []struct {
+		name     string
+		filename string
+		content  string
+		want     string // "" = no warning expected
+	}{
+		{
+			name:     "v0 file warns legacy",
+			filename: "leg1--old.md",
+			content:  "---\ntitle: Old\nstatus: todo\nblocking:\n    - other\n---\n\nBody.\n",
+			want:     "legacy shape",
+		},
+		{
+			name:     "deferred priority warns legacy",
+			filename: "def1--set-aside.md",
+			content:  "---\nversion: 1\ntitle: Set Aside\nstatus: todo\npriority: deferred\n---\n\nBody.\n",
+			want:     "legacy shape",
+		},
+		{
+			name:     "newer version warns upgrade",
+			filename: "fut1--future.md",
+			content:  "---\nversion: 99\ntitle: Future\nstatus: todo\n---\n\nBody.\n",
+			want:     "newer than this build",
+		},
+		{
+			name:     "current shape stays silent",
+			filename: "cur1--now.md",
+			content:  "---\nversion: 1\ntitle: Now\nstatus: todo\n---\n\nBody.\n",
+			want:     "",
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			core, nibsDir := setupTestCore(t)
+			setWatching(core)
+			var warnings strings.Builder
+			core.SetWarnWriter(&warnings)
+
+			path := filepath.Join(nibsDir, tt.filename)
+			writeNibFileAtomic(t, path, tt.content)
+			core.handleChanges(map[string]fsnotify.Op{path: fsnotify.Create})
+
+			got := warnings.String()
+			if tt.want == "" {
+				if strings.Contains(got, "legacy") || strings.Contains(got, "newer") {
+					t.Errorf("current-format arrival logged a shape warning:\n%s", got)
+				}
+				return
+			}
+			if !strings.Contains(got, tt.want) || !strings.Contains(got, tt.filename) {
+				t.Errorf("arrival warning should contain %q and name %s, got:\n%s", tt.want, tt.filename, got)
+			}
+		})
+	}
+}
 
 // watchingCore returns a core with a nib created and a filename, with the
 // watching flag forced on (no real watch loop) so handleChanges runs.

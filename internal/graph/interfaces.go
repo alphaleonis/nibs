@@ -77,9 +77,8 @@ type NibReader interface {
 	//     because the canonical rule guarantees those fields are never rewritten in
 	//     place on a published pointer (Core.Update, the watcher's create/write
 	//     branch, and — as of nib nibs-pyei — RemoveLinksTo/FixBrokenLinks all
-	//     install a fresh pointer). migrateV0ToV1 does edit BlockedBy/Blocking/
-	//     Version in place, but only on fresh, not-yet-published pointers while c.mu
-	//     is held during loadFromDisk, so no off-lock reader can observe it.
+	//     install a fresh pointer; MigrateV0ToV1 stages every change on clones
+	//     and reinstalls them the same way).
 	//
 	// Unlike Get (live pointer) the result is race-safe to read from later; ok is
 	// false when the nib is absent.

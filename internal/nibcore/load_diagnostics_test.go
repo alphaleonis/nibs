@@ -121,6 +121,65 @@ func TestCheckAllLinksReportsUnparseableFile(t *testing.T) {
 	}
 }
 
+// TestLoadAndCheckReportOutOfEnumValues pins the authoritative backstop behind
+// the migration gate's header-scan heuristic: an out-of-enum field value (the
+// legacy `priority: deferred` slipping past the gate, a hand-edited typo)
+// loads EXACTLY AS WRITTEN — no in-memory normalization, which would diverge
+// the etag from the on-disk bytes — but never silently: Load warns by nib id,
+// and CheckAllLinks reports it so `nibs check` makes it actionable.
+func TestLoadAndCheckReportOutOfEnumValues(t *testing.T) {
+	core, nibsDir := mustLoadPrefixedCore(t)
+	legacy := "---\nversion: 1\ntitle: Legacy\nstatus: todo\ntype: task\npriority: deferred\n---\n\nBody.\n"
+	writeNibFile(t, nibsDir, "nibs-leg1--legacy.md", legacy)
+	writeNibFile(t, nibsDir, "nibs-good1--ok.md", diagValidNib)
+
+	var warnings strings.Builder
+	core.SetWarnWriter(&warnings)
+	if err := core.Load(); err != nil {
+		t.Fatalf("Load() error = %v, want nil", err)
+	}
+
+	// The load warning names the nib and the offending value.
+	if w := warnings.String(); !strings.Contains(w, "nibs-leg1") || !strings.Contains(w, "deferred") {
+		t.Errorf("load warning should name the nib and value, got:\n%s", w)
+	}
+
+	// Diagnostics, not normalization: the value is in memory as written.
+	b, err := core.Get("nibs-leg1")
+	if err != nil {
+		t.Fatalf("Get(nibs-leg1): %v", err)
+	}
+	if b.Priority != "deferred" {
+		t.Errorf("Priority = %q, want the on-disk %q — diagnostics must not normalize", b.Priority, "deferred")
+	}
+
+	result := core.CheckAllLinks()
+	if len(result.InvalidEnums) != 1 {
+		t.Fatalf("InvalidEnums = %+v, want exactly 1 entry", result.InvalidEnums)
+	}
+	got := result.InvalidEnums[0]
+	if got.NibID != "nibs-leg1" {
+		t.Errorf("InvalidEnums[0].NibID = %q, want %q", got.NibID, "nibs-leg1")
+	}
+	if !strings.Contains(got.Reason, "deferred") {
+		t.Errorf("InvalidEnums[0].Reason = %q, want it to name the value", got.Reason)
+	}
+	if !result.HasIssues() || result.TotalIssues() != 1 {
+		t.Errorf("TotalIssues() = %d, want 1 (result: %+v)", result.TotalIssues(), result)
+	}
+
+	// False-positive guard: valid enum values report nothing.
+	if err := os.Remove(filepath.Join(nibsDir, "nibs-leg1--legacy.md")); err != nil {
+		t.Fatal(err)
+	}
+	if err := core.Load(); err != nil {
+		t.Fatalf("reload: %v", err)
+	}
+	if result := core.CheckAllLinks(); len(result.InvalidEnums) != 0 {
+		t.Errorf("InvalidEnums = %+v after removing the legacy file, want none", result.InvalidEnums)
+	}
+}
+
 // TestCheckAllLinksReportsDuplicateID pins the second half: two files claiming
 // one id means one silently shadows the other, and which one wins depends on
 // the lexical walk order. The report must name both files and which one was
@@ -292,9 +351,9 @@ func TestCheckAllLinksLoadDiagnosticsAreCopies(t *testing.T) {
 // bring back. In one run the command printed "Cannot auto-fix unparseable nib
 // file …" and "removed broken link parent:…" together.
 //
-// migrateV0ToV1 already takes the opposite posture for exactly this hazard
-// (see the skipped-set note at the top of migrate.go), deferring rather than
-// erasing. This pins the same rule for FixBrokenLinks.
+// The migrate command takes the same posture for the same hazard: it refuses
+// to run at all while a file is unparseable, naming it instead of guessing.
+// This pins the keep-don't-erase rule for FixBrokenLinks.
 func TestFixBrokenLinksKeepsLinksToSkippedNibs(t *testing.T) {
 	core, nibsDir := mustLoadPrefixedCore(t)
 
@@ -357,5 +416,34 @@ Body.
 	}
 	if !strings.Contains(string(raw), "parent: nibs-tgt1") {
 		t.Errorf("child file lost its parent line:\n%s", raw)
+	}
+}
+
+// TestSkippedIDSet pins the one shared builder for "which ids are merely
+// skipped this load": both spellings of each skipped id — as the filename
+// derives it and prefix-trimmed — answer true to a plain map probe, so every
+// consumer (FixBrokenLinks' keep rule, check's report partition) tests a link
+// target with a single lookup of the spelling the file holds.
+func TestSkippedIDSet(t *testing.T) {
+	unparseable := []UnparseableFile{
+		{NibID: "nibs-abc", Path: "nibs-abc--broken.md", Reason: "boom"},
+		{NibID: "bare", Path: "bare--broken.md", Reason: "boom"},
+		{NibID: "", Path: "noid.md", Reason: "boom"}, // filename yields no id
+	}
+	set := SkippedIDSet(unparseable, "nibs-")
+
+	for _, want := range []string{"nibs-abc", "abc", "bare"} {
+		if !set[want] {
+			t.Errorf("SkippedIDSet missing %q: %v", want, set)
+		}
+	}
+	for _, wantAbsent := range []string{"", "nibs-bare", "other"} {
+		if set[wantAbsent] {
+			t.Errorf("SkippedIDSet wrongly contains %q: %v", wantAbsent, set)
+		}
+	}
+
+	if got := SkippedIDSet(nil, "nibs-"); len(got) != 0 {
+		t.Errorf("SkippedIDSet(nil) = %v, want empty", got)
 	}
 }

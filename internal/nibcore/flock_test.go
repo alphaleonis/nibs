@@ -87,6 +87,34 @@ func TestAcquireFileLockReleaseAllowsReacquire(t *testing.T) {
 	}
 }
 
+// TestStoreLockReleaseIdempotent pins Release's tolerated double-call: this
+// package's own tests pair loadMigrationCore's t.Cleanup release with an
+// explicit early Release (TestMigrationMethodsRequireLockToken exercises the
+// released-token refusal), so teardown re-releases the same token. The second
+// call must be a no-op returning nil rather than running the platform release
+// closure against a closed descriptor (EBADF on Unix), and the token must
+// keep proving nothing: released stays set, so requireStoreLock still refuses
+// it (pinned by TestMigrationMethodsRequireLockToken).
+func TestStoreLockReleaseIdempotent(t *testing.T) {
+	nibsRoot := filepath.Join(t.TempDir(), NibsDir)
+	if err := os.MkdirAll(nibsRoot, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	lock, err := AcquireStoreLock(nibsRoot)
+	if err != nil {
+		t.Fatalf("AcquireStoreLock: %v", err)
+	}
+	if err := lock.Release(); err != nil {
+		t.Fatalf("first Release: %v", err)
+	}
+	if err := lock.Release(); err != nil {
+		t.Errorf("second Release = %v, want nil (idempotent no-op)", err)
+	}
+	if !lock.released {
+		t.Error("second Release cleared the released flag; the token must keep proving nothing")
+	}
+}
+
 // TestUpdateAcquiresWriteLock proves the write path participates in the advisory
 // lock: while another holder owns the lock, Core.Update blocks, and it proceeds
 // once the lock is released. Without the per-op lock in Update, the first select

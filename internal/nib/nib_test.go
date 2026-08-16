@@ -80,11 +80,13 @@ Paragraph text.`,
 			expectedBody:   "\n# Header\n\n- Item 1\n- Item 2\n\nParagraph text.",
 		},
 		{
-			name:           "plain text without frontmatter",
-			input:          `Just plain text without any YAML frontmatter.`,
-			expectedTitle:  "",
-			expectedStatus: "",
-			expectedBody:   "Just plain text without any YAML frontmatter.",
+			// A fence-less document is NOT a nib shape: parsing it into an
+			// empty v0 nib is how a README became a phantom store row that an
+			// ungated `nibs set` rewrote into a nib render. Parse refuses it
+			// (see TestParseRequiresFrontMatter for the full boundary).
+			name:    "plain text without frontmatter",
+			input:   `Just plain text without any YAML frontmatter.`,
+			wantErr: true,
 		},
 	}
 
@@ -109,6 +111,74 @@ Paragraph text.`,
 			}
 			if nib.Body != tt.expectedBody {
 				t.Errorf("Body = %q, want %q", nib.Body, tt.expectedBody)
+			}
+		})
+	}
+}
+
+// TestParseRequiresFrontMatter pins the classification boundary Parse
+// enforces: a nib file OPENS with a front-matter fence, spelled the way the
+// migration header scan reads it (cmd/migrate's readFrontMatterHeader), so
+// every consumer — Core.Load, the watcher, computeStoredETag, the scans —
+// shares ONE definition of "not a nib file". Anything else parsed into an
+// empty v0 nib before, which turned READMEs into phantom store rows and let
+// migrate/set rewrite documents into nib renders.
+//
+// The fence rule is TrimSpace-equivalence with the fence token: a line is a
+// fence iff strings.TrimSpace(line) equals `---` or `---yaml`. That rule is
+// pinned to the frontmatter library, whose line handling is a fixed
+// bytes.TrimSpace — whitespace-padded fences parse there and cannot be made
+// stricter — so TrimSpace everywhere is the only rule all four comparisons
+// (Parse opening, scan opening, scan closing, library closing) can share.
+func TestParseRequiresFrontMatter(t *testing.T) {
+	tests := []struct {
+		name    string
+		input   string
+		wantErr string // substring of the expected error; empty = must parse
+	}{
+		{"empty file", "", "no front matter"},
+		{"plain text", "Just plain text.\n", "no front matter"},
+		// A BOM hides the fence from the scan's line compare, so it hides it
+		// from Parse too — the two must agree on what is a nib. (TrimSpace
+		// does not trim a BOM: U+FEFF is not Unicode whitespace.)
+		{"BOM before the fence", "\uFEFF---\nversion: 1\ntitle: T\nstatus: todo\n---\n\nBody.\n", "no front matter"},
+		{"leading blank line before the fence", "\n---\ntitle: T\nstatus: todo\n---\n\nBody.\n", "no front matter"},
+		// An opening fence that never closes is a torn/half-written file, not
+		// an empty nib with the whole document as its body.
+		{"only an opening fence", "---\n", "never closed"},
+		{"opening fence without trailing newline", "---", "never closed"},
+		{"unterminated front matter", "---\ntitle: T\nstatus: todo\n\nBody.\n", "never closed"},
+		// Genuinely fenced content keeps its contract.
+		{"empty front matter is still a nib", "---\n---\n", ""},
+		{"crlf fences are still a nib", "---\r\ntitle: T\r\nstatus: todo\r\n---\r\n\r\nBody.\r\n", ""},
+		{"---yaml fence is still a nib", "---yaml\ntitle: T\nstatus: todo\n---\n\nBody.\n", ""},
+		// Whitespace-padded fences: the library's TrimSpace line handling
+		// accepts every one of these, so Parse must too — a stricter pre-check
+		// silently demoted hand-edited nibs to load diagnostics.
+		{"space-padded opening fence is still a nib", "---   \ntitle: T\nstatus: todo\n---\n\nBody.\n", ""},
+		{"leading-space opening fence is still a nib", " ---\ntitle: T\nstatus: todo\n---\n\nBody.\n", ""},
+		{"tab-padded opening fence is still a nib", "---\t\ntitle: T\nstatus: todo\n---\n\nBody.\n", ""},
+		{"crlf opening fence with trailing spaces is still a nib", "---  \r\ntitle: T\r\nstatus: todo\r\n---\r\n\r\nBody.\r\n", ""},
+		{"---yaml fence with trailing spaces is still a nib", "---yaml  \ntitle: T\nstatus: todo\n---\n\nBody.\n", ""},
+		{"space-padded closing fence still closes", "---\ntitle: T\nstatus: todo\n---  \n\nBody.\n", ""},
+		// The trimmed line must EQUAL the fence token, not merely start with
+		// it: dash runs are horizontal rules / conflict markers, not fences.
+		{"---- is not a fence", "----\ntitle: T\nstatus: todo\n---\n\nBody.\n", "no front matter"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			b, err := Parse(strings.NewReader(tt.input))
+			if tt.wantErr == "" {
+				if err != nil {
+					t.Fatalf("Parse() error: %v", err)
+				}
+				return
+			}
+			if err == nil {
+				t.Fatalf("Parse() succeeded (nib %+v), want an error containing %q", b, tt.wantErr)
+			}
+			if !strings.Contains(err.Error(), tt.wantErr) {
+				t.Errorf("Parse() error = %q, want it to contain %q", err, tt.wantErr)
 			}
 		})
 	}
@@ -206,22 +276,21 @@ priority: high
 			expectedPriority: "high",
 		},
 		{
-			// Migration: "deferred" was removed as a priority (it is now a
-			// status). A legacy file carrying priority: deferred must load
-			// without error, normalized to "low".
-			name: "deferred priority migrates to low",
+			// The legacy "deferred" priority loads exactly as written: Parse
+			// never rewrites content. Mapping it to "low" is `nibs migrate`'s
+			// priority-deferred step, an on-disk rewrite — not a parse concern.
+			name: "legacy deferred priority passes through unchanged",
 			input: `---
 title: Later Task
 status: draft
 priority: deferred
 ---`,
-			expectedPriority: "low",
+			expectedPriority: "deferred",
 		},
 		{
-			// Pins the migration to the single literal "deferred": any other
-			// (even invalid) priority must pass through Parse unmodified, so a
-			// future edit can't silently widen the normalization.
-			name: "non-deferred invalid priority passes through unchanged",
+			// Any other (even invalid) priority also passes through Parse
+			// unmodified: priority is not validated at parse time.
+			name: "invalid priority passes through unchanged",
 			input: `---
 title: Odd Task
 status: todo
@@ -2530,7 +2599,7 @@ version: 0
 func TestBlockingNotPersistedForV1Nibs(t *testing.T) {
 	// Single-side blocking: a normal v1 nib never has the legacy Blocking field
 	// set (resolvers store the relationship on targets' blocked_by, and
-	// migrateV0ToV1 clears Blocking before persisting), so with omitempty it is
+	// MigrateV0ToV1 clears Blocking before persisting), so with omitempty it is
 	// absent from the render. (When Blocking IS explicitly set — only a legacy v0
 	// file parsed straight from disk — it now round-trips; see
 	// TestBlockingRoundtrip.)
@@ -2757,42 +2826,13 @@ func TestNibClone(t *testing.T) {
 		}
 	})
 
-	t.Run("clone clears the priorityMigrated flag", func(t *testing.T) {
-		// Parsing a legacy `priority: deferred` nib normalizes it to `low` and
-		// sets the load-boundary-only priorityMigrated flag. Clone() must clear
-		// that flag so a stale `true` never rides along through Update cycles
-		// (it is meaningful only on a freshly-parsed nib, consumed by the loader).
-		parsed, err := Parse(strings.NewReader(`---
-version: 1
-title: Legacy Deferred
-status: todo
-priority: deferred
----
-`))
-		if err != nil {
-			t.Fatalf("Parse() error: %v", err)
-		}
-		if !parsed.PriorityMigrated() {
-			t.Fatal("parsed.PriorityMigrated() = false, want true after parsing priority: deferred")
-		}
-
-		cloned := parsed.Clone()
-		if cloned.PriorityMigrated() {
-			t.Error("cloned.PriorityMigrated() = true, want false (Clone must clear the flag)")
-		}
-		// The normalized value itself must survive the clone.
-		if cloned.Priority != "low" {
-			t.Errorf("cloned.Priority = %q, want %q", cloned.Priority, "low")
-		}
-	})
-
 	t.Run("clone carries the raw link spelling", func(t *testing.T) {
-		// rawLinks is the other transient, parse-set field — but its semantics are
-		// the INVERSE of priorityMigrated's. Canonicalization re-resolves a stored
-		// nib from the file's spelling and applies the result to a Clone, so a
-		// shadow that did not survive cloning would leave every later sweep reading
-		// its own output. It must therefore ride along, deep-copied so a mutated
-		// clone cannot corrupt the original's recorded spelling.
+		// rawLinks is a transient, parse-set field that must SURVIVE cloning.
+		// Canonicalization re-resolves a stored nib from the file's spelling and
+		// applies the result to a Clone, so a shadow that did not survive
+		// cloning would leave every later sweep reading its own output. It must
+		// therefore ride along, deep-copied so a mutated clone cannot corrupt
+		// the original's recorded spelling.
 		parsed, err := Parse(strings.NewReader(`---
 version: 1
 title: Short Form Links

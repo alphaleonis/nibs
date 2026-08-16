@@ -118,36 +118,36 @@ func statesRelDefault(text string) bool {
 //   - e5 mentions a1 (inbound to a1)
 //   - f6 mentions a1 (inbound, scrapped)
 var relFixture = map[string]string{
-	"a1--alpha.md":   "---\ntitle: Alpha\nstatus: todo\ntype: task\n---\n\nSee #b2 and #c3 and #d4.\n",
-	"b2--beta.md":    "---\ntitle: Beta\nstatus: todo\ntype: task\npriority: high\n---\n\nNo refs.\n",
-	"c3--gamma.md":   "---\ntitle: Gamma\nstatus: completed\ntype: task\npriority: low\n---\n\nNo refs.\n",
-	"d4--delta.md":   "---\ntitle: Delta\nstatus: todo\ntype: bug\npriority: high\n---\n\nNo refs.\n",
-	"e5--epsilon.md": "---\ntitle: Epsilon\nstatus: todo\ntype: task\n---\n\nRefs #a1.\n",
-	"f6--zeta.md":    "---\ntitle: Zeta\nstatus: scrapped\ntype: task\n---\n\nRefs #a1.\n",
+	"a1--alpha.md":   "---\nversion: 1\ntitle: Alpha\nstatus: todo\ntype: task\n---\n\nSee #b2 and #c3 and #d4.\n",
+	"b2--beta.md":    "---\nversion: 1\ntitle: Beta\nstatus: todo\ntype: task\npriority: high\n---\n\nNo refs.\n",
+	"c3--gamma.md":   "---\nversion: 1\ntitle: Gamma\nstatus: completed\ntype: task\npriority: low\n---\n\nNo refs.\n",
+	"d4--delta.md":   "---\nversion: 1\ntitle: Delta\nstatus: todo\ntype: bug\npriority: high\n---\n\nNo refs.\n",
+	"e5--epsilon.md": "---\nversion: 1\ntitle: Epsilon\nstatus: todo\ntype: task\n---\n\nRefs #a1.\n",
+	"f6--zeta.md":    "---\nversion: 1\ntitle: Zeta\nstatus: scrapped\ntype: task\n---\n\nRefs #a1.\n",
 }
 
 // hierarchyFixture: a parent epic with three children. child2 mentions child1.
 var hierarchyFixture = map[string]string{
-	"p1--parent-epic.md": "---\ntitle: Parent Epic\nstatus: in-progress\ntype: epic\n---\n\nTop level.\n",
-	"c1--child-one.md":   "---\ntitle: Child One\nstatus: todo\ntype: task\nparent: p1\norder: a0\n---\n\nFirst child.\n",
-	"c2--child-two.md":   "---\ntitle: Child Two\nstatus: todo\ntype: task\nparent: p1\norder: a1\n---\n\nDepends on #c1.\n",
-	"c3--child-three.md": "---\ntitle: Child Three\nstatus: completed\ntype: task\nparent: p1\norder: a2\n---\n\nFinished.\n",
-	"orphan--loner.md":   "---\ntitle: Loner\nstatus: todo\ntype: task\n---\n\nNo parent.\n",
+	"p1--parent-epic.md": "---\nversion: 1\ntitle: Parent Epic\nstatus: in-progress\ntype: epic\n---\n\nTop level.\n",
+	"c1--child-one.md":   "---\nversion: 1\ntitle: Child One\nstatus: todo\ntype: task\nparent: p1\norder: a0\n---\n\nFirst child.\n",
+	"c2--child-two.md":   "---\nversion: 1\ntitle: Child Two\nstatus: todo\ntype: task\nparent: p1\norder: a1\n---\n\nDepends on #c1.\n",
+	"c3--child-three.md": "---\nversion: 1\ntitle: Child Three\nstatus: completed\ntype: task\nparent: p1\norder: a2\n---\n\nFinished.\n",
+	"orphan--loner.md":   "---\nversion: 1\ntitle: Loner\nstatus: todo\ntype: task\n---\n\nNo parent.\n",
 }
 
 // blockingFixture: src is blocked by tgt1 (todo) and tgt2 (todo/high).
 var blockingFixture = map[string]string{
-	"src--source.md":   "---\ntitle: Src\nstatus: todo\ntype: task\nblocked_by: [tgt1, tgt2]\n---\n\nBlocked work.\n",
-	"tgt1--target1.md": "---\ntitle: Target1\nstatus: todo\ntype: task\n---\n\nPrereq 1.\n",
-	"tgt2--target2.md": "---\ntitle: Target2\nstatus: todo\ntype: task\npriority: high\n---\n\nPrereq 2.\n",
+	"src--source.md":   "---\nversion: 1\ntitle: Src\nstatus: todo\ntype: task\nblocked_by: [tgt1, tgt2]\n---\n\nBlocked work.\n",
+	"tgt1--target1.md": "---\nversion: 1\ntitle: Target1\nstatus: todo\ntype: task\n---\n\nPrereq 1.\n",
+	"tgt2--target2.md": "---\nversion: 1\ntitle: Target2\nstatus: todo\ntype: task\npriority: high\n---\n\nPrereq 2.\n",
 }
 
 // ancestryFixture: root → mid → leaf chain for ancestor/descendant tests.
 var ancestryFixture = map[string]string{
-	"root--r.md":   "---\ntitle: Root\nstatus: in-progress\ntype: milestone\n---\n",
-	"mid--m.md":    "---\ntitle: Mid\nstatus: in-progress\ntype: epic\nparent: root\norder: a0\n---\n",
-	"leaf--l.md":   "---\ntitle: Leaf\nstatus: todo\ntype: task\nparent: mid\norder: a0\n---\n",
-	"grand--gl.md": "---\ntitle: Grandleaf\nstatus: todo\ntype: task\nparent: leaf\norder: a0\n---\n",
+	"root--r.md":   "---\nversion: 1\ntitle: Root\nstatus: in-progress\ntype: milestone\n---\n",
+	"mid--m.md":    "---\nversion: 1\ntitle: Mid\nstatus: in-progress\ntype: epic\nparent: root\norder: a0\n---\n",
+	"leaf--l.md":   "---\nversion: 1\ntitle: Leaf\nstatus: todo\ntype: task\nparent: mid\norder: a0\n---\n",
+	"grand--gl.md": "---\nversion: 1\ntitle: Grandleaf\nstatus: todo\ntype: task\nparent: leaf\norder: a0\n---\n",
 }
 
 // relEnvelope is the {nibs,count,truncated} shape rel and list share. The
@@ -326,10 +326,10 @@ func TestRelCommand_Siblings_WithParent_JSON(t *testing.T) {
 
 func TestRelCommand_Siblings_NoParent_JSON(t *testing.T) {
 	files := map[string]string{
-		"root1--r1.md": "---\ntitle: R1\nstatus: todo\ntype: task\n---\n",
-		"root2--r2.md": "---\ntitle: R2\nstatus: todo\ntype: task\n---\n",
-		"root3--r3.md": "---\ntitle: R3\nstatus: todo\ntype: task\n---\n",
-		"child--c.md":  "---\ntitle: C\nstatus: todo\ntype: task\nparent: root1\n---\n",
+		"root1--r1.md": "---\nversion: 1\ntitle: R1\nstatus: todo\ntype: task\n---\n",
+		"root2--r2.md": "---\nversion: 1\ntitle: R2\nstatus: todo\ntype: task\n---\n",
+		"root3--r3.md": "---\nversion: 1\ntitle: R3\nstatus: todo\ntype: task\n---\n",
+		"child--c.md":  "---\nversion: 1\ntitle: C\nstatus: todo\ntype: task\nparent: root1\n---\n",
 	}
 	nibsDir := setupRelCobraTest(t, files)
 	out := runRelJSON(t, "--nibs-path", nibsDir, "rel", "root1", "--rel", "siblings", "--json")
@@ -352,9 +352,9 @@ func TestRelCommand_MultiRel_UnionDedup_JSON(t *testing.T) {
 	// c1's mentions-out {c2} and siblings {c2} both include c2 — the union
 	// must dedup it to a single entry.
 	files := map[string]string{
-		"p--p.md":   "---\ntitle: P\nstatus: in-progress\ntype: epic\n---\n",
-		"c1--c1.md": "---\ntitle: C1\nstatus: todo\ntype: task\nparent: p\norder: a0\n---\n\nRefs #c2.\n",
-		"c2--c2.md": "---\ntitle: C2\nstatus: todo\ntype: task\nparent: p\norder: a1\n---\n",
+		"p--p.md":   "---\nversion: 1\ntitle: P\nstatus: in-progress\ntype: epic\n---\n",
+		"c1--c1.md": "---\nversion: 1\ntitle: C1\nstatus: todo\ntype: task\nparent: p\norder: a0\n---\n\nRefs #c2.\n",
+		"c2--c2.md": "---\nversion: 1\ntitle: C2\nstatus: todo\ntype: task\nparent: p\norder: a1\n---\n",
 	}
 	nibsDir := setupRelCobraTest(t, files)
 	out := runRelJSON(t, "--nibs-path", nibsDir, "rel", "c1", "--rel", "mentions-out,siblings", "--json")
@@ -452,10 +452,10 @@ func TestRelCommand_Children_OrderTopo(t *testing.T) {
 	// Edges come from `blocked_by` declarations only.
 	// Input order: y (a0), x (a1), z (a2). y.blocked_by=[x]. So topo: x before y.
 	files := map[string]string{
-		"p--p.md": "---\ntitle: P\nstatus: in-progress\ntype: epic\n---\n",
-		"y--y.md": "---\ntitle: Y\nstatus: todo\ntype: task\nparent: p\norder: a0\nblocked_by:\n  - x\n---\n",
-		"x--x.md": "---\ntitle: X\nstatus: todo\ntype: task\nparent: p\norder: a1\n---\n",
-		"z--z.md": "---\ntitle: Z\nstatus: todo\ntype: task\nparent: p\norder: a2\n---\n",
+		"p--p.md": "---\nversion: 1\ntitle: P\nstatus: in-progress\ntype: epic\n---\n",
+		"y--y.md": "---\nversion: 1\ntitle: Y\nstatus: todo\ntype: task\nparent: p\norder: a0\nblocked_by:\n  - x\n---\n",
+		"x--x.md": "---\nversion: 1\ntitle: X\nstatus: todo\ntype: task\nparent: p\norder: a1\n---\n",
+		"z--z.md": "---\nversion: 1\ntitle: Z\nstatus: todo\ntype: task\nparent: p\norder: a2\n---\n",
 	}
 	nibsDir := setupRelCobraTest(t, files)
 	out := runRelJSON(t, "--nibs-path", nibsDir, "rel", "p", "--rel", "children", "--order", "topo", "--json")
@@ -474,10 +474,10 @@ func TestRelCommand_Children_OrderTopo(t *testing.T) {
 
 func TestRelCommand_Children_OrderTopo_BlockedByEdges(t *testing.T) {
 	files := map[string]string{
-		"p--p.md": "---\ntitle: P\nstatus: in-progress\ntype: epic\n---\n",
+		"p--p.md": "---\nversion: 1\ntitle: P\nstatus: in-progress\ntype: epic\n---\n",
 		// b is listed first (a0) but is blocked by a (a1) — topo must reorder.
-		"b--b.md": "---\ntitle: B\nstatus: todo\ntype: task\nparent: p\norder: a0\nblocked_by:\n  - a\n---\n",
-		"a--a.md": "---\ntitle: A\nstatus: todo\ntype: task\nparent: p\norder: a1\n---\n",
+		"b--b.md": "---\nversion: 1\ntitle: B\nstatus: todo\ntype: task\nparent: p\norder: a0\nblocked_by:\n  - a\n---\n",
+		"a--a.md": "---\nversion: 1\ntitle: A\nstatus: todo\ntype: task\nparent: p\norder: a1\n---\n",
 	}
 	nibsDir := setupRelCobraTest(t, files)
 	out := runRelJSON(t, "--nibs-path", nibsDir, "rel", "p", "--rel", "children", "--order", "topo", "--json")
@@ -494,9 +494,9 @@ func TestRelCommand_Children_OrderTopo_BlockedByEdges(t *testing.T) {
 func TestRelCommand_Children_OrderTopo_CrossMentionsAreNotACycle(t *testing.T) {
 	// `#<id>` body mentions are NOT topo edges (only blocked_by is).
 	files := map[string]string{
-		"p--p.md": "---\ntitle: P\nstatus: in-progress\ntype: epic\n---\n",
-		"a--a.md": "---\ntitle: A\nstatus: todo\ntype: task\nparent: p\norder: a0\n---\n\nSee #b for context.\n",
-		"b--b.md": "---\ntitle: B\nstatus: todo\ntype: task\nparent: p\norder: a1\n---\n\nSee #a for context.\n",
+		"p--p.md": "---\nversion: 1\ntitle: P\nstatus: in-progress\ntype: epic\n---\n",
+		"a--a.md": "---\nversion: 1\ntitle: A\nstatus: todo\ntype: task\nparent: p\norder: a0\n---\n\nSee #b for context.\n",
+		"b--b.md": "---\nversion: 1\ntitle: B\nstatus: todo\ntype: task\nparent: p\norder: a1\n---\n\nSee #a for context.\n",
 	}
 	nibsDir := setupRelCobraTest(t, files)
 	out := runRelJSON(t, "--nibs-path", nibsDir, "rel", "p", "--rel", "children", "--order", "topo", "--json")
@@ -509,9 +509,9 @@ func TestRelCommand_Children_OrderTopo_CrossMentionsAreNotACycle(t *testing.T) {
 
 func TestRelCommand_Children_OrderTopo_BlockedByCycle_Errors(t *testing.T) {
 	files := map[string]string{
-		"p--p.md": "---\ntitle: P\nstatus: in-progress\ntype: epic\n---\n",
-		"a--a.md": "---\ntitle: A\nstatus: todo\ntype: task\nparent: p\norder: a0\nblocked_by:\n  - b\n---\n",
-		"b--b.md": "---\ntitle: B\nstatus: todo\ntype: task\nparent: p\norder: a1\nblocked_by:\n  - a\n---\n",
+		"p--p.md": "---\nversion: 1\ntitle: P\nstatus: in-progress\ntype: epic\n---\n",
+		"a--a.md": "---\nversion: 1\ntitle: A\nstatus: todo\ntype: task\nparent: p\norder: a0\nblocked_by:\n  - b\n---\n",
+		"b--b.md": "---\nversion: 1\ntitle: B\nstatus: todo\ntype: task\nparent: p\norder: a1\nblocked_by:\n  - a\n---\n",
 	}
 	nibsDir := setupRelCobraTest(t, files)
 	_, err := runRelExpectError(t, "--nibs-path", nibsDir, "rel", "p", "--rel", "children", "--order", "topo")
@@ -529,11 +529,11 @@ func TestRelCommand_Children_OrderTopo_BlockedByCycle_Errors(t *testing.T) {
 
 func TestRelCommand_Children_OrderTopo_ExternalBlockedByDropped(t *testing.T) {
 	files := map[string]string{
-		"p--p.md": "---\ntitle: P\nstatus: in-progress\ntype: epic\n---\n",
-		"a--a.md": "---\ntitle: A\nstatus: todo\ntype: task\nparent: p\norder: a0\n---\n",
-		"b--b.md": "---\ntitle: B\nstatus: todo\ntype: task\nparent: p\norder: a1\nblocked_by:\n  - z\n---\n",
+		"p--p.md": "---\nversion: 1\ntitle: P\nstatus: in-progress\ntype: epic\n---\n",
+		"a--a.md": "---\nversion: 1\ntitle: A\nstatus: todo\ntype: task\nparent: p\norder: a0\n---\n",
+		"b--b.md": "---\nversion: 1\ntitle: B\nstatus: todo\ntype: task\nparent: p\norder: a1\nblocked_by:\n  - z\n---\n",
 		// 'z' exists but is unrelated (not a child of p).
-		"z--z.md": "---\ntitle: Z\nstatus: todo\ntype: task\n---\n",
+		"z--z.md": "---\nversion: 1\ntitle: Z\nstatus: todo\ntype: task\n---\n",
 	}
 	nibsDir := setupRelCobraTest(t, files)
 	out := runRelJSON(t, "--nibs-path", nibsDir, "rel", "p", "--rel", "children", "--order", "topo", "--json")
@@ -546,10 +546,10 @@ func TestRelCommand_Children_OrderTopo_ExternalBlockedByDropped(t *testing.T) {
 
 func TestRelCommand_Children_OrderTopo_SelfBlockedByIgnored(t *testing.T) {
 	files := map[string]string{
-		"p--p.md": "---\ntitle: P\nstatus: in-progress\ntype: epic\n---\n",
+		"p--p.md": "---\nversion: 1\ntitle: P\nstatus: in-progress\ntype: epic\n---\n",
 		// a lists itself plus a real dep b.
-		"a--a.md": "---\ntitle: A\nstatus: todo\ntype: task\nparent: p\norder: a0\nblocked_by:\n  - a\n  - b\n---\n",
-		"b--b.md": "---\ntitle: B\nstatus: todo\ntype: task\nparent: p\norder: a1\n---\n",
+		"a--a.md": "---\nversion: 1\ntitle: A\nstatus: todo\ntype: task\nparent: p\norder: a0\nblocked_by:\n  - a\n  - b\n---\n",
+		"b--b.md": "---\nversion: 1\ntitle: B\nstatus: todo\ntype: task\nparent: p\norder: a1\n---\n",
 	}
 	nibsDir := setupRelCobraTest(t, files)
 	out := runRelJSON(t, "--nibs-path", nibsDir, "rel", "p", "--rel", "children", "--order", "topo", "--json")
@@ -569,10 +569,10 @@ func TestRelCommand_Children_OrderTopo_SelfBlockedByIgnored(t *testing.T) {
 // into a synthetic edge between the survivors.
 func TestRelCommand_Children_OrderTopo_SkipsFilteredSibling(t *testing.T) {
 	files := map[string]string{
-		"p--p.md": "---\ntitle: P\nstatus: in-progress\ntype: epic\n---\n",
-		"a--a.md": "---\ntitle: A\nstatus: todo\ntype: task\nparent: p\norder: a0\n---\n",
-		"b--b.md": "---\ntitle: B\nstatus: completed\ntype: task\nparent: p\norder: a1\n---\n",
-		"c--c.md": "---\ntitle: C\nstatus: todo\ntype: task\nparent: p\norder: a2\nblocked_by:\n  - b\n---\n",
+		"p--p.md": "---\nversion: 1\ntitle: P\nstatus: in-progress\ntype: epic\n---\n",
+		"a--a.md": "---\nversion: 1\ntitle: A\nstatus: todo\ntype: task\nparent: p\norder: a0\n---\n",
+		"b--b.md": "---\nversion: 1\ntitle: B\nstatus: completed\ntype: task\nparent: p\norder: a1\n---\n",
+		"c--c.md": "---\nversion: 1\ntitle: C\nstatus: todo\ntype: task\nparent: p\norder: a2\nblocked_by:\n  - b\n---\n",
 	}
 	nibsDir := setupRelCobraTest(t, files)
 	out := runRelJSON(t, "--nibs-path", nibsDir, "rel", "p", "--rel", "children", "--order", "topo", "--open", "--json")
@@ -618,11 +618,11 @@ func TestRelCommand_Ancestors_Depth2(t *testing.T) {
 // hierarchy filters use.
 func TestRelCommand_Ancestors_DanglingLinkEndsChain(t *testing.T) {
 	files := map[string]string{
-		"root--r.md": "---\ntitle: Root\nstatus: in-progress\ntype: milestone\n---\n",
+		"root--r.md": "---\nversion: 1\ntitle: Root\nstatus: in-progress\ntype: milestone\n---\n",
 		// Hand-edited: mid's parent names a nib that does not exist, so the
 		// chain from leaf must stop at mid and never reach root.
-		"mid--m.md":  "---\ntitle: Mid\nstatus: in-progress\ntype: epic\nparent: ghost\norder: a0\n---\n",
-		"leaf--l.md": "---\ntitle: Leaf\nstatus: todo\ntype: task\nparent: mid\norder: a0\n---\n",
+		"mid--m.md":  "---\nversion: 1\ntitle: Mid\nstatus: in-progress\ntype: epic\nparent: ghost\norder: a0\n---\n",
+		"leaf--l.md": "---\nversion: 1\ntitle: Leaf\nstatus: todo\ntype: task\nparent: mid\norder: a0\n---\n",
 	}
 	nibsDir := setupRelCobraTest(t, files)
 	out := runRelJSON(t, "--nibs-path", nibsDir, "rel", "leaf", "--rel", "ancestors", "--depth", "all", "--json")
@@ -638,8 +638,8 @@ func TestRelCommand_Ancestors_DanglingLinkEndsChain(t *testing.T) {
 // starting nib is never reported as its own ancestor.
 func TestRelCommand_Ancestors_CycleTerminates(t *testing.T) {
 	files := map[string]string{
-		"a--a.md": "---\ntitle: A\nstatus: todo\ntype: task\nparent: b\norder: a0\n---\n",
-		"b--b.md": "---\ntitle: B\nstatus: todo\ntype: task\nparent: a\norder: a0\n---\n",
+		"a--a.md": "---\nversion: 1\ntitle: A\nstatus: todo\ntype: task\nparent: b\norder: a0\n---\n",
+		"b--b.md": "---\nversion: 1\ntitle: B\nstatus: todo\ntype: task\nparent: a\norder: a0\n---\n",
 	}
 	nibsDir := setupRelCobraTest(t, files)
 	out := runRelJSON(t, "--nibs-path", nibsDir, "rel", "a", "--rel", "ancestors", "--depth", "all", "--json")
@@ -668,9 +668,9 @@ func TestRelCommand_Descendants_DepthAll(t *testing.T) {
 // intermediate is still returned.
 func TestRelCommand_Descendants_StatusFilter_MatchesSubtree(t *testing.T) {
 	files := map[string]string{
-		"root--r.md": "---\ntitle: Root\nstatus: todo\ntype: epic\n---\n",
-		"mid--m.md":  "---\ntitle: Mid\nstatus: in-progress\ntype: task\nparent: root\norder: a0\n---\n",
-		"leaf--l.md": "---\ntitle: Leaf\nstatus: todo\ntype: task\nparent: mid\norder: a0\n---\n",
+		"root--r.md": "---\nversion: 1\ntitle: Root\nstatus: todo\ntype: epic\n---\n",
+		"mid--m.md":  "---\nversion: 1\ntitle: Mid\nstatus: in-progress\ntype: task\nparent: root\norder: a0\n---\n",
+		"leaf--l.md": "---\nversion: 1\ntitle: Leaf\nstatus: todo\ntype: task\nparent: mid\norder: a0\n---\n",
 	}
 	nibsDir := setupRelCobraTest(t, files)
 	out := runRelJSON(t, "--nibs-path", nibsDir, "rel", "root", "--rel", "descendants", "--status", "todo", "--depth", "all", "--json")
@@ -689,9 +689,9 @@ func TestRelCommand_Descendants_StatusFilter_MatchesSubtree(t *testing.T) {
 // descendants -t bug must return the bug regardless of the intermediate's type.
 func TestRelCommand_Descendants_TypeFilter_MatchesUnderNonMatchingIntermediate(t *testing.T) {
 	files := map[string]string{
-		"root--r.md": "---\ntitle: Root\nstatus: todo\ntype: milestone\n---\n",
-		"epic--e.md": "---\ntitle: Epic\nstatus: todo\ntype: epic\nparent: root\norder: a0\n---\n",
-		"bug--b.md":  "---\ntitle: Bug\nstatus: todo\ntype: bug\nparent: epic\norder: a0\n---\n",
+		"root--r.md": "---\nversion: 1\ntitle: Root\nstatus: todo\ntype: milestone\n---\n",
+		"epic--e.md": "---\nversion: 1\ntitle: Epic\nstatus: todo\ntype: epic\nparent: root\norder: a0\n---\n",
+		"bug--b.md":  "---\nversion: 1\ntitle: Bug\nstatus: todo\ntype: bug\nparent: epic\norder: a0\n---\n",
 	}
 	nibsDir := setupRelCobraTest(t, files)
 	out := runRelJSON(t, "--nibs-path", nibsDir, "rel", "root", "--rel", "descendants", "--type", "bug", "--depth", "all", "--json")
@@ -710,9 +710,9 @@ func TestRelCommand_Descendants_TypeFilter_MatchesUnderNonMatchingIntermediate(t
 // out of range at a shallow depth even though nearer nodes were filtered out.
 func TestRelCommand_Descendants_Depth_CountsStructuralHops(t *testing.T) {
 	files := map[string]string{
-		"root--r.md": "---\ntitle: Root\nstatus: todo\ntype: milestone\n---\n",
-		"epic--e.md": "---\ntitle: Epic\nstatus: todo\ntype: epic\nparent: root\norder: a0\n---\n",
-		"bug--b.md":  "---\ntitle: Bug\nstatus: todo\ntype: bug\nparent: epic\norder: a0\n---\n",
+		"root--r.md": "---\nversion: 1\ntitle: Root\nstatus: todo\ntype: milestone\n---\n",
+		"epic--e.md": "---\nversion: 1\ntitle: Epic\nstatus: todo\ntype: epic\nparent: root\norder: a0\n---\n",
+		"bug--b.md":  "---\nversion: 1\ntitle: Bug\nstatus: todo\ntype: bug\nparent: epic\norder: a0\n---\n",
 	}
 	nibsDir := setupRelCobraTest(t, files)
 	// bug is 2 structural hops down (root→epic→bug); depth 1 must not reach it.
@@ -726,9 +726,9 @@ func TestRelCommand_Descendants_Depth_CountsStructuralHops(t *testing.T) {
 func TestRelCommand_BlockersTransitive_DepthAll(t *testing.T) {
 	// chain: a ← b ← c (a blocked_by b, b blocked_by c).
 	files := map[string]string{
-		"a--a.md": "---\ntitle: A\nstatus: todo\ntype: task\nblocked_by: [b]\n---\n",
-		"b--b.md": "---\ntitle: B\nstatus: todo\ntype: task\nblocked_by: [c]\n---\n",
-		"c--c.md": "---\ntitle: C\nstatus: todo\ntype: task\n---\n",
+		"a--a.md": "---\nversion: 1\ntitle: A\nstatus: todo\ntype: task\nblocked_by: [b]\n---\n",
+		"b--b.md": "---\nversion: 1\ntitle: B\nstatus: todo\ntype: task\nblocked_by: [c]\n---\n",
+		"c--c.md": "---\nversion: 1\ntitle: C\nstatus: todo\ntype: task\n---\n",
 	}
 	nibsDir := setupRelCobraTest(t, files)
 	out := runRelJSON(t, "--nibs-path", nibsDir, "rel", "a", "--rel", "blockers-transitive", "--depth", "all", "--json")
@@ -742,10 +742,10 @@ func TestRelCommand_BlockersTransitive_DepthAll(t *testing.T) {
 func TestRelCommand_MentionsOutTransitive_Depth2(t *testing.T) {
 	// a mentions b; b mentions c; c mentions d.
 	files := map[string]string{
-		"a--a.md": "---\ntitle: A\nstatus: todo\ntype: task\n---\n\nRefs #b.\n",
-		"b--b.md": "---\ntitle: B\nstatus: todo\ntype: task\n---\n\nRefs #c.\n",
-		"c--c.md": "---\ntitle: C\nstatus: todo\ntype: task\n---\n\nRefs #d.\n",
-		"d--d.md": "---\ntitle: D\nstatus: todo\ntype: task\n---\n",
+		"a--a.md": "---\nversion: 1\ntitle: A\nstatus: todo\ntype: task\n---\n\nRefs #b.\n",
+		"b--b.md": "---\nversion: 1\ntitle: B\nstatus: todo\ntype: task\n---\n\nRefs #c.\n",
+		"c--c.md": "---\nversion: 1\ntitle: C\nstatus: todo\ntype: task\n---\n\nRefs #d.\n",
+		"d--d.md": "---\nversion: 1\ntitle: D\nstatus: todo\ntype: task\n---\n",
 	}
 	nibsDir := setupRelCobraTest(t, files)
 	out := runRelJSON(t, "--nibs-path", nibsDir, "rel", "a", "--rel", "mentions-out-transitive", "--depth", "2", "--json")
@@ -790,10 +790,10 @@ func TestRelCommand_Depth_TrailingGarbage_Errors(t *testing.T) {
 
 func TestRelCommand_Children_StatusAndTypeFilter(t *testing.T) {
 	files := map[string]string{
-		"p1--parent.md": "---\ntitle: Parent\nstatus: in-progress\ntype: epic\n---\n",
-		"c1--task1.md":  "---\ntitle: T1\nstatus: todo\ntype: task\nparent: p1\norder: a0\n---\n",
-		"c2--task2.md":  "---\ntitle: T2\nstatus: in-progress\ntype: task\nparent: p1\norder: a1\n---\n",
-		"c3--bug1.md":   "---\ntitle: B1\nstatus: todo\ntype: bug\nparent: p1\norder: a2\n---\n",
+		"p1--parent.md": "---\nversion: 1\ntitle: Parent\nstatus: in-progress\ntype: epic\n---\n",
+		"c1--task1.md":  "---\nversion: 1\ntitle: T1\nstatus: todo\ntype: task\nparent: p1\norder: a0\n---\n",
+		"c2--task2.md":  "---\nversion: 1\ntitle: T2\nstatus: in-progress\ntype: task\nparent: p1\norder: a1\n---\n",
+		"c3--bug1.md":   "---\nversion: 1\ntitle: B1\nstatus: todo\ntype: bug\nparent: p1\norder: a2\n---\n",
 	}
 	nibsDir := setupRelCobraTest(t, files)
 	// --status todo --type bug → c3 only.
@@ -817,11 +817,11 @@ func TestRelCommand_Parent_WithFilter_Errors(t *testing.T) {
 
 func TestRelCommand_Siblings_OpenAndType(t *testing.T) {
 	files := map[string]string{
-		"p1--parent.md": "---\ntitle: Parent\nstatus: in-progress\ntype: epic\n---\n",
-		"c1--task1.md":  "---\ntitle: T1\nstatus: todo\ntype: task\nparent: p1\norder: a0\n---\n",
-		"c2--task2.md":  "---\ntitle: T2\nstatus: todo\ntype: task\nparent: p1\norder: a1\n---\n",
-		"c3--bug1.md":   "---\ntitle: B1\nstatus: todo\ntype: bug\nparent: p1\norder: a2\n---\n",
-		"c4--task3.md":  "---\ntitle: T3\nstatus: completed\ntype: task\nparent: p1\norder: a3\n---\n",
+		"p1--parent.md": "---\nversion: 1\ntitle: Parent\nstatus: in-progress\ntype: epic\n---\n",
+		"c1--task1.md":  "---\nversion: 1\ntitle: T1\nstatus: todo\ntype: task\nparent: p1\norder: a0\n---\n",
+		"c2--task2.md":  "---\nversion: 1\ntitle: T2\nstatus: todo\ntype: task\nparent: p1\norder: a1\n---\n",
+		"c3--bug1.md":   "---\nversion: 1\ntitle: B1\nstatus: todo\ntype: bug\nparent: p1\norder: a2\n---\n",
+		"c4--task3.md":  "---\nversion: 1\ntitle: T3\nstatus: completed\ntype: task\nparent: p1\norder: a3\n---\n",
 	}
 	nibsDir := setupRelCobraTest(t, files)
 	// c1's siblings with --open --type task → c2 only (c3 wrong type, c4 completed).
@@ -834,10 +834,10 @@ func TestRelCommand_Siblings_OpenAndType(t *testing.T) {
 
 func TestRelCommand_MentionsOut_NoPriorityExclusion(t *testing.T) {
 	files := map[string]string{
-		"a1--alpha.md": "---\ntitle: Alpha\nstatus: todo\ntype: task\n---\n\nSee #b2 and #c3 and #d4.\n",
-		"b2--beta.md":  "---\ntitle: Beta\nstatus: todo\ntype: task\npriority: high\n---\n",
-		"c3--gamma.md": "---\ntitle: Gamma\nstatus: todo\ntype: task\npriority: normal\n---\n",
-		"d4--delta.md": "---\ntitle: Delta\nstatus: todo\ntype: task\npriority: low\n---\n",
+		"a1--alpha.md": "---\nversion: 1\ntitle: Alpha\nstatus: todo\ntype: task\n---\n\nSee #b2 and #c3 and #d4.\n",
+		"b2--beta.md":  "---\nversion: 1\ntitle: Beta\nstatus: todo\ntype: task\npriority: high\n---\n",
+		"c3--gamma.md": "---\nversion: 1\ntitle: Gamma\nstatus: todo\ntype: task\npriority: normal\n---\n",
+		"d4--delta.md": "---\nversion: 1\ntitle: Delta\nstatus: todo\ntype: task\npriority: low\n---\n",
 	}
 	nibsDir := setupRelCobraTest(t, files)
 	// --no-priority low → excludes d4; b2 and c3 remain.
@@ -858,8 +858,8 @@ func TestRelCommand_MentionsOut_NoPriorityExclusion(t *testing.T) {
 // so the parent still appears in the union.
 func TestRelCommand_Neighbours_WithFilter_DropsFilterOnParent(t *testing.T) {
 	files := map[string]string{
-		"parent--p.md": "---\ntitle: P\nstatus: completed\ntype: epic\n---\n",
-		"child--c.md":  "---\ntitle: C\nstatus: todo\ntype: task\nparent: parent\n---\n",
+		"parent--p.md": "---\nversion: 1\ntitle: P\nstatus: completed\ntype: epic\n---\n",
+		"child--c.md":  "---\nversion: 1\ntitle: C\nstatus: todo\ntype: task\nparent: parent\n---\n",
 	}
 	nibsDir := setupRelCobraTest(t, files)
 	out := runRelJSON(t, "--nibs-path", nibsDir, "rel", "child", "--rel", "neighbours", "--status", "todo", "--json")

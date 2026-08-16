@@ -313,6 +313,68 @@ func freezeGuardCases() []freezeGuardCase {
 			},
 		},
 		{
+			name:   "MigrateV0ToV1",
+			covers: []string{"MigrateV0ToV1"},
+			setup: func(t *testing.T, c *Core, _ string) {
+				// A published v0 blocker plus its target: the migration must stamp
+				// the blocker v1 and transfer the edge onto the target — both via
+				// fresh clones, never on the published pointers. Create does not
+				// validate Version/Blocking, so it can publish the legacy shape.
+				if err := c.Create(&nib.Nib{
+					ID: "v0src", Title: "V0 Source", Status: "todo",
+					Version: 0, Blocking: []string{"v0tgt"},
+				}); err != nil {
+					t.Fatalf("setup Create v0src: %v", err)
+				}
+				if err := c.Create(&nib.Nib{
+					ID: "v0tgt", Title: "V0 Target", Status: "todo", Version: 1,
+				}); err != nil {
+					t.Fatalf("setup Create v0tgt: %v", err)
+				}
+			},
+			mutate: func(t *testing.T, c *Core, dir string) {
+				lock, err := AcquireStoreLock(dir)
+				if err != nil {
+					t.Fatalf("AcquireStoreLock: %v", err)
+				}
+				defer func() { _ = lock.Release() }()
+				if _, err := c.MigrateV0ToV1(lock); err != nil {
+					t.Fatalf("MigrateV0ToV1: %v", err)
+				}
+			},
+		},
+		{
+			name:   "NormalizeLegacyPriorities",
+			covers: []string{"NormalizeLegacyPriorities"},
+			setup: func(t *testing.T, c *Core, dir string) {
+				// A published nib carrying the legacy deferred priority: the
+				// rewrite to "low" must land on a fresh clone. Create validates
+				// enums (and "deferred" is not a valid priority), so publish it
+				// the way it reaches a real store — a raw file plus Load, which
+				// loads the value exactly as written.
+				raw := "---\nversion: 1\ntitle: Deferred\nstatus: todo\npriority: deferred\n---\n"
+				if err := os.WriteFile(filepath.Join(dir, "defpub--legacy.md"), []byte(raw), 0644); err != nil {
+					t.Fatalf("setup write defpub: %v", err)
+				}
+				if err := c.Load(); err != nil {
+					t.Fatalf("setup Load: %v", err)
+				}
+				if b, err := c.Get("defpub"); err != nil || b.Priority != "deferred" {
+					t.Fatalf("setup premise: want a published deferred-priority nib, got %+v (err %v)", b, err)
+				}
+			},
+			mutate: func(t *testing.T, c *Core, dir string) {
+				lock, err := AcquireStoreLock(dir)
+				if err != nil {
+					t.Fatalf("AcquireStoreLock: %v", err)
+				}
+				defer func() { _ = lock.Release() }()
+				if _, err := c.NormalizeLegacyPriorities(lock); err != nil {
+					t.Fatalf("NormalizeLegacyPriorities: %v", err)
+				}
+			},
+		},
+		{
 			name: "watcher-reload-write", // External edit: installs a FRESH pointer.
 			// covers is nil: the watcher path drives the UNEXPORTED handleChanges,
 			// not an exported mutator, so it contributes nothing to the exported-
@@ -446,14 +508,16 @@ func TestCoreMutators_FreezePartition(t *testing.T) {
 	// LoadAndUnarchive write the store (core.go); RemoveLinksTo/FixBrokenLinks
 	// rewrite linking nibs copy-on-write (link_health.go).
 	freezeMutators := map[string]bool{
-		"Create":           true,
-		"Update":           true,
-		"Delete":           true,
-		"Archive":          true,
-		"Unarchive":        true,
-		"LoadAndUnarchive": true,
-		"RemoveLinksTo":    true,
-		"FixBrokenLinks":   true,
+		"Create":                    true,
+		"Update":                    true,
+		"Delete":                    true,
+		"Archive":                   true,
+		"Unarchive":                 true,
+		"LoadAndUnarchive":          true,
+		"RemoveLinksTo":             true,
+		"FixBrokenLinks":            true,
+		"MigrateV0ToV1":             true,
+		"NormalizeLegacyPriorities": true,
 	}
 
 	// freezeNonMutators: every OTHER exported *Core method (readers, lifecycle,
@@ -482,6 +546,7 @@ func TestCoreMutators_FreezePartition(t *testing.T) {
 		"IsBlocked":          true,
 		"IsBlocking":         true,
 		"Load":               true,
+		"LoadDiagnostics":    true,
 		"NormalizeID":        true,
 		"Root":               true,
 		"Search":             true,
@@ -587,13 +652,12 @@ func assertPublishedPointersFrozenExceptPath(t *testing.T, c *Core, snaps []froz
 	defer c.mu.RUnlock()
 
 	for _, s := range snaps {
-		// Compare two Clones so load-boundary-only fields that Clone() normalizes
-		// (priorityMigrated, which Clone deliberately clears) are neutralized
-		// SYMMETRICALLY — otherwise a future subtest that loads a migrated v0 nib
-		// would spuriously differ. s.before is already a capture-time Clone; re-clone
-		// the SAME captured pointer now to read its post-mutation state through the
-		// same normalization. An in-place non-Path write still surfaces: Clone()
-		// copies the pointer's current field values.
+		// Compare two Clones so any load-boundary-only field a future Clone()
+		// normalizes is neutralized SYMMETRICALLY. s.before is already a
+		// capture-time Clone; re-clone the SAME captured pointer now to read its
+		// post-mutation state through the same normalization. An in-place
+		// non-Path write still surfaces: Clone() copies the pointer's current
+		// field values.
 		before := *s.before     // deep, independent capture-time clone
 		after := *s.ptr.Clone() // deep clone of the SAME captured pointer, post-mutation
 		before.Path = ""
