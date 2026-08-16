@@ -14,39 +14,84 @@ import (
 	"github.com/alphaleonis/nibs/internal/nib"
 	"github.com/alphaleonis/nibs/internal/nibcore"
 	"github.com/alphaleonis/nibs/internal/output"
+	"github.com/alphaleonis/nibs/internal/store"
 	"github.com/alphaleonis/nibs/internal/ui"
 	"github.com/spf13/cobra"
+	"gopkg.in/yaml.v3"
 )
 
 // migrateEnv carries the filesystem coordinates a migration step operates on.
-// cfg is the project configuration the CLI resolved (the same one every other
-// command runs under): content steps load a scoped throwaway Core with it so
-// short-form link ids canonicalize under the project's real prefix.
+//
+// The configuration is resolved ON DEMAND rather than captured, and that is
+// load-bearing: the layout step MOVES the project config into the store, so a
+// *config.Config read before the run is stale for every step that follows it.
+// Content steps load a scoped throwaway Core with the config as it stands when
+// they ask, which is what makes a short-form link id canonicalize under the
+// project's real prefix instead of the empty default a pre-move read returns.
 type migrateEnv struct {
 	nibsRoot string
-	cfg      *config.Config
+	loadCfg  func() (*config.Config, error)
 }
 
 // newMigrateEnv builds the env for a resolved store root.
-func newMigrateEnv(nibsRoot string, cfg *config.Config) migrateEnv {
-	return migrateEnv{nibsRoot: nibsRoot, cfg: cfg}
+func newMigrateEnv(nibsRoot string) migrateEnv {
+	return migrateEnv{
+		nibsRoot: nibsRoot,
+		loadCfg:  func() (*config.Config, error) { return migrateConfig(nibsRoot) },
+	}
+}
+
+// layout returns the store's directory structure.
+func (e migrateEnv) layout() store.Layout { return store.NewLayout(e.nibsRoot) }
+
+// legacyConfigPath is where the pre-layout project config sat: beside the
+// store, not inside it.
+func (e migrateEnv) legacyConfigPath() string {
+	return filepath.Join(e.layout().ProjectDir(), store.LegacyProjectConfigFileName)
+}
+
+// config resolves the project configuration at the moment it is asked for.
+func (e migrateEnv) config() (*config.Config, error) { return e.loadCfg() }
+
+// migrateConfig reads the project config from wherever it currently lives: an
+// explicit --config file while that file still exists (a legacy `.nibs.yml`
+// stops existing the instant the layout step relocates it), otherwise the
+// store's own config.yml. A store with no config at all resolves to the
+// defaults, which is the normal state of a pre-layout store and must not be an
+// error — the refusal gate has to work before the config has moved.
+func migrateConfig(nibsRoot string) (*config.Config, error) {
+	if configPath != "" {
+		if _, err := os.Stat(configPath); err == nil {
+			return config.LoadFromExplicitPathWithUserConfig(configPath)
+		}
+	}
+	return config.LoadStoreWithUserConfig(nibsRoot)
 }
 
 // logf is the migration engine's progress sink, so runMigrations stays
 // testable without capturing stdout.
 type logf func(format string, a ...any)
 
-// migrationStep is one ordered entry in the migration chain.
+// migrationStep is one ordered entry in the migration chain. A step detects
+// its own pendingness in exactly one of two ways, and carries exactly one of
+// the two detectors:
 //
-// pred answers "does this FILE need the step?" over its scanned front-matter
-// header — a pure predicate, never a Core, never a full YAML parse, and NEVER
-// a write. Detection ("does this store need the step?") is one shared
-// filesystem walk (scanStore) that reads each file's header ONCE and evaluates
-// every step's pred plus the newer-store check against it, so the per-command
-// pre-run probe stays O(files) no matter how many steps the chain grows.
-// Detection runs on every command (the PersistentPreRunE refusal) and a second
-// time under the store lock, where detect-gates-apply is what makes every step
-// idempotent and a crashed run resumable by re-running.
+// pred is a CONTENT step's detector: it answers "does this FILE need the
+// step?" over its scanned front-matter header — a pure predicate, never a
+// Core, never a full YAML parse, and NEVER a write. Detection ("does this
+// store need the step?") is one shared filesystem walk (scanStore) that reads
+// each file's header ONCE and evaluates every content step's pred plus the
+// newer-store check against it, so the per-command pre-run probe stays
+// O(files) no matter how many steps the chain grows.
+//
+// shape is a STORE-SHAPE step's detector: it answers "is the store's directory
+// structure still the old one?", which no per-file header can express, and
+// returns the number of files the step would move. It is evaluated ONCE per
+// scan rather than per file.
+//
+// Detection of both kinds runs on every command (the PersistentPreRunE
+// refusal) and a second time under the store lock, where detect-gates-apply is
+// what makes every step idempotent and a crashed run resumable by re-running.
 //
 // apply performs the migration and is FAIL-LOUD: the first error aborts the
 // run. Content steps load a scoped throwaway Core (the existing load pipeline
@@ -56,8 +101,14 @@ type logf func(format string, a ...any)
 type migrationStep struct {
 	name, title string
 	pred        func(fmHeader) bool
+	shape       func(migrateEnv) (int, error)
 	apply       func(migrateEnv, *nibcore.StoreLock, logf) error
 }
+
+// isContent reports whether the step detects per file (as opposed to per
+// store shape). The distinction decides which files a scan problem can
+// endanger — see runMigrations' fail-loud gate.
+func (s migrationStep) isContent() bool { return s.pred != nil }
 
 // migrationSteps is the ordered migration chain. A future format bump (v2)
 // appends one more entry with no engine change — but note the watcher's
@@ -67,18 +118,34 @@ type migrationStep struct {
 // step NOT keyed on the version must be mirrored into that condition by hand,
 // or its files arrive with no breadcrumb.
 //
-// The load-bearing invariant is NOT the entries' order — it is that ONLY the
-// version-bump step may write the version stamp. `version: 1` is v0-blocking's
-// completion record: a step that stamped a still-v0 file would mark its
-// `blocking:` edges migrated without transferring them, and because v0
-// detection keys on the version, nothing would ever return to finish the job —
-// the edges silently vanish from every view (the retired load-time migration
-// carried the same guard, refusing to persist exactly that half-migrated
-// shape). Because NormalizeLegacyPriorities honors the rule — a still-v0 file
-// it rewrites renders `version: 0`, so isV0Header keeps firing — the chain
-// converges to the same store whichever order the steps run in; v0-blocking
-// runs first simply so one run converts a doubly-legacy file in one pass.
+// Two invariants govern this chain, and only one of them is about order.
+//
+// The order-free one: ONLY the version-bump step may write the version stamp.
+// `version: 1` is v0-blocking's completion record — a step that stamped a
+// still-v0 file would mark its `blocking:` edges migrated without transferring
+// them, and because v0 detection keys on the version, nothing would ever
+// return to finish the job; the edges silently vanish from every view (the
+// retired load-time migration carried the same guard, refusing to persist
+// exactly that half-migrated shape). Because NormalizeLegacyPriorities honors
+// the rule — a still-v0 file it rewrites renders `version: 0`, so isV0Header
+// keeps firing — the content steps converge to the same store whichever order
+// they run in; v0-blocking precedes priority-deferred simply so one run
+// converts a doubly-legacy file in one pass.
+//
+// The ordering one: `layout` MUST run FIRST. It relocates the project config
+// INTO the store, and every content step afterwards loads a Core whose
+// canonicalization resolves short-form link ids under the project's prefix —
+// which only that config carries. Run a content step first and its Core reads
+// the empty default prefix, leaving a short-form `blocking:` target
+// unresolvable and its edge dropped. Nothing else in the engine encodes this;
+// the position in this slice is the whole mechanism.
 var migrationSteps = []migrationStep{
+	{
+		name:  "layout",
+		title: "move the project config into the store and the nib files into data/",
+		shape: layoutPendingCount,
+		apply: applyLayout,
+	},
 	{
 		name:  "v0-blocking",
 		title: "invert legacy `blocking:` edges onto targets' blocked_by and stamp version: 1",
@@ -138,6 +205,226 @@ func applyV0Blocking(env migrateEnv, lock *nibcore.StoreLock, log logf) error {
 	return nil
 }
 
+// layoutPendingCount reports how many files the layout step would relocate:
+// every nib file still sitting outside data/ and archive/, plus the project
+// config if it is still beside the store rather than inside it. Zero means the
+// store already has the current shape.
+func layoutPendingCount(env migrateEnv) (int, error) {
+	movable, err := layoutMovableFiles(env)
+	if err != nil {
+		return 0, err
+	}
+	n := len(movable)
+	if legacyConfigExists(env) {
+		n++
+	}
+	return n, nil
+}
+
+// legacyConfigExists reports whether the pre-layout project config is still
+// beside the store. An unreadable path counts as absent: the apply re-checks
+// and fails loudly there, and detection must never abort every command.
+func legacyConfigExists(env migrateEnv) bool {
+	info, err := os.Stat(env.legacyConfigPath())
+	return err == nil && !info.IsDir()
+}
+
+// layoutMovableFiles returns the store-relative paths (forward slashes) of the
+// nib files the layout step must move into data/, in walk order.
+//
+// Everything already under data/ or archive/ is where it belongs. Everything
+// else under the store root is pre-layout content — including files nested in
+// subdirectories, which keep their relative shape under data/.
+//
+// A .md file with NO front matter is deliberately left where it is: it is not
+// a nib (nib.Parse refuses it, and Core.Load only ever reported it as a
+// diagnostic), so after the migration it simply stops being store content —
+// which makes `.nibs/README.md` a legal place for a readme rather than a
+// permanent complaint. A file whose header cannot be READ is moved anyway: the
+// scan cannot prove it is not a nib, and leaving a real nib behind would drop
+// it out of every query.
+func layoutMovableFiles(env migrateEnv) ([]string, error) {
+	l := env.layout()
+	var movable []string
+	err := forEachNibFile(env, func(path string) error {
+		rel := storeRelPath(env, path)
+		if l.IsDataRel(rel) || l.IsArchivedRel(rel) {
+			return nil
+		}
+		h, err := readFrontMatterHeader(path)
+		if err == nil && !h.hasFrontMatter {
+			return nil
+		}
+		movable = append(movable, rel)
+		return nil
+	})
+	if err != nil {
+		return nil, err
+	}
+	return movable, nil
+}
+
+// applyLayout performs the whole shape change in one pass: every pre-layout
+// nib file moves into data/ under its ORIGINAL basename (ids derive from
+// filenames, so a migration moves directories and never renames files), and
+// the project config moves from beside the store to inside it.
+//
+// Every move is guarded by a destination check, so a run that died halfway
+// resumes cleanly: the moves it already made are simply not pending any more.
+func applyLayout(env migrateEnv, _ *nibcore.StoreLock, log logf) error {
+	l := env.layout()
+
+	movable, err := layoutMovableFiles(env)
+	if err != nil {
+		return err
+	}
+	for _, rel := range movable {
+		src := filepath.Join(env.nibsRoot, filepath.FromSlash(rel))
+		dst := filepath.Join(l.DataDir(), filepath.FromSlash(rel))
+		if _, err := os.Stat(dst); err == nil {
+			return fmt.Errorf("cannot move %s into data/: %s already exists; resolve the duplicate by hand, then re-run `nibs migrate`", rel, l.DataRel(rel))
+		}
+		if err := os.MkdirAll(filepath.Dir(dst), 0755); err != nil {
+			return fmt.Errorf("creating %s: %w", filepath.Dir(dst), err)
+		}
+		if err := os.Rename(src, dst); err != nil {
+			return fmt.Errorf("moving %s into data/: %w", rel, err)
+		}
+	}
+	if len(movable) > 0 {
+		log("layout: moved %d nib file(s) into %s/", len(movable), store.DataDirName)
+	}
+
+	if legacyConfigExists(env) {
+		if err := relocateProjectConfig(env, log); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// relocateProjectConfig moves the pre-layout `.nibs.yml` into the store as
+// config.yml, dropping the retired `nibs.path` key on the way. The key is not
+// cosmetic debris: every config `nibs init` used to write carries it, and a
+// config still carrying it is a hard load error — so relocating the file
+// verbatim would leave a store that refuses to open.
+//
+// The rewrite goes through a YAML node tree rather than the Config struct so
+// that everything else in the file survives: comments, key order, and any key
+// this build does not know about.
+//
+// A `path` that pointed somewhere OTHER than the store being migrated is
+// refused rather than silently dropped: the data lives in a directory this
+// build can no longer address, and quietly discarding the only record of where
+// it is would strand it.
+func relocateProjectConfig(env migrateEnv, log logf) error {
+	l := env.layout()
+	legacy := env.legacyConfigPath()
+
+	if _, err := os.Stat(l.ConfigPath()); err == nil {
+		return fmt.Errorf("both %s and %s exist; keep the one you want and delete the other, then re-run `nibs migrate`",
+			legacy, l.ConfigPath())
+	}
+
+	data, err := os.ReadFile(legacy)
+	if err != nil {
+		return fmt.Errorf("reading %s: %w", legacy, err)
+	}
+	rewritten, err := stripRetiredNibsPath(data, env)
+	if err != nil {
+		return err
+	}
+	if err := os.MkdirAll(env.nibsRoot, 0755); err != nil {
+		return fmt.Errorf("creating %s: %w", env.nibsRoot, err)
+	}
+	if err := os.WriteFile(l.ConfigPath(), rewritten, 0644); err != nil {
+		return fmt.Errorf("writing %s: %w", l.ConfigPath(), err)
+	}
+	if err := os.Remove(legacy); err != nil {
+		return fmt.Errorf("removing %s after relocating it: %w", legacy, err)
+	}
+	log("layout: relocated the project config to %s", l.ConfigPath())
+	return nil
+}
+
+// stripRetiredNibsPath removes the `nibs.path` key from a legacy config's
+// bytes, leaving the rest of the document untouched. It refuses when the key
+// names a directory other than the store being migrated (see
+// relocateProjectConfig).
+func stripRetiredNibsPath(data []byte, env migrateEnv) ([]byte, error) {
+	var doc yaml.Node
+	if err := yaml.Unmarshal(data, &doc); err != nil {
+		return nil, fmt.Errorf("parsing %s: %w", env.legacyConfigPath(), err)
+	}
+	if doc.Kind != yaml.DocumentNode || len(doc.Content) == 0 {
+		return data, nil // empty document: nothing to strip
+	}
+	root := doc.Content[0]
+	nibs := mappingValue(root, "nibs")
+	if nibs == nil {
+		return data, nil
+	}
+	pathNode := mappingValue(nibs, "path")
+	if pathNode == nil {
+		return data, nil
+	}
+
+	// The retired key is only droppable when it named the very store being
+	// migrated; anything else points at data this build can no longer reach.
+	declared := pathNode.Value
+	if !filepath.IsAbs(declared) {
+		declared = filepath.Join(env.layout().ProjectDir(), declared)
+	}
+	if !sameDir(declared, env.nibsRoot) {
+		return nil, fmt.Errorf("%s sets `nibs.path: %s`, which is not the store being migrated (%s); move that directory to %s and re-run `nibs migrate`",
+			env.legacyConfigPath(), pathNode.Value, env.nibsRoot, env.nibsRoot)
+	}
+
+	deleteMappingKey(nibs, "path")
+	out, err := yaml.Marshal(root)
+	if err != nil {
+		return nil, fmt.Errorf("rewriting %s without the retired `nibs.path` key: %w", env.legacyConfigPath(), err)
+	}
+	return out, nil
+}
+
+// mappingValue returns the value node for key in a YAML mapping, or nil.
+func mappingValue(node *yaml.Node, key string) *yaml.Node {
+	if node == nil || node.Kind != yaml.MappingNode {
+		return nil
+	}
+	for i := 0; i+1 < len(node.Content); i += 2 {
+		if node.Content[i].Value == key {
+			return node.Content[i+1]
+		}
+	}
+	return nil
+}
+
+// deleteMappingKey removes a key/value pair from a YAML mapping.
+func deleteMappingKey(node *yaml.Node, key string) {
+	if node == nil || node.Kind != yaml.MappingNode {
+		return
+	}
+	for i := 0; i+1 < len(node.Content); i += 2 {
+		if node.Content[i].Value == key {
+			node.Content = append(node.Content[:i], node.Content[i+2:]...)
+			return
+		}
+	}
+}
+
+// sameDir reports whether two paths name the same directory, comparing their
+// cleaned absolute forms.
+func sameDir(a, b string) bool {
+	absA, errA := filepath.Abs(a)
+	absB, errB := filepath.Abs(b)
+	if errA != nil || errB != nil {
+		return filepath.Clean(a) == filepath.Clean(b)
+	}
+	return filepath.Clean(absA) == filepath.Clean(absB)
+}
+
 // loadStoreForMigration loads a scoped throwaway Core for a content step's
 // apply. Content steps ride the existing load pipeline (canonicalization
 // included) rather than growing a second parser.
@@ -151,7 +438,11 @@ func applyV0Blocking(env migrateEnv, lock *nibcore.StoreLock, log logf) error {
 // at `nibs check`; the deferral concept the old load-time migration carried is
 // deliberately gone.
 func loadStoreForMigration(env migrateEnv) (*nibcore.Core, error) {
-	core := nibcore.New(env.nibsRoot, env.cfg)
+	cfg, err := env.config()
+	if err != nil {
+		return nil, fmt.Errorf("loading config for migration: %w", err)
+	}
+	core := nibcore.New(env.nibsRoot, cfg)
 	if err := core.Load(); err != nil {
 		return nil, fmt.Errorf("loading store for migration: %w", err)
 	}
@@ -229,6 +520,20 @@ func (e *newerStoreError) Error() string { return e.msg }
 // their way to it.
 func scanStore(env migrateEnv) (*storeScan, error) {
 	scan := &storeScan{counts: make([]int, len(migrationSteps))}
+
+	// Shape steps ask about the store's directory structure, which no per-file
+	// header can answer, so they are evaluated once each — outside the walk.
+	for i, step := range migrationSteps {
+		if step.shape == nil {
+			continue
+		}
+		n, err := step.shape(env)
+		if err != nil {
+			return nil, err
+		}
+		scan.counts[i] = n
+	}
+
 	err := forEachNibFile(env, func(path string) error {
 		h, err := readFrontMatterHeader(path)
 		if err != nil {
@@ -248,7 +553,7 @@ func scanStore(env migrateEnv) (*storeScan, error) {
 			return nil
 		}
 		for i, step := range migrationSteps {
-			if step.pred(h) {
+			if step.isContent() && step.pred(h) {
 				scan.counts[i]++
 			}
 		}
@@ -328,10 +633,17 @@ func runMigrations(env migrateEnv, log logf) error {
 	// silently loses edges pointing at it. (A fence-less document once LOADED
 	// as an empty v0 "nib" the v0 step rewrote into a nib render; nib.Parse
 	// now refuses it, so this gate plus the load gate are two layers of the
-	// same refusal.) Refuse while anything is actually pending; a store with
-	// nothing to apply never reaches here (the command reports up-to-date
+	// same refusal.) Refuse while a CONTENT step is actually pending; a store
+	// with nothing to apply never reaches here (the command reports up-to-date
 	// first).
-	if len(pending) > 0 && len(scan.problems) > 0 {
+	//
+	// Scoped to content steps because the danger it names is a link-rewrite
+	// danger: a step that rewrites edges must see every file that could hold
+	// one. A shape step only MOVES files, and moves nothing it could not
+	// classify (see layoutMovableFiles), so blocking a relayout on an
+	// unrelated `.nibs/README.md` would refuse a safe migration over a file
+	// the new layout stops caring about anyway.
+	if anyContentPending(pending) && len(scan.problems) > 0 {
 		lines := make([]string, len(scan.problems))
 		for i, p := range scan.problems {
 			lines[i] = fmt.Sprintf("%s: %s", p.path, p.reason)
@@ -347,7 +659,7 @@ func runMigrations(env migrateEnv, log logf) error {
 		}
 	}
 	for _, step := range pending {
-		stuck, err := filesMatching(env, step.pred)
+		stuck, err := stillPending(env, step)
 		if err != nil {
 			return fmt.Errorf("verifying migration %s: %w", step.name, err)
 		}
@@ -357,6 +669,35 @@ func runMigrations(env migrateEnv, log logf) error {
 		}
 	}
 	return nil
+}
+
+// anyContentPending reports whether any pending step rewrites file content (as
+// opposed to only moving files around).
+func anyContentPending(pending []migrationStep) bool {
+	for _, step := range pending {
+		if step.isContent() {
+			return true
+		}
+	}
+	return false
+}
+
+// stillPending re-runs a step's detection after its apply and describes
+// whatever still fires, so runMigrations' post-condition covers BOTH detector
+// kinds. A content step names the files whose header still matches; a shape
+// step, having no per-file answer, reports how many files it would still move.
+func stillPending(env migrateEnv, step migrationStep) ([]string, error) {
+	if step.isContent() {
+		return filesMatching(env, step.pred)
+	}
+	n, err := step.shape(env)
+	if err != nil {
+		return nil, err
+	}
+	if n == 0 {
+		return nil, nil
+	}
+	return []string{fmt.Sprintf("%d file(s) still out of place", n)}, nil
 }
 
 // filesMatching walks the store and returns (store-relative) paths of the
@@ -379,11 +720,16 @@ func filesMatching(env migrateEnv, pred func(fmHeader) bool) ([]string, error) {
 	return matches, err
 }
 
-// refuseIfMigrationPending is the gate PersistentPreRunE runs between
-// resolveNibsPath and core.Load(): every command except the skip-listed ones
+// refuseIfMigrationPending is the gate PersistentPreRunE runs between store
+// resolution and core.Load(): every command except the skip-listed ones
 // refuses to run on a store with pending migrations, naming the fix.
-func refuseIfMigrationPending(nibsRoot string, cfg *config.Config) error {
-	pending, err := pendingMigrations(newMigrateEnv(nibsRoot, cfg))
+//
+// It takes NO config, and that is deliberate rather than an omission:
+// detection reads file headers and directory shapes only, so the gate works on
+// a store whose config has not moved into it yet — which is the state every
+// pre-layout store is in when this gate first fires.
+func refuseIfMigrationPending(nibsRoot string) error {
+	pending, err := pendingMigrations(newMigrateEnv(nibsRoot))
 	if err != nil {
 		return err
 	}
@@ -578,11 +924,11 @@ or stashed (or --allow-dirty overrides). Use --dry-run to list what would be
 applied without modifying anything.`,
 	Args: codedNoArgs(nil),
 	RunE: func(cmd *cobra.Command, args []string) error {
-		nibsRoot, cfg, err := resolveCLIStore()
+		nibsRoot, err := resolveStoreDir()
 		if err != nil {
 			return err
 		}
-		env := newMigrateEnv(nibsRoot, cfg)
+		env := newMigrateEnv(nibsRoot)
 
 		// One shared scan serves both the pending decision and --dry-run's
 		// per-step counts — the same walk pendingMigrations performs.
@@ -627,6 +973,16 @@ applied without modifying anything.`,
 			ui.Printf("Note: the store at %s is not protected by git; consider backing it up before migrating.\n", env.nibsRoot)
 		}
 
+		// The layout step is the only migration that reaches OUTSIDE the store:
+		// it deletes the project's `.nibs.yml`. That deletion lands in the
+		// PROJECT's repository, which is frequently a different repository from
+		// the store's — so the store's clean bill of health says nothing about
+		// whether it can be undone. Guard it over the one path the step touches
+		// there, on the same terms: refuse a dirty path, tolerate "not a repo".
+		if err := refuseIfLegacyConfigUnrecoverable(env); err != nil {
+			return err
+		}
+
 		ui.Println("Stop any running `nibs serve` before migrating.")
 		log := func(format string, a ...any) { ui.Printf(format+"\n", a...) }
 		if err := runMigrations(env, log); err != nil {
@@ -635,6 +991,36 @@ applied without modifying anything.`,
 		ui.Println("Migration complete." + postMigrateCommitHint(isRepo))
 		return nil
 	},
+}
+
+// refuseIfLegacyConfigUnrecoverable applies the dirty-git safety net to the
+// project repository over the single path the layout step deletes there, the
+// legacy `.nibs.yml`. It is a no-op once that file is gone (the step has
+// already run, or the project never had one).
+//
+// "Not a repo" is not a refusal here, matching the store's own posture: the
+// store check has already printed the backup suggestion for an unprotected
+// project, and refusing twice for one unprotected tree would make migrate
+// unusable outside git.
+func refuseIfLegacyConfigUnrecoverable(env migrateEnv) error {
+	if migrateAllowDirty || !legacyConfigExists(env) {
+		return nil
+	}
+	projectDir := env.layout().ProjectDir()
+	dirty, err := gitIsDirtyFn(projectDir, store.LegacyProjectConfigFileName)
+	if err != nil {
+		// Same posture as the store's check: say the net could not be
+		// evaluated rather than silently proceeding as if it were clean.
+		ui.Printf("Warning: could not determine the git state of %s (%v); its dirty-file safety check was skipped.\n",
+			env.legacyConfigPath(), err)
+		return nil
+	}
+	if !dirty {
+		return nil
+	}
+	return cmdError(false, output.ErrValidation,
+		"%s has uncommitted git changes and this migration deletes it; commit or stash it so the pre-migration state is recoverable, or re-run with --allow-dirty",
+		env.legacyConfigPath())
 }
 
 // migrateCmdError codes migrate's RunE-level failures for the CLI's error

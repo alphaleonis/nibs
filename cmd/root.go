@@ -58,7 +58,7 @@ a full view of your project.`,
 		// migrate" — with no working diagnostic for the stores that most need
 		// one. Only --fix writes, so only --fix stays gated.
 		if cmd.Name() != "check" || checkFix {
-			if err := refuseIfMigrationPending(root, cfg); err != nil {
+			if err := refuseIfMigrationPending(root); err != nil {
 				return err
 			}
 		}

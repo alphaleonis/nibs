@@ -345,7 +345,7 @@ func catalogSampleNib() *nib.Nib {
 	return &nib.Nib{
 		ID:        "tnib-a1b2",
 		Slug:      "wire-up-oauth-login",
-		Path:      ".nibs/tnib-a1b2-wire-up-oauth-login.md",
+		Path:      "data/tnib-a1b2-wire-up-oauth-login.md",
 		Title:     "Wire up OAuth login",
 		Status:    "in-progress",
 		Type:      "feature",
@@ -406,7 +406,7 @@ func catalogSampleParent() *nib.Nib {
 	return &nib.Nib{
 		ID:        "tnib-9f3d",
 		Slug:      "authentication",
-		Path:      ".nibs/tnib-9f3d-authentication.md",
+		Path:      "data/tnib-9f3d-authentication.md",
 		Title:     "Authentication",
 		Status:    "todo",
 		Type:      "epic",

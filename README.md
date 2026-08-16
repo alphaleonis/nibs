@@ -91,7 +91,7 @@ Initialize nibs in your project:
 nibs init
 ```
 
-This creates a `.nibs/` directory and a `.nibs.yml` configuration file. Both should be tracked in version control.
+This creates a `.nibs/` store directory holding `config.yml` and `data/`. It should be tracked in version control.
 
 ```bash
 nibs new "Set up CI pipeline" -t task    # create a task

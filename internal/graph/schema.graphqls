@@ -357,7 +357,7 @@ type Nib {
   id: ID!
   "Human-readable slug from filename"
   slug: String
-  "Relative path from .nibs/ directory"
+  "Path relative to the .nibs store directory (`data/x.md`, or `archive/x.md` once archived)"
   path: String!
   "File format version (0 = legacy)"
   version: Int!

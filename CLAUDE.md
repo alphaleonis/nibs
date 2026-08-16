@@ -61,7 +61,8 @@ The GraphQL engine runs in-process for CLI commands (`cmd/graphql.go` executes q
 - **`internal/nib/`** - Core `Nib` struct, Markdown+YAML parsing/rendering, ID generation, sorting
 - **`internal/nibcore/`** - `Core` type: thread-safe in-memory nib store with filesystem persistence, file watching (fsnotify), search (Bleve), and archive management
 - **`internal/graph/`** - gqlgen GraphQL layer. `schema.graphqls` is the schema, `schema.resolvers.go` has resolver implementations, `resolver.go` has shared validation logic (parent hierarchy, cycle detection, etag validation)
-- **`internal/config/`** - Configuration from `.nibs.yml`. Hardcoded enums: statuses (draft/todo/in-progress/deferred/completed/scrapped), types (milestone/epic/bug/feature/task), priorities (critical/high/normal/low)
+- **`internal/store/`** - The store layout: the `.nibs` directory's structure (`config.yml`, `data/`, `archive/`) and the upward walk that finds a store. Stdlib-only so both `internal/config` and `internal/nibcore` can derive their paths from it
+- **`internal/config/`** - Configuration from `<store>/config.yml`. Hardcoded enums: statuses (draft/todo/in-progress/deferred/completed/scrapped), types (milestone/epic/bug/feature/task), priorities (critical/high/normal/low)
 - **`internal/tui/`** - Bubbletea TUI app. Uses the GraphQL resolver internally for all mutations
 - **`internal/search/`** - Bleve full-text search index (lazy-initialized, in-memory)
 - **`internal/ui/`** - Shared UI utilities (styles, tree rendering)
@@ -90,13 +91,19 @@ The GraphQL engine runs in-process for CLI commands (`cmd/graphql.go` executes q
 
 ### Nib Data Model
 
-Nibs are Markdown files with YAML front matter stored in `.nibs/`. Filename format: `{id}-{slug}.md` or `{id}.md`. Archived nibs go to `.nibs/archive/` but **stay in the store and remain visible in all queries** — `Core.Archive` keeps the nib in memory and rewrites its `Path`. Archiving is a move, not a removal (only `Delete` removes). The `Nib` struct fields like `ID`, `Slug`, and `Path` are derived from the filename/path, not from front matter.
+Nibs are Markdown files with YAML front matter stored in `.nibs/data/`. Filename format: `{id}-{slug}.md` or `{id}.md`. Archived nibs go to `.nibs/archive/` but **stay in the store and remain visible in all queries** — `Core.Archive` keeps the nib in memory and rewrites its `Path`. Archiving is a move, not a removal (only `Delete` removes), and unarchiving returns the file to `data/`, never to the store root. The `Nib` struct fields like `ID`, `Slug`, and `Path` are derived from the filename/path, not from front matter.
 
-The `Path` field always uses forward slashes (normalized via `filepath.ToSlash`) for cross-platform portability. When using `Path` for filesystem operations, combine with `filepath.Join(c.root, b.Path)` which handles mixed separators.
+`Path` is relative to the STORE directory and carries the content directory as its first component: `data/x.md` for an active nib, `archive/x.md` for an archived one. It always uses forward slashes (normalized via `filepath.ToSlash`) for cross-platform portability. When using `Path` for filesystem operations, combine with `filepath.Join(c.root, b.Path)` which handles mixed separators.
+
+Store content is `data/` (subdirectories included) and `archive/`, and nothing else — a `.md` file at the store ROOT is the pre-migration shape, so `.nibs/README.md` is a legal place for a readme rather than a nib.
 
 ### Configuration
 
-Project config lives in `.nibs.yml` at project root (searched upward from cwd). Key settings: `nibs.prefix` (ID prefix like "myproj-"), `nibs.id_length`, `nibs.path` (data directory, default `.nibs`), `nibs.require_if_match` (optimistic concurrency). Nibs path can also be set via `--nibs-path` flag or `NIBS_PATH` env var — but those move **only the data directory**; config is still discovered from cwd, so pointing them at another project silently applies *this* project's prefix/id_length/defaults to that project's data. To work against another project, pass `--config <dir>/.nibs.yml` — it resolves that project's data directory too, so `--nibs-path` is unnecessary.
+Project config lives INSIDE the store, at `.nibs/config.yml`. The `.nibs` **directory** is the project-root marker: commands walk up from the cwd looking for it, then read the config from within it. Key settings: `nibs.prefix` (ID prefix like "myproj-"), `nibs.id_length`, `nibs.require_if_match` (optimistic concurrency).
+
+Because the config travels with the data, `--nibs-path <dir>` and `NIBS_PATH` apply **that store's** prefix, id_length and defaults — pointing nibs at another project reads it under its own vocabulary, not the cwd project's. `--config <file>` still works and names the store through its containing directory, so it is redundant with `--nibs-path`.
+
+The `nibs.path` key is retired: a config still carrying it is a hard error naming `nibs migrate`. Migrating a pre-layout project (`.nibs.yml` beside the store, nib files at the store root) is the `layout` step of `nibs migrate`, which every command refuses until it has run.
 
 For optional config fields with non-zero defaults, use pointer types (`*int`, `*bool`) with `yaml:"...,omitempty"` so nil means "use default" vs explicit zero/false. See `ServerConfig` for the pattern.
 

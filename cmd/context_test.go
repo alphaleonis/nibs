@@ -20,7 +20,7 @@ func resetContextFlags() {
 	})
 }
 
-// setupContextCobraTest writes a .nibs.yml (with prefix nibs-) plus nib files
+// setupContextCobraTest writes a store config (with prefix nibs-) plus nib files
 // and returns the config path and .nibs directory so a test can drive the full
 // Cobra pipeline via `--config <cfg> --nibs-path <dir> context ...`.
 func setupContextCobraTest(t *testing.T, files map[string]string) (cfgPath, nibsDir string) {
@@ -36,7 +36,7 @@ func setupContextCobraTest(t *testing.T, files map[string]string) (cfgPath, nibs
 	if err := os.MkdirAll(storeDataDir(nibsDir), 0755); err != nil {
 		t.Fatal(err)
 	}
-	cfgPath = filepath.Join(tmpDir, ".nibs.yml")
+	cfgPath = filepath.Join(nibsDir, "config.yml")
 	if err := os.WriteFile(cfgPath, []byte("nibs:\n  prefix: nibs-\n  id_length: 4\n"), 0644); err != nil {
 		t.Fatal(err)
 	}
