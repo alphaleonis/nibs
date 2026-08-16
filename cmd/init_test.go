@@ -67,7 +67,10 @@ func loadInitCfg(t *testing.T, projectDir string) *config.Config {
 
 // TestInit_ExplicitPrefix_TracerBullet exercises the happy path: a
 // directory with an awkward camelCase name + an explicit --prefix flag
-// produces a valid prefix in .nibs.yml regardless of the dirname.
+// produces a valid prefix in the store's config regardless of the dirname,
+// and the store comes out in the current shape — `.nibs/{config.yml, data/}`
+// with NO `.nibs.yml` beside it, which is the shape the migration gate
+// refuses.
 func TestInit_ExplicitPrefix_TracerBullet(t *testing.T) {
 	projectDir, nibsPath := setupInitTest(t, "boardGameTracker")
 
@@ -75,15 +78,25 @@ func TestInit_ExplicitPrefix_TracerBullet(t *testing.T) {
 		t.Fatalf("init failed: %v", err)
 	}
 
-	// .nibs.yml must exist and have the explicit prefix.
+	// <store>/config.yml must exist and have the explicit prefix.
 	cfg := loadInitCfg(t, projectDir)
 	if cfg.Nibs.Prefix != "bgt-" {
 		t.Errorf("cfg prefix = %q, want %q", cfg.Nibs.Prefix, "bgt-")
 	}
 
-	// .nibs/ subdir must exist.
+	// The store and its data directory must exist.
 	if _, err := os.Stat(nibsPath); err != nil {
-		t.Errorf("expected .nibs/ dir to exist: %v", err)
+		t.Errorf("expected the .nibs store to exist: %v", err)
+	}
+	if _, err := os.Stat(store.NewLayout(nibsPath).DataDir()); err != nil {
+		t.Errorf("expected the store's data/ directory to exist: %v", err)
+	}
+
+	// And NOT the retired project-root config: a fresh store must never be
+	// born in a shape `nibs migrate` would have to fix.
+	legacy := filepath.Join(projectDir, store.LegacyProjectConfigFileName)
+	if _, err := os.Stat(legacy); !os.IsNotExist(err) {
+		t.Errorf("init wrote %s (stat err = %v); the config belongs inside the store", legacy, err)
 	}
 }
 
