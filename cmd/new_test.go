@@ -133,7 +133,7 @@ func setupNewTest(t *testing.T) string {
 
 	tmpDir := t.TempDir()
 	nibsDir := filepath.Join(tmpDir, ".nibs")
-	if err := os.MkdirAll(nibsDir, 0755); err != nil {
+	if err := os.MkdirAll(storeDataDir(nibsDir), 0755); err != nil {
 		t.Fatal(err)
 	}
 	return nibsDir
@@ -189,7 +189,7 @@ func TestNewEditorOpensWithTemplate(t *testing.T) {
 	_ = out
 
 	// Find the created nib file
-	entries, err := os.ReadDir(nibsDir)
+	entries, err := os.ReadDir(storeDataDir(nibsDir))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -197,7 +197,7 @@ func TestNewEditorOpensWithTemplate(t *testing.T) {
 		t.Fatal("no nib file created")
 	}
 
-	content, err := os.ReadFile(filepath.Join(nibsDir, entries[0].Name()))
+	content, err := os.ReadFile(dataPath(nibsDir, entries[0].Name()))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -232,8 +232,8 @@ func TestNewFallsBackToTemplateWithoutEditor(t *testing.T) {
 	})
 	_ = out
 
-	entries, _ := os.ReadDir(nibsDir)
-	content, _ := os.ReadFile(filepath.Join(nibsDir, entries[0].Name()))
+	entries, _ := os.ReadDir(storeDataDir(nibsDir))
+	content, _ := os.ReadFile(dataPath(nibsDir, entries[0].Name()))
 	body := string(content)
 
 	// Should contain the template
@@ -265,8 +265,8 @@ func TestNewBodyFlagSkipsEditor(t *testing.T) {
 	})
 	_ = out
 
-	entries, _ := os.ReadDir(nibsDir)
-	content, _ := os.ReadFile(filepath.Join(nibsDir, entries[0].Name()))
+	entries, _ := os.ReadDir(storeDataDir(nibsDir))
+	content, _ := os.ReadFile(dataPath(nibsDir, entries[0].Name()))
 	body := string(content)
 
 	// Should use the provided body, not the template
@@ -325,8 +325,8 @@ func TestNewBodyFromStdin(t *testing.T) {
 	})
 	_ = out
 
-	entries, _ := os.ReadDir(nibsDir)
-	content, _ := os.ReadFile(filepath.Join(nibsDir, entries[0].Name()))
+	entries, _ := os.ReadDir(storeDataDir(nibsDir))
+	content, _ := os.ReadFile(dataPath(nibsDir, entries[0].Name()))
 	if !strings.Contains(string(content), "`code` with \"quotes\" and 'apostrophes'") {
 		t.Errorf("piped body not preserved verbatim, got:\n%s", content)
 	}
@@ -352,8 +352,8 @@ func TestNewBodyFromFile(t *testing.T) {
 	})
 	_ = out
 
-	entries, _ := os.ReadDir(nibsDir)
-	content, _ := os.ReadFile(filepath.Join(nibsDir, entries[0].Name()))
+	entries, _ := os.ReadDir(storeDataDir(nibsDir))
+	content, _ := os.ReadFile(dataPath(nibsDir, entries[0].Name()))
 	if !strings.Contains(string(content), "content from a file") {
 		t.Errorf("file body not used, got:\n%s", content)
 	}
@@ -382,7 +382,7 @@ func TestNewRejectsInlineBody(t *testing.T) {
 	if output.ExitCode(ce.Code) != output.ExitValidation {
 		t.Errorf("inline --body exit = %d, want %d (validation)", output.ExitCode(ce.Code), output.ExitValidation)
 	}
-	entries, _ := os.ReadDir(nibsDir)
+	entries, _ := os.ReadDir(storeDataDir(nibsDir))
 	if len(entries) != 0 {
 		t.Errorf("expected no nib created on rejection, found %d entries", len(entries))
 	}
@@ -417,7 +417,7 @@ func TestNewMissingBodyFileIsIOError(t *testing.T) {
 // to exactly the given ID. Used by the positioning tests below.
 func readNibByID(t *testing.T, nibsDir, idPrefix string) *nib.Nib {
 	t.Helper()
-	entries, err := os.ReadDir(nibsDir)
+	entries, err := os.ReadDir(storeDataDir(nibsDir))
 	if err != nil {
 		t.Fatalf("reading nibs dir: %v", err)
 	}
@@ -429,7 +429,7 @@ func readNibByID(t *testing.T, nibsDir, idPrefix string) *nib.Nib {
 		if id != idPrefix {
 			continue
 		}
-		f, err := os.Open(filepath.Join(nibsDir, e.Name()))
+		f, err := os.Open(dataPath(nibsDir, e.Name()))
 		if err != nil {
 			t.Fatalf("opening %s: %v", e.Name(), err)
 		}
@@ -449,7 +449,7 @@ func readNibByID(t *testing.T, nibsDir, idPrefix string) *nib.Nib {
 // Useful when the just-created nib's ID was generated and is not known up-front.
 func firstCreatedID(t *testing.T, nibsDir string) string {
 	t.Helper()
-	entries, err := os.ReadDir(nibsDir)
+	entries, err := os.ReadDir(storeDataDir(nibsDir))
 	if err != nil {
 		t.Fatalf("reading nibs dir: %v", err)
 	}
@@ -470,7 +470,7 @@ func firstCreatedID(t *testing.T, nibsDir string) string {
 // directly in nibsDir.
 func countNibFiles(t *testing.T, nibsDir string) int {
 	t.Helper()
-	entries, err := os.ReadDir(nibsDir)
+	entries, err := os.ReadDir(storeDataDir(nibsDir))
 	if err != nil {
 		t.Fatalf("reading nibs dir: %v", err)
 	}
@@ -561,7 +561,7 @@ func TestNewAfterRootSibling(t *testing.T) {
 // given excluded set. Fails the test if zero or more than one such nib exists.
 func otherID(t *testing.T, nibsDir string, excluded map[string]bool) string {
 	t.Helper()
-	entries, err := os.ReadDir(nibsDir)
+	entries, err := os.ReadDir(storeDataDir(nibsDir))
 	if err != nil {
 		t.Fatalf("reading nibs dir: %v", err)
 	}
@@ -606,8 +606,8 @@ func TestNewVisualTakesPrecedence(t *testing.T) {
 	})
 	_ = out
 
-	entries, _ := os.ReadDir(nibsDir)
-	content, _ := os.ReadFile(filepath.Join(nibsDir, entries[0].Name()))
+	entries, _ := os.ReadDir(storeDataDir(nibsDir))
+	content, _ := os.ReadFile(dataPath(nibsDir, entries[0].Name()))
 	body := string(content)
 
 	if !strings.Contains(body, "EDITED BY SCRIPT") {
@@ -637,8 +637,8 @@ func TestNewJSONNeverOpensEditor(t *testing.T) {
 		}
 	})
 
-	entries, _ := os.ReadDir(nibsDir)
-	content, _ := os.ReadFile(filepath.Join(nibsDir, entries[0].Name()))
+	entries, _ := os.ReadDir(storeDataDir(nibsDir))
+	content, _ := os.ReadFile(dataPath(nibsDir, entries[0].Name()))
 	body := string(content)
 
 	if !strings.Contains(body, "## Description") {
@@ -682,8 +682,8 @@ func TestNewNonTTYFallsBackToTemplate(t *testing.T) {
 		}
 	})
 
-	entries, _ := os.ReadDir(nibsDir)
-	content, _ := os.ReadFile(filepath.Join(nibsDir, entries[0].Name()))
+	entries, _ := os.ReadDir(storeDataDir(nibsDir))
+	content, _ := os.ReadFile(dataPath(nibsDir, entries[0].Name()))
 	body := string(content)
 
 	if !strings.Contains(body, "## Description") {
@@ -715,8 +715,8 @@ func TestNewNoEditFlagSkipsEditor(t *testing.T) {
 		}
 	})
 
-	entries, _ := os.ReadDir(nibsDir)
-	content, _ := os.ReadFile(filepath.Join(nibsDir, entries[0].Name()))
+	entries, _ := os.ReadDir(storeDataDir(nibsDir))
+	content, _ := os.ReadFile(dataPath(nibsDir, entries[0].Name()))
 	body := string(content)
 
 	if !strings.Contains(body, "## Description") {

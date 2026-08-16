@@ -226,7 +226,7 @@ func setupServeTestApp(t *testing.T) *App {
 	t.Helper()
 	tmpDir := t.TempDir()
 	nibsDir := filepath.Join(tmpDir, ".nibs")
-	if err := os.MkdirAll(nibsDir, 0755); err != nil {
+	if err := os.MkdirAll(storeDataDir(nibsDir), 0755); err != nil {
 		t.Fatalf("failed to create test .nibs dir: %v", err)
 	}
 

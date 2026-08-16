@@ -10,78 +10,89 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/alphaleonis/nibs/internal/config"
 	"github.com/alphaleonis/nibs/internal/output"
 )
 
-func TestResolveNibsPath(t *testing.T) {
-	// Create a valid nibs directory for tests that need one
+func TestResolveStoreDir(t *testing.T) {
 	tmpDir := t.TempDir()
-	validNibsDir := filepath.Join(tmpDir, ".nibs")
-	if err := os.MkdirAll(validNibsDir, 0755); err != nil {
+	projectDir := filepath.Join(tmpDir, "project")
+	validStoreDir := filepath.Join(projectDir, ".nibs")
+	if err := os.MkdirAll(validStoreDir, 0755); err != nil {
 		t.Fatalf("failed to create test .nibs dir: %v", err)
 	}
 
-	altNibsDir := filepath.Join(tmpDir, "alt-nibs")
-	if err := os.MkdirAll(altNibsDir, 0755); err != nil {
-		t.Fatalf("failed to create alt nibs dir: %v", err)
+	altStoreDir := filepath.Join(tmpDir, "alt", ".nibs")
+	if err := os.MkdirAll(altStoreDir, 0755); err != nil {
+		t.Fatalf("failed to create alt store dir: %v", err)
 	}
 
-	// Config that points to the valid nibs dir
-	cfg := config.Default()
-	cfg.SetConfigDir(tmpDir)
+	t.Cleanup(resetRootPersistentFlags)
 
 	t.Run("flag takes highest precedence", func(t *testing.T) {
-		t.Setenv("NIBS_PATH", altNibsDir)
+		t.Cleanup(resetRootPersistentFlags)
+		t.Setenv("NIBS_PATH", altStoreDir)
+		nibsPath = validStoreDir
 
-		got, err := resolveNibsPath(validNibsDir, cfg)
+		got, err := resolveStoreDir()
 		if err != nil {
-			t.Fatalf("resolveNibsPath() error = %v", err)
+			t.Fatalf("resolveStoreDir() error = %v", err)
 		}
-		if got != validNibsDir {
-			t.Errorf("expected flag path %q, got %q", validNibsDir, got)
-		}
-	})
-
-	t.Run("flag overrides env var", func(t *testing.T) {
-		t.Setenv("NIBS_PATH", "/nonexistent/should/not/be/used")
-
-		got, err := resolveNibsPath(validNibsDir, cfg)
-		if err != nil {
-			t.Fatalf("resolveNibsPath() error = %v", err)
-		}
-		if got != validNibsDir {
-			t.Errorf("expected flag path %q, got %q", validNibsDir, got)
+		if got != validStoreDir {
+			t.Errorf("expected flag path %q, got %q", validStoreDir, got)
 		}
 	})
 
 	t.Run("env var used when flag is empty", func(t *testing.T) {
-		t.Setenv("NIBS_PATH", altNibsDir)
+		t.Cleanup(resetRootPersistentFlags)
+		t.Setenv("NIBS_PATH", altStoreDir)
 
-		got, err := resolveNibsPath("", cfg)
+		got, err := resolveStoreDir()
 		if err != nil {
-			t.Fatalf("resolveNibsPath() error = %v", err)
+			t.Fatalf("resolveStoreDir() error = %v", err)
 		}
-		if got != altNibsDir {
-			t.Errorf("expected env var path %q, got %q", altNibsDir, got)
+		if got != altStoreDir {
+			t.Errorf("expected env var path %q, got %q", altStoreDir, got)
 		}
 	})
 
-	t.Run("config used when flag and env var are empty", func(t *testing.T) {
+	t.Run("--config names the store through its directory", func(t *testing.T) {
+		t.Cleanup(resetRootPersistentFlags)
 		t.Setenv("NIBS_PATH", "")
+		configPath = filepath.Join(altStoreDir, "config.yml")
 
-		got, err := resolveNibsPath("", cfg)
+		got, err := resolveStoreDir()
 		if err != nil {
-			t.Fatalf("resolveNibsPath() error = %v", err)
+			t.Fatalf("resolveStoreDir() error = %v", err)
 		}
-		expected := cfg.ResolveNibsPath()
-		if got != expected {
-			t.Errorf("expected config path %q, got %q", expected, got)
+		if got != altStoreDir {
+			t.Errorf("expected --config's directory %q, got %q", altStoreDir, got)
+		}
+	})
+
+	t.Run("upward walk finds the store from a subdirectory", func(t *testing.T) {
+		t.Cleanup(resetRootPersistentFlags)
+		t.Setenv("NIBS_PATH", "")
+		t.Setenv("NIBS_CONFIG_ROOT", tmpDir)
+		deep := filepath.Join(projectDir, "a", "b")
+		if err := os.MkdirAll(deep, 0755); err != nil {
+			t.Fatalf("mkdir deep: %v", err)
+		}
+		t.Chdir(deep)
+
+		got, err := resolveStoreDir()
+		if err != nil {
+			t.Fatalf("resolveStoreDir() error = %v", err)
+		}
+		if got != validStoreDir {
+			t.Errorf("expected discovered store %q, got %q", validStoreDir, got)
 		}
 	})
 
 	t.Run("invalid flag path returns error", func(t *testing.T) {
-		_, err := resolveNibsPath("/nonexistent/path", cfg)
+		t.Cleanup(resetRootPersistentFlags)
+		nibsPath = "/nonexistent/path"
+
+		_, err := resolveStoreDir()
 		if err == nil {
 			t.Fatal("expected error for invalid flag path, got nil")
 		}
@@ -91,9 +102,10 @@ func TestResolveNibsPath(t *testing.T) {
 	})
 
 	t.Run("invalid env var path returns error", func(t *testing.T) {
+		t.Cleanup(resetRootPersistentFlags)
 		t.Setenv("NIBS_PATH", "/nonexistent/env/path")
 
-		_, err := resolveNibsPath("", cfg)
+		_, err := resolveStoreDir()
 		if err == nil {
 			t.Fatal("expected error for invalid env var path, got nil")
 		}
@@ -102,16 +114,16 @@ func TestResolveNibsPath(t *testing.T) {
 		}
 	})
 
-	t.Run("invalid config path returns init suggestion", func(t *testing.T) {
+	t.Run("no store anywhere returns init suggestion", func(t *testing.T) {
+		t.Cleanup(resetRootPersistentFlags)
 		t.Setenv("NIBS_PATH", "")
+		bare := t.TempDir()
+		t.Setenv("NIBS_CONFIG_ROOT", bare)
+		t.Chdir(bare)
 
-		// Config pointing to a nonexistent directory
-		badCfg := config.Default()
-		badCfg.SetConfigDir("/nonexistent/config/dir")
-
-		_, err := resolveNibsPath("", badCfg)
+		_, err := resolveStoreDir()
 		if err == nil {
-			t.Fatal("expected error for invalid config path, got nil")
+			t.Fatal("expected error when no store exists, got nil")
 		}
 		if !strings.Contains(err.Error(), "nibs init") {
 			t.Errorf("expected error to suggest 'nibs init', got %q", err.Error())
@@ -119,13 +131,14 @@ func TestResolveNibsPath(t *testing.T) {
 	})
 
 	t.Run("file path rejected as not a directory", func(t *testing.T) {
-		// Create a regular file (not a directory)
+		t.Cleanup(resetRootPersistentFlags)
 		filePath := filepath.Join(tmpDir, "not-a-dir")
 		if err := os.WriteFile(filePath, []byte("hello"), 0644); err != nil {
 			t.Fatalf("failed to create test file: %v", err)
 		}
+		nibsPath = filePath
 
-		_, err := resolveNibsPath(filePath, cfg)
+		_, err := resolveStoreDir()
 		if err == nil {
 			t.Fatal("expected error for file path (not directory), got nil")
 		}

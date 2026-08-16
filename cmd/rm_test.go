@@ -34,11 +34,11 @@ func setupRmTest(t *testing.T, files map[string]string) string {
 
 	tmpDir := t.TempDir()
 	nibsDir := filepath.Join(tmpDir, ".nibs")
-	if err := os.MkdirAll(nibsDir, 0755); err != nil {
+	if err := os.MkdirAll(storeDataDir(nibsDir), 0755); err != nil {
 		t.Fatal(err)
 	}
 	for name, content := range files {
-		if err := os.WriteFile(filepath.Join(nibsDir, name), []byte(content), 0644); err != nil {
+		if err := os.WriteFile(dataPath(nibsDir, name), []byte(content), 0644); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -64,7 +64,7 @@ func TestRmArchiveDefault(t *testing.T) {
 		t.Fatalf("rm -f (archive) failed: %v", execErr)
 	}
 
-	if fileExists(filepath.Join(nibsDir, "arc-1--task.md")) {
+	if fileExists(dataPath(nibsDir, "arc-1--task.md")) {
 		t.Error("nib should have been moved out of the main .nibs dir")
 	}
 	if !fileExists(filepath.Join(nibsDir, "archive", "arc-1--task.md")) {
@@ -85,7 +85,7 @@ func TestRmDeleteForce(t *testing.T) {
 		t.Fatalf("rm --delete -f failed: %v", execErr)
 	}
 
-	if fileExists(filepath.Join(nibsDir, "del-1--task.md")) {
+	if fileExists(dataPath(nibsDir, "del-1--task.md")) {
 		t.Error("nib file should have been deleted")
 	}
 	if fileExists(filepath.Join(nibsDir, "archive", "del-1--task.md")) {
@@ -117,7 +117,7 @@ func TestRmRefusesWithoutForceNonInteractive(t *testing.T) {
 		t.Errorf("code = %q, want %q", ce.Code, output.ErrValidation)
 	}
 	// And the nib must still be present (nothing was removed).
-	if !fileExists(filepath.Join(nibsDir, "keep-1--task.md")) {
+	if !fileExists(dataPath(nibsDir, "keep-1--task.md")) {
 		t.Error("nib must be untouched when rm refuses")
 	}
 }
@@ -222,7 +222,7 @@ func TestRmDeleteLegacyAliasStillWorks(t *testing.T) {
 	if execErr != nil {
 		t.Fatalf("legacy delete command failed: %v", execErr)
 	}
-	if fileExists(filepath.Join(nibsDir, "leg-1--task.md")) {
+	if fileExists(dataPath(nibsDir, "leg-1--task.md")) {
 		t.Error("nib should have been deleted by the legacy command")
 	}
 }

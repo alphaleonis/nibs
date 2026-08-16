@@ -68,10 +68,10 @@ assignee: bob
 
 Body dup-extra.
 `
-	writeNibFile(t, nibsDir, "gooda1--good.md", goodA)
-	writeNibFile(t, nibsDir, "goodb1--good.md", goodB)
-	writeNibFile(t, nibsDir, "dupmod1--broken.md", dupModeled)
-	writeNibFile(t, nibsDir, "dupext1--broken.md", dupExtra)
+	writeNibFile(t, storeData(t, nibsDir), "gooda1--good.md", goodA)
+	writeNibFile(t, storeData(t, nibsDir), "goodb1--good.md", goodB)
+	writeNibFile(t, storeData(t, nibsDir), "dupmod1--broken.md", dupModeled)
+	writeNibFile(t, storeData(t, nibsDir), "dupext1--broken.md", dupExtra)
 
 	var warnBuf bytes.Buffer
 	core := New(nibsDir, config.Default())
@@ -109,14 +109,14 @@ Body dup-extra.
 
 	// The skipped files' bytes must be left untouched on disk (skip = not loaded,
 	// never delete/rewrite).
-	gotMod, err := os.ReadFile(filepath.Join(nibsDir, "dupmod1--broken.md"))
+	gotMod, err := os.ReadFile(dataPath(nibsDir, "dupmod1--broken.md"))
 	if err != nil {
 		t.Fatalf("reading skipped file: %v", err)
 	}
 	if string(gotMod) != dupModeled {
 		t.Errorf("skipped duplicate-modeled-key file was modified on disk:\n got:\n%s\nwant:\n%s", gotMod, dupModeled)
 	}
-	gotExt, err := os.ReadFile(filepath.Join(nibsDir, "dupext1--broken.md"))
+	gotExt, err := os.ReadFile(dataPath(nibsDir, "dupext1--broken.md"))
 	if err != nil {
 		t.Fatalf("reading skipped file: %v", err)
 	}
@@ -156,8 +156,8 @@ Body.
 	}
 	sb.WriteString("---\n\nBody.\n")
 
-	writeNibFile(t, nibsDir, "good1--ok.md", good)
-	writeNibFile(t, nibsDir, "manykeys1--dos.md", sb.String())
+	writeNibFile(t, storeData(t, nibsDir), "good1--ok.md", good)
+	writeNibFile(t, storeData(t, nibsDir), "manykeys1--dos.md", sb.String())
 
 	var warnBuf bytes.Buffer
 	core := New(nibsDir, config.Default())
@@ -189,8 +189,8 @@ Body.
 func TestLoadClassifiesFencelessFileAsDiagnostic(t *testing.T) {
 	nibsDir := setupNibsDir(t)
 	const readme = "# Store notes\n\nNo front matter here.\n"
-	writeNibFile(t, nibsDir, "README.md", readme)
-	writeNibFile(t, nibsDir, "good1--ok.md", "---\nversion: 1\ntitle: Good\nstatus: todo\n---\n\nBody.\n")
+	writeNibFile(t, storeData(t, nibsDir), "README.md", readme)
+	writeNibFile(t, storeData(t, nibsDir), "good1--ok.md", "---\nversion: 1\ntitle: Good\nstatus: todo\n---\n\nBody.\n")
 
 	core := New(nibsDir, config.Default())
 	core.SetWarnWriter(nil)
@@ -205,7 +205,7 @@ func TestLoadClassifiesFencelessFileAsDiagnostic(t *testing.T) {
 	}
 
 	unparseable, _ := core.LoadDiagnostics()
-	if len(unparseable) != 1 || unparseable[0].Path != "README.md" {
+	if len(unparseable) != 1 || unparseable[0].Path != "data/README.md" {
 		t.Fatalf("LoadDiagnostics unparseable = %+v, want exactly README.md", unparseable)
 	}
 	if !strings.Contains(unparseable[0].Reason, "no front matter") {
@@ -213,7 +213,7 @@ func TestLoadClassifiesFencelessFileAsDiagnostic(t *testing.T) {
 	}
 
 	// Classification never writes: the document's bytes stay untouched.
-	got, err := os.ReadFile(filepath.Join(nibsDir, "README.md"))
+	got, err := os.ReadFile(dataPath(nibsDir, "README.md"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -241,16 +241,13 @@ status: todo
 
 Body.
 `
-	writeNibFile(t, nibsDir, "top1--one.md", nibBody)
-	if err := os.MkdirAll(filepath.Join(nibsDir, "archive"), 0o755); err != nil {
+	writeNibFile(t, storeData(t, nibsDir), "top1--one.md", nibBody)
+	writeNibFile(t, storeArchive(t, nibsDir), "arc1--old.md", nibBody)
+	if err := os.MkdirAll(dataPath(nibsDir, ".obsidian", "cache"), 0o755); err != nil {
 		t.Fatal(err)
 	}
-	writeNibFile(t, nibsDir, filepath.Join("archive", "arc1--old.md"), nibBody)
-	if err := os.MkdirAll(filepath.Join(nibsDir, ".obsidian", "cache"), 0o755); err != nil {
-		t.Fatal(err)
-	}
-	writeNibFile(t, nibsDir, filepath.Join(".obsidian", "cache", "note1--x.md"), nibBody)
-	writeNibFile(t, nibsDir, ".dot1--lockish.md", nibBody)
+	writeNibFile(t, storeData(t, nibsDir), filepath.Join(".obsidian", "cache", "note1--x.md"), nibBody)
+	writeNibFile(t, storeData(t, nibsDir), ".dot1--lockish.md", nibBody)
 
 	core := New(nibsDir, config.Default())
 	core.SetWarnWriter(nil)
@@ -289,7 +286,7 @@ func TestLoadPropagatesWalkDirIOError(t *testing.T) {
 	nibsDir := setupNibsDir(t)
 
 	// A valid nib so the store isn't trivially empty.
-	writeNibFile(t, nibsDir, "good1--ok.md", `---
+	writeNibFile(t, storeData(t, nibsDir), "good1--ok.md", `---
 version: 1
 title: Good
 status: todo
@@ -300,7 +297,7 @@ Body.
 
 	// An unreadable subdirectory: WalkDir surfaces the readdir permission error
 	// through the callback's err parameter, which must abort Load.
-	locked := filepath.Join(nibsDir, "locked")
+	locked := dataPath(nibsDir, "locked")
 	if err := os.Mkdir(locked, 0o755); err != nil {
 		t.Fatalf("mkdir: %v", err)
 	}

@@ -12,6 +12,7 @@ import (
 
 	"github.com/alphaleonis/nibs/internal/config"
 	"github.com/alphaleonis/nibs/internal/nib"
+	"github.com/alphaleonis/nibs/internal/store"
 )
 
 // setupLoadedCore builds a Core over an existing nibsDir and performs the initial
@@ -29,7 +30,7 @@ func setupLoadedCore(t *testing.T, nibsDir string) *Core {
 
 func setupNibsDir(t *testing.T) string {
 	t.Helper()
-	nibsDir := filepath.Join(t.TempDir(), NibsDir)
+	nibsDir := filepath.Join(t.TempDir(), store.DirName)
 	if err := os.MkdirAll(nibsDir, 0755); err != nil {
 		t.Fatalf("failed to create test .nibs dir: %v", err)
 	}
@@ -80,7 +81,7 @@ func TestComputeStoredETagCanonical(t *testing.T) {
 	// Case 1: benign byte drift on disk does not change the stored etag.
 	t.Run("benign byte drift keeps stored etag equal to in-memory ETag", func(t *testing.T) {
 		nibsDir := setupNibsDir(t)
-		writeNibFile(t, nibsDir, canonEtagFile, canonEtagCanonical)
+		writeNibFile(t, storeData(t, nibsDir), canonEtagFile, canonEtagCanonical)
 		core := setupLoadedCore(t, nibsDir)
 
 		b, err := core.Get("etagcanon1")
@@ -90,7 +91,7 @@ func TestComputeStoredETagCanonical(t *testing.T) {
 		want := b.ETag()
 
 		// Overwrite disk with cosmetically-drifted bytes that parse identically.
-		writeNibFile(t, nibsDir, canonEtagFile, canonEtagReordered)
+		writeNibFile(t, storeData(t, nibsDir), canonEtagFile, canonEtagReordered)
 
 		got, err := core.CurrentETag("etagcanon1")
 		if err != nil {
@@ -105,7 +106,7 @@ func TestComputeStoredETagCanonical(t *testing.T) {
 	// genuine divergence.
 	t.Run("ETag()-based Update succeeds across drift and fails on divergence", func(t *testing.T) {
 		nibsDir := setupNibsDir(t)
-		writeNibFile(t, nibsDir, canonEtagFile, canonEtagCanonical)
+		writeNibFile(t, storeData(t, nibsDir), canonEtagFile, canonEtagCanonical)
 		core := setupLoadedCore(t, nibsDir)
 
 		b, err := core.Get("etagcanon1")
@@ -115,7 +116,7 @@ func TestComputeStoredETagCanonical(t *testing.T) {
 		ifMatch := b.ETag()
 
 		// Benign drift on disk must not block an ETag()-derived if-match Update.
-		writeNibFile(t, nibsDir, canonEtagFile, canonEtagReordered)
+		writeNibFile(t, storeData(t, nibsDir), canonEtagFile, canonEtagReordered)
 
 		updated := b.Clone()
 		updated.Title = "Canonical Etag (edited)"
@@ -129,7 +130,7 @@ func TestComputeStoredETagCanonical(t *testing.T) {
 
 		// Now simulate a genuine concurrent external edit on disk (different
 		// title AND body), then attempt an Update with the now-stale if-match.
-		writeNibFile(t, nibsDir, canonEtagFile, `---
+		writeNibFile(t, storeData(t, nibsDir), canonEtagFile, `---
 version: 1
 title: Externally Changed
 status: todo
@@ -159,7 +160,7 @@ Externally rewritten body.
 		nibsDir := setupNibsDir(t)
 		// Start from a canonical `low` nib so the in-memory value is low.
 		const file = "defcanon1--legacy.md"
-		writeNibFile(t, nibsDir, file, `---
+		writeNibFile(t, storeData(t, nibsDir), file, `---
 version: 1
 title: Legacy Deferred
 status: todo
@@ -178,7 +179,7 @@ updated_at: 2026-01-02T03:04:05Z
 		inMemory := b.ETag()
 
 		// Externally rewrite the value to the legacy `deferred` spelling.
-		writeNibFile(t, nibsDir, file, `---
+		writeNibFile(t, storeData(t, nibsDir), file, `---
 version: 1
 title: Legacy Deferred
 status: todo
@@ -203,7 +204,7 @@ updated_at: 2026-01-02T03:04:05Z
 	// in-memory clone.
 	t.Run("genuine divergence aborts and preserves disk content", func(t *testing.T) {
 		nibsDir := setupNibsDir(t)
-		writeNibFile(t, nibsDir, canonEtagFile, canonEtagCanonical)
+		writeNibFile(t, storeData(t, nibsDir), canonEtagFile, canonEtagCanonical)
 		core := setupLoadedCore(t, nibsDir)
 
 		b, err := core.Get("etagcanon1")
@@ -224,7 +225,7 @@ updated_at: 2026-03-04T05:06:07Z
 
 Content written by another process.
 `
-		writeNibFile(t, nibsDir, canonEtagFile, external)
+		writeNibFile(t, storeData(t, nibsDir), canonEtagFile, external)
 
 		clone := b.Clone()
 		clone.Title = "Stale Loser"
@@ -236,7 +237,7 @@ Content written by another process.
 		}
 
 		// The on-disk file must still hold the external writer's content.
-		after, err := os.ReadFile(filepath.Join(nibsDir, canonEtagFile))
+		after, err := os.ReadFile(dataPath(nibsDir, canonEtagFile))
 		if err != nil {
 			t.Fatalf("reading file after aborted update: %v", err)
 		}
@@ -250,7 +251,7 @@ Content written by another process.
 	// genuine divergence.
 	t.Run("CurrentETag tracks canonical content for bulk-reorder pre-validation", func(t *testing.T) {
 		nibsDir := setupNibsDir(t)
-		writeNibFile(t, nibsDir, canonEtagFile, canonEtagCanonical)
+		writeNibFile(t, storeData(t, nibsDir), canonEtagFile, canonEtagCanonical)
 		core := setupLoadedCore(t, nibsDir)
 
 		b, err := core.Get("etagcanon1")
@@ -267,7 +268,7 @@ Content written by another process.
 		}
 
 		// Benign drift: still matches.
-		writeNibFile(t, nibsDir, canonEtagFile, canonEtagReordered)
+		writeNibFile(t, storeData(t, nibsDir), canonEtagFile, canonEtagReordered)
 		got, err = core.CurrentETag("etagcanon1")
 		if err != nil {
 			t.Fatalf("CurrentETag() error: %v", err)
@@ -277,7 +278,7 @@ Content written by another process.
 		}
 
 		// Genuine divergence: no longer matches.
-		writeNibFile(t, nibsDir, canonEtagFile, `---
+		writeNibFile(t, storeData(t, nibsDir), canonEtagFile, `---
 version: 1
 title: Reordered Externally
 status: todo
@@ -327,7 +328,7 @@ Body under edit.
 
 	t.Run("CurrentETag returns a non-reconcilable error for an unparseable file", func(t *testing.T) {
 		nibsDir := setupNibsDir(t)
-		writeNibFile(t, nibsDir, canonEtagFile, canonEtagCanonical)
+		writeNibFile(t, storeData(t, nibsDir), canonEtagFile, canonEtagCanonical)
 		core := setupLoadedCore(t, nibsDir)
 
 		if _, err := core.Get("etagcanon1"); err != nil {
@@ -335,7 +336,7 @@ Body under edit.
 		}
 
 		// Corrupt the on-disk file after load.
-		writeNibFile(t, nibsDir, canonEtagFile, corrupt)
+		writeNibFile(t, storeData(t, nibsDir), canonEtagFile, corrupt)
 
 		got, err := core.CurrentETag("etagcanon1")
 		var unparseable *OnDiskUnparseableError
@@ -352,7 +353,7 @@ Body under edit.
 
 	t.Run("stale if-match Update is refused with OnDiskUnparseableError; retry cannot clobber", func(t *testing.T) {
 		nibsDir := setupNibsDir(t)
-		writeNibFile(t, nibsDir, canonEtagFile, canonEtagCanonical)
+		writeNibFile(t, storeData(t, nibsDir), canonEtagFile, canonEtagCanonical)
 		core := setupLoadedCore(t, nibsDir)
 
 		b, err := core.Get("etagcanon1")
@@ -362,7 +363,7 @@ Body under edit.
 		ifMatch := b.ETag() // matches the in-memory value a normal client holds
 
 		// An external writer leaves the file in an unparseable state.
-		writeNibFile(t, nibsDir, canonEtagFile, corrupt)
+		writeNibFile(t, storeData(t, nibsDir), canonEtagFile, corrupt)
 
 		clone := b.Clone()
 		clone.Title = "Stale Overwrite Attempt"
@@ -384,7 +385,7 @@ Body under edit.
 		// OnDiskUnparseableError before any etag comparison), so it adds no branch
 		// coverage — it just documents that a "reconcile" token fabricated from the
 		// corrupt bytes still cannot reach the comparison, hence cannot clobber.
-		disk, err := os.ReadFile(filepath.Join(nibsDir, canonEtagFile))
+		disk, err := os.ReadFile(dataPath(nibsDir, canonEtagFile))
 		if err != nil {
 			t.Fatalf("reading file: %v", err)
 		}
@@ -395,7 +396,7 @@ Body under edit.
 		}
 
 		// The corrupt bytes must survive both attempts.
-		after, err := os.ReadFile(filepath.Join(nibsDir, canonEtagFile))
+		after, err := os.ReadFile(dataPath(nibsDir, canonEtagFile))
 		if err != nil {
 			t.Fatalf("reading file after refused updates: %v", err)
 		}
@@ -430,14 +431,14 @@ func TestComputeStoredETagReadErrorFailsClosed(t *testing.T) {
 			t.Skip("chmod 0 does not make a file unreadable on Windows")
 		}
 		nibsDir := setupNibsDir(t)
-		writeNibFile(t, nibsDir, canonEtagFile, canonEtagCanonical)
+		writeNibFile(t, storeData(t, nibsDir), canonEtagFile, canonEtagCanonical)
 		core := setupLoadedCore(t, nibsDir)
 
 		if _, err := core.Get("etagcanon1"); err != nil {
 			t.Fatalf("Get() error: %v", err)
 		}
 
-		path := filepath.Join(nibsDir, canonEtagFile)
+		path := dataPath(nibsDir, canonEtagFile)
 		if err := os.Chmod(path, 0); err != nil {
 			t.Fatalf("chmod 0: %v", err)
 		}
@@ -461,7 +462,7 @@ func TestComputeStoredETagReadErrorFailsClosed(t *testing.T) {
 			t.Skip("chmod 0 does not make a file unreadable on Windows")
 		}
 		nibsDir := setupNibsDir(t)
-		writeNibFile(t, nibsDir, canonEtagFile, canonEtagCanonical)
+		writeNibFile(t, storeData(t, nibsDir), canonEtagFile, canonEtagCanonical)
 		core := setupLoadedCore(t, nibsDir)
 
 		b, err := core.Get("etagcanon1")
@@ -470,7 +471,7 @@ func TestComputeStoredETagReadErrorFailsClosed(t *testing.T) {
 		}
 		ifMatch := b.ETag() // the etag a normal client holds from Get
 
-		path := filepath.Join(nibsDir, canonEtagFile)
+		path := dataPath(nibsDir, canonEtagFile)
 		if err := os.Chmod(path, 0); err != nil {
 			t.Fatalf("chmod 0: %v", err)
 		}
@@ -522,14 +523,14 @@ func TestComputeStoredETagFailsOpenWhenNotFlushed(t *testing.T) {
 
 	t.Run("removed file (os.IsNotExist) falls back to the in-memory etag", func(t *testing.T) {
 		nibsDir := setupNibsDir(t)
-		writeNibFile(t, nibsDir, canonEtagFile, canonEtagCanonical)
+		writeNibFile(t, storeData(t, nibsDir), canonEtagFile, canonEtagCanonical)
 		core := setupLoadedCore(t, nibsDir)
 
 		b, err := core.Get("etagcanon1")
 		if err != nil {
 			t.Fatalf("Get() error: %v", err)
 		}
-		if err := os.Remove(filepath.Join(nibsDir, canonEtagFile)); err != nil {
+		if err := os.Remove(dataPath(nibsDir, canonEtagFile)); err != nil {
 			t.Fatalf("removing file: %v", err)
 		}
 		got, err := core.CurrentETag("etagcanon1")
@@ -564,7 +565,7 @@ updated_at: 2026-01-02T03:04:05Z
 
 Body.
 `
-		writeNibFile(t, nibsDir, file, withAlice)
+		writeNibFile(t, storeData(t, nibsDir), file, withAlice)
 		core := setupLoadedCore(t, nibsDir)
 
 		b, err := core.Get("extrakey1")
@@ -582,7 +583,7 @@ Body.
 
 		// External edit changing ONLY the unknown key.
 		withBob := strings.Replace(withAlice, "assignee: alice", "assignee: bob", 1)
-		writeNibFile(t, nibsDir, file, withBob)
+		writeNibFile(t, storeData(t, nibsDir), file, withBob)
 
 		after, err := core.CurrentETag("extrakey1")
 		if err != nil {
@@ -600,7 +601,7 @@ Body.
 		if !errors.As(err, &mismatch) {
 			t.Fatalf("expected *ETagMismatchError on unknown-key divergence, got %T: %v", err, err)
 		}
-		disk, err := os.ReadFile(filepath.Join(nibsDir, file))
+		disk, err := os.ReadFile(dataPath(nibsDir, file))
 		if err != nil {
 			t.Fatalf("reading file: %v", err)
 		}
@@ -616,7 +617,7 @@ Body.
 		// `blocking:` target, so the etag comparison isolates the
 		// out-of-projection content.
 		const file = "v0block1--legacy.md"
-		writeNibFile(t, nibsDir, file, `---
+		writeNibFile(t, storeData(t, nibsDir), file, `---
 version: 1
 title: Legacy Blocking
 status: todo
@@ -653,12 +654,12 @@ Body.
 		}
 
 		// Two v0 on-disk states differing ONLY in the blocking target.
-		writeNibFile(t, nibsDir, file, writeV0("ghost-a"))
+		writeNibFile(t, storeData(t, nibsDir), file, writeV0("ghost-a"))
 		before, err := core.CurrentETag("v0block1")
 		if err != nil {
 			t.Fatalf("CurrentETag() error: %v", err)
 		}
-		writeNibFile(t, nibsDir, file, writeV0("ghost-b"))
+		writeNibFile(t, storeData(t, nibsDir), file, writeV0("ghost-b"))
 		after, err := core.CurrentETag("v0block1")
 		if err != nil {
 			t.Fatalf("CurrentETag() error: %v", err)
@@ -675,7 +676,7 @@ Body.
 		if !errors.As(err, &mismatch) {
 			t.Fatalf("expected *ETagMismatchError on v0 blocking divergence, got %T: %v", err, err)
 		}
-		disk, err := os.ReadFile(filepath.Join(nibsDir, file))
+		disk, err := os.ReadFile(dataPath(nibsDir, file))
 		if err != nil {
 			t.Fatalf("reading file: %v", err)
 		}
@@ -713,7 +714,7 @@ updated_at: 2026-01-02T03:04:05Z
 
 Body.
 `
-	writeNibFile(t, nibsDir, file, content)
+	writeNibFile(t, storeData(t, nibsDir), file, content)
 	core := setupLoadedCore(t, nibsDir)
 
 	b, err := core.Get("ambig1")
@@ -730,7 +731,7 @@ Body.
 	}
 
 	// The unknown keys must survive the write verbatim.
-	disk, err := os.ReadFile(filepath.Join(nibsDir, file))
+	disk, err := os.ReadFile(dataPath(nibsDir, file))
 	if err != nil {
 		t.Fatalf("reading file: %v", err)
 	}

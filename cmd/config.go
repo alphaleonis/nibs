@@ -9,7 +9,6 @@ import (
 	"path/filepath"
 	"strings"
 
-	"github.com/alphaleonis/nibs/internal/config"
 	"github.com/alphaleonis/nibs/internal/nib"
 	"github.com/alphaleonis/nibs/internal/output"
 	"github.com/alphaleonis/nibs/internal/reprefix"
@@ -25,10 +24,10 @@ var (
 // gitIsDirtyFn reports whether any of the given pathspecs have uncommitted
 // changes under git, running from workTree as the current directory. It must
 // return (false, nil) when workTree is not inside a git repo — the caller
-// treats "not a repo" as "nothing to guard". The caller passes the project
-// root as workTree and explicit pathspecs for the nibs data directory and
-// the .nibs.yml config file, so the check covers exactly what the command
-// mutates and no more. Tests override this to avoid shelling out to real git.
+// treats "not a repo" as "nothing to guard". The caller passes the store
+// directory as workTree, so the check covers exactly what the command mutates
+// (its nib files and its config) and no more. Tests override this to avoid
+// shelling out to real git.
 var gitIsDirtyFn = realGitIsDirty
 
 var configCmd = &cobra.Command{
@@ -40,9 +39,9 @@ var configCmd = &cobra.Command{
 var configSetPrefixCmd = &cobra.Command{
 	Use:   "set-prefix <new-prefix>",
 	Short: "Change the project nib ID prefix and rename all nibs on disk",
-	Long: `Renames every nib (active and archive) under .nibs/ to use a new prefix
-and updates .nibs.yml. This is a bulk filesystem operation — run on a
-clean git working tree (check covers both .nibs/ and .nibs.yml) unless
+	Long: `Renames every nib (active and archived) in the store to use a new prefix
+and updates the store's config.yml. This is a bulk filesystem operation — run
+on a clean git working tree (the check covers the whole .nibs store) unless
 --force is given.
 
 Use --dry-run to print the planned renames without mutating anything.
@@ -104,22 +103,18 @@ func runSetPrefix(cmd *cobra.Command, args []string) error {
 	}
 
 	if !setPrefixForce {
-		// Check git-dirtiness over the two paths this command actually mutates:
-		// the nibs data directory and the .nibs.yml config file. Unrelated
-		// uncommitted edits elsewhere in the project root are not our concern.
-		configDir := cfg.ConfigDir()
-		nibsRel, err := filepath.Rel(configDir, root)
-		if err != nil {
-			return cmdError(setPrefixJSON, output.ErrFileError, "resolving nibs path: %v", err)
-		}
-		dirty, err := gitIsDirtyFn(configDir, filepath.ToSlash(nibsRel), config.ConfigFileName)
+		// Check git-dirtiness over the ONE path this command mutates: the store
+		// directory, which holds the renamed nib files and the config file it
+		// rewrites. Unrelated uncommitted edits elsewhere in the project are not
+		// our concern.
+		dirty, err := gitIsDirtyFn(root, ".")
 		if err != nil {
 			return cmdError(setPrefixJSON, output.ErrFileError, "checking git status: %v", err)
 		}
 		if dirty {
 			return cmdError(setPrefixJSON, output.ErrValidation,
-				"nibs data directory or %s has uncommitted git changes — commit or stash them, or pass --force to proceed anyway",
-				config.ConfigFileName)
+				"the nibs store at %s has uncommitted git changes — commit or stash them, or pass --force to proceed anyway",
+				root)
 		}
 	}
 
@@ -129,9 +124,10 @@ func runSetPrefix(cmd *cobra.Command, args []string) error {
 
 	cfg.Nibs.Prefix = newPrefix
 	if err := cfg.Save(""); err != nil {
+		configFile := cfg.Layout().ConfigPath()
 		return cmdError(setPrefixJSON, output.ErrFileError,
 			"files renamed to prefix %q but updating %s failed: %v\nto recover, edit %s manually and set nibs.prefix to %q",
-			newPrefix, config.ConfigFileName, err, config.ConfigFileName, newPrefix)
+			newPrefix, configFile, err, configFile, newPrefix)
 	}
 
 	msg := fmt.Sprintf("Changed prefix from %q to %q; renamed %d file(s)", oldPrefix, newPrefix, len(plan.Files))

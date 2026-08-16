@@ -68,7 +68,7 @@ func TestETagNoFalseConflictOnMissingDefault(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			nibsDir := setupNibsDir(t)
-			writeNibFile(t, nibsDir, tt.file, tt.content)
+			writeNibFile(t, storeData(t, nibsDir), tt.file, tt.content)
 			core := setupLoadedCore(t, nibsDir)
 
 			b, err := core.Get(tt.id)
@@ -153,8 +153,8 @@ func TestETagNoFalseConflictAcrossSampleFixture(t *testing.T) {
 	nibsDir := fixtures.NibsPath(root)
 
 	// Inject default-omitting nibs into the (mutable) copy.
-	writeNibFile(t, nibsDir, missingPriorityFile, missingPriorityContent)
-	writeNibFile(t, nibsDir, missingTypeFile, missingTypeContent)
+	writeNibFile(t, storeData(t, nibsDir), missingPriorityFile, missingPriorityContent)
+	writeNibFile(t, storeData(t, nibsDir), missingTypeFile, missingTypeContent)
 
 	cfg := config.Default()
 	core := New(nibsDir, cfg)

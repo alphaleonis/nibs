@@ -1,6 +1,7 @@
 // Package fixtures provides test helpers for working with fixture datasets.
 //
-// Fixture data lives under testdata/fixtures/sample-project/.nibs/ and must
+// Fixture data lives under testdata/fixtures/sample-project/.nibs/ — a
+// complete store, holding config.yml alongside its data/ directory — and must
 // never be modified in place. Use [CopySampleProject] to get a temporary copy
 // that tests can safely mutate.
 package fixtures
@@ -10,11 +11,13 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+
+	"github.com/alphaleonis/nibs/internal/store"
 )
 
 // CopySampleProject copies the sample-project fixture to a temporary directory
-// and returns the root path (the directory containing .nibs.yml and .nibs/).
-// The temporary directory is cleaned up automatically when the test finishes.
+// and returns the PROJECT root — the directory containing the .nibs store. The
+// temporary directory is cleaned up automatically when the test finishes.
 func CopySampleProject(t *testing.T) string {
 	t.Helper()
 
@@ -45,10 +48,17 @@ func CopySampleProject(t *testing.T) string {
 	return dst
 }
 
-// NibsPath returns the .nibs directory path for a fixture root returned by
-// [CopySampleProject]. Convenience for passing to --nibs-path or nibcore.New.
+// NibsPath returns the .nibs STORE directory for a fixture root returned by
+// [CopySampleProject]. Pass it to --nibs-path or nibcore.New: the store carries
+// its own config, so the fixture is always read under its own `tnib-` prefix.
 func NibsPath(root string) string {
-	return filepath.Join(root, ".nibs")
+	return filepath.Join(root, store.DirName)
+}
+
+// DataPath returns the store's data/ directory for a fixture root — where the
+// fixture's nib files live.
+func DataPath(root string) string {
+	return store.NewLayout(NibsPath(root)).DataDir()
 }
 
 // findFixtureDir locates the sample-project directory relative to this file.

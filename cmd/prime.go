@@ -8,6 +8,7 @@ import (
 	"text/template"
 
 	"github.com/alphaleonis/nibs/internal/config"
+	"github.com/alphaleonis/nibs/internal/store"
 	"github.com/spf13/cobra"
 )
 
@@ -89,15 +90,15 @@ body section conventions, GraphQL examples).`,
 	Args: codedNoArgs(nil),
 	RunE: func(cmd *cobra.Command, args []string) error {
 		// If no explicit path given, check if a nibs project exists by searching
-		// upward for a .nibs.yml config file
+		// upward for a .nibs store directory
 		if nibsPath == "" && configPath == "" {
 			cwd, err := os.Getwd()
 			if err != nil {
 				return nil // Silently exit on error
 			}
-			configFile, err := config.FindConfig(cwd)
-			if err != nil || configFile == "" {
-				// No config file found - silently exit
+			storeDir, err := store.FindStore(cwd)
+			if err != nil || storeDir == "" {
+				// No store found - silently exit
 				return nil
 			}
 		}

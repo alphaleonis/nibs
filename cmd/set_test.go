@@ -129,11 +129,11 @@ func TestResetSetFlagsClearsAllState(t *testing.T) {
 func writeSetNib(t *testing.T, id, body string) (string, string) {
 	t.Helper()
 	nibsDir := filepath.Join(t.TempDir(), ".nibs")
-	if err := os.MkdirAll(nibsDir, 0755); err != nil {
+	if err := os.MkdirAll(storeDataDir(nibsDir), 0755); err != nil {
 		t.Fatal(err)
 	}
 	content := "---\nversion: 1\ntitle: Test\nstatus: todo\ntype: task\n---\n" + body
-	if err := os.WriteFile(filepath.Join(nibsDir, id+"--test.md"), []byte(content), 0644); err != nil {
+	if err := os.WriteFile(dataPath(nibsDir, id+"--test.md"), []byte(content), 0644); err != nil {
 		t.Fatal(err)
 	}
 	return nibsDir, id
@@ -150,7 +150,7 @@ func writeSetNib(t *testing.T, id, body string) (string, string) {
 func writeIllegalReparentFixture(t *testing.T) (string, string, string) {
 	t.Helper()
 	nibsDir := filepath.Join(t.TempDir(), ".nibs")
-	if err := os.MkdirAll(nibsDir, 0755); err != nil {
+	if err := os.MkdirAll(storeDataDir(nibsDir), 0755); err != nil {
 		t.Fatal(err)
 	}
 	files := map[string]string{
@@ -158,7 +158,7 @@ func writeIllegalReparentFixture(t *testing.T) (string, string, string) {
 		"tk--task.md": "---\nversion: 1\ntitle: Task\nstatus: todo\ntype: task\norder: b0\n---\n",
 	}
 	for name, content := range files {
-		if err := os.WriteFile(filepath.Join(nibsDir, name), []byte(content), 0644); err != nil {
+		if err := os.WriteFile(dataPath(nibsDir, name), []byte(content), 0644); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -253,7 +253,7 @@ func TestSetTypeChangeOrphaningAChildIsHierarchy(t *testing.T) {
 	resetSetFlags()
 
 	nibsDir := filepath.Join(t.TempDir(), ".nibs")
-	if err := os.MkdirAll(nibsDir, 0755); err != nil {
+	if err := os.MkdirAll(storeDataDir(nibsDir), 0755); err != nil {
 		t.Fatal(err)
 	}
 	files := map[string]string{
@@ -261,7 +261,7 @@ func TestSetTypeChangeOrphaningAChildIsHierarchy(t *testing.T) {
 		"ft--feature.md": "---\nversion: 1\ntitle: Feature\nstatus: todo\ntype: feature\nparent: ep\norder: a0\n---\n",
 	}
 	for name, content := range files {
-		if err := os.WriteFile(filepath.Join(nibsDir, name), []byte(content), 0644); err != nil {
+		if err := os.WriteFile(dataPath(nibsDir, name), []byte(content), 0644); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -335,11 +335,11 @@ func TestSetClearPriority(t *testing.T) {
 	resetSetFlags()
 
 	nibsDir := filepath.Join(t.TempDir(), ".nibs")
-	if err := os.MkdirAll(nibsDir, 0755); err != nil {
+	if err := os.MkdirAll(storeDataDir(nibsDir), 0755); err != nil {
 		t.Fatal(err)
 	}
 	content := "---\nversion: 1\ntitle: Test\nstatus: todo\ntype: task\npriority: critical\n---\n"
-	if err := os.WriteFile(filepath.Join(nibsDir, "clr-1--test.md"), []byte(content), 0644); err != nil {
+	if err := os.WriteFile(dataPath(nibsDir, "clr-1--test.md"), []byte(content), 0644); err != nil {
 		t.Fatal(err)
 	}
 
@@ -348,7 +348,7 @@ func TestSetClearPriority(t *testing.T) {
 		t.Fatalf("set --clear priority should succeed, got: %v", err)
 	}
 
-	data, _ := os.ReadFile(filepath.Join(nibsDir, "clr-1--test.md"))
+	data, _ := os.ReadFile(dataPath(nibsDir, "clr-1--test.md"))
 	if strings.Contains(string(data), "priority: critical") {
 		t.Errorf("priority should be cleared, got:\n%s", data)
 	}
@@ -363,11 +363,11 @@ func TestSetClearEstimate(t *testing.T) {
 	resetSetFlags()
 
 	nibsDir := filepath.Join(t.TempDir(), ".nibs")
-	if err := os.MkdirAll(nibsDir, 0755); err != nil {
+	if err := os.MkdirAll(storeDataDir(nibsDir), 0755); err != nil {
 		t.Fatal(err)
 	}
 	content := "---\nversion: 1\ntitle: Test\nstatus: todo\ntype: task\nestimate: xl\n---\n"
-	if err := os.WriteFile(filepath.Join(nibsDir, "clr-2--test.md"), []byte(content), 0644); err != nil {
+	if err := os.WriteFile(dataPath(nibsDir, "clr-2--test.md"), []byte(content), 0644); err != nil {
 		t.Fatal(err)
 	}
 
@@ -376,7 +376,7 @@ func TestSetClearEstimate(t *testing.T) {
 		t.Fatalf("set --clear estimate should succeed, got: %v", err)
 	}
 
-	data, _ := os.ReadFile(filepath.Join(nibsDir, "clr-2--test.md"))
+	data, _ := os.ReadFile(dataPath(nibsDir, "clr-2--test.md"))
 	if strings.Contains(string(data), "estimate: xl") {
 		t.Errorf("estimate should be cleared, got:\n%s", data)
 	}
@@ -388,15 +388,15 @@ func TestSetClearParent(t *testing.T) {
 	resetSetFlags()
 
 	nibsDir := filepath.Join(t.TempDir(), ".nibs")
-	if err := os.MkdirAll(nibsDir, 0755); err != nil {
+	if err := os.MkdirAll(storeDataDir(nibsDir), 0755); err != nil {
 		t.Fatal(err)
 	}
 	parent := "---\nversion: 1\ntitle: Parent\nstatus: todo\ntype: epic\n---\n"
 	child := "---\nversion: 1\ntitle: Child\nstatus: todo\ntype: task\nparent: par-1\n---\n"
-	if err := os.WriteFile(filepath.Join(nibsDir, "par-1--parent.md"), []byte(parent), 0644); err != nil {
+	if err := os.WriteFile(dataPath(nibsDir, "par-1--parent.md"), []byte(parent), 0644); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(filepath.Join(nibsDir, "chi-1--child.md"), []byte(child), 0644); err != nil {
+	if err := os.WriteFile(dataPath(nibsDir, "chi-1--child.md"), []byte(child), 0644); err != nil {
 		t.Fatal(err)
 	}
 
@@ -405,7 +405,7 @@ func TestSetClearParent(t *testing.T) {
 		t.Fatalf("set --clear parent should succeed, got: %v", err)
 	}
 
-	data, _ := os.ReadFile(filepath.Join(nibsDir, "chi-1--child.md"))
+	data, _ := os.ReadFile(dataPath(nibsDir, "chi-1--child.md"))
 	if strings.Contains(string(data), "parent: par-1") {
 		t.Errorf("parent should be cleared, got:\n%s", data)
 	}
@@ -418,11 +418,11 @@ func TestSetRejectsSetAndClearSameField(t *testing.T) {
 	resetSetFlags()
 
 	nibsDir := filepath.Join(t.TempDir(), ".nibs")
-	if err := os.MkdirAll(nibsDir, 0755); err != nil {
+	if err := os.MkdirAll(storeDataDir(nibsDir), 0755); err != nil {
 		t.Fatal(err)
 	}
 	content := "---\nversion: 1\ntitle: Test\nstatus: todo\ntype: task\n---\n"
-	if err := os.WriteFile(filepath.Join(nibsDir, "clr-3--test.md"), []byte(content), 0644); err != nil {
+	if err := os.WriteFile(dataPath(nibsDir, "clr-3--test.md"), []byte(content), 0644); err != nil {
 		t.Fatal(err)
 	}
 
@@ -474,7 +474,7 @@ func TestUpdateAliasStillWorks(t *testing.T) {
 		t.Fatalf("update alias should still work, got: %v", err)
 	}
 
-	data, _ := os.ReadFile(filepath.Join(nibsDir, id+"--test.md"))
+	data, _ := os.ReadFile(dataPath(nibsDir, id+"--test.md"))
 	if !strings.Contains(string(data), "status: todo") {
 		t.Errorf("status should be todo via update alias, got:\n%s", data)
 	}
@@ -488,18 +488,18 @@ func TestSetStaleIfMatchConflictCarriesCurrentEtag(t *testing.T) {
 	resetSetFlags()
 
 	nibsDir := filepath.Join(t.TempDir(), ".nibs")
-	if err := os.MkdirAll(nibsDir, 0755); err != nil {
+	if err := os.MkdirAll(storeDataDir(nibsDir), 0755); err != nil {
 		t.Fatal(err)
 	}
 	// version: 1 and the `# id` comment match Render() output so the etag we
 	// compute from the file agrees with what the core computes.
 	content := "---\n# cnf-1\nversion: 1\ntitle: Test\nstatus: todo\ntype: task\norder: a0\n---\n\n"
-	if err := os.WriteFile(filepath.Join(nibsDir, "cnf-1--test.md"), []byte(content), 0644); err != nil {
+	if err := os.WriteFile(dataPath(nibsDir, "cnf-1--test.md"), []byte(content), 0644); err != nil {
 		t.Fatal(err)
 	}
 
 	// Compute the etag before any mutation — this becomes the stale token.
-	f, err := os.Open(filepath.Join(nibsDir, "cnf-1--test.md"))
+	f, err := os.Open(dataPath(nibsDir, "cnf-1--test.md"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -556,7 +556,7 @@ func TestSetStaleIfMatchConflictCarriesCurrentEtag(t *testing.T) {
 	}
 
 	// The nib must be unchanged by the rejected write (still in-progress).
-	data, _ := os.ReadFile(filepath.Join(nibsDir, "cnf-1--test.md"))
+	data, _ := os.ReadFile(dataPath(nibsDir, "cnf-1--test.md"))
 	if !strings.Contains(string(data), "status: in-progress") {
 		t.Errorf("rejected set must not have mutated the nib, got:\n%s", data)
 	}
@@ -568,11 +568,11 @@ func TestSetStaleIfMatchConflictCarriesCurrentEtag(t *testing.T) {
 func writeSetNibWithStatus(t *testing.T, id, status string) (string, string) {
 	t.Helper()
 	nibsDir := filepath.Join(t.TempDir(), ".nibs")
-	if err := os.MkdirAll(nibsDir, 0755); err != nil {
+	if err := os.MkdirAll(storeDataDir(nibsDir), 0755); err != nil {
 		t.Fatal(err)
 	}
 	content := "---\nversion: 1\ntitle: Test\nstatus: " + status + "\ntype: task\n---\nbody\n"
-	if err := os.WriteFile(filepath.Join(nibsDir, id+"--test.md"), []byte(content), 0644); err != nil {
+	if err := os.WriteFile(dataPath(nibsDir, id+"--test.md"), []byte(content), 0644); err != nil {
 		t.Fatal(err)
 	}
 	return nibsDir, id
@@ -617,7 +617,7 @@ func TestSetRefusesEveryClosedStatus(t *testing.T) {
 				t.Errorf("set -s %s error should name %q, got: %s", status, wantCmd, err)
 			}
 
-			data, readErr := os.ReadFile(filepath.Join(nibsDir, id+"--test.md"))
+			data, readErr := os.ReadFile(dataPath(nibsDir, id+"--test.md"))
 			if readErr != nil {
 				t.Fatal(readErr)
 			}
@@ -646,7 +646,7 @@ func TestSetAllowsOpenStatusOnClosedNib(t *testing.T) {
 				t.Fatalf("set -s todo on a %s nib should be allowed, got: %v", from, err)
 			}
 
-			data, readErr := os.ReadFile(filepath.Join(nibsDir, id+"--test.md"))
+			data, readErr := os.ReadFile(dataPath(nibsDir, id+"--test.md"))
 			if readErr != nil {
 				t.Fatal(readErr)
 			}
@@ -713,7 +713,7 @@ func TestSetRefusalFollowsTheClosedFlag(t *testing.T) {
 			t.Fatalf("set -s deferred should be allowed while deferred is declared open, got: %v", err)
 		}
 
-		data, readErr := os.ReadFile(filepath.Join(nibsDir, id+"--test.md"))
+		data, readErr := os.ReadFile(dataPath(nibsDir, id+"--test.md"))
 		if readErr != nil {
 			t.Fatal(readErr)
 		}
@@ -829,7 +829,7 @@ func TestSetRefusalOnAClosedNibNamesAWorkingRoute(t *testing.T) {
 				t.Fatalf("the refusal quoted `%s`, which failed: %v", quoted[0][1], runErr)
 			}
 
-			data, readErr := os.ReadFile(filepath.Join(nibsDir, id+"--test.md"))
+			data, readErr := os.ReadFile(dataPath(nibsDir, id+"--test.md"))
 			if readErr != nil {
 				t.Fatal(readErr)
 			}

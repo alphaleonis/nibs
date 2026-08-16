@@ -24,8 +24,8 @@ func writeCollisionNibFile(t *testing.T, dir, filename, title string) {
 func TestLoadWarnsOnDuplicateIDCollision(t *testing.T) {
 	core, nibsDir := mustLoadPrefixedCore(t)
 
-	writeCollisionNibFile(t, nibsDir, "nibs-x9z2--alpha.md", "Alpha")
-	writeCollisionNibFile(t, nibsDir, "nibs-x9z2--beta.md", "Beta")
+	writeCollisionNibFile(t, storeData(t, nibsDir), "nibs-x9z2--alpha.md", "Alpha")
+	writeCollisionNibFile(t, storeData(t, nibsDir), "nibs-x9z2--beta.md", "Beta")
 
 	var buf bytes.Buffer
 	core.SetWarnWriter(&buf)
@@ -69,9 +69,9 @@ func TestLoadWarnsOnDuplicateIDCollision(t *testing.T) {
 func TestLoadNoCollisionWarningForDistinctIDs(t *testing.T) {
 	core, nibsDir := mustLoadPrefixedCore(t)
 
-	writeCollisionNibFile(t, nibsDir, "nibs-aaa1--one.md", "One")
-	writeCollisionNibFile(t, nibsDir, "nibs-bbb2--two.md", "Two")
-	writeCollisionNibFile(t, nibsDir, "nibs-ccc3.md", "Three")
+	writeCollisionNibFile(t, storeData(t, nibsDir), "nibs-aaa1--one.md", "One")
+	writeCollisionNibFile(t, storeData(t, nibsDir), "nibs-bbb2--two.md", "Two")
+	writeCollisionNibFile(t, storeData(t, nibsDir), "nibs-ccc3.md", "Three")
 
 	var buf bytes.Buffer
 	core.SetWarnWriter(&buf)
@@ -91,8 +91,8 @@ func TestLoadNoCollisionWarningForDistinctIDs(t *testing.T) {
 func TestLoadWarnsOnSluggedSluglessCollision(t *testing.T) {
 	core, nibsDir := mustLoadPrefixedCore(t)
 
-	writeCollisionNibFile(t, nibsDir, "nibs-x9z2--slug.md", "Slugged")
-	writeCollisionNibFile(t, nibsDir, "nibs-x9z2.md", "Slugless")
+	writeCollisionNibFile(t, storeData(t, nibsDir), "nibs-x9z2--slug.md", "Slugged")
+	writeCollisionNibFile(t, storeData(t, nibsDir), "nibs-x9z2.md", "Slugless")
 
 	var buf bytes.Buffer
 	core.SetWarnWriter(&buf)
@@ -128,9 +128,9 @@ func TestLoadWarnsOnSluggedSluglessCollision(t *testing.T) {
 func TestLoadWarnsOnThreeWayIDCollision(t *testing.T) {
 	core, nibsDir := mustLoadPrefixedCore(t)
 
-	writeCollisionNibFile(t, nibsDir, "nibs-x9z2--alpha.md", "Alpha")
-	writeCollisionNibFile(t, nibsDir, "nibs-x9z2--beta.md", "Beta")
-	writeCollisionNibFile(t, nibsDir, "nibs-x9z2--gamma.md", "Gamma")
+	writeCollisionNibFile(t, storeData(t, nibsDir), "nibs-x9z2--alpha.md", "Alpha")
+	writeCollisionNibFile(t, storeData(t, nibsDir), "nibs-x9z2--beta.md", "Beta")
+	writeCollisionNibFile(t, storeData(t, nibsDir), "nibs-x9z2--gamma.md", "Gamma")
 
 	var buf bytes.Buffer
 	core.SetWarnWriter(&buf)

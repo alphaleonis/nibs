@@ -13,6 +13,7 @@ import (
 	"github.com/alphaleonis/nibs/internal/nib"
 	"github.com/alphaleonis/nibs/internal/nibcore"
 	"github.com/alphaleonis/nibs/internal/projection"
+	"github.com/alphaleonis/nibs/internal/store"
 )
 
 // writeParentLinkNib writes a nib file by hand and returns its path. Hand-writing
@@ -22,7 +23,7 @@ import (
 // `version: 1` keeps the v0->v1 migration from rewriting the file during Load.
 func writeParentLinkNib(t *testing.T, nibsDir, id, frontMatter string) string {
 	t.Helper()
-	path := filepath.Join(nibsDir, id+"--test.md")
+	path := filepath.Join(store.NewLayout(nibsDir).DataDir(), id+"--test.md")
 	head := "---\nversion: 1\ntitle: " + id + "\nstatus: todo\n"
 	// A fixture that declares its own type REPLACES the default rather than
 	// adding a second `type:` key, which YAML would reject as a duplicate.
@@ -45,8 +46,8 @@ func writeParentLinkNib(t *testing.T, nibsDir, id, frontMatter string) string {
 // files maps a nib id to the extra front matter lines for it.
 func mustLoadResolverFromFiles(t *testing.T, files map[string]string) (*Resolver, *nibcore.Core) {
 	t.Helper()
-	nibsDir := filepath.Join(t.TempDir(), nibcore.NibsDir)
-	if err := os.MkdirAll(nibsDir, 0755); err != nil {
+	nibsDir := filepath.Join(t.TempDir(), store.DirName)
+	if err := os.MkdirAll(store.NewLayout(nibsDir).DataDir(), 0755); err != nil {
 		t.Fatalf("mkdir: %v", err)
 	}
 	for id, frontMatter := range files {

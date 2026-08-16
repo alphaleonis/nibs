@@ -6,6 +6,8 @@ import (
 	"slices"
 	"strings"
 	"testing"
+
+	"github.com/alphaleonis/nibs/internal/store"
 )
 
 func TestDefault(t *testing.T) {
@@ -661,13 +663,12 @@ func TestLoadAndSave(t *testing.T) {
 	// Create a config (statuses are no longer stored in config)
 	cfg := &Config{
 		Nibs: NibsConfig{
-			Path:        ".nibs",
 			Prefix:      "test-",
 			IDLength:    6,
 			DefaultType: "bug",
 		},
 	}
-	cfg.SetConfigDir(tmpDir)
+	cfg.SetStoreDir(tmpDir)
 
 	// Save it
 	if err := cfg.Save(tmpDir); err != nil {
@@ -675,7 +676,7 @@ func TestLoadAndSave(t *testing.T) {
 	}
 
 	// Verify file exists
-	configPath := filepath.Join(tmpDir, ConfigFileName)
+	configPath := filepath.Join(tmpDir, store.ConfigFileName)
 	if _, err := os.Stat(configPath); os.IsNotExist(err) {
 		t.Fatal("config file was not created")
 	}
@@ -705,7 +706,7 @@ func TestLoadAndSave(t *testing.T) {
 func TestLoadAppliesDefaults(t *testing.T) {
 	// Create temp directory with minimal config
 	tmpDir := t.TempDir()
-	configPath := filepath.Join(tmpDir, ConfigFileName)
+	configPath := filepath.Join(tmpDir, store.ConfigFileName)
 
 	// Write minimal config (missing id_length and default_type)
 	minimalConfig := `nibs:
@@ -845,13 +846,12 @@ func TestTypesAreHardcoded(t *testing.T) {
 
 	cfg := &Config{
 		Nibs: NibsConfig{
-			Path:        ".nibs",
 			Prefix:      "test-",
 			IDLength:    4,
 			DefaultType: "task",
 		},
 	}
-	cfg.SetConfigDir(tmpDir)
+	cfg.SetStoreDir(tmpDir)
 
 	// Save it
 	if err := cfg.Save(tmpDir); err != nil {
@@ -859,7 +859,7 @@ func TestTypesAreHardcoded(t *testing.T) {
 	}
 
 	// Load it back
-	configPath := filepath.Join(tmpDir, ConfigFileName)
+	configPath := filepath.Join(tmpDir, store.ConfigFileName)
 	loaded, err := Load(configPath)
 	if err != nil {
 		t.Fatalf("Load() error = %v", err)
@@ -912,7 +912,7 @@ func TestTypeDescriptions(t *testing.T) {
 		// Even if a config file has custom types, they should be ignored
 		// and hardcoded types should be used instead
 		tmpDir := t.TempDir()
-		configPath := filepath.Join(tmpDir, ConfigFileName)
+		configPath := filepath.Join(tmpDir, store.ConfigFileName)
 
 		// Config with custom types (should be ignored)
 		configYAML := `nibs:
@@ -977,7 +977,7 @@ func TestStatusDescriptions(t *testing.T) {
 		// Even if a config file has custom statuses, they should be ignored
 		// and hardcoded statuses should be used instead
 		tmpDir := t.TempDir()
-		configPath := filepath.Join(tmpDir, ConfigFileName)
+		configPath := filepath.Join(tmpDir, store.ConfigFileName)
 
 		// Config with custom statuses (should be ignored)
 		configYAML := `nibs:
@@ -1019,150 +1019,29 @@ func isolateConfigSearch(t *testing.T, dir string) {
 	t.Setenv("NIBS_CONFIG_ROOT", dir)
 }
 
-func TestFindConfig(t *testing.T) {
-	t.Run("finds config in current directory", func(t *testing.T) {
+func TestLoadFromDirectory(t *testing.T) {
+	t.Run("finds the store by walking up and reads the config inside it", func(t *testing.T) {
 		tmpDir := t.TempDir()
 		isolateConfigSearch(t, tmpDir)
-		configPath := filepath.Join(tmpDir, ConfigFileName)
-		if err := os.WriteFile(configPath, []byte("nibs:\n  prefix: test-\n"), 0644); err != nil {
+		storeDir := filepath.Join(tmpDir, store.DirName)
+		if err := os.MkdirAll(storeDir, 0755); err != nil {
+			t.Fatalf("MkdirAll error = %v", err)
+		}
+		configYAML := `nibs:
+  prefix: test-
+  id_length: 6
+`
+		if err := os.WriteFile(filepath.Join(storeDir, store.ConfigFileName), []byte(configYAML), 0644); err != nil {
 			t.Fatalf("WriteFile error = %v", err)
 		}
-
-		found, err := FindConfig(tmpDir)
-		if err != nil {
-			t.Fatalf("FindConfig() error = %v", err)
-		}
-		if found != configPath {
-			t.Errorf("FindConfig() = %q, want %q", found, configPath)
-		}
-	})
-
-	t.Run("finds config in parent directory", func(t *testing.T) {
-		tmpDir := t.TempDir()
-		isolateConfigSearch(t, tmpDir)
 		subDir := filepath.Join(tmpDir, "sub", "dir")
 		if err := os.MkdirAll(subDir, 0755); err != nil {
 			t.Fatalf("MkdirAll error = %v", err)
 		}
 
-		configPath := filepath.Join(tmpDir, ConfigFileName)
-		if err := os.WriteFile(configPath, []byte("nibs:\n  prefix: test-\n"), 0644); err != nil {
-			t.Fatalf("WriteFile error = %v", err)
-		}
-
-		found, err := FindConfig(subDir)
-		if err != nil {
-			t.Fatalf("FindConfig() error = %v", err)
-		}
-		if found != configPath {
-			t.Errorf("FindConfig() = %q, want %q", found, configPath)
-		}
-	})
-
-	t.Run("returns empty string when no config found", func(t *testing.T) {
-		tmpDir := t.TempDir()
-		isolateConfigSearch(t, tmpDir)
-
-		found, err := FindConfig(tmpDir)
-		if err != nil {
-			t.Fatalf("FindConfig() error = %v", err)
-		}
-		if found != "" {
-			t.Errorf("FindConfig() = %q, want empty string", found)
-		}
-	})
-}
-
-func TestFindConfig_RespectsCeiling(t *testing.T) {
-	// writeConfig places a .nibs.yml in dir.
-	writeConfig := func(t *testing.T, dir string) string {
-		t.Helper()
-		p := filepath.Join(dir, ConfigFileName)
-		if err := os.WriteFile(p, []byte("nibs:\n  prefix: test-\n"), 0644); err != nil {
-			t.Fatalf("WriteFile error = %v", err)
-		}
-		return p
-	}
-
-	// mkSub creates a child directory and returns its path.
-	mkSub := func(t *testing.T, parent, name string) string {
-		t.Helper()
-		p := filepath.Join(parent, name)
-		if err := os.MkdirAll(p, 0755); err != nil {
-			t.Fatalf("MkdirAll error = %v", err)
-		}
-		return p
-	}
-
-	t.Run("config above the ceiling is not found", func(t *testing.T) {
-		root := t.TempDir()
-		ceiling := mkSub(t, root, "ceiling")
-		start := mkSub(t, ceiling, "start")
-		writeConfig(t, root) // above the ceiling
-
-		t.Setenv("NIBS_CONFIG_ROOT", ceiling)
-		found, err := FindConfig(start)
-		if err != nil {
-			t.Fatalf("FindConfig() error = %v", err)
-		}
-		if found != "" {
-			t.Errorf("FindConfig() = %q, want empty (config above ceiling must not be found)", found)
-		}
-	})
-
-	t.Run("config at the ceiling is found", func(t *testing.T) {
-		root := t.TempDir()
-		ceiling := mkSub(t, root, "ceiling")
-		start := mkSub(t, ceiling, "start")
-		want := writeConfig(t, ceiling) // at the ceiling
-
-		t.Setenv("NIBS_CONFIG_ROOT", ceiling)
-		found, err := FindConfig(start)
-		if err != nil {
-			t.Fatalf("FindConfig() error = %v", err)
-		}
-		if found != want {
-			t.Errorf("FindConfig() = %q, want %q (config at ceiling must be found)", found, want)
-		}
-	})
-
-	t.Run("config below the ceiling is found", func(t *testing.T) {
-		root := t.TempDir()
-		ceiling := mkSub(t, root, "ceiling")
-		start := mkSub(t, ceiling, "start")
-		want := writeConfig(t, start) // below the ceiling
-
-		t.Setenv("NIBS_CONFIG_ROOT", ceiling)
-		found, err := FindConfig(start)
-		if err != nil {
-			t.Fatalf("FindConfig() error = %v", err)
-		}
-		if found != want {
-			t.Errorf("FindConfig() = %q, want %q (config below ceiling must be found)", found, want)
-		}
-	})
-}
-
-func TestLoadFromDirectory(t *testing.T) {
-	t.Run("loads config from directory with .nibs.yml", func(t *testing.T) {
-		tmpDir := t.TempDir()
-		isolateConfigSearch(t, tmpDir)
-		configPath := filepath.Join(tmpDir, ConfigFileName)
-		configYAML := `nibs:
-  path: custom-nibs
-  prefix: test-
-  id_length: 6
-`
-		if err := os.WriteFile(configPath, []byte(configYAML), 0644); err != nil {
-			t.Fatalf("WriteFile error = %v", err)
-		}
-
-		cfg, err := LoadFromDirectory(tmpDir)
+		cfg, err := LoadFromDirectory(subDir)
 		if err != nil {
 			t.Fatalf("LoadFromDirectory() error = %v", err)
-		}
-		if cfg.Nibs.Path != "custom-nibs" {
-			t.Errorf("Nibs.Path = %q, want \"custom-nibs\"", cfg.Nibs.Path)
 		}
 		if cfg.Nibs.Prefix != "test-" {
 			t.Errorf("Prefix = %q, want \"test-\"", cfg.Nibs.Prefix)
@@ -1170,9 +1049,32 @@ func TestLoadFromDirectory(t *testing.T) {
 		if cfg.Nibs.IDLength != 6 {
 			t.Errorf("IDLength = %d, want 6", cfg.Nibs.IDLength)
 		}
+		if cfg.StoreDir() != storeDir {
+			t.Errorf("StoreDir() = %q, want %q", cfg.StoreDir(), storeDir)
+		}
 	})
 
-	t.Run("returns default config when no config file exists", func(t *testing.T) {
+	t.Run("a store without a config file loads as defaults", func(t *testing.T) {
+		tmpDir := t.TempDir()
+		isolateConfigSearch(t, tmpDir)
+		storeDir := filepath.Join(tmpDir, store.DirName)
+		if err := os.MkdirAll(storeDir, 0755); err != nil {
+			t.Fatalf("MkdirAll error = %v", err)
+		}
+
+		cfg, err := LoadFromDirectory(tmpDir)
+		if err != nil {
+			t.Fatalf("LoadFromDirectory() error = %v", err)
+		}
+		if cfg.Nibs.IDLength != 4 {
+			t.Errorf("IDLength = %d, want the system default 4", cfg.Nibs.IDLength)
+		}
+		if cfg.StoreDir() != storeDir {
+			t.Errorf("StoreDir() = %q, want %q", cfg.StoreDir(), storeDir)
+		}
+	})
+
+	t.Run("no store anywhere anchors defaults at a would-be store", func(t *testing.T) {
 		tmpDir := t.TempDir()
 		isolateConfigSearch(t, tmpDir)
 
@@ -1180,61 +1082,34 @@ func TestLoadFromDirectory(t *testing.T) {
 		if err != nil {
 			t.Fatalf("LoadFromDirectory() error = %v", err)
 		}
-		if cfg.Nibs.Path != DefaultNibsPath {
-			t.Errorf("Nibs.Path = %q, want %q", cfg.Nibs.Path, DefaultNibsPath)
-		}
-		if cfg.ConfigDir() != tmpDir {
-			t.Errorf("ConfigDir() = %q, want %q", cfg.ConfigDir(), tmpDir)
+		want := filepath.Join(tmpDir, store.DirName)
+		if cfg.StoreDir() != want {
+			t.Errorf("StoreDir() = %q, want %q", cfg.StoreDir(), want)
 		}
 	})
 }
 
-func TestResolveNibsPath(t *testing.T) {
-	t.Run("resolves relative path from config directory", func(t *testing.T) {
-		configDir := filepath.Join("project", "root")
-		cfg := &Config{
-			Nibs: NibsConfig{Path: "custom-nibs"},
+// TestLoadRejectsRetiredNibsPath pins the refusal behavior 8 describes: the
+// `nibs.path` key pointed the config at a data directory somewhere else, which
+// the store layout retired. A config still carrying it describes a layout this
+// build cannot honor, so reading it as decoration and silently operating on a
+// different directory is the one outcome that must not happen.
+func TestLoadRejectsRetiredNibsPath(t *testing.T) {
+	tmpDir := t.TempDir()
+	configPath := filepath.Join(tmpDir, store.ConfigFileName)
+	body := "nibs:\n  path: custom-nibs\n  prefix: test-\n"
+	if err := os.WriteFile(configPath, []byte(body), 0644); err != nil {
+		t.Fatalf("WriteFile error = %v", err)
+	}
+
+	_, err := Load(configPath)
+	if err == nil {
+		t.Fatal("Load() error = nil, want a refusal naming the retired nibs.path key")
+	}
+	for _, want := range []string{"nibs.path", "nibs migrate"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Errorf("Load() error = %q, want it to mention %q", err.Error(), want)
 		}
-		cfg.SetConfigDir(configDir)
-
-		got := cfg.ResolveNibsPath()
-		want := filepath.Join("project", "root", "custom-nibs")
-		if got != want {
-			t.Errorf("ResolveNibsPath() = %q, want %q", got, want)
-		}
-	})
-
-	t.Run("returns absolute path unchanged", func(t *testing.T) {
-		absPath := filepath.Join(t.TempDir(), "nibs")
-		configDir := filepath.Join("project", "root")
-		cfg := &Config{
-			Nibs: NibsConfig{Path: absPath},
-		}
-		cfg.SetConfigDir(configDir)
-
-		got := cfg.ResolveNibsPath()
-		if got != absPath {
-			t.Errorf("ResolveNibsPath() = %q, want %q", got, absPath)
-		}
-	})
-
-	t.Run("uses default .nibs path", func(t *testing.T) {
-		configDir := filepath.Join("project", "root")
-		cfg := Default()
-		cfg.SetConfigDir(configDir)
-
-		got := cfg.ResolveNibsPath()
-		want := filepath.Join("project", "root", ".nibs")
-		if got != want {
-			t.Errorf("ResolveNibsPath() = %q, want %q", got, want)
-		}
-	})
-}
-
-func TestDefaultHasNibsPath(t *testing.T) {
-	cfg := Default()
-	if cfg.Nibs.Path != DefaultNibsPath {
-		t.Errorf("Default().Nibs.Path = %q, want %q", cfg.Nibs.Path, DefaultNibsPath)
 	}
 }
 
@@ -1242,12 +1117,12 @@ func TestSaveIncludesHideCompletedAndWideMode(t *testing.T) {
 	tmpDir := t.TempDir()
 
 	cfg := DefaultWithPrefix("test-")
-	cfg.SetConfigDir(tmpDir)
+	cfg.SetStoreDir(tmpDir)
 	if err := cfg.Save(tmpDir); err != nil {
 		t.Fatalf("Save() error = %v", err)
 	}
 
-	data, err := os.ReadFile(filepath.Join(tmpDir, ConfigFileName))
+	data, err := os.ReadFile(filepath.Join(tmpDir, store.ConfigFileName))
 	if err != nil {
 		t.Fatalf("ReadFile error = %v", err)
 	}
@@ -1267,12 +1142,12 @@ func TestSavePreservesExplicitFalseValues(t *testing.T) {
 	cfg := DefaultWithPrefix("test-")
 	cfg.Nibs.HideCompleted = boolPtr(false)
 	cfg.Nibs.WideMode = boolPtr(false)
-	cfg.SetConfigDir(tmpDir)
+	cfg.SetStoreDir(tmpDir)
 	if err := cfg.Save(tmpDir); err != nil {
 		t.Fatalf("Save() error = %v", err)
 	}
 
-	data, err := os.ReadFile(filepath.Join(tmpDir, ConfigFileName))
+	data, err := os.ReadFile(filepath.Join(tmpDir, store.ConfigFileName))
 	if err != nil {
 		t.Fatalf("ReadFile error = %v", err)
 	}
@@ -1538,13 +1413,13 @@ func TestServerConfigYAMLRoundTrip(t *testing.T) {
 	cfg := Default()
 	cfg.Nibs.Server.Port = &port
 	cfg.Nibs.Server.OpenBrowser = &openBrowser
-	cfg.SetConfigDir(tmpDir)
+	cfg.SetStoreDir(tmpDir)
 
 	if err := cfg.Save(tmpDir); err != nil {
 		t.Fatalf("Save() error = %v", err)
 	}
 
-	loaded, err := Load(filepath.Join(tmpDir, ConfigFileName))
+	loaded, err := Load(filepath.Join(tmpDir, store.ConfigFileName))
 	if err != nil {
 		t.Fatalf("Load() error = %v", err)
 	}
@@ -1559,7 +1434,7 @@ func TestServerConfigYAMLRoundTrip(t *testing.T) {
 
 func TestServerConfigPartialYAML(t *testing.T) {
 	tmpDir := t.TempDir()
-	configPath := filepath.Join(tmpDir, ConfigFileName)
+	configPath := filepath.Join(tmpDir, store.ConfigFileName)
 
 	// Only port set, open_browser omitted
 	yaml := `nibs:
@@ -1585,38 +1460,47 @@ func TestServerConfigPartialYAML(t *testing.T) {
 	}
 }
 
+// TestGetProjectName pins the project name to the directory CONTAINING the
+// store. Every store directory is called `.nibs`, so reading the name off the
+// store itself would call every project "nibs" — and that name is user-visible:
+// it titles the TUI border and the web page (via the GraphQL Config resolver).
 func TestGetProjectName(t *testing.T) {
 	tests := []struct {
-		name      string
-		configDir string
-		want      string
+		name     string
+		storeDir string
+		want     string
 	}{
 		{
-			name:      "normal directory",
-			configDir: filepath.Join("home", "user", "my-project"),
-			want:      "my-project",
+			name:     "normal directory",
+			storeDir: filepath.Join("home", "user", "my-project", ".nibs"),
+			want:     "my-project",
 		},
 		{
-			name:      "nested path",
-			configDir: filepath.Join("var", "repos", "nibs"),
-			want:      "nibs",
+			name:     "nested path",
+			storeDir: filepath.Join("var", "repos", "boardgametracker", ".nibs"),
+			want:     "boardgametracker",
 		},
 		{
-			name:      "empty configDir",
-			configDir: "",
-			want:      "Nibs",
+			name:     "empty storeDir",
+			storeDir: "",
+			want:     "Nibs",
 		},
 		{
-			name:      "single directory",
-			configDir: "myapp",
-			want:      "myapp",
+			name:     "store at the filesystem root has no project directory",
+			storeDir: filepath.Join(string(filepath.Separator), ".nibs"),
+			want:     "Nibs",
+		},
+		{
+			name:     "relative store with no parent",
+			storeDir: ".nibs",
+			want:     "Nibs",
 		},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			cfg := Default()
-			cfg.SetConfigDir(tt.configDir)
+			cfg.SetStoreDir(tt.storeDir)
 			got := cfg.GetProjectName()
 			if got != tt.want {
 				t.Errorf("GetProjectName() = %q, want %q", got, tt.want)

@@ -210,7 +210,7 @@ status: todo
 
 External content keyword.
 `
-	if err := writeTestFile(nibsDir, "ext1--external.md", content); err != nil {
+	if err := writeTestFile(storeData(t, nibsDir), "ext1--external.md", content); err != nil {
 		t.Fatalf("failed to write test file: %v", err)
 	}
 

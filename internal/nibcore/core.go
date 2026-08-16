@@ -17,10 +17,8 @@ import (
 	"github.com/alphaleonis/nibs/internal/config"
 	"github.com/alphaleonis/nibs/internal/nib"
 	"github.com/alphaleonis/nibs/internal/search"
+	"github.com/alphaleonis/nibs/internal/store"
 )
-
-const NibsDir = ".nibs"
-const ArchiveDir = "archive"
 
 // ErrNotFound is an alias for nib.ErrNotFound for backwards compatibility.
 var ErrNotFound = nib.ErrNotFound
@@ -76,6 +74,7 @@ func (e *OnDiskUnparseableError) Unwrap() error { return e.Err }
 // Core provides thread-safe in-memory storage for nibs with filesystem persistence.
 type Core struct {
 	root   string         // absolute path to .nibs directory
+	layout store.Layout   // the store's directory structure, derived from root
 	config *config.Config // project configuration
 
 	// lockPath is the OS-temp-dir path of the cross-process advisory write lock
@@ -138,6 +137,7 @@ type Core struct {
 func New(root string, cfg *config.Config) *Core {
 	return &Core{
 		root:              root,
+		layout:            store.NewLayout(root),
 		config:            cfg,
 		lockPath:          writeLockPath(root),
 		nibs:              make(map[string]*nib.Nib),
@@ -221,13 +221,14 @@ func (c *Core) loadFromDisk() error {
 	c.unparseableFiles = nil
 	c.duplicateIDs = nil
 
-	// Walk the store tree through the SHARED store-content definition
-	// (WalkStoreFiles): every .md file, subdirectories included, dot
-	// directories pruned. cmd/migrate's scans walk through the same function,
-	// so what loads here and what the migration gates probe can never
-	// disagree — a dot-directory .md loading as a nib while the scan skipped
-	// it is exactly how `nibs migrate` once rewrote non-store files.
-	err := WalkStoreFiles(c.root, func(path string, err error) error {
+	// Walk the store's CONTENT directories — data/ and archive/, dot
+	// directories pruned (see WalkStoreContent). cmd/migrate's scans walk the
+	// same per-file classifier over the store root, so what loads here and
+	// what the migration gates probe can never disagree about whether a given
+	// file is a nib — only about which directories are in scope, which is the
+	// whole difference between "content" and "everything the migration must
+	// relocate".
+	err := WalkStoreContent(c.layout, func(path string, err error) error {
 		if err != nil {
 			return err
 		}
@@ -1112,14 +1113,15 @@ func (c *Core) Update(b *nib.Nib, ifMatch *string) error {
 
 // saveToDisk writes a nib to the filesystem.
 func (c *Core) saveToDisk(b *nib.Nib) error {
-	// Determine the file path
+	// Determine the file path. A nib with no Path yet is new, and new nibs are
+	// written into the store's data/ directory — the store root holds
+	// directories and the config, never nib files.
 	var path string
 	if b.Path != "" {
 		path = filepath.Join(c.root, b.Path)
 	} else {
-		filename := nib.BuildFilename(b.ID, b.Slug)
-		path = filepath.Join(c.root, filename)
-		b.Path = filename
+		b.Path = c.layout.DataRel(nib.BuildFilename(b.ID, b.Slug))
+		path = filepath.Join(c.root, b.Path)
 	}
 
 	// Ensure parent directory exists
@@ -1264,14 +1266,13 @@ func (c *Core) Archive(id string) error {
 	}
 
 	// Ensure archive directory exists
-	archivePath := filepath.Join(c.root, ArchiveDir)
-	if err := os.MkdirAll(archivePath, 0755); err != nil {
+	if err := os.MkdirAll(c.layout.ArchiveDir(), 0755); err != nil {
 		return fmt.Errorf("creating archive directory: %w", err)
 	}
 
 	// Move the file
 	oldPath := filepath.Join(c.root, targetNib.Path)
-	newRelPath := filepath.Join(ArchiveDir, filepath.Base(targetNib.Path))
+	newRelPath := c.layout.ArchiveRel(filepath.Base(targetNib.Path))
 	newPath := filepath.Join(c.root, newRelPath)
 
 	if err := os.Rename(oldPath, newPath); err != nil {
@@ -1279,7 +1280,7 @@ func (c *Core) Archive(id string) error {
 	}
 
 	// Update nib's path
-	targetNib.Path = filepath.ToSlash(newRelPath)
+	targetNib.Path = newRelPath
 	c.nibs[targetID] = targetNib
 
 	return nil
@@ -1308,17 +1309,22 @@ func (c *Core) Unarchive(id string) error {
 		return nil // Not archived, nothing to do
 	}
 
-	// Move the file back to main directory
+	// Move the file back to the data directory — NOT the store root, which
+	// holds no nib files: a file returned there would still exist but would
+	// stop being store content, vanishing from every query on the next load.
 	oldPath := filepath.Join(c.root, targetNib.Path)
-	newRelPath := filepath.Base(targetNib.Path)
+	newRelPath := c.layout.DataRel(filepath.Base(targetNib.Path))
 	newPath := filepath.Join(c.root, newRelPath)
 
+	if err := os.MkdirAll(c.layout.DataDir(), 0755); err != nil {
+		return fmt.Errorf("creating data directory: %w", err)
+	}
 	if err := os.Rename(oldPath, newPath); err != nil {
 		return fmt.Errorf("moving nib from archive: %w", err)
 	}
 
 	// Update nib's path (forward slashes, matching Archive and loadNib)
-	targetNib.Path = filepath.ToSlash(newRelPath)
+	targetNib.Path = newRelPath
 	c.nibs[targetID] = targetNib
 
 	return nil
@@ -1338,10 +1344,9 @@ func (c *Core) IsArchived(id string) bool {
 	return c.isArchivedPath(b.Path)
 }
 
-// isArchivedPath returns true if the path indicates an archived nib.
+// isArchivedPath returns true if the store-relative path indicates an archived nib.
 func (c *Core) isArchivedPath(path string) bool {
-	return strings.HasPrefix(path, ArchiveDir+string(filepath.Separator)) ||
-		strings.HasPrefix(path, ArchiveDir+"/")
+	return c.layout.IsArchivedRel(path)
 }
 
 // normalizeID returns the full ID with prefix if a prefix is configured
@@ -1378,7 +1383,7 @@ func (c *Core) findNibLocked(id string) (*nib.Nib, string, error) {
 func (c *Core) GetFromArchive(id string) (*nib.Nib, error) {
 	fullID := c.normalizeID(id)
 
-	archiveDir := filepath.Join(c.root, ArchiveDir)
+	archiveDir := c.layout.ArchiveDir()
 	if _, err := os.Stat(archiveDir); os.IsNotExist(err) {
 		return nil, nil
 	}
@@ -1427,25 +1432,32 @@ func (c *Core) LoadAndUnarchive(id string) (*nib.Nib, error) {
 		return b, nil
 	}
 
-	// Move file from archive to main directory
+	// Move file from archive back to the data directory, for the same reason
+	// Unarchive does: the store root is not store content.
 	oldPath := filepath.Join(c.root, b.Path)
-	newRelPath := filepath.Base(b.Path)
+	newRelPath := c.layout.DataRel(filepath.Base(b.Path))
 	newPath := filepath.Join(c.root, newRelPath)
 
+	if err := os.MkdirAll(c.layout.DataDir(), 0755); err != nil {
+		return nil, fmt.Errorf("creating data directory: %w", err)
+	}
 	if err := os.Rename(oldPath, newPath); err != nil {
 		return nil, fmt.Errorf("moving nib from archive: %w", err)
 	}
 
 	// Update nib's path (forward slashes, matching Archive and loadNib)
-	b.Path = filepath.ToSlash(newRelPath)
+	b.Path = newRelPath
 	c.nibs[targetID] = b
 
 	return b, nil
 }
 
-// Init creates the .nibs directory if it doesn't exist.
+// Init creates the store's directories if they don't exist: the store root and
+// the data/ directory every new nib is written into. archive/ is created on
+// demand by the first archive, so a project that never archives keeps a store
+// with nothing empty in it.
 func (c *Core) Init() error {
-	return os.MkdirAll(c.root, 0755)
+	return os.MkdirAll(c.layout.DataDir(), 0755)
 }
 
 // FullPath returns the absolute path to a nib file.
@@ -1469,9 +1481,8 @@ func (c *Core) Close() error {
 	return c.unwatchLocked()
 }
 
-// Init creates the .nibs directory at the given path if it doesn't exist.
-// This is a standalone function for use before a Core is created.
+// Init creates the store under the given project directory if it doesn't
+// exist. This is a standalone function for use before a Core is created.
 func Init(dir string) error {
-	nibsPath := filepath.Join(dir, NibsDir)
-	return os.MkdirAll(nibsPath, 0755)
+	return New(filepath.Join(dir, store.DirName), nil).Init()
 }

@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"io"
 	"os"
+	"path/filepath"
 	"sync"
 	"testing"
 	"time"
@@ -11,7 +12,20 @@ import (
 	"github.com/spf13/pflag"
 
 	"github.com/alphaleonis/nibs/internal/config"
+	"github.com/alphaleonis/nibs/internal/store"
 )
+
+// storeDataDir returns the store's data/ directory — where a store's nib files
+// live. Tests that place files by hand write them there; a .md at the store
+// ROOT is the pre-migration shape and is not store content.
+func storeDataDir(nibsDir string) string {
+	return store.NewLayout(nibsDir).DataDir()
+}
+
+// dataPath joins a path inside the store's data/ directory.
+func dataPath(nibsDir string, parts ...string) string {
+	return filepath.Join(append([]string{storeDataDir(nibsDir)}, parts...)...)
+}
 
 // resetRootPersistentFlags restores rootCmd's persistent flag state
 // (--nibs-path, --config) to defaults so tests don't leak each other.

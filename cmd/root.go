@@ -6,12 +6,14 @@ import (
 	"io"
 	"io/fs"
 	"os"
+	"path/filepath"
 
 	"github.com/alphaleonis/nibs/internal/config"
 	"github.com/alphaleonis/nibs/internal/graph"
 	"github.com/alphaleonis/nibs/internal/nib"
 	"github.com/alphaleonis/nibs/internal/nibcore"
 	"github.com/alphaleonis/nibs/internal/output"
+	"github.com/alphaleonis/nibs/internal/store"
 	"github.com/spf13/cobra"
 )
 
@@ -40,13 +42,7 @@ a full view of your project.`,
 			return nil
 		}
 
-		cfg, err := loadCLIConfig()
-		if err != nil {
-			return err
-		}
-
-		// Determine nibs directory
-		root, err := resolveNibsPath(nibsPath, cfg)
+		root, cfg, err := resolveCLIStore()
 		if err != nil {
 			return err
 		}
@@ -92,59 +88,75 @@ func init() {
 	rootCmd.SilenceUsage = true
 	rootCmd.SilenceErrors = true
 
-	rootCmd.PersistentFlags().StringVar(&nibsPath, "nibs-path", "", "Path to data directory (overrides config and NIBS_PATH env var)")
-	rootCmd.PersistentFlags().StringVar(&configPath, "config", "", "Path to config file (default: searches upward for .nibs.yml)")
+	rootCmd.PersistentFlags().StringVar(&nibsPath, "nibs-path", "", "Path to the .nibs store directory (overrides discovery and NIBS_PATH env var)")
+	rootCmd.PersistentFlags().StringVar(&configPath, "config", "", "Path to a store's config file (default: searches upward for a .nibs directory)")
 	installFlagSuggestions(rootCmd)
 }
 
-// loadCLIConfig loads the project configuration the way every command sees it:
-// an explicit --config path when given, otherwise an upward search from the
-// cwd, with the user config layered underneath in both paths. Shared by
-// PersistentPreRunE and the skip-listed migrate command so the two can never
-// resolve a different config.
-func loadCLIConfig() (*config.Config, error) {
+// resolveCLIStore resolves the store every command operates on and loads THAT
+// store's config. The two answers come as a pair on purpose: the store
+// directory holds its own config, so pointing nibs at another project's store
+// carries that project's prefix, id length and defaults with it — a store can
+// never be read under a neighboring project's vocabulary.
+//
+// Shared by PersistentPreRunE and the skip-listed migrate command so the two
+// can never resolve a different store.
+func resolveCLIStore() (string, *config.Config, error) {
+	storeDir, err := resolveStoreDir()
+	if err != nil {
+		return "", nil, err
+	}
+
+	// --config names a config file explicitly; without it the store's own
+	// config.yml is read. Either way the user config layers underneath.
 	if configPath != "" {
 		cfg, err := config.LoadFromExplicitPathWithUserConfig(configPath)
 		if err != nil {
-			return nil, fmt.Errorf("loading config from %s: %w", configPath, err)
+			return "", nil, fmt.Errorf("loading config from %s: %w", configPath, err)
 		}
-		return cfg, nil
+		return storeDir, cfg, nil
 	}
-	cwd, err := os.Getwd()
+	cfg, err := config.LoadStoreWithUserConfig(storeDir)
 	if err != nil {
-		return nil, fmt.Errorf("getting current directory: %w", err)
+		return "", nil, fmt.Errorf("loading config: %w", err)
 	}
-	cfg, err := config.LoadWithUserConfig(cwd)
-	if err != nil {
-		return nil, fmt.Errorf("loading config: %w", err)
-	}
-	return cfg, nil
+	return storeDir, cfg, nil
 }
 
-// resolveNibsPath determines the nibs data directory path.
-// Precedence: --nibs-path flag > NIBS_PATH env var > config.
-func resolveNibsPath(flagPath string, c *config.Config) (string, error) {
-	var root string
-	if flagPath != "" {
-		// Use explicit nibs path flag (highest priority)
-		root = flagPath
-	} else if envPath := os.Getenv("NIBS_PATH"); envPath != "" {
-		// Use environment variable (medium priority)
-		root = envPath
-	} else {
-		// Use path from config (lowest priority)
-		root = c.ResolveNibsPath()
+// resolveStoreDir determines the `.nibs` store directory.
+// Precedence: --nibs-path flag > NIBS_PATH env var > --config's directory >
+// an upward search from the cwd for a `.nibs` directory.
+func resolveStoreDir() (string, error) {
+	explicit := nibsPath
+	if explicit == "" {
+		explicit = os.Getenv("NIBS_PATH")
+	}
+	if explicit == "" && configPath != "" {
+		// The config lives inside the store, so naming the config names the
+		// store — which is why --config alone is enough to work against
+		// another project.
+		explicit = filepath.Dir(configPath)
 	}
 
-	// Verify it exists
-	if info, statErr := os.Stat(root); statErr != nil || !info.IsDir() {
-		if flagPath != "" || os.Getenv("NIBS_PATH") != "" {
-			return "", fmt.Errorf("nibs path does not exist or is not a directory: %s", root)
+	if explicit != "" {
+		if info, err := os.Stat(explicit); err != nil || !info.IsDir() {
+			return "", fmt.Errorf("nibs store does not exist or is not a directory: %s", explicit)
 		}
-		return "", fmt.Errorf("no .nibs directory found at %s (run 'nibs init' to create one)", root)
+		return explicit, nil
 	}
 
-	return root, nil
+	cwd, err := os.Getwd()
+	if err != nil {
+		return "", fmt.Errorf("getting current directory: %w", err)
+	}
+	storeDir, err := store.FindStore(cwd)
+	if err != nil {
+		return "", fmt.Errorf("searching for a nibs store: %w", err)
+	}
+	if storeDir == "" {
+		return "", fmt.Errorf("no %s directory found in %s or any parent directory (run 'nibs init' to create one)", store.DirName, cwd)
+	}
+	return storeDir, nil
 }
 
 // reportExitError is the single, testable error boundary for the CLI. It is

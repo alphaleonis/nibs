@@ -11,14 +11,44 @@ import (
 
 	"github.com/alphaleonis/nibs/internal/config"
 	"github.com/alphaleonis/nibs/internal/nib"
+	"github.com/alphaleonis/nibs/internal/store"
 )
+
+// dataPath joins a path inside the store's data/ directory — the location a
+// nib file created through Core.Create ends up at.
+func dataPath(nibsDir string, parts ...string) string {
+	return filepath.Join(append([]string{store.NewLayout(nibsDir).DataDir()}, parts...)...)
+}
+
+// storeData returns the store's data directory, creating it if needed. Tests
+// that place nib files by hand write them there: data/ and archive/ are the
+// store's content, and a .md file at the store ROOT is the pre-migration shape
+// that Core.Load deliberately does not read.
+func storeData(t *testing.T, nibsDir string) string {
+	t.Helper()
+	dir := store.NewLayout(nibsDir).DataDir()
+	if err := os.MkdirAll(dir, 0755); err != nil {
+		t.Fatalf("failed to create data dir: %v", err)
+	}
+	return dir
+}
+
+// storeArchive returns the store's archive directory, creating it if needed.
+func storeArchive(t *testing.T, nibsDir string) string {
+	t.Helper()
+	dir := store.NewLayout(nibsDir).ArchiveDir()
+	if err := os.MkdirAll(dir, 0755); err != nil {
+		t.Fatalf("failed to create archive dir: %v", err)
+	}
+	return dir
+}
 
 func setupTestCore(t *testing.T) (*Core, string) {
 	t.Helper()
 	tmpDir := t.TempDir()
-	nibsDir := filepath.Join(tmpDir, NibsDir)
-	if err := os.MkdirAll(nibsDir, 0755); err != nil {
-		t.Fatalf("failed to create test .nibs dir: %v", err)
+	nibsDir := filepath.Join(tmpDir, store.DirName)
+	if err := os.MkdirAll(store.NewLayout(nibsDir).DataDir(), 0755); err != nil {
+		t.Fatalf("failed to create test store: %v", err)
 	}
 
 	cfg := config.Default()
@@ -34,9 +64,9 @@ func setupTestCore(t *testing.T) (*Core, string) {
 func setupTestCoreWithRequireIfMatch(t *testing.T) (*Core, string) {
 	t.Helper()
 	tmpDir := t.TempDir()
-	nibsDir := filepath.Join(tmpDir, NibsDir)
-	if err := os.MkdirAll(nibsDir, 0755); err != nil {
-		t.Fatalf("failed to create test .nibs dir: %v", err)
+	nibsDir := filepath.Join(tmpDir, store.DirName)
+	if err := os.MkdirAll(store.NewLayout(nibsDir).DataDir(), 0755); err != nil {
+		t.Fatalf("failed to create test store: %v", err)
 	}
 
 	cfg := config.Default()
@@ -95,7 +125,7 @@ func TestNew(t *testing.T) {
 
 func TestInit(t *testing.T) {
 	tmpDir := t.TempDir()
-	nibsDir := filepath.Join(tmpDir, NibsDir)
+	nibsDir := filepath.Join(tmpDir, store.DirName)
 
 	core := New(nibsDir, nil)
 	err := core.Init()
@@ -114,7 +144,7 @@ func TestInit(t *testing.T) {
 
 func TestInitIdempotent(t *testing.T) {
 	tmpDir := t.TempDir()
-	nibsDir := filepath.Join(tmpDir, NibsDir)
+	nibsDir := filepath.Join(tmpDir, store.DirName)
 
 	core := New(nibsDir, nil)
 
@@ -144,7 +174,7 @@ func TestCreate(t *testing.T) {
 	}
 
 	// Check file exists
-	expectedPath := filepath.Join(nibsDir, "abc1--test-nib.md")
+	expectedPath := dataPath(nibsDir, "abc1--test-nib.md")
 	if _, err := os.Stat(expectedPath); os.IsNotExist(err) {
 		t.Errorf("nib file not created at %s", expectedPath)
 	}
@@ -157,9 +187,9 @@ func TestCreate(t *testing.T) {
 		t.Error("UpdatedAt not set")
 	}
 
-	// Check Path was set
-	if b.Path != "abc1--test-nib.md" {
-		t.Errorf("Path = %q, want %q", b.Path, "abc1--test-nib.md")
+	// Check Path was set — new nibs live under data/
+	if b.Path != "data/abc1--test-nib.md" {
+		t.Errorf("Path = %q, want %q", b.Path, "data/abc1--test-nib.md")
 	}
 
 	// Check in-memory state
@@ -306,9 +336,9 @@ func TestGetForUpdate(t *testing.T) {
 func TestGetShortID(t *testing.T) {
 	// Create a core with a configured prefix
 	tmpDir := t.TempDir()
-	nibsDir := filepath.Join(tmpDir, NibsDir)
-	if err := os.MkdirAll(nibsDir, 0755); err != nil {
-		t.Fatalf("failed to create test .nibs dir: %v", err)
+	nibsDir := filepath.Join(tmpDir, store.DirName)
+	if err := os.MkdirAll(store.NewLayout(nibsDir).DataDir(), 0755); err != nil {
+		t.Fatalf("failed to create test store: %v", err)
 	}
 
 	cfg := config.DefaultWithPrefix("nibs-")
@@ -458,9 +488,9 @@ func TestDeleteNotFound(t *testing.T) {
 func TestDeleteShortID(t *testing.T) {
 	// Create a core with a configured prefix
 	tmpDir := t.TempDir()
-	nibsDir := filepath.Join(tmpDir, NibsDir)
-	if err := os.MkdirAll(nibsDir, 0755); err != nil {
-		t.Fatalf("failed to create test .nibs dir: %v", err)
+	nibsDir := filepath.Join(tmpDir, store.DirName)
+	if err := os.MkdirAll(store.NewLayout(nibsDir).DataDir(), 0755); err != nil {
+		t.Fatalf("failed to create test store: %v", err)
 	}
 
 	cfg := config.DefaultWithPrefix("nibs-")
@@ -531,7 +561,7 @@ status: open
 
 Manual content.
 `
-	if err := os.WriteFile(filepath.Join(nibsDir, "man1--manual.md"), []byte(content), 0644); err != nil {
+	if err := os.WriteFile(dataPath(nibsDir, "man1--manual.md"), []byte(content), 0644); err != nil {
 		t.Fatalf("failed to write test file: %v", err)
 	}
 
@@ -689,7 +719,7 @@ title: External Nib
 status: open
 ---
 `
-	writeNibFileAtomic(t, filepath.Join(nibsDir, "ext1--external.md"), content)
+	writeNibFileAtomic(t, dataPath(nibsDir, "ext1--external.md"), content)
 
 	// Wait for the watcher to report the change
 	select {
@@ -797,7 +827,7 @@ title: New Nib
 status: todo
 ---
 `
-	writeNibFileAtomic(t, filepath.Join(nibsDir, "new1--new.md"), content)
+	writeNibFileAtomic(t, dataPath(nibsDir, "new1--new.md"), content)
 
 	// Wait for events
 	select {
@@ -845,7 +875,7 @@ title: Multi Test
 status: todo
 ---
 `
-	writeNibFileAtomic(t, filepath.Join(nibsDir, "mult--multi.md"), content)
+	writeNibFileAtomic(t, dataPath(nibsDir, "mult--multi.md"), content)
 
 	// Both subscribers should receive events
 	received1, received2 := false, false
@@ -905,7 +935,7 @@ title: Updated Title
 status: in-progress
 ---
 `
-		writeNibFileAtomic(t, filepath.Join(nibsDir, "evt1--event-test.md"), content)
+		writeNibFileAtomic(t, dataPath(nibsDir, "evt1--event-test.md"), content)
 
 		select {
 		case events := <-ch:
@@ -931,7 +961,7 @@ status: in-progress
 
 	t.Run("delete event", func(t *testing.T) {
 		// Delete the nib file
-		if err := os.Remove(filepath.Join(nibsDir, "evt1--event-test.md")); err != nil {
+		if err := os.Remove(dataPath(nibsDir, "evt1--event-test.md")); err != nil {
 			t.Fatalf("failed to delete file: %v", err)
 		}
 
@@ -1022,7 +1052,7 @@ func TestWatcherArchiveVsDelete(t *testing.T) {
 			// the ordering fsnotify can produce either way round.
 			name: "archiving into a pre-existing watched archive dir reports archived",
 			preWatch: func(t *testing.T, core *Core, nibsDir, filename string) {
-				if err := os.MkdirAll(filepath.Join(nibsDir, ArchiveDir), 0755); err != nil {
+				if err := os.MkdirAll(filepath.Join(nibsDir, store.ArchiveDirName), 0755); err != nil {
 					t.Fatalf("failed to pre-create archive dir: %v", err)
 				}
 			},
@@ -1039,7 +1069,7 @@ func TestWatcherArchiveVsDelete(t *testing.T) {
 		{
 			name: "removing the file reports deleted",
 			act: func(t *testing.T, core *Core, nibsDir, filename string) {
-				if err := os.Remove(filepath.Join(nibsDir, filename)); err != nil {
+				if err := os.Remove(dataPath(nibsDir, filename)); err != nil {
 					t.Fatalf("failed to remove nib file: %v", err)
 				}
 			},
@@ -1058,7 +1088,7 @@ func TestWatcherArchiveVsDelete(t *testing.T) {
 				}
 			},
 			act: func(t *testing.T, core *Core, nibsDir, filename string) {
-				if err := os.Remove(filepath.Join(nibsDir, ArchiveDir, filename)); err != nil {
+				if err := os.Remove(filepath.Join(nibsDir, store.ArchiveDirName, filename)); err != nil {
 					t.Fatalf("failed to remove archived nib file: %v", err)
 				}
 			},
@@ -1232,7 +1262,7 @@ title: New Nib
 status: todo
 ---
 `
-	writeNibFileAtomic(t, filepath.Join(nibsDir, "new1--new.md"), content1)
+	writeNibFileAtomic(t, dataPath(nibsDir, "new1--new.md"), content1)
 
 	// 2. Update existing nib
 	content2 := `---
@@ -1240,11 +1270,11 @@ title: Updated Nib
 status: in-progress
 ---
 `
-	writeNibFileAtomic(t, filepath.Join(nibsDir, "upd1--to-update.md"), content2)
+	writeNibFileAtomic(t, dataPath(nibsDir, "upd1--to-update.md"), content2)
 
 	// 3. Create another nib then delete it (net effect: nothing)
-	writeNibFileAtomic(t, filepath.Join(nibsDir, "tmp1--temp.md"), content1)
-	_ = os.Remove(filepath.Join(nibsDir, "tmp1--temp.md"))
+	writeNibFileAtomic(t, dataPath(nibsDir, "tmp1--temp.md"), content1)
+	_ = os.Remove(dataPath(nibsDir, "tmp1--temp.md"))
 
 	// tmp1 might or might not appear depending on timing, so it is not awaited.
 	awaitEvents(t, ch, map[string]EventType{
@@ -1303,7 +1333,7 @@ func TestChangesSpanningDebounceWindows(t *testing.T) {
 
 	time.Sleep(50 * time.Millisecond)
 
-	writeNibFileAtomic(t, filepath.Join(nibsDir, "new1--new.md"), `---
+	writeNibFileAtomic(t, dataPath(nibsDir, "new1--new.md"), `---
 title: New Nib
 status: todo
 ---
@@ -1312,7 +1342,7 @@ status: todo
 	// Wide enough that the first batch has certainly fired before the next write.
 	time.Sleep(3 * debounceDelay)
 
-	writeNibFileAtomic(t, filepath.Join(nibsDir, "upd1--to-update.md"), `---
+	writeNibFileAtomic(t, dataPath(nibsDir, "upd1--to-update.md"), `---
 title: Updated Nib
 status: in-progress
 ---
@@ -1357,7 +1387,7 @@ title: [unclosed bracket
 status: {broken yaml
 ---
 `
-	writeNibFileAtomic(t, filepath.Join(nibsDir, "bad1--invalid.md"), invalidContent)
+	writeNibFileAtomic(t, dataPath(nibsDir, "bad1--invalid.md"), invalidContent)
 
 	// Also create a valid nib to verify processing continues
 	validContent := `---
@@ -1365,7 +1395,7 @@ title: Another Valid
 status: todo
 ---
 `
-	writeNibFileAtomic(t, filepath.Join(nibsDir, "val2--another.md"), validContent)
+	writeNibFileAtomic(t, dataPath(nibsDir, "val2--another.md"), validContent)
 
 	// Wait for events
 	select {
@@ -1414,7 +1444,7 @@ func TestRapidUpdatesToSameFile(t *testing.T) {
 	// Write to the same file multiple times rapidly
 	const writes = 5
 	const finalTitle = "Update 5"
-	path := filepath.Join(nibsDir, "rap1--rapid-updates.md")
+	path := dataPath(nibsDir, "rap1--rapid-updates.md")
 	for i := 1; i <= writes; i++ {
 		content := fmt.Sprintf(`---
 title: Update %d
@@ -1505,13 +1535,13 @@ func TestArchive(t *testing.T) {
 	}
 
 	// Verify file moved to archive directory
-	archivePath := filepath.Join(nibsDir, ArchiveDir, originalFilename)
+	archivePath := filepath.Join(nibsDir, store.ArchiveDirName, originalFilename)
 	if _, err := os.Stat(archivePath); os.IsNotExist(err) {
 		t.Error("nib file should exist in archive directory")
 	}
 
 	// Verify file no longer in main directory
-	mainPath := filepath.Join(nibsDir, "arc1--to-archive.md")
+	mainPath := dataPath(nibsDir, "arc1--to-archive.md")
 	if _, err := os.Stat(mainPath); !os.IsNotExist(err) {
 		t.Error("nib file should not exist in main directory")
 	}
@@ -1523,7 +1553,7 @@ func TestArchive(t *testing.T) {
 	}
 
 	// Verify path is updated (Path uses forward slashes for portability)
-	wantPath := ArchiveDir + "/" + "arc1--to-archive.md"
+	wantPath := store.ArchiveDirName + "/" + "arc1--to-archive.md"
 	if archived.Path != wantPath {
 		t.Errorf("Path = %q, want %q", archived.Path, wantPath)
 	}
@@ -1570,13 +1600,13 @@ func TestUnarchive(t *testing.T) {
 	}
 
 	// Verify file moved back to main directory
-	mainPath := filepath.Join(nibsDir, originalFilename)
+	mainPath := dataPath(nibsDir, originalFilename)
 	if _, err := os.Stat(mainPath); os.IsNotExist(err) {
 		t.Error("nib file should exist in main directory")
 	}
 
 	// Verify file no longer in archive
-	archivePath := filepath.Join(nibsDir, ArchiveDir, originalFilename)
+	archivePath := filepath.Join(nibsDir, store.ArchiveDirName, originalFilename)
 	if _, err := os.Stat(archivePath); !os.IsNotExist(err) {
 		t.Error("nib file should not exist in archive directory")
 	}
@@ -1586,8 +1616,8 @@ func TestUnarchive(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Get() error = %v", err)
 	}
-	if unarchived.Path != "una1--to-unarchive.md" {
-		t.Errorf("Path = %q, want %q", unarchived.Path, "una1--to-unarchive.md")
+	if unarchived.Path != "data/una1--to-unarchive.md" {
+		t.Errorf("Path = %q, want %q", unarchived.Path, "data/una1--to-unarchive.md")
 	}
 }
 
@@ -1681,15 +1711,16 @@ func TestArchivedNibsAlwaysLoaded(t *testing.T) {
 func TestLoadFromSubdirectories(t *testing.T) {
 	// Create a core with nibs in various subdirectories
 	tmpDir := t.TempDir()
-	nibsDir := filepath.Join(tmpDir, NibsDir)
-	if err := os.MkdirAll(nibsDir, 0755); err != nil {
-		t.Fatalf("failed to create test .nibs dir: %v", err)
+	nibsDir := filepath.Join(tmpDir, store.DirName)
+	if err := os.MkdirAll(store.NewLayout(nibsDir).DataDir(), 0755); err != nil {
+		t.Fatalf("failed to create test store: %v", err)
 	}
 
-	// Create subdirectories
-	milestone1Dir := filepath.Join(nibsDir, "milestone-1")
-	milestone2Dir := filepath.Join(nibsDir, "milestone-2")
-	nestedDir := filepath.Join(nibsDir, "epics", "auth")
+	// Create subdirectories INSIDE data/ — a store's content lives there, and
+	// nesting inside it is still supported.
+	milestone1Dir := dataPath(nibsDir, "milestone-1")
+	milestone2Dir := dataPath(nibsDir, "milestone-2")
+	nestedDir := dataPath(nibsDir, "epics", "auth")
 	if err := os.MkdirAll(milestone1Dir, 0755); err != nil {
 		t.Fatalf("failed to create milestone-1 dir: %v", err)
 	}
@@ -1701,7 +1732,7 @@ func TestLoadFromSubdirectories(t *testing.T) {
 	}
 
 	// Create nibs in different locations
-	writeTestNibFile(t, filepath.Join(nibsDir, "root1--root-nib.md"), "root1", "Root Nib", "todo")
+	writeTestNibFile(t, dataPath(nibsDir, "root1--root-nib.md"), "root1", "Root Nib", "todo")
 	writeTestNibFile(t, filepath.Join(milestone1Dir, "m1b1--milestone-one-nib.md"), "m1b1", "Milestone One Nib", "todo")
 	writeTestNibFile(t, filepath.Join(milestone2Dir, "m2b1--milestone-two-nib.md"), "m2b1", "Milestone Two Nib", "in-progress")
 	writeTestNibFile(t, filepath.Join(nestedDir, "auth1--auth-nib.md"), "auth1", "Auth Nib", "todo")
@@ -1723,10 +1754,10 @@ func TestLoadFromSubdirectories(t *testing.T) {
 		id           string
 		expectedPath string
 	}{
-		{"root1", "root1--root-nib.md"},
-		{"m1b1", "milestone-1/m1b1--milestone-one-nib.md"},
-		{"m2b1", "milestone-2/m2b1--milestone-two-nib.md"},
-		{"auth1", "epics/auth/auth1--auth-nib.md"},
+		{"root1", "data/root1--root-nib.md"},
+		{"m1b1", "data/milestone-1/m1b1--milestone-one-nib.md"},
+		{"m2b1", "data/milestone-2/m2b1--milestone-two-nib.md"},
+		{"auth1", "data/epics/auth/auth1--auth-nib.md"},
 	}
 
 	for _, tc := range testCases {
@@ -1800,7 +1831,7 @@ func TestGetFromArchive(t *testing.T) {
 	t.Run("no archive directory", func(t *testing.T) {
 		// Create a fresh core with no archive
 		tmpDir := t.TempDir()
-		freshNibsDir := filepath.Join(tmpDir, NibsDir)
+		freshNibsDir := filepath.Join(tmpDir, store.DirName)
 		if err := os.MkdirAll(freshNibsDir, 0755); err != nil {
 			t.Fatalf("failed to create .nibs dir: %v", err)
 		}
@@ -1863,7 +1894,7 @@ func TestLoadAndUnarchive(t *testing.T) {
 	}
 
 	// File should be in main directory, not archive
-	mainPath := filepath.Join(nibsDir, "lau1--load-and-unarchive.md")
+	mainPath := dataPath(nibsDir, "lau1--load-and-unarchive.md")
 	if _, err := os.Stat(mainPath); os.IsNotExist(err) {
 		t.Error("nib file should exist in main directory after LoadAndUnarchive")
 	}
@@ -1887,9 +1918,9 @@ func TestLoadAndUnarchiveNotFound(t *testing.T) {
 func TestArchiveShortID(t *testing.T) {
 	// Create a core with a configured prefix
 	tmpDir := t.TempDir()
-	nibsDir := filepath.Join(tmpDir, NibsDir)
-	if err := os.MkdirAll(nibsDir, 0755); err != nil {
-		t.Fatalf("failed to create test .nibs dir: %v", err)
+	nibsDir := filepath.Join(tmpDir, store.DirName)
+	if err := os.MkdirAll(store.NewLayout(nibsDir).DataDir(), 0755); err != nil {
+		t.Fatalf("failed to create test store: %v", err)
 	}
 
 	cfg := config.DefaultWithPrefix("nibs-")
@@ -1915,7 +1946,7 @@ func TestArchiveShortID(t *testing.T) {
 
 func TestNormalizeID(t *testing.T) {
 	tmpDir := t.TempDir()
-	nibsDir := filepath.Join(tmpDir, NibsDir)
+	nibsDir := filepath.Join(tmpDir, store.DirName)
 	if err := os.MkdirAll(nibsDir, 0755); err != nil {
 		t.Fatal(err)
 	}
@@ -2158,7 +2189,7 @@ func TestCreateValidatesEnums(t *testing.T) {
 
 	t.Run("no-op when config is nil", func(t *testing.T) {
 		tmpDir := t.TempDir()
-		nibsDir := filepath.Join(tmpDir, NibsDir)
+		nibsDir := filepath.Join(tmpDir, store.DirName)
 		if err := os.MkdirAll(nibsDir, 0755); err != nil {
 			t.Fatalf("mkdir: %v", err)
 		}
@@ -2240,7 +2271,7 @@ func TestUpdateValidatesEnums(t *testing.T) {
 
 	t.Run("no-op when config is nil", func(t *testing.T) {
 		tmpDir := t.TempDir()
-		nibsDir := filepath.Join(tmpDir, NibsDir)
+		nibsDir := filepath.Join(tmpDir, store.DirName)
 		if err := os.MkdirAll(nibsDir, 0755); err != nil {
 			t.Fatalf("mkdir: %v", err)
 		}
@@ -2273,7 +2304,7 @@ func TestLoadSluglessPrefixedFileKeepsFullID(t *testing.T) {
 		t.Fatalf("create slugless nib: %v", err)
 	}
 	// Precondition: the file on disk really is the slugless {id}.md form.
-	sluglessAbs := filepath.Join(nibsDir, nib.BuildFilename(fullID, ""))
+	sluglessAbs := dataPath(nibsDir, nib.BuildFilename(fullID, ""))
 	if _, err := os.Stat(sluglessAbs); err != nil {
 		t.Fatalf("precondition: expected slugless file %s on disk: %v", sluglessAbs, err)
 	}

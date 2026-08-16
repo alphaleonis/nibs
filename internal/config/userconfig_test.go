@@ -4,7 +4,21 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+
+	"github.com/alphaleonis/nibs/internal/store"
 )
+
+// storeConfigPath creates the store directory under projectDir and returns the
+// path of the config file inside it — where a project's config lives once the
+// store owns it.
+func storeConfigPath(t *testing.T, projectDir string) string {
+	t.Helper()
+	storeDir := filepath.Join(projectDir, store.DirName)
+	if err := os.MkdirAll(storeDir, 0755); err != nil {
+		t.Fatalf("MkdirAll error = %v", err)
+	}
+	return filepath.Join(storeDir, store.ConfigFileName)
+}
 
 func TestUserConfigPath(t *testing.T) {
 	t.Run("returns path under os.UserConfigDir", func(t *testing.T) {
@@ -157,13 +171,13 @@ func TestBoolFieldsRoundTrip(t *testing.T) {
 		cfg := Default()
 		cfg.Nibs.HideCompleted = boolPtr(false)
 		cfg.Nibs.WideMode = boolPtr(false)
-		cfg.SetConfigDir(tmpDir)
+		cfg.SetStoreDir(tmpDir)
 
 		if err := cfg.Save(tmpDir); err != nil {
 			t.Fatalf("Save() error = %v", err)
 		}
 
-		loaded, err := Load(filepath.Join(tmpDir, ConfigFileName))
+		loaded, err := Load(filepath.Join(tmpDir, store.ConfigFileName))
 		if err != nil {
 			t.Fatalf("Load() error = %v", err)
 		}
@@ -188,19 +202,18 @@ func TestBoolFieldsRoundTrip(t *testing.T) {
 
 		cfg := &Config{
 			Nibs: NibsConfig{
-				Path:     ".nibs",
 				Prefix:   "test-",
 				IDLength: 4,
 				// HideCompleted and WideMode intentionally nil
 			},
 		}
-		cfg.SetConfigDir(tmpDir)
+		cfg.SetStoreDir(tmpDir)
 
 		if err := cfg.Save(tmpDir); err != nil {
 			t.Fatalf("Save() error = %v", err)
 		}
 
-		loaded, err := Load(filepath.Join(tmpDir, ConfigFileName))
+		loaded, err := Load(filepath.Join(tmpDir, store.ConfigFileName))
 		if err != nil {
 			t.Fatalf("Load() error = %v", err)
 		}
@@ -237,7 +250,7 @@ func TestLoadWithUserConfig(t *testing.T) {
   id_length: 6
   hide_completed: true
 `
-		projectCfgPath := filepath.Join(projectDir, ConfigFileName)
+		projectCfgPath := storeConfigPath(t, projectDir)
 		if err := os.WriteFile(projectCfgPath, []byte(projectYAML), 0644); err != nil {
 			t.Fatalf("WriteFile error = %v", err)
 		}
@@ -278,7 +291,7 @@ func TestLoadWithUserConfig(t *testing.T) {
 		projectYAML := `nibs:
   prefix: "proj-"
 `
-		projectCfgPath := filepath.Join(projectDir, ConfigFileName)
+		projectCfgPath := storeConfigPath(t, projectDir)
 		if err := os.WriteFile(projectCfgPath, []byte(projectYAML), 0644); err != nil {
 			t.Fatalf("WriteFile error = %v", err)
 		}
@@ -315,7 +328,7 @@ func TestLoadWithUserConfig(t *testing.T) {
 		projectYAML := `nibs:
   prefix: "proj-"
 `
-		projectCfgPath := filepath.Join(projectDir, ConfigFileName)
+		projectCfgPath := storeConfigPath(t, projectDir)
 		if err := os.WriteFile(projectCfgPath, []byte(projectYAML), 0644); err != nil {
 			t.Fatalf("WriteFile error = %v", err)
 		}
@@ -340,7 +353,7 @@ func TestLoadWithUserConfig(t *testing.T) {
   id_length: 5
   hide_completed: false
 `
-		projectCfgPath := filepath.Join(projectDir, ConfigFileName)
+		projectCfgPath := storeConfigPath(t, projectDir)
 		if err := os.WriteFile(projectCfgPath, []byte(projectYAML), 0644); err != nil {
 			t.Fatalf("WriteFile error = %v", err)
 		}
@@ -368,7 +381,7 @@ func TestLoadWithUserConfig(t *testing.T) {
 	})
 
 	t.Run("no project config, user only", func(t *testing.T) {
-		// Empty directory with no .nibs.yml
+		// Empty directory with no store
 		projectDir := t.TempDir()
 		isolateConfigSearch(t, projectDir)
 		userCfgDir := t.TempDir()
@@ -399,15 +412,14 @@ func TestLoadWithUserConfig(t *testing.T) {
 			t.Error("WideMode() = true, want false (from user config)")
 		}
 		// System defaults should fill in the rest
-		if cfg.Nibs.Path != DefaultNibsPath {
-			t.Errorf("Path = %q, want %q (system default)", cfg.Nibs.Path, DefaultNibsPath)
-		}
 		if cfg.Nibs.DefaultStatus != "todo" {
 			t.Errorf("DefaultStatus = %q, want \"todo\" (system default)", cfg.Nibs.DefaultStatus)
 		}
-		// ConfigDir should be the project directory
-		if cfg.ConfigDir() != projectDir {
-			t.Errorf("ConfigDir() = %q, want %q", cfg.ConfigDir(), projectDir)
+		// With no store to find, the config anchors at the store that would be
+		// created under the start directory.
+		want := filepath.Join(projectDir, store.DirName)
+		if cfg.StoreDir() != want {
+			t.Errorf("StoreDir() = %q, want %q", cfg.StoreDir(), want)
 		}
 	})
 }

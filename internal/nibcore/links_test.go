@@ -676,9 +676,11 @@ func TestFixBrokenLinks(t *testing.T) {
 // reaches the store. The explicit `version: 1` keeps the v0->v1 migration from
 // rewriting the file during Load, so a test asserting the file's bytes is
 // asserting what the code under test did to it and nothing else.
+// writeLinkNibFile places a nib file in the store's data/ directory — where
+// store content lives — and returns its absolute path.
 func writeLinkNibFile(t *testing.T, nibsDir, id, status, frontMatter string) string {
 	t.Helper()
-	path := filepath.Join(nibsDir, id+"--test.md")
+	path := filepath.Join(storeData(t, nibsDir), id+"--test.md")
 	body := "---\nversion: 1\ntitle: " + id + "\nstatus: " + status + "\ntype: task\n" + frontMatter + "---\n\nBody.\n"
 	if err := os.WriteFile(path, []byte(body), 0644); err != nil {
 		t.Fatalf("write %s: %v", path, err)

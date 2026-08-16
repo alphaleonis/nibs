@@ -28,12 +28,12 @@ import (
 func setupParentLinkTest(t *testing.T, files map[string]string) (*graph.Resolver, *nibcore.Core) {
 	t.Helper()
 	nibsDir := filepath.Join(t.TempDir(), ".nibs")
-	if err := os.MkdirAll(nibsDir, 0755); err != nil {
+	if err := os.MkdirAll(storeDataDir(nibsDir), 0755); err != nil {
 		t.Fatal(err)
 	}
 	for id, frontMatter := range files {
 		content := "---\nversion: 1\ntitle: " + id + "\nstatus: todo\ntype: task\n" + frontMatter + "---\n\nBody.\n"
-		if err := os.WriteFile(filepath.Join(nibsDir, id+"--test.md"), []byte(content), 0644); err != nil {
+		if err := os.WriteFile(dataPath(nibsDir, id+"--test.md"), []byte(content), 0644); err != nil {
 			t.Fatal(err)
 		}
 	}

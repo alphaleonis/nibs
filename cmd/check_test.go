@@ -76,11 +76,11 @@ func setupCheckTest(t *testing.T, files map[string]string) (*App, string) {
 	resetCheckFlags()
 
 	nibsDir := filepath.Join(t.TempDir(), ".nibs")
-	if err := os.MkdirAll(nibsDir, 0755); err != nil {
+	if err := os.MkdirAll(storeDataDir(nibsDir), 0755); err != nil {
 		t.Fatal(err)
 	}
 	for name, content := range files {
-		if err := os.WriteFile(filepath.Join(nibsDir, name), []byte(content), 0644); err != nil {
+		if err := os.WriteFile(dataPath(nibsDir, name), []byte(content), 0644); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -164,7 +164,7 @@ func TestCheckReportsInvalidEnumValues(t *testing.T) {
 		if runErr != nil {
 			t.Fatalf("runCheck error = %v", runErr)
 		}
-		raw, err := os.ReadFile(filepath.Join(nibsDir, "chk-leg1--old.md"))
+		raw, err := os.ReadFile(dataPath(nibsDir, "chk-leg1--old.md"))
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -333,8 +333,8 @@ func TestCheckJSONReportsLoadDiagnostics(t *testing.T) {
 	if len(got.NibIssues.UnparseableFiles) != 1 {
 		t.Fatalf("unparseable_files = %+v, want exactly 1 entry", got.NibIssues.UnparseableFiles)
 	}
-	if p := got.NibIssues.UnparseableFiles[0].Path; p != "chk-bad1--broken.md" {
-		t.Errorf("unparseable_files[0].path = %q, want %q", p, "chk-bad1--broken.md")
+	if p := got.NibIssues.UnparseableFiles[0].Path; p != "data/chk-bad1--broken.md" {
+		t.Errorf("unparseable_files[0].path = %q, want %q", p, "data/chk-bad1--broken.md")
 	}
 
 	if len(got.NibIssues.DuplicateIDs) != 1 {
@@ -344,9 +344,9 @@ func TestCheckJSONReportsLoadDiagnostics(t *testing.T) {
 	if dup.NibID != "chk-dup1" {
 		t.Errorf("duplicate_ids[0].nib_id = %q, want %q", dup.NibID, "chk-dup1")
 	}
-	if dup.Loaded != "chk-dup1--beta.md" || dup.Shadowed != "chk-dup1--alpha.md" {
+	if dup.Loaded != "data/chk-dup1--beta.md" || dup.Shadowed != "data/chk-dup1--alpha.md" {
 		t.Errorf("duplicate_ids[0] = {loaded:%q shadowed:%q}, want {loaded:%q shadowed:%q}",
-			dup.Loaded, dup.Shadowed, "chk-dup1--beta.md", "chk-dup1--alpha.md")
+			dup.Loaded, dup.Shadowed, "data/chk-dup1--beta.md", "data/chk-dup1--alpha.md")
 	}
 
 	// The two load-time issues must be counted, not merely listed: the exit
@@ -411,7 +411,7 @@ func TestCheckFixLeavesLoadDiagnosticsUnfixed(t *testing.T) {
 	untouchable := []string{"chk-bad1--broken.md", "chk-dup1--alpha.md", "chk-dup1--beta.md"}
 	before := make(map[string][]byte, len(untouchable))
 	for _, name := range untouchable {
-		data, err := os.ReadFile(filepath.Join(nibsDir, name))
+		data, err := os.ReadFile(dataPath(nibsDir, name))
 		if err != nil {
 			t.Fatalf("read %s: %v", name, err)
 		}
@@ -428,7 +428,7 @@ func TestCheckFixLeavesLoadDiagnosticsUnfixed(t *testing.T) {
 
 	// Files on disk are untouched.
 	for _, name := range untouchable {
-		after, err := os.ReadFile(filepath.Join(nibsDir, name))
+		after, err := os.ReadFile(dataPath(nibsDir, name))
 		if err != nil {
 			t.Fatalf("read %s after --fix: %v", name, err)
 		}
@@ -539,7 +539,7 @@ func TestCheckFixKeepsLinksToSkippedNibs(t *testing.T) {
 	})
 
 	// The link to the skipped nib survives on disk — the whole point.
-	raw, err := os.ReadFile(filepath.Join(nibsDir, "chk-skip1--links-to-skipped.md"))
+	raw, err := os.ReadFile(dataPath(nibsDir, "chk-skip1--links-to-skipped.md"))
 	if err != nil {
 		t.Fatalf("read: %v", err)
 	}
@@ -557,7 +557,7 @@ func TestCheckFixKeepsLinksToSkippedNibs(t *testing.T) {
 
 	// Control: the genuinely dangling link IS still removed, on disk and in the
 	// report — so a blanket "stop fixing anything" regression fails here.
-	brokenRaw, err := os.ReadFile(filepath.Join(nibsDir, "chk-link1--broken.md"))
+	brokenRaw, err := os.ReadFile(dataPath(nibsDir, "chk-link1--broken.md"))
 	if err != nil {
 		t.Fatalf("read: %v", err)
 	}

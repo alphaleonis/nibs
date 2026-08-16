@@ -578,11 +578,7 @@ or stashed (or --allow-dirty overrides). Use --dry-run to list what would be
 applied without modifying anything.`,
 	Args: codedNoArgs(nil),
 	RunE: func(cmd *cobra.Command, args []string) error {
-		cfg, err := loadCLIConfig()
-		if err != nil {
-			return err
-		}
-		nibsRoot, err := resolveNibsPath(nibsPath, cfg)
+		nibsRoot, cfg, err := resolveCLIStore()
 		if err != nil {
 			return err
 		}

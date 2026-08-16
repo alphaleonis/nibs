@@ -7,6 +7,7 @@ import (
 	"testing"
 
 	"github.com/alphaleonis/nibs/internal/nib"
+	"github.com/alphaleonis/nibs/internal/store"
 	"github.com/fsnotify/fsnotify"
 )
 
@@ -353,7 +354,7 @@ func freezeGuardCases() []freezeGuardCase {
 				// the way it reaches a real store — a raw file plus Load, which
 				// loads the value exactly as written.
 				raw := "---\nversion: 1\ntitle: Deferred\nstatus: todo\npriority: deferred\n---\n"
-				if err := os.WriteFile(filepath.Join(dir, "defpub--legacy.md"), []byte(raw), 0644); err != nil {
+				if err := os.WriteFile(filepath.Join(storeData(t, dir), "defpub--legacy.md"), []byte(raw), 0644); err != nil {
 					t.Fatalf("setup write defpub: %v", err)
 				}
 				if err := c.Load(); err != nil {
@@ -413,7 +414,7 @@ func freezeGuardCases() []freezeGuardCase {
 					t.Fatalf("Get: %v", err)
 				}
 				oldPath := filepath.Join(dir, stored.Path)
-				archiveDir := filepath.Join(dir, ArchiveDir)
+				archiveDir := filepath.Join(dir, store.ArchiveDirName)
 				if err := os.MkdirAll(archiveDir, 0755); err != nil {
 					t.Fatalf("MkdirAll: %v", err)
 				}

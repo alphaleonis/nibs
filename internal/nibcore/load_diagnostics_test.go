@@ -6,6 +6,8 @@ import (
 	"slices"
 	"strings"
 	"testing"
+
+	"github.com/alphaleonis/nibs/internal/store"
 )
 
 // Minimal well-formed nib bodies for the load-diagnostics tests. The id comes
@@ -58,14 +60,15 @@ func TestCheckAllLinksReportsUnparseableFile(t *testing.T) {
 		wantID   string
 	}{
 		{
-			name:     "at the nibs root",
+			name:     "under data",
+			subdir:   store.DataDirName,
 			filename: "nibs-bad1--broken.md",
-			wantPath: "nibs-bad1--broken.md",
+			wantPath: "data/nibs-bad1--broken.md",
 			wantID:   "nibs-bad1",
 		},
 		{
 			name:     "under archive",
-			subdir:   ArchiveDir,
+			subdir:   store.ArchiveDirName,
 			filename: "nibs-bad2--broken.md",
 			wantPath: "archive/nibs-bad2--broken.md",
 			wantID:   "nibs-bad2",
@@ -76,14 +79,11 @@ func TestCheckAllLinksReportsUnparseableFile(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			core, nibsDir := mustLoadPrefixedCore(t)
 
-			dir := nibsDir
-			if tt.subdir != "" {
-				dir = filepath.Join(nibsDir, tt.subdir)
-				if err := os.MkdirAll(dir, 0755); err != nil {
-					t.Fatalf("mkdir %s: %v", dir, err)
-				}
+			dir := filepath.Join(nibsDir, tt.subdir)
+			if err := os.MkdirAll(dir, 0755); err != nil {
+				t.Fatalf("mkdir %s: %v", dir, err)
 			}
-			writeNibFile(t, nibsDir, "nibs-good1--ok.md", diagValidNib)
+			writeNibFile(t, storeData(t, nibsDir), "nibs-good1--ok.md", diagValidNib)
 			writeNibFile(t, dir, tt.filename, diagUnparseableNib)
 
 			if err := core.Load(); err != nil {
@@ -130,8 +130,8 @@ func TestCheckAllLinksReportsUnparseableFile(t *testing.T) {
 func TestLoadAndCheckReportOutOfEnumValues(t *testing.T) {
 	core, nibsDir := mustLoadPrefixedCore(t)
 	legacy := "---\nversion: 1\ntitle: Legacy\nstatus: todo\ntype: task\npriority: deferred\n---\n\nBody.\n"
-	writeNibFile(t, nibsDir, "nibs-leg1--legacy.md", legacy)
-	writeNibFile(t, nibsDir, "nibs-good1--ok.md", diagValidNib)
+	writeNibFile(t, storeData(t, nibsDir), "nibs-leg1--legacy.md", legacy)
+	writeNibFile(t, storeData(t, nibsDir), "nibs-good1--ok.md", diagValidNib)
 
 	var warnings strings.Builder
 	core.SetWarnWriter(&warnings)
@@ -169,7 +169,7 @@ func TestLoadAndCheckReportOutOfEnumValues(t *testing.T) {
 	}
 
 	// False-positive guard: valid enum values report nothing.
-	if err := os.Remove(filepath.Join(nibsDir, "nibs-leg1--legacy.md")); err != nil {
+	if err := os.Remove(dataPath(nibsDir, "nibs-leg1--legacy.md")); err != nil {
 		t.Fatal(err)
 	}
 	if err := core.Load(); err != nil {
@@ -187,8 +187,8 @@ func TestLoadAndCheckReportOutOfEnumValues(t *testing.T) {
 func TestCheckAllLinksReportsDuplicateID(t *testing.T) {
 	core, nibsDir := mustLoadPrefixedCore(t)
 
-	writeCollisionNibFile(t, nibsDir, "nibs-x9z2--alpha.md", "Alpha")
-	writeCollisionNibFile(t, nibsDir, "nibs-x9z2--beta.md", "Beta")
+	writeCollisionNibFile(t, storeData(t, nibsDir), "nibs-x9z2--alpha.md", "Alpha")
+	writeCollisionNibFile(t, storeData(t, nibsDir), "nibs-x9z2--beta.md", "Beta")
 
 	if err := core.Load(); err != nil {
 		t.Fatalf("Load() error = %v, want nil", err)
@@ -205,11 +205,11 @@ func TestCheckAllLinksReportsDuplicateID(t *testing.T) {
 	// Direction matters: beta is lexically last, so beta is the file the store
 	// answers with and alpha is the one nothing can reach. A swapped-args
 	// regression would tell the user to keep the wrong file.
-	if got.Loaded != "nibs-x9z2--beta.md" {
-		t.Errorf("DuplicateIDs[0].Loaded = %q, want %q (lexically-last file wins)", got.Loaded, "nibs-x9z2--beta.md")
+	if got.Loaded != "data/nibs-x9z2--beta.md" {
+		t.Errorf("DuplicateIDs[0].Loaded = %q, want %q (lexically-last file wins)", got.Loaded, "data/nibs-x9z2--beta.md")
 	}
-	if got.Shadowed != "nibs-x9z2--alpha.md" {
-		t.Errorf("DuplicateIDs[0].Shadowed = %q, want %q", got.Shadowed, "nibs-x9z2--alpha.md")
+	if got.Shadowed != "data/nibs-x9z2--alpha.md" {
+		t.Errorf("DuplicateIDs[0].Shadowed = %q, want %q", got.Shadowed, "data/nibs-x9z2--alpha.md")
 	}
 
 	if !result.HasIssues() {
@@ -226,9 +226,9 @@ func TestCheckAllLinksReportsDuplicateID(t *testing.T) {
 func TestCheckAllLinksReportsChainedDuplicateIDs(t *testing.T) {
 	core, nibsDir := mustLoadPrefixedCore(t)
 
-	writeCollisionNibFile(t, nibsDir, "nibs-x9z2--alpha.md", "Alpha")
-	writeCollisionNibFile(t, nibsDir, "nibs-x9z2--beta.md", "Beta")
-	writeCollisionNibFile(t, nibsDir, "nibs-x9z2--gamma.md", "Gamma")
+	writeCollisionNibFile(t, storeData(t, nibsDir), "nibs-x9z2--alpha.md", "Alpha")
+	writeCollisionNibFile(t, storeData(t, nibsDir), "nibs-x9z2--beta.md", "Beta")
+	writeCollisionNibFile(t, storeData(t, nibsDir), "nibs-x9z2--gamma.md", "Gamma")
 
 	if err := core.Load(); err != nil {
 		t.Fatalf("Load() error = %v, want nil", err)
@@ -236,8 +236,8 @@ func TestCheckAllLinksReportsChainedDuplicateIDs(t *testing.T) {
 
 	result := core.CheckAllLinks()
 	want := []DuplicateID{
-		{NibID: "nibs-x9z2", Loaded: "nibs-x9z2--beta.md", Shadowed: "nibs-x9z2--alpha.md"},
-		{NibID: "nibs-x9z2", Loaded: "nibs-x9z2--gamma.md", Shadowed: "nibs-x9z2--beta.md"},
+		{NibID: "nibs-x9z2", Loaded: "data/nibs-x9z2--beta.md", Shadowed: "data/nibs-x9z2--alpha.md"},
+		{NibID: "nibs-x9z2", Loaded: "data/nibs-x9z2--gamma.md", Shadowed: "data/nibs-x9z2--beta.md"},
 	}
 	if len(result.DuplicateIDs) != len(want) {
 		t.Fatalf("DuplicateIDs = %+v, want %+v", result.DuplicateIDs, want)
@@ -254,8 +254,8 @@ func TestCheckAllLinksReportsChainedDuplicateIDs(t *testing.T) {
 func TestCheckAllLinksCleanStoreHasNoLoadDiagnostics(t *testing.T) {
 	core, nibsDir := mustLoadPrefixedCore(t)
 
-	writeNibFile(t, nibsDir, "nibs-aaa1--one.md", diagValidNib)
-	writeNibFile(t, nibsDir, "nibs-bbb2--two.md", diagValidNib)
+	writeNibFile(t, storeData(t, nibsDir), "nibs-aaa1--one.md", diagValidNib)
+	writeNibFile(t, storeData(t, nibsDir), "nibs-bbb2--two.md", diagValidNib)
 
 	if err := core.Load(); err != nil {
 		t.Fatalf("Load() error = %v, want nil", err)
@@ -283,9 +283,9 @@ func TestCheckAllLinksCleanStoreHasNoLoadDiagnostics(t *testing.T) {
 func TestCheckAllLinksLoadDiagnosticsRebuiltOnReload(t *testing.T) {
 	core, nibsDir := mustLoadPrefixedCore(t)
 
-	writeNibFile(t, nibsDir, "nibs-bad1--broken.md", diagUnparseableNib)
-	writeCollisionNibFile(t, nibsDir, "nibs-x9z2--alpha.md", "Alpha")
-	writeCollisionNibFile(t, nibsDir, "nibs-x9z2--beta.md", "Beta")
+	writeNibFile(t, storeData(t, nibsDir), "nibs-bad1--broken.md", diagUnparseableNib)
+	writeCollisionNibFile(t, storeData(t, nibsDir), "nibs-x9z2--alpha.md", "Alpha")
+	writeCollisionNibFile(t, storeData(t, nibsDir), "nibs-x9z2--beta.md", "Beta")
 
 	if err := core.Load(); err != nil {
 		t.Fatalf("Load() error = %v, want nil", err)
@@ -296,8 +296,8 @@ func TestCheckAllLinksLoadDiagnosticsRebuiltOnReload(t *testing.T) {
 	}
 
 	// Repair: make the broken file parse, and drop the shadowed duplicate.
-	writeNibFile(t, nibsDir, "nibs-bad1--broken.md", diagValidNib)
-	if err := os.Remove(filepath.Join(nibsDir, "nibs-x9z2--alpha.md")); err != nil {
+	writeNibFile(t, storeData(t, nibsDir), "nibs-bad1--broken.md", diagValidNib)
+	if err := os.Remove(dataPath(nibsDir, "nibs-x9z2--alpha.md")); err != nil {
 		t.Fatalf("remove duplicate: %v", err)
 	}
 
@@ -319,9 +319,9 @@ func TestCheckAllLinksLoadDiagnosticsRebuiltOnReload(t *testing.T) {
 func TestCheckAllLinksLoadDiagnosticsAreCopies(t *testing.T) {
 	core, nibsDir := mustLoadPrefixedCore(t)
 
-	writeNibFile(t, nibsDir, "nibs-bad1--broken.md", diagUnparseableNib)
-	writeCollisionNibFile(t, nibsDir, "nibs-x9z2--alpha.md", "Alpha")
-	writeCollisionNibFile(t, nibsDir, "nibs-x9z2--beta.md", "Beta")
+	writeNibFile(t, storeData(t, nibsDir), "nibs-bad1--broken.md", diagUnparseableNib)
+	writeCollisionNibFile(t, storeData(t, nibsDir), "nibs-x9z2--alpha.md", "Alpha")
+	writeCollisionNibFile(t, storeData(t, nibsDir), "nibs-x9z2--beta.md", "Beta")
 
 	if err := core.Load(); err != nil {
 		t.Fatalf("Load() error = %v, want nil", err)
@@ -358,7 +358,7 @@ func TestFixBrokenLinksKeepsLinksToSkippedNibs(t *testing.T) {
 	core, nibsDir := mustLoadPrefixedCore(t)
 
 	// The target: present on disk, unparseable, so it is skipped at load.
-	if err := os.WriteFile(filepath.Join(nibsDir, "nibs-tgt1--target.md"), []byte(diagUnparseableNib), 0644); err != nil {
+	if err := os.WriteFile(dataPath(nibsDir, "nibs-tgt1--target.md"), []byte(diagUnparseableNib), 0644); err != nil {
 		t.Fatalf("write target: %v", err)
 	}
 	// A bystander linking to it by parent AND blocked_by, plus a link to an id
@@ -380,7 +380,7 @@ updated_at: 2026-01-02T03:04:05Z
 
 Body.
 `
-	childPath := filepath.Join(nibsDir, "nibs-chd1--child.md")
+	childPath := dataPath(nibsDir, "nibs-chd1--child.md")
 	if err := os.WriteFile(childPath, []byte(child), 0644); err != nil {
 		t.Fatalf("write child: %v", err)
 	}

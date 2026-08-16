@@ -15,13 +15,14 @@ import (
 	"github.com/alphaleonis/nibs/internal/graph/model"
 	"github.com/alphaleonis/nibs/internal/nib"
 	"github.com/alphaleonis/nibs/internal/nibcore"
+	"github.com/alphaleonis/nibs/internal/store"
 )
 
 func setupTestResolver(t *testing.T) (*Resolver, *nibcore.Core) {
 	t.Helper()
 	tmpDir := t.TempDir()
-	nibsDir := filepath.Join(tmpDir, ".nibs")
-	if err := os.MkdirAll(nibsDir, 0755); err != nil {
+	nibsDir := filepath.Join(tmpDir, store.DirName)
+	if err := os.MkdirAll(store.NewLayout(nibsDir).DataDir(), 0755); err != nil {
 		t.Fatalf("failed to create test .nibs dir: %v", err)
 	}
 
@@ -62,12 +63,12 @@ func createTestNib(t *testing.T, core *nibcore.Core, id, title, status string) *
 // fresh Core.Load to exercise the reload path where the false-conflict bug lived.
 func TestNibFieldResolversApplyPresentationDefaults(t *testing.T) {
 	tmpDir := t.TempDir()
-	nibsDir := filepath.Join(tmpDir, ".nibs")
-	if err := os.MkdirAll(nibsDir, 0755); err != nil {
+	nibsDir := filepath.Join(tmpDir, store.DirName)
+	if err := os.MkdirAll(store.NewLayout(nibsDir).DataDir(), 0755); err != nil {
 		t.Fatalf("mkdir: %v", err)
 	}
 	write := func(name, content string) {
-		if err := os.WriteFile(filepath.Join(nibsDir, name), []byte(content), 0644); err != nil {
+		if err := os.WriteFile(filepath.Join(store.NewLayout(nibsDir).DataDir(), name), []byte(content), 0644); err != nil {
 			t.Fatalf("write %s: %v", name, err)
 		}
 	}
@@ -1748,8 +1749,8 @@ func TestRelationshipFieldsWithFilter(t *testing.T) {
 func setupTestResolverWithPrefix(t *testing.T, prefix string) (*Resolver, *nibcore.Core) {
 	t.Helper()
 	tmpDir := t.TempDir()
-	nibsDir := filepath.Join(tmpDir, ".nibs")
-	if err := os.MkdirAll(nibsDir, 0755); err != nil {
+	nibsDir := filepath.Join(tmpDir, store.DirName)
+	if err := os.MkdirAll(store.NewLayout(nibsDir).DataDir(), 0755); err != nil {
 		t.Fatalf("failed to create test .nibs dir: %v", err)
 	}
 
@@ -1766,8 +1767,8 @@ func setupTestResolverWithPrefix(t *testing.T, prefix string) (*Resolver, *nibco
 func setupTestResolverWithRequireIfMatch(t *testing.T) (*Resolver, *nibcore.Core) {
 	t.Helper()
 	tmpDir := t.TempDir()
-	nibsDir := filepath.Join(tmpDir, ".nibs")
-	if err := os.MkdirAll(nibsDir, 0755); err != nil {
+	nibsDir := filepath.Join(tmpDir, store.DirName)
+	if err := os.MkdirAll(store.NewLayout(nibsDir).DataDir(), 0755); err != nil {
 		t.Fatalf("failed to create test .nibs dir: %v", err)
 	}
 
@@ -4314,8 +4315,8 @@ func TestReparentRecalculatesOrderKey(t *testing.T) {
 func setupTestResolverWithAutoActivation(t *testing.T) (*Resolver, *nibcore.Core) {
 	t.Helper()
 	tmpDir := t.TempDir()
-	nibsDir := filepath.Join(tmpDir, ".nibs")
-	if err := os.MkdirAll(nibsDir, 0755); err != nil {
+	nibsDir := filepath.Join(tmpDir, store.DirName)
+	if err := os.MkdirAll(store.NewLayout(nibsDir).DataDir(), 0755); err != nil {
 		t.Fatalf("failed to create test .nibs dir: %v", err)
 	}
 
@@ -4556,8 +4557,8 @@ func TestAutoActivationStopsAtAlreadyActiveParent(t *testing.T) {
 
 func TestAutoActivationWorksWithRequireIfMatch(t *testing.T) {
 	tmpDir := t.TempDir()
-	nibsDir := filepath.Join(tmpDir, ".nibs")
-	if err := os.MkdirAll(nibsDir, 0755); err != nil {
+	nibsDir := filepath.Join(tmpDir, store.DirName)
+	if err := os.MkdirAll(store.NewLayout(nibsDir).DataDir(), 0755); err != nil {
 		t.Fatalf("failed to create test .nibs dir: %v", err)
 	}
 

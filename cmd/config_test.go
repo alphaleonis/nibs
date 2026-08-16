@@ -22,11 +22,12 @@ type testNibSpec struct {
 	body      string
 }
 
-// setupSetPrefixTest creates a temporary project with a .nibs directory, a
-// .nibs.yml containing the given prefix, and one rendered nib file per spec.
-// It also registers a t.Cleanup that resets the package-level set-prefix flag
-// vars and restores gitIsDirtyFn to realGitIsDirty. By default gitIsDirtyFn
-// is overridden to report clean so tests don't accidentally shell out to git.
+// setupSetPrefixTest creates a temporary project with a .nibs store — its
+// config.yml carrying the given prefix, and one rendered nib file per spec
+// under data/. It also registers a t.Cleanup that resets the package-level
+// set-prefix flag vars and restores gitIsDirtyFn to realGitIsDirty. By default
+// gitIsDirtyFn is overridden to report clean so tests don't accidentally shell
+// out to git.
 //
 // Returns (projectRoot, nibsDir, cfgPath).
 func setupSetPrefixTest(t *testing.T, prefix string, nibs ...testNibSpec) (string, string, string) {
@@ -51,11 +52,11 @@ func setupSetPrefixTest(t *testing.T, prefix string, nibs ...testNibSpec) (strin
 
 	tmpDir := t.TempDir()
 	nibsDir := filepath.Join(tmpDir, ".nibs")
-	if err := os.MkdirAll(nibsDir, 0o755); err != nil {
+	if err := os.MkdirAll(storeDataDir(nibsDir), 0o755); err != nil {
 		t.Fatalf("mkdir nibs: %v", err)
 	}
 
-	cfgPath := filepath.Join(tmpDir, ".nibs.yml")
+	cfgPath := filepath.Join(nibsDir, "config.yml")
 	cfgYAML := "nibs:\n  prefix: " + prefix + "\n  id_length: 4\n"
 	if err := os.WriteFile(cfgPath, []byte(cfgYAML), 0o644); err != nil {
 		t.Fatalf("write cfg: %v", err)
@@ -76,7 +77,7 @@ func setupSetPrefixTest(t *testing.T, prefix string, nibs ...testNibSpec) (strin
 		if err != nil {
 			t.Fatalf("render %s: %v", spec.id, err)
 		}
-		if err := os.WriteFile(filepath.Join(nibsDir, spec.filename), data, 0o644); err != nil {
+		if err := os.WriteFile(dataPath(nibsDir, spec.filename), data, 0o644); err != nil {
 			t.Fatalf("write nib %s: %v", spec.filename, err)
 		}
 	}
@@ -131,20 +132,20 @@ func TestSetPrefix_HappyPath_RenamesFilesAndUpdatesReferences(t *testing.T) {
 
 	// Old files must be gone.
 	for _, old := range []string{"tnib-aaa--root.md", "tnib-bbb--child.md", "tnib-ccc--blocked.md"} {
-		if _, err := os.Stat(filepath.Join(nibsDir, old)); !os.IsNotExist(err) {
+		if _, err := os.Stat(dataPath(nibsDir, old)); !os.IsNotExist(err) {
 			t.Errorf("expected old file %s to be gone, stat err=%v", old, err)
 		}
 	}
 
 	// New files must exist.
 	for _, newName := range []string{"new-aaa--root.md", "new-bbb--child.md", "new-ccc--blocked.md"} {
-		if _, err := os.Stat(filepath.Join(nibsDir, newName)); err != nil {
+		if _, err := os.Stat(dataPath(nibsDir, newName)); err != nil {
 			t.Errorf("expected new file %s to exist: %v", newName, err)
 		}
 	}
 
 	// Child's parent reference must be updated.
-	child := parseNibFile(t, filepath.Join(nibsDir, "new-bbb--child.md"))
+	child := parseNibFile(t, dataPath(nibsDir, "new-bbb--child.md"))
 	if child.Parent != "new-aaa" {
 		t.Errorf("child parent = %q, want %q", child.Parent, "new-aaa")
 	}
@@ -153,7 +154,7 @@ func TestSetPrefix_HappyPath_RenamesFilesAndUpdatesReferences(t *testing.T) {
 	}
 
 	// Blocked nib's parent + blocked_by must be updated.
-	blocked := parseNibFile(t, filepath.Join(nibsDir, "new-ccc--blocked.md"))
+	blocked := parseNibFile(t, dataPath(nibsDir, "new-ccc--blocked.md"))
 	if blocked.Parent != "new-aaa" {
 		t.Errorf("blocked parent = %q, want %q", blocked.Parent, "new-aaa")
 	}
@@ -182,7 +183,7 @@ func TestSetPrefix_InvalidNewPrefix_Rejected(t *testing.T) {
 	}
 
 	// File must be unchanged.
-	if _, statErr := os.Stat(filepath.Join(nibsDir, "tnib-aaa--only.md")); statErr != nil {
+	if _, statErr := os.Stat(dataPath(nibsDir, "tnib-aaa--only.md")); statErr != nil {
 		t.Errorf("expected original file to remain, stat err=%v", statErr)
 	}
 
@@ -210,7 +211,7 @@ func TestSetPrefix_GitDirtyWithoutForce_Rejected(t *testing.T) {
 	}
 
 	// File must be unchanged.
-	if _, statErr := os.Stat(filepath.Join(nibsDir, "tnib-aaa--only.md")); statErr != nil {
+	if _, statErr := os.Stat(dataPath(nibsDir, "tnib-aaa--only.md")); statErr != nil {
 		t.Errorf("expected original file to remain, stat err=%v", statErr)
 	}
 
@@ -233,11 +234,11 @@ func TestSetPrefix_GitDirtyWithForce_Proceeds(t *testing.T) {
 	}
 
 	// Old file gone.
-	if _, err := os.Stat(filepath.Join(nibsDir, "tnib-aaa--only.md")); !os.IsNotExist(err) {
+	if _, err := os.Stat(dataPath(nibsDir, "tnib-aaa--only.md")); !os.IsNotExist(err) {
 		t.Errorf("expected old file to be removed, stat err=%v", err)
 	}
 	// New file exists.
-	if _, err := os.Stat(filepath.Join(nibsDir, "new-aaa--only.md")); err != nil {
+	if _, err := os.Stat(dataPath(nibsDir, "new-aaa--only.md")); err != nil {
 		t.Errorf("expected new file to exist: %v", err)
 	}
 
@@ -269,11 +270,11 @@ func TestSetPrefix_DryRun_DoesNotMutateOrCallGit(t *testing.T) {
 	}
 
 	// Original file still there.
-	if _, err := os.Stat(filepath.Join(nibsDir, "tnib-aaa--only.md")); err != nil {
+	if _, err := os.Stat(dataPath(nibsDir, "tnib-aaa--only.md")); err != nil {
 		t.Errorf("expected original file to remain after dry-run: %v", err)
 	}
 	// No renamed file.
-	if _, err := os.Stat(filepath.Join(nibsDir, "new-aaa--only.md")); !os.IsNotExist(err) {
+	if _, err := os.Stat(dataPath(nibsDir, "new-aaa--only.md")); !os.IsNotExist(err) {
 		t.Errorf("expected new file NOT to exist after dry-run, stat err=%v", err)
 	}
 
@@ -298,7 +299,7 @@ func TestSetPrefix_SamePrefix_Rejected(t *testing.T) {
 	}
 
 	// File must be unchanged.
-	if _, statErr := os.Stat(filepath.Join(nibsDir, "tnib-aaa--only.md")); statErr != nil {
+	if _, statErr := os.Stat(dataPath(nibsDir, "tnib-aaa--only.md")); statErr != nil {
 		t.Errorf("expected original file to remain, stat err=%v", statErr)
 	}
 
@@ -317,7 +318,7 @@ func TestSetPrefix_Collision_Rejected(t *testing.T) {
 	// the path exists without core.Load() picking it up as a stray nib
 	// (it walks only .md regular files). This drives targetExists to report
 	// true and exercises the collision short-circuit in runSetPrefix.
-	if err := os.Mkdir(filepath.Join(nibsDir, "new-aaa--only.md"), 0o755); err != nil {
+	if err := os.Mkdir(dataPath(nibsDir, "new-aaa--only.md"), 0o755); err != nil {
 		t.Fatalf("seed collision dir: %v", err)
 	}
 
@@ -329,7 +330,7 @@ func TestSetPrefix_Collision_Rejected(t *testing.T) {
 		t.Errorf("error = %q, should mention collision", err.Error())
 	}
 	// Original file should still exist at its old path.
-	if _, err := os.Stat(filepath.Join(nibsDir, "tnib-aaa--only.md")); err != nil {
+	if _, err := os.Stat(dataPath(nibsDir, "tnib-aaa--only.md")); err != nil {
 		t.Errorf("original file clobbered: %v", err)
 	}
 	// Config should still have the old prefix.
@@ -355,7 +356,7 @@ func TestSetPrefix_GitCheckError_Surfaces(t *testing.T) {
 		t.Errorf("error %q should mention git", err.Error())
 	}
 	// Original file should still exist at its old path.
-	if _, err := os.Stat(filepath.Join(nibsDir, "tnib-aaa--only.md")); err != nil {
+	if _, err := os.Stat(dataPath(nibsDir, "tnib-aaa--only.md")); err != nil {
 		t.Errorf("original file clobbered: %v", err)
 	}
 }
@@ -380,10 +381,10 @@ func TestSetPrefix_AutoAppendsDash(t *testing.T) {
 				t.Fatalf("set-prefix %q failed: %v", tc.input, err)
 			}
 			// Same expected file regardless of which input form was used.
-			if _, err := os.Stat(filepath.Join(nibsDir, "new-aaa--only.md")); err != nil {
+			if _, err := os.Stat(dataPath(nibsDir, "new-aaa--only.md")); err != nil {
 				t.Errorf("expected new-aaa--only.md to exist: %v", err)
 			}
-			if _, err := os.Stat(filepath.Join(nibsDir, "tnib-aaa--only.md")); !os.IsNotExist(err) {
+			if _, err := os.Stat(dataPath(nibsDir, "tnib-aaa--only.md")); !os.IsNotExist(err) {
 				t.Errorf("expected old file gone, got err=%v", err)
 			}
 			cfg := loadCfg(t, cfgPath)
@@ -418,7 +419,7 @@ func TestSetPrefix_UppercaseExplicitRejected(t *testing.T) {
 
 	// Original file must be unchanged (not renamed to BGT-aaa--only.md or
 	// any other form).
-	if _, statErr := os.Stat(filepath.Join(nibsDir, "tnib-aaa--only.md")); statErr != nil {
+	if _, statErr := os.Stat(dataPath(nibsDir, "tnib-aaa--only.md")); statErr != nil {
 		t.Errorf("expected original file to remain, stat err=%v", statErr)
 	}
 
@@ -442,10 +443,10 @@ func TestSetPrefix_GrandfatheredOldPrefix(t *testing.T) {
 	if err := runSetPrefixCmd(t, cfgPath, nibsDir, "bgt", "--json"); err != nil {
 		t.Fatalf("set-prefix from grandfathered prefix failed: %v", err)
 	}
-	if _, err := os.Stat(filepath.Join(nibsDir, "bgt-aaa--only.md")); err != nil {
+	if _, err := os.Stat(dataPath(nibsDir, "bgt-aaa--only.md")); err != nil {
 		t.Errorf("expected bgt-aaa--only.md to exist: %v", err)
 	}
-	if _, err := os.Stat(filepath.Join(nibsDir, "boardGameTracker-aaa--only.md")); !os.IsNotExist(err) {
+	if _, err := os.Stat(dataPath(nibsDir, "boardGameTracker-aaa--only.md")); !os.IsNotExist(err) {
 		t.Errorf("expected old file gone, got err=%v", err)
 	}
 	cfg := loadCfg(t, cfgPath)

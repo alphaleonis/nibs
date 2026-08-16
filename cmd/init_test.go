@@ -7,6 +7,7 @@ import (
 	"testing"
 
 	"github.com/alphaleonis/nibs/internal/config"
+	"github.com/alphaleonis/nibs/internal/store"
 )
 
 // resetInitFlags restores all package-level flag globals touched by the init
@@ -52,10 +53,11 @@ func runInitCmd(t *testing.T, nibsPath string, args ...string) error {
 	return rootCmd.Execute()
 }
 
-// loadInitCfg loads <projectDir>/.nibs.yml and fails the test if missing.
+// loadInitCfg loads the config `nibs init` wrote INSIDE the store and fails
+// the test if it is missing.
 func loadInitCfg(t *testing.T, projectDir string) *config.Config {
 	t.Helper()
-	cfgPath := filepath.Join(projectDir, ".nibs.yml")
+	cfgPath := filepath.Join(projectDir, store.DirName, store.ConfigFileName)
 	cfg, err := config.Load(cfgPath)
 	if err != nil {
 		t.Fatalf("load config at %s: %v", cfgPath, err)
@@ -247,10 +249,10 @@ func TestInit_ExplicitPrefix_InvalidCharset(t *testing.T) {
 }
 
 // assertNoConfigFile helps a handful of failure-mode tests verify that a
-// rejected init did NOT leave a partial .nibs.yml behind.
+// rejected init did NOT leave a partial config behind.
 func assertNoConfigFile(t *testing.T, projectDir string) {
 	t.Helper()
-	cfgPath := filepath.Join(projectDir, ".nibs.yml")
+	cfgPath := filepath.Join(projectDir, store.DirName, store.ConfigFileName)
 	_, err := os.Stat(cfgPath)
 	if err == nil {
 		t.Errorf("expected %s to NOT exist after rejected init", cfgPath)

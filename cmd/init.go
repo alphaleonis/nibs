@@ -10,6 +10,7 @@ import (
 	"github.com/alphaleonis/nibs/internal/nibcore"
 	"github.com/alphaleonis/nibs/internal/output"
 	"github.com/alphaleonis/nibs/internal/reprefix"
+	"github.com/alphaleonis/nibs/internal/store"
 	"github.com/spf13/cobra"
 )
 
@@ -21,37 +22,17 @@ var (
 var initCmd = &cobra.Command{
 	Use:   "init",
 	Short: "Initialize a nibs project",
-	Long:  `Creates a .nibs directory and .nibs.yml config file in the current directory.`,
+	Long:  `Creates a .nibs store directory holding config.yml and data/ in the current directory.`,
 	// Target directory comes from --nibs-path / cwd and the prefix from --prefix;
 	// no positional args are read.
 	Args: codedNoArgs(&initJSON),
 	RunE: func(cmd *cobra.Command, args []string) error {
-		var projectDir string
-		var nibsDir string
-		var dirName string
-
-		// Note: both branches below ((*nibcore.Core).Init at the explicit-
-		// path branch and nibcore.Init at the Getwd branch) create the .nibs/
-		// directory via MkdirAll BEFORE prefix validation runs further down.
-		// If validation fails, the empty .nibs/ remains on disk but .nibs.yml
-		// is not written. Rerunning `nibs init --prefix <valid>` after fixing
-		// the flag is safe because MkdirAll is a no-op on an existing
-		// directory — the two code paths intentionally share this property.
-		if nibsPath != "" {
-			// Use explicit path for nibs directory
-			nibsDir = nibsPath
-			projectDir = filepath.Dir(nibsDir)
-			dirName = filepath.Base(projectDir)
-			// Create the directory using Core.Init to set up .gitignore
-			core := nibcore.New(nibsDir, nil)
-			if err := core.Init(); err != nil {
-				if initJSON {
-					return output.Error(output.ErrFileError, err.Error())
-				}
-				return fmt.Errorf("failed to create directory: %w", err)
-			}
-		} else {
-			// Use current working directory
+		// The store directory is the only handle: --nibs-path names it
+		// directly, otherwise it is `.nibs` under the cwd. Everything else —
+		// the project directory, the derived prefix, where the config is
+		// written — follows from it.
+		nibsDir := nibsPath
+		if nibsDir == "" {
 			dir, err := os.Getwd()
 			if err != nil {
 				if initJSON {
@@ -59,17 +40,22 @@ var initCmd = &cobra.Command{
 				}
 				return err
 			}
+			nibsDir = filepath.Join(dir, store.DirName)
+		}
+		projectDir := filepath.Dir(nibsDir)
+		dirName := filepath.Base(projectDir)
 
-			if err := nibcore.Init(dir); err != nil {
-				if initJSON {
-					return output.Error(output.ErrFileError, err.Error())
-				}
-				return fmt.Errorf("failed to initialize: %w", err)
+		// Core.Init creates the store's directories BEFORE prefix validation
+		// runs further down. If validation fails, the empty store remains on
+		// disk but no config is written. Rerunning `nibs init --prefix <valid>`
+		// after fixing the flag is safe because MkdirAll is a no-op on an
+		// existing directory.
+		core := nibcore.New(nibsDir, nil)
+		if err := core.Init(); err != nil {
+			if initJSON {
+				return output.Error(output.ErrFileError, err.Error())
 			}
-
-			projectDir = dir
-			nibsDir = filepath.Join(dir, ".nibs")
-			dirName = filepath.Base(dir)
+			return fmt.Errorf("failed to create store directory: %w", err)
 		}
 
 		// Compute the project nib ID prefix. The explicit path (user passed
@@ -106,8 +92,8 @@ var initCmd = &cobra.Command{
 		// Create default config file with the computed prefix,
 		// seeding values from user config where available
 		defaultCfg := config.DefaultWithPrefixFromUserConfig(prefix, userCfg)
-		defaultCfg.SetConfigDir(projectDir)
-		if err := defaultCfg.Save(projectDir); err != nil {
+		defaultCfg.SetStoreDir(nibsDir)
+		if err := defaultCfg.Save(nibsDir); err != nil {
 			if initJSON {
 				return output.Error(output.ErrFileError, err.Error())
 			}

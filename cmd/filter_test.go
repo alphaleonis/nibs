@@ -13,7 +13,7 @@ import (
 func TestFilterClosedBlockersDoesNotMutateCore(t *testing.T) {
 	tmpDir := t.TempDir()
 	nibsDir := filepath.Join(tmpDir, ".nibs")
-	if err := os.MkdirAll(nibsDir, 0755); err != nil {
+	if err := os.MkdirAll(storeDataDir(nibsDir), 0755); err != nil {
 		t.Fatal(err)
 	}
 
