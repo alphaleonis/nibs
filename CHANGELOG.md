@@ -7,6 +7,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Changed
+- **Store-format migrations are now explicit** — `nibs migrate` previews and applies them, and every other command refuses an unmigrated (or newer-format) store instead of silently rewriting files at load.
+
 ### Fixed
 - **The web UI now notices a live connection that dies without closing**, such as going offline or waking from sleep, instead of holding an apparently-healthy socket and serving a stale view indefinitely.
 - **The server now notices a live-updates client that vanishes without closing** and reclaims its connection, instead of holding it until the OS TCP timeout.
