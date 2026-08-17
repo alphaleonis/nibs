@@ -398,8 +398,14 @@ func fieldRemediation(app *App, ie nibcore.InvalidEnum) string {
 // ("unmarshal errors:" then an indented "line N: ..."), which otherwise breaks
 // the alignment of the whole section. The --json envelope carries the reason
 // verbatim, so nothing is lost where the consumer is a machine.
+//
+// A parse error quotes the file it came from, so it is file-sourced text and goes
+// through the control-character boundary first (see stripControlChars) — a `\e`
+// scalar inside a nib's front matter would otherwise reach the terminal from the
+// report. Truncation is deliberately not applied: this also renders nibs' own
+// multi-file refusals, where the length is the information.
 func flattenReason(reason string) string {
-	return strings.Join(strings.Fields(reason), " ")
+	return strings.Join(strings.Fields(stripControlChars(reason)), " ")
 }
 
 // describeMissingNib names the nib a skipped file would have provided. The id

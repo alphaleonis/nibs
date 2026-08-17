@@ -823,7 +823,7 @@ func scanStore(env migrateEnv) (*storeScan, error) {
 		if h.version > nib.CurrentVersion {
 			// Not this build's business: no step predicate is evaluated for a
 			// newer file, only the refusal below.
-			scan.newer = append(scan.newer, fmt.Sprintf("%s (format version %d)", storeRelPath(env, path), h.version))
+			scan.newer = append(scan.newer, fmt.Sprintf("%s (format version %d)", stripControlChars(storeRelPath(env, path)), h.version))
 			return nil
 		}
 		for i, step := range migrationSteps {
@@ -840,12 +840,8 @@ func scanStore(env migrateEnv) (*storeScan, error) {
 		msg := fmt.Sprintf("%d nib file(s) in this store were written by a newer nibs (this build supports up to format version %d); upgrade nibs:\n  %s",
 			len(scan.newer), nib.CurrentVersion, strings.Join(scan.newer, "\n  "))
 		if len(scan.problems) > 0 {
-			lines := make([]string, len(scan.problems))
-			for i, p := range scan.problems {
-				lines[i] = fmt.Sprintf("%s: %s", p.path, p.reason)
-			}
 			msg += fmt.Sprintf("\nthe scan also skipped %d file(s) that cannot be read as nibs:\n  %s",
-				len(scan.problems), strings.Join(lines, "\n  "))
+				len(scan.problems), describeScanProblems(scan.problems))
 		}
 		return nil, &newerStoreError{msg: msg}
 	}
@@ -1182,11 +1178,13 @@ func blockingScanProblems(env migrateEnv, scan *storeScan) []scanProblem {
 }
 
 // describeScanProblems renders one indented "path: reason" line per problem,
-// the shape both the refusal and its preview list them in.
+// the shape both the refusal and its preview list them in. Both halves come from
+// the filesystem — a filename, an os error quoting one — so both pass through the
+// control-character boundary (see stripControlChars).
 func describeScanProblems(problems []scanProblem) string {
 	lines := make([]string, len(problems))
 	for i, p := range problems {
-		lines[i] = fmt.Sprintf("%s: %s", p.path, p.reason)
+		lines[i] = fmt.Sprintf("%s: %s", stripControlChars(p.path), stripControlChars(p.reason))
 	}
 	return strings.Join(lines, "\n  ")
 }
