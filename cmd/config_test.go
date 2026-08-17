@@ -1,6 +1,7 @@
 package cmd
 
 import (
+	"encoding/json"
 	"errors"
 	"os"
 	"path/filepath"
@@ -9,6 +10,7 @@ import (
 
 	"github.com/alphaleonis/nibs/internal/config"
 	"github.com/alphaleonis/nibs/internal/nib"
+	"github.com/alphaleonis/nibs/internal/testskip"
 )
 
 // testNibSpec is a minimal on-disk description of a nib used by
@@ -458,5 +460,106 @@ func TestSetPrefix_GrandfatheredOldPrefix(t *testing.T) {
 	cfg := loadCfg(t, cfgPath)
 	if cfg.Nibs.Prefix != "bgt-" {
 		t.Errorf("cfg prefix = %q, want %q", cfg.Nibs.Prefix, "bgt-")
+	}
+}
+
+// TestSetPrefix_ReportsReplacingASymlinkedConfig pins the note this command
+// prints when the config write replaces a symlink.
+//
+// config.Save reports that replacement rather than refusing it, because by the
+// time it runs every nib file has already been renamed and a refusal would
+// leave the store half-changed. The note is therefore the only thing telling a
+// user whose config.yml is a link into a dotfile manager that the manager's
+// copy still carries the old prefix and will restore it on the next apply.
+// internal/config pinned the reporting; nothing pinned the printing, so
+// disabling Save's symlink detection left this whole package green.
+func TestSetPrefix_ReportsReplacingASymlinkedConfig(t *testing.T) {
+	tests := []struct {
+		name string
+		args []string
+		// message extracts the human-readable message from captured stdout,
+		// which the two output modes carry differently.
+		message func(t *testing.T, out string) string
+	}{
+		{
+			name:    "printed line",
+			message: func(_ *testing.T, out string) string { return out },
+		},
+		{
+			// --json routes the same string through output.SuccessMessage, a
+			// separate sink — agents read the envelope and never see the line.
+			name: "json envelope",
+			args: []string{"--json"},
+			message: func(t *testing.T, out string) string {
+				t.Helper()
+				var env struct {
+					Success bool   `json:"success"`
+					Message string `json:"message"`
+				}
+				if err := json.Unmarshal([]byte(out), &env); err != nil {
+					t.Fatalf("decoding the success envelope %q: %v", out, err)
+				}
+				if !env.Success {
+					t.Fatalf("envelope reports failure: %s", out)
+				}
+				return env.Message
+			},
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			tmpDir, nibsDir, cfgPath := setupSetPrefixTest(t, "tnib-",
+				testNibSpec{filename: "tnib-aaa--only.md", id: "tnib-aaa"},
+			)
+
+			// The real config lives outside the store, the way a dotfile
+			// manager keeps it, with the store's config.yml linking to it.
+			external := filepath.Join(tmpDir, "dotfiles", "nibs-config.yml")
+			if err := os.MkdirAll(filepath.Dir(external), 0o755); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.Rename(cfgPath, external); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.Symlink(external, cfgPath); err != nil {
+				testskip.SymlinkUnavailable(t, err)
+			}
+
+			args := append([]string{"--config", cfgPath, "config", "set-prefix", "new-"}, tc.args...)
+			out, err := runRootWith(t, args...)
+			if err != nil {
+				t.Fatalf("set-prefix: %v", err)
+			}
+
+			msg := tc.message(t, out)
+			if !strings.Contains(msg, external) {
+				t.Errorf("output does not name the stale file %s, which is the only way the user learns of it:\n%s", external, msg)
+			}
+			if !strings.Contains(msg, cfgPath) {
+				t.Errorf("output does not name the config that was replaced (%s):\n%s", cfgPath, msg)
+			}
+			if !strings.Contains(msg, "symlink") {
+				t.Errorf("output does not say a symlink was replaced, so the note reads as unrelated advice:\n%s", msg)
+			}
+
+			// Everything above asserts nothing unless the divergence is real:
+			// the link must actually be gone and its target left behind.
+			if info, lerr := os.Lstat(cfgPath); lerr != nil || info.Mode()&os.ModeSymlink != 0 {
+				t.Fatalf("Lstat(%s) = %v, %v; the link was not replaced, so there was nothing to report", cfgPath, info, lerr)
+			}
+			stale, err := os.ReadFile(external)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if !strings.Contains(string(stale), "tnib-") {
+				t.Fatalf("the symlink target was updated after all, so there is nothing to report:\n%s", stale)
+			}
+			// And the rename really did happen first, which is why Save
+			// reports instead of refusing.
+			if _, err := os.Stat(dataPath(nibsDir, "new-aaa--only.md")); err != nil {
+				t.Errorf("expected new-aaa--only.md to exist: %v", err)
+			}
+		})
 	}
 }
