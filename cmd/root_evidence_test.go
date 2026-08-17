@@ -29,6 +29,102 @@ func symlinkLoopT(t *testing.T, path string) {
 	}
 }
 
+// lockedDirT creates a mode-000 subdirectory of parent — a directory the
+// corroboration walk cannot enumerate — and skips where the process can read it
+// anyway (running as root).
+func lockedDirT(t *testing.T, parent, name string) string {
+	t.Helper()
+	dir := filepath.Join(parent, name)
+	mkdirAllT(t, dir)
+	if err := os.Chmod(dir, 0); err != nil {
+		t.Skipf("chmod 0 unavailable: %v", err)
+	}
+	t.Cleanup(func() { _ = os.Chmod(dir, 0o755) })
+	if _, err := os.ReadDir(dir); err == nil {
+		t.Skipf("this process can read a mode-000 directory (running as root?)")
+	}
+	return dir
+}
+
+// TestNoStoreFoundSeparatesUnreadableEvidenceFromNoEvidence pins the third answer
+// at the ONE entry point that used to collapse it.
+//
+// hasLegacyStoreShape reports "cannot tell" by returning an error, and dropping it
+// left the message free to pick a reason clause that states a definite fact: a
+// declared directory holding a real nib behind an unreadable subdirectory was
+// reported as holding "nothing written by nibs", and a declared directory that is
+// simply gone got the same false reason plus the instruction to delete the only
+// record of where the nibs are.
+func TestNoStoreFoundSeparatesUnreadableEvidenceFromNoEvidence(t *testing.T) {
+	tests := []struct {
+		name string
+		// build materializes what `nibs.path: nibdata` names.
+		build   func(t *testing.T, projectDir string)
+		want    []string
+		notWant []string
+	}{
+		{
+			name: "a declared directory that cannot be enumerated",
+			build: func(t *testing.T, projectDir string) {
+				dir := filepath.Join(projectDir, "nibdata")
+				mkdirAllT(t, dir)
+				writeFileT(t, filepath.Join(dir, "leg-a1--one.md"), layoutNib)
+				// Sorts before the nib, so the walk fails before it finds one.
+				lockedDirT(t, dir, "asub")
+			},
+			// The key is the only record of where the nibs are, so the
+			// instruction to remove it must be reversed rather than merely
+			// omitted.
+			want: []string{"cannot be read", "cannot be determined", "do NOT remove the `nibs.path` key"},
+			notWant: []string{
+				"nothing in it was written by nibs",
+				"not an immediate subdirectory",
+			},
+		},
+		{
+			name:  "a declared directory that is not there",
+			build: func(t *testing.T, projectDir string) {},
+			want:  []string{"does not exist", "not where the config says"},
+			notWant: []string{
+				"nothing in it was written by nibs",
+				"remove the `nibs.path` key",
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Cleanup(resetRootPersistentFlags)
+			resetRootPersistentFlags()
+			t.Setenv("NIBS_PATH", "")
+
+			tmp := t.TempDir()
+			t.Setenv("NIBS_CONFIG_ROOT", tmp)
+			projectDir := filepath.Join(tmp, "proj")
+			mkdirAllT(t, projectDir)
+			tt.build(t, projectDir)
+			writeFileT(t, filepath.Join(projectDir, store.LegacyProjectConfigFileName),
+				"nibs:\n  prefix: leg-\n  id_length: 4\n  path: nibdata\n")
+			t.Chdir(projectDir)
+
+			_, err := resolveStoreDir()
+			if err == nil {
+				t.Fatal("resolveStoreDir found a store where there is no .nibs directory")
+			}
+			for _, want := range tt.want {
+				if !strings.Contains(err.Error(), want) {
+					t.Errorf("message = %q, want it to mention %q", err.Error(), want)
+				}
+			}
+			for _, notWant := range tt.notWant {
+				if strings.Contains(err.Error(), notWant) {
+					t.Errorf("message = %q must not say %q — it was never established", err.Error(), notWant)
+				}
+			}
+		})
+	}
+}
+
 // TestResolveStoreDirSeparatesNoEvidenceFromUnreadableEvidence pins the
 // three-way answer store resolution has to give. "No evidence" and "the evidence
 // could not be read" lead to OPPOSITE advice: the first refusal tells the user to

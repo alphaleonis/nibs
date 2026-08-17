@@ -275,6 +275,12 @@ func resolveStoreDir() (string, error) {
 // produced a store whose `.nibs.yml` still named the emptied directory, and no
 // filesystem action can make a config VALUE equal `.nibs`.
 //
+// The guard's answer is THREE-WAY here as everywhere else. A declared directory
+// that could not be read gets neither reason clause below: both of them state a
+// definite fact about its contents, and both carry an instruction — move the files
+// out of it, remove the key that records where they are — that is destructive when
+// the fact is unknown.
+//
 // The command is printed ONLY when the store-evidence guard would accept the
 // directory (hasLegacyStoreShape, the same predicate resolveStoreDir consults) —
 // otherwise this message would prescribe a command the tool refuses, and its only
@@ -312,10 +318,28 @@ func noStoreFoundError(cwd string) error {
 	if !filepath.IsAbs(dataDir) {
 		dataDir = filepath.Join(projectDir, dataDir)
 	}
-	if ok, evErr := hasLegacyStoreShape(dataDir); evErr == nil && ok {
+	ok, evErr := hasLegacyStoreShape(dataDir)
+	if evErr == nil && ok {
 		return fmt.Errorf("no %s directory found in %s or any parent directory, but %s sets the retired `nibs.path: %s`; this project's nibs live in %s — run `nibs migrate --nibs-path %s`, which moves that store to %s and relocates the config into it (do NOT run `nibs init`, which would create an empty store beside the real data)",
 			store.DirName, cwd, legacy, sanitizeFileText(declared),
 			stripControlChars(dataDir), shellArg(dataDir), target)
+	}
+	if evErr != nil {
+		// The evidence could not be established, which is a THIRD answer and not
+		// "no evidence" — the reason clauses below assert a definite fact about
+		// dataDir's contents, and asserting one about a directory that could not
+		// be enumerated is how this message came to tell a user that a directory
+		// holding a real nib held nothing. Both of the instructions the reason
+		// clauses carry are withheld here: moving files out of a directory nobody
+		// can read, and discarding the only record of where those files are.
+		if errors.Is(evErr, fs.ErrNotExist) {
+			return fmt.Errorf("no %s directory found in %s or any parent directory, and %s sets the retired `nibs.path: %s`, but %s does not exist — so this project's nib files are not where the config says they are; find them, create %s and move them into it, then run `nibs migrate` (do NOT run `nibs init`, which would create an empty store beside data that may already exist)",
+				store.DirName, cwd, legacy, sanitizeFileText(declared),
+				stripControlChars(dataDir), target)
+		}
+		return fmt.Errorf("no %s directory found in %s or any parent directory, and %s sets the retired `nibs.path: %s`, whose contents cannot be read (%v) — so whether this project's nibs are in %s cannot be determined; resolve that (mount the volume, fix its permissions), then re-run (do NOT run `nibs init`, and do NOT remove the `nibs.path` key: it is the only record of where the nibs are)",
+			store.DirName, cwd, legacy, sanitizeFileText(declared), evErr,
+			stripControlChars(dataDir))
 	}
 	why := "which `nibs migrate` will not relocate for you because it is not an immediate subdirectory of " + projectDir
 	if named, namedErr := legacyConfigNamesStore(dataDir); namedErr == nil && named {

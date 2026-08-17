@@ -488,7 +488,7 @@ func planStoreConfigRewrite(env migrateEnv, finalRoot string) (*configRewrite, e
 	if err != nil {
 		return nil, fmt.Errorf("reading %s: %w", path, err)
 	}
-	rewritten, note, err := stripRetiredNibsPath(data, env)
+	rewritten, note, err := stripRetiredNibsPath(data, env, path)
 	if err != nil {
 		return nil, err
 	}
@@ -761,7 +761,7 @@ func planConfigRelocation(env migrateEnv, finalRoot string) (*configRelocation, 
 			dest, destInfo.Mode(), legacy)
 	}
 
-	rewritten, note, stripErr := stripRetiredNibsPath(data, env)
+	rewritten, note, stripErr := stripRetiredNibsPath(data, env, legacy)
 	if destErr == nil {
 		existing, readErr := config.ReadConfigFile(dest)
 		if readErr == nil && stripErr == nil && bytes.Equal(existing, rewritten) {
@@ -843,9 +843,16 @@ func (c *configRelocation) apply(log logf) error {
 	return nil
 }
 
-// stripRetiredNibsPath removes the `nibs.path` key from a legacy config's bytes,
-// leaving the rest of the document untouched, and returns a note when dropping
-// the key is worth telling the user about.
+// stripRetiredNibsPath removes the `nibs.path` key from a config's bytes, leaving
+// the rest of the document untouched, and returns a note when dropping the key is
+// worth telling the user about.
+//
+// configFile is the path of the file those bytes came from, and it is a parameter
+// rather than derived from env because the key lives in TWO places: the
+// pre-layout `.nibs.yml` beside the store, and — for a project whose config was
+// hand-moved into the store — `<store>/config.yml`. A refusal has to name the file
+// the reader must actually edit, and the in-store caller runs precisely when
+// `.nibs.yml` is absent, so citing that file there names nothing.
 //
 // A `path` naming somewhere OTHER than the store being migrated is refused
 // rather than silently dropped — while the directory it names still EXISTS. The
@@ -856,6 +863,12 @@ func (c *configRelocation) apply(log logf) error {
 // the store is at `.nibs` by then, while the key still names the directory it
 // came from.
 //
+// The `nibs migrate --nibs-path <declared>` remedy is offered only where the
+// store-evidence guard ACCEPTS that directory, the same gating noStoreFoundError
+// applies: a directory the guard refuses would send the reader to a command the
+// tool then rejects, and the remove-the-key remedy converges for every shape
+// regardless.
+//
 // "Gone" means ONLY a definite fs.ErrNotExist. os.Stat fails for far more than
 // that — EACCES on any ancestor, an unmounted mount point, an unreachable network
 // path, ELOOP — and storing the nibs on another volume is precisely why
@@ -863,12 +876,12 @@ func (c *configRelocation) apply(log logf) error {
 // record of where they are. Every other stat failure is "cannot determine" and
 // refuses, naming the error, the same posture twoConfigsError takes for an
 // unreadable destination.
-func stripRetiredNibsPath(data []byte, env migrateEnv) (out []byte, note string, err error) {
+func stripRetiredNibsPath(data []byte, env migrateEnv, configFile string) (out []byte, note string, err error) {
 	var doc yaml.Node
 	if err := yaml.Unmarshal(data, &doc); err != nil {
 		// The yaml error quotes the file's own content, so it crosses the boundary
 		// like every other file-sourced reason (see describeScanProblems).
-		return nil, "", fmt.Errorf("parsing %s: %s", env.legacyConfigPath(), flattenReason(err.Error()))
+		return nil, "", fmt.Errorf("parsing %s: %s", configFile, flattenReason(err.Error()))
 	}
 	if doc.Kind != yaml.DocumentNode || len(doc.Content) == 0 {
 		return data, "", nil // empty document: nothing to strip
@@ -892,13 +905,18 @@ func stripRetiredNibsPath(data []byte, env migrateEnv) (out []byte, note string,
 		_, statErr := os.Stat(resolved)
 		switch {
 		case statErr == nil:
-			return nil, "", fmt.Errorf("%s sets `nibs.path: %s`, which is not the store being migrated (%s) and still exists; migrate that store instead (`nibs migrate --nibs-path %s`), or — if %s is the store you want to keep — remove the retired `nibs.path` key from %s and re-run",
-				env.legacyConfigPath(), sanitizeFileText(declared), env.nibsRoot,
-				shellArg(resolved), env.nibsRoot, env.legacyConfigPath())
+			if relocatable, shapeErr := hasLegacyStoreShape(resolved); shapeErr == nil && relocatable {
+				return nil, "", fmt.Errorf("%s sets `nibs.path: %s`, which is not the store being migrated (%s) and still exists; migrate that store instead (`nibs migrate --nibs-path %s`), or — if %s is the store you want to keep — remove the retired `nibs.path` key from %s and re-run",
+					configFile, sanitizeFileText(declared), env.nibsRoot,
+					shellArg(resolved), env.nibsRoot, configFile)
+			}
+			return nil, "", fmt.Errorf("%s sets `nibs.path: %s`, which is not the store being migrated (%s) and still exists; `nibs migrate` will not relocate that directory for you, so remove the retired `nibs.path` key from %s and re-run, which keeps %s as this project's store — and if the nibs you want are the ones in %s, move them into %s first",
+				configFile, sanitizeFileText(declared), env.nibsRoot,
+				configFile, env.nibsRoot, stripControlChars(resolved), env.nibsRoot)
 		case !errors.Is(statErr, fs.ErrNotExist):
 			return nil, "", fmt.Errorf("%s sets `nibs.path: %s`, and whether that directory still holds this project's nibs cannot be determined (%v); resolve that (mount the volume, fix its permissions), or — if %s is the store you want to keep — remove the retired `nibs.path` key from %s, then re-run `nibs migrate`",
-				env.legacyConfigPath(), sanitizeFileText(declared), statErr,
-				env.nibsRoot, env.legacyConfigPath())
+				configFile, sanitizeFileText(declared), statErr,
+				env.nibsRoot, configFile)
 		default:
 			note = fmt.Sprintf("dropped the retired `nibs.path: %s` from the config — that directory no longer exists, so the key was a stale record",
 				sanitizeFileText(declared))
@@ -908,7 +926,7 @@ func stripRetiredNibsPath(data []byte, env migrateEnv) (out []byte, note string,
 	deleteMappingKey(nibs, "path")
 	rewritten, err := yaml.Marshal(root)
 	if err != nil {
-		return nil, "", fmt.Errorf("rewriting %s without the retired `nibs.path` key: %w", env.legacyConfigPath(), err)
+		return nil, "", fmt.Errorf("rewriting %s without the retired `nibs.path` key: %w", configFile, err)
 	}
 	return rewritten, note, nil
 }

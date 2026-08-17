@@ -491,24 +491,21 @@ func TestMigrateNamesTheBrokenConfigRatherThanOfferingAChoice(t *testing.T) {
 	}
 }
 
-// TestMigrateDryRunPreviewsEveryRefusalGate walks migrateGates and requires each
-// entry to have a fixture that trips it, previewed by --dry-run AND raised by the
-// real run.
-//
-// Sharing a predicate per gate is not enough, and that is the point of this test:
-// two gates — the store's load gate and the dirty-git refusal — had no preview at
-// all, so `--dry-run` printed step counts with no warning for a store the real run
-// exited 5 on. A gate added to migrateGates without a row here fails this test,
-// which is what makes the completeness of the SET enforced rather than assumed.
-func TestMigrateDryRunPreviewsEveryRefusalGate(t *testing.T) {
-	const v0Nib = "---\ntitle: One\nstatus: todo\n---\n\nBody.\n"
+// migrateGateFixture builds a store that trips one gate in migrateGates.
+// allowDirty mirrors what the invocation must pass, since two gates are disabled
+// by --allow-dirty.
+type migrateGateFixture struct {
+	build      func(t *testing.T) string
+	allowDirty bool
+}
 
-	// build returns the store to migrate; allowDirty mirrors what the real
-	// invocation passes, since two gates are disabled by --allow-dirty.
-	fixtures := map[string]struct {
-		build      func(t *testing.T) string
-		allowDirty bool
-	}{
+// migrateGateFixtures is one fixture per entry in migrateGates, keyed by gate
+// name. It is shared by every test that has to walk the production gate list and
+// trip each gate for real — the preview/real-run parity test and the refusal
+// invariant test — so a new gate needs one fixture rather than one per test.
+func migrateGateFixtures() map[string]migrateGateFixture {
+	const v0Nib = "---\ntitle: One\nstatus: todo\n---\n\nBody.\n"
+	return map[string]migrateGateFixture{
 		"dirty-store": {build: func(t *testing.T) string {
 			_, storeDir := writeLegacyStore(t, "", map[string]string{"leg-a1--one.md": layoutNib})
 			if out, err := exec.Command("git", "-C", storeDir, "init", "-q").CombinedOutput(); err != nil {
@@ -558,6 +555,19 @@ func TestMigrateDryRunPreviewsEveryRefusalGate(t *testing.T) {
 			return storeDir
 		}},
 	}
+}
+
+// TestMigrateDryRunPreviewsEveryRefusalGate walks migrateGates and requires each
+// entry to have a fixture that trips it, previewed by --dry-run AND raised by the
+// real run.
+//
+// Sharing a predicate per gate is not enough, and that is the point of this test:
+// two gates — the store's load gate and the dirty-git refusal — had no preview at
+// all, so `--dry-run` printed step counts with no warning for a store the real run
+// exited 5 on. A gate added to migrateGates without a row here fails this test,
+// which is what makes the completeness of the SET enforced rather than assumed.
+func TestMigrateDryRunPreviewsEveryRefusalGate(t *testing.T) {
+	fixtures := migrateGateFixtures()
 
 	// The two sets must match in BOTH directions. Iterating migrateGates alone
 	// catches a gate added with no test; iterating the fixtures alone catches a
@@ -765,6 +775,157 @@ func TestMigrateRefusesARetiredNibsPathItCannotStat(t *testing.T) {
 			}
 			if _, statErr := os.Stat(filepath.Join(storeDir, "leg-a1--one.md")); statErr != nil {
 				t.Errorf("a refused run moved a nib file anyway: %v", statErr)
+			}
+		})
+	}
+}
+
+// TestMigrateNamesTheConfigThatHoldsTheRetiredKey pins the CALLER half of
+// stripRetiredNibsPath's refusals: the retired `nibs.path` key lives in two files
+// — the pre-layout `.nibs.yml` beside the store, and `<store>/config.yml` for a
+// project whose config was hand-moved — and each refusal must name the one the
+// reader has to edit.
+//
+// The in-store caller is reached ONLY when `<project>/.nibs.yml` is absent, so
+// citing that file there sends the reader to edit nothing. It also must not
+// prescribe `nibs migrate --nibs-path <declared>`: with no `.nibs.yml` naming that
+// directory the store-evidence guard refuses it, which is the closed loop.
+func TestMigrateNamesTheConfigThatHoldsTheRetiredKey(t *testing.T) {
+	// inStoreProject builds a store whose OWN config carries `path: declared`,
+	// with no `.nibs.yml` beside it.
+	inStoreProject := func(t *testing.T, declared string) (projectDir, storeDir string) {
+		projectDir = t.TempDir()
+		storeDir = filepath.Join(projectDir, store.DirName)
+		mkdirAllT(t, filepath.Join(storeDir, store.DataDirName))
+		writeFileT(t, dataPath(storeDir, "leg-a1--one.md"), layoutNib)
+		writeFileT(t, filepath.Join(storeDir, store.ConfigFileName),
+			"nibs:\n  prefix: leg-\n  id_length: 4\n  path: "+declared+"\n")
+		return projectDir, storeDir
+	}
+
+	tests := []struct {
+		name string
+		// build materializes the project and returns the store to migrate plus
+		// the config file the refusal must name.
+		build func(t *testing.T) (storeDir, namedConfig string)
+		want  []string
+		// wantMigratePrescription is whether the refusal may offer
+		// `nibs migrate --nibs-path <declared>`.
+		wantMigratePrescription bool
+	}{
+		{
+			name: "in-store config, declared directory exists",
+			build: func(t *testing.T) (string, string) {
+				projectDir, storeDir := inStoreProject(t, "olddata")
+				mkdirAllT(t, filepath.Join(projectDir, "olddata"))
+				return storeDir, filepath.Join(storeDir, store.ConfigFileName)
+			},
+			want: []string{"still exists", "remove the retired `nibs.path` key"},
+		},
+		{
+			name: "in-store config, declared directory cannot be stat'd",
+			build: func(t *testing.T) (string, string) {
+				projectDir, storeDir := inStoreProject(t, "loop")
+				symlinkLoopT(t, filepath.Join(projectDir, "loop"))
+				return storeDir, filepath.Join(storeDir, store.ConfigFileName)
+			},
+			want: []string{"cannot be determined", "remove the retired `nibs.path` key"},
+		},
+		{
+			name: "legacy config, declared directory holds nibs",
+			build: func(t *testing.T) (string, string) {
+				projectDir := t.TempDir()
+				storeDir := filepath.Join(projectDir, store.DirName)
+				mkdirAllT(t, storeDir)
+				writeFileT(t, filepath.Join(storeDir, "leg-a1--one.md"), layoutNib)
+				elsewhere := filepath.Join(projectDir, "elsewhere")
+				mkdirAllT(t, elsewhere)
+				writeFileT(t, filepath.Join(elsewhere, "leg-b2--two.md"), layoutNib)
+				legacy := filepath.Join(projectDir, store.LegacyProjectConfigFileName)
+				writeFileT(t, legacy, "nibs:\n  prefix: leg-\n  id_length: 4\n  path: elsewhere\n")
+				return storeDir, legacy
+			},
+			want:                    []string{"still exists", "migrate that store instead"},
+			wantMigratePrescription: true,
+		},
+		{
+			// The naming half holds but nothing inside corroborates it, so the
+			// guard refuses that directory — and the refusal must not send the
+			// reader to a command the guard rejects.
+			name: "legacy config, declared directory holds nothing nibs wrote",
+			build: func(t *testing.T) (string, string) {
+				projectDir := t.TempDir()
+				storeDir := filepath.Join(projectDir, store.DirName)
+				mkdirAllT(t, storeDir)
+				writeFileT(t, filepath.Join(storeDir, "leg-a1--one.md"), layoutNib)
+				content := filepath.Join(projectDir, "content")
+				mkdirAllT(t, content)
+				writeFileT(t, filepath.Join(content, "hello.md"), hugoPost)
+				legacy := filepath.Join(projectDir, store.LegacyProjectConfigFileName)
+				writeFileT(t, legacy, "nibs:\n  prefix: leg-\n  id_length: 4\n  path: content\n")
+				return storeDir, legacy
+			},
+			want: []string{"still exists", "remove the retired `nibs.path` key"},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Cleanup(resetRootPersistentFlags)
+			t.Cleanup(resetMigrateFlags)
+			resetMigrateFlags()
+
+			storeDir, namedConfig := tt.build(t)
+			out, err := runRootWith(t, "--nibs-path", storeDir, "migrate", "--allow-dirty")
+			if err == nil {
+				t.Fatalf("migrate did not refuse\nout: %s", out)
+			}
+			msg := err.Error()
+			for _, want := range append(tt.want, namedConfig) {
+				if !strings.Contains(msg, want) {
+					t.Errorf("refusal = %q, want it to mention %q", msg, want)
+				}
+			}
+			// Every other candidate config must be absent from the message: it is
+			// either not there at all, or not the file holding the key.
+			for _, other := range []string{
+				filepath.Join(filepath.Dir(storeDir), store.LegacyProjectConfigFileName),
+				filepath.Join(storeDir, store.ConfigFileName),
+			} {
+				if other == namedConfig {
+					continue
+				}
+				if strings.Contains(msg, other) {
+					t.Errorf("refusal = %q names %s, which does not hold the retired key", msg, other)
+				}
+			}
+			if got := strings.Contains(msg, "nibs migrate --nibs-path"); got != tt.wantMigratePrescription {
+				t.Errorf("refusal prescribes `nibs migrate --nibs-path` = %v, want %v:\n%s", got, tt.wantMigratePrescription, msg)
+			}
+
+			// The remedy the refusal names has to converge: strip the key from
+			// the file it named, and the store must migrate and load.
+			data, readErr := os.ReadFile(namedConfig)
+			if readErr != nil {
+				t.Fatalf("reading the config the refusal named: %v", readErr)
+			}
+			var kept []string
+			for _, line := range strings.Split(string(data), "\n") {
+				if !strings.Contains(line, "path:") {
+					kept = append(kept, line)
+				}
+			}
+			writeFileT(t, namedConfig, strings.Join(kept, "\n"))
+			resetRootPersistentFlags()
+			resetMigrateFlags()
+			if out, migrateErr := runRootWith(t, "--nibs-path", storeDir, "migrate", "--allow-dirty"); migrateErr != nil {
+				t.Fatalf("the remedy the refusal named did not converge: %v\nout: %s", migrateErr, out)
+			}
+			resetRootPersistentFlags()
+			resetListFlags()
+			t.Cleanup(resetListFlags)
+			if _, listErr := runRootWith(t, "--nibs-path", filepath.Join(filepath.Dir(storeDir), store.DirName), "list", "--all", "--json"); listErr != nil {
+				t.Fatalf("list after following the remedy: %v", listErr)
 			}
 		})
 	}
