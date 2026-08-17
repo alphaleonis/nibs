@@ -65,9 +65,10 @@ func contextFixture() map[string]string {
 func runContextJSON(t *testing.T, cfgPath, nibsDir, idArg string) contextOutput {
 	t.Helper()
 	resetContextFlags()
+	// --config alone names the store; the two flags together are refused.
+	_ = nibsDir
 	rootCmd.SetArgs([]string{
 		"--config", cfgPath,
-		"--nibs-path", nibsDir,
 		"context", "--json", idArg,
 	})
 	var execErr error

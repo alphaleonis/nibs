@@ -24,9 +24,44 @@ type checkResult struct {
 	ConfigErrors []string                 `json:"config_errors"`
 	NibIssues    *nibcore.LinkCheckResult `json:"nib_issues,omitempty"`
 	Fixed        int                      `json:"fixed,omitempty"`
-	// Migration describes a pending store migration, empty when the store is
-	// current. See storeMigrationIssue.
-	Migration string `json:"migration,omitempty"`
+	// Migration describes the store's migration state, omitted entirely when
+	// the store is current. See storeMigration.
+	Migration *migrationStatus `json:"migration,omitempty"`
+}
+
+// Migration status kinds. The field carries two materially different outcomes
+// and a consumer has to branch on which: one is fixed by running a command, the
+// other only by installing a different binary.
+const (
+	// migrationKindPending means `nibs migrate` resolves this. Steps names them.
+	migrationKindPending = "pending"
+	// migrationKindBlocked means the migration probe itself refused — a store
+	// written by a newer nibs, a directory that cannot be enumerated — and
+	// `nibs migrate` refuses the same way. Running it changes nothing.
+	migrationKindBlocked = "blocked"
+)
+
+// migrationStatus is the structured form of the store's migration state.
+//
+// It replaced a single free-text sentence that carried three states — healthy,
+// pending, probe refused — where "" meant healthy and the other two were only
+// separable by matching on prose. This CLI's stated primary audience is coding
+// agents, every sibling field in the envelope is structured, and the two
+// non-healthy states have opposite remedies: an agent that reads "run
+// nibs migrate" off a newer-store refusal loops forever.
+type migrationStatus struct {
+	// Kind is migrationKindPending or migrationKindBlocked.
+	Kind string `json:"kind"`
+	// Steps names the pending migration steps, in chain order. Empty for
+	// a blocked store: nothing was decided about individual steps.
+	Steps []string `json:"steps,omitempty"`
+	// PartialLoad reports that a pending step moves files Core.Load does not yet
+	// look at, so every other finding in this report speaks for a store that
+	// loaded only part of itself.
+	PartialLoad bool `json:"partial_load,omitempty"`
+	// Message is the human sentence the text report prints. Present in both
+	// kinds; for a blocked store it is the probe's own refusal.
+	Message string `json:"message"`
 }
 
 var checkCmd = &cobra.Command{
@@ -34,15 +69,22 @@ var checkCmd = &cobra.Command{
 	Short: "Validate configuration and nib integrity",
 	Long: `Checks configuration and nib integrity, including:
 - Configuration settings (colors, default type)
+- A pending store migration, or a store this build cannot read at all
 - Unparseable nib files (skipped at load, so missing from every query)
 - Duplicate nib ids on disk (one file silently shadows another)
+- Out-of-enum field values (loaded as written, so they sort and filter oddly)
 - Broken links (links to non-existent nibs)
 - Self-references (nibs linking to themselves)
 - Circular dependencies (cycles in blocks/parent relationships)
 
-Use --fix to automatically remove broken links and self-references.
-Note: cycles, unparseable files and duplicate ids cannot be auto-fixed and
-require manual intervention.`,
+Plain check is the one command that still runs on a store needing migration —
+it is the diagnostic for exactly that state — and it reports the migration as an
+issue, so an otherwise clean store exits 1 until ` + "`nibs migrate`" + ` has run.
+
+Use --fix to automatically remove broken links and self-references. --fix WRITES,
+so unlike plain check it refuses a store needing migration.
+Note: cycles, unparseable files, duplicate ids, out-of-enum values and a pending
+migration cannot be auto-fixed and require manual intervention.`,
 	Args: codedNoArgs(&checkJSON), // operates on the whole store; takes no positional args
 	RunE: func(cmd *cobra.Command, args []string) error {
 		totalIssues, err := runCheck(getApp(cmd))
@@ -134,7 +176,7 @@ func runCheck(app *App) (int, error) {
 	}
 
 	linkResult := app.Core.CheckAllLinks()
-	migration := storeMigrationIssue(app)
+	migration := storeMigration(app)
 
 	// === Nib file checks ===
 	// Reported BEFORE the link checks because a load-time problem explains link
@@ -146,10 +188,10 @@ func runCheck(app *App) (int, error) {
 		ui.Println(ui.Bold.Render("Nib Files"))
 		// First of all, because it explains everything under it: a store with
 		// a pending migration loads only part of itself (or none of itself).
-		if migration != "" {
-			ui.Printf("  %s %s\n", ui.Danger.Render("✗"), migration)
+		if migration != nil {
+			ui.Printf("  %s %s\n", ui.Danger.Render("✗"), migration.Message)
 		}
-		renderLoadDiagnostics(linkResult)
+		renderLoadDiagnostics(linkResult, migration)
 		renderFieldDiagnostics(app, linkResult)
 	}
 
@@ -232,7 +274,7 @@ func runCheck(app *App) (int, error) {
 
 	// === Summary ===
 	totalIssues := len(configErrors) + linkResult.TotalIssues()
-	if migration != "" {
+	if migration != nil {
 		totalIssues++
 	}
 
@@ -265,8 +307,8 @@ func runCheck(app *App) (int, error) {
 	return totalIssues, nil
 }
 
-// storeMigrationIssue describes a pending store migration, or "" when the
-// store is current.
+// storeMigration describes the store's migration state, or nil when the store is
+// current.
 //
 // Plain `nibs check` is exempt from the pre-run migration gate precisely so it
 // can diagnose the store states that gate creates (see cmd/root.go). But
@@ -277,32 +319,43 @@ func runCheck(app *App) (int, error) {
 // other side, so a pending migration is reported and counted as an issue.
 //
 // The probe's own refusals (a store written by a newer nibs, a directory that
-// cannot be enumerated) are surfaced the same way: they are exactly what a
-// diagnostic is for, and swallowing them would restore the silent pass.
-func storeMigrationIssue(app *App) string {
+// cannot be enumerated) are surfaced the same way — they are exactly what a
+// diagnostic is for, and swallowing them would restore the silent pass — but as
+// a DIFFERENT kind, because `nibs migrate` cannot resolve them.
+//
+// The probe is skipped when the pre-run gate already answered the same question
+// for this store: getting past it is proof nothing is pending. `check --fix` is
+// gated, so it asked twice moments apart and the second full store scan could
+// only ever confirm the first.
+func storeMigration(app *App) *migrationStatus {
+	if app.MigrationGatePassed {
+		return nil
+	}
 	pending, err := pendingMigrations(newMigrateEnv(app.Core.Root()))
 	if err != nil {
-		return flattenReason(err.Error())
-	}
-	if len(pending) == 0 {
-		return ""
-	}
-	names := make([]string, len(pending))
-	shapePending := false
-	for i, step := range pending {
-		names[i] = step.name
-		if !step.isContent() {
-			shapePending = true
+		return &migrationStatus{
+			Kind:    migrationKindBlocked,
+			Message: flattenReason(err.Error()),
 		}
 	}
-	msg := fmt.Sprintf("Store needs migration (pending: %s) — run `nibs migrate`", strings.Join(names, ", "))
-	if shapePending {
-		// A shape step means the store's directories are not where Load looks,
-		// so the checks below spoke for a store that loaded nothing.
-		msg += fmt.Sprintf("; until then only %s/ and %s/ are loaded, so nib files outside them are missing from the checks below",
+	if len(pending) == 0 {
+		return nil
+	}
+	status := &migrationStatus{Kind: migrationKindPending, Steps: make([]string, len(pending))}
+	for i, step := range pending {
+		status.Steps[i] = step.name
+		if !step.isContent() {
+			// A shape step means the store's directories are not where Load
+			// looks, so the checks below spoke for a store that loaded nothing.
+			status.PartialLoad = true
+		}
+	}
+	status.Message = fmt.Sprintf("Store needs migration (pending: %s) — run `nibs migrate`", strings.Join(status.Steps, ", "))
+	if status.PartialLoad {
+		status.Message += fmt.Sprintf("; until then only %s/ and %s/ are loaded, so nib files outside them are missing from the checks below",
 			store.DataDirName, store.ArchiveDirName)
 	}
-	return msg
+	return status
 }
 
 // renderLoadDiagnostics prints the load-time integrity section in text mode.
@@ -312,7 +365,12 @@ func storeMigrationIssue(app *App) string {
 // lose. So --fix says so per file rather than skipping them silently, which
 // would leave "Fixed N issue(s)" implying it had handled everything. The
 // phrasing mirrors the cycle branch, the other not-auto-fixable category.
-func renderLoadDiagnostics(result *nibcore.LinkCheckResult) {
+//
+// The "all loaded" checkmark is suppressed while a migration is reported. On a
+// pre-layout store it is vacuously true — 0 of 0 files failed, because Core.Load
+// found nothing where it looks — and printing it directly beneath "Store needs
+// migration" reads as a contradiction.
+func renderLoadDiagnostics(result *nibcore.LinkCheckResult, migration *migrationStatus) {
 	for _, uf := range result.UnparseableFiles {
 		// The reason is carried through: the user has to repair the file by
 		// hand, so the report has to say what is wrong with it.
@@ -333,7 +391,7 @@ func renderLoadDiagnostics(result *nibcore.LinkCheckResult) {
 				ui.Danger.Render("✗"), d.NibID, d.Loaded, d.Shadowed)
 		}
 	}
-	if result.LoadIssues() == 0 {
+	if result.LoadIssues() == 0 && migration == nil {
 		ui.Printf("  %s All nib files loaded\n", ui.Success.Render("✓"))
 	}
 }

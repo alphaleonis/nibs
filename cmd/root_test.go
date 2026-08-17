@@ -206,6 +206,82 @@ func assertRefusedByConfigGuard(t *testing.T, err error, storeDir string) {
 	}
 }
 
+// TestResolveStoreDirRefusesConfigCombinedWithAnExplicitStore pins that --config
+// and an explicitly named store cannot be supplied together.
+//
+// Alone, --config names the store through its containing directory. Together with
+// --nibs-path or NIBS_PATH the store comes from one and the config from the other,
+// which is exactly what resolveCLIStore's invariant forbids: `nibs new
+// --nibs-path A --config B/config.yml` wrote a nib into store A carrying store
+// B's prefix and id length, and since ids derive from filenames that is a
+// persisted misnaming rather than a display artifact.
+func TestResolveStoreDirRefusesConfigCombinedWithAnExplicitStore(t *testing.T) {
+	tests := []struct {
+		name  string
+		route func(t *testing.T, storeDir string)
+		want  string
+	}{
+		{
+			name:  "--nibs-path",
+			route: func(_ *testing.T, storeDir string) { nibsPath = storeDir },
+			want:  "--config and --nibs-path cannot be combined",
+		},
+		{
+			name:  "NIBS_PATH",
+			route: func(t *testing.T, storeDir string) { t.Setenv("NIBS_PATH", storeDir) },
+			want:  "--config cannot be combined with NIBS_PATH",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Cleanup(resetRootPersistentFlags)
+			resetRootPersistentFlags()
+			t.Setenv("NIBS_PATH", "")
+
+			tmp := t.TempDir()
+			// Two genuine stores, so nothing but the combination can refuse.
+			storeA := filepath.Join(tmp, "aaa", store.DirName)
+			storeB := filepath.Join(tmp, "zzz", store.DirName)
+			for dir, prefix := range map[string]string{storeA: "aaa-", storeB: "zzz-"} {
+				mkdirAllT(t, filepath.Join(dir, store.DataDirName))
+				writeFileT(t, filepath.Join(dir, store.ConfigFileName), "nibs:\n  prefix: "+prefix+"\n  id_length: 4\n")
+			}
+			tt.route(t, storeA)
+			configPath = filepath.Join(storeB, store.ConfigFileName)
+
+			_, err := resolveStoreDir()
+			if err == nil {
+				t.Fatal("resolveStoreDir accepted a store and a config from different projects")
+			}
+			for _, want := range []string{tt.want, storeA, storeB} {
+				if !strings.Contains(err.Error(), want) {
+					t.Errorf("refusal = %q, want it to mention %q", err.Error(), want)
+				}
+			}
+		})
+	}
+
+	t.Run("--config alone still names the store", func(t *testing.T) {
+		t.Cleanup(resetRootPersistentFlags)
+		resetRootPersistentFlags()
+		t.Setenv("NIBS_PATH", "")
+
+		storeDir := filepath.Join(t.TempDir(), "proj", store.DirName)
+		mkdirAllT(t, filepath.Join(storeDir, store.DataDirName))
+		writeFileT(t, filepath.Join(storeDir, store.ConfigFileName), "nibs:\n  prefix: p-\n")
+		configPath = filepath.Join(storeDir, store.ConfigFileName)
+
+		got, err := resolveStoreDir()
+		if err != nil {
+			t.Fatalf("--config alone must keep working: %v", err)
+		}
+		if got != storeDir {
+			t.Errorf("resolveStoreDir() = %q, want %q", got, storeDir)
+		}
+	})
+}
+
 // TestResolveStoreDirRequiresStoreEvidence pins the second guard: a directory
 // named EXPLICITLY — by --nibs-path, by NIBS_PATH, or through --config's
 // containing directory — must carry positive evidence that it is a store.

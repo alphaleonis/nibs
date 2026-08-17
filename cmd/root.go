@@ -58,7 +58,8 @@ a full view of your project.`,
 		// user in a circle — migrate says "run check", check says "run
 		// migrate" — with no working diagnostic for the stores that most need
 		// one. Only --fix writes, so only --fix stays gated.
-		if cmd.Name() != "check" || checkFix {
+		gated := cmd.Name() != "check" || checkFix
+		if gated {
 			if err := refuseIfMigrationPending(root); err != nil {
 				return err
 			}
@@ -69,7 +70,10 @@ a full view of your project.`,
 			return fmt.Errorf("loading nibs: %w", err)
 		}
 
-		cmd.SetContext(withApp(cmd.Context(), &App{Core: core}))
+		// Getting past the gate IS the answer to "does this store need
+		// migration?", so record it rather than making a command re-scan for it
+		// (see App.MigrationGatePassed).
+		cmd.SetContext(withApp(cmd.Context(), &App{Core: core, MigrationGatePassed: gated}))
 		return nil
 	},
 	// Runs only after a subcommand succeeds (Cobra skips PostRun on error).
@@ -90,7 +94,7 @@ func init() {
 	rootCmd.SilenceErrors = true
 
 	rootCmd.PersistentFlags().StringVar(&nibsPath, "nibs-path", "", "Path to the .nibs store directory (overrides discovery and NIBS_PATH env var)")
-	rootCmd.PersistentFlags().StringVar(&configPath, "config", "", "Path to a store's config file (default: searches upward for a .nibs directory)")
+	rootCmd.PersistentFlags().StringVar(&configPath, "config", "", "Path to a store's config file; names the store through its directory (cannot be combined with --nibs-path or NIBS_PATH)")
 	installFlagSuggestions(rootCmd)
 }
 
@@ -98,7 +102,10 @@ func init() {
 // store's config. The two answers come as a pair on purpose: the store
 // directory holds its own config, so pointing nibs at another project's store
 // carries that project's prefix, id length and defaults with it — a store can
-// never be read under a neighboring project's vocabulary.
+// never be read under a neighboring project's vocabulary. resolveStoreDir keeps
+// that invariant true by refusing --config together with --nibs-path/NIBS_PATH,
+// the one combination that would supply the store and the config from different
+// projects.
 //
 // Shared by PersistentPreRunE and the skip-listed migrate command so the two
 // can never resolve a different store.
@@ -134,6 +141,28 @@ func resolveCLIStore() (string, *config.Config, error) {
 // `nibs migrate` would then move and rewrite every front-mattered .md it finds
 // there while the real store went untouched.
 func resolveStoreDir() (string, error) {
+	// --config and an explicitly named store are MUTUALLY EXCLUSIVE. Supplied
+	// together they break resolveCLIStore's invariant that a store is always read
+	// under its own vocabulary: --nibs-path (or NIBS_PATH) wins for the store
+	// while --config wins for the config, so `nibs new --nibs-path A --config
+	// B/config.yml` writes into store A under B's prefix and id_length. Ids
+	// derive from filenames, so that is a persisted misnaming, not a display
+	// artifact.
+	//
+	// Given ALONE, --config stays supported and simply names the store through
+	// its containing directory — that is the whole reason the combination is
+	// redundant rather than useful.
+	if configPath != "" {
+		if nibsPath != "" {
+			return "", fmt.Errorf("--config and --nibs-path cannot be combined: the config lives inside the store, so each names a store and together they would read %s under %s's prefix and id length; pass --nibs-path %s alone",
+				nibsPath, filepath.Dir(configPath), nibsPath)
+		}
+		if envPath := os.Getenv("NIBS_PATH"); envPath != "" {
+			return "", fmt.Errorf("--config cannot be combined with NIBS_PATH (%s): each names a store, so together they would read %s under %s's prefix and id length; unset NIBS_PATH, or drop --config and pass --nibs-path %s",
+				envPath, envPath, filepath.Dir(configPath), filepath.Dir(configPath))
+		}
+	}
+
 	// --config now names a config INSIDE the store. The pre-layout `.nibs.yml`
 	// sat beside the store, so its directory is the PROJECT — the single most
 	// dangerous thing to mistake for a store, and the invocation the pre-layout

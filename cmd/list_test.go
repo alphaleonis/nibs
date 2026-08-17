@@ -659,9 +659,10 @@ func TestListCommand_MentionsFlag_ShortIDNormalisation(t *testing.T) {
 
 	// Pass the short form "a1" — filter layer should normalize to nibs-a1.
 	// --all keeps the completed mentioner visible (list is open-by-default).
+	// --config alone names the store (the config lives inside it); the two
+	// flags together are refused.
 	rootCmd.SetArgs([]string{
 		"--config", cfgPath,
-		"--nibs-path", nibsDir,
 		"list", "--mentions", "a1", "--all", "--json",
 	})
 
@@ -764,11 +765,12 @@ func projectionFixture() map[string]string {
 
 // runListCmdWithConfig is runListCmd with an explicit --config, for tests whose
 // fixture supplies its own project config (see setupListCobraTestWithPrefix).
-// --nibs-path is still passed so the data directory does not depend on how the
-// config file resolves it.
+// --config alone resolves the store as the config file's containing directory,
+// and combining it with --nibs-path is refused.
 func runListCmdWithConfig(t *testing.T, cfgPath, nibsDir string, args ...string) (string, error) {
 	t.Helper()
-	rootCmd.SetArgs(append([]string{"--config", cfgPath, "--nibs-path", nibsDir, "list"}, args...))
+	_ = nibsDir
+	rootCmd.SetArgs(append([]string{"--config", cfgPath, "list"}, args...))
 	var execErr error
 	out := captureStdout(t, func() {
 		execErr = rootCmd.Execute()

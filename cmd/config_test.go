@@ -85,11 +85,17 @@ func setupSetPrefixTest(t *testing.T, prefix string, nibs ...testNibSpec) (strin
 	return tmpDir, nibsDir, cfgPath
 }
 
-// runSetPrefixCmd invokes `nibs --config <cfg> --nibs-path <dir> config set-prefix <args...>`
-// using the package-level rootCmd. Returns the error from rootCmd.Execute().
+// runSetPrefixCmd invokes `nibs --config <cfg> config set-prefix <args...>` using
+// the package-level rootCmd. Returns the error from rootCmd.Execute().
+//
+// --config alone names the store: the config lives inside it, so its containing
+// directory IS nibsDir here. Passing --nibs-path as well is refused, because a
+// store and a config from different projects decouple a store from its own
+// vocabulary.
 func runSetPrefixCmd(t *testing.T, cfgPath, nibsDir string, args ...string) error {
 	t.Helper()
-	full := append([]string{"--config", cfgPath, "--nibs-path", nibsDir, "config", "set-prefix"}, args...)
+	_ = nibsDir
+	full := append([]string{"--config", cfgPath, "config", "set-prefix"}, args...)
 	rootCmd.SetArgs(full)
 	return rootCmd.Execute()
 }
