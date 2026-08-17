@@ -55,10 +55,23 @@ type migrationStatus struct {
 	// Steps names the pending migration steps, in chain order. Empty for
 	// a blocked store: nothing was decided about individual steps.
 	Steps []string `json:"steps,omitempty"`
-	// PartialLoad reports that a pending step moves files Core.Load does not yet
-	// look at, so every other finding in this report speaks for a store that
-	// loaded only part of itself.
-	PartialLoad bool `json:"partial_load,omitempty"`
+	// PartialLoad reports whether nib files exist that Core.Load does not yet look
+	// at, so every other finding in this report speaks for a store that loaded only
+	// part of itself.
+	//
+	// It is a POINTER because the answer has three states and a consumer has to be
+	// able to tell them apart: true and false are both emitted, while nil (the
+	// field absent) means "not established" — the only honest answer for a blocked
+	// store, where the probe refused before anything was decided about the files.
+	// An absent-means-false field reported a clean, complete picture for a store
+	// that may have loaded nothing.
+	//
+	// It is derived from the FILES, not from the pending step's kind. Keying it on
+	// "a shape step is pending" made a store whose nibs are already under data/,
+	// and whose only pending work is its own location, report partial_load: true
+	// and "nib files outside data/ are missing" for a store that loaded completely
+	// — so an agent branching on the field discarded an accurate report.
+	PartialLoad *bool `json:"partial_load,omitempty"`
 	// Message is the human sentence the text report prints. Present in both
 	// kinds; for a blocked store it is the probe's own refusal.
 	Message string `json:"message"`
@@ -191,7 +204,7 @@ func runCheck(app *App) (int, error) {
 		if migration != nil {
 			ui.Printf("  %s %s\n", ui.Danger.Render("✗"), migration.Message)
 		}
-		renderLoadDiagnostics(linkResult, migration)
+		renderLoadDiagnostics(linkResult, loadWasComplete(migration))
 		renderFieldDiagnostics(app, linkResult)
 	}
 
@@ -331,8 +344,12 @@ func storeMigration(app *App) *migrationStatus {
 	if app.MigrationGatePassed {
 		return nil
 	}
-	pending, err := pendingMigrations(newMigrateEnv(app.Core.Root()))
+	env := newMigrateEnv(app.Core.Root())
+	pending, err := pendingMigrations(env)
 	if err != nil {
+		// PartialLoad stays nil: the probe refused before deciding anything about
+		// the files, and this kind IS reachable on a store that loaded nothing, so
+		// reporting false would be a claim nobody established.
 		return &migrationStatus{
 			Kind:    migrationKindBlocked,
 			Message: flattenReason(err.Error()),
@@ -344,14 +361,16 @@ func storeMigration(app *App) *migrationStatus {
 	status := &migrationStatus{Kind: migrationKindPending, Steps: make([]string, len(pending))}
 	for i, step := range pending {
 		status.Steps[i] = step.name
-		if !step.isContent() {
-			// A shape step means the store's directories are not where Load
-			// looks, so the checks below spoke for a store that loaded nothing.
-			status.PartialLoad = true
-		}
+	}
+	// The question is whether any nib file sits where Core.Load does not look, so
+	// ask the files. A read failure leaves the answer unestablished rather than
+	// asserting either value.
+	if movable, err := layoutMovableFiles(env); err == nil {
+		partial := len(movable) > 0
+		status.PartialLoad = &partial
 	}
 	status.Message = fmt.Sprintf("Store needs migration (pending: %s) — run `nibs migrate`", strings.Join(status.Steps, ", "))
-	if status.PartialLoad {
+	if status.PartialLoad != nil && *status.PartialLoad {
 		status.Message += fmt.Sprintf("; until then only %s/ and %s/ are loaded, so nib files outside them are missing from the checks below",
 			store.DataDirName, store.ArchiveDirName)
 	}
@@ -366,11 +385,15 @@ func storeMigration(app *App) *migrationStatus {
 // would leave "Fixed N issue(s)" implying it had handled everything. The
 // phrasing mirrors the cycle branch, the other not-auto-fixable category.
 //
-// The "all loaded" checkmark is suppressed while a migration is reported. On a
-// pre-layout store it is vacuously true — 0 of 0 files failed, because Core.Load
-// found nothing where it looks — and printing it directly beneath "Store needs
-// migration" reads as a contradiction.
-func renderLoadDiagnostics(result *nibcore.LinkCheckResult, migration *migrationStatus) {
+// The "all loaded" checkmark is suppressed when the load was, or may have been,
+// PARTIAL. On a pre-layout store it is vacuously true — 0 of 0 files failed,
+// because Core.Load found nothing where it looks — and printing it directly beneath
+// "Store needs migration" reads as a contradiction. It is NOT suppressed merely
+// because a migration is pending: a store whose nibs are already under data/ and
+// whose only pending work is its own location loaded completely, and there the
+// checkmark is the truth. partialLoad carries migrationStatus.PartialLoad's three
+// states, and an unestablished answer suppresses the claim like a partial one does.
+func renderLoadDiagnostics(result *nibcore.LinkCheckResult, partialLoad *bool) {
 	for _, uf := range result.UnparseableFiles {
 		// The reason is carried through: the user has to repair the file by
 		// hand, so the report has to say what is wrong with it.
@@ -395,9 +418,20 @@ func renderLoadDiagnostics(result *nibcore.LinkCheckResult, migration *migration
 				ui.Danger.Render("✗"), d.NibID, stripControlChars(d.Loaded), stripControlChars(d.Shadowed))
 		}
 	}
-	if result.LoadIssues() == 0 && migration == nil {
+	if result.LoadIssues() == 0 && partialLoad != nil && !*partialLoad {
 		ui.Printf("  %s All nib files loaded\n", ui.Success.Render("✓"))
 	}
+}
+
+// loadWasComplete renders the migration status as the answer
+// renderLoadDiagnostics needs: nil when no migration is pending is the definite
+// "the load was complete", and otherwise the status's own three-state answer.
+func loadWasComplete(migration *migrationStatus) *bool {
+	if migration == nil {
+		complete := false
+		return &complete
+	}
+	return migration.PartialLoad
 }
 
 // renderFieldDiagnostics prints the out-of-enum field findings in text mode,

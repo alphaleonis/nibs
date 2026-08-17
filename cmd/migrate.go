@@ -31,16 +31,61 @@ import (
 // Content steps load a scoped throwaway Core with the config as it stands when
 // they ask, which is what makes a short-form link id canonicalize under the
 // project's real prefix instead of the empty default a pre-move read returns.
+//
+// The git observations are memoized on a shared pointer, so the narration and the
+// gates that act on the same observation consult git ONCE per run. Splitting
+// narration from gating had every `nibs migrate` shell out to git twice with
+// identical arguments; --dry-run never did, because it only ran the gates.
 type migrateEnv struct {
 	nibsRoot string
 	loadCfg  func() (*config.Config, error)
+	git      *gitObservations
+}
+
+// gitObservations caches the answers to the git questions one migrate run asks.
+// Each is answered at most once; the zero value means "not asked yet".
+type gitObservations struct {
+	storeAsked  bool
+	storeDirty  bool
+	storeIsRepo bool
+	storeErr    error
+
+	legacyAsked bool
+	legacyDirty bool
+	legacyErr   error
 }
 
 // newMigrateEnv builds the env for a resolved store root.
 func newMigrateEnv(nibsRoot string) migrateEnv {
-	env := migrateEnv{}
+	env := migrateEnv{git: &gitObservations{}}
 	env.setRoot(nibsRoot)
 	return env
+}
+
+// storeGitState reports whether a git repository genuinely covers the store and
+// whether it has uncommitted changes (see realStoreGitState), asking git once.
+func (e migrateEnv) storeGitState() (dirty, isRepo bool, err error) {
+	if e.git == nil {
+		return storeGitStateFn(e.nibsRoot)
+	}
+	if !e.git.storeAsked {
+		e.git.storeDirty, e.git.storeIsRepo, e.git.storeErr = storeGitStateFn(e.nibsRoot)
+		e.git.storeAsked = true
+	}
+	return e.git.storeDirty, e.git.storeIsRepo, e.git.storeErr
+}
+
+// legacyConfigDirty reports whether the pre-layout `.nibs.yml` this migration
+// deletes has uncommitted changes, asking git once.
+func (e migrateEnv) legacyConfigDirty() (bool, error) {
+	if e.git == nil {
+		return gitIsDirtyFn(e.layout().ProjectDir(), store.LegacyProjectConfigFileName)
+	}
+	if !e.git.legacyAsked {
+		e.git.legacyDirty, e.git.legacyErr = gitIsDirtyFn(e.layout().ProjectDir(), store.LegacyProjectConfigFileName)
+		e.git.legacyAsked = true
+	}
+	return e.git.legacyDirty, e.git.legacyErr
 }
 
 // setRoot points the env at a store root, rebuilding the config loader with it.
@@ -119,11 +164,27 @@ type logf func(format string, a ...any)
 // apply takes the env by POINTER because one step moves the store itself: the
 // layout step's relocation repoints the env (see migrateEnv.setRoot) so the
 // steps after it address the store's new location.
+//
+// plan and invalidatesLoad are DECLARED CAPABILITIES rather than things a gate
+// infers. Two gates used to read "any step with no per-file predicate is pending"
+// as "the layout step is pending", in opposite directions — one runs planLayout
+// when it holds, the other skips itself when it holds — and only the layout step
+// actually has the property both were reaching for. A second shape step would have
+// silently disabled the load gate for the whole run with nothing in the type or the
+// list to catch it.
 type migrationStep struct {
 	name, title string
 	pred        func(fmHeader) bool
 	shape       func(migrateEnv) (int, error)
-	apply       func(*migrateEnv, *nibcore.StoreLock, logf) error
+	// plan, when set, computes everything the step will do WITHOUT touching the
+	// filesystem, returning the step's complete set of refusals. It is what lets
+	// --dry-run name them: the step computes the same plan when it runs.
+	plan func(migrateEnv) error
+	// invalidatesLoad marks a step whose apply MOVES the files Core.Load reads.
+	// While such a step is pending, anything answered by loading the store is
+	// answered against a store that is not there yet.
+	invalidatesLoad bool
+	apply           func(*migrateEnv, *nibcore.StoreLock, logf) error
 }
 
 // isContent reports whether the step detects per file (as opposed to per
@@ -162,10 +223,12 @@ func (s migrationStep) isContent() bool { return s.pred != nil }
 // the position in this slice is the whole mechanism.
 var migrationSteps = []migrationStep{
 	{
-		name:  "layout",
-		title: "put the store, the project config and the nib files where the current layout expects them",
-		shape: layoutPendingCount,
-		apply: applyLayout,
+		name:            "layout",
+		title:           "put the store, the project config and the nib files where the current layout expects them",
+		shape:           layoutPendingCount,
+		plan:            func(env migrateEnv) error { _, err := planLayout(env); return err },
+		invalidatesLoad: true,
+		apply:           applyLayout,
 	},
 	{
 		name:  "v0-blocking",
@@ -1011,7 +1074,7 @@ func runMigrations(env migrateEnv, log logf) error {
 	// evaluation raced other processes. wouldRefuse is the ONE place the set of
 	// gates lives, shared with --dry-run's preview, so the preview cannot
 	// predict an outcome this run does not produce.
-	if refusals := wouldRefuse(env, scan); len(refusals) > 0 {
+	if refusals, _ := wouldRefuse(env, scan); len(refusals) > 0 {
 		return &refusalError{refusals: refusals}
 	}
 
@@ -1045,17 +1108,30 @@ func anyContentPending(pending []migrationStep) bool {
 	return false
 }
 
-// anyShapePending reports whether any pending step changes the store's directory
-// structure. It matters to the gates because a pending shape step means the nib
-// files are not yet where Core.Load looks, so anything answered by loading the
-// store is answered against a store that is not there yet.
-func anyShapePending(pending []migrationStep) bool {
+// loadPendingInvalidated reports whether any pending step still has to move the
+// files Core.Load reads. It asks the DECLARED question (migrationStep.
+// invalidatesLoad) rather than inferring it from "the step has no per-file
+// predicate", which happened to coincide with it while the layout step was the
+// only shape step.
+func loadPendingInvalidated(pending []migrationStep) bool {
 	for _, step := range pending {
-		if !step.isContent() {
+		if step.invalidatesLoad {
 			return true
 		}
 	}
 	return false
+}
+
+// pendingPlans returns the pending steps that can compute their whole change up
+// front, in chain order.
+func pendingPlans(pending []migrationStep) []migrationStep {
+	var planned []migrationStep
+	for _, step := range pending {
+		if step.plan != nil {
+			planned = append(planned, step)
+		}
+	}
+	return planned
 }
 
 // refusal is one precondition `nibs migrate` applies to a store it is about to
@@ -1090,11 +1166,35 @@ func (e *refusalError) code() string {
 	return e.refusals[0].code
 }
 
+// gateResult is one gate's answer, and it has THREE states rather than two. A
+// bare *refusal made nil mean both "precondition met" and "cannot be answered
+// yet", and the overload is what let --dry-run drop the note explaining the one
+// gate it cannot preview as soon as any other gate fired — exactly the case where
+// the user acts on the preview and re-runs.
+type gateResult struct {
+	// refusal is set when the precondition is not met.
+	refusal *refusal
+	// undecidable is set, to the sentence explaining why, when the gate cannot be
+	// answered before the run performs earlier steps. Never set together with
+	// refusal.
+	undecidable string
+}
+
+// gateMet, gateRefused and gateUndecidable are the three answers a gate may give,
+// named so a gate body cannot express "met" and "undecidable" with the same value.
+func gateMet() gateResult { return gateResult{} }
+
+func gateRefused(code, reason string) gateResult {
+	return gateResult{refusal: &refusal{code: code, reason: reason}}
+}
+
+func gateUndecidable(why string) gateResult { return gateResult{undecidable: why} }
+
 // migrateGate is one precondition, evaluated identically by the real run and by
 // --dry-run's preview.
 type migrateGate struct {
 	name  string
-	check func(migrateEnv, *storeScan) *refusal
+	check func(migrateEnv, *storeScan) gateResult
 }
 
 // migrateGates is EVERY precondition `nibs migrate` applies before it changes a
@@ -1110,7 +1210,7 @@ type migrateGate struct {
 var migrateGates = []migrateGate{
 	{name: "dirty-store", check: gateStoreGitClean},
 	{name: "dirty-legacy-config", check: gateLegacyConfigRecoverable},
-	{name: "layout-plan", check: gateLayoutPlan},
+	{name: "step-plan", check: gatePendingPlans},
 	{name: "unclassifiable-content", check: gateContentClassifiable},
 	{name: "store-loads-cleanly", check: gateStoreLoadsCleanly},
 }
@@ -1118,18 +1218,22 @@ var migrateGates = []migrateGate{
 // wouldRefuse runs every gate in migrateGates and returns the ones that failed.
 // A store with nothing pending is never refused: the command reports it up to
 // date before any gate is consulted.
-func wouldRefuse(env migrateEnv, scan *storeScan) []refusal {
+func wouldRefuse(env migrateEnv, scan *storeScan) (refusals []refusal, undecidable []string) {
 	if len(scan.pending()) == 0 {
-		return nil
+		return nil, nil
 	}
-	var refusals []refusal
 	for _, g := range migrateGates {
-		if r := g.check(env, scan); r != nil {
+		res := g.check(env, scan)
+		switch {
+		case res.refusal != nil:
+			r := *res.refusal
 			r.gate = g.name
-			refusals = append(refusals, *r)
+			refusals = append(refusals, r)
+		case res.undecidable != "":
+			undecidable = append(undecidable, res.undecidable)
 		}
 	}
-	return refusals
+	return refusals, undecidable
 }
 
 // gateStoreGitClean refuses a store repository with uncommitted changes: git is
@@ -1141,19 +1245,17 @@ func wouldRefuse(env migrateEnv, scan *storeScan) []refusal {
 // git failure means the net cannot be evaluated, which is narrated rather than
 // refused (see reportGitPosture) — blocking migration on git's availability
 // would make it unusable without git.
-func gateStoreGitClean(env migrateEnv, _ *storeScan) *refusal {
+func gateStoreGitClean(env migrateEnv, _ *storeScan) gateResult {
 	if migrateAllowDirty {
-		return nil
+		return gateMet()
 	}
-	dirty, isRepo, err := storeGitStateFn(env.nibsRoot)
+	dirty, isRepo, err := env.storeGitState()
 	if err != nil || !isRepo || !dirty {
-		return nil
+		return gateMet()
 	}
-	return &refusal{
-		code: output.ErrValidation,
-		reason: fmt.Sprintf("the store at %s has uncommitted git changes; commit or stash them so the pre-migration state is recoverable, or re-run with --allow-dirty",
-			env.nibsRoot),
-	}
+	return gateRefused(output.ErrValidation,
+		fmt.Sprintf("the store at %s has uncommitted git changes; commit or stash them so the pre-migration state is recoverable, or re-run with --allow-dirty",
+			env.nibsRoot))
 }
 
 // gateLegacyConfigRecoverable applies the same net to the ONE path the layout
@@ -1165,33 +1267,36 @@ func gateStoreGitClean(env migrateEnv, _ *storeScan) *refusal {
 // "Not a repo" is not a refusal here, matching the store's own posture: the store
 // check has already suggested a backup for an unprotected project, and refusing
 // twice for one unprotected tree would make migrate unusable outside git.
-func gateLegacyConfigRecoverable(env migrateEnv, _ *storeScan) *refusal {
+func gateLegacyConfigRecoverable(env migrateEnv, _ *storeScan) gateResult {
 	if migrateAllowDirty || !legacyConfigExists(env) {
-		return nil
+		return gateMet()
 	}
-	dirty, err := gitIsDirtyFn(env.layout().ProjectDir(), store.LegacyProjectConfigFileName)
+	dirty, err := env.legacyConfigDirty()
 	if err != nil || !dirty {
-		return nil
+		return gateMet()
 	}
-	return &refusal{
-		code: output.ErrValidation,
-		reason: fmt.Sprintf("%s has uncommitted git changes and this migration deletes it; commit or stash it so the pre-migration state is recoverable, or re-run with --allow-dirty",
-			env.legacyConfigPath()),
-	}
+	return gateRefused(output.ErrValidation,
+		fmt.Sprintf("%s has uncommitted git changes and this migration deletes it; commit or stash it so the pre-migration state is recoverable, or re-run with --allow-dirty",
+			env.legacyConfigPath()))
 }
 
-// gateLayoutPlan surfaces every refusal the layout step's PLANNING raises: an
-// occupied relocation destination, a name collision in data/, two project
-// configs, a `nibs.path` naming a store that still exists. Sharing planLayout is
-// what lets the preview name them — the step computes the same plan when it runs.
-func gateLayoutPlan(env migrateEnv, scan *storeScan) *refusal {
-	if !anyShapePending(scan.pending()) {
-		return nil
+// gatePendingPlans surfaces every refusal a pending step's PLANNING raises — for
+// the layout step: an occupied relocation destination, a name collision in data/,
+// two project configs, a `nibs.path` naming a store that still exists or one that
+// cannot be stat'd, a store that is a linked git worktree. Sharing the step's own
+// plan is what lets the preview name them; the step computes the same plan when it
+// runs.
+//
+// It asks which pending steps HAVE a plan rather than inferring it from the
+// detector kind, so a future step that can pre-compute its change is previewed by
+// declaring plan and nothing else.
+func gatePendingPlans(env migrateEnv, scan *storeScan) gateResult {
+	for _, step := range pendingPlans(scan.pending()) {
+		if err := step.plan(env); err != nil {
+			return gateRefused(output.ErrFileError, err.Error())
+		}
 	}
-	if _, err := planLayout(env); err != nil {
-		return &refusal{code: output.ErrFileError, reason: err.Error()}
-	}
-	return nil
+	return gateMet()
 }
 
 // gateContentClassifiable is the fail-loud gate over files the scan could not
@@ -1202,16 +1307,14 @@ func gateLayoutPlan(env migrateEnv, scan *storeScan) *refusal {
 // nib render; nib.Parse now refuses it, so this gate and the load gate are two
 // layers of the same refusal. Which files endanger anything is
 // blockingScanProblems' decision.
-func gateContentClassifiable(env migrateEnv, scan *storeScan) *refusal {
+func gateContentClassifiable(env migrateEnv, scan *storeScan) gateResult {
 	blocking := blockingScanProblems(env, scan)
 	if len(blocking) == 0 {
-		return nil
+		return gateMet()
 	}
-	return &refusal{
-		code: output.ErrFileError,
-		reason: fmt.Sprintf("refusing to migrate around %d file(s) that cannot be read as nibs (move them out of the store or repair them, then re-run `nibs migrate`):\n  %s",
-			len(blocking), describeScanProblems(blocking)),
-	}
+	return gateRefused(output.ErrFileError,
+		fmt.Sprintf("refusing to migrate around %d file(s) that cannot be read as nibs (move them out of the store or repair them, then re-run `nibs migrate`):\n  %s",
+			len(blocking), describeScanProblems(blocking)))
 }
 
 // gateStoreLoadsCleanly previews loadStoreForMigration's own refusal: a store
@@ -1219,21 +1322,26 @@ func gateContentClassifiable(env migrateEnv, scan *storeScan) *refusal {
 // content step run over it, because the loaded store is then not a faithful
 // picture of the directory.
 //
-// It is skipped while a SHAPE step is pending, and that limit is inherent rather
-// than an oversight: Core.Load walks data/ and archive/, so on a pre-layout store
-// the nib files are not there yet and this gate would answer for an empty store.
-// Evaluating it honestly would mean performing the move first. The run still
-// applies it — at the content step's apply, after the layout step — and
-// reportDryRun says so rather than letting the silence read as "all clear".
-func gateStoreLoadsCleanly(env migrateEnv, scan *storeScan) *refusal {
+// It is UNDECIDABLE while a pending step still has to move the files Core.Load
+// reads, and that limit is inherent rather than an oversight: Core.Load walks
+// data/ and archive/, so on a pre-layout store the nib files are not there yet and
+// this gate would answer for an empty store. Evaluating it honestly would mean
+// performing the move first. The run still applies it — at the content step's
+// apply, after the layout step — and "undecidable" is a state the preview reports
+// rather than an absence its silence has to carry.
+func gateStoreLoadsCleanly(env migrateEnv, scan *storeScan) gateResult {
 	pending := scan.pending()
-	if !anyContentPending(pending) || anyShapePending(pending) {
-		return nil
+	if !anyContentPending(pending) {
+		return gateMet()
+	}
+	if loadPendingInvalidated(pending) {
+		return gateUndecidable(fmt.Sprintf("the content steps' own precondition — every file under %s/ parses and no id is duplicated — can only be checked once the layout step has moved the files there, so it is not previewed here.",
+			store.DataDirName))
 	}
 	if _, err := loadStoreForMigration(env); err != nil {
-		return &refusal{code: output.ErrFileError, reason: err.Error()}
+		return gateRefused(output.ErrFileError, err.Error())
 	}
-	return nil
+	return gateMet()
 }
 
 // blockingScanProblems returns the scan problems that must stop a run: the
@@ -1573,7 +1681,7 @@ applied without modifying anything.`,
 		// git was consulted.
 		isRepo := reportGitPosture(env)
 
-		if refusals := wouldRefuse(env, scan); len(refusals) > 0 {
+		if refusals, _ := wouldRefuse(env, scan); len(refusals) > 0 {
 			return migrateCmdError(&refusalError{refusals: refusals})
 		}
 
@@ -1596,8 +1704,12 @@ applied without modifying anything.`,
 // rather than blocking migration on git's availability. The corresponding gates
 // (gateStoreGitClean, gateLegacyConfigRecoverable) take the same view and simply
 // do not fire.
+//
+// Both questions go through the env's memoized accessors, so the narration and the
+// gates share ONE git invocation each rather than asking the same question twice
+// per run.
 func reportGitPosture(env migrateEnv) (storeIsRepo bool) {
-	_, isRepo, err := storeGitStateFn(env.nibsRoot)
+	_, isRepo, err := env.storeGitState()
 	if err != nil {
 		ui.Printf("Warning: could not determine the store's git state (%v); the dirty-store safety check was skipped.\n", err)
 		isRepo = false
@@ -1609,7 +1721,7 @@ func reportGitPosture(env migrateEnv) (storeIsRepo bool) {
 	// deletes the project's `.nibs.yml`, in a repository that is frequently not
 	// the store's.
 	if !migrateAllowDirty && legacyConfigExists(env) {
-		if _, gitErr := gitIsDirtyFn(env.layout().ProjectDir(), store.LegacyProjectConfigFileName); gitErr != nil {
+		if _, gitErr := env.legacyConfigDirty(); gitErr != nil {
 			ui.Printf("Warning: could not determine the git state of %s (%v); its dirty-file safety check was skipped.\n",
 				env.legacyConfigPath(), gitErr)
 		}
@@ -1648,8 +1760,12 @@ func migrateCmdError(err error) error {
 // predict an outcome the run does not produce, and cannot go quiet about a gate
 // somebody added on one side only.
 //
-// One gate genuinely cannot be answered in advance, and the preview says so
-// rather than letting its silence read as all-clear: see gateStoreLoadsCleanly.
+// A gate that cannot be answered in advance says so, and says so UNCONDITIONALLY.
+// The note used to live in the `else` of the refusal branch, so it vanished the
+// moment any other gate fired — precisely the case where the user fixes what the
+// preview named and re-runs, and then meets the unpreviewed refusal anyway. Its
+// whole purpose is that its silence must not read as all-clear, which makes
+// "printed only when everything else is clear" self-defeating.
 func reportDryRun(env migrateEnv, scan *storeScan) error {
 	pending := scan.pending()
 	if len(pending) == 0 {
@@ -1667,14 +1783,15 @@ func reportDryRun(env migrateEnv, scan *storeScan) error {
 		ui.Printf("  the layout step will first move the store %s to %s, where nibs can find it\n",
 			env.nibsRoot, filepath.Join(env.layout().ProjectDir(), store.DirName))
 	}
-	if refusals := wouldRefuse(env, scan); len(refusals) > 0 {
+	refusals, undecidable := wouldRefuse(env, scan)
+	if len(refusals) > 0 {
 		ui.Printf("Warning: the real run will refuse — %d precondition(s) are not met:\n", len(refusals))
 		for _, r := range refusals {
 			ui.Printf("  %s: %s\n", r.gate, r.reason)
 		}
-	} else if anyContentPending(pending) && anyShapePending(pending) {
-		ui.Printf("Note: the content steps' own precondition — every file under %s/ parses and no id is duplicated — can only be checked once the layout step has moved the files there, so it is not previewed here.\n",
-			store.DataDirName)
+	}
+	for _, why := range undecidable {
+		ui.Printf("Note: %s\n", why)
 	}
 	ui.Println("Stop any running `nibs serve` before migrating.")
 	return nil

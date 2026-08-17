@@ -57,8 +57,8 @@ func TestCheckJSONMigrationFieldIsStructured(t *testing.T) {
 		if len(got.Migration.Steps) == 0 || got.Migration.Steps[0] != "layout" {
 			t.Errorf("steps = %v, want the layout step first", got.Migration.Steps)
 		}
-		if !got.Migration.PartialLoad {
-			t.Error("partial_load = false, but a shape step means Core.Load saw only part of the store")
+		if got.Migration.PartialLoad == nil || !*got.Migration.PartialLoad {
+			t.Errorf("partial_load = %v, but this store's nib file sits at the store ROOT, where Core.Load does not look", got.Migration.PartialLoad)
 		}
 		if !strings.Contains(got.Migration.Message, "nibs migrate") {
 			t.Errorf("message = %q, want it to name the command that fixes this", got.Migration.Message)
@@ -87,6 +87,9 @@ func TestCheckJSONMigrationFieldIsStructured(t *testing.T) {
 		}
 		if len(got.Migration.Steps) != 0 {
 			t.Errorf("steps = %v, want none: no step was decided", got.Migration.Steps)
+		}
+		if got.Migration.PartialLoad != nil {
+			t.Errorf("partial_load = %v on a BLOCKED store, want it absent: the probe refused before anything was decided about the files, and this kind is reachable on a store that loaded nothing", *got.Migration.PartialLoad)
 		}
 		if !strings.Contains(got.Migration.Message, "upgrade nibs") {
 			t.Errorf("message = %q, want it to name the only remedy", got.Migration.Message)
@@ -218,4 +221,76 @@ func TestCheckSuppressesTheAllLoadedCheckmarkOnAnUnmigratedStore(t *testing.T) {
 	if !strings.Contains(currentOut, "All nib files loaded") {
 		t.Errorf("a healthy store lost its load checkmark:\n%s", currentOut)
 	}
+}
+
+// TestCheckReportsPartialLoadFromTheFilesNotTheStepKind pins that partial_load
+// answers the question it names.
+//
+// It used to be derived from the pending step's KIND, justified by "a shape step
+// means the files are not where Core.Load looks". A third trigger for the same shape
+// step — the store's own DIRECTORY being in the wrong place — does not have that
+// property: a store whose nibs are already under data/ loads completely, and
+// reporting partial_load: true plus "nib files outside data/ are missing" made an
+// agent discard an accurate report, real broken links included.
+func TestCheckReportsPartialLoadFromTheFilesNotTheStepKind(t *testing.T) {
+	t.Run("a relocation-only pending store loaded completely", func(t *testing.T) {
+		t.Cleanup(resetRootPersistentFlags)
+		t.Cleanup(resetCheckFlags)
+		resetCheckFlags()
+		// The store is outside `.nibs` and its `.nibs.yml` names it, so the layout
+		// step is pending — but every nib file is already under data/.
+		_, storeDir := writeLegacyStoreNamed(t, "nibdata", legacyPathConfig("nibdata"), map[string]string{
+			"data/leg-a1--one.md": layoutNib,
+		})
+
+		got := checkJSONResult(t, checkAppPastTheGate(t, storeDir))
+		if got.Migration == nil {
+			t.Fatal("check reported no migration state for a store that must move")
+		}
+		if got.Migration.PartialLoad == nil {
+			t.Fatal("partial_load is absent; the files were readable, so the answer was established")
+		}
+		if *got.Migration.PartialLoad {
+			t.Error("partial_load = true for a store whose every nib file is already under data/")
+		}
+		if strings.Contains(got.Migration.Message, "missing from the checks below") {
+			t.Errorf("message = %q claims files are missing from a store that loaded completely", got.Migration.Message)
+		}
+	})
+
+	t.Run("the text report keeps its all-loaded checkmark", func(t *testing.T) {
+		t.Cleanup(resetRootPersistentFlags)
+		t.Cleanup(resetCheckFlags)
+		resetCheckFlags()
+		_, storeDir := writeLegacyStoreNamed(t, "nibdata", legacyPathConfig("nibdata"), map[string]string{
+			"data/leg-a1--one.md": layoutNib,
+		})
+		app := checkAppPastTheGate(t, storeDir)
+		out := captureStdout(t, func() {
+			if _, err := runCheck(app); err != nil {
+				t.Fatalf("runCheck: %v", err)
+			}
+		})
+		if !strings.Contains(out, "All nib files loaded") {
+			t.Errorf("the report suppressed a checkmark that is genuinely true:\n%s", out)
+		}
+	})
+
+	t.Run("a pre-layout store still reports the partial load", func(t *testing.T) {
+		t.Cleanup(resetRootPersistentFlags)
+		t.Cleanup(resetCheckFlags)
+		resetCheckFlags()
+		_, storeDir := writeLegacyStore(t, "nibs:\n  prefix: leg-\n", map[string]string{
+			"leg-a1--one.md": layoutNib,
+		})
+		app := checkAppPastTheGate(t, storeDir)
+		out := captureStdout(t, func() {
+			if _, err := runCheck(app); err != nil {
+				t.Fatalf("runCheck: %v", err)
+			}
+		})
+		if strings.Contains(out, "All nib files loaded") {
+			t.Errorf("the report claimed all files loaded for a store whose nibs sit at its root:\n%s", out)
+		}
+	})
 }

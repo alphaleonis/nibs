@@ -497,7 +497,7 @@ func TestMigrateDryRunPreviewsEveryRefusalGate(t *testing.T) {
 			}
 			return storeDir
 		}},
-		"layout-plan": {allowDirty: true, build: func(t *testing.T) string {
+		"step-plan": {allowDirty: true, build: func(t *testing.T) string {
 			projectDir, storeDir := writeLegacyStoreNamed(t, "nibdata", legacyPathConfig("nibdata"), map[string]string{
 				"leg-a1--one.md": layoutNib,
 			})
@@ -858,5 +858,137 @@ func TestMigrateFindsFilesThroughASymlinkedStoreRoot(t *testing.T) {
 	}
 	if ids := envelopeIDs(parseListEnvelope(t, listOut)); !ids["leg-a1"] {
 		t.Errorf("list ids = %v, want leg-a1 — the store's only nib", ids)
+	}
+}
+
+// TestMigrateDryRunAlwaysReportsTheUndecidableGate pins that a gate which cannot be
+// answered before the run says so no matter what else the preview found.
+//
+// The note used to live in the `else` of the refusal branch, so it disappeared the
+// moment any other gate fired — exactly the case where the user fixes what the
+// preview named, re-runs, and meets the unpreviewed load refusal anyway. A note
+// whose purpose is that its silence must not read as all-clear cannot be printed
+// only when everything else is clear.
+func TestMigrateDryRunAlwaysReportsTheUndecidableGate(t *testing.T) {
+	// A version-less nib, so a CONTENT step is pending alongside the shape step.
+	const v0Nib = "---\ntitle: One\nstatus: todo\n---\n\nBody.\n"
+	const undecidableNote = "can only be checked once the layout step has moved the files"
+
+	for _, tt := range []struct {
+		name        string
+		alsoRefuses bool
+		build       func(t *testing.T) string
+	}{
+		{
+			name: "no other gate fires",
+			build: func(t *testing.T) string {
+				_, storeDir := writeLegacyStore(t, "", map[string]string{"leg-a1--one.md": v0Nib})
+				return storeDir
+			},
+		},
+		{
+			name:        "another gate also fires",
+			alsoRefuses: true,
+			build: func(t *testing.T) string {
+				projectDir, storeDir := writeLegacyStoreNamed(t, "nibdata", legacyPathConfig("nibdata"), map[string]string{
+					"leg-a1--one.md": v0Nib,
+				})
+				// An occupied relocation destination: the step-plan gate refuses,
+				// and a content step is pending as well.
+				mkdirAllT(t, filepath.Join(projectDir, store.DirName))
+				return storeDir
+			},
+		},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Cleanup(resetRootPersistentFlags)
+			t.Cleanup(resetMigrateFlags)
+			resetMigrateFlags()
+			storeDir := tt.build(t)
+
+			out, err := runRootWith(t, "--nibs-path", storeDir, "migrate", "--dry-run", "--allow-dirty")
+			if err != nil {
+				t.Fatalf("--dry-run must preview, not fail: %v\nout: %s", err, out)
+			}
+			if strings.Contains(out, "the real run will refuse") != tt.alsoRefuses {
+				t.Errorf("refusal prediction = %v, want %v\nout: %s", !tt.alsoRefuses, tt.alsoRefuses, out)
+			}
+			if !strings.Contains(out, undecidableNote) {
+				t.Errorf("the un-previewable gate went unmentioned:\n%s", out)
+			}
+		})
+	}
+}
+
+// TestMigrateConsultsGitOncePerQuestion pins that the narration and the gates that
+// act on the same git observation share one invocation. Splitting them left every
+// real run shelling out to git twice with identical arguments; --dry-run never did,
+// because it only ran the gates.
+func TestMigrateConsultsGitOncePerQuestion(t *testing.T) {
+	t.Cleanup(resetRootPersistentFlags)
+	t.Cleanup(resetMigrateFlags)
+	resetMigrateFlags()
+
+	projectDir, storeDir := writeLegacyStore(t, "nibs:\n  prefix: leg-\n", map[string]string{
+		"leg-a1--one.md": layoutNib,
+	})
+	_ = projectDir
+
+	storeCalls, legacyCalls := 0, 0
+	origStore, origDirty := storeGitStateFn, gitIsDirtyFn
+	storeGitStateFn = func(string) (bool, bool, error) { storeCalls++; return false, true, nil }
+	gitIsDirtyFn = func(string, ...string) (bool, error) { legacyCalls++; return false, nil }
+	t.Cleanup(func() { storeGitStateFn, gitIsDirtyFn = origStore, origDirty })
+
+	if out, err := runRootWith(t, "--nibs-path", storeDir, "migrate"); err != nil {
+		t.Fatalf("migrate: %v\nout: %s", err, out)
+	}
+	if storeCalls != 1 {
+		t.Errorf("the store's git state was asked %d time(s), want 1", storeCalls)
+	}
+	if legacyCalls != 1 {
+		t.Errorf("the legacy config's git state was asked %d time(s), want 1", legacyCalls)
+	}
+}
+
+// TestMigrationChainInvariantsAreCheckable pins the two things about
+// migrationSteps that nothing else in the engine encodes.
+//
+// The ORDER invariant — `layout` runs first — is carried only by this slice's
+// position: it relocates the project config INTO the store, and every content step
+// afterwards resolves short-form link ids under the prefix only that config carries.
+// Run a content step first and its Core reads the empty default prefix, leaving a
+// short-form `blocking:` target unresolvable and its edge dropped.
+//
+// The CAPABILITY invariant — the step that moves the files Core.Load reads says so —
+// used to be inferred from "the step has no per-file predicate", which two gates read
+// with opposite polarity. A second shape step would have silently disabled the load
+// gate for the whole run.
+func TestMigrationChainInvariantsAreCheckable(t *testing.T) {
+	if len(migrationSteps) == 0 || migrationSteps[0].name != "layout" {
+		t.Fatalf("migrationSteps[0] = %q, want \"layout\": every content step after it needs the config it relocates", migrationSteps[0].name)
+	}
+	for i, step := range migrationSteps {
+		if step.isContent() == (step.shape != nil) {
+			t.Errorf("step %q carries %d detectors, want exactly one (pred XOR shape)", step.name, i)
+		}
+		if step.invalidatesLoad && step.isContent() {
+			t.Errorf("step %q is a content step yet claims to invalidate the load; a content step rewrites files in place", step.name)
+		}
+		if step.plan != nil && step.apply == nil {
+			t.Errorf("step %q can plan but not apply", step.name)
+		}
+	}
+	// Exactly one step moves the files today, and it is the first one. A second
+	// would need reportDryRun's note and gateStoreLoadsCleanly revisited together.
+	moving := 0
+	for _, step := range migrationSteps {
+		if step.invalidatesLoad {
+			moving++
+		}
+	}
+	if moving != 1 || !migrationSteps[0].invalidatesLoad {
+		t.Errorf("%d step(s) invalidate the load and migrationSteps[0].invalidatesLoad = %v; want exactly the first step",
+			moving, migrationSteps[0].invalidatesLoad)
 	}
 }
