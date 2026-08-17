@@ -359,6 +359,16 @@ func loadRaw(configPath string) (*Config, error) {
 		return nil, err
 	}
 
+	// The CONFIG PATH and the backticked `nibs migrate` are load-bearing OUTSIDE
+	// this package. cmd's resolveCLIStore wraps this error with a `%w`-only
+	// format that contributes no path and no command of its own, so what the
+	// user reads — and what cmd/refusal_invariant_test.go's rows "--config
+	// naming a store config that still sets nibs.path" and "a store config that
+	// still sets nibs.path" assert on — comes from here. That test parses
+	// cmd/root.go alone and cannot see this string: dropping the path from it
+	// leaves the composed message with nothing but an unresolvable command, and
+	// the `want` list in TestLoadRejectsRetiredNibsPath is what catches it.
+	// Reword freely, but keep both.
 	var probe retiredPathProbe
 	if err := yaml.Unmarshal(data, &probe); err == nil && probe.Nibs.Path != "" {
 		return nil, fmt.Errorf("%s sets the retired `nibs.path` key (%q); the store directory now holds the config, the data and the archive together — remove the key, and run `nibs migrate` if this project still uses the old layout",

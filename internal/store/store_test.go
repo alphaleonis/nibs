@@ -91,77 +91,125 @@ func TestFindStore(t *testing.T) {
 	})
 }
 
-// TestFindLegacyProjectConfig pins the locator that lets a failed store search
-// explain itself. It is the pre-layout `.nibs.yml` FILE, found by the same
-// upward walk (and the same ceiling) as the store itself.
-func TestFindLegacyProjectConfig(t *testing.T) {
-	writeLegacy := func(t *testing.T, dir string) string {
-		t.Helper()
-		p := filepath.Join(dir, LegacyProjectConfigFileName)
-		if err := os.WriteFile(p, []byte("nibs:\n  prefix: leg-\n"), 0644); err != nil {
-			t.Fatalf("WriteFile error = %v", err)
-		}
-		return p
+// writeLegacy writes a pre-layout `.nibs.yml` in dir and returns its path.
+func writeLegacy(t *testing.T, dir string) string {
+	t.Helper()
+	p := filepath.Join(dir, LegacyProjectConfigFileName)
+	if err := os.WriteFile(p, []byte("nibs:\n  prefix: leg-\n"), 0644); err != nil {
+		t.Fatalf("WriteFile error = %v", err)
+	}
+	return p
+}
+
+// TestFindNearestMarker pins the SINGLE upward pass store resolution runs on.
+//
+// The rows that matter are the ones where the two markers sit at different
+// depths, because that is the comparison two independent walks cannot make: a
+// pre-layout sub-project below an ancestor store used to resolve to the ancestor,
+// so `nibs migrate` in the sub-project moved and rewrote a store nobody had named.
+func TestFindNearestMarker(t *testing.T) {
+	tests := []struct {
+		name string
+		// build lays out the tree and returns the directory to walk from and the
+		// marker expected there.
+		build func(t *testing.T, root string) (start string, want Marker)
+	}{
+		{
+			name: "a store in the start directory",
+			build: func(t *testing.T, root string) (string, Marker) {
+				return root, Marker{Kind: MarkerStore, Path: mkStore(t, root)}
+			},
+		},
+		{
+			name: "a pre-layout config in the start directory",
+			build: func(t *testing.T, root string) (string, Marker) {
+				return root, Marker{Kind: MarkerLegacyProject, Path: writeLegacy(t, root)}
+			},
+		},
+		{
+			name: "no marker anywhere",
+			build: func(t *testing.T, root string) (string, Marker) {
+				return root, Marker{}
+			},
+		},
+		{
+			// THE DEFECT. Both markers exist; the nearer one is the pre-layout
+			// project, and it is the answer.
+			name: "a nearer pre-layout project beats an ancestor store",
+			build: func(t *testing.T, root string) (string, Marker) {
+				mkStore(t, root)
+				sub := mkSub(t, root, "sub")
+				legacy := writeLegacy(t, sub)
+				return mkSub(t, sub, "deep"), Marker{Kind: MarkerLegacyProject, Path: legacy}
+			},
+		},
+		{
+			// The mirror image, so "nearest wins" is shown to be a rule about
+			// depth rather than a preference for one marker.
+			name: "a nearer store beats an ancestor pre-layout project",
+			build: func(t *testing.T, root string) (string, Marker) {
+				writeLegacy(t, root)
+				sub := mkSub(t, root, "sub")
+				return mkSub(t, sub, "deep"), Marker{Kind: MarkerStore, Path: mkStore(t, sub)}
+			},
+		},
+		{
+			// Both in ONE directory: the pre-layout default shape, and what a
+			// hand-migrated project leaves behind. The store wins, because
+			// resolving it is what lets the migration gate speak for it.
+			name: "a store and a pre-layout config in the same directory",
+			build: func(t *testing.T, root string) (string, Marker) {
+				writeLegacy(t, root)
+				return root, Marker{Kind: MarkerStore, Path: mkStore(t, root)}
+			},
+		},
+		{
+			// A `.nibs` FILE is not a store and a `.nibs.yml` DIRECTORY is not a
+			// config; neither may halt the walk and hide the real marker above.
+			name: "decoys of the wrong file type do not stop the walk",
+			build: func(t *testing.T, root string) (string, Marker) {
+				want := mkStore(t, root)
+				decoy := mkSub(t, root, "decoy")
+				if err := os.WriteFile(filepath.Join(decoy, DirName), []byte("not a store"), 0644); err != nil {
+					t.Fatalf("WriteFile error = %v", err)
+				}
+				mkSub(t, decoy, LegacyProjectConfigFileName)
+				return decoy, Marker{Kind: MarkerStore, Path: want}
+			},
+		},
 	}
 
-	t.Run("finds the config in an ancestor directory", func(t *testing.T) {
-		tmpDir := t.TempDir()
-		t.Setenv("NIBS_CONFIG_ROOT", tmpDir)
-		want := writeLegacy(t, tmpDir)
-		subDir := mkSub(t, tmpDir, filepath.Join("sub", "dir"))
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			root := t.TempDir()
+			t.Setenv("NIBS_CONFIG_ROOT", root)
+			start, want := tt.build(t, root)
 
-		found, err := FindLegacyProjectConfig(subDir)
-		if err != nil {
-			t.Fatalf("FindLegacyProjectConfig() error = %v", err)
-		}
-		if found != want {
-			t.Errorf("FindLegacyProjectConfig() = %q, want %q", found, want)
-		}
-	})
+			got, err := FindNearestMarker(start)
+			if err != nil {
+				t.Fatalf("FindNearestMarker() error = %v", err)
+			}
+			if got != want {
+				t.Errorf("FindNearestMarker() = %+v, want %+v", got, want)
+			}
+		})
+	}
 
-	t.Run("returns empty when no legacy config exists", func(t *testing.T) {
-		tmpDir := t.TempDir()
-		t.Setenv("NIBS_CONFIG_ROOT", tmpDir)
-
-		found, err := FindLegacyProjectConfig(tmpDir)
-		if err != nil {
-			t.Fatalf("FindLegacyProjectConfig() error = %v", err)
-		}
-		if found != "" {
-			t.Errorf("FindLegacyProjectConfig() = %q, want empty string", found)
-		}
-	})
-
-	// A `.nibs.yml` DIRECTORY is not a config, mirroring FindStore's insistence
-	// that a `.nibs` FILE is not a store.
-	t.Run("a .nibs.yml directory does not stop the walk", func(t *testing.T) {
-		tmpDir := t.TempDir()
-		t.Setenv("NIBS_CONFIG_ROOT", tmpDir)
-		want := writeLegacy(t, tmpDir)
-		decoy := mkSub(t, tmpDir, "decoy")
-		mkSub(t, decoy, LegacyProjectConfigFileName)
-
-		found, err := FindLegacyProjectConfig(decoy)
-		if err != nil {
-			t.Fatalf("FindLegacyProjectConfig() error = %v", err)
-		}
-		if found != want {
-			t.Errorf("FindLegacyProjectConfig() = %q, want %q", found, want)
-		}
-	})
-
+	// The ceiling bounds this walk exactly as it bounds FindStore's — a
+	// pre-layout project above it must not answer, or a stray `.nibs.yml` above
+	// a test's temp tree would resolve every case below it.
 	t.Run("respects the NIBS_CONFIG_ROOT ceiling", func(t *testing.T) {
 		root := t.TempDir()
 		ceiling := mkSub(t, root, "ceiling")
 		writeLegacy(t, root)
 		t.Setenv("NIBS_CONFIG_ROOT", ceiling)
 
-		found, err := FindLegacyProjectConfig(ceiling)
+		got, err := FindNearestMarker(ceiling)
 		if err != nil {
-			t.Fatalf("FindLegacyProjectConfig() error = %v", err)
+			t.Fatalf("FindNearestMarker() error = %v", err)
 		}
-		if found != "" {
-			t.Errorf("FindLegacyProjectConfig() = %q, want empty (the config sits above the ceiling)", found)
+		if got.Kind != MarkerNone {
+			t.Errorf("FindNearestMarker() = %+v, want none (the config sits above the ceiling)", got)
 		}
 	})
 }

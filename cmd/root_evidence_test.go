@@ -434,7 +434,7 @@ func TestResolveStoreDirExplainsANibsPathMigrateCannotRelocate(t *testing.T) {
 			if strings.Contains(err.Error(), "nibs migrate --nibs-path") {
 				t.Errorf("message = %q prescribes `nibs migrate --nibs-path`, which the store-evidence guard refuses for this shape", err.Error())
 			}
-			if strings.Contains(err.Error(), "run 'nibs init' to create one") {
+			if strings.Contains(err.Error(), "run `nibs init` to create one") {
 				t.Errorf("message = %q suggests nibs init, which strands the data", err.Error())
 			}
 			// And the guard must really refuse it, so the two agree.

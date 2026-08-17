@@ -1095,6 +1095,15 @@ func TestLoadFromDirectory(t *testing.T) {
 // the store layout retired. A config still carrying it describes a layout this
 // build cannot honor, so reading it as decoration and silently operating on a
 // different directory is the one outcome that must not happen.
+//
+// The `want` list is also this message's only guard from the CMD side. Two
+// cmd/refusal_invariant_test.go rows drive this refusal through
+// resolveCLIStore's `%w`-only wrappers, so every substantive part of what the
+// user reads — the path, the backticked command — is written here, and that
+// test parses cmd/root.go alone and cannot see it. The path in particular is
+// guarded at neither end without this row: the composed message keeps a path
+// from the wrapper's own format, so cmd's totality check stays satisfied while
+// the reader loses the one thing telling them WHICH config to edit.
 func TestLoadRejectsRetiredNibsPath(t *testing.T) {
 	tmpDir := t.TempDir()
 	configPath := filepath.Join(tmpDir, store.ConfigFileName)
@@ -1107,7 +1116,7 @@ func TestLoadRejectsRetiredNibsPath(t *testing.T) {
 	if err == nil {
 		t.Fatal("Load() error = nil, want a refusal naming the retired nibs.path key")
 	}
-	for _, want := range []string{"nibs.path", "nibs migrate"} {
+	for _, want := range []string{"nibs.path", "nibs migrate", configPath} {
 		if !strings.Contains(err.Error(), want) {
 			t.Errorf("Load() error = %q, want it to mention %q", err.Error(), want)
 		}

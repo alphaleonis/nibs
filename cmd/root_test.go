@@ -2,6 +2,7 @@ package cmd
 
 import (
 	"bytes"
+	"crypto/sha256"
 	"errors"
 	"fmt"
 	"io/fs"
@@ -149,6 +150,343 @@ func TestResolveStoreDir(t *testing.T) {
 	})
 }
 
+// TestResolveStoreDirBindsToTheNEARESTMarker pins the single upward pass.
+//
+// Discovery used to run TWO independent walks — one for a `.nibs` directory, one
+// for a pre-layout `.nibs.yml` — and bind to whatever the first found, with
+// nothing comparing their depths. A pre-layout sub-project nested under an
+// unrelated ancestor store therefore resolved to the ANCESTOR: `nibs migrate`
+// run in the sub-project moved the ancestor's nib files into data/ and stamped
+// them, while the sub-project's own files stayed byte-identical. A store the
+// user had never named was rewritten, and the project they were standing in was
+// not touched at all.
+//
+// The rule is nearest-marker-wins, and both directions are pinned: a nearer
+// pre-layout project must SHADOW an ancestor store (and refuse, because a
+// project in that shape has no store to operate on), while a nearer store must
+// still win over an ancestor pre-layout project.
+func TestResolveStoreDirBindsToTheNEARESTMarker(t *testing.T) {
+	// nestedPreLayout builds `<tmp>/parent/.nibs` (a real store) with a
+	// pre-layout sub-project at `<tmp>/parent/sub`, and returns both.
+	nestedPreLayout := func(t *testing.T) (ancestor, sub string) {
+		t.Helper()
+		tmp := t.TempDir()
+		t.Setenv("NIBS_CONFIG_ROOT", tmp)
+		parent := filepath.Join(tmp, "parent")
+		ancestor = filepath.Join(parent, store.DirName)
+		mkdirAllT(t, filepath.Join(ancestor, store.DataDirName))
+		writeFileT(t, filepath.Join(ancestor, store.ConfigFileName), "nibs:\n  prefix: par-\n  id_length: 4\n")
+		sub = filepath.Join(parent, "sub")
+		mkdirAllT(t, filepath.Join(sub, "nibdata"))
+		writeFileT(t, filepath.Join(sub, "nibdata", "sub-b2--two.md"), layoutNib)
+		writeFileT(t, filepath.Join(sub, store.LegacyProjectConfigFileName),
+			"nibs:\n  prefix: sub-\n  id_length: 4\n  path: nibdata\n")
+		return ancestor, sub
+	}
+
+	t.Run("a nearer pre-layout project shadows an ancestor store", func(t *testing.T) {
+		t.Cleanup(resetRootPersistentFlags)
+		resetRootPersistentFlags()
+		t.Setenv("NIBS_PATH", "")
+		ancestor, sub := nestedPreLayout(t)
+		t.Chdir(sub)
+
+		got, err := resolveStoreDir()
+		if err == nil {
+			t.Fatalf("resolveStoreDir() = %q; a pre-layout project below a store must refuse, not bind to the store above it", got)
+		}
+		if got != "" {
+			t.Errorf("resolveStoreDir() = %q on the error path, want no store", got)
+		}
+		msg := err.Error()
+		// The refusal must be ABOUT this project, and it must carry the remedy
+		// for it — the sub-project's own data directory, not the ancestor's.
+		for _, want := range []string{sub, filepath.Join(sub, "nibdata"), "nibs migrate --nibs-path"} {
+			if !strings.Contains(msg, want) {
+				t.Errorf("refusal = %q, want it to mention %q", msg, want)
+			}
+		}
+		// The ancestor is named as context, never as the thing to act on.
+		if !strings.Contains(msg, ancestor) {
+			t.Errorf("refusal = %q, want it to name the shadowed ancestor store %q so the reader knows why it stopped answering", msg, ancestor)
+		}
+		if strings.Contains(msg, "--nibs-path "+ancestor) {
+			t.Errorf("refusal = %q prescribes acting on the ancestor store, which belongs to another project", msg)
+		}
+	})
+
+	t.Run("a deeper directory of the same project still refuses", func(t *testing.T) {
+		t.Cleanup(resetRootPersistentFlags)
+		resetRootPersistentFlags()
+		t.Setenv("NIBS_PATH", "")
+		_, sub := nestedPreLayout(t)
+		deep := filepath.Join(sub, "src", "pkg")
+		mkdirAllT(t, deep)
+		t.Chdir(deep)
+
+		if got, err := resolveStoreDir(); err == nil {
+			t.Fatalf("resolveStoreDir() = %q from %q; the nearest marker is still the sub-project's", got, deep)
+		}
+	})
+
+	t.Run("a nearer store still wins over an ancestor pre-layout project", func(t *testing.T) {
+		t.Cleanup(resetRootPersistentFlags)
+		resetRootPersistentFlags()
+		t.Setenv("NIBS_PATH", "")
+		tmp := t.TempDir()
+		t.Setenv("NIBS_CONFIG_ROOT", tmp)
+		outer := filepath.Join(tmp, "outer")
+		mkdirAllT(t, outer)
+		writeFileT(t, filepath.Join(outer, store.LegacyProjectConfigFileName), "nibs:\n  prefix: leg-\n  path: nibdata\n")
+		inner := filepath.Join(outer, "inner")
+		want := filepath.Join(inner, store.DirName)
+		mkdirAllT(t, filepath.Join(want, store.DataDirName))
+		t.Chdir(inner)
+
+		got, err := resolveStoreDir()
+		if err != nil {
+			t.Fatalf("resolveStoreDir() error = %v; the nearer marker is a real store", err)
+		}
+		if got != want {
+			t.Errorf("resolveStoreDir() = %q, want %q", got, want)
+		}
+	})
+
+	// Both markers in ONE directory is the pre-layout default shape (and what a
+	// hand-migrated project leaves behind). The store wins there, because
+	// binding it is what lets the migration gate speak for it; preferring the
+	// file would refuse every such project with no store bound to migrate.
+	t.Run("a store beside the config wins in the same directory", func(t *testing.T) {
+		t.Cleanup(resetRootPersistentFlags)
+		resetRootPersistentFlags()
+		t.Setenv("NIBS_PATH", "")
+		tmp := t.TempDir()
+		t.Setenv("NIBS_CONFIG_ROOT", tmp)
+		projectDir := filepath.Join(tmp, "proj")
+		want := filepath.Join(projectDir, store.DirName)
+		mkdirAllT(t, want)
+		writeFileT(t, filepath.Join(projectDir, store.LegacyProjectConfigFileName), "nibs:\n  prefix: leg-\n")
+		t.Chdir(projectDir)
+
+		got, err := resolveStoreDir()
+		if err != nil {
+			t.Fatalf("resolveStoreDir() error = %v; the store beside the config is the marker", err)
+		}
+		if got != want {
+			t.Errorf("resolveStoreDir() = %q, want %q", got, want)
+		}
+	})
+}
+
+// TestMigrateLeavesAnAncestorStoreAloneFromANestedPreLayoutProject is the
+// end-to-end half of the same defect, and the one that shows what it COST:
+// `nibs migrate` in a nested pre-layout project moved and rewrote the ancestor
+// store's files. Every byte under both roots is compared, because the harm here
+// is a mutation rather than a wrong answer.
+func TestMigrateLeavesAnAncestorStoreAloneFromANestedPreLayoutProject(t *testing.T) {
+	t.Cleanup(resetRootPersistentFlags)
+	t.Cleanup(resetMigrateFlags)
+	resetRootPersistentFlags()
+	resetMigrateFlags()
+	t.Setenv("NIBS_PATH", "")
+
+	tmp := t.TempDir()
+	t.Setenv("NIBS_CONFIG_ROOT", tmp)
+	parent := filepath.Join(tmp, "parent")
+	ancestor := filepath.Join(parent, store.DirName)
+	mkdirAllT(t, ancestor)
+	writeFileT(t, filepath.Join(ancestor, store.ConfigFileName), "nibs:\n  prefix: par-\n  id_length: 4\n")
+	// Pre-layout shape (a nib at the store ROOT), so a migrate that bound here
+	// would have work to do and would visibly move it.
+	writeFileT(t, filepath.Join(ancestor, "par-a1--parent.md"), layoutNib)
+	sub := filepath.Join(parent, "sub")
+	mkdirAllT(t, filepath.Join(sub, "nibdata"))
+	writeFileT(t, filepath.Join(sub, "nibdata", "sub-b2--two.md"), layoutNib)
+	writeFileT(t, filepath.Join(sub, store.LegacyProjectConfigFileName),
+		"nibs:\n  prefix: sub-\n  id_length: 4\n  path: nibdata\n")
+
+	before := treeSnapshot(t, tmp)
+	t.Chdir(sub)
+	out, err := runRootWith(t, "migrate", "--allow-dirty")
+	if err == nil {
+		t.Fatalf("migrate bound to a store the user never named\nout: %s", out)
+	}
+	if !strings.Contains(err.Error(), filepath.Join(sub, "nibdata")) {
+		t.Errorf("refusal = %q, want it to name this project's own nibs", err.Error())
+	}
+
+	after := treeSnapshot(t, tmp)
+	if len(before) != len(after) {
+		t.Fatalf("migrate changed the file set:\nbefore %v\nafter  %v", before, after)
+	}
+	for path, sum := range before {
+		if after[path] != sum {
+			t.Errorf("%s was moved or rewritten by a migrate the user ran elsewhere", path)
+		}
+	}
+}
+
+// treeSnapshot maps every regular file under root to a digest of its contents,
+// keyed by root-relative path. It answers "did anything move or change" in one
+// comparison, which a per-file stat cannot.
+func treeSnapshot(t *testing.T, root string) map[string][32]byte {
+	t.Helper()
+	files := map[string][32]byte{}
+	err := filepath.WalkDir(root, func(path string, d fs.DirEntry, err error) error {
+		if err != nil {
+			return err
+		}
+		if d.IsDir() {
+			return nil
+		}
+		data, readErr := os.ReadFile(path)
+		if readErr != nil {
+			return readErr
+		}
+		rel, relErr := filepath.Rel(root, path)
+		if relErr != nil {
+			return relErr
+		}
+		files[filepath.ToSlash(rel)] = sha256.Sum256(data)
+		return nil
+	})
+	if err != nil {
+		t.Fatalf("snapshotting %s: %v", root, err)
+	}
+	if len(files) == 0 {
+		t.Fatalf("snapshot of %s found no files; it is not reading the tree", root)
+	}
+	return files
+}
+
+// TestResolveStoreDirStatsTheNamedLegacyConfig pins the three shapes
+// `--config <dir>/.nibs.yml` can be in. The guard was a bare basename
+// comparison with no stat, so all three got ONE message: "a project still
+// carrying that file has not been migrated: run `nibs migrate` in <dir>".
+//
+//   - for a file that is not there, that prescribes a command in a directory
+//     that need not exist — the path-existence class of defect;
+//   - for an already-migrated project both halves are false: the file is gone,
+//     the project is migrated, and the prescribed migrate answers "Store is up
+//     to date" while `--nibs-path <dir>/.nibs` — which resolves — went
+//     unmentioned.
+//
+// Every remedy asserted here is also run through the resolver by
+// TestEveryRefusalNamesAReachablePathAndARunnableCommand; what these rows add is
+// that the message's CLAIMS match what is on disk.
+func TestResolveStoreDirStatsTheNamedLegacyConfig(t *testing.T) {
+	tests := []struct {
+		name string
+		// build lays out the project and returns the --config value.
+		build func(t *testing.T, projectDir string) string
+		// want and notWant take the project directory so the assertions can name
+		// the exact remedy rather than a fragment of one.
+		want    func(projectDir string) []string
+		notWant []string
+	}{
+		{
+			// Migrated: `.nibs` is there, the pre-layout file is not.
+			name: "the file is absent and the store is there",
+			build: func(t *testing.T, projectDir string) string {
+				mkdirAllT(t, filepath.Join(projectDir, store.DirName))
+				return filepath.Join(projectDir, store.LegacyProjectConfigFileName)
+			},
+			want: func(projectDir string) []string {
+				return []string{
+					filepath.Join(projectDir, store.LegacyProjectConfigFileName) + " does not exist",
+					"--nibs-path " + filepath.Join(projectDir, store.DirName),
+				}
+			},
+			// Neither claim survives contact with the filesystem here.
+			notWant: []string{"has not been migrated", "run `nibs migrate` in"},
+		},
+		{
+			name: "the file is absent and there is no store either",
+			build: func(t *testing.T, projectDir string) string {
+				return filepath.Join(projectDir, "gone", store.LegacyProjectConfigFileName)
+			},
+			want: func(projectDir string) []string {
+				return []string{
+					filepath.Join(projectDir, "gone", store.LegacyProjectConfigFileName) + " does not exist",
+					"--nibs-path",
+				}
+			},
+			// With nothing on disk to name, the message must not invent a store —
+			// `--nibs-path <project>/.nibs` here would be a path that is not there.
+			notWant: []string{"has not been migrated", "--nibs-path " + string(filepath.Separator)},
+		},
+		{
+			// Genuinely pre-layout: the file is there, the nibs are where its
+			// retired key says, and there is no `<project>/.nibs`.
+			name: "the file is there and names where the nibs live",
+			build: func(t *testing.T, projectDir string) string {
+				dir := filepath.Join(projectDir, "nibdata")
+				mkdirAllT(t, dir)
+				writeFileT(t, filepath.Join(dir, "leg-a1--one.md"), layoutNib)
+				legacy := filepath.Join(projectDir, store.LegacyProjectConfigFileName)
+				writeFileT(t, legacy, "nibs:\n  prefix: leg-\n  id_length: 4\n  path: nibdata\n")
+				return legacy
+			},
+			// The remedy is anchored to the NAMED project's own store, not to a
+			// migrate whose meaning depends on where the reader is standing.
+			want: func(projectDir string) []string {
+				return []string{"nibs migrate --nibs-path " + filepath.Join(projectDir, "nibdata")}
+			},
+			notWant: []string{"run `nibs migrate` in"},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Cleanup(resetRootPersistentFlags)
+			resetRootPersistentFlags()
+			t.Setenv("NIBS_PATH", "")
+			projectDir := filepath.Join(t.TempDir(), "proj")
+			mkdirAllT(t, projectDir)
+			configPath = tt.build(t, projectDir)
+
+			got, err := resolveStoreDir()
+			if err == nil {
+				t.Fatalf("resolveStoreDir() = %q; --config at the pre-layout file names the PROJECT, not a store", got)
+			}
+			for _, want := range tt.want(projectDir) {
+				if !strings.Contains(err.Error(), want) {
+					t.Errorf("refusal = %q, want it to mention %q", err.Error(), want)
+				}
+			}
+			for _, notWant := range tt.notWant {
+				if strings.Contains(err.Error(), notWant) {
+					t.Errorf("refusal = %q, want it NOT to claim %q", err.Error(), notWant)
+				}
+			}
+		})
+	}
+}
+
+// TestResolveStoreDirStatsAMisnamedConfig is the sibling guard's half of the
+// same missing stat: it advised `--nibs-path <dir>` in bare prose for a file it
+// never looked for, so a mistyped path produced a rename instruction for a file
+// that is not there and a store path derived from it.
+func TestResolveStoreDirStatsAMisnamedConfig(t *testing.T) {
+	t.Cleanup(resetRootPersistentFlags)
+	resetRootPersistentFlags()
+	t.Setenv("NIBS_PATH", "")
+
+	missing := filepath.Join(t.TempDir(), "proj", "settings.yml")
+	configPath = missing
+
+	_, err := resolveStoreDir()
+	if err == nil {
+		t.Fatal("resolveStoreDir accepted a --config that is neither config.yml nor present")
+	}
+	if !strings.Contains(err.Error(), missing+" does not exist") {
+		t.Errorf("refusal = %q, want it to report the file's absence", err.Error())
+	}
+	if strings.Contains(err.Error(), "rename it") {
+		t.Errorf("refusal = %q tells the reader to rename a file that is not there", err.Error())
+	}
+}
+
 // TestResolveStoreDirRefusesTheLegacyProjectConfig pins the first of the two
 // guards that keep a mis-aimed --config from turning a project directory into
 // a store. `--config <project>/.nibs.yml` was the DOCUMENTED way to work
@@ -158,11 +496,10 @@ func TestResolveStoreDir(t *testing.T) {
 // replacement rather than merely rejecting.
 //
 // The assertions DISCRIMINATE between the two guards. Both refuse this fixture
-// and both name --nibs-path, the project directory and config.yml, so asserting
-// only those passes with this guard deleted — the fallback evidence guard would
-// satisfy every one of them. `assertRefusedByConfigGuard` keys on the phrases
-// only this guard's message carries, and asserts the fallback's own phrase is
-// absent.
+// and both name the project directory and config.yml, so asserting only those
+// passes with this guard deleted — the fallback evidence guard would satisfy
+// them. `assertRefusedByConfigGuard` keys on the phrases only this guard's
+// message carries, and asserts the fallback's own phrase is absent.
 func TestResolveStoreDirRefusesTheLegacyProjectConfig(t *testing.T) {
 	t.Cleanup(resetRootPersistentFlags)
 	resetRootPersistentFlags()
@@ -179,7 +516,7 @@ func TestResolveStoreDirRefusesTheLegacyProjectConfig(t *testing.T) {
 	if err == nil {
 		t.Fatal("resolveStoreDir accepted --config at the pre-layout .nibs.yml; that path names the PROJECT, not the store")
 	}
-	assertRefusedByConfigGuard(t, err, storeDir)
+	assertRefusedByConfigGuard(t, err, projectDir)
 }
 
 // assertRefusedByConfigGuard asserts that err is resolveStoreDir's --config
@@ -192,11 +529,20 @@ func TestResolveStoreDirRefusesTheLegacyProjectConfig(t *testing.T) {
 // evidence slips past it, and this guard is then the only thing standing
 // between `--config <project>/.nibs.yml` and `nibs migrate` walking the project
 // tree. A test that cannot tell the two apart cannot catch this guard's removal.
-func assertRefusedByConfigGuard(t *testing.T, err error, storeDir string) {
+//
+// Both callers' fixtures carry a `.nibs` store beside the config, so the remedy
+// asserted here is the one anchored to THAT directory. The guard used to
+// prescribe `nibs migrate` in the config's directory instead, which is advice
+// about a CWD rather than about a store: run there, the upward walk answers with
+// whatever store it reaches first, and for an already-migrated project it also
+// asserted the project was unmigrated and prescribed a migrate that reports
+// nothing to do.
+func assertRefusedByConfigGuard(t *testing.T, err error, projectDir string) {
 	t.Helper()
 	// Phrases unique to this guard: it talks about the pre-layout CONFIG and
 	// where that file SITS. The fallback talks about a pre-layout STORE.
-	for _, want := range []string{"pre-layout config", "sits beside the store", "--nibs-path", storeDir, store.ConfigFileName} {
+	storeDir := filepath.Join(projectDir, store.DirName)
+	for _, want := range []string{"pre-layout config", "sits beside the store", "--nibs-path " + storeDir, store.ConfigFileName} {
 		if !strings.Contains(err.Error(), want) {
 			t.Errorf("refusal = %q, want it to mention %q", err.Error(), want)
 		}
@@ -755,7 +1101,7 @@ func TestResolveStoreDirExplainsAPreLayoutProject(t *testing.T) {
 			name:       "nibs.path names the real data directory",
 			configBody: "nibs:\n  prefix: leg-\n  path: nibdata\n",
 			want:       []string{"nibs.path", "nibdata", ".nibs", "nibs migrate --nibs-path"},
-			notWant:    []string{"run 'nibs init' to create one"},
+			notWant:    []string{"run `nibs init` to create one"},
 			remedy: func(t *testing.T, projectDir string) string {
 				t.Helper()
 				t.Cleanup(resetMigrateFlags)
@@ -772,7 +1118,7 @@ func TestResolveStoreDirExplainsAPreLayoutProject(t *testing.T) {
 			name:       "a pre-layout config with no nibs.path",
 			configBody: "nibs:\n  prefix: leg-\n",
 			want:       []string{".nibs.yml", "nibs migrate"},
-			notWant:    []string{"run 'nibs init' to create one"},
+			notWant:    []string{"run `nibs init` to create one"},
 			remedy: func(t *testing.T, projectDir string) string {
 				t.Helper()
 				t.Cleanup(resetMigrateFlags)

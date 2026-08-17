@@ -24,7 +24,7 @@ import (
 
 const (
 	// DirName is the store directory's name, and the marker that identifies a
-	// project root to FindStore.
+	// project root to FindStore and FindNearestMarker.
 	DirName = ".nibs"
 	// ConfigFileName is the project config file, stored INSIDE the store.
 	ConfigFileName = "config.yml"
@@ -117,48 +117,98 @@ func (l Layout) WatchableDirs() []string {
 	return dirs
 }
 
+// MarkerKind names which kind of nibs marker an upward walk met.
+type MarkerKind int
+
+const (
+	// MarkerNone means the walk met no marker before its ceiling.
+	MarkerNone MarkerKind = iota
+	// MarkerStore means a `.nibs` DIRECTORY: a store in the current layout.
+	MarkerStore
+	// MarkerLegacyProject means a pre-layout `.nibs.yml` FILE. Its DIRECTORY is
+	// the project; where that project's nibs live is whatever the retired
+	// `nibs.path` key says, so this marker names a project and not a store.
+	MarkerLegacyProject
+)
+
+// Marker is the nearest nibs marker at or above a starting directory.
+type Marker struct {
+	Kind MarkerKind
+	// Path is the marker itself — the `.nibs` directory for MarkerStore, the
+	// `.nibs.yml` file for MarkerLegacyProject, empty for MarkerNone.
+	Path string
+}
+
+// FindNearestMarker walks upward from startDir and reports the FIRST nibs
+// marker it meets, of either kind, in ONE pass.
+//
+// ONE PASS IS THE WHOLE POINT, and it is why this exists alongside FindStore.
+// "Which marker is nearer" is only answerable while the walk is running: two
+// independent walks each report a path, and comparing those paths afterwards
+// means re-deriving each one's depth — which nothing did. A pre-layout
+// sub-project nested under an unrelated ancestor store therefore bound to the
+// ancestor, and `nibs migrate` moved and rewrote a store the user had never
+// named while their own project stayed untouched.
+//
+// WITHIN one directory the store wins. A project can legitimately hold both: the
+// pre-layout default shape is `.nibs.yml` beside a `.nibs` store whose nib files
+// sit at its root, and a project migrated by hand can leave the retired file
+// behind. Binding to the store there is what lets the migration gate see the
+// store and say what is pending; preferring the file would refuse every such
+// project with no store bound to migrate.
+//
+// The walk and its NIBS_CONFIG_ROOT ceiling are findUpward's, which is where
+// they are described.
+func FindNearestMarker(startDir string) (Marker, error) {
+	return findUpward(startDir, func(dir string) (Marker, bool) {
+		if candidate := filepath.Join(dir, DirName); isDir(candidate) {
+			return Marker{Kind: MarkerStore, Path: candidate}, true
+		}
+		if candidate := filepath.Join(dir, LegacyProjectConfigFileName); isNonDir(candidate) {
+			return Marker{Kind: MarkerLegacyProject, Path: candidate}, true
+		}
+		return Marker{}, false
+	})
+}
+
 // FindStore searches upward from startDir for a `.nibs` DIRECTORY and returns
 // its absolute path, or an empty string when none is found. A `.nibs` FILE is
 // not a store and does not stop the walk.
 //
+// It answers "where is the nearest store", which is a narrower question than the
+// one a command has to answer — a pre-layout project above the nearest store is
+// invisible here. Store RESOLUTION must therefore go through FindNearestMarker;
+// this remains for the callers that only need a store's config (internal/config)
+// or a yes/no on whether a project exists at all.
+//
 // The walk and its NIBS_CONFIG_ROOT ceiling are findUpward's, which is where
 // they are described.
 func FindStore(startDir string) (string, error) {
-	return findUpward(startDir, func(dir string) string {
+	return findUpward(startDir, func(dir string) (string, bool) {
 		candidate := filepath.Join(dir, DirName)
-		if info, err := os.Stat(candidate); err == nil && info.IsDir() {
-			return candidate
-		}
-		return ""
+		return candidate, isDir(candidate)
 	})
 }
 
-// FindLegacyProjectConfig searches upward from startDir for a pre-layout
-// `.nibs.yml` FILE and returns its absolute path, or an empty string when none
-// is found. It walks and bounds itself exactly as FindStore does.
-//
-// No command reads a store through this file. It exists so a FAILED store
-// search can explain itself: a project whose data lived outside `.nibs` (the
-// retired `nibs.path` key) has no store directory for FindStore to find, and
-// the generic "run nibs init" answer would tell it to create an empty store
-// beside its real data.
-func FindLegacyProjectConfig(startDir string) (string, error) {
-	return findUpward(startDir, func(dir string) string {
-		candidate := filepath.Join(dir, LegacyProjectConfigFileName)
-		if info, err := os.Stat(candidate); err == nil && !info.IsDir() {
-			return candidate
-		}
-		return ""
-	})
+// isDir reports whether path is a directory that can be stat'd.
+func isDir(path string) bool {
+	info, err := os.Stat(path)
+	return err == nil && info.IsDir()
+}
+
+// isNonDir reports whether path can be stat'd and is not a directory — the test
+// a marker FILE has to pass, mirroring isDir's insistence for a marker directory.
+func isNonDir(path string) bool {
+	info, err := os.Stat(path)
+	return err == nil && !info.IsDir()
 }
 
 // findUpward walks from startDir toward the filesystem root, returning the first
-// path match reports, or an empty string when the walk finds none.
+// value match reports, or the zero value when the walk finds none.
 //
-// match answers with the path it found, or "" for no match — the same
-// no-match-is-the-empty-string convention findUpward itself uses toward its
-// callers. Both matchers build a non-empty path whenever they match, so "" is
-// unambiguous.
+// match answers with the value it found and whether it found one. The found flag
+// is separate from the value so a matcher whose result has no useful zero — a
+// struct rather than a path — cannot be misread as a match.
 //
 // THE CEILING is applied here, once, for every locator. The NIBS_CONFIG_ROOT
 // environment variable, when set to a non-empty path, bounds the walk: each
@@ -168,36 +218,38 @@ func FindLegacyProjectConfig(startDir string) (string, error) {
 // filesystem root as usual.
 //
 // It is a sandboxing knob rather than only a test-isolation one: it bounds every
-// upward walk in the tree, including the user-facing second walk noStoreFoundError
-// performs to explain a failure. In tests it keeps a stray ancestor store (e.g.
-// /tmp/.nibs) from leaking into cases that expect no store to be found.
-func findUpward(startDir string, match func(dir string) string) (string, error) {
+// upward walk in the tree, including the diagnostic second walk a refusal makes
+// to name the store its answer shadowed. In tests it keeps a stray ancestor store
+// (e.g. /tmp/.nibs) from leaking into cases that expect no store to be found.
+func findUpward[T any](startDir string, match func(dir string) (T, bool)) (T, error) {
+	var zero T
+
 	dir, err := filepath.Abs(startDir)
 	if err != nil {
-		return "", err
+		return zero, err
 	}
 
 	var ceiling string
 	if raw := os.Getenv("NIBS_CONFIG_ROOT"); raw != "" {
 		ceiling, err = filepath.Abs(raw)
 		if err != nil {
-			return "", err
+			return zero, err
 		}
 	}
 
 	for {
-		if found := match(dir); found != "" {
+		if found, ok := match(dir); ok {
 			return found, nil
 		}
 
 		// Stop at the ceiling: this dir was checked, but do not ascend above it.
 		if ceiling != "" && dir == ceiling {
-			return "", nil
+			return zero, nil
 		}
 
 		parent := filepath.Dir(dir)
 		if parent == dir {
-			return "", nil // reached the filesystem root
+			return zero, nil // reached the filesystem root
 		}
 		dir = parent
 	}

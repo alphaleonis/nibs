@@ -714,9 +714,10 @@ func TestMigrateRefusesAMisAimedLegacyConfig(t *testing.T) {
 		t.Fatalf("migrate accepted --config at the pre-layout config\nout: %s", out)
 	}
 	// The refusal must come from the --config guard specifically. The fallback
-	// store-evidence guard rejects this fixture too and names --nibs-path in the
-	// same breath, so asserting only that passes with the guard deleted.
-	assertRefusedByConfigGuard(t, err, storeDir)
+	// store-evidence guard rejects this fixture too and names the project
+	// directory in the same breath, so asserting only that passes with the
+	// guard deleted.
+	assertRefusedByConfigGuard(t, err, projectDir)
 
 	// Nothing was created outside the store, and the unrelated document is
 	// byte-identical.
