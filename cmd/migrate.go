@@ -14,6 +14,7 @@ import (
 	"syscall"
 
 	"github.com/alphaleonis/nibs/internal/config"
+	"github.com/alphaleonis/nibs/internal/fsutil"
 	"github.com/alphaleonis/nibs/internal/nib"
 	"github.com/alphaleonis/nibs/internal/nibcore"
 	"github.com/alphaleonis/nibs/internal/output"
@@ -289,10 +290,11 @@ func applyV0Blocking(env *migrateEnv, lock *nibcore.StoreLock, log logf) error {
 	return nil
 }
 
-// layoutPendingCount reports how many things the layout step would move: every
-// nib file still sitting outside data/ and archive/, the project config if it is
-// still beside the store rather than inside it, and the store DIRECTORY itself
-// if it is still outside `<project>/.nibs`. Zero means the store already has the
+// layoutPendingCount reports how many things the layout step would put right:
+// every nib file still sitting outside data/ and archive/, the project config if it
+// is still beside the store rather than inside it, the store DIRECTORY itself if it
+// is still outside `<project>/.nibs`, and a config ALREADY inside the store that
+// still carries the retired `nibs.path` key. Zero means the store already has the
 // current shape.
 func layoutPendingCount(env migrateEnv) (int, error) {
 	movable, err := layoutMovableFiles(env)
@@ -310,7 +312,41 @@ func layoutPendingCount(env migrateEnv) (int, error) {
 	if relocating {
 		n++
 	}
+	// Only when no legacy config sits beside the store, matching planLayout's
+	// precedence: with both present the relocation owns the decision, and a
+	// destination that cannot be parsed is a two-config conflict planConfigRelocation
+	// reports precisely rather than a detection failure.
+	if !legacyConfigExists(env) {
+		retired, err := storeConfigRetiredKeyPending(env)
+		if err != nil {
+			return 0, err
+		}
+		if retired {
+			n++
+		}
+	}
 	return n, nil
+}
+
+// storeConfigRetiredKeyPending reports whether the config INSIDE the store still
+// carries the retired `nibs.path` key.
+//
+// It is layout work like any other shape defect, and until it was detected here the
+// state was terminal: config.loadRaw refuses such a config outright, naming
+// `nibs migrate`, while `nibs migrate` answered "Store is up to date; no migrations
+// pending" — no legacy config beside the store, no movable files, no relocation. A
+// user reaches it by hand-moving `.nibs.yml` to `.nibs/config.yml`, which is the
+// obvious reading of the new layout.
+//
+// An unreadable or non-YAML config is reported as an error rather than as "no key":
+// deciding nothing is pending because the evidence could not be read is what leaves
+// a wedged store looking healthy.
+func storeConfigRetiredKeyPending(env migrateEnv) (bool, error) {
+	declared, err := config.RetiredNibsPath(env.layout().ConfigPath())
+	if err != nil {
+		return false, fmt.Errorf("reading %s: %w", env.layout().ConfigPath(), err)
+	}
+	return declared != "", nil
 }
 
 // storeRelocationPending reports whether the store still sits somewhere other
@@ -405,6 +441,54 @@ type layoutPlan struct {
 	// config, when non-nil, relocates the pre-layout project config into the
 	// store. Nil when the project has none (already migrated, or never had one).
 	config *configRelocation
+	// retiredKey, when non-nil, strips the retired `nibs.path` key from a config
+	// ALREADY inside the store. Mutually exclusive with config: a legacy config
+	// beside the store is relocated (and stripped) instead, and two configs are
+	// refused by planConfigRelocation before either is touched.
+	retiredKey *configRewrite
+}
+
+// configRewrite is the planned in-place rewrite of the store's own config.yml: the
+// bytes to write, the mode to write them with, and a note for the user.
+type configRewrite struct {
+	path string
+	body []byte
+	perm os.FileMode
+	note string
+}
+
+// apply rewrites the store's config atomically, so a crash cannot leave a torn
+// config where the previous one was complete.
+func (c *configRewrite) apply(log logf) error {
+	if err := fsutil.AtomicWriteFile(c.path, c.body, c.perm); err != nil {
+		return fmt.Errorf("rewriting %s: %w", c.path, err)
+	}
+	log("layout: removed the retired `nibs.path` key from %s", c.path)
+	if c.note != "" {
+		log("layout: %s", c.note)
+	}
+	return nil
+}
+
+// planStoreConfigRewrite prepares removing the retired `nibs.path` key from the
+// config already inside the store. It shares stripRetiredNibsPath with the
+// relocation, so the stale-versus-live distinction — and the refusal when the key
+// names a store that still exists or cannot be stat'd — is decided in one place.
+func planStoreConfigRewrite(env migrateEnv, finalRoot string) (*configRewrite, error) {
+	path := store.NewLayout(finalRoot).ConfigPath()
+	info, err := os.Stat(path)
+	if err != nil {
+		return nil, fmt.Errorf("reading %s: %w", path, err)
+	}
+	data, err := config.ReadConfigFile(path)
+	if err != nil {
+		return nil, fmt.Errorf("reading %s: %w", path, err)
+	}
+	rewritten, note, err := stripRetiredNibsPath(data, env)
+	if err != nil {
+		return nil, err
+	}
+	return &configRewrite{path: path, body: rewritten, perm: info.Mode().Perm(), note: note}, nil
 }
 
 // planLayout works out the whole shape change without touching the filesystem.
@@ -445,6 +529,21 @@ func planLayout(env migrateEnv) (*layoutPlan, error) {
 			return nil, err
 		}
 		plan.config = cr
+		return plan, nil
+	}
+	// No legacy config beside the store, but the store's OWN config may still carry
+	// the retired key — the state a hand-moved `.nibs.yml` leaves behind, which
+	// every command refuses while naming this command.
+	retired, err := storeConfigRetiredKeyPending(env)
+	if err != nil {
+		return nil, err
+	}
+	if retired {
+		rewrite, err := planStoreConfigRewrite(env, plan.finalRoot)
+		if err != nil {
+			return nil, err
+		}
+		plan.retiredKey = rewrite
 	}
 	return plan, nil
 }
@@ -565,6 +664,9 @@ func (p *layoutPlan) apply(env *migrateEnv, log logf) error {
 
 	if p.config != nil {
 		return p.config.apply(log)
+	}
+	if p.retiredKey != nil {
+		return p.retiredKey.apply(log)
 	}
 	return nil
 }
@@ -713,7 +815,7 @@ func (c *configRelocation) apply(log logf) error {
 		if err := os.MkdirAll(filepath.Dir(c.dest), 0755); err != nil {
 			return fmt.Errorf("creating %s: %w", filepath.Dir(c.dest), err)
 		}
-		if err := nibcore.AtomicWriteFile(c.dest, c.body, c.perm); err != nil {
+		if err := fsutil.AtomicWriteFile(c.dest, c.body, c.perm); err != nil {
 			return fmt.Errorf("writing %s: %w", c.dest, err)
 		}
 	}

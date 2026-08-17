@@ -1,4 +1,4 @@
-package nibcore
+package fsutil
 
 import (
 	"errors"
@@ -50,9 +50,9 @@ func TestAtomicWriteFileFailedRenameLeavesExistingIntact(t *testing.T) {
 		t.Fatalf("seed old file: %v", err)
 	}
 
-	orig := renameFn
-	renameFn = func(_, _ string) error { return errors.New("simulated crash before rename") }
-	defer func() { renameFn = orig }()
+	orig := RenameFn
+	RenameFn = func(_, _ string) error { return errors.New("simulated crash before rename") }
+	defer func() { RenameFn = orig }()
 
 	err := AtomicWriteFile(path, []byte("NEW"), 0o644)
 	if err == nil {

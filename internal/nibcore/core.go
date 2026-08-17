@@ -15,6 +15,7 @@ import (
 	"time"
 
 	"github.com/alphaleonis/nibs/internal/config"
+	"github.com/alphaleonis/nibs/internal/fsutil"
 	"github.com/alphaleonis/nibs/internal/nib"
 	"github.com/alphaleonis/nibs/internal/safetext"
 	"github.com/alphaleonis/nibs/internal/search"
@@ -1154,7 +1155,7 @@ func (c *Core) saveToDisk(b *nib.Nib) error {
 	// Write atomically (temp file + rename) so a crash or a concurrent reader
 	// never observes a half-written nib — a torn file would fail nib.Parse on the
 	// next snapshot build and surface as an OnDiskUnparseableError.
-	if err := AtomicWriteFile(path, content, 0644); err != nil {
+	if err := fsutil.AtomicWriteFile(path, content, 0644); err != nil {
 		return fmt.Errorf("writing file: %w", err)
 	}
 

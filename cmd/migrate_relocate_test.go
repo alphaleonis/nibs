@@ -992,3 +992,66 @@ func TestMigrationChainInvariantsAreCheckable(t *testing.T) {
 			moving, migrationSteps[0].invalidatesLoad)
 	}
 }
+
+// TestMigrateStripsTheRetiredKeyFromAConfigInsideTheStore pins the way out of a
+// terminal state.
+//
+// A user who hand-moves `.nibs.yml` to `.nibs/config.yml` — the obvious reading of
+// the new layout — leaves the retired `nibs.path` key inside the store. config's
+// loader refuses such a config outright and names `nibs migrate`, while
+// `nibs migrate` answered "Store is up to date; no migrations pending": no legacy
+// config beside the store, no movable files, no relocation. Every command failed
+// with the one command that was supposed to fix it doing nothing.
+func TestMigrateStripsTheRetiredKeyFromAConfigInsideTheStore(t *testing.T) {
+	t.Cleanup(resetRootPersistentFlags)
+	t.Cleanup(resetMigrateFlags)
+	resetMigrateFlags()
+
+	projectDir := t.TempDir()
+	storeDir := filepath.Join(projectDir, store.DirName)
+	mkdirAllT(t, filepath.Join(storeDir, store.DataDirName))
+	writeFileT(t, filepath.Join(storeDir, store.DataDirName, "leg-a1--one.md"), layoutNib)
+	// The hand-moved config: correct location, retired key still in it. `nibs.path`
+	// named `.nibs` relative to the project, which IS this store.
+	configFile := filepath.Join(storeDir, store.ConfigFileName)
+	writeFileT(t, configFile, "nibs:\n  prefix: leg-\n  id_length: 4\n  path: .nibs\n")
+
+	// Before: every command refuses and names this command.
+	resetListFlags()
+	t.Cleanup(resetListFlags)
+	if _, err := runRootWith(t, "--nibs-path", storeDir, "list", "--all"); err == nil {
+		t.Fatal("`nibs list` accepted a config carrying the retired key")
+	} else if !strings.Contains(err.Error(), "nibs migrate") {
+		t.Errorf("refusal = %q, want it to name `nibs migrate`", err.Error())
+	}
+
+	resetRootPersistentFlags()
+	out, err := runRootWith(t, "--nibs-path", storeDir, "migrate", "--allow-dirty")
+	if err != nil {
+		t.Fatalf("migrate: %v\nout: %s", err, err)
+	}
+	if strings.Contains(out, "up to date") {
+		t.Errorf("migrate reported the store up to date while every command refuses it:\n%s", out)
+	}
+
+	// After: the key is gone, the prefix survived, and commands work.
+	data, readErr := os.ReadFile(configFile)
+	if readErr != nil {
+		t.Fatalf("reading the rewritten config: %v", readErr)
+	}
+	if strings.Contains(string(data), "path:") {
+		t.Errorf("the retired key survived the migration:\n%s", data)
+	}
+	if !strings.Contains(string(data), "prefix: leg-") {
+		t.Errorf("the rewrite lost the rest of the config:\n%s", data)
+	}
+	resetRootPersistentFlags()
+	resetListFlags()
+	listOut, listErr := runRootWith(t, "--nibs-path", storeDir, "list", "--all", "--json")
+	if listErr != nil {
+		t.Fatalf("list after the migration: %v", listErr)
+	}
+	if ids := envelopeIDs(parseListEnvelope(t, listOut)); !ids["leg-a1"] {
+		t.Errorf("list ids = %v, want leg-a1", ids)
+	}
+}

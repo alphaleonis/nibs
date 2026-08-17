@@ -7,6 +7,7 @@ import (
 	"path/filepath"
 	"strings"
 
+	"github.com/alphaleonis/nibs/internal/fsutil"
 	"github.com/alphaleonis/nibs/internal/store"
 	"gopkg.in/yaml.v3"
 )
@@ -438,6 +439,13 @@ func (c *Config) GetProjectName() string {
 
 // Save writes the configuration to <store>/config.yml. If the config has no
 // store directory, the given directory is taken as the store.
+//
+// The write is ATOMIC and MODE-PRESERVING, the same contract the migration engine's
+// relocation of this file holds it to (fsutil.AtomicWriteFile). One file with two
+// writers and two contracts is not a contract: a plain os.WriteFile here widened a
+// 0600 config the relocation had deliberately kept private, and left a torn file
+// possible for a resume path that assumes config.yml is only ever absent or
+// complete.
 func (c *Config) Save(storeDir string) error {
 	targetDir := c.storeDir
 	if targetDir == "" {
@@ -453,7 +461,13 @@ func (c *Config) Save(storeDir string) error {
 		return err
 	}
 
-	return os.WriteFile(path, data, 0644)
+	// Keep the existing file's permissions; a config that has never existed gets
+	// the ordinary 0644 this used to hardcode for every case.
+	perm := os.FileMode(0644)
+	if info, statErr := os.Stat(path); statErr == nil {
+		perm = info.Mode().Perm()
+	}
+	return fsutil.AtomicWriteFile(path, data, perm)
 }
 
 // IsValidStatus returns true if the status is a valid hardcoded status.

@@ -3,6 +3,7 @@ package config
 import (
 	"os"
 	"path/filepath"
+	"runtime"
 	"slices"
 	"strings"
 	"testing"
@@ -1506,5 +1507,51 @@ func TestGetProjectName(t *testing.T) {
 				t.Errorf("GetProjectName() = %q, want %q", got, tt.want)
 			}
 		})
+	}
+}
+
+// TestSavePreservesTheConfigsPermissions pins that the two writers of
+// <store>/config.yml hold the same contract. The migration engine relocates this
+// file atomically with the source's mode preserved, precisely so a 0600 config does
+// not become world-readable; Save writing 0644 unconditionally undid that on the
+// next `nibs config set-*`.
+func TestSavePreservesTheConfigsPermissions(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("unix permission bits are not modeled on windows")
+	}
+	storeDir := filepath.Join(t.TempDir(), store.DirName)
+	if err := os.MkdirAll(storeDir, 0755); err != nil {
+		t.Fatal(err)
+	}
+	path := store.NewLayout(storeDir).ConfigPath()
+	if err := os.WriteFile(path, []byte("nibs:\n  prefix: p-\n"), 0600); err != nil {
+		t.Fatal(err)
+	}
+
+	cfg := Default()
+	cfg.SetStoreDir(storeDir)
+	if err := cfg.Save(storeDir); err != nil {
+		t.Fatalf("Save: %v", err)
+	}
+	info, err := os.Stat(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := info.Mode().Perm(); got != 0600 {
+		t.Errorf("mode = %v after Save, want 0600 — the write widened a private config", got)
+	}
+
+	// A config that never existed still gets the ordinary mode.
+	fresh := filepath.Join(t.TempDir(), store.DirName)
+	freshCfg := Default()
+	if err := freshCfg.Save(fresh); err != nil {
+		t.Fatalf("Save into a new store: %v", err)
+	}
+	info, err = os.Stat(store.NewLayout(fresh).ConfigPath())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := info.Mode().Perm(); got != 0644 {
+		t.Errorf("mode = %v for a new config, want 0644", got)
 	}
 }

@@ -9,6 +9,7 @@ import (
 	"testing"
 
 	"github.com/alphaleonis/nibs/internal/config"
+	"github.com/alphaleonis/nibs/internal/fsutil"
 	"github.com/alphaleonis/nibs/internal/nib"
 	"github.com/alphaleonis/nibs/internal/store"
 )
@@ -314,9 +315,9 @@ func TestMigrateV0ToV1(t *testing.T) {
 		// (saveToDisk writes a temp file and renames it over the target), which
 		// simulates an un-persistable .nibs — full disk, unwritable dir, torn
 		// rename — deterministically and independent of uid/OS.
-		orig := renameFn
-		renameFn = func(_, _ string) error { return errors.New("simulated persistence failure") }
-		t.Cleanup(func() { renameFn = orig })
+		orig := fsutil.RenameFn
+		fsutil.RenameFn = func(_, _ string) error { return errors.New("simulated persistence failure") }
+		t.Cleanup(func() { fsutil.RenameFn = orig })
 
 		if _, err := core.MigrateV0ToV1(lock); err == nil {
 			t.Fatal("MigrateV0ToV1() = nil error on an unwritable store, want fail-loud error")
@@ -436,9 +437,9 @@ func TestMigrateV0ToV1CrashResumeKeepsEdges(t *testing.T) {
 			for failAt := 1; failAt <= maxProbes; failAt++ {
 				core, nibsDir, lock := loadMigrationCore(t, sc.files)
 
-				orig := renameFn
+				orig := fsutil.RenameFn
 				writes := 0
-				renameFn = func(oldpath, newpath string) error {
+				fsutil.RenameFn = func(oldpath, newpath string) error {
 					writes++
 					if writes == failAt {
 						return errors.New("injected crash")
@@ -446,7 +447,7 @@ func TestMigrateV0ToV1CrashResumeKeepsEdges(t *testing.T) {
 					return orig(oldpath, newpath)
 				}
 				_, err := core.MigrateV0ToV1(lock)
-				renameFn = orig
+				fsutil.RenameFn = orig
 
 				if err == nil {
 					// The run finished before reaching write #failAt: every
@@ -618,9 +619,9 @@ func TestNormalizeLegacyPriorities(t *testing.T) {
 		core, _, lock := loadMigrationCore(t, map[string]string{
 			"def1--legacy.md": "---\nversion: 1\ntitle: Set Aside\nstatus: todo\npriority: deferred\n---\n",
 		})
-		orig := renameFn
-		renameFn = func(_, _ string) error { return errors.New("simulated persistence failure") }
-		t.Cleanup(func() { renameFn = orig })
+		orig := fsutil.RenameFn
+		fsutil.RenameFn = func(_, _ string) error { return errors.New("simulated persistence failure") }
+		t.Cleanup(func() { fsutil.RenameFn = orig })
 
 		if _, err := core.NormalizeLegacyPriorities(lock); err == nil {
 			t.Fatal("NormalizeLegacyPriorities() = nil error on an unwritable store, want fail-loud error")

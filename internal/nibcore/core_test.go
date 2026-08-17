@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/alphaleonis/nibs/internal/config"
+	"github.com/alphaleonis/nibs/internal/fsutil"
 	"github.com/alphaleonis/nibs/internal/nib"
 	"github.com/alphaleonis/nibs/internal/store"
 )
@@ -92,7 +93,7 @@ func setupTestCoreWithRequireIfMatch(t *testing.T) (*Core, string) {
 // receives sees the empty read and fails (nibs-6wdq).
 func writeNibFileAtomic(t *testing.T, path, content string) {
 	t.Helper()
-	if err := AtomicWriteFile(path, []byte(content), 0644); err != nil {
+	if err := fsutil.AtomicWriteFile(path, []byte(content), 0644); err != nil {
 		t.Fatalf("failed to write nib file %s: %v", path, err)
 	}
 }

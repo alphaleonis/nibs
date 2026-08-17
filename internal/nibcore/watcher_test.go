@@ -11,6 +11,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/alphaleonis/nibs/internal/fsutil"
 	"github.com/alphaleonis/nibs/internal/nib"
 	"github.com/alphaleonis/nibs/internal/store"
 	"github.com/fsnotify/fsnotify"
@@ -1033,7 +1034,7 @@ func TestWatcherReplacingRenameBatchReportsUpdate(t *testing.T) {
 	// The external edit itself, committed the way every writer commits: a temp
 	// file renamed over the target.
 	edited := fmt.Sprintf("---\ntitle: %s\nstatus: todo\npriority: high\n---\n\nbody\n", newTitle)
-	if err := AtomicWriteFile(abs, []byte(edited), 0o644); err != nil {
+	if err := fsutil.AtomicWriteFile(abs, []byte(edited), 0o644); err != nil {
 		t.Fatalf("atomic write: %v", err)
 	}
 
@@ -1081,7 +1082,7 @@ func TestWatcherObservesExternalAtomicWrite(t *testing.T) {
 
 	// Stand in for a second process (`nibs set <id> -p high`) rewriting the file.
 	edited := fmt.Sprintf("---\ntitle: %s\nstatus: todo\npriority: high\n---\n\nbody\n", newTitle)
-	if err := AtomicWriteFile(abs, []byte(edited), 0o644); err != nil {
+	if err := fsutil.AtomicWriteFile(abs, []byte(edited), 0o644); err != nil {
 		t.Fatalf("atomic write: %v", err)
 	}
 
