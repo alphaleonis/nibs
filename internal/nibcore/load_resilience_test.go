@@ -2,7 +2,9 @@ package nibcore
 
 import (
 	"bytes"
+	"errors"
 	"fmt"
+	"io/fs"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -309,7 +311,18 @@ Body.
 
 	core := New(nibsDir, config.Default())
 	core.SetWarnWriter(nil)
-	if err := core.Load(); err == nil {
+	err := core.Load()
+	if err == nil {
 		t.Fatal("Load() returned nil; a WalkDir-level I/O error must abort the load, not be swallowed by the per-file skip")
+	}
+	// The error must name the entry it failed on, ROOTED. os.dirFS trims the root
+	// prefix from its *PathError, so the bare error says "open locked: permission
+	// denied" — which does not say which store, or whether it was under data/ or
+	// archive/, and `nibs check` reports it verbatim.
+	if !strings.Contains(err.Error(), locked) {
+		t.Errorf("Load() error = %q, want it to name %s", err, locked)
+	}
+	if !errors.Is(err, fs.ErrPermission) {
+		t.Errorf("Load() error = %q, want errors.Is(err, fs.ErrPermission) to still hold through the wrap", err)
 	}
 }

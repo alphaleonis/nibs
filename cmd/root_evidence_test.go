@@ -332,8 +332,7 @@ func TestResolveStoreDirNormalizesTheStorePath(t *testing.T) {
 }
 
 // TestResolveStoreDirExplainsANibsPathMigrateCannotRelocate covers the REJECT
-// side of the store-evidence guard — the direction the previous round never
-// enumerated.
+// side of the store-evidence guard.
 //
 // hasLegacyStoreShape only confirms a store that is an immediate subdirectory of
 // the project holding `.nibs.yml`, and it requires an artifact nibs itself wrote

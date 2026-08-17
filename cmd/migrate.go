@@ -1385,7 +1385,7 @@ func gateStoreGitClean(env migrateEnv, _ *storeScan) gateResult {
 	}
 	return gateRefused(output.ErrValidation,
 		fmt.Sprintf("the store at %s has uncommitted git changes; commit or stash them so the pre-migration state is recoverable, or re-run with --allow-dirty",
-			env.nibsRoot))
+			stripControlChars(env.nibsRoot)))
 }
 
 // gateLegacyConfigRecoverable applies the same net to the ONE path the layout
@@ -1407,7 +1407,7 @@ func gateLegacyConfigRecoverable(env migrateEnv, _ *storeScan) gateResult {
 	}
 	return gateRefused(output.ErrValidation,
 		fmt.Sprintf("%s has uncommitted git changes and this migration deletes it; commit or stash it so the pre-migration state is recoverable, or re-run with --allow-dirty",
-			env.legacyConfigPath()))
+			stripControlChars(env.legacyConfigPath())))
 }
 
 // gatePendingPlans surfaces every refusal a pending step's PLANNING raises — for
@@ -1600,8 +1600,9 @@ func forEachNibFile(env migrateEnv, fn func(path string) error) error {
 		if err != nil {
 			// A directory that cannot be ENUMERATED stays fatal — unlike a
 			// single skippable file, the scan cannot know what it is missing —
-			// but with enough context to act on.
-			return fmt.Errorf("scanning nibs store %s (fix its permissions, or remove the offending entry): %w", path, err)
+			// but with enough context to act on. The offending entry is named by
+			// the walk's own error, so this adds the store rather than repeating it.
+			return fmt.Errorf("scanning nibs store %s (fix its permissions, or remove the offending entry): %w", env.nibsRoot, err)
 		}
 		return fn(path)
 	})

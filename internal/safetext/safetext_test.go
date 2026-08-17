@@ -2,8 +2,11 @@ package safetext
 
 import (
 	"bytes"
+	"io"
 	"strings"
+	"sync"
 	"testing"
+	"unicode"
 )
 
 func TestStripReplacesEveryNonPrintableRune(t *testing.T) {
@@ -76,5 +79,81 @@ func TestWriterCarriesARuneSplitAcrossWrites(t *testing.T) {
 	}
 	if got := buf.String(); got != "höger" {
 		t.Errorf("output = %q, want %q", got, "höger")
+	}
+}
+
+// TestWriterFlushEmitsAHeldTail pins that bytes Write accepted cannot vanish. A
+// trailing incomplete rune is held so it can be joined with the next Write, and
+// with no Flush it was simply dropped at the end of the writer's life — while
+// Write had already reported the full length as accepted.
+func TestWriterFlushEmitsAHeldTail(t *testing.T) {
+	var buf bytes.Buffer
+	w := NewWriter(&buf)
+	// "hello " plus the first two bytes of a three-byte rune.
+	partial := []byte("hello \xe2\x82")
+	n, err := w.Write(partial)
+	if err != nil {
+		t.Fatalf("Write: %v", err)
+	}
+	if n != len(partial) {
+		t.Fatalf("Write returned n = %d, want %d", n, len(partial))
+	}
+	if got := buf.String(); got != "hello " {
+		t.Fatalf("output before Flush = %q, want the held tail withheld", got)
+	}
+	if err := w.Flush(); err != nil {
+		t.Fatalf("Flush: %v", err)
+	}
+	if got := buf.String(); got != "hello  " {
+		t.Errorf("output after Flush = %q, want the held bytes rendered as one space", got)
+	}
+	// Flush is idempotent: a second call must not emit a second space.
+	if err := w.Flush(); err != nil {
+		t.Fatalf("second Flush: %v", err)
+	}
+	if got := buf.String(); got != "hello  " {
+		t.Errorf("output after a second Flush = %q, want it unchanged", got)
+	}
+}
+
+// TestWriterIsSafeForConcurrentUse pins the property the wrapped sink already had.
+// os.Stderr's Write is safe for concurrent use, and every caller that installed
+// this Writer in its place inherited whatever guarantee it gives — an
+// unsynchronized tail would take that away silently. Run under -race.
+func TestWriterIsSafeForConcurrentUse(t *testing.T) {
+	w := NewWriter(io.Discard)
+	var wg sync.WaitGroup
+	for i := 0; i < 8; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			for j := 0; j < 200; j++ {
+				// Ends mid-rune, so every goroutine touches the tail.
+				_, _ = w.Write([]byte("warning: h\xc3"))
+				_ = w.Flush()
+			}
+		}()
+	}
+	wg.Wait()
+}
+
+// TestStripBlanksCodePointsThatRenderAsWhitespace pins the exceptions
+// unicode.IsPrint cannot express: these are letters and symbols by category, so
+// IsPrint accepts them, yet they render as blank — which lets a path or an id be
+// padded with runes a reader cannot see.
+func TestStripBlanksCodePointsThatRenderAsWhitespace(t *testing.T) {
+	for _, r := range []rune{'ㅤ', '⠀', 'ᅟ', 'ᅠ', 'ﾠ'} {
+		if !unicode.IsPrint(r) {
+			t.Fatalf("U+%04X is not IsPrint, so this test asserts nothing about the exception list", r)
+		}
+		in := "a" + string(r) + "b"
+		if got := Strip(in); got != "a b" {
+			t.Errorf("Strip(%q) = %q, want %q — U+%04X renders blank and survived", in, got, "a b", r)
+		}
+	}
+	// Ordinary Hangul must still come through: the exceptions are the fillers, not
+	// the script.
+	if got := Strip("한글"); got != "한글" {
+		t.Errorf("Strip(%q) = %q, want it untouched", "한글", got)
 	}
 }

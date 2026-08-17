@@ -26,10 +26,27 @@
 // A sink that also carries STYLED output cannot be wrapped: lipgloss emits real
 // escape sequences for color, and stripping them would erase the styling. Those
 // surfaces neutralize the file-sourced field at the call site instead.
+//
+// WHAT THIS DOES NOT COVER, so the Trojan-Source class is not read as closed:
+//
+//   - COMBINING MARKS. U+0338 COMBINING LONG SOLIDUS OVERLAY negates the glyph it
+//     sits on, and marks stack without bound (the "Zalgo" effect). They are
+//     Unicode category M and therefore printable — a rule that stripped them would
+//     corrupt every legitimately decomposed name — so bounding them means counting
+//     marks per base character, which this package does not do.
+//   - LENGTH. Strip imposes no bound; only cmd's sanitizeFileText truncates, and
+//     paths and reasons deliberately skip it because the string has to survive
+//     intact.
+//   - HOMOGLYPHS. Cyrillic "а" is an ordinary printable letter.
+//
+// The guarantee is narrower and exact: no rune reaches the sink that can move the
+// cursor, repaint the terminal, reorder the text around it, or occupy width
+// invisibly.
 package safetext
 
 import (
 	"io"
+	"sync"
 	"unicode"
 	"unicode/utf8"
 )
@@ -81,7 +98,23 @@ func keep(r rune) bool {
 	if r == '\n' {
 		return true
 	}
+	if blankRendering[r] {
+		return false
+	}
 	return r != utf8.RuneError && unicode.IsPrint(r)
+}
+
+// blankRendering are code points unicode.IsPrint accepts — they are letters and
+// symbols, not formatting characters — that nevertheless render as whitespace, so
+// a path or an id can be padded with runes a reader cannot see. IsPrint is the
+// right rule for the rest of the category; these are the exceptions it cannot
+// express.
+var blankRendering = map[rune]bool{
+	'ᅟ': true, // HANGUL CHOSEONG FILLER
+	'ᅠ': true, // HANGUL JUNGSEONG FILLER
+	'ㅤ': true, // HANGUL FILLER
+	'ﾠ': true, // HALFWIDTH HANGUL FILLER
+	'⠀': true, // BRAILLE PATTERN BLANK
 }
 
 // Writer wraps a sink so no file-sourced text can reach it unfiltered by
@@ -91,10 +124,17 @@ func keep(r rune) bool {
 //
 // It is NOT safe to wrap a writer that carries styled output; see the package
 // comment.
+//
+// Write is safe for concurrent use. The mutex is not there for throughput — this
+// is a diagnostic path — but because the wrapped sink usually is safe (os.Stderr
+// is), so an unsynchronized tail would silently take that property away from every
+// caller that already relied on it.
 type Writer struct {
-	w io.Writer
+	mu sync.Mutex
+	w  io.Writer
 	// tail holds an incomplete UTF-8 sequence split across two Write calls, so a
 	// multi-byte rune is never misread as invalid bytes at a buffer boundary.
+	// Flush emits whatever is left at the end of the writer's life.
 	tail []byte
 }
 
@@ -105,7 +145,14 @@ func NewWriter(w io.Writer) *Writer { return &Writer{w: w} }
 // Write neutralizes p and writes the result. It reports len(p) on success even
 // though the byte count written may differ: callers count what they handed over,
 // and io.Writer requires n < len(p) to mean an error occurred.
+//
+// A trailing INCOMPLETE rune is held rather than written, so a caller that ends a
+// Write mid-rune must Flush to see those bytes. Both current wrap sites end their
+// format string in a literal newline, which is never a UTF-8 continuation byte, so
+// the tail is always empty for them.
 func (s *Writer) Write(p []byte) (int, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
 	buf := p
 	if len(s.tail) > 0 {
 		buf = append(s.tail, p...)
@@ -131,4 +178,19 @@ func (s *Writer) Write(p []byte) (int, error) {
 		return 0, err
 	}
 	return len(p), nil
+}
+
+// Flush emits any incomplete rune Write is still holding, as a single space — the
+// same substitution every other unrenderable byte gets. Without it those bytes
+// vanish at the end of the writer's life, and Write has already told the caller it
+// accepted them.
+func (s *Writer) Flush() error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if len(s.tail) == 0 {
+		return nil
+	}
+	s.tail = nil
+	_, err := s.w.Write([]byte{' '})
+	return err
 }

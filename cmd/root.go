@@ -677,7 +677,13 @@ func reportExitError(stderr io.Writer, err error) int {
 	if err == nil {
 		return output.ExitOK
 	}
-	stderr = safetext.NewWriter(stderr)
+	sanitized := safetext.NewWriter(stderr)
+	// The writer holds a rune split across writes, so anything left at the end of
+	// this call has to be emitted or it disappears after Fprintf reported it
+	// written. Reachable only if a format string stops mid-rune; both here end in a
+	// newline, and the Flush means that stays a property rather than a dependency.
+	defer func() { _ = sanitized.Flush() }()
+	stderr = sanitized
 	var ce *output.CodedError
 	if errors.As(err, &ce) {
 		if !ce.Reported {

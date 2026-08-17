@@ -459,8 +459,9 @@ func TestResolveStoreDirRequiresStoreEvidence(t *testing.T) {
 			accept: true,
 		},
 		{
-			// R2's shape, the Critical this table previously PINNED as accepted:
-			// any sibling directory of an unmigrated project holding any .md.
+			// Any sibling directory of an unmigrated project holding any .md —
+			// a shape this table once pinned as ACCEPTED, which let `nibs migrate`
+			// delete the project's real `.nibs.yml` and relocate it there.
 			name: "a sibling docs directory of an unmigrated project",
 			build: func(t *testing.T, tmp string) string {
 				proj := filepath.Join(tmp, "proj")
@@ -525,7 +526,7 @@ func TestResolveStoreDirRequiresStoreEvidence(t *testing.T) {
 			},
 		},
 		{
-			// P1's shape: a cloned repository chooses its own `nibs.path`, and
+			// A cloned repository chooses its own `nibs.path`, and
 			// pre-layout `nibs init` never wrote a value other than `.nibs`, so a
 			// config naming an ordinary content directory is hand-authored. The
 			// naming alone must not authorize `nibs migrate` to move every

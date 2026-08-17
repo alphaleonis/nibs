@@ -49,15 +49,20 @@ func assertNoDeception(t *testing.T, surface, text string) {
 	}
 }
 
-// TestFileSourcedTextNeverReachesAnEchoSurfaceRaw enumerates every surface that
-// echoes text nibs did not write, and requires each one to render it through the
-// boundary.
+// TestFileSourcedTextNeverReachesAnEchoSurfaceRaw requires every surface listed
+// below to render text nibs did not write through the boundary.
 //
-// The list IS the mechanism, in the same way migrateGates is: the boundary used to
-// be opt-in per call site with nothing enforcing the set, and the two
-// highest-traffic sites — Core.Load's "skipping unparseable nib file %s" on every
-// command, and the migration engine's unclean-store refusal — were both missing.
-// Two of the surfaces below are now filtered by their WRITER and cannot regress by
+// The list is a REGRESSION GUARD, not an enumeration: it is a table literal in one
+// test function with no production counterpart, so a new ui.Printf of a
+// file-sourced value cannot fail it and nothing detects an omission. It is
+// deliberately unlike migrateGates, which is a production slice
+// TestMigrateDryRunPreviewsEveryRefusalGate walks in both directions — there the
+// completeness of the set IS enforced. Two omissions here (cmd/check.go's link
+// diagnostics, cmd/config.go's printPlan) went unnoticed while an earlier version
+// of this comment claimed the list was the mechanism, so: adding a row when you add
+// an echo is a habit, not a check.
+//
+// Two of the surfaces below are filtered by their WRITER and cannot regress by
 // omission; the rest write to stdout, which carries lipgloss styling and so cannot
 // be wrapped, and are listed here because a call site is all that protects them.
 func TestFileSourcedTextNeverReachesAnEchoSurfaceRaw(t *testing.T) {
@@ -168,6 +173,78 @@ func TestFileSourcedTextNeverReachesAnEchoSurfaceRaw(t *testing.T) {
 				writeFileT(t, filepath.Join(projectDir, store.LegacyProjectConfigFileName),
 					"nibs:\n  path: \""+strings.ReplaceAll(deceptivePayload, "\x1b", `\e`)+"\"\n")
 				return noStoreFoundError(projectDir).Error()
+			},
+		},
+		{
+			// The Nib Links section echoes front-matter scalars — a `documents:`
+			// path, a `blocked_by:` target — and the id derived from a filename.
+			name: "check link diagnostics",
+			emit: func(t *testing.T) string {
+				escaped := strings.ReplaceAll(deceptivePayload, "\x1b", `\e`)
+				// runCheck rather than the command: checkCmd's RunE calls
+				// os.Exit(1) whenever the report is non-empty, and this one is.
+				app, _ := setupCheckTest(t, map[string]string{
+					"tnib-0001--one.md": "---\nversion: 1\ntitle: One\nstatus: todo\ndocuments:\n  - \"" +
+						escaped + "\"\nblocked_by:\n  - \"" + escaped + "\"\n---\n\nBody.\n",
+				})
+				out := captureStdout(t, func() {
+					if _, err := runCheck(app); err != nil {
+						t.Fatalf("runCheck: %v", err)
+					}
+				})
+				return out
+			},
+		},
+		{
+			// `nibs config set-prefix --dry-run` echoes store FILENAMES, which on
+			// Linux are arbitrary bytes.
+			name: "config set-prefix dry-run plan",
+			emit: func(t *testing.T) string {
+				storeDir := writeStoreFiles(t, nil)
+				writeFileT(t, filepath.Join(storeDir, store.ConfigFileName), "nibs:\n  prefix: tnib-\n  id_length: 4\n")
+				writeFileT(t, dataPath(storeDir, hostileName),
+					"---\nversion: 1\ntitle: One\nstatus: todo\n---\n\nBody.\n")
+				t.Cleanup(resetRootPersistentFlags)
+				t.Cleanup(func() {
+					setPrefixDryRun, setPrefixForce, setPrefixJSON = false, false, false
+					gitIsDirtyFn = realGitIsDirty
+				})
+				gitIsDirtyFn = func(string, ...string) (bool, error) { return false, nil }
+				out, err := runRootWith(t, "--nibs-path", storeDir, "config", "set-prefix", "newp-", "--dry-run")
+				if err != nil {
+					t.Fatalf("config set-prefix --dry-run: %v\nout: %s", err, out)
+				}
+				return out
+			},
+		},
+		{
+			// The two git gates embed the store root and the project config path.
+			// A checkout chooses its own directory names, and on Linux a directory
+			// name is arbitrary bytes — so both are file-sourced.
+			name: "migrate git gate refusals",
+			emit: func(t *testing.T) string {
+				projectDir := filepath.Join(t.TempDir(), "p"+strings.ReplaceAll(deceptivePayload, "/", ""))
+				storeDir := filepath.Join(projectDir, store.DirName)
+				mkdirAllT(t, storeDir)
+				writeFileT(t, filepath.Join(projectDir, store.LegacyProjectConfigFileName), "nibs:\n  prefix: leg-\n")
+
+				origStore, origDirty := storeGitStateFn, gitIsDirtyFn
+				t.Cleanup(func() { storeGitStateFn, gitIsDirtyFn = origStore, origDirty })
+				storeGitStateFn = func(string) (bool, bool, error) { return true, true, nil }
+				gitIsDirtyFn = func(string, ...string) (bool, error) { return true, nil }
+				t.Cleanup(resetMigrateFlags)
+				resetMigrateFlags()
+
+				env := newMigrateEnv(storeDir)
+				var out strings.Builder
+				for _, gate := range []func(migrateEnv, *storeScan) gateResult{gateStoreGitClean, gateLegacyConfigRecoverable} {
+					res := gate(env, nil)
+					if res.refusal == nil {
+						t.Fatal("a git gate did not refuse a dirty tree, so this row asserts nothing")
+					}
+					out.WriteString(res.refusal.reason + "\n")
+				}
+				return out.String()
 			},
 		},
 		{

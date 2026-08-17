@@ -29,7 +29,16 @@ const maxEchoedFileTextRunes = 200
 // them — it carries lipgloss-styled output, and stripping escapes there would
 // erase the styling — so every file-sourced field printed through ui.Printf must
 // pass through this function or flattenReason at the call site.
-// TestFileSourcedTextNeverReachesAnEchoSurfaceRaw enumerates those surfaces.
+//
+// That per-call-site half is NOT enforced. TestFileSourcedTextNeverReachesAnEchoSurfaceRaw
+// pins the sites it lists, and nothing detects a new ui.Printf of a file-sourced
+// value — a `go/analysis` rule over a tainted string type returned by nib parsing
+// would, and does not exist. Treat the test as a regression guard over known sites,
+// not as proof of coverage: two omissions (the link diagnostics in cmd/check.go and
+// `config set-prefix --dry-run`'s filenames) survived under a comment claiming the
+// list was complete. `nibs list` / `nibs show` render nib TITLES and bodies through
+// lipgloss on stdout and are deliberately outside this boundary — that is the
+// app's own output, not a diagnostic echo.
 //
 // Whitespace collapsing is left to the caller — flattenReason already does it
 // with strings.Fields, and a path is better left as-is.

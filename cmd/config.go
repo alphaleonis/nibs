@@ -172,7 +172,7 @@ func printPlan(plan *reprefix.RenamePlan, jsonMode bool) error {
 	fmt.Printf("Would change prefix from %q to %q\n", plan.OldPrefix, plan.NewPrefix)
 	fmt.Printf("Plan: %d file(s) to rename\n", len(plan.Files))
 	for _, fp := range plan.Files {
-		fmt.Printf("  %s -> %s\n", fp.OldPath, fp.NewPath)
+		fmt.Printf("  %s -> %s\n", stripControlChars(fp.OldPath), stripControlChars(fp.NewPath))
 	}
 	return nil
 }

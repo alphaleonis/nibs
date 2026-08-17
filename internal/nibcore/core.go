@@ -138,7 +138,7 @@ type Core struct {
 	// repaint the terminal from every command that loads the store. The boundary
 	// lives on the writer rather than at the logWarn call sites so it cannot be
 	// bypassed by adding a warning that forgets it.
-	warnWriter io.Writer
+	warnWriter *safetext.Writer
 }
 
 // New creates a new Core with the given root path and configuration.
@@ -189,9 +189,16 @@ func (c *Core) SetSearchIndex(idx SearchIndex) {
 }
 
 // logWarn logs a warning message if a warn writer is configured.
+//
+// The Flush releases any incomplete rune the boundary is holding, so a warning
+// cannot end up one byte short of what Fprintf reported written. Every format here
+// ends in a literal newline, which is never a UTF-8 continuation byte, so the tail
+// is already empty — the Flush keeps that a property of this call rather than of
+// every format string a future warning uses.
 func (c *Core) logWarn(format string, args ...any) {
 	if c.warnWriter != nil {
 		_, _ = fmt.Fprintf(c.warnWriter, "warning: "+format+"\n", args...)
+		_ = c.warnWriter.Flush()
 	}
 }
 

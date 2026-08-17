@@ -204,7 +204,7 @@ func runCheck(app *App) (int, error) {
 		if migration != nil {
 			ui.Printf("  %s %s\n", ui.Danger.Render("✗"), migration.Message)
 		}
-		renderLoadDiagnostics(linkResult, loadWasComplete(migration))
+		renderLoadDiagnostics(linkResult, loadWasPartial(migration))
 		renderFieldDiagnostics(app, linkResult)
 	}
 
@@ -217,7 +217,7 @@ func runCheck(app *App) (int, error) {
 	// Report broken documents
 	if !checkJSON && !checkFix {
 		for _, bd := range linkResult.BrokenDocuments {
-			ui.Printf("  %s %s: broken document link %s\n", ui.Danger.Render("✗"), bd.NibID, bd.Path)
+			ui.Printf("  %s %s: broken document link %s\n", ui.Danger.Render("✗"), stripControlChars(bd.NibID), stripControlChars(bd.Path))
 		}
 	}
 
@@ -238,17 +238,17 @@ func runCheck(app *App) (int, error) {
 
 		if !checkJSON {
 			for _, bl := range removed {
-				ui.Printf("  %s %s: removed broken link %s:%s\n", ui.Success.Render("✓"), bl.NibID, bl.LinkType, bl.Target)
+				ui.Printf("  %s %s: removed broken link %s:%s\n", ui.Success.Render("✓"), stripControlChars(bl.NibID), bl.LinkType, stripControlChars(bl.Target))
 			}
 			for _, bl := range kept {
 				ui.Printf("  %s %s: kept %s:%s — its target's file failed to load, so the link is unresolvable for now, not broken\n",
-					ui.Warning.Render("!"), bl.NibID, bl.LinkType, bl.Target)
+					ui.Warning.Render("!"), stripControlChars(bl.NibID), bl.LinkType, stripControlChars(bl.Target))
 			}
 			for _, sl := range linkResult.SelfLinks {
-				ui.Printf("  %s %s: removed self-reference in %s link\n", ui.Success.Render("✓"), sl.NibID, sl.LinkType)
+				ui.Printf("  %s %s: removed self-reference in %s link\n", ui.Success.Render("✓"), stripControlChars(sl.NibID), sl.LinkType)
 			}
 			for _, bd := range linkResult.BrokenDocuments {
-				ui.Printf("  %s %s: removed broken document link %s\n", ui.Success.Render("✓"), bd.NibID, bd.Path)
+				ui.Printf("  %s %s: removed broken document link %s\n", ui.Success.Render("✓"), stripControlChars(bd.NibID), stripControlChars(bd.Path))
 			}
 		}
 
@@ -260,10 +260,10 @@ func runCheck(app *App) (int, error) {
 	} else if !checkJSON {
 		// Report issues without fixing
 		for _, bl := range linkResult.BrokenLinks {
-			ui.Printf("  %s %s: broken link %s:%s\n", ui.Danger.Render("✗"), bl.NibID, bl.LinkType, bl.Target)
+			ui.Printf("  %s %s: broken link %s:%s\n", ui.Danger.Render("✗"), stripControlChars(bl.NibID), bl.LinkType, stripControlChars(bl.Target))
 		}
 		for _, sl := range linkResult.SelfLinks {
-			ui.Printf("  %s %s: self-reference in %s link\n", ui.Danger.Render("✗"), sl.NibID, sl.LinkType)
+			ui.Printf("  %s %s: self-reference in %s link\n", ui.Danger.Render("✗"), stripControlChars(sl.NibID), sl.LinkType)
 		}
 	}
 
@@ -423,13 +423,20 @@ func renderLoadDiagnostics(result *nibcore.LinkCheckResult, partialLoad *bool) {
 	}
 }
 
-// loadWasComplete renders the migration status as the answer
-// renderLoadDiagnostics needs: nil when no migration is pending is the definite
-// "the load was complete", and otherwise the status's own three-state answer.
-func loadWasComplete(migration *migrationStatus) *bool {
+// loadWasPartial renders the migration status as the answer
+// renderLoadDiagnostics needs: it is a PARTIAL-load answer, so no migration
+// pending is the definite false, and otherwise the status's own three-state
+// answer passes through (nil meaning "cannot tell").
+//
+// Named for what it returns, not for the question the caller asks. A name
+// asserting the opposite polarity reads correctly at a glance and inverts the
+// report: `if *thisWasComplete(m)` would print "All nib files loaded" for exactly
+// the pre-layout store that loaded nothing, and a three-state pointer makes that
+// a silent bug rather than a type error.
+func loadWasPartial(migration *migrationStatus) *bool {
 	if migration == nil {
-		complete := false
-		return &complete
+		partial := false
+		return &partial
 	}
 	return migration.PartialLoad
 }

@@ -2,6 +2,7 @@ package nibcore
 
 import (
 	"errors"
+	"fmt"
 	"io/fs"
 	"os"
 	"path/filepath"
@@ -65,6 +66,15 @@ func WalkStoreContent(l store.Layout, fn func(path string, err error) error) err
 // reaches fn. Every path handed to fn is rooted at the caller's spelling of
 // root, so store-relative derivations hold.
 //
+// The ERROR handed to fn names that same rooted path. os.dirFS trims the root
+// prefix from its *PathError, so the raw error says `open deep: permission
+// denied` about a store whose only clue to WHICH deep that is comes from the
+// caller — and `nibs check`, the one command that reports a load failure without
+// re-annotating it, printed exactly that. Wrapping here rather than at each
+// caller also disambiguates data/ from archive/, which WalkStoreContent walks with
+// two separate calls and no directory tag. errors.Is still reaches the underlying
+// fs.ErrNotExist / fs.ErrPermission.
+//
 // The ROOT is opened rather than Lstat'd, which is why this goes through
 // os.DirFS instead of filepath.WalkDir. filepath.WalkDir Lstats its root, so a
 // store reached through a SYMLINK — the ordinary spelling of "the nibs live on
@@ -77,7 +87,7 @@ func WalkStoreFiles(root string, fn func(path string, err error) error) error {
 	return fs.WalkDir(os.DirFS(root), ".", func(rel string, d fs.DirEntry, err error) error {
 		path := filepath.Join(root, filepath.FromSlash(rel))
 		if err != nil {
-			return fn(path, err)
+			return fn(path, fmt.Errorf("%s: %w", path, err))
 		}
 		if d.IsDir() {
 			// rel == "." IS the root, which is exempt from the dot rule: the
