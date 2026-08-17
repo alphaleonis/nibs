@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"io/fs"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -64,19 +65,23 @@ func (e migrateEnv) legacyConfigPath() string {
 // config resolves the project configuration at the moment it is asked for.
 func (e migrateEnv) config() (*config.Config, error) { return e.loadCfg() }
 
-// migrateConfig reads the project config from wherever it currently lives: an
-// explicit --config file, otherwise the store's own config.yml. --config can
-// only name a config INSIDE the store — resolveStoreDir refuses one pointed at
-// the pre-layout `.nibs.yml` — so the file the layout step relocates is never
-// the one read here, and this stays the same derivation resolveCLIStore uses.
+// migrateConfig reads the project config from inside the store as it stands right
+// now, and DELIBERATELY ignores --config.
+//
+// --config can only name a store's own config.yml (resolveStoreDir requires the
+// basename and refuses the pre-layout `.nibs.yml`), so for an unmoved store the
+// flag's file and the store's config.yml are the same file. But the layout step
+// RELOCATES the store, and the flag's value is the static string the user typed:
+// after the move it names a file under a directory that no longer exists, and an
+// absent config reads as "use the defaults" — so the content steps that follow
+// loaded the store under the EMPTY prefix and dropped every short-form `blocking:`
+// edge while reporting a completed migration. Deriving from nibsRoot is what makes
+// migrateEnv's on-demand resolution mean what its comment says.
 //
 // A store with no config at all resolves to the defaults, which is the normal
 // state of a pre-layout store and must not be an error: the refusal gate has to
 // work before the config has moved into the store.
 func migrateConfig(nibsRoot string) (*config.Config, error) {
-	if configPath != "" {
-		return config.LoadFromExplicitPathWithUserConfig(configPath)
-	}
 	return config.LoadStoreWithUserConfig(nibsRoot)
 }
 
@@ -234,7 +239,11 @@ func layoutPendingCount(env migrateEnv) (int, error) {
 	if legacyConfigExists(env) {
 		n++
 	}
-	if storeRelocationPending(env) {
+	relocating, err := storeRelocationPending(env)
+	if err != nil {
+		return 0, err
+	}
+	if relocating {
 		n++
 	}
 	return n, nil
@@ -254,11 +263,17 @@ func layoutPendingCount(env migrateEnv) (int, error) {
 // store the user deliberately put elsewhere (`nibs init --nibs-path /srv/nibs`)
 // has no such file naming it and is left exactly where it is.
 //
-// Unlike planStoreRelocation this never errors: detection runs on every command,
-// and a relocation blocked by an occupied destination is still pending work —
-// planLayout raises that refusal when migrate actually runs.
-func storeRelocationPending(env migrateEnv) bool {
-	return filepath.Base(env.nibsRoot) != store.DirName && hasLegacyStoreShape(env.nibsRoot)
+// An occupied destination is NOT an error here: detection runs on every command,
+// and a relocation blocked by one is still pending work — planLayout raises that
+// refusal when migrate actually runs. An error means the evidence itself could not
+// be read (`hasLegacyStoreShape`), which is a different answer from "not pending":
+// deciding a store must stay put because a file's permissions denied the read
+// would leave it undiscoverable with nothing said about why.
+func storeRelocationPending(env migrateEnv) (bool, error) {
+	if filepath.Base(env.nibsRoot) == store.DirName {
+		return false, nil
+	}
+	return hasLegacyStoreShape(env.nibsRoot)
 }
 
 // legacyConfigExists reports whether the pre-layout project config is still
@@ -381,11 +396,15 @@ func planLayout(env migrateEnv) (*layoutPlan, error) {
 // directory makes the retired key a stale record the rewrite then drops (see
 // stripRetiredNibsPath).
 func planStoreRelocation(env migrateEnv) (string, error) {
-	if !storeRelocationPending(env) {
+	relocating, err := storeRelocationPending(env)
+	if err != nil {
+		return "", err
+	}
+	if !relocating {
 		return "", nil
 	}
 	target := filepath.Join(env.layout().ProjectDir(), store.DirName)
-	if _, err := os.Lstat(target); err == nil {
+	if _, statErr := os.Lstat(target); statErr == nil {
 		return "", fmt.Errorf("cannot move the store %s to %s: %s already exists, and %s names %s as this project's store — so one of the two is stale; keep the one holding your nibs, remove the other, then re-run `nibs migrate`",
 			env.nibsRoot, target, target, env.legacyConfigPath(), env.nibsRoot)
 	}
@@ -609,6 +628,14 @@ func (c *configRelocation) apply(log logf) error {
 // run interrupted between the store relocation and the config write converge:
 // the store is at `.nibs` by then, while the key still names the directory it
 // came from.
+//
+// "Gone" means ONLY a definite fs.ErrNotExist. os.Stat fails for far more than
+// that — EACCES on any ancestor, an unmounted mount point, an unreachable network
+// path, ELOOP — and storing the nibs on another volume is precisely why
+// `nibs.path` existed, so reading any of those as "no longer exists" drops the one
+// record of where they are. Every other stat failure is "cannot determine" and
+// refuses, naming the error, the same posture twoConfigsError takes for an
+// unreadable destination.
 func stripRetiredNibsPath(data []byte, env migrateEnv) (out []byte, note string, err error) {
 	var doc yaml.Node
 	if err := yaml.Unmarshal(data, &doc); err != nil {
@@ -633,13 +660,20 @@ func stripRetiredNibsPath(data []byte, env migrateEnv) (out []byte, note string,
 		resolved = filepath.Join(env.layout().ProjectDir(), resolved)
 	}
 	if !sameDir(resolved, env.nibsRoot) {
-		if _, statErr := os.Stat(resolved); statErr == nil {
+		_, statErr := os.Stat(resolved)
+		switch {
+		case statErr == nil:
 			return nil, "", fmt.Errorf("%s sets `nibs.path: %s`, which is not the store being migrated (%s) and still exists; migrate that store instead (`nibs migrate --nibs-path %s`), or — if %s is the store you want to keep — remove the retired `nibs.path` key from %s and re-run",
 				env.legacyConfigPath(), sanitizeFileText(declared), env.nibsRoot,
-				sanitizeFileText(resolved), env.nibsRoot, env.legacyConfigPath())
+				shellArg(resolved), env.nibsRoot, env.legacyConfigPath())
+		case !errors.Is(statErr, fs.ErrNotExist):
+			return nil, "", fmt.Errorf("%s sets `nibs.path: %s`, and whether that directory still holds this project's nibs cannot be determined (%v); resolve that (mount the volume, fix its permissions), or — if %s is the store you want to keep — remove the retired `nibs.path` key from %s, then re-run `nibs migrate`",
+				env.legacyConfigPath(), sanitizeFileText(declared), statErr,
+				env.nibsRoot, env.legacyConfigPath())
+		default:
+			note = fmt.Sprintf("dropped the retired `nibs.path: %s` from the config — that directory no longer exists, so the key was a stale record",
+				sanitizeFileText(declared))
 		}
-		note = fmt.Sprintf("dropped the retired `nibs.path: %s` from the config — that directory no longer exists, so the key was a stale record",
-			sanitizeFileText(declared))
 	}
 
 	deleteMappingKey(nibs, "path")
@@ -1313,6 +1347,11 @@ type fmHeader struct {
 	version int
 	// priority is the unquoted value of a top-level `priority:` line.
 	priority string
+	// status is the unquoted value of a top-level `status:` line. No migration
+	// step keys on it; store resolution uses it as the artifact that
+	// distinguishes a file nibs wrote from any other front-mattered markdown
+	// (see declaredStoreCorroborated).
+	status string
 }
 
 // readFrontMatterHeader streams a nib file's front-matter header with bufio,
@@ -1382,6 +1421,8 @@ func readFrontMatterHeader(path string) (fmHeader, error) {
 			}
 		case "priority":
 			h.priority = unquoteHeaderValue(value)
+		case "status":
+			h.status = unquoteHeaderValue(value)
 		}
 	}
 	if err := sc.Err(); err != nil {
@@ -1565,7 +1606,7 @@ func reportDryRun(env migrateEnv, scan *storeScan) error {
 		}
 		ui.Printf("  %s — %s: %d file(s)\n", step.name, step.title, scan.counts[i])
 	}
-	if storeRelocationPending(env) {
+	if relocating, err := storeRelocationPending(env); err == nil && relocating {
 		ui.Printf("  the layout step will first move the store %s to %s, where nibs can find it\n",
 			env.nibsRoot, filepath.Join(env.layout().ProjectDir(), store.DirName))
 	}

@@ -283,28 +283,40 @@ type retiredPathProbe struct {
 }
 
 // RetiredNibsPath returns the retired `nibs.path` value a pre-layout config
-// carries, or "" when the file cannot be read, is not YAML, or does not set the
-// key. Best-effort by design: its callers use it to sharpen a message or to
-// decide whether a directory is the store a `.nibs.yml` NAMES, and every
-// failure there reads as "no key".
-func RetiredNibsPath(path string) string {
+// carries. The answer is THREE-WAY, because one of its callers decides whether
+// `nibs migrate` may rewrite a directory and "I could not read the evidence" is
+// not the same authorization answer as "there is no evidence":
+//
+//   - ("", nil)      the file is absent, or present and simply does not set the key;
+//   - (value, nil)   the key is set;
+//   - ("", err)      the file EXISTS but its content could not be established —
+//     unreadable, over MaxConfigBytes, or not YAML at all.
+//
+// A caller that only sharpens a message may discard the error; a caller making a
+// decision from the answer must report "cannot determine" instead of guessing.
+func RetiredNibsPath(path string) (string, error) {
 	data, err := ReadConfigFile(path)
 	if err != nil {
-		return ""
+		if os.IsNotExist(err) {
+			return "", nil
+		}
+		return "", err
 	}
 	var probe retiredPathProbe
 	if err := yaml.Unmarshal(data, &probe); err != nil {
-		return ""
+		return "", fmt.Errorf("parsing %s: %w", path, err)
 	}
-	return probe.Nibs.Path
+	return probe.Nibs.Path, nil
 }
 
-// MaxConfigBytes bounds how many bytes any config file read may consume. A
-// nibs config is a few dozen lines; the ceiling exists because the read sits on
-// the ORDINARY, always-successful path of every command, where an unbounded
-// os.ReadFile turns one oversized file into ~10x its size in resident memory
-// (a 50 MB config.yml drove a plain `nibs list` to 334 MB RSS). It is the same
-// posture nib.MaxFrontMatterBytes takes for a nib file's header.
+// MaxConfigBytes bounds how many bytes any config file read may consume — the
+// project config, the user config and the pre-layout config probe alike, because
+// every one of them is read on the ORDINARY, always-successful path of every
+// command. A nibs config is a few dozen lines; the ceiling exists because an
+// unbounded os.ReadFile there turns one oversized file into several times its
+// size in resident memory (a 50 MB config.yml drove a plain `nibs list` to
+// 334 MB RSS). It is the same posture nib.MaxFrontMatterBytes takes for a nib
+// file's header.
 const MaxConfigBytes = 1 << 20 // 1 MiB
 
 // ReadConfigFile reads a config file, refusing one larger than MaxConfigBytes.
@@ -446,6 +458,14 @@ func (c *Config) Save(storeDir string) error {
 
 // IsValidStatus returns true if the status is a valid hardcoded status.
 func (c *Config) IsValidStatus(status string) bool {
+	return IsKnownStatus(status)
+}
+
+// IsKnownStatus reports whether status is one of the hardcoded statuses. The
+// package-level form exists for callers that have no Config yet — store
+// resolution runs before any config is loaded and uses a nibs status as the
+// evidence that a file was written by nibs.
+func IsKnownStatus(status string) bool {
 	for _, s := range DefaultStatuses {
 		if s.Name == status {
 			return true

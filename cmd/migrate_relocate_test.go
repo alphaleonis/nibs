@@ -578,3 +578,158 @@ func TestMigrateDryRunPreviewsEveryRefusalGate(t *testing.T) {
 		})
 	}
 }
+
+// legacyV0BlockingStore is a pre-layout store whose only edge is a SHORT-FORM
+// `blocking:` target. Resolving `a2` to `leg-a2` needs the project's prefix, and
+// the project's prefix lives in the config the layout step relocates — so this
+// fixture fails loudly whenever a content step runs against a stale config.
+func legacyV0BlockingStore() map[string]string {
+	return map[string]string{
+		"leg-a1--one.md": "---\ntitle: One\nstatus: todo\nblocking:\n    - a2\n---\n\nBody A.\n",
+		"leg-a2--two.md": "---\ntitle: Two\nstatus: todo\n---\n\nBody B.\n",
+	}
+}
+
+// TestMigrateReadsTheConfigThatMovedWithTheStore pins that the config a CONTENT
+// step reads follows the store the layout step just relocated.
+//
+// --config names a config INSIDE the store, so its value is a path under the
+// pre-relocation root. Once the store moves, that path names a file under a
+// directory that no longer exists — and an absent config reads as "use the
+// defaults", so the content steps loaded the store under the EMPTY prefix, the
+// short-form `blocking: a2` target became unresolvable, and the edge was dropped
+// while the run printed "Migration complete." and exited 0.
+//
+// Both routes to the same store must produce the same store, which is what makes
+// --nibs-path a usable control rather than a second assertion.
+func TestMigrateReadsTheConfigThatMovedWithTheStore(t *testing.T) {
+	routes := []struct {
+		name string
+		args func(storeDir string) []string
+	}{
+		{"--nibs-path", func(storeDir string) []string { return []string{"--nibs-path", storeDir} }},
+		{"--config", func(storeDir string) []string {
+			return []string{"--config", filepath.Join(storeDir, store.ConfigFileName)}
+		}},
+	}
+
+	for _, route := range routes {
+		t.Run(route.name, func(t *testing.T) {
+			t.Cleanup(resetRootPersistentFlags)
+			t.Cleanup(resetMigrateFlags)
+			resetMigrateFlags()
+
+			projectDir, storeDir := writeLegacyStoreNamed(t, "nibdata", legacyPathConfig("nibdata"), legacyV0BlockingStore())
+
+			args := append(route.args(storeDir), "migrate", "--allow-dirty")
+			out, err := runRootWith(t, args...)
+			if err != nil {
+				t.Fatalf("migrate via %s: %v\nout: %s", route.name, err, out)
+			}
+			if strings.Contains(out, "dropping the edge") {
+				t.Errorf("the migration dropped an edge it should have resolved:\n%s", out)
+			}
+
+			target := filepath.Join(store.NewLayout(filepath.Join(projectDir, store.DirName)).DataDir(), "leg-a2--two.md")
+			data, readErr := os.ReadFile(target)
+			if readErr != nil {
+				t.Fatalf("reading the migrated target: %v", readErr)
+			}
+			if !strings.Contains(string(data), "leg-a1") {
+				t.Errorf("%s did not receive the inverted edge; content:\n%s", target, data)
+			}
+		})
+	}
+}
+
+// TestMigrateRefusesARetiredNibsPathItCannotStat pins the THREE-WAY answer
+// stripRetiredNibsPath has to give about the directory the retired key names.
+//
+// Dropping the key discards the only record of where a project's nibs live, so it
+// is allowed exactly when that directory is definitely gone. os.Stat fails for far
+// more than ENOENT — EACCES on an ancestor, an unmounted mount point, ELOOP — and
+// storing the nibs on another volume is precisely why `nibs.path` existed, so
+// every other failure must refuse and KEEP the file rather than assert a falsehood
+// and delete it.
+func TestMigrateRefusesARetiredNibsPathItCannotStat(t *testing.T) {
+	tests := []struct {
+		name string
+		// build materializes whatever the declared value names and returns the
+		// value to write into `nibs.path`.
+		build func(t *testing.T, projectDir string) string
+		// want are substrings of the refusal; empty means the run must SUCCEED.
+		want []string
+	}{
+		{
+			name:  "a directory that is really gone is a stale record",
+			build: func(t *testing.T, projectDir string) string { return "gone" },
+		},
+		{
+			name: "a directory that still exists is refused",
+			build: func(t *testing.T, projectDir string) string {
+				mkdirAllT(t, filepath.Join(projectDir, "elsewhere"))
+				return "elsewhere"
+			},
+			want: []string{"still exists"},
+		},
+		{
+			name: "a directory that cannot be stat'd is refused, not declared gone",
+			build: func(t *testing.T, projectDir string) string {
+				symlinkLoopT(t, filepath.Join(projectDir, "loop"))
+				return "loop"
+			},
+			want: []string{"cannot be determined"},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Cleanup(resetRootPersistentFlags)
+			t.Cleanup(resetMigrateFlags)
+			resetMigrateFlags()
+
+			projectDir := t.TempDir()
+			storeDir := filepath.Join(projectDir, store.DirName)
+			mkdirAllT(t, storeDir)
+			writeFileT(t, filepath.Join(storeDir, "leg-a1--one.md"), layoutNib)
+			declared := tt.build(t, projectDir)
+			legacy := filepath.Join(projectDir, store.LegacyProjectConfigFileName)
+			writeFileT(t, legacy, "nibs:\n  prefix: leg-\n  id_length: 4\n  path: "+declared+"\n")
+
+			out, err := runRootWith(t, "--nibs-path", storeDir, "migrate", "--allow-dirty")
+
+			if len(tt.want) == 0 {
+				if err != nil {
+					t.Fatalf("migrate: %v\nout: %s", err, out)
+				}
+				if !strings.Contains(out, "no longer exists") {
+					t.Errorf("the stale-record note is missing:\n%s", out)
+				}
+				if _, statErr := os.Stat(legacy); !os.IsNotExist(statErr) {
+					t.Errorf("%s survived a completed relocation (stat err = %v)", legacy, statErr)
+				}
+				return
+			}
+
+			if err == nil {
+				t.Fatalf("migrate did not refuse\nout: %s", out)
+			}
+			for _, want := range tt.want {
+				if !strings.Contains(err.Error(), want) {
+					t.Errorf("refusal = %q, want it to mention %q", err.Error(), want)
+				}
+			}
+			if strings.Contains(err.Error(), "no longer exists") {
+				t.Errorf("refusal = %q asserts the directory is gone, which is not what was observed", err.Error())
+			}
+			// The record of where the nibs live must survive the refusal, and
+			// nothing may have moved.
+			if _, statErr := os.Stat(legacy); statErr != nil {
+				t.Errorf("%s was removed by a refused run: %v", legacy, statErr)
+			}
+			if _, statErr := os.Stat(filepath.Join(storeDir, "leg-a1--one.md")); statErr != nil {
+				t.Errorf("a refused run moved a nib file anyway: %v", statErr)
+			}
+		})
+	}
+}

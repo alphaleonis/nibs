@@ -46,6 +46,11 @@ func stripControlChars(s string) string {
 // onto one line, and the result truncated. Use it for a VALUE quoted back at the
 // user; use stripControlChars alone where the text is a path or a multi-line
 // report whose length carries information.
+//
+// It must NOT reach a path that appears as an argument in a remedy the user is
+// meant to copy and run: collapsing whitespace and appending "…" past 200 runes
+// corrupts exactly the string that has to survive intact. Those go through
+// shellArg (stripControlChars plus quoting) instead.
 func sanitizeFileText(s string) string {
 	flat := strings.Join(strings.Fields(stripControlChars(s)), " ")
 	if utf8.RuneCountInString(flat) <= maxEchoedFileTextRunes {

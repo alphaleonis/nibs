@@ -48,8 +48,12 @@ func LoadUserConfig() (*UserConfig, error) {
 
 // LoadUserConfigFrom loads user config from the given path.
 // Returns a zero-value UserConfig (no error) when the file doesn't exist.
+//
+// The read goes through ReadConfigFile, the same bounded reader the project
+// config uses: this path is reached by every command that resolves a store, so
+// an oversized file here costs exactly what MaxConfigBytes exists to prevent.
 func LoadUserConfigFrom(path string) (*UserConfig, error) {
-	data, err := os.ReadFile(path)
+	data, err := ReadConfigFile(path)
 	if err != nil {
 		if os.IsNotExist(err) {
 			return &UserConfig{}, nil

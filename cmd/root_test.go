@@ -306,6 +306,11 @@ func TestResolveStoreDirRequiresStoreEvidence(t *testing.T) {
 		name   string
 		build  func(t *testing.T, tmp string) string
 		accept bool
+		// refusal is the substring a rejected shape's message must carry.
+		// Defaults to the generic "not a nibs store"; a directory a `.nibs.yml`
+		// really NAMES gets a different one, because "no .nibs.yml beside it
+		// names it" would be false and `nibs init` would be wrong advice.
+		refusal string
 	}{
 		{
 			name: "a .nibs store holding data/",
@@ -498,6 +503,42 @@ func TestResolveStoreDirRequiresStoreEvidence(t *testing.T) {
 			},
 		},
 		{
+			// P1's shape: a cloned repository chooses its own `nibs.path`, and
+			// pre-layout `nibs init` never wrote a value other than `.nibs`, so a
+			// config naming an ordinary content directory is hand-authored. The
+			// naming alone must not authorize `nibs migrate` to move every
+			// front-mattered .md under it into data/ and rewrite each as a nib
+			// render — something inside has to have been written by nibs.
+			name: "a nibs.path naming a content directory of an untrusted repo",
+			build: func(t *testing.T, tmp string) string {
+				repo := filepath.Join(tmp, "repo")
+				dir := filepath.Join(repo, "content")
+				mkdirAllT(t, filepath.Join(dir, "posts"))
+				writeFileT(t, filepath.Join(dir, "posts", "hello.md"), hugoPost)
+				writeFileT(t, filepath.Join(dir, "about.md"), hugoPost)
+				writeFileT(t, filepath.Join(repo, store.LegacyProjectConfigFileName), "nibs:\n  path: content\n")
+				return dir
+			},
+			refusal: "nothing in it was written by nibs",
+		},
+		{
+			// The accept side of the same rule, so the corroboration cannot be
+			// satisfied by "it holds some markdown": one nib among the documents
+			// is what makes this the project's store.
+			name: "a nibs.path naming a directory that holds a nib among other markdown",
+			build: func(t *testing.T, tmp string) string {
+				proj := filepath.Join(tmp, "proj")
+				dir := filepath.Join(proj, "nibdata")
+				mkdirAllT(t, dir)
+				writeFileT(t, filepath.Join(dir, "README.md"), "# Notes\n")
+				writeFileT(t, filepath.Join(dir, "guide.md"), hugoPost)
+				writeFileT(t, filepath.Join(dir, "leg-a1--one.md"), layoutNib)
+				writeFileT(t, filepath.Join(proj, store.LegacyProjectConfigFileName), "nibs:\n  prefix: leg-\n  path: nibdata\n")
+				return dir
+			},
+			accept: true,
+		},
+		{
 			// The evidence is the config naming a PATH, and sameDir compares
 			// paths rather than resolving them — so a symlink aimed at the
 			// declared directory is refused rather than accepted by another
@@ -552,8 +593,12 @@ func TestResolveStoreDirRequiresStoreEvidence(t *testing.T) {
 				if err == nil {
 					t.Fatalf("resolveStoreDir() = %q with no error; %s carries no evidence of being a store", got, dir)
 				}
-				if !strings.Contains(err.Error(), "not a nibs store") {
-					t.Errorf("refusal = %q, want it to say the directory is not a nibs store", err.Error())
+				wantRefusal := tt.refusal
+				if wantRefusal == "" {
+					wantRefusal = "not a nibs store"
+				}
+				if !strings.Contains(err.Error(), wantRefusal) {
+					t.Errorf("refusal = %q, want it to mention %q", err.Error(), wantRefusal)
 				}
 			})
 		}
