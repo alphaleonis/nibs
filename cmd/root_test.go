@@ -262,6 +262,28 @@ func TestResolveStoreDirRefusesConfigCombinedWithAnExplicitStore(t *testing.T) {
 		})
 	}
 
+	// The refusal is deliberately unconditional, so the SELF-CONSISTENT spelling —
+	// both flags naming the same store — is refused too. Narrowing it to a
+	// disagreement would sanction the one spelling that teaches the habit: the
+	// invocation silently changes meaning the moment either value moves.
+	t.Run("both naming the same store is still refused", func(t *testing.T) {
+		t.Cleanup(resetRootPersistentFlags)
+		resetRootPersistentFlags()
+		t.Setenv("NIBS_PATH", "")
+
+		storeDir := filepath.Join(t.TempDir(), "proj", store.DirName)
+		mkdirAllT(t, filepath.Join(storeDir, store.DataDirName))
+		writeFileT(t, filepath.Join(storeDir, store.ConfigFileName), "nibs:\n  prefix: p-\n  id_length: 4\n")
+
+		nibsPath = storeDir
+		configPath = filepath.Join(storeDir, store.ConfigFileName)
+		if got, err := resolveStoreDir(); err == nil {
+			t.Fatalf("resolveStoreDir() = %q; the combination is refused whether or not the two agree", got)
+		} else if !strings.Contains(err.Error(), "cannot be combined") {
+			t.Errorf("refusal = %q, want it to name the combination", err.Error())
+		}
+	})
+
 	t.Run("--config alone still names the store", func(t *testing.T) {
 		t.Cleanup(resetRootPersistentFlags)
 		resetRootPersistentFlags()

@@ -157,9 +157,8 @@ func FindLegacyProjectConfig(startDir string) (string, error) {
 //
 // match answers with the path it found, or "" for no match — the same
 // no-match-is-the-empty-string convention findUpward itself uses toward its
-// callers. A (path, bool) pair would leave the path meaningless whenever the bool
-// is false, and both callers built a candidate path alongside a false that was
-// then silently discarded.
+// callers. Both matchers build a non-empty path whenever they match, so "" is
+// unambiguous.
 //
 // THE CEILING is applied here, once, for every locator. The NIBS_CONFIG_ROOT
 // environment variable, when set to a non-empty path, bounds the walk: each

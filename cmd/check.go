@@ -494,8 +494,14 @@ func fieldRemediation(app *App, ie nibcore.InvalidEnum) string {
 // flattenReason collapses a parse error onto a single line so it stays inside
 // the report's bullet list. yaml.v3 always wraps its message across two lines
 // ("unmarshal errors:" then an indented "line N: ..."), which otherwise breaks
-// the alignment of the whole section. The --json envelope carries the reason
-// verbatim, so nothing is lost where the consumer is a machine.
+// the alignment of the whole section.
+//
+// The --json envelope carries the reason VERBATIM, which is safe for the same
+// audience the boundary below exists to protect: encoding/json escapes C0 as \uXXXX,
+// so a live escape sequence cannot survive into the envelope, and a machine consumer
+// reading structured JSON is not rendering it to a terminal. It is the TEXT report
+// that reaches an agent's transcript unescaped, which is why the boundary is applied
+// here rather than to the envelope.
 //
 // A parse error quotes the file it came from, so it is file-sourced text and goes
 // through the control-character boundary first (see stripControlChars) — a `\e`

@@ -1,7 +1,6 @@
 package cmd
 
 import (
-	"os"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -97,7 +96,8 @@ func TestNoStoreFoundErrorDoesNotEchoTerminalEscapes(t *testing.T) {
 
 // TestOversizedConfigIsRefusedRatherThanRead pins the read ceiling on the
 // ORDINARY, always-successful config path. An unbounded os.ReadFile there turned
-// one oversized file into ~10x its size in resident memory on a plain `nibs list`
+// one oversized file into several times its size in resident memory on a plain
+// `nibs list` (a 50 MB config drove it to 334 MB RSS)
 // — no failure precondition required — and truncating instead of refusing would
 // be worse: a config shortened past its prefix silently re-prefixes every new nib.
 func TestOversizedConfigIsRefusedRatherThanRead(t *testing.T) {
@@ -123,9 +123,7 @@ func TestOversizedConfigIsRefusedRatherThanRead(t *testing.T) {
 	resetRootPersistentFlags()
 	resetListFlags()
 	small := "nibs:\n  prefix: big-\n  note: \"" + strings.Repeat("x", 1024) + "\"\n"
-	if writeErr := os.WriteFile(store.NewLayout(storeDir).ConfigPath(), []byte(small), 0644); writeErr != nil {
-		t.Fatal(writeErr)
-	}
+	writeFileT(t, store.NewLayout(storeDir).ConfigPath(), small)
 	if _, err := runRootWith(t, "--nibs-path", storeDir, "list"); err != nil {
 		t.Fatalf("a config comfortably under the ceiling was refused: %v", err)
 	}

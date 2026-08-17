@@ -211,3 +211,14 @@ func captureStdout(t *testing.T, fn func()) string {
 		return ""
 	}
 }
+
+// readFileT reads a file's whole content as a string, failing the test instead of
+// returning an error. Used where a refusal must be shown to have changed nothing.
+func readFileT(t *testing.T, path string) string {
+	t.Helper()
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("read %s: %v", path, err)
+	}
+	return string(data)
+}

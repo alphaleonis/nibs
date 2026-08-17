@@ -133,7 +133,31 @@ func TestMigrateRelocationCarriesTheStoresGitRepository(t *testing.T) {
 // merges: two candidate stores mean one is stale, and choosing silently would
 // either strand the real data or bury it under an empty store. Both ways out of
 // the refusal converge, so the message names removing one of them.
+//
+// The destination is inspected with Lstat, so anything occupying the name refuses —
+// including a plain FILE or a symlink, neither of which rename(2) would merge into
+// and both of which are things a user or another tool can leave at `<project>/.nibs`.
 func TestMigrateRefusesToRelocateOntoAnExistingStore(t *testing.T) {
+	for _, occupant := range []struct {
+		name  string
+		build func(t *testing.T, path string)
+	}{
+		{"a directory", func(t *testing.T, path string) { mkdirAllT(t, path) }},
+		{"a plain file", func(t *testing.T, path string) { writeFileT(t, path, "not a store\n") }},
+		{"a dangling symlink", func(t *testing.T, path string) {
+			if err := os.Symlink(filepath.Join(filepath.Dir(path), "no-such-target"), path); err != nil {
+				t.Skipf("symlinks unavailable: %v", err)
+			}
+		}},
+	} {
+		t.Run(occupant.name, func(t *testing.T) {
+			runRelocationOntoOccupiedDestination(t, occupant.build)
+		})
+	}
+}
+
+func runRelocationOntoOccupiedDestination(t *testing.T, occupy func(t *testing.T, path string)) {
+	t.Helper()
 	t.Cleanup(resetRootPersistentFlags)
 	t.Cleanup(resetMigrateFlags)
 	resetMigrateFlags()
@@ -142,7 +166,7 @@ func TestMigrateRefusesToRelocateOntoAnExistingStore(t *testing.T) {
 		"leg-a1--one.md": layoutNib,
 	})
 	occupied := filepath.Join(projectDir, store.DirName)
-	mkdirAllT(t, occupied)
+	occupy(t, occupied)
 
 	out, err := runRootWith(t, "--nibs-path", storeDir, "migrate", "--allow-dirty")
 	if err == nil {
@@ -315,6 +339,17 @@ func TestMigrateReportsBothFaultsWhenTwoConfigsMeetANibsPathMismatch(t *testing.
 		if !strings.Contains(err.Error(), want) {
 			t.Errorf("refusal = %v, want it to mention %q", err, want)
 		}
+	}
+	// A refusal must leave everything exactly as it was, which the message alone
+	// cannot show: both configs intact, byte for byte, and the nib where it was.
+	if got := readFileT(t, legacy); got != legacyPathConfig("elsewhere") {
+		t.Errorf("the legacy config changed under a refused run:\n%s", got)
+	}
+	if got := readFileT(t, dest); got != "nibs:\n  prefix: other-\n" {
+		t.Errorf("the destination config changed under a refused run:\n%s", got)
+	}
+	if _, statErr := os.Stat(filepath.Join(store.NewLayout(storeDir).DataDir(), "leg-a1--one.md")); statErr != nil {
+		t.Errorf("a refused run moved a nib file: %v", statErr)
 	}
 }
 

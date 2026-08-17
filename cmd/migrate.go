@@ -431,8 +431,12 @@ type layoutPlan struct {
 	// relocateTo is where the WHOLE store directory moves, or "" when it is
 	// already at `<project>/.nibs`. See planStoreRelocation.
 	relocateTo string
-	// finalRoot is the store root once relocateTo has been honored — the root
-	// every path this step writes is derived from.
+	// finalRoot is the store root once relocateTo has been honored, and it is what
+	// the CONFIG destination is derived from. The nib-file moves are derived from
+	// the env instead, which agrees with it only because apply repoints the env to
+	// relocateTo before deriving them — plan and apply must be given the same env,
+	// which applyLayout guarantees by computing the plan from the env it then
+	// applies with.
 	finalRoot string
 	// movable holds the store-relative paths (forward slashes) of the nib files
 	// that move into data/, in walk order. They survive the store relocation
@@ -1044,14 +1048,14 @@ func (e *newerStoreError) Error() string { return e.msg }
 // every file without opening it, but on a pre-layout store layoutMovableFiles
 // reads each out-of-place file's header to tell a nib from a fence-less document.
 // That is the O(files) case, once, on the stores the step exists for. A chain that
-// grew several shape steps would owe this note a rethink. A file with a version
-// above nib.CurrentVersion refuses
-// the whole scan (error): it was written by a newer nibs and this build must
-// not touch the store. The refusal is raised AFTER the walk completes rather
-// than aborting at the first such file, so it can name every newer file and
-// every other problem the walk collected — aborting mid-walk used to hide a
-// coexisting broken file behind the version refusal until the user repaired
-// their way to it.
+// grew several shape steps would owe this note a rethink.
+//
+// A file with a version above nib.CurrentVersion refuses the whole scan (error):
+// it was written by a newer nibs and this build must not touch the store. The
+// refusal is raised AFTER the walk completes rather than aborting at the first
+// such file, so it can name every newer file and every other problem the walk
+// collected — aborting mid-walk used to hide a coexisting broken file behind the
+// version refusal until the user repaired their way to it.
 func scanStore(env migrateEnv) (*storeScan, error) {
 	scan := &storeScan{counts: make([]int, len(migrationSteps))}
 

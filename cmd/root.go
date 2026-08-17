@@ -154,6 +154,14 @@ func resolveStoreDir() (string, error) {
 	// Given ALONE, --config stays supported and simply names the store through
 	// its containing directory — that is the whole reason the combination is
 	// redundant rather than useful.
+	//
+	// The refusal is deliberately UNCONDITIONAL rather than narrowed to the case
+	// where the two disagree. Comparing them with sameDir would accept the
+	// self-consistent spelling, which is exactly the spelling that teaches the
+	// habit: the same invocation silently changes meaning the moment either value
+	// moves, and the flag it would sanction adds nothing --nibs-path does not
+	// already say. A rule with no exceptions is also the only one a message can
+	// state in one sentence.
 	if configPath != "" {
 		if nibsPath != "" {
 			return "", fmt.Errorf("--config and --nibs-path cannot be combined: the config lives inside the store, so each names a store and together they would read %s under %s's prefix and id length; pass --nibs-path %s alone",
@@ -344,10 +352,12 @@ func noStoreFoundError(cwd string) error {
 //
 //   - a bare `data/` or `archive/` subdirectory. `data/` is a standard Hugo
 //     directory and `archive/` is unremarkable anywhere; a Hugo site root had
-//     its blog post moved into `data/` and rewritten as a nib render. A store
-//     with either but no config.yml can only come from a half-deleted store,
-//     and `.nibs`-named stores — every store nibs itself creates or migrates
-//     to — are covered by the name clause regardless;
+//     its blog post moved into `data/` and rewritten as a nib render. Such a
+//     store DOES occur — `nibs init` creates the directories before it validates
+//     the prefix, so a rejected prefix leaves a config-less store behind (see
+//     cmd/init.go) — but that store is reached by re-running `nibs init`, and
+//     every store nibs creates or migrates to is named `.nibs` and covered by
+//     the name clause regardless;
 //   - a file merely NAMED config.yml, never parsed. The name is among the most
 //     common in software projects, and the check did not even exclude a
 //     DIRECTORY by that name;
