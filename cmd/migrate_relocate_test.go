@@ -733,3 +733,130 @@ func TestMigrateRefusesARetiredNibsPathItCannotStat(t *testing.T) {
 		})
 	}
 }
+
+// TestMigrateRefusesToRelocateALinkedGitWorktree pins that the relocation does not
+// destroy the rollback net the run just verified.
+//
+// The move is one os.Rename, justified by the store's own git repository travelling
+// with it. A linked worktree's `.git` is a FILE pointing into the main repository's
+// worktrees/<name>/, and that repository still records the pre-rename path — so
+// after the move git reports the worktree `prunable`, and after any routine prune
+// the relocated store answers "not a repository". gateStoreGitClean had just
+// certified a recoverable baseline, and postMigrateCommitHint then tells the user to
+// review the store's changes with git.
+func TestMigrateRefusesToRelocateALinkedGitWorktree(t *testing.T) {
+	if _, err := exec.LookPath("git"); err != nil {
+		t.Skip("git is not available")
+	}
+	t.Cleanup(resetRootPersistentFlags)
+	t.Cleanup(resetMigrateFlags)
+	resetMigrateFlags()
+
+	projectDir, storeDir := writeLegacyStoreNamed(t, "nibdata", legacyPathConfig("nibdata"), nil)
+	// A main repository elsewhere, with the store as a LINKED WORKTREE of it —
+	// the shape a `.git` FILE marks.
+	mainRepo := filepath.Join(t.TempDir(), "main")
+	mkdirAllT(t, mainRepo)
+	for _, args := range [][]string{
+		{"init", "-q", "-b", "main"},
+		{"-c", "user.email=t@example.com", "-c", "user.name=T", "commit", "-q", "--allow-empty", "-m", "root"},
+	} {
+		cmd := exec.Command("git", args...)
+		cmd.Dir = mainRepo
+		if out, err := cmd.CombinedOutput(); err != nil {
+			t.Skipf("git %v: %v\n%s", args, err, out)
+		}
+	}
+	if err := os.RemoveAll(storeDir); err != nil {
+		t.Fatal(err)
+	}
+	add := exec.Command("git", "worktree", "add", "-q", "-b", "storebranch", storeDir)
+	add.Dir = mainRepo
+	if out, err := add.CombinedOutput(); err != nil {
+		t.Skipf("git worktree add: %v\n%s", err, out)
+	}
+	writeFileT(t, filepath.Join(storeDir, "leg-a1--one.md"), layoutNib)
+	if info, err := os.Lstat(filepath.Join(storeDir, ".git")); err != nil || !info.Mode().IsRegular() {
+		t.Skipf("this git does not use a .git FILE for a linked worktree (err = %v)", err)
+	}
+
+	out, err := runRootWith(t, "--nibs-path", storeDir, "migrate", "--allow-dirty")
+	if err == nil {
+		t.Fatalf("migrate relocated a linked git worktree\nout: %s", out)
+	}
+	for _, want := range []string{"linked git worktree", "git worktree move"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Errorf("refusal = %q, want it to mention %q", err.Error(), want)
+		}
+	}
+	// Nothing may have moved: the store, its nib file and its git marker stay.
+	for _, want := range []string{storeDir, filepath.Join(storeDir, "leg-a1--one.md"), filepath.Join(storeDir, ".git")} {
+		if _, statErr := os.Lstat(want); statErr != nil {
+			t.Errorf("%s is gone after a refused run: %v", want, statErr)
+		}
+	}
+	if _, statErr := os.Lstat(filepath.Join(projectDir, store.DirName)); !os.IsNotExist(statErr) {
+		t.Errorf("the refused run created %s anyway (stat err = %v)", filepath.Join(projectDir, store.DirName), statErr)
+	}
+	// A PLAIN repository is still relocated: the refusal is about the linkage,
+	// not about git.
+	resetRootPersistentFlags()
+	resetMigrateFlags()
+	plainProject, plainStore := writeLegacyStoreNamed(t, "nibdata", legacyPathConfig("nibdata"), map[string]string{
+		"leg-a1--one.md": layoutNib,
+	})
+	initPlain := exec.Command("git", "init", "-q")
+	initPlain.Dir = plainStore
+	if out, initErr := initPlain.CombinedOutput(); initErr != nil {
+		t.Skipf("git init: %v\n%s", initErr, out)
+	}
+	if out, plainErr := runRootWith(t, "--nibs-path", plainStore, "migrate", "--allow-dirty"); plainErr != nil {
+		t.Fatalf("migrate refused a plain repository store: %v\nout: %s", plainErr, out)
+	}
+	if _, statErr := os.Stat(filepath.Join(plainProject, store.DirName, ".git")); statErr != nil {
+		t.Errorf("the plain repository did not travel with the store: %v", statErr)
+	}
+}
+
+// TestMigrateFindsFilesThroughASymlinkedStoreRoot pins that a store reached through
+// a symlink is migrated rather than silently emptied.
+//
+// The store walk used to Lstat its root, so a symlinked store yielded no files at
+// all: the layout step moved nothing, `nibs migrate` printed "Migration complete."
+// and afterwards `nibs list` reported 0 nibs while `nibs check` printed
+// "All nib files loaded" — with the nibs sitting unreachable at the old root. A
+// symlink is the ordinary spelling of "the nibs live on another volume", which is
+// what the retired `nibs.path` key existed for.
+func TestMigrateFindsFilesThroughASymlinkedStoreRoot(t *testing.T) {
+	t.Cleanup(resetRootPersistentFlags)
+	t.Cleanup(resetMigrateFlags)
+	resetMigrateFlags()
+
+	projectDir := t.TempDir()
+	real := filepath.Join(t.TempDir(), "elsewhere")
+	mkdirAllT(t, real)
+	writeFileT(t, filepath.Join(real, "leg-a1--one.md"), layoutNib)
+	link := filepath.Join(projectDir, store.DirName)
+	if err := os.Symlink(real, link); err != nil {
+		t.Skipf("symlinks unavailable: %v", err)
+	}
+
+	out, err := runRootWith(t, "--nibs-path", link, "migrate", "--allow-dirty")
+	if err != nil {
+		t.Fatalf("migrate: %v\nout: %s", err, out)
+	}
+	if _, statErr := os.Stat(filepath.Join(real, store.DataDirName, "leg-a1--one.md")); statErr != nil {
+		t.Fatalf("the nib was not moved into %s/ through the link: %v", store.DataDirName, statErr)
+	}
+
+	resetRootPersistentFlags()
+	resetListFlags()
+	t.Cleanup(resetListFlags)
+	listOut, listErr := runRootWith(t, "--nibs-path", link, "list", "--all", "--json")
+	if listErr != nil {
+		t.Fatalf("list: %v", listErr)
+	}
+	if ids := envelopeIDs(parseListEnvelope(t, listOut)); !ids["leg-a1"] {
+		t.Errorf("list ids = %v, want leg-a1 — the store's only nib", ids)
+	}
+}

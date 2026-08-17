@@ -11,6 +11,7 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+	"syscall"
 
 	"github.com/alphaleonis/nibs/internal/config"
 	"github.com/alphaleonis/nibs/internal/nib"
@@ -408,7 +409,48 @@ func planStoreRelocation(env migrateEnv) (string, error) {
 		return "", fmt.Errorf("cannot move the store %s to %s: %s already exists, and %s names %s as this project's store — so one of the two is stale; keep the one holding your nibs, remove the other, then re-run `nibs migrate`",
 			env.nibsRoot, target, target, env.legacyConfigPath(), env.nibsRoot)
 	}
+	if linked, err := gitLinkageIsExternal(env.nibsRoot); err != nil {
+		return "", err
+	} else if linked {
+		return "", fmt.Errorf("cannot move the store %s to %s: its %s is a FILE, so the store is a linked git worktree or a submodule and the repository that owns it records the store's CURRENT path — renaming it here leaves that repository pointing at a directory that no longer exists, and `git -C %s status` fails with \"not a repository\" after the next routine prune. Move it with git instead (`git worktree move %s %s` for a worktree, or move it and update the superproject for a submodule), then re-run `nibs migrate`",
+			env.nibsRoot, target, gitMarkerName, target, shellArg(env.nibsRoot), shellArg(target))
+	}
 	return target, nil
+}
+
+// gitMarkerName is the entry git puts at the root of a work tree: a DIRECTORY for
+// a plain repository, a FILE (`gitdir: …`) for a linked worktree or a submodule.
+const gitMarkerName = ".git"
+
+// gitLinkageIsExternal reports whether the git repository covering the store is
+// one whose bookkeeping lives OUTSIDE the store directory, so renaming the
+// directory would break it.
+//
+// The layout step's relocation is a single os.Rename, justified by the store's own
+// git repository travelling with it intact — which holds for a plain repository,
+// whose whole `.git` directory moves along. It does not hold for a linked worktree
+// or a submodule: their `.git` is a file pointing into another repository's
+// `worktrees/<name>/` (or `modules/<name>/`), and that repository still records the
+// pre-rename path. The result is a worktree git reports as `prunable` and, after
+// any `git worktree prune` (which `git gc --auto` performs routinely), a store
+// directory where git no longer works at all.
+//
+// That matters more than the inconvenience: gateStoreGitClean verified a
+// recoverable pre-migration baseline moments earlier, and postMigrateCommitHint
+// then tells the user to review and commit the store's changes with git. Silently
+// invalidating the net the run just leaned on is the failure this refuses.
+//
+// An Lstat failure other than "absent" is reported rather than assumed benign: it
+// is the same "cannot determine" the rest of this step takes seriously.
+func gitLinkageIsExternal(nibsRoot string) (bool, error) {
+	info, err := os.Lstat(filepath.Join(nibsRoot, gitMarkerName))
+	if err != nil {
+		if errors.Is(err, fs.ErrNotExist) {
+			return false, nil
+		}
+		return false, fmt.Errorf("checking whether the store %s is a linked git worktree: %w", nibsRoot, err)
+	}
+	return info.Mode().IsRegular(), nil
 }
 
 // apply performs the planned layout change, in the one order the derivations
@@ -425,8 +467,18 @@ func planStoreRelocation(env migrateEnv) (string, error) {
 func (p *layoutPlan) apply(env *migrateEnv, log logf) error {
 	if p.relocateTo != "" {
 		// One rename, so the store's own git repository (if it is one) travels
-		// with it intact rather than being reassembled file by file.
+		// with it intact rather than being reassembled file by file — see
+		// gitLinkageIsExternal for the case where that reasoning does not hold.
 		if err := os.Rename(env.nibsRoot, p.relocateTo); err != nil {
+			// A rename across filesystems fails wholesale, so the store is still
+			// exactly where it was and the run is re-runnable — but the raw OS
+			// error names no way forward, unlike every other refusal in this step.
+			// It takes the store itself being a mount point, since the target is
+			// always the store's own parent.
+			if errors.Is(err, syscall.EXDEV) {
+				return fmt.Errorf("cannot move the store %s to %s: they are on different filesystems, so the store directory is its own mount point (%w). Nothing has been moved. Create %s, copy the store's contents into it, verify them, remove the originals, then re-run `nibs migrate`",
+					env.nibsRoot, p.relocateTo, err, shellArg(p.relocateTo))
+			}
 			return fmt.Errorf("moving the store %s to %s: %w", env.nibsRoot, p.relocateTo, err)
 		}
 		log("layout: moved the store to %s, where nibs can find it", p.relocateTo)
