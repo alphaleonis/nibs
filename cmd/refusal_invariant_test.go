@@ -146,10 +146,20 @@ func shellFields(line string) []string {
 // storeFlagIn returns the store-naming flag a prescribed invocation carries and
 // its value. Only --nibs-path and --config name a store; every other argument is
 // irrelevant to whether resolveStoreDir accepts the command.
+// Both spellings Cobra accepts are recognized: `--nibs-path <v>` and
+// `--nibs-path=<v>`. The separated form alone would let a refusal written with
+// `=` skip the runnability check silently — and for a path whose basename is
+// `.nibs`, that check is the ONLY half that looks at it, since mayBeAbsent
+// exempts the destination migrate creates.
 func storeFlagIn(args []string) (flag, value string) {
 	for i, a := range args {
-		if (a == "--nibs-path" || a == "--config") && i+1 < len(args) {
-			return a, args[i+1]
+		for _, name := range []string{"--nibs-path", "--config"} {
+			if a == name && i+1 < len(args) {
+				return name, args[i+1]
+			}
+			if v, ok := strings.CutPrefix(a, name+"="); ok {
+				return name, v
+			}
 		}
 	}
 	return "", ""
@@ -324,6 +334,22 @@ func storeResolutionRefusalCases() []refusalCase {
 			name: "nibs.path naming a directory that is gone",
 			build: func(t *testing.T) (string, string) {
 				projectDir := legacyProject(t, "vanished")
+				return discovered(projectDir)(t)
+			},
+		},
+		{
+			// The one refusal that PRESCRIBES a command instead of a manual
+			// remedy: a `nibs.path` store the evidence guard accepts. It names
+			// the store's current location and the exact `nibs migrate` call
+			// that relocates it, so the path and the command are the two things
+			// here most worth pinning — a wrong value in either sends a user
+			// whose nibs are already misplaced somewhere that cannot help.
+			name: "nibs.path naming a store the guard accepts",
+			build: func(t *testing.T) (string, string) {
+				projectDir := legacyProject(t, "nibdata")
+				dir := filepath.Join(projectDir, "nibdata")
+				mkdirAllT(t, dir)
+				writeFileT(t, filepath.Join(dir, "leg-a1--one.md"), layoutNib)
 				return discovered(projectDir)(t)
 			},
 		},
