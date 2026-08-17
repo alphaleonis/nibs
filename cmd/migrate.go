@@ -639,7 +639,9 @@ func (c *configRelocation) apply(log logf) error {
 func stripRetiredNibsPath(data []byte, env migrateEnv) (out []byte, note string, err error) {
 	var doc yaml.Node
 	if err := yaml.Unmarshal(data, &doc); err != nil {
-		return nil, "", fmt.Errorf("parsing %s: %w", env.legacyConfigPath(), err)
+		// The yaml error quotes the file's own content, so it crosses the boundary
+		// like every other file-sourced reason (see describeScanProblems).
+		return nil, "", fmt.Errorf("parsing %s: %s", env.legacyConfigPath(), flattenReason(err.Error()))
 	}
 	if doc.Kind != yaml.DocumentNode || len(doc.Content) == 0 {
 		return data, "", nil // empty document: nothing to strip
@@ -745,11 +747,14 @@ func loadStoreForMigration(env migrateEnv) (*nibcore.Core, error) {
 	unparseable, duplicates := core.LoadDiagnostics()
 	if len(unparseable) > 0 || len(duplicates) > 0 {
 		var problems []string
+		// Filenames and parse errors quoting them, so both halves cross the
+		// rendering boundary here as well as at the error boundary that prints
+		// them (see stripControlChars).
 		for _, uf := range unparseable {
-			problems = append(problems, fmt.Sprintf("unparseable nib file %s: %s", uf.Path, uf.Reason))
+			problems = append(problems, fmt.Sprintf("unparseable nib file %s: %s", stripControlChars(uf.Path), stripControlChars(uf.Reason)))
 		}
 		for _, d := range duplicates {
-			problems = append(problems, fmt.Sprintf("duplicate id %q: %s shadows %s", d.NibID, d.Loaded, d.Shadowed))
+			problems = append(problems, fmt.Sprintf("duplicate id %q: %s shadows %s", d.NibID, stripControlChars(d.Loaded), stripControlChars(d.Shadowed)))
 		}
 		return nil, fmt.Errorf("refusing to migrate a store that does not load cleanly (repair the files below by hand, `nibs check` reports them too, then re-run `nibs migrate`):\n  %s",
 			strings.Join(problems, "\n  "))

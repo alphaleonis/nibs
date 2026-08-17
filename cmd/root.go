@@ -14,6 +14,7 @@ import (
 	"github.com/alphaleonis/nibs/internal/nib"
 	"github.com/alphaleonis/nibs/internal/nibcore"
 	"github.com/alphaleonis/nibs/internal/output"
+	"github.com/alphaleonis/nibs/internal/safetext"
 	"github.com/alphaleonis/nibs/internal/store"
 	"github.com/spf13/cobra"
 	"gopkg.in/yaml.v3"
@@ -562,10 +563,18 @@ func shellArg(path string) string {
 // violation is a VALIDATION_ERROR (exit 2) and, for --json commands, the {error}
 // envelope — matching value-validation errors instead of Cobra's plain-text
 // exit 1.
+//
+// The writer is wrapped in safetext.Writer, which makes this a STRUCTURAL
+// boundary for file-sourced text rather than one every message has to remember:
+// refusals here quote filenames and front-matter scalars an attacker may choose,
+// and unlike stdout this channel carries no styled output, so nothing is lost by
+// neutralizing it wholesale. Newlines survive — multi-file refusals list one file
+// per line.
 func reportExitError(stderr io.Writer, err error) int {
 	if err == nil {
 		return output.ExitOK
 	}
+	stderr = safetext.NewWriter(stderr)
 	var ce *output.CodedError
 	if errors.As(err, &ce) {
 		if !ce.Reported {

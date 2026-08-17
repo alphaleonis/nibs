@@ -374,21 +374,25 @@ func renderLoadDiagnostics(result *nibcore.LinkCheckResult, migration *migration
 	for _, uf := range result.UnparseableFiles {
 		// The reason is carried through: the user has to repair the file by
 		// hand, so the report has to say what is wrong with it.
+		// Every field here comes from the filesystem — the path is a filename,
+		// the id is derived from it — so all of them cross the rendering boundary,
+		// not only the parse reason. stdout carries lipgloss styling, so the
+		// boundary cannot live on this writer (see stripControlChars).
 		if checkFix {
 			ui.Printf("  %s Cannot auto-fix unparseable nib file %s (repair it by hand): %s\n",
-				ui.Warning.Render("!"), uf.Path, flattenReason(uf.Reason))
+				ui.Warning.Render("!"), stripControlChars(uf.Path), flattenReason(uf.Reason))
 		} else {
 			ui.Printf("  %s Unparseable nib file %s (skipped at load, so %s is missing from every query): %s\n",
-				ui.Danger.Render("✗"), uf.Path, describeMissingNib(uf.NibID), flattenReason(uf.Reason))
+				ui.Danger.Render("✗"), stripControlChars(uf.Path), stripControlChars(describeMissingNib(uf.NibID)), flattenReason(uf.Reason))
 		}
 	}
 	for _, d := range result.DuplicateIDs {
 		if checkFix {
 			ui.Printf("  %s Cannot auto-fix duplicate id %q: %s shadows %s (choose which file to keep)\n",
-				ui.Warning.Render("!"), d.NibID, d.Loaded, d.Shadowed)
+				ui.Warning.Render("!"), d.NibID, stripControlChars(d.Loaded), stripControlChars(d.Shadowed))
 		} else {
 			ui.Printf("  %s Duplicate id %q: %s shadows %s (the shadowed file is unreachable)\n",
-				ui.Danger.Render("✗"), d.NibID, d.Loaded, d.Shadowed)
+				ui.Danger.Render("✗"), d.NibID, stripControlChars(d.Loaded), stripControlChars(d.Shadowed))
 		}
 	}
 	if result.LoadIssues() == 0 && migration == nil {
@@ -404,12 +408,14 @@ func renderLoadDiagnostics(result *nibcore.LinkCheckResult, migration *migration
 func renderFieldDiagnostics(app *App, result *nibcore.LinkCheckResult) {
 	for _, ie := range result.InvalidEnums {
 		remedy := fieldRemediation(app, ie)
+		// ie.Reason embeds a raw front-matter VALUE, so it crosses the boundary
+		// like every other file-sourced field printed to stdout.
 		if checkFix {
 			ui.Printf("  %s Cannot auto-fix %s: %s (%s)\n",
-				ui.Warning.Render("!"), ie.NibID, ie.Reason, remedy)
+				ui.Warning.Render("!"), ie.NibID, flattenReason(ie.Reason), remedy)
 		} else {
 			ui.Printf("  %s %s: %s (loads as written; %s)\n",
-				ui.Danger.Render("✗"), ie.NibID, ie.Reason, remedy)
+				ui.Danger.Render("✗"), ie.NibID, flattenReason(ie.Reason), remedy)
 		}
 	}
 }

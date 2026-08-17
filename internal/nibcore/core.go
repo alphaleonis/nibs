@@ -16,6 +16,7 @@ import (
 
 	"github.com/alphaleonis/nibs/internal/config"
 	"github.com/alphaleonis/nibs/internal/nib"
+	"github.com/alphaleonis/nibs/internal/safetext"
 	"github.com/alphaleonis/nibs/internal/search"
 	"github.com/alphaleonis/nibs/internal/store"
 )
@@ -129,7 +130,13 @@ type Core struct {
 	// holding subMu). See handleChanges for the full reasoning.
 	payloadSubCount atomic.Int64
 
-	// Warning logger for non-fatal errors (defaults to stderr)
+	// Warning logger for non-fatal errors. It defaults to stderr through
+	// safetext.Writer, because the highest-traffic warning here interpolates a
+	// FILENAME ("skipping unparseable nib file %s") and a filename on Linux is
+	// arbitrary bytes: a file named with an embedded ESC sequence would otherwise
+	// repaint the terminal from every command that loads the store. The boundary
+	// lives on the writer rather than at the logWarn call sites so it cannot be
+	// bypassed by adding a warning that forgets it.
 	warnWriter io.Writer
 }
 
@@ -144,7 +151,7 @@ func New(root string, cfg *config.Config) *Core {
 		mentionIdx:        newMentionIndex(),
 		subscribers:       make(map[uint64]*subscription),
 		signalSubscribers: make(map[uint64]chan struct{}),
-		warnWriter:        os.Stderr,
+		warnWriter:        safetext.NewWriter(os.Stderr),
 	}
 }
 
@@ -159,8 +166,16 @@ func (c *Core) acquireWriteLock() (func() error, error) {
 
 // SetWarnWriter sets the writer for warning messages.
 // Pass nil to disable warnings.
+//
+// The replacement is wrapped in the same rendering boundary the default carries,
+// so a caller redirecting warnings (tests, an embedding process) cannot
+// accidentally opt out of it.
 func (c *Core) SetWarnWriter(w io.Writer) {
-	c.warnWriter = w
+	if w == nil {
+		c.warnWriter = nil
+		return
+	}
+	c.warnWriter = safetext.NewWriter(w)
 }
 
 // SetSearchIndex sets a custom search index implementation.

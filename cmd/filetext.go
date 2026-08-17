@@ -3,6 +3,8 @@ package cmd
 import (
 	"strings"
 	"unicode/utf8"
+
+	"github.com/alphaleonis/nibs/internal/safetext"
 )
 
 // maxEchoedFileTextRunes bounds how much of a file-sourced scalar a message
@@ -11,13 +13,9 @@ import (
 // file a canvas.
 const maxEchoedFileTextRunes = 200
 
-// stripControlChars replaces every C0 and C1 control character in s with a
-// single space. It is the rendering boundary for text nibs did not write: file
-// contents, filesystem paths and the parse errors that quote them all reach
-// stdout and stderr, and a YAML double-quoted scalar can carry ESC (`\e`), so
-// echoing the raw bytes lets a file paint arbitrary text over the terminal.
-// The observed payload redrew the line as a fabricated "All checks passed"
-// inside an error message.
+// stripControlChars renders one scalar read from a file so it cannot paint text
+// over the terminal — see internal/safetext for the rule and why it is the whole
+// non-printable category rather than a control-character list.
 //
 // This CLI's primary consumer is a coding agent, which makes the transcript the
 // aggravating sink rather than the terminal: `nibs list` in a freshly cloned,
@@ -25,21 +23,17 @@ const maxEchoedFileTextRunes = 200
 // runs, and an ancestor `.nibs.yml` reached by the upward walk lands unfiltered
 // in that agent's context.
 //
+// SCOPE, so nobody reads more into this than it does. Two sinks apply the boundary
+// structurally and cannot be bypassed by forgetting to call this: nibcore's warn
+// writer and the CLI's error boundary (reportExitError). STDOUT is not one of
+// them — it carries lipgloss-styled output, and stripping escapes there would
+// erase the styling — so every file-sourced field printed through ui.Printf must
+// pass through this function or flattenReason at the call site.
+// TestFileSourcedTextNeverReachesAnEchoSurfaceRaw enumerates those surfaces.
+//
 // Whitespace collapsing is left to the caller — flattenReason already does it
 // with strings.Fields, and a path is better left as-is.
-func stripControlChars(s string) string {
-	var b strings.Builder
-	b.Grow(len(s))
-	for _, r := range s {
-		switch {
-		case r == utf8.RuneError, r < 0x20, r == 0x7f, r >= 0x80 && r <= 0x9f:
-			b.WriteByte(' ')
-		default:
-			b.WriteRune(r)
-		}
-	}
-	return b.String()
-}
+func stripControlChars(s string) string { return safetext.Strip(s) }
 
 // sanitizeFileText renders one scalar read from a file for a terminal message:
 // control characters neutralized (see stripControlChars), whitespace collapsed
