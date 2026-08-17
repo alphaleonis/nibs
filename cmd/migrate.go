@@ -635,7 +635,7 @@ func (p *layoutPlan) apply(env *migrateEnv, log logf) error {
 		// One rename, so the store's own git repository (if it is one) travels
 		// with it intact rather than being reassembled file by file — see
 		// gitLinkageIsExternal for the case where that reasoning does not hold.
-		if err := os.Rename(env.nibsRoot, p.relocateTo); err != nil {
+		if err := storeRenameFn(env.nibsRoot, p.relocateTo); err != nil {
 			// A rename across filesystems fails wholesale, so the store is still
 			// exactly where it was and the run is re-runnable — but the raw OS
 			// error names no way forward, unlike every other refusal in this step.
@@ -674,6 +674,12 @@ func (p *layoutPlan) apply(env *migrateEnv, log logf) error {
 	}
 	return nil
 }
+
+// storeRenameFn is a seam over os.Rename for the STORE relocation, so tests can
+// exercise the failures the filesystem will not produce on demand — a cross-device
+// rename needs the store to be its own mount point. Production always uses
+// os.Rename.
+var storeRenameFn = os.Rename
 
 // applyLayout performs the whole shape change in one pass: the store moves to
 // `<project>/.nibs` if it is elsewhere, every pre-layout nib file moves into

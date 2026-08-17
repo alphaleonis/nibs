@@ -3,6 +3,7 @@ package config
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/alphaleonis/nibs/internal/store"
@@ -478,4 +479,44 @@ func TestDefaultWithPrefixFromUserConfig(t *testing.T) {
 			t.Errorf("Prefix = %q, want \"myapp-\"", cfg.Nibs.Prefix)
 		}
 	})
+}
+
+// TestLoadUserConfigFromIsBounded pins that the ceiling MaxConfigBytes documents
+// covers the user config too. That read sits on the same always-successful path as
+// the project config — every command that resolves a store reaches it — so an
+// unbounded os.ReadFile there is exactly the cost the ceiling exists to prevent,
+// and the comment declaring the hazard closed is what stops anyone re-deriving it.
+func TestLoadUserConfigFromIsBounded(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "nibs.yml")
+	body := "nibs:\n  id_length: 4\n# " + strings.Repeat("x", MaxConfigBytes) + "\n"
+	if err := os.WriteFile(path, []byte(body), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	if _, err := LoadUserConfigFrom(path); err == nil {
+		t.Fatal("LoadUserConfigFrom read a user config past the size ceiling")
+	} else if !strings.Contains(err.Error(), "configuration limit") {
+		t.Errorf("error = %v, want it to name the configuration size limit", err)
+	}
+
+	// A config comfortably under the ceiling still loads, and absence still means
+	// "use the defaults".
+	small := "nibs:\n  id_length: 6\n"
+	if err := os.WriteFile(path, []byte(small), 0644); err != nil {
+		t.Fatal(err)
+	}
+	cfg, err := LoadUserConfigFrom(path)
+	if err != nil {
+		t.Fatalf("a small user config was refused: %v", err)
+	}
+	if cfg.Nibs.IDLength != 6 {
+		t.Errorf("id_length = %d, want 6", cfg.Nibs.IDLength)
+	}
+	missing, err := LoadUserConfigFrom(filepath.Join(t.TempDir(), "absent.yml"))
+	if err != nil {
+		t.Fatalf("an absent user config must read as the defaults: %v", err)
+	}
+	if missing.Nibs.IDLength != 0 {
+		t.Errorf("absent config = %+v, want the zero value", missing.Nibs)
+	}
 }

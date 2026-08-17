@@ -6,6 +6,7 @@ import (
 	"path/filepath"
 	"runtime"
 	"strings"
+	"syscall"
 	"testing"
 
 	"github.com/alphaleonis/nibs/internal/store"
@@ -1088,5 +1089,46 @@ func TestMigrateStripsTheRetiredKeyFromAConfigInsideTheStore(t *testing.T) {
 	}
 	if ids := envelopeIDs(parseListEnvelope(t, listOut)); !ids["leg-a1"] {
 		t.Errorf("list ids = %v, want leg-a1", ids)
+	}
+}
+
+// TestMigrateNamesARemedyForACrossDeviceRelocation pins that the one failure the
+// relocation cannot avoid still names a next step. os.Rename fails wholesale with
+// EXDEV, so the store is exactly where it was and the run is re-runnable — but a raw
+// OS error was the only refusal in this step that pointed nowhere.
+//
+// EXDEV needs the store to be its own mount point (the target is always the store's
+// parent), so it is injected through the rename seam rather than staged on disk.
+func TestMigrateNamesARemedyForACrossDeviceRelocation(t *testing.T) {
+	t.Cleanup(resetRootPersistentFlags)
+	t.Cleanup(resetMigrateFlags)
+	resetMigrateFlags()
+
+	projectDir, storeDir := writeLegacyStoreNamed(t, "nibdata", legacyPathConfig("nibdata"), map[string]string{
+		"leg-a1--one.md": layoutNib,
+	})
+	orig := storeRenameFn
+	storeRenameFn = func(string, string) error {
+		return &os.LinkError{Op: "rename", Old: storeDir, New: filepath.Join(projectDir, store.DirName), Err: syscall.EXDEV}
+	}
+	t.Cleanup(func() { storeRenameFn = orig })
+
+	out, err := runRootWith(t, "--nibs-path", storeDir, "migrate", "--allow-dirty")
+	if err == nil {
+		t.Fatalf("migrate reported success across a failed rename\nout: %s", out)
+	}
+	for _, want := range []string{"different filesystems", "Nothing has been moved", "re-run `nibs migrate`"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Errorf("refusal = %q, want it to mention %q", err.Error(), want)
+		}
+	}
+	// Nothing moved, so the run really is re-runnable.
+	for _, want := range []string{
+		filepath.Join(storeDir, "leg-a1--one.md"),
+		filepath.Join(projectDir, store.LegacyProjectConfigFileName),
+	} {
+		if _, statErr := os.Stat(want); statErr != nil {
+			t.Errorf("%s is gone after a failed relocation: %v", want, statErr)
+		}
 	}
 }
