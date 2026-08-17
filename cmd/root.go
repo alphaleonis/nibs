@@ -300,9 +300,16 @@ func resolveStoreDir() (string, error) {
 // for.
 //
 // The declared VALUE is echoed through sanitizeFileText (untrusted file content
-// quoted back, so collapsed and bounded), while the paths that appear as COMMAND
-// ARGUMENTS go through stripControlChars and shell quoting only — collapsing or
-// truncating those would corrupt the one string the user has to run.
+// quoted back, so collapsed and bounded) and printed with %q, while the paths that
+// appear as COMMAND ARGUMENTS go through stripControlChars and shell quoting only —
+// collapsing or truncating those would corrupt the one string the user has to run.
+//
+// %q rather than %s because the rendering boundary handles deception and nothing
+// handles the SEMANTIC channel: a value from a cloned repository's `.nibs.yml` sits
+// in the same sentence as a command the reader is told to run, and with ~180 runes
+// of prose to work with it could close its own markdown span and address the reader
+// directly — whose stated primary consumer is an agent primed to follow
+// instructions. Quoting cannot terminate its own delimiter.
 func noStoreFoundError(cwd string) error {
 	legacy, err := store.FindLegacyProjectConfig(cwd)
 	if err != nil || legacy == "" {
@@ -328,7 +335,7 @@ func noStoreFoundError(cwd string) error {
 	}
 	ok, evErr := hasLegacyStoreShape(dataDir)
 	if evErr == nil && ok {
-		return fmt.Errorf("no %s directory found in %s or any parent directory, but %s sets the retired `nibs.path: %s`; this project's nibs live in %s — run `nibs migrate --nibs-path %s`, which moves that store to %s and relocates the config into it (do NOT run `nibs init`, which would create an empty store beside the real data)",
+		return fmt.Errorf("no %s directory found in %s or any parent directory, but %s sets the retired `nibs.path: %q`; this project's nibs live in %s — run `nibs migrate --nibs-path %s`, which moves that store to %s and relocates the config into it (do NOT run `nibs init`, which would create an empty store beside the real data)",
 			store.DirName, cwd, legacy, sanitizeFileText(declared),
 			stripControlChars(dataDir), shellArg(dataDir), target)
 	}
@@ -341,11 +348,11 @@ func noStoreFoundError(cwd string) error {
 		// clauses carry are withheld here: moving files out of a directory nobody
 		// can read, and discarding the only record of where those files are.
 		if errors.Is(evErr, fs.ErrNotExist) {
-			return fmt.Errorf("no %s directory found in %s or any parent directory, and %s sets the retired `nibs.path: %s`, but %s does not exist — so this project's nib files are not where the config says they are; find them, create %s and move them into it, then run `nibs migrate` (do NOT run `nibs init`, which would create an empty store beside data that may already exist)",
+			return fmt.Errorf("no %s directory found in %s or any parent directory, and %s sets the retired `nibs.path: %q`, but %s does not exist — so this project's nib files are not where the config says they are; find them, create %s and move them into it, then run `nibs migrate` (do NOT run `nibs init`, which would create an empty store beside data that may already exist)",
 				store.DirName, cwd, legacy, sanitizeFileText(declared),
 				stripControlChars(dataDir), target)
 		}
-		return fmt.Errorf("no %s directory found in %s or any parent directory, and %s sets the retired `nibs.path: %s`, whose contents cannot be read (%v) — so whether this project's nibs are in %s cannot be determined; resolve that (mount the volume, fix its permissions), then re-run (do NOT run `nibs init`, and do NOT remove the `nibs.path` key: it is the only record of where the nibs are)",
+		return fmt.Errorf("no %s directory found in %s or any parent directory, and %s sets the retired `nibs.path: %q`, whose contents cannot be read (%v) — so whether this project's nibs are in %s cannot be determined; resolve that (mount the volume, fix its permissions), then re-run (do NOT run `nibs init`, and do NOT remove the `nibs.path` key: it is the only record of where the nibs are)",
 			store.DirName, cwd, legacy, sanitizeFileText(declared), evErr,
 			stripControlChars(dataDir))
 	}
@@ -359,7 +366,7 @@ func noStoreFoundError(cwd string) error {
 	if namedErr == nil && named && insideErr == nil && inside {
 		why = "which `nibs migrate` will not relocate for you because nothing in it was written by nibs (no markdown file carries a nibs `status:`)"
 	}
-	return fmt.Errorf("no %s directory found in %s or any parent directory, but %s sets the retired `nibs.path: %s`; this project's nibs live in %s, %s — create %s, move this project's nib files from %s into it, remove the `nibs.path` key from %s, then run `nibs migrate` (do NOT run `nibs init`, which would create an empty store beside the real data)",
+	return fmt.Errorf("no %s directory found in %s or any parent directory, but %s sets the retired `nibs.path: %q`; this project's nibs live in %s, %s — create %s, move this project's nib files from %s into it, remove the `nibs.path` key from %s, then run `nibs migrate` (do NOT run `nibs init`, which would create an empty store beside the real data)",
 		store.DirName, cwd, legacy, sanitizeFileText(declared),
 		stripControlChars(dataDir), why, target, stripControlChars(dataDir), legacy)
 }
