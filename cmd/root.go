@@ -7,7 +7,6 @@ import (
 	"io/fs"
 	"os"
 	"path/filepath"
-	"strings"
 
 	"github.com/alphaleonis/nibs/internal/config"
 	"github.com/alphaleonis/nibs/internal/graph"
@@ -160,8 +159,8 @@ func resolveStoreDir() (string, error) {
 			return "", fmt.Errorf("nibs store does not exist or is not a directory: %s", explicit)
 		}
 		if !looksLikeStore(explicit) {
-			return "", fmt.Errorf("%s is not a nibs store: it holds no %s, %s/ or %s/, and is not a pre-layout store either; name the store directory itself (e.g. --nibs-path %s), or run `nibs init` there",
-				explicit, store.ConfigFileName, store.DataDirName, store.ArchiveDirName,
+			return "", fmt.Errorf("%s is not a nibs store: it holds no %s that parses as one, and no %s beside it names it; name the store directory itself (e.g. --nibs-path %s), or run `nibs init` there",
+				explicit, store.ConfigFileName, store.LegacyProjectConfigFileName,
 				filepath.Join(explicit, store.DirName))
 		}
 		return explicit, nil
@@ -188,91 +187,138 @@ func resolveStoreDir() (string, error) {
 // `nibs.path` key — has no store directory either, and for it that advice is
 // actively harmful: it creates an empty store with a derived prefix beside the
 // real data and strands it. So the walk that fails is followed by a walk for
-// the pre-layout config, and when one is there the message names it, the data
-// directory it points at, and the move that makes the project resolvable.
+// the pre-layout config, and when one is there the message names it and the
+// remedy that actually converges.
+//
+// That remedy is `nibs migrate --nibs-path <dataDir>` — migrating the store
+// WHERE IT IS. The layout step then moves it to `<project>/.nibs`, which is what
+// makes the project discoverable afterwards; telling the user to move the files
+// by hand first only produced a store whose `.nibs.yml` still named the emptied
+// directory, and no filesystem action can make a config VALUE equal `.nibs`.
+//
+// The declared path is echoed through sanitizeFileText: it is untrusted file
+// content, and this message is one of the first things run in a freshly cloned
+// repository.
 func noStoreFoundError(cwd string) error {
 	legacy, err := store.FindLegacyProjectConfig(cwd)
 	if err != nil || legacy == "" {
 		return fmt.Errorf("no %s directory found in %s or any parent directory (run 'nibs init' to create one)", store.DirName, cwd)
 	}
-	target := filepath.Join(filepath.Dir(legacy), store.DirName)
-	if declared := legacyNibsPath(legacy); declared != "" {
+	projectDir := filepath.Dir(legacy)
+	target := filepath.Join(projectDir, store.DirName)
+	if declared := config.RetiredNibsPath(legacy); declared != "" {
 		dataDir := declared
 		if !filepath.IsAbs(dataDir) {
-			dataDir = filepath.Join(filepath.Dir(legacy), dataDir)
+			dataDir = filepath.Join(projectDir, dataDir)
 		}
-		return fmt.Errorf("no %s directory found in %s or any parent directory, but %s sets the retired `nibs.path: %s`; this project's nibs live in %s — move its contents into %s/, then run `nibs migrate` (do NOT run `nibs init`, which would create an empty store beside them)",
-			store.DirName, cwd, legacy, declared, dataDir, target)
+		return fmt.Errorf("no %s directory found in %s or any parent directory, but %s sets the retired `nibs.path: %s`; this project's nibs live in %s — run `nibs migrate --nibs-path %s`, which moves that store to %s and relocates the config into it (do NOT run `nibs init`, which would create an empty store beside the real data)",
+			store.DirName, cwd, legacy, sanitizeFileText(declared),
+			sanitizeFileText(dataDir), sanitizeFileText(dataDir), target)
 	}
 	return fmt.Errorf("no %s directory found in %s or any parent directory, but %s is a pre-layout nibs config with no store beside it; create %s and move this project's nib files into it, then run `nibs migrate`",
 		store.DirName, cwd, legacy, target)
 }
 
-// legacyNibsPath returns the retired `nibs.path` value from a pre-layout
-// config, or "" when the file cannot be read or does not set the key. It is a
-// best-effort probe used only to sharpen an error message, so every failure
-// simply reads as "no key".
-func legacyNibsPath(path string) string {
-	data, err := os.ReadFile(path)
-	if err != nil {
-		return ""
-	}
-	var probe struct {
-		Nibs struct {
-			Path string `yaml:"path"`
-		} `yaml:"nibs"`
-	}
-	if err := yaml.Unmarshal(data, &probe); err != nil {
-		return ""
-	}
-	return probe.Nibs.Path
-}
-
 // looksLikeStore reports whether dir carries positive evidence of being a nibs
 // store, so an explicitly named directory can never silently resolve to an
-// ordinary project directory (see resolveStoreDir). Any ONE of these suffices:
+// ordinary project directory (see resolveStoreDir).
+//
+// This is structurally an authorization check: it decides whether `nibs migrate`
+// may move and rewrite a whole subtree. So the evidence must be something only a
+// nibs store PRODUCES, not something a directory might merely be CALLED. Any ONE
+// of these suffices:
 //
 //   - the directory is named `.nibs` — the name IS the marker store.FindStore
 //     recognizes, and an empty one is a legal freshly created store;
-//   - it holds config.yml, data/ or archive/ — the current layout's own paths;
-//   - it holds a top-level *.md and a `.nibs.yml` sits beside it — the
-//     pre-layout shape. That clause is what keeps a store outside `.nibs` (the
-//     retired `nibs.path` key) resolvable, and --nibs-path is the only way to
-//     name one, so dropping it would put those projects out of `nibs migrate`'s
-//     reach — the very population the migration exists to serve.
+//   - it holds a config.yml that PARSES as a nibs config: every config
+//     `nibs init` writes has a top-level `nibs:` mapping, and the current layout
+//     puts it inside the store. This is what keeps `nibs init --nibs-path <dir>`
+//     followed by `nibs list --nibs-path <dir>` working for a store the user
+//     deliberately put somewhere other than `.nibs`;
+//   - a pre-layout `.nibs.yml` beside it NAMES it through the retired
+//     `nibs.path` key — see hasLegacyStoreShape. That clause is what keeps a
+//     pre-layout store outside `.nibs` reachable by `nibs migrate`, the very
+//     population the migration exists to serve.
+//
+// Deliberately NOT evidence, and each one was an accepted shape that resolved an
+// ordinary project directory as a store:
+//
+//   - a bare `data/` or `archive/` subdirectory. `data/` is a standard Hugo
+//     directory and `archive/` is unremarkable anywhere; a Hugo site root had
+//     its blog post moved into `data/` and rewritten as a nib render. A store
+//     with either but no config.yml can only come from a half-deleted store,
+//     and `.nibs`-named stores — every store nibs itself creates or migrates
+//     to — are covered by the name clause regardless;
+//   - a file merely NAMED config.yml, never parsed. The name is among the most
+//     common in software projects, and the check did not even exclude a
+//     DIRECTORY by that name;
+//   - "a `.nibs.yml` sits beside it and it holds some `*.md`". That accepted
+//     any docs/ or notes/ directory of an unmigrated project, and `nibs migrate`
+//     then deleted the project's real `.nibs.yml` and relocated it there.
 func looksLikeStore(dir string) bool {
 	if filepath.Base(dir) == store.DirName {
 		return true
 	}
-	l := store.NewLayout(dir)
-	if _, err := os.Stat(l.ConfigPath()); err == nil {
+	if parsesAsNibsConfig(store.NewLayout(dir).ConfigPath()) {
 		return true
-	}
-	for _, sub := range []string{l.DataDir(), l.ArchiveDir()} {
-		if info, err := os.Stat(sub); err == nil && info.IsDir() {
-			return true
-		}
 	}
 	return hasLegacyStoreShape(dir)
 }
 
-// hasLegacyStoreShape reports whether dir looks like a pre-layout store: nib
-// files sat directly in it, and the project config sat beside it.
-func hasLegacyStoreShape(dir string) bool {
-	legacy := filepath.Join(filepath.Dir(dir), store.LegacyProjectConfigFileName)
-	if info, err := os.Stat(legacy); err != nil || info.IsDir() {
+// parsesAsNibsConfig reports whether path is a regular file holding YAML with a
+// top-level `nibs:` MAPPING — the shape of every config `nibs init` writes
+// (config.Config always marshals its `nibs` key), and the one artifact a nibs
+// store cannot be mistaken about. A directory, a dangling symlink, unparseable
+// YAML, or a document whose `nibs` key is a scalar all read as "not a store".
+func parsesAsNibsConfig(path string) bool {
+	if info, err := os.Stat(path); err != nil || !info.Mode().IsRegular() {
 		return false
 	}
-	entries, err := os.ReadDir(dir)
+	data, err := config.ReadConfigFile(path)
 	if err != nil {
 		return false
 	}
-	for _, e := range entries {
-		if !e.IsDir() && strings.HasSuffix(e.Name(), ".md") {
-			return true
-		}
+	// A node tree rather than a struct probe: yaml.v3 populates a struct's
+	// *yaml.Node field with a zero-Kind node, so "the key is a mapping" is not
+	// answerable that way. mappingValue is the same accessor the layout step's
+	// rewrite uses.
+	var doc yaml.Node
+	if err := yaml.Unmarshal(data, &doc); err != nil {
+		return false
 	}
-	return false
+	if doc.Kind != yaml.DocumentNode || len(doc.Content) == 0 {
+		return false
+	}
+	nibs := mappingValue(doc.Content[0], "nibs")
+	return nibs != nil && nibs.Kind == yaml.MappingNode
+}
+
+// hasLegacyStoreShape reports whether dir is the store a pre-layout project's
+// `.nibs.yml` NAMES through the retired `nibs.path` key.
+//
+// The authorization is the config naming this exact directory — nothing about
+// dir's own contents. "A `.nibs.yml` sits beside it and it holds a `*.md`" is
+// satisfied by any docs/ or notes/ directory of an unmigrated project, and what
+// this decision authorizes is `nibs migrate` relocating that project's real
+// config into the directory and rewriting every front-mattered file under it.
+//
+// A `.nibs.yml` carrying no `nibs.path` describes a store at `<project>/.nibs`,
+// which looksLikeStore's name clause already accepts, so there is nothing for
+// this clause to add there.
+func hasLegacyStoreShape(dir string) bool {
+	projectDir := filepath.Dir(dir)
+	legacy := filepath.Join(projectDir, store.LegacyProjectConfigFileName)
+	if info, err := os.Stat(legacy); err != nil || info.IsDir() {
+		return false
+	}
+	declared := config.RetiredNibsPath(legacy)
+	if declared == "" {
+		return false
+	}
+	if !filepath.IsAbs(declared) {
+		declared = filepath.Join(projectDir, declared)
+	}
+	return sameDir(declared, dir)
 }
 
 // reportExitError is the single, testable error boundary for the CLI. It is

@@ -634,9 +634,10 @@ func TestMigrateRefusesAMisAimedLegacyConfig(t *testing.T) {
 	if err == nil {
 		t.Fatalf("migrate accepted --config at the pre-layout config\nout: %s", out)
 	}
-	if !strings.Contains(err.Error(), "--nibs-path") {
-		t.Errorf("refusal = %v, want it to name --nibs-path as the replacement", err)
-	}
+	// The refusal must come from the --config guard specifically. The fallback
+	// store-evidence guard rejects this fixture too and names --nibs-path in the
+	// same breath, so asserting only that passes with the guard deleted.
+	assertRefusedByConfigGuard(t, err, storeDir)
 
 	// Nothing was created outside the store, and the unrelated document is
 	// byte-identical.
@@ -652,6 +653,63 @@ func TestMigrateRefusesAMisAimedLegacyConfig(t *testing.T) {
 	}
 	// And the real store is still where it was, still unmigrated.
 	if _, statErr := os.Stat(filepath.Join(storeDir, "leg-a1--one.md")); statErr != nil {
+		t.Errorf("the real store's nib file moved: %v", statErr)
+	}
+}
+
+// TestMigrateRefusesASiblingDirectoryOfAnUnmigratedProject is the end-to-end
+// guard for the shape the evidence check used to accept on the weakest possible
+// grounds: ANY sibling directory of an unmigrated project that happens to hold a
+// markdown file. `--nibs-path <project>/docs` resolved docs/ as the store, and
+// the layout step then DELETED the project's real `.nibs.yml` and relocated it
+// into docs/ — after which `nibs check` certified the store healthy and
+// `nibs init` silently re-prefixed the project, because the config the init
+// guard looks for had been moved away.
+//
+// The fixture uses a fence-less README: front matter is not required to trip the
+// old clause, so the guard must not depend on the file's content either.
+func TestMigrateRefusesASiblingDirectoryOfAnUnmigratedProject(t *testing.T) {
+	t.Cleanup(resetRootPersistentFlags)
+	t.Cleanup(resetMigrateFlags)
+	resetMigrateFlags()
+
+	projectDir, storeDir := writeLegacyStore(t, "nibs:\n  prefix: real-\n  id_length: 6\n", map[string]string{
+		"real-a1b2c3--one.md": layoutNib,
+	})
+	docs := filepath.Join(projectDir, "docs")
+	mkdirAllT(t, docs)
+	const readme = "# Docs\n\nOrdinary documentation, no front matter.\n"
+	writeFileT(t, filepath.Join(docs, "README.md"), readme)
+
+	out, err := runRootWith(t, "--nibs-path", docs, "migrate", "--allow-dirty")
+	if err == nil {
+		t.Fatalf("migrate accepted a sibling docs/ directory as the store\nout: %s", out)
+	}
+	if !strings.Contains(err.Error(), "not a nibs store") {
+		t.Errorf("refusal = %v, want the store-evidence guard", err)
+	}
+
+	// The project's real config is untouched — that deletion is what made the
+	// whole cascade silent.
+	legacy := filepath.Join(projectDir, store.LegacyProjectConfigFileName)
+	if _, statErr := os.Stat(legacy); statErr != nil {
+		t.Errorf("the project's %s was deleted: %v", store.LegacyProjectConfigFileName, statErr)
+	}
+	if _, statErr := os.Stat(filepath.Join(docs, store.ConfigFileName)); !os.IsNotExist(statErr) {
+		t.Errorf("migrate wrote a %s into docs/ (stat err = %v)", store.ConfigFileName, statErr)
+	}
+	if _, statErr := os.Stat(filepath.Join(docs, store.DataDirName)); !os.IsNotExist(statErr) {
+		t.Errorf("migrate created docs/%s/ (stat err = %v)", store.DataDirName, statErr)
+	}
+	got, readErr := os.ReadFile(filepath.Join(docs, "README.md"))
+	if readErr != nil {
+		t.Fatalf("the readme was moved or removed: %v", readErr)
+	}
+	if string(got) != readme {
+		t.Errorf("migrate rewrote the readme:\n%s", got)
+	}
+	// And the real store is still where it was, still unmigrated.
+	if _, statErr := os.Stat(filepath.Join(storeDir, "real-a1b2c3--one.md")); statErr != nil {
 		t.Errorf("the real store's nib file moved: %v", statErr)
 	}
 }

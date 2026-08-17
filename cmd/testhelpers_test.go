@@ -27,6 +27,24 @@ func dataPath(nibsDir string, parts ...string) string {
 	return filepath.Join(append([]string{storeDataDir(nibsDir)}, parts...)...)
 }
 
+// mkdirAllT creates dir and every missing parent, failing the test instead of
+// returning an error.
+func mkdirAllT(t *testing.T, dir string) {
+	t.Helper()
+	if err := os.MkdirAll(dir, 0755); err != nil {
+		t.Fatalf("mkdir %s: %v", dir, err)
+	}
+}
+
+// writeFileT writes content to path, failing the test instead of returning an
+// error. The parent directory must already exist.
+func writeFileT(t *testing.T, path, content string) {
+	t.Helper()
+	if err := os.WriteFile(path, []byte(content), 0644); err != nil {
+		t.Fatalf("write %s: %v", path, err)
+	}
+}
+
 // resetRootPersistentFlags restores rootCmd's persistent flag state
 // (--nibs-path, --config) to defaults so tests don't leak each other.
 // Call via t.Cleanup() from any helper that runs rootCmd.Execute() with

@@ -2,6 +2,7 @@ package config
 
 import (
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"strings"
@@ -272,16 +273,68 @@ func LoadFromStore(storeDir string) (*Config, error) {
 // carrying it describes a layout this build cannot honor. Refusing loudly
 // beats silently reading the key's value as decoration and operating on a
 // different directory than the user wrote down.
+//
+// It is also what RetiredNibsPath reads on behalf of the CLI, so the shape of
+// the retired key is declared once rather than re-transcribed per caller.
 type retiredPathProbe struct {
 	Nibs struct {
 		Path string `yaml:"path"`
 	} `yaml:"nibs"`
 }
 
+// RetiredNibsPath returns the retired `nibs.path` value a pre-layout config
+// carries, or "" when the file cannot be read, is not YAML, or does not set the
+// key. Best-effort by design: its callers use it to sharpen a message or to
+// decide whether a directory is the store a `.nibs.yml` NAMES, and every
+// failure there reads as "no key".
+func RetiredNibsPath(path string) string {
+	data, err := ReadConfigFile(path)
+	if err != nil {
+		return ""
+	}
+	var probe retiredPathProbe
+	if err := yaml.Unmarshal(data, &probe); err != nil {
+		return ""
+	}
+	return probe.Nibs.Path
+}
+
+// MaxConfigBytes bounds how many bytes any config file read may consume. A
+// nibs config is a few dozen lines; the ceiling exists because the read sits on
+// the ORDINARY, always-successful path of every command, where an unbounded
+// os.ReadFile turns one oversized file into ~10x its size in resident memory
+// (a 50 MB config.yml drove a plain `nibs list` to 334 MB RSS). It is the same
+// posture nib.MaxFrontMatterBytes takes for a nib file's header.
+const MaxConfigBytes = 1 << 20 // 1 MiB
+
+// ReadConfigFile reads a config file, refusing one larger than MaxConfigBytes.
+//
+// The ceiling is enforced by reading one byte PAST it and erroring, never by
+// truncating: a silently shortened config would parse as a different project —
+// a missing prefix re-prefixes every new nib — which is worse than not opening
+// at all. A missing file is returned as an ordinary os.IsNotExist error so
+// callers can keep treating absence as "use the defaults".
+func ReadConfigFile(path string) ([]byte, error) {
+	f, err := os.Open(path)
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = f.Close() }()
+	data, err := io.ReadAll(io.LimitReader(f, MaxConfigBytes+1))
+	if err != nil {
+		return nil, err
+	}
+	if len(data) > MaxConfigBytes {
+		return nil, fmt.Errorf("%s is larger than the %d-byte configuration limit; a nibs config is a few dozen lines, so this is either not a config or is corrupt",
+			path, MaxConfigBytes)
+	}
+	return data, nil
+}
+
 // loadRaw reads and unmarshals the config file without applying system defaults.
 // Returns an empty Config if the file doesn't exist (callers apply defaults).
 func loadRaw(configPath string) (*Config, error) {
-	data, err := os.ReadFile(configPath)
+	data, err := ReadConfigFile(configPath)
 	if err != nil {
 		if os.IsNotExist(err) {
 			cfg := &Config{}

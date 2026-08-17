@@ -156,6 +156,13 @@ func TestResolveStoreDir(t *testing.T) {
 // the project, not the store — so accepting it would point every command
 // (`nibs migrate` above all) at the project tree. The refusal names the
 // replacement rather than merely rejecting.
+//
+// The assertions DISCRIMINATE between the two guards. Both refuse this fixture
+// and both name --nibs-path, the project directory and config.yml, so asserting
+// only those passes with this guard deleted — the fallback evidence guard would
+// satisfy every one of them. `assertRefusedByConfigGuard` keys on the phrases
+// only this guard's message carries, and asserts the fallback's own phrase is
+// absent.
 func TestResolveStoreDirRefusesTheLegacyProjectConfig(t *testing.T) {
 	t.Cleanup(resetRootPersistentFlags)
 	resetRootPersistentFlags()
@@ -163,23 +170,39 @@ func TestResolveStoreDirRefusesTheLegacyProjectConfig(t *testing.T) {
 
 	projectDir := t.TempDir()
 	storeDir := filepath.Join(projectDir, store.DirName)
-	if err := os.MkdirAll(storeDir, 0755); err != nil {
-		t.Fatalf("mkdir store: %v", err)
-	}
+	mkdirAllT(t, storeDir)
 	legacy := filepath.Join(projectDir, store.LegacyProjectConfigFileName)
-	if err := os.WriteFile(legacy, []byte("nibs:\n  prefix: leg-\n"), 0644); err != nil {
-		t.Fatalf("write legacy config: %v", err)
-	}
+	writeFileT(t, legacy, "nibs:\n  prefix: leg-\n")
 	configPath = legacy
 
 	_, err := resolveStoreDir()
 	if err == nil {
 		t.Fatal("resolveStoreDir accepted --config at the pre-layout .nibs.yml; that path names the PROJECT, not the store")
 	}
-	for _, want := range []string{"--nibs-path", storeDir, store.ConfigFileName} {
+	assertRefusedByConfigGuard(t, err, storeDir)
+}
+
+// assertRefusedByConfigGuard asserts that err is resolveStoreDir's --config
+// guard refusing a path aimed at the pre-layout `.nibs.yml`, and not the
+// fallback store-evidence guard that would reject the same fixture one step
+// later.
+//
+// The distinction is load-bearing rather than pedantic: the fallback guard
+// decides on filesystem SHAPE, so a project that happens to carry store-shaped
+// evidence slips past it, and this guard is then the only thing standing
+// between `--config <project>/.nibs.yml` and `nibs migrate` walking the project
+// tree. A test that cannot tell the two apart cannot catch this guard's removal.
+func assertRefusedByConfigGuard(t *testing.T, err error, storeDir string) {
+	t.Helper()
+	// Phrases unique to this guard: it talks about the pre-layout CONFIG and
+	// where that file SITS. The fallback talks about a pre-layout STORE.
+	for _, want := range []string{"pre-layout config", "sits beside the store", "--nibs-path", storeDir, store.ConfigFileName} {
 		if !strings.Contains(err.Error(), want) {
 			t.Errorf("refusal = %q, want it to mention %q", err.Error(), want)
 		}
+	}
+	if strings.Contains(err.Error(), "not a nibs store") {
+		t.Errorf("the fallback evidence guard fired, not the --config guard: %v", err)
 	}
 }
 
@@ -190,9 +213,18 @@ func TestResolveStoreDirRefusesTheLegacyProjectConfig(t *testing.T) {
 // resolves to the project tree, and `nibs migrate` relocates and rewrites
 // every front-mattered .md it finds there.
 //
-// The legacy shape (a top-level *.md beside a `.nibs.yml`) counts as evidence
-// on purpose: a pre-layout store must stay resolvable, or `nibs migrate` could
-// never reach the stores it exists to convert.
+// The evidence has to be something only a nibs store PRODUCES, because this
+// decision authorizes moving and rewriting a whole subtree: a config.yml that
+// parses as a nibs config, or a pre-layout `.nibs.yml` whose retired
+// `nibs.path` names this very directory. A directory merely CALLED something a
+// store also calls its own — `data/`, `archive/`, a file named `config.yml` —
+// is not evidence; `data/` is a standard Hugo directory, and accepting it
+// resolved every Hugo site root as a store.
+//
+// The table walks the boundary in both directions, including shapes BETWEEN the
+// two clauses: half-evidence (a `.nibs.yml` with no `nibs.path`, a `nibs.path`
+// naming a sibling), and near-misses on the config clause (a config.yml that is
+// not a nibs config, a DIRECTORY by that name).
 func TestResolveStoreDirRequiresStoreEvidence(t *testing.T) {
 	tests := []struct {
 		name   string
@@ -228,24 +260,126 @@ func TestResolveStoreDirRequiresStoreEvidence(t *testing.T) {
 			accept: true,
 		},
 		{
-			name: "a differently named store holding only archive/",
+			name: "a differently named store holding config.yml and data/",
 			build: func(t *testing.T, tmp string) string {
 				dir := filepath.Join(tmp, "proj", "nibdata")
-				mkdirAllT(t, filepath.Join(dir, store.ArchiveDirName))
+				mkdirAllT(t, filepath.Join(dir, store.DataDirName))
+				writeFileT(t, filepath.Join(dir, store.ConfigFileName), "nibs:\n  prefix: nd-\n")
 				return dir
 			},
 			accept: true,
 		},
 		{
-			name: "the legacy shape: a top-level nib file beside a .nibs.yml",
+			name: "a config.yml that is not a nibs config",
+			build: func(t *testing.T, tmp string) string {
+				dir := filepath.Join(tmp, "proj", "ci")
+				mkdirAllT(t, dir)
+				writeFileT(t, filepath.Join(dir, store.ConfigFileName), "jobs:\n  build:\n    steps: []\n")
+				return dir
+			},
+		},
+		{
+			name: "a config.yml whose `nibs` key is not a mapping",
+			build: func(t *testing.T, tmp string) string {
+				dir := filepath.Join(tmp, "proj", "ci")
+				mkdirAllT(t, dir)
+				writeFileT(t, filepath.Join(dir, store.ConfigFileName), "nibs: 3\n")
+				return dir
+			},
+		},
+		{
+			name: "a config.yml that is not even YAML",
+			build: func(t *testing.T, tmp string) string {
+				dir := filepath.Join(tmp, "proj", "ci")
+				mkdirAllT(t, dir)
+				writeFileT(t, filepath.Join(dir, store.ConfigFileName), "nibs: [unterminated\n")
+				return dir
+			},
+		},
+		{
+			name: "a DIRECTORY named config.yml",
+			build: func(t *testing.T, tmp string) string {
+				dir := filepath.Join(tmp, "proj", "generated")
+				mkdirAllT(t, filepath.Join(dir, store.ConfigFileName))
+				return dir
+			},
+		},
+		{
+			name: "a Hugo-shaped site root holding only data/",
+			build: func(t *testing.T, tmp string) string {
+				dir := filepath.Join(tmp, "hugo-site")
+				mkdirAllT(t, filepath.Join(dir, store.DataDirName))
+				writeFileT(t, filepath.Join(dir, store.DataDirName, "params.yaml"), "unrelated: yaml\n")
+				mkdirAllT(t, filepath.Join(dir, "content", "posts"))
+				writeFileT(t, filepath.Join(dir, "content", "posts", "hello.md"), "---\ntitle: Hello\n---\n\nBody.\n")
+				return dir
+			},
+		},
+		{
+			name: "a directory holding only archive/",
+			build: func(t *testing.T, tmp string) string {
+				dir := filepath.Join(tmp, "proj", "mail")
+				mkdirAllT(t, filepath.Join(dir, store.ArchiveDirName))
+				return dir
+			},
+		},
+		{
+			name: "the legacy shape: a .nibs.yml whose nibs.path names this directory",
 			build: func(t *testing.T, tmp string) string {
 				dir := filepath.Join(tmp, "proj", "nibdata")
 				mkdirAllT(t, dir)
 				writeFileT(t, filepath.Join(dir, "leg-a1--one.md"), layoutNib)
-				writeFileT(t, filepath.Join(tmp, "proj", store.LegacyProjectConfigFileName), "nibs:\n  prefix: leg-\n")
+				writeFileT(t, filepath.Join(tmp, "proj", store.LegacyProjectConfigFileName), "nibs:\n  prefix: leg-\n  path: nibdata\n")
 				return dir
 			},
 			accept: true,
+		},
+		{
+			name: "a nibs.path naming this directory, which holds no nib files yet",
+			build: func(t *testing.T, tmp string) string {
+				dir := filepath.Join(tmp, "proj", "nibdata")
+				mkdirAllT(t, dir)
+				writeFileT(t, filepath.Join(tmp, "proj", store.LegacyProjectConfigFileName), "nibs:\n  prefix: leg-\n  path: nibdata\n")
+				return dir
+			},
+			accept: true,
+		},
+		{
+			name: "a nibs.path given as an absolute path",
+			build: func(t *testing.T, tmp string) string {
+				dir := filepath.Join(tmp, "proj", "nibdata")
+				mkdirAllT(t, dir)
+				writeFileT(t, filepath.Join(tmp, "proj", store.LegacyProjectConfigFileName),
+					"nibs:\n  prefix: leg-\n  path: "+filepath.ToSlash(dir)+"\n")
+				return dir
+			},
+			accept: true,
+		},
+		{
+			// R2's shape, the Critical this table previously PINNED as accepted:
+			// any sibling directory of an unmigrated project holding any .md.
+			name: "a sibling docs directory of an unmigrated project",
+			build: func(t *testing.T, tmp string) string {
+				proj := filepath.Join(tmp, "proj")
+				mkdirAllT(t, filepath.Join(proj, store.DirName))
+				writeFileT(t, filepath.Join(proj, store.DirName, "leg-a1--one.md"), layoutNib)
+				writeFileT(t, filepath.Join(proj, store.LegacyProjectConfigFileName), "nibs:\n  prefix: leg-\n")
+				dir := filepath.Join(proj, "docs")
+				mkdirAllT(t, dir)
+				writeFileT(t, filepath.Join(dir, "README.md"), "# Docs\n")
+				return dir
+			},
+		},
+		{
+			name: "a .nibs.yml whose nibs.path names a DIFFERENT directory",
+			build: func(t *testing.T, tmp string) string {
+				dir := filepath.Join(tmp, "proj", "docs")
+				mkdirAllT(t, dir)
+				writeFileT(t, filepath.Join(dir, "guide.md"), layoutNib)
+				mkdirAllT(t, filepath.Join(tmp, "proj", "nibdata"))
+				writeFileT(t, filepath.Join(tmp, "proj", store.LegacyProjectConfigFileName), "nibs:\n  prefix: leg-\n  path: nibdata\n")
+				return dir
+			},
 		},
 		{
 			name: "a project directory with neither shape",
@@ -272,6 +406,36 @@ func TestResolveStoreDirRequiresStoreEvidence(t *testing.T) {
 				mkdirAllT(t, dir)
 				writeFileT(t, filepath.Join(tmp, "proj", store.LegacyProjectConfigFileName), "nibs:\n  prefix: leg-\n")
 				return dir
+			},
+		},
+		{
+			// A `.nibs.yml` with no `nibs.path` describes a store at
+			// <project>/.nibs, which the name clause already accepts — so this
+			// directory, whatever it holds, is not the store it names.
+			name: "a .nibs.yml with no nibs.path beside a top-level nib file",
+			build: func(t *testing.T, tmp string) string {
+				dir := filepath.Join(tmp, "proj", "nibdata")
+				mkdirAllT(t, dir)
+				writeFileT(t, filepath.Join(dir, "leg-a1--one.md"), layoutNib)
+				writeFileT(t, filepath.Join(tmp, "proj", store.LegacyProjectConfigFileName), "nibs:\n  prefix: leg-\n")
+				return dir
+			},
+		},
+		{
+			// The evidence is the config naming a PATH, and sameDir compares
+			// paths rather than resolving them — so a symlink aimed at the
+			// declared directory is refused rather than accepted by another
+			// name. Refusing is the safe direction: the real path still works.
+			name: "a symlink pointing at the directory nibs.path names",
+			build: func(t *testing.T, tmp string) string {
+				real := filepath.Join(tmp, "proj", "nibdata")
+				mkdirAllT(t, real)
+				writeFileT(t, filepath.Join(tmp, "proj", store.LegacyProjectConfigFileName), "nibs:\n  prefix: leg-\n  path: nibdata\n")
+				link := filepath.Join(tmp, "proj", "link")
+				if err := os.Symlink(real, link); err != nil {
+					t.Skipf("symlinks unavailable: %v", err)
+				}
+				return link
 			},
 		},
 	}
@@ -376,20 +540,6 @@ func TestResolveStoreDirExplainsAPreLayoutProject(t *testing.T) {
 				}
 			}
 		})
-	}
-}
-
-func mkdirAllT(t *testing.T, dir string) {
-	t.Helper()
-	if err := os.MkdirAll(dir, 0755); err != nil {
-		t.Fatalf("mkdir %s: %v", dir, err)
-	}
-}
-
-func writeFileT(t *testing.T, path, content string) {
-	t.Helper()
-	if err := os.WriteFile(path, []byte(content), 0644); err != nil {
-		t.Fatalf("write %s: %v", path, err)
 	}
 }
 
