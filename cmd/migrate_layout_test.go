@@ -19,24 +19,24 @@ import (
 // shape a store gets when only its files are legacy.
 func writeLegacyStore(t *testing.T, configBody string, files map[string]string) (projectDir, storeDir string) {
 	t.Helper()
+	return writeLegacyStoreNamed(t, store.DirName, configBody, files)
+}
+
+// writeLegacyStoreNamed is writeLegacyStore with the store directory's NAME
+// spelled out, so the tests for the retired `nibs.path` key can put a pre-layout
+// store somewhere other than `.nibs`.
+func writeLegacyStoreNamed(t *testing.T, storeName, configBody string, files map[string]string) (projectDir, storeDir string) {
+	t.Helper()
 	projectDir = t.TempDir()
-	storeDir = filepath.Join(projectDir, store.DirName)
-	if err := os.MkdirAll(storeDir, 0755); err != nil {
-		t.Fatalf("mkdir store: %v", err)
-	}
+	storeDir = filepath.Join(projectDir, storeName)
+	mkdirAllT(t, storeDir)
 	if configBody != "" {
-		if err := os.WriteFile(filepath.Join(projectDir, store.LegacyProjectConfigFileName), []byte(configBody), 0644); err != nil {
-			t.Fatalf("write legacy config: %v", err)
-		}
+		writeFileT(t, filepath.Join(projectDir, store.LegacyProjectConfigFileName), configBody)
 	}
 	for name, content := range files {
 		path := filepath.Join(storeDir, name)
-		if err := os.MkdirAll(filepath.Dir(path), 0755); err != nil {
-			t.Fatalf("mkdir: %v", err)
-		}
-		if err := os.WriteFile(path, []byte(content), 0644); err != nil {
-			t.Fatalf("write %s: %v", name, err)
-		}
+		mkdirAllT(t, filepath.Dir(path))
+		writeFileT(t, path, content)
 	}
 	return projectDir, storeDir
 }
@@ -324,8 +324,13 @@ func TestMigrateLayoutConverges(t *testing.T) {
 // Convergence is deliberately narrow: only a config.yml BYTE-IDENTICAL to what
 // this step would write is treated as its own interrupted write. Anything else
 // is a genuine "which one did you mean?" and still refuses.
+// The body deliberately CARRIES the retired `nibs.path` key, naming the store
+// being migrated. Without it the rewrite is an identity no-op and the
+// byte-identity comparison never sees the `yaml.Marshal` round trip that
+// reindents the document from 2 spaces to 4 — the exact shape the resume exists
+// to recognize.
 func TestMigrateConfigRelocationConverges(t *testing.T) {
-	const legacyBody = "nibs:\n  prefix: leg-\n  id_length: 4\n"
+	const legacyBody = "nibs:\n  prefix: leg-\n  id_length: 4\n  path: " + store.DirName + "\n"
 
 	// migrateOnce runs a full migration and returns the project and store dirs,
 	// leaving the store in the current layout.
@@ -388,8 +393,13 @@ func TestMigrateConfigRelocationConverges(t *testing.T) {
 		if err == nil {
 			t.Fatal("migrate silently discarded one of two differing configs")
 		}
-		if !strings.Contains(err.Error(), "both") {
-			t.Errorf("refusal = %v, want it to say both configs exist", err)
+		// Name BOTH paths rather than matching the word "both": the refusal's
+		// whole job is telling the user which two files it will not choose
+		// between.
+		for _, want := range []string{legacy, store.NewLayout(storeDir).ConfigPath()} {
+			if !strings.Contains(err.Error(), want) {
+				t.Errorf("refusal = %v, want it to name %s", err, want)
+			}
 		}
 		if _, statErr := os.Stat(legacy); statErr != nil {
 			t.Errorf("the refusal deleted the legacy config anyway: %v", statErr)

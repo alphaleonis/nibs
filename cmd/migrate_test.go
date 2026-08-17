@@ -927,7 +927,7 @@ func TestRunMigrationsHoldsStoreLock(t *testing.T) {
 		name:  "probe",
 		title: "park mid-apply so the test can contend for the lock",
 		pred:  func(h fmHeader) bool { return h.priority == "probe-pending" },
-		apply: func(env migrateEnv, _ *nibcore.StoreLock, _ logf) error {
+		apply: func(env *migrateEnv, _ *nibcore.StoreLock, _ logf) error {
 			close(entered)
 			<-unpark
 			// Clear our own detection marker so the engine's apply-detect
@@ -1083,7 +1083,7 @@ func TestRunMigrationsPostConditionFailsLoud(t *testing.T) {
 		name:  "probe-disagree",
 		title: "fire on every file and repair nothing",
 		pred:  func(fmHeader) bool { return true },
-		apply: func(migrateEnv, *nibcore.StoreLock, logf) error { return nil },
+		apply: func(*migrateEnv, *nibcore.StoreLock, logf) error { return nil },
 	}}
 
 	nibsDir := writeStoreFiles(t, map[string]string{

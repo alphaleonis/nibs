@@ -1000,7 +1000,7 @@ func TestSignalOnlySkipPathRaceClean(t *testing.T) {
 // The two tests below cover nibs-oakc: an external edit to a nib file must reach
 // watchers on every platform.
 //
-// Every nib write commits through atomicWriteFile, i.e. a rename over the
+// Every nib write commits through AtomicWriteFile, i.e. a rename over the
 // existing file. Windows reports that replacing rename on the TARGET path as
 // REMOVE followed by CREATE (verified with fsnotify v1.9.0 on Windows 11); both
 // halves land inside one 100 ms debounce window and are OR-ed into a single op.
@@ -1033,7 +1033,7 @@ func TestWatcherReplacingRenameBatchReportsUpdate(t *testing.T) {
 	// The external edit itself, committed the way every writer commits: a temp
 	// file renamed over the target.
 	edited := fmt.Sprintf("---\ntitle: %s\nstatus: todo\npriority: high\n---\n\nbody\n", newTitle)
-	if err := atomicWriteFile(abs, []byte(edited), 0o644); err != nil {
+	if err := AtomicWriteFile(abs, []byte(edited), 0o644); err != nil {
 		t.Fatalf("atomic write: %v", err)
 	}
 
@@ -1081,7 +1081,7 @@ func TestWatcherObservesExternalAtomicWrite(t *testing.T) {
 
 	// Stand in for a second process (`nibs set <id> -p high`) rewriting the file.
 	edited := fmt.Sprintf("---\ntitle: %s\nstatus: todo\npriority: high\n---\n\nbody\n", newTitle)
-	if err := atomicWriteFile(abs, []byte(edited), 0o644); err != nil {
+	if err := AtomicWriteFile(abs, []byte(edited), 0o644); err != nil {
 		t.Fatalf("atomic write: %v", err)
 	}
 

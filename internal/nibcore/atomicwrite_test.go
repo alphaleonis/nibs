@@ -12,7 +12,7 @@ func TestAtomicWriteFileCreatesAndReplaces(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "nib.md")
 
-	if err := atomicWriteFile(path, []byte("first"), 0o644); err != nil {
+	if err := AtomicWriteFile(path, []byte("first"), 0o644); err != nil {
 		t.Fatalf("first write: %v", err)
 	}
 	got, err := os.ReadFile(path)
@@ -23,7 +23,7 @@ func TestAtomicWriteFileCreatesAndReplaces(t *testing.T) {
 		t.Fatalf("content after first write = %q, want %q", got, "first")
 	}
 
-	if err := atomicWriteFile(path, []byte("second"), 0o644); err != nil {
+	if err := AtomicWriteFile(path, []byte("second"), 0o644); err != nil {
 		t.Fatalf("second write: %v", err)
 	}
 	got, err = os.ReadFile(path)
@@ -54,7 +54,7 @@ func TestAtomicWriteFileFailedRenameLeavesExistingIntact(t *testing.T) {
 	renameFn = func(_, _ string) error { return errors.New("simulated crash before rename") }
 	defer func() { renameFn = orig }()
 
-	err := atomicWriteFile(path, []byte("NEW"), 0o644)
+	err := AtomicWriteFile(path, []byte("NEW"), 0o644)
 	if err == nil {
 		t.Fatal("expected error from injected rename failure, got nil")
 	}
@@ -65,6 +65,43 @@ func TestAtomicWriteFileFailedRenameLeavesExistingIntact(t *testing.T) {
 	}
 	if string(got) != "OLD" {
 		t.Fatalf("old file corrupted: got %q, want %q", got, "OLD")
+	}
+	assertNoTempFiles(t, dir)
+}
+
+// TestAtomicWriteFileReplacesASymlinkRatherThanFollowingIt pins the second
+// property the CLI's migration engine relies on when it writes a store's
+// config.yml: the rename REPLACES whatever sits at path, so a symlink there — a
+// dangling one especially — cannot redirect the write outside the directory the
+// caller named. os.WriteFile follows the link and creates the file wherever it
+// points, which put a project's config outside its store and reported success.
+func TestAtomicWriteFileReplacesASymlinkRatherThanFollowingIt(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "nib.md")
+	outside := filepath.Join(t.TempDir(), "escaped.md")
+	if err := os.Symlink(outside, path); err != nil {
+		t.Skipf("symlinks unavailable: %v", err)
+	}
+
+	if err := AtomicWriteFile(path, []byte("contained"), 0o644); err != nil {
+		t.Fatalf("write over a dangling symlink: %v", err)
+	}
+	if _, err := os.Lstat(outside); !os.IsNotExist(err) {
+		t.Errorf("the write followed the symlink out of the directory (stat err = %v)", err)
+	}
+	info, err := os.Lstat(path)
+	if err != nil {
+		t.Fatalf("lstat after write: %v", err)
+	}
+	if !info.Mode().IsRegular() {
+		t.Errorf("path is still a %v, want a regular file", info.Mode().Type())
+	}
+	got, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("read after write: %v", err)
+	}
+	if string(got) != "contained" {
+		t.Errorf("content = %q, want %q", got, "contained")
 	}
 	assertNoTempFiles(t, dir)
 }

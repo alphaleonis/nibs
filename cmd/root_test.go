@@ -490,24 +490,63 @@ func TestResolveStoreDirRequiresStoreEvidence(t *testing.T) {
 // DIRECTORY, so the upward walk finds nothing — and the generic "run nibs
 // init" answer is the one action that strands its data, creating an empty
 // store with a derived prefix beside the real files.
+//
+// The `nibs.path` case then EXECUTES the remedy the message prints and requires
+// the project to end up migrated. Asserting only the wording is what let a
+// message ship whose remedy could not be satisfied by any filesystem action: it
+// said to move the data into `<project>/.nibs/` and re-run, after which the
+// migration compared the config VALUE `nibs.path` against the store root and
+// refused with the same instruction, forever.
 func TestResolveStoreDirExplainsAPreLayoutProject(t *testing.T) {
 	tests := []struct {
 		name       string
 		configBody string
 		want       []string
 		notWant    []string
+		// remedy runs what the message told the user to do, and reports the
+		// store it should now be possible to discover.
+		remedy func(t *testing.T, projectDir string) string
 	}{
 		{
 			name:       "nibs.path names the real data directory",
 			configBody: "nibs:\n  prefix: leg-\n  path: nibdata\n",
-			want:       []string{"nibs.path", "nibdata", ".nibs", "nibs migrate"},
+			want:       []string{"nibs.path", "nibdata", ".nibs", "nibs migrate --nibs-path"},
 			notWant:    []string{"run 'nibs init' to create one"},
+			remedy: func(t *testing.T, projectDir string) string {
+				t.Helper()
+				t.Cleanup(resetMigrateFlags)
+				resetMigrateFlags()
+				resetRootPersistentFlags()
+				dataDir := filepath.Join(projectDir, "nibdata")
+				if out, err := runRootWith(t, "--nibs-path", dataDir, "migrate", "--allow-dirty"); err != nil {
+					t.Fatalf("the remedy the message printed did not work: %v\nout: %s", err, out)
+				}
+				return filepath.Join(projectDir, store.DirName)
+			},
 		},
 		{
 			name:       "a pre-layout config with no nibs.path",
 			configBody: "nibs:\n  prefix: leg-\n",
 			want:       []string{".nibs.yml", "nibs migrate"},
 			notWant:    []string{"run 'nibs init' to create one"},
+			remedy: func(t *testing.T, projectDir string) string {
+				t.Helper()
+				t.Cleanup(resetMigrateFlags)
+				resetMigrateFlags()
+				resetRootPersistentFlags()
+				// "create <project>/.nibs and move this project's nib files
+				// into it, then run `nibs migrate`".
+				storeDir := filepath.Join(projectDir, store.DirName)
+				mkdirAllT(t, storeDir)
+				if err := os.Rename(filepath.Join(projectDir, "nibdata", "leg-a1--one.md"),
+					filepath.Join(storeDir, "leg-a1--one.md")); err != nil {
+					t.Fatalf("moving the nib files: %v", err)
+				}
+				if out, err := runRootWith(t, "--nibs-path", storeDir, "migrate", "--allow-dirty"); err != nil {
+					t.Fatalf("the remedy the message printed did not work: %v\nout: %s", err, out)
+				}
+				return storeDir
+			},
 		},
 	}
 
@@ -520,6 +559,8 @@ func TestResolveStoreDirExplainsAPreLayoutProject(t *testing.T) {
 			tmp := t.TempDir()
 			t.Setenv("NIBS_CONFIG_ROOT", tmp)
 			projectDir := filepath.Join(tmp, "proj")
+			// The data directory `nibs.path` names, holding the project's only
+			// nib — the message quotes this path, and the remedy migrates it.
 			mkdirAllT(t, filepath.Join(projectDir, "nibdata"))
 			writeFileT(t, filepath.Join(projectDir, "nibdata", "leg-a1--one.md"), layoutNib)
 			writeFileT(t, filepath.Join(projectDir, store.LegacyProjectConfigFileName), tt.configBody)
@@ -538,6 +579,28 @@ func TestResolveStoreDirExplainsAPreLayoutProject(t *testing.T) {
 				if strings.Contains(err.Error(), notWant) {
 					t.Errorf("message = %q, must not suggest %q — that is what strands the data", err.Error(), notWant)
 				}
+			}
+
+			// Follow the message, then require the project to be discoverable:
+			// no --nibs-path, from the project root.
+			storeDir := tt.remedy(t, projectDir)
+			resetRootPersistentFlags()
+			t.Setenv("NIBS_PATH", "")
+			got, resolveErr := resolveStoreDir()
+			if resolveErr != nil {
+				t.Fatalf("after following the remedy the store is still not discoverable: %v", resolveErr)
+			}
+			if got != storeDir {
+				t.Errorf("resolveStoreDir() = %q, want the migrated store %q", got, storeDir)
+			}
+			resetListFlags()
+			t.Cleanup(resetListFlags)
+			out, listErr := runRootWith(t, "list", "--all", "--json")
+			if listErr != nil {
+				t.Fatalf("list after following the remedy: %v", listErr)
+			}
+			if ids := envelopeIDs(parseListEnvelope(t, out)); !ids["leg-a1"] {
+				t.Errorf("list ids = %v, want leg-a1 — the migrated nib", ids)
 			}
 		})
 	}

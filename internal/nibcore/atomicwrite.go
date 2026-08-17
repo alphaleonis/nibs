@@ -10,7 +10,7 @@ import (
 // temp write and the rename. Production always uses os.Rename.
 var renameFn = os.Rename
 
-// atomicWriteFile writes data to path atomically: it writes to a uniquely-named
+// AtomicWriteFile writes data to path atomically: it writes to a uniquely-named
 // temp file in the same directory, fsyncs it, then renames it over path. Because
 // the rename is atomic on the same filesystem, a concurrent reader observes
 // either the old file or the fully-written new file — never a torn/partial write
@@ -21,7 +21,12 @@ var renameFn = os.Rename
 // racing on the same nib — the exact hazard this hardening targets — must not
 // collide on a shared temp file. Each renames its own complete temp; the later
 // rename wins wholesale rather than interleaving bytes.
-func atomicWriteFile(path string, data []byte, perm os.FileMode) (err error) {
+//
+// It is exported for the CLI's migration engine, which writes the store's
+// config.yml and needs the same two guarantees for it: no torn file after a
+// crash, and a rename that REPLACES a symlink at path rather than following it
+// somewhere outside the store.
+func AtomicWriteFile(path string, data []byte, perm os.FileMode) (err error) {
 	dir := filepath.Dir(path)
 	tmp, err := os.CreateTemp(dir, "."+filepath.Base(path)+".tmp-*")
 	if err != nil {

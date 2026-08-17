@@ -466,7 +466,7 @@ func (c *Core) handleChanges(changes map[string]fsnotify.Op) {
 		// all, and must fall through to the create/write handling below.
 		//
 		// This is the common case on Windows, not a corner: every nib write commits
-		// through atomicWriteFile, i.e. a rename over the existing file, and
+		// through AtomicWriteFile, i.e. a rename over the existing file, and
 		// ReadDirectoryChangesW reports that replacing rename on the TARGET path as
 		// REMOVE followed by CREATE. Both halves land in one debounce window and
 		// watchLoop ORs them into a single op, so an ordinary external edit arrives
