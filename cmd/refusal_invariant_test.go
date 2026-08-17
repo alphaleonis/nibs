@@ -328,6 +328,20 @@ func storeResolutionRefusalCases() []refusalCase {
 			},
 		},
 		{
+			// A pre-layout config that never declared `nibs.path` at all — the
+			// shape every project that took the default carries, and so the
+			// refusal most users reach. It names the store to create rather than
+			// one that exists, which is why it needs a row here: the absence
+			// exemption covers `.nibs` by basename, so nothing else would notice
+			// this message naming an unreachable path or an unrunnable command.
+			name: "a pre-layout config declaring no nibs.path",
+			build: func(t *testing.T) (string, string) {
+				projectDir := legacyProject(t, "")
+				writeFileT(t, filepath.Join(projectDir, "leg-a1--one.md"), layoutNib)
+				return discovered(projectDir)(t)
+			},
+		},
+		{
 			name: "an explicitly named directory that is not a store",
 			build: func(t *testing.T) (string, string) {
 				tmp := t.TempDir()
