@@ -230,12 +230,20 @@ func resolveStoreDir() (string, error) {
 			// A `.nibs.yml` that NAMES this directory but no artifact inside it is
 			// its own answer: "no .nibs.yml beside it names it" would be false, and
 			// `nibs init` is the wrong advice when the naming config is real. Say
-			// which half of the evidence is missing.
-			if named, namedErr := legacyConfigNamesStore(explicit); namedErr == nil && named {
-				return "", fmt.Errorf("%s is named as this project's store by %s, but nothing in it was written by nibs (no markdown file carries a nibs `status:`), and `nibs migrate` will not move and rewrite a directory on a config's say-so alone; if these really are your nibs, create %s, move them into it, remove the `nibs.path` key from %s, then run `nibs migrate`",
-					explicit, filepath.Join(filepath.Dir(explicit), store.LegacyProjectConfigFileName),
-					filepath.Join(filepath.Dir(explicit), store.DirName),
-					filepath.Join(filepath.Dir(explicit), store.LegacyProjectConfigFileName))
+			// which half of the evidence is missing, and say only what was
+			// established — the two halves fail for different reasons.
+			projectDir := filepath.Dir(explicit)
+			named, namedErr := legacyConfigNamesStore(explicit)
+			inside, insideErr := isRealImmediateChild(explicit, projectDir)
+			if namedErr == nil && named && insideErr == nil {
+				why := "nothing in it was written by nibs (no markdown file carries a nibs `status:`)"
+				if !inside {
+					why = "with symlinks resolved it is not an immediate subdirectory of " + projectDir + ", so a config inside the project cannot authorize moving it"
+				}
+				return "", fmt.Errorf("%s is named as this project's store by %s, but %s, and `nibs migrate` will not move and rewrite a directory on a config's say-so alone; if these really are your nibs, create %s, move them into it, remove the `nibs.path` key from %s, then run `nibs migrate`",
+					explicit, filepath.Join(projectDir, store.LegacyProjectConfigFileName), why,
+					filepath.Join(projectDir, store.DirName),
+					filepath.Join(projectDir, store.LegacyProjectConfigFileName))
 			}
 			return "", fmt.Errorf("%s is not a nibs store: it holds no %s that parses as one, and no %s beside it names it; name the store directory itself (e.g. --nibs-path %s), or run `nibs init` there",
 				explicit, store.ConfigFileName, store.LegacyProjectConfigFileName,
@@ -341,8 +349,14 @@ func noStoreFoundError(cwd string) error {
 			store.DirName, cwd, legacy, sanitizeFileText(declared), evErr,
 			stripControlChars(dataDir))
 	}
-	why := "which `nibs migrate` will not relocate for you because it is not an immediate subdirectory of " + projectDir
-	if named, namedErr := legacyConfigNamesStore(dataDir); namedErr == nil && named {
+	// Naming AND containment both have to hold before "nothing in it was written
+	// by nibs" is the accurate reason: a `nibs.path` satisfied only by a symlink
+	// out of the project fails on containment, and saying anything about the
+	// directory's contents there would answer a question that was never asked.
+	why := "which `nibs migrate` will not relocate for you because, with symlinks resolved, it is not an immediate subdirectory of " + projectDir
+	named, namedErr := legacyConfigNamesStore(dataDir)
+	inside, insideErr := isRealImmediateChild(dataDir, projectDir)
+	if namedErr == nil && named && insideErr == nil && inside {
 		why = "which `nibs migrate` will not relocate for you because nothing in it was written by nibs (no markdown file carries a nibs `status:`)"
 	}
 	return fmt.Errorf("no %s directory found in %s or any parent directory, but %s sets the retired `nibs.path: %s`; this project's nibs live in %s, %s — create %s, move this project's nib files from %s into it, remove the `nibs.path` key from %s, then run `nibs migrate` (do NOT run `nibs init`, which would create an empty store beside the real data)",
@@ -450,14 +464,15 @@ func parsesAsNibsConfig(path string) (bool, error) {
 
 // hasLegacyStoreShape reports whether dir is a store `nibs migrate` may relocate:
 // a pre-layout project's `.nibs.yml` NAMES it through the retired `nibs.path`
-// key, AND something inside it was written by nibs (see
+// key, AND either something inside it was written by nibs or it is empty (see
 // declaredStoreCorroborated).
 //
-// PARENT-ONLY, DELIBERATELY. The `.nibs.yml` is looked for in dir's PARENT and
-// nowhere else, so only a store that is an immediate subdirectory of the project
-// can be confirmed this way. The retired key accepted more — a nested value like
-// `docs/nibs`, an absolute path, `.`, `..` — and this predicate refuses all of
-// them on purpose:
+// PARENT-ONLY, DELIBERATELY, AND ON THE RESOLVED PATH. The `.nibs.yml` is looked
+// for in dir's PARENT and nowhere else, and dir must resolve — symlinks and all —
+// to a directory really inside that parent (see isRealImmediateChild), so only a
+// store that is an immediate subdirectory of the project can be confirmed this
+// way. The retired key accepted more — a nested value like `docs/nibs`, an
+// absolute path, `.`, `..` — and this predicate refuses all of them on purpose:
 //
 //   - it is an authorization decision (what it accepts, `nibs migrate` may
 //     relocate and rewrite), and requiring the naming config to sit in the named
@@ -477,6 +492,10 @@ func parsesAsNibsConfig(path string) (bool, error) {
 func hasLegacyStoreShape(dir string) (bool, error) {
 	named, err := legacyConfigNamesStore(dir)
 	if err != nil || !named {
+		return false, err
+	}
+	inside, err := isRealImmediateChild(dir, filepath.Dir(dir))
+	if err != nil || !inside {
 		return false, err
 	}
 	return declaredStoreCorroborated(dir)
@@ -511,6 +530,38 @@ func legacyConfigNamesStore(dir string) (bool, error) {
 	return sameDir(declared, dir), nil
 }
 
+// isRealImmediateChild reports whether dir, with every symlink resolved, sits
+// directly inside parent with every symlink resolved.
+//
+// This is the CONTAINMENT half of hasLegacyStoreShape's parent-only rule, and the
+// rule is worth nothing without it. Every other comparison in this chain is
+// lexical (filepath.Dir, Abs, Clean), and a symlink satisfies "an immediate
+// subdirectory of the project" while pointing anywhere on the filesystem —
+// meanwhile the store walk OPENS its root, so it enumerates whatever the link
+// leads to. A repository shipping `.nibs.yml` (`path: store`) plus a committed
+// `store -> /somewhere/else` therefore got nibs to prescribe
+// `nibs migrate --nibs-path <repo>/store`, which moved that whole tree into
+// `<repo>/.nibs`, rewrote every front-mattered file in it as a nib render, and
+// deleted the repository's `.nibs.yml`.
+//
+// A link that stays INSIDE the project is still accepted: this is a containment
+// test, not a ban on symlinks — a store reached through a link within the project
+// relocates correctly, because renaming the link moves the store nibs addresses.
+// A store on another volume reached by a link OUT of the project is refused, which
+// matches how the same store spelled as an absolute `nibs.path` has always been
+// treated: the manual remedy noStoreFoundError prints converges for both.
+func isRealImmediateChild(dir, parent string) (bool, error) {
+	realDir, err := filepath.EvalSymlinks(dir)
+	if err != nil {
+		return false, err
+	}
+	realParent, err := filepath.EvalSymlinks(parent)
+	if err != nil {
+		return false, err
+	}
+	return sameDir(filepath.Dir(realDir), realParent), nil
+}
+
 // declaredStoreCorroborated reports whether dir holds anything only nibs writes,
 // so a `.nibs.yml` cannot authorize a relocation on its own say-so.
 //
@@ -528,20 +579,38 @@ func legacyConfigNamesStore(dir string) (bool, error) {
 // keeps nibs named under the old one, and refusing its real store would be worse
 // than the risk this closes.
 //
-// A directory with NO markdown at all is corroborated: a freshly created store
-// legitimately holds nothing, and there is nothing there to rewrite.
+// An EMPTY directory is corroborated, and only an empty one: a store `nibs init`
+// created but never wrote to legitimately holds nothing, so requiring an artifact
+// there would refuse a real store. The exemption is keyed on os.ReadDir finding no
+// entries rather than on the walk finding no markdown, because what acceptance
+// authorizes is a whole-directory os.Rename plus deletion of the project's
+// `.nibs.yml` — a mutation that has nothing to do with file CONTENTS. An asset
+// directory holding only `style.css` and `img/logo.svg` was renamed to `.nibs`
+// wholesale, and so was a note vault whose markdown all lived under `.obsidian/`
+// (the walk prunes dot directories, so it saw none).
+//
+// A file whose header cannot be READ makes the answer UNDECIDED rather than
+// negative. layoutMovableFiles moves such a file into data/ precisely because the
+// scan cannot prove it is not a nib; the authorizer reading the same file as proof
+// that nothing here was written by nibs is the opposite conclusion from the same
+// evidence.
 func declaredStoreCorroborated(dir string) (bool, error) {
-	sawMarkdown := false
-	err := nibcore.WalkStoreFiles(dir, func(path string, walkErr error) error {
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		return false, err
+	}
+	if len(entries) == 0 {
+		return true, nil
+	}
+	err = nibcore.WalkStoreFiles(dir, func(path string, walkErr error) error {
 		if walkErr != nil {
 			return walkErr
 		}
-		sawMarkdown = true
 		h, hErr := readFrontMatterHeader(path)
-		if hErr != nil || !h.hasFrontMatter {
-			return nil
+		if hErr != nil {
+			return hErr
 		}
-		if config.IsKnownStatus(h.status) {
+		if h.hasFrontMatter && config.IsKnownStatus(h.status) {
 			return errStoreCorroborated
 		}
 		return nil
@@ -552,7 +621,7 @@ func declaredStoreCorroborated(dir string) (bool, error) {
 	if err != nil {
 		return false, err
 	}
-	return !sawMarkdown, nil
+	return false, nil
 }
 
 // errStoreCorroborated stops declaredStoreCorroborated's walk at the first nib it

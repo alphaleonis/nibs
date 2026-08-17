@@ -577,6 +577,106 @@ func TestResolveStoreDirRequiresStoreEvidence(t *testing.T) {
 				return link
 			},
 		},
+		{
+			// The containment half of the parent-only rule. `nibs.path` naming an
+			// immediate subdirectory is satisfied LEXICALLY by a symlink pointing
+			// anywhere, and the store walk opens its root — so a repository
+			// shipping `.nibs.yml` plus `store -> /outside` had nibs print
+			// `nibs migrate --nibs-path <repo>/store`, which moved and rewrote
+			// every front-mattered file outside the project.
+			name: "a nibs.path naming a symlink that leaves the project",
+			build: func(t *testing.T, tmp string) string {
+				outside := filepath.Join(tmp, "victim")
+				mkdirAllT(t, outside)
+				writeFileT(t, filepath.Join(outside, "journal.md"), layoutNib)
+				repo := filepath.Join(tmp, "repo")
+				mkdirAllT(t, repo)
+				writeFileT(t, filepath.Join(repo, store.LegacyProjectConfigFileName), "nibs:\n  prefix: leg-\n  path: store\n")
+				link := filepath.Join(repo, "store")
+				if err := os.Symlink(outside, link); err != nil {
+					t.Skipf("symlinks unavailable: %v", err)
+				}
+				return link
+			},
+			refusal: "not an immediate subdirectory",
+		},
+		{
+			// The accept side of the same rule: resolving symlinks is a
+			// containment test, not a ban on them. A store reached by a link that
+			// stays inside the project is still the project's store.
+			name: "a nibs.path naming a symlink that stays inside the project",
+			build: func(t *testing.T, tmp string) string {
+				proj := filepath.Join(tmp, "proj")
+				real := filepath.Join(proj, "real")
+				mkdirAllT(t, real)
+				writeFileT(t, filepath.Join(real, "leg-a1--one.md"), layoutNib)
+				writeFileT(t, filepath.Join(proj, store.LegacyProjectConfigFileName), "nibs:\n  prefix: leg-\n  path: store\n")
+				link := filepath.Join(proj, "store")
+				if err := os.Symlink(real, link); err != nil {
+					t.Skipf("symlinks unavailable: %v", err)
+				}
+				return link
+			},
+			accept: true,
+		},
+		{
+			// The corroboration exemption for a markdown-free directory was
+			// unbounded: what acceptance authorizes is a whole-directory rename
+			// plus deletion of the project's `.nibs.yml`, which has nothing to do
+			// with rewriting file CONTENTS. An asset directory was renamed to
+			// `.nibs` wholesale.
+			name: "a nibs.path naming a populated directory with no markdown in it",
+			build: func(t *testing.T, tmp string) string {
+				proj := filepath.Join(tmp, "proj")
+				dir := filepath.Join(proj, "assets")
+				mkdirAllT(t, filepath.Join(dir, "img"))
+				writeFileT(t, filepath.Join(dir, "style.css"), "body{}\n")
+				writeFileT(t, filepath.Join(dir, "img", "logo.svg"), "<svg/>\n")
+				writeFileT(t, filepath.Join(proj, store.LegacyProjectConfigFileName), "nibs:\n  prefix: leg-\n  path: assets\n")
+				return dir
+			},
+			refusal: "nothing in it was written by nibs",
+		},
+		{
+			// The same exemption reached a second way: the store walk prunes dot
+			// directories, so markdown living only under one read as "no markdown
+			// at all" and the directory passed as a freshly created store.
+			name: "a nibs.path naming a directory whose only markdown is under a dot directory",
+			build: func(t *testing.T, tmp string) string {
+				proj := filepath.Join(tmp, "proj")
+				dir := filepath.Join(proj, "vault")
+				mkdirAllT(t, filepath.Join(dir, ".obsidian"))
+				writeFileT(t, filepath.Join(dir, ".obsidian", "hidden-note.md"), layoutNib)
+				writeFileT(t, filepath.Join(proj, store.LegacyProjectConfigFileName), "nibs:\n  prefix: leg-\n  path: vault\n")
+				return dir
+			},
+			refusal: "nothing in it was written by nibs",
+		},
+		{
+			// The mover treats a file whose header cannot be READ as a possible
+			// nib and moves it into data/ anyway; the authorizer read the same
+			// file as proof that nothing here was written by nibs. Undecided is
+			// the only answer that agrees with both.
+			name: "a nibs.path naming a directory whose only nib cannot be read",
+			build: func(t *testing.T, tmp string) string {
+				proj := filepath.Join(tmp, "proj")
+				dir := filepath.Join(proj, "nibdata")
+				mkdirAllT(t, dir)
+				nib := filepath.Join(dir, "leg-a1--one.md")
+				writeFileT(t, nib, layoutNib)
+				if err := os.Chmod(nib, 0); err != nil {
+					t.Skipf("chmod 0 unavailable: %v", err)
+				}
+				t.Cleanup(func() { _ = os.Chmod(nib, 0o644) })
+				if f, err := os.Open(nib); err == nil {
+					_ = f.Close()
+					t.Skip("this process can read a mode-000 file (running as root?)")
+				}
+				writeFileT(t, filepath.Join(proj, store.LegacyProjectConfigFileName), "nibs:\n  prefix: leg-\n  path: nibdata\n")
+				return dir
+			},
+			refusal: "cannot tell whether",
+		},
 	}
 
 	// The guard must cover every route to an explicitly named directory, not

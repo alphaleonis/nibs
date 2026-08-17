@@ -931,6 +931,142 @@ func TestMigrateNamesTheConfigThatHoldsTheRetiredKey(t *testing.T) {
 	}
 }
 
+// TestMigrateWillNotSweepUpADirectoryAConfigMerelyNames pins the blast radius of
+// the store-evidence guard, not just its verdict.
+//
+// The layout step's first act is a whole-directory os.Rename followed by deleting
+// the project's `.nibs.yml`, so a `.nibs.yml` — untrusted content in any cloned
+// repository — that gets past the guard costs the user their files, not a
+// confusing message. Two shapes did get past it:
+//
+//   - a `nibs.path` naming a directory reached by a symlink OUT of the project.
+//     The naming comparison is lexical, and the store walk opens its root, so the
+//     whole tree the link pointed at was moved into `<repo>/.nibs` and every
+//     front-mattered file in it rewritten as a nib render.
+//   - a `nibs.path` naming a populated directory holding no markdown, which the
+//     freshly-created-store exemption accepted.
+//
+// Each case asserts the refusal AND that the tree is untouched: a verdict-only
+// assertion would have passed against the version that moved the files.
+func TestMigrateWillNotSweepUpADirectoryAConfigMerelyNames(t *testing.T) {
+	tests := []struct {
+		name string
+		// build lays out the project and returns the store path to name plus the
+		// files that must survive untouched, as path -> content.
+		build func(t *testing.T, projectDir string) (declaredDir string, untouched map[string]string)
+	}{
+		{
+			name: "a store reached by a symlink out of the project",
+			build: func(t *testing.T, projectDir string) (string, map[string]string) {
+				victim := filepath.Join(t.TempDir(), "victim")
+				mkdirAllT(t, filepath.Join(victim, "notes"))
+				untouched := map[string]string{
+					filepath.Join(victim, "journal.md"):          layoutNib,
+					filepath.Join(victim, "notes", "private.md"): layoutNib,
+				}
+				for path, content := range untouched {
+					writeFileT(t, path, content)
+				}
+				link := filepath.Join(projectDir, "store")
+				if err := os.Symlink(victim, link); err != nil {
+					t.Skipf("symlinks unavailable: %v", err)
+				}
+				writeFileT(t, filepath.Join(projectDir, store.LegacyProjectConfigFileName),
+					"nibs:\n  prefix: leg-\n  id_length: 4\n  path: store\n")
+				return link, untouched
+			},
+		},
+		{
+			name: "a populated directory holding no markdown",
+			build: func(t *testing.T, projectDir string) (string, map[string]string) {
+				assets := filepath.Join(projectDir, "assets")
+				mkdirAllT(t, filepath.Join(assets, "img"))
+				untouched := map[string]string{
+					filepath.Join(assets, "style.css"):       "body{}\n",
+					filepath.Join(assets, "img", "logo.svg"): "<svg/>\n",
+				}
+				for path, content := range untouched {
+					writeFileT(t, path, content)
+				}
+				writeFileT(t, filepath.Join(projectDir, store.LegacyProjectConfigFileName),
+					"nibs:\n  prefix: leg-\n  id_length: 4\n  path: assets\n")
+				return assets, untouched
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Cleanup(resetRootPersistentFlags)
+			t.Cleanup(resetMigrateFlags)
+			resetMigrateFlags()
+
+			projectDir := t.TempDir()
+			declaredDir, untouched := tt.build(t, projectDir)
+			legacy := filepath.Join(projectDir, store.LegacyProjectConfigFileName)
+
+			out, err := runRootWith(t, "--nibs-path", declaredDir, "migrate", "--allow-dirty")
+			if err == nil {
+				t.Fatalf("migrate accepted a directory a config merely names\nout: %s", out)
+			}
+
+			for path, want := range untouched {
+				got, readErr := os.ReadFile(path)
+				if readErr != nil {
+					t.Errorf("%s is gone after a refused run: %v", path, readErr)
+					continue
+				}
+				if string(got) != want {
+					t.Errorf("%s was rewritten by a refused run:\n%s", path, got)
+				}
+			}
+			if _, statErr := os.Stat(legacy); statErr != nil {
+				t.Errorf("%s was deleted by a refused run: %v", legacy, statErr)
+			}
+			if _, statErr := os.Lstat(filepath.Join(projectDir, store.DirName)); statErr == nil {
+				t.Errorf("a refused run created %s", filepath.Join(projectDir, store.DirName))
+			}
+		})
+	}
+}
+
+// TestMigrateRelocatesAStoreLinkedInsideTheProject is the accept control for the
+// containment rule: resolving symlinks bounds WHERE a config may authorize, and
+// must not turn into a ban on links. A store reached through a link that stays
+// inside the project relocates, because renaming the link moves the store nibs
+// addresses.
+func TestMigrateRelocatesAStoreLinkedInsideTheProject(t *testing.T) {
+	t.Cleanup(resetRootPersistentFlags)
+	t.Cleanup(resetMigrateFlags)
+	resetMigrateFlags()
+
+	projectDir := t.TempDir()
+	real := filepath.Join(projectDir, "real")
+	mkdirAllT(t, real)
+	writeFileT(t, filepath.Join(real, "leg-a1--one.md"), layoutNib)
+	link := filepath.Join(projectDir, "store")
+	if err := os.Symlink(real, link); err != nil {
+		t.Skipf("symlinks unavailable: %v", err)
+	}
+	writeFileT(t, filepath.Join(projectDir, store.LegacyProjectConfigFileName),
+		"nibs:\n  prefix: leg-\n  id_length: 4\n  path: store\n")
+
+	if out, err := runRootWith(t, "--nibs-path", link, "migrate", "--allow-dirty"); err != nil {
+		t.Fatalf("migrate refused a store linked inside its own project: %v\nout: %s", err, out)
+	}
+
+	resetRootPersistentFlags()
+	resetListFlags()
+	t.Cleanup(resetListFlags)
+	out, err := runRootWith(t, "--nibs-path", filepath.Join(projectDir, store.DirName), "list", "--all", "--json")
+	if err != nil {
+		t.Fatalf("list after the relocation: %v", err)
+	}
+	if ids := envelopeIDs(parseListEnvelope(t, out)); !ids["leg-a1"] {
+		t.Errorf("list ids = %v, want leg-a1", ids)
+	}
+}
+
 // TestMigrateRefusesToRelocateALinkedGitWorktree pins that the relocation does not
 // destroy the rollback net the run just verified.
 //
