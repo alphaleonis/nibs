@@ -106,6 +106,93 @@ func TestAtomicWriteFileReplacesASymlinkRatherThanFollowingIt(t *testing.T) {
 	assertNoTempFiles(t, dir)
 }
 
+// TestAtomicWriteFileSyncsItsDirectory pins the durability half of the contract
+// that the batch variant deliberately drops: the single-write path flushes the
+// directory entry the rename created, exactly once, for the directory it wrote
+// into. Nothing else can see this — syncDir returns nothing and swallows both
+// its errors — so without SyncDirFn a deleted sync passes every other test here.
+func TestAtomicWriteFileSyncsItsDirectory(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "nib.md")
+	synced := recordDirSyncs(t)
+
+	if err := AtomicWriteFile(path, []byte("first"), 0o644); err != nil {
+		t.Fatalf("write: %v", err)
+	}
+
+	if got := *synced; len(got) != 1 || got[0] != dir {
+		t.Errorf("directories synced = %v, want exactly [%s]", got, dir)
+	}
+}
+
+// TestAtomicWriteFileDeferDirSyncHandsTheFlushBack is the other side of that
+// guard: the batch variant writes the file but leaves the directory entry
+// unflushed and names the directory, so the caller can pay one fsync per
+// distinct directory after its loop instead of one per file.
+func TestAtomicWriteFileDeferDirSyncHandsTheFlushBack(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "nib.md")
+	synced := recordDirSyncs(t)
+
+	gotDir, err := AtomicWriteFileDeferDirSync(path, []byte("batched"), 0o644)
+	if err != nil {
+		t.Fatalf("write: %v", err)
+	}
+	if gotDir != dir {
+		t.Errorf("returned directory = %q, want %q", gotDir, dir)
+	}
+	if got := *synced; len(got) != 0 {
+		t.Errorf("directories synced = %v, want none — the flush is the caller's", got)
+	}
+
+	// The file itself is complete and correctly named; only its directory entry
+	// is left unflushed.
+	content, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("read after write: %v", err)
+	}
+	if string(content) != "batched" {
+		t.Errorf("content = %q, want %q", content, "batched")
+	}
+	assertNoTempFiles(t, dir)
+}
+
+// TestAtomicWriteFileDeferDirSyncReportsNoDirectoryWhenTheRenameFails covers the
+// error path a batch caller feeds straight into its collected set: a failure
+// happens before the rename, so there is no new directory entry to flush and the
+// caller must not be told to flush one.
+func TestAtomicWriteFileDeferDirSyncReportsNoDirectoryWhenTheRenameFails(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "nib.md")
+
+	orig := RenameFn
+	RenameFn = func(_, _ string) error { return errors.New("simulated crash before rename") }
+	defer func() { RenameFn = orig }()
+
+	gotDir, err := AtomicWriteFileDeferDirSync(path, []byte("never lands"), 0o644)
+	if err == nil {
+		t.Fatal("expected error from injected rename failure, got nil")
+	}
+	if gotDir != "" {
+		t.Errorf("returned directory = %q, want %q — nothing was renamed", gotDir, "")
+	}
+}
+
+// recordDirSyncs swaps the directory-sync seam for one that records every
+// directory flushed and still performs the flush, and restores it afterwards.
+// The returned pointer is read after the code under test has run.
+func recordDirSyncs(t *testing.T) *[]string {
+	t.Helper()
+	var synced []string
+	orig := SyncDirFn
+	SyncDirFn = func(dir string) {
+		synced = append(synced, dir)
+		orig(dir)
+	}
+	t.Cleanup(func() { SyncDirFn = orig })
+	return &synced
+}
+
 // assertNoTempFiles fails if any file other than the canonical nib.md remains in
 // dir — i.e. a temp file leaked.
 func assertNoTempFiles(t *testing.T, dir string) {

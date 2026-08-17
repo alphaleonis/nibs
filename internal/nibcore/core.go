@@ -1134,8 +1134,25 @@ func (c *Core) Update(b *nib.Nib, ifMatch *string) error {
 	return nil
 }
 
-// saveToDisk writes a nib to the filesystem.
+// saveToDisk writes a nib to the filesystem and flushes the directory entry
+// before returning, so a single write is as durable as fsutil.AtomicWriteFile
+// makes it. A caller writing MANY nibs wants saveToDiskDeferDirSync plus a
+// dirSyncBatch instead: the flush is per directory, not per file.
 func (c *Core) saveToDisk(b *nib.Nib) error {
+	dir, err := c.saveToDiskDeferDirSync(b)
+	if err != nil {
+		return err
+	}
+	fsutil.SyncDir(dir)
+	return nil
+}
+
+// saveToDiskDeferDirSync writes a nib to the filesystem without flushing the
+// directory entry, returning the directory that still needs one (empty when the
+// write failed before its rename). Every caller owes that directory to a
+// dirSyncBatch — see fsutil.AtomicWriteFileDeferDirSync for the weaker
+// guarantee that holds until the flush.
+func (c *Core) saveToDiskDeferDirSync(b *nib.Nib) (string, error) {
 	// Determine the file path. A nib with no Path yet is new, and new nibs are
 	// written into the store's data/ directory — the store root holds
 	// directories and the config, never nib files.
@@ -1150,20 +1167,21 @@ func (c *Core) saveToDisk(b *nib.Nib) error {
 	// Ensure parent directory exists
 	dir := filepath.Dir(path)
 	if err := os.MkdirAll(dir, 0755); err != nil {
-		return fmt.Errorf("creating directory: %w", err)
+		return "", fmt.Errorf("creating directory: %w", err)
 	}
 
 	// Render and write
 	content, err := b.Render()
 	if err != nil {
-		return err
+		return "", err
 	}
 
 	// Write atomically (temp file + rename) so a crash or a concurrent reader
 	// never observes a half-written nib — a torn file would fail nib.Parse on the
 	// next snapshot build and surface as an OnDiskUnparseableError.
-	if err := fsutil.AtomicWriteFile(path, content, 0644); err != nil {
-		return fmt.Errorf("writing file: %w", err)
+	unflushedDir, err := fsutil.AtomicWriteFileDeferDirSync(path, content, 0644)
+	if err != nil {
+		return "", fmt.Errorf("writing file: %w", err)
 	}
 
 	// The bytes just written ARE b's link spelling, so this is the one write path
@@ -1179,7 +1197,43 @@ func (c *Core) saveToDisk(b *nib.Nib) error {
 	// keep describing them.
 	b.CaptureRawLinks()
 
-	return nil
+	return unflushedDir, nil
+}
+
+// dirSyncBatch collects the distinct directories that saveToDiskDeferDirSync
+// writes left unflushed, so a bulk loop pays one directory fsync per DIRECTORY
+// rather than one per nib — the same flush, N times fewer.
+//
+// A set rather than a single remembered directory because one loop over c.nibs
+// can span several: archived nibs stay in the store and live under archive/
+// while active ones live under data/, and data/ tolerates subdirectories that a
+// nib's Path preserves. Syncing one hardcoded directory would silently drop the
+// durability of every write outside it.
+type dirSyncBatch map[string]struct{}
+
+// add records a directory to flush. The empty string is ignored, so a caller can
+// hand it the result of a failed write without a guard.
+func (b dirSyncBatch) add(dir string) {
+	if dir == "" {
+		return
+	}
+	b[dir] = struct{}{}
+}
+
+// flush fsyncs each collected directory once, in a deterministic order. Run it
+// even when the loop aborts early — the writes that already landed are on disk
+// with unflushed directory entries — which is what the defer at each call site
+// is for. Best-effort, like every directory sync here: see
+// fsutil.AtomicWriteFile's "does not promise" list.
+func (b dirSyncBatch) flush() {
+	dirs := make([]string, 0, len(b))
+	for dir := range b {
+		dirs = append(dirs, dir)
+	}
+	sort.Strings(dirs)
+	for _, dir := range dirs {
+		fsutil.SyncDir(dir)
+	}
 }
 
 // Delete removes a nib by exact ID match.

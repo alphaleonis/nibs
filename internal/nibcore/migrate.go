@@ -190,9 +190,18 @@ func (c *Core) persistClonesLocked(dirty map[string]*nib.Nib, what string) error
 		ids = append(ids, id)
 	}
 	sort.Strings(ids)
+
+	// One directory fsync per directory the batch touched, not one per nib.
+	// Deferred so an aborted batch still flushes what it did write: the first
+	// error returns with the earlier files already renamed into place.
+	pending := dirSyncBatch{}
+	defer pending.flush()
+
 	for _, id := range ids {
 		cl := dirty[id]
-		if err := c.saveToDisk(cl); err != nil {
+		dir, err := c.saveToDiskDeferDirSync(cl)
+		pending.add(dir)
+		if err != nil {
 			return fmt.Errorf("persisting %s migration for %s: %w", what, id, err)
 		}
 		c.nibs[id] = cl

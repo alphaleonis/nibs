@@ -14,6 +14,24 @@ import (
 // temp write and the rename. Production always uses os.Rename.
 var RenameFn = os.Rename
 
+// SyncDirFn is the seam a test observes the directory flush through — syncDir
+// returns nothing and swallows its errors by contract, so a sync that stopped
+// happening would otherwise be invisible. Production always uses syncDir.
+//
+// Callers outside this package go through SyncDir, not this variable: a seam is
+// owned by the package that declares it (as RenameFn here and storeRenameFn in
+// cmd are), so the set of places that can silently disable a flush stays inside
+// one file.
+var SyncDirFn = syncDir
+
+// SyncDir flushes one directory entry, and is the call a batch writer makes for
+// each distinct directory after a run of AtomicWriteFileDeferDirSync writes.
+// Best-effort, like every directory sync here: see AtomicWriteFile's "does not
+// promise" list.
+func SyncDir(dir string) {
+	SyncDirFn(dir)
+}
+
 // AtomicWriteFile writes data to path atomically: it writes to a uniquely-named
 // temp file in the same directory, fsyncs it, renames it over path, then fsyncs the
 // containing directory. Because the rename is atomic on the same filesystem, a
@@ -37,6 +55,16 @@ var RenameFn = os.Rename
 //     directory handle, and the write has already succeeded there, so failing would
 //     report an error for a completed operation. On such a platform a crash-recovery
 //     path keying on "the file is present" must not treat the rename as durable.
+//     AtomicWriteFileDeferDirSync widens that same window deliberately, for a
+//     caller writing a batch; it hands the flush obligation back rather than
+//     dropping it.
+//   - Durability of the directory ENTRY OF A DIRECTORY a caller had to create
+//     first. A new directory's own name lives in its PARENT, which nothing here
+//     flushes — the sync covers the directory the file was renamed into, not the
+//     chain above it. Callers that MkdirAll before writing (nibcore's saveToDisk)
+//     inherit that: after a crash the file's contents are durable and its
+//     directory may not be, which the bullet above already says about the file
+//     itself.
 //   - Mode BITS beyond the permission bits. Both callers pass
 //     info.Mode().Perm(), so setuid/setgid/sticky never reach Chmod and the new
 //     file does not carry them. That is the safe direction, and no config or nib
@@ -53,11 +81,47 @@ var RenameFn = os.Rename
 //     reports what it means for a config.yml.
 //   - Any protection against a cross-filesystem rename, which cannot arise: the
 //     temp file is always created in filepath.Dir(path), so EXDEV is impossible.
-func AtomicWriteFile(path string, data []byte, perm os.FileMode) (err error) {
+func AtomicWriteFile(path string, data []byte, perm os.FileMode) error {
+	dir, err := writeAndRename(path, data, perm)
+	if err != nil {
+		return err
+	}
+	SyncDirFn(dir)
+	return nil
+}
+
+// AtomicWriteFileDeferDirSync is AtomicWriteFile without the trailing directory
+// fsync, for a caller writing a BATCH of files: N writes into one directory pay
+// N identical directory fsyncs where a single one after the batch is equivalent
+// (measured: 500 same-directory writes, 5.6ms without the per-write fsync
+// against 10.2ms with it, on NVMe — the gap widens on spinning disks,
+// network-synced directories and Windows volumes).
+//
+// It returns the directory the file was renamed into, whose entry is NOT yet
+// flushed, and the empty string when it returns an error — an error means the
+// rename never ran, so there is no new entry to flush.
+//
+// THE WEAKER GUARANTEE: until the caller passes that directory to SyncDir,
+// the file's CONTENTS are durable (the temp is fsynced before the rename) but
+// its NAME may not survive a crash, so a recovery path keying on "the file is
+// present" cannot rely on it — precisely the state AtomicWriteFile's "does not
+// promise" list describes for a platform that refuses a directory sync, except
+// here it is the caller who ends it. A batch caller therefore owes SyncDir one
+// call per DISTINCT directory it collected, and owes them on the ERROR path too:
+// a batch that aborts midway has already committed every rename before the
+// failure. Everything else in AtomicWriteFile's contract holds unchanged.
+func AtomicWriteFileDeferDirSync(path string, data []byte, perm os.FileMode) (string, error) {
+	return writeAndRename(path, data, perm)
+}
+
+// writeAndRename is the shared mechanism behind both writers: temp file, fsync,
+// chmod, rename. It returns the directory whose entry the rename created, so
+// the caller can decide when — or whether — to flush it.
+func writeAndRename(path string, data []byte, perm os.FileMode) (_ string, err error) {
 	dir := filepath.Dir(path)
 	tmp, err := os.CreateTemp(dir, "."+filepath.Base(path)+".tmp-*")
 	if err != nil {
-		return fmt.Errorf("creating temp file: %w", err)
+		return "", fmt.Errorf("creating temp file: %w", err)
 	}
 	tmpName := tmp.Name()
 
@@ -71,26 +135,25 @@ func AtomicWriteFile(path string, data []byte, perm os.FileMode) (err error) {
 	}()
 
 	if _, err = tmp.Write(data); err != nil {
-		return fmt.Errorf("writing temp file: %w", err)
+		return "", fmt.Errorf("writing temp file: %w", err)
 	}
 	// Flush to disk before the rename so a crash cannot leave a renamed-but-empty
 	// file (the rename would otherwise be durable while the data is not).
 	if err = tmp.Sync(); err != nil {
-		return fmt.Errorf("syncing temp file: %w", err)
+		return "", fmt.Errorf("syncing temp file: %w", err)
 	}
 	if err = tmp.Close(); err != nil {
-		return fmt.Errorf("closing temp file: %w", err)
+		return "", fmt.Errorf("closing temp file: %w", err)
 	}
 	// os.CreateTemp makes the file 0600; restore the intended permissions before
 	// it becomes the visible file.
 	if err = os.Chmod(tmpName, perm); err != nil {
-		return fmt.Errorf("chmod temp file: %w", err)
+		return "", fmt.Errorf("chmod temp file: %w", err)
 	}
 	if err = RenameFn(tmpName, path); err != nil {
-		return fmt.Errorf("renaming temp file over %s: %w", path, err)
+		return "", fmt.Errorf("renaming temp file over %s: %w", path, err)
 	}
-	syncDir(dir)
-	return nil
+	return dir, nil
 }
 
 // syncDir flushes the directory entry the rename created, so the file's NAME is as
