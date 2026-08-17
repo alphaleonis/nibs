@@ -15,6 +15,7 @@ import (
 
 	"github.com/alphaleonis/nibs/internal/config"
 	"github.com/alphaleonis/nibs/internal/store"
+	"github.com/alphaleonis/nibs/internal/testskip"
 	"github.com/spf13/cobra"
 )
 
@@ -105,19 +106,62 @@ const pathTail = "[^\\s'\"`,;:)\\]]*"
 // config value would go unchecked here rather than fail. Anchoring is what makes
 // the extraction reliable at all: without a root to anchor on, "which" and
 // "nibs.path:" read as paths.
+//
+// TWO SPELLINGS of root are searched, because a refusal renders a path with
+// either %s or %q and the two are the same string only where Go quoting has
+// nothing to escape. On a Windows path they never are: %q doubles every
+// separator, so an anchor built from the raw `C:\proj` matches nothing inside the
+// span `"C:\\proj\\nibdata"` and that path is simply not extracted — the row
+// then asserts nothing about it and still passes, which is the silent skip this
+// whole file exists to refuse. A match found through the escaped anchor is
+// unquoted back to the real path before it is returned, so a caller stats and
+// reports the path a reader would see rather than its escaped spelling.
+// TestPathsUnderReadsBothSpellingsOfItsRoot pins both directions.
 func pathsUnder(msg, root string) []string {
-	re := regexp.MustCompile(regexp.QuoteMeta(root) + pathTail)
 	seen := map[string]bool{}
 	var out []string
-	for _, m := range re.FindAllString(msg, -1) {
-		p := strings.TrimRight(m, ".")
+	add := func(p string) {
 		if p == "" || seen[p] {
-			continue
+			return
 		}
 		seen[p] = true
 		out = append(out, p)
 	}
+	for _, m := range anchoredOn(msg, root) {
+		add(strings.TrimRight(m, "."))
+	}
+	if escaped := goQuotedBody(root); escaped != root {
+		for _, m := range anchoredOn(msg, escaped) {
+			add(unescapeQuotedBody(strings.TrimRight(m, ".")))
+		}
+	}
 	return out
+}
+
+// anchoredOn returns every run of path characters in msg that begins with anchor.
+func anchoredOn(msg, anchor string) []string {
+	return regexp.MustCompile(regexp.QuoteMeta(anchor)+pathTail).FindAllString(msg, -1)
+}
+
+// goQuotedBody renders s the way %q writes it, without the surrounding quotes —
+// the spelling a path takes inside a %q span.
+func goQuotedBody(s string) string {
+	quoted := strconv.Quote(s)
+	return quoted[1 : len(quoted)-1]
+}
+
+// unescapeQuotedBody undoes the Go quoting a %q span applied.
+//
+// A body the unquoter refuses is returned UNCHANGED rather than dropped. Dropping
+// it would put back the very silence this extraction is being widened to remove:
+// the escaped spelling names no real file, so returning it makes the existence
+// check fail and say so, while returning nothing makes the row quietly assert
+// less than it claims to.
+func unescapeQuotedBody(body string) string {
+	if s, err := strconv.Unquote(`"` + body + `"`); err == nil {
+		return s
+	}
+	return body
 }
 
 // storeFlagAdvice returns every store-naming flag advice in msg whose value is a
@@ -148,6 +192,11 @@ func pathsUnder(msg, root string) []string {
 // reads with a real field splitter. Matching a quoted value here without one
 // would truncate a path containing a space and then report the truncation as an
 // unresolvable store.
+//
+// Nor is the Go-quoted spelling pathsUnder also searches for, and the asymmetry
+// is not an oversight: %q is used on the DECLARED CONFIG VALUE these refusals
+// echo, never on a flag argument — a flag argument goes through shellArg, whose
+// output this deliberately leaves to the invocation half.
 func storeFlagAdvice(msg, root string) [][2]string {
 	re := regexp.MustCompile(`(--nibs-path|--config)[= ](` + regexp.QuoteMeta(root) + pathTail + `)`)
 	seen := map[[2]string]bool{}
@@ -790,7 +839,7 @@ func storeResolutionRefusalCases() []refusalCase {
 					"nibs:\n  prefix: leg-\n  id_length: 4\n  path: store\n")
 				link := filepath.Join(repo, "store")
 				if err := os.Symlink(outside, link); err != nil {
-					t.Skipf("symlinks unavailable: %v", err)
+					testskip.SymlinkUnavailable(t, err)
 				}
 				return explicitly(t, func(*testing.T) { nibsPath = link }), tmp
 			},
@@ -1688,6 +1737,72 @@ func TestRefusalExtractionFindsWhatItClaimsTo(t *testing.T) {
 	}
 	if mayBeAbsent(stated, "/tmp/x/b") {
 		t.Error("mayBeAbsent excuses a second path from another path's absence statement")
+	}
+}
+
+// TestPathsUnderReadsBothSpellingsOfItsRoot pins the extraction against the two
+// ways a refusal renders a path — %s and %q — which are the same string on a
+// POSIX root and different strings on a Windows one.
+//
+// pathsUnder anchors on regexp.QuoteMeta(root), and QuoteMeta escapes a
+// backslash into a pattern matching ONE backslash, while %q writes it as TWO.
+// So on the root `C:\proj` the anchor finds nothing inside the span
+// `"C:\\proj\\nibdata"`: that path is not extracted, nothing fails, and the row
+// goes on asserting only whatever else its message happened to yield. A skip
+// that looks exactly like a pass is the defect this whole file is built against,
+// and it is invisible on this platform because `/tmp/x` survives %q unchanged.
+//
+// LATENT RATHER THAN LIVE, stated here because the fix is otherwise unmotivated:
+// the %q sites in cmd/root.go, cmd/migrate.go and internal/config render the
+// DECLARED `nibs.path` value, and every fixture in storeResolutionRefusalCases
+// declares that value RELATIVELY — a relative value is never under root, so no %q
+// span in this suite holds an extractable path on any platform today. The moment
+// a fixture declares an ABSOLUTE `nibs.path`, the echo lands under root, and on
+// Windows it would silently stop being checked. This test is what makes that a
+// failure rather than a quiet loss of coverage.
+//
+// The %q span's own delimiters need no special handling, which the assertion
+// below establishes rather than assumes: the anchor starts at root's first byte
+// so the opening quote falls outside the match, and pathTail excludes `"` so the
+// closing quote ends it. An extracted value carrying either delimiter fails here.
+func TestPathsUnderReadsBothSpellingsOfItsRoot(t *testing.T) {
+	tests := []struct {
+		name string
+		root string
+		// quoted is rendered with %q, plain with %s, in one message.
+		quoted string
+		plain  string
+	}{
+		{
+			// No filesystem access anywhere in this test: %q escaping and
+			// regexp.QuoteMeta's special set are identical on every GOOS, so a
+			// Windows path is exercisable here as a plain Go string literal.
+			name:   "a windows root, where %q doubles every separator",
+			root:   `C:\proj`,
+			quoted: `C:\proj\nibdata`,
+			plain:  `C:\proj\.nibs`,
+		},
+		{
+			// The control: the same two renderings on a root %q leaves alone.
+			name:   "a posix root, where the two renderings coincide",
+			root:   "/tmp/x",
+			quoted: "/tmp/x/nibdata",
+			plain:  "/tmp/x/.nibs",
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			msg := fmt.Sprintf("sets the retired `nibs.path: %q`; create %s and move this project's nib files into it", tt.quoted, tt.plain)
+
+			got := pathsUnder(msg, tt.root)
+			sort.Strings(got)
+			want := []string{tt.plain, tt.quoted}
+			sort.Strings(want)
+			if strings.Join(got, "\x00") != strings.Join(want, "\x00") {
+				t.Fatalf("pathsUnder(%q) = %q, want %q; a path a refusal renders with %%q must come back in its real spelling, "+
+					"or every assertion this harness makes about that path is skipped in silence", msg, got, want)
+			}
+		})
 	}
 }
 

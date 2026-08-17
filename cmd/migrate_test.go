@@ -12,6 +12,7 @@ import (
 	"github.com/alphaleonis/nibs/internal/nibcore"
 	"github.com/alphaleonis/nibs/internal/output"
 	"github.com/alphaleonis/nibs/internal/store"
+	"github.com/alphaleonis/nibs/internal/testskip"
 	"github.com/spf13/pflag"
 )
 
@@ -525,7 +526,7 @@ func TestStoreProbeDegradation(t *testing.T) {
 		// The emacs lock-file shape: a .md-named symlink to a target that
 		// does not exist. Opening it fails; probing must skip, not abort.
 		if err := os.Symlink(dataPath(nibsDir, "no-such-target"), dataPath(nibsDir, ".#cur1--one.md")); err != nil {
-			t.Skipf("symlinks unavailable: %v", err)
+			testskip.SymlinkUnavailable(t, err)
 		}
 		out, err := runRootWith(t, "--nibs-path", nibsDir, "list", "-q", "--all")
 		if err != nil {

@@ -6,6 +6,8 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/alphaleonis/nibs/internal/testskip"
 )
 
 func TestAtomicWriteFileCreatesAndReplaces(t *testing.T) {
@@ -80,7 +82,7 @@ func TestAtomicWriteFileReplacesASymlinkRatherThanFollowingIt(t *testing.T) {
 	path := filepath.Join(dir, "nib.md")
 	outside := filepath.Join(t.TempDir(), "escaped.md")
 	if err := os.Symlink(outside, path); err != nil {
-		t.Skipf("symlinks unavailable: %v", err)
+		testskip.SymlinkUnavailable(t, err)
 	}
 
 	if err := AtomicWriteFile(path, []byte("contained"), 0o644); err != nil {

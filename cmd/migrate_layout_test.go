@@ -8,6 +8,7 @@ import (
 	"testing"
 
 	"github.com/alphaleonis/nibs/internal/store"
+	"github.com/alphaleonis/nibs/internal/testskip"
 )
 
 // writeLegacyStore materializes a PRE-LAYOUT project: a `.nibs.yml` beside the
@@ -586,7 +587,9 @@ func TestMigrateScopesTheFailLoudGateToStoreContent(t *testing.T) {
 		// windows-latest, where symlinks commonly need elevation, so the
 		// unreadable boundary would go unverified exactly there. This drives the
 		// predicate directly over a synthesized scan instead: no filesystem, no
-		// symlinks, same decision.
+		// symlinks, same decision. Those skips are counted rather than silent now
+		// (internal/testskip), so how much this stands in for is a number a run
+		// reports rather than a thing to reason about.
 		contentStep := -1
 		for i, step := range migrationSteps {
 			if step.isContent() {
@@ -662,7 +665,7 @@ func TestMigrateScopesTheFailLoudGateToStoreContent(t *testing.T) {
 		})
 		link := filepath.Join(storeDir, ".#leg-a1--one.md")
 		if err := os.Symlink(filepath.Join(storeDir, "no-such-target"), link); err != nil {
-			t.Skipf("symlinks unavailable: %v", err)
+			testskip.SymlinkUnavailable(t, err)
 		}
 
 		out, err := runRootWith(t, "--nibs-path", storeDir, "migrate", "--allow-dirty")

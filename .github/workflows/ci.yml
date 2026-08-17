@@ -22,6 +22,23 @@ jobs:
       matrix:
         os: [ubuntu-latest, windows-latest]
     runs-on: ${{ matrix.os }}
+    env:
+      # Where internal/testskip appends its tally of guards that did not run
+      # because the runner could not build their fixture. This job runs
+      # `go test ./...`, which prints one `ok <pkg>` line for a package whose
+      # tests all pass or skip and discards that package's output — so without
+      # this file a green windows leg is indistinguishable from one where every
+      # symlink-dependent guard skipped, and fifteen fixtures here skip on
+      # os.Symlink failing. Absolute, because `go test ./...` runs each package's
+      # binary with that package's own source directory as its cwd.
+      NIBS_SKIP_REPORT: ${{ github.workspace }}/skipped-guards.txt
+      # The Linux runner's filesystem always supports symlinks, so a symlink skip
+      # there is a regression in the environment rather than a limitation of it,
+      # and this makes it a build failure. The windows leg is deliberately left
+      # permissive: whether these runners can create a symlink without elevation
+      # is precisely the open question the report above exists to answer. Set it
+      # there too once a run has shown the count is zero.
+      NIBS_REQUIRE_SYMLINKS: ${{ matrix.os == 'ubuntu-latest' && '1' || '' }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
       # Every tool this job runs — go, node, task — is installed by mise from
@@ -93,6 +110,25 @@ jobs:
       # run wherever there is no user systemd manager.
       - run: go build ./...
       - run: go test -count=1 ./...
+      # The counts the step above cannot print. `if: always()` because a failing
+      # test run is exactly when knowing which guards never ran matters most, and
+      # the job summary because a log line still has to be gone looking for.
+      - name: Report the guards that did not run
+        if: always()
+        shell: bash
+        run: |
+          report="$NIBS_SKIP_REPORT"
+          # Git Bash on the windows runner gets a backslash path from
+          # github.workspace; cygpath is absent everywhere else.
+          if command -v cygpath >/dev/null 2>&1; then
+            report="$(cygpath -u "$report")"
+          fi
+          if [ -s "$report" ]; then
+            cat "$report"
+            cat "$report" >> "$GITHUB_STEP_SUMMARY"
+          else
+            echo "Every environment-dependent guard ran; nothing was skipped."
+          fi
       # Run the concurrency-critical packages under the race detector so a
       # reintroduced data race fails CI (nibs-7l3v). Linux-only: -race on
       # Windows needs a mingw toolchain and is materially slower, and the

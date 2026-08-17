@@ -12,6 +12,7 @@ import (
 	"testing"
 
 	"github.com/alphaleonis/nibs/internal/store"
+	"github.com/alphaleonis/nibs/internal/testskip"
 )
 
 // legacyPathConfig is a pre-layout config whose retired `nibs.path` names a
@@ -149,7 +150,7 @@ func TestMigrateRefusesToRelocateOntoAnExistingStore(t *testing.T) {
 		{"a plain file", func(t *testing.T, path string) { writeFileT(t, path, "not a store\n") }},
 		{"a dangling symlink", func(t *testing.T, path string) {
 			if err := os.Symlink(filepath.Join(filepath.Dir(path), "no-such-target"), path); err != nil {
-				t.Skipf("symlinks unavailable: %v", err)
+				testskip.SymlinkUnavailable(t, err)
 			}
 		}},
 	} {
@@ -402,7 +403,7 @@ func TestMigrateConfigRelocationRefusesANonRegularDestination(t *testing.T) {
 			legacy := filepath.Join(projectDir, store.LegacyProjectConfigFileName)
 			dest := store.NewLayout(storeDir).ConfigPath()
 			if err := os.Symlink(tt.target(projectDir, storeDir), dest); err != nil {
-				t.Skipf("symlinks unavailable: %v", err)
+				testskip.SymlinkUnavailable(t, err)
 			}
 
 			_, err := runRootWith(t, "--nibs-path", storeDir, "migrate", "--allow-dirty")
@@ -543,7 +544,7 @@ func migrateGateFixtures() map[string]migrateGateFixture {
 			_, storeDir := writeLegacyStore(t, "", map[string]string{"leg-a1--one.md": v0Nib})
 			link := filepath.Join(storeDir, ".#leg-a1--one.md")
 			if err := os.Symlink(filepath.Join(storeDir, "no-such-target"), link); err != nil {
-				t.Skipf("symlinks unavailable: %v", err)
+				testskip.SymlinkUnavailable(t, err)
 			}
 			return storeDir
 		}},
@@ -989,7 +990,7 @@ func TestMigrateWillNotSweepUpADirectoryAConfigMerelyNames(t *testing.T) {
 				}
 				link := filepath.Join(projectDir, "store")
 				if err := os.Symlink(victim, link); err != nil {
-					t.Skipf("symlinks unavailable: %v", err)
+					testskip.SymlinkUnavailable(t, err)
 				}
 				writeFileT(t, filepath.Join(projectDir, store.LegacyProjectConfigFileName),
 					"nibs:\n  prefix: leg-\n  id_length: 4\n  path: store\n")
@@ -1066,7 +1067,7 @@ func TestMigrateRelocatesAStoreLinkedInsideTheProject(t *testing.T) {
 	writeFileT(t, filepath.Join(real, "leg-a1--one.md"), layoutNib)
 	link := filepath.Join(projectDir, "store")
 	if err := os.Symlink(real, link); err != nil {
-		t.Skipf("symlinks unavailable: %v", err)
+		testskip.SymlinkUnavailable(t, err)
 	}
 	writeFileT(t, filepath.Join(projectDir, store.LegacyProjectConfigFileName),
 		"nibs:\n  prefix: leg-\n  id_length: 4\n  path: store\n")
@@ -1191,7 +1192,7 @@ func TestMigrateFindsFilesThroughASymlinkedStoreRoot(t *testing.T) {
 	writeFileT(t, filepath.Join(real, "leg-a1--one.md"), layoutNib)
 	link := filepath.Join(projectDir, store.DirName)
 	if err := os.Symlink(real, link); err != nil {
-		t.Skipf("symlinks unavailable: %v", err)
+		testskip.SymlinkUnavailable(t, err)
 	}
 
 	out, err := runRootWith(t, "--nibs-path", link, "migrate", "--allow-dirty")

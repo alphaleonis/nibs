@@ -9,6 +9,7 @@ import (
 	"testing"
 
 	"github.com/alphaleonis/nibs/internal/store"
+	"github.com/alphaleonis/nibs/internal/testskip"
 )
 
 func TestDefault(t *testing.T) {
@@ -1588,7 +1589,7 @@ func TestSaveReportsReplacingASymlinkedConfig(t *testing.T) {
 	}
 	path := store.NewLayout(storeDir).ConfigPath()
 	if err := os.Symlink(external, path); err != nil {
-		t.Skipf("symlinks unavailable: %v", err)
+		testskip.SymlinkUnavailable(t, err)
 	}
 
 	cfg := Default()

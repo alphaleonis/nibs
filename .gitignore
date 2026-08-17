@@ -22,3 +22,5 @@ web/dist/
 /web/.installed-lock.tmp
 __pycache__/
 *.pyc
+/.skipped-guards.txt
+/skipped-guards.txt

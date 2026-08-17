@@ -229,12 +229,25 @@ tasks:
   test:
     desc: Run all tests (Go + web, incl. the -race gate on nibcore + graph)
     deps: [web:build]
+    env:
+      # Where internal/testskip appends its tally of guards that did not run
+      # because this machine could not build their fixture. Absolute, because
+      # `go test ./...` runs each package's binary with that package's source
+      # directory as its cwd — a relative path would scatter one file per
+      # package. `go test` also DISCARDS a passing package's stdout in
+      # package-list mode, so this file is the only channel a green run has.
+      NIBS_SKIP_REPORT: '{{.ROOT_DIR}}/.skipped-guards.txt'
     cmds:
+      # Stale counts from a previous run would read as this run's.
+      - rm -f "$NIBS_SKIP_REPORT"
       # Go tests run memory-capped so a runaway test is OOM-killed inside its own
       # cgroup instead of triggering a global OOM that takes down the WSL VM
       # (nibs-mv0i). Falls back to plain `go test` where systemd --user scopes
       # aren't available. Override the cap with NIBS_CAP_MEM_MAX (default 4G).
       - bash scripts/go-test-capped.sh ./...
+      # Silent when nothing was skipped, which is the normal case here.
+      - cmd: 'if [ -s "$NIBS_SKIP_REPORT" ]; then cat "$NIBS_SKIP_REPORT"; fi'
+        silent: true
       # Run the concurrency-critical packages a second time under -race, so a
       # reintroduced data race fails the default gate rather than only when
       # someone remembers to pass -race by hand (nibs-7l3v). Many guards in these

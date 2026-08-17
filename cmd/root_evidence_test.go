@@ -8,6 +8,7 @@ import (
 
 	"github.com/alphaleonis/nibs/internal/config"
 	"github.com/alphaleonis/nibs/internal/store"
+	"github.com/alphaleonis/nibs/internal/testskip"
 )
 
 // hugoPost is front-mattered markdown that is NOT a nib: it carries a title and
@@ -22,10 +23,10 @@ const hugoPost = "---\ntitle: Hello\ndate: 2026-01-02\ndraft: false\n---\n\nA bl
 func symlinkLoopT(t *testing.T, path string) {
 	t.Helper()
 	if err := os.Symlink(filepath.Base(path), path); err != nil {
-		t.Skipf("symlinks unavailable: %v", err)
+		testskip.SymlinkUnavailable(t, err)
 	}
 	if _, err := os.Stat(path); err == nil {
-		t.Skipf("this filesystem resolves a self-referential symlink at %s", path)
+		testskip.Unavailable(t, testskip.Symlinks, "this filesystem resolves a self-referential symlink at %s", path)
 	}
 }
 
@@ -37,11 +38,11 @@ func lockedDirT(t *testing.T, parent, name string) string {
 	dir := filepath.Join(parent, name)
 	mkdirAllT(t, dir)
 	if err := os.Chmod(dir, 0); err != nil {
-		t.Skipf("chmod 0 unavailable: %v", err)
+		testskip.Unavailable(t, testskip.UnreadablePaths, "os.Chmod(dir, 0): %v", err)
 	}
 	t.Cleanup(func() { _ = os.Chmod(dir, 0o755) })
 	if _, err := os.ReadDir(dir); err == nil {
-		t.Skipf("this process can read a mode-000 directory (running as root?)")
+		testskip.Unavailable(t, testskip.UnreadablePaths, "this process reads a mode-000 directory anyway (running as root?)")
 	}
 	return dir
 }

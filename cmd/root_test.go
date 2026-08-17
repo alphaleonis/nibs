@@ -13,6 +13,7 @@ import (
 
 	"github.com/alphaleonis/nibs/internal/output"
 	"github.com/alphaleonis/nibs/internal/store"
+	"github.com/alphaleonis/nibs/internal/testskip"
 )
 
 func TestResolveStoreDir(t *testing.T) {
@@ -919,7 +920,7 @@ func TestResolveStoreDirRequiresStoreEvidence(t *testing.T) {
 				writeFileT(t, filepath.Join(tmp, "proj", store.LegacyProjectConfigFileName), "nibs:\n  prefix: leg-\n  path: nibdata\n")
 				link := filepath.Join(tmp, "proj", "link")
 				if err := os.Symlink(real, link); err != nil {
-					t.Skipf("symlinks unavailable: %v", err)
+					testskip.SymlinkUnavailable(t, err)
 				}
 				return link
 			},
@@ -941,7 +942,7 @@ func TestResolveStoreDirRequiresStoreEvidence(t *testing.T) {
 				writeFileT(t, filepath.Join(repo, store.LegacyProjectConfigFileName), "nibs:\n  prefix: leg-\n  path: store\n")
 				link := filepath.Join(repo, "store")
 				if err := os.Symlink(outside, link); err != nil {
-					t.Skipf("symlinks unavailable: %v", err)
+					testskip.SymlinkUnavailable(t, err)
 				}
 				return link
 			},
@@ -960,7 +961,7 @@ func TestResolveStoreDirRequiresStoreEvidence(t *testing.T) {
 				writeFileT(t, filepath.Join(proj, store.LegacyProjectConfigFileName), "nibs:\n  prefix: leg-\n  path: store\n")
 				link := filepath.Join(proj, "store")
 				if err := os.Symlink(real, link); err != nil {
-					t.Skipf("symlinks unavailable: %v", err)
+					testskip.SymlinkUnavailable(t, err)
 				}
 				return link
 			},
@@ -1012,12 +1013,12 @@ func TestResolveStoreDirRequiresStoreEvidence(t *testing.T) {
 				nib := filepath.Join(dir, "leg-a1--one.md")
 				writeFileT(t, nib, layoutNib)
 				if err := os.Chmod(nib, 0); err != nil {
-					t.Skipf("chmod 0 unavailable: %v", err)
+					testskip.Unavailable(t, testskip.UnreadablePaths, "os.Chmod(nib, 0): %v", err)
 				}
 				t.Cleanup(func() { _ = os.Chmod(nib, 0o644) })
 				if f, err := os.Open(nib); err == nil {
 					_ = f.Close()
-					t.Skip("this process can read a mode-000 file (running as root?)")
+					testskip.Unavailable(t, testskip.UnreadablePaths, "this process reads a mode-000 file anyway (running as root?)")
 				}
 				writeFileT(t, filepath.Join(proj, store.LegacyProjectConfigFileName), "nibs:\n  prefix: leg-\n  path: nibdata\n")
 				return dir
