@@ -580,6 +580,75 @@ func TestMigrateScopesTheFailLoudGateToStoreContent(t *testing.T) {
 		}
 	})
 
+	t.Run("blockingScanProblems classifies every position a problem can sit in", func(t *testing.T) {
+		// The end-to-end subtests around this one need a symlink to produce an
+		// UNREADABLE file, and skip where os.Symlink fails — CI's matrix includes
+		// windows-latest, where symlinks commonly need elevation, so the
+		// unreadable boundary would go unverified exactly there. This drives the
+		// predicate directly over a synthesized scan instead: no filesystem, no
+		// symlinks, same decision.
+		contentStep := -1
+		for i, step := range migrationSteps {
+			if step.isContent() {
+				contentStep = i
+				break
+			}
+		}
+		if contentStep < 0 {
+			t.Fatal("the chain has no content step, so this table tests nothing")
+		}
+
+		tests := []struct {
+			name           string
+			path           string
+			unreadable     bool
+			contentPending bool
+			wantBlocked    bool
+		}{
+			{name: "a fence-less file under data/", path: "data/x.md", contentPending: true, wantBlocked: true},
+			{name: "a fence-less file under archive/", path: "archive/x.md", contentPending: true, wantBlocked: true},
+			{name: "a fence-less file nested under data/", path: "data/sub/x.md", contentPending: true, wantBlocked: true},
+			{name: "a fence-less file at the store root", path: "README.md", contentPending: true},
+			{name: "a fence-less file in a root subdirectory", path: "notes/README.md", contentPending: true},
+			{
+				// hasDirPrefix must match a whole path COMPONENT: a directory
+				// merely beginning with "data" is not data/.
+				name: "a fence-less file under a directory named dataset", path: "dataset/x.md", contentPending: true,
+			},
+			{name: "a fence-less file under a directory named archived", path: "archived/x.md", contentPending: true},
+			{
+				// The boundary the root scoping must not cross: the layout step
+				// cannot prove an unreadable file is not a nib, so it moves it
+				// into data/ where a content step would migrate around it.
+				name: "an unreadable file at the store root", path: ".#x.md", unreadable: true, contentPending: true, wantBlocked: true,
+			},
+			{name: "an unreadable file already under data/", path: "data/.#x.md", unreadable: true, contentPending: true, wantBlocked: true},
+			{
+				// A shape step only MOVES files, and moves nothing it could not
+				// classify, so nothing can block it.
+				name: "an unreadable file with no content step pending", path: ".#x.md", unreadable: true,
+			},
+			{name: "a fence-less data/ file with no content step pending", path: "data/x.md"},
+		}
+
+		env := newMigrateEnv(t.TempDir())
+		for _, tt := range tests {
+			t.Run(tt.name, func(t *testing.T) {
+				scan := &storeScan{
+					counts:   make([]int, len(migrationSteps)),
+					problems: []scanProblem{{path: tt.path, reason: "probe", unreadable: tt.unreadable}},
+				}
+				if tt.contentPending {
+					scan.counts[contentStep] = 1
+				}
+				blocking := blockingScanProblems(env, scan)
+				if got := len(blocking) > 0; got != tt.wantBlocked {
+					t.Errorf("blocked = %v, want %v for %s", got, tt.wantBlocked, tt.path)
+				}
+			})
+		}
+	})
+
 	t.Run("an UNREADABLE root file still blocks a content step", func(t *testing.T) {
 		t.Cleanup(resetRootPersistentFlags)
 		t.Cleanup(resetMigrateFlags)

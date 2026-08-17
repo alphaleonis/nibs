@@ -121,18 +121,15 @@ func (l Layout) WatchableDirs() []string {
 // its absolute path, or an empty string when none is found. A `.nibs` FILE is
 // not a store and does not stop the walk.
 //
-// The NIBS_CONFIG_ROOT environment variable, when set to a non-empty path,
-// bounds the walk: each directory up to and including that ceiling is checked,
-// but the walk never ascends above it. Comparison is on absolute paths, so a
-// ceiling that is not an ancestor of startDir simply never triggers and the
-// walk proceeds to the filesystem root as usual. It is a sandboxing and
-// test-isolation knob — it keeps a stray ancestor store (e.g. /tmp/.nibs) from
-// leaking into tests that expect no store to be found.
+// The walk and its NIBS_CONFIG_ROOT ceiling are findUpward's, which is where
+// they are described.
 func FindStore(startDir string) (string, error) {
-	return findUpward(startDir, func(dir string) (string, bool) {
+	return findUpward(startDir, func(dir string) string {
 		candidate := filepath.Join(dir, DirName)
-		info, err := os.Stat(candidate)
-		return candidate, err == nil && info.IsDir()
+		if info, err := os.Stat(candidate); err == nil && info.IsDir() {
+			return candidate
+		}
+		return ""
 	})
 }
 
@@ -146,20 +143,36 @@ func FindStore(startDir string) (string, error) {
 // the generic "run nibs init" answer would tell it to create an empty store
 // beside its real data.
 func FindLegacyProjectConfig(startDir string) (string, error) {
-	return findUpward(startDir, func(dir string) (string, bool) {
+	return findUpward(startDir, func(dir string) string {
 		candidate := filepath.Join(dir, LegacyProjectConfigFileName)
-		info, err := os.Stat(candidate)
-		return candidate, err == nil && !info.IsDir()
+		if info, err := os.Stat(candidate); err == nil && !info.IsDir() {
+			return candidate
+		}
+		return ""
 	})
 }
 
-// findUpward walks from startDir toward the filesystem root, returning the
-// first path match reports, or an empty string when the walk finds none.
+// findUpward walks from startDir toward the filesystem root, returning the first
+// path match reports, or an empty string when the walk finds none.
 //
-// The NIBS_CONFIG_ROOT ceiling is applied here, once, for every locator: each
-// directory up to and including the ceiling is checked, but the walk never
-// ascends above it.
-func findUpward(startDir string, match func(dir string) (string, bool)) (string, error) {
+// match answers with the path it found, or "" for no match — the same
+// no-match-is-the-empty-string convention findUpward itself uses toward its
+// callers. A (path, bool) pair would leave the path meaningless whenever the bool
+// is false, and both callers built a candidate path alongside a false that was
+// then silently discarded.
+//
+// THE CEILING is applied here, once, for every locator. The NIBS_CONFIG_ROOT
+// environment variable, when set to a non-empty path, bounds the walk: each
+// directory up to and including that ceiling is checked, but the walk never
+// ascends above it. Comparison is on absolute paths, so a ceiling that is not an
+// ancestor of startDir simply never triggers and the walk proceeds to the
+// filesystem root as usual.
+//
+// It is a sandboxing knob rather than only a test-isolation one: it bounds every
+// upward walk in the tree, including the user-facing second walk noStoreFoundError
+// performs to explain a failure. In tests it keeps a stray ancestor store (e.g.
+// /tmp/.nibs) from leaking into cases that expect no store to be found.
+func findUpward(startDir string, match func(dir string) string) (string, error) {
 	dir, err := filepath.Abs(startDir)
 	if err != nil {
 		return "", err
@@ -174,7 +187,7 @@ func findUpward(startDir string, match func(dir string) (string, bool)) (string,
 	}
 
 	for {
-		if found, ok := match(dir); ok {
+		if found := match(dir); found != "" {
 			return found, nil
 		}
 

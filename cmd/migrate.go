@@ -782,10 +782,14 @@ func (e *newerStoreError) Error() string { return e.msg }
 // runs on every command, so its cost must stay O(files), not O(files × steps).
 //
 // SHAPE steps are outside that budget: each answers a directory-structure
-// question no per-file header can express, so each performs its own pass —
-// today one, layoutPendingCount's, whose directory-prefix check short-circuits
-// before reading any file. A chain that grew several shape steps would owe this
-// note a rethink. A file with a version above nib.CurrentVersion refuses
+// question no per-file header can express, so each performs its own pass — today
+// one, layoutPendingCount's. Its cost depends on the store's shape rather than
+// being free: on an ALREADY-migrated store the directory-prefix check answers
+// every file without opening it, but on a pre-layout store layoutMovableFiles
+// reads each out-of-place file's header to tell a nib from a fence-less document.
+// That is the O(files) case, once, on the stores the step exists for. A chain that
+// grew several shape steps would owe this note a rethink. A file with a version
+// above nib.CurrentVersion refuses
 // the whole scan (error): it was written by a newer nibs and this build must
 // not touch the store. The refusal is raised AFTER the walk completes rather
 // than aborting at the first such file, so it can name every newer file and
@@ -1149,8 +1153,8 @@ func gateStoreLoadsCleanly(env migrateEnv, scan *storeScan) *refusal {
 // predicts an outcome the run does not produce. They have already diverged
 // twice by being written twice; sharing this function is what stops a third.
 //
-// The scoping (deviation #7) is what makes `.nibs/README.md` a legal place for
-// a readme. The danger the gate names is a link-rewrite danger — a step that
+// The scoping is what makes `.nibs/README.md` a legal place for a readme. The
+// danger the gate names is a link-rewrite danger — a step that
 // rewrites edges must see every file that could hold one — so a problem blocks
 // exactly when it is, or is about to become, store CONTENT:
 //

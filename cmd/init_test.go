@@ -263,14 +263,14 @@ func TestInit_ExplicitPrefix_InvalidCharset(t *testing.T) {
 
 // TestInit_RefusesToCreateASecondConfig pins the guard that keeps `nibs init`
 // from wedging a project. init is skip-listed from the pre-run migration gate,
-// so it is one of the few commands that runs on a store nothing else will
-// touch — and it used to write <store>/config.yml unconditionally.
+// so it is one of the few commands that runs on a store nothing else will touch,
+// which makes it the one command that can give a project a SECOND config.
 //
-// On a pre-layout project that produces a SECOND config carrying a derived
-// prefix, and `nibs migrate` then refuses forever with two configs it must not
-// choose between. The two disagree on the load-bearing fields, so deleting the
-// wrong one silently re-prefixes the project. Refusing up front is what stops
-// users reaching that state at all.
+// On a pre-layout project that second config carries a derived prefix, and
+// `nibs migrate` then refuses with two configs it must not choose between. The
+// two disagree on the load-bearing fields, so deleting the wrong one silently
+// re-prefixes the project. Refusing up front is what stops users reaching that
+// state at all.
 func TestInit_RefusesToCreateASecondConfig(t *testing.T) {
 	tests := []struct {
 		name    string
