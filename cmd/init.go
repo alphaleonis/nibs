@@ -104,7 +104,7 @@ var initCmd = &cobra.Command{
 		// seeding values from user config where available
 		defaultCfg := config.DefaultWithPrefixFromUserConfig(prefix, userCfg)
 		defaultCfg.SetStoreDir(nibsDir)
-		if err := defaultCfg.Save(nibsDir); err != nil {
+		if _, err := defaultCfg.Save(nibsDir); err != nil {
 			if initJSON {
 				return output.Error(output.ErrFileError, err.Error())
 			}

@@ -629,9 +629,16 @@ func declaredStoreCorroborated(dir string) (bool, error) {
 var errStoreCorroborated = errors.New("nib file found")
 
 // shellArg renders a path for a copy-pasteable command line, quoting it when it
-// carries a character a POSIX shell would split or expand. Control characters are
-// neutralized first (see stripControlChars) but nothing is collapsed or
-// truncated: this is the argument the user has to run, so it must survive intact.
+// carries a character a POSIX shell would split or expand. Nothing is collapsed or
+// truncated — unlike sanitizeFileText, which does both — because this is the
+// argument the user has to run.
+//
+// It is NOT byte-preserving. stripControlChars runs first and maps every
+// non-printable rune to a space, so a path really containing one yields a command
+// naming a different path. That is the safe direction here rather than a defect: a
+// substituted path cannot satisfy legacyConfigNamesStore, so the prescribed command
+// is refused rather than acting on the wrong directory. Do not reach for this where
+// the bytes themselves have to survive.
 func shellArg(path string) string {
 	clean := stripControlChars(path)
 	if clean != "" && !strings.ContainsAny(clean, " \t\"'$&|;<>()*?[]{}#!~`\\") {

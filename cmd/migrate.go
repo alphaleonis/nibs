@@ -902,7 +902,7 @@ func stripRetiredNibsPath(data []byte, env migrateEnv, configFile string) (out [
 		resolved = filepath.Join(env.layout().ProjectDir(), resolved)
 	}
 	if !sameDir(resolved, env.nibsRoot) {
-		_, statErr := os.Stat(resolved)
+		_, statErr := retiredPathStatFn(resolved)
 		switch {
 		case statErr == nil:
 			if relocatable, shapeErr := hasLegacyStoreShape(resolved); shapeErr == nil && relocatable {
@@ -930,6 +930,18 @@ func stripRetiredNibsPath(data []byte, env migrateEnv, configFile string) (out [
 	}
 	return rewritten, note, nil
 }
+
+// retiredPathStatFn asks whether the directory the retired `nibs.path` key names
+// is there. It is a seam because the three answers it drives are not all reachable
+// on every platform: "definitely gone" and "definitely there" are trivial, but
+// "cannot determine" needs a stat that fails with something other than ENOENT, and
+// the portable ways to produce one — a symlink loop, an unreadable ancestor — are
+// exactly what a Windows CI leg cannot do. The branch that keeps a project's only
+// record of where its nibs live must be verified everywhere it ships.
+//
+// One seam per git/filesystem question, like storeGitStateFn and gitIsDirtyFn.
+// Production always uses os.Stat.
+var retiredPathStatFn = os.Stat
 
 // mappingValue returns the value node for key in a YAML mapping, or nil.
 func mappingValue(node *yaml.Node, key string) *yaml.Node {
@@ -1301,6 +1313,13 @@ func (e *refusalError) code() string {
 // yet", and the overload is what let --dry-run drop the note explaining the one
 // gate it cannot preview as soon as any other gate fired — exactly the case where
 // the user acts on the preview and re-runs.
+//
+// The three states live in the CONSTRUCTORS, not in the type: the two fields are
+// independent, so gateResult{refusal: r, undecidable: why} is representable and
+// wouldRefuse would silently drop the note (it tests refusal first), and
+// gateUndecidable("") is byte-identical to gateMet(). Build one with gateMet,
+// gateRefused or gateUndecidable and the states stay disjoint; a struct literal in
+// a gate body is the way to break that.
 type gateResult struct {
 	// refusal is set when the precondition is not met.
 	refusal *refusal
@@ -1311,7 +1330,7 @@ type gateResult struct {
 }
 
 // gateMet, gateRefused and gateUndecidable are the three answers a gate may give,
-// named so a gate body cannot express "met" and "undecidable" with the same value.
+// named for the three answers themselves so a gate body never has to encode one.
 func gateMet() gateResult { return gateResult{} }
 
 func gateRefused(code, reason string) gateResult {

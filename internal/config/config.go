@@ -1,8 +1,10 @@
 package config
 
 import (
+	"errors"
 	"fmt"
 	"io"
+	"io/fs"
 	"os"
 	"path/filepath"
 	"strings"
@@ -446,28 +448,61 @@ func (c *Config) GetProjectName() string {
 // 0600 config the relocation had deliberately kept private, and left a torn file
 // possible for a resume path that assumes config.yml is only ever absent or
 // complete.
-func (c *Config) Save(storeDir string) error {
+//
+// A SYMLINK at config.yml is REPLACED with a regular file rather than written
+// through, because the rename is what makes the write atomic. That is a contract of
+// Save and not an implementation detail of fsutil: a config.yml symlinked into a
+// dotfile manager becomes an ordinary file holding the new settings while the
+// manager's copy keeps the old ones, so the next `chezmoi apply` (or equivalent)
+// restores a stale prefix and short-id resolution stops finding nibs created since.
+//
+// It is REPORTED rather than silent — the first return value is the path the link
+// pointed at, non-empty only when a link was replaced, and the caller must tell the
+// user which file is now stale. Refusing instead was rejected: `nibs config
+// set-prefix` has already renamed every nib file by the time Save runs, so a
+// refusal here leaves the store half-changed.
+func (c *Config) Save(storeDir string) (staleLinkTarget string, err error) {
 	targetDir := c.storeDir
 	if targetDir == "" {
 		targetDir = storeDir
 	}
 	if err := os.MkdirAll(targetDir, 0755); err != nil {
-		return err
+		return "", err
 	}
 	path := store.NewLayout(targetDir).ConfigPath()
 
 	data, err := yaml.Marshal(c)
 	if err != nil {
-		return err
+		return "", err
+	}
+
+	if link, lstatErr := os.Lstat(path); lstatErr == nil && link.Mode()&os.ModeSymlink != 0 {
+		if target, readErr := os.Readlink(path); readErr == nil {
+			if !filepath.IsAbs(target) {
+				target = filepath.Join(filepath.Dir(path), target)
+			}
+			staleLinkTarget = target
+		} else {
+			staleLinkTarget = path
+		}
 	}
 
 	// Keep the existing file's permissions; a config that has never existed gets
-	// the ordinary 0644 this used to hardcode for every case.
+	// the ordinary 0644 this used to hardcode for every case. A stat failure that is
+	// not "absent" is reported rather than answered with 0644 — that fallback could
+	// only widen a config whose real mode was narrower.
 	perm := os.FileMode(0644)
-	if info, statErr := os.Stat(path); statErr == nil {
+	info, statErr := os.Stat(path)
+	switch {
+	case statErr == nil:
 		perm = info.Mode().Perm()
+	case !errors.Is(statErr, fs.ErrNotExist):
+		return "", fmt.Errorf("reading the current mode of %s: %w", path, statErr)
 	}
-	return fsutil.AtomicWriteFile(path, data, perm)
+	if err := fsutil.AtomicWriteFile(path, data, perm); err != nil {
+		return "", err
+	}
+	return staleLinkTarget, nil
 }
 
 // IsValidStatus returns true if the status is a valid hardcoded status.

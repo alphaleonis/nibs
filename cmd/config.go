@@ -123,7 +123,8 @@ func runSetPrefix(cmd *cobra.Command, args []string) error {
 	}
 
 	cfg.Nibs.Prefix = newPrefix
-	if err := cfg.Save(""); err != nil {
+	staleLink, err := cfg.Save("")
+	if err != nil {
 		configFile := cfg.Layout().ConfigPath()
 		return cmdError(setPrefixJSON, output.ErrFileError,
 			"files renamed to prefix %q but updating %s failed: %v\nto recover, edit %s manually and set nibs.prefix to %q",
@@ -131,6 +132,12 @@ func runSetPrefix(cmd *cobra.Command, args []string) error {
 	}
 
 	msg := fmt.Sprintf("Changed prefix from %q to %q; renamed %d file(s)", oldPrefix, newPrefix, len(plan.Files))
+	if staleLink != "" {
+		// The atomic write replaced a symlink, so whatever manages that target
+		// still holds the old prefix and will restore it (see config.Save).
+		msg += fmt.Sprintf("\nNote: %s was a symlink to %s and is now a regular file; %s still holds the old prefix, so update or remove it",
+			cfg.Layout().ConfigPath(), stripControlChars(staleLink), stripControlChars(staleLink))
+	}
 	if setPrefixJSON {
 		return output.SuccessMessage(msg)
 	}

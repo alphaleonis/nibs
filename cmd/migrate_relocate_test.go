@@ -1,6 +1,8 @@
 package cmd
 
 import (
+	"errors"
+	"io/fs"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -711,6 +713,24 @@ func TestMigrateRefusesARetiredNibsPathItCannotStat(t *testing.T) {
 			build: func(t *testing.T, projectDir string) string { return "gone" },
 		},
 		{
+			// The same "cannot determine" answer as the symlink case below, driven
+			// against an INJECTED stat error instead of a filesystem trick — so the
+			// branch that keeps the only record of where the nibs live is verified
+			// on the Windows CI leg too, where a symlink needs elevation and an
+			// unreadable ancestor is not expressible.
+			name: "a stat that fails for any reason other than absence is refused",
+			build: func(t *testing.T, projectDir string) string {
+				mkdirAllT(t, filepath.Join(projectDir, "onavolume"))
+				orig := retiredPathStatFn
+				t.Cleanup(func() { retiredPathStatFn = orig })
+				retiredPathStatFn = func(string) (os.FileInfo, error) {
+					return nil, &fs.PathError{Op: "stat", Path: "onavolume", Err: errors.New("host is down")}
+				}
+				return "onavolume"
+			},
+			want: []string{"cannot be determined", "host is down"},
+		},
+		{
 			name: "a directory that still exists is refused",
 			build: func(t *testing.T, projectDir string) string {
 				mkdirAllT(t, filepath.Join(projectDir, "elsewhere"))
@@ -1301,9 +1321,10 @@ func TestMigrationChainInvariantsAreCheckable(t *testing.T) {
 	if len(migrationSteps) == 0 || migrationSteps[0].name != "layout" {
 		t.Fatalf("migrationSteps[0] = %q, want \"layout\": every content step after it needs the config it relocates", migrationSteps[0].name)
 	}
-	for i, step := range migrationSteps {
+	for _, step := range migrationSteps {
 		if step.isContent() == (step.shape != nil) {
-			t.Errorf("step %q carries %d detectors, want exactly one (pred XOR shape)", step.name, i)
+			t.Errorf("step %q has pred != nil = %v and shape != nil = %v, want exactly one of the two",
+				step.name, step.isContent(), step.shape != nil)
 		}
 		if step.invalidatesLoad && step.isContent() {
 			t.Errorf("step %q is a content step yet claims to invalidate the load; a content step rewrites files in place", step.name)

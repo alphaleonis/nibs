@@ -672,7 +672,7 @@ func TestLoadAndSave(t *testing.T) {
 	cfg.SetStoreDir(tmpDir)
 
 	// Save it
-	if err := cfg.Save(tmpDir); err != nil {
+	if _, err := cfg.Save(tmpDir); err != nil {
 		t.Fatalf("Save() error = %v", err)
 	}
 
@@ -855,7 +855,7 @@ func TestTypesAreHardcoded(t *testing.T) {
 	cfg.SetStoreDir(tmpDir)
 
 	// Save it
-	if err := cfg.Save(tmpDir); err != nil {
+	if _, err := cfg.Save(tmpDir); err != nil {
 		t.Fatalf("Save() error = %v", err)
 	}
 
@@ -1119,7 +1119,7 @@ func TestSaveIncludesHideCompletedAndWideMode(t *testing.T) {
 
 	cfg := DefaultWithPrefix("test-")
 	cfg.SetStoreDir(tmpDir)
-	if err := cfg.Save(tmpDir); err != nil {
+	if _, err := cfg.Save(tmpDir); err != nil {
 		t.Fatalf("Save() error = %v", err)
 	}
 
@@ -1144,7 +1144,7 @@ func TestSavePreservesExplicitFalseValues(t *testing.T) {
 	cfg.Nibs.HideCompleted = boolPtr(false)
 	cfg.Nibs.WideMode = boolPtr(false)
 	cfg.SetStoreDir(tmpDir)
-	if err := cfg.Save(tmpDir); err != nil {
+	if _, err := cfg.Save(tmpDir); err != nil {
 		t.Fatalf("Save() error = %v", err)
 	}
 
@@ -1416,7 +1416,7 @@ func TestServerConfigYAMLRoundTrip(t *testing.T) {
 	cfg.Nibs.Server.OpenBrowser = &openBrowser
 	cfg.SetStoreDir(tmpDir)
 
-	if err := cfg.Save(tmpDir); err != nil {
+	if _, err := cfg.Save(tmpDir); err != nil {
 		t.Fatalf("Save() error = %v", err)
 	}
 
@@ -1530,7 +1530,7 @@ func TestSavePreservesTheConfigsPermissions(t *testing.T) {
 
 	cfg := Default()
 	cfg.SetStoreDir(storeDir)
-	if err := cfg.Save(storeDir); err != nil {
+	if _, err := cfg.Save(storeDir); err != nil {
 		t.Fatalf("Save: %v", err)
 	}
 	info, err := os.Stat(path)
@@ -1544,7 +1544,7 @@ func TestSavePreservesTheConfigsPermissions(t *testing.T) {
 	// A config that never existed still gets the ordinary mode.
 	fresh := filepath.Join(t.TempDir(), store.DirName)
 	freshCfg := Default()
-	if err := freshCfg.Save(fresh); err != nil {
+	if _, err := freshCfg.Save(fresh); err != nil {
 		t.Fatalf("Save into a new store: %v", err)
 	}
 	info, err = os.Stat(store.NewLayout(fresh).ConfigPath())
@@ -1553,5 +1553,61 @@ func TestSavePreservesTheConfigsPermissions(t *testing.T) {
 	}
 	if got := info.Mode().Perm(); got != 0644 {
 		t.Errorf("mode = %v for a new config, want 0644", got)
+	}
+}
+
+// TestSaveReportsReplacingASymlinkedConfig pins that a divergence Save creates
+// cannot be silent.
+//
+// The atomic write renames a temp file over the destination, and a rename REPLACES
+// a symlink. So a config.yml symlinked into a dotfile manager becomes a regular
+// file holding the new settings while the manager's copy keeps the old ones — the
+// next apply restores a stale prefix, and short-id resolution stops finding nibs
+// created since. Save must hand the caller the path that is now stale.
+func TestSaveReportsReplacingASymlinkedConfig(t *testing.T) {
+	tmp := t.TempDir()
+	external := filepath.Join(tmp, "dotfiles", "nibs-config.yml")
+	if err := os.MkdirAll(filepath.Dir(external), 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(external, []byte("nibs:\n  prefix: old-\n"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	storeDir := filepath.Join(tmp, store.DirName)
+	if err := os.MkdirAll(storeDir, 0755); err != nil {
+		t.Fatal(err)
+	}
+	path := store.NewLayout(storeDir).ConfigPath()
+	if err := os.Symlink(external, path); err != nil {
+		t.Skipf("symlinks unavailable: %v", err)
+	}
+
+	cfg := Default()
+	cfg.Nibs.Prefix = "new-"
+	cfg.SetStoreDir(storeDir)
+	stale, err := cfg.Save(storeDir)
+	if err != nil {
+		t.Fatalf("Save: %v", err)
+	}
+	if stale != external {
+		t.Errorf("Save reported stale target %q, want %q — the divergence must not be silent", stale, external)
+	}
+	// And the divergence is real, which is what makes the report load-bearing.
+	if info, lerr := os.Lstat(path); lerr != nil || info.Mode()&os.ModeSymlink != 0 {
+		t.Fatalf("Lstat(%s) = %v, %v; this test asserts nothing unless the link was replaced", path, info, lerr)
+	}
+	target, err := os.ReadFile(external)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(target), "old-") {
+		t.Fatalf("the symlink target was updated after all, so there is nothing to report:\n%s", target)
+	}
+
+	// A plain regular file reports nothing.
+	plain := filepath.Join(tmp, "plain", store.DirName)
+	plainCfg := Default()
+	if stale, err := plainCfg.Save(plain); err != nil || stale != "" {
+		t.Errorf("Save into a link-free store = (%q, %v), want no stale target and no error", stale, err)
 	}
 }

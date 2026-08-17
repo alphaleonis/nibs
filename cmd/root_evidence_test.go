@@ -342,8 +342,11 @@ func TestResolveStoreDirNormalizesTheStorePath(t *testing.T) {
 // `nibs init` (which the same message calls harmful) as the only remaining
 // suggestion.
 //
-// Each case executes the printed remedy and then requires `nibs list` to find the
-// nib. Asserting only the wording is what let a dead end ship.
+// Every case with a nib to recover EXECUTES the printed remedy and then requires
+// `nibs list` to find that nib — asserting only the wording is what let a dead end
+// ship. The one case without a nib (an untrusted directory naming itself, where
+// there is nothing of the user's to move) stops at the wording and at the guard
+// really refusing the directory, which is the whole claim for that row.
 func TestResolveStoreDirExplainsANibsPathMigrateCannotRelocate(t *testing.T) {
 	tests := []struct {
 		name string

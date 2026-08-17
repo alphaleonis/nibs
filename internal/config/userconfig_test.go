@@ -174,7 +174,7 @@ func TestBoolFieldsRoundTrip(t *testing.T) {
 		cfg.Nibs.WideMode = boolPtr(false)
 		cfg.SetStoreDir(tmpDir)
 
-		if err := cfg.Save(tmpDir); err != nil {
+		if _, err := cfg.Save(tmpDir); err != nil {
 			t.Fatalf("Save() error = %v", err)
 		}
 
@@ -210,7 +210,7 @@ func TestBoolFieldsRoundTrip(t *testing.T) {
 		}
 		cfg.SetStoreDir(tmpDir)
 
-		if err := cfg.Save(tmpDir); err != nil {
+		if _, err := cfg.Save(tmpDir); err != nil {
 			t.Fatalf("Save() error = %v", err)
 		}
 

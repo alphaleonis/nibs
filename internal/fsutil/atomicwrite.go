@@ -27,10 +27,6 @@ var RenameFn = os.Rename
 // collide on a shared temp file. Each renames its own complete temp; the later
 // rename wins wholesale rather than interleaving bytes.
 //
-// The rename REPLACES a symlink at path instead of following it: writing through a
-// dangling link created the file wherever the link pointed, outside the store, and
-// callers then deleted their source and reported success.
-//
 // WHAT IT DOES NOT PROMISE:
 //
 //   - Nothing about CONCURRENT writers beyond "no torn file": two writers of
@@ -41,9 +37,20 @@ var RenameFn = os.Rename
 //     directory handle, and the write has already succeeded there, so failing would
 //     report an error for a completed operation. On such a platform a crash-recovery
 //     path keying on "the file is present" must not treat the rename as durable.
-//   - Mode BITS beyond the permission bits: os.CreateTemp makes the file 0600 and
-//     Chmod restores perm, so setuid/setgid/sticky are dropped. That is the safe
-//     direction, and no config or nib file wants them.
+//   - Mode BITS beyond the permission bits. Both callers pass
+//     info.Mode().Perm(), so setuid/setgid/sticky never reach Chmod and the new
+//     file does not carry them. That is the safe direction, and no config or nib
+//     file wants them.
+//   - Anything else carried by the OLD file, all of it lost the way every
+//     write-temp-and-rename loses it: OWNERSHIP (uid/gid — the temp belongs to the
+//     writing process), POSIX ACLs, extended attributes, and any HARD LINK to the
+//     old path, which now refers to the replaced content.
+//   - Preservation of a SYMLINK at path. The rename replaces it, so the file the
+//     link pointed at keeps its old contents — writing through it instead would
+//     mean writing wherever the link leads, and a dangling one created the file
+//     outside the store, after which callers deleted their source and reported
+//     success. Every caller inherits the replacement; config.Save documents and
+//     reports what it means for a config.yml.
 //   - Any protection against a cross-filesystem rename, which cannot arise: the
 //     temp file is always created in filepath.Dir(path), so EXDEV is impossible.
 func AtomicWriteFile(path string, data []byte, perm os.FileMode) (err error) {
