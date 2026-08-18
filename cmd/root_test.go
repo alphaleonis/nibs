@@ -431,7 +431,10 @@ func TestResolveStoreDirStatsTheNamedLegacyConfig(t *testing.T) {
 			// The remedy is anchored to the NAMED project's own store, not to a
 			// migrate whose meaning depends on where the reader is standing.
 			want: func(projectDir string) []string {
-				return []string{"nibs migrate --nibs-path " + filepath.Join(projectDir, "nibdata")}
+				// Rendered through shellArg, as the message is: on Windows every
+				// path carries separators the quote-trigger set matches, so pinning
+				// the bare spelling here passed on POSIX and failed there.
+				return []string{"nibs migrate --nibs-path " + shellArg(filepath.Join(projectDir, "nibdata"))}
 			},
 			notWant: []string{"run `nibs migrate` in"},
 		},
