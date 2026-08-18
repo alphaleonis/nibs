@@ -678,11 +678,16 @@ func TestResolveStoreDirRequiresStoreEvidence(t *testing.T) {
 		name   string
 		build  func(t *testing.T, tmp string) string
 		accept bool
-		// refusal is the substring a rejected shape's message must carry.
-		// Defaults to the generic "not a nibs store"; a directory a `.nibs.yml`
-		// really NAMES gets a different one, because "no .nibs.yml beside it
-		// names it" would be false and `nibs init` would be wrong advice.
-		refusal string
+		// refusal lists the substrings a rejected shape's message must carry.
+		//
+		// It defaults to the FLAT DENIAL's own clause rather than to the lead
+		// "not a nibs store", which every refusal on this path opens with. When
+		// there was one such site the lead identified it; there are now three,
+		// so a default matching the lead matches whichever fired and a row that
+		// changes production branch stays green — which is how two rows below
+		// silently moved from the flat denial to preLayoutRemedy's answer inside
+		// one round. Rows whose shape routes elsewhere name their own clauses.
+		refusal []string
 	}{
 		{
 			name: "a .nibs store holding data/",
@@ -834,6 +839,13 @@ func TestResolveStoreDirRequiresStoreEvidence(t *testing.T) {
 				writeFileT(t, filepath.Join(tmp, "proj", store.LegacyProjectConfigFileName), "nibs:\n  prefix: leg-\n  path: nibdata\n")
 				return dir
 			},
+			// Not the flat denial: a config that declares SOME other store is a
+			// pre-layout project, so the branch that answers is the one carrying
+			// preLayoutRemedy. Both clauses are named — the one that reports what
+			// the comparison established, and the remedy it composes — because a
+			// row that named only the shared "not a nibs store" lead let this
+			// shape change branch with the table green.
+			refusal: []string{"beside it sets a retired nibs.path", "nibs migrate --nibs-path"},
 		},
 		{
 			name: "a project directory with neither shape",
@@ -892,7 +904,7 @@ func TestResolveStoreDirRequiresStoreEvidence(t *testing.T) {
 				writeFileT(t, filepath.Join(repo, store.LegacyProjectConfigFileName), "nibs:\n  path: content\n")
 				return dir
 			},
-			refusal: "nothing in it was written by nibs",
+			refusal: []string{"nothing in it was written by nibs"},
 		},
 		{
 			// The accept side of the same rule, so the corroboration cannot be
@@ -927,6 +939,11 @@ func TestResolveStoreDirRequiresStoreEvidence(t *testing.T) {
 				}
 				return link
 			},
+			// The row still refuses, but through the pre-layout branch rather
+			// than the flat denial — the config names a real declared store, it
+			// just does not spell THIS path. Naming both clauses is what makes a
+			// future move between those branches visible here.
+			refusal: []string{"beside it sets a retired nibs.path", "nibs migrate --nibs-path"},
 		},
 		{
 			// The containment half of the parent-only rule. `nibs.path` naming an
@@ -949,7 +966,7 @@ func TestResolveStoreDirRequiresStoreEvidence(t *testing.T) {
 				}
 				return link
 			},
-			refusal: "not an immediate subdirectory",
+			refusal: []string{"not an immediate subdirectory"},
 		},
 		{
 			// The accept side of the same rule: resolving symlinks is a
@@ -986,7 +1003,7 @@ func TestResolveStoreDirRequiresStoreEvidence(t *testing.T) {
 				writeFileT(t, filepath.Join(proj, store.LegacyProjectConfigFileName), "nibs:\n  prefix: leg-\n  path: assets\n")
 				return dir
 			},
-			refusal: "nothing in it was written by nibs",
+			refusal: []string{"nothing in it was written by nibs"},
 		},
 		{
 			// The same exemption reached a second way: the store walk prunes dot
@@ -1001,7 +1018,7 @@ func TestResolveStoreDirRequiresStoreEvidence(t *testing.T) {
 				writeFileT(t, filepath.Join(proj, store.LegacyProjectConfigFileName), "nibs:\n  prefix: leg-\n  path: vault\n")
 				return dir
 			},
-			refusal: "nothing in it was written by nibs",
+			refusal: []string{"nothing in it was written by nibs"},
 		},
 		{
 			// The mover treats a file whose header cannot be READ as a possible
@@ -1026,7 +1043,7 @@ func TestResolveStoreDirRequiresStoreEvidence(t *testing.T) {
 				writeFileT(t, filepath.Join(proj, store.LegacyProjectConfigFileName), "nibs:\n  prefix: leg-\n  path: nibdata\n")
 				return dir
 			},
-			refusal: "cannot tell whether",
+			refusal: []string{"cannot tell whether"},
 		},
 	}
 
@@ -1066,12 +1083,14 @@ func TestResolveStoreDirRequiresStoreEvidence(t *testing.T) {
 				if err == nil {
 					t.Fatalf("resolveStoreDir() = %q with no error; %s carries no evidence of being a store", got, dir)
 				}
-				wantRefusal := tt.refusal
-				if wantRefusal == "" {
-					wantRefusal = "not a nibs store"
+				wantRefusals := tt.refusal
+				if len(wantRefusals) == 0 {
+					wantRefusals = []string{"and no " + store.LegacyProjectConfigFileName + " beside it names it"}
 				}
-				if !strings.Contains(err.Error(), wantRefusal) {
-					t.Errorf("refusal = %q, want it to mention %q", err.Error(), wantRefusal)
+				for _, wantRefusal := range wantRefusals {
+					if !strings.Contains(err.Error(), wantRefusal) {
+						t.Errorf("refusal = %q, want it to mention %q", err.Error(), wantRefusal)
+					}
 				}
 			})
 		}

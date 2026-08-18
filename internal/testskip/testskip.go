@@ -88,6 +88,37 @@ var (
 	// visible; before this, the writes simply failed and took the package red on
 	// every Windows run.
 	HostileFilenames = Capability{Name: "hostile filenames", EnvVar: "NIBS_REQUIRE_HOSTILE_FILENAMES"}
+
+	// CaseInsensitivePaths covers a filesystem that reaches one directory
+	// through two differently cased names — what Windows, macOS's default
+	// volume and WSL's DrvFs mounts do, and what ext4, APFS's case-sensitive
+	// variant and most Linux volumes do not.
+	//
+	// A fixture that needs one is unbuildable rather than unnecessary
+	// elsewhere: where the filesystem is case-sensitive, two spellings are two
+	// directories, and the confusion the guard is about cannot be staged at all.
+	//
+	// DELIBERATELY LEFT PERMISSIVE for now: unlike NIBS_REQUIRE_SYMLINKS, this
+	// var is set on no CI leg, so a skip anywhere shows up only in the tally.
+	// The one leg that could host the fixture is windows-latest, and requiring
+	// it there would assert that a GitHub runner's TMPDIR is NTFS-backed — a
+	// property of the runner image rather than of this repository, which would
+	// take the whole Windows leg red if it ever changed. What the capability
+	// buys unrequired is the report line, which is what makes the absence
+	// visible at all. Turn it on once a fixture needing it guards behavior with
+	// no platform-independent guard beside it; today the aliasing property it
+	// exists for is pinned end to end on every platform by
+	// TestRefusalDoesNotDenyAConfigThatNamesTheDirectoryThroughASymlink, whose
+	// symlink alias stages the same two-names-one-directory fixture without a
+	// case-insensitive volume, so a skip here loses a second spelling of a
+	// covered claim rather than the coverage.
+	//
+	// That citation is load-bearing rather than decorative: leaving this var
+	// unrequired is honest only while SOME guard for the same property runs on
+	// the legs where this fixture is unbuildable. Without one, a wording that
+	// asserts what the comparison cannot establish passes a guard written for
+	// exactly that defect, because the guard never executes there.
+	CaseInsensitivePaths = Capability{Name: "case-insensitive paths", EnvVar: "NIBS_REQUIRE_CASE_INSENSITIVE_PATHS"}
 )
 
 var (
