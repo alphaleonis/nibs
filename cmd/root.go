@@ -456,7 +456,16 @@ func preLayoutRemedy(legacy string) error {
 		// holding a real nib held nothing. Both of the instructions the reason
 		// clauses carry are withheld here: moving files out of a directory nobody
 		// can read, and discarding the only record of where those files are.
-		if errors.Is(evErr, fs.ErrNotExist) {
+		// An UNUSABLE path belongs with absence, not with the third answer. A name
+		// the filesystem rejects on sight names nothing, on any volume, under any
+		// permissions — so "find the files, create <project>/.nibs, move them in"
+		// is the remedy that applies, while "mount the volume, fix its permissions"
+		// sends the reader to check something that cannot help and simultaneously
+		// tells them to keep a key that points nowhere. isUnusablePath is
+		// deliberately narrow (see its platform files): a permission error or a
+		// disconnected volume stays in the third answer, because there the
+		// directory may be real and full of nibs.
+		if errors.Is(evErr, fs.ErrNotExist) || isUnusablePath(evErr) {
 			return fmt.Errorf("%s sets the retired `nibs.path: %q`, but %s does not exist — so this project's nib files are not where the config says they are; find them, create %s and move them into it, then run `nibs migrate` (do NOT run `nibs init`, which would create an empty store beside data that may already exist)",
 				legacy, sanitizeFileText(declared),
 				stripControlChars(dataDir), target)
@@ -464,17 +473,8 @@ func preLayoutRemedy(legacy string) error {
 		// flattenReason, not %v: an OS error embeds the path it failed on, and that
 		// path is built from the declared value — so interpolating the error raw
 		// reopens the very channel sanitizeFileText closes one argument earlier.
-		// Reached on Windows by any malformed nibs.path, which fails with
-		// ERROR_INVALID_NAME rather than the fs.ErrNotExist the branch above
-		// catches; on POSIX the same hole opens for a permission error.
-		//
-		// KNOWN IMPRECISION, tracked separately: this branch's advice — mount the
-		// volume, fix the permissions — suits a path that is real but unreadable,
-		// and an UNUSABLE path lands here too. On Windows a nibs.path carrying a
-		// character forbidden in a filename, or a drive-relative spelling like
-		// `C:proj` reduced to `<project>\C:`, fails ERROR_INVALID_NAME and so
-		// reads as "cannot tell" when it is really absence. The refusal is still
-		// the safe one; only the remedy sends the reader somewhere useless.
+		// Reached on POSIX by a permission error, and by a YAML error quoting file
+		// contents.
 		return fmt.Errorf("%s sets the retired `nibs.path: %q`, whose contents cannot be read (%s) — so whether this project's nibs are in %s cannot be determined; resolve that (mount the volume, fix its permissions), then re-run (do NOT run `nibs init`, and do NOT remove the `nibs.path` key: it is the only record of where the nibs are)",
 			legacy, sanitizeFileText(declared), flattenReason(evErr.Error()),
 			stripControlChars(dataDir))
