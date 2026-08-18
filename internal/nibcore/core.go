@@ -1136,8 +1136,8 @@ func (c *Core) Update(b *nib.Nib, ifMatch *string) error {
 
 // saveToDisk writes a nib to the filesystem and flushes the directory entry
 // before returning, so a single write is as durable as fsutil.AtomicWriteFile
-// makes it. A caller writing MANY nibs wants saveToDiskDeferDirSync plus a
-// dirSyncBatch instead: the flush is per directory, not per file.
+// makes it. A caller writing MANY nibs wants saveToDiskDeferDirSync plus
+// an fsutil.DirSyncBatch instead: the flush is per directory, not per file.
 func (c *Core) saveToDisk(b *nib.Nib) error {
 	dir, err := c.saveToDiskDeferDirSync(b)
 	if err != nil {
@@ -1149,8 +1149,8 @@ func (c *Core) saveToDisk(b *nib.Nib) error {
 
 // saveToDiskDeferDirSync writes a nib to the filesystem without flushing the
 // directory entry, returning the directory that still needs one (empty when the
-// write failed before its rename). Every caller owes that directory to a
-// dirSyncBatch — see fsutil.AtomicWriteFileDeferDirSync for the weaker
+// write failed before its rename). Every caller owes that directory to an
+// fsutil.DirSyncBatch — see fsutil.AtomicWriteFileDeferDirSync for the weaker
 // guarantee that holds until the flush.
 func (c *Core) saveToDiskDeferDirSync(b *nib.Nib) (string, error) {
 	// Determine the file path. A nib with no Path yet is new, and new nibs are
@@ -1198,42 +1198,6 @@ func (c *Core) saveToDiskDeferDirSync(b *nib.Nib) (string, error) {
 	b.CaptureRawLinks()
 
 	return unflushedDir, nil
-}
-
-// dirSyncBatch collects the distinct directories that saveToDiskDeferDirSync
-// writes left unflushed, so a bulk loop pays one directory fsync per DIRECTORY
-// rather than one per nib — the same flush, N times fewer.
-//
-// A set rather than a single remembered directory because one loop over c.nibs
-// can span several: archived nibs stay in the store and live under archive/
-// while active ones live under data/, and data/ tolerates subdirectories that a
-// nib's Path preserves. Syncing one hardcoded directory would silently drop the
-// durability of every write outside it.
-type dirSyncBatch map[string]struct{}
-
-// add records a directory to flush. The empty string is ignored, so a caller can
-// hand it the result of a failed write without a guard.
-func (b dirSyncBatch) add(dir string) {
-	if dir == "" {
-		return
-	}
-	b[dir] = struct{}{}
-}
-
-// flush fsyncs each collected directory once, in a deterministic order. Run it
-// even when the loop aborts early — the writes that already landed are on disk
-// with unflushed directory entries — which is what the defer at each call site
-// is for. Best-effort, like every directory sync here: see
-// fsutil.AtomicWriteFile's "does not promise" list.
-func (b dirSyncBatch) flush() {
-	dirs := make([]string, 0, len(b))
-	for dir := range b {
-		dirs = append(dirs, dir)
-	}
-	sort.Strings(dirs)
-	for _, dir := range dirs {
-		fsutil.SyncDir(dir)
-	}
 }
 
 // Delete removes a nib by exact ID match.
@@ -1321,6 +1285,40 @@ func (c *Core) Delete(id string) error {
 
 // Archive moves a nib to the archive directory.
 // Supports short IDs (without prefix) if a prefix is configured.
+//
+// THE MOVE IS A BARE RENAME WITH NO DIRECTORY FSYNC ON EITHER SIDE, deliberately;
+// Unarchive and LoadAndUnarchive follow the same rule. The rename spans two
+// directories, so making its NAME durable means flushing both — the source, whose
+// entry it removed, and the destination, whose entry it created. Neither is
+// flushed, because:
+//
+//   - The rename is the WHOLE operation: no bytes are written here. What a crash
+//     can cost is a nib's LOCATION, never its content or its front matter, which
+//     whatever last wrote them already flushed. The file lands at one path or the
+//     other and isArchivedPath reads that path, so a reloaded store agrees with the
+//     disk either way. `nibs archive` re-selects by closed status, so its bulk path
+//     re-archives on the next run; the single-id paths cost one repeated, idempotent
+//     command.
+//   - Flushing would not buy the outcome that WOULD hurt. That one is a torn rename
+//     — destination entry persisted, source entry not — leaving one id at two paths.
+//     Whether a rename can tear across a crash is a property of the filesystem, and
+//     two after-the-fact fsyncs cannot order the halves, so the flush would make the
+//     benign outcome durable and leave the harmful one exactly as it is. loadFromDisk
+//     already detects and reports that state (see its duplicate-id warning, which
+//     names an interrupted rename as a cause).
+//   - It is not the cheap single-nib call it looks like. `nibs archive` loops over
+//     every closed nib and `nibs rm` over every argument, and neither writes nor
+//     fsyncs anything else that would amortize the flush. Measured on ext4: two
+//     directory fsyncs per archive cost ~4.0ms against ~14µs for the bare rename,
+//     turning a 200-nib archive run from 2.7ms into 813ms. Paying it without that
+//     cost means the fsutil.DirSyncBatch pattern — deferred variants plus a bulk
+//     entry point — which is new Core API for a failure that costs a repeated
+//     command.
+//
+// This matches what the rest of the store promises rather than falling short of it:
+// fsutil.AtomicWriteFile declares its directory fsync best-effort and Windows
+// refuses one outright, so no directory entry here is promised to survive a crash.
+// A recovery path must not key on "the file is at its new path".
 func (c *Core) Archive(id string) error {
 	c.mu.Lock()
 	defer c.mu.Unlock()
@@ -1365,6 +1363,9 @@ func (c *Core) Archive(id string) error {
 
 // Unarchive moves a nib from the archive directory back to the main directory.
 // Supports short IDs (without prefix) if a prefix is configured.
+//
+// The move is a bare rename with no directory fsync on either side, for the reasons
+// Archive's comment records.
 func (c *Core) Unarchive(id string) error {
 	c.mu.Lock()
 	defer c.mu.Unlock()
@@ -1488,6 +1489,12 @@ func (c *Core) GetFromArchive(id string) (*nib.Nib, error) {
 
 // LoadAndUnarchive finds a nib in the archive, loads it, unarchives it,
 // and adds it to the in-memory store. Returns the nib or ErrNotFound.
+//
+// The move is a bare rename with no directory fsync on either side, for the reasons
+// Archive's comment records. On this path the destination flush arrives anyway:
+// both callers (`nibs set` and `nibs body`, falling back to the archive when the id
+// is not in the active set) write the nib immediately afterwards, and that write's
+// saveToDisk flushes data/ — the directory this rename moved the file INTO.
 func (c *Core) LoadAndUnarchive(id string) (*nib.Nib, error) {
 	c.mu.Lock()
 	defer c.mu.Unlock()

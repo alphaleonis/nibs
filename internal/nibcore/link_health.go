@@ -7,6 +7,7 @@ import (
 	"sort"
 	"strings"
 
+	"github.com/alphaleonis/nibs/internal/fsutil"
 	"github.com/alphaleonis/nibs/internal/nib"
 )
 
@@ -466,8 +467,8 @@ func (c *Core) RemoveLinksTo(targetID string) (int, error) {
 	// One directory fsync per directory the sweep touched, not one per nib.
 	// Deferred so an aborted sweep still flushes what it did write: the first
 	// error returns with the earlier files already renamed into place.
-	pending := dirSyncBatch{}
-	defer pending.flush()
+	var pending fsutil.DirSyncBatch
+	defer pending.Flush()
 
 	removed := 0
 	for id, b := range c.nibs {
@@ -494,7 +495,7 @@ func (c *Core) RemoveLinksTo(targetID string) (int, error) {
 		}
 
 		dir, err := c.saveToDiskDeferDirSync(clone)
-		pending.add(dir)
+		pending.Add(dir)
 		if err != nil {
 			return removed, err
 		}
@@ -581,8 +582,8 @@ func (c *Core) FixBrokenLinks() (int, error) {
 	// One directory fsync per directory the sweep touched, not one per nib.
 	// Deferred so an aborted sweep still flushes what it did write: the first
 	// error returns with the earlier files already renamed into place.
-	pending := dirSyncBatch{}
-	defer pending.flush()
+	var pending fsutil.DirSyncBatch
+	defer pending.Flush()
 
 	fixed := 0
 	for id, b := range c.nibs {
@@ -638,7 +639,7 @@ func (c *Core) FixBrokenLinks() (int, error) {
 		}
 
 		dir, err := c.saveToDiskDeferDirSync(clone)
-		pending.add(dir)
+		pending.Add(dir)
 		if err != nil {
 			return fixed, err
 		}
