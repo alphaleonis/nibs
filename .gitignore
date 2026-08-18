@@ -1,5 +1,12 @@
 /nibs
 .nibs/
+# ...except the test fixture, which is a store on purpose. The layout inversion
+# moved it from .nibs/*.md to .nibs/data/*.md, a path the rule above matches, so
+# the 89 nibs stopped being tracked and a fresh checkout failed internal/reprefix
+# on a fixture nothing regenerates. Negating the directory is what lets git
+# descend: a rule excluding a DIRECTORY stops the walk, so re-including only the
+# files beneath it cannot work.
+!/testdata/fixtures/sample-project/.nibs/
 third_party_licenses/
 .fastembed_cache
 /.vscode/settings.json
