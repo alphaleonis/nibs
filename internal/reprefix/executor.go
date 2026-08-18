@@ -4,7 +4,6 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
-	"sort"
 
 	"github.com/alphaleonis/nibs/internal/fsutil"
 	"github.com/alphaleonis/nibs/internal/nib"
@@ -43,8 +42,8 @@ func Execute(plan *RenamePlan, root string) error {
 	// then. Both passes record into the same batch because they touch the same
 	// directories: rewritePath only rewrites a basename, so each rewrite lands
 	// in the directory its own rename created.
-	pending := dirSyncBatch{}
-	defer pending.flush()
+	var pending fsutil.DirSyncBatch
+	defer pending.Flush()
 
 	// Pass 1 renames files on disk; Pass 2 re-renders every renamed file.
 	// The two passes are kept separate (rather than rewriting during rename)
@@ -54,47 +53,13 @@ func Execute(plan *RenamePlan, root string) error {
 	// the new filename. Rename is first because it is mechanical and cheap
 	// to reason about on partial failure; rewrite second because it
 	// operates on already-renamed files.
-	if err := renameAll(plan.Files, root, pending); err != nil {
+	if err := renameAll(plan.Files, root, &pending); err != nil {
 		return err
 	}
-	if err := rewriteAll(plan.Files, root, pending); err != nil {
+	if err := rewriteAll(plan.Files, root, &pending); err != nil {
 		return err
 	}
 	return nil
-}
-
-// dirSyncBatch collects the distinct directories a run wrote into, so it pays
-// one directory fsync per DIRECTORY rather than one per file.
-//
-// A set rather than a single remembered directory because one plan spans
-// several: a nib's Path carries the content directory it lives in, so archived
-// nibs sit under archive/ while active ones sit under data/, which itself
-// tolerates subdirectories that rewritePath preserves verbatim. Syncing one
-// hardcoded directory would silently drop the durability of every rename and
-// rewrite outside it.
-type dirSyncBatch map[string]struct{}
-
-// add records a directory to flush. The empty string is ignored, so a caller
-// can hand it the result of a failed write without a guard.
-func (b dirSyncBatch) add(dir string) {
-	if dir == "" {
-		return
-	}
-	b[dir] = struct{}{}
-}
-
-// flush fsyncs each collected directory once, in a deterministic order.
-// Best-effort, like every directory sync here: see fsutil.AtomicWriteFile's
-// "does not promise" list.
-func (b dirSyncBatch) flush() {
-	dirs := make([]string, 0, len(b))
-	for dir := range b {
-		dirs = append(dirs, dir)
-	}
-	sort.Strings(dirs)
-	for _, dir := range dirs {
-		fsutil.SyncDir(dir)
-	}
 }
 
 // renameAll renames each FilePlan.OldPath -> FilePlan.NewPath under root,
@@ -113,14 +78,14 @@ func (b dirSyncBatch) flush() {
 // No os.MkdirAll is needed here: reprefix.rewritePath only rewrites the
 // basename, so filepath.Dir(newAbs) == filepath.Dir(oldAbs), and the
 // source file's parent directory provably already exists.
-func renameAll(files []FilePlan, root string, pending dirSyncBatch) error {
+func renameAll(files []FilePlan, root string, pending *fsutil.DirSyncBatch) error {
 	for _, fp := range files {
 		oldAbs := filepath.Join(root, filepath.FromSlash(fp.OldPath))
 		newAbs := filepath.Join(root, filepath.FromSlash(fp.NewPath))
 		if err := os.Rename(oldAbs, newAbs); err != nil {
 			return fmt.Errorf("reprefix.Execute: rename %s -> %s: %w", fp.OldPath, fp.NewPath, err)
 		}
-		pending.add(filepath.Dir(newAbs))
+		pending.Add(filepath.Dir(newAbs))
 	}
 	return nil
 }
@@ -143,11 +108,11 @@ func renameAll(files []FilePlan, root string, pending dirSyncBatch) error {
 // about, and because the redundancy holds only while rewritePath touches the
 // basename alone. Anything that moved a nib between directories would make this
 // line load-bearing with nothing to notice it had been dropped.
-func rewriteAll(files []FilePlan, root string, pending dirSyncBatch) error {
+func rewriteAll(files []FilePlan, root string, pending *fsutil.DirSyncBatch) error {
 	for _, fp := range files {
 		absPath := filepath.Join(root, filepath.FromSlash(fp.NewPath))
 		dir, err := rewriteOne(absPath, fp)
-		pending.add(dir)
+		pending.Add(dir)
 		if err != nil {
 			return err
 		}
@@ -160,7 +125,7 @@ func rewriteAll(files []FilePlan, root string, pending dirSyncBatch) error {
 // so callers can pinpoint partial-failure locations.
 //
 // It returns the directory the write landed in, whose entry is not yet
-// flushed — the caller owes it to a dirSyncBatch — and the empty string on
+// flushed — the caller owes it to an fsutil.DirSyncBatch — and the empty string on
 // error, since a failed write never reached its rename.
 func rewriteOne(absPath string, fp FilePlan) (string, error) {
 	b, mode, err := readNibForRewrite(absPath, fp)

@@ -1136,8 +1136,8 @@ func (c *Core) Update(b *nib.Nib, ifMatch *string) error {
 
 // saveToDisk writes a nib to the filesystem and flushes the directory entry
 // before returning, so a single write is as durable as fsutil.AtomicWriteFile
-// makes it. A caller writing MANY nibs wants saveToDiskDeferDirSync plus a
-// dirSyncBatch instead: the flush is per directory, not per file.
+// makes it. A caller writing MANY nibs wants saveToDiskDeferDirSync plus
+// an fsutil.DirSyncBatch instead: the flush is per directory, not per file.
 func (c *Core) saveToDisk(b *nib.Nib) error {
 	dir, err := c.saveToDiskDeferDirSync(b)
 	if err != nil {
@@ -1149,8 +1149,8 @@ func (c *Core) saveToDisk(b *nib.Nib) error {
 
 // saveToDiskDeferDirSync writes a nib to the filesystem without flushing the
 // directory entry, returning the directory that still needs one (empty when the
-// write failed before its rename). Every caller owes that directory to a
-// dirSyncBatch — see fsutil.AtomicWriteFileDeferDirSync for the weaker
+// write failed before its rename). Every caller owes that directory to an
+// fsutil.DirSyncBatch — see fsutil.AtomicWriteFileDeferDirSync for the weaker
 // guarantee that holds until the flush.
 func (c *Core) saveToDiskDeferDirSync(b *nib.Nib) (string, error) {
 	// Determine the file path. A nib with no Path yet is new, and new nibs are
@@ -1198,42 +1198,6 @@ func (c *Core) saveToDiskDeferDirSync(b *nib.Nib) (string, error) {
 	b.CaptureRawLinks()
 
 	return unflushedDir, nil
-}
-
-// dirSyncBatch collects the distinct directories that saveToDiskDeferDirSync
-// writes left unflushed, so a bulk loop pays one directory fsync per DIRECTORY
-// rather than one per nib — the same flush, N times fewer.
-//
-// A set rather than a single remembered directory because one loop over c.nibs
-// can span several: archived nibs stay in the store and live under archive/
-// while active ones live under data/, and data/ tolerates subdirectories that a
-// nib's Path preserves. Syncing one hardcoded directory would silently drop the
-// durability of every write outside it.
-type dirSyncBatch map[string]struct{}
-
-// add records a directory to flush. The empty string is ignored, so a caller can
-// hand it the result of a failed write without a guard.
-func (b dirSyncBatch) add(dir string) {
-	if dir == "" {
-		return
-	}
-	b[dir] = struct{}{}
-}
-
-// flush fsyncs each collected directory once, in a deterministic order. Run it
-// even when the loop aborts early — the writes that already landed are on disk
-// with unflushed directory entries — which is what the defer at each call site
-// is for. Best-effort, like every directory sync here: see
-// fsutil.AtomicWriteFile's "does not promise" list.
-func (b dirSyncBatch) flush() {
-	dirs := make([]string, 0, len(b))
-	for dir := range b {
-		dirs = append(dirs, dir)
-	}
-	sort.Strings(dirs)
-	for _, dir := range dirs {
-		fsutil.SyncDir(dir)
-	}
 }
 
 // Delete removes a nib by exact ID match.
@@ -1347,8 +1311,9 @@ func (c *Core) Delete(id string) error {
 //     fsyncs anything else that would amortize the flush. Measured on ext4: two
 //     directory fsyncs per archive cost ~4.0ms against ~14µs for the bare rename,
 //     turning a 200-nib archive run from 2.7ms into 813ms. Paying it without that
-//     cost means the dirSyncBatch pattern — deferred variants plus a bulk entry
-//     point — which is new Core API for a failure that costs a repeated command.
+//     cost means the fsutil.DirSyncBatch pattern — deferred variants plus a bulk
+//     entry point — which is new Core API for a failure that costs a repeated
+//     command.
 //
 // This matches what the rest of the store promises rather than falling short of it:
 // fsutil.AtomicWriteFile declares its directory fsync best-effort and Windows
