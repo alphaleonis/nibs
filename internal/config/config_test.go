@@ -1011,20 +1011,14 @@ statuses:
 	})
 }
 
-// isolateConfigSearch bounds FindConfig's upward walk at dir by setting
-// NIBS_CONFIG_ROOT, so a stray ancestor .nibs.yml (e.g. /tmp/.nibs.yml) can't
-// leak into config-discovery tests that assert "no config found" / "default
-// config". When the fixture places its config at dir (or below), the config is
-// still found because the ceiling directory itself is checked.
-func isolateConfigSearch(t *testing.T, dir string) {
-	t.Helper()
-	t.Setenv("NIBS_CONFIG_ROOT", dir)
-}
-
-func TestLoadFromDirectory(t *testing.T) {
-	t.Run("finds the store by walking up and reads the config inside it", func(t *testing.T) {
+// TestLoadFromStore pins the read of an ALREADY-RESOLVED store's config: the
+// config is taken from inside the store directory, and the loaded config
+// remembers which store it came from. Resolving the store is a separate
+// question, answered by internal/store's locators and covered there — this
+// package no longer walks for one.
+func TestLoadFromStore(t *testing.T) {
+	t.Run("reads the config inside the store", func(t *testing.T) {
 		tmpDir := t.TempDir()
-		isolateConfigSearch(t, tmpDir)
 		storeDir := filepath.Join(tmpDir, store.DirName)
 		if err := os.MkdirAll(storeDir, 0755); err != nil {
 			t.Fatalf("MkdirAll error = %v", err)
@@ -1036,14 +1030,10 @@ func TestLoadFromDirectory(t *testing.T) {
 		if err := os.WriteFile(filepath.Join(storeDir, store.ConfigFileName), []byte(configYAML), 0644); err != nil {
 			t.Fatalf("WriteFile error = %v", err)
 		}
-		subDir := filepath.Join(tmpDir, "sub", "dir")
-		if err := os.MkdirAll(subDir, 0755); err != nil {
-			t.Fatalf("MkdirAll error = %v", err)
-		}
 
-		cfg, err := LoadFromDirectory(subDir)
+		cfg, err := LoadFromStore(storeDir)
 		if err != nil {
-			t.Fatalf("LoadFromDirectory() error = %v", err)
+			t.Fatalf("LoadFromStore() error = %v", err)
 		}
 		if cfg.Nibs.Prefix != "test-" {
 			t.Errorf("Prefix = %q, want \"test-\"", cfg.Nibs.Prefix)
@@ -1058,35 +1048,20 @@ func TestLoadFromDirectory(t *testing.T) {
 
 	t.Run("a store without a config file loads as defaults", func(t *testing.T) {
 		tmpDir := t.TempDir()
-		isolateConfigSearch(t, tmpDir)
 		storeDir := filepath.Join(tmpDir, store.DirName)
 		if err := os.MkdirAll(storeDir, 0755); err != nil {
 			t.Fatalf("MkdirAll error = %v", err)
 		}
 
-		cfg, err := LoadFromDirectory(tmpDir)
+		cfg, err := LoadFromStore(storeDir)
 		if err != nil {
-			t.Fatalf("LoadFromDirectory() error = %v", err)
+			t.Fatalf("LoadFromStore() error = %v", err)
 		}
 		if cfg.Nibs.IDLength != 4 {
 			t.Errorf("IDLength = %d, want the system default 4", cfg.Nibs.IDLength)
 		}
 		if cfg.StoreDir() != storeDir {
 			t.Errorf("StoreDir() = %q, want %q", cfg.StoreDir(), storeDir)
-		}
-	})
-
-	t.Run("no store anywhere anchors defaults at a would-be store", func(t *testing.T) {
-		tmpDir := t.TempDir()
-		isolateConfigSearch(t, tmpDir)
-
-		cfg, err := LoadFromDirectory(tmpDir)
-		if err != nil {
-			t.Fatalf("LoadFromDirectory() error = %v", err)
-		}
-		want := filepath.Join(tmpDir, store.DirName)
-		if cfg.StoreDir() != want {
-			t.Errorf("StoreDir() = %q, want %q", cfg.StoreDir(), want)
 		}
 	})
 }

@@ -399,25 +399,6 @@ func applySystemDefaults(cfg *Config) {
 	}
 }
 
-// LoadFromDirectory finds the store by searching upward from the given
-// directory and loads the config from inside it. If no store is found, returns
-// a default config anchored at a `.nibs` directory under startDir.
-func LoadFromDirectory(startDir string) (*Config, error) {
-	storeDir, err := store.FindStore(startDir)
-	if err != nil {
-		return nil, err
-	}
-
-	if storeDir == "" {
-		// No store found: a default anchored where one would be created.
-		cfg := Default()
-		cfg.storeDir = filepath.Join(startDir, store.DirName)
-		return cfg, nil
-	}
-
-	return LoadFromStore(storeDir)
-}
-
 // StoreDir returns the `.nibs` directory this config belongs to.
 func (c *Config) StoreDir() string {
 	return c.storeDir

@@ -9,16 +9,21 @@ import (
 	"github.com/alphaleonis/nibs/internal/store"
 )
 
-// storeConfigPath creates the store directory under projectDir and returns the
-// path of the config file inside it — where a project's config lives once the
-// store owns it.
-func storeConfigPath(t *testing.T, projectDir string) string {
+// storeDirFor creates the store directory under projectDir and returns it.
+func storeDirFor(t *testing.T, projectDir string) string {
 	t.Helper()
 	storeDir := filepath.Join(projectDir, store.DirName)
 	if err := os.MkdirAll(storeDir, 0755); err != nil {
 		t.Fatalf("MkdirAll error = %v", err)
 	}
-	return filepath.Join(storeDir, store.ConfigFileName)
+	return storeDir
+}
+
+// storeConfigPath returns the path of the config file inside projectDir's
+// store — where a project's config lives once the store owns it.
+func storeConfigPath(t *testing.T, projectDir string) string {
+	t.Helper()
+	return filepath.Join(storeDirFor(t, projectDir), store.ConfigFileName)
 }
 
 func TestUserConfigPath(t *testing.T) {
@@ -229,10 +234,11 @@ func TestBoolFieldsRoundTrip(t *testing.T) {
 	})
 }
 
-func TestLoadWithUserConfig(t *testing.T) {
+// TestLoadStoreWithUserConfigPath pins the layering an already-resolved store's
+// config goes through: project config > user config > system defaults.
+func TestLoadStoreWithUserConfigPath(t *testing.T) {
 	t.Run("project values override user values", func(t *testing.T) {
 		projectDir := t.TempDir()
-		isolateConfigSearch(t, projectDir)
 		userCfgDir := t.TempDir()
 
 		// User config: id_length=8, hide_completed=false
@@ -256,9 +262,9 @@ func TestLoadWithUserConfig(t *testing.T) {
 			t.Fatalf("WriteFile error = %v", err)
 		}
 
-		cfg, err := LoadWithUserConfigPath(projectDir, userCfgPath)
+		cfg, err := LoadStoreWithUserConfigPath(storeDirFor(t, projectDir), userCfgPath)
 		if err != nil {
-			t.Fatalf("LoadWithUserConfigPath() error = %v", err)
+			t.Fatalf("LoadStoreWithUserConfigPath() error = %v", err)
 		}
 
 		// Project values should win
@@ -275,7 +281,6 @@ func TestLoadWithUserConfig(t *testing.T) {
 
 	t.Run("nil project fields fall through to user config", func(t *testing.T) {
 		projectDir := t.TempDir()
-		isolateConfigSearch(t, projectDir)
 		userCfgDir := t.TempDir()
 
 		// User config: hide_completed=false, wide_mode=false
@@ -297,9 +302,9 @@ func TestLoadWithUserConfig(t *testing.T) {
 			t.Fatalf("WriteFile error = %v", err)
 		}
 
-		cfg, err := LoadWithUserConfigPath(projectDir, userCfgPath)
+		cfg, err := LoadStoreWithUserConfigPath(filepath.Join(projectDir, store.DirName), userCfgPath)
 		if err != nil {
-			t.Fatalf("LoadWithUserConfigPath() error = %v", err)
+			t.Fatalf("LoadStoreWithUserConfigPath() error = %v", err)
 		}
 
 		// User config values should apply for unset project fields
@@ -313,7 +318,6 @@ func TestLoadWithUserConfig(t *testing.T) {
 
 	t.Run("user config id_length applies when project omits it", func(t *testing.T) {
 		projectDir := t.TempDir()
-		isolateConfigSearch(t, projectDir)
 		userCfgDir := t.TempDir()
 
 		// User config: id_length=8
@@ -334,9 +338,9 @@ func TestLoadWithUserConfig(t *testing.T) {
 			t.Fatalf("WriteFile error = %v", err)
 		}
 
-		cfg, err := LoadWithUserConfigPath(projectDir, userCfgPath)
+		cfg, err := LoadStoreWithUserConfigPath(storeDirFor(t, projectDir), userCfgPath)
 		if err != nil {
-			t.Fatalf("LoadWithUserConfigPath() error = %v", err)
+			t.Fatalf("LoadStoreWithUserConfigPath() error = %v", err)
 		}
 
 		// User config's id_length should apply since project didn't set it
@@ -347,7 +351,6 @@ func TestLoadWithUserConfig(t *testing.T) {
 
 	t.Run("no user config file, project only", func(t *testing.T) {
 		projectDir := t.TempDir()
-		isolateConfigSearch(t, projectDir)
 
 		projectYAML := `nibs:
   prefix: "proj-"
@@ -360,12 +363,12 @@ func TestLoadWithUserConfig(t *testing.T) {
 		}
 
 		// Non-existent user config path
-		cfg, err := LoadWithUserConfigPath(projectDir, "/nonexistent/user/nibs.yml")
+		cfg, err := LoadStoreWithUserConfigPath(storeDirFor(t, projectDir), "/nonexistent/user/nibs.yml")
 		if err != nil {
-			t.Fatalf("LoadWithUserConfigPath() error = %v", err)
+			t.Fatalf("LoadStoreWithUserConfigPath() error = %v", err)
 		}
 
-		// Should work exactly like LoadFromDirectory
+		// Should work exactly as if no user config layer existed at all
 		if cfg.Nibs.Prefix != "proj-" {
 			t.Errorf("Prefix = %q, want \"proj-\"", cfg.Nibs.Prefix)
 		}
@@ -382,9 +385,9 @@ func TestLoadWithUserConfig(t *testing.T) {
 	})
 
 	t.Run("no project config, user only", func(t *testing.T) {
-		// Empty directory with no store
+		// A store that is not on disk yet — the shape `nibs migrate` reads
+		// while the config is still on its way into the store.
 		projectDir := t.TempDir()
-		isolateConfigSearch(t, projectDir)
 		userCfgDir := t.TempDir()
 
 		userYAML := `nibs:
@@ -397,9 +400,9 @@ func TestLoadWithUserConfig(t *testing.T) {
 			t.Fatalf("WriteFile error = %v", err)
 		}
 
-		cfg, err := LoadWithUserConfigPath(projectDir, userCfgPath)
+		cfg, err := LoadStoreWithUserConfigPath(filepath.Join(projectDir, store.DirName), userCfgPath)
 		if err != nil {
-			t.Fatalf("LoadWithUserConfigPath() error = %v", err)
+			t.Fatalf("LoadStoreWithUserConfigPath() error = %v", err)
 		}
 
 		// User config values should apply
@@ -416,8 +419,8 @@ func TestLoadWithUserConfig(t *testing.T) {
 		if cfg.Nibs.DefaultStatus != "todo" {
 			t.Errorf("DefaultStatus = %q, want \"todo\" (system default)", cfg.Nibs.DefaultStatus)
 		}
-		// With no store to find, the config anchors at the store that would be
-		// created under the start directory.
+		// With no config on disk, the config still anchors at the store it was
+		// asked to read.
 		want := filepath.Join(projectDir, store.DirName)
 		if cfg.StoreDir() != want {
 			t.Errorf("StoreDir() = %q, want %q", cfg.StoreDir(), want)

@@ -68,17 +68,6 @@ func LoadUserConfigFrom(path string) (*UserConfig, error) {
 	return &cfg, nil
 }
 
-// LoadWithUserConfig loads project config from startDir, with user config
-// from the OS-standard location providing defaults for unset fields.
-func LoadWithUserConfig(startDir string) (*Config, error) {
-	userCfgPath, err := UserConfigPath()
-	if err != nil {
-		// Can't determine user config path; fall back to project-only
-		return LoadFromDirectory(startDir)
-	}
-	return LoadWithUserConfigPath(startDir, userCfgPath)
-}
-
 // LoadStoreWithUserConfig loads an already-resolved store's config from inside
 // it, with user config from the OS-standard location providing defaults for
 // unset fields.
@@ -111,28 +100,16 @@ func LoadFromExplicitPathWithUserConfig(configPath string) (*Config, error) {
 	return cfg, nil
 }
 
-// LoadWithUserConfigPath finds the store by walking up from startDir and loads
-// its config, with user config from the given path providing defaults for
-// unset fields. This variant accepts an explicit user config path for testing.
-//
-// Layering order: project config > user config > system defaults.
-// The raw project config is loaded first (without system defaults),
-// then user config fills in unset fields, then system defaults fill the rest.
-func LoadWithUserConfigPath(startDir string, userConfigPath string) (*Config, error) {
-	storeDir, err := store.FindStore(startDir)
-	if err != nil {
-		return nil, err
-	}
-	if storeDir == "" {
-		storeDir = filepath.Join(startDir, store.DirName)
-	}
-	return LoadStoreWithUserConfigPath(storeDir, userConfigPath)
-}
-
 // LoadStoreWithUserConfigPath loads the config of an ALREADY-RESOLVED store,
 // layering the user config underneath. It is the shared bottom of every
 // config-loading path: whichever way the store was resolved (an upward walk,
 // --nibs-path, NIBS_PATH), its config is read the same way from inside it.
+// It accepts an explicit user config path so tests can layer without touching
+// the OS-standard location.
+//
+// Layering order: project config > user config > system defaults.
+// The raw project config is loaded first (without system defaults),
+// then user config fills in unset fields, then system defaults fill the rest.
 func LoadStoreWithUserConfigPath(storeDir string, userConfigPath string) (*Config, error) {
 	// Load user config — graceful on all errors (user config is advisory)
 	userCfg, err := LoadUserConfigFrom(userConfigPath)
