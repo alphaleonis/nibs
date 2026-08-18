@@ -137,17 +137,20 @@ func resolveCLIStore() (string, *config.Config, error) {
 // Precedence: --nibs-path flag > NIBS_PATH env var > --config's directory >
 // an upward search from the cwd for the NEAREST nibs marker.
 //
-// A directory named EXPLICITLY — by any of the first three routes — must carry
-// positive evidence that it IS a store (see looksLikeStore). Existence alone is
-// not enough: a path aimed one level too high resolves to the project tree, and
-// `nibs migrate` would then move and rewrite every front-mattered .md it finds
-// there while the real store went untouched.
+// Whichever route names the directory, it must carry positive evidence that it
+// IS a store, and that check is ONE function every route shares — see
+// bindNamedStore. Existence alone is not enough: a path aimed one level too high
+// resolves to the project tree, and `nibs migrate` would then move and rewrite
+// every front-mattered .md it finds there while the real store went untouched.
 //
 // The DISCOVERED route answers with the nearest marker of EITHER kind — a
 // `.nibs` store or a pre-layout `.nibs.yml` — because the two are alternatives
 // rather than independent searches: a pre-layout project between the cwd and a
 // store is the project the user is in, and binding past it to a store belonging
 // to someone else is a mutation waiting to happen (see preLayoutProjectError).
+// What that walk finds still goes through bindNamedStore: it matches a `.nibs`
+// on its NAME, which is evidence for a real directory and no evidence at all for
+// a link.
 func resolveStoreDir() (string, error) {
 	// --config and an explicitly named store are MUTUALLY EXCLUSIVE. Supplied
 	// together they break resolveCLIStore's invariant that a store is always read
@@ -209,7 +212,7 @@ func resolveStoreDir() (string, error) {
 	if configPath != "" && filepath.Base(configPath) == store.LegacyProjectConfigFileName {
 		projectDir := filepath.Dir(configPath)
 		storeDir := filepath.Join(projectDir, store.DirName)
-		beside := isDir(storeDir)
+		beside := bindsAsStore(storeDir)
 
 		if _, err := os.Stat(configPath); errors.Is(err, fs.ErrNotExist) {
 			remedy := "and nothing names a store here; pass --nibs-path with the store directory itself, or run `nibs init` in the project you meant"
@@ -273,99 +276,7 @@ func resolveStoreDir() (string, error) {
 		if info, err := os.Stat(explicit); err != nil || !info.IsDir() {
 			return "", fmt.Errorf("nibs store does not exist or is not a directory: %s", explicit)
 		}
-		is, err := looksLikeStore(explicit)
-		if err != nil {
-			// "Cannot determine" must never be reported as "no evidence": the
-			// message below tells the user to run `nibs init` here, and doing that
-			// over a real store whose config merely could not be read creates a
-			// second, empty store beside their data.
-			return "", fmt.Errorf("cannot tell whether %s is a nibs store: %w; repair or remove that file, then re-run", explicit, err)
-		}
-		if !is {
-			// A `.nibs.yml` that NAMES this directory but no artifact inside it is
-			// its own answer: "no .nibs.yml beside it names it" would be false, and
-			// `nibs init` is the wrong advice when the naming config is real. Say
-			// which half of the evidence is missing, and say only what was
-			// established — the two halves fail for different reasons.
-			projectDir := filepath.Dir(explicit)
-			declared, resolvedDeclared, declaredErr := legacyDeclaredStorePath(explicit)
-			named := declaredErr == nil && declared != "" && sameDir(resolvedDeclared, explicit)
-			inside, insideErr := isRealImmediateChild(explicit, projectDir)
-			if named && insideErr == nil {
-				why := "nothing in it was written by nibs (no markdown file carries a nibs `status:`)"
-				if !inside {
-					why = "with symlinks resolved it is not an immediate subdirectory of " + projectDir + ", so a config inside the project cannot authorize moving it"
-				}
-				return "", fmt.Errorf("%s is named as this project's store by %s, but %s, and `nibs migrate` will not move and rewrite a directory on a config's say-so alone; if these really are your nibs, create %s, move them into it, remove the `nibs.path` key from %s, then run `nibs migrate`",
-					explicit, filepath.Join(projectDir, store.LegacyProjectConfigFileName), why,
-					filepath.Join(projectDir, store.DirName),
-					filepath.Join(projectDir, store.LegacyProjectConfigFileName))
-			}
-			// The naming clause reports what was CHECKED. A `.nibs.yml` beside it
-			// that declares some other path is not "no config names it", and the
-			// difference matters most where it is least visible: sameDir compares
-			// paths as text, so on a case-insensitive filesystem the other path can
-			// be this very directory under another spelling. Denying that any
-			// config names it then sends a user standing on real nibs to
-			// `nibs init`.
-			//
-			// "It names a different DIRECTORY" is that same unestablished claim
-			// wearing a conclusion, and it is false in exactly the cases the
-			// comparison is weakest on: a symlink alias and a case variant both
-			// fail sameDir while reaching this very directory (`<proj>/link ->
-			// nibdata` and `<proj>/nibdata` report one inode, and either spelling
-			// resolves as the store). So the clause states the comparison instead
-			// — the declared value where this branch has one, and that the match
-			// is textual — which stays true whether the two names are two
-			// directories or one.
-			//
-			// What such a config describes is a PRE-LAYOUT PROJECT, so the remedy
-			// is preLayoutRemedy's — the same answer the discovery route gives for
-			// the same project. It names the declared value, the directory that
-			// value resolves to and what to do about it, and it prescribes
-			// `nibs migrate` only for the shapes the store-evidence guard accepts.
-			// Advice of the form "name it the way the config does" cannot make
-			// that distinction: for `docs/nibs`, an absolute path, `.` or `..` —
-			// shapes that guard refuses — following it lands on a second refusal
-			// whose only advice is the `nibs init` this branch exists to avoid.
-			//
-			// It also keeps the resolved path out of sanitizeFileText's hands. The
-			// declared value is echoed as EVIDENCE, collapsed and bounded because
-			// it is untrusted file content; the path the reader has to act on is
-			// the resolved one, which must survive intact.
-			if declaredErr == nil && declared != "" {
-				// preLayoutRemedy's precondition is that no store sits beside the
-				// pre-layout config. Its other two callers establish that; this
-				// route cannot, because the reader names any directory they like.
-				// Where a store IS there it is the answer, and the remedy would
-				// otherwise tell them to create a directory they already have.
-				if storeDir := filepath.Join(projectDir, store.DirName); isDir(storeDir) {
-					return "", fmt.Errorf("%s is not a nibs store: it holds no %s that parses as one, and the %s beside it sets the retired nibs.path to %q, which does not match this path as text — the comparison resolves no symlinks and folds no case, so another name for this same directory does not match either; pass --nibs-path %s, the store this project already has",
-						explicit, store.ConfigFileName, store.LegacyProjectConfigFileName,
-						sanitizeFileText(declared), storeDir)
-				}
-				return "", fmt.Errorf("%s is not a nibs store: it holds no %s that parses as one, and the %s beside it sets a retired nibs.path that does not match this path as text — the comparison resolves no symlinks and folds no case, so another name for this same directory does not match either; %w",
-					explicit, store.ConfigFileName, store.LegacyProjectConfigFileName,
-					preLayoutRemedy(filepath.Join(projectDir, store.LegacyProjectConfigFileName)))
-			}
-			// declaredErr is nil by construction here, so this is a genuine
-			// absence: looksLikeStore reaches the same `.nibs.yml` through
-			// hasLegacyStoreShape, and an unreadable one has already been reported
-			// as the "cannot tell" third answer above. If that ordering ever
-			// changes, this flat denial becomes the false claim about an
-			// unreadable config that the third answer exists to prevent.
-			//
-			// It also rests on the two reads of that one file AGREEING, which is
-			// a property of the file rather than of this code: a FIFO served a
-			// valid `nibs.path` to the first read and malformed YAML to the
-			// second, and this branch duly denied that any config named the
-			// directory one line after the other read had found one. That is why
-			// config.ReadConfigFile refuses anything but a regular file.
-			return "", fmt.Errorf("%s is not a nibs store: it holds no %s that parses as one, and no %s beside it names it; name the store directory itself (e.g. --nibs-path %s), or run `nibs init` there",
-				explicit, store.ConfigFileName, store.LegacyProjectConfigFileName,
-				filepath.Join(explicit, store.DirName))
-		}
-		return explicit, nil
+		return bindNamedStore(explicit)
 	}
 
 	cwd, err := os.Getwd()
@@ -385,11 +296,246 @@ func resolveStoreDir() (string, error) {
 	}
 	switch marker.Kind {
 	case store.MarkerStore:
-		return marker.Path, nil
+		// The SAME decision the explicit routes make: a real `.nibs` is accepted
+		// on its name, while a `.nibs` SYMLINK has to carry the evidence its name
+		// cannot vouch for.
+		return bindNamedStore(marker.Path)
 	case store.MarkerLegacyProject:
 		return "", preLayoutProjectError(cwd, marker.Path)
 	}
 	return "", noStoreFoundError(cwd)
+}
+
+// bindNamedStore validates dir as a nibs store and returns it, or the refusal
+// explaining why it is not one.
+//
+// EVERY route arrives here — the three that name a store explicitly
+// (--nibs-path, NIBS_PATH, --config's containing directory) and the upward walk
+// that discovers one — so all four answer "is this a store?" with ONE decision.
+// A route answering it on its own is the defect this exists to prevent: with the
+// explicit routes consulting looksLikeStore while the walk matched a `.nibs` on
+// its name alone, a committed `.nibs -> /outside` bound with no flag at all and
+// `nibs migrate` planned to move that outside tree into `<project>/.nibs` and
+// rewrite every front-mattered file in it.
+//
+// Sharing it costs the discovery route nothing: for a REAL `.nibs` directory
+// looksLikeStore answers on its name clause, before anything is opened.
+func bindNamedStore(dir string) (string, error) {
+	is, err := looksLikeStore(dir)
+	if err != nil {
+		// "Cannot determine" must never be reported as "no evidence": the
+		// message below tells the user to run `nibs init` here, and doing that
+		// over a real store whose config merely could not be read creates a
+		// second, empty store beside their data.
+		return "", fmt.Errorf("cannot tell whether %s is a nibs store: %w; repair or remove that file, then re-run", dir, err)
+	}
+	if !is {
+		// A `.nibs` that is a SYMLINK gets its own refusal, and it has to come
+		// FIRST — not because the branches below are unhelpful, but because they
+		// are false here. Every one of them converges on "create <project>/.nibs
+		// and move the nib files into it", which the reader cannot do while a link
+		// holds that name, and the "store this project already has" clause tests
+		// isDir(<project>/.nibs) — this very directory — so reaching it would
+		// advise the path being refused.
+		//
+		// A failed Lstat falls through rather than refusing: os.Stat already
+		// followed this path one moment ago, so an error here means the link moved
+		// under us, and the branches below answer for whatever is there now.
+		if link, linkErr := isSymlink(dir); linkErr == nil && link && filepath.Base(dir) == store.DirName {
+			return "", symlinkedStoreError(dir)
+		}
+		// A `.nibs.yml` that NAMES this directory but no artifact inside it is
+		// its own answer: "no .nibs.yml beside it names it" would be false, and
+		// `nibs init` is the wrong advice when the naming config is real. Say
+		// which half of the evidence is missing, and say only what was
+		// established — the two halves fail for different reasons.
+		projectDir := filepath.Dir(dir)
+		declared, resolvedDeclared, declaredErr := legacyDeclaredStorePath(dir)
+		named := declaredErr == nil && declared != "" && sameDir(resolvedDeclared, dir)
+		inside, insideErr := isRealImmediateChild(dir, projectDir)
+		if named && insideErr == nil {
+			why := "nothing in it was written by nibs (no markdown file carries a nibs `status:`)"
+			if !inside {
+				why = "with symlinks resolved it is not an immediate subdirectory of " + projectDir + ", so a config inside the project cannot authorize moving it"
+			}
+			return "", fmt.Errorf("%s is named as this project's store by %s, but %s, and `nibs migrate` will not move and rewrite a directory on a config's say-so alone; if these really are your nibs, create %s, move them into it, remove the `nibs.path` key from %s, then run `nibs migrate`",
+				dir, filepath.Join(projectDir, store.LegacyProjectConfigFileName), why,
+				filepath.Join(projectDir, store.DirName),
+				filepath.Join(projectDir, store.LegacyProjectConfigFileName))
+		}
+		// The naming clause reports what was CHECKED. A `.nibs.yml` beside it
+		// that declares some other path is not "no config names it", and the
+		// difference matters most where it is least visible: sameDir compares
+		// paths as text, so on a case-insensitive filesystem the other path can
+		// be this very directory under another spelling. Denying that any
+		// config names it then sends a user standing on real nibs to
+		// `nibs init`.
+		//
+		// "It names a different DIRECTORY" is that same unestablished claim
+		// wearing a conclusion, and it is false in exactly the cases the
+		// comparison is weakest on: a symlink alias and a case variant both
+		// fail sameDir while reaching this very directory (`<proj>/link ->
+		// nibdata` and `<proj>/nibdata` report one inode, and either spelling
+		// resolves as the store). So the clause states the comparison instead
+		// — the declared value where this branch has one, and that the match
+		// is textual — which stays true whether the two names are two
+		// directories or one.
+		//
+		// What such a config describes is a PRE-LAYOUT PROJECT, so the remedy
+		// is preLayoutRemedy's — the same answer the discovery route gives for
+		// the same project. It names the declared value, the directory that
+		// value resolves to and what to do about it, and it prescribes
+		// `nibs migrate` only for the shapes the store-evidence guard accepts.
+		// Advice of the form "name it the way the config does" cannot make
+		// that distinction: for `docs/nibs`, an absolute path, `.` or `..` —
+		// shapes that guard refuses — following it lands on a second refusal
+		// whose only advice is the `nibs init` this branch exists to avoid.
+		//
+		// It also keeps the resolved path out of sanitizeFileText's hands. The
+		// declared value is echoed as EVIDENCE, collapsed and bounded because
+		// it is untrusted file content; the path the reader has to act on is
+		// the resolved one, which must survive intact.
+		if declaredErr == nil && declared != "" {
+			// preLayoutRemedy's precondition is that no store sits beside the
+			// pre-layout config. Its other two callers establish that; this
+			// route cannot, because the reader names any directory they like.
+			// Where a store IS there it is the answer, and the remedy would
+			// otherwise tell them to create a directory they already have.
+			if storeDir := filepath.Join(projectDir, store.DirName); bindsAsStore(storeDir) {
+				return "", fmt.Errorf("%s is not a nibs store: it holds no %s that parses as one, and the %s beside it sets the retired nibs.path to %q, which does not match this path as text — the comparison resolves no symlinks and folds no case, so another name for this same directory does not match either; pass --nibs-path %s, the store this project already has",
+					dir, store.ConfigFileName, store.LegacyProjectConfigFileName,
+					sanitizeFileText(declared), storeDir)
+			}
+			return "", fmt.Errorf("%s is not a nibs store: it holds no %s that parses as one, and the %s beside it sets a retired nibs.path that does not match this path as text — the comparison resolves no symlinks and folds no case, so another name for this same directory does not match either; %w",
+				dir, store.ConfigFileName, store.LegacyProjectConfigFileName,
+				preLayoutRemedy(filepath.Join(projectDir, store.LegacyProjectConfigFileName)))
+		}
+		// declaredErr is nil by construction here, so this is a genuine
+		// absence: looksLikeStore reaches the same `.nibs.yml` through
+		// hasLegacyStoreShape, and an unreadable one has already been reported
+		// as the "cannot tell" third answer above. If that ordering ever
+		// changes, this flat denial becomes the false claim about an
+		// unreadable config that the third answer exists to prevent.
+		//
+		// It also rests on the two reads of that one file AGREEING, which is
+		// a property of the file rather than of this code: a FIFO served a
+		// valid `nibs.path` to the first read and malformed YAML to the
+		// second, and this branch duly denied that any config named the
+		// directory one line after the other read had found one. That is why
+		// config.ReadConfigFile refuses anything but a regular file.
+		return "", fmt.Errorf("%s is not a nibs store: it holds no %s that parses as one, and no %s beside it names it; name the store directory itself (e.g. --nibs-path %s), or run `nibs init` there",
+			dir, store.ConfigFileName, store.LegacyProjectConfigFileName,
+			filepath.Join(dir, store.DirName))
+	}
+	return dir, nil
+}
+
+// isSymlink reports whether path is ITSELF a symbolic link, which os.Stat cannot
+// answer because it follows one. It is the distinction looksLikeStore's name
+// clause turns on: for a real directory the name and the directory are the same
+// thing, and for a link they are not.
+//
+// WINDOWS, read off the toolchain rather than reasoned: os.Lstat sets
+// ModeSymlink for IO_REPARSE_TAG_SYMLINK only, and every other reparse tag —
+// a JUNCTION (IO_REPARSE_TAG_MOUNT_POINT) among them — gets ModeIrregular
+// instead (go/src/os/types_windows.go, Go 1.26). So a `.nibs` junction is read
+// as a real directory here and keeps the name clause. Under GODEBUG=winsymlink=0
+// that reverts — modePreGo1_23 returns ModeSymlink for a junction too — which
+// only makes this guard STRICTER, so it needs no handling of its own.
+//
+// That is the intended bound rather than a gap left open. The threat is a link a
+// CLONE materializes, and git checkout writes a symlink or a plain file, never a
+// junction — a junction is something a user typed `mklink /J` for, which is the
+// deliberate off-repo store this rule exists to keep working. Widening the test
+// to "not a plain directory" would also catch cloud-storage placeholders and
+// other reparse tags a real store may legitimately sit on.
+func isSymlink(path string) (bool, error) {
+	info, err := os.Lstat(path)
+	if err != nil {
+		return false, err
+	}
+	return info.Mode()&os.ModeSymlink != 0, nil
+}
+
+// symlinkedStoreError refuses a `.nibs` that is a SYMLINK carrying no evidence of
+// being a store.
+//
+// looksLikeStore's name clause exists because `.nibs` is the marker nibs itself
+// creates and the upward walk recognizes. A LINK is exactly the case that
+// reasoning cannot cover: the name is here and the directory is somewhere else,
+// so the name says nothing about what is being authorized. A committed
+// `.nibs -> /outside` was accepted on every route, and `nibs migrate` then planned
+// to sweep that whole tree into `<project>/.nibs` while the project's real nibs
+// went untouched and unreferenced.
+//
+// Links are NOT banned, and this is deliberately an evidence rule rather than a
+// containment one: `.nibs -> ~/sync/proj-nibs` pointing at a genuine store is a
+// legitimate way to keep nibs out of the code repository, and it resolves through
+// the config clause without ever reaching here. What is refused is trusting the
+// name over the destination.
+//
+// The remedy for the PROJECT is preLayoutRemedy's wherever a pre-layout
+// `.nibs.yml` is beside the link, so this route cannot disagree with the other
+// three about what to do with it. The link is named first either way, because
+// every remedy those refusals converge on begins by creating `<project>/.nibs` —
+// and the link is holding that name.
+//
+// The link's destination is echoed through sanitizeFilePath for the same reason a
+// `nibs.path` value is: it is bytes a cloned repository chose, in a message whose
+// primary consumer is an agent.
+func symlinkedStoreError(dir string) error {
+	// EvalSymlinks resolves EVERY component, so it can fail on a parent this
+	// process cannot traverse even though os.Stat followed the link a moment
+	// ago. The link's own value is the honest fallback — it is what the
+	// repository committed — and where even that cannot be read the destination
+	// clause is dropped rather than filled with dir, which would read as a link
+	// pointing at itself.
+	where := ""
+	if resolved, err := filepath.EvalSymlinks(dir); err == nil {
+		where = " to " + sanitizeFilePath(resolved)
+	} else if declared, err := os.Readlink(dir); err == nil {
+		where = " to " + sanitizeFilePath(declared)
+	}
+	lead := fmt.Sprintf("%s is a symlink%s, and what it leads to carries no evidence of being a nibs store: it holds no %s that parses as one. A store's NAME is evidence only for a real directory — a link's name says nothing about where it leads, and `nibs migrate` would move and rewrite everything under there",
+		dir, where, store.ConfigFileName)
+
+	// A stat that fails for any reason OTHER than absence counts as present, the
+	// same reading the --config guard takes: preLayoutRemedy's first branch
+	// reports an unreadable pre-layout config as exactly that, while the
+	// `nibs init` advice below would be wrong over a config that is really there.
+	legacy := filepath.Join(filepath.Dir(dir), store.LegacyProjectConfigFileName)
+	if _, err := os.Stat(legacy); !errors.Is(err, fs.ErrNotExist) {
+		// preLayoutRemedy already says the name is occupied and must be cleared —
+		// it is the shared remedy, and duplicating that sentence here is how the
+		// two would come to disagree.
+		return fmt.Errorf("%s. What this project needs instead: %w", lead, preLayoutRemedy(legacy))
+	}
+	// The ORDER is stated because it is load-bearing, and measured rather than
+	// assumed: `nibs init` resolves `<cwd>/.nibs` and MkdirAll follows a link
+	// that is still in place, so running it here first writes config.yml and
+	// data/ INTO the destination — which then parses as a store and re-opens the
+	// hazard this refusal closed. A guard inside init is the real answer; until
+	// there is one, the ordering has to survive in the message.
+	return fmt.Errorf("%s; repoint it at a directory that really is a store, or remove the link BEFORE running `nibs init` here — init follows a link that is still in place and would initialize a store inside it", lead)
+}
+
+// bindsAsStore reports whether dir is a directory bindNamedStore would ACCEPT.
+// It is the test every "the store is right there, pass --nibs-path X" advice
+// owes, and it is narrower than isDir on purpose: isDir follows a symlink, so
+// three refusals advised a `.nibs` link the resolver then refused, stranding the
+// reader one command later on a second refusal — the shape
+// TestEveryRefusalNamesAReachablePathAndARunnableCommand exists to forbid.
+//
+// "Cannot tell" collapses into FALSE, deliberately. A message may prescribe only
+// a store it has ESTABLISHED, and each caller's other branch is a remedy that
+// converges anyway; advising a directory whose evidence could not be read would
+// print a command the resolver answers with "cannot tell whether …".
+func bindsAsStore(dir string) bool {
+	if !isDir(dir) {
+		return false
+	}
+	ok, err := looksLikeStore(dir)
+	return err == nil && ok
 }
 
 // isDir reports whether path is a directory that can be stat'd. Anything else —
@@ -443,12 +589,21 @@ func noStoreFoundError(cwd string) error {
 // declares some other store — so they can never disagree about what to do about
 // it.
 //
-// PRECONDITION: no `.nibs` sits beside legacy. Every caller establishes that (the
-// walk binds to a store in the same directory before it looks for this file; the
-// --config guard and resolveStoreDir's naming clause both stat for one first),
-// and the "no store beside it" branch below states it as fact. It is load-bearing
-// rather than tidy: three branches below tell the reader to CREATE that
-// directory, and a fourth prescribes a migration whose destination it is.
+// PRECONDITION: no `.nibs` that BINDS AS A STORE sits beside legacy. Every caller
+// establishes that (the walk binds to a store in the same directory before it
+// looks for this file; the --config guard and bindNamedStore's naming clause both
+// consult bindsAsStore first), and the "no store beside it" branch below states it
+// as fact. It is load-bearing rather than tidy: three branches below tell the
+// reader to CREATE that directory, and a fourth prescribes a migration whose
+// destination it is.
+//
+// A NON-store may still be sitting on the name — a `.nibs` symlink leading
+// somewhere that carries no store evidence is the shape symlinkedStoreError hands
+// over from, and a dangling one blocks MkdirAll the same way. That is why the
+// obstruction clause below exists rather than the precondition simply forbidding
+// it: "no store beside it" stays true, while "create <project>/.nibs" would be
+// unfollowable in silence. Stating it once here is also what lets that caller
+// delegate instead of writing a fifth copy of this remedy.
 //
 // For the shapes `nibs migrate` can relocate itself, the remedy is
 // `nibs migrate --nibs-path <dataDir>` — migrating the store WHERE IT IS. The
@@ -501,6 +656,19 @@ func noStoreFoundError(cwd string) error {
 func preLayoutRemedy(legacy string) error {
 	projectDir := filepath.Dir(legacy)
 	target := filepath.Join(projectDir, store.DirName)
+	// Every remedy below needs the name `<project>/.nibs` — three tell the reader
+	// to CREATE it and the fourth migrates a store TO it — so something already
+	// sitting on that name without being a store makes all four unfollowable.
+	// Said ONCE here rather than per branch, which is also what lets the caller
+	// that met such a thing hand over instead of writing its own remedy.
+	//
+	// os.Lstat, not isDir: a link is what occupies the name in the shape this was
+	// written for, and a DANGLING one blocks MkdirAll just as effectively while
+	// isDir reports it absent.
+	obstruction := ""
+	if _, err := os.Lstat(target); err == nil && !bindsAsStore(target) {
+		obstruction = target + " is already taken by something that is not a nibs store, and every remedy here needs that name — move or remove it first; then "
+	}
 	declared, readErr := config.RetiredNibsPath(legacy)
 	if readErr != nil {
 		// Absence of evidence and unreadable evidence lead to opposite advice, so
@@ -513,8 +681,8 @@ func preLayoutRemedy(legacy string) error {
 			legacy, flattenReason(readErr.Error()))
 	}
 	if declared == "" {
-		return fmt.Errorf("%s is a pre-layout nibs config with no store beside it; create %s and move this project's nib files into it, then run `nibs migrate`",
-			legacy, target)
+		return fmt.Errorf("%s%s is a pre-layout nibs config with no store beside it; create %s and move this project's nib files into it, then run `nibs migrate`",
+			obstruction, legacy, target)
 	}
 	dataDir := declared
 	if !filepath.IsAbs(dataDir) {
@@ -522,8 +690,8 @@ func preLayoutRemedy(legacy string) error {
 	}
 	ok, evErr := hasLegacyStoreShape(dataDir)
 	if evErr == nil && ok {
-		return fmt.Errorf("%s sets the retired `nibs.path: %q`; this project's nibs live in %s — run `nibs migrate --nibs-path %s`, which moves that store to %s and relocates the config into it (do NOT run `nibs init`, which would create an empty store beside the real data)",
-			legacy, sanitizeFileText(declared),
+		return fmt.Errorf("%s%s sets the retired `nibs.path: %q`; this project's nibs live in %s — run `nibs migrate --nibs-path %s`, which moves that store to %s and relocates the config into it (do NOT run `nibs init`, which would create an empty store beside the real data)",
+			obstruction, legacy, sanitizeFileText(declared),
 			sanitizeFilePath(dataDir), shellArg(dataDir), target)
 	}
 	if evErr != nil {
@@ -544,8 +712,8 @@ func preLayoutRemedy(legacy string) error {
 		// disconnected volume stays in the third answer, because there the
 		// directory may be real and full of nibs.
 		if errors.Is(evErr, fs.ErrNotExist) || isUnusablePath(evErr) {
-			return fmt.Errorf("%s sets the retired `nibs.path: %q`, but %s does not exist — so this project's nib files are not where the config says they are; find them, create %s and move them into it, then run `nibs migrate` (do NOT run `nibs init`, which would create an empty store beside data that may already exist)",
-				legacy, sanitizeFileText(declared),
+			return fmt.Errorf("%s%s sets the retired `nibs.path: %q`, but %s does not exist — so this project's nib files are not where the config says they are; find them, create %s and move them into it, then run `nibs migrate` (do NOT run `nibs init`, which would create an empty store beside data that may already exist)",
+				obstruction, legacy, sanitizeFileText(declared),
 				sanitizeFilePath(dataDir), target)
 		}
 		// flattenReason, not %v: an OS error embeds the path it failed on, and that
@@ -567,8 +735,8 @@ func preLayoutRemedy(legacy string) error {
 	if namedErr == nil && named && insideErr == nil && inside {
 		why = "which `nibs migrate` will not relocate for you because nothing in it was written by nibs (no markdown file carries a nibs `status:`)"
 	}
-	return fmt.Errorf("%s sets the retired `nibs.path: %q`; this project's nibs live in %s, %s — create %s, move this project's nib files from %s into it, remove the `nibs.path` key from %s, then run `nibs migrate` (do NOT run `nibs init`, which would create an empty store beside the real data)",
-		legacy, sanitizeFileText(declared),
+	return fmt.Errorf("%s%s sets the retired `nibs.path: %q`; this project's nibs live in %s, %s — create %s, move this project's nib files from %s into it, remove the `nibs.path` key from %s, then run `nibs migrate` (do NOT run `nibs init`, which would create an empty store beside the real data)",
+		obstruction, legacy, sanitizeFileText(declared),
 		sanitizeFilePath(dataDir), why, target, sanitizeFilePath(dataDir), legacy)
 }
 
@@ -581,8 +749,15 @@ func preLayoutRemedy(legacy string) error {
 // nibs store PRODUCES, not something a directory might merely be CALLED. Any ONE
 // of these suffices:
 //
-//   - the directory is named `.nibs` — the name IS the marker store.FindStore
-//     recognizes, and an empty one is a legal freshly created store;
+//   - the directory is named `.nibs` AND IS A REAL DIRECTORY — the name IS the
+//     marker store.FindStore recognizes, and an empty one is a legal freshly
+//     created store. A SYMLINK named `.nibs` is deliberately not covered: the
+//     name is what this clause trusts, and for a link the name and the directory
+//     it leads to are different things, so a committed `.nibs -> /outside` was
+//     bound as the store on every route and `nibs migrate` planned to sweep that
+//     tree into `<project>/.nibs`. Such a link falls through to the clauses
+//     below and is accepted only on the evidence they read, which is what keeps
+//     a deliberate `.nibs -> ~/sync/proj-nibs` working;
 //   - it holds a config.yml that PARSES as a nibs config: every config
 //     `nibs init` writes has a top-level `nibs:` mapping, and the current layout
 //     puts it inside the store. This is what keeps `nibs init --nibs-path <dir>`
@@ -602,8 +777,11 @@ func preLayoutRemedy(legacy string) error {
 //     store DOES occur — `nibs init` creates the directories before it validates
 //     the prefix, so a rejected prefix leaves a config-less store behind (see
 //     cmd/init.go) — but that store is reached by re-running `nibs init`, and
-//     every store nibs creates or migrates to is named `.nibs` and covered by
-//     the name clause regardless;
+//     every store nibs creates or migrates to is named `.nibs`. That covers it
+//     under the name clause whenever `.nibs` is a real directory, which is what
+//     nibs itself makes; a config-less store behind a LINK is refused until the
+//     re-run writes the config, and re-running init is the same remedy either
+//     way;
 //   - a file merely NAMED config.yml, never parsed. The name is among the most
 //     common in software projects, and the check did not even exclude a
 //     DIRECTORY by that name;
@@ -618,7 +796,15 @@ func preLayoutRemedy(legacy string) error {
 // over data that is really there.
 func looksLikeStore(dir string) (bool, error) {
 	if filepath.Base(dir) == store.DirName {
-		return true, nil
+		link, err := isSymlink(dir)
+		if err != nil {
+			return false, err
+		}
+		if !link {
+			return true, nil
+		}
+		// A SYMLINK named `.nibs` falls through to the evidence below instead of
+		// short-circuiting — see symlinkedStoreError.
 	}
 	switch ok, err := parsesAsNibsConfig(store.NewLayout(dir).ConfigPath()); {
 	case err != nil:
@@ -704,8 +890,13 @@ func parsesAsNibsConfig(path string) (bool, error) {
 // exactly that reason.
 //
 // A `.nibs.yml` carrying no `nibs.path` describes a store at `<project>/.nibs`,
-// which looksLikeStore's name clause already accepts, so there is nothing for
-// this clause to add there.
+// which looksLikeStore's name clause accepts whenever that is a real directory —
+// so there is nothing for this clause to add there. Where `.nibs` is a SYMLINK
+// the name clause does not fire and this one cannot stand in for it: it needs the
+// config to NAME the directory, and a config carrying no `nibs.path` names
+// nothing. A pre-layout store reached through a link is therefore refused, and
+// converted by the manual remedy rather than through the link — see
+// symlinkedStoreError.
 func hasLegacyStoreShape(dir string) (bool, error) {
 	named, err := legacyConfigNamesStore(dir)
 	if err != nil || !named {

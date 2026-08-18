@@ -464,7 +464,7 @@ type declaredEcho struct {
 // would carry the next delimiter.
 var approvedDeclaredEchoes = []declaredEcho{
 	{
-		file: "root.go", fn: "resolveStoreDir",
+		file: "root.go", fn: "bindNamedStore",
 		marker: "sets the retired nibs.path to %q",
 		rows:   []string{"a named directory whose project config declares a different path"},
 	},

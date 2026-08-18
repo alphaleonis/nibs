@@ -157,6 +157,15 @@ type Marker struct {
 // store and say what is pending; preferring the file would refuse every such
 // project with no store bound to migrate.
 //
+// WHAT THIS DOES NOT DECIDE: whether the `.nibs` it matched really is a store.
+// It matches on the NAME, which is evidence for a real directory and none at all
+// for a SYMLINK wearing that name — a committed `.nibs -> /outside` resolves as a
+// directory here and is reported as a marker. Answering that needs the config
+// parsing this package is deliberately stdlib-only to stay out of, so the check
+// lives in the caller: cmd's bindNamedStore, which every route to a store shares.
+// Do not add a second copy here — two evidence rules is the disagreement that
+// defect was.
+//
 // The walk and its NIBS_CONFIG_ROOT ceiling are findUpward's, which is where
 // they are described.
 func FindNearestMarker(startDir string) (Marker, error) {

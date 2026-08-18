@@ -91,6 +91,15 @@ body section conventions, GraphQL examples).`,
 	RunE: func(cmd *cobra.Command, args []string) error {
 		// An explicitly named store answers "is there a project here" on its
 		// own; only the cwd-driven case has to walk for one.
+		//
+		// BOUND, stated because the branch below reads like a general guard and
+		// is not one: this covers the DISCOVERY route only. `nibs prime
+		// --nibs-path <dir>` still emits the prompt without asking whether that
+		// directory is a store, and NIBS_PATH is not consulted here at all. Both
+		// predate the store-evidence rule and neither is a mutation — prime
+		// writes nothing — so widening them is a change to prime's contract
+		// ("safe to run unconditionally from an agent's startup") rather than a
+		// fix to this one.
 		if nibsPath == "" && configPath == "" {
 			cwd, err := os.Getwd()
 			if err != nil {
@@ -106,6 +115,16 @@ body section conventions, GraphQL examples).`,
 				return nil // Silently exit on error
 			}
 			switch marker.Kind {
+			case store.MarkerStore:
+				// A `.nibs` SYMLINK is a store only on the evidence its
+				// destination carries, and prime has to agree with the commands
+				// it is teaching: emitting the onboarding prompt for a store
+				// every one of them refuses is the same wrong answer the
+				// pre-layout branch below exists to avoid. For a real `.nibs`
+				// this costs nothing — bindNamedStore answers on the name.
+				if _, err := bindNamedStore(marker.Path); err != nil {
+					return err
+				}
 			case store.MarkerLegacyProject:
 				// A pre-layout project IS a nibs project, so silence is the
 				// wrong answer: this command's consumer is an agent, and
