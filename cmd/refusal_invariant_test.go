@@ -807,6 +807,52 @@ func storeResolutionRefusalCases() []refusalCase {
 			},
 		},
 		{
+			// The incident this whole census exists for, reached through the
+			// store's own NAME rather than through `nibs.path`: a committed
+			// `.nibs -> /outside` was bound as the store on every route, and
+			// `nibs migrate` planned to sweep that tree into `<project>/.nibs`.
+			// The refusal names the link and where it leads, and its only
+			// prescription is `nibs init` — which the reader can run once the
+			// link is out of the way, exactly as the message says.
+			name: "a `.nibs` symlink leaving the project",
+			build: func(t *testing.T) (string, string) {
+				tmp := t.TempDir()
+				outside := filepath.Join(tmp, "outside")
+				mkdirAllT(t, outside)
+				writeFileT(t, filepath.Join(outside, "post.md"), hugoPost)
+				link := filepath.Join(tmp, "proj", store.DirName)
+				mkdirAllT(t, filepath.Dir(link))
+				if err := os.Symlink(outside, link); err != nil {
+					testskip.SymlinkUnavailable(t, err)
+				}
+				return explicitly(t, func(t *testing.T) { nibsPath = link }), tmp
+			},
+		},
+		{
+			// The same link in a PRE-LAYOUT project, which is the shape the
+			// incident was reproduced on. The link is holding the name every
+			// remedy here begins by creating, so the message has to say so before
+			// it hands over to preLayoutRemedy — whose paths and `nibs migrate`
+			// this row reads.
+			name: "a `.nibs` symlink leaving the project, in a pre-layout project",
+			build: func(t *testing.T) (string, string) {
+				tmp := t.TempDir()
+				outside := filepath.Join(tmp, "outside")
+				mkdirAllT(t, outside)
+				writeFileT(t, filepath.Join(outside, "post.md"), hugoPost)
+				projectDir := filepath.Join(tmp, "proj")
+				mkdirAllT(t, filepath.Join(projectDir, "nibdata"))
+				writeFileT(t, filepath.Join(projectDir, "nibdata", "leg-a1--one.md"), layoutNib)
+				writeFileT(t, filepath.Join(projectDir, store.LegacyProjectConfigFileName),
+					"nibs:\n  prefix: leg-\n  id_length: 4\n  path: nibdata\n")
+				link := filepath.Join(projectDir, store.DirName)
+				if err := os.Symlink(outside, link); err != nil {
+					testskip.SymlinkUnavailable(t, err)
+				}
+				return explicitly(t, func(t *testing.T) { nibsPath = link }), tmp
+			},
+		},
+		{
 			name: "an explicitly named directory that is not a store",
 			build: func(t *testing.T) (string, string) {
 				tmp := t.TempDir()
@@ -1343,7 +1389,8 @@ var approvedRootRefusals = []rootRefusal{
 		rows: []string{"a store config that still sets nibs.path"},
 	},
 
-	// resolveStoreDir: the explicitly named store.
+	// resolveStoreDir: the flag combinations and the --config guards, which are
+	// answered before any directory is looked at.
 	{
 		fn: "resolveStoreDir", marker: "--config and --nibs-path cannot be combined",
 		rows: []string{"--config combined with --nibs-path"},
@@ -1395,12 +1442,15 @@ var approvedRootRefusals = []rootRefusal{
 		// site with a path that exists, which is what the row drives.
 		rows: []string{"an explicitly named path that is a regular file"},
 	},
+	// bindNamedStore: the one decision every route makes about a directory —
+	// the three that name a store explicitly and the upward walk that discovers
+	// one. A row driving any of these through --nibs-path drives it for all four.
 	{
-		fn: "resolveStoreDir", marker: "cannot tell whether %s is a nibs store",
+		fn: "bindNamedStore", marker: "cannot tell whether %s is a nibs store",
 		rows: []string{"an explicitly named directory whose config.yml exceeds the read ceiling"},
 	},
 	{
-		fn: "resolveStoreDir", marker: "is named as this project's store by",
+		fn: "bindNamedStore", marker: "is named as this project's store by",
 		// One site, two reason clauses; a row for each.
 		rows: []string{
 			"an explicitly named directory a config names but nothing corroborates",
@@ -1408,13 +1458,13 @@ var approvedRootRefusals = []rootRefusal{
 		},
 	},
 	{
-		fn: "resolveStoreDir", marker: "beside it names it; name the store directory itself",
+		fn: "bindNamedStore", marker: "beside it names it; name the store directory itself",
 		// The determinate absence: nothing beside the named directory names it,
 		// so `nibs init` there is advice the reader can act on.
 		rows: []string{"an explicitly named directory that is not a store"},
 	},
 	{
-		fn: "resolveStoreDir", marker: "so another name for this same directory does not match either; %w",
+		fn: "bindNamedStore", marker: "so another name for this same directory does not match either; %w",
 		// A pre-layout project whose `.nibs.yml` declares some other store. The
 		// remedy is preLayoutRemedy's rather than a second copy of it, which is
 		// what keeps this route from advising a shape the store-evidence guard
@@ -1431,7 +1481,7 @@ var approvedRootRefusals = []rootRefusal{
 		rows: []string{"an explicitly named directory whose project config names a different path"},
 	},
 	{
-		fn: "resolveStoreDir", marker: "the store this project already has",
+		fn: "bindNamedStore", marker: "the store this project already has",
 		// The same shape in a project that HAS a store — preLayoutRemedy's
 		// precondition, and the branch that keeps it true.
 		rows: []string{"an explicitly named directory whose project config names a different path, in a project that has a store"},
@@ -1443,6 +1493,19 @@ var approvedRootRefusals = []rootRefusal{
 	{
 		fn: "resolveStoreDir", marker: "searching for a nibs store: %w",
 		reason: "store.FindNearestMarker's walk swallows every os.Stat error, so its only error return needs a relative NIBS_CONFIG_ROOT together with os.Getwd failing — the same unreachability as the site above, for the same payoff",
+	},
+
+	// symlinkedStoreError: a `.nibs` that is a symlink and carries no evidence.
+	// One refusal, two tails — the project's remedy is preLayoutRemedy's where a
+	// pre-layout config is beside the link, and `nibs init` where none is — so a
+	// row for each.
+	{
+		fn: "symlinkedStoreError", marker: "repoint or remove %s first",
+		rows: []string{"a `.nibs` symlink leaving the project, in a pre-layout project"},
+	},
+	{
+		fn: "symlinkedStoreError", marker: "repoint it at a directory that really is a store",
+		rows: []string{"a `.nibs` symlink leaving the project"},
 	},
 
 	// preLayoutProjectError: the walk met a pre-layout project before any store.

@@ -1181,6 +1181,12 @@ func TestMigrateRefusesToRelocateALinkedGitWorktree(t *testing.T) {
 // "All nib files loaded" — with the nibs sitting unreachable at the old root. A
 // symlink is the ordinary spelling of "the nibs live on another volume", which is
 // what the retired `nibs.path` key existed for.
+//
+// The config.yml inside the linked directory is LOAD-BEARING and not decoration:
+// a `.nibs` symlink is accepted on the evidence its destination carries rather
+// than on the name the link wears, so without it this store is refused (see
+// symlinkedStoreError). Removing it turns this test into a coverage hole rather
+// than a failure elsewhere.
 func TestMigrateFindsFilesThroughASymlinkedStoreRoot(t *testing.T) {
 	t.Cleanup(resetRootPersistentFlags)
 	t.Cleanup(resetMigrateFlags)
@@ -1189,6 +1195,7 @@ func TestMigrateFindsFilesThroughASymlinkedStoreRoot(t *testing.T) {
 	projectDir := t.TempDir()
 	real := filepath.Join(t.TempDir(), "elsewhere")
 	mkdirAllT(t, real)
+	writeFileT(t, filepath.Join(real, store.ConfigFileName), "nibs:\n  prefix: leg-\n  id_length: 4\n")
 	writeFileT(t, filepath.Join(real, "leg-a1--one.md"), layoutNib)
 	link := filepath.Join(projectDir, store.DirName)
 	if err := os.Symlink(real, link); err != nil {

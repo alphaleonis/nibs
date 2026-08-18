@@ -106,6 +106,16 @@ body section conventions, GraphQL examples).`,
 				return nil // Silently exit on error
 			}
 			switch marker.Kind {
+			case store.MarkerStore:
+				// A `.nibs` SYMLINK is a store only on the evidence its
+				// destination carries, and prime has to agree with the commands
+				// it is teaching: emitting the onboarding prompt for a store
+				// every one of them refuses is the same wrong answer the
+				// pre-layout branch below exists to avoid. For a real `.nibs`
+				// this costs nothing — bindNamedStore answers on the name.
+				if _, err := bindNamedStore(marker.Path); err != nil {
+					return err
+				}
 			case store.MarkerLegacyProject:
 				// A pre-layout project IS a nibs project, so silence is the
 				// wrong answer: this command's consumer is an agent, and
