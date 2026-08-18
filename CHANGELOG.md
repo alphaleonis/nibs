@@ -15,6 +15,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 - **A pre-layout project nested under a store no longer resolves to that ancestor store**, where `nibs migrate` moved and rewrote the ancestor's nib files while leaving the project it was run in untouched.
 - **Text read from a file can no longer rewrite the terminal**, such as a control sequence in a config value or a nib body reaching a message that echoes it.
 - **Commands a refusal prescribes are quoted for the shell of the platform printing them**, instead of POSIX quoting that `cmd.exe` passes through literally.
+- **`nibs prime` no longer primes an agent for a project it cannot use** — a pre-layout project now gets the same migration refusal as every other command, in place of instructions whose every command refuses there.
+- **A store refusal no longer denies that any config names the directory** when one names it under a different spelling, which sent the reader to `nibs init` over the project's real nibs.
+- **`nibs config set-prefix` renames each nib through an atomic write**, instead of a shared temp name with no fsync.
 - **The web UI now notices a live connection that dies without closing**, such as going offline or waking from sleep, instead of holding an apparently-healthy socket and serving a stale view indefinitely.
 - **The server now notices a live-updates client that vanishes without closing** and reclaims its connection, instead of holding it until the OS TCP timeout.
 
