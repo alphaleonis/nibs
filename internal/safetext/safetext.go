@@ -16,12 +16,23 @@
 // Two shapes, for two situations:
 //
 //   - Strip, for one scalar interpolated into a message. Every non-printable rune
-//     becomes a space, newlines included: a scalar spans one line.
+//     becomes a space, newlines included: a scalar spans one line. The backtick
+//     goes with them, because a scalar never carries a message's own markup —
+//     see below.
 //   - Writer, for a SINK that carries only such messages. Newlines survive
-//     (nibs' own refusals are multi-line and their layout is information) and
-//     everything else non-printable becomes a space. A sink cannot be bypassed by
-//     forgetting to call a helper, which is why the two highest-traffic
+//     (nibs' own refusals are multi-line and their layout is information), the
+//     backtick survives with them (a message's code spans are its own markup),
+//     and everything else non-printable becomes a space. A sink cannot be bypassed
+//     by forgetting to call a helper, which is why the two highest-traffic
 //     file-sourced echoes are wrapped rather than sanitized per call site.
+//
+// The rendered sink is not only a terminal. This CLI's stated primary consumer is
+// a coding agent, and its transcript renders markdown — so a scalar carrying a
+// backtick closes the code span the message opened around it, and what follows is
+// no longer quoted evidence but prose addressed to the reader, ending in a
+// runnable `nibs …` span the message never wrote. That is a SEMANTIC channel, not
+// a terminal one, and it is why the backtick is the one printable rune Strip
+// substitutes.
 //
 // A sink that also carries STYLED output cannot be wrapped: lipgloss emits real
 // escape sequences for color, and stripping them would erase the styling. Those
@@ -38,10 +49,16 @@
 //     paths and reasons deliberately skip it because the string has to survive
 //     intact.
 //   - HOMOGLYPHS. Cyrillic "а" is an ordinary printable letter.
+//   - EMPHASIS. `*`, `_` and `#` still render as markdown, so an echoed scalar can
+//     still shout. They are left alone because they cannot manufacture a command
+//     for the reader to run, and because they are ordinary characters in real
+//     filenames — the backtick is bounded here for the opposite reason on both
+//     counts.
 //
 // The guarantee is narrower and exact: no rune reaches the sink that can move the
-// cursor, repaint the terminal, reorder the text around it, or occupy width
-// invisibly.
+// cursor, repaint the terminal, reorder the text around it, occupy width
+// invisibly, or — for a scalar Strip renders — close a code span the message put
+// around it.
 package safetext
 
 import (
@@ -65,6 +82,17 @@ import (
 // because an invalid sequence is the more likely of the two here and a filename
 // that renders one space short is still recognizable.
 //
+// The BACKTICK is replaced too, and it is the one printable rune that is. A
+// scalar is interpolated into a message that delimits its own code spans with
+// backticks — around the `nibs …` commands it prescribes above all — so a scalar
+// carrying one closes the span it was placed inside, and the text after it is read
+// as the message rather than as the file. What that buys an attacker is not
+// emphasis but a COMMAND: the observed payload closed the span quoting a config
+// value and opened its own `nibs migrate --nibs-path /etc`. Nothing legitimate is
+// lost, because the markup around a scalar belongs to the message and never to the
+// scalar; a filename really containing one renders with a space instead, the same
+// substitution and the same trade every other replaced rune makes.
+//
 // Whitespace collapsing and length bounding are deliberately NOT done here — a
 // caller quoting a value wants both, and a caller printing a path wants neither.
 func Strip(s string) string {
@@ -74,7 +102,7 @@ func Strip(s string) string {
 	}
 	out := make([]rune, 0, len(s))
 	for _, r := range s {
-		if keep(r) && r != '\n' {
+		if scalarSafe(r) {
 			out = append(out, r)
 			continue
 		}
@@ -85,15 +113,24 @@ func Strip(s string) string {
 
 func needsStripping(s string) bool {
 	for _, r := range s {
-		if !keep(r) || r == '\n' {
+		if !scalarSafe(r) {
 			return true
 		}
 	}
 	return false
 }
 
-// keep reports whether r may reach a terminal as itself. A newline is kept here
-// and dropped by Strip, because only a Writer wraps a whole multi-line message.
+// scalarSafe reports whether r may appear in a SCALAR as itself. It is keep minus
+// the two runes only a whole message may carry: the newline, whose layout is the
+// message's information, and the backtick, which delimits the message's code
+// spans. Both are kept by keep and dropped here, because Writer wraps messages
+// and Strip renders the values inside them.
+func scalarSafe(r rune) bool { return keep(r) && r != '\n' && r != '`' }
+
+// keep reports whether r may reach a sink as itself — the rule for a whole
+// MESSAGE. The newline and the backtick are kept here and dropped by Strip (see
+// scalarSafe), because only a Writer wraps a message, and a message's line breaks
+// and code spans are its own.
 func keep(r rune) bool {
 	if r == '\n' {
 		return true
@@ -118,9 +155,12 @@ var blankRendering = map[rune]bool{
 }
 
 // Writer wraps a sink so no file-sourced text can reach it unfiltered by
-// omission. Every rune Strip would replace is replaced, except the newline, which
-// survives: nibs' own refusals enumerate files one per line and collapsing them
-// would destroy the report rather than protect it.
+// omission. Every rune Strip would replace is replaced, except the newline and the
+// backtick, which survive: nibs' own refusals enumerate files one per line and
+// prescribe their commands inside code spans, so replacing either would destroy
+// the report rather than protect it. A file-sourced scalar inside such a message
+// has already crossed Strip at the call site, which is where its backtick is
+// answered.
 //
 // It is NOT safe to wrap a writer that carries styled output; see the package
 // comment.

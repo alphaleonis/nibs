@@ -354,6 +354,13 @@ func resolveStoreDir() (string, error) {
 			// as the "cannot tell" third answer above. If that ordering ever
 			// changes, this flat denial becomes the false claim about an
 			// unreadable config that the third answer exists to prevent.
+			//
+			// It also rests on the two reads of that one file AGREEING, which is
+			// a property of the file rather than of this code: a FIFO served a
+			// valid `nibs.path` to the first read and malformed YAML to the
+			// second, and this branch duly denied that any config named the
+			// directory one line after the other read had found one. That is why
+			// config.ReadConfigFile refuses anything but a regular file.
 			return "", fmt.Errorf("%s is not a nibs store: it holds no %s that parses as one, and no %s beside it names it; name the store directory itself (e.g. --nibs-path %s), or run `nibs init` there",
 				explicit, store.ConfigFileName, store.LegacyProjectConfigFileName,
 				filepath.Join(explicit, store.DirName))
@@ -466,17 +473,31 @@ func noStoreFoundError(cwd string) error {
 // is what stops the relocation refusing over a directory it can no longer account
 // for.
 //
-// The declared VALUE is echoed through sanitizeFileText (untrusted file content
-// quoted back, so collapsed and bounded) and printed with %q, while the paths that
-// appear as COMMAND ARGUMENTS go through stripControlChars and shell quoting only —
-// collapsing or truncating those would corrupt the one string the user has to run.
+// EVERY string here that came from the config crosses a boundary, and which one
+// depends on what the string is FOR. The declared VALUE is quoted evidence, so it
+// goes through sanitizeFileText — collapsed onto a line and bounded — and is
+// printed with %q. The resolved directory is a path the reader goes and looks at,
+// so it goes through sanitizeFilePath, which bounds it but leaves its spaces
+// alone: the value is joined onto the project directory, and a config may be a
+// megabyte, so an unbounded interpolation repeated that megabyte per site. The
+// path that appears as a COMMAND ARGUMENT gets shellArg — stripControlChars plus
+// shell quoting, unbounded, because truncating the one string the reader has to
+// run would corrupt it, and that branch is reached only for a directory the
+// filesystem could open.
 //
-// %q rather than %s because the rendering boundary handles deception and nothing
-// handles the SEMANTIC channel: a value from a cloned repository's `.nibs.yml` sits
-// in the same sentence as a command the reader is told to run, and with ~180 runes
-// of prose to work with it could close its own markdown span and address the reader
-// directly — whose stated primary consumer is an agent primed to follow
-// instructions. Quoting cannot terminate its own delimiter.
+// What all three answer is the SEMANTIC channel, not the terminal one: a value
+// from a cloned repository's `.nibs.yml` sits in the same sentence as a command
+// the reader is told to run, and this CLI's stated primary consumer is an agent
+// primed to follow instructions. %q alone does NOT close it, and the claim that it
+// did was false in the exact way that mattered: %q's delimiter is the double
+// quote, the span's is the backtick, and %q escapes the first and never the
+// second. A value carrying a backtick therefore closed the span quoting it and
+// rendered as prose plus a runnable `nibs migrate --nibs-path /etc` — three times
+// in one message, once per interpolation, since the derived path and the command
+// argument carry the same bytes. The backtick is answered where every one of these
+// renderings passes: safetext.Strip substitutes it, so no config value can put a
+// delimiter into a message. %q stays for what it does do — bounding the value with
+// a visible pair of quotes so a reader can see where it ends.
 func preLayoutRemedy(legacy string) error {
 	projectDir := filepath.Dir(legacy)
 	target := filepath.Join(projectDir, store.DirName)
@@ -503,7 +524,7 @@ func preLayoutRemedy(legacy string) error {
 	if evErr == nil && ok {
 		return fmt.Errorf("%s sets the retired `nibs.path: %q`; this project's nibs live in %s — run `nibs migrate --nibs-path %s`, which moves that store to %s and relocates the config into it (do NOT run `nibs init`, which would create an empty store beside the real data)",
 			legacy, sanitizeFileText(declared),
-			stripControlChars(dataDir), shellArg(dataDir), target)
+			sanitizeFilePath(dataDir), shellArg(dataDir), target)
 	}
 	if evErr != nil {
 		// The evidence could not be established, which is a THIRD answer and not
@@ -525,7 +546,7 @@ func preLayoutRemedy(legacy string) error {
 		if errors.Is(evErr, fs.ErrNotExist) || isUnusablePath(evErr) {
 			return fmt.Errorf("%s sets the retired `nibs.path: %q`, but %s does not exist — so this project's nib files are not where the config says they are; find them, create %s and move them into it, then run `nibs migrate` (do NOT run `nibs init`, which would create an empty store beside data that may already exist)",
 				legacy, sanitizeFileText(declared),
-				stripControlChars(dataDir), target)
+				sanitizeFilePath(dataDir), target)
 		}
 		// flattenReason, not %v: an OS error embeds the path it failed on, and that
 		// path is built from the declared value — so interpolating the error raw
@@ -534,7 +555,7 @@ func preLayoutRemedy(legacy string) error {
 		// contents.
 		return fmt.Errorf("%s sets the retired `nibs.path: %q`, whose contents cannot be read (%s) — so whether this project's nibs are in %s cannot be determined; resolve that (mount the volume, fix its permissions), then re-run (do NOT run `nibs init`, and do NOT remove the `nibs.path` key: it is the only record of where the nibs are)",
 			legacy, sanitizeFileText(declared), flattenReason(evErr.Error()),
-			stripControlChars(dataDir))
+			sanitizeFilePath(dataDir))
 	}
 	// Naming AND containment both have to hold before "nothing in it was written
 	// by nibs" is the accurate reason: a `nibs.path` satisfied only by a symlink
@@ -548,7 +569,7 @@ func preLayoutRemedy(legacy string) error {
 	}
 	return fmt.Errorf("%s sets the retired `nibs.path: %q`; this project's nibs live in %s, %s — create %s, move this project's nib files from %s into it, remove the `nibs.path` key from %s, then run `nibs migrate` (do NOT run `nibs init`, which would create an empty store beside the real data)",
 		legacy, sanitizeFileText(declared),
-		stripControlChars(dataDir), why, target, stripControlChars(dataDir), legacy)
+		sanitizeFilePath(dataDir), why, target, sanitizeFilePath(dataDir), legacy)
 }
 
 // looksLikeStore reports whether dir carries positive evidence of being a nibs
@@ -619,6 +640,13 @@ func looksLikeStore(dir string) (bool, error) {
 // over config.MaxConfigBytes — returns the error instead, because a size refusal
 // reported as absence of evidence made a real store answer "is not a nibs store
 // … or run `nibs init` there".
+//
+// The IsRegular check below is NOT what keeps a FIFO here from hanging the
+// process — config.ReadConfigFile refuses an irregular file for every reader.
+// It survives because it picks which of the two answers an irregular file gets:
+// without it a pipe named config.yml would come back as the reader's error, and
+// "cannot tell whether this is a store" is the wrong answer about a path that
+// plainly holds no config. Deleting it costs determinacy, not liveness.
 func parsesAsNibsConfig(path string) (bool, error) {
 	info, err := os.Stat(path)
 	if err != nil {

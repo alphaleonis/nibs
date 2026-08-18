@@ -912,10 +912,14 @@ func stripRetiredNibsPath(data []byte, env migrateEnv, configFile string) (out [
 			}
 			return nil, "", fmt.Errorf("%s sets `nibs.path: %q`, which is not the store being migrated (%s) and still exists; `nibs migrate` will not relocate that directory for you, so remove the retired `nibs.path` key from %s and re-run, which keeps %s as this project's store — and if the nibs you want are the ones in %s, move them into %s first",
 				configFile, sanitizeFileText(declared), env.nibsRoot,
-				configFile, env.nibsRoot, stripControlChars(resolved), env.nibsRoot)
+				configFile, env.nibsRoot, sanitizeFilePath(resolved), env.nibsRoot)
 		case !errors.Is(statErr, fs.ErrNotExist):
-			return nil, "", fmt.Errorf("%s sets `nibs.path: %q`, and whether that directory still holds this project's nibs cannot be determined (%v); resolve that (mount the volume, fix its permissions), or — if %s is the store you want to keep — remove the retired `nibs.path` key from %s, then re-run `nibs migrate`",
-				configFile, sanitizeFileText(declared), statErr,
+			// flattenReason, not %v: a stat error embeds the path it failed on, and
+			// that path is the declared value joined onto the project directory —
+			// so interpolating the error raw carries file content into the message
+			// around the boundary sanitizeFileText applies one argument earlier.
+			return nil, "", fmt.Errorf("%s sets `nibs.path: %q`, and whether that directory still holds this project's nibs cannot be determined (%s); resolve that (mount the volume, fix its permissions), or — if %s is the store you want to keep — remove the retired `nibs.path` key from %s, then re-run `nibs migrate`",
+				configFile, sanitizeFileText(declared), flattenReason(statErr.Error()),
 				env.nibsRoot, configFile)
 		default:
 			note = fmt.Sprintf("dropped the retired `nibs.path: %q` from the config — that directory no longer exists, so the key was a stale record",

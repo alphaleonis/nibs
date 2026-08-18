@@ -22,6 +22,7 @@ func TestStripReplacesEveryNonPrintableRune(t *testing.T) {
 		{"a BOM", "a\ufeffb", "a b"},
 		{"a soft hyphen", "a\u00adb", "a b"},
 		{"a newline, because a scalar is one line", "a\nb", "a b"},
+		{"a backtick, because the code spans belong to the message", "a`b", "a b"},
 		{"a tab", "a\tb", "a b"},
 		{"an invalid UTF-8 byte", "a\xffb", "a b"},
 		{"ordinary text is untouched", "data/tnib-0001--höger.md", "data/tnib-0001--höger.md"},
@@ -38,10 +39,10 @@ func TestStripReplacesEveryNonPrintableRune(t *testing.T) {
 	}
 }
 
-// TestWriterKeepsNewlinesAndDropsEverythingElse pins the one difference between
-// the writer and Strip. A sink carries whole messages, and nibs' own multi-file
-// refusals put one file per line — collapsing those would destroy the report the
-// boundary is supposed to protect.
+// TestWriterKeepsNewlinesAndDropsEverythingElse pins one of the two differences
+// between the writer and Strip (the backtick is the other, below). A sink carries
+// whole messages, and nibs' own multi-file refusals put one file per line —
+// collapsing those would destroy the report the boundary is supposed to protect.
 func TestWriterKeepsNewlinesAndDropsEverythingElse(t *testing.T) {
 	var buf bytes.Buffer
 	w := NewWriter(&buf)
@@ -61,6 +62,27 @@ func TestWriterKeepsNewlinesAndDropsEverythingElse(t *testing.T) {
 		if strings.Contains(got, bad) {
 			t.Errorf("output = %q still carries %q", got, bad)
 		}
+	}
+}
+
+// TestWriterKeepsTheBackticksAMessageWrites pins the other half of the asymmetry
+// Strip's backtick rule creates. A whole MESSAGE delimits the commands it
+// prescribes with backticks, so a writer that replaced them would render every
+// remedy this CLI prints as undelimited prose — protecting nothing and destroying
+// the one part of a refusal a reader is meant to copy. The scalars inside such a
+// message have already crossed Strip at the call site.
+func TestWriterKeepsTheBackticksAMessageWrites(t *testing.T) {
+	var buf bytes.Buffer
+	w := NewWriter(&buf)
+	in := "no store here; run `nibs init` to create one\n"
+	if _, err := w.Write([]byte(in)); err != nil {
+		t.Fatalf("Write: %v", err)
+	}
+	if got := buf.String(); got != in {
+		t.Errorf("output = %q, want the message unchanged (%q) — a writer that strips backticks unwrites every prescribed command", got, in)
+	}
+	if Strip(in) == in {
+		t.Error("Strip left this message unchanged, so the two rules no longer differ and this test compares nothing")
 	}
 }
 
