@@ -1062,6 +1062,15 @@ func declaredStoreCorroborated(dir string) (bool, error) {
 	}
 	err = nibcore.WalkStoreFiles(dir, func(path string, walkErr error) error {
 		if walkErr != nil {
+			// An entry the walk declined to open is DEFINITE evidence of nothing,
+			// not undecided evidence: a FIFO carries no front matter whatever it
+			// is named, so the walk continues rather than answering "cannot tell"
+			// — which is the third answer, reserved for evidence that exists and
+			// could not be read. It also cannot be read here to find out: opening
+			// it is the hang the walk exists to avoid.
+			if errors.Is(walkErr, nibcore.ErrNotRegularFile) {
+				return nil
+			}
 			return walkErr
 		}
 		h, hErr := readFrontMatterHeader(path)

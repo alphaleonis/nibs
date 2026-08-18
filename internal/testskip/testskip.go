@@ -130,15 +130,16 @@ var (
 	// no ordinary file on a volume without FIFOs blocks that way, so there is
 	// nothing to substitute.
 	//
-	// DELIBERATELY LEFT PERMISSIVE, on the same terms as CaseInsensitivePaths:
-	// no CI leg sets this var, so a skip shows up only in the tally. That is
-	// honest only while some guard for the same property runs where the fixture
-	// is unbuildable, and here one does — the guard needing a FIFO shares its
-	// table with a DIRECTORY row that reaches the same refusal through the same
-	// branch, and a directory is buildable on every platform. A skip therefore
-	// costs the blocking-open spelling of the claim, not coverage of the code
-	// that answers it. Turn this on for the unix legs if a fixture ever needs a
-	// FIFO to guard behavior with no platform-independent row beside it.
+	// REQUIRED ON THE LINUX LEG. The escape clause this used to rest on — that a
+	// DIRECTORY row beside the FIFO row reaches the same refusal, so a skip costs
+	// only the blocking-open spelling — held for config reads and holds nowhere
+	// else. The store-walk guards have no such twin: a directory named `x.md`
+	// returns at the walk's own d.IsDir() branch and never reaches the regularity
+	// test, so a FIFO is the ONLY fixture that exercises them and a silent skip
+	// would cost the whole guard rather than one spelling of it.
+	//
+	// Windows still skips, and the tally is what makes that visible. Setting the
+	// var there would fail a leg where the capability genuinely does not exist.
 	NamedPipes = Capability{Name: "named pipes", EnvVar: "NIBS_REQUIRE_NAMED_PIPES"}
 )
 

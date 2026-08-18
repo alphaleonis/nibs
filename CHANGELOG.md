@@ -13,6 +13,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 - **A `.nibs` symlink must lead to a directory that is already a store** — a link at anything else is refused rather than adopted as the project's store, and `nibs init` will not create one through a link. A store reached that way needs the manual steps the refusal prints before `nibs migrate` will run; to keep nibs out of the code repository, initialize the directory with `--nibs-path` (and `--prefix`, since a store outside the project derives its prefix from its own parent) and link `.nibs` at it afterwards.
 
 ### Fixed
+- **A named pipe or device named like a nib file no longer hangs every command** — it is skipped at load and reported by `nibs check`, like any other file that cannot be read.
 - **A pre-layout project nested under a store no longer resolves to that ancestor store**, where `nibs migrate` moved and rewrote the ancestor's nib files while leaving the project it was run in untouched.
 - **Text read from a file can no longer rewrite the terminal**, such as a control sequence in a config value or a nib body reaching a message that echoes it.
 - **Commands a refusal prescribes are quoted for the shell of the platform printing them**, instead of POSIX quoting that `cmd.exe` passes through literally.

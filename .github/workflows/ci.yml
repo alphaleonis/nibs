@@ -39,6 +39,12 @@ jobs:
       # is precisely the open question the report above exists to answer. Set it
       # there too once a run has shown the count is zero.
       NIBS_REQUIRE_SYMLINKS: ${{ matrix.os == 'ubuntu-latest' && '1' || '' }}
+      # Required rather than permissive: the store-walk guards that keep a FIFO
+      # named `*.md` from blocking every command have no platform-independent
+      # fixture beside them (a directory by that name is answered by the walk's
+      # own IsDir branch and never reaches the regularity test), so a silent skip
+      # here costs the whole guard rather than one spelling of it.
+      NIBS_REQUIRE_NAMED_PIPES: ${{ matrix.os == 'ubuntu-latest' && '1' || '' }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
       # Every tool this job runs — go, node, task — is installed by mise from
