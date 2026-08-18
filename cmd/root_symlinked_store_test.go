@@ -259,3 +259,96 @@ func TestPrimeStillAnswersForASymlinkedStoreThatIsReal(t *testing.T) {
 		t.Error("`nibs prime` emitted nothing for a project that has a store")
 	}
 }
+
+// TestSymlinkedStoreRefusalNamesTheLinkAndItsDestination pins the two facts the
+// refusal exists to deliver.
+//
+// A reader who is told only "this is not a store" cannot act: the whole
+// difficulty of this shape is that the name in the project and the directory it
+// resolves to are different things, so the message has to name BOTH. It also
+// guards the fallback the destination clause is built on — printing dir as its
+// own destination ("X is a symlink to X") reads as a self-referential link that
+// is not there.
+func TestSymlinkedStoreRefusalNamesTheLinkAndItsDestination(t *testing.T) {
+	t.Cleanup(resetRootPersistentFlags)
+	resetRootPersistentFlags()
+	t.Setenv("NIBS_PATH", "")
+	tmp := t.TempDir()
+	t.Setenv("NIBS_CONFIG_ROOT", tmp)
+	outside := filepath.Join(tmp, "outside")
+	mkdirAllT(t, outside)
+	writeFileT(t, filepath.Join(outside, "post.md"), hugoPost)
+	projectDir := filepath.Join(tmp, "proj")
+	mkdirAllT(t, projectDir)
+	link := filepath.Join(projectDir, store.DirName)
+	symlinkT(t, outside, link)
+	t.Chdir(projectDir)
+
+	_, err := resolveStoreDir()
+	if err == nil {
+		t.Fatal("resolveStoreDir accepted a `.nibs` link leading to a directory with no store evidence")
+	}
+	msg := err.Error()
+	for _, want := range []string{link, outside} {
+		if !strings.Contains(msg, want) {
+			t.Errorf("refusal = %q, want it to name %q", msg, want)
+		}
+	}
+	if strings.Contains(msg, "symlink to "+link) {
+		t.Errorf("refusal names the link as its own destination, which describes no filesystem:\n%s", msg)
+	}
+	// The ordering is what keeps the prescription safe: `nibs init` follows a
+	// link that is still in place and would initialize the store inside it.
+	if !strings.Contains(msg, "BEFORE running `nibs init`") {
+		t.Errorf("refusal = %q, want it to require removing the link before `nibs init`", msg)
+	}
+}
+
+// TestPreLayoutStoreBehindASymlinkIsRefusedWithAFollowableRemedy records a
+// DELIBERATE behavior change and holds its remedy honest.
+//
+// A pre-layout store has no `config.yml` inside it by definition — its config is
+// the `.nibs.yml` beside it — so reached through a link it carries no evidence
+// the evidence rule accepts, and `nibs migrate` no longer converts it in place.
+// That is the operator's decision for this shape: it is what `nibs migrate`
+// exists to convert, and it should be converted deliberately rather than through
+// a link.
+//
+// A refusal is only as good as its remedy, and this one has to clear a bar the
+// other refusals do not: the name every remedy converges on — `<project>/.nibs` —
+// is the link itself. So the message must say the name is occupied, and must name
+// the destination, or "move this project's nib files into it" names no files a
+// reader can find.
+func TestPreLayoutStoreBehindASymlinkIsRefusedWithAFollowableRemedy(t *testing.T) {
+	t.Cleanup(resetRootPersistentFlags)
+	resetRootPersistentFlags()
+	t.Setenv("NIBS_PATH", "")
+	tmp := t.TempDir()
+	t.Setenv("NIBS_CONFIG_ROOT", tmp)
+	volume := filepath.Join(tmp, "volume")
+	mkdirAllT(t, volume)
+	writeFileT(t, filepath.Join(volume, "leg-a1--one.md"), layoutNib)
+	projectDir := filepath.Join(tmp, "proj")
+	mkdirAllT(t, projectDir)
+	writeFileT(t, filepath.Join(projectDir, store.LegacyProjectConfigFileName),
+		"nibs:\n  prefix: leg-\n  id_length: 4\n")
+	link := filepath.Join(projectDir, store.DirName)
+	symlinkT(t, volume, link)
+	t.Chdir(projectDir)
+
+	_, err := resolveStoreDir()
+	if err == nil {
+		t.Fatal("resolveStoreDir bound a pre-layout store through a `.nibs` link; the evidence rule refuses that shape")
+	}
+	msg := err.Error()
+	for _, want := range []string{
+		volume,                                   // where the nib files actually are
+		"already taken by something that is not", // the name the remedy needs is occupied
+		"move or remove it first",
+		"create " + link, // the real directory to put in its place
+	} {
+		if !strings.Contains(msg, want) {
+			t.Errorf("refusal = %q, want it to carry %q", msg, want)
+		}
+	}
+}

@@ -632,6 +632,23 @@ func storeResolutionRefusalCases() []refusalCase {
 		}
 		return err.Error()
 	}
+	// linkedNonStore lays out a project whose `.nibs` is a SYMLINK to a directory
+	// carrying no store evidence — the shape three "the store is right there"
+	// advices used to prescribe, because isDir follows a link. It returns the
+	// project directory and the linked-to directory.
+	linkedNonStore := func(t *testing.T, tmp string) (projectDir, outside string) {
+		t.Helper()
+		t.Setenv("NIBS_CONFIG_ROOT", tmp)
+		outside = filepath.Join(tmp, "outside")
+		mkdirAllT(t, outside)
+		writeFileT(t, filepath.Join(outside, "post.md"), hugoPost)
+		projectDir = filepath.Join(tmp, "proj")
+		mkdirAllT(t, projectDir)
+		if err := os.Symlink(outside, filepath.Join(projectDir, store.DirName)); err != nil {
+			testskip.SymlinkUnavailable(t, err)
+		}
+		return projectDir, outside
+	}
 	// realStore materializes a store carrying a config nibs itself would write.
 	//
 	// What the config buys depends on the DIRECTORY'S NAME. For a `.nibs`-named
@@ -804,6 +821,51 @@ func storeResolutionRefusalCases() []refusalCase {
 				projectDir := legacyProject(t, "")
 				writeFileT(t, filepath.Join(projectDir, "leg-a1--one.md"), layoutNib)
 				return discovered(projectDir)(t)
+			},
+		},
+		{
+			// The `--config` guard's "the store is right there" advice, in a
+			// project whose `.nibs` is a LINK carrying no evidence. isDir follows
+			// a link, so this advised `--nibs-path <p>/.nibs` and the reader met a
+			// second refusal one command later — the runnability half of this
+			// invariant, silently violated because no row stood here.
+			name: "--config aimed at a pre-layout .nibs.yml beside an evidence-less .nibs link",
+			build: func(t *testing.T) (string, string) {
+				tmp := t.TempDir()
+				projectDir, _ := linkedNonStore(t, tmp)
+				writeFileT(t, filepath.Join(projectDir, store.LegacyProjectConfigFileName),
+					"nibs:\n  prefix: leg-\n  id_length: 4\n")
+				return explicitly(t, func(t *testing.T) {
+					configPath = filepath.Join(projectDir, store.LegacyProjectConfigFileName)
+				}), tmp
+			},
+		},
+		{
+			// The same advice on the ABSENT-file branch of the same guard.
+			name: "--config aimed at a .nibs.yml that is not there beside an evidence-less .nibs link",
+			build: func(t *testing.T) (string, string) {
+				tmp := t.TempDir()
+				projectDir, _ := linkedNonStore(t, tmp)
+				return explicitly(t, func(t *testing.T) {
+					configPath = filepath.Join(projectDir, store.LegacyProjectConfigFileName)
+				}), tmp
+			},
+		},
+		{
+			// The naming clause's "the store this project already has", same
+			// defect a third time: a directory the project config does not name,
+			// in a project whose `.nibs` is an evidence-less link.
+			name: "a named directory whose project config declares a different path, beside an evidence-less .nibs link",
+			build: func(t *testing.T) (string, string) {
+				tmp := t.TempDir()
+				projectDir, _ := linkedNonStore(t, tmp)
+				mkdirAllT(t, filepath.Join(projectDir, "nibdata"))
+				writeFileT(t, filepath.Join(projectDir, "nibdata", "leg-a1--one.md"), layoutNib)
+				other := filepath.Join(projectDir, "other")
+				mkdirAllT(t, other)
+				writeFileT(t, filepath.Join(projectDir, store.LegacyProjectConfigFileName),
+					"nibs:\n  prefix: leg-\n  id_length: 4\n  path: nibdata\n")
+				return explicitly(t, func(t *testing.T) { nibsPath = other }), tmp
 			},
 		},
 		{
@@ -1404,7 +1466,11 @@ var approvedRootRefusals = []rootRefusal{
 		// The already-migrated shape (and the pre-layout default shape, which is
 		// the same observation: a `.nibs` is there). What this row pins is that
 		// the message names a store that RESOLVES rather than asserting the
-		// project is unmigrated.
+		// project is unmigrated — which is why the guard is bindsAsStore rather
+		// than isDir: isDir follows a link, so an evidence-less `.nibs` symlink
+		// reached this clause and it advised the path the resolver refuses. The
+		// rows on the two branches BELOW are what hold that, because the fix
+		// moves the link case off this site rather than changing its message.
 		rows: []string{"--config aimed at the pre-layout .nibs.yml beside a real store"},
 	},
 	{
@@ -1412,7 +1478,10 @@ var approvedRootRefusals = []rootRefusal{
 		// The genuine pre-layout project, and the only shape that can see this
 		// message prescribe something the resolver refuses — which is why the
 		// remedy is preLayoutRemedy's rather than a second copy of it.
-		rows: []string{"--config aimed at a genuine pre-layout project's .nibs.yml"},
+		rows: []string{
+			"--config aimed at a genuine pre-layout project's .nibs.yml",
+			"--config aimed at a pre-layout .nibs.yml beside an evidence-less .nibs link",
+		},
 	},
 	{
 		fn: "resolveStoreDir", marker: "--config names a store's %s, and %s does not exist",
@@ -1423,6 +1492,7 @@ var approvedRootRefusals = []rootRefusal{
 		rows: []string{
 			"--config aimed at a .nibs.yml that is not there beside a real store",
 			"--config aimed at a .nibs.yml in a directory that does not exist",
+			"--config aimed at a .nibs.yml that is not there beside an evidence-less .nibs link",
 		},
 	},
 	{
@@ -1478,7 +1548,10 @@ var approvedRootRefusals = []rootRefusal{
 		// site shares the prose and closes it with `; pass --nibs-path %s`
 		// instead, so the trailing verb is also what keeps this marker on ONE
 		// site.
-		rows: []string{"an explicitly named directory whose project config names a different path"},
+		rows: []string{
+			"an explicitly named directory whose project config names a different path",
+			"a named directory whose project config declares a different path, beside an evidence-less .nibs link",
+		},
 	},
 	{
 		fn: "bindNamedStore", marker: "the store this project already has",
@@ -1500,7 +1573,7 @@ var approvedRootRefusals = []rootRefusal{
 	// pre-layout config is beside the link, and `nibs init` where none is — so a
 	// row for each.
 	{
-		fn: "symlinkedStoreError", marker: "repoint or remove %s first",
+		fn: "symlinkedStoreError", marker: "What this project needs instead",
 		rows: []string{"a `.nibs` symlink leaving the project, in a pre-layout project"},
 	},
 	{
