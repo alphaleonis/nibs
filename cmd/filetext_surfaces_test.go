@@ -3,13 +3,16 @@ package cmd
 import (
 	"bytes"
 	"errors"
+	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 
 	"github.com/alphaleonis/nibs/internal/config"
 	"github.com/alphaleonis/nibs/internal/nibcore"
 	"github.com/alphaleonis/nibs/internal/store"
+	"github.com/alphaleonis/nibs/internal/testskip"
 )
 
 // deceptiveRunes are what a hostile file uses to make a rendered message differ
@@ -70,13 +73,19 @@ func TestFileSourcedTextNeverReachesAnEchoSurfaceRaw(t *testing.T) {
 
 	surfaces := []struct {
 		name string
-		emit func(t *testing.T) string
+		// needsHostileName marks a row whose fixture is a FILE OR DIRECTORY named
+		// with the payload, as opposed to one that merely carries it as content.
+		// Only the former needs a filesystem that will accept the name, which
+		// Windows will not — see testskip.HostileFilenames.
+		needsHostileName bool
+		emit             func(t *testing.T) string
 	}{
 		{
 			// Structural: nibcore's warn writer. Reached by EVERY command that
 			// loads a store, carrying a filename, which on Linux is arbitrary
 			// bytes.
-			name: "nibcore load warning",
+			name:             "nibcore load warning",
+			needsHostileName: true,
 			emit: func(t *testing.T) string {
 				storeDir := writeStoreFiles(t, nil)
 				writeFileT(t, dataPath(storeDir, hostileName), "---\nnot: [valid\n")
@@ -100,7 +109,8 @@ func TestFileSourcedTextNeverReachesAnEchoSurfaceRaw(t *testing.T) {
 			},
 		},
 		{
-			name: "loadStoreForMigration refusal",
+			name:             "loadStoreForMigration refusal",
+			needsHostileName: true,
 			emit: func(t *testing.T) string {
 				storeDir := writeStoreFiles(t, nil)
 				writeFileT(t, dataPath(storeDir, hostileName), "---\nnot: [valid\n")
@@ -145,7 +155,8 @@ func TestFileSourcedTextNeverReachesAnEchoSurfaceRaw(t *testing.T) {
 			},
 		},
 		{
-			name: "migrate scan-problem note",
+			name:             "migrate scan-problem note",
+			needsHostileName: true,
 			emit: func(t *testing.T) string {
 				projectDir, storeDir := writeLegacyStoreNamed(t, store.DirName,
 					"nibs:\n  prefix: leg-\n  id_length: 4\n", map[string]string{
@@ -198,7 +209,8 @@ func TestFileSourcedTextNeverReachesAnEchoSurfaceRaw(t *testing.T) {
 		{
 			// `nibs config set-prefix --dry-run` echoes store FILENAMES, which on
 			// Linux are arbitrary bytes.
-			name: "config set-prefix dry-run plan",
+			name:             "config set-prefix dry-run plan",
+			needsHostileName: true,
 			emit: func(t *testing.T) string {
 				storeDir := writeStoreFiles(t, nil)
 				writeFileT(t, filepath.Join(storeDir, store.ConfigFileName), "nibs:\n  prefix: tnib-\n  id_length: 4\n")
@@ -221,7 +233,8 @@ func TestFileSourcedTextNeverReachesAnEchoSurfaceRaw(t *testing.T) {
 			// The two git gates embed the store root and the project config path.
 			// A checkout chooses its own directory names, and on Linux a directory
 			// name is arbitrary bytes — so both are file-sourced.
-			name: "migrate git gate refusals",
+			name:             "migrate git gate refusals",
+			needsHostileName: true,
 			emit: func(t *testing.T) string {
 				projectDir := filepath.Join(t.TempDir(), "p"+strings.ReplaceAll(deceptivePayload, "/", ""))
 				storeDir := filepath.Join(projectDir, store.DirName)
@@ -271,12 +284,40 @@ func TestFileSourcedTextNeverReachesAnEchoSurfaceRaw(t *testing.T) {
 
 	for _, s := range surfaces {
 		t.Run(s.name, func(t *testing.T) {
+			if s.needsHostileName {
+				requireHostileFilenames(t, hostileName)
+			}
 			got := s.emit(t)
 			if got == "" {
 				t.Fatalf("%s emitted nothing, so this row asserts nothing", s.name)
 			}
 			assertNoDeception(t, s.name, got)
 		})
+	}
+}
+
+// requireHostileFilenames skips t, through the counted mechanism, when this
+// filesystem will not hold a file named `name`.
+//
+// The probe CREATES the name rather than inspecting it, because the rule it is
+// testing for is the operating system's and not one worth restating here: Windows
+// rejects the control characters and bidi overrides in the deception payload with
+// ERROR_INVALID_NAME, while POSIX accepts nearly any byte that is not `/` or NUL.
+//
+// Taking this through testskip rather than t.Skip is the point. These rows were
+// hard failures on every Windows run — the fixture write called t.Fatalf — which
+// made a platform limitation look like a defect in the code under test; and a bare
+// skip would have made five deception guards vanish from the run with nothing
+// counting them, which is the state internal/testskip exists to prevent.
+func requireHostileFilenames(t *testing.T, name string) {
+	t.Helper()
+	probe := filepath.Join(t.TempDir(), name)
+	if err := os.WriteFile(probe, []byte("probe"), 0o644); err != nil {
+		testskip.Unavailable(t, testskip.HostileFilenames, "os.WriteFile(%q): %v", name, err)
+		return
+	}
+	if err := os.Remove(probe); err != nil {
+		t.Fatalf("removing the probe file: %v", err)
 	}
 }
 
@@ -293,12 +334,50 @@ func TestShellArgKeepsAPathRunnable(t *testing.T) {
 		t.Fatalf("sanitizeFileText no longer truncates, so this test asserts nothing: %q", got)
 	}
 	spaced := "/tmp/my nibs/store"
-	if got := shellArg(spaced); got != "'/tmp/my nibs/store'" {
-		t.Errorf("shellArg(%q) = %q, want it quoted so the shell sees one argument", spaced, got)
+	wantSpaced := "'" + spaced + "'"
+	if runtime.GOOS == "windows" {
+		// cmd.exe does not honor the single quote as a delimiter at all, so the
+		// POSIX spelling reaches the program with the quotes still attached.
+		wantSpaced = `"` + spaced + `"`
+	}
+	if got := shellArg(spaced); got != wantSpaced {
+		t.Errorf("shellArg(%q) = %q, want %q so the shell sees one argument", spaced, got, wantSpaced)
 	}
 	plain := "/tmp/nibdata"
 	if got := shellArg(plain); got != plain {
 		t.Errorf("shellArg(%q) = %q, want it unquoted", plain, got)
+	}
+}
+
+// TestShellArgLeavesAWindowsPathUnquoted is the regression guard for the defect
+// nibs-gpeq found by execution: the shared POSIX trigger set contained the
+// backslash, so EVERY Windows path was quoted — and quoted with `'`, which
+// cmd.exe passes through to the program verbatim. The prescribed
+// `nibs migrate --nibs-path 'C:\proj\nibdata'` therefore named the directory
+// `'C:\proj\nibdata'`, quotes included, which cannot exist.
+//
+// A separator is not a reason to quote. Measured against a program printing its
+// argv, an unquoted `C:\proj\nibdata` arrives intact in both cmd.exe and
+// PowerShell; see shellarg_windows.go.
+func TestShellArgLeavesAWindowsPathUnquoted(t *testing.T) {
+	if runtime.GOOS != "windows" {
+		t.Skip("the backslash is only a path separator on Windows")
+	}
+	for _, path := range []string{
+		`C:\proj\nibdata`,
+		`C:\proj\.nibs`,
+		`D:\dev\code\tools\nibs\.nibs`,
+	} {
+		if got := shellArg(path); got != path {
+			t.Errorf("shellArg(%q) = %q, want it unquoted — cmd.exe would pass the quotes through as part of the path", path, got)
+		}
+	}
+	// A path that genuinely needs quoting still gets it, in the spelling both
+	// Windows shells honor. Without this row the guard above is satisfied by a
+	// shellArg that never quotes anything.
+	spaced := `C:\my proj\nibdata`
+	if got, want := shellArg(spaced), `"`+spaced+`"`; got != want {
+		t.Errorf("shellArg(%q) = %q, want %q", spaced, got, want)
 	}
 }
 

@@ -971,6 +971,26 @@ func deleteMappingKey(node *yaml.Node, key string) {
 
 // sameDir reports whether two paths name the same directory, comparing their
 // cleaned absolute forms.
+//
+// The comparison is BYTEWISE, and on a case-insensitive volume that makes it
+// stricter than the filesystem. Measured on Windows:
+//
+//	os.SameFile(<dir>/NibData, <dir>/nibdata) = true
+//	sameDir(<dir>/NibData, <dir>/nibdata)     = false
+//	sameDir(c:\p\d, C:\p\d)                   = false   (Clean does not case-fold
+//	                                                     the drive letter either)
+//
+// That direction is deliberate and safe: every caller uses this to decide whether
+// a declared `nibs.path` names the directory in hand, and the false answer refuses
+// — routing the user into the converging manual remedy rather than authorizing
+// `nibs migrate` to move and rewrite a tree on a case-variant match. Discovery is
+// immune regardless, because dataDir is derived FROM declared, so the two sides
+// are the same string.
+//
+// The cost is a usability one, and it is real: the refusal a case-variant produces
+// says no `.nibs.yml` beside the directory names it, which is false — one does, in
+// a different case. Tracked separately; do not "fix" this by case-folding, which
+// would make an authorization decision on a filesystem-dependent guess.
 func sameDir(a, b string) bool {
 	absA, errA := filepath.Abs(a)
 	absB, errB := filepath.Abs(b)

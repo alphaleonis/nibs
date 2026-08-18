@@ -76,6 +76,18 @@ var (
 	// chmod 0 denies nothing to root, and nothing at all on Windows, so a
 	// fixture that needs an unreadable path is not buildable everywhere.
 	UnreadablePaths = Capability{Name: "unreadable paths", EnvVar: "NIBS_REQUIRE_UNREADABLE_PATHS"}
+
+	// HostileFilenames covers a filesystem that accepts a NAME carrying control
+	// characters and bidi overrides. The deception guards need one, because the
+	// thing they prove is that a filename cannot rewrite a message that quotes
+	// it — and on POSIX a filename is very nearly arbitrary bytes.
+	//
+	// Windows is the environment that cannot: it rejects those names outright
+	// with ERROR_INVALID_NAME, so the fixture is unbuildable rather than the
+	// guard being unnecessary. Counting the skip is what keeps that distinction
+	// visible; before this, the writes simply failed and took the package red on
+	// every Windows run.
+	HostileFilenames = Capability{Name: "hostile filenames", EnvVar: "NIBS_REQUIRE_HOSTILE_FILENAMES"}
 )
 
 var (

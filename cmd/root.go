@@ -428,8 +428,11 @@ func preLayoutRemedy(legacy string) error {
 		// Absence of evidence and unreadable evidence lead to opposite advice, so
 		// they must not collapse: `nibs init` here could strand a real store this
 		// file names.
-		return fmt.Errorf("%s — the pre-layout config that would say where this project's nibs live — cannot be read: %v; repair or remove it, then re-run (do NOT run `nibs init` until you know, it would create an empty store beside data that may already exist)",
-			legacy, readErr)
+		// flattenReason for the same reason as evErr below: a YAML parse failure
+		// quotes the offending line, so this error carries file CONTENTS and not
+		// only a path.
+		return fmt.Errorf("%s — the pre-layout config that would say where this project's nibs live — cannot be read: %s; repair or remove it, then re-run (do NOT run `nibs init` until you know, it would create an empty store beside data that may already exist)",
+			legacy, flattenReason(readErr.Error()))
 	}
 	if declared == "" {
 		return fmt.Errorf("%s is a pre-layout nibs config with no store beside it; create %s and move this project's nib files into it, then run `nibs migrate`",
@@ -458,8 +461,14 @@ func preLayoutRemedy(legacy string) error {
 				legacy, sanitizeFileText(declared),
 				stripControlChars(dataDir), target)
 		}
-		return fmt.Errorf("%s sets the retired `nibs.path: %q`, whose contents cannot be read (%v) — so whether this project's nibs are in %s cannot be determined; resolve that (mount the volume, fix its permissions), then re-run (do NOT run `nibs init`, and do NOT remove the `nibs.path` key: it is the only record of where the nibs are)",
-			legacy, sanitizeFileText(declared), evErr,
+		// flattenReason, not %v: an OS error embeds the path it failed on, and that
+		// path is built from the declared value — so interpolating the error raw
+		// reopens the very channel sanitizeFileText closes one argument earlier.
+		// Reached on Windows by any malformed nibs.path, which fails with
+		// ERROR_INVALID_NAME rather than the fs.ErrNotExist the branch above
+		// catches; on POSIX the same hole opens for a permission error.
+		return fmt.Errorf("%s sets the retired `nibs.path: %q`, whose contents cannot be read (%s) — so whether this project's nibs are in %s cannot be determined; resolve that (mount the volume, fix its permissions), then re-run (do NOT run `nibs init`, and do NOT remove the `nibs.path` key: it is the only record of where the nibs are)",
+			legacy, sanitizeFileText(declared), flattenReason(evErr.Error()),
 			stripControlChars(dataDir))
 	}
 	// Naming AND containment both have to hold before "nothing in it was written
@@ -617,6 +626,17 @@ func hasLegacyStoreShape(dir string) (bool, error) {
 // legacyConfigNamesStore reports whether the pre-layout `.nibs.yml` beside dir
 // names dir itself through the retired `nibs.path` key. It is the NAMING half of
 // hasLegacyStoreShape, split out so a refusal can say which half failed.
+//
+// A DRIVE-RELATIVE `nibs.path` — `C:proj`, meaning "proj, relative to the current
+// directory on drive C:" — is not absolute by filepath.IsAbs, so it falls into the
+// Join below and yields `<project>\C:proj`, a path with a colon mid-component that
+// Windows can never create. Measured: `C:proj` then fails ENOENT and `C:` fails
+// ERROR_INVALID_NAME, so both refuse and print the manual remedy.
+//
+// Left as-is rather than rejected up front. The shape is already refused, by the
+// same route every other unusable `nibs.path` takes, and a dedicated error would
+// have to explain a Windows path spelling nobody writes on purpose in a YAML file.
+// Reject it explicitly only if a real project is ever seen carrying one.
 func legacyConfigNamesStore(dir string) (bool, error) {
 	projectDir := filepath.Dir(dir)
 	legacy := filepath.Join(projectDir, store.LegacyProjectConfigFileName)
@@ -663,6 +683,27 @@ func legacyConfigNamesStore(dir string) (bool, error) {
 // A store on another volume reached by a link OUT of the project is refused, which
 // matches how the same store spelled as an absolute `nibs.path` has always been
 // treated: the manual remedy noStoreFoundError prints converges for both.
+//
+// WINDOWS, measured rather than reasoned (the concern was that the two arguments
+// might normalize differently and make the containment check answer at random):
+//
+//   - CASE AND 8.3 SHORT NAMES ARE SAFE. filepath.EvalSymlinks upper-cases the
+//     drive letter and rewrites every component to its real on-disk spelling via
+//     FindFirstFile, so both arguments arrive canonical no matter how either was
+//     typed. A lower-cased drive, a lower-cased component, and a `PROJEC~1` alias
+//     all returned true, on either side or both.
+//   - UNC IS EXEMPT FROM THAT NORMALIZATION and therefore is NOT safe.
+//     normVolumeName returns the volume untouched when it is longer than two
+//     bytes, which every `\\server\share` is. Measured against a real share:
+//     EvalSymlinks(`\\localhost\C$\…`) and EvalSymlinks(`\\LOCALHOST\c$\…`) both
+//     succeed and both keep the case they were given, so a UNC parent and child
+//     that reached here from different origins answer FALSE for the same
+//     directory.
+//
+// The UNC direction is conservative — a false negative refuses and prints the
+// manual remedy, it does not authorize a relocation — which is why it is
+// documented here rather than papered over with a case-folding special case that
+// would have to guess at the remote volume's semantics.
 func isRealImmediateChild(dir, parent string) (bool, error) {
 	realDir, err := filepath.EvalSymlinks(dir)
 	if err != nil {
@@ -742,9 +783,16 @@ func declaredStoreCorroborated(dir string) (bool, error) {
 var errStoreCorroborated = errors.New("nib file found")
 
 // shellArg renders a path for a copy-pasteable command line, quoting it when it
-// carries a character a POSIX shell would split or expand. Nothing is collapsed or
-// truncated — unlike sanitizeFileText, which does both — because this is the
+// carries a character the local shell would split or expand. Nothing is collapsed
+// or truncated — unlike sanitizeFileText, which does both — because this is the
 // argument the user has to run.
+//
+// The quoting is PLATFORM-SPECIFIC, and it has to be: the trigger set and the
+// quote character both differ. A POSIX shell splits on a space and reads a
+// backslash as an escape; cmd.exe and PowerShell split on a space, treat the
+// backslash as an ordinary separator, and disagree with sh about which quote
+// character delimits an argument. Rendering one spelling for both platforms is
+// what shellarg_windows.go exists to stop — see its comment for the measurements.
 //
 // It is NOT byte-preserving. stripControlChars runs first and maps every
 // non-printable rune to a space, so a path really containing one yields a command
@@ -754,10 +802,10 @@ var errStoreCorroborated = errors.New("nib file found")
 // the bytes themselves have to survive.
 func shellArg(path string) string {
 	clean := stripControlChars(path)
-	if clean != "" && !strings.ContainsAny(clean, " \t\"'$&|;<>()*?[]{}#!~`\\") {
+	if clean != "" && !strings.ContainsAny(clean, shellArgQuoteTriggers) {
 		return clean
 	}
-	return "'" + strings.ReplaceAll(clean, "'", `'\''`) + "'"
+	return quoteShellArg(clean)
 }
 
 // reportExitError is the single, testable error boundary for the CLI. It is

@@ -239,9 +239,19 @@ func mayBeAbsent(msg, path string) bool {
 	return false
 }
 
-// shellFields splits a command line the way a POSIX shell would for the only
-// quoting shellArg produces: single quotes around an argument, with an embedded
-// quote written as the close-escape-reopen sequence shellArg substitutes.
+// shellFields splits a command line the way the LOCAL shell would for the only
+// quoting shellArg produces: on POSIX, single quotes around an argument with an
+// embedded quote written as the close-escape-reopen sequence shellArg
+// substitutes; on Windows, double quotes, which is the one delimiter cmd.exe and
+// PowerShell both honor.
+//
+// The platform split is what makes the runnability check HONEST rather than
+// merely green. Modeling sh everywhere accepted `--nibs-path 'C:\proj\nibdata'`
+// as naming C:\proj\nibdata, because this splitter stripped the single quotes —
+// while a real cmd.exe hands the program `'C:\proj\nibdata'`, quotes included,
+// naming a directory that cannot exist. The invariant certified as runnable a
+// command whose whole point is that the reader can run it. See
+// shellarg_windows.go for the argv measurements.
 //
 // NEWLINES SEPARATE FIELDS, not only spaces and tabs. backtickedSpan and
 // nibsCommandLine both match with `\s`, so a command wrapped across a line inside
@@ -250,6 +260,11 @@ func mayBeAbsent(msg, path string) bool {
 // as no flag at all and the runnability check skipped in silence. No production
 // message wraps a command today; this keeps that a property of the extraction
 // rather than of the current wording.
+// shellQuoteChar is the delimiter shellArg wraps an argument in on this platform,
+// derived from the production function rather than restated — a splitter that
+// disagreed with the renderer is the exact failure this pairing exists to prevent.
+var shellQuoteChar = quoteShellArg("")[0]
+
 func shellFields(line string) []string {
 	var fields []string
 	var cur strings.Builder
@@ -257,10 +272,10 @@ func shellFields(line string) []string {
 	for i := 0; i < len(line); i++ {
 		c := line[i]
 		switch {
-		case c == '\'':
+		case c == shellQuoteChar:
 			inQuote = !inQuote
 			has = true
-		case c == '\\' && inQuote && i+1 < len(line) && line[i+1] == '\'':
+		case c == '\\' && shellQuoteChar == '\'' && inQuote && i+1 < len(line) && line[i+1] == '\'':
 			cur.WriteByte('\'')
 			i++
 			has = true
@@ -1695,8 +1710,12 @@ func TestRefusalQuotesTheDeclaredValueItEchoes(t *testing.T) {
 // vacuously. An extraction that finds no command and no path asserts nothing, and
 // a regex that silently stopped matching would look exactly like a clean run.
 func TestRefusalExtractionFindsWhatItClaimsTo(t *testing.T) {
-	const msg = "no .nibs directory found in /tmp/x/proj, but /tmp/x/proj/.nibs.yml sets the retired " +
-		"`nibs.path: olddata`; run `nibs migrate --nibs-path '/tmp/x/my proj/olddata'`, " +
+	// The spaced argument is rendered by shellArg rather than written out, so this
+	// self-test reads the quoting the local platform actually emits. Hard-coding
+	// the POSIX spelling made it assert that shellFields could parse a line no
+	// Windows build produces.
+	msg := "no .nibs directory found in /tmp/x/proj, but /tmp/x/proj/.nibs.yml sets the retired " +
+		"`nibs.path: olddata`; run `nibs migrate --nibs-path " + shellArg("/tmp/x/my proj/olddata") + "`, " +
 		"or remove the key from /tmp/x/proj/.nibs.yml, then run `nibs migrate`"
 
 	invocations := nibsInvocations(msg)
