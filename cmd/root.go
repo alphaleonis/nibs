@@ -434,6 +434,19 @@ func bindNamedStore(dir string) (string, error) {
 // answer because it follows one. It is the distinction looksLikeStore's name
 // clause turns on: for a real directory the name and the directory are the same
 // thing, and for a link they are not.
+//
+// WINDOWS, read off the toolchain rather than reasoned: os.Lstat sets
+// ModeSymlink for IO_REPARSE_TAG_SYMLINK only, and every other reparse tag —
+// a JUNCTION (IO_REPARSE_TAG_MOUNT_POINT) among them — gets ModeIrregular
+// instead (go/src/os/types_windows.go, Go 1.26). So a `.nibs` junction is read
+// as a real directory here and keeps the name clause.
+//
+// That is the intended bound rather than a gap left open. The threat is a link a
+// CLONE materializes, and git checkout writes a symlink or a plain file, never a
+// junction — a junction is something a user typed `mklink /J` for, which is the
+// deliberate off-repo store this rule exists to keep working. Widening the test
+// to "not a plain directory" would also catch cloud-storage placeholders and
+// other reparse tags a real store may legitimately sit on.
 func isSymlink(path string) (bool, error) {
 	info, err := os.Lstat(path)
 	if err != nil {
@@ -469,12 +482,20 @@ func isSymlink(path string) (bool, error) {
 // `nibs.path` value is: it is bytes a cloned repository chose, in a message whose
 // primary consumer is an agent.
 func symlinkedStoreError(dir string) error {
-	target := dir
+	// EvalSymlinks resolves EVERY component, so it can fail on a parent this
+	// process cannot traverse even though os.Stat followed the link a moment
+	// ago. The link's own value is the honest fallback — it is what the
+	// repository committed — and where even that cannot be read the destination
+	// clause is dropped rather than filled with dir, which would read as a link
+	// pointing at itself.
+	where := ""
 	if resolved, err := filepath.EvalSymlinks(dir); err == nil {
-		target = resolved
+		where = " to " + sanitizeFilePath(resolved)
+	} else if declared, err := os.Readlink(dir); err == nil {
+		where = " to " + sanitizeFilePath(declared)
 	}
-	lead := fmt.Sprintf("%s is a symlink to %s, which carries no evidence of being a nibs store: it holds no %s that parses as one. A store's NAME is evidence only for a real directory — a link's name says nothing about where it leads, and `nibs migrate` would move and rewrite everything under there",
-		dir, sanitizeFilePath(target), store.ConfigFileName)
+	lead := fmt.Sprintf("%s is a symlink%s, and what it leads to carries no evidence of being a nibs store: it holds no %s that parses as one. A store's NAME is evidence only for a real directory — a link's name says nothing about where it leads, and `nibs migrate` would move and rewrite everything under there",
+		dir, where, store.ConfigFileName)
 
 	// A stat that fails for any reason OTHER than absence counts as present, the
 	// same reading the --config guard takes: preLayoutRemedy's first branch
@@ -484,7 +505,13 @@ func symlinkedStoreError(dir string) error {
 	if _, err := os.Stat(legacy); !errors.Is(err, fs.ErrNotExist) {
 		return fmt.Errorf("%s; repoint or remove %s first, because the remedy for this project needs that name: %w", lead, dir, preLayoutRemedy(legacy))
 	}
-	return fmt.Errorf("%s; repoint it at a directory that really is a store, or remove it and run `nibs init` here", lead)
+	// The ORDER is stated because it is load-bearing, and measured rather than
+	// assumed: `nibs init` resolves `<cwd>/.nibs` and MkdirAll follows a link
+	// that is still in place, so running it here first writes config.yml and
+	// data/ INTO the destination — which then parses as a store and re-opens the
+	// hazard this refusal closed. A guard inside init is the real answer; until
+	// there is one, the ordering has to survive in the message.
+	return fmt.Errorf("%s; repoint it at a directory that really is a store, or remove the link BEFORE running `nibs init` here — init follows a link that is still in place and would initialize a store inside it", lead)
 }
 
 // isDir reports whether path is a directory that can be stat'd. Anything else —
