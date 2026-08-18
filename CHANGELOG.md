@@ -8,9 +8,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 ## [Unreleased]
 
 ### Changed
+- **BREAKING: The store carries its own config and keeps active nibs in `data/`** — `.nibs/config.yml`, `.nibs/data/` and `.nibs/archive/` replace a project-root `.nibs.yml` and nib files at the store root, and the `nibs.path` key is retired. Run `nibs migrate` to convert a project; every command refuses until it has.
 - **Store-format migrations are now explicit** — `nibs migrate` previews and applies them, and every other command refuses an unmigrated (or newer-format) store instead of silently rewriting files at load.
 
 ### Fixed
+- **A pre-layout project nested under a store no longer resolves to that ancestor store**, where `nibs migrate` moved and rewrote the ancestor's nib files while leaving the project it was run in untouched.
+- **Text read from a file can no longer rewrite the terminal**, such as a control sequence in a config value or a nib body reaching a message that echoes it.
+- **Commands a refusal prescribes are quoted for the shell of the platform printing them**, instead of POSIX quoting that `cmd.exe` passes through literally.
 - **The web UI now notices a live connection that dies without closing**, such as going offline or waking from sleep, instead of holding an apparently-healthy socket and serving a stale view indefinitely.
 - **The server now notices a live-updates client that vanishes without closing** and reclaims its connection, instead of holding it until the OS TCP timeout.
 
