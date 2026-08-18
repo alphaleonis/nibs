@@ -3,6 +3,7 @@ package cmd
 import (
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
 
@@ -475,5 +476,288 @@ func TestResolveStoreDirExplainsANibsPathMigrateCannotRelocate(t *testing.T) {
 				t.Errorf("list ids = %v, want leg-a1 — the migrated nib", ids)
 			}
 		})
+	}
+}
+
+// requireCaseInsensitivePathsT reports that dir is on a volume reaching one name
+// through two spellings, and skips through internal/testskip where it is not.
+//
+// Probed in the test's OWN directory rather than decided from runtime.GOOS: case
+// sensitivity is a property of the VOLUME, and one process sees both — WSL mounts
+// case-insensitive DrvFs beside case-sensitive ext4, and macOS ships either — so
+// the answer follows TMPDIR rather than the platform. A fixture staging two
+// spellings of one directory is unbuildable where they are two directories, which
+// is what makes this a testskip capability rather than an assertion.
+func requireCaseInsensitivePathsT(t *testing.T, dir string) {
+	t.Helper()
+	probe := filepath.Join(dir, "case-probe")
+	writeFileT(t, probe, "probe\n")
+	t.Cleanup(func() { _ = os.Remove(probe) })
+	if _, err := os.Stat(filepath.Join(dir, "CASE-PROBE")); err != nil {
+		testskip.Unavailable(t, testskip.CaseInsensitivePaths, "os.Stat of a differently cased name: %v", err)
+	}
+}
+
+// TestRefusalReportsWhatTheProjectConfigNames pins the naming clause of the
+// explicit route's no-evidence refusal to what was actually CHECKED.
+//
+// "no `.nibs.yml` beside it names it" is a claim about a file, and the check
+// behind it is a textual path comparison (see sameDir) — so a `.nibs.yml` sitting
+// right there naming somewhere else made the refusal deny its own existence. The
+// clause has to state the declared value where there is one, and keep the flat
+// denial only where there is genuinely no config to speak of.
+//
+// The remedy has to converge with it. A config declaring some other store
+// describes a pre-layout project, and "run `nibs init` there" is the advice that
+// strands one — so where the flat denial goes, so does that advice, and what
+// takes its place is preLayoutRemedy's answer: the same one the discovery route
+// gives for the same project, which prescribes a command only for the shapes the
+// store-evidence guard accepts.
+func TestRefusalReportsWhatTheProjectConfigNames(t *testing.T) {
+	flatDenial := "no " + store.LegacyProjectConfigFileName + " beside it names it"
+	initAdvice := "or run `nibs init` there"
+
+	tests := []struct {
+		name string
+		// build lays out the project and returns the directory to name.
+		build   func(t *testing.T, projectDir string) string
+		want    []string
+		notWant []string
+	}{
+		{
+			name: "a project config naming a different path",
+			build: func(t *testing.T, projectDir string) string {
+				writeFileT(t, filepath.Join(projectDir, store.LegacyProjectConfigFileName),
+					"nibs:\n  prefix: leg-\n  id_length: 4\n  path: docs/nibs\n")
+				dir := filepath.Join(projectDir, "ci")
+				mkdirAllT(t, dir)
+				return dir
+			},
+			// `docs/nibs` is a shape hasLegacyStoreShape refuses, so the remedy
+			// is the manual one — and it must WARN against `nibs init` where the
+			// flat denial prescribed it.
+			want:    []string{"is not a nibs store", strconv.Quote("docs/nibs"), "do NOT run `nibs init`"},
+			notWant: []string{flatDenial, initAdvice},
+		},
+		{
+			// preLayoutRemedy's precondition: a store beside the pre-layout
+			// config. Its remedy says to create that directory, so this branch
+			// answers instead — and names the store rather than either `nibs
+			// init` or a directory that is already there.
+			name: "a project config naming a different path, with a store beside it",
+			build: func(t *testing.T, projectDir string) string {
+				writeFileT(t, filepath.Join(projectDir, store.LegacyProjectConfigFileName),
+					"nibs:\n  prefix: leg-\n  id_length: 4\n  path: docs/nibs\n")
+				mkdirAllT(t, filepath.Join(projectDir, store.DirName, store.DataDirName))
+				dir := filepath.Join(projectDir, "ci")
+				mkdirAllT(t, dir)
+				return dir
+			},
+			want:    []string{"is not a nibs store", "the store this project already has"},
+			notWant: []string{flatDenial, "nibs init"},
+		},
+		{
+			// The determinate absence still has to read as one: with no config
+			// beside it, the flat denial is what the check established, and
+			// `nibs init` is advice the reader can act on.
+			name: "no project config beside it at all",
+			build: func(t *testing.T, projectDir string) string {
+				dir := filepath.Join(projectDir, "ci")
+				mkdirAllT(t, dir)
+				return dir
+			},
+			want: []string{"is not a nibs store", flatDenial, initAdvice},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Cleanup(resetRootPersistentFlags)
+			resetRootPersistentFlags()
+			t.Setenv("NIBS_PATH", "")
+
+			tmp := t.TempDir()
+			t.Setenv("NIBS_CONFIG_ROOT", tmp)
+			projectDir := filepath.Join(tmp, "proj")
+			mkdirAllT(t, projectDir)
+			nibsPath = tt.build(t, projectDir)
+
+			got, err := resolveStoreDir()
+			if err == nil {
+				t.Fatalf("resolveStoreDir() = %q with no error", got)
+			}
+			for _, want := range tt.want {
+				if !strings.Contains(err.Error(), want) {
+					t.Errorf("refusal = %q, want it to mention %q", err.Error(), want)
+				}
+			}
+			for _, notWant := range tt.notWant {
+				if strings.Contains(err.Error(), notWant) {
+					t.Errorf("refusal = %q, must not say %q — it was never established", err.Error(), notWant)
+				}
+			}
+		})
+	}
+}
+
+// TestRefusalDoesNotDenyAConfigThatNamesTheDirectoryInAnotherCase is the same
+// property where it is least visible, and where the old wording was flatly
+// false: on a case-insensitive volume the declared `NibData` and the on-disk
+// `nibdata` are ONE directory, so a refusal saying no config names it denied a
+// file that names it — and then told the reader to run `nibs init` on top of
+// their nibs.
+//
+// The refusal itself is deliberately unchanged: sameDir compares paths as text
+// on every platform, because widening what counts as "the same directory" widens
+// an authorization decision (what this guard accepts, `nibs migrate` may move and
+// rewrite) onto a filesystem-dependent guess. What has to hold is that the
+// message states the declared value rather than denying it exists, and hands the
+// reader the way out: here the declared store is a shape the evidence guard
+// accepts, so the remedy is the `nibs migrate` that relocates it — a command,
+// not a spelling exercise.
+func TestRefusalDoesNotDenyAConfigThatNamesTheDirectoryInAnotherCase(t *testing.T) {
+	t.Cleanup(resetRootPersistentFlags)
+	resetRootPersistentFlags()
+	t.Setenv("NIBS_PATH", "")
+
+	tmp := t.TempDir()
+	requireCaseInsensitivePathsT(t, tmp)
+	t.Setenv("NIBS_CONFIG_ROOT", tmp)
+
+	projectDir := filepath.Join(tmp, "proj")
+	onDisk := filepath.Join(projectDir, "nibdata")
+	mkdirAllT(t, onDisk)
+	writeFileT(t, filepath.Join(onDisk, "leg-a1--one.md"), layoutNib)
+	writeFileT(t, filepath.Join(projectDir, store.LegacyProjectConfigFileName),
+		"nibs:\n  prefix: leg-\n  id_length: 4\n  path: NibData\n")
+
+	// The config's own spelling resolves, which is what makes the refusal below
+	// a statement about spelling rather than about the fixture: both names reach
+	// one store holding one real nib.
+	declaredSpelling := filepath.Join(projectDir, "NibData")
+	nibsPath = declaredSpelling
+	if got, err := resolveStoreDir(); err != nil || got != declaredSpelling {
+		t.Fatalf("resolveStoreDir(%s) = (%q, %v), want the store the config names", declaredSpelling, got, err)
+	}
+
+	resetRootPersistentFlags()
+	nibsPath = onDisk
+	got, err := resolveStoreDir()
+	if err == nil {
+		t.Fatalf("resolveStoreDir(%s) = %q with no error; this row exists for the refusal", onDisk, got)
+	}
+	assertClaimsNoDifference(t, err, onDisk, declaredSpelling)
+	if want := strconv.Quote("NibData"); !strings.Contains(err.Error(), want) {
+		t.Errorf("refusal = %q, want it to name %s — the reader cannot see the difference in spelling unless the message shows it", err.Error(), want)
+	}
+	// shellArg rather than the raw path: the argument is rendered for a shell,
+	// and a test that restated the rendering would pass against a renderer that
+	// disagreed with it.
+	if want := "`nibs migrate --nibs-path " + shellArg(declaredSpelling) + "`"; !strings.Contains(err.Error(), want) {
+		t.Errorf("refusal = %q, want it to prescribe %s — the declared store is one the evidence guard accepts, so the reader gets a command rather than being sent back to spell the path again", err.Error(), want)
+	}
+}
+
+// falseDifferenceClaims are the things a refusal must never say about a fixture
+// where the declared value and the named directory reach ONE directory under two
+// names. Each is false there: the flat denial says no config beside it names this
+// directory when one does, and the "different directory" wording restates the
+// same unestablished conclusion — sameDir compares cleaned absolute paths as
+// text, which answers whether the two SPELL the same path and says nothing about
+// whether they open the same directory. Both are wordings this refusal has
+// carried, which is why the list has two entries rather than one.
+var falseDifferenceClaims = []string{
+	"no " + store.LegacyProjectConfigFileName + " beside it names it",
+	"names a different directory",
+}
+
+// assertClaimsNoDifference fails when err asserts a difference between two names
+// that are one directory. It is the negative half of the two aliasing guards it
+// sits between: everything they pin POSITIVELY — the declared value is echoed, a
+// runnable command is prescribed — holds just as well in a message that also
+// tells the reader their config points somewhere else, so the positive
+// assertions alone cannot see this defect.
+func assertClaimsNoDifference(t *testing.T, err error, named, declaredSpelling string) {
+	t.Helper()
+	for _, claim := range falseDifferenceClaims {
+		if strings.Contains(err.Error(), claim) {
+			t.Errorf("refusal = %q, and %q is false here: %s and %s are two names for one directory, so nothing about this fixture differs",
+				err.Error(), claim, named, declaredSpelling)
+		}
+	}
+}
+
+// TestRefusalDoesNotDenyAConfigThatNamesTheDirectoryThroughASymlink is the same
+// property as the case-variant guard above, staged so it runs EVERYWHERE.
+//
+// That guard needs a volume reaching one directory through two spellings, which
+// this project's Linux machines and CI's ubuntu leg do not have — so a refusal
+// reworded to assert exactly the difference it forbids clears it untouched, which
+// is what a guard that skips where it is needed buys. A symlink alias stages the
+// identical situation (`path: link`, `link -> nibdata`, one inode, and the
+// declared spelling resolving as the store) on any filesystem with symlinks at
+// all, which is every leg the case-variant fixture is unbuildable on.
+//
+// What both pin is that the refusal states the COMPARISON — the declared value,
+// and that the match is textual — rather than concluding from a failed textual
+// match that the config names somewhere else. Nothing here argues sameDir should
+// resolve links: widening it would widen an authorization decision (what this
+// guard accepts, `nibs migrate` may move and rewrite) onto a filesystem-dependent
+// guess. The refusal is correct; only its account of itself has to be.
+func TestRefusalDoesNotDenyAConfigThatNamesTheDirectoryThroughASymlink(t *testing.T) {
+	t.Cleanup(resetRootPersistentFlags)
+	resetRootPersistentFlags()
+	t.Setenv("NIBS_PATH", "")
+
+	tmp := t.TempDir()
+	t.Setenv("NIBS_CONFIG_ROOT", tmp)
+
+	projectDir := filepath.Join(tmp, "proj")
+	onDisk := filepath.Join(projectDir, "nibdata")
+	mkdirAllT(t, onDisk)
+	writeFileT(t, filepath.Join(onDisk, "leg-a1--one.md"), layoutNib)
+
+	declaredSpelling := filepath.Join(projectDir, "link")
+	if err := os.Symlink(onDisk, declaredSpelling); err != nil {
+		testskip.SymlinkUnavailable(t, err)
+	}
+	// A filesystem that quietly copies or resolves the link away leaves two
+	// directories, and the aliasing this guard is about cannot be staged there —
+	// the other half of what testskip.Symlinks covers.
+	realInfo, statErr := os.Stat(onDisk)
+	if statErr != nil {
+		t.Fatalf("stat %s: %v", onDisk, statErr)
+	}
+	linkInfo, statErr := os.Stat(declaredSpelling)
+	if statErr != nil {
+		t.Fatalf("stat %s: %v", declaredSpelling, statErr)
+	}
+	if !os.SameFile(realInfo, linkInfo) {
+		testskip.Unavailable(t, testskip.Symlinks, "os.SameFile(%s, %s) = false, so the link is not an alias here", onDisk, declaredSpelling)
+	}
+
+	writeFileT(t, filepath.Join(projectDir, store.LegacyProjectConfigFileName),
+		"nibs:\n  prefix: leg-\n  id_length: 4\n  path: link\n")
+
+	// The config's own spelling resolves, which is what makes the refusal below a
+	// statement about spelling rather than about the fixture: both names reach one
+	// store holding one real nib.
+	nibsPath = declaredSpelling
+	if got, err := resolveStoreDir(); err != nil || got != declaredSpelling {
+		t.Fatalf("resolveStoreDir(%s) = (%q, %v), want the store the config names", declaredSpelling, got, err)
+	}
+
+	resetRootPersistentFlags()
+	nibsPath = onDisk
+	got, err := resolveStoreDir()
+	if err == nil {
+		t.Fatalf("resolveStoreDir(%s) = %q with no error; this guard exists for the refusal", onDisk, got)
+	}
+	assertClaimsNoDifference(t, err, onDisk, declaredSpelling)
+	if want := strconv.Quote("link"); !strings.Contains(err.Error(), want) {
+		t.Errorf("refusal = %q, want it to name %s — the reader cannot see which spelling the config used unless the message shows it", err.Error(), want)
+	}
+	if want := "`nibs migrate --nibs-path " + shellArg(declaredSpelling) + "`"; !strings.Contains(err.Error(), want) {
+		t.Errorf("refusal = %q, want it to prescribe %s — the declared store is one the evidence guard accepts, so the reader gets a command rather than being sent back to spell the path again", err.Error(), want)
 	}
 }

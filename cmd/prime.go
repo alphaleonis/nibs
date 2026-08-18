@@ -89,16 +89,34 @@ the full reference on demand. Pass --full to emit the complete CLI guide (comman
 body section conventions, GraphQL examples).`,
 	Args: codedNoArgs(nil),
 	RunE: func(cmd *cobra.Command, args []string) error {
-		// If no explicit path given, check if a nibs project exists by searching
-		// upward for a .nibs store directory
+		// An explicitly named store answers "is there a project here" on its
+		// own; only the cwd-driven case has to walk for one.
 		if nibsPath == "" && configPath == "" {
 			cwd, err := os.Getwd()
 			if err != nil {
 				return nil // Silently exit on error
 			}
-			storeDir, err := store.FindStore(cwd)
-			if err != nil || storeDir == "" {
-				// No store found - silently exit
+			// The nearest marker of EITHER kind, for the same reason store
+			// resolution binds to it: a `.nibs`-only walk runs past a nearer
+			// pre-layout project and answers from an ancestor store, so the
+			// prompt was emitted for a project the reader is not standing in
+			// while every command it teaches refused in that directory.
+			marker, err := store.FindNearestMarker(cwd)
+			if err != nil {
+				return nil // Silently exit on error
+			}
+			switch marker.Kind {
+			case store.MarkerLegacyProject:
+				// A pre-layout project IS a nibs project, so silence is the
+				// wrong answer: this command's consumer is an agent, and
+				// emitting nothing reads as "this project does not use nibs".
+				// It gets the refusal every other command gives, which names
+				// the migration that makes the project usable.
+				return preLayoutProjectError(cwd, marker.Path)
+			case store.MarkerNone:
+				// No nibs project at all — say nothing, so `nibs prime` stays
+				// safe to run unconditionally from an agent's startup in a
+				// repository that does not use nibs.
 				return nil
 			}
 		}

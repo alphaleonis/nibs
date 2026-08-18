@@ -987,10 +987,17 @@ func deleteMappingKey(node *yaml.Node, key string) {
 // immune regardless, because dataDir is derived FROM declared, so the two sides
 // are the same string.
 //
-// The cost is a usability one, and it is real: the refusal a case-variant produces
-// says no `.nibs.yml` beside the directory names it, which is false — one does, in
-// a different case. Tracked separately; do not "fix" this by case-folding, which
-// would make an authorization decision on a filesystem-dependent guess.
+// The cost is a usability one, and it is real: a case-variant or symlinked
+// `nibs.path` is refused on a volume that reaches one directory through either
+// spelling. What a refusal must not do is turn a false answer here into a claim
+// this comparison cannot establish — neither "no `.nibs.yml` beside it names it"
+// (false when one names this very directory in another spelling) nor "it names a
+// different DIRECTORY" (the same claim wearing a conclusion, and false for the
+// same fixtures). A refusal built on this answer reports what was COMPARED: the
+// declared value where it has one, and that the match is textual, so another name
+// for the same directory lands there too (see resolveStoreDir). Do not close the
+// gap by case-folding here: that would make an authorization decision on a
+// filesystem-dependent guess.
 func sameDir(a, b string) bool {
 	absA, errA := filepath.Abs(a)
 	absB, errB := filepath.Abs(b)

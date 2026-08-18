@@ -99,13 +99,19 @@ const pathTail = "[^\\s'\"`,;:)\\]]*"
 // and treating "…/.nibs." as a path would report an absence that is not real.
 //
 // KNOWN BLIND SPOT, deliberate: a path spelled RELATIVELY is not under root and
-// is not extracted, so it asserts nothing. Every path these refusals print is
+// is not extracted, so it asserts nothing. Refusals DO print relative text — the
+// declared `nibs.path` value, echoed through sanitizeFileText and %q by
+// preLayoutRemedy and stripRetiredNibsPath — and that is evidence of what a
+// config SAYS rather than a path the reader is told to act on, so leaving it
+// unextracted is the intent and not the gap. What is pinned is the acting half:
+// every path a refusal tells the reader to read, edit, move or pass to a flag is
 // absolutized before it reaches a format string (resolveStoreDir calls
-// filepath.Abs, noStoreFoundError joins the declared value onto projectDir), so
-// there is nothing to find today — but a message that started interpolating a raw
-// config value would go unchecked here rather than fail. Anchoring is what makes
-// the extraction reliable at all: without a root to anchor on, "which" and
-// "nibs.path:" read as paths.
+// filepath.Abs; preLayoutRemedy joins the declared value onto projectDir and
+// prints THAT), so each one is extracted and existence-checked. The gap is a
+// message that started printing a relative path as something to act on: it would
+// go unchecked here rather than fail. Anchoring is what makes the extraction
+// reliable at all: without a root to anchor on, "which" and "nibs.path:" read as
+// paths.
 //
 // TWO SPELLINGS of root are searched, because a refusal renders a path with
 // either %s or %q and the two are the same string only where Go quoting has
@@ -819,6 +825,40 @@ func storeResolutionRefusalCases() []refusalCase {
 			},
 		},
 		{
+			// A `.nibs.yml` IS sitting beside the named directory, naming
+			// somewhere else — a pre-layout project, reached explicitly rather
+			// than by the walk. What this row pins is the composed message: the
+			// refusal's own clause plus preLayoutRemedy's answer, whose absolute
+			// paths and `nibs migrate` this test reads. The declared value itself
+			// is quoted evidence and is deliberately NOT read here (see
+			// pathsUnder); the paths the reader is told to act on are the resolved
+			// ones beside it.
+			name: "an explicitly named directory whose project config names a different path",
+			build: func(t *testing.T) (string, string) {
+				projectDir := legacyProject(t, "docs/nibs")
+				data := filepath.Join(projectDir, "docs", "nibs")
+				mkdirAllT(t, data)
+				writeFileT(t, filepath.Join(data, "leg-a1--one.md"), layoutNib)
+				dir := filepath.Join(projectDir, "ci")
+				mkdirAllT(t, dir)
+				return explicitly(t, func(*testing.T) { nibsPath = dir }), filepath.Dir(projectDir)
+			},
+		},
+		{
+			// The same shape where preLayoutRemedy must NOT answer: a store sits
+			// beside the pre-layout config, so the remedy that tells the reader to
+			// create one would name a directory they already have. The advice is
+			// the store itself, and this row is what holds it to resolving.
+			name: "an explicitly named directory whose project config names a different path, in a project that has a store",
+			build: func(t *testing.T) (string, string) {
+				projectDir := legacyProject(t, "docs/nibs")
+				mkdirAllT(t, filepath.Join(projectDir, store.DirName, store.DataDirName))
+				dir := filepath.Join(projectDir, "ci")
+				mkdirAllT(t, dir)
+				return explicitly(t, func(*testing.T) { nibsPath = dir }), filepath.Dir(projectDir)
+			},
+		},
+		{
 			name: "an explicitly named directory a config names but nothing corroborates",
 			build: func(t *testing.T) (string, string) {
 				projectDir := legacyProject(t, "content")
@@ -1365,8 +1405,33 @@ var approvedRootRefusals = []rootRefusal{
 		},
 	},
 	{
-		fn: "resolveStoreDir", marker: "is not a nibs store: it holds no",
+		fn: "resolveStoreDir", marker: "beside it names it; name the store directory itself",
+		// The determinate absence: nothing beside the named directory names it,
+		// so `nibs init` there is advice the reader can act on.
 		rows: []string{"an explicitly named directory that is not a store"},
+	},
+	{
+		fn: "resolveStoreDir", marker: "so another name for this same directory does not match either; %w",
+		// A pre-layout project whose `.nibs.yml` declares some other store. The
+		// remedy is preLayoutRemedy's rather than a second copy of it, which is
+		// what keeps this route from advising a shape the store-evidence guard
+		// refuses.
+		//
+		// The marker carries prose AND the trailing `%w`, and both halves earn
+		// their place: the prose is what a rewording trips, while the verb is the
+		// only thing in the whole ./cmd suite that catches `%w` silently becoming
+		// `%v` — the composed message is byte-identical either way. So a failure
+		// here means "reworded, or unwrapped", not only the first. The sibling
+		// site shares the prose and closes it with `; pass --nibs-path %s`
+		// instead, so the trailing verb is also what keeps this marker on ONE
+		// site.
+		rows: []string{"an explicitly named directory whose project config names a different path"},
+	},
+	{
+		fn: "resolveStoreDir", marker: "the store this project already has",
+		// The same shape in a project that HAS a store — preLayoutRemedy's
+		// precondition, and the branch that keeps it true.
+		rows: []string{"an explicitly named directory whose project config names a different path, in a project that has a store"},
 	},
 	{
 		fn: "resolveStoreDir", marker: "getting current directory: %w",

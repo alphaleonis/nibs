@@ -2,11 +2,13 @@ package cmd
 
 import (
 	"fmt"
+	"path/filepath"
 	"regexp"
 	"strings"
 	"testing"
 
 	"github.com/alphaleonis/nibs/internal/config"
+	"github.com/alphaleonis/nibs/internal/store"
 )
 
 // renderedFullPrompt renders the full guide once for the assertions below.
@@ -494,5 +496,114 @@ func TestPromptsGuardEmptyDerivedSets(t *testing.T) {
 				}
 			}
 		})
+	}
+}
+
+// primeDiscoveryFixture is the shape the discovery bug lived in: a pre-layout
+// project (a `.nibs.yml` naming its data directory through the retired
+// `nibs.path` key) nested under an unrelated ancestor store. It returns the
+// nested project's directory.
+func primeDiscoveryFixture(t *testing.T) string {
+	t.Helper()
+	tmp := t.TempDir()
+	t.Setenv("NIBS_CONFIG_ROOT", tmp)
+	t.Setenv("NIBS_PATH", "")
+	parent := filepath.Join(tmp, "parent")
+	ancestor := filepath.Join(parent, store.DirName)
+	mkdirAllT(t, filepath.Join(ancestor, store.DataDirName))
+	writeFileT(t, filepath.Join(ancestor, store.ConfigFileName), "nibs:\n  prefix: par-\n  id_length: 4\n")
+	sub := filepath.Join(parent, "sub")
+	data := filepath.Join(sub, "nibdata")
+	mkdirAllT(t, data)
+	writeFileT(t, filepath.Join(data, "sub-b2--two.md"), layoutNib)
+	writeFileT(t, filepath.Join(sub, store.LegacyProjectConfigFileName),
+		"nibs:\n  prefix: sub-\n  id_length: 4\n  path: nibdata\n")
+	return sub
+}
+
+// TestPrimeRefusesInANestedPreLayoutProject pins which question `nibs prime`
+// asks on the way to emitting the onboarding prompt. Searching only for a
+// `.nibs` directory walks straight past the nearer pre-layout project and finds
+// the ancestor store, so the prompt was emitted — telling an agent to track all
+// work here with a CLI whose every other command refuses in this directory.
+// A pre-layout project is a nibs project, so the answer is the same refusal
+// every other command gives, naming the migration that makes it usable.
+func TestPrimeRefusesInANestedPreLayoutProject(t *testing.T) {
+	t.Cleanup(resetRootPersistentFlags)
+	t.Cleanup(func() { rootCmd.SetArgs(nil) })
+	resetRootPersistentFlags()
+
+	sub := primeDiscoveryFixture(t)
+	t.Chdir(sub)
+
+	out, err := runRootWith(t, "prime")
+	if err == nil {
+		t.Fatalf("prime emitted a prompt in a pre-layout project instead of refusing; output:\n%s", out)
+	}
+	if strings.Contains(out, "Nibs — agentic-first issue tracker") {
+		t.Errorf("prime refused but still wrote the prompt to stdout:\n%s", out)
+	}
+	msg := err.Error()
+	for _, want := range []string{sub, "pre-layout", "nibs migrate"} {
+		if !strings.Contains(msg, want) {
+			t.Errorf("refusal = %q, want it to name %q", msg, want)
+		}
+	}
+	// The ancestor store is named as context, not bound to: the reader may have
+	// watched prime answer from it until now.
+	if ancestor := filepath.Join(filepath.Dir(sub), store.DirName); !strings.Contains(msg, ancestor) {
+		t.Errorf("refusal = %q, want it to name the shadowed ancestor store %q", msg, ancestor)
+	}
+}
+
+// TestPrimeStaysSilentWithNoNibsProject is the other half of the gate, and the
+// reason the refusal above cannot simply be "refuse whenever no store is
+// bound": `nibs prime` is run unconditionally from an agent's startup, so a
+// repository that does not use nibs must get silence and a zero exit.
+func TestPrimeStaysSilentWithNoNibsProject(t *testing.T) {
+	t.Cleanup(resetRootPersistentFlags)
+	t.Cleanup(func() { rootCmd.SetArgs(nil) })
+	resetRootPersistentFlags()
+
+	tmp := t.TempDir()
+	t.Setenv("NIBS_CONFIG_ROOT", tmp)
+	t.Setenv("NIBS_PATH", "")
+	plain := filepath.Join(tmp, "plain", "src")
+	mkdirAllT(t, plain)
+	t.Chdir(plain)
+
+	out, err := runRootWith(t, "prime")
+	if err != nil {
+		t.Fatalf("prime in a project with no nibs marker = %v, want a silent success", err)
+	}
+	if out != "" {
+		t.Errorf("prime wrote %q where there is no nibs project, want nothing", out)
+	}
+}
+
+// TestPrimeEmitsInACurrentLayoutProject is the happy path the gate must keep:
+// a store found by the upward walk still gets the prompt.
+func TestPrimeEmitsInACurrentLayoutProject(t *testing.T) {
+	t.Cleanup(resetRootPersistentFlags)
+	t.Cleanup(func() { rootCmd.SetArgs(nil) })
+	resetRootPersistentFlags()
+
+	tmp := t.TempDir()
+	t.Setenv("NIBS_CONFIG_ROOT", tmp)
+	t.Setenv("NIBS_PATH", "")
+	projectDir := filepath.Join(tmp, "proj")
+	writeStore(t, projectDir, "nibs:\n  prefix: proj-\n  id_length: 4\n", map[string]string{
+		"proj-a1b2--one.md": layoutNib,
+	})
+	nested := filepath.Join(projectDir, "src", "deep")
+	mkdirAllT(t, nested)
+	t.Chdir(nested)
+
+	out, err := runRootWith(t, "prime")
+	if err != nil {
+		t.Fatalf("prime in a current-layout project = %v, want the prompt", err)
+	}
+	if !strings.Contains(out, "Nibs — agentic-first issue tracker") {
+		t.Errorf("prime emitted no prompt in a current-layout project; output:\n%s", out)
 	}
 }
