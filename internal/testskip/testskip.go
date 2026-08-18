@@ -119,6 +119,27 @@ var (
 	// asserts what the comparison cannot establish passes a guard written for
 	// exactly that defect, because the guard never executes there.
 	CaseInsensitivePaths = Capability{Name: "case-insensitive paths", EnvVar: "NIBS_REQUIRE_CASE_INSENSITIVE_PATHS"}
+
+	// NamedPipes covers a filesystem that can hold a FIFO at an ordinary path —
+	// what syscall.Mkfifo makes, and what Windows has no equivalent of: its
+	// named pipes live in the \\.\pipe\ namespace, not in the directory tree a
+	// config path can name.
+	//
+	// A fixture that needs one is unbuildable rather than unnecessary
+	// elsewhere. What it stages is open(2) BLOCKING until a writer arrives, and
+	// no ordinary file on a volume without FIFOs blocks that way, so there is
+	// nothing to substitute.
+	//
+	// DELIBERATELY LEFT PERMISSIVE, on the same terms as CaseInsensitivePaths:
+	// no CI leg sets this var, so a skip shows up only in the tally. That is
+	// honest only while some guard for the same property runs where the fixture
+	// is unbuildable, and here one does — the guard needing a FIFO shares its
+	// table with a DIRECTORY row that reaches the same refusal through the same
+	// branch, and a directory is buildable on every platform. A skip therefore
+	// costs the blocking-open spelling of the claim, not coverage of the code
+	// that answers it. Turn this on for the unix legs if a fixture ever needs a
+	// FIFO to guard behavior with no platform-independent row beside it.
+	NamedPipes = Capability{Name: "named pipes", EnvVar: "NIBS_REQUIRE_NAMED_PIPES"}
 )
 
 var (

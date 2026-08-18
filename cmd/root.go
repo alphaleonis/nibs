@@ -354,6 +354,13 @@ func resolveStoreDir() (string, error) {
 			// as the "cannot tell" third answer above. If that ordering ever
 			// changes, this flat denial becomes the false claim about an
 			// unreadable config that the third answer exists to prevent.
+			//
+			// It also rests on the two reads of that one file AGREEING, which is
+			// a property of the file rather than of this code: a FIFO served a
+			// valid `nibs.path` to the first read and malformed YAML to the
+			// second, and this branch duly denied that any config named the
+			// directory one line after the other read had found one. That is why
+			// config.ReadConfigFile refuses anything but a regular file.
 			return "", fmt.Errorf("%s is not a nibs store: it holds no %s that parses as one, and no %s beside it names it; name the store directory itself (e.g. --nibs-path %s), or run `nibs init` there",
 				explicit, store.ConfigFileName, store.LegacyProjectConfigFileName,
 				filepath.Join(explicit, store.DirName))
@@ -619,6 +626,13 @@ func looksLikeStore(dir string) (bool, error) {
 // over config.MaxConfigBytes — returns the error instead, because a size refusal
 // reported as absence of evidence made a real store answer "is not a nibs store
 // … or run `nibs init` there".
+//
+// The IsRegular check below is NOT what keeps a FIFO here from hanging the
+// process — config.ReadConfigFile refuses an irregular file for every reader.
+// It survives because it picks which of the two answers an irregular file gets:
+// without it a pipe named config.yml would come back as the reader's error, and
+// "cannot tell whether this is a store" is the wrong answer about a path that
+// plainly holds no config. Deleting it costs determinacy, not liveness.
 func parsesAsNibsConfig(path string) (bool, error) {
 	info, err := os.Stat(path)
 	if err != nil {

@@ -7,6 +7,7 @@ import (
 	"slices"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/alphaleonis/nibs/internal/store"
 	"github.com/alphaleonis/nibs/internal/testskip"
@@ -1594,5 +1595,137 @@ func TestSaveReportsReplacingASymlinkedConfig(t *testing.T) {
 	plainCfg := Default()
 	if stale, err := plainCfg.Save(plain); err != nil || stale != "" {
 		t.Errorf("Save into a link-free store = (%q, %v), want no stale target and no error", stale, err)
+	}
+}
+
+// TestConfigReadsRefuseAnIrregularFile pins that something other than a regular
+// file at a config path produces a DETERMINATE ERROR from every config read,
+// rather than blocking the command forever.
+//
+// The hazard is open(2) on a FIFO: it blocks until a writer arrives, so a
+// project whose `.nibs.yml` was a named pipe made every command hang — never
+// returning and never failing, with nothing downstream able to bound it because
+// the process never reached downstream. The shared reader is what has to answer,
+// which is why the routes below are every entry point into it, reaching the
+// three different FILES a run reads: the pre-layout config beside the store, the
+// bound store's own config, and the user config. A regularity check at any one
+// of them leaves the others hanging.
+//
+// The error must also not read as ABSENCE. loadRaw and LoadUserConfigFrom both
+// treat os.IsNotExist as "use the defaults", so an irregular file reported that
+// way would quietly become an empty config — a project with no prefix, whose
+// next nib is written under a different id.
+//
+// EVERY READ RUNS UNDER A DEADLINE, in a goroutine that never touches t. A guard
+// against a hang that hangs when it regresses takes the whole package's run with
+// it, and a suite that never finishes is a much worse signal than a red test. On
+// a regression that goroutine stays parked in open(2) until the binary exits;
+// that is an acceptable cost once the guard has already failed.
+//
+// The directory row is not a second spelling of the FIFO row: it is what keeps
+// this guard meaningful where FIFOs cannot be created (see testskip.NamedPipes),
+// because it reaches the same refusal through the same branch. Asserting the
+// wording is what ties it to that branch rather than to whatever errno a read of
+// a directory happens to produce.
+func TestConfigReadsRefuseAnIrregularFile(t *testing.T) {
+	kinds := []struct {
+		name   string
+		create func(t *testing.T, path string)
+	}{
+		{
+			name: "a named pipe",
+			create: func(t *testing.T, path string) {
+				if err := mkfifo(path); err != nil {
+					testskip.Unavailable(t, testskip.NamedPipes, "mkfifo(%s): %v", path, err)
+				}
+			},
+		},
+		{
+			name: "a directory",
+			create: func(t *testing.T, path string) {
+				if err := os.Mkdir(path, 0o755); err != nil {
+					t.Fatalf("mkdir %s: %v", path, err)
+				}
+			},
+		},
+	}
+
+	routes := []struct {
+		name string
+		// file is where the irregular thing goes, relative to a fresh directory
+		// that read then works against.
+		file string
+		read func(dir string) error
+	}{
+		{
+			name: "ReadConfigFile",
+			file: store.ConfigFileName,
+			read: func(dir string) error {
+				_, err := ReadConfigFile(filepath.Join(dir, store.ConfigFileName))
+				return err
+			},
+		},
+		{
+			name: "RetiredNibsPath",
+			file: store.LegacyProjectConfigFileName,
+			read: func(dir string) error {
+				_, err := RetiredNibsPath(filepath.Join(dir, store.LegacyProjectConfigFileName))
+				return err
+			},
+		},
+		{
+			name: "LoadFromStore",
+			file: store.ConfigFileName,
+			read: func(dir string) error {
+				_, err := LoadFromStore(dir)
+				return err
+			},
+		},
+		{
+			name: "LoadUserConfigFrom",
+			file: "nibs.yml",
+			read: func(dir string) error {
+				_, err := LoadUserConfigFrom(filepath.Join(dir, "nibs.yml"))
+				return err
+			},
+		},
+	}
+
+	// Generous, because the only thing it has to separate is "returned" from
+	// "blocked in open(2) forever" — every one of these reads is a stat and a
+	// few hundred bytes otherwise.
+	const deadline = 10 * time.Second
+
+	for _, kind := range kinds {
+		for _, route := range routes {
+			t.Run(kind.name+"/"+route.name, func(t *testing.T) {
+				dir := t.TempDir()
+				kind.create(t, filepath.Join(dir, route.file))
+
+				// Buffered, so a read that unblocks after the deadline has passed
+				// completes its send and exits instead of leaking on the channel.
+				done := make(chan error, 1)
+				go func() { done <- route.read(dir) }()
+
+				var err error
+				select {
+				case err = <-done:
+				case <-time.After(deadline):
+					t.Fatalf("%s did not return within %s with %s at the config path; the read is blocked, which is the hang this guard exists for",
+						route.name, deadline, kind.name)
+				}
+				if err == nil {
+					t.Fatalf("%s accepted %s as a config", route.name, kind.name)
+				}
+				if os.IsNotExist(err) {
+					t.Fatalf("%s reported %s as an absent file (%v); absence means \"use the defaults\", so this becomes an empty config",
+						route.name, kind.name, err)
+				}
+				if !strings.Contains(err.Error(), "not a regular file") {
+					t.Errorf("%s refused %s with %v, which does not come from the regularity check; the guard is passing on some other error",
+						route.name, kind.name, err)
+				}
+			})
+		}
 	}
 }

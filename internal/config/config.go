@@ -322,7 +322,33 @@ func RetiredNibsPath(path string) (string, error) {
 // file's header.
 const MaxConfigBytes = 1 << 20 // 1 MiB
 
-// ReadConfigFile reads a config file, refusing one larger than MaxConfigBytes.
+// ReadConfigFile reads a config file, refusing one that is not a regular file
+// and one larger than MaxConfigBytes.
+//
+// THE REGULARITY CHECK IS ABOUT LIVENESS. Opening a FIFO for reading blocks
+// inside open(2) until a writer arrives, so a `.nibs.yml` or a config.yml that
+// is a named pipe made every command hang forever instead of failing — and
+// nothing downstream can bound that, because the process never reaches
+// downstream. Statting first answers before the open, and it is the shared
+// reader that has to do it: this is the one point all four config reads — the
+// project config, the user config, the pre-layout probe and the store-evidence
+// probe — pass through.
+//
+// It is also what makes the answer DETERMINATE. The discovery route reads the
+// same pre-layout `.nibs.yml` twice, and a FIFO can serve different bytes to
+// each read: a valid `nibs.path` first and malformed YAML second made one
+// refusal say a config names the store while the next said no config names it.
+// A regular file cannot diverge that way for free.
+//
+// os.O_RDONLY|syscall.O_NONBLOCK is the other way to avoid the block, and it is
+// worse. On a writerless FIFO it opens and then reads clean EOF (measured: 0
+// bytes, nil error), so the caller is handed an EMPTY config — a project with
+// no prefix, whose next nib is written under a different id — where it should
+// be handed an error. A determinate refusal beats a silent misreading.
+//
+// The stat races the filesystem by construction. That is acceptable because
+// this guard bounds a hang and a divergence, not an attacker: nothing decided
+// downstream treats "was regular a moment ago" as a security property.
 //
 // The ceiling is enforced by reading one byte PAST it and erroring, never by
 // truncating: a silently shortened config would parse as a different project —
@@ -330,6 +356,14 @@ const MaxConfigBytes = 1 << 20 // 1 MiB
 // at all. A missing file is returned as an ordinary os.IsNotExist error so
 // callers can keep treating absence as "use the defaults".
 func ReadConfigFile(path string) ([]byte, error) {
+	info, err := os.Stat(path)
+	if err != nil {
+		return nil, err
+	}
+	if !info.Mode().IsRegular() {
+		return nil, fmt.Errorf("%s is %s, not a regular file; a nibs config is an ordinary file, and reading a pipe or a device here would block the command instead of failing — remove or replace it",
+			path, describeFileKind(info.Mode()))
+	}
 	f, err := os.Open(path)
 	if err != nil {
 		return nil, err
@@ -344,6 +378,27 @@ func ReadConfigFile(path string) ([]byte, error) {
 			path, MaxConfigBytes)
 	}
 	return data, nil
+}
+
+// describeFileKind names what sits at a path a config was expected at. The
+// refusal quotes it because "not a regular file" alone sends the reader hunting:
+// a stray FIFO and a directory called config.yml are different mistakes with
+// different fixes.
+func describeFileKind(mode fs.FileMode) string {
+	switch {
+	case mode.IsDir():
+		return "a directory"
+	case mode&fs.ModeNamedPipe != 0:
+		return "a named pipe (FIFO)"
+	case mode&fs.ModeSocket != 0:
+		return "a socket"
+	case mode&fs.ModeCharDevice != 0:
+		return "a character device"
+	case mode&fs.ModeDevice != 0:
+		return "a block device"
+	default:
+		return "of type " + mode.Type().String()
+	}
 }
 
 // loadRaw reads and unmarshals the config file without applying system defaults.
