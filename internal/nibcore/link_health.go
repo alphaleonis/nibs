@@ -463,6 +463,12 @@ func (c *Core) RemoveLinksTo(targetID string) (int, error) {
 		return ok && linkFullID == fullID
 	}
 
+	// One directory fsync per directory the sweep touched, not one per nib.
+	// Deferred so an aborted sweep still flushes what it did write: the first
+	// error returns with the earlier files already renamed into place.
+	pending := dirSyncBatch{}
+	defer pending.flush()
+
 	removed := 0
 	for id, b := range c.nibs {
 		// Detect changes by READING the stored pointer only — never mutate it,
@@ -487,7 +493,9 @@ func (c *Core) RemoveLinksTo(targetID string) (int, error) {
 			removed += before - len(clone.BlockedBy)
 		}
 
-		if err := c.saveToDisk(clone); err != nil {
+		dir, err := c.saveToDiskDeferDirSync(clone)
+		pending.add(dir)
+		if err != nil {
 			return removed, err
 		}
 		c.nibs[id] = clone
@@ -570,6 +578,12 @@ func (c *Core) FixBrokenLinks() (int, error) {
 	configPrefix := c.configPrefix()
 	skipped := c.skippedIDsLocked()
 
+	// One directory fsync per directory the sweep touched, not one per nib.
+	// Deferred so an aborted sweep still flushes what it did write: the first
+	// error returns with the earlier files already renamed into place.
+	pending := dirSyncBatch{}
+	defer pending.flush()
+
 	fixed := 0
 	for id, b := range c.nibs {
 		// Detect changes by READING the stored pointer only — never mutate it.
@@ -623,7 +637,9 @@ func (c *Core) FixBrokenLinks() (int, error) {
 			fixed += docsRemoved
 		}
 
-		if err := c.saveToDisk(clone); err != nil {
+		dir, err := c.saveToDiskDeferDirSync(clone)
+		pending.add(dir)
+		if err != nil {
 			return fixed, err
 		}
 		c.nibs[id] = clone

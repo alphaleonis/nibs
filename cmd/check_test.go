@@ -1,6 +1,7 @@
 package cmd
 
 import (
+	"context"
 	"encoding/json"
 	"os"
 	"path/filepath"
@@ -76,11 +77,11 @@ func setupCheckTest(t *testing.T, files map[string]string) (*App, string) {
 	resetCheckFlags()
 
 	nibsDir := filepath.Join(t.TempDir(), ".nibs")
-	if err := os.MkdirAll(nibsDir, 0755); err != nil {
+	if err := os.MkdirAll(storeDataDir(nibsDir), 0755); err != nil {
 		t.Fatal(err)
 	}
 	for name, content := range files {
-		if err := os.WriteFile(filepath.Join(nibsDir, name), []byte(content), 0644); err != nil {
+		if err := os.WriteFile(dataPath(nibsDir, name), []byte(content), 0644); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -91,6 +92,25 @@ func setupCheckTest(t *testing.T, files map[string]string) (*App, string) {
 		t.Fatalf("Load() error = %v", err)
 	}
 	return &App{Core: core}, nibsDir
+}
+
+// checkAppPastTheGate runs the root command's pre-run gate for `nibs check`
+// against the store at storeDir and returns the App it built, so a test can
+// assert BOTH that the gate let check through and what check then reports.
+//
+// It drives PersistentPreRunE directly rather than rootCmd.Execute because
+// checkCmd's RunE exits the process whenever the report is non-empty — and
+// every store the exemption exists for now reports something.
+func checkAppPastTheGate(t *testing.T, storeDir string) *App {
+	t.Helper()
+	t.Cleanup(resetRootPersistentFlags)
+	nibsPath = storeDir
+	checkCmd.SetContext(context.Background())
+	t.Cleanup(func() { checkCmd.SetContext(context.Background()) })
+	if err := rootCmd.PersistentPreRunE(checkCmd, nil); err != nil {
+		t.Fatalf("the pre-run gate refused plain check on %s: %v", storeDir, err)
+	}
+	return getApp(checkCmd)
 }
 
 // loadDiagnosticFiles is the fixture both load-time conditions need: one file
@@ -125,11 +145,17 @@ func TestCheckReportsInvalidEnumValues(t *testing.T) {
 		if runErr != nil {
 			t.Fatalf("runCheck error = %v", runErr)
 		}
-		if total != 1 {
-			t.Errorf("total issues = %d, want 1", total)
+		// Two findings, not one: the out-of-enum value on the nib, and the
+		// store-level fact that `priority-deferred` is pending so every other
+		// command refuses this store.
+		if total != 2 {
+			t.Errorf("total issues = %d, want 2", total)
 		}
 		if !strings.Contains(out, "chk-leg1") || !strings.Contains(out, "deferred") {
 			t.Errorf("report should name the nib and value, got:\n%s", out)
+		}
+		if !strings.Contains(out, "priority-deferred") {
+			t.Errorf("report should name the pending migration step, got:\n%s", out)
 		}
 	})
 
@@ -164,7 +190,7 @@ func TestCheckReportsInvalidEnumValues(t *testing.T) {
 		if runErr != nil {
 			t.Fatalf("runCheck error = %v", runErr)
 		}
-		raw, err := os.ReadFile(filepath.Join(nibsDir, "chk-leg1--old.md"))
+		raw, err := os.ReadFile(dataPath(nibsDir, "chk-leg1--old.md"))
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -196,8 +222,11 @@ func TestCheckNewerStore(t *testing.T) {
 		if runErr != nil {
 			t.Fatalf("runCheck error = %v", runErr)
 		}
-		if total != 1 {
-			t.Errorf("total issues = %d, want 1 (the out-of-enum finding)", total)
+		// The out-of-enum finding, plus the store-level refusal the migration
+		// probe raises on a newer-format file — check is the one command that
+		// reports that refusal instead of being stopped by it.
+		if total != 2 {
+			t.Errorf("total issues = %d, want 2 (the out-of-enum finding and the newer-store refusal)", total)
 		}
 		if !strings.Contains(out, "newer nibs") || !strings.Contains(out, "upgrade nibs") {
 			t.Errorf("diagnostic should say the file was written by a newer nibs and to upgrade, got:\n%s", out)
@@ -207,18 +236,27 @@ func TestCheckNewerStore(t *testing.T) {
 		}
 	})
 
-	t.Run("plain check runs end to end through the CLI gate", func(t *testing.T) {
-		// A CLEAN newer-version store: checkCmd's os.Exit(1)-on-issues branch
-		// is not reached, so the full Cobra pipeline is safe to drive. This is
-		// the exemption pin: list/migrate refuse this store, check runs.
+	t.Run("plain check gets past the CLI gate and names the refusal", func(t *testing.T) {
+		// The exemption pin: list/migrate refuse this store, check runs — and
+		// then reports the very refusal it was let past, rather than passing
+		// silently over a store this build must not touch.
 		nibsDir := setupListCobraTest(t, map[string]string{
 			"chk-fut1--future.md": "---\nversion: 99\ntitle: Future\nstatus: todo\n---\n\nBody.\n",
 		})
 		t.Cleanup(resetCheckFlags)
 		resetCheckFlags()
-		out, err := runRootWith(t, "--nibs-path", nibsDir, "check")
-		if err != nil {
-			t.Fatalf("plain check on a newer-version store refused: %v\nout: %s", err, out)
+		app := checkAppPastTheGate(t, nibsDir)
+		var total int
+		var runErr error
+		out := captureStdout(t, func() { total, runErr = runCheck(app) })
+		if runErr != nil {
+			t.Fatalf("runCheck error = %v", runErr)
+		}
+		if total != 1 {
+			t.Errorf("total issues = %d, want 1 (the newer-store refusal)", total)
+		}
+		if !strings.Contains(out, "newer nibs") {
+			t.Errorf("report should name the newer-store refusal, got:\n%s", out)
 		}
 	})
 
@@ -333,8 +371,8 @@ func TestCheckJSONReportsLoadDiagnostics(t *testing.T) {
 	if len(got.NibIssues.UnparseableFiles) != 1 {
 		t.Fatalf("unparseable_files = %+v, want exactly 1 entry", got.NibIssues.UnparseableFiles)
 	}
-	if p := got.NibIssues.UnparseableFiles[0].Path; p != "chk-bad1--broken.md" {
-		t.Errorf("unparseable_files[0].path = %q, want %q", p, "chk-bad1--broken.md")
+	if p := got.NibIssues.UnparseableFiles[0].Path; p != "data/chk-bad1--broken.md" {
+		t.Errorf("unparseable_files[0].path = %q, want %q", p, "data/chk-bad1--broken.md")
 	}
 
 	if len(got.NibIssues.DuplicateIDs) != 1 {
@@ -344,9 +382,9 @@ func TestCheckJSONReportsLoadDiagnostics(t *testing.T) {
 	if dup.NibID != "chk-dup1" {
 		t.Errorf("duplicate_ids[0].nib_id = %q, want %q", dup.NibID, "chk-dup1")
 	}
-	if dup.Loaded != "chk-dup1--beta.md" || dup.Shadowed != "chk-dup1--alpha.md" {
+	if dup.Loaded != "data/chk-dup1--beta.md" || dup.Shadowed != "data/chk-dup1--alpha.md" {
 		t.Errorf("duplicate_ids[0] = {loaded:%q shadowed:%q}, want {loaded:%q shadowed:%q}",
-			dup.Loaded, dup.Shadowed, "chk-dup1--beta.md", "chk-dup1--alpha.md")
+			dup.Loaded, dup.Shadowed, "data/chk-dup1--beta.md", "data/chk-dup1--alpha.md")
 	}
 
 	// The two load-time issues must be counted, not merely listed: the exit
@@ -411,7 +449,7 @@ func TestCheckFixLeavesLoadDiagnosticsUnfixed(t *testing.T) {
 	untouchable := []string{"chk-bad1--broken.md", "chk-dup1--alpha.md", "chk-dup1--beta.md"}
 	before := make(map[string][]byte, len(untouchable))
 	for _, name := range untouchable {
-		data, err := os.ReadFile(filepath.Join(nibsDir, name))
+		data, err := os.ReadFile(dataPath(nibsDir, name))
 		if err != nil {
 			t.Fatalf("read %s: %v", name, err)
 		}
@@ -428,7 +466,7 @@ func TestCheckFixLeavesLoadDiagnosticsUnfixed(t *testing.T) {
 
 	// Files on disk are untouched.
 	for _, name := range untouchable {
-		after, err := os.ReadFile(filepath.Join(nibsDir, name))
+		after, err := os.ReadFile(dataPath(nibsDir, name))
 		if err != nil {
 			t.Fatalf("read %s after --fix: %v", name, err)
 		}
@@ -539,7 +577,7 @@ func TestCheckFixKeepsLinksToSkippedNibs(t *testing.T) {
 	})
 
 	// The link to the skipped nib survives on disk — the whole point.
-	raw, err := os.ReadFile(filepath.Join(nibsDir, "chk-skip1--links-to-skipped.md"))
+	raw, err := os.ReadFile(dataPath(nibsDir, "chk-skip1--links-to-skipped.md"))
 	if err != nil {
 		t.Fatalf("read: %v", err)
 	}
@@ -557,7 +595,7 @@ func TestCheckFixKeepsLinksToSkippedNibs(t *testing.T) {
 
 	// Control: the genuinely dangling link IS still removed, on disk and in the
 	// report — so a blanket "stop fixing anything" regression fails here.
-	brokenRaw, err := os.ReadFile(filepath.Join(nibsDir, "chk-link1--broken.md"))
+	brokenRaw, err := os.ReadFile(dataPath(nibsDir, "chk-link1--broken.md"))
 	if err != nil {
 		t.Fatalf("read: %v", err)
 	}

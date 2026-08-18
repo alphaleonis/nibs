@@ -9,7 +9,9 @@ import (
 	"testing"
 
 	"github.com/alphaleonis/nibs/internal/config"
+	"github.com/alphaleonis/nibs/internal/fsutil"
 	"github.com/alphaleonis/nibs/internal/nib"
+	"github.com/alphaleonis/nibs/internal/store"
 )
 
 // writeNibFile writes a raw nib markdown file to disk for testing migration. It
@@ -27,7 +29,7 @@ func writeNibFile(t *testing.T, dir, filename, content string) {
 // only path that rewrites store files is `nibs migrate`.
 func TestLoadNeverWrites(t *testing.T) {
 	tmpDir := t.TempDir()
-	nibsDir := filepath.Join(tmpDir, NibsDir)
+	nibsDir := filepath.Join(tmpDir, store.DirName)
 	if err := os.MkdirAll(nibsDir, 0755); err != nil {
 		t.Fatal(err)
 	}
@@ -39,7 +41,7 @@ func TestLoadNeverWrites(t *testing.T) {
 		"cur1--modern.md": "---\nversion: 1\ntitle: Modern\nstatus: todo\ntype: task\n---\n\nBody C.\n",
 	}
 	for name, content := range files {
-		writeNibFile(t, nibsDir, name, content)
+		writeNibFile(t, storeData(t, nibsDir), name, content)
 	}
 
 	cfg := config.Default()
@@ -50,7 +52,7 @@ func TestLoadNeverWrites(t *testing.T) {
 	}
 
 	for name, before := range files {
-		after, err := os.ReadFile(filepath.Join(nibsDir, name))
+		after, err := os.ReadFile(dataPath(nibsDir, name))
 		if err != nil {
 			t.Fatalf("re-reading %s: %v", name, err)
 		}
@@ -80,7 +82,7 @@ func TestLoadNeverWrites(t *testing.T) {
 
 func TestCheckBrokenDocuments(t *testing.T) {
 	tmpDir := t.TempDir()
-	nibsDir := filepath.Join(tmpDir, NibsDir)
+	nibsDir := filepath.Join(tmpDir, store.DirName)
 	if err := os.MkdirAll(nibsDir, 0755); err != nil {
 		t.Fatal(err)
 	}
@@ -148,12 +150,12 @@ func TestCheckBrokenDocuments(t *testing.T) {
 // cleanup), token passed to every migration call against this store.
 func loadMigrationCore(t *testing.T, files map[string]string) (*Core, string, *StoreLock) {
 	t.Helper()
-	nibsDir := filepath.Join(t.TempDir(), NibsDir)
+	nibsDir := filepath.Join(t.TempDir(), store.DirName)
 	if err := os.MkdirAll(nibsDir, 0755); err != nil {
 		t.Fatal(err)
 	}
 	for name, content := range files {
-		writeNibFile(t, nibsDir, name, content)
+		writeNibFile(t, storeData(t, nibsDir), name, content)
 	}
 	core := New(nibsDir, config.Default())
 	core.SetWarnWriter(nil)
@@ -290,7 +292,7 @@ func TestMigrateV0ToV1(t *testing.T) {
 			t.Errorf("migrated count = %d, want 0 on an all-v1 store", n)
 		}
 		for name, before := range files {
-			after, err := os.ReadFile(filepath.Join(nibsDir, name))
+			after, err := os.ReadFile(dataPath(nibsDir, name))
 			if err != nil {
 				t.Fatalf("re-reading %s: %v", name, err)
 			}
@@ -313,9 +315,9 @@ func TestMigrateV0ToV1(t *testing.T) {
 		// (saveToDisk writes a temp file and renames it over the target), which
 		// simulates an un-persistable .nibs — full disk, unwritable dir, torn
 		// rename — deterministically and independent of uid/OS.
-		orig := renameFn
-		renameFn = func(_, _ string) error { return errors.New("simulated persistence failure") }
-		t.Cleanup(func() { renameFn = orig })
+		orig := fsutil.RenameFn
+		fsutil.RenameFn = func(_, _ string) error { return errors.New("simulated persistence failure") }
+		t.Cleanup(func() { fsutil.RenameFn = orig })
 
 		if _, err := core.MigrateV0ToV1(lock); err == nil {
 			t.Fatal("MigrateV0ToV1() = nil error on an unwritable store, want fail-loud error")
@@ -435,9 +437,9 @@ func TestMigrateV0ToV1CrashResumeKeepsEdges(t *testing.T) {
 			for failAt := 1; failAt <= maxProbes; failAt++ {
 				core, nibsDir, lock := loadMigrationCore(t, sc.files)
 
-				orig := renameFn
+				orig := fsutil.RenameFn
 				writes := 0
-				renameFn = func(oldpath, newpath string) error {
+				fsutil.RenameFn = func(oldpath, newpath string) error {
 					writes++
 					if writes == failAt {
 						return errors.New("injected crash")
@@ -445,7 +447,7 @@ func TestMigrateV0ToV1CrashResumeKeepsEdges(t *testing.T) {
 					return orig(oldpath, newpath)
 				}
 				_, err := core.MigrateV0ToV1(lock)
-				renameFn = orig
+				fsutil.RenameFn = orig
 
 				if err == nil {
 					// The run finished before reaching write #failAt: every
@@ -500,7 +502,7 @@ func TestMigrationMethodsRequireLockToken(t *testing.T) {
 	// A token acquired for a DIFFERENT store holds the wrong lock. Acquiring
 	// it while this store's own lock is held is safe — the two flocks are
 	// different files.
-	otherRoot := filepath.Join(t.TempDir(), NibsDir)
+	otherRoot := filepath.Join(t.TempDir(), store.DirName)
 	if err := os.MkdirAll(otherRoot, 0755); err != nil {
 		t.Fatal(err)
 	}
@@ -530,7 +532,7 @@ func TestMigrationMethodsRequireLockToken(t *testing.T) {
 	// Every refusal above fired BEFORE touching state: the store is
 	// byte-identical.
 	for name, before := range files {
-		after, err := os.ReadFile(filepath.Join(nibsDir, name))
+		after, err := os.ReadFile(dataPath(nibsDir, name))
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -558,7 +560,7 @@ func TestNormalizeLegacyPriorities(t *testing.T) {
 		}
 
 		for _, name := range []string{"def1--legacy.md", "v0d2--old.md"} {
-			disk, err := os.ReadFile(filepath.Join(nibsDir, name))
+			disk, err := os.ReadFile(dataPath(nibsDir, name))
 			if err != nil {
 				t.Fatalf("re-reading %s: %v", name, err)
 			}
@@ -577,14 +579,14 @@ func TestNormalizeLegacyPriorities(t *testing.T) {
 		// migrated without transferring them — permanently, since v0 detection
 		// keys on the version. The rewrite renders `version: 0`, which stays
 		// detectably v0.
-		v1Disk, err := os.ReadFile(filepath.Join(nibsDir, "def1--legacy.md"))
+		v1Disk, err := os.ReadFile(dataPath(nibsDir, "def1--legacy.md"))
 		if err != nil {
 			t.Fatal(err)
 		}
 		if !strings.Contains(string(v1Disk), "version: 1") {
 			t.Errorf("already-v1 file lost its version key:\n%s", v1Disk)
 		}
-		v0Disk, err := os.ReadFile(filepath.Join(nibsDir, "v0d2--old.md"))
+		v0Disk, err := os.ReadFile(dataPath(nibsDir, "v0d2--old.md"))
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -601,7 +603,7 @@ func TestNormalizeLegacyPriorities(t *testing.T) {
 		}
 
 		// Control untouched, and a second run is a no-op.
-		ctl, err := os.ReadFile(filepath.Join(nibsDir, "ctl3--normal.md"))
+		ctl, err := os.ReadFile(dataPath(nibsDir, "ctl3--normal.md"))
 		if err != nil {
 			t.Fatalf("re-reading control: %v", err)
 		}
@@ -617,9 +619,9 @@ func TestNormalizeLegacyPriorities(t *testing.T) {
 		core, _, lock := loadMigrationCore(t, map[string]string{
 			"def1--legacy.md": "---\nversion: 1\ntitle: Set Aside\nstatus: todo\npriority: deferred\n---\n",
 		})
-		orig := renameFn
-		renameFn = func(_, _ string) error { return errors.New("simulated persistence failure") }
-		t.Cleanup(func() { renameFn = orig })
+		orig := fsutil.RenameFn
+		fsutil.RenameFn = func(_, _ string) error { return errors.New("simulated persistence failure") }
+		t.Cleanup(func() { fsutil.RenameFn = orig })
 
 		if _, err := core.NormalizeLegacyPriorities(lock); err == nil {
 			t.Fatal("NormalizeLegacyPriorities() = nil error on an unwritable store, want fail-loud error")

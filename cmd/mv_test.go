@@ -20,7 +20,7 @@ import (
 // --child-if-match arguments without spinning up a resolver.
 func onDiskETag(t *testing.T, nibsDir, id string) string {
 	t.Helper()
-	f, err := os.Open(filepath.Join(nibsDir, id+".md"))
+	f, err := os.Open(dataPath(nibsDir, id+".md"))
 	if err != nil {
 		t.Fatalf("read nib %s: %v", id, err)
 	}
@@ -61,11 +61,11 @@ func setupMvCobraTest(t *testing.T, files map[string]string) string {
 
 	tmpDir := t.TempDir()
 	nibsDir := filepath.Join(tmpDir, ".nibs")
-	if err := os.MkdirAll(nibsDir, 0755); err != nil {
+	if err := os.MkdirAll(storeDataDir(nibsDir), 0755); err != nil {
 		t.Fatal(err)
 	}
 	for name, content := range files {
-		if err := os.WriteFile(filepath.Join(nibsDir, name), []byte(content), 0644); err != nil {
+		if err := os.WriteFile(dataPath(nibsDir, name), []byte(content), 0644); err != nil {
 			t.Fatal(err)
 		}
 	}

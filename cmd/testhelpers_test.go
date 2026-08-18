@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"io"
 	"os"
+	"path/filepath"
 	"sync"
 	"testing"
 	"time"
@@ -11,7 +12,38 @@ import (
 	"github.com/spf13/pflag"
 
 	"github.com/alphaleonis/nibs/internal/config"
+	"github.com/alphaleonis/nibs/internal/store"
 )
+
+// storeDataDir returns the store's data/ directory — where a store's nib files
+// live. Tests that place files by hand write them there; a .md at the store
+// ROOT is the pre-migration shape and is not store content.
+func storeDataDir(nibsDir string) string {
+	return store.NewLayout(nibsDir).DataDir()
+}
+
+// dataPath joins a path inside the store's data/ directory.
+func dataPath(nibsDir string, parts ...string) string {
+	return filepath.Join(append([]string{storeDataDir(nibsDir)}, parts...)...)
+}
+
+// mkdirAllT creates dir and every missing parent, failing the test instead of
+// returning an error.
+func mkdirAllT(t *testing.T, dir string) {
+	t.Helper()
+	if err := os.MkdirAll(dir, 0755); err != nil {
+		t.Fatalf("mkdir %s: %v", dir, err)
+	}
+}
+
+// writeFileT writes content to path, failing the test instead of returning an
+// error. The parent directory must already exist.
+func writeFileT(t *testing.T, path, content string) {
+	t.Helper()
+	if err := os.WriteFile(path, []byte(content), 0644); err != nil {
+		t.Fatalf("write %s: %v", path, err)
+	}
+}
 
 // resetRootPersistentFlags restores rootCmd's persistent flag state
 // (--nibs-path, --config) to defaults so tests don't leak each other.
@@ -178,4 +210,15 @@ func captureStdout(t *testing.T, fn func()) string {
 		t.Fatal("captureStdout timed out waiting for goroutine (pipe deadlocked?)")
 		return ""
 	}
+}
+
+// readFileT reads a file's whole content as a string, failing the test instead of
+// returning an error. Used where a refusal must be shown to have changed nothing.
+func readFileT(t *testing.T, path string) string {
+	t.Helper()
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("read %s: %v", path, err)
+	}
+	return string(data)
 }

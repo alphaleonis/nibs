@@ -33,8 +33,8 @@ nibs serve --nibs-path testdata/fixtures/sample-project/.nibs
 func copyFixture(t *testing.T) string {
     t.Helper()
     tmp := t.TempDir()
-    // Copy testdata/fixtures/sample-project/.nibs/ to tmp/.nibs/
-    // Copy testdata/fixtures/sample-project/.nibs.yml to tmp/
+    // Copy testdata/fixtures/sample-project/.nibs/ to tmp/.nibs/ — the store
+    // carries its own config.yml, so nothing else needs copying
     return filepath.Join(tmp, ".nibs")
 }
 ```

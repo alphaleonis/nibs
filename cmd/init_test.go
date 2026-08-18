@@ -7,6 +7,7 @@ import (
 	"testing"
 
 	"github.com/alphaleonis/nibs/internal/config"
+	"github.com/alphaleonis/nibs/internal/store"
 )
 
 // resetInitFlags restores all package-level flag globals touched by the init
@@ -52,10 +53,11 @@ func runInitCmd(t *testing.T, nibsPath string, args ...string) error {
 	return rootCmd.Execute()
 }
 
-// loadInitCfg loads <projectDir>/.nibs.yml and fails the test if missing.
+// loadInitCfg loads the config `nibs init` wrote INSIDE the store and fails
+// the test if it is missing.
 func loadInitCfg(t *testing.T, projectDir string) *config.Config {
 	t.Helper()
-	cfgPath := filepath.Join(projectDir, ".nibs.yml")
+	cfgPath := filepath.Join(projectDir, store.DirName, store.ConfigFileName)
 	cfg, err := config.Load(cfgPath)
 	if err != nil {
 		t.Fatalf("load config at %s: %v", cfgPath, err)
@@ -65,7 +67,10 @@ func loadInitCfg(t *testing.T, projectDir string) *config.Config {
 
 // TestInit_ExplicitPrefix_TracerBullet exercises the happy path: a
 // directory with an awkward camelCase name + an explicit --prefix flag
-// produces a valid prefix in .nibs.yml regardless of the dirname.
+// produces a valid prefix in the store's config regardless of the dirname,
+// and the store comes out in the current shape — `.nibs/{config.yml, data/}`
+// with NO `.nibs.yml` beside it, which is the shape the migration gate
+// refuses.
 func TestInit_ExplicitPrefix_TracerBullet(t *testing.T) {
 	projectDir, nibsPath := setupInitTest(t, "boardGameTracker")
 
@@ -73,15 +78,25 @@ func TestInit_ExplicitPrefix_TracerBullet(t *testing.T) {
 		t.Fatalf("init failed: %v", err)
 	}
 
-	// .nibs.yml must exist and have the explicit prefix.
+	// <store>/config.yml must exist and have the explicit prefix.
 	cfg := loadInitCfg(t, projectDir)
 	if cfg.Nibs.Prefix != "bgt-" {
 		t.Errorf("cfg prefix = %q, want %q", cfg.Nibs.Prefix, "bgt-")
 	}
 
-	// .nibs/ subdir must exist.
+	// The store and its data directory must exist.
 	if _, err := os.Stat(nibsPath); err != nil {
-		t.Errorf("expected .nibs/ dir to exist: %v", err)
+		t.Errorf("expected the .nibs store to exist: %v", err)
+	}
+	if _, err := os.Stat(store.NewLayout(nibsPath).DataDir()); err != nil {
+		t.Errorf("expected the store's data/ directory to exist: %v", err)
+	}
+
+	// And NOT the retired project-root config: a fresh store must never be
+	// born in a shape `nibs migrate` would have to fix.
+	legacy := filepath.Join(projectDir, store.LegacyProjectConfigFileName)
+	if _, err := os.Stat(legacy); !os.IsNotExist(err) {
+		t.Errorf("init wrote %s (stat err = %v); the config belongs inside the store", legacy, err)
 	}
 }
 
@@ -246,11 +261,74 @@ func TestInit_ExplicitPrefix_InvalidCharset(t *testing.T) {
 	}
 }
 
+// TestInit_RefusesToCreateASecondConfig pins the guard that keeps `nibs init`
+// from wedging a project. init is skip-listed from the pre-run migration gate,
+// so it is one of the few commands that runs on a store nothing else will touch,
+// which makes it the one command that can give a project a SECOND config.
+//
+// On a pre-layout project that second config carries a derived prefix, and
+// `nibs migrate` then refuses with two configs it must not choose between. The
+// two disagree on the load-bearing fields, so deleting the wrong one silently
+// re-prefixes the project. Refusing up front is what stops users reaching that
+// state at all.
+func TestInit_RefusesToCreateASecondConfig(t *testing.T) {
+	tests := []struct {
+		name    string
+		build   func(t *testing.T, projectDir, nibsDir string)
+		wantMsg string
+	}{
+		{
+			name: "a pre-layout project is sent to migrate",
+			build: func(t *testing.T, projectDir, _ string) {
+				writeFileT(t, filepath.Join(projectDir, store.LegacyProjectConfigFileName), "nibs:\n  prefix: real-\n  id_length: 6\n")
+			},
+			wantMsg: "nibs migrate",
+		},
+		{
+			name: "an initialized store is not overwritten",
+			build: func(t *testing.T, _, nibsDir string) {
+				mkdirAllT(t, nibsDir)
+				writeFileT(t, filepath.Join(nibsDir, store.ConfigFileName), "nibs:\n  prefix: real-\n")
+			},
+			wantMsg: store.ConfigFileName,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			projectDir, nibsDir := setupInitTest(t, "myproj")
+			tt.build(t, projectDir, nibsDir)
+
+			err := runInitCmd(t, nibsDir, "--json")
+			if err == nil {
+				t.Fatal("init overwrote or duplicated an existing project config")
+			}
+			if !strings.Contains(err.Error(), tt.wantMsg) {
+				t.Errorf("refusal = %v, want it to mention %q", err, tt.wantMsg)
+			}
+		})
+	}
+
+	t.Run("the pre-layout project keeps its one config", func(t *testing.T) {
+		projectDir, nibsDir := setupInitTest(t, "myproj")
+		legacy := filepath.Join(projectDir, store.LegacyProjectConfigFileName)
+		writeFileT(t, legacy, "nibs:\n  prefix: real-\n  id_length: 6\n")
+
+		if err := runInitCmd(t, nibsDir, "--json"); err == nil {
+			t.Fatal("expected a refusal")
+		}
+		assertNoConfigFile(t, projectDir)
+		if _, err := os.Stat(legacy); err != nil {
+			t.Errorf("init disturbed the pre-layout config: %v", err)
+		}
+	})
+}
+
 // assertNoConfigFile helps a handful of failure-mode tests verify that a
-// rejected init did NOT leave a partial .nibs.yml behind.
+// rejected init did NOT leave a partial config behind.
 func assertNoConfigFile(t *testing.T, projectDir string) {
 	t.Helper()
-	cfgPath := filepath.Join(projectDir, ".nibs.yml")
+	cfgPath := filepath.Join(projectDir, store.DirName, store.ConfigFileName)
 	_, err := os.Stat(cfgPath)
 	if err == nil {
 		t.Errorf("expected %s to NOT exist after rejected init", cfgPath)

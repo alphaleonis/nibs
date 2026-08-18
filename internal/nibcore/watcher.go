@@ -231,15 +231,19 @@ func (c *Core) fanOut(events []NibEvent, payloadsCloned bool) {
 	}
 }
 
-// StartWatching starts watching the .nibs directory for changes, updating
-// internal state incrementally (after debouncing) as nibs are created,
-// modified, or deleted. Use Subscribe() to receive the resulting nib change
-// events via a channel. Calling it while already watching is a no-op.
+// StartWatching starts watching the store for changes, updating internal state
+// incrementally (after debouncing) as nibs are created, modified, or deleted.
+// Use Subscribe() to receive the resulting nib change events via a channel.
+// Calling it while already watching is a no-op.
 //
-// Subdirectories present at this point are watched too, on a best-effort basis;
-// ones created later are not, so a directory the walk missed stays unwatched
-// for the watcher's lifetime. Incremental updates also mean a change the
-// watcher never observes stays stale until the next full Load.
+// The watched set is the store's own directories (store.Layout.WatchableDirs:
+// the root plus data/ and archive/ where they exist) plus any subdirectories
+// under them, on a best-effort basis. The ROOT is watched even though it holds
+// no nib files: a data/ or archive/ directory created after the watch starts
+// arrives as a create event there, and watchLoop adds the new directory to the
+// watch rather than leaving it a blind spot for the watcher's lifetime.
+// Incremental updates still mean a change the watcher never observes stays
+// stale until the next full Load.
 func (c *Core) StartWatching() error {
 	c.mu.Lock()
 	if c.watching {
@@ -259,14 +263,21 @@ func (c *Core) StartWatching() error {
 		return err
 	}
 
-	// Watch all subdirectories (best effort - don't fail if any can't be watched)
-	_ = filepath.WalkDir(c.root, func(path string, d os.DirEntry, err error) error {
-		if err != nil || !d.IsDir() || path == c.root {
-			return nil
+	// Watch the store's content directories and anything nested under them
+	// (best effort — don't fail if any can't be watched).
+	for _, dir := range c.layout.WatchableDirs() {
+		if dir == c.root {
+			continue // added above, and its failure is fatal
 		}
-		_ = watcher.Add(path)
-		return nil
-	})
+		_ = watcher.Add(dir)
+		_ = filepath.WalkDir(dir, func(path string, d os.DirEntry, err error) error {
+			if err != nil || !d.IsDir() || path == dir {
+				return nil
+			}
+			_ = watcher.Add(path)
+			return nil
+		})
+	}
 
 	// Capture the done channel in a local while the lock is still held, and hand
 	// that local to the loop. The loop must never re-read c.done: a restart
@@ -347,12 +358,25 @@ func (c *Core) watchLoop(watcher *fsnotify.Watcher, done <-chan struct{}) {
 				return
 			}
 
-			// Only care about .md files within the .nibs directory tree
+			// A DIRECTORY appearing inside the store has to join the watch.
+			// data/ and archive/ are created on demand — by `nibs migrate`, by
+			// the first archive, by a `git pull` in the store repo — and a
+			// directory that appears after the watch started would otherwise
+			// stay a permanent blind spot: every nib file inside it is
+			// invisible for the rest of the process's life.
+			if event.Op&fsnotify.Create != 0 && c.isStoreSubdir(event.Name) {
+				_ = watcher.Add(event.Name)
+				// Fall through: a directory is never a .md file, so the .md
+				// filter below drops it. Files that landed inside it before
+				// the watch was added are picked up by the next full Load.
+			}
+
+			// Only care about .md files within the store's directory tree
 			if !strings.HasSuffix(event.Name, ".md") {
 				continue
 			}
 
-			// Verify the file is within the .nibs directory
+			// Verify the file is within the store directory
 			relPath, err := filepath.Rel(c.root, event.Name)
 			if err != nil || strings.HasPrefix(relPath, "..") {
 				continue
@@ -442,7 +466,7 @@ func (c *Core) handleChanges(changes map[string]fsnotify.Op) {
 		// all, and must fall through to the create/write handling below.
 		//
 		// This is the common case on Windows, not a corner: every nib write commits
-		// through atomicWriteFile, i.e. a rename over the existing file, and
+		// through AtomicWriteFile, i.e. a rename over the existing file, and
 		// ReadDirectoryChangesW reports that replacing rename on the TARGET path as
 		// REMOVE followed by CREATE. Both halves land in one debounce window and
 		// watchLoop ORs them into a single op, so an ordinary external edit arrives
@@ -476,7 +500,7 @@ func (c *Core) handleChanges(changes map[string]fsnotify.Op) {
 			// not. Emitting archived REQUIRES the archive file to exist, so a
 			// misdetection can never strand a phantom — the deliberate safe bias.
 			if !fromArchive {
-				archiveRel := filepath.ToSlash(filepath.Join(ArchiveDir, filename))
+				archiveRel := c.layout.ArchiveRel(filename)
 				if c.fileExists(filepath.Join(c.root, archiveRel)) {
 					stored.Path = archiveRel
 					c.nibs[id] = stored
@@ -497,7 +521,7 @@ func (c *Core) handleChanges(changes map[string]fsnotify.Op) {
 			// rather than treat this as an in-place edit — nibs-2fgz). Evicting here
 			// would silently drop a live nib whose file is present on disk.
 			if fromArchive {
-				mainRel := filepath.ToSlash(filename)
+				mainRel := c.layout.DataRel(filename)
 				if c.fileExists(filepath.Join(c.root, mainRel)) {
 					stored.Path = mainRel
 					c.nibs[id] = stored
@@ -718,6 +742,25 @@ func (c *Core) fileExists(path string) bool {
 	return err == nil
 }
 
+// isStoreSubdir reports whether an absolute path is a DIRECTORY inside the
+// store — the test watchLoop applies before extending the watch to a
+// newly-created directory. Dot directories are excluded for the same reason
+// WalkStoreFiles prunes them: `.git`, `.obsidian` and the like are not store
+// content, and watching them would fill the debounce batches with noise.
+func (c *Core) isStoreSubdir(absPath string) bool {
+	rel, err := filepath.Rel(c.root, absPath)
+	if err != nil || rel == "." || strings.HasPrefix(rel, "..") {
+		return false
+	}
+	for _, part := range strings.Split(filepath.ToSlash(rel), "/") {
+		if strings.HasPrefix(part, ".") {
+			return false
+		}
+	}
+	info, err := os.Stat(absPath)
+	return err == nil && info.IsDir()
+}
+
 // isArchivedAbsPath reports whether an absolute filesystem path lies within the
 // archive directory under the nibs root. It is the on-disk-location counterpart
 // to isArchivedPath (which classifies a stored, root-relative Path); the removal
@@ -731,19 +774,24 @@ func (c *Core) isArchivedAbsPath(absPath string) bool {
 	return c.isArchivedPath(filepath.ToSlash(rel))
 }
 
-// findRelPathByID scans the main data directory and the archive subdirectory for
-// a nib file whose parsed id equals id, returning its root-relative,
+// findRelPathByID scans the store's content directories (data/ and archive/)
+// for a nib file whose parsed id equals id, returning its root-relative,
 // forward-slash path. It recognizes a nib by id rather than by exact basename, so
 // it locates a file that a same-id slug rename moved to a new name — the case the
 // removal branch's two basename checks (archive-in, unarchive-out) cannot match.
 // The scan is bounded to two os.ReadDir calls and is reached only on the removal
 // branch's delete fall-through, so the two basename checks stay the cheap fast
 // path.
+//
+// Scanning the store ROOT instead of data/ would misread every ordinary move:
+// nib files no longer live there, so the scan would find nothing and the
+// removal branch would fall through to a genuine deletion, dropping a live nib
+// whose file is present on disk.
 func (c *Core) findRelPathByID(id string) (string, bool) {
 	if id == "" {
 		return "", false
 	}
-	for _, dir := range []string{c.root, filepath.Join(c.root, ArchiveDir)} {
+	for _, dir := range []string{c.layout.DataDir(), c.layout.ArchiveDir()} {
 		entries, err := os.ReadDir(dir)
 		if err != nil {
 			continue

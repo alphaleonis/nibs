@@ -229,12 +229,25 @@ tasks:
   test:
     desc: Run all tests (Go + web, incl. the -race gate on nibcore + graph)
     deps: [web:build]
+    env:
+      # Where internal/testskip appends its tally of guards that did not run
+      # because this machine could not build their fixture. Absolute, because
+      # `go test ./...` runs each package's binary with that package's source
+      # directory as its cwd — a relative path would scatter one file per
+      # package. `go test` also DISCARDS a passing package's stdout in
+      # package-list mode, so this file is the only channel a green run has.
+      NIBS_SKIP_REPORT: '{{.ROOT_DIR}}/.skipped-guards.txt'
     cmds:
+      # Stale counts from a previous run would read as this run's.
+      - rm -f "$NIBS_SKIP_REPORT"
       # Go tests run memory-capped so a runaway test is OOM-killed inside its own
       # cgroup instead of triggering a global OOM that takes down the WSL VM
       # (nibs-mv0i). Falls back to plain `go test` where systemd --user scopes
       # aren't available. Override the cap with NIBS_CAP_MEM_MAX (default 4G).
       - bash scripts/go-test-capped.sh ./...
+      # Silent when nothing was skipped, which is the normal case here.
+      - cmd: 'if [ -s "$NIBS_SKIP_REPORT" ]; then cat "$NIBS_SKIP_REPORT"; fi'
+        silent: true
       # Run the concurrency-critical packages a second time under -race, so a
       # reintroduced data race fails the default gate rather than only when
       # someone remembers to pass -race by hand (nibs-7l3v). Many guards in these
@@ -305,13 +318,12 @@ tasks:
         sh: mktemp -d -p "{{env "TEMP" | default "/tmp"}}"
     cmds:
       - defer: rm -rf "{{.TMP}}"
-      - cp -r testdata/fixtures/sample-project/.nibs testdata/fixtures/sample-project/.nibs.yml "{{.TMP}}/"
+      - cp -r testdata/fixtures/sample-project/.nibs "{{.TMP}}/"
       - echo "Using temporary copy at {{.TMP}}"
-      # --config, not --nibs-path: this runs from the repo root, and --nibs-path
-      # moves only the data directory — config discovery would still walk up from
-      # the cwd and apply THIS project's prefix to fixture data. Naming the
-      # fixture's config resolves its data directory alongside it.
-      - go run . serve --config "{{.TMP}}/.nibs.yml" {{.CLI_ARGS}}
+      # --nibs-path names the store, and the store carries its own config, so
+      # the fixture is read under its own prefix even though this runs from the
+      # repo root.
+      - go run . serve --nibs-path "{{.TMP}}/.nibs" {{.CLI_ARGS}}
 
   demo:tui:
     desc: Run the TUI with the sample project fixture (temporary copy)
@@ -320,10 +332,10 @@ tasks:
         sh: mktemp -d -p "{{env "TEMP" | default "/tmp"}}"
     cmds:
       - defer: rm -rf "{{.TMP}}"
-      - cp -r testdata/fixtures/sample-project/.nibs testdata/fixtures/sample-project/.nibs.yml "{{.TMP}}/"
+      - cp -r testdata/fixtures/sample-project/.nibs "{{.TMP}}/"
       - echo "Using temporary copy at {{.TMP}}"
-      # --config, not --nibs-path — see the demo task above.
-      - go run . tui --config "{{.TMP}}/.nibs.yml"
+      # --nibs-path names the store — see the demo task above.
+      - go run . tui --nibs-path "{{.TMP}}/.nibs"
 
   check:
     desc: Type-check the web UI (svelte-check for src/, tsc for everything else)

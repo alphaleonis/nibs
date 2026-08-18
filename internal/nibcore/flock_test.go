@@ -9,6 +9,7 @@ import (
 
 	"github.com/alphaleonis/nibs/internal/config"
 	"github.com/alphaleonis/nibs/internal/nib"
+	"github.com/alphaleonis/nibs/internal/store"
 )
 
 // TestAcquireFileLockSerializesHolders proves the advisory lock actually
@@ -96,7 +97,7 @@ func TestAcquireFileLockReleaseAllowsReacquire(t *testing.T) {
 // keep proving nothing: released stays set, so requireStoreLock still refuses
 // it (pinned by TestMigrationMethodsRequireLockToken).
 func TestStoreLockReleaseIdempotent(t *testing.T) {
-	nibsRoot := filepath.Join(t.TempDir(), NibsDir)
+	nibsRoot := filepath.Join(t.TempDir(), store.DirName)
 	if err := os.MkdirAll(nibsRoot, 0o755); err != nil {
 		t.Fatal(err)
 	}
@@ -121,7 +122,7 @@ func TestStoreLockReleaseIdempotent(t *testing.T) {
 // would observe an immediate completion — the guard bites.
 func TestUpdateAcquiresWriteLock(t *testing.T) {
 	tmpDir := t.TempDir()
-	nibsDir := filepath.Join(tmpDir, NibsDir)
+	nibsDir := filepath.Join(tmpDir, store.DirName)
 	if err := os.MkdirAll(nibsDir, 0o755); err != nil {
 		t.Fatal(err)
 	}

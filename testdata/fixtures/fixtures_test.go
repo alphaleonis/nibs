@@ -9,17 +9,17 @@ import (
 func TestCopySampleProject(t *testing.T) {
 	root := CopySampleProject(t)
 
-	// Config file should exist
-	configPath := filepath.Join(root, ".nibs.yml")
+	// The config lives inside the store
+	configPath := filepath.Join(NibsPath(root), "config.yml")
 	if _, err := os.Stat(configPath); err != nil {
-		t.Errorf("expected .nibs.yml at %s: %v", configPath, err)
+		t.Errorf("expected config.yml at %s: %v", configPath, err)
 	}
 
-	// .nibs directory should exist with nib files
-	nibsDir := NibsPath(root)
-	entries, err := os.ReadDir(nibsDir)
+	// data/ should exist with nib files
+	dataDir := DataPath(root)
+	entries, err := os.ReadDir(dataDir)
 	if err != nil {
-		t.Fatalf("reading .nibs directory: %v", err)
+		t.Fatalf("reading data directory: %v", err)
 	}
 
 	var mdCount int
@@ -34,12 +34,12 @@ func TestCopySampleProject(t *testing.T) {
 	}
 
 	// Should be a separate copy (modifying shouldn't affect original)
-	testFile := filepath.Join(nibsDir, "test-write.md")
+	testFile := filepath.Join(dataDir, "test-write.md")
 	if err := os.WriteFile(testFile, []byte("test"), 0o644); err != nil {
 		t.Fatalf("writing to temp copy: %v", err)
 	}
 	// Verify original doesn't have this file
-	origPath := filepath.Join("sample-project", ".nibs", "test-write.md")
+	origPath := filepath.Join("sample-project", ".nibs", "data", "test-write.md")
 	if _, err := os.Stat(origPath); err == nil {
 		t.Error("write to temp copy affected the original fixture")
 	}

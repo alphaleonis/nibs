@@ -1,6 +1,7 @@
 package cmd
 
 import (
+	"encoding/json"
 	"errors"
 	"os"
 	"path/filepath"
@@ -9,6 +10,7 @@ import (
 
 	"github.com/alphaleonis/nibs/internal/config"
 	"github.com/alphaleonis/nibs/internal/nib"
+	"github.com/alphaleonis/nibs/internal/testskip"
 )
 
 // testNibSpec is a minimal on-disk description of a nib used by
@@ -22,11 +24,12 @@ type testNibSpec struct {
 	body      string
 }
 
-// setupSetPrefixTest creates a temporary project with a .nibs directory, a
-// .nibs.yml containing the given prefix, and one rendered nib file per spec.
-// It also registers a t.Cleanup that resets the package-level set-prefix flag
-// vars and restores gitIsDirtyFn to realGitIsDirty. By default gitIsDirtyFn
-// is overridden to report clean so tests don't accidentally shell out to git.
+// setupSetPrefixTest creates a temporary project with a .nibs store — its
+// config.yml carrying the given prefix, and one rendered nib file per spec
+// under data/. It also registers a t.Cleanup that resets the package-level
+// set-prefix flag vars and restores gitIsDirtyFn to realGitIsDirty. By default
+// gitIsDirtyFn is overridden to report clean so tests don't accidentally shell
+// out to git.
 //
 // Returns (projectRoot, nibsDir, cfgPath).
 func setupSetPrefixTest(t *testing.T, prefix string, nibs ...testNibSpec) (string, string, string) {
@@ -51,11 +54,11 @@ func setupSetPrefixTest(t *testing.T, prefix string, nibs ...testNibSpec) (strin
 
 	tmpDir := t.TempDir()
 	nibsDir := filepath.Join(tmpDir, ".nibs")
-	if err := os.MkdirAll(nibsDir, 0o755); err != nil {
+	if err := os.MkdirAll(storeDataDir(nibsDir), 0o755); err != nil {
 		t.Fatalf("mkdir nibs: %v", err)
 	}
 
-	cfgPath := filepath.Join(tmpDir, ".nibs.yml")
+	cfgPath := filepath.Join(nibsDir, "config.yml")
 	cfgYAML := "nibs:\n  prefix: " + prefix + "\n  id_length: 4\n"
 	if err := os.WriteFile(cfgPath, []byte(cfgYAML), 0o644); err != nil {
 		t.Fatalf("write cfg: %v", err)
@@ -76,7 +79,7 @@ func setupSetPrefixTest(t *testing.T, prefix string, nibs ...testNibSpec) (strin
 		if err != nil {
 			t.Fatalf("render %s: %v", spec.id, err)
 		}
-		if err := os.WriteFile(filepath.Join(nibsDir, spec.filename), data, 0o644); err != nil {
+		if err := os.WriteFile(dataPath(nibsDir, spec.filename), data, 0o644); err != nil {
 			t.Fatalf("write nib %s: %v", spec.filename, err)
 		}
 	}
@@ -84,11 +87,17 @@ func setupSetPrefixTest(t *testing.T, prefix string, nibs ...testNibSpec) (strin
 	return tmpDir, nibsDir, cfgPath
 }
 
-// runSetPrefixCmd invokes `nibs --config <cfg> --nibs-path <dir> config set-prefix <args...>`
-// using the package-level rootCmd. Returns the error from rootCmd.Execute().
+// runSetPrefixCmd invokes `nibs --config <cfg> config set-prefix <args...>` using
+// the package-level rootCmd. Returns the error from rootCmd.Execute().
+//
+// --config alone names the store: the config lives inside it, so its containing
+// directory IS nibsDir here. Passing --nibs-path as well is refused, because a
+// store and a config from different projects decouple a store from its own
+// vocabulary.
 func runSetPrefixCmd(t *testing.T, cfgPath, nibsDir string, args ...string) error {
 	t.Helper()
-	full := append([]string{"--config", cfgPath, "--nibs-path", nibsDir, "config", "set-prefix"}, args...)
+	_ = nibsDir
+	full := append([]string{"--config", cfgPath, "config", "set-prefix"}, args...)
 	rootCmd.SetArgs(full)
 	return rootCmd.Execute()
 }
@@ -131,20 +140,20 @@ func TestSetPrefix_HappyPath_RenamesFilesAndUpdatesReferences(t *testing.T) {
 
 	// Old files must be gone.
 	for _, old := range []string{"tnib-aaa--root.md", "tnib-bbb--child.md", "tnib-ccc--blocked.md"} {
-		if _, err := os.Stat(filepath.Join(nibsDir, old)); !os.IsNotExist(err) {
+		if _, err := os.Stat(dataPath(nibsDir, old)); !os.IsNotExist(err) {
 			t.Errorf("expected old file %s to be gone, stat err=%v", old, err)
 		}
 	}
 
 	// New files must exist.
 	for _, newName := range []string{"new-aaa--root.md", "new-bbb--child.md", "new-ccc--blocked.md"} {
-		if _, err := os.Stat(filepath.Join(nibsDir, newName)); err != nil {
+		if _, err := os.Stat(dataPath(nibsDir, newName)); err != nil {
 			t.Errorf("expected new file %s to exist: %v", newName, err)
 		}
 	}
 
 	// Child's parent reference must be updated.
-	child := parseNibFile(t, filepath.Join(nibsDir, "new-bbb--child.md"))
+	child := parseNibFile(t, dataPath(nibsDir, "new-bbb--child.md"))
 	if child.Parent != "new-aaa" {
 		t.Errorf("child parent = %q, want %q", child.Parent, "new-aaa")
 	}
@@ -153,7 +162,7 @@ func TestSetPrefix_HappyPath_RenamesFilesAndUpdatesReferences(t *testing.T) {
 	}
 
 	// Blocked nib's parent + blocked_by must be updated.
-	blocked := parseNibFile(t, filepath.Join(nibsDir, "new-ccc--blocked.md"))
+	blocked := parseNibFile(t, dataPath(nibsDir, "new-ccc--blocked.md"))
 	if blocked.Parent != "new-aaa" {
 		t.Errorf("blocked parent = %q, want %q", blocked.Parent, "new-aaa")
 	}
@@ -182,7 +191,7 @@ func TestSetPrefix_InvalidNewPrefix_Rejected(t *testing.T) {
 	}
 
 	// File must be unchanged.
-	if _, statErr := os.Stat(filepath.Join(nibsDir, "tnib-aaa--only.md")); statErr != nil {
+	if _, statErr := os.Stat(dataPath(nibsDir, "tnib-aaa--only.md")); statErr != nil {
 		t.Errorf("expected original file to remain, stat err=%v", statErr)
 	}
 
@@ -210,7 +219,7 @@ func TestSetPrefix_GitDirtyWithoutForce_Rejected(t *testing.T) {
 	}
 
 	// File must be unchanged.
-	if _, statErr := os.Stat(filepath.Join(nibsDir, "tnib-aaa--only.md")); statErr != nil {
+	if _, statErr := os.Stat(dataPath(nibsDir, "tnib-aaa--only.md")); statErr != nil {
 		t.Errorf("expected original file to remain, stat err=%v", statErr)
 	}
 
@@ -233,11 +242,11 @@ func TestSetPrefix_GitDirtyWithForce_Proceeds(t *testing.T) {
 	}
 
 	// Old file gone.
-	if _, err := os.Stat(filepath.Join(nibsDir, "tnib-aaa--only.md")); !os.IsNotExist(err) {
+	if _, err := os.Stat(dataPath(nibsDir, "tnib-aaa--only.md")); !os.IsNotExist(err) {
 		t.Errorf("expected old file to be removed, stat err=%v", err)
 	}
 	// New file exists.
-	if _, err := os.Stat(filepath.Join(nibsDir, "new-aaa--only.md")); err != nil {
+	if _, err := os.Stat(dataPath(nibsDir, "new-aaa--only.md")); err != nil {
 		t.Errorf("expected new file to exist: %v", err)
 	}
 
@@ -269,11 +278,11 @@ func TestSetPrefix_DryRun_DoesNotMutateOrCallGit(t *testing.T) {
 	}
 
 	// Original file still there.
-	if _, err := os.Stat(filepath.Join(nibsDir, "tnib-aaa--only.md")); err != nil {
+	if _, err := os.Stat(dataPath(nibsDir, "tnib-aaa--only.md")); err != nil {
 		t.Errorf("expected original file to remain after dry-run: %v", err)
 	}
 	// No renamed file.
-	if _, err := os.Stat(filepath.Join(nibsDir, "new-aaa--only.md")); !os.IsNotExist(err) {
+	if _, err := os.Stat(dataPath(nibsDir, "new-aaa--only.md")); !os.IsNotExist(err) {
 		t.Errorf("expected new file NOT to exist after dry-run, stat err=%v", err)
 	}
 
@@ -298,7 +307,7 @@ func TestSetPrefix_SamePrefix_Rejected(t *testing.T) {
 	}
 
 	// File must be unchanged.
-	if _, statErr := os.Stat(filepath.Join(nibsDir, "tnib-aaa--only.md")); statErr != nil {
+	if _, statErr := os.Stat(dataPath(nibsDir, "tnib-aaa--only.md")); statErr != nil {
 		t.Errorf("expected original file to remain, stat err=%v", statErr)
 	}
 
@@ -317,7 +326,7 @@ func TestSetPrefix_Collision_Rejected(t *testing.T) {
 	// the path exists without core.Load() picking it up as a stray nib
 	// (it walks only .md regular files). This drives targetExists to report
 	// true and exercises the collision short-circuit in runSetPrefix.
-	if err := os.Mkdir(filepath.Join(nibsDir, "new-aaa--only.md"), 0o755); err != nil {
+	if err := os.Mkdir(dataPath(nibsDir, "new-aaa--only.md"), 0o755); err != nil {
 		t.Fatalf("seed collision dir: %v", err)
 	}
 
@@ -329,7 +338,7 @@ func TestSetPrefix_Collision_Rejected(t *testing.T) {
 		t.Errorf("error = %q, should mention collision", err.Error())
 	}
 	// Original file should still exist at its old path.
-	if _, err := os.Stat(filepath.Join(nibsDir, "tnib-aaa--only.md")); err != nil {
+	if _, err := os.Stat(dataPath(nibsDir, "tnib-aaa--only.md")); err != nil {
 		t.Errorf("original file clobbered: %v", err)
 	}
 	// Config should still have the old prefix.
@@ -355,7 +364,7 @@ func TestSetPrefix_GitCheckError_Surfaces(t *testing.T) {
 		t.Errorf("error %q should mention git", err.Error())
 	}
 	// Original file should still exist at its old path.
-	if _, err := os.Stat(filepath.Join(nibsDir, "tnib-aaa--only.md")); err != nil {
+	if _, err := os.Stat(dataPath(nibsDir, "tnib-aaa--only.md")); err != nil {
 		t.Errorf("original file clobbered: %v", err)
 	}
 }
@@ -380,10 +389,10 @@ func TestSetPrefix_AutoAppendsDash(t *testing.T) {
 				t.Fatalf("set-prefix %q failed: %v", tc.input, err)
 			}
 			// Same expected file regardless of which input form was used.
-			if _, err := os.Stat(filepath.Join(nibsDir, "new-aaa--only.md")); err != nil {
+			if _, err := os.Stat(dataPath(nibsDir, "new-aaa--only.md")); err != nil {
 				t.Errorf("expected new-aaa--only.md to exist: %v", err)
 			}
-			if _, err := os.Stat(filepath.Join(nibsDir, "tnib-aaa--only.md")); !os.IsNotExist(err) {
+			if _, err := os.Stat(dataPath(nibsDir, "tnib-aaa--only.md")); !os.IsNotExist(err) {
 				t.Errorf("expected old file gone, got err=%v", err)
 			}
 			cfg := loadCfg(t, cfgPath)
@@ -418,7 +427,7 @@ func TestSetPrefix_UppercaseExplicitRejected(t *testing.T) {
 
 	// Original file must be unchanged (not renamed to BGT-aaa--only.md or
 	// any other form).
-	if _, statErr := os.Stat(filepath.Join(nibsDir, "tnib-aaa--only.md")); statErr != nil {
+	if _, statErr := os.Stat(dataPath(nibsDir, "tnib-aaa--only.md")); statErr != nil {
 		t.Errorf("expected original file to remain, stat err=%v", statErr)
 	}
 
@@ -442,14 +451,115 @@ func TestSetPrefix_GrandfatheredOldPrefix(t *testing.T) {
 	if err := runSetPrefixCmd(t, cfgPath, nibsDir, "bgt", "--json"); err != nil {
 		t.Fatalf("set-prefix from grandfathered prefix failed: %v", err)
 	}
-	if _, err := os.Stat(filepath.Join(nibsDir, "bgt-aaa--only.md")); err != nil {
+	if _, err := os.Stat(dataPath(nibsDir, "bgt-aaa--only.md")); err != nil {
 		t.Errorf("expected bgt-aaa--only.md to exist: %v", err)
 	}
-	if _, err := os.Stat(filepath.Join(nibsDir, "boardGameTracker-aaa--only.md")); !os.IsNotExist(err) {
+	if _, err := os.Stat(dataPath(nibsDir, "boardGameTracker-aaa--only.md")); !os.IsNotExist(err) {
 		t.Errorf("expected old file gone, got err=%v", err)
 	}
 	cfg := loadCfg(t, cfgPath)
 	if cfg.Nibs.Prefix != "bgt-" {
 		t.Errorf("cfg prefix = %q, want %q", cfg.Nibs.Prefix, "bgt-")
+	}
+}
+
+// TestSetPrefix_ReportsReplacingASymlinkedConfig pins the note this command
+// prints when the config write replaces a symlink.
+//
+// config.Save reports that replacement rather than refusing it, because by the
+// time it runs every nib file has already been renamed and a refusal would
+// leave the store half-changed. The note is therefore the only thing telling a
+// user whose config.yml is a link into a dotfile manager that the manager's
+// copy still carries the old prefix and will restore it on the next apply.
+// internal/config pinned the reporting; nothing pinned the printing, so
+// disabling Save's symlink detection left this whole package green.
+func TestSetPrefix_ReportsReplacingASymlinkedConfig(t *testing.T) {
+	tests := []struct {
+		name string
+		args []string
+		// message extracts the human-readable message from captured stdout,
+		// which the two output modes carry differently.
+		message func(t *testing.T, out string) string
+	}{
+		{
+			name:    "printed line",
+			message: func(_ *testing.T, out string) string { return out },
+		},
+		{
+			// --json routes the same string through output.SuccessMessage, a
+			// separate sink — agents read the envelope and never see the line.
+			name: "json envelope",
+			args: []string{"--json"},
+			message: func(t *testing.T, out string) string {
+				t.Helper()
+				var env struct {
+					Success bool   `json:"success"`
+					Message string `json:"message"`
+				}
+				if err := json.Unmarshal([]byte(out), &env); err != nil {
+					t.Fatalf("decoding the success envelope %q: %v", out, err)
+				}
+				if !env.Success {
+					t.Fatalf("envelope reports failure: %s", out)
+				}
+				return env.Message
+			},
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			tmpDir, nibsDir, cfgPath := setupSetPrefixTest(t, "tnib-",
+				testNibSpec{filename: "tnib-aaa--only.md", id: "tnib-aaa"},
+			)
+
+			// The real config lives outside the store, the way a dotfile
+			// manager keeps it, with the store's config.yml linking to it.
+			external := filepath.Join(tmpDir, "dotfiles", "nibs-config.yml")
+			if err := os.MkdirAll(filepath.Dir(external), 0o755); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.Rename(cfgPath, external); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.Symlink(external, cfgPath); err != nil {
+				testskip.SymlinkUnavailable(t, err)
+			}
+
+			args := append([]string{"--config", cfgPath, "config", "set-prefix", "new-"}, tc.args...)
+			out, err := runRootWith(t, args...)
+			if err != nil {
+				t.Fatalf("set-prefix: %v", err)
+			}
+
+			msg := tc.message(t, out)
+			if !strings.Contains(msg, external) {
+				t.Errorf("output does not name the stale file %s, which is the only way the user learns of it:\n%s", external, msg)
+			}
+			if !strings.Contains(msg, cfgPath) {
+				t.Errorf("output does not name the config that was replaced (%s):\n%s", cfgPath, msg)
+			}
+			if !strings.Contains(msg, "symlink") {
+				t.Errorf("output does not say a symlink was replaced, so the note reads as unrelated advice:\n%s", msg)
+			}
+
+			// Everything above asserts nothing unless the divergence is real:
+			// the link must actually be gone and its target left behind.
+			if info, lerr := os.Lstat(cfgPath); lerr != nil || info.Mode()&os.ModeSymlink != 0 {
+				t.Fatalf("Lstat(%s) = %v, %v; the link was not replaced, so there was nothing to report", cfgPath, info, lerr)
+			}
+			stale, err := os.ReadFile(external)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if !strings.Contains(string(stale), "tnib-") {
+				t.Fatalf("the symlink target was updated after all, so there is nothing to report:\n%s", stale)
+			}
+			// And the rename really did happen first, which is why Save
+			// reports instead of refusing.
+			if _, err := os.Stat(dataPath(nibsDir, "new-aaa--only.md")); err != nil {
+				t.Errorf("expected new-aaa--only.md to exist: %v", err)
+			}
+		})
 	}
 }

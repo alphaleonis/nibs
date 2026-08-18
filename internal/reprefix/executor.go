@@ -17,7 +17,7 @@ import (
 //  3. Rewrite every renamed file: read, update ID + Parent + BlockedBy, write
 //
 // Execute does NOT:
-//   - Update the project config (.nibs.yml) — callers do that AFTER Execute
+//   - Update the project config (<store>/config.yml) — callers do that AFTER Execute
 //     returns successfully, so a partial rename leaves the config pointing
 //     at the old prefix for easier recovery.
 //   - Coordinate with a file watcher — callers must ensure no fsnotify

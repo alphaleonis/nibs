@@ -412,7 +412,7 @@ func TestExecute_SampleProjectEndToEnd(t *testing.T) {
 	// Loading a fresh Core pointed at the renamed project must succeed.
 	cfg := config.Default()
 	cfg.Nibs.Prefix = "demo-"
-	cfg.SetConfigDir(root)
+	cfg.SetStoreDir(nibsPath)
 
 	core := nibcore.New(nibsPath, cfg)
 	if err := core.Load(); err != nil {

@@ -490,26 +490,26 @@ func setupListCobraTest(t *testing.T, files map[string]string) string {
 
 	tmpDir := t.TempDir()
 	nibsDir := filepath.Join(tmpDir, ".nibs")
-	if err := os.MkdirAll(nibsDir, 0755); err != nil {
+	if err := os.MkdirAll(storeDataDir(nibsDir), 0755); err != nil {
 		t.Fatal(err)
 	}
 	for name, content := range files {
-		if err := os.WriteFile(filepath.Join(nibsDir, name), []byte(content), 0644); err != nil {
+		if err := os.WriteFile(dataPath(nibsDir, name), []byte(content), 0644); err != nil {
 			t.Fatal(err)
 		}
 	}
 	return nibsDir
 }
 
-// setupListCobraTestWithPrefix is setupListCobraTest plus a .nibs.yml carrying
-// an explicit prefix, written beside the data directory. Tests that need the
-// short (prefix-less) spelling of an id use it so the prefix under test is the
+// setupListCobraTestWithPrefix is setupListCobraTest plus a config carrying an
+// explicit prefix, written INSIDE the store. Tests that need the short
+// (prefix-less) spelling of an id use it so the prefix under test is the
 // fixture's own rather than whatever project config the test cwd happens to sit
-// under. Returns the data directory and the config path to pass as --config.
+// under. Returns the store directory and the config path to pass as --config.
 func setupListCobraTestWithPrefix(t *testing.T, prefix string, files map[string]string) (nibsDir, cfgPath string) {
 	t.Helper()
 	nibsDir = setupListCobraTest(t, files)
-	cfgPath = filepath.Join(filepath.Dir(nibsDir), ".nibs.yml")
+	cfgPath = filepath.Join(nibsDir, "config.yml")
 	body := fmt.Sprintf("nibs:\n  prefix: %s\n  id_length: 4\n", prefix)
 	if err := os.WriteFile(cfgPath, []byte(body), 0644); err != nil {
 		t.Fatal(err)
@@ -634,21 +634,21 @@ func TestListCommand_MentionedByFlag(t *testing.T) {
 
 func TestListCommand_MentionsFlag_ShortIDNormalisation(t *testing.T) {
 	// Passing a short-form id (without the prefix) should still resolve via
-	// the GraphQL filter layer's NormalizeID path. We write an explicit
-	// .nibs.yml with prefix `nibs-` and point --config at it so the loaded
-	// config's prefix is honored regardless of test cwd.
+	// the GraphQL filter layer's NormalizeID path. The store carries its own
+	// config with prefix `nibs-`, so that prefix is honored regardless of the
+	// test cwd.
 	tmpDir := t.TempDir()
 	nibsDir := filepath.Join(tmpDir, ".nibs")
-	if err := os.MkdirAll(nibsDir, 0755); err != nil {
+	if err := os.MkdirAll(storeDataDir(nibsDir), 0755); err != nil {
 		t.Fatal(err)
 	}
-	cfgPath := filepath.Join(tmpDir, ".nibs.yml")
+	cfgPath := filepath.Join(nibsDir, "config.yml")
 	if err := os.WriteFile(cfgPath, []byte("nibs:\n  prefix: nibs-\n  id_length: 4\n"), 0644); err != nil {
 		t.Fatal(err)
 	}
 	for name, content := range mentionsFixture() {
 		// Prefix filenames with `nibs-` so the ids parse as nibs-a1 etc.
-		target := filepath.Join(nibsDir, "nibs-"+name)
+		target := dataPath(nibsDir, "nibs-"+name)
 		if err := os.WriteFile(target, []byte(content), 0644); err != nil {
 			t.Fatal(err)
 		}
@@ -659,9 +659,10 @@ func TestListCommand_MentionsFlag_ShortIDNormalisation(t *testing.T) {
 
 	// Pass the short form "a1" — filter layer should normalize to nibs-a1.
 	// --all keeps the completed mentioner visible (list is open-by-default).
+	// --config alone names the store (the config lives inside it); the two
+	// flags together are refused.
 	rootCmd.SetArgs([]string{
 		"--config", cfgPath,
-		"--nibs-path", nibsDir,
 		"list", "--mentions", "a1", "--all", "--json",
 	})
 
@@ -764,11 +765,12 @@ func projectionFixture() map[string]string {
 
 // runListCmdWithConfig is runListCmd with an explicit --config, for tests whose
 // fixture supplies its own project config (see setupListCobraTestWithPrefix).
-// --nibs-path is still passed so the data directory does not depend on how the
-// config file resolves it.
+// --config alone resolves the store as the config file's containing directory,
+// and combining it with --nibs-path is refused.
 func runListCmdWithConfig(t *testing.T, cfgPath, nibsDir string, args ...string) (string, error) {
 	t.Helper()
-	rootCmd.SetArgs(append([]string{"--config", cfgPath, "--nibs-path", nibsDir, "list"}, args...))
+	_ = nibsDir
+	rootCmd.SetArgs(append([]string{"--config", cfgPath, "list"}, args...))
 	var execErr error
 	out := captureStdout(t, func() {
 		execErr = rootCmd.Execute()

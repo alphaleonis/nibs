@@ -11,7 +11,9 @@ import (
 	"testing"
 	"time"
 
+	"github.com/alphaleonis/nibs/internal/fsutil"
 	"github.com/alphaleonis/nibs/internal/nib"
+	"github.com/alphaleonis/nibs/internal/store"
 	"github.com/fsnotify/fsnotify"
 )
 
@@ -160,7 +162,7 @@ func TestRestartWatchingDoesNotDuplicateEvents(t *testing.T) {
 
 		events, unsubscribe := core.Subscribe()
 
-		path := filepath.Join(nibsDir, fmt.Sprintf("dup%d--duplicate.md", round))
+		path := dataPath(nibsDir, fmt.Sprintf("dup%d--duplicate.md", round))
 		body := fmt.Sprintf("---\ntitle: Duplicate %d\nstatus: todo\n---\n", round)
 		writeNibFileAtomic(t, path, body)
 
@@ -274,7 +276,7 @@ func TestWatcherWarnsOnLegacyOrNewerArrival(t *testing.T) {
 			var warnings strings.Builder
 			core.SetWarnWriter(&warnings)
 
-			path := filepath.Join(nibsDir, tt.filename)
+			path := dataPath(nibsDir, tt.filename)
 			writeNibFileAtomic(t, path, tt.content)
 			core.handleChanges(map[string]fsnotify.Op{path: fsnotify.Create})
 
@@ -367,12 +369,12 @@ func TestWatcherExternalArchiveReportsArchivedNotDeleted(t *testing.T) {
 
 			// The archive dir must exist for the archive-path create to be a real
 			// on-disk fact the handler can stat.
-			archiveDir := filepath.Join(nibsDir, ArchiveDir)
+			archiveDir := filepath.Join(nibsDir, store.ArchiveDirName)
 			if err := os.MkdirAll(archiveDir, 0o755); err != nil {
 				t.Fatalf("mkdir archive: %v", err)
 			}
 
-			mainAbs := filepath.Join(nibsDir, filename)
+			mainAbs := dataPath(nibsDir, filename)
 			archiveAbs := filepath.Join(archiveDir, filename)
 
 			// External archive: move the file on disk WITHOUT calling core.Archive,
@@ -429,8 +431,8 @@ func TestWatcherUnarchiveReportsUnarchivedNotDeleted(t *testing.T) {
 			if err := core.Archive(nibID); err != nil {
 				t.Fatalf("Archive: %v", err)
 			}
-			archiveAbs := filepath.Join(nibsDir, ArchiveDir, filename)
-			mainAbs := filepath.Join(nibsDir, filename)
+			archiveAbs := filepath.Join(nibsDir, store.ArchiveDirName, filename)
+			mainAbs := dataPath(nibsDir, filename)
 
 			if _, err := core.LoadAndUnarchive(nibID); err != nil {
 				t.Fatalf("LoadAndUnarchive: %v", err)
@@ -498,8 +500,8 @@ func TestWatcherSameIdSlugRenameNotEvicted(t *testing.T) {
 		t.Run(name, func(t *testing.T) {
 			core, nibsDir, oldFilename := watchingCore(t, nibID)
 
-			oldAbs := filepath.Join(nibsDir, oldFilename)
-			newAbs := filepath.Join(nibsDir, nibID+"--new-slug.md")
+			oldAbs := dataPath(nibsDir, oldFilename)
+			newAbs := dataPath(nibsDir, nibID+"--new-slug.md")
 
 			// Physical rename so the old path is gone and the new one loads —
 			// exactly what a slug rename by any mover leaves on disk. Same id, new
@@ -565,8 +567,8 @@ func TestWatcherSameIdSluglessRenameNotEvicted(t *testing.T) {
 			core, nibsDir := mustLoadPrefixedCore(t)
 			createTestNib(t, core, fullID, "Move Test", "todo")
 
-			oldAbs := filepath.Join(nibsDir, nib.BuildFilename(fullID, nib.Slugify("Move Test")))
-			newAbs := filepath.Join(nibsDir, nib.BuildFilename(fullID, "")) // slugless {id}.md
+			oldAbs := dataPath(nibsDir, nib.BuildFilename(fullID, nib.Slugify("Move Test")))
+			newAbs := dataPath(nibsDir, nib.BuildFilename(fullID, "")) // slugless {id}.md
 
 			// Physical rename so the old path is gone and the new (slugless) one
 			// loads — exactly what a slug-dropping rename leaves on disk.
@@ -601,7 +603,7 @@ func TestWatcherSameIdSluglessRenameNotEvicted(t *testing.T) {
 			if !core.fileExists(filepath.Join(nibsDir, n.Path)) {
 				t.Errorf("stored Path %q has no file on disk", n.Path)
 			}
-			if wantPath := filepath.ToSlash(nib.BuildFilename(fullID, "")); n.Path != wantPath {
+			if wantPath := store.NewLayout(nibsDir).DataRel(nib.BuildFilename(fullID, "")); n.Path != wantPath {
 				t.Errorf("stored Path = %q, want slugless %q", n.Path, wantPath)
 			}
 		})
@@ -636,9 +638,9 @@ func TestWatcherSameIdSlugRenameUpdatesSlug(t *testing.T) {
 		t.Fatalf("precondition: nib already has slug %q before rename", newSlug)
 	}
 
-	oldAbs := filepath.Join(nibsDir, oldFilename)
+	oldAbs := dataPath(nibsDir, oldFilename)
 	newName := nib.BuildFilename(nibID, newSlug)
-	newAbs := filepath.Join(nibsDir, newName)
+	newAbs := dataPath(nibsDir, newName)
 	if err := os.Rename(oldAbs, newAbs); err != nil {
 		t.Fatalf("slug rename: %v", err)
 	}
@@ -658,7 +660,7 @@ func TestWatcherSameIdSlugRenameUpdatesSlug(t *testing.T) {
 	if got.Slug != newSlug {
 		t.Errorf("stored Slug = %q, want %q (slug not re-derived from renamed file)", got.Slug, newSlug)
 	}
-	if wantPath := filepath.ToSlash(newName); got.Path != wantPath {
+	if wantPath := store.NewLayout(nibsDir).DataRel(newName); got.Path != wantPath {
 		t.Errorf("stored Path = %q, want %q", got.Path, wantPath)
 	}
 
@@ -708,11 +710,11 @@ func TestEventPayloadsAreImmutableSnapshots(t *testing.T) {
 	const nibID = "snap1"
 	core, nibsDir, filename := watchingCore(t, nibID)
 
-	archiveDir := filepath.Join(nibsDir, ArchiveDir)
+	archiveDir := filepath.Join(nibsDir, store.ArchiveDirName)
 	if err := os.MkdirAll(archiveDir, 0o755); err != nil {
 		t.Fatalf("mkdir archive: %v", err)
 	}
-	mainAbs := filepath.Join(nibsDir, filename)
+	mainAbs := dataPath(nibsDir, filename)
 	archiveAbs := filepath.Join(archiveDir, filename)
 
 	// Move the file into archive/ on disk, then drive the move through
@@ -866,7 +868,7 @@ func TestSubscribeSignalReceivesTick(t *testing.T) {
 	defer unsub()
 
 	// A write to the existing nib publishes a non-empty batch (EventUpdated).
-	abs := filepath.Join(nibsDir, filename)
+	abs := dataPath(nibsDir, filename)
 	core.handleChanges(map[string]fsnotify.Op{abs: fsnotify.Write})
 
 	select {
@@ -945,7 +947,7 @@ func TestSignalOnlySkipPathRaceClean(t *testing.T) {
 	sigCh, unsub := core.SubscribeSignal()
 	defer unsub()
 
-	abs := filepath.Join(nibsDir, filename)
+	abs := dataPath(nibsDir, filename)
 
 	stop := make(chan struct{})
 	var wg sync.WaitGroup    // producer + readers: finite work
@@ -999,7 +1001,7 @@ func TestSignalOnlySkipPathRaceClean(t *testing.T) {
 // The two tests below cover nibs-oakc: an external edit to a nib file must reach
 // watchers on every platform.
 //
-// Every nib write commits through atomicWriteFile, i.e. a rename over the
+// Every nib write commits through AtomicWriteFile, i.e. a rename over the
 // existing file. Windows reports that replacing rename on the TARGET path as
 // REMOVE followed by CREATE (verified with fsnotify v1.9.0 on Windows 11); both
 // halves land inside one 100 ms debounce window and are OR-ed into a single op.
@@ -1017,7 +1019,7 @@ func TestWatcherReplacingRenameBatchReportsUpdate(t *testing.T) {
 	const newTitle = "Edited By Another Process"
 
 	core, nibsDir, filename := watchingCore(t, nibID)
-	abs := filepath.Join(nibsDir, filename)
+	abs := dataPath(nibsDir, filename)
 
 	// Precondition: the on-disk edit is a real change, so a handler that ignores
 	// the batch entirely cannot pass by accident.
@@ -1032,7 +1034,7 @@ func TestWatcherReplacingRenameBatchReportsUpdate(t *testing.T) {
 	// The external edit itself, committed the way every writer commits: a temp
 	// file renamed over the target.
 	edited := fmt.Sprintf("---\ntitle: %s\nstatus: todo\npriority: high\n---\n\nbody\n", newTitle)
-	if err := atomicWriteFile(abs, []byte(edited), 0o644); err != nil {
+	if err := fsutil.AtomicWriteFile(abs, []byte(edited), 0o644); err != nil {
 		t.Fatalf("atomic write: %v", err)
 	}
 
@@ -1068,7 +1070,7 @@ func TestWatcherObservesExternalAtomicWrite(t *testing.T) {
 
 	core, nibsDir := setupTestCore(t)
 	b := createTestNib(t, core, nibID, "Original Title", "todo")
-	abs := filepath.Join(nibsDir, filepath.Base(b.Path))
+	abs := dataPath(nibsDir, filepath.Base(b.Path))
 
 	if err := core.StartWatching(); err != nil {
 		t.Fatalf("StartWatching() error = %v", err)
@@ -1080,7 +1082,7 @@ func TestWatcherObservesExternalAtomicWrite(t *testing.T) {
 
 	// Stand in for a second process (`nibs set <id> -p high`) rewriting the file.
 	edited := fmt.Sprintf("---\ntitle: %s\nstatus: todo\npriority: high\n---\n\nbody\n", newTitle)
-	if err := atomicWriteFile(abs, []byte(edited), 0o644); err != nil {
+	if err := fsutil.AtomicWriteFile(abs, []byte(edited), 0o644); err != nil {
 		t.Fatalf("atomic write: %v", err)
 	}
 

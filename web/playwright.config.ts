@@ -9,7 +9,6 @@ import { join, resolve } from "node:path";
 const fixture = resolve(import.meta.dirname, "..", "testdata", "fixtures", "sample-project");
 const tmp = mkdtempSync(join(tmpdir(), "nibs-e2e-"));
 cpSync(join(fixture, ".nibs"), join(tmp, ".nibs"), { recursive: true });
-cpSync(join(fixture, ".nibs.yml"), join(tmp, ".nibs.yml"));
 
 export default defineConfig({
   testDir: "./e2e",
@@ -33,11 +32,10 @@ export default defineConfig({
     viewport: { width: 1440, height: 900 },
   },
   webServer: {
-    // --config, not --nibs-path: the server runs from the repo root, and
-    // --nibs-path moves only the data directory — config discovery would still
-    // walk up from the cwd and apply THIS project's prefix to fixture data.
-    // Naming the fixture's config resolves its data directory alongside it.
-    command: `cd .. && go run . serve --port 3131 --no-open --config "${join(tmp, ".nibs.yml")}"`,
+    // --nibs-path names the store, and the store carries its own config, so
+    // the fixture is read under its own prefix even though the server runs
+    // from the repo root.
+    command: `cd .. && go run . serve --port 3131 --no-open --nibs-path "${join(tmp, ".nibs")}"`,
     url: "http://127.0.0.1:3131",
     // Never reuse: a leftover server could be pointed at real data.
     reuseExistingServer: false,

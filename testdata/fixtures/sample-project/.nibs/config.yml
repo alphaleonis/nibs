@@ -1,5 +1,4 @@
 nibs:
-    path: .nibs
     prefix: tnib-
     id_length: 4
     default_status: todo

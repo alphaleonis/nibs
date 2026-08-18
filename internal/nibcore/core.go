@@ -15,12 +15,12 @@ import (
 	"time"
 
 	"github.com/alphaleonis/nibs/internal/config"
+	"github.com/alphaleonis/nibs/internal/fsutil"
 	"github.com/alphaleonis/nibs/internal/nib"
+	"github.com/alphaleonis/nibs/internal/safetext"
 	"github.com/alphaleonis/nibs/internal/search"
+	"github.com/alphaleonis/nibs/internal/store"
 )
-
-const NibsDir = ".nibs"
-const ArchiveDir = "archive"
 
 // ErrNotFound is an alias for nib.ErrNotFound for backwards compatibility.
 var ErrNotFound = nib.ErrNotFound
@@ -76,6 +76,7 @@ func (e *OnDiskUnparseableError) Unwrap() error { return e.Err }
 // Core provides thread-safe in-memory storage for nibs with filesystem persistence.
 type Core struct {
 	root   string         // absolute path to .nibs directory
+	layout store.Layout   // the store's directory structure, derived from root
 	config *config.Config // project configuration
 
 	// lockPath is the OS-temp-dir path of the cross-process advisory write lock
@@ -130,21 +131,28 @@ type Core struct {
 	// holding subMu). See handleChanges for the full reasoning.
 	payloadSubCount atomic.Int64
 
-	// Warning logger for non-fatal errors (defaults to stderr)
-	warnWriter io.Writer
+	// Warning logger for non-fatal errors. It defaults to stderr through
+	// safetext.Writer, because the highest-traffic warning here interpolates a
+	// FILENAME ("skipping unparseable nib file %s") and a filename on Linux is
+	// arbitrary bytes: a file named with an embedded ESC sequence would otherwise
+	// repaint the terminal from every command that loads the store. The boundary
+	// lives on the writer rather than at the logWarn call sites so it cannot be
+	// bypassed by adding a warning that forgets it.
+	warnWriter *safetext.Writer
 }
 
 // New creates a new Core with the given root path and configuration.
 func New(root string, cfg *config.Config) *Core {
 	return &Core{
 		root:              root,
+		layout:            store.NewLayout(root),
 		config:            cfg,
 		lockPath:          writeLockPath(root),
 		nibs:              make(map[string]*nib.Nib),
 		mentionIdx:        newMentionIndex(),
 		subscribers:       make(map[uint64]*subscription),
 		signalSubscribers: make(map[uint64]chan struct{}),
-		warnWriter:        os.Stderr,
+		warnWriter:        safetext.NewWriter(os.Stderr),
 	}
 }
 
@@ -159,8 +167,16 @@ func (c *Core) acquireWriteLock() (func() error, error) {
 
 // SetWarnWriter sets the writer for warning messages.
 // Pass nil to disable warnings.
+//
+// The replacement is wrapped in the same rendering boundary the default carries,
+// so a caller redirecting warnings (tests, an embedding process) cannot
+// accidentally opt out of it.
 func (c *Core) SetWarnWriter(w io.Writer) {
-	c.warnWriter = w
+	if w == nil {
+		c.warnWriter = nil
+		return
+	}
+	c.warnWriter = safetext.NewWriter(w)
 }
 
 // SetSearchIndex sets a custom search index implementation.
@@ -173,9 +189,16 @@ func (c *Core) SetSearchIndex(idx SearchIndex) {
 }
 
 // logWarn logs a warning message if a warn writer is configured.
+//
+// The Flush releases any incomplete rune the boundary is holding, so a warning
+// cannot end up one byte short of what Fprintf reported written. Every format here
+// ends in a literal newline, which is never a UTF-8 continuation byte, so the tail
+// is already empty — the Flush keeps that a property of this call rather than of
+// every format string a future warning uses.
 func (c *Core) logWarn(format string, args ...any) {
 	if c.warnWriter != nil {
 		_, _ = fmt.Fprintf(c.warnWriter, "warning: "+format+"\n", args...)
+		_ = c.warnWriter.Flush()
 	}
 }
 
@@ -221,13 +244,14 @@ func (c *Core) loadFromDisk() error {
 	c.unparseableFiles = nil
 	c.duplicateIDs = nil
 
-	// Walk the store tree through the SHARED store-content definition
-	// (WalkStoreFiles): every .md file, subdirectories included, dot
-	// directories pruned. cmd/migrate's scans walk through the same function,
-	// so what loads here and what the migration gates probe can never
-	// disagree — a dot-directory .md loading as a nib while the scan skipped
-	// it is exactly how `nibs migrate` once rewrote non-store files.
-	err := WalkStoreFiles(c.root, func(path string, err error) error {
+	// Walk the store's CONTENT directories — data/ and archive/, dot
+	// directories pruned (see WalkStoreContent). cmd/migrate's scans walk the
+	// same per-file classifier over the store root, so what loads here and
+	// what the migration gates probe can never disagree about whether a given
+	// file is a nib — only about which directories are in scope, which is the
+	// whole difference between "content" and "everything the migration must
+	// relocate".
+	err := WalkStoreContent(c.layout, func(path string, err error) error {
 		if err != nil {
 			return err
 		}
@@ -1110,35 +1134,54 @@ func (c *Core) Update(b *nib.Nib, ifMatch *string) error {
 	return nil
 }
 
-// saveToDisk writes a nib to the filesystem.
+// saveToDisk writes a nib to the filesystem and flushes the directory entry
+// before returning, so a single write is as durable as fsutil.AtomicWriteFile
+// makes it. A caller writing MANY nibs wants saveToDiskDeferDirSync plus a
+// dirSyncBatch instead: the flush is per directory, not per file.
 func (c *Core) saveToDisk(b *nib.Nib) error {
-	// Determine the file path
+	dir, err := c.saveToDiskDeferDirSync(b)
+	if err != nil {
+		return err
+	}
+	fsutil.SyncDir(dir)
+	return nil
+}
+
+// saveToDiskDeferDirSync writes a nib to the filesystem without flushing the
+// directory entry, returning the directory that still needs one (empty when the
+// write failed before its rename). Every caller owes that directory to a
+// dirSyncBatch — see fsutil.AtomicWriteFileDeferDirSync for the weaker
+// guarantee that holds until the flush.
+func (c *Core) saveToDiskDeferDirSync(b *nib.Nib) (string, error) {
+	// Determine the file path. A nib with no Path yet is new, and new nibs are
+	// written into the store's data/ directory — the store root holds
+	// directories and the config, never nib files.
 	var path string
 	if b.Path != "" {
 		path = filepath.Join(c.root, b.Path)
 	} else {
-		filename := nib.BuildFilename(b.ID, b.Slug)
-		path = filepath.Join(c.root, filename)
-		b.Path = filename
+		b.Path = c.layout.DataRel(nib.BuildFilename(b.ID, b.Slug))
+		path = filepath.Join(c.root, b.Path)
 	}
 
 	// Ensure parent directory exists
 	dir := filepath.Dir(path)
 	if err := os.MkdirAll(dir, 0755); err != nil {
-		return fmt.Errorf("creating directory: %w", err)
+		return "", fmt.Errorf("creating directory: %w", err)
 	}
 
 	// Render and write
 	content, err := b.Render()
 	if err != nil {
-		return err
+		return "", err
 	}
 
 	// Write atomically (temp file + rename) so a crash or a concurrent reader
 	// never observes a half-written nib — a torn file would fail nib.Parse on the
 	// next snapshot build and surface as an OnDiskUnparseableError.
-	if err := atomicWriteFile(path, content, 0644); err != nil {
-		return fmt.Errorf("writing file: %w", err)
+	unflushedDir, err := fsutil.AtomicWriteFileDeferDirSync(path, content, 0644)
+	if err != nil {
+		return "", fmt.Errorf("writing file: %w", err)
 	}
 
 	// The bytes just written ARE b's link spelling, so this is the one write path
@@ -1154,7 +1197,43 @@ func (c *Core) saveToDisk(b *nib.Nib) error {
 	// keep describing them.
 	b.CaptureRawLinks()
 
-	return nil
+	return unflushedDir, nil
+}
+
+// dirSyncBatch collects the distinct directories that saveToDiskDeferDirSync
+// writes left unflushed, so a bulk loop pays one directory fsync per DIRECTORY
+// rather than one per nib — the same flush, N times fewer.
+//
+// A set rather than a single remembered directory because one loop over c.nibs
+// can span several: archived nibs stay in the store and live under archive/
+// while active ones live under data/, and data/ tolerates subdirectories that a
+// nib's Path preserves. Syncing one hardcoded directory would silently drop the
+// durability of every write outside it.
+type dirSyncBatch map[string]struct{}
+
+// add records a directory to flush. The empty string is ignored, so a caller can
+// hand it the result of a failed write without a guard.
+func (b dirSyncBatch) add(dir string) {
+	if dir == "" {
+		return
+	}
+	b[dir] = struct{}{}
+}
+
+// flush fsyncs each collected directory once, in a deterministic order. Run it
+// even when the loop aborts early — the writes that already landed are on disk
+// with unflushed directory entries — which is what the defer at each call site
+// is for. Best-effort, like every directory sync here: see
+// fsutil.AtomicWriteFile's "does not promise" list.
+func (b dirSyncBatch) flush() {
+	dirs := make([]string, 0, len(b))
+	for dir := range b {
+		dirs = append(dirs, dir)
+	}
+	sort.Strings(dirs)
+	for _, dir := range dirs {
+		fsutil.SyncDir(dir)
+	}
 }
 
 // Delete removes a nib by exact ID match.
@@ -1264,14 +1343,13 @@ func (c *Core) Archive(id string) error {
 	}
 
 	// Ensure archive directory exists
-	archivePath := filepath.Join(c.root, ArchiveDir)
-	if err := os.MkdirAll(archivePath, 0755); err != nil {
+	if err := os.MkdirAll(c.layout.ArchiveDir(), 0755); err != nil {
 		return fmt.Errorf("creating archive directory: %w", err)
 	}
 
 	// Move the file
 	oldPath := filepath.Join(c.root, targetNib.Path)
-	newRelPath := filepath.Join(ArchiveDir, filepath.Base(targetNib.Path))
+	newRelPath := c.layout.ArchiveRel(filepath.Base(targetNib.Path))
 	newPath := filepath.Join(c.root, newRelPath)
 
 	if err := os.Rename(oldPath, newPath); err != nil {
@@ -1279,7 +1357,7 @@ func (c *Core) Archive(id string) error {
 	}
 
 	// Update nib's path
-	targetNib.Path = filepath.ToSlash(newRelPath)
+	targetNib.Path = newRelPath
 	c.nibs[targetID] = targetNib
 
 	return nil
@@ -1308,17 +1386,22 @@ func (c *Core) Unarchive(id string) error {
 		return nil // Not archived, nothing to do
 	}
 
-	// Move the file back to main directory
+	// Move the file back to the data directory — NOT the store root, which
+	// holds no nib files: a file returned there would still exist but would
+	// stop being store content, vanishing from every query on the next load.
 	oldPath := filepath.Join(c.root, targetNib.Path)
-	newRelPath := filepath.Base(targetNib.Path)
+	newRelPath := c.layout.DataRel(filepath.Base(targetNib.Path))
 	newPath := filepath.Join(c.root, newRelPath)
 
+	if err := os.MkdirAll(c.layout.DataDir(), 0755); err != nil {
+		return fmt.Errorf("creating data directory: %w", err)
+	}
 	if err := os.Rename(oldPath, newPath); err != nil {
 		return fmt.Errorf("moving nib from archive: %w", err)
 	}
 
 	// Update nib's path (forward slashes, matching Archive and loadNib)
-	targetNib.Path = filepath.ToSlash(newRelPath)
+	targetNib.Path = newRelPath
 	c.nibs[targetID] = targetNib
 
 	return nil
@@ -1338,10 +1421,9 @@ func (c *Core) IsArchived(id string) bool {
 	return c.isArchivedPath(b.Path)
 }
 
-// isArchivedPath returns true if the path indicates an archived nib.
+// isArchivedPath returns true if the store-relative path indicates an archived nib.
 func (c *Core) isArchivedPath(path string) bool {
-	return strings.HasPrefix(path, ArchiveDir+string(filepath.Separator)) ||
-		strings.HasPrefix(path, ArchiveDir+"/")
+	return c.layout.IsArchivedRel(path)
 }
 
 // normalizeID returns the full ID with prefix if a prefix is configured
@@ -1378,7 +1460,7 @@ func (c *Core) findNibLocked(id string) (*nib.Nib, string, error) {
 func (c *Core) GetFromArchive(id string) (*nib.Nib, error) {
 	fullID := c.normalizeID(id)
 
-	archiveDir := filepath.Join(c.root, ArchiveDir)
+	archiveDir := c.layout.ArchiveDir()
 	if _, err := os.Stat(archiveDir); os.IsNotExist(err) {
 		return nil, nil
 	}
@@ -1427,25 +1509,32 @@ func (c *Core) LoadAndUnarchive(id string) (*nib.Nib, error) {
 		return b, nil
 	}
 
-	// Move file from archive to main directory
+	// Move file from archive back to the data directory, for the same reason
+	// Unarchive does: the store root is not store content.
 	oldPath := filepath.Join(c.root, b.Path)
-	newRelPath := filepath.Base(b.Path)
+	newRelPath := c.layout.DataRel(filepath.Base(b.Path))
 	newPath := filepath.Join(c.root, newRelPath)
 
+	if err := os.MkdirAll(c.layout.DataDir(), 0755); err != nil {
+		return nil, fmt.Errorf("creating data directory: %w", err)
+	}
 	if err := os.Rename(oldPath, newPath); err != nil {
 		return nil, fmt.Errorf("moving nib from archive: %w", err)
 	}
 
 	// Update nib's path (forward slashes, matching Archive and loadNib)
-	b.Path = filepath.ToSlash(newRelPath)
+	b.Path = newRelPath
 	c.nibs[targetID] = b
 
 	return b, nil
 }
 
-// Init creates the .nibs directory if it doesn't exist.
+// Init creates the store's directories if they don't exist: the store root and
+// the data/ directory every new nib is written into. archive/ is created on
+// demand by the first archive, so a project that never archives keeps a store
+// with nothing empty in it.
 func (c *Core) Init() error {
-	return os.MkdirAll(c.root, 0755)
+	return os.MkdirAll(c.layout.DataDir(), 0755)
 }
 
 // FullPath returns the absolute path to a nib file.
@@ -1469,9 +1558,8 @@ func (c *Core) Close() error {
 	return c.unwatchLocked()
 }
 
-// Init creates the .nibs directory at the given path if it doesn't exist.
-// This is a standalone function for use before a Core is created.
+// Init creates the store under the given project directory if it doesn't
+// exist. This is a standalone function for use before a Core is created.
 func Init(dir string) error {
-	nibsPath := filepath.Join(dir, NibsDir)
-	return os.MkdirAll(nibsPath, 0755)
+	return New(filepath.Join(dir, store.DirName), nil).Init()
 }

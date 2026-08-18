@@ -11,6 +11,8 @@ import (
 
 	"github.com/alphaleonis/nibs/internal/nibcore"
 	"github.com/alphaleonis/nibs/internal/output"
+	"github.com/alphaleonis/nibs/internal/store"
+	"github.com/alphaleonis/nibs/internal/testskip"
 	"github.com/spf13/pflag"
 )
 
@@ -37,15 +39,19 @@ func runRootWith(t *testing.T, args ...string) (string, error) {
 	return out, execErr
 }
 
-// writeStoreFiles materializes a store fixture in a fresh .nibs dir.
+// writeStoreFiles materializes a store fixture in a fresh .nibs dir, in the
+// CURRENT layout: the files land under data/ unless the name already places
+// them somewhere the store owns (archive/, or a dot directory). Legacy-shape
+// fixtures — files at the store ROOT — belong to the layout step and are built
+// with writeLegacyStore instead.
 func writeStoreFiles(t *testing.T, files map[string]string) string {
 	t.Helper()
 	nibsDir := filepath.Join(t.TempDir(), ".nibs")
-	if err := os.MkdirAll(nibsDir, 0755); err != nil {
+	if err := os.MkdirAll(storeDataDir(nibsDir), 0755); err != nil {
 		t.Fatal(err)
 	}
 	for name, content := range files {
-		path := filepath.Join(nibsDir, name)
+		path := filepath.Join(nibsDir, storeRelForFixture(name))
 		if err := os.MkdirAll(filepath.Dir(path), 0755); err != nil {
 			t.Fatal(err)
 		}
@@ -56,11 +62,24 @@ func writeStoreFiles(t *testing.T, files map[string]string) string {
 	return nibsDir
 }
 
+// storeRelForFixture places a fixture file inside the store: names that
+// already address a store directory (archive/, a dot directory such as .git)
+// are taken as written; everything else goes under data/.
+func storeRelForFixture(name string) string {
+	slashed := filepath.ToSlash(name)
+	if strings.HasPrefix(slashed, store.ArchiveDirName+"/") ||
+		strings.HasPrefix(slashed, store.DataDirName+"/") ||
+		strings.HasPrefix(slashed, ".") {
+		return filepath.FromSlash(name)
+	}
+	return filepath.Join(store.DataDirName, filepath.FromSlash(name))
+}
+
 // pendingNames runs pendingMigrations over a fixture store and returns the
 // pending step names.
 func pendingNames(t *testing.T, nibsDir string) []string {
 	t.Helper()
-	pending, err := pendingMigrations(newMigrateEnv(nibsDir, nil))
+	pending, err := pendingMigrations(newMigrateEnv(nibsDir))
 	if err != nil {
 		t.Fatalf("pendingMigrations: %v", err)
 	}
@@ -223,12 +242,12 @@ func TestPendingMigrationsDetectNeverWrites(t *testing.T) {
 	}
 	capture := func() map[string]fileState {
 		states := map[string]fileState{}
-		entries, err := os.ReadDir(nibsDir)
+		entries, err := os.ReadDir(storeDataDir(nibsDir))
 		if err != nil {
 			t.Fatal(err)
 		}
 		for _, e := range entries {
-			path := filepath.Join(nibsDir, e.Name())
+			path := dataPath(nibsDir, e.Name())
 			data, err := os.ReadFile(path)
 			if err != nil {
 				t.Fatal(err)
@@ -290,7 +309,7 @@ func TestMigratePriorityDeferredStep(t *testing.T) {
 		t.Fatalf("nibs migrate failed: %v\nout: %s", err, out)
 	}
 
-	defDisk, err := os.ReadFile(filepath.Join(nibsDir, "def1--deferred.md"))
+	defDisk, err := os.ReadFile(dataPath(nibsDir, "def1--deferred.md"))
 	if err != nil {
 		t.Fatalf("reading migrated file: %v", err)
 	}
@@ -305,7 +324,7 @@ func TestMigratePriorityDeferredStep(t *testing.T) {
 		t.Errorf("migrated file missing the version stamp:\n%s", disk)
 	}
 
-	ctlDisk, err := os.ReadFile(filepath.Join(nibsDir, "low1--control.md"))
+	ctlDisk, err := os.ReadFile(dataPath(nibsDir, "low1--control.md"))
 	if err != nil {
 		t.Fatalf("reading control file: %v", err)
 	}
@@ -343,14 +362,14 @@ func TestMigrateCrashResume(t *testing.T) {
 	}
 
 	// The already-converted file is untouched; the remaining one is rewritten.
-	aDisk, err := os.ReadFile(filepath.Join(nibsDir, "aaa1--done.md"))
+	aDisk, err := os.ReadFile(dataPath(nibsDir, "aaa1--done.md"))
 	if err != nil {
 		t.Fatal(err)
 	}
 	if string(aDisk) != files["aaa1--done.md"] {
 		t.Errorf("already-migrated file was rewritten:\n%s", aDisk)
 	}
-	bDisk, err := os.ReadFile(filepath.Join(nibsDir, "bbb2--rest.md"))
+	bDisk, err := os.ReadFile(dataPath(nibsDir, "bbb2--rest.md"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -387,7 +406,7 @@ func TestMigrateRefusesUnparseableStore(t *testing.T) {
 	// parseable v0 file, whose migration alone could drop its edge to the
 	// broken target.
 	for name, before := range files {
-		after, err := os.ReadFile(filepath.Join(nibsDir, name))
+		after, err := os.ReadFile(dataPath(nibsDir, name))
 		if err != nil {
 			t.Fatalf("re-reading %s: %v", name, err)
 		}
@@ -442,7 +461,7 @@ func TestMigrateDryRun(t *testing.T) {
 	}
 
 	for name, before := range files {
-		after, err := os.ReadFile(filepath.Join(nibsDir, name))
+		after, err := os.ReadFile(dataPath(nibsDir, name))
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -480,7 +499,7 @@ func TestMigrateDryRunWarnsWhenRealRunWillRefuse(t *testing.T) {
 
 	// The preview still modifies nothing.
 	for name, before := range files {
-		after, readErr := os.ReadFile(filepath.Join(nibsDir, name))
+		after, readErr := os.ReadFile(dataPath(nibsDir, name))
 		if readErr != nil {
 			t.Fatal(readErr)
 		}
@@ -506,8 +525,8 @@ func TestStoreProbeDegradation(t *testing.T) {
 		})
 		// The emacs lock-file shape: a .md-named symlink to a target that
 		// does not exist. Opening it fails; probing must skip, not abort.
-		if err := os.Symlink(filepath.Join(nibsDir, "no-such-target"), filepath.Join(nibsDir, ".#cur1--one.md")); err != nil {
-			t.Skipf("symlinks unavailable: %v", err)
+		if err := os.Symlink(dataPath(nibsDir, "no-such-target"), dataPath(nibsDir, ".#cur1--one.md")); err != nil {
+			testskip.SymlinkUnavailable(t, err)
 		}
 		out, err := runRootWith(t, "--nibs-path", nibsDir, "list", "-q", "--all")
 		if err != nil {
@@ -553,7 +572,7 @@ func TestMigrateFencelessFileNeverRewritten(t *testing.T) {
 			t.Errorf("refusal should name the fence-less file, got: %v", err)
 		}
 		for name, before := range files {
-			after, readErr := os.ReadFile(filepath.Join(nibsDir, name))
+			after, readErr := os.ReadFile(dataPath(nibsDir, name))
 			if readErr != nil {
 				t.Fatal(readErr)
 			}
@@ -576,7 +595,7 @@ func TestMigrateFencelessFileNeverRewritten(t *testing.T) {
 		if !strings.Contains(out, "README.md") {
 			t.Errorf("run should note the skipped fence-less file by name, got:\n%s", out)
 		}
-		after, readErr := os.ReadFile(filepath.Join(nibsDir, "README.md"))
+		after, readErr := os.ReadFile(dataPath(nibsDir, "README.md"))
 		if readErr != nil {
 			t.Fatal(readErr)
 		}
@@ -619,7 +638,7 @@ func TestFencelessFileClassificationAgrees(t *testing.T) {
 		if err == nil {
 			t.Fatal("set on a fence-less document succeeded; the document must be unreachable")
 		}
-		after, readErr := os.ReadFile(filepath.Join(nibsDir, "README.md"))
+		after, readErr := os.ReadFile(dataPath(nibsDir, "README.md"))
 		if readErr != nil {
 			t.Fatal(readErr)
 		}
@@ -664,7 +683,7 @@ func TestMigrateUpToDateStore(t *testing.T) {
 		}
 	}
 	for name, before := range files {
-		after, err := os.ReadFile(filepath.Join(nibsDir, name))
+		after, err := os.ReadFile(dataPath(nibsDir, name))
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -742,7 +761,7 @@ func TestMigrateDotDirectoryFilesStayUntouched(t *testing.T) {
 	}
 
 	// The genuine store file was converted.
-	converted, err := os.ReadFile(filepath.Join(nibsDir, "v0a--one.md"))
+	converted, err := os.ReadFile(dataPath(nibsDir, "v0a--one.md"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -786,7 +805,7 @@ func TestMigrateDirtyGitRefusal(t *testing.T) {
 			t.Errorf("refusal should mention the --allow-dirty override, got: %v", err)
 		}
 		before := v0Files["v0a--one.md"]
-		after, readErr := os.ReadFile(filepath.Join(nibsDir, "v0a--one.md"))
+		after, readErr := os.ReadFile(dataPath(nibsDir, "v0a--one.md"))
 		if readErr != nil {
 			t.Fatal(readErr)
 		}
@@ -799,7 +818,7 @@ func TestMigrateDirtyGitRefusal(t *testing.T) {
 		if err != nil {
 			t.Fatalf("migrate --allow-dirty failed: %v\nout: %s", err, out)
 		}
-		after, readErr = os.ReadFile(filepath.Join(nibsDir, "v0a--one.md"))
+		after, readErr = os.ReadFile(dataPath(nibsDir, "v0a--one.md"))
 		if readErr != nil {
 			t.Fatal(readErr)
 		}
@@ -909,12 +928,12 @@ func TestRunMigrationsHoldsStoreLock(t *testing.T) {
 		name:  "probe",
 		title: "park mid-apply so the test can contend for the lock",
 		pred:  func(h fmHeader) bool { return h.priority == "probe-pending" },
-		apply: func(env migrateEnv, _ *nibcore.StoreLock, _ logf) error {
+		apply: func(env *migrateEnv, _ *nibcore.StoreLock, _ logf) error {
 			close(entered)
 			<-unpark
 			// Clear our own detection marker so the engine's apply-detect
 			// post-condition sees an honestly-completed step.
-			return os.WriteFile(filepath.Join(env.nibsRoot, "a1--probe.md"),
+			return os.WriteFile(dataPath(env.nibsRoot, "a1--probe.md"),
 				[]byte("---\nversion: 1\ntitle: Probe\nstatus: todo\n---\n\nBody.\n"), 0644)
 		},
 	}}
@@ -924,7 +943,7 @@ func TestRunMigrationsHoldsStoreLock(t *testing.T) {
 	nibsDir := writeStoreFiles(t, map[string]string{
 		"a1--probe.md": "---\nversion: 1\ntitle: Probe\nstatus: todo\npriority: probe-pending\n---\n\nBody.\n",
 	})
-	env := newMigrateEnv(nibsDir, nil)
+	env := newMigrateEnv(nibsDir)
 
 	runDone := make(chan error, 1)
 	go func() { runDone <- runMigrations(env, func(string, ...any) {}) }()
@@ -993,7 +1012,7 @@ func TestMigrateNewerStoreRefusal(t *testing.T) {
 	assertNewerRefusal("migrate", err)
 
 	for name, before := range files {
-		after, err := os.ReadFile(filepath.Join(nibsDir, name))
+		after, err := os.ReadFile(dataPath(nibsDir, name))
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -1065,13 +1084,13 @@ func TestRunMigrationsPostConditionFailsLoud(t *testing.T) {
 		name:  "probe-disagree",
 		title: "fire on every file and repair nothing",
 		pred:  func(fmHeader) bool { return true },
-		apply: func(migrateEnv, *nibcore.StoreLock, logf) error { return nil },
+		apply: func(*migrateEnv, *nibcore.StoreLock, logf) error { return nil },
 	}}
 
 	nibsDir := writeStoreFiles(t, map[string]string{
 		"a1--stuck.md": "---\nversion: 1\ntitle: Stuck\nstatus: todo\n---\n\nBody.\n",
 	})
-	err := runMigrations(newMigrateEnv(nibsDir, nil), func(string, ...any) {})
+	err := runMigrations(newMigrateEnv(nibsDir), func(string, ...any) {})
 	if err == nil {
 		t.Fatal("runMigrations reported success while an applied step's detection still fires")
 	}
@@ -1099,16 +1118,23 @@ func TestCheckRunsOnPendingStore(t *testing.T) {
 		t.Fatal("list on a v0 store succeeded; fixture should be pending or this test is vacuous")
 	}
 
-	// Plain check runs. The fixture is clean apart from being v0, so the
-	// report is empty and RunE's os.Exit(1)-on-issues branch is not reached.
-	out, err := runRootWith(t, "--nibs-path", nibsDir, "check")
-	if err != nil {
-		t.Fatalf("plain `nibs check` on a pending store refused: %v\nout: %s", err, out)
+	// Plain check gets past the gate — and then reports the pending migration
+	// rather than certifying a store no other command will touch. (The report
+	// is driven directly because RunE exits the process on a non-empty one.)
+	app := checkAppPastTheGate(t, nibsDir)
+	var runErr error
+	out := captureStdout(t, func() { _, runErr = runCheck(app) })
+	if runErr != nil {
+		t.Fatalf("runCheck on a pending store: %v", runErr)
+	}
+	if !strings.Contains(out, "v0-blocking") {
+		t.Errorf("check should name the pending migration step, got:\n%s", out)
 	}
 
 	// check --fix writes, so it stays behind the gate.
+	resetRootPersistentFlags()
 	resetCheckFlags()
-	_, err = runRootWith(t, "--nibs-path", nibsDir, "check", "--fix")
+	_, err := runRootWith(t, "--nibs-path", nibsDir, "check", "--fix")
 	if err == nil {
 		t.Fatal("`nibs check --fix` on a pending store succeeded, want the migration refusal")
 	}
@@ -1206,7 +1232,7 @@ func TestMigrateTracer_V0StoreRefusedThenMigrated(t *testing.T) {
 
 	// 3. On disk: the blocker is v1 with its `blocking:` inverted away, and the
 	// target carries the transferred blocked_by plus the version stamp.
-	aBytes, err := os.ReadFile(filepath.Join(nibsDir, "aaa1--blocker.md"))
+	aBytes, err := os.ReadFile(dataPath(nibsDir, "aaa1--blocker.md"))
 	if err != nil {
 		t.Fatalf("reading migrated blocker file: %v", err)
 	}
@@ -1218,7 +1244,7 @@ func TestMigrateTracer_V0StoreRefusedThenMigrated(t *testing.T) {
 		t.Errorf("blocker file still carries `blocking:` after migrate:\n%s", aDisk)
 	}
 
-	bBytes, err := os.ReadFile(filepath.Join(nibsDir, "bbb2--blocked.md"))
+	bBytes, err := os.ReadFile(dataPath(nibsDir, "bbb2--blocked.md"))
 	if err != nil {
 		t.Fatalf("reading migrated target file: %v", err)
 	}

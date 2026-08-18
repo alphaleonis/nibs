@@ -29,7 +29,7 @@ func setupQueryTestApp(t *testing.T) *App {
 	t.Helper()
 	tmpDir := t.TempDir()
 	nibsDir := filepath.Join(tmpDir, ".nibs")
-	if err := os.MkdirAll(nibsDir, 0755); err != nil {
+	if err := os.MkdirAll(storeDataDir(nibsDir), 0755); err != nil {
 		t.Fatalf("failed to create test .nibs dir: %v", err)
 	}
 
@@ -1046,13 +1046,13 @@ type conflictEnvelope struct {
 func writeStaleEtagNib(t *testing.T, id string) (string, string, string) {
 	t.Helper()
 	nibsDir := filepath.Join(t.TempDir(), ".nibs")
-	if err := os.MkdirAll(nibsDir, 0755); err != nil {
+	if err := os.MkdirAll(storeDataDir(nibsDir), 0755); err != nil {
 		t.Fatal(err)
 	}
 	// version: 1 and the `# id` comment match Render() output, so the etag
 	// computed from the file agrees with the one the core computes.
 	content := "---\n# " + id + "\nversion: 1\ntitle: Test\nstatus: todo\ntype: task\norder: a0\n---\n\n"
-	path := filepath.Join(nibsDir, id+"--test.md")
+	path := dataPath(nibsDir, id+"--test.md")
 	if err := os.WriteFile(path, []byte(content), 0644); err != nil {
 		t.Fatal(err)
 	}
@@ -1314,7 +1314,7 @@ func TestQueryBulkReorderPreValidationConflictIsAConflict(t *testing.T) {
 	// reorderChildren refuses an incomplete list before it ever checks an etag.
 	const sibling = "q-brs"
 	content := "---\n# " + sibling + "\nversion: 1\ntitle: Sibling\nstatus: todo\ntype: task\norder: b0\n---\n\n"
-	if err := os.WriteFile(filepath.Join(nibsDir, sibling+"--test.md"), []byte(content), 0644); err != nil {
+	if err := os.WriteFile(dataPath(nibsDir, sibling+"--test.md"), []byte(content), 0644); err != nil {
 		t.Fatal(err)
 	}
 
@@ -1477,7 +1477,7 @@ func TestQueryCommandRefusalExitsLikeTheDirectCommand(t *testing.T) {
 func addFeatureNib(t *testing.T, nibsDir, id string) string {
 	t.Helper()
 	content := "---\nversion: 1\ntitle: Feature\nstatus: todo\ntype: feature\norder: c0\n---\n"
-	if err := os.WriteFile(filepath.Join(nibsDir, id+"--feature.md"), []byte(content), 0644); err != nil {
+	if err := os.WriteFile(dataPath(nibsDir, id+"--feature.md"), []byte(content), 0644); err != nil {
 		t.Fatal(err)
 	}
 	return id
@@ -1670,7 +1670,7 @@ func writeReplaceFixture(t *testing.T) (string, string, string) {
 	t.Helper()
 	nibsDir, subjectID := writeSetNib(t, "rp", "dup here\nand dup there\n")
 	content := "---\nversion: 1\ntitle: Other\nstatus: todo\ntype: task\n---\ntrip\ntrip\ntrip\n"
-	if err := os.WriteFile(filepath.Join(nibsDir, "ot--other.md"), []byte(content), 0644); err != nil {
+	if err := os.WriteFile(dataPath(nibsDir, "ot--other.md"), []byte(content), 0644); err != nil {
 		t.Fatal(err)
 	}
 	return nibsDir, subjectID, "ot"
@@ -1948,15 +1948,16 @@ func TestExecuteQueryBatchNamesTheMutationsThatCommitted(t *testing.T) {
 // because those are different claims. Only the "after" rows can fail if
 // execution ever stops at the first failure.
 func TestExecuteQueryBatchHalfCommitsDurably(t *testing.T) {
-	// nibFiles lists what the nibs directory holds for an id. It globs the id
-	// prefix rather than reading the Path the store reports, because asking the
-	// store where to look would be asking the store — the very thing these
-	// assertions exist to avoid. Globbing also stays correct if a write ever does
-	// relocate a file; today none does, since saveToDisk rebuilds a filename only
-	// when Path is empty and a nib from GetForUpdate always carries one.
+	// nibFiles lists what the store's data directory holds for an id. It globs
+	// the id prefix rather than reading the Path the store reports, because
+	// asking the store where to look would be asking the store — the very thing
+	// these assertions exist to avoid. Globbing also stays correct if a write
+	// ever does relocate a file; today none does, since saveToDisk rebuilds a
+	// filename only when Path is empty and a nib from GetForUpdate always
+	// carries one.
 	nibFiles := func(t *testing.T, root, id string) []string {
 		t.Helper()
-		matches, err := filepath.Glob(filepath.Join(root, id+"*.md"))
+		matches, err := filepath.Glob(dataPath(root, id+"*.md"))
 		if err != nil {
 			t.Fatalf("globbing for %s under %s: %v", id, root, err)
 		}

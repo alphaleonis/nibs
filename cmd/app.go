@@ -14,6 +14,17 @@ import (
 // Config is accessed via App.Config(), which delegates to Core.Config().
 type App struct {
 	Core *nibcore.Core
+
+	// MigrationGatePassed records that PersistentPreRunE's migration gate ran
+	// against this store and let the command through — which is only possible
+	// when nothing was pending and the probe raised nothing. It exists so a
+	// command that wants the same answer does not repeat the full store scan
+	// that produced it: `check --fix` asked twice, moments apart, and the second
+	// answer was known to be "nothing pending" before it was computed.
+	//
+	// False means "not established here", never "something is pending": plain
+	// `nibs check` is exempt from the gate, so it must still probe.
+	MigrationGatePassed bool
 }
 
 type appContextKey struct{}

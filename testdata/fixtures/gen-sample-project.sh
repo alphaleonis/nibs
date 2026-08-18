@@ -3,9 +3,21 @@
 # Run from repo root: bash testdata/fixtures/gen-sample-project.sh
 set -euo pipefail
 
-DIR="testdata/fixtures/sample-project/.nibs"
-rm -rf "$DIR"
+STORE="testdata/fixtures/sample-project/.nibs"
+DIR="$STORE/data"
+rm -rf "$STORE"
 mkdir -p "$DIR"
+
+# The store holds its own config: prefix, id length and defaults travel with the
+# data directory, so pointing nibs at this fixture applies the fixture's
+# vocabulary and not the surrounding project's.
+cat > "$STORE/config.yml" << 'ENDCONFIG'
+nibs:
+    prefix: tnib-
+    id_length: 4
+    default_status: todo
+    default_type: task
+ENDCONFIG
 
 # ============================================================
 # MILESTONES (2)
@@ -2550,9 +2562,8 @@ ENDNIB
 echo ""
 echo "Generated $(find "$DIR" -name '*.md' | wc -l) nib files in $DIR"
 echo ""
-# --config, not --nibs-path: --nibs-path moves only the data directory, so config
-# discovery would still walk up from the cwd and apply the outer project's prefix
-# to this fixture's tnib- data. Naming the fixture's config resolves .nibs beside it.
+# --nibs-path names the store, and the store carries its own config, so the
+# fixture is read under its own prefix wherever the command is run from.
 echo "To use this fixture:"
-echo "  nibs list --config testdata/fixtures/sample-project/.nibs.yml"
-echo "  nibs serve --config testdata/fixtures/sample-project/.nibs.yml"
+echo "  nibs list --nibs-path testdata/fixtures/sample-project/.nibs"
+echo "  nibs serve --nibs-path testdata/fixtures/sample-project/.nibs"

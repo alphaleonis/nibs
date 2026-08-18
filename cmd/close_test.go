@@ -73,20 +73,22 @@ func setupCloseTest(t *testing.T, files map[string]string) string {
 
 	tmpDir := t.TempDir()
 	nibsDir := filepath.Join(tmpDir, ".nibs")
-	if err := os.MkdirAll(nibsDir, 0755); err != nil {
+	if err := os.MkdirAll(storeDataDir(nibsDir), 0755); err != nil {
 		t.Fatal(err)
 	}
 	for name, content := range files {
-		if err := os.WriteFile(filepath.Join(nibsDir, name), []byte(content), 0644); err != nil {
+		if err := os.WriteFile(dataPath(nibsDir, name), []byte(content), 0644); err != nil {
 			t.Fatal(err)
 		}
 	}
 	return nibsDir
 }
 
+// readNibFile reads an ACTIVE nib file out of the store — i.e. from data/,
+// where nib files live.
 func readNibFile(t *testing.T, nibsDir, filename string) string {
 	t.Helper()
-	data, err := os.ReadFile(filepath.Join(nibsDir, filename))
+	data, err := os.ReadFile(dataPath(nibsDir, filename))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -816,7 +818,7 @@ func TestCloseMergesADecisionTheChildGainedBetweenCloses(t *testing.T) {
 	if revised == child {
 		t.Fatalf("test setup: %q not found in the child, so it gained no decision:\n%s", firstDecision, child)
 	}
-	if err := os.WriteFile(filepath.Join(nibsDir, "gan-ch--child.md"), []byte(revised), 0644); err != nil {
+	if err := os.WriteFile(dataPath(nibsDir, "gan-ch--child.md"), []byte(revised), 0644); err != nil {
 		t.Fatal(err)
 	}
 

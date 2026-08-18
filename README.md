@@ -91,7 +91,7 @@ Initialize nibs in your project:
 nibs init
 ```
 
-This creates a `.nibs/` directory and a `.nibs.yml` configuration file. Both should be tracked in version control.
+This creates a `.nibs/` store directory holding `config.yml` and `data/`. It should be tracked in version control.
 
 ```bash
 nibs new "Set up CI pipeline" -t task    # create a task
@@ -169,7 +169,7 @@ Each nib has:
 - **Tags**: freeform labels for categorization
 - **Relationships**: parent/child hierarchy, blocking/blocked-by dependencies, document links
 
-Nibs are stored as individual Markdown files in `.nibs/`, with YAML front matter for metadata and Markdown body for description and notes. Archived nibs move to `.nibs/archive/` and remain queryable.
+Nibs are stored as individual Markdown files in `.nibs/data/`, with YAML front matter for metadata and Markdown body for description and notes. Archived nibs move to `.nibs/archive/` and remain queryable.
 
 ## License
 

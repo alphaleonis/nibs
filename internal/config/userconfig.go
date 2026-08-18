@@ -4,11 +4,12 @@ import (
 	"os"
 	"path/filepath"
 
+	"github.com/alphaleonis/nibs/internal/store"
 	"gopkg.in/yaml.v3"
 )
 
 // UserConfig holds user-level configuration that provides defaults
-// across all projects. Project-level config (.nibs.yml) overrides these.
+// across all projects. Project config (<store>/config.yml) overrides these.
 type UserConfig struct {
 	Nibs UserNibsConfig `yaml:"nibs"`
 }
@@ -47,8 +48,12 @@ func LoadUserConfig() (*UserConfig, error) {
 
 // LoadUserConfigFrom loads user config from the given path.
 // Returns a zero-value UserConfig (no error) when the file doesn't exist.
+//
+// The read goes through ReadConfigFile, the same bounded reader the project
+// config uses: this path is reached by every command that resolves a store, so
+// an oversized file here costs exactly what MaxConfigBytes exists to prevent.
 func LoadUserConfigFrom(path string) (*UserConfig, error) {
-	data, err := os.ReadFile(path)
+	data, err := ReadConfigFile(path)
 	if err != nil {
 		if os.IsNotExist(err) {
 			return &UserConfig{}, nil
@@ -74,6 +79,18 @@ func LoadWithUserConfig(startDir string) (*Config, error) {
 	return LoadWithUserConfigPath(startDir, userCfgPath)
 }
 
+// LoadStoreWithUserConfig loads an already-resolved store's config from inside
+// it, with user config from the OS-standard location providing defaults for
+// unset fields.
+func LoadStoreWithUserConfig(storeDir string) (*Config, error) {
+	userCfgPath, err := UserConfigPath()
+	if err != nil {
+		// Can't determine user config path; fall back to project-only
+		return LoadFromStore(storeDir)
+	}
+	return LoadStoreWithUserConfigPath(storeDir, userCfgPath)
+}
+
 // LoadFromExplicitPathWithUserConfig loads project config from a specific file path
 // (rather than searching upward), with user config from the OS-standard location
 // providing defaults for unset fields. Used when --config flag is provided.
@@ -94,36 +111,38 @@ func LoadFromExplicitPathWithUserConfig(configPath string) (*Config, error) {
 	return cfg, nil
 }
 
-// LoadWithUserConfigPath loads project config from startDir, with user config
-// from the given path providing defaults for unset fields.
-// This variant accepts an explicit user config path for testing.
+// LoadWithUserConfigPath finds the store by walking up from startDir and loads
+// its config, with user config from the given path providing defaults for
+// unset fields. This variant accepts an explicit user config path for testing.
 //
 // Layering order: project config > user config > system defaults.
 // The raw project config is loaded first (without system defaults),
 // then user config fills in unset fields, then system defaults fill the rest.
 func LoadWithUserConfigPath(startDir string, userConfigPath string) (*Config, error) {
+	storeDir, err := store.FindStore(startDir)
+	if err != nil {
+		return nil, err
+	}
+	if storeDir == "" {
+		storeDir = filepath.Join(startDir, store.DirName)
+	}
+	return LoadStoreWithUserConfigPath(storeDir, userConfigPath)
+}
+
+// LoadStoreWithUserConfigPath loads the config of an ALREADY-RESOLVED store,
+// layering the user config underneath. It is the shared bottom of every
+// config-loading path: whichever way the store was resolved (an upward walk,
+// --nibs-path, NIBS_PATH), its config is read the same way from inside it.
+func LoadStoreWithUserConfigPath(storeDir string, userConfigPath string) (*Config, error) {
 	// Load user config — graceful on all errors (user config is advisory)
 	userCfg, err := LoadUserConfigFrom(userConfigPath)
 	if err != nil {
 		userCfg = &UserConfig{}
 	}
 
-	// Load raw project config (without system defaults applied)
-	configPath, err := FindConfig(startDir)
+	cfg, err := loadRaw(store.NewLayout(storeDir).ConfigPath())
 	if err != nil {
 		return nil, err
-	}
-
-	var cfg *Config
-	if configPath == "" {
-		// No project config found -- start with empty config
-		cfg = &Config{}
-		cfg.configDir = startDir
-	} else {
-		cfg, err = loadRaw(configPath)
-		if err != nil {
-			return nil, err
-		}
 	}
 
 	// Layer 2: fill in unset fields from user config

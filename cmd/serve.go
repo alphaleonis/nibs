@@ -42,6 +42,11 @@ var serveCmd = &cobra.Command{
 	Use:     "web",
 	Aliases: []string{"serve"},
 	Short:   "Start the web UI server",
+	Long: `Start the web UI server.
+
+The file watcher picks up nib files added, changed or removed while the server
+runs. It does NOT watch <store>/config.yml — the prefix, id length and defaults
+are read once at startup, so a config edit needs a restart to take effect.`,
 	// Host and port come from --host/--port (or config); no positional args.
 	Args: codedNoArgs(nil),
 	RunE: func(cmd *cobra.Command, args []string) error {

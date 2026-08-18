@@ -10,6 +10,7 @@ import (
 
 	"github.com/alphaleonis/nibs/internal/config"
 	"github.com/alphaleonis/nibs/internal/nib"
+	"github.com/alphaleonis/nibs/internal/store"
 )
 
 // mustLoadPrefixedCore builds a fresh Core with the "nibs-" prefix and an
@@ -17,8 +18,8 @@ import (
 func mustLoadPrefixedCore(t *testing.T) (*Core, string) {
 	t.Helper()
 	tmpDir := t.TempDir()
-	nibsDir := filepath.Join(tmpDir, NibsDir)
-	if err := os.MkdirAll(nibsDir, 0755); err != nil {
+	nibsDir := filepath.Join(tmpDir, store.DirName)
+	if err := os.MkdirAll(store.NewLayout(nibsDir).DataDir(), 0755); err != nil {
 		t.Fatalf("mkdir: %v", err)
 	}
 	cfg := config.DefaultWithPrefix("nibs-")
@@ -259,8 +260,8 @@ func TestCoreFindMentions(t *testing.T) {
 // oracle in the differential test below).
 func TestCoreFindMentionedBy_IndexServesAfterLoad(t *testing.T) {
 	tmpDir := t.TempDir()
-	nibsDir := filepath.Join(tmpDir, NibsDir)
-	if err := os.MkdirAll(nibsDir, 0755); err != nil {
+	nibsDir := filepath.Join(tmpDir, store.DirName)
+	if err := os.MkdirAll(store.NewLayout(nibsDir).DataDir(), 0755); err != nil {
 		t.Fatalf("mkdir: %v", err)
 	}
 
@@ -269,7 +270,7 @@ func TestCoreFindMentionedBy_IndexServesAfterLoad(t *testing.T) {
 	// the double-dash filename separator so ParseFilename returns the full
 	// prefixed ID rather than splitting "nibs-aaa" into id="nibs"+slug="aaa".
 	writeNibFile := func(id, body string) {
-		path := filepath.Join(nibsDir, id+"--note.md")
+		path := dataPath(nibsDir, id+"--note.md")
 		content := "---\ntitle: " + id + "\nstatus: todo\n---\n" + body + "\n"
 		if err := os.WriteFile(path, []byte(content), 0644); err != nil {
 			t.Fatalf("write %s: %v", path, err)
@@ -296,8 +297,8 @@ func TestCoreFindMentionedBy_IndexServesAfterLoad(t *testing.T) {
 // matching the contract established by Core.Get / Core.NormalizeID.
 func TestCoreFindMentions_ShortIDNormalization(t *testing.T) {
 	tmpDir := t.TempDir()
-	nibsDir := filepath.Join(tmpDir, NibsDir)
-	if err := os.MkdirAll(nibsDir, 0755); err != nil {
+	nibsDir := filepath.Join(tmpDir, store.DirName)
+	if err := os.MkdirAll(store.NewLayout(nibsDir).DataDir(), 0755); err != nil {
 		t.Fatalf("mkdir: %v", err)
 	}
 	cfg := config.DefaultWithPrefix("nibs-")
@@ -567,7 +568,7 @@ func TestCoreWatcher_WriteReparsesMentionEdges(t *testing.T) {
 	time.Sleep(50 * time.Millisecond)
 
 	// Rewrite src on disk to mention t2 instead of t1.
-	srcPath := filepath.Join(nibsDir, "nibs-src--src.md")
+	srcPath := dataPath(nibsDir, "nibs-src--src.md")
 	newContent := "---\ntitle: Src\nstatus: todo\n---\nRef #nibs-t2.\n"
 	writeNibFileAtomic(t, srcPath, newContent)
 
@@ -609,7 +610,7 @@ func TestCoreWatcher_RemoveDropsFromMentionIndex(t *testing.T) {
 	time.Sleep(50 * time.Millisecond)
 
 	// Delete src directly on disk.
-	srcPath := filepath.Join(nibsDir, "nibs-src--src.md")
+	srcPath := dataPath(nibsDir, "nibs-src--src.md")
 	if err := os.Remove(srcPath); err != nil {
 		t.Fatalf("remove: %v", err)
 	}

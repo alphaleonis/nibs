@@ -1,20 +1,17 @@
 package config
 
 import (
+	"errors"
+	"fmt"
+	"io"
+	"io/fs"
 	"os"
 	"path/filepath"
 	"strings"
 
+	"github.com/alphaleonis/nibs/internal/fsutil"
+	"github.com/alphaleonis/nibs/internal/store"
 	"gopkg.in/yaml.v3"
-)
-
-const (
-	// ConfigFileName is the name of the config file at project root
-	ConfigFileName = ".nibs.yml"
-	// DefaultNibsPath is the default directory for storing nibs
-	DefaultNibsPath = ".nibs"
-	// LegacyConfigFile is the old config file location (deprecated)
-	LegacyConfigFile = "config.yaml"
 )
 
 // DefaultStatuses defines the hardcoded status configuration.
@@ -202,15 +199,15 @@ type PriorityConfig struct {
 type Config struct {
 	Nibs NibsConfig `yaml:"nibs"`
 
-	// configDir is the directory containing the config file (not serialized)
-	// Used to resolve relative paths
-	configDir string `yaml:"-"`
+	// storeDir is the `.nibs` directory this config was read from (not
+	// serialized). Everything positional about a project derives from it: the
+	// config file's own location, the data and archive directories, and the
+	// project name (its PARENT directory's name).
+	storeDir string `yaml:"-"`
 }
 
 // NibsConfig defines settings for nib creation.
 type NibsConfig struct {
-	// Path is the path to the nibs directory (relative to config file location)
-	Path           string       `yaml:"path,omitempty"`
 	Prefix         string       `yaml:"prefix"`
 	IDLength       int          `yaml:"id_length"`
 	DefaultStatus  string       `yaml:"default_status,omitempty"`
@@ -232,7 +229,6 @@ type ServerConfig struct {
 func Default() *Config {
 	return &Config{
 		Nibs: NibsConfig{
-			Path:          DefaultNibsPath,
 			Prefix:        "",
 			IDLength:      4,
 			DefaultStatus: "todo",
@@ -255,55 +251,9 @@ func DefaultWithPrefix(prefix string) *Config {
 	return cfg
 }
 
-// FindConfig searches upward from the given directory for a .nibs.yml config file.
-// Returns the absolute path to the config file, or empty string if not found.
-//
-// The NIBS_CONFIG_ROOT environment variable, when set to a non-empty path,
-// bounds the upward walk: each directory up to and including that ceiling is
-// checked for .nibs.yml, but the walk never ascends above it. Comparison is
-// done on absolute paths (via filepath.Abs), so a ceiling that isn't an
-// ancestor of startDir simply never triggers and the walk proceeds to the
-// filesystem root as usual. When unset, behavior is unchanged (walk to root).
-// This is mainly a sandboxing/test-isolation knob — it keeps a stray ancestor
-// .nibs.yml (e.g. /tmp/.nibs.yml) from leaking into tests that expect no
-// config to be found.
-func FindConfig(startDir string) (string, error) {
-	dir, err := filepath.Abs(startDir)
-	if err != nil {
-		return "", err
-	}
-
-	// NIBS_CONFIG_ROOT caps how far the upward walk may climb.
-	var ceiling string
-	if raw := os.Getenv("NIBS_CONFIG_ROOT"); raw != "" {
-		ceiling, err = filepath.Abs(raw)
-		if err != nil {
-			return "", err
-		}
-	}
-
-	for {
-		configPath := filepath.Join(dir, ConfigFileName)
-		if _, err := os.Stat(configPath); err == nil {
-			return configPath, nil
-		}
-
-		// Stop at the ceiling: this dir was checked, but do not ascend above it.
-		if ceiling != "" && dir == ceiling {
-			return "", nil
-		}
-
-		parent := filepath.Dir(dir)
-		if parent == dir {
-			// Reached filesystem root
-			return "", nil
-		}
-		dir = parent
-	}
-}
-
-// Load reads configuration from the given config file path.
-// Returns default config if the file doesn't exist.
+// Load reads configuration from the given config file path, taking the file's
+// containing directory as the store. Returns a default config if the file
+// doesn't exist.
 func Load(configPath string) (*Config, error) {
 	cfg, err := loadRaw(configPath)
 	if err != nil {
@@ -313,17 +263,116 @@ func Load(configPath string) (*Config, error) {
 	return cfg, nil
 }
 
+// LoadFromStore reads the config that lives INSIDE the store directory
+// (<store>/config.yml). This is the derivation every command uses: the store
+// is located first, and its config is read from within it.
+func LoadFromStore(storeDir string) (*Config, error) {
+	return Load(store.NewLayout(storeDir).ConfigPath())
+}
+
+// retiredPathProbe detects a `nibs.path:` key, which the store layout retired.
+// The key used to point the config at a data directory somewhere else; the
+// store directory now IS the data directory's parent, so a config still
+// carrying it describes a layout this build cannot honor. Refusing loudly
+// beats silently reading the key's value as decoration and operating on a
+// different directory than the user wrote down.
+//
+// It is also what RetiredNibsPath reads on behalf of the CLI, so the shape of
+// the retired key is declared once rather than re-transcribed per caller.
+type retiredPathProbe struct {
+	Nibs struct {
+		Path string `yaml:"path"`
+	} `yaml:"nibs"`
+}
+
+// RetiredNibsPath returns the retired `nibs.path` value a pre-layout config
+// carries. The answer is THREE-WAY, because one of its callers decides whether
+// `nibs migrate` may rewrite a directory and "I could not read the evidence" is
+// not the same authorization answer as "there is no evidence":
+//
+//   - ("", nil)      the file is absent, or present and simply does not set the key;
+//   - (value, nil)   the key is set;
+//   - ("", err)      the file EXISTS but its content could not be established —
+//     unreadable, over MaxConfigBytes, or not YAML at all.
+//
+// A caller that only sharpens a message may discard the error; a caller making a
+// decision from the answer must report "cannot determine" instead of guessing.
+func RetiredNibsPath(path string) (string, error) {
+	data, err := ReadConfigFile(path)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return "", nil
+		}
+		return "", err
+	}
+	var probe retiredPathProbe
+	if err := yaml.Unmarshal(data, &probe); err != nil {
+		return "", fmt.Errorf("parsing %s: %w", path, err)
+	}
+	return probe.Nibs.Path, nil
+}
+
+// MaxConfigBytes bounds how many bytes any config file read may consume — the
+// project config, the user config and the pre-layout config probe alike, because
+// every one of them is read on the ORDINARY, always-successful path of every
+// command. A nibs config is a few dozen lines; the ceiling exists because an
+// unbounded os.ReadFile there turns one oversized file into several times its
+// size in resident memory (a 50 MB config.yml drove a plain `nibs list` to
+// 334 MB RSS). It is the same posture nib.MaxFrontMatterBytes takes for a nib
+// file's header.
+const MaxConfigBytes = 1 << 20 // 1 MiB
+
+// ReadConfigFile reads a config file, refusing one larger than MaxConfigBytes.
+//
+// The ceiling is enforced by reading one byte PAST it and erroring, never by
+// truncating: a silently shortened config would parse as a different project —
+// a missing prefix re-prefixes every new nib — which is worse than not opening
+// at all. A missing file is returned as an ordinary os.IsNotExist error so
+// callers can keep treating absence as "use the defaults".
+func ReadConfigFile(path string) ([]byte, error) {
+	f, err := os.Open(path)
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = f.Close() }()
+	data, err := io.ReadAll(io.LimitReader(f, MaxConfigBytes+1))
+	if err != nil {
+		return nil, err
+	}
+	if len(data) > MaxConfigBytes {
+		return nil, fmt.Errorf("%s is larger than the %d-byte configuration limit; a nibs config is a few dozen lines, so this is either not a config or is corrupt",
+			path, MaxConfigBytes)
+	}
+	return data, nil
+}
+
 // loadRaw reads and unmarshals the config file without applying system defaults.
 // Returns an empty Config if the file doesn't exist (callers apply defaults).
 func loadRaw(configPath string) (*Config, error) {
-	data, err := os.ReadFile(configPath)
+	data, err := ReadConfigFile(configPath)
 	if err != nil {
 		if os.IsNotExist(err) {
 			cfg := &Config{}
-			cfg.configDir = filepath.Dir(configPath)
+			cfg.storeDir = filepath.Dir(configPath)
 			return cfg, nil
 		}
 		return nil, err
+	}
+
+	// The CONFIG PATH and the backticked `nibs migrate` are load-bearing OUTSIDE
+	// this package. cmd's resolveCLIStore wraps this error with a `%w`-only
+	// format that contributes no path and no command of its own, so what the
+	// user reads — and what cmd/refusal_invariant_test.go's rows "--config
+	// naming a store config that still sets nibs.path" and "a store config that
+	// still sets nibs.path" assert on — comes from here. That test parses
+	// cmd/root.go alone and cannot see this string: dropping the path from it
+	// leaves the composed message with nothing but an unresolvable command, and
+	// the `want` list in TestLoadRejectsRetiredNibsPath is what catches it.
+	// Reword freely, but keep both.
+	var probe retiredPathProbe
+	if err := yaml.Unmarshal(data, &probe); err == nil && probe.Nibs.Path != "" {
+		return nil, fmt.Errorf("%s sets the retired `nibs.path` key (%q); the store directory now holds the config, the data and the archive together — remove the key, and run `nibs migrate` if this project still uses the old layout",
+			configPath, probe.Nibs.Path)
 	}
 
 	var cfg Config
@@ -331,17 +380,14 @@ func loadRaw(configPath string) (*Config, error) {
 		return nil, err
 	}
 
-	// Store the config directory for resolving relative paths
-	cfg.configDir = filepath.Dir(configPath)
+	// The config lives inside the store, so its directory IS the store.
+	cfg.storeDir = filepath.Dir(configPath)
 
 	return &cfg, nil
 }
 
 // applySystemDefaults fills in zero-value fields with system defaults.
 func applySystemDefaults(cfg *Config) {
-	if cfg.Nibs.Path == "" {
-		cfg.Nibs.Path = DefaultNibsPath
-	}
 	if cfg.Nibs.IDLength == 0 {
 		cfg.Nibs.IDLength = 4
 	}
@@ -353,76 +399,132 @@ func applySystemDefaults(cfg *Config) {
 	}
 }
 
-// LoadFromDirectory finds and loads the config file by searching upward from the given directory.
-// If no config file is found, returns a default config anchored at the given directory.
+// LoadFromDirectory finds the store by searching upward from the given
+// directory and loads the config from inside it. If no store is found, returns
+// a default config anchored at a `.nibs` directory under startDir.
 func LoadFromDirectory(startDir string) (*Config, error) {
-	configPath, err := FindConfig(startDir)
+	storeDir, err := store.FindStore(startDir)
 	if err != nil {
 		return nil, err
 	}
 
-	if configPath == "" {
-		// No config found, return default anchored at startDir
+	if storeDir == "" {
+		// No store found: a default anchored where one would be created.
 		cfg := Default()
-		cfg.configDir = startDir
+		cfg.storeDir = filepath.Join(startDir, store.DirName)
 		return cfg, nil
 	}
 
-	return Load(configPath)
+	return LoadFromStore(storeDir)
 }
 
-// ResolveNibsPath returns the absolute path to the nibs directory.
-func (c *Config) ResolveNibsPath() string {
-	if filepath.IsAbs(c.Nibs.Path) {
-		return c.Nibs.Path
-	}
-	if c.configDir == "" {
-		// Fallback: use current directory
-		cwd, _ := os.Getwd()
-		return filepath.Join(cwd, c.Nibs.Path)
-	}
-	return filepath.Join(c.configDir, c.Nibs.Path)
+// StoreDir returns the `.nibs` directory this config belongs to.
+func (c *Config) StoreDir() string {
+	return c.storeDir
 }
 
-// ConfigDir returns the directory containing the config file.
-func (c *Config) ConfigDir() string {
-	return c.configDir
+// SetStoreDir sets the store directory (for testing, or when creating a config
+// for a store that does not exist yet).
+func (c *Config) SetStoreDir(dir string) {
+	c.storeDir = dir
 }
 
-// SetConfigDir sets the config directory (for testing or when creating new configs).
-func (c *Config) SetConfigDir(dir string) {
-	c.configDir = dir
+// Layout returns the store layout this config belongs to — the one place the
+// data and archive directories are derived from.
+func (c *Config) Layout() store.Layout {
+	return store.NewLayout(c.storeDir)
 }
 
-// GetProjectName returns the project name derived from the config directory name.
-// Falls back to "Nibs" when no config directory is set.
+// GetProjectName returns the project name: the name of the directory
+// CONTAINING the store, since the store itself is always called `.nibs`.
+// Falls back to "Nibs" when no store directory is set.
 func (c *Config) GetProjectName() string {
-	name := filepath.Base(c.configDir)
-	if name == "." || name == "" {
+	if c.storeDir == "" {
+		return "Nibs"
+	}
+	name := filepath.Base(filepath.Dir(c.storeDir))
+	if name == "." || name == "" || name == string(filepath.Separator) {
 		return "Nibs"
 	}
 	return name
 }
 
-// Save writes the configuration to the config file.
-// If configDir is set, saves to that directory; otherwise saves to the given directory.
-func (c *Config) Save(dir string) error {
-	targetDir := c.configDir
+// Save writes the configuration to <store>/config.yml. If the config has no
+// store directory, the given directory is taken as the store.
+//
+// The write is ATOMIC and MODE-PRESERVING, the same contract the migration engine's
+// relocation of this file holds it to (fsutil.AtomicWriteFile). One file with two
+// writers and two contracts is not a contract: a plain os.WriteFile here widened a
+// 0600 config the relocation had deliberately kept private, and left a torn file
+// possible for a resume path that assumes config.yml is only ever absent or
+// complete.
+//
+// A SYMLINK at config.yml is REPLACED with a regular file rather than written
+// through, because the rename is what makes the write atomic. That is a contract of
+// Save and not an implementation detail of fsutil: a config.yml symlinked into a
+// dotfile manager becomes an ordinary file holding the new settings while the
+// manager's copy keeps the old ones, so the next `chezmoi apply` (or equivalent)
+// restores a stale prefix and short-id resolution stops finding nibs created since.
+//
+// It is REPORTED rather than silent — the first return value is the path the link
+// pointed at, non-empty only when a link was replaced, and the caller must tell the
+// user which file is now stale. Refusing instead was rejected: `nibs config
+// set-prefix` has already renamed every nib file by the time Save runs, so a
+// refusal here leaves the store half-changed.
+func (c *Config) Save(storeDir string) (staleLinkTarget string, err error) {
+	targetDir := c.storeDir
 	if targetDir == "" {
-		targetDir = dir
+		targetDir = storeDir
 	}
-	path := filepath.Join(targetDir, ConfigFileName)
+	if err := os.MkdirAll(targetDir, 0755); err != nil {
+		return "", err
+	}
+	path := store.NewLayout(targetDir).ConfigPath()
 
 	data, err := yaml.Marshal(c)
 	if err != nil {
-		return err
+		return "", err
 	}
 
-	return os.WriteFile(path, data, 0644)
+	if link, lstatErr := os.Lstat(path); lstatErr == nil && link.Mode()&os.ModeSymlink != 0 {
+		if target, readErr := os.Readlink(path); readErr == nil {
+			if !filepath.IsAbs(target) {
+				target = filepath.Join(filepath.Dir(path), target)
+			}
+			staleLinkTarget = target
+		} else {
+			staleLinkTarget = path
+		}
+	}
+
+	// Keep the existing file's permissions; a config that has never existed gets
+	// the ordinary 0644 this used to hardcode for every case. A stat failure that is
+	// not "absent" is reported rather than answered with 0644 — that fallback could
+	// only widen a config whose real mode was narrower.
+	perm := os.FileMode(0644)
+	info, statErr := os.Stat(path)
+	switch {
+	case statErr == nil:
+		perm = info.Mode().Perm()
+	case !errors.Is(statErr, fs.ErrNotExist):
+		return "", fmt.Errorf("reading the current mode of %s: %w", path, statErr)
+	}
+	if err := fsutil.AtomicWriteFile(path, data, perm); err != nil {
+		return "", err
+	}
+	return staleLinkTarget, nil
 }
 
 // IsValidStatus returns true if the status is a valid hardcoded status.
 func (c *Config) IsValidStatus(status string) bool {
+	return IsKnownStatus(status)
+}
+
+// IsKnownStatus reports whether status is one of the hardcoded statuses. The
+// package-level form exists for callers that have no Config yet — store
+// resolution runs before any config is loaded and uses a nibs status as the
+// evidence that a file was written by nibs.
+func IsKnownStatus(status string) bool {
 	for _, s := range DefaultStatuses {
 		if s.Name == status {
 			return true

@@ -32,11 +32,11 @@ func setupArchiveTest(t *testing.T, files map[string]string) string {
 
 	tmpDir := t.TempDir()
 	nibsDir := filepath.Join(tmpDir, ".nibs")
-	if err := os.MkdirAll(nibsDir, 0755); err != nil {
+	if err := os.MkdirAll(storeDataDir(nibsDir), 0755); err != nil {
 		t.Fatal(err)
 	}
 	for name, content := range files {
-		if err := os.WriteFile(filepath.Join(nibsDir, name), []byte(content), 0644); err != nil {
+		if err := os.WriteFile(dataPath(nibsDir, name), []byte(content), 0644); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -80,7 +80,7 @@ func TestArchiveRejectsArgAndArchivesNothing(t *testing.T) {
 	if fileExists(filepath.Join(nibsDir, "archive", "done--task.md")) {
 		t.Error("`archive <id>` must archive NOTHING; the completed nib was moved to archive/")
 	}
-	if !fileExists(filepath.Join(nibsDir, "done--task.md")) {
+	if !fileExists(dataPath(nibsDir, "done--task.md")) {
 		t.Error("the completed nib must stay in the main .nibs dir when the command is rejected")
 	}
 }
@@ -154,7 +154,7 @@ func TestArchiveNoArgsArchivesAllEligible(t *testing.T) {
 	if fileExists(filepath.Join(nibsDir, "archive", "open--task.md")) {
 		t.Error("open (todo) nib must not be archived")
 	}
-	if !fileExists(filepath.Join(nibsDir, "open--task.md")) {
+	if !fileExists(dataPath(nibsDir, "open--task.md")) {
 		t.Error("open (todo) nib must stay in the main .nibs dir")
 	}
 }
