@@ -18,7 +18,8 @@ is first scanned into the two: text the shell would execute keeps its
 characters, and text it would only pass along as an argument or feed to a
 program's stdin is blanked out. What survives is then matched for `go test` at a
 command position -- start of input, or after a separator -- allowing env
-assignments, `sudo`-style wrappers and shell keywords in front of it.
+assignments, redirections, `sudo`-style wrappers and shell keywords in front of
+it.
 
 Data, therefore not matched:
 
@@ -40,6 +41,30 @@ Ambiguity resolves toward the widest match. An unterminated quote, backtick or
 raw command string instead -- never a subset of it. A command word that cannot
 be resolved counts as a runner, so its quoted arguments are code. A false
 positive costs one rephrased command; a false negative costs the machine.
+
+Known limits, left open on purpose. Each needs an invocation to be *built*
+rather than typed, so reaching one is a workaround and not a slip -- and a
+workaround already has NIBS_ALLOW_BARE_GO_TEST=1, which at least states a
+reason. Both real incidents were a plain `go test` at a command position, the
+shape this guard has always caught, and closing these would cost more scanner
+surface than the protection is worth:
+
+  * a command handed to another machine -- `docker run IMG go test ./...`. The
+    command word is `docker`; finding the trailing command means parsing
+    `run [opts] IMAGE CMD...`, which needs every value-taking option known by
+    name to tell the image from an argument, and a wrong guess there misfires in
+    both directions. The string form `docker run IMG sh -c '...'` is caught
+    already, docker being a runner. This project has no containerized test path
+    to stumble into.
+  * a pipeline whose sink runs what it reads -- `echo "go test ./..." | sh`.
+    The quote opens before the `| sh` that decides what it is, and one
+    left-to-right pass has called it data by then. Seeing it needs lookahead to
+    the sink, and finding the sink means knowing where the pipeline ends, which
+    is the scan's own job -- so this is a second pass over the whole string, not
+    a rule. The heredoc form of the same idea *is* caught: a body is consumed at
+    the newline, by which time the pipeline is known.
+  * a script written to a file and then run. Watching that means watching what
+    file contents become, which is a different tool.
 
 Reached through scripts/guard-go-test.sh, which resolves an interpreter that
 actually runs (`python3` and `python` name different things on Windows and on
@@ -87,10 +112,30 @@ TRAILING_WRAPPERS = frozenset({"xargs", "watch", "parallel"})
 _ENV_ASSIGN = re.compile(r"[A-Za-z_][A-Za-z0-9_]*=")
 _DURATION = re.compile(r"\d+[smhdSMHD]?\Z")
 
-# The words the match may step over before reaching `go test`: an env
-# assignment, a wrapper command or keyword, an option belonging to one of those,
-# or a bare duration such as the `30` in `timeout 30`. Longest alternatives
-# first so `timeout` is not shadowed by `time`.
+# A command prefixed by more wrapper words than this is not a shape worth
+# scanning for. Both walks over a prefix stop there -- the match below and
+# _resolve_command_word -- which is what keeps a run of separators, each trailed
+# by a long steppable prefix, from turning the whole scan quadratic on
+# adversarial input.
+_MAX_PREFIX_WORDS = 64
+
+# A redirection may sit in front of the command word rather than after it:
+# `> /tmp/out go test ./...` runs the tests exactly as the plain form does, only
+# with stdout captured, so the match steps over one the way it steps over a
+# wrapper. The operator either duplicates a descriptor and carries its target
+# with it (`2>&1`, `>&-`) or takes the next word as the file. That word stops at
+# the characters the shell ends a word on, so it can never swallow a separator
+# and fuse two commands into one.
+_REDIRECT = (
+    r"(?:[0-9]*|&)(?:>>|>\||<>|>|<)"  # operator, longest form first
+    r"(?:&[0-9]*-?"  # duplicated descriptor, no file word of its own
+    r"|[ \t]*[^\s;&|<>()`]+)"  # otherwise the next word names the file
+)
+
+# The words the match may step over before reaching `go test`: a redirection, an
+# env assignment, a wrapper command or keyword, an option belonging to one of
+# those, or a bare duration such as the `30` in `timeout 30`. Longest
+# alternatives first so `timeout` is not shadowed by `time`.
 _STEP_OVER = "|".join(
     sorted(
         (re.escape(w) for w in PREFIX_COMMANDS | SHELL_KEYWORDS | TRAILING_WRAPPERS),
@@ -99,7 +144,8 @@ _STEP_OVER = "|".join(
     )
 )
 _PREFIX_WORD = (
-    r"(?:[A-Za-z_][A-Za-z0-9_]*=\S*"  # env assignment
+    r"(?:" + _REDIRECT +
+    r"|[A-Za-z_][A-Za-z0-9_]*=\S*"  # env assignment
     r"|" + _STEP_OVER + r"|-{1,2}[A-Za-z0-9]\S*"  # option of a wrapper
     r"|\d+[smhdSMHD]?)"  # bare duration
 )
@@ -112,7 +158,7 @@ _PREFIX_WORD = (
 BARE_GO_TEST = re.compile(
     r"""(?:^|(?<!\\)[\n;&|({])            # command position, not an escaped one
         \s*
-        (?:""" + _PREFIX_WORD + r"""\s+)*
+        (?:""" + _PREFIX_WORD + r"""\s+){0,""" + str(_MAX_PREFIX_WORDS) + r"""}
         go\s+test\b
     """,
     re.VERBOSE | re.MULTILINE,
@@ -168,11 +214,6 @@ class _Frame:
 
 
 _WORD = re.compile(r"[ \t]*([^\s;&|<>()`]+)")
-
-# A command prefixed by more wrapper words than this is not a shape worth
-# scanning for; the bound keeps the per-separator lookahead from turning the
-# whole scan quadratic on adversarial input.
-_MAX_PREFIX_WORDS = 64
 
 
 def _resolve_command_word(text, pos):

@@ -112,12 +112,28 @@ func TestGuardSeparatesInvocationFromMention(t *testing.T) {
 		{"behind sudo", "sudo " + goTest + " ./...", true},
 		{"behind a loop keyword", "for d in a b; do " + goTest + " $d; done", true},
 		{"behind xargs", "echo ./... | xargs " + goTest, true},
+		// A redirection may precede the command word instead of following it,
+		// and `> file cmd args` runs cmd args all the same.
+		{"behind a leading redirect", "> /tmp/out " + goTest + " ./...", true},
+		{"behind a redirect with no space", ">/tmp/out " + goTest + " ./...", true},
+		{"behind an appending redirect after a separator",
+			"cd internal && >> /tmp/out " + goTest + " ./...", true},
+		{"behind a numbered redirect", "2> /tmp/err " + goTest + " ./internal/nib", true},
+		{"behind a merged redirect", "&> /tmp/out " + goTest + " ./...", true},
+		{"behind a clobbering redirect", ">| /tmp/out " + goTest + " ./...", true},
+		{"behind an input redirect", "< /dev/null " + goTest + " ./...", true},
+		{"behind a duplicated descriptor", "2>&1 " + goTest + " ./...", true},
+		{"behind a redirect and a wrapper", "> /tmp/out timeout 30 " + goTest + " ./...", true},
 		// A quoted argument is data for most commands, but not for one that
 		// hands it to an interpreter.
 		{"quoted argument of sh -c", `sh -c "` + goTest + ` ./..."`, true},
 		{"quoted argument of bash -c", "bash -c '" + goTest + " ./...'", true},
 		{"quoted argument of eval", "eval '" + goTest + " ./...'", true},
 		{"separator inside sh -c", `sh -c "cd internal && ` + goTest + ` ./..."`, true},
+		// The guard's doc leans on this case when it explains why a container
+		// runner's *trailing* command form is left open: the string form of the
+		// same thing is not.
+		{"quoted argument of a container runner", "docker run img sh -c '" + goTest + " ./...'", true},
 		// Likewise a heredoc body, when something in the pipeline runs it.
 		{"heredoc read by bash", "bash <<'EOF'\n" + goTest + " ./...\nEOF", true},
 		{"heredoc piped to sh", "cat <<'EOF' | sh\n" + goTest + " ./...\nEOF", true},
@@ -158,6 +174,13 @@ func TestGuardSeparatesInvocationFromMention(t *testing.T) {
 		{"capped runner run directly", "scripts/go-test-capped.sh ./internal/nib -run TestX", false},
 		{"the full gate", "task test", false},
 		{"another go subcommand", "go build ./... && go vet ./...", false},
+		{"another go subcommand behind a redirect", "> /tmp/out go build ./...", false},
+		{"capped runner behind a redirect", "> /tmp/out bash scripts/go-test-capped.sh ./...", false},
+		{"the full gate with its output redirected", "task test > /tmp/out 2>&1", false},
+		// A redirect only stands in front of a command word at a command
+		// position. Here `echo` already holds that place, so the words after
+		// the file are its arguments and nothing runs the tests.
+		{"a redirect that is not at a command position", "echo hi > /tmp/out " + goTest, false},
 		// An escaped separator is regex alternation in a search pattern, not a
 		// shell separator.
 		{"escaped separator in a pattern", `rg '\bgo\|test\b' .`, false},
