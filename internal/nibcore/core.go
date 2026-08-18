@@ -395,8 +395,24 @@ func (c *Core) recordUnparseable(path string, reason error) {
 	})
 }
 
+// readRegularFile is os.ReadFile through OpenRegularFile, so a path recorded at
+// load time and since replaced by a FIFO fails instead of blocking. Every caller
+// of this holds a Core lock while it runs.
+func readRegularFile(path string) ([]byte, error) {
+	f, err := OpenRegularFile(path)
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = f.Close() }()
+	return io.ReadAll(f)
+}
+
 func (c *Core) loadNib(path string) (*nib.Nib, error) {
-	f, err := os.Open(path)
+	// OpenRegularFile, not os.Open: this is reached from the fsnotify watcher
+	// with a path no walk classified, and it runs under the write lock — so an
+	// open that blocks there does not cost one nib, it wedges every reader in the
+	// process for as long as it lasts.
+	f, err := OpenRegularFile(path)
 	if err != nil {
 		return nil, err
 	}
@@ -1023,7 +1039,7 @@ func (c *Core) computeStoredETag(storedNib *nib.Nib) (string, error) {
 		return storedNib.ETag(), nil
 	}
 	diskPath := filepath.Join(c.root, storedNib.Path)
-	raw, err := os.ReadFile(diskPath)
+	raw, err := readRegularFile(diskPath)
 	if err != nil {
 		if os.IsNotExist(err) {
 			// Legitimately "in memory but not flushed yet" (freshly created) or

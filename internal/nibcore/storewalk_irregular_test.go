@@ -247,3 +247,101 @@ func TestLoadSkipsAnIrregularFileAndReportsIt(t *testing.T) {
 		t.Errorf("diagnostic Reason = %q, want it to say the file is not a regular one", found.Reason)
 	}
 }
+
+// TestWatcherDoesNotWedgeTheStoreOnAnIrregularFile pins the opener the WALK
+// cannot reach, and the one where the same hang costs the most.
+//
+// The fsnotify watcher loads a single path on a Create event — it never goes
+// through WalkStoreFiles — and it does so holding the write lock. A FIFO arriving
+// in a watched store therefore did not cost one nib: it blocked in open(2) with
+// the lock held, so every reader in the process blocked behind it, permanently.
+// A one-shot CLI hang is recoverable by killing the command; this is a `nibs
+// serve` that never answers again.
+func TestWatcherDoesNotWedgeTheStoreOnAnIrregularFile(t *testing.T) {
+	nibsDir := setupNibsDir(t)
+	data := storeData(t, nibsDir)
+	writeNibFile(t, data, "good01--good.md", irregularTestNib)
+
+	core := New(nibsDir, config.Default())
+	core.SetWarnWriter(nil)
+	if err := core.Load(); err != nil {
+		t.Fatalf("Load(): %v", err)
+	}
+	if err := core.StartWatching(); err != nil {
+		t.Fatalf("StartWatching(): %v", err)
+	}
+	// BOUNDED, and not a plain defer. If the guard regresses, the watcher
+	// goroutine is blocked in open(2) holding the write lock — and StopWatching
+	// blocks behind it, so the deadline below fires, t.Fatalf unwinds into this
+	// cleanup, and the test hangs there instead of failing. That is the exact
+	// outcome this file exists to prevent, and it is how this very test behaved
+	// the first time its guard was mutated away. Leaking one blocked goroutine in
+	// an already-failing test costs nothing: the process exits at the end of the
+	// run.
+	t.Cleanup(func() {
+		stopped := make(chan struct{})
+		go func() { _ = core.StopWatching(); close(stopped) }()
+		select {
+		case <-stopped:
+		case <-time.After(2 * time.Second):
+		}
+	})
+
+	mkfifoT(t, filepath.Join(data, "pipe01--x.md"))
+
+	// The watcher's ingest is asynchronous, so the assertion is that reads keep
+	// answering while it runs — which is exactly what the write lock would deny.
+	// Retried, because a single Get could land before the event is delivered and
+	// pass whether the guard is there or not.
+	for round := 1; round <= 20; round++ {
+		if err := withinDeadline(t, "Core.Get while the watcher ingests a FIFO", func() error {
+			_, err := core.Get("good01")
+			return err
+		}); err != nil {
+			t.Fatalf("Get(good01) round %d: %v", round, err)
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+	// The FIFO must not have been adopted as a nib either.
+	if _, err := core.Get("pipe01"); err == nil {
+		t.Error("the watcher loaded a FIFO as a nib")
+	}
+}
+
+// TestCurrentETagRefusesANibReplacedByAnIrregularFile pins the third opener: a
+// path recorded at LOAD time and re-read later.
+//
+// computeStoredETag re-reads the file behind a loaded nib to certify what is on
+// disk, and CurrentETag holds a read lock across it while Update holds the write
+// lock — so a nib swapped for a FIFO after load blocked there instead of failing.
+// Failing closed is the right answer: the on-disk content cannot be certified, so
+// the overwrite must be refused.
+func TestCurrentETagRefusesANibReplacedByAnIrregularFile(t *testing.T) {
+	nibsDir := setupNibsDir(t)
+	data := storeData(t, nibsDir)
+	writeNibFile(t, data, "good01--good.md", irregularTestNib)
+
+	core := New(nibsDir, config.Default())
+	core.SetWarnWriter(nil)
+	if err := core.Load(); err != nil {
+		t.Fatalf("Load(): %v", err)
+	}
+
+	path := filepath.Join(data, "good01--good.md")
+	if err := os.Remove(path); err != nil {
+		t.Fatalf("remove: %v", err)
+	}
+	mkfifoT(t, path)
+
+	err := withinDeadline(t, "Core.CurrentETag", func() error {
+		_, etagErr := core.CurrentETag("good01")
+		return etagErr
+	})
+	if err == nil {
+		t.Fatal("CurrentETag certified a nib whose file is a FIFO")
+	}
+	var unparseable *OnDiskUnparseableError
+	if !errors.As(err, &unparseable) {
+		t.Fatalf("CurrentETag error = %v (%T), want an OnDiskUnparseableError so an if-match Update fails closed", err, err)
+	}
+}

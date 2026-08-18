@@ -1151,6 +1151,16 @@ func scanStore(env migrateEnv) (*storeScan, error) {
 			// The same family an unreadable file lands in, and reported the same
 			// way: migrate names every file its scan passed over, so an entry it
 			// could not even open must not be the one that goes unmentioned.
+			// unreadable: FALSE, and the distinction is what keeps this a
+			// diagnostic rather than a lockout. `unreadable` means "the scan
+			// cannot prove this is not a nib", which is why such a file blocks a
+			// content step — the layout step moves it into data/ and the step
+			// meets it there. For an irregular file the scan CAN prove it, and
+			// layoutMovableFiles leaves it where it is, so it is never migrated
+			// around and blocks nothing. Marked unreadable, a FIFO at a pre-layout
+			// store's root wedged the project: every command said "run
+			// `nibs migrate`" and migrate refused to migrate around it.
+			//
 			// The bare sentinel, not the wrapped error: the walk prefixes it with
 			// the absolute path, and scanProblem already carries the path in the
 			// spelling every nibs surface uses.
@@ -1158,7 +1168,7 @@ func scanStore(env migrateEnv) (*storeScan, error) {
 			if errors.Is(skipped, nibcore.ErrNotRegularFile) {
 				reason = nibcore.ErrNotRegularFile.Error()
 			}
-			scan.problems = append(scan.problems, scanProblem{path: storeRelPath(env, path), reason: reason, unreadable: true})
+			scan.problems = append(scan.problems, scanProblem{path: storeRelPath(env, path), reason: reason})
 			return nil
 		}
 		h, err := readFrontMatterHeader(path)
@@ -1564,6 +1574,12 @@ func gateStoreLoadsCleanly(env migrateEnv, scan *storeScan) gateResult {
 //     steps meet it there;
 //   - fence-less at the store root: provably not a nib, never moved, and
 //     invisible to Core.Load once the relayout lands — so it blocks nothing.
+//     An IRREGULAR file — a FIFO, socket or device named `*.md` — is in this
+//     bucket for the same reason and is recorded with unreadable false: the scan
+//     proves what it is from the directory entry without opening it, and
+//     layoutMovableFiles leaves it where it sits. Filing it under `unreadable`
+//     instead made a FIFO at a pre-layout store's root a lockout — every command
+//     said to run `nibs migrate`, and migrate refused to migrate around it.
 //
 // A shape step alone can never be blocked: it only MOVES files, and moves
 // nothing it could not classify.
@@ -1756,7 +1772,10 @@ type fmHeader struct {
 // happen in the step's apply, and runMigrations' post-condition catches any
 // residual scan/parse disagreement rather than letting it wedge the CLI.
 func readFrontMatterHeader(path string) (fmHeader, error) {
-	f, err := os.Open(path)
+	// OpenRegularFile closes the window WalkStoreFiles' classification leaves
+	// open: the walk decided this path was a regular file a moment ago, and
+	// opening a FIFO blocks forever rather than failing.
+	f, err := nibcore.OpenRegularFile(path)
 	if err != nil {
 		return fmHeader{}, err
 	}

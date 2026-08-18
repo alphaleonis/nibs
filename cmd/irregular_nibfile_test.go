@@ -226,3 +226,48 @@ func TestCommandsDoNotHangOnAnIrregularNibFile(t *testing.T) {
 		}
 	})
 }
+
+// TestIrregularFileAtAPreLayoutStoreRootDoesNotLockTheProjectOut pins the
+// classification, which is the difference between the operator's decision and its
+// opposite.
+//
+// scanProblem.unreadable means "the scan cannot prove this is not a nib", and
+// such a file BLOCKS a pending content step: the layout step moves it into data/
+// and the step would meet it there. An irregular file is the other case — the
+// scan proves what it is from the directory entry, and layoutMovableFiles leaves
+// it where it sits — so it must block nothing. Filed under `unreadable` it wedged
+// the project instead: every command said to run `nibs migrate`, and migrate
+// refused to migrate around it, which is the lockout the decision to DIAGNOSE
+// rather than refuse exists to avoid.
+func TestIrregularFileAtAPreLayoutStoreRootDoesNotLockTheProjectOut(t *testing.T) {
+	t.Cleanup(resetRootPersistentFlags)
+	t.Cleanup(resetMigrateFlags)
+	resetRootPersistentFlags()
+	resetMigrateFlags()
+	t.Setenv("NIBS_PATH", "")
+	tmp := t.TempDir()
+	t.Setenv("NIBS_CONFIG_ROOT", tmp)
+
+	projectDir := filepath.Join(tmp, "proj")
+	dataDir := filepath.Join(projectDir, "nibdata")
+	mkdirAllT(t, dataDir)
+	writeFileT(t, filepath.Join(projectDir, store.LegacyProjectConfigFileName),
+		"nibs:\n  prefix: leg-\n  id_length: 4\n  path: nibdata\n")
+	// A CONTENT step must be pending, or nothing consults the blocking set at
+	// all and this row passes whatever the classification is.
+	writeFileT(t, filepath.Join(dataDir, "leg-a1--one.md"),
+		"---\ntitle: One\nstatus: todo\npriority: deferred\n---\n\nBody.\n")
+	mkfifoT(t, filepath.Join(dataDir, "leg-b2--pipe.md"))
+
+	out, err := runWithinDeadline(t, "migrate", "--dry-run", "--nibs-path", dataDir)
+	if err != nil {
+		t.Fatalf("migrate --dry-run refused a store whose only problem is a file it can prove is not a nib: %v\n%s", err, out)
+	}
+	if strings.Contains(out, "refusing to migrate around") {
+		t.Errorf("the preview predicts a refusal over a provably-not-a-nib file:\n%s", out)
+	}
+	// Skipped is not silent: migrate names every file its scan passed over.
+	if !strings.Contains(out, "leg-b2--pipe.md") {
+		t.Errorf("the preview does not name the skipped file:\n%s", out)
+	}
+}
