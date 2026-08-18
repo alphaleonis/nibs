@@ -18,6 +18,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 - **`nibs prime` no longer primes an agent for a project it cannot use** — a pre-layout project now gets the same migration refusal as every other command, in place of instructions whose every command refuses there.
 - **A store refusal no longer denies that any config names the directory** when one names it under a different spelling, which sent the reader to `nibs init` over the project's real nibs.
 - **`nibs config set-prefix` renames each nib through an atomic write**, instead of a shared temp name with no fsync.
+- **A backtick in a config value can no longer break out of the code span a refusal renders it in**, where the rest of the value became prose addressed to the reader carrying a command of its own choosing.
+- **A config file that is not a regular file is refused**, instead of a named pipe or socket at that path blocking the command indefinitely.
 - **The web UI now notices a live connection that dies without closing**, such as going offline or waking from sleep, instead of holding an apparently-healthy socket and serving a stale view indefinitely.
 - **The server now notices a live-updates client that vanishes without closing** and reclaims its connection, instead of holding it until the OS TCP timeout.
 
