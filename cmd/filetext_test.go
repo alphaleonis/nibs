@@ -61,6 +61,32 @@ func TestSanitizeFileTextCollapsesAndTruncates(t *testing.T) {
 	}
 }
 
+// TestSanitizeFilePathBoundsWithoutCollapsing pins the third rendering, used for
+// a path DERIVED from a file-declared value.
+//
+// It bounds where stripControlChars does not, because such a path is the declared
+// value joined onto the project directory and a config may be a megabyte — the
+// refusal repeated that megabyte per interpolation. It keeps whitespace where
+// sanitizeFileText collapses it, because a real directory name may contain a
+// space and collapsing one names a directory that is not there.
+func TestSanitizeFilePathBoundsWithoutCollapsing(t *testing.T) {
+	spaced := filepath.Join("/tmp", "my nibs", "store")
+	if got := sanitizeFilePath(spaced); got != spaced {
+		t.Errorf("sanitizeFilePath(%q) = %q, want the spaces left alone", spaced, got)
+	}
+	long := "/" + strings.Repeat("x", maxEchoedFileTextRunes+50)
+	got := sanitizeFilePath(long)
+	if !strings.HasSuffix(got, "…") {
+		t.Errorf("an over-long path was not marked as truncated: %q", got)
+	}
+	if n := len([]rune(got)); n != maxEchoedFileTextRunes+1 {
+		t.Errorf("truncated length = %d runes, want %d plus the ellipsis", n, maxEchoedFileTextRunes)
+	}
+	if got := sanitizeFilePath("a\u0060b"); strings.Contains(got, "`") {
+		t.Errorf("sanitizeFilePath kept a backtick (%q), which closes the code span a message puts around it", got)
+	}
+}
+
 // TestNoStoreFoundErrorDoesNotEchoTerminalEscapes is the end-to-end half: the
 // message is built from an ancestor `.nibs.yml` found by an upward walk that in
 // normal use reaches the filesystem root, and `nibs list` in a freshly cloned,

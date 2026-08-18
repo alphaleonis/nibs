@@ -277,6 +277,10 @@ func TestFileSourcedTextNeverReachesAnEchoSurfaceRaw(t *testing.T) {
 			emit: func(t *testing.T) string { return sanitizeFileText(deceptivePayload) },
 		},
 		{
+			name: "sanitizeFilePath",
+			emit: func(t *testing.T) string { return sanitizeFilePath("/tmp/" + deceptivePayload) },
+		},
+		{
 			name: "shellArg",
 			emit: func(t *testing.T) string { return shellArg("/tmp/" + deceptivePayload) },
 		},
