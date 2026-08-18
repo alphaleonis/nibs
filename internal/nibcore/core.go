@@ -4,6 +4,7 @@ package nibcore
 
 import (
 	"bytes"
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -253,6 +254,17 @@ func (c *Core) loadFromDisk() error {
 	// relocate".
 	err := WalkStoreContent(c.layout, func(path string, err error) error {
 		if err != nil {
+			// An entry the walk DECLINED to hand over — a FIFO, socket or device
+			// named `*.md` — is one bad file, not a broken store, so it joins the
+			// unparseable family below rather than aborting the load. It reaches
+			// the same family for the same reason and with the same cost: the nib
+			// is absent from every query until someone runs `nibs check`. What it
+			// cannot do is share the path below, because that path OPENS the file
+			// and opening this one never returns.
+			if errors.Is(err, ErrNotRegularFile) {
+				c.recordUnparseable(path, ErrNotRegularFile)
+				return nil
+			}
 			return err
 		}
 
@@ -271,13 +283,7 @@ func (c *Core) loadFromDisk() error {
 			// writer nothing in production redirects, while the skipped nib is
 			// missing from every query with nothing to explain it. `nibs check`
 			// reads these back (see Core.CheckAllLinks).
-			c.logWarn("skipping unparseable nib file %s: %v", path, loadErr)
-			id, _ := nib.ParseFilename(filepath.Base(path), c.configPrefix())
-			c.unparseableFiles = append(c.unparseableFiles, UnparseableFile{
-				NibID:  id,
-				Path:   c.relPathFromRoot(path),
-				Reason: loadErr.Error(),
-			})
+			c.recordUnparseable(path, loadErr)
 			return nil
 		}
 
@@ -368,6 +374,27 @@ func (c *Core) relPathFromRoot(path string) string {
 }
 
 // loadNib reads and parses a single nib file.
+// recordUnparseable logs a file the load skipped and retains it as a diagnostic.
+//
+// Both halves earn their place. The warning goes to a writer nothing in
+// production redirects; the diagnostic is what `nibs check` reads back, and
+// without it the skipped nib is missing from every query with nothing to explain
+// it. Shared by the two ways a file can be skipped — it could not be parsed, or
+// the walk declined to open it at all — so the two can never diverge in what a
+// user is told.
+//
+// The id comes from the FILENAME, which parses whatever the contents are (or
+// whether there are contents), so the diagnostic names the nib that went missing.
+func (c *Core) recordUnparseable(path string, reason error) {
+	c.logWarn("skipping unparseable nib file %s: %v", path, reason)
+	id, _ := nib.ParseFilename(filepath.Base(path), c.configPrefix())
+	c.unparseableFiles = append(c.unparseableFiles, UnparseableFile{
+		NibID:  id,
+		Path:   c.relPathFromRoot(path),
+		Reason: reason.Error(),
+	})
+}
+
 func (c *Core) loadNib(path string) (*nib.Nib, error) {
 	f, err := os.Open(path)
 	if err != nil {

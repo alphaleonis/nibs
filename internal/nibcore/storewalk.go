@@ -11,6 +11,16 @@ import (
 	"github.com/alphaleonis/nibs/internal/store"
 )
 
+// ErrNotRegularFile marks a store entry named like a nib file that is not a
+// regular file — a FIFO, socket or device, or a symlink leading to one.
+//
+// It travels through the walk's ERROR channel because that is the only channel
+// there is, but it is not an enumeration failure and callers must not treat it
+// as one: the walk enumerated the entry perfectly well and is declining to hand
+// it over. Every caller skips it and records a per-file diagnostic, which is what
+// keeps one bad entry from bricking a store (see Core.loadFromDisk).
+var ErrNotRegularFile = errors.New("not a regular file")
+
 // WalkStoreContent walks every file that is STORE CONTENT for a store laid out
 // at l: the .md files under data/ and archive/, and nothing else. A .md file
 // sitting at the store ROOT is deliberately NOT content — that is the
@@ -100,6 +110,43 @@ func WalkStoreFiles(root string, fn func(path string, err error) error) error {
 		if !strings.HasSuffix(d.Name(), ".md") {
 			return nil
 		}
+		if !leadsToRegularFile(path, d) {
+			return fn(path, fmt.Errorf("%s: %w", path, ErrNotRegularFile))
+		}
 		return fn(path, nil)
 	})
+}
+
+// leadsToRegularFile reports whether a walked entry is a regular file, or a
+// symlink leading to one.
+//
+// THE ANSWER MUST COME FROM THE DIRECTORY ENTRY, not from reading the file.
+// Every caller's next move is os.Open, and opening a FIFO blocks until a writer
+// appears — so unlike a malformed nib, an irregular file cannot be read to
+// discover that it is bad. Reading IS the hang, which is why this sits in the
+// walk and not at each opener (there are three: Core.loadNib,
+// cmd.readFrontMatterHeader, and the corroboration probe store resolution runs).
+//
+// A SYMLINK IS RESOLVED BEFORE IT IS JUDGED, and that is not incidental:
+// os.DirFS reports a link as a link, so `d.Type().IsRegular()` alone is false for
+// every symlinked nib file — and a link to a real nib file is ordinary (a dotfile
+// manager, a partially-synced store) and loaded before this guard existed.
+// Judging the entry rather than its destination would have dropped those nibs out
+// of every query in silence. A link AT a FIFO is the same hang wearing a
+// different name, so following it is also what makes the guard complete.
+//
+// A LINK THAT CANNOT BE RESOLVED IS HANDED ON rather than skipped here. The
+// opener's own error names what is wrong ("no such file"), which is a better
+// diagnostic than "not a regular file", and opening a broken link cannot block.
+// os.Stat is safe to call on any of these: stat(2) does not open, so it never
+// blocks on a FIFO the way an open would.
+func leadsToRegularFile(path string, d fs.DirEntry) bool {
+	if d.Type().IsRegular() {
+		return true
+	}
+	if d.Type()&fs.ModeSymlink == 0 {
+		return false
+	}
+	info, err := os.Stat(path)
+	return err != nil || info.Mode().IsRegular()
 }

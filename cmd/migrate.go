@@ -401,7 +401,14 @@ func legacyConfigExists(env migrateEnv) bool {
 func layoutMovableFiles(env migrateEnv) ([]string, error) {
 	l := env.layout()
 	var movable []string
-	err := forEachNibFile(env, func(path string) error {
+	err := forEachNibFile(env, func(path string, skipped error) error {
+		// An unreadable header is moved anyway (see above) because the scan
+		// cannot prove the file is not a nib. For an irregular file it CAN: a
+		// FIFO is not a nib whatever it is named, so it stays where it is rather
+		// than being relocated into data/ and counted as a moved file.
+		if skipped != nil {
+			return nil
+		}
 		rel := storeRelPath(env, path)
 		if l.IsDataRel(rel) || l.IsArchivedRel(rel) {
 			return nil
@@ -1139,7 +1146,21 @@ func scanStore(env migrateEnv) (*storeScan, error) {
 		scan.counts[i] = n
 	}
 
-	err := forEachNibFile(env, func(path string) error {
+	err := forEachNibFile(env, func(path string, skipped error) error {
+		if skipped != nil {
+			// The same family an unreadable file lands in, and reported the same
+			// way: migrate names every file its scan passed over, so an entry it
+			// could not even open must not be the one that goes unmentioned.
+			// The bare sentinel, not the wrapped error: the walk prefixes it with
+			// the absolute path, and scanProblem already carries the path in the
+			// spelling every nibs surface uses.
+			reason := skipped.Error()
+			if errors.Is(skipped, nibcore.ErrNotRegularFile) {
+				reason = nibcore.ErrNotRegularFile.Error()
+			}
+			scan.problems = append(scan.problems, scanProblem{path: storeRelPath(env, path), reason: reason, unreadable: true})
+			return nil
+		}
 		h, err := readFrontMatterHeader(path)
 		if err != nil {
 			// Per-file degradation, matching Core.Load: skip with the file's
@@ -1597,7 +1618,10 @@ func stillPending(env migrateEnv, step migrationStep) ([]string, error) {
 // were never counted pending, so they can never be what a step failed to fix.
 func filesMatching(env migrateEnv, pred func(fmHeader) bool) ([]string, error) {
 	var matches []string
-	err := forEachNibFile(env, func(path string) error {
+	err := forEachNibFile(env, func(path string, skipped error) error {
+		if skipped != nil {
+			return nil
+		}
 		h, err := readFrontMatterHeader(path)
 		if err != nil || !h.hasFrontMatter {
 			return nil
@@ -1645,16 +1669,24 @@ func refuseIfMigrationPending(nibsRoot string) error {
 // layout step exists to move. Every caller that compares a scan result against
 // what will LOAD has to bridge that gap itself (see blockingScanProblems).
 // Only the enumeration-failure posture is this walk's own.
-func forEachNibFile(env migrateEnv, fn func(path string) error) error {
+func forEachNibFile(env migrateEnv, fn func(path string, skipped error) error) error {
 	return nibcore.WalkStoreFiles(env.nibsRoot, func(path string, err error) error {
 		if err != nil {
+			// An entry the walk DECLINED to hand over — a FIFO, socket or device
+			// named `*.md` — is one file, not a broken store, so it goes to fn
+			// with the reason rather than aborting every command. It cannot share
+			// fn's ordinary path because that path OPENS the file, and opening
+			// this one never returns.
+			if errors.Is(err, nibcore.ErrNotRegularFile) {
+				return fn(path, err)
+			}
 			// A directory that cannot be ENUMERATED stays fatal — unlike a
 			// single skippable file, the scan cannot know what it is missing —
 			// but with enough context to act on. The offending entry is named by
 			// the walk's own error, so this adds the store rather than repeating it.
 			return fmt.Errorf("scanning nibs store %s (fix its permissions, or remove the offending entry): %w", env.nibsRoot, err)
 		}
-		return fn(path)
+		return fn(path, nil)
 	})
 }
 
