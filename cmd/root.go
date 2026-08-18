@@ -510,13 +510,12 @@ func symlinkedStoreError(dir string) error {
 		// two would come to disagree.
 		return fmt.Errorf("%s. What this project needs instead: %w", lead, preLayoutRemedy(legacy))
 	}
-	// `nibs init` is safe to prescribe here because init refuses through a link
-	// itself (see refuseSymlinkedStoreDir). That is not decoration: MkdirAll
-	// follows a link, so before that guard existed a reader who ran init without
-	// removing the link first wrote config.yml and data/ INTO the destination —
-	// which then parses as a store and re-opens the very hazard this refusal
-	// closed. The ordering is now enforced where it can be, so the message states
-	// the remedy rather than a warning about the order of its own steps.
+	// `nibs init` is safe to prescribe here only because init refuses through a
+	// link itself (refuseSymlinkedStoreDir). Without that guard MkdirAll follows
+	// the link, so a reader who runs the prescription without removing the link
+	// first writes config.yml and data/ INTO the destination — which then parses
+	// as a store and re-opens the very hazard this refusal closed. The two are
+	// one rule in two files; changing either without the other reopens it.
 	return fmt.Errorf("%s; repoint it at a directory that really is a store, or remove the link and run `nibs init` here", lead)
 }
 

@@ -1564,9 +1564,3 @@ func (c *Core) Close() error {
 
 	return c.unwatchLocked()
 }
-
-// Init creates the store under the given project directory if it doesn't
-// exist. This is a standalone function for use before a Core is created.
-func Init(dir string) error {
-	return New(filepath.Join(dir, store.DirName), nil).Init()
-}

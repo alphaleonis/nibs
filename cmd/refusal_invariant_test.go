@@ -574,7 +574,10 @@ func refusalGateCases(t *testing.T) []refusalCase {
 
 // storeResolutionRefusalCases are the hand-written half: the refusals
 // resolveCLIStore, resolveStoreDir, noStoreFoundError and stripRetiredNibsPath
-// raise about where a project's nibs live. The rows are written by hand, but for
+// raise about where a project's nibs live, plus `nibs init`'s refusal to CREATE
+// one through a `.nibs` symlink — which belongs here because it is the other end
+// of one rule: symlinkedStoreError prescribes `nibs init`, and init refusing
+// through a link is what makes that prescription safe. The rows are written by hand, but for
 // root.go the SET is enforced complete — approvedRootRefusals names the rows
 // below that drive each site, in both directions (see
 // TestEveryRootRefusalIsDrivenOrExcused) — and each such claim is MEASURED: the
@@ -629,6 +632,19 @@ func storeResolutionRefusalCases() []refusalCase {
 		resetRootPersistentFlags()
 		if err == nil {
 			t.Fatal("resolveStoreDir accepted the shape this row exists to see refused")
+		}
+		return err.Error()
+	}
+	// initRefusal drives `nibs init` from projectDir and returns its refusal.
+	initRefusal := func(t *testing.T, projectDir string) string {
+		t.Helper()
+		t.Setenv("NIBS_PATH", "")
+		resetInitFlags()
+		t.Cleanup(resetInitFlags)
+		t.Chdir(projectDir)
+		out, err := runRootWith(t, "init")
+		if err == nil {
+			t.Fatalf("`nibs init` accepted the shape this row exists to see refused\nout: %s", out)
 		}
 		return err.Error()
 	}
@@ -866,6 +882,32 @@ func storeResolutionRefusalCases() []refusalCase {
 				writeFileT(t, filepath.Join(projectDir, store.LegacyProjectConfigFileName),
 					"nibs:\n  prefix: leg-\n  id_length: 4\n  path: nibdata\n")
 				return explicitly(t, func(t *testing.T) { nibsPath = other }), tmp
+			},
+		},
+		{
+			// `nibs init` refusing to CREATE a store through a `.nibs` link. It
+			// is enrolled here because it is the far end of symlinkedStoreError's
+			// remedy, and because its own wording is what this invariant is for:
+			// the absent-destination row below states absence in the adjacent
+			// form mayBeAbsent recognizes, which a comma-separated variant broke.
+			name: "nibs init at a `.nibs` symlink leading to a non-store",
+			build: func(t *testing.T) (string, string) {
+				tmp := t.TempDir()
+				projectDir, _ := linkedNonStore(t, tmp)
+				return initRefusal(t, projectDir), tmp
+			},
+		},
+		{
+			name: "nibs init at a `.nibs` symlink leading nowhere",
+			build: func(t *testing.T) (string, string) {
+				tmp := t.TempDir()
+				t.Setenv("NIBS_CONFIG_ROOT", tmp)
+				projectDir := filepath.Join(tmp, "proj")
+				mkdirAllT(t, projectDir)
+				if err := os.Symlink(filepath.Join(tmp, "gone"), filepath.Join(projectDir, store.DirName)); err != nil {
+					testskip.SymlinkUnavailable(t, err)
+				}
+				return initRefusal(t, projectDir), tmp
 			},
 		},
 		{

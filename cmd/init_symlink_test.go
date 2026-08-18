@@ -3,6 +3,7 @@ package cmd
 import (
 	"os"
 	"path/filepath"
+	"slices"
 	"sort"
 	"strings"
 	"testing"
@@ -13,6 +14,12 @@ import (
 
 // dirEntryNames lists a directory's entries by name, sorted, so a test can
 // assert that a refused command wrote NOTHING into it.
+//
+// TOP LEVEL ONLY, which is the bound the hazard needs: what init creates is
+// `config.yml` and `data/`, both immediate children. A write deeper in an
+// existing subtree, or a change to a file already there, would not be seen —
+// nothing init does has that shape, so widening this would assert against a
+// mechanism rather than against the defect.
 func dirEntryNames(t *testing.T, dir string) []string {
 	t.Helper()
 	entries, err := os.ReadDir(dir)
@@ -141,7 +148,7 @@ func TestInitRefusesASymlinkedStoreDirectory(t *testing.T) {
 				// The harm is a WRITE, so the assertion is on the filesystem
 				// rather than on the message.
 				if destination != "" {
-					if got := dirEntryNames(t, destination); !equalStrings(got, before) {
+					if got := dirEntryNames(t, destination); !slices.Equal(got, before) {
 						t.Errorf("the refused run wrote into %s: entries %v, want %v", destination, got, before)
 					}
 				} else if _, statErr := os.Lstat(target); statErr == nil {
@@ -150,19 +157,6 @@ func TestInitRefusesASymlinkedStoreDirectory(t *testing.T) {
 			})
 		}
 	}
-}
-
-// equalStrings reports whether two sorted string slices hold the same entries.
-func equalStrings(a, b []string) bool {
-	if len(a) != len(b) {
-		return false
-	}
-	for i := range a {
-		if a[i] != b[i] {
-			return false
-		}
-	}
-	return true
 }
 
 // TestInitStillInitializesARealStoreDirectory is the counterweight: the guard is
@@ -278,4 +272,92 @@ func TestInitRemediesTheSymlinkedStoreRefusalPrescribes(t *testing.T) {
 			t.Errorf("cfg prefix = %q, want %q", cfg.Nibs.Prefix, "myproj-")
 		}
 	})
+}
+
+// TestInitStillInitializesAThroughAnExplicitlyNamedLink pins the bound on the
+// guard's scope: it is about the name `.nibs`, which is the shape a CLONE can
+// materialize and the only one the resolution refusal ever names.
+//
+// A link the reader spells out with --nibs-path grants nothing
+// `--nibs-path <the link's destination>` does not already grant, and refusing it
+// would print a remedy that loops — "name that directory with --nibs-path" to
+// someone who just did. `/srv/nibs-current -> /mnt/vol1/nibs` is the ordinary
+// spelling of a store on a volume that moves.
+func TestInitStillInitializesAThroughAnExplicitlyNamedLink(t *testing.T) {
+	t.Cleanup(resetInitFlags)
+	resetInitFlags()
+	t.Setenv("NIBS_PATH", "")
+	tmp := t.TempDir()
+	t.Setenv("NIBS_CONFIG_ROOT", tmp)
+	real := filepath.Join(tmp, "vol1", "nibs")
+	mkdirAllT(t, real)
+	srv := filepath.Join(tmp, "srv")
+	mkdirAllT(t, srv)
+	link := filepath.Join(srv, "nibs-current")
+	symlinkT(t, real, link)
+
+	rootCmd.SetArgs([]string{"--nibs-path", link, "init", "--prefix", "cur-"})
+	if err := rootCmd.Execute(); err != nil {
+		t.Fatalf("init refused a link the reader named explicitly: %v", err)
+	}
+	if _, err := config.Load(filepath.Join(real, store.ConfigFileName)); err != nil {
+		t.Fatalf("the store was not created at the link's destination: %v", err)
+	}
+}
+
+// TestInitAtALinkedStoreReportsTheConfigRatherThanTheLink pins the guard's one
+// exemption, and the reason it is keyed on the config PARSING.
+//
+// `.nibs -> ~/sync/proj-nibs` at a store that is already initialized is a working
+// layout every other command resolves, and its owner needs "config.yml already
+// exists" — not "not through a link", which would read as "your layout is
+// unsupported". Keyed on the file merely EXISTING, the same exemption answered a
+// link at a Hugo site with "config.yml already exists" one command after the
+// resolver said that directory holds no config.yml that parses as one.
+func TestInitAtALinkedStoreReportsTheConfigRatherThanTheLink(t *testing.T) {
+	tests := []struct {
+		name        string
+		destination func(t *testing.T, dir string)
+		want        string
+	}{
+		{
+			name: "a store that is already initialized",
+			destination: func(t *testing.T, dir string) {
+				writeFileT(t, filepath.Join(dir, store.ConfigFileName), "nibs:\n  prefix: syn-\n  id_length: 4\n")
+			},
+			want: "already exists",
+		},
+		{
+			name: "a site whose config.yml is not a nibs config",
+			destination: func(t *testing.T, dir string) {
+				writeFileT(t, filepath.Join(dir, store.ConfigFileName), "baseURL: https://example.com/\ntitle: Site\n")
+			},
+			want: "will not create a store through one",
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Cleanup(resetInitFlags)
+			resetInitFlags()
+			t.Setenv("NIBS_PATH", "")
+			tmp := t.TempDir()
+			t.Setenv("NIBS_CONFIG_ROOT", tmp)
+			destination := filepath.Join(tmp, "elsewhere")
+			mkdirAllT(t, destination)
+			tt.destination(t, destination)
+			projectDir := filepath.Join(tmp, "proj")
+			mkdirAllT(t, projectDir)
+			symlinkT(t, destination, filepath.Join(projectDir, store.DirName))
+			t.Chdir(projectDir)
+
+			rootCmd.SetArgs([]string{"init"})
+			err := rootCmd.Execute()
+			if err == nil {
+				t.Fatal("init wrote over a destination that already holds a config.yml")
+			}
+			if !strings.Contains(err.Error(), tt.want) {
+				t.Errorf("refusal = %q, want it to say %q", err.Error(), tt.want)
+			}
+		})
+	}
 }
