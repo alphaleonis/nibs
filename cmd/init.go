@@ -55,6 +55,15 @@ var initCmd = &cobra.Command{
 		if err := refuseExistingProjectConfig(nibsDir, projectDir); err != nil {
 			return err
 		}
+		// AFTER the config check, deliberately. A link pointing at a store that
+		// is already initialized is a working setup, and "config.yml already
+		// exists" is the answer its owner needs; leading with "not through a
+		// link" would tell them their layout is unsupported when every other
+		// command resolves it. The guard below is for the case where there is no
+		// config yet — which is the only case that WRITES.
+		if err := refuseSymlinkedStoreDir(nibsDir); err != nil {
+			return err
+		}
 
 		// Core.Init creates the store's directories BEFORE prefix validation
 		// runs further down. If validation fails, the empty store remains on
@@ -118,6 +127,59 @@ var initCmd = &cobra.Command{
 		fmt.Println("Initialized nibs project")
 		return nil
 	},
+}
+
+// refuseSymlinkedStoreDir stops `nibs init` from creating a store through a
+// `.nibs` that is a SYMLINK.
+//
+// Core.Init is os.MkdirAll on `<store>/data`, and MkdirAll follows a link — so
+// for a project carrying a committed `.nibs -> /outside` the store was created
+// inside the link's destination. That directory then holds a config.yml that
+// PARSES, which is the one artifact a nibs store cannot be mistaken about: every
+// route binds it from then on, and `nibs migrate`'s layout step moves its
+// front-mattered files into data/ and rewrites each as a nib render. The
+// resolution guard refuses that tree on sight (see cmd/root.go's
+// symlinkedStoreError) — and this is how a reader following that very refusal
+// used to hand it the evidence it was missing.
+//
+// NO EXEMPTION, including an empty destination. Setting up
+// `.nibs -> ~/sync/proj-nibs` and running `nibs init` to populate it was a real
+// workflow and this refuses it, which is a recorded decision rather than an
+// oversight: at the moment init runs, nothing on disk tells that shape apart from
+// the hazard above, and "the destination happens to be empty" is a fact about the
+// victim's filesystem rather than about the link. The remedy names the directory
+// instead of reaching it through a link, which says the same thing without a
+// guess.
+//
+// It costs that remedy the derived prefix, and the message says so rather than
+// letting it surprise: `nibs init --nibs-path <dir>` derives the prefix from
+// <dir>'s PARENT, so a store outside the project is named after whatever contains
+// it (measured: `--nibs-path ~/sync/proj-nibs` yields `sync-`).
+//
+// os.Lstat, not os.Stat: Stat follows the link, which is the whole thing being
+// guarded against. A link that leads NOWHERE is refused by the same rule and for
+// its own reason — MkdirAll answers it with `mkdir <link>: file exists`, which
+// names a path the reader sees as a link, calls it a file, and reports existence
+// as the problem.
+func refuseSymlinkedStoreDir(nibsDir string) error {
+	info, err := os.Lstat(nibsDir)
+	if err != nil || info.Mode()&os.ModeSymlink == 0 {
+		return nil
+	}
+	// Where the link leads is the fact the reader acts on, so it is worth two
+	// attempts: the resolved path, then the link's own value when resolution
+	// fails (a dangling link, or a parent this process cannot traverse). The
+	// clause is dropped rather than filled with nibsDir, which would describe a
+	// link pointing at itself.
+	where := ""
+	if resolved, resolveErr := filepath.EvalSymlinks(nibsDir); resolveErr == nil {
+		where = " to " + sanitizeFilePath(resolved)
+	} else if declared, linkErr := os.Readlink(nibsDir); linkErr == nil {
+		where = " to " + sanitizeFilePath(declared) + ", which is not there"
+	}
+	return cmdError(initJSON, output.ErrValidation,
+		"%s is a symlink%s, and `nibs init` will not create a store through one: the store would land at the link's other end rather than in this project, which is how a repository that ships a link gets its own tree adopted as the project's store. Remove or repoint the link, then re-run. To keep this project's store elsewhere on purpose, name that directory with --nibs-path — and --prefix with it, because a store outside the project derives its prefix from its own parent — then point %s at it",
+		nibsDir, where, nibsDir)
 }
 
 // refuseExistingProjectConfig stops `nibs init` from adding a config to a

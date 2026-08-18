@@ -510,13 +510,14 @@ func symlinkedStoreError(dir string) error {
 		// two would come to disagree.
 		return fmt.Errorf("%s. What this project needs instead: %w", lead, preLayoutRemedy(legacy))
 	}
-	// The ORDER is stated because it is load-bearing, and measured rather than
-	// assumed: `nibs init` resolves `<cwd>/.nibs` and MkdirAll follows a link
-	// that is still in place, so running it here first writes config.yml and
-	// data/ INTO the destination — which then parses as a store and re-opens the
-	// hazard this refusal closed. A guard inside init is the real answer; until
-	// there is one, the ordering has to survive in the message.
-	return fmt.Errorf("%s; repoint it at a directory that really is a store, or remove the link BEFORE running `nibs init` here — init follows a link that is still in place and would initialize a store inside it", lead)
+	// `nibs init` is safe to prescribe here because init refuses through a link
+	// itself (see refuseSymlinkedStoreDir). That is not decoration: MkdirAll
+	// follows a link, so before that guard existed a reader who ran init without
+	// removing the link first wrote config.yml and data/ INTO the destination —
+	// which then parses as a store and re-opens the very hazard this refusal
+	// closed. The ordering is now enforced where it can be, so the message states
+	// the remedy rather than a warning about the order of its own steps.
+	return fmt.Errorf("%s; repoint it at a directory that really is a store, or remove the link and run `nibs init` here", lead)
 }
 
 // bindsAsStore reports whether dir is a directory bindNamedStore would ACCEPT.
@@ -779,9 +780,10 @@ func preLayoutRemedy(legacy string) error {
 //     cmd/init.go) — but that store is reached by re-running `nibs init`, and
 //     every store nibs creates or migrates to is named `.nibs`. That covers it
 //     under the name clause whenever `.nibs` is a real directory, which is what
-//     nibs itself makes; a config-less store behind a LINK is refused until the
-//     re-run writes the config, and re-running init is the same remedy either
-//     way;
+//     nibs itself makes — and nibs never makes one behind a link, because init
+//     refuses to create a store through one (refuseSymlinkedStoreDir). So a
+//     config-less `.nibs` link is not a store this tool left behind, and refusing
+//     it strands nothing;
 //   - a file merely NAMED config.yml, never parsed. The name is among the most
 //     common in software projects, and the check did not even exclude a
 //     DIRECTORY by that name;
