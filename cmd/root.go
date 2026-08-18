@@ -467,6 +467,14 @@ func preLayoutRemedy(legacy string) error {
 		// Reached on Windows by any malformed nibs.path, which fails with
 		// ERROR_INVALID_NAME rather than the fs.ErrNotExist the branch above
 		// catches; on POSIX the same hole opens for a permission error.
+		//
+		// KNOWN IMPRECISION, tracked separately: this branch's advice — mount the
+		// volume, fix the permissions — suits a path that is real but unreadable,
+		// and an UNUSABLE path lands here too. On Windows a nibs.path carrying a
+		// character forbidden in a filename, or a drive-relative spelling like
+		// `C:proj` reduced to `<project>\C:`, fails ERROR_INVALID_NAME and so
+		// reads as "cannot tell" when it is really absence. The refusal is still
+		// the safe one; only the remedy sends the reader somewhere useless.
 		return fmt.Errorf("%s sets the retired `nibs.path: %q`, whose contents cannot be read (%s) — so whether this project's nibs are in %s cannot be determined; resolve that (mount the volume, fix its permissions), then re-run (do NOT run `nibs init`, and do NOT remove the `nibs.path` key: it is the only record of where the nibs are)",
 			legacy, sanitizeFileText(declared), flattenReason(evErr.Error()),
 			stripControlChars(dataDir))
