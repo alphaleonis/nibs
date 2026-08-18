@@ -297,10 +297,13 @@ func TestSymlinkedStoreRefusalNamesTheLinkAndItsDestination(t *testing.T) {
 	if strings.Contains(msg, "symlink to "+link) {
 		t.Errorf("refusal names the link as its own destination, which describes no filesystem:\n%s", msg)
 	}
-	// The ordering is what keeps the prescription safe: `nibs init` follows a
-	// link that is still in place and would initialize the store inside it.
-	if !strings.Contains(msg, "BEFORE running `nibs init`") {
-		t.Errorf("refusal = %q, want it to require removing the link before `nibs init`", msg)
+	// `nibs init` is prescribed here, and it is safe to prescribe ONLY because
+	// init refuses through a link itself — see
+	// TestInitRefusesASymlinkedStoreDirectory, which is the other half of this
+	// pair. Without that guard the prescription writes the store into the
+	// destination and re-opens the hazard this refusal closed.
+	if !strings.Contains(msg, "remove the link and run `nibs init` here") {
+		t.Errorf("refusal = %q, want it to prescribe removing the link and running `nibs init`", msg)
 	}
 }
 
