@@ -93,9 +93,12 @@ func AtomicWriteFile(path string, data []byte, perm os.FileMode) error {
 // AtomicWriteFileDeferDirSync is AtomicWriteFile without the trailing directory
 // fsync, for a caller writing a BATCH of files: N writes into one directory pay
 // N identical directory fsyncs where a single one after the batch is equivalent
-// (measured: 500 same-directory writes, 5.6ms without the per-write fsync
-// against 10.2ms with it, on NVMe — the gap widens on spinning disks,
-// network-synced directories and Windows volumes).
+// (measured on this project's ext4 volume, 500 same-directory writes: 2.1s
+// without the per-write directory fsync against 4.1s with it — the flush is a
+// second full journal commit per file, not something amortized behind the
+// file's own fsync, and it roughly DOUBLES the cost of an atomic write. Take
+// any figure here from a real disk: on tmpfs the same probe reports ~18us per
+// write either way, because there the flush is very nearly free).
 //
 // It returns the directory the file was renamed into, whose entry is NOT yet
 // flushed, and the empty string when it returns an error — an error means the
