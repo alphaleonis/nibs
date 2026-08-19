@@ -211,15 +211,12 @@ func spanRows() []spanRow {
 		{
 			// The declared value and the store are ONE directory reached by two
 			// spellings — here a symlink beside the store, which needs no
-			// case-folding volume. The refusal changed to say so, and it still
-			// echoes the value, so it is still subject to this boundary.
+			// case-folding volume. The refusal says so, and it still echoes the
+			// value, so it is still subject to this boundary.
 			name: "migrate finds the retired key naming the store under another spelling",
 			build: func(t *testing.T, root, declared string) string {
-				projectDir := legacyProjectUnder(t, root, declared)
-				storeDir := filepath.Join(projectDir, store.DirName)
-				mkdirAllT(t, storeDir)
-				writeFileT(t, filepath.Join(storeDir, "leg-a1--one.md"), layoutNib)
-				if err := os.Symlink(store.DirName, filepath.Join(projectDir, declared)); err != nil {
+				storeDir := legacyStoreToMigrate(t, root, declared)
+				if err := os.Symlink(store.DirName, filepath.Join(filepath.Dir(storeDir), declared)); err != nil {
 					testskip.SymlinkUnavailable(t, err)
 				}
 				return migrateSpanRefusal(t, storeDir)
@@ -537,7 +534,7 @@ var approvedDeclaredEchoes = []declaredEcho{
 }
 
 // TestEverySiteEchoingADeclaredValueIsDriven is what makes the boundary a property
-// of the codebase rather than of the nine sites that carry it today. The fix lives
+// of the codebase rather than of the ten sites that carry it today. The fix lives
 // in safetext.Strip, so a new echo inherits it — but only if the new echo goes
 // through the boundary at all, and the one defect this work found that Strip could
 // not answer was a site interpolating a raw *fs.PathError beside a sanitized
