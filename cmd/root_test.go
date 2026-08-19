@@ -907,6 +907,22 @@ func TestResolveStoreDirRequiresStoreEvidence(t *testing.T) {
 			refusal: []string{"nothing in it was written by nibs"},
 		},
 		{
+			// The accept side for a TORN nib: a half-written nib is still a nib
+			// somebody wrote, which is exactly what corroboration asks. The scan
+			// errors on it (the front matter never closes) and the walk must read
+			// that as determinate rather than as "cannot tell".
+			name: "a nibs.path naming a directory whose only nib has an unclosed header",
+			build: func(t *testing.T, tmp string) string {
+				proj := filepath.Join(tmp, "proj")
+				dir := filepath.Join(proj, "nibdata")
+				mkdirAllT(t, dir)
+				writeFileT(t, filepath.Join(dir, "leg-a1--torn.md"), "---\ntitle: Torn\nstatus: todo\n")
+				writeFileT(t, filepath.Join(proj, store.LegacyProjectConfigFileName), "nibs:\n  prefix: leg-\n  path: nibdata\n")
+				return dir
+			},
+			accept: true,
+		},
+		{
 			// The accept side of the same rule, so the corroboration cannot be
 			// satisfied by "it holds some markdown": one nib among the documents
 			// is what makes this the project's store.

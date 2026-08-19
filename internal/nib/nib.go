@@ -316,12 +316,17 @@ const (
 	// MaxFrontMatterBytes bounds the raw YAML front-matter block (the bytes
 	// between the `---` fences, excluding the markdown body). 256 KiB.
 	//
-	// Exported (unlike MaxFrontMatterKeys' sibling below) because
-	// cmd/migrate's streamed header scan caps its read at this same boundary:
-	// the scan's safety argument — "a header too large to scan is a file the
-	// load-time diagnostics will name anyway" — is true only while the two
-	// caps are one constant, so the scan derives its cap from here rather
+	// Exported (unlike MaxFrontMatterKeys' sibling below) because cmd/migrate's
+	// streamed header scan derives its own read budget from this one, rather
 	// than duplicating the number and drifting.
+	//
+	// The two are NOT the same measurement, and the scan's comment carries the
+	// consequence: this bounds the block between the fences, while the scan
+	// bounds bytes read from the file, fences included. A block just under this
+	// cap therefore parses here while the scan cannot see its closing fence. The
+	// scan abstains (errors) there rather than guessing, so the direction of the
+	// disagreement is safe — but it is a disagreement, not the identity the two
+	// constants look like.
 	MaxFrontMatterBytes = 256 * 1024
 	// maxFrontMatterKeys bounds the total number of mapping keys in the
 	// front-matter block. The top-level key count is the direct O(N²) driver

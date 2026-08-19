@@ -1074,7 +1074,18 @@ func declaredStoreCorroborated(dir string) (bool, error) {
 			return walkErr
 		}
 		h, hErr := readFrontMatterHeader(path)
-		if hErr != nil {
+		// A file whose front matter never CLOSES was read completely — the scan
+		// saw every byte and extracted the keys — so it is determinate evidence
+		// and must not reach the third answer. The distinction is the whole
+		// difference between the two branches here: "cannot tell" is for evidence
+		// that EXISTS AND COULD NOT BE READ (a permission error, an unmounted
+		// volume), where the directory may be real and full of nibs, and its
+		// remedy says so — "mount the volume, fix its permissions". Answering a
+		// torn nib that way locked every command out of a pre-layout project,
+		// including the `nibs migrate` that would fix it, and prescribed mounting
+		// a volume that was never absent. A half-written nib is still a nib
+		// somebody wrote, which is exactly what this walk is asking about.
+		if hErr != nil && !errors.Is(hErr, errFrontMatterNotClosed) {
 			return hErr
 		}
 		if h.hasFrontMatter && config.IsKnownStatus(h.status) {

@@ -203,6 +203,27 @@ func TestResolveStoreDirSeparatesNoEvidenceFromUnreadableEvidence(t *testing.T) 
 			notWant: []string{"run `nibs init` there", "is not a nibs store"},
 		},
 		{
+			// A TORN nib is determinate evidence, not unreadable evidence: the
+			// header scan read every byte of it and extracted the keys, it simply
+			// never met a closing fence. Routed to the third answer it locked
+			// every command out of a pre-layout project — `nibs migrate`
+			// included, the one command that would fix it — and prescribed
+			// mounting a volume that was never absent.
+			name: "a declared directory holding a nib whose front matter never closes",
+			build: func(t *testing.T, tmp string) string {
+				proj := filepath.Join(tmp, "proj")
+				dir := filepath.Join(proj, "nibdata")
+				mkdirAllT(t, dir)
+				// No `status:`, so it does not corroborate — which is what makes
+				// this a refusal row at all. The point is WHICH refusal.
+				writeFileT(t, filepath.Join(dir, "leg-a1--torn.md"), "---\ntitle: Torn\n")
+				writeFileT(t, filepath.Join(proj, store.LegacyProjectConfigFileName), "nibs:\n  prefix: leg-\n  path: nibdata\n")
+				return dir
+			},
+			want:    []string{"nothing in it was written by nibs"},
+			notWant: []string{"cannot tell whether", "mount the volume"},
+		},
+		{
 			// The determinate no still has to read as one.
 			name: "a config.yml that is genuinely not a nibs config",
 			build: func(t *testing.T, tmp string) string {
