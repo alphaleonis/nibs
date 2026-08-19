@@ -24,4 +24,13 @@ if [[ $here == "${BASH_SOURCE[0]}" ]]; then
 	here=.
 fi
 
-exec bash "$here/run-capped.sh" --refuse-on-wsl go test "$@"
+# --host-os is run-capped.sh's, not this script's: peel it off the front and hand
+# it straight back, so a caller passes it once and does not have to know which of
+# the two scripts consumes it.
+hostos=()
+if [[ ${1:-} == --host-os ]]; then
+	hostos=(--host-os "${2:-}")
+	shift 2
+fi
+
+exec bash "$here/run-capped.sh" ${hostos[@]+"${hostos[@]}"} --refuse-on-wsl go test "$@"
