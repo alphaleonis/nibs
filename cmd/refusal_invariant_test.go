@@ -56,8 +56,8 @@ import (
 // enforced rather than asserted.
 //
 // What is still NOT enumerated: the refusals migrate.go raises outside
-// migrateGates — stripRetiredNibsPath above all. Three rows below drive its
-// three refusals, but nothing asserts that set is complete, because the file
+// migrateGates — stripRetiredNibsPath above all. Four rows below drive its four
+// declared-value refusals, but nothing asserts that set is complete, because the file
 // carries hundreds of fmt.Errorf sites and a totality guard over it would be a
 // list of exclusions rather than a record of anything. root.go is the file the
 // recurrence cycle kept landing in, and it is the one enumerated.
@@ -908,6 +908,33 @@ func storeResolutionRefusalCases() []refusalCase {
 					testskip.SymlinkUnavailable(t, err)
 				}
 				return initRefusal(t, projectDir), tmp
+			},
+		},
+		{
+			// The declared directory and the store are ONE directory reached by
+			// two spellings. What this row pins is the half the span census
+			// cannot: the paths the message names are real, and it prescribes no
+			// command the resolver would refuse.
+			name: "migrate finds the retired key naming the store under another spelling",
+			build: func(t *testing.T) (string, string) {
+				tmp := t.TempDir()
+				t.Setenv("NIBS_CONFIG_ROOT", tmp)
+				projectDir := filepath.Join(tmp, "proj")
+				storeDir := filepath.Join(projectDir, store.DirName)
+				mkdirAllT(t, storeDir)
+				writeFileT(t, filepath.Join(storeDir, "leg-a1--one.md"), layoutNib)
+				if err := os.Symlink(store.DirName, filepath.Join(projectDir, "alias")); err != nil {
+					testskip.SymlinkUnavailable(t, err)
+				}
+				writeFileT(t, filepath.Join(projectDir, store.LegacyProjectConfigFileName),
+					"nibs:\n  prefix: leg-\n  id_length: 4\n  path: alias\n")
+				resetMigrateFlags()
+				t.Cleanup(resetMigrateFlags)
+				out, err := runRootWith(t, "--nibs-path", storeDir, "migrate", "--allow-dirty")
+				if err == nil {
+					t.Fatalf("migrate accepted a config naming the store under another spelling\nout: %s", out)
+				}
+				return err.Error(), tmp
 			},
 		},
 		{

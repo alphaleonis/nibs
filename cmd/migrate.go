@@ -579,6 +579,20 @@ func planStoreRelocation(env migrateEnv) (string, error) {
 	}
 	target := filepath.Join(env.layout().ProjectDir(), store.DirName)
 	if _, statErr := os.Lstat(target); statErr == nil {
+		// ONE DIRECTORY UNDER TWO SPELLINGS, on the same message-only basis as
+		// stripRetiredNibsPath's clause: storeRelocationPending compares the
+		// store's BASENAME bytewise, so a store reached through a symlink or a
+		// differently cased name is read as somewhere else and the Lstat above
+		// then finds "another" store at the destination. There is no other, and
+		// the remedy below is the one place in this tool where following a
+		// refusal DESTROYS the store: "remove the other" removes the only one.
+		//
+		// os.Stat, not the Lstat above: the existence test must not follow a link
+		// (a dangling one still occupies the name), while this comparison must.
+		if info, err := os.Stat(target); err == nil && namesTheSameDirectory(info, env.nibsRoot) {
+			return "", fmt.Errorf("cannot move the store %s to %s: they are ONE directory under two spellings — a symlink, or a differently cased name — so there is nothing to move and nothing to remove; run `nibs migrate --nibs-path %s`, which names the store the way nibs finds it",
+				env.nibsRoot, target, shellArg(target))
+		}
 		return "", fmt.Errorf("cannot move the store %s to %s: %s already exists, and %s names %s as this project's store — so one of the two is stale; keep the one holding your nibs, remove the other, then re-run `nibs migrate`",
 			env.nibsRoot, target, target, env.legacyConfigPath(), env.nibsRoot)
 	}
@@ -909,9 +923,20 @@ func stripRetiredNibsPath(data []byte, env migrateEnv, configFile string) (out [
 		resolved = filepath.Join(env.layout().ProjectDir(), resolved)
 	}
 	if !sameDir(resolved, env.nibsRoot) {
-		_, statErr := retiredPathStatFn(resolved)
+		info, statErr := retiredPathStatFn(resolved)
 		switch {
 		case statErr == nil:
+			// ONE DIRECTORY UNDER TWO SPELLINGS, which sameDir cannot see: it
+			// compares bytes, so `.NIBS` on a case-folding volume and a symlink
+			// beside the store both read as somewhere else. Both remedies below
+			// then address it as somewhere else — one prescribes migrating the
+			// store already being migrated, the other a move from a directory into
+			// itself — and a reader cannot tell without resolving the two paths by
+			// hand.
+			if namesTheSameDirectory(info, env.nibsRoot) {
+				return nil, "", fmt.Errorf("%s sets `nibs.path: %q`, which is the store being migrated (%s) under a different spelling — the comparison is textual, so a symlink or a differently cased name reads as somewhere else; remove the retired `nibs.path` key from %s and re-run",
+					configFile, sanitizeFileText(declared), env.nibsRoot, configFile)
+			}
 			if relocatable, shapeErr := hasLegacyStoreShape(resolved); shapeErr == nil && relocatable {
 				return nil, "", fmt.Errorf("%s sets `nibs.path: %q`, which is not the store being migrated (%s) and still exists; migrate that store instead (`nibs migrate --nibs-path %s`), or — if %s is the store you want to keep — remove the retired `nibs.path` key from %s and re-run",
 					configFile, sanitizeFileText(declared), env.nibsRoot,
@@ -940,6 +965,39 @@ func stripRetiredNibsPath(data []byte, env migrateEnv, configFile string) (out [
 		return nil, "", fmt.Errorf("rewriting %s without the retired `nibs.path` key: %w", configFile, err)
 	}
 	return rewritten, note, nil
+}
+
+// namesTheSameDirectory reports whether info — the stat of the directory a
+// retired `nibs.path` names — and path are ONE directory on disk.
+//
+// MESSAGE PATH ONLY, and that restriction is what makes it safe rather than a
+// second route to a hazard already refused elsewhere. os.Stat FOLLOWS symlinks,
+// so os.SameFile calls two genuinely different LOCATIONS equal whenever one leads
+// to the other. That is exactly right for choosing a sentence — the reader is
+// looking at one directory under two names — and would be fatal for choosing an
+// action, because a config could then authorize migrate against a store it did
+// not name.
+//
+// sameDir still governs the branch, and nothing downstream reads this answer: a
+// config carrying the retired key is refused either way, and only the remedy
+// printed changes. Do not widen it into the condition — teaching the comparison
+// itself to fold case or resolve links was declined deliberately, because
+// sameDir is also isRealImmediateChild's containment test, the guard that closed
+// a data-loss defect. planStoreRelocation uses it on the same terms.
+//
+// The second stat is a DIRECT os.Stat rather than the retiredPathStatFn seam.
+// That seam exists to inject a stat FAILURE for the declared directory; the store
+// being migrated exists by definition, and a seam here would let a synthetic
+// FileInfo choose a sentence. os.SameFile's type assertion fails on one anyway,
+// so an override falls back to the textual wording rather than misfiring.
+//
+// [Unverified] On Windows os.SameFile compares volume serial plus file index,
+// which some filesystems and network redirectors do not guarantee unique. A false
+// positive costs the "migrate that store instead" pointer; the remove-the-key
+// remedy the message keeps converges regardless.
+func namesTheSameDirectory(info fs.FileInfo, path string) bool {
+	other, err := os.Stat(path)
+	return err == nil && os.SameFile(info, other)
 }
 
 // retiredPathStatFn asks whether the directory the retired `nibs.path` key names

@@ -13,6 +13,7 @@ import (
 	"testing"
 
 	"github.com/alphaleonis/nibs/internal/store"
+	"github.com/alphaleonis/nibs/internal/testskip"
 )
 
 // A refusal that echoes a config value writes TWO kinds of text into one string:
@@ -204,6 +205,20 @@ func spanRows() []spanRow {
 				dir := filepath.Join(root, "proj", declared)
 				mkdirAllT(t, dir)
 				writeFileT(t, filepath.Join(dir, "leg-b2--two.md"), layoutNib)
+				return migrateSpanRefusal(t, storeDir)
+			},
+		},
+		{
+			// The declared value and the store are ONE directory reached by two
+			// spellings — here a symlink beside the store, which needs no
+			// case-folding volume. The refusal says so, and it still echoes the
+			// value, so it is still subject to this boundary.
+			name: "migrate finds the retired key naming the store under another spelling",
+			build: func(t *testing.T, root, declared string) string {
+				storeDir := legacyStoreToMigrate(t, root, declared)
+				if err := os.Symlink(store.DirName, filepath.Join(filepath.Dir(storeDir), declared)); err != nil {
+					testskip.SymlinkUnavailable(t, err)
+				}
 				return migrateSpanRefusal(t, storeDir)
 			},
 		},
@@ -503,6 +518,11 @@ var approvedDeclaredEchoes = []declaredEcho{
 	},
 	{
 		file: "migrate.go", fn: "stripRetiredNibsPath",
+		marker: "under a different spelling",
+		rows:   []string{"migrate finds the retired key naming the store under another spelling"},
+	},
+	{
+		file: "migrate.go", fn: "stripRetiredNibsPath",
 		marker: "cannot be determined",
 		rows:   []string{"migrate cannot stat the directory the retired key names"},
 	},
@@ -514,7 +534,7 @@ var approvedDeclaredEchoes = []declaredEcho{
 }
 
 // TestEverySiteEchoingADeclaredValueIsDriven is what makes the boundary a property
-// of the codebase rather than of the nine sites that carry it today. The fix lives
+// of the codebase rather than of the ten sites that carry it today. The fix lives
 // in safetext.Strip, so a new echo inherits it — but only if the new echo goes
 // through the boundary at all, and the one defect this work found that Strip could
 // not answer was a site interpolating a raw *fs.PathError beside a sanitized
