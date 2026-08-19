@@ -13,6 +13,7 @@ import (
 	"testing"
 
 	"github.com/alphaleonis/nibs/internal/store"
+	"github.com/alphaleonis/nibs/internal/testskip"
 )
 
 // A refusal that echoes a config value writes TWO kinds of text into one string:
@@ -204,6 +205,23 @@ func spanRows() []spanRow {
 				dir := filepath.Join(root, "proj", declared)
 				mkdirAllT(t, dir)
 				writeFileT(t, filepath.Join(dir, "leg-b2--two.md"), layoutNib)
+				return migrateSpanRefusal(t, storeDir)
+			},
+		},
+		{
+			// The declared value and the store are ONE directory reached by two
+			// spellings — here a symlink beside the store, which needs no
+			// case-folding volume. The refusal changed to say so, and it still
+			// echoes the value, so it is still subject to this boundary.
+			name: "migrate finds the retired key naming the store under another spelling",
+			build: func(t *testing.T, root, declared string) string {
+				projectDir := legacyProjectUnder(t, root, declared)
+				storeDir := filepath.Join(projectDir, store.DirName)
+				mkdirAllT(t, storeDir)
+				writeFileT(t, filepath.Join(storeDir, "leg-a1--one.md"), layoutNib)
+				if err := os.Symlink(store.DirName, filepath.Join(projectDir, declared)); err != nil {
+					testskip.SymlinkUnavailable(t, err)
+				}
 				return migrateSpanRefusal(t, storeDir)
 			},
 		},
@@ -500,6 +518,11 @@ var approvedDeclaredEchoes = []declaredEcho{
 		file: "migrate.go", fn: "stripRetiredNibsPath",
 		marker: "will not relocate that directory for you",
 		rows:   []string{"migrate finds the retired key naming a directory it will not relocate"},
+	},
+	{
+		file: "migrate.go", fn: "stripRetiredNibsPath",
+		marker: "under a different spelling",
+		rows:   []string{"migrate finds the retired key naming the store under another spelling"},
 	},
 	{
 		file: "migrate.go", fn: "stripRetiredNibsPath",
