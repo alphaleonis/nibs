@@ -26,7 +26,7 @@ func symlinkT(t *testing.T, target, path string) {
 // linked-to directory.
 func outwardLinkedStore(t *testing.T) (projectDir, outside string) {
 	t.Helper()
-	tmp := t.TempDir()
+	tmp := canonicalTempDir(t)
 	t.Setenv("NIBS_CONFIG_ROOT", tmp)
 
 	outside = filepath.Join(tmp, "outside")
@@ -140,7 +140,7 @@ func TestOutwardSymlinkedStoreIsRefusedOnEveryRoute(t *testing.T) {
 // must keep working on every route.
 func TestSymlinkedStoreCarryingRealEvidenceStillResolves(t *testing.T) {
 	build := func(t *testing.T) (link string) {
-		tmp := t.TempDir()
+		tmp := canonicalTempDir(t)
 		t.Setenv("NIBS_CONFIG_ROOT", tmp)
 		real := filepath.Join(tmp, "sync", "proj-nibs")
 		mkdirAllT(t, filepath.Join(real, store.DataDirName))
@@ -191,7 +191,7 @@ func TestSymlinkedStoreCarryingRealEvidenceStillResolves(t *testing.T) {
 		t.Cleanup(resetRootPersistentFlags)
 		resetRootPersistentFlags()
 		t.Setenv("NIBS_PATH", "")
-		tmp := t.TempDir()
+		tmp := canonicalTempDir(t)
 		t.Setenv("NIBS_CONFIG_ROOT", tmp)
 		projectDir := filepath.Join(tmp, "proj")
 		real := filepath.Join(projectDir, "nibdata")
@@ -241,7 +241,7 @@ func TestPrimeStillAnswersForASymlinkedStoreThatIsReal(t *testing.T) {
 	t.Cleanup(resetRootPersistentFlags)
 	resetRootPersistentFlags()
 	t.Setenv("NIBS_PATH", "")
-	tmp := t.TempDir()
+	tmp := canonicalTempDir(t)
 	t.Setenv("NIBS_CONFIG_ROOT", tmp)
 	real := filepath.Join(tmp, "sync", "proj-nibs")
 	mkdirAllT(t, filepath.Join(real, store.DataDirName))
@@ -273,7 +273,7 @@ func TestSymlinkedStoreRefusalNamesTheLinkAndItsDestination(t *testing.T) {
 	t.Cleanup(resetRootPersistentFlags)
 	resetRootPersistentFlags()
 	t.Setenv("NIBS_PATH", "")
-	tmp := t.TempDir()
+	tmp := canonicalTempDir(t)
 	t.Setenv("NIBS_CONFIG_ROOT", tmp)
 	outside := filepath.Join(tmp, "outside")
 	mkdirAllT(t, outside)
@@ -326,7 +326,7 @@ func TestPreLayoutStoreBehindASymlinkIsRefusedWithAFollowableRemedy(t *testing.T
 	t.Cleanup(resetRootPersistentFlags)
 	resetRootPersistentFlags()
 	t.Setenv("NIBS_PATH", "")
-	tmp := t.TempDir()
+	tmp := canonicalTempDir(t)
 	t.Setenv("NIBS_CONFIG_ROOT", tmp)
 	volume := filepath.Join(tmp, "volume")
 	mkdirAllT(t, volume)

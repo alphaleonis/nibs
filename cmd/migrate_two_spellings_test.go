@@ -106,7 +106,7 @@ func TestMigrateDoesNotInstructAMoveBetweenTwoSpellingsOfOneDirectory(t *testing
 				resetRootPersistentFlags()
 				resetMigrateFlags()
 				t.Setenv("NIBS_PATH", "")
-				tmp := t.TempDir()
+				tmp := canonicalTempDir(t)
 				t.Setenv("NIBS_CONFIG_ROOT", tmp)
 				storeDir := branch.build(t, tmp, tt.alias)
 
@@ -188,7 +188,7 @@ func TestMigrateTwoSpellingsRowsStillDiscriminate(t *testing.T) {
 			resetRootPersistentFlags()
 			resetMigrateFlags()
 			t.Setenv("NIBS_PATH", "")
-			tmp := t.TempDir()
+			tmp := canonicalTempDir(t)
 			t.Setenv("NIBS_CONFIG_ROOT", tmp)
 			storeDir := tt.build(t, tmp)
 
@@ -224,7 +224,7 @@ func TestMigrateDoesNotTellTheUserToDeleteTheOnlyStore(t *testing.T) {
 	resetRootPersistentFlags()
 	resetMigrateFlags()
 	t.Setenv("NIBS_PATH", "")
-	tmp := t.TempDir()
+	tmp := canonicalTempDir(t)
 	t.Setenv("NIBS_CONFIG_ROOT", tmp)
 
 	projectDir := filepath.Join(tmp, "proj")

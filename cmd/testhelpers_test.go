@@ -27,6 +27,37 @@ func dataPath(nibsDir string, parts ...string) string {
 	return filepath.Join(append([]string{storeDataDir(nibsDir)}, parts...)...)
 }
 
+// canonicalTempDir is t.TempDir() in the spelling the code under test prints.
+//
+// A refusal that names a directory it has RESOLVED prints what
+// filepath.EvalSymlinks returned, and that is not always the path t.TempDir()
+// handed out — so a test comparing a message against its own temp path can fail
+// while the message is correct. Both platforms this repo tests on have a way to
+// produce the divergence:
+//
+//   - On a GitHub Windows runner TMP sits under an 8.3 alias,
+//     `C:\Users\RUNNER~1\…`, which resolves to `C:\Users\runneradmin\…`.
+//     EvalSymlinks expands every short component through FindFirstFile, so the
+//     resolved half of a message is long where the fixture's half is short.
+//   - On macOS /var is a symlink to /private/var, which does the same thing one
+//     component higher.
+//
+// Resolving ONCE, here, keeps every path derived from the temp dir in the
+// canonical spelling, which is why this belongs at the source rather than in each
+// assertion: a per-assertion fix leaves the next test to rediscover it, and this
+// one took a red windows-latest leg on every run to notice.
+//
+// Use it in preference to t.TempDir() in any test that compares a path against
+// rendered output. A test that only creates and reads files does not need it.
+func canonicalTempDir(t *testing.T) string {
+	t.Helper()
+	dir, err := filepath.EvalSymlinks(t.TempDir())
+	if err != nil {
+		t.Fatalf("resolving the temp dir: %v", err)
+	}
+	return dir
+}
+
 // mkdirAllT creates dir and every missing parent, failing the test instead of
 // returning an error.
 func mkdirAllT(t *testing.T, dir string) {
