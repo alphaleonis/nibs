@@ -1776,10 +1776,36 @@ func storeRelPath(env migrateEnv, path string) string {
 
 // maxHeaderScanBytes bounds how much of a file readFrontMatterHeader reads.
 // It IS internal/nib's front-matter byte cap (not a copied number, so the two
-// cannot drift): a legitimate header is a few hundred bytes, and anything the
-// scan cannot reach within this bound is over the parse cap too — not a nib,
-// or a file the load-time diagnostics will name anyway.
+// cannot drift), and a legitimate header is a few hundred bytes.
+//
+// THE TWO CAPS MEASURE DIFFERENT THINGS, and the difference is worth stating
+// because it is tempting to read them as one. MaxFrontMatterBytes bounds the
+// block BETWEEN the fences; this bounds bytes READ FROM THE FILE, which also
+// include the opening fence line and the closing fence token. So a block in the
+// last few bytes below the cap is one nib.Parse accepts and the scan cannot see
+// the end of — measured: a block of 262138..262144 bytes parses while the scan
+// refuses it, a band `len("---\n") + len("---")` wide, and whitespace-padded
+// fences mean no fixed slack closes it exactly.
+//
+// The scan ABSTAINS there rather than guessing: such a file errors, which
+// classifies it unreadable, which is the conservative direction (the layout step
+// keeps moving it, content gates refuse rather than migrate around it). What the
+// scan must never do is the opposite — call a file a nib that nib.Parse refuses
+// — and that it does not do at any size.
 const maxHeaderScanBytes = nib.MaxFrontMatterBytes
+
+// errFrontMatterNotClosed is readFrontMatterHeader's answer for a file whose
+// front matter opens and never closes — torn, half-written, or a header past the
+// scan's byte budget.
+//
+// A SENTINEL rather than a wrapped io.ErrUnexpectedEOF, for two reasons that
+// pull the same way. Its text is nib.Parse's verbatim, so one file reads
+// identically whether migrate's scan or Core.Load's diagnostics reports it —
+// wrapping appends "unexpected EOF" to one surface and not the other. And it is
+// a more precise fact than "input ended early": declaredStoreCorroborated has to
+// tell a file it READ COMPLETELY and found unterminated from one it genuinely
+// could not read, because those two get opposite answers (see its call site).
+var errFrontMatterNotClosed = errors.New("front matter never closed (missing the closing --- fence)")
 
 // fmHeader is the migration-relevant subset of a nib file's front-matter
 // header, extracted by a streamed line scan (no YAML parse).
@@ -1823,14 +1849,16 @@ type fmHeader struct {
 // BODY lines as header keys — false pending (a migrated store gated forever)
 // or false not-pending (a v0 file silently never migrated).
 //
-// Best-effort about VALUES, never about the shape. A key the scan misreads
-// costs at most a wrong count; a file it calls a nib that nib.Parse refuses is
-// counted toward a step that can never process it, so the shape questions —
-// does a front-matter block open, and does it close — are answered exactly. A
-// header that runs past maxHeaderScanBytes without closing is therefore an
-// ERROR rather than a best-effort partial: the limiter's EOF is indistinguishable
-// from the file's own, so accepting either would be accepting a header whose end
-// was never seen. The scan only decides whether a migration is PENDING; the
+// Best-effort about VALUES, never about the shape. A key the scan misreads costs
+// at most a wrong count; a file it calls a nib that nib.Parse refuses is counted
+// toward a step that can never process it. So the shape questions — does a
+// front-matter block open, and does it close — are never answered WRONGLY: where
+// the scan cannot see the answer it errors instead of guessing. A header that
+// runs past maxHeaderScanBytes without closing is therefore an ERROR rather than
+// a best-effort partial, since the limiter's EOF is indistinguishable from the
+// file's own and accepting either would accept a header whose end was never seen
+// (see maxHeaderScanBytes for the narrow band where that abstention costs a file
+// nib.Parse would have taken). The scan only decides whether a migration is PENDING; the
 // authoritative parse (and its errors) happen in the step's apply, and
 // runMigrations' post-condition catches any residual scan/parse disagreement
 // rather than letting it wedge the CLI.
@@ -1891,23 +1919,17 @@ func readFrontMatterHeader(path string) (fmHeader, error) {
 		return h, err
 	}
 	if !closed {
-		// RUNNING OUT OF INPUT IS NOT A CLOSING FENCE, and nothing here could
+		// RUNNING OUT OF INPUT IS NOT A CLOSING FENCE, and nothing else here can
 		// tell the two apart: bufio.ScanLines returns the last partial chunk as
-		// an ordinary token, so both the real end of a short file and the
-		// LimitReader's artificial EOF at maxHeaderScanBytes simply ended the
-		// loop with whatever had been extracted. A header that never closes was
-		// therefore reported as a nib carrying no `version` — counted v0
-		// pending — while nib.Parse refuses the very same file. That is the
-		// scan/parse divergence this function's fence rule and runMigrations'
-		// post-condition both exist to prevent.
+		// an ordinary token, so the real end of a short file and the
+		// LimitReader's artificial EOF at maxHeaderScanBytes both end the loop
+		// exactly as meeting a fence does. Without this check a header that never
+		// closes is reported as a nib carrying no `version` — counted v0 pending
+		// — while nib.Parse refuses the very same file, which is the scan/parse
+		// divergence this function's fence rule and runMigrations' post-condition
+		// both exist to prevent.
 		//
-		// The wording mirrors nib.Parse's so one file reads the same way whether
-		// migrate's scan or Core.Load's diagnostics reports it. io.ErrUnexpectedEOF
-		// is wrapped rather than merely described: no caller reads the cause today,
-		// but "input ended before the structure closed" is exactly what happened,
-		// and a later caller distinguishing a truncated file from an unreadable one
-		// should not have to match on prose.
-		return h, fmt.Errorf("front matter never closed (missing the closing --- fence): %w", io.ErrUnexpectedEOF)
+		return h, errFrontMatterNotClosed
 	}
 	return h, nil
 }

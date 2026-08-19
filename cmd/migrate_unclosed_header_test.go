@@ -7,64 +7,69 @@ import (
 	"testing"
 
 	"github.com/alphaleonis/nibs/internal/nib"
+	"github.com/alphaleonis/nibs/internal/store"
 )
 
 // unclosedOverCapHeader is an opening fence followed by enough short key lines
-// to run past nib.MaxFrontMatterBytes, and no closing fence.
+// to push the scan one byte past its read budget, and no closing fence.
 //
 // The SIZE is the point: bufio.ScanLines cannot tell the LimitReader's
-// artificial EOF from the real end of a file, so the scan's loop simply runs out
-// of input and returns whatever it had — which is why this shape reached a clean
-// verdict while nib.Parse refused it.
+// artificial EOF from the real end of a file, so the loop simply runs out of
+// input and returns whatever it had. Sized to the boundary rather than to the
+// 440 KB of the original report — a file that only just crosses the cap is the
+// harder case, and the one a fencepost error would slip through.
 func unclosedOverCapHeader() string {
 	var b strings.Builder
 	b.WriteString("---\n")
-	for i := 0; b.Len() <= nib.MaxFrontMatterBytes; i++ {
-		b.WriteString("k")
-		b.WriteString(strings.Repeat("0", 6))
-		b.WriteString(": v\n")
+	for b.Len() <= nib.MaxFrontMatterBytes {
+		b.WriteString("k000000: v\n")
 	}
 	return b.String()
 }
 
 // TestHeaderScanAndParseAgree pins the invariant readFrontMatterHeader's own
-// comments state and the migration engine's post-condition depends on: the scan
-// may never call a file a nib that nib.Parse refuses.
+// fence rule states and runMigrations' post-condition depends on: the scan may
+// never call a file a nib that nib.Parse refuses.
 //
-// nib.Parse is the REFERENCE here rather than a second opinion — it is what
-// Core.Load runs, so a file the scan counts pending and the parse rejects is
-// counted toward a step that can never process it.
+// nib.Parse is the REFERENCE rather than a second opinion — it is what Core.Load
+// runs, so a file the scan counts pending and the parse rejects is counted toward
+// a step that can never process it.
+//
+// The shape rows mirror internal/nib's TestParseRequiresFrontMatter, which is the
+// canonical corpus for what Parse considers a nib. Kept in step by hand: they
+// live in different packages, and what this asserts is that the two SIDES agree,
+// which is only meaningful over shapes Parse actually has opinions about.
 func TestHeaderScanAndParseAgree(t *testing.T) {
-	const closed = "---\nversion: 1\ntitle: Good\nstatus: todo\ntype: task\n---\n\nBody.\n"
-
 	tests := []struct {
 		name    string
 		content string
 	}{
-		{
-			// The reported shape: a 440 KB header of short lines that never
-			// closes. The scan returned hasFrontMatter=true, version=0 — v0
-			// pending — with a nil error.
-			name:    "a header that never closes, past the byte cap",
-			content: unclosedOverCapHeader(),
-		},
-		{
-			// The same divergence without needing the cap at all: the loop ends
-			// on the real end of the file, and nothing distinguished that from
-			// meeting a closing fence.
-			name:    "a header that never closes, well under the cap",
-			content: "---\ntitle: Short\n",
-		},
-		{
-			name:    "a properly closed header",
-			content: closed,
-		},
-		{
-			// Already consistent, and here to keep it that way: the scan reports
-			// hasFrontMatter=false, which every caller reads as "not a nib".
-			name:    "no opening fence at all",
-			content: "just some markdown\n",
-		},
+		// The reported shape, and the same divergence without needing the cap.
+		{"a header that never closes, one byte past the read budget", unclosedOverCapHeader()},
+		{"a header that never closes, well under the cap", "---\ntitle: Short\n"},
+		{"only an opening fence", "---\n"},
+		{"an opening fence with no trailing newline", "---"},
+
+		// Shapes Parse ACCEPTS. The scan must not refuse any of them — that
+		// direction would be a worse regression than the bug, since such a file
+		// would be counted unreadable and block a content step.
+		{"a properly closed header", "---\nversion: 1\ntitle: Good\nstatus: todo\ntype: task\n---\n\nBody.\n"},
+		{"empty front matter", "---\n---\n"},
+		{"crlf throughout", "---\r\nversion: 1\r\ntitle: T\r\nstatus: todo\r\n---\r\n\r\nBody.\r\n"},
+		{"a ---yaml opening fence", "---yaml\nversion: 1\ntitle: T\nstatus: todo\n---\n\nBody.\n"},
+		{"a space-padded opening fence", "---   \nversion: 1\ntitle: T\n---\n\nBody.\n"},
+		{"a tab-padded opening fence", "---\t\nversion: 1\ntitle: T\n---\n\nBody.\n"},
+		{"a space-padded closing fence", "---\nversion: 1\ntitle: T\n---  \n\nBody.\n"},
+		{"a closing fence as the last line, no trailing newline", "---\nversion: 1\ntitle: T\n---"},
+
+		// Shapes Parse REFUSES for a reason other than truncation. The scan
+		// answers these with hasFrontMatter=false, which every caller reads as
+		// "not a nib" — already consistent, and here to keep it that way.
+		{"no opening fence at all", "just some markdown\n"},
+		{"an empty file", ""},
+		{"a BOM before the fence", "\uFEFF---\nversion: 1\ntitle: T\n---\n\nBody.\n"},
+		{"a blank line before the fence", "\n---\nversion: 1\ntitle: T\n---\n\nBody.\n"},
+		{"---- is a rule, not a fence", "----\nversion: 1\ntitle: T\n---\n\nBody.\n"},
 	}
 
 	for _, tt := range tests {
@@ -89,7 +94,8 @@ func TestHeaderScanAndParseAgree(t *testing.T) {
 				return
 			}
 			if scanErr != nil {
-				t.Errorf("nib.Parse accepts this file while the scan errors: %v", scanErr)
+				t.Errorf("nib.Parse accepts this file while the scan refuses it (%v); such a file is recorded "+
+					"unreadable and blocks a content step, which is the more expensive direction of disagreement", scanErr)
 			}
 			if !h.hasFrontMatter {
 				t.Error("nib.Parse accepts this file while the scan reports no front matter")
@@ -102,9 +108,11 @@ func TestHeaderScanAndParseAgree(t *testing.T) {
 // reach the scan's PROBLEM list, not a step's count.
 //
 // Counted pending, it inflates the number a preview shows and names a step that
-// cannot process it; recorded as a problem, it lands where the engine already
-// knows what to do — unreadable, so the layout step moves it with the rest
-// because it cannot prove the file is not a nib.
+// cannot process it. Recorded as a problem it lands where the engine already
+// knows what to do — and it must land as UNREADABLE, because that flag is what
+// decides whether the layout step keeps moving the file: the scan cannot prove a
+// file it could not read is not a nib, so leaving it behind would strand
+// something that might be one.
 func TestUnclosedHeaderIsNotCountedPending(t *testing.T) {
 	nibsDir := writeStoreFiles(t, map[string]string{
 		"t-0001--good.md":    "---\nversion: 1\ntitle: Good\nstatus: todo\ntype: task\n---\n\nBody.\n",
@@ -132,17 +140,72 @@ func TestUnclosedHeaderIsNotCountedPending(t *testing.T) {
 		for i := range scan.problems {
 			if strings.Contains(scan.problems[i].path, want) {
 				found = &scan.problems[i]
+				break
 			}
 		}
 		if found == nil {
 			t.Errorf("%s is in no scan problem: %+v", want, scan.problems)
 			continue
 		}
-		// UNREADABLE, not fence-less: the scan could not establish what the file
-		// is, so the layout step must keep moving it rather than leaving behind
-		// something that might be a nib.
 		if !found.unreadable {
 			t.Errorf("%s recorded with unreadable=false; the scan cannot prove it is not a nib, so the layout step must still move it", want)
 		}
 	}
+}
+
+// TestUnclosedHeaderAtAPreLayoutStoreRootRefusesBeforeAnyRename exercises the
+// consequence the flag carries, which the data/ fixture above cannot reach: at a
+// pre-layout store's ROOT, whether the file blocks depends on `unreadable` alone
+// (under data/ it would block either way).
+//
+// It also pins the property blockingScanProblems' own comment says has already
+// diverged twice — the preview and the run answering identically — for a shape
+// that reaches the gate by a new route.
+func TestUnclosedHeaderAtAPreLayoutStoreRootRefusesBeforeAnyRename(t *testing.T) {
+	build := func(t *testing.T) (projectDir, storeDir string) {
+		t.Helper()
+		t.Cleanup(resetRootPersistentFlags)
+		t.Cleanup(resetMigrateFlags)
+		resetRootPersistentFlags()
+		resetMigrateFlags()
+		t.Setenv("NIBS_PATH", "")
+		// A v0 nib makes a CONTENT step pending, which is what consults the
+		// blocking set at all; the torn file beside it is what must block.
+		return writeLegacyStore(t, "", map[string]string{
+			"leg-a1--one.md":  "---\ntitle: One\nstatus: todo\n---\n\nBody.\n",
+			"leg-b2--torn.md": "---\ntitle: Torn\n",
+		})
+	}
+
+	t.Run("the preview predicts the refusal", func(t *testing.T) {
+		_, storeDir := build(t)
+		out, err := runRootWith(t, "--nibs-path", storeDir, "migrate", "--dry-run", "--allow-dirty")
+		if err != nil {
+			t.Fatalf("migrate --dry-run: %v\n%s", err, out)
+		}
+		if !strings.Contains(out, "refusing to migrate around") {
+			t.Errorf("the preview does not predict the refusal the run raises:\n%s", out)
+		}
+		if !strings.Contains(out, "leg-b2--torn.md") {
+			t.Errorf("the preview does not name the torn file:\n%s", out)
+		}
+	})
+
+	t.Run("the run refuses before moving anything", func(t *testing.T) {
+		_, storeDir := build(t)
+		out, err := runRootWith(t, "--nibs-path", storeDir, "migrate", "--allow-dirty")
+		if err == nil {
+			t.Fatalf("migrate proceeded with a file it cannot classify\n%s", out)
+		}
+		// The gate must fire BEFORE the layout step's renames, or the store is
+		// left half-migrated — files under data/ and a store that still refuses.
+		if _, statErr := os.Stat(filepath.Join(storeDir, store.DataDirName)); statErr == nil {
+			t.Error("the refused run created data/; the gate fired after the movement it guards")
+		}
+		for _, name := range []string{"leg-a1--one.md", "leg-b2--torn.md"} {
+			if _, statErr := os.Stat(filepath.Join(storeDir, name)); statErr != nil {
+				t.Errorf("%s left the store root despite the refusal: %v", name, statErr)
+			}
+		}
+	})
 }
