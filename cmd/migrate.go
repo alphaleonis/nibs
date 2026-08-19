@@ -1823,12 +1823,17 @@ type fmHeader struct {
 // BODY lines as header keys — false pending (a migrated store gated forever)
 // or false not-pending (a v0 file silently never migrated).
 //
-// Best-effort by design: a header larger than maxHeaderScanBytes ends the
-// scan with whatever was extracted so far — such a file is over the parse cap
-// too, so the load-time diagnostics will name it. The scan only decides
-// whether a migration is PENDING; the authoritative parse (and its errors)
-// happen in the step's apply, and runMigrations' post-condition catches any
-// residual scan/parse disagreement rather than letting it wedge the CLI.
+// Best-effort about VALUES, never about the shape. A key the scan misreads
+// costs at most a wrong count; a file it calls a nib that nib.Parse refuses is
+// counted toward a step that can never process it, so the shape questions —
+// does a front-matter block open, and does it close — are answered exactly. A
+// header that runs past maxHeaderScanBytes without closing is therefore an
+// ERROR rather than a best-effort partial: the limiter's EOF is indistinguishable
+// from the file's own, so accepting either would be accepting a header whose end
+// was never seen. The scan only decides whether a migration is PENDING; the
+// authoritative parse (and its errors) happen in the step's apply, and
+// runMigrations' post-condition catches any residual scan/parse disagreement
+// rather than letting it wedge the CLI.
 func readFrontMatterHeader(path string) (fmHeader, error) {
 	// OpenRegularFile closes the window WalkStoreFiles' classification leaves
 	// open: the walk decided this path was a regular file a moment ago, and
@@ -1857,12 +1862,14 @@ func readFrontMatterHeader(path string) (fmHeader, error) {
 		return h, sc.Err() // no opening fence: hasFrontMatter stays false
 	}
 	h.hasFrontMatter = true
+	closed := false
 	for sc.Scan() {
 		// line keeps its leading whitespace: the key checks below are
 		// positional (a top-level key starts at column 0), so only the
 		// fence compare may TrimSpace.
 		line := strings.TrimRight(sc.Text(), "\r")
 		if strings.TrimSpace(line) == "---" {
+			closed = true
 			break // closing fence, whitespace-padded or not (fence rule above)
 		}
 		key, value, ok := strings.Cut(line, ":")
@@ -1882,6 +1889,25 @@ func readFrontMatterHeader(path string) (fmHeader, error) {
 	}
 	if err := sc.Err(); err != nil {
 		return h, err
+	}
+	if !closed {
+		// RUNNING OUT OF INPUT IS NOT A CLOSING FENCE, and nothing here could
+		// tell the two apart: bufio.ScanLines returns the last partial chunk as
+		// an ordinary token, so both the real end of a short file and the
+		// LimitReader's artificial EOF at maxHeaderScanBytes simply ended the
+		// loop with whatever had been extracted. A header that never closes was
+		// therefore reported as a nib carrying no `version` — counted v0
+		// pending — while nib.Parse refuses the very same file. That is the
+		// scan/parse divergence this function's fence rule and runMigrations'
+		// post-condition both exist to prevent.
+		//
+		// The wording mirrors nib.Parse's so one file reads the same way whether
+		// migrate's scan or Core.Load's diagnostics reports it. io.ErrUnexpectedEOF
+		// is wrapped rather than merely described: no caller reads the cause today,
+		// but "input ended before the structure closed" is exactly what happened,
+		// and a later caller distinguishing a truncated file from an unreadable one
+		// should not have to match on prose.
+		return h, fmt.Errorf("front matter never closed (missing the closing --- fence): %w", io.ErrUnexpectedEOF)
 	}
 	return h, nil
 }
