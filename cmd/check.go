@@ -2,6 +2,7 @@ package cmd
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"strings"
@@ -350,9 +351,14 @@ func storeMigration(app *App) *migrationStatus {
 		// PartialLoad stays nil: the probe refused before deciding anything about
 		// the files, and this kind IS reachable on a store that loaded nothing, so
 		// reporting false would be a claim nobody established.
+		//
+		// The UNBOUNDED rendering, which is what makes check different from every
+		// other surface this refusal reaches. Their copies name at most
+		// maxEchoedListEntries files and send the reader here for the rest, so
+		// bounding it here too would close that loop on nothing.
 		return &migrationStatus{
 			Kind:    migrationKindBlocked,
-			Message: flattenReason(err.Error()),
+			Message: flattenReason(fullRefusal(err)),
 		}
 	}
 	if len(pending) == 0 {
@@ -375,6 +381,16 @@ func storeMigration(app *App) *migrationStatus {
 			store.DataDirName, store.ArchiveDirName)
 	}
 	return status
+}
+
+// fullRefusal renders err with nothing elided where it can, for the one command
+// the bounded refusals point at. Any other error is already its own whole text.
+func fullRefusal(err error) string {
+	var newer *newerStoreError
+	if errors.As(err, &newer) {
+		return newer.full()
+	}
+	return err.Error()
 }
 
 // renderLoadDiagnostics prints the load-time integrity section in text mode.
