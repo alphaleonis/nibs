@@ -32,19 +32,29 @@ jobs:
       # os.Symlink failing. Absolute, because `go test ./...` runs each package's
       # binary with that package's own source directory as its cwd.
       NIBS_SKIP_REPORT: ${{ github.workspace }}/skipped-guards.txt
-      # The Linux runner's filesystem always supports symlinks, so a symlink skip
-      # there is a regression in the environment rather than a limitation of it,
-      # and this makes it a build failure. The windows leg is deliberately left
-      # permissive: whether these runners can create a symlink without elevation
-      # is precisely the open question the report above exists to answer. Set it
-      # there too once a run has shown the count is zero.
-      NIBS_REQUIRE_SYMLINKS: ${{ matrix.os == 'ubuntu-latest' && '1' || '' }}
+      # Required on BOTH legs: a symlink skip is now a regression in the
+      # environment rather than a limitation of it, whichever runner it happens
+      # on. Linux always supported them. The windows leg was left permissive
+      # until a run could answer whether those runners create a symlink without
+      # elevation — and the tally has now answered it, reporting `hostile
+      # filenames`, `named pipes` and `unreadable paths` while never once naming
+      # symlinks. Fifteen fixtures depend on that capability, several of them the
+      # only coverage a store-resolution refusal has, so requiring it is what
+      # stops a runner image change silently taking them out of the run.
+      NIBS_REQUIRE_SYMLINKS: '1'
       # Required rather than permissive: the store-walk guards that keep a FIFO
       # named `*.md` from blocking every command have no platform-independent
       # fixture beside them (a directory by that name is answered by the walk's
       # own IsDir branch and never reaches the regularity test), so a silent skip
       # here costs the whole guard rather than one spelling of it.
       NIBS_REQUIRE_NAMED_PIPES: ${{ matrix.os == 'ubuntu-latest' && '1' || '' }}
+      # Ubuntu only, and unfixably so: the deception guards need a FILENAME
+      # carrying control characters and bidi overrides, which POSIX accepts and
+      # Windows rejects outright with ERROR_INVALID_NAME. So a skip on the linux
+      # leg means the fixture stopped being built rather than that the machine
+      # could not build it, and the five guards it covers are the ones proving a
+      # filename cannot rewrite a message that quotes it.
+      NIBS_REQUIRE_HOSTILE_FILENAMES: ${{ matrix.os == 'ubuntu-latest' && '1' || '' }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
       # Every tool this job runs — go, node, task — is installed by mise from
