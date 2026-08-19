@@ -311,6 +311,133 @@ func TestCeilingIsAppliedToTheScope(t *testing.T) {
 	}
 }
 
+// TestCrossedOperatingSystemsIsRefused pins the guard that stops a lane Task
+// started on Windows from silently executing on Linux.
+//
+// `bash` is not one program on Windows: PowerShell resolves it to the WSL
+// launcher in System32, Git Bash resolves its own first. Handed off from
+// PowerShell the lane runs on Linux, and the Go suite then answers for Linux
+// while looking like a Windows run — with an EMPTY skip tally, because on Linux
+// nothing skips, which reads exactly like "every guard ran" (nibs-ehym).
+//
+// The marker is an ARGUMENT because neither environment route survives the
+// crossing: a Windows variable is invisible inside WSL unless named in WSLENV,
+// and Task's `env:` cannot set WSLENV when the parent shell already has one —
+// which Windows Terminal does by default.
+func TestCrossedOperatingSystemsIsRefused(t *testing.T) {
+	skipUnlessBash(t)
+
+	tests := []struct {
+		name string
+		// script defaults to run-capped.sh; naming the front end asserts it
+		// forwards the marker rather than swallowing it.
+		script string
+		// hostOS is the --host-os value; empty means the flag is not passed at
+		// all, which must stay runnable.
+		hostOS string
+		// ostype is what the script observes for the platform it is ON.
+		ostype string
+
+		wantRefusal bool
+	}{
+		{
+			name:        "Task ran on Windows and the lane landed on Linux",
+			hostOS:      "windows",
+			ostype:      "linux-gnu",
+			wantRefusal: true,
+		},
+		{
+			// Git Bash is a Windows lane running on Windows: it reports cygwin
+			// or msys, never linux-gnu, so the guard must stay out of the way.
+			name:   "Git Bash is a Windows lane that did not cross",
+			hostOS: "windows",
+			ostype: "cygwin",
+		},
+		{
+			name:   "a deliberate Linux run agrees with itself",
+			hostOS: "linux",
+			ostype: "linux-gnu",
+		},
+		{
+			name:   "no marker at all still runs",
+			ostype: "linux-gnu",
+		},
+		{
+			name:        "the go front end forwards the marker",
+			script:      "go-test-capped.sh",
+			hostOS:      "windows",
+			ostype:      "linux-gnu",
+			wantRefusal: true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			binDir := t.TempDir()
+			log := filepath.Join(t.TempDir(), "payload.log")
+
+			// No cap available, and a native kernel — so neither the cap branch
+			// nor the WSL refusal can account for a refusal seen here.
+			writeExec(t, filepath.Join(binDir, "systemd-run"), "#!/bin/sh\nexit 1\n")
+			osrelease := osreleaseFile(t, nativeKernel)
+
+			var args []string
+			switch tt.script {
+			case "":
+				recorder(t, binDir, "payload", log)
+				args = []string{"run-capped.sh"}
+				if tt.hostOS != "" {
+					args = append(args, "--host-os", tt.hostOS)
+				}
+				args = append(args, "payload", "an-argument")
+			default:
+				recorder(t, binDir, "go", log)
+				args = []string{tt.script}
+				if tt.hostOS != "" {
+					args = append(args, "--host-os", tt.hostOS)
+				}
+				args = append(args, "an-argument")
+			}
+
+			cmd := exec.Command("bash", args...)
+			cmd.Env = append(os.Environ(),
+				"PATH="+binDir+string(os.PathListSeparator)+os.Getenv("PATH"),
+				"NIBS_OSRELEASE_FILE="+osrelease,
+				// bash does not overwrite an inherited OSTYPE, which is what
+				// lets one machine exercise both platforms.
+				"OSTYPE="+tt.ostype,
+			)
+
+			var stderr strings.Builder
+			cmd.Stderr = &stderr
+			runErr := cmd.Run()
+			ran := logLines(t, log) != nil
+
+			if tt.wantRefusal {
+				if runErr == nil {
+					t.Errorf("expected a non-zero exit, got success")
+				}
+				// A refusal that still ran the lane would have tested Linux
+				// anyway, which is the whole failure being prevented.
+				if ran {
+					t.Errorf("refused but still executed the lane")
+				}
+				if !strings.Contains(stderr.String(), "crossed operating systems") {
+					t.Errorf("refusal does not say what went wrong; stderr:\n%s", stderr.String())
+				}
+				return
+			}
+
+			if runErr != nil {
+				t.Errorf("expected success, got %v; stderr:\n%s", runErr, stderr.String())
+			}
+			if !ran {
+				t.Fatalf("expected the lane to run; stderr:\n%s", stderr.String())
+			}
+		})
+	}
+}
+
 // TestRunCappedRejectsAnEmptyCommand keeps a missing command from being read as
 // "cap nothing and succeed".
 func TestRunCappedRejectsAnEmptyCommand(t *testing.T) {

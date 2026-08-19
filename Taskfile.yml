@@ -185,7 +185,7 @@ tasks:
       # Capped for the same reason as the vitest lane in `test`: svelte-check
       # holds the whole project graph in one node process, and it should pay for
       # that out of its own cgroup rather than the caller's (nibs-0kip).
-      - bash ../scripts/run-capped.sh npm run check
+      - bash ../scripts/run-capped.sh --host-os {{OS}} npm run check
       - task: web:check-tooling
 
   web:check-tooling:
@@ -204,7 +204,7 @@ tasks:
     deps: [web:install]
     dir: web
     cmds:
-      - bash ../scripts/run-capped.sh npx tsc --noEmit -p tsconfig.tooling.json
+      - bash ../scripts/run-capped.sh --host-os {{OS}} npx tsc --noEmit -p tsconfig.tooling.json
 
   build:
     desc: Build the nibs CLI executable
@@ -244,7 +244,7 @@ tasks:
       # cgroup instead of triggering a global OOM that takes down the WSL VM
       # (nibs-mv0i). Falls back to plain `go test` where systemd --user scopes
       # aren't available. Override the cap with NIBS_CAP_MEM_MAX (default 4G).
-      - bash scripts/go-test-capped.sh ./...
+      - bash scripts/go-test-capped.sh --host-os {{OS}} ./...
       # Silent when nothing was skipped, which is the normal case here.
       - cmd: 'if [ -s "$NIBS_SKIP_REPORT" ]; then cat "$NIBS_SKIP_REPORT"; fi'
         silent: true
@@ -262,7 +262,7 @@ tasks:
       # session, the kernel's memcg OOM killer picks the session over any single
       # worker and the supervisor dies instead of the tests (nibs-0kip). The
       # scope makes the lane pay for its own memory.
-      - cd web && bash ../scripts/run-capped.sh npx vitest run --reporter=agent
+      - cd web && bash ../scripts/run-capped.sh --host-os {{OS}} npx vitest run --reporter=agent
 
   test:race:
     desc: Run the -race detector on the concurrency-critical packages (nibcore + graph)
@@ -270,7 +270,7 @@ tasks:
       # Scoped to the two packages that carry the concurrency invariants — a full
       # `-race ./...` is slow (the watcher tests use real debounce timing).
       # -count=1 defeats the test cache so the detector always actually runs.
-      - bash scripts/go-test-capped.sh -race -count=1 ./internal/nibcore/... ./internal/graph/...
+      - bash scripts/go-test-capped.sh --host-os {{OS}} -race -count=1 ./internal/nibcore/... ./internal/graph/...
 
   nibs:
     desc: Build and run the nibs CLI (pass args after `--`, e.g. `task nibs -- list --json`)

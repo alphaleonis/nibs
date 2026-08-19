@@ -36,11 +36,69 @@
 #                     not the machine, and refusing would break `task test` on
 #                     an ordinary WSL box with no user systemd manager.
 #
-# Usage: run-capped.sh [--refuse-on-wsl] <command> [args...]
+# Usage: run-capped.sh [--host-os <os>] [--refuse-on-wsl] <command> [args...]
 #
 # Env: NIBS_CAP_MEM_MAX  scope ceiling, default 4G
 #      NIBS_UNCAPPED=1   run uncapped even where the policy would refuse
 set -euo pipefail
+
+# Parsed before the crossing check below, which is what consumes it.
+host_os=""
+if [[ ${1:-} == --host-os ]]; then
+	host_os=${2:-}
+	shift 2
+fi
+
+# A handoff that crossed operating systems is a worse error than a missing cap,
+# so it is checked before anything else.
+#
+# The Taskfile invokes this script as `bash scripts/run-capped.sh`, and on Windows
+# `bash` is not one program. PowerShell resolves it to C:\Windows\system32\bash.exe
+# — the WSL launcher — while Git Bash finds its own /usr/bin/bash first. Started
+# from PowerShell the whole lane therefore executes on Linux, against
+# /mnt/<drive>/…, using WSL's Go instead of the mise.toml pin.
+#
+# What makes that worth refusing rather than warning: the Go suite then reports the
+# LINUX answer for every platform-specific guard while looking like a Windows run,
+# and the skip tally comes back EMPTY — on Linux every capability exists, so
+# nothing skips and internal/testskip prints nothing at all, which reads exactly
+# like "every guard ran". The only loud symptom is the web lane, where WSL's node
+# cannot load the Windows-native binaries in web/node_modules; without that
+# accident the run would pass and be believed (nibs-ehym).
+#
+# --host-os carries Task's own {{OS}}, so this compares where Task ran against
+# where this script is executing. $OSTYPE rather than uname, for the same reason
+# the osrelease read below avoids grep: bash is already required and the check must
+# not become a no-op on a machine missing a coreutil. Git Bash reports cygwin or
+# msys here, never linux-gnu.
+#
+# AN ARGUMENT RATHER THAN AN ENVIRONMENT VARIABLE, and that is the whole trick. A
+# Windows environment variable is not visible inside WSL unless it is named in
+# WSLENV — so an env-var marker is swallowed by the very boundary it exists to
+# detect. Forwarding it through WSLENV does not rescue it either: Task's `env:`
+# does not override a variable the parent shell already set, and Windows Terminal
+# sets WSLENV itself, so the forwarding silently stops working in exactly the
+# environment most people run in. Arguments cross unchanged. (All three measured.)
+#
+# Deliberately NO override. Running the Windows lanes through WSL is never the
+# intent — a deliberate Linux run starts Task inside WSL, where {{OS}} is linux and
+# this never fires.
+if [[ $host_os == windows && ${OSTYPE:-} == linux* ]]; then
+	printf '%s\n' \
+		"error: refusing to run this lane — the handoff crossed operating systems." \
+		"" \
+		"Task is running on Windows, but 'bash' resolved to the WSL launcher" \
+		"(C:\\Windows\\system32\\bash.exe), so this lane is executing on Linux against" \
+		"/mnt/<drive> with WSL's Go rather than the version mise.toml pins." \
+		"" \
+		"It would have passed, and told you nothing about Windows: every" \
+		"platform-specific guard would report the Linux answer, and the skip tally" \
+		"would come back empty because on Linux nothing skips." \
+		"" \
+		"Run 'task' from Git Bash instead of PowerShell. To test Linux on purpose," \
+		"start Task inside WSL rather than handing off to it." >&2
+	exit 1
+fi
 
 refuse_on_wsl=0
 if [[ ${1:-} == --refuse-on-wsl ]]; then
@@ -49,7 +107,7 @@ if [[ ${1:-} == --refuse-on-wsl ]]; then
 fi
 
 if [[ $# -eq 0 ]]; then
-	printf 'usage: %s [--refuse-on-wsl] <command> [args...]\n' "${BASH_SOURCE[0]}" >&2
+	printf 'usage: %s [--host-os <os>] [--refuse-on-wsl] <command> [args...]\n' "${BASH_SOURCE[0]}" >&2
 	exit 2
 fi
 
