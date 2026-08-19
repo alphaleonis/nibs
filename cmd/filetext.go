@@ -1,6 +1,7 @@
 package cmd
 
 import (
+	"fmt"
 	"strings"
 	"unicode/utf8"
 
@@ -12,6 +13,48 @@ import (
 // look; repeating an arbitrarily long value adds nothing and gives a hostile
 // file a canvas.
 const maxEchoedFileTextRunes = 200
+
+// maxEchoedListEntries bounds how many entries a message ENUMERATES, the count
+// half of the same boundary maxEchoedFileTextRunes governs one scalar of. A
+// refusal that names one file per offender is O(store): 300 files carrying a
+// format version this build cannot read made every command print 301 lines and
+// 13 KB, on every command, until the store was repaired.
+//
+// Twenty is enough to recognize the shape of the problem — one directory, one
+// bad merge, the whole store — which is what the reader acts on; the full list
+// belongs to the command the elision names (see echoedListRemedyCheck), not to a
+// message printed by a pre-run gate nobody asked to run.
+const maxEchoedListEntries = 20
+
+// echoedListRemedyCheck is the elision tail's remedy for a list `nibs check`
+// reports in full. Pass it only where check really does report the SAME files:
+// the tail is a prescription, and one pointing at a command that does not carry
+// the list would send the reader in a circle.
+const echoedListRemedyCheck = "run `nibs check` for the full list"
+
+// echoedList joins entries onto the indented lines a refusal enumerates them on,
+// bounded to maxEchoedListEntries with the elided count stated. An empty remedy
+// states the count alone, for a list nothing else reports.
+//
+// The bound belongs HERE rather than where each list is collected: the lists feed
+// `nibs check` too, which is the unbounded channel this tail points at, so
+// truncating at the source would leave the full list nowhere (see
+// newerStoreError.full).
+func echoedList(entries []string, remedy string) string {
+	if len(entries) <= maxEchoedListEntries {
+		return strings.Join(entries, "\n  ")
+	}
+	// Copy rather than append onto the caller's slice: entries is a live field on
+	// the error these messages are rendered from, and appending in place would
+	// overwrite the 21st entry it still has to be able to render in full.
+	shown := make([]string, maxEchoedListEntries, maxEchoedListEntries+1)
+	copy(shown, entries)
+	tail := fmt.Sprintf("…and %d more", len(entries)-maxEchoedListEntries)
+	if remedy != "" {
+		tail += "; " + remedy
+	}
+	return strings.Join(append(shown, tail), "\n  ")
+}
 
 // stripControlChars renders one scalar read from a file so it cannot paint text
 // over the terminal, nor close a markdown code span the message put around it —

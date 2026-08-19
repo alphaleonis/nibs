@@ -1110,7 +1110,7 @@ func loadStoreForMigration(env migrateEnv) (*nibcore.Core, error) {
 			problems = append(problems, fmt.Sprintf("duplicate id %q: %s shadows %s", d.NibID, stripControlChars(d.Loaded), stripControlChars(d.Shadowed)))
 		}
 		return nil, fmt.Errorf("refusing to migrate a store that does not load cleanly (repair the files below by hand, `nibs check` reports them too, then re-run `nibs migrate`):\n  %s",
-			strings.Join(problems, "\n  "))
+			echoedList(problems, echoedListRemedyCheck))
 	}
 	return core, nil
 }
@@ -1164,9 +1164,40 @@ func (s *storeScan) pending() []migrationStep {
 // to a VALIDATION exit (see migrateCmdError) while the same error surfacing
 // through the shared PersistentPreRunE gate stays uncoded, matching that
 // gate's other refusals (deliberately out of scope for coding).
-type newerStoreError struct{ msg string }
+//
+// It holds the two lists rather than a rendered sentence because the refusal has
+// two readers with opposite needs: the pre-run gate prints it on EVERY command,
+// where one line per offending file is the whole problem, while `nibs check` —
+// the command that bounded rendering points at — has to be able to print the
+// list in full. Rendering once at construction would have to pick one of them.
+type newerStoreError struct {
+	// newer describes each file whose format version exceeds nib.CurrentVersion
+	// ("path (format version N)"), and problems the files the same walk could not
+	// classify at all. Both are COMPLETE; bounding happens at rendering.
+	newer    []string
+	problems []scanProblem
+}
 
-func (e *newerStoreError) Error() string { return e.msg }
+// Error is the bounded rendering, for the surfaces that print a refusal.
+func (e *newerStoreError) Error() string {
+	return e.render(func(entries []string) string { return echoedList(entries, echoedListRemedyCheck) })
+}
+
+// full is the same refusal with nothing elided, for `nibs check` — the
+// full-list channel Error's elision tail sends the reader to.
+func (e *newerStoreError) full() string {
+	return e.render(func(entries []string) string { return strings.Join(entries, "\n  ") })
+}
+
+func (e *newerStoreError) render(list func([]string) string) string {
+	msg := fmt.Sprintf("%d nib file(s) in this store were written by a newer nibs (this build supports up to format version %d); upgrade nibs:\n  %s",
+		len(e.newer), nib.CurrentVersion, list(e.newer))
+	if len(e.problems) > 0 {
+		msg += fmt.Sprintf("\nthe scan also skipped %d file(s) that cannot be read as nibs:\n  %s",
+			len(e.problems), list(scanProblemLines(e.problems)))
+	}
+	return msg
+}
 
 // scanStore reads each file's front-matter header ONCE and evaluates the
 // newer-store refusal plus every CONTENT step's predicate against it — one
@@ -1257,13 +1288,7 @@ func scanStore(env migrateEnv) (*storeScan, error) {
 		return nil, err
 	}
 	if len(scan.newer) > 0 {
-		msg := fmt.Sprintf("%d nib file(s) in this store were written by a newer nibs (this build supports up to format version %d); upgrade nibs:\n  %s",
-			len(scan.newer), nib.CurrentVersion, strings.Join(scan.newer, "\n  "))
-		if len(scan.problems) > 0 {
-			msg += fmt.Sprintf("\nthe scan also skipped %d file(s) that cannot be read as nibs:\n  %s",
-				len(scan.problems), describeScanProblems(scan.problems))
-		}
-		return nil, &newerStoreError{msg: msg}
+		return nil, &newerStoreError{newer: scan.newer, problems: scan.problems}
 	}
 	return scan, nil
 }
@@ -1352,8 +1377,11 @@ func runMigrations(env migrateEnv, log logf) error {
 			return fmt.Errorf("verifying migration %s: %w", step.name, err)
 		}
 		if len(stuck) > 0 {
+			// No remedy on the elision: this list is the disagreement itself, so
+			// nothing else reports it. Twenty names are a bug report, and the store
+			// is unchanged — re-running migrate reproduces the whole set.
 			return fmt.Errorf("migration %s applied but its detection still fires — the header scan disagrees with the parsed store for:\n  %s\nplease repair these files by hand (or report a nibs bug); until then commands will keep refusing",
-				step.name, strings.Join(stuck, "\n  "))
+				step.name, echoedList(stuck, ""))
 		}
 	}
 	return nil
@@ -1655,16 +1683,22 @@ func blockingScanProblems(env migrateEnv, scan *storeScan) []scanProblem {
 	return blocking
 }
 
-// describeScanProblems renders one indented "path: reason" line per problem,
-// the shape both the refusal and its preview list them in. Both halves come from
-// the filesystem — a filename, an os error quoting one — so both pass through the
-// control-character boundary (see stripControlChars).
-func describeScanProblems(problems []scanProblem) string {
+// scanProblemLines renders one "path: reason" entry per problem. Both halves come
+// from the filesystem — a filename, an os error quoting one — so both pass through
+// the control-character boundary (see stripControlChars).
+func scanProblemLines(problems []scanProblem) []string {
 	lines := make([]string, len(problems))
 	for i, p := range problems {
 		lines[i] = fmt.Sprintf("%s: %s", stripControlChars(p.path), stripControlChars(p.reason))
 	}
-	return strings.Join(lines, "\n  ")
+	return lines
+}
+
+// describeScanProblems renders those entries as the indented lines a refusal
+// lists them on, bounded — `nibs check` reports every unclassifiable file in the
+// store, so it is the full list the elision points at.
+func describeScanProblems(problems []scanProblem) string {
+	return echoedList(scanProblemLines(problems), echoedListRemedyCheck)
 }
 
 // stillPending re-runs a step's detection after its apply and describes
