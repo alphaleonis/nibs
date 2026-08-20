@@ -649,7 +649,17 @@ func (c *Core) handleChanges(changes map[string]fsnotify.Op) {
 				warns.warn("nib file %s arrived with a legacy shape; it loads as written until `nibs migrate` runs (stop serve first)", path)
 			}
 
-			_, existed := c.nibs[newNib.ID]
+			// Two files parsing to one id, the arrival half. The load walk warns
+			// about this from what it sees on disk; here the store is the only
+			// witness to the file already answering for the id, and the arriving
+			// file wins whichever it was — so without this line a live serve
+			// swapped one for the other with nothing on stderr, and which one won
+			// depended on the debounce batch's map iteration order.
+			existing, existed := c.nibs[newNib.ID]
+			if existed && c.shadowsAnotherFile(existing.Path, newNib.Path) {
+				warns.warn("duplicate nib id %q on disk: %s shadows %s (the arriving file wins; resolve the duplicate)",
+					newNib.ID, path, filepath.Join(c.root, existing.Path))
+			}
 			c.nibs[newNib.ID] = newNib
 
 			// Refresh reverse-mention index with the new body's edges.
@@ -745,6 +755,32 @@ func (c *Core) handleChanges(changes map[string]fsnotify.Op) {
 	// re-reads — so emitting events before applying state would break it
 	// silently and intermittently. Fan out outside the lock.
 	c.fanOut(events, cloningPayloads)
+}
+
+// shadowsAnotherFile reports whether an arriving file collides with a DIFFERENT
+// file that already answers for its id, rather than being that same file again.
+//
+// Two conditions, and neither is redundant. A file rewritten in place arrives at
+// the path the store already holds, so an equal path is an edit and not a
+// collision. And every MOVE — a slug rename, an archive, an unarchive — reaches
+// the create half with the store still holding the OLD path, because the removal
+// half that updates it may not have run yet: both halves land in one debounce
+// batch and iterate as a Go map. So a differing path alone reports a duplicate
+// for an ordinary archive, non-deterministically. What separates a move from a
+// collision is whether the old file is still THERE.
+//
+// A LINK — two directory entries for one file — is reported as a collision, which
+// is also what the load walk makes of that pair, so the two halves of the store
+// agree. On a case-folding volume a stored spelling and an event spelling
+// differing only in case would be reported too, where the load walk sees one
+// entry and says nothing. That divergence is accepted rather than guarded:
+// nothing here can reproduce it to prove a guard works, and the cost is one
+// generous diagnostic line, not an action.
+func (c *Core) shadowsAnotherFile(storedRel, arrivingRel string) bool {
+	if storedRel == arrivingRel {
+		return false
+	}
+	return c.fileExists(filepath.Join(c.root, storedRel))
 }
 
 // fileExists checks if a file exists at the given path.
