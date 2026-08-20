@@ -6,10 +6,10 @@ import (
 	"math"
 	"strings"
 
-	"github.com/alphaleonis/nibs/internal/graph"
 	"github.com/alphaleonis/nibs/internal/membership"
 	"github.com/alphaleonis/nibs/internal/nibcontext"
 	"github.com/alphaleonis/nibs/internal/output"
+	"github.com/alphaleonis/nibs/internal/progress"
 	"github.com/alphaleonis/nibs/internal/ui"
 	"github.com/spf13/cobra"
 )
@@ -18,17 +18,17 @@ var contextJSON bool
 
 // contextOutput is the lean, agent-facing shape emitted by `nibs context`.
 // The `progress` values are the canonical child-completion rollup
-// (graph.ProgressRollup) — byte-identical to `nibs get <id> -f progress` — so
+// (progress.Rollup) — byte-identical to `nibs get <id> -f progress` — so
 // an agent never has to re-sum children. Overview mode (no id) populates
 // Milestones; detail mode (an id) populates Root and the subtree fields.
 type contextOutput struct {
 	// Detail mode (a specific nib's subtree summary).
-	Root        *nibcontext.NibRef    `json:"root,omitempty"`
-	Progress    *graph.ProgressRollup `json:"progress,omitempty"`
-	ActivePhase *nibcontext.NibRef    `json:"active_phase,omitempty"`
-	ActiveTasks []*nibcontext.NibRef  `json:"active_tasks,omitempty"`
-	NextTasks   []*nibcontext.NibRef  `json:"next_tasks,omitempty"`
-	Decisions   []string              `json:"decisions,omitempty"`
+	Root        *nibcontext.NibRef   `json:"root,omitempty"`
+	Progress    *progress.Rollup     `json:"progress,omitempty"`
+	ActivePhase *nibcontext.NibRef   `json:"active_phase,omitempty"`
+	ActiveTasks []*nibcontext.NibRef `json:"active_tasks,omitempty"`
+	NextTasks   []*nibcontext.NibRef `json:"next_tasks,omitempty"`
+	Decisions   []string             `json:"decisions,omitempty"`
 
 	// Overview mode (all active milestones).
 	Milestones []milestoneContext `json:"milestones,omitempty"`
@@ -41,8 +41,8 @@ type contextOutput struct {
 // child-completion rollup over the milestone's direct children.
 type milestoneContext struct {
 	*nibcontext.NibRef
-	Progress    graph.ProgressRollup `json:"progress"`
-	ActivePhase *nibcontext.NibRef   `json:"active_phase,omitempty"`
+	Progress    progress.Rollup    `json:"progress"`
+	ActivePhase *nibcontext.NibRef `json:"active_phase,omitempty"`
 }
 
 var contextCmd = &cobra.Command{
@@ -106,7 +106,7 @@ func buildContextOutput(sum nibcontext.Summary, rootID string, view *membership.
 		for _, c := range sum.Containers {
 			out.Milestones = append(out.Milestones, milestoneContext{
 				NibRef:      &c.NibRef,
-				Progress:    graph.ComputeProgress(memberStatuses(view, c.ID)),
+				Progress:    progress.ByCount(memberStatuses(view, c.ID)),
 				ActivePhase: c.ActivePhase,
 			})
 		}
@@ -120,14 +120,14 @@ func buildContextOutput(sum nibcontext.Summary, rootID string, view *membership.
 	out.NextTasks = sum.NextTasks
 	out.Decisions = sum.Decisions
 	if sum.Root != nil {
-		rollup := graph.ComputeProgress(memberStatuses(view, rootID))
+		rollup := progress.ByCount(memberStatuses(view, rootID))
 		out.Progress = &rollup
 	}
 	return out
 }
 
 // memberStatuses projects a container's direct members to their statuses —
-// the input graph.ComputeProgress needs to build the rollup for a node.
+// the input progress.ByCount needs to build the rollup for a node.
 func memberStatuses(view *membership.View, containerID string) []string {
 	members := view.DirectMembers(containerID)
 	statuses := make([]string, len(members))
@@ -213,7 +213,7 @@ func renderMilestoneLine(m milestoneContext) {
 }
 
 // renderProgressBar renders the detail-mode progress bar for a rollup.
-func renderProgressBar(p graph.ProgressRollup) {
+func renderProgressBar(p progress.Rollup) {
 	const barWidth = 30
 	ui.Printf("  %s %s %s\n",
 		progressBar(p, barWidth),
@@ -223,7 +223,7 @@ func renderProgressBar(p graph.ProgressRollup) {
 
 // progressBar builds a filled/empty bar of the given width from a rollup's
 // percent. An empty rollup (total 0) renders as all-empty.
-func progressBar(p graph.ProgressRollup, width int) string {
+func progressBar(p progress.Rollup, width int) string {
 	filled := 0
 	if p.Total > 0 {
 		filled = int(math.Round(float64(width) * float64(p.Percent) / 100))

@@ -5,8 +5,8 @@ import (
 	"time"
 
 	"github.com/alphaleonis/nibs/internal/config"
-	"github.com/alphaleonis/nibs/internal/graph"
 	"github.com/alphaleonis/nibs/internal/nib"
+	"github.com/alphaleonis/nibs/internal/progress"
 )
 
 func TestBuildRoadmap(t *testing.T) {
@@ -320,7 +320,7 @@ func TestBuildRoadmap_VisibilityMatchesProgress(t *testing.T) {
 			if len(result.Milestones) == 1 && len(result.Milestones[0].Epics) == 1 {
 				rendered = len(result.Milestones[0].Epics[0].Items)
 			}
-			rollup := graph.ComputeProgress([]string{status})
+			rollup := progress.ByCount([]string{status})
 			outstanding := rollup.Total - rollup.Done
 
 			if rendered != outstanding {

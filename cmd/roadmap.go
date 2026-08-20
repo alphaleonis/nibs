@@ -13,10 +13,10 @@ import (
 	"text/template"
 
 	"github.com/alphaleonis/nibs/internal/config"
-	"github.com/alphaleonis/nibs/internal/graph"
 	"github.com/alphaleonis/nibs/internal/membership"
 	"github.com/alphaleonis/nibs/internal/nib"
 	"github.com/alphaleonis/nibs/internal/nibcore"
+	"github.com/alphaleonis/nibs/internal/progress"
 	"github.com/spf13/cobra"
 )
 
@@ -46,21 +46,21 @@ type unscheduledGroup struct {
 
 // milestoneGroup represents a milestone and its contents. Progress is the
 // canonical child-completion rollup over the milestone's DIRECT children
-// (graph.ComputeProgress) — the same value `nibs get <milestone> -f progress`
+// (progress.ByCount) — the same value `nibs get <milestone> -f progress`
 // reports — computed over every real child, independent of the display filters.
 type milestoneGroup struct {
-	Milestone *nib.Nib             `json:"milestone"`
-	Progress  graph.ProgressRollup `json:"progress"`
-	Epics     []epicGroup          `json:"epics,omitempty"`
-	Other     []*nib.Nib           `json:"other,omitempty"`
+	Milestone *nib.Nib        `json:"milestone"`
+	Progress  progress.Rollup `json:"progress"`
+	Epics     []epicGroup     `json:"epics,omitempty"`
+	Other     []*nib.Nib      `json:"other,omitempty"`
 }
 
 // epicGroup represents an epic and its child items. Progress is the canonical
 // child-completion rollup over the epic's direct children.
 type epicGroup struct {
-	Epic     *nib.Nib             `json:"epic"`
-	Progress graph.ProgressRollup `json:"progress"`
-	Items    []*nib.Nib           `json:"items,omitempty"`
+	Epic     *nib.Nib        `json:"epic"`
+	Progress progress.Rollup `json:"progress"`
+	Items    []*nib.Nib      `json:"items,omitempty"`
 }
 
 var roadmapCmd = &cobra.Command{
@@ -148,7 +148,7 @@ func buildRoadmap(allNibs []*nib.Nib, includeDone bool, statusFilter, noStatusFi
 			sortByTypeThenStatus(epicItems, cfg)
 			unscheduledEpics = append(unscheduledEpics, epicGroup{
 				Epic:     eg.Epic,
-				Progress: graph.ComputeProgress(childStatuses(eg.Items)),
+				Progress: progress.ByCount(childStatuses(eg.Items)),
 				Items:    epicItems,
 			})
 		}
@@ -193,7 +193,7 @@ func buildMilestoneGroup(m *nib.Nib, view *membership.View, includeDone bool, cf
 		Milestone: m,
 		// % complete over the milestone's real direct members (epics + direct
 		// items), computed over the full member set regardless of includeDone.
-		Progress: graph.ComputeProgress(childStatuses(view.DirectMembers(m.ID))),
+		Progress: progress.ByCount(childStatuses(view.DirectMembers(m.ID))),
 	}
 
 	// Build epic groups
@@ -206,7 +206,7 @@ func buildMilestoneGroup(m *nib.Nib, view *membership.View, includeDone bool, cf
 			sortByTypeThenStatus(epicItems, cfg)
 			group.Epics = append(group.Epics, epicGroup{
 				Epic:     eg.Epic,
-				Progress: graph.ComputeProgress(childStatuses(eg.Items)),
+				Progress: progress.ByCount(childStatuses(eg.Items)),
 				Items:    epicItems,
 			})
 		}
@@ -234,7 +234,7 @@ func buildMilestoneGroup(m *nib.Nib, view *membership.View, includeDone bool, cf
 }
 
 // childStatuses projects a child slice to its status strings, the input
-// graph.ComputeProgress needs to build a canonical progress rollup.
+// progress.ByCount needs to build a canonical progress rollup.
 func childStatuses(children []*nib.Nib) []string {
 	statuses := make([]string, len(children))
 	for i, c := range children {
@@ -252,7 +252,7 @@ func childStatuses(children []*nib.Nib) []string {
 // hidden-closed disclosure, so a deferred nib that dropped out would be
 // invisible rather than merely collapsed.
 //
-// This is the visibility half of the seam with graph.ComputeProgress: without
+// This is the visibility half of the seam with progress.ByCount: without
 // includeDone, the nibs this keeps are exactly the ones that rollup counts in
 // Total but not in Done.
 func staysOnRoadmap(status string, includeDone bool, cfg *config.Config) bool {
