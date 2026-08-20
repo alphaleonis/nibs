@@ -4,6 +4,7 @@ import (
 	"context"
 	"math"
 
+	"github.com/alphaleonis/nibs/internal/config"
 	"github.com/alphaleonis/nibs/internal/nib"
 	"github.com/alphaleonis/nibs/internal/projection"
 )
@@ -14,34 +15,36 @@ import (
 // Build it only via ComputeProgress — do not fork the rule.
 //
 // Canonical definition (single source of truth). Each child falls into exactly
-// one of three buckets:
+// one of three buckets, keyed on its status's ROLE (config.StatusRole):
 //
-//   - Done    = children whose status is "completed" — the one status that means
-//     the work actually happened. They also count toward Total.
+//   - Done    = children whose status carries the done role ("completed") — the
+//     work actually happened. They also count toward Total.
 //
-//   - Dropped = children whose status is "scrapped". The work will not be done
-//     and is no longer scope, so it leaves the denominator entirely rather than
-//     pinning the percentage below 100 forever.
+//   - Dropped = children whose status carries the dropped role ("scrapped").
+//     The work will not be done and is no longer scope, so it leaves the
+//     denominator entirely rather than pinning the percentage below 100
+//     forever.
 //
-//   - Pending = every other child, including "deferred". Counts toward Total,
-//     not toward Done. Deferred work is set aside, not resolved — it is coming
-//     back, so it is outstanding scope and the percentage must say so.
+//   - Pending = every other child, including the parked role ("deferred").
+//     Counts toward Total, not toward Done. Parked work is set aside, not
+//     resolved — it is coming back, so it is outstanding scope and the
+//     percentage must say so.
 //
-//   - Total    = Done + Pending; only scrapped children are excluded.
+//   - Total    = Done + Pending; only dropped children are excluded.
 //
 //   - Percent  = round(Done/Total*100); 0 when Total == 0.
 //
-//   - Scrapped = direct children with status "scrapped", disclosed so the
+//   - Scrapped = direct children in the dropped role, disclosed so the
 //     children missing from Total are visible rather than silently dropped.
 //
-//   - Deferred = direct children with status "deferred", disclosed so a
+//   - Deferred = direct children in the parked role, disclosed so a
 //     set-aside child inside Total can be told apart from work still in flight.
 //
-// The three closed statuses get three different treatments, so the rule names
-// them individually: no combination of the Closed/ReleasesDependents flags
-// separates completed from scrapped (both are closed and both release their
-// dependents), and each named status is a single member rather than a rival
-// definition of a status group. See config.StatusConfig.
+// The three closed statuses get three different treatments, and the roles are
+// what tell them apart: no combination of the closed/releases-dependents
+// predicates separates completed from scrapped (both are closed and both
+// release their dependents) — the done/dropped role split exists exactly for
+// this rule. See config.Role.
 //
 // A leaf nib (no children) reports zeros across the board: progress is a rollup
 // over children, not a reflection of the nib's own status.
@@ -63,7 +66,8 @@ type ProgressRollup struct {
 // ComputeProgress builds the canonical ProgressRollup from a set of child
 // status strings. It is the single place the done/total/percent rule lives; the
 // projected `progress` field and every recipe view call it, so the rollup is
-// identical everywhere. See ProgressRollup for the exact definition.
+// identical everywhere. The buckets key on status ROLES, not names — see
+// ProgressRollup for the exact definition.
 //
 // An unrecognized status (including the empty status of a nib whose front
 // matter omits it) lands in the default arm and counts as outstanding scope, so
@@ -71,14 +75,15 @@ type ProgressRollup struct {
 func ComputeProgress(childStatuses []string) ProgressRollup {
 	var r ProgressRollup
 	for _, s := range childStatuses {
-		switch s {
-		case "completed":
+		role, known := config.StatusRole(s)
+		switch {
+		case known && role == config.RoleDone:
 			r.Total++
 			r.Done++
-		case "scrapped":
+		case known && role == config.RoleDropped:
 			// Not scope any more — out of the denominator entirely.
 			r.Scrapped++
-		case "deferred":
+		case known && role == config.RoleParked:
 			// Set aside, not resolved: still scope, still not done.
 			r.Deferred++
 			r.Total++

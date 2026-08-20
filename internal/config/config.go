@@ -27,12 +27,12 @@ import (
 // draft), then the closed ones (deferred, completed, scrapped) last. Pickers
 // list statuses in a different order — see workflowStatusOrder.
 var DefaultStatuses = []StatusConfig{
-	{Name: "in-progress", Color: "yellow", Description: "Currently being worked on"},
-	{Name: "todo", Color: "green", Startable: true, Description: "Ready to be worked on"},
-	{Name: "draft", Color: "blue", Description: "Needs refinement before it can be worked on"},
-	{Name: "deferred", Color: "magenta", Closed: true, Description: "Set aside — a good idea at the wrong time; closed, but kept as a seed rather than a dead end"},
-	{Name: "completed", Color: "lightgray", Closed: true, ReleasesDependents: true, Description: "Finished successfully"},
-	{Name: "scrapped", Color: "dimgray", Closed: true, ReleasesDependents: true, Description: "Will not be done"},
+	{Name: "in-progress", Color: "yellow", Role: RoleOpen, Description: "Currently being worked on"},
+	{Name: "todo", Color: "green", Role: RoleStartable, Description: "Ready to be worked on"},
+	{Name: "draft", Color: "blue", Role: RoleOpen, Description: "Needs refinement before it can be worked on"},
+	{Name: "deferred", Color: "magenta", Role: RoleParked, Description: "Set aside — a good idea at the wrong time; closed, but kept as a seed rather than a dead end"},
+	{Name: "completed", Color: "lightgray", Role: RoleDone, Description: "Finished successfully"},
+	{Name: "scrapped", Color: "dimgray", Role: RoleDropped, Description: "Will not be done"},
 }
 
 // workflowStatusOrder lists the statuses in transition order — the path work
@@ -94,90 +94,52 @@ type EstimateConfig struct {
 
 // StatusConfig defines a single status with its display color.
 //
-// Three booleans classify a status, because "is this nib finished", "does this
-// nib still hold up the work that depends on it" and "can this nib be picked
-// up" are different questions:
+// A status's Role is its whole classification (see Role): which of the five
+// lifecycle positions the status occupies. The three group predicates —
+// closed, releases-dependents, startable — derive from the role, so of the
+// eight states three independent booleans could express, only the legal
+// combinations are representable: every role IS one legal row of that table,
+// and the illegal rows (an open status releasing its dependents, a startable
+// closed status) have no role to express them. What the role adds over the
+// flags is the done/dropped split: completed and scrapped share every
+// predicate and differ only in whether the work counts as accomplished, which
+// is the distinction progress arithmetic keys on.
 //
-//   - Closed marks the status as terminal — the work is no longer on the board,
-//     whether it was finished (completed), abandoned (scrapped) or set aside
-//     (deferred); everything else is open. Open and closed partition the
-//     declared statuses. A status outside that vocabulary — a hand-edited nib
-//     with no `status:` carries "" — is in neither group, and IsClosedStatus
-//     reads it as open.
-//   - ReleasesDependents marks a status that *satisfies* a dependency: closing a
-//     blocker this way frees everything it was gating. True for completed (the
-//     work happened) and scrapped (it never will), false for deferred — the
-//     set-aside work is coming back, so the dependency is still unmet. Every
-//     open status is false too: an unfinished blocker blocks.
-//   - Startable marks a status work can be picked up from. It is the status half
-//     of "can I start this?"; the other half is having no active blockers, and
-//     the two are applied together by the `ready` projection and by
-//     `nibs list --ready`. True for todo alone: in-progress work is already
-//     underway, draft needs refinement first, and the closed statuses are off
-//     the board.
-//
-// The three questions are independent; the flags are not. Of the eight states
-// three booleans can express, four are legal, and every declared status is one
-// of them:
-//
-//	Closed  Releases  Startable  meaning                       members
-//	false   false     false      open, not yet pickable        in-progress, draft
-//	false   false     true       open and pickable             todo
-//	true    false     false      closed, still blocking        deferred
-//	true    true      false      closed, dependency settled    completed, scrapped
-//
-// The other four are illegal. ReleasesDependents is a strict subset of Closed,
-// since an open status that released its dependents would hand out work that is
-// still blocked. Startable and Closed are disjoint, because a startable closed
-// status would offer finished work as the next thing to pick up.
-//
-// **Nothing in the type enforces this**, and that is a deliberate choice rather
-// than an oversight. Statuses are hardcoded in DefaultStatuses below and are not
-// user-configurable (see the note on Config), so an illegal combination can only
-// be written by a developer editing this file — and
-// TestStatusFlagCombinationsAreLegal fails in that same commit, naming the
-// offending status and the rule it broke. Making the states unrepresentable
-// would mean migrating every consumer of these three predicates to prevent a
-// state no user can reach.
-//
-// The same test also requires each of the four groups to be NON-EMPTY, which is
-// not a stylistic nicety: a derived set that empties out fails open rather than
-// closed. Emptying Startable made `nibs list --ready` widen from "only startable"
+// TestStatusRoles pins each status's role, and TestStatusRoleGroupsAreNonEmpty
+// requires each derived group to be NON-EMPTY, which is not a stylistic
+// nicety: a derived set that empties out fails open rather than closed.
+// Emptying Startable made `nibs list --ready` widen from "only startable"
 // to every unblocked nib — 86 of 89 on the sample fixture, including completed
 // and scrapped work — because an empty include-list filters nothing.
 //
-// None of the three sets is interchangeable with another. Deferred is closed
-// and still blocks, so collapsing Closed and ReleasesDependents back into one
-// flag would silently unblock deferred work. Startable is strictly narrower
+// None of the derived sets is interchangeable with another. Deferred is closed
+// and still blocks, so collapsing Closed and ReleasesDependents into one
+// answer would silently unblock deferred work. Startable is strictly narrower
 // than "not closed": draft and in-progress are open and not startable, so
-// reading Startable off the Closed flag would put work that is already underway
-// or not yet refined into the ready queue.
+// reading Startable off the Closed answer would put work that is already
+// underway or not yet refined into the ready queue.
 //
-// In Go these flags are the only definitions of their sets — consumers read
+// In Go the roles are the only definitions of their sets — consumers read
 // them through IsClosedStatus/ClosedStatusNames/OpenStatusNames,
 // StatusReleasesDependents/ReleasingStatusNames, HoldingStatusNames for the
-// closed-but-still-blocking difference, and
-// IsStartableStatus/StartableStatusNames for the ready queue. The web UI keeps
+// closed-but-still-blocking difference,
+// IsStartableStatus/StartableStatusNames for the ready queue, and StatusRole
+// for the done/dropped split the group predicates cannot see. The web UI keeps
 // a hand-written copy in web/src/lib/constants.ts as CLOSED_STATUSES
 // (nibs-nv05). README.md's Data Model section is another hand-written copy —
-// there is no render step behind it — held to these flags by cmd/readme_test.go
+// there is no render step behind it — held to these roles by cmd/readme_test.go
 // rather than by derivation.
 //
 // Sites that name one specific status are not rival definitions of these sets,
 // because a group predicate cannot single a member out — but renaming a status
-// means visiting them. The progress rollups in internal/graph and
-// internal/nibcontext give "completed", "scrapped" and "deferred" three
-// different treatments (see graph.ProgressRollup); cmd/dedup.go names
-// "scrapped" to attach the scrap-reason snippet; cmd/close.go writes
-// "completed"; internal/ui abbreviates "deferred" to F so it does not collide
-// with draft.
+// means visiting them. cmd/dedup.go names "scrapped" to attach the
+// scrap-reason snippet; internal/ui abbreviates "deferred" to F so it does not
+// collide with draft.
 type StatusConfig struct {
-	Name               string `yaml:"name"`
-	Color              string `yaml:"color"`
-	Closed             bool   `yaml:"closed,omitempty"`
-	ReleasesDependents bool   `yaml:"releases_dependents,omitempty"`
-	Startable          bool   `yaml:"startable,omitempty"`
-	Description        string `yaml:"description,omitempty"`
+	Name        string `yaml:"name"`
+	Color       string `yaml:"color"`
+	Role        Role   `yaml:"-"`
+	Description string `yaml:"description,omitempty"`
 }
 
 // TypeConfig defines a single nib type with its display color.
@@ -670,7 +632,7 @@ func (c *Config) GetDefaultType() string {
 // *Config (config.Default() if nothing better is in reach).
 func (c *Config) IsClosedStatus(name string) bool {
 	if s := c.GetStatus(name); s != nil {
-		return s.Closed
+		return s.Role.Closed()
 	}
 	return false
 }
@@ -683,7 +645,7 @@ func (c *Config) IsClosedStatus(name string) bool {
 func (c *Config) ClosedStatusNames() []string {
 	var names []string
 	for _, s := range DefaultStatuses {
-		if s.Closed {
+		if s.Role.Closed() {
 			names = append(names, s.Name)
 		}
 	}
@@ -701,7 +663,7 @@ func (c *Config) ClosedStatusNames() []string {
 // should hand it a real *Config anyway (config.Default() if nothing better).
 func (c *Config) StatusReleasesDependents(name string) bool {
 	if s := c.GetStatus(name); s != nil {
-		return s.ReleasesDependents
+		return s.Role.ReleasesDependents()
 	}
 	return false
 }
@@ -714,7 +676,7 @@ func (c *Config) StatusReleasesDependents(name string) bool {
 func (c *Config) ReleasingStatusNames() []string {
 	var names []string
 	for _, s := range DefaultStatuses {
-		if s.ReleasesDependents {
+		if s.Role.ReleasesDependents() {
 			names = append(names, s.Name)
 		}
 	}
@@ -731,7 +693,7 @@ func (c *Config) ReleasingStatusNames() []string {
 func (c *Config) HoldingStatusNames() []string {
 	var names []string
 	for _, s := range DefaultStatuses {
-		if s.Closed && !s.ReleasesDependents {
+		if s.Role.Closed() && !s.Role.ReleasesDependents() {
 			names = append(names, s.Name)
 		}
 	}
@@ -745,7 +707,7 @@ func (c *Config) HoldingStatusNames() []string {
 func (c *Config) OpenStatusNames() []string {
 	var names []string
 	for _, s := range DefaultStatuses {
-		if !s.Closed {
+		if !s.Role.Closed() {
 			names = append(names, s.Name)
 		}
 	}
@@ -764,7 +726,7 @@ func (c *Config) OpenStatusNames() []string {
 // should hand it a real *Config anyway (config.Default() if nothing better).
 func (c *Config) IsStartableStatus(name string) bool {
 	if s := c.GetStatus(name); s != nil {
-		return s.Startable
+		return s.Role.Startable()
 	}
 	return false
 }
@@ -779,7 +741,24 @@ func (c *Config) IsStartableStatus(name string) bool {
 func (c *Config) StartableStatusNames() []string {
 	var names []string
 	for _, s := range DefaultStatuses {
-		if s.Startable {
+		if s.Role.Startable() {
+			names = append(names, s.Name)
+		}
+	}
+	return names
+}
+
+// DoneStatusNames returns the names of the statuses in the done role — the
+// close reasons that count as an accomplishment, in DefaultStatuses order.
+// Today this is {completed}. `nibs close` derives its default reason and its
+// completion reason from the FIRST of them, so the set must never be empty —
+// which TestStatusRoleGroupsAreNonEmpty enforces for the declared vocabulary.
+// Strictly narrower than ReleasingStatusNames: dropped work also releases its
+// dependents, but nothing was accomplished.
+func (c *Config) DoneStatusNames() []string {
+	var names []string
+	for _, s := range DefaultStatuses {
+		if s.Role == RoleDone {
 			names = append(names, s.Name)
 		}
 	}

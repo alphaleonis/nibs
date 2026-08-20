@@ -24,9 +24,11 @@ func declaredStatusNames(keep func(config.StatusConfig) bool) []string {
 	return names
 }
 
-func statusIsOpen(s config.StatusConfig) bool    { return !s.Closed }
-func statusIsClosed(s config.StatusConfig) bool  { return s.Closed }
-func statusIsHolding(s config.StatusConfig) bool { return s.Closed && !s.ReleasesDependents }
+func statusIsOpen(s config.StatusConfig) bool   { return !s.Role.Closed() }
+func statusIsClosed(s config.StatusConfig) bool { return s.Role.Closed() }
+func statusIsHolding(s config.StatusConfig) bool {
+	return s.Role.Closed() && !s.Role.ReleasesDependents()
+}
 
 // statusLineGroups returns the "open=… · closed=…" segment of the cheat sheet's
 // STATUS line: everything between the "STATUS " prefix and the parenthetical
@@ -260,7 +262,7 @@ func TestCheatSheetDerivesStatusGroups(t *testing.T) {
 	withExtraStatus(t, config.StatusConfig{
 		Name:        "parked",
 		Color:       "gray",
-		Closed:      true,
+		Role:        config.RoleParked,
 		Description: "Guard status: closed, and still blocking",
 	})
 
@@ -303,8 +305,8 @@ func TestCheatSheetCloseLineNamesTheCloseDefault(t *testing.T) {
 	if !strings.Contains(entry, "--as") {
 		t.Errorf("cheat sheet close entry should name --as, got: %q", entry)
 	}
-	if !strings.Contains(entry, closeDefaultStatus) {
-		t.Errorf("cheat sheet close entry should name the default close reason %q, got: %q", closeDefaultStatus, entry)
+	if !strings.Contains(entry, closeDefaultStatus()) {
+		t.Errorf("cheat sheet close entry should name the default close reason %q, got: %q", closeDefaultStatus(), entry)
 	}
 }
 
@@ -359,15 +361,15 @@ func TestCheatSheetRelEntryMatchesRelArity(t *testing.T) {
 }
 
 // TestCheatSheetDropsBlockerNoteWhenNothingHolds asserts the blocker note is
-// conditional on the ReleasesDependents flag: with every closed status
-// releasing its dependents the note has no members, so the sheet must drop it
-// rather than print a dangling label.
+// conditional on the holding set: with every closed status releasing its
+// dependents the note has no members, so the sheet must drop it rather than
+// print a dangling label.
 func TestCheatSheetDropsBlockerNoteWhenNothingHolds(t *testing.T) {
 	statuses := make([]config.StatusConfig, len(config.DefaultStatuses))
 	copy(statuses, config.DefaultStatuses)
 	for i := range statuses {
-		if statuses[i].Closed {
-			statuses[i].ReleasesDependents = true
+		if statuses[i].Role == config.RoleParked {
+			statuses[i].Role = config.RoleDropped
 		}
 	}
 	withStatuses(t, statuses)

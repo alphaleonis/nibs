@@ -1116,7 +1116,9 @@ func TestListCommand_ReadyStatusFiltering(t *testing.T) {
 				statuses := make([]config.StatusConfig, len(config.DefaultStatuses))
 				copy(statuses, config.DefaultStatuses)
 				for i := range statuses {
-					statuses[i].Startable = false
+					if statuses[i].Role == config.RoleStartable {
+						statuses[i].Role = config.RoleOpen
+					}
 				}
 				withStatuses(t, statuses)
 			},

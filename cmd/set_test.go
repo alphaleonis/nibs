@@ -669,7 +669,7 @@ func TestSetRefusalFollowsTheClosedFlag(t *testing.T) {
 		withExtraStatus(t, config.StatusConfig{
 			Name:        "abandoned",
 			Color:       "gray",
-			Closed:      true,
+			Role:        config.RoleParked,
 			Description: "Guard status: closed, declared only for this test",
 		})
 		t.Cleanup(resetSetFlags)
@@ -693,8 +693,7 @@ func TestSetRefusalFollowsTheClosedFlag(t *testing.T) {
 		flipped := false
 		for i := range statuses {
 			if statuses[i].Name == "deferred" {
-				statuses[i].Closed = false
-				statuses[i].ReleasesDependents = false
+				statuses[i].Role = config.RoleOpen
 				flipped = true
 			}
 		}

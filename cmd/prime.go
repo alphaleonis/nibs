@@ -181,8 +181,8 @@ func renderPrompt(w io.Writer, name, text string) error {
 		ReleasingStatuses:     cfg.ReleasingStatusNames(),
 		HoldingStatuses:       cfg.HoldingStatusNames(),
 		StartableStatuses:     cfg.StartableStatusNames(),
-		DefaultCloseStatus:    closeDefaultStatus,
-		CompletionCloseStatus: closeCompletionStatus,
+		DefaultCloseStatus:    closeDefaultStatus(),
+		CompletionCloseStatus: closeCompletionStatus(),
 	}
 
 	return tmpl.Execute(w, data)

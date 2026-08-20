@@ -20,7 +20,7 @@ func resetCloseFlags() {
 	// leaves the bound variable at whatever the last invocation parsed, so
 	// clearing it to "" would make the next bare `close` fail its own --as
 	// validation rather than produce the default close reason.
-	closeAs = closeDefaultStatus
+	closeAs = closeDefaultStatus()
 	closeForce = false
 	closeIfMatch = ""
 	closeJSON = false
@@ -38,8 +38,8 @@ func TestResetCloseFlagsClearsAllState(t *testing.T) {
 	if closeSummary != "" {
 		t.Errorf("closeSummary not reset: %q", closeSummary)
 	}
-	if closeAs != closeDefaultStatus {
-		t.Errorf("closeAs = %q after reset, want the flag default %q", closeAs, closeDefaultStatus)
+	if closeAs != closeDefaultStatus() {
+		t.Errorf("closeAs = %q after reset, want the flag default %q", closeAs, closeDefaultStatus())
 	}
 	if closeForce {
 		t.Error("closeForce not reset")
@@ -497,7 +497,7 @@ func TestCloseAsFollowsTheClosedFlag(t *testing.T) {
 	withExtraStatus(t, config.StatusConfig{
 		Name:        "abandoned",
 		Color:       "gray",
-		Closed:      true,
+		Role:        config.RoleParked,
 		Description: "Guard status: closed, declared only for this test",
 	})
 
@@ -659,7 +659,7 @@ func TestCloseReasonStampFollowsTheStatusVocabulary(t *testing.T) {
 	withExtraStatus(t, config.StatusConfig{
 		Name:        "abandoned",
 		Color:       "gray",
-		Closed:      true,
+		Role:        config.RoleParked,
 		Description: "Guard status: closed, declared only for this test",
 	})
 
@@ -698,7 +698,7 @@ func TestCloseReasonStampFollowsTheStatusVocabulary(t *testing.T) {
 // a build that simply never writes Current Focus at all.
 func TestCloseParentPropagationDependsOnTheReason(t *testing.T) {
 	closed := config.Default().ClosedStatusNames()
-	for _, want := range []string{closeCompletionStatus, "deferred", "scrapped"} {
+	for _, want := range []string{closeCompletionStatus(), "deferred", "scrapped"} {
 		if !slices.Contains(closed, want) {
 			t.Fatalf("test setup: %q is not among the closed statuses %v, so this test no longer covers it", want, closed)
 		}
@@ -735,7 +735,7 @@ func TestCloseParentPropagationDependsOnTheReason(t *testing.T) {
 			if !found {
 				t.Fatalf("close --as %s removed the parent's Current Focus section:\n%s", status, milestone)
 			}
-			if status == closeCompletionStatus {
+			if status == closeCompletionStatus() {
 				if !strings.Contains(focus, "Completed pp-ch: the child is off the board") {
 					t.Errorf("close --as %s should have rewritten the parent's Current Focus, got: %q", status, focus)
 				}

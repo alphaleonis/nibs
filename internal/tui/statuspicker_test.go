@@ -59,8 +59,8 @@ func TestStatusPickerModel(t *testing.T) {
 			if item.color != s.Color {
 				t.Errorf("item %d (%s): got color %q, want %q", i, s.Name, item.color, s.Color)
 			}
-			if item.isClosed != s.Closed {
-				t.Errorf("item %d (%s): got isClosed %v, want %v", i, s.Name, item.isClosed, s.Closed)
+			if item.isClosed != s.Role.Closed() {
+				t.Errorf("item %d (%s): got isClosed %v, want %v", i, s.Name, item.isClosed, s.Role.Closed())
 			}
 		}
 	})

@@ -275,7 +275,7 @@ func TestHoldingStatusNames(t *testing.T) {
 	// helper, so it stays a real check if either stops reading the flags.
 	releasing := cfg.ReleasingStatusNames()
 	for _, s := range DefaultStatuses {
-		if !s.Closed {
+		if !s.Role.Closed() {
 			continue
 		}
 		inHolding := slices.Contains(got, s.Name)
@@ -364,55 +364,32 @@ func TestStartableStatusNames(t *testing.T) {
 	// stays a real check if the helper stops reading the flag: exactly the
 	// statuses declaring Startable are returned, and no others.
 	for _, s := range DefaultStatuses {
-		if inSet := slices.Contains(got, s.Name); inSet != s.Startable {
-			t.Errorf("status %q: Startable=%v but StartableStatusNames() membership=%v",
-				s.Name, s.Startable, inSet)
+		if inSet := slices.Contains(got, s.Name); inSet != s.Role.Startable() {
+			t.Errorf("status %q: Role.Startable()=%v but StartableStatusNames() membership=%v",
+				s.Name, s.Role.Startable(), inSet)
 		}
 	}
 }
 
-// TestStatusFlagCombinationsAreLegal holds the two constraints the three
-// booleans have to satisfy but the type cannot express: ReleasesDependents
-// implies Closed (an open status that freed its dependents would hand out work
-// that is still blocked), and Startable excludes Closed (a startable closed
-// status would offer finished work as the next thing to pick up). The struct
-// makes both illegal combinations representable, so this test is what rules
-// them out.
-// TestStatusFlagCombinationsAreLegal is the whole enforcement of the status flag
-// model. The three booleans can express eight states and only four are legal;
-// nothing in the type prevents the other four, deliberately, because statuses
-// are hardcoded in DefaultStatuses rather than user-configurable — so an illegal
-// combination can only arrive in the same commit that trips this test. See the
-// state table on StatusConfig.
-//
-// The messages name the rule rather than just reporting a mismatch, because a
-// developer adding a status meets this test before they meet the documentation.
-func TestStatusFlagCombinationsAreLegal(t *testing.T) {
-	for _, s := range DefaultStatuses {
-		t.Run(s.Name, func(t *testing.T) {
-			if s.ReleasesDependents && !s.Closed {
-				t.Errorf("status %q is {Closed:false, ReleasesDependents:true} — an open status must not release its dependents, because that would hand out work that is still blocked", s.Name)
-			}
-			if s.Startable && s.Closed {
-				t.Errorf("status %q is {Closed:true, Startable:true} — closed work must not be offered as startable", s.Name)
-			}
-		})
-	}
-
-	// Each group must be non-empty. This is not tidiness: a derived set that
-	// empties out fails OPEN, not closed. Emptying Startable widened
-	// `nibs list --ready` from "only startable" to every unblocked nib (86 of 89
-	// on the sample fixture, including completed and scrapped work), because an
-	// empty include-list filters nothing.
+// TestStatusRoleGroupsAreNonEmpty requires each role-derived group to be
+// non-empty. This is not tidiness: a derived set that empties out fails OPEN,
+// not closed. Emptying Startable widened `nibs list --ready` from "only
+// startable" to every unblocked nib (86 of 89 on the sample fixture, including
+// completed and scrapped work), because an empty include-list filters nothing.
+// (The illegal flag combinations the old TestStatusFlagCombinationsAreLegal
+// ruled out are unrepresentable now — a Role is one legal combination.)
+func TestStatusRoleGroupsAreNonEmpty(t *testing.T) {
 	groups := []struct {
 		name string
 		why  string
 		n    int
 	}{
-		{"open", "every nib would be closed, so nothing could be worked on", countStatuses(func(s StatusConfig) bool { return !s.Closed })},
-		{"closed", "nothing could ever leave the board", countStatuses(func(s StatusConfig) bool { return s.Closed })},
-		{"startable", "`nibs list --ready` could return nothing, and an empty include-list would make it return everything", countStatuses(func(s StatusConfig) bool { return s.Startable })},
-		{"releasing", "closing a blocker would never free the work it gates", countStatuses(func(s StatusConfig) bool { return s.Closed && s.ReleasesDependents })},
+		{"open", "every nib would be closed, so nothing could be worked on", countStatuses(func(s StatusConfig) bool { return !s.Role.Closed() })},
+		{"closed", "nothing could ever leave the board", countStatuses(func(s StatusConfig) bool { return s.Role.Closed() })},
+		{"startable", "`nibs list --ready` could return nothing, and an empty include-list would make it return everything", countStatuses(func(s StatusConfig) bool { return s.Role.Startable() })},
+		{"releasing", "closing a blocker would never free the work it gates", countStatuses(func(s StatusConfig) bool { return s.Role.ReleasesDependents() })},
+		{"done", "no close reason would count as an accomplishment, and `nibs close` could not derive its default reason", countStatuses(func(s StatusConfig) bool { return s.Role == RoleDone })},
+		{"dropped", "no close reason would take work out of scope, so progress could never shed abandoned work", countStatuses(func(s StatusConfig) bool { return s.Role == RoleDropped })},
 	}
 	for _, g := range groups {
 		t.Run("at least one "+g.name+" status", func(t *testing.T) {
