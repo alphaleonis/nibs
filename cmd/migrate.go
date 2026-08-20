@@ -1853,6 +1853,18 @@ type fmHeader struct {
 	// nib render. nib.Parse enforces the same first-line rule, so the scan
 	// and the load classify the file identically.
 	hasFrontMatter bool
+	// hasIDMarker reports whether the FIRST line inside the fence is a `#`
+	// comment. nib.Render writes the nib's own id there and has since the
+	// initial commit, and it is the part of the shape ordinary front matter is
+	// least likely to reach by accident — a hand-authored header rarely opens
+	// with a comment. Presence only: the value is deliberately not matched
+	// against the filename (see nibFileFormat.requiresIDMarker).
+	hasIDMarker bool
+	// values holds every top-level `key: value` line the scan saw, unquoted.
+	// PRESENCE is a different question from VALUE and the typed fields below
+	// cannot answer it: a nibs-written v0 file renders `version: 0`, so a zero
+	// version must not be read as a missing one.
+	values map[string]string
 	// version is the value of a top-level `version:` line; 0 when the key is
 	// absent or its value is not an integer (absent = 0 = legacy, matching
 	// nib.Nib.Version; a garbage value surfaces later as an unparseable file).
@@ -1860,11 +1872,84 @@ type fmHeader struct {
 	// priority is the unquoted value of a top-level `priority:` line.
 	priority string
 	// status is the unquoted value of a top-level `status:` line. No migration
-	// step keys on it; store resolution reads it as weak corroboration that a
-	// directory holds nibs rather than something else — weak because nothing
-	// reserves the key, so ordinary notes and docs pages carry it too (see
-	// declaredStoreCorroborated, which says what that does and does not buy).
+	// step keys on it; it is one of the keys nibRenderFormat requires, and the
+	// only one whose VALUE that format constrains. On its own it establishes
+	// almost nothing — nothing reserves the key, and ordinary notes and docs
+	// pages track their own state with it — which is why the format asks for
+	// the whole rendered shape rather than this key alone.
 	status string
+}
+
+// nibFileFormat describes the front matter a renderer ALWAYS writes. It is what
+// lets a scanned header be classified as "nibs rendered this file" rather than
+// the far weaker "this is markdown with front matter", which is the question
+// declaredStoreCorroborated has to answer before `nibs migrate` may rename a
+// whole directory and rewrite everything in it.
+//
+// EVERY RULE HERE NAMES SOMETHING THE RENDERER NEVER OMITS. `version`, `title`
+// and `status` are the only three keys renderFrontMatter emits unconditionally;
+// every other field carries omitempty. `type:` looks equally dependable — it is
+// present on all 666 nibs in this project's own store — but that is the default
+// type showing through, not a promise of the format, so requiring it would bet
+// on a default.
+//
+// A DESCRIPTION rather than inline conditionals because a second format is
+// coming: beans files carry no `version:`, so the required set is necessarily
+// per format and adding one must not force this predicate to be restructured.
+// One struct and one method, deliberately — not a registry, not a plugin system.
+type nibFileFormat struct {
+	// requiresIDMarker requires the first line inside the fence to be a `#`
+	// comment, where nib.Render writes the nib's own id.
+	//
+	// PRESENCE, NOT A MATCH against the filename. The match buys little on top
+	// of the keys below, and it asks the wrong question: for "did nibs render
+	// this file", a nib render in an oddly-named file is still a nib render.
+	requiresIDMarker bool
+	// requiredKeys must all be PRESENT in the header. Presence rather than a
+	// non-zero value: a nibs-written v0 file renders `version: 0`.
+	requiredKeys []string
+	// valueRules constrain the keys whose VALUE is itself evidence. A rule
+	// applies only where the key is present — absence is requiredKeys' answer to
+	// give, and a rule that also fired on it would report one defect as two.
+	valueRules map[string]func(string) bool
+}
+
+// nibRenderFormat is the shape nib.Render writes.
+var nibRenderFormat = nibFileFormat{
+	requiresIDMarker: true,
+	requiredKeys:     []string{"version", "title", "status"},
+	valueRules: map[string]func(string) bool{
+		"version": isIntegerHeaderValue,
+		"status":  config.IsKnownStatus,
+	},
+}
+
+// rendered reports whether h is a header this format's renderer produced.
+func (f nibFileFormat) rendered(h fmHeader) bool {
+	if !h.hasFrontMatter {
+		return false
+	}
+	if f.requiresIDMarker && !h.hasIDMarker {
+		return false
+	}
+	for _, key := range f.requiredKeys {
+		if _, ok := h.values[key]; !ok {
+			return false
+		}
+	}
+	for key, valid := range f.valueRules {
+		if value, ok := h.values[key]; ok && !valid(value) {
+			return false
+		}
+	}
+	return true
+}
+
+// isIntegerHeaderValue reports whether a scanned scalar is an integer, the same
+// test readFrontMatterHeader applies before populating fmHeader.version.
+func isIntegerHeaderValue(value string) bool {
+	_, err := strconv.Atoi(value)
+	return err == nil
 }
 
 // readFrontMatterHeader streams a nib file's front-matter header with bufio,
@@ -1926,6 +2011,7 @@ func readFrontMatterHeader(path string) (fmHeader, error) {
 	}
 	h.hasFrontMatter = true
 	closed := false
+	firstLine := true
 	for sc.Scan() {
 		// line keeps its leading whitespace: the key checks below are
 		// positional (a top-level key starts at column 0), so only the
@@ -1935,19 +2021,30 @@ func readFrontMatterHeader(path string) (fmHeader, error) {
 			closed = true
 			break // closing fence, whitespace-padded or not (fence rule above)
 		}
+		if firstLine {
+			firstLine = false
+			h.hasIDMarker = strings.HasPrefix(line, "#")
+		}
 		key, value, ok := strings.Cut(line, ":")
 		if !ok || key == "" || key[0] == ' ' || key[0] == '\t' || key[0] == '#' {
 			continue // not a top-level key line (nested item, comment, prose)
 		}
+		scalar := unquoteHeaderValue(value)
+		if h.values == nil {
+			h.values = make(map[string]string, 8)
+		}
+		// Last occurrence wins, which is what the typed fields below have always
+		// done — the two views must not disagree about the same header.
+		h.values[key] = scalar
 		switch key {
 		case "version":
-			if v, err := strconv.Atoi(unquoteHeaderValue(value)); err == nil {
+			if v, err := strconv.Atoi(scalar); err == nil {
 				h.version = v
 			}
 		case "priority":
-			h.priority = unquoteHeaderValue(value)
+			h.priority = scalar
 		case "status":
-			h.status = unquoteHeaderValue(value)
+			h.status = scalar
 		}
 	}
 	if err := sc.Err(); err != nil {

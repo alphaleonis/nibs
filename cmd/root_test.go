@@ -911,12 +911,19 @@ func TestResolveStoreDirRequiresStoreEvidence(t *testing.T) {
 			// somebody wrote, which is exactly what corroboration asks. The scan
 			// errors on it (the front matter never closes) and the walk must read
 			// that as determinate rather than as "cannot tell".
+			//
+			// The tear is AFTER the keys the format requires, which is the only
+			// torn file that can still answer the question: raising the bar to
+			// what nib.Render always writes means a file torn BEFORE `status:`
+			// no longer corroborates on its own. That costs nothing on a real
+			// store, where corroboration needs any ONE file to pass, and a store
+			// with no other file is the empty-directory exemption's case.
 			name: "a nibs.path naming a directory whose only nib has an unclosed header",
 			build: func(t *testing.T, tmp string) string {
 				proj := filepath.Join(tmp, "proj")
 				dir := filepath.Join(proj, "nibdata")
 				mkdirAllT(t, dir)
-				writeFileT(t, filepath.Join(dir, "leg-a1--torn.md"), "---\ntitle: Torn\nstatus: todo\n")
+				writeFileT(t, filepath.Join(dir, "leg-a1--torn.md"), "---\n# leg-a1\nversion: 1\ntitle: Torn\nstatus: todo\n")
 				writeFileT(t, filepath.Join(proj, store.LegacyProjectConfigFileName), "nibs:\n  prefix: leg-\n  path: nibdata\n")
 				return dir
 			},
@@ -1032,6 +1039,68 @@ func TestResolveStoreDirRequiresStoreEvidence(t *testing.T) {
 				mkdirAllT(t, filepath.Join(dir, ".obsidian"))
 				writeFileT(t, filepath.Join(dir, ".obsidian", "hidden-note.md"), layoutNib)
 				writeFileT(t, filepath.Join(proj, store.LegacyProjectConfigFileName), "nibs:\n  prefix: leg-\n  path: vault\n")
+				return dir
+			},
+			refusal: []string{"nothing in it was written by nibs"},
+		},
+		{
+			// The bar used to be a single key, and `status:` is not nibs' to
+			// claim: a vault tracking its own notes that way had `notes/`
+			// renamed to `.nibs` and every file in it rewritten as a nib render.
+			name: "a nibs.path naming a note vault whose markdown carries a nibs status",
+			build: func(t *testing.T, tmp string) string {
+				proj := filepath.Join(tmp, "proj")
+				dir := filepath.Join(proj, "notes")
+				mkdirAllT(t, dir)
+				writeFileT(t, filepath.Join(dir, "task.md"), vaultNote)
+				writeFileT(t, filepath.Join(dir, "journal.md"), vaultNote)
+				writeFileT(t, filepath.Join(proj, store.LegacyProjectConfigFileName), "nibs:\n  prefix: leg-\n  path: notes\n")
+				return dir
+			},
+			refusal: []string{"nothing in it was written by nibs"},
+		},
+		{
+			// The same key on a docs site. hugoPost carries no `status:` and was
+			// already refused; this is the shape that carries one, which is what
+			// made the old bar reachable by ordinary content.
+			name: "a nibs.path naming a content directory whose posts carry a nibs status",
+			build: func(t *testing.T, tmp string) string {
+				repo := filepath.Join(tmp, "repo")
+				dir := filepath.Join(repo, "content")
+				mkdirAllT(t, dir)
+				writeFileT(t, filepath.Join(dir, "hello.md"), hugoPostWithStatus)
+				writeFileT(t, filepath.Join(repo, store.LegacyProjectConfigFileName), "nibs:\n  path: content\n")
+				return dir
+			},
+			refusal: []string{"nothing in it was written by nibs"},
+		},
+		{
+			// The accept side of the raised bar, stated on its own so the rule
+			// has an anchor that does not depend on any other row's fixture: a
+			// file carrying what nib.Render always writes IS evidence.
+			name: "a nibs.path naming a directory holding one nibs-rendered file",
+			build: func(t *testing.T, tmp string) string {
+				proj := filepath.Join(tmp, "proj")
+				dir := filepath.Join(proj, "nibdata")
+				mkdirAllT(t, dir)
+				writeFileT(t, filepath.Join(dir, "leg-a1--one.md"), layoutNib)
+				writeFileT(t, filepath.Join(proj, store.LegacyProjectConfigFileName), "nibs:\n  prefix: leg-\n  path: nibdata\n")
+				return dir
+			},
+			accept: true,
+		},
+		{
+			// The boundary: everything nib.Render writes EXCEPT the id comment.
+			// Hand-authored front matter reaches the three keys far more easily
+			// than it reaches the marker, so the marker is what the rule turns
+			// on and it needs a row that isolates it.
+			name: "a nibs.path naming a directory whose only candidate lacks the id comment",
+			build: func(t *testing.T, tmp string) string {
+				proj := filepath.Join(tmp, "proj")
+				dir := filepath.Join(proj, "nibdata")
+				mkdirAllT(t, dir)
+				writeFileT(t, filepath.Join(dir, "one.md"), "---\nversion: 1\ntitle: One\nstatus: todo\ntype: task\n---\n\nBody.\n")
+				writeFileT(t, filepath.Join(proj, store.LegacyProjectConfigFileName), "nibs:\n  prefix: leg-\n  path: nibdata\n")
 				return dir
 			},
 			refusal: []string{"nothing in it was written by nibs"},

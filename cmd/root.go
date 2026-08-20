@@ -354,7 +354,7 @@ func bindNamedStore(dir string) (string, error) {
 		named := declaredErr == nil && declared != "" && sameDir(resolvedDeclared, dir)
 		inside, insideErr := isRealImmediateChild(dir, projectDir)
 		if named && insideErr == nil {
-			why := "nothing in it was written by nibs (no markdown file carries a nibs `status:`)"
+			why := "nothing in it was written by nibs (no markdown file in it was rendered by nibs)"
 			if !inside {
 				why = "with symlinks resolved it is not an immediate subdirectory of " + projectDir + ", so a config inside the project cannot authorize moving it"
 			}
@@ -733,7 +733,7 @@ func preLayoutRemedy(legacy string) error {
 	named, namedErr := legacyConfigNamesStore(dataDir)
 	inside, insideErr := isRealImmediateChild(dataDir, projectDir)
 	if namedErr == nil && named && insideErr == nil && inside {
-		why = "which `nibs migrate` will not relocate for you because nothing in it was written by nibs (no markdown file carries a nibs `status:`)"
+		why = "which `nibs migrate` will not relocate for you because nothing in it was written by nibs (no markdown file in it was rendered by nibs)"
 	}
 	return fmt.Errorf("%s%s sets the retired `nibs.path: %q`; this project's nibs live in %s, %s — create %s, move this project's nib files from %s into it, remove the `nibs.path` key from %s, then run `nibs migrate` (do NOT run `nibs init`, which would create an empty store beside the real data)",
 		obstruction, legacy, sanitizeFileText(declared),
@@ -1032,19 +1032,22 @@ func isRealImmediateChild(dir, parent string) (bool, error) {
 //
 // WHAT THIS STOPS IS AN ACCIDENT, NOT AN ADVERSARY, and reading it as more than
 // that is how the predicate gets left alone when it should not be. The
-// corroborating artifact is a `status:` from the hardcoded enum in a file's front
-// matter. nib.Render writes it into every nib, but nothing reserves the key:
-// tracking a page's own state as `status: todo` or `status: draft` is routine
-// convention in note vaults (Obsidian, Dendron) and on docs sites, so ordinary
-// content a project keeps beside its code satisfies this check — measured, in
-// TestCorroborationDocMatchesWhatForeignFrontMatterDoes. Against a `nibs.path`
-// aimed at the wrong directory it still helps, because a directory reached by
-// mistake more often holds assets or build output than state-tracking front
-// matter — but it filters accidents rather than proving anything about them, and
-// a misaimed path landing on a note vault passes. Against a repository that
-// CHOSE its `nibs.path` it proves nothing at all — whoever wrote the config wrote
-// the .md files too, and can spell a `status:` into them as easily as a path into
-// the config.
+// corroborating artifact is a file carrying everything nib.Render ALWAYS writes:
+// the id comment on the first line inside the fence, then `version`, `title` and
+// `status`, the three keys renderFrontMatter emits unconditionally. The rule
+// itself lives in nibRenderFormat; one file anywhere under dir passing it is
+// enough.
+//
+// A single `status:` used to be the whole bar, and ordinary content reached it:
+// note vaults and docs sites track a page's own state that way, so a `notes/`
+// directory was renamed to `.nibs` and every file in it rewritten as a nib
+// render. The rendered shape is much harder to meet by accident — a
+// hand-authored header rarely opens with a comment — but it is still a SHAPE,
+// never provenance: anyone who knows the rule can write a file that passes, and
+// whoever authors `.nibs.yml` authors the .md files beside it. So against a
+// repository that CHOSE its `nibs.path` this proves nothing, and no further
+// raising of the bar would change that — measured, in
+// TestCorroborationDocMatchesWhatTheArtifactProves.
 //
 // isRealImmediateChild is what answers that case, and it is the reason this one
 // may stay this weak: the named directory has to resolve, symlinks and all, to a
@@ -1107,7 +1110,7 @@ func declaredStoreCorroborated(dir string) (bool, error) {
 		if hErr != nil && !errors.Is(hErr, errFrontMatterNotClosed) {
 			return hErr
 		}
-		if h.hasFrontMatter && config.IsKnownStatus(h.status) {
+		if nibRenderFormat.rendered(h) {
 			return errStoreCorroborated
 		}
 		return nil

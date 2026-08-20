@@ -94,8 +94,8 @@ func pendingNames(t *testing.T, nibsDir string) []string {
 // pending. Detection is a pure header probe, so these drive pendingMigrations
 // directly over hand-written fixtures.
 func TestPendingMigrationsDetectTable(t *testing.T) {
-	const v0Nib = "---\ntitle: Legacy\nstatus: todo\n---\n\nBody.\n"
-	const v1Nib = "---\nversion: 1\ntitle: Current\nstatus: todo\n---\n\nBody.\n"
+	const v0Nib = "---\n# leg-a1\nversion: 0\ntitle: Legacy\nstatus: todo\n---\n\nBody.\n"
+	const v1Nib = "---\n# leg-a1\nversion: 1\ntitle: Current\nstatus: todo\n---\n\nBody.\n"
 
 	tests := []struct {
 		name  string
@@ -517,7 +517,7 @@ func TestMigrateDryRunWarnsWhenRealRunWillRefuse(t *testing.T) {
 // probe aborted with a raw open error, deadlocking the whole CLI including
 // `nibs check`, the diagnostic for exactly this state.
 func TestStoreProbeDegradation(t *testing.T) {
-	const v1Nib = "---\nversion: 1\ntitle: Current\nstatus: todo\n---\n\nBody.\n"
+	const v1Nib = "---\n# leg-a1\nversion: 1\ntitle: Current\nstatus: todo\n---\n\nBody.\n"
 
 	t.Run("dangling symlink does not brick the CLI", func(t *testing.T) {
 		nibsDir := setupListCobraTest(t, map[string]string{

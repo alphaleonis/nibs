@@ -42,7 +42,11 @@ func writeLegacyStoreNamed(t *testing.T, storeName, configBody string, files map
 	return projectDir, storeDir
 }
 
-const layoutNib = "---\nversion: 1\ntitle: One\nstatus: todo\ntype: task\n---\n\nBody.\n"
+// layoutNib is a file as nib.Render writes one: the id comment on the first line
+// inside the fence, then the three keys renderFrontMatter never omits. Store
+// corroboration keys on exactly that shape, so a fixture standing in for a nib
+// has to carry it.
+const layoutNib = "---\n# leg-a1\nversion: 1\ntitle: One\nstatus: todo\ntype: task\n---\n\nBody.\n"
 
 // TestLegacyStoreRefusesEveryCommand pins behavior 9: a store still in the
 // pre-layout shape — a `.nibs.yml` beside it, nib files at its root, or both —
@@ -527,7 +531,7 @@ func gitCommitAll(t *testing.T, repo string) {
 // new layout stops caring about.
 func TestMigrateScopesTheFailLoudGateToStoreContent(t *testing.T) {
 	const readme = "# Store notes\n\nNo front matter here.\n"
-	const v0Nib = "---\ntitle: One\nstatus: todo\n---\n\nBody.\n"
+	const v0Nib = "---\n# leg-a1\nversion: 0\ntitle: One\nstatus: todo\n---\n\nBody.\n"
 
 	t.Run("a content step runs past a fence-less file at the store root", func(t *testing.T) {
 		t.Cleanup(resetRootPersistentFlags)
