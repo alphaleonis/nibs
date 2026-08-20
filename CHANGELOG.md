@@ -32,6 +32,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 - **`nibs help` and shell completion now work outside a project**, instead of failing with "no .nibs directory found" — which also left `nibs <TAB>` offering filenames in place of subcommands.
 - **`nibs config set-prefix` now edits only the prefix key of your config file**, instead of rewriting it from the merged read model — which discarded the file's comments, baked user-level settings into the project, and dropped any key this build does not model.
 - **The roadmap's Unscheduled group now shows exactly the work outside every milestone** — items under a milestone hidden by a `--status` filter no longer leak into the backlog, and a work item whose parent link names no nib now appears there instead of vanishing from the roadmap entirely.
+- **`nibs new` no longer silently shadows an existing nib when a generated id collides** — a colliding draw is redrawn, and a caller-supplied duplicate id is refused as a conflict instead of leaving two files claiming one id.
 
 ## v0.8.3 - 2026-08-13
 
