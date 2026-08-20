@@ -391,13 +391,16 @@ func legacyConfigExists(env migrateEnv) bool {
 // else under the store root is pre-layout content — including files nested in
 // subdirectories, which keep their relative shape under data/.
 //
-// A .md file with NO front matter is deliberately left where it is: it is not
-// a nib (nib.Parse refuses it, and Core.Load only ever reported it as a
-// diagnostic), so after the migration it simply stops being store content —
-// which makes `.nibs/README.md` a legal place for a readme rather than a
-// permanent complaint. A file whose header cannot be READ is moved anyway: the
-// scan cannot prove it is not a nib, and leaving a real nib behind would drop
-// it out of every query.
+// What moves is layoutVerdict's answer: the rendered shape wherever it sits, and
+// at the store ROOT also a header that fits a nib and ordinary content equally
+// well. What that verdict calls notANib is left where it is, so after the
+// migration it simply stops being store content — which makes `.nibs/README.md`
+// a legal place for a readme rather than a permanent complaint.
+//
+// A file whose header cannot be READ is moved anyway: the scan cannot prove it
+// is not a nib, and leaving a real nib behind would drop it out of every query.
+// That leniency is load-bearing elsewhere — blockingScanProblems refuses to
+// migrate AROUND such a file precisely because this step moves it into data/.
 func layoutMovableFiles(env migrateEnv) ([]string, error) {
 	l := env.layout()
 	var movable []string
@@ -414,7 +417,7 @@ func layoutMovableFiles(env migrateEnv) ([]string, error) {
 			return nil
 		}
 		h, err := readFrontMatterHeader(path)
-		if err == nil && !h.hasFrontMatter {
+		if err == nil && layoutVerdict(rel, h) == notANib {
 			return nil
 		}
 		movable = append(movable, rel)
@@ -1922,6 +1925,70 @@ var nibRenderFormat = nibFileFormat{
 		"version": isIntegerHeaderValue,
 		"status":  config.IsKnownStatus,
 	},
+}
+
+// nibFileVerdict is what the layout step concludes about one file it is deciding
+// whether to move into data/. Three answers rather than two, because the honest
+// middle one is what this step kept getting wrong: its bar used to be nib.Parse's
+// (a front-matter fence), which a documentation page clears, and raising it to
+// nib.Render's alone would leave a hand-authored nib behind — and a nib left
+// outside data/ is gone from every query with nothing said about it.
+type nibFileVerdict int
+
+const (
+	// notANib: the evidence is complete and negative. Left where it sits, which
+	// is what makes `.nibs/README.md` a legal place for a readme.
+	notANib nibFileVerdict = iota
+	// assumedNib: the evidence fits a nib and fits ordinary content equally well.
+	// Moved — losing a nib is the worse failure — but never silently: the run
+	// asks, or says which files it assumed.
+	assumedNib
+	// isNib: the whole shape nib.Render writes. Moved without comment.
+	isNib
+)
+
+// layoutVerdict classifies a file the layout step is deciding whether to move.
+//
+// Callers filter data/ and archive/ FIRST: a file already there is store content
+// by position, and nothing about its header changes that.
+//
+// EVIDENCE AND POSITION ARE NOT SYMMETRIC AXES. The rendered shape settles the
+// question wherever the file sits, because Core.Load has always loaded nested
+// files (internal/nibcore/core.go) and a store somebody organized into folders
+// has to keep working. Position only breaks the tie in the middle tier, where
+// there is nothing else to break it with: nibs has never written a nib into a
+// subdirectory of a pre-layout store root, so `notes/architecture.md` carrying a
+// title and a status is a documentation page, while the same header at the root
+// could be either.
+//
+// The middle bar — a `title` and a `status` from the enum — is deliberately one
+// ordinary content REACHES. `status: draft` is how note vaults and docs sites
+// track a page's own state, and `draft` is one of our six. That is not a defect
+// in the bar: no bar can separate a hand-authored nib from a documentation page,
+// because the two are the same bytes. The bar's job is to decide which way the
+// tie breaks by default, and the verdict's name is what obliges the caller to
+// say so.
+//
+// The store's id prefix is deliberately NOT consulted, though the filename is
+// where a nib's identity lives. Its failure mode runs the wrong way: a project
+// that changed its prefix keeps older nibs named under the old one, so the test
+// would classify real nibs as documents and leave them behind — silently
+// orphaning exactly the files this verdict exists to protect. A config-less
+// pre-layout store, which is legal, has no prefix to test at all.
+func layoutVerdict(rel string, h fmHeader) nibFileVerdict {
+	if nibRenderFormat.rendered(h) {
+		return isNib
+	}
+	if !h.hasFrontMatter || strings.Contains(rel, "/") {
+		return notANib
+	}
+	if _, ok := h.values["title"]; !ok {
+		return notANib
+	}
+	if !config.IsKnownStatus(h.values["status"]) {
+		return notANib
+	}
+	return assumedNib
 }
 
 // rendered reports whether h is a header this format's renderer produced.
