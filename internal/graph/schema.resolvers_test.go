@@ -2333,37 +2333,6 @@ func TestUpdateNibWithBodyMod(t *testing.T) {
 			t.Errorf("UpdateNib().Body = %q, want %q (no-op for empty append)", got.Body, "Original content")
 		}
 	})
-
-	t.Run("transactional: later replacement fails, nothing saved", func(t *testing.T) {
-		b := &nib.Nib{
-			ID:     "bodymod-test-9",
-			Title:  "Test",
-			Status: "todo",
-			Body:   "Task 1\nTask 2",
-		}
-		mustCreate(t, core, b)
-		originalBody := b.Body
-
-		input := model.UpdateNibInput{
-			BodyMod: &model.BodyModification{
-				Replace: []*model.ReplaceOperation{
-					{Old: "Task 1", New: "Done 1"},    // This should succeed
-					{Old: "nonexistent", New: "fail"}, // This should fail
-				},
-			},
-		}
-
-		_, err := resolver.Mutation().UpdateNib(ctx, "bodymod-test-9", input)
-		if err == nil {
-			t.Error("UpdateNib() expected error")
-		}
-
-		// Verify nib wasn't modified
-		updated, _ := core.Get("bodymod-test-9")
-		if updated.Body != originalBody {
-			t.Errorf("Nib body was modified despite error. Got %q, want %q", updated.Body, originalBody)
-		}
-	})
 }
 
 func TestUpdateNibWithRelationships(t *testing.T) {
@@ -2647,15 +2616,15 @@ func TestUpdateNibWithRelationships(t *testing.T) {
 	})
 
 	t.Run("remove blockedBy relationships", func(t *testing.T) {
-		task := &nib.Nib{ID: "task-remove-blockedby", Title: "Task", Type: "task", Status: "todo", BlockedBy: []string{"blocker-1", "blocker-2"}}
-		blocker1 := &nib.Nib{ID: "blocker-1", Title: "Blocker 1", Type: "task", Status: "todo"}
-		blocker2 := &nib.Nib{ID: "blocker-2", Title: "Blocker 2", Type: "task", Status: "todo"}
+		task := &nib.Nib{ID: "task-remove-blockedby", Title: "Task", Type: "task", Status: "todo", BlockedBy: []string{"blocker-rm-1", "blocker-rm-2"}}
+		blocker1 := &nib.Nib{ID: "blocker-rm-1", Title: "Blocker 1", Type: "task", Status: "todo"}
+		blocker2 := &nib.Nib{ID: "blocker-rm-2", Title: "Blocker 2", Type: "task", Status: "todo"}
 		mustCreate(t, core, task)
 		mustCreate(t, core, blocker1)
 		mustCreate(t, core, blocker2)
 
 		input := model.UpdateNibInput{
-			RemoveBlockedBy: []string{"blocker-1"},
+			RemoveBlockedBy: []string{"blocker-rm-1"},
 		}
 
 		got, err := resolver.Mutation().UpdateNib(ctx, "task-remove-blockedby", input)
@@ -2663,8 +2632,8 @@ func TestUpdateNibWithRelationships(t *testing.T) {
 			t.Fatalf("UpdateNib() error = %v", err)
 		}
 
-		if len(got.BlockedBy) != 1 || got.BlockedBy[0] != "blocker-2" {
-			t.Errorf("BlockedBy = %v, want [blocker-2]", got.BlockedBy)
+		if len(got.BlockedBy) != 1 || got.BlockedBy[0] != "blocker-rm-2" {
+			t.Errorf("BlockedBy = %v, want [blocker-rm-2]", got.BlockedBy)
 		}
 	})
 

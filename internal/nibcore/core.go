@@ -26,6 +26,17 @@ import (
 // ErrNotFound is an alias for nib.ErrNotFound for backwards compatibility.
 var ErrNotFound = nib.ErrNotFound
 
+// IDExistsError reports a Create refused because the caller-supplied id
+// already belongs to a nib in the store (active or archived). Classified as
+// a conflict by the CLI, like the etag errors below.
+type IDExistsError struct {
+	ID string
+}
+
+func (e *IDExistsError) Error() string {
+	return fmt.Sprintf("nib id %q already exists — creating it again would shadow the existing nib", e.ID)
+}
+
 // ETagMismatchError is returned when an ETag validation fails.
 // This allows callers to distinguish concurrency conflicts from other errors.
 type ETagMismatchError struct {
@@ -931,7 +942,12 @@ func (c *Core) Create(b *nib.Nib) error {
 		return err
 	}
 
-	// Generate ID if not provided
+	// Generate ID if not provided. Redraw on a collision with a live id —
+	// active or archived, both are in c.nibs — because a single draw once
+	// shadowed an existing nib (nibs-kafe): 4-char ids give ~1.7M
+	// combinations, so at hundreds of nibs every create carries real birthday
+	// odds. The bound turns a broken generator into an error instead of a
+	// hang; at any sane density it is never approached.
 	if b.ID == "" {
 		prefix := ""
 		length := 4
@@ -941,7 +957,21 @@ func (c *Core) Create(b *nib.Nib) error {
 				length = c.config.Nibs.IDLength
 			}
 		}
-		b.ID = nib.NewID(prefix, length)
+		for range 100 {
+			id := newNibID(prefix, length)
+			if _, exists := c.nibs[id]; !exists {
+				b.ID = id
+				break
+			}
+		}
+		if b.ID == "" {
+			return fmt.Errorf("could not generate a free nib id in 100 draws — the id space (length %d) is exhausted or the generator is broken; raise nibs.id_length", length)
+		}
+	} else if _, exists := c.nibs[b.ID]; exists {
+		// A caller-supplied id that is already taken is refused, never
+		// silently replaced: c.nibs[b.ID] = b below would shadow the existing
+		// nib in memory and leave two files claiming one id on disk.
+		return &IDExistsError{ID: b.ID}
 	}
 
 	// Set timestamps
@@ -1686,3 +1716,7 @@ func (c *Core) Close() error {
 
 	return c.unwatchLocked()
 }
+
+// newNibID is the id generator Create draws from. A variable so the collision
+// tests can seed deterministic draws; nothing in production reassigns it.
+var newNibID = nib.NewID

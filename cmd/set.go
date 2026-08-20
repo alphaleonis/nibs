@@ -321,7 +321,8 @@ func hasFieldUpdates(input model.UpdateNibInput) bool {
 func isConflictError(err error) bool {
 	var mismatchErr *nibcore.ETagMismatchError
 	var requiredErr *nibcore.ETagRequiredError
-	return errors.As(err, &mismatchErr) || errors.As(err, &requiredErr)
+	var idExistsErr *nibcore.IDExistsError
+	return errors.As(err, &mismatchErr) || errors.As(err, &requiredErr) || errors.As(err, &idExistsErr)
 }
 
 // etagConflictError reports a reconcilable ETag mismatch as CONFLICT enriched
