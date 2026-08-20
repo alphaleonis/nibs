@@ -340,3 +340,68 @@ func TestMigrateAsksAboutAssumedNibsAtATerminal(t *testing.T) {
 		}
 	})
 }
+
+// TestDryRunPredictsWhatTheRealRunWillAsk pins the preview's half of the
+// uncertain tier. --dry-run modifies nothing and asks nothing, so it has to SAY
+// what the real run would do about a file it can only assume is a nib — the two
+// have to answer identically or the preview promises an outcome the run does not
+// produce, the property blockingScanProblems' comment says has already diverged
+// twice.
+func TestDryRunPredictsWhatTheRealRunWillAsk(t *testing.T) {
+	build := func(t *testing.T, interactive bool) string {
+		t.Helper()
+		t.Cleanup(resetRootPersistentFlags)
+		t.Cleanup(resetMigrateFlags)
+		resetRootPersistentFlags()
+		resetMigrateFlags()
+		forceInteractive(t, interactive)
+		_, storeDir := writeLegacyStore(t, "nibs:\n  prefix: leg-\n", map[string]string{
+			"leg-a1--one.md": layoutNib,
+			"my-idea.md":     "---\ntitle: Fix the login bug\nstatus: todo\n---\n\nBody.\n",
+		})
+		return storeDir
+	}
+
+	t.Run("at a terminal it says the run will ask, without asking", func(t *testing.T) {
+		storeDir := build(t, true)
+		out, err := runRootWith(t, "--nibs-path", storeDir, "migrate", "--dry-run")
+		if err != nil {
+			t.Fatalf("--dry-run must preview, not fail: %v\nout: %s", err, out)
+		}
+		if !strings.Contains(out, "my-idea.md") {
+			t.Errorf("the preview does not name the file the run would ask about:\n%s", out)
+		}
+		if strings.Contains(out, "[y/N]") {
+			t.Errorf("--dry-run asked a question instead of predicting one:\n%s", out)
+		}
+	})
+
+	t.Run("without a terminal it predicts the refusal", func(t *testing.T) {
+		storeDir := build(t, false)
+		out, err := runRootWith(t, "--nibs-path", storeDir, "migrate", "--dry-run")
+		if err != nil {
+			t.Fatalf("--dry-run must preview, not fail: %v\nout: %s", err, out)
+		}
+		if !strings.Contains(out, "will refuse") {
+			t.Errorf("the preview does not predict the refusal the run raises:\n%s", out)
+		}
+		if !strings.Contains(out, "my-idea.md") {
+			t.Errorf("the preview does not name the file:\n%s", out)
+		}
+	})
+
+	t.Run("the preview modifies nothing", func(t *testing.T) {
+		storeDir := build(t, true)
+		if _, err := runRootWith(t, "--nibs-path", storeDir, "migrate", "--dry-run"); err != nil {
+			t.Fatalf("--dry-run: %v", err)
+		}
+		if _, err := os.Stat(filepath.Join(storeDir, store.DataDirName)); err == nil {
+			t.Error("--dry-run created data/")
+		}
+		for _, name := range []string{"leg-a1--one.md", "my-idea.md"} {
+			if _, err := os.Stat(filepath.Join(storeDir, name)); err != nil {
+				t.Errorf("--dry-run moved %s: %v", name, err)
+			}
+		}
+	})
+}

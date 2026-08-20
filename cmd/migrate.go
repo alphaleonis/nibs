@@ -2462,11 +2462,41 @@ func reportDryRun(env migrateEnv, scan *storeScan) error {
 			ui.Printf("  %s: %s\n", r.gate, r.reason)
 		}
 	}
+	// Only when nothing refuses: a refusal over these same files already names
+	// them, and saying it twice reads as two problems.
+	if len(refusals) == 0 {
+		if assumed, err := assumedNibsPending(env); err == nil && len(assumed) > 0 {
+			ui.Printf("Note: the real run %s %d file(s) as nibs — they carry a title and a known status but not the shape nibs writes:\n  %s\n",
+				assumedNibsDisposition(), len(assumed), echoedList(sanitizedList(assumed), ""))
+		}
+	}
 	for _, why := range undecidable {
 		ui.Printf("Note: %s\n", why)
 	}
 	ui.Println("Stop any running `nibs serve` before migrating.")
 	return nil
+}
+
+// assumedNibsPending is the files the layout step would move without being able
+// to prove they are nibs, for the preview to report. It walks the store again
+// rather than threading the plan out of wouldRefuse: --dry-run is not a hot path,
+// and a second reader of the same rule is safer than a second copy of it.
+func assumedNibsPending(env migrateEnv) ([]string, error) {
+	moves, err := layoutMovableFiles(env)
+	if err != nil {
+		return nil, err
+	}
+	return layoutAssumedPaths(moves), nil
+}
+
+// assumedNibsDisposition names what the real run would do about those files,
+// which is the whole point of previewing them: with --force it acts, at a
+// terminal it asks. (Neither, and wouldRefuse has already reported the refusal.)
+func assumedNibsDisposition() string {
+	if migrateForce {
+		return "will treat"
+	}
+	return "will ask whether to treat"
 }
 
 // postMigrateCommitHint suggests committing the migration's rewrite when the
