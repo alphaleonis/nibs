@@ -164,6 +164,9 @@ is used as-is — with --no-edit, with --json, or when stdin/stdout is not a ter
 			if hierarchy, ok := hierarchyError(newJSON, err); ok {
 				return hierarchy
 			}
+			if code, ok := mutationErrCode(err); ok {
+				return cmdError(newJSON, code, "failed to create nib: %v", err)
+			}
 			return cmdError(newJSON, output.ErrFileError, "failed to create nib: %v", err)
 		}
 

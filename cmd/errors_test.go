@@ -643,6 +643,7 @@ func TestMutationErrCodeBoundaries(t *testing.T) {
 			output.ErrConflict,
 		},
 		{"etag required", &nibcore.ETagRequiredError{}, output.ErrConflict},
+		{"supplied id already exists", &nibcore.IDExistsError{ID: "a"}, output.ErrConflict},
 		{
 			"unparseable carrying an OS error",
 			&nibcore.OnDiskUnparseableError{
