@@ -343,3 +343,34 @@ func TestSortByStatusPriorityAndType(t *testing.T) {
 		}
 	})
 }
+
+// TestSortByKey pins the generalized ordering sort the multi-scope engine
+// uses: the same semantics as SortByOrder — keyed nibs first, lexicographic by
+// key with a title-then-ID tiebreak, unkeyed appended sorted by title — but
+// over a caller-chosen key field.
+func TestSortByKey(t *testing.T) {
+	a := &Nib{ID: "a", Title: "Alpha"}
+	b := &Nib{ID: "b", Title: "beta"}
+	c := &Nib{ID: "c", Title: "Gamma"}
+	d := &Nib{ID: "d", Title: "delta"}
+	keys := map[string]string{"a": "m", "b": "", "c": "a", "d": ""}
+	nibs := []*Nib{a, b, c, d}
+
+	SortByKey(nibs, func(n *Nib) string { return keys[n.ID] })
+
+	// Keyed: c ("a") then a ("m"); unkeyed by title: b ("beta") then d ("delta").
+	want := []string{"c", "a", "b", "d"}
+	for i, n := range nibs {
+		if n.ID != want[i] {
+			t.Fatalf("SortByKey order = %v, want %v", ids(nibs), want)
+		}
+	}
+}
+
+func ids(nibs []*Nib) []string {
+	out := make([]string, len(nibs))
+	for i, n := range nibs {
+		out[i] = n.ID
+	}
+	return out
+}

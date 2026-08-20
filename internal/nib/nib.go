@@ -196,6 +196,15 @@ type Nib struct {
 	// Order is a fractional index string for sorting among siblings.
 	Order string `yaml:"order,omitempty" json:"order,omitempty"`
 
+	// MilestoneOrder is the fractional index for the nib's position in its
+	// milestone queue — the ordering engine's second scope. IN-MEMORY ONLY for
+	// now: the front-matter `milestone:`/`milestone_order:` fields arrive with
+	// the three-axis model's v2 migration release, so this is neither parsed
+	// nor rendered (renderFrontMatter has no column for it) and never reaches
+	// disk. The engine's milestone arm is fully wired against it and inert in
+	// production until those fields land.
+	MilestoneOrder string `yaml:"-" json:"-"`
+
 	// Extra holds front-matter keys that none of the modeled fields above claim
 	// (e.g. a hand-added `assignee: bob`, or forward-compatible keys written by a
 	// newer tool). Parse captures each unknown key's value as a raw yaml.v3 node

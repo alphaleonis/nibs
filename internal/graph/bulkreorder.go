@@ -62,7 +62,7 @@ func (r *mutationResolver) reorderChildrenImpl(parentID string, childIDs []strin
 // (based on the anchor and direction), and persist the block in its requested
 // order.
 func (r *mutationResolver) reorderSiblingsImpl(siblingIDs []string, afterID *string, beforeID *string, first *bool, ifMatch []*model.ChildEtag) ([]*nib.Nib, error) {
-	block, anchor, parentID, err := r.validateBulkSiblings(siblingIDs, afterID, beforeID, first)
+	block, pos, anchor, parentID, err := r.validateBulkSiblings(siblingIDs, afterID, beforeID, first)
 	if err != nil {
 		return nil, err
 	}
@@ -75,7 +75,7 @@ func (r *mutationResolver) reorderSiblingsImpl(siblingIDs []string, afterID *str
 	// Sorted siblings excluding the block — preserves the on-disk order of
 	// non-moved siblings so we can find the upper/lower bound around the
 	// anchor without colliding with about-to-be-moved keys.
-	allSiblings := r.Orderer.siblingsForParent(parentID)
+	allSiblings := r.Orderer.Members(ScopeParent, parentID)
 	blockSet := make(map[string]struct{}, len(block))
 	for _, b := range block {
 		blockSet[b.ID] = struct{}{}
@@ -89,13 +89,13 @@ func (r *mutationResolver) reorderSiblingsImpl(siblingIDs []string, afterID *str
 
 	// Determine the [lower, upper] range the new block keys go into.
 	var lower, upper string
-	switch {
-	case first != nil && *first:
+	switch pos.kind {
+	case posFirst:
 		lower = ""
 		if len(others) > 0 {
 			upper = others[0].Order
 		}
-	case beforeID != nil:
+	case posBefore:
 		// Block goes immediately before the anchor — anchor is the upper
 		// bound; lower bound is the previous non-moved sibling (or empty).
 		upper = anchor.Order
@@ -107,7 +107,7 @@ func (r *mutationResolver) reorderSiblingsImpl(siblingIDs []string, afterID *str
 				break
 			}
 		}
-	default: // afterID
+	case posAfter:
 		// Block goes immediately after the anchor — anchor is the lower bound;
 		// upper bound is the next non-moved sibling (or empty).
 		lower = anchor.Order
@@ -172,28 +172,13 @@ func ifMatchPtr(etagByID map[string]string, id string) *string {
 }
 
 // validateBulkSiblings resolves and validates a Mode B request. Returns the
-// listed nibs in the requested order (the block to move), the resolved anchor
-// (nil for first=true), the inferred parent ID, or an error.
-func (r *mutationResolver) validateBulkSiblings(siblingIDs []string, afterID *string, beforeID *string, first *bool) ([]*nib.Nib, *nib.Nib, string, error) {
-	// Mode mutex: exactly one of afterID/beforeID/first.
-	hasAfter := afterID != nil && *afterID != ""
-	hasBefore := beforeID != nil && *beforeID != ""
-	hasFirst := first != nil && *first
-	count := 0
-	if hasAfter {
-		count++
-	}
-	if hasBefore {
-		count++
-	}
-	if hasFirst {
-		count++
-	}
-	if count != 1 {
-		if count == 0 {
-			return nil, nil, "", fmt.Errorf("exactly one of afterId, beforeId, first must be specified (none given)")
-		}
-		return nil, nil, "", fmt.Errorf("exactly one of afterId, beforeId, first must be specified (got %d)", count)
+// listed nibs in the requested order (the block to move), the resolved
+// position, the resolved anchor (nil for First), the inferred parent ID, or
+// an error.
+func (r *mutationResolver) validateBulkSiblings(siblingIDs []string, afterID *string, beforeID *string, first *bool) ([]*nib.Nib, Position, *nib.Nib, string, error) {
+	pos, err := PositionFromArgs(afterID, beforeID, first)
+	if err != nil {
+		return nil, Position{}, nil, "", err
 	}
 
 	// Resolve the listed siblings. Existence check runs before duplicate
@@ -207,53 +192,48 @@ func (r *mutationResolver) validateBulkSiblings(siblingIDs []string, afterID *st
 		normalizedID, _ := r.Reader.NormalizeID(id)
 		b, err := r.Reader.Get(normalizedID)
 		if err != nil {
-			return nil, nil, "", fmt.Errorf("sibling nib not found: %s", notFoundDetail(id, normalizedID))
+			return nil, Position{}, nil, "", fmt.Errorf("sibling nib not found: %s", notFoundDetail(id, normalizedID))
 		}
 		if _, dup := seen[b.ID]; dup {
-			return nil, nil, "", fmt.Errorf("duplicate id in sibling list: %s (resolved to %s)", id, b.ID)
+			return nil, Position{}, nil, "", fmt.Errorf("duplicate id in sibling list: %s (resolved to %s)", id, b.ID)
 		}
 		seen[b.ID] = struct{}{}
 		// Group on the resolved parent (see resolvedParentID) so the block matches
-		// the sibling set siblingsForParent enumerates below.
+		// the sibling set Members enumerates below.
 		bParentID := resolvedParentID(b, r.Reader)
 		if i == 0 {
 			parentID = bParentID
 		} else if bParentID != parentID {
-			return nil, nil, "", fmt.Errorf("siblings span multiple parents: %s has parent %s, expected %q",
+			return nil, Position{}, nil, "", fmt.Errorf("siblings span multiple parents: %s has parent %s, expected %q",
 				id, describeParent(b, bParentID), parentID)
 		}
 		block = append(block, b)
 	}
 
-	// Resolve the anchor (only required when not first=true).
+	// Resolve the anchor (only required for the anchored forms).
 	var anchor *nib.Nib
-	if hasAfter || hasBefore {
-		anchorID := ""
-		if hasAfter {
-			anchorID = *afterID
-		} else {
-			anchorID = *beforeID
-		}
+	if pos.kind == posAfter || pos.kind == posBefore {
+		anchorID := pos.anchor
 		normalizedAnchor, _ := r.Reader.NormalizeID(anchorID)
 		a, err := r.Reader.Get(normalizedAnchor)
 		if err != nil {
-			return nil, nil, "", fmt.Errorf("anchor nib not found: %s", notFoundDetail(anchorID, normalizedAnchor))
+			return nil, Position{}, nil, "", fmt.Errorf("anchor nib not found: %s", notFoundDetail(anchorID, normalizedAnchor))
 		}
 		if aParentID := resolvedParentID(a, r.Reader); aParentID != parentID {
-			return nil, nil, "", fmt.Errorf("anchor %s is not a sibling (parent=%s, expected %q)",
+			return nil, Position{}, nil, "", fmt.Errorf("anchor %s is not a sibling (parent=%s, expected %q)",
 				anchorID, describeParent(a, aParentID), parentID)
 		}
 		// Block membership is checked against resolved IDs so short/full
 		// forms in the input both surface as an error.
 		for _, b := range block {
 			if b.ID == a.ID {
-				return nil, nil, "", fmt.Errorf("anchor %s (resolved to %s) must not appear in siblingIds", anchorID, a.ID)
+				return nil, Position{}, nil, "", fmt.Errorf("anchor %s (resolved to %s) must not appear in siblingIds", anchorID, a.ID)
 			}
 		}
 		anchor = a
 	}
 
-	return block, anchor, parentID, nil
+	return block, pos, anchor, parentID, nil
 }
 
 // validateBulkChildren resolves the child IDs against the parent's current
@@ -300,7 +280,7 @@ func (r *mutationResolver) validateBulkChildren(parentID string, childIDs []stri
 		requested[b.ID] = struct{}{}
 	}
 
-	for _, b := range r.Orderer.siblingsForParent(parentID) {
+	for _, b := range r.Orderer.Members(ScopeParent, parentID) {
 		if _, ok := requested[b.ID]; !ok {
 			return nil, fmt.Errorf("missing child in reorder list: %s", b.ID)
 		}

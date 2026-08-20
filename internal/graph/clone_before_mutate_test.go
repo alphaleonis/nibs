@@ -387,20 +387,20 @@ func TestUpdateNibDuplicateBlockingTargetIsIdempotent(t *testing.T) {
 
 // TestBackfillOrderKeysRefusedWriteLeavesNoPhantomOrder guards the
 // corruption class in a sibling site the sweep extends to.
-// Orderer.backfillOrderKeys iterates the SHARED c.nibs[id] pointers returned by
+// Orderer.backfillKeys iterates the SHARED c.nibs[id] pointers returned by
 // reader.All()/FindIncomingLinks and assigned b.Order = newKey in place before a
 // best-effort Writer.Update. A refused write (genuine on-disk divergence)
 // therefore left the shared in-memory sibling showing a phantom Order that was
 // never persisted. The fix mutates a CLONE so the shared pointer is untouched.
 //
-// backfillOrderKeys also runs on the hot Children/root READ path, and a
+// backfillKeys also runs on the hot Children/root READ path, and a
 // persistently etag-diverged sibling keeps Order=="" so the backfill Update is
 // re-attempted on EVERY read. An unconditional stderr warning there floods the
 // log under a long-running `nibs serve`, so a stable ETagMismatchError (a benign,
 // already-accepted best-effort fallback) must NOT warn.
 //
 // One unordered root nib is created and its on-disk file diverged so the backfill
-// Update is rejected (etag mismatch); backfill is triggered via getRootSiblings,
+// Update is rejected (etag mismatch); backfill is triggered via Members(ScopeParent, ""),
 // called REPEATEDLY to model the read-path re-attempt. The shared in-memory nib
 // must still show no order key, and NO warning may be emitted across the repeated
 // reads. RED against the mutate-shared-pointer code (phantom order) and against
@@ -408,7 +408,7 @@ func TestUpdateNibDuplicateBlockingTargetIsIdempotent(t *testing.T) {
 func TestBackfillOrderKeysRefusedWriteLeavesNoPhantomOrder(t *testing.T) {
 	r, core := setupTestResolver(t)
 
-	// A root nib with no order key → getRootSiblings will try to backfill it.
+	// A root nib with no order key → Members(ScopeParent, "") will try to backfill it.
 	createTestNib(t, core, "root-bf", "Root", "todo")
 	if b, err := core.Get("root-bf"); err != nil {
 		t.Fatalf("get root-bf: %v", err)
@@ -423,7 +423,7 @@ func TestBackfillOrderKeysRefusedWriteLeavesNoPhantomOrder(t *testing.T) {
 		// Model repeated tree renders/polls: each read re-attempts the backfill
 		// because the diverged sibling never gets an order key persisted.
 		for i := 0; i < 3; i++ {
-			_ = r.Orderer.getRootSiblings()
+			_ = r.Orderer.Members(ScopeParent, "")
 		}
 	})
 
@@ -444,7 +444,7 @@ func TestBackfillOrderKeysRefusedWriteLeavesNoPhantomOrder(t *testing.T) {
 }
 
 // errWriter is a NibWriter whose Update always fails with a fixed error, used to
-// exercise backfillOrderKeys' unexpected-error branch (a non-etag, non-parse
+// exercise backfillKeys' unexpected-error branch (a non-etag, non-parse
 // write failure, e.g. disk I/O) which must still emit exactly one warning.
 type errWriter struct {
 	stubWriter
@@ -459,7 +459,7 @@ func (w *errWriter) Update(b *nib.Nib, ifMatch *string) error {
 // no-flood guard above: a genuinely UNEXPECTED backfill write failure (not an
 // etag mismatch or an unparseable/unreadable file) must still surface a stderr
 // warning so a real problem stays diagnosable. Uses a writer that returns a
-// plain error to drive backfillOrderKeys' non-etag branch.
+// plain error to drive backfillKeys' non-etag branch.
 func TestBackfillOrderKeysUnexpectedWriteErrorWarns(t *testing.T) {
 	unordered := &nib.Nib{ID: "root-err", Title: "Root", Status: "todo"} // Order == ""
 	reader := &stubReader{
@@ -470,7 +470,7 @@ func TestBackfillOrderKeysUnexpectedWriteErrorWarns(t *testing.T) {
 	o := NewOrderer(reader, writer)
 
 	stderr := captureStderr(t, func() {
-		_ = o.getRootSiblings()
+		_ = o.Members(ScopeParent, "")
 	})
 
 	if !strings.Contains(stderr, "root-err") {
@@ -515,7 +515,7 @@ Body under edit.
 }
 
 // TestBackfillOrderKeysCorruptSiblingDoesNotFloodStderr is the residual-flood
-// guard. backfillOrderKeys runs on the hot
+// guard. backfillKeys runs on the hot
 // Children/root READ path and re-attempts the best-effort Writer.Update on every
 // read for a sibling that never gets an order key. When that sibling's on-disk
 // file is UNCERTIFIABLE (unparseable/unreadable), computeStoredETag returns
@@ -530,7 +530,7 @@ Body under edit.
 // This test captures BOTH warning sinks — the orderer writes to os.Stderr, while
 // nibcore writes to its own warnWriter (which setupTestResolver leaves at the
 // real os.Stderr captured at New() time, so captureStderr's pipe swap would NOT
-// see it; we redirect it explicitly to a buffer). Repeated getRootSiblings reads
+// see it; we redirect it explicitly to a buffer). Repeated Members(ScopeParent, "") reads
 // over a store with one corrupt sibling must produce ZERO warning lines across
 // both sinks. Detection is preserved: a direct if-match Update of the same corrupt
 // file still fails CLOSED with *OnDiskUnparseableError.
@@ -547,7 +547,7 @@ func TestBackfillOrderKeysCorruptSiblingDoesNotFloodStderr(t *testing.T) {
 	var nibcoreWarn bytes.Buffer
 	core.SetWarnWriter(&nibcoreWarn)
 
-	// A root nib with no order key → getRootSiblings will try to backfill it.
+	// A root nib with no order key → Members(ScopeParent, "") will try to backfill it.
 	createTestNib(t, core, "root-corrupt", "Root", "todo")
 
 	// Corrupt its on-disk file so the backfill Update fails CLOSED with an
@@ -560,7 +560,7 @@ func TestBackfillOrderKeysCorruptSiblingDoesNotFloodStderr(t *testing.T) {
 		// Model repeated tree renders/polls: each read re-attempts the backfill
 		// because the corrupt sibling never gets an order key persisted.
 		for i := 0; i < reads; i++ {
-			_ = r.Orderer.getRootSiblings()
+			_ = r.Orderer.Members(ScopeParent, "")
 		}
 	})
 

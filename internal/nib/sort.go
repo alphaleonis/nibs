@@ -32,13 +32,22 @@ func PositionMap(nibs []*Nib) map[string]int {
 // SortByOrder sorts nibs by their Order field lexicographically.
 // Nibs with an order key come first; nibs without one are appended sorted by title.
 func SortByOrder(nibs []*Nib) {
+	SortByKey(nibs, func(n *Nib) string { return n.Order })
+}
+
+// SortByKey sorts nibs by a caller-chosen ordering key, with SortByOrder's
+// semantics: keyed nibs first in lexicographic key order, unkeyed nibs
+// appended sorted by title. The multi-scope ordering engine sorts each scope
+// by its own key field through this.
+func SortByKey(nibs []*Nib, key func(*Nib) string) {
 	slices.SortStableFunc(nibs, func(a, b *Nib) int {
-		aHas := a.Order != ""
-		bHas := b.Order != ""
+		aKey, bKey := key(a), key(b)
+		aHas := aKey != ""
+		bHas := bKey != ""
 
 		switch {
 		case aHas && bHas:
-			if c := cmp.Compare(a.Order, b.Order); c != 0 {
+			if c := cmp.Compare(aKey, bKey); c != 0 {
 				return c
 			}
 			// Tiebreaker for equal order keys: sort by title, then ID

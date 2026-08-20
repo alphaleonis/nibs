@@ -104,7 +104,11 @@ func (r *mutationResolver) CreateNib(ctx context.Context, input model.CreateNibI
 	}
 
 	// Handle positioning (afterId, beforeId, first)
-	if err := r.Orderer.ApplyPositioning(b, input.AfterID, input.BeforeID, input.First); err != nil {
+	placement, err := PlacementFromArgs(input.AfterID, input.BeforeID, input.First)
+	if err != nil {
+		return nil, err
+	}
+	if err := r.Orderer.Place(ScopeParent, b, placement); err != nil {
 		return nil, err
 	}
 
@@ -209,7 +213,7 @@ func (r *mutationResolver) UpdateNib(ctx context.Context, id string, input model
 	// precedes both: the blocking handlers persist each target directly, and both
 	// calls to validateAndSetParent (the type-change branch immediately below, and
 	// the parent block further down) recalculate the order key on a real parent
-	// change, which reads the sibling set through Orderer.backfillOrderKeys — a
+	// change, which reads the sibling set through Orderer.backfillKeys — a
 	// lazy read-path repair that PERSISTS an order key to any sibling that has
 	// none. See preValidateSubject for the window Writer.Update still owns.
 	if err := r.preValidateSubject(b, input.IfMatch); err != nil {
@@ -616,69 +620,25 @@ func (r *mutationResolver) ReorderNib(ctx context.Context, id string, afterID *s
 		return nil, err
 	}
 
-	hasAfter := afterID != nil && *afterID != ""
-	hasBefore := beforeID != nil && *beforeID != ""
-	hasFirst := first != nil && *first
-
-	count := 0
-	if hasAfter {
-		count++
-	}
-	if hasBefore {
-		count++
-	}
-	if hasFirst {
-		count++
-	}
-	if count == 0 {
-		return nil, fmt.Errorf("at least one positioning flag (afterId, beforeId, first) is required")
-	}
-	if count > 1 {
-		return nil, fmt.Errorf("at most one of afterId, beforeId, first may be specified")
+	pos, err := PositionFromArgs(afterID, beforeID, first)
+	if err != nil {
+		return nil, err
 	}
 
-	// Optional reparent: change parent before reordering (atomic cross-parent move).
-	// parentID stays a plain *string here (NOT omittable, unlike updateNib.parent):
-	// nil means "no reparent — reorder within the current parent", and this differs
-	// from updateNib where an explicit parent:null CLEARS the parent (moves to
-	// root). For reorderNib, root context is expressed by an explicit parentId:""
-	// (empty string), which validateAndSetParent treats as clear-to-root. This
-	// asymmetry is intentional: a reorder must be able to omit reparenting entirely,
-	// so null cannot double as a clear here.
-	if parentID != nil {
-		newParent := *parentID
-		if err := r.validateAndSetParent(b, newParent); err != nil {
+	// Optional reparent: change parent before reordering (atomic cross-parent
+	// move). See ContainerChange for the wire reading — note the contrast with
+	// updateNib's omittable parent, where null is the clear.
+	if target, ok := ContainerChangeFromArg(parentID).Requested(); ok {
+		if err := r.validateAndSetParent(b, target); err != nil {
 			return nil, err
 		}
 	}
 
-	// Get siblings from the (possibly new) parent. siblingsOf resolves that
-	// parent first, so the set an anchor has to be found in is the same set the
-	// siblingId filter and `nibs rel --rel siblings` report for b.
-	siblings := r.Orderer.siblingsOf(b)
-
-	// Remove self from siblings list to avoid self-referencing
-	var filtered []*nib.Nib
-	for _, s := range siblings {
-		if s.ID != b.ID {
-			filtered = append(filtered, s)
-		}
-	}
-
-	if hasAfter {
-		if err := r.Orderer.positionAfter(b, *afterID, filtered); err != nil {
-			return nil, err
-		}
-	} else if hasBefore {
-		if err := r.Orderer.positionBefore(b, *beforeID, filtered); err != nil {
-			return nil, err
-		}
-	} else if hasFirst {
-		if len(filtered) == 0 {
-			b.Order = nib.OrderInitial()
-		} else {
-			b.Order = nib.OrderFirst(filtered[0].Order)
-		}
+	// Move resolves b's (possibly new) parent group itself, so the set an
+	// anchor has to be found in is the same set the siblingId filter and
+	// `nibs rel --rel siblings` report for b.
+	if err := r.Orderer.Move(ScopeParent, b, pos); err != nil {
+		return nil, err
 	}
 
 	if err := r.Writer.Update(b, ifMatch); err != nil {
@@ -855,10 +815,10 @@ func (r *nibResolver) Parent(ctx context.Context, obj *nib.Nib) (*nib.Nib, error
 //
 // Returns detached snapshots via Reader.GetSnapshot (clone-under-lock), never
 // the live c.nibs pointers — gqlgen marshals their fields asynchronously. Only
-// the immutable sibling.ID is read off GetSortedSiblings' live pointers; the
+// the immutable sibling.ID is read off Members' live pointers; the
 // sort/backfill it performs internally is a separate pre-existing concern.
 func (r *nibResolver) Children(ctx context.Context, obj *nib.Nib, filter *model.NibFilter, sort *model.NibSort) ([]*nib.Nib, error) {
-	siblings := r.Orderer.GetSortedSiblings(obj.ID)
+	siblings := r.Orderer.Members(ScopeParent, obj.ID)
 	result := make([]*nib.Nib, 0, len(siblings))
 	for _, sib := range siblings {
 		if snap, ok := r.Reader.GetSnapshot(sib.ID); ok {

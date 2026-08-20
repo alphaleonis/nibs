@@ -166,14 +166,14 @@ func (r *Resolver) snapshotResults(nibs []*nib.Nib) ([]*nib.Nib, error) {
 // at odds over where the nib lands. Resolving settles both.
 //
 // Caller must pass a nib it owns (a clone), not a shared Reader.Get pointer —
-// this mutates b (b.Parent and, via RecalculateOrder, b.Order) in place.
+// this mutates b (b.Parent and, via Orderer.Recalculate, b.Order) in place.
 func (r *Resolver) validateAndSetParent(b *nib.Nib, parentID string) error {
 	oldParent := resolvedParentID(b, r.Reader)
 
 	if parentID == "" {
 		b.Parent = ""
 		if oldParent != "" {
-			r.Orderer.RecalculateOrder(b)
+			r.Orderer.Recalculate(ScopeParent, b)
 		}
 		return nil
 	}
@@ -196,7 +196,7 @@ func (r *Resolver) validateAndSetParent(b *nib.Nib, parentID string) error {
 
 	b.Parent = normalizedParent
 	if normalizedParent != oldParent {
-		r.Orderer.RecalculateOrder(b)
+		r.Orderer.Recalculate(ScopeParent, b)
 	}
 	return nil
 }
@@ -210,7 +210,7 @@ func (r *Resolver) validateAndSetParent(b *nib.Nib, parentID string) error {
 // blocking handlers persist each target immediately (single-side storage puts
 // the edge in the target's blocked_by). And a parent change recalculates the
 // subject's order key, which reads the sibling set — a read that repairs lazily:
-// Orderer.backfillOrderKeys PERSISTS an order key to any sibling that has none,
+// Orderer.backfillKeys PERSISTS an order key to any sibling that has none,
 // so an ordinary read path leaves a durable edit on a nib the mutation never
 // named. That second one is reachable from BOTH calls to validateAndSetParent —
 // the type-change branch as well as the parent block — which is why updateNib
