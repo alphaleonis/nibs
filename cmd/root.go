@@ -163,7 +163,10 @@ func initAppForCommand(cmd *cobra.Command) (*App, error) {
 // there is not.
 func isCompletionRequest(cmd *cobra.Command) bool {
 	for c := cmd; c != nil; c = c.Parent() {
-		if c.Name() == cobra.ShellCompRequestCmd || c.Name() == cobra.ShellCompNoDescRequestCmd {
+		// One name, not two: cobra registers ShellCompNoDescRequestCmd as an
+		// ALIAS of this command and tells them apart with CalledAs(), so Name()
+		// answers `__complete` for both spellings.
+		if c.Name() == cobra.ShellCompRequestCmd {
 			return true
 		}
 	}

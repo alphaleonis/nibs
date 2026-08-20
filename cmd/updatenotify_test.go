@@ -1,12 +1,12 @@
 package cmd
 
 import (
+	"slices"
 	"strings"
 	"testing"
 
 	"github.com/alphaleonis/nibs/internal/updatecheck"
 	"github.com/spf13/cobra"
-	"slices"
 )
 
 func TestUpdateNotifyEligible(t *testing.T) {
@@ -120,14 +120,19 @@ func TestJSONFlagSet(t *testing.T) {
 // The same shape sits one line below: the GraphQL command's Use is "query" with
 // "graphql" as its alias.
 func TestUpdateNotifySkipKeysRealCommandNames(t *testing.T) {
-	// Cobra creates its completion tree during Execute, not at init.
+	// Cobra registers the help and completion commands during Execute, not at
+	// init, so a test that only reads rootCmd.Commands() would otherwise depend
+	// on some earlier test in the package having run one. Both are idempotent.
+	rootCmd.InitDefaultHelpCmd()
 	rootCmd.InitDefaultCompletionCmd()
 
 	real := map[string]bool{
-		// Cobra owns these two and builds them inside ExecuteC through an
-		// unexported initializer, so they are never in rootCmd.Commands() here.
-		cobra.ShellCompRequestCmd:       true,
-		cobra.ShellCompNoDescRequestCmd: true,
+		// The one name cobra owns that is genuinely absent from Commands():
+		// initCompleteCmd builds it inside ExecuteC through an unexported
+		// initializer. Its no-descriptions spelling is NOT exempt — that is an
+		// alias of this same command, so keying it would be the very defect
+		// this test exists to catch.
+		cobra.ShellCompRequestCmd: true,
 	}
 	var aliases []string
 	for _, c := range rootCmd.Commands() {
@@ -135,6 +140,15 @@ func TestUpdateNotifySkipKeysRealCommandNames(t *testing.T) {
 		aliases = append(aliases, c.Aliases...)
 	}
 	isAlias := func(key string) bool { return slices.Contains(aliases, key) }
+
+	// Without this the test passes vacuously on an empty map: every key being
+	// valid is trivially true when there are none, and only `web` is pinned by a
+	// behavior test.
+	for _, want := range []string{"web", "query", "tui", "upgrade", "help", "completion", cobra.ShellCompRequestCmd} {
+		if !updateNotifySkip[want] {
+			t.Errorf("updateNotifySkip lost its %q entry", want)
+		}
+	}
 
 	for key := range updateNotifySkip {
 		if real[key] {
@@ -146,6 +160,36 @@ func TestUpdateNotifySkipKeysRealCommandNames(t *testing.T) {
 		}
 		t.Errorf("updateNotifySkip keys %q, which names no command in the tree", key)
 	}
+}
+
+// TestUpdateNotifySkipCoversSubtrees pins what an entry means: the command it
+// names AND everything under it. `nibs completion bash` executes the "bash"
+// subcommand, so before updateNotifyKey the "completion" entry covered only the
+// bare `nibs completion` and every shell fell through it.
+func TestUpdateNotifySkipCoversSubtrees(t *testing.T) {
+	rootCmd.InitDefaultCompletionCmd()
+
+	for _, shell := range []string{"bash", "zsh", "fish", "powershell"} {
+		t.Run("completion "+shell, func(t *testing.T) {
+			cmd, _, err := rootCmd.Find([]string{"completion", shell})
+			if err != nil {
+				t.Fatalf("completion %s is not a command: %v", shell, err)
+			}
+			if updateNotifyEligible(updateNotifyKey(cmd), false, true) {
+				t.Errorf("`nibs completion %s` would print an update notice into the script it emits", shell)
+			}
+		})
+	}
+
+	t.Run("an ordinary command is untouched", func(t *testing.T) {
+		cmd, _, err := rootCmd.Find([]string{"list"})
+		if err != nil {
+			t.Fatalf("finding list: %v", err)
+		}
+		if !updateNotifyEligible(updateNotifyKey(cmd), false, true) {
+			t.Error("`nibs list` stopped being eligible; the subtree walk is too broad")
+		}
+	})
 }
 
 // TestUpdateNotifySkipsTheServerUnderEitherSpelling is the behavior the map
