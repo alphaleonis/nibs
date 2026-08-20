@@ -35,37 +35,55 @@ func SortByOrder(nibs []*Nib) {
 	SortByKey(nibs, func(n *Nib) string { return n.Order })
 }
 
+// SortByMilestoneOrder sorts nibs by their MilestoneOrder field — the
+// milestone-queue position key — with SortByOrder's semantics. A milestone's
+// members sit in its QUEUE, not among their structural siblings, so listing
+// them by the parent-scope Order key would ignore the queue entirely (a
+// migrated assignee carries no Order at all); consumers listing a milestone's
+// members sort through this, and epic members keep SortByOrder.
+func SortByMilestoneOrder(nibs []*Nib) {
+	SortByKey(nibs, func(n *Nib) string { return n.MilestoneOrder })
+}
+
 // SortByKey sorts nibs by a caller-chosen ordering key, with SortByOrder's
 // semantics: keyed nibs first in lexicographic key order, unkeyed nibs
 // appended sorted by title. The multi-scope ordering engine sorts each scope
 // by its own key field through this.
 func SortByKey(nibs []*Nib, key func(*Nib) string) {
 	slices.SortStableFunc(nibs, func(a, b *Nib) int {
-		aKey, bKey := key(a), key(b)
-		aHas := aKey != ""
-		bHas := bKey != ""
-
-		switch {
-		case aHas && bHas:
-			if c := cmp.Compare(aKey, bKey); c != 0 {
-				return c
-			}
-			// Tiebreaker for equal order keys: sort by title, then ID
-			if c := cmp.Compare(strings.ToLower(a.Title), strings.ToLower(b.Title)); c != 0 {
-				return c
-			}
-			return cmp.Compare(a.ID, b.ID)
-		case aHas:
-			return -1 // a (ordered) before b (unordered)
-		case bHas:
-			return 1 // b (ordered) before a (unordered)
-		default:
-			if c := cmp.Compare(strings.ToLower(a.Title), strings.ToLower(b.Title)); c != 0 {
-				return c
-			}
-			return cmp.Compare(a.ID, b.ID)
-		}
+		return CompareByKey(a, b, key)
 	})
+}
+
+// CompareByKey is SortByKey's element comparison — keyed before unkeyed, key
+// order first, then the title-then-ID tiebreak — exported so a consumer
+// ordering a WRAPPER slice keyed by an embedded nib (the roadmap's epic
+// groups) applies the exact rule the nib-slice sorts do.
+func CompareByKey(a, b *Nib, key func(*Nib) string) int {
+	aKey, bKey := key(a), key(b)
+	aHas := aKey != ""
+	bHas := bKey != ""
+
+	switch {
+	case aHas && bHas:
+		if c := cmp.Compare(aKey, bKey); c != 0 {
+			return c
+		}
+		// Tiebreaker for equal order keys: sort by title, then ID
+		if c := cmp.Compare(strings.ToLower(a.Title), strings.ToLower(b.Title)); c != 0 {
+			return c
+		}
+		return cmp.Compare(a.ID, b.ID)
+	case aHas:
+		return -1 // a (ordered) before b (unordered)
+	case bHas:
+		return 1 // b (ordered) before a (unordered)
+	default:
+		if c := cmp.Compare(strings.ToLower(a.Title), strings.ToLower(b.Title)); c != 0 {
+			return c
+		}
+		return cmp.Compare(a.ID, b.ID)
+	}
 }
 
 // PriorityRanker maps a priority string to its sort rank.

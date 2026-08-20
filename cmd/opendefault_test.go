@@ -45,11 +45,11 @@ func jsonHiddenClosed(t *testing.T, raw string) (int, bool) {
 // features.
 func twoTypeStatusFixture() map[string]string {
 	return map[string]string{
-		"bo--bug-open.md":   "---\nversion: 1\ntitle: BugOpen\nstatus: todo\ntype: bug\n---\n",
-		"bd--bug-done.md":   "---\nversion: 1\ntitle: BugDone\nstatus: completed\ntype: bug\n---\n",
-		"fo--feat-open.md":  "---\nversion: 1\ntitle: FeatOpen\nstatus: todo\ntype: feature\n---\n",
-		"fd--feat-done.md":  "---\nversion: 1\ntitle: FeatDone\nstatus: completed\ntype: feature\n---\n",
-		"fs--feat-scrap.md": "---\nversion: 1\ntitle: FeatScrap\nstatus: scrapped\ntype: feature\n---\n",
+		"bo--bug-open.md":   "---\nversion: 2\ntitle: BugOpen\nstatus: todo\ntype: bug\n---\n",
+		"bd--bug-done.md":   "---\nversion: 2\ntitle: BugDone\nstatus: completed\ntype: bug\n---\n",
+		"fo--feat-open.md":  "---\nversion: 2\ntitle: FeatOpen\nstatus: todo\ntype: feature\n---\n",
+		"fd--feat-done.md":  "---\nversion: 2\ntitle: FeatDone\nstatus: completed\ntype: feature\n---\n",
+		"fs--feat-scrap.md": "---\nversion: 2\ntitle: FeatScrap\nstatus: scrapped\ntype: feature\n---\n",
 	}
 }
 
@@ -57,8 +57,8 @@ func twoTypeStatusFixture() map[string]string {
 // nothing and must NOT annotate.
 func allOpenFixture() map[string]string {
 	return map[string]string{
-		"o1--one.md": "---\nversion: 1\ntitle: One\nstatus: todo\ntype: task\n---\n",
-		"o2--two.md": "---\nversion: 1\ntitle: Two\nstatus: in-progress\ntype: task\n---\n",
+		"o1--one.md": "---\nversion: 2\ntitle: One\nstatus: todo\ntype: task\n---\n",
+		"o2--two.md": "---\nversion: 2\ntitle: Two\nstatus: in-progress\ntype: task\n---\n",
 	}
 }
 
@@ -270,12 +270,12 @@ func TestRelCommand_HiddenClosed(t *testing.T) {
 // closed (deferred/completed/scrapped).
 func mixedStatusFixture() map[string]string {
 	return map[string]string{
-		"w1--wip.md":      "---\nversion: 1\ntitle: Wip\nstatus: in-progress\ntype: task\n---\n",
-		"t1--todo.md":     "---\nversion: 1\ntitle: Todo\nstatus: todo\ntype: task\n---\n",
-		"d1--draft.md":    "---\nversion: 1\ntitle: Draft\nstatus: draft\ntype: task\n---\n",
-		"p1--deferred.md": "---\nversion: 1\ntitle: Deferred\nstatus: deferred\ntype: task\n---\n",
-		"c1--done.md":     "---\nversion: 1\ntitle: Done\nstatus: completed\ntype: task\n---\n",
-		"s1--scrap.md":    "---\nversion: 1\ntitle: Scrap\nstatus: scrapped\ntype: task\n---\n",
+		"w1--wip.md":      "---\nversion: 2\ntitle: Wip\nstatus: in-progress\ntype: task\n---\n",
+		"t1--todo.md":     "---\nversion: 2\ntitle: Todo\nstatus: todo\ntype: task\n---\n",
+		"d1--draft.md":    "---\nversion: 2\ntitle: Draft\nstatus: draft\ntype: task\n---\n",
+		"p1--deferred.md": "---\nversion: 2\ntitle: Deferred\nstatus: deferred\ntype: task\n---\n",
+		"c1--done.md":     "---\nversion: 2\ntitle: Done\nstatus: completed\ntype: task\n---\n",
+		"s1--scrap.md":    "---\nversion: 2\ntitle: Scrap\nstatus: scrapped\ntype: task\n---\n",
 	}
 }
 
@@ -412,11 +412,11 @@ func TestListCommand_BadNoStatus_Validation(t *testing.T) {
 
 // relStatusFixture: parent epic with open + completed + scrapped children.
 var relStatusFixture = map[string]string{
-	"par--parent.md":  "---\nversion: 1\ntitle: Parent\nstatus: in-progress\ntype: epic\n---\n",
-	"co--open.md":     "---\nversion: 1\ntitle: COpen\nstatus: todo\ntype: task\nparent: par\norder: a0\n---\n",
-	"cd--done.md":     "---\nversion: 1\ntitle: CDone\nstatus: completed\ntype: task\nparent: par\norder: a1\n---\n",
-	"cs--scrap.md":    "---\nversion: 1\ntitle: CScrap\nstatus: scrapped\ntype: task\nparent: par\norder: a2\n---\n",
-	"cf--deferred.md": "---\nversion: 1\ntitle: CDeferred\nstatus: deferred\ntype: task\nparent: par\norder: a3\n---\n",
+	"par--parent.md":  "---\nversion: 2\ntitle: Parent\nstatus: in-progress\ntype: epic\n---\n",
+	"co--open.md":     "---\nversion: 2\ntitle: COpen\nstatus: todo\ntype: task\nparent: par\norder: a0\n---\n",
+	"cd--done.md":     "---\nversion: 2\ntitle: CDone\nstatus: completed\ntype: task\nparent: par\norder: a1\n---\n",
+	"cs--scrap.md":    "---\nversion: 2\ntitle: CScrap\nstatus: scrapped\ntype: task\nparent: par\norder: a2\n---\n",
+	"cf--deferred.md": "---\nversion: 2\ntitle: CDeferred\nstatus: deferred\ntype: task\nparent: par\norder: a3\n---\n",
 }
 
 func TestRelCommand_OpenByDefault(t *testing.T) {

@@ -1,6 +1,6 @@
 ---
 # tnib-t026
-version: 1
+version: 2
 title: Set up WebSocket server infrastructure
 status: draft
 type: task

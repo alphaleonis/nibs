@@ -1,6 +1,6 @@
 ---
 # tnib-t030
-version: 1
+version: 2
 title: Implement read/unread state management
 status: draft
 type: task

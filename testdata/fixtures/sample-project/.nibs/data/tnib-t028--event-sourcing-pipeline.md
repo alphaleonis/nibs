@@ -1,6 +1,6 @@
 ---
 # tnib-t028
-version: 1
+version: 2
 title: Build event sourcing pipeline
 status: draft
 type: task

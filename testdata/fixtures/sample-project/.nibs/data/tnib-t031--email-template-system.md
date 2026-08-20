@@ -1,6 +1,6 @@
 ---
 # tnib-t031
-version: 1
+version: 2
 title: Build email template system
 status: draft
 type: task

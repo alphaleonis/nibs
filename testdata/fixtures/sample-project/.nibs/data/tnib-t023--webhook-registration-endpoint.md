@@ -1,6 +1,6 @@
 ---
 # tnib-t023
-version: 1
+version: 2
 title: Build webhook registration endpoint
 status: todo
 type: task

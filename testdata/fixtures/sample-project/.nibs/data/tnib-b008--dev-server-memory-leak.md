@@ -1,6 +1,6 @@
 ---
 # tnib-b008
-version: 1
+version: 2
 title: Memory leak in development server after hot reload
 status: in-progress
 type: bug
@@ -8,7 +8,7 @@ priority: critical
 estimate: s
 created_at: 2026-03-22T09:00:00Z
 updated_at: 2026-03-25T14:00:00Z
-order: n
+order: "n"
 ---
 
 ## Steps to Reproduce

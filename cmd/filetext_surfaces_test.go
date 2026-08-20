@@ -139,7 +139,7 @@ func TestFileSourcedTextNeverReachesAnEchoSurfaceRaw(t *testing.T) {
 			name: "check renderFieldDiagnostics",
 			emit: func(t *testing.T) string {
 				storeDir := writeStoreFiles(t, map[string]string{
-					"tnib-0001--one.md": "---\nversion: 1\ntitle: One\nstatus: todo\n---\n\nBody.\n",
+					"tnib-0001--one.md": "---\nversion: 2\ntitle: One\nstatus: todo\n---\n\nBody.\n",
 				})
 				core := nibcore.New(storeDir, config.Default())
 				core.SetWarnWriter(nil)
@@ -198,7 +198,7 @@ func TestFileSourcedTextNeverReachesAnEchoSurfaceRaw(t *testing.T) {
 				// runCheck rather than the command: checkCmd's RunE calls
 				// os.Exit(1) whenever the report is non-empty, and this one is.
 				app, _ := setupCheckTest(t, map[string]string{
-					"tnib-0001--one.md": "---\nversion: 1\ntitle: One\nstatus: todo\ndocuments:\n  - \"" +
+					"tnib-0001--one.md": "---\nversion: 2\ntitle: One\nstatus: todo\ndocuments:\n  - \"" +
 						escaped + "\"\nblocked_by:\n  - \"" + escaped + "\"\n---\n\nBody.\n",
 				})
 				out := captureStdout(t, func() {
@@ -218,7 +218,7 @@ func TestFileSourcedTextNeverReachesAnEchoSurfaceRaw(t *testing.T) {
 				storeDir := writeStoreFiles(t, nil)
 				writeFileT(t, filepath.Join(storeDir, store.ConfigFileName), "nibs:\n  prefix: tnib-\n  id_length: 4\n")
 				writeFileT(t, dataPath(storeDir, hostileName),
-					"---\nversion: 1\ntitle: One\nstatus: todo\n---\n\nBody.\n")
+					"---\nversion: 2\ntitle: One\nstatus: todo\n---\n\nBody.\n")
 				t.Cleanup(resetRootPersistentFlags)
 				t.Cleanup(func() {
 					setPrefixDryRun, setPrefixForce, setPrefixJSON = false, false, false

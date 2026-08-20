@@ -1,6 +1,6 @@
 ---
 # tnib-f003
-version: 1
+version: 2
 title: Password reset flow
 status: todo
 type: feature

@@ -1,6 +1,6 @@
 ---
 # tnib-f014
-version: 1
+version: 2
 title: WebSocket live updates
 status: draft
 type: feature

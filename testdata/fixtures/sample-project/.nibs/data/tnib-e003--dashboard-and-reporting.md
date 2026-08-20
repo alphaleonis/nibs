@@ -1,16 +1,16 @@
 ---
 # tnib-e003
-version: 1
+version: 2
 title: Dashboard & Reporting
 status: todo
 type: epic
 priority: normal
 created_at: 2026-02-20T11:00:00Z
 updated_at: 2026-03-15T10:00:00Z
-parent: tnib-m001
 blocked_by:
     - tnib-e002
-order: c
+milestone: tnib-m001
+milestone_order: c
 ---
 
 ## Objective

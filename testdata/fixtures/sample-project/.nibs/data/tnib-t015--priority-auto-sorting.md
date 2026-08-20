@@ -1,6 +1,6 @@
 ---
 # tnib-t015
-version: 1
+version: 2
 title: Add priority-based auto-sorting
 status: todo
 type: task

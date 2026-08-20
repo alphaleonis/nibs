@@ -26,7 +26,7 @@ ENDCONFIG
 cat > "$DIR/tnib-m001--v1-mvp-launch.md" << 'ENDNIB'
 ---
 # tnib-m001
-version: 1
+version: 2
 title: v1.0 MVP Launch
 status: in-progress
 type: milestone
@@ -60,7 +60,7 @@ ENDNIB
 cat > "$DIR/tnib-m002--v1-1-team-collaboration.md" << 'ENDNIB'
 ---
 # tnib-m002
-version: 1
+version: 2
 title: v1.1 Team Collaboration
 status: draft
 type: milestone
@@ -89,17 +89,17 @@ ENDNIB
 cat > "$DIR/tnib-e001--user-authentication.md" << 'ENDNIB'
 ---
 # tnib-e001
-version: 1
+version: 2
 title: User Authentication
 status: in-progress
 type: epic
 priority: high
 created_at: 2026-02-18T10:00:00Z
 updated_at: 2026-03-24T16:00:00Z
-parent: tnib-m001
 documents:
     - docs/auth-architecture.md
-order: a
+milestone: tnib-m001
+milestone_order: a
 ---
 
 ## Objective
@@ -123,15 +123,15 @@ ENDNIB
 cat > "$DIR/tnib-e002--task-management-core.md" << 'ENDNIB'
 ---
 # tnib-e002
-version: 1
+version: 2
 title: Task Management Core
 status: in-progress
 type: epic
 priority: high
 created_at: 2026-02-18T10:30:00Z
 updated_at: 2026-03-25T09:00:00Z
-parent: tnib-m001
-order: b
+milestone: tnib-m001
+milestone_order: b
 ---
 
 ## Objective
@@ -154,17 +154,17 @@ ENDNIB
 cat > "$DIR/tnib-e003--dashboard-and-reporting.md" << 'ENDNIB'
 ---
 # tnib-e003
-version: 1
+version: 2
 title: Dashboard & Reporting
 status: todo
 type: epic
 priority: normal
 created_at: 2026-02-20T11:00:00Z
 updated_at: 2026-03-15T10:00:00Z
-parent: tnib-m001
 blocked_by:
     - tnib-e002
-order: c
+milestone: tnib-m001
+milestone_order: c
 ---
 
 ## Objective
@@ -186,15 +186,15 @@ ENDNIB
 cat > "$DIR/tnib-e004--api-and-integrations.md" << 'ENDNIB'
 ---
 # tnib-e004
-version: 1
+version: 2
 title: API & Integrations
 status: todo
 type: epic
 priority: normal
 created_at: 2026-02-20T14:00:00Z
 updated_at: 2026-03-15T10:00:00Z
-parent: tnib-m001
-order: d
+milestone: tnib-m001
+milestone_order: d
 ---
 
 ## Objective
@@ -216,7 +216,7 @@ ENDNIB
 cat > "$DIR/tnib-e005--real-time-collaboration.md" << 'ENDNIB'
 ---
 # tnib-e005
-version: 1
+version: 2
 title: Real-time Collaboration
 status: draft
 type: epic
@@ -224,10 +224,10 @@ priority: normal
 estimate: xl
 created_at: 2026-03-10T10:00:00Z
 updated_at: 2026-03-18T09:00:00Z
-parent: tnib-m002
 documents:
     - docs/websocket-rfc.md
-order: a
+milestone: tnib-m002
+milestone_order: a
 ---
 
 ## Objective
@@ -249,15 +249,15 @@ ENDNIB
 cat > "$DIR/tnib-e006--notifications-system.md" << 'ENDNIB'
 ---
 # tnib-e006
-version: 1
+version: 2
 title: Notifications System
 status: draft
 type: epic
 priority: normal
 created_at: 2026-03-10T11:00:00Z
 updated_at: 2026-03-18T09:00:00Z
-parent: tnib-m002
-order: b
+milestone: tnib-m002
+milestone_order: b
 ---
 
 ## Objective
@@ -283,7 +283,7 @@ ENDNIB
 cat > "$DIR/tnib-f001--email-password-login.md" << 'ENDNIB'
 ---
 # tnib-f001
-version: 1
+version: 2
 title: Email/password login
 status: completed
 type: feature
@@ -308,7 +308,7 @@ ENDNIB
 cat > "$DIR/tnib-f002--oauth2-social-login.md" << 'ENDNIB'
 ---
 # tnib-f002
-version: 1
+version: 2
 title: OAuth2 social login
 status: in-progress
 type: feature
@@ -318,6 +318,7 @@ created_at: 2026-02-25T09:00:00Z
 updated_at: 2026-03-24T15:00:00Z
 parent: tnib-e001
 order: b
+area: auth
 ---
 
 Allow users to log in via Google and GitHub OAuth2 providers. Account linking when email matches existing account.
@@ -333,7 +334,7 @@ ENDNIB
 cat > "$DIR/tnib-f003--password-reset-flow.md" << 'ENDNIB'
 ---
 # tnib-f003
-version: 1
+version: 2
 title: Password reset flow
 status: todo
 type: feature
@@ -362,7 +363,7 @@ ENDNIB
 cat > "$DIR/tnib-f004--crud-operations-for-tasks.md" << 'ENDNIB'
 ---
 # tnib-f004
-version: 1
+version: 2
 title: CRUD operations for tasks
 status: completed
 type: feature
@@ -388,7 +389,7 @@ ENDNIB
 cat > "$DIR/tnib-f005--task-assignment-and-ownership.md" << 'ENDNIB'
 ---
 # tnib-f005
-version: 1
+version: 2
 title: Task assignment and ownership
 status: in-progress
 type: feature
@@ -413,7 +414,7 @@ ENDNIB
 cat > "$DIR/tnib-f006--task-prioritization-and-sorting.md" << 'ENDNIB'
 ---
 # tnib-f006
-version: 1
+version: 2
 title: Task prioritization and sorting
 status: todo
 type: feature
@@ -437,7 +438,7 @@ ENDNIB
 cat > "$DIR/tnib-f007--subtask-and-checklist-support.md" << 'ENDNIB'
 ---
 # tnib-f007
-version: 1
+version: 2
 title: Subtask and checklist support
 status: draft
 type: feature
@@ -466,7 +467,7 @@ ENDNIB
 cat > "$DIR/tnib-f008--team-velocity-chart.md" << 'ENDNIB'
 ---
 # tnib-f008
-version: 1
+version: 2
 title: Team velocity chart
 status: todo
 type: feature
@@ -476,6 +477,7 @@ created_at: 2026-03-05T11:00:00Z
 updated_at: 2026-03-15T10:00:00Z
 parent: tnib-e003
 order: a
+area: web/dashboard
 ---
 
 Sprint-over-sprint velocity chart showing completed story points per sprint with trend line.
@@ -491,7 +493,7 @@ ENDNIB
 cat > "$DIR/tnib-f009--personal-task-dashboard.md" << 'ENDNIB'
 ---
 # tnib-f009
-version: 1
+version: 2
 title: Personal task dashboard
 status: todo
 type: feature
@@ -516,7 +518,7 @@ ENDNIB
 cat > "$DIR/tnib-f010--export-reports-csv-pdf.md" << 'ENDNIB'
 ---
 # tnib-f010
-version: 1
+version: 2
 title: Export reports to CSV and PDF
 status: draft
 type: feature
@@ -544,7 +546,7 @@ ENDNIB
 cat > "$DIR/tnib-f011--webhook-delivery-system.md" << 'ENDNIB'
 ---
 # tnib-f011
-version: 1
+version: 2
 title: Webhook delivery system
 status: todo
 type: feature
@@ -554,6 +556,7 @@ created_at: 2026-03-05T14:00:00Z
 updated_at: 2026-03-15T10:00:00Z
 parent: tnib-e004
 order: a
+area: api/webhooks
 ---
 
 HTTP webhook system for notifying external services of task events (created, updated, deleted, assigned).
@@ -569,7 +572,7 @@ ENDNIB
 cat > "$DIR/tnib-f012--slack-integration.md" << 'ENDNIB'
 ---
 # tnib-f012
-version: 1
+version: 2
 title: Slack integration
 status: deferred
 type: feature
@@ -594,7 +597,7 @@ ENDNIB
 cat > "$DIR/tnib-f013--rest-api-v2-openapi.md" << 'ENDNIB'
 ---
 # tnib-f013
-version: 1
+version: 2
 title: REST API v2 with OpenAPI
 status: scrapped
 type: feature
@@ -617,7 +620,7 @@ ENDNIB
 cat > "$DIR/tnib-f014--websocket-live-updates.md" << 'ENDNIB'
 ---
 # tnib-f014
-version: 1
+version: 2
 title: WebSocket live updates
 status: draft
 type: feature
@@ -644,7 +647,7 @@ ENDNIB
 cat > "$DIR/tnib-f015--activity-feed.md" << 'ENDNIB'
 ---
 # tnib-f015
-version: 1
+version: 2
 title: Activity feed
 status: draft
 type: feature
@@ -673,7 +676,7 @@ ENDNIB
 cat > "$DIR/tnib-f016--in-app-notification-center.md" << 'ENDNIB'
 ---
 # tnib-f016
-version: 1
+version: 2
 title: In-app notification center
 status: draft
 type: feature
@@ -698,7 +701,7 @@ ENDNIB
 cat > "$DIR/tnib-f017--email-digest-notifications.md" << 'ENDNIB'
 ---
 # tnib-f017
-version: 1
+version: 2
 title: Email digest notifications
 status: draft
 type: feature
@@ -727,7 +730,7 @@ ENDNIB
 cat > "$DIR/tnib-f018--dark-mode-theme.md" << 'ENDNIB'
 ---
 # tnib-f018
-version: 1
+version: 2
 title: Dark mode theme support
 status: scrapped
 type: feature
@@ -745,7 +748,7 @@ ENDNIB
 cat > "$DIR/tnib-f019--keyboard-shortcuts.md" << 'ENDNIB'
 ---
 # tnib-f019
-version: 1
+version: 2
 title: Keyboard shortcuts for power users
 status: todo
 type: feature
@@ -771,7 +774,7 @@ ENDNIB
 cat > "$DIR/tnib-f020--bulk-task-operations.md" << 'ENDNIB'
 ---
 # tnib-f020
-version: 1
+version: 2
 title: Bulk task operations
 status: todo
 type: feature
@@ -799,7 +802,7 @@ ENDNIB
 cat > "$DIR/tnib-t001--implement-bcrypt-hashing.md" << 'ENDNIB'
 ---
 # tnib-t001
-version: 1
+version: 2
 title: Implement bcrypt password hashing
 status: completed
 type: task
@@ -825,7 +828,7 @@ ENDNIB
 cat > "$DIR/tnib-t002--rate-limiting-login.md" << 'ENDNIB'
 ---
 # tnib-t002
-version: 1
+version: 2
 title: Add rate limiting to login endpoint
 status: completed
 type: task
@@ -852,7 +855,7 @@ ENDNIB
 cat > "$DIR/tnib-t003--login-integration-tests.md" << 'ENDNIB'
 ---
 # tnib-t003
-version: 1
+version: 2
 title: Write login integration tests
 status: completed
 type: task
@@ -879,7 +882,7 @@ ENDNIB
 cat > "$DIR/tnib-t004--google-oauth-integration.md" << 'ENDNIB'
 ---
 # tnib-t004
-version: 1
+version: 2
 title: Google OAuth provider integration
 status: completed
 type: task
@@ -906,7 +909,7 @@ ENDNIB
 cat > "$DIR/tnib-t005--github-oauth-integration.md" << 'ENDNIB'
 ---
 # tnib-t005
-version: 1
+version: 2
 title: GitHub OAuth provider integration
 status: in-progress
 type: task
@@ -933,7 +936,7 @@ ENDNIB
 cat > "$DIR/tnib-t006--password-reset-email-template.md" << 'ENDNIB'
 ---
 # tnib-t006
-version: 1
+version: 2
 title: Design password reset email template
 status: todo
 type: task
@@ -960,7 +963,7 @@ ENDNIB
 cat > "$DIR/tnib-t007--token-generation-expiry.md" << 'ENDNIB'
 ---
 # tnib-t007
-version: 1
+version: 2
 title: Implement token generation and expiry
 status: todo
 type: task
@@ -987,7 +990,7 @@ ENDNIB
 cat > "$DIR/tnib-t008--auth-api-documentation.md" << 'ENDNIB'
 ---
 # tnib-t008
-version: 1
+version: 2
 title: Write authentication API documentation
 status: draft
 type: task
@@ -1020,7 +1023,7 @@ ENDNIB
 cat > "$DIR/tnib-t009--database-schema-design.md" << 'ENDNIB'
 ---
 # tnib-t009
-version: 1
+version: 2
 title: Design database schema for tasks
 status: completed
 type: task
@@ -1047,7 +1050,7 @@ ENDNIB
 cat > "$DIR/tnib-t010--rest-api-endpoints.md" << 'ENDNIB'
 ---
 # tnib-t010
-version: 1
+version: 2
 title: Implement REST API endpoints
 status: completed
 type: task
@@ -1074,7 +1077,7 @@ ENDNIB
 cat > "$DIR/tnib-t011--input-validation.md" << 'ENDNIB'
 ---
 # tnib-t011
-version: 1
+version: 2
 title: Add input validation and sanitization
 status: completed
 type: task
@@ -1101,7 +1104,7 @@ ENDNIB
 cat > "$DIR/tnib-t012--user-task-relationship.md" << 'ENDNIB'
 ---
 # tnib-t012
-version: 1
+version: 2
 title: Create user-task relationship model
 status: completed
 type: task
@@ -1127,7 +1130,7 @@ ENDNIB
 cat > "$DIR/tnib-t013--assignment-notification-emails.md" << 'ENDNIB'
 ---
 # tnib-t013
-version: 1
+version: 2
 title: Build assignment notification emails
 status: todo
 type: task
@@ -1156,7 +1159,7 @@ ENDNIB
 cat > "$DIR/tnib-t014--drag-and-drop-reordering.md" << 'ENDNIB'
 ---
 # tnib-t014
-version: 1
+version: 2
 title: Implement drag-and-drop reordering
 status: todo
 type: task
@@ -1183,7 +1186,7 @@ ENDNIB
 cat > "$DIR/tnib-t015--priority-auto-sorting.md" << 'ENDNIB'
 ---
 # tnib-t015
-version: 1
+version: 2
 title: Add priority-based auto-sorting
 status: todo
 type: task
@@ -1209,7 +1212,7 @@ ENDNIB
 cat > "$DIR/tnib-t016--recursive-depth-limit.md" << 'ENDNIB'
 ---
 # tnib-t016
-version: 1
+version: 2
 title: Enforce recursive depth limit
 status: draft
 type: task
@@ -1235,7 +1238,7 @@ ENDNIB
 cat > "$DIR/tnib-t017--subtask-progress-aggregation.md" << 'ENDNIB'
 ---
 # tnib-t017
-version: 1
+version: 2
 title: Subtask progress aggregation
 status: draft
 type: task
@@ -1261,7 +1264,7 @@ ENDNIB
 cat > "$DIR/tnib-t018--performance-benchmark-10k.md" << 'ENDNIB'
 ---
 # tnib-t018
-version: 1
+version: 2
 title: Performance benchmark for 10k tasks
 status: todo
 type: task
@@ -1294,7 +1297,7 @@ ENDNIB
 cat > "$DIR/tnib-t019--charting-library-integration.md" << 'ENDNIB'
 ---
 # tnib-t019
-version: 1
+version: 2
 title: Integrate charting library
 status: todo
 type: task
@@ -1320,7 +1323,7 @@ ENDNIB
 cat > "$DIR/tnib-t020--sprint-data-aggregation.md" << 'ENDNIB'
 ---
 # tnib-t020
-version: 1
+version: 2
 title: Build sprint data aggregation query
 status: todo
 type: task
@@ -1346,7 +1349,7 @@ ENDNIB
 cat > "$DIR/tnib-t021--widget-layout-system.md" << 'ENDNIB'
 ---
 # tnib-t021
-version: 1
+version: 2
 title: Design widget layout system
 status: todo
 type: task
@@ -1373,7 +1376,7 @@ ENDNIB
 cat > "$DIR/tnib-t022--my-tasks-widget.md" << 'ENDNIB'
 ---
 # tnib-t022
-version: 1
+version: 2
 title: Build "my tasks" summary widget
 status: todo
 type: task
@@ -1404,7 +1407,7 @@ ENDNIB
 cat > "$DIR/tnib-t023--webhook-registration-endpoint.md" << 'ENDNIB'
 ---
 # tnib-t023
-version: 1
+version: 2
 title: Build webhook registration endpoint
 status: todo
 type: task
@@ -1431,7 +1434,7 @@ ENDNIB
 cat > "$DIR/tnib-t024--webhook-retry-backoff.md" << 'ENDNIB'
 ---
 # tnib-t024
-version: 1
+version: 2
 title: Implement retry with exponential backoff
 status: todo
 type: task
@@ -1458,7 +1461,7 @@ ENDNIB
 cat > "$DIR/tnib-t025--openapi-spec-generation.md" << 'ENDNIB'
 ---
 # tnib-t025
-version: 1
+version: 2
 title: Auto-generate OpenAPI spec from code
 status: scrapped
 type: task
@@ -1483,7 +1486,7 @@ ENDNIB
 cat > "$DIR/tnib-t026--websocket-server-setup.md" << 'ENDNIB'
 ---
 # tnib-t026
-version: 1
+version: 2
 title: Set up WebSocket server infrastructure
 status: draft
 type: task
@@ -1510,7 +1513,7 @@ ENDNIB
 cat > "$DIR/tnib-t027--conflict-resolution-strategy.md" << 'ENDNIB'
 ---
 # tnib-t027
-version: 1
+version: 2
 title: Design conflict resolution strategy
 status: draft
 type: task
@@ -1537,7 +1540,7 @@ ENDNIB
 cat > "$DIR/tnib-t028--event-sourcing-pipeline.md" << 'ENDNIB'
 ---
 # tnib-t028
-version: 1
+version: 2
 title: Build event sourcing pipeline
 status: draft
 type: task
@@ -1568,7 +1571,7 @@ ENDNIB
 cat > "$DIR/tnib-t029--notification-center-ui.md" << 'ENDNIB'
 ---
 # tnib-t029
-version: 1
+version: 2
 title: Design notification center UI
 status: draft
 type: task
@@ -1595,7 +1598,7 @@ ENDNIB
 cat > "$DIR/tnib-t030--read-unread-state.md" << 'ENDNIB'
 ---
 # tnib-t030
-version: 1
+version: 2
 title: Implement read/unread state management
 status: draft
 type: task
@@ -1622,7 +1625,7 @@ ENDNIB
 cat > "$DIR/tnib-t031--email-template-system.md" << 'ENDNIB'
 ---
 # tnib-t031
-version: 1
+version: 2
 title: Build email template system
 status: draft
 type: task
@@ -1653,7 +1656,7 @@ ENDNIB
 cat > "$DIR/tnib-t041--bulk-selection-ui.md" << 'ENDNIB'
 ---
 # tnib-t041
-version: 1
+version: 2
 title: Design bulk selection UI
 status: todo
 type: task
@@ -1680,7 +1683,7 @@ ENDNIB
 cat > "$DIR/tnib-t042--batch-api-endpoint.md" << 'ENDNIB'
 ---
 # tnib-t042
-version: 1
+version: 2
 title: Implement batch API endpoint
 status: todo
 type: task
@@ -1711,7 +1714,7 @@ ENDNIB
 cat > "$DIR/tnib-t032--setup-ci-cd-pipeline.md" << 'ENDNIB'
 ---
 # tnib-t032
-version: 1
+version: 2
 title: Set up CI/CD pipeline
 status: completed
 type: task
@@ -1737,7 +1740,7 @@ ENDNIB
 cat > "$DIR/tnib-t033--configure-staging-environment.md" << 'ENDNIB'
 ---
 # tnib-t033
-version: 1
+version: 2
 title: Configure staging environment
 status: completed
 type: task
@@ -1763,7 +1766,7 @@ ENDNIB
 cat > "$DIR/tnib-t034--database-migration-strategy.md" << 'ENDNIB'
 ---
 # tnib-t034
-version: 1
+version: 2
 title: Write database migration strategy doc
 status: todo
 type: task
@@ -1791,7 +1794,7 @@ ENDNIB
 cat > "$DIR/tnib-t035--accessibility-audit.md" << 'ENDNIB'
 ---
 # tnib-t035
-version: 1
+version: 2
 title: Accessibility audit
 status: todo
 type: task
@@ -1819,7 +1822,7 @@ ENDNIB
 cat > "$DIR/tnib-t036--security-pen-testing.md" << 'ENDNIB'
 ---
 # tnib-t036
-version: 1
+version: 2
 title: Security penetration testing
 status: todo
 type: task
@@ -1850,7 +1853,7 @@ ENDNIB
 cat > "$DIR/tnib-t037--update-npm-dependencies.md" << 'ENDNIB'
 ---
 # tnib-t037
-version: 1
+version: 2
 title: Update npm dependencies to latest
 status: in-progress
 type: task
@@ -1875,7 +1878,7 @@ ENDNIB
 cat > "$DIR/tnib-t038--error-monitoring-service.md" << 'ENDNIB'
 ---
 # tnib-t038
-version: 1
+version: 2
 title: Set up error monitoring service
 status: completed
 type: task
@@ -1901,7 +1904,7 @@ ENDNIB
 cat > "$DIR/tnib-t039--optimize-docker-image.md" << 'ENDNIB'
 ---
 # tnib-t039
-version: 1
+version: 2
 title: Optimize Docker image size
 status: todo
 type: task
@@ -1912,6 +1915,7 @@ tags:
 created_at: 2026-03-12T09:00:00Z
 updated_at: 2026-03-15T10:00:00Z
 order: j
+area: infra
 ---
 
 ## Description
@@ -1929,7 +1933,7 @@ ENDNIB
 cat > "$DIR/tnib-t040--load-testing.md" << 'ENDNIB'
 ---
 # tnib-t040
-version: 1
+version: 2
 title: Load testing with 1000 concurrent users
 status: todo
 type: task
@@ -1958,7 +1962,7 @@ ENDNIB
 cat > "$DIR/tnib-t043--structured-logging.md" << 'ENDNIB'
 ---
 # tnib-t043
-version: 1
+version: 2
 title: Add structured logging
 status: completed
 type: task
@@ -1986,7 +1990,7 @@ ENDNIB
 cat > "$DIR/tnib-t044--onboarding-guide.md" << 'ENDNIB'
 ---
 # tnib-t044
-version: 1
+version: 2
 title: Write onboarding guide for new developers
 status: todo
 type: task
@@ -2018,7 +2022,7 @@ ENDNIB
 cat > "$DIR/tnib-r001--oauth2-library-evaluation.md" << 'ENDNIB'
 ---
 # tnib-r001
-version: 1
+version: 2
 title: Evaluate OAuth2 provider libraries
 status: completed
 type: research
@@ -2057,7 +2061,7 @@ ENDNIB
 cat > "$DIR/tnib-r002--concurrent-edit-conflict-strategy.md" << 'ENDNIB'
 ---
 # tnib-r002
-version: 1
+version: 2
 title: Research concurrent task-edit conflict strategy
 status: todo
 type: research
@@ -2098,7 +2102,7 @@ ENDNIB
 cat > "$DIR/tnib-b001--oauth-callback-url-mismatch.md" << 'ENDNIB'
 ---
 # tnib-b001
-version: 1
+version: 2
 title: OAuth callback URL mismatch in production config
 status: todo
 type: bug
@@ -2130,18 +2134,19 @@ ENDNIB
 cat > "$DIR/tnib-b002--session-tokens-not-invalidated.md" << 'ENDNIB'
 ---
 # tnib-b002
-version: 1
+version: 2
 title: Session tokens not invalidated on password change
 status: todo
 type: bug
 priority: critical
 estimate: m
+tags:
+    - security
 created_at: 2026-03-15T10:00:00Z
 updated_at: 2026-03-20T09:00:00Z
 parent: tnib-e001
-tags:
-    - security
 order: e
+area: auth
 ---
 
 ## Steps to Reproduce
@@ -2163,7 +2168,7 @@ ENDNIB
 cat > "$DIR/tnib-b003--deactivated-user-assignment.md" << 'ENDNIB'
 ---
 # tnib-b003
-version: 1
+version: 2
 title: Assigning task to deactivated user shows no error
 status: in-progress
 type: bug
@@ -2194,7 +2199,7 @@ ENDNIB
 cat > "$DIR/tnib-b004--task-title-truncation.md" << 'ENDNIB'
 ---
 # tnib-b004
-version: 1
+version: 2
 title: Task title silently truncated at 255 characters
 status: todo
 type: bug
@@ -2224,7 +2229,7 @@ ENDNIB
 cat > "$DIR/tnib-b005--date-picker-timezone.md" << 'ENDNIB'
 ---
 # tnib-b005
-version: 1
+version: 2
 title: Date picker shows wrong timezone for remote users
 status: todo
 type: bug
@@ -2234,6 +2239,7 @@ created_at: 2026-03-10T09:00:00Z
 updated_at: 2026-03-15T10:00:00Z
 parent: tnib-e003
 order: d
+area: web
 ---
 
 ## Steps to Reproduce
@@ -2255,7 +2261,7 @@ ENDNIB
 cat > "$DIR/tnib-b006--webhook-missing-updated-at.md" << 'ENDNIB'
 ---
 # tnib-b006
-version: 1
+version: 2
 title: Webhook payloads missing updated_at timestamp
 status: todo
 type: bug
@@ -2286,7 +2292,7 @@ ENDNIB
 cat > "$DIR/tnib-b007--push-notification-permission.md" << 'ENDNIB'
 ---
 # tnib-b007
-version: 1
+version: 2
 title: Push notifications not requesting permission on mobile
 status: draft
 type: bug
@@ -2317,7 +2323,7 @@ ENDNIB
 cat > "$DIR/tnib-b008--dev-server-memory-leak.md" << 'ENDNIB'
 ---
 # tnib-b008
-version: 1
+version: 2
 title: Memory leak in development server after hot reload
 status: in-progress
 type: bug
@@ -2325,7 +2331,7 @@ priority: critical
 estimate: s
 created_at: 2026-03-22T09:00:00Z
 updated_at: 2026-03-25T14:00:00Z
-order: n
+order: "n"
 ---
 
 ## Steps to Reproduce
@@ -2347,7 +2353,7 @@ ENDNIB
 cat > "$DIR/tnib-b009--flaky-user-service-test.md" << 'ENDNIB'
 ---
 # tnib-b009
-version: 1
+version: 2
 title: Flaky test in user_service_test.go
 status: todo
 type: bug
@@ -2376,7 +2382,7 @@ ENDNIB
 cat > "$DIR/tnib-b010--safari-grid-layout.md" << 'ENDNIB'
 ---
 # tnib-b010
-version: 1
+version: 2
 title: CSS grid layout breaks on Safari 15
 status: todo
 type: bug
@@ -2407,7 +2413,7 @@ ENDNIB
 cat > "$DIR/tnib-b011--api-500-malformed-json.md" << 'ENDNIB'
 ---
 # tnib-b011
-version: 1
+version: 2
 title: API returns 500 on malformed JSON body
 status: todo
 type: bug
@@ -2416,6 +2422,7 @@ estimate: s
 created_at: 2026-03-18T10:00:00Z
 updated_at: 2026-03-22T09:00:00Z
 order: q
+area: api
 ---
 
 ## Steps to Reproduce
@@ -2436,7 +2443,7 @@ ENDNIB
 cat > "$DIR/tnib-b012--search-stale-after-delete.md" << 'ENDNIB'
 ---
 # tnib-b012
-version: 1
+version: 2
 title: Search results not updating after task deletion
 status: in-progress
 type: bug
@@ -2466,7 +2473,7 @@ ENDNIB
 cat > "$DIR/tnib-b013--file-upload-special-chars.md" << 'ENDNIB'
 ---
 # tnib-b013
-version: 1
+version: 2
 title: File upload fails for names with special characters
 status: todo
 type: bug
@@ -2497,7 +2504,7 @@ ENDNIB
 cat > "$DIR/tnib-b014--race-condition-concurrent-updates.md" << 'ENDNIB'
 ---
 # tnib-b014
-version: 1
+version: 2
 title: Race condition in concurrent task updates
 status: todo
 type: bug
@@ -2530,7 +2537,7 @@ ENDNIB
 cat > "$DIR/tnib-b015--dropdown-zindex-modal.md" << 'ENDNIB'
 ---
 # tnib-b015
-version: 1
+version: 2
 title: Dropdown menu z-index conflict with modal
 status: todo
 type: bug

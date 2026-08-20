@@ -149,7 +149,7 @@ func (b *Nib) RemoveBlockedBy(id string) bool {
 // is a fixed property of that step (v0→v1 always writes 1), so bumping
 // CurrentVersion for a future format must never change an existing step's
 // output.
-const CurrentVersion = 1
+const CurrentVersion = 2
 
 // Nib represents an issue stored as a markdown file with front matter.
 type Nib struct {
@@ -202,18 +202,17 @@ type Nib struct {
 
 	// Milestone is the optional ID of the milestone nib whose queue this nib
 	// is enqueued in. Id-valued and part of the link machinery like Parent
-	// (RawLinks/CaptureRawLinks, nibcore canonicalization), but no consumer
-	// reads it yet: milestone membership still derives from the resolved
-	// Parent's type (see MilestoneOrder), and a later phase switches it.
+	// (RawLinks/CaptureRawLinks, nibcore canonicalization). It is THE
+	// membership axis: milestone membership derives from this field alone
+	// (membership.ResolvedMilestoneID), never from the resolved Parent's
+	// type — the parent axis is pure decomposition.
 	Milestone string `yaml:"milestone,omitempty" json:"-"`
 
 	// MilestoneOrder is a fractional index string for the nib's position in
-	// its milestone queue — the ordering engine's second scope. Parsed and
-	// rendered, but not wired to any consumer: no resolver passes
-	// ScopeMilestone, and that scope's grouping (resolvedMilestoneID ->
-	// membership.ResolvedMilestoneID) still derives from the resolved
-	// Parent's type, not from Milestone. A follow-up task switches the
-	// grouping to read Milestone.
+	// its milestone queue — the ordering engine's second scope, whose
+	// grouping (resolvedMilestoneID -> membership.ResolvedMilestoneID) reads
+	// Milestone. No resolver passes ScopeMilestone yet; activating the scope
+	// for mutations is a follow-up task.
 	MilestoneOrder string `yaml:"milestone_order,omitempty" json:"-"`
 
 	// Area is the optional area path the nib belongs to — a plain path-valued

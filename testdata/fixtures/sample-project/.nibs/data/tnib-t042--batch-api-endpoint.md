@@ -1,6 +1,6 @@
 ---
 # tnib-t042
-version: 1
+version: 2
 title: Implement batch API endpoint
 status: todo
 type: task

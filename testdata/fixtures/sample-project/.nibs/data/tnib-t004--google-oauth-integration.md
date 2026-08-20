@@ -1,6 +1,6 @@
 ---
 # tnib-t004
-version: 1
+version: 2
 title: Google OAuth provider integration
 status: completed
 type: task

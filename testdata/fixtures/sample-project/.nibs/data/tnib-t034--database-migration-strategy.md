@@ -1,6 +1,6 @@
 ---
 # tnib-t034
-version: 1
+version: 2
 title: Write database migration strategy doc
 status: todo
 type: task

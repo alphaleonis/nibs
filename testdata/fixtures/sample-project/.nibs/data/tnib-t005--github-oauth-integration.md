@@ -1,6 +1,6 @@
 ---
 # tnib-t005
-version: 1
+version: 2
 title: GitHub OAuth provider integration
 status: in-progress
 type: task

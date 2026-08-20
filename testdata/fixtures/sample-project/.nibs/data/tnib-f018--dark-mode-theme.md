@@ -1,6 +1,6 @@
 ---
 # tnib-f018
-version: 1
+version: 2
 title: Dark mode theme support
 status: scrapped
 type: feature

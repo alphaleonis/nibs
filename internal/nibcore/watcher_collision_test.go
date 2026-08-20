@@ -11,7 +11,7 @@ import (
 	"github.com/fsnotify/fsnotify"
 )
 
-const twinNib = "---\nversion: 1\ntitle: Twin\nstatus: todo\n---\n\nBody.\n"
+const twinNib = "---\nversion: 2\ntitle: Twin\nstatus: todo\n---\n\nBody.\n"
 
 // feedBatch hands one debounce batch to a watching core and returns what the
 // batch wrote to the warn writer. The writer is attached AFTER setup so a

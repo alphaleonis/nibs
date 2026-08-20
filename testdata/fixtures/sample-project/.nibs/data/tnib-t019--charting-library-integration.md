@@ -1,6 +1,6 @@
 ---
 # tnib-t019
-version: 1
+version: 2
 title: Integrate charting library
 status: todo
 type: task

@@ -1,17 +1,18 @@
 ---
 # tnib-b002
-version: 1
+version: 2
 title: Session tokens not invalidated on password change
 status: todo
 type: bug
 priority: critical
 estimate: m
+tags:
+    - security
 created_at: 2026-03-15T10:00:00Z
 updated_at: 2026-03-20T09:00:00Z
 parent: tnib-e001
-tags:
-    - security
 order: e
+area: auth
 ---
 
 ## Steps to Reproduce

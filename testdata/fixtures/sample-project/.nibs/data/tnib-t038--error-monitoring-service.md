@@ -1,6 +1,6 @@
 ---
 # tnib-t038
-version: 1
+version: 2
 title: Set up error monitoring service
 status: completed
 type: task

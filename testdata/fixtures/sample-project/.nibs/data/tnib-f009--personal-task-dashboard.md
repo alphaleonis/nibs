@@ -1,6 +1,6 @@
 ---
 # tnib-f009
-version: 1
+version: 2
 title: Personal task dashboard
 status: todo
 type: feature

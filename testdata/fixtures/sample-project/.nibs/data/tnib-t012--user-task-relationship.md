@@ -1,6 +1,6 @@
 ---
 # tnib-t012
-version: 1
+version: 2
 title: Create user-task relationship model
 status: completed
 type: task

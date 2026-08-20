@@ -1,6 +1,6 @@
 ---
 # tnib-t041
-version: 1
+version: 2
 title: Design bulk selection UI
 status: todo
 type: task

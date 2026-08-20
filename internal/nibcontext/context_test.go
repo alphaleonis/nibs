@@ -25,6 +25,15 @@ func makeNib(id, typ, status, estimate, parent string) *nib.Nib {
 	}
 }
 
+// makeQueued is makeNib on the assignment axis: the nib is enqueued in a
+// milestone via its milestone: field rather than parented to it — the v2
+// shape milestone membership derives from.
+func makeQueued(id, typ, status, estimate, milestone string) *nib.Nib {
+	n := makeNib(id, typ, status, estimate, "")
+	n.Milestone = milestone
+	return n
+}
+
 func TestBuildSummary(t *testing.T) {
 	// Build a realistic nib tree:
 	//   milestone (m1)
@@ -45,15 +54,15 @@ func TestBuildSummary(t *testing.T) {
 
 	allNibs := []*nib.Nib{
 		m1,
-		makeNib("e1", "epic", "completed", "", "m1"),
+		makeQueued("e1", "epic", "completed", "", "m1"),
 		makeNib("t1", "task", "completed", "s", "e1"),
 		makeNib("t2", "task", "completed", "m", "e1"),
-		makeNib("e2", "epic", "in-progress", "", "m1"),
+		makeQueued("e2", "epic", "in-progress", "", "m1"),
 		makeNib("f1", "feature", "completed", "l", "e2"),
 		makeNib("t3", "task", "in-progress", "m", "e2"),
 		makeNib("b1", "bug", "todo", "s", "e2"),
 		makeNib("t4", "task", "todo", "xl", "e2"),
-		makeNib("e3", "epic", "todo", "", "m1"),
+		makeQueued("e3", "epic", "todo", "", "m1"),
 		makeNib("t5", "task", "todo", "m", "e3"),
 		makeNib("u1", "task", "in-progress", "m", ""),
 	}
@@ -146,7 +155,7 @@ func TestBuildSummary_ResearchIsLeafWork(t *testing.T) {
 	//     task-t1 (todo)            <-- should be next
 	allNibs := []*nib.Nib{
 		makeNib("m1", "milestone", "in-progress", "", ""),
-		makeNib("e1", "epic", "in-progress", "", "m1"),
+		makeQueued("e1", "epic", "in-progress", "", "m1"),
 		makeNib("r1", "research", "in-progress", "m", "e1"),
 		makeNib("r2", "research", "todo", "s", "e1"),
 		makeNib("t1", "task", "todo", "s", "e1"),
@@ -283,16 +292,30 @@ func makeNibWithOrder(id, typ, status, estimate, parent, order string) *nib.Nib 
 	return n
 }
 
-func TestBuildSummary_ActivePhaseByOrder(t *testing.T) {
-	// Two in-progress epics under milestone, different Order keys.
-	// ActivePhase should be the one with the lowest Order, regardless of input order.
+// makeQueuedWithOrder is makeQueued plus a MilestoneOrder key: an assignee's
+// position lives in the milestone's queue, and the phase sorting under a
+// milestone reads the queue key.
+func makeQueuedWithOrder(id, typ, status, estimate, milestone, milestoneOrder string) *nib.Nib {
+	n := makeQueued(id, typ, status, estimate, milestone)
+	n.MilestoneOrder = milestoneOrder
+	return n
+}
+
+func TestBuildSummary_ActivePhaseByQueueOrder(t *testing.T) {
+	// Two in-progress epics assigned to the milestone, different MilestoneOrder
+	// keys. ActivePhase should be the one first in the QUEUE, regardless of
+	// input order — and regardless of any parent-scope Order key, which
+	// positions an assignee among the structural roots, not in the queue.
 	m := makeNib("ms", "milestone", "in-progress", "", "")
 
-	// epic-b has lower order ("a1") than epic-a ("a2"), but appears LATER in the slice
+	// epic-b is first in the queue ("a1" < "a2") but appears later in the
+	// slice, and epic-a's LOWER root-scope Order must not outrank it.
+	epicA := makeQueuedWithOrder("epic-a", "epic", "in-progress", "", "ms", "a2")
+	epicA.Order = "a0"
 	allNibs := []*nib.Nib{
 		m,
-		makeNibWithOrder("epic-a", "epic", "in-progress", "", "ms", "a2"),
-		makeNibWithOrder("epic-b", "epic", "in-progress", "", "ms", "a1"),
+		epicA,
+		makeQueuedWithOrder("epic-b", "epic", "in-progress", "", "ms", "a1"),
 	}
 
 	sum := BuildSummary(allNibs, "ms", cfgForTest)
@@ -301,13 +324,39 @@ func TestBuildSummary_ActivePhaseByOrder(t *testing.T) {
 		t.Fatal("ActivePhase is nil")
 	}
 	if sum.ActivePhase.ID != "epic-b" {
-		t.Errorf("ActivePhase.ID = %q, want %q (lowest Order key)", sum.ActivePhase.ID, "epic-b")
+		t.Errorf("ActivePhase.ID = %q, want %q (lowest MilestoneOrder key)", sum.ActivePhase.ID, "epic-b")
+	}
+}
+
+// TestSortDirectMembers pins the container seam directly: a milestone's
+// members sort by the queue key (milestone_order), any other container's by
+// the decomposition key (order) — each ignoring the other axis's key.
+func TestSortDirectMembers(t *testing.T) {
+	first := makeNib("first", "task", "todo", "", "")
+	second := makeNib("second", "task", "todo", "", "")
+	// The keys disagree across the axes: first leads the queue but trails the
+	// decomposition, so each container type must produce the opposite order.
+	first.MilestoneOrder, first.Order = "a1", "a2"
+	second.MilestoneOrder, second.Order = "a2", "a1"
+
+	milestone := makeNib("ms", "milestone", "in-progress", "", "")
+	got := []*nib.Nib{second, first}
+	sortDirectMembers(milestone, got)
+	if got[0].ID != "first" || got[1].ID != "second" {
+		t.Errorf("milestone members = [%s, %s], want queue order [first, second]", got[0].ID, got[1].ID)
+	}
+
+	epic := makeNib("ep", "epic", "in-progress", "", "")
+	got = []*nib.Nib{first, second}
+	sortDirectMembers(epic, got)
+	if got[0].ID != "second" || got[1].ID != "first" {
+		t.Errorf("epic members = [%s, %s], want decomposition order [second, first]", got[0].ID, got[1].ID)
 	}
 }
 
 func TestBuildSummary_NextTasksSortedByOrder(t *testing.T) {
 	m := makeNib("ms", "milestone", "in-progress", "", "")
-	ep := makeNibWithOrder("ep", "epic", "in-progress", "", "ms", "a0")
+	ep := makeQueuedWithOrder("ep", "epic", "in-progress", "", "ms", "a0")
 
 	// Tasks under the active phase with Order keys in non-alphabetical input order
 	allNibs := []*nib.Nib{
@@ -333,7 +382,7 @@ func TestBuildSummary_NextTasksSortedByOrder(t *testing.T) {
 
 func TestBuildSummary_ActiveTasksSortedByOrder(t *testing.T) {
 	m := makeNib("ms", "milestone", "in-progress", "", "")
-	ep := makeNib("ep", "epic", "in-progress", "", "ms")
+	ep := makeQueued("ep", "epic", "in-progress", "", "ms")
 
 	// In-progress tasks under milestone, input order differs from Order
 	allNibs := []*nib.Nib{
@@ -364,7 +413,7 @@ func TestBuildSummary_JSONContract(t *testing.T) {
 	m := makeNib("ms", "milestone", "in-progress", "l", "")
 	m.Title = "My Milestone"
 	m.Body = "should not appear"
-	ep := makeNib("ep", "epic", "in-progress", "", "ms")
+	ep := makeQueued("ep", "epic", "in-progress", "", "ms")
 	task := makeNib("t1", "task", "in-progress", "l", "ep")
 	task.Title = "Active Task"
 	task.Body = "task body should not appear"
@@ -517,15 +566,15 @@ func TestBuildSummary_Overview(t *testing.T) {
 
 	allNibs := []*nib.Nib{
 		m1,
-		makeNibWithOrder("e1", "epic", "in-progress", "", "m1", "a1"),
+		makeQueuedWithOrder("e1", "epic", "in-progress", "", "m1", "a1"),
 		makeNib("t1", "task", "completed", "s", "e1"),
 		makeNib("t2", "task", "in-progress", "m", "e1"),
-		makeNibWithOrder("e2", "epic", "todo", "", "m1", "a2"),
+		makeQueuedWithOrder("e2", "epic", "todo", "", "m1", "a2"),
 		makeNib("t3", "task", "todo", "l", "e2"),
 		m2,
-		makeNib("t4", "task", "todo", "m", "m2"),
+		makeQueued("t4", "task", "todo", "m", "m2"),
 		m3,
-		makeNib("t5", "task", "completed", "s", "m3"),
+		makeQueued("t5", "task", "completed", "s", "m3"),
 		makeNib("u1", "task", "in-progress", "m", ""),
 	}
 
@@ -616,7 +665,7 @@ func TestContainerSummaryJSONFields(t *testing.T) {
 func TestBuildSummary_OverviewJSON(t *testing.T) {
 	// Verify the full Summary JSON in overview mode includes containers
 	m1 := makeNib("m1", "milestone", "in-progress", "", "")
-	t1 := makeNib("t1", "task", "todo", "s", "m1")
+	t1 := makeQueued("t1", "task", "todo", "s", "m1")
 
 	sum := BuildSummary([]*nib.Nib{m1, t1}, "", cfgForTest)
 

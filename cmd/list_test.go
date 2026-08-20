@@ -96,10 +96,10 @@ func TestListReadyFlagMutualExclusion(t *testing.T) {
 // the whole set in play and the two --is-blocked answers are exact complements.
 func isBlockedFixture() map[string]string {
 	return map[string]string{
-		"bk--blocker.md":     "---\nversion: 1\ntitle: Blocker\nstatus: todo\ntype: task\n---\n",
-		"b1--blocked-one.md": "---\nversion: 1\ntitle: BlockedOne\nstatus: todo\ntype: task\nblocked_by: [bk]\n---\n",
-		"b2--blocked-two.md": "---\nversion: 1\ntitle: BlockedTwo\nstatus: todo\ntype: task\nblocked_by: [bk]\n---\n",
-		"f1--free.md":        "---\nversion: 1\ntitle: Free\nstatus: todo\ntype: task\n---\n",
+		"bk--blocker.md":     "---\nversion: 2\ntitle: Blocker\nstatus: todo\ntype: task\n---\n",
+		"b1--blocked-one.md": "---\nversion: 2\ntitle: BlockedOne\nstatus: todo\ntype: task\nblocked_by: [bk]\n---\n",
+		"b2--blocked-two.md": "---\nversion: 2\ntitle: BlockedTwo\nstatus: todo\ntype: task\nblocked_by: [bk]\n---\n",
+		"f1--free.md":        "---\nversion: 2\ntitle: Free\nstatus: todo\ntype: task\n---\n",
 	}
 }
 
@@ -148,10 +148,10 @@ func TestListCommand_IsBlockedFlag(t *testing.T) {
 // answers is an exact complement.
 func presenceFixture() map[string]string {
 	return map[string]string{
-		"pa--parent-a.md": "---\nversion: 1\ntitle: ParentA\nstatus: todo\ntype: task\n---\n",
-		"ca--child-a.md":  "---\nversion: 1\ntitle: ChildA\nstatus: todo\ntype: task\nparent: pa\n---\n",
-		"cb--child-b.md":  "---\nversion: 1\ntitle: ChildB\nstatus: todo\ntype: task\nparent: pa\nblocked_by: [rb]\n---\n",
-		"rb--root-b.md":   "---\nversion: 1\ntitle: RootB\nstatus: todo\ntype: task\n---\n",
+		"pa--parent-a.md": "---\nversion: 2\ntitle: ParentA\nstatus: todo\ntype: task\n---\n",
+		"ca--child-a.md":  "---\nversion: 2\ntitle: ChildA\nstatus: todo\ntype: task\nparent: pa\n---\n",
+		"cb--child-b.md":  "---\nversion: 2\ntitle: ChildB\nstatus: todo\ntype: task\nparent: pa\nblocked_by: [rb]\n---\n",
+		"rb--root-b.md":   "---\nversion: 2\ntitle: RootB\nstatus: todo\ntype: task\n---\n",
 	}
 }
 
@@ -522,10 +522,10 @@ func setupListCobraTestWithPrefix(t *testing.T, prefix string, files map[string]
 // composition can be exercised.
 func mentionsFixture() map[string]string {
 	return map[string]string{
-		"a1--alpha.md": "---\nversion: 1\ntitle: Alpha\nstatus: todo\ntype: task\n---\n\nSee #b2 and #c3.\n",
-		"b2--beta.md":  "---\nversion: 1\ntitle: Beta\nstatus: todo\ntype: task\n---\n\nNo refs.\n",
-		"c3--gamma.md": "---\nversion: 1\ntitle: Gamma\nstatus: completed\ntype: task\n---\n\nBackref to #a1.\n",
-		"d4--delta.md": "---\nversion: 1\ntitle: Delta\nstatus: todo\ntype: task\n---\n\nAlso mentions #a1.\n",
+		"a1--alpha.md": "---\nversion: 2\ntitle: Alpha\nstatus: todo\ntype: task\n---\n\nSee #b2 and #c3.\n",
+		"b2--beta.md":  "---\nversion: 2\ntitle: Beta\nstatus: todo\ntype: task\n---\n\nNo refs.\n",
+		"c3--gamma.md": "---\nversion: 2\ntitle: Gamma\nstatus: completed\ntype: task\n---\n\nBackref to #a1.\n",
+		"d4--delta.md": "---\nversion: 2\ntitle: Delta\nstatus: todo\ntype: task\n---\n\nAlso mentions #a1.\n",
 	}
 }
 
@@ -758,8 +758,8 @@ func TestListCommand_UnknownFilterTargetIsNotFound(t *testing.T) {
 // for the projection/envelope tests. a1 = todo task, b2 = in-progress bug.
 func projectionFixture() map[string]string {
 	return map[string]string{
-		"a1--alpha.md": "---\nversion: 1\ntitle: Alpha\nstatus: todo\ntype: task\n---\n\nAlpha body.\n",
-		"b2--beta.md":  "---\nversion: 1\ntitle: Beta\nstatus: in-progress\ntype: bug\n---\n\nBeta body.\n",
+		"a1--alpha.md": "---\nversion: 2\ntitle: Alpha\nstatus: todo\ntype: task\n---\n\nAlpha body.\n",
+		"b2--beta.md":  "---\nversion: 2\ntitle: Beta\nstatus: in-progress\ntype: bug\n---\n\nBeta body.\n",
 	}
 }
 
@@ -796,10 +796,10 @@ func runListCmd(t *testing.T, nibsDir string, args ...string) (string, error) {
 // only a predicate narrower than IsClosedStatus tells them apart.
 func deferredBlockerFixture() map[string]string {
 	return map[string]string{
-		"bd--blocker-done.md":     "---\nversion: 1\ntitle: BlockerDone\nstatus: completed\ntype: task\n---\n",
-		"bp--blocker-deferred.md": "---\nversion: 1\ntitle: BlockerDeferred\nstatus: deferred\ntype: task\n---\n",
-		"dd--dep-of-done.md":      "---\nversion: 1\ntitle: DepOfDone\nstatus: todo\ntype: task\nblocked_by: [bd]\n---\n",
-		"dp--dep-of-deferred.md":  "---\nversion: 1\ntitle: DepOfDeferred\nstatus: todo\ntype: task\nblocked_by: [bp]\n---\n",
+		"bd--blocker-done.md":     "---\nversion: 2\ntitle: BlockerDone\nstatus: completed\ntype: task\n---\n",
+		"bp--blocker-deferred.md": "---\nversion: 2\ntitle: BlockerDeferred\nstatus: deferred\ntype: task\n---\n",
+		"dd--dep-of-done.md":      "---\nversion: 2\ntitle: DepOfDone\nstatus: todo\ntype: task\nblocked_by: [bd]\n---\n",
+		"dp--dep-of-deferred.md":  "---\nversion: 2\ntitle: DepOfDeferred\nstatus: todo\ntype: task\nblocked_by: [bp]\n---\n",
 	}
 }
 
@@ -939,7 +939,7 @@ func readyAgreementFrontMatter(title, status, extra string) string {
 	if status != "" {
 		line = fmt.Sprintf("status: %s\n", status)
 	}
-	return fmt.Sprintf("---\nversion: 1\ntitle: %s\n%stype: task\n%s---\n", title, line, extra)
+	return fmt.Sprintf("---\nversion: 2\ntitle: %s\n%stype: task\n%s---\n", title, line, extra)
 }
 
 // TestReadyProjectionAndFilterAgree is the agreement guard between the two
@@ -970,7 +970,7 @@ func TestReadyProjectionAndFilterAgree(t *testing.T) {
 	// short spelling.
 	const blockerID = "nibs-bkr"
 	fixture := map[string]string{
-		blockerID + "--blocker.md": "---\nversion: 1\ntitle: Blocker\nstatus: todo\ntype: task\n---\n",
+		blockerID + "--blocker.md": "---\nversion: 2\ntitle: Blocker\nstatus: todo\ntype: task\n---\n",
 	}
 	unblockedID := make([]string, len(readyAgreementCases))
 	blockedID := make([]string, len(readyAgreementCases))
@@ -1075,11 +1075,11 @@ func TestListCommand_ReadyStatusFiltering(t *testing.T) {
 	// nostatus's front matter omits `status:` entirely, so it carries "" — a
 	// status no group and no exclusion list names.
 	fixture := map[string]string{
-		"td--todo.md":      "---\nversion: 1\ntitle: Todo\nstatus: todo\ntype: task\n---\n",
-		"dr--draft.md":     "---\nversion: 1\ntitle: Draft\nstatus: draft\ntype: task\n---\n",
-		"ip--in-prog.md":   "---\nversion: 1\ntitle: InProgress\nstatus: in-progress\ntype: task\n---\n",
-		"cm--completed.md": "---\nversion: 1\ntitle: Completed\nstatus: completed\ntype: task\n---\n",
-		"ns--no-status.md": "---\nversion: 1\ntitle: NoStatus\ntype: task\n---\n",
+		"td--todo.md":      "---\nversion: 2\ntitle: Todo\nstatus: todo\ntype: task\n---\n",
+		"dr--draft.md":     "---\nversion: 2\ntitle: Draft\nstatus: draft\ntype: task\n---\n",
+		"ip--in-prog.md":   "---\nversion: 2\ntitle: InProgress\nstatus: in-progress\ntype: task\n---\n",
+		"cm--completed.md": "---\nversion: 2\ntitle: Completed\nstatus: completed\ntype: task\n---\n",
+		"ns--no-status.md": "---\nversion: 2\ntitle: NoStatus\ntype: task\n---\n",
 	}
 
 	tests := []struct {
@@ -1178,8 +1178,8 @@ func TestListCommand_ReadyRequiresDeclaredStartability(t *testing.T) {
 	}
 
 	fixture := map[string]string{
-		"td--todo.md":   "---\nversion: 1\ntitle: Todo\nstatus: todo\ntype: task\n---\n",
-		"pk--parked.md": "---\nversion: 1\ntitle: Parked\nstatus: parked\ntype: task\n---\n",
+		"td--todo.md":   "---\nversion: 2\ntitle: Todo\nstatus: todo\ntype: task\n---\n",
+		"pk--parked.md": "---\nversion: 2\ntitle: Parked\nstatus: parked\ntype: task\n---\n",
 	}
 	nibsDir := setupListCobraTest(t, fixture)
 
@@ -1270,7 +1270,7 @@ func TestReadyFlagUsageStatesTheStatusesReadyActuallyReturns(t *testing.T) {
 	idOf := map[string]string{}
 	for i, status := range declared {
 		id := fmt.Sprintf("s%d", i)
-		fixture[id+"--nib.md"] = fmt.Sprintf("---\nversion: 1\ntitle: S\nstatus: %s\ntype: task\n---\n", status)
+		fixture[id+"--nib.md"] = fmt.Sprintf("---\nversion: 2\ntitle: S\nstatus: %s\ntype: task\n---\n", status)
 		idOf[id] = status
 	}
 	nibsDir := setupListCobraTest(t, fixture)

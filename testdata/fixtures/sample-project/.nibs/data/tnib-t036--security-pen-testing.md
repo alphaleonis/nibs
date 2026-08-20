@@ -1,6 +1,6 @@
 ---
 # tnib-t036
-version: 1
+version: 2
 title: Security penetration testing
 status: todo
 type: task

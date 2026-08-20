@@ -1,6 +1,6 @@
 ---
 # tnib-t011
-version: 1
+version: 2
 title: Add input validation and sanitization
 status: completed
 type: task

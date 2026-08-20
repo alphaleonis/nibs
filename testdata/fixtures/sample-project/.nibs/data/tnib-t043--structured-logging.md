@@ -1,6 +1,6 @@
 ---
 # tnib-t043
-version: 1
+version: 2
 title: Add structured logging
 status: completed
 type: task

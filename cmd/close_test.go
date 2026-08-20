@@ -97,7 +97,7 @@ func readNibFile(t *testing.T, nibsDir, filename string) string {
 
 func TestCloseBasic(t *testing.T) {
 	nibsDir := setupCloseTest(t, map[string]string{
-		"abc-1--my-task.md": "---\nversion: 1\ntitle: My Task\nstatus: in-progress\ntype: task\n---\n\nSome body content.\n",
+		"abc-1--my-task.md": "---\nversion: 2\ntitle: My Task\nstatus: in-progress\ntype: task\n---\n\nSome body content.\n",
 	})
 
 	withStdin(t, "All done\n")
@@ -119,7 +119,7 @@ func TestCloseBasic(t *testing.T) {
 
 func TestCloseSummaryAppended(t *testing.T) {
 	nibsDir := setupCloseTest(t, map[string]string{
-		"sum-1--my-task.md": "---\nversion: 1\ntitle: My Task\nstatus: in-progress\ntype: task\n---\n\nExisting body.\n",
+		"sum-1--my-task.md": "---\nversion: 2\ntitle: My Task\nstatus: in-progress\ntype: task\n---\n\nExisting body.\n",
 	})
 
 	withStdin(t, "Implemented the feature and added tests.\n")
@@ -147,9 +147,9 @@ func TestCloseSummaryAppended(t *testing.T) {
 
 func TestCloseFailsWithIncompleteChildren(t *testing.T) {
 	nibsDir := setupCloseTest(t, map[string]string{
-		"par-1--parent.md":    "---\nversion: 1\ntitle: Parent Epic\nstatus: in-progress\ntype: epic\n---\n\nEpic body.\n",
-		"ch-1--child-done.md": "---\nversion: 1\ntitle: Child Done\nstatus: completed\ntype: task\nparent: par-1\n---\n\nDone.\n",
-		"ch-2--child-wip.md":  "---\nversion: 1\ntitle: Child WIP\nstatus: in-progress\ntype: task\nparent: par-1\n---\n\nStill working.\n",
+		"par-1--parent.md":    "---\nversion: 2\ntitle: Parent Epic\nstatus: in-progress\ntype: epic\n---\n\nEpic body.\n",
+		"ch-1--child-done.md": "---\nversion: 2\ntitle: Child Done\nstatus: completed\ntype: task\nparent: par-1\n---\n\nDone.\n",
+		"ch-2--child-wip.md":  "---\nversion: 2\ntitle: Child WIP\nstatus: in-progress\ntype: task\nparent: par-1\n---\n\nStill working.\n",
 	})
 
 	withStdin(t, "Done\n")
@@ -172,8 +172,8 @@ func TestCloseFailsWithIncompleteChildren(t *testing.T) {
 
 func TestCloseForceWithIncompleteChildren(t *testing.T) {
 	nibsDir := setupCloseTest(t, map[string]string{
-		"frc-1--parent.md": "---\nversion: 1\ntitle: Parent\nstatus: in-progress\ntype: epic\n---\n\nBody.\n",
-		"frc-2--child.md":  "---\nversion: 1\ntitle: Child\nstatus: todo\ntype: task\nparent: frc-1\n---\n\nTodo.\n",
+		"frc-1--parent.md": "---\nversion: 2\ntitle: Parent\nstatus: in-progress\ntype: epic\n---\n\nBody.\n",
+		"frc-2--child.md":  "---\nversion: 2\ntitle: Child\nstatus: todo\ntype: task\nparent: frc-1\n---\n\nTodo.\n",
 	})
 
 	withStdin(t, "Forced close\n")
@@ -195,8 +195,8 @@ func TestCloseForceWithIncompleteChildren(t *testing.T) {
 
 func TestCloseUpdatesParentCurrentFocus(t *testing.T) {
 	nibsDir := setupCloseTest(t, map[string]string{
-		"ms-1--milestone.md": "---\nversion: 1\ntitle: Milestone\nstatus: in-progress\ntype: milestone\ncreated_at: 2026-01-02T03:04:05Z\nupdated_at: 2026-01-02T03:04:05Z\n---\n\n## Current Focus\n\nWorking on phase 1.\n",
-		"ph-1--phase.md":     "---\nversion: 1\ntitle: Phase 1\nstatus: in-progress\ntype: epic\nparent: ms-1\n---\n\nPhase 1 body.\n",
+		"ms-1--milestone.md": "---\nversion: 2\ntitle: Milestone\nstatus: in-progress\ntype: milestone\ncreated_at: 2026-01-02T03:04:05Z\nupdated_at: 2026-01-02T03:04:05Z\n---\n\n## Current Focus\n\nWorking on phase 1.\n",
+		"ph-1--phase.md":     "---\nversion: 2\ntitle: Phase 1\nstatus: in-progress\ntype: epic\nparent: ms-1\n---\n\nPhase 1 body.\n",
 	})
 
 	withStdin(t, "Phase 1 completed successfully.\n")
@@ -217,8 +217,8 @@ func TestCloseUpdatesParentCurrentFocus(t *testing.T) {
 
 func TestCloseUpdatesParentKeyDecisions(t *testing.T) {
 	nibsDir := setupCloseTest(t, map[string]string{
-		"ms-2--milestone.md": "---\nversion: 1\ntitle: Milestone\nstatus: in-progress\ntype: milestone\ncreated_at: 2026-01-02T03:04:05Z\nupdated_at: 2026-01-02T03:04:05Z\n---\n\n## Key Decisions\n\n- Previous decision\n",
-		"ph-2--phase.md":     "---\nversion: 1\ntitle: Phase 2\nstatus: in-progress\ntype: epic\nparent: ms-2\n---\n\n## Key Decisions\n\n- Used GraphQL instead of REST\n- Chose table-driven tests\n",
+		"ms-2--milestone.md": "---\nversion: 2\ntitle: Milestone\nstatus: in-progress\ntype: milestone\ncreated_at: 2026-01-02T03:04:05Z\nupdated_at: 2026-01-02T03:04:05Z\n---\n\n## Key Decisions\n\n- Previous decision\n",
+		"ph-2--phase.md":     "---\nversion: 2\ntitle: Phase 2\nstatus: in-progress\ntype: epic\nparent: ms-2\n---\n\n## Key Decisions\n\n- Used GraphQL instead of REST\n- Chose table-driven tests\n",
 	})
 
 	withStdin(t, "Phase 2 done.\n")
@@ -243,7 +243,7 @@ func TestCloseUpdatesParentKeyDecisions(t *testing.T) {
 
 func TestCloseNoParent(t *testing.T) {
 	nibsDir := setupCloseTest(t, map[string]string{
-		"nop-1--solo.md": "---\nversion: 1\ntitle: Solo Task\nstatus: in-progress\ntype: task\n---\n\nJust a task.\n",
+		"nop-1--solo.md": "---\nversion: 2\ntitle: Solo Task\nstatus: in-progress\ntype: task\n---\n\nJust a task.\n",
 	})
 
 	withStdin(t, "Done without parent\n")
@@ -264,8 +264,8 @@ func TestCloseNoParent(t *testing.T) {
 
 func TestCloseParentMissingSections(t *testing.T) {
 	nibsDir := setupCloseTest(t, map[string]string{
-		"ms-3--milestone.md": "---\nversion: 1\ntitle: Milestone\nstatus: in-progress\ntype: milestone\ncreated_at: 2026-01-02T03:04:05Z\nupdated_at: 2026-01-02T03:04:05Z\n---\n\nJust a goal.\n",
-		"ph-3--phase.md":     "---\nversion: 1\ntitle: Phase 3\nstatus: in-progress\ntype: epic\nparent: ms-3\n---\n\n## Key Decisions\n\n- Chose mdsection for parsing\n",
+		"ms-3--milestone.md": "---\nversion: 2\ntitle: Milestone\nstatus: in-progress\ntype: milestone\ncreated_at: 2026-01-02T03:04:05Z\nupdated_at: 2026-01-02T03:04:05Z\n---\n\nJust a goal.\n",
+		"ph-3--phase.md":     "---\nversion: 2\ntitle: Phase 3\nstatus: in-progress\ntype: epic\nparent: ms-3\n---\n\n## Key Decisions\n\n- Chose mdsection for parsing\n",
 	})
 
 	withStdin(t, "Phase 3 completed.\n")
@@ -297,7 +297,7 @@ func TestCloseParentMissingSections(t *testing.T) {
 // the entries kept afterwards are asserted here too, not left to a sibling test.
 func TestCloseOnAnAlreadyClosedNibChangesTheReason(t *testing.T) {
 	nibsDir := setupCloseTest(t, map[string]string{
-		"done-1--finished.md": "---\nversion: 1\ntitle: Finished\nstatus: completed\ntype: task\n---\n\n## Summary\n\n**Completed 2026-07-20** — shipped it.\n",
+		"done-1--finished.md": "---\nversion: 2\ntitle: Finished\nstatus: completed\ntype: task\n---\n\n## Summary\n\n**Completed 2026-07-20** — shipped it.\n",
 	})
 	withCloseNow(t, time.Date(2026, 7, 27, 9, 0, 0, 0, time.UTC))
 
@@ -325,7 +325,7 @@ func TestCloseOnAnAlreadyClosedNibChangesTheReason(t *testing.T) {
 
 func TestCloseJSONOutput(t *testing.T) {
 	nibsDir := setupCloseTest(t, map[string]string{
-		"json-1--task.md": "---\nversion: 1\ntitle: JSON Task\nstatus: in-progress\ntype: task\n---\n\nBody.\n",
+		"json-1--task.md": "---\nversion: 2\ntitle: JSON Task\nstatus: in-progress\ntype: task\n---\n\nBody.\n",
 	})
 
 	withStdin(t, "Done\n")
@@ -349,7 +349,7 @@ func TestCloseJSONOutput(t *testing.T) {
 
 func TestCloseSummaryRequired(t *testing.T) {
 	nibsDir := setupCloseTest(t, map[string]string{
-		"req-1--task.md": "---\nversion: 1\ntitle: Task\nstatus: todo\ntype: task\n---\n\nBody.\n",
+		"req-1--task.md": "---\nversion: 2\ntitle: Task\nstatus: todo\ntype: task\n---\n\nBody.\n",
 	})
 
 	rootCmd.SetArgs([]string{
@@ -368,9 +368,9 @@ func TestCloseSummaryRequired(t *testing.T) {
 
 func TestCloseSucceedsWithAllChildrenCompleted(t *testing.T) {
 	nibsDir := setupCloseTest(t, map[string]string{
-		"par-2--parent.md": "---\nversion: 1\ntitle: Parent Epic\nstatus: in-progress\ntype: epic\n---\n\nEpic body.\n",
-		"ch-3--child-a.md": "---\nversion: 1\ntitle: Child A\nstatus: completed\ntype: task\nparent: par-2\n---\n\nDone.\n",
-		"ch-4--child-b.md": "---\nversion: 1\ntitle: Child B\nstatus: scrapped\ntype: task\nparent: par-2\n---\n\nScrapped.\n",
+		"par-2--parent.md": "---\nversion: 2\ntitle: Parent Epic\nstatus: in-progress\ntype: epic\n---\n\nEpic body.\n",
+		"ch-3--child-a.md": "---\nversion: 2\ntitle: Child A\nstatus: completed\ntype: task\nparent: par-2\n---\n\nDone.\n",
+		"ch-4--child-b.md": "---\nversion: 2\ntitle: Child B\nstatus: scrapped\ntype: task\nparent: par-2\n---\n\nScrapped.\n",
 	})
 
 	withStdin(t, "All children resolved\n")
@@ -408,7 +408,7 @@ func TestCloseAsSetsTheNamedClosedStatus(t *testing.T) {
 	for _, status := range closed {
 		t.Run(status, func(t *testing.T) {
 			nibsDir := setupCloseTest(t, map[string]string{
-				"as-1--my-task.md": "---\nversion: 1\ntitle: My Task\nstatus: in-progress\ntype: task\n---\n\nBody.\n",
+				"as-1--my-task.md": "---\nversion: 2\ntitle: My Task\nstatus: in-progress\ntype: task\n---\n\nBody.\n",
 			})
 
 			withStdin(t, "Closing as "+status+".\n")
@@ -448,7 +448,7 @@ func TestCloseRejectsAnOpenStatusAs(t *testing.T) {
 	for _, status := range open {
 		t.Run(status, func(t *testing.T) {
 			nibsDir := setupCloseTest(t, map[string]string{
-				"bad-1--my-task.md": "---\nversion: 1\ntitle: My Task\nstatus: in-progress\ntype: task\n---\n\nBody.\n",
+				"bad-1--my-task.md": "---\nversion: 2\ntitle: My Task\nstatus: in-progress\ntype: task\n---\n\nBody.\n",
 			})
 
 			// Supply the summary so --as is the only thing wrong with this
@@ -502,7 +502,7 @@ func TestCloseAsFollowsTheClosedFlag(t *testing.T) {
 	})
 
 	nibsDir := setupCloseTest(t, map[string]string{
-		"drv-1--my-task.md": "---\nversion: 1\ntitle: My Task\nstatus: in-progress\ntype: task\n---\n\nBody.\n",
+		"drv-1--my-task.md": "---\nversion: 2\ntitle: My Task\nstatus: in-progress\ntype: task\n---\n\nBody.\n",
 	})
 
 	withStdin(t, "Walked away from it.\n")
@@ -529,7 +529,7 @@ func TestCloseAsFollowsTheClosedFlag(t *testing.T) {
 // drift together and agree about the wrong thing.
 func TestCloseSummaryEntryIsStampedWithReasonAndDate(t *testing.T) {
 	nibsDir := setupCloseTest(t, map[string]string{
-		"stamp-1--task.md": "---\nversion: 1\ntitle: Task\nstatus: in-progress\ntype: task\n---\n\nExisting body.\n",
+		"stamp-1--task.md": "---\nversion: 2\ntitle: Task\nstatus: in-progress\ntype: task\n---\n\nExisting body.\n",
 	})
 	withCloseNow(t, time.Date(2026, 7, 27, 14, 30, 0, 0, time.UTC))
 
@@ -562,7 +562,7 @@ func TestCloseSummaryEntryIsStampedWithReasonAndDate(t *testing.T) {
 // fails only here, because only here is there an earlier rationale to destroy.
 func TestCloseSummaryAccruesAcrossReasons(t *testing.T) {
 	nibsDir := setupCloseTest(t, map[string]string{
-		"acc-1--task.md": "---\nversion: 1\ntitle: Task\nstatus: in-progress\ntype: task\n---\n\nBody.\n",
+		"acc-1--task.md": "---\nversion: 2\ntitle: Task\nstatus: in-progress\ntype: task\n---\n\nBody.\n",
 	})
 	setNow := withCloseNow(t, time.Date(2026, 7, 27, 0, 0, 0, 0, time.UTC))
 
@@ -614,7 +614,7 @@ func TestCloseSummaryAccruesAcrossReasons(t *testing.T) {
 // a no-op to be swallowed, so it appends a second entry like any other close.
 func TestCloseSummaryAccruesUnderTheSameReason(t *testing.T) {
 	nibsDir := setupCloseTest(t, map[string]string{
-		"same-1--task.md": "---\nversion: 1\ntitle: Task\nstatus: in-progress\ntype: task\n---\n\nBody.\n",
+		"same-1--task.md": "---\nversion: 2\ntitle: Task\nstatus: in-progress\ntype: task\n---\n\nBody.\n",
 	})
 	setNow := withCloseNow(t, time.Date(2026, 7, 27, 0, 0, 0, 0, time.UTC))
 
@@ -664,7 +664,7 @@ func TestCloseReasonStampFollowsTheStatusVocabulary(t *testing.T) {
 	})
 
 	nibsDir := setupCloseTest(t, map[string]string{
-		"stmp-1--task.md": "---\nversion: 1\ntitle: Task\nstatus: in-progress\ntype: task\n---\n\nBody.\n",
+		"stmp-1--task.md": "---\nversion: 2\ntitle: Task\nstatus: in-progress\ntype: task\n---\n\nBody.\n",
 	})
 	withCloseNow(t, time.Date(2026, 8, 2, 0, 0, 0, 0, time.UTC))
 
@@ -708,8 +708,8 @@ func TestCloseParentPropagationDependsOnTheReason(t *testing.T) {
 	for _, status := range closed {
 		t.Run(status, func(t *testing.T) {
 			nibsDir := setupCloseTest(t, map[string]string{
-				"pp-ms--milestone.md": "---\nversion: 1\ntitle: Milestone\nstatus: in-progress\ntype: milestone\ncreated_at: 2026-01-02T03:04:05Z\nupdated_at: 2026-01-02T03:04:05Z\n---\n\n## Current Focus\n\n" + originalFocus + "\n\n## Key Decisions\n\n- Previous decision\n",
-				"pp-ch--child.md":     "---\nversion: 1\ntitle: Child\nstatus: in-progress\ntype: epic\nparent: pp-ms\n---\n\n## Key Decisions\n\n- Chose mdsection for parsing\n",
+				"pp-ms--milestone.md": "---\nversion: 2\ntitle: Milestone\nstatus: in-progress\ntype: milestone\ncreated_at: 2026-01-02T03:04:05Z\nupdated_at: 2026-01-02T03:04:05Z\n---\n\n## Current Focus\n\n" + originalFocus + "\n\n## Key Decisions\n\n- Previous decision\n",
+				"pp-ch--child.md":     "---\nversion: 2\ntitle: Child\nstatus: in-progress\ntype: epic\nparent: pp-ms\n---\n\n## Key Decisions\n\n- Chose mdsection for parsing\n",
 			})
 
 			withStdin(t, "the child is off the board\n")
@@ -760,8 +760,8 @@ func TestCloseParentPropagationDependsOnTheReason(t *testing.T) {
 // would also pass a merge that happened to skip the second write.
 func TestCloseMergesEachChildDecisionIntoTheParentOnce(t *testing.T) {
 	nibsDir := setupCloseTest(t, map[string]string{
-		"idm-ms--milestone.md": "---\nversion: 1\ntitle: Milestone\nstatus: in-progress\ntype: milestone\ncreated_at: 2026-01-02T03:04:05Z\nupdated_at: 2026-01-02T03:04:05Z\n---\n\n## Key Decisions\n\n- Previous decision\n",
-		"idm-ch--child.md":     "---\nversion: 1\ntitle: Child\nstatus: in-progress\ntype: epic\nparent: idm-ms\n---\n\n## Key Decisions\n\n- Chose mdsection for parsing\n",
+		"idm-ms--milestone.md": "---\nversion: 2\ntitle: Milestone\nstatus: in-progress\ntype: milestone\ncreated_at: 2026-01-02T03:04:05Z\nupdated_at: 2026-01-02T03:04:05Z\n---\n\n## Key Decisions\n\n- Previous decision\n",
+		"idm-ch--child.md":     "---\nversion: 2\ntitle: Child\nstatus: in-progress\ntype: epic\nparent: idm-ms\n---\n\n## Key Decisions\n\n- Chose mdsection for parsing\n",
 	})
 	setNow := withCloseNow(t, time.Date(2026, 7, 27, 0, 0, 0, 0, time.UTC))
 
@@ -794,8 +794,8 @@ func TestCloseMergesEachChildDecisionIntoTheParentOnce(t *testing.T) {
 // comparison is per line rather than over the section as a whole.
 func TestCloseMergesADecisionTheChildGainedBetweenCloses(t *testing.T) {
 	nibsDir := setupCloseTest(t, map[string]string{
-		"gan-ms--milestone.md": "---\nversion: 1\ntitle: Milestone\nstatus: in-progress\ntype: milestone\ncreated_at: 2026-01-02T03:04:05Z\nupdated_at: 2026-01-02T03:04:05Z\n---\n\n## Key Decisions\n\n- Previous decision\n",
-		"gan-ch--child.md":     "---\nversion: 1\ntitle: Child\nstatus: in-progress\ntype: epic\nparent: gan-ms\n---\n\n## Key Decisions\n\n- Chose mdsection for parsing\n",
+		"gan-ms--milestone.md": "---\nversion: 2\ntitle: Milestone\nstatus: in-progress\ntype: milestone\ncreated_at: 2026-01-02T03:04:05Z\nupdated_at: 2026-01-02T03:04:05Z\n---\n\n## Key Decisions\n\n- Previous decision\n",
+		"gan-ch--child.md":     "---\nversion: 2\ntitle: Child\nstatus: in-progress\ntype: epic\nparent: gan-ms\n---\n\n## Key Decisions\n\n- Chose mdsection for parsing\n",
 	})
 	setNow := withCloseNow(t, time.Date(2026, 7, 27, 0, 0, 0, 0, time.UTC))
 
@@ -890,7 +890,7 @@ func TestCloseSummaryEntryDatesInUTC(t *testing.T) {
 // stray blank line standing in for the record that was never written.
 func TestCloseIntoAnEmptySummaryStub(t *testing.T) {
 	nibsDir := setupCloseTest(t, map[string]string{
-		"stub-1--task.md": "---\nversion: 1\ntitle: Task\nstatus: in-progress\ntype: task\n---\n\nBody.\n\n## Summary\n",
+		"stub-1--task.md": "---\nversion: 2\ntitle: Task\nstatus: in-progress\ntype: task\n---\n\nBody.\n\n## Summary\n",
 	})
 	withCloseNow(t, time.Date(2026, 7, 27, 0, 0, 0, 0, time.UTC))
 

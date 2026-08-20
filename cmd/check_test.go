@@ -16,7 +16,7 @@ import (
 // Fixture bodies for the check tests. Ids come from the filenames.
 const (
 	chkValidNib = `---
-version: 1
+version: 2
 title: Good
 status: todo
 type: task
@@ -29,7 +29,7 @@ Body.
 	// Duplicate MODELED front-matter key — yaml.v3 hard-errors on it, which is
 	// the real-world shape of an unparseable nib (bad merge, hand-edit).
 	chkUnparseableNib = `---
-version: 1
+version: 2
 title: First Title
 title: Second Title
 status: todo
@@ -42,7 +42,7 @@ Body.
 	// repair. Present so the --fix assertions distinguish "left alone because
 	// nothing was fixable" from "left alone because it is not auto-fixable".
 	chkBrokenLinkNib = `---
-version: 1
+version: 2
 title: Dangling parent
 status: todo
 type: task
@@ -57,7 +57,7 @@ Body.
 	// underscore), so no filter ever sees it — the near-miss finding is what
 	// makes it visible.
 	chkNearMissKeyNib = `---
-version: 1
+version: 2
 title: Near miss
 status: todo
 type: task
@@ -70,7 +70,7 @@ Body.
 
 	// A legitimately foreign Extra key: unknown, but a near miss of nothing.
 	chkForeignKeyNib = `---
-version: 1
+version: 2
 title: Foreign key
 status: todo
 type: task
@@ -162,7 +162,7 @@ func loadDiagnosticFiles() map[string]string {
 func TestCheckReportsInvalidEnumValues(t *testing.T) {
 	files := map[string]string{
 		"chk-good1--ok.md": chkValidNib,
-		"chk-leg1--old.md": "---\nversion: 1\ntitle: Legacy\nstatus: todo\ntype: task\npriority: deferred\n---\n\nBody.\n",
+		"chk-leg1--old.md": "---\nversion: 2\ntitle: Legacy\nstatus: todo\ntype: task\npriority: deferred\n---\n\nBody.\n",
 	}
 
 	t.Run("text report names the nib and counts the issue", func(t *testing.T) {
@@ -414,7 +414,7 @@ func TestCheckLegacyValueRemediation(t *testing.T) {
 
 	t.Run("plain-scalar legacy value keeps the migrate pointer", func(t *testing.T) {
 		out := runCheckOn(t, map[string]string{
-			"chk-leg1--old.md": "---\nversion: 1\ntitle: Legacy\nstatus: todo\npriority: deferred\n---\n\nBody.\n",
+			"chk-leg1--old.md": "---\nversion: 2\ntitle: Legacy\nstatus: todo\npriority: deferred\n---\n\nBody.\n",
 		})
 		if !strings.Contains(out, "nibs migrate") {
 			t.Errorf("plain-scalar deferred is migrate-fixable; the pointer must stay, got:\n%s", out)
@@ -426,7 +426,7 @@ func TestCheckLegacyValueRemediation(t *testing.T) {
 		// migration header scan reads the literal `>-` — the gate never fires
 		// and migrate reports nothing pending.
 		app, nibsDir := setupCheckTest(t, map[string]string{
-			"chk-fold1--folded.md": "---\nversion: 1\ntitle: Folded\nstatus: todo\npriority: >-\n    deferred\n---\n\nBody.\n",
+			"chk-fold1--folded.md": "---\nversion: 2\ntitle: Folded\nstatus: todo\npriority: >-\n    deferred\n---\n\nBody.\n",
 		})
 		// The circularity evidence: the scan genuinely cannot see it.
 		if got := pendingNames(t, nibsDir); len(got) != 0 {
@@ -447,7 +447,7 @@ func TestCheckLegacyValueRemediation(t *testing.T) {
 
 	t.Run("unknown value gets no migrate pointer", func(t *testing.T) {
 		out := runCheckOn(t, map[string]string{
-			"chk-odd1--odd.md": "---\nversion: 1\ntitle: Odd\nstatus: todo\npriority: made-up-nonsense\n---\n\nBody.\n",
+			"chk-odd1--odd.md": "---\nversion: 2\ntitle: Odd\nstatus: todo\npriority: made-up-nonsense\n---\n\nBody.\n",
 		})
 		if strings.Contains(out, "nibs migrate") {
 			t.Errorf("no migration step rewrites an unknown value; the pointer must go, got:\n%s", out)
@@ -656,7 +656,7 @@ func TestCheckCleanStoreReportsNoLoadDiagnostics(t *testing.T) {
 // present on disk and merely fails to parse, so this link is unresolvable for
 // now — NOT broken — and --fix must leave it alone.
 const chkLinkToSkippedNib = `---
-version: 1
+version: 2
 title: Links to the skipped nib
 status: todo
 type: task

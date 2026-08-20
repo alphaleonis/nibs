@@ -83,7 +83,7 @@ func BuildSummaryWithView(allNibs []*nib.Nib, view *membership.View, rootID stri
 				NibRef: *newNibRef(ms),
 			}
 
-			// Active phase: first in-progress epic child
+			// Active phase: first in-progress epic member, in queue order
 			var phaseCandidates []*nib.Nib
 			for _, n := range view.DirectMembers(ms.ID) {
 				// Classification check — exempt: empty type is never milestone/epic.
@@ -91,7 +91,7 @@ func BuildSummaryWithView(allNibs []*nib.Nib, view *membership.View, rootID stri
 					phaseCandidates = append(phaseCandidates, n)
 				}
 			}
-			nib.SortByOrder(phaseCandidates)
+			nib.SortByMilestoneOrder(phaseCandidates)
 			if len(phaseCandidates) > 0 {
 				cs.ActivePhase = newNibRef(phaseCandidates[0])
 			}
@@ -113,8 +113,9 @@ func BuildSummaryWithView(allNibs []*nib.Nib, view *membership.View, rootID stri
 	// Collect all descendants of the root nib
 	descendants := view.Members(rootID)
 
-	// Active phase: in-progress epic that is a direct child of the root.
-	// Sort candidates by Order so the selection is deterministic.
+	// Active phase: in-progress epic that is a direct member of the root.
+	// Sort candidates by the root's member-order key so the selection is
+	// deterministic (see sortDirectMembers).
 	var phaseCandidates []*nib.Nib
 	for _, n := range view.DirectMembers(rootID) {
 		// Classification check — exempt: empty type is never milestone/epic.
@@ -122,7 +123,7 @@ func BuildSummaryWithView(allNibs []*nib.Nib, view *membership.View, rootID stri
 			phaseCandidates = append(phaseCandidates, n)
 		}
 	}
-	nib.SortByOrder(phaseCandidates)
+	sortDirectMembers(root, phaseCandidates)
 	if len(phaseCandidates) > 0 {
 		sum.ActivePhase = newNibRef(phaseCandidates[0])
 	}
@@ -146,6 +147,18 @@ func BuildSummaryWithView(allNibs []*nib.Nib, view *membership.View, rootID stri
 	}
 
 	return sum
+}
+
+// sortDirectMembers orders a container's direct members by the key that
+// positions them in THAT container: a milestone's members sit in its queue
+// (milestone_order), every other container's in its decomposition (order).
+// Members lacking the key fall to the shared title tiebreak.
+func sortDirectMembers(container *nib.Nib, members []*nib.Nib) {
+	if container.EffectiveType() == "milestone" {
+		nib.SortByMilestoneOrder(members)
+		return
+	}
+	nib.SortByOrder(members)
 }
 
 // ExtractDecisions parses bullet points from a "Key Decisions" section in markdown.

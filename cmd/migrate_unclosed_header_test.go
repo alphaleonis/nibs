@@ -115,7 +115,7 @@ func TestHeaderScanAndParseAgree(t *testing.T) {
 // something that might be one.
 func TestUnclosedHeaderIsNotCountedPending(t *testing.T) {
 	nibsDir := writeStoreFiles(t, map[string]string{
-		"t-0001--good.md":    "---\nversion: 1\ntitle: Good\nstatus: todo\ntype: task\n---\n\nBody.\n",
+		"t-0001--good.md":    "---\nversion: 2\ntitle: Good\nstatus: todo\ntype: task\n---\n\nBody.\n",
 		"t-0002--overcap.md": unclosedOverCapHeader(),
 		"t-0003--short.md":   "---\ntitle: Short\n",
 	})
@@ -125,7 +125,7 @@ func TestUnclosedHeaderIsNotCountedPending(t *testing.T) {
 		t.Fatalf("scanStore: %v", err)
 	}
 
-	// Every nib in this store is already v1, so any pending step can only have
+	// Every nib in this store is already v2, so any pending step can only have
 	// come from misclassifying one of the two unclosed files.
 	if pending := scan.pending(); len(pending) != 0 {
 		names := make([]string, 0, len(pending))

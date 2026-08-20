@@ -1,6 +1,6 @@
 ---
 # tnib-t002
-version: 1
+version: 2
 title: Add rate limiting to login endpoint
 status: completed
 type: task

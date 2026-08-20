@@ -1,6 +1,6 @@
 ---
 # tnib-f005
-version: 1
+version: 2
 title: Task assignment and ownership
 status: in-progress
 type: feature

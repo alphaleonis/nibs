@@ -1,6 +1,6 @@
 ---
 # tnib-f007
-version: 1
+version: 2
 title: Subtask and checklist support
 status: draft
 type: feature

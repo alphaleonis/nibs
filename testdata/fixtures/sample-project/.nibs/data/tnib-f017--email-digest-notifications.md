@@ -1,6 +1,6 @@
 ---
 # tnib-f017
-version: 1
+version: 2
 title: Email digest notifications
 status: draft
 type: feature

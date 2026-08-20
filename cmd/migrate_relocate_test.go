@@ -1376,6 +1376,23 @@ func TestMigrationChainInvariantsAreCheckable(t *testing.T) {
 		t.Errorf("%d step(s) invalidate the load and migrationSteps[0].invalidatesLoad = %v; want exactly the first step",
 			moving, migrationSteps[0].invalidatesLoad)
 	}
+
+	// The version chain applies in slice order: v2-axes converts only v1 files
+	// (the v0 stamp is v0-blocking's completion record), so v0-blocking must
+	// come first or a v0 file survives the run at v1 and the post-condition
+	// fails it. Nothing but this slice's order encodes that.
+	index := func(name string) int {
+		for i, step := range migrationSteps {
+			if step.name == name {
+				return i
+			}
+		}
+		t.Fatalf("step %q is not in the chain", name)
+		return -1
+	}
+	if index("v0-blocking") > index("v2-axes") {
+		t.Error("v0-blocking must precede v2-axes: the v2 engine leaves v0 files for the v0 step to lift first")
+	}
 }
 
 // TestMigrateStripsTheRetiredKeyFromAConfigInsideTheStore pins the way out of a

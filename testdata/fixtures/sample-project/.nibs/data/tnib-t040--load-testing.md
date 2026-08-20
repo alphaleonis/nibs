@@ -1,6 +1,6 @@
 ---
 # tnib-t040
-version: 1
+version: 2
 title: Load testing with 1000 concurrent users
 status: todo
 type: task

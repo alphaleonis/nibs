@@ -1,14 +1,14 @@
 ---
 # tnib-e002
-version: 1
+version: 2
 title: Task Management Core
 status: in-progress
 type: epic
 priority: high
 created_at: 2026-02-18T10:30:00Z
 updated_at: 2026-03-25T09:00:00Z
-parent: tnib-m001
-order: b
+milestone: tnib-m001
+milestone_order: b
 ---
 
 ## Objective

@@ -1,6 +1,6 @@
 ---
 # tnib-f015
-version: 1
+version: 2
 title: Activity feed
 status: draft
 type: feature

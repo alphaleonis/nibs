@@ -630,3 +630,190 @@ func TestNormalizeLegacyPriorities(t *testing.T) {
 		}
 	})
 }
+
+func TestMigrateV1ToV2(t *testing.T) {
+	t.Run("moves a milestone parent onto the assignment axis and persists", func(t *testing.T) {
+		core, nibsDir, lock := loadMigrationCore(t, map[string]string{
+			"ms01--rel.md":  "---\nversion: 1\ntitle: Release\nstatus: todo\ntype: milestone\n---\n",
+			"epi1--auth.md": "---\nversion: 1\ntitle: Auth\nstatus: todo\ntype: epic\nparent: ms01\norder: a5\n---\n",
+			"tsk1--sub.md":  "---\nversion: 1\ntitle: Sub\nstatus: todo\ntype: task\nparent: epi1\norder: a0\n---\n",
+		})
+
+		n, err := core.MigrateV1ToV2(lock)
+		if err != nil {
+			t.Fatalf("MigrateV1ToV2() error: %v", err)
+		}
+		if n != 3 {
+			t.Errorf("migrated count = %d, want 3 (every v1 nib is stamped)", n)
+		}
+
+		// In memory: the milestone child moved axes; the epic child did not.
+		epi, _ := core.Get("epi1")
+		if epi.Milestone != "ms01" || epi.MilestoneOrder != "a5" {
+			t.Errorf("epi1 = milestone %q order %q, want the assignment ms01/a5", epi.Milestone, epi.MilestoneOrder)
+		}
+		if epi.Parent != "" || epi.Order != "" {
+			t.Errorf("epi1 kept parent %q order %q; the milestone parent must be cleared", epi.Parent, epi.Order)
+		}
+		tsk, _ := core.Get("tsk1")
+		if tsk.Parent != "epi1" || tsk.Order != "a0" || tsk.Milestone != "" {
+			t.Errorf("tsk1 = parent %q order %q milestone %q; a non-milestone parent is untouched", tsk.Parent, tsk.Order, tsk.Milestone)
+		}
+		for _, id := range []string{"ms01", "epi1", "tsk1"} {
+			b, _ := core.Get(id)
+			if b.Version != 2 {
+				t.Errorf("%s.Version = %d, want 2", id, b.Version)
+			}
+		}
+
+		// Persisted: a fresh Load sees the converted store.
+		core2 := New(nibsDir, config.Default())
+		core2.SetWarnWriter(nil)
+		if err := core2.Load(); err != nil {
+			t.Fatalf("second Load() error: %v", err)
+		}
+		epi2, _ := core2.Get("epi1")
+		if epi2.Milestone != "ms01" || epi2.MilestoneOrder != "a5" || epi2.Parent != "" || epi2.Version != 2 {
+			t.Errorf("epi1 not persisted: milestone %q order %q parent %q version %d", epi2.Milestone, epi2.MilestoneOrder, epi2.Parent, epi2.Version)
+		}
+	})
+
+	t.Run("an existing assignment wins the collision, with a warning", func(t *testing.T) {
+		core, _, lock := loadMigrationCore(t, map[string]string{
+			"ms01--one.md": "---\nversion: 1\ntitle: One\nstatus: todo\ntype: milestone\n---\n",
+			"ms02--two.md": "---\nversion: 1\ntitle: Two\nstatus: todo\ntype: milestone\n---\n",
+			"tsk1--t.md":   "---\nversion: 1\ntitle: T\nstatus: todo\ntype: task\nparent: ms01\norder: a5\nmilestone: ms02\nmilestone_order: b3\n---\n",
+		})
+		var warnings strings.Builder
+		core.SetWarnWriter(&warnings)
+
+		if _, err := core.MigrateV1ToV2(lock); err != nil {
+			t.Fatalf("MigrateV1ToV2() error: %v", err)
+		}
+
+		tsk, _ := core.Get("tsk1")
+		if tsk.Milestone != "ms02" || tsk.MilestoneOrder != "b3" {
+			t.Errorf("tsk1 = milestone %q order %q, want the pre-existing ms02/b3 kept", tsk.Milestone, tsk.MilestoneOrder)
+		}
+		if tsk.Parent != "" || tsk.Order != "" {
+			t.Errorf("tsk1 kept parent %q order %q; the milestone parent is cleared even on a collision", tsk.Parent, tsk.Order)
+		}
+		if !strings.Contains(warnings.String(), "tsk1") || !strings.Contains(warnings.String(), "ms02") {
+			t.Errorf("collision should be warned about, got %q", warnings.String())
+		}
+	})
+
+	t.Run("dangling and non-milestone parents stay on the parent axis", func(t *testing.T) {
+		core, _, lock := loadMigrationCore(t, map[string]string{
+			"epi1--e.md": "---\nversion: 1\ntitle: E\nstatus: todo\ntype: epic\n---\n",
+			"tsk1--a.md": "---\nversion: 1\ntitle: A\nstatus: todo\ntype: task\nparent: epi1\norder: a0\n---\n",
+			"tsk2--b.md": "---\nversion: 1\ntitle: B\nstatus: todo\ntype: task\nparent: ghost\n---\n",
+		})
+
+		if _, err := core.MigrateV1ToV2(lock); err != nil {
+			t.Fatalf("MigrateV1ToV2() error: %v", err)
+		}
+		a, _ := core.Get("tsk1")
+		if a.Parent != "epi1" || a.Order != "a0" || a.Milestone != "" || a.Version != 2 {
+			t.Errorf("tsk1 = parent %q order %q milestone %q version %d, want epic parent untouched at version 2", a.Parent, a.Order, a.Milestone, a.Version)
+		}
+		b, _ := core.Get("tsk2")
+		if b.Parent != "ghost" || b.Version != 2 {
+			t.Errorf("tsk2 = parent %q version %d, want the dangling parent untouched at version 2", b.Parent, b.Version)
+		}
+	})
+
+	t.Run("an illegally nested milestone is not assigned to its parent", func(t *testing.T) {
+		core, _, lock := loadMigrationCore(t, map[string]string{
+			"ms01--outer.md": "---\nversion: 1\ntitle: Outer\nstatus: todo\ntype: milestone\n---\n",
+			"ms02--inner.md": "---\nversion: 1\ntitle: Inner\nstatus: todo\ntype: milestone\nparent: ms01\n---\n",
+		})
+
+		if _, err := core.MigrateV1ToV2(lock); err != nil {
+			t.Fatalf("MigrateV1ToV2() error: %v", err)
+		}
+		inner, _ := core.Get("ms02")
+		// A milestone is never a member of another; v1 membership never
+		// enqueued the nest, so the migration must not invent the assignment.
+		// The illegal parent stays as it is — untouched, not repaired.
+		if inner.Milestone != "" || inner.Parent != "ms01" || inner.Version != 2 {
+			t.Errorf("ms02 = milestone %q parent %q version %d, want no assignment, parent kept, version 2", inner.Milestone, inner.Parent, inner.Version)
+		}
+	})
+
+	t.Run("a still-v0 file is left for the v0 step", func(t *testing.T) {
+		files := map[string]string{
+			"v0a--old.md":  "---\ntitle: Old\nstatus: todo\nblocking:\n    - cur1\n---\n",
+			"cur1--new.md": "---\nversion: 1\ntitle: New\nstatus: todo\n---\n",
+		}
+		core, nibsDir, lock := loadMigrationCore(t, files)
+
+		n, err := core.MigrateV1ToV2(lock)
+		if err != nil {
+			t.Fatalf("MigrateV1ToV2() error: %v", err)
+		}
+		if n != 1 {
+			t.Errorf("migrated count = %d, want 1 (only the v1 nib)", n)
+		}
+		// The version stamp is MigrateV0ToV1's completion record: stamping the
+		// v0 file from here would mark its `blocking:` edges migrated without
+		// transferring them, permanently. Byte-identical, not merely still-v0.
+		after, err := os.ReadFile(dataPath(nibsDir, "v0a--old.md"))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if string(after) != files["v0a--old.md"] {
+			t.Errorf("v0 file was touched by the v1→v2 step:\n%s", after)
+		}
+	})
+
+	t.Run("idempotent: an all-v2 store is untouched", func(t *testing.T) {
+		files := map[string]string{
+			"ms01--m.md":  "---\nversion: 2\ntitle: M\nstatus: todo\ntype: milestone\n---\n",
+			"tsk1--t.md":  "---\nversion: 2\ntitle: T\nstatus: todo\ntype: task\nmilestone: ms01\nmilestone_order: a0\n---\n",
+			"tsk2--t2.md": "---\nversion: 2\ntitle: T2\nstatus: todo\ntype: task\nparent: ms01\n---\n",
+		}
+		core, nibsDir, lock := loadMigrationCore(t, files)
+
+		n, err := core.MigrateV1ToV2(lock)
+		if err != nil {
+			t.Fatalf("MigrateV1ToV2() error: %v", err)
+		}
+		if n != 0 {
+			t.Errorf("migrated count = %d, want 0 on an all-v2 store", n)
+		}
+		for name, before := range files {
+			after, err := os.ReadFile(dataPath(nibsDir, name))
+			if err != nil {
+				t.Fatalf("re-reading %s: %v", name, err)
+			}
+			if string(after) != before {
+				t.Errorf("MigrateV1ToV2 rewrote already-migrated file %s:\n%s", name, after)
+			}
+		}
+	})
+
+	t.Run("fail-loud: a persistence failure aborts with an error", func(t *testing.T) {
+		core, _, lock := loadMigrationCore(t, map[string]string{
+			"cur1--one.md": "---\nversion: 1\ntitle: One\nstatus: todo\n---\n",
+		})
+		orig := fsutil.RenameFn
+		fsutil.RenameFn = func(_, _ string) error { return errors.New("simulated persistence failure") }
+		t.Cleanup(func() { fsutil.RenameFn = orig })
+
+		if _, err := core.MigrateV1ToV2(lock); err == nil {
+			t.Fatal("MigrateV1ToV2() = nil error on an unwritable store, want fail-loud error")
+		} else if !strings.Contains(err.Error(), "cur1") {
+			t.Errorf("error should name the nib that failed to persist, got: %v", err)
+		}
+	})
+
+	t.Run("requires the lock token", func(t *testing.T) {
+		core, _, _ := loadMigrationCore(t, map[string]string{
+			"cur1--one.md": "---\nversion: 1\ntitle: One\nstatus: todo\n---\n",
+		})
+		if _, err := core.MigrateV1ToV2(nil); err == nil || !strings.Contains(err.Error(), "AcquireStoreLock") {
+			t.Errorf("MigrateV1ToV2(nil) = %v, want a refusal naming AcquireStoreLock", err)
+		}
+	})
+}

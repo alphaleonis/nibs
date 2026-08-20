@@ -1,6 +1,6 @@
 ---
 # tnib-b015
-version: 1
+version: 2
 title: Dropdown menu z-index conflict with modal
 status: todo
 type: bug

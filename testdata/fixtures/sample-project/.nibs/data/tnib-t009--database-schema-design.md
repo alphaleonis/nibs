@@ -1,6 +1,6 @@
 ---
 # tnib-t009
-version: 1
+version: 2
 title: Design database schema for tasks
 status: completed
 type: task

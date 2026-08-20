@@ -1,6 +1,6 @@
 ---
 # tnib-f016
-version: 1
+version: 2
 title: In-app notification center
 status: draft
 type: feature

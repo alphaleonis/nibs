@@ -1,6 +1,6 @@
 ---
 # tnib-m002
-version: 1
+version: 2
 title: v1.1 Team Collaboration
 status: draft
 type: milestone

@@ -1,6 +1,6 @@
 ---
 # tnib-b003
-version: 1
+version: 2
 title: Assigning task to deactivated user shows no error
 status: in-progress
 type: bug

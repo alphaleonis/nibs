@@ -1,6 +1,6 @@
 ---
 # tnib-f013
-version: 1
+version: 2
 title: REST API v2 with OpenAPI
 status: scrapped
 type: feature

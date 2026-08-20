@@ -1,6 +1,6 @@
 ---
 # tnib-r002
-version: 1
+version: 2
 title: Research concurrent task-edit conflict strategy
 status: todo
 type: research

@@ -1051,7 +1051,7 @@ func writeStaleEtagNib(t *testing.T, id string) (string, string, string) {
 	}
 	// version: 1 and the `# id` comment match Render() output, so the etag
 	// computed from the file agrees with the one the core computes.
-	content := "---\n# " + id + "\nversion: 1\ntitle: Test\nstatus: todo\ntype: task\norder: a0\n---\n\n"
+	content := "---\n# " + id + "\nversion: 2\ntitle: Test\nstatus: todo\ntype: task\norder: a0\n---\n\n"
 	path := dataPath(nibsDir, id+"--test.md")
 	if err := os.WriteFile(path, []byte(content), 0644); err != nil {
 		t.Fatal(err)
@@ -1313,7 +1313,7 @@ func TestQueryBulkReorderPreValidationConflictIsAConflict(t *testing.T) {
 	// A second root-level nib, so childIds can list every root sibling —
 	// reorderChildren refuses an incomplete list before it ever checks an etag.
 	const sibling = "q-brs"
-	content := "---\n# " + sibling + "\nversion: 1\ntitle: Sibling\nstatus: todo\ntype: task\norder: b0\n---\n\n"
+	content := "---\n# " + sibling + "\nversion: 2\ntitle: Sibling\nstatus: todo\ntype: task\norder: b0\n---\n\n"
 	if err := os.WriteFile(dataPath(nibsDir, sibling+"--test.md"), []byte(content), 0644); err != nil {
 		t.Fatal(err)
 	}
@@ -1476,7 +1476,7 @@ func TestQueryCommandRefusalExitsLikeTheDirectCommand(t *testing.T) {
 // what makes a single-valued repair hint unrepresentable for a batch.
 func addFeatureNib(t *testing.T, nibsDir, id string) string {
 	t.Helper()
-	content := "---\nversion: 1\ntitle: Feature\nstatus: todo\ntype: feature\norder: c0\n---\n"
+	content := "---\nversion: 2\ntitle: Feature\nstatus: todo\ntype: feature\norder: c0\n---\n"
 	if err := os.WriteFile(dataPath(nibsDir, id+"--feature.md"), []byte(content), 0644); err != nil {
 		t.Fatal(err)
 	}
@@ -1669,7 +1669,7 @@ func TestQueryHierarchyBatchExitsLikeTheDirectCommands(t *testing.T) {
 func writeReplaceFixture(t *testing.T) (string, string, string) {
 	t.Helper()
 	nibsDir, subjectID := writeSetNib(t, "rp", "dup here\nand dup there\n")
-	content := "---\nversion: 1\ntitle: Other\nstatus: todo\ntype: task\n---\ntrip\ntrip\ntrip\n"
+	content := "---\nversion: 2\ntitle: Other\nstatus: todo\ntype: task\n---\ntrip\ntrip\ntrip\n"
 	if err := os.WriteFile(dataPath(nibsDir, "ot--other.md"), []byte(content), 0644); err != nil {
 		t.Fatal(err)
 	}

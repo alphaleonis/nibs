@@ -132,7 +132,7 @@ func writeSetNib(t *testing.T, id, body string) (string, string) {
 	if err := os.MkdirAll(storeDataDir(nibsDir), 0755); err != nil {
 		t.Fatal(err)
 	}
-	content := "---\nversion: 1\ntitle: Test\nstatus: todo\ntype: task\n---\n" + body
+	content := "---\nversion: 2\ntitle: Test\nstatus: todo\ntype: task\n---\n" + body
 	if err := os.WriteFile(dataPath(nibsDir, id+"--test.md"), []byte(content), 0644); err != nil {
 		t.Fatal(err)
 	}
@@ -154,8 +154,8 @@ func writeIllegalReparentFixture(t *testing.T) (string, string, string) {
 		t.Fatal(err)
 	}
 	files := map[string]string{
-		"ep--epic.md": "---\nversion: 1\ntitle: Epic\nstatus: todo\ntype: epic\norder: a0\n---\n",
-		"tk--task.md": "---\nversion: 1\ntitle: Task\nstatus: todo\ntype: task\norder: b0\n---\n",
+		"ep--epic.md": "---\nversion: 2\ntitle: Epic\nstatus: todo\ntype: epic\norder: a0\n---\n",
+		"tk--task.md": "---\nversion: 2\ntitle: Task\nstatus: todo\ntype: task\norder: b0\n---\n",
 	}
 	for name, content := range files {
 		if err := os.WriteFile(dataPath(nibsDir, name), []byte(content), 0644); err != nil {
@@ -257,8 +257,8 @@ func TestSetTypeChangeOrphaningAChildIsHierarchy(t *testing.T) {
 		t.Fatal(err)
 	}
 	files := map[string]string{
-		"ep--epic.md":    "---\nversion: 1\ntitle: Epic\nstatus: todo\ntype: epic\norder: a0\n---\n",
-		"ft--feature.md": "---\nversion: 1\ntitle: Feature\nstatus: todo\ntype: feature\nparent: ep\norder: a0\n---\n",
+		"ep--epic.md":    "---\nversion: 2\ntitle: Epic\nstatus: todo\ntype: epic\norder: a0\n---\n",
+		"ft--feature.md": "---\nversion: 2\ntitle: Feature\nstatus: todo\ntype: feature\nparent: ep\norder: a0\n---\n",
 	}
 	for name, content := range files {
 		if err := os.WriteFile(dataPath(nibsDir, name), []byte(content), 0644); err != nil {
@@ -338,7 +338,7 @@ func TestSetClearPriority(t *testing.T) {
 	if err := os.MkdirAll(storeDataDir(nibsDir), 0755); err != nil {
 		t.Fatal(err)
 	}
-	content := "---\nversion: 1\ntitle: Test\nstatus: todo\ntype: task\npriority: critical\n---\n"
+	content := "---\nversion: 2\ntitle: Test\nstatus: todo\ntype: task\npriority: critical\n---\n"
 	if err := os.WriteFile(dataPath(nibsDir, "clr-1--test.md"), []byte(content), 0644); err != nil {
 		t.Fatal(err)
 	}
@@ -366,7 +366,7 @@ func TestSetClearEstimate(t *testing.T) {
 	if err := os.MkdirAll(storeDataDir(nibsDir), 0755); err != nil {
 		t.Fatal(err)
 	}
-	content := "---\nversion: 1\ntitle: Test\nstatus: todo\ntype: task\nestimate: xl\n---\n"
+	content := "---\nversion: 2\ntitle: Test\nstatus: todo\ntype: task\nestimate: xl\n---\n"
 	if err := os.WriteFile(dataPath(nibsDir, "clr-2--test.md"), []byte(content), 0644); err != nil {
 		t.Fatal(err)
 	}
@@ -391,8 +391,8 @@ func TestSetClearParent(t *testing.T) {
 	if err := os.MkdirAll(storeDataDir(nibsDir), 0755); err != nil {
 		t.Fatal(err)
 	}
-	parent := "---\nversion: 1\ntitle: Parent\nstatus: todo\ntype: epic\n---\n"
-	child := "---\nversion: 1\ntitle: Child\nstatus: todo\ntype: task\nparent: par-1\n---\n"
+	parent := "---\nversion: 2\ntitle: Parent\nstatus: todo\ntype: epic\n---\n"
+	child := "---\nversion: 2\ntitle: Child\nstatus: todo\ntype: task\nparent: par-1\n---\n"
 	if err := os.WriteFile(dataPath(nibsDir, "par-1--parent.md"), []byte(parent), 0644); err != nil {
 		t.Fatal(err)
 	}
@@ -421,7 +421,7 @@ func TestSetRejectsSetAndClearSameField(t *testing.T) {
 	if err := os.MkdirAll(storeDataDir(nibsDir), 0755); err != nil {
 		t.Fatal(err)
 	}
-	content := "---\nversion: 1\ntitle: Test\nstatus: todo\ntype: task\n---\n"
+	content := "---\nversion: 2\ntitle: Test\nstatus: todo\ntype: task\n---\n"
 	if err := os.WriteFile(dataPath(nibsDir, "clr-3--test.md"), []byte(content), 0644); err != nil {
 		t.Fatal(err)
 	}
@@ -493,7 +493,7 @@ func TestSetStaleIfMatchConflictCarriesCurrentEtag(t *testing.T) {
 	}
 	// version: 1 and the `# id` comment match Render() output so the etag we
 	// compute from the file agrees with what the core computes.
-	content := "---\n# cnf-1\nversion: 1\ntitle: Test\nstatus: todo\ntype: task\norder: a0\n---\n\n"
+	content := "---\n# cnf-1\nversion: 2\ntitle: Test\nstatus: todo\ntype: task\norder: a0\n---\n\n"
 	if err := os.WriteFile(dataPath(nibsDir, "cnf-1--test.md"), []byte(content), 0644); err != nil {
 		t.Fatal(err)
 	}
@@ -571,7 +571,7 @@ func writeSetNibWithStatus(t *testing.T, id, status string) (string, string) {
 	if err := os.MkdirAll(storeDataDir(nibsDir), 0755); err != nil {
 		t.Fatal(err)
 	}
-	content := "---\nversion: 1\ntitle: Test\nstatus: " + status + "\ntype: task\n---\nbody\n"
+	content := "---\nversion: 2\ntitle: Test\nstatus: " + status + "\ntype: task\n---\nbody\n"
 	if err := os.WriteFile(dataPath(nibsDir, id+"--test.md"), []byte(content), 0644); err != nil {
 		t.Fatal(err)
 	}

@@ -179,6 +179,86 @@ func (c *Core) NormalizeLegacyPriorities(lock *StoreLock) (int, error) {
 	return len(dirty), nil
 }
 
+// MigrateV1ToV2 converts every v1 nib in the store to v2: a nib whose resolved
+// direct parent is milestone-typed moves onto the assignment axis — Milestone
+// set to that parent's id, MilestoneOrder to the nib's Order (the milestone's
+// child set WAS its queue, so the sibling position carries over) — with the
+// milestone parent and its order cleared, and every converted nib's Version
+// stamped 2. Returns the number of v1 nibs converted.
+//
+// A nib already carrying an assignment keeps it (and its MilestoneOrder): the
+// hand-authored field is the newer axis speaking, and inventing a different
+// answer would silently reschedule the nib. The milestone parent is still
+// cleared — the parent axis is decomposition only from v2 on — and the
+// collision is warned about, like the dropped-edge warning in MigrateV0ToV1.
+//
+// A milestone-typed nib under a milestone parent (an illegal nest) gets no
+// assignment: v1 membership never enqueued the nest, so writing `milestone:`
+// here would invent membership. The illegal parent stays as it is — this
+// migration cannot repair it, and hierarchy is validated only on write
+// paths today (a hierarchy scan in `nibs check` is tracked separately).
+//
+// Parents are resolved by exact id against the loaded store, exactly as the
+// membership reads resolve them: Load's canonicalization has already resolved
+// short-form spellings, so a parent that resolves to nothing is no parent and
+// the nib stays on the parent axis as written.
+//
+// A still-v0 nib is deliberately left byte-identical: the version stamp is
+// MigrateV0ToV1's completion record (see NormalizeLegacyPriorities for the
+// chain-wide statement), and the chain runs the v0 step first, so by the time
+// this step applies no v0 nib remains.
+//
+// This is the v2-axes migration step's engine, sharing MigrateV0ToV1's
+// contract: fail-loud persistence (first error aborts), idempotent per nib (a
+// v2 nib no longer matches), copy-on-write staging, and NO per-operation write
+// lock — lock is the caller's proof-of-lock token from AcquireStoreLock (see
+// MigrateV0ToV1's concurrency note for why the precondition is a parameter).
+func (c *Core) MigrateV1ToV2(lock *StoreLock) (int, error) {
+	if err := c.requireStoreLock("MigrateV1ToV2", lock); err != nil {
+		return 0, err
+	}
+
+	c.mu.Lock()
+	defer c.mu.Unlock()
+
+	// Deterministic id order so warnings and any failure point are stable from
+	// run to run (map iteration order is not).
+	v1IDs := make([]string, 0)
+	for id, b := range c.nibs {
+		if b.Version == 1 {
+			v1IDs = append(v1IDs, id)
+		}
+	}
+	sort.Strings(v1IDs)
+
+	dirty := make(map[string]*nib.Nib, len(v1IDs))
+	for _, id := range v1IDs {
+		b := c.nibs[id]
+		cl := b.Clone()
+		if p, ok := c.nibs[b.Parent]; ok && b.Parent != "" &&
+			p.EffectiveType() == "milestone" && b.EffectiveType() != "milestone" {
+			if cl.Milestone != "" {
+				c.logWarn("migration: nib %s already carries milestone %s; keeping it over milestone parent %s", id, cl.Milestone, p.ID)
+			} else {
+				cl.Milestone = p.ID
+				cl.MilestoneOrder = b.Order
+			}
+			// Order positioned the nib among the cleared parent's children — a
+			// group it just left — so it is cleared with the parent rather than
+			// left to place the nib among the roots at a meaningless position.
+			cl.Parent = ""
+			cl.Order = ""
+		}
+		cl.Version = 2 // the v1→v2 step's fixed output version (not CurrentVersion)
+		dirty[id] = cl
+	}
+	if err := c.persistClonesLocked(dirty, "v1→v2"); err != nil {
+		return 0, err
+	}
+
+	return len(dirty), nil
+}
+
 // persistClonesLocked writes each staged clone to disk in deterministic id
 // order and reinstalls it under c.nibs — the copy-on-write commit shared by
 // the migration methods. Fail-loud: the first write error aborts, naming the

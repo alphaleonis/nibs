@@ -20,14 +20,14 @@ const (
 	// ScopeParent orders the sibling set under one resolved parent. The empty
 	// group id is the ROOT group: nibs whose parent link resolves to no nib.
 	ScopeParent Scope = iota
-	// ScopeMilestone orders a milestone's queue. The empty group id means
-	// MEMBERLESS — a nib assigned to no milestone is in no queue at all:
-	// Move errors there, and a default Place clears the queue key.
+	// ScopeMilestone orders a milestone's queue — the group a nib's
+	// `milestone:` field resolves to (membership.ResolvedMilestoneID). The
+	// empty group id means MEMBERLESS — a nib assigned to no milestone is in
+	// no queue at all: Move errors there, and a default Place clears the
+	// queue key.
 	//
-	// The arm is fully wired and inert in production: no resolver passes
-	// ScopeMilestone, and resolvedMilestoneID still derives the queue from
-	// the resolved parent's type (membership.ResolvedMilestoneID), not from
-	// the `milestone:` field. Activating the scope is a follow-up task.
+	// The arm is fully wired but no resolver passes ScopeMilestone yet;
+	// activating the scope for mutations is a follow-up task.
 	ScopeMilestone
 	numScopes
 )
@@ -153,11 +153,11 @@ func (s Scope) ops() *scopeOps {
 }
 
 // resolvedMilestoneID is the milestone-queue group of b, answered by THE
-// shared definition of "directly assigned" — membership.ResolvedMilestoneID —
-// through a reader-backed Lookup. Reader.Get is resolvedParent's own rule
-// (normalization included; a dangling link is no parent), so the ordering
-// engine and every membership consumer read one definition, and the three-axis
-// v2 release swaps only the membership body to the `milestone:` field.
+// shared definition of "directly assigned" — membership.ResolvedMilestoneID,
+// which reads the `milestone:` field — through a reader-backed Lookup.
+// Reader.Get is resolvedParent's own rule (normalization included; a dangling
+// link is no assignment), so the ordering engine and every membership
+// consumer read one definition.
 func resolvedMilestoneID(b *nib.Nib, reader NibReader) string {
 	return membership.ResolvedMilestoneID(b, func(id string) *nib.Nib {
 		n, err := reader.Get(id)

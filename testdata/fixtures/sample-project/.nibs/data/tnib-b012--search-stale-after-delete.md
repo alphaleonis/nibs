@@ -1,6 +1,6 @@
 ---
 # tnib-b012
-version: 1
+version: 2
 title: Search results not updating after task deletion
 status: in-progress
 type: bug

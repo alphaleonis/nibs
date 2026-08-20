@@ -1,6 +1,6 @@
 ---
 # tnib-t027
-version: 1
+version: 2
 title: Design conflict resolution strategy
 status: draft
 type: task

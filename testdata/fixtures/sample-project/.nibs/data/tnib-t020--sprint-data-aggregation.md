@@ -1,6 +1,6 @@
 ---
 # tnib-t020
-version: 1
+version: 2
 title: Build sprint data aggregation query
 status: todo
 type: task

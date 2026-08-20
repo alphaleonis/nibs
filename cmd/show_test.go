@@ -81,12 +81,12 @@ func setupGetCobraTest(t *testing.T, files map[string]string) string {
 //   - par1: in-progress epic parenting child1 (completed) + child2 (todo).
 func getFixture() map[string]string {
 	return map[string]string{
-		"task1--task-one.md":   "---\nversion: 1\ntitle: Task One\nstatus: todo\ntype: task\npriority: high\nblocked_by:\n  - blk1\n  - blk2\n---\n\nDepends on #blk1.\n",
-		"blk1--blocker-one.md": "---\nversion: 1\ntitle: Blocker One\nstatus: todo\ntype: task\n---\n\nFirst blocker.\n",
-		"blk2--blocker-two.md": "---\nversion: 1\ntitle: Blocker Two\nstatus: in-progress\ntype: task\n---\n\nSecond blocker.\n",
-		"par1--parent.md":      "---\nversion: 1\ntitle: Parent\nstatus: in-progress\ntype: epic\n---\n\nParent body.\n",
-		"child1--child-one.md": "---\nversion: 1\ntitle: Child One\nstatus: completed\ntype: task\nparent: par1\n---\n\nChild one.\n",
-		"child2--child-two.md": "---\nversion: 1\ntitle: Child Two\nstatus: todo\ntype: task\nparent: par1\n---\n\nChild two.\n",
+		"task1--task-one.md":   "---\nversion: 2\ntitle: Task One\nstatus: todo\ntype: task\npriority: high\nblocked_by:\n  - blk1\n  - blk2\n---\n\nDepends on #blk1.\n",
+		"blk1--blocker-one.md": "---\nversion: 2\ntitle: Blocker One\nstatus: todo\ntype: task\n---\n\nFirst blocker.\n",
+		"blk2--blocker-two.md": "---\nversion: 2\ntitle: Blocker Two\nstatus: in-progress\ntype: task\n---\n\nSecond blocker.\n",
+		"par1--parent.md":      "---\nversion: 2\ntitle: Parent\nstatus: in-progress\ntype: epic\n---\n\nParent body.\n",
+		"child1--child-one.md": "---\nversion: 2\ntitle: Child One\nstatus: completed\ntype: task\nparent: par1\n---\n\nChild one.\n",
+		"child2--child-two.md": "---\nversion: 2\ntitle: Child Two\nstatus: todo\ntype: task\nparent: par1\n---\n\nChild two.\n",
 	}
 }
 

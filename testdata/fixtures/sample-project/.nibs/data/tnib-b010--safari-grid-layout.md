@@ -1,6 +1,6 @@
 ---
 # tnib-b010
-version: 1
+version: 2
 title: CSS grid layout breaks on Safari 15
 status: todo
 type: bug
