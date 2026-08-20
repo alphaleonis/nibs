@@ -1,0 +1,36 @@
+{
+  "milestones": [
+    {
+      "id": "tnib-m001",
+      "title": "v1.0 MVP Launch",
+      "status": "in-progress",
+      "type": "milestone",
+      "progress": {
+        "total": 4,
+        "done": 0,
+        "percent": 0,
+        "scrapped": 0,
+        "deferred": 0
+      },
+      "active_phase": {
+        "id": "tnib-e001",
+        "title": "User Authentication",
+        "status": "in-progress",
+        "type": "epic"
+      }
+    },
+    {
+      "id": "tnib-m002",
+      "title": "v1.1 Team Collaboration",
+      "status": "draft",
+      "type": "milestone",
+      "progress": {
+        "total": 2,
+        "done": 0,
+        "percent": 0,
+        "scrapped": 0,
+        "deferred": 0
+      }
+    }
+  ]
+}

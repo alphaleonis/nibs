@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 
+	"github.com/alphaleonis/nibs/internal/membership"
 	"github.com/alphaleonis/nibs/internal/nib"
 	"github.com/alphaleonis/nibs/internal/nibcore"
 )
@@ -150,18 +151,20 @@ func (s Scope) ops() *scopeOps {
 	return &scopeTable[s]
 }
 
-// resolvedMilestoneID is the milestone-queue group of b: its resolved parent
-// when that parent is milestone-typed, "" otherwise — including when the
-// parent link dangles, mirroring resolvedParentID's rule. This is the step-1
-// definition of "assigned to a milestone", to be shared with
-// internal/membership (nibs-a3fb); the three-axis v2 release swaps the body to read the
-// `milestone:` field, and every caller survives the swap unchanged.
+// resolvedMilestoneID is the milestone-queue group of b, answered by THE
+// shared definition of "directly assigned" — membership.ResolvedMilestoneID —
+// through a reader-backed Lookup. Reader.Get is resolvedParent's own rule
+// (normalization included; a dangling link is no parent), so the ordering
+// engine and every membership consumer read one definition, and the three-axis
+// v2 release swaps only the membership body to the `milestone:` field.
 func resolvedMilestoneID(b *nib.Nib, reader NibReader) string {
-	parent := resolvedParent(b, reader)
-	if parent == nil || parent.EffectiveType() != "milestone" {
-		return ""
-	}
-	return parent.ID
+	return membership.ResolvedMilestoneID(b, func(id string) *nib.Nib {
+		n, err := reader.Get(id)
+		if err != nil {
+			return nil
+		}
+		return n
+	})
 }
 
 // Orderer is the two-scope ordering engine, with only read/write dependencies.

@@ -458,3 +458,27 @@ func TestStatusFiltering(t *testing.T) {
 		}
 	})
 }
+
+// TestBuildRoadmap_HiddenMilestoneMembersAreNotBacklog pins the roadmap's side
+// of membership ledger delta (d): work under a milestone the status filter
+// hides is SCHEDULED work the filter chose not to show — it must not leak into
+// the Unscheduled group. The old two-level walk computed "under a milestone"
+// from the filtered list, so hiding a milestone dumped its epics into the
+// backlog.
+func TestBuildRoadmap_HiddenMilestoneMembersAreNotBacklog(t *testing.T) {
+	cfg := config.Default()
+	nibs := []*nib.Nib{
+		{ID: "m1", Title: "Shipped", Type: "milestone", Status: "completed"},
+		{ID: "e1", Title: "Epic under shipped", Type: "epic", Status: "in-progress", Parent: "m1"},
+		{ID: "t1", Title: "Task", Type: "task", Status: "todo", Parent: "e1"},
+	}
+
+	data := buildRoadmap(nibs, false, nil, []string{"completed"}, cfg)
+
+	if len(data.Milestones) != 0 {
+		t.Fatalf("the completed milestone is filtered out, got %d milestone groups", len(data.Milestones))
+	}
+	if data.Unscheduled != nil {
+		t.Fatalf("members of the hidden milestone leaked into Unscheduled: %+v", data.Unscheduled)
+	}
+}

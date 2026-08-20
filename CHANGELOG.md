@@ -31,6 +31,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 - **`nibs web` no longer prints an "update available" line into its own startup output** — the entry meant to suppress it named the `serve` alias, which the lookup never sees.
 - **`nibs help` and shell completion now work outside a project**, instead of failing with "no .nibs directory found" — which also left `nibs <TAB>` offering filenames in place of subcommands.
 - **`nibs config set-prefix` now edits only the prefix key of your config file**, instead of rewriting it from the merged read model — which discarded the file's comments, baked user-level settings into the project, and dropped any key this build does not model.
+- **The roadmap's Unscheduled group now shows exactly the work outside every milestone** — items under a milestone hidden by a `--status` filter no longer leak into the backlog, and a work item whose parent link names no nib now appears there instead of vanishing from the roadmap entirely.
 
 ## v0.8.3 - 2026-08-13
 

@@ -3,8 +3,10 @@ package graph
 import (
 	"context"
 	"math"
+	"sync"
 
 	"github.com/alphaleonis/nibs/internal/config"
+	"github.com/alphaleonis/nibs/internal/membership"
 	"github.com/alphaleonis/nibs/internal/nib"
 	"github.com/alphaleonis/nibs/internal/projection"
 )
@@ -102,13 +104,33 @@ func ComputeProgress(childStatuses []string) ProgressRollup {
 // the relation and readiness computations to the exact nib-field resolvers
 // (BlockingIds, MentionIds, MentionedByIds, BlockedByIds) so the projection
 // engine and the GraphQL surface cannot drift on blocking / mention / ready
-// semantics. The child rollups (children count, progress) are read straight
-// off the parent-link graph via FindIncomingLinks, matching the child set the
-// Children resolver derives from Orderer.Members.
+// semantics. The child rollups (children count, progress) answer from one
+// membership.View built lazily on first use and memoized for the instance's
+// lifetime — one O(N) Compute per operation instead of an O(N) store scan per
+// projected nib.
+//
+// The memo is why an instance is POINT-IN-TIME: create a projectionResolver
+// after any write whose result it should reflect, and never reuse one across
+// operations — the same staleness rule the per-operation RequestCache states
+// for the mention and search memos. Every current caller already obeys it
+// (read commands build one per invocation; write commands build one after the
+// write, to echo the result).
 type projectionResolver struct {
-	r   *Resolver
-	nib NibResolver
-	ctx context.Context
+	r        *Resolver
+	nib      NibResolver
+	ctx      context.Context
+	viewOnce sync.Once
+	view     *membership.View
+}
+
+// membershipView returns the instance's memoized membership view, building it
+// on first use. sync.Once rather than a nil check so a future concurrent
+// projection fan-out collapses into a single Compute instead of racing.
+func (p *projectionResolver) membershipView() *membership.View {
+	p.viewOnce.Do(func() {
+		p.view = membership.Compute(p.r.Reader.All())
+	})
+	return p.view
 }
 
 // ProjectionResolver returns a projection.Resolver backed by this resolver's
@@ -150,38 +172,34 @@ func (p *projectionResolver) ParentID(id string) string {
 	return resolvedParentID(b, p.r.Reader)
 }
 
-// ChildCount returns the number of direct children of the nib, counting the
-// parent links that point at it — the same child set Orderer.Members derives,
-// without the ordering-key backfill a count does not need.
+// ChildCount returns the number of direct children of the nib — the
+// STRUCTURAL parent axis (membership.View.Children), the same child set
+// Orderer.Members derives without the ordering-key backfill a count does not
+// need. Deliberately not DirectMembers: childCount answers "how many nibs name
+// this one as parent", and it keeps doing so when the membership axis moves to
+// `milestone:` assignment.
 func (p *projectionResolver) ChildCount(id string) int {
-	count := 0
-	for _, link := range p.r.Reader.FindIncomingLinks(id) {
-		if link.LinkType == "parent" {
-			count++
-		}
-	}
-	return count
+	return len(p.membershipView().Children(id))
 }
 
-// Progress returns the canonical child-completion ProgressRollup over the nib's
-// direct children, collecting the child set from the incoming parent links (the
-// same set the Children resolver derives). See ProgressRollup / ComputeProgress
-// for the exact rule.
+// Progress returns the canonical child-completion ProgressRollup over the
+// nib's direct members (membership.View.DirectMembers — the same set the
+// Children resolver derives on legal data). See ProgressRollup /
+// ComputeProgress for the exact rule.
+//
+// Reading Status off the view's live pointers is safe here, unlike the
+// resolvers that hand nibs to gqlgen: Status is not mutated in place on a
+// stored pointer (status changes go through Update, which installs a fresh
+// pointer), and this method returns a computed ProgressRollup value, so no
+// pointer escapes to async marshaling. No snapshot/clone is needed. As of the
+// pyei copy-on-write change no non-Path field is mutated in place on a
+// published stored pointer; only Path is (see NibReader.GetSnapshot for the
+// full contract).
 func (p *projectionResolver) Progress(id string) any {
-	var statuses []string
-	for _, link := range p.r.Reader.FindIncomingLinks(id) {
-		if link.LinkType == "parent" {
-			// Reading Status off the live link.FromNib pointer is safe here,
-			// unlike the resolvers that hand nibs to gqlgen: Status is not
-			// mutated in place on a stored pointer (status changes go through
-			// Update, which installs a fresh pointer), and this method returns a
-			// computed ProgressRollup value, so no pointer escapes to async
-			// marshaling. No snapshot/clone is needed. As of the pyei
-			// copy-on-write change no non-Path field is mutated in place on a
-			// published stored pointer; only Path is (see NibReader.GetSnapshot
-			// for the full contract).
-			statuses = append(statuses, link.FromNib.Status)
-		}
+	members := p.membershipView().DirectMembers(id)
+	statuses := make([]string, len(members))
+	for i, m := range members {
+		statuses[i] = m.Status
 	}
 	return ComputeProgress(statuses)
 }

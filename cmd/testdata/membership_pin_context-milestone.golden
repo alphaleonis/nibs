@@ -1,0 +1,33 @@
+Root
+    
+  tnib-m001  v1.0 MVP Launch
+
+Active Phase
+            
+  tnib-e001  User Authentication
+
+Progress
+        
+  ░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░ 0% (0/4)
+
+Active Tasks
+            
+  tnib-t005  GitHub OAuth provider integration
+  tnib-f002  OAuth2 social login
+  tnib-f005  Task assignment and ownership
+  tnib-b003  Assigning task to deactivated user shows no error
+
+Next Tasks
+          
+  tnib-t006  Design password reset email template
+  tnib-t007  Implement token generation and expiry
+  tnib-b001  OAuth callback URL mismatch in production config
+  tnib-f003  Password reset flow
+  tnib-b002  Session tokens not invalidated on password change
+
+Key Decisions
+             
+  • Chose PostgreSQL over MongoDB for ACID compliance requirements
+  • REST API first, GraphQL deferred to v1.2
+  • Server-side rendering deferred — SPA with Svelte for now
+

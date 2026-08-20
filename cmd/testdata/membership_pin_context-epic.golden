@@ -1,0 +1,23 @@
+Root
+    
+  tnib-e002  Task Management Core
+
+Progress
+        
+  █████░░░░░░░░░░░░░░░░░░░░░░░░░ 17% (1/6)
+
+Active Tasks
+            
+  tnib-f005  Task assignment and ownership
+  tnib-b003  Assigning task to deactivated user shows no error
+
+Next Tasks
+          
+  tnib-t014  Implement drag-and-drop reordering
+  tnib-t015  Add priority-based auto-sorting
+  tnib-t013  Build assignment notification emails
+  tnib-f006  Task prioritization and sorting
+  tnib-r002  Research concurrent task-edit conflict strategy
+  tnib-t018  Performance benchmark for 10k tasks
+  tnib-b004  Task title silently truncated at 255 characters
+

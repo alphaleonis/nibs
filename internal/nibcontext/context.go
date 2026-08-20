@@ -6,6 +6,7 @@ import (
 	"github.com/alphaleonis/nibs/internal/config"
 	"github.com/alphaleonis/nibs/internal/estimate"
 	"github.com/alphaleonis/nibs/internal/mdsection"
+	"github.com/alphaleonis/nibs/internal/membership"
 	"github.com/alphaleonis/nibs/internal/nib"
 )
 
@@ -57,6 +58,14 @@ type Progress struct {
 // on purpose: the epic/task selectors match "in-progress"/"todo" — single
 // statuses a group predicate cannot single out.
 func BuildSummary(allNibs []*nib.Nib, rootID string, cfg *config.Config) Summary {
+	return BuildSummaryWithView(allNibs, membership.Compute(allNibs), rootID, cfg)
+}
+
+// BuildSummaryWithView is BuildSummary for a caller that already computed the
+// membership view over the same slice — one Compute per command, not one per
+// layer. The view MUST be built over allNibs; two different slices here would
+// let the summary and its rollups disagree about the store.
+func BuildSummaryWithView(allNibs []*nib.Nib, view *membership.View, rootID string, cfg *config.Config) Summary {
 	byID := indexByID(allNibs)
 
 	sum := Summary{
@@ -73,9 +82,8 @@ func BuildSummary(allNibs []*nib.Nib, rootID string, cfg *config.Config) Summary
 
 		// Build per-milestone container summaries for active milestones
 		var milestones []*nib.Nib
-		for _, n := range allNibs {
-			// Classification check — exempt: empty type is never milestone/epic.
-			if n.Type == "milestone" && !cfg.IsClosedStatus(n.Status) {
+		for _, n := range view.Milestones() {
+			if !cfg.IsClosedStatus(n.Status) {
 				milestones = append(milestones, n)
 			}
 		}
@@ -85,14 +93,13 @@ func BuildSummary(allNibs []*nib.Nib, rootID string, cfg *config.Config) Summary
 			cs := &ContainerSummary{
 				NibRef: *newNibRef(ms),
 			}
-			descendants := collectDescendants(allNibs, ms.ID, byID)
-			cs.Progress = CalcProgress(descendants)
+			cs.Progress = CalcProgress(view.Members(ms.ID))
 
 			// Active phase: first in-progress epic child
 			var phaseCandidates []*nib.Nib
-			for _, n := range descendants {
+			for _, n := range view.DirectMembers(ms.ID) {
 				// Classification check — exempt: empty type is never milestone/epic.
-				if n.Type == "epic" && n.Status == "in-progress" && n.Parent == ms.ID {
+				if n.Type == "epic" && n.Status == "in-progress" {
 					phaseCandidates = append(phaseCandidates, n)
 				}
 			}
@@ -116,14 +123,14 @@ func BuildSummary(allNibs []*nib.Nib, rootID string, cfg *config.Config) Summary
 	sum.Decisions = ExtractDecisions(root.Body)
 
 	// Collect all descendants of the root nib
-	descendants := collectDescendants(allNibs, rootID, byID)
+	descendants := view.Members(rootID)
 
 	// Active phase: in-progress epic that is a direct child of the root.
 	// Sort candidates by Order so the selection is deterministic.
 	var phaseCandidates []*nib.Nib
-	for _, n := range descendants {
+	for _, n := range view.DirectMembers(rootID) {
 		// Classification check — exempt: empty type is never milestone/epic.
-		if n.Type == "epic" && n.Status == "in-progress" && n.Parent == rootID {
+		if n.Type == "epic" && n.Status == "in-progress" {
 			phaseCandidates = append(phaseCandidates, n)
 		}
 	}
@@ -143,7 +150,7 @@ func BuildSummary(allNibs []*nib.Nib, rootID string, cfg *config.Config) Summary
 	// Next tasks: todo leaf work under the active phase (if any), sorted by Order.
 	// If there's no active phase, fall back to all todo leaf work under root.
 	if len(phaseCandidates) > 0 {
-		phaseDescendants := collectDescendants(allNibs, phaseCandidates[0].ID, byID)
+		phaseDescendants := view.Members(phaseCandidates[0].ID)
 		nextTasks := filterByStatusAndLeaf(phaseDescendants, "todo")
 		nib.SortByOrder(nextTasks)
 		sum.NextTasks = toNibRefs(nextTasks)
@@ -240,36 +247,6 @@ func indexByID(nibs []*nib.Nib) map[string]*nib.Nib {
 		m[n.ID] = n
 	}
 	return m
-}
-
-// collectDescendants returns all nibs that are descendants of rootID
-// (children, grandchildren, etc.) — not including rootID itself.
-func collectDescendants(allNibs []*nib.Nib, rootID string, byID map[string]*nib.Nib) []*nib.Nib {
-	// Build children map
-	children := make(map[string][]string)
-	for _, n := range allNibs {
-		if n.Parent != "" {
-			children[n.Parent] = append(children[n.Parent], n.ID)
-		}
-	}
-
-	// BFS from rootID
-	var result []*nib.Nib
-	queue := children[rootID]
-	visited := make(map[string]bool)
-	for len(queue) > 0 {
-		id := queue[0]
-		queue = queue[1:]
-		if visited[id] {
-			continue
-		}
-		visited[id] = true
-		if n, ok := byID[id]; ok {
-			result = append(result, n)
-			queue = append(queue, children[id]...)
-		}
-	}
-	return result
 }
 
 // isLeafType returns true for work types that count toward progress.

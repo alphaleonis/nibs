@@ -59,6 +59,32 @@ func TestProjectionResolver_ChildCountAndProgress(t *testing.T) {
 	}
 }
 
+// TestProjectionRollupAxisSplit pins membership ledger delta (e)'s step-1
+// half: the two rollups answer from DIFFERENT axes. ChildCount is the
+// STRUCTURAL parent axis — every nib naming the parent, a milestone-typed
+// child included — while Progress rolls over the MEMBERS, where a
+// milestone-typed nib never counts (it is a container of its own). The split
+// is what lets step 2 move membership to `milestone:` assignment without
+// childCount silently changing meaning.
+func TestProjectionRollupAxisSplit(t *testing.T) {
+	resolver, core := setupTestResolver(t)
+	mustCreate(t, core, &nib.Nib{ID: "par", Slug: "par", Title: "Parent", Status: "in-progress"})
+	// A milestone-typed child is illegal data (milestones cannot have
+	// parents), created below the validating resolver on purpose: the axes
+	// only diverge on it, so it is the one probe that can tell them apart.
+	mustCreate(t, core, &nib.Nib{ID: "ms", Slug: "ms", Title: "Nested milestone", Type: "milestone", Status: "todo", Parent: "par"})
+	mustCreate(t, core, &nib.Nib{ID: "c1", Slug: "c1", Title: "C1", Status: "completed", Parent: "par"})
+	pr := resolver.ProjectionResolver(context.Background())
+
+	if got := pr.ChildCount("par"); got != 2 {
+		t.Errorf("ChildCount(par) = %d, want 2 — the structural axis counts the milestone-typed child", got)
+	}
+	want := ProgressRollup{Total: 1, Done: 1, Percent: 100}
+	if got := pr.Progress("par"); !reflect.DeepEqual(got, want) {
+		t.Errorf("Progress(par) = %#v, want %#v — the member axis excludes the milestone-typed child", got, want)
+	}
+}
+
 // TestComputeProgress pins the canonical progress rule directly, independent of
 // the store: done = completed only, total excludes scrapped children and no
 // others, percent rounds, and the two closed-but-not-completed statuses are
