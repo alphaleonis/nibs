@@ -1,8 +1,12 @@
 package cmd
 
 import (
+	"go/ast"
+	"go/parser"
+	"go/token"
 	"os"
 	"path/filepath"
+	"regexp"
 	"strconv"
 	"strings"
 	"testing"
@@ -781,4 +785,116 @@ func TestRefusalDoesNotDenyAConfigThatNamesTheDirectoryThroughASymlink(t *testin
 	if want := "`nibs migrate --nibs-path " + shellArg(declaredSpelling) + "`"; !strings.Contains(err.Error(), want) {
 		t.Errorf("refusal = %q, want it to prescribe %s — the declared store is one the evidence guard accepts, so the reader gets a command rather than being sent back to spell the path again", err.Error(), want)
 	}
+}
+
+// foreignNotesCarryingNibsStatus are front-mattered markdown files that no nib
+// renderer wrote, each carrying a `status:` value from the nibs enum. `status:`
+// is routine convention in note vaults and on docs sites — an Obsidian or
+// Dendron note tracks its own state with it, and a docs page marks itself
+// `draft` the same way — so these stand in for the ordinary content a project
+// keeps beside its code.
+var foreignNotesCarryingNibsStatus = map[string]string{
+	"vault-note.md": "---\ntitle: Weekly review\ntags: [notes, journal]\nstatus: in-progress\n---\n\n# Weekly review\n",
+	"docs-page.md":  "---\ntitle: Configuration\nweight: 20\nstatus: draft\n---\n\nHow to configure the thing.\n",
+}
+
+// TestCorroborationDocMatchesWhatForeignFrontMatterDoes holds
+// declaredStoreCorroborated's doc comment to what the predicate actually
+// accepts.
+//
+// The comment used to justify the `status:` bar by asserting that other tools'
+// front matter "does not carry it". It does: a note vault or docs site marking
+// its own pages `status: todo` satisfies the check with content nibs never
+// touched, so the corroboration is evidence against an ACCIDENT — a `nibs.path`
+// aimed at the wrong directory — and not against a repository that chose its
+// `nibs.path` on purpose. What bounds that case is isRealImmediateChild, which
+// is the fact the comment has to carry instead.
+//
+// A wrong justification in a comment is not inert here: it is the reason the
+// next reader would give for leaving the predicate alone, and the predicate
+// authorizes a whole-directory rename plus a rewrite of every file under it.
+//
+// The claim is measured rather than assumed, and BOTH directions fail. If the
+// predicate is ever strengthened so ordinary notes no longer corroborate, this
+// test fails too — the comment would then be free to say something this one
+// forbids, and that is a decision to make deliberately rather than to inherit.
+func TestCorroborationDocMatchesWhatForeignFrontMatterDoes(t *testing.T) {
+	dir := filepath.Join(t.TempDir(), "notes")
+	mkdirAllT(t, dir)
+	for name, content := range foreignNotesCarryingNibsStatus {
+		writeFileT(t, filepath.Join(dir, name), content)
+	}
+
+	corroborated, err := declaredStoreCorroborated(dir)
+	if err != nil {
+		t.Fatalf("declaredStoreCorroborated(%s): %v", dir, err)
+	}
+	if !corroborated {
+		t.Fatalf("declaredStoreCorroborated accepted none of %d ordinary notes carrying a nibs `status:`; "+
+			"the predicate has been strengthened, so re-read declaredStoreCorroborated's doc comment "+
+			"and this guard together before changing either", len(foreignNotesCarryingNibsStatus))
+	}
+
+	doc := docCommentOf(t, rootRefusalFile, "declaredStoreCorroborated")
+	for _, sentence := range docSentences(doc) {
+		if namesForeignFrontMatterTool(sentence) && deniesCarryingTheKey(sentence) {
+			t.Errorf("declaredStoreCorroborated's doc comment says %q, but ordinary notes carrying a nibs "+
+				"`status:` DO corroborate — the bar is not exclusive to nibs", strings.TrimSpace(sentence))
+		}
+	}
+	if !strings.Contains(doc, "isRealImmediateChild") {
+		t.Errorf("declaredStoreCorroborated's doc comment does not name isRealImmediateChild; "+
+			"corroboration only stops an accident, so the comment has to point at what actually "+
+			"bounds a repository that chose its own `nibs.path`\n\ncomment:\n%s", doc)
+	}
+}
+
+// foreignFrontMatterTool matches a name for someone else's front matter — the
+// subject of the claim this guard is about. The corrected comment names the same
+// tools to say the opposite thing, so naming one is not by itself a failure.
+var foreignFrontMatterTool = regexp.MustCompile(`(?i)\b(hugo|jekyll|obsidian|dendron|mkdocs|docusaurus|docs[- ]site)\b`)
+
+// deniesCarryingTheKey matches a negated claim about carrying, having, using or
+// writing something — "does not carry it", "never carries a status". It is
+// deliberately narrower than "any negation": a sentence may say what
+// corroboration does NOT prove without asserting anything about another tool's
+// front matter.
+var deniesCarryingTheKey = regexp.MustCompile(`(?i)\b(?:does not|do not|doesn't|don't|never|cannot|can't|no)\s+(?:\w+\s+){0,3}(?:carry|carries|carried|have|has|use|uses|used|write|writes|set|sets)\b`).MatchString
+
+// namesForeignFrontMatterTool reports whether s names someone else's front
+// matter generator or note vault.
+func namesForeignFrontMatterTool(s string) bool {
+	return foreignFrontMatterTool.MatchString(s)
+}
+
+// docSentences splits a doc comment into sentences so a claim is judged against
+// the words around it. Both halves of the claim must land in ONE sentence: a
+// comment that names Hugo in one place and denies something unrelated in another
+// is not making this claim.
+func docSentences(doc string) []string {
+	return regexp.MustCompile(`(?m)(?:\.\s|\.$|\n\s*\n)`).Split(doc, -1)
+}
+
+// docCommentOf returns the doc comment on the named top-level function in the
+// given source file, failing the test when either is missing — a guard that
+// stops finding what it reads must fail rather than pass vacuously.
+func docCommentOf(t *testing.T, file, fn string) string {
+	t.Helper()
+	fset := token.NewFileSet()
+	parsed, err := parser.ParseFile(fset, file, nil, parser.ParseComments|parser.SkipObjectResolution)
+	if err != nil {
+		t.Fatalf("parse %s: %v", file, err)
+	}
+	for _, decl := range parsed.Decls {
+		d, ok := decl.(*ast.FuncDecl)
+		if !ok || d.Name.Name != fn {
+			continue
+		}
+		if d.Doc == nil {
+			t.Fatalf("%s in %s has no doc comment", fn, file)
+		}
+		return d.Doc.Text()
+	}
+	t.Fatalf("%s declares no function named %s", file, fn)
+	return ""
 }
