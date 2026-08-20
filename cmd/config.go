@@ -9,6 +9,7 @@ import (
 	"path/filepath"
 	"strings"
 
+	"github.com/alphaleonis/nibs/internal/config"
 	"github.com/alphaleonis/nibs/internal/nib"
 	"github.com/alphaleonis/nibs/internal/output"
 	"github.com/alphaleonis/nibs/internal/reprefix"
@@ -122,8 +123,12 @@ func runSetPrefix(cmd *cobra.Command, args []string) error {
 		return cmdError(setPrefixJSON, output.ErrFileError, "%v", err)
 	}
 
+	// Only the prefix key, edited in place. cfg is the MERGED read model — user
+	// config and system defaults layered onto the project's own values — so
+	// marshaling it back would write advisory settings into the project's
+	// committed config and destroy every key this build does not model.
 	cfg.Nibs.Prefix = newPrefix
-	staleLink, err := cfg.Save("")
+	staleLink, err := config.SetStoredPrefix(cfg.StoreDir(), newPrefix)
 	if err != nil {
 		configFile := cfg.Layout().ConfigPath()
 		return cmdError(setPrefixJSON, output.ErrFileError,
