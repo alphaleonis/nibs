@@ -154,8 +154,12 @@ func TestMilestoneTypedNibsAreNeverMembers(t *testing.T) {
 	})
 	wantIDs(t, `DirectMembers("m1")`, v.DirectMembers("m1"), "b1")
 	wantIDs(t, `Members("m1")`, v.Members("m1"), "b1")
-	// The nested milestone still answers for its own subtree.
+	// The nested milestone still answers for its own subtree, and belongs to
+	// no milestone itself — even nested, it is a container, not a member.
 	wantIDs(t, `Members("mx")`, v.Members("mx"), "tx")
+	if got := v.MilestoneOf("mx"); got != "" {
+		t.Errorf(`MilestoneOf("mx") = %q, want "" — a milestone is never scheduled into another`, got)
+	}
 	// But the structural child axis still reports it — ChildCount stays honest.
 	wantIDs(t, `Children("m1")`, v.Children("m1"), "mx", "b1")
 }

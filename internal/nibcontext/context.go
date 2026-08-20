@@ -58,8 +58,15 @@ type Progress struct {
 // on purpose: the epic/task selectors match "in-progress"/"todo" — single
 // statuses a group predicate cannot single out.
 func BuildSummary(allNibs []*nib.Nib, rootID string, cfg *config.Config) Summary {
+	return BuildSummaryWithView(allNibs, membership.Compute(allNibs), rootID, cfg)
+}
+
+// BuildSummaryWithView is BuildSummary for a caller that already computed the
+// membership view over the same slice — one Compute per command, not one per
+// layer. The view MUST be built over allNibs; two different slices here would
+// let the summary and its rollups disagree about the store.
+func BuildSummaryWithView(allNibs []*nib.Nib, view *membership.View, rootID string, cfg *config.Config) Summary {
 	byID := indexByID(allNibs)
-	view := membership.Compute(allNibs)
 
 	sum := Summary{
 		ActiveTasks: []*NibRef{},
@@ -75,9 +82,8 @@ func BuildSummary(allNibs []*nib.Nib, rootID string, cfg *config.Config) Summary
 
 		// Build per-milestone container summaries for active milestones
 		var milestones []*nib.Nib
-		for _, n := range allNibs {
-			// Classification check — exempt: empty type is never milestone/epic.
-			if n.Type == "milestone" && !cfg.IsClosedStatus(n.Status) {
+		for _, n := range view.Milestones() {
+			if !cfg.IsClosedStatus(n.Status) {
 				milestones = append(milestones, n)
 			}
 		}

@@ -52,22 +52,27 @@ func TestMembershipConsumersDoNotReadParentDirectly(t *testing.T) {
 	for _, rel := range auditedFiles {
 		path := filepath.Join(root, filepath.FromSlash(rel))
 		fset := token.NewFileSet()
-		f, err := parser.ParseFile(fset, path, nil, 0)
+		f, err := parser.ParseFile(fset, path, nil, parser.SkipObjectResolution)
 		if err != nil {
 			t.Fatalf("parsing %s: %v — if the file moved, update auditedFiles rather than deleting the guard", rel, err)
 		}
+		// Count within each function first, then attribute whatever is left to
+		// package level — a selector can legally sit in a var initializer (the
+		// cobra RunE closures in cmd are exactly that shape), and dropping it
+		// would be a silent hole in the guard.
+		inFuncs := 0
 		for _, decl := range f.Decls {
 			fn, ok := decl.(*ast.FuncDecl)
-			if !ok || fn.Body == nil {
+			if !ok {
 				continue
 			}
-			ast.Inspect(fn.Body, func(node ast.Node) bool {
-				sel, ok := node.(*ast.SelectorExpr)
-				if ok && sel.Sel.Name == "Parent" {
-					found[fmt.Sprintf("%s:%s", rel, fn.Name.Name)]++
-				}
-				return true
-			})
+			if n := countParentSelectors(fn); n > 0 {
+				found[fmt.Sprintf("%s:%s", rel, funcKey(fn))] += n
+				inFuncs += n
+			}
+		}
+		if total := countParentSelectors(f); total > inFuncs {
+			found[rel+":<package-level>"] = total - inFuncs
 		}
 	}
 
@@ -98,6 +103,40 @@ func TestMembershipConsumersDoNotReadParentDirectly(t *testing.T) {
 	}
 	sort.Strings(names)
 	t.Logf("audited %d files; .Parent sites found: %v", len(auditedFiles), names)
+}
+
+// countParentSelectors reports how many `X.Parent` selector expressions appear
+// anywhere inside n, reads and writes alike.
+func countParentSelectors(n ast.Node) int {
+	count := 0
+	ast.Inspect(n, func(node ast.Node) bool {
+		if sel, ok := node.(*ast.SelectorExpr); ok && sel.Sel != nil && sel.Sel.Name == "Parent" {
+			count++
+		}
+		return true
+	})
+	return count
+}
+
+// funcKey renders a function's name, qualified by its receiver type for a
+// method, so two methods named alike on different types stay distinguishable.
+func funcKey(fn *ast.FuncDecl) string {
+	if fn.Recv == nil || len(fn.Recv.List) == 0 {
+		return fn.Name.Name
+	}
+	return "(" + receiverString(fn.Recv.List[0].Type) + ")." + fn.Name.Name
+}
+
+func receiverString(expr ast.Expr) string {
+	switch e := expr.(type) {
+	case *ast.Ident:
+		return e.Name
+	case *ast.StarExpr:
+		return "*" + receiverString(e.X)
+	case *ast.IndexExpr:
+		return receiverString(e.X)
+	}
+	return "?"
 }
 
 // moduleRoot walks up from the package directory to the directory holding

@@ -1,0 +1,93 @@
+{
+  "root": {
+    "id": "tnib-m001",
+    "title": "v1.0 MVP Launch",
+    "status": "in-progress",
+    "type": "milestone"
+  },
+  "progress": {
+    "total": 4,
+    "done": 0,
+    "percent": 0,
+    "scrapped": 0,
+    "deferred": 0
+  },
+  "active_phase": {
+    "id": "tnib-e001",
+    "title": "User Authentication",
+    "status": "in-progress",
+    "type": "epic"
+  },
+  "active_tasks": [
+    {
+      "id": "tnib-t005",
+      "title": "GitHub OAuth provider integration",
+      "status": "in-progress",
+      "type": "task",
+      "estimate": "m"
+    },
+    {
+      "id": "tnib-f002",
+      "title": "OAuth2 social login",
+      "status": "in-progress",
+      "type": "feature",
+      "estimate": "l"
+    },
+    {
+      "id": "tnib-f005",
+      "title": "Task assignment and ownership",
+      "status": "in-progress",
+      "type": "feature",
+      "estimate": "m"
+    },
+    {
+      "id": "tnib-b003",
+      "title": "Assigning task to deactivated user shows no error",
+      "status": "in-progress",
+      "type": "bug",
+      "estimate": "s"
+    }
+  ],
+  "next_tasks": [
+    {
+      "id": "tnib-t006",
+      "title": "Design password reset email template",
+      "status": "todo",
+      "type": "task",
+      "estimate": "s"
+    },
+    {
+      "id": "tnib-t007",
+      "title": "Implement token generation and expiry",
+      "status": "todo",
+      "type": "task",
+      "estimate": "m"
+    },
+    {
+      "id": "tnib-b001",
+      "title": "OAuth callback URL mismatch in production config",
+      "status": "todo",
+      "type": "bug",
+      "estimate": "s"
+    },
+    {
+      "id": "tnib-f003",
+      "title": "Password reset flow",
+      "status": "todo",
+      "type": "feature",
+      "estimate": "m"
+    },
+    {
+      "id": "tnib-b002",
+      "title": "Session tokens not invalidated on password change",
+      "status": "todo",
+      "type": "bug",
+      "estimate": "m"
+    }
+  ],
+  "decisions": [
+    "Chose PostgreSQL over MongoDB for ACID compliance requirements",
+    "REST API first, GraphQL deferred to v1.2",
+    "Server-side rendering deferred — SPA with Svelte for now"
+  ]
+}

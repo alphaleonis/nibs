@@ -84,8 +84,9 @@ over its direct children, plus active tasks, next tasks, and key decisions
 			}
 		}
 
-		sum := nibcontext.BuildSummary(allNibs, rootID, app.Config())
-		out := buildContextOutput(sum, rootID, membership.Compute(allNibs))
+		view := membership.Compute(allNibs)
+		sum := nibcontext.BuildSummaryWithView(allNibs, view, rootID, app.Config())
+		out := buildContextOutput(sum, rootID, view)
 
 		if contextJSON {
 			return output.JSONRaw(out)

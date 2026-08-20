@@ -136,11 +136,15 @@ func (v *View) Members(containerID string) []*nib.Nib {
 
 // MilestoneOf returns the id of the milestone the nib transitively belongs to,
 // or "" for unscheduled work — walking up the resolved parent chain to the
-// nearest milestone-typed ancestor. A milestone belongs to no milestone, and
-// an unknown id is unscheduled.
+// nearest milestone-typed ancestor. A milestone belongs to no milestone — it
+// is a container of its own even when an illegal nest places it under one —
+// and an unknown id is unscheduled.
 func (v *View) MilestoneOf(id string) string {
 	visited := make(map[string]bool)
 	b := v.byID[id]
+	if b != nil && b.EffectiveType() == "milestone" {
+		return ""
+	}
 	for b != nil && !visited[b.ID] {
 		visited[b.ID] = true
 		if b.Parent == "" {

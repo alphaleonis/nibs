@@ -30,6 +30,11 @@ func TestMembershipConsumerFixturePins(t *testing.T) {
 		{"context-overview", []string{"--nibs-path", nibsPath, "context"}},
 		{"context-milestone", []string{"--nibs-path", nibsPath, "context", "tnib-m001"}},
 		{"context-json", []string{"--nibs-path", nibsPath, "context", "--json"}},
+		// The two goldens below were captured by running the PRE-cutover binary
+		// (commit bdb7692, the branch base) against the fixture, so they pin
+		// base behavior even though they entered the tree after the cutover.
+		{"context-epic", []string{"--nibs-path", nibsPath, "context", "tnib-e002"}},
+		{"context-milestone-json", []string{"--nibs-path", nibsPath, "context", "tnib-m001", "--json"}},
 		{"list-projection", []string{"--nibs-path", nibsPath, "list", "--all", "-f", "id,children,progress"}},
 	}
 	for _, tc := range cases {
@@ -66,6 +71,7 @@ func TestMembershipConsumerFixturePins(t *testing.T) {
 // resetMembershipPinFlags clears the package-level flag state the pinned
 // commands share, so one case's flags cannot leak into the next run.
 func resetMembershipPinFlags() {
+	resetListFlags()
 	roadmapJSON = false
 	roadmapIncludeDone = false
 	roadmapStatus = nil
