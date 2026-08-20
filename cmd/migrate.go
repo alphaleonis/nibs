@@ -9,6 +9,7 @@ import (
 	"io/fs"
 	"os"
 	"path/filepath"
+	"slices"
 	"strconv"
 	"strings"
 	"syscall"
@@ -224,7 +225,7 @@ func (s migrationStep) isContent() bool { return s.pred != nil }
 // the position in this slice is the whole mechanism.
 var migrationSteps = []migrationStep{
 	{
-		name:            "layout",
+		name:            layoutStepName,
 		title:           "put the store, the project config and the nib files where the current layout expects them",
 		shape:           layoutPendingCount,
 		plan:            func(env migrateEnv) error { _, err := planLayout(env); return err },
@@ -1250,8 +1251,13 @@ func loadStoreForMigration(env migrateEnv) (*nibcore.Core, error) {
 // files written by a newer nibs (collected so the eventual refusal can carry
 // everything the walk saw — see scanStore).
 type storeScan struct {
-	counts   []int
-	problems []scanProblem
+	// foreignContent holds files already under data/ or archive/ that
+	// layoutVerdict would not have moved there. On a MIGRATED store that is an
+	// ordinary diagnostic; on a pre-layout one it is evidence the directory is
+	// not ours (see gateContentDirsAreOurs).
+	foreignContent []string
+	counts         []int
+	problems       []scanProblem
 	// newer describes each file whose format version exceeds
 	// nib.CurrentVersion ("path (format version N)").
 	newer []string
@@ -1407,7 +1413,11 @@ func scanStore(env migrateEnv) (*storeScan, error) {
 			return nil
 		}
 		rel := storeRelPath(env, path)
-		if l := env.layout(); !l.IsDataRel(rel) && !l.IsArchivedRel(rel) && layoutVerdict(rel, h) == notANib {
+		if l := env.layout(); l.IsDataRel(rel) || l.IsArchivedRel(rel) {
+			if layoutVerdict(contentDirRel(l, rel), h) == notANib {
+				scan.foreignContent = append(scan.foreignContent, rel)
+			}
+		} else if layoutVerdict(rel, h) == notANib {
 			// The layout step leaves this file where it sits, so no content step
 			// will ever meet it. Counting it leaves a step pending that applying
 			// cannot clear: the run reports "applied but its detection still
@@ -1502,6 +1512,17 @@ func runMigrations(env migrateEnv, log logf) error {
 		return &refusalError{refusals: refusals}
 	}
 
+	// Record that this run started before it changes anything, so an interrupted
+	// one is recognizable as ours afterwards — the question gateContentDirsAreOurs
+	// cannot answer from a directory's contents. A run with nothing pending falls
+	// through to the clear below, which is what stops a crash in the instant
+	// before removal from leaving the store looking mid-migration forever.
+	if len(pending) > 0 {
+		if err := writeMigrationMarker(env, pending); err != nil {
+			return fmt.Errorf("recording that the migration started: %w", err)
+		}
+	}
+
 	for _, step := range pending {
 		log("applying %s: %s", step.name, step.title)
 		if err := step.apply(&env, lock, log); err != nil {
@@ -1520,6 +1541,12 @@ func runMigrations(env migrateEnv, log logf) error {
 			return fmt.Errorf("migration %s applied but its detection still fires — the header scan disagrees with the parsed store for:\n  %s\nplease repair these files by hand (or report a nibs bug); until then commands will keep refusing",
 				step.name, echoedList(stuck, ""))
 		}
+	}
+	// The store finished at env.nibsRoot's CURRENT value: the layout step
+	// repoints env when it relocates the store, so the marker is cleared where it
+	// now lives rather than where the run started.
+	if err := clearMigrationMarker(env); err != nil {
+		return fmt.Errorf("clearing %s after a completed migration: %w", migrationMarkerName, err)
 	}
 	return nil
 }
@@ -1644,6 +1671,7 @@ type migrateGate struct {
 var migrateGates = []migrateGate{
 	{name: "dirty-store", check: gateStoreGitClean},
 	{name: "dirty-legacy-config", check: gateLegacyConfigRecoverable},
+	{name: "foreign-content-dir", check: gateContentDirsAreOurs},
 	{name: "step-plan", check: gatePendingPlans},
 	{name: "unclassifiable-content", check: gateContentClassifiable},
 	{name: "store-loads-cleanly", check: gateStoreLoadsCleanly},
@@ -1749,6 +1777,95 @@ func gateContentClassifiable(env migrateEnv, scan *storeScan) gateResult {
 	return gateRefused(output.ErrFileError,
 		fmt.Sprintf("refusing to migrate around %d file(s) that cannot be read as nibs (move them out of the store or repair them, then re-run `nibs migrate`):\n  %s",
 			len(blocking), describeScanProblems(blocking)))
+}
+
+// gateContentDirsAreOurs refuses a PRE-LAYOUT store whose data/ or archive/ holds
+// something this tool would not have put there.
+//
+// On a pre-layout store those directories have two possible histories: a run of
+// ours was interrupted partway through moving files in, or they are the user's
+// own — a site's data/, a note vault — and migrating would load every page in
+// them as a nib. Two tests separate the two, and both are needed:
+//
+//   - the marker, which says an interrupted run was OURS. It is the only thing
+//     that can answer for a directory whose contents look like nibs either way.
+//   - the contents, for every store that crashed before markers existed and for
+//     the ordinary case where the answer is plain: a resumed run's data/ holds
+//     files layoutVerdict would have moved there.
+//
+// Scoped to a pre-layout store on purpose. Once the layout step has run, data/ IS
+// the store's content by definition and a file in it that is not a nib is a
+// different complaint — gateContentClassifiable's, or `nibs check`'s.
+func gateContentDirsAreOurs(env migrateEnv, scan *storeScan) gateResult {
+	if !layoutStepPending(env, scan) || migrationMarkerExists(env) {
+		return gateMet()
+	}
+	l := env.layout()
+	var foreign []string
+	for _, p := range scan.problems {
+		// A file the scan could not read at all is gateContentClassifiable's
+		// business, not this gate's: it refuses over exactly those, with a
+		// remedy of its own, and two refusals over one file help nobody.
+		if p.unreadable || !l.IsDataRel(p.path) && !l.IsArchivedRel(p.path) {
+			continue
+		}
+		foreign = append(foreign, p.path)
+	}
+	foreign = append(foreign, scan.foreignContent...)
+	if len(foreign) == 0 {
+		return gateMet()
+	}
+	slices.Sort(foreign)
+	return gateRefused(output.ErrValidation,
+		fmt.Sprintf("this store has not been migrated yet, but %s/ already holds %d file(s) nibs would not have written there:\n  %s\n"+
+			"that directory is where the migration puts nib files, so migrating would load these as nibs. If they are yours, move them "+
+			"aside and re-run `nibs migrate`; if this is a migration of ours that was interrupted, re-run it from the same nibs version, "+
+			"which leaves a %s marker behind. Nothing has been changed",
+			store.DataDirName, len(foreign), echoedList(sanitizedList(foreign), ""), migrationMarkerName))
+}
+
+// layoutStepPending reports whether the store still has the pre-layout shape,
+// read off the scan the caller already performed rather than walking again.
+func layoutStepPending(env migrateEnv, scan *storeScan) bool {
+	for i, step := range migrationSteps {
+		if step.name == layoutStepName {
+			return scan.counts[i] > 0
+		}
+	}
+	return false
+}
+
+// migrationMarkerExists reports whether a previous run of ours was interrupted
+// inside this store. A read error counts as absent: the marker only ever WIDENS
+// what migrate will proceed over, so failing to read it must not do so silently.
+func migrationMarkerExists(env migrateEnv) bool {
+	info, err := os.Stat(filepath.Join(env.nibsRoot, migrationMarkerName))
+	return err == nil && info.Mode().IsRegular()
+}
+
+// writeMigrationMarker records that a run has started working in this store, so
+// an interrupted one is recognizable afterwards (see migrationMarkerName). The
+// body is diagnostics; presence is the signal.
+func writeMigrationMarker(env migrateEnv, steps []migrationStep) error {
+	names := make([]string, len(steps))
+	for i, step := range steps {
+		names[i] = step.name
+	}
+	body := fmt.Sprintf("# `nibs migrate` is working in this store, or was interrupted while doing so.\n"+
+		"# Re-run `nibs migrate` to finish; this file is removed when it completes.\n"+
+		"steps: %s\n", strings.Join(names, ", "))
+	return fsutil.AtomicWriteFile(filepath.Join(env.nibsRoot, migrationMarkerName), []byte(body), 0644)
+}
+
+// clearMigrationMarker removes the marker, tolerating its absence: a run that
+// finds nothing pending clears it too, so a crash in the last instant before
+// removal does not leave the store looking mid-migration forever.
+func clearMigrationMarker(env migrateEnv) error {
+	err := os.Remove(filepath.Join(env.nibsRoot, migrationMarkerName))
+	if errors.Is(err, os.ErrNotExist) {
+		return nil
+	}
+	return err
 }
 
 // gateStoreLoadsCleanly previews loadStoreForMigration's own refusal: a store
@@ -2080,6 +2197,19 @@ const (
 	// isNib: the whole shape nib.Render writes. Moved without comment.
 	isNib
 )
+
+// contentDirRel is a content file's path as it would have looked BEFORE the
+// layout step moved it: data/x.md came from x.md, data/sub/y.md from sub/y.md.
+// It is what lets layoutVerdict answer "would we have written this here?" about a
+// file already in place, since the verdict reads position from the path.
+func contentDirRel(l store.Layout, rel string) string {
+	for _, dir := range []string{store.DataDirName, store.ArchiveDirName} {
+		if trimmed, ok := strings.CutPrefix(rel, dir+"/"); ok {
+			return trimmed
+		}
+	}
+	return rel
+}
 
 // layoutVerdict classifies a file the layout step is deciding whether to move.
 //
@@ -2476,6 +2606,29 @@ func reportDryRun(env migrateEnv, scan *storeScan) error {
 	ui.Println("Stop any running `nibs serve` before migrating.")
 	return nil
 }
+
+// layoutStepName is the shape step's name, referenced where a gate has to ask
+// whether the store still has the pre-layout shape.
+const layoutStepName = "layout"
+
+// migrationMarkerName is the file a run drops in the store root while it is
+// working, so an interrupted run is recognizable as OURS afterwards.
+//
+// It answers a question no inspection of data/ can: a pre-layout store already
+// holding data/ is either a crashed migration to resume or somebody's own
+// directory, and a note vault under data/ whose pages carry a title and a status
+// classifies as ours under layoutVerdict. Presence is the whole signal; the
+// contents are diagnostics.
+//
+// Not a key in config.yml, which was the obvious home: that file's exact bytes
+// are already the config relocation's own crash-recovery signal (see
+// planConfigRelocation's bytes.Equal), so a marker key in it would make every
+// resumed run report a two-config conflict — and it would create a config file
+// for a config-less project that never had one.
+//
+// Deliberately not a .md file and deliberately dot-prefixed, so no walk, scan or
+// classifier has to know it exists.
+const migrationMarkerName = ".migrating"
 
 // assumedNibsPending is the files the layout step would move without being able
 // to prove they are nibs, for the preview to report. It walks the store again

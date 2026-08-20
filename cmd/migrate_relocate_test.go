@@ -548,6 +548,15 @@ func migrateGateFixtures() map[string]migrateGateFixture {
 			}
 			return storeDir
 		}},
+		"foreign-content-dir": {allowDirty: true, build: func(t *testing.T) string {
+			// Pre-layout (a nib still at the root) with a data/ nibs did not
+			// write: a page carrying a title and a status outside the enum.
+			_, storeDir := writeLegacyStore(t, "nibs:\n  prefix: leg-\n", map[string]string{
+				"leg-a1--one.md":   layoutNib,
+				"data/overview.md": "---\ntitle: Overview\nstatus: published\n---\n\nBody.\n",
+			})
+			return storeDir
+		}},
 		"store-loads-cleanly": {allowDirty: true, build: func(t *testing.T) string {
 			// Only a CONTENT step pending (the files are already under data/),
 			// with two files claiming one id.

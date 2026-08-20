@@ -405,3 +405,81 @@ func TestDryRunPredictsWhatTheRealRunWillAsk(t *testing.T) {
 		}
 	})
 }
+
+// TestMigrateRefusesADataDirectoryItDidNotWrite pins the other half of "is this
+// ours?".
+//
+// A pre-layout store that already holds data/ is ambiguous: either a crashed
+// migration to resume, or somebody's own directory about to be swallowed. Two
+// answers cover it, and both are needed. Inspecting the contents settles the
+// common case — a resumed run's data/ holds files we would have put there — but
+// it CANNOT settle a note vault under data/ whose pages carry a title and a
+// status, because those classify as ours. So a run also records that it started,
+// and the marker is what makes an interrupted run recognizable regardless of what
+// it had managed to move.
+func TestMigrateRefusesADataDirectoryItDidNotWrite(t *testing.T) {
+	const page = "---\ntitle: Overview\nstatus: published\n---\n\nBody.\n"
+
+	build := func(t *testing.T, extra map[string]string) string {
+		t.Helper()
+		t.Cleanup(resetRootPersistentFlags)
+		t.Cleanup(resetMigrateFlags)
+		resetRootPersistentFlags()
+		resetMigrateFlags()
+		files := map[string]string{
+			"leg-a1--one.md":   layoutNib,
+			"data/overview.md": page,
+		}
+		for k, v := range extra {
+			files[k] = v
+		}
+		_, storeDir := writeLegacyStore(t, "nibs:\n  prefix: leg-\n", files)
+		return storeDir
+	}
+
+	t.Run("a foreign data/ stops the run before it moves anything", func(t *testing.T) {
+		storeDir := build(t, nil)
+		out, err := runRootWith(t, "--nibs-path", storeDir, "migrate", "--allow-dirty", "--force")
+		if err == nil {
+			t.Fatalf("migrate swallowed a data/ directory it did not write\nout: %s", out)
+		}
+		if !strings.Contains(err.Error(), "overview.md") {
+			t.Errorf("the refusal does not name what made it refuse: %v", err)
+		}
+		if _, statErr := os.Stat(filepath.Join(storeDir, "leg-a1--one.md")); statErr != nil {
+			t.Errorf("the refusal came after the layout step had moved files: %v", statErr)
+		}
+	})
+
+	t.Run("the marker identifies an interrupted run of ours", func(t *testing.T) {
+		storeDir := build(t, map[string]string{})
+		writeFileT(t, filepath.Join(storeDir, migrationMarkerName), "step: layout\n")
+
+		out, err := runRootWith(t, "--nibs-path", storeDir, "migrate", "--allow-dirty", "--force")
+		if err != nil {
+			t.Fatalf("migrate refused to resume its own interrupted run: %v\nout: %s", err, out)
+		}
+		if _, statErr := os.Stat(filepath.Join(storeDir, migrationMarkerName)); statErr == nil {
+			t.Error("the marker survived a completed run")
+		}
+	})
+}
+
+// TestMigrationMarkerGatesNothing pins the marker's scope. It is evidence for one
+// decision, and a leftover one on a healthy store must not make any command
+// refuse — otherwise a file nobody cleaned up becomes a store-wide lockout, which
+// is a worse failure than the one it exists to prevent.
+func TestMigrationMarkerGatesNothing(t *testing.T) {
+	t.Cleanup(resetRootPersistentFlags)
+	t.Cleanup(resetListFlags)
+	resetListFlags()
+
+	storeDir := writeStore(t, filepath.Join(t.TempDir(), "proj"), "nibs:\n  prefix: chk-\n", map[string]string{
+		"chk-a1--one.md": layoutNib,
+	})
+	writeFileT(t, filepath.Join(storeDir, migrationMarkerName), "step: layout\n")
+
+	if _, err := runRootWith(t, "--nibs-path", storeDir, "list", "--all", "--json"); err != nil {
+		t.Fatalf("a leftover migration marker locked the store: %v", err)
+	}
+}
