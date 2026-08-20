@@ -1020,8 +1020,8 @@ func isRealImmediateChild(dir, parent string) (bool, error) {
 	return sameDir(filepath.Dir(realDir), realParent), nil
 }
 
-// declaredStoreCorroborated reports whether dir holds anything only nibs writes,
-// so a `.nibs.yml` cannot authorize a relocation on its own say-so.
+// declaredStoreCorroborated reports whether dir holds a file nibs plausibly
+// wrote, so a `.nibs.yml` cannot authorize a relocation on its own say-so.
 //
 // The naming config is untrusted content: a cloned repository chooses its own
 // `nibs.path`, and pre-layout `nibs init` NEVER wrote a value other than `.nibs`
@@ -1030,12 +1030,31 @@ func isRealImmediateChild(dir, parent string) (bool, error) {
 // nibs print `nibs migrate --nibs-path <that dir>`, which moves every
 // front-mattered .md under it into data/ and rewrites each one as a nib render.
 //
-// The corroborating artifact is a `status:` from the hardcoded enum in a file's
-// front matter: nib.Render writes it into every nib, while Hugo, Jekyll and
-// docs-site front matter does not carry it. Deliberately NOT keyed on the id
-// matching the config's prefix and id length — a project that changed its prefix
-// keeps nibs named under the old one, and refusing its real store would be worse
-// than the risk this closes.
+// WHAT THIS STOPS IS AN ACCIDENT, NOT AN ADVERSARY, and reading it as more than
+// that is how the predicate gets left alone when it should not be. The
+// corroborating artifact is a `status:` from the hardcoded enum in a file's front
+// matter. nib.Render writes it into every nib, but nothing reserves the key:
+// tracking a page's own state as `status: todo` or `status: draft` is routine
+// convention in note vaults (Obsidian, Dendron) and on docs sites, so ordinary
+// content a project keeps beside its code satisfies this check — measured, in
+// TestCorroborationDocMatchesWhatForeignFrontMatterDoes. Against a `nibs.path`
+// aimed at the wrong directory it still helps, because a directory reached by
+// mistake more often holds assets or build output than state-tracking front
+// matter — but it filters accidents rather than proving anything about them, and
+// a misaimed path landing on a note vault passes. Against a repository that
+// CHOSE its `nibs.path` it proves nothing at all — whoever wrote the config wrote
+// the .md files too, and can spell a `status:` into them as easily as a path into
+// the config.
+//
+// isRealImmediateChild is what answers that case, and it is the reason this one
+// may stay this weak: the named directory has to resolve, symlinks and all, to a
+// real child of the project, so a hostile config reaches nothing outside the
+// checkout it ships in. Corroboration narrows which directories inside that
+// checkout it can name; containment is what bounds where they can be.
+//
+// Deliberately NOT keyed on the id matching the config's prefix and id length —
+// a project that changed its prefix keeps nibs named under the old one, and
+// refusing its real store would be worse than the risk this closes.
 //
 // An EMPTY directory is corroborated, and only an empty one: a store `nibs init`
 // created but never wrote to legitimately holds nothing, so requiring an artifact
