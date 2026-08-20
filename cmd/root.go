@@ -98,6 +98,11 @@ func commandNeedsNoStore(cmd *cobra.Command) bool {
 	// would skip the store too and panic in getApp. Every one of these is a
 	// direct child of root today; nest one and this needs the lineage treatment
 	// below.
+	//
+	// cmd.Name() is never an ALIAS, which is what makes these names the right
+	// keys and not a trap: `query` is the real name of the command also reached
+	// as `nibs graphql`, so both spellings land here. Keying the alias instead is
+	// how updateNotifySkip silently exempted nothing (nibs-rg07).
 	switch cmd.Name() {
 	case "init", "prime", "version", "catalog", "cheat", "upgrade", "migrate":
 		return true

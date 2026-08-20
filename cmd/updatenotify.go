@@ -12,12 +12,18 @@ import (
 
 // updateNotifySkip lists commands that must never emit the trailing
 // "update available" line: long-running servers and machine/JSON-oriented
-// output (serve, graphql, query), shell-completion machinery, and tui — which
+// output (the web server and the GraphQL query command), shell-completion
+// machinery, help, and tui — which
 // surfaces update availability inside the UI itself rather than on stderr.
+//
+// KEYED ON cmd.Name(), WHICH IS NEVER AN ALIAS. Two of these commands are usually
+// typed under one — `nibs serve` is an alias for `web`, `nibs graphql` for
+// `query` — and keying the alias silently disables the entry, which is how the
+// server spent its life outside this list. TestUpdateNotifySkipKeysRealCommandNames
+// fails on a key that names no command, or one that names an alias.
 var updateNotifySkip = map[string]bool{
-	"serve":            true,
-	"graphql":          true,
-	"query":            true,
+	"web":              true, // also reached as `nibs serve`
+	"query":            true, // also reached as `nibs graphql`
 	"tui":              true,
 	"upgrade":          true, // upgrade reports availability itself
 	"help":             true,

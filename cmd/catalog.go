@@ -459,6 +459,10 @@ func catalogSchema() error {
 
 // commandShort returns the Short description of a top-level subcommand by name,
 // or a placeholder if it is ever renamed (guarded by a test).
+//
+// Name(), so an ALIAS finds nothing — but unlike a skip-list lookup, a miss here
+// is visible in the output rather than silent, which is what the placeholder and
+// its guard are for.
 func commandShort(name string) string {
 	for _, c := range rootCmd.Commands() {
 		if c.Name() == name {

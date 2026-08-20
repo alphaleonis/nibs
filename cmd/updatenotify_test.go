@@ -6,6 +6,7 @@ import (
 
 	"github.com/alphaleonis/nibs/internal/updatecheck"
 	"github.com/spf13/cobra"
+	"slices"
 )
 
 func TestUpdateNotifyEligible(t *testing.T) {
@@ -17,13 +18,16 @@ func TestUpdateNotifyEligible(t *testing.T) {
 		want    bool
 	}{
 		{"interactive list on a tty", "list", false, true, true},
-		{"show on a tty", "show", false, true, true},
+		// Real command names throughout: maybeNotifyUpdate passes cmd.Name(),
+		// which never returns an alias, so a row naming one would describe an
+		// input this function cannot receive. `get` is the command `nibs show`
+		// reaches.
+		{"get on a tty", "get", false, true, true},
 		{"not a tty (piped)", "list", false, false, false},
 		{"json output suppresses", "list", true, true, false},
 		{"json and non-tty", "list", true, false, false},
-		{"serve is skipped", "serve", false, true, false},
-		{"graphql is skipped", "graphql", false, true, false},
-		{"query is skipped", "query", false, true, false},
+		{"the web server is skipped", "web", false, true, false},
+		{"the query command is skipped", "query", false, true, false},
 		{"tui is skipped (in-app indicator)", "tui", false, true, false},
 		{"completion machinery is skipped", "__complete", false, true, false},
 	}
@@ -102,4 +106,63 @@ func TestJSONFlagSet(t *testing.T) {
 			t.Error("expected jsonFlagSet=false when there is no --json flag")
 		}
 	})
+}
+
+// TestUpdateNotifySkipKeysRealCommandNames pins every key in the skip map against
+// the tree it is supposed to name.
+//
+// The map keyed the server as "serve", which is an ALIAS: the command's Use is
+// "web" (cmd/serve.go), and maybeNotifyUpdate passes cmd.Name(), which returns
+// the real name whichever spelling the user typed. So the entry never fired, and
+// nothing said so — a key that matches nothing looks exactly like a key that
+// matches something, which is why this is a test rather than a careful reading.
+//
+// The same shape sits one line below: the GraphQL command's Use is "query" with
+// "graphql" as its alias.
+func TestUpdateNotifySkipKeysRealCommandNames(t *testing.T) {
+	// Cobra creates its completion tree during Execute, not at init.
+	rootCmd.InitDefaultCompletionCmd()
+
+	real := map[string]bool{
+		// Cobra owns these two and builds them inside ExecuteC through an
+		// unexported initializer, so they are never in rootCmd.Commands() here.
+		cobra.ShellCompRequestCmd:       true,
+		cobra.ShellCompNoDescRequestCmd: true,
+	}
+	var aliases []string
+	for _, c := range rootCmd.Commands() {
+		real[c.Name()] = true
+		aliases = append(aliases, c.Aliases...)
+	}
+	isAlias := func(key string) bool { return slices.Contains(aliases, key) }
+
+	for key := range updateNotifySkip {
+		if real[key] {
+			continue
+		}
+		if isAlias(key) {
+			t.Errorf("updateNotifySkip keys %q, which is an ALIAS — cmd.Name() never returns it, so the entry never fires", key)
+			continue
+		}
+		t.Errorf("updateNotifySkip keys %q, which names no command in the tree", key)
+	}
+}
+
+// TestUpdateNotifySkipsTheServerUnderEitherSpelling is the behavior the map
+// exists for: the server's output must stay clean, and a user may reach it by
+// either name.
+func TestUpdateNotifySkipsTheServerUnderEitherSpelling(t *testing.T) {
+	for _, spelling := range []string{"web", "serve"} {
+		t.Run(spelling, func(t *testing.T) {
+			cmd, _, err := rootCmd.Find([]string{spelling})
+			if err != nil {
+				t.Fatalf("`nibs %s` is not a command: %v", spelling, err)
+			}
+			// isTTY and no --json: every other reason to stay quiet is off, so
+			// the skip map is the only thing that can answer.
+			if updateNotifyEligible(cmd.Name(), false, true) {
+				t.Errorf("`nibs %s` would print an update notice into the server's output", spelling)
+			}
+		})
+	}
 }
