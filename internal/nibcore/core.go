@@ -189,39 +189,46 @@ func (c *Core) SetSearchIndex(idx SearchIndex) {
 	c.searchIndex = idx
 }
 
-// maxLoadWarnings bounds how many per-file diagnostics ONE load writes to the
-// warn writer. Every one of them is O(store): a bad merge, an interrupted rename
-// or a hand-edited field reaches a whole directory as easily as it reaches one
-// file, and 300 unparseable files put 600 lines and 77 KB on stderr on EVERY
-// command until they are repaired. This CLI's stated primary consumer is a
-// coding agent, so that accumulates in a transcript rather than scrolling past.
+// maxWarningsPerBatch bounds how many per-file diagnostics ONE batch of files
+// writes to the warn writer. A batch is a whole store load, or one debounce
+// window's worth of watcher events.
+//
+// Every one of these diagnostics is O(files): a bad merge, an interrupted rename
+// or a `git pull` in the separate .nibs repository reaches a whole directory as
+// easily as it reaches one file. Unbounded, 300 unparseable files put 600 lines
+// and 77 KB on stderr on EVERY command until they are repaired, and one watcher
+// batch of the same 300 put 600 lines through a running `nibs serve`. This CLI's
+// stated primary consumer is a coding agent, so that accumulates in a transcript
+// rather than scrolling past.
 //
 // It deliberately matches cmd's maxEchoedListEntries, which bounds the same thing
 // for a joined refusal, but stays a SEPARATE constant: the units differ (an
 // emitted warning here, one entry of one list there), and the only package both
 // sides could import — internal/safetext — documents volume as explicitly outside
 // its guarantee. Change one and look at the other.
-const maxLoadWarnings = 20
+const maxWarningsPerBatch = 20
 
-// loadWarnings is one load's warning budget. It is spent per WARNING rather than
-// per line, because a single warning can span several lines — a yaml parse error
+// warnBudget is one batch's allowance. It is spent per WARNING rather than per
+// line, because a single warning can span several lines — a yaml parse error
 // does — and a line budget would cut one in half.
 //
-// The budget is SHARED across the kinds a load emits (a skipped file, an id
-// collision, an out-of-enum value), so a store full of one kind can hide the
-// others entirely. That is why the closing line points at `nibs check` instead of
-// claiming the stream was complete: check reports all three, and twenty examples
+// The budget is SHARED across the kinds a batch emits (a file that would not
+// parse, an id collision, an out-of-enum value, a search-index failure), so a
+// store full of one kind can hide the others entirely. That is why the closing
+// line points at `nibs check` instead of claiming the stream was complete: check
+// loads the store fresh in its own process and reports every one of them, so the
+// remedy holds even for a batch a long-lived serve suppressed. Twenty examples
 // already tell one broken file apart from a broken store.
 //
-// It needs no locking: loadFromDisk walks on one goroutine, under c.mu.
-type loadWarnings struct {
+// It needs no locking: both callers iterate on one goroutine, under c.mu.
+type warnBudget struct {
 	c          *Core
 	emitted    int
 	suppressed int
 }
 
-func (w *loadWarnings) warn(format string, args ...any) {
-	if w.emitted >= maxLoadWarnings {
+func (w *warnBudget) warn(format string, args ...any) {
+	if w.emitted >= maxWarningsPerBatch {
 		w.suppressed++
 		return
 	}
@@ -230,10 +237,10 @@ func (w *loadWarnings) warn(format string, args ...any) {
 }
 
 // close reports what the budget held back. Nothing is printed when nothing was
-// suppressed, so a store under the budget warns exactly as it always did.
-func (w *loadWarnings) close() {
+// suppressed, so a batch under the budget warns exactly as it always did.
+func (w *warnBudget) close() {
 	if w.suppressed > 0 {
-		w.c.logWarn("…and %d more load-time problem(s) not shown; run `nibs check` for the full list", w.suppressed)
+		w.c.logWarn("…and %d more warning(s) suppressed; run `nibs check` for the full list of store problems", w.suppressed)
 	}
 }
 
@@ -295,8 +302,8 @@ func (c *Core) loadFromDisk() error {
 
 	// Every per-file warning below spends this budget; the retained diagnostics
 	// above do not, so `nibs check` still answers for the whole store however
-	// little of it reached stderr (see loadWarnings).
-	warns := &loadWarnings{c: c}
+	// little of it reached stderr (see warnBudget).
+	warns := &warnBudget{c: c}
 
 	// Walk the store's CONTENT directories — data/ and archive/, dot
 	// directories pruned (see WalkStoreContent). cmd/migrate's scans walk the
@@ -446,7 +453,7 @@ func (c *Core) relPathFromRoot(path string) string {
 // Only the WARNING is bounded by the load's budget. The diagnostic is retained
 // unconditionally, because it is what `nibs check` reads back — and the bounded
 // warning sends the reader there.
-func (c *Core) recordUnparseable(warns *loadWarnings, path string, reason error) {
+func (c *Core) recordUnparseable(warns *warnBudget, path string, reason error) {
 	warns.warn("skipping unparseable nib file %s: %v", path, reason)
 	id, _ := nib.ParseFilename(filepath.Base(path), c.configPrefix())
 	c.unparseableFiles = append(c.unparseableFiles, UnparseableFile{

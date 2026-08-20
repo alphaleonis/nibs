@@ -437,6 +437,13 @@ func (c *Core) handleChanges(changes map[string]fsnotify.Op) {
 
 	var events []NibEvent
 
+	// One batch's warning allowance, shared by every per-file diagnostic in the
+	// loop below. A debounce window holds whatever changed at once — a `git pull`
+	// in the separate .nibs repository is the event that makes that the whole
+	// store — so an unbounded stream here reaches a long-lived serve's stderr the
+	// way loadFromDisk's reached every command's (see warnBudget).
+	warns := &warnBudget{c: c}
+
 	// Whether this batch changed the set of stored ids in a way that can re-point
 	// a link held by a nib the batch never touched, which widens the
 	// canonicalization pass below from this batch's own nibs to the whole store.
@@ -596,7 +603,7 @@ func (c *Core) handleChanges(changes map[string]fsnotify.Op) {
 			// Update search index
 			if c.searchIndex != nil {
 				if err := c.searchIndex.DeleteNib(id); err != nil {
-					c.logWarn("failed to remove nib %s from search index: %v", id, err)
+					warns.warn("failed to remove nib %s from search index: %v", id, err)
 				}
 			}
 
@@ -619,7 +626,7 @@ func (c *Core) handleChanges(changes map[string]fsnotify.Op) {
 			// rewriting it is `nibs migrate`'s job.
 			newNib, err := c.loadNib(path)
 			if err != nil {
-				c.logWarn("failed to load nib from %s: %v", path, err)
+				warns.warn("failed to load nib from %s: %v", path, err)
 				continue
 			}
 
@@ -637,9 +644,9 @@ func (c *Core) handleChanges(changes map[string]fsnotify.Op) {
 			// the version must be mirrored into this condition, or a file it
 			// pends arrives into a live serve with no breadcrumb at all.
 			if newNib.Version > nib.CurrentVersion {
-				c.logWarn("nib file %s arrived with format version %d, newer than this build supports (%d); leave it to a newer nibs", path, newNib.Version, nib.CurrentVersion)
+				warns.warn("nib file %s arrived with format version %d, newer than this build supports (%d); leave it to a newer nibs", path, newNib.Version, nib.CurrentVersion)
 			} else if newNib.Version < nib.CurrentVersion || newNib.Priority == "deferred" {
-				c.logWarn("nib file %s arrived with a legacy shape; it loads as written until `nibs migrate` runs (stop serve first)", path)
+				warns.warn("nib file %s arrived with a legacy shape; it loads as written until `nibs migrate` runs (stop serve first)", path)
 			}
 
 			_, existed := c.nibs[newNib.ID]
@@ -651,7 +658,7 @@ func (c *Core) handleChanges(changes map[string]fsnotify.Op) {
 			// Update search index
 			if c.searchIndex != nil {
 				if err := c.searchIndex.IndexNib(newNib); err != nil {
-					c.logWarn("failed to index nib %s: %v", newNib.ID, err)
+					warns.warn("failed to index nib %s: %v", newNib.ID, err)
 				}
 			}
 
@@ -671,6 +678,10 @@ func (c *Core) handleChanges(changes map[string]fsnotify.Op) {
 			}
 		}
 	}
+
+	// Closed at the end of the per-file stream it speaks for, before the passes
+	// below that warn about nothing.
+	warns.close()
 
 	// Resolve short-form link ids against the post-batch store (see
 	// canonicalize.go). This runs AFTER the whole batch, not per file as it is
