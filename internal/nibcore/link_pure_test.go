@@ -1,11 +1,13 @@
 package nibcore
 
 import (
+	"reflect"
 	"slices"
 	"testing"
 
 	"github.com/alphaleonis/nibs/internal/config"
 	"github.com/alphaleonis/nibs/internal/nib"
+	"gopkg.in/yaml.v3"
 )
 
 // releasesDependentsForTest is the "does this blocker still count" predicate
@@ -677,4 +679,62 @@ func TestDetectCycleInMap(t *testing.T) {
 			t.Fatal("expected cycle A->B->A, got nil")
 		}
 	})
+}
+
+// TestCheckAllLinksInMapFlagsNearMissKeys pins the near-miss front-matter key
+// finding: an Extra key that is a misspelling of a modeled key (dash, case,
+// stray underscores — see nib.ModeledKeyResembling) is reported with the file,
+// the key as spelled, and the modeled key it resembles, while a legitimately
+// foreign key stays unflagged. The findings arrive sorted by nib id and then by
+// key, so the report cannot shuffle run to run, and they count as issues.
+func TestCheckAllLinksInMapFlagsNearMissKeys(t *testing.T) {
+	extra := func(keys ...string) map[string]yaml.Node {
+		m := make(map[string]yaml.Node, len(keys))
+		for _, k := range keys {
+			m[k] = yaml.Node{Kind: yaml.ScalarNode, Value: "v"}
+		}
+		return m
+	}
+	nibs := map[string]*nib.Nib{
+		// Two near-miss keys on one nib, ids deliberately out of map-literal
+		// order relative to the others, to exercise the sorting.
+		"chk-b2": {ID: "chk-b2", Status: "todo", Path: "data/chk-b2--case.md", Extra: extra("Milestone")},
+		"chk-a1": {ID: "chk-a1", Status: "todo", Path: "data/chk-a1--dash.md", Extra: extra("milestone-order", "Area")},
+		"chk-c3": {ID: "chk-c3", Status: "todo", Path: "data/chk-c3--foreign.md", Extra: extra("assignee")},
+		"chk-d4": {ID: "chk-d4", Status: "todo", Path: "data/chk-d4--plain.md"},
+	}
+
+	result := CheckAllLinksInMap(nibs, "", "chk-")
+
+	want := []NearMissKey{
+		{NibID: "chk-a1", Path: "data/chk-a1--dash.md", Key: "Area", Modeled: "area"},
+		{NibID: "chk-a1", Path: "data/chk-a1--dash.md", Key: "milestone-order", Modeled: "milestone_order"},
+		{NibID: "chk-b2", Path: "data/chk-b2--case.md", Key: "Milestone", Modeled: "milestone"},
+	}
+	if !reflect.DeepEqual(result.NearMissKeys, want) {
+		t.Errorf("NearMissKeys = %+v, want %+v", result.NearMissKeys, want)
+	}
+	if result.TotalIssues() != len(want) {
+		t.Errorf("TotalIssues() = %d, want %d (the near-miss findings must count)", result.TotalIssues(), len(want))
+	}
+	if result.NearMissIssues() != len(want) {
+		t.Errorf("NearMissIssues() = %d, want %d", result.NearMissIssues(), len(want))
+	}
+}
+
+// TestCheckAllLinksInMapNearMissCleanStore is the false-positive guard: a store
+// whose Extra keys are all foreign (or absent) reports no near-miss findings.
+func TestCheckAllLinksInMapNearMissCleanStore(t *testing.T) {
+	nibs := map[string]*nib.Nib{
+		"chk-a1": {ID: "chk-a1", Status: "todo", Path: "data/chk-a1--x.md",
+			Extra: map[string]yaml.Node{"assignee": {Kind: yaml.ScalarNode, Value: "someone"}}},
+		"chk-b2": {ID: "chk-b2", Status: "todo", Path: "data/chk-b2--y.md"},
+	}
+	result := CheckAllLinksInMap(nibs, "", "chk-")
+	if len(result.NearMissKeys) != 0 {
+		t.Errorf("NearMissKeys = %+v, want none for foreign keys", result.NearMissKeys)
+	}
+	if result.TotalIssues() != 0 {
+		t.Errorf("TotalIssues() = %d, want 0", result.TotalIssues())
+	}
 }

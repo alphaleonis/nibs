@@ -1247,6 +1247,59 @@ func yamlKeyNames(t reflect.Type) map[string]struct{} {
 	return names
 }
 
+// TestModeledKeyResembling pins the near-miss rule's boundaries: a key whose
+// normalized spelling (lowercased, '-' and '_' removed) equals a modeled key's
+// while the raw spelling differs IS a near miss, and everything else — an exact
+// modeled spelling, a genuinely foreign key, a fuzzy-distance neighbor like
+// `milestones` — is not. The rule must forgive any NUMBER of separators too
+// (`milestone__order`, `mile_stone`), not just a single swapped one.
+func TestModeledKeyResembling(t *testing.T) {
+	tests := []struct {
+		key     string
+		modeled string
+		ok      bool
+	}{
+		// Near-miss shapes: dash, case, stray/doubled underscores, combinations.
+		{key: "milestone-order", modeled: "milestone_order", ok: true},
+		{key: "Milestone", modeled: "milestone", ok: true},
+		{key: "milestone__order", modeled: "milestone_order", ok: true},
+		{key: "mile_stone", modeled: "milestone", ok: true},
+		{key: "MILESTONE_ORDER", modeled: "milestone_order", ok: true},
+		{key: "Blocked-By", modeled: "blocked_by", ok: true},
+		// The rule spans the whole modeled set, not just the axis keys, so it
+		// grows automatically as keys are promoted.
+		{key: "created-at", modeled: "created_at", ok: true},
+		// An exact modeled spelling is not a near miss.
+		{key: "milestone_order", ok: false},
+		{key: "milestone", ok: false},
+		// Foreign keys stay foreign — including fuzzy-distance neighbors, which
+		// a normalize-and-compare rule deliberately does not chase.
+		{key: "assignee", ok: false},
+		{key: "milestones", ok: false},
+		{key: "milestone_ordering", ok: false},
+		{key: "", ok: false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.key, func(t *testing.T) {
+			modeled, ok := ModeledKeyResembling(tt.key)
+			if ok != tt.ok || modeled != tt.modeled {
+				t.Errorf("ModeledKeyResembling(%q) = (%q, %v), want (%q, %v)", tt.key, modeled, ok, tt.modeled, tt.ok)
+			}
+		})
+	}
+}
+
+// TestNormalizedModeledTagsAreDistinct guards the assumption the near-miss map
+// is built on: no two modeled keys share a normalized spelling. If a future
+// promoted key collided (say `blocked-by` alongside `blocked_by`), the map
+// would silently keep one of them and the near-miss report would name the
+// wrong resembled key.
+func TestNormalizedModeledTagsAreDistinct(t *testing.T) {
+	if got, want := len(normalizedModeledTags), len(modeledRenderTags); got != want {
+		t.Errorf("normalizedModeledTags has %d entries for %d modeled keys; two modeled keys normalize to the same spelling", got, want)
+	}
+}
+
 // TestRenderExtraKeyCollisionDoesNotPanic covers an Extra key that
 // collides with a modeled field name (reachable via the "promote an unknown key
 // to a modeled field" evolution path) must NOT panic Render/ETag. Render drops

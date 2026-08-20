@@ -767,6 +767,49 @@ func buildModeledRenderTags() map[string]struct{} {
 	return tags
 }
 
+// normalizedModeledTags maps each modeled key's normalized spelling to the key
+// itself, for ModeledKeyResembling. Built from modeledRenderTags so promoting
+// an unknown key to a modeled field enrolls its near-miss spellings with no
+// second edit (TestNormalizedModeledTagsAreDistinct guards the no-collision
+// assumption the map encoding relies on).
+var normalizedModeledTags = buildNormalizedModeledTags()
+
+func buildNormalizedModeledTags() map[string]string {
+	m := make(map[string]string, len(modeledRenderTags))
+	for tag := range modeledRenderTags {
+		m[normalizeKeySpelling(tag)] = tag
+	}
+	return m
+}
+
+// normalizeKeySpelling collapses the spelling variations the near-miss rule
+// forgives: letter case, and any number of '-' or '_' separators — removing
+// them outright (rather than mapping one onto the other) is what makes
+// doubled-separator shapes like `milestone__order` land on their target.
+func normalizeKeySpelling(key string) string {
+	key = strings.ToLower(key)
+	key = strings.ReplaceAll(key, "-", "")
+	return strings.ReplaceAll(key, "_", "")
+}
+
+// ModeledKeyResembling reports whether key is a near-miss spelling of a modeled
+// front-matter key, returning the modeled key it resembles: the two normalized
+// spellings match while the raw spellings differ. That catches case variants
+// (`Milestone`), dashed shapes (`milestone-order`) and stray underscores
+// (`mile_stone`, `milestone__order`) without the false positives of
+// fuzzy-distance matching (`milestones` stays foreign). Parse routes every such
+// key into Extra — lossless, but invisible to every filter — so `nibs check`
+// uses this to name them; parsing and rendering stay tolerant regardless. An
+// exact modeled spelling is not a near miss (and never reaches Extra anyway:
+// Parse routes it to its named field).
+func ModeledKeyResembling(key string) (string, bool) {
+	modeled, ok := normalizedModeledTags[normalizeKeySpelling(key)]
+	if !ok || modeled == key {
+		return "", false
+	}
+	return modeled, true
+}
+
 // renderExtra returns b.Extra with any key colliding with a modeled render field
 // dropped, without mutating b.Extra. The common case (no Extra, or no collision)
 // returns the original map with no allocation. A collision cannot arise from
