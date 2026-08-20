@@ -1860,9 +1860,10 @@ type fmHeader struct {
 	// priority is the unquoted value of a top-level `priority:` line.
 	priority string
 	// status is the unquoted value of a top-level `status:` line. No migration
-	// step keys on it; store resolution uses it as the artifact that
-	// distinguishes a file nibs wrote from any other front-mattered markdown
-	// (see declaredStoreCorroborated).
+	// step keys on it; store resolution reads it as weak corroboration that a
+	// directory holds nibs rather than something else — weak because nothing
+	// reserves the key, so ordinary notes and docs pages carry it too (see
+	// declaredStoreCorroborated, which says what that does and does not buy).
 	status string
 }
 
