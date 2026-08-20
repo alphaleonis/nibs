@@ -33,13 +33,17 @@ func feedBatch(t *testing.T, core *Core, batch map[string]fsnotify.Op) string {
 // `nibs serve` with nothing on stderr — and which of the two won depended on the
 // debounce batch's map iteration order.
 //
-// The three quiet rows are the reason this cannot be decided from memory alone.
-// A move (slug rename, archive, unarchive) reaches the create half with the
-// store still holding the OLD path, so "the stored path differs" is true for
-// every one of them; only the old file's absence from disk tells a move from a
-// collision. Each quiet row is fed as the create half ALONE, which is the
-// ordering a real one-batch move takes whenever the map hands the create out
-// first — non-deterministic in production, deterministic here.
+// The move rows are the reason this cannot be decided from memory alone. A move
+// (slug rename, archive, unarchive) reaches the create half with the store still
+// holding the OLD path, so "the stored path differs" is true for every one of
+// them; only the old file's absence from disk tells a move from a collision. Each
+// is fed as the create half ALONE, which is the ordering a real one-batch move
+// takes whenever the map hands the create out first — non-deterministic in
+// production, deterministic here.
+//
+// They are quiet about COLLISIONS only, which is why the assertion looks for that
+// word rather than counting warnings: the file createTestNib wrote carries no
+// version key, so each move row also trips the legacy-shape warning on arrival.
 func TestWatcherWarnsOnlyWhenADifferentFileClaimsAStoredID(t *testing.T) {
 	tests := []struct {
 		name string
