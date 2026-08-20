@@ -285,3 +285,58 @@ func TestMigrateRefusesToGuessAboutAssumedNibs(t *testing.T) {
 		}
 	})
 }
+
+// TestMigrateAsksAboutAssumedNibsAtATerminal is the third of the uncertain
+// tier's three answers: somebody is there, so the run asks instead of deciding.
+//
+// Declining ABORTS rather than migrating the rest, and that is not a stylistic
+// choice. Pending-ness is derived from what the mover would move, so a file
+// declined at the prompt and left behind would still read as outstanding layout
+// work and keep every command refusing. Leaving the store exactly as it was is
+// the only answer that does not wedge it.
+func TestMigrateAsksAboutAssumedNibsAtATerminal(t *testing.T) {
+	build := func(t *testing.T, answer string) string {
+		t.Helper()
+		t.Cleanup(resetRootPersistentFlags)
+		t.Cleanup(resetMigrateFlags)
+		resetRootPersistentFlags()
+		resetMigrateFlags()
+		forceInteractive(t, true)
+		withStdin(t, answer)
+		_, storeDir := writeLegacyStore(t, "nibs:\n  prefix: leg-\n", map[string]string{
+			"leg-a1--one.md": layoutNib,
+			"my-idea.md":     "---\ntitle: Fix the login bug\nstatus: todo\n---\n\nBody.\n",
+		})
+		return storeDir
+	}
+
+	t.Run("the question names the files and yes migrates them", func(t *testing.T) {
+		storeDir := build(t, "y\n")
+		out, err := runRootWith(t, "--nibs-path", storeDir, "migrate", "--allow-dirty")
+		if err != nil {
+			t.Fatalf("migrate after a yes: %v\nout: %s", err, out)
+		}
+		if !strings.Contains(out, "my-idea.md") {
+			t.Errorf("the question does not name the file it is about:\n%s", out)
+		}
+		if _, statErr := os.Stat(filepath.Join(store.NewLayout(storeDir).DataDir(), "my-idea.md")); statErr != nil {
+			t.Errorf("a yes did not move the assumed nib: %v", statErr)
+		}
+	})
+
+	t.Run("no leaves the store exactly as it was", func(t *testing.T) {
+		storeDir := build(t, "n\n")
+		out, err := runRootWith(t, "--nibs-path", storeDir, "migrate", "--allow-dirty")
+		if err == nil {
+			t.Fatalf("migrate proceeded after the user declined\nout: %s", out)
+		}
+		if _, statErr := os.Stat(filepath.Join(storeDir, store.DataDirName)); statErr == nil {
+			t.Error("the declined run created data/")
+		}
+		for _, name := range []string{"leg-a1--one.md", "my-idea.md"} {
+			if _, statErr := os.Stat(filepath.Join(storeDir, name)); statErr != nil {
+				t.Errorf("%s moved despite the decline: %v", name, statErr)
+			}
+		}
+	})
+}

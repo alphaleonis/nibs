@@ -1,11 +1,8 @@
 package cmd
 
 import (
-	"bufio"
 	"context"
 	"fmt"
-	"os"
-	"strings"
 
 	"github.com/alphaleonis/nibs/internal/nib"
 	"github.com/alphaleonis/nibs/internal/output"
@@ -135,10 +132,7 @@ func confirmDeleteMultiple(targets []nibWithLinks) bool {
 		fmt.Print("\nProceed with deletion? [y/N] ")
 	}
 
-	reader := bufio.NewReader(os.Stdin)
-	response, _ := reader.ReadString('\n')
-	response = strings.TrimSpace(strings.ToLower(response))
-	return response == "y" || response == "yes"
+	return confirmedYes()
 }
 
 func init() {

@@ -384,6 +384,35 @@ func legacyConfigExists(env migrateEnv) bool {
 	return err == nil && !info.IsDir()
 }
 
+// confirmAssumedNibs asks the person at the terminal about the files this step
+// could only ASSUME are nibs. It is authorizeAssumedNibs' other half: that one
+// answers for a run with nobody to ask, this one for a run with somebody.
+//
+// It lives in the APPLY path, not in planLayout, for two reasons. planLayout is
+// re-run by wouldRefuse's plan gate before the steps execute, so a question
+// asked there would be asked twice; and `--dry-run` previews through that same
+// gate, where the run must REPORT what it would ask rather than ask it.
+// Answering still happens before the first rename — applyLayout plans, asks,
+// and only then moves.
+//
+// Declining ABORTS the whole migration instead of migrating everything else.
+// Pending-ness is derived from what the mover would move, so a file declined
+// here and left in place would still read as outstanding layout work and keep
+// every command refusing; leaving the store exactly as it was is the only
+// answer that does not wedge it.
+func confirmAssumedNibs(assumed []string) error {
+	if len(assumed) == 0 || migrateForce || !isInteractiveTerminal() {
+		return nil
+	}
+	fmt.Printf("%d file(s) carry a title and a known status but not the shape nibs writes, so they could be nibs or ordinary documents:\n  %s\n",
+		len(assumed), echoedList(sanitizedList(assumed), ""))
+	fmt.Printf("Treat them as nibs and move them into %s/? [y/N] ", store.DataDirName)
+	if confirmedYes() {
+		return nil
+	}
+	return errors.New("migration cancelled; nothing has been changed. Move those files out of the store to keep them as documents, then re-run `nibs migrate`")
+}
+
 // authorizeAssumedNibs decides whether the run may move the files it could only
 // ASSUME are nibs (see nibFileVerdict).
 //
@@ -405,43 +434,11 @@ func authorizeAssumedNibs(assumed []string) error {
 	if isInteractiveTerminal() {
 		return nil
 	}
-	return fmt.Errorf("cannot tell whether %s a nib or an ordinary document:\n  %s\n"+
-		"each carries a title and a known status but not the shape nibs writes, so it could be either, "+
-		"and this run has no terminal to ask at. Re-run with --force to treat %s as nibs and move %s into %s/, "+
-		"or move %s out of the store first to keep %s as %s. Nothing has been changed",
-		pluralIsAre(len(assumed)), echoedList(sanitizedList(assumed), ""),
-		pluralThemIt(len(assumed)), pluralThemIt(len(assumed)), store.DataDirName,
-		pluralThemIt(len(assumed)), pluralThemIt(len(assumed)), pluralDocuments(len(assumed)))
-}
-
-// pluralIsAre, pluralThemIt and pluralDocuments keep the refusal above readable
-// for the one-file case, which is the common one.
-func pluralIsAre(n int) string {
-	if n == 1 {
-		return "this file is"
-	}
-	return "these files are"
-}
-
-func pluralThemIt(n int) string {
-	if n == 1 {
-		return "it"
-	}
-	return "them"
-}
-
-func pluralCarryCarries(n int) string {
-	if n == 1 {
-		return "it carries"
-	}
-	return "they carry"
-}
-
-func pluralDocuments(n int) string {
-	if n == 1 {
-		return "a document"
-	}
-	return "documents"
+	return fmt.Errorf("cannot tell whether %d file(s) are nibs or ordinary documents:\n  %s\n"+
+		"each carries a title and a known status but not the shape nibs writes, and this run has no terminal to ask at. "+
+		"Re-run with --force to treat them as nibs and move them into %s/, or move them out of the store first to keep "+
+		"them as documents. Nothing has been changed",
+		len(assumed), echoedList(sanitizedList(assumed), ""), store.DataDirName)
 }
 
 // sanitizedList renders paths read from the filesystem for a message, through
@@ -809,9 +806,8 @@ func (p *layoutPlan) apply(env *migrateEnv, log logf) error {
 		// the only thing standing between an assumed nib and a silent one. The
 		// migration report is what keeps it available once the run's output has
 		// scrolled away.
-		log("layout: assumed %d file(s) to be nibs and moved %s into %s/ — %s a title and a known status but not the shape nibs writes:\n  %s",
-			len(p.assumed), pluralThemIt(len(p.assumed)), store.DataDirName,
-			pluralCarryCarries(len(p.assumed)), echoedList(sanitizedList(p.assumed), ""))
+		log("layout: assumed %d file(s) to be nibs and moved them into %s/ — they carry a title and a known status but not the shape nibs writes:\n  %s",
+			len(p.assumed), store.DataDirName, echoedList(sanitizedList(p.assumed), ""))
 	}
 	if len(p.movable) > 0 {
 		log("layout: moved %d nib file(s) into %s/", len(p.movable), store.DataDirName)
@@ -840,6 +836,9 @@ var storeRenameFn = os.Rename
 func applyLayout(env *migrateEnv, _ *nibcore.StoreLock, log logf) error {
 	plan, err := planLayout(*env)
 	if err != nil {
+		return err
+	}
+	if err := confirmAssumedNibs(plan.assumed); err != nil {
 		return err
 	}
 	return plan.apply(env, log)
