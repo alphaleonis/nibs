@@ -158,8 +158,8 @@ func (r *LinkCheckResult) NearMissIssues() int {
 // When projectRoot is empty, document filesystem checks are skipped.
 // This is a pure function that operates on a map of nibs without locking.
 //
-// A parent or blockedBy target is resolved through normalizeIDInMap — the
-// exact id, then the configured prefix prepended — so it is broken only when
+// A parent, milestone or blockedBy target is resolved through normalizeIDInMap —
+// the exact id, then the configured prefix prepended — so it is broken only when
 // no nib answers to it under either spelling. That is the same rule Core.Get
 // and findActiveBlockersInMap apply, which matters because Core.FixBrokenLinks
 // repeats these checks and writes: a bare map lookup here called a resolvable
@@ -211,6 +211,24 @@ func CheckAllLinksInMap(nibs map[string]*nib.Nib, projectRoot, configPrefix stri
 			}
 		}
 
+		// Check milestone link, resolved under the same rule as parent.
+		if b.Milestone != "" {
+			fullID, ok := normalizeIDInMap(nibs, b.Milestone, configPrefix)
+			switch {
+			case !ok:
+				result.BrokenLinks = append(result.BrokenLinks, BrokenLink{
+					NibID:    b.ID,
+					LinkType: "milestone",
+					Target:   b.Milestone,
+				})
+			case fullID == b.ID:
+				result.SelfLinks = append(result.SelfLinks, SelfLink{
+					NibID:    b.ID,
+					LinkType: "milestone",
+				})
+			}
+		}
+
 		// Check document paths exist on disk (skip when projectRoot is empty)
 		if projectRoot != "" {
 			for _, docPath := range b.Documents {
@@ -244,7 +262,9 @@ func CheckAllLinksInMap(nibs map[string]*nib.Nib, projectRoot, configPrefix stri
 	}
 
 	// Check for cycles in blocked_by and parent links
-	// (blocking is derived from blocked_by, so only these two need cycle checks)
+	// (blocking is derived from blocked_by, so only these two need cycle
+	// checks; milestone is a flat assignment nothing traverses transitively,
+	// so a milestone loop cannot hang any walk)
 	for _, linkType := range []string{"blocked_by", "parent"} {
 		cycles := FindCyclesInMap(nibs, linkType)
 		result.Cycles = append(result.Cycles, cycles...)
@@ -439,8 +459,9 @@ func canonicalCycleKey(path []string) string {
 	return key
 }
 
-// RemoveLinksTo removes every parent and blockedBy link that RESOLVES to the
-// given target from all nibs. Returns the number of links removed.
+// RemoveLinksTo removes every parent, milestone and blockedBy link that
+// RESOLVES to the given target from all nibs. Returns the number of links
+// removed.
 //
 // Both ends of the comparison are spelling-independent, because neither end is
 // under a caller's control:
@@ -508,7 +529,7 @@ func (c *Core) RemoveLinksTo(targetID string) (int, error) {
 	// literal compare already rejected, and only when the target resolves at all.
 	pointsAtTarget := func(linkID string) bool {
 		if linkID == "" {
-			return false // an unset Parent is not a link
+			return false // an unset Parent or Milestone is not a link
 		}
 		if linkID == targetID {
 			return true
@@ -531,15 +552,20 @@ func (c *Core) RemoveLinksTo(targetID string) (int, error) {
 		// Detect changes by READING the stored pointer only — never mutate it,
 		// so an unchanged nib skips the Clone() below.
 		removeParent := pointsAtTarget(b.Parent)
+		removeMilestone := pointsAtTarget(b.Milestone)
 		removeBlocker := slices.ContainsFunc(b.BlockedBy, pointsAtTarget)
 
-		if !removeParent && !removeBlocker {
+		if !removeParent && !removeMilestone && !removeBlocker {
 			continue
 		}
 
 		clone := b.Clone()
 		if removeParent {
 			clone.Parent = ""
+			removed++
+		}
+		if removeMilestone {
+			clone.Milestone = ""
 			removed++
 		}
 		if removeBlocker {
@@ -564,8 +590,9 @@ func (c *Core) RemoveLinksTo(targetID string) (int, error) {
 // FixBrokenLinks removes all broken links (links to non-existent nibs) and self-references.
 // Returns the number of issues fixed.
 //
-// It restates the parent, blockedBy and document checks CheckAllLinksInMap
-// makes, resolving each link target through normalizeIDInMap the same way, so
+// It restates the parent, milestone, blockedBy and document checks
+// CheckAllLinksInMap makes, resolving each link target through
+// normalizeIDInMap the same way, so
 // `nibs check --fix` removes exactly the broken links, self links and broken
 // documents `nibs check` reported. The other reported categories are left
 // untouched here and the command prints them as not auto-fixable instead:
@@ -654,6 +681,14 @@ func (c *Core) FixBrokenLinks() (int, error) {
 			fixParent = (!ok && !skipped[b.Parent]) || fullID == b.ID
 		}
 
+		// Milestone follows the same rule as parent, skipped-target gate
+		// included.
+		fixMilestone := false
+		if b.Milestone != "" {
+			fullID, ok := normalizeIDInMap(c.nibs, b.Milestone, configPrefix)
+			fixMilestone = (!ok && !skipped[b.Milestone]) || fullID == b.ID
+		}
+
 		// Surviving blocked_by set (drop self-refs and links to missing nibs).
 		// Survivors keep the spelling they were stored with.
 		var newBlockedBy []string
@@ -676,13 +711,17 @@ func (c *Core) FixBrokenLinks() (int, error) {
 		}
 		docsRemoved := len(b.Documents) - len(newDocs)
 
-		if !fixParent && blockedRemoved == 0 && docsRemoved == 0 {
+		if !fixParent && !fixMilestone && blockedRemoved == 0 && docsRemoved == 0 {
 			continue
 		}
 
 		clone := b.Clone()
 		if fixParent {
 			clone.Parent = ""
+			fixed++
+		}
+		if fixMilestone {
+			clone.Milestone = ""
 			fixed++
 		}
 		if blockedRemoved > 0 {
