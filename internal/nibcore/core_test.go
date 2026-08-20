@@ -1446,6 +1446,11 @@ func TestRapidUpdatesToSameFile(t *testing.T) {
 	const writes = 5
 	const finalTitle = "Update 5"
 	path := dataPath(nibsDir, "rap1--rapid-updates.md")
+	// The SPAN the writes actually achieved, not the one this loop asks for. The
+	// sleep below is 10ms, but nothing holds a loaded machine to it, and the
+	// coalescing assertion at the end is only meaningful relative to how far apart
+	// the writes really landed. Measured rather than assumed — see that assertion.
+	var firstWrite, lastWrite time.Time
 	for i := 1; i <= writes; i++ {
 		content := fmt.Sprintf(`---
 title: Update %d
@@ -1453,8 +1458,13 @@ status: todo
 ---
 `, i)
 		writeNibFileAtomic(t, path, content)
+		lastWrite = time.Now()
+		if i == 1 {
+			firstWrite = lastWrite
+		}
 		time.Sleep(10 * time.Millisecond) // Small delay but within debounce
 	}
+	writeSpan := lastWrite.Sub(firstWrite)
 
 	// Collect batches until the settled value arrives, rather than asserting on
 	// whichever batch happens to land first. Debouncing coalesces the writes, but
@@ -1503,12 +1513,30 @@ status: todo
 		}
 	}
 
-	// Debouncing must actually have coalesced something. Five writes spanning
-	// ~40ms against a 100ms window cannot each earn their own batch unless the
-	// watcher idled a full window four times over — so one event per write means
-	// debouncing has stopped working, which the settle loop alone would not catch.
-	if rap1Events >= writes {
-		t.Errorf("got %d events for %d rapid writes — writes were not debounced", rap1Events, writes)
+	// Debouncing must actually have coalesced something, which the settle loop
+	// alone would not catch: a watcher that stopped waiting would publish one
+	// batch per write and still deliver the final title.
+	//
+	// The bound SCALES WITH THE MEASURED SPAN rather than assuming one. An earlier
+	// version asserted `rap1Events < writes` on the reasoning that five writes
+	// spanning ~40ms cannot each earn their own window — true on an idle machine,
+	// and false on a loaded one, where this loop's 10ms sleep stretches past
+	// debounceDelay and one batch per write becomes CORRECT behavior. That made a
+	// correct debouncer report as a broken one, intermittently, on whichever
+	// platform was slowest (nibs-roqh; reproduced deterministically on Linux and
+	// Windows alike by spacing the writes past the window).
+	//
+	// Writes spread over span S can fall into at most floor(S/debounceDelay)+1
+	// windows, and delivery jitter can split one more, so that +2 is the honest
+	// ceiling. It stays sharp where it matters: with the writes inside a single
+	// window the bound is 2, so a debouncer that stopped coalescing still yields
+	// `writes` batches and still fails. Deliberately NOT a skip when the machine
+	// is slow — that would drop the guard silently on exactly the runs most likely
+	// to break it.
+	maxBatches := int(writeSpan/debounceDelay) + 2
+	if rap1Events > maxBatches {
+		t.Errorf("got %d batches for %d writes spanning %v against a %v window; at most %d are explainable, so the writes were not debounced",
+			rap1Events, writes, writeSpan.Round(time.Millisecond), debounceDelay, maxBatches)
 	}
 
 	// The store settles on the final value too, not just the event stream.
