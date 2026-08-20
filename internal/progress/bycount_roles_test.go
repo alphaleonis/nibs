@@ -1,4 +1,4 @@
-package graph
+package progress
 
 import (
 	"testing"
@@ -17,7 +17,7 @@ func TestComputeProgressKeysOnRoles(t *testing.T) {
 
 	t.Run("a dropped-role status leaves the denominator", func(t *testing.T) {
 		vocabtest.WithStatusRole(t, "deferred", config.RoleDropped)
-		got := ComputeProgress(statuses)
+		got := ByCount(statuses)
 		if got.Done != 1 || got.Total != 1 || got.Scrapped != 1 || got.Deferred != 0 {
 			t.Errorf("ComputeProgress = %+v, want done 1/1 with 1 out of scope and 0 deferred — deferred carries the dropped role", got)
 		}
@@ -25,7 +25,7 @@ func TestComputeProgressKeysOnRoles(t *testing.T) {
 
 	t.Run("a done-role status counts as done", func(t *testing.T) {
 		vocabtest.WithStatusRole(t, "deferred", config.RoleDone)
-		got := ComputeProgress(statuses)
+		got := ByCount(statuses)
 		if got.Done != 2 || got.Total != 2 || got.Deferred != 0 {
 			t.Errorf("ComputeProgress = %+v, want done 2/2 with 0 deferred — deferred carries the done role", got)
 		}

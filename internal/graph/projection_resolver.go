@@ -2,102 +2,13 @@ package graph
 
 import (
 	"context"
-	"math"
 	"sync"
 
-	"github.com/alphaleonis/nibs/internal/config"
 	"github.com/alphaleonis/nibs/internal/membership"
 	"github.com/alphaleonis/nibs/internal/nib"
+	"github.com/alphaleonis/nibs/internal/progress"
 	"github.com/alphaleonis/nibs/internal/projection"
 )
-
-// ProgressRollup is the value projected for the computed `progress` field, and
-// the canonical child-completion rollup the recipe views (context, roadmap)
-// reuse, so `nibs get <id> -f progress` and those views report the same number.
-// Build it only via ComputeProgress — do not fork the rule.
-//
-// Canonical definition (single source of truth). Each child falls into exactly
-// one of three buckets, keyed on its status's ROLE (config.StatusRole):
-//
-//   - Done    = children whose status carries the done role ("completed") — the
-//     work actually happened. They also count toward Total.
-//
-//   - Dropped = children whose status carries the dropped role ("scrapped").
-//     The work will not be done and is no longer scope, so it leaves the
-//     denominator entirely rather than pinning the percentage below 100
-//     forever.
-//
-//   - Pending = every other child, including the parked role ("deferred").
-//     Counts toward Total, not toward Done. Parked work is set aside, not
-//     resolved — it is coming back, so it is outstanding scope and the
-//     percentage must say so.
-//
-//   - Total    = Done + Pending; only dropped children are excluded.
-//
-//   - Percent  = round(Done/Total*100); 0 when Total == 0.
-//
-//   - Scrapped = direct children in the dropped role, disclosed so the
-//     children missing from Total are visible rather than silently dropped.
-//
-//   - Deferred = direct children in the parked role, disclosed so a
-//     set-aside child inside Total can be told apart from work still in flight.
-//
-// The three closed statuses get three different treatments, and the roles are
-// what tell them apart: no combination of the closed/releases-dependents
-// predicates separates completed from scrapped (both are closed and both
-// release their dependents) — the done/dropped role split exists exactly for
-// this rule. See config.Role.
-//
-// A leaf nib (no children) reports zeros across the board: progress is a rollup
-// over children, not a reflection of the nib's own status.
-//
-// This rule is one half of a seam with the roadmap's item filter
-// (cmd/roadmap.go filterChildren): the direct children a default `nibs roadmap`
-// lists under a container are exactly the ones this rollup counts in Total but
-// not in Done, so a container cannot both list items and claim 100%. The rollup
-// is over direct children only, so a milestone can sit at 100% while an epic
-// below it still lists a deferred task under a closed parent.
-type ProgressRollup struct {
-	Total    int `json:"total"`
-	Done     int `json:"done"`
-	Percent  int `json:"percent"`
-	Scrapped int `json:"scrapped"`
-	Deferred int `json:"deferred"`
-}
-
-// ComputeProgress builds the canonical ProgressRollup from a set of child
-// status strings. It is the single place the done/total/percent rule lives; the
-// projected `progress` field and every recipe view call it, so the rollup is
-// identical everywhere. The buckets key on status ROLES, not names — see
-// ProgressRollup for the exact definition.
-//
-// An unrecognized status (including the empty status of a nib whose front
-// matter omits it) lands in the default arm and counts as outstanding scope, so
-// a typo holds the percentage down rather than inflating it.
-func ComputeProgress(childStatuses []string) ProgressRollup {
-	var r ProgressRollup
-	for _, s := range childStatuses {
-		role, known := config.StatusRole(s)
-		switch {
-		case known && role == config.RoleDone:
-			r.Total++
-			r.Done++
-		case known && role == config.RoleDropped:
-			// Not scope any more — out of the denominator entirely.
-			r.Scrapped++
-		case known && role == config.RoleParked:
-			// Set aside, not resolved: still scope, still not done.
-			r.Deferred++
-			r.Total++
-		default:
-			r.Total++
-		}
-	}
-	if r.Total > 0 {
-		r.Percent = int(math.Round(float64(r.Done) / float64(r.Total) * 100))
-	}
-	return r
-}
 
 // projectionResolver adapts the GraphQL resolver's store logic to the
 // projection.Resolver interface consumed by internal/projection. It delegates
@@ -182,15 +93,15 @@ func (p *projectionResolver) ChildCount(id string) int {
 	return len(p.membershipView().Children(id))
 }
 
-// Progress returns the canonical child-completion ProgressRollup over the
+// Progress returns the canonical child-completion progress.Rollup over the
 // nib's direct members (membership.View.DirectMembers — the same set the
-// Children resolver derives on legal data). See ProgressRollup /
-// ComputeProgress for the exact rule.
+// Children resolver derives on legal data). See progress.Rollup /
+// progress.ByCount for the exact rule.
 //
 // Reading Status off the view's live pointers is safe here, unlike the
 // resolvers that hand nibs to gqlgen: Status is not mutated in place on a
 // stored pointer (status changes go through Update, which installs a fresh
-// pointer), and this method returns a computed ProgressRollup value, so no
+// pointer), and this method returns a computed progress.Rollup value, so no
 // pointer escapes to async marshaling. No snapshot/clone is needed. As of the
 // pyei copy-on-write change no non-Path field is mutated in place on a
 // published stored pointer; only Path is (see NibReader.GetSnapshot for the
@@ -201,7 +112,7 @@ func (p *projectionResolver) Progress(id string) any {
 	for i, m := range members {
 		statuses[i] = m.Status
 	}
-	return ComputeProgress(statuses)
+	return progress.ByCount(statuses)
 }
 
 // Ready reports whether the nib can be started: it carries a startable status

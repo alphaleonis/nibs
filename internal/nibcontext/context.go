@@ -4,7 +4,6 @@ import (
 	"strings"
 
 	"github.com/alphaleonis/nibs/internal/config"
-	"github.com/alphaleonis/nibs/internal/estimate"
 	"github.com/alphaleonis/nibs/internal/mdsection"
 	"github.com/alphaleonis/nibs/internal/membership"
 	"github.com/alphaleonis/nibs/internal/nib"
@@ -26,27 +25,18 @@ type NibRef struct {
 // for the no-arg overview mode.
 type ContainerSummary struct {
 	NibRef
-	ActivePhase *NibRef  `json:"active_phase,omitempty"`
-	Progress    Progress `json:"progress"`
+	ActivePhase *NibRef `json:"active_phase,omitempty"`
 }
 
 // Summary is the full context output for a nib or all active work.
 type Summary struct {
 	Root        *NibRef             `json:"root,omitempty"`
 	ActivePhase *NibRef             `json:"active_phase,omitempty"`
-	Progress    Progress            `json:"progress"`
 	ActiveTasks []*NibRef           `json:"active_tasks"`
 	NextTasks   []*NibRef           `json:"next_tasks"`
 	Decisions   []string            `json:"decisions,omitempty"`
 	Warnings    []string            `json:"warnings,omitempty"`
 	Containers  []*ContainerSummary `json:"containers,omitempty"`
-}
-
-// Progress holds weighted progress metrics for a set of nibs.
-type Progress struct {
-	CompletedWeight int     `json:"completed_weight"`
-	TotalWeight     int     `json:"total_weight"`
-	Percentage      float64 `json:"percentage"`
 }
 
 // BuildSummary constructs a context summary for a specific nib and its descendants.
@@ -78,7 +68,6 @@ func BuildSummaryWithView(allNibs []*nib.Nib, view *membership.View, rootID stri
 		active := filterByStatusAndLeaf(allNibs, "in-progress")
 		nib.SortByOrder(active)
 		sum.ActiveTasks = toNibRefs(active)
-		sum.Progress = CalcProgress(filterLeafWork(allNibs))
 
 		// Build per-milestone container summaries for active milestones
 		var milestones []*nib.Nib
@@ -93,7 +82,6 @@ func BuildSummaryWithView(allNibs []*nib.Nib, view *membership.View, rootID stri
 			cs := &ContainerSummary{
 				NibRef: *newNibRef(ms),
 			}
-			cs.Progress = CalcProgress(view.Members(ms.ID))
 
 			// Active phase: first in-progress epic child
 			var phaseCandidates []*nib.Nib
@@ -139,9 +127,6 @@ func BuildSummaryWithView(allNibs []*nib.Nib, view *membership.View, rootID stri
 		sum.ActivePhase = newNibRef(phaseCandidates[0])
 	}
 
-	// Progress across all descendant leaf work
-	sum.Progress = CalcProgress(descendants)
-
 	// Active tasks: in-progress leaf work anywhere under root, sorted by Order
 	activeTasks := filterByStatusAndLeaf(descendants, "in-progress")
 	nib.SortByOrder(activeTasks)
@@ -161,43 +146,6 @@ func BuildSummaryWithView(allNibs []*nib.Nib, view *membership.View, rootID stri
 	}
 
 	return sum
-}
-
-// CalcProgress computes weighted progress across a set of nibs.
-// Only leaf work types (task, bug, feature) count — epics and milestones are excluded.
-// It applies the same three-way rule as graph.ComputeProgress, weighted by
-// estimate and keyed on status ROLES: done-role work is the numerator,
-// dropped-role work is no longer scope and leaves the denominator, and
-// everything else counts toward the denominator without counting as done.
-// Deferred nibs are in that last group — parked work is coming back, so it is
-// outstanding scope. Draft nibs are there too: planned scope that hasn't been
-// refined yet, as is any status outside the vocabulary, so a typo holds the
-// percentage down rather than inflating it.
-func CalcProgress(nibs []*nib.Nib) Progress {
-	var completed, total int
-	for _, n := range nibs {
-		if !isLeafType(n.EffectiveType()) {
-			continue
-		}
-		role, known := config.StatusRole(n.Status)
-		if known && role == config.RoleDropped {
-			continue
-		}
-		w := estimate.Weight(n.Estimate)
-		total += w
-		if known && role == config.RoleDone {
-			completed += w
-		}
-	}
-	var pct float64
-	if total > 0 {
-		pct = float64(completed) / float64(total) * 100
-	}
-	return Progress{
-		CompletedWeight: completed,
-		TotalWeight:     total,
-		Percentage:      pct,
-	}
 }
 
 // ExtractDecisions parses bullet points from a "Key Decisions" section in markdown.
@@ -261,17 +209,6 @@ func filterByStatusAndLeaf(nibs []*nib.Nib, status string) []*nib.Nib {
 	result := []*nib.Nib{}
 	for _, n := range nibs {
 		if isLeafType(n.EffectiveType()) && n.Status == status {
-			result = append(result, n)
-		}
-	}
-	return result
-}
-
-// filterLeafWork returns only leaf-type nibs from the input.
-func filterLeafWork(nibs []*nib.Nib) []*nib.Nib {
-	var result []*nib.Nib
-	for _, n := range nibs {
-		if isLeafType(n.EffectiveType()) {
 			result = append(result, n)
 		}
 	}

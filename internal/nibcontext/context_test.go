@@ -2,7 +2,6 @@ package nibcontext
 
 import (
 	"encoding/json"
-	"math"
 	"testing"
 
 	"github.com/alphaleonis/nibs/internal/config"
@@ -23,140 +22,6 @@ func makeNib(id, typ, status, estimate, parent string) *nib.Nib {
 		Status:   status,
 		Estimate: estimate,
 		Parent:   parent,
-	}
-}
-
-func TestCalcProgress(t *testing.T) {
-	tests := []struct {
-		name           string
-		nibs           []*nib.Nib
-		wantCompleted  int
-		wantTotal      int
-		wantPercentage float64
-	}{
-		{
-			name:           "empty list",
-			nibs:           nil,
-			wantCompleted:  0,
-			wantTotal:      0,
-			wantPercentage: 0,
-		},
-		{
-			name: "all completed",
-			nibs: []*nib.Nib{
-				{ID: "a", Type: "task", Status: "completed", Estimate: "s"}, // 1
-				{ID: "b", Type: "task", Status: "completed", Estimate: "m"}, // 3
-			},
-			wantCompleted:  4,
-			wantTotal:      4,
-			wantPercentage: 100,
-		},
-		{
-			name: "mixed statuses",
-			nibs: []*nib.Nib{
-				{ID: "a", Type: "task", Status: "completed", Estimate: "xl"},     // 8
-				{ID: "b", Type: "feature", Status: "in-progress", Estimate: "l"}, // 5
-				{ID: "c", Type: "bug", Status: "todo", Estimate: "s"},            // 1
-			},
-			wantCompleted:  8,
-			wantTotal:      14,
-			wantPercentage: 57.14285714285714,
-		},
-		{
-			name: "unestimated defaults to M weight",
-			nibs: []*nib.Nib{
-				{ID: "a", Type: "task", Status: "completed"}, // default 3
-				{ID: "b", Type: "task", Status: "todo"},      // default 3
-			},
-			wantCompleted:  3,
-			wantTotal:      6,
-			wantPercentage: 50,
-		},
-		{
-			name: "scrapped excluded from total",
-			nibs: []*nib.Nib{
-				{ID: "a", Type: "task", Status: "completed", Estimate: "m"}, // 3
-				{ID: "b", Type: "task", Status: "scrapped", Estimate: "xl"}, // excluded
-				{ID: "c", Type: "task", Status: "todo", Estimate: "m"},      // 3
-			},
-			wantCompleted:  3,
-			wantTotal:      6,
-			wantPercentage: 50,
-		},
-		{
-			// deferred is closed, but the work is coming back — set-aside scope
-			// weighs on the denominator exactly like open work, so the estimate
-			// of a set-aside nib is still counted as outstanding.
-			name: "deferred counts toward total, not toward completed",
-			nibs: []*nib.Nib{
-				{ID: "a", Type: "task", Status: "completed", Estimate: "m"}, // 3
-				{ID: "b", Type: "task", Status: "deferred", Estimate: "xl"}, // 8, undone
-				{ID: "c", Type: "task", Status: "todo", Estimate: "m"},      // 3
-			},
-			wantCompleted:  3,
-			wantTotal:      14,
-			wantPercentage: 3.0 / 14.0 * 100,
-		},
-		{
-			name: "a deferred nib holds the set below 100%",
-			nibs: []*nib.Nib{
-				{ID: "a", Type: "task", Status: "completed", Estimate: "m"}, // 3
-				{ID: "b", Type: "task", Status: "deferred", Estimate: "m"},  // 3, undone
-			},
-			wantCompleted:  3,
-			wantTotal:      6,
-			wantPercentage: 50,
-		},
-		{
-			// Only scrapped work leaves the denominator, so a set whose
-			// remaining nibs are all scrapped does reach 100%.
-			name: "scrapped remainder reaches 100%",
-			nibs: []*nib.Nib{
-				{ID: "a", Type: "task", Status: "completed", Estimate: "m"}, // 3
-				{ID: "b", Type: "task", Status: "scrapped", Estimate: "m"},  // excluded
-			},
-			wantCompleted:  3,
-			wantTotal:      3,
-			wantPercentage: 100,
-		},
-		{
-			name: "epics/milestones excluded (only leaf work counts)",
-			nibs: []*nib.Nib{
-				{ID: "a", Status: "completed", Estimate: "m", Type: "task"},
-				{ID: "b", Status: "todo", Estimate: "l", Type: "feature"},
-				{ID: "c", Status: "in-progress", Estimate: "xl", Type: "epic"},    // excluded
-				{ID: "d", Status: "completed", Estimate: "xl", Type: "milestone"}, // excluded
-			},
-			wantCompleted:  3,
-			wantTotal:      8,
-			wantPercentage: 37.5,
-		},
-		{
-			name: "research counts as leaf work",
-			nibs: []*nib.Nib{
-				{ID: "a", Status: "completed", Estimate: "m", Type: "task"},     // 3
-				{ID: "b", Status: "completed", Estimate: "l", Type: "research"}, // 5
-				{ID: "c", Status: "todo", Estimate: "s", Type: "research"},      // 1
-			},
-			wantCompleted:  8,
-			wantTotal:      9,
-			wantPercentage: 88.88888888888889,
-		},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			got := CalcProgress(tt.nibs)
-			if got.CompletedWeight != tt.wantCompleted {
-				t.Errorf("CompletedWeight = %d, want %d", got.CompletedWeight, tt.wantCompleted)
-			}
-			if got.TotalWeight != tt.wantTotal {
-				t.Errorf("TotalWeight = %d, want %d", got.TotalWeight, tt.wantTotal)
-			}
-			if math.Abs(got.Percentage-tt.wantPercentage) > 1e-9 {
-				t.Errorf("Percentage = %f, want %f", got.Percentage, tt.wantPercentage)
-			}
-		})
 	}
 }
 
@@ -209,14 +74,7 @@ func TestBuildSummary(t *testing.T) {
 			t.Errorf("ActivePhase.ID = %q, want %q", sum.ActivePhase.ID, "e2")
 		}
 
-		// Progress: leaf work under milestone = t1(1) + t2(3) + f1(5) + t3(3) + b1(1) + t4(8) + t5(3) = 24
 		// Completed: t1(1) + t2(3) + f1(5) = 9
-		if sum.Progress.TotalWeight != 24 {
-			t.Errorf("TotalWeight = %d, want 24", sum.Progress.TotalWeight)
-		}
-		if sum.Progress.CompletedWeight != 9 {
-			t.Errorf("CompletedWeight = %d, want 9", sum.Progress.CompletedWeight)
-		}
 
 		// Active tasks: in-progress leaf work
 		if len(sum.ActiveTasks) != 1 || sum.ActiveTasks[0].ID != "t3" {
@@ -298,11 +156,6 @@ func TestBuildSummary_ResearchIsLeafWork(t *testing.T) {
 
 	sum := BuildSummary(allNibs, "m1", cfgForTest)
 
-	// Progress: r1(3) + r2(1) + t1(1) = 5 total, 0 completed
-	if sum.Progress.TotalWeight != 5 {
-		t.Errorf("TotalWeight = %d, want 5 (research must count toward total)", sum.Progress.TotalWeight)
-	}
-
 	// Active tasks must include r1 (in-progress research)
 	activeIDs := nibRefIDs(sum.ActiveTasks)
 	foundR1 := false
@@ -332,10 +185,6 @@ func TestBuildSummary_ResearchIsLeafWork(t *testing.T) {
 	overview := BuildSummary(allNibs, "", cfgForTest)
 	if len(overview.Containers) != 1 {
 		t.Fatalf("Containers count = %d, want 1", len(overview.Containers))
-	}
-	if overview.Containers[0].Progress.TotalWeight != 5 {
-		t.Errorf("Container TotalWeight = %d, want 5 (research must count toward container progress)",
-			overview.Containers[0].Progress.TotalWeight)
 	}
 }
 
@@ -707,12 +556,6 @@ func TestBuildSummary_Overview(t *testing.T) {
 		t.Errorf("Containers[0].ActivePhase = %v, want e1", c1.ActivePhase)
 	}
 	// m1 progress: t1(1)+t2(3)+t3(5) = 9 total, 1 completed
-	if c1.Progress.TotalWeight != 9 {
-		t.Errorf("Containers[0].Progress.TotalWeight = %d, want 9", c1.Progress.TotalWeight)
-	}
-	if c1.Progress.CompletedWeight != 1 {
-		t.Errorf("Containers[0].Progress.CompletedWeight = %d, want 1", c1.Progress.CompletedWeight)
-	}
 
 	// Second container: m2
 	c2 := sum.Containers[1]
@@ -721,23 +564,6 @@ func TestBuildSummary_Overview(t *testing.T) {
 	}
 	if c2.ActivePhase != nil {
 		t.Errorf("Containers[1].ActivePhase = %v, want nil", c2.ActivePhase)
-	}
-	// m2 progress: t4(3) = 3 total, 0 completed
-	if c2.Progress.TotalWeight != 3 {
-		t.Errorf("Containers[1].Progress.TotalWeight = %d, want 3", c2.Progress.TotalWeight)
-	}
-
-	// Overall progress should cover ALL leaf work including orphan u1
-	// t1(1)+t2(3)+t3(5)+t4(3)+t5(1)+u1(3) = 16 total, t1(1)+t5(1) = 2 completed
-	if sum.Progress.TotalWeight != 16 {
-		t.Errorf("Progress.TotalWeight = %d, want 16", sum.Progress.TotalWeight)
-	}
-	if sum.Progress.CompletedWeight != 2 {
-		t.Errorf("Progress.CompletedWeight = %d, want 2", sum.Progress.CompletedWeight)
-	}
-	wantPct := float64(2) / float64(16) * 100
-	if math.Abs(sum.Progress.Percentage-wantPct) > 1e-9 {
-		t.Errorf("Progress.Percentage = %f, want %f", sum.Progress.Percentage, wantPct)
 	}
 
 	// Active tasks should include ALL in-progress leaf work
@@ -760,7 +586,6 @@ func TestContainerSummaryJSONFields(t *testing.T) {
 			Type:   "milestone",
 		},
 		ActivePhase: &NibRef{ID: "e1", Title: "Phase 1", Status: "in-progress", Type: "epic"},
-		Progress:    Progress{CompletedWeight: 5, TotalWeight: 10, Percentage: 50},
 	}
 
 	data, err := json.Marshal(cs)
@@ -776,7 +601,7 @@ func TestContainerSummaryJSONFields(t *testing.T) {
 	// NibRef fields should be flattened (not nested under a "nib_ref" key)
 	wantKeys := map[string]bool{
 		"id": true, "title": true, "status": true, "type": true,
-		"active_phase": true, "progress": true,
+		"active_phase": true,
 	}
 	for k := range raw {
 		if !wantKeys[k] {
@@ -829,9 +654,6 @@ func TestBuildSummary_OverviewJSON(t *testing.T) {
 	if _, ok := c["id"]; !ok {
 		t.Error("container missing 'id' (NibRef not flattened)")
 	}
-	if _, ok := c["progress"]; !ok {
-		t.Error("container missing 'progress'")
-	}
 }
 
 func TestBuildSummary_NonMilestoneRoot(t *testing.T) {
@@ -864,14 +686,6 @@ func TestBuildSummary_NonMilestoneRoot(t *testing.T) {
 	// No active phase (epic has no epic children)
 	if sum.ActivePhase != nil {
 		t.Errorf("ActivePhase = %v, want nil (no epic children)", sum.ActivePhase)
-	}
-
-	// Progress: t1(1) + t2(3) + t3(5) = 9 total, 1 completed
-	if sum.Progress.TotalWeight != 9 {
-		t.Errorf("TotalWeight = %d, want 9", sum.Progress.TotalWeight)
-	}
-	if sum.Progress.CompletedWeight != 1 {
-		t.Errorf("CompletedWeight = %d, want 1", sum.Progress.CompletedWeight)
 	}
 
 	// Active tasks: t2

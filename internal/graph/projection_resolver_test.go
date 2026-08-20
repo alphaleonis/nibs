@@ -8,6 +8,7 @@ import (
 
 	"github.com/alphaleonis/nibs/internal/config"
 	"github.com/alphaleonis/nibs/internal/nib"
+	"github.com/alphaleonis/nibs/internal/progress"
 )
 
 // TestProjectionResolver_NibByID covers the lookup used to expand nested
@@ -48,12 +49,12 @@ func TestProjectionResolver_ChildCountAndProgress(t *testing.T) {
 
 	// Canonical rollup: 1 completed of 2 non-scrapped children -> 50%;
 	// the scrapped child is excluded from Total/Done and reported separately.
-	want := ProgressRollup{Total: 2, Done: 1, Percent: 50, Scrapped: 1}
+	want := progress.Rollup{Total: 2, Done: 1, Percent: 50, Scrapped: 1}
 	if got := pr.Progress("par"); !reflect.DeepEqual(got, want) {
 		t.Errorf("Progress(par) = %#v, want %#v", got, want)
 	}
 	// Leaf: no children -> all zeros, no divide-by-zero.
-	wantLeaf := ProgressRollup{Total: 0, Done: 0, Percent: 0, Scrapped: 0}
+	wantLeaf := progress.Rollup{Total: 0, Done: 0, Percent: 0, Scrapped: 0}
 	if got := pr.Progress("c3"); !reflect.DeepEqual(got, wantLeaf) {
 		t.Errorf("Progress(c3) = %#v, want %#v", got, wantLeaf)
 	}
@@ -79,7 +80,7 @@ func TestProjectionRollupAxisSplit(t *testing.T) {
 	if got := pr.ChildCount("par"); got != 2 {
 		t.Errorf("ChildCount(par) = %d, want 2 — the structural axis counts the milestone-typed child", got)
 	}
-	want := ProgressRollup{Total: 1, Done: 1, Percent: 100}
+	want := progress.Rollup{Total: 1, Done: 1, Percent: 100}
 	if got := pr.Progress("par"); !reflect.DeepEqual(got, want) {
 		t.Errorf("Progress(par) = %#v, want %#v — the member axis excludes the milestone-typed child", got, want)
 	}
@@ -91,32 +92,32 @@ func TestProjectionRollupAxisSplit(t *testing.T) {
 // disclosed by their own counters. The three closed statuses get three
 // treatments — completed counts as done, scrapped leaves the denominator,
 // deferred stays in it undone — so each is covered separately below.
-func TestComputeProgress(t *testing.T) {
+func TestByCountRollup(t *testing.T) {
 	cases := []struct {
 		name     string
 		statuses []string
-		want     ProgressRollup
+		want     progress.Rollup
 	}{
-		{"no children", nil, ProgressRollup{}},
+		{"no children", nil, progress.Rollup{}},
 		{
 			"mixed with scrapped excluded",
 			[]string{"completed", "scrapped", "todo"},
-			ProgressRollup{Total: 2, Done: 1, Percent: 50, Scrapped: 1},
+			progress.Rollup{Total: 2, Done: 1, Percent: 50, Scrapped: 1},
 		},
 		{
 			"all completed",
 			[]string{"completed", "completed"},
-			ProgressRollup{Total: 2, Done: 2, Percent: 100},
+			progress.Rollup{Total: 2, Done: 2, Percent: 100},
 		},
 		{
 			"rounds to nearest",
 			[]string{"completed", "todo", "todo"}, // 1/3 = 33.33 -> 33
-			ProgressRollup{Total: 3, Done: 1, Percent: 33},
+			progress.Rollup{Total: 3, Done: 1, Percent: 33},
 		},
 		{
 			"only scrapped -> zero denominator",
 			[]string{"scrapped", "scrapped"},
-			ProgressRollup{Total: 0, Done: 0, Percent: 0, Scrapped: 2},
+			progress.Rollup{Total: 0, Done: 0, Percent: 0, Scrapped: 2},
 		},
 		{
 			// Deferred is closed, but the work is coming back — it is set aside
@@ -124,7 +125,7 @@ func TestComputeProgress(t *testing.T) {
 			// the open statuses. Only scrapped leaves the denominator.
 			"draft and deferred both count toward total but not done",
 			[]string{"draft", "deferred", "in-progress", "completed"},
-			ProgressRollup{Total: 4, Done: 1, Percent: 25, Deferred: 1},
+			progress.Rollup{Total: 4, Done: 1, Percent: 25, Deferred: 1},
 		},
 		{
 			// A deferred child holds the parent below 100%: there is still work
@@ -132,25 +133,25 @@ func TestComputeProgress(t *testing.T) {
 			// here would contradict a view that lists the deferred item.
 			"a deferred child holds the parent below 100%",
 			[]string{"completed", "completed", "completed", "deferred"},
-			ProgressRollup{Total: 4, Done: 3, Percent: 75, Deferred: 1},
+			progress.Rollup{Total: 4, Done: 3, Percent: 75, Deferred: 1},
 		},
 		{
 			"only deferred -> all scope outstanding, 0%",
 			[]string{"deferred", "deferred"},
-			ProgressRollup{Total: 2, Done: 0, Percent: 0, Deferred: 2},
+			progress.Rollup{Total: 2, Done: 0, Percent: 0, Deferred: 2},
 		},
 		{
 			// Unknown statuses (a hand-edited nib with no `status:`) are
 			// outstanding scope, so they cannot inflate the percentage.
 			"unknown status counts toward total but not done",
 			[]string{"completed", "", "bogus"},
-			ProgressRollup{Total: 3, Done: 1, Percent: 33},
+			progress.Rollup{Total: 3, Done: 1, Percent: 33},
 		},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			if got := ComputeProgress(tc.statuses); !reflect.DeepEqual(got, tc.want) {
-				t.Errorf("ComputeProgress(%v) = %#v, want %#v", tc.statuses, got, tc.want)
+			if got := progress.ByCount(tc.statuses); !reflect.DeepEqual(got, tc.want) {
+				t.Errorf("progress.ByCount(%v) = %#v, want %#v", tc.statuses, got, tc.want)
 			}
 		})
 	}
