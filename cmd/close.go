@@ -9,6 +9,7 @@ import (
 	"unicode"
 
 	"github.com/alphaleonis/nibs/internal/config"
+	"github.com/alphaleonis/nibs/internal/graph"
 	"github.com/alphaleonis/nibs/internal/graph/model"
 	"github.com/alphaleonis/nibs/internal/mdsection"
 	"github.com/alphaleonis/nibs/internal/output"
@@ -133,7 +134,7 @@ The --if-match flag protects the target nib only; the parent update uses its own
 		}
 
 		// Check children status
-		children := resolver.Orderer.GetSortedSiblings(b.ID)
+		children := resolver.Orderer.Members(graph.ScopeParent, b.ID)
 		if len(children) > 0 && !closeForce {
 			var incomplete []string
 			for _, child := range children {

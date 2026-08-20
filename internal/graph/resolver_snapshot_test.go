@@ -883,7 +883,7 @@ func TestSnapshotResultsSkipsVanishedElements(t *testing.T) {
 
 // vanishingSnapshotReader wraps a NibReader and reports one id as vanished from
 // GetSnapshot ONLY, leaving every other accessor (Get, GetForUpdate, and the ids
-// the Orderer's siblingsForParent sees) intact. It is a deterministic stand-in for a
+// the Orderer's Members sees) intact. It is a deterministic stand-in for a
 // nib deleted in the lock-free window between a bulk reorder's order-key write
 // committing and its post-write snapshot: the reorder validates and persists the
 // full block, then snapshotResults snapshots into the gap the delete left.

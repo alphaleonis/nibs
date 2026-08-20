@@ -166,14 +166,14 @@ func (r *Resolver) snapshotResults(nibs []*nib.Nib) ([]*nib.Nib, error) {
 // at odds over where the nib lands. Resolving settles both.
 //
 // Caller must pass a nib it owns (a clone), not a shared Reader.Get pointer —
-// this mutates b (b.Parent and, via RecalculateOrder, b.Order) in place.
+// this mutates b (b.Parent and, via Orderer.Recalculate, b.Order) in place.
 func (r *Resolver) validateAndSetParent(b *nib.Nib, parentID string) error {
 	oldParent := resolvedParentID(b, r.Reader)
 
 	if parentID == "" {
 		b.Parent = ""
 		if oldParent != "" {
-			r.Orderer.RecalculateOrder(b)
+			r.Orderer.Recalculate(ScopeParent, b)
 		}
 		return nil
 	}
@@ -196,7 +196,7 @@ func (r *Resolver) validateAndSetParent(b *nib.Nib, parentID string) error {
 
 	b.Parent = normalizedParent
 	if normalizedParent != oldParent {
-		r.Orderer.RecalculateOrder(b)
+		r.Orderer.Recalculate(ScopeParent, b)
 	}
 	return nil
 }

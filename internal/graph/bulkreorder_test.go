@@ -194,7 +194,7 @@ func TestReorderSiblings_AfterIdTracer(t *testing.T) {
 	}
 
 	// Re-read siblings — order should be [a, c, e, b, d]
-	siblings := resolver.Orderer.GetSortedSiblings(parentID)
+	siblings := resolver.Orderer.Members(ScopeParent, parentID)
 	want := []string{"a", "c", "e", "b", "d"}
 	if len(siblings) != len(want) {
 		t.Fatalf("got %d siblings, want %d", len(siblings), len(want))
@@ -219,7 +219,7 @@ func TestReorderSiblings_BeforeId(t *testing.T) {
 	}
 
 	// Re-read siblings — order should be [c, e, a, b, d]
-	siblings := resolver.Orderer.GetSortedSiblings(parentID)
+	siblings := resolver.Orderer.Members(ScopeParent, parentID)
 	want := []string{"c", "e", "a", "b", "d"}
 	if len(siblings) != len(want) {
 		t.Fatalf("got %d siblings, want %d", len(siblings), len(want))
@@ -244,7 +244,7 @@ func TestReorderSiblings_First(t *testing.T) {
 	}
 
 	// Re-read siblings — order should be [c, e, a, b, d]
-	siblings := resolver.Orderer.GetSortedSiblings(parentID)
+	siblings := resolver.Orderer.Members(ScopeParent, parentID)
 	want := []string{"c", "e", "a", "b", "d"}
 	if len(siblings) != len(want) {
 		t.Fatalf("got %d siblings, want %d", len(siblings), len(want))
@@ -500,7 +500,7 @@ func TestReorderSiblings_IfMatch_StaleEtagAtomic(t *testing.T) {
 	}
 
 	// Atomicity — order unchanged.
-	siblings := resolver.Orderer.GetSortedSiblings(parentID)
+	siblings := resolver.Orderer.Members(ScopeParent, parentID)
 	want := []string{"a", "b", "c", "d", "e"}
 	if len(siblings) != len(want) {
 		t.Fatalf("got %d siblings, want %d", len(siblings), len(want))
@@ -528,7 +528,7 @@ func TestReorderSiblings_IfMatch_Tracer(t *testing.T) {
 	}
 
 	// Re-read siblings — order should be [a, c, e, b, d]
-	siblings := resolver.Orderer.GetSortedSiblings(parentID)
+	siblings := resolver.Orderer.Members(ScopeParent, parentID)
 	want := []string{"a", "c", "e", "b", "d"}
 	if len(siblings) != len(want) {
 		t.Fatalf("got %d siblings, want %d", len(siblings), len(want))
@@ -600,7 +600,7 @@ func TestReorderChildren_RequireIfMatch_PartialRejected(t *testing.T) {
 	}
 
 	// Atomicity — order unchanged after rejection.
-	siblings := resolver.Orderer.GetSortedSiblings("epic1")
+	siblings := resolver.Orderer.Members(ScopeParent, "epic1")
 	want := []string{"a", "b", "c"}
 	for i, b := range siblings {
 		if b.ID != want[i] {
@@ -686,7 +686,7 @@ func TestReorderSiblings_RequireIfMatch(t *testing.T) {
 			t.Errorf("got %+v, want [c]", got)
 		}
 
-		siblings := resolver.Orderer.GetSortedSiblings("epic1")
+		siblings := resolver.Orderer.Members(ScopeParent, "epic1")
 		want := []string{"a", "c", "b"}
 		if len(siblings) != len(want) {
 			t.Fatalf("got %d siblings, want %d", len(siblings), len(want))
@@ -746,8 +746,8 @@ func TestReorderChildren_Tracer(t *testing.T) {
 		}
 	}
 
-	// Re-read the siblings via GetSortedSiblings to confirm persistence
-	siblings := resolver.Orderer.GetSortedSiblings(parentID)
+	// Re-read the siblings via Members to confirm persistence
+	siblings := resolver.Orderer.Members(ScopeParent, parentID)
 	if len(siblings) != 3 {
 		t.Fatalf("got %d siblings after reorder, want 3", len(siblings))
 	}
@@ -995,7 +995,7 @@ func TestReorderChildren_IfMatch_PartialCoverage(t *testing.T) {
 		}
 	}
 
-	siblings := resolver.Orderer.GetSortedSiblings(parentID)
+	siblings := resolver.Orderer.Members(ScopeParent, parentID)
 	for i, b := range siblings {
 		if b.ID != wantIDs[i] {
 			t.Errorf("siblings[%d].ID = %q, want %q (order=%q)", i, b.ID, wantIDs[i], b.Order)
@@ -1070,7 +1070,7 @@ func TestReorderChildren_IfMatch_StaleEtagAtomic(t *testing.T) {
 	}
 
 	// Atomicity: order must be unchanged.
-	siblings := resolver.Orderer.GetSortedSiblings(parentID)
+	siblings := resolver.Orderer.Members(ScopeParent, parentID)
 	want := []string{"a", "b", "c"}
 	if len(siblings) != len(want) {
 		t.Fatalf("got %d siblings, want %d", len(siblings), len(want))
@@ -1110,7 +1110,7 @@ func TestReorderChildren_IfMatch_Tracer(t *testing.T) {
 		}
 	}
 
-	siblings := resolver.Orderer.GetSortedSiblings(parentID)
+	siblings := resolver.Orderer.Members(ScopeParent, parentID)
 	if len(siblings) != 3 {
 		t.Fatalf("got %d siblings, want 3", len(siblings))
 	}

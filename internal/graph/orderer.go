@@ -9,7 +9,162 @@ import (
 	"github.com/alphaleonis/nibs/internal/nibcore"
 )
 
-// Orderer handles nib ordering operations with only read/write dependencies.
+// Scope identifies which ordering axis an operation runs on. The positioning
+// grammar (after/before/first/default), the duplicate-key boundary skipping,
+// the two membership error tiers and the lazy key backfill exist once,
+// parameterized by scope; what varies per scope lives in its scopeOps entry.
+type Scope uint8
+
+const (
+	// ScopeParent orders the sibling set under one resolved parent. The empty
+	// group id is the ROOT group: nibs whose parent link resolves to no nib.
+	ScopeParent Scope = iota
+	// ScopeMilestone orders a milestone's queue. The empty group id means
+	// MEMBERLESS — a nib assigned to no milestone is in no queue at all:
+	// Move errors there, and a default Place clears the queue key.
+	//
+	// The arm is fully wired and inert in production: nothing passes
+	// ScopeMilestone outside tests until the three-axis model's
+	// `milestone:`/`milestone_order:` fields land (see nib.Nib.MilestoneOrder).
+	ScopeMilestone
+	numScopes
+)
+
+// String names the scope for subtests and diagnostics.
+func (s Scope) String() string {
+	switch s {
+	case ScopeParent:
+		return "parent"
+	case ScopeMilestone:
+		return "milestone"
+	}
+	return fmt.Sprintf("scope(%d)", uint8(s))
+}
+
+// scopeOps is one scope's set of switch points: how to read and write its
+// ordering key, how a nib resolves to its group, how a group enumerates its
+// raw members, what the default placement is, and the nouns its membership
+// errors speak in. Everything else — grammar, backfill, boundary skipping,
+// error tiers — is shared code in the methods below.
+type scopeOps struct {
+	key    func(*nib.Nib) string
+	setKey func(*nib.Nib, string)
+	// group resolves the nib's container in this scope; "" has the per-scope
+	// meaning documented on the Scope constants.
+	group func(*nib.Nib, NibReader) string
+	// rawMembers enumerates the group unsorted and un-backfilled.
+	rawMembers func(*Orderer, string) []*nib.Nib
+	// emptyGroupIsMemberless: "" is a real group in the parent scope (the
+	// roots) and no group at all in the milestone scope.
+	emptyGroupIsMemberless bool
+	// defaultPlace assigns the scope's default position among siblings
+	// (never empty here — the empty set short-circuits to OrderInitial).
+	defaultPlace func(*Orderer, *nib.Nib, string, []*nib.Nib)
+	// errAnchorNotFound / errAnchorNotMember are the two membership error
+	// tiers: the anchor does not exist at all, or exists outside the group.
+	errAnchorNotFound  func(id string) error
+	errAnchorNotMember func(id string) error
+	// errNoGroup is the memberless refusal (milestone scope only).
+	errNoGroup func(id string) error
+}
+
+// scopeTable holds every scope's ops; Scope.ops is the single dispatch point.
+var scopeTable = [numScopes]scopeOps{
+	ScopeParent: {
+		key:    func(b *nib.Nib) string { return b.Order },
+		setKey: func(b *nib.Nib, k string) { b.Order = k },
+		group:  resolvedParentID,
+		rawMembers: func(o *Orderer, groupID string) []*nib.Nib {
+			if groupID == "" {
+				// Root-ness comes from resolvedParentID, so the root set here
+				// is the same one the query surfaces report.
+				var roots []*nib.Nib
+				for _, b := range o.reader.All() {
+					if resolvedParentID(b, o.reader) == "" {
+						roots = append(roots, b)
+					}
+				}
+				return roots
+			}
+			var siblings []*nib.Nib
+			for _, link := range o.reader.FindIncomingLinks(groupID) {
+				if link.LinkType == "parent" {
+					siblings = append(siblings, link.FromNib)
+				}
+			}
+			return siblings
+		},
+		defaultPlace: func(o *Orderer, b *nib.Nib, groupID string, siblings []*nib.Nib) {
+			// Root nibs: append last (no priority-aware positioning — use
+			// reorderNib to reposition). Child nibs: insert last among
+			// siblings of the same priority.
+			if groupID == "" {
+				b.Order = nib.OrderLast(siblings[len(siblings)-1].Order)
+				return
+			}
+			o.placeDefaultByPriority(b, siblings)
+		},
+		errAnchorNotFound: func(id string) error {
+			return fmt.Errorf("sibling nib not found: %s", id)
+		},
+		errAnchorNotMember: func(id string) error {
+			return fmt.Errorf("nib %s is not a sibling (different parent)", id)
+		},
+	},
+	ScopeMilestone: {
+		key:    func(b *nib.Nib) string { return b.MilestoneOrder },
+		setKey: func(b *nib.Nib, k string) { b.MilestoneOrder = k },
+		group:  resolvedMilestoneID,
+		rawMembers: func(o *Orderer, groupID string) []*nib.Nib {
+			if groupID == "" {
+				return nil
+			}
+			// A full-store scan: milestone queues are read rarely (nothing in
+			// production yet), and an index can move BEHIND this shape without
+			// an API change if a profile ever asks for one.
+			var members []*nib.Nib
+			for _, b := range o.reader.All() {
+				if resolvedMilestoneID(b, o.reader) == groupID {
+					members = append(members, b)
+				}
+			}
+			return members
+		},
+		emptyGroupIsMemberless: true,
+		defaultPlace: func(o *Orderer, b *nib.Nib, _ string, siblings []*nib.Nib) {
+			b.MilestoneOrder = nib.OrderLast(siblings[len(siblings)-1].MilestoneOrder)
+		},
+		errAnchorNotFound: func(id string) error {
+			return fmt.Errorf("queue nib not found: %s", id)
+		},
+		errAnchorNotMember: func(id string) error {
+			return fmt.Errorf("nib %s is not in the same milestone queue", id)
+		},
+		errNoGroup: func(id string) error {
+			return fmt.Errorf("nib %s is assigned to no milestone, so it has no queue position", id)
+		},
+	},
+}
+
+func (s Scope) ops() *scopeOps {
+	return &scopeTable[s]
+}
+
+// resolvedMilestoneID is the milestone-queue group of b: its resolved parent
+// when that parent is milestone-typed, "" otherwise — including when the
+// parent link dangles, mirroring resolvedParentID's rule. This is the step-1
+// definition of "assigned to a milestone" shared with internal/membership
+// (nibs-a3fb); the three-axis v2 release swaps the body to read the
+// `milestone:` field, and every caller survives the swap unchanged.
+func resolvedMilestoneID(b *nib.Nib, reader NibReader) string {
+	parent := resolvedParent(b, reader)
+	if parent == nil || parent.EffectiveType() != "milestone" {
+		return ""
+	}
+	return parent.ID
+}
+
+// Orderer is the two-scope ordering engine, with only read/write dependencies.
 type Orderer struct {
 	reader NibReader
 	writer NibWriter
@@ -20,133 +175,137 @@ func NewOrderer(reader NibReader, writer NibWriter) *Orderer {
 	return &Orderer{reader: reader, writer: writer}
 }
 
-// getRootSiblings returns all nibs with no parent, sorted by order key.
-// Backfills order keys on any unordered root nibs before sorting.
+// Members returns the scope's group sorted by its ordering key, lazily
+// backfilling a key onto any member that lacks one. In the parent scope the
+// empty group id names the roots; in the milestone scope it names nothing and
+// returns nil.
+func (o *Orderer) Members(scope Scope, groupID string) []*nib.Nib {
+	ops := scope.ops()
+	members := ops.rawMembers(o, groupID)
+	o.backfillKeys(scope, members)
+	nib.SortByKey(members, ops.key)
+	return members
+}
+
+// Place computes b's ordering key for ENTERING its group in the scope — at
+// creation, or after a reassignment put it there. The group is derived from b
+// itself. A default placement is allowed and lands where the scope's policy
+// says; an explicit position anchors among the current members. An unassigned
+// nib in a memberless scope takes a default Place as "no key" (the key is
+// cleared) and refuses an anchored one.
 //
-// Root-ness comes from resolvedParentID, so the root set here is the same one
-// the query surfaces report.
-func (o *Orderer) getRootSiblings() []*nib.Nib {
-	all := o.reader.All()
-	var roots []*nib.Nib
-	for _, b := range all {
-		if resolvedParentID(b, o.reader) == "" {
-			roots = append(roots, b)
+// Mutates only b's own scope key; the caller owns b (a clone) and persists it.
+func (o *Orderer) Place(scope Scope, b *nib.Nib, pl Placement) error {
+	ops := scope.ops()
+	groupID := ops.group(b, o.reader)
+	if groupID == "" && ops.emptyGroupIsMemberless {
+		if pl.isDefault {
+			ops.setKey(b, "")
+			return nil
 		}
-	}
-	o.backfillOrderKeys(roots)
-	nib.SortByOrder(roots)
-	return roots
-}
-
-// siblingsForParent returns the ordered sibling set under parentID — the root
-// nibs when it is empty, otherwise that parent's children. parentID must be a
-// RESOLVED parent id (see resolvedParentID); a raw stored field would send a
-// dangling link down the children branch, forming a sibling group of one keyed
-// on a nib that does not exist.
-func (o *Orderer) siblingsForParent(parentID string) []*nib.Nib {
-	if parentID == "" {
-		return o.getRootSiblings()
-	}
-	return o.GetSortedSiblings(parentID)
-}
-
-// siblingsOf returns the ordered sibling set b belongs to (see
-// resolvedParentID).
-func (o *Orderer) siblingsOf(b *nib.Nib) []*nib.Nib {
-	return o.siblingsForParent(resolvedParentID(b, o.reader))
-}
-
-// sameParent reports whether x and y sit in the same sibling set (see
-// resolvedParentID). Two nibs whose parent links both name no nib are roots,
-// and so siblings of each other and of every genuine root, rather than a pair
-// keyed on a phantom parent.
-func (o *Orderer) sameParent(x, y *nib.Nib) bool {
-	return resolvedParentID(x, o.reader) == resolvedParentID(y, o.reader)
-}
-
-// GetSortedSiblings returns all children of parentID, sorted by order key.
-// Backfills order keys on any unordered siblings before sorting.
-func (o *Orderer) GetSortedSiblings(parentID string) []*nib.Nib {
-	incoming := o.reader.FindIncomingLinks(parentID)
-	var siblings []*nib.Nib
-	for _, link := range incoming {
-		if link.LinkType == "parent" {
-			siblings = append(siblings, link.FromNib)
-		}
-	}
-	o.backfillOrderKeys(siblings)
-	nib.SortByOrder(siblings)
-	return siblings
-}
-
-// ApplyPositioning computes an order key for a new nib based on positioning flags.
-// At most one of afterID, beforeID, first may be specified. The flags work for
-// both root-level and child nibs (siblings are looked up among other roots when
-// b has no parent, otherwise among that parent's children).
-// When no flag is given: child nibs are inserted last among siblings of the same
-// priority; root nibs are appended last (no priority-aware positioning).
-func (o *Orderer) ApplyPositioning(b *nib.Nib, afterID, beforeID *string, first *bool) error {
-	hasAfter := afterID != nil && *afterID != ""
-	hasBefore := beforeID != nil && *beforeID != ""
-	hasFirst := first != nil && *first
-
-	// Count how many positioning flags are set
-	count := 0
-	if hasAfter {
-		count++
-	}
-	if hasBefore {
-		count++
-	}
-	if hasFirst {
-		count++
-	}
-	if count > 1 {
-		return fmt.Errorf("at most one of afterId, beforeId, first may be specified")
+		return ops.errNoGroup(b.ID)
 	}
 
-	// Look up siblings uniformly: roots when b has no parent, else children of
-	// its parent. Both the root/child choice and the child lookup key come from
-	// the resolved parent (see resolvedParentID).
-	parentID := resolvedParentID(b, o.reader)
-	siblings := o.siblingsForParent(parentID)
-
+	siblings := excludeSelf(o.Members(scope, groupID), b.ID)
 	if len(siblings) == 0 {
-		b.Order = nib.OrderInitial()
+		ops.setKey(b, nib.OrderInitial())
 		return nil
 	}
-
-	if hasAfter {
-		return o.positionAfter(b, *afterID, siblings)
-	}
-	if hasBefore {
-		return o.positionBefore(b, *beforeID, siblings)
-	}
-	if hasFirst {
-		b.Order = nib.OrderFirst(siblings[0].Order)
+	if pl.isDefault {
+		ops.defaultPlace(o, b, groupID, siblings)
 		return nil
 	}
-
-	// Default — no positioning flag.
-	// Root nibs: append last (no priority-aware positioning, matching RecalculateOrder).
-	// Child nibs: insert last among siblings of the same priority.
-	if parentID == "" {
-		b.Order = nib.OrderLast(siblings[len(siblings)-1].Order)
-		return nil
-	}
-	return o.positionDefaultByPriority(b, siblings)
+	return o.position(scope, b, pl.pos, siblings)
 }
 
-// backfillOrderKeys assigns order keys to siblings that lack them.
-// Unordered nibs are appended after the last ordered sibling.
-func (o *Orderer) backfillOrderKeys(nibs []*nib.Nib) {
-	if len(nibs) == 0 {
+// Move repositions b within the group it is already in. There is no default
+// arm — a Position always names a destination — and moving a nib that is in
+// no group (memberless scopes only) is an error.
+//
+// Mutates only b's own scope key; the caller owns b (a clone) and persists it.
+func (o *Orderer) Move(scope Scope, b *nib.Nib, pos Position) error {
+	ops := scope.ops()
+	groupID := ops.group(b, o.reader)
+	if groupID == "" && ops.emptyGroupIsMemberless {
+		return ops.errNoGroup(b.ID)
+	}
+	siblings := excludeSelf(o.Members(scope, groupID), b.ID)
+	return o.position(scope, b, pos, siblings)
+}
+
+// Recalculate assigns b a fresh key at the scope's default position among its
+// CURRENT group — the hook a reassignment calls after changing the nib's
+// container, so it enters the new group where a created nib would. In a
+// memberless scope an unassigned nib's key is cleared instead.
+func (o *Orderer) Recalculate(scope Scope, b *nib.Nib) {
+	ops := scope.ops()
+	groupID := ops.group(b, o.reader)
+	if groupID == "" && ops.emptyGroupIsMemberless {
+		ops.setKey(b, "")
 		return
 	}
+	siblings := excludeSelf(o.Members(scope, groupID), b.ID)
+	if len(siblings) == 0 {
+		ops.setKey(b, nib.OrderInitial())
+		return
+	}
+	ops.defaultPlace(o, b, groupID, siblings)
+}
+
+// position dispatches an explicit Position over the (self-excluded) sibling
+// set. First on an empty set degrades to the initial key; an anchored form on
+// an empty set falls through to the anchor lookup and reports its error tier.
+func (o *Orderer) position(scope Scope, b *nib.Nib, pos Position, siblings []*nib.Nib) error {
+	ops := scope.ops()
+	switch pos.kind {
+	case posFirst:
+		if len(siblings) == 0 {
+			ops.setKey(b, nib.OrderInitial())
+			return nil
+		}
+		ops.setKey(b, nib.OrderFirst(ops.key(siblings[0])))
+		return nil
+	case posAfter:
+		return o.positionAfter(scope, b, pos.anchor, siblings)
+	case posBefore:
+		return o.positionBefore(scope, b, pos.anchor, siblings)
+	}
+	// A zero Position cannot come off the wire (PositionFromArgs refuses the
+	// no-flag shape); reaching this arm is a programming error at a call site.
+	return fmt.Errorf("a move requires a position (after, before or first)")
+}
+
+// excludeSelf returns members without the nib being positioned, so a nib never
+// anchors against itself and default placement ignores its old spot.
+func excludeSelf(members []*nib.Nib, id string) []*nib.Nib {
+	filtered := make([]*nib.Nib, 0, len(members))
+	for _, m := range members {
+		if m.ID != id {
+			filtered = append(filtered, m)
+		}
+	}
+	return filtered
+}
+
+// sameGroup reports whether x and y sit in the same group of the scope. Two
+// nibs whose container links both resolve to nothing are in the same group
+// exactly when "" names a real group there (the parent scope's roots).
+func (o *Orderer) sameGroup(scope Scope, x, y *nib.Nib) bool {
+	ops := scope.ops()
+	return ops.group(x, o.reader) == ops.group(y, o.reader)
+}
+
+// backfillKeys assigns ordering keys to members that lack them.
+// Unkeyed nibs are appended after the last keyed member.
+func (o *Orderer) backfillKeys(scope Scope, members []*nib.Nib) {
+	if len(members) == 0 {
+		return
+	}
+	ops := scope.ops()
 
 	needsBackfill := false
-	for _, b := range nibs {
-		if b.Order == "" {
+	for _, b := range members {
+		if ops.key(b) == "" {
 			needsBackfill = true
 			break
 		}
@@ -155,21 +314,21 @@ func (o *Orderer) backfillOrderKeys(nibs []*nib.Nib) {
 		return
 	}
 
-	// Sort for stable baseline (ordered first by key, unordered by title)
-	nib.SortByOrder(nibs)
+	// Sort for stable baseline (keyed first by key, unkeyed by title)
+	nib.SortByKey(members, ops.key)
 
-	// Find the last existing order key
+	// Find the last existing ordering key
 	lastKey := ""
-	for _, b := range nibs {
-		if b.Order != "" && b.Order > lastKey {
-			lastKey = b.Order
+	for _, b := range members {
+		if k := ops.key(b); k != "" && k > lastKey {
+			lastKey = k
 		}
 	}
 
-	// Assign keys to unordered nibs, appending after the last ordered one.
-	for i := range nibs {
-		b := nibs[i]
-		if b.Order != "" {
+	// Assign keys to unkeyed nibs, appending after the last keyed one.
+	for i := range members {
+		b := members[i]
+		if ops.key(b) != "" {
 			continue
 		}
 		newKey := nib.OrderBetween(lastKey, "")
@@ -180,7 +339,7 @@ func (o *Orderer) backfillOrderKeys(nibs []*nib.Nib) {
 
 		// Mutate an OWNED clone from GetForUpdate, never the shared reader pointer
 		// (b is c.nibs[id]): a refused write must not leave the shared in-memory
-		// sibling showing a phantom Order that was never persisted.
+		// sibling showing a phantom key that was never persisted.
 		// GetForUpdate fails only not-found: the sibling was deleted between the
 		// snapshot above and here (a concurrent external/`serve` delete). It's gone,
 		// so there is nothing to backfill — quietly skip it (not a write failure, and
@@ -189,21 +348,21 @@ func (o *Orderer) backfillOrderKeys(nibs []*nib.Nib) {
 		if err != nil {
 			continue
 		}
-		clone.Order = newKey
+		ops.setKey(clone, newKey)
 
 		// Best-effort persist: ordering falls back to title sort if this fails.
-		// backfillOrderKeys runs on the hot Children/root READ path (once per
+		// backfillKeys runs on the hot Children/root READ path (once per
 		// parent per tree render/poll), and a persistently unwritable sibling
-		// keeps Order=="" so needsBackfill never clears — meaning this Update is
+		// keeps an empty key so needsBackfill never clears — meaning this Update is
 		// re-attempted on EVERY read. Classify the error so a steady-state
 		// failure does not flood stderr under a long-running `nibs serve`:
 		//   - *ETagMismatchError: a stable on-disk etag divergence (e.g. a
 		//     hand-authored nib missing an order key AND both timestamps, whose
 		//     synthesized-from-mtime in-memory etag permanently differs from the
 		//     stored one). This is the already-accepted best-effort fallback — the
-		//     failed clone's computed key is DISCARDED (nibs[i] keeps its pre-write,
-		//     Order=="" pointer), so the sibling falls back to title sort; the write
-		//     simply cannot land. Stay quiet.
+		//     failed clone's computed key is DISCARDED (members[i] keeps its
+		//     pre-write, unkeyed pointer), so the sibling falls back to title sort;
+		//     the write simply cannot land. Stay quiet.
 		//   - *OnDiskUnparseableError: the file is corrupt/unreadable. Suppressing
 		//     our OWN warning here avoids the orderer emitting a line per read on the
 		//     hot Children/root path; the condition is still surfaced where it
@@ -214,8 +373,8 @@ func (o *Orderer) backfillOrderKeys(nibs []*nib.Nib) {
 		//     double-log, no flood).
 		// Warn only on a genuinely unexpected write failure (disk I/O, etc.) so a
 		// real problem stays diagnosable (matches activateParentChain's stderr
-		// warning). Propagating is not an option: getRootSiblings/GetSortedSiblings
-		// return no error and have many callers, so this stays best-effort.
+		// warning). Propagating is not an option: Members returns no error and has
+		// many callers, so this stays best-effort.
 		if err := o.writer.Update(clone, &etag); err != nil {
 			var etagMismatch *nibcore.ETagMismatchError
 			var unparseable *nibcore.OnDiskUnparseableError
@@ -225,88 +384,87 @@ func (o *Orderer) backfillOrderKeys(nibs []*nib.Nib) {
 			continue
 		}
 		// The write installed the clone as the new c.nibs[id]; reflect the
-		// persisted order in the returned slice without touching the pre-write
+		// persisted key in the returned slice without touching the pre-write
 		// pointer.
-		nibs[i] = clone
+		members[i] = clone
 	}
 }
 
-// positionAfter places b after the target sibling.
-func (o *Orderer) positionAfter(b *nib.Nib, targetID string, siblings []*nib.Nib) error {
+// positionAfter places b after the target member. The two error tiers: an
+// anchor that does not exist at all reports not-found; one that exists outside
+// the group reports the membership error.
+func (o *Orderer) positionAfter(scope Scope, b *nib.Nib, targetID string, siblings []*nib.Nib) error {
+	ops := scope.ops()
 	normalizedID, ok := o.reader.NormalizeID(targetID)
 	if !ok {
-		return fmt.Errorf("sibling nib not found: %s", targetID)
+		return ops.errAnchorNotFound(targetID)
 	}
 	targetID = normalizedID
 	for i, s := range siblings {
 		if s.ID == targetID {
-			// Defensive: every production caller passes a sibling slice already
-			// filtered by parent (getRootSiblings or GetSortedSiblings). This guard
-			// fires only for direct unit tests that hand-build a mixed list.
-			if !o.sameParent(s, b) {
-				return fmt.Errorf("nib %s is not a sibling (different parent)", targetID)
+			// Defensive: every production caller passes a member slice already
+			// filtered by group (Members). This guard fires only for direct
+			// unit tests that hand-build a mixed list.
+			if !o.sameGroup(scope, s, b) {
+				return ops.errAnchorNotMember(targetID)
 			}
-			// Find the next sibling with a different order key to get a real boundary.
-			// Duplicate keys (from legacy data) would cause OrderBetween to produce
-			// a key that collides with the nib's current order.
+			// Find the next member with a different ordering key to get a real
+			// boundary. Duplicate keys (from legacy data) would cause
+			// OrderBetween to produce a key that collides with the nib's
+			// current one.
 			nextKey := ""
 			for j := i + 1; j < len(siblings); j++ {
-				if siblings[j].Order != s.Order {
-					nextKey = siblings[j].Order
+				if ops.key(siblings[j]) != ops.key(s) {
+					nextKey = ops.key(siblings[j])
 					break
 				}
 			}
-			b.Order = nib.OrderBetween(s.Order, nextKey)
+			ops.setKey(b, nib.OrderBetween(ops.key(s), nextKey))
 			return nil
 		}
 	}
-	// Target was resolved (exists) but not in the sibling list — that means
-	// it has a different parent. Surface a clearer error than "not found".
-	if t, err := o.reader.Get(targetID); err == nil && !o.sameParent(t, b) {
-		return fmt.Errorf("nib %s is not a sibling (different parent)", targetID)
+	// Target was resolved (exists) but not in the member list — that means
+	// it belongs to a different group. Surface a clearer error than "not found".
+	if t, err := o.reader.Get(targetID); err == nil && !o.sameGroup(scope, t, b) {
+		return ops.errAnchorNotMember(targetID)
 	}
-	return fmt.Errorf("sibling nib not found: %s", targetID)
+	return ops.errAnchorNotFound(targetID)
 }
 
-// positionBefore places b before the target sibling.
-func (o *Orderer) positionBefore(b *nib.Nib, targetID string, siblings []*nib.Nib) error {
+// positionBefore places b before the target member; see positionAfter for the
+// error tiers and the duplicate-key boundary rule.
+func (o *Orderer) positionBefore(scope Scope, b *nib.Nib, targetID string, siblings []*nib.Nib) error {
+	ops := scope.ops()
 	normalizedID, ok := o.reader.NormalizeID(targetID)
 	if !ok {
-		return fmt.Errorf("sibling nib not found: %s", targetID)
+		return ops.errAnchorNotFound(targetID)
 	}
 	targetID = normalizedID
 	for i, s := range siblings {
 		if s.ID == targetID {
-			// Defensive: every production caller passes a sibling slice already
-			// filtered by parent (getRootSiblings or GetSortedSiblings). This guard
-			// fires only for direct unit tests that hand-build a mixed list.
-			if !o.sameParent(s, b) {
-				return fmt.Errorf("nib %s is not a sibling (different parent)", targetID)
+			if !o.sameGroup(scope, s, b) {
+				return ops.errAnchorNotMember(targetID)
 			}
-			// Find the previous sibling with a different order key to get a real boundary.
-			// Duplicate keys (from legacy data) would cause OrderBetween to produce
-			// a key that collides with the nib's current order.
 			prevKey := ""
 			for j := i - 1; j >= 0; j-- {
-				if siblings[j].Order != s.Order {
-					prevKey = siblings[j].Order
+				if ops.key(siblings[j]) != ops.key(s) {
+					prevKey = ops.key(siblings[j])
 					break
 				}
 			}
-			b.Order = nib.OrderBetween(prevKey, s.Order)
+			ops.setKey(b, nib.OrderBetween(prevKey, ops.key(s)))
 			return nil
 		}
 	}
-	// Target was resolved (exists) but not in the sibling list — that means
-	// it has a different parent. Surface a clearer error than "not found".
-	if t, err := o.reader.Get(targetID); err == nil && !o.sameParent(t, b) {
-		return fmt.Errorf("nib %s is not a sibling (different parent)", targetID)
+	if t, err := o.reader.Get(targetID); err == nil && !o.sameGroup(scope, t, b) {
+		return ops.errAnchorNotMember(targetID)
 	}
-	return fmt.Errorf("sibling nib not found: %s", targetID)
+	return ops.errAnchorNotFound(targetID)
 }
 
-// positionDefaultByPriority inserts b last among siblings of the same or higher priority.
-func (o *Orderer) positionDefaultByPriority(b *nib.Nib, siblings []*nib.Nib) error {
+// placeDefaultByPriority inserts b last among siblings of the same or higher
+// priority — the parent scope's default for child nibs.
+func (o *Orderer) placeDefaultByPriority(b *nib.Nib, siblings []*nib.Nib) {
 	cfg := o.reader.Config()
 
 	newRank := cfg.PriorityRank(b.Priority)
@@ -319,56 +477,15 @@ func (o *Orderer) positionDefaultByPriority(b *nib.Nib, siblings []*nib.Nib) err
 		}
 	}
 
-	if insertAfterIdx == -1 {
+	switch {
+	case insertAfterIdx == -1:
 		// All siblings have lower priority — insert first
 		b.Order = nib.OrderFirst(siblings[0].Order)
-	} else if insertAfterIdx == len(siblings)-1 {
+	case insertAfterIdx == len(siblings)-1:
 		// Insert after the last sibling
 		b.Order = nib.OrderLast(siblings[insertAfterIdx].Order)
-	} else {
+	default:
 		// Insert between insertAfterIdx and insertAfterIdx+1
 		b.Order = nib.OrderBetween(siblings[insertAfterIdx].Order, siblings[insertAfterIdx+1].Order)
 	}
-	return nil
-}
-
-// RecalculateOrder assigns a new order key to b based on its current parent.
-// Root-level nibs are appended last (no priority-aware positioning, matching
-// ApplyPositioning behavior — use ReorderNib to reposition).
-// Child nibs are positioned last among siblings of the same priority.
-func (o *Orderer) RecalculateOrder(b *nib.Nib) {
-	parentID := resolvedParentID(b, o.reader)
-	if parentID == "" {
-		rootSiblings := o.getRootSiblings()
-		// Exclude self from siblings
-		filtered := make([]*nib.Nib, 0, len(rootSiblings))
-		for _, s := range rootSiblings {
-			if s.ID != b.ID {
-				filtered = append(filtered, s)
-			}
-		}
-		if len(filtered) == 0 {
-			b.Order = nib.OrderInitial()
-		} else {
-			b.Order = nib.OrderLast(filtered[len(filtered)-1].Order)
-		}
-		return
-	}
-
-	siblings := o.GetSortedSiblings(parentID)
-	// Exclude self from siblings
-	filtered := make([]*nib.Nib, 0, len(siblings))
-	for _, s := range siblings {
-		if s.ID != b.ID {
-			filtered = append(filtered, s)
-		}
-	}
-
-	if len(filtered) == 0 {
-		b.Order = nib.OrderInitial()
-		return
-	}
-
-	// Use priority-aware positioning (same as create default).
-	_ = o.positionDefaultByPriority(b, filtered)
 }
