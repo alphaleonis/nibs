@@ -1504,7 +1504,7 @@ var approvedRootRefusals = []rootRefusal{
 	// but the message a `%w` composes is what a user reads, so the two whose
 	// composed message can name a path and prescribe a command are driven.
 	{
-		fn: "<package-level>", marker: "loading nibs: %w",
+		fn: "initAppForCommand", marker: "loading nibs: %w",
 		reason: "wraps nibcore.Load, and the composed message CAN name a path — WalkStoreFiles prefixes every enumeration " +
 			"error with the path it failed on. But that path is one the walk itself enumerated from its parent's listing, " +
 			"not one composed from a config value or an argument, which is the class this invariant is about; nothing " +
