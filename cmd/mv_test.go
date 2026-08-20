@@ -777,7 +777,7 @@ func TestMvChildIfMatchConflict(t *testing.T) {
 // TestMvUnknownIdIsNotFound pins `nibs mv` on the same class every other direct
 // command reports for an id no nib answers to: NOT_FOUND, exit 3.
 //
-// Of the four commands that route a mutation failure through mutationErrCode,
+// Of the five commands that route a mutation failure through mutationErrCode,
 // mv is the only one with no id pre-check — set, close and body resolve the id
 // themselves and emit NOT_FOUND before any mutation, while mv hands the id
 // straight to updateNib/reorderNib. What reaches the classifier is

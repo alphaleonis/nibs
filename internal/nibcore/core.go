@@ -26,8 +26,6 @@ import (
 // ErrNotFound is an alias for nib.ErrNotFound for backwards compatibility.
 var ErrNotFound = nib.ErrNotFound
 
-// ETagMismatchError is returned when an ETag validation fails.
-// This allows callers to distinguish concurrency conflicts from other errors.
 // IDExistsError reports a Create refused because the caller-supplied id
 // already belongs to a nib in the store (active or archived). Classified as
 // a conflict by the CLI, like the etag errors below.
@@ -39,6 +37,8 @@ func (e *IDExistsError) Error() string {
 	return fmt.Sprintf("nib id %q already exists — creating it again would shadow the existing nib", e.ID)
 }
 
+// ETagMismatchError is returned when an ETag validation fails.
+// This allows callers to distinguish concurrency conflicts from other errors.
 type ETagMismatchError struct {
 	Provided string
 	Current  string

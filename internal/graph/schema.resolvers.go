@@ -123,13 +123,17 @@ func (r *mutationResolver) CreateNib(ctx context.Context, input model.CreateNibI
 		}
 		for range 100 {
 			id := newPrefixedNibID(*input.Prefix, idLength)
+			// Reader.Get prefix-prepends on a miss, so a draw can be marked
+			// taken by a DIFFERENT nib under the store prefix — deliberately
+			// conservative: a false "taken" costs one wasted draw, and a
+			// false "free" is impossible (exact match is tried first).
 			if _, err := r.Reader.Get(id); err != nil {
 				b.ID = id
 				break
 			}
 		}
 		if b.ID == "" {
-			return nil, fmt.Errorf("could not generate a free nib id with prefix %q in 100 draws — the id space (length %d) is exhausted or the generator is broken", *input.Prefix, idLength)
+			return nil, fmt.Errorf("could not generate a free nib id with prefix %q in 100 draws — the id space (length %d) is exhausted or the generator is broken; raise nibs.id_length", *input.Prefix, idLength)
 		}
 	}
 

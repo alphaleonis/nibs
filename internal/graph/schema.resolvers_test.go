@@ -2633,7 +2633,7 @@ func TestUpdateNibWithRelationships(t *testing.T) {
 		}
 
 		if len(got.BlockedBy) != 1 || got.BlockedBy[0] != "blocker-rm-2" {
-			t.Errorf("BlockedBy = %v, want [blocker-2]", got.BlockedBy)
+			t.Errorf("BlockedBy = %v, want [blocker-rm-2]", got.BlockedBy)
 		}
 	})
 
