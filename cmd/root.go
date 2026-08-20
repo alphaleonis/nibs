@@ -33,49 +33,25 @@ var rootCmd = &cobra.Command{
 Track your work alongside your code and supercharge your coding agent with
 a full view of your project.`,
 	PersistentPreRunE: func(cmd *cobra.Command, args []string) error {
-		// Skip core initialization for commands that don't need App state.
-		// These commands must NOT call getApp(). If adding a command here,
-		// ensure it never accesses the App.
-		// migrate is skip-listed because it must run on the very stores this
-		// hook refuses below; it resolves config and the store root itself.
-		if cmd.Name() == "init" || cmd.Name() == "prime" || cmd.Name() == "version" ||
-			cmd.Name() == "catalog" || cmd.Name() == "cheat" || cmd.Name() == "upgrade" ||
-			cmd.Name() == "migrate" ||
-			(cmd.Name() == "query" && querySchemaOnly) {
+		if commandNeedsNoStore(cmd) {
 			return nil
 		}
-
-		root, cfg, err := resolveCLIStore()
+		app, err := initAppForCommand(cmd)
 		if err != nil {
+			// A TAB press must never fail. The hidden __complete command runs on
+			// every one of them, and its output IS the completion list: a shell
+			// that gets an error instead falls back to completing FILENAMES, so
+			// `nibs <TAB>` outside a project — or inside one that needs migrating
+			// — offers the contents of the current directory in place of the
+			// subcommand list. Degrading to no App, rather than skipping the
+			// resolution outright, keeps the App available wherever a store does
+			// resolve, which is what a completer over nib ids will need.
+			if isCompletionRequest(cmd) {
+				return nil
+			}
 			return err
 		}
-
-		// Refuse to touch a store with pending migrations (or one written by a
-		// newer nibs) BEFORE Load ever sees it: migration is explicit, so no
-		// command may operate on — let alone rewrite — an unmigrated store.
-		//
-		// Plain `nibs check` is exempt: it is the read-only diagnostic built
-		// for exactly the store states this refusal creates (migrate's own
-		// unclean-store refusal points at it), so gating it would send the
-		// user in a circle — migrate says "run check", check says "run
-		// migrate" — with no working diagnostic for the stores that most need
-		// one. Only --fix writes, so only --fix stays gated.
-		gated := cmd.Name() != "check" || checkFix
-		if gated {
-			if err := refuseIfMigrationPending(root); err != nil {
-				return err
-			}
-		}
-
-		core := nibcore.New(root, cfg)
-		if err := core.Load(); err != nil {
-			return fmt.Errorf("loading nibs: %w", err)
-		}
-
-		// Getting past the gate IS the answer to "does this store need
-		// migration?", so record it rather than making a command re-scan for it
-		// (see App.MigrationGatePassed).
-		cmd.SetContext(withApp(cmd.Context(), &App{Core: core, MigrationGatePassed: gated}))
+		cmd.SetContext(withApp(cmd.Context(), app))
 		return nil
 	},
 	// Runs only after a subcommand succeeds (Cobra skips PostRun on error).
@@ -98,6 +74,95 @@ func init() {
 	rootCmd.PersistentFlags().StringVar(&nibsPath, "nibs-path", "", "Path to the .nibs store directory (overrides discovery and NIBS_PATH env var)")
 	rootCmd.PersistentFlags().StringVar(&configPath, "config", "", "Path to a store's config file; names the store through its directory (cannot be combined with --nibs-path or NIBS_PATH)")
 	installFlagSuggestions(rootCmd)
+}
+
+// commandNeedsNoStore reports whether cmd can do its whole job without a store,
+// so PersistentPreRunE skips resolving one. A command listed here must NOT call
+// getApp(): there is no App in its context.
+//
+// migrate is here because it must run on the very stores the hook refuses; it
+// resolves config and the store root itself.
+//
+// HELP AND COMPLETION ARE TREES, NOT COMMANDS, which is why they are matched by
+// lineage rather than by name. `nibs completion bash` executes the "bash"
+// subcommand, so a name check would have to list every shell and would miss the
+// next one added. Both failed outside a project with "no .nibs directory found" —
+// help, which is where a user reads how to create a project, and completion,
+// which a shell sources on every new session.
+//
+// `nibs --help` never failed, and the asymmetry is worth knowing: Cobra's ErrHelp
+// path returns before these hooks run, so the FLAG and the SUBCOMMAND reach the
+// same output by different routes and only one of them passed through here.
+func commandNeedsNoStore(cmd *cobra.Command) bool {
+	// Matched on the executed command's own name, so a future `nibs <x> init`
+	// would skip the store too and panic in getApp. Every one of these is a
+	// direct child of root today; nest one and this needs the lineage treatment
+	// below.
+	switch cmd.Name() {
+	case "init", "prime", "version", "catalog", "cheat", "upgrade", "migrate":
+		return true
+	case "query":
+		return querySchemaOnly
+	}
+	for c := cmd; c != nil; c = c.Parent() {
+		if c.Name() == "help" || c.Name() == "completion" {
+			return true
+		}
+	}
+	return false
+}
+
+// initAppForCommand resolves the store, refuses an unmigrated one, and loads it
+// into the App a command reads through getApp.
+func initAppForCommand(cmd *cobra.Command) (*App, error) {
+	root, cfg, err := resolveCLIStore()
+	if err != nil {
+		return nil, err
+	}
+
+	// Refuse to touch a store with pending migrations (or one written by a
+	// newer nibs) BEFORE Load ever sees it: migration is explicit, so no
+	// command may operate on — let alone rewrite — an unmigrated store.
+	//
+	// Plain `nibs check` is exempt: it is the read-only diagnostic built
+	// for exactly the store states this refusal creates (migrate's own
+	// unclean-store refusal points at it), so gating it would send the
+	// user in a circle — migrate says "run check", check says "run
+	// migrate" — with no working diagnostic for the stores that most need
+	// one. Only --fix writes, so only --fix stays gated.
+	gated := cmd.Name() != "check" || checkFix
+	if gated {
+		if err := refuseIfMigrationPending(root); err != nil {
+			return nil, err
+		}
+	}
+
+	core := nibcore.New(root, cfg)
+	if err := core.Load(); err != nil {
+		return nil, fmt.Errorf("loading nibs: %w", err)
+	}
+
+	// Getting past the gate IS the answer to "does this store need
+	// migration?", so record it rather than making a command re-scan for it
+	// (see App.MigrationGatePassed).
+	return &App{Core: core, MigrationGatePassed: gated}, nil
+}
+
+// isCompletionRequest reports whether cmd is the hidden command a shell runs on
+// every TAB press.
+//
+// Distinct from commandNeedsNoStore on purpose. `nibs completion <shell>` runs
+// ONCE, at install, and needs no store at all; `__complete` runs constantly and
+// would be able to USE one — a completer over nib ids is the obvious next thing
+// to want — so it resolves a store when there is one and degrades quietly when
+// there is not.
+func isCompletionRequest(cmd *cobra.Command) bool {
+	for c := cmd; c != nil; c = c.Parent() {
+		if c.Name() == cobra.ShellCompRequestCmd || c.Name() == cobra.ShellCompNoDescRequestCmd {
+			return true
+		}
+	}
+	return false
 }
 
 // resolveCLIStore resolves the store every command operates on and loads THAT

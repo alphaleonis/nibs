@@ -89,7 +89,7 @@ func buildPlan(ctx context.Context, resolver *graph.Resolver, parentID string, o
 
 	// Get children sorted by order via the resolver, which handles
 	// backfilling order keys for legacy nibs without them.
-	children := resolver.Orderer.GetSortedSiblings(parent.ID)
+	children := resolver.Orderer.Members(graph.ScopeParent, parent.ID)
 
 	// Filter to open children only
 	if openOnly {
@@ -227,8 +227,8 @@ func renderPlanHuman(plan *Plan) error {
 	}
 
 	for _, item := range plan.Items {
-		// item.Order is always non-empty here: GetSortedSiblings backfills missing
-		// keys via Orderer.backfillOrderKeys before items are built.
+		// item.Order is always non-empty here: Orderer.Members backfills missing
+		// keys via Orderer.backfillKeys before items are built.
 		line := fmt.Sprintf("  %d. [%s] %s (%s)", item.Position, item.Status, item.Title, item.ID)
 		if item.Acceptance != nil && item.Acceptance.Total > 0 {
 			line += fmt.Sprintf(" %d/%d", item.Acceptance.Checked, item.Acceptance.Total)

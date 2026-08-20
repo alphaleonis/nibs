@@ -20,6 +20,7 @@ var updateNotifySkip = map[string]bool{
 	"query":            true,
 	"tui":              true,
 	"upgrade":          true, // upgrade reports availability itself
+	"help":             true,
 	"completion":       true,
 	"__complete":       true,
 	"__completeNoDesc": true,

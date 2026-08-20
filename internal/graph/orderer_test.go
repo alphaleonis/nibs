@@ -45,7 +45,7 @@ func TestOrderer_GetRootSiblings(t *testing.T) {
 	writer := &stubWriter{}
 
 	orderer := NewOrderer(reader, writer)
-	roots := orderer.getRootSiblings()
+	roots := orderer.Members(ScopeParent, "")
 
 	if len(roots) != 2 {
 		t.Fatalf("got %d roots, want 2", len(roots))
@@ -59,7 +59,7 @@ func TestOrderer_GetRootSiblings(t *testing.T) {
 	}
 }
 
-func TestOrderer_GetSortedSiblings(t *testing.T) {
+func TestOrderer_Members(t *testing.T) {
 	parent := &nib.Nib{ID: "parent-1", Title: "Parent"}
 	child1 := &nib.Nib{ID: "child-1", Title: "Child A", Parent: "parent-1", Order: "c0"}
 	child2 := &nib.Nib{ID: "child-2", Title: "Child B", Parent: "parent-1", Order: "a0"}
@@ -70,7 +70,7 @@ func TestOrderer_GetSortedSiblings(t *testing.T) {
 	writer := &stubWriter{}
 
 	orderer := NewOrderer(reader, writer)
-	siblings := orderer.GetSortedSiblings("parent-1")
+	siblings := orderer.Members(ScopeParent, "parent-1")
 
 	if len(siblings) != 3 {
 		t.Fatalf("got %d siblings, want 3", len(siblings))
@@ -96,7 +96,7 @@ func TestOrderer_BackfillOrderKeys(t *testing.T) {
 		reader := newOrdererReader(root1, root2)
 
 		orderer := NewOrderer(reader, writer)
-		roots := orderer.getRootSiblings()
+		roots := orderer.Members(ScopeParent, "")
 
 		if len(roots) != 2 {
 			t.Fatalf("got %d roots, want 2", len(roots))
@@ -121,7 +121,7 @@ func TestOrderer_BackfillOrderKeys(t *testing.T) {
 		reader := newOrdererReader(ordered, unordered)
 
 		orderer := NewOrderer(reader, writer)
-		roots := orderer.getRootSiblings()
+		roots := orderer.Members(ScopeParent, "")
 
 		if len(roots) != 2 {
 			t.Fatalf("got %d roots, want 2", len(roots))
@@ -157,12 +157,22 @@ func TestOrderer_BackfillOrderKeys(t *testing.T) {
 		reader := newOrdererReader(root1, root2)
 
 		orderer := NewOrderer(reader, writer)
-		orderer.getRootSiblings()
+		orderer.Members(ScopeParent, "")
 
 		if len(writer.updated) != 0 {
 			t.Errorf("expected no update calls when all nibs already ordered, got %d", len(writer.updated))
 		}
 	})
+}
+
+// applyPositioning mirrors the create resolver's flow: resolve the wire
+// flags into a Placement, then Place in the parent scope.
+func applyPositioning(o *Orderer, b *nib.Nib, afterID, beforeID *string, first *bool) error {
+	pl, err := PlacementFromArgs(afterID, beforeID, first)
+	if err != nil {
+		return err
+	}
+	return o.Place(ScopeParent, b, pl)
 }
 
 func TestOrderer_ApplyPositioning(t *testing.T) {
@@ -173,7 +183,7 @@ func TestOrderer_ApplyPositioning(t *testing.T) {
 		reader := newOrdererReader(existing)
 		orderer := NewOrderer(reader, &stubWriter{})
 
-		err := orderer.ApplyPositioning(newNib, nil, nil, nil)
+		err := applyPositioning(orderer, newNib, nil, nil, nil)
 		if err != nil {
 			t.Fatalf("unexpected error: %v", err)
 		}
@@ -194,7 +204,7 @@ func TestOrderer_ApplyPositioning(t *testing.T) {
 
 		newNib := &nib.Nib{ID: "r-3", Title: "Inserted"}
 		afterID := "r-1"
-		err := orderer.ApplyPositioning(newNib, &afterID, nil, nil)
+		err := applyPositioning(orderer, newNib, &afterID, nil, nil)
 		if err != nil {
 			t.Fatalf("unexpected error: %v", err)
 		}
@@ -215,7 +225,7 @@ func TestOrderer_ApplyPositioning(t *testing.T) {
 
 		newNib := &nib.Nib{ID: "r-3", Title: "Inserted"}
 		beforeID := "r-2"
-		err := orderer.ApplyPositioning(newNib, nil, &beforeID, nil)
+		err := applyPositioning(orderer, newNib, nil, &beforeID, nil)
 		if err != nil {
 			t.Fatalf("unexpected error: %v", err)
 		}
@@ -236,7 +246,7 @@ func TestOrderer_ApplyPositioning(t *testing.T) {
 
 		newNib := &nib.Nib{ID: "r-3", Title: "New First"}
 		first := true
-		err := orderer.ApplyPositioning(newNib, nil, nil, &first)
+		err := applyPositioning(orderer, newNib, nil, nil, &first)
 		if err != nil {
 			t.Fatalf("unexpected error: %v", err)
 		}
@@ -253,7 +263,7 @@ func TestOrderer_ApplyPositioning(t *testing.T) {
 
 		newNib := &nib.Nib{ID: "r-2", Title: "New"}
 		afterID := "does-not-exist"
-		err := orderer.ApplyPositioning(newNib, &afterID, nil, nil)
+		err := applyPositioning(orderer, newNib, &afterID, nil, nil)
 		if err == nil {
 			t.Fatal("expected error for unknown anchor")
 		}
@@ -271,7 +281,7 @@ func TestOrderer_ApplyPositioning(t *testing.T) {
 
 		newNib := &nib.Nib{ID: "r-1", Title: "New Root"}
 		afterID := "c-1"
-		err := orderer.ApplyPositioning(newNib, &afterID, nil, nil)
+		err := applyPositioning(orderer, newNib, &afterID, nil, nil)
 		if err == nil {
 			t.Fatal("expected error for non-sibling anchor (anchor has a parent)")
 		}
@@ -285,7 +295,7 @@ func TestOrderer_ApplyPositioning(t *testing.T) {
 		reader := newOrdererReader()
 		orderer := NewOrderer(reader, &stubWriter{})
 
-		err := orderer.ApplyPositioning(newNib, nil, nil, nil)
+		err := applyPositioning(orderer, newNib, nil, nil, nil)
 		if err != nil {
 			t.Fatalf("unexpected error: %v", err)
 		}
@@ -301,7 +311,7 @@ func TestOrderer_ApplyPositioning(t *testing.T) {
 
 		afterID := "a"
 		beforeID := "b"
-		err := orderer.ApplyPositioning(newNib, &afterID, &beforeID, nil)
+		err := applyPositioning(orderer, newNib, &afterID, &beforeID, nil)
 		if err == nil {
 			t.Error("expected error when specifying both afterId and beforeId")
 		}
@@ -319,7 +329,7 @@ func TestOrderer_ApplyPositioning(t *testing.T) {
 
 		// Insert a high-priority nib — should go between critical and normal
 		highNib := &nib.Nib{ID: "c-4", Title: "High", Parent: "p-1", Priority: "high"}
-		err := orderer.ApplyPositioning(highNib, nil, nil, nil)
+		err := applyPositioning(orderer, highNib, nil, nil, nil)
 		if err != nil {
 			t.Fatalf("unexpected error: %v", err)
 		}
@@ -341,7 +351,7 @@ func TestOrderer_ApplyPositioning(t *testing.T) {
 
 		newNib := &nib.Nib{ID: "c-3", Title: "New First", Parent: "p-1"}
 		first := true
-		err := orderer.ApplyPositioning(newNib, nil, nil, &first)
+		err := applyPositioning(orderer, newNib, nil, nil, &first)
 		if err != nil {
 			t.Fatalf("unexpected error: %v", err)
 		}
@@ -357,7 +367,7 @@ func TestOrderer_ApplyPositioning(t *testing.T) {
 		orderer := NewOrderer(reader, &stubWriter{})
 
 		newNib := &nib.Nib{ID: "c-1", Title: "Only Child", Parent: "p-1"}
-		err := orderer.ApplyPositioning(newNib, nil, nil, nil)
+		err := applyPositioning(orderer, newNib, nil, nil, nil)
 		if err != nil {
 			t.Fatalf("unexpected error: %v", err)
 		}
@@ -377,7 +387,7 @@ func TestOrderer_PositionAfter(t *testing.T) {
 		orderer := NewOrderer(reader, &stubWriter{})
 
 		newNib := &nib.Nib{ID: "n-1", Parent: "p-1"}
-		err := orderer.positionAfter(newNib, "s-1", []*nib.Nib{s1, s2, s3})
+		err := orderer.positionAfter(ScopeParent, newNib, "s-1", []*nib.Nib{s1, s2, s3})
 		if err != nil {
 			t.Fatalf("unexpected error: %v", err)
 		}
@@ -393,7 +403,7 @@ func TestOrderer_PositionAfter(t *testing.T) {
 		orderer := NewOrderer(reader, &stubWriter{})
 
 		newNib := &nib.Nib{ID: "n-1", Parent: "p-1"}
-		err := orderer.positionAfter(newNib, "s-1", []*nib.Nib{s1})
+		err := orderer.positionAfter(ScopeParent, newNib, "s-1", []*nib.Nib{s1})
 		if err != nil {
 			t.Fatalf("unexpected error: %v", err)
 		}
@@ -415,7 +425,7 @@ func TestOrderer_PositionAfter(t *testing.T) {
 		orderer := NewOrderer(reader, &stubWriter{})
 
 		newNib := &nib.Nib{ID: "n-1", Parent: "p-1"}
-		err := orderer.positionAfter(newNib, "o-1", []*nib.Nib{s1, other})
+		err := orderer.positionAfter(ScopeParent, newNib, "o-1", []*nib.Nib{s1, other})
 		if err == nil {
 			t.Error("expected error for non-sibling target")
 		}
@@ -435,7 +445,7 @@ func TestOrderer_PositionAfter(t *testing.T) {
 		siblings := []*nib.Nib{dup, target, mover}
 		nib.SortByOrder(siblings)
 
-		err := orderer.positionAfter(mover, dup.ID, siblings)
+		err := orderer.positionAfter(ScopeParent, mover, dup.ID, siblings)
 		if err != nil {
 			t.Fatalf("unexpected error: %v", err)
 		}
@@ -449,7 +459,7 @@ func TestOrderer_PositionAfter(t *testing.T) {
 		orderer := NewOrderer(reader, &stubWriter{})
 
 		newNib := &nib.Nib{ID: "n-1", Parent: "p-1"}
-		err := orderer.positionAfter(newNib, "nonexistent", nil)
+		err := orderer.positionAfter(ScopeParent, newNib, "nonexistent", nil)
 		if err == nil {
 			t.Error("expected error for nonexistent target")
 		}
@@ -466,7 +476,7 @@ func TestOrderer_PositionBefore(t *testing.T) {
 		orderer := NewOrderer(reader, &stubWriter{})
 
 		newNib := &nib.Nib{ID: "n-1", Parent: "p-1"}
-		err := orderer.positionBefore(newNib, "s-2", []*nib.Nib{s1, s2, s3})
+		err := orderer.positionBefore(ScopeParent, newNib, "s-2", []*nib.Nib{s1, s2, s3})
 		if err != nil {
 			t.Fatalf("unexpected error: %v", err)
 		}
@@ -482,7 +492,7 @@ func TestOrderer_PositionBefore(t *testing.T) {
 		orderer := NewOrderer(reader, &stubWriter{})
 
 		newNib := &nib.Nib{ID: "n-1", Parent: "p-1"}
-		err := orderer.positionBefore(newNib, "s-1", []*nib.Nib{s1})
+		err := orderer.positionBefore(ScopeParent, newNib, "s-1", []*nib.Nib{s1})
 		if err != nil {
 			t.Fatalf("unexpected error: %v", err)
 		}
@@ -502,7 +512,7 @@ func TestOrderer_PositionBefore(t *testing.T) {
 		siblings := []*nib.Nib{dup, target, mover}
 		nib.SortByOrder(siblings)
 
-		err := orderer.positionBefore(mover, target.ID, siblings)
+		err := orderer.positionBefore(ScopeParent, mover, target.ID, siblings)
 		if err != nil {
 			t.Fatalf("unexpected error: %v", err)
 		}
@@ -516,7 +526,7 @@ func TestOrderer_PositionBefore(t *testing.T) {
 	})
 }
 
-func TestOrderer_RecalculateOrder(t *testing.T) {
+func TestOrderer_Recalculate(t *testing.T) {
 	t.Run("root nib gets appended last", func(t *testing.T) {
 		existing := &nib.Nib{ID: "r-1", Title: "Existing", Order: "a0"}
 		moved := &nib.Nib{ID: "r-2", Title: "Moved", Order: "old-key"}
@@ -524,7 +534,7 @@ func TestOrderer_RecalculateOrder(t *testing.T) {
 		reader := newOrdererReader(existing, moved)
 		orderer := NewOrderer(reader, &stubWriter{})
 
-		orderer.RecalculateOrder(moved)
+		orderer.Recalculate(ScopeParent, moved)
 
 		if moved.Order <= existing.Order {
 			t.Errorf("recalculated order %q should be after existing %q", moved.Order, existing.Order)
@@ -542,7 +552,7 @@ func TestOrderer_RecalculateOrder(t *testing.T) {
 		reader := newOrdererReader(parent, critical, low, moved)
 		orderer := NewOrderer(reader, &stubWriter{})
 
-		orderer.RecalculateOrder(moved)
+		orderer.Recalculate(ScopeParent, moved)
 
 		// High should be after critical but before low
 		if moved.Order <= critical.Order {
@@ -560,7 +570,7 @@ func TestOrderer_RecalculateOrder(t *testing.T) {
 		reader := newOrdererReader(parent, child)
 		orderer := NewOrderer(reader, &stubWriter{})
 
-		orderer.RecalculateOrder(child)
+		orderer.Recalculate(ScopeParent, child)
 
 		if child.Order != nib.OrderInitial() {
 			t.Errorf("order = %q, want %q for only child", child.Order, nib.OrderInitial())
@@ -573,7 +583,7 @@ func TestOrderer_RecalculateOrder(t *testing.T) {
 		reader := newOrdererReader(root)
 		orderer := NewOrderer(reader, &stubWriter{})
 
-		orderer.RecalculateOrder(root)
+		orderer.Recalculate(ScopeParent, root)
 
 		if root.Order != nib.OrderInitial() {
 			t.Errorf("order = %q, want %q for lone root", root.Order, nib.OrderInitial())

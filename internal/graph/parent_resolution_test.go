@@ -212,7 +212,7 @@ func TestParentIDMatchesShortFormStoredLink(t *testing.T) {
 // Every nib carries an explicit order key. Without one the sibling lookup tries
 // to backfill, and on a hand-authored file with no timestamps that write is
 // refused on a stable etag divergence and silently dropped (see
-// Orderer.backfillOrderKeys) — leaving an anchor at the empty key, which any
+// Orderer.backfillKeys) — leaving an anchor at the empty key, which any
 // assigned key trivially sorts after. Seeding the keys keeps the positional
 // assertion below load-bearing.
 func orderingFixture() map[string]string {
@@ -248,7 +248,8 @@ func assertReorderAfter(t *testing.T, resolver *Resolver, core *nibcore.Core, ta
 
 	// Read the placement out of the ANCHOR's sibling set: the move is only
 	// correct if the two ended up in one set, which is the agreement under test.
-	ordered := resolver.Orderer.siblingsOf(mustGet(t, core, anchorID))
+	anchorNib := mustGet(t, core, anchorID)
+	ordered := resolver.Orderer.Members(ScopeParent, resolvedParentID(anchorNib, resolver.Reader))
 	got := make([]string, 0, len(ordered))
 	for _, s := range ordered {
 		got = append(got, s.ID)
@@ -398,7 +399,7 @@ func nibIDsInOrder(nibs []*nib.Nib) []string {
 // order-key order, which is what a reorder is supposed to have rewritten.
 func rootIDsInOrder(t *testing.T, resolver *Resolver) []string {
 	t.Helper()
-	return nibIDsInOrder(resolver.Orderer.siblingsForParent(""))
+	return nibIDsInOrder(resolver.Orderer.Members(ScopeParent, ""))
 }
 
 // TestChildrenResolverSeesShortFormParentLink is the reverse-traversal half. A
@@ -406,7 +407,7 @@ func rootIDsInOrder(t *testing.T, resolver *Resolver) []string {
 // masks whether the PARENT can see it — so the child side passing says nothing
 // about this direction. The children resolver is the surface the web UI and
 // `nibs rel --rel children` both read, and it reaches the link through
-// GetSortedSiblings, which matches exact map keys — so nothing but
+// Members, which matches exact map keys — so nothing but
 // canonicalization puts the child in this list.
 func TestChildrenResolverSeesShortFormParentLink(t *testing.T) {
 	resolver, core := mustLoadResolverFromFiles(t, map[string]string{
@@ -568,7 +569,7 @@ func TestClearingAParentLinkThatResolvesToNothingLeavesTheNibInPlace(t *testing.
 		if after.Order == before.Order {
 			t.Errorf("order after clearing a resolvable parent = %q, want it recalculated away from the child key", after.Order)
 		}
-		// It lands at the end of the root set, which is what RecalculateOrder does.
+		// It lands at the end of the root set, which is what Recalculate does.
 		if ids := rootIDsInOrder(t, resolver); len(ids) == 0 || ids[len(ids)-1] != "nibs-ch1" {
 			t.Errorf("root order after the promotion = %v, want nibs-ch1 last", ids)
 		}
