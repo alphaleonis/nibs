@@ -110,6 +110,21 @@ const shutdownTimeout = 5 * time.Second
 // gracefully shuts down, draining in-flight requests. The opener function is
 // called with the URL after the listener is bound, allowing tests to inject a fake.
 func startServer(ctx context.Context, app *App, host string, port int, open bool, opener func(string) error) error {
+	// Announce that this store is being served, for as long as it is. This is the
+	// half of the interlock `nibs migrate` requires exclusively: the store's shape
+	// must not change under a process holding nibs in memory, and the
+	// per-operation write lock cannot express that — it excludes writers for one
+	// mutation, while the dangerous window is a clone parked on it across a whole
+	// migration run.
+	serving, err := nibcore.AcquireServeLock(app.Core.Root())
+	if err != nil {
+		if errors.Is(err, nibcore.ErrStoreServed) {
+			return fmt.Errorf("`nibs migrate` is running against this store; wait for it to finish, then start `nibs serve` again")
+		}
+		return fmt.Errorf("announcing that this store is being served: %w", err)
+	}
+	defer func() { _ = serving.Release() }()
+
 	// Start filesystem watching so external edits (CLI, text editor, another
 	// process) are reflected in the web UI without requiring a server restart.
 	if err := app.Core.StartWatching(); err != nil {

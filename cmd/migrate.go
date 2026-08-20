@@ -41,8 +41,11 @@ import (
 // identical arguments; --dry-run never did, because it only ran the gates.
 type migrateEnv struct {
 	nibsRoot string
-	loadCfg  func() (*config.Config, error)
-	git      *gitObservations
+	// serveExcluded records that this run already holds the serve exclusion, so
+	// gateNoLiveServe does not probe a lock the same process is holding.
+	serveExcluded bool
+	loadCfg       func() (*config.Config, error)
+	git           *gitObservations
 }
 
 // gitObservations caches the answers to the git questions one migrate run asks.
@@ -1514,6 +1517,19 @@ func runMigrations(env migrateEnv, log logf) error {
 	// content steps' Core at the new one. Locking the destination is also the
 	// right exclusion: nothing may operate on the pre-layout root, because every
 	// command refuses a store with a pending layout step.
+	// Before the store lock and before every gate: a serve holding nibs in memory
+	// must be gone before the shape changes, and refusing early keeps a run that
+	// cannot proceed from taking the store's write lock at all.
+	fence, err := nibcore.AcquireServeExclusion(env.nibsRoot)
+	if err != nil {
+		if errors.Is(err, nibcore.ErrStoreServed) {
+			return errors.New(liveServeRefusal)
+		}
+		return fmt.Errorf("checking whether a `nibs serve` is running: %w", err)
+	}
+	defer func() { _ = fence.Release() }()
+	env.serveExcluded = true
+
 	lockRoot := env.nibsRoot
 	target, err := planStoreRelocation(env)
 	if err != nil {
@@ -1701,6 +1717,7 @@ type migrateGate struct {
 var migrateGates = []migrateGate{
 	{name: "dirty-store", check: gateStoreGitClean},
 	{name: "dirty-legacy-config", check: gateLegacyConfigRecoverable},
+	{name: "live-serve", check: gateNoLiveServe},
 	{name: "foreign-content-dir", check: gateContentDirsAreOurs},
 	{name: "step-plan", check: gatePendingPlans},
 	{name: "unclassifiable-content", check: gateContentClassifiable},
@@ -1808,6 +1825,40 @@ func gateContentClassifiable(env migrateEnv, scan *storeScan) gateResult {
 		fmt.Sprintf("refusing to migrate around %d file(s) that cannot be read as nibs (move them out of the store or repair them, then re-run `nibs migrate`):\n  %s",
 			len(blocking), describeScanProblems(blocking)))
 }
+
+// gateNoLiveServe refuses to migrate a store some `nibs serve` is holding.
+//
+// It replaces guidance that could only ask. AcquireStoreLock excludes cooperating
+// writers for ONE mutation, which is not the dangerous window: a web update
+// clones a nib, parks on that lock inside Core.Update while holding c.mu — so the
+// watcher cannot refresh the stale clone — and writes the pre-migration render
+// back after the run releases. The source is v1 by then, so no detection fires
+// again: silent, permanent, and not self-healing.
+//
+// A run that already holds the exclusion answers met without probing. The probe
+// takes the same lock, and the flock is per descriptor, so a run asking this
+// question about a lock it is itself holding would refuse itself — the shape
+// AcquireStoreLock's warning describes.
+func gateNoLiveServe(env migrateEnv, _ *storeScan) gateResult {
+	if env.serveExcluded {
+		return gateMet()
+	}
+	fence, err := nibcore.AcquireServeExclusion(env.nibsRoot)
+	if errors.Is(err, nibcore.ErrStoreServed) {
+		return gateRefused(output.ErrConflict, liveServeRefusal)
+	}
+	if err != nil {
+		return gateUndecidable(fmt.Sprintf("whether a `nibs serve` is running could not be determined (%v), so it is not previewed here.", err))
+	}
+	// A probe, not a hold: the run's own acquisition is the authority, and holding
+	// it here would refuse the very run this is previewing for.
+	_ = fence.Release()
+	return gateMet()
+}
+
+// liveServeRefusal is the one wording both the preview and the run use.
+const liveServeRefusal = "a `nibs serve` is running against this store; stop it, then re-run `nibs migrate`. " +
+	"Migrating under a live serve can silently undo the migration: a web update already in flight writes its pre-migration copy back afterwards, and nothing detects it"
 
 // gateContentDirsAreOurs refuses a PRE-LAYOUT store whose data/ or archive/ holds
 // something this tool would not have put there.
