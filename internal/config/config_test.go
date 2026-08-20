@@ -714,9 +714,11 @@ func TestLoadAppliesDefaults(t *testing.T) {
 	if cfg.GetDefaultStatus() != "todo" {
 		t.Errorf("DefaultStatus: got %q, want \"todo\"", cfg.GetDefaultStatus())
 	}
-	// DefaultType should be first type name when not specified
-	if cfg.Nibs.DefaultType != "milestone" {
-		t.Errorf("DefaultType default not applied: got %q, want \"milestone\"", cfg.Nibs.DefaultType)
+	// An omitted default_type resolves to what nibs init would have written, not
+	// to the first entry of a list ordered by hierarchy depth. This assertion
+	// used to require "milestone" and so pinned the defect in place.
+	if cfg.Nibs.DefaultType != defaultTypeName {
+		t.Errorf("DefaultType default not applied: got %q, want %q", cfg.Nibs.DefaultType, defaultTypeName)
 	}
 }
 

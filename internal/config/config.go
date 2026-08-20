@@ -195,14 +195,27 @@ type ServerConfig struct {
 	OpenBrowser *bool `yaml:"open_browser,omitempty"`
 }
 
+// The system defaults: what an unset key means. Named rather than repeated,
+// because they have to be identical in two places — Default(), which nibs init
+// persists into a new project config, and applySystemDefaults, which fills the
+// gaps in a config that omits them. Those two disagreed about the type: the
+// fallback read DefaultTypes[0], and that list is ordered by HIERARCHY DEPTH, not
+// by which entry is a sensible default, so it answered "milestone" while every
+// config nibs init wrote said "task".
+const (
+	defaultIDLength   = 4
+	defaultStatusName = "todo"
+	defaultTypeName   = "task"
+)
+
 // Default returns a Config with default values.
 func Default() *Config {
 	return &Config{
 		Nibs: NibsConfig{
 			Prefix:        "",
-			IDLength:      4,
-			DefaultStatus: "todo",
-			DefaultType:   "task",
+			IDLength:      defaultIDLength,
+			DefaultStatus: defaultStatusName,
+			DefaultType:   defaultTypeName,
 			HideCompleted: boolPtr(true),
 			WideMode:      boolPtr(true),
 		},
@@ -414,13 +427,13 @@ func loadRaw(configPath string) (*Config, error) {
 // applySystemDefaults fills in zero-value fields with system defaults.
 func applySystemDefaults(cfg *Config) {
 	if cfg.Nibs.IDLength == 0 {
-		cfg.Nibs.IDLength = 4
+		cfg.Nibs.IDLength = defaultIDLength
 	}
 	if cfg.Nibs.DefaultStatus == "" {
-		cfg.Nibs.DefaultStatus = "todo"
+		cfg.Nibs.DefaultStatus = defaultStatusName
 	}
 	if cfg.Nibs.DefaultType == "" {
-		cfg.Nibs.DefaultType = DefaultTypes[0].Name
+		cfg.Nibs.DefaultType = defaultTypeName
 	}
 }
 
