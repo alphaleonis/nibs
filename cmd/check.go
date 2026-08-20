@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"path/filepath"
 	"strings"
 
 	"github.com/alphaleonis/nibs/internal/config"
@@ -303,6 +304,10 @@ func runCheck(app *App) (int, error) {
 		data, _ := json.MarshalIndent(result, "", "  ")
 		ui.Println(string(data))
 	} else {
+		if note := migrationReportNote(app); note != "" {
+			ui.Println()
+			ui.Println(note)
+		}
 		ui.Println()
 		if totalIssues == 0 && fixed == 0 {
 			ui.Println(ui.Success.Render("All checks passed"))
@@ -319,6 +324,23 @@ func runCheck(app *App) (int, error) {
 	}
 
 	return totalIssues, nil
+}
+
+// migrationReportNote points at the record `nibs migrate` leaves behind when it
+// had to judge a file: what it assumed was a nib, and what it left where it was.
+//
+// A NOTE and not an issue. The migration succeeded and the store is not unhealthy
+// for holding the record — but the files it names are the ones a user comes to
+// check about, because a nib that stopped appearing in queries is exactly the
+// symptom of one having been left behind. Counting it as an issue would instead
+// make check fail until the file was deleted, which teaches people to delete it
+// unread.
+func migrationReportNote(app *App) string {
+	path := filepath.Join(app.Core.Root(), migrationReportName)
+	if info, err := os.Stat(path); err != nil || !info.Mode().IsRegular() {
+		return ""
+	}
+	return ui.Warning.Render(fmt.Sprintf("`nibs migrate` left %s in this store: it names the files it assumed were nibs and the files it left alone. Delete it once you have acted on it.", path))
 }
 
 // storeMigration describes the store's migration state, or nil when the store is

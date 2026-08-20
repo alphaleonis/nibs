@@ -568,3 +568,31 @@ func TestMigrateWritesAReportOfWhatItJudged(t *testing.T) {
 		}
 	})
 }
+
+// TestCheckPointsAtTheMigrationReport pins what makes the report findable.
+// Nobody opens a file they do not know exists, and `nibs check` is what a user
+// runs when a nib is missing and they want to know why — which is exactly the
+// question a left-behind file raises. It is a note rather than an issue: the
+// migration succeeded, and the store is not unhealthy for having a record in it.
+func TestCheckPointsAtTheMigrationReport(t *testing.T) {
+	t.Cleanup(resetRootPersistentFlags)
+	t.Cleanup(resetCheckFlags)
+	resetCheckFlags()
+
+	storeDir := writeStore(t, filepath.Join(t.TempDir(), "proj"), "nibs:\n  prefix: chk-\n", map[string]string{
+		"chk-a1--one.md": layoutNib,
+	})
+	writeFileT(t, filepath.Join(storeDir, migrationReportName),
+		"# nibs migration report\n\n## Left where they are\n\n- `CHANGELOG.md`\n")
+
+	out, err := runRootWith(t, "--nibs-path", storeDir, "check")
+	if err != nil {
+		t.Fatalf("check: %v", err)
+	}
+	if !strings.Contains(out, migrationReportName) {
+		t.Errorf("check does not point at the migration report:\n%s", out)
+	}
+	if !strings.Contains(out, "All checks passed") {
+		t.Errorf("a migration report made check report the store unhealthy:\n%s", out)
+	}
+}
