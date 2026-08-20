@@ -104,7 +104,7 @@ func ComputeProgress(childStatuses []string) ProgressRollup {
 // engine and the GraphQL surface cannot drift on blocking / mention / ready
 // semantics. The child rollups (children count, progress) are read straight
 // off the parent-link graph via FindIncomingLinks, matching the child set the
-// Children resolver derives from GetSortedSiblings.
+// Children resolver derives from Orderer.Members.
 type projectionResolver struct {
 	r   *Resolver
 	nib NibResolver
@@ -151,7 +151,7 @@ func (p *projectionResolver) ParentID(id string) string {
 }
 
 // ChildCount returns the number of direct children of the nib, counting the
-// parent links that point at it — the same child set GetSortedSiblings derives,
+// parent links that point at it — the same child set Orderer.Members derives,
 // without the ordering-key backfill a count does not need.
 func (p *projectionResolver) ChildCount(id string) int {
 	count := 0

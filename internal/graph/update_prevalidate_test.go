@@ -131,7 +131,7 @@ func TestUpdateNibPreValidatesSubjectBeforeWritingBlockingTargets(t *testing.T) 
 // ordering against updateNib's OTHER foreign write. Changing the parent
 // recalculates the subject's order key, which reads the new parent's sibling
 // set — and that read repairs any sibling missing an order key by persisting
-// one (Orderer.backfillOrderKeys). A subject guard placed after the parent
+// one (Orderer.backfillKeys). A subject guard placed after the parent
 // block therefore lets a refused update leave a durable edit on a sibling's
 // file, which is the same failure class the pre-check exists to remove.
 //
@@ -237,7 +237,7 @@ func shortParentResolver(core *nibcore.Core, subjectID, shortParent string) *Res
 // TestTypeChangeBranchMakesNoForeignWrite covers the SECOND call into
 // validateAndSetParent — the one in the type-change branch. That call re-checks
 // the subject's EXISTING parent, which by definition is not changing, so it must
-// never reach RecalculateOrder and therefore never reach the sibling order-key
+// never reach Recalculate and therefore never reach the sibling order-key
 // backfill that recalculation performs. A type change is not a move.
 //
 // The subject's working clone carries a SHORT-form parent, which is what makes
@@ -301,8 +301,8 @@ func TestTypeChangeBranchMakesNoForeignWrite(t *testing.T) {
 // TestUpdateNibRecalcUsesNewPriority pins the ordering consequence of applying
 // priority before the parent block rather than after it.
 //
-// RecalculateOrder positions a child among its siblings by PRIORITY
-// (positionDefaultByPriority), and it reads the priority this same mutation is
+// Recalculate positions a child among its siblings by PRIORITY
+// (placeDefaultByPriority), and it reads the priority this same mutation is
 // setting — so a single update that changes parent and priority together places
 // the nib by its incoming priority, not its outgoing one.
 //
@@ -312,7 +312,7 @@ func TestTypeChangeBranchMakesNoForeignWrite(t *testing.T) {
 // order key so no backfill runs — an unordered one would be assigned a key past
 // a2 and join the comparison, which decides nothing about priority.
 //
-// There is only one route into RecalculateOrder from updateNib. The type-change
+// There is only one route into Recalculate from updateNib. The type-change
 // branch used to be a second one, reachable when the subject's stored parent was
 // spelled short, and is not anymore: it compares the RESOLVED parent, which a
 // type change never moves. TestTypeChangeBranchMakesNoForeignWrite guards that.

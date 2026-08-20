@@ -24,7 +24,7 @@ func TestGetRootSiblings(t *testing.T) {
 	writer := &stubWriter{}
 
 	orderer := NewOrderer(reader, writer)
-	roots := orderer.getRootSiblings()
+	roots := orderer.Members(ScopeParent, "")
 
 	if len(roots) != 2 {
 		t.Fatalf("got %d roots, want 2", len(roots))
@@ -52,7 +52,7 @@ func TestGetRootSiblingsBackfillsUnordered(t *testing.T) {
 	}
 
 	orderer := NewOrderer(reader, writer)
-	roots := orderer.getRootSiblings()
+	roots := orderer.Members(ScopeParent, "")
 
 	if len(roots) != 2 {
 		t.Fatalf("got %d roots, want 2", len(roots))
