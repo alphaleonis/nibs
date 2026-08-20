@@ -77,7 +77,7 @@ FILTER list/rel show OPEN only by default (closed statuses hidden; header notes 
 RULE   On any nibs error: STOP, find the root cause, never silently retry.
 `,
 		relDefaultKind,
-		closeDefaultStatus,
+		closeDefaultStatus(),
 		strings.Join(cfg.TypeNames(), ", "),
 		statusGroupOpen, strings.Join(cfg.OpenStatusNames(), "/"),
 		statusGroupClosed, strings.Join(cfg.ClosedStatusNames(), "/"),

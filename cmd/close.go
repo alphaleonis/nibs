@@ -16,24 +16,34 @@ import (
 	"github.com/spf13/cobra"
 )
 
-// closeDefaultStatus is the close reason a bare `nibs close` produces. It is
-// named here rather than derived, because "which closed status is the default"
-// is not recorded by any flag on config.StatusConfig — the Closed flag says a
-// status is a close reason, not that it is the usual one.
-const closeDefaultStatus = "completed"
+// closeDefaultStatus returns the close reason a bare `nibs close` produces:
+// the first done-role status. The two functions here share one derivation and
+// still ask different questions — "which reason does a bare close record" and
+// "which reason is an accomplishment" — and the done role answers both:
+// recording an accomplishment is what a bare close means, and no other role
+// says anything was accomplished (dropped work releases its dependents too,
+// but nothing got done).
+func closeDefaultStatus() string {
+	return firstDoneStatus()
+}
 
-// closeCompletionStatus is the one close reason that counts as progress, and so
-// the only one that rewrites the parent's Current Focus (see the parent
+// closeCompletionStatus returns the one close reason that counts as progress,
+// and so the only one that rewrites the parent's Current Focus (see the parent
 // propagation below).
-//
-// Named here rather than derived, for the same reason closeDefaultStatus is: no
-// flag on config.StatusConfig records "this close reason means the work got
-// done". Closed says the work left the board, ReleasesDependents says it no
-// longer gates whatever depended on it — which scrapped satisfies too — and
-// neither answers whether anything was accomplished. The two consts hold the
-// same word today and still ask different questions: "which reason does a bare
-// close record" and "which reason is an accomplishment".
-const closeCompletionStatus = "completed"
+func closeCompletionStatus() string {
+	return firstDoneStatus()
+}
+
+// firstDoneStatus is the shared derivation: the first done-role status in
+// DefaultStatuses order. TestStatusRoleGroupsAreNonEmpty forbids an empty done
+// group in the declared vocabulary, so only a test-mutated vocabulary reaches
+// the "" fallback.
+func firstDoneStatus() string {
+	if names := config.Default().DoneStatusNames(); len(names) > 0 {
+		return names[0]
+	}
+	return ""
+}
 
 // closeSummaryHeading is the section `close` writes its record into. Matched
 // case-insensitively at any level (see mdsection.Find).
@@ -64,7 +74,7 @@ var closeCmd = &cobra.Command{
 	Use:   "close <id>",
 	Short: "Close a nib with a summary (completed, or --as another closed status)",
 	Long: `Closes a nib with a summary, recording why it left the board. --as picks the
-close reason from the closed statuses (` + closeDefaultStatus + ` when omitted); they are ordinary
+close reason from the closed statuses (` + closeDefaultStatus() + ` when omitted); they are ordinary
 status names, not a separate close-reason vocabulary. An open status is a validation error.
 
 close is the verb that closes an existing nib: ` + "`nibs set -s <closed status>`" + ` is refused,
@@ -75,10 +85,10 @@ The summary lands in a ## Summary section as a dated, reason-stamped entry, and 
 an already-closed nib is allowed: it appends another entry rather than replacing the
 record, so a reason can be revised without losing why it was closed the first time.
 
-If the nib has a parent, closing it as ` + closeCompletionStatus + ` rewrites the parent's Current Focus;
+If the nib has a parent, closing it as ` + closeCompletionStatus() + ` rewrites the parent's Current Focus;
 every close reason merges Key Decisions into the parent, including the ones that set work
 aside rather than finish it. Revising a reason does not retract an earlier close's parent
-write: the "Completed <id>: <summary>" line an earlier ` + closeCompletionStatus + ` close put in the
+write: the "Completed <id>: <summary>" line an earlier ` + closeCompletionStatus() + ` close put in the
 parent's Current Focus stays there when the reason is revised to another one, so the
 parent still reads as though the work landed — correct it by hand when that matters.
 The --if-match flag protects the target nib only; the parent update uses its own etag internally.`,
@@ -197,7 +207,7 @@ The --if-match flag protects the target nib only; the parent update uses its own
 				// progress and leave the parent reading as though nothing had happened.
 				// Gating the write here is also what keeps the "Completed" verb off the
 				// reasons it would misdescribe.
-				if closeAs == closeCompletionStatus {
+				if closeAs == closeCompletionStatus() {
 					focusContent := fmt.Sprintf("\nCompleted %s: %s\n", b.ID, summary)
 					parentBody, _ = mdsection.Set(parentBody, 2, "Current Focus", focusContent)
 				}
@@ -319,7 +329,7 @@ func init() {
 	// The usage string is interpolated at package load, so it lists the closed
 	// statuses declared then; RunE re-derives the accepted set per invocation,
 	// and that check is what actually admits or rejects a value.
-	closeCmd.Flags().StringVar(&closeAs, "as", closeDefaultStatus,
+	closeCmd.Flags().StringVar(&closeAs, "as", closeDefaultStatus(),
 		"Close reason: which closed status to set ("+strings.Join(config.Default().ClosedStatusNames(), ", ")+")")
 	closeCmd.Flags().BoolVar(&closeForce, "force", false, "Close even if children are incomplete")
 	closeCmd.Flags().StringVar(&closeIfMatch, "if-match", "", "Only close if etag matches (optimistic locking)")

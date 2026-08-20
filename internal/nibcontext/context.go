@@ -159,23 +159,26 @@ func BuildSummary(allNibs []*nib.Nib, rootID string, cfg *config.Config) Summary
 // CalcProgress computes weighted progress across a set of nibs.
 // Only leaf work types (task, bug, feature) count — epics and milestones are excluded.
 // It applies the same three-way rule as graph.ComputeProgress, weighted by
-// estimate: "completed" is the numerator, "scrapped" work is no longer scope and
-// leaves the denominator, and everything else counts toward the denominator
-// without counting as done. Deferred nibs are in that last group — the
-// set-aside work is coming back, so it is outstanding scope. Draft nibs are
-// there too: planned scope that hasn't been refined yet.
+// estimate and keyed on status ROLES: done-role work is the numerator,
+// dropped-role work is no longer scope and leaves the denominator, and
+// everything else counts toward the denominator without counting as done.
+// Deferred nibs are in that last group — parked work is coming back, so it is
+// outstanding scope. Draft nibs are there too: planned scope that hasn't been
+// refined yet, as is any status outside the vocabulary, so a typo holds the
+// percentage down rather than inflating it.
 func CalcProgress(nibs []*nib.Nib) Progress {
 	var completed, total int
 	for _, n := range nibs {
 		if !isLeafType(n.EffectiveType()) {
 			continue
 		}
-		if n.Status == "scrapped" {
+		role, known := config.StatusRole(n.Status)
+		if known && role == config.RoleDropped {
 			continue
 		}
 		w := estimate.Weight(n.Estimate)
 		total += w
-		if n.Status == "completed" {
+		if known && role == config.RoleDone {
 			completed += w
 		}
 	}

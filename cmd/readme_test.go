@@ -140,9 +140,9 @@ func TestReadmeBlockerRuleMatchesConfig(t *testing.T) {
 func TestReadmeCloseDefaultMatchesCommand(t *testing.T) {
 	m := readmeCloseDefault.FindStringSubmatch(readmeText(t))
 	if m == nil {
-		t.Fatalf("README.md has no \"picks the close reason (default `x`)\" phrase, so the close default is unguarded; `nibs close` records %q when --as is omitted — restore the phrase or update this test to match its new shape", closeDefaultStatus)
+		t.Fatalf("README.md has no \"picks the close reason (default `x`)\" phrase, so the close default is unguarded; `nibs close` records %q when --as is omitted — restore the phrase or update this test to match its new shape", closeDefaultStatus())
 	}
-	if m[1] != closeDefaultStatus {
-		t.Errorf("README says a bare `nibs close` records %q; the command records %q", m[1], closeDefaultStatus)
+	if m[1] != closeDefaultStatus() {
+		t.Errorf("README says a bare `nibs close` records %q; the command records %q", m[1], closeDefaultStatus())
 	}
 }

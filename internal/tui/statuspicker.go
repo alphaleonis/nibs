@@ -103,7 +103,7 @@ func newStatusPickerModel(nibIDs []string, nibTitle, currentStatus string, cfg *
 			name:        s.Name,
 			description: s.Description,
 			color:       s.Color,
-			isClosed:    s.Closed,
+			isClosed:    s.Role.Closed(),
 			isCurrent:   isCurrent,
 		})
 	}

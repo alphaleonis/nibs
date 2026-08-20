@@ -248,7 +248,7 @@ func TestPromptsDeriveStatusVocabularyFromConfig(t *testing.T) {
 	withExtraStatus(t, config.StatusConfig{
 		Name:        "parked",
 		Color:       "gray",
-		Closed:      true,
+		Role:        config.RoleParked,
 		Description: "Guard status: closed, and still blocking",
 	})
 
@@ -448,8 +448,8 @@ func TestPromptsGuardEmptyDerivedSets(t *testing.T) {
 		{
 			"nothing holds",
 			func(s *config.StatusConfig) {
-				if s.Closed {
-					s.ReleasesDependents = true
+				if s.Role == config.RoleParked {
+					s.Role = config.RoleDropped
 				}
 			},
 			(*config.Config).HoldingStatusNames,
@@ -458,8 +458,8 @@ func TestPromptsGuardEmptyDerivedSets(t *testing.T) {
 		{
 			"nothing releases",
 			func(s *config.StatusConfig) {
-				if s.Closed {
-					s.ReleasesDependents = false
+				if s.Role.Closed() {
+					s.Role = config.RoleParked
 				}
 			},
 			(*config.Config).ReleasingStatusNames,
@@ -467,7 +467,11 @@ func TestPromptsGuardEmptyDerivedSets(t *testing.T) {
 		},
 		{
 			"nothing is startable",
-			func(s *config.StatusConfig) { s.Startable = false },
+			func(s *config.StatusConfig) {
+				if s.Role == config.RoleStartable {
+					s.Role = config.RoleOpen
+				}
+			},
 			(*config.Config).StartableStatusNames,
 			"nothing else is startable",
 		},
