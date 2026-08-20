@@ -158,6 +158,37 @@ func WalkStoreFiles(root string, fn func(path string, err error) error) error {
 	})
 }
 
+// WalkStoreDirs calls fn for every DIRECTORY inside root that store content can
+// live in, root itself first, applying WalkStoreFiles' dot rule: a dot directory
+// is pruned with everything under it, and root is exempt because a store is
+// typically named `.nibs`.
+//
+// It exists so the file watcher's directory set and the scans' file set come from
+// ONE definition. They diverged: StartWatching enumerated with a bare
+// filepath.WalkDir, so it registered watches inside `.git` and `.obsidian` and
+// handleChanges loaded nib-shaped files from directories no scan would read.
+//
+// A directory that cannot be read is SKIPPED rather than failing the walk. The
+// caller is registering best-effort watches, and a store with one unreadable
+// subdirectory must still be watchable everywhere else.
+func WalkStoreDirs(root string, fn func(dir string) error) error {
+	return fs.WalkDir(os.DirFS(root), ".", func(rel string, d fs.DirEntry, err error) error {
+		if err != nil {
+			if d != nil && d.IsDir() {
+				return fs.SkipDir
+			}
+			return nil
+		}
+		if !d.IsDir() {
+			return nil
+		}
+		if rel != "." && strings.HasPrefix(d.Name(), ".") {
+			return fs.SkipDir
+		}
+		return fn(filepath.Join(root, filepath.FromSlash(rel)))
+	})
+}
+
 // leadsToRegularFile reports whether a walked entry is a regular file, or a
 // symlink leading to one.
 //
