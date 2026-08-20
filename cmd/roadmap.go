@@ -14,6 +14,7 @@ import (
 
 	"github.com/alphaleonis/nibs/internal/config"
 	"github.com/alphaleonis/nibs/internal/graph"
+	"github.com/alphaleonis/nibs/internal/membership"
 	"github.com/alphaleonis/nibs/internal/nib"
 	"github.com/alphaleonis/nibs/internal/nibcore"
 	"github.com/spf13/cobra"
@@ -98,31 +99,17 @@ var roadmapCmd = &cobra.Command{
 	},
 }
 
-// buildRoadmap constructs the roadmap data structure from nibs.
+// buildRoadmap constructs the roadmap data structure from nibs. Membership —
+// which milestones exist, what belongs to each, what remains unscheduled —
+// comes from internal/membership; everything here is display policy: status
+// filters, the includeDone rule, sorting, and the "earns its place by holding
+// outstanding scope" tests.
 func buildRoadmap(allNibs []*nib.Nib, includeDone bool, statusFilter, noStatusFilter []string, cfg *config.Config) *roadmapData {
-	// Index all nibs by ID for lookups
-	byID := make(map[string]*nib.Nib)
-	for _, b := range allNibs {
-		byID[b.ID] = b
-	}
-
-	// Build children index: parent ID -> children
-	// This maps each nib ID to the nibs that have it as a parent
-	children := make(map[string][]*nib.Nib)
-	for _, b := range allNibs {
-		if b.Parent != "" {
-			children[b.Parent] = append(children[b.Parent], b)
-		}
-	}
+	view := membership.Compute(allNibs)
 
 	// Find milestones, applying status filters
 	var milestones []*nib.Nib
-	for _, b := range allNibs {
-		// Classification check — exempt: empty type is never milestone/epic.
-		if b.Type != "milestone" {
-			continue
-		}
-		// Apply status filters to milestones
+	for _, b := range view.Milestones() {
 		if len(statusFilter) > 0 && !containsStatus(statusFilter, b.Status) {
 			continue
 		}
@@ -138,7 +125,7 @@ func buildRoadmap(allNibs []*nib.Nib, includeDone bool, statusFilter, noStatusFi
 	// Build milestone groups
 	var milestoneGroups []milestoneGroup
 	for _, m := range milestones {
-		group := buildMilestoneGroup(m, children, includeDone, cfg)
+		group := buildMilestoneGroup(m, view, includeDone, cfg)
 		// A milestone earns its place by holding outstanding scope — the same
 		// rule as epics, one level up.
 		if len(group.Epics) > 0 || len(group.Other) > 0 {
@@ -146,39 +133,22 @@ func buildRoadmap(allNibs []*nib.Nib, includeDone bool, statusFilter, noStatusFi
 		}
 	}
 
-	// Build unscheduled group: items not under any milestone
-	// Track which nibs are under a milestone (directly or via epic)
-	underMilestone := make(map[string]bool)
-	for _, m := range milestones {
-		underMilestone[m.ID] = true
-		for _, child := range children[m.ID] {
-			underMilestone[child.ID] = true
-			// Also mark children of epics under this milestone
-			if child.Type == "epic" {
-				for _, epicChild := range children[child.ID] {
-					underMilestone[epicChild.ID] = true
-				}
-			}
-		}
-	}
+	// The unscheduled remainder comes from the view, computed against every
+	// DECLARED milestone rather than the status-filtered list above — work
+	// under a status-hidden milestone is scheduled work the filter chose not
+	// to show, not backlog. (The old two-level walk leaked it here; restoring
+	// that would be a deliberate policy change, not a default.)
+	rem := view.Unscheduled()
 
-	// Find unscheduled epics (epics not under a milestone)
 	var unscheduledEpics []epicGroup
-	for _, b := range allNibs {
-		// Classification check — exempt: empty type is never milestone/epic.
-		if b.Type != "epic" {
-			continue
-		}
-		if underMilestone[b.ID] {
-			continue
-		}
+	for _, eg := range rem.Epics {
 		// Build the epic group if it still holds outstanding scope.
-		epicItems := filterChildren(children[b.ID], includeDone, cfg)
+		epicItems := filterChildren(eg.Items, includeDone, cfg)
 		if len(epicItems) > 0 {
 			sortByTypeThenStatus(epicItems, cfg)
 			unscheduledEpics = append(unscheduledEpics, epicGroup{
-				Epic:     b,
-				Progress: graph.ComputeProgress(childStatuses(children[b.ID])),
+				Epic:     eg.Epic,
+				Progress: graph.ComputeProgress(childStatuses(eg.Items)),
 				Items:    epicItems,
 			})
 		}
@@ -189,23 +159,9 @@ func buildRoadmap(allNibs []*nib.Nib, includeDone bool, statusFilter, noStatusFi
 		return unscheduledEpics[i].Epic.Title < unscheduledEpics[j].Epic.Title
 	})
 
-	// Find orphan items (not milestone, not epic, no parent or parent is not milestone/epic)
+	// Orphan items: root-level work, kept while it stays on the roadmap.
 	var orphanItems []*nib.Nib
-	for _, b := range allNibs {
-		// Skip milestones and epics.
-		// Classification check — exempt: empty type is never milestone/epic.
-		if b.Type == "milestone" || b.Type == "epic" {
-			continue
-		}
-		// Skip if already under a milestone
-		if underMilestone[b.ID] {
-			continue
-		}
-		// Skip if has a parent (it's under an unscheduled epic, handled above)
-		if b.Parent != "" {
-			continue
-		}
-		// Apply done filter
+	for _, b := range rem.Other {
 		if !staysOnRoadmap(b.Status, includeDone, cfg) {
 			continue
 		}
@@ -231,49 +187,35 @@ func buildRoadmap(allNibs []*nib.Nib, includeDone bool, statusFilter, noStatusFi
 }
 
 // buildMilestoneGroup builds a milestone group with its epics and other items.
-func buildMilestoneGroup(m *nib.Nib, children map[string][]*nib.Nib, includeDone bool, cfg *config.Config) milestoneGroup {
+func buildMilestoneGroup(m *nib.Nib, view *membership.View, includeDone bool, cfg *config.Config) milestoneGroup {
+	tree := view.Grouped(m.ID)
 	group := milestoneGroup{
 		Milestone: m,
-		// % complete over the milestone's real direct children (epics + direct
-		// items), computed over the full child set regardless of includeDone.
-		Progress: graph.ComputeProgress(childStatuses(children[m.ID])),
-	}
-
-	// Get direct children of this milestone
-	directChildren := children[m.ID]
-
-	// Separate epics from other items
-	var epics []*nib.Nib
-
-	for _, child := range directChildren {
-		if child.Type == "epic" {
-			epics = append(epics, child)
-		}
+		// % complete over the milestone's real direct members (epics + direct
+		// items), computed over the full member set regardless of includeDone.
+		Progress: graph.ComputeProgress(childStatuses(view.DirectMembers(m.ID))),
 	}
 
 	// Build epic groups
-	for _, epic := range epics {
-		epicItems := filterChildren(children[epic.ID], includeDone, cfg)
+	for _, eg := range tree.Epics {
+		epicItems := filterChildren(eg.Items, includeDone, cfg)
 		// Include epics that still hold outstanding scope. An epic that closed
 		// over a deferred child keeps rendering it — closing the parent does not
 		// resolve the child.
 		if len(epicItems) > 0 {
 			sortByTypeThenStatus(epicItems, cfg)
 			group.Epics = append(group.Epics, epicGroup{
-				Epic:     epic,
-				Progress: graph.ComputeProgress(childStatuses(children[epic.ID])),
+				Epic:     eg.Epic,
+				Progress: graph.ComputeProgress(childStatuses(eg.Items)),
 				Items:    epicItems,
 			})
 		}
 	}
 
-	// Build "Other" list: direct children that are not epics
+	// Build "Other" list: the milestone's direct non-epic members
 	// (With single parent enforcement, items can't be both under an epic and directly under the milestone)
 	var other []*nib.Nib
-	for _, child := range directChildren {
-		if child.Type == "epic" {
-			continue
-		}
+	for _, child := range tree.Other {
 		if staysOnRoadmap(child.Status, includeDone, cfg) {
 			other = append(other, child)
 		}

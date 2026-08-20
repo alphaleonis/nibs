@@ -7,7 +7,7 @@ import (
 	"strings"
 
 	"github.com/alphaleonis/nibs/internal/graph"
-	"github.com/alphaleonis/nibs/internal/nib"
+	"github.com/alphaleonis/nibs/internal/membership"
 	"github.com/alphaleonis/nibs/internal/nibcontext"
 	"github.com/alphaleonis/nibs/internal/output"
 	"github.com/alphaleonis/nibs/internal/ui"
@@ -85,7 +85,7 @@ over its direct children, plus active tasks, next tasks, and key decisions
 		}
 
 		sum := nibcontext.BuildSummary(allNibs, rootID, app.Config())
-		out := buildContextOutput(sum, rootID, directChildStatuses(allNibs))
+		out := buildContextOutput(sum, rootID, membership.Compute(allNibs))
 
 		if contextJSON {
 			return output.JSONRaw(out)
@@ -97,7 +97,7 @@ over its direct children, plus active tasks, next tasks, and key decisions
 // buildContextOutput adapts the structural summary from nibcontext into the
 // lean context output, replacing nibcontext's weighted progress with the
 // canonical child-completion rollup so it matches `nibs get -f progress`.
-func buildContextOutput(sum nibcontext.Summary, rootID string, childStatuses map[string][]string) contextOutput {
+func buildContextOutput(sum nibcontext.Summary, rootID string, view *membership.View) contextOutput {
 	out := contextOutput{Warnings: sum.Warnings}
 
 	// Overview mode: one entry per active milestone with its rollup.
@@ -105,7 +105,7 @@ func buildContextOutput(sum nibcontext.Summary, rootID string, childStatuses map
 		for _, c := range sum.Containers {
 			out.Milestones = append(out.Milestones, milestoneContext{
 				NibRef:      &c.NibRef,
-				Progress:    graph.ComputeProgress(childStatuses[c.ID]),
+				Progress:    graph.ComputeProgress(memberStatuses(view, c.ID)),
 				ActivePhase: c.ActivePhase,
 			})
 		}
@@ -119,23 +119,21 @@ func buildContextOutput(sum nibcontext.Summary, rootID string, childStatuses map
 	out.NextTasks = sum.NextTasks
 	out.Decisions = sum.Decisions
 	if sum.Root != nil {
-		rollup := graph.ComputeProgress(childStatuses[rootID])
+		rollup := graph.ComputeProgress(memberStatuses(view, rootID))
 		out.Progress = &rollup
 	}
 	return out
 }
 
-// directChildStatuses maps each parent id to the statuses of its direct
-// children — the input graph.ComputeProgress needs to build the rollup for any
-// node without re-scanning the whole set.
-func directChildStatuses(allNibs []*nib.Nib) map[string][]string {
-	m := make(map[string][]string)
-	for _, n := range allNibs {
-		if n.Parent != "" {
-			m[n.Parent] = append(m[n.Parent], n.Status)
-		}
+// memberStatuses projects a container's direct members to their statuses —
+// the input graph.ComputeProgress needs to build the rollup for a node.
+func memberStatuses(view *membership.View, containerID string) []string {
+	members := view.DirectMembers(containerID)
+	statuses := make([]string, len(members))
+	for i, m := range members {
+		statuses[i] = m.Status
 	}
-	return m
+	return statuses
 }
 
 func renderContextPretty(out contextOutput) error {
