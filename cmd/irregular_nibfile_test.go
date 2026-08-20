@@ -256,7 +256,7 @@ func TestIrregularFileAtAPreLayoutStoreRootDoesNotLockTheProjectOut(t *testing.T
 	// A CONTENT step must be pending, or nothing consults the blocking set at
 	// all and this row passes whatever the classification is.
 	writeFileT(t, filepath.Join(dataDir, "leg-a1--one.md"),
-		"---\ntitle: One\nstatus: todo\npriority: deferred\n---\n\nBody.\n")
+		"---\n# leg-a1\nversion: 0\ntitle: One\nstatus: todo\npriority: deferred\n---\n\nBody.\n")
 	mkfifoT(t, filepath.Join(dataDir, "leg-b2--pipe.md"))
 
 	out, err := runWithinDeadline(t, "migrate", "--dry-run", "--nibs-path", dataDir)

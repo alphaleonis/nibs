@@ -507,7 +507,7 @@ type migrateGateFixture struct {
 // trip each gate for real — the preview/real-run parity test and the refusal
 // invariant test — so a new gate needs one fixture rather than one per test.
 func migrateGateFixtures() map[string]migrateGateFixture {
-	const v0Nib = "---\ntitle: One\nstatus: todo\n---\n\nBody.\n"
+	const v0Nib = "---\n# leg-a1\nversion: 0\ntitle: One\nstatus: todo\n---\n\nBody.\n"
 	return map[string]migrateGateFixture{
 		"dirty-store": {build: func(t *testing.T) string {
 			_, storeDir := writeLegacyStore(t, "", map[string]string{"leg-a1--one.md": layoutNib})
@@ -634,8 +634,8 @@ func TestMigrateDryRunPreviewsEveryRefusalGate(t *testing.T) {
 // fixture fails loudly whenever a content step runs against a stale config.
 func legacyV0BlockingStore() map[string]string {
 	return map[string]string{
-		"leg-a1--one.md": "---\ntitle: One\nstatus: todo\nblocking:\n    - a2\n---\n\nBody A.\n",
-		"leg-a2--two.md": "---\ntitle: Two\nstatus: todo\n---\n\nBody B.\n",
+		"leg-a1--one.md": "---\n# leg-a1\nversion: 0\ntitle: One\nstatus: todo\nblocking:\n    - a2\n---\n\nBody A.\n",
+		"leg-a2--two.md": "---\n# leg-a2\nversion: 0\ntitle: Two\nstatus: todo\n---\n\nBody B.\n",
 	}
 }
 
@@ -1232,7 +1232,7 @@ func TestMigrateFindsFilesThroughASymlinkedStoreRoot(t *testing.T) {
 // only when everything else is clear.
 func TestMigrateDryRunAlwaysReportsTheUndecidableGate(t *testing.T) {
 	// A version-less nib, so a CONTENT step is pending alongside the shape step.
-	const v0Nib = "---\ntitle: One\nstatus: todo\n---\n\nBody.\n"
+	const v0Nib = "---\n# leg-a1\nversion: 0\ntitle: One\nstatus: todo\n---\n\nBody.\n"
 	const undecidableNote = "can only be checked once the layout step has moved the files"
 
 	for _, tt := range []struct {

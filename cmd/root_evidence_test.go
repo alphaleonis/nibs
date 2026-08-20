@@ -787,63 +787,48 @@ func TestRefusalDoesNotDenyAConfigThatNamesTheDirectoryThroughASymlink(t *testin
 	}
 }
 
-// foreignNotesCarryingNibsStatus are front-mattered markdown files that no nib
-// renderer wrote, each carrying a `status:` value from the nibs enum. `status:`
-// is routine convention in note vaults and on docs sites — an Obsidian or
-// Dendron note tracks its own state with it, and a docs page marks itself
-// `draft` the same way — so these stand in for the ordinary content a project
-// keeps beside its code.
-var foreignNotesCarryingNibsStatus = map[string]string{
-	"vault-note.md": "---\ntitle: Weekly review\ntags: [notes, journal]\nstatus: in-progress\n---\n\n# Weekly review\n",
-	"docs-page.md":  "---\ntitle: Configuration\nweight: 20\nstatus: draft\n---\n\nHow to configure the thing.\n",
-}
+// nibShapedForeignFile is a docs page wearing the shape nib.Render writes: the
+// id comment, then the three keys renderFrontMatter never omits. nibs did not
+// write it, and no scan of a file's front matter can tell — which is exactly
+// what the corroboration check can and cannot establish.
+const nibShapedForeignFile = "---\n# leg-a1\nversion: 1\ntitle: Configuration\nstatus: draft\n---\n\nHow to configure the thing.\n"
 
-// TestCorroborationDocMatchesWhatForeignFrontMatterDoes holds
-// declaredStoreCorroborated's doc comment to what the predicate actually
-// accepts.
+// TestCorroborationDocMatchesWhatTheArtifactProves holds every comment that
+// describes the corroborating artifact to what the check actually establishes.
 //
-// The comment used to justify the `status:` bar by asserting that other tools'
-// front matter "does not carry it". It does: a note vault or docs site marking
-// its own pages `status: todo` satisfies the check with content nibs never
-// touched, so the corroboration is evidence against an ACCIDENT — a `nibs.path`
-// aimed at the wrong directory — and not against a repository that chose its
-// `nibs.path` on purpose. What bounds that case is isRealImmediateChild, which
-// is the fact the comment has to carry instead.
-//
-// A wrong justification in a comment is not inert here: it is the reason the
-// next reader would give for leaving the predicate alone, and the predicate
-// authorizes a whole-directory rename plus a rewrite of every file under it.
+// The bar is now the whole shape nib.Render writes, not the lone `status:` that
+// ordinary notes reached. That is a real narrowing, and it is pinned where it
+// belongs — in TestResolveStoreDirRequiresStoreEvidence. What it is NOT is a
+// proof of provenance, and that is this test's subject: the check reads a shape,
+// so anything that knows the shape can wear it, and a comment claiming otherwise
+// would be the reason a future reader stopped looking for what really bounds the
+// damage.
 //
 // The claim is measured rather than assumed, and BOTH directions fail. If the
-// predicate is ever strengthened so ordinary notes no longer corroborate, this
-// test fails too — the comment would then be free to say something this one
-// forbids, and that is a decision to make deliberately rather than to inherit.
-func TestCorroborationDocMatchesWhatForeignFrontMatterDoes(t *testing.T) {
-	dir := filepath.Join(t.TempDir(), "notes")
+// check ever stops accepting a hand-authored file in the rendered shape, this
+// test fails too — the comments would then be free to say something it forbids,
+// and that is a decision to make deliberately rather than to inherit.
+func TestCorroborationDocMatchesWhatTheArtifactProves(t *testing.T) {
+	dir := filepath.Join(t.TempDir(), "content")
 	mkdirAllT(t, dir)
-	for name, content := range foreignNotesCarryingNibsStatus {
-		writeFileT(t, filepath.Join(dir, name), content)
-	}
+	writeFileT(t, filepath.Join(dir, "configuration.md"), nibShapedForeignFile)
 
 	corroborated, err := declaredStoreCorroborated(dir)
 	if err != nil {
 		t.Fatalf("declaredStoreCorroborated(%s): %v", dir, err)
 	}
 	if !corroborated {
-		t.Fatalf("declaredStoreCorroborated accepted none of %d ordinary notes carrying a nibs `status:`; "+
-			"the predicate has been strengthened, so re-read declaredStoreCorroborated's doc comment "+
-			"and this guard together before changing either", len(foreignNotesCarryingNibsStatus))
+		t.Fatalf("declaredStoreCorroborated refused a file in the rendered shape that nibs did not write; "+
+			"the check now establishes more than a shape, so re-read the comments it holds "+
+			"(%d of them) and this guard together before changing either", len(artifactComments(t)))
 	}
 
-	// Both comments that describe the artifact, not only the predicate's own:
-	// the claim was made twice, and the field comment is what a reader consults
-	// when asking what the scanned `status:` is FOR.
 	for _, site := range artifactComments(t) {
 		for _, sentence := range docSentences(site.doc) {
 			if claimsTheKeyIsExclusive(sentence) ||
 				(namesForeignFrontMatterTool(sentence) && deniesCarryingTheKey(sentence)) {
-				t.Errorf("%s says %q, but ordinary notes carrying a nibs `status:` DO corroborate "+
-					"— the key is not exclusive to nibs", site.name, strings.TrimSpace(sentence))
+				t.Errorf("%s says %q, but the check reads a SHAPE — a file nibs never wrote "+
+					"passes it whenever it carries that shape", site.name, strings.TrimSpace(sentence))
 			}
 		}
 	}
@@ -877,6 +862,12 @@ func artifactComments(t *testing.T) []artifactComment {
 		{
 			name: "fmHeader.status's comment",
 			doc:  docCommentOfField(t, "migrate.go", "fmHeader", "status"),
+		},
+		{
+			// Where the rule itself now lives, and so where the next
+			// overstatement of it would be written.
+			name: "nibFileFormat's doc comment",
+			doc:  docCommentOfType(t, "migrate.go", "nibFileFormat"),
 		},
 	}
 }
@@ -978,5 +969,49 @@ func docCommentOf(t *testing.T, file, fn string) string {
 		return d.Doc.Text()
 	}
 	t.Fatalf("%s declares no function named %s", file, fn)
+	return ""
+}
+
+// vaultNote is a note vault's own markdown: a title, tags, and a `status:` the
+// vault tracks its own work with. It is not a nib and nibs never wrote it, but
+// it carries the one key store corroboration used to key on.
+const vaultNote = "---\ntitle: Weekly review\ntags: [notes]\nstatus: in-progress\n---\n\n# Weekly review\n"
+
+// hugoPostWithStatus is hugoPost's shape carrying a nibs `status:` value, which
+// docs sites routinely do to mark a page's own state.
+const hugoPostWithStatus = "---\ntitle: Hello\ndate: 2026-01-02\nstatus: draft\n---\n\nA blog post.\n"
+
+// docCommentOfType returns the doc comment on the named top-level type, failing
+// the test when it is missing — a guard that stops finding what it reads must
+// fail rather than pass vacuously.
+func docCommentOfType(t *testing.T, file, typeName string) string {
+	t.Helper()
+	fset := token.NewFileSet()
+	parsed, err := parser.ParseFile(fset, file, nil, parser.ParseComments|parser.SkipObjectResolution)
+	if err != nil {
+		t.Fatalf("parse %s: %v", file, err)
+	}
+	for _, decl := range parsed.Decls {
+		gen, ok := decl.(*ast.GenDecl)
+		if !ok || gen.Tok != token.TYPE {
+			continue
+		}
+		for _, spec := range gen.Specs {
+			ts, ok := spec.(*ast.TypeSpec)
+			if !ok || ts.Name.Name != typeName {
+				continue
+			}
+			// A single-spec `type X struct` carries its comment on the GenDecl;
+			// one inside a parenthesized block carries it on the TypeSpec.
+			if ts.Doc != nil {
+				return ts.Doc.Text()
+			}
+			if gen.Doc != nil {
+				return gen.Doc.Text()
+			}
+			t.Fatalf("%s in %s has no doc comment", typeName, file)
+		}
+	}
+	t.Fatalf("%s declares no type named %s", file, typeName)
 	return ""
 }
