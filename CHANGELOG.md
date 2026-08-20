@@ -9,6 +9,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ### Added
 - **`nibs --version`** alongside the `version` subcommand, printing the same build identity.
+- **The three axis keys `milestone:`, `milestone_order:` and `area:` are modeled front-matter keys** — `milestone:` resolves and re-resolves like `parent:`, a mistyped spelling such as `milestone-order:` is named by `nibs check`, and a malformed value now fails parse instead of hiding among unknown keys.
 
 ### Changed
 - **BREAKING: The store carries its own config and keeps active nibs in `data/`** — `.nibs/config.yml`, `.nibs/data/` and `.nibs/archive/` replace a project-root `.nibs.yml` and nib files at the store root, and the `nibs.path` key is retired. Run `nibs migrate` to convert a project; every command refuses until it has.
