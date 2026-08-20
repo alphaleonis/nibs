@@ -210,7 +210,7 @@ func (r *Resolver) validateAndSetParent(b *nib.Nib, parentID string) error {
 // blocking handlers persist each target immediately (single-side storage puts
 // the edge in the target's blocked_by). And a parent change recalculates the
 // subject's order key, which reads the sibling set — a read that repairs lazily:
-// Orderer.backfillOrderKeys PERSISTS an order key to any sibling that has none,
+// Orderer.backfillKeys PERSISTS an order key to any sibling that has none,
 // so an ordinary read path leaves a durable edit on a nib the mutation never
 // named. That second one is reachable from BOTH calls to validateAndSetParent —
 // the type-change branch as well as the parent block — which is why updateNib

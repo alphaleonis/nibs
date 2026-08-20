@@ -153,8 +153,8 @@ func (s Scope) ops() *scopeOps {
 // resolvedMilestoneID is the milestone-queue group of b: its resolved parent
 // when that parent is milestone-typed, "" otherwise — including when the
 // parent link dangles, mirroring resolvedParentID's rule. This is the step-1
-// definition of "assigned to a milestone" shared with internal/membership
-// (nibs-a3fb); the three-axis v2 release swaps the body to read the
+// definition of "assigned to a milestone", to be shared with
+// internal/membership (nibs-a3fb); the three-axis v2 release swaps the body to read the
 // `milestone:` field, and every caller survives the swap unchanged.
 func resolvedMilestoneID(b *nib.Nib, reader NibReader) string {
 	parent := resolvedParent(b, reader)

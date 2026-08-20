@@ -206,6 +206,28 @@ func TestReorderSiblings_AfterIdTracer(t *testing.T) {
 	}
 }
 
+// TestReorderSiblings_EmptyBeforeIdIsUnset pins the fix for a branch
+// mismatch: an empty-string beforeId alongside afterId used to VALIDATE as
+// "after" (empty counts as unset) but RANGE as "before" (a raw nil check), so
+// the block landed before the anchor a request said to place it after. Both
+// readings now come off one resolved Position, and this input must behave
+// exactly as afterId alone. Reachable via raw GraphQL only — the CLI never
+// sends an empty-string pointer.
+func TestReorderSiblings_EmptyBeforeIdIsUnset(t *testing.T) {
+	ctx := context.Background()
+	resolver, _, parentID := setupBlockMoveFixture(t)
+
+	if _, err := resolver.Mutation().ReorderSiblings(ctx, []string{"c", "e"}, strPtr("a"), strPtr(""), nil, nil); err != nil {
+		t.Fatalf("ReorderSiblings error: %v", err)
+	}
+
+	siblings := resolver.Orderer.Members(ScopeParent, parentID)
+	want := []string{"a", "c", "e", "b", "d"}
+	if got := nibIDs(siblings); !equalStrings(got, want) {
+		t.Errorf("siblings = %v, want %v — the block must land AFTER the anchor, the empty beforeId is unset", got, want)
+	}
+}
+
 func TestReorderSiblings_BeforeId(t *testing.T) {
 	ctx := context.Background()
 	resolver, _, parentID := setupBlockMoveFixture(t)

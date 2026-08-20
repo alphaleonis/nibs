@@ -227,8 +227,8 @@ func renderPlanHuman(plan *Plan) error {
 	}
 
 	for _, item := range plan.Items {
-		// item.Order is always non-empty here: Members backfills missing
-		// keys via Orderer.backfillOrderKeys before items are built.
+		// item.Order is always non-empty here: Orderer.Members backfills missing
+		// keys via Orderer.backfillKeys before items are built.
 		line := fmt.Sprintf("  %d. [%s] %s (%s)", item.Position, item.Status, item.Title, item.ID)
 		if item.Acceptance != nil && item.Acceptance.Total > 0 {
 			line += fmt.Sprintf(" %d/%d", item.Acceptance.Checked, item.Acceptance.Total)

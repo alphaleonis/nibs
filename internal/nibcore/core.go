@@ -1100,7 +1100,7 @@ func (c *Core) CurrentETag(id string) (string, error) {
 // bulk-reorder pre-validation wraps it, while the best-effort backfill/activation
 // read paths deliberately swallow it. Logging here as well would double-handle the
 // error and flood stderr on the hot Children read path (orderer.go's
-// backfillOrderKeys re-attempts the Update once per read for a persistently
+// backfillKeys re-attempts the Update once per read for a persistently
 // uncertifiable sibling). Caller must hold c.mu (read or write lock).
 func (c *Core) computeStoredETag(storedNib *nib.Nib) (string, error) {
 	if storedNib.Path == "" {
@@ -1122,7 +1122,7 @@ func (c *Core) computeStoredETag(storedNib *nib.Nib) (string, error) {
 		// is refused and no retry-with-Current can satisfy the guard. We RETURN the
 		// error rather than logging it here — the caller surfaces it where it
 		// matters (see the matrix above); logging too would double-handle it and
-		// flood stderr on the hot Children read path (orderer.go backfillOrderKeys).
+		// flood stderr on the hot Children read path (orderer.go backfillKeys).
 		return "", &OnDiskUnparseableError{ID: storedNib.ID, Path: storedNib.Path, Reason: "unreadable", Err: err}
 	}
 
@@ -1135,7 +1135,7 @@ func (c *Core) computeStoredETag(storedNib *nib.Nib) (string, error) {
 		// RETURN the error (do not log it here) — the
 		// caller surfaces it where it matters; logging too would double-handle it
 		// and flood stderr on the hot Children read path (orderer.go
-		// backfillOrderKeys).
+		// backfillKeys).
 		return "", &OnDiskUnparseableError{ID: storedNib.ID, Path: storedNib.Path, Reason: "unparseable", Err: err}
 	}
 	// The rendered form includes the `# <id>` header, which is derived from the

@@ -176,7 +176,7 @@ func TestScopePlaceGrammar(t *testing.T) {
 			o := NewOrderer(reader, writer)
 
 			b, _ := reader.GetForUpdate("kc")
-			fxSetKeyClear(scope, b)
+			fxSetKeyClear(t, scope, b)
 			if err := o.Place(scope, b, DefaultPlacement()); err != nil {
 				t.Fatalf("Place: %v", err)
 			}
@@ -231,16 +231,14 @@ func TestScopeCrossScopeIsolation(t *testing.T) {
 			t.Errorf("a %v-scope move changed the other scope's key to %q; the two axes must be isolated", scope, got)
 		}
 
-		reader2, writer2 := fx.build()
-		o2 := NewOrderer(reader2, writer2)
+		reader2, _ := fx.build()
+		o2 := NewOrderer(reader2, &stubWriter{store: &reader2.stubReader})
 		members := o2.Members(scope, fx.groupID)
 		for _, m := range members {
 			if got := fx.otherKey(m); got != "keep" {
 				t.Errorf("a %v-scope backfill changed %s's other-scope key to %q", scope, m.ID, got)
 			}
 		}
-		_ = writer
-		_ = writer2
 	})
 }
 
@@ -265,6 +263,19 @@ func TestScopeMilestoneUnassigned(t *testing.T) {
 	}
 	if b.MilestoneOrder != "" {
 		t.Errorf("default-placing an unassigned nib kept queue key %q; want it cleared", b.MilestoneOrder)
+	}
+
+	// Recalculate is the reassignment hook: on a nib assigned to no milestone
+	// it must clear the queue key, same as a default Place.
+	b.MilestoneOrder = "stale"
+	o.Recalculate(ScopeMilestone, b)
+	if b.MilestoneOrder != "" {
+		t.Errorf("Recalculate on an unassigned nib kept queue key %q; want it cleared", b.MilestoneOrder)
+	}
+
+	// And the empty group id enumerates nothing — it is no group at all.
+	if members := o.Members(ScopeMilestone, ""); len(members) != 0 {
+		t.Errorf("Members(ScopeMilestone, \"\") = %v, want empty", nibIDs(members))
 	}
 }
 
@@ -291,13 +302,16 @@ func TestScopeParentRootGroup(t *testing.T) {
 }
 
 // fxSetKeyClear clears the scope's own key on b so a Place test starts from an
-// unkeyed nib.
-func fxSetKeyClear(scope Scope, b *nib.Nib) {
+// unkeyed nib. The default arm keeps the enrollment complete: a future scope
+// covered by the fixture table but not here would otherwise silently no-op.
+func fxSetKeyClear(t *testing.T, scope Scope, b *nib.Nib) {
 	switch scope {
 	case ScopeParent:
 		b.Order = ""
 	case ScopeMilestone:
 		b.MilestoneOrder = ""
+	default:
+		t.Fatalf("fxSetKeyClear knows no scope %v — enroll the new scope here", scope)
 	}
 }
 

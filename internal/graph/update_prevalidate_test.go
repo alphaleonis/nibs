@@ -302,7 +302,7 @@ func TestTypeChangeBranchMakesNoForeignWrite(t *testing.T) {
 // priority before the parent block rather than after it.
 //
 // Recalculate positions a child among its siblings by PRIORITY
-// (positionDefaultByPriority), and it reads the priority this same mutation is
+// (placeDefaultByPriority), and it reads the priority this same mutation is
 // setting — so a single update that changes parent and priority together places
 // the nib by its incoming priority, not its outgoing one.
 //

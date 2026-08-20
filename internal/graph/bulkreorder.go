@@ -107,7 +107,7 @@ func (r *mutationResolver) reorderSiblingsImpl(siblingIDs []string, afterID *str
 				break
 			}
 		}
-	default: // afterID
+	case posAfter:
 		// Block goes immediately after the anchor — anchor is the lower bound;
 		// upper bound is the next non-moved sibling (or empty).
 		lower = anchor.Order
