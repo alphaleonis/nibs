@@ -14,6 +14,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ### Fixed
 - **A named pipe or device named like a nib file no longer hangs every command** — it is skipped at load and reported by `nibs check`, like any other file that cannot be read.
+- **A store full of unreadable or duplicate nib files no longer floods every command with warnings** — the first 20 are printed, then a count pointing at `nibs check`, which still reports every one.
 - **A pre-layout project nested under a store no longer resolves to that ancestor store**, where `nibs migrate` moved and rewrote the ancestor's nib files while leaving the project it was run in untouched.
 - **Text read from a file can no longer rewrite the terminal**, such as a control sequence in a config value or a nib body reaching a message that echoes it.
 - **Commands a refusal prescribes are quoted for the shell of the platform printing them**, instead of POSIX quoting that `cmd.exe` passes through literally.
