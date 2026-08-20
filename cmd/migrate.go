@@ -389,35 +389,6 @@ func legacyConfigExists(env migrateEnv) bool {
 	return err == nil && !info.IsDir()
 }
 
-// confirmAssumedNibs asks the person at the terminal about the files this step
-// could only ASSUME are nibs. It is authorizeAssumedNibs' other half: that one
-// answers for a run with nobody to ask, this one for a run with somebody.
-//
-// It lives in the APPLY path, not in planLayout, for two reasons. planLayout is
-// re-run by wouldRefuse's plan gate before the steps execute, so a question
-// asked there would be asked twice; and `--dry-run` previews through that same
-// gate, where the run must REPORT what it would ask rather than ask it.
-// Answering still happens before the first rename — applyLayout plans, asks,
-// and only then moves.
-//
-// Declining ABORTS the whole migration instead of migrating everything else.
-// Pending-ness is derived from what the mover would move, so a file declined
-// here and left in place would still read as outstanding layout work and keep
-// every command refusing; leaving the store exactly as it was is the only
-// answer that does not wedge it.
-func confirmAssumedNibs(assumed []string) error {
-	if len(assumed) == 0 || migrateForce || !isInteractiveTerminal() {
-		return nil
-	}
-	fmt.Printf("%d file(s) carry a title and a known status but not the shape nibs writes, so they could be nibs or ordinary documents:\n  %s\n",
-		len(assumed), echoedList(sanitizedList(assumed), ""))
-	fmt.Printf("Treat them as nibs and move them into %s/? [y/N] ", store.DataDirName)
-	if confirmedYes() {
-		return nil
-	}
-	return errors.New("migration cancelled; nothing has been changed. Move those files out of the store to keep them as documents, then re-run `nibs migrate`")
-}
-
 // authorizeAssumedNibs decides whether the run may move the files it could only
 // ASSUME are nibs (see nibFileVerdict).
 //
@@ -867,9 +838,6 @@ var storeRenameFn = os.Rename
 func applyLayout(env *migrateEnv, _ *nibcore.StoreLock, log logf) error {
 	plan, err := planLayout(*env)
 	if err != nil {
-		return err
-	}
-	if err := confirmAssumedNibs(plan.assumed); err != nil {
 		return err
 	}
 	return plan.apply(env, log)
@@ -1558,6 +1526,10 @@ func runMigrations(env migrateEnv, log logf) error {
 		return &refusalError{refusals: refusals}
 	}
 
+	if err := confirmMigration(env, pending); err != nil {
+		return err
+	}
+
 	// Record that this run started before it changes anything, so an interrupted
 	// one is recognizable as ours afterwards — the question gateContentDirsAreOurs
 	// cannot answer from a directory's contents. A run with nothing pending falls
@@ -1824,6 +1796,58 @@ func gateContentClassifiable(env migrateEnv, scan *storeScan) gateResult {
 	return gateRefused(output.ErrFileError,
 		fmt.Sprintf("refusing to migrate around %d file(s) that cannot be read as nibs (move them out of the store or repair them, then re-run `nibs migrate`):\n  %s",
 			len(blocking), describeScanProblems(blocking)))
+}
+
+// olderServeAdvice is what remains for the reader to act on once gateNoLiveServe
+// fences every serve this build can see. Naming the older one specifically is the
+// point: "stop any running `nibs serve`" now overstates the danger for a current
+// serve (which cannot be running — the gate refused) and understates it for an
+// older one (which the gate cannot see, because it does not take the lock).
+//
+// The gate, this line and confirmMigration's question have to keep saying the
+// same thing. They are three renderings of one fact.
+const olderServeAdvice = "A `nibs serve` of this release or later cannot run while this migrates. Stop an OLDER `nibs serve` yourself — it does not take the interlock, and can write its pre-migration copy back afterwards."
+
+// confirmMigration pauses before the first change, so migrate's advice about a
+// running serve is something the reader can still act on.
+//
+// It used to print "Stop any running `nibs serve` before migrating." immediately
+// BEFORE applying, with no pause and no bypass flag — narration of work already
+// underway. Only --dry-run surfaced it in time to act.
+//
+// INTERACTIVE ONLY, and deliberately unlike --force's policy for ambiguous files.
+// --force decides what happens to a user's files, which no script should do
+// silently. This asks whether a process nibs cannot see has been stopped, and
+// every serve this build CAN see is already fenced by gateNoLiveServe — so the
+// residue is an OLDER serve, which is a human-noticing problem and nothing a
+// script can answer. Requiring the flag everywhere would make it the normal case
+// rather than the exception.
+//
+// It runs after the gates, so it never asks about a run that would refuse anyway,
+// and before the marker and the first step, so declining leaves the store exactly
+// as it was.
+func confirmMigration(env migrateEnv, pending []migrationStep) error {
+	if len(pending) == 0 || migrateYes || !isInteractiveTerminal() {
+		return nil
+	}
+	names := make([]string, len(pending))
+	for i, step := range pending {
+		names[i] = step.name
+	}
+	fmt.Printf("About to migrate %s: %s.\n", env.nibsRoot, strings.Join(names, ", "))
+	// Listed HERE rather than asked separately when the layout step runs: two
+	// questions in one command is two chances to answer the wrong one, and the
+	// second would arrive after this one had already been answered yes.
+	if assumed, err := assumedNibsPending(env); err == nil && len(assumed) > 0 {
+		fmt.Printf("%d file(s) carry a title and a known status but not the shape nibs writes, and will be treated as nibs:\n  %s\n",
+			len(assumed), echoedList(sanitizedList(assumed), ""))
+	}
+	fmt.Println(olderServeAdvice)
+	fmt.Print("Proceed? [y/N] ")
+	if confirmedYes() {
+		return nil
+	}
+	return errors.New("migration cancelled; nothing has been changed")
 }
 
 // gateNoLiveServe refuses to migrate a store some `nibs serve` is holding.
@@ -2602,6 +2626,7 @@ var (
 	migrateDryRun     bool
 	migrateAllowDirty bool
 	migrateForce      bool
+	migrateYes        bool
 )
 
 var migrateCmd = &cobra.Command{
@@ -2656,7 +2681,7 @@ applied without modifying anything.`,
 			return migrateCmdError(&refusalError{refusals: refusals})
 		}
 
-		ui.Println("Stop any running `nibs serve` before migrating.")
+		ui.Println(olderServeAdvice)
 		log := func(format string, a ...any) { ui.Printf(format+"\n", a...) }
 		if err := runMigrations(env, log); err != nil {
 			return migrateCmdError(err)
@@ -2772,7 +2797,7 @@ func reportDryRun(env migrateEnv, scan *storeScan) error {
 	for _, why := range undecidable {
 		ui.Printf("Note: %s\n", why)
 	}
-	ui.Println("Stop any running `nibs serve` before migrating.")
+	ui.Println(olderServeAdvice)
 	return nil
 }
 
@@ -2845,5 +2870,6 @@ func init() {
 	migrateCmd.Flags().BoolVar(&migrateDryRun, "dry-run", false, "List pending migrations and per-step file counts without modifying anything")
 	migrateCmd.Flags().BoolVar(&migrateAllowDirty, "allow-dirty", false, "Migrate even when the store's git repository has uncommitted changes")
 	migrateCmd.Flags().BoolVarP(&migrateForce, "force", "f", false, "Treat files that could be either a nib or an ordinary document as nibs, without asking")
+	migrateCmd.Flags().BoolVarP(&migrateYes, "yes", "y", false, "Apply without pausing for confirmation")
 	rootCmd.AddCommand(migrateCmd)
 }
