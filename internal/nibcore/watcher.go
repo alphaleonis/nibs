@@ -649,7 +649,23 @@ func (c *Core) handleChanges(changes map[string]fsnotify.Op) {
 				warns.warn("nib file %s arrived with a legacy shape; it loads as written until `nibs migrate` runs (stop serve first)", path)
 			}
 
-			_, existed := c.nibs[newNib.ID]
+			// Two files parsing to one id, the arrival half. The load walk warns
+			// about this from what it sees on disk; here the store is the only
+			// witness to the file already answering for the id, and the arriving
+			// file wins whichever it was — so without this line a live serve
+			// swapped one for the other with nothing on stderr, and which one won
+			// depended on the debounce batch's map iteration order.
+			//
+			// A batch holding BOTH files of a pair can warn twice, naming opposite
+			// shadow directions. That is two real swaps narrated in the order they
+			// happened, not a contradiction, and the last line always names the file
+			// the store ends up answering with — collapsing the pair to the first
+			// line would name a file that lost.
+			existing, existed := c.nibs[newNib.ID]
+			if existed && c.arrivingShadowsStored(newNib.Path, existing.Path) {
+				warns.warn("duplicate nib id %q on disk: %s shadows %s (the arriving file wins; resolve the duplicate)",
+					newNib.ID, path, filepath.Join(c.root, existing.Path))
+			}
 			c.nibs[newNib.ID] = newNib
 
 			// Refresh reverse-mention index with the new body's edges.
@@ -745,6 +761,40 @@ func (c *Core) handleChanges(changes map[string]fsnotify.Op) {
 	// re-reads — so emitting events before applying state would break it
 	// silently and intermittently. Fan out outside the lock.
 	c.fanOut(events, cloningPayloads)
+}
+
+// arrivingShadowsStored reports whether an arriving file collides with a
+// DIFFERENT file that already answers for its id, rather than being that same
+// file again.
+//
+// Two conditions, and neither is redundant. A file rewritten in place arrives at
+// the path the store already holds, so an equal path is an edit rather than a
+// collision. And a move by an OUTSIDE mover — the CLI against a running server, a
+// pull in the separate .nibs repository — reaches the create half with the store
+// still holding the OLD path, because the removal half that updates it may not
+// have run yet: both halves land in one debounce batch and iterate as a Go map.
+// So a differing path alone reports an ordinary archive as a duplicate,
+// non-deterministically. What separates a move from a collision is whether the old
+// file is still THERE. An in-process Archive/Unarchive/LoadAndUnarchive is not in
+// that family: each rewrites the stored Path under the lock this handler takes, so
+// its create half arrives with the paths already equal — the same in-process /
+// external split the removal branch above turns on.
+//
+// The answer drives a MESSAGE and nothing else, so it errs generous where it
+// cannot tell a collision apart: a LINK, two directory entries for one file, which
+// the load walk also calls a duplicate; a case-only difference between the stored
+// spelling and the event's on a folding volume, which the load walk does not, and
+// which nothing here can reproduce to prove a guard would work; a stored file that
+// no longer parses as a nib, which the load walk calls unparseable instead; and
+// [Inference, not reproduced] the window of a copy-then-delete slow enough to
+// straddle the debounce. It errs quiet in one: a stat failing for any reason other
+// than absence — an unreadable parent — reads as absence, so a real collision
+// under one goes unreported.
+func (c *Core) arrivingShadowsStored(arrivingRel, storedRel string) bool {
+	if storedRel == arrivingRel {
+		return false
+	}
+	return c.fileExists(filepath.Join(c.root, storedRel))
 }
 
 // fileExists checks if a file exists at the given path.
