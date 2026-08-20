@@ -197,7 +197,8 @@ func indexByID(nibs []*nib.Nib) map[string]*nib.Nib {
 	return m
 }
 
-// isLeafType returns true for work types that count toward progress.
+// isLeafType returns true for the work types the active/next task lists draw
+// from — containers organize work, they are not work themselves.
 // Mirrors the leaf-type set in internal/nibtypes/hierarchy.go — keep in sync
 // when new leaf types are added to DefaultTypes.
 func isLeafType(typ string) bool {

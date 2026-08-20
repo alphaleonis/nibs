@@ -109,7 +109,7 @@ func TestStatusNames(t *testing.T) {
 	if len(got) != 6 {
 		t.Fatalf("len(StatusNames()) = %d, want 6 — a status was added or removed. Classify it "+
 			"(Closed, ReleasesDependents), update the membership assertions in this file, and give it a "+
-			"progress bucket in graph.ComputeProgress and nibcontext.CalcProgress, which name statuses "+
+			"progress bucket in progress.ByCount and progress.ByEstimate, which name statuses "+
 			"individually rather than reading a group predicate", len(got))
 	}
 	expected := []string{"in-progress", "todo", "draft", "deferred", "completed", "scrapped"}

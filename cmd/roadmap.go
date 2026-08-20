@@ -46,7 +46,7 @@ type unscheduledGroup struct {
 
 // milestoneGroup represents a milestone and its contents. Progress is the
 // canonical child-completion rollup over the milestone's DIRECT children
-// (graph.ComputeProgress) — the same value `nibs get <milestone> -f progress`
+// (progress.ByCount) — the same value `nibs get <milestone> -f progress`
 // reports — computed over every real child, independent of the display filters.
 type milestoneGroup struct {
 	Milestone *nib.Nib        `json:"milestone"`
@@ -234,7 +234,7 @@ func buildMilestoneGroup(m *nib.Nib, view *membership.View, includeDone bool, cf
 }
 
 // childStatuses projects a child slice to its status strings, the input
-// graph.ComputeProgress needs to build a canonical progress rollup.
+// progress.ByCount needs to build a canonical progress rollup.
 func childStatuses(children []*nib.Nib) []string {
 	statuses := make([]string, len(children))
 	for i, c := range children {
@@ -252,7 +252,7 @@ func childStatuses(children []*nib.Nib) []string {
 // hidden-closed disclosure, so a deferred nib that dropped out would be
 // invisible rather than merely collapsed.
 //
-// This is the visibility half of the seam with graph.ComputeProgress: without
+// This is the visibility half of the seam with progress.ByCount: without
 // includeDone, the nibs this keeps are exactly the ones that rollup counts in
 // Total but not in Done.
 func staysOnRoadmap(status string, includeDone bool, cfg *config.Config) bool {

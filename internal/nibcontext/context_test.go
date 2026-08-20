@@ -74,8 +74,6 @@ func TestBuildSummary(t *testing.T) {
 			t.Errorf("ActivePhase.ID = %q, want %q", sum.ActivePhase.ID, "e2")
 		}
 
-		// Completed: t1(1) + t2(3) + f1(5) = 9
-
 		// Active tasks: in-progress leaf work
 		if len(sum.ActiveTasks) != 1 || sum.ActiveTasks[0].ID != "t3" {
 			t.Errorf("ActiveTasks = %v, want [t3]", nibRefIDs(sum.ActiveTasks))
@@ -181,7 +179,8 @@ func TestBuildSummary_ResearchIsLeafWork(t *testing.T) {
 		t.Errorf("NextTasks = %v, want to include t1", nextIDs)
 	}
 
-	// Container progress (overview mode) must also include research weight
+	// Overview mode still reports the container itself; only the weighted
+	// progress it used to carry has moved out of this package.
 	overview := BuildSummary(allNibs, "", cfgForTest)
 	if len(overview.Containers) != 1 {
 		t.Fatalf("Containers count = %d, want 1", len(overview.Containers))
@@ -555,7 +554,6 @@ func TestBuildSummary_Overview(t *testing.T) {
 	if c1.ActivePhase == nil || c1.ActivePhase.ID != "e1" {
 		t.Errorf("Containers[0].ActivePhase = %v, want e1", c1.ActivePhase)
 	}
-	// m1 progress: t1(1)+t2(3)+t3(5) = 9 total, 1 completed
 
 	// Second container: m2
 	c2 := sum.Containers[1]

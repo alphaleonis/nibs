@@ -21,7 +21,7 @@ import (
 // Rollup is the value projected for the computed `progress` field, and
 // the canonical child-completion rollup the recipe views (context, roadmap)
 // reuse, so `nibs get <id> -f progress` and those views report the same number.
-// Build it only via ComputeProgress — do not fork the rule.
+// Build it only via ByCount — do not fork the rule.
 //
 // Canonical definition (single source of truth). Each child falls into exactly
 // one of three buckets, keyed on its status's ROLE (config.StatusRole):
@@ -121,14 +121,20 @@ type Weighted struct {
 
 // ByEstimate computes estimate-weighted progress across a set of nibs.
 //
-// It weighs WHAT IT IS GIVEN. Selecting the set — leaf work, a container's
-// members, a subtree — is the caller's, exactly as it is for ByCount, which
-// takes prepared statuses. Its predecessor filtered to leaf types itself with a
-// literal type list; two of its three callers were already passing filtered sets,
-// and a module that knows which types count is a module that has to be edited
-// when the hierarchy changes.
-// Only leaf work types (task, bug, feature) count — epics and milestones are excluded.
-// It applies the same three-way rule as graph.ComputeProgress, weighted by
+// IT WEIGHS WHAT IT IS GIVEN, AND THE CALLER OWES IT A PREPARED SET. Selecting
+// which nibs count — leaf work, a container's members, a subtree — is the
+// caller's, exactly as it is for ByCount, which takes prepared statuses. A module
+// that knows which TYPES count is one that has to be edited whenever the
+// hierarchy changes, which is why the filtering moved out.
+//
+// That is a real obligation, not a formality: the predecessor filtered to leaf
+// types itself, and two of its three call sites relied on it rather than
+// preparing their own set. Handing this the raw member list of a container puts
+// the epic and milestone weights into the denominator, which reads as a
+// plausible percentage and is silently wrong — 16.8% where the filtered answer
+// is 18.2%, measured on the sample fixture.
+//
+// It applies the same three-way rule as ByCount, weighted by
 // estimate and keyed on status ROLES: done-role work is the numerator,
 // dropped-role work is no longer scope and leaves the denominator, and
 // everything else counts toward the denominator without counting as done.
