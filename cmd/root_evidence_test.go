@@ -835,18 +835,100 @@ func TestCorroborationDocMatchesWhatForeignFrontMatterDoes(t *testing.T) {
 			"and this guard together before changing either", len(foreignNotesCarryingNibsStatus))
 	}
 
-	doc := docCommentOf(t, rootRefusalFile, "declaredStoreCorroborated")
-	for _, sentence := range docSentences(doc) {
-		if namesForeignFrontMatterTool(sentence) && deniesCarryingTheKey(sentence) {
-			t.Errorf("declaredStoreCorroborated's doc comment says %q, but ordinary notes carrying a nibs "+
-				"`status:` DO corroborate — the bar is not exclusive to nibs", strings.TrimSpace(sentence))
+	// Both comments that describe the artifact, not only the predicate's own:
+	// the claim was made twice, and the field comment is what a reader consults
+	// when asking what the scanned `status:` is FOR.
+	for _, site := range artifactComments(t) {
+		for _, sentence := range docSentences(site.doc) {
+			if claimsTheKeyIsExclusive(sentence) ||
+				(namesForeignFrontMatterTool(sentence) && deniesCarryingTheKey(sentence)) {
+				t.Errorf("%s says %q, but ordinary notes carrying a nibs `status:` DO corroborate "+
+					"— the key is not exclusive to nibs", site.name, strings.TrimSpace(sentence))
+			}
 		}
 	}
+
+	doc := docCommentOf(t, rootRefusalFile, "declaredStoreCorroborated")
 	if !strings.Contains(doc, "isRealImmediateChild") {
 		t.Errorf("declaredStoreCorroborated's doc comment does not name isRealImmediateChild; "+
 			"corroboration only stops an accident, so the comment has to point at what actually "+
 			"bounds a repository that chose its own `nibs.path`\n\ncomment:\n%s", doc)
 	}
+}
+
+// artifactComment is one comment that tells a reader what the corroborating
+// `status:` proves.
+type artifactComment struct {
+	name string
+	doc  string
+}
+
+// artifactComments returns every comment that describes the corroborating
+// artifact. Both are listed because the overstated claim was written twice, in
+// different words — one naming other tools, one naming none — so a guard reading
+// only the predicate's own comment would have left the other standing.
+func artifactComments(t *testing.T) []artifactComment {
+	t.Helper()
+	return []artifactComment{
+		{
+			name: "declaredStoreCorroborated's doc comment",
+			doc:  docCommentOf(t, rootRefusalFile, "declaredStoreCorroborated"),
+		},
+		{
+			name: "fmHeader.status's comment",
+			doc:  docCommentOfField(t, "migrate.go", "fmHeader", "status"),
+		},
+	}
+}
+
+// claimsTheKeyIsExclusive matches a sentence asserting that carrying the key
+// tells a nib from anything else — "distinguishes a file nibs wrote from any
+// other front-mattered markdown", "anything only nibs writes". It is the same
+// claim deniesCarryingTheKey catches, made WITHOUT naming whose front matter is
+// being ruled out, which is how the second instance escaped the first guard.
+var claimsTheKeyIsExclusive = regexp.MustCompile(
+	`(?i)(?:\bdistinguish\w*\b.{0,80}?\bfrom\b|\bonly nibs\b\s*\w*\s*(?:writes|wrote|produces)|\banything only nibs\b)`).MatchString
+
+// docCommentOfField returns the comment on the named field of the named struct
+// type, failing the test when any part of that path is missing — a guard that
+// stops finding what it reads must fail rather than pass vacuously.
+func docCommentOfField(t *testing.T, file, typeName, field string) string {
+	t.Helper()
+	fset := token.NewFileSet()
+	parsed, err := parser.ParseFile(fset, file, nil, parser.ParseComments|parser.SkipObjectResolution)
+	if err != nil {
+		t.Fatalf("parse %s: %v", file, err)
+	}
+	for _, decl := range parsed.Decls {
+		gen, ok := decl.(*ast.GenDecl)
+		if !ok || gen.Tok != token.TYPE {
+			continue
+		}
+		for _, spec := range gen.Specs {
+			ts, ok := spec.(*ast.TypeSpec)
+			if !ok || ts.Name.Name != typeName {
+				continue
+			}
+			st, ok := ts.Type.(*ast.StructType)
+			if !ok {
+				t.Fatalf("%s in %s is not a struct type", typeName, file)
+			}
+			for _, f := range st.Fields.List {
+				for _, name := range f.Names {
+					if name.Name != field {
+						continue
+					}
+					if f.Doc == nil {
+						t.Fatalf("%s.%s in %s has no comment", typeName, field, file)
+					}
+					return f.Doc.Text()
+				}
+			}
+			t.Fatalf("%s in %s has no field named %s", typeName, file, field)
+		}
+	}
+	t.Fatalf("%s declares no type named %s", file, typeName)
+	return ""
 }
 
 // foreignFrontMatterTool matches a name for someone else's front matter — the
