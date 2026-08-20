@@ -41,7 +41,7 @@ const (
 // newerFile is one file written by a nibs this build is too old to read.
 func newerFile(i int) (string, string) {
 	return fmt.Sprintf("enum-f%03d--future.md", i),
-		"---\nversion: 99\ntitle: Future\nstatus: todo\ntype: task\n---\n\nBody.\n"
+		fmt.Sprintf("---\n# enum-f%03d\nversion: 99\ntitle: Future\nstatus: todo\ntype: task\n---\n\nBody.\n", i)
 }
 
 // fenceLessFile is one .md the scan can prove is not a nib.

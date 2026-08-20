@@ -1352,7 +1352,8 @@ func (e *newerStoreError) full() string {
 }
 
 func (e *newerStoreError) render(list func([]string) string) string {
-	msg := fmt.Sprintf("%d nib file(s) in this store were written by a newer nibs (this build supports up to format version %d); upgrade nibs:\n  %s",
+	msg := fmt.Sprintf("%d file(s) in this store were written by a newer nibs, or carry a format version this build does not support (it supports up to version %d); "+
+		"upgrade nibs, or move any file listed here that is not a nib out of the store:\n  %s",
 		len(e.newer), nib.CurrentVersion, list(e.newer))
 	if len(e.problems) > 0 {
 		msg += fmt.Sprintf("\nthe scan also skipped %d file(s) that cannot be read as nibs:\n  %s",
@@ -1376,7 +1377,11 @@ func (e *newerStoreError) render(list func([]string) string) string {
 // grew several shape steps would owe this note a rethink.
 //
 // A file with a version above nib.CurrentVersion refuses the whole scan (error):
-// it was written by a newer nibs and this build must not touch the store. The
+// it was written by a newer nibs and this build must not touch the store. Which
+// files that question is ASKED of is newerVersionSpeaksForStore's, and it is
+// deliberately not "every fenced file" — `version:` is ordinary front matter
+// elsewhere, and one documentation page used to lock a store out of every
+// command including the migrate that would fix it. The
 // refusal is raised AFTER the walk completes rather than aborting at the first
 // such file, so it can name every newer file and every other problem the walk
 // collected — aborting mid-walk used to hide a coexisting broken file behind the
@@ -1433,14 +1438,14 @@ func scanStore(env migrateEnv) (*storeScan, error) {
 			scan.problems = append(scan.problems, scanProblem{path: storeRelPath(env, path), reason: "no front matter — not a nib file"})
 			return nil
 		}
-		if h.version > nib.CurrentVersion {
-			// Not this build's business: no step predicate is evaluated for a
-			// newer file, only the refusal below.
-			scan.newer = append(scan.newer, fmt.Sprintf("%s (format version %d)", stripControlChars(storeRelPath(env, path)), h.version))
-			return nil
-		}
 		rel := storeRelPath(env, path)
 		l := env.layout()
+		if h.version > nib.CurrentVersion && newerVersionSpeaksForStore(l, rel, h) {
+			// Not this build's business: no step predicate is evaluated for a
+			// newer file, only the refusal below.
+			scan.newer = append(scan.newer, fmt.Sprintf("%s (format version %d)", stripControlChars(rel), h.version))
+			return nil
+		}
 		if l.IsDataRel(rel) || l.IsArchivedRel(rel) {
 			if layoutVerdict(contentDirRel(l, rel), h) == notANib {
 				scan.foreignContent = append(scan.foreignContent, rel)
@@ -2270,6 +2275,31 @@ const (
 	// isNib: the whole shape nib.Render writes. Moved without comment.
 	isNib
 )
+
+// newerVersionSpeaksForStore reports whether a `version:` above
+// nib.CurrentVersion in this file means the STORE was written by a newer nibs.
+//
+// The key is not a nibs invention — API docs, spec pages and chart front matter
+// carry it — so asking it of every fenced file let one documentation page in a
+// pre-layout store refuse EVERY command, `nibs migrate` included. That state is
+// terminal: the only command that could repair the store is one of the refused
+// ones, and the remedy printed ("upgrade nibs") names a version that does not
+// exist.
+//
+// Classification alone is the wrong scope, in the other direction. A future
+// format may rename keys or add a status this build has never heard of, so a
+// genuine v2 nib need not classify — and that is precisely the file the refusal
+// exists for. So two things qualify, and the second is what keeps the refusal
+// honest about the future:
+//
+//   - the file will BE store content, so this build would have to migrate a
+//     version it does not understand;
+//   - it carries the id comment, which nib.Render has written since the initial
+//     commit. Whatever else changes around it, a file opening that way was
+//     written by nibs.
+func newerVersionSpeaksForStore(l store.Layout, rel string, h fmHeader) bool {
+	return willBeStoreContent(l, rel, h) || h.hasIDMarker
+}
 
 // willBeStoreContent reports whether a file will be store content once the layout
 // step has run: already under data/ or archive/, or destined to be moved there.
