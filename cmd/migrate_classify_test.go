@@ -483,3 +483,88 @@ func TestMigrationMarkerGatesNothing(t *testing.T) {
 		t.Fatalf("a leftover migration marker locked the store: %v", err)
 	}
 }
+
+// TestMigrateWritesAReportOfWhatItJudged pins the durable half of the accounting.
+//
+// A warning printed once during a one-time migration is gone by the time it
+// matters: --force typically runs unattended, and the store's own output scrolls
+// away. The report is what survives, and it covers exactly the two judgement
+// calls — what the run assumed was a nib, and what it declined to move — while
+// staying silent about files that were never in question.
+func TestMigrateWritesAReportOfWhatItJudged(t *testing.T) {
+	reportPath := func(storeDir string) string {
+		return filepath.Join(storeDir, migrationReportName)
+	}
+
+	t.Run("it names what was assumed and what was left", func(t *testing.T) {
+		t.Cleanup(resetRootPersistentFlags)
+		t.Cleanup(resetMigrateFlags)
+		resetMigrateFlags()
+		_, storeDir := writeLegacyStore(t, "nibs:\n  prefix: leg-\n", map[string]string{
+			"leg-a1--one.md": layoutNib,
+			"my-idea.md":     "---\ntitle: Fix the login bug\nstatus: todo\n---\n\nBody.\n",
+			"CHANGELOG.md":   "---\ntitle: Release notes\nstatus: published\n---\n\nBody.\n",
+			"README.md":      "# Store notes\n\nNo front matter here.\n",
+		})
+
+		if _, err := runRootWith(t, "--nibs-path", storeDir, "migrate", "--allow-dirty", "--force"); err != nil {
+			t.Fatalf("migrate: %v", err)
+		}
+
+		body, err := os.ReadFile(reportPath(storeDir))
+		if err != nil {
+			t.Fatalf("no migration report was written: %v", err)
+		}
+		report := string(body)
+		for _, want := range []string{"my-idea.md", "CHANGELOG.md"} {
+			if !strings.Contains(report, want) {
+				t.Errorf("the report does not name %s:\n%s", want, report)
+			}
+		}
+		// A fence-less file was never a candidate, so saying so would be noise.
+		if strings.Contains(report, "README.md") {
+			t.Errorf("the report names a file that was never in question:\n%s", report)
+		}
+		// Fence-less itself, so this tool's own rule says it is not a nib and no
+		// later migration has to make an exception for it.
+		if strings.HasPrefix(report, "---") {
+			t.Errorf("the report opens with a front-matter fence:\n%s", report)
+		}
+	})
+
+	t.Run("a migration with nothing to judge leaves no report", func(t *testing.T) {
+		t.Cleanup(resetRootPersistentFlags)
+		t.Cleanup(resetMigrateFlags)
+		resetMigrateFlags()
+		_, storeDir := writeLegacyStore(t, "nibs:\n  prefix: leg-\n", map[string]string{
+			"leg-a1--one.md": layoutNib,
+			"README.md":      "# Store notes\n\nNo front matter here.\n",
+		})
+
+		if _, err := runRootWith(t, "--nibs-path", storeDir, "migrate", "--allow-dirty"); err != nil {
+			t.Fatalf("migrate: %v", err)
+		}
+		if _, err := os.Stat(reportPath(storeDir)); err == nil {
+			t.Error("a clean migration littered the store with a report")
+		}
+	})
+
+	t.Run("--dry-run writes neither the report nor the marker", func(t *testing.T) {
+		t.Cleanup(resetRootPersistentFlags)
+		t.Cleanup(resetMigrateFlags)
+		resetMigrateFlags()
+		_, storeDir := writeLegacyStore(t, "nibs:\n  prefix: leg-\n", map[string]string{
+			"leg-a1--one.md": layoutNib,
+			"CHANGELOG.md":   "---\ntitle: Release notes\nstatus: published\n---\n\nBody.\n",
+		})
+
+		if _, err := runRootWith(t, "--nibs-path", storeDir, "migrate", "--dry-run"); err != nil {
+			t.Fatalf("--dry-run: %v", err)
+		}
+		for _, name := range []string{migrationReportName, migrationMarkerName} {
+			if _, err := os.Stat(filepath.Join(storeDir, name)); err == nil {
+				t.Errorf("--dry-run wrote %s", name)
+			}
+		}
+	})
+}

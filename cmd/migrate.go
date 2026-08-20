@@ -13,6 +13,7 @@ import (
 	"strconv"
 	"strings"
 	"syscall"
+	"time"
 
 	"github.com/alphaleonis/nibs/internal/config"
 	"github.com/alphaleonis/nibs/internal/fsutil"
@@ -500,9 +501,20 @@ func layoutAssumedPaths(moves []layoutMove) []string {
 // That leniency is load-bearing elsewhere — blockingScanProblems refuses to
 // migrate AROUND such a file precisely because this step moves it into data/.
 func layoutMovableFiles(env migrateEnv) ([]layoutMove, error) {
+	moves, _, err := layoutClassifyFiles(env)
+	return moves, err
+}
+
+// layoutClassifyFiles is layoutMovableFiles plus the files it DECLINED to move —
+// one walk, both answers, so the report cannot disagree with what happened.
+//
+// Only front-mattered files are reported as declined. A fence-less one was never
+// a candidate (nib.Parse refuses it wherever it sits), so naming it would turn
+// every store holding a readme into a store with a complaint.
+func layoutClassifyFiles(env migrateEnv) (moves []layoutMove, declined []string, err error) {
 	l := env.layout()
 	var movable []layoutMove
-	err := forEachNibFile(env, func(path string, skipped error) error {
+	err = forEachNibFile(env, func(path string, skipped error) error {
 		// An unreadable header is moved anyway (see above) because the scan
 		// cannot prove the file is not a nib. For an irregular file it CAN: a
 		// FIFO is not a nib whatever it is named, so it stays where it is rather
@@ -514,15 +526,18 @@ func layoutMovableFiles(env migrateEnv) ([]layoutMove, error) {
 		if l.IsDataRel(rel) || l.IsArchivedRel(rel) {
 			return nil
 		}
-		h, err := readFrontMatterHeader(path)
+		h, hErr := readFrontMatterHeader(path)
 		// An unreadable header keeps the leniency above: it is moved, and
 		// recorded as isNib because nothing about it is uncertain in the way the
 		// middle tier means — the run has a separate, louder answer for it
 		// (blockingScanProblems refuses to migrate around such a file).
 		verdict := isNib
-		if err == nil {
+		if hErr == nil {
 			verdict = layoutVerdict(rel, h)
 			if verdict == notANib {
+				if h.hasFrontMatter {
+					declined = append(declined, rel)
+				}
 				return nil
 			}
 		}
@@ -530,9 +545,9 @@ func layoutMovableFiles(env migrateEnv) ([]layoutMove, error) {
 		return nil
 	})
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
-	return movable, nil
+	return movable, declined, nil
 }
 
 // layoutPlan is everything the layout step will do, computed BEFORE it does any
@@ -554,6 +569,10 @@ type layoutPlan struct {
 	// which applyLayout guarantees by computing the plan from the env it then
 	// applies with.
 	finalRoot string
+	// declined holds the store-relative paths of the front-mattered files this
+	// step left where they are. They are not store content afterwards, which is
+	// the judgement the report records.
+	declined []string
 	// assumed holds the store-relative paths of the moves this step could not
 	// prove are nibs — a subset of movable. The run names them, and refuses over
 	// them when there is nobody to ask.
@@ -630,11 +649,12 @@ func planLayout(env migrateEnv) (*layoutPlan, error) {
 		plan.finalRoot = target
 	}
 
-	moves, err := layoutMovableFiles(env)
+	moves, declined, err := layoutClassifyFiles(env)
 	if err != nil {
 		return nil, err
 	}
 	plan.assumed = layoutAssumedPaths(moves)
+	plan.declined = declined
 	if err := authorizeAssumedNibs(plan.assumed); err != nil {
 		return nil, err
 	}
@@ -809,6 +829,13 @@ func (p *layoutPlan) apply(env *migrateEnv, log logf) error {
 		// scrolled away.
 		log("layout: assumed %d file(s) to be nibs and moved them into %s/ — they carry a title and a known status but not the shape nibs writes:\n  %s",
 			len(p.assumed), store.DataDirName, echoedList(sanitizedList(p.assumed), ""))
+	}
+	if err := writeMigrationReport(p.finalRoot, p.assumed, p.declined); err != nil {
+		// The moves already happened, so a report that cannot be written must not
+		// fail the run — but it must not vanish either: the whole reason it exists
+		// is that the run's own output does not survive.
+		log("warning: could not write %s (%v); the judgement calls above are only in this output",
+			migrationReportName, err)
 	}
 	if len(p.movable) > 0 {
 		log("layout: moved %d nib file(s) into %s/", len(p.movable), store.DataDirName)
@@ -1413,15 +1440,13 @@ func scanStore(env migrateEnv) (*storeScan, error) {
 			return nil
 		}
 		rel := storeRelPath(env, path)
-		if l := env.layout(); l.IsDataRel(rel) || l.IsArchivedRel(rel) {
+		l := env.layout()
+		if l.IsDataRel(rel) || l.IsArchivedRel(rel) {
 			if layoutVerdict(contentDirRel(l, rel), h) == notANib {
 				scan.foreignContent = append(scan.foreignContent, rel)
 			}
-		} else if layoutVerdict(rel, h) == notANib {
-			// The layout step leaves this file where it sits, so no content step
-			// will ever meet it. Counting it leaves a step pending that applying
-			// cannot clear: the run reports "applied but its detection still
-			// fires" and every command keeps refusing.
+		}
+		if !willBeStoreContent(l, rel, h) {
 			return nil
 		}
 		for i, step := range migrationSteps {
@@ -1835,6 +1860,51 @@ func layoutStepPending(env migrateEnv, scan *storeScan) bool {
 	return false
 }
 
+// writeMigrationReport records the layout step's judgement calls in the store, or
+// removes a previous run's report when this one had none to make.
+//
+// Removing matters as much as writing: the report is rewritten per run rather
+// than accumulated, so a store that was cleaned up between runs must not keep a
+// stale list of files that are no longer there.
+func writeMigrationReport(root string, assumed, declined []string) error {
+	path := filepath.Join(root, migrationReportName)
+	if len(assumed) == 0 && len(declined) == 0 {
+		if err := os.Remove(path); err != nil && !errors.Is(err, os.ErrNotExist) {
+			return err
+		}
+		return nil
+	}
+
+	var b strings.Builder
+	b.WriteString("# nibs migration report\n\n")
+	fmt.Fprintf(&b, "Written by `nibs migrate` on %s. Rewritten by each run; delete it once you have acted on it.\n",
+		time.Now().Format(time.DateOnly))
+	if len(assumed) > 0 {
+		fmt.Fprintf(&b, "\n## Moved into %s/ as assumed nibs\n\n"+
+			"These carry a title and a known status but not the shape nibs writes, so the migration could not prove they were nibs. "+
+			"They are nib files now. If one of them was an ordinary document, move it back out of `%s/` and delete the nib.\n\n",
+			store.DataDirName, store.DataDirName)
+		writeReportList(&b, assumed)
+	}
+	if len(declined) > 0 {
+		b.WriteString("\n## Left where they are\n\n" +
+			"These carry front matter but nothing that identifies them as nibs, so the migration did not touch them. " +
+			"They are no longer store content: nibs will not load them and no query will show them. " +
+			"If one of them IS a nib, move it into `" + store.DataDirName + "/`.\n\n")
+		writeReportList(&b, declined)
+	}
+	return fsutil.AtomicWriteFile(path, []byte(b.String()), 0644)
+}
+
+// writeReportList renders one bullet per path, through the control-character
+// boundary every filename read off the filesystem crosses. Unbounded, unlike the
+// lists a refusal prints: this is the channel those elisions point AT.
+func writeReportList(b *strings.Builder, paths []string) {
+	for _, p := range paths {
+		fmt.Fprintf(b, "- `%s`\n", stripControlChars(p))
+	}
+}
+
 // migrationMarkerExists reports whether a previous run of ours was interrupted
 // inside this store. A read error counts as absent: the marker only ever WIDENS
 // what migrate will proceed over, so failing to read it must not do so silently.
@@ -1976,8 +2046,11 @@ func stillPending(env migrateEnv, step migrationStep) ([]string, error) {
 // filesMatching walks the store and returns (store-relative) paths of the
 // files whose scanned header satisfies pred. Used only on runMigrations'
 // post-condition failure path, where naming the files is the whole point.
-// Unreadable and fence-less files are passed over, mirroring scanStore — they
-// were never counted pending, so they can never be what a step failed to fix.
+// Files that will not be store content are passed over through the same
+// predicate scanStore counts by — they were never counted pending, so they can
+// never be what a step failed to fix, and answering that differently here turns
+// a document the layout step correctly left alone into "applied but its
+// detection still fires", which locks the store.
 func filesMatching(env migrateEnv, pred func(fmHeader) bool) ([]string, error) {
 	var matches []string
 	err := forEachNibFile(env, func(path string, skipped error) error {
@@ -1985,7 +2058,7 @@ func filesMatching(env migrateEnv, pred func(fmHeader) bool) ([]string, error) {
 			return nil
 		}
 		h, err := readFrontMatterHeader(path)
-		if err != nil || !h.hasFrontMatter {
+		if err != nil || !willBeStoreContent(env.layout(), storeRelPath(env, path), h) {
 			return nil
 		}
 		if pred(h) {
@@ -2197,6 +2270,21 @@ const (
 	// isNib: the whole shape nib.Render writes. Moved without comment.
 	isNib
 )
+
+// willBeStoreContent reports whether a file will be store content once the layout
+// step has run: already under data/ or archive/, or destined to be moved there.
+//
+// It is ONE definition on purpose. Every count of "how much work is pending"
+// derives from it — scanStore's per-step counts, and filesMatching's check that
+// applying a step actually cleared it — and the two disagreeing is not a cosmetic
+// bug: a file counted pending that the layout step will never move leaves a step
+// permanently unclearable, and every command refuses a store with pending work.
+func willBeStoreContent(l store.Layout, rel string, h fmHeader) bool {
+	if l.IsDataRel(rel) || l.IsArchivedRel(rel) {
+		return true
+	}
+	return layoutVerdict(rel, h) != notANib
+}
 
 // contentDirRel is a content file's path as it would have looked BEFORE the
 // layout step moved it: data/x.md came from x.md, data/sub/y.md from sub/y.md.
@@ -2606,6 +2694,16 @@ func reportDryRun(env migrateEnv, scan *storeScan) error {
 	ui.Println("Stop any running `nibs serve` before migrating.")
 	return nil
 }
+
+// migrationReportName is the file a run leaves in the store root recording the
+// judgement calls it made: what it could only ASSUME was a nib, and what it
+// declined to move. The run says both on stdout too, but a one-time migration's
+// output scrolls away — under --force it may never be read at all — and this is
+// what a user still has weeks later.
+//
+// Fence-less on purpose, so this tool's own rule (layoutVerdict) says it is not a
+// nib and no later migration needs an exception for it.
+const migrationReportName = "migration-report.md"
 
 // layoutStepName is the shape step's name, referenced where a gate has to ask
 // whether the store still has the pre-layout shape.
