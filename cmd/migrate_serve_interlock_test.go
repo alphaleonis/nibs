@@ -100,7 +100,26 @@ func TestServeHoldsTheInterlockWhileItRuns(t *testing.T) {
 	// binds a listener and starts a watcher first, and a sleep long enough to
 	// cover that on a loaded machine is a flake waiting to happen.
 	held := false
-	for range 100 {
+	deadline := time.Now().Add(10 * time.Second)
+	for time.Now().Before(deadline) {
+		// The serve can DIE instead of taking the lock: each successful probe
+		// below owns the migrate-side exclusion for a moment, and a serve whose
+		// own acquire lands inside that moment exits with the fenced-out
+		// refusal — by design, since a real migrate holds it for a whole run.
+		// That death is the probe's doing (nibs-hgha: it killed a CI run whose
+		// cold scheduler let the first probe beat the serve goroutine), so
+		// relaunch the serve and keep waiting; any OTHER death is a real
+		// failure and reports its error instead of a misleading "does not hold
+		// the interlock".
+		select {
+		case err := <-errCh:
+			if err == nil || !strings.Contains(err.Error(), "`nibs migrate` is running") {
+				t.Fatalf("startServer exited while the test waited for the lock: %v", err)
+			}
+			go func() { errCh <- startServer(ctx, app, "127.0.0.1", 0, false, nil) }()
+			continue
+		default:
+		}
 		probe, err := nibcore.AcquireServeExclusion(storeDir)
 		if errors.Is(err, nibcore.ErrStoreServed) {
 			held = true
@@ -119,8 +138,8 @@ func TestServeHoldsTheInterlockWhileItRuns(t *testing.T) {
 	}
 	if !held {
 		cancel()
-		<-errCh
-		t.Fatal("a running serve does not hold the interlock, so migrate is not fenced out")
+		serveErr := <-errCh
+		t.Fatalf("a running serve does not hold the interlock, so migrate is not fenced out (startServer: %v)", serveErr)
 	}
 
 	cancel()
