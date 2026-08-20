@@ -189,6 +189,54 @@ func (c *Core) SetSearchIndex(idx SearchIndex) {
 	c.searchIndex = idx
 }
 
+// maxLoadWarnings bounds how many per-file diagnostics ONE load writes to the
+// warn writer. Every one of them is O(store): a bad merge, an interrupted rename
+// or a hand-edited field reaches a whole directory as easily as it reaches one
+// file, and 300 unparseable files put 600 lines and 77 KB on stderr on EVERY
+// command until they are repaired. This CLI's stated primary consumer is a
+// coding agent, so that accumulates in a transcript rather than scrolling past.
+//
+// It deliberately matches cmd's maxEchoedListEntries, which bounds the same thing
+// for a joined refusal, but stays a SEPARATE constant: the units differ (an
+// emitted warning here, one entry of one list there), and the only package both
+// sides could import — internal/safetext — documents volume as explicitly outside
+// its guarantee. Change one and look at the other.
+const maxLoadWarnings = 20
+
+// loadWarnings is one load's warning budget. It is spent per WARNING rather than
+// per line, because a single warning can span several lines — a yaml parse error
+// does — and a line budget would cut one in half.
+//
+// The budget is SHARED across the kinds a load emits (a skipped file, an id
+// collision, an out-of-enum value), so a store full of one kind can hide the
+// others entirely. That is why the closing line points at `nibs check` instead of
+// claiming the stream was complete: check reports all three, and twenty examples
+// already tell one broken file apart from a broken store.
+//
+// It needs no locking: loadFromDisk walks on one goroutine, under c.mu.
+type loadWarnings struct {
+	c          *Core
+	emitted    int
+	suppressed int
+}
+
+func (w *loadWarnings) warn(format string, args ...any) {
+	if w.emitted >= maxLoadWarnings {
+		w.suppressed++
+		return
+	}
+	w.emitted++
+	w.c.logWarn(format, args...)
+}
+
+// close reports what the budget held back. Nothing is printed when nothing was
+// suppressed, so a store under the budget warns exactly as it always did.
+func (w *loadWarnings) close() {
+	if w.suppressed > 0 {
+		w.c.logWarn("…and %d more load-time problem(s) not shown; run `nibs check` for the full list", w.suppressed)
+	}
+}
+
 // logWarn logs a warning message if a warn writer is configured.
 //
 // The Flush releases any incomplete rune the boundary is holding, so a warning
@@ -245,6 +293,11 @@ func (c *Core) loadFromDisk() error {
 	c.unparseableFiles = nil
 	c.duplicateIDs = nil
 
+	// Every per-file warning below spends this budget; the retained diagnostics
+	// above do not, so `nibs check` still answers for the whole store however
+	// little of it reached stderr (see loadWarnings).
+	warns := &loadWarnings{c: c}
+
 	// Walk the store's CONTENT directories — data/ and archive/, dot
 	// directories pruned (see WalkStoreContent). cmd/migrate's scans walk the
 	// same per-file classifier over the store root, so what loads here and
@@ -262,7 +315,7 @@ func (c *Core) loadFromDisk() error {
 			// cannot do is share the path below, because that path OPENS the file
 			// and opening this one never returns.
 			if errors.Is(err, ErrNotRegularFile) {
-				c.recordUnparseable(path, ErrNotRegularFile)
+				c.recordUnparseable(warns, path, ErrNotRegularFile)
 				return nil
 			}
 			return err
@@ -283,7 +336,7 @@ func (c *Core) loadFromDisk() error {
 			// writer nothing in production redirects, while the skipped nib is
 			// missing from every query with nothing to explain it. `nibs check`
 			// reads these back (see Core.CheckAllLinks).
-			c.recordUnparseable(path, loadErr)
+			c.recordUnparseable(warns, path, loadErr)
 			return nil
 		}
 
@@ -301,7 +354,7 @@ func (c *Core) loadFromDisk() error {
 		// report it (see Core.CheckAllLinks); there the two files are named in
 		// nib.Path form, which is how every other nibs surface spells a path.
 		if existing, ok := c.nibs[b.ID]; ok {
-			c.logWarn("duplicate nib id %q on disk: %s shadows %s (last file loaded wins; resolve the duplicate)",
+			warns.warn("duplicate nib id %q on disk: %s shadows %s (last file loaded wins; resolve the duplicate)",
 				b.ID, path, filepath.Join(c.root, existing.Path))
 			c.duplicateIDs = append(c.duplicateIDs, DuplicateID{
 				NibID:    b.ID,
@@ -319,12 +372,16 @@ func (c *Core) loadFromDisk() error {
 		// authoritative backstop that makes such a value visible instead of
 		// silently flowing into ranking, filters, and the web UI.
 		if enumErr := c.ValidateEnums(b); enumErr != nil {
-			c.logWarn("nib %s: %v — value loads as written; `nibs migrate` rewrites known legacy values, `nibs check` reports the rest", b.ID, enumErr)
+			warns.warn("nib %s: %v — value loads as written; `nibs migrate` rewrites known legacy values, `nibs check` reports the rest", b.ID, enumErr)
 		}
 
 		c.nibs[b.ID] = b
 		return nil
 	})
+	// Closed here rather than deferred so the elision line lands at the end of the
+	// per-file stream it speaks for, and on the walk's error path too — an aborted
+	// walk has already suppressed whatever it suppressed.
+	warns.close()
 	if err != nil {
 		return err
 	}
@@ -385,8 +442,12 @@ func (c *Core) relPathFromRoot(path string) string {
 //
 // The id comes from the FILENAME, which parses whatever the contents are (or
 // whether there are contents), so the diagnostic names the nib that went missing.
-func (c *Core) recordUnparseable(path string, reason error) {
-	c.logWarn("skipping unparseable nib file %s: %v", path, reason)
+//
+// Only the WARNING is bounded by the load's budget. The diagnostic is retained
+// unconditionally, because it is what `nibs check` reads back — and the bounded
+// warning sends the reader there.
+func (c *Core) recordUnparseable(warns *loadWarnings, path string, reason error) {
+	warns.warn("skipping unparseable nib file %s: %v", path, reason)
 	id, _ := nib.ParseFilename(filepath.Base(path), c.configPrefix())
 	c.unparseableFiles = append(c.unparseableFiles, UnparseableFile{
 		NibID:  id,
