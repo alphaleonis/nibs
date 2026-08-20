@@ -51,9 +51,12 @@ func init() {
 	// Version is non-empty; the template makes it print exactly what the
 	// subcommand does.
 	//
-	// NO `-v` SHORTHAND: `nibs query` already binds -v to --variables
-	// (cmd/graphql.go), and a persistent short flag on root would collide with it
-	// there. The long spelling is the one tooling reaches for anyway.
+	// `-v` COMES WITH IT, and is kept: InitDefaultVersionFlag adds the shorthand
+	// whenever root's own flagset has no `-v`, which it does not. It is safe here
+	// only because this flag is LOCAL to root — `nibs query` binds -v to
+	// --variables, and the two never meet. A PERSISTENT `-v` on root would not
+	// merely shadow it, it panics at merge time ("unable to redefine 'v'
+	// shorthand in \"query\" flagset"), so this is a line to leave local.
 	rootCmd.Version = versionLine()
 	rootCmd.SetVersionTemplate("{{.Version}}\n")
 }
@@ -63,12 +66,29 @@ var versionCmd = &cobra.Command{
 	Short: "Show version information",
 	Args:  codedNoArgs(nil), // prints build info; takes no positional args
 	Run: func(cmd *cobra.Command, args []string) {
-		fmt.Println(versionLine())
+		// Through the command's writer, which is where the --version path writes
+		// too: identical in production, but the package's tests do redirect it,
+		// and two spellings of one answer should not be able to land in two
+		// places.
+		_, _ = fmt.Fprintln(cmd.OutOrStdout(), versionLine())
 	},
 }
 
 // versionLine is the ONE rendering of this build's identity, shared by the
 // `version` subcommand and the `--version` flag.
+//
+// The two spellings differ in exactly one respect, deliberately: `nibs version`
+// can be followed by the "an update is available" line and `--version` cannot,
+// because cobra returns from the version branch before PersistentPostRun exists
+// to run it. That asymmetry is kept rather than evened out — a person asking
+// which version they are on is well served by being told a newer one exists,
+// while the flag is the spelling scripts and agents reach for, where an extra
+// stderr line is noise. Both still print the same thing on stdout.
+//
+// One caveat on how far the sharing is enforced: the test pins that the two
+// spellings RENDER IDENTICALLY, which is the property that matters, and it
+// cannot see whether they came from here or from two copies of the same literal.
+// Editing either copy is still caught.
 //
 // Shared rather than written twice because the two spellings are asked by
 // different readers — a person types one, a script or an agent reaches for the
