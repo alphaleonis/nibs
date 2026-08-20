@@ -1158,21 +1158,32 @@ func (c *Core) computeStoredETag(storedNib *nib.Nib) (string, error) {
 // If ifMatch is provided, validates the current on-disk version's etag matches before updating.
 // This provides optimistic concurrency control to prevent lost updates.
 //
-// KNOWN RESIDUAL RACE (migrate under a live serve, nibs-7ist): the caller's b
-// was built from a snapshot taken BEFORE this call, and Update takes c.mu and
-// then parks on the store flock while holding it. If `nibs migrate` holds
-// that flock (AcquireStoreLock), the whole wait happens with c.mu held — so
-// the watcher, which needs c.mu, cannot refresh c.nibs with the migrated
-// files first. When migrate releases, an Update WITH ifMatch fails safe (the
-// stored etag no longer matches), but an Update with NO ifMatch — the web
-// UI's batch mutations call updateNib without one — writes b's pre-migration
-// render straight back, erasing e.g. a freshly transferred blocked_by edge;
-// the source file is already stamped v1, so no migration detect ever fires
-// again and the loss is silent and permanent. This is precisely why migrate
-// prints "stop any running `nibs serve`" (see AcquireStoreLock's doc);
-// enforcement instead of advice is deferred to nibs-7ist. Note the residual
-// is THIS stale-in-memory-clone chain, not the watcher or any layout move —
-// the watcher is a bystander that c.mu keeps parked.
+// THE STALE-CLONE CHAIN, and why it is closed a process apart rather than here:
+// the caller's b was built from a snapshot taken BEFORE this call, and Update
+// takes c.mu and then parks on the store flock while holding it. If a migration
+// holds that flock (AcquireStoreLock), the whole wait happens with c.mu held —
+// so the watcher, which needs c.mu, cannot refresh c.nibs with the migrated
+// files first. When the migration releases, an Update WITH ifMatch fails safe
+// (the stored etag no longer matches), but one with NO ifMatch writes b's
+// pre-migration render straight back, erasing e.g. a freshly transferred
+// blocked_by edge; the source file is already stamped v1, so no migration
+// detect ever fires again and the loss is silent and permanent.
+//
+// Nothing inside this method can see that, which is why the fix is not here: by
+// the time Update runs, the snapshot it is asked to write is already stale, and
+// no lock ordering makes a pre-migration clone current again. So the chain is
+// broken one level up — AcquireServeExclusion fences a migration out of a live
+// serve entirely (servelock.go), so the flock this method parks on cannot be
+// held by one. What remains is a serve from a release that predates that
+// interlock, which does not take the lock and so cannot be fenced; `nibs migrate`
+// names exactly that case before it applies.
+//
+// The second guard is the caller's: an ifMatch makes this fail safe whatever the
+// process arrangement. The web UI's batch mutations now send one, which they did
+// not when this note was first written.
+//
+// Note the residual is THIS stale-in-memory-clone chain, not the watcher or any
+// layout move — the watcher is a bystander that c.mu keeps parked.
 func (c *Core) Update(b *nib.Nib, ifMatch *string) error {
 	c.mu.Lock()
 	defer c.mu.Unlock()

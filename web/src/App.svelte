@@ -465,11 +465,15 @@
   let contextMenuPosition = $state({ x: 0, y: 0 });
   let contextMenuNibId: string | null = $state(null);
   let contextMenuNib: TreeTableNib | null = $state(null);
+  // Supplied by the table with each context-menu event: only it holds the loaded
+  // nibs, and the menu's batch mutations need each target's etag to send ifMatch.
+  let contextMenuEtagOf: ((id: string) => string | undefined) | undefined = $state(undefined);
   // Subtree expand/collapse actions for the right-clicked row.
   // TreeTable owns the collapse state, so it hands down closures that mutate it.
   let contextMenuSubtree: RowSubtreeActions | null = $state(null);
 
-  function handleRowContextMenu(nibId: string, event: MouseEvent, nib: TreeTableNib, subtree: RowSubtreeActions) {
+  function handleRowContextMenu(nibId: string, event: MouseEvent, nib: TreeTableNib, subtree: RowSubtreeActions, etagOf: (id: string) => string | undefined) {
+    contextMenuEtagOf = etagOf;
     // The right-clicked nib needs to become the menu's target when it is not
     // already in the selection. How that happens follows the open-detail
     // preference:
@@ -719,6 +723,7 @@
   onexpandchildren={() => contextMenuSubtree?.expandChildren()}
   oncollapsechildren={() => contextMenuSubtree?.collapseChildren()}
   onfilterrelated={handleFilterRelated}
+  etagOf={contextMenuEtagOf}
 />
 
 <!-- Hand the whole composable to the dialog. The dialog reads its display state

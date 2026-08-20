@@ -51,7 +51,13 @@
     oncolumnresizeend?: () => void;
     oncolumnorderchange?: (order: ColumnKey[]) => void;
     ontagschange?: (tags: string[]) => void;
-    onrowcontextmenu?: (nibId: string, event: MouseEvent, nib: TreeTableNib, subtree: RowSubtreeActions) => void;
+    onrowcontextmenu?: (
+      nibId: string,
+      event: MouseEvent,
+      nib: TreeTableNib,
+      subtree: RowSubtreeActions,
+      etagOf: (id: string) => string | undefined,
+    ) => void;
     onaddchild?: (nibId: string, nibType: string, anchor: DOMRect) => void;
     rowDensity?: RowDensity;
     blockedEmphasis?: BlockedEmphasis;
@@ -660,7 +666,14 @@
       hasChildren: row.hasChildren,
       expandChildren: () => expandSubtree(nibId),
       collapseChildren: () => collapseSubtree(nibId),
-    });
+    }, etagFor);
+  }
+
+  // The loaded nibs live here, so the etag lookup the context menu's batch
+  // mutations need has to be handed up with the event — the menu is rendered
+  // from App and only ever sees the row that was right-clicked.
+  function etagFor(id: string): string | undefined {
+    return allNibs.find((n) => n.id === id)?.etag;
   }
 
   function handleDelegatedPointerDown(e: PointerEvent) {

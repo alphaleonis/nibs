@@ -29,6 +29,7 @@ function makeTreeTableNib(overrides: Partial<TreeTableNib> = {}): TreeTableNib {
     parentId: null,
     blockingIds: [],
     blockedByIds: [],
+    etag: "etag-test",
     ...overrides,
   };
 }
@@ -2297,6 +2298,9 @@ describe("TreeTable", () => {
           expandChildren: expect.any(Function),
           collapseChildren: expect.any(Function),
         }),
+        // The etag resolver: the table owns the loaded nibs, so the batch
+        // mutations' ifMatch lookup has to travel with the event.
+        expect.any(Function),
       );
     });
 
@@ -2315,6 +2319,7 @@ describe("TreeTable", () => {
         expect.any(MouseEvent),
         expect.objectContaining({ id: "nibs-m1" }),
         expect.objectContaining({ hasChildren: true }),
+        expect.any(Function),
       );
     });
 

@@ -190,6 +190,7 @@ export const TREE_TABLE_QUERY = graphql(`
       parentId
       blockingIds
       blockedByIds
+      etag
     }
   }
 `);
