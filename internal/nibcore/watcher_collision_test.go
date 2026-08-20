@@ -79,6 +79,25 @@ func TestWatcherWarnsOnlyWhenADifferentFileClaimsAStoredID(t *testing.T) {
 			},
 		},
 		{
+			name: "an unarchive, arriving before its removal half",
+			arrange: func(t *testing.T, core *Core, nibsDir string) map[string]fsnotify.Op {
+				b := createTestNib(t, core, "una1", "Unarchivable", "todo")
+				if err := core.Archive(b.ID); err != nil {
+					t.Fatal(err)
+				}
+				stored, err := core.Get(b.ID)
+				if err != nil {
+					t.Fatal(err)
+				}
+				archived := filepath.Join(core.Root(), filepath.FromSlash(stored.Path))
+				restored := dataPath(nibsDir, filepath.Base(archived))
+				if err := os.Rename(archived, restored); err != nil {
+					t.Fatal(err)
+				}
+				return map[string]fsnotify.Op{restored: fsnotify.Create}
+			},
+		},
+		{
 			name: "an archive move, arriving before its removal half",
 			arrange: func(t *testing.T, core *Core, nibsDir string) map[string]fsnotify.Op {
 				b := createTestNib(t, core, "arc1", "Archivable", "todo")
@@ -150,14 +169,67 @@ func TestWatcherDuplicateWarningSpendsTheBatchBudget(t *testing.T) {
 	if !strings.Contains(warnings, "duplicate") {
 		t.Fatal("no collision was reported, so this test asserts nothing about the budget")
 	}
-	// Every warning this batch can emit is a collision, so the emitted count is
-	// the collision count. Counted by the warn prefix rather than by wording, so
-	// rephrasing the message cannot silently disarm the bound.
+	// Counted by the warn prefix rather than by wording, so rephrasing the message
+	// cannot silently disarm the bound.
 	if n := countWarnings(warnings); n > maxWarningsPerBatch+1 {
 		t.Errorf("%d warnings for %d colliding arrivals; the budget is %d plus the line reporting what it held back",
 			n, collisions, maxWarningsPerBatch)
 	}
+	// That count is the COLLISION count only because nothing else in this batch
+	// warns, which rests on twinNib carrying the current format version: drop that
+	// key and every arrival also trips the legacy-shape warning, leaving the bound
+	// above measuring a mixture while still passing.
+	if collisionLines, total := strings.Count(warnings, "duplicate nib id"), countWarnings(warnings); collisionLines != total-1 {
+		t.Errorf("%d of the %d warnings are collisions (the other should be only the suppression line); the budget being measured is not this warning's:\n%.512s…",
+			collisionLines, total, warnings)
+	}
 	if !strings.Contains(warnings, "suppressed") {
 		t.Errorf("the batch hid warnings without saying so:\n%.512s…", warnings)
+	}
+}
+
+// TestWatcherCollisionAmongBrandNewArrivals covers the shape the bulk case is
+// named for — a pull that adds both spellings at once, with neither previously
+// stored. It takes a different route from the other collision tests: the first
+// arrival passes through `existed == false` and warns about nothing, so only the
+// second can report the pair.
+func TestWatcherCollisionAmongBrandNewArrivals(t *testing.T) {
+	core, nibsDir := setupTestCore(t)
+	first := dataPath(nibsDir, "new1--alpha.md")
+	second := dataPath(nibsDir, "new1--beta.md")
+	writeNibFileAtomic(t, first, twinNib)
+	writeNibFileAtomic(t, second, twinNib)
+	setWatching(core)
+
+	warnings := feedBatch(t, core, map[string]fsnotify.Op{
+		first:  fsnotify.Create,
+		second: fsnotify.Create,
+	})
+	if n := strings.Count(warnings, "duplicate nib id"); n != 1 {
+		t.Errorf("two twins arriving together produced %d collision lines, want exactly 1:\n%s", n, warnings)
+	}
+}
+
+// TestWatcherCollisionLeavesTheArrivingFileAnswering pins the claim the warning
+// makes about the store. "The arriving file wins" is the reader's whole basis for
+// deciding which of the two to delete, and nothing else asserts it.
+func TestWatcherCollisionLeavesTheArrivingFileAnswering(t *testing.T) {
+	core, nibsDir := setupTestCore(t)
+	createTestNib(t, core, "win1", "First", "todo")
+	twin := dataPath(nibsDir, "win1--second.md")
+	writeNibFileAtomic(t, twin, twinNib)
+	setWatching(core)
+
+	warnings := feedBatch(t, core, map[string]fsnotify.Op{twin: fsnotify.Create})
+	if !strings.Contains(warnings, "duplicate nib id") {
+		t.Fatal("no collision was reported, so this test asserts nothing about the winner")
+	}
+	answering, err := core.Get("win1")
+	if err != nil {
+		t.Fatalf("Get after the collision: %v", err)
+	}
+	if want := "win1--second.md"; filepath.Base(answering.Path) != want {
+		t.Errorf("the store answers with %s, but the warning said the arriving file (%s) wins",
+			answering.Path, want)
 	}
 }
