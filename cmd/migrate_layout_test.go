@@ -428,8 +428,12 @@ func TestMigrateLayoutRunsBeforeContentStepsAgainstTheRelocatedConfig(t *testing
 	resetMigrateFlags()
 
 	_, storeDir := writeLegacyStore(t, "nibs:\n  prefix: zzz-\n  id_length: 4\n", map[string]string{
-		"zzz-aaa1--blocker.md": "---\ntitle: Blocker\nstatus: todo\nblocking:\n    - bbb2\n---\n\nBody A.\n",
-		"zzz-bbb2--blocked.md": "---\ntitle: Blocked\nstatus: todo\n---\n\nBody B.\n",
+		// Faithful v0 renders: nib.Render has written the id comment since the
+		// initial commit, and `version` carries no omitempty, so a nibs-written
+		// v0 file renders `version: 0`. A fixture missing both is a file the
+		// layout step can only ASSUME is a nib, which is a different test.
+		"zzz-aaa1--blocker.md": "---\n# zzz-aaa1\nversion: 0\ntitle: Blocker\nstatus: todo\nblocking:\n    - bbb2\n---\n\nBody A.\n",
+		"zzz-bbb2--blocked.md": "---\n# zzz-bbb2\nversion: 0\ntitle: Blocked\nstatus: todo\n---\n\nBody B.\n",
 	})
 
 	if _, err := runRootWith(t, "--nibs-path", storeDir, "migrate"); err != nil {

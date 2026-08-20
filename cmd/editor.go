@@ -1,9 +1,11 @@
 package cmd
 
 import (
+	"bufio"
 	"fmt"
 	"os"
 	"os/exec"
+	"strings"
 
 	"golang.org/x/term"
 )
@@ -14,6 +16,20 @@ import (
 // behavior without a real TTY (os.Stdout is a pipe under captureStdout).
 var isInteractiveTerminal = func() bool {
 	return term.IsTerminal(int(os.Stdin.Fd())) && term.IsTerminal(int(os.Stdout.Fd()))
+}
+
+// confirmedYes reads one line from stdin and reports whether it is a yes. The
+// default is NO: anything else — a bare newline, a stray word, EOF — declines,
+// so a caller that mishandles its input channel cannot turn a prompt into an
+// unattended approval.
+func confirmedYes() bool {
+	response, _ := bufio.NewReader(os.Stdin).ReadString('\n')
+	switch strings.TrimSpace(strings.ToLower(response)) {
+	case "y", "yes":
+		return true
+	default:
+		return false
+	}
 }
 
 // getEditor returns the user's preferred editor from environment variables.
