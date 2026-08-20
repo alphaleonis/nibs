@@ -114,7 +114,7 @@ func TestLayoutMovableFilesMovesOnlyWhatItCanVouchFor(t *testing.T) {
 
 	// archive/ is already in place, so it is not MOVED even though it is a nib.
 	want := []string{"leg-a1--one.md", "my-idea.md", "nested/leg-b2--two.md"}
-	got := append([]string(nil), movable...)
+	got := layoutMovePaths(movable)
 	slices.Sort(got)
 	if !slices.Equal(got, want) {
 		t.Errorf("movable set = %v, want %v", got, want)
@@ -214,6 +214,74 @@ func TestCheckPartialLoadFollowsTheSameClassification(t *testing.T) {
 		out := run(t, map[string]string{"leg-a1--one.md": layoutNib})
 		if !strings.Contains(out, partial) {
 			t.Errorf("check no longer warns that a nib sits outside data/:\n%s", out)
+		}
+	})
+}
+
+// TestMigrateRefusesToGuessAboutAssumedNibs pins the policy for the uncertain
+// tier: a file that fits a nib and ordinary content equally well is never moved
+// on the tool's own say-so.
+//
+// The three answers are one decision seen from three places. A person at a
+// terminal is asked; a run with --force is taken at its word; a run that is
+// neither has nobody to ask, so it refuses and changes nothing rather than
+// picking for the user — moving a document is recoverable but not free, and a
+// script that silently converted a readme into a nib would do it every time.
+func TestMigrateRefusesToGuessAboutAssumedNibs(t *testing.T) {
+	const handAuthored = "---\ntitle: Fix the login bug\nstatus: todo\n---\n\nBody.\n"
+
+	build := func(t *testing.T) string {
+		t.Helper()
+		t.Cleanup(resetRootPersistentFlags)
+		t.Cleanup(resetMigrateFlags)
+		resetRootPersistentFlags()
+		resetMigrateFlags()
+		_, storeDir := writeLegacyStore(t, "nibs:\n  prefix: leg-\n", map[string]string{
+			"leg-a1--one.md": layoutNib,
+			"my-idea.md":     handAuthored,
+		})
+		return storeDir
+	}
+
+	t.Run("without a terminal and without --force it refuses", func(t *testing.T) {
+		storeDir := build(t)
+		out, err := runRootWith(t, "--nibs-path", storeDir, "migrate", "--allow-dirty")
+		if err == nil {
+			t.Fatalf("migrate moved a file it could not classify, with nobody to ask\nout: %s", out)
+		}
+		if !strings.Contains(err.Error(), "my-idea.md") {
+			t.Errorf("the refusal does not name the file it is about: %v", err)
+		}
+		if !strings.Contains(err.Error(), "--force") {
+			t.Errorf("the refusal does not say how to proceed: %v", err)
+		}
+		// And it refuses before the first rename: a store it will not finish
+		// migrating is left exactly as it was.
+		if _, statErr := os.Stat(filepath.Join(storeDir, store.DataDirName)); statErr == nil {
+			t.Error("the refused run created data/; the gate fired after the movement it guards")
+		}
+		for _, name := range []string{"leg-a1--one.md", "my-idea.md"} {
+			if _, statErr := os.Stat(filepath.Join(storeDir, name)); statErr != nil {
+				t.Errorf("%s moved despite the refusal: %v", name, statErr)
+			}
+		}
+	})
+
+	t.Run("--force takes the run at its word and says which files", func(t *testing.T) {
+		storeDir := build(t)
+		migrateForce = true
+		t.Cleanup(func() { migrateForce = false })
+
+		out, err := runRootWith(t, "--nibs-path", storeDir, "migrate", "--allow-dirty", "--force")
+		if err != nil {
+			t.Fatalf("migrate --force refused: %v\nout: %s", err, out)
+		}
+		if !strings.Contains(out, "my-idea.md") {
+			t.Errorf("the run does not name the file it assumed to be a nib:\n%s", out)
+		}
+		data := store.NewLayout(storeDir).DataDir()
+		if _, statErr := os.Stat(filepath.Join(data, "my-idea.md")); statErr != nil {
+			t.Errorf("--force did not move the assumed nib: %v", statErr)
 		}
 	})
 }

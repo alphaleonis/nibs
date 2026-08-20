@@ -384,6 +384,106 @@ func legacyConfigExists(env migrateEnv) bool {
 	return err == nil && !info.IsDir()
 }
 
+// authorizeAssumedNibs decides whether the run may move the files it could only
+// ASSUME are nibs (see nibFileVerdict).
+//
+// The three answers are one decision seen from three places, and they must stay
+// one function or they will drift: --force is a standing yes, a terminal has
+// somebody to ask, and a run that is neither has nobody — so it refuses and
+// changes nothing rather than choosing for the user. Moving a document is
+// recoverable (nothing is deleted, and unknown front-matter keys survive the
+// rewrite through frontMatter.Extra) but it is not free, and a script that
+// silently converted a readme into a nib would do it on every store it touched.
+//
+// It runs during PLANNING, which is what makes the refusal safe: `nibs migrate`
+// computes its whole plan before the first rename, so this fires before anything
+// has moved (see layoutPlan).
+func authorizeAssumedNibs(assumed []string) error {
+	if len(assumed) == 0 || migrateForce {
+		return nil
+	}
+	if isInteractiveTerminal() {
+		return nil
+	}
+	return fmt.Errorf("cannot tell whether %s a nib or an ordinary document:\n  %s\n"+
+		"each carries a title and a known status but not the shape nibs writes, so it could be either, "+
+		"and this run has no terminal to ask at. Re-run with --force to treat %s as nibs and move %s into %s/, "+
+		"or move %s out of the store first to keep %s as %s. Nothing has been changed",
+		pluralIsAre(len(assumed)), echoedList(sanitizedList(assumed), ""),
+		pluralThemIt(len(assumed)), pluralThemIt(len(assumed)), store.DataDirName,
+		pluralThemIt(len(assumed)), pluralThemIt(len(assumed)), pluralDocuments(len(assumed)))
+}
+
+// pluralIsAre, pluralThemIt and pluralDocuments keep the refusal above readable
+// for the one-file case, which is the common one.
+func pluralIsAre(n int) string {
+	if n == 1 {
+		return "this file is"
+	}
+	return "these files are"
+}
+
+func pluralThemIt(n int) string {
+	if n == 1 {
+		return "it"
+	}
+	return "them"
+}
+
+func pluralCarryCarries(n int) string {
+	if n == 1 {
+		return "it carries"
+	}
+	return "they carry"
+}
+
+func pluralDocuments(n int) string {
+	if n == 1 {
+		return "a document"
+	}
+	return "documents"
+}
+
+// sanitizedList renders paths read from the filesystem for a message, through
+// the control-character boundary every filename crosses here.
+func sanitizedList(paths []string) []string {
+	out := make([]string, len(paths))
+	for i, p := range paths {
+		out[i] = stripControlChars(p)
+	}
+	return out
+}
+
+// layoutMove is one file the layout step will move into data/, carrying the
+// verdict that put it there. The verdict travels with the path because what the
+// run OWES the user differs by tier: an assumed nib has to be named, and a run
+// with nobody to ask has to refuse over it.
+type layoutMove struct {
+	rel     string
+	verdict nibFileVerdict
+}
+
+// layoutMovePaths is the store-relative paths of moves, in the order given.
+func layoutMovePaths(moves []layoutMove) []string {
+	paths := make([]string, len(moves))
+	for i, m := range moves {
+		paths[i] = m.rel
+	}
+	return paths
+}
+
+// layoutAssumedPaths is the store-relative paths of the moves that were only
+// ASSUMED to be nibs, in the order given.
+func layoutAssumedPaths(moves []layoutMove) []string {
+	var assumed []string
+	for _, m := range moves {
+		if m.verdict == assumedNib {
+			assumed = append(assumed, m.rel)
+		}
+	}
+	return assumed
+}
+
 // layoutMovableFiles returns the store-relative paths (forward slashes) of the
 // nib files the layout step must move into data/, in walk order.
 //
@@ -401,9 +501,9 @@ func legacyConfigExists(env migrateEnv) bool {
 // is not a nib, and leaving a real nib behind would drop it out of every query.
 // That leniency is load-bearing elsewhere — blockingScanProblems refuses to
 // migrate AROUND such a file precisely because this step moves it into data/.
-func layoutMovableFiles(env migrateEnv) ([]string, error) {
+func layoutMovableFiles(env migrateEnv) ([]layoutMove, error) {
 	l := env.layout()
-	var movable []string
+	var movable []layoutMove
 	err := forEachNibFile(env, func(path string, skipped error) error {
 		// An unreadable header is moved anyway (see above) because the scan
 		// cannot prove the file is not a nib. For an irregular file it CAN: a
@@ -417,10 +517,18 @@ func layoutMovableFiles(env migrateEnv) ([]string, error) {
 			return nil
 		}
 		h, err := readFrontMatterHeader(path)
-		if err == nil && layoutVerdict(rel, h) == notANib {
-			return nil
+		// An unreadable header keeps the leniency above: it is moved, and
+		// recorded as isNib because nothing about it is uncertain in the way the
+		// middle tier means — the run has a separate, louder answer for it
+		// (blockingScanProblems refuses to migrate around such a file).
+		verdict := isNib
+		if err == nil {
+			verdict = layoutVerdict(rel, h)
+			if verdict == notANib {
+				return nil
+			}
 		}
-		movable = append(movable, rel)
+		movable = append(movable, layoutMove{rel: rel, verdict: verdict})
 		return nil
 	})
 	if err != nil {
@@ -448,6 +556,10 @@ type layoutPlan struct {
 	// which applyLayout guarantees by computing the plan from the env it then
 	// applies with.
 	finalRoot string
+	// assumed holds the store-relative paths of the moves this step could not
+	// prove are nibs — a subset of movable. The run names them, and refuses over
+	// them when there is nobody to ask.
+	assumed []string
 	// movable holds the store-relative paths (forward slashes) of the nib files
 	// that move into data/, in walk order. They survive the store relocation
 	// unchanged: that is a rename of the directory they sit in.
@@ -520,10 +632,15 @@ func planLayout(env migrateEnv) (*layoutPlan, error) {
 		plan.finalRoot = target
 	}
 
-	movable, err := layoutMovableFiles(env)
+	moves, err := layoutMovableFiles(env)
 	if err != nil {
 		return nil, err
 	}
+	plan.assumed = layoutAssumedPaths(moves)
+	if err := authorizeAssumedNibs(plan.assumed); err != nil {
+		return nil, err
+	}
+	movable := layoutMovePaths(moves)
 	// Collisions are checked against the CURRENT root: a store relocation is a
 	// rename of the directory these paths sit in, so a destination that exists
 	// now exists at the new root too.
@@ -685,6 +802,16 @@ func (p *layoutPlan) apply(env *migrateEnv, log logf) error {
 		if err := os.Rename(src, dst); err != nil {
 			return fmt.Errorf("moving %s into %s/: %w", rel, store.DataDirName, err)
 		}
+	}
+	if len(p.assumed) > 0 {
+		// Named individually, and after the move rather than before it: this is
+		// the record of a judgement call the run made on the user's behalf, and
+		// the only thing standing between an assumed nib and a silent one. The
+		// migration report is what keeps it available once the run's output has
+		// scrolled away.
+		log("layout: assumed %d file(s) to be nibs and moved %s into %s/ — %s a title and a known status but not the shape nibs writes:\n  %s",
+			len(p.assumed), pluralThemIt(len(p.assumed)), store.DataDirName,
+			pluralCarryCarries(len(p.assumed)), echoedList(sanitizedList(p.assumed), ""))
 	}
 	if len(p.movable) > 0 {
 		log("layout: moved %d nib file(s) into %s/", len(p.movable), store.DataDirName)
@@ -2176,6 +2303,7 @@ func unquoteHeaderValue(v string) string {
 var (
 	migrateDryRun     bool
 	migrateAllowDirty bool
+	migrateForce      bool
 )
 
 var migrateCmd = &cobra.Command{
@@ -2355,5 +2483,6 @@ func postMigrateCommitHint(isRepo bool) string {
 func init() {
 	migrateCmd.Flags().BoolVar(&migrateDryRun, "dry-run", false, "List pending migrations and per-step file counts without modifying anything")
 	migrateCmd.Flags().BoolVar(&migrateAllowDirty, "allow-dirty", false, "Migrate even when the store's git repository has uncommitted changes")
+	migrateCmd.Flags().BoolVarP(&migrateForce, "force", "f", false, "Treat files that could be either a nib or an ordinary document as nibs, without asking")
 	rootCmd.AddCommand(migrateCmd)
 }
