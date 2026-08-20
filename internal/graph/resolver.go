@@ -461,3 +461,8 @@ func validateDocumentPaths(paths []string) error {
 	}
 	return nil
 }
+
+// newPrefixedNibID is the id generator CreateNib's custom-prefix path draws
+// from. A variable so the collision tests can seed deterministic draws;
+// nothing in production reassigns it.
+var newPrefixedNibID = nib.NewID

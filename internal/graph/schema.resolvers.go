@@ -112,13 +112,25 @@ func (r *mutationResolver) CreateNib(ctx context.Context, input model.CreateNibI
 		return nil, err
 	}
 
-	// Handle custom prefix - pre-generate ID if prefix is provided
+	// Handle custom prefix - pre-generate ID if prefix is provided. Redraw on
+	// a collision like Core.Create does for the ids it generates itself
+	// (nibs-kafe); Create's duplicate refusal stays the backstop for a draw
+	// that races a concurrent write between this check and the store lock.
 	if input.Prefix != nil && *input.Prefix != "" {
 		idLength := 4 // default
 		if cfg := r.Reader.Config(); cfg != nil && cfg.Nibs.IDLength > 0 {
 			idLength = cfg.Nibs.IDLength
 		}
-		b.ID = nib.NewID(*input.Prefix, idLength)
+		for range 100 {
+			id := newPrefixedNibID(*input.Prefix, idLength)
+			if _, err := r.Reader.Get(id); err != nil {
+				b.ID = id
+				break
+			}
+		}
+		if b.ID == "" {
+			return nil, fmt.Errorf("could not generate a free nib id with prefix %q in 100 draws — the id space (length %d) is exhausted or the generator is broken", *input.Prefix, idLength)
+		}
 	}
 
 	if err := r.Writer.Create(b); err != nil {
