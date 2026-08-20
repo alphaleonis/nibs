@@ -22,8 +22,8 @@ import (
 // spelled by a concrete status name — that is why there is no group for
 // {deferred} alone: `-s deferred` already selects it.
 const (
-	statusGroupOpen   = "open"
-	statusGroupClosed = "closed"
+	statusGroupOpen   = config.StatusGroupOpen
+	statusGroupClosed = config.StatusGroupClosed
 )
 
 // statusFilterInput captures the raw status-related flags shared by `list` and

@@ -35,6 +35,17 @@ var DefaultStatuses = []StatusConfig{
 	{Name: "scrapped", Color: "dimgray", Role: RoleDropped, Description: "Will not be done"},
 }
 
+// Status group names — one value vocabulary across every surface that accepts
+// a group where a concrete status goes: the CLI's `-s open` (cmd/statusfilter.go)
+// and the web filter box's `status:open` (via the generated vocabulary,
+// internal/webvocab). Membership is not declared here — each surface derives
+// it from the roles (OpenStatusNames/ClosedStatusNames); the names are the one
+// part that cannot be derived, so they live once.
+const (
+	StatusGroupOpen   = "open"
+	StatusGroupClosed = "closed"
+)
+
 // workflowStatusOrder lists the statuses in transition order — the path work
 // actually takes, from draft through to a closed state. It exists because the
 // two ways a status list gets shown want opposite orders: a *chooser* reads
@@ -45,11 +56,8 @@ var DefaultStatuses = []StatusConfig{
 // archive and roadmap. Two orders, one vocabulary.
 //
 // Read through WorkflowStatuses/WorkflowStatusNames by the TUI status picker
-// (internal/tui/statuspicker.go) and, via the hand-written STATUS_WORKFLOW copy
-// in web/src/lib/constants.ts, by the web's status select and row context menu.
-// The web copy is pinned to this order by TestWebConstantsMatchConfig — unlike
-// the STATUSES/DefaultStatuses pair, where only membership is pinned because
-// the orders differ on purpose.
+// (internal/tui/statuspicker.go) and, via the generated vocabulary
+// (internal/webvocab), by the web's status select and row context menu.
 //
 // Membership is not restated: TestWorkflowStatusOrderCoversEveryStatus requires
 // this list and DefaultStatuses to hold the same names, and orderStatusesBy
@@ -124,11 +132,11 @@ type EstimateConfig struct {
 // StatusReleasesDependents/ReleasingStatusNames, HoldingStatusNames for the
 // closed-but-still-blocking difference,
 // IsStartableStatus/StartableStatusNames for the ready queue, and StatusRole
-// for the done/dropped split the group predicates cannot see. The web UI keeps
-// a hand-written copy in web/src/lib/constants.ts as CLOSED_STATUSES
-// (nibs-nv05). README.md's Data Model section is another hand-written copy —
-// there is no render step behind it — held to these roles by cmd/readme_test.go
-// rather than by derivation.
+// for the done/dropped split the group predicates cannot see. The web UI
+// derives its copy from the generated vocabulary (internal/webvocab), pinned
+// fresh by TestGeneratedVocabularyIsFresh. README.md's Data Model section is a
+// hand-written copy — there is no render step behind it — held to these roles
+// by cmd/readme_test.go rather than by derivation.
 //
 // Sites that name one specific status are not rival definitions of these sets,
 // because a group predicate cannot single a member out — but renaming a status

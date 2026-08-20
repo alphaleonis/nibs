@@ -157,7 +157,7 @@ export interface AnchorRect {
 export interface TypePickerState {
   parentId: string;
   parentType: string;
-  validTypes: string[];
+  validTypes: readonly string[];
   anchor: AnchorRect;
 }
 

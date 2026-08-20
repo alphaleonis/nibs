@@ -21,13 +21,13 @@ tasks:
     silent: true
 
   codegen:
-    desc: Regenerate GraphQL code (Go gqlgen + web graphql-codegen client preset)
+    desc: Regenerate GraphQL code (Go gqlgen + web graphql-codegen client preset) and the web's generated vocabulary
     cmds:
       - task: go:codegen
       - task: web:codegen
 
   go:codegen:
-    desc: Regenerate the Go GraphQL server code (gqlgen)
+    desc: Regenerate the Go GraphQL server code (gqlgen) and the web vocabulary module (internal/webvocab)
     cmds:
       - go generate ./...
 
