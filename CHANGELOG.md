@@ -27,6 +27,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 - **The web UI now notices a live connection that dies without closing**, such as going offline or waking from sleep, instead of holding an apparently-healthy socket and serving a stale view indefinitely.
 - **The server now notices a live-updates client that vanishes without closing** and reclaims its connection, instead of holding it until the OS TCP timeout.
 - **Bulk status and priority changes from the web table now carry the same concurrency guard as the detail panel**, instead of silently overwriting a nib that changed after the table loaded it.
+- **A store config that omits `default_type` now creates tasks**, matching what `nibs init` writes, instead of milestones.
+- **`nibs config set-prefix` now edits only the prefix key of your config file**, instead of rewriting it from the merged read model — which discarded the file's comments, baked user-level settings into the project, and dropped any key this build does not model.
 
 ## v0.8.3 - 2026-08-13
 

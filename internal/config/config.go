@@ -195,14 +195,27 @@ type ServerConfig struct {
 	OpenBrowser *bool `yaml:"open_browser,omitempty"`
 }
 
+// The system defaults: what an unset key means. Named rather than repeated,
+// because they have to be identical in two places — Default(), which nibs init
+// persists into a new project config, and applySystemDefaults, which fills the
+// gaps in a config that omits them. Those two disagreed about the type: the
+// fallback read DefaultTypes[0], and that list is ordered by HIERARCHY DEPTH, not
+// by which entry is a sensible default, so it answered "milestone" while every
+// config nibs init wrote said "task".
+const (
+	defaultIDLength   = 4
+	defaultStatusName = "todo"
+	defaultTypeName   = "task"
+)
+
 // Default returns a Config with default values.
 func Default() *Config {
 	return &Config{
 		Nibs: NibsConfig{
 			Prefix:        "",
-			IDLength:      4,
-			DefaultStatus: "todo",
-			DefaultType:   "task",
+			IDLength:      defaultIDLength,
+			DefaultStatus: defaultStatusName,
+			DefaultType:   defaultTypeName,
 			HideCompleted: boolPtr(true),
 			WideMode:      boolPtr(true),
 		},
@@ -414,13 +427,13 @@ func loadRaw(configPath string) (*Config, error) {
 // applySystemDefaults fills in zero-value fields with system defaults.
 func applySystemDefaults(cfg *Config) {
 	if cfg.Nibs.IDLength == 0 {
-		cfg.Nibs.IDLength = 4
+		cfg.Nibs.IDLength = defaultIDLength
 	}
 	if cfg.Nibs.DefaultStatus == "" {
-		cfg.Nibs.DefaultStatus = "todo"
+		cfg.Nibs.DefaultStatus = defaultStatusName
 	}
 	if cfg.Nibs.DefaultType == "" {
-		cfg.Nibs.DefaultType = DefaultTypes[0].Name
+		cfg.Nibs.DefaultType = defaultTypeName
 	}
 }
 
@@ -477,6 +490,118 @@ func (c *Config) GetProjectName() string {
 // user which file is now stale. Refusing instead was rejected: `nibs config
 // set-prefix` has already renamed every nib file by the time Save runs, so a
 // refusal here leaves the store half-changed.
+// SetStoredPrefix rewrites ONLY the `nibs.prefix` key of the config inside
+// storeDir, leaving every other byte of the file as it was.
+//
+// It exists because Save marshals a whole Config, and the Config a command holds
+// is the MERGED read model: LoadStoreWithUserConfig layers the user's config and
+// then the system defaults onto the project's own values in place. Saving that
+// back writes advisory settings into a project's committed config and destroys
+// everything the struct does not model — including keys a NEWER nibs wrote, which
+// is data loss rather than formatting.
+//
+// Save keeps its meaning for the caller that wants it: `nibs init` writes a brand
+// new config from the merged defaults on purpose, and there is no prior file to
+// preserve. Editing one key in place is a different operation, not a better Save.
+//
+// The edit goes through a yaml.Node tree so comments, key order, indentation and
+// unmodeled keys survive. A config with no `nibs:` mapping, or none at all, gains
+// one: set-prefix's whole job is to make the file say the new prefix.
+func SetStoredPrefix(storeDir, prefix string) (staleLinkTarget string, err error) {
+	path := store.NewLayout(storeDir).ConfigPath()
+	data, err := ReadConfigFile(path)
+	if err != nil && !errors.Is(err, fs.ErrNotExist) {
+		return "", err
+	}
+
+	var doc yaml.Node
+	if len(data) > 0 {
+		if err := yaml.Unmarshal(data, &doc); err != nil {
+			return "", fmt.Errorf("parsing %s: %w", path, err)
+		}
+	}
+	setNestedScalar(&doc, "nibs", "prefix", prefix)
+
+	out, err := yaml.Marshal(&doc)
+	if err != nil {
+		return "", err
+	}
+	return writeConfigPreservingMode(path, out)
+}
+
+// setNestedScalar sets doc's section.key to value, creating the document, the
+// section or the key when any of them is absent. An existing key keeps its
+// position in the file, which is what makes the rewrite invisible.
+func setNestedScalar(doc *yaml.Node, section, key, value string) {
+	if doc.Kind == 0 {
+		doc.Kind = yaml.DocumentNode
+	}
+	if len(doc.Content) == 0 {
+		doc.Content = []*yaml.Node{{Kind: yaml.MappingNode, Tag: "!!map"}}
+	}
+	root := doc.Content[0]
+	sectionNode := mappingValueNode(root, section)
+	if sectionNode == nil {
+		sectionNode = &yaml.Node{Kind: yaml.MappingNode, Tag: "!!map"}
+		root.Content = append(root.Content,
+			&yaml.Node{Kind: yaml.ScalarNode, Tag: "!!str", Value: section},
+			sectionNode)
+	}
+	if existing := mappingValueNode(sectionNode, key); existing != nil {
+		existing.Kind = yaml.ScalarNode
+		existing.Tag = "!!str"
+		existing.Value = value
+		// Drop any style the old scalar carried (a quoted prefix, a folded
+		// block): the value is new, so the old rendering does not describe it.
+		existing.Style = 0
+		return
+	}
+	sectionNode.Content = append(sectionNode.Content,
+		&yaml.Node{Kind: yaml.ScalarNode, Tag: "!!str", Value: key},
+		&yaml.Node{Kind: yaml.ScalarNode, Tag: "!!str", Value: value})
+}
+
+// mappingValueNode returns the value node for key in a YAML mapping, or nil.
+func mappingValueNode(node *yaml.Node, key string) *yaml.Node {
+	if node == nil || node.Kind != yaml.MappingNode {
+		return nil
+	}
+	for i := 0; i+1 < len(node.Content); i += 2 {
+		if node.Content[i].Value == key {
+			return node.Content[i+1]
+		}
+	}
+	return nil
+}
+
+// writeConfigPreservingMode writes data over the config at path, keeping the
+// existing file's permissions and reporting a symlink at that path the way Save
+// does — the two writers must not differ about either.
+func writeConfigPreservingMode(path string, data []byte) (staleLinkTarget string, err error) {
+	if link, lstatErr := os.Lstat(path); lstatErr == nil && link.Mode()&os.ModeSymlink != 0 {
+		if target, readErr := os.Readlink(path); readErr == nil {
+			if !filepath.IsAbs(target) {
+				target = filepath.Join(filepath.Dir(path), target)
+			}
+			staleLinkTarget = target
+		} else {
+			staleLinkTarget = path
+		}
+	}
+	perm := os.FileMode(0644)
+	info, statErr := os.Stat(path)
+	switch {
+	case statErr == nil:
+		perm = info.Mode().Perm()
+	case !errors.Is(statErr, fs.ErrNotExist):
+		return "", fmt.Errorf("reading the current mode of %s: %w", path, statErr)
+	}
+	if err := fsutil.AtomicWriteFile(path, data, perm); err != nil {
+		return "", err
+	}
+	return staleLinkTarget, nil
+}
+
 func (c *Config) Save(storeDir string) (staleLinkTarget string, err error) {
 	targetDir := c.storeDir
 	if targetDir == "" {

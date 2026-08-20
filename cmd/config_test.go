@@ -563,3 +563,59 @@ func TestSetPrefix_ReportsReplacingASymlinkedConfig(t *testing.T) {
 		})
 	}
 }
+
+// TestSetPrefix_PreservesTheProjectConfig pins what `set-prefix` may write.
+//
+// It finished by calling cfg.Save("") on the config the app had LOADED — the
+// merged read model, with user-level values and system defaults layered onto the
+// project's own IN PLACE. Marshaling that struct back over <store>/config.yml
+// wrote advisory settings into the project's committed config, and destroyed
+// everything the struct does not model.
+//
+// Rewriting only the one key it changes closes all of it at once, because nothing
+// else in the file is touched.
+func TestSetPrefix_PreservesTheProjectConfig(t *testing.T) {
+	_, nibsDir, cfgPath := setupSetPrefixTest(t, "tnib-",
+		testNibSpec{filename: "tnib-aaa--root.md", id: "tnib-aaa"},
+	)
+
+	// A project config that declares ONLY a prefix, plus a comment and a key
+	// this build does not model — what a newer nibs might have written.
+	const original = "# This project's nibs settings. Keep the prefix short.\n" +
+		"nibs:\n" +
+		"  prefix: \"tnib-\"\n" +
+		"  # an experimental key a newer nibs might understand\n" +
+		"  future_setting: keep-me\n"
+	if err := os.WriteFile(cfgPath, []byte(original), 0o644); err != nil {
+		t.Fatalf("writing the project config: %v", err)
+	}
+
+	if err := runSetPrefixCmd(t, cfgPath, nibsDir, "new-", "--json"); err != nil {
+		t.Fatalf("set-prefix failed: %v", err)
+	}
+
+	body, err := os.ReadFile(cfgPath)
+	if err != nil {
+		t.Fatalf("reading the config back: %v", err)
+	}
+	got := string(body)
+
+	if !strings.Contains(got, "prefix: new-") && !strings.Contains(got, `prefix: "new-"`) {
+		t.Errorf("the prefix was not updated:\n%s", got)
+	}
+	// Data loss: an unmodeled key is content a newer nibs wrote, and an older
+	// one must not delete it by round-tripping the file through its own struct.
+	if !strings.Contains(got, "future_setting: keep-me") {
+		t.Errorf("an unmodeled key was destroyed:\n%s", got)
+	}
+	if !strings.Contains(got, "Keep the prefix short") {
+		t.Errorf("the file's comments were destroyed:\n%s", got)
+	}
+	// Advisory and system-level settings belong to the user's config and to the
+	// defaults, not to the project's committed file.
+	for _, unwanted := range []string{"id_length", "default_status", "default_type", "hide_completed", "wide_mode"} {
+		if strings.Contains(got, unwanted) {
+			t.Errorf("set-prefix baked %s into the project config:\n%s", unwanted, got)
+		}
+	}
+}
