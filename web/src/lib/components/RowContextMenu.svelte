@@ -12,6 +12,7 @@
     deleteBatch,
     archiveBatch,
   } from "$lib/mutations/commands";
+  import type { EtagResolver } from "$lib/mutations/commands";
   import { copyToClipboard } from "$lib/clipboard";
   import { getActionTargetIds, clearAfterMutation } from "$lib/actionTarget";
 
@@ -28,6 +29,10 @@
     /** Compose a relationship-id filter onto the current filter, targeting this
      *  row (`nib.id`). Single-target only. */
     onfilterrelated?: (field: RelIdKey, id: string) => void;
+    /** Resolves each selected nib's etag so batch mutations carry ifMatch. The
+     *  table owns the loaded nibs, so the resolver has to come from there — this
+     *  component only ever sees the right-clicked row. */
+    etagOf?: EtagResolver;
   }
 
   let {
@@ -39,6 +44,7 @@
     onexpandchildren,
     oncollapsechildren,
     onfilterrelated,
+    etagOf,
   }: Props = $props();
 
   // "Filter related" items — each composes a scalar relationship-id filter onto the
@@ -109,13 +115,13 @@
   async function handleStatusChange(status: string) {
     const ids = getActionTargetIds(selection, nib?.id ?? null);
     if (ids.length === 0) return;
-    await mutations.execute(setStatusBatch(ids, status));
+    await mutations.execute(setStatusBatch(ids, status, etagOf));
   }
 
   async function handlePriorityChange(priority: string) {
     const ids = getActionTargetIds(selection, nib?.id ?? null);
     if (ids.length === 0) return;
-    await mutations.execute(setPriorityBatch(ids, priority));
+    await mutations.execute(setPriorityBatch(ids, priority, etagOf));
   }
 
   function handleCopyId() {

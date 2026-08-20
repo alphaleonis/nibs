@@ -283,3 +283,36 @@ describe("domain composition factories", () => {
     });
   });
 });
+
+describe("batch mutations carry ifMatch", () => {
+  // The detail form has always sent ifMatch; the row context menu's batches
+  // never did, so a status or priority change from the table bypassed the etag
+  // guard entirely — including on a store configured with require_if_match.
+  // Optimistic concurrency that a whole surface can route around is not
+  // optimistic concurrency.
+  const etagOf = (id: string) => ({ a: "etag-a", b: "etag-b" })[id];
+
+  it("setStatusBatch stamps each command with that nib's etag", () => {
+    const cmd = setStatusBatch(["a", "b"], "completed", etagOf);
+    expect(cmd.commands.map((c) => (c as { ifMatch?: string }).ifMatch)).toEqual([
+      "etag-a",
+      "etag-b",
+    ]);
+  });
+
+  it("setPriorityBatch stamps each command with that nib's etag", () => {
+    const cmd = setPriorityBatch(["a", "b"], "high", etagOf);
+    expect(cmd.commands.map((c) => (c as { ifMatch?: string }).ifMatch)).toEqual([
+      "etag-a",
+      "etag-b",
+    ]);
+  });
+
+  it("omits ifMatch for a nib whose etag is unknown", () => {
+    // A row the table has not loaded an etag for must not be sent a made-up
+    // one: an absent ifMatch is an unguarded write, a wrong one is a write that
+    // always fails.
+    const cmd = setStatusBatch(["a", "missing"], "todo", etagOf);
+    expect((cmd.commands[1] as { ifMatch?: string }).ifMatch).toBeUndefined();
+  });
+});

@@ -265,15 +265,16 @@ func (c *Core) StartWatching() error {
 
 	// Watch the store's content directories and anything nested under them
 	// (best effort — don't fail if any can't be watched).
+	//
+	// Enumerated through WalkStoreDirs so the watched set and the set the scans
+	// read share ONE definition of what is inside the store. A bare walk here
+	// registered watches inside `.git` and `.obsidian`, and handleChanges then
+	// loaded nib-shaped files from directories no scan would ever read.
 	for _, dir := range c.layout.WatchableDirs() {
 		if dir == c.root {
 			continue // added above, and its failure is fatal
 		}
-		_ = watcher.Add(dir)
-		_ = filepath.WalkDir(dir, func(path string, d os.DirEntry, err error) error {
-			if err != nil || !d.IsDir() || path == dir {
-				return nil
-			}
+		_ = WalkStoreDirs(dir, func(path string) error {
 			_ = watcher.Add(path)
 			return nil
 		})

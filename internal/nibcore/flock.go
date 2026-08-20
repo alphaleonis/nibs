@@ -83,10 +83,14 @@ func (l *StoreLock) Release() error {
 // It does NOT stop serve's READERS or its fsnotify watcher: neither acquires
 // this lock, so a live serve can observe half-migrated states mid-run, and a
 // writer parked on this lock can hold a pre-acquisition snapshot it writes
-// back after release (the stale-clone chain documented at Core.Update). That
-// residual is why the migrate command tells the user to stop any running
-// serve first — the print is load-bearing guidance, not a redundant nicety.
-// Enforcing (fencing serve out rather than advising) is deferred: nibs-7ist.
+// back after release (the stale-clone chain documented at Core.Update).
+//
+// That residual is closed by a SECOND lock rather than by widening this one:
+// AcquireServeExclusion (servelock.go) fences a migration out of a live serve
+// process, which is a guarantee no per-operation lock can express — serve cannot
+// hold this one for its lifetime without blocking its own mutations. What this
+// lock still cannot reach is a serve from a release predating that interlock,
+// which never takes it; `nibs migrate` names that case before it applies.
 //
 // The lock derivation MUST stay keyed on the .nibs directory itself, NOT any
 // subdirectory (e.g. a future data/): serve derives its per-mutation lock from

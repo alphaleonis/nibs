@@ -423,6 +423,7 @@ func resetMigrateFlags() {
 	migrateDryRun = false
 	migrateAllowDirty = false
 	migrateForce = false
+	migrateYes = false
 	migrateCmd.Flags().Visit(func(f *pflag.Flag) {
 		_ = f.Value.Set(f.DefValue)
 		f.Changed = false

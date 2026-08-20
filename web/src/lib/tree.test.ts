@@ -24,6 +24,7 @@ function makeTreeTableNib(overrides: Partial<TreeTableNib> = {}): TreeTableNib {
   return {
     ...makeTreeNib(overrides),
     blockingIds: [],
+    etag: "etag-test",
     blockedByIds: [],
     ...overrides,
   };

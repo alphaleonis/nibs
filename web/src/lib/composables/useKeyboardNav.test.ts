@@ -19,6 +19,7 @@ function makeNib(overrides: Partial<TreeTableNib> = {}): TreeTableNib {
     parentId: null,
     blockingIds: [],
     blockedByIds: [],
+    etag: "etag-test",
     ...overrides,
   };
 }

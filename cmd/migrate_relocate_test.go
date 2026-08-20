@@ -11,6 +11,7 @@ import (
 	"syscall"
 	"testing"
 
+	"github.com/alphaleonis/nibs/internal/nibcore"
 	"github.com/alphaleonis/nibs/internal/store"
 	"github.com/alphaleonis/nibs/internal/testskip"
 )
@@ -546,6 +547,19 @@ func migrateGateFixtures() map[string]migrateGateFixture {
 			if err := os.Symlink(filepath.Join(storeDir, "no-such-target"), link); err != nil {
 				testskip.SymlinkUnavailable(t, err)
 			}
+			return storeDir
+		}},
+		"live-serve": {allowDirty: true, build: func(t *testing.T) string {
+			_, storeDir := writeLegacyStore(t, "nibs:\n  prefix: leg-\n", map[string]string{
+				"leg-a1--one.md": layoutNib,
+			})
+			// Hold the shared side for the test's duration, which is what a live
+			// `nibs serve` does.
+			serving, err := nibcore.AcquireServeLock(storeDir)
+			if err != nil {
+				t.Fatalf("simulating a live serve: %v", err)
+			}
+			t.Cleanup(func() { _ = serving.Release() })
 			return storeDir
 		}},
 		"foreign-content-dir": {allowDirty: true, build: func(t *testing.T) string {

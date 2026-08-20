@@ -113,12 +113,25 @@ export function archiveBatch(ids: string[]): BatchCommand {
   return batch(ids.map((id) => archiveNib(id)));
 }
 
-export function setStatusBatch(ids: string[], status: string): BatchCommand {
-  return batch(ids.map((id) => updateNib(id, { status })));
+/** Resolves a nib's current etag, or undefined when the caller has not loaded
+ *  one for it. Undefined means "send no ifMatch": an absent guard is an
+ *  unguarded write, while a made-up one is a write that can only fail. */
+export type EtagResolver = (id: string) => string | undefined;
+
+export function setStatusBatch(
+  ids: string[],
+  status: string,
+  etagOf?: EtagResolver,
+): BatchCommand {
+  return batch(ids.map((id) => updateNib(id, { status }, etagOf?.(id))));
 }
 
-export function setPriorityBatch(ids: string[], priority: string): BatchCommand {
-  return batch(ids.map((id) => updateNib(id, { priority })));
+export function setPriorityBatch(
+  ids: string[],
+  priority: string,
+  etagOf?: EtagResolver,
+): BatchCommand {
+  return batch(ids.map((id) => updateNib(id, { priority }, etagOf?.(id))));
 }
 
 export function reparentBatch(ids: string[], parentId: string): BatchCommand {

@@ -78,6 +78,12 @@ export interface TreeNib extends NibSummary {
 export interface TreeTableNib extends TreeNib {
   blockingIds: string[];
   blockedByIds: string[];
+  /** The row's current content etag, carried so the table's batch mutations can
+   *  send ifMatch. It lives on the TABLE's nib rather than on NibSummary because
+   *  leaner queries over the same shape (the typeahead completion) do not select
+   *  it, and a base type promising a field they never fetch would be a lie the
+   *  compiler enforces on the wrong side. */
+  etag: string;
 }
 
 export interface TreeNode<T extends TreeNib = TreeNib> {
