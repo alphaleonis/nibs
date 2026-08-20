@@ -33,15 +33,7 @@ var rootCmd = &cobra.Command{
 Track your work alongside your code and supercharge your coding agent with
 a full view of your project.`,
 	PersistentPreRunE: func(cmd *cobra.Command, args []string) error {
-		// Skip core initialization for commands that don't need App state.
-		// These commands must NOT call getApp(). If adding a command here,
-		// ensure it never accesses the App.
-		// migrate is skip-listed because it must run on the very stores this
-		// hook refuses below; it resolves config and the store root itself.
-		if cmd.Name() == "init" || cmd.Name() == "prime" || cmd.Name() == "version" ||
-			cmd.Name() == "catalog" || cmd.Name() == "cheat" || cmd.Name() == "upgrade" ||
-			cmd.Name() == "migrate" ||
-			(cmd.Name() == "query" && querySchemaOnly) {
+		if commandNeedsNoStore(cmd) {
 			return nil
 		}
 
@@ -98,6 +90,38 @@ func init() {
 	rootCmd.PersistentFlags().StringVar(&nibsPath, "nibs-path", "", "Path to the .nibs store directory (overrides discovery and NIBS_PATH env var)")
 	rootCmd.PersistentFlags().StringVar(&configPath, "config", "", "Path to a store's config file; names the store through its directory (cannot be combined with --nibs-path or NIBS_PATH)")
 	installFlagSuggestions(rootCmd)
+}
+
+// commandNeedsNoStore reports whether cmd can do its whole job without a store,
+// so PersistentPreRunE skips resolving one. A command listed here must NOT call
+// getApp(): there is no App in its context.
+//
+// migrate is here because it must run on the very stores the hook refuses; it
+// resolves config and the store root itself.
+//
+// HELP AND COMPLETION ARE TREES, NOT COMMANDS, which is why they are matched by
+// lineage rather than by name. `nibs completion bash` executes the "bash"
+// subcommand, so a name check would have to list every shell and would miss the
+// next one added. Both failed outside a project with "no .nibs directory found" —
+// help, which is where a user reads how to create a project, and completion,
+// which a shell sources on every new session.
+//
+// `nibs --help` never failed, and the asymmetry is worth knowing: Cobra's ErrHelp
+// path returns before these hooks run, so the FLAG and the SUBCOMMAND reach the
+// same output by different routes and only one of them passed through here.
+func commandNeedsNoStore(cmd *cobra.Command) bool {
+	switch cmd.Name() {
+	case "init", "prime", "version", "catalog", "cheat", "upgrade", "migrate":
+		return true
+	case "query":
+		return querySchemaOnly
+	}
+	for c := cmd; c != nil; c = c.Parent() {
+		if c.Name() == "help" || c.Name() == "completion" {
+			return true
+		}
+	}
+	return false
 }
 
 // resolveCLIStore resolves the store every command operates on and loads THAT

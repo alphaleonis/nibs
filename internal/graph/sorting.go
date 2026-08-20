@@ -27,6 +27,13 @@ func compareTimePtr(a, b *time.Time) int {
 
 // ApplySorting sorts nibs in-place according to the given sort options.
 // If sort is nil, no sorting is applied (preserves input order).
+//
+// cfg is REQUIRED for the vocabulary-ordered fields (priority, status, and the
+// two combined): it supplies the order those values sort in. It used to fall back
+// to config.Default() when nil, which silently sorted a store by a vocabulary
+// that was not its own — and both production callers already pass
+// Reader.Config(), so the fallback only ever answered for a caller that had
+// forgotten to.
 // Single-field sorts use slices.SortStableFunc: equal elements preserve input
 // order rather than using explicit ID tiebreakers.
 func ApplySorting(nibs []*nib.Nib, sort *model.NibSort, cfg *config.Config) {
@@ -50,9 +57,6 @@ func ApplySorting(nibs []*nib.Nib, sort *model.NibSort, cfg *config.Config) {
 			return compareTimePtr(a.UpdatedAt, b.UpdatedAt)
 		})
 	case model.NibSortFieldPriority:
-		if cfg == nil {
-			cfg = config.Default()
-		}
 		slices.SortStableFunc(nibs, func(a, b *nib.Nib) int {
 			return cmp.Compare(cfg.PriorityRank(a.Priority), cfg.PriorityRank(b.Priority))
 		})
@@ -61,9 +65,6 @@ func ApplySorting(nibs []*nib.Nib, sort *model.NibSort, cfg *config.Config) {
 			return cmp.Compare(a.ID, b.ID)
 		})
 	case model.NibSortFieldStatus:
-		if cfg == nil {
-			cfg = config.Default()
-		}
 		statusOrder := make(map[string]int)
 		for i, s := range cfg.StatusNames() {
 			statusOrder[s] = i
@@ -81,9 +82,6 @@ func ApplySorting(nibs []*nib.Nib, sort *model.NibSort, cfg *config.Config) {
 			return cmp.Compare(oa, ob)
 		})
 	case model.NibSortFieldStatusPriority:
-		if cfg == nil {
-			cfg = config.Default()
-		}
 		nib.SortByStatusPriorityAndType(nibs, cfg.StatusNames(), cfg.TypeNames(), cfg)
 		// Multi-key composite sort; simple reversal would invert all keys
 		// simultaneously rather than just the primary key. Direction is ignored.
