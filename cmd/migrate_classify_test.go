@@ -1,8 +1,13 @@
 package cmd
 
 import (
+	"os"
+	"path/filepath"
 	"slices"
+	"strings"
 	"testing"
+
+	"github.com/alphaleonis/nibs/internal/store"
 )
 
 // header builds a scanned front-matter header for the classifier table. The
@@ -114,4 +119,101 @@ func TestLayoutMovableFilesMovesOnlyWhatItCanVouchFor(t *testing.T) {
 	if !slices.Equal(got, want) {
 		t.Errorf("movable set = %v, want %v", got, want)
 	}
+}
+
+// TestMigrateCompletesWithAFileLeftBehind pins the consequence of leaving a file
+// where it is: it must stop counting as unfinished migration work.
+//
+// Pending-ness is DERIVED from what the mover would move, in more than one place,
+// and every command refuses while anything is pending. A file the mover declines
+// therefore reads as outstanding layout work forever unless every derivation is
+// taught the same rule — including scanStore's, which evaluates each CONTENT
+// step's predicate against every front-mattered file wherever it sits, so a
+// version-less document left at the root keeps the v0 step pending and the run
+// ends with "applied but its detection still fires".
+func TestMigrateCompletesWithAFileLeftBehind(t *testing.T) {
+	t.Cleanup(resetRootPersistentFlags)
+	t.Cleanup(resetMigrateFlags)
+	resetMigrateFlags()
+	const doc = "---\ntitle: Release notes\nstatus: published\n---\n\nBody.\n"
+	_, storeDir := writeLegacyStore(t, "nibs:\n  prefix: leg-\n", map[string]string{
+		"leg-a1--one.md": layoutNib,
+		"CHANGELOG.md":   doc,
+	})
+
+	out, err := runRootWith(t, "--nibs-path", storeDir, "migrate", "--allow-dirty")
+	if err != nil {
+		t.Fatalf("migrate refused over a file it left behind: %v\nout: %s", err, out)
+	}
+
+	after, readErr := os.ReadFile(filepath.Join(storeDir, "CHANGELOG.md"))
+	if readErr != nil {
+		t.Fatalf("the document was moved out of the store root: %v", readErr)
+	}
+	if string(after) != doc {
+		t.Errorf("migrate rewrote a document it did not write:\n%s", after)
+	}
+	if _, statErr := os.Stat(filepath.Join(store.NewLayout(storeDir).DataDir(), "leg-a1--one.md")); statErr != nil {
+		t.Errorf("the nib did not reach data/: %v", statErr)
+	}
+
+	// The store is no longer gated: an ordinary command runs, and a second
+	// migrate finds nothing left to do.
+	resetRootPersistentFlags()
+	resetListFlags()
+	t.Cleanup(resetListFlags)
+	if _, err := runRootWith(t, "--nibs-path", storeDir, "list", "--all", "--json"); err != nil {
+		t.Fatalf("the store stayed gated after migrating: %v", err)
+	}
+
+	resetRootPersistentFlags()
+	resetMigrateFlags()
+	again, err := runRootWith(t, "--nibs-path", storeDir, "migrate", "--allow-dirty")
+	if err != nil {
+		t.Fatalf("re-running migrate: %v", err)
+	}
+	if !strings.Contains(again, "up to date") {
+		t.Errorf("the left-behind file still reads as pending work:\n%s", again)
+	}
+}
+
+// TestCheckPartialLoadFollowsTheSameClassification pins check's half of the
+// derivation. Its partial-load warning answers "do nib files sit where Core.Load
+// does not look?", and it asks layoutMovableFiles — so once the mover
+// classifies, a store holding nothing but a documentation page must stop being
+// described as partially loaded, or the warning cries wolf on every store with a
+// readme in it.
+func TestCheckPartialLoadFollowsTheSameClassification(t *testing.T) {
+	const partial = "missing from the checks below"
+
+	run := func(t *testing.T, files map[string]string) string {
+		t.Helper()
+		t.Cleanup(resetRootPersistentFlags)
+		t.Cleanup(resetCheckFlags)
+		resetCheckFlags()
+		_, storeDir := writeLegacyStore(t, "nibs:\n  prefix: leg-\n", files)
+		app := checkAppPastTheGate(t, storeDir)
+		var runErr error
+		out := captureStdout(t, func() { _, runErr = runCheck(app) })
+		if runErr != nil {
+			t.Fatalf("runCheck error = %v", runErr)
+		}
+		return out
+	}
+
+	t.Run("a document at the store root is not a partial load", func(t *testing.T) {
+		out := run(t, map[string]string{
+			"CHANGELOG.md": "---\ntitle: Release notes\nstatus: published\n---\n\nBody.\n",
+		})
+		if strings.Contains(out, partial) {
+			t.Errorf("check called a store holding only a document partially loaded:\n%s", out)
+		}
+	})
+
+	t.Run("a nib at the store root still is", func(t *testing.T) {
+		out := run(t, map[string]string{"leg-a1--one.md": layoutNib})
+		if !strings.Contains(out, partial) {
+			t.Errorf("check no longer warns that a nib sits outside data/:\n%s", out)
+		}
+	})
 }

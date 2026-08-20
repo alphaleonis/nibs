@@ -1280,6 +1280,14 @@ func scanStore(env migrateEnv) (*storeScan, error) {
 			scan.newer = append(scan.newer, fmt.Sprintf("%s (format version %d)", stripControlChars(storeRelPath(env, path)), h.version))
 			return nil
 		}
+		rel := storeRelPath(env, path)
+		if l := env.layout(); !l.IsDataRel(rel) && !l.IsArchivedRel(rel) && layoutVerdict(rel, h) == notANib {
+			// The layout step leaves this file where it sits, so no content step
+			// will ever meet it. Counting it leaves a step pending that applying
+			// cannot clear: the run reports "applied but its detection still
+			// fires" and every command keeps refusing.
+			return nil
+		}
 		for i, step := range migrationSteps {
 			if step.isContent() && step.pred(h) {
 				scan.counts[i]++
