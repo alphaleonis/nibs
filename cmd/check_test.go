@@ -52,6 +52,34 @@ parent: chk-nope9
 
 Body.
 `
+
+	// A mistyped axis key: `milestone-order` lands in Extra (dash for the
+	// underscore), so no filter ever sees it — the near-miss finding is what
+	// makes it visible.
+	chkNearMissKeyNib = `---
+version: 1
+title: Near miss
+status: todo
+type: task
+priority: normal
+milestone-order: a5
+---
+
+Body.
+`
+
+	// A legitimately foreign Extra key: unknown, but a near miss of nothing.
+	chkForeignKeyNib = `---
+version: 1
+title: Foreign key
+status: todo
+type: task
+priority: normal
+assignee: someone
+---
+
+Body.
+`
 )
 
 // resetCheckFlags clears checkCmd's package-level flag vars and Cobra's
@@ -196,6 +224,94 @@ func TestCheckReportsInvalidEnumValues(t *testing.T) {
 		}
 		if !strings.Contains(string(raw), "priority: deferred") {
 			t.Errorf("--fix rewrote the out-of-enum value; that is migrate's job:\n%s", raw)
+		}
+	})
+}
+
+// TestCheckFlagsNearMissKeys pins the near-miss key finding end to end: a
+// mistyped axis key (`milestone-order:` for `milestone_order:`) is reported by
+// `nibs check` naming the file, the key as spelled, and the modeled key it
+// resembles; a legitimately foreign Extra key (`assignee:`) stays unflagged; in
+// --json the finding rides the near_miss_keys array; and --fix leaves the file
+// alone (renaming a key means deciding what the author meant) while saying so.
+func TestCheckFlagsNearMissKeys(t *testing.T) {
+	files := map[string]string{
+		"chk-good1--ok.md":     chkValidNib,
+		"chk-miss1--near.md":   chkNearMissKeyNib,
+		"chk-for1--foreign.md": chkForeignKeyNib,
+	}
+
+	t.Run("text report names the file, the key and the modeled key", func(t *testing.T) {
+		app, _ := setupCheckTest(t, files)
+		var total int
+		var runErr error
+		out := captureStdout(t, func() { total, runErr = runCheck(app) })
+		if runErr != nil {
+			t.Fatalf("runCheck error = %v", runErr)
+		}
+		if total != 1 {
+			t.Errorf("total issues = %d, want 1 (the near-miss key)", total)
+		}
+		for _, want := range []string{"data/chk-miss1--near.md", `"milestone-order"`, `"milestone_order"`} {
+			if !strings.Contains(out, want) {
+				t.Errorf("report should contain %q, got:\n%s", want, out)
+			}
+		}
+		if strings.Contains(out, "assignee") {
+			t.Errorf("a foreign key must stay unflagged, got:\n%s", out)
+		}
+		// The finding is per-file integrity, not a link problem: the link
+		// section still reports clean.
+		if !strings.Contains(out, "No link issues found") {
+			t.Errorf("links are clean and the report should say so, got:\n%s", out)
+		}
+	})
+
+	t.Run("json envelope carries near_miss_keys", func(t *testing.T) {
+		app, _ := setupCheckTest(t, files)
+		checkJSON = true
+		var runErr error
+		out := captureStdout(t, func() { _, runErr = runCheck(app) })
+		if runErr != nil {
+			t.Fatalf("runCheck error = %v", runErr)
+		}
+		var got checkResult
+		if err := json.Unmarshal([]byte(out), &got); err != nil {
+			t.Fatalf("unmarshal: %v\noutput: %s", err, out)
+		}
+		if got.Success {
+			t.Error("success = true; want false with a near-miss key present")
+		}
+		if got.NibIssues == nil || len(got.NibIssues.NearMissKeys) != 1 {
+			t.Fatalf("near_miss_keys = %+v, want exactly 1 entry", got.NibIssues)
+		}
+		want := nibcore.NearMissKey{NibID: "chk-miss1", Path: "data/chk-miss1--near.md", Key: "milestone-order", Modeled: "milestone_order"}
+		if got.NibIssues.NearMissKeys[0] != want {
+			t.Errorf("near_miss_keys[0] = %+v, want %+v", got.NibIssues.NearMissKeys[0], want)
+		}
+	})
+
+	t.Run("--fix leaves the key alone and says it cannot fix it", func(t *testing.T) {
+		app, nibsDir := setupCheckTest(t, files)
+		checkFix = true
+		var total int
+		var runErr error
+		out := captureStdout(t, func() { total, runErr = runCheck(app) })
+		if runErr != nil {
+			t.Fatalf("runCheck error = %v", runErr)
+		}
+		raw, err := os.ReadFile(dataPath(nibsDir, "chk-miss1--near.md"))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if !strings.Contains(string(raw), "milestone-order: a5") {
+			t.Errorf("--fix rewrote the near-miss key; renaming is the author's call:\n%s", raw)
+		}
+		if !strings.Contains(out, "Cannot auto-fix") {
+			t.Errorf("--fix should say the finding is not auto-fixable, got:\n%s", out)
+		}
+		if total != 1 {
+			t.Errorf("total issues after --fix = %d, want 1 (the near-miss key remains outstanding)", total)
 		}
 	})
 }

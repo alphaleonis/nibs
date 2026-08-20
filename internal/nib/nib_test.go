@@ -982,6 +982,147 @@ func TestBlockingRoundtrip(t *testing.T) {
 	}
 }
 
+// TestAxisKeysParsedAsModeledFields pins the three axis keys — `milestone:`,
+// `milestone_order:`, `area:` — as modeled front-matter fields: a hand-authored
+// file carrying them parses into the named Nib fields (not Extra) and renders
+// them back. Keeping them out of Extra is what keeps them clear of the
+// Extra/modeled-field collision that Render's modeledRenderTags drop defends
+// against.
+func TestAxisKeysParsedAsModeledFields(t *testing.T) {
+	input := `---
+version: 1
+title: Axis nib
+status: todo
+milestone: nibs-m1
+milestone_order: a5
+area: web/ui
+---
+
+Body content.
+`
+
+	b, err := Parse(strings.NewReader(input))
+	if err != nil {
+		t.Fatalf("Parse error: %v", err)
+	}
+	if b.Milestone != "nibs-m1" {
+		t.Errorf("Milestone: got %q, want %q", b.Milestone, "nibs-m1")
+	}
+	if b.MilestoneOrder != "a5" {
+		t.Errorf("MilestoneOrder: got %q, want %q", b.MilestoneOrder, "a5")
+	}
+	if b.Area != "web/ui" {
+		t.Errorf("Area: got %q, want %q", b.Area, "web/ui")
+	}
+	for _, key := range []string{"milestone", "milestone_order", "area"} {
+		if _, ok := b.Extra[key]; ok {
+			t.Errorf("axis key %q landed in Extra; it must parse into its modeled field", key)
+		}
+		if _, ok := modeledRenderTags[key]; !ok {
+			t.Errorf("modeledRenderTags is missing axis key %q; Render's collision drop would not defend it", key)
+		}
+	}
+
+	rendered, err := b.Render()
+	if err != nil {
+		t.Fatalf("Render error: %v", err)
+	}
+	out := string(rendered)
+	for _, line := range []string{"milestone: nibs-m1", "milestone_order: a5", "area: web/ui"} {
+		if !strings.Contains(out, line) {
+			t.Errorf("rendered output missing %q:\n%s", line, out)
+		}
+	}
+}
+
+// TestAxisKeysRoundtrip: Render->Parse round-trips the three axis fields, and a
+// nib without them renders none of the keys — existing stores stay etag-neutral
+// (the byte-exact pin is TestRenderNoChurnWithoutExtraOrBlocking).
+func TestAxisKeysRoundtrip(t *testing.T) {
+	tests := []struct {
+		name           string
+		milestone      string
+		milestoneOrder string
+		area           string
+	}{
+		{name: "with axis fields", milestone: "xyz789", milestoneOrder: "a0", area: "web/ui"},
+		{name: "without axis fields"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			original := &Nib{
+				Title:          "Test",
+				Status:         "todo",
+				Milestone:      tt.milestone,
+				MilestoneOrder: tt.milestoneOrder,
+				Area:           tt.area,
+			}
+
+			rendered, err := original.Render()
+			if err != nil {
+				t.Fatalf("Render error: %v", err)
+			}
+			if tt.milestone == "" && tt.milestoneOrder == "" && tt.area == "" {
+				for _, key := range []string{"milestone:", "milestone_order:", "area:"} {
+					if strings.Contains(string(rendered), key) {
+						t.Errorf("nib without axis fields rendered %q:\n%s", key, rendered)
+					}
+				}
+			}
+
+			parsed, err := Parse(strings.NewReader(string(rendered)))
+			if err != nil {
+				t.Fatalf("Parse error: %v", err)
+			}
+			if parsed.Milestone != tt.milestone {
+				t.Errorf("Milestone: got %q, want %q", parsed.Milestone, tt.milestone)
+			}
+			if parsed.MilestoneOrder != tt.milestoneOrder {
+				t.Errorf("MilestoneOrder: got %q, want %q", parsed.MilestoneOrder, tt.milestoneOrder)
+			}
+			if parsed.Area != tt.area {
+				t.Errorf("Area: got %q, want %q", parsed.Area, tt.area)
+			}
+		})
+	}
+}
+
+// TestParseRejectsInvalidMilestoneOrderKey: milestone_order is a fractional
+// index like order, so Parse applies the same base-62 validation to it.
+func TestParseRejectsInvalidMilestoneOrderKey(t *testing.T) {
+	input := `---
+title: Bad milestone order
+status: todo
+milestone_order: "not valid!"
+---
+`
+	_, err := Parse(strings.NewReader(input))
+	if err == nil {
+		t.Fatal("Parse should reject an invalid milestone_order key")
+	}
+	if !strings.Contains(err.Error(), "milestone_order") {
+		t.Errorf("error should name milestone_order, got: %v", err)
+	}
+}
+
+// TestParseRejectsNonScalarAxisValues pins that a non-scalar YAML value (a
+// list) under an axis key fails Parse. The axis keys are modeled as typed
+// string fields, so a kind mismatch is rejected exactly as it is for
+// `parent:` or `order:` — a hand-authored file carrying one is refused, not
+// captured loosely in Extra. Deliberate posture: modeling a key trades the
+// old anything-goes Extra capture for typed validation.
+func TestParseRejectsNonScalarAxisValues(t *testing.T) {
+	for _, key := range []string{"milestone", "milestone_order", "area"} {
+		t.Run(key, func(t *testing.T) {
+			input := "---\ntitle: Non-scalar axis value\nstatus: todo\n" + key + ":\n  - a\n  - b\n---\n"
+			if _, err := Parse(strings.NewReader(input)); err == nil {
+				t.Fatalf("Parse should reject a list value under %q", key)
+			}
+		})
+	}
+}
+
 // TestUnknownKeysRoundtrip verifies that front-matter keys not modeled by any
 // named field survive a Parse->Render->Parse cycle, so an external
 // edit confined to such a key is visible to the canonical etag rather than being
@@ -1104,6 +1245,59 @@ func yamlKeyNames(t reflect.Type) map[string]struct{} {
 		names[name] = struct{}{}
 	}
 	return names
+}
+
+// TestModeledKeyResembling pins the near-miss rule's boundaries: a key whose
+// normalized spelling (lowercased, '-' and '_' removed) equals a modeled key's
+// while the raw spelling differs IS a near miss, and everything else — an exact
+// modeled spelling, a genuinely foreign key, a fuzzy-distance neighbor like
+// `milestones` — is not. The rule must forgive any NUMBER of separators too
+// (`milestone__order`, `mile_stone`), not just a single swapped one.
+func TestModeledKeyResembling(t *testing.T) {
+	tests := []struct {
+		key     string
+		modeled string
+		ok      bool
+	}{
+		// Near-miss shapes: dash, case, stray/doubled underscores, combinations.
+		{key: "milestone-order", modeled: "milestone_order", ok: true},
+		{key: "Milestone", modeled: "milestone", ok: true},
+		{key: "milestone__order", modeled: "milestone_order", ok: true},
+		{key: "mile_stone", modeled: "milestone", ok: true},
+		{key: "MILESTONE_ORDER", modeled: "milestone_order", ok: true},
+		{key: "Blocked-By", modeled: "blocked_by", ok: true},
+		// The rule spans the whole modeled set, not just the axis keys, so it
+		// grows automatically as keys are promoted.
+		{key: "created-at", modeled: "created_at", ok: true},
+		// An exact modeled spelling is not a near miss.
+		{key: "milestone_order", ok: false},
+		{key: "milestone", ok: false},
+		// Foreign keys stay foreign — including fuzzy-distance neighbors, which
+		// a normalize-and-compare rule deliberately does not chase.
+		{key: "assignee", ok: false},
+		{key: "milestones", ok: false},
+		{key: "milestone_ordering", ok: false},
+		{key: "", ok: false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.key, func(t *testing.T) {
+			modeled, ok := ModeledKeyResembling(tt.key)
+			if ok != tt.ok || modeled != tt.modeled {
+				t.Errorf("ModeledKeyResembling(%q) = (%q, %v), want (%q, %v)", tt.key, modeled, ok, tt.modeled, tt.ok)
+			}
+		})
+	}
+}
+
+// TestNormalizedModeledTagsAreDistinct guards the assumption the near-miss map
+// is built on: no two modeled keys share a normalized spelling. If a future
+// promoted key collided (say `blocked-by` alongside `blocked_by`), the map
+// would silently keep one of them and the near-miss report would name the
+// wrong resembled key.
+func TestNormalizedModeledTagsAreDistinct(t *testing.T) {
+	if got, want := len(normalizedModeledTags), len(modeledRenderTags); got != want {
+		t.Errorf("normalizedModeledTags has %d entries for %d modeled keys; two modeled keys normalize to the same spelling", got, want)
+	}
 }
 
 // TestRenderExtraKeyCollisionDoesNotPanic covers an Extra key that
@@ -2838,6 +3032,7 @@ version: 1
 title: Short Form Links
 status: todo
 parent: par
+milestone: mst
 blocked_by: [blk]
 blocking: [blg]
 ---
@@ -2849,6 +3044,7 @@ blocking: [blg]
 		// Canonicalization's effect: the stored values move to the full form while
 		// the file — and therefore the shadow — keeps the short one.
 		parsed.Parent = "nibs-par"
+		parsed.Milestone = "nibs-mst"
 		parsed.BlockedBy = []string{"nibs-blk"}
 		parsed.Blocking = []string{"nibs-blg"}
 
@@ -2856,6 +3052,9 @@ blocking: [blg]
 		raw := cloned.RawLinks()
 		if raw.Parent != "par" {
 			t.Errorf("cloned.RawLinks().Parent = %q, want %q — the clone must carry the file's spelling, not the resolved one", raw.Parent, "par")
+		}
+		if raw.Milestone != "mst" {
+			t.Errorf("cloned.RawLinks().Milestone = %q, want %q — the clone must carry the file's spelling, not the resolved one", raw.Milestone, "mst")
 		}
 		if !reflect.DeepEqual(raw.BlockedBy, []string{"blk"}) {
 			t.Errorf("cloned.RawLinks().BlockedBy = %v, want [blk]", raw.BlockedBy)
@@ -2872,9 +3071,12 @@ blocking: [blg]
 
 		// A nib that has never seen a file reports its live values, so a
 		// hand-built nib canonicalizes exactly as it did before the shadow existed.
-		bare := &Nib{ID: "nibs-x", Parent: "par", BlockedBy: []string{"blk"}}
+		bare := &Nib{ID: "nibs-x", Parent: "par", Milestone: "mst", BlockedBy: []string{"blk"}}
 		if got := bare.RawLinks().Parent; got != "par" {
 			t.Errorf("RawLinks().Parent on a never-parsed nib = %q, want the live value %q", got, "par")
+		}
+		if got := bare.RawLinks().Milestone; got != "mst" {
+			t.Errorf("RawLinks().Milestone on a never-parsed nib = %q, want the live value %q", got, "mst")
 		}
 	})
 

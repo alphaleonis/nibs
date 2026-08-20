@@ -196,14 +196,29 @@ type Nib struct {
 	// Order is a fractional index string for sorting among siblings.
 	Order string `yaml:"order,omitempty" json:"order,omitempty"`
 
-	// MilestoneOrder is the fractional index for the nib's position in its
-	// milestone queue — the ordering engine's second scope. IN-MEMORY ONLY for
-	// now: the front-matter `milestone:`/`milestone_order:` fields arrive with
-	// the three-axis model's v2 migration release, so this is neither parsed
-	// nor rendered (renderFrontMatter has no column for it) and never reaches
-	// disk. The engine's milestone arm is fully wired against it and inert in
-	// production until those fields land.
-	MilestoneOrder string `yaml:"-" json:"-"`
+	// The three axis fields below carry json:"-": no consumer (GraphQL, CLI
+	// JSON, filters) models them, and keeping them off the JSON surface until
+	// one does keeps that surface from freezing an unconsumed shape.
+
+	// Milestone is the optional ID of the milestone nib whose queue this nib
+	// is enqueued in. Id-valued and part of the link machinery like Parent
+	// (RawLinks/CaptureRawLinks, nibcore canonicalization), but no consumer
+	// reads it yet: milestone membership still derives from the resolved
+	// Parent's type (see MilestoneOrder), and a later phase switches it.
+	Milestone string `yaml:"milestone,omitempty" json:"-"`
+
+	// MilestoneOrder is a fractional index string for the nib's position in
+	// its milestone queue — the ordering engine's second scope. Parsed and
+	// rendered, but not wired to any consumer: no resolver passes
+	// ScopeMilestone, and that scope's grouping (resolvedMilestoneID ->
+	// membership.ResolvedMilestoneID) still derives from the resolved
+	// Parent's type, not from Milestone. A follow-up task switches the
+	// grouping to read Milestone.
+	MilestoneOrder string `yaml:"milestone_order,omitempty" json:"-"`
+
+	// Area is the optional area path the nib belongs to — a plain path-valued
+	// string (e.g. "web/ui"), never a nib id or link.
+	Area string `yaml:"area,omitempty" json:"-"`
 
 	// Extra holds front-matter keys that none of the modeled fields above claim
 	// (e.g. a hand-added `assignee: bob`, or forward-compatible keys written by a
@@ -245,10 +260,12 @@ type Nib struct {
 	rawLinks *LinkSpelling
 }
 
-// LinkSpelling carries a nib's three link fields as one value — the ids as some
+// LinkSpelling carries a nib's four link fields as one value — the ids as some
 // particular source spells them, which is not necessarily how the nib holds them.
+// Area is deliberately absent: it is a plain path-valued string, not a link.
 type LinkSpelling struct {
 	Parent    string
+	Milestone string
 	BlockedBy []string
 	Blocking  []string
 }
@@ -271,7 +288,7 @@ type LinkSpelling struct {
 // The returned slices alias the recorded spelling — read them, do not mutate them.
 func (b *Nib) RawLinks() LinkSpelling {
 	if b.rawLinks == nil {
-		return LinkSpelling{Parent: b.Parent, BlockedBy: b.BlockedBy, Blocking: b.Blocking}
+		return LinkSpelling{Parent: b.Parent, Milestone: b.Milestone, BlockedBy: b.BlockedBy, Blocking: b.Blocking}
 	}
 	return *b.rawLinks
 }
@@ -289,6 +306,7 @@ func (b *Nib) RawLinks() LinkSpelling {
 func (b *Nib) CaptureRawLinks() {
 	b.rawLinks = &LinkSpelling{
 		Parent:    b.Parent,
+		Milestone: b.Milestone,
 		BlockedBy: slices.Clone(b.BlockedBy),
 		Blocking:  slices.Clone(b.Blocking),
 	}
@@ -423,6 +441,10 @@ type frontMatter struct {
 	Documents []string   `yaml:"documents,omitempty"`
 	Order     string     `yaml:"order,omitempty"`
 
+	Milestone      string `yaml:"milestone,omitempty"`
+	MilestoneOrder string `yaml:"milestone_order,omitempty"`
+	Area           string `yaml:"area,omitempty"`
+
 	// Extra is a yaml inline catch-all: any front-matter key not matched by a
 	// named field above lands here (via yaml.v3, see yamlFrontMatterFormats). Each
 	// value is captured as a raw yaml.Node so unknown keys survive parsing and are
@@ -530,6 +552,11 @@ func Parse(r io.Reader) (*Nib, error) {
 	if err := ValidateOrderKey(fm.Order); err != nil {
 		return nil, fmt.Errorf("invalid order key: %w", err)
 	}
+	// milestone_order is a fractional index like order, so it gets the same
+	// base-62 validation.
+	if err := ValidateOrderKey(fm.MilestoneOrder); err != nil {
+		return nil, fmt.Errorf("invalid milestone_order key: %w", err)
+	}
 
 	// Note on the legacy `priority: deferred` value: "deferred" was removed as a
 	// priority (it is now a status), but Parse does NOT rewrite it — a file's
@@ -576,22 +603,25 @@ func Parse(r io.Reader) (*Nib, error) {
 	}
 
 	b := &Nib{
-		Version:   fm.Version,
-		Title:     fm.Title,
-		Status:    fm.Status,
-		Type:      fm.Type,
-		Priority:  fm.Priority,
-		Estimate:  fm.Estimate,
-		Tags:      fm.Tags,
-		CreatedAt: fm.CreatedAt,
-		UpdatedAt: fm.UpdatedAt,
-		Body:      bodyStr,
-		Parent:    fm.Parent,
-		Blocking:  fm.Blocking,
-		BlockedBy: fm.BlockedBy,
-		Documents: fm.Documents,
-		Order:     fm.Order,
-		Extra:     fm.Extra,
+		Version:        fm.Version,
+		Title:          fm.Title,
+		Status:         fm.Status,
+		Type:           fm.Type,
+		Priority:       fm.Priority,
+		Estimate:       fm.Estimate,
+		Tags:           fm.Tags,
+		CreatedAt:      fm.CreatedAt,
+		UpdatedAt:      fm.UpdatedAt,
+		Body:           bodyStr,
+		Parent:         fm.Parent,
+		Blocking:       fm.Blocking,
+		BlockedBy:      fm.BlockedBy,
+		Documents:      fm.Documents,
+		Order:          fm.Order,
+		Milestone:      fm.Milestone,
+		MilestoneOrder: fm.MilestoneOrder,
+		Area:           fm.Area,
+		Extra:          fm.Extra,
 	}
 	// The link fields as they stand right now ARE the file's spelling. Record it
 	// before anything downstream resolves them to their full form (see RawLinks).
@@ -693,21 +723,26 @@ func resolveExtraAliasesGuarded(node *yaml.Node, active map[*yaml.Node]bool, bud
 // pre-drops any such key (modeledRenderTags) to keep its ([]byte, error) contract
 // panic-free, and TestFrontMatterRenderProjectionSymmetry pins the two key sets.
 type renderFrontMatter struct {
-	Version   int                  `yaml:"version"`
-	Title     string               `yaml:"title"`
-	Status    string               `yaml:"status"`
-	Type      string               `yaml:"type,omitempty"`
-	Priority  string               `yaml:"priority,omitempty"`
-	Estimate  string               `yaml:"estimate,omitempty"`
-	Tags      []string             `yaml:"tags,omitempty"`
-	CreatedAt *time.Time           `yaml:"created_at,omitempty"`
-	UpdatedAt *time.Time           `yaml:"updated_at,omitempty"`
-	Parent    string               `yaml:"parent,omitempty"`
-	Blocking  []string             `yaml:"blocking,omitempty"`
-	BlockedBy []string             `yaml:"blocked_by,omitempty"`
-	Documents []string             `yaml:"documents,omitempty"`
-	Order     string               `yaml:"order,omitempty"`
-	Extra     map[string]yaml.Node `yaml:",inline"`
+	Version   int        `yaml:"version"`
+	Title     string     `yaml:"title"`
+	Status    string     `yaml:"status"`
+	Type      string     `yaml:"type,omitempty"`
+	Priority  string     `yaml:"priority,omitempty"`
+	Estimate  string     `yaml:"estimate,omitempty"`
+	Tags      []string   `yaml:"tags,omitempty"`
+	CreatedAt *time.Time `yaml:"created_at,omitempty"`
+	UpdatedAt *time.Time `yaml:"updated_at,omitempty"`
+	Parent    string     `yaml:"parent,omitempty"`
+	Blocking  []string   `yaml:"blocking,omitempty"`
+	BlockedBy []string   `yaml:"blocked_by,omitempty"`
+	Documents []string   `yaml:"documents,omitempty"`
+	Order     string     `yaml:"order,omitempty"`
+
+	Milestone      string `yaml:"milestone,omitempty"`
+	MilestoneOrder string `yaml:"milestone_order,omitempty"`
+	Area           string `yaml:"area,omitempty"`
+
+	Extra map[string]yaml.Node `yaml:",inline"`
 }
 
 // modeledRenderTags is the set of YAML key names that renderFrontMatter models
@@ -730,6 +765,49 @@ func buildModeledRenderTags() map[string]struct{} {
 		tags[name] = struct{}{}
 	}
 	return tags
+}
+
+// normalizedModeledTags maps each modeled key's normalized spelling to the key
+// itself, for ModeledKeyResembling. Built from modeledRenderTags so promoting
+// an unknown key to a modeled field enrolls its near-miss spellings with no
+// second edit (TestNormalizedModeledTagsAreDistinct guards the no-collision
+// assumption the map encoding relies on).
+var normalizedModeledTags = buildNormalizedModeledTags()
+
+func buildNormalizedModeledTags() map[string]string {
+	m := make(map[string]string, len(modeledRenderTags))
+	for tag := range modeledRenderTags {
+		m[normalizeKeySpelling(tag)] = tag
+	}
+	return m
+}
+
+// normalizeKeySpelling collapses the spelling variations the near-miss rule
+// forgives: letter case, and any number of '-' or '_' separators — removing
+// them outright (rather than mapping one onto the other) is what makes
+// doubled-separator shapes like `milestone__order` land on their target.
+func normalizeKeySpelling(key string) string {
+	key = strings.ToLower(key)
+	key = strings.ReplaceAll(key, "-", "")
+	return strings.ReplaceAll(key, "_", "")
+}
+
+// ModeledKeyResembling reports whether key is a near-miss spelling of a modeled
+// front-matter key, returning the modeled key it resembles: the two normalized
+// spellings match while the raw spellings differ. That catches case variants
+// (`Milestone`), dashed shapes (`milestone-order`) and stray underscores
+// (`mile_stone`, `milestone__order`) without the false positives of
+// fuzzy-distance matching (`milestones` stays foreign). Parse routes every such
+// key into Extra — lossless, but invisible to every filter — so `nibs check`
+// uses this to name them; parsing and rendering stay tolerant regardless. An
+// exact modeled spelling is not a near miss (and never reaches Extra anyway:
+// Parse routes it to its named field).
+func ModeledKeyResembling(key string) (string, bool) {
+	modeled, ok := normalizedModeledTags[normalizeKeySpelling(key)]
+	if !ok || modeled == key {
+		return "", false
+	}
+	return modeled, true
 }
 
 // renderExtra returns b.Extra with any key colliding with a modeled render field
@@ -763,21 +841,24 @@ func (b *Nib) renderExtra() map[string]yaml.Node {
 // Render serializes the nib back to markdown with YAML front matter.
 func (b *Nib) Render() ([]byte, error) {
 	fm := renderFrontMatter{
-		Version:   b.Version,
-		Title:     b.Title,
-		Status:    b.Status,
-		Type:      b.Type,
-		Priority:  b.Priority,
-		Estimate:  b.Estimate,
-		Tags:      b.Tags,
-		CreatedAt: b.CreatedAt,
-		UpdatedAt: b.UpdatedAt,
-		Parent:    b.Parent,
-		Blocking:  b.Blocking,
-		BlockedBy: b.BlockedBy,
-		Documents: b.Documents,
-		Order:     b.Order,
-		Extra:     b.renderExtra(),
+		Version:        b.Version,
+		Title:          b.Title,
+		Status:         b.Status,
+		Type:           b.Type,
+		Priority:       b.Priority,
+		Estimate:       b.Estimate,
+		Tags:           b.Tags,
+		CreatedAt:      b.CreatedAt,
+		UpdatedAt:      b.UpdatedAt,
+		Parent:         b.Parent,
+		Blocking:       b.Blocking,
+		BlockedBy:      b.BlockedBy,
+		Documents:      b.Documents,
+		Order:          b.Order,
+		Milestone:      b.Milestone,
+		MilestoneOrder: b.MilestoneOrder,
+		Area:           b.Area,
+		Extra:          b.renderExtra(),
 	}
 
 	fmBytes, err := yaml.Marshal(&fm)

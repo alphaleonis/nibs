@@ -88,6 +88,8 @@ var checkCmd = &cobra.Command{
 - Unparseable nib files (skipped at load, so missing from every query)
 - Duplicate nib ids on disk (one file silently shadows another)
 - Out-of-enum field values (loaded as written, so they sort and filter oddly)
+- Near-miss front-matter keys (a mistyped modeled key like ` + "`milestone-order:`" + ` is
+  kept as an unknown key, invisible to every filter)
 - Broken links (links to non-existent nibs)
 - Self-references (nibs linking to themselves)
 - Circular dependencies (cycles in blocks/parent relationships)
@@ -98,8 +100,9 @@ issue, so an otherwise clean store exits 1 until ` + "`nibs migrate`" + ` has ru
 
 Use --fix to automatically remove broken links and self-references. --fix WRITES,
 so unlike plain check it refuses a store needing migration.
-Note: cycles, unparseable files, duplicate ids, out-of-enum values and a pending
-migration cannot be auto-fixed and require manual intervention.`,
+Note: cycles, unparseable files, duplicate ids, out-of-enum values, near-miss
+keys and a pending migration cannot be auto-fixed and require manual
+intervention.`,
 	Args: codedNoArgs(&checkJSON), // operates on the whole store; takes no positional args
 	RunE: func(cmd *cobra.Command, args []string) error {
 		totalIssues, err := runCheck(getApp(cmd))
@@ -283,7 +286,7 @@ func runCheck(app *App) (int, error) {
 	// Show success if no issues. This speaks only for the LINK categories: a
 	// store whose only problems are load-time or field-level still has clean
 	// links, and HasIssues() covers all kinds.
-	if !checkJSON && linkResult.TotalIssues()-linkResult.LoadIssues()-linkResult.EnumIssues() == 0 && fixed == 0 {
+	if !checkJSON && linkResult.TotalIssues()-linkResult.LoadIssues()-linkResult.EnumIssues()-linkResult.NearMissIssues() == 0 && fixed == 0 {
 		ui.Printf("  %s No link issues found\n", ui.Success.Render("✓"))
 	}
 
@@ -479,11 +482,14 @@ func loadWasPartial(migration *migrationStatus) *bool {
 	return migration.PartialLoad
 }
 
-// renderFieldDiagnostics prints the out-of-enum field findings in text mode,
+// renderFieldDiagnostics prints the per-file field findings in text mode,
 // under the Nib Files heading (they are per-file integrity, reported next to
-// the other conditions --fix cannot repair). Not auto-fixable by design, so
-// --fix names them like the cycle branch does instead of skipping them
-// silently. The remediation is per finding — see fieldRemediation.
+// the other conditions --fix cannot repair): out-of-enum values, then
+// near-miss keys. Not auto-fixable by design, so --fix names them like the
+// cycle branch does instead of skipping them silently. The out-of-enum
+// remediation is per finding — see fieldRemediation; a near-miss key has one
+// remediation (rename it to the modeled key, or remove it), and --fix cannot
+// apply it because a resembling spelling is not proof of the author's intent.
 func renderFieldDiagnostics(app *App, result *nibcore.LinkCheckResult) {
 	for _, ie := range result.InvalidEnums {
 		remedy := fieldRemediation(app, ie)
@@ -495,6 +501,20 @@ func renderFieldDiagnostics(app *App, result *nibcore.LinkCheckResult) {
 		} else {
 			ui.Printf("  %s %s: %s (loads as written; %s)\n",
 				ui.Danger.Render("✗"), ie.NibID, flattenReason(ie.Reason), remedy)
+		}
+	}
+	for _, nm := range result.NearMissKeys {
+		// The key and path come from the file, and the id from its filename, so
+		// all three cross the rendering boundary. Modeled is a compile-time
+		// constant of the nib package.
+		finding := fmt.Sprintf("unknown front-matter key %q in %s resembles modeled key %q",
+			stripControlChars(nm.Key), stripControlChars(nm.Path), nm.Modeled)
+		if checkFix {
+			ui.Printf("  %s Cannot auto-fix %s: %s (rename it to %q, or remove it)\n",
+				ui.Warning.Render("!"), stripControlChars(nm.NibID), finding, nm.Modeled)
+		} else {
+			ui.Printf("  %s %s: %s (kept as an unknown key, so no filter sees it; rename it to %q, or remove it)\n",
+				ui.Danger.Render("✗"), stripControlChars(nm.NibID), finding, nm.Modeled)
 		}
 	}
 }

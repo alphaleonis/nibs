@@ -82,6 +82,23 @@ type InvalidEnum struct {
 	Reason string `json:"reason"`
 }
 
+// NearMissKey is a loaded nib carrying an unknown front-matter key whose
+// spelling is a near miss of a modeled key (a dash for the underscore, a case
+// variant, stray underscores — the rule is nib.ModeledKeyResembling's). The
+// key parses losslessly into Extra and renders back — read tolerance is
+// unchanged — but no filter or query consults Extra, so a mistyped
+// `milestone-order:` silently drops the nib out of every milestone view. This
+// finding is the one surface that names it.
+type NearMissKey struct {
+	NibID string `json:"nib_id"`
+	// Path is relative to the nibs root with forward slashes, like nib.Path.
+	Path string `json:"path"`
+	// Key is the unknown key exactly as the file spells it.
+	Key string `json:"key"`
+	// Modeled is the modeled front-matter key the spelling resembles.
+	Modeled string `json:"modeled"`
+}
+
 // LinkCheckResult contains all nib integrity issues found: the link issues
 // derivable from the loaded nibs, plus the load-time integrity issues that are
 // derivable only from what did NOT make it into the store.
@@ -101,6 +118,10 @@ type LinkCheckResult struct {
 	// needs the config's enum tables, which the pure map function does not
 	// carry.
 	InvalidEnums []InvalidEnum `json:"invalid_enums"`
+
+	// Key integrity. Derivable from the nibs alone (the modeled key set is a
+	// compile-time fact of the nib package), so the pure map function carries it.
+	NearMissKeys []NearMissKey `json:"near_miss_keys"`
 }
 
 // HasIssues returns true if any issues were found.
@@ -110,7 +131,7 @@ func (r *LinkCheckResult) HasIssues() bool {
 
 // TotalIssues returns the total count of all issues.
 func (r *LinkCheckResult) TotalIssues() int {
-	return len(r.BrokenLinks) + len(r.SelfLinks) + len(r.Cycles) + len(r.BrokenDocuments) + r.LoadIssues() + r.EnumIssues()
+	return len(r.BrokenLinks) + len(r.SelfLinks) + len(r.Cycles) + len(r.BrokenDocuments) + r.LoadIssues() + r.EnumIssues() + r.NearMissIssues()
 }
 
 // LoadIssues returns the count of load-time integrity issues alone. Callers
@@ -125,6 +146,12 @@ func (r *LinkCheckResult) LoadIssues() int {
 // same render-them-apart reason as LoadIssues.
 func (r *LinkCheckResult) EnumIssues() int {
 	return len(r.InvalidEnums)
+}
+
+// NearMissIssues returns the count of near-miss key findings alone, for the
+// same render-them-apart reason as LoadIssues.
+func (r *LinkCheckResult) NearMissIssues() int {
+	return len(r.NearMissKeys)
 }
 
 // CheckAllLinksInMap validates all links across all nibs.
@@ -160,6 +187,7 @@ func CheckAllLinksInMap(nibs map[string]*nib.Nib, projectRoot, configPrefix stri
 		UnparseableFiles: []UnparseableFile{},
 		DuplicateIDs:     []DuplicateID{},
 		InvalidEnums:     []InvalidEnum{},
+		NearMissKeys:     []NearMissKey{},
 	}
 
 	// Check for broken links and self-references
@@ -220,6 +248,34 @@ func CheckAllLinksInMap(nibs map[string]*nib.Nib, projectRoot, configPrefix stri
 	for _, linkType := range []string{"blocked_by", "parent"} {
 		cycles := FindCyclesInMap(nibs, linkType)
 		result.Cycles = append(result.Cycles, cycles...)
+	}
+
+	// Key integrity: an Extra key spelled a near miss from a modeled key
+	// (nib.ModeledKeyResembling's rule) loads losslessly but is invisible to
+	// every filter, so it is reported here. Sorted by id and then key — both
+	// maps would otherwise shuffle the report run to run.
+	ids := make([]string, 0, len(nibs))
+	for id := range nibs {
+		ids = append(ids, id)
+	}
+	sort.Strings(ids)
+	for _, id := range ids {
+		b := nibs[id]
+		keys := make([]string, 0, len(b.Extra))
+		for key := range b.Extra {
+			keys = append(keys, key)
+		}
+		sort.Strings(keys)
+		for _, key := range keys {
+			if modeled, ok := nib.ModeledKeyResembling(key); ok {
+				result.NearMissKeys = append(result.NearMissKeys, NearMissKey{
+					NibID:   b.ID,
+					Path:    b.Path,
+					Key:     key,
+					Modeled: modeled,
+				})
+			}
+		}
 	}
 
 	return result

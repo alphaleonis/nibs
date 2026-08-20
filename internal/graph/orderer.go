@@ -24,9 +24,10 @@ const (
 	// MEMBERLESS — a nib assigned to no milestone is in no queue at all:
 	// Move errors there, and a default Place clears the queue key.
 	//
-	// The arm is fully wired and inert in production: nothing passes
-	// ScopeMilestone outside tests until the three-axis model's
-	// `milestone:`/`milestone_order:` fields land (see nib.Nib.MilestoneOrder).
+	// The arm is fully wired and inert in production: no resolver passes
+	// ScopeMilestone, and resolvedMilestoneID still derives the queue from
+	// the resolved parent's type (membership.ResolvedMilestoneID), not from
+	// the `milestone:` field. Activating the scope is a follow-up task.
 	ScopeMilestone
 	numScopes
 )
