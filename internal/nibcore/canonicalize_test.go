@@ -82,6 +82,43 @@ func TestLoadCanonicalizesShortFormLinks(t *testing.T) {
 	}
 }
 
+// TestLoadCanonicalizesShortFormMilestone drives the milestone link through the
+// load pass: a hand-written short-form `milestone:` must resolve in memory
+// exactly like `parent:` while the file keeps its spelling, and one naming no
+// nib must survive verbatim. Milestone has no reverse traversal yet (membership
+// still derives from Parent), so the stored spelling is the whole assertion.
+func TestLoadCanonicalizesShortFormMilestone(t *testing.T) {
+	core, nibsDir := mustLoadPrefixedCore(t)
+
+	writeLinkNibFile(t, nibsDir, "nibs-mst", "todo", "")
+	depPath := writeLinkNibFile(t, nibsDir, "nibs-dep", "todo", "milestone: mst\n")
+	writeLinkNibFile(t, nibsDir, "nibs-orp", "todo", "milestone: nope\n")
+	before := hashFile(t, depPath)
+	if err := core.Load(); err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+
+	dep, err := core.Get("nibs-dep")
+	if err != nil {
+		t.Fatalf(`Get("nibs-dep"): %v`, err)
+	}
+	if dep.Milestone != "nibs-mst" {
+		t.Errorf("stored milestone = %q, want %q — the short form must be resolved on load", dep.Milestone, "nibs-mst")
+	}
+	if after := hashFile(t, depPath); after != before {
+		data, _ := os.ReadFile(depPath)
+		t.Errorf("Load rewrote %s; canonicalization is in-memory only. File is now:\n%s", filepath.Base(depPath), data)
+	}
+
+	orp, err := core.Get("nibs-orp")
+	if err != nil {
+		t.Fatalf(`Get("nibs-orp"): %v`, err)
+	}
+	if orp.Milestone != "nope" {
+		t.Errorf("milestone = %q, want the unresolvable id left verbatim as %q", orp.Milestone, "nope")
+	}
+}
+
 // TestLoadCanonicalizationDetectsShortFormCycle covers the silent-detection half
 // of nibs-lzch: two nibs each naming the other as parent in short form formed a
 // real cycle for the forward resolver while `nibs check` reported nothing,
@@ -299,6 +336,35 @@ func TestWatcherCanonicalizesWhenTargetArrivesLater(t *testing.T) {
 	}
 }
 
+// TestWatcherCanonicalizesMilestoneWhenTargetArrivesLater drives the milestone
+// link through the watcher batch pass: written before its target exists it is
+// genuinely unresolvable and stays verbatim, and the target's arrival must
+// revisit it — the same ordering case the parent link needs.
+func TestWatcherCanonicalizesMilestoneWhenTargetArrivesLater(t *testing.T) {
+	core, nibsDir := mustLoadPrefixedCore(t)
+
+	writeLinkNibFile(t, nibsDir, "nibs-dep", "todo", "milestone: mst\n")
+	if err := core.Load(); err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	// Premise: with no target loaded the link is unresolvable and stays as written.
+	if dep, _ := core.Get("nibs-dep"); dep == nil || dep.Milestone != "mst" {
+		t.Fatalf("premise failed: milestone = %+v, want it left verbatim as \"mst\"", dep)
+	}
+	setWatching(core)
+
+	mstPath := writeLinkNibFile(t, nibsDir, "nibs-mst", "todo", "")
+	core.handleChanges(map[string]fsnotify.Op{mstPath: fsnotify.Create})
+
+	dep, err := core.Get("nibs-dep")
+	if err != nil {
+		t.Fatalf(`Get("nibs-dep"): %v`, err)
+	}
+	if dep.Milestone != "nibs-mst" {
+		t.Errorf("milestone = %q, want %q once the target exists", dep.Milestone, "nibs-mst")
+	}
+}
+
 // TestWatcherCanonicalizesWithinOneBatch drives both files in a SINGLE debounce
 // batch. handleChanges ranges a map, so the two arrive in an arbitrary order and
 // the dependent may well be loaded before its target is in the store —
@@ -466,6 +532,43 @@ func TestDeleteBareTokenIDRecanonicalizesBlockedBy(t *testing.T) {
 	}
 }
 
+// TestDeleteBareTokenIDRecanonicalizesMilestone drives the removal sweep
+// through the milestone link: a `milestone: e1` that resolved EXACTLY while the
+// bare-token nib existed must fall through to the prefixed twin once it is
+// deleted, or the stored spelling names one nib while the eventual consumer
+// resolves another.
+func TestDeleteBareTokenIDRecanonicalizesMilestone(t *testing.T) {
+	core, nibsDir := mustLoadPrefixedCore(t)
+
+	writeLinkNibFile(t, nibsDir, "e1", "todo", "")
+	writeLinkNibFile(t, nibsDir, "nibs-e1", "todo", "")
+	writeLinkNibFile(t, nibsDir, "nibs-t1", "todo", "milestone: e1\n")
+	if err := core.Load(); err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+
+	// Premise: the bare spelling resolves exactly, so load leaves it verbatim.
+	dep, err := core.Get("nibs-t1")
+	if err != nil {
+		t.Fatalf(`Get("nibs-t1"): %v`, err)
+	}
+	if dep.Milestone != "e1" {
+		t.Fatalf("premise failed: stored milestone = %q, want the bare spelling %q to survive load", dep.Milestone, "e1")
+	}
+
+	if err := core.Delete("e1"); err != nil {
+		t.Fatalf(`Delete("e1"): %v`, err)
+	}
+
+	dep, err = core.Get("nibs-t1")
+	if err != nil {
+		t.Fatalf(`Get("nibs-t1") after delete: %v`, err)
+	}
+	if dep.Milestone != "nibs-e1" {
+		t.Errorf("stored milestone = %q, want %q — deleting the bare-token nib must re-resolve the link", dep.Milestone, "nibs-e1")
+	}
+}
+
 // TestDeleteWarnsAboutTheLinksItRepointed pins the announcement half of the
 // removal sweep. Re-pointing a THIRD nib's link changes no file and publishes no
 // event (no direct Core mutator publishes one), so the warning is the only
@@ -566,6 +669,7 @@ func storedLinkSpellings(t *testing.T, core *Core) map[string]string {
 	out := make(map[string]string)
 	for _, b := range core.All() {
 		out[b.ID] = "parent=" + b.Parent +
+			" milestone=" + b.Milestone +
 			" blocked_by=[" + strings.Join(b.BlockedBy, " ") + "]" +
 			// Blocking is included because canonicalizeLinksInMap resolves it too,
 			// and it is the one field RemoveLinksTo deliberately does NOT clear — so
@@ -607,7 +711,7 @@ func TestCanonicalizationSurvivesADeleteAndRestore(t *testing.T) {
 
 	barePath := writeLinkNibFile(t, nibsDir, "e1", "in-progress", "")
 	writeLinkNibFile(t, nibsDir, "nibs-e1", "in-progress", "")
-	writeLinkNibFile(t, nibsDir, "nibs-t1", "todo", "parent: e1\nblocked_by: [e1]\n")
+	writeLinkNibFile(t, nibsDir, "nibs-t1", "todo", "parent: e1\nmilestone: e1\nblocked_by: [e1]\n")
 	if err := core.Load(); err != nil {
 		t.Fatalf("Load: %v", err)
 	}
@@ -658,7 +762,7 @@ func TestCanonicalizationSweepIsIdempotent(t *testing.T) {
 
 	writeLinkNibFile(t, nibsDir, "e1", "in-progress", "")
 	writeLinkNibFile(t, nibsDir, "nibs-e1", "in-progress", "")
-	writeLinkNibFile(t, nibsDir, "nibs-t1", "todo", "parent: e1\nblocked_by: [e1, nibs-e1]\n")
+	writeLinkNibFile(t, nibsDir, "nibs-t1", "todo", "parent: e1\nmilestone: e1\nblocked_by: [e1, nibs-e1]\n")
 	if err := core.Load(); err != nil {
 		t.Fatalf("Load: %v", err)
 	}
@@ -830,6 +934,93 @@ func TestCreateWarnsAboutTheLinksItRepointed(t *testing.T) {
 	}
 }
 
+// TestCreateResolvesMilestoneNamingTheNewNib is the arrival direction for the
+// milestone link: a dangling `milestone:` left verbatim by design must resolve
+// when the nib it names is created, and the rebind must be announced — the
+// warning is the only signal a direct Core.Create gives that it moved a third
+// nib's link.
+func TestCreateResolvesMilestoneNamingTheNewNib(t *testing.T) {
+	core, nibsDir := mustLoadPrefixedCore(t)
+
+	writeLinkNibFile(t, nibsDir, "nibs-t1", "todo", "milestone: zz9\n")
+	if err := core.Load(); err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+
+	// Premise: nothing named zz9 exists, so the link stays exactly as written.
+	dep, err := core.Get("nibs-t1")
+	if err != nil {
+		t.Fatalf(`Get("nibs-t1"): %v`, err)
+	}
+	if dep.Milestone != "zz9" {
+		t.Fatalf("premise failed: milestone = %q, want it left verbatim as %q", dep.Milestone, "zz9")
+	}
+
+	// Attached after Load so a load-time warning cannot be mistaken for one.
+	var warnings bytes.Buffer
+	core.SetWarnWriter(&warnings)
+
+	if err := core.Create(&nib.Nib{ID: "nibs-zz9", Version: 1, Title: "Arrived", Status: "todo", Type: "milestone"}); err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+
+	dep, err = core.Get("nibs-t1")
+	if err != nil {
+		t.Fatalf(`Get("nibs-t1") after Create: %v`, err)
+	}
+	if dep.Milestone != "nibs-zz9" {
+		t.Errorf("stored milestone = %q, want %q — creating the nib a dangling link names must resolve it", dep.Milestone, "nibs-zz9")
+	}
+	got := warnings.String()
+	for _, want := range []string{"nibs-t1.milestone", "zz9 -> nibs-zz9"} {
+		if !strings.Contains(got, want) {
+			t.Errorf("create warnings = %q, want them to mention %q", got, want)
+		}
+	}
+}
+
+// TestAreaIsNotALink pins the axis split: `area:` is a plain path-valued
+// string, so a value that HAPPENS to spell a resolvable short id must pass
+// through every canonicalization pass untouched — load and the create-driven
+// full sweep alike.
+func TestAreaIsNotALink(t *testing.T) {
+	core, nibsDir := mustLoadPrefixedCore(t)
+
+	writeLinkNibFile(t, nibsDir, "nibs-blk", "todo", "")
+	writeLinkNibFile(t, nibsDir, "nibs-t1", "todo", "area: blk\n")
+	if err := core.Load(); err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+
+	dep, err := core.Get("nibs-t1")
+	if err != nil {
+		t.Fatalf(`Get("nibs-t1"): %v`, err)
+	}
+	if dep.Area != "blk" {
+		t.Errorf("area = %q after load, want %q — area is not a link and must never be resolved", dep.Area, "blk")
+	}
+
+	// A create sweeps the whole store; the sweep must leave area alone too.
+	if err := core.Create(&nib.Nib{ID: "nibs-new1", Version: 1, Title: "New", Status: "todo", Type: "task"}); err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+	dep, err = core.Get("nibs-t1")
+	if err != nil {
+		t.Fatalf(`Get("nibs-t1") after the sweep: %v`, err)
+	}
+	if dep.Area != "blk" {
+		t.Errorf("area = %q after the sweep, want %q", dep.Area, "blk")
+	}
+
+	// And the pure helper agrees: a nib whose only resolvable-looking value is
+	// its area reports no change at all.
+	nibs := map[string]*nib.Nib{"nibs-blk": {ID: "nibs-blk", Title: "B", Status: "todo"}}
+	b := &nib.Nib{ID: "nibs-x", Area: "blk"}
+	if set := canonicalizeLinksInMap(nibs, b, "nibs-"); set.changed {
+		t.Errorf("canonicalizeLinksInMap reported a change for a nib with only an area set; area must not be canonicalized")
+	}
+}
+
 // TestCanonicalizeLinksInMapPure exercises the pure helper directly, including
 // the shapes the Core-level tests cannot reach cheaply: a v0 `blocking:` list
 // and a no-op on an already-canonical nib.
@@ -844,12 +1035,13 @@ func TestCanonicalizeLinksInMapPure(t *testing.T) {
 		in            *nib.Nib
 		wantChanged   bool
 		wantParent    string
+		wantMilestone string
 		wantBlockedBy []string
 		wantBlocking  []string
 	}{
 		{
 			name:        "already canonical is a no-op",
-			in:          &nib.Nib{ID: "nibs-ccc3", Parent: "nibs-aaa1", BlockedBy: []string{"nibs-bbb2"}},
+			in:          &nib.Nib{ID: "nibs-ccc3", Parent: "nibs-aaa1", Milestone: "nibs-bbb2", BlockedBy: []string{"nibs-bbb2"}},
 			wantChanged: false,
 		},
 		{
@@ -860,10 +1052,17 @@ func TestCanonicalizeLinksInMapPure(t *testing.T) {
 			wantBlockedBy: []string{"nibs-bbb2"},
 		},
 		{
+			name:          "short milestone resolves",
+			in:            &nib.Nib{ID: "nibs-ccc3", Milestone: "aaa1"},
+			wantChanged:   true,
+			wantMilestone: "nibs-aaa1",
+		},
+		{
 			name:          "unresolvable entries survive verbatim",
-			in:            &nib.Nib{ID: "nibs-ccc3", Parent: "ghost", BlockedBy: []string{"ghost", "bbb2"}},
+			in:            &nib.Nib{ID: "nibs-ccc3", Parent: "ghost", Milestone: "ghost2", BlockedBy: []string{"ghost", "bbb2"}},
 			wantChanged:   true,
 			wantParent:    "ghost",
+			wantMilestone: "ghost2",
 			wantBlockedBy: []string{"ghost", "nibs-bbb2"},
 		},
 		{
@@ -891,6 +1090,9 @@ func TestCanonicalizeLinksInMapPure(t *testing.T) {
 			set.applyTo(tt.in)
 			if tt.in.Parent != tt.wantParent {
 				t.Errorf("parent = %q, want %q", tt.in.Parent, tt.wantParent)
+			}
+			if tt.in.Milestone != tt.wantMilestone {
+				t.Errorf("milestone = %q, want %q", tt.in.Milestone, tt.wantMilestone)
 			}
 			if !slices.Equal(tt.in.BlockedBy, tt.wantBlockedBy) {
 				t.Errorf("blocked_by = %v, want %v", tt.in.BlockedBy, tt.wantBlockedBy)

@@ -201,8 +201,10 @@ type Nib struct {
 	// one does keeps that surface from freezing an unconsumed shape.
 
 	// Milestone is the optional ID of the milestone nib whose queue this nib
-	// is enqueued in. Id-valued like Parent, but not part of the link
-	// machinery (RawLinks/CaptureRawLinks): nothing re-resolves it.
+	// is enqueued in. Id-valued and part of the link machinery like Parent
+	// (RawLinks/CaptureRawLinks, nibcore canonicalization), but no consumer
+	// reads it yet: milestone membership still derives from the resolved
+	// Parent's type (see MilestoneOrder), and a later phase switches it.
 	Milestone string `yaml:"milestone,omitempty" json:"-"`
 
 	// MilestoneOrder is a fractional index string for the nib's position in
@@ -258,10 +260,12 @@ type Nib struct {
 	rawLinks *LinkSpelling
 }
 
-// LinkSpelling carries a nib's three link fields as one value — the ids as some
+// LinkSpelling carries a nib's four link fields as one value — the ids as some
 // particular source spells them, which is not necessarily how the nib holds them.
+// Area is deliberately absent: it is a plain path-valued string, not a link.
 type LinkSpelling struct {
 	Parent    string
+	Milestone string
 	BlockedBy []string
 	Blocking  []string
 }
@@ -284,7 +288,7 @@ type LinkSpelling struct {
 // The returned slices alias the recorded spelling — read them, do not mutate them.
 func (b *Nib) RawLinks() LinkSpelling {
 	if b.rawLinks == nil {
-		return LinkSpelling{Parent: b.Parent, BlockedBy: b.BlockedBy, Blocking: b.Blocking}
+		return LinkSpelling{Parent: b.Parent, Milestone: b.Milestone, BlockedBy: b.BlockedBy, Blocking: b.Blocking}
 	}
 	return *b.rawLinks
 }
@@ -302,6 +306,7 @@ func (b *Nib) RawLinks() LinkSpelling {
 func (b *Nib) CaptureRawLinks() {
 	b.rawLinks = &LinkSpelling{
 		Parent:    b.Parent,
+		Milestone: b.Milestone,
 		BlockedBy: slices.Clone(b.BlockedBy),
 		Blocking:  slices.Clone(b.Blocking),
 	}

@@ -2979,6 +2979,7 @@ version: 1
 title: Short Form Links
 status: todo
 parent: par
+milestone: mst
 blocked_by: [blk]
 blocking: [blg]
 ---
@@ -2990,6 +2991,7 @@ blocking: [blg]
 		// Canonicalization's effect: the stored values move to the full form while
 		// the file — and therefore the shadow — keeps the short one.
 		parsed.Parent = "nibs-par"
+		parsed.Milestone = "nibs-mst"
 		parsed.BlockedBy = []string{"nibs-blk"}
 		parsed.Blocking = []string{"nibs-blg"}
 
@@ -2997,6 +2999,9 @@ blocking: [blg]
 		raw := cloned.RawLinks()
 		if raw.Parent != "par" {
 			t.Errorf("cloned.RawLinks().Parent = %q, want %q — the clone must carry the file's spelling, not the resolved one", raw.Parent, "par")
+		}
+		if raw.Milestone != "mst" {
+			t.Errorf("cloned.RawLinks().Milestone = %q, want %q — the clone must carry the file's spelling, not the resolved one", raw.Milestone, "mst")
 		}
 		if !reflect.DeepEqual(raw.BlockedBy, []string{"blk"}) {
 			t.Errorf("cloned.RawLinks().BlockedBy = %v, want [blk]", raw.BlockedBy)
@@ -3013,9 +3018,12 @@ blocking: [blg]
 
 		// A nib that has never seen a file reports its live values, so a
 		// hand-built nib canonicalizes exactly as it did before the shadow existed.
-		bare := &Nib{ID: "nibs-x", Parent: "par", BlockedBy: []string{"blk"}}
+		bare := &Nib{ID: "nibs-x", Parent: "par", Milestone: "mst", BlockedBy: []string{"blk"}}
 		if got := bare.RawLinks().Parent; got != "par" {
 			t.Errorf("RawLinks().Parent on a never-parsed nib = %q, want the live value %q", got, "par")
+		}
+		if got := bare.RawLinks().Milestone; got != "mst" {
+			t.Errorf("RawLinks().Milestone on a never-parsed nib = %q, want the live value %q", got, "mst")
 		}
 	})
 

@@ -9,10 +9,10 @@ import (
 
 // Link-id canonicalization: every id stored in c.nibs is a FULL id.
 //
-// A nib file may name its parent or a blocker by SHORT id (`parent: par`
-// rather than `parent: nibs-par`) — hand-editing a file is the only way that
-// spelling enters the store, since every write path resolves through
-// NormalizeID first. The forward resolvers normalize such an id when they
+// A nib file may name its parent, milestone or a blocker by SHORT id
+// (`parent: par` rather than `parent: nibs-par`) — hand-editing a file is the
+// only way that spelling enters the store, since every write path resolves
+// through NormalizeID first. The forward resolvers normalize such an id when they
 // follow it, but the reverse traversals (findIncomingLinksInMap,
 // isBlockingInMap) and the cycle passes (FindCyclesInMap,
 // findPathToTargetInMap) walk exact map keys, so a short-form link used to
@@ -83,6 +83,7 @@ import (
 // GraphQL's non-null list fields rely on) with a nil.
 type canonicalLinks struct {
 	parent    string
+	milestone string
 	blockedBy []string
 	blocking  []string
 	changed   bool
@@ -92,6 +93,7 @@ type canonicalLinks struct {
 // true; applying an unchanged set is a no-op.
 func (s canonicalLinks) applyTo(b *nib.Nib) {
 	b.Parent = s.parent
+	b.Milestone = s.milestone
 	if s.blockedBy != nil {
 		b.BlockedBy = s.blockedBy
 	}
@@ -100,10 +102,11 @@ func (s canonicalLinks) applyTo(b *nib.Nib) {
 	}
 }
 
-// canonicalizeLinksInMap resolves b's Parent, BlockedBy and legacy Blocking ids
-// to their full form against nibs, using the same exact-match-then-prefix-
-// prepended rule as Core.Get (normalizeIDInMap). Targets that resolve to no nib
-// are carried through unchanged.
+// canonicalizeLinksInMap resolves b's Parent, Milestone, BlockedBy and legacy
+// Blocking ids to their full form against nibs, using the same exact-match-
+// then-prefix-prepended rule as Core.Get (normalizeIDInMap). Targets that
+// resolve to no nib are carried through unchanged. Area is not touched: it is
+// a plain path-valued string, not a link (see nib.LinkSpelling).
 //
 // Resolution reads b's FILE spelling (nib.RawLinks), never the values b
 // currently holds — those are the previous resolution's own output, and feeding
@@ -139,10 +142,16 @@ func canonicalizeLinksInMap(nibs map[string]*nib.Nib, b *nib.Nib, configPrefix s
 
 	raw := b.RawLinks()
 
-	set := canonicalLinks{parent: b.Parent}
+	set := canonicalLinks{parent: b.Parent, milestone: b.Milestone}
 	if raw.Parent != "" {
 		if resolved := resolve(raw.Parent); resolved != b.Parent {
 			set.parent = resolved
+			set.changed = true
+		}
+	}
+	if raw.Milestone != "" {
+		if resolved := resolve(raw.Milestone); resolved != b.Milestone {
+			set.milestone = resolved
 			set.changed = true
 		}
 	}
@@ -212,10 +221,11 @@ func (c *Core) canonicalizeAllLinksUnpublishedLocked() {
 // fresh pointer. Returns nil when the nib is absent or nothing changed, so a
 // caller can treat "rewritten" and "left alone" as one branch.
 //
-// Every rewrite is copy-on-write: Parent (a torn string) and BlockedBy (a
-// memory-unsafe torn slice header) are non-Path fields, so they must land on a
-// FRESH pointer rather than on the published one — see the canonical live-pointer
-// invariant at NibReader.GetSnapshot (internal/graph/interfaces.go).
+// Every rewrite is copy-on-write: Parent and Milestone (torn strings) and
+// BlockedBy (a memory-unsafe torn slice header) are non-Path fields, so they
+// must land on a FRESH pointer rather than on the published one — see the
+// canonical live-pointer invariant at NibReader.GetSnapshot
+// (internal/graph/interfaces.go).
 //
 // This is the runtime counterpart used by the mutator and watcher sweeps, which
 // re-point links on nibs the user is already looking at; the load path rewrites
@@ -259,6 +269,9 @@ func describeRebinds(before, after *nib.Nib) []linkRebind {
 	var out []linkRebind
 	if before.Parent != after.Parent {
 		out = append(out, linkRebind{nibID: after.ID, field: "parent", from: before.Parent, to: after.Parent})
+	}
+	if before.Milestone != after.Milestone {
+		out = append(out, linkRebind{nibID: after.ID, field: "milestone", from: before.Milestone, to: after.Milestone})
 	}
 	if !slices.Equal(before.BlockedBy, after.BlockedBy) {
 		out = append(out, linkRebind{
