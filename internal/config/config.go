@@ -68,7 +68,7 @@ var workflowStatusOrder = []string{"draft", "todo", "in-progress", "completed", 
 // DefaultTypes defines the default type configuration.
 var DefaultTypes = []TypeConfig{
 	{Name: "milestone", Color: "cyan", Description: "A target release or checkpoint; group work that should ship together"},
-	{Name: "epic", Color: "purple", Description: "A thematic container for related work; should have child nibs, not be worked on directly"},
+	{Name: "epic", Color: "purple", Description: "A deliverable that tops the work tree; should have child nibs, not be worked on directly"},
 	{Name: "bug", Color: "red", Description: "Something that is broken and needs fixing"},
 	{Name: "feature", Color: "green", Description: "A user-facing capability or enhancement"},
 	{Name: "task", Color: "blue", Description: "A concrete piece of work to complete (eg. a chore, or a sub-task for a feature)"},

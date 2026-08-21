@@ -242,12 +242,14 @@ describe("RowContextMenu", () => {
       });
     });
 
-    it("shows Add child for milestone type in single mode", async () => {
+    it("hides Add child for milestone type (a milestone takes no children)", async () => {
       renderMenu({ nib: makeNib({ type: "milestone" }) });
 
       await waitFor(() => {
-        expect(screen.getByTestId("ctx-add-child")).toBeInTheDocument();
+        expect(screen.getByTestId("ctx-delete")).toBeInTheDocument();
       });
+
+      expect(screen.queryByTestId("ctx-add-child")).not.toBeInTheDocument();
     });
 
     it("hides Add child for task type (leaf)", async () => {

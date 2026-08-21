@@ -2257,24 +2257,36 @@ describe("TreeTable", () => {
       const user = userEvent.setup();
       const sel = new SelectionState();
       const onaddchild = vi.fn();
-      const nibs = makeTestNibs();
+      // An epic can take children, so its row carries the [+] affordance
+      // (a milestone's no longer does).
+      const nibs = [
+        makeTreeTableNib({ id: "nibs-e1", title: "Epic", type: "epic" }),
+        makeTreeTableNib({ id: "nibs-001", title: "Child Task", type: "task", parentId: "nibs-e1" }),
+      ];
 
       const { container } = setupWithNibs(nibs, { onaddchild }, { selection: sel });
 
-      // The milestone row (type: "milestone") can have children
-      const addChildBtn = container.querySelector("tr[data-nib-id='nibs-m1'] [data-action='add-child']") as HTMLElement;
+      const addChildBtn = container.querySelector("tr[data-nib-id='nibs-e1'] [data-action='add-child']") as HTMLElement;
       await user.click(addChildBtn);
 
       expect(onaddchild).toHaveBeenCalledOnce();
       // Third arg is the clicked [+]'s viewport rect (the type picker anchors to it).
       expect(onaddchild).toHaveBeenCalledWith(
-        "nibs-m1",
-        "milestone",
+        "nibs-e1",
+        "epic",
         expect.objectContaining({ x: expect.any(Number), y: expect.any(Number) }),
       );
 
       // selection should NOT have changed
       expect(sel.selectedNibId).toBeNull();
+    });
+
+    it("milestone rows render no add-child affordance (a milestone takes no children)", () => {
+      const nibs = makeTestNibs();
+
+      const { container } = setupWithNibs(nibs, {});
+
+      expect(container.querySelector("tr[data-nib-id='nibs-m1'] [data-action='add-child']")).toBeNull();
     });
 
     it("context menu dispatches onrowcontextmenu via delegation with preventDefault", async () => {
@@ -2726,12 +2738,16 @@ describe("TreeTable", () => {
       const user = userEvent.setup();
       const sel = new SelectionState();
       const onaddchild = vi.fn();
-      const nibs = makeTestNibs();
+      // An epic row carries the [+] affordance (a milestone's no longer does).
+      const nibs = [
+        makeTreeTableNib({ id: "nibs-e1", title: "Epic", type: "epic" }),
+        makeTreeTableNib({ id: "nibs-001", title: "Child Task", type: "task", parentId: "nibs-e1" }),
+      ];
 
       const { container } = setupWithNibs(nibs, { onaddchild }, { selection: sel });
 
       const addChild = container.querySelector(
-        "tr[data-nib-id='nibs-m1'] [data-action='add-child']",
+        "tr[data-nib-id='nibs-e1'] [data-action='add-child']",
       ) as HTMLElement;
       addChild.focus();
       await user.keyboard(" ");
@@ -2762,26 +2778,31 @@ describe("TreeTable", () => {
       const user = userEvent.setup();
       const sel = new SelectionState();
       const onaddchild = vi.fn();
-      const nibs = makeTestNibs();
+      // An epic row carries every delegated affordance, add-child included
+      // (a milestone's no longer does).
+      const nibs = [
+        makeTreeTableNib({ id: "nibs-e1", title: "Epic", type: "epic" }),
+        makeTreeTableNib({ id: "nibs-001", title: "Child Task", type: "task", parentId: "nibs-e1" }),
+      ];
 
       const { container } = setupWithNibs(nibs, { onaddchild }, { selection: sel });
 
       // Click various interactive elements — all should be handled via delegation
       // Toggle: should collapse without selecting
-      const toggle = container.querySelector("[data-action='toggle']") as HTMLElement;
+      const toggle = container.querySelector("tr[data-nib-id='nibs-e1'] [data-action='toggle']") as HTMLElement;
       await user.click(toggle);
       expect(sel.selectedNibId).toBeNull();
 
       // Add-child: should call onaddchild without selecting
-      const addChildBtn = container.querySelector("[data-action='add-child']") as HTMLElement;
+      const addChildBtn = container.querySelector("tr[data-nib-id='nibs-e1'] [data-action='add-child']") as HTMLElement;
       await user.click(addChildBtn);
       expect(onaddchild).toHaveBeenCalledOnce();
       expect(sel.selectedNibId).toBeNull();
 
       // Title: should select via context
-      const titleText = container.querySelector("tr[data-nib-id='nibs-m1'] [data-action='title']") as HTMLElement;
+      const titleText = container.querySelector("tr[data-nib-id='nibs-e1'] [data-action='title']") as HTMLElement;
       await user.click(titleText);
-      expect(sel.selectedNibId).toBe("nibs-m1");
+      expect(sel.selectedNibId).toBe("nibs-e1");
     });
   });
 

@@ -630,20 +630,20 @@ func TestMvReparentToRoot(t *testing.T) {
 	}
 }
 
-// TestMvReparentIllegalHierarchy verifies an illegal reparent (epic under a task)
-// surfaces a structured HIERARCHY error carrying the allowed parent types.
+// TestMvReparentIllegalHierarchy verifies an illegal reparent (feature under a
+// task) surfaces a structured HIERARCHY error carrying the allowed parent types.
 func TestMvReparentIllegalHierarchy(t *testing.T) {
 	files := map[string]string{
 		"tk.md": "---\nversion: 2\ntitle: Task\nstatus: todo\ntype: task\norder: a0\n---\n",
-		"ep.md": "---\nversion: 2\ntitle: Epic\nstatus: todo\ntype: epic\norder: b0\n---\n",
+		"ft.md": "---\nversion: 2\ntitle: Feature\nstatus: todo\ntype: feature\norder: b0\n---\n",
 	}
 	nibsDir := setupMvCobraTest(t, files)
 
-	rootCmd.SetArgs([]string{"--nibs-path", nibsDir, "mv", "ep", "--parent", "tk", "--json"})
+	rootCmd.SetArgs([]string{"--nibs-path", nibsDir, "mv", "ft", "--parent", "tk", "--json"})
 	var execErr error
 	out := captureStdout(t, func() { execErr = rootCmd.Execute() })
 	if execErr == nil {
-		t.Fatal("expected HIERARCHY error moving an epic under a task")
+		t.Fatal("expected HIERARCHY error moving a feature under a task")
 	}
 
 	var ce *output.CodedError
@@ -657,7 +657,7 @@ func TestMvReparentIllegalHierarchy(t *testing.T) {
 		t.Errorf("exit code = %d, want %d", output.ExitCode(ce.Code), output.ExitValidation)
 	}
 
-	// The JSON envelope must carry the allowed parent types (milestone for an epic).
+	// The JSON envelope must carry the allowed parent types (epic for a feature).
 	var env struct {
 		Error struct {
 			Code               string   `json:"code"`
@@ -670,8 +670,8 @@ func TestMvReparentIllegalHierarchy(t *testing.T) {
 	if env.Error.Code != output.ErrHierarchy {
 		t.Errorf("envelope code = %q, want %q", env.Error.Code, output.ErrHierarchy)
 	}
-	if len(env.Error.AllowedParentTypes) != 1 || env.Error.AllowedParentTypes[0] != "milestone" {
-		t.Errorf("allowedParentTypes = %v, want [milestone]", env.Error.AllowedParentTypes)
+	if len(env.Error.AllowedParentTypes) != 1 || env.Error.AllowedParentTypes[0] != "epic" {
+		t.Errorf("allowedParentTypes = %v, want [epic]", env.Error.AllowedParentTypes)
 	}
 }
 

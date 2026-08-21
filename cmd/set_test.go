@@ -139,10 +139,10 @@ func writeSetNib(t *testing.T, id, body string) (string, string) {
 	return nibsDir, id
 }
 
-// writeIllegalReparentFixture creates a nibs dir holding one epic and one task —
-// the smallest store in which a reparent is refused by the hierarchy rule, since
-// an epic's only legal parent is a milestone. It returns (nibsDir, epicID,
-// taskID).
+// writeIllegalReparentFixture creates a nibs dir holding one feature and one
+// task — the smallest store in which a reparent is refused by the hierarchy
+// rule with a non-empty repair hint, since a feature's only legal parent is an
+// epic. It returns (nibsDir, featureID, taskID).
 //
 // The surfaces that must agree about that one refusal — `set`, `mv` and
 // `query` — all build from this helper, so a difference between them can only
@@ -154,15 +154,15 @@ func writeIllegalReparentFixture(t *testing.T) (string, string, string) {
 		t.Fatal(err)
 	}
 	files := map[string]string{
-		"ep--epic.md": "---\nversion: 2\ntitle: Epic\nstatus: todo\ntype: epic\norder: a0\n---\n",
-		"tk--task.md": "---\nversion: 2\ntitle: Task\nstatus: todo\ntype: task\norder: b0\n---\n",
+		"ft--feature.md": "---\nversion: 2\ntitle: Feature\nstatus: todo\ntype: feature\norder: a0\n---\n",
+		"tk--task.md":    "---\nversion: 2\ntitle: Task\nstatus: todo\ntype: task\norder: b0\n---\n",
 	}
 	for name, content := range files {
 		if err := os.WriteFile(dataPath(nibsDir, name), []byte(content), 0644); err != nil {
 			t.Fatal(err)
 		}
 	}
-	return nibsDir, "ep", "tk"
+	return nibsDir, "ft", "tk"
 }
 
 // hierarchyEnvelope is the {code,message,allowedParentTypes} shape a HIERARCHY
@@ -189,9 +189,9 @@ func TestSetIllegalReparentIsHierarchy(t *testing.T) {
 	t.Run("json", func(t *testing.T) {
 		t.Cleanup(resetSetFlags)
 		resetSetFlags()
-		nibsDir, epicID, taskID := writeIllegalReparentFixture(t)
+		nibsDir, featureID, taskID := writeIllegalReparentFixture(t)
 
-		rootCmd.SetArgs([]string{"--nibs-path", nibsDir, "set", epicID, "--parent", taskID, "--json"})
+		rootCmd.SetArgs([]string{"--nibs-path", nibsDir, "set", featureID, "--parent", taskID, "--json"})
 		var execErr error
 		out := captureStdout(t, func() { execErr = rootCmd.Execute() })
 		if execErr == nil {
@@ -208,11 +208,11 @@ func TestSetIllegalReparentIsHierarchy(t *testing.T) {
 		if env.Error.Code != output.ErrHierarchy {
 			t.Errorf("envelope code = %q, want %q", env.Error.Code, output.ErrHierarchy)
 		}
-		want := []string{"milestone"}
+		want := []string{"epic"}
 		if !slices.Equal(env.Error.AllowedParentTypes, want) {
 			t.Errorf("allowedParentTypes = %v, want %v", env.Error.AllowedParentTypes, want)
 		}
-		if !strings.Contains(env.Error.Message, "milestone") {
+		if !strings.Contains(env.Error.Message, "epic") {
 			t.Errorf("message %q should name the allowed parent type", env.Error.Message)
 		}
 	})
@@ -220,9 +220,9 @@ func TestSetIllegalReparentIsHierarchy(t *testing.T) {
 	t.Run("text", func(t *testing.T) {
 		t.Cleanup(resetSetFlags)
 		resetSetFlags()
-		nibsDir, epicID, taskID := writeIllegalReparentFixture(t)
+		nibsDir, featureID, taskID := writeIllegalReparentFixture(t)
 
-		rootCmd.SetArgs([]string{"--nibs-path", nibsDir, "set", epicID, "--parent", taskID})
+		rootCmd.SetArgs([]string{"--nibs-path", nibsDir, "set", featureID, "--parent", taskID})
 		var execErr error
 		out := captureStdout(t, func() { execErr = rootCmd.Execute() })
 		if execErr == nil {
@@ -266,7 +266,7 @@ func TestSetTypeChangeOrphaningAChildIsHierarchy(t *testing.T) {
 		}
 	}
 
-	// A feature may sit under a milestone or an epic — not under a task.
+	// A feature may sit under an epic — not under a task.
 	rootCmd.SetArgs([]string{"--nibs-path", nibsDir, "set", "ep", "--type", "task", "--json"})
 	var execErr error
 	out := captureStdout(t, func() { execErr = rootCmd.Execute() })
@@ -284,7 +284,7 @@ func TestSetTypeChangeOrphaningAChildIsHierarchy(t *testing.T) {
 	if env.Error.Code != output.ErrHierarchy {
 		t.Errorf("envelope code = %q, want %q", env.Error.Code, output.ErrHierarchy)
 	}
-	want := []string{"milestone", "epic"}
+	want := []string{"epic"}
 	if !slices.Equal(env.Error.AllowedParentTypes, want) {
 		t.Errorf("allowedParentTypes = %v, want %v (the CHILD's legal parents)",
 			env.Error.AllowedParentTypes, want)

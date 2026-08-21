@@ -24,7 +24,10 @@ describe("TypePickerPopover", () => {
     });
   });
 
-  it("renders every non-milestone type for a milestone parent", async () => {
+  it("renders no items for a milestone parent: a milestone takes no children", async () => {
+    // The add-child affordance is absent on milestone rows, so this picker
+    // should never open for one — but if it does, it must render empty rather
+    // than offer an illegal child type.
     render(TypePickerPopover, {
       parentType: "milestone",
       onselect: vi.fn(),
@@ -32,16 +35,9 @@ describe("TypePickerPopover", () => {
     });
 
     await waitFor(() => {
-      const items = screen.getAllByTestId("type-picker-item");
-      expect(items).toHaveLength(5);
-      expect(items.map((el) => el.textContent?.trim())).toEqual([
-        "epic",
-        "bug",
-        "feature",
-        "task",
-        "research",
-      ]);
+      expect(screen.getByTestId("type-picker-popover")).toBeInTheDocument();
     });
+    expect(screen.queryAllByTestId("type-picker-item")).toHaveLength(0);
   });
 
   it("calls onselect when a type is clicked", async () => {

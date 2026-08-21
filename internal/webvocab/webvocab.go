@@ -88,7 +88,7 @@ func Render() (string, error) {
 	}
 	b.WriteString("};\n\n")
 
-	b.WriteString("/** Container→leaf rank derived from the hierarchy: a leaf ranks 0, a container one above its highest child. */\n")
+	b.WriteString("/** Container→leaf rank derived from the hierarchy: a leaf ranks 0, a container one above its highest child. Milestone is pinned above every container — the milestone-grouped view keys on rank until the Phase-8 membership-based view. */\n")
 	b.WriteString("export const TYPE_RANK: Record<string, number> = {\n")
 	ranks := typeRanks()
 	for _, t := range typeNames() {
@@ -150,6 +150,12 @@ func priorityNames() []string {
 // highest-ranked possible child. The hierarchy is acyclic by construction (a
 // type never appears among its own descendants' children), so the recursion
 // terminates.
+//
+// Milestone is the one pinned exception. Presentation bridge: the
+// milestone-grouped view keys on rank until the Phase-8 membership-based view,
+// and the hierarchy no longer defines a rank for milestones (they take no
+// children), so they are pinned above every container rather than falling to
+// the leaf tier.
 func typeRanks() map[string]int {
 	ranks := make(map[string]int, len(config.DefaultTypes))
 	var rank func(t string) int
@@ -169,6 +175,13 @@ func typeRanks() map[string]int {
 	for _, t := range typeNames() {
 		rank(t)
 	}
+	top := 0
+	for t, r := range ranks {
+		if t != "milestone" && r > top {
+			top = r
+		}
+	}
+	ranks["milestone"] = top + 1
 	return ranks
 }
 

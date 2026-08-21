@@ -372,10 +372,10 @@ func (a *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return a, a.list.loadNibs
 
 	case openParentPickerMsg:
-		// Check if all nib types can have parents
+		// A root-only type (milestone or epic) has no legal parent, so there is
+		// nothing to pick.
 		for _, nibType := range msg.nibTypes {
-			if nibtypes.ValidParentTypes(nibType) == nil {
-				// At least one nib type (e.g., milestone) cannot have parents - don't open the picker
+			if !nibtypes.CanHaveParent(nibType) {
 				return a, nil
 			}
 		}

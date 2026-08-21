@@ -4011,20 +4011,20 @@ func TestUpdateNibTypeChangeValidatesParent(t *testing.T) {
 		}
 	})
 
-	t.Run("change task to epic under milestone parent succeeds", func(t *testing.T) {
-		milestone := &nib.Nib{ID: "ms-tc", Title: "Milestone", Type: "milestone", Status: "todo"}
-		taskUnderMs := &nib.Nib{ID: "task-tc2", Title: "Task2", Type: "task", Status: "todo", Parent: "ms-tc"}
-		mustCreate(t, core, milestone)
-		mustCreate(t, core, taskUnderMs)
+	t.Run("change task to research under feature parent succeeds", func(t *testing.T) {
+		feat := &nib.Nib{ID: "feat-tc-rs", Title: "Feature", Type: "feature", Status: "todo"}
+		taskUnderFeat := &nib.Nib{ID: "task-tc2", Title: "Task2", Type: "task", Status: "todo", Parent: "feat-tc-rs"}
+		mustCreate(t, core, feat)
+		mustCreate(t, core, taskUnderFeat)
 
-		newType := "epic"
+		newType := "research"
 		input := model.UpdateNibInput{Type: &newType}
 		got, err := resolver.Mutation().UpdateNib(ctx, "task-tc2", input)
 		if err != nil {
 			t.Fatalf("expected no error, got: %v", err)
 		}
-		if got.Type != "epic" {
-			t.Errorf("type = %q, want %q", got.Type, "epic")
+		if got.Type != "research" {
+			t.Errorf("type = %q, want %q", got.Type, "research")
 		}
 	})
 
@@ -4060,7 +4060,7 @@ func TestUpdateNibTypeChangeValidatesParent(t *testing.T) {
 		}
 	})
 
-	t.Run("change epic to milestone succeeds because all child types are valid under milestone", func(t *testing.T) {
+	t.Run("change epic to milestone rejects because milestones cannot have children", func(t *testing.T) {
 		epic := &nib.Nib{ID: "epic-tc3", Title: "Epic", Type: "epic", Status: "todo"}
 		task := &nib.Nib{ID: "task-tc3", Title: "Task", Type: "task", Status: "todo", Parent: "epic-tc3"}
 		mustCreate(t, core, epic)
@@ -4068,12 +4068,12 @@ func TestUpdateNibTypeChangeValidatesParent(t *testing.T) {
 
 		newType := "milestone"
 		input := model.UpdateNibInput{Type: &newType}
-		got, err := resolver.Mutation().UpdateNib(ctx, "epic-tc3", input)
-		if err != nil {
-			t.Fatalf("expected no error, got: %v", err)
+		_, err := resolver.Mutation().UpdateNib(ctx, "epic-tc3", input)
+		if err == nil {
+			t.Fatal("expected error when changing epic to milestone with children, got nil")
 		}
-		if got.Type != "milestone" {
-			t.Errorf("type = %q, want %q", got.Type, "milestone")
+		if !strings.Contains(err.Error(), "invalidate child") {
+			t.Errorf("expected child validation error, got: %v", err)
 		}
 	})
 
@@ -4102,26 +4102,26 @@ func TestUpdateNibTypeChangeValidatesParent(t *testing.T) {
 	})
 
 	t.Run("simultaneous type and parent change validates correctly", func(t *testing.T) {
-		ms := &nib.Nib{ID: "ms-tc-sim", Title: "Milestone", Type: "milestone", Status: "todo"}
+		epic := &nib.Nib{ID: "epic-tc-sim", Title: "Epic", Type: "epic", Status: "todo"}
 		feat := &nib.Nib{ID: "feat-tc-sim", Title: "Feature", Type: "feature", Status: "todo"}
 		task := &nib.Nib{ID: "task-tc-sim", Title: "Task", Type: "task", Status: "todo", Parent: "feat-tc-sim"}
-		mustCreate(t, core, ms)
+		mustCreate(t, core, epic)
 		mustCreate(t, core, feat)
 		mustCreate(t, core, task)
 
-		// Change task to epic AND move parent from feature to milestone — should succeed
-		newType := "epic"
-		newParent := "ms-tc-sim"
+		// Change task to bug AND move parent from feature to epic — should succeed
+		newType := "bug"
+		newParent := "epic-tc-sim"
 		input := model.UpdateNibInput{Type: &newType, Parent: graphql.OmittableOf(&newParent)}
 		got, err := resolver.Mutation().UpdateNib(ctx, "task-tc-sim", input)
 		if err != nil {
 			t.Fatalf("expected no error, got: %v", err)
 		}
-		if got.Type != "epic" {
-			t.Errorf("type = %q, want %q", got.Type, "epic")
+		if got.Type != "bug" {
+			t.Errorf("type = %q, want %q", got.Type, "bug")
 		}
-		if got.Parent != "ms-tc-sim" {
-			t.Errorf("parent = %q, want %q", got.Parent, "ms-tc-sim")
+		if got.Parent != "epic-tc-sim" {
+			t.Errorf("parent = %q, want %q", got.Parent, "epic-tc-sim")
 		}
 	})
 
