@@ -3,7 +3,6 @@ import { getValidChildTypes, isLeafType, canHaveChildren, VALID_CHILD_TYPES, typ
 
 describe("typeRank", () => {
   it("orders container types above leaf types", () => {
-    expect(typeRank("milestone")).toBe(3);
     expect(typeRank("epic")).toBe(2);
     expect(typeRank("feature")).toBe(1);
     expect(typeRank("bug")).toBe(1);
@@ -12,6 +11,10 @@ describe("typeRank", () => {
 
   it("ranks research at the leaf tier (0)", () => {
     expect(typeRank("research")).toBe(0);
+  });
+
+  it("ranks milestone above every container: the milestone-grouped view keys on rank until the Phase-8 membership-based view", () => {
+    expect(typeRank("milestone")).toBe(3);
   });
 
   it("treats unknown and empty types as leaf tier (0)", () => {
@@ -23,8 +26,8 @@ describe("typeRank", () => {
 // These mirror the backend exactly (internal/nibtypes/hierarchy.go); order
 // follows the canonical type order milestone, epic, bug, feature, task, research.
 describe("getValidChildTypes", () => {
-  it("milestone can have every non-milestone type as a child", () => {
-    expect(getValidChildTypes("milestone")).toEqual(["epic", "bug", "feature", "task", "research"]);
+  it("milestone can have no children at all", () => {
+    expect(getValidChildTypes("milestone")).toEqual([]);
   });
 
   it("epic can have bug, feature, task, and research children", () => {
@@ -67,8 +70,8 @@ describe("isLeafType", () => {
     expect(isLeafType("bug")).toBe(false);
   });
 
-  it("milestone is not a leaf type", () => {
-    expect(isLeafType("milestone")).toBe(false);
+  it("milestone is a leaf type: nothing nests under a waypoint", () => {
+    expect(isLeafType("milestone")).toBe(true);
   });
 
   it("epic is not a leaf type", () => {
@@ -85,8 +88,8 @@ describe("isLeafType", () => {
 });
 
 describe("canHaveChildren", () => {
-  it("milestone can have children", () => {
-    expect(canHaveChildren("milestone")).toBe(true);
+  it("milestone cannot have children", () => {
+    expect(canHaveChildren("milestone")).toBe(false);
   });
 
   it("epic can have children", () => {

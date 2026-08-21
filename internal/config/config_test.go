@@ -870,7 +870,7 @@ func TestTypeDescriptions(t *testing.T) {
 		cfg := Default()
 
 		expectedDescriptions := map[string]string{
-			"epic":      "A thematic container for related work; should have child nibs, not be worked on directly",
+			"epic":      "A deliverable that tops the work tree; should have child nibs, not be worked on directly",
 			"milestone": "A target release or checkpoint; group work that should ship together",
 			"feature":   "A user-facing capability or enhancement",
 			"bug":       "Something that is broken and needs fixing",

@@ -936,7 +936,7 @@ func TestNewHierarchyErrorText(t *testing.T) {
 		t.Errorf("exit = %d, want %d (validation)", output.ExitCode(ce.Code), output.ExitValidation)
 	}
 	// The message names the allowed parent types for a feature.
-	if !strings.Contains(ce.Error(), "milestone or epic") {
+	if !strings.Contains(ce.Error(), "parent of type epic") {
 		t.Errorf("message %q should name the allowed parent types", ce.Error())
 	}
 	if n := countNibFiles(t, nibsDir); n != 1 {
@@ -979,8 +979,8 @@ func TestNewHierarchyErrorJSON(t *testing.T) {
 	if env.Error.Message == "" {
 		t.Error("error envelope has empty message")
 	}
-	// A feature's legal parents are milestone and epic.
-	want := []string{"milestone", "epic"}
+	// A feature's only legal parent is an epic.
+	want := []string{"epic"}
 	if !reflect.DeepEqual(env.Error.AllowedParentTypes, want) {
 		t.Errorf("allowedParentTypes = %v, want %v", env.Error.AllowedParentTypes, want)
 	}

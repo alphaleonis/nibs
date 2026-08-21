@@ -13,14 +13,14 @@ func TestDefaultTypeForContext(t *testing.T) {
 		selectedType string
 		want         string
 	}{
-		{"milestone", "epic"},
+		{"milestone", "milestone"}, // no children, no work level → another waypoint
 		{"epic", "feature"},
 		{"feature", "task"},
 		{"bug", "task"},
 		{"task", "task"},
 		{"research", "task"},
-		{"", "feature"},        // no selection → feature
-		{"unknown", "feature"}, // unknown type → feature
+		{"", "feature"},     // no selection → feature
+		{"unknown", "task"}, // unknown types parent like tasks (EffectiveType) → task
 	}
 
 	for _, tt := range tests {

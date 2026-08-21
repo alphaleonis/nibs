@@ -1470,14 +1470,14 @@ func TestQueryCommandRefusalExitsLikeTheDirectCommand(t *testing.T) {
 	}
 }
 
-// addFeatureNib writes a second illegal-reparent subject into an existing
-// fixture dir: a feature, whose legal parents (milestone, epic) differ from an
-// epic's (milestone alone). Two refusals carrying DIFFERENT allowed sets are
+// addEpicNib writes a second illegal-reparent subject into an existing
+// fixture dir: an epic, which has no legal parent at all, unlike the fixture's
+// feature (epic alone). Two refusals carrying DIFFERENT allowed sets are
 // what makes a single-valued repair hint unrepresentable for a batch.
-func addFeatureNib(t *testing.T, nibsDir, id string) string {
+func addEpicNib(t *testing.T, nibsDir, id string) string {
 	t.Helper()
-	content := "---\nversion: 2\ntitle: Feature\nstatus: todo\ntype: feature\norder: c0\n---\n"
-	if err := os.WriteFile(dataPath(nibsDir, id+"--feature.md"), []byte(content), 0644); err != nil {
+	content := "---\nversion: 2\ntitle: Epic\nstatus: todo\ntype: epic\norder: c0\n---\n"
+	if err := os.WriteFile(dataPath(nibsDir, id+"--epic.md"), []byte(content), 0644); err != nil {
 		t.Fatal(err)
 	}
 	return id
@@ -1491,7 +1491,7 @@ func addFeatureNib(t *testing.T, nibsDir, id string) string {
 // Comparing the envelopes rather than asserting four independent expectations is
 // the point: the hint is the field that turns a refusal into a next action, and
 // a surface that omits it leaves an agent to re-derive the hierarchy rule. All
-// four run against one fixture and one refusal (an epic under a task), so any
+// four run against one fixture and one refusal (a feature under a task), so any
 // difference is the code under test.
 //
 // `query` is compared on code, exit and hint but not on message text: it renders
@@ -1506,7 +1506,7 @@ func TestHierarchyEnvelopeIsTheSameOnEveryWriteSurface(t *testing.T) {
 	t.Setenv("EDITOR", "")
 	t.Setenv("VISUAL", "")
 
-	nibsDir, epicID, taskID := writeIllegalReparentFixture(t)
+	nibsDir, featureID, taskID := writeIllegalReparentFixture(t)
 
 	run := func(t *testing.T, reset func(), args ...string) hierarchyEnvelope {
 		t.Helper()
@@ -1527,20 +1527,20 @@ func TestHierarchyEnvelopeIsTheSameOnEveryWriteSurface(t *testing.T) {
 		return env
 	}
 
-	// `new` creates a fresh epic under the task rather than moving one, but the
-	// refused link — and so the hint — is the same.
-	newEnv := run(t, resetNewFlags, "new", "New Epic", "-t", "epic", "--parent", taskID, "--json")
-	mvEnv := run(t, resetMvFlags, "mv", epicID, "--parent", taskID, "--json")
-	setEnv := run(t, resetSetFlags, "set", epicID, "--parent", taskID, "--json")
+	// `new` creates a fresh feature under the task rather than moving one, but
+	// the refused link — and so the hint — is the same.
+	newEnv := run(t, resetNewFlags, "new", "New Feature", "-t", "feature", "--parent", taskID, "--json")
+	mvEnv := run(t, resetMvFlags, "mv", featureID, "--parent", taskID, "--json")
+	setEnv := run(t, resetSetFlags, "set", featureID, "--parent", taskID, "--json")
 	queryEnv := run(t, resetQueryFlags, "query", "--json",
-		`mutation { updateNib(id: "`+epicID+`", input: {parent: "`+taskID+`"}) { id } }`)
+		`mutation { updateNib(id: "`+featureID+`", input: {parent: "`+taskID+`"}) { id } }`)
 
 	surfaces := map[string]hierarchyEnvelope{"new": newEnv, "mv": mvEnv, "set": setEnv, "query": queryEnv}
 	for name, env := range surfaces {
 		if env.Error.Code != output.ErrHierarchy {
 			t.Errorf("%s envelope code = %q, want %q", name, env.Error.Code, output.ErrHierarchy)
 		}
-		want := []string{"milestone"}
+		want := []string{"epic"}
 		if !slices.Equal(env.Error.AllowedParentTypes, want) {
 			t.Errorf("%s allowedParentTypes = %v, want %v", name, env.Error.AllowedParentTypes, want)
 		}
@@ -1567,7 +1567,7 @@ func TestHierarchyEnvelopeIsTheSameOnEveryWriteSurface(t *testing.T) {
 func TestQueryHierarchyBatchExitsLikeTheDirectCommands(t *testing.T) {
 	tests := []struct {
 		name       string
-		mutation   func(epicID, featureID, taskID string) string
+		mutation   func(featureID, epicID, taskID string) string
 		wantCode   string
 		wantExit   int
 		wantHint   []string
@@ -1577,21 +1577,21 @@ func TestQueryHierarchyBatchExitsLikeTheDirectCommands(t *testing.T) {
 			// One refusal, one allowed set: the hint is representable and the
 			// specific code survives.
 			name: "a lone illegal reparent keeps HIERARCHY and its hint",
-			mutation: func(epicID, _, taskID string) string {
-				return `mutation { updateNib(id: "` + epicID + `", input: {parent: "` + taskID + `"}) { id } }`
+			mutation: func(featureID, _, taskID string) string {
+				return `mutation { updateNib(id: "` + featureID + `", input: {parent: "` + taskID + `"}) { id } }`
 			},
 			wantCode: output.ErrHierarchy,
 			wantExit: output.ExitValidation,
-			wantHint: []string{"milestone"},
+			wantHint: []string{"epic"},
 		},
 		{
 			// Two refusals of the same class agree on the code, so it survives —
-			// but their allowed sets differ (milestone for an epic, milestone or
-			// epic for a feature) and one field cannot speak for both.
+			// but their allowed sets differ (epic for a feature, nothing at all
+			// for an epic) and one field cannot speak for both.
 			name: "two illegal reparents keep HIERARCHY but offer no single hint",
-			mutation: func(epicID, featureID, taskID string) string {
-				return `mutation { a: updateNib(id: "` + epicID + `", input: {parent: "` + taskID + `"}) { id } ` +
-					`b: updateNib(id: "` + featureID + `", input: {parent: "` + taskID + `"}) { id } }`
+			mutation: func(featureID, epicID, taskID string) string {
+				return `mutation { a: updateNib(id: "` + featureID + `", input: {parent: "` + taskID + `"}) { id } ` +
+					`b: updateNib(id: "` + epicID + `", input: {parent: "` + taskID + `"}) { id } }`
 			},
 			wantCode:   output.ErrHierarchy,
 			wantExit:   output.ExitValidation,
@@ -1604,8 +1604,8 @@ func TestQueryHierarchyBatchExitsLikeTheDirectCommands(t *testing.T) {
 			// generalizes to the class rather than claiming either specific
 			// refusal about the other's failure.
 			name: "an illegal reparent beside a bad status stays exit 2",
-			mutation: func(epicID, _, taskID string) string {
-				return `mutation { a: updateNib(id: "` + epicID + `", input: {parent: "` + taskID + `"}) { id } ` +
+			mutation: func(featureID, _, taskID string) string {
+				return `mutation { a: updateNib(id: "` + featureID + `", input: {parent: "` + taskID + `"}) { id } ` +
 					`b: updateNib(id: "` + taskID + `", input: {status: "bogus"}) { id } }`
 			},
 			wantCode:   output.ErrValidation,
@@ -1616,8 +1616,8 @@ func TestQueryHierarchyBatchExitsLikeTheDirectCommands(t *testing.T) {
 			// Different exit classes: exit 2 asserts the caller's input was at
 			// fault, which the missing id beside it does not support.
 			name: "an illegal reparent beside an unknown id is uncategorized",
-			mutation: func(epicID, _, taskID string) string {
-				return `mutation { a: updateNib(id: "` + epicID + `", input: {parent: "` + taskID + `"}) { id } ` +
+			mutation: func(featureID, _, taskID string) string {
+				return `mutation { a: updateNib(id: "` + featureID + `", input: {parent: "` + taskID + `"}) { id } ` +
 					`b: updateNib(id: "nosuch", input: {title: "x"}) { id } }`
 			},
 			wantCode:   output.ErrUncategorized,
@@ -1630,10 +1630,10 @@ func TestQueryHierarchyBatchExitsLikeTheDirectCommands(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Cleanup(resetQueryFlags)
 			resetQueryFlags()
-			nibsDir, epicID, taskID := writeIllegalReparentFixture(t)
-			featureID := addFeatureNib(t, nibsDir, "ft")
+			nibsDir, featureID, taskID := writeIllegalReparentFixture(t)
+			epicID := addEpicNib(t, nibsDir, "ep")
 
-			out, err := runQueryCmd(t, nibsDir, tt.mutation(epicID, featureID, taskID), "--json")
+			out, err := runQueryCmd(t, nibsDir, tt.mutation(featureID, epicID, taskID), "--json")
 			if err == nil {
 				t.Fatalf("mutation returned no error; out: %q", out)
 			}

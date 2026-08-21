@@ -150,6 +150,9 @@ func TestFileSourcedTextNeverReachesAnEchoSurfaceRaw(t *testing.T) {
 					InvalidEnums: []nibcore.InvalidEnum{
 						{NibID: "tnib-0001", Reason: "invalid priority " + deceptivePayload},
 					},
+					InvalidAxes: []nibcore.InvalidAxis{
+						{NibID: "tnib-0001", Path: "data/" + deceptivePayload, Reason: "a milestone cannot have an area " + deceptivePayload},
+					},
 					NearMissKeys: []nibcore.NearMissKey{
 						{NibID: "tnib-0001", Path: "data/" + deceptivePayload, Key: deceptivePayload, Modeled: "milestone"},
 					},

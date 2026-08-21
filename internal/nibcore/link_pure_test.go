@@ -288,11 +288,19 @@ func TestValidateParentInMap(t *testing.T) {
 		}
 	})
 
-	t.Run("valid: epic under milestone", func(t *testing.T) {
-		child := &nib.Nib{ID: "new-epic", Type: "epic"}
-		err := ValidateParentInMap(nibs, child, "milestone-1")
+	t.Run("valid: feature under epic", func(t *testing.T) {
+		child := &nib.Nib{ID: "new-feature", Type: "feature"}
+		err := ValidateParentInMap(nibs, child, "epic-1")
 		if err != nil {
 			t.Errorf("expected nil, got %v", err)
+		}
+	})
+
+	t.Run("invalid: epic under milestone", func(t *testing.T) {
+		child := &nib.Nib{ID: "new-epic", Type: "epic"}
+		err := ValidateParentInMap(nibs, child, "milestone-1")
+		if err == nil {
+			t.Error("expected error for epic under milestone, got nil")
 		}
 	})
 
@@ -729,6 +737,39 @@ func TestCheckAllLinksInMapFlagsNearMissKeys(t *testing.T) {
 	}
 	if result.NearMissIssues() != len(want) {
 		t.Errorf("NearMissIssues() = %d, want %d", result.NearMissIssues(), len(want))
+	}
+}
+
+// TestCheckAllLinksInMapFlagsInvalidAxes pins the axis-rule finding: a
+// milestone-typed nib carrying a `milestone:` or `area:` value is reported with
+// the file and nibtypes.ValidateAxes' reason, while the same values on a work
+// type (and a clean milestone) stay unflagged. The findings arrive sorted by
+// nib id and count as issues. Without this finding the write-side strictness
+// makes a hand-edited offender un-updatable through nibs with no diagnostic
+// naming the file.
+func TestCheckAllLinksInMapFlagsInvalidAxes(t *testing.T) {
+	nibs := map[string]*nib.Nib{
+		// Ids deliberately out of map-literal order to exercise the sorting.
+		"chk-b2": {ID: "chk-b2", Status: "todo", Type: "milestone", Path: "data/chk-b2--assigned.md", Milestone: "chk-d4"},
+		"chk-a1": {ID: "chk-a1", Status: "todo", Type: "milestone", Path: "data/chk-a1--located.md", Area: "web/ui"},
+		"chk-c3": {ID: "chk-c3", Status: "todo", Type: "task", Path: "data/chk-c3--work.md", Milestone: "chk-d4", Area: "web/ui"},
+		"chk-d4": {ID: "chk-d4", Status: "todo", Type: "milestone", Path: "data/chk-d4--clean.md"},
+	}
+
+	result := CheckAllLinksInMap(nibs, "", "chk-")
+
+	want := []InvalidAxis{
+		{NibID: "chk-a1", Path: "data/chk-a1--located.md", Reason: "a milestone cannot have an area"},
+		{NibID: "chk-b2", Path: "data/chk-b2--assigned.md", Reason: "a milestone cannot be assigned to a milestone"},
+	}
+	if !reflect.DeepEqual(result.InvalidAxes, want) {
+		t.Errorf("InvalidAxes = %+v, want %+v", result.InvalidAxes, want)
+	}
+	if result.TotalIssues() != len(want) {
+		t.Errorf("TotalIssues() = %d, want %d (the axis findings must count)", result.TotalIssues(), len(want))
+	}
+	if result.AxisIssues() != len(want) {
+		t.Errorf("AxisIssues() = %d, want %d", result.AxisIssues(), len(want))
 	}
 }
 

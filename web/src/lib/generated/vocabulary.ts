@@ -29,7 +29,7 @@ export const TYPES: readonly string[] = ["milestone", "epic", "bug", "feature", 
 
 /** Parent type → legal child types (Go nibtypes.ValidChildTypes). */
 export const VALID_CHILD_TYPES: Record<string, readonly string[]> = {
-  milestone: ["epic", "bug", "feature", "task", "research"],
+  milestone: [],
   epic: ["bug", "feature", "task", "research"],
   bug: ["task", "research"],
   feature: ["task", "research"],
@@ -37,7 +37,7 @@ export const VALID_CHILD_TYPES: Record<string, readonly string[]> = {
   research: [],
 };
 
-/** Container→leaf rank derived from the hierarchy: a leaf ranks 0, a container one above its highest child. */
+/** Container→leaf rank derived from the hierarchy: a leaf ranks 0, a container one above its highest child. Milestone is pinned above every container — the milestone-grouped view keys on rank until the Phase-8 membership-based view. */
 export const TYPE_RANK: Record<string, number> = {
   milestone: 3,
   epic: 2,

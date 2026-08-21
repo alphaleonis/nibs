@@ -9,6 +9,7 @@ import (
 
 	"github.com/alphaleonis/nibs/internal/nib"
 	"github.com/alphaleonis/nibs/internal/nibcore"
+	"github.com/alphaleonis/nibs/internal/nibtypes"
 )
 
 // schema.resolvers.go is generated but not disposable: gqlgen rewrites it on
@@ -236,6 +237,14 @@ func (r *Resolver) validateAndSetParent(b *nib.Nib, parentID string) error {
 // subject is already durable.
 func (r *mutationResolver) preValidateSubject(b *nib.Nib, ifMatch *string) error {
 	if err := r.Validator.ValidateEnums(b); err != nil {
+		return err
+	}
+
+	// The axis rule (a milestone takes neither assignment axis) is pure — no
+	// config, no store state — so it is checked directly rather than through the
+	// Validator. Writer.Update repeats it under the write lock; this call, like
+	// ValidateEnums above, only refuses the doomed subject early.
+	if err := nibtypes.ValidateAxes(b.EffectiveType(), b.Milestone, b.Area); err != nil {
 		return err
 	}
 

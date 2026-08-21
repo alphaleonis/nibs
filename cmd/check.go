@@ -88,6 +88,8 @@ var checkCmd = &cobra.Command{
 - Unparseable nib files (skipped at load, so missing from every query)
 - Duplicate nib ids on disk (one file silently shadows another)
 - Out-of-enum field values (loaded as written, so they sort and filter oddly)
+- Axis keys a nib's type refuses (a hand-edited milestone carrying ` + "`milestone:`" + `
+  or ` + "`area:`" + ` loads as written, but every update of it through nibs is refused)
 - Near-miss front-matter keys (a mistyped modeled key like ` + "`milestone-order:`" + ` is
   kept as an unknown key, invisible to every filter)
 - Broken links (links to non-existent nibs)
@@ -100,9 +102,9 @@ issue, so an otherwise clean store exits 1 until ` + "`nibs migrate`" + ` has ru
 
 Use --fix to automatically remove broken links and self-references. --fix WRITES,
 so unlike plain check it refuses a store needing migration.
-Note: cycles, unparseable files, duplicate ids, out-of-enum values, near-miss
-keys and a pending migration cannot be auto-fixed and require manual
-intervention.`,
+Note: cycles, unparseable files, duplicate ids, out-of-enum values, refused
+axis keys, near-miss keys and a pending migration cannot be auto-fixed and
+require manual intervention.`,
 	Args: codedNoArgs(&checkJSON), // operates on the whole store; takes no positional args
 	RunE: func(cmd *cobra.Command, args []string) error {
 		totalIssues, err := runCheck(getApp(cmd))
@@ -286,7 +288,7 @@ func runCheck(app *App) (int, error) {
 	// Show success if no issues. This speaks only for the LINK categories: a
 	// store whose only problems are load-time or field-level still has clean
 	// links, and HasIssues() covers all kinds.
-	if !checkJSON && linkResult.TotalIssues()-linkResult.LoadIssues()-linkResult.EnumIssues()-linkResult.NearMissIssues() == 0 && fixed == 0 {
+	if !checkJSON && linkResult.TotalIssues()-linkResult.LoadIssues()-linkResult.EnumIssues()-linkResult.AxisIssues()-linkResult.NearMissIssues() == 0 && fixed == 0 {
 		ui.Printf("  %s No link issues found\n", ui.Success.Render("✓"))
 	}
 
@@ -485,11 +487,14 @@ func loadWasPartial(migration *migrationStatus) *bool {
 // renderFieldDiagnostics prints the per-file field findings in text mode,
 // under the Nib Files heading (they are per-file integrity, reported next to
 // the other conditions --fix cannot repair): out-of-enum values, then
-// near-miss keys. Not auto-fixable by design, so --fix names them like the
-// cycle branch does instead of skipping them silently. The out-of-enum
-// remediation is per finding — see fieldRemediation; a near-miss key has one
-// remediation (rename it to the modeled key, or remove it), and --fix cannot
-// apply it because a resembling spelling is not proof of the author's intent.
+// axis-rule violations, then near-miss keys. Not auto-fixable by design, so
+// --fix names them like the cycle branch does instead of skipping them
+// silently. The out-of-enum remediation is per finding — see fieldRemediation;
+// an axis violation has one remediation (remove the axis key, or retype the
+// nib), and --fix cannot choose between the type and the assignment for the
+// author; a near-miss key has one remediation (rename it to the modeled key,
+// or remove it), and --fix cannot apply it because a resembling spelling is
+// not proof of the author's intent.
 func renderFieldDiagnostics(app *App, result *nibcore.LinkCheckResult) {
 	for _, ie := range result.InvalidEnums {
 		remedy := fieldRemediation(app, ie)
@@ -501,6 +506,19 @@ func renderFieldDiagnostics(app *App, result *nibcore.LinkCheckResult) {
 		} else {
 			ui.Printf("  %s %s: %s (loads as written; %s)\n",
 				ui.Danger.Render("✗"), ie.NibID, flattenReason(ie.Reason), remedy)
+		}
+	}
+	for _, ia := range result.InvalidAxes {
+		// The path comes from the file and the id from its filename, so both
+		// cross the rendering boundary; the reason goes through with them like
+		// every other reason field on this surface.
+		finding := fmt.Sprintf("%s: %s", stripControlChars(ia.Path), flattenReason(ia.Reason))
+		if checkFix {
+			ui.Printf("  %s Cannot auto-fix %s: %s (remove the axis key, or retype the nib — choosing between the type and the assignment is the author's call)\n",
+				ui.Warning.Render("!"), stripControlChars(ia.NibID), finding)
+		} else {
+			ui.Printf("  %s %s: %s (loads as written, but every update of this nib through nibs is refused; remove the axis key by hand)\n",
+				ui.Danger.Render("✗"), stripControlChars(ia.NibID), finding)
 		}
 	}
 	for _, nm := range result.NearMissKeys {

@@ -80,6 +80,57 @@ assignee: someone
 
 Body.
 `
+
+	// A clean milestone, present so the axis fixtures below can point their
+	// `milestone:` at a real nib — a dangling target would add a broken-link
+	// finding and muddy the axis assertions.
+	chkWaypointNib = `---
+version: 2
+title: Waypoint
+status: todo
+type: milestone
+---
+
+Body.
+`
+
+	// Hand-edited axis offenders: the write paths refuse these shapes, so only
+	// a hand edit produces them — which is exactly what the check finding is for.
+	chkMilestoneWithMilestoneNib = `---
+version: 2
+title: Assigned waypoint
+status: todo
+type: milestone
+milestone: chk-way1
+---
+
+Body.
+`
+
+	chkMilestoneWithAreaNib = `---
+version: 2
+title: Located waypoint
+status: todo
+type: milestone
+area: web/ui
+---
+
+Body.
+`
+
+	// The same axis keys on a work type are legal and must stay unflagged.
+	chkTaskWithAxesNib = `---
+version: 2
+title: Assigned task
+status: todo
+type: task
+priority: normal
+milestone: chk-way1
+area: web/ui
+---
+
+Body.
+`
 )
 
 // resetCheckFlags clears checkCmd's package-level flag vars and Cobra's
@@ -312,6 +363,109 @@ func TestCheckFlagsNearMissKeys(t *testing.T) {
 		}
 		if total != 1 {
 			t.Errorf("total issues after --fix = %d, want 1 (the near-miss key remains outstanding)", total)
+		}
+	})
+}
+
+// TestCheckReportsAxisViolations pins the axis-rule finding end to end: a
+// hand-edited milestone-typed nib carrying `milestone:` (and one carrying
+// `area:`) is reported by `nibs check` naming the file and the reason — the
+// write paths refuse this shape strictly, so without the finding such a nib is
+// un-updatable through nibs with nothing pointing at the offending file. The
+// same keys on a work type stay unflagged, in --json the finding rides the
+// invalid_axes array, and --fix leaves the file alone (choosing between the
+// type and the assignment is the author's call) while saying so.
+func TestCheckReportsAxisViolations(t *testing.T) {
+	files := map[string]string{
+		"chk-way1--waypoint.md": chkWaypointNib,
+		"chk-axm1--assigned.md": chkMilestoneWithMilestoneNib,
+		"chk-axa1--located.md":  chkMilestoneWithAreaNib,
+		"chk-axok1--task.md":    chkTaskWithAxesNib,
+	}
+
+	t.Run("text report names the file and the refused axis", func(t *testing.T) {
+		app, _ := setupCheckTest(t, files)
+		var total int
+		var runErr error
+		out := captureStdout(t, func() { total, runErr = runCheck(app) })
+		if runErr != nil {
+			t.Fatalf("runCheck error = %v", runErr)
+		}
+		if total != 2 {
+			t.Errorf("total issues = %d, want 2 (one per axis offender)", total)
+		}
+		for _, want := range []string{
+			"data/chk-axm1--assigned.md", "cannot be assigned to a milestone",
+			"data/chk-axa1--located.md", "cannot have an area",
+		} {
+			if !strings.Contains(out, want) {
+				t.Errorf("report should contain %q, got:\n%s", want, out)
+			}
+		}
+		// Legal shapes stay silent: the clean milestone and the axis-carrying
+		// work nib must not be flagged.
+		for _, silent := range []string{"chk-axok1", "chk-way1:"} {
+			if strings.Contains(out, silent) {
+				t.Errorf("legal shape %q must stay unflagged, got:\n%s", silent, out)
+			}
+		}
+		// The finding is per-file integrity, not a link problem: chk-axm1's
+		// `milestone:` target exists, so the link section still reports clean.
+		if !strings.Contains(out, "No link issues found") {
+			t.Errorf("links are clean and the report should say so, got:\n%s", out)
+		}
+	})
+
+	t.Run("json envelope carries invalid_axes", func(t *testing.T) {
+		app, _ := setupCheckTest(t, files)
+		checkJSON = true
+		var runErr error
+		out := captureStdout(t, func() { _, runErr = runCheck(app) })
+		if runErr != nil {
+			t.Fatalf("runCheck error = %v", runErr)
+		}
+		var got checkResult
+		if err := json.Unmarshal([]byte(out), &got); err != nil {
+			t.Fatalf("unmarshal: %v\noutput: %s", err, out)
+		}
+		if got.Success {
+			t.Error("success = true; want false with axis violations present")
+		}
+		if got.NibIssues == nil || len(got.NibIssues.InvalidAxes) != 2 {
+			t.Fatalf("invalid_axes = %+v, want exactly 2 entries", got.NibIssues)
+		}
+		want := []nibcore.InvalidAxis{
+			{NibID: "chk-axa1", Path: "data/chk-axa1--located.md", Reason: "a milestone cannot have an area"},
+			{NibID: "chk-axm1", Path: "data/chk-axm1--assigned.md", Reason: "a milestone cannot be assigned to a milestone"},
+		}
+		for i, w := range want {
+			if got.NibIssues.InvalidAxes[i] != w {
+				t.Errorf("invalid_axes[%d] = %+v, want %+v", i, got.NibIssues.InvalidAxes[i], w)
+			}
+		}
+	})
+
+	t.Run("--fix leaves the axis key alone and says it cannot fix it", func(t *testing.T) {
+		app, nibsDir := setupCheckTest(t, files)
+		checkFix = true
+		var total int
+		var runErr error
+		out := captureStdout(t, func() { total, runErr = runCheck(app) })
+		if runErr != nil {
+			t.Fatalf("runCheck error = %v", runErr)
+		}
+		raw, err := os.ReadFile(dataPath(nibsDir, "chk-axm1--assigned.md"))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if !strings.Contains(string(raw), "milestone: chk-way1") {
+			t.Errorf("--fix rewrote the axis key; choosing between type and assignment is the author's call:\n%s", raw)
+		}
+		if !strings.Contains(out, "Cannot auto-fix") {
+			t.Errorf("--fix should say the finding is not auto-fixable, got:\n%s", out)
+		}
+		if total != 2 {
+			t.Errorf("total issues after --fix = %d, want 2 (the axis findings remain outstanding)", total)
 		}
 	})
 }

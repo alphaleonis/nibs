@@ -45,7 +45,7 @@ func (e *HierarchyError) Error() string {
 	if len(e.Allowed) == 0 {
 		return fmt.Sprintf("%s cannot have a parent", e.ChildType)
 	}
-	return fmt.Sprintf("%s can only have a %s parent, not %s", e.ChildType, JoinWithOr(e.Allowed), e.ParentType)
+	return fmt.Sprintf("%s can only have a parent of type %s, not %s", e.ChildType, JoinWithOr(e.Allowed), e.ParentType)
 }
 
 // ValidateParentType checks whether childType can have parentType as a parent.
@@ -66,19 +66,48 @@ func ValidateParentType(childType, parentType string) error {
 
 // ValidParentTypes returns the valid parent types for a given nib type.
 // Returns nil if the nib type cannot have a parent.
+//
+// Milestones sit outside the parent graph entirely: they are waypoints, not
+// containers, so they neither take a parent nor appear as one — work reaches a
+// milestone through the `milestone:` assignment axis instead. Epics top the
+// work tree.
 func ValidParentTypes(nibType string) []string {
 	switch nibType {
 	case "milestone":
-		return nil // milestones cannot have parents
+		return nil
 	case "epic":
-		return []string{"milestone"}
+		return nil
 	case "feature", "bug":
-		return []string{"milestone", "epic"}
+		return []string{"epic"}
 	case "task", "research":
-		return []string{"milestone", "epic", "feature", "bug"}
+		return []string{"epic", "feature", "bug"}
 	default:
-		return []string{"milestone", "epic", "feature", "bug"} // default for unknown types
+		return []string{"epic", "feature", "bug"} // default for unknown types
 	}
+}
+
+// CanHaveParent reports whether the nib type may take a parent at all. Both
+// milestone and epic are root-only — the milestone as a waypoint outside the
+// parent graph, the epic as the top of the work tree — so "no valid parents"
+// must not be read as "is a milestone".
+func CanHaveParent(nibType string) bool {
+	return ValidParentTypes(nibType) != nil
+}
+
+// ValidateAxes checks the assignment axes against the nib's type. A milestone
+// is a waypoint, not work: it takes neither a milestone assignment nor an
+// area. Every other type (unknown ones included) takes both.
+func ValidateAxes(nibType, milestone, area string) error {
+	if nibType != "milestone" {
+		return nil
+	}
+	if milestone != "" {
+		return fmt.Errorf("a milestone cannot be assigned to a milestone")
+	}
+	if area != "" {
+		return fmt.Errorf("a milestone cannot have an area")
+	}
+	return nil
 }
 
 // ValidChildTypes returns the nib types that can be children of the given parent type.

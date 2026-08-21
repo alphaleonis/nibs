@@ -108,7 +108,7 @@ With `--json`, an error is `{"error":{"code":"<CODE>","message":"<msg>"}}`. **On
 ## Relationships
 
 Set with `nibs set <id>` (or at creation with `nibs new`):
-- **Parent** (`--parent <id>`): hierarchy (milestone → epic → feature → task/bug/research). See `nibs catalog hierarchy` for the legal parent/child matrix.
+- **Parent** (`--parent <id>`): hierarchy (epic → feature/bug → task/research; milestones take no children). See `nibs catalog hierarchy` for the legal parent/child matrix.
 - **Blocking** (`--blocking <id>`): THIS nib blocks another.
 - **Blocked-by** (`--blocked-by <id>`): THIS nib is blocked by another. **Prefer this when creating dependent work.**
 - **Mentions** (`#<id>` in body prose): weak informational references. Write `#<short-id>` (e.g. `#gx0f`) or `#<full-id>`; a bare id without `#` is NOT a mention. Mentions inside code spans/blocks, links, images, and HTML are skipped; heading text counts. Mentions are informational only — use `--blocked-by` for real dependencies.

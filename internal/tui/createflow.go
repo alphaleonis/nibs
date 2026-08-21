@@ -1,6 +1,8 @@
 package tui
 
 import (
+	"slices"
+
 	"github.com/alphaleonis/nibs/internal/nib"
 	"github.com/alphaleonis/nibs/internal/nibtypes"
 )
@@ -15,19 +17,29 @@ type createTypeSelectedMsg struct {
 	nibType string
 }
 
-// defaultTypeForContext computes the smart default type for a new nib
-// based on the type of the currently selected nib.
+// defaultTypeForContext computes the smart default type for a new nib from the
+// hierarchy rules rather than a hand-kept ladder, so a rule change reshapes the
+// suggestions instead of stranding them:
+//
+//   - a selection that can take children suggests its preferred legal child —
+//     feature before task, the primary decomposition at each tier (this also
+//     covers no selection: ValidChildTypes("") is every type, so it suggests
+//     the generic starting point, a feature)
+//   - a childless selection at the task level (task, research, an unknown
+//     type) suggests more task-level work beside it
+//   - a milestone takes no children and sits at no work level, so it suggests
+//     another waypoint
 func defaultTypeForContext(selectedNibType string) string {
-	switch selectedNibType {
-	case "milestone":
-		return "epic"
-	case "epic":
-		return "feature"
-	case "feature", "bug", "task", "research":
-		return "task"
-	default:
-		return "feature" // no selection or unknown type
+	children := nibtypes.ValidChildTypes(selectedNibType)
+	for _, candidate := range []string{"feature", "task"} {
+		if slices.Contains(children, candidate) {
+			return candidate
+		}
 	}
+	if sameParentTypes(nibtypes.ValidParentTypes(selectedNibType), nibtypes.ValidParentTypes("task")) {
+		return "task"
+	}
+	return selectedNibType
 }
 
 // inferParent determines the appropriate parent and afterID for a new nib

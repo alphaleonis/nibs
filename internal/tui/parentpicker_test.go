@@ -4,6 +4,7 @@ import (
 	"strings"
 	"testing"
 
+	tea "charm.land/bubbletea/v2"
 	"github.com/alphaleonis/nibs/internal/config"
 	"github.com/alphaleonis/nibs/internal/nib"
 )
@@ -134,5 +135,32 @@ func TestParentPicker_ClearParentAlwaysPresent(t *testing.T) {
 	}
 	if _, ok := items[0].(clearParentItem); !ok {
 		t.Error("first item should be clearParentItem")
+	}
+}
+
+// TestParentPicker_RootOnlyTypesDoNotOpen pins the open gate in App.Update:
+// pressing 'p' on a nib whose type cannot take a parent — milestone AND epic
+// are both root-only — leaves the picker closed, while a parentable type
+// opens it.
+func TestParentPicker_RootOnlyTypesDoNotOpen(t *testing.T) {
+	tests := []struct {
+		nibType  string
+		wantOpen bool
+	}{
+		{"milestone", false},
+		{"epic", false},
+		{"feature", true},
+		{"task", true},
+	}
+	for _, tt := range tests {
+		t.Run(tt.nibType, func(t *testing.T) {
+			app, _ := setupTestApp(t, []*nib.Nib{
+				{ID: "nib-1", Title: "Selected", Status: "todo", Type: tt.nibType},
+			})
+			sendKey(app, tea.KeyPressMsg{Code: 'p', Text: "p"})
+			if got := app.state == viewParentPicker; got != tt.wantOpen {
+				t.Errorf("pressing p on a %s: picker open = %v, want %v", tt.nibType, got, tt.wantOpen)
+			}
+		})
 	}
 }

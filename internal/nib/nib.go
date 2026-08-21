@@ -176,7 +176,7 @@ type Nib struct {
 	// Body is the markdown content after the front matter.
 	Body string `yaml:"-" json:"body,omitempty"`
 
-	// Parent is the optional parent nib ID (milestone, epic, or feature).
+	// Parent is the optional parent nib ID (epic, feature, or bug).
 	Parent string `yaml:"parent,omitempty" json:"parent,omitempty"`
 
 	// Blocking is DEPRECATED for computing links: in v1+, blocking is derived by

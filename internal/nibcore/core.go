@@ -18,6 +18,7 @@ import (
 	"github.com/alphaleonis/nibs/internal/config"
 	"github.com/alphaleonis/nibs/internal/fsutil"
 	"github.com/alphaleonis/nibs/internal/nib"
+	"github.com/alphaleonis/nibs/internal/nibtypes"
 	"github.com/alphaleonis/nibs/internal/safetext"
 	"github.com/alphaleonis/nibs/internal/search"
 	"github.com/alphaleonis/nibs/internal/store"
@@ -391,6 +392,16 @@ func (c *Core) loadFromDisk() error {
 		// silently flowing into ranking, filters, and the web UI.
 		if enumErr := c.ValidateEnums(b); enumErr != nil {
 			warns.warn("nib %s: %v — value loads as written; `nibs migrate` rewrites known legacy values, `nibs check` reports the rest", b.ID, enumErr)
+		}
+
+		// The axis rule (nibtypes.ValidateAxes) shares the enum posture — strict
+		// on the write paths, tolerant here — but its dead end is worse than a
+		// skewed filter: every subsequent update of the offender through nibs is
+		// refused, and no CLI flag or mutation input exposes the axis fields for
+		// repair. This warning plus the `nibs check` finding (see
+		// CheckAllLinksInMap) name the nib before that dead end is hit.
+		if axisErr := nibtypes.ValidateAxes(b.EffectiveType(), b.Milestone, b.Area); axisErr != nil {
+			warns.warn("nib %s: %v — value loads as written, but every update of this nib through nibs is refused until the axis key is removed by hand; `nibs check` names the file", b.ID, axisErr)
 		}
 
 		c.nibs[b.ID] = b
@@ -941,6 +952,9 @@ func (c *Core) Create(b *nib.Nib) error {
 	if err := c.ValidateEnums(b); err != nil {
 		return err
 	}
+	if err := nibtypes.ValidateAxes(b.EffectiveType(), b.Milestone, b.Area); err != nil {
+		return err
+	}
 
 	// Generate ID if not provided. Redraw on a collision with a live id —
 	// active or archived, both are in c.nibs — because a single draw once
@@ -1233,6 +1247,9 @@ func (c *Core) Update(b *nib.Nib, ifMatch *string) error {
 	// Reject invalid enum values before the concurrency guard or any write
 	// — input validity is independent of the etag precondition.
 	if err := c.ValidateEnums(b); err != nil {
+		return err
+	}
+	if err := nibtypes.ValidateAxes(b.EffectiveType(), b.Milestone, b.Area); err != nil {
 		return err
 	}
 

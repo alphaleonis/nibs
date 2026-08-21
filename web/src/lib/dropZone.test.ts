@@ -75,8 +75,8 @@ describe("isValidParent", () => {
     expect(isValidParent("task", "feature")).toBe(true);
   });
 
-  it("epic can be child of milestone", () => {
-    expect(isValidParent("epic", "milestone")).toBe(true);
+  it("epic cannot be child of milestone", () => {
+    expect(isValidParent("epic", "milestone")).toBe(false);
   });
 
   it("milestone cannot be child of epic", () => {

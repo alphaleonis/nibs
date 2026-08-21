@@ -9,6 +9,7 @@ import (
 
 	"github.com/alphaleonis/nibs/internal/fsutil"
 	"github.com/alphaleonis/nibs/internal/nib"
+	"github.com/alphaleonis/nibs/internal/nibtypes"
 )
 
 // BrokenLink represents a link to a non-existent nib.
@@ -82,6 +83,21 @@ type InvalidEnum struct {
 	Reason string `json:"reason"`
 }
 
+// InvalidAxis is a loaded nib whose assignment axes violate its type's axis
+// rule (nibtypes.ValidateAxes: a milestone-typed nib carrying a `milestone:`
+// or `area:` value). The rule is strict on the write paths only, so the value
+// loads as written (see loadFromDisk's diagnostic warning) — but then every
+// update of the nib through nibs is refused, and no CLI flag or mutation input
+// exposes the axis fields for repair. This finding is what names the file the
+// hand edit has to fix.
+type InvalidAxis struct {
+	NibID string `json:"nib_id"`
+	// Path is relative to the nibs root with forward slashes, like nib.Path.
+	Path string `json:"path"`
+	// Reason is ValidateAxes' message, naming the axis the type refuses.
+	Reason string `json:"reason"`
+}
+
 // NearMissKey is a loaded nib carrying an unknown front-matter key whose
 // spelling is a near miss of a modeled key (a dash for the underscore, a case
 // variant, stray underscores — the rule is nib.ModeledKeyResembling's). The
@@ -119,6 +135,10 @@ type LinkCheckResult struct {
 	// carry.
 	InvalidEnums []InvalidEnum `json:"invalid_enums"`
 
+	// Axis integrity. Derivable from the nibs alone (the axis rule is
+	// nibtypes.ValidateAxes, config-free), so the pure map function carries it.
+	InvalidAxes []InvalidAxis `json:"invalid_axes"`
+
 	// Key integrity. Derivable from the nibs alone (the modeled key set is a
 	// compile-time fact of the nib package), so the pure map function carries it.
 	NearMissKeys []NearMissKey `json:"near_miss_keys"`
@@ -131,7 +151,7 @@ func (r *LinkCheckResult) HasIssues() bool {
 
 // TotalIssues returns the total count of all issues.
 func (r *LinkCheckResult) TotalIssues() int {
-	return len(r.BrokenLinks) + len(r.SelfLinks) + len(r.Cycles) + len(r.BrokenDocuments) + r.LoadIssues() + r.EnumIssues() + r.NearMissIssues()
+	return len(r.BrokenLinks) + len(r.SelfLinks) + len(r.Cycles) + len(r.BrokenDocuments) + r.LoadIssues() + r.EnumIssues() + r.AxisIssues() + r.NearMissIssues()
 }
 
 // LoadIssues returns the count of load-time integrity issues alone. Callers
@@ -146,6 +166,12 @@ func (r *LinkCheckResult) LoadIssues() int {
 // same render-them-apart reason as LoadIssues.
 func (r *LinkCheckResult) EnumIssues() int {
 	return len(r.InvalidEnums)
+}
+
+// AxisIssues returns the count of axis-rule findings alone, for the same
+// render-them-apart reason as LoadIssues.
+func (r *LinkCheckResult) AxisIssues() int {
+	return len(r.InvalidAxes)
 }
 
 // NearMissIssues returns the count of near-miss key findings alone, for the
@@ -187,6 +213,7 @@ func CheckAllLinksInMap(nibs map[string]*nib.Nib, projectRoot, configPrefix stri
 		UnparseableFiles: []UnparseableFile{},
 		DuplicateIDs:     []DuplicateID{},
 		InvalidEnums:     []InvalidEnum{},
+		InvalidAxes:      []InvalidAxis{},
 		NearMissKeys:     []NearMissKey{},
 	}
 
@@ -270,9 +297,7 @@ func CheckAllLinksInMap(nibs map[string]*nib.Nib, projectRoot, configPrefix stri
 		result.Cycles = append(result.Cycles, cycles...)
 	}
 
-	// Key integrity: an Extra key spelled a near miss from a modeled key
-	// (nib.ModeledKeyResembling's rule) loads losslessly but is invisible to
-	// every filter, so it is reported here. Sorted by id and then key — both
+	// Per-nib field findings, sorted by id (and near-miss keys by key) — both
 	// maps would otherwise shuffle the report run to run.
 	ids := make([]string, 0, len(nibs))
 	for id := range nibs {
@@ -281,6 +306,15 @@ func CheckAllLinksInMap(nibs map[string]*nib.Nib, projectRoot, configPrefix stri
 	sort.Strings(ids)
 	for _, id := range ids {
 		b := nibs[id]
+		// Axis integrity: the axis rule is strict on the write paths only, so a
+		// hand-edited offender loads as written — and then every update of it
+		// through nibs is refused. This finding is what names the file to fix.
+		if err := nibtypes.ValidateAxes(b.EffectiveType(), b.Milestone, b.Area); err != nil {
+			result.InvalidAxes = append(result.InvalidAxes, InvalidAxis{NibID: b.ID, Path: b.Path, Reason: err.Error()})
+		}
+		// Key integrity: an Extra key spelled a near miss from a modeled key
+		// (nib.ModeledKeyResembling's rule) loads losslessly but is invisible to
+		// every filter, so it is reported here.
 		keys := make([]string, 0, len(b.Extra))
 		for key := range b.Extra {
 			keys = append(keys, key)

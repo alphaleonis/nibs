@@ -364,22 +364,28 @@ func renderNibRef(b *nib.Nib, asLink bool, linkPrefix string) string {
 	return fmt.Sprintf("([%s](%s%s))", b.ID, linkPrefix, b.Path)
 }
 
-// typeBadge returns a shields.io badge markdown for the nib type. Uses
+// badgeHexes maps a TypeConfig.Color name to the shields.io hex the roadmap
+// renders it as. Colors deliberately stay out of the shared vocabulary — each
+// surface owns its palette — so the hexes live with this renderer; a config
+// color without an entry falls back to gray.
+var badgeHexes = map[string]string{
+	"red":    "d73a4a",
+	"green":  "0e8a16",
+	"blue":   "1d76db",
+	"purple": "5319e7",
+}
+
+// typeBadge returns a shields.io badge markdown for the nib type, colored via
+// the type's config color so the type→color pairing is declared once. Uses
 // EffectiveType so a type-less nib still renders its "task" badge rather than
 // an empty one.
 func typeBadge(b *nib.Nib) string {
 	typeName := b.EffectiveType()
-	// Map types to colors
-	colors := map[string]string{
-		"bug":       "d73a4a",
-		"feature":   "0e8a16",
-		"task":      "1d76db",
-		"epic":      "5319e7",
-		"milestone": "fbca04",
-	}
-	color := colors[typeName]
-	if color == "" {
-		color = "gray"
+	color := "gray"
+	if tc := config.Default().GetType(typeName); tc != nil {
+		if hex, ok := badgeHexes[tc.Color]; ok {
+			color = hex
+		}
 	}
 	return fmt.Sprintf("![%s](https://img.shields.io/badge/%s-%s?style=flat-square)", typeName, typeName, color)
 }

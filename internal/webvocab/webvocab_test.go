@@ -27,12 +27,16 @@ func TestGeneratedVocabularyIsFresh(t *testing.T) {
 }
 
 // TestTypeRanksDeriveFromHierarchy pins the derived container ranks to the
-// values the web's hand-written TYPE_RANK carried: leaf types rank 0 and a
-// container ranks one above its highest-ranked possible child. A hierarchy
+// values the web's hand-written TYPE_RANK carried: leaf types rank 0, a
+// container ranks one above its highest-ranked possible child, and milestone
+// is pinned on top (the presentation bridge typeRanks documents). A hierarchy
 // change moves these on purpose; anything else moving them is a bug in the
 // derivation.
 func TestTypeRanksDeriveFromHierarchy(t *testing.T) {
 	want := map[string]int{
+		// Milestones take no children, but the milestone-grouped view keys on
+		// rank until the Phase-8 membership-based view, so they are pinned
+		// above every container instead of ranking as a leaf.
 		"milestone": 3,
 		"epic":      2,
 		"bug":       1,
