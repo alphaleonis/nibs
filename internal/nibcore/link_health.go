@@ -1,6 +1,7 @@
 package nibcore
 
 import (
+	"errors"
 	"os"
 	"path/filepath"
 	"slices"
@@ -98,6 +99,31 @@ type InvalidAxis struct {
 	Reason string `json:"reason"`
 }
 
+// InvalidHierarchy is a loaded nib whose parent's type the hierarchy rules
+// refuse (nibtypes.ValidateParentType: a milestone parented under a milestone,
+// a feature under a task). The rule is strict on the write paths that set a
+// parent or change a type, so an offender reaches the store only through a
+// hand edit or as the leftover of an earlier rule set — the v2 migration
+// deliberately leaves illegal nests untouched — and it then loads, lists and
+// renders like any other nib. This finding is the one surface that names the
+// file and the rule it breaks.
+type InvalidHierarchy struct {
+	NibID string `json:"nib_id"`
+	// Path is relative to the nibs root with forward slashes, like nib.Path.
+	Path string `json:"path"`
+	// ParentID is the resolved parent's full id, however the file spells it.
+	ParentID string `json:"parent_id"`
+	// ChildType and ParentType are the two nibs' effective types — a type-less
+	// nib is judged as the default type, the way every write path judges it.
+	ChildType  string `json:"child_type"`
+	ParentType string `json:"parent_type"`
+	// Allowed is the set of parent types that WOULD be legal for the child,
+	// empty when the child type takes no parent at all.
+	Allowed []string `json:"allowed_parents,omitempty"`
+	// Reason is the HierarchyError's message, naming the rule in prose.
+	Reason string `json:"reason"`
+}
+
 // NearMissKey is a loaded nib carrying an unknown front-matter key whose
 // spelling is a near miss of a modeled key (a dash for the underscore, a case
 // variant, stray underscores — the rule is nib.ModeledKeyResembling's). The
@@ -139,6 +165,12 @@ type LinkCheckResult struct {
 	// nibtypes.ValidateAxes, config-free), so the pure map function carries it.
 	InvalidAxes []InvalidAxis `json:"invalid_axes"`
 
+	// Hierarchy integrity. Derivable from the nibs alone (the parent-type rule
+	// is nibtypes.ValidateParentType, config-free; the prefix a parent id may
+	// need is already threaded in for the link checks), so the pure map
+	// function carries it.
+	InvalidHierarchies []InvalidHierarchy `json:"invalid_hierarchies"`
+
 	// Key integrity. Derivable from the nibs alone (the modeled key set is a
 	// compile-time fact of the nib package), so the pure map function carries it.
 	NearMissKeys []NearMissKey `json:"near_miss_keys"`
@@ -151,7 +183,7 @@ func (r *LinkCheckResult) HasIssues() bool {
 
 // TotalIssues returns the total count of all issues.
 func (r *LinkCheckResult) TotalIssues() int {
-	return len(r.BrokenLinks) + len(r.SelfLinks) + len(r.Cycles) + len(r.BrokenDocuments) + r.LoadIssues() + r.EnumIssues() + r.AxisIssues() + r.NearMissIssues()
+	return len(r.BrokenLinks) + len(r.SelfLinks) + len(r.Cycles) + len(r.BrokenDocuments) + r.LoadIssues() + r.EnumIssues() + r.AxisIssues() + r.HierarchyIssues() + r.NearMissIssues()
 }
 
 // LoadIssues returns the count of load-time integrity issues alone. Callers
@@ -172,6 +204,12 @@ func (r *LinkCheckResult) EnumIssues() int {
 // render-them-apart reason as LoadIssues.
 func (r *LinkCheckResult) AxisIssues() int {
 	return len(r.InvalidAxes)
+}
+
+// HierarchyIssues returns the count of hierarchy-rule findings alone, for the
+// same render-them-apart reason as LoadIssues.
+func (r *LinkCheckResult) HierarchyIssues() int {
+	return len(r.InvalidHierarchies)
 }
 
 // NearMissIssues returns the count of near-miss key findings alone, for the
@@ -206,15 +244,16 @@ func (r *LinkCheckResult) NearMissIssues() int {
 // holds, which is what `--fix` would drop.
 func CheckAllLinksInMap(nibs map[string]*nib.Nib, projectRoot, configPrefix string) *LinkCheckResult {
 	result := &LinkCheckResult{
-		BrokenLinks:      []BrokenLink{},
-		SelfLinks:        []SelfLink{},
-		Cycles:           []Cycle{},
-		BrokenDocuments:  []BrokenDocument{},
-		UnparseableFiles: []UnparseableFile{},
-		DuplicateIDs:     []DuplicateID{},
-		InvalidEnums:     []InvalidEnum{},
-		InvalidAxes:      []InvalidAxis{},
-		NearMissKeys:     []NearMissKey{},
+		BrokenLinks:        []BrokenLink{},
+		SelfLinks:          []SelfLink{},
+		Cycles:             []Cycle{},
+		BrokenDocuments:    []BrokenDocument{},
+		UnparseableFiles:   []UnparseableFile{},
+		DuplicateIDs:       []DuplicateID{},
+		InvalidEnums:       []InvalidEnum{},
+		InvalidAxes:        []InvalidAxis{},
+		InvalidHierarchies: []InvalidHierarchy{},
+		NearMissKeys:       []NearMissKey{},
 	}
 
 	// Check for broken links and self-references
@@ -311,6 +350,33 @@ func CheckAllLinksInMap(nibs map[string]*nib.Nib, projectRoot, configPrefix stri
 		// through nibs is refused. This finding is what names the file to fix.
 		if err := nibtypes.ValidateAxes(b.EffectiveType(), b.Milestone, b.Area); err != nil {
 			result.InvalidAxes = append(result.InvalidAxes, InvalidAxis{NibID: b.ID, Path: b.Path, Reason: err.Error()})
+		}
+		// Hierarchy integrity: the parent-type rule is strict only on the write
+		// paths that set a parent or change a type, and the v2 migration
+		// deliberately leaves an illegal nest untouched — so a file-level
+		// offender loads, lists and renders normally and no other surface
+		// reports it. A parent that does not resolve is already a broken link
+		// (its type is unknowable), and one resolving to the nib itself is
+		// already a self link, so neither is judged again here.
+		if b.Parent != "" {
+			if parentID, ok := normalizeIDInMap(nibs, b.Parent, configPrefix); ok && parentID != b.ID {
+				parent := nibs[parentID]
+				if err := nibtypes.ValidateParentType(b.EffectiveType(), parent.EffectiveType()); err != nil {
+					finding := InvalidHierarchy{
+						NibID:      b.ID,
+						Path:       b.Path,
+						ParentID:   parentID,
+						ChildType:  b.EffectiveType(),
+						ParentType: parent.EffectiveType(),
+						Reason:     err.Error(),
+					}
+					var herr *nibtypes.HierarchyError
+					if errors.As(err, &herr) {
+						finding.Allowed = herr.Allowed
+					}
+					result.InvalidHierarchies = append(result.InvalidHierarchies, finding)
+				}
+			}
 		}
 		// Key integrity: an Extra key spelled a near miss from a modeled key
 		// (nib.ModeledKeyResembling's rule) loads losslessly but is invisible to

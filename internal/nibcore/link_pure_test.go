@@ -584,7 +584,10 @@ func TestCheckAllLinksInMapIDSpelling(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			nibs := map[string]*nib.Nib{
-				"nibs-tgt": {ID: "nibs-tgt", Status: "in-progress"},
+				// The target is an epic so the parent cases stay hierarchy-legal
+				// for the type-less (default task) subject: this test pins id
+				// resolution, and a hierarchy finding would muddy the counts.
+				"nibs-tgt": {ID: "nibs-tgt", Status: "in-progress", Type: "epic"},
 				subjectID:  {ID: subjectID, Status: "todo", Parent: tt.parent, Milestone: tt.milestone, BlockedBy: tt.blockedBy},
 			}
 

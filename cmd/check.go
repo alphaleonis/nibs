@@ -95,6 +95,9 @@ var checkCmd = &cobra.Command{
 - Broken links (links to non-existent nibs)
 - Self-references (nibs linking to themselves)
 - Circular dependencies (cycles in blocks/parent relationships)
+- Parent types the hierarchy rules refuse (an illegal nest like a milestone
+  parented under a milestone is enforced on write paths only, so in the files
+  it loads as written and nothing else reports it)
 
 Plain check is the one command that still runs on a store needing migration —
 it is the diagnostic for exactly that state — and it reports the migration as an
@@ -103,8 +106,8 @@ issue, so an otherwise clean store exits 1 until ` + "`nibs migrate`" + ` has ru
 Use --fix to automatically remove broken links and self-references. --fix WRITES,
 so unlike plain check it refuses a store needing migration.
 Note: cycles, unparseable files, duplicate ids, out-of-enum values, refused
-axis keys, near-miss keys and a pending migration cannot be auto-fixed and
-require manual intervention.`,
+axis keys, near-miss keys, illegal hierarchy nests and a pending migration
+cannot be auto-fixed and require manual intervention.`,
 	Args: codedNoArgs(&checkJSON), // operates on the whole store; takes no positional args
 	RunE: func(cmd *cobra.Command, args []string) error {
 		totalIssues, err := runCheck(getApp(cmd))
@@ -285,9 +288,34 @@ func runCheck(app *App) (int, error) {
 		}
 	}
 
+	// Hierarchy findings cannot be auto-fixed either: which end of an illegal
+	// nest is the wrong one — the parent link or one of the types — is the
+	// author's call, so re-parenting is not provable intent.
+	if !checkJSON {
+		for _, ih := range linkResult.InvalidHierarchies {
+			// The types come from front matter and the ids and path from
+			// filenames, so every piece crosses the rendering boundary; the
+			// reason embeds the types, so it is flattened like every other
+			// reason field on this surface.
+			finding := fmt.Sprintf("%s: %s is parented under %s %s, but %s",
+				stripControlChars(ih.Path), stripControlChars(ih.ChildType),
+				stripControlChars(ih.ParentType), stripControlChars(ih.ParentID),
+				flattenReason(ih.Reason))
+			if checkFix {
+				ui.Printf("  %s Cannot auto-fix %s: %s (re-parenting is not provable intent — move it with `nibs mv %s --parent <id>`, or retype it)\n",
+					ui.Warning.Render("!"), stripControlChars(ih.NibID), finding, stripControlChars(ih.NibID))
+			} else {
+				ui.Printf("  %s %s: %s (loads as written; move it with `nibs mv %s --parent <id>`, or retype it)\n",
+					ui.Danger.Render("✗"), stripControlChars(ih.NibID), finding, stripControlChars(ih.NibID))
+			}
+		}
+	}
+
 	// Show success if no issues. This speaks only for the LINK categories: a
 	// store whose only problems are load-time or field-level still has clean
-	// links, and HasIssues() covers all kinds.
+	// links, and HasIssues() covers all kinds. Hierarchy findings render under
+	// Nib Links, so they count as link issues here — deliberately not
+	// subtracted.
 	if !checkJSON && linkResult.TotalIssues()-linkResult.LoadIssues()-linkResult.EnumIssues()-linkResult.AxisIssues()-linkResult.NearMissIssues() == 0 && fixed == 0 {
 		ui.Printf("  %s No link issues found\n", ui.Success.Render("✓"))
 	}

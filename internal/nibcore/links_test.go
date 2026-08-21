@@ -699,8 +699,16 @@ func TestFixBrokenLinks(t *testing.T) {
 // store content lives — and returns its absolute path.
 func writeLinkNibFile(t *testing.T, nibsDir, id, status, frontMatter string) string {
 	t.Helper()
+	return writeTypedLinkNibFile(t, nibsDir, id, status, "task", frontMatter)
+}
+
+// writeTypedLinkNibFile is writeLinkNibFile with the type chosen by the caller,
+// for a fixture that must be a legal parent under the hierarchy rules (a task
+// cannot parent a task, so a parent target has to be an epic, feature or bug).
+func writeTypedLinkNibFile(t *testing.T, nibsDir, id, status, nibType, frontMatter string) string {
+	t.Helper()
 	path := filepath.Join(storeData(t, nibsDir), id+"--test.md")
-	body := "---\nversion: 1\ntitle: " + id + "\nstatus: " + status + "\ntype: task\n" + frontMatter + "---\n\nBody.\n"
+	body := "---\nversion: 1\ntitle: " + id + "\nstatus: " + status + "\ntype: " + nibType + "\n" + frontMatter + "---\n\nBody.\n"
 	if err := os.WriteFile(path, []byte(body), 0644); err != nil {
 		t.Fatalf("write %s: %v", path, err)
 	}
@@ -731,7 +739,10 @@ func hashFile(t *testing.T, path string) [32]byte {
 func TestFixBrokenLinksLeavesResolvableShortIDsOnDisk(t *testing.T) {
 	core, nibsDir := mustLoadPrefixedCore(t)
 
-	writeLinkNibFile(t, nibsDir, "nibs-par", "todo", "")
+	// The parent is an epic so the nest is hierarchy-legal for the task child:
+	// this test pins id resolution and --fix's write behavior, and a hierarchy
+	// finding would register as an issue.
+	writeTypedLinkNibFile(t, nibsDir, "nibs-par", "todo", "epic", "")
 	writeLinkNibFile(t, nibsDir, "nibs-blk", "in-progress", "")
 	writeLinkNibFile(t, nibsDir, "nibs-mst", "todo", "")
 	depPath := writeLinkNibFile(t, nibsDir, "nibs-dep", "todo", "parent: par\nmilestone: mst\nblocked_by: [blk]\n")
