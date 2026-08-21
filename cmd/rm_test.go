@@ -54,7 +54,7 @@ func fileExists(path string) bool {
 // .nibs/archive/) by default.
 func TestRmArchiveDefault(t *testing.T) {
 	nibsDir := setupRmTest(t, map[string]string{
-		"arc-1--task.md": "---\nversion: 1\ntitle: Task\nstatus: todo\ntype: task\n---\n\nBody.\n",
+		"arc-1--task.md": "---\nversion: 2\ntitle: Task\nstatus: todo\ntype: task\n---\n\nBody.\n",
 	})
 
 	rootCmd.SetArgs([]string{"--nibs-path", nibsDir, "rm", "arc-1", "-f"})
@@ -75,7 +75,7 @@ func TestRmArchiveDefault(t *testing.T) {
 // TestRmDeleteForce verifies `rm <id> --delete -f` hard-deletes the nib.
 func TestRmDeleteForce(t *testing.T) {
 	nibsDir := setupRmTest(t, map[string]string{
-		"del-1--task.md": "---\nversion: 1\ntitle: Task\nstatus: todo\ntype: task\n---\n\nBody.\n",
+		"del-1--task.md": "---\nversion: 2\ntitle: Task\nstatus: todo\ntype: task\n---\n\nBody.\n",
 	})
 
 	rootCmd.SetArgs([]string{"--nibs-path", nibsDir, "rm", "del-1", "--delete", "-f"})
@@ -99,7 +99,7 @@ func TestRmDeleteForce(t *testing.T) {
 // non-terminal stdin so the test is deterministic regardless of how it is run.
 func TestRmRefusesWithoutForceNonInteractive(t *testing.T) {
 	nibsDir := setupRmTest(t, map[string]string{
-		"keep-1--task.md": "---\nversion: 1\ntitle: Task\nstatus: todo\ntype: task\n---\n\nBody.\n",
+		"keep-1--task.md": "---\nversion: 2\ntitle: Task\nstatus: todo\ntype: task\n---\n\nBody.\n",
 	})
 
 	withStdin(t, "")
@@ -126,7 +126,7 @@ func TestRmRefusesWithoutForceNonInteractive(t *testing.T) {
 // emits the {nib} success contract.
 func TestRmArchiveJSONImpliesForce(t *testing.T) {
 	nibsDir := setupRmTest(t, map[string]string{
-		"js-1--task.md": "---\nversion: 1\ntitle: Task\nstatus: todo\ntype: task\n---\n\nBody.\n",
+		"js-1--task.md": "---\nversion: 2\ntitle: Task\nstatus: todo\ntype: task\n---\n\nBody.\n",
 	})
 
 	rootCmd.SetArgs([]string{"--nibs-path", nibsDir, "rm", "js-1", "--json"})
@@ -155,7 +155,7 @@ func TestRmArchiveJSONImpliesForce(t *testing.T) {
 // TestRmNotFound verifies a missing id is a NOT_FOUND error.
 func TestRmNotFound(t *testing.T) {
 	nibsDir := setupRmTest(t, map[string]string{
-		"present--task.md": "---\nversion: 1\ntitle: Task\nstatus: todo\ntype: task\n---\n\nBody.\n",
+		"present--task.md": "---\nversion: 2\ntitle: Task\nstatus: todo\ntype: task\n---\n\nBody.\n",
 	})
 
 	rootCmd.SetArgs([]string{"--nibs-path", nibsDir, "rm", "nope", "-f"})
@@ -176,7 +176,7 @@ func TestRmNotFound(t *testing.T) {
 // TestRmArchiveDeleteMutex verifies --archive and --delete cannot be combined.
 func TestRmArchiveDeleteMutex(t *testing.T) {
 	nibsDir := setupRmTest(t, map[string]string{
-		"mx-1--task.md": "---\nversion: 1\ntitle: Task\nstatus: todo\ntype: task\n---\n\nBody.\n",
+		"mx-1--task.md": "---\nversion: 2\ntitle: Task\nstatus: todo\ntype: task\n---\n\nBody.\n",
 	})
 
 	rootCmd.SetArgs([]string{"--nibs-path", nibsDir, "rm", "mx-1", "--archive", "--delete", "-f"})
@@ -191,8 +191,8 @@ func TestRmArchiveDeleteMutex(t *testing.T) {
 // (it archives all completed/scrapped nibs).
 func TestRmArchiveAliasStillWorks(t *testing.T) {
 	nibsDir := setupRmTest(t, map[string]string{
-		"done--task.md": "---\nversion: 1\ntitle: Done\nstatus: completed\ntype: task\n---\n\nBody.\n",
-		"open--task.md": "---\nversion: 1\ntitle: Open\nstatus: todo\ntype: task\n---\n\nBody.\n",
+		"done--task.md": "---\nversion: 2\ntitle: Done\nstatus: completed\ntype: task\n---\n\nBody.\n",
+		"open--task.md": "---\nversion: 2\ntitle: Open\nstatus: todo\ntype: task\n---\n\nBody.\n",
 	})
 
 	rootCmd.SetArgs([]string{"--nibs-path", nibsDir, "archive"})
@@ -213,7 +213,7 @@ func TestRmArchiveAliasStillWorks(t *testing.T) {
 // hard-deletes.
 func TestRmDeleteLegacyAliasStillWorks(t *testing.T) {
 	nibsDir := setupRmTest(t, map[string]string{
-		"leg-1--task.md": "---\nversion: 1\ntitle: Task\nstatus: todo\ntype: task\n---\n\nBody.\n",
+		"leg-1--task.md": "---\nversion: 2\ntitle: Task\nstatus: todo\ntype: task\n---\n\nBody.\n",
 	})
 
 	rootCmd.SetArgs([]string{"--nibs-path", nibsDir, "delete", "leg-1", "-f"})

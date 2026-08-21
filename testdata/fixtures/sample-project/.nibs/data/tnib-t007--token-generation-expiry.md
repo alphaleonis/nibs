@@ -1,6 +1,6 @@
 ---
 # tnib-t007
-version: 1
+version: 2
 title: Implement token generation and expiry
 status: todo
 type: task

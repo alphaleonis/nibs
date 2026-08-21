@@ -6,11 +6,18 @@
 // definition; consumers get SETS and keep every display policy (filtering,
 // sorting, progress arithmetic, queue order) to themselves.
 //
+// Two axes feed the definition. The structural parent axis (`parent:`) is
+// decomposition: epic → feature → task. The assignment axis (`milestone:`)
+// is scheduling: it alone decides what belongs to a milestone. A container's
+// membership is its assignees plus their structural subtrees; the parent edge
+// on its own never schedules anything.
+//
 // Everything is pure and total: Compute takes any slice — including
-// invariant-violating data — and produces a deterministic View. Parent links
-// resolve against the slice itself, mirroring graph.resolvedParentID's rule: a
-// link naming no nib in the slice is no parent at all, so the nib is a root.
-// Every accessor answers in input-slice order, never map-iteration order.
+// invariant-violating data — and produces a deterministic View. Links resolve
+// against the slice itself, mirroring graph.resolvedParentID's rule: a link
+// naming no nib in the slice is no link at all, so a dangling parent makes a
+// root and a dangling assignment schedules nothing. Every accessor answers in
+// input-slice order, never map-iteration order.
 //
 // Live-pointer discipline, stated once for the package: a View pins the
 // *nib.Nib pointers it was built over. It is a point-in-time value — build it
@@ -28,21 +35,22 @@ import "github.com/alphaleonis/nibs/internal/nib"
 // callers pass a NibReader.Get closure or a snapshot map.
 type Lookup func(id string) *nib.Nib
 
-// ResolvedMilestoneID is THE step-1 definition of "directly assigned to a
-// milestone": b's resolved parent when that parent is milestone-typed, ""
-// otherwise — including when the parent link dangles, mirroring the
-// resolved-parent rule. The ordering engine's milestone scope consumes this
-// via a Lookup closure; the three-axis v2 release swaps this one body to read
-// the `milestone:` field, and every caller survives unchanged.
+// ResolvedMilestoneID is THE definition of "directly assigned to a
+// milestone": the target of b's `milestone:` field when that target exists
+// and is milestone-typed, "" otherwise — the same dangling-link rule the
+// resolved parent gives, so hand-edited garbage (a dangling id, an assignment
+// naming a non-milestone) stays out of every view. The structural parent axis
+// confers no membership at all. The ordering engine's milestone scope consumes
+// this via a Lookup closure.
 func ResolvedMilestoneID(b *nib.Nib, lookup Lookup) string {
-	if b.Parent == "" {
+	if b.Milestone == "" {
 		return ""
 	}
-	parent := lookup(b.Parent)
-	if parent == nil || parent.EffectiveType() != "milestone" {
+	target := lookup(b.Milestone)
+	if target == nil || target.EffectiveType() != "milestone" {
 		return ""
 	}
-	return parent.ID
+	return target.ID
 }
 
 // View is a point-in-time membership index over one slice of nibs. See the
@@ -51,19 +59,24 @@ type View struct {
 	byID map[string]*nib.Nib
 	// children is the structural parent axis: resolved parent id → children in
 	// input order. "" holds the roots (no parent, or a dangling link).
-	children   map[string][]*nib.Nib
+	children map[string][]*nib.Nib
+	// assigned is the assignment axis: resolved milestone id
+	// (ResolvedMilestoneID) → assignees in input order. "" holds the
+	// unassigned.
+	assigned   map[string][]*nib.Nib
 	milestones []*nib.Nib
 	all        []*nib.Nib
 }
 
 // Compute builds a View in O(N): an index pass, then a resolution pass that
-// files every nib under its resolved parent. The transitive accessors walk
-// the resulting adjacency with visited sets, so cyclic parent links (illegal
-// data) terminate instead of recursing forever.
+// files every nib under its resolved parent and its resolved assignment. The
+// transitive accessors walk the resulting adjacencies with visited sets, so
+// cyclic parent links (illegal data) terminate instead of recursing forever.
 func Compute(all []*nib.Nib) *View {
 	v := &View{
 		byID:     make(map[string]*nib.Nib, len(all)),
 		children: make(map[string][]*nib.Nib),
+		assigned: make(map[string][]*nib.Nib),
 		all:      all,
 	}
 	for _, b := range all {
@@ -77,11 +90,18 @@ func Compute(all []*nib.Nib) *View {
 			}
 		}
 		v.children[parentID] = append(v.children[parentID], b)
+		msID := ResolvedMilestoneID(b, v.lookup)
+		v.assigned[msID] = append(v.assigned[msID], b)
 		if b.EffectiveType() == "milestone" {
 			v.milestones = append(v.milestones, b)
 		}
 	}
 	return v
+}
+
+// lookup is the View's own Lookup over its slice.
+func (v *View) lookup(id string) *nib.Nib {
+	return v.byID[id]
 }
 
 // Milestones returns the milestone-typed nibs in input order.
@@ -91,20 +111,27 @@ func (v *View) Milestones() []*nib.Nib {
 
 // Children is the structural parent axis: the nibs whose resolved parent is
 // containerID, in input order — every type, containers included. "" names the
-// root set. This axis stays what it is through the step-2 cutover (the
-// projected childCount answers from it), while DirectMembers/Members move to
-// the assignment axis.
+// root set. Deliberately NOT the assignment axis: the projected childCount
+// answers "how many nibs name this one as parent" from here, so a milestone
+// honestly reports no children while DirectMembers carries its assignees.
 func (v *View) Children(containerID string) []*nib.Nib {
 	return copyNibs(v.children[containerID])
 }
 
 // DirectMembers returns the work directly belonging to the container, in input
-// order: its resolved-parent children, minus milestone-typed nibs — a
+// order. For a milestone that is its ASSIGNEES — the nibs whose `milestone:`
+// field resolves to it; for any other container it is the structural children
+// (its decomposition). Milestone-typed nibs are excluded on both axes — a
 // milestone is a container of its own and is never a member of anything (an
-// illegal milestone nest keeps its subtree in its own queue).
+// illegal milestone nest keeps its subtree in its own queue, and a
+// hand-authored assignment on a container schedules nothing).
 func (v *View) DirectMembers(containerID string) []*nib.Nib {
+	group := v.children[containerID]
+	if c := v.byID[containerID]; c != nil && c.EffectiveType() == "milestone" {
+		group = v.assigned[containerID]
+	}
 	var members []*nib.Nib
-	for _, b := range v.children[containerID] {
+	for _, b := range group {
 		if b.EffectiveType() == "milestone" {
 			continue
 		}
@@ -114,9 +141,10 @@ func (v *View) DirectMembers(containerID string) []*nib.Nib {
 }
 
 // Members returns the container's transitive membership closure, single-
-// counted, in breadth-first input order. The closure is FULL depth — a task
-// under a feature under an epic under a milestone is a member — and does not
-// descend through a milestone-typed child (see DirectMembers).
+// counted, in breadth-first input order. The closure is FULL depth — for a
+// milestone, the assignees plus their structural subtrees; for any other
+// container, its structural subtree — and does not descend through a
+// milestone-typed child (see DirectMembers).
 func (v *View) Members(containerID string) []*nib.Nib {
 	var result []*nib.Nib
 	visited := make(map[string]bool)
@@ -135,29 +163,30 @@ func (v *View) Members(containerID string) []*nib.Nib {
 }
 
 // MilestoneOf returns the id of the milestone the nib transitively belongs to,
-// or "" for unscheduled work — walking up the resolved parent chain to the
-// nearest milestone-typed ancestor. A milestone belongs to no milestone — it
-// is a container of its own even when an illegal nest places it under one —
-// and an unknown id is unscheduled.
+// or "" for unscheduled work: the nib's own resolved assignment when it has
+// one, else the nearest resolved assignment up the structural parent chain.
+// The walk stops at a milestone-typed ancestor — a milestone parent is
+// decomposition data, not an assignment — and a milestone belongs to no
+// milestone itself: it is a container of its own even when hand-edited data
+// assigns or nests it. An unknown id is unscheduled.
 func (v *View) MilestoneOf(id string) string {
-	visited := make(map[string]bool)
 	b := v.byID[id]
-	if b != nil && b.EffectiveType() == "milestone" {
+	if b == nil || b.EffectiveType() == "milestone" {
 		return ""
 	}
+	visited := make(map[string]bool)
 	for b != nil && !visited[b.ID] {
 		visited[b.ID] = true
+		if b.EffectiveType() == "milestone" {
+			return ""
+		}
+		if ms := ResolvedMilestoneID(b, v.lookup); ms != "" {
+			return ms
+		}
 		if b.Parent == "" {
 			return ""
 		}
-		p := v.byID[b.Parent]
-		if p == nil {
-			return ""
-		}
-		if p.EffectiveType() == "milestone" {
-			return p.ID
-		}
-		b = p
+		b = v.byID[b.Parent]
 	}
 	return ""
 }
@@ -199,10 +228,12 @@ type Remainder struct {
 
 // Unscheduled returns the Remainder. Roots are the RESOLVED reading — a nib
 // whose parent link names no nib is a root here, exactly as every query
-// surface reports it, where the old raw `Parent != ""` orphan scan hid it.
-// The remainder is computed against every declared milestone regardless of
-// status: work under a status-hidden milestone is scheduled work, not backlog
-// — a consumer wanting the old leak back has to build it deliberately.
+// surface reports it — and scheduling is MilestoneOf's: a root with a
+// resolved assignment is scheduled work, not backlog, while a dangling
+// assignment schedules nothing. The remainder is computed against every
+// declared milestone regardless of status: work under a status-hidden
+// milestone is scheduled work, not backlog — a consumer wanting the old leak
+// back has to build it deliberately.
 func (v *View) Unscheduled() Remainder {
 	var rem Remainder
 	for _, b := range v.all {
@@ -213,7 +244,7 @@ func (v *View) Unscheduled() Remainder {
 				rem.Epics = append(rem.Epics, EpicGroup{Epic: b, Items: v.DirectMembers(b.ID)})
 			}
 		default:
-			if v.isRoot(b) {
+			if v.isRoot(b) && v.MilestoneOf(b.ID) == "" {
 				rem.Other = append(rem.Other, b)
 			}
 		}

@@ -404,11 +404,12 @@ func TestCheckAllLinksInMap(t *testing.T) {
 		nibs := map[string]*nib.Nib{
 			"a": {ID: "a", Status: "todo", Parent: "nonexistent"},
 			"b": {ID: "b", Status: "todo", BlockedBy: []string{"nonexistent2"}},
+			"c": {ID: "c", Status: "todo", Milestone: "nonexistent3"},
 		}
 
 		result := CheckAllLinksInMap(nibs, "", "")
-		if len(result.BrokenLinks) != 2 {
-			t.Errorf("expected 2 broken links, got %d", len(result.BrokenLinks))
+		if len(result.BrokenLinks) != 3 {
+			t.Errorf("expected 3 broken links, got %d", len(result.BrokenLinks))
 		}
 	})
 
@@ -416,11 +417,12 @@ func TestCheckAllLinksInMap(t *testing.T) {
 		nibs := map[string]*nib.Nib{
 			"a": {ID: "a", Status: "todo", Parent: "a"},
 			"b": {ID: "b", Status: "todo", BlockedBy: []string{"b"}},
+			"c": {ID: "c", Status: "todo", Milestone: "c"},
 		}
 
 		result := CheckAllLinksInMap(nibs, "", "")
-		if len(result.SelfLinks) != 2 {
-			t.Errorf("expected 2 self-links, got %d", len(result.SelfLinks))
+		if len(result.SelfLinks) != 3 {
+			t.Errorf("expected 3 self-links, got %d", len(result.SelfLinks))
 		}
 	})
 
@@ -501,8 +503,8 @@ func TestCheckAllLinksInMap(t *testing.T) {
 	})
 }
 
-// TestCheckAllLinksInMapIDSpelling pins how a parent or blockedBy target is
-// resolved here: exact id first, then the configured prefix prepended — the
+// TestCheckAllLinksInMapIDSpelling pins how a parent, milestone or blockedBy
+// target is resolved here: exact id first, then the configured prefix prepended — the
 // rule normalizeIDInMap already gives Core.Get, findActiveBlockersInMap and the
 // mention resolvers. A bare map lookup called a resolvable short-form target
 // broken, and Core.FixBrokenLinks repeats these checks and writes, so `nibs
@@ -521,6 +523,7 @@ func TestCheckAllLinksInMapIDSpelling(t *testing.T) {
 	tests := []struct {
 		name      string
 		parent    string
+		milestone string
 		blockedBy []string
 		prefix    string
 		// Target of each expected broken link, and LinkType of each expected
@@ -530,6 +533,8 @@ func TestCheckAllLinksInMapIDSpelling(t *testing.T) {
 	}{
 		{name: "full parent", parent: "nibs-tgt", prefix: "nibs-"},
 		{name: "short parent", parent: "tgt", prefix: "nibs-"},
+		{name: "full milestone", milestone: "nibs-tgt", prefix: "nibs-"},
+		{name: "short milestone", milestone: "tgt", prefix: "nibs-"},
 		{name: "full blocked_by", blockedBy: []string{"nibs-tgt"}, prefix: "nibs-"},
 		{name: "short blocked_by", blockedBy: []string{"tgt"}, prefix: "nibs-"},
 		{
@@ -544,6 +549,8 @@ func TestCheckAllLinksInMapIDSpelling(t *testing.T) {
 		// both name the subject, so both are self links.
 		{name: "full parent naming self", parent: subjectID, prefix: "nibs-", wantSelf: []string{"parent"}},
 		{name: "short parent naming self", parent: "dep", prefix: "nibs-", wantSelf: []string{"parent"}},
+		{name: "full milestone naming self", milestone: subjectID, prefix: "nibs-", wantSelf: []string{"milestone"}},
+		{name: "short milestone naming self", milestone: "dep", prefix: "nibs-", wantSelf: []string{"milestone"}},
 		{name: "full blocked_by naming self", blockedBy: []string{subjectID}, prefix: "nibs-", wantSelf: []string{"blocked_by"}},
 		{name: "short blocked_by naming self", blockedBy: []string{"dep"}, prefix: "nibs-", wantSelf: []string{"blocked_by"}},
 
@@ -551,12 +558,15 @@ func TestCheckAllLinksInMapIDSpelling(t *testing.T) {
 		// spelling. These must survive the change, or `--fix` stops fixing.
 		{name: "parent naming no nib", parent: "nope", prefix: "nibs-", wantBroken: []string{"nope"}},
 		{name: "parent naming no nib, spelled in full", parent: "nibs-nope", prefix: "nibs-", wantBroken: []string{"nibs-nope"}},
+		{name: "milestone naming no nib", milestone: "nope", prefix: "nibs-", wantBroken: []string{"nope"}},
+		{name: "milestone naming no nib, spelled in full", milestone: "nibs-nope", prefix: "nibs-", wantBroken: []string{"nibs-nope"}},
 		{name: "blocked_by naming no nib", blockedBy: []string{"nope"}, prefix: "nibs-", wantBroken: []string{"nope"}},
 		{name: "blocked_by naming no nib, spelled in full", blockedBy: []string{"nibs-nope"}, prefix: "nibs-", wantBroken: []string{"nibs-nope"}},
 
 		// With no configured prefix there is nothing to prepend, so a short
 		// target names no nib — the same answer findActiveBlockersInMap gives.
 		{name: "short parent with no configured prefix", parent: "tgt", wantBroken: []string{"tgt"}},
+		{name: "short milestone with no configured prefix", milestone: "tgt", wantBroken: []string{"tgt"}},
 		{name: "short blocked_by with no configured prefix", blockedBy: []string{"tgt"}, wantBroken: []string{"tgt"}},
 		// Nothing to prepend, so the subject's short id does not name the
 		// subject either: broken, not self.
@@ -567,7 +577,7 @@ func TestCheckAllLinksInMapIDSpelling(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			nibs := map[string]*nib.Nib{
 				"nibs-tgt": {ID: "nibs-tgt", Status: "in-progress"},
-				subjectID:  {ID: subjectID, Status: "todo", Parent: tt.parent, BlockedBy: tt.blockedBy},
+				subjectID:  {ID: subjectID, Status: "todo", Parent: tt.parent, Milestone: tt.milestone, BlockedBy: tt.blockedBy},
 			}
 
 			result := CheckAllLinksInMap(nibs, "", tt.prefix)
@@ -588,12 +598,12 @@ func TestCheckAllLinksInMapIDSpelling(t *testing.T) {
 			slices.Sort(wantSelf)
 
 			if !slices.Equal(gotBroken, wantBroken) {
-				t.Errorf("broken link targets = %v, want %v (parent %q, blocked_by %v, prefix %q)",
-					gotBroken, wantBroken, tt.parent, tt.blockedBy, tt.prefix)
+				t.Errorf("broken link targets = %v, want %v (parent %q, milestone %q, blocked_by %v, prefix %q)",
+					gotBroken, wantBroken, tt.parent, tt.milestone, tt.blockedBy, tt.prefix)
 			}
 			if !slices.Equal(gotSelf, wantSelf) {
-				t.Errorf("self link types = %v, want %v (parent %q, blocked_by %v, prefix %q)",
-					gotSelf, wantSelf, tt.parent, tt.blockedBy, tt.prefix)
+				t.Errorf("self link types = %v, want %v (parent %q, milestone %q, blocked_by %v, prefix %q)",
+					gotSelf, wantSelf, tt.parent, tt.milestone, tt.blockedBy, tt.prefix)
 			}
 			// Nothing else may be reported: catches a cycle or document issue
 			// invented by the resolution change.

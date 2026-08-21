@@ -46,7 +46,7 @@ func writeLegacyStoreNamed(t *testing.T, storeName, configBody string, files map
 // inside the fence, then the three keys renderFrontMatter never omits. Store
 // corroboration keys on exactly that shape, so a fixture standing in for a nib
 // has to carry it.
-const layoutNib = "---\n# leg-a1\nversion: 1\ntitle: One\nstatus: todo\ntype: task\n---\n\nBody.\n"
+const layoutNib = "---\n# leg-a1\nversion: 2\ntitle: One\nstatus: todo\ntype: task\n---\n\nBody.\n"
 
 // TestLegacyStoreRefusesEveryCommand pins behavior 9: a store still in the
 // pre-layout shape — a `.nibs.yml` beside it, nib files at its root, or both —

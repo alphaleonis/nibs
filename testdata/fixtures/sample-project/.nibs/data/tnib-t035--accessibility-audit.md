@@ -1,6 +1,6 @@
 ---
 # tnib-t035
-version: 1
+version: 2
 title: Accessibility audit
 status: todo
 type: task

@@ -19,8 +19,8 @@ func TestCloseCompletionFollowsTheDoneRole(t *testing.T) {
 	vocabtest.WithStatusRole(t, "deferred", config.RoleDone)
 
 	nibsDir := setupCloseTest(t, map[string]string{
-		"dr-ms--milestone.md": "---\nversion: 1\ntitle: Milestone\nstatus: in-progress\ntype: milestone\ncreated_at: 2026-01-02T03:04:05Z\nupdated_at: 2026-01-02T03:04:05Z\n---\n\n## Current Focus\n\nWorking on phase 1.\n",
-		"dr-ch--child.md":     "---\nversion: 1\ntitle: Child\nstatus: in-progress\ntype: task\nparent: dr-ms\n---\n\nBody.\n",
+		"dr-ms--milestone.md": "---\nversion: 2\ntitle: Milestone\nstatus: in-progress\ntype: milestone\ncreated_at: 2026-01-02T03:04:05Z\nupdated_at: 2026-01-02T03:04:05Z\n---\n\n## Current Focus\n\nWorking on phase 1.\n",
+		"dr-ch--child.md":     "---\nversion: 2\ntitle: Child\nstatus: in-progress\ntype: task\nparent: dr-ms\n---\n\nBody.\n",
 	})
 
 	withStdin(t, "the work got done under another name\n")

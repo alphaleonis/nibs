@@ -1,6 +1,6 @@
 ---
 # tnib-b014
-version: 1
+version: 2
 title: Race condition in concurrent task updates
 status: todo
 type: bug

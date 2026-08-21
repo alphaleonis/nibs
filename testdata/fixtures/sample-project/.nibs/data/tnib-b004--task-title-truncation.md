@@ -1,6 +1,6 @@
 ---
 # tnib-b004
-version: 1
+version: 2
 title: Task title silently truncated at 255 characters
 status: todo
 type: bug

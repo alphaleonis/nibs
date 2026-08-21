@@ -1,6 +1,6 @@
 ---
 # tnib-t018
-version: 1
+version: 2
 title: Performance benchmark for 10k tasks
 status: todo
 type: task

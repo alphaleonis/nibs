@@ -1,6 +1,6 @@
 ---
 # tnib-b007
-version: 1
+version: 2
 title: Push notifications not requesting permission on mobile
 status: draft
 type: bug

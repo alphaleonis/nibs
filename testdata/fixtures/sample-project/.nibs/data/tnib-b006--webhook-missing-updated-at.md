@@ -1,6 +1,6 @@
 ---
 # tnib-b006
-version: 1
+version: 2
 title: Webhook payloads missing updated_at timestamp
 status: todo
 type: bug

@@ -221,9 +221,12 @@ func buildMilestoneGroup(m *nib.Nib, view *membership.View, includeDone bool, cf
 		}
 	}
 
-	// Sort epics by their epic's title
-	sort.Slice(group.Epics, func(i, j int) bool {
-		return group.Epics[i].Epic.Title < group.Epics[j].Epic.Title
+	// Sort epics by their position in the milestone's queue: assignees carry
+	// milestone_order, not the parent-scope order key (which they lack), and a
+	// title sort here would shuffle the queue the user arranged. Unkeyed epics
+	// fall to the title tiebreak.
+	slices.SortStableFunc(group.Epics, func(a, b epicGroup) int {
+		return nib.CompareByKey(a.Epic, b.Epic, func(n *nib.Nib) string { return n.MilestoneOrder })
 	})
 
 	// Sort other items

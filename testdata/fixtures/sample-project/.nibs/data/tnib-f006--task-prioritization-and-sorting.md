@@ -1,6 +1,6 @@
 ---
 # tnib-f006
-version: 1
+version: 2
 title: Task prioritization and sorting
 status: todo
 type: feature

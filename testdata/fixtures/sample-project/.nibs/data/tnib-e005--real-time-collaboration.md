@@ -1,6 +1,6 @@
 ---
 # tnib-e005
-version: 1
+version: 2
 title: Real-time Collaboration
 status: draft
 type: epic
@@ -8,10 +8,10 @@ priority: normal
 estimate: xl
 created_at: 2026-03-10T10:00:00Z
 updated_at: 2026-03-18T09:00:00Z
-parent: tnib-m002
 documents:
     - docs/websocket-rfc.md
-order: a
+milestone: tnib-m002
+milestone_order: a
 ---
 
 ## Objective

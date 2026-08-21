@@ -181,6 +181,7 @@ func TestCheckAllLinks(t *testing.T) {
 
 	// Create nibs with various link issues:
 	// - Broken parent link to nonexistent nib (on nibA)
+	// - Broken milestone link to nonexistent nib (on nibA)
 	// - Self-reference in blocked_by (on nibA)
 	// - Cycle (A.BlockedBy=[B], B.BlockedBy=[A] via blocked_by)
 	nibA := &nib.Nib{
@@ -189,6 +190,7 @@ func TestCheckAllLinks(t *testing.T) {
 		Status:    "todo",
 		BlockedBy: []string{"bbb2", "aaa1"}, // aaa1 is self-reference
 		Parent:    "nonexistent",
+		Milestone: "ms-gone",
 	}
 	nibB := &nib.Nib{
 		ID:        "bbb2",
@@ -206,14 +208,18 @@ func TestCheckAllLinks(t *testing.T) {
 	result := core.CheckAllLinks()
 
 	t.Run("detects broken links", func(t *testing.T) {
-		if len(result.BrokenLinks) != 1 {
-			t.Errorf("BrokenLinks = %d, want 1", len(result.BrokenLinks))
+		if len(result.BrokenLinks) != 2 {
+			t.Errorf("BrokenLinks = %d, want 2", len(result.BrokenLinks))
 		}
-		if len(result.BrokenLinks) > 0 {
-			bl := result.BrokenLinks[0]
-			if bl.NibID != "aaa1" || bl.LinkType != "parent" || bl.Target != "nonexistent" {
+		got := map[string]string{}
+		for _, bl := range result.BrokenLinks {
+			if bl.NibID != "aaa1" {
 				t.Errorf("unexpected broken link: %+v", bl)
 			}
+			got[bl.LinkType] = bl.Target
+		}
+		if got["parent"] != "nonexistent" || got["milestone"] != "ms-gone" {
+			t.Errorf("broken links = %v, want parent:nonexistent and milestone:ms-gone", got)
 		}
 	})
 
@@ -251,8 +257,8 @@ func TestCheckAllLinks(t *testing.T) {
 	})
 
 	t.Run("TotalIssues counts all", func(t *testing.T) {
-		if result.TotalIssues() != 3 {
-			t.Errorf("TotalIssues() = %d, want 3", result.TotalIssues())
+		if result.TotalIssues() != 4 {
+			t.Errorf("TotalIssues() = %d, want 4", result.TotalIssues())
 		}
 	})
 }
@@ -294,6 +300,7 @@ func TestRemoveLinksTo(t *testing.T) {
 	// - nibA has parent=target (1 link to target)
 	// - nibA has BlockedBy=[target] (1 link to target)
 	// - nibB has BlockedBy=[target] (1 link to target)
+	// - nibB has milestone=target (1 link to target)
 	nibA := &nib.Nib{
 		ID:        "aaa1",
 		Title:     "Nib A",
@@ -305,6 +312,7 @@ func TestRemoveLinksTo(t *testing.T) {
 		ID:        "bbb2",
 		Title:     "Nib B",
 		Status:    "todo",
+		Milestone: "target",
 		BlockedBy: []string{"target"},
 	}
 	target := &nib.Nib{
@@ -325,8 +333,8 @@ func TestRemoveLinksTo(t *testing.T) {
 		t.Fatalf("RemoveLinksTo error: %v", err)
 	}
 
-	if removed != 3 {
-		t.Errorf("removed = %d, want 3", removed)
+	if removed != 4 {
+		t.Errorf("removed = %d, want 4", removed)
 	}
 
 	// Verify links are gone
@@ -336,23 +344,25 @@ func TestRemoveLinksTo(t *testing.T) {
 	}
 
 	loadedB, _ := core.Get("bbb2")
-	if len(loadedB.BlockedBy) != 0 {
-		t.Errorf("Nib B still has %d blocked_by, want 0", len(loadedB.BlockedBy))
+	if loadedB.Milestone != "" || len(loadedB.BlockedBy) != 0 {
+		t.Errorf("Nib B still has relationships: milestone=%q blocked_by=%v", loadedB.Milestone, loadedB.BlockedBy)
 	}
 }
 
 // linkedNibs is the shared fixture for the RemoveLinksTo target-resolution
 // tests: one target, one nib per incoming link shape (parent only, blocked_by
-// only, both), and a bystander pair whose links name a different nib.
+// only, milestone only, all three), and a bystander pair whose links name a
+// different nib.
 func linkedNibs(t *testing.T, core *Core) {
 	t.Helper()
 	for _, b := range []*nib.Nib{
 		{ID: "nibs-tgt", Title: "Target", Status: "todo"},
 		{ID: "nibs-kid", Title: "Child", Status: "todo", Parent: "nibs-tgt"},
 		{ID: "nibs-dep", Title: "Dependent", Status: "todo", BlockedBy: []string{"nibs-tgt"}},
-		{ID: "nibs-both", Title: "Both", Status: "todo", Parent: "nibs-tgt", BlockedBy: []string{"nibs-tgt"}},
+		{ID: "nibs-mst", Title: "Enqueued", Status: "todo", Milestone: "nibs-tgt"},
+		{ID: "nibs-both", Title: "Both", Status: "todo", Parent: "nibs-tgt", Milestone: "nibs-tgt", BlockedBy: []string{"nibs-tgt"}},
 		{ID: "nibs-oth", Title: "Other", Status: "todo"},
-		{ID: "nibs-by", Title: "Bystander", Status: "todo", Parent: "nibs-oth", BlockedBy: []string{"nibs-oth"}},
+		{ID: "nibs-by", Title: "Bystander", Status: "todo", Parent: "nibs-oth", Milestone: "nibs-oth", BlockedBy: []string{"nibs-oth"}},
 	} {
 		if err := core.Create(b); err != nil {
 			t.Fatalf("create %s: %v", b.ID, err)
@@ -370,8 +380,8 @@ func TestRemoveLinksToResolvesTarget(t *testing.T) {
 		target  string
 		removed int
 	}{
-		{name: "full id", target: "nibs-tgt", removed: 4},
-		{name: "short id", target: "tgt", removed: 4},
+		{name: "full id", target: "nibs-tgt", removed: 6},
+		{name: "short id", target: "tgt", removed: 6},
 		{name: "unlinked target", target: "nibs-oth2", removed: 0},
 		{name: "full id naming no nib", target: "nibs-ghost", removed: 0},
 		{name: "short id naming no nib", target: "ghost", removed: 0},
@@ -402,16 +412,20 @@ func TestRemoveLinksToResolvesTarget(t *testing.T) {
 			if cleared := len(dep.BlockedBy) == 0; cleared != wantCleared {
 				t.Errorf("nibs-dep.BlockedBy = %v, cleared = %v, want cleared = %v", dep.BlockedBy, cleared, wantCleared)
 			}
+			mst := mustGetNib(t, core, "nibs-mst")
+			if cleared := mst.Milestone == ""; cleared != wantCleared {
+				t.Errorf("nibs-mst.Milestone = %q, cleared = %v, want cleared = %v", mst.Milestone, cleared, wantCleared)
+			}
 			both := mustGetNib(t, core, "nibs-both")
-			if cleared := both.Parent == "" && len(both.BlockedBy) == 0; cleared != wantCleared {
-				t.Errorf("nibs-both = {parent: %q, blocked_by: %v}, cleared = %v, want cleared = %v",
-					both.Parent, both.BlockedBy, cleared, wantCleared)
+			if cleared := both.Parent == "" && both.Milestone == "" && len(both.BlockedBy) == 0; cleared != wantCleared {
+				t.Errorf("nibs-both = {parent: %q, milestone: %q, blocked_by: %v}, cleared = %v, want cleared = %v",
+					both.Parent, both.Milestone, both.BlockedBy, cleared, wantCleared)
 			}
 
 			bystander := mustGetNib(t, core, "nibs-by")
-			if bystander.Parent != "nibs-oth" || !slices.Equal(bystander.BlockedBy, []string{"nibs-oth"}) {
-				t.Errorf("nibs-by = {parent: %q, blocked_by: %v}, want links to nibs-oth untouched",
-					bystander.Parent, bystander.BlockedBy)
+			if bystander.Parent != "nibs-oth" || bystander.Milestone != "nibs-oth" || !slices.Equal(bystander.BlockedBy, []string{"nibs-oth"}) {
+				t.Errorf("nibs-by = {parent: %q, milestone: %q, blocked_by: %v}, want links to nibs-oth untouched",
+					bystander.Parent, bystander.Milestone, bystander.BlockedBy)
 			}
 		})
 	}
@@ -429,6 +443,7 @@ func TestRemoveLinksToAmbiguousTwin(t *testing.T) {
 	type wantLinks struct {
 		id        string
 		parent    string
+		milestone string
 		blockedBy []string
 	}
 
@@ -439,16 +454,16 @@ func TestRemoveLinksToAmbiguousTwin(t *testing.T) {
 		want        []wantLinks
 	}{
 		{
-			name: "bare token", target: "tgt", wantRemoved: 2,
+			name: "bare token", target: "tgt", wantRemoved: 3,
 			want: []wantLinks{
 				{id: "nibs-bare"},
-				{id: "nibs-twin", parent: "nibs-tgt", blockedBy: []string{"nibs-tgt"}},
+				{id: "nibs-twin", parent: "nibs-tgt", milestone: "nibs-tgt", blockedBy: []string{"nibs-tgt"}},
 			},
 		},
 		{
-			name: "prefixed twin", target: "nibs-tgt", wantRemoved: 2,
+			name: "prefixed twin", target: "nibs-tgt", wantRemoved: 3,
 			want: []wantLinks{
-				{id: "nibs-bare", parent: "tgt", blockedBy: []string{"tgt"}},
+				{id: "nibs-bare", parent: "tgt", milestone: "tgt", blockedBy: []string{"tgt"}},
 				{id: "nibs-twin"},
 			},
 		},
@@ -460,8 +475,8 @@ func TestRemoveLinksToAmbiguousTwin(t *testing.T) {
 			for _, b := range []*nib.Nib{
 				{ID: "tgt", Title: "Bare", Status: "todo"},
 				{ID: "nibs-tgt", Title: "Twin", Status: "todo"},
-				{ID: "nibs-bare", Title: "Names bare", Status: "todo", Parent: "tgt", BlockedBy: []string{"tgt"}},
-				{ID: "nibs-twin", Title: "Names twin", Status: "todo", Parent: "nibs-tgt", BlockedBy: []string{"nibs-tgt"}},
+				{ID: "nibs-bare", Title: "Names bare", Status: "todo", Parent: "tgt", Milestone: "tgt", BlockedBy: []string{"tgt"}},
+				{ID: "nibs-twin", Title: "Names twin", Status: "todo", Parent: "nibs-tgt", Milestone: "nibs-tgt", BlockedBy: []string{"nibs-tgt"}},
 			} {
 				if err := core.Create(b); err != nil {
 					t.Fatalf("create %s: %v", b.ID, err)
@@ -478,9 +493,9 @@ func TestRemoveLinksToAmbiguousTwin(t *testing.T) {
 
 			for _, want := range tt.want {
 				b := mustGetNib(t, core, want.id)
-				if b.Parent != want.parent || !slices.Equal(b.BlockedBy, want.blockedBy) {
-					t.Errorf("%s = {parent: %q, blocked_by: %v}, want {parent: %q, blocked_by: %v}",
-						want.id, b.Parent, b.BlockedBy, want.parent, want.blockedBy)
+				if b.Parent != want.parent || b.Milestone != want.milestone || !slices.Equal(b.BlockedBy, want.blockedBy) {
+					t.Errorf("%s = {parent: %q, milestone: %q, blocked_by: %v}, want {parent: %q, milestone: %q, blocked_by: %v}",
+						want.id, b.Parent, b.Milestone, b.BlockedBy, want.parent, want.milestone, want.blockedBy)
 				}
 			}
 		})
@@ -499,7 +514,7 @@ func TestRemoveLinksToStripsShortFormStoredLink(t *testing.T) {
 	core, _ := mustLoadPrefixedCore(t)
 	for _, b := range []*nib.Nib{
 		{ID: "nibs-tgt", Title: "Target", Status: "todo"},
-		{ID: "nibs-kid", Title: "Child", Status: "todo", Parent: "tgt", BlockedBy: []string{"tgt"}},
+		{ID: "nibs-kid", Title: "Child", Status: "todo", Parent: "tgt", Milestone: "tgt", BlockedBy: []string{"tgt"}},
 	} {
 		if err := core.Create(b); err != nil {
 			t.Fatalf("create %s: %v", b.ID, err)
@@ -510,13 +525,13 @@ func TestRemoveLinksToStripsShortFormStoredLink(t *testing.T) {
 	if err != nil {
 		t.Fatalf("RemoveLinksTo(nibs-tgt): %v", err)
 	}
-	if removed != 2 {
-		t.Errorf("removed = %d, want 2", removed)
+	if removed != 3 {
+		t.Errorf("removed = %d, want 3", removed)
 	}
 
 	kid := mustGetNib(t, core, "nibs-kid")
-	if kid.Parent != "" || len(kid.BlockedBy) != 0 {
-		t.Errorf("nibs-kid = {parent: %q, blocked_by: %v}, want both cleared", kid.Parent, kid.BlockedBy)
+	if kid.Parent != "" || kid.Milestone != "" || len(kid.BlockedBy) != 0 {
+		t.Errorf("nibs-kid = {parent: %q, milestone: %q, blocked_by: %v}, want all cleared", kid.Parent, kid.Milestone, kid.BlockedBy)
 	}
 }
 
@@ -527,8 +542,8 @@ func TestRemoveLinksToStripsShortFormStoredLink(t *testing.T) {
 func TestRemoveLinksToUnresolvableTarget(t *testing.T) {
 	core, _ := mustLoadPrefixedCore(t)
 	for _, b := range []*nib.Nib{
-		{ID: "nibs-kid", Title: "Child", Status: "todo", Parent: "nibs-ghost", BlockedBy: []string{"nibs-ghost"}},
-		{ID: "nibs-by", Title: "Bystander", Status: "todo", Parent: "nibs-kid", BlockedBy: []string{"nibs-kid"}},
+		{ID: "nibs-kid", Title: "Child", Status: "todo", Parent: "nibs-ghost", Milestone: "nibs-ghost", BlockedBy: []string{"nibs-ghost"}},
+		{ID: "nibs-by", Title: "Bystander", Status: "todo", Parent: "nibs-kid", Milestone: "nibs-kid", BlockedBy: []string{"nibs-kid"}},
 	} {
 		if err := core.Create(b); err != nil {
 			t.Fatalf("create %s: %v", b.ID, err)
@@ -539,19 +554,19 @@ func TestRemoveLinksToUnresolvableTarget(t *testing.T) {
 	if err != nil {
 		t.Fatalf("RemoveLinksTo(nibs-ghost): %v", err)
 	}
-	if removed != 2 {
-		t.Errorf("removed = %d, want 2", removed)
+	if removed != 3 {
+		t.Errorf("removed = %d, want 3", removed)
 	}
 
 	kid := mustGetNib(t, core, "nibs-kid")
-	if kid.Parent != "" || len(kid.BlockedBy) != 0 {
-		t.Errorf("nibs-kid = {parent: %q, blocked_by: %v}, want both cleared", kid.Parent, kid.BlockedBy)
+	if kid.Parent != "" || kid.Milestone != "" || len(kid.BlockedBy) != 0 {
+		t.Errorf("nibs-kid = {parent: %q, milestone: %q, blocked_by: %v}, want all cleared", kid.Parent, kid.Milestone, kid.BlockedBy)
 	}
 
 	bystander := mustGetNib(t, core, "nibs-by")
-	if bystander.Parent != "nibs-kid" || !slices.Equal(bystander.BlockedBy, []string{"nibs-kid"}) {
-		t.Errorf("nibs-by = {parent: %q, blocked_by: %v}, want links to nibs-kid untouched",
-			bystander.Parent, bystander.BlockedBy)
+	if bystander.Parent != "nibs-kid" || bystander.Milestone != "nibs-kid" || !slices.Equal(bystander.BlockedBy, []string{"nibs-kid"}) {
+		t.Errorf("nibs-by = {parent: %q, milestone: %q, blocked_by: %v}, want links to nibs-kid untouched",
+			bystander.Parent, bystander.Milestone, bystander.BlockedBy)
 	}
 }
 
@@ -583,7 +598,7 @@ func TestRemoveLinksToEmptyTargetIgnoresPrefixKeyedNib(t *testing.T) {
 	core, _ := mustLoadPrefixedCore(t)
 	for _, b := range []*nib.Nib{
 		{ID: "nibs-", Title: "Prefix keyed", Status: "todo"},
-		{ID: "nibs-kid", Title: "Child", Status: "todo", Parent: "nibs-", BlockedBy: []string{"nibs-"}},
+		{ID: "nibs-kid", Title: "Child", Status: "todo", Parent: "nibs-", Milestone: "nibs-", BlockedBy: []string{"nibs-"}},
 	} {
 		if err := core.Create(b); err != nil {
 			t.Fatalf("create %q: %v", b.ID, err)
@@ -605,9 +620,9 @@ func TestRemoveLinksToEmptyTargetIgnoresPrefixKeyedNib(t *testing.T) {
 	}
 
 	kid := mustGetNib(t, core, "nibs-kid")
-	if kid.Parent != "nibs-" || !slices.Equal(kid.BlockedBy, []string{"nibs-"}) {
-		t.Errorf("nibs-kid = {parent: %q, blocked_by: %v}, want links to nibs- untouched",
-			kid.Parent, kid.BlockedBy)
+	if kid.Parent != "nibs-" || kid.Milestone != "nibs-" || !slices.Equal(kid.BlockedBy, []string{"nibs-"}) {
+		t.Errorf("nibs-kid = {parent: %q, milestone: %q, blocked_by: %v}, want links to nibs- untouched",
+			kid.Parent, kid.Milestone, kid.BlockedBy)
 	}
 }
 
@@ -631,6 +646,7 @@ func TestFixBrokenLinks(t *testing.T) {
 		Status:    "todo",
 		BlockedBy: []string{"bbb2", "aaa1"}, // bbb2 is valid, aaa1 is self-reference
 		Parent:    "nonexistent",            // broken
+		Milestone: "ms-missing",             // broken
 	}
 	nibB := &nib.Nib{
 		ID:     "bbb2",
@@ -650,8 +666,8 @@ func TestFixBrokenLinks(t *testing.T) {
 		t.Fatalf("FixBrokenLinks error: %v", err)
 	}
 
-	if fixed != 2 {
-		t.Errorf("fixed = %d, want 2", fixed)
+	if fixed != 3 {
+		t.Errorf("fixed = %d, want 3", fixed)
 	}
 
 	// Verify only valid blocked_by link remains
@@ -664,6 +680,9 @@ func TestFixBrokenLinks(t *testing.T) {
 	}
 	if loadedA.Parent != "" {
 		t.Errorf("broken parent should be removed, got %q", loadedA.Parent)
+	}
+	if loadedA.Milestone != "" {
+		t.Errorf("broken milestone should be removed, got %q", loadedA.Milestone)
 	}
 }
 
@@ -714,7 +733,8 @@ func TestFixBrokenLinksLeavesResolvableShortIDsOnDisk(t *testing.T) {
 
 	writeLinkNibFile(t, nibsDir, "nibs-par", "todo", "")
 	writeLinkNibFile(t, nibsDir, "nibs-blk", "in-progress", "")
-	depPath := writeLinkNibFile(t, nibsDir, "nibs-dep", "todo", "parent: par\nblocked_by: [blk]\n")
+	writeLinkNibFile(t, nibsDir, "nibs-mst", "todo", "")
+	depPath := writeLinkNibFile(t, nibsDir, "nibs-dep", "todo", "parent: par\nmilestone: mst\nblocked_by: [blk]\n")
 	if err := core.Load(); err != nil {
 		t.Fatalf("Load: %v", err)
 	}
@@ -752,9 +772,9 @@ func TestFixBrokenLinksLeavesResolvableShortIDsOnDisk(t *testing.T) {
 	// visible from both ends — while the file above is untouched.
 	if dep, err := core.Get("nibs-dep"); err != nil {
 		t.Fatalf(`Get("nibs-dep"): %v`, err)
-	} else if dep.Parent != "nibs-par" || len(dep.BlockedBy) != 1 || dep.BlockedBy[0] != "nibs-blk" {
-		t.Errorf("stored links = parent %q, blocked_by %v; want them resolved (%q, %v)",
-			dep.Parent, dep.BlockedBy, "nibs-par", []string{"nibs-blk"})
+	} else if dep.Parent != "nibs-par" || dep.Milestone != "nibs-mst" || len(dep.BlockedBy) != 1 || dep.BlockedBy[0] != "nibs-blk" {
+		t.Errorf("stored links = parent %q, milestone %q, blocked_by %v; want them resolved (%q, %q, %v)",
+			dep.Parent, dep.Milestone, dep.BlockedBy, "nibs-par", "nibs-mst", []string{"nibs-blk"})
 	}
 }
 
@@ -771,6 +791,8 @@ func TestFixBrokenLinksStillRemovesUnresolvableLinks(t *testing.T) {
 	// answers to. "blk" resolves and must survive.
 	writeLinkNibFile(t, nibsDir, "nibs-shortparent", "todo", "parent: nope\n")
 	writeLinkNibFile(t, nibsDir, "nibs-fullparent", "todo", "parent: nibs-nope\n")
+	writeLinkNibFile(t, nibsDir, "nibs-shortms", "todo", "milestone: nope\n")
+	writeLinkNibFile(t, nibsDir, "nibs-fullms", "todo", "milestone: nibs-nope\n")
 	depPath := writeLinkNibFile(t, nibsDir, "nibs-dep", "todo", "blocked_by: [nope, nibs-nope, blk]\n")
 	if err := core.Load(); err != nil {
 		t.Fatalf("Load: %v", err)
@@ -784,6 +806,8 @@ func TestFixBrokenLinksStillRemovesUnresolvableLinks(t *testing.T) {
 	for _, want := range []string{
 		"nibs-shortparent:nope",
 		"nibs-fullparent:nibs-nope",
+		"nibs-shortms:nope",
+		"nibs-fullms:nibs-nope",
 		"nibs-dep:nope",
 		"nibs-dep:nibs-nope",
 	} {
@@ -791,8 +815,8 @@ func TestFixBrokenLinksStillRemovesUnresolvableLinks(t *testing.T) {
 			t.Errorf("CheckAllLinks() did not report %q as broken; reported %+v", want, result.BrokenLinks)
 		}
 	}
-	if len(result.BrokenLinks) != 4 {
-		t.Errorf("broken links = %d, want 4: %+v", len(result.BrokenLinks), result.BrokenLinks)
+	if len(result.BrokenLinks) != 6 {
+		t.Errorf("broken links = %d, want 6: %+v", len(result.BrokenLinks), result.BrokenLinks)
 	}
 
 	before := hashFile(t, depPath)
@@ -800,8 +824,8 @@ func TestFixBrokenLinksStillRemovesUnresolvableLinks(t *testing.T) {
 	if err != nil {
 		t.Fatalf("FixBrokenLinks: %v", err)
 	}
-	if fixed != 4 {
-		t.Errorf("FixBrokenLinks() = %d, want 4", fixed)
+	if fixed != 6 {
+		t.Errorf("FixBrokenLinks() = %d, want 6", fixed)
 	}
 	if after := hashFile(t, depPath); after == before {
 		t.Error("FixBrokenLinks left the dependent file untouched; the unresolvable blocked_by entries were not removed from disk")
@@ -814,6 +838,15 @@ func TestFixBrokenLinksStillRemovesUnresolvableLinks(t *testing.T) {
 		}
 		if b.Parent != "" {
 			t.Errorf("%s parent = %q, want it removed", id, b.Parent)
+		}
+	}
+	for _, id := range []string{"nibs-shortms", "nibs-fullms"} {
+		b, err := core.Get(id)
+		if err != nil {
+			t.Fatalf("Get(%q): %v", id, err)
+		}
+		if b.Milestone != "" {
+			t.Errorf("%s milestone = %q, want it removed", id, b.Milestone)
 		}
 	}
 	dep, err := core.Get("nibs-dep")
@@ -835,7 +868,7 @@ func TestFixBrokenLinksStillRemovesUnresolvableLinks(t *testing.T) {
 func TestCheckAllLinksReportsShortSelfReferenceAsSelfLink(t *testing.T) {
 	core, nibsDir := mustLoadPrefixedCore(t)
 
-	writeLinkNibFile(t, nibsDir, "nibs-slf", "todo", "parent: slf\nblocked_by: [slf]\n")
+	writeLinkNibFile(t, nibsDir, "nibs-slf", "todo", "parent: slf\nmilestone: slf\nblocked_by: [slf]\n")
 	if err := core.Load(); err != nil {
 		t.Fatalf("Load: %v", err)
 	}
@@ -848,8 +881,8 @@ func TestCheckAllLinksReportsShortSelfReferenceAsSelfLink(t *testing.T) {
 	for _, sl := range result.SelfLinks {
 		gotSelf[sl.LinkType] = true
 	}
-	if !gotSelf["parent"] || !gotSelf["blocked_by"] || len(result.SelfLinks) != 2 {
-		t.Errorf("self links = %+v, want one parent and one blocked_by", result.SelfLinks)
+	if !gotSelf["parent"] || !gotSelf["milestone"] || !gotSelf["blocked_by"] || len(result.SelfLinks) != 3 {
+		t.Errorf("self links = %+v, want one parent, one milestone and one blocked_by", result.SelfLinks)
 	}
 
 	// Still removed, as self links always were.
@@ -857,15 +890,15 @@ func TestCheckAllLinksReportsShortSelfReferenceAsSelfLink(t *testing.T) {
 	if err != nil {
 		t.Fatalf("FixBrokenLinks: %v", err)
 	}
-	if fixed != 2 {
-		t.Errorf("FixBrokenLinks() = %d, want 2", fixed)
+	if fixed != 3 {
+		t.Errorf("FixBrokenLinks() = %d, want 3", fixed)
 	}
 	b, err := core.Get("nibs-slf")
 	if err != nil {
 		t.Fatalf(`Get("nibs-slf"): %v`, err)
 	}
-	if b.Parent != "" || len(b.BlockedBy) != 0 {
-		t.Errorf("self links survived --fix: parent=%q blocked_by=%v", b.Parent, b.BlockedBy)
+	if b.Parent != "" || b.Milestone != "" || len(b.BlockedBy) != 0 {
+		t.Errorf("self links survived --fix: parent=%q milestone=%q blocked_by=%v", b.Parent, b.Milestone, b.BlockedBy)
 	}
 }
 

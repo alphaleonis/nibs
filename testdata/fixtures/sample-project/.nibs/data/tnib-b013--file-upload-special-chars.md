@@ -1,6 +1,6 @@
 ---
 # tnib-b013
-version: 1
+version: 2
 title: File upload fails for names with special characters
 status: todo
 type: bug

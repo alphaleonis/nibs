@@ -1,6 +1,6 @@
 ---
 # tnib-f004
-version: 1
+version: 2
 title: CRUD operations for tasks
 status: completed
 type: feature

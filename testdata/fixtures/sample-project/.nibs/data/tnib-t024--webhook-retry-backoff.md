@@ -1,6 +1,6 @@
 ---
 # tnib-t024
-version: 1
+version: 2
 title: Implement retry with exponential backoff
 status: todo
 type: task

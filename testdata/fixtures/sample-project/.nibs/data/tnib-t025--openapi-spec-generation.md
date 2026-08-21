@@ -1,6 +1,6 @@
 ---
 # tnib-t025
-version: 1
+version: 2
 title: Auto-generate OpenAPI spec from code
 status: scrapped
 type: task

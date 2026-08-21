@@ -1,14 +1,14 @@
 ---
 # tnib-e006
-version: 1
+version: 2
 title: Notifications System
 status: draft
 type: epic
 priority: normal
 created_at: 2026-03-10T11:00:00Z
 updated_at: 2026-03-18T09:00:00Z
-parent: tnib-m002
-order: b
+milestone: tnib-m002
+milestone_order: b
 ---
 
 ## Objective

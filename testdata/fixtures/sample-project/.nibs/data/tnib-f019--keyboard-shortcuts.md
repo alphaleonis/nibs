@@ -1,6 +1,6 @@
 ---
 # tnib-f019
-version: 1
+version: 2
 title: Keyboard shortcuts for power users
 status: todo
 type: feature

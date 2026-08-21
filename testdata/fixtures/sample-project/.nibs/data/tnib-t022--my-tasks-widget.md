@@ -1,6 +1,6 @@
 ---
 # tnib-t022
-version: 1
+version: 2
 title: Build "my tasks" summary widget
 status: todo
 type: task

@@ -1,6 +1,6 @@
 ---
 # tnib-t021
-version: 1
+version: 2
 title: Design widget layout system
 status: todo
 type: task

@@ -47,7 +47,7 @@ func TestStoreLayout_ListFromSubdirectory_TracerBullet(t *testing.T) {
 	tmpDir := t.TempDir()
 	projectDir := filepath.Join(tmpDir, "demo")
 	writeStore(t, projectDir, "nibs:\n  prefix: demo-\n  id_length: 4\n", map[string]string{
-		"demo-a1b2--tracer.md": "---\nversion: 1\ntitle: Tracer\nstatus: todo\ntype: task\n---\n\nBody.\n",
+		"demo-a1b2--tracer.md": "---\nversion: 2\ntitle: Tracer\nstatus: todo\ntype: task\n---\n\nBody.\n",
 	})
 
 	deep := filepath.Join(projectDir, "src", "internal")
@@ -89,13 +89,13 @@ func TestStoreLayout_NibsPathAppliesThatStoresConfig(t *testing.T) {
 	// Project A is the cwd, with a deliberately different prefix and id length.
 	projectA := filepath.Join(tmpDir, "project-a")
 	writeStore(t, projectA, "nibs:\n  prefix: aaa-\n  id_length: 8\n", map[string]string{
-		"aaa-00000001--alpha.md": "---\nversion: 1\ntitle: Alpha\nstatus: todo\ntype: task\n---\n\nA.\n",
+		"aaa-00000001--alpha.md": "---\nversion: 2\ntitle: Alpha\nstatus: todo\ntype: task\n---\n\nA.\n",
 	})
 
 	// Project B is the store we point at.
 	projectB := filepath.Join(tmpDir, "project-b")
 	storeB := writeStore(t, projectB, "nibs:\n  prefix: bbb-\n  id_length: 4\n", map[string]string{
-		"bbb-b1b1--beta.md": "---\nversion: 1\ntitle: Beta\nstatus: todo\ntype: task\n---\n\nB.\n",
+		"bbb-b1b1--beta.md": "---\nversion: 2\ntitle: Beta\nstatus: todo\ntype: task\n---\n\nB.\n",
 	})
 
 	t.Setenv("NIBS_CONFIG_ROOT", tmpDir)

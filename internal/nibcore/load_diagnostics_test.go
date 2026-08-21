@@ -361,9 +361,10 @@ func TestFixBrokenLinksKeepsLinksToSkippedNibs(t *testing.T) {
 	if err := os.WriteFile(dataPath(nibsDir, "nibs-tgt1--target.md"), []byte(diagUnparseableNib), 0644); err != nil {
 		t.Fatalf("write target: %v", err)
 	}
-	// A bystander linking to it by parent AND blocked_by, plus a link to an id
-	// that genuinely does not exist anywhere — the control, which MUST still be
-	// removed so this test cannot pass by disabling the fixer wholesale.
+	// A bystander linking to it by parent, milestone AND blocked_by, plus a
+	// link to an id that genuinely does not exist anywhere — the control, which
+	// MUST still be removed so this test cannot pass by disabling the fixer
+	// wholesale.
 	child := `---
 version: 1
 title: Child
@@ -371,6 +372,7 @@ status: todo
 type: task
 priority: normal
 parent: nibs-tgt1
+milestone: nibs-tgt1
 blocked_by:
     - nibs-tgt1
     - nibs-gone9
@@ -400,6 +402,9 @@ Body.
 	if stored.Parent != "nibs-tgt1" {
 		t.Errorf("Parent = %q, want %q kept — the target is skipped, not missing; erasing it loses an edge a YAML repair would have restored", stored.Parent, "nibs-tgt1")
 	}
+	if stored.Milestone != "nibs-tgt1" {
+		t.Errorf("Milestone = %q, want %q kept for the same reason", stored.Milestone, "nibs-tgt1")
+	}
 	if !slices.Contains(stored.BlockedBy, "nibs-tgt1") {
 		t.Errorf("BlockedBy = %v, want it to still contain %q for the same reason", stored.BlockedBy, "nibs-tgt1")
 	}
@@ -416,6 +421,9 @@ Body.
 	}
 	if !strings.Contains(string(raw), "parent: nibs-tgt1") {
 		t.Errorf("child file lost its parent line:\n%s", raw)
+	}
+	if !strings.Contains(string(raw), "milestone: nibs-tgt1") {
+		t.Errorf("child file lost its milestone line:\n%s", raw)
 	}
 }
 

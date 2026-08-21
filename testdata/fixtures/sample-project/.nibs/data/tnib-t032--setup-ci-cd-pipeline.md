@@ -1,6 +1,6 @@
 ---
 # tnib-t032
-version: 1
+version: 2
 title: Set up CI/CD pipeline
 status: completed
 type: task

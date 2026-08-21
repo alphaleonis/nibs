@@ -1,6 +1,6 @@
 ---
 # tnib-t008
-version: 1
+version: 2
 title: Write authentication API documentation
 status: draft
 type: task

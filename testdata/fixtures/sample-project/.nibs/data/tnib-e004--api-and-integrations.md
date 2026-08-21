@@ -1,14 +1,14 @@
 ---
 # tnib-e004
-version: 1
+version: 2
 title: API & Integrations
 status: todo
 type: epic
 priority: normal
 created_at: 2026-02-20T14:00:00Z
 updated_at: 2026-03-15T10:00:00Z
-parent: tnib-m001
-order: d
+milestone: tnib-m001
+milestone_order: d
 ---
 
 ## Objective

@@ -1,6 +1,6 @@
 ---
 # tnib-t014
-version: 1
+version: 2
 title: Implement drag-and-drop reordering
 status: todo
 type: task

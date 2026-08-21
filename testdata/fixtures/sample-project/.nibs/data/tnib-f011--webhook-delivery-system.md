@@ -1,6 +1,6 @@
 ---
 # tnib-f011
-version: 1
+version: 2
 title: Webhook delivery system
 status: todo
 type: feature
@@ -10,6 +10,7 @@ created_at: 2026-03-05T14:00:00Z
 updated_at: 2026-03-15T10:00:00Z
 parent: tnib-e004
 order: a
+area: api/webhooks
 ---
 
 HTTP webhook system for notifying external services of task events (created, updated, deleted, assigned).

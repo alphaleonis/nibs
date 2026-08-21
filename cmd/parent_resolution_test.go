@@ -32,7 +32,7 @@ func setupParentLinkTest(t *testing.T, files map[string]string) (*graph.Resolver
 		t.Fatal(err)
 	}
 	for id, frontMatter := range files {
-		content := "---\nversion: 1\ntitle: " + id + "\nstatus: todo\ntype: task\n" + frontMatter + "---\n\nBody.\n"
+		content := "---\nversion: 2\ntitle: " + id + "\nstatus: todo\ntype: task\n" + frontMatter + "---\n\nBody.\n"
 		if err := os.WriteFile(dataPath(nibsDir, id+"--test.md"), []byte(content), 0644); err != nil {
 			t.Fatal(err)
 		}

@@ -87,16 +87,17 @@ func (p *projectionResolver) ParentID(id string) string {
 // STRUCTURAL parent axis (membership.View.Children), the same child set
 // Orderer.Members derives without the ordering-key backfill a count does not
 // need. Deliberately not DirectMembers: childCount answers "how many nibs name
-// this one as parent", and it keeps doing so when the membership axis moves to
-// `milestone:` assignment.
+// this one as parent", while membership answers from the `milestone:`
+// assignment axis — a milestone honestly reports 0 children while its
+// progress rolls over the assignees.
 func (p *projectionResolver) ChildCount(id string) int {
 	return len(p.membershipView().Children(id))
 }
 
-// Progress returns the canonical child-completion progress.Rollup over the
-// nib's direct members (membership.View.DirectMembers — the same set the
-// Children resolver derives on legal data). See progress.Rollup /
-// progress.ByCount for the exact rule.
+// Progress returns the canonical completion progress.Rollup over the nib's
+// direct members (membership.View.DirectMembers): a milestone rolls over its
+// `milestone:` assignees, every other container over its structural children.
+// See progress.Rollup / progress.ByCount for the exact rule.
 //
 // Reading Status off the view's live pointers is safe here, unlike the
 // resolvers that hand nibs to gqlgen: Status is not mutated in place on a

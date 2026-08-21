@@ -19,7 +19,7 @@ import (
 // v0MigrateFixture is a hand-written v0 store: no `version:` key (absent = 0,
 // legacy) and a dual-side `blocking:` edge that the v0→v1 migration must invert
 // onto the target's blocked_by. Fixtures are written by hand rather than via
-// fixtures.CopySampleProject because that dataset is already v1.
+// fixtures.CopySampleProject because that dataset is already current-format.
 func v0MigrateFixture() map[string]string {
 	return map[string]string{
 		"aaa1--blocker.md": "---\ntitle: Blocker\nstatus: todo\nblocking:\n    - bbb2\n---\n\nBody A.\n",
@@ -95,7 +95,11 @@ func pendingNames(t *testing.T, nibsDir string) []string {
 // directly over hand-written fixtures.
 func TestPendingMigrationsDetectTable(t *testing.T) {
 	const v0Nib = "---\n# leg-a1\nversion: 0\ntitle: Legacy\nstatus: todo\n---\n\nBody.\n"
-	const v1Nib = "---\n# leg-a1\nversion: 1\ntitle: Current\nstatus: todo\n---\n\nBody.\n"
+	const v1Nib = "---\n# leg-a1\nversion: 1\ntitle: Old\nstatus: todo\n---\n\nBody.\n"
+	const v2Nib = "---\n# leg-a1\nversion: 2\ntitle: Current\nstatus: todo\n---\n\nBody.\n"
+	// A v0 file pends BOTH version-keyed steps: the chain lifts it to v1 and
+	// then to v2 in one run.
+	v0Pending := []string{"v0-blocking", "v2-axes"}
 
 	tests := []struct {
 		name  string
@@ -103,26 +107,30 @@ func TestPendingMigrationsDetectTable(t *testing.T) {
 		want  []string
 	}{
 		{"empty store has nothing pending", map[string]string{}, nil},
-		{"all-v1 store has nothing pending", map[string]string{
+		{"all-v2 store has nothing pending", map[string]string{
+			"a1--one.md": v2Nib,
+			"b2--two.md": v2Nib,
+		}, nil},
+		{"all-v1 store needs the v2 step", map[string]string{
 			"a1--one.md": v1Nib,
 			"b2--two.md": v1Nib,
-		}, nil},
-		{"v0 store needs the v0 step", map[string]string{
+		}, []string{"v2-axes"}},
+		{"v0 store needs the v0 step and the v2 step", map[string]string{
 			"a1--one.md": v0Nib,
-		}, []string{"v0-blocking"}},
-		{"mixed store needs the v0 step", map[string]string{
+		}, v0Pending},
+		{"mixed store needs both version steps", map[string]string{
 			"a1--one.md": v0Nib,
-			"b2--two.md": v1Nib,
-		}, []string{"v0-blocking"}},
+			"b2--two.md": v2Nib,
+		}, v0Pending},
 		{"archived v0 nib still counts", map[string]string{
-			"a1--one.md":         v1Nib,
+			"a1--one.md":         v2Nib,
 			"archive/z9--old.md": v0Nib,
-		}, []string{"v0-blocking"}},
+		}, v0Pending},
 		{"version key in the body does not count as versioned", map[string]string{
 			// The scan must stop at the closing fence: this file's header has no
 			// version key, so it is v0 no matter what the body says.
-			"a1--one.md": "---\ntitle: Legacy\nstatus: todo\n---\n\nversion: 1\n",
-		}, []string{"v0-blocking"}},
+			"a1--one.md": "---\ntitle: Legacy\nstatus: todo\n---\n\nversion: 2\n",
+		}, v0Pending},
 		{"non-md files are not probed", map[string]string{
 			"notes.txt": "not front matter at all",
 		}, nil},
@@ -130,47 +138,47 @@ func TestPendingMigrationsDetectTable(t *testing.T) {
 			// nib.Parse accepts the `---yaml` opening fence, so the scan must
 			// read it too or the two disagree on whether this file is a nib.
 			"a1--one.md": "---yaml\ntitle: Legacy\nstatus: todo\n---\n\nBody.\n",
-		}, []string{"v0-blocking"}},
+		}, v0Pending},
 
 		// YAML trailing comments: the scan must read these headers the way the
 		// authoritative parse will, or detect and apply disagree forever — the
 		// refusal loop reproduced in review finding #7. Boundary rows bracket
 		// the strip rule: a comment needs whitespace before its `#`.
 		{"version with trailing comment is not v0", map[string]string{
-			"a1--one.md": "---\nversion: 1 # migrated\ntitle: T\nstatus: todo\n---\n\nBody.\n",
+			"a1--one.md": "---\nversion: 2 # migrated\ntitle: T\nstatus: todo\n---\n\nBody.\n",
 		}, nil},
 		{"version with tight trailing comment is not v0", map[string]string{
-			"a1--one.md": "---\nversion: 1 #c\ntitle: T\nstatus: todo\n---\n\nBody.\n",
+			"a1--one.md": "---\nversion: 2 #c\ntitle: T\nstatus: todo\n---\n\nBody.\n",
 		}, nil},
 		{"quoted version with trailing comment is not v0", map[string]string{
-			"a1--one.md": "---\nversion: \"1\" # c\ntitle: T\nstatus: todo\n---\n\nBody.\n",
+			"a1--one.md": "---\nversion: \"2\" # c\ntitle: T\nstatus: todo\n---\n\nBody.\n",
 		}, nil},
 		{"hash without preceding space is part of the value, not a comment", map[string]string{
-			// YAML reads `1#nospace` as the scalar "1#nospace" — an invalid
+			// YAML reads `2#nospace` as the scalar "2#nospace" — an invalid
 			// int the load will refuse loudly; the scan must agree it is NOT
-			// version 1 (v0 keeps the store gated until the file is repaired).
-			"a1--one.md": "---\nversion: 1#nospace\ntitle: T\nstatus: todo\n---\n\nBody.\n",
-		}, []string{"v0-blocking"}},
+			// version 2 (v0 keeps the store gated until the file is repaired).
+			"a1--one.md": "---\nversion: 2#nospace\ntitle: T\nstatus: todo\n---\n\nBody.\n",
+		}, v0Pending},
 		{"deferred priority with trailing comment is caught", map[string]string{
-			"a1--one.md": "---\nversion: 1\ntitle: T\nstatus: todo\npriority: deferred # legacy\n---\n\nBody.\n",
+			"a1--one.md": "---\nversion: 2\ntitle: T\nstatus: todo\npriority: deferred # legacy\n---\n\nBody.\n",
 		}, []string{"priority-deferred"}},
 		{"quoted deferred priority with trailing comment is caught", map[string]string{
-			"a1--one.md": "---\nversion: 1\ntitle: T\nstatus: todo\npriority: 'deferred' # note\n---\n\nBody.\n",
+			"a1--one.md": "---\nversion: 2\ntitle: T\nstatus: todo\npriority: 'deferred' # note\n---\n\nBody.\n",
 		}, []string{"priority-deferred"}},
 		{"hash inside a quoted value is not a comment", map[string]string{
 			// Not deferred, and the quoted ` # ` must not be stripped into one.
-			"a1--one.md": "---\nversion: 1\ntitle: T\nstatus: todo\npriority: \"low # x\"\n---\n\nBody.\n",
+			"a1--one.md": "---\nversion: 2\ntitle: T\nstatus: todo\npriority: \"low # x\"\n---\n\nBody.\n",
 		}, nil},
 		{"version key after an over-64KiB header line is still read", map[string]string{
 			// bufio's default 64 KiB token cap used to end the scan mid-header
 			// with version 0 extracted; the buffer is raised to the full header
 			// cap so scan and parse see the same keys.
-			"a1--one.md": "---\nlong_note: " + strings.Repeat("x", 70*1024) + "\nversion: 1\ntitle: T\nstatus: todo\n---\n\nBody.\n",
+			"a1--one.md": "---\nlong_note: " + strings.Repeat("x", 70*1024) + "\nversion: 2\ntitle: T\nstatus: todo\n---\n\nBody.\n",
 		}, nil},
 		{"version with tab before trailing comment is not v0", map[string]string{
 			// YAML opens a comment after a tab just as after a space; the
 			// strip rule must too.
-			"a1--one.md": "---\nversion: 1\t# migrated\ntitle: T\nstatus: todo\n---\n\nBody.\n",
+			"a1--one.md": "---\nversion: 2\t# migrated\ntitle: T\nstatus: todo\n---\n\nBody.\n",
 		}, nil},
 
 		// Whitespace-padded fences: the frontmatter library's line handling is
@@ -179,29 +187,29 @@ func TestPendingMigrationsDetectTable(t *testing.T) {
 		// with the fence token) or detect and load disagree on the same file.
 		{"padded closing fence ends the header before a body version line", map[string]string{
 			// The scan must recognize `---  ` as the close nib.Parse sees:
-			// missing it reads the body's unindented `version: 1` as a header
+			// missing it reads the body's unindented `version: 2` as a header
 			// key and reports this v0 file as already migrated — silently
 			// never migrated.
-			"a1--one.md": "---\ntitle: Legacy\nstatus: todo\n---  \n\nversion: 1\n",
-		}, []string{"v0-blocking"}},
+			"a1--one.md": "---\ntitle: Legacy\nstatus: todo\n---  \n\nversion: 2\n",
+		}, v0Pending},
 		{"padded closing fence ends the header before a body priority line", map[string]string{
 			// The inverse misread: a body line that is itself an unindented
 			// `priority: deferred` must not be scanned as a header key — that
 			// would report a migrated file as pending forever.
-			"a1--one.md": "---\nversion: 1\ntitle: T\nstatus: todo\n--- \n\npriority: deferred\n",
+			"a1--one.md": "---\nversion: 2\ntitle: T\nstatus: todo\n--- \n\npriority: deferred\n",
 		}, nil},
 		{"tab-padded closing fence ends the header", map[string]string{
-			"a1--one.md": "---\ntitle: Legacy\nstatus: todo\n---\t\n\nversion: 1\n",
-		}, []string{"v0-blocking"}},
+			"a1--one.md": "---\ntitle: Legacy\nstatus: todo\n---\t\n\nversion: 2\n",
+		}, v0Pending},
 		{"crlf closing fence with trailing spaces ends the header", map[string]string{
-			"a1--one.md": "---\r\ntitle: Legacy\r\nstatus: todo\r\n---  \r\n\r\nversion: 1\r\n",
-		}, []string{"v0-blocking"}},
+			"a1--one.md": "---\r\ntitle: Legacy\r\nstatus: todo\r\n---  \r\n\r\nversion: 2\r\n",
+		}, v0Pending},
 		{"padded opening fence is still front matter, so a v0 file behind it is pending", map[string]string{
 			"a1--one.md": "---   \ntitle: Legacy\nstatus: todo\n---\n\nBody.\n",
-		}, []string{"v0-blocking"}},
+		}, v0Pending},
 		{"---yaml opening fence with trailing spaces is still front matter", map[string]string{
 			"a1--one.md": "---yaml  \ntitle: Legacy\nstatus: todo\n---\n\nBody.\n",
-		}, []string{"v0-blocking"}},
+		}, v0Pending},
 		{"---- is not a fence, so the file is not a v0 nib", map[string]string{
 			// The trimmed line must EQUAL the fence token: a dash run is a
 			// horizontal rule / conflict marker, classified as a diagnostic
@@ -233,7 +241,7 @@ func TestPendingMigrationsDetectNeverWrites(t *testing.T) {
 	nibsDir := writeStoreFiles(t, map[string]string{
 		"a1--legacy.md":  "---\ntitle: Legacy\nstatus: todo\nblocking:\n    - b2\n---\n\nBody.\n",
 		"b2--target.md":  "---\ntitle: Target\nstatus: todo\n---\n\nBody.\n",
-		"c3--current.md": "---\nversion: 1\ntitle: Current\nstatus: todo\n---\n\nBody.\n",
+		"c3--current.md": "---\nversion: 2\ntitle: Current\nstatus: todo\n---\n\nBody.\n",
 	})
 
 	type fileState struct {
@@ -282,16 +290,16 @@ func TestPendingMigrationsDetectNeverWrites(t *testing.T) {
 }
 
 // TestMigratePriorityDeferredStep pins the priority-deferred step: a file
-// carrying the legacy `priority: deferred` is rewritten to `low` and stamped
-// version: 1, and detection finds it INDEPENDENTLY of the version key — a
-// version: 1 file hand-edited back to deferred is still caught, refused by
-// normal commands, and repaired by migrate.
+// carrying the legacy `priority: deferred` is rewritten to `low`, and
+// detection finds it INDEPENDENTLY of the version key — a current-version file
+// hand-edited back to deferred is still caught, refused by normal commands,
+// and repaired by migrate.
 func TestMigratePriorityDeferredStep(t *testing.T) {
 	files := map[string]string{
-		// version: 1 already — only the priority is legacy.
-		"def1--deferred.md": "---\nversion: 1\ntitle: Set Aside\nstatus: todo\npriority: deferred\n---\n\nBody.\n",
+		// version: 2 already — only the priority is legacy.
+		"def1--deferred.md": "---\nversion: 2\ntitle: Set Aside\nstatus: todo\npriority: deferred\n---\n\nBody.\n",
 		// Control: untouched by the run.
-		"low1--control.md": "---\nversion: 1\ntitle: Control\nstatus: todo\npriority: low\n---\n\nBody.\n",
+		"low1--control.md": "---\nversion: 2\ntitle: Control\nstatus: todo\npriority: low\n---\n\nBody.\n",
 	}
 	nibsDir := setupListCobraTest(t, files)
 
@@ -320,8 +328,8 @@ func TestMigratePriorityDeferredStep(t *testing.T) {
 	if !strings.Contains(disk, "priority: low") {
 		t.Errorf("migrated file missing 'priority: low':\n%s", disk)
 	}
-	if !strings.Contains(disk, "version: 1") {
-		t.Errorf("migrated file missing the version stamp:\n%s", disk)
+	if !strings.Contains(disk, "version: 2") {
+		t.Errorf("migrated file lost its version:\n%s", disk)
 	}
 
 	ctlDisk, err := os.ReadFile(dataPath(nibsDir, "low1--control.md"))
@@ -338,13 +346,13 @@ func TestMigratePriorityDeferredStep(t *testing.T) {
 }
 
 // TestMigrateCrashResume pins detect-gates-apply idempotency: a store where
-// the v0 step already ran (every file is version: 1) but the priority step did
-// not — the on-disk state a crash between steps leaves behind — re-runs with
-// ONLY the remaining step applied. There is no run journal to consult; the
-// files themselves say what is left to do.
+// the earlier steps already ran for one file (it is version: 2) while another
+// still pends the priority and v2 steps — the on-disk state a crash between
+// steps leaves behind — re-runs with ONLY the remaining steps applied. There
+// is no run journal to consult; the files themselves say what is left to do.
 func TestMigrateCrashResume(t *testing.T) {
 	files := map[string]string{
-		"aaa1--done.md": "---\nversion: 1\ntitle: Already Migrated\nstatus: todo\nblocked_by:\n    - bbb2\n---\n\nBody A.\n",
+		"aaa1--done.md": "---\nversion: 2\ntitle: Already Migrated\nstatus: todo\nblocked_by:\n    - bbb2\n---\n\nBody A.\n",
 		"bbb2--rest.md": "---\nversion: 1\ntitle: Still Deferred\nstatus: todo\npriority: deferred\n---\n\nBody B.\n",
 	}
 	nibsDir := setupListCobraTest(t, files)
@@ -355,10 +363,13 @@ func TestMigrateCrashResume(t *testing.T) {
 	}
 
 	if strings.Contains(out, "applying v0-blocking") {
-		t.Errorf("v0 step re-applied on an all-v1 store; detect must gate apply.\nout:\n%s", out)
+		t.Errorf("v0 step re-applied on a store with no v0 file; detect must gate apply.\nout:\n%s", out)
 	}
 	if !strings.Contains(out, "applying priority-deferred") {
 		t.Errorf("remaining priority step was not applied.\nout:\n%s", out)
+	}
+	if !strings.Contains(out, "applying v2-axes") {
+		t.Errorf("remaining v2 step was not applied.\nout:\n%s", out)
 	}
 
 	// The already-converted file is untouched; the remaining one is rewritten.
@@ -374,7 +385,10 @@ func TestMigrateCrashResume(t *testing.T) {
 		t.Fatal(err)
 	}
 	if strings.Contains(string(bDisk), "deferred") || !strings.Contains(string(bDisk), "priority: low") {
-		t.Errorf("remaining step did not convert the deferred file:\n%s", bDisk)
+		t.Errorf("remaining priority step did not convert the deferred file:\n%s", bDisk)
+	}
+	if !strings.Contains(string(bDisk), "version: 2") {
+		t.Errorf("remaining v2 step did not stamp the file:\n%s", bDisk)
 	}
 }
 
@@ -413,6 +427,96 @@ func TestMigrateRefusesUnparseableStore(t *testing.T) {
 		if string(after) != before {
 			t.Errorf("migrate's refusal modified %s:\nbefore:\n%s\nafter:\n%s", name, before, after)
 		}
+	}
+}
+
+// TestMigrateV2AxesStep pins the v2 step end to end: a v1 store where an epic
+// and a bug are parented to a milestone is refused by a normal command; one
+// `nibs migrate` moves both onto the assignment axis (milestone: from the
+// parent, milestone_order: from the sibling order) and stamps every file
+// version: 2; a second run detects nothing and rewrites nothing (convergence).
+func TestMigrateV2AxesStep(t *testing.T) {
+	files := map[string]string{
+		"ms01--rel.md":  "---\nversion: 1\ntitle: Release\nstatus: todo\ntype: milestone\n---\n\nBody.\n",
+		"epi1--auth.md": "---\nversion: 1\ntitle: Auth\nstatus: todo\ntype: epic\nparent: ms01\norder: a5\n---\n\nBody.\n",
+		"tsk1--sub.md":  "---\nversion: 1\ntitle: Sub\nstatus: todo\ntype: task\nparent: epi1\norder: a0\n---\n\nBody.\n",
+	}
+	nibsDir := setupMigrateStore(t, files)
+
+	// The pre-run refusal names the pending v2 step.
+	_, err := runRootWith(t, "--nibs-path", nibsDir, "list", "-q")
+	if err == nil {
+		t.Fatal("list on a v1 store succeeded, want a refusal")
+	}
+	if !strings.Contains(err.Error(), "v2-axes") {
+		t.Errorf("refusal should name the v2-axes step, got: %v", err)
+	}
+
+	out, err := runRootWith(t, "--nibs-path", nibsDir, "migrate")
+	if err != nil {
+		t.Fatalf("nibs migrate failed: %v\nout: %s", err, out)
+	}
+
+	epiDisk, err := os.ReadFile(dataPath(nibsDir, "epi1--auth.md"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	epi := string(epiDisk)
+	for _, want := range []string{"milestone: ms01", "milestone_order: a5", "version: 2"} {
+		if !strings.Contains(epi, want) {
+			t.Errorf("migrated epic missing %q:\n%s", want, epi)
+		}
+	}
+	for _, gone := range []string{"parent:", "order: a5"} {
+		if strings.Contains(strings.ReplaceAll(epi, "milestone_order: a5", ""), gone) {
+			t.Errorf("migrated epic still carries %q:\n%s", gone, epi)
+		}
+	}
+	tskDisk, err := os.ReadFile(dataPath(nibsDir, "tsk1--sub.md"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	tsk := string(tskDisk)
+	// The task's epic parent is decomposition, not milestone membership: it
+	// stays on the parent axis, version-stamped only.
+	for _, want := range []string{"parent: epi1", "order: a0", "version: 2"} {
+		if !strings.Contains(tsk, want) {
+			t.Errorf("migrated task missing %q:\n%s", want, tsk)
+		}
+	}
+	if strings.Contains(tsk, "milestone") {
+		t.Errorf("the task gained an assignment its epic parent never conferred:\n%s", tsk)
+	}
+
+	// Convergence: the second run finds nothing and changes nothing.
+	after := map[string]string{}
+	for name := range files {
+		disk, readErr := os.ReadFile(dataPath(nibsDir, name))
+		if readErr != nil {
+			t.Fatal(readErr)
+		}
+		after[name] = string(disk)
+	}
+	out, err = runRootWith(t, "--nibs-path", nibsDir, "migrate")
+	if err != nil {
+		t.Fatalf("second migrate failed: %v\nout: %s", err, out)
+	}
+	if !strings.Contains(out, "Store is up to date; no migrations pending.") {
+		t.Errorf("second run should report the store up to date, got:\n%s", out)
+	}
+	for name, before := range after {
+		disk, readErr := os.ReadFile(dataPath(nibsDir, name))
+		if readErr != nil {
+			t.Fatal(readErr)
+		}
+		if string(disk) != before {
+			t.Errorf("second run rewrote %s:\n%s", name, disk)
+		}
+	}
+
+	// And the normal command now runs.
+	if _, err := runRootWith(t, "--nibs-path", nibsDir, "list", "-q", "--all"); err != nil {
+		t.Fatalf("list after migrate failed: %v", err)
 	}
 }
 
@@ -460,6 +564,9 @@ func TestMigrateDryRun(t *testing.T) {
 	}
 	if !strings.Contains(out, "priority-deferred") || !strings.Contains(out, "1 file(s)") {
 		t.Errorf("dry-run should list the priority step with its count of 1, got:\n%s", out)
+	}
+	if !strings.Contains(out, "v2-axes") || !strings.Contains(out, "3 file(s)") {
+		t.Errorf("dry-run should list the v2 step with its count of 3 (every pre-v2 file), got:\n%s", out)
 	}
 
 	for name, before := range files {
@@ -519,11 +626,11 @@ func TestMigrateDryRunWarnsWhenRealRunWillRefuse(t *testing.T) {
 // probe aborted with a raw open error, deadlocking the whole CLI including
 // `nibs check`, the diagnostic for exactly this state.
 func TestStoreProbeDegradation(t *testing.T) {
-	const v1Nib = "---\n# leg-a1\nversion: 1\ntitle: Current\nstatus: todo\n---\n\nBody.\n"
+	const v2Nib = "---\n# leg-a1\nversion: 2\ntitle: Current\nstatus: todo\n---\n\nBody.\n"
 
 	t.Run("dangling symlink does not brick the CLI", func(t *testing.T) {
 		nibsDir := setupListCobraTest(t, map[string]string{
-			"cur1--one.md": v1Nib,
+			"cur1--one.md": v2Nib,
 		})
 		// The emacs lock-file shape: a .md-named symlink to a target that
 		// does not exist. Opening it fails; probing must skip, not abort.
@@ -538,7 +645,7 @@ func TestStoreProbeDegradation(t *testing.T) {
 
 	t.Run("fence-less markdown is not counted pending", func(t *testing.T) {
 		nibsDir := setupListCobraTest(t, map[string]string{
-			"cur1--one.md": v1Nib,
+			"cur1--one.md": v2Nib,
 			"README.md":    "# Store notes\n\nNo front matter here.\n",
 		})
 		// A fence-less file has no version key; it must land in the
@@ -586,7 +693,7 @@ func TestMigrateFencelessFileNeverRewritten(t *testing.T) {
 
 	t.Run("up-to-date store notes the file and leaves it alone", func(t *testing.T) {
 		files := map[string]string{
-			"cur1--one.md": "---\nversion: 1\ntitle: One\nstatus: todo\n---\n\nBody.\n",
+			"cur1--one.md": "---\nversion: 2\ntitle: One\nstatus: todo\n---\n\nBody.\n",
 			"README.md":    readme,
 		}
 		nibsDir := setupMigrateStore(t, files)
@@ -617,7 +724,7 @@ func TestMigrateFencelessFileNeverRewritten(t *testing.T) {
 func TestFencelessFileClassificationAgrees(t *testing.T) {
 	const readme = "# Store notes\n\nNo front matter here.\n"
 	files := map[string]string{
-		"cur1--one.md": "---\nversion: 1\ntitle: One\nstatus: todo\n---\n\nBody.\n",
+		"cur1--one.md": "---\nversion: 2\ntitle: One\nstatus: todo\n---\n\nBody.\n",
 		"README.md":    readme,
 	}
 
@@ -667,8 +774,8 @@ func TestFencelessFileClassificationAgrees(t *testing.T) {
 // date", and modify nothing.
 func TestMigrateUpToDateStore(t *testing.T) {
 	files := map[string]string{
-		"cur1--one.md": "---\nversion: 1\ntitle: One\nstatus: todo\n---\n\nBody.\n",
-		"cur2--two.md": "---\nversion: 1\ntitle: Two\nstatus: todo\npriority: low\n---\n\nBody.\n",
+		"cur1--one.md": "---\nversion: 2\ntitle: One\nstatus: todo\n---\n\nBody.\n",
+		"cur2--two.md": "---\nversion: 2\ntitle: Two\nstatus: todo\npriority: low\n---\n\nBody.\n",
 	}
 	nibsDir := setupMigrateStore(t, files)
 
@@ -701,7 +808,7 @@ func TestMigrateUpToDateStore(t *testing.T) {
 // .git must not hold the whole CLI hostage.
 func TestPendingMigrationsSkipsDotDirectories(t *testing.T) {
 	nibsDir := writeStoreFiles(t, map[string]string{
-		"cur1--one.md":       "---\nversion: 1\ntitle: One\nstatus: todo\n---\n\nBody.\n",
+		"cur1--one.md":       "---\nversion: 2\ntitle: One\nstatus: todo\n---\n\nBody.\n",
 		".git/notes/x.md":    "---\ntitle: Not A Nib\nstatus: todo\n---\n\nLooks v0.\n",
 		".obsidian/cache.md": "no front matter at all",
 	})
@@ -767,7 +874,7 @@ func TestMigrateDotDirectoryFilesStayUntouched(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(string(converted), "version: 1") {
+	if !strings.Contains(string(converted), "version: 2") {
 		t.Errorf("genuine v0 file was not converted:\n%s", converted)
 	}
 
@@ -824,7 +931,7 @@ func TestMigrateDirtyGitRefusal(t *testing.T) {
 		if readErr != nil {
 			t.Fatal(readErr)
 		}
-		if !strings.Contains(string(after), "version: 1") {
+		if !strings.Contains(string(after), "version: 2") {
 			t.Errorf("--allow-dirty run did not migrate the store:\n%s", after)
 		}
 		// The store IS a git repo, so the run must end with the commit hint —
@@ -990,7 +1097,7 @@ func TestRunMigrationsHoldsStoreLock(t *testing.T) {
 func TestMigrateNewerStoreRefusal(t *testing.T) {
 	files := map[string]string{
 		"fut1--future.md": "---\nversion: 99\ntitle: From The Future\nstatus: todo\n---\n\nBody.\n",
-		"cur1--now.md":    "---\nversion: 1\ntitle: Current\nstatus: todo\n---\n\nBody.\n",
+		"cur1--now.md":    "---\nversion: 2\ntitle: Current\nstatus: todo\n---\n\nBody.\n",
 	}
 	nibsDir := setupListCobraTest(t, files)
 
@@ -1031,7 +1138,7 @@ func TestMigrateNewerStoreRefusal(t *testing.T) {
 // behind the first until the user repairs their way to it.
 func TestNewerStoreRefusalNamesCoexistingProblems(t *testing.T) {
 	nibsDir := setupListCobraTest(t, map[string]string{
-		"cur1--now.md":    "---\nversion: 1\ntitle: Current\nstatus: todo\n---\n\nBody.\n",
+		"cur1--now.md":    "---\nversion: 2\ntitle: Current\nstatus: todo\n---\n\nBody.\n",
 		"fut1--future.md": "---\nversion: 99\ntitle: Future\nstatus: todo\n---\n\nBody.\n",
 		"README.md":       "# Store notes\n\nNo front matter here.\n",
 	})
@@ -1054,7 +1161,7 @@ func TestNewerStoreRefusalNamesCoexistingProblems(t *testing.T) {
 // YAML says it is: up to date and usable.
 func TestMigrateCommentedVersionHeader(t *testing.T) {
 	files := map[string]string{
-		"a1--one.md": "---\nversion: 1 # migrated\ntitle: One\nstatus: todo\n---\n\nBody.\n",
+		"a1--one.md": "---\nversion: 2 # migrated\ntitle: One\nstatus: todo\n---\n\nBody.\n",
 	}
 	nibsDir := setupMigrateStore(t, files)
 
@@ -1212,7 +1319,8 @@ func TestMigrateRefusalsAreCoded(t *testing.T) {
 // TestMigrateTracer_V0StoreRefusedThenMigrated is the end-to-end tracer for the
 // migration engine: a v0 store is REFUSED by a normal command with an error
 // naming `nibs migrate`; running `nibs migrate` converts it (blocking →
-// blocked_by inversion, version: 1 stamped); the normal command then succeeds.
+// blocked_by inversion, then the v2 step's stamp); the normal command then
+// succeeds.
 func TestMigrateTracer_V0StoreRefusedThenMigrated(t *testing.T) {
 	nibsDir := setupListCobraTest(t, v0MigrateFixture())
 
@@ -1239,8 +1347,8 @@ func TestMigrateTracer_V0StoreRefusedThenMigrated(t *testing.T) {
 		t.Fatalf("reading migrated blocker file: %v", err)
 	}
 	aDisk := string(aBytes)
-	if !strings.Contains(aDisk, "version: 1") {
-		t.Errorf("blocker file missing `version: 1` after migrate:\n%s", aDisk)
+	if !strings.Contains(aDisk, "version: 2") {
+		t.Errorf("blocker file missing `version: 2` after migrate:\n%s", aDisk)
 	}
 	if strings.Contains(aDisk, "blocking:") {
 		t.Errorf("blocker file still carries `blocking:` after migrate:\n%s", aDisk)
@@ -1251,8 +1359,8 @@ func TestMigrateTracer_V0StoreRefusedThenMigrated(t *testing.T) {
 		t.Fatalf("reading migrated target file: %v", err)
 	}
 	bDisk := string(bBytes)
-	if !strings.Contains(bDisk, "version: 1") {
-		t.Errorf("target file missing `version: 1` after migrate:\n%s", bDisk)
+	if !strings.Contains(bDisk, "version: 2") {
+		t.Errorf("target file missing `version: 2` after migrate:\n%s", bDisk)
 	}
 	if !strings.Contains(bDisk, "blocked_by:") || !strings.Contains(bDisk, "aaa1") {
 		t.Errorf("target file missing transferred `blocked_by: [aaa1]` after migrate:\n%s", bDisk)

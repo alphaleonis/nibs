@@ -31,7 +31,7 @@ func TestBuildRoadmap(t *testing.T) {
 			name: "milestone with epic and items",
 			nibs: []*nib.Nib{
 				{ID: "m1", Type: "milestone", Title: "v1.0", Status: "todo", CreatedAt: &now},
-				{ID: "e1", Type: "epic", Title: "Auth", Status: "todo", Parent: "m1"},
+				{ID: "e1", Type: "epic", Title: "Auth", Status: "todo", Milestone: "m1"},
 				{ID: "t1", Type: "task", Title: "Login", Status: "todo", Parent: "e1"},
 			},
 			wantMilestones: 1,
@@ -40,7 +40,7 @@ func TestBuildRoadmap(t *testing.T) {
 			name: "milestone with direct children (no epic)",
 			nibs: []*nib.Nib{
 				{ID: "m1", Type: "milestone", Title: "v1.0", Status: "todo", CreatedAt: &now},
-				{ID: "t1", Type: "task", Title: "Docs", Status: "todo", Parent: "m1"},
+				{ID: "t1", Type: "task", Title: "Docs", Status: "todo", Milestone: "m1"},
 			},
 			wantMilestones: 1,
 		},
@@ -57,7 +57,7 @@ func TestBuildRoadmap(t *testing.T) {
 			name: "done items excluded by default",
 			nibs: []*nib.Nib{
 				{ID: "m1", Type: "milestone", Title: "v1.0", Status: "todo", CreatedAt: &now},
-				{ID: "t1", Type: "task", Title: "Done task", Status: "completed", Parent: "m1"},
+				{ID: "t1", Type: "task", Title: "Done task", Status: "completed", Milestone: "m1"},
 			},
 			includeDone:    false,
 			wantMilestones: 0, // milestone has no visible children
@@ -66,7 +66,7 @@ func TestBuildRoadmap(t *testing.T) {
 			name: "done items included when requested",
 			nibs: []*nib.Nib{
 				{ID: "m1", Type: "milestone", Title: "v1.0", Status: "todo", CreatedAt: &now},
-				{ID: "t1", Type: "task", Title: "Done task", Status: "completed", Parent: "m1"},
+				{ID: "t1", Type: "task", Title: "Done task", Status: "completed", Milestone: "m1"},
 			},
 			includeDone:    true,
 			wantMilestones: 1,
@@ -115,9 +115,9 @@ func TestBuildRoadmap_Progress(t *testing.T) {
 
 	nibs := []*nib.Nib{
 		{ID: "m1", Type: "milestone", Title: "v1.0", Status: "in-progress", CreatedAt: &now},
-		{ID: "e1", Type: "epic", Title: "Done Epic", Status: "completed", Parent: "m1"},
-		{ID: "e2", Type: "epic", Title: "Active Epic", Status: "in-progress", Parent: "m1"},
-		{ID: "e3", Type: "epic", Title: "Scrapped Epic", Status: "scrapped", Parent: "m1"},
+		{ID: "e1", Type: "epic", Title: "Done Epic", Status: "completed", Milestone: "m1"},
+		{ID: "e2", Type: "epic", Title: "Active Epic", Status: "in-progress", Milestone: "m1"},
+		{ID: "e3", Type: "epic", Title: "Scrapped Epic", Status: "scrapped", Milestone: "m1"},
 		{ID: "t1", Type: "task", Title: "T1", Status: "todo", Parent: "e1"},
 		{ID: "t2", Type: "task", Title: "T2", Status: "completed", Parent: "e2"},
 		{ID: "t3", Type: "task", Title: "T3", Status: "todo", Parent: "e2"},
@@ -170,7 +170,7 @@ func TestBuildRoadmap_DeferredChildStaysVisible(t *testing.T) {
 	base := func(lastChildStatus string) []*nib.Nib {
 		return []*nib.Nib{
 			{ID: "m1", Type: "milestone", Title: "v1.0", Status: "in-progress", CreatedAt: &now},
-			{ID: "e1", Type: "epic", Title: "Epic", Status: "in-progress", Parent: "m1"},
+			{ID: "e1", Type: "epic", Title: "Epic", Status: "in-progress", Milestone: "m1"},
 			{ID: "t1", Type: "task", Title: "T1", Status: "completed", Parent: "e1"},
 			{ID: "t2", Type: "task", Title: "T2", Status: "completed", Parent: "e1"},
 			{ID: "t3", Type: "task", Title: "T3", Status: "completed", Parent: "e1"},
@@ -234,7 +234,7 @@ func TestBuildRoadmap_DeferredChildStaysVisible(t *testing.T) {
 	t.Run("milestone keeps a deferred direct child", func(t *testing.T) {
 		nibs := []*nib.Nib{
 			{ID: "m1", Type: "milestone", Title: "v1.0", Status: "in-progress", CreatedAt: &now},
-			{ID: "t1", Type: "task", Title: "Set Aside", Status: "deferred", Parent: "m1"},
+			{ID: "t1", Type: "task", Title: "Set Aside", Status: "deferred", Milestone: "m1"},
 		}
 		result := buildRoadmap(nibs, false, nil, nil, cfg)
 		if len(result.Milestones) != 1 {
@@ -274,8 +274,8 @@ func TestBuildRoadmap_DeferredChildStaysVisible(t *testing.T) {
 		// rendered, so its rollup must not read 100%.
 		nibs := []*nib.Nib{
 			{ID: "m1", Type: "milestone", Title: "v1.0", Status: "in-progress", CreatedAt: &now},
-			{ID: "e1", Type: "epic", Title: "Done Epic", Status: "completed", Parent: "m1"},
-			{ID: "e2", Type: "epic", Title: "Deferred Epic", Status: "deferred", Parent: "m1"},
+			{ID: "e1", Type: "epic", Title: "Done Epic", Status: "completed", Milestone: "m1"},
+			{ID: "e2", Type: "epic", Title: "Deferred Epic", Status: "deferred", Milestone: "m1"},
 			{ID: "t1", Type: "task", Title: "Open one", Status: "todo", Parent: "e2"},
 			{ID: "t2", Type: "task", Title: "Open two", Status: "todo", Parent: "e2"},
 		}
@@ -311,7 +311,7 @@ func TestBuildRoadmap_VisibilityMatchesProgress(t *testing.T) {
 		t.Run("status="+status, func(t *testing.T) {
 			nibs := []*nib.Nib{
 				{ID: "m1", Type: "milestone", Title: "v1.0", Status: "in-progress", CreatedAt: &now},
-				{ID: "e1", Type: "epic", Title: "Epic", Status: "in-progress", Parent: "m1"},
+				{ID: "e1", Type: "epic", Title: "Epic", Status: "in-progress", Milestone: "m1"},
 				{ID: "t1", Type: "task", Title: "T1", Status: status, Parent: "e1"},
 			}
 			result := buildRoadmap(nibs, false, nil, nil, cfg)
@@ -434,8 +434,8 @@ func TestStatusFiltering(t *testing.T) {
 	nibs := []*nib.Nib{
 		{ID: "m1", Type: "milestone", Title: "Todo Milestone", Status: "todo", CreatedAt: &now},
 		{ID: "m2", Type: "milestone", Title: "In Progress Milestone", Status: "in-progress", CreatedAt: &now},
-		{ID: "t1", Type: "task", Title: "Task 1", Status: "todo", Parent: "m1"},
-		{ID: "t2", Type: "task", Title: "Task 2", Status: "todo", Parent: "m2"},
+		{ID: "t1", Type: "task", Title: "Task 1", Status: "todo", Milestone: "m1"},
+		{ID: "t2", Type: "task", Title: "Task 2", Status: "todo", Milestone: "m2"},
 	}
 
 	t.Run("filter by status", func(t *testing.T) {
@@ -469,7 +469,7 @@ func TestBuildRoadmap_HiddenMilestoneMembersAreNotBacklog(t *testing.T) {
 	cfg := config.Default()
 	nibs := []*nib.Nib{
 		{ID: "m1", Title: "Shipped", Type: "milestone", Status: "completed"},
-		{ID: "e1", Title: "Epic under shipped", Type: "epic", Status: "in-progress", Parent: "m1"},
+		{ID: "e1", Title: "Epic under shipped", Type: "epic", Status: "in-progress", Milestone: "m1"},
 		{ID: "t1", Title: "Task", Type: "task", Status: "todo", Parent: "e1"},
 	}
 

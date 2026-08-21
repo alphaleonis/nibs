@@ -1,6 +1,6 @@
 ---
 # tnib-t003
-version: 1
+version: 2
 title: Write login integration tests
 status: completed
 type: task

@@ -1,6 +1,6 @@
 ---
 # tnib-t016
-version: 1
+version: 2
 title: Enforce recursive depth limit
 status: draft
 type: task

@@ -1,6 +1,6 @@
 ---
 # tnib-t033
-version: 1
+version: 2
 title: Configure staging environment
 status: completed
 type: task

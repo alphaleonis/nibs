@@ -1,6 +1,6 @@
 ---
 # tnib-t001
-version: 1
+version: 2
 title: Implement bcrypt password hashing
 status: completed
 type: task

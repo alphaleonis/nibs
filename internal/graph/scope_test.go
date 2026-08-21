@@ -51,11 +51,11 @@ func scopeFixtures(t *testing.T) map[Scope]scopeFixture {
 				reader := newOrdererReader(
 					&nib.Nib{ID: "m1", Title: "Milestone", Type: "milestone"},
 					&nib.Nib{ID: "m2", Title: "Other milestone", Type: "milestone"},
-					&nib.Nib{ID: "ka", Title: "A", Parent: "m1", MilestoneOrder: "a0", Order: "keep"},
-					&nib.Nib{ID: "kb", Title: "B", Parent: "m1", MilestoneOrder: "b0", Order: "keep"},
-					&nib.Nib{ID: "kc", Title: "C", Parent: "m1", MilestoneOrder: "c0", Order: "keep"},
-					&nib.Nib{ID: "bf", Title: "Backfill", Parent: "m1", Order: "keep"},
-					&nib.Nib{ID: "str-1", Title: "Stranger", Parent: "m2", MilestoneOrder: "a0"},
+					&nib.Nib{ID: "ka", Title: "A", Milestone: "m1", MilestoneOrder: "a0", Order: "keep"},
+					&nib.Nib{ID: "kb", Title: "B", Milestone: "m1", MilestoneOrder: "b0", Order: "keep"},
+					&nib.Nib{ID: "kc", Title: "C", Milestone: "m1", MilestoneOrder: "c0", Order: "keep"},
+					&nib.Nib{ID: "bf", Title: "Backfill", Milestone: "m1", Order: "keep"},
+					&nib.Nib{ID: "str-1", Title: "Stranger", Milestone: "m2", MilestoneOrder: "a0"},
 				)
 				return reader, &stubWriter{store: &reader.stubReader}
 			},

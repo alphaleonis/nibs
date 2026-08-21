@@ -1,16 +1,16 @@
 ---
 # tnib-e001
-version: 1
+version: 2
 title: User Authentication
 status: in-progress
 type: epic
 priority: high
 created_at: 2026-02-18T10:00:00Z
 updated_at: 2026-03-24T16:00:00Z
-parent: tnib-m001
 documents:
     - docs/auth-architecture.md
-order: a
+milestone: tnib-m001
+milestone_order: a
 ---
 
 ## Objective

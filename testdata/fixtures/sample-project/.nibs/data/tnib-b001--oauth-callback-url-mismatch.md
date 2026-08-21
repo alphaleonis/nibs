@@ -1,6 +1,6 @@
 ---
 # tnib-b001
-version: 1
+version: 2
 title: OAuth callback URL mismatch in production config
 status: todo
 type: bug

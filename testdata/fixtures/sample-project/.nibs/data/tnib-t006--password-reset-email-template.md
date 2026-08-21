@@ -1,6 +1,6 @@
 ---
 # tnib-t006
-version: 1
+version: 2
 title: Design password reset email template
 status: todo
 type: task

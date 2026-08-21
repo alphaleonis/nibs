@@ -67,7 +67,7 @@ func setupSetPrefixTest(t *testing.T, prefix string, nibs ...testNibSpec) (strin
 	for _, spec := range nibs {
 		b := &nib.Nib{
 			ID:        spec.id,
-			Version:   1,
+			Version:   2,
 			Title:     spec.id,
 			Status:    "todo",
 			Type:      "task",

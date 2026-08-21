@@ -1,6 +1,6 @@
 ---
 # tnib-b009
-version: 1
+version: 2
 title: Flaky test in user_service_test.go
 status: todo
 type: bug

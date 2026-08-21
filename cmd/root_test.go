@@ -923,7 +923,7 @@ func TestResolveStoreDirRequiresStoreEvidence(t *testing.T) {
 				proj := filepath.Join(tmp, "proj")
 				dir := filepath.Join(proj, "nibdata")
 				mkdirAllT(t, dir)
-				writeFileT(t, filepath.Join(dir, "leg-a1--torn.md"), "---\n# leg-a1\nversion: 1\ntitle: Torn\nstatus: todo\n")
+				writeFileT(t, filepath.Join(dir, "leg-a1--torn.md"), "---\n# leg-a1\nversion: 2\ntitle: Torn\nstatus: todo\n")
 				writeFileT(t, filepath.Join(proj, store.LegacyProjectConfigFileName), "nibs:\n  prefix: leg-\n  path: nibdata\n")
 				return dir
 			},
@@ -1099,7 +1099,7 @@ func TestResolveStoreDirRequiresStoreEvidence(t *testing.T) {
 				proj := filepath.Join(tmp, "proj")
 				dir := filepath.Join(proj, "nibdata")
 				mkdirAllT(t, dir)
-				writeFileT(t, filepath.Join(dir, "one.md"), "---\nversion: 1\ntitle: One\nstatus: todo\ntype: task\n---\n\nBody.\n")
+				writeFileT(t, filepath.Join(dir, "one.md"), "---\nversion: 2\ntitle: One\nstatus: todo\ntype: task\n---\n\nBody.\n")
 				writeFileT(t, filepath.Join(proj, store.LegacyProjectConfigFileName), "nibs:\n  prefix: leg-\n  path: nibdata\n")
 				return dir
 			},

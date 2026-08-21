@@ -198,7 +198,7 @@ type migrationStep struct {
 // endanger — see runMigrations' fail-loud gate.
 func (s migrationStep) isContent() bool { return s.pred != nil }
 
-// migrationSteps is the ordered migration chain. A future format bump (v2)
+// migrationSteps is the ordered migration chain. A future format bump (v3)
 // appends one more entry with no engine change — but note the watcher's
 // legacy-shape breadcrumb (handleChanges in internal/nibcore/watcher.go)
 // restates this chain's detection for files arriving into a LIVE serve:
@@ -206,21 +206,28 @@ func (s migrationStep) isContent() bool { return s.pred != nil }
 // step NOT keyed on the version must be mirrored into that condition by hand,
 // or its files arrive with no breadcrumb.
 //
-// Two invariants govern this chain, and only one of them is about order.
+// Three invariants govern this chain, and only two of them are about order.
 //
-// The order-free one: ONLY the version-bump step may write the version stamp.
-// `version: 1` is v0-blocking's completion record — a step that stamped a
-// still-v0 file would mark its `blocking:` edges migrated without transferring
-// them, and because v0 detection keys on the version, nothing would ever
-// return to finish the job; the edges silently vanish from every view (the
-// retired load-time migration carried the same guard, refusing to persist
-// exactly that half-migrated shape). Because NormalizeLegacyPriorities honors
-// the rule — a still-v0 file it rewrites renders `version: 0`, so isV0Header
-// keeps firing — the content steps converge to the same store whichever order
-// they run in; v0-blocking precedes priority-deferred simply so one run
-// converts a doubly-legacy file in one pass.
+// The order-free one: each version stamp is exactly ONE step's completion
+// record — `version: 1` is v0-blocking's, `version: 2` is v2-axes' — and no
+// step may write another step's record. A step that stamped a still-v0 file
+// would mark its `blocking:` edges migrated without transferring them, and
+// because v0 detection keys on the version, nothing would ever return to
+// finish the job; the edges silently vanish from every view (the retired
+// load-time migration carried the same guard, refusing to persist exactly
+// that half-migrated shape). NormalizeLegacyPriorities honors the rule by
+// rendering the version verbatim (a still-v0 file it rewrites keeps
+// `version: 0`), and MigrateV1ToV2 honors it by leaving still-v0 files
+// byte-identical.
 //
-// The ordering one: `layout` MUST run FIRST. It relocates the project config
+// The version-chain ordering one: `v2-axes` must FOLLOW `v0-blocking` in this
+// slice. Its engine converts only v1 files (per the invariant above), so the
+// v0 step has to lift a v0 file to v1 within the same run for the v2 step to
+// finish it — apply order is slice order, and runMigrations' post-condition
+// fails loud if a pre-v2 file survives the run. priority-deferred is
+// order-free relative to both (value-keyed, version rendered verbatim).
+//
+// The other ordering one: `layout` MUST run FIRST. It relocates the project config
 // INTO the store, and every content step afterwards loads a Core whose
 // canonicalization resolves short-form link ids under the project's prefix —
 // which only that config carries. Run a content step first and its Core reads
@@ -248,12 +255,26 @@ var migrationSteps = []migrationStep{
 		pred:  hasDeferredPriorityHeader,
 		apply: applyPriorityDeferred,
 	},
+	{
+		name:  "v2-axes",
+		title: "move milestone parents onto the `milestone:` assignment axis and stamp version: 2",
+		pred:  isPreV2Header,
+		apply: applyV2Axes,
+	},
 }
 
 // isV0Header reports whether a scanned header describes a legacy v0 file: an
 // absent `version:` key parses as 0 (see nib.Nib.Version).
 func isV0Header(h fmHeader) bool {
 	return h.version < 1
+}
+
+// isPreV2Header reports whether a scanned header describes a file older than
+// the three-axis v2 format. Version-keyed like isV0Header, so the watcher's
+// legacy-shape breadcrumb (below-current version) covers these files without
+// a hand-mirrored condition.
+func isPreV2Header(h fmHeader) bool {
+	return h.version < 2
 }
 
 // hasDeferredPriorityHeader reports whether a scanned header carries the
@@ -292,6 +313,21 @@ func applyV0Blocking(env *migrateEnv, lock *nibcore.StoreLock, log logf) error {
 		return err
 	}
 	log("v0-blocking: migrated %d nib(s) to version 1", n)
+	return nil
+}
+
+// applyV2Axes loads the store through the normal pipeline and runs the v1→v2
+// axis conversion (see nibcore.Core.MigrateV1ToV2).
+func applyV2Axes(env *migrateEnv, lock *nibcore.StoreLock, log logf) error {
+	core, err := loadStoreForMigration(*env)
+	if err != nil {
+		return err
+	}
+	n, err := core.MigrateV1ToV2(lock)
+	if err != nil {
+		return err
+	}
+	log("v2-axes: migrated %d nib(s) to version 2", n)
 	return nil
 }
 

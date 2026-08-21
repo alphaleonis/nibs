@@ -1,6 +1,6 @@
 ---
 # tnib-t029
-version: 1
+version: 2
 title: Design notification center UI
 status: draft
 type: task

@@ -1,6 +1,6 @@
 ---
 # tnib-m001
-version: 1
+version: 2
 title: v1.0 MVP Launch
 status: in-progress
 type: milestone

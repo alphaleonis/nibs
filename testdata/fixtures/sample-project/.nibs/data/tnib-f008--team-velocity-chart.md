@@ -1,6 +1,6 @@
 ---
 # tnib-f008
-version: 1
+version: 2
 title: Team velocity chart
 status: todo
 type: feature
@@ -10,6 +10,7 @@ created_at: 2026-03-05T11:00:00Z
 updated_at: 2026-03-15T10:00:00Z
 parent: tnib-e003
 order: a
+area: web/dashboard
 ---
 
 Sprint-over-sprint velocity chart showing completed story points per sprint with trend line.

@@ -1,6 +1,6 @@
 ---
 # tnib-f001
-version: 1
+version: 2
 title: Email/password login
 status: completed
 type: feature

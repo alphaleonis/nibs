@@ -367,6 +367,30 @@ func TestSortByKey(t *testing.T) {
 	}
 }
 
+// TestSortByMilestoneOrder pins the milestone-queue sort: it reads
+// MilestoneOrder — never the parent-scope Order key — with SortByOrder's
+// semantics (keyed first in key order, unkeyed appended sorted by title).
+func TestSortByMilestoneOrder(t *testing.T) {
+	// Order keys deliberately CONTRADICT the queue keys, so a regression to
+	// SortByOrder inverts the keyed pair and fails.
+	a := &Nib{ID: "a", Title: "Alpha", MilestoneOrder: "m2", Order: "a1"}
+	b := &Nib{ID: "b", Title: "Beta", MilestoneOrder: "m1", Order: "a2"}
+	// Unkeyed in the queue (a migrated assignee's sibling with only Order, or
+	// no key at all): appended sorted by title.
+	c := &Nib{ID: "c", Title: "Delta", Order: "a0"}
+	d := &Nib{ID: "d", Title: "Charlie"}
+	nibs := []*Nib{a, c, b, d}
+
+	SortByMilestoneOrder(nibs)
+
+	want := []string{"b", "a", "d", "c"}
+	for i, n := range nibs {
+		if n.ID != want[i] {
+			t.Fatalf("SortByMilestoneOrder order = %v, want %v", ids(nibs), want)
+		}
+	}
+}
+
 func ids(nibs []*Nib) []string {
 	out := make([]string, len(nibs))
 	for i, n := range nibs {

@@ -1,6 +1,6 @@
 ---
 # tnib-f012
-version: 1
+version: 2
 title: Slack integration
 status: deferred
 type: feature

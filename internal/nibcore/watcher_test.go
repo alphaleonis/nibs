@@ -257,6 +257,14 @@ func TestWatcherWarnsOnLegacyOrNewerArrival(t *testing.T) {
 			want:     "legacy shape",
 		},
 		{
+			// The v2 step is version-keyed, so the below-current condition
+			// covers its files with no hand-mirrored clause.
+			name:     "v1 file warns legacy",
+			filename: "one1--v1.md",
+			content:  "---\nversion: 1\ntitle: One\nstatus: todo\n---\n\nBody.\n",
+			want:     "legacy shape",
+		},
+		{
 			name:     "newer version warns upgrade",
 			filename: "fut1--future.md",
 			content:  "---\nversion: 99\ntitle: Future\nstatus: todo\n---\n\nBody.\n",
@@ -265,7 +273,7 @@ func TestWatcherWarnsOnLegacyOrNewerArrival(t *testing.T) {
 		{
 			name:     "current shape stays silent",
 			filename: "cur1--now.md",
-			content:  "---\nversion: 1\ntitle: Now\nstatus: todo\n---\n\nBody.\n",
+			content:  "---\nversion: 2\ntitle: Now\nstatus: todo\n---\n\nBody.\n",
 			want:     "",
 		},
 	}

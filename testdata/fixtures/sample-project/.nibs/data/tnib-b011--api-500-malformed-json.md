@@ -1,6 +1,6 @@
 ---
 # tnib-b011
-version: 1
+version: 2
 title: API returns 500 on malformed JSON body
 status: todo
 type: bug
@@ -9,6 +9,7 @@ estimate: s
 created_at: 2026-03-18T10:00:00Z
 updated_at: 2026-03-22T09:00:00Z
 order: q
+area: api
 ---
 
 ## Steps to Reproduce

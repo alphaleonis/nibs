@@ -76,10 +76,10 @@ func setupMvCobraTest(t *testing.T, files map[string]string) string {
 // strictly increasing order keys.
 func reorderFixture() map[string]string {
 	return map[string]string{
-		"epic1.md": "---\nversion: 1\ntitle: Epic\nstatus: todo\ntype: epic\norder: a0\n---\n",
-		"a.md":     "---\nversion: 1\ntitle: A\nstatus: todo\ntype: task\nparent: epic1\norder: a0\n---\n",
-		"b.md":     "---\nversion: 1\ntitle: B\nstatus: todo\ntype: task\nparent: epic1\norder: b0\n---\n",
-		"c.md":     "---\nversion: 1\ntitle: C\nstatus: todo\ntype: task\nparent: epic1\norder: c0\n---\n",
+		"epic1.md": "---\nversion: 2\ntitle: Epic\nstatus: todo\ntype: epic\norder: a0\n---\n",
+		"a.md":     "---\nversion: 2\ntitle: A\nstatus: todo\ntype: task\nparent: epic1\norder: a0\n---\n",
+		"b.md":     "---\nversion: 2\ntitle: B\nstatus: todo\ntype: task\nparent: epic1\norder: b0\n---\n",
+		"c.md":     "---\nversion: 2\ntitle: C\nstatus: todo\ntype: task\nparent: epic1\norder: c0\n---\n",
 	}
 }
 
@@ -154,12 +154,12 @@ func TestReorderCommand_ChildrenOf(t *testing.T) {
 // `nibs reorder <id1> <id2> --after <anchor>`.
 func TestReorderCommand_BlockMove(t *testing.T) {
 	files := map[string]string{
-		"epic1.md": "---\nversion: 1\ntitle: Epic\nstatus: todo\ntype: epic\norder: a0\n---\n",
-		"a.md":     "---\nversion: 1\ntitle: A\nstatus: todo\ntype: task\nparent: epic1\norder: a0\n---\n",
-		"b.md":     "---\nversion: 1\ntitle: B\nstatus: todo\ntype: task\nparent: epic1\norder: b0\n---\n",
-		"c.md":     "---\nversion: 1\ntitle: C\nstatus: todo\ntype: task\nparent: epic1\norder: c0\n---\n",
-		"d.md":     "---\nversion: 1\ntitle: D\nstatus: todo\ntype: task\nparent: epic1\norder: d0\n---\n",
-		"e.md":     "---\nversion: 1\ntitle: E\nstatus: todo\ntype: task\nparent: epic1\norder: e0\n---\n",
+		"epic1.md": "---\nversion: 2\ntitle: Epic\nstatus: todo\ntype: epic\norder: a0\n---\n",
+		"a.md":     "---\nversion: 2\ntitle: A\nstatus: todo\ntype: task\nparent: epic1\norder: a0\n---\n",
+		"b.md":     "---\nversion: 2\ntitle: B\nstatus: todo\ntype: task\nparent: epic1\norder: b0\n---\n",
+		"c.md":     "---\nversion: 2\ntitle: C\nstatus: todo\ntype: task\nparent: epic1\norder: c0\n---\n",
+		"d.md":     "---\nversion: 2\ntitle: D\nstatus: todo\ntype: task\nparent: epic1\norder: d0\n---\n",
+		"e.md":     "---\nversion: 2\ntitle: E\nstatus: todo\ntype: task\nparent: epic1\norder: e0\n---\n",
 	}
 	nibsDir := setupMvCobraTest(t, files)
 
@@ -195,8 +195,8 @@ func TestReorderCommand_BlockMove(t *testing.T) {
 // "set" (Changed=true), so the CLI dispatches to Mode A with parentID="".
 func TestReorderCommand_ChildrenOf_RootEmptyString(t *testing.T) {
 	files := map[string]string{
-		"r1.md": "---\nversion: 1\ntitle: Root1\nstatus: todo\ntype: task\norder: a0\n---\n",
-		"r2.md": "---\nversion: 1\ntitle: Root2\nstatus: todo\ntype: task\norder: b0\n---\n",
+		"r1.md": "---\nversion: 2\ntitle: Root1\nstatus: todo\ntype: task\norder: a0\n---\n",
+		"r2.md": "---\nversion: 2\ntitle: Root2\nstatus: todo\ntype: task\norder: b0\n---\n",
 	}
 	nibsDir := setupMvCobraTest(t, files)
 
@@ -557,10 +557,10 @@ func TestMvRepositionFirst(t *testing.T) {
 // can be legally reparented from one epic to the other.
 func reparentFixture() map[string]string {
 	return map[string]string{
-		"ep1.md": "---\nversion: 1\ntitle: Epic1\nstatus: todo\ntype: epic\norder: a0\n---\n",
-		"ep2.md": "---\nversion: 1\ntitle: Epic2\nstatus: todo\ntype: epic\norder: b0\n---\n",
-		"a.md":   "---\nversion: 1\ntitle: A\nstatus: todo\ntype: task\nparent: ep1\norder: a0\n---\n",
-		"b.md":   "---\nversion: 1\ntitle: B\nstatus: todo\ntype: task\nparent: ep1\norder: b0\n---\n",
+		"ep1.md": "---\nversion: 2\ntitle: Epic1\nstatus: todo\ntype: epic\norder: a0\n---\n",
+		"ep2.md": "---\nversion: 2\ntitle: Epic2\nstatus: todo\ntype: epic\norder: b0\n---\n",
+		"a.md":   "---\nversion: 2\ntitle: A\nstatus: todo\ntype: task\nparent: ep1\norder: a0\n---\n",
+		"b.md":   "---\nversion: 2\ntitle: B\nstatus: todo\ntype: task\nparent: ep1\norder: b0\n---\n",
 	}
 }
 
@@ -591,7 +591,7 @@ func TestMvReparentAppends(t *testing.T) {
 func TestMvReparentToFirstUnderNewParent(t *testing.T) {
 	files := reparentFixture()
 	// Give ep2 an existing child so "first" is observable.
-	files["z.md"] = "---\nversion: 1\ntitle: Z\nstatus: todo\ntype: task\nparent: ep2\norder: a0\n---\n"
+	files["z.md"] = "---\nversion: 2\ntitle: Z\nstatus: todo\ntype: task\nparent: ep2\norder: a0\n---\n"
 	nibsDir := setupMvCobraTest(t, files)
 
 	rootCmd.SetArgs([]string{"--nibs-path", nibsDir, "mv", "a", "--parent", "ep2", "--first"})
@@ -634,8 +634,8 @@ func TestMvReparentToRoot(t *testing.T) {
 // surfaces a structured HIERARCHY error carrying the allowed parent types.
 func TestMvReparentIllegalHierarchy(t *testing.T) {
 	files := map[string]string{
-		"tk.md": "---\nversion: 1\ntitle: Task\nstatus: todo\ntype: task\norder: a0\n---\n",
-		"ep.md": "---\nversion: 1\ntitle: Epic\nstatus: todo\ntype: epic\norder: b0\n---\n",
+		"tk.md": "---\nversion: 2\ntitle: Task\nstatus: todo\ntype: task\norder: a0\n---\n",
+		"ep.md": "---\nversion: 2\ntitle: Epic\nstatus: todo\ntype: epic\norder: b0\n---\n",
 	}
 	nibsDir := setupMvCobraTest(t, files)
 

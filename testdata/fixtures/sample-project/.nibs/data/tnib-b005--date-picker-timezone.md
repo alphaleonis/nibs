@@ -1,6 +1,6 @@
 ---
 # tnib-b005
-version: 1
+version: 2
 title: Date picker shows wrong timezone for remote users
 status: todo
 type: bug
@@ -10,6 +10,7 @@ created_at: 2026-03-10T09:00:00Z
 updated_at: 2026-03-15T10:00:00Z
 parent: tnib-e003
 order: d
+area: web
 ---
 
 ## Steps to Reproduce

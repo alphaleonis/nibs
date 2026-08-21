@@ -1,6 +1,6 @@
 ---
 # tnib-t017
-version: 1
+version: 2
 title: Subtask progress aggregation
 status: draft
 type: task

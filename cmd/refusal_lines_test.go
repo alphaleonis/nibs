@@ -34,7 +34,7 @@ func enumeratedStore(t *testing.T, n int, companion string, content func(i int) 
 // A companion nib that leaves nothing pending, and one that leaves the v0
 // content step pending.
 const (
-	enumCurrentNib = "---\nversion: 1\ntitle: Fine\nstatus: todo\ntype: task\n---\n\nBody.\n"
+	enumCurrentNib = "---\nversion: 2\ntitle: Fine\nstatus: todo\ntype: task\n---\n\nBody.\n"
 	enumV0Nib      = "---\ntitle: Legacy\nstatus: todo\ntype: task\n---\n\nBody.\n"
 )
 

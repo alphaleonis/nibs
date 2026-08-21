@@ -1,6 +1,6 @@
 ---
 # tnib-f020
-version: 1
+version: 2
 title: Bulk task operations
 status: todo
 type: feature

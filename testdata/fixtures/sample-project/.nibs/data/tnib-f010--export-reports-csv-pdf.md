@@ -1,6 +1,6 @@
 ---
 # tnib-f010
-version: 1
+version: 2
 title: Export reports to CSV and PDF
 status: draft
 type: feature

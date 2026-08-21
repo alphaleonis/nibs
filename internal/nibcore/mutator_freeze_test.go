@@ -345,6 +345,38 @@ func freezeGuardCases() []freezeGuardCase {
 			},
 		},
 		{
+			name:   "MigrateV1ToV2",
+			covers: []string{"MigrateV1ToV2"},
+			setup: func(t *testing.T, c *Core, _ string) {
+				// A published v1 milestone child: the migration must move it onto
+				// the assignment axis and stamp version 2 — both via fresh clones,
+				// never on the published pointers. Create does not validate
+				// Version, so it can publish the legacy shape.
+				if err := c.Create(&nib.Nib{
+					ID: "v1ms", Title: "V1 Milestone", Status: "todo",
+					Type: "milestone", Version: 1,
+				}); err != nil {
+					t.Fatalf("setup Create v1ms: %v", err)
+				}
+				if err := c.Create(&nib.Nib{
+					ID: "v1kid", Title: "V1 Kid", Status: "todo",
+					Version: 1, Parent: "v1ms", Order: "a0",
+				}); err != nil {
+					t.Fatalf("setup Create v1kid: %v", err)
+				}
+			},
+			mutate: func(t *testing.T, c *Core, dir string) {
+				lock, err := AcquireStoreLock(dir)
+				if err != nil {
+					t.Fatalf("AcquireStoreLock: %v", err)
+				}
+				defer func() { _ = lock.Release() }()
+				if _, err := c.MigrateV1ToV2(lock); err != nil {
+					t.Fatalf("MigrateV1ToV2: %v", err)
+				}
+			},
+		},
+		{
 			name:   "NormalizeLegacyPriorities",
 			covers: []string{"NormalizeLegacyPriorities"},
 			setup: func(t *testing.T, c *Core, dir string) {
@@ -518,6 +550,7 @@ func TestCoreMutators_FreezePartition(t *testing.T) {
 		"RemoveLinksTo":             true,
 		"FixBrokenLinks":            true,
 		"MigrateV0ToV1":             true,
+		"MigrateV1ToV2":             true,
 		"NormalizeLegacyPriorities": true,
 	}
 

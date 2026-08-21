@@ -1,6 +1,6 @@
 ---
 # tnib-t013
-version: 1
+version: 2
 title: Build assignment notification emails
 status: todo
 type: task

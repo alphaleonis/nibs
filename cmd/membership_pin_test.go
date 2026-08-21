@@ -11,11 +11,14 @@ import (
 // TestMembershipConsumerFixturePins pins the rendered output of every surface
 // that derives container membership — roadmap, context (overview and rooted),
 // and the projected children/progress fields — byte-for-byte on the sample
-// fixture. The goldens were captured BEFORE the internal/membership cutover,
-// so these tests are the "step-1 output otherwise byte-identical" guarantee of
-// nibs-a3fb: the cutover may change none of this output on validator-legal
-// data. Regenerate deliberately with NIBS_UPDATE_GOLDENS=1 when an output
-// change is intended and reviewed.
+// fixture. The goldens pin the v2-axes semantics: a milestone's members are
+// its `milestone:` assignees listed in milestone_order (its progress rolls
+// over them while childCount reports 0), and every other container keeps its
+// structural decomposition. The five context goldens are byte-identical to
+// the pre-cutover captures — the queue preserved the old sibling order — so
+// they still witness nibs-a3fb's "output otherwise byte-identical" guarantee.
+// Regenerate deliberately with NIBS_UPDATE_GOLDENS=1 when an output change is
+// intended and reviewed.
 func TestMembershipConsumerFixturePins(t *testing.T) {
 	dir := fixtures.CopySampleProject(t)
 	nibsPath := filepath.Join(dir, ".nibs")

@@ -5,7 +5,7 @@
         "id": "tnib-m001",
         "slug": "v1-mvp-launch",
         "path": "data/tnib-m001--v1-mvp-launch.md",
-        "version": 1,
+        "version": 2,
         "title": "v1.0 MVP Launch",
         "status": "in-progress",
         "type": "milestone",
@@ -17,7 +17,7 @@
           "docs/product-roadmap.md"
         ],
         "order": "a",
-        "etag": "88f5ce25714e7cf9"
+        "etag": "a43cadc3b6d5eefc"
       },
       "progress": {
         "total": 4,
@@ -29,284 +29,10 @@
       "epics": [
         {
           "epic": {
-            "id": "tnib-e004",
-            "slug": "api-and-integrations",
-            "path": "data/tnib-e004--api-and-integrations.md",
-            "version": 1,
-            "title": "API \u0026 Integrations",
-            "status": "todo",
-            "type": "epic",
-            "priority": "normal",
-            "created_at": "2026-02-20T14:00:00Z",
-            "updated_at": "2026-03-15T10:00:00Z",
-            "body": "\n## Objective\n\nExpose a webhook system for third-party integrations and lay groundwork for future Slack/GitHub integrations.\n\n## Acceptance Criteria\n\n- [ ] Webhook registration and delivery with retry\n- [ ] At least one external integration (Slack or GitHub)\n- [ ] REST API documented with OpenAPI spec\n\n## Scope Boundaries\n\n- GraphQL API deferred to v1.2\n- Two-way sync with external tools deferred",
-            "parent": "tnib-m001",
-            "order": "d",
-            "etag": "5d9033c3fb5f4ae8"
-          },
-          "progress": {
-            "total": 2,
-            "done": 0,
-            "percent": 0,
-            "scrapped": 1,
-            "deferred": 1
-          },
-          "items": [
-            {
-              "id": "tnib-f011",
-              "slug": "webhook-delivery-system",
-              "path": "data/tnib-f011--webhook-delivery-system.md",
-              "version": 1,
-              "title": "Webhook delivery system",
-              "status": "todo",
-              "type": "feature",
-              "priority": "normal",
-              "estimate": "l",
-              "created_at": "2026-03-05T14:00:00Z",
-              "updated_at": "2026-03-15T10:00:00Z",
-              "body": "\nHTTP webhook system for notifying external services of task events (created, updated, deleted, assigned).\n\n## Acceptance Criteria\n\n- [ ] Register webhook URLs with event type filters\n- [ ] HMAC-SHA256 signature verification\n- [ ] Retry with exponential backoff (max 5 attempts)\n- [ ] Delivery log with status and response time",
-              "parent": "tnib-e004",
-              "order": "a",
-              "etag": "ef9b9e9f4206038a"
-            },
-            {
-              "id": "tnib-f012",
-              "slug": "slack-integration",
-              "path": "data/tnib-f012--slack-integration.md",
-              "version": 1,
-              "title": "Slack integration",
-              "status": "deferred",
-              "type": "feature",
-              "priority": "low",
-              "estimate": "l",
-              "created_at": "2026-03-08T09:00:00Z",
-              "updated_at": "2026-03-15T10:00:00Z",
-              "body": "\nSlack bot that posts task updates to channels and allows creating tasks via slash commands.\n\n## Acceptance Criteria\n\n- [ ] Slack app with OAuth2 installation flow\n- [ ] `/taskflow create` slash command\n- [ ] Channel notifications for task events\n- [ ] Thread replies linked to task comments",
-              "parent": "tnib-e004",
-              "order": "b",
-              "etag": "1c44a9b6cf599be6"
-            }
-          ]
-        },
-        {
-          "epic": {
-            "id": "tnib-e003",
-            "slug": "dashboard-and-reporting",
-            "path": "data/tnib-e003--dashboard-and-reporting.md",
-            "version": 1,
-            "title": "Dashboard \u0026 Reporting",
-            "status": "todo",
-            "type": "epic",
-            "priority": "normal",
-            "created_at": "2026-02-20T11:00:00Z",
-            "updated_at": "2026-03-15T10:00:00Z",
-            "body": "\n## Objective\n\nProvide team leads with velocity charts, personal dashboards, and exportable reports.\n\n## Acceptance Criteria\n\n- [ ] Team velocity chart with sprint-over-sprint comparison\n- [ ] Personal \"My Tasks\" dashboard with widget layout\n- [ ] Export to CSV and PDF\n\n## Scope Boundaries\n\n- Custom report builder deferred to v1.2\n- Real-time dashboard updates require v1.1 WebSocket infrastructure",
-            "parent": "tnib-m001",
-            "blocked_by": [
-              "tnib-e002"
-            ],
-            "order": "c",
-            "etag": "58f547d9ea1df6e2"
-          },
-          "progress": {
-            "total": 4,
-            "done": 0,
-            "percent": 0,
-            "scrapped": 0,
-            "deferred": 0
-          },
-          "items": [
-            {
-              "id": "tnib-b005",
-              "slug": "date-picker-timezone",
-              "path": "data/tnib-b005--date-picker-timezone.md",
-              "version": 1,
-              "title": "Date picker shows wrong timezone for remote users",
-              "status": "todo",
-              "type": "bug",
-              "priority": "normal",
-              "estimate": "m",
-              "created_at": "2026-03-10T09:00:00Z",
-              "updated_at": "2026-03-15T10:00:00Z",
-              "body": "\n## Steps to Reproduce\n\n1. Set system timezone to UTC+9 (Tokyo)\n2. Open task with due date \"2026-03-15\"\n3. Date picker shows \"March 14\" (off by one due to UTC conversion)\n\n## Expected vs Actual\n\n**Expected:** Date picker shows the date as entered, in user's local timezone\n**Actual:** Date displayed relative to UTC, causing off-by-one for users east of UTC\n\n## Root Cause\n\nDates stored as UTC timestamps but rendered without timezone conversion. Should store as date-only (no time component) or convert to user's timezone on display.",
-              "parent": "tnib-e003",
-              "order": "d",
-              "etag": "da4986aef667468e"
-            },
-            {
-              "id": "tnib-f008",
-              "slug": "team-velocity-chart",
-              "path": "data/tnib-f008--team-velocity-chart.md",
-              "version": 1,
-              "title": "Team velocity chart",
-              "status": "todo",
-              "type": "feature",
-              "priority": "normal",
-              "estimate": "l",
-              "created_at": "2026-03-05T11:00:00Z",
-              "updated_at": "2026-03-15T10:00:00Z",
-              "body": "\nSprint-over-sprint velocity chart showing completed story points per sprint with trend line.\n\n## Acceptance Criteria\n\n- [ ] Bar chart showing points completed per sprint\n- [ ] Rolling average trend line\n- [ ] Configurable sprint length (1-4 weeks)\n- [ ] Export chart as PNG",
-              "parent": "tnib-e003",
-              "order": "a",
-              "etag": "8c440ba543cce55f"
-            },
-            {
-              "id": "tnib-f009",
-              "slug": "personal-task-dashboard",
-              "path": "data/tnib-f009--personal-task-dashboard.md",
-              "version": 1,
-              "title": "Personal task dashboard",
-              "status": "todo",
-              "type": "feature",
-              "priority": "normal",
-              "estimate": "l",
-              "created_at": "2026-03-05T11:30:00Z",
-              "updated_at": "2026-03-15T10:00:00Z",
-              "body": "\nCustomizable personal dashboard showing assigned tasks, upcoming deadlines, and activity summary.\n\n## Acceptance Criteria\n\n- [ ] \"My Tasks\" widget with filtering\n- [ ] Upcoming deadlines widget (next 7 days)\n- [ ] Recent activity feed widget\n- [ ] Draggable widget layout (persisted per user)",
-              "parent": "tnib-e003",
-              "order": "b",
-              "etag": "816d889b81ac80e0"
-            },
-            {
-              "id": "tnib-f010",
-              "slug": "export-reports-csv-pdf",
-              "path": "data/tnib-f010--export-reports-csv-pdf.md",
-              "version": 1,
-              "title": "Export reports to CSV and PDF",
-              "status": "draft",
-              "type": "feature",
-              "priority": "low",
-              "estimate": "l",
-              "created_at": "2026-03-08T09:00:00Z",
-              "updated_at": "2026-03-15T10:00:00Z",
-              "body": "\nAllow exporting task lists, sprint reports, and velocity data as CSV or PDF files.\n\n## Acceptance Criteria\n\n- [ ] CSV export for task lists with all fields\n- [ ] PDF report with charts and summary\n- [ ] Scheduled email reports (weekly digest)",
-              "parent": "tnib-e003",
-              "order": "c",
-              "etag": "f5f6edc20c61b3cc"
-            }
-          ]
-        },
-        {
-          "epic": {
-            "id": "tnib-e002",
-            "slug": "task-management-core",
-            "path": "data/tnib-e002--task-management-core.md",
-            "version": 1,
-            "title": "Task Management Core",
-            "status": "in-progress",
-            "type": "epic",
-            "priority": "high",
-            "created_at": "2026-02-18T10:30:00Z",
-            "updated_at": "2026-03-25T09:00:00Z",
-            "body": "\n## Objective\n\nBuild the core task CRUD, assignment, prioritization, and subtask systems that form the backbone of the product.\n\n## Acceptance Criteria\n\n- [x] Full CRUD for tasks with validation\n- [x] Task assignment to users\n- [ ] Priority-based sorting and drag-and-drop reordering\n- [ ] Subtask/checklist support with depth limits\n\n## Scope Boundaries\n\n- Recurring tasks deferred to v1.2\n- Gantt chart view deferred to v1.1",
-            "parent": "tnib-m001",
-            "order": "b",
-            "etag": "febdc5115ae6fef5"
-          },
-          "progress": {
-            "total": 6,
-            "done": 1,
-            "percent": 17,
-            "scrapped": 0,
-            "deferred": 0
-          },
-          "items": [
-            {
-              "id": "tnib-b004",
-              "slug": "task-title-truncation",
-              "path": "data/tnib-b004--task-title-truncation.md",
-              "version": 1,
-              "title": "Task title silently truncated at 255 characters",
-              "status": "todo",
-              "type": "bug",
-              "priority": "low",
-              "estimate": "s",
-              "created_at": "2026-03-12T09:00:00Z",
-              "updated_at": "2026-03-15T10:00:00Z",
-              "body": "\n## Steps to Reproduce\n\n1. Create a task with a title longer than 255 characters via API\n2. Read the task back\n\n## Expected vs Actual\n\n**Expected:** Either accept full title (up to our stated 500 char limit) or return 400 if too long\n**Actual:** Title silently truncated to 255 chars by database column constraint\n\n## Root Cause\n\nDatabase column is `VARCHAR(255)` but API validation allows up to 500 chars. Either widen the column to 500 or lower the API limit to 255.",
-              "parent": "tnib-e002",
-              "order": "f",
-              "etag": "bf31292bb87a7b6d"
-            },
-            {
-              "id": "tnib-f005",
-              "slug": "task-assignment-and-ownership",
-              "path": "data/tnib-f005--task-assignment-and-ownership.md",
-              "version": 1,
-              "title": "Task assignment and ownership",
-              "status": "in-progress",
-              "type": "feature",
-              "priority": "normal",
-              "estimate": "m",
-              "created_at": "2026-03-01T09:00:00Z",
-              "updated_at": "2026-03-23T11:00:00Z",
-              "body": "\nAssign tasks to team members with ownership tracking and notification on assignment changes.\n\n## Acceptance Criteria\n\n- [x] Assign/unassign users to tasks\n- [x] User-task relationship model\n- [ ] Email notification on assignment\n- [ ] Bulk assignment via API",
-              "parent": "tnib-e002",
-              "order": "b",
-              "etag": "8b5e09a6c5de43aa"
-            },
-            {
-              "id": "tnib-f006",
-              "slug": "task-prioritization-and-sorting",
-              "path": "data/tnib-f006--task-prioritization-and-sorting.md",
-              "version": 1,
-              "title": "Task prioritization and sorting",
-              "status": "todo",
-              "type": "feature",
-              "priority": "normal",
-              "estimate": "l",
-              "created_at": "2026-03-05T09:00:00Z",
-              "updated_at": "2026-03-15T10:00:00Z",
-              "body": "\nAllow users to prioritize tasks with drag-and-drop reordering and optional auto-sorting by priority level.\n\n## Acceptance Criteria\n\n- [ ] Drag-and-drop reordering within a list\n- [ ] Priority-based auto-sort toggle\n- [ ] Persisted custom order per user per board",
-              "parent": "tnib-e002",
-              "order": "c",
-              "etag": "d2c1729ecb7bfdfa"
-            },
-            {
-              "id": "tnib-f007",
-              "slug": "subtask-and-checklist-support",
-              "path": "data/tnib-f007--subtask-and-checklist-support.md",
-              "version": 1,
-              "title": "Subtask and checklist support",
-              "status": "draft",
-              "type": "feature",
-              "priority": "low",
-              "estimate": "xl",
-              "created_at": "2026-03-10T09:00:00Z",
-              "updated_at": "2026-03-15T10:00:00Z",
-              "body": "\nSupport nested subtasks and checklists within tasks, with progress aggregation and configurable depth limits.\n\n## Acceptance Criteria\n\n- [ ] Create subtasks nested under a parent task\n- [ ] Checklist items with completion toggle\n- [ ] Progress percentage aggregated from subtask completion\n- [ ] Configurable max nesting depth (default: 3)",
-              "parent": "tnib-e002",
-              "order": "d",
-              "etag": "ff5362edb8bed821"
-            },
-            {
-              "id": "tnib-t018",
-              "slug": "performance-benchmark-10k",
-              "path": "data/tnib-t018--performance-benchmark-10k.md",
-              "version": 1,
-              "title": "Performance benchmark for 10k tasks",
-              "status": "todo",
-              "type": "task",
-              "priority": "normal",
-              "estimate": "m",
-              "tags": [
-                "perf"
-              ],
-              "created_at": "2026-03-10T09:00:00Z",
-              "updated_at": "2026-03-15T10:00:00Z",
-              "body": "\n## Description\n\nLoad test with 10,000 tasks to establish baseline performance metrics. Identify bottlenecks in list rendering and API response times.\n\n## Verification\n\n- [ ] Seed script creates 10k tasks with realistic data\n- [ ] API list endpoint responds in \u003c200ms at p95\n- [ ] UI list renders without jank (60fps scroll)\n- [ ] Document baseline metrics for future regression checks",
-              "parent": "tnib-e002",
-              "order": "e",
-              "etag": "cbee833adc4c5dc8"
-            }
-          ]
-        },
-        {
-          "epic": {
             "id": "tnib-e001",
             "slug": "user-authentication",
             "path": "data/tnib-e001--user-authentication.md",
-            "version": 1,
+            "version": 2,
             "title": "User Authentication",
             "status": "in-progress",
             "type": "epic",
@@ -314,12 +40,10 @@
             "created_at": "2026-02-18T10:00:00Z",
             "updated_at": "2026-03-24T16:00:00Z",
             "body": "\n## Objective\n\nImplement a complete authentication system supporting email/password, OAuth2 social providers, and secure session management.\n\n## Acceptance Criteria\n\n- [x] Users can register and log in with email/password\n- [x] Passwords hashed with bcrypt (cost 12)\n- [ ] OAuth2 login via Google and GitHub\n- [ ] Password reset via email link\n- [ ] Sessions invalidated on password change\n\n## Scope Boundaries\n\n- MFA is out of scope for v1.0\n- SAML/SSO deferred to enterprise tier",
-            "parent": "tnib-m001",
             "documents": [
               "docs/auth-architecture.md"
             ],
-            "order": "a",
-            "etag": "9dd103b35dfed279"
+            "etag": "087d0acaf343def5"
           },
           "progress": {
             "total": 5,
@@ -333,7 +57,7 @@
               "id": "tnib-b002",
               "slug": "session-tokens-not-invalidated",
               "path": "data/tnib-b002--session-tokens-not-invalidated.md",
-              "version": 1,
+              "version": 2,
               "title": "Session tokens not invalidated on password change",
               "status": "todo",
               "type": "bug",
@@ -347,13 +71,13 @@
               "body": "\n## Steps to Reproduce\n\n1. Log in on Device A\n2. Change password on Device A\n3. Check Device B — still logged in with old session\n\n## Expected vs Actual\n\n**Expected:** All other sessions invalidated after password change\n**Actual:** Existing sessions remain valid indefinitely\n\n## Root Cause\n\nPassword change handler updates the password hash but doesn't increment the session generation counter. The session validation middleware doesn't check generation — it only validates the session token exists in Redis.",
               "parent": "tnib-e001",
               "order": "e",
-              "etag": "ce3a8293b9e31588"
+              "etag": "0bc8a984518686e6"
             },
             {
               "id": "tnib-f002",
               "slug": "oauth2-social-login",
               "path": "data/tnib-f002--oauth2-social-login.md",
-              "version": 1,
+              "version": 2,
               "title": "OAuth2 social login",
               "status": "in-progress",
               "type": "feature",
@@ -364,13 +88,13 @@
               "body": "\nAllow users to log in via Google and GitHub OAuth2 providers. Account linking when email matches existing account.\n\n## Acceptance Criteria\n\n- [x] Google OAuth2 login flow\n- [ ] GitHub OAuth2 login flow\n- [ ] Account linking for matching emails\n- [ ] Graceful handling of denied permissions",
               "parent": "tnib-e001",
               "order": "b",
-              "etag": "42631640db50d497"
+              "etag": "7fb15e73551a9f57"
             },
             {
               "id": "tnib-f003",
               "slug": "password-reset-flow",
               "path": "data/tnib-f003--password-reset-flow.md",
-              "version": 1,
+              "version": 2,
               "title": "Password reset flow",
               "status": "todo",
               "type": "feature",
@@ -381,13 +105,13 @@
               "body": "\nEmail-based password reset with secure token generation and configurable expiry.\n\n## Acceptance Criteria\n\n- [ ] \"Forgot password\" page sends reset email\n- [ ] Token valid for 1 hour, single-use\n- [ ] Rate limiting on reset requests\n- [ ] Password strength validation on new password",
               "parent": "tnib-e001",
               "order": "c",
-              "etag": "060786d52d2687cc"
+              "etag": "e1525b2ef99f4327"
             },
             {
               "id": "tnib-t008",
               "slug": "auth-api-documentation",
               "path": "data/tnib-t008--auth-api-documentation.md",
-              "version": 1,
+              "version": 2,
               "title": "Write authentication API documentation",
               "status": "draft",
               "type": "task",
@@ -401,7 +125,275 @@
               "body": "\n## Description\n\nDocument all authentication endpoints in the API reference: registration, login, logout, OAuth flows, password reset, and session management.\n\n## Verification\n\n- [ ] OpenAPI spec updated with auth endpoints\n- [ ] Request/response examples for each endpoint\n- [ ] Error code reference table\n- [ ] Authentication flow diagrams",
               "parent": "tnib-e001",
               "order": "d",
-              "etag": "7bf5047b01c832ad"
+              "etag": "4eb881098a68bb98"
+            }
+          ]
+        },
+        {
+          "epic": {
+            "id": "tnib-e002",
+            "slug": "task-management-core",
+            "path": "data/tnib-e002--task-management-core.md",
+            "version": 2,
+            "title": "Task Management Core",
+            "status": "in-progress",
+            "type": "epic",
+            "priority": "high",
+            "created_at": "2026-02-18T10:30:00Z",
+            "updated_at": "2026-03-25T09:00:00Z",
+            "body": "\n## Objective\n\nBuild the core task CRUD, assignment, prioritization, and subtask systems that form the backbone of the product.\n\n## Acceptance Criteria\n\n- [x] Full CRUD for tasks with validation\n- [x] Task assignment to users\n- [ ] Priority-based sorting and drag-and-drop reordering\n- [ ] Subtask/checklist support with depth limits\n\n## Scope Boundaries\n\n- Recurring tasks deferred to v1.2\n- Gantt chart view deferred to v1.1",
+            "etag": "6fcdd5030cc73bfb"
+          },
+          "progress": {
+            "total": 6,
+            "done": 1,
+            "percent": 17,
+            "scrapped": 0,
+            "deferred": 0
+          },
+          "items": [
+            {
+              "id": "tnib-b004",
+              "slug": "task-title-truncation",
+              "path": "data/tnib-b004--task-title-truncation.md",
+              "version": 2,
+              "title": "Task title silently truncated at 255 characters",
+              "status": "todo",
+              "type": "bug",
+              "priority": "low",
+              "estimate": "s",
+              "created_at": "2026-03-12T09:00:00Z",
+              "updated_at": "2026-03-15T10:00:00Z",
+              "body": "\n## Steps to Reproduce\n\n1. Create a task with a title longer than 255 characters via API\n2. Read the task back\n\n## Expected vs Actual\n\n**Expected:** Either accept full title (up to our stated 500 char limit) or return 400 if too long\n**Actual:** Title silently truncated to 255 chars by database column constraint\n\n## Root Cause\n\nDatabase column is `VARCHAR(255)` but API validation allows up to 500 chars. Either widen the column to 500 or lower the API limit to 255.",
+              "parent": "tnib-e002",
+              "order": "f",
+              "etag": "2543a9599e9427fe"
+            },
+            {
+              "id": "tnib-f005",
+              "slug": "task-assignment-and-ownership",
+              "path": "data/tnib-f005--task-assignment-and-ownership.md",
+              "version": 2,
+              "title": "Task assignment and ownership",
+              "status": "in-progress",
+              "type": "feature",
+              "priority": "normal",
+              "estimate": "m",
+              "created_at": "2026-03-01T09:00:00Z",
+              "updated_at": "2026-03-23T11:00:00Z",
+              "body": "\nAssign tasks to team members with ownership tracking and notification on assignment changes.\n\n## Acceptance Criteria\n\n- [x] Assign/unassign users to tasks\n- [x] User-task relationship model\n- [ ] Email notification on assignment\n- [ ] Bulk assignment via API",
+              "parent": "tnib-e002",
+              "order": "b",
+              "etag": "9d8f2d4aa2605a63"
+            },
+            {
+              "id": "tnib-f006",
+              "slug": "task-prioritization-and-sorting",
+              "path": "data/tnib-f006--task-prioritization-and-sorting.md",
+              "version": 2,
+              "title": "Task prioritization and sorting",
+              "status": "todo",
+              "type": "feature",
+              "priority": "normal",
+              "estimate": "l",
+              "created_at": "2026-03-05T09:00:00Z",
+              "updated_at": "2026-03-15T10:00:00Z",
+              "body": "\nAllow users to prioritize tasks with drag-and-drop reordering and optional auto-sorting by priority level.\n\n## Acceptance Criteria\n\n- [ ] Drag-and-drop reordering within a list\n- [ ] Priority-based auto-sort toggle\n- [ ] Persisted custom order per user per board",
+              "parent": "tnib-e002",
+              "order": "c",
+              "etag": "da4d32ac8d8f8309"
+            },
+            {
+              "id": "tnib-f007",
+              "slug": "subtask-and-checklist-support",
+              "path": "data/tnib-f007--subtask-and-checklist-support.md",
+              "version": 2,
+              "title": "Subtask and checklist support",
+              "status": "draft",
+              "type": "feature",
+              "priority": "low",
+              "estimate": "xl",
+              "created_at": "2026-03-10T09:00:00Z",
+              "updated_at": "2026-03-15T10:00:00Z",
+              "body": "\nSupport nested subtasks and checklists within tasks, with progress aggregation and configurable depth limits.\n\n## Acceptance Criteria\n\n- [ ] Create subtasks nested under a parent task\n- [ ] Checklist items with completion toggle\n- [ ] Progress percentage aggregated from subtask completion\n- [ ] Configurable max nesting depth (default: 3)",
+              "parent": "tnib-e002",
+              "order": "d",
+              "etag": "ab249c781e46d1c2"
+            },
+            {
+              "id": "tnib-t018",
+              "slug": "performance-benchmark-10k",
+              "path": "data/tnib-t018--performance-benchmark-10k.md",
+              "version": 2,
+              "title": "Performance benchmark for 10k tasks",
+              "status": "todo",
+              "type": "task",
+              "priority": "normal",
+              "estimate": "m",
+              "tags": [
+                "perf"
+              ],
+              "created_at": "2026-03-10T09:00:00Z",
+              "updated_at": "2026-03-15T10:00:00Z",
+              "body": "\n## Description\n\nLoad test with 10,000 tasks to establish baseline performance metrics. Identify bottlenecks in list rendering and API response times.\n\n## Verification\n\n- [ ] Seed script creates 10k tasks with realistic data\n- [ ] API list endpoint responds in \u003c200ms at p95\n- [ ] UI list renders without jank (60fps scroll)\n- [ ] Document baseline metrics for future regression checks",
+              "parent": "tnib-e002",
+              "order": "e",
+              "etag": "71ec204e7cd544ab"
+            }
+          ]
+        },
+        {
+          "epic": {
+            "id": "tnib-e003",
+            "slug": "dashboard-and-reporting",
+            "path": "data/tnib-e003--dashboard-and-reporting.md",
+            "version": 2,
+            "title": "Dashboard \u0026 Reporting",
+            "status": "todo",
+            "type": "epic",
+            "priority": "normal",
+            "created_at": "2026-02-20T11:00:00Z",
+            "updated_at": "2026-03-15T10:00:00Z",
+            "body": "\n## Objective\n\nProvide team leads with velocity charts, personal dashboards, and exportable reports.\n\n## Acceptance Criteria\n\n- [ ] Team velocity chart with sprint-over-sprint comparison\n- [ ] Personal \"My Tasks\" dashboard with widget layout\n- [ ] Export to CSV and PDF\n\n## Scope Boundaries\n\n- Custom report builder deferred to v1.2\n- Real-time dashboard updates require v1.1 WebSocket infrastructure",
+            "blocked_by": [
+              "tnib-e002"
+            ],
+            "etag": "d05893dc1ec8fb30"
+          },
+          "progress": {
+            "total": 4,
+            "done": 0,
+            "percent": 0,
+            "scrapped": 0,
+            "deferred": 0
+          },
+          "items": [
+            {
+              "id": "tnib-b005",
+              "slug": "date-picker-timezone",
+              "path": "data/tnib-b005--date-picker-timezone.md",
+              "version": 2,
+              "title": "Date picker shows wrong timezone for remote users",
+              "status": "todo",
+              "type": "bug",
+              "priority": "normal",
+              "estimate": "m",
+              "created_at": "2026-03-10T09:00:00Z",
+              "updated_at": "2026-03-15T10:00:00Z",
+              "body": "\n## Steps to Reproduce\n\n1. Set system timezone to UTC+9 (Tokyo)\n2. Open task with due date \"2026-03-15\"\n3. Date picker shows \"March 14\" (off by one due to UTC conversion)\n\n## Expected vs Actual\n\n**Expected:** Date picker shows the date as entered, in user's local timezone\n**Actual:** Date displayed relative to UTC, causing off-by-one for users east of UTC\n\n## Root Cause\n\nDates stored as UTC timestamps but rendered without timezone conversion. Should store as date-only (no time component) or convert to user's timezone on display.",
+              "parent": "tnib-e003",
+              "order": "d",
+              "etag": "8d286d66083ad752"
+            },
+            {
+              "id": "tnib-f008",
+              "slug": "team-velocity-chart",
+              "path": "data/tnib-f008--team-velocity-chart.md",
+              "version": 2,
+              "title": "Team velocity chart",
+              "status": "todo",
+              "type": "feature",
+              "priority": "normal",
+              "estimate": "l",
+              "created_at": "2026-03-05T11:00:00Z",
+              "updated_at": "2026-03-15T10:00:00Z",
+              "body": "\nSprint-over-sprint velocity chart showing completed story points per sprint with trend line.\n\n## Acceptance Criteria\n\n- [ ] Bar chart showing points completed per sprint\n- [ ] Rolling average trend line\n- [ ] Configurable sprint length (1-4 weeks)\n- [ ] Export chart as PNG",
+              "parent": "tnib-e003",
+              "order": "a",
+              "etag": "db158c1f663d305c"
+            },
+            {
+              "id": "tnib-f009",
+              "slug": "personal-task-dashboard",
+              "path": "data/tnib-f009--personal-task-dashboard.md",
+              "version": 2,
+              "title": "Personal task dashboard",
+              "status": "todo",
+              "type": "feature",
+              "priority": "normal",
+              "estimate": "l",
+              "created_at": "2026-03-05T11:30:00Z",
+              "updated_at": "2026-03-15T10:00:00Z",
+              "body": "\nCustomizable personal dashboard showing assigned tasks, upcoming deadlines, and activity summary.\n\n## Acceptance Criteria\n\n- [ ] \"My Tasks\" widget with filtering\n- [ ] Upcoming deadlines widget (next 7 days)\n- [ ] Recent activity feed widget\n- [ ] Draggable widget layout (persisted per user)",
+              "parent": "tnib-e003",
+              "order": "b",
+              "etag": "074a44997b9411a3"
+            },
+            {
+              "id": "tnib-f010",
+              "slug": "export-reports-csv-pdf",
+              "path": "data/tnib-f010--export-reports-csv-pdf.md",
+              "version": 2,
+              "title": "Export reports to CSV and PDF",
+              "status": "draft",
+              "type": "feature",
+              "priority": "low",
+              "estimate": "l",
+              "created_at": "2026-03-08T09:00:00Z",
+              "updated_at": "2026-03-15T10:00:00Z",
+              "body": "\nAllow exporting task lists, sprint reports, and velocity data as CSV or PDF files.\n\n## Acceptance Criteria\n\n- [ ] CSV export for task lists with all fields\n- [ ] PDF report with charts and summary\n- [ ] Scheduled email reports (weekly digest)",
+              "parent": "tnib-e003",
+              "order": "c",
+              "etag": "9869563037010667"
+            }
+          ]
+        },
+        {
+          "epic": {
+            "id": "tnib-e004",
+            "slug": "api-and-integrations",
+            "path": "data/tnib-e004--api-and-integrations.md",
+            "version": 2,
+            "title": "API \u0026 Integrations",
+            "status": "todo",
+            "type": "epic",
+            "priority": "normal",
+            "created_at": "2026-02-20T14:00:00Z",
+            "updated_at": "2026-03-15T10:00:00Z",
+            "body": "\n## Objective\n\nExpose a webhook system for third-party integrations and lay groundwork for future Slack/GitHub integrations.\n\n## Acceptance Criteria\n\n- [ ] Webhook registration and delivery with retry\n- [ ] At least one external integration (Slack or GitHub)\n- [ ] REST API documented with OpenAPI spec\n\n## Scope Boundaries\n\n- GraphQL API deferred to v1.2\n- Two-way sync with external tools deferred",
+            "etag": "f8dd857da2f11646"
+          },
+          "progress": {
+            "total": 2,
+            "done": 0,
+            "percent": 0,
+            "scrapped": 1,
+            "deferred": 1
+          },
+          "items": [
+            {
+              "id": "tnib-f011",
+              "slug": "webhook-delivery-system",
+              "path": "data/tnib-f011--webhook-delivery-system.md",
+              "version": 2,
+              "title": "Webhook delivery system",
+              "status": "todo",
+              "type": "feature",
+              "priority": "normal",
+              "estimate": "l",
+              "created_at": "2026-03-05T14:00:00Z",
+              "updated_at": "2026-03-15T10:00:00Z",
+              "body": "\nHTTP webhook system for notifying external services of task events (created, updated, deleted, assigned).\n\n## Acceptance Criteria\n\n- [ ] Register webhook URLs with event type filters\n- [ ] HMAC-SHA256 signature verification\n- [ ] Retry with exponential backoff (max 5 attempts)\n- [ ] Delivery log with status and response time",
+              "parent": "tnib-e004",
+              "order": "a",
+              "etag": "4ed4704558027837"
+            },
+            {
+              "id": "tnib-f012",
+              "slug": "slack-integration",
+              "path": "data/tnib-f012--slack-integration.md",
+              "version": 2,
+              "title": "Slack integration",
+              "status": "deferred",
+              "type": "feature",
+              "priority": "low",
+              "estimate": "l",
+              "created_at": "2026-03-08T09:00:00Z",
+              "updated_at": "2026-03-15T10:00:00Z",
+              "body": "\nSlack bot that posts task updates to channels and allows creating tasks via slash commands.\n\n## Acceptance Criteria\n\n- [ ] Slack app with OAuth2 installation flow\n- [ ] `/taskflow create` slash command\n- [ ] Channel notifications for task events\n- [ ] Thread replies linked to task comments",
+              "parent": "tnib-e004",
+              "order": "b",
+              "etag": "65efcf0ef6ca3573"
             }
           ]
         }
@@ -412,7 +404,7 @@
         "id": "tnib-m002",
         "slug": "v1-1-team-collaboration",
         "path": "data/tnib-m002--v1-1-team-collaboration.md",
-        "version": 1,
+        "version": 2,
         "title": "v1.1 Team Collaboration",
         "status": "draft",
         "type": "milestone",
@@ -421,7 +413,7 @@
         "updated_at": "2026-03-20T11:00:00Z",
         "body": "\nAdd real-time collaboration features, notification system, and activity feeds. Depends on v1.0 infrastructure being stable.\n\n## Goal\n\nEnable teams to collaborate in real-time on shared task boards with live updates and notifications.\n\n## Key Decisions\n\n- WebSocket for real-time (not SSE) — need bidirectional communication\n- Event sourcing for activity feed to support retroactive queries",
         "order": "b",
-        "etag": "59b75beca1052070"
+        "etag": "2f99e2b2bbfd625f"
       },
       "progress": {
         "total": 2,
@@ -433,88 +425,10 @@
       "epics": [
         {
           "epic": {
-            "id": "tnib-e006",
-            "slug": "notifications-system",
-            "path": "data/tnib-e006--notifications-system.md",
-            "version": 1,
-            "title": "Notifications System",
-            "status": "draft",
-            "type": "epic",
-            "priority": "normal",
-            "created_at": "2026-03-10T11:00:00Z",
-            "updated_at": "2026-03-18T09:00:00Z",
-            "body": "\n## Objective\n\nDeliver in-app and email notifications for task assignments, mentions, and deadline reminders.\n\n## Acceptance Criteria\n\n- [ ] In-app notification center with read/unread state\n- [ ] Email digest (daily/weekly configurable)\n- [ ] Push notifications on mobile (PWA)\n\n## Scope Boundaries\n\n- SMS notifications out of scope\n- Notification preferences UI in v1.1, API-only in v1.0",
-            "parent": "tnib-m002",
-            "order": "b",
-            "etag": "3116e1d14896c0b9"
-          },
-          "progress": {
-            "total": 3,
-            "done": 0,
-            "percent": 0,
-            "scrapped": 0,
-            "deferred": 0
-          },
-          "items": [
-            {
-              "id": "tnib-b007",
-              "slug": "push-notification-permission",
-              "path": "data/tnib-b007--push-notification-permission.md",
-              "version": 1,
-              "title": "Push notifications not requesting permission on mobile",
-              "status": "draft",
-              "type": "bug",
-              "priority": "low",
-              "estimate": "s",
-              "created_at": "2026-03-14T09:00:00Z",
-              "updated_at": "2026-03-18T09:00:00Z",
-              "body": "\n## Steps to Reproduce\n\n1. Open app on mobile Safari (iOS 16+)\n2. No permission prompt appears for push notifications\n3. Notification settings show \"Not Determined\"\n\n## Expected vs Actual\n\n**Expected:** Permission prompt shown on first relevant action (e.g., enabling notifications)\n**Actual:** Permission never requested because Service Worker registration fails silently on mobile Safari\n\n## Root Cause\n\nService Worker scope is misconfigured — needs investigation into Safari PWA requirements.",
-              "parent": "tnib-e006",
-              "order": "c",
-              "etag": "74242d78df434c01"
-            },
-            {
-              "id": "tnib-f016",
-              "slug": "in-app-notification-center",
-              "path": "data/tnib-f016--in-app-notification-center.md",
-              "version": 1,
-              "title": "In-app notification center",
-              "status": "draft",
-              "type": "feature",
-              "priority": "normal",
-              "estimate": "m",
-              "created_at": "2026-03-12T11:00:00Z",
-              "updated_at": "2026-03-18T09:00:00Z",
-              "body": "\nBell icon notification center with real-time badge count and read/unread state management.\n\n## Acceptance Criteria\n\n- [ ] Notification bell with unread count badge\n- [ ] Dropdown panel with recent notifications\n- [ ] Mark as read (individual and bulk)\n- [ ] Click-through to relevant task/comment",
-              "parent": "tnib-e006",
-              "order": "a",
-              "etag": "3ee4b2427e3eee73"
-            },
-            {
-              "id": "tnib-f017",
-              "slug": "email-digest-notifications",
-              "path": "data/tnib-f017--email-digest-notifications.md",
-              "version": 1,
-              "title": "Email digest notifications",
-              "status": "draft",
-              "type": "feature",
-              "priority": "low",
-              "estimate": "m",
-              "created_at": "2026-03-12T11:30:00Z",
-              "updated_at": "2026-03-18T09:00:00Z",
-              "body": "\nConfigurable email digest summarizing task updates, mentions, and upcoming deadlines.\n\n## Acceptance Criteria\n\n- [ ] Daily or weekly digest (user-configurable)\n- [ ] Summary of assigned task changes\n- [ ] Upcoming deadline reminders\n- [ ] Unsubscribe link in every email",
-              "parent": "tnib-e006",
-              "order": "b",
-              "etag": "cef714b9fe7c0b28"
-            }
-          ]
-        },
-        {
-          "epic": {
             "id": "tnib-e005",
             "slug": "real-time-collaboration",
             "path": "data/tnib-e005--real-time-collaboration.md",
-            "version": 1,
+            "version": 2,
             "title": "Real-time Collaboration",
             "status": "draft",
             "type": "epic",
@@ -523,12 +437,10 @@
             "created_at": "2026-03-10T10:00:00Z",
             "updated_at": "2026-03-18T09:00:00Z",
             "body": "\n## Objective\n\nEnable live multi-user editing with WebSocket-based updates and conflict resolution.\n\n## Acceptance Criteria\n\n- [ ] WebSocket server with connection management\n- [ ] Optimistic UI updates with server reconciliation\n- [ ] Activity feed powered by event sourcing\n\n## Scope Boundaries\n\n- Operational transform / CRDT for rich text editing deferred\n- Voice/video collaboration out of scope",
-            "parent": "tnib-m002",
             "documents": [
               "docs/websocket-rfc.md"
             ],
-            "order": "a",
-            "etag": "738d2168bc044e1e"
+            "etag": "4c5a14edf5ecfe06"
           },
           "progress": {
             "total": 2,
@@ -542,7 +454,7 @@
               "id": "tnib-f014",
               "slug": "websocket-live-updates",
               "path": "data/tnib-f014--websocket-live-updates.md",
-              "version": 1,
+              "version": 2,
               "title": "WebSocket live updates",
               "status": "draft",
               "type": "feature",
@@ -556,13 +468,13 @@
                 "docs/websocket-rfc.md"
               ],
               "order": "a",
-              "etag": "a9c826f370fce81c"
+              "etag": "c67df380067a71e1"
             },
             {
               "id": "tnib-f015",
               "slug": "activity-feed",
               "path": "data/tnib-f015--activity-feed.md",
-              "version": 1,
+              "version": 2,
               "title": "Activity feed",
               "status": "draft",
               "type": "feature",
@@ -573,7 +485,83 @@
               "body": "\nChronological activity feed showing task changes, comments, and team activity powered by event sourcing.\n\n## Acceptance Criteria\n\n- [ ] Event sourcing pipeline capturing all task mutations\n- [ ] Feed UI with infinite scroll\n- [ ] Filter by user, project, or event type\n- [ ] @mention highlighting",
               "parent": "tnib-e005",
               "order": "b",
-              "etag": "a974b2b561065109"
+              "etag": "7103f6fa0485e150"
+            }
+          ]
+        },
+        {
+          "epic": {
+            "id": "tnib-e006",
+            "slug": "notifications-system",
+            "path": "data/tnib-e006--notifications-system.md",
+            "version": 2,
+            "title": "Notifications System",
+            "status": "draft",
+            "type": "epic",
+            "priority": "normal",
+            "created_at": "2026-03-10T11:00:00Z",
+            "updated_at": "2026-03-18T09:00:00Z",
+            "body": "\n## Objective\n\nDeliver in-app and email notifications for task assignments, mentions, and deadline reminders.\n\n## Acceptance Criteria\n\n- [ ] In-app notification center with read/unread state\n- [ ] Email digest (daily/weekly configurable)\n- [ ] Push notifications on mobile (PWA)\n\n## Scope Boundaries\n\n- SMS notifications out of scope\n- Notification preferences UI in v1.1, API-only in v1.0",
+            "etag": "c24a8d59e33595cf"
+          },
+          "progress": {
+            "total": 3,
+            "done": 0,
+            "percent": 0,
+            "scrapped": 0,
+            "deferred": 0
+          },
+          "items": [
+            {
+              "id": "tnib-b007",
+              "slug": "push-notification-permission",
+              "path": "data/tnib-b007--push-notification-permission.md",
+              "version": 2,
+              "title": "Push notifications not requesting permission on mobile",
+              "status": "draft",
+              "type": "bug",
+              "priority": "low",
+              "estimate": "s",
+              "created_at": "2026-03-14T09:00:00Z",
+              "updated_at": "2026-03-18T09:00:00Z",
+              "body": "\n## Steps to Reproduce\n\n1. Open app on mobile Safari (iOS 16+)\n2. No permission prompt appears for push notifications\n3. Notification settings show \"Not Determined\"\n\n## Expected vs Actual\n\n**Expected:** Permission prompt shown on first relevant action (e.g., enabling notifications)\n**Actual:** Permission never requested because Service Worker registration fails silently on mobile Safari\n\n## Root Cause\n\nService Worker scope is misconfigured — needs investigation into Safari PWA requirements.",
+              "parent": "tnib-e006",
+              "order": "c",
+              "etag": "6a06f65bcf2300c8"
+            },
+            {
+              "id": "tnib-f016",
+              "slug": "in-app-notification-center",
+              "path": "data/tnib-f016--in-app-notification-center.md",
+              "version": 2,
+              "title": "In-app notification center",
+              "status": "draft",
+              "type": "feature",
+              "priority": "normal",
+              "estimate": "m",
+              "created_at": "2026-03-12T11:00:00Z",
+              "updated_at": "2026-03-18T09:00:00Z",
+              "body": "\nBell icon notification center with real-time badge count and read/unread state management.\n\n## Acceptance Criteria\n\n- [ ] Notification bell with unread count badge\n- [ ] Dropdown panel with recent notifications\n- [ ] Mark as read (individual and bulk)\n- [ ] Click-through to relevant task/comment",
+              "parent": "tnib-e006",
+              "order": "a",
+              "etag": "f5b9eda2917d92d0"
+            },
+            {
+              "id": "tnib-f017",
+              "slug": "email-digest-notifications",
+              "path": "data/tnib-f017--email-digest-notifications.md",
+              "version": 2,
+              "title": "Email digest notifications",
+              "status": "draft",
+              "type": "feature",
+              "priority": "low",
+              "estimate": "m",
+              "created_at": "2026-03-12T11:30:00Z",
+              "updated_at": "2026-03-18T09:00:00Z",
+              "body": "\nConfigurable email digest summarizing task updates, mentions, and upcoming deadlines.\n\n## Acceptance Criteria\n\n- [ ] Daily or weekly digest (user-configurable)\n- [ ] Summary of assigned task changes\n- [ ] Upcoming deadline reminders\n- [ ] Unsubscribe link in every email",
+              "parent": "tnib-e006",
+              "order": "b",
+              "etag": "7ecfb346e95a7fb1"
             }
           ]
         }
@@ -586,7 +574,7 @@
         "id": "tnib-b008",
         "slug": "dev-server-memory-leak",
         "path": "data/tnib-b008--dev-server-memory-leak.md",
-        "version": 1,
+        "version": 2,
         "title": "Memory leak in development server after hot reload",
         "status": "in-progress",
         "type": "bug",
@@ -596,13 +584,13 @@
         "updated_at": "2026-03-25T14:00:00Z",
         "body": "\n## Steps to Reproduce\n\n1. Start development server with `npm run dev`\n2. Make 20+ file changes triggering hot reload\n3. Observe Node.js memory usage climbing from ~150MB to 1.2GB+\n\n## Expected vs Actual\n\n**Expected:** Memory usage stable around 200-300MB regardless of hot reloads\n**Actual:** Memory grows ~50MB per hot reload and is never reclaimed\n\n## Root Cause\n\nVite's HMR is not cleaning up old module instances. Likely related to circular dependency in the state management layer preventing garbage collection. Investigating with `--inspect` heap snapshots.",
         "order": "n",
-        "etag": "5d866a72702271c2"
+        "etag": "3736427cfbc04a17"
       },
       {
         "id": "tnib-b012",
         "slug": "search-stale-after-delete",
         "path": "data/tnib-b012--search-stale-after-delete.md",
-        "version": 1,
+        "version": 2,
         "title": "Search results not updating after task deletion",
         "status": "in-progress",
         "type": "bug",
@@ -612,13 +600,13 @@
         "updated_at": "2026-03-25T11:00:00Z",
         "body": "\n## Steps to Reproduce\n\n1. Create a task with title \"quarterly review\"\n2. Delete the task\n3. Search for \"quarterly\" — deleted task still appears in results\n\n## Expected vs Actual\n\n**Expected:** Deleted tasks excluded from search results immediately\n**Actual:** Search index retains deleted tasks until server restart\n\n## Root Cause\n\nDelete handler removes from database but doesn't update the Bleve search index. Need to call `index.Delete(taskID)` in the delete path.",
         "order": "u",
-        "etag": "85d1f03dab6f2268"
+        "etag": "aef2f33711280d2f"
       },
       {
         "id": "tnib-b009",
         "slug": "flaky-user-service-test",
         "path": "data/tnib-b009--flaky-user-service-test.md",
-        "version": 1,
+        "version": 2,
         "title": "Flaky test in user_service_test.go",
         "status": "todo",
         "type": "bug",
@@ -628,13 +616,13 @@
         "updated_at": "2026-03-22T10:00:00Z",
         "body": "\n## Steps to Reproduce\n\n1. Run `go test ./internal/service/ -count=100`\n2. TestUserService_ConcurrentUpdate fails ~5% of the time\n\n## Expected vs Actual\n\n**Expected:** Test passes consistently\n**Actual:** Intermittent failure with \"context deadline exceeded\" — race condition in test setup\n\n## Root Cause\n\nTest uses a shared database connection pool without proper per-test isolation. When tests run in parallel, the pool is exhausted and some tests timeout waiting for a connection. Need to use `t.Parallel()` with per-test transactions.",
         "order": "o",
-        "etag": "2db65ab9890d4a9c"
+        "etag": "0000e554edfb36cb"
       },
       {
         "id": "tnib-b010",
         "slug": "safari-grid-layout",
         "path": "data/tnib-b010--safari-grid-layout.md",
-        "version": 1,
+        "version": 2,
         "title": "CSS grid layout breaks on Safari 15",
         "status": "todo",
         "type": "bug",
@@ -647,13 +635,13 @@
         "updated_at": "2026-03-20T10:00:00Z",
         "body": "\n## Steps to Reproduce\n\n1. Open task board in Safari 15.x\n2. Observe columns overlapping when board has \u003e5 columns\n\n## Expected vs Actual\n\n**Expected:** Columns sized correctly with horizontal scroll when needed\n**Actual:** Columns overlap because Safari 15 doesn't support `subgrid` — falls back to `auto` sizing\n\n## Root Cause\n\nWe use `grid-template-columns: subgrid` which Safari didn't support until 16.0. Need fallback for Safari 15 using explicit column definitions.",
         "order": "p",
-        "etag": "8da65a2be37721e9"
+        "etag": "2798b3e68af60952"
       },
       {
         "id": "tnib-b011",
         "slug": "api-500-malformed-json",
         "path": "data/tnib-b011--api-500-malformed-json.md",
-        "version": 1,
+        "version": 2,
         "title": "API returns 500 on malformed JSON body",
         "status": "todo",
         "type": "bug",
@@ -663,13 +651,13 @@
         "updated_at": "2026-03-22T09:00:00Z",
         "body": "\n## Steps to Reproduce\n\n1. Send POST /api/tasks with body: `{invalid json`\n2. Server returns 500 Internal Server Error\n\n## Expected vs Actual\n\n**Expected:** 400 Bad Request with message \"Invalid JSON: unexpected character at position 1\"\n**Actual:** 500 Internal Server Error with generic message — json.Decoder error is not caught by error middleware\n\n## Root Cause\n\nError middleware only handles our custom `AppError` type. stdlib `json.SyntaxError` and `json.UnmarshalTypeError` fall through to the default 500 handler. Need to add type switches in the error middleware.",
         "order": "q",
-        "etag": "104451c4b47f6808"
+        "etag": "f9db76e2724dd1d4"
       },
       {
         "id": "tnib-b013",
         "slug": "file-upload-special-chars",
         "path": "data/tnib-b013--file-upload-special-chars.md",
-        "version": 1,
+        "version": 2,
         "title": "File upload fails for names with special characters",
         "status": "todo",
         "type": "bug",
@@ -682,13 +670,13 @@
         "updated_at": "2026-03-22T09:00:00Z",
         "body": "\n## Steps to Reproduce\n\n1. Attach a file named `报告_2026年.pdf` to a task\n2. Upload fails with \"Invalid filename\" error\n\n## Expected vs Actual\n\n**Expected:** File uploaded successfully with Unicode filename preserved\n**Actual:** Filename validation regex `^[a-zA-Z0-9._-]+$` rejects non-ASCII characters\n\n## Root Cause\n\nOverly restrictive filename validation. Should sanitize path separators and null bytes but allow Unicode characters.",
         "order": "v",
-        "etag": "fcfa2f5aa6289c0c"
+        "etag": "46faa8c88f9c984f"
       },
       {
         "id": "tnib-b014",
         "slug": "race-condition-concurrent-updates",
         "path": "data/tnib-b014--race-condition-concurrent-updates.md",
-        "version": 1,
+        "version": 2,
         "title": "Race condition in concurrent task updates",
         "status": "todo",
         "type": "bug",
@@ -698,13 +686,13 @@
         "updated_at": "2026-03-25T10:00:00Z",
         "body": "\n## Steps to Reproduce\n\n1. Open the same task in two browser tabs\n2. Change status to \"done\" in tab A\n3. Immediately change assignee in tab B (before tab A's change is reflected)\n4. Tab B's update overwrites tab A's status change\n\n## Expected vs Actual\n\n**Expected:** Optimistic concurrency detects the conflict and prompts user to resolve\n**Actual:** Last write wins — tab B's update silently reverts tab A's status change\n\n## Root Cause\n\nAPI uses PUT (full replace) instead of PATCH (partial update). No ETag/If-Match headers for optimistic concurrency control. Need to implement either:\n1. ETags with If-Match headers (preferred)\n2. Field-level versioning",
         "order": "w",
-        "etag": "706971549050e303"
+        "etag": "9103b23bcaa49262"
       },
       {
         "id": "tnib-b015",
         "slug": "dropdown-zindex-modal",
         "path": "data/tnib-b015--dropdown-zindex-modal.md",
-        "version": 1,
+        "version": 2,
         "title": "Dropdown menu z-index conflict with modal",
         "status": "todo",
         "type": "bug",
@@ -717,13 +705,13 @@
         "updated_at": "2026-03-25T09:00:00Z",
         "body": "\n## Steps to Reproduce\n\n1. Open the task edit modal\n2. Click the priority dropdown inside the modal\n3. Dropdown renders behind the modal backdrop\n\n## Expected vs Actual\n\n**Expected:** Dropdown floats above the modal\n**Actual:** Dropdown is clipped by modal's `overflow: hidden` and renders behind the backdrop\n\n## Root Cause\n\nDropdown uses `position: absolute` relative to the modal, which has `overflow: hidden`. Need to portal the dropdown to `document.body` or use Floating UI for proper positioning.",
         "order": "x",
-        "etag": "f61a253d881ad808"
+        "etag": "444657b306d95121"
       },
       {
         "id": "tnib-f019",
         "slug": "keyboard-shortcuts",
         "path": "data/tnib-f019--keyboard-shortcuts.md",
-        "version": 1,
+        "version": 2,
         "title": "Keyboard shortcuts for power users",
         "status": "todo",
         "type": "feature",
@@ -736,13 +724,13 @@
         "updated_at": "2026-03-20T10:00:00Z",
         "body": "\nVim-inspired keyboard shortcuts for task navigation, creation, and status changes.\n\n## Acceptance Criteria\n\n- [ ] `j`/`k` for list navigation\n- [ ] `c` to create task, `e` to edit\n- [ ] `1`-`5` to set priority\n- [ ] `?` to show shortcut cheat sheet",
         "order": "s",
-        "etag": "fedf262eae0fa2a3"
+        "etag": "af4d910c188e55d8"
       },
       {
         "id": "tnib-f020",
         "slug": "bulk-task-operations",
         "path": "data/tnib-f020--bulk-task-operations.md",
-        "version": 1,
+        "version": 2,
         "title": "Bulk task operations",
         "status": "todo",
         "type": "feature",
@@ -752,13 +740,13 @@
         "updated_at": "2026-03-20T10:00:00Z",
         "body": "\nSelect multiple tasks and perform bulk operations (assign, change status, move, delete).\n\n## Acceptance Criteria\n\n- [ ] Checkbox-based multi-select in list view\n- [ ] Bulk status change\n- [ ] Bulk assignment\n- [ ] Batch API endpoint for programmatic use",
         "order": "t",
-        "etag": "97753ee7ce9faf27"
+        "etag": "9dc1830523bc37e0"
       },
       {
         "id": "tnib-t037",
         "slug": "update-npm-dependencies",
         "path": "data/tnib-t037--update-npm-dependencies.md",
-        "version": 1,
+        "version": 2,
         "title": "Update npm dependencies to latest",
         "status": "in-progress",
         "type": "task",
@@ -768,13 +756,13 @@
         "updated_at": "2026-03-25T10:00:00Z",
         "body": "\n## Description\n\nUpdate all npm dependencies to latest compatible versions. Check for breaking changes in major version bumps.\n\n## Verification\n\n- [x] `npm audit` shows zero high/critical vulnerabilities\n- [ ] All tests pass after update\n- [ ] Visual regression check on main UI screens",
         "order": "h",
-        "etag": "69c88244192197c5"
+        "etag": "bc63aa9b1dbb7d78"
       },
       {
         "id": "tnib-t034",
         "slug": "database-migration-strategy",
         "path": "data/tnib-t034--database-migration-strategy.md",
-        "version": 1,
+        "version": 2,
         "title": "Write database migration strategy doc",
         "status": "todo",
         "type": "task",
@@ -787,13 +775,13 @@
         "updated_at": "2026-03-15T10:00:00Z",
         "body": "\n## Description\n\nDocument our approach to database migrations: tool choice (golang-migrate), naming conventions, rollback procedures, and zero-downtime migration patterns.\n\n## Verification\n\n- [ ] Migration tool documented (golang-migrate)\n- [ ] Naming convention: `YYYYMMDDHHMMSS_description.sql`\n- [ ] Rollback procedure for each migration type\n- [ ] Zero-downtime patterns for schema changes",
         "order": "e",
-        "etag": "c9d4a72b2464940b"
+        "etag": "42535f5d6813d998"
       },
       {
         "id": "tnib-t035",
         "slug": "accessibility-audit",
         "path": "data/tnib-t035--accessibility-audit.md",
-        "version": 1,
+        "version": 2,
         "title": "Accessibility audit",
         "status": "todo",
         "type": "task",
@@ -806,13 +794,13 @@
         "updated_at": "2026-03-15T10:00:00Z",
         "body": "\n## Description\n\nConduct WCAG 2.1 AA compliance audit of all UI screens. Use axe-core automated testing plus manual keyboard and screen reader testing.\n\n## Verification\n\n- [ ] Automated axe-core scan with zero critical violations\n- [ ] All interactive elements keyboard accessible\n- [ ] Screen reader navigation tested (VoiceOver + NVDA)\n- [ ] Color contrast ratios meet AA standard (4.5:1 for text)",
         "order": "f",
-        "etag": "7933a5ab1d44db32"
+        "etag": "0c7f45aa56b40edf"
       },
       {
         "id": "tnib-t036",
         "slug": "security-pen-testing",
         "path": "data/tnib-t036--security-pen-testing.md",
-        "version": 1,
+        "version": 2,
         "title": "Security penetration testing",
         "status": "todo",
         "type": "task",
@@ -828,13 +816,13 @@
           "tnib-e001"
         ],
         "order": "g",
-        "etag": "124931742dd2487e"
+        "etag": "a58e862f6e860909"
       },
       {
         "id": "tnib-t039",
         "slug": "optimize-docker-image",
         "path": "data/tnib-t039--optimize-docker-image.md",
-        "version": 1,
+        "version": 2,
         "title": "Optimize Docker image size",
         "status": "todo",
         "type": "task",
@@ -847,13 +835,13 @@
         "updated_at": "2026-03-15T10:00:00Z",
         "body": "\n## Description\n\nReduce Docker image size from ~800MB to \u003c200MB using multi-stage builds, Alpine base, and pruning dev dependencies.\n\n## Verification\n\n- [ ] Multi-stage Dockerfile (build + runtime)\n- [ ] Alpine or distroless base image\n- [ ] Final image size \u003c200MB\n- [ ] All health checks pass on optimized image",
         "order": "j",
-        "etag": "781078882543d56b"
+        "etag": "01af6d24214ae267"
       },
       {
         "id": "tnib-t040",
         "slug": "load-testing",
         "path": "data/tnib-t040--load-testing.md",
-        "version": 1,
+        "version": 2,
         "title": "Load testing with 1000 concurrent users",
         "status": "todo",
         "type": "task",
@@ -866,13 +854,13 @@
         "updated_at": "2026-03-20T10:00:00Z",
         "body": "\n## Description\n\nLoad test with k6 simulating 1000 concurrent users performing typical workflows. Establish baseline metrics and find breaking points.\n\n## Verification\n\n- [ ] k6 test scripts for: login, list tasks, create task, update task\n- [ ] Sustained 1000 concurrent users for 10 minutes\n- [ ] p95 response time \u003c500ms for all endpoints\n- [ ] Error rate \u003c0.1%\n- [ ] Results documented with graphs",
         "order": "k",
-        "etag": "7eea486c5e4a06c5"
+        "etag": "c8e6feae654be97a"
       },
       {
         "id": "tnib-t044",
         "slug": "onboarding-guide",
         "path": "data/tnib-t044--onboarding-guide.md",
-        "version": 1,
+        "version": 2,
         "title": "Write onboarding guide for new developers",
         "status": "todo",
         "type": "task",
@@ -885,7 +873,7 @@
         "updated_at": "2026-03-20T10:00:00Z",
         "body": "\n## Description\n\nGetting-started guide covering local development setup, project structure, coding conventions, PR process, and debugging tips.\n\n## Verification\n\n- [ ] Prerequisites section (Go 1.22+, Node 20+, Docker)\n- [ ] Step-by-step local setup instructions\n- [ ] Project structure overview with package responsibilities\n- [ ] Common debugging scenarios and tools",
         "order": "m",
-        "etag": "05cd06c33b19ca6e"
+        "etag": "63d3d150dfbcac4f"
       }
     ]
   }

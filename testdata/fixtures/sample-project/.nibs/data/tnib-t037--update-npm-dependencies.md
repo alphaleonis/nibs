@@ -1,6 +1,6 @@
 ---
 # tnib-t037
-version: 1
+version: 2
 title: Update npm dependencies to latest
 status: in-progress
 type: task
