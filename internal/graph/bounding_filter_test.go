@@ -29,6 +29,9 @@ var boundingFilterFields = []string{
 	"blockedById",
 	"mentionsId",
 	"mentionedById",
+	// milestone names a nib whose queue bounds the working set — "of X's
+	// assignees, which match q" — even though its name does not end in "Id".
+	"milestone",
 }
 
 // nonBoundingFilterFields are the fields that narrow without naming a nib, so
@@ -51,6 +54,7 @@ var nonBoundingFilterFields = []string{
 	"hasBlocking",
 	"isBlocked",
 	"hasBlockedBy",
+	"noMilestone",
 }
 
 // nibFilterFieldNames returns the schema name of every field of

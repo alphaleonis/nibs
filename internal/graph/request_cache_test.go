@@ -11,6 +11,8 @@ import (
 
 	"github.com/99designs/gqlgen/graphql"
 	"github.com/alphaleonis/nibs/internal/config"
+	"github.com/alphaleonis/nibs/internal/graph/model"
+	"github.com/alphaleonis/nibs/internal/membership"
 	"github.com/alphaleonis/nibs/internal/nib"
 	"github.com/vektah/gqlparser/v2/ast"
 )
@@ -19,14 +21,27 @@ import (
 // SearchAll invocations. Used to verify per-request memoization behavior.
 //
 // searchDelay, when set, holds each SearchAll call open for that long, which is
-// what gives the concurrent callers in TestCachedSearchAll_CollapsesConcurrentMisses
-// a window to pile into.
+// what gives the concurrent callers in TestCachedSearchAllIDs_CollapsesConcurrentMisses
+// a window to pile into. allDelay is the same hook on All, for
+// TestCachedMembershipView_CollapsesConcurrentMisses.
 type countingReader struct {
 	*stubReader
 	mentionsCalls    int32
 	mentionedByCalls int32
 	searchAllCalls   int32
+	allCalls         int32
 	searchDelay      time.Duration
+	allDelay         time.Duration
+}
+
+// All counts and delegates. ApplyFilter reads the whole store only to build
+// the membership View, so the count stands in for View computations.
+func (c *countingReader) All() []*nib.Nib {
+	atomic.AddInt32(&c.allCalls, 1)
+	if c.allDelay > 0 {
+		time.Sleep(c.allDelay)
+	}
+	return c.stubReader.All()
 }
 
 func (c *countingReader) FindMentions(fromID string) []*nib.Nib {
@@ -219,6 +234,13 @@ func mutationOperationContext(t *testing.T) context.Context {
 func queryOperationContext(t *testing.T) context.Context {
 	t.Helper()
 	return operationContextOfType(t, ast.Query)
+}
+
+// subscriptionOperationContext returns a context carrying a gqlgen
+// OperationContext for a subscription document.
+func subscriptionOperationContext(t *testing.T) context.Context {
+	t.Helper()
+	return operationContextOfType(t, ast.Subscription)
 }
 
 func operationContextOfType(t *testing.T, op ast.Operation) context.Context {
@@ -449,5 +471,185 @@ func TestRequestCacheOperationMiddleware_DedupsWithinOneOperation(t *testing.T) 
 	}
 	if calls := atomic.LoadInt32(&reader.mentionsCalls); calls != 1 {
 		t.Errorf("reader.FindMentions called %d times within one operation, want 1 (middleware-installed cache should dedup)", calls)
+	}
+}
+
+// noMilestone builds the membership View through the per-operation cache: one
+// operation invoking ApplyFilter once per parent nib — the shape relationship
+// resolvers like Children produce — computes the O(N) View once, not once per
+// parent. reader.All is the proxy for View computations: the noMilestone
+// branch is ApplyFilter's only whole-store read.
+func TestApplyFilterNoMilestoneComputesTheViewOncePerOperation(t *testing.T) {
+	reader := &countingReader{stubReader: milestoneFixture()}
+	blocking := &stubBlockingChecker{}
+	ctx := WithRequestCache(context.Background(), NewRequestCache())
+
+	backlog := []string{"nibs-m1", "nibs-m2", "nibs-t3", "nibs-t4", "nibs-t5"}
+	first := applyFilterOK(t, ctx, reader.allNibs, &model.NibFilter{NoMilestone: boolPtr(true)}, reader, blocking)
+	second := applyFilterOK(t, ctx, reader.allNibs, &model.NibFilter{NoMilestone: boolPtr(true)}, reader, blocking)
+
+	assertNibIDs(t, first, backlog)
+	assertNibIDs(t, second, backlog)
+	if calls := atomic.LoadInt32(&reader.allCalls); calls != 1 {
+		t.Errorf("reader.All calls = %d, want 1 (one View per operation, however many ApplyFilter calls)", calls)
+	}
+}
+
+// cachedMembershipView memoizes the View within one operation and hands every
+// caller the same object; a NEW operation computes its own, so a write landing
+// between operations is observed rather than served stale.
+func TestCachedMembershipView_PerOperationIsolation(t *testing.T) {
+	reader := &countingReader{stubReader: milestoneFixture()}
+
+	ctx1 := WithRequestCache(context.Background(), NewRequestCache())
+	first := cachedMembershipView(ctx1, reader)
+	if again := cachedMembershipView(ctx1, reader); again != first {
+		t.Error("second call within the operation returned a different View; the entry was recomputed rather than memoized")
+	}
+	if got := first.MilestoneOf("nibs-t3"); got != "" {
+		t.Fatalf("fixture: MilestoneOf(t3) = %q, want the backlog", got)
+	}
+
+	// A write lands between operations: t3 becomes assigned. The stub mutates
+	// in place; the real store installs a fresh pointer, which only makes the
+	// staleness this test rules out easier to observe.
+	reader.nibs["nibs-t3"].Milestone = "nibs-m1"
+
+	ctx2 := WithRequestCache(context.Background(), NewRequestCache())
+	second := cachedMembershipView(ctx2, reader)
+	if second == first {
+		t.Error("new operation was handed the previous operation's View")
+	}
+	if got := second.MilestoneOf("nibs-t3"); got != "nibs-m1" {
+		t.Errorf("new operation's View: MilestoneOf(t3) = %q, want %q — a write between operations must be observed", got, "nibs-m1")
+	}
+	if calls := atomic.LoadInt32(&reader.allCalls); calls != 2 {
+		t.Errorf("reader.All calls = %d, want 2 (one View per operation)", calls)
+	}
+}
+
+// With no cache on the context the helper falls straight through to a fresh
+// Compute, exactly as the mention helpers do.
+func TestCachedMembershipView_NilCacheFallsThrough(t *testing.T) {
+	reader := &countingReader{stubReader: milestoneFixture()}
+	ctx := context.Background() // no cache attached
+
+	_ = cachedMembershipView(ctx, reader)
+	_ = cachedMembershipView(ctx, reader)
+
+	if calls := atomic.LoadInt32(&reader.allCalls); calls != 2 {
+		t.Errorf("reader.All calls = %d, want 2 (no cache, no dedup)", calls)
+	}
+}
+
+// The membership memo takes the mutation bypass too: a mutation's own root
+// fields can reassign or reparent between two reads of the View.
+func TestCachedMembershipView_MutationBypassesTheMemo(t *testing.T) {
+	reader := &countingReader{stubReader: milestoneFixture()}
+	ctx := WithRequestCache(mutationOperationContext(t), NewRequestCache())
+
+	_ = cachedMembershipView(ctx, reader)
+	_ = cachedMembershipView(ctx, reader)
+	if calls := atomic.LoadInt32(&reader.allCalls); calls != 2 {
+		t.Errorf("reader.All calls = %d, want 2 (mutation bypasses the memo)", calls)
+	}
+
+	// The same shape under a query operation memoizes, so the bypass keys on
+	// the operation type and not on something incidental to the fixture.
+	queryReader := &countingReader{stubReader: milestoneFixture()}
+	queryCtx := WithRequestCache(queryOperationContext(t), NewRequestCache())
+	_ = cachedMembershipView(queryCtx, queryReader)
+	_ = cachedMembershipView(queryCtx, queryReader)
+	if calls := atomic.LoadInt32(&queryReader.allCalls); calls != 1 {
+		t.Errorf("query operation: reader.All calls = %d, want 1", calls)
+	}
+}
+
+// TestCachedMembershipView_CollapsesConcurrentMisses pins for the membership
+// entry the property TestCachedSearchAllIDs_CollapsesConcurrentMisses pins for
+// a search term: callers that arrive together and all miss must COLLAPSE into
+// one Compute. A mutex-guarded double-checked read — the shape cachedMentions
+// uses — passes every single-goroutine test in this file and gives -race
+// nothing to flag (a correct double check has no unsynchronized access), yet
+// it lets each concurrent miss pay its own O(N) three-map build — the fan-out
+// the memo exists to remove, in the one shape gqlgen actually produces. Only a
+// concurrent test can catch that regression.
+//
+// The barrier is two-sided for the same reason the search test's is: `ready`
+// holds the release until every caller goroutine has reached the barrier, so
+// they go together rather than resting on allDelay outrunning scheduler
+// latency.
+func TestCachedMembershipView_CollapsesConcurrentMisses(t *testing.T) {
+	reader := &countingReader{stubReader: milestoneFixture(), allDelay: 20 * time.Millisecond}
+	ctx := WithRequestCache(context.Background(), NewRequestCache())
+
+	const callers = 8
+	var ready sync.WaitGroup
+	var start sync.WaitGroup
+	var done sync.WaitGroup
+	start.Add(1)
+	ready.Add(callers)
+	views := make([]*membership.View, callers)
+	for i := range callers {
+		done.Add(1)
+		go func() {
+			defer done.Done()
+			ready.Done()
+			start.Wait()
+			views[i] = cachedMembershipView(ctx, reader)
+		}()
+	}
+	ready.Wait()
+	start.Done()
+	done.Wait()
+
+	if calls := atomic.LoadInt32(&reader.allCalls); calls != 1 {
+		t.Errorf("reader.All called %d times, want 1 — concurrent misses must collapse into one Compute", calls)
+	}
+	for i, v := range views {
+		if v == nil {
+			t.Fatalf("caller %d got a nil View", i)
+		}
+		if v != views[0] {
+			t.Errorf("caller %d got a different View than caller 0; every caller must share the memoized object", i)
+		}
+	}
+}
+
+// A SUBSCRIPTION operation bypasses the memo for every entry — membership,
+// search, and both mention directions. The memo is only safe for
+// single-response operations: gqlgen dispatches a subscription once per
+// subscribe and then resolves every pushed event under that same operation
+// context, and each event is by definition preceded by a store write. A memo
+// filled at the first event would serve the socket's entire life from
+// pre-write state (and pin that event's store pointers for as long as the
+// client stays subscribed).
+func TestSubscriptionBypassesTheMemo(t *testing.T) {
+	reader := newCountingReader(t)
+	ctx := WithRequestCache(subscriptionOperationContext(t), NewRequestCache())
+
+	_ = cachedMembershipView(ctx, reader)
+	_ = cachedMembershipView(ctx, reader)
+	for i := range 2 {
+		if _, err := cachedSearchAllIDs(ctx, reader, "term"); err != nil {
+			t.Fatalf("cachedSearchAllIDs call %d: %v", i, err)
+		}
+	}
+	_ = cachedMentions(ctx, reader, "a")
+	_ = cachedMentions(ctx, reader, "a")
+	_ = cachedMentionedBy(ctx, reader, "b")
+	_ = cachedMentionedBy(ctx, reader, "b")
+
+	if calls := atomic.LoadInt32(&reader.allCalls); calls != 2 {
+		t.Errorf("reader.All calls = %d, want 2 (subscription bypasses the memo)", calls)
+	}
+	if calls := atomic.LoadInt32(&reader.searchAllCalls); calls != 2 {
+		t.Errorf("reader.SearchAll calls = %d, want 2 (subscription bypasses the memo)", calls)
+	}
+	if calls := atomic.LoadInt32(&reader.mentionsCalls); calls != 2 {
+		t.Errorf("reader.FindMentions calls = %d, want 2 (subscription bypasses the memo)", calls)
+	}
+	if calls := atomic.LoadInt32(&reader.mentionedByCalls); calls != 2 {
+		t.Errorf("reader.FindMentionedBy calls = %d, want 2 (subscription bypasses the memo)", calls)
 	}
 }

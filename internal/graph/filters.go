@@ -161,7 +161,8 @@ func hasBoundingFilter(filter *model.NibFilter) bool {
 		filter.BlockingID != nil ||
 		filter.BlockedByID != nil ||
 		filter.MentionsID != nil ||
-		filter.MentionedByID != nil
+		filter.MentionedByID != nil ||
+		filter.Milestone != nil
 }
 
 // ApplyFilter applies NibFilter to a slice of nibs and returns filtered results.
@@ -361,6 +362,39 @@ func ApplyFilter(ctx context.Context, nibs []*nib.Nib, filter *model.NibFilter, 
 			return nil, err
 		}
 		result = filterBySliceField(result, []string{fullID}, func(b *nib.Nib) []string { return b.BlockedBy })
+	}
+
+	// Assignment-axis filters. milestone matches the RESOLVED direct
+	// assignment — membership.ResolvedMilestoneID's reading, the one the
+	// ordering engine's queue scope groups by — so a dangling or non-milestone
+	// assignment matches nothing here exactly as it schedules nothing there.
+	// An unknown target fails the filter (shared contract for all id-valued
+	// filters); a target that exists but is not milestone-typed is answered
+	// with the empty set, since no assignment can resolve to it.
+	if filter.Milestone != nil {
+		fullID, err := resolveFilterTarget(reader, "milestone", *filter.Milestone)
+		if err != nil {
+			return nil, err
+		}
+		result = filterByField(result, []string{fullID}, func(b *nib.Nib) string {
+			return resolvedMilestoneID(b, reader)
+		})
+	}
+
+	// noMilestone reads DERIVED membership (membership.MilestoneOf): true is
+	// the backlog, and a child of an assigned epic is planned work rather than
+	// backlog. The View is built over the WHOLE store, not the candidate
+	// slice: an assigned ancestor outside the slice — filtered out earlier, or
+	// never in the relation — still schedules its subtree. Built once per
+	// GraphQL OPERATION via the per-operation cache — the reuse scope the
+	// membership package's live-pointer discipline permits — so relationship
+	// resolvers invoking ApplyFilter once per parent share one View instead of
+	// recomputing O(N) per parent; never cached across operations.
+	if filter.NoMilestone != nil {
+		view := cachedMembershipView(ctx, reader)
+		result = filterByPredicate(result, filter.NoMilestone, func(b *nib.Nib) bool {
+			return view.MilestoneOf(b.ID) == ""
+		})
 	}
 
 	// Mention filters (computed via FindMentions/FindMentionedBy on the reader,

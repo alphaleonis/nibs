@@ -59,6 +59,39 @@ func TestNibsSortByTitle(t *testing.T) {
 	}
 }
 
+// TestNibsSortByMilestoneOrder pins MILESTONE_ORDER to
+// nib.SortByMilestoneOrder's semantics: keyed nibs first in queue-key order,
+// unkeyed nibs appended sorted by title — the same shape ORDER gives, read off
+// the milestone_order key instead of the sibling-scope order key.
+func TestNibsSortByMilestoneOrder(t *testing.T) {
+	resolver, core := setupTestResolver(t)
+	ctx := context.Background()
+
+	mustCreate(t, core, &nib.Nib{ID: "ms1", Slug: "milestone", Title: "Milestone", Type: "milestone", Status: "todo"})
+	// Created out of queue order so default order ≠ queue order, plus one
+	// unkeyed nib that must trail the keyed ones.
+	mustCreate(t, core, &nib.Nib{ID: "qs2", Slug: "second", Title: "Second in queue", Status: "todo", Milestone: "ms1", MilestoneOrder: "b0"})
+	mustCreate(t, core, &nib.Nib{ID: "qs3", Slug: "third", Title: "Third in queue", Status: "todo", Milestone: "ms1", MilestoneOrder: "c0"})
+	mustCreate(t, core, &nib.Nib{ID: "qs1", Slug: "first", Title: "First in queue", Status: "todo", Milestone: "ms1", MilestoneOrder: "a0"})
+	mustCreate(t, core, &nib.Nib{ID: "qs0", Slug: "unkeyed", Title: "An unkeyed member", Status: "todo", Milestone: "ms1"})
+
+	sort := &model.NibSort{Field: model.NibSortFieldMilestoneOrder}
+	got, err := resolver.Query().Nibs(ctx, &model.NibFilter{Milestone: strPtr("ms1")}, sort)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	wantOrder := []string{"qs1", "qs2", "qs3", "qs0"}
+	if len(got) != len(wantOrder) {
+		t.Fatalf("got %d nibs, want %d", len(got), len(wantOrder))
+	}
+	for i, want := range wantOrder {
+		if got[i].ID != want {
+			t.Errorf("position %d: got %s (%s), want %s", i, got[i].ID, got[i].Title, want)
+		}
+	}
+}
+
 func TestNibsSortByCreatedAt(t *testing.T) {
 	t1 := time.Date(2026, 3, 19, 10, 0, 0, 0, time.UTC)
 	t2 := time.Date(2026, 3, 19, 11, 0, 0, 0, time.UTC)

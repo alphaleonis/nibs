@@ -49,6 +49,8 @@ func ApplySorting(nibs []*nib.Nib, sort *model.NibSort, cfg *config.Config) {
 	switch sort.Field {
 	case model.NibSortFieldOrder:
 		nib.SortByOrder(nibs)
+	case model.NibSortFieldMilestoneOrder:
+		nib.SortByMilestoneOrder(nibs)
 	case model.NibSortFieldTitle:
 		slices.SortStableFunc(nibs, func(a, b *nib.Nib) int {
 			return cmp.Compare(strings.ToLower(a.Title), strings.ToLower(b.Title))
