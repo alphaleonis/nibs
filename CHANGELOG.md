@@ -9,6 +9,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ### Added
 - **`nibs --version`** alongside the `version` subcommand, printing the same build identity.
+- **`nibs check` names illegal parent nests** — each parent/type combination the hierarchy rules refuse is reported with the file, both types and the allowed parents; `--fix` refuses, since re-parenting is not provable intent.
 - **The three axis keys `milestone:`, `milestone_order:` and `area:` are modeled front-matter keys** — `milestone:` resolves and re-resolves like `parent:`, a mistyped spelling such as `milestone-order:` is named by `nibs check`, and a malformed value now fails parse instead of hiding among unknown keys.
 
 ### Changed
