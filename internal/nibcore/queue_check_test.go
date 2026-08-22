@@ -100,13 +100,16 @@ func TestClosedMilestoneQueuesInMapSilentCases(t *testing.T) {
 			},
 		},
 		{
-			// A prefix-less `milestone: ms1` is inert everywhere: membership
-			// resolves the assignment axis by exact id, so no view, no orderer and
-			// neither write refusal sees this nib in chk-ms's queue. Reporting it
-			// would send a reader to repair something no write surface objects to.
-			// (That such an assignment is silently inert rather than named is a
-			// separate gap, and not this finding's to answer.)
-			name: "a shorthand assignment is not a queue entry, because no refusal sees one",
+			// This pins the PURE function's contract, not a state a loaded store
+			// can present: Core.Load canonicalizes link ids in memory, so
+			// CheckAllLinks never receives a short-form assignment. What it holds
+			// in step is the resolution rule — this function and both write
+			// refusals all answer through membership.ResolvedMilestoneID over an
+			// exact-id map, so none of the three counts this nib. That is
+			// agreement among those three, NOT inertness everywhere: the ordering
+			// engine, the milestone filter and cmd/close.go supply a
+			// Reader.Get-backed Lookup, which does prefix-expand.
+			name: "a shorthand assignment is not a queue entry, because no refusal counts one",
 			nibs: map[string]*nib.Nib{
 				"chk-ms": {ID: "chk-ms", Status: "completed", Type: "milestone", Path: "data/chk-ms.md"},
 				"chk-t":  {ID: "chk-t", Status: "todo", Type: "task", Path: "data/chk-t.md", Milestone: "ms"},
@@ -203,9 +206,11 @@ func TestCheckAllLinksReportsClosedMilestoneQueues(t *testing.T) {
 // that gap, so this compares the two answers over one map instead of trusting
 // the prose.
 //
-// The shorthand assignment below is the case that separates them: a hand-edited
-// `milestone: ms1` in a store prefixed `chk-`. It is the only population the
-// finding exists for, since every write path stores the normalized full id.
+// The shorthand assignment below is the input that separates the two rules. It is
+// a probe, not a reachable store state — Core.Load canonicalizes link ids in
+// memory, so the production caller is handed full-form assignments and this
+// divergence never reaches a user. The guard is therefore against future drift
+// between the two derivations, not against a defect anyone can hit today.
 func TestClosedMilestoneQueueAgreesWithMembership(t *testing.T) {
 	cfg := config.Default()
 	all := []*nib.Nib{

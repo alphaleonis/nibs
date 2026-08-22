@@ -549,13 +549,22 @@ func resolvedMilestoneInMap(nibs map[string]*nib.Nib, b *nib.Nib, configPrefix s
 //
 // Which is why the assignment is resolved by calling membership.ResolvedMilestoneID
 // itself rather than by restating its clauses: that is the function both refusals
-// reach through OpenQueueEntries -> View.DirectMembers, so the two answers agree
-// by construction. Restating it drifted once already — an id-normalizing variant
-// expanded a prefix-less `milestone: ms1` that membership leaves unresolved, so
-// the check reported a queue entry no write path would have objected to. Hence no
-// configPrefix parameter here: this function deliberately does NOT expand
-// shorthand ids, because the refusal does not either. (A shorthand assignment
-// being silently inert everywhere is its own gap, tracked separately.)
+// reach through OpenQueueEntries -> View.DirectMembers, so the three answers agree
+// by construction rather than by two prose descriptions staying in step. Hence no
+// configPrefix parameter — expanding a shorthand id here would part this function
+// from the refusals it exists to mirror.
+//
+// The agreement is what is guaranteed; it is NOT a claim that a shorthand id is
+// inert system-wide. ResolvedMilestoneID has no rule of its own — it answers
+// through the Lookup its caller supplies, and Compute's is an exact byID map
+// while the ordering engine, the milestone filter and cmd/close.go pass a
+// Reader.Get-backed closure, which DOES prefix-expand (nibcore.Core.Get).
+//
+// Nor is this guarding an observed defect: Core.Load canonicalizes link ids in
+// memory before any of this runs, so CheckAllLinks is handed assignments already
+// in full form and a store cannot in practice present the divergent case. This
+// couples a pure function to the rule it mirrors so the two cannot drift apart
+// later; it changes no reported finding today.
 // Pinned by TestClosedMilestoneQueueAgreesWithMembership.
 //
 // isClosed and releasesDependents are supplied by the caller because this is a
