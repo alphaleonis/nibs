@@ -196,8 +196,9 @@ func TestUpdateNibMilestoneCloseGate(t *testing.T) {
 }
 
 // writeStatusOnDisk rewrites one nib's status straight into its file, bypassing
-// Core, and reloads. That hand edit is the only way the offending state arises
-// once every write surface refuses to create it.
+// Core, and reloads. It is the shortest way to stand a test on the offending
+// state, not the only way that state arises — the assignment door reaches it
+// through ordinary writes (nibs-l5df).
 func writeStatusOnDisk(t *testing.T, core *nibcore.Core, id, status string) {
 	t.Helper()
 	b, err := core.Get(id)
@@ -230,13 +231,12 @@ func equalIDs(got, want []string) bool {
 	return true
 }
 
-// seedClosedMilestoneWithLiveQueue builds the state the write path itself can no
-// longer produce but the store can still hold: a milestone already carrying a
-// releasing status while an OPEN nib is assigned to its queue. It is reachable
-// with no bypass at all — assigning to an already-closed milestone is not
-// refused, since validateAndSetMilestone checks the target's type and never its
-// status (tracked in nibs-l5df) — and by a hand edit, which is the case
-// nibcore's ClosedMilestoneQueue finding reports.
+// seedClosedMilestoneWithLiveQueue builds the state the CLOSING transition can no
+// longer produce: a milestone already carrying a releasing status while an OPEN
+// nib is assigned to its queue. Closing it is what the guard refuses; arriving
+// here by the other door is not refused at all — assigning to an already-closed
+// milestone checks the target's type and never its status (nibs-l5df) — so this
+// is ordinary reachable state, not a hand-edit curiosity.
 func seedClosedMilestoneWithLiveQueue(t *testing.T, core *nibcore.Core) {
 	t.Helper()
 	for _, b := range []*nib.Nib{
@@ -300,4 +300,44 @@ func TestUpdateNibKeepsClosedMilestoneEditable(t *testing.T) {
 			t.Fatalf("re-closing for a different releasing reason should still be refused, got: %v", err)
 		}
 	})
+}
+
+// TestUpdateNibCloseGateReadsTheStoredType pins which type decides whether a nib
+// HAS a queue.
+//
+// The guard judges the pending clone (type already applied), but the queue is
+// read through membership.View.DirectMembers, which picks its axis from the
+// STORED nib: milestone-typed containers answer with their assignees, everything
+// else with its structural CHILDREN. So a request that retypes a container into
+// a milestone while also closing it read that container's children as if they
+// were queue entries and refused with a message naming work that carries no
+// assignment at all — `--clear milestone` on it is a no-op, so the refusal names
+// no remedy that would answer it.
+//
+// A nib only becoming a milestone in this very request has no queue to speak of:
+// nothing could have been assigned to it while it was not one. The outcome is
+// unchanged either way (a milestone can be nobody's parent, so the type change
+// is refused regardless) — what changes is whether the reason given is true.
+func TestUpdateNibCloseGateReadsTheStoredType(t *testing.T) {
+	ctx := context.Background()
+	resolver, core := setupTestResolver(t)
+	mustCreate(t, core, &nib.Nib{ID: "ep1", Title: "Epic", Type: "epic", Status: "in-progress"})
+	mustCreate(t, core, &nib.Nib{ID: "ft1", Title: "Feature", Type: "feature", Status: "todo", Parent: "ep1"})
+
+	milestone, completed := "milestone", "completed"
+	_, err := resolver.Mutation().UpdateNib(ctx, "ep1", model.UpdateNibInput{
+		Type:   &milestone,
+		Status: &completed,
+	})
+	if err == nil {
+		t.Fatal("retyping an epic with an open child into a milestone should be refused")
+	}
+	var queueErr *MilestoneQueueOpenError
+	if errors.As(err, &queueErr) {
+		t.Fatalf("refused as a full queue naming %v, but ft1 is a structural CHILD with no assignment; "+
+			"the queue refusal names a remedy that cannot apply: %v", queueErr.Open, err)
+	}
+	if !strings.Contains(err.Error(), "ft1") {
+		t.Errorf("the refusal should still name the child that blocks the type change, got: %v", err)
+	}
 }

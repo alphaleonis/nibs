@@ -134,6 +134,28 @@ func (r *mutationResolver) refuseClosingFullQueue(ctx context.Context, b *nib.Ni
 	if b.EffectiveType() != "milestone" || !cfg.StatusReleasesDependents(b.Status) {
 		return nil
 	}
+
+	// Two different types are in play, and the queue read below answers to the
+	// STORED one. membership.View.DirectMembers picks its axis from the stored
+	// nib: a milestone-typed container hands back its assignees, anything else
+	// hands back its structural CHILDREN. The pending clone decides whether this
+	// guard runs; the stored nib decides what it would be shown.
+	//
+	// For a nib only BECOMING a milestone in this same request those diverge, and
+	// it has no queue either way — nothing can have been assigned to it while it
+	// was not a milestone. Asking anyway hands back its children and refuses while
+	// naming work that carries no assignment at all, so the remedy the message
+	// names ("clear its assignments") cannot apply to any of it. The type change
+	// is still refused, by the check that actually understands it: a milestone can
+	// be nobody's parent.
+	//
+	// A subject that vanished between GetForUpdate and here is not this guard's to
+	// report — the write it is about to attempt says so with the right error.
+	stored, err := r.Reader.Get(b.ID)
+	if err != nil || stored.EffectiveType() != "milestone" {
+		return nil
+	}
+
 	open := OpenQueueEntries(cachedMembershipView(ctx, r.Reader), b.ID, cfg)
 	if len(open) == 0 {
 		return nil

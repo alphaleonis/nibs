@@ -4,9 +4,11 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
+	"slices"
 	"testing"
 
 	"github.com/alphaleonis/nibs/internal/config"
+	"github.com/alphaleonis/nibs/internal/membership"
 	"github.com/alphaleonis/nibs/internal/nib"
 	"github.com/alphaleonis/nibs/internal/store"
 )
@@ -22,14 +24,14 @@ func TestClosedMilestoneQueuesInMap(t *testing.T) {
 		// member is left out of the set.
 		"chk-ms1": {ID: "chk-ms1", Status: "completed", Type: "milestone", Path: "data/chk-ms1--one.md"},
 		"chk-t1":  {ID: "chk-t1", Status: "in-progress", Type: "task", Path: "data/chk-t1.md", Milestone: "chk-ms1", MilestoneOrder: "b0"},
-		"chk-t2":  {ID: "chk-t2", Status: "todo", Type: "task", Path: "data/chk-t2.md", Milestone: "ms1", MilestoneOrder: "a0"},
+		"chk-t2":  {ID: "chk-t2", Status: "todo", Type: "task", Path: "data/chk-t2.md", Milestone: "chk-ms1", MilestoneOrder: "a0"},
 		"chk-t3":  {ID: "chk-t3", Status: "completed", Type: "task", Path: "data/chk-t3.md", Milestone: "chk-ms1", MilestoneOrder: "c0"},
 		// Scrapped is releasing too, so one open entry is enough.
 		"chk-ms2": {ID: "chk-ms2", Status: "scrapped", Type: "milestone", Path: "data/chk-ms2--two.md"},
 		"chk-t4":  {ID: "chk-t4", Status: "draft", Type: "task", Path: "data/chk-t4.md", Milestone: "chk-ms2"},
 	}
 
-	got := closedMilestoneQueuesInMap(nibs, "chk-", cfg.IsClosedStatus, cfg.StatusReleasesDependents)
+	got := closedMilestoneQueuesInMap(nibs, cfg.IsClosedStatus, cfg.StatusReleasesDependents)
 	want := []ClosedMilestoneQueue{
 		{NibID: "chk-ms1", Path: "data/chk-ms1--one.md", Status: "completed", Open: []string{"chk-t2", "chk-t1"}},
 		{NibID: "chk-ms2", Path: "data/chk-ms2--two.md", Status: "scrapped", Open: []string{"chk-t4"}},
@@ -98,6 +100,19 @@ func TestClosedMilestoneQueuesInMapSilentCases(t *testing.T) {
 			},
 		},
 		{
+			// A prefix-less `milestone: ms1` is inert everywhere: membership
+			// resolves the assignment axis by exact id, so no view, no orderer and
+			// neither write refusal sees this nib in chk-ms's queue. Reporting it
+			// would send a reader to repair something no write surface objects to.
+			// (That such an assignment is silently inert rather than named is a
+			// separate gap, and not this finding's to answer.)
+			name: "a shorthand assignment is not a queue entry, because no refusal sees one",
+			nibs: map[string]*nib.Nib{
+				"chk-ms": {ID: "chk-ms", Status: "completed", Type: "milestone", Path: "data/chk-ms.md"},
+				"chk-t":  {ID: "chk-t", Status: "todo", Type: "task", Path: "data/chk-t.md", Milestone: "ms"},
+			},
+		},
+		{
 			name: "a milestone hand-assigned to a closed milestone is not a queue entry",
 			nibs: map[string]*nib.Nib{
 				"chk-ms":  {ID: "chk-ms", Status: "completed", Type: "milestone", Path: "data/chk-ms.md"},
@@ -108,7 +123,7 @@ func TestClosedMilestoneQueuesInMapSilentCases(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			if got := closedMilestoneQueuesInMap(tt.nibs, "chk-", cfg.IsClosedStatus, cfg.StatusReleasesDependents); len(got) != 0 {
+			if got := closedMilestoneQueuesInMap(tt.nibs, cfg.IsClosedStatus, cfg.StatusReleasesDependents); len(got) != 0 {
 				t.Errorf("closedMilestoneQueuesInMap = %+v, want none", got)
 			}
 		})
@@ -172,5 +187,57 @@ func TestCheckAllLinksReportsClosedMilestoneQueues(t *testing.T) {
 	}
 	if !result.HasIssues() {
 		t.Error("HasIssues() = false, want true")
+	}
+}
+
+// TestClosedMilestoneQueueAgreesWithMembership ties the read-side finding to the
+// write-side refusal by construction rather than by restating its clauses.
+//
+// The finding's whole justification is that it names exactly the set the refusal
+// names (see closedMilestoneQueuesInMap's doc: "A report naming a wider or
+// narrower set than the refusal would send a reader to repair something no write
+// surface objects to"). Both `nibs close`'s gate and updateNib's backstop read
+// that set through graph.OpenQueueEntries -> membership.View.DirectMembers, whose
+// resolution rule is membership.ResolvedMilestoneID — an EXACT id, no prefix
+// expansion. Resolving the finding's side by any other rule silently re-opens
+// that gap, so this compares the two answers over one map instead of trusting
+// the prose.
+//
+// The shorthand assignment below is the case that separates them: a hand-edited
+// `milestone: ms1` in a store prefixed `chk-`. It is the only population the
+// finding exists for, since every write path stores the normalized full id.
+func TestClosedMilestoneQueueAgreesWithMembership(t *testing.T) {
+	cfg := config.Default()
+	all := []*nib.Nib{
+		{ID: "chk-ms1", Status: "completed", Type: "milestone", Path: "data/chk-ms1.md"},
+		{ID: "chk-full", Status: "todo", Type: "task", Path: "data/chk-full.md", Milestone: "chk-ms1", MilestoneOrder: "a0"},
+		{ID: "chk-short", Status: "todo", Type: "task", Path: "data/chk-short.md", Milestone: "ms1", MilestoneOrder: "b0"},
+	}
+	nibs := make(map[string]*nib.Nib, len(all))
+	for _, b := range all {
+		nibs[b.ID] = b
+	}
+
+	view := membership.Compute(all)
+	var refusalSees []string
+	for _, m := range view.DirectMembers("chk-ms1") {
+		if !cfg.IsClosedStatus(m.Status) {
+			refusalSees = append(refusalSees, m.ID)
+		}
+	}
+
+	findings := closedMilestoneQueuesInMap(nibs, cfg.IsClosedStatus, cfg.StatusReleasesDependents)
+	var checkSees []string
+	for _, f := range findings {
+		if f.NibID == "chk-ms1" {
+			checkSees = f.Open
+		}
+	}
+
+	slices.Sort(refusalSees)
+	slices.Sort(checkSees)
+	if !reflect.DeepEqual(checkSees, refusalSees) {
+		t.Errorf("check reports queue %v but the refusal sees %v; the finding must name the set the write path objects to, no wider and no narrower",
+			checkSees, refusalSees)
 	}
 }

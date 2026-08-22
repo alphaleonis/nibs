@@ -9,6 +9,7 @@ import (
 	"strings"
 
 	"github.com/alphaleonis/nibs/internal/fsutil"
+	"github.com/alphaleonis/nibs/internal/membership"
 	"github.com/alphaleonis/nibs/internal/nib"
 	"github.com/alphaleonis/nibs/internal/nibtypes"
 )
@@ -151,14 +152,19 @@ type AssignmentConflict struct {
 // scrapped) while open work is still assigned to its queue: decision 1.5's
 // refusal, standing in the store as a fact rather than as a rejected write.
 //
-// Every write surface refuses to create it — `nibs close`'s gate
+// The CLOSING transition is refused on every client — `nibs close`'s gate
 // (cmd/close_queue.go) and updateNib's backstop (graph.MilestoneQueueOpenError),
-// which between them cover the CLI, the web, the TUI and `nibs graphql` — so an
-// offender reaches the store only through a hand edit or from data predating
-// the rule. It then loads, lists and schedules like any other nib, and the
-// queue keeps carrying work planned for a wave that has finished. This finding
-// is the one surface that names it, because no write refusal can ever see a
-// state no write produced.
+// covering the CLI, the web, the TUI and `nibs graphql`. The state is NOT
+// unreachable, though, and this finding is not here only for hand edits and
+// pre-rule data: the ASSIGNMENT door is still open, since assigning work to an
+// already-closed milestone checks the target's type and never its status
+// (nibs-l5df). So ordinary use still lands it, from the other side.
+//
+// It then loads, lists and schedules like any other nib, and the queue keeps
+// carrying work planned for a wave that has finished. This finding is the one
+// surface that names it — and, while a door stays open, the only one that can:
+// a refusal only ever sees the write it refuses, never the state that write
+// leaves behind by another route.
 //
 // Deferred is not an offense on EITHER side, and for two different reasons: a
 // deferred MILESTONE holds its queue on purpose (a parked wave is coming back),
@@ -534,13 +540,23 @@ func resolvedMilestoneInMap(nibs map[string]*nib.Nib, b *nib.Nib, configPrefix s
 // map: each milestone whose status releases its dependents, paired with the
 // open work still assigned to it.
 //
-// It is graph.OpenQueueEntries' rule read over a different substrate, and it
-// matches it clause for clause deliberately — DIRECT assignees only (work
-// belonging to the milestone through an assigned ancestor carries no assignment
-// of its own), milestone-typed members skipped the way membership.View.
-// DirectMembers skips them, queue order from nib.SortByMilestoneOrder. A report
-// naming a wider or narrower set than the refusal would send a reader to repair
-// something no write surface objects to.
+// It is graph.OpenQueueEntries' rule read over a different substrate — DIRECT
+// assignees only (work belonging to the milestone through an assigned ancestor
+// carries no assignment of its own), milestone-typed members skipped, queue
+// order from nib.SortByMilestoneOrder. A report naming a wider or narrower set
+// than the refusal would send a reader to repair something no write surface
+// objects to.
+//
+// Which is why the assignment is resolved by calling membership.ResolvedMilestoneID
+// itself rather than by restating its clauses: that is the function both refusals
+// reach through OpenQueueEntries -> View.DirectMembers, so the two answers agree
+// by construction. Restating it drifted once already — an id-normalizing variant
+// expanded a prefix-less `milestone: ms1` that membership leaves unresolved, so
+// the check reported a queue entry no write path would have objected to. Hence no
+// configPrefix parameter here: this function deliberately does NOT expand
+// shorthand ids, because the refusal does not either. (A shorthand assignment
+// being silently inert everywhere is its own gap, tracked separately.)
+// Pinned by TestClosedMilestoneQueueAgreesWithMembership.
 //
 // isClosed and releasesDependents are supplied by the caller because this is a
 // pure function over a map and cannot reach the project config itself, the same
@@ -550,13 +566,14 @@ func resolvedMilestoneInMap(nibs map[string]*nib.Nib, b *nib.Nib, configPrefix s
 //
 // Findings come back sorted by milestone id, since map order would shuffle the
 // report run to run.
-func closedMilestoneQueuesInMap(nibs map[string]*nib.Nib, configPrefix string, isClosed, releasesDependents func(string) bool) []ClosedMilestoneQueue {
+func closedMilestoneQueuesInMap(nibs map[string]*nib.Nib, isClosed, releasesDependents func(string) bool) []ClosedMilestoneQueue {
+	lookup := func(id string) *nib.Nib { return nibs[id] }
 	open := make(map[string][]*nib.Nib)
 	for _, b := range nibs {
 		if b.EffectiveType() == "milestone" || isClosed(b.Status) {
 			continue
 		}
-		if ms := resolvedMilestoneInMap(nibs, b, configPrefix); ms != "" {
+		if ms := membership.ResolvedMilestoneID(b, lookup); ms != "" {
 			open[ms] = append(open[ms], b)
 		}
 	}
@@ -618,7 +635,7 @@ func (c *Core) CheckAllLinks() *LinkCheckResult {
 	// — the status ROLES are the config's answer. The derivation stays pure;
 	// only the two predicates cross.
 	result.ClosedMilestoneQueues = append(result.ClosedMilestoneQueues,
-		closedMilestoneQueuesInMap(c.nibs, c.configPrefix(), c.closedStatusPredicate(), c.releasesDependentsPredicate())...)
+		closedMilestoneQueuesInMap(c.nibs, c.closedStatusPredicate(), c.releasesDependentsPredicate())...)
 	return result
 }
 

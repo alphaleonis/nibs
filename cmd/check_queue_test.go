@@ -28,8 +28,9 @@ func closedMilestoneQueueFiles() map[string]string {
 }
 
 // TestCheckReportsClosedMilestoneQueue pins the read-side half of decision 1.5:
-// a milestone carrying a releasing status over an open queue — reachable only
-// by hand edit, since `nibs close` and updateNib both refuse it — is reported
+// a milestone carrying a releasing status over an open queue — which `nibs close`
+// and updateNib both refuse to CLOSE into, though the assignment door still
+// reaches it (nibs-l5df) — is reported
 // by `nibs check` naming the milestone and its open entries, counted as an
 // issue, rendered under Nib Links (suppressing the link success line), carried
 // in the --json envelope, and left alone by --fix since disposing of a queue is
