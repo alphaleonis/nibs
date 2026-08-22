@@ -1,6 +1,10 @@
 package graph
 
-import "github.com/alphaleonis/nibs/internal/nib"
+import (
+	"sort"
+
+	"github.com/alphaleonis/nibs/internal/nib"
+)
 
 // QueueInversion is one order-vs-dependency inversion inside a milestone
 // queue: Ahead sits earlier in the queue than Blocker, yet Blocker still
@@ -50,51 +54,79 @@ func QueueInversionsInvolving(reader NibReader, id string) []QueueInversion {
 	if err != nil {
 		return nil
 	}
-	msID := resolvedMilestoneID(subject, reader)
-	if msID == "" {
+	var out []QueueInversion
+	for _, inv := range QueueInversionsIn(reader, resolvedMilestoneID(subject, reader)) {
+		if inv.Ahead.ID == subject.ID || inv.Blocker.ID == subject.ID {
+			out = append(out, inv)
+		}
+	}
+	return out
+}
+
+// QueueInversionsIn reports every inversion in ONE milestone queue, by the
+// rule QueueInversionsInvolving documents — it is the same definition read
+// whole rather than through a subject, so the two cannot drift. Nil for the
+// empty id (a nib in no queue is in no inversion).
+//
+// resolved is a RESOLVED milestone id — what resolvedMilestoneID returns —
+// not a user-supplied one, which is why nothing is normalized here: this is
+// below the boundary where an id is turned into a nib, and every caller has
+// already crossed it. A short form reaching this far names no queue and
+// yields nil.
+//
+// The scan, the sort and the position map behind an inversion depend on the
+// QUEUE alone, so a caller asking about many entries of one queue — `nibs
+// next` walking it in order — asks here once instead of re-deriving all three
+// per entry.
+//
+// Pairs come back in queue order: by the position of the entry sitting ahead,
+// then by the position of the blocker it sits ahead of. Filtering that to one
+// subject yields exactly the order the per-subject view is pinned to, since
+// every pair naming the subject as the blocker has an Ahead earlier than the
+// subject itself.
+func QueueInversionsIn(reader NibReader, resolved string) []QueueInversion {
+	if resolved == "" {
 		return nil
 	}
-
 	var members []*nib.Nib
 	for _, b := range reader.All() {
-		if resolvedMilestoneID(b, reader) == msID {
+		if resolvedMilestoneID(b, reader) == resolved {
 			members = append(members, b)
 		}
 	}
 	nib.SortByMilestoneOrder(members)
 	position := make(map[string]int, len(members))
+	member := make(map[string]*nib.Nib, len(members))
 	for i, b := range members {
 		position[b.ID] = i
+		member[b.ID] = b
 	}
-	subjectPos, ok := position[subject.ID]
-	if !ok {
-		return nil
-	}
-
-	stillBlocks := func(b *nib.Nib) bool {
-		return !reader.Config().StatusReleasesDependents(b.Status)
-	}
-	// blockedBy reports whether blocker is in b's blocked_by set, resolving
-	// each stored entry the way every blocker read does.
-	blockedBy := func(b *nib.Nib, blockerID string) bool {
-		for _, raw := range b.BlockedBy {
-			if full, ok := reader.NormalizeID(raw); ok && full == blockerID {
-				return true
-			}
-		}
-		return false
-	}
+	cfg := reader.Config()
 
 	var out []QueueInversion
-	for _, m := range members {
-		if m.ID == subject.ID {
-			continue
+	for i, ahead := range members {
+		// Read from the blocked_by side rather than by re-scanning the queue
+		// for each entry: the set is small, and the queue is not.
+		var blockers []*nib.Nib
+		seen := make(map[string]bool, len(ahead.BlockedBy))
+		for _, raw := range ahead.BlockedBy {
+			full, ok := reader.NormalizeID(raw)
+			if !ok || seen[full] {
+				continue
+			}
+			seen[full] = true
+			// In the same queue, later in it, and still blocking.
+			blocker := member[full]
+			if blocker == nil || position[full] <= i || cfg.StatusReleasesDependents(blocker.Status) {
+				continue
+			}
+			blockers = append(blockers, blocker)
 		}
-		switch {
-		case position[m.ID] > subjectPos && blockedBy(subject, m.ID) && stillBlocks(m):
-			out = append(out, QueueInversion{Milestone: msID, Ahead: subject, Blocker: m})
-		case position[m.ID] < subjectPos && blockedBy(m, subject.ID) && stillBlocks(subject):
-			out = append(out, QueueInversion{Milestone: msID, Ahead: m, Blocker: subject})
+		sort.Slice(blockers, func(x, y int) bool {
+			return position[blockers[x].ID] < position[blockers[y].ID]
+		})
+		for _, blocker := range blockers {
+			out = append(out, QueueInversion{Milestone: resolved, Ahead: ahead, Blocker: blocker})
 		}
 	}
 	return out

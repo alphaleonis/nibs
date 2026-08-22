@@ -1,6 +1,7 @@
 package graph
 
 import (
+	"reflect"
 	"testing"
 
 	"github.com/alphaleonis/nibs/internal/nib"
@@ -102,6 +103,53 @@ func TestQueueInversionsInvolving(t *testing.T) {
 			&nib.Nib{ID: "z", Title: "Z", Status: "todo", Milestone: "ms1", MilestoneOrder: "d0"},
 		)
 		want(t, QueueInversionsInvolving(r, "s"), [2]string{"x", "s"}, [2]string{"y", "s"}, [2]string{"s", "z"})
+	})
+
+	t.Run("several blockers ahead of one entry keep queue order", func(t *testing.T) {
+		// blocked_by is authored by hand, so its order is not the queue's. The
+		// pairs must still come back by the blocker's queue position.
+		r := build(
+			&nib.Nib{ID: "s", Title: "Subject", Status: "todo", Milestone: "ms1", MilestoneOrder: "a0", BlockedBy: []string{"z", "y", "z"}},
+			&nib.Nib{ID: "y", Title: "Y", Status: "todo", Milestone: "ms1", MilestoneOrder: "b0"},
+			&nib.Nib{ID: "z", Title: "Z", Status: "todo", Milestone: "ms1", MilestoneOrder: "c0"},
+		)
+		want(t, QueueInversionsInvolving(r, "s"), [2]string{"s", "y"}, [2]string{"s", "z"})
+	})
+
+	t.Run("the whole-queue read is the per-subject one, unioned", func(t *testing.T) {
+		// QueueInversionsIn is the definition QueueInversionsInvolving filters,
+		// so reading the queue whole must agree with reading it subject by
+		// subject — the property `nibs next` relies on when it asks once for a
+		// queue it then walks entry by entry.
+		r := build(
+			&nib.Nib{ID: "x", Title: "X", Status: "todo", Milestone: "ms1", MilestoneOrder: "a0", BlockedBy: []string{"s"}},
+			&nib.Nib{ID: "y", Title: "Y", Status: "todo", Milestone: "ms1", MilestoneOrder: "b0", BlockedBy: []string{"s"}},
+			&nib.Nib{ID: "s", Title: "Subject", Status: "todo", Milestone: "ms1", MilestoneOrder: "c0", BlockedBy: []string{"z"}},
+			&nib.Nib{ID: "z", Title: "Z", Status: "todo", Milestone: "ms1", MilestoneOrder: "d0"},
+		)
+		want(t, QueueInversionsIn(r, "ms1"), [2]string{"x", "s"}, [2]string{"y", "s"}, [2]string{"s", "z"})
+		// Union the per-subject reads and compare against the whole-queue one.
+		// Each pair surfaces under both of its ends, so dedupe before comparing:
+		// what must match is the SET, which is the property next relies on.
+		union := map[[2]string]bool{}
+		for _, id := range []string{"x", "y", "s", "z"} {
+			for _, pair := range pairs(QueueInversionsInvolving(r, id)) {
+				union[pair] = true
+			}
+		}
+		whole := map[[2]string]bool{}
+		for _, pair := range pairs(QueueInversionsIn(r, "ms1")) {
+			whole[pair] = true
+		}
+		if !reflect.DeepEqual(union, whole) {
+			t.Errorf("per-subject union = %v, whole-queue read = %v", union, whole)
+		}
+		if got := QueueInversionsIn(r, ""); got != nil {
+			t.Errorf("the empty milestone id yields %v, want nil", pairs(got))
+		}
+		if got := QueueInversionsIn(r, "ms2"); got != nil {
+			t.Errorf("an empty queue yields %v, want nil", pairs(got))
+		}
 	})
 
 	t.Run("no key is written while reading", func(t *testing.T) {
