@@ -30,6 +30,7 @@ WHEN DELEGATING to subagents (auto-tdd, auto-dev, feature-dev, etc.):
 ## Finding work
 
 ```bash
+nibs next                         # the one thing to work on next, with the plan it came from (exit 0 even with no answer)
 nibs list --ready                 # nibs ready to start (not blocked{{if .StartableStatuses}}; status {{join .StartableStatuses "/"}} — nothing else is startable{{end}})
 nibs list --ready --json          # same, as the {nibs,count,truncated} envelope
 nibs list                         # all OPEN nibs (the closed ones — {{join .ClosedStatuses "/"}} — hidden by default; --all to include them)
@@ -46,16 +47,19 @@ nibs get <id> --view card --json  # {"nib":{…}} single-read contract (card fie
 nibs list [filters]               # TSV rows under a "# <n> nibs" header (ref fields)
 nibs list [filters] --json        # {"nibs":[…],"count":N,"truncated":<bool>} envelope
 nibs rel <id> [--rel <relation>]  # related nibs in the SAME envelope as list (see Relationships)
+nibs next                         # the first startable nib in the active milestone's queue (see Queues)
+nibs list --milestone <ms>        # that milestone's queue, in queue order unless --sort says otherwise
 ```
-Recipe / composite views: `nibs context [id]`, `nibs plan <id>`, `nibs roadmap`, `nibs list --ready`.
+Recipe / composite views: `nibs next`, `nibs context [id]`, `nibs plan <id>`, `nibs roadmap`, `nibs list --ready`.
 
 **WRITE** — one intent per verb:
 ```bash
 nibs new "Title" -t <type>        # create (always pass -t); also -s -p -e --parent --blocked-by --tag --after/--before/--first
 nibs set <id> -s in-progress      # metadata/links: -s -p -e -t --title --parent --tag --blocking --blocked-by --document
-nibs set <id> --clear priority    # clear a clearable field: priority | estimate | parent
+nibs set <id> --milestone <ms>    # assign to a milestone's queue, appended last (see Queues)
+nibs set <id> --clear priority    # clear a clearable field: priority | estimate | parent | milestone
 nibs body <id> --set -            # edit body text (content via '-'/'@FILE'; see Editing body content)
-nibs mv <id> --after <sibling>    # reposition / reparent (see Reordering)
+nibs mv <id> --after <sibling>    # reposition among siblings, within the queue (--queue), or reparent (see Queues)
 nibs rm <id>                      # archive (default, reversible) or --delete (irreversible); agents pass -f
 nibs close <id> --summary -       # close + summary + parent propagation; --as <closed status> (see Closing)
 ```
@@ -68,7 +72,7 @@ Canonical names are above; legacy aliases still resolve (show→get, links→rel
 
 Read output is projected through one field-selection model shared by `get`, `list`, and `rel`:
 
-- `--view id|ref|card|full` — coarse field sets, leanest → fullest. `body` and `etag` are opt-in (absent below `full`).
+- `--view id|ref|card|full` — coarse field sets, leanest → fullest. `body`, `etag` and the scheduling fields `milestone`/`milestone_order` are absent below `full`, so a `card` read never shows an assignment; name them with `-f` to read them from a leaner view.
 - `-f/--fields "<spec>"` — exact fields, additive over `--view`. Supports scalars, computed fields (`children`, `progress`, `ready`), and one level of nested relation projection, e.g. `-f "id,blocked-by(id,status)"`.
 - Defaults: `get` → the full on-disk document; `list`/`rel` → `ref` TSV; any `--json` → the `card` field set.
 - `nibs list` extras: `-q/--quiet` (ids only), `-c/--count` (bare integer, pre-limit), `--limit N` (sets `"truncated":true`), `--no-header` (drop the `# <n> nibs` line).
@@ -104,6 +108,8 @@ Every command maps failures to a stable process exit code so you can branch on `
 | 1 | uncategorized failure |
 
 With `--json`, an error is `{"error":{"code":"<CODE>","message":"<msg>"}}`. **On any error: STOP. Diagnose the root cause and suggest a mitigation (code fix, follow-up nib, workaround). Never silently retry.**
+
+**Two things look like failures and are not, so the STOP rule does not reach either.** `nibs next` exits 0 whether or not it found something to do — having nothing to do is an answer, so branch on `--json`'s `"action"` being null, never on the exit status. And a write that leaves a queue entry sitting ahead of something that still blocks it prints a `warning:` line on stderr AFTER succeeding (exit 0; under `--json` it rides the success payload as `"warnings"`): such order-vs-dependency inversions are legal — plans state importance, dependencies state feasibility — so that line is a lint on a write that landed, not an error. Read it, decide whether the order was intended, and reorder with `nibs mv <id> --queue --after <blocker>` if it was not.
 
 ## Relationships
 
@@ -202,16 +208,19 @@ nibs body <id> --replace-old "- [ ] Task" --replace-new "- [x] Task"   # replace
 
 `--replace-old`/`--replace-new` must match exactly once: zero matches → `TEXT_NOT_FOUND`, more than one → `TEXT_AMBIGUOUS` (both exit 2, with an occurrence count). For several replacements in one atomic write, use `nibs graphql` with `bodyMod.replace`, which reports the same codes and the same count (see GraphQL).
 
-## Reordering
+## Queues and reordering
 
-`nibs mv` moves a nib among its siblings or reparents it:
+`nibs mv` moves a nib among its siblings, within its milestone queue, or under a new parent:
 ```bash
 nibs mv <id> --after <sibling>          # reposition after a sibling (also --before, --first)
+nibs mv <id> --queue --after <anchor>   # reposition within the milestone queue (also --before, --first)
 nibs mv <id> --parent <new-parent>      # reparent (appends; add --first to reparent to front)
 nibs mv <id1> <id2> <id3> --after <anchor>          # block move: slide a contiguous run of siblings
 nibs mv --children-of <parent-id> <c1> <c2> <c3>    # declaratively set the full child order (all children, once)
 ```
-Use `--children-of ""` for root-level siblings. Position a NEW nib at creation with `nibs new … --after/--before/--first`.
+Use `--children-of ""` for root-level siblings. Position a NEW nib at creation with `nibs new … --after/--before/--first` — those place it among its SIBLINGS, not in any queue, and `nibs new` cannot assign a milestone at all.
+
+**Assignment is `set`, position is `mv`.** A milestone's queue is the nibs assigned to it: `nibs set <id> --milestone <ms>` appends one to the END of that queue, `nibs set <id> --clear milestone` takes it out, and `nibs mv <id> --queue …` only reorders within the queue a nib is already in (the anchor must be in the same queue). Read one with `nibs list --milestone <ms>`, which sorts by queue order unless `--sort` says otherwise, and read the unscheduled remainder with `nibs list --backlog` — nibs with no assignment of their own and none up their parent chain. The two flags are mutually exclusive, an empty `--milestone ""` is refused (use `--backlog`), and an id naming a nib that is not a milestone is a validation error rather than an empty listing. `nibs next` walks the active milestone's queue — the in-progress milestone earliest in milestone order — and hands back the first startable thing it reaches.
 
 ## Closing
 
@@ -223,6 +232,8 @@ nibs close <id> --summary - --force         # close even if children are incompl
 nibs close <id> --summary - --json          # machine-readable result
 ```
 `--as` takes a **closed status** — the word it names is the word that lands in the nib's `status:`, so there is no second close-reason vocabulary. An open status is a validation error naming the closed ones. Omit `--as` and you get `{{.DefaultCloseStatus}}`.
+
+**Closing a MILESTONE speaks its queue.** A close reason that releases the milestone's dependents is refused while open work is still assigned to it. Dispose of that work first — `--move-open-to <other-milestone>` reassigns the open members to the end of that milestone's queue, `--unassign-open` drops their assignments — or close with a reason that holds rather than releases, which keeps the queue exactly as it is. The three are alternatives, not switches to combine.
 
 **`## Summary` accrues.** Each close adds an entry stamped with its reason and the date, so under the `## Summary` heading of a nib closed twice you find both records:
 ```markdown

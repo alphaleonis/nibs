@@ -34,6 +34,8 @@ var cheatCmd = &cobra.Command{
 // The rel entry names relDefaultKind the same way, and brackets --rel because
 // omitting it is legal: a grammar that reads as required is how the bare form
 // gets run unawares, and its default answers plausibly rather than erroring.
+// The next entry takes its description from the command's own Short via
+// commandShort, the same source `nibs catalog recipes` reads.
 func cheatSheet(cfg *config.Config) string {
 	var b strings.Builder
 	// The STATUS line lists the statuses by group rather than in one flat run:
@@ -54,13 +56,19 @@ READ   get <id…>          nib document (default); -f/--view id|ref|card|full; 
        context [id]       project context summary
        plan <id>          plan view: a parent nib and its children
        roadmap            Markdown roadmap from milestones and epics
-WRITE  new "<title>" -t T create; also -s -p -e --parent --blocked-by --tag --after/--before/--first
-       set <id>           metadata/links; --clear priority|estimate|parent; --remove-tag/-blocked-by/…
+       next               %s
+                          (having nothing to do is an answer: exit 0 either way — branch on --json's null action)
+WRITE  new "<title>" -t T create; also -s -p -e --parent --blocked-by --tag --after/--before/--first (siblings)
+       set <id>           metadata/links; --clear priority|estimate|parent|milestone; --remove-tag/-blocked-by/…
+                          --milestone <ms> assigns to that milestone's queue, appended last (new cannot assign)
        body <id>          --set | --append | --section "## H" --set [--create] | --replace-old T --replace-new U
        mv <id[…]>         --after|--before|--first <anchor> | --parent <id> | --children-of <p> <id…>
+                          --queue --after|--before|--first <anchor> repositions within the milestone queue
        rm <id…>           --archive (default) | --delete (irreversible); agents pass -f/--force
        close <id>         --summary - (required); --as <closed status> picks the close reason (default
                           %s). Closing an existing nib goes through close — set -s <closed> errors.
+                          A milestone with open work assigned refuses a releasing reason: --move-open-to <ms>,
+                          --unassign-open, or a holding reason (which keeps the queue).
 META   cheat · catalog <fields|filters|recipes|examples|hierarchy|schema> · prime[ --full] · query (GraphQL)
 
 VIEWS  id < ref < card < full (leanest→fullest). -f adds exact fields, e.g. -f "id,blocked-by(id,status)".
@@ -74,9 +82,12 @@ PRIO   %s (default normal)   EST  %s (s=1 m=3 l=5 xl=8; default m)
 FILTER list/rel show OPEN only by default (closed statuses hidden; header notes "N hidden — --all to include").
        -s overrides (-s closed = only closed); --all = every status. Open work under X: 'rel <id> --rel
        descendants -t bug' is already open — no post-filter. -c/-q honor the open default (--all for totals).
-RULE   On any nibs error: STOP, find the root cause, never silently retry.
+       list only: --milestone <ms> = that queue, in queue order; --backlog = no assignment, own or inherited.
+RULE   On any nibs error: STOP, find the root cause, never silently retry. A queue "warning:" printed by a
+       command that exited 0 is a lint on a successful write, not an error — read it, don't stop for it.
 `,
 		relDefaultKind,
+		commandShort("next"),
 		closeDefaultStatus(),
 		strings.Join(cfg.TypeNames(), ", "),
 		statusGroupOpen, strings.Join(cfg.OpenStatusNames(), "/"),

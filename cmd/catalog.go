@@ -30,13 +30,16 @@ type catalogTopic struct {
 }
 
 // catalogTopics is the ordered topic index. Each Name must have a matching case
-// in runCatalog's dispatch (pinned by TestCatalogTopicsMatchDispatch).
+// in runCatalog's dispatch — TestCatalogTopicsRunClean drives every advertised
+// topic and fails on one the dispatch cannot render. Only that direction is
+// guarded: a dispatch case missing from the index still runs when typed, it is
+// simply advertised nowhere, which costs discoverability rather than an error.
 var catalogTopics = []catalogTopic{
 	{"fields", "Every projectable field with its kind and the JSON key it serializes to"},
 	{"filters", "The list/rel filter flags and their status/type/priority/estimate enum values"},
 	{"hierarchy", "The legal parent (and child) types per nib type"},
 	{"examples", "A real {nib} and {nibs,count,truncated} JSON payload"},
-	{"recipes", "The composite/agent views (context, plan, roadmap, list --ready)"},
+	{"recipes", "The composite/agent views (next, context, plan, roadmap, list --ready)"},
 	{"schema", "The GraphQL SDL"},
 }
 
@@ -156,6 +159,27 @@ type filterInfo struct {
 	Values      []string `json:"values"`
 }
 
+// queueFilterInfo describes one milestone-scope filter on `nibs list`. These
+// are published apart from filterInfo above because they answer to neither of
+// that table's two claims: their values are nib ids or nothing at all rather
+// than a fixed enum, and they are `nibs list` flags only — `nibs rel` accepts
+// neither, so listing them in a table headed "list and rel" would state
+// something false about rel.
+type queueFilterInfo struct {
+	Flag        string `json:"flag"`
+	Description string `json:"description"`
+}
+
+// queueFilterCatalogEntries returns the milestone-scope filters, described in
+// the flags' own usage strings so the catalog cannot drift from what `nibs
+// list` accepts — the same discipline the enum table follows against config.
+func queueFilterCatalogEntries() []queueFilterInfo {
+	return []queueFilterInfo{
+		{"--milestone <id>", flagUsage("list", "milestone")},
+		{"--backlog", flagUsage("list", "backlog")},
+	}
+}
+
 // statusGroupCatalog describes one status group accepted by -s/--status and
 // --no-status and the concrete statuses it expands to, all derived from config
 // so the group members cannot drift from what resolveStatusFilter expands.
@@ -178,7 +202,9 @@ func statusGroupCatalogEntries(cfg *config.Config) []statusGroupCatalog {
 // generated from config (the single source of truth for the enums). The status
 // groups (open/closed) are documented alongside the concrete statuses because
 // -s/--status and --no-status accept them anywhere a concrete status is
-// accepted, and list/rel apply an open-by-default status filter.
+// accepted, and list/rel apply an open-by-default status filter. The
+// milestone-scope flags get a block of their own — see queueFilterInfo for why
+// they cannot join the enum table.
 func catalogFilters() error {
 	cfg := config.Default()
 	filters := []filterInfo{
@@ -188,9 +214,11 @@ func catalogFilters() error {
 		{"estimate", "--estimate/-e", "--no-estimate", cfg.EstimateNames()},
 	}
 	statusGroups := statusGroupCatalogEntries(cfg)
+	queueFilters := queueFilterCatalogEntries()
 	if catalogJSON {
 		return output.JSONRaw(map[string]any{
 			"filters":         filters,
+			"queue_filters":   queueFilters,
 			"status_groups":   statusGroups,
 			"open_by_default": true,
 		})
@@ -205,6 +233,16 @@ func catalogFilters() error {
 		_, _ = fmt.Fprintf(tw, "%s\t%s\t%s\t%s\n", f.Field, f.IncludeFlag, f.ExcludeFlag, strings.Join(f.Values, ", "))
 	}
 	_ = tw.Flush()
+
+	b.WriteString("\nMilestone scope — 'nibs list' only ('nibs rel' takes neither), and mutually\n")
+	b.WriteString("exclusive with each other. Assign with 'nibs set <id> --milestone <ms>' and\n")
+	b.WriteString("reposition with 'nibs mv <id> --queue --after|--before|--first <anchor>':\n\n")
+	qtw := tabwriter.NewWriter(&b, 0, 0, 2, ' ', 0)
+	_, _ = fmt.Fprintln(qtw, "FLAG\tSELECTS")
+	for _, q := range queueFilters {
+		_, _ = fmt.Fprintf(qtw, "%s\t%s\n", q.Flag, q.Description)
+	}
+	_ = qtw.Flush()
 
 	b.WriteString("\nStatus groups — accepted by -s/--status and --no-status anywhere a concrete\n")
 	b.WriteString("status is (they expand to their member statuses):\n\n")
@@ -331,6 +369,7 @@ func catalogOpenWorkRecipes() []recipeInfo {
 	return []recipeInfo{
 		{"nibs list", "open work everywhere (closed statuses hidden by default)"},
 		{"nibs rel <id> --rel descendants", "open work under a parent (add -t bug for open bugs only)"},
+		{"nibs list --milestone <id>", "open work in a milestone's queue, in queue order (--backlog: what no milestone holds)"},
 		{"nibs list -s closed", "only closed nibs (an explicit -s overrides the open default)"},
 		{"nibs list --all", "every status, including the closed ones"},
 		{"nibs list --ready", flagUsage("list", "ready")},
@@ -429,6 +468,7 @@ type recipeInfo struct {
 // the live command Short strings and the list --ready flag usage.
 func catalogRecipes() error {
 	recipes := []recipeInfo{
+		{"nibs next", commandShort("next")},
 		{"nibs context", commandShort("context")},
 		{"nibs plan <id>", commandShort("plan")},
 		{"nibs roadmap", commandShort("roadmap")},
