@@ -47,11 +47,17 @@ const (
 	// who the parent actually is; see the registry entry for FieldParent.
 	FieldStoredParent Field = "stored_parent"
 	FieldOrder        Field = "order"
-	FieldCreatedAt    Field = "created_at"
-	FieldUpdatedAt    Field = "updated_at"
-	FieldPath         Field = "path"
-	FieldBody         Field = "body"
-	FieldETag         Field = "etag"
+	// The assignment axis as stored: the milestone id, the queue key beside
+	// the sibling key, and the area path. milestone_order keeps the nib's own
+	// serialization spelling, like the timestamps.
+	FieldMilestone      Field = "milestone"
+	FieldMilestoneOrder Field = "milestone_order"
+	FieldArea           Field = "area"
+	FieldCreatedAt      Field = "created_at"
+	FieldUpdatedAt      Field = "updated_at"
+	FieldPath           Field = "path"
+	FieldBody           Field = "body"
+	FieldETag           Field = "etag"
 
 	// Computed scalars — need the Resolver; not nestable.
 	//
@@ -142,6 +148,9 @@ var registry = []fieldDef{
 	{name: FieldParent, kind: kindComputed},
 	{name: FieldStoredParent, kind: kindScalar, extract: func(n *nib.Nib) any { return n.Parent }},
 	{name: FieldOrder, kind: kindScalar, extract: func(n *nib.Nib) any { return n.Order }},
+	{name: FieldMilestone, kind: kindScalar, extract: func(n *nib.Nib) any { return n.Milestone }},
+	{name: FieldMilestoneOrder, kind: kindScalar, extract: func(n *nib.Nib) any { return n.MilestoneOrder }},
+	{name: FieldArea, kind: kindScalar, extract: func(n *nib.Nib) any { return n.Area }},
 	{name: FieldCreatedAt, kind: kindScalar, extract: func(n *nib.Nib) any { return n.CreatedAt }},
 	{name: FieldUpdatedAt, kind: kindScalar, extract: func(n *nib.Nib) any { return n.UpdatedAt }},
 	{name: FieldPath, kind: kindScalar, extract: func(n *nib.Nib) any { return n.Path }},

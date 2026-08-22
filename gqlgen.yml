@@ -49,6 +49,8 @@ models:
         omittable: true
       parent:
         omittable: true
+      milestone:
+        omittable: true
   # Map ID scalar to string
   ID:
     model:

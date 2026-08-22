@@ -232,7 +232,7 @@ func orderingFixture() map[string]string {
 // anchor's own sibling set, rather than merely avoiding an error.
 func assertReorderAfter(t *testing.T, resolver *Resolver, core *nibcore.Core, targetID, anchorID string, wantErr bool) {
 	t.Helper()
-	_, err := resolver.Mutation().ReorderNib(context.Background(), targetID, &anchorID, nil, nil, nil, nil)
+	_, err := resolver.Mutation().ReorderNib(context.Background(), targetID, &anchorID, nil, nil, nil, nil, model.OrderScopeParent)
 	if wantErr {
 		if err == nil {
 			t.Fatalf("ReorderNib(%s, after=%s) succeeded, want it refused as a non-sibling", targetID, anchorID)

@@ -174,7 +174,7 @@ func TestFailedUpdateLeavesSharedNibUntouched(t *testing.T) {
 				divergeNibOnDisk(t, core, "task-ra")
 
 				afterID := "task-rb"
-				if _, err := r.Mutation().ReorderNib(ctx, "task-ra", &afterID, nil, nil, nil, ifMatch); err == nil {
+				if _, err := r.Mutation().ReorderNib(ctx, "task-ra", &afterID, nil, nil, nil, ifMatch, model.OrderScopeParent); err == nil {
 					t.Fatal("expected ReorderNib to fail on etag mismatch, got nil error")
 				}
 

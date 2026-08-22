@@ -196,28 +196,24 @@ type Nib struct {
 	// Order is a fractional index string for sorting among siblings.
 	Order string `yaml:"order,omitempty" json:"order,omitempty"`
 
-	// The three axis fields below carry json:"-": no consumer (GraphQL, CLI
-	// JSON, filters) models them, and keeping them off the JSON surface until
-	// one does keeps that surface from freezing an unconsumed shape.
-
 	// Milestone is the optional ID of the milestone nib whose queue this nib
 	// is enqueued in. Id-valued and part of the link machinery like Parent
 	// (RawLinks/CaptureRawLinks, nibcore canonicalization). It is THE
 	// membership axis: milestone membership derives from this field alone
 	// (membership.ResolvedMilestoneID), never from the resolved Parent's
 	// type — the parent axis is pure decomposition.
-	Milestone string `yaml:"milestone,omitempty" json:"-"`
+	Milestone string `yaml:"milestone,omitempty" json:"milestone,omitempty"`
 
 	// MilestoneOrder is a fractional index string for the nib's position in
 	// its milestone queue — the ordering engine's second scope, whose
 	// grouping (resolvedMilestoneID -> membership.ResolvedMilestoneID) reads
-	// Milestone. No resolver passes ScopeMilestone yet; activating the scope
-	// for mutations is a follow-up task.
-	MilestoneOrder string `yaml:"milestone_order,omitempty" json:"-"`
+	// Milestone. Written only through that engine: an assignment places the
+	// nib, a queue reorder moves it, and a clear drops the key.
+	MilestoneOrder string `yaml:"milestone_order,omitempty" json:"milestone_order,omitempty"`
 
 	// Area is the optional area path the nib belongs to — a plain path-valued
 	// string (e.g. "web/ui"), never a nib id or link.
-	Area string `yaml:"area,omitempty" json:"-"`
+	Area string `yaml:"area,omitempty" json:"area,omitempty"`
 
 	// Extra holds front-matter keys that none of the modeled fields above claim
 	// (e.g. a hand-added `assignee: bob`, or forward-compatible keys written by a

@@ -732,7 +732,7 @@ func TestApplyFilterIDBranchesKnownAndUnknown(t *testing.T) {
 // is what the "resolves ancestry through the store" row needs.
 func hierarchyFixture() *stubReader {
 	nibs := []*nib.Nib{
-		{ID: "nibs-m1", Title: "Milestone", Status: "todo"},
+		{ID: "nibs-m1", Title: "Milestone", Type: "milestone", Status: "todo"},
 		{ID: "nibs-e1", Title: "Epic", Parent: "nibs-m1", Status: "completed"},
 		{ID: "nibs-f1", Title: "Feature", Parent: "nibs-e1", Status: "todo"},
 		{ID: "nibs-t1", Title: "Task", Parent: "nibs-f1", Status: "todo"},

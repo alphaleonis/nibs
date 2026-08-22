@@ -146,6 +146,12 @@ func contradictionErr() *gqlerror.Error {
 	})
 }
 
+func wrongTypeErr() *gqlerror.Error {
+	return gqlerror.Wrap(&graph.FilterTargetTypeError{
+		Field: "milestone", ID: "zz", Got: "epic", Want: "milestone",
+	})
+}
+
 func conflictErr() *gqlerror.Error {
 	return gqlerror.Wrap(&nibcore.ETagMismatchError{Provided: "stale", Current: "fresh"})
 }
@@ -436,6 +442,15 @@ func TestGraphQLErrCodeCodesAggregateWithinTheirExitClass(t *testing.T) {
 			// for the same class and nothing an agent could act on.
 			"contradictory filter pair",
 			contradictionErr(),
+			output.ErrValidation,
+		},
+		{
+			// The third refusal on the unclassified default's own code. It is
+			// a real id of the wrong type, so neither the not-found nor the
+			// file class fits, and nothing beyond the field name would repair
+			// it — the same reasoning the two rows above record.
+			"filter target wrong type",
+			wrongTypeErr(),
 			output.ErrValidation,
 		},
 		{"mutation etag mismatch", conflictErr(), output.ErrConflict},
@@ -779,6 +794,10 @@ func TestFilterTargetErrCodeClassifiesEveryRefusalClass(t *testing.T) {
 		},
 		"FilterTargetContradictionError": {
 			&graph.FilterTargetContradictionError{Field: "parentId", PresenceField: "hasParent", ID: "zz"},
+			output.ErrValidation,
+		},
+		"FilterTargetTypeError": {
+			&graph.FilterTargetTypeError{Field: "milestone", ID: "zz", Got: "epic", Want: "milestone"},
 			output.ErrValidation,
 		},
 	}

@@ -55,7 +55,7 @@ type ComplexityRoot struct {
 		RemoveBlockedBy func(childComplexity int, id string, targetID string, ifMatch *string) int
 		RemoveBlocking  func(childComplexity int, id string, targetID string) int
 		ReorderChildren func(childComplexity int, parentID string, childIds []string, ifMatch []*model.ChildEtag) int
-		ReorderNib      func(childComplexity int, id string, afterID *string, beforeID *string, first *bool, parentID *string, ifMatch *string) int
+		ReorderNib      func(childComplexity int, id string, afterID *string, beforeID *string, first *bool, parentID *string, ifMatch *string, scope model.OrderScope) int
 		ReorderSiblings func(childComplexity int, siblingIds []string, afterID *string, beforeID *string, first *bool, ifMatch []*model.ChildEtag) int
 		SetParent       func(childComplexity int, id string, parentID *string, ifMatch *string) int
 		UpdateNib       func(childComplexity int, id string, input model.UpdateNibInput) int
@@ -133,7 +133,7 @@ type MutationResolver interface {
 	RemoveBlocking(ctx context.Context, id string, targetID string) (*nib.Nib, error)
 	AddBlockedBy(ctx context.Context, id string, targetID string, ifMatch *string) (*nib.Nib, error)
 	RemoveBlockedBy(ctx context.Context, id string, targetID string, ifMatch *string) (*nib.Nib, error)
-	ReorderNib(ctx context.Context, id string, afterID *string, beforeID *string, first *bool, parentID *string, ifMatch *string) (*nib.Nib, error)
+	ReorderNib(ctx context.Context, id string, afterID *string, beforeID *string, first *bool, parentID *string, ifMatch *string, scope model.OrderScope) (*nib.Nib, error)
 	ReorderChildren(ctx context.Context, parentID string, childIds []string, ifMatch []*model.ChildEtag) ([]*nib.Nib, error)
 	ReorderSiblings(ctx context.Context, siblingIds []string, afterID *string, beforeID *string, first *bool, ifMatch []*model.ChildEtag) ([]*nib.Nib, error)
 }
@@ -293,7 +293,7 @@ func (e *executableSchema) Complexity(ctx context.Context, typeName, field strin
 			return 0, false
 		}
 
-		return e.ComplexityRoot.Mutation.ReorderNib(childComplexity, args["id"].(string), args["afterId"].(*string), args["beforeId"].(*string), args["first"].(*bool), args["parentId"].(*string), args["ifMatch"].(*string)), true
+		return e.ComplexityRoot.Mutation.ReorderNib(childComplexity, args["id"].(string), args["afterId"].(*string), args["beforeId"].(*string), args["first"].(*bool), args["parentId"].(*string), args["ifMatch"].(*string), args["scope"].(model.OrderScope)), true
 	case "Mutation.reorderSiblings":
 		if e.ComplexityRoot.Mutation.ReorderSiblings == nil {
 			break
@@ -1197,6 +1197,14 @@ func (ec *executionContext) field_Mutation_reorderNib_args(ctx context.Context, 
 		return nil, err
 	}
 	args["ifMatch"] = arg5
+	arg6, err := graphql.ProcessArgField(ctx, rawArgs, "scope",
+		func(ctx context.Context, v any) (model.OrderScope, error) {
+			return ec.unmarshalNOrderScope2githubᚗcomᚋalphaleonisᚋnibsᚋinternalᚋgraphᚋmodelᚐOrderScope(ctx, v)
+		})
+	if err != nil {
+		return nil, err
+	}
+	args["scope"] = arg6
 	return args, nil
 }
 
@@ -1952,7 +1960,7 @@ func (ec *executionContext) _Mutation_reorderNib(ctx context.Context, field grap
 		},
 		func(ctx context.Context) (any, error) {
 			fc := graphql.GetFieldContext(ctx)
-			return ec.Resolvers.Mutation().ReorderNib(ctx, fc.Args["id"].(string), fc.Args["afterId"].(*string), fc.Args["beforeId"].(*string), fc.Args["first"].(*bool), fc.Args["parentId"].(*string), fc.Args["ifMatch"].(*string))
+			return ec.Resolvers.Mutation().ReorderNib(ctx, fc.Args["id"].(string), fc.Args["afterId"].(*string), fc.Args["beforeId"].(*string), fc.Args["first"].(*bool), fc.Args["parentId"].(*string), fc.Args["ifMatch"].(*string), fc.Args["scope"].(model.OrderScope))
 		},
 		nil,
 		func(ctx context.Context, selections ast.SelectionSet, v *nib.Nib) graphql.Marshaler {
@@ -4868,7 +4876,7 @@ func (ec *executionContext) unmarshalInputUpdateNibInput(ctx context.Context, ob
 		asMap[k] = v
 	}
 
-	fieldsInOrder := [...]string{"title", "status", "type", "priority", "estimate", "tags", "addTags", "removeTags", "body", "bodyMod", "parent", "addBlocking", "removeBlocking", "addBlockedBy", "removeBlockedBy", "documents", "addDocuments", "removeDocuments", "ifMatch"}
+	fieldsInOrder := [...]string{"title", "status", "type", "priority", "estimate", "tags", "addTags", "removeTags", "body", "bodyMod", "parent", "milestone", "addBlocking", "removeBlocking", "addBlockedBy", "removeBlockedBy", "documents", "addDocuments", "removeDocuments", "ifMatch"}
 	for _, k := range fieldsInOrder {
 		v, ok := asMap[k]
 		if !ok {
@@ -4952,6 +4960,13 @@ func (ec *executionContext) unmarshalInputUpdateNibInput(ctx context.Context, ob
 				return it, err
 			}
 			it.Parent = graphql.OmittableOf(data)
+		case "milestone":
+			ctx := graphql.WithPathContext(ctx, graphql.NewPathWithField("milestone"))
+			data, err := ec.unmarshalOString2ᚖstring(ctx, v)
+			if err != nil {
+				return it, err
+			}
+			it.Milestone = graphql.OmittableOf(data)
 		case "addBlocking":
 			ctx := graphql.WithPathContext(ctx, graphql.NewPathWithField("addBlocking"))
 			data, err := ec.unmarshalOString2ᚕstringᚄ(ctx, v)
@@ -6642,6 +6657,16 @@ func (ec *executionContext) unmarshalNNibSortField2githubᚗcomᚋalphaleonisᚋ
 }
 
 func (ec *executionContext) marshalNNibSortField2githubᚗcomᚋalphaleonisᚋnibsᚋinternalᚋgraphᚋmodelᚐNibSortField(ctx context.Context, sel ast.SelectionSet, v model.NibSortField) graphql.Marshaler {
+	return v
+}
+
+func (ec *executionContext) unmarshalNOrderScope2githubᚗcomᚋalphaleonisᚋnibsᚋinternalᚋgraphᚋmodelᚐOrderScope(ctx context.Context, v any) (model.OrderScope, error) {
+	var res model.OrderScope
+	err := res.UnmarshalGQL(v)
+	return res, graphql.ErrorOnPath(ctx, err)
+}
+
+func (ec *executionContext) marshalNOrderScope2githubᚗcomᚋalphaleonisᚋnibsᚋinternalᚋgraphᚋmodelᚐOrderScope(ctx context.Context, sel ast.SelectionSet, v model.OrderScope) graphql.Marshaler {
 	return v
 }
 

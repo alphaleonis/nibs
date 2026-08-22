@@ -200,6 +200,39 @@ func (e *FilterTargetContradictionError) Error() string {
 		e.Field, e.PresenceField, e.Field, echoID(e.ID), e.PresenceField)
 }
 
+// FilterTargetTypeError reports that a filter field naming a nib of one
+// particular type was given an id that resolves to a nib of another —
+// `nibs(filter:{milestone:"nibs-e1"})` where nibs-e1 is an epic. The id is
+// real, so this is neither a not-found nor an empty answer: the caller asked
+// for a queue and named something that has none.
+//
+// It is the validation class (exit 2), the class the WRITE surface already
+// gives the same mistake — `nibs set --milestone <epic>` is refused by
+// validateAndSetMilestone with a message of the same shape — so one user error
+// carries one verdict whichever side raises it. The empty set it replaces is
+// the answer an agent would read as "this milestone has no members" when in
+// fact it named no milestone at all.
+//
+// Like FilterTargetEmptyError it implements NO Unwrap: unwrapping to
+// nib.ErrNotFound would route it to the not-found class — and, on the HTTP
+// surface, to the web list's "no such nib" empty state — for an id that names
+// a nib the caller can open.
+type FilterTargetTypeError struct {
+	// Field is the GraphQL filter field that carried the target, e.g.
+	// "milestone" — the same spelling as in the schema.
+	Field string
+	// ID is the normalized (full) target id: the spelling is fine, so the
+	// resolved form is the useful one, as for FilterTargetUnreadableError.
+	ID string
+	// Got is the target's effective type; Want is the type the field requires.
+	Got  string
+	Want string
+}
+
+func (e *FilterTargetTypeError) Error() string {
+	return fmt.Sprintf("%s filter: target %s has type %s, not %s", e.Field, echoID(e.ID), e.Got, e.Want)
+}
+
 // FilterTargetUnreadableError reports that a filter target resolved and then
 // could not be fetched — the reader answered NormalizeID for the id and refused
 // Get for it moments later. The concurrent-delete window between the two is how

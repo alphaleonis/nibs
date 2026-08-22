@@ -211,8 +211,11 @@ export type NibFilter = {
    * and never could. Unlike the not-found refusal above it carries no
    * extensions.code, so a GraphQL client sees a generic error; the CLI reports
    * VALIDATION_ERROR (exit 2). An id naming an existing NON-milestone nib is
-   * answered rather than refused: no assignment can resolve to it, so the result
-   * is empty. Omit the field to leave it unfiltered.
+   * refused the same way, naming the nib's actual type: no assignment can resolve
+   * to it, so an empty answer would read as "this milestone has no members" for
+   * an id that names no milestone — the mistake updateNib's milestone field
+   * refuses with a message of the same shape. Omit the field to leave it
+   * unfiltered.
    */
   milestone?: string | null | undefined;
   /**
@@ -384,9 +387,31 @@ export type UpdateNibInput = {
   /** ETag for optimistic concurrency control (optional) */
   ifMatch?: string | null | undefined;
   /**
+   * Set the milestone assignment — the scheduling axis. The target must exist
+   * and be milestone-typed; a missing target or one of any other type is
+   * refused naming why. Exclusivity along the parent chain is enforced: the
+   * assignment is refused when any ancestor or any descendant of the nib is
+   * already assigned, naming the conflicting nib. A milestone-typed subject is
+   * refused (a waypoint is not work and takes no assignment).
+   *
+   * On assignment the nib enters the target's queue at the default placement
+   * (last), and a reassignment re-enters the new queue the same way — the queue
+   * key is never carried from one queue to another. Explicit null OR empty
+   * string clears the assignment and the queue key with it; omit to leave both
+   * unchanged. An update carrying both a parent and a milestone change is judged
+   * on the state it leaves: a clear of either axis opens the way for the other,
+   * and an assignment is checked against the chain the nib will sit on.
+   */
+  milestone?: string | null | undefined;
+  /**
    * Set the parent nib ID (validated against the type hierarchy). Explicit null
    * OR empty string clears the parent (moves the nib to root); omit to leave it
    * unchanged.
+   *
+   * A reparent also honors assignment exclusivity: when the nib or any nib in
+   * its subtree is assigned to a milestone AND the new parent or any of its
+   * ancestors is too, the move is refused naming both nibs — a nib and one of
+   * its ancestors are never both assigned.
    */
   parent?: string | null | undefined;
   /**

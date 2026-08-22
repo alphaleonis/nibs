@@ -41,6 +41,7 @@ func resetMvFlags() {
 	mvBefore = ""
 	mvFirst = false
 	mvParent = ""
+	mvQueue = false
 	mvIfMatch = ""
 	mvJSON = false
 	mvChildrenOf = ""

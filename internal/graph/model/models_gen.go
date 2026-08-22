@@ -362,8 +362,11 @@ type NibFilter struct {
 	// and never could. Unlike the not-found refusal above it carries no
 	// extensions.code, so a GraphQL client sees a generic error; the CLI reports
 	// VALIDATION_ERROR (exit 2). An id naming an existing NON-milestone nib is
-	// answered rather than refused: no assignment can resolve to it, so the result
-	// is empty. Omit the field to leave it unfiltered.
+	// refused the same way, naming the nib's actual type: no assignment can resolve
+	// to it, so an empty answer would read as "this milestone has no members" for
+	// an id that names no milestone — the mistake updateNib's milestone field
+	// refuses with a message of the same shape. Omit the field to leave it
+	// unfiltered.
 	Milestone *string `json:"milestone,omitempty"`
 	// Tri-state over DERIVED milestone membership: true keeps the backlog — nibs
 	// with neither an own resolved assignment nor one anywhere up the structural
@@ -434,7 +437,27 @@ type UpdateNibInput struct {
 	// Set the parent nib ID (validated against the type hierarchy). Explicit null
 	// OR empty string clears the parent (moves the nib to root); omit to leave it
 	// unchanged.
+	//
+	// A reparent also honors assignment exclusivity: when the nib or any nib in
+	// its subtree is assigned to a milestone AND the new parent or any of its
+	// ancestors is too, the move is refused naming both nibs — a nib and one of
+	// its ancestors are never both assigned.
 	Parent graphql.Omittable[*string] `json:"parent,omitempty"`
+	// Set the milestone assignment — the scheduling axis. The target must exist
+	// and be milestone-typed; a missing target or one of any other type is
+	// refused naming why. Exclusivity along the parent chain is enforced: the
+	// assignment is refused when any ancestor or any descendant of the nib is
+	// already assigned, naming the conflicting nib. A milestone-typed subject is
+	// refused (a waypoint is not work and takes no assignment).
+	//
+	// On assignment the nib enters the target's queue at the default placement
+	// (last), and a reassignment re-enters the new queue the same way — the queue
+	// key is never carried from one queue to another. Explicit null OR empty
+	// string clears the assignment and the queue key with it; omit to leave both
+	// unchanged. An update carrying both a parent and a milestone change is judged
+	// on the state it leaves: a clear of either axis opens the way for the other,
+	// and an assignment is checked against the chain the nib will sit on.
+	Milestone graphql.Omittable[*string] `json:"milestone,omitempty"`
 	// Add nibs to blocking list (validates cycles and existence)
 	AddBlocking []string `json:"addBlocking,omitempty"`
 	// Remove nibs from blocking list
@@ -528,6 +551,65 @@ func (e *NibSortField) UnmarshalJSON(b []byte) error {
 }
 
 func (e NibSortField) MarshalJSON() ([]byte, error) {
+	var buf bytes.Buffer
+	e.MarshalGQL(&buf)
+	return buf.Bytes(), nil
+}
+
+// The ordering axis a reorder runs on. PARENT is the sibling order under one
+// resolved parent (the order key); MILESTONE is the milestone queue the nib's
+// assignment resolves to (the milestoneOrder key). The two are isolated: a move
+// in one scope never touches the other scope's key.
+type OrderScope string
+
+const (
+	OrderScopeParent    OrderScope = "PARENT"
+	OrderScopeMilestone OrderScope = "MILESTONE"
+)
+
+var AllOrderScope = []OrderScope{
+	OrderScopeParent,
+	OrderScopeMilestone,
+}
+
+func (e OrderScope) IsValid() bool {
+	switch e {
+	case OrderScopeParent, OrderScopeMilestone:
+		return true
+	}
+	return false
+}
+
+func (e OrderScope) String() string {
+	return string(e)
+}
+
+func (e *OrderScope) UnmarshalGQL(v any) error {
+	str, ok := v.(string)
+	if !ok {
+		return fmt.Errorf("enums must be strings")
+	}
+
+	*e = OrderScope(str)
+	if !e.IsValid() {
+		return fmt.Errorf("%s is not a valid OrderScope", str)
+	}
+	return nil
+}
+
+func (e OrderScope) MarshalGQL(w io.Writer) {
+	fmt.Fprint(w, strconv.Quote(e.String()))
+}
+
+func (e *OrderScope) UnmarshalJSON(b []byte) error {
+	s, err := strconv.Unquote(string(b))
+	if err != nil {
+		return err
+	}
+	return e.UnmarshalGQL(s)
+}
+
+func (e OrderScope) MarshalJSON() ([]byte, error) {
 	var buf bytes.Buffer
 	e.MarshalGQL(&buf)
 	return buf.Bytes(), nil

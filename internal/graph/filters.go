@@ -188,8 +188,8 @@ func hasBoundingFilter(filter *model.NibFilter) bool {
 // forms across resolvers within the same request will desync the cache
 // keys (keyed on the full normalized ID) and silently degrade memoization.
 //
-// Five outcomes are kept distinct, and the error return exists to separate the
-// first four from the last:
+// Six outcomes are kept distinct, and the error return exists to separate the
+// first five from the last:
 //
 //   - A filter field naming a single nib was given the empty string:
 //     *FilterTargetEmptyError, the validation class — malformed input rather
@@ -197,13 +197,17 @@ func hasBoundingFilter(filter *model.NibFilter) bool {
 //   - An id-valued field was combined with its presence twin set to false:
 //     *FilterTargetContradictionError, also the validation class — a pair no
 //     store state could satisfy.
+//   - A filter field requiring a nib of one type was given an id resolving to
+//     a nib of another (milestone naming an epic): *FilterTargetTypeError,
+//     also the validation class — the class the write path gives the same
+//     mistake.
 //   - A filter field naming a single nib was given an id no nib answers to:
 //     *FilterTargetNotFoundError, carrying nib.ErrNotFound.
 //   - A target that resolved could not then be fetched:
 //     *FilterTargetUnreadableError, deliberately not a not-found.
 //   - Nothing matched: an empty result and a nil error.
 //
-// Folding any of the three refusals into the last is what this signature exists
+// Folding any of the refusals into the last is what this signature exists
 // to prevent. "What is under nibs-abc1?" answered with an empty list is a
 // factual claim about the store, and a caller that mistyped the id cannot tell
 // it apart from the truth. An empty id is worse still: read as "unset" it drops
@@ -369,12 +373,21 @@ func ApplyFilter(ctx context.Context, nibs []*nib.Nib, filter *model.NibFilter, 
 	// ordering engine's queue scope groups by — so a dangling or non-milestone
 	// assignment matches nothing here exactly as it schedules nothing there.
 	// An unknown target fails the filter (shared contract for all id-valued
-	// filters); a target that exists but is not milestone-typed is answered
-	// with the empty set, since no assignment can resolve to it.
+	// filters), and so does a target that exists but is not milestone-typed:
+	// no assignment can resolve to it, so the empty set it would otherwise
+	// get reads as "this milestone has no members" for an id that names no
+	// milestone — the same mistake the write path refuses naming the type.
 	if filter.Milestone != nil {
 		fullID, err := resolveFilterTarget(reader, "milestone", *filter.Milestone)
 		if err != nil {
 			return nil, err
+		}
+		target, err := reader.Get(fullID)
+		if err != nil {
+			return nil, &FilterTargetUnreadableError{Field: "milestone", ID: fullID, ReaderErr: err}
+		}
+		if typ := target.EffectiveType(); typ != "milestone" {
+			return nil, &FilterTargetTypeError{Field: "milestone", ID: fullID, Got: typ, Want: "milestone"}
 		}
 		result = filterByField(result, []string{fullID}, func(b *nib.Nib) string {
 			return resolvedMilestoneID(b, reader)

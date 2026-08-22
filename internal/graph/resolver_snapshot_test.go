@@ -698,7 +698,7 @@ func TestMutationResolversReturnSnapshots(t *testing.T) {
 		a := createTestNib(t, core, "a1", "A", "todo")
 		b := createTestNib(t, core, "b1", "B", "todo")
 
-		got, err := mr.ReorderNib(ctx, a.ID, &b.ID, nil, nil, nil, nil)
+		got, err := mr.ReorderNib(ctx, a.ID, &b.ID, nil, nil, nil, nil, model.OrderScopeParent)
 		if err != nil {
 			t.Fatalf("ReorderNib resolver: %v", err)
 		}

@@ -54,8 +54,12 @@ func reportErr(jsonMode bool, code string, err error) error {
 //   - An id-valued field combined with its presence twin set to false is
 //     VALIDATION_ERROR (exit 2) for the same reason, and to agree with the same
 //     surface: cmd/list.go gives `--parent X --no-parent` exit 2 too.
+//   - An id-valued field requiring a nib of one type and given one of another
+//     (milestone naming an epic) is VALIDATION_ERROR (exit 2): the id is real,
+//     so it is not a not-found, and it is the class `nibs set --milestone`
+//     gives the same mistake, so the read and write surfaces agree.
 //
-// Reusing VALIDATION_ERROR rather than minting a code for those last two is
+// Reusing VALIDATION_ERROR rather than minting a code for those last three is
 // deliberate: a distinct code is worth minting only when it carries something an
 // agent can act on that the exit status does not. HIERARCHY earns its own — the
 // envelope carries the parent types that would be accepted with it — while a
@@ -64,10 +68,10 @@ func reportErr(jsonMode bool, code string, err error) error {
 // (see graphQLResponseCode's first tier), for no gain.
 //
 // The branches are independent, not ordered: none of
-// graph.FilterTargetUnreadableError, graph.FilterTargetEmptyError and
-// graph.FilterTargetContradictionError carries nib.ErrNotFound (see their doc
-// comments — the absent Unwrap is the whole safety property in each), so no test
-// can claim another's error.
+// graph.FilterTargetUnreadableError, graph.FilterTargetEmptyError,
+// graph.FilterTargetContradictionError and graph.FilterTargetTypeError carries
+// nib.ErrNotFound (see their doc comments — the absent Unwrap is the whole
+// safety property in each), so no test can claim another's error.
 //
 // This is the READ path's classifier: cmd/list.go and cmd/rel.go call it
 // directly with a graph.ApplyFilter failure. It is NOT what classifies a
@@ -85,6 +89,10 @@ func filterTargetErrCode(err error) (string, bool) {
 	}
 	var contradiction *graph.FilterTargetContradictionError
 	if errors.As(err, &contradiction) {
+		return output.ErrValidation, true
+	}
+	var wrongType *graph.FilterTargetTypeError
+	if errors.As(err, &wrongType) {
 		return output.ErrValidation, true
 	}
 	if errors.Is(err, nib.ErrNotFound) {

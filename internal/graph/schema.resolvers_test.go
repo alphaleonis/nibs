@@ -3736,7 +3736,7 @@ func TestReorderNib(t *testing.T) {
 	t.Run("reorder after sibling", func(t *testing.T) {
 		resolver, _ := setupReorderFixture(t)
 		afterID := "t2"
-		got, err := resolver.Mutation().ReorderNib(ctx, "t1", &afterID, nil, nil, nil, nil)
+		got, err := resolver.Mutation().ReorderNib(ctx, "t1", &afterID, nil, nil, nil, nil, model.OrderScopeParent)
 		if err != nil {
 			t.Fatalf("ReorderNib error: %v", err)
 		}
@@ -3751,7 +3751,7 @@ func TestReorderNib(t *testing.T) {
 	t.Run("reorder before sibling", func(t *testing.T) {
 		resolver, _ := setupReorderFixture(t)
 		beforeID := "t2"
-		got, err := resolver.Mutation().ReorderNib(ctx, "t3", nil, &beforeID, nil, nil, nil)
+		got, err := resolver.Mutation().ReorderNib(ctx, "t3", nil, &beforeID, nil, nil, nil, model.OrderScopeParent)
 		if err != nil {
 			t.Fatalf("ReorderNib error: %v", err)
 		}
@@ -3766,7 +3766,7 @@ func TestReorderNib(t *testing.T) {
 	t.Run("reorder to first", func(t *testing.T) {
 		resolver, _ := setupReorderFixture(t)
 		firstFlag := true
-		got, err := resolver.Mutation().ReorderNib(ctx, "t3", nil, nil, &firstFlag, nil, nil)
+		got, err := resolver.Mutation().ReorderNib(ctx, "t3", nil, nil, &firstFlag, nil, nil, model.OrderScopeParent)
 		if err != nil {
 			t.Fatalf("ReorderNib error: %v", err)
 		}
@@ -3777,7 +3777,7 @@ func TestReorderNib(t *testing.T) {
 
 	t.Run("error when no positioning flag", func(t *testing.T) {
 		resolver, _ := setupReorderFixture(t)
-		_, err := resolver.Mutation().ReorderNib(ctx, "t1", nil, nil, nil, nil, nil)
+		_, err := resolver.Mutation().ReorderNib(ctx, "t1", nil, nil, nil, nil, nil, model.OrderScopeParent)
 		if err == nil {
 			t.Fatal("expected error when no positioning flag")
 		}
@@ -3789,7 +3789,7 @@ func TestReorderNib(t *testing.T) {
 	t.Run("reorder root nib succeeds", func(t *testing.T) {
 		resolver, _ := setupReorderFixture(t)
 		firstFlag := true
-		got, err := resolver.Mutation().ReorderNib(ctx, "epic1", nil, nil, &firstFlag, nil, nil)
+		got, err := resolver.Mutation().ReorderNib(ctx, "epic1", nil, nil, &firstFlag, nil, nil, model.OrderScopeParent)
 		if err != nil {
 			t.Fatalf("unexpected error: %v", err)
 		}
@@ -3820,7 +3820,7 @@ func TestReorderNib(t *testing.T) {
 		// Move t1 (child of epic1) to before x2 (child of epic2) using parentId
 		beforeID := "x2"
 		newParent := "epic2"
-		got, err := resolver.Mutation().ReorderNib(ctx, "t1", nil, &beforeID, nil, &newParent, nil)
+		got, err := resolver.Mutation().ReorderNib(ctx, "t1", nil, &beforeID, nil, &newParent, nil, model.OrderScopeParent)
 		if err != nil {
 			t.Fatalf("cross-parent ReorderNib error: %v", err)
 		}

@@ -33,6 +33,8 @@ var (
 	listIsBlocked   bool
 	listMentions    string
 	listMentionedBy string
+	listMilestone   string
+	listBacklog     bool
 	listReady       bool
 	listAll         bool
 	listOpen        bool
@@ -55,12 +57,23 @@ The filtered set is projected and rendered as tab-separated rows under a
 "# <n> nibs" comment header (drop it with --no-header). Every output form
 shares one field-selection model with 'nibs get'.
 
-Id-valued filters (--parent, --mentions, --mentioned-by):
+Id-valued filters (--parent, --milestone, --mentions, --mentioned-by):
   An id naming no nib is refused with a "not found" error (exit 3) rather than
   listing zero rows, so a mistyped or stale id — --parent "$ID" with $ID unset
   or wrong — stays distinguishable from a nib that genuinely has no children.
   An empty value is rejected outright (use --no-parent to select the parentless
-  nibs).
+  nibs, --backlog for the unscheduled ones). --milestone given a nib that is
+  not a milestone is refused as a validation error (exit 2) naming its type,
+  as 'nibs set --milestone' refuses the same id.
+
+Milestone queue and backlog:
+  --milestone <id>   The milestone's queue — the nibs assigned to it — in
+                     queue order (milestone_order) unless --sort says otherwise.
+  --backlog          The unscheduled remainder in tree order: nibs with no
+                     assignment of their own and none up their parent chain
+                     (a child of an assigned epic is planned work, not backlog).
+                     Milestones themselves are in no queue and so appear here;
+                     add --no-type milestone to drop them.
 
 Status filtering (open by default):
   With no status flag, only open nibs are listed (the closed statuses are
@@ -188,8 +201,31 @@ Search Syntax (--search/-S):
 			return reportErr(listJSON, output.ErrValidation,
 				fmt.Errorf(`--mentioned-by was given an empty value; it takes a nib id`))
 		}
+		if cmd.Flags().Changed("milestone") && listMilestone == "" {
+			return reportErr(listJSON, output.ErrValidation,
+				fmt.Errorf(`--milestone was given an empty value; use --backlog to select nibs in no milestone`))
+		}
 		if listParentID != "" {
 			filter.ParentID = &listParentID
+		}
+
+		// --milestone <id> names a queue and --backlog the set outside every
+		// queue, so together they select nothing by construction — refused
+		// like --parent with --no-parent rather than answered with an empty
+		// listing. The milestone filter is the RESOLVED direct assignment
+		// (the queue the ordering engine groups by); --backlog is the derived
+		// reading (no assignment anywhere up the parent chain). Both rules
+		// live in the graph layer's NibFilter docstrings.
+		if listMilestone != "" && listBacklog {
+			return reportErr(listJSON, output.ErrValidation,
+				fmt.Errorf("--milestone and --backlog are mutually exclusive (no nib is both in milestone %q and in no milestone)", listMilestone))
+		}
+		if listMilestone != "" {
+			filter.Milestone = &listMilestone
+		}
+		if listBacklog {
+			backlog := true
+			filter.NoMilestone = &backlog
 		}
 
 		// --has-parent/--no-parent and --has-blocking/--no-blocking are each
@@ -335,8 +371,13 @@ Search Syntax (--search/-S):
 			sel, _ = projection.ViewFields(string(projection.ViewRef))
 		}
 
-		// Execute the query (filter + sort).
+		// Execute the query (filter + sort). A queue listing is in queue order
+		// by default — the order key is the sibling order, which says nothing
+		// about a milestone's plan — and an explicit --sort still wins.
 		nibSort := buildNibSort(listSort)
+		if listMilestone != "" && listSort == "" {
+			nibSort = &model.NibSort{Field: model.NibSortFieldMilestoneOrder}
+		}
 		resolver := app.newResolver()
 		nibs, err := resolver.Query().Nibs(context.Background(), filter, nibSort)
 		if err != nil {
@@ -511,6 +552,8 @@ func buildNibSort(sortFlag string) *model.NibSort {
 		return &model.NibSort{Field: model.NibSortFieldStatusPriority}
 	case "id":
 		return &model.NibSort{Field: model.NibSortFieldID}
+	case "milestone-order":
+		return &model.NibSort{Field: model.NibSortFieldMilestoneOrder}
 	default:
 		return &model.NibSort{Field: model.NibSortFieldOrder}
 	}
@@ -537,11 +580,13 @@ func init() {
 	listCmd.Flags().BoolVar(&listIsBlocked, "is-blocked", false, "Filter nibs that are blocked by others")
 	listCmd.Flags().StringVar(&listMentions, "mentions", "", "Filter nibs whose bodies mention this ID (short or full; an id naming no nib is an error, not an empty listing)")
 	listCmd.Flags().StringVar(&listMentionedBy, "mentioned-by", "", "Filter nibs mentioned in the given ID's body (short or full; an id naming no nib is an error, not an empty listing)")
+	listCmd.Flags().StringVar(&listMilestone, "milestone", "", "Show the milestone's queue — the nibs assigned to it — in queue order (an id naming no nib, or a nib that is not a milestone, is an error, not an empty listing)")
+	listCmd.Flags().BoolVar(&listBacklog, "backlog", false, "Show the backlog: nibs in no milestone, own assignment or inherited (tree order)")
 	listCmd.Flags().BoolVar(&listReady, "ready", false, readyFlagUsage(config.Default()))
 	listCmd.Flags().BoolVar(&listAll, "all", false, "Include every status (disable the open-by-default filter)")
 	listCmd.Flags().BoolVar(&listOpen, "open", false, "Show only open nibs — shorthand for -s open; slightly narrower than the open-by-default rule, which excludes the closed statuses and so keeps a nib with no status")
 	listCmd.Flags().BoolVarP(&listQuiet, "quiet", "q", false, "Only output IDs, one per line (honors the open default; add --all to include closed nibs)")
-	listCmd.Flags().StringVar(&listSort, "sort", "", "Sort by: created, updated, status, priority, status-priority, id (default: order key)")
+	listCmd.Flags().StringVar(&listSort, "sort", "", "Sort by: created, updated, status, priority, status-priority, id, milestone-order (default: order key; queue order with --milestone)")
 	listCmd.Flags().StringVar(&listView, "view", "", "View tier: id, ref, card, or full (default: ref)")
 	listCmd.Flags().StringVarP(&listFields, "fields", "f", "", "Field selection (additive over --view), e.g. \"status,priority\" or \"id,blocked-by(id,status)\"")
 	listCmd.Flags().BoolVar(&listNoHeader, "no-header", false, "Drop the \"# <n> nibs\" header from TSV output")

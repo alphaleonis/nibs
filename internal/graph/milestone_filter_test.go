@@ -3,6 +3,8 @@ package graph
 import (
 	"context"
 	"encoding/json"
+	"errors"
+	"strings"
 	"testing"
 
 	"github.com/99designs/gqlgen/graphql"
@@ -69,18 +71,39 @@ func TestApplyFilterMilestoneShortForm(t *testing.T) {
 // reflective walks in filters_test.go and filter_errors_test.go drive it
 // through the shared id-filter contract alongside the suffix-named eight.
 
-// TestApplyFilterMilestoneNonMilestoneTargetMatchesNothing: a target that
-// exists but is not milestone-typed is a real id, so the question is answered
-// rather than refused — and answered with the empty set, because no assignment
-// can RESOLVE to a non-milestone (t5 names t3 and is dropped by the same rule
-// that keeps it out of every membership view).
-func TestApplyFilterMilestoneNonMilestoneTargetMatchesNothing(t *testing.T) {
+// TestApplyFilterMilestoneNonMilestoneTargetIsRefused: a target that exists
+// but is not milestone-typed is refused naming its type, not answered with the
+// empty set. No assignment can RESOLVE to a non-milestone (t5 names t3 and is
+// dropped by the same rule that keeps it out of every membership view), so an
+// empty answer would read as "this milestone has no members" for an id that
+// names no milestone — the same mistake the write path refuses. The class is
+// validation, not not-found: the id is real, and the refusal must not carry
+// the sentinel that would route it to the "no such nib" reading.
+func TestApplyFilterMilestoneNonMilestoneTargetIsRefused(t *testing.T) {
 	reader := milestoneFixture()
 	blocking := &stubBlockingChecker{}
 
-	got := applyFilterOK(t, context.Background(), reader.allNibs, &model.NibFilter{Milestone: strPtr("nibs-t3")}, reader, blocking)
-	if len(got) != 0 {
-		t.Errorf("got %d nibs, want none — an assignment naming a non-milestone resolves to nothing", len(got))
+	got, err := ApplyFilter(context.Background(), reader.allNibs, &model.NibFilter{Milestone: strPtr("t3")}, reader, blocking)
+	if err == nil {
+		t.Fatalf("got %d nibs and no error; a non-milestone target must be refused", len(got))
+	}
+	if got != nil {
+		t.Errorf("result = %v, want nil alongside the error", got)
+	}
+	var wrongType *FilterTargetTypeError
+	if !errors.As(err, &wrongType) {
+		t.Fatalf("error = %T (%v), want *FilterTargetTypeError", err, err)
+	}
+	if wrongType.Field != "milestone" || wrongType.ID != "nibs-t3" || wrongType.Got != "task" || wrongType.Want != "milestone" {
+		t.Errorf("refusal = %+v, want field milestone, the normalized id nibs-t3, got task, want milestone", *wrongType)
+	}
+	for _, want := range []string{"milestone filter", `"nibs-t3"`, "has type task, not milestone"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Errorf("error = %q, want substring %q", err.Error(), want)
+		}
+	}
+	if errors.Is(err, nib.ErrNotFound) {
+		t.Error("a wrong-typed target carries nib.ErrNotFound, so it classifies as NOT_FOUND — the id names a nib")
 	}
 }
 

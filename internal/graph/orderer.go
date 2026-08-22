@@ -24,10 +24,8 @@ const (
 	// `milestone:` field resolves to (membership.ResolvedMilestoneID). The
 	// empty group id means MEMBERLESS — a nib assigned to no milestone is in
 	// no queue at all: Move errors there, and a default Place clears the
-	// queue key.
-	//
-	// The arm is fully wired but no resolver passes ScopeMilestone yet;
-	// activating the scope for mutations is a follow-up task.
+	// queue key. Reached by the assignment write (validateAndSetMilestone)
+	// and by reorderNib in the MILESTONE scope.
 	ScopeMilestone
 	numScopes
 )
@@ -121,9 +119,8 @@ var scopeTable = [numScopes]scopeOps{
 			if groupID == "" {
 				return nil
 			}
-			// A full-store scan: milestone queues are read rarely (nothing in
-			// production yet), and an index can move BEHIND this shape without
-			// an API change if a profile ever asks for one.
+			// A full-store scan: an index can move BEHIND this shape without an
+			// API change if a profile ever asks for one.
 			var members []*nib.Nib
 			for _, b := range o.reader.All() {
 				if resolvedMilestoneID(b, o.reader) == groupID {

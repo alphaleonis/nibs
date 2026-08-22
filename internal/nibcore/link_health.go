@@ -124,6 +124,28 @@ type InvalidHierarchy struct {
 	Reason string `json:"reason"`
 }
 
+// AssignmentConflict is a loaded nib assigned to a milestone while one of its
+// structural ancestors is assigned too — the shape decision 1.2 rules out (a
+// nib and one of its ancestors are never both assigned; files are the whole
+// planning truth and membership is derived, never inherited). The rule is
+// strict on the write paths that assign or reparent, so an offender reaches
+// the store only through a hand edit or data that predates the rule, and it
+// then loads, lists and schedules like any other nib — counted in BOTH queues.
+// This finding is the one surface that names the pair. One finding per nib,
+// naming its NEAREST assigned ancestor; a deeper conflict shows up as that
+// ancestor's own finding.
+type AssignmentConflict struct {
+	NibID string `json:"nib_id"`
+	// Path is relative to the nibs root with forward slashes, like nib.Path.
+	Path string `json:"path"`
+	// Milestone is the resolved full id of the nib's own assignment.
+	Milestone string `json:"milestone"`
+	// AncestorID is the nearest assigned ancestor's full id, and
+	// AncestorMilestone the resolved full id of ITS assignment.
+	AncestorID        string `json:"ancestor_id"`
+	AncestorMilestone string `json:"ancestor_milestone"`
+}
+
 // NearMissKey is a loaded nib carrying an unknown front-matter key whose
 // spelling is a near miss of a modeled key (a dash for the underscore, a case
 // variant, stray underscores — the rule is nib.ModeledKeyResembling's). The
@@ -171,6 +193,11 @@ type LinkCheckResult struct {
 	// function carries it.
 	InvalidHierarchies []InvalidHierarchy `json:"invalid_hierarchies"`
 
+	// Assignment integrity. Derivable from the nibs alone (exclusivity along
+	// the parent chain needs only the links and the prefix already threaded
+	// in), so the pure map function carries it.
+	AssignmentConflicts []AssignmentConflict `json:"assignment_conflicts"`
+
 	// Key integrity. Derivable from the nibs alone (the modeled key set is a
 	// compile-time fact of the nib package), so the pure map function carries it.
 	NearMissKeys []NearMissKey `json:"near_miss_keys"`
@@ -183,7 +210,7 @@ func (r *LinkCheckResult) HasIssues() bool {
 
 // TotalIssues returns the total count of all issues.
 func (r *LinkCheckResult) TotalIssues() int {
-	return len(r.BrokenLinks) + len(r.SelfLinks) + len(r.Cycles) + len(r.BrokenDocuments) + r.LoadIssues() + r.EnumIssues() + r.AxisIssues() + r.HierarchyIssues() + r.NearMissIssues()
+	return len(r.BrokenLinks) + len(r.SelfLinks) + len(r.Cycles) + len(r.BrokenDocuments) + r.LoadIssues() + r.EnumIssues() + r.AxisIssues() + r.HierarchyIssues() + r.AssignmentIssues() + r.NearMissIssues()
 }
 
 // LoadIssues returns the count of load-time integrity issues alone. Callers
@@ -210,6 +237,12 @@ func (r *LinkCheckResult) AxisIssues() int {
 // same render-them-apart reason as LoadIssues.
 func (r *LinkCheckResult) HierarchyIssues() int {
 	return len(r.InvalidHierarchies)
+}
+
+// AssignmentIssues returns the count of assignment-exclusivity findings alone,
+// for the same render-them-apart reason as LoadIssues.
+func (r *LinkCheckResult) AssignmentIssues() int {
+	return len(r.AssignmentConflicts)
 }
 
 // NearMissIssues returns the count of near-miss key findings alone, for the
@@ -244,16 +277,17 @@ func (r *LinkCheckResult) NearMissIssues() int {
 // holds, which is what `--fix` would drop.
 func CheckAllLinksInMap(nibs map[string]*nib.Nib, projectRoot, configPrefix string) *LinkCheckResult {
 	result := &LinkCheckResult{
-		BrokenLinks:        []BrokenLink{},
-		SelfLinks:          []SelfLink{},
-		Cycles:             []Cycle{},
-		BrokenDocuments:    []BrokenDocument{},
-		UnparseableFiles:   []UnparseableFile{},
-		DuplicateIDs:       []DuplicateID{},
-		InvalidEnums:       []InvalidEnum{},
-		InvalidAxes:        []InvalidAxis{},
-		InvalidHierarchies: []InvalidHierarchy{},
-		NearMissKeys:       []NearMissKey{},
+		BrokenLinks:         []BrokenLink{},
+		SelfLinks:           []SelfLink{},
+		Cycles:              []Cycle{},
+		BrokenDocuments:     []BrokenDocument{},
+		UnparseableFiles:    []UnparseableFile{},
+		DuplicateIDs:        []DuplicateID{},
+		InvalidEnums:        []InvalidEnum{},
+		InvalidAxes:         []InvalidAxis{},
+		InvalidHierarchies:  []InvalidHierarchy{},
+		AssignmentConflicts: []AssignmentConflict{},
+		NearMissKeys:        []NearMissKey{},
 	}
 
 	// Check for broken links and self-references
@@ -378,6 +412,38 @@ func CheckAllLinksInMap(nibs map[string]*nib.Nib, projectRoot, configPrefix stri
 				}
 			}
 		}
+		// Assignment integrity: exclusivity along the parent chain is strict
+		// only on the write paths that assign or reparent, so an assigned nib
+		// under an assigned ancestor reaches the store by hand edit or from
+		// data predating the rule, and is then scheduled in both queues. The
+		// walk reads RESOLVED assignments — the target must exist and be
+		// milestone-typed, membership.ResolvedMilestoneID's rule, which is
+		// also what the write path judges — so a dangling or non-milestone
+		// assignment (a broken link, or nibs-4h8f's silent drop) conflicts
+		// with nothing. Parents resolve the way every link check resolves
+		// them, and a visited set bounds the walk on a hand-edited cycle.
+		if ms := resolvedMilestoneInMap(nibs, b, configPrefix); ms != "" {
+			visited := map[string]bool{b.ID: true}
+			for cur := b; cur.Parent != ""; {
+				parentID, ok := normalizeIDInMap(nibs, cur.Parent, configPrefix)
+				if !ok || visited[parentID] {
+					break
+				}
+				visited[parentID] = true
+				parent := nibs[parentID]
+				if ancestorMS := resolvedMilestoneInMap(nibs, parent, configPrefix); ancestorMS != "" {
+					result.AssignmentConflicts = append(result.AssignmentConflicts, AssignmentConflict{
+						NibID:             b.ID,
+						Path:              b.Path,
+						Milestone:         ms,
+						AncestorID:        parent.ID,
+						AncestorMilestone: ancestorMS,
+					})
+					break
+				}
+				cur = parent
+			}
+		}
 		// Key integrity: an Extra key spelled a near miss from a modeled key
 		// (nib.ModeledKeyResembling's rule) loads losslessly but is invisible to
 		// every filter, so it is reported here.
@@ -399,6 +465,24 @@ func CheckAllLinksInMap(nibs map[string]*nib.Nib, projectRoot, configPrefix stri
 	}
 
 	return result
+}
+
+// resolvedMilestoneInMap is membership.ResolvedMilestoneID's rule over the
+// map: b's `milestone:` target when it resolves (exact id, then the prefix
+// prepended) to a milestone-typed nib, "" otherwise.
+func resolvedMilestoneInMap(nibs map[string]*nib.Nib, b *nib.Nib, configPrefix string) string {
+	if b.Milestone == "" {
+		return ""
+	}
+	targetID, ok := normalizeIDInMap(nibs, b.Milestone, configPrefix)
+	if !ok {
+		return ""
+	}
+	target := nibs[targetID]
+	if target == nil || target.EffectiveType() != "milestone" {
+		return ""
+	}
+	return targetID
 }
 
 // CheckAllLinks validates all links across all nibs and adds the load-time
