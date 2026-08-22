@@ -19,12 +19,11 @@ import (
 	"github.com/spf13/cobra"
 )
 
-// closeQueueNameLimit caps how many ids the refusal enumerates before it
-// switches to a count. `close`'s sibling guard (incomplete children) names them
-// all, but a milestone queue is a project-sized set rather than one container's
-// children, and a refusal that scrolls off the screen stops naming anything
-// usefully. The count that follows keeps the message honest about the size.
-const closeQueueNameLimit = 5
+// closeQueueNameLimit is graph.QueueNameLimit under this package's name: the
+// gate's refusal and updateNib's backstop are one refusal seen from two
+// surfaces, so they name the same amount of one set. See that constant for why
+// a queue refusal caps its enumeration at all.
+const closeQueueNameLimit = graph.QueueNameLimit
 
 // closeQueueGate is decision 1.5: closing a milestone speaks its queue.
 //
@@ -80,7 +79,7 @@ func closeQueueGate(ctx context.Context, cmd *cobra.Command, app *App, resolver 
 	// held across the writes below.
 	view := membership.Compute(resolver.Reader.All())
 	queued := len(view.DirectMembers(subject.ID))
-	open := openQueueEntries(view, subject.ID, app.Config())
+	open := graph.OpenQueueEntries(view, subject.ID, app.Config())
 
 	if move || unassign {
 		if !app.Config().StatusReleasesDependents(closeAs) {
@@ -105,24 +104,6 @@ func closeQueueGate(ctx context.Context, cmd *cobra.Command, app *App, resolver 
 		stripControlChars(subject.ID), closeAs, countNibs(len(open)),
 		strings.Join(namedIDs(open), ", "), moreThanNamed(len(open)),
 		holdingReasonClause(app.Config()))
-}
-
-// openQueueEntries returns the ids of the milestone's OPEN queue entries — the
-// direct assignees whose status is not closed — in queue order, so a set that
-// moves elsewhere arrives there in the order it left.
-func openQueueEntries(view *membership.View, milestoneID string, cfg *config.Config) []string {
-	var open []*nib.Nib
-	for _, m := range view.DirectMembers(milestoneID) {
-		if !cfg.IsClosedStatus(m.Status) {
-			open = append(open, m)
-		}
-	}
-	nib.SortByMilestoneOrder(open)
-	ids := make([]string, len(open))
-	for i, b := range open {
-		ids[i] = b.ID
-	}
-	return ids
 }
 
 // closeDisposition records what a queue disposition actually did: the verb it

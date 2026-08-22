@@ -119,6 +119,18 @@ func (c *Core) releasesDependentsPredicate() func(string) bool {
 	return c.config.StatusReleasesDependents
 }
 
+// closedStatusPredicate returns the "is this nib finished" test, the other of
+// the two role questions a pure map function can need. Its nil-config safety is
+// releasesDependentsPredicate's, for the same reason: Config.IsClosedStatus
+// answers from the package-level config.DefaultStatuses and never dereferences
+// its receiver.
+//
+// The two are never interchangeable — deferred is closed and still blocks — so
+// a caller needing both takes both rather than deriving one from the other.
+func (c *Core) closedStatusPredicate() func(string) bool {
+	return c.config.IsClosedStatus
+}
+
 // isBlockedInMap returns true if the nib with the given ID is blocked by any
 // nib whose status has not released its dependents. releasesDependents is that
 // predicate, and configPrefix the id-resolution prefix, both supplied by the

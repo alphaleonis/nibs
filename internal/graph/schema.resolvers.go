@@ -258,6 +258,27 @@ func (r *mutationResolver) UpdateNib(ctx context.Context, id string, input model
 		return nil, err
 	}
 
+	// Decision 1.5 at the model boundary, and the reason it is HERE rather than
+	// inside preValidateSubject is a correctness requirement, not a preference:
+	// `nibs close` calls PreValidateSubject BEFORE its dispositions drain the
+	// queue (closePreValidateSubject), so a guard placed there would refuse the
+	// very escapes that exist to answer this refusal. It also reads store state,
+	// which everything in that function deliberately does not — the axis rule
+	// sits there precisely because it is pure. What it shares with that function
+	// is only the obligation this position satisfies: run before any foreign
+	// write.
+	//
+	// Gated on input.Status because the invariant is about CLOSING a milestone.
+	// An unrelated field edit — a title, a tag — on a milestone already carrying
+	// a releasing status is not a close and is not refused; the standing offense
+	// is `nibs check`'s to report (nibcore's ClosedMilestoneQueue finding), and
+	// refusing the edit instead would make such a milestone uneditable.
+	if input.Status != nil {
+		if err := r.refuseClosingFullQueue(ctx, b); err != nil {
+			return nil, err
+		}
+	}
+
 	if input.Type != nil {
 		// Only re-validate relationships when the EFFECTIVE type ACTUALLY changed.
 		// The web edit form always sends `type` unconditionally, so a title-only
