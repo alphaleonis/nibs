@@ -9,10 +9,24 @@ import (
 	"testing"
 	"time"
 
+	"github.com/spf13/pflag"
+
 	"github.com/alphaleonis/nibs/internal/config"
 	"github.com/alphaleonis/nibs/internal/mdsection"
 	"github.com/alphaleonis/nibs/internal/output"
 )
+
+// closeOwnedFlags is the surface resetCloseFlags answers for: the flags
+// registered on closeCmd itself. It is NOT closeCmd.Flags() — after the first
+// rootCmd.Execute() Cobra merges the root's persistent flags (--nibs-path,
+// --config) into that set as the very same *pflag.Flag pointers, and those
+// belong to resetRootPersistentFlags. Clearing them from a helper named for
+// `close` would reach into global state it does not set, and asserting on them
+// would report a persistent-flag leak from any earlier test in this package as
+// a `close` bug.
+func closeOwnedFlags() *pflag.FlagSet {
+	return closeCmd.LocalNonPersistentFlags()
+}
 
 func resetCloseFlags() {
 	closeSummary = ""
@@ -24,31 +38,129 @@ func resetCloseFlags() {
 	closeForce = false
 	closeIfMatch = ""
 	closeJSON = false
+	closeMoveOpenTo = ""
+	closeUnassignOpen = false
+	// Cobra registers --help on the command itself and binds no variable of
+	// ours to it, so it is restored through its Value. A leaked one makes the
+	// next `close` print help instead of running.
+	if help := closeOwnedFlags().Lookup("help"); help != nil {
+		_ = help.Value.Set(help.DefValue)
+	}
+	// The queue gate asks Cobra whether --move-open-to was GIVEN rather than
+	// reading the bound string, so "given as empty" cannot pass as "omitted".
+	// That makes the Changed bit state too, and it leaks between subtests
+	// exactly as a bound value does. VisitAll, not Visit: the derived set has
+	// no `actual` map of its own, and the flags it carries are the command's
+	// real pointers, so clearing Changed here clears it on the command.
+	closeOwnedFlags().VisitAll(func(f *pflag.Flag) {
+		f.Changed = false
+	})
 }
 
+// TestResetCloseFlagsClearsAllState dirties every flag `close` owns — through
+// the FlagSet the real parser writes to — and verifies each is back at its
+// documented default afterwards. The dirty set is DERIVED from the command
+// rather than listed here, which is what makes the guard self-maintaining: a
+// flag added to close and left out of resetCloseFlags fails this test instead
+// of leaking state into another subtest.
 func TestResetCloseFlagsClearsAllState(t *testing.T) {
-	closeSummary = "dirty"
-	closeAs = "dirty"
-	closeForce = true
-	closeIfMatch = "dirty"
-	closeJSON = true
+	t.Cleanup(resetCloseFlags)
+
+	// Cobra adds --help LAZILY, from Command.execute() and from the generated
+	// help subcommand — never from LocalNonPersistentFlags(). So the derived set
+	// carries it only if something executed `close` earlier in the process, and
+	// under `-run '^TestResetCloseFlagsClearsAllState$'` nothing has: the one
+	// flag resetCloseFlags special-cases would be the one flag this guard never
+	// exercised. Forcing the registration (exported, idempotent) makes the set
+	// the same whatever the run order or -run filter.
+	closeCmd.InitDefaultHelpFlag()
+
+	var names []string
+	closeOwnedFlags().VisitAll(func(f *pflag.Flag) { names = append(names, f.Name) })
+	if len(names) == 0 {
+		t.Fatal("close owns no flags, so this guard asserts nothing")
+	}
+	if !slices.Contains(names, "help") {
+		t.Fatal("--help is not in the derived set, so resetCloseFlags's restoration of it is unguarded here")
+	}
+	for _, name := range names {
+		f := closeCmd.Flags().Lookup(name)
+		if err := closeCmd.Flags().Set(name, dirtyFlagValue(t, f)); err != nil {
+			t.Fatalf("pre-populate --%s: %v", name, err)
+		}
+	}
 
 	resetCloseFlags()
 
-	if closeSummary != "" {
-		t.Errorf("closeSummary not reset: %q", closeSummary)
+	closeOwnedFlags().VisitAll(func(f *pflag.Flag) {
+		if f.Value.String() != f.DefValue {
+			t.Errorf("flag %q = %q after reset, want default %q",
+				f.Name, f.Value.String(), f.DefValue)
+		}
+		if f.Changed {
+			t.Errorf("flag %q Changed = true after reset, want false", f.Name)
+		}
+	})
+}
+
+// dirtyFlagValue returns a value that differs from f's default, so the guard
+// above can dirty a flag it knows nothing about beyond its type. A type it
+// cannot dirty fails loudly: silently dirtying nothing would let the very flag
+// the guard exists to catch pass at its default.
+func dirtyFlagValue(t *testing.T, f *pflag.Flag) string {
+	t.Helper()
+	switch f.Value.Type() {
+	case "bool":
+		if f.DefValue == "true" {
+			return "false"
+		}
+		return "true"
+	case "string":
+		if f.DefValue == "leaked" {
+			return "leaked-twice"
+		}
+		return "leaked"
+	default:
+		t.Fatalf("flag --%s has type %q: teach dirtyFlagValue how to dirty it", f.Name, f.Value.Type())
+		return ""
 	}
-	if closeAs != closeDefaultStatus() {
-		t.Errorf("closeAs = %q after reset, want the flag default %q", closeAs, closeDefaultStatus())
+}
+
+// TestResetCloseFlagsLeavesRootPersistentFlagsAlone: after the first Execute,
+// --nibs-path and --config are in closeCmd.Flags() as the root's own flag
+// pointers. resetRootPersistentFlags owns them; a close-scoped reset that
+// cleared their Changed bit would silently take over half of another helper's
+// job and hide the leak that helper exists to catch.
+func TestResetCloseFlagsLeavesRootPersistentFlagsAlone(t *testing.T) {
+	t.Cleanup(resetCloseFlags)
+	t.Cleanup(resetRootPersistentFlags)
+
+	// Force Cobra's merge: before the first Execute the root's persistent flags
+	// are not in closeCmd.Flags() at all, so there would be nothing to protect.
+	nibsDir := setupCloseTest(t, map[string]string{
+		"abc-1--my-task.md": "---\nversion: 2\ntitle: My Task\nstatus: in-progress\ntype: task\n---\n\nBody.\n",
+	})
+	withStdin(t, "Done.\n")
+	if _, err := runRootWith(t, "--nibs-path", nibsDir, "close", "abc-1", "--summary", "-"); err != nil {
+		t.Fatalf("close: %v", err)
 	}
-	if closeForce {
-		t.Error("closeForce not reset")
+
+	root := rootCmd.PersistentFlags().Lookup("nibs-path")
+	if root == nil {
+		t.Fatal("rootCmd has no --nibs-path")
 	}
-	if closeIfMatch != "" {
-		t.Errorf("closeIfMatch not reset: %q", closeIfMatch)
+	if closeCmd.Flags().Lookup("nibs-path") != root {
+		t.Fatal("Cobra did not merge --nibs-path into closeCmd.Flags(); this guard would prove nothing")
 	}
-	if closeJSON {
-		t.Error("closeJSON not reset")
+
+	if err := rootCmd.PersistentFlags().Set("nibs-path", "/tmp/leaked"); err != nil {
+		t.Fatalf("pre-populate --nibs-path: %v", err)
+	}
+	resetCloseFlags()
+
+	if !root.Changed || root.Value.String() != "/tmp/leaked" {
+		t.Errorf("resetCloseFlags touched --nibs-path: Changed = %v, value = %q",
+			root.Changed, root.Value.String())
 	}
 }
 

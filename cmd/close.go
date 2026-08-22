@@ -12,6 +12,8 @@ import (
 	"github.com/alphaleonis/nibs/internal/graph"
 	"github.com/alphaleonis/nibs/internal/graph/model"
 	"github.com/alphaleonis/nibs/internal/mdsection"
+	"github.com/alphaleonis/nibs/internal/membership"
+	"github.com/alphaleonis/nibs/internal/nib"
 	"github.com/alphaleonis/nibs/internal/output"
 	"github.com/alphaleonis/nibs/internal/projection"
 	"github.com/spf13/cobra"
@@ -64,11 +66,13 @@ const closeEntryDateFormat = "2006-01-02"
 var closeNow = time.Now
 
 var (
-	closeSummary string
-	closeAs      string
-	closeForce   bool
-	closeIfMatch string
-	closeJSON    bool
+	closeSummary      string
+	closeAs           string
+	closeForce        bool
+	closeIfMatch      string
+	closeJSON         bool
+	closeMoveOpenTo   string
+	closeUnassignOpen bool
 )
 
 var closeCmd = &cobra.Command{
@@ -88,11 +92,26 @@ record, so a reason can be revised without losing why it was closed the first ti
 
 If the nib has a parent, closing it as ` + closeCompletionStatus() + ` rewrites the parent's Current Focus;
 every close reason merges Key Decisions into the parent, including the ones that set work
-aside rather than finish it. Revising a reason does not retract an earlier close's parent
-write: the "Completed <id>: <summary>" line an earlier ` + closeCompletionStatus() + ` close put in the
-parent's Current Focus stays there when the reason is revised to another one, so the
-parent still reads as though the work landed — correct it by hand when that matters.
-The --if-match flag protects the target nib only; the parent update uses its own etag internally.`,
+aside rather than finish it. A nib with no resolvable parent but an assigned milestone merges
+its Key Decisions into that milestone instead, and leaves its Current Focus alone. Revising a
+reason does not retract an earlier close's parent write: the "Completed <id>: <summary>" line an
+earlier ` + closeCompletionStatus() + ` close put in the parent's Current Focus stays there when the reason
+is revised to another one, so the parent still reads as though the work landed — correct it
+by hand when that matters.
+The --if-match flag protects the target nib only; the parent update uses its own etag internally.
+
+Closing a MILESTONE speaks its queue. A close reason that releases the milestone's dependents
+is refused while open work is still assigned to it — dispose of that work with
+--move-open-to <milestone> (reassigning it to the end of another milestone's queue) or with
+--unassign-open (dropping the assignments), or pick a close reason that holds rather than
+releases, which keeps the queue untouched. Those three are alternatives, not switches to
+combine: the two flags are mutually exclusive, apply only to a milestone, are refused alongside
+a holding close reason (which keeps the queue, so there is nothing to dispose of), and are
+refused when the queue holds nothing open. A member whose own front matter the write path
+refuses is named up front, before anything is written, because no flag and no rerun can
+dispose of it. The rest write one nib at a time: a failure part way through leaves the earlier
+writes persisted and does not close the milestone, and the message says whether rerunning is
+the repair or what to do instead.`,
 	Args: codedExactArgs(&closeJSON, 1),
 	RunE: func(cmd *cobra.Command, args []string) error {
 		app := getApp(cmd)
@@ -148,6 +167,20 @@ The --if-match flag protects the target nib only; the parent update uses its own
 			}
 		}
 
+		// The children guard above reads the DECOMPOSITION axis, which a
+		// milestone has none of — nothing may be parented to one — so it is a
+		// no-op there. The queue gate is the assignment-axis half of the same
+		// question, and the two coexist: a non-milestone answers only to the
+		// children guard (--force still its only override), a milestone only to
+		// this one, which has its own two dispositions instead.
+		disposed, err := closeQueueGate(ctx, cmd, app, resolver, b)
+		if err != nil {
+			return err
+		}
+		// Held separately because UpdateNib returns a nil nib on failure, and the
+		// failure path below is where the subject has to be named.
+		subjectID := b.ID
+
 		// Save original body before mutation (needed for Key Decisions extraction)
 		originalBody := b.Body
 
@@ -190,56 +223,65 @@ The --if-match flag protects the target nib only; the parent update uses its own
 		if err != nil {
 			// A reconcilable ETag conflict carries the server's current etag so an
 			// agent can retry with it (the "409 → retry with the server etag"
-			// reconcile), mirroring `nibs set`.
-			return setMutationError(closeJSON, err)
+			// reconcile), mirroring `nibs set`. A COMPLETED queue disposition rides
+			// along: this is the one exit where writes to nibs the caller never
+			// named are already durable and would otherwise go unreported.
+			return closeSubjectWriteError(subjectID, disposed, err)
 		}
 
-		// Update parent milestone if present
-		if b.Parent != "" {
-			parent, parentErr := resolver.Query().Nib(ctx, b.Parent)
-			if parentErr == nil && parent != nil {
-				parentBody := parent.Body
+		// Flow the record upward — to the parent, else to the assigned
+		// milestone (decision 1.6).
+		if recipient, viaParent := closeRecordRecipient(ctx, resolver, b); recipient != nil {
+			recipientBody := recipient.Body
 
-				// Current Focus answers "what is the latest progress here", so only a
-				// completion rewrites it — and it rewrites rather than appends, because
-				// the parent should show the latest progress, not accumulate history.
-				// Setting work aside or abandoning it is not progress: rewriting the
-				// parent's focus for those would erase the record of the last real
-				// progress and leave the parent reading as though nothing had happened.
-				// Gating the write here is also what keeps the "Completed" verb off the
-				// reasons it would misdescribe.
-				if closeAs == closeCompletionStatus() {
-					focusContent := fmt.Sprintf("\nCompleted %s: %s\n", b.ID, summary)
-					parentBody, _ = mdsection.Set(parentBody, 2, "Current Focus", focusContent)
-				}
+			// Current Focus answers "what is the latest progress here", so only a
+			// completion rewrites it — and it rewrites rather than appends, because
+			// the parent should show the latest progress, not accumulate history.
+			// Setting work aside or abandoning it is not progress: rewriting the
+			// parent's focus for those would erase the record of the last real
+			// progress and leave the parent reading as though nothing had happened.
+			// Gating the write here is also what keeps the "Completed" verb off the
+			// reasons it would misdescribe.
+			//
+			// It is a DECOMPOSITION question, so only the parent path asks it. A
+			// milestone is not a deliverable being broken down: its queue entries
+			// are independent, they finish in queue order, and a single
+			// last-writer-wins "Completed <id>" line would report the most recent
+			// event in the queue rather than the milestone's progress — which the
+			// queue itself already shows. Decision 1.6 routes only the Key
+			// Decisions there, and this stays inside that.
+			if viaParent && closeAs == closeCompletionStatus() {
+				focusContent := fmt.Sprintf("\nCompleted %s: %s\n", b.ID, summary)
+				recipientBody, _ = mdsection.Set(recipientBody, 2, "Current Focus", focusContent)
+			}
 
-				// Merge Key Decisions from the closed nib into the parent, for EVERY
-				// close reason: why work was set aside or abandoned is exactly what a
-				// later reader looks for in the parent. All matches are wildcard
-				// (AnyLevel) to preserve the historic level-agnostic behavior.
-				if childDecisions, found := mdsection.Find(originalBody, "Key Decisions", mdsection.AnyLevel); found {
-					existingDecisions, hasExisting := mdsection.Find(parentBody, "Key Decisions", mdsection.AnyLevel)
-					if hasExisting {
-						// Merge only what the parent does not already carry. Closing runs
-						// this merge every time, and a nib can be closed more than once to
-						// revise the reason — re-appending the whole child section would
-						// leave the parent holding one copy of the child's decisions per
-						// close.
-						if added := unmergedDecisions(existingDecisions, childDecisions); added != "" {
-							merged := strings.TrimRight(existingDecisions, "\n") + "\n\n" + added
-							parentBody = mdsection.Replace(parentBody, "Key Decisions", merged, mdsection.AnyLevel)
-						}
-					} else {
-						parentBody, _ = mdsection.Set(parentBody, 2, "Key Decisions", childDecisions)
+			// Merge Key Decisions from the closed nib into the recipient, for EVERY
+			// close reason: why work was set aside or abandoned is exactly what a
+			// later reader looks for there. All matches are wildcard
+			// (AnyLevel) to preserve the historic level-agnostic behavior.
+			if childDecisions, found := mdsection.Find(originalBody, "Key Decisions", mdsection.AnyLevel); found {
+				existingDecisions, hasExisting := mdsection.Find(recipientBody, "Key Decisions", mdsection.AnyLevel)
+				if hasExisting {
+					// Merge only what the recipient does not already carry. Closing runs
+					// this merge every time, and a nib can be closed more than once to
+					// revise the reason — re-appending the whole child section would
+					// leave the recipient holding one copy of the child's decisions per
+					// close.
+					if added := unmergedDecisions(existingDecisions, childDecisions); added != "" {
+						merged := strings.TrimRight(existingDecisions, "\n") + "\n\n" + added
+						recipientBody = mdsection.Replace(recipientBody, "Key Decisions", merged, mdsection.AnyLevel)
 					}
+				} else {
+					recipientBody, _ = mdsection.Set(recipientBody, 2, "Key Decisions", childDecisions)
 				}
+			}
 
-				if parentBody != parent.Body {
-					parentETag := parent.ETag()
-					parentInput := model.UpdateNibInput{Body: &parentBody, IfMatch: &parentETag}
-					if _, updateErr := resolver.Mutation().UpdateNib(ctx, parent.ID, parentInput); updateErr != nil {
-						fmt.Fprintf(os.Stderr, "warning: closed %s but failed to update parent %s: %v\n", b.ID, parent.ID, updateErr)
-					}
+			if recipientBody != recipient.Body {
+				recipientETag := recipient.ETag()
+				recipientInput := model.UpdateNibInput{Body: &recipientBody, IfMatch: &recipientETag}
+				if _, updateErr := resolver.Mutation().UpdateNib(ctx, recipient.ID, recipientInput); updateErr != nil {
+					fmt.Fprintf(os.Stderr, "warning: closed %s but failed to update %s %s: %v\n",
+						b.ID, closeRecipientNoun(viaParent), recipient.ID, updateErr)
 				}
 			}
 		}
@@ -247,8 +289,56 @@ The --if-match flag protects the target nib only; the parent update uses its own
 		// Lean card echo — the same projection path `nibs get` uses (no body/etag
 		// unless explicitly asked).
 		card, _ := projection.ViewFields(string(projection.ViewCard))
-		return echoCard(closeJSON, b, resolver.ProjectionResolver(ctx), card)
+		return echoCardWithWarning(cmd, closeJSON, b, resolver.ProjectionResolver(ctx), card, disposed.notice(subjectID))
 	},
+}
+
+// closeRecordRecipient answers where a closing nib's record flows (decision
+// 1.6): to its parent when it has one, else to the milestone its own
+// `milestone:` field assigns it to. The second return says which of the two it
+// is, because only the parent path rewrites Current Focus.
+//
+// Parent wins when both exist — a nib is PART OF its parent and only PLANNED
+// FOR its milestone, and the decomposition is where a reader looks for why a
+// piece of it was closed. Both links are read RESOLVED, the way every
+// membership surface reads them: a parent link naming no nib is no parent, so
+// such a nib falls through to its milestone rather than flowing its record
+// nowhere, and the assignment goes through membership.ResolvedMilestoneID so
+// this and the queue agree on what "assigned" means (a dangling id, or one
+// naming a non-milestone, assigns nothing).
+//
+// The recipient is fetched through Query().Nib, which returns a detached
+// snapshot — the caller edits its body and writes it back under its own etag.
+func closeRecordRecipient(ctx context.Context, resolver *graph.Resolver, b *nib.Nib) (*nib.Nib, bool) {
+	if b.Parent != "" {
+		if parent, err := resolver.Query().Nib(ctx, b.Parent); err == nil && parent != nil {
+			return parent, true
+		}
+	}
+	milestoneID := membership.ResolvedMilestoneID(b, func(id string) *nib.Nib {
+		target, err := resolver.Reader.Get(id)
+		if err != nil {
+			return nil
+		}
+		return target
+	})
+	if milestoneID == "" {
+		return nil, false
+	}
+	milestone, err := resolver.Query().Nib(ctx, milestoneID)
+	if err != nil || milestone == nil {
+		return nil, false
+	}
+	return milestone, false
+}
+
+// closeRecipientNoun names the recipient in the warning a failed flow-up
+// prints, so the reader knows which axis the write was on.
+func closeRecipientNoun(viaParent bool) string {
+	if viaParent {
+		return "parent"
+	}
+	return "milestone"
 }
 
 // closeSummaryEntry renders one ## Summary entry: which reason closed the nib,
@@ -335,5 +425,10 @@ func init() {
 	closeCmd.Flags().BoolVar(&closeForce, "force", false, "Close even if children are incomplete")
 	closeCmd.Flags().StringVar(&closeIfMatch, "if-match", "", "Only close if etag matches (optimistic locking)")
 	closeCmd.Flags().BoolVar(&closeJSON, "json", false, "Output as JSON")
+	closeCmd.Flags().StringVar(&closeMoveOpenTo, "move-open-to", "",
+		"When closing a milestone: reassign its open work to the end of this milestone's queue")
+	closeCmd.Flags().BoolVar(&closeUnassignOpen, "unassign-open", false,
+		"When closing a milestone: drop the assignment (and queue position) from its open work")
+	closeCmd.MarkFlagsMutuallyExclusive("move-open-to", "unassign-open")
 	rootCmd.AddCommand(closeCmd)
 }

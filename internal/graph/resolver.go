@@ -261,12 +261,12 @@ func (r *Resolver) validateAndSetMilestone(b *nib.Nib, milestoneID string) error
 
 	// Exclusivity along the parent chain, both directions from the subject.
 	if ancestor, ms := r.firstAssignedAncestor(b); ancestor != nil {
-		return fmt.Errorf("cannot assign %s to milestone %s: its ancestor %s is already assigned to milestone %s (a nib and its ancestor are never both assigned)",
-			b.ID, normalized, ancestor.ID, ms)
+		return &MilestoneExclusivityError{SubjectID: b.ID, MilestoneID: normalized,
+			Relation: "ancestor", ConflictID: ancestor.ID, ConflictMilestoneID: ms}
 	}
 	if descendant, ms := r.firstAssignedDescendant(b.ID); descendant != nil {
-		return fmt.Errorf("cannot assign %s to milestone %s: its descendant %s is already assigned to milestone %s (a nib and its ancestor are never both assigned)",
-			b.ID, normalized, descendant.ID, ms)
+		return &MilestoneExclusivityError{SubjectID: b.ID, MilestoneID: normalized,
+			Relation: "descendant", ConflictID: descendant.ID, ConflictMilestoneID: ms}
 	}
 
 	b.Milestone = normalized
@@ -274,6 +274,34 @@ func (r *Resolver) validateAndSetMilestone(b *nib.Nib, milestoneID string) error
 		r.Orderer.Recalculate(ScopeMilestone, b)
 	}
 	return nil
+}
+
+// MilestoneExclusivityError is decision 1.2's refusal: a nib and one of its
+// ancestors are never both assigned.
+//
+// It is typed rather than a bare fmt.Errorf because it is the one assignment
+// refusal a CALLER can route around. validateAndSetMilestone's clear branch
+// returns before these two checks run, so dropping the assignment succeeds
+// exactly where assigning it fails — and `nibs close` offers --unassign-open as
+// the remedy for this class and for no other (cmd/close_queue.go's refusal
+// diagnosis). Recognizing the class by message text would make that advice a
+// guess, which is what it used to be.
+//
+// It deliberately carries no Unwrap: there is no cause underneath, and
+// mutationErrCode's trailing nib.ErrNotFound test must not be able to claim it.
+// It has no class of its own there either, so it stays validation-class, as the
+// fmt.Errorf it replaces did.
+type MilestoneExclusivityError struct {
+	SubjectID           string // the nib being assigned
+	MilestoneID         string // the milestone it was being assigned to
+	Relation            string // how ConflictID relates to it: "ancestor" or "descendant"
+	ConflictID          string // the already-assigned nib on that chain
+	ConflictMilestoneID string // the milestone THAT nib is assigned to
+}
+
+func (e *MilestoneExclusivityError) Error() string {
+	return fmt.Sprintf("cannot assign %s to milestone %s: its %s %s is already assigned to milestone %s (a nib and its ancestor are never both assigned)",
+		e.SubjectID, e.MilestoneID, e.Relation, e.ConflictID, e.ConflictMilestoneID)
 }
 
 // checkReparentExclusivity refuses a move of b under newParentID that would
@@ -422,6 +450,33 @@ func (r *mutationResolver) preValidateSubject(b *nib.Nib, ifMatch *string) error
 		return &nibcore.ETagMismatchError{Provided: *ifMatch, Current: current}
 	}
 	return nil
+}
+
+// PreValidateSubject exposes preValidateSubject to callers outside this package
+// that make foreign writes of their OWN before the subject's mutation runs —
+// `nibs close`, whose queue dispositions rewrite a milestone's assignees before
+// the milestone itself is written. Such a caller has the same obligation
+// updateNib has (not to leave a durable edit on a nib the command never named
+// for a subject that was doomed anyway) and therefore needs the same guard set,
+// not a second one that can drift away from it: a guard added to
+// preValidateSubject must reach every foreign-write path at once.
+//
+// b carries the PENDING values of the fields this check READS — the enum
+// fields, and EffectiveType/Milestone/Area for the axis rule — applied to a
+// Clone, never to the stored nib. Validating them as read would refuse a
+// mutation whose whole purpose is to replace the offending value: updateNib
+// applies the enum fields before calling this, and `nibs close` applies the
+// status it is about to write.
+//
+// It is deliberately NOT "the nib as it will be written", which no caller can
+// supply: `nibs close` also writes a ## Summary body entry, and it cannot build
+// that until after the queue dispositions this check exists to run BEFORE. That
+// costs nothing while the guard set stays inside the fields above — none of
+// them is Body — but it bounds the invariant above: a guard added here that
+// reads a field a caller cannot prepare would silently judge that caller's
+// write on stale input, so it has to arrive with the means to prepare it.
+func (r *Resolver) PreValidateSubject(b *nib.Nib, ifMatch *string) error {
+	return (&mutationResolver{r}).preValidateSubject(b, ifMatch)
 }
 
 // validateAndAddBlocking validates and adds blocking relationships.
