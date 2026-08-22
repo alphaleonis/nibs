@@ -164,15 +164,12 @@ func TestUpdateNibMilestoneCloseGate(t *testing.T) {
 		}
 	})
 
-	t.Run("re-asserting the same closed status on a standing offense is refused", func(t *testing.T) {
-		resolver, core := setupTestResolver(t)
-		seedCloseGateFixture(t, core)
-		writeStatusOnDisk(t, core, "msq", "completed")
-
-		if _, err := resolver.Mutation().UpdateNib(ctx, "msq", statusInput("completed")); err == nil {
-			t.Fatal("UpdateNib(status=completed) on a standing offense succeeded; the invariant is about the state the write leaves")
-		}
-	})
+	// The status-resent-unchanged shape — which is what the web edit form actually
+	// sends on every save, and so the case that decides whether a standing offense
+	// is editable in practice — is covered by
+	// TestUpdateNibKeepsClosedMilestoneEditable below, together with its
+	// complement (a real transition between two releasing reasons, still refused).
+	// The subtest above deliberately omits status, so it alone does not settle it.
 
 	t.Run("only DIRECT assignees count, not the transitive closure", func(t *testing.T) {
 		resolver, core := setupTestResolver(t)
@@ -231,4 +228,76 @@ func equalIDs(got, want []string) bool {
 		}
 	}
 	return true
+}
+
+// seedClosedMilestoneWithLiveQueue builds the state the write path itself can no
+// longer produce but the store can still hold: a milestone already carrying a
+// releasing status while an OPEN nib is assigned to its queue. It is reachable
+// with no bypass at all — assigning to an already-closed milestone is not
+// refused, since validateAndSetMilestone checks the target's type and never its
+// status (tracked in nibs-l5df) — and by a hand edit, which is the case
+// nibcore's ClosedMilestoneQueue finding reports.
+func seedClosedMilestoneWithLiveQueue(t *testing.T, core *nibcore.Core) {
+	t.Helper()
+	for _, b := range []*nib.Nib{
+		{ID: "msshut", Title: "Shut milestone", Type: "milestone", Status: "completed"},
+		{ID: "sa", Title: "Still open", Type: "task", Status: "todo", Milestone: "msshut", MilestoneOrder: "a0"},
+	} {
+		mustCreate(t, core, b)
+	}
+}
+
+// TestUpdateNibKeepsClosedMilestoneEditable is the no-op half of the close gate.
+//
+// The web edit form sends `status` on EVERY save (web/src/lib/nibForm.svelte.ts),
+// so a title-only edit arrives with status PRESENT but equal to what the nib
+// already carries. Gating the refusal on "status was supplied" rather than
+// "status is CHANGING" therefore makes a milestone that already holds a releasing
+// status over a live queue permanently uneditable from the web — title, body,
+// priority, every field — refused in the name of a close the caller never asked
+// for. The queue is then unfixable through the one surface most likely to be
+// fixing it.
+//
+// This is the same distinction the type branch draws for the same reason (see the
+// oldEffectiveType comment in UpdateNib): a no-op submission must not re-validate
+// a state the caller is not changing. The standing offense belongs to `nibs
+// check`'s ClosedMilestoneQueue finding, which reports it without blocking the
+// edit that would resolve it.
+func TestUpdateNibKeepsClosedMilestoneEditable(t *testing.T) {
+	ctx := context.Background()
+
+	t.Run("an unrelated edit resending the same status is not a close", func(t *testing.T) {
+		resolver, core := setupTestResolver(t)
+		seedClosedMilestoneWithLiveQueue(t, core)
+
+		title := "Renamed by the web form"
+		status := "completed"
+		got, err := resolver.Mutation().UpdateNib(ctx, "msshut", model.UpdateNibInput{
+			Title:  &title,
+			Status: &status,
+		})
+		if err != nil {
+			t.Fatalf("editing a closed milestone with a live queue was refused: %v", err)
+		}
+		if got.Title != title {
+			t.Errorf("Title = %q, want %q", got.Title, title)
+		}
+		if got.Status != status {
+			t.Errorf("Status = %q, want %q", got.Status, status)
+		}
+	})
+
+	// The complement, so the fix above cannot be "once releasing, allow anything":
+	// revising one releasing reason to another IS a close of a milestone whose
+	// queue is still live, and `nibs close` refuses it for the same reason.
+	t.Run("revising one releasing reason to another is still refused", func(t *testing.T) {
+		resolver, core := setupTestResolver(t)
+		seedClosedMilestoneWithLiveQueue(t, core)
+
+		_, err := resolver.Mutation().UpdateNib(ctx, "msshut", statusInput("scrapped"))
+		var queueErr *MilestoneQueueOpenError
+		if !errors.As(err, &queueErr) {
+			t.Fatalf("re-closing for a different releasing reason should still be refused, got: %v", err)
+		}
+	})
 }

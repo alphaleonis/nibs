@@ -197,6 +197,7 @@ func (r *mutationResolver) UpdateNib(ctx context.Context, id string, input model
 	if input.Title != nil {
 		b.Title = *input.Title
 	}
+	statusChanged := input.Status != nil && *input.Status != b.Status
 	if input.Status != nil {
 		b.Status = *input.Status
 	}
@@ -268,12 +269,23 @@ func (r *mutationResolver) UpdateNib(ctx context.Context, id string, input model
 	// is only the obligation this position satisfies: run before any foreign
 	// write.
 	//
-	// Gated on input.Status because the invariant is about CLOSING a milestone.
-	// An unrelated field edit — a title, a tag — on a milestone already carrying
-	// a releasing status is not a close and is not refused; the standing offense
-	// is `nibs check`'s to report (nibcore's ClosedMilestoneQueue finding), and
-	// refusing the edit instead would make such a milestone uneditable.
-	if input.Status != nil {
+	// Gated on the status actually CHANGING, not merely being supplied, because
+	// the invariant is about CLOSING a milestone. The web edit form sends `status`
+	// on every save, so a title-only edit arrives carrying the value the nib
+	// already holds; refusing that would make a milestone that already sits on a
+	// releasing status over a live queue permanently uneditable from the web, in
+	// the name of a close nobody asked for — and unfixable through the surface
+	// most likely to be fixing it. The standing offense is `nibs check`'s to
+	// report (nibcore's ClosedMilestoneQueue finding), not this write's to block.
+	// Revising one releasing reason to another IS a close and is still refused.
+	//
+	// Same distinction, same reason, as the effective-type check just below —
+	// but a RAW comparison is right here where that one needs EffectiveType().
+	// Status has no normalizing accessor: a status-less nib carries "" and the
+	// Nib.status field hands back that same "", so a form echoes what it read and
+	// no no-op can disguise itself as a change. ("" also releases nothing, so a
+	// status-less milestone never reaches the guard at all.)
+	if statusChanged {
 		if err := r.refuseClosingFullQueue(ctx, b); err != nil {
 			return nil, err
 		}
