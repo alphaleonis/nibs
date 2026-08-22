@@ -347,6 +347,7 @@ func TestCatalogExamplesShowOpenWorkRecipes(t *testing.T) {
 	want := []recipeInfo{
 		{"nibs list", "open work everywhere (closed statuses hidden by default)"},
 		{"nibs rel <id> --rel descendants", "open work under a parent (add -t bug for open bugs only)"},
+		{"nibs list --milestone <id>", "open work in a milestone's queue, in queue order (--backlog: what no milestone holds)"},
 		{"nibs list -s closed", "only closed nibs (an explicit -s overrides the open default)"},
 		{"nibs list --all", "every status, including the closed ones"},
 		{"nibs list --ready", readyFlag.Usage},
@@ -514,6 +515,7 @@ func TestCatalogRecipesFromLiveCommands(t *testing.T) {
 	}
 
 	want := map[string]string{
+		"nibs next":         commandShort("next"),
 		"nibs context":      commandShort("context"),
 		"nibs plan <id>":    commandShort("plan"),
 		"nibs roadmap":      commandShort("roadmap"),

@@ -25,6 +25,7 @@ var (
 	setTitle           string
 	setClear           []string
 	setParent          string
+	setMilestone       string
 	setBlocking        []string
 	setRemoveBlocking  []string
 	setBlockedBy       []string
@@ -39,16 +40,23 @@ var (
 
 // clearableFields are the field names --clear accepts. These are exactly the
 // fields the graph layer can clear via an explicit-null update (an Omittable set
-// to a nil inner pointer): the priority/estimate scalars and the parent link.
-var clearableFields = []string{"priority", "estimate", "parent"}
+// to a nil inner pointer): the priority/estimate scalars and the two links that
+// place a nib — parent (decomposition) and milestone (scheduling).
+var clearableFields = []string{"priority", "estimate", "parent", "milestone"}
 
 var setCmd = &cobra.Command{
 	Use:     "set <id>",
 	Aliases: []string{"update", "u"},
 	Short:   "Set a nib's metadata, links, or clear fields",
 	Long: `Sets one or more properties of an existing nib: metadata (status, type,
-priority, estimate, title), links (parent, blocking, blocked-by, tags,
-documents), or clears a clearable field (--clear priority|estimate|parent).`,
+priority, estimate, title), links (parent, milestone, blocking, blocked-by,
+tags, documents), or clears a clearable field
+(--clear priority|estimate|parent|milestone).
+
+--milestone <id> assigns the nib to a milestone's queue (appended last; the
+target must be a milestone, and a nib and one of its ancestors are never both
+assigned). --clear milestone unassigns it and drops its queue position. Use
+'nibs mv <id> --queue' to reposition within the queue.`,
 	Args: codedExactArgs(&setJSON, 1),
 	RunE: func(cmd *cobra.Command, args []string) error {
 		app := getApp(cmd)
@@ -97,6 +105,22 @@ documents), or clears a clearable field (--clear priority|estimate|parent).`,
 			input.IfMatch = ifMatch
 		}
 
+		// The writes that can put a NEW pair into a milestone queue are linted
+		// for order-vs-dependency inversions (decision 2.3): an assignment
+		// (the subject enters a queue) and a new dependency edge in either
+		// spelling (a pair already in one queue gains its blocking half). The
+		// lint is a before/after comparison so it fires once, at the creating
+		// write — a reassignment to the same queue re-reports nothing — which
+		// is why the snapshot is taken here, ahead of the mutation. A clear
+		// and the --remove-* forms can only take pairs away; a status change
+		// is not linted either — reopening a released blocker re-arms a pair
+		// whose order and dependency both pre-existed.
+		lintQueue := cmd.Flags().Changed("milestone") || len(setBlockedBy) > 0 || len(setBlocking) > 0
+		var inversionsBefore map[inversionKey]bool
+		if lintQueue {
+			inversionsBefore = queueInversionKeys(resolver.Reader, b.ID)
+		}
+
 		// Apply all field/link/clear updates atomically via a single UpdateNib
 		// mutation.
 		if hasFieldUpdates(input) {
@@ -109,14 +133,19 @@ documents), or clears a clearable field (--clear priority|estimate|parent).`,
 		// Require at least one change
 		if len(changes) == 0 {
 			return cmdError(setJSON, output.ErrValidation,
-				"no changes specified (use --status, --type, --priority, --estimate, --title, --parent, --blocking, --blocked-by, --tag, --document, --clear, or their --remove-* variants; use `nibs mv` to reposition or reparent)")
+				"no changes specified (use --status, --type, --priority, --estimate, --title, --parent, --milestone, --blocking, --blocked-by, --tag, --document, --clear, or their --remove-* variants; use `nibs mv` to reposition or reparent)")
+		}
+
+		warning := ""
+		if lintQueue {
+			warning = queueInversionWarning(resolver.Reader, b.ID, inversionsBefore)
 		}
 
 		// Echo the updated nib as a lean card — the same projection + rendering
 		// path `nibs get` uses (no body/etag unless explicitly asked). Card is a
 		// compile-time-valid view, so ViewFields never errors here.
 		card, _ := projection.ViewFields(string(projection.ViewCard))
-		return echoCard(setJSON, b, resolver.ProjectionResolver(ctx), card)
+		return echoCardWithWarning(cmd, setJSON, b, resolver.ProjectionResolver(ctx), card, warning)
 	},
 }
 
@@ -236,6 +265,15 @@ func buildSetInput(cmd *cobra.Command, cfg *config.Config, id string) (model.Upd
 		changes = append(changes, "parent")
 	}
 
+	// The milestone assignment is the same Omittable shape as parent: the flag
+	// sets a value (an empty one clears, like --parent ""), --clear milestone
+	// sets the explicit null. Target existence, type and exclusivity are judged
+	// by the resolver, which owns those rules for every surface.
+	if cmd.Flags().Changed("milestone") {
+		input.Milestone = graphql.OmittableOf(&setMilestone)
+		changes = append(changes, "milestone")
+	}
+
 	// Apply --clear (explicit-null) for the requested clearable fields.
 	if clears["priority"] {
 		input.Priority = graphql.OmittableOf[*string](nil)
@@ -248,6 +286,10 @@ func buildSetInput(cmd *cobra.Command, cfg *config.Config, id string) (model.Upd
 	if clears["parent"] {
 		input.Parent = graphql.OmittableOf[*string](nil)
 		changes = append(changes, "parent")
+	}
+	if clears["milestone"] {
+		input.Milestone = graphql.OmittableOf[*string](nil)
+		changes = append(changes, "milestone")
 	}
 
 	// Handle blocking relationships
@@ -307,7 +349,7 @@ func hasFieldUpdates(input model.UpdateNibInput) bool {
 	return input.Status != nil || input.Type != nil || input.Priority.IsSet() || input.Estimate.IsSet() ||
 		input.Title != nil || input.Tags != nil ||
 		input.AddTags != nil || input.RemoveTags != nil ||
-		input.Parent.IsSet() || input.AddBlocking != nil || input.RemoveBlocking != nil ||
+		input.Parent.IsSet() || input.Milestone.IsSet() || input.AddBlocking != nil || input.RemoveBlocking != nil ||
 		input.AddBlockedBy != nil || input.RemoveBlockedBy != nil ||
 		input.Documents != nil || input.AddDocuments != nil || input.RemoveDocuments != nil
 }
@@ -539,6 +581,7 @@ func init() {
 	setCmd.Flags().StringVar(&setTitle, "title", "", "New title")
 	setCmd.Flags().StringArrayVar(&setClear, "clear", nil, "Clear a field to its default ("+strings.Join(clearableFields, ", ")+"; can be repeated)")
 	setCmd.Flags().StringVar(&setParent, "parent", "", "Set parent nib ID (use --clear parent to remove)")
+	setCmd.Flags().StringVar(&setMilestone, "milestone", "", "Assign to this milestone's queue, appended last (use --clear milestone to unassign)")
 	setCmd.Flags().StringArrayVar(&setBlocking, "blocking", nil, "ID of nib this blocks (can be repeated)")
 	setCmd.Flags().StringArrayVar(&setRemoveBlocking, "remove-blocking", nil, "ID of nib to unblock (can be repeated)")
 	setCmd.Flags().StringArrayVar(&setBlockedBy, "blocked-by", nil, "ID of nib that blocks this one (can be repeated)")

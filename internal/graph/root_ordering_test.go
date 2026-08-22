@@ -88,7 +88,7 @@ func TestReorderRootNibFirst(t *testing.T) {
 
 	ctx := context.Background()
 	first := true
-	result, err := resolver.Mutation().ReorderNib(ctx, "root-3", nil, nil, &first, nil, nil)
+	result, err := resolver.Mutation().ReorderNib(ctx, "root-3", nil, nil, &first, nil, nil, model.OrderScopeParent)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -119,7 +119,7 @@ func TestReorderRootNibAfter(t *testing.T) {
 
 	ctx := context.Background()
 	afterID := "root-1"
-	result, err := resolver.Mutation().ReorderNib(ctx, "root-3", &afterID, nil, nil, nil, nil)
+	result, err := resolver.Mutation().ReorderNib(ctx, "root-3", &afterID, nil, nil, nil, nil, model.OrderScopeParent)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -150,7 +150,7 @@ func TestReorderRootNibBefore(t *testing.T) {
 
 	ctx := context.Background()
 	beforeID := "root-2"
-	result, err := resolver.Mutation().ReorderNib(ctx, "root-3", nil, &beforeID, nil, nil, nil)
+	result, err := resolver.Mutation().ReorderNib(ctx, "root-3", nil, &beforeID, nil, nil, nil, model.OrderScopeParent)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -187,7 +187,7 @@ func TestReorderBeforeWithDuplicateOrderKeys(t *testing.T) {
 	ctx := context.Background()
 	beforeID := "kofy"
 	kofyOrder := kofy.Order // capture before mutation in case resolver modifies pointer
-	result, err := resolver.Mutation().ReorderNib(ctx, "n1nb", nil, &beforeID, nil, nil, nil)
+	result, err := resolver.Mutation().ReorderNib(ctx, "n1nb", nil, &beforeID, nil, nil, nil, model.OrderScopeParent)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -224,7 +224,7 @@ func TestReorderAfterWithDuplicateOrderKeys(t *testing.T) {
 	ctx := context.Background()
 	afterID := "a1"
 	a1Order := a1.Order // capture before mutation in case resolver modifies pointer
-	result, err := resolver.Mutation().ReorderNib(ctx, "a3", &afterID, nil, nil, nil, nil)
+	result, err := resolver.Mutation().ReorderNib(ctx, "a3", &afterID, nil, nil, nil, nil, model.OrderScopeParent)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -257,7 +257,7 @@ func TestReorderRootNibRejectsNonSibling(t *testing.T) {
 
 	ctx := context.Background()
 	afterID := "child-1"
-	_, err := resolver.Mutation().ReorderNib(ctx, "root-1", &afterID, nil, nil, nil, nil)
+	_, err := resolver.Mutation().ReorderNib(ctx, "root-1", &afterID, nil, nil, nil, nil, model.OrderScopeParent)
 	if err == nil {
 		t.Fatal("expected error when positioning after a non-sibling, got nil")
 	}

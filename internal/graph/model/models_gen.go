@@ -166,13 +166,13 @@ type NibFilter struct {
 	// Concretely, on the top-level nibs query: the term alone is capped, and so is
 	// the term alongside any of the list and tri-state facets — status, excludeStatus,
 	// type, excludeType, priority, excludePriority, estimate, excludeEstimate, tags,
-	// excludeTags, hasParent, hasBlocking, isBlocked, hasBlockedBy. None of those
-	// names a nib, so the population they narrow is still the store. Combining the
-	// term with a field that DOES name one — parentId, ancestorId, descendantId,
-	// siblingId, blockingId, blockedById, mentionsId, mentionedById — makes the read
-	// uncapped. Every relationship field (children, blockedBy, blocking, mentions,
-	// mentionedBy) is uncapped for the same reason: the relation it names is the
-	// bound.
+	// excludeTags, hasParent, hasBlocking, isBlocked, hasBlockedBy, noMilestone.
+	// None of those names a nib, so the population they narrow is still the store.
+	// Combining the term with a field that DOES name one — parentId, ancestorId,
+	// descendantId, siblingId, blockingId, blockedById, mentionsId, mentionedById,
+	// milestone — makes the read uncapped. Every relationship field (children,
+	// blockedBy, blocking, mentions, mentionedBy) is uncapped for the same reason:
+	// the relation it names is the bound.
 	//
 	// So `nibs(filter: {search: q, parentId: X})` and
 	// `nib(id: X) { children(filter: {search: q}) }` agree on the MATCHES. They are
@@ -344,6 +344,45 @@ type NibFilter struct {
 	// extensions.code, so a GraphQL client sees a generic error; the CLI reports
 	// VALIDATION_ERROR (exit 2). Omit the field to leave it unfiltered.
 	MentionedByID *string `json:"mentionedById,omitempty"`
+	// Include only the milestone's queue: nibs whose `milestone:` assignment
+	// RESOLVES to this milestone. Resolution is the membership rule the ordering
+	// engine's queue scope also groups by — the stored id must name an existing,
+	// milestone-typed nib to count, so a dangling assignment matches nothing
+	// (known gap, tracked as nibs-4h8f: such an assignment is dropped silently
+	// rather than flagged). Resolution checks the target's type, never the
+	// assignee's: a milestone-typed nib hand-edited to carry an assignment — a
+	// shape the write path refuses — is in this set even though noMilestone's
+	// derived reading keeps it in the backlog set. This is DIRECT assignment
+	// only: the structural children of an assigned nib are planned work in the
+	// derived sense noMilestone reads, but they are not in this set.
+	//
+	// An id naming no nib is refused with a NOT_FOUND error rather than matching
+	// nothing, so a mistyped or stale id stays distinguishable from a genuine empty
+	// result. An empty string is refused as a malformed argument: it names no nib
+	// and never could. Unlike the not-found refusal above it carries no
+	// extensions.code, so a GraphQL client sees a generic error; the CLI reports
+	// VALIDATION_ERROR (exit 2). An id naming an existing NON-milestone nib is
+	// refused the same way, naming the nib's actual type: no assignment can resolve
+	// to it, so an empty answer would read as "this milestone has no members" for
+	// an id that names no milestone — the mistake updateNib's milestone field
+	// refuses with a message of the same shape. Omit the field to leave it
+	// unfiltered.
+	Milestone *string `json:"milestone,omitempty"`
+	// Tri-state over DERIVED milestone membership: true keeps the backlog — nibs
+	// with neither an own resolved assignment nor one anywhere up the structural
+	// parent chain, so a child of an assigned epic is planned work and NOT in
+	// this set. false keeps the complement: on data the write path accepts,
+	// exactly the nibs some milestone's queue transitively contains. Null does
+	// not filter.
+	//
+	// Milestone-typed nibs belong to no milestone themselves — a milestone is a
+	// container, not a member — so they sit in the true set; combine with
+	// excludeType: ["milestone"] to keep them out. A dangling or non-milestone
+	// assignment schedules nothing and leaves the nib in the true set. A
+	// milestone-typed nib hand-edited to carry an assignment — a shape the write
+	// path refuses — also sits in the true set here while the milestone filter's
+	// resolved-assignment reading places it in that milestone's queue set.
+	NoMilestone *bool `json:"noMilestone,omitempty"`
 }
 
 // Sort options for nib queries
@@ -398,7 +437,27 @@ type UpdateNibInput struct {
 	// Set the parent nib ID (validated against the type hierarchy). Explicit null
 	// OR empty string clears the parent (moves the nib to root); omit to leave it
 	// unchanged.
+	//
+	// A reparent also honors assignment exclusivity: when the nib or any nib in
+	// its subtree is assigned to a milestone AND the new parent or any of its
+	// ancestors is too, the move is refused naming both nibs — a nib and one of
+	// its ancestors are never both assigned.
 	Parent graphql.Omittable[*string] `json:"parent,omitempty"`
+	// Set the milestone assignment — the scheduling axis. The target must exist
+	// and be milestone-typed; a missing target or one of any other type is
+	// refused naming why. Exclusivity along the parent chain is enforced: the
+	// assignment is refused when any ancestor or any descendant of the nib is
+	// already assigned, naming the conflicting nib. A milestone-typed subject is
+	// refused (a waypoint is not work and takes no assignment).
+	//
+	// On assignment the nib enters the target's queue at the default placement
+	// (last), and a reassignment re-enters the new queue the same way — the queue
+	// key is never carried from one queue to another. Explicit null OR empty
+	// string clears the assignment and the queue key with it; omit to leave both
+	// unchanged. An update carrying both a parent and a milestone change is judged
+	// on the state it leaves: a clear of either axis opens the way for the other,
+	// and an assignment is checked against the chain the nib will sit on.
+	Milestone graphql.Omittable[*string] `json:"milestone,omitempty"`
 	// Add nibs to blocking list (validates cycles and existence)
 	AddBlocking []string `json:"addBlocking,omitempty"`
 	// Remove nibs from blocking list
@@ -432,6 +491,7 @@ type NibSortField string
 
 const (
 	NibSortFieldOrder          NibSortField = "ORDER"
+	NibSortFieldMilestoneOrder NibSortField = "MILESTONE_ORDER"
 	NibSortFieldCreatedAt      NibSortField = "CREATED_AT"
 	NibSortFieldUpdatedAt      NibSortField = "UPDATED_AT"
 	NibSortFieldTitle          NibSortField = "TITLE"
@@ -443,6 +503,7 @@ const (
 
 var AllNibSortField = []NibSortField{
 	NibSortFieldOrder,
+	NibSortFieldMilestoneOrder,
 	NibSortFieldCreatedAt,
 	NibSortFieldUpdatedAt,
 	NibSortFieldTitle,
@@ -454,7 +515,7 @@ var AllNibSortField = []NibSortField{
 
 func (e NibSortField) IsValid() bool {
 	switch e {
-	case NibSortFieldOrder, NibSortFieldCreatedAt, NibSortFieldUpdatedAt, NibSortFieldTitle, NibSortFieldPriority, NibSortFieldID, NibSortFieldStatus, NibSortFieldStatusPriority:
+	case NibSortFieldOrder, NibSortFieldMilestoneOrder, NibSortFieldCreatedAt, NibSortFieldUpdatedAt, NibSortFieldTitle, NibSortFieldPriority, NibSortFieldID, NibSortFieldStatus, NibSortFieldStatusPriority:
 		return true
 	}
 	return false
@@ -490,6 +551,65 @@ func (e *NibSortField) UnmarshalJSON(b []byte) error {
 }
 
 func (e NibSortField) MarshalJSON() ([]byte, error) {
+	var buf bytes.Buffer
+	e.MarshalGQL(&buf)
+	return buf.Bytes(), nil
+}
+
+// The ordering axis a reorder runs on. PARENT is the sibling order under one
+// resolved parent (the order key); MILESTONE is the milestone queue the nib's
+// assignment resolves to (the milestoneOrder key). The two are isolated: a move
+// in one scope never touches the other scope's key.
+type OrderScope string
+
+const (
+	OrderScopeParent    OrderScope = "PARENT"
+	OrderScopeMilestone OrderScope = "MILESTONE"
+)
+
+var AllOrderScope = []OrderScope{
+	OrderScopeParent,
+	OrderScopeMilestone,
+}
+
+func (e OrderScope) IsValid() bool {
+	switch e {
+	case OrderScopeParent, OrderScopeMilestone:
+		return true
+	}
+	return false
+}
+
+func (e OrderScope) String() string {
+	return string(e)
+}
+
+func (e *OrderScope) UnmarshalGQL(v any) error {
+	str, ok := v.(string)
+	if !ok {
+		return fmt.Errorf("enums must be strings")
+	}
+
+	*e = OrderScope(str)
+	if !e.IsValid() {
+		return fmt.Errorf("%s is not a valid OrderScope", str)
+	}
+	return nil
+}
+
+func (e OrderScope) MarshalGQL(w io.Writer) {
+	fmt.Fprint(w, strconv.Quote(e.String()))
+}
+
+func (e *OrderScope) UnmarshalJSON(b []byte) error {
+	s, err := strconv.Unquote(string(b))
+	if err != nil {
+		return err
+	}
+	return e.UnmarshalGQL(s)
+}
+
+func (e OrderScope) MarshalJSON() ([]byte, error) {
 	var buf bytes.Buffer
 	e.MarshalGQL(&buf)
 	return buf.Bytes(), nil

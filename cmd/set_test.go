@@ -32,6 +32,7 @@ func resetSetFlags() {
 	setTitle = ""
 	setClear = nil
 	setParent = ""
+	setMilestone = ""
 	setBlocking = nil
 	setRemoveBlocking = nil
 	setBlockedBy = nil
@@ -58,6 +59,7 @@ func TestResetSetFlagsClearsAllState(t *testing.T) {
 	setTitle = "dirty"
 	setClear = []string{"priority"}
 	setParent = "dirty"
+	setMilestone = "dirty"
 	setBlocking = []string{"x"}
 	setRemoveBlocking = []string{"y"}
 	setBlockedBy = []string{"z"}
@@ -92,6 +94,9 @@ func TestResetSetFlagsClearsAllState(t *testing.T) {
 	}
 	if setParent != "" {
 		t.Errorf("setParent not reset: %q", setParent)
+	}
+	if setMilestone != "" {
+		t.Errorf("setMilestone not reset: %q", setMilestone)
 	}
 	if setBlocking != nil {
 		t.Errorf("setBlocking not reset: %v", setBlocking)

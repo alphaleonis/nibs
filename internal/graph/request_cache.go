@@ -5,6 +5,7 @@ import (
 	"sync"
 
 	"github.com/99designs/gqlgen/graphql"
+	"github.com/alphaleonis/nibs/internal/membership"
 	"github.com/alphaleonis/nibs/internal/nib"
 	"github.com/vektah/gqlparser/v2/ast"
 )
@@ -46,6 +47,11 @@ type RequestCache struct {
 	mentions    map[string][]*nib.Nib
 	mentionedBy map[string][]*nib.Nib
 	searchAll   map[string]*searchEntry
+
+	// The operation's membership View. A single unkeyed entry, because the
+	// View is a function of the store alone — see cachedMembershipView.
+	membershipOnce sync.Once
+	membershipView *membership.View
 }
 
 // searchEntry holds one memoized SearchAll answer, reduced to the membership
@@ -103,41 +109,59 @@ func RequestCacheFrom(ctx context.Context) *RequestCache {
 // memoFor returns the cache the cached* helpers should memoize into, or nil to
 // bypass memoization and read the store directly.
 //
-// It bypasses for MUTATION operations, and that is a correctness rule rather
-// than a tuning choice. GraphQL executes mutation root fields serially and
-// gqlgen honors it, so one document can write between two reads of the same
-// question: field a resolves `children(filter: {search: q})`, field b creates a
-// matching nib, field c resolves the same selection. A memo filled by a would
-// answer c from before b's write, and the response would report, at exit 0, a
-// child set missing the child the same response just created. Core reindexes
-// synchronously on write, so an unmemoized read sees b immediately — the
-// staleness is entirely the memo's, and dropping the memo removes it for the
-// search entries and for the mention entries alike.
+// The memo is only for SINGLE-RESPONSE operations: it is safe exactly when no
+// store write can land between two reads served by one memo. Two operation
+// shapes break that guarantee, and both are withheld as a correctness rule
+// rather than a tuning choice:
 //
-// The trade is the fan-out protection inside a mutation document, which is the
-// cheap half: mutation documents name a few root fields, they do not select a
-// relationship field across a large outer list the way a query does.
+//   - MUTATION. GraphQL executes mutation root fields serially and gqlgen
+//     honors it, so one document can write between two reads of the same
+//     question: field a resolves `children(filter: {search: q})`, field b
+//     creates a matching nib, field c resolves the same selection. A memo
+//     filled by a would answer c from before b's write, and the response would
+//     report, at exit 0, a child set missing the child the same response just
+//     created.
+//
+//   - SUBSCRIPTION. gqlgen dispatches the operation once per subscribe message
+//     and then resolves every pushed event under that same cache-carrying
+//     context, and each event is by definition preceded by a store write. A
+//     memo filled at the first event would answer every later event from
+//     pre-write state for the socket's entire life, and pin that first event's
+//     store pointers just as long.
+//
+// Core reindexes synchronously on write, so an unmemoized read sees the write
+// immediately — the staleness is entirely the memo's, and bypassing it removes
+// it for the search, mention and membership entries alike.
+//
+// The trade is the fan-out protection, and in both shapes it is the cheap
+// half: mutation documents name a few root fields rather than selecting a
+// relationship field across a large outer list the way a query does, and a
+// subscription event resolves a single nib's selection.
 //
 // Deciding here rather than at attach time is deliberate — it is one choke
 // point that every entry point and every future one passes through, so a new
 // caller cannot reintroduce the staleness by attaching a cache of its own.
 func memoFor(ctx context.Context) *RequestCache {
-	if isMutationOperation(ctx) {
+	switch operationType(ctx) {
+	case ast.Mutation, ast.Subscription:
 		return nil
 	}
 	return RequestCacheFrom(ctx)
 }
 
-// isMutationOperation reports whether ctx is executing a mutation. Contexts
-// with no operation context at all — direct resolver callers and unit tests —
-// are not mutations for this purpose: they perform no GraphQL-level write
-// sequencing, so nothing can go stale mid-operation.
-func isMutationOperation(ctx context.Context) bool {
+// operationType reports which kind of GraphQL operation ctx is executing, or
+// "" for contexts with no operation context at all — direct resolver callers
+// and unit tests. Those memoize: they perform no GraphQL-level write
+// sequencing and serve a single response, so nothing can go stale mid-use.
+func operationType(ctx context.Context) ast.Operation {
 	if ctx == nil || !graphql.HasOperationContext(ctx) {
-		return false
+		return ""
 	}
 	op := graphql.GetOperationContext(ctx).Operation
-	return op != nil && op.Operation == ast.Mutation
+	if op == nil {
+		return ""
+	}
+	return op.Operation
 }
 
 // cachedMentions returns the nibs mentioned by sourceID. When a RequestCache
@@ -191,7 +215,7 @@ func cachedMentions(ctx context.Context, reader NibReader, sourceID string) []*n
 // If that ever becomes desirable, the bound belongs in the key. Nothing else
 // varies the result: SearchAll is a function of the term and the store, the
 // reader is fixed for the operation, and memoFor withholds the cache from the
-// one operation shape that can write to the store while it runs.
+// operation shapes under which a write can land between two memoized reads.
 //
 // The error is memoized alongside the result, so a failing index is queried
 // once per operation rather than once per parent. It reaches every caller
@@ -231,6 +255,32 @@ func searchAllIDs(reader NibReader, query string) (map[string]struct{}, error) {
 		ids[b.ID] = struct{}{}
 	}
 	return ids, nil
+}
+
+// cachedMembershipView returns the operation's membership View, computed on
+// first use and shared by every ApplyFilter call within the operation. With
+// no cache on ctx it falls straight through to a fresh Compute, exactly as
+// the mention helpers do. Per-operation reuse is the scope the membership
+// package's live-pointer discipline names ("build it once per command or per
+// GraphQL operation"): the store installs fresh pointers only on writes, and
+// memoFor withholds the cache from the operation shapes under which a write
+// can land between two memoized reads.
+//
+// The entry is unkeyed — the View is a function of the store alone, and the
+// reader is fixed for the operation — and filled through a sync.Once for the
+// same reason searchEntry is: relationship fields across an outer list
+// resolve concurrently, so concurrent misses must COLLAPSE into one Compute
+// rather than each paying the O(N) three-map build this memo exists to
+// remove.
+func cachedMembershipView(ctx context.Context, reader NibReader) *membership.View {
+	cache := memoFor(ctx)
+	if cache == nil {
+		return membership.Compute(reader.All())
+	}
+	cache.membershipOnce.Do(func() {
+		cache.membershipView = membership.Compute(reader.All())
+	})
+	return cache.membershipView
 }
 
 // cachedMentionedBy returns the nibs that mention targetID. Semantics match

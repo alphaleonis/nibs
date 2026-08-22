@@ -54,6 +54,7 @@ func TestFullPromptTeachesNewSurface(t *testing.T) {
 	for _, want := range []string{
 		"nibs get", "nibs list", "nibs rel", "nibs new", "nibs set",
 		"nibs body", "nibs mv", "nibs rm", "nibs close", "nibs catalog", "nibs cheat",
+		"nibs next",
 		`{"nib"`, `"truncated"`, // the two read contracts
 		"@FILE",          // the prose-input rule
 		"| 4 | conflict", // the exit-code table

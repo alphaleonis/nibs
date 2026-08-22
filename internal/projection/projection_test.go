@@ -62,6 +62,7 @@ func TestViewFields(t *testing.T) {
 		{"full", []Field{
 			FieldID, FieldSlug, FieldTitle, FieldStatus, FieldType, FieldPriority,
 			FieldEstimate, FieldTags, FieldParent, FieldStoredParent, FieldOrder,
+			FieldMilestone, FieldMilestoneOrder, FieldArea,
 			FieldCreatedAt, FieldUpdatedAt, FieldPath, FieldBody, FieldETag,
 			FieldBlocking, FieldBlockedBy, FieldMentions, FieldMentionedBy,
 		}},

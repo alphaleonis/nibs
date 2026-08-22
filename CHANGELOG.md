@@ -11,6 +11,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 - **`nibs --version`** alongside the `version` subcommand, printing the same build identity.
 - **`nibs check` names illegal parent nests** — each parent/type combination the hierarchy rules refuse is reported with the file, both types and the allowed parents; `--fix` refuses, since re-parenting is not provable intent.
 - **The three axis keys `milestone:`, `milestone_order:` and `area:` are modeled front-matter keys** — `milestone:` resolves and re-resolves like `parent:`, a mistyped spelling such as `milestone-order:` is named by `nibs check`, and a malformed value now fails parse instead of hiding among unknown keys.
+- **Work is assigned to a milestone and ordered within its queue** — `nibs set --milestone` assigns (never a nib and one of its ancestors both), `nibs list --milestone`/`--backlog` read a queue and the unscheduled remainder, and `nibs mv --queue` repositions one entry by rewriting one file.
+- **`nibs next`** — the first startable nib the active milestone's queue leads to, shown with the path it was reached by, exiting 0 whether or not it found one.
+- **Completing or scrapping a milestone is refused while open work is still assigned to it** — `--move-open-to <milestone>` or `--unassign-open` dispose of the queue, deferring keeps it, and `nibs check` names a milestone already closed over a live one.
 
 ### Changed
 - **BREAKING: Epic tops the work tree** — epics and milestones no longer take parents, nothing parents under a milestone, and a milestone carrying `milestone:` or `area:` is refused on write and named by `nibs check`.

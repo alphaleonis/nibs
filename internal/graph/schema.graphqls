@@ -121,10 +121,25 @@ type Mutation {
   removeBlockedBy(id: ID!, targetId: ID!, ifMatch: String): Nib!
 
   """
-  Reorder a nib among its siblings. Exactly one positioning flag required.
-  Optional parentId reparents the nib before reordering (atomic cross-parent move).
+  Reorder a nib within one ordering scope. Exactly one positioning flag
+  required; the anchor must be a member of the same group.
+
+  scope selects the axis: PARENT (the default) repositions the nib among its
+  siblings by order, and MILESTONE repositions it within its milestone queue by
+  milestoneOrder — a queue move rewrites the subject's own queue key, and once
+  every member of the queue carries one, no other file; a member without a key
+  is keyed once, as a side effect of the first move that reads the queue (the
+  same lazy backfill the PARENT scope performs on an unkeyed sibling). In the
+  MILESTONE scope the subject must be assigned to a milestone (an unassigned
+  nib has no queue position) and the anchor must sit in the same queue; both
+  are refused with a validation error.
+
+  Optional parentId reparents the nib before reordering (atomic cross-parent
+  move). It belongs to the PARENT scope only: a queue move takes no container
+  change, so parentId with scope MILESTONE is refused — reassign through
+  updateNib's milestone field instead.
   """
-  reorderNib(id: ID!, afterId: ID, beforeId: ID, first: Boolean, parentId: String, ifMatch: String): Nib!
+  reorderNib(id: ID!, afterId: ID, beforeId: ID, first: Boolean, parentId: String, ifMatch: String, scope: OrderScope! = PARENT): Nib!
 
   """
   Reorder the full set of children under a parent. childIds must list exactly
@@ -299,8 +314,30 @@ input UpdateNibInput {
   Set the parent nib ID (validated against the type hierarchy). Explicit null
   OR empty string clears the parent (moves the nib to root); omit to leave it
   unchanged.
+
+  A reparent also honors assignment exclusivity: when the nib or any nib in
+  its subtree is assigned to a milestone AND the new parent or any of its
+  ancestors is too, the move is refused naming both nibs — a nib and one of
+  its ancestors are never both assigned.
   """
   parent: String
+  """
+  Set the milestone assignment — the scheduling axis. The target must exist
+  and be milestone-typed; a missing target or one of any other type is
+  refused naming why. Exclusivity along the parent chain is enforced: the
+  assignment is refused when any ancestor or any descendant of the nib is
+  already assigned, naming the conflicting nib. A milestone-typed subject is
+  refused (a waypoint is not work and takes no assignment).
+
+  On assignment the nib enters the target's queue at the default placement
+  (last), and a reassignment re-enters the new queue the same way — the queue
+  key is never carried from one queue to another. Explicit null OR empty
+  string clears the assignment and the queue key with it; omit to leave both
+  unchanged. An update carrying both a parent and a milestone change is judged
+  on the state it leaves: a clear of either axis opens the way for the other,
+  and an assignment is checked against the chain the nib will sit on.
+  """
+  milestone: String
   "Add nibs to blocking list (validates cycles and existence)"
   addBlocking: [String!]
   "Remove nibs from blocking list"
@@ -385,6 +422,27 @@ type Nib {
   documents: [String!]!
   "Order key for sorting among siblings (fractional index)"
   order: String!
+  """
+  Milestone assignment as stored: the id in the nib's `milestone:` field, or
+  empty when unassigned. This is the scheduling axis — membership in a
+  milestone's queue derives from this field alone, never from the parent
+  chain's types. Reported verbatim: an assignment naming a missing or
+  non-milestone nib is dropped by every membership view (known gap, tracked
+  as nibs-4h8f) but still appears here, so a broken assignment stays
+  diagnosable.
+  """
+  milestone: String!
+  """
+  Fractional queue key: the nib's position in its milestone queue, with the
+  same key grammar as order but scoped to the queue instead of the sibling
+  group. Empty when the nib has never been placed in a queue.
+  """
+  milestoneOrder: String!
+  """
+  Area path the nib belongs to (e.g. "web/ui") — a plain path-valued string,
+  never a nib id. Empty when unset.
+  """
+  area: String!
 
   # Direct link fields
   """
@@ -506,13 +564,13 @@ input NibFilter {
   Concretely, on the top-level nibs query: the term alone is capped, and so is
   the term alongside any of the list and tri-state facets — status, excludeStatus,
   type, excludeType, priority, excludePriority, estimate, excludeEstimate, tags,
-  excludeTags, hasParent, hasBlocking, isBlocked, hasBlockedBy. None of those
-  names a nib, so the population they narrow is still the store. Combining the
-  term with a field that DOES name one — parentId, ancestorId, descendantId,
-  siblingId, blockingId, blockedById, mentionsId, mentionedById — makes the read
-  uncapped. Every relationship field (children, blockedBy, blocking, mentions,
-  mentionedBy) is uncapped for the same reason: the relation it names is the
-  bound.
+  excludeTags, hasParent, hasBlocking, isBlocked, hasBlockedBy, noMilestone.
+  None of those names a nib, so the population they narrow is still the store.
+  Combining the term with a field that DOES name one — parentId, ancestorId,
+  descendantId, siblingId, blockingId, blockedById, mentionsId, mentionedById,
+  milestone — makes the read uncapped. Every relationship field (children,
+  blockedBy, blocking, mentions, mentionedBy) is uncapped for the same reason:
+  the relation it names is the bound.
 
   So `nibs(filter: {search: q, parentId: X})` and
   `nib(id: X) { children(filter: {search: q}) }` agree on the MATCHES. They are
@@ -707,6 +765,60 @@ input NibFilter {
   VALIDATION_ERROR (exit 2). Omit the field to leave it unfiltered.
   """
   mentionedById: String
+  """
+  Include only the milestone's queue: nibs whose `milestone:` assignment
+  RESOLVES to this milestone. Resolution is the membership rule the ordering
+  engine's queue scope also groups by — the stored id must name an existing,
+  milestone-typed nib to count, so a dangling assignment matches nothing
+  (known gap, tracked as nibs-4h8f: such an assignment is dropped silently
+  rather than flagged). Resolution checks the target's type, never the
+  assignee's: a milestone-typed nib hand-edited to carry an assignment — a
+  shape the write path refuses — is in this set even though noMilestone's
+  derived reading keeps it in the backlog set. This is DIRECT assignment
+  only: the structural children of an assigned nib are planned work in the
+  derived sense noMilestone reads, but they are not in this set.
+
+  An id naming no nib is refused with a NOT_FOUND error rather than matching
+  nothing, so a mistyped or stale id stays distinguishable from a genuine empty
+  result. An empty string is refused as a malformed argument: it names no nib
+  and never could. Unlike the not-found refusal above it carries no
+  extensions.code, so a GraphQL client sees a generic error; the CLI reports
+  VALIDATION_ERROR (exit 2). An id naming an existing NON-milestone nib is
+  refused the same way, naming the nib's actual type: no assignment can resolve
+  to it, so an empty answer would read as "this milestone has no members" for
+  an id that names no milestone — the mistake updateNib's milestone field
+  refuses with a message of the same shape. Omit the field to leave it
+  unfiltered.
+  """
+  milestone: String
+  """
+  Tri-state over DERIVED milestone membership: true keeps the backlog — nibs
+  with neither an own resolved assignment nor one anywhere up the structural
+  parent chain, so a child of an assigned epic is planned work and NOT in
+  this set. false keeps the complement: on data the write path accepts,
+  exactly the nibs some milestone's queue transitively contains. Null does
+  not filter.
+
+  Milestone-typed nibs belong to no milestone themselves — a milestone is a
+  container, not a member — so they sit in the true set; combine with
+  excludeType: ["milestone"] to keep them out. A dangling or non-milestone
+  assignment schedules nothing and leaves the nib in the true set. A
+  milestone-typed nib hand-edited to carry an assignment — a shape the write
+  path refuses — also sits in the true set here while the milestone filter's
+  resolved-assignment reading places it in that milestone's queue set.
+  """
+  noMilestone: Boolean
+}
+
+"""
+The ordering axis a reorder runs on. PARENT is the sibling order under one
+resolved parent (the order key); MILESTONE is the milestone queue the nib's
+assignment resolves to (the milestoneOrder key). The two are isolated: a move
+in one scope never touches the other scope's key.
+"""
+enum OrderScope {
+  PARENT
+  MILESTONE
 }
 
 """
@@ -714,6 +826,7 @@ Sort field for nib queries
 """
 enum NibSortField {
   ORDER
+  MILESTONE_ORDER
   CREATED_AT
   UPDATED_AT
   TITLE

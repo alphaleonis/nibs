@@ -193,6 +193,49 @@ export type NibFilter = {
    */
   mentionsId?: string | null | undefined;
   /**
+   * Include only the milestone's queue: nibs whose `milestone:` assignment
+   * RESOLVES to this milestone. Resolution is the membership rule the ordering
+   * engine's queue scope also groups by — the stored id must name an existing,
+   * milestone-typed nib to count, so a dangling assignment matches nothing
+   * (known gap, tracked as nibs-4h8f: such an assignment is dropped silently
+   * rather than flagged). Resolution checks the target's type, never the
+   * assignee's: a milestone-typed nib hand-edited to carry an assignment — a
+   * shape the write path refuses — is in this set even though noMilestone's
+   * derived reading keeps it in the backlog set. This is DIRECT assignment
+   * only: the structural children of an assigned nib are planned work in the
+   * derived sense noMilestone reads, but they are not in this set.
+   *
+   * An id naming no nib is refused with a NOT_FOUND error rather than matching
+   * nothing, so a mistyped or stale id stays distinguishable from a genuine empty
+   * result. An empty string is refused as a malformed argument: it names no nib
+   * and never could. Unlike the not-found refusal above it carries no
+   * extensions.code, so a GraphQL client sees a generic error; the CLI reports
+   * VALIDATION_ERROR (exit 2). An id naming an existing NON-milestone nib is
+   * refused the same way, naming the nib's actual type: no assignment can resolve
+   * to it, so an empty answer would read as "this milestone has no members" for
+   * an id that names no milestone — the mistake updateNib's milestone field
+   * refuses with a message of the same shape. Omit the field to leave it
+   * unfiltered.
+   */
+  milestone?: string | null | undefined;
+  /**
+   * Tri-state over DERIVED milestone membership: true keeps the backlog — nibs
+   * with neither an own resolved assignment nor one anywhere up the structural
+   * parent chain, so a child of an assigned epic is planned work and NOT in
+   * this set. false keeps the complement: on data the write path accepts,
+   * exactly the nibs some milestone's queue transitively contains. Null does
+   * not filter.
+   *
+   * Milestone-typed nibs belong to no milestone themselves — a milestone is a
+   * container, not a member — so they sit in the true set; combine with
+   * excludeType: ["milestone"] to keep them out. A dangling or non-milestone
+   * assignment schedules nothing and leaves the nib in the true set. A
+   * milestone-typed nib hand-edited to carry an assignment — a shape the write
+   * path refuses — also sits in the true set here while the milestone filter's
+   * resolved-assignment reading places it in that milestone's queue set.
+   */
+  noMilestone?: boolean | null | undefined;
+  /**
    * Include only nibs with this specific parent ID.
    *
    * Matches on the RESOLVED parent, the same reading the parentId field and
@@ -275,13 +318,13 @@ export type NibFilter = {
    * Concretely, on the top-level nibs query: the term alone is capped, and so is
    * the term alongside any of the list and tri-state facets — status, excludeStatus,
    * type, excludeType, priority, excludePriority, estimate, excludeEstimate, tags,
-   * excludeTags, hasParent, hasBlocking, isBlocked, hasBlockedBy. None of those
-   * names a nib, so the population they narrow is still the store. Combining the
-   * term with a field that DOES name one — parentId, ancestorId, descendantId,
-   * siblingId, blockingId, blockedById, mentionsId, mentionedById — makes the read
-   * uncapped. Every relationship field (children, blockedBy, blocking, mentions,
-   * mentionedBy) is uncapped for the same reason: the relation it names is the
-   * bound.
+   * excludeTags, hasParent, hasBlocking, isBlocked, hasBlockedBy, noMilestone.
+   * None of those names a nib, so the population they narrow is still the store.
+   * Combining the term with a field that DOES name one — parentId, ancestorId,
+   * descendantId, siblingId, blockingId, blockedById, mentionsId, mentionedById,
+   * milestone — makes the read uncapped. Every relationship field (children,
+   * blockedBy, blocking, mentions, mentionedBy) is uncapped for the same reason:
+   * the relation it names is the bound.
    *
    * So `nibs(filter: {search: q, parentId: X})` and
    * `nib(id: X) { children(filter: {search: q}) }` agree on the MATCHES. They are
@@ -344,9 +387,31 @@ export type UpdateNibInput = {
   /** ETag for optimistic concurrency control (optional) */
   ifMatch?: string | null | undefined;
   /**
+   * Set the milestone assignment — the scheduling axis. The target must exist
+   * and be milestone-typed; a missing target or one of any other type is
+   * refused naming why. Exclusivity along the parent chain is enforced: the
+   * assignment is refused when any ancestor or any descendant of the nib is
+   * already assigned, naming the conflicting nib. A milestone-typed subject is
+   * refused (a waypoint is not work and takes no assignment).
+   *
+   * On assignment the nib enters the target's queue at the default placement
+   * (last), and a reassignment re-enters the new queue the same way — the queue
+   * key is never carried from one queue to another. Explicit null OR empty
+   * string clears the assignment and the queue key with it; omit to leave both
+   * unchanged. An update carrying both a parent and a milestone change is judged
+   * on the state it leaves: a clear of either axis opens the way for the other,
+   * and an assignment is checked against the chain the nib will sit on.
+   */
+  milestone?: string | null | undefined;
+  /**
    * Set the parent nib ID (validated against the type hierarchy). Explicit null
    * OR empty string clears the parent (moves the nib to root); omit to leave it
    * unchanged.
+   *
+   * A reparent also honors assignment exclusivity: when the nib or any nib in
+   * its subtree is assigned to a milestone AND the new parent or any of its
+   * ancestors is too, the move is refused naming both nibs — a nib and one of
+   * its ancestors are never both assigned.
    */
   parent?: string | null | undefined;
   /**

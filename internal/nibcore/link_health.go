@@ -9,6 +9,7 @@ import (
 	"strings"
 
 	"github.com/alphaleonis/nibs/internal/fsutil"
+	"github.com/alphaleonis/nibs/internal/membership"
 	"github.com/alphaleonis/nibs/internal/nib"
 	"github.com/alphaleonis/nibs/internal/nibtypes"
 )
@@ -124,6 +125,62 @@ type InvalidHierarchy struct {
 	Reason string `json:"reason"`
 }
 
+// AssignmentConflict is a loaded nib assigned to a milestone while one of its
+// structural ancestors is assigned too — the shape decision 1.2 rules out (a
+// nib and one of its ancestors are never both assigned; files are the whole
+// planning truth and membership is derived, never inherited). The rule is
+// strict on the write paths that assign or reparent, so an offender reaches
+// the store only through a hand edit or data that predates the rule, and it
+// then loads, lists and schedules like any other nib — counted in BOTH queues.
+// This finding is the one surface that names the pair. One finding per nib,
+// naming its NEAREST assigned ancestor; a deeper conflict shows up as that
+// ancestor's own finding.
+type AssignmentConflict struct {
+	NibID string `json:"nib_id"`
+	// Path is relative to the nibs root with forward slashes, like nib.Path.
+	Path string `json:"path"`
+	// Milestone is the resolved full id of the nib's own assignment.
+	Milestone string `json:"milestone"`
+	// AncestorID is the nearest assigned ancestor's full id, and
+	// AncestorMilestone the resolved full id of ITS assignment.
+	AncestorID        string `json:"ancestor_id"`
+	AncestorMilestone string `json:"ancestor_milestone"`
+}
+
+// ClosedMilestoneQueue is a loaded MILESTONE carrying a status that RELEASES
+// its dependents (config.StatusReleasesDependents — today completed and
+// scrapped) while open work is still assigned to its queue: decision 1.5's
+// refusal, standing in the store as a fact rather than as a rejected write.
+//
+// The CLOSING transition is refused on every client — `nibs close`'s gate
+// (cmd/close_queue.go) and updateNib's backstop (graph.MilestoneQueueOpenError),
+// covering the CLI, the web, the TUI and `nibs graphql`. The state is NOT
+// unreachable, though, and this finding is not here only for hand edits and
+// pre-rule data: the ASSIGNMENT door is still open, since assigning work to an
+// already-closed milestone checks the target's type and never its status
+// (nibs-l5df). So ordinary use still lands it, from the other side.
+//
+// It then loads, lists and schedules like any other nib, and the queue keeps
+// carrying work planned for a wave that has finished. This finding is the one
+// surface that names it — and, while a door stays open, the only one that can:
+// a refusal only ever sees the write it refuses, never the state that write
+// leaves behind by another route.
+//
+// Deferred is not an offense on EITHER side, and for two different reasons: a
+// deferred MILESTONE holds its queue on purpose (a parked wave is coming back),
+// and a deferred MEMBER is closed and so does not hold the milestone open.
+type ClosedMilestoneQueue struct {
+	NibID string `json:"nib_id"`
+	// Path is relative to the nibs root with forward slashes, like nib.Path.
+	Path string `json:"path"`
+	// Status is the releasing status the milestone carries.
+	Status string `json:"status"`
+	// Open is the open queue entries' full ids, in queue order — the same set
+	// and the same order graph.OpenQueueEntries yields, so the report and the
+	// refusal name one set.
+	Open []string `json:"open"`
+}
+
 // NearMissKey is a loaded nib carrying an unknown front-matter key whose
 // spelling is a near miss of a modeled key (a dash for the underscore, a case
 // variant, stray underscores — the rule is nib.ModeledKeyResembling's). The
@@ -171,9 +228,23 @@ type LinkCheckResult struct {
 	// function carries it.
 	InvalidHierarchies []InvalidHierarchy `json:"invalid_hierarchies"`
 
+	// Assignment integrity. Derivable from the nibs alone (exclusivity along
+	// the parent chain needs only the links and the prefix already threaded
+	// in), so the pure map function carries it.
+	AssignmentConflicts []AssignmentConflict `json:"assignment_conflicts"`
+
 	// Key integrity. Derivable from the nibs alone (the modeled key set is a
 	// compile-time fact of the nib package), so the pure map function carries it.
 	NearMissKeys []NearMissKey `json:"near_miss_keys"`
+
+	// Queue integrity. Populated only by Core.CheckAllLinks — which statuses
+	// close and which release their dependents is the config's answer
+	// (Config.IsClosedStatus / Config.StatusReleasesDependents), the same
+	// reason InvalidEnums is filled there. The derivation itself is pure and
+	// lives in closedMilestoneQueuesInMap; only the two role predicates are
+	// threaded in, exactly as the blocking queries thread
+	// releasesDependentsPredicate, so nibcore keeps no status list of its own.
+	ClosedMilestoneQueues []ClosedMilestoneQueue `json:"closed_milestone_queues"`
 }
 
 // HasIssues returns true if any issues were found.
@@ -183,7 +254,7 @@ func (r *LinkCheckResult) HasIssues() bool {
 
 // TotalIssues returns the total count of all issues.
 func (r *LinkCheckResult) TotalIssues() int {
-	return len(r.BrokenLinks) + len(r.SelfLinks) + len(r.Cycles) + len(r.BrokenDocuments) + r.LoadIssues() + r.EnumIssues() + r.AxisIssues() + r.HierarchyIssues() + r.NearMissIssues()
+	return len(r.BrokenLinks) + len(r.SelfLinks) + len(r.Cycles) + len(r.BrokenDocuments) + r.LoadIssues() + r.EnumIssues() + r.AxisIssues() + r.HierarchyIssues() + r.AssignmentIssues() + r.NearMissIssues() + r.QueueIssues()
 }
 
 // LoadIssues returns the count of load-time integrity issues alone. Callers
@@ -212,10 +283,22 @@ func (r *LinkCheckResult) HierarchyIssues() int {
 	return len(r.InvalidHierarchies)
 }
 
+// AssignmentIssues returns the count of assignment-exclusivity findings alone,
+// for the same render-them-apart reason as LoadIssues.
+func (r *LinkCheckResult) AssignmentIssues() int {
+	return len(r.AssignmentConflicts)
+}
+
 // NearMissIssues returns the count of near-miss key findings alone, for the
 // same render-them-apart reason as LoadIssues.
 func (r *LinkCheckResult) NearMissIssues() int {
 	return len(r.NearMissKeys)
+}
+
+// QueueIssues returns the count of closed-milestone-queue findings alone, for
+// the same render-them-apart reason as LoadIssues.
+func (r *LinkCheckResult) QueueIssues() int {
+	return len(r.ClosedMilestoneQueues)
 }
 
 // CheckAllLinksInMap validates all links across all nibs.
@@ -244,16 +327,18 @@ func (r *LinkCheckResult) NearMissIssues() int {
 // holds, which is what `--fix` would drop.
 func CheckAllLinksInMap(nibs map[string]*nib.Nib, projectRoot, configPrefix string) *LinkCheckResult {
 	result := &LinkCheckResult{
-		BrokenLinks:        []BrokenLink{},
-		SelfLinks:          []SelfLink{},
-		Cycles:             []Cycle{},
-		BrokenDocuments:    []BrokenDocument{},
-		UnparseableFiles:   []UnparseableFile{},
-		DuplicateIDs:       []DuplicateID{},
-		InvalidEnums:       []InvalidEnum{},
-		InvalidAxes:        []InvalidAxis{},
-		InvalidHierarchies: []InvalidHierarchy{},
-		NearMissKeys:       []NearMissKey{},
+		BrokenLinks:           []BrokenLink{},
+		SelfLinks:             []SelfLink{},
+		Cycles:                []Cycle{},
+		BrokenDocuments:       []BrokenDocument{},
+		UnparseableFiles:      []UnparseableFile{},
+		DuplicateIDs:          []DuplicateID{},
+		InvalidEnums:          []InvalidEnum{},
+		InvalidAxes:           []InvalidAxis{},
+		InvalidHierarchies:    []InvalidHierarchy{},
+		AssignmentConflicts:   []AssignmentConflict{},
+		NearMissKeys:          []NearMissKey{},
+		ClosedMilestoneQueues: []ClosedMilestoneQueue{},
 	}
 
 	// Check for broken links and self-references
@@ -378,6 +463,38 @@ func CheckAllLinksInMap(nibs map[string]*nib.Nib, projectRoot, configPrefix stri
 				}
 			}
 		}
+		// Assignment integrity: exclusivity along the parent chain is strict
+		// only on the write paths that assign or reparent, so an assigned nib
+		// under an assigned ancestor reaches the store by hand edit or from
+		// data predating the rule, and is then scheduled in both queues. The
+		// walk reads RESOLVED assignments — the target must exist and be
+		// milestone-typed, membership.ResolvedMilestoneID's rule, which is
+		// also what the write path judges — so a dangling or non-milestone
+		// assignment (a broken link, or nibs-4h8f's silent drop) conflicts
+		// with nothing. Parents resolve the way every link check resolves
+		// them, and a visited set bounds the walk on a hand-edited cycle.
+		if ms := resolvedMilestoneInMap(nibs, b, configPrefix); ms != "" {
+			visited := map[string]bool{b.ID: true}
+			for cur := b; cur.Parent != ""; {
+				parentID, ok := normalizeIDInMap(nibs, cur.Parent, configPrefix)
+				if !ok || visited[parentID] {
+					break
+				}
+				visited[parentID] = true
+				parent := nibs[parentID]
+				if ancestorMS := resolvedMilestoneInMap(nibs, parent, configPrefix); ancestorMS != "" {
+					result.AssignmentConflicts = append(result.AssignmentConflicts, AssignmentConflict{
+						NibID:             b.ID,
+						Path:              b.Path,
+						Milestone:         ms,
+						AncestorID:        parent.ID,
+						AncestorMilestone: ancestorMS,
+					})
+					break
+				}
+				cur = parent
+			}
+		}
 		// Key integrity: an Extra key spelled a near miss from a modeled key
 		// (nib.ModeledKeyResembling's rule) loads losslessly but is invisible to
 		// every filter, so it is reported here.
@@ -399,6 +516,92 @@ func CheckAllLinksInMap(nibs map[string]*nib.Nib, projectRoot, configPrefix stri
 	}
 
 	return result
+}
+
+// resolvedMilestoneInMap is membership.ResolvedMilestoneID's rule over the
+// map: b's `milestone:` target when it resolves (exact id, then the prefix
+// prepended) to a milestone-typed nib, "" otherwise.
+func resolvedMilestoneInMap(nibs map[string]*nib.Nib, b *nib.Nib, configPrefix string) string {
+	if b.Milestone == "" {
+		return ""
+	}
+	targetID, ok := normalizeIDInMap(nibs, b.Milestone, configPrefix)
+	if !ok {
+		return ""
+	}
+	target := nibs[targetID]
+	if target == nil || target.EffectiveType() != "milestone" {
+		return ""
+	}
+	return targetID
+}
+
+// closedMilestoneQueuesInMap derives every ClosedMilestoneQueue finding over the
+// map: each milestone whose status releases its dependents, paired with the
+// open work still assigned to it.
+//
+// It is graph.OpenQueueEntries' rule read over a different substrate — DIRECT
+// assignees only (work belonging to the milestone through an assigned ancestor
+// carries no assignment of its own), milestone-typed members skipped, queue
+// order from nib.SortByMilestoneOrder. A report naming a wider or narrower set
+// than the refusal would send a reader to repair something no write surface
+// objects to.
+//
+// Which is why the assignment is resolved by calling membership.ResolvedMilestoneID
+// itself rather than by restating its clauses: that is the function both refusals
+// reach through OpenQueueEntries -> View.DirectMembers, so the three answers agree
+// by construction rather than by two prose descriptions staying in step. Hence no
+// configPrefix parameter — expanding a shorthand id here would part this function
+// from the refusals it exists to mirror.
+//
+// The agreement is what is guaranteed; it is NOT a claim that a shorthand id is
+// inert system-wide. ResolvedMilestoneID has no rule of its own — it answers
+// through the Lookup its caller supplies, and Compute's is an exact byID map
+// while the ordering engine, the milestone filter and cmd/close.go pass a
+// Reader.Get-backed closure, which DOES prefix-expand (nibcore.Core.Get).
+//
+// Nor is this guarding an observed defect: Core.Load canonicalizes link ids in
+// memory before any of this runs, so CheckAllLinks is handed assignments already
+// in full form and a store cannot in practice present the divergent case. This
+// couples a pure function to the rule it mirrors so the two cannot drift apart
+// later; it changes no reported finding today.
+// Pinned by TestClosedMilestoneQueueAgreesWithMembership.
+//
+// isClosed and releasesDependents are supplied by the caller because this is a
+// pure function over a map and cannot reach the project config itself, the same
+// arrangement isBlockedInMap has. The two are NOT interchangeable: a deferred
+// member is closed and does not hold its milestone open, while a deferred
+// milestone releases nothing and is no offense at all.
+//
+// Findings come back sorted by milestone id, since map order would shuffle the
+// report run to run.
+func closedMilestoneQueuesInMap(nibs map[string]*nib.Nib, isClosed, releasesDependents func(string) bool) []ClosedMilestoneQueue {
+	lookup := func(id string) *nib.Nib { return nibs[id] }
+	open := make(map[string][]*nib.Nib)
+	for _, b := range nibs {
+		if b.EffectiveType() == "milestone" || isClosed(b.Status) {
+			continue
+		}
+		if ms := membership.ResolvedMilestoneID(b, lookup); ms != "" {
+			open[ms] = append(open[ms], b)
+		}
+	}
+
+	var findings []ClosedMilestoneQueue
+	for id, members := range open {
+		m := nibs[id]
+		if !releasesDependents(m.Status) {
+			continue
+		}
+		nib.SortByMilestoneOrder(members)
+		ids := make([]string, len(members))
+		for i, b := range members {
+			ids[i] = b.ID
+		}
+		findings = append(findings, ClosedMilestoneQueue{NibID: m.ID, Path: m.Path, Status: m.Status, Open: ids})
+	}
+	sort.Slice(findings, func(i, j int) bool { return findings[i].NibID < findings[j].NibID })
+	return findings
 }
 
 // CheckAllLinks validates all links across all nibs and adds the load-time
@@ -436,6 +639,12 @@ func (c *Core) CheckAllLinks() *LinkCheckResult {
 			result.InvalidEnums = append(result.InvalidEnums, InvalidEnum{NibID: id, Reason: err.Error()})
 		}
 	}
+
+	// Queue integrity: same reason it is here and not in the pure map function
+	// — the status ROLES are the config's answer. The derivation stays pure;
+	// only the two predicates cross.
+	result.ClosedMilestoneQueues = append(result.ClosedMilestoneQueues,
+		closedMilestoneQueuesInMap(c.nibs, c.closedStatusPredicate(), c.releasesDependentsPredicate())...)
 	return result
 }
 

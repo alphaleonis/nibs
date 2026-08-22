@@ -197,6 +197,7 @@ func (r *mutationResolver) UpdateNib(ctx context.Context, id string, input model
 	if input.Title != nil {
 		b.Title = *input.Title
 	}
+	statusChanged := input.Status != nil && *input.Status != b.Status
 	if input.Status != nil {
 		b.Status = *input.Status
 	}
@@ -222,6 +223,28 @@ func (r *mutationResolver) UpdateNib(ctx context.Context, id string, input model
 		}
 	}
 
+	// The milestone assignment's three-way wire reading — omitted leaves it,
+	// null or "" clears it, an id assigns — is read here, above the axis check,
+	// because a CLEAR's FIELD effect belongs to the state this request leaves:
+	// one call carrying both a type change to milestone and a clear ends valid,
+	// and preValidateSubject must judge that state rather than the stale
+	// pre-write assignment. Only the field effect moves up. The write-capable
+	// half of a clear — Orderer.Recalculate, which drops the queue key — stays
+	// in the milestone block below, after the guards that exist to precede
+	// every foreign write. An ASSIGNMENT is not pre-applied: it is judged by
+	// validateAndSetMilestone against the chain the nib will sit on, which the
+	// parent block has not yet settled here.
+	milestoneSet, newMilestone := false, ""
+	if m, ok := input.Milestone.ValueOK(); ok {
+		milestoneSet = true
+		if m != nil {
+			newMilestone = *m
+		}
+	}
+	if milestoneSet && newMilestone == "" {
+		b.Milestone = ""
+	}
+
 	// Everything above assigns to b, the owned clone, and reads nothing off disk.
 	// Every step BELOW can reach a write to another nib's file, so the subject's
 	// write-free guards run here — a doomed update must not leave a durable edit on
@@ -234,6 +257,38 @@ func (r *mutationResolver) UpdateNib(ctx context.Context, id string, input model
 	// none. See preValidateSubject for the window Writer.Update still owns.
 	if err := r.preValidateSubject(b, input.IfMatch); err != nil {
 		return nil, err
+	}
+
+	// Decision 1.5 at the model boundary, and the reason it is HERE rather than
+	// inside preValidateSubject is a correctness requirement, not a preference:
+	// `nibs close` calls PreValidateSubject BEFORE its dispositions drain the
+	// queue (closePreValidateSubject), so a guard placed there would refuse the
+	// very escapes that exist to answer this refusal. It also reads store state,
+	// which everything in that function deliberately does not — the axis rule
+	// sits there precisely because it is pure. What it shares with that function
+	// is only the obligation this position satisfies: run before any foreign
+	// write.
+	//
+	// Gated on the status actually CHANGING, not merely being supplied, because
+	// the invariant is about CLOSING a milestone. The web edit form sends `status`
+	// on every save, so a title-only edit arrives carrying the value the nib
+	// already holds; refusing that would make a milestone that already sits on a
+	// releasing status over a live queue permanently uneditable from the web, in
+	// the name of a close nobody asked for — and unfixable through the surface
+	// most likely to be fixing it. The standing offense is `nibs check`'s to
+	// report (nibcore's ClosedMilestoneQueue finding), not this write's to block.
+	// Revising one releasing reason to another IS a close and is still refused.
+	//
+	// Same distinction, same reason, as the effective-type check just below —
+	// but a RAW comparison is right here where that one needs EffectiveType().
+	// Status has no normalizing accessor: a status-less nib carries "" and the
+	// Nib.status field hands back that same "", so a form echoes what it read and
+	// no no-op can disguise itself as a change. ("" also releases nothing, so a
+	// status-less milestone never reaches the guard at all.)
+	if statusChanged {
+		if err := r.refuseClosingFullQueue(ctx, b); err != nil {
+			return nil, err
+		}
 	}
 
 	if input.Type != nil {
@@ -352,6 +407,24 @@ func (r *mutationResolver) UpdateNib(ctx context.Context, id string, input model
 		b.Documents = newDocs
 	}
 
+	// A request carrying BOTH a parent and a milestone change is judged on the
+	// state it leaves, and each exclusivity check reads the other axis off the
+	// clone — so the two blocks are ordered by which one has to see the other's
+	// result: a clear runs BEFORE the parent block (the parent block then judges
+	// the move against a nib that carries no assignment, rather than refusing it
+	// for one this request drops), an assignment runs AFTER it (judged against
+	// the chain the nib will actually sit on, not the one it leaves). Both stay
+	// before the blocking handlers like every other subject-side step. Like a
+	// parent change, a queue change recalculates the scope key, which reads the
+	// queue through Orderer.backfillKeys — the foreign write preValidateSubject
+	// above exists to precede, which is why the clear's field effect, and not
+	// this call, is what the axis check up there gets to see.
+	if milestoneSet && newMilestone == "" {
+		if err := r.validateAndSetMilestone(b, ""); err != nil {
+			return nil, err
+		}
+	}
+
 	// Handle parent relationship. parent is graphql.Omittable[*string] so the
 	// wire distinguishes three cases:
 	//   - not set (omitted)        → leave unchanged (the type-change path above
@@ -365,6 +438,12 @@ func (r *mutationResolver) UpdateNib(ctx context.Context, id string, input model
 			newParent = *p
 		}
 		if err := r.validateAndSetParent(b, newParent); err != nil {
+			return nil, err
+		}
+	}
+
+	if milestoneSet && newMilestone != "" {
+		if err := r.validateAndSetMilestone(b, newMilestone); err != nil {
 			return nil, err
 		}
 	}
@@ -627,7 +706,7 @@ func (r *mutationResolver) RemoveBlockedBy(ctx context.Context, id string, targe
 }
 
 // ReorderNib is the resolver for the reorderNib field.
-func (r *mutationResolver) ReorderNib(ctx context.Context, id string, afterID *string, beforeID *string, first *bool, parentID *string, ifMatch *string) (*nib.Nib, error) {
+func (r *mutationResolver) ReorderNib(ctx context.Context, id string, afterID *string, beforeID *string, first *bool, parentID *string, ifMatch *string, scope model.OrderScope) (*nib.Nib, error) {
 	// GetForUpdate returns an owned clone — validateAndSetParent/positionAfter/
 	// positionBefore and Writer.Update operate on it, so a rejected write never
 	// leaves the shared in-memory nib showing a phantom order/parent change.
@@ -643,17 +722,25 @@ func (r *mutationResolver) ReorderNib(ctx context.Context, id string, afterID *s
 
 	// Optional reparent: change parent before reordering (atomic cross-parent
 	// move). See ContainerChange for the wire reading — note the contrast with
-	// updateNib's omittable parent, where null is the clear.
+	// updateNib's omittable parent, where null is the clear. It belongs to the
+	// parent scope alone: a queue move changes no container, and the queue a
+	// nib sits in is set through updateNib's milestone field, so the two
+	// arguments together are a contradiction rather than a combined move.
 	if target, ok := ContainerChangeFromArg(parentID).Requested(); ok {
+		if scope == model.OrderScopeMilestone {
+			return nil, fmt.Errorf("parentId reparents within the parent scope; a milestone-queue reorder takes no container change (reassign the nib with updateNib's milestone field instead)")
+		}
 		if err := r.validateAndSetParent(b, target); err != nil {
 			return nil, err
 		}
 	}
 
-	// Move resolves b's (possibly new) parent group itself, so the set an
-	// anchor has to be found in is the same set the siblingId filter and
-	// `nibs rel --rel siblings` report for b.
-	if err := r.Orderer.Move(ScopeParent, b, pos); err != nil {
+	// Move resolves b's (possibly new) group in the requested scope itself, so
+	// the set an anchor has to be found in is the same set the siblingId filter
+	// and `nibs rel --rel siblings` report for b in the parent scope, and the
+	// milestone filter's queue in the milestone scope. The engine's memberless
+	// and wrong-queue refusals surface here as-is.
+	if err := r.Orderer.Move(scopeFromModel(scope), b, pos); err != nil {
 		return nil, err
 	}
 

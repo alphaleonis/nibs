@@ -55,13 +55,14 @@ type ComplexityRoot struct {
 		RemoveBlockedBy func(childComplexity int, id string, targetID string, ifMatch *string) int
 		RemoveBlocking  func(childComplexity int, id string, targetID string) int
 		ReorderChildren func(childComplexity int, parentID string, childIds []string, ifMatch []*model.ChildEtag) int
-		ReorderNib      func(childComplexity int, id string, afterID *string, beforeID *string, first *bool, parentID *string, ifMatch *string) int
+		ReorderNib      func(childComplexity int, id string, afterID *string, beforeID *string, first *bool, parentID *string, ifMatch *string, scope model.OrderScope) int
 		ReorderSiblings func(childComplexity int, siblingIds []string, afterID *string, beforeID *string, first *bool, ifMatch []*model.ChildEtag) int
 		SetParent       func(childComplexity int, id string, parentID *string, ifMatch *string) int
 		UpdateNib       func(childComplexity int, id string, input model.UpdateNibInput) int
 	}
 
 	Nib struct {
+		Area           func(childComplexity int) int
 		BlockedBy      func(childComplexity int, filter *model.NibFilter) int
 		BlockedByIds   func(childComplexity int) int
 		Blocking       func(childComplexity int, filter *model.NibFilter) int
@@ -77,6 +78,8 @@ type ComplexityRoot struct {
 		MentionedBy    func(childComplexity int, filter *model.NibFilter) int
 		MentionedByIds func(childComplexity int) int
 		Mentions       func(childComplexity int, filter *model.NibFilter) int
+		Milestone      func(childComplexity int) int
+		MilestoneOrder func(childComplexity int) int
 		Order          func(childComplexity int) int
 		Parent         func(childComplexity int) int
 		ParentID       func(childComplexity int) int
@@ -130,7 +133,7 @@ type MutationResolver interface {
 	RemoveBlocking(ctx context.Context, id string, targetID string) (*nib.Nib, error)
 	AddBlockedBy(ctx context.Context, id string, targetID string, ifMatch *string) (*nib.Nib, error)
 	RemoveBlockedBy(ctx context.Context, id string, targetID string, ifMatch *string) (*nib.Nib, error)
-	ReorderNib(ctx context.Context, id string, afterID *string, beforeID *string, first *bool, parentID *string, ifMatch *string) (*nib.Nib, error)
+	ReorderNib(ctx context.Context, id string, afterID *string, beforeID *string, first *bool, parentID *string, ifMatch *string, scope model.OrderScope) (*nib.Nib, error)
 	ReorderChildren(ctx context.Context, parentID string, childIds []string, ifMatch []*model.ChildEtag) ([]*nib.Nib, error)
 	ReorderSiblings(ctx context.Context, siblingIds []string, afterID *string, beforeID *string, first *bool, ifMatch []*model.ChildEtag) ([]*nib.Nib, error)
 }
@@ -290,7 +293,7 @@ func (e *executableSchema) Complexity(ctx context.Context, typeName, field strin
 			return 0, false
 		}
 
-		return e.ComplexityRoot.Mutation.ReorderNib(childComplexity, args["id"].(string), args["afterId"].(*string), args["beforeId"].(*string), args["first"].(*bool), args["parentId"].(*string), args["ifMatch"].(*string)), true
+		return e.ComplexityRoot.Mutation.ReorderNib(childComplexity, args["id"].(string), args["afterId"].(*string), args["beforeId"].(*string), args["first"].(*bool), args["parentId"].(*string), args["ifMatch"].(*string), args["scope"].(model.OrderScope)), true
 	case "Mutation.reorderSiblings":
 		if e.ComplexityRoot.Mutation.ReorderSiblings == nil {
 			break
@@ -325,6 +328,12 @@ func (e *executableSchema) Complexity(ctx context.Context, typeName, field strin
 
 		return e.ComplexityRoot.Mutation.UpdateNib(childComplexity, args["id"].(string), args["input"].(model.UpdateNibInput)), true
 
+	case "Nib.area":
+		if e.ComplexityRoot.Nib.Area == nil {
+			break
+		}
+
+		return e.ComplexityRoot.Nib.Area(childComplexity), true
 	case "Nib.blockedBy":
 		if e.ComplexityRoot.Nib.BlockedBy == nil {
 			break
@@ -440,6 +449,18 @@ func (e *executableSchema) Complexity(ctx context.Context, typeName, field strin
 		}
 
 		return e.ComplexityRoot.Nib.Mentions(childComplexity, args["filter"].(*model.NibFilter)), true
+	case "Nib.milestone":
+		if e.ComplexityRoot.Nib.Milestone == nil {
+			break
+		}
+
+		return e.ComplexityRoot.Nib.Milestone(childComplexity), true
+	case "Nib.milestoneOrder":
+		if e.ComplexityRoot.Nib.MilestoneOrder == nil {
+			break
+		}
+
+		return e.ComplexityRoot.Nib.MilestoneOrder(childComplexity), true
 	case "Nib.order":
 		if e.ComplexityRoot.Nib.Order == nil {
 			break
@@ -775,6 +796,12 @@ func (ec *executionContext) childFields_Nib(ctx context.Context, field graphql.C
 		return ec.fieldContext_Nib_documents(ctx, field)
 	case "order":
 		return ec.fieldContext_Nib_order(ctx, field)
+	case "milestone":
+		return ec.fieldContext_Nib_milestone(ctx, field)
+	case "milestoneOrder":
+		return ec.fieldContext_Nib_milestoneOrder(ctx, field)
+	case "area":
+		return ec.fieldContext_Nib_area(ctx, field)
 	case "parentId":
 		return ec.fieldContext_Nib_parentId(ctx, field)
 	case "storedParentId":
@@ -1170,6 +1197,14 @@ func (ec *executionContext) field_Mutation_reorderNib_args(ctx context.Context, 
 		return nil, err
 	}
 	args["ifMatch"] = arg5
+	arg6, err := graphql.ProcessArgField(ctx, rawArgs, "scope",
+		func(ctx context.Context, v any) (model.OrderScope, error) {
+			return ec.unmarshalNOrderScope2githubᚗcomᚋalphaleonisᚋnibsᚋinternalᚋgraphᚋmodelᚐOrderScope(ctx, v)
+		})
+	if err != nil {
+		return nil, err
+	}
+	args["scope"] = arg6
 	return args, nil
 }
 
@@ -1925,7 +1960,7 @@ func (ec *executionContext) _Mutation_reorderNib(ctx context.Context, field grap
 		},
 		func(ctx context.Context) (any, error) {
 			fc := graphql.GetFieldContext(ctx)
-			return ec.Resolvers.Mutation().ReorderNib(ctx, fc.Args["id"].(string), fc.Args["afterId"].(*string), fc.Args["beforeId"].(*string), fc.Args["first"].(*bool), fc.Args["parentId"].(*string), fc.Args["ifMatch"].(*string))
+			return ec.Resolvers.Mutation().ReorderNib(ctx, fc.Args["id"].(string), fc.Args["afterId"].(*string), fc.Args["beforeId"].(*string), fc.Args["first"].(*bool), fc.Args["parentId"].(*string), fc.Args["ifMatch"].(*string), fc.Args["scope"].(model.OrderScope))
 		},
 		nil,
 		func(ctx context.Context, selections ast.SelectionSet, v *nib.Nib) graphql.Marshaler {
@@ -2412,6 +2447,75 @@ func (ec *executionContext) _Nib_order(ctx context.Context, field graphql.Collec
 	)
 }
 func (ec *executionContext) fieldContext_Nib_order(_ context.Context, field graphql.CollectedField) (fc *graphql.FieldContext, err error) {
+	return graphql.NewScalarFieldContext("Nib", field, false, false, errors.New("field of type String does not have child fields"))
+}
+
+func (ec *executionContext) _Nib_milestone(ctx context.Context, field graphql.CollectedField, obj *nib.Nib) (ret graphql.Marshaler) {
+	return graphql.ResolveField(
+		ctx,
+		ec.OperationContext,
+		field,
+		func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+			return ec.fieldContext_Nib_milestone(ctx, field)
+		},
+		func(ctx context.Context) (any, error) {
+			return obj.Milestone, nil
+		},
+		nil,
+		func(ctx context.Context, selections ast.SelectionSet, v string) graphql.Marshaler {
+			return ec.marshalNString2string(ctx, selections, v)
+		},
+		true,
+		true,
+	)
+}
+func (ec *executionContext) fieldContext_Nib_milestone(_ context.Context, field graphql.CollectedField) (fc *graphql.FieldContext, err error) {
+	return graphql.NewScalarFieldContext("Nib", field, false, false, errors.New("field of type String does not have child fields"))
+}
+
+func (ec *executionContext) _Nib_milestoneOrder(ctx context.Context, field graphql.CollectedField, obj *nib.Nib) (ret graphql.Marshaler) {
+	return graphql.ResolveField(
+		ctx,
+		ec.OperationContext,
+		field,
+		func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+			return ec.fieldContext_Nib_milestoneOrder(ctx, field)
+		},
+		func(ctx context.Context) (any, error) {
+			return obj.MilestoneOrder, nil
+		},
+		nil,
+		func(ctx context.Context, selections ast.SelectionSet, v string) graphql.Marshaler {
+			return ec.marshalNString2string(ctx, selections, v)
+		},
+		true,
+		true,
+	)
+}
+func (ec *executionContext) fieldContext_Nib_milestoneOrder(_ context.Context, field graphql.CollectedField) (fc *graphql.FieldContext, err error) {
+	return graphql.NewScalarFieldContext("Nib", field, false, false, errors.New("field of type String does not have child fields"))
+}
+
+func (ec *executionContext) _Nib_area(ctx context.Context, field graphql.CollectedField, obj *nib.Nib) (ret graphql.Marshaler) {
+	return graphql.ResolveField(
+		ctx,
+		ec.OperationContext,
+		field,
+		func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+			return ec.fieldContext_Nib_area(ctx, field)
+		},
+		func(ctx context.Context) (any, error) {
+			return obj.Area, nil
+		},
+		nil,
+		func(ctx context.Context, selections ast.SelectionSet, v string) graphql.Marshaler {
+			return ec.marshalNString2string(ctx, selections, v)
+		},
+		true,
+		true,
+	)
+}
+func (ec *executionContext) fieldContext_Nib_area(_ context.Context, field graphql.CollectedField) (fc *graphql.FieldContext, err error) {
 	return graphql.NewScalarFieldContext("Nib", field, false, false, errors.New("field of type String does not have child fields"))
 }
 
@@ -4496,7 +4600,7 @@ func (ec *executionContext) unmarshalInputNibFilter(ctx context.Context, obj any
 		asMap[k] = v
 	}
 
-	fieldsInOrder := [...]string{"search", "status", "excludeStatus", "type", "excludeType", "priority", "excludePriority", "estimate", "excludeEstimate", "tags", "excludeTags", "hasParent", "parentId", "ancestorId", "descendantId", "siblingId", "hasBlocking", "blockingId", "isBlocked", "hasBlockedBy", "blockedById", "mentionsId", "mentionedById"}
+	fieldsInOrder := [...]string{"search", "status", "excludeStatus", "type", "excludeType", "priority", "excludePriority", "estimate", "excludeEstimate", "tags", "excludeTags", "hasParent", "parentId", "ancestorId", "descendantId", "siblingId", "hasBlocking", "blockingId", "isBlocked", "hasBlockedBy", "blockedById", "mentionsId", "mentionedById", "milestone", "noMilestone"}
 	for _, k := range fieldsInOrder {
 		v, ok := asMap[k]
 		if !ok {
@@ -4664,6 +4768,20 @@ func (ec *executionContext) unmarshalInputNibFilter(ctx context.Context, obj any
 				return it, err
 			}
 			it.MentionedByID = data
+		case "milestone":
+			ctx := graphql.WithPathContext(ctx, graphql.NewPathWithField("milestone"))
+			data, err := ec.unmarshalOString2ᚖstring(ctx, v)
+			if err != nil {
+				return it, err
+			}
+			it.Milestone = data
+		case "noMilestone":
+			ctx := graphql.WithPathContext(ctx, graphql.NewPathWithField("noMilestone"))
+			data, err := ec.unmarshalOBoolean2ᚖbool(ctx, v)
+			if err != nil {
+				return it, err
+			}
+			it.NoMilestone = data
 		}
 	}
 	return it, nil
@@ -4758,7 +4876,7 @@ func (ec *executionContext) unmarshalInputUpdateNibInput(ctx context.Context, ob
 		asMap[k] = v
 	}
 
-	fieldsInOrder := [...]string{"title", "status", "type", "priority", "estimate", "tags", "addTags", "removeTags", "body", "bodyMod", "parent", "addBlocking", "removeBlocking", "addBlockedBy", "removeBlockedBy", "documents", "addDocuments", "removeDocuments", "ifMatch"}
+	fieldsInOrder := [...]string{"title", "status", "type", "priority", "estimate", "tags", "addTags", "removeTags", "body", "bodyMod", "parent", "milestone", "addBlocking", "removeBlocking", "addBlockedBy", "removeBlockedBy", "documents", "addDocuments", "removeDocuments", "ifMatch"}
 	for _, k := range fieldsInOrder {
 		v, ok := asMap[k]
 		if !ok {
@@ -4842,6 +4960,13 @@ func (ec *executionContext) unmarshalInputUpdateNibInput(ctx context.Context, ob
 				return it, err
 			}
 			it.Parent = graphql.OmittableOf(data)
+		case "milestone":
+			ctx := graphql.WithPathContext(ctx, graphql.NewPathWithField("milestone"))
+			data, err := ec.unmarshalOString2ᚖstring(ctx, v)
+			if err != nil {
+				return it, err
+			}
+			it.Milestone = graphql.OmittableOf(data)
 		case "addBlocking":
 			ctx := graphql.WithPathContext(ctx, graphql.NewPathWithField("addBlocking"))
 			data, err := ec.unmarshalOString2ᚕstringᚄ(ctx, v)
@@ -5234,6 +5359,21 @@ func (ec *executionContext) _Nib(ctx context.Context, sel ast.SelectionSet, obj 
 			}
 		case "order":
 			out.Values[i] = ec._Nib_order(ctx, field, obj)
+			if out.Values[i] == graphql.Null {
+				atomic.AddUint32(&out.Invalids, 1)
+			}
+		case "milestone":
+			out.Values[i] = ec._Nib_milestone(ctx, field, obj)
+			if out.Values[i] == graphql.Null {
+				atomic.AddUint32(&out.Invalids, 1)
+			}
+		case "milestoneOrder":
+			out.Values[i] = ec._Nib_milestoneOrder(ctx, field, obj)
+			if out.Values[i] == graphql.Null {
+				atomic.AddUint32(&out.Invalids, 1)
+			}
+		case "area":
+			out.Values[i] = ec._Nib_area(ctx, field, obj)
 			if out.Values[i] == graphql.Null {
 				atomic.AddUint32(&out.Invalids, 1)
 			}
@@ -6517,6 +6657,16 @@ func (ec *executionContext) unmarshalNNibSortField2githubᚗcomᚋalphaleonisᚋ
 }
 
 func (ec *executionContext) marshalNNibSortField2githubᚗcomᚋalphaleonisᚋnibsᚋinternalᚋgraphᚋmodelᚐNibSortField(ctx context.Context, sel ast.SelectionSet, v model.NibSortField) graphql.Marshaler {
+	return v
+}
+
+func (ec *executionContext) unmarshalNOrderScope2githubᚗcomᚋalphaleonisᚋnibsᚋinternalᚋgraphᚋmodelᚐOrderScope(ctx context.Context, v any) (model.OrderScope, error) {
+	var res model.OrderScope
+	err := res.UnmarshalGQL(v)
+	return res, graphql.ErrorOnPath(ctx, err)
+}
+
+func (ec *executionContext) marshalNOrderScope2githubᚗcomᚋalphaleonisᚋnibsᚋinternalᚋgraphᚋmodelᚐOrderScope(ctx context.Context, sel ast.SelectionSet, v model.OrderScope) graphql.Marshaler {
 	return v
 }
 

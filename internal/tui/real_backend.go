@@ -95,7 +95,7 @@ func (b *RealBackend) DeleteNib(ctx context.Context, id string) error {
 // Reordering
 
 func (b *RealBackend) ReorderNib(ctx context.Context, id string, afterID, beforeID *string, first *bool) (*nib.Nib, error) {
-	return b.resolver.Mutation().ReorderNib(ctx, id, afterID, beforeID, first, nil, nil)
+	return b.resolver.Mutation().ReorderNib(ctx, id, afterID, beforeID, first, nil, nil, model.OrderScopeParent)
 }
 
 // Editor support

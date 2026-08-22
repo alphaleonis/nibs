@@ -78,7 +78,7 @@ func TestCheatSheetCoversTheSurface(t *testing.T) {
 	for _, want := range []string{
 		"get", "list", "rel", "new", "set", "body", "mv", "rm", "close",
 		"catalog", "cheat", "prime",
-		"context", "plan", "roadmap", // the composite views
+		"context", "plan", "roadmap", "next", // the composite views
 		"--ready", // the startable filter, the only route to it on this sheet
 		"@FILE",   // the '-'/@FILE prose-input rule
 		"{nib}", "{nibs,count,truncated}",

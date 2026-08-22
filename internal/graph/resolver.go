@@ -7,6 +7,7 @@ import (
 	"reflect"
 	"strings"
 
+	"github.com/alphaleonis/nibs/internal/graph/model"
 	"github.com/alphaleonis/nibs/internal/nib"
 	"github.com/alphaleonis/nibs/internal/nibcore"
 	"github.com/alphaleonis/nibs/internal/nibtypes"
@@ -195,11 +196,193 @@ func (r *Resolver) validateAndSetParent(b *nib.Nib, parentID string) error {
 		return fmt.Errorf("setting parent would create cycle: %v", cycle)
 	}
 
+	// Assignment exclusivity is checked only for a REAL change of parent. The
+	// type-change branch re-validates the existing parent through this same
+	// call, and a pre-existing conflict in hand-edited data must not turn every
+	// type change on such a nib into a dead end — `nibs check` names that
+	// shape; the write path refuses only the moves that would create it.
+	if normalizedParent != oldParent {
+		if err := r.checkReparentExclusivity(b, normalizedParent); err != nil {
+			return err
+		}
+	}
+
 	b.Parent = normalizedParent
 	if normalizedParent != oldParent {
 		r.Orderer.Recalculate(ScopeParent, b)
 	}
 	return nil
+}
+
+// validateAndSetMilestone validates and sets the milestone assignment — the
+// scheduling axis — and is the assignment-side mirror of validateAndSetParent.
+//
+// The target must exist and be milestone-typed (a short id normalizes like
+// every other link); the subject must be able to carry an assignment at all
+// (nibtypes.ValidateAxes: a milestone is a waypoint, not work); and decision
+// 1.2's exclusivity holds — a nib and one of its ancestors are never both
+// assigned — so an assigned ancestor or an assigned descendant refuses the
+// write, naming the conflicting nib. "Assigned" throughout is the RESOLVED
+// reading (membership.ResolvedMilestoneID): a dangling or non-milestone
+// assignment schedules nothing, so it does not conflict either.
+//
+// On a change of queue the nib re-enters the new queue at the scope's default
+// placement (last) through Orderer.Recalculate, the same hook a parent change
+// uses; the key is never carried from one queue to another. Clearing drops
+// the key with the assignment — Recalculate in the memberless group clears
+// it — so a stale queue key cannot outlive its queue.
+//
+// Caller must pass a nib it owns (a clone), not a shared Reader.Get pointer —
+// this mutates b (b.Milestone and, via Orderer.Recalculate, b.MilestoneOrder)
+// in place.
+func (r *Resolver) validateAndSetMilestone(b *nib.Nib, milestoneID string) error {
+	oldMilestone := resolvedMilestoneID(b, r.Reader)
+
+	if milestoneID == "" {
+		b.Milestone = ""
+		r.Orderer.Recalculate(ScopeMilestone, b)
+		return nil
+	}
+
+	normalized, ok := r.Reader.NormalizeID(milestoneID)
+	if !ok {
+		return fmt.Errorf("milestone nib not found: %s", milestoneID)
+	}
+	target, err := r.Reader.Get(normalized)
+	if err != nil {
+		return fmt.Errorf("milestone nib not found: %s", milestoneID)
+	}
+	if typ := target.EffectiveType(); typ != "milestone" {
+		return fmt.Errorf("milestone target %s has type %s, not milestone", normalized, typ)
+	}
+	if err := nibtypes.ValidateAxes(b.EffectiveType(), normalized, b.Area); err != nil {
+		return err
+	}
+
+	// Exclusivity along the parent chain, both directions from the subject.
+	if ancestor, ms := r.firstAssignedAncestor(b); ancestor != nil {
+		return &MilestoneExclusivityError{SubjectID: b.ID, MilestoneID: normalized,
+			Relation: "ancestor", ConflictID: ancestor.ID, ConflictMilestoneID: ms}
+	}
+	if descendant, ms := r.firstAssignedDescendant(b.ID); descendant != nil {
+		return &MilestoneExclusivityError{SubjectID: b.ID, MilestoneID: normalized,
+			Relation: "descendant", ConflictID: descendant.ID, ConflictMilestoneID: ms}
+	}
+
+	b.Milestone = normalized
+	if normalized != oldMilestone {
+		r.Orderer.Recalculate(ScopeMilestone, b)
+	}
+	return nil
+}
+
+// MilestoneExclusivityError is decision 1.2's refusal: a nib and one of its
+// ancestors are never both assigned.
+//
+// It is typed rather than a bare fmt.Errorf because it is the one assignment
+// refusal a CALLER can route around. validateAndSetMilestone's clear branch
+// returns before these two checks run, so dropping the assignment succeeds
+// exactly where assigning it fails — and `nibs close` offers --unassign-open as
+// the remedy for this class and for no other (cmd/close_queue.go's refusal
+// diagnosis). Recognizing the class by message text would make that advice a
+// guess, which is what it used to be.
+//
+// It deliberately carries no Unwrap: there is no cause underneath, and
+// mutationErrCode's trailing nib.ErrNotFound test must not be able to claim it.
+// It has no class of its own there either, so it stays validation-class, as the
+// fmt.Errorf it replaces did.
+type MilestoneExclusivityError struct {
+	SubjectID           string // the nib being assigned
+	MilestoneID         string // the milestone it was being assigned to
+	Relation            string // how ConflictID relates to it: "ancestor" or "descendant"
+	ConflictID          string // the already-assigned nib on that chain
+	ConflictMilestoneID string // the milestone THAT nib is assigned to
+}
+
+func (e *MilestoneExclusivityError) Error() string {
+	return fmt.Sprintf("cannot assign %s to milestone %s: its %s %s is already assigned to milestone %s (a nib and its ancestor are never both assigned)",
+		e.SubjectID, e.MilestoneID, e.Relation, e.ConflictID, e.ConflictMilestoneID)
+}
+
+// checkReparentExclusivity refuses a move of b under newParentID that would
+// violate assignment exclusivity: something in b's subtree (b itself first)
+// is assigned AND something on the new chain (the new parent first, then its
+// ancestors) is assigned. Called only for a real change of parent — see
+// validateAndSetParent.
+func (r *Resolver) checkReparentExclusivity(b *nib.Nib, newParentID string) error {
+	var below *nib.Nib
+	var belowMS string
+	if ms := resolvedMilestoneID(b, r.Reader); ms != "" {
+		below, belowMS = b, ms
+	} else {
+		below, belowMS = r.firstAssignedDescendant(b.ID)
+	}
+	if below == nil {
+		return nil
+	}
+	parent, err := r.Reader.Get(newParentID)
+	if err != nil {
+		return nil
+	}
+	var above *nib.Nib
+	var aboveMS string
+	if ms := resolvedMilestoneID(parent, r.Reader); ms != "" {
+		above, aboveMS = parent, ms
+	} else {
+		above, aboveMS = r.firstAssignedAncestor(parent)
+	}
+	if above == nil {
+		return nil
+	}
+	return fmt.Errorf("cannot move %s under %s: %s is assigned to milestone %s and %s is assigned to milestone %s (a nib and its ancestor are never both assigned)",
+		b.ID, newParentID, below.ID, belowMS, above.ID, aboveMS)
+}
+
+// firstAssignedAncestor walks b's resolved parent chain and returns the
+// nearest ancestor with a resolved milestone assignment, and that milestone's
+// id — or nil when no ancestor is assigned.
+func (r *Resolver) firstAssignedAncestor(b *nib.Nib) (*nib.Nib, string) {
+	for _, ancestor := range liveParentChain(b, r.Reader, map[string]bool{b.ID: true}) {
+		if ms := resolvedMilestoneID(ancestor, r.Reader); ms != "" {
+			return ancestor, ms
+		}
+	}
+	return nil, ""
+}
+
+// firstAssignedDescendant walks the structural subtree under id (breadth
+// first, cycle-safe) and returns the first nib with a resolved milestone
+// assignment, and that milestone's id — or nil when none is assigned. Children
+// are read the way the ordering engine's parent scope reads them, through the
+// reader's incoming parent links.
+func (r *Resolver) firstAssignedDescendant(id string) (*nib.Nib, string) {
+	visited := map[string]bool{id: true}
+	queue := []string{id}
+	for len(queue) > 0 {
+		cur := queue[0]
+		queue = queue[1:]
+		for _, link := range r.Reader.FindIncomingLinks(cur) {
+			if link.LinkType != "parent" || visited[link.FromNib.ID] {
+				continue
+			}
+			visited[link.FromNib.ID] = true
+			if ms := resolvedMilestoneID(link.FromNib, r.Reader); ms != "" {
+				return link.FromNib, ms
+			}
+			queue = append(queue, link.FromNib.ID)
+		}
+	}
+	return nil, ""
+}
+
+// scopeFromModel maps the wire enum onto the ordering engine's scope. The
+// switch is exhaustive over model.AllOrderScope; gqlgen refuses any other
+// value at the boundary, so the fallthrough is unreachable.
+func scopeFromModel(scope model.OrderScope) Scope {
+	if scope == model.OrderScopeMilestone {
+		return ScopeMilestone
+	}
+	return ScopeParent
 }
 
 // preValidateSubject runs the subject's write-free guards — enum validity, a
@@ -267,6 +450,33 @@ func (r *mutationResolver) preValidateSubject(b *nib.Nib, ifMatch *string) error
 		return &nibcore.ETagMismatchError{Provided: *ifMatch, Current: current}
 	}
 	return nil
+}
+
+// PreValidateSubject exposes preValidateSubject to callers outside this package
+// that make foreign writes of their OWN before the subject's mutation runs —
+// `nibs close`, whose queue dispositions rewrite a milestone's assignees before
+// the milestone itself is written. Such a caller has the same obligation
+// updateNib has (not to leave a durable edit on a nib the command never named
+// for a subject that was doomed anyway) and therefore needs the same guard set,
+// not a second one that can drift away from it: a guard added to
+// preValidateSubject must reach every foreign-write path at once.
+//
+// b carries the PENDING values of the fields this check READS — the enum
+// fields, and EffectiveType/Milestone/Area for the axis rule — applied to a
+// Clone, never to the stored nib. Validating them as read would refuse a
+// mutation whose whole purpose is to replace the offending value: updateNib
+// applies the enum fields before calling this, and `nibs close` applies the
+// status it is about to write.
+//
+// It is deliberately NOT "the nib as it will be written", which no caller can
+// supply: `nibs close` also writes a ## Summary body entry, and it cannot build
+// that until after the queue dispositions this check exists to run BEFORE. That
+// costs nothing while the guard set stays inside the fields above — none of
+// them is Body — but it bounds the invariant above: a guard added here that
+// reads a field a caller cannot prepare would silently judge that caller's
+// write on stale input, so it has to arrive with the means to prepare it.
+func (r *Resolver) PreValidateSubject(b *nib.Nib, ifMatch *string) error {
+	return (&mutationResolver{r}).preValidateSubject(b, ifMatch)
 }
 
 // validateAndAddBlocking validates and adds blocking relationships.

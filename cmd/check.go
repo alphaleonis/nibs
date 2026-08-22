@@ -311,11 +311,51 @@ func runCheck(app *App) (int, error) {
 		}
 	}
 
+	// Assignment conflicts cannot be auto-fixed either: which of the two
+	// assignments to drop — the nib's or its ancestor's — is the author's
+	// call, so clearing one is not provable intent.
+	if !checkJSON {
+		for _, ac := range linkResult.AssignmentConflicts {
+			// The path comes from the file and every id from a filename or a
+			// front-matter link, so all of them cross the rendering boundary.
+			finding := fmt.Sprintf("%s: assigned to milestone %s while its ancestor %s is assigned to milestone %s",
+				stripControlChars(ac.Path), stripControlChars(ac.Milestone),
+				stripControlChars(ac.AncestorID), stripControlChars(ac.AncestorMilestone))
+			if checkFix {
+				ui.Printf("  %s Cannot auto-fix %s: %s (which assignment to drop is not provable intent — clear one with `nibs set <id> --clear milestone`)\n",
+					ui.Warning.Render("!"), stripControlChars(ac.NibID), finding)
+			} else {
+				ui.Printf("  %s %s: %s (a nib and its ancestor are never both assigned; loads as written, so it is scheduled in both queues — clear one with `nibs set <id> --clear milestone`)\n",
+					ui.Danger.Render("✗"), stripControlChars(ac.NibID), finding)
+			}
+		}
+	}
+
+	// Closed-milestone queues cannot be auto-fixed either: disposing of a queue
+	// — reassigning the open work, dropping its assignments, or reopening the
+	// milestone — is not provable intent, the same reason re-parenting is not.
+	if !checkJSON {
+		for _, cq := range linkResult.ClosedMilestoneQueues {
+			// The path and status come from front matter and the ids from
+			// filenames, so every piece crosses the rendering boundary.
+			finding := fmt.Sprintf("%s: closed as %s while %s still assigned to its queue (%s%s)",
+				stripControlChars(cq.Path), stripControlChars(cq.Status),
+				countNibs(len(cq.Open)), strings.Join(namedIDs(cq.Open), ", "), moreThanNamed(len(cq.Open)))
+			if checkFix {
+				ui.Printf("  %s Cannot auto-fix %s: %s (disposing of a queue is not provable intent — reassign the open work with `nibs set <id> --milestone <id>`, drop the assignments with `nibs set <id> --clear milestone`, or reopen the milestone)\n",
+					ui.Warning.Render("!"), stripControlChars(cq.NibID), finding)
+			} else {
+				ui.Printf("  %s %s: %s (a milestone closed for a reason that releases its dependents holds no open work; loads as written, so the queue still plans work for a finished wave — reassign it with `nibs set <id> --milestone <id>`, or drop the assignments with `nibs set <id> --clear milestone`)\n",
+					ui.Danger.Render("✗"), stripControlChars(cq.NibID), finding)
+			}
+		}
+	}
+
 	// Show success if no issues. This speaks only for the LINK categories: a
 	// store whose only problems are load-time or field-level still has clean
-	// links, and HasIssues() covers all kinds. Hierarchy findings render under
-	// Nib Links, so they count as link issues here — deliberately not
-	// subtracted.
+	// links, and HasIssues() covers all kinds. Hierarchy, assignment and
+	// closed-queue findings render under Nib Links, so they count as link
+	// issues here — deliberately not subtracted.
 	if !checkJSON && linkResult.TotalIssues()-linkResult.LoadIssues()-linkResult.EnumIssues()-linkResult.AxisIssues()-linkResult.NearMissIssues() == 0 && fixed == 0 {
 		ui.Printf("  %s No link issues found\n", ui.Success.Render("✓"))
 	}

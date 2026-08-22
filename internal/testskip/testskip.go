@@ -77,6 +77,17 @@ var (
 	// fixture that needs an unreadable path is not buildable everywhere.
 	UnreadablePaths = Capability{Name: "unreadable paths", EnvVar: "NIBS_REQUIRE_UNREADABLE_PATHS"}
 
+	// UnwritablePaths covers a directory this process cannot create a file in.
+	// It is the write-side twin of UnreadablePaths and skips for the same two
+	// reasons: chmod denies nothing to root, and nothing at all on Windows.
+	//
+	// Counted separately rather than folded into UnreadablePaths so the tally
+	// says which capability a run actually lost — a fixture staging a failed
+	// WRITE against a readable store is a different shape from one staging an
+	// unreadable path, and a report naming the wrong one sends the next reader
+	// looking in the wrong place.
+	UnwritablePaths = Capability{Name: "unwritable paths", EnvVar: "NIBS_REQUIRE_UNWRITABLE_PATHS"}
+
 	// HostileFilenames covers a filesystem that accepts a NAME carrying control
 	// characters and bidi overrides. The deception guards need one, because the
 	// thing they prove is that a filename cannot rewrite a message that quotes

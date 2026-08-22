@@ -460,9 +460,10 @@ func newGraphQLHandler(app *App, wsPingPong time.Duration) http.Handler {
 //
 // Every other error (the enum-validation errors, ETagRequiredError,
 // OnDiskUnparseableError, a filter target that vanished mid-query, a filter
-// field given an empty id, generic failures) is left EXACTLY as the default
-// presenter formats it: no code is added, so callers can't mistake a
-// non-reconcilable failure for a retryable conflict or a real deletion.
+// field given an empty id or a nib of the wrong type, generic failures) is
+// left EXACTLY as the default presenter formats it: no code is added, so
+// callers can't mistake a non-reconcilable failure for a retryable conflict or
+// a real deletion.
 //
 // The empty-id refusal is the case where that default is a decision rather than
 // an omission. It is a malformed query — an empty id is what a client sends when

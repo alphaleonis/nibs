@@ -387,6 +387,8 @@ func resetListFlags() {
 	listIsBlocked = false
 	listMentions = ""
 	listMentionedBy = ""
+	listMilestone = ""
+	listBacklog = false
 	listReady = false
 	listAll = false
 	listOpen = false
@@ -437,6 +439,8 @@ func TestResetListFlagsClearsAllState(t *testing.T) {
 		"is-blocked":   "true",
 		"mentions":     "dirty",
 		"mentioned-by": "dirty",
+		"milestone":    "dirty",
+		"backlog":      "true",
 		"ready":        "true",
 		"all":          "true",
 		"open":         "true",

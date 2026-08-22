@@ -43,6 +43,14 @@ export interface NibFilter {
   blockedById?: string;
   mentionsId?: string;
   mentionedById?: string;
+  // Assignment axis. `milestone` selects the queue: nibs whose stored
+  // assignment resolves to that milestone (direct assignment only).
+  // `noMilestone` is tri-state over DERIVED membership: true keeps the backlog
+  // (a child of an assigned epic is planned, not backlog), false the
+  // complement. Guard-only for now — the query box does not speak these facets
+  // (QueryFilter deliberately omits them).
+  milestone?: string;
+  noMilestone?: boolean;
 }
 
 // Compile-time guard binding the hand-written NibFilter above to the codegen'd

@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"reflect"
+	"slices"
 	"sort"
 	"strings"
 	"testing"
@@ -198,12 +199,14 @@ func TestApplyFilterUnknownTargetIsNotFound(t *testing.T) {
 // per-branch guards are otherwise enforced only by review, on a surface that is
 // not settled.
 //
-// The json tag is the whole selector, and it is applied BEFORE any check on the
-// field's shape — an id-named field this test cannot drive fails here rather
-// than being skipped, so a plural or differently-typed id filter cannot be
-// exempted by accident. Search is the only other *string field and does not end
-// in "Id"; every list facet is a []string whose tag does not either. A field
-// that genuinely should not refuse has to be excepted deliberately.
+// The selector is the json tag — the "Id" suffix, plus the enumerated
+// id-valued names in idValuedNonIdNamedFields — and it is applied BEFORE any
+// check on the field's shape: an id-valued field this test cannot drive fails
+// here rather than being skipped, so a plural or differently-typed id filter
+// cannot be exempted by accident. Search is the only *string field outside the
+// selector and is not an id at all; every list facet is a []string whose tag
+// does not end in "Id" either. A field that genuinely should not refuse has to
+// be excepted deliberately.
 func TestEveryIDValuedFilterFieldHasAGuard(t *testing.T) {
 	reader := hierarchyFixture()
 	blocking := &stubBlockingChecker{}
@@ -242,18 +245,28 @@ func (f idFilterField) filterWith(value string) *model.NibFilter {
 	return filter
 }
 
-// idValuedFilterFields selects every *string field of model.NibFilter whose json
-// tag ends in "Id", which is the set every "all the id filters behave alike"
-// test derives its rows from instead of restating them. A NINTH id field shipped
-// without its guards therefore fails those tests rather than passing them by
-// omission.
+// idValuedNonIdNamedFields enumerates the id-valued filter fields whose json
+// name does not end in "Id", so the suffix rule below cannot select them.
+// milestone resolves through resolveFilterTarget exactly like the suffix-named
+// eight, but is named for the queue it selects rather than for the id that
+// selects it; listing it here enrolls it in every "all the id filters behave
+// alike" walk instead of leaving its guards to convention.
+var idValuedNonIdNamedFields = []string{"milestone"}
+
+// idValuedFilterFields selects every *string field of model.NibFilter whose
+// json tag ends in "Id" — plus the enumerated names in
+// idValuedNonIdNamedFields — which is the set every "all the id filters behave
+// alike" test derives its rows from instead of restating them. A NINTH id
+// field shipped without its guards therefore fails those tests rather than
+// passing them by omission.
 //
 // The json tag is the whole selector, and it is applied BEFORE any check on the
 // field's shape — an id-named field these tests cannot drive fails here rather
 // than being skipped, so a plural or differently-typed id filter cannot be
-// exempted by accident. Search is the only other *string field and does not end
-// in "Id"; every list facet is a []string whose tag does not either. A field
-// that genuinely should not refuse has to be excepted deliberately.
+// exempted by accident. Search is the only *string field outside the selector
+// and is not an id at all; every list facet is a []string whose tag does not
+// end in "Id" either. A field that genuinely should not refuse has to be
+// excepted deliberately.
 func idValuedFilterFields(t *testing.T) []idFilterField {
 	t.Helper()
 
@@ -262,7 +275,8 @@ func idValuedFilterFields(t *testing.T) []idFilterField {
 	for i := range filterType.NumField() {
 		field := filterType.Field(i)
 		name, _, _ := strings.Cut(field.Tag.Get("json"), ",")
-		if !strings.HasSuffix(name, "Id") && !strings.HasSuffix(name, "Ids") {
+		if !strings.HasSuffix(name, "Id") && !strings.HasSuffix(name, "Ids") &&
+			!slices.Contains(idValuedNonIdNamedFields, name) {
 			continue
 		}
 		// Shape is checked only after the NAME has selected the field. Selecting
@@ -718,7 +732,7 @@ func TestApplyFilterIDBranchesKnownAndUnknown(t *testing.T) {
 // is what the "resolves ancestry through the store" row needs.
 func hierarchyFixture() *stubReader {
 	nibs := []*nib.Nib{
-		{ID: "nibs-m1", Title: "Milestone", Status: "todo"},
+		{ID: "nibs-m1", Title: "Milestone", Type: "milestone", Status: "todo"},
 		{ID: "nibs-e1", Title: "Epic", Parent: "nibs-m1", Status: "completed"},
 		{ID: "nibs-f1", Title: "Feature", Parent: "nibs-e1", Status: "todo"},
 		{ID: "nibs-t1", Title: "Task", Parent: "nibs-f1", Status: "todo"},

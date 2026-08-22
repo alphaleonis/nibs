@@ -161,7 +161,8 @@ func hasBoundingFilter(filter *model.NibFilter) bool {
 		filter.BlockingID != nil ||
 		filter.BlockedByID != nil ||
 		filter.MentionsID != nil ||
-		filter.MentionedByID != nil
+		filter.MentionedByID != nil ||
+		filter.Milestone != nil
 }
 
 // ApplyFilter applies NibFilter to a slice of nibs and returns filtered results.
@@ -187,8 +188,8 @@ func hasBoundingFilter(filter *model.NibFilter) bool {
 // forms across resolvers within the same request will desync the cache
 // keys (keyed on the full normalized ID) and silently degrade memoization.
 //
-// Five outcomes are kept distinct, and the error return exists to separate the
-// first four from the last:
+// Six outcomes are kept distinct, and the error return exists to separate the
+// first five from the last:
 //
 //   - A filter field naming a single nib was given the empty string:
 //     *FilterTargetEmptyError, the validation class — malformed input rather
@@ -196,13 +197,17 @@ func hasBoundingFilter(filter *model.NibFilter) bool {
 //   - An id-valued field was combined with its presence twin set to false:
 //     *FilterTargetContradictionError, also the validation class — a pair no
 //     store state could satisfy.
+//   - A filter field requiring a nib of one type was given an id resolving to
+//     a nib of another (milestone naming an epic): *FilterTargetTypeError,
+//     also the validation class — the class the write path gives the same
+//     mistake.
 //   - A filter field naming a single nib was given an id no nib answers to:
 //     *FilterTargetNotFoundError, carrying nib.ErrNotFound.
 //   - A target that resolved could not then be fetched:
 //     *FilterTargetUnreadableError, deliberately not a not-found.
 //   - Nothing matched: an empty result and a nil error.
 //
-// Folding any of the three refusals into the last is what this signature exists
+// Folding any of the refusals into the last is what this signature exists
 // to prevent. "What is under nibs-abc1?" answered with an empty list is a
 // factual claim about the store, and a caller that mistyped the id cannot tell
 // it apart from the truth. An empty id is worse still: read as "unset" it drops
@@ -361,6 +366,48 @@ func ApplyFilter(ctx context.Context, nibs []*nib.Nib, filter *model.NibFilter, 
 			return nil, err
 		}
 		result = filterBySliceField(result, []string{fullID}, func(b *nib.Nib) []string { return b.BlockedBy })
+	}
+
+	// Assignment-axis filters. milestone matches the RESOLVED direct
+	// assignment — membership.ResolvedMilestoneID's reading, the one the
+	// ordering engine's queue scope groups by — so a dangling or non-milestone
+	// assignment matches nothing here exactly as it schedules nothing there.
+	// An unknown target fails the filter (shared contract for all id-valued
+	// filters), and so does a target that exists but is not milestone-typed:
+	// no assignment can resolve to it, so the empty set it would otherwise
+	// get reads as "this milestone has no members" for an id that names no
+	// milestone — the same mistake the write path refuses naming the type.
+	if filter.Milestone != nil {
+		fullID, err := resolveFilterTarget(reader, "milestone", *filter.Milestone)
+		if err != nil {
+			return nil, err
+		}
+		target, err := reader.Get(fullID)
+		if err != nil {
+			return nil, &FilterTargetUnreadableError{Field: "milestone", ID: fullID, ReaderErr: err}
+		}
+		if typ := target.EffectiveType(); typ != "milestone" {
+			return nil, &FilterTargetTypeError{Field: "milestone", ID: fullID, Got: typ, Want: "milestone"}
+		}
+		result = filterByField(result, []string{fullID}, func(b *nib.Nib) string {
+			return resolvedMilestoneID(b, reader)
+		})
+	}
+
+	// noMilestone reads DERIVED membership (membership.MilestoneOf): true is
+	// the backlog, and a child of an assigned epic is planned work rather than
+	// backlog. The View is built over the WHOLE store, not the candidate
+	// slice: an assigned ancestor outside the slice — filtered out earlier, or
+	// never in the relation — still schedules its subtree. Built once per
+	// GraphQL OPERATION via the per-operation cache — the reuse scope the
+	// membership package's live-pointer discipline permits — so relationship
+	// resolvers invoking ApplyFilter once per parent share one View instead of
+	// recomputing O(N) per parent; never cached across operations.
+	if filter.NoMilestone != nil {
+		view := cachedMembershipView(ctx, reader)
+		result = filterByPredicate(result, filter.NoMilestone, func(b *nib.Nib) bool {
+			return view.MilestoneOf(b.ID) == ""
+		})
 	}
 
 	// Mention filters (computed via FindMentions/FindMentionedBy on the reader,
