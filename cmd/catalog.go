@@ -236,7 +236,7 @@ func catalogFilters() error {
 
 	b.WriteString("\nMilestone scope — 'nibs list' only ('nibs rel' takes neither), and mutually\n")
 	b.WriteString("exclusive with each other. Assign with 'nibs set <id> --milestone <ms>' and\n")
-	b.WriteString("reposition with 'nibs mv <id> --queue --after|--before|--first <anchor>':\n\n")
+	b.WriteString("reposition with 'nibs mv <id> --queue --after|--before <anchor>' (or --first,\nwhich takes no anchor):\n\n")
 	qtw := tabwriter.NewWriter(&b, 0, 0, 2, ' ', 0)
 	_, _ = fmt.Fprintln(qtw, "FLAG\tSELECTS")
 	for _, q := range queueFilters {

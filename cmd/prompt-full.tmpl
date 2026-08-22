@@ -47,7 +47,7 @@ nibs get <id> --view card --json  # {"nib":{…}} single-read contract (card fie
 nibs list [filters]               # TSV rows under a "# <n> nibs" header (ref fields)
 nibs list [filters] --json        # {"nibs":[…],"count":N,"truncated":<bool>} envelope
 nibs rel <id> [--rel <relation>]  # related nibs in the SAME envelope as list (see Relationships)
-nibs next                         # the first startable nib in the active milestone's queue (see Queues)
+nibs next                         # the first startable nib reached FROM the active milestone's queue (see Queues)
 nibs list --milestone <ms>        # that milestone's queue, in queue order unless --sort says otherwise
 ```
 Recipe / composite views: `nibs next`, `nibs context [id]`, `nibs plan <id>`, `nibs roadmap`, `nibs list --ready`.
@@ -109,7 +109,7 @@ Every command maps failures to a stable process exit code so you can branch on `
 
 With `--json`, an error is `{"error":{"code":"<CODE>","message":"<msg>"}}`. **On any error: STOP. Diagnose the root cause and suggest a mitigation (code fix, follow-up nib, workaround). Never silently retry.**
 
-**Two things look like failures and are not, so the STOP rule does not reach either.** `nibs next` exits 0 whether or not it found something to do — having nothing to do is an answer, so branch on `--json`'s `"action"` being null, never on the exit status. And a write that leaves a queue entry sitting ahead of something that still blocks it prints a `warning:` line on stderr AFTER succeeding (exit 0; under `--json` it rides the success payload as `"warnings"`): such order-vs-dependency inversions are legal — plans state importance, dependencies state feasibility — so that line is a lint on a write that landed, not an error. Read it, decide whether the order was intended, and reorder with `nibs mv <id> --queue --after <blocker>` if it was not.
+**Two things look like failures and are not, so the STOP rule does not reach either.** `nibs next` exits 0 whether or not it found something to do — having nothing to do is an answer, so branch on `--json`'s `"action"` being null, never on the exit status; check `"fallback"` too, which is present when the answer came from the store's tree order rather than from a plan. And a write that leaves a queue entry sitting ahead of something that still blocks it prints a `warning:` line on stderr AFTER succeeding (exit 0; under `--json` it rides the success payload as `"warnings"`): such order-vs-dependency inversions are legal — plans state importance, dependencies state feasibility — so that line is a lint on a write that landed, not an error. Read it, decide whether the order was intended, and reorder with `nibs mv <id> --queue --after <blocker>` if it was not.
 
 ## Relationships
 
@@ -220,7 +220,7 @@ nibs mv --children-of <parent-id> <c1> <c2> <c3>    # declaratively set the full
 ```
 Use `--children-of ""` for root-level siblings. Position a NEW nib at creation with `nibs new … --after/--before/--first` — those place it among its SIBLINGS, not in any queue, and `nibs new` cannot assign a milestone at all.
 
-**Assignment is `set`, position is `mv`.** A milestone's queue is the nibs assigned to it: `nibs set <id> --milestone <ms>` appends one to the END of that queue, `nibs set <id> --clear milestone` takes it out, and `nibs mv <id> --queue …` only reorders within the queue a nib is already in (the anchor must be in the same queue). Read one with `nibs list --milestone <ms>`, which sorts by queue order unless `--sort` says otherwise, and read the unscheduled remainder with `nibs list --backlog` — nibs with no assignment of their own and none up their parent chain. The two flags are mutually exclusive, an empty `--milestone ""` is refused (use `--backlog`), and an id naming a nib that is not a milestone is a validation error rather than an empty listing. `nibs next` walks the active milestone's queue — the in-progress milestone earliest in milestone order — and hands back the first startable thing it reaches.
+**Assignment is `set`, position is `mv`.** A milestone's queue is the nibs assigned to it: `nibs set <id> --milestone <ms>` appends one to the END of that queue, `nibs set <id> --clear milestone` takes it out, and `nibs mv <id> --queue …` only reorders within the queue a nib is already in (the anchor must be in the same queue). Read one with `nibs list --milestone <ms>`, which sorts by queue order unless `--sort` says otherwise, and read the unscheduled remainder with `nibs list --backlog` — nibs with no assignment of their own and none up their parent chain. The two flags are mutually exclusive, an empty `--milestone ""` is refused (use `--backlog`), and an id naming a nib that is not a milestone is a validation error rather than an empty listing. `nibs next` walks the active milestone's queue — the in-progress milestone earliest in milestone order — and hands back the first startable thing it reaches, descending each entry's decomposition, so the answer is usually a leaf BELOW a queue entry and not itself in the queue. With no active milestone it still answers, walking the store's own tree order instead and naming that in `fallback` — the ordinary shape of a project that has declared no milestones yet.
 
 ## Closing
 

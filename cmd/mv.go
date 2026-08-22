@@ -65,7 +65,7 @@ var mvCmd = &cobra.Command{
 Single nib:   nibs mv <id> --after|--before|--first <anchor>   # reposition among siblings
               nibs mv <id> --parent <new-parent>                # reparent (append to end)
               nibs mv <id> --parent <new-parent> --first        # reparent to first
-Queue move:   nibs mv <id> --queue --after|--before|--first <anchor>
+Queue move:   nibs mv <id> --queue --after|--before <anchor>   # --first takes no anchor
               # reposition within its milestone queue; the anchor must be in
               # the same queue. Once every member carries a queue key only
               # the nib's own file is rewritten; a member without one is

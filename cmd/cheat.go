@@ -63,7 +63,7 @@ WRITE  new "<title>" -t T create; also -s -p -e --parent --blocked-by --tag --af
                           --milestone <ms> assigns to that milestone's queue, appended last (new cannot assign)
        body <id>          --set | --append | --section "## H" --set [--create] | --replace-old T --replace-new U
        mv <id[…]>         --after|--before|--first <anchor> | --parent <id> | --children-of <p> <id…>
-                          --queue --after|--before|--first <anchor> repositions within the milestone queue
+                          --queue --after|--before <anchor> | --queue --first repositions within its queue
        rm <id…>           --archive (default) | --delete (irreversible); agents pass -f/--force
        close <id>         --summary - (required); --as <closed status> picks the close reason (default
                           %s). Closing an existing nib goes through close — set -s <closed> errors.
