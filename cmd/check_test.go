@@ -153,6 +153,14 @@ func resetCheckFlags() {
 // test binary down with it — and every case here is deliberately non-empty.
 func setupCheckTest(t *testing.T, files map[string]string) (*App, string) {
 	t.Helper()
+	return setupCheckTestWithConfig(t, files, config.Default())
+}
+
+// setupCheckTestWithConfig is setupCheckTest over a config the caller composes.
+// The areas rows need it: config.Default() declares no vocabulary, which is
+// exactly the state the area finding is deliberately silent in.
+func setupCheckTestWithConfig(t *testing.T, files map[string]string, cfg *config.Config) (*App, string) {
+	t.Helper()
 	t.Cleanup(resetCheckFlags)
 	resetCheckFlags()
 
@@ -166,12 +174,22 @@ func setupCheckTest(t *testing.T, files map[string]string) (*App, string) {
 		}
 	}
 
-	core := nibcore.New(nibsDir, config.Default())
+	core := nibcore.New(nibsDir, cfg)
 	core.SetWarnWriter(nil) // the point of these tests is the report, not the stderr line
 	if err := core.Load(); err != nil {
 		t.Fatalf("Load() error = %v", err)
 	}
 	return &App{Core: core}, nibsDir
+}
+
+// checkAreasConfig is the vocabulary the area rows are judged against.
+func checkAreasConfig() *config.Config {
+	cfg := config.Default()
+	cfg.Areas = []config.AreaConfig{
+		{Name: "web", Children: []config.AreaConfig{{Name: "ui"}}},
+		{Name: "auth"},
+	}
+	return cfg
 }
 
 // checkAppPastTheGate runs the root command's pre-run gate for `nibs check`
@@ -981,4 +999,183 @@ func TestCheckDoesNotLeakANSIToRedirectedOutput(t *testing.T) {
 	if strings.ContainsRune(out, '\x1b') {
 		t.Errorf("check leaked ANSI escapes into non-terminal output:\n%q", out)
 	}
+}
+
+// Hand-edited area offenders: the write paths refuse an undeclared `area:`, so
+// only a hand edit or a retired vocabulary entry produces one — which is
+// exactly what the check finding is for.
+const (
+	chkStrandedAreaNib = `---
+version: 2
+title: Stranded work
+status: todo
+type: task
+priority: normal
+area: retired/thing
+---
+
+Body.
+`
+
+	chkDeclaredAreaNib = `---
+version: 2
+title: Located work
+status: todo
+type: task
+priority: normal
+area: web/ui
+---
+
+Body.
+`
+
+	chkMilestoneWithStrandedAreaNib = `---
+version: 2
+title: Located waypoint
+status: todo
+type: milestone
+area: retired/thing
+---
+
+Body.
+`
+)
+
+// TestCheckReportsUndeclaredArea pins the area finding end to end: a loaded nib
+// whose `area:` the vocabulary does not declare is reported by `nibs check` in
+// text and counted as an issue, in --json it rides the undeclared_areas array,
+// and --fix does NOT touch it (it would have to invent an area).
+func TestCheckReportsUndeclaredArea(t *testing.T) {
+	files := map[string]string{
+		"chk-arst1--stranded.md": chkStrandedAreaNib,
+		"chk-arok1--located.md":  chkDeclaredAreaNib,
+	}
+
+	t.Run("text report names the nib, the value and the declared set", func(t *testing.T) {
+		app, _ := setupCheckTestWithConfig(t, files, checkAreasConfig())
+		var total int
+		var runErr error
+		out := captureStdout(t, func() { total, runErr = runCheck(app) })
+		if runErr != nil {
+			t.Fatalf("runCheck error = %v", runErr)
+		}
+		if total != 1 {
+			t.Errorf("total issues = %d, want 1", total)
+		}
+		for _, want := range []string{
+			"chk-arst1", "data/chk-arst1--stranded.md", `"retired/thing"`,
+			"web, web/ui, auth",
+		} {
+			if !strings.Contains(out, want) {
+				t.Errorf("report should contain %q, got:\n%s", want, out)
+			}
+		}
+		// A declared assignment stays unflagged.
+		if strings.Contains(out, "chk-arok1") {
+			t.Errorf("a declared area must stay unflagged, got:\n%s", out)
+		}
+		// Per-file integrity, not a link problem.
+		if !strings.Contains(out, "No link issues found") {
+			t.Errorf("links are clean and the report should say so, got:\n%s", out)
+		}
+	})
+
+	t.Run("json envelope carries undeclared_areas", func(t *testing.T) {
+		app, _ := setupCheckTestWithConfig(t, files, checkAreasConfig())
+		checkJSON = true
+		var runErr error
+		out := captureStdout(t, func() { _, runErr = runCheck(app) })
+		if runErr != nil {
+			t.Fatalf("runCheck error = %v", runErr)
+		}
+		var got checkResult
+		if err := json.Unmarshal([]byte(out), &got); err != nil {
+			t.Fatalf("unmarshal: %v\noutput: %s", err, out)
+		}
+		if got.Success {
+			t.Error("success = true; want false with an undeclared area present")
+		}
+		if got.NibIssues == nil || len(got.NibIssues.UndeclaredAreas) != 1 {
+			t.Fatalf("undeclared_areas = %+v, want exactly 1 entry", got.NibIssues)
+		}
+		want := nibcore.UndeclaredArea{
+			NibID:    "chk-arst1",
+			Path:     "data/chk-arst1--stranded.md",
+			Area:     "retired/thing",
+			Declared: "web, web/ui, auth",
+		}
+		if !reflect.DeepEqual(got.NibIssues.UndeclaredAreas[0], want) {
+			t.Errorf("undeclared_areas[0] = %+v, want %+v", got.NibIssues.UndeclaredAreas[0], want)
+		}
+		// The envelope carries the same finding the text report does, and it is
+		// NOT filed under the enum category — that seam is what keeps the
+		// loader tolerant.
+		if len(got.NibIssues.InvalidEnums) != 0 {
+			t.Errorf("invalid_enums = %+v, want none", got.NibIssues.InvalidEnums)
+		}
+	})
+
+	t.Run("--fix leaves the value alone and says it cannot fix it", func(t *testing.T) {
+		app, nibsDir := setupCheckTestWithConfig(t, files, checkAreasConfig())
+		checkFix = true
+		var total int
+		var runErr error
+		out := captureStdout(t, func() { total, runErr = runCheck(app) })
+		if runErr != nil {
+			t.Fatalf("runCheck error = %v", runErr)
+		}
+		raw, err := os.ReadFile(dataPath(nibsDir, "chk-arst1--stranded.md"))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if !strings.Contains(string(raw), "area: retired/thing") {
+			t.Errorf("--fix rewrote the area; inventing one is not provable intent:\n%s", raw)
+		}
+		if !strings.Contains(out, "Cannot auto-fix") {
+			t.Errorf("--fix should say the finding is not auto-fixable, got:\n%s", out)
+		}
+		if total != 1 {
+			t.Errorf("total issues after --fix = %d, want 1 (the area finding remains outstanding)", total)
+		}
+	})
+
+	t.Run("a store declaring no areas reports nothing", func(t *testing.T) {
+		app, _ := setupCheckTest(t, files) // config.Default() declares no areas
+		var total int
+		var runErr error
+		out := captureStdout(t, func() { total, runErr = runCheck(app) })
+		if runErr != nil {
+			t.Fatalf("runCheck error = %v", runErr)
+		}
+		if total != 0 {
+			t.Errorf("total issues = %d, want 0 — with no vocabulary to check against the report is exempt, whatever the write path answers:\n%s", total, out)
+		}
+		if strings.Contains(out, "retired/thing") {
+			t.Errorf("a store with no vocabulary must not flag its assignments, got:\n%s", out)
+		}
+	})
+
+	t.Run("a milestone is reported by the axis rule alone", func(t *testing.T) {
+		app, _ := setupCheckTestWithConfig(t, map[string]string{
+			"chk-arms1--waypoint.md": chkMilestoneWithStrandedAreaNib,
+		}, checkAreasConfig())
+		checkJSON = true
+		var runErr error
+		out := captureStdout(t, func() { _, runErr = runCheck(app) })
+		if runErr != nil {
+			t.Fatalf("runCheck error = %v", runErr)
+		}
+		var got checkResult
+		if err := json.Unmarshal([]byte(out), &got); err != nil {
+			t.Fatalf("unmarshal: %v\noutput: %s", err, out)
+		}
+		// The type refuses the KEY, so the remedy is to drop it. Naming a
+		// declared value beside that would prescribe one this nib cannot carry.
+		if len(got.NibIssues.InvalidAxes) != 1 {
+			t.Errorf("invalid_axes = %+v, want exactly 1", got.NibIssues.InvalidAxes)
+		}
+		if len(got.NibIssues.UndeclaredAreas) != 0 {
+			t.Errorf("undeclared_areas = %+v, want none for a milestone", got.NibIssues.UndeclaredAreas)
+		}
+	})
 }

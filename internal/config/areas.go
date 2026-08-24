@@ -215,6 +215,25 @@ func (c *Config) GetArea(path string) *AreaConfig {
 	return findArea(c.Areas, path)
 }
 
+// AreasDeclared reports whether the store declares an areas vocabulary at all.
+//
+// It is the one question asked about the AXIS rather than about a value, and it
+// has two callers that must agree: `nibs check` reports no undeclared-area
+// finding when nothing is declared (an exemption whose cost — the nibs it
+// silences are exactly the ones no write can reach — is set out at
+// nibcore.Core.CheckAllLinks), and `nibs close`'s member refusal asks it of a
+// member refused for its AREA, to decide whether the report it offers to point
+// at will name that member. Stated here rather than spelled
+// `len(cfg.Areas) > 0` at each site, because the two would otherwise be free to
+// drift and the second would then name a silent diagnostic.
+//
+// The WRITE paths deliberately do not consult it: ValidateStoredArea refuses a
+// stored value whether or not a vocabulary exists, because a write is asked
+// about one nib the caller named, where the refusal is actionable.
+func (c *Config) AreasDeclared() bool {
+	return len(c.Areas) > 0
+}
+
 // IsValidArea reports whether path names a declared area. The empty string is
 // NOT valid here: this answers a membership question, and callers that treat an
 // unset `area:` as legal check for that themselves.

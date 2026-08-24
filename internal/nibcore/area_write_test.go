@@ -206,10 +206,13 @@ func TestUpdateChecksAreaAgainstVocabulary(t *testing.T) {
 // than incidental: a file already carrying an undeclared area must load, list
 // and render exactly as written. The write path is the only refusal.
 //
-// The absent warning and the absent `nibs check` finding are asserted too, and
-// that is what pins the SEAM: an area check folded into ValidateEnums would
-// reach the loader and the health report through the two calls they already
-// make, turning read-tolerance into a report this feature does not own.
+// The absent LOADER warning is asserted too, and so is the absence of an
+// InvalidEnum for the same nib, and together they pin the SEAM: an area check
+// folded into ValidateEnums would reach loadFromDisk and CheckAllLinks through
+// the two calls they already make, and the loader would then warn. The health
+// report does name this nib — under its own category, see
+// TestCheckAllLinksReportsUndeclaredArea — which is the one surface that is
+// meant to.
 func TestLoadToleratesUndeclaredArea(t *testing.T) {
 	core, nibsDir := setupAreaCore(t)
 
@@ -238,5 +241,97 @@ func TestLoadToleratesUndeclaredArea(t *testing.T) {
 		if ie.NibID == "nibs-arld" {
 			t.Errorf("check reported the undeclared area as an out-of-enum value: %s", ie.Reason)
 		}
+	}
+}
+
+// TestCheckAllLinksReportsUndeclaredArea is the other half of read-tolerance:
+// the value loads as written, and this report is what makes it visible.
+//
+// It is its OWN category rather than an InvalidEnum — folding the area rule
+// into ValidateEnums would reach loadFromDisk too and turn the tolerance above
+// into a warning — so the finding carries the value and the declared set as
+// data, not only a message.
+func TestCheckAllLinksReportsUndeclaredArea(t *testing.T) {
+	core, nibsDir := setupAreaCore(t)
+
+	files := map[string]string{
+		// The subject: a work nib whose stored area the vocabulary retired.
+		"nibs-arf1--stranded.md": "---\n# nibs-arf1\nversion: 2\ntitle: Stranded\nstatus: todo\ntype: task\narea: retired/thing\n---\n\nBody.\n",
+		// A declared assignment, which must stay unflagged.
+		"nibs-arf2--located.md": "---\n# nibs-arf2\nversion: 2\ntitle: Located\nstatus: todo\ntype: task\narea: web/dashboard\n---\n\nBody.\n",
+		// Unset, likewise.
+		"nibs-arf3--plain.md": "---\n# nibs-arf3\nversion: 2\ntitle: Plain\nstatus: todo\ntype: task\n---\n\nBody.\n",
+		// A milestone carrying an undeclared area: the axis rule already
+		// refuses the KEY, so naming a declared value beside it would
+		// prescribe a remedy this nib cannot follow.
+		"nibs-arf4--waypoint.md": "---\n# nibs-arf4\nversion: 2\ntitle: Waypoint\nstatus: todo\ntype: milestone\narea: retired/thing\n---\n\nBody.\n",
+	}
+	for name, content := range files {
+		if err := os.WriteFile(dataPath(nibsDir, name), []byte(content), 0644); err != nil {
+			t.Fatalf("write %s: %v", name, err)
+		}
+	}
+	if err := core.Load(); err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+
+	result := core.CheckAllLinks()
+	if len(result.UndeclaredAreas) != 1 {
+		t.Fatalf("undeclared areas = %+v, want exactly nibs-arf1", result.UndeclaredAreas)
+	}
+	got := result.UndeclaredAreas[0]
+	if got.NibID != "nibs-arf1" {
+		t.Errorf("nib_id = %q, want nibs-arf1", got.NibID)
+	}
+	if got.Path != "data/nibs-arf1--stranded.md" {
+		t.Errorf("path = %q, want data/nibs-arf1--stranded.md", got.Path)
+	}
+	if got.Area != "retired/thing" {
+		t.Errorf("area = %q, want retired/thing", got.Area)
+	}
+	for _, want := range []string{"web", "web/dashboard", "auth"} {
+		if !strings.Contains(got.Declared, want) {
+			t.Errorf("declared = %q, want it to name %q", got.Declared, want)
+		}
+	}
+	if result.AreaIssues() != 1 {
+		t.Errorf("AreaIssues() = %d, want 1", result.AreaIssues())
+	}
+	if !result.HasIssues() {
+		t.Error("HasIssues() = false; an undeclared area is an issue")
+	}
+	// The milestone is reported once, by the axis rule, and its remedy is to
+	// drop the key rather than to pick a declared value.
+	axisIDs := make([]string, 0, len(result.InvalidAxes))
+	for _, ia := range result.InvalidAxes {
+		axisIDs = append(axisIDs, ia.NibID)
+	}
+	if len(axisIDs) != 1 || axisIDs[0] != "nibs-arf4" {
+		t.Errorf("invalid axes = %v, want exactly nibs-arf4", axisIDs)
+	}
+}
+
+// TestCheckIsSilentOnAreasWhenStoreDeclaresNone pins the deliberate exemption:
+// with no vocabulary to check against, a stored `area:` produces no finding —
+// even though every write to that nib is refused for it. The fixture is the
+// only store shape the exemption changes anything for, and the trade it makes
+// is set out at Core.CheckAllLinks.
+func TestCheckIsSilentOnAreasWhenStoreDeclaresNone(t *testing.T) {
+	core, nibsDir := setupTestCore(t) // config.Default() declares no areas
+
+	file := "---\n# nibs-arn1\nversion: 2\ntitle: Located\nstatus: todo\ntype: task\narea: whatever/team\n---\n\nBody.\n"
+	if err := os.WriteFile(dataPath(nibsDir, "nibs-arn1--located.md"), []byte(file), 0644); err != nil {
+		t.Fatalf("write: %v", err)
+	}
+	if err := core.Load(); err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+
+	result := core.CheckAllLinks()
+	if len(result.UndeclaredAreas) != 0 {
+		t.Errorf("a store declaring no areas must produce no area findings, got %+v", result.UndeclaredAreas)
+	}
+	if result.AreaIssues() != 0 {
+		t.Errorf("AreaIssues() = %d, want 0", result.AreaIssues())
 	}
 }

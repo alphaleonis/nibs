@@ -551,6 +551,19 @@ area: retired/team
 Body.
 `
 
+	remedyQueueEnumMember = `---
+version: 2
+title: Enum-broken member
+status: todo
+type: task
+priority: superhigh
+milestone: rmd-ms01
+milestone_order: b
+---
+
+Body.
+`
+
 	// An illegal nest, whose remedy this delta did not touch: the positive
 	// control that shows the gate accepts a correctly written remedy rather
 	// than merely failing on everything.
@@ -591,6 +604,25 @@ func remedyQueueFiles() map[string]string {
 		"rmd-ms01--wave.md":   remedyQueueMilestone,
 		"rmd-mb01--member.md": remedyQueueStrandedMember,
 	}
+}
+
+// remedyQueueEnumFiles is the same wave whose one blocked member is refused for
+// an out-of-enum value instead of its area — the cause `nibs check` reports
+// whether or not the store declares an areas vocabulary.
+func remedyQueueEnumFiles() map[string]string {
+	return map[string]string{
+		"rmd-ms01--wave.md":   remedyQueueMilestone,
+		"rmd-eb01--member.md": remedyQueueEnumMember,
+	}
+}
+
+// remedyQueueMixedFiles blocks the close on one member of each cause, which is
+// the only shape where a store's vocabulary answers for one blocked member and
+// not the other.
+func remedyQueueMixedFiles() map[string]string {
+	files := remedyQueueFiles()
+	files["rmd-eb01--member.md"] = remedyQueueEnumMember
+	return files
 }
 
 func remedySurfaces() []remedySurface {
@@ -655,10 +687,36 @@ func remedySurfaces() []remedySurface {
 			wantCommands: 1,
 		},
 		{
-			name:         "close refuses a queue whose member carries a retired area",
-			store:        remedyStore(queueFiles),
-			diagnose:     remedyCloseRefusal,
-			mustName:     []string{"rmd-mb01", "No escape and no retry"},
+			name:     "close refuses a queue whose member carries a retired area",
+			store:    remedyStore(queueFiles),
+			diagnose: remedyCloseRefusal,
+			mustName: []string{"rmd-mb01", "No escape and no retry"},
+			choices:  declared,
+			// The two escapes the member's own refusal names, plus the pointer
+			// at `nibs check` — which is a claim about another tool as well as
+			// a command, so TestCloseRefusalNamesNoSilentDiagnostic checks that
+			// the report it names actually answers.
+			wantCommands: 3,
+		},
+		{
+			name:  "check names an undeclared area",
+			store: remedyStore(strandedFiles),
+			diagnose: func(t *testing.T, nibsDir string) string {
+				return remedyCheckOutput(t, nibsDir, false)
+			},
+			subjects:     []string{"rmd-st01"},
+			mustName:     []string{`area "retired/team" is not declared`},
+			choices:      declared,
+			wantCommands: 2,
+		},
+		{
+			name:  "check --fix names an undeclared area",
+			store: remedyStore(strandedFiles),
+			diagnose: func(t *testing.T, nibsDir string) string {
+				return remedyCheckOutput(t, nibsDir, true)
+			},
+			subjects:     []string{"rmd-st01"},
+			mustName:     []string{"Cannot auto-fix"},
 			choices:      declared,
 			wantCommands: 2,
 		},
@@ -879,22 +937,94 @@ func TestDiagnosticCommandExtraction(t *testing.T) {
 // TestCloseRefusalNamesNoSilentDiagnostic covers the half of a diagnostic the
 // gate above cannot run: a claim about what ANOTHER tool will say.
 //
-// `nibs close`'s own-front-matter refusal used to promise that `nibs check`
-// names the shape. For an enum or axis cause it does; for an undeclared `area:`
-// it is deliberately silent — read-tolerance is by design — so the pointer sent
-// the reader to a report with nothing in it. This asserts the implication in
-// both directions rather than the absence of a sentence: name `nibs check`
-// only if `nibs check` answers. When the proactive diagnostic lands, the
-// pointer may come back and this test will accept it.
+// `nibs close`'s own-front-matter refusal names `nibs check` as the surface
+// that lists every offending member, and the reasons it prints itself are
+// capped. For an enum or axis cause check has always answered; for an
+// undeclared `area:` it answers only where a vocabulary is declared, since a
+// store declaring none is exempt by design. So the answer depends on each
+// blocked member's CAUSE and not on the store alone, and the table therefore
+// varies both: the vocabulary, and which guard the member trips.
+//
+// The implication is asserted in both directions rather than the presence or
+// absence of a sentence: name `nibs check` if and only if `nibs check` names
+// every member this refusal blocked. Each row states its blocked set, and the
+// row first checks the refusal really named it — a fixture that stopped
+// blocking would otherwise assert nothing while still passing.
 func TestCloseRefusalNamesNoSilentDiagnostic(t *testing.T) {
-	store := remedyStore(remedyQueueFiles())
-	refusal := remedyCloseRefusal(t, store(t))
-	if !strings.Contains(refusal, "nibs check") {
-		return
+	tests := []struct {
+		name    string
+		store   func(t *testing.T) string
+		blocked []string
+	}{
+		{
+			name:    "a declared vocabulary, an undeclared area",
+			store:   remedyStore(remedyQueueFiles()),
+			blocked: []string{"rmd-mb01"},
+		},
+		{
+			name:    "no vocabulary at all, an undeclared area",
+			store:   remedyStoreWithoutAreas(remedyQueueFiles()),
+			blocked: []string{"rmd-mb01"},
+		},
+		{
+			name:    "no vocabulary at all, an out-of-enum value",
+			store:   remedyStoreWithoutAreas(remedyQueueEnumFiles()),
+			blocked: []string{"rmd-eb01"},
+		},
+		{
+			name:    "no vocabulary at all, one blocked member of each cause",
+			store:   remedyStoreWithoutAreas(remedyQueueMixedFiles()),
+			blocked: []string{"rmd-eb01", "rmd-mb01"},
+		},
 	}
-	report := remedyCheckOutput(t, store(t), false)
-	if !strings.Contains(report, "rmd-mb01") {
-		t.Errorf("the refusal points at `nibs check`, which reports nothing for this member:\nrefusal: %s\nreport:\n%s", refusal, report)
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			refusal := remedyCloseRefusal(t, tt.store(t))
+			report := remedyCheckOutput(t, tt.store(t), false)
+			for _, id := range tt.blocked {
+				if !strings.Contains(refusal, id) {
+					t.Fatalf("the row claims %s blocks the close, but the refusal does not name it:\n%s", id, refusal)
+				}
+			}
+			var silent []string
+			for _, id := range tt.blocked {
+				if !strings.Contains(report, id) {
+					silent = append(silent, id)
+				}
+			}
+			names := strings.Contains(refusal, "nibs check")
+			answers := len(silent) == 0
+			if names && !answers {
+				t.Errorf("the refusal points at `nibs check`, which reports nothing for %s:\nrefusal: %s\nreport:\n%s", strings.Join(silent, ", "), refusal, report)
+			}
+			if answers && !names {
+				t.Errorf("`nibs check` names every blocked member and the refusal withholds the pointer:\nrefusal: %s\nreport:\n%s", refusal, report)
+			}
+		})
+	}
+}
+
+// TestAreaDiagnosticClaimMatchesWhatExecutes pins the claim beside the command,
+// for the area finding.
+//
+// The gate above runs the two remedies the finding names and would pass just as
+// well if ordinary edits went through — so the claim that every update KEEPING
+// the value is refused is the half it cannot reach. Both shapes are run here:
+// an edit that touches something else, and the retype the axis findings offer
+// as an alternative, which is precisely why this finding does not offer it.
+func TestAreaDiagnosticClaimMatchesWhatExecutes(t *testing.T) {
+	store := remedyStore(map[string]string{"rmd-st01--stranded.md": remedyStrandedTask})
+
+	if err := runDiagnosticCommand(t, store(t), []string{"set", "rmd-st01", "--title", "Renamed"}); err == nil {
+		t.Error("an update that keeps the undeclared value must be refused, got nil")
+	}
+	if err := runDiagnosticCommand(t, store(t), []string{"set", "rmd-st01", "-t", "bug"}); err == nil {
+		t.Error("a retype that keeps the undeclared value must be refused, got nil")
+	}
+
+	report := diagnosticLinesAbout(t, remedyCheckOutput(t, store(t), false), []string{"rmd-st01"})
+	if !strings.Contains(report, "every update that keeps the value is refused") {
+		t.Errorf("the report should state the claim the runs above confirm, got:\n%s", report)
 	}
 }
 

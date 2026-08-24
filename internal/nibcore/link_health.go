@@ -8,6 +8,7 @@ import (
 	"sort"
 	"strings"
 
+	"github.com/alphaleonis/nibs/internal/config"
 	"github.com/alphaleonis/nibs/internal/fsutil"
 	"github.com/alphaleonis/nibs/internal/membership"
 	"github.com/alphaleonis/nibs/internal/nib"
@@ -116,6 +117,42 @@ type InvalidAxis struct {
 	// front-matter order. Reason speaks for the first of them only; the escape
 	// has to drop them all at once.
 	Axes []string `json:"axes"`
+}
+
+// UndeclaredArea is a loaded nib whose `area:` names a path the store's areas
+// vocabulary does not declare. The value loads, lists, filters and renders
+// exactly as written — read-tolerance is deliberate, see Core.ValidateArea —
+// so this finding is the only surface that names the file, exactly as
+// InvalidEnum is for an out-of-enum value.
+//
+// It is its OWN category rather than an InvalidEnum because ValidateEnums has
+// two callers that are not write paths — loadFromDisk and CheckAllLinks — so
+// folding the area rule in would make the LOADER warn, which is the tolerance
+// this feature owes.
+//
+// Both of its remediations have a command: `nibs set <id> --area <declared>`
+// assigns a declared value and `nibs set <id> --clear area` drops the
+// assignment. That is the difference from the axis findings, which have a
+// command of their own (ClearAxesCommand — `--clear area` repairs an axis
+// violation too): what those lack is a command for their ALTERNATIVE, since
+// retyping the nib is a choice between the type and the assignment that only
+// the author can make. `--fix` cannot apply either of these two — it would have
+// to invent an area, or decide the assignment should go, and neither is
+// provable intent.
+//
+// A store that declares NO areas produces none of these; see Core.CheckAllLinks
+// for why that exemption is deliberate.
+type UndeclaredArea struct {
+	NibID string `json:"nib_id"`
+	// Path is relative to the nibs root with forward slashes, like nib.Path.
+	Path string `json:"path"`
+	// Area is the undeclared value as the file spells it, already rendered by
+	// config for a message (control characters neutralized, length bounded).
+	Area string `json:"area"`
+	// Declared is the vocabulary the store DOES declare, as config.AreaList
+	// renders it — bounded the same way, since a declared name is file-sourced
+	// text too.
+	Declared string `json:"declared"`
 }
 
 // ClearAxesCommand renders the one command that drops every axis key a nib's
@@ -294,6 +331,11 @@ type LinkCheckResult struct {
 	// nibtypes.ValidateAxes, config-free), so the pure map function carries it.
 	InvalidAxes []InvalidAxis `json:"invalid_axes"`
 
+	// Area integrity. Populated only by Core.CheckAllLinks — the areas
+	// vocabulary lives on the config, the same reason InvalidEnums is filled
+	// there and not in the pure map function.
+	UndeclaredAreas []UndeclaredArea `json:"undeclared_areas"`
+
 	// Hierarchy integrity. Derivable from the nibs alone (the parent-type rule
 	// is nibtypes.ValidateParentType, config-free; the prefix a parent id may
 	// need is already threaded in for the link checks), so the pure map
@@ -331,7 +373,7 @@ func (r *LinkCheckResult) HasIssues() bool {
 
 // TotalIssues returns the total count of all issues.
 func (r *LinkCheckResult) TotalIssues() int {
-	return len(r.BrokenLinks) + len(r.SelfLinks) + len(r.Cycles) + len(r.BrokenDocuments) + r.LoadIssues() + r.EnumIssues() + r.AxisIssues() + r.HierarchyIssues() + r.AssignmentIssues() + r.MilestoneTargetIssues() + r.NearMissIssues() + r.QueueIssues()
+	return len(r.BrokenLinks) + len(r.SelfLinks) + len(r.Cycles) + len(r.BrokenDocuments) + r.LoadIssues() + r.EnumIssues() + r.AxisIssues() + r.AreaIssues() + r.HierarchyIssues() + r.AssignmentIssues() + r.MilestoneTargetIssues() + r.NearMissIssues() + r.QueueIssues()
 }
 
 // LoadIssues returns the count of load-time integrity issues alone. Callers
@@ -352,6 +394,12 @@ func (r *LinkCheckResult) EnumIssues() int {
 // render-them-apart reason as LoadIssues.
 func (r *LinkCheckResult) AxisIssues() int {
 	return len(r.InvalidAxes)
+}
+
+// AreaIssues returns the count of undeclared-area findings alone, for the same
+// render-them-apart reason as LoadIssues.
+func (r *LinkCheckResult) AreaIssues() int {
+	return len(r.UndeclaredAreas)
 }
 
 // HierarchyIssues returns the count of hierarchy-rule findings alone, for the
@@ -418,6 +466,7 @@ func CheckAllLinksInMap(nibs map[string]*nib.Nib, projectRoot, configPrefix stri
 		DuplicateIDs:            []DuplicateID{},
 		InvalidEnums:            []InvalidEnum{},
 		InvalidAxes:             []InvalidAxis{},
+		UndeclaredAreas:         []UndeclaredArea{},
 		InvalidHierarchies:      []InvalidHierarchy{},
 		InvalidMilestoneTargets: []InvalidMilestoneTarget{},
 		AssignmentConflicts:     []AssignmentConflict{},
@@ -755,6 +804,51 @@ func (c *Core) CheckAllLinks() *LinkCheckResult {
 	for _, id := range ids {
 		if err := c.ValidateEnums(c.nibs[id]); err != nil {
 			result.InvalidEnums = append(result.InvalidEnums, InvalidEnum{NibID: id, Reason: err.Error()})
+		}
+	}
+
+	// Area integrity: here for the same reason as the enums — the areas
+	// vocabulary is the config's answer, and the pure map function carries no
+	// config. Values load as written (read-tolerance is deliberate, see
+	// ValidateArea), so this report is the only surface that names the file.
+	//
+	// A store declaring NO areas is exempt WHOLESALE, and the exemption is
+	// narrower than it reads. A project that never adopted areas carries no
+	// `area:` values at all, so it reports nothing either way — the exemption
+	// saves it from no red report it was ever going to get. The only stores
+	// whose report it changes are the ones carrying values with no vocabulary
+	// to check them against (a vocabulary retired out from under its data, or a
+	// config that never followed it), and every one of those nibs is a write
+	// dead end: ValidateStoredArea refuses a stored value whether or not a
+	// vocabulary exists. So what this silences is exactly the unwritable set.
+	//
+	// That is the trade being made, not a side effect of it. It is taken
+	// because the answer for such a store is one config edit — declare the
+	// vocabulary, or clear the values — which N per-nib findings do not
+	// prescribe any better than none do; and the write path stays loud, being
+	// asked about one nib the caller named, where the refusal is actionable.
+	// The cost is that no read surface names those nibs — the loader is silent
+	// by design and this report by the exemption — so the dead end is
+	// discoverable only by attempting a write. Revisiting it means a single
+	// summary line, not N findings.
+	if c.config != nil && c.config.AreasDeclared() {
+		for _, id := range ids {
+			b := c.nibs[id]
+			// A type that refuses `area:` outright is already an InvalidAxis
+			// finding, and its remedy is to drop the key. Naming a declared
+			// value beside it would prescribe one this nib may not carry at
+			// all — the same ordering preValidateSubject and
+			// closeMemberOwnGuards apply. The milestone axis is passed empty so
+			// only the area reading decides.
+			if nibtypes.ValidateAxes(b.EffectiveType(), "", b.Area) != nil {
+				continue
+			}
+			var areaErr *config.AreaError
+			if errors.As(c.ValidateArea(b), &areaErr) {
+				result.UndeclaredAreas = append(result.UndeclaredAreas, UndeclaredArea{
+					NibID: id, Path: b.Path, Area: areaErr.Path, Declared: areaErr.Declared,
+				})
+			}
 		}
 	}
 

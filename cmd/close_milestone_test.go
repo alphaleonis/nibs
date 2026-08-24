@@ -1276,18 +1276,20 @@ func TestCloseMilestoneMemberUndeclaredAreaDeadEndsBothEscapes(t *testing.T) {
 			}
 
 			msg := err.Error()
-			// The repair is quoted inline as a command the reader can run —
-			// `nibs check` reports nothing for an undeclared area, so pointing
-			// there would name a report with nothing in it.
+			// The repair is quoted inline as a command the reader can run, and
+			// `nibs check` is offered for the whole-store view: this fixture
+			// declares a vocabulary, so the report names this member too (the
+			// shape that report is silent about is what closeCheckNamesCause
+			// answers for, and is pinned by
+			// TestCloseRefusalNamesNoSilentDiagnostic).
 			for _, want := range []string{"tnib-e002", "front matter", "retired/thing",
-				"`nibs set tnib-e002 --clear area`"} {
+				"`nibs set tnib-e002 --clear area`", "`nibs check`"} {
 				if !strings.Contains(msg, want) {
 					t.Errorf("the diagnosis should contain %q, got: %s", want, msg)
 				}
 			}
-			// The two exits that cannot work must not be offered, and neither
-			// must a diagnostic that says nothing about this cause.
-			for _, unwanted := range []string{"--unassign-open", "transient", "nibs check"} {
+			// The two exits that cannot work must not be offered.
+			for _, unwanted := range []string{"--unassign-open", "transient"} {
 				if strings.Contains(msg, unwanted) {
 					t.Errorf("the diagnosis must not offer %q, which cannot clear this: %s", unwanted, msg)
 				}
