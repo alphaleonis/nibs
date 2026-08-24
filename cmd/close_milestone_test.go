@@ -1141,12 +1141,14 @@ func TestCloseMilestoneHoldingReasonRefusesADispositionFlag(t *testing.T) {
 // TestCloseMilestoneDisposesMembersMissingEitherStamp pins each of loadNib's
 // three timestamp-synthesis shapes through the disposition. A hand-authored nib
 // omitting created_at, updated_at or both is loaded with the missing one
-// synthesized, while computeStoredETag bare-parses the file and sees neither —
-// so without the allowance in memberFileIsAsLoaded such a member false-conflicts
-// and the escape is unusable in a hand-authored store.
+// synthesized, so its in-memory nib renders stamps the file does not carry —
+// and unless nibcore.reconcileLoaderDerived takes those back out of the
+// comparison, such a member false-conflicts and the escape is unusable in a
+// hand-authored store.
 //
-// One member per shape, because the allowance is a per-shape list: drop any one
-// entry from it and exactly one of these three members starts refusing.
+// One member per shape, because the reconciliation fills the two stamps
+// independently: disable either fill and exactly the members whose files lack
+// that stamp start refusing.
 func TestCloseMilestoneDisposesMembersMissingEitherStamp(t *testing.T) {
 	const stamp = "2026-01-02T03:04:05Z"
 	member := func(title, order, stamps string) string {
@@ -1176,14 +1178,15 @@ func TestCloseMilestoneDisposesMembersMissingEitherStamp(t *testing.T) {
 	}
 }
 
-// TestCloseMilestoneRefusesAStampDeletionOnAFullyStampedMember bounds the
-// allowance the test above needs. loadNib's fallback always leaves the two
-// stamps CARRYING THE SAME VALUE — it copies one into the other, or derives both
-// from the file's mtime — so a member loaded with two DIFFERENT stamps
-// synthesized nothing, and its file has to match exactly.
+// TestCloseMilestoneRefusesAStampDeletionOnAFullyStampedMember bounds, through
+// the close path, the reconciliation the test above needs. A stamp DELETED from
+// a member's file renders exactly like a stamp the loader synthesized, so what
+// separates them is the store's own pair: loadNib's fallback always leaves the
+// two CARRYING THE SAME VALUE, and a member loaded with two DIFFERENT stamps
+// therefore synthesized nothing and has to match exactly
+// (nibcore.loaderMaySynthesizeStamps).
 //
-// Without that bound the allowance accepts a concurrent deletion of created_at
-// as "only the stamps differ", and Core.Update then writes the stale in-memory
+// Unbounded, the deletion is accepted and Core.Update writes the stale in-memory
 // clone: it re-stamps updated_at but never assigns created_at, so the deleted key
 // is silently restored and the concurrent edit is lost with no conflict raised.
 func TestCloseMilestoneRefusesAStampDeletionOnAFullyStampedMember(t *testing.T) {
