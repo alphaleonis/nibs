@@ -162,3 +162,59 @@ func TestETagExternalEditAfterLoadStillConflicts(t *testing.T) {
 		})
 	}
 }
+
+// TestETagStampLessFileDoesNotFalseConflict is the POSITIVE direction, and it
+// belongs in this package rather than only behind the CLI.
+//
+// Its siblings above are bounding tests — they pin what the reconciliation must
+// NOT do. Without this one the whole stamp fill can be deleted and
+// ./internal/nibcore/ stays green, with only ./cmd/ going red: a maintainer
+// refactoring reconcileLoaderDerived and running the package targeted at it, the
+// focused workflow this project prescribes, would get a false green on the very
+// regression the reconciliation exists to prevent.
+//
+// Each shape below is one route through loadNib's fallback: no stamps at all
+// (both derived from the file's mtime), created_at alone (updated_at defaulted
+// from it), and updated_at alone (created_at taken from it).
+func TestETagStampLessFileDoesNotFalseConflict(t *testing.T) {
+	const file = "stamp2--partial.md"
+
+	for _, tt := range []struct {
+		name   string
+		stamps string
+	}{
+		{"neither stamp", ""},
+		{"created_at only", "created_at: 2026-01-02T03:04:05Z\n"},
+		{"updated_at only", "updated_at: 2026-01-02T03:04:05Z\n"},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			nibsDir := setupNibsDir(t)
+			writeNibFile(t, storeData(t, nibsDir), file, stampedNibFile("Partial", tt.stamps))
+			core := setupLoadedCore(t, nibsDir)
+
+			b, err := core.Get("stamp2")
+			if err != nil {
+				t.Fatalf("Get() error: %v", err)
+			}
+			ifMatch := b.ETag()
+			stored, err := core.CurrentETag("stamp2")
+			if err != nil {
+				t.Fatalf("CurrentETag() error: %v", err)
+			}
+			// The two renders of an UNMODIFIED file must agree. They are what the
+			// caller supplies and what the store compares it against, so a
+			// divergence here is a conflict no retry can clear.
+			if ifMatch != stored {
+				t.Fatalf("the in-memory etag (%s) and the stored etag (%s) disagree on an unmodified file; "+
+					"an if-match write on it can never succeed", ifMatch, stored)
+			}
+
+			// And the token the caller holds is actually accepted.
+			clone := b.Clone()
+			clone.Title = "Renamed"
+			if err := core.Update(clone, &ifMatch); err != nil {
+				t.Errorf("Update with the etag Get handed back: %v", err)
+			}
+		})
+	}
+}

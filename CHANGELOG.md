@@ -26,6 +26,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 - **A `.nibs` symlink must lead to a directory that is already a store** — a link at anything else is refused rather than adopted as the project's store, and `nibs init` will not create one through a link. A store reached that way needs the manual steps the refusal prints before `nibs migrate` will run; to keep nibs out of the code repository, initialize the directory with `--nibs-path` (and `--prefix`, since a store outside the project derives its prefix from its own parent) and link `.nibs` at it afterwards.
 
 ### Fixed
+- **A hand-authored nib file no longer conflicts with itself** — a file omitting `created_at` or `updated_at` had the stamps synthesized in memory but not on disk, so its etag disagreed with itself permanently: `nibs set <a> --blocking <b>` was refused as a conflict, and the token `nibs get -f etag` printed was the one the store then rejected.
 - **A named pipe or device named like a nib file no longer hangs every command** — it is skipped at load and reported by `nibs check`, like any other file that cannot be read.
 - **A store full of unreadable or duplicate nib files no longer floods every command — or a running `nibs serve` — with warnings**, printing at most 20 and then a count pointing at `nibs check`, which still reports every one.
 - **A running `nibs serve` now reports a second file claiming a nib id it already holds**, instead of silently answering with whichever of the two the filesystem happened to deliver last.

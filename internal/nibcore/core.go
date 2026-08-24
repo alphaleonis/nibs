@@ -1239,12 +1239,33 @@ func (c *Core) reconcileLoaderDerived(parsed, storedNib *nib.Nib) {
 // writes the stale clone back and silently restores the deleted key (it
 // re-stamps updated_at on every write, but never assigns created_at).
 //
-// The residual, stated rather than hidden: a nib whose stamps are genuinely
-// equal — created and never updated since — is indistinguishable from one whose
-// stamps were synthesized, so a concurrent deletion of a stamp there is still
-// accepted and restored. Closing that needs provenance the loader does not hand
-// out (which stamps it synthesized), and it trades a real, reachable false
-// conflict for a narrow race on a nib nobody has edited.
+// The residual, stated at its true size rather than hidden. A nib whose stamps
+// are equal is indistinguishable from one whose stamps were synthesized, so a
+// stamp deleted from ITS file is invisible to the etag and gets restored by the
+// next if-match write. Two things about that are easy to understate and are not:
+//
+//   - It is not a race. There is no window: the deletion is invisible across
+//     process boundaries and across a fresh Load, because the reload
+//     re-synthesizes the deleted stamp from the surviving equal one and lands on
+//     the identical render. It is a class of file edit this etag cannot see.
+//   - It is not confined to untouched hand-authored files. Core.Create assigns
+//     ONE now to both stamps, so every nib nibs has created and not yet updated
+//     is in this set from the moment it is written.
+//
+// What makes the trade acceptable is not that the case is rare but that it is
+// information-preserving: the fill writes a nil slot with the store's own value,
+// which is by construction the value the file carried before the deletion, so the
+// restored stamp is byte-identical to the deleted one. Nothing is lost but the
+// intent to drop the key, and any edit riding along with the deletion still
+// diverges and is still refused. Closing it properly needs provenance the loader
+// does not hand out — which stamps it synthesized — and the alternative is a real,
+// permanent false conflict on every hand-authored file.
+//
+// Note the reach. This rule governs computeStoredETag, so it applies to every
+// if-match comparison in the product — `nibs set --if-match`, `mv
+// --child-if-match`, updateNib, bulk-reorder pre-validation, the web UI's batch
+// mutations. The closeMemberETag allowance it replaced expressed the same
+// predicate but governed only `nibs close`'s queue dispositions.
 func loaderMaySynthesizeStamps(storedNib *nib.Nib) bool {
 	return storedNib.CreatedAt != nil && storedNib.UpdatedAt != nil &&
 		storedNib.CreatedAt.Equal(*storedNib.UpdatedAt)
