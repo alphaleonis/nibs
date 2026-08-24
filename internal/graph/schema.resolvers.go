@@ -303,6 +303,30 @@ func (r *mutationResolver) UpdateNib(ctx context.Context, id string, input model
 		// parent/child relationship, or every edit of a nib with a legacy invalid
 		// parent would dead-end with a hierarchy error.
 		if b.EffectiveType() != oldEffectiveType {
+			// Decision 1.5's TYPE-FLIP door, and a defect on its own terms. A
+			// milestone holding assignments cannot stop being one: every nib
+			// pointing at it would keep a `milestone:` naming a non-milestone,
+			// which confers no membership and is exactly what `nibs check` reports
+			// as an invalid target. It also closed a three-call route to the state
+			// the close guard refuses — retype away, close (the guard skips a
+			// non-milestone), retype back (the guard keys on the status CHANGING,
+			// and it did not) — by refusing that sequence at its first step.
+			//
+			// The queue is read here, while the STORED type is still milestone, so
+			// View.DirectMembers answers on the assignment axis exactly as it does
+			// everywhere else. Openness is deliberately not consulted: a closed
+			// member's assignment is still a live link that this change would
+			// invalidate, which is a different question from the close gate's.
+			if oldEffectiveType == "milestone" {
+				if held := cachedMembershipView(ctx, r.Reader).DirectMembers(b.ID); len(held) > 0 {
+					return nil, &MilestoneRetypeError{
+						MilestoneID: b.ID,
+						NewType:     b.EffectiveType(),
+						Held:        memberIDs(held),
+					}
+				}
+			}
+
 			// Re-validate existing parent against the new type (when parent isn't also
 			// being changed — i.e. the parent field was omitted, not set to null/id).
 			//

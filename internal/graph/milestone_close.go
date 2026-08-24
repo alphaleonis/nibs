@@ -64,6 +64,51 @@ func OpenQueueEntries(view *membership.View, milestoneID string, cfg *config.Con
 	return ids
 }
 
+// MilestoneRetypeError refuses to strip milestone-hood from a nib that still
+// holds assignments. Every member's `milestone:` would keep naming it, conferring
+// no membership and reading back a target of the wrong type — the state
+// nibcore's InvalidMilestoneTarget finding reports. Unlike the close gate this
+// counts EVERY assignee, open or closed: a closed member's assignment is still a
+// link this change would invalidate.
+type MilestoneRetypeError struct {
+	MilestoneID string
+	NewType     string
+	Held        []string
+}
+
+func (e *MilestoneRetypeError) Error() string {
+	named := e.Held
+	more := ""
+	if len(named) > QueueNameLimit {
+		named = named[:QueueNameLimit]
+		more = fmt.Sprintf(", and %d more", len(e.Held)-QueueNameLimit)
+	}
+	subject := fmt.Sprintf("%d nibs are", len(e.Held))
+	if len(e.Held) == 1 {
+		subject = "1 nib is"
+	}
+	return fmt.Sprintf("cannot change milestone %s to %s: %s still assigned to it (%s%s), and the assignment would name a nib that is no longer a milestone — clear the assignments first, or leave the type alone",
+		e.MilestoneID, e.NewType, subject, strings.Join(named, ", "), more)
+}
+
+// memberIDs reads the ids out of a member set in queue order, so no store pointer
+// outlives the view it came from (internal/membership's discipline).
+//
+// The sort is not cosmetic. DirectMembers answers in reader.All() order, which is
+// Go map-iteration order, so without it two identical refusals name the same set
+// differently — and once the set exceeds QueueNameLimit they name DIFFERENT nibs,
+// leaving the caller unable to enumerate the blockers by re-running and pointing
+// the ", and N more" tail at a rotating remainder. OpenQueueEntries sorts for
+// exactly this reason; the two refusals must present one set one way.
+func memberIDs(members []*nib.Nib) []string {
+	nib.SortByMilestoneOrder(members)
+	ids := make([]string, len(members))
+	for i, m := range members {
+		ids[i] = m.ID
+	}
+	return ids
+}
+
 // MilestoneQueueOpenError is decision 1.5's refusal at the model boundary: a
 // milestone may not take a status that RELEASES its dependents while open work
 // is still assigned to its queue, because that would leave the work planned for
