@@ -21,7 +21,7 @@ import (
 func CopySampleProject(t *testing.T) string {
 	t.Helper()
 
-	src := findFixtureDir(t)
+	src := SampleProjectDir(t)
 	dst := t.TempDir()
 
 	err := filepath.WalkDir(src, func(path string, d fs.DirEntry, err error) error {
@@ -61,8 +61,14 @@ func DataPath(root string) string {
 	return store.NewLayout(NibsPath(root)).DataDir()
 }
 
-// findFixtureDir locates the sample-project directory relative to this file.
-func findFixtureDir(t *testing.T) string {
+// SampleProjectDir returns the sample-project fixture directory itself — the
+// PROJECT root holding the .nibs store, at its committed location. It walks up
+// from the working directory rather than resolving a path relative to this
+// file, so it answers from any package's test.
+//
+// It is for tests that only READ the fixture; the committed data must never be
+// modified in place, so a test that writes takes [CopySampleProject] instead.
+func SampleProjectDir(t *testing.T) string {
 	t.Helper()
 
 	// When running tests, the working directory is the package directory.

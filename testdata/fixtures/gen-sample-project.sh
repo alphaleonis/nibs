@@ -8,15 +8,31 @@ DIR="$STORE/data"
 rm -rf "$STORE"
 mkdir -p "$DIR"
 
-# The store holds its own config: prefix, id length and defaults travel with the
-# data directory, so pointing nibs at this fixture applies the fixture's
-# vocabulary and not the surrounding project's.
+# The store holds its own config: prefix, id length, defaults and the declared
+# area vocabulary travel with the data directory, so pointing nibs at this
+# fixture applies the fixture's vocabulary and not the surrounding project's.
+# The areas block declares every path the nibs below assign.
 cat > "$STORE/config.yml" << 'ENDCONFIG'
 nibs:
     prefix: tnib-
     id_length: 4
     default_status: todo
     default_type: task
+areas:
+    - name: auth
+      description: Sign-in, sessions, tokens and account security
+    - name: api
+      description: The public HTTP API and the integrations built on it
+      children:
+        - name: webhooks
+          description: Outbound webhook delivery and subscriptions
+    - name: web
+      description: The browser client
+      children:
+        - name: dashboard
+          description: The project dashboard and its charts
+    - name: infra
+      description: Build, deployment and runtime infrastructure
 ENDCONFIG
 
 # ============================================================
