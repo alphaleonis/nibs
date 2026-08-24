@@ -744,7 +744,10 @@ func TestFixBrokenLinksLeavesResolvableShortIDsOnDisk(t *testing.T) {
 	// finding would register as an issue.
 	writeTypedLinkNibFile(t, nibsDir, "nibs-par", "todo", "epic", "")
 	writeLinkNibFile(t, nibsDir, "nibs-blk", "in-progress", "")
-	writeLinkNibFile(t, nibsDir, "nibs-mst", "todo", "")
+	// The milestone target is milestone-typed for the same reason: an
+	// assignment naming any other type resolves to no membership and is itself
+	// a finding.
+	writeTypedLinkNibFile(t, nibsDir, "nibs-mst", "todo", "milestone", "")
 	depPath := writeLinkNibFile(t, nibsDir, "nibs-dep", "todo", "parent: par\nmilestone: mst\nblocked_by: [blk]\n")
 	if err := core.Load(); err != nil {
 		t.Fatalf("Load: %v", err)
@@ -757,8 +760,7 @@ func TestFixBrokenLinksLeavesResolvableShortIDsOnDisk(t *testing.T) {
 	}
 
 	if result := core.CheckAllLinks(); result.HasIssues() {
-		t.Errorf("CheckAllLinks() reported issues on resolvable short ids: broken=%+v self=%+v cycles=%+v documents=%+v",
-			result.BrokenLinks, result.SelfLinks, result.Cycles, result.BrokenDocuments)
+		t.Errorf("CheckAllLinks() reported issues on resolvable short ids: %+v", result)
 	}
 
 	before := hashFile(t, depPath)

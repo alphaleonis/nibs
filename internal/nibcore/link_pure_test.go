@@ -541,8 +541,8 @@ func TestCheckAllLinksInMapIDSpelling(t *testing.T) {
 	}{
 		{name: "full parent", parent: "nibs-tgt", prefix: "nibs-"},
 		{name: "short parent", parent: "tgt", prefix: "nibs-"},
-		{name: "full milestone", milestone: "nibs-tgt", prefix: "nibs-"},
-		{name: "short milestone", milestone: "tgt", prefix: "nibs-"},
+		{name: "full milestone", milestone: "nibs-ms", prefix: "nibs-"},
+		{name: "short milestone", milestone: "ms", prefix: "nibs-"},
 		{name: "full blocked_by", blockedBy: []string{"nibs-tgt"}, prefix: "nibs-"},
 		{name: "short blocked_by", blockedBy: []string{"tgt"}, prefix: "nibs-"},
 		{
@@ -588,7 +588,12 @@ func TestCheckAllLinksInMapIDSpelling(t *testing.T) {
 				// for the type-less (default task) subject: this test pins id
 				// resolution, and a hierarchy finding would muddy the counts.
 				"nibs-tgt": {ID: "nibs-tgt", Status: "in-progress", Type: "epic"},
-				subjectID:  {ID: subjectID, Status: "todo", Parent: tt.parent, Milestone: tt.milestone, BlockedBy: tt.blockedBy},
+				// The milestone rows that must RESOLVE need a target of their
+				// own, for the same reason: a milestone is never a legal
+				// parent and an epic is never a legal assignment target, so no
+				// single nib is sound on both axes.
+				"nibs-ms": {ID: "nibs-ms", Status: "todo", Type: "milestone"},
+				subjectID: {ID: subjectID, Status: "todo", Parent: tt.parent, Milestone: tt.milestone, BlockedBy: tt.blockedBy},
 			}
 
 			result := CheckAllLinksInMap(nibs, "", tt.prefix)

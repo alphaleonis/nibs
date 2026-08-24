@@ -98,6 +98,9 @@ var checkCmd = &cobra.Command{
 - Parent types the hierarchy rules refuse (an illegal nest like a milestone
   parented under a milestone is enforced on write paths only, so in the files
   it loads as written and nothing else reports it)
+- Milestone assignments naming a nib that is not a milestone (the target
+  exists, so the link is not broken, but only a milestone confers membership —
+  the nib sits in the backlog and appears in no milestone queue)
 
 Plain check is the one command that still runs on a store needing migration —
 it is the diagnostic for exactly that state — and it reports the migration as an
@@ -106,8 +109,9 @@ issue, so an otherwise clean store exits 1 until ` + "`nibs migrate`" + ` has ru
 Use --fix to automatically remove broken links and self-references. --fix WRITES,
 so unlike plain check it refuses a store needing migration.
 Note: cycles, unparseable files, duplicate ids, out-of-enum values, refused
-axis keys, near-miss keys, illegal hierarchy nests and a pending migration
-cannot be auto-fixed and require manual intervention.`,
+axis keys, near-miss keys, illegal hierarchy nests, milestone assignments
+naming a non-milestone and a pending migration cannot be auto-fixed and require
+manual intervention.`,
 	Args: codedNoArgs(&checkJSON), // operates on the whole store; takes no positional args
 	RunE: func(cmd *cobra.Command, args []string) error {
 		totalIssues, err := runCheck(getApp(cmd))
@@ -307,6 +311,28 @@ func runCheck(app *App) (int, error) {
 			} else {
 				ui.Printf("  %s %s: %s (loads as written; move it with `nibs mv %s --parent <id>`, or retype it)\n",
 					ui.Danger.Render("✗"), stripControlChars(ih.NibID), finding, stripControlChars(ih.NibID))
+			}
+		}
+	}
+
+	// Invalid milestone targets cannot be auto-fixed either: which milestone
+	// the author meant is unknowable, and dropping the assignment discards a
+	// statement of intent, so neither repair is provable intent.
+	if !checkJSON {
+		for _, mt := range linkResult.InvalidMilestoneTargets {
+			// The type comes from front matter and the ids and path from
+			// filenames, so every piece crosses the rendering boundary.
+			finding := fmt.Sprintf("%s: assigned to %s, which is a %s, not a milestone",
+				stripControlChars(mt.Path), stripControlChars(mt.Target),
+				stripControlChars(mt.TargetType))
+			if checkFix {
+				ui.Printf("  %s Cannot auto-fix %s: %s (choosing the right milestone is not provable intent — point it at one with `nibs set %s --milestone <id>`, or drop it with `nibs set %s --clear milestone`)\n",
+					ui.Warning.Render("!"), stripControlChars(mt.NibID), finding,
+					stripControlChars(mt.NibID), stripControlChars(mt.NibID))
+			} else {
+				ui.Printf("  %s %s: %s (only a milestone confers membership; loads as written, so the nib sits in the backlog and appears in no milestone queue — point it at a milestone with `nibs set %s --milestone <id>`, or drop it with `nibs set %s --clear milestone`)\n",
+					ui.Danger.Render("✗"), stripControlChars(mt.NibID), finding,
+					stripControlChars(mt.NibID), stripControlChars(mt.NibID))
 			}
 		}
 	}
