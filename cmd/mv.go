@@ -62,7 +62,7 @@ var mvCmd = &cobra.Command{
 	Short:   "Move a nib: reposition among siblings or in its milestone queue, or reparent",
 	Long: `Move one nib (reposition or reparent) or reorder a block of siblings.
 
-Single nib:   nibs mv <id> --after|--before|--first <anchor>   # reposition among siblings
+Single nib:   nibs mv <id> --after|--before <anchor> | --first   # reposition among siblings
               nibs mv <id> --parent <new-parent>                # reparent (append to end)
               nibs mv <id> --parent <new-parent> --first        # reparent to first
 Queue move:   nibs mv <id> --queue --after|--before <anchor>   # --first takes no anchor
