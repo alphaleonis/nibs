@@ -244,9 +244,9 @@ func TestCanonicalizationDedupesResolvedDuplicates(t *testing.T) {
 func TestShortFormIfMatchUpdateDoesNotFalseConflict(t *testing.T) {
 	core, nibsDir := mustLoadPrefixedCore(t)
 
-	// Timestamps are spelled out because loadNib synthesizes a missing created_at
-	// from the file mtime while computeStoredETag's bare parse does not — a
-	// separate, pre-existing divergence that would mask the one under test.
+	// Timestamps are spelled out so this fixture exercises the link axis alone: a
+	// file omitting them also goes through the loader's stamp synthesis, and a
+	// failure in THAT reconciliation would read here as a link failure.
 	const stamps = "created_at: 2026-07-30T10:00:00Z\nupdated_at: 2026-07-30T10:00:00Z\n"
 	writeLinkNibFile(t, nibsDir, "nibs-par", "todo", stamps)
 	writeLinkNibFile(t, nibsDir, "nibs-dep", "todo", stamps+"parent: par\n")

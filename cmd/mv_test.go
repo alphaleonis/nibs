@@ -14,25 +14,6 @@ import (
 	"github.com/spf13/pflag"
 )
 
-// onDiskETag computes the canonical etag of the nib file at <nibsDir>/<id>.md by
-// parsing it and hashing its canonical render (with the id derived from the
-// filename). Mirrors nibcore.Core.computeStoredETag so CLI tests can build valid
-// --child-if-match arguments without spinning up a resolver.
-func onDiskETag(t *testing.T, nibsDir, id string) string {
-	t.Helper()
-	f, err := os.Open(dataPath(nibsDir, id+".md"))
-	if err != nil {
-		t.Fatalf("read nib %s: %v", id, err)
-	}
-	defer func() { _ = f.Close() }()
-	b, err := nib.Parse(f)
-	if err != nil {
-		t.Fatalf("parse nib %s: %v", id, err)
-	}
-	b.ID = id
-	return b.ETag()
-}
-
 // resetMvFlags clears the package-level flag vars used by mvCmd AND Cobra's
 // Changed-state tracking so tests don't pollute each other via rootCmd's
 // singleton state.
@@ -379,10 +360,10 @@ func TestReorderCommand_IfMatchRejectedInModeB(t *testing.T) {
 func TestReorderCommand_ChildIfMatch(t *testing.T) {
 	nibsDir := setupMvCobraTest(t, reorderFixture())
 
-	// Compute the on-disk etag for each child before the reorder.
-	etagA := onDiskETag(t, nibsDir, "a")
-	etagB := onDiskETag(t, nibsDir, "b")
-	etagC := onDiskETag(t, nibsDir, "c")
+	// Read each child's etag back the way a caller obliged to supply one does.
+	etagA := etagOf(t, nibsDir, "a")
+	etagB := etagOf(t, nibsDir, "b")
+	etagC := etagOf(t, nibsDir, "c")
 
 	rootCmd.SetArgs([]string{
 		"--nibs-path", nibsDir,
