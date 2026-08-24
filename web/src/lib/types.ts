@@ -51,6 +51,13 @@ export interface NibFilter {
   // (QueryFilter deliberately omits them).
   milestone?: string;
   noMilestone?: boolean;
+  // Ownership axis. `area` selects the area's work DOWNWARD-CLOSED over the
+  // declared tree: the nibs assigned to that path plus those in every area
+  // declared beneath it. Closure is over the tree, not the string — `webhooks`
+  // is not within `web` — and an undeclared value is refused rather than
+  // matching nothing. Guard-only for now, like the two above: QueryFilter does
+  // not speak this facet either.
+  area?: string;
 }
 
 // Compile-time guard binding the hand-written NibFilter above to the codegen'd

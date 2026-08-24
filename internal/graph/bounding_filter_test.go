@@ -55,6 +55,10 @@ var nonBoundingFilterFields = []string{
 	"isBlocked",
 	"hasBlockedBy",
 	"noMilestone",
+	// area names a declared PATH and not a nib, so however few nibs an area
+	// holds, no relation bounds the population a term selects from — the test
+	// here is what the field NAMES, not how large its set turns out to be.
+	"area",
 }
 
 // nibFilterFieldNames returns the schema name of every field of

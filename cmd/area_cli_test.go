@@ -5,6 +5,8 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"slices"
+	"sort"
 	"strings"
 	"testing"
 
@@ -20,11 +22,15 @@ func setupAreaCLITest(t *testing.T) string {
 	resetSetFlags()
 	resetNewFlags()
 	resetGetFlags()
+	resetListFlags()
+	resetQueryFlags()
 	resetRootPersistentFlags()
 	t.Cleanup(func() {
 		resetSetFlags()
 		resetNewFlags()
 		resetGetFlags()
+		resetListFlags()
+		resetQueryFlags()
 		resetRootPersistentFlags()
 		rootCmd.SetArgs(nil)
 	})
@@ -308,5 +314,194 @@ func rewriteStoredArea(t *testing.T, nibsPath, id, from, to string) {
 	}
 	if err := os.WriteFile(matches[0], []byte(rewritten), 0644); err != nil {
 		t.Fatalf("writing %s: %v", matches[0], err)
+	}
+}
+
+// listAreaIDs runs `nibs list --area <path> --all -q` and returns the ids it
+// listed, sorted. --all is deliberate: the area axis says nothing about status,
+// and the open default would otherwise decide half of what these rows assert.
+func listAreaIDs(t *testing.T, nibsPath, area string) []string {
+	t.Helper()
+	resetListFlags()
+	resetRootPersistentFlags()
+	out, err := runRootWith(t, "--nibs-path", nibsPath, "list", "--area", area, "--all", "-q")
+	if err != nil {
+		t.Fatalf("list --area %s: %v", area, err)
+	}
+	var ids []string
+	for _, line := range strings.Split(strings.TrimSpace(out), "\n") {
+		if line = strings.TrimSpace(line); line != "" {
+			ids = append(ids, line)
+		}
+	}
+	sort.Strings(ids)
+	return ids
+}
+
+// TestListAreaIsDownwardClosedOverTheDeclaredTree is the flag surface of the
+// closure rule, on the shipped vocabulary: a filter selects the area named and
+// every declared area below it, and a leaf never reaches back up to its parent.
+//
+// The tree-versus-string half of the rule cannot be shown here — the sample
+// project declares `webhooks` nested under `api`, so no two of its paths spell a
+// prefix of one another as separate roots. It is pinned where a vocabulary can
+// be authored for it, in TestAreaFilterIsDownwardClosedOverTheDeclaredTree
+// (internal/graph), over the same ApplyFilter this flag reaches.
+func TestListAreaIsDownwardClosedOverTheDeclaredTree(t *testing.T) {
+	nibsPath := setupAreaCLITest(t)
+
+	tests := []struct {
+		name string
+		area string
+		want []string
+	}{
+		{
+			name: "a root takes its declared child too",
+			area: "web",
+			want: []string{"tnib-b005", "tnib-f008"},
+		},
+		{
+			name: "a leaf takes itself alone",
+			area: "web/dashboard",
+			want: []string{"tnib-f008"},
+		},
+		{
+			name: "the other nested root behaves the same way",
+			area: "api",
+			want: []string{"tnib-b011", "tnib-f011"},
+		},
+		{
+			name: "a childless root takes only its own",
+			area: "infra",
+			want: []string{"tnib-t039"},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := listAreaIDs(t, nibsPath, tt.area)
+			want := append([]string(nil), tt.want...)
+			sort.Strings(want)
+			if !slices.Equal(got, want) {
+				t.Errorf("list --area %s = %v, want %v", tt.area, got, want)
+			}
+		})
+	}
+}
+
+// TestListAreaRefusesUndeclaredValue pins the refusal the work item asks for by
+// name: a path the store does not declare is an error, not an empty listing.
+//
+// The empty listing is what makes it worth refusing. The fixture holds seven
+// assigned nibs, so zero rows is a shape the caller sees constantly and would
+// read as "nothing is in this area" — for a value that names no area at all.
+func TestListAreaRefusesUndeclaredValue(t *testing.T) {
+	nibsPath := setupAreaCLITest(t)
+
+	resetListFlags()
+	out, err := runRootWith(t, "--nibs-path", nibsPath, "list", "--area", "nosuch")
+	if err == nil {
+		t.Fatalf("an undeclared area listed instead of being refused:\n%s", out)
+	}
+	if code := areaErrCode(t, err); code != output.ErrValidation {
+		t.Errorf("code = %q (exit %d), want %q (exit 2)", code, output.ExitCode(code), output.ErrValidation)
+	}
+	for _, want := range []string{"nosuch", "must be one of", "web/dashboard", "api/webhooks"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Errorf("error = %q, want substring %q", err.Error(), want)
+		}
+	}
+}
+
+// TestListAreaRefusesAnEmptyValue keeps `--area "$AREA"` with AREA unset from
+// widening the listing to the whole store — the usual way an empty value
+// arrives, and the one where a silent widening is a lie about the result rather
+// than a broader answer.
+func TestListAreaRefusesAnEmptyValue(t *testing.T) {
+	nibsPath := setupAreaCLITest(t)
+
+	resetListFlags()
+	out, err := runRootWith(t, "--nibs-path", nibsPath, "list", "--area", "")
+	if err == nil {
+		t.Fatalf(`--area "" listed instead of being refused:\n%s`, out)
+	}
+	if code := areaErrCode(t, err); code != output.ErrValidation {
+		t.Errorf("code = %q, want %q", code, output.ErrValidation)
+	}
+	if !strings.Contains(err.Error(), "empty value") {
+		t.Errorf("error = %q, want it to report the value as empty", err.Error())
+	}
+}
+
+// TestListAreaInAStoreDeclaringNoAreasSaysWhy answers the question the axis
+// itself raises. "must be one of " followed by nothing reads as a bug in nibs;
+// the real answer is that this project has never declared a vocabulary, which is
+// a config edit rather than a different flag value.
+func TestListAreaInAStoreDeclaringNoAreasSaysWhy(t *testing.T) {
+	setupAreaCLITest(t)
+	nibsPath := remedyStoreWithoutAreas(nil)(t)
+
+	resetListFlags()
+	_, err := runRootWith(t, "--nibs-path", nibsPath, "list", "--area", "web")
+	if err == nil {
+		t.Fatal("a store declaring no areas must refuse every --area, got nil")
+	}
+	if code := areaErrCode(t, err); code != output.ErrValidation {
+		t.Errorf("code = %q, want %q", code, output.ErrValidation)
+	}
+	if !strings.Contains(err.Error(), "declares no areas") {
+		t.Errorf("error = %q, want it to say the store declares none", err.Error())
+	}
+	if strings.Contains(err.Error(), "must be one of") {
+		t.Errorf("error = %q, must not name an empty allowed set", err.Error())
+	}
+}
+
+// TestQueryAreaFilterAgreesWithTheFlag is the [manual] acceptance criterion as a
+// test: `nibs(filter: {area: …})` is downward-closed the same way `--area` is,
+// and refuses the same value with the same exit class.
+//
+// Both surfaces reach one ApplyFilter, so what this really guards is that
+// neither grew a reading of its own on the way there — the flag by pre-filtering
+// or expanding the path itself, the graph surface by a schema field wired to
+// something else.
+func TestQueryAreaFilterAgreesWithTheFlag(t *testing.T) {
+	nibsPath := setupAreaCLITest(t)
+
+	for _, area := range []string{"web", "web/dashboard", "api", "infra"} {
+		t.Run(area, func(t *testing.T) {
+			resetQueryFlags()
+			out, err := runRootWith(t, "--nibs-path", nibsPath, "query", "--json",
+				`{ nibs(filter:{area:"`+area+`"}) { id } }`)
+			if err != nil {
+				t.Fatalf("query: %v", err)
+			}
+			var payload struct {
+				Nibs []struct {
+					ID string `json:"id"`
+				} `json:"nibs"`
+			}
+			if err := json.Unmarshal([]byte(out), &payload); err != nil {
+				t.Fatalf("unmarshal query output: %v\nraw: %s", err, out)
+			}
+			var ids []string
+			for _, b := range payload.Nibs {
+				ids = append(ids, b.ID)
+			}
+			sort.Strings(ids)
+			if want := listAreaIDs(t, nibsPath, area); !slices.Equal(ids, want) {
+				t.Errorf("graphql area %q = %v, flag = %v", area, ids, want)
+			}
+		})
+	}
+
+	resetQueryFlags()
+	_, err := runRootWith(t, "--nibs-path", nibsPath, "query",
+		`{ nibs(filter:{area:"nosuch"}) { id } }`)
+	if err == nil {
+		t.Fatal("an undeclared area must be refused on the graph surface too, got nil")
+	}
+	if code := areaErrCode(t, err); code != output.ErrValidation {
+		t.Errorf("code = %q (exit %d), want %q (exit 2)", code, output.ExitCode(code), output.ErrValidation)
 	}
 }

@@ -274,3 +274,66 @@ type FilterTargetUnreadableError struct {
 func (e *FilterTargetUnreadableError) Error() string {
 	return fmt.Sprintf("%s filter: target %s became unreadable while filtering: %v", e.Field, echoID(e.ID), e.ReaderErr)
 }
+
+// FilterAreaError reports that the area filter was given a value the store's
+// declared vocabulary does not hold — `nibs(filter:{area:"nosuch"})`, or the
+// empty string. The value names no area, so this is neither a not-found about
+// some nib nor a question whose answer is "nothing".
+//
+// The empty listing it replaces is the reason it exists. "What is in this area?"
+// answered with zero rows is a factual claim about the store, and a caller who
+// mistyped the path — or retired it from `areas:` and forgot — receives that
+// claim as the answer to a question that was never asked. It is the same reading
+// FilterTargetNotFoundError refuses for an id, arrived at from the other
+// direction: an area is a declared PATH rather than a nib, so there is no lookup
+// to miss and the vocabulary itself is the authority.
+//
+// It is the validation class (exit 2), the class the WRITE surface already gives
+// the same mistake — `nibs set --area <undeclared>` reaches
+// config.ValidateStoredArea through Core.ValidateArea — so one user error
+// carries one verdict
+// whichever side raises it. cmd/errors.go's filterTargetErrCode recognizes the
+// concrete type.
+//
+// Like FilterTargetEmptyError it implements NO Unwrap. Unwrapping to
+// nib.ErrNotFound would make errors.Is(err, nib.ErrNotFound) true and collapse
+// this into the not-found class at every classifier keyed on that channel —
+// reporting exit 3, "that id names no nib", for input that is not an id at all.
+//
+// Its message is worded for a FILTER rather than reusing config.AreaError, which
+// is worded for an assignment: that one prescribes `nibs set` escapes for a nib
+// whose stored value is refused, and neither the escapes nor the nib apply to a
+// caller who merely asked a question. What is NOT restated here is any rule —
+// membership is config.IsValidArea's, whether the axis is in use at all is
+// config.AreasDeclared's, and the declared set is rendered by config.AreaList,
+// so only the sentence around them is local.
+type FilterAreaError struct {
+	// Field is the GraphQL filter field that carried the value — "area", the
+	// same spelling as in the schema, so a message naming it points at
+	// something the caller can look up.
+	Field string
+	// Path is the refused value, already through config.RenderAreaPath: it is
+	// caller text of unbounded length, and it is the config's own declared set
+	// that the same message quotes beside it, so both sides go through one
+	// renderer. Empty exactly when the caller supplied the empty string, which
+	// is what selects the malformed-input wording.
+	Path string
+	// Declared is the vocabulary as config.AreaList renders it, empty when the
+	// store declares none. "must be one of " followed by nothing reads as a bug
+	// in nibs — the reader looks for the list that failed to print — where the
+	// real answer is that the project has not declared a vocabulary yet, which
+	// is a config edit rather than a different value.
+	Declared string
+}
+
+func (e *FilterAreaError) Error() string {
+	switch {
+	case e.Path == "":
+		return fmt.Sprintf("%s filter: empty value; it takes a declared area path", e.Field)
+	case e.Declared == "":
+		return fmt.Sprintf("%s filter: %q is not a declared area: this store declares no areas — declare an `areas:` block in the store's config.yml before filtering by one",
+			e.Field, e.Path)
+	default:
+		return fmt.Sprintf("%s filter: %q is not a declared area; must be one of %s", e.Field, e.Path, e.Declared)
+	}
+}

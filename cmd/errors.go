@@ -58,8 +58,13 @@ func reportErr(jsonMode bool, code string, err error) error {
 //     (milestone naming an epic) is VALIDATION_ERROR (exit 2): the id is real,
 //     so it is not a not-found, and it is the class `nibs set --milestone`
 //     gives the same mistake, so the read and write surfaces agree.
+//   - The area filter given a path the store's vocabulary does not declare is
+//     VALIDATION_ERROR (exit 2) on the same principle, arrived at from the
+//     other direction: an area is a declared path rather than a nib, so there
+//     is no lookup to miss and nothing is a not-found — and `nibs set --area`
+//     already refuses the same value with that class.
 //
-// Reusing VALIDATION_ERROR rather than minting a code for those last three is
+// Reusing VALIDATION_ERROR rather than minting a code for those last four is
 // deliberate: a distinct code is worth minting only when it carries something an
 // agent can act on that the exit status does not. HIERARCHY earns its own — the
 // envelope carries the parent types that would be accepted with it — while a
@@ -69,9 +74,10 @@ func reportErr(jsonMode bool, code string, err error) error {
 //
 // The branches are independent, not ordered: none of
 // graph.FilterTargetUnreadableError, graph.FilterTargetEmptyError,
-// graph.FilterTargetContradictionError and graph.FilterTargetTypeError carries
-// nib.ErrNotFound (see their doc comments — the absent Unwrap is the whole
-// safety property in each), so no test can claim another's error.
+// graph.FilterTargetContradictionError, graph.FilterTargetTypeError and
+// graph.FilterAreaError carries nib.ErrNotFound (see their doc comments — the
+// absent Unwrap is the whole safety property in each), so no test can claim
+// another's error.
 //
 // This is the READ path's classifier: cmd/list.go and cmd/rel.go call it
 // directly with a graph.ApplyFilter failure. It is NOT what classifies a
@@ -93,6 +99,10 @@ func filterTargetErrCode(err error) (string, bool) {
 	}
 	var wrongType *graph.FilterTargetTypeError
 	if errors.As(err, &wrongType) {
+		return output.ErrValidation, true
+	}
+	var badArea *graph.FilterAreaError
+	if errors.As(err, &badArea) {
 		return output.ErrValidation, true
 	}
 	if errors.Is(err, nib.ErrNotFound) {

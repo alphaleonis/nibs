@@ -389,6 +389,7 @@ func resetListFlags() {
 	listMentionedBy = ""
 	listMilestone = ""
 	listBacklog = false
+	listArea = ""
 	listReady = false
 	listAll = false
 	listOpen = false

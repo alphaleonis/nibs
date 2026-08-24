@@ -721,6 +721,26 @@ func remedySurfaces() []remedySurface {
 			wantCommands: 2,
 		},
 		{
+			name:     "the area filter refuses a path the vocabulary does not declare",
+			store:    remedyStore(nil),
+			diagnose: remedyAreaFilterRefusal,
+			mustName: []string{`"nosuch" is not a declared area`, "must be one of"},
+			// The declared set IS the repair, and it is already in the message,
+			// so this refusal names no command. The row is here to enroll the
+			// surface: one added later is executed rather than trusted.
+			wantCommands: 0,
+		},
+		{
+			name:     "the area filter in a store declaring no areas says that instead",
+			store:    remedyStoreWithoutAreas(nil),
+			diagnose: remedyAreaFilterRefusal,
+			mustName: []string{"declares no areas", "config.yml"},
+			// No command either, and here for a stronger reason than above: the
+			// repair is a config edit, so any `nibs …` this named would be one
+			// with no satisfiable argument in the very state it reports.
+			wantCommands: 0,
+		},
+		{
 			name:  "check names an illegal nest (unchanged sibling, the control)",
 			store: remedyStore(nestFiles),
 			diagnose: func(t *testing.T, nibsDir string) string {
@@ -790,6 +810,24 @@ func remedyStrandedWriteRefusal(t *testing.T, nibsDir string) string {
 	_, err := runRootWith(t, "--nibs-path", nibsDir, "set", "rmd-st01", "--title", "Renamed")
 	if err == nil {
 		t.Fatal("a write to a nib carrying an undeclared area must be refused, got nil")
+	}
+	return err.Error()
+}
+
+// remedyAreaFilterRefusal returns the refusal `nibs list --area` raises for a
+// path the store's vocabulary does not declare. It is the READ side of the same
+// vocabulary the write refusals above speak for, and the one refusal here that a
+// caller meets without having written anything.
+func remedyAreaFilterRefusal(t *testing.T, nibsDir string) string {
+	t.Helper()
+	resetCommandTreeFlags(rootCmd)
+	t.Cleanup(func() {
+		resetCommandTreeFlags(rootCmd)
+		rootCmd.SetArgs(nil)
+	})
+	_, err := runRootWith(t, "--nibs-path", nibsDir, "list", "--area", "nosuch")
+	if err == nil {
+		t.Fatal("an undeclared area must be refused rather than listed as empty, got nil")
 	}
 	return err.Error()
 }

@@ -35,6 +35,7 @@ var (
 	listMentionedBy string
 	listMilestone   string
 	listBacklog     bool
+	listArea        string
 	listReady       bool
 	listAll         bool
 	listOpen        bool
@@ -74,6 +75,16 @@ Milestone queue and backlog:
                      (a child of an assigned epic is planned work, not backlog).
                      Milestones themselves are in no queue and so appear here;
                      add --no-type milestone to drop them.
+
+Area scope:
+  --area <path>      The area's work, downward-closed over the areas the store's
+                     config declares: the nibs assigned to that path plus those
+                     in every area declared beneath it (--area web takes in
+                     web/dashboard). Closure follows the declared tree, not the
+                     spelling, so a sibling whose name merely starts the same
+                     way is a different area. A path the store does not declare
+                     is refused (exit 2) naming the declared set, and a store
+                     that declares no areas at all says that instead.
 
 Status filtering (open by default):
   With no status flag, only open nibs are listed (the closed statuses are
@@ -205,6 +216,14 @@ Search Syntax (--search/-S):
 			return reportErr(listJSON, output.ErrValidation,
 				fmt.Errorf(`--milestone was given an empty value; use --backlog to select nibs in no milestone`))
 		}
+		// --area takes a declared PATH rather than a nib id, so it is not one of
+		// the id-valued filters above; the empty value is refused for the same
+		// reason all the same, and the message names no sibling flag because
+		// there is no --no-area to redirect to.
+		if cmd.Flags().Changed("area") && listArea == "" {
+			return reportErr(listJSON, output.ErrValidation,
+				fmt.Errorf(`--area was given an empty value; it takes a declared area path`))
+		}
 		if listParentID != "" {
 			filter.ParentID = &listParentID
 		}
@@ -226,6 +245,15 @@ Search Syntax (--search/-S):
 		if listBacklog {
 			backlog := true
 			filter.NoMilestone = &backlog
+		}
+
+		// The area vocabulary is per store, so membership is checked in the
+		// graph layer against the config the store carries rather than here:
+		// one refusal, worded once, whichever surface asks. filterTargetErrCode
+		// maps it to VALIDATION_ERROR below, the class `nibs set --area` gives
+		// the same value.
+		if listArea != "" {
+			filter.Area = &listArea
 		}
 
 		// --has-parent/--no-parent and --has-blocking/--no-blocking are each
@@ -582,6 +610,9 @@ func init() {
 	listCmd.Flags().StringVar(&listMentionedBy, "mentioned-by", "", "Filter nibs mentioned in the given ID's body (short or full; an id naming no nib is an error, not an empty listing)")
 	listCmd.Flags().StringVar(&listMilestone, "milestone", "", "Show the milestone's queue — the nibs assigned to it — in queue order (an id naming no nib, or a nib that is not a milestone, is an error, not an empty listing)")
 	listCmd.Flags().BoolVar(&listBacklog, "backlog", false, "Show the backlog: nibs in no milestone, own assignment or inherited (tree order)")
+	// No allowed set in the usage string: areas are declared per store, and this
+	// text is rendered from a default config that declares none.
+	listCmd.Flags().StringVar(&listArea, "area", "", "Show an area's work — the nibs assigned to it or to any area declared beneath it (a path the store does not declare is an error, not an empty listing)")
 	listCmd.Flags().BoolVar(&listReady, "ready", false, readyFlagUsage(config.Default()))
 	listCmd.Flags().BoolVar(&listAll, "all", false, "Include every status (disable the open-by-default filter)")
 	listCmd.Flags().BoolVar(&listOpen, "open", false, "Show only open nibs — shorthand for -s open; slightly narrower than the open-by-default rule, which excludes the closed statuses and so keeps a nib with no status")

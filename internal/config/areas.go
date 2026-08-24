@@ -181,7 +181,7 @@ func (c *Config) AreaList() string {
 	}
 	rendered := make([]string, 0, len(shown)+1)
 	for _, path := range shown {
-		rendered = append(rendered, renderAreaPath(path))
+		rendered = append(rendered, RenderAreaPath(path))
 	}
 	if len(paths) > len(shown) {
 		rendered = append(rendered, fmt.Sprintf("…and %d more", len(paths)-len(shown)))
@@ -189,12 +189,15 @@ func (c *Config) AreaList() string {
 	return strings.Join(rendered, ", ")
 }
 
-// renderAreaPath renders one file-sourced path for a message: control
-// characters neutralized and the length bounded. Both messages that echo a path
-// go through it — the declared set AreaList lists, and the refused value
-// ValidateAreaAssignment quotes back — because both sides of that message can
-// come from a config file.
-func renderAreaPath(path string) string {
+// RenderAreaPath renders one area path for a message: control characters
+// neutralized and the length bounded. Every message that echoes a path goes
+// through it — the declared set AreaList lists, the refused value
+// ValidateAreaAssignment quotes back, and the filter argument internal/graph
+// refuses — because a path reaching one of those slots is file-sourced whenever
+// it is the declared set or a value a nib already carries, and caller-supplied
+// text of unbounded length otherwise. Both hazards want the same treatment, and
+// one renderer is what keeps the two sides of a single message rendered alike.
+func RenderAreaPath(path string) string {
 	return truncateListedArea(safetext.Strip(path))
 }
 
@@ -301,7 +304,7 @@ func (c *Config) ValidateAreaAssignment(path string) error {
 	if path == "" || c.IsValidArea(path) {
 		return nil
 	}
-	return &AreaError{Path: renderAreaPath(path), Declared: c.declaredList()}
+	return &AreaError{Path: RenderAreaPath(path), Declared: c.declaredList()}
 }
 
 // declaredList renders the vocabulary for a refusal, or the empty string when
@@ -334,7 +337,7 @@ func (c *Config) ValidateStoredArea(nibID, path string) error {
 	if path == "" || c.IsValidArea(path) {
 		return nil
 	}
-	return &AreaError{Path: renderAreaPath(path), Declared: c.declaredList(), NibID: safetext.Strip(nibID)}
+	return &AreaError{Path: RenderAreaPath(path), Declared: c.declaredList(), NibID: safetext.Strip(nibID)}
 }
 
 // IsAreaWithin reports whether path is ancestor or sits below it — the
