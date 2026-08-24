@@ -13,6 +13,7 @@ import (
 	"github.com/alphaleonis/nibs/internal/nibcore"
 	"github.com/alphaleonis/nibs/internal/store"
 	"github.com/alphaleonis/nibs/internal/testskip"
+	"gopkg.in/yaml.v3"
 )
 
 // deceptiveRunes are what a hostile file uses to make a rendered message differ
@@ -176,6 +177,38 @@ func TestFileSourcedTextNeverReachesAnEchoSurfaceRaw(t *testing.T) {
 				out, err := runRootWith(t, "--nibs-path", storeDir, "migrate", "--dry-run")
 				if err != nil {
 					t.Fatalf("migrate --dry-run: %v\nout: %s", err, out)
+				}
+				return out
+			},
+		},
+		{
+			// `nibs area list` prints the one vocabulary a PROJECT authors, so
+			// both the node NAMES and their descriptions are file-sourced text
+			// going straight to stdout.
+			name: "area list",
+			emit: func(t *testing.T) string {
+				storeDir := writeStoreFiles(t, nil)
+				cfg := config.Default()
+				cfg.Nibs.Prefix = "tnib-"
+				cfg.Areas = []config.AreaConfig{{
+					Name:        deceptivePayload,
+					Description: deceptivePayload,
+					Children:    []config.AreaConfig{{Name: deceptivePayload + "-child"}},
+				}}
+				data, err := yaml.Marshal(cfg)
+				if err != nil {
+					t.Fatal(err)
+				}
+				writeFileT(t, filepath.Join(storeDir, "config.yml"), string(data))
+
+				t.Cleanup(func() {
+					resetCommandTreeFlags(rootCmd)
+					rootCmd.SetArgs(nil)
+				})
+				resetCommandTreeFlags(rootCmd)
+				out, err := runRootWith(t, "--nibs-path", storeDir, "area", "list")
+				if err != nil {
+					t.Fatalf("area list: %v\nout: %s", err, out)
 				}
 				return out
 			},

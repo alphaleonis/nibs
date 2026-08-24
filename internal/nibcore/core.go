@@ -970,9 +970,25 @@ func (c *Core) ValidateEnums(b *nib.Nib) error {
 // so the off-lock call rests on a narrower fact: nothing mutates c.config.Areas
 // after construction. The config struct IS writable — `nibs config set-prefix`
 // assigns cfg.Nibs.Prefix in place — and preValidateSubject already reads
-// cfg.Nibs.RequireIfMatch off-lock beside this call on exactly that footing. A
-// command that edits the areas vocabulary in a live process breaks both, and
-// would have to reload the config rather than assign into it.
+// cfg.Nibs.RequireIfMatch off-lock beside this call on exactly that footing.
+//
+// `nibs area rename` and `nibs area rm` edit the vocabulary and keep that fact
+// true rather than trading it away: they rewrite the `areas:` block in the
+// store's config.yml (config.PlanRenameStoredArea / config.PlanRemoveStoredArea,
+// written after the cascade) and never assign into this struct, so no reader
+// here ever observes a torn or changed Areas. What they give up is that the
+// loaded config is stale for the rest of the process, which for a CLI verb that
+// prints its result and exits is nothing — but is NOT nothing for a live
+// `nibs serve`, whose watcher picks the rewritten nibs up while its vocabulary
+// stays the one it read at startup, so every write it makes to one of them is
+// refused here until it restarts. Closing that would be a config RELOAD, not an
+// in-place assign into this struct; until there is one, the verbs name a live
+// serve in their output (cmd.areaLiveServeNote).
+//
+// RewriteAreaAssignments, the cascade beside those edits, is
+// deliberately not a caller of this method for the same reason a rename could
+// not go through Update at all: no single vocabulary declares both the value a
+// member is leaving and the one it is arriving at.
 func (c *Core) ValidateArea(b *nib.Nib) error {
 	if c.config == nil {
 		return nil

@@ -480,6 +480,98 @@ func remedyStoreWithoutAreas(files map[string]string) func(t *testing.T) string 
 	}
 }
 
+// remedyStoreWithEmptyArea is the sample store with infra's one assignment
+// cleared, so a DECLARED area exists that nothing is assigned to — the state a
+// disposition flag has nothing to act on in. Every area the shipped fixture
+// declares is populated, which is why the row cannot use it as it stands.
+func remedyStoreWithEmptyArea(t *testing.T) string {
+	t.Helper()
+	nibsDir := remedyStore(nil)(t)
+	matches, err := filepath.Glob(filepath.Join(nibsDir, "data", "tnib-t039*.md"))
+	if err != nil || len(matches) != 1 {
+		t.Fatalf("locating tnib-t039: %v (matches %v)", err, matches)
+	}
+	raw, err := os.ReadFile(matches[0])
+	if err != nil {
+		t.Fatal(err)
+	}
+	stripped := strings.Replace(string(raw), "area: infra\n", "", 1)
+	if stripped == string(raw) {
+		t.Fatalf("tnib-t039 no longer carries `area: infra`:\n%s", raw)
+	}
+	if err := os.WriteFile(matches[0], []byte(stripped), 0644); err != nil {
+		t.Fatal(err)
+	}
+	return nibsDir
+}
+
+// remedyStoreWithConfigShape is the sample store with its config.yml replaced,
+// so a row can exercise a vocabulary shape the areas editor refuses. The
+// replacement has to keep declaring the same paths the fixture's nibs carry,
+// which is what makes the refusal about the SHAPE rather than about the value.
+func remedyStoreWithConfigShape(cfg string) func(t *testing.T) string {
+	base := remedyStore(nil)
+	return func(t *testing.T) string {
+		t.Helper()
+		nibsDir := base(t)
+		if err := os.WriteFile(filepath.Join(nibsDir, "config.yml"), []byte(cfg), 0644); err != nil {
+			t.Fatal(err)
+		}
+		return nibsDir
+	}
+}
+
+// remedyAliasedAreasConfig declares web/dashboard through a YAML alias: the
+// loader resolves it and the file editor cannot address it.
+const remedyAliasedAreasConfig = `nibs:
+    prefix: tnib-
+    id_length: 4
+shared:
+    dashboard: &dashboard
+        name: dashboard
+        description: The project dashboard and its charts
+areas:
+    - name: auth
+      description: Sign-in
+    - name: api
+      description: The public HTTP API
+      children:
+        - name: webhooks
+          description: Outbound webhook delivery
+    - name: web
+      description: The browser client
+      children:
+        - *dashboard
+    - name: infra
+      description: Build and deployment
+`
+
+// remedyMultiDocumentAreasConfig is a config the loader accepts and the areas
+// editor refuses, because rewriting it from the first document alone would
+// delete the second.
+const remedyMultiDocumentAreasConfig = `nibs:
+    prefix: tnib-
+    id_length: 4
+areas:
+    - name: auth
+      description: Sign-in
+    - name: api
+      description: The public HTTP API
+      children:
+        - name: webhooks
+          description: Outbound webhook delivery
+    - name: web
+      description: The browser client
+      children:
+        - name: dashboard
+          description: The project dashboard and its charts
+    - name: infra
+      description: Build and deployment
+---
+# a second document some other tool appends
+extra: true
+`
+
 const (
 	remedyMilestoneWithArea = `---
 version: 2
@@ -741,6 +833,83 @@ func remedySurfaces() []remedySurface {
 			wantCommands: 0,
 		},
 		{
+			name:     "retiring a populated area names both dispositions",
+			store:    remedyStore(nil),
+			diagnose: remedyAreaRetireRefusal([]string{"rm", "auth"}),
+			mustName: []string{`cannot retire area "auth"`, "tnib-b002", "tnib-f002"},
+			choices:  map[string]string{"<area>": "api"},
+			// The two dispositions. "leave the declaration in place" is the third
+			// way out and names no command, which is the point of it.
+			wantCommands: 2,
+		},
+		{
+			name:         "a disposition with nothing to dispose of names the bare retire",
+			store:        remedyStoreWithEmptyArea,
+			diagnose:     remedyAreaRetireRefusal([]string{"rm", "infra", "--unassign"}),
+			mustName:     []string{"nothing to unassign"},
+			wantCommands: 1,
+		},
+		{
+			name:         "moving members into the subtree being retired names the other escape",
+			store:        remedyStore(nil),
+			diagnose:     remedyAreaRetireRefusal([]string{"rm", "web", "--move-to", "web/dashboard"}),
+			mustName:     []string{"which this command is retiring"},
+			wantCommands: 1,
+		},
+		{
+			name:         "a path where a name belongs names the rename that works",
+			store:        remedyStore(nil),
+			diagnose:     remedyAreaRetireRefusal([]string{"rename", "web/dashboard", "web/panel"}),
+			mustName:     []string{"is not a name"},
+			wantCommands: 1,
+		},
+		{
+			name:         "a rename across parents points at the listing",
+			store:        remedyStore(nil),
+			diagnose:     remedyAreaRetireRefusal([]string{"rename", "web/dashboard", "api/panel"}),
+			mustName:     []string{"never moves it between parents"},
+			wantCommands: 1,
+		},
+		{
+			name:     "retiring a path the vocabulary does not declare",
+			store:    remedyStore(nil),
+			diagnose: remedyAreaRetireRefusal([]string{"rm", "nosuch"}),
+			mustName: []string{`declares no area "nosuch"`, "web/dashboard"},
+			// The declared set IS the repair and it is already in the message, so
+			// this refusal names no command. The row enrolls the surface: one
+			// added later is executed rather than trusted.
+			wantCommands: 0,
+		},
+		{
+			name:  "a retire whose config write fails with no disposition names the bare rerun",
+			store: remedyStoreWithEmptyArea,
+			// The one branch that must NOT report a disposition or name a flag:
+			// nothing was assigned below the area, so nothing was rewritten.
+			diagnose:     remedyAreaConfigWriteFailure([]string{"rm", "infra"}),
+			mustName:     []string{`area "infra" could not be retired`, "nothing is assigned at or below it"},
+			wantCommands: 1,
+		},
+		{
+			name:     "a vocabulary reached through a YAML alias names no command",
+			store:    remedyStoreWithConfigShape(remedyAliasedAreasConfig),
+			diagnose: remedyAreaRetireRefusal([]string{"rename", "web/dashboard", "panel"}),
+			mustName: []string{"YAML alias"},
+			// The repair is an edit to config.yml, which no nibs command makes —
+			// so the message names the key to write rather than a command. The
+			// row enrolls the surface: one added later is executed, not trusted.
+			wantCommands: 0,
+		},
+		{
+			name:     "a multi-document config names no command",
+			store:    remedyStoreWithConfigShape(remedyMultiDocumentAreasConfig),
+			diagnose: remedyAreaRetireRefusal([]string{"rename", "web", "frontend"}),
+			mustName: []string{"more than one YAML document"},
+			// Same shape: the remedy is an edit to the file. The backticked `---`
+			// in it is a YAML marker, not a flag fragment, and the extractor must
+			// keep reading it as one.
+			wantCommands: 0,
+		},
+		{
 			name:  "check names an illegal nest (unchanged sibling, the control)",
 			store: remedyStore(nestFiles),
 			diagnose: func(t *testing.T, nibsDir string) string {
@@ -830,6 +999,41 @@ func remedyAreaFilterRefusal(t *testing.T, nibsDir string) string {
 		t.Fatal("an undeclared area must be refused rather than listed as empty, got nil")
 	}
 	return err.Error()
+}
+
+// remedyAreaRetireRefusal returns the refusal one `nibs area …` invocation
+// raises. The verbs edit the vocabulary itself, so every one of their refusals
+// is a message about the store the caller is standing in — which is exactly the
+// shape this gate runs the remedies of.
+func remedyAreaRetireRefusal(args []string) func(t *testing.T, nibsDir string) string {
+	return func(t *testing.T, nibsDir string) string {
+		t.Helper()
+		resetCommandTreeFlags(rootCmd)
+		t.Cleanup(func() {
+			resetCommandTreeFlags(rootCmd)
+			rootCmd.SetArgs(nil)
+		})
+		full := append([]string{"--nibs-path", nibsDir, "area"}, args...)
+		out, err := runRootWith(t, full...)
+		if err == nil {
+			t.Fatalf("`nibs area %s` must be refused, got:\n%s", strings.Join(args, " "), out)
+		}
+		return err.Error()
+	}
+}
+
+// remedyAreaConfigWriteFailure returns the error one `nibs area …` invocation
+// raises when the store is fine and only the config write fails. The seam is
+// lifted before this returns, so the remedy the gate runs afterwards faces a
+// working filesystem — which is the state the message tells the caller to rerun
+// in.
+func remedyAreaConfigWriteFailure(args []string) func(t *testing.T, nibsDir string) string {
+	return func(t *testing.T, nibsDir string) string {
+		t.Helper()
+		disarm := failRenameOnto(t, "config.yml")
+		defer disarm()
+		return remedyAreaRetireRefusal(args)(t, nibsDir)
+	}
 }
 
 // remedyCloseRefusal returns the refusal `nibs close` raises when a queue

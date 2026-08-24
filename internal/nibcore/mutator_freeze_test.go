@@ -314,6 +314,33 @@ func freezeGuardCases() []freezeGuardCase {
 			},
 		},
 		{
+			name:   "RewriteAreaAssignments",
+			covers: []string{"RewriteAreaAssignments"},
+			// The default core's config declares no areas, and a store that
+			// declares none refuses every assignment — so there would be no
+			// member to rewrite and the guard would be vacuous.
+			newCore: setupAreaCore,
+			setup: func(t *testing.T, c *Core, _ string) {
+				if err := c.Create(&nib.Nib{
+					ID: "placed", Title: "Placed", Status: "todo", Area: "web/dashboard",
+				}); err != nil {
+					t.Fatalf("setup Create placed: %v", err)
+				}
+			},
+			mutate: func(t *testing.T, c *Core, dir string) {
+				lock, err := AcquireStoreLock(dir)
+				if err != nil {
+					t.Fatalf("AcquireStoreLock: %v", err)
+				}
+				defer func() { _ = lock.Release() }()
+				if _, err := c.RewriteAreaAssignments(lock, func(area string) (string, bool) {
+					return "auth", area == "web/dashboard"
+				}); err != nil {
+					t.Fatalf("RewriteAreaAssignments: %v", err)
+				}
+			},
+		},
+		{
 			name:   "MigrateV0ToV1",
 			covers: []string{"MigrateV0ToV1"},
 			setup: func(t *testing.T, c *Core, _ string) {
@@ -539,7 +566,9 @@ func TestCoreMutators_FreezePartition(t *testing.T) {
 	// c.nibs pointer and therefore MUST have freeze-guard coverage. Verified
 	// against the nibcore sources: Create/Update/Delete/Archive/Unarchive/
 	// LoadAndUnarchive write the store (core.go); RemoveLinksTo/FixBrokenLinks
-	// rewrite linking nibs copy-on-write (link_health.go).
+	// rewrite linking nibs copy-on-write (link_health.go); RewriteAreaAssignments
+	// rewrites the members of a renamed or retired area the same way
+	// (area_write.go).
 	freezeMutators := map[string]bool{
 		"Create":                    true,
 		"Update":                    true,
@@ -552,6 +581,7 @@ func TestCoreMutators_FreezePartition(t *testing.T) {
 		"MigrateV0ToV1":             true,
 		"MigrateV1ToV2":             true,
 		"NormalizeLegacyPriorities": true,
+		"RewriteAreaAssignments":    true,
 	}
 
 	// freezeNonMutators: every OTHER exported *Core method (readers, lifecycle,
