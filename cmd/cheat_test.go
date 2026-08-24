@@ -379,3 +379,42 @@ func TestCheatSheetDropsBlockerNoteWhenNothingHolds(t *testing.T) {
 		t.Errorf("cheat sheet still carries the blocker note with no status holding its dependents:\n%s", got)
 	}
 }
+
+// cheatLineContaining returns the first line of the sheet holding needle, so an
+// assertion about one entry cannot pass on an unrelated mention elsewhere.
+func cheatLineContaining(t *testing.T, sheet, needle string) string {
+	t.Helper()
+	for _, line := range strings.Split(sheet, "\n") {
+		if strings.Contains(line, needle) {
+			return line
+		}
+	}
+	t.Fatalf("cheat sheet has no line containing %q, got:\n%s", needle, sheet)
+	return ""
+}
+
+// TestCheatSheetSpeaksAreas asserts the sheet carries the three things an agent
+// needs about the area axis and cannot infer: that `new` and `set` both take
+// --area, that the declared set is read with `nibs area list`, and that the
+// list filter is downward-closed over the declared tree. Each is scoped to the
+// line that must carry it, so a mention elsewhere cannot stand in for it.
+func TestCheatSheetSpeaksAreas(t *testing.T) {
+	got := cheatSheet(config.Default())
+
+	if line := cheatLineContaining(t, got, `new "<title>"`); !strings.Contains(line, "--area") {
+		t.Errorf("cheat sheet new entry does not offer --area, got line: %q", line)
+	}
+	writeLine := cheatLineContaining(t, got, "--area <path> places")
+	if !strings.Contains(writeLine, "nibs area list") {
+		t.Errorf("cheat sheet area write line never names the command that prints the declared set, got: %q", writeLine)
+	}
+	filterLine := cheatLineContaining(t, got, "--area <path> =")
+	if !strings.Contains(filterLine, "beneath it") {
+		t.Errorf("cheat sheet area filter line does not state the downward closure, got: %q", filterLine)
+	}
+	// The catalog topic index on the META line is how an agent finds the full
+	// area grammar from here.
+	if line := cheatLineContaining(t, got, "META"); !strings.Contains(line, "areas") {
+		t.Errorf("cheat sheet META line does not advertise the areas catalog topic, got: %q", line)
+	}
+}

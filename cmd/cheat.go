@@ -58,9 +58,10 @@ READ   get <id…>          nib document (default); -f/--view id|ref|card|full; 
        roadmap            Markdown roadmap from milestones and epics
        next               %s
                           (having nothing to do is an answer: exit 0 either way — branch on --json's null action)
-WRITE  new "<title>" -t T create; also -s -p -e --parent --blocked-by --tag --after/--before/--first (siblings)
+WRITE  new "<title>" -t T create; also -s -p -e --area --parent --blocked-by --tag --after/--before/--first (siblings)
        set <id>           metadata/links; --clear %s; --remove-tag/-blocked-by/…
                           --milestone <ms> assigns to that milestone's queue, appended last (new cannot assign)
+                          --area <path> places it in a declared area; nibs area list|rename|rm prints and edits the set
        body <id>          --set | --append | --section "## H" --set [--create] | --replace-old T --replace-new U
        mv <id…>           --after|--before <anchor> | --first | --parent <id> | --children-of <p> <id…>; 2+ ids need --block
                           --queue --after|--before <anchor> | --queue --first repositions within its queue
@@ -69,7 +70,7 @@ WRITE  new "<title>" -t T create; also -s -p -e --parent --blocked-by --tag --af
                           %s). Closing an existing nib goes through close — set -s <closed> errors.
                           A milestone with open work assigned refuses a releasing reason: --move-open-to <ms>,
                           --unassign-open, or a holding reason (which keeps the queue).
-META   cheat · catalog <fields|filters|recipes|examples|hierarchy|schema> · prime[ --full] · query (GraphQL)
+META   cheat · catalog <fields|filters|recipes|examples|hierarchy|areas|schema> · prime[ --full] · query (GraphQL)
 
 VIEWS  id < ref < card < full (leanest→fullest). -f adds exact fields, e.g. -f "id,blocked-by(id,status)".
        get → full document · list/rel → ref TSV · --json → card. body & etag are opt-in (-f body/etag).
@@ -82,7 +83,8 @@ PRIO   %s (default normal)   EST  %s (s=1 m=3 l=5 xl=8; default m)
 FILTER list/rel show OPEN only by default (closed statuses hidden; header notes "N hidden — --all to include").
        -s overrides (-s closed = only closed); --all = every status. Open work under X: 'rel <id> --rel
        descendants -t bug' is already open — no post-filter. -c/-q honor the open default (--all for totals).
-       list only: --milestone <ms> = that queue, in queue order; --backlog = no assignment, own or inherited.
+       list only: --milestone <ms> = that queue, in queue order; --backlog = no assignment, own or inherited;
+                  --area <path> = that area and every area declared beneath it.
 RULE   On any nibs error: STOP, find the root cause, never silently retry. A queue "warning:" printed by a
        command that exited 0 is a lint on a successful write, not an error — read it, don't stop for it.
 `,

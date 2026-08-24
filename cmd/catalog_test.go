@@ -13,6 +13,7 @@ import (
 	"github.com/alphaleonis/nibs/internal/nibtypes"
 	"github.com/alphaleonis/nibs/internal/output"
 	"github.com/alphaleonis/nibs/internal/projection"
+	"github.com/alphaleonis/nibs/internal/store"
 )
 
 // resetCatalogFlags clears the package-level flag var used by catalogCmd so
@@ -625,5 +626,179 @@ func TestCatalogUnknownTopic(t *testing.T) {
 				t.Errorf("json error envelope missing on stdout: %q", out)
 			}
 		})
+	}
+}
+
+// areasTopicPayload decodes the `catalog --json areas` payload for the guards
+// below.
+func areasTopicPayload(t *testing.T) struct {
+	Commands          []recipeInfo `json:"commands"`
+	PathSeparator     string       `json:"path_separator"`
+	DeclaredIn        string       `json:"declared_in"`
+	DownwardClosed    bool         `json:"downward_closed"`
+	VocabularyCommand string       `json:"vocabulary_command"`
+} {
+	t.Helper()
+	var got struct {
+		Commands          []recipeInfo `json:"commands"`
+		PathSeparator     string       `json:"path_separator"`
+		DeclaredIn        string       `json:"declared_in"`
+		DownwardClosed    bool         `json:"downward_closed"`
+		VocabularyCommand string       `json:"vocabulary_command"`
+	}
+	out, err := execCatalog(t, "--json", "areas")
+	if err != nil {
+		t.Fatalf("catalog --json areas: %v", err)
+	}
+	if err := json.Unmarshal([]byte(out), &got); err != nil {
+		t.Fatalf("decode areas JSON: %v\n%s", err, out)
+	}
+	if len(got.Commands) == 0 {
+		t.Fatal("catalog areas publishes no commands, so the guards below compare nothing")
+	}
+	return got
+}
+
+// TestCatalogAreasFromLiveCommands pins that the areas topic's purposes are
+// pulled from the live cobra Short strings and flag usage — the discipline every
+// other topic follows — rather than transcribed. Both sides of the comparison
+// resolve the same command tree, so what this catches is a row whose command or
+// flag was RENAMED: the resolver answers with a placeholder rather than silently
+// dropping the row, and a placeholder is what fails here.
+func TestCatalogAreasFromLiveCommands(t *testing.T) {
+	got := areasTopicPayload(t)
+
+	want := map[string]string{
+		"nibs area list":                             commandShort("area", "list"),
+		"nibs area rename <path> <new-name>":         commandShort("area", "rename"),
+		"nibs area rm <path>":                        commandShort("area", "rm"),
+		`nibs new "<title>" -t <type> --area <path>`: flagUsage("new", "area"),
+		"nibs set <id> --area <path>":                flagUsage("set", "area"),
+		"nibs list --area <path>":                    flagUsage("list", "area"),
+	}
+	if len(got.Commands) != len(want) {
+		t.Fatalf("got %d area commands, want %d", len(got.Commands), len(want))
+	}
+	for _, c := range got.Commands {
+		w, ok := want[c.Command]
+		if !ok {
+			t.Errorf("unexpected area command %q", c.Command)
+			continue
+		}
+		if c.Purpose != w {
+			t.Errorf("area command %q purpose = %q, want %q", c.Command, c.Purpose, w)
+		}
+		if strings.HasPrefix(c.Purpose, "(command not found") || strings.HasPrefix(c.Purpose, "(flag not found") {
+			t.Errorf("area command %q resolved to placeholder %q — a command/flag was renamed", c.Command, c.Purpose)
+		}
+	}
+}
+
+// TestCatalogAreasCoversTheAreaVerbs pins that every subcommand of `nibs area`
+// has a row in the topic. The catalog is where an agent is sent to learn the
+// surface, so a fourth area verb added without a row here is advertised nowhere
+// an agent reads.
+func TestCatalogAreasCoversTheAreaVerbs(t *testing.T) {
+	got := areasTopicPayload(t)
+
+	subs := areaCmd.Commands()
+	if len(subs) == 0 {
+		t.Fatal("`nibs area` has no subcommands; the coverage check below would be vacuous")
+	}
+	for _, sub := range subs {
+		if sub.Name() == "help" || sub.Name() == "completion" {
+			continue
+		}
+		want := "nibs area " + sub.Name()
+		found := false
+		for _, c := range got.Commands {
+			if strings.HasPrefix(c.Command, want) {
+				found = true
+				break
+			}
+		}
+		if !found {
+			t.Errorf("catalog areas has no row for %q, so that verb is documented nowhere the catalog reaches", want)
+		}
+	}
+}
+
+// TestCatalogAreasNamesARunnableVocabularyCommand pins the one pointer the topic
+// leans on: the declared set is not printed by the catalog, so the command it
+// names instead must be runnable exactly as written.
+func TestCatalogAreasNamesARunnableVocabularyCommand(t *testing.T) {
+	got := areasTopicPayload(t)
+
+	fields := strings.Fields(got.VocabularyCommand)
+	if len(fields) < 2 || fields[0] != "nibs" {
+		t.Fatalf("vocabulary_command = %q, want a `nibs <cmd> …` invocation", got.VocabularyCommand)
+	}
+	if short := commandShort(fields[1:]...); strings.HasPrefix(short, "(command not found") {
+		t.Errorf("catalog areas sends the reader to %q, which is not a runnable command", got.VocabularyCommand)
+	}
+	// The same command must be named in the text form, which is what a human or
+	// an agent reading the topic actually gets.
+	text, err := execCatalog(t, "areas")
+	if err != nil {
+		t.Fatalf("catalog areas: %v", err)
+	}
+	if !strings.Contains(text, got.VocabularyCommand) {
+		t.Errorf("catalog areas text never names %q, so the declared set is reachable only from --json", got.VocabularyCommand)
+	}
+}
+
+// TestCatalogAreasStatesTheGrammar pins the facts the topic carries that no
+// row does: the path separator, the filter's downward closure, and where the
+// vocabulary is declared.
+func TestCatalogAreasStatesTheGrammar(t *testing.T) {
+	got := areasTopicPayload(t)
+
+	if got.PathSeparator != config.AreaPathSeparator {
+		t.Errorf("areas path_separator = %q, want %q", got.PathSeparator, config.AreaPathSeparator)
+	}
+	if got.DeclaredIn != store.ConfigFileName {
+		t.Errorf("areas declared_in = %q, want %q", got.DeclaredIn, store.ConfigFileName)
+	}
+	if !got.DownwardClosed {
+		t.Error("areas downward_closed = false, but --area selects an area and everything declared beneath it")
+	}
+
+	text, err := execCatalog(t, "areas")
+	if err != nil {
+		t.Fatalf("catalog areas: %v", err)
+	}
+	for _, want := range []string{
+		"DOWNWARD-CLOSED",  // the filter rule an agent cannot infer
+		"--clear area",     // how an assignment is undone
+		"validation error", // an undeclared path is refused, not silently empty
+	} {
+		if !strings.Contains(text, want) {
+			t.Errorf("catalog areas text missing %q", want)
+		}
+	}
+}
+
+// TestCatalogIsStoreFree pins the claim `catalog areas` prints about itself: it
+// renders the grammar and not this project's declared areas BECAUSE catalog
+// resolves no store. Were catalog to grow one, that sentence would be false and
+// the topic would start answering differently in different directories, which no
+// other topic does.
+func TestCatalogIsStoreFree(t *testing.T) {
+	if !commandNeedsNoStore(catalogCmd) {
+		t.Error("catalog now resolves a store, but `nibs catalog areas` still tells the reader it does not")
+	}
+}
+
+// TestAreaFilterIsListOnly pins a claim three agent-facing surfaces make — the
+// areas topic, the cheat sheet's FILTER block and the full guide: --area is a
+// `nibs list` flag and `nibs rel` has none. An agent that runs the documented
+// grammar on rel gets `unknown flag`, and the project rule is to STOP on any
+// nibs error, so the wrong half of this claim halts a run.
+func TestAreaFilterIsListOnly(t *testing.T) {
+	if listCmd.Flags().Lookup("area") == nil {
+		t.Error("`nibs list` has no --area flag, but three agent-facing surfaces document one")
+	}
+	if f := relCmd.Flags().Lookup("area"); f != nil {
+		t.Errorf("`nibs rel` now registers --area (%q), but the same surfaces say it takes none", f.Usage)
 	}
 }

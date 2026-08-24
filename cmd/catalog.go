@@ -13,11 +13,12 @@ import (
 	"github.com/alphaleonis/nibs/internal/nibtypes"
 	"github.com/alphaleonis/nibs/internal/output"
 	"github.com/alphaleonis/nibs/internal/projection"
+	"github.com/alphaleonis/nibs/internal/store"
 )
 
 // catalogJSON toggles the structured JSON form of the topics that support it
-// (fields, filters, hierarchy, recipes, and the topic index). examples always
-// emits JSON payloads; schema always emits the raw SDL.
+// (fields, filters, hierarchy, areas, recipes, and the topic index). examples
+// always emits JSON payloads; schema always emits the raw SDL.
 var catalogJSON bool
 
 // catalogTopic is one entry in the catalog's self-describing topic index. The
@@ -38,6 +39,7 @@ var catalogTopics = []catalogTopic{
 	{"fields", "Every projectable field with its kind and the JSON key it serializes to"},
 	{"filters", "The list/rel filter flags and their status/type/priority/estimate enum values"},
 	{"hierarchy", "The legal parent (and child) types per nib type"},
+	{"areas", "The areas vocabulary: how a project declares one, and the verbs that assign, filter and edit it"},
 	{"examples", "A real {nib} and {nibs,count,truncated} JSON payload"},
 	{"recipes", "The composite/agent views (next, context, plan, roadmap, list --ready)"},
 	{"schema", "The GraphQL SDL"},
@@ -51,20 +53,22 @@ so it can never drift from what the CLI actually accepts.
 
 Every topic is derived at runtime from the code that enforces it: the field
 menu from the projection engine, the enum values from config, the parent/child
-matrix from the same source the HIERARCHY error uses, and the schema from the
-GraphQL executable. Nothing here is hand-transcribed.
+matrix from the same source the HIERARCHY error uses, the area verbs and flags
+from their own help strings, and the schema from the GraphQL executable. Nothing
+here is hand-transcribed.
 
 Topics:
   fields      Every projectable field (` + "`-f`/--fields" + `) with its kind and JSON key.
   filters     The list/rel filter flags and their enum values.
   hierarchy   The legal parent (and child) types per nib type.
+  areas       The areas vocabulary and the verbs that assign, filter and edit it.
   examples    A real {nib} and {nibs,count,truncated} JSON payload.
   recipes     The composite/agent views and their one-line purpose.
   schema      The GraphQL SDL (same as 'nibs graphql --schema').
 
 Run 'nibs catalog' with no topic for this index. --json emits structured data
-for fields, filters, hierarchy, recipes, and the index; examples is always JSON;
-schema is always SDL.`,
+for fields, filters, hierarchy, areas, recipes, and the index; examples is
+always JSON; schema is always SDL.`,
 	Args:              codedMaximumNArgs(&catalogJSON, 1),
 	ValidArgs:         catalogTopicNames(),
 	DisableAutoGenTag: true,
@@ -84,6 +88,8 @@ func runCatalog(cmd *cobra.Command, args []string) error {
 		return catalogFilters()
 	case "hierarchy":
 		return catalogHierarchy()
+	case "areas":
+		return catalogAreas()
 	case "examples":
 		return catalogExamples()
 	case "recipes":
@@ -159,24 +165,26 @@ type filterInfo struct {
 	Values      []string `json:"values"`
 }
 
-// queueFilterInfo describes one milestone-scope filter on `nibs list`. These
+// scopeFilterInfo describes one scope filter on `nibs list` — the flags that
+// select a population by where work sits rather than by an enum value. These
 // are published apart from filterInfo above because they answer to neither of
-// that table's two claims: their values are nib ids or nothing at all rather
-// than a fixed enum, and they are `nibs list` flags only — `nibs rel` accepts
-// neither, so listing them in a table headed "list and rel" would state
-// something false about rel.
-type queueFilterInfo struct {
+// that table's two claims: their values are nib ids, declared area paths or
+// nothing at all rather than a fixed enum, and they are `nibs list` flags
+// only — `nibs rel` accepts none of them, so listing them in a table headed
+// "list and rel" would state something false about rel.
+type scopeFilterInfo struct {
 	Flag        string `json:"flag"`
 	Description string `json:"description"`
 }
 
-// queueFilterCatalogEntries returns the milestone-scope filters, described in
-// the flags' own usage strings so the catalog cannot drift from what `nibs
-// list` accepts — the same discipline the enum table follows against config.
-func queueFilterCatalogEntries() []queueFilterInfo {
-	return []queueFilterInfo{
+// scopeFilterCatalogEntries returns the scope filters, described in the flags'
+// own usage strings so the catalog cannot drift from what `nibs list` accepts —
+// the same discipline the enum table follows against config.
+func scopeFilterCatalogEntries() []scopeFilterInfo {
+	return []scopeFilterInfo{
 		{"--milestone <id>", flagUsage("list", "milestone")},
 		{"--backlog", flagUsage("list", "backlog")},
+		{"--area <path>", flagUsage("list", "area")},
 	}
 }
 
@@ -203,8 +211,8 @@ func statusGroupCatalogEntries(cfg *config.Config) []statusGroupCatalog {
 // groups (open/closed) are documented alongside the concrete statuses because
 // -s/--status and --no-status accept them anywhere a concrete status is
 // accepted, and list/rel apply an open-by-default status filter. The
-// milestone-scope flags get a block of their own — see queueFilterInfo for why
-// they cannot join the enum table.
+// scope flags get a block of their own — see scopeFilterInfo for why they
+// cannot join the enum table.
 func catalogFilters() error {
 	cfg := config.Default()
 	filters := []filterInfo{
@@ -214,11 +222,11 @@ func catalogFilters() error {
 		{"estimate", "--estimate/-e", "--no-estimate", cfg.EstimateNames()},
 	}
 	statusGroups := statusGroupCatalogEntries(cfg)
-	queueFilters := queueFilterCatalogEntries()
+	scopeFilters := scopeFilterCatalogEntries()
 	if catalogJSON {
 		return output.JSONRaw(map[string]any{
 			"filters":         filters,
-			"queue_filters":   queueFilters,
+			"scope_filters":   scopeFilters,
 			"status_groups":   statusGroups,
 			"open_by_default": true,
 		})
@@ -234,15 +242,20 @@ func catalogFilters() error {
 	}
 	_ = tw.Flush()
 
-	b.WriteString("\nMilestone scope — 'nibs list' only ('nibs rel' takes neither), and mutually\n")
-	b.WriteString("exclusive with each other. Assign with 'nibs set <id> --milestone <ms>' and\n")
-	b.WriteString("reposition with 'nibs mv <id> --queue --after|--before <anchor>' (or --first,\nwhich takes no anchor):\n\n")
-	qtw := tabwriter.NewWriter(&b, 0, 0, 2, ' ', 0)
-	_, _ = fmt.Fprintln(qtw, "FLAG\tSELECTS")
-	for _, q := range queueFilters {
-		_, _ = fmt.Fprintf(qtw, "%s\t%s\n", q.Flag, q.Description)
+	b.WriteString("\nScope filters — 'nibs list' only ('nibs rel' takes none of them). The two\n")
+	b.WriteString("milestone flags are mutually exclusive with each other:\n\n")
+	stw := tabwriter.NewWriter(&b, 0, 0, 2, ' ', 0)
+	_, _ = fmt.Fprintln(stw, "FLAG\tSELECTS")
+	for _, q := range scopeFilters {
+		_, _ = fmt.Fprintf(stw, "%s\t%s\n", q.Flag, q.Description)
 	}
-	_ = qtw.Flush()
+	_ = stw.Flush()
+	b.WriteString("\nAssign a milestone with 'nibs set <id> --milestone <ms>' and reposition\n")
+	b.WriteString("within its queue with 'nibs mv <id> --queue --after|--before <anchor>' (or\n")
+	b.WriteString("--first, which takes no anchor). Assign an area with 'nibs set <id> --area\n")
+	b.WriteString("<path>'. Areas are declared per project, so --area's values are not listed\n")
+	b.WriteString("here: run 'nibs catalog areas' for the grammar and 'nibs area list' for what\n")
+	b.WriteString("this store declares.\n")
 
 	b.WriteString("\nStatus groups — accepted by -s/--status and --no-status anywhere a concrete\n")
 	b.WriteString("status is (they expand to their member statuses):\n\n")
@@ -303,6 +316,81 @@ func catalogHierarchy() error {
 	fmt.Print(b.String())
 	return nil
 }
+
+// areaCommandCatalogEntries returns the area surface: the three verbs that read
+// and edit the vocabulary, and the three flags that assign to it and filter by
+// it. Every purpose is the command's own Short or the flag's own usage string,
+// so this table cannot drift from what the CLI accepts.
+func areaCommandCatalogEntries() []recipeInfo {
+	return []recipeInfo{
+		{"nibs area list", commandShort("area", "list")},
+		{"nibs area rename <path> <new-name>", commandShort("area", "rename")},
+		{"nibs area rm <path>", commandShort("area", "rm")},
+		{`nibs new "<title>" -t <type> --area <path>`, flagUsage("new", "area")},
+		{"nibs set <id> --area <path>", flagUsage("set", "area")},
+		{"nibs list --area <path>", flagUsage("list", "area")},
+	}
+}
+
+// catalogAreas renders the areas grammar: how a project declares the vocabulary
+// and the verbs that assign to, filter by and edit it.
+//
+// It renders the GRAMMAR and not the vocabulary, which is the one thing that
+// separates this topic from every other one. Areas are the only vocabulary a
+// project authors itself, and `catalog` resolves no store (it sits in
+// commandNeedsNoStore, so it answers the same outside a project as inside one) —
+// so the declared set is one command away rather than inlined here, and the text
+// says which command that is.
+func catalogAreas() error {
+	commands := areaCommandCatalogEntries()
+	if catalogJSON {
+		return output.JSONRaw(map[string]any{
+			"commands":           commands,
+			"path_separator":     config.AreaPathSeparator,
+			"declared_in":        store.ConfigFileName,
+			"downward_closed":    true,
+			"vocabulary_command": areaVocabularyCommand,
+		})
+	}
+
+	var b strings.Builder
+	b.WriteString("Areas are the one vocabulary a project authors itself — statuses, types,\n")
+	b.WriteString("priorities and estimates are fixed. A store declares them as a nested\n")
+	b.WriteString("`areas:` block in its " + store.ConfigFileName + ", and a nib is placed in one by the node's\n")
+	b.WriteString("FULL path: `web" + config.AreaPathSeparator + "dashboard` is the `dashboard` node declared under `web`.\n")
+	b.WriteString("\nThe declared set is per project, so it is not printed here — this command\n")
+	b.WriteString("resolves no store. Run '" + areaVocabularyCommand + "' for this project's tree, each node\n")
+	b.WriteString("with the description that says what belongs in it (--json for the same tree\n")
+	b.WriteString("as data).\n\n")
+	tw := tabwriter.NewWriter(&b, 0, 0, 2, ' ', 0)
+	_, _ = fmt.Fprintln(tw, "COMMAND\tPURPOSE")
+	for _, c := range commands {
+		_, _ = fmt.Fprintf(tw, "%s\t%s\n", c.Command, c.Purpose)
+	}
+	_ = tw.Flush()
+	b.WriteString("\n--area takes a declared PATH, never a nib id, and a path the store does not\n")
+	b.WriteString("declare is a validation error (exit 2) naming the declared set — on the\n")
+	b.WriteString("filter as much as on the two assignment flags, so a typo is an error rather\n")
+	b.WriteString("than a silently empty listing; a store that declares no areas says that\n")
+	b.WriteString("instead. 'nibs set <id> --clear area' unassigns.\n")
+	b.WriteString("\n'nibs list --area' is DOWNWARD-CLOSED over the declared tree: --area web\n")
+	b.WriteString("selects the nibs in web and those in every area declared beneath it. It is a\n")
+	b.WriteString("'nibs list' flag only ('nibs rel' takes no --area), and a milestone takes no\n")
+	b.WriteString("area at all.\n")
+	b.WriteString("\nEditing the vocabulary rewrites the nibs assigned at or below what the edit\n")
+	b.WriteString("touches, because an area is a PATH: 'nibs area rename' moves every path\n")
+	b.WriteString("under the node it renames, and 'nibs area rm' is refused while nibs are\n")
+	b.WriteString("assigned at or below the node unless a disposition says where they go\n")
+	b.WriteString("(--move-to <area> reassigns them, --unassign drops their assignment).\n")
+	b.WriteString("'nibs check' reports a nib whose area the vocabulary does not declare.\n")
+	fmt.Print(b.String())
+	return nil
+}
+
+// areaVocabularyCommand is the command that prints the project's own declared
+// areas. Named once because several surfaces point at it and they must send the
+// reader to the same place.
+const areaVocabularyCommand = "nibs area list"
 
 // catalogExamples emits a real {nib} single-read payload and a
 // {nibs,count,truncated} list envelope, projected from a synthetic nib through
@@ -456,9 +544,9 @@ func catalogSampleParent() *nib.Nib {
 	}
 }
 
-// recipeInfo names a composite/agent view and its one-line purpose. Command
-// purposes are pulled from the live cobra Short strings (and the --ready flag's
-// usage) so they cannot drift from the commands themselves.
+// recipeInfo pairs a runnable command line with its one-line purpose. Purposes
+// are pulled from the live cobra Short strings and flag usage strings so they
+// cannot drift from the commands themselves.
 type recipeInfo struct {
 	Command string `json:"command"`
 	Purpose string `json:"purpose"`
@@ -497,20 +585,37 @@ func catalogSchema() error {
 	return nil
 }
 
-// commandShort returns the Short description of a top-level subcommand by name,
-// or a placeholder if it is ever renamed (guarded by a test).
+// commandShort returns the Short description of a command addressed by its path
+// from the root — commandShort("next") for a top-level verb, commandShort("area",
+// "list") for a subcommand — or a placeholder if any step is ever renamed
+// (guarded by a test).
 //
-// The match is on c.Name(), so an ALIAS finds nothing — but unlike a skip-list
-// lookup, a miss here is visible in the output rather than silent, which is what
-// the placeholder and its guard are for. flagUsage below has the same shape and
-// the same answer.
-func commandShort(name string) string {
-	for _, c := range rootCmd.Commands() {
-		if c.Name() == name {
-			return c.Short
-		}
+// Each step matches on c.Name(), so an ALIAS finds nothing — but unlike a
+// skip-list lookup, a miss here is visible in the output rather than silent,
+// which is what the placeholder and its guard are for. flagUsage below has the
+// same shape and the same answer.
+func commandShort(path ...string) string {
+	// A caller that names no command is asking for nothing; answering with the
+	// root's own Short would put nibs' one-line description where a subcommand's
+	// purpose belongs, and read as a real answer.
+	if len(path) == 0 {
+		return "(command not found: <no command named>)"
 	}
-	return "(command not found: " + name + ")"
+	cmd := rootCmd
+	for _, name := range path {
+		var found *cobra.Command
+		for _, c := range cmd.Commands() {
+			if c.Name() == name {
+				found = c
+				break
+			}
+		}
+		if found == nil {
+			return "(command not found: " + strings.Join(path, " ") + ")"
+		}
+		cmd = found
+	}
+	return cmd.Short
 }
 
 // flagUsage returns the usage string of a flag on a top-level subcommand, or a
@@ -546,6 +651,6 @@ func joinOrNone(s []string) string {
 
 func init() {
 	catalogCmd.Flags().BoolVar(&catalogJSON, "json", false,
-		"Emit structured JSON (fields, filters, hierarchy, recipes, index; examples is always JSON)")
+		"Emit structured JSON (fields, filters, hierarchy, areas, recipes, index; examples is always JSON)")
 	rootCmd.AddCommand(catalogCmd)
 }

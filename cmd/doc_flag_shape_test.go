@@ -69,7 +69,7 @@ func agentFacingDocSurfaces(t *testing.T) []docSurface {
 		{"nibs prime", renderedSlimPrompt(t)},
 		{"nibs prime --full", renderedFullPrompt(t)},
 	}
-	for _, topic := range []string{"filters", "recipes"} {
+	for _, topic := range []string{"filters", "recipes", "areas"} {
 		out, err := execCatalog(t, topic)
 		if err != nil {
 			t.Fatalf("catalog %s: %v", topic, err)
