@@ -255,6 +255,9 @@ func (r *Resolver) validateAndSetMilestone(b *nib.Nib, milestoneID string) error
 	if typ := target.EffectiveType(); typ != "milestone" {
 		return fmt.Errorf("milestone target %s has type %s, not milestone", normalized, typ)
 	}
+	if err := nibtypes.ValidateAxes(b.EffectiveType(), normalized, b.Area); err != nil {
+		return err
+	}
 	// Decision 1.5's ASSIGNMENT door. Closing a milestone over a live queue is
 	// refused on every client, but the same end-state — open work planned for a
 	// wave that has finished — was reachable from the other side, by assigning
@@ -263,6 +266,12 @@ func (r *Resolver) validateAndSetMilestone(b *nib.Nib, milestoneID string) error
 	// fact, and leaves nothing planned for a wave that ended. A HOLDING reason
 	// keeps accepting work, because 1.5 gives a parked milestone its queue and it
 	// is coming back. Which reasons release is config's answer, never a literal.
+	//
+	// It runs AFTER ValidateAxes deliberately. That rule is about the SUBJECT and
+	// no property of the target can satisfy it — a milestone may never carry an
+	// assignment — so answering first with the target's status would hand back a
+	// remedy ("assign to an open milestone") that the subject cannot follow, and
+	// callers here are told to stop at the first error.
 	if cfg := r.Reader.Config(); cfg != nil &&
 		cfg.StatusReleasesDependents(target.Status) && !cfg.IsClosedStatus(b.Status) {
 		return &MilestoneReleasedError{
@@ -270,9 +279,6 @@ func (r *Resolver) validateAndSetMilestone(b *nib.Nib, milestoneID string) error
 			Status:      target.Status,
 			Holding:     cfg.HoldingStatusNames(),
 		}
-	}
-	if err := nibtypes.ValidateAxes(b.EffectiveType(), normalized, b.Area); err != nil {
-		return err
 	}
 
 	// Exclusivity along the parent chain, both directions from the subject.

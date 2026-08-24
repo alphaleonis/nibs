@@ -91,9 +91,17 @@ func (e *MilestoneRetypeError) Error() string {
 		e.MilestoneID, e.NewType, subject, strings.Join(named, ", "), more)
 }
 
-// memberIDs reads the ids out of a member set, so no store pointer outlives the
-// view it came from (internal/membership's discipline).
+// memberIDs reads the ids out of a member set in queue order, so no store pointer
+// outlives the view it came from (internal/membership's discipline).
+//
+// The sort is not cosmetic. DirectMembers answers in reader.All() order, which is
+// Go map-iteration order, so without it two identical refusals name the same set
+// differently — and once the set exceeds QueueNameLimit they name DIFFERENT nibs,
+// leaving the caller unable to enumerate the blockers by re-running and pointing
+// the ", and N more" tail at a rotating remainder. OpenQueueEntries sorts for
+// exactly this reason; the two refusals must present one set one way.
 func memberIDs(members []*nib.Nib) []string {
+	nib.SortByMilestoneOrder(members)
 	ids := make([]string, len(members))
 	for i, m := range members {
 		ids[i] = m.ID

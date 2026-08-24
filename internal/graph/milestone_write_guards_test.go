@@ -22,6 +22,7 @@ func seedWriteGuardFixture(t *testing.T, core *nibcore.Core) {
 		{ID: "wlive", Title: "Live wave", Type: "milestone", Status: "in-progress"},
 		{ID: "topen", Title: "Open work", Type: "task", Status: "todo"},
 		{ID: "tshut", Title: "Finished work", Type: "task", Status: "completed"},
+		{ID: "tpark", Title: "Parked work", Type: "task", Status: "deferred"},
 		{ID: "tqueued", Title: "Queued work", Type: "task", Status: "todo", Milestone: "wlive", MilestoneOrder: "a0"},
 	} {
 		mustCreate(t, core, b)
@@ -90,6 +91,21 @@ func TestUpdateNibRefusesAssigningOpenWorkToAReleasedMilestone(t *testing.T) {
 
 		if _, err := resolver.Mutation().UpdateNib(ctx, "tshut", assignInputFor("wdone")); err != nil {
 			t.Fatalf("assigning closed work to a released milestone: %v; the record must stay writable", err)
+		}
+	})
+
+	// Which vocabulary the SUBJECT test reads is load-bearing and was otherwise
+	// unpinned: `deferred` is a CLOSED status that does not release its dependents,
+	// so a parked nib is closed for this purpose and may be recorded against a
+	// finished wave. Reading the releasing set here instead would refuse it. The
+	// two readings of "deferred" in decision 1.5 are about different nibs — the
+	// milestone's own close reason, and its members' statuses.
+	t.Run("parked work counts as closed and may be assigned to a released milestone", func(t *testing.T) {
+		resolver, core := setupTestResolver(t)
+		seedWriteGuardFixture(t, core)
+
+		if _, err := resolver.Mutation().UpdateNib(ctx, "tpark", assignInputFor("wdone")); err != nil {
+			t.Fatalf("assigning deferred work to a released milestone: %v; a deferred MEMBER is closed", err)
 		}
 	})
 
