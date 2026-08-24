@@ -16,6 +16,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 - **Completing or scrapping a milestone is refused while open work is still assigned to it** — `--move-open-to <milestone>` or `--unassign-open` dispose of the queue, deferring keeps it, and `nibs check` names a milestone already closed over a live one.
 
 ### Changed
+- **BREAKING: moving more than one nib at once now requires `--block`** — `nibs mv <a> <b> --first` is refused instead of quietly reordering a nib you did not name, which is what a mistyped single move produced, since `--first` takes no anchor and a trailing id became a second one; the help and cheat grammars that invited it are corrected too.
 - **BREAKING: Epic tops the work tree** — epics and milestones no longer take parents, nothing parents under a milestone, and a milestone carrying `milestone:` or `area:` is refused on write and named by `nibs check`.
 - **BREAKING: Milestones assign work instead of containing it** — `nibs migrate` rewrites a milestone's children into `milestone:` assignments ordered by `milestone_order:` and stamps `version: 2`; a milestone now honestly reports 0 children while its progress and queues roll over the assignees.
 - **BREAKING: The store carries its own config and keeps active nibs in `data/`** — `.nibs/config.yml`, `.nibs/data/` and `.nibs/archive/` replace a project-root `.nibs.yml` and nib files at the store root, and the `nibs.path` key is retired. Run `nibs migrate` to convert a project; every command refuses until it has.
@@ -42,7 +43,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 - **`nibs help` and shell completion now work outside a project**, instead of failing with "no .nibs directory found" — which also left `nibs <TAB>` offering filenames in place of subcommands.
 - **`nibs config set-prefix` now edits only the prefix key of your config file**, instead of rewriting it from the merged read model — which discarded the file's comments, baked user-level settings into the project, and dropped any key this build does not model.
 - **The roadmap's Unscheduled group now shows exactly the work outside every milestone** — items under a milestone hidden by a `--status` filter no longer leak into the backlog, and a work item whose parent link names no nib now appears there instead of vanishing from the roadmap entirely.
-- **`nibs mv --help` and `nibs cheat` no longer document a reposition that cannot be run** — `--first` takes no anchor, so the `--after|--before|--first <anchor>` form they showed had its anchor absorbed as a second nib id and quietly moved two nibs as a block.
 - **`nibs new` no longer silently shadows an existing nib when a generated id collides** — a colliding draw is redrawn, and a caller-supplied duplicate id is refused as a conflict instead of leaving two files claiming one id.
 
 ## v0.8.3 - 2026-08-13

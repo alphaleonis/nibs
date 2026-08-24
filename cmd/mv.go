@@ -19,6 +19,7 @@ var (
 	mvFirst        bool
 	mvParent       string
 	mvQueue        bool
+	mvBlock        bool
 	mvIfMatch      string
 	mvJSON         bool
 	mvChildrenOf   string
@@ -71,8 +72,8 @@ Queue move:   nibs mv <id> --queue --after|--before <anchor>   # --first takes n
               # the nib's own file is rewritten; a member without one is
               # keyed once, as a side effect of the first move that reads
               # the queue
-Block move:   nibs mv <id1> <id2> ... --after|--before <anchor>
-Block move:   nibs mv <id1> <id2> ... --first
+Block move:   nibs mv <id1> <id2> ... --block --after|--before <anchor>
+              nibs mv <id1> <id2> ... --block --first
 Children-of:  nibs mv --children-of <parent-id> <id1> <id2> ...
 
 Use --children-of "" to reorder root-level (no-parent) siblings. --queue
@@ -118,6 +119,35 @@ no --parent (assign with 'nibs set <id> --milestone' instead).`,
 				"--queue moves a single nib within its milestone queue; it cannot be combined with multiple ids")
 		}
 
+		// A block move announces itself, like the two multi-nib regimes beside it:
+		// --children-of selects the full-reorder mode and --queue the queue scope.
+		// This one used to be entered by argument COUNT alone, which is what let a
+		// mistyped single move become a block move — `--first` is a bool and takes no
+		// anchor, so `nibs mv <id> --first <anchor>` parses as two positional ids and
+		// reorders a nib the caller never named. Flag position cannot be recovered
+		// after parsing (`mv a b --first` and `mv a --first b` reach this function
+		// identically), so arity is the only place the intent can be asked for.
+		if len(args) >= 2 && !childrenOfSet && !mvBlock {
+			hint := ""
+			if hasFirst {
+				// Two ids with --first set is overwhelmingly the typo rather than a
+				// real block move, so name the cause and not only the remedy: the old
+				// failure was expensive because it reported an argument count and
+				// pointed nowhere near the mistake.
+				hint = " (--first takes no anchor, so `nibs mv <id> --first <anchor>` reads as two ids" +
+					" — likely what happened here)"
+			}
+			return cmdError(mvJSON, output.ErrValidation,
+				"nibs mv moves one nib unless a multi-nib mode is named: got %d ids (%s%s) — add --block to move them as one contiguous run, or --children-of <parent> to reorder a full child list%s",
+				len(args), strings.Join(namedIDs(args), ", "), moreThanNamed(len(args)), hint)
+		}
+		// A block of one is just a single move, and allowing both spellings would give
+		// one action two grammars with different output shapes (a count, or a nib echo).
+		if mvBlock && len(args) < 2 {
+			return cmdError(mvJSON, output.ErrValidation,
+				"--block moves two or more nibs as one contiguous run; for a single nib, drop --block")
+		}
+
 		childIfMatch, err := parseChildIfMatch(mvChildIfMatch)
 		if err != nil {
 			return cmdError(mvJSON, output.ErrValidation, "%v", err)
@@ -149,11 +179,11 @@ no --parent (assign with 'nibs set <id> --milestone' instead).`,
 			return nil
 		}
 
-		// Mode B: <id1> <id2> ... --after|--before|--first
-		if len(args) >= 2 {
+		// Mode B: --block <id1> <id2> ... --after|--before|--first
+		if mvBlock {
 			if !hasPosition {
 				return cmdError(mvJSON, output.ErrValidation,
-					"multiple ids given without --children-of, --after, --before, or --first")
+					"--block needs a destination: add --after <anchor>, --before <anchor>, or --first")
 			}
 			if mvIfMatch != "" {
 				// Bulk modes use --child-if-match (per-id etags), not --if-match.
@@ -275,6 +305,7 @@ func init() {
 	mvCmd.Flags().BoolVar(&mvFirst, "first", false, "Move to first position")
 	mvCmd.Flags().StringVar(&mvParent, "parent", "", "Reparent under this nib ID (single-nib only; use \"\" for root)")
 	mvCmd.Flags().BoolVar(&mvQueue, "queue", false, "Reposition within the nib's milestone queue instead of among its siblings (single-nib; the anchor must be in the same queue)")
+	mvCmd.Flags().BoolVar(&mvBlock, "block", false, "Move two or more ids as one contiguous run of siblings (required for a multi-nib move)")
 	mvCmd.Flags().StringVar(&mvIfMatch, "if-match", "", "ETag for optimistic concurrency (single-nib mode only)")
 	mvCmd.Flags().BoolVar(&mvJSON, "json", false, "Output as JSON")
 	mvCmd.Flags().StringVar(&mvChildrenOf, "children-of", "", `Replace ordering of all children under this parent (bulk). Use "" for root.`)
@@ -286,6 +317,9 @@ func init() {
 	mvCmd.MarkFlagsMutuallyExclusive("children-of", "parent")
 	mvCmd.MarkFlagsMutuallyExclusive("queue", "parent")
 	mvCmd.MarkFlagsMutuallyExclusive("queue", "children-of")
+	mvCmd.MarkFlagsMutuallyExclusive("block", "children-of")
+	mvCmd.MarkFlagsMutuallyExclusive("block", "parent")
+	mvCmd.MarkFlagsMutuallyExclusive("block", "queue")
 	mvCmd.MarkFlagsMutuallyExclusive("children-of", "if-match")
 	mvCmd.MarkFlagsMutuallyExclusive("if-match", "child-if-match")
 	rootCmd.AddCommand(mvCmd)

@@ -42,6 +42,7 @@ func resetMvFlags() {
 	mvFirst = false
 	mvParent = ""
 	mvQueue = false
+	mvBlock = false
 	mvIfMatch = ""
 	mvJSON = false
 	mvChildrenOf = ""
@@ -168,6 +169,7 @@ func TestReorderCommand_BlockMove(t *testing.T) {
 		"--nibs-path", nibsDir,
 		"reorder",
 		"c", "e",
+		"--block",
 		"--after", "a",
 	})
 
@@ -736,7 +738,7 @@ func TestMvChildIfMatchConflict(t *testing.T) {
 		},
 		{
 			name: "block move",
-			args: []string{"mv", "a", "b", "--first",
+			args: []string{"mv", "a", "b", "--block", "--first",
 				"--child-if-match", "a=deadbeefdeadbeef", "--json"},
 		},
 	}
