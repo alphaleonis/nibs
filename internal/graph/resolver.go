@@ -255,6 +255,22 @@ func (r *Resolver) validateAndSetMilestone(b *nib.Nib, milestoneID string) error
 	if typ := target.EffectiveType(); typ != "milestone" {
 		return fmt.Errorf("milestone target %s has type %s, not milestone", normalized, typ)
 	}
+	// Decision 1.5's ASSIGNMENT door. Closing a milestone over a live queue is
+	// refused on every client, but the same end-state — open work planned for a
+	// wave that has finished — was reachable from the other side, by assigning
+	// AFTER the close. Scoped to an OPEN subject on purpose: retro-assigning
+	// finished work to a finished wave is how a record gets written after the
+	// fact, and leaves nothing planned for a wave that ended. A HOLDING reason
+	// keeps accepting work, because 1.5 gives a parked milestone its queue and it
+	// is coming back. Which reasons release is config's answer, never a literal.
+	if cfg := r.Reader.Config(); cfg != nil &&
+		cfg.StatusReleasesDependents(target.Status) && !cfg.IsClosedStatus(b.Status) {
+		return &MilestoneReleasedError{
+			MilestoneID: normalized,
+			Status:      target.Status,
+			Holding:     cfg.HoldingStatusNames(),
+		}
+	}
 	if err := nibtypes.ValidateAxes(b.EffectiveType(), normalized, b.Area); err != nil {
 		return err
 	}
@@ -274,6 +290,28 @@ func (r *Resolver) validateAndSetMilestone(b *nib.Nib, milestoneID string) error
 		r.Orderer.Recalculate(ScopeMilestone, b)
 	}
 	return nil
+}
+
+// MilestoneReleasedError is decision 1.5's refusal seen from the assignment
+// side: a milestone closed for a reason that RELEASES its dependents plans no
+// further work, so open work may not be assigned into it. The close gate refuses
+// the same end-state from the other direction; this is the door it cannot see.
+//
+// It carries the declared holding reasons rather than a status name spelled here,
+// so a project declaring none gets no clause instead of advice it cannot follow.
+type MilestoneReleasedError struct {
+	MilestoneID string
+	Status      string
+	Holding     []string
+}
+
+func (e *MilestoneReleasedError) Error() string {
+	holding := ""
+	if len(e.Holding) > 0 {
+		holding = fmt.Sprintf(", or one closed as %s, which keeps its queue", strings.Join(e.Holding, " / "))
+	}
+	return fmt.Sprintf("cannot assign open work to milestone %s: it is %s, and a milestone closed for a reason that releases its dependents plans no further work — assign to an open milestone%s",
+		e.MilestoneID, e.Status, holding)
 }
 
 // MilestoneExclusivityError is decision 1.2's refusal: a nib and one of its
