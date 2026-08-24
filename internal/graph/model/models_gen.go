@@ -68,6 +68,11 @@ type CreateNibInput struct {
 	Tags []string `json:"tags,omitempty"`
 	// Markdown body content
 	Body *string `json:"body,omitempty"`
+	// Area path the new nib belongs to (e.g. "web/ui"). Must be a path the store's
+	// config declares; an undeclared one is refused naming the declared set, and a
+	// store that declares no areas refuses every value. Omit or "" to leave it
+	// unset, which is always legal.
+	Area *string `json:"area,omitempty"`
 	// Parent nib ID (validated against type hierarchy)
 	Parent *string `json:"parent,omitempty"`
 	// Nib IDs this nib is blocking
@@ -166,8 +171,10 @@ type NibFilter struct {
 	// Concretely, on the top-level nibs query: the term alone is capped, and so is
 	// the term alongside any of the list and tri-state facets — status, excludeStatus,
 	// type, excludeType, priority, excludePriority, estimate, excludeEstimate, tags,
-	// excludeTags, hasParent, hasBlocking, isBlocked, hasBlockedBy, noMilestone.
-	// None of those names a nib, so the population they narrow is still the store.
+	// excludeTags, hasParent, hasBlocking, isBlocked, hasBlockedBy, noMilestone — or
+	// alongside area, whose value is a declared PATH and not a nib, however few nibs
+	// an area holds. None of those names a nib, so the population they narrow is
+	// still the store.
 	// Combining the term with a field that DOES name one — parentId, ancestorId,
 	// descendantId, siblingId, blockingId, blockedById, mentionsId, mentionedById,
 	// milestone — makes the read uncapped. Every relationship field (children,
@@ -383,6 +390,31 @@ type NibFilter struct {
 	// path refuses — also sits in the true set here while the milestone filter's
 	// resolved-assignment reading places it in that milestone's queue set.
 	NoMilestone *bool `json:"noMilestone,omitempty"`
+	// Include only the area's work, DOWNWARD-CLOSED over the declared tree: the nibs
+	// whose `area:` is this path, plus those in every area declared beneath it. So
+	// `area: "web"` selects `web` and `web/dashboard` alike, while
+	// `area: "web/dashboard"` selects that leaf alone — closure runs downward and a
+	// leaf never pulls in its parent.
+	//
+	// Closure is over the TREE and not over the strings. `webhooks` is not within
+	// `web` even though one spells a prefix of the other, because they are two roots;
+	// and a stored value the vocabulary no longer declares is within nothing, so
+	// retiring `web/legacy` from the `areas:` block drops it out of `area: "web"`
+	// rather than leaving it swept in by a filter naming its former parent. The value
+	// is a declared path, never a nib id.
+	//
+	// A path the store does not declare is refused as a malformed argument naming
+	// the declared set, rather than matching nothing: an empty answer reads as "no
+	// work is in this area" for a value that names no area at all — the reading
+	// `milestone` refuses an unknown id for. Like the empty-id refusals above it
+	// carries no extensions.code, so a GraphQL client sees a generic error; the CLI
+	// reports VALIDATION_ERROR (exit 2), the class `nibs set --area` gives the same
+	// value. The empty string is refused as that same class, in its own words: it
+	// names no area, and read as "unset" the branch would widen the query to the
+	// whole store. Omit the field to leave it unfiltered. A store that declares no
+	// `areas:` block at all says THAT instead of naming an empty allowed set, since
+	// the repair there is a config edit rather than a different value.
+	Area *string `json:"area,omitempty"`
 }
 
 // Sort options for nib queries
@@ -458,6 +490,15 @@ type UpdateNibInput struct {
 	// on the state it leaves: a clear of either axis opens the way for the other,
 	// and an assignment is checked against the chain the nib will sit on.
 	Milestone graphql.Omittable[*string] `json:"milestone,omitempty"`
+	// Set the area assignment — the ownership axis. The value must be a path the
+	// store's config declares; an undeclared one is refused naming the declared set,
+	// and a store that declares no areas refuses every value and says so. A
+	// milestone-typed subject is refused (a waypoint is not work and takes no area).
+	//
+	// Explicit null OR empty string clears the assignment; omit to leave it
+	// unchanged. Unlike milestone this names no nib, so nothing is resolved and no
+	// queue moves — it is a plain path-valued scalar.
+	Area graphql.Omittable[*string] `json:"area,omitempty"`
 	// Add nibs to blocking list (validates cycles and existence)
 	AddBlocking []string `json:"addBlocking,omitempty"`
 	// Remove nibs from blocking list

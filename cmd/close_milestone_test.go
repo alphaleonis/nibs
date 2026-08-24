@@ -1006,7 +1006,11 @@ func TestCloseMilestoneMemberOwnFrontMatterDeadEndsBothEscapes(t *testing.T) {
 			}
 
 			msg := err.Error()
-			for _, want := range []string{"mem-b", "front matter", "nibs check"} {
+			// `nibs check` is deliberately NOT named: the message is shared
+			// across causes and check is silent for one of them (see
+			// closeRefusalOwnFrontMatter), so the pointer would be true here
+			// and false one row down.
+			for _, want := range []string{"mem-b", "front matter", "No escape and no retry"} {
 				if !strings.Contains(msg, want) {
 					t.Errorf("the diagnosis should contain %q, got: %s", want, msg)
 				}
@@ -1226,4 +1230,105 @@ func TestCloseMilestoneRefusesAStampDeletionOnAFullyStampedMember(t *testing.T) 
 	if got := readNibFile(t, nibsPath, memberFile); got != deleted {
 		t.Errorf("the deleted created_at was silently restored; file is now:\n%s", got)
 	}
+}
+
+// TestCloseMilestoneMemberUndeclaredAreaDeadEndsBothEscapes is the area half of
+// the own-front-matter dead end. Retiring or renaming an `areas:` entry leaves
+// every nib that carried it loading fine and refused by every write path, so a
+// queue member in that shape is exactly the case closePreValidateMembers exists
+// for: no escape and no rerun can dispose of it, and disposing of the members
+// ahead of it first destroys queue keys Orderer.Recalculate never gives back.
+//
+// The guard set closeMemberOwnGuards runs therefore has to be the same one
+// preValidateSubject runs, area rule included — the sibling status case is
+// TestCloseMilestoneMemberOwnFrontMatterDeadEndsBothEscapes.
+func TestCloseMilestoneMemberUndeclaredAreaDeadEndsBothEscapes(t *testing.T) {
+	escapes := map[string][]string{
+		"unassign-open": {"--unassign-open"},
+		"move-open-to":  {"--move-open-to", "tnib-m002"},
+	}
+	for escape, flags := range escapes {
+		t.Run(escape, func(t *testing.T) {
+			nibsPath := setupMilestoneCloseFixture(t)
+
+			// tnib-m001's open queue is tnib-e001..e004 in that order; the
+			// offender sits SECOND so a disposition that starts writing leaves
+			// tnib-e001 visibly rewritten.
+			queue := queueIDs(t, nibsPath, "tnib-m001")
+			if len(queue) < 2 || queue[1] != "tnib-e002" {
+				t.Fatalf("test setup: queue = %v, want tnib-e002 second", queue)
+			}
+			resetQueueCLIFlags()
+			if _, err := runRootWith(t, "--nibs-path", nibsPath, "set", "tnib-e002", "--area", "auth"); err != nil {
+				t.Fatalf("set --area auth: %v", err)
+			}
+			rewriteStoredArea(t, nibsPath, "tnib-e002", "auth", "retired/thing")
+
+			before := queueFileContents(t, nibsPath, queue)
+
+			resetQueueCLIFlags()
+			resetCloseFlags()
+			withStdin(t, "Wave over.\n")
+			args := append([]string{"--nibs-path", nibsPath, "close", "tnib-m001", "--summary", "-"}, flags...)
+			_, err := runRootWith(t, args...)
+			if err == nil {
+				t.Fatal("a member carrying an undeclared area must refuse the disposition, got nil")
+			}
+
+			msg := err.Error()
+			// The repair is quoted inline as a command the reader can run, and
+			// `nibs check` is offered for the whole-store view: this fixture
+			// declares a vocabulary, so the report names this member too (the
+			// shape that report is silent about is what closeCheckNamesCause
+			// answers for, and is pinned by
+			// TestCloseRefusalNamesNoSilentDiagnostic).
+			for _, want := range []string{"tnib-e002", "front matter", "retired/thing",
+				"`nibs set tnib-e002 --clear area`", "`nibs check`"} {
+				if !strings.Contains(msg, want) {
+					t.Errorf("the diagnosis should contain %q, got: %s", want, msg)
+				}
+			}
+			// The two exits that cannot work must not be offered.
+			for _, unwanted := range []string{"--unassign-open", "transient"} {
+				if strings.Contains(msg, unwanted) {
+					t.Errorf("the diagnosis must not offer %q, which cannot clear this: %s", unwanted, msg)
+				}
+			}
+
+			// Nothing was written: every member file, the ones AHEAD of the
+			// offender included, is byte-identical to what it was.
+			for _, id := range queue {
+				if got := before[id]; got != readQueueFile(t, nibsPath, id) {
+					t.Errorf("a doomed disposition rewrote %s; before:\n%s\nafter:\n%s", id, got, readQueueFile(t, nibsPath, id))
+				}
+			}
+			if got := statusOf(t, nibsPath, "tnib-m001"); got != "in-progress" {
+				t.Errorf("a refused close must leave the milestone open: status = %q", got)
+			}
+		})
+	}
+}
+
+// readQueueFile reads one nib's file out of data/ by id, for the byte-identity
+// assertions a "no writes happened" claim needs.
+func readQueueFile(t *testing.T, nibsPath, id string) string {
+	t.Helper()
+	matches, err := filepath.Glob(filepath.Join(nibsPath, "data", id+"*.md"))
+	if err != nil || len(matches) != 1 {
+		t.Fatalf("locating %s: %v (matches %v)", id, err, matches)
+	}
+	raw, err := os.ReadFile(matches[0])
+	if err != nil {
+		t.Fatalf("reading %s: %v", matches[0], err)
+	}
+	return string(raw)
+}
+
+func queueFileContents(t *testing.T, nibsPath string, ids []string) map[string]string {
+	t.Helper()
+	contents := make(map[string]string, len(ids))
+	for _, id := range ids {
+		contents[id] = readQueueFile(t, nibsPath, id)
+	}
+	return contents
 }

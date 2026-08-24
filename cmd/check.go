@@ -90,6 +90,9 @@ var checkCmd = &cobra.Command{
 - Out-of-enum field values (loaded as written, so they sort and filter oddly)
 - Axis keys a nib's type refuses (a hand-edited milestone carrying ` + "`milestone:`" + `
   or ` + "`area:`" + ` loads as written, but every update of it through nibs is refused)
+- Area values the store's ` + "`areas:`" + ` vocabulary does not declare (loaded as
+  written, so the nib lists and filters as itself, but every update that keeps
+  the value is refused; a store declaring no areas is not checked at all)
 - Near-miss front-matter keys (a mistyped modeled key like ` + "`milestone-order:`" + ` is
   kept as an unknown key, invisible to every filter)
 - Broken links (links to non-existent nibs)
@@ -109,9 +112,9 @@ issue, so an otherwise clean store exits 1 until ` + "`nibs migrate`" + ` has ru
 Use --fix to automatically remove broken links and self-references. --fix WRITES,
 so unlike plain check it refuses a store needing migration.
 Note: cycles, unparseable files, duplicate ids, out-of-enum values, refused
-axis keys, near-miss keys, illegal hierarchy nests, milestone assignments
-naming a non-milestone and a pending migration cannot be auto-fixed and require
-manual intervention.`,
+axis keys, undeclared areas, near-miss keys, illegal hierarchy nests, milestone
+assignments naming a non-milestone and a pending migration cannot be auto-fixed
+and require manual intervention.`,
 	Args: codedNoArgs(&checkJSON), // operates on the whole store; takes no positional args
 	RunE: func(cmd *cobra.Command, args []string) error {
 		totalIssues, err := runCheck(getApp(cmd))
@@ -382,7 +385,7 @@ func runCheck(app *App) (int, error) {
 	// links, and HasIssues() covers all kinds. Hierarchy, assignment and
 	// closed-queue findings render under Nib Links, so they count as link
 	// issues here — deliberately not subtracted.
-	if !checkJSON && linkResult.TotalIssues()-linkResult.LoadIssues()-linkResult.EnumIssues()-linkResult.AxisIssues()-linkResult.NearMissIssues() == 0 && fixed == 0 {
+	if !checkJSON && linkResult.TotalIssues()-linkResult.LoadIssues()-linkResult.EnumIssues()-linkResult.AxisIssues()-linkResult.AreaIssues()-linkResult.NearMissIssues() == 0 && fixed == 0 {
 		ui.Printf("  %s No link issues found\n", ui.Success.Render("✓"))
 	}
 
@@ -581,14 +584,17 @@ func loadWasPartial(migration *migrationStatus) *bool {
 // renderFieldDiagnostics prints the per-file field findings in text mode,
 // under the Nib Files heading (they are per-file integrity, reported next to
 // the other conditions --fix cannot repair): out-of-enum values, then
-// axis-rule violations, then near-miss keys. Not auto-fixable by design, so
-// --fix names them like the cycle branch does instead of skipping them
-// silently. The out-of-enum remediation is per finding — see fieldRemediation;
-// an axis violation has one remediation (remove the axis key, or retype the
-// nib), and --fix cannot choose between the type and the assignment for the
-// author; a near-miss key has one remediation (rename it to the modeled key,
-// or remove it), and --fix cannot apply it because a resembling spelling is
-// not proof of the author's intent.
+// axis-rule violations, then undeclared areas, then near-miss keys. Not
+// auto-fixable by design, so --fix names them like the cycle branch does
+// instead of skipping them silently. The out-of-enum remediation is per finding
+// — see fieldRemediation; an axis violation has one remediation (clear the axis
+// key, or retype the nib) and --fix cannot choose between the type and the
+// assignment for the author — the clear has a command, the choice does not; an
+// undeclared area has TWO remediations that both execute (assign a declared
+// value, or drop the assignment) and --fix cannot pick between them because it
+// would have to invent the area; a near-miss key has one remediation (rename it
+// to the modeled key, or remove it), and --fix cannot apply it because a
+// resembling spelling is not proof of the author's intent.
 func renderFieldDiagnostics(app *App, result *nibcore.LinkCheckResult) {
 	for _, ie := range result.InvalidEnums {
 		remedy := fieldRemediation(app, ie)
@@ -605,14 +611,32 @@ func renderFieldDiagnostics(app *App, result *nibcore.LinkCheckResult) {
 	for _, ia := range result.InvalidAxes {
 		// The path comes from the file and the id from its filename, so both
 		// cross the rendering boundary; the reason goes through with them like
-		// every other reason field on this surface.
+		// every other reason field on this surface. The axis names are
+		// nibtypes constants, so only the id inside the command is rendered.
 		finding := fmt.Sprintf("%s: %s", stripControlChars(ia.Path), flattenReason(ia.Reason))
+		escape := nibcore.ClearAxesCommand(stripControlChars(ia.NibID), ia.Axes)
+		keys := nibcore.AxisKeysNoun(ia.Axes)
 		if checkFix {
-			ui.Printf("  %s Cannot auto-fix %s: %s (remove the axis key, or retype the nib — choosing between the type and the assignment is the author's call)\n",
-				ui.Warning.Render("!"), stripControlChars(ia.NibID), finding)
+			ui.Printf("  %s Cannot auto-fix %s: %s (clear %s with `%s`, or retype the nib — choosing between the type and the assignment is the author's call)\n",
+				ui.Warning.Render("!"), stripControlChars(ia.NibID), finding, keys, escape)
 		} else {
-			ui.Printf("  %s %s: %s (loads as written, but every update of this nib through nibs is refused; remove the axis key by hand)\n",
-				ui.Danger.Render("✗"), stripControlChars(ia.NibID), finding)
+			ui.Printf("  %s %s: %s (loads as written, but every update that keeps the type and %s is refused; clear %s with `%s`)\n",
+				ui.Danger.Render("✗"), stripControlChars(ia.NibID), finding, keys, keys, escape)
+		}
+	}
+	for _, ua := range result.UndeclaredAreas {
+		// The value and the declared set are rendered by config on the way into
+		// the finding (both are file-sourced); the path comes from the file and
+		// the id from its filename, so both cross the boundary here.
+		id := stripControlChars(ua.NibID)
+		finding := fmt.Sprintf("%s: area %q is not declared by this store (declared: %s)",
+			stripControlChars(ua.Path), ua.Area, ua.Declared)
+		if checkFix {
+			ui.Printf("  %s Cannot auto-fix %s: %s (assign a declared area with `nibs set %s --area <declared>`, or drop it with `nibs set %s --clear area` — choosing which is the author's call)\n",
+				ui.Warning.Render("!"), id, finding, id, id)
+		} else {
+			ui.Printf("  %s %s: %s (loads as written, but every update that keeps the value is refused; assign a declared area with `nibs set %s --area <declared>`, or drop it with `nibs set %s --clear area`)\n",
+				ui.Danger.Render("✗"), id, finding, id, id)
 		}
 	}
 	for _, nm := range result.NearMissKeys {

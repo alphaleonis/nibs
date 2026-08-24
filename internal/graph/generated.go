@@ -4472,7 +4472,7 @@ func (ec *executionContext) unmarshalInputCreateNibInput(ctx context.Context, ob
 		asMap[k] = v
 	}
 
-	fieldsInOrder := [...]string{"title", "type", "status", "priority", "estimate", "tags", "body", "parent", "blocking", "blockedBy", "documents", "prefix", "afterId", "beforeId", "first"}
+	fieldsInOrder := [...]string{"title", "type", "status", "priority", "estimate", "tags", "body", "area", "parent", "blocking", "blockedBy", "documents", "prefix", "afterId", "beforeId", "first"}
 	for _, k := range fieldsInOrder {
 		v, ok := asMap[k]
 		if !ok {
@@ -4528,6 +4528,13 @@ func (ec *executionContext) unmarshalInputCreateNibInput(ctx context.Context, ob
 				return it, err
 			}
 			it.Body = data
+		case "area":
+			ctx := graphql.WithPathContext(ctx, graphql.NewPathWithField("area"))
+			data, err := ec.unmarshalOString2ᚖstring(ctx, v)
+			if err != nil {
+				return it, err
+			}
+			it.Area = data
 		case "parent":
 			ctx := graphql.WithPathContext(ctx, graphql.NewPathWithField("parent"))
 			data, err := ec.unmarshalOString2ᚖstring(ctx, v)
@@ -4600,7 +4607,7 @@ func (ec *executionContext) unmarshalInputNibFilter(ctx context.Context, obj any
 		asMap[k] = v
 	}
 
-	fieldsInOrder := [...]string{"search", "status", "excludeStatus", "type", "excludeType", "priority", "excludePriority", "estimate", "excludeEstimate", "tags", "excludeTags", "hasParent", "parentId", "ancestorId", "descendantId", "siblingId", "hasBlocking", "blockingId", "isBlocked", "hasBlockedBy", "blockedById", "mentionsId", "mentionedById", "milestone", "noMilestone"}
+	fieldsInOrder := [...]string{"search", "status", "excludeStatus", "type", "excludeType", "priority", "excludePriority", "estimate", "excludeEstimate", "tags", "excludeTags", "hasParent", "parentId", "ancestorId", "descendantId", "siblingId", "hasBlocking", "blockingId", "isBlocked", "hasBlockedBy", "blockedById", "mentionsId", "mentionedById", "milestone", "noMilestone", "area"}
 	for _, k := range fieldsInOrder {
 		v, ok := asMap[k]
 		if !ok {
@@ -4782,6 +4789,13 @@ func (ec *executionContext) unmarshalInputNibFilter(ctx context.Context, obj any
 				return it, err
 			}
 			it.NoMilestone = data
+		case "area":
+			ctx := graphql.WithPathContext(ctx, graphql.NewPathWithField("area"))
+			data, err := ec.unmarshalOString2ᚖstring(ctx, v)
+			if err != nil {
+				return it, err
+			}
+			it.Area = data
 		}
 	}
 	return it, nil
@@ -4876,7 +4890,7 @@ func (ec *executionContext) unmarshalInputUpdateNibInput(ctx context.Context, ob
 		asMap[k] = v
 	}
 
-	fieldsInOrder := [...]string{"title", "status", "type", "priority", "estimate", "tags", "addTags", "removeTags", "body", "bodyMod", "parent", "milestone", "addBlocking", "removeBlocking", "addBlockedBy", "removeBlockedBy", "documents", "addDocuments", "removeDocuments", "ifMatch"}
+	fieldsInOrder := [...]string{"title", "status", "type", "priority", "estimate", "tags", "addTags", "removeTags", "body", "bodyMod", "parent", "milestone", "area", "addBlocking", "removeBlocking", "addBlockedBy", "removeBlockedBy", "documents", "addDocuments", "removeDocuments", "ifMatch"}
 	for _, k := range fieldsInOrder {
 		v, ok := asMap[k]
 		if !ok {
@@ -4967,6 +4981,13 @@ func (ec *executionContext) unmarshalInputUpdateNibInput(ctx context.Context, ob
 				return it, err
 			}
 			it.Milestone = graphql.OmittableOf(data)
+		case "area":
+			ctx := graphql.WithPathContext(ctx, graphql.NewPathWithField("area"))
+			data, err := ec.unmarshalOString2ᚖstring(ctx, v)
+			if err != nil {
+				return it, err
+			}
+			it.Area = graphql.OmittableOf(data)
 		case "addBlocking":
 			ctx := graphql.WithPathContext(ctx, graphql.NewPathWithField("addBlocking"))
 			data, err := ec.unmarshalOString2ᚕstringᚄ(ctx, v)

@@ -94,20 +94,64 @@ func CanHaveParent(nibType string) bool {
 	return ValidParentTypes(nibType) != nil
 }
 
+// The assignment axes, by the front-matter key each one is stored under. They
+// name AxisError.Axis, so a caller can tell which axis refused without reading
+// the message.
+const (
+	AxisMilestone = "milestone"
+	AxisArea      = "area"
+)
+
+// AxisError describes an assignment axis a nib's type may not carry.
+//
+// It is typed, rather than a bare error, so a write surface can classify the
+// refusal without matching on its text: `nibs new` falls back to FILE_ERROR for
+// anything the create path raises that carries no class of its own, and a
+// type/axis mismatch is a malformed argument pair, not a filesystem failure.
+type AxisError struct {
+	// NibType is the type that refuses the axis, and Axis the front-matter key
+	// it was nonetheless given (AxisMilestone or AxisArea).
+	NibType string
+	Axis    string
+}
+
+func (e *AxisError) Error() string {
+	if e.Axis == AxisMilestone {
+		return fmt.Sprintf("a %s cannot be assigned to a milestone", e.NibType)
+	}
+	return fmt.Sprintf("a %s cannot have an area", e.NibType)
+}
+
+// RefusedAxes returns every assignment axis the nib's TYPE refuses among those
+// it actually carries, in front-matter order.
+//
+// ValidateAxes reports only the first, which is all a write path needs. A
+// DIAGNOSTIC needs them all: dropping one key leaves the write refused by the
+// next, so a nib carrying both is escaped by one command clearing both, and a
+// message offering them as alternatives names one that is guaranteed to fail.
+func RefusedAxes(nibType, milestone, area string) []string {
+	if nibType != "milestone" {
+		return nil
+	}
+	var axes []string
+	if milestone != "" {
+		axes = append(axes, AxisMilestone)
+	}
+	if area != "" {
+		axes = append(axes, AxisArea)
+	}
+	return axes
+}
+
 // ValidateAxes checks the assignment axes against the nib's type. A milestone
 // is a waypoint, not work: it takes neither a milestone assignment nor an
 // area. Every other type (unknown ones included) takes both.
 func ValidateAxes(nibType, milestone, area string) error {
-	if nibType != "milestone" {
+	axes := RefusedAxes(nibType, milestone, area)
+	if len(axes) == 0 {
 		return nil
 	}
-	if milestone != "" {
-		return fmt.Errorf("a milestone cannot be assigned to a milestone")
-	}
-	if area != "" {
-		return fmt.Errorf("a milestone cannot have an area")
-	}
-	return nil
+	return &AxisError{NibType: nibType, Axis: axes[0]}
 }
 
 // ValidChildTypes returns the nib types that can be children of the given parent type.

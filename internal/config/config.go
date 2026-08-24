@@ -169,6 +169,12 @@ type PriorityConfig struct {
 type Config struct {
 	Nibs NibsConfig `yaml:"nibs"`
 
+	// Areas is the project's declared area vocabulary — the only vocabulary in
+	// this file a project defines for itself. It sits beside `nibs:` rather than
+	// inside it because it is a vocabulary, not a nib-creation setting. Absent
+	// or empty is legal; see ValidateAreas.
+	Areas []AreaConfig `yaml:"areas,omitempty"`
+
 	// storeDir is the `.nibs` directory this config was read from (not
 	// serialized). Everything positional about a project derives from it: the
 	// config file's own location, the data and archive directories, and the
@@ -420,6 +426,13 @@ func loadRaw(configPath string) (*Config, error) {
 
 	// The config lives inside the store, so its directory IS the store.
 	cfg.storeDir = filepath.Dir(configPath)
+
+	// Every load path bottoms out here, so validating the area vocabulary here
+	// is what makes a malformed one a refusal on every route into a store
+	// rather than a silently shortened tree the next write authorizes against.
+	if err := cfg.ValidateAreas(); err != nil {
+		return nil, fmt.Errorf("%s declares a malformed area vocabulary: %w", configPath, err)
+	}
 
 	return &cfg, nil
 }

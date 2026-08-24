@@ -4,6 +4,7 @@ import (
 	"context"
 	"slices"
 
+	"github.com/alphaleonis/nibs/internal/config"
 	"github.com/alphaleonis/nibs/internal/graph/model"
 	"github.com/alphaleonis/nibs/internal/nib"
 )
@@ -410,6 +411,26 @@ func ApplyFilter(ctx context.Context, nibs []*nib.Nib, filter *model.NibFilter, 
 		})
 	}
 
+	// The OWNERSHIP axis. area is DOWNWARD-CLOSED over the declared tree: the
+	// path named plus every area declared beneath it, so `area: "web"` selects
+	// web/dashboard too. Closure is Config.IsAreaWithin's, which descends the
+	// tree rather than testing the strings — `webhooks` is not within `web`, and
+	// a stored value the vocabulary no longer declares is within nothing, so a
+	// retired area is not swept back in by a filter naming its former parent.
+	//
+	// Unlike milestone this names no nib, so there is no target to resolve and
+	// nothing here bounds a search (see hasBoundingFilter). What it does share
+	// with milestone is the refusal: a value the vocabulary does not declare is
+	// rejected rather than answered with the empty set, which would read as "no
+	// work is in this area" for a path that names no area at all.
+	if filter.Area != nil {
+		cfg := reader.Config()
+		if err := refuseUndeclaredArea(cfg, "area", *filter.Area); err != nil {
+			return nil, err
+		}
+		result = filterByAreaWithin(result, cfg, *filter.Area)
+	}
+
 	// Mention filters (computed via FindMentions/FindMentionedBy on the reader,
 	// routed through the per-operation cache so repeated lookups within one
 	// GraphQL operation don't re-run the reader).
@@ -761,6 +782,51 @@ func excludeByField(nibs []*nib.Nib, values []string, getter func(*nib.Nib) stri
 	var result []*nib.Nib
 	for _, b := range nibs {
 		if !valueSet[getter(b)] {
+			result = append(result, b)
+		}
+	}
+	return result
+}
+
+// refuseUndeclaredArea reports why an area filter cannot run, or nil when the
+// value names a declared area.
+//
+// The empty string is refused for the reason resolveFilterTarget refuses an
+// empty id: read as "unset" the branch would be dropped and the query would
+// widen to the whole store, which is the worst answer for the input that
+// produces it — an unset shell variable, not a deliberate choice. It is tested
+// EXACTLY, so a whitespace-only value stays an ordinary undeclared path and is
+// reported as one; that keeps this layer from carrying a trimming policy the
+// echoed value would then contradict, and matches cmd/list.go's own `== ""`
+// tests.
+//
+// Every rule it applies belongs to the config: membership is IsValidArea, and
+// the declared set is AreaList's rendering — empty when the store declares
+// none, which is what selects the wording that says so instead of naming an
+// empty allowed set.
+func refuseUndeclaredArea(cfg *config.Config, field, path string) error {
+	if path == "" {
+		return &FilterAreaError{Field: field}
+	}
+	if cfg.IsValidArea(path) {
+		return nil
+	}
+	declared := ""
+	if cfg.AreasDeclared() {
+		declared = cfg.AreaList()
+	}
+	return &FilterAreaError{Field: field, Path: config.RenderAreaPath(path), Declared: declared}
+}
+
+// filterByAreaWithin keeps the nibs whose stored area is ancestor or sits below
+// it in the DECLARED tree. ancestor has already been checked as declared, so a
+// candidate is judged only on its own value — and one the vocabulary does not
+// declare is within nothing, which is how a retired area stays out of an answer
+// about the tree that no longer holds it.
+func filterByAreaWithin(nibs []*nib.Nib, cfg *config.Config, ancestor string) []*nib.Nib {
+	var result []*nib.Nib
+	for _, b := range nibs {
+		if cfg.IsAreaWithin(b.Area, ancestor) {
 			result = append(result, b)
 		}
 	}

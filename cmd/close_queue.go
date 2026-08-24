@@ -160,12 +160,16 @@ const (
 
 	// closeRefusalOwnFrontMatter: the member's OWN front matter is what the
 	// write path refuses. Both escapes call UpdateNib, whose preValidateSubject
-	// runs ValidateEnums and the axis rule BEFORE the milestone branch splits,
-	// so the clear path meets the identical wall — and every rerun recomputes
-	// the same set and stops at the same member. Only repairing that nib clears
-	// it, which is `nibs check`'s job, not this command's: writing a nib the
-	// vocabulary refuses in order to get past its own guard is not an escape,
-	// it is a corruption.
+	// runs ValidateEnums, the axis rule and the area vocabulary BEFORE the
+	// milestone branch splits, so the clear path meets the identical wall — and
+	// every rerun recomputes the same set and stops at the same member. Only
+	// repairing that nib clears it, and this command is not where that happens:
+	// writing a nib the vocabulary refuses in order to get past its own guard
+	// is not an escape, it is a corruption.
+	//
+	// The advice therefore quotes the refusal itself, and points at `nibs check`
+	// only for the whole-store view it adds — see closeCheckPointer for the one
+	// shape that report is silent about, and why the pointer is guarded on it.
 	closeRefusalOwnFrontMatter
 
 	// closeRefusalOwnFile: the member's own file could not be written. The same
@@ -203,18 +207,27 @@ func closeClassifyMemberRefusal(resolver *graph.Resolver, id string, err error) 
 // MEMBER whichever escape asked for it, so a failure here is one no escape
 // routes around.
 //
-// UpdateNib's preValidateSubject runs ValidateEnums and the axis rule before
-// validateAndSetMilestone branches, so both are shared. The axis rule is asked
-// with the assignment CLEARED because that is the weaker of its two readings:
-// a member the clear path still refuses is a genuine dead end, while one only
-// the assign reading refuses (a milestone-typed nib carrying an assignment,
-// which a hand-edit can produce) is precisely a case --unassign-open does fix,
-// and calling that a dead end would withhold the remedy that works.
+// UpdateNib's preValidateSubject runs ValidateEnums, the axis rule and the area
+// vocabulary before validateAndSetMilestone branches, so all three are shared,
+// and in that order — no area value satisfies the axis rule, so answering an
+// undeclared area on a milestone-typed member with the declared set would
+// prescribe a remedy that member cannot follow.
+//
+// The axis rule is asked with the assignment CLEARED because that is the weaker
+// of its two readings: a member the clear path still refuses is a genuine dead
+// end, while one only the assign reading refuses (a milestone-typed nib carrying
+// an assignment, which a hand-edit can produce) is precisely a case
+// --unassign-open does fix, and calling that a dead end would withhold the
+// remedy that works. The area rule has no such weaker reading — neither escape
+// touches `area:`, so the member's stored value is the one both writes carry.
 func closeMemberOwnGuards(resolver *graph.Resolver, member *nib.Nib) error {
 	if err := resolver.Validator.ValidateEnums(member); err != nil {
 		return err
 	}
-	return nibtypes.ValidateAxes(member.EffectiveType(), "", member.Area)
+	if err := nibtypes.ValidateAxes(member.EffectiveType(), "", member.Area); err != nil {
+		return err
+	}
+	return resolver.Validator.ValidateArea(member)
 }
 
 // refusalRemedy is the tail of the partial-failure advice: what the caller
@@ -231,7 +244,7 @@ func (d *closeDisposition) refusalRemedy(failedID string, class closeMemberRefus
 	id := stripControlChars(failedID)
 	switch class {
 	case closeRefusalOwnFrontMatter:
-		return fmt.Sprintf("the blocker is %s's own front matter, which every escape and every retry meets identically — repair %s (`nibs check` names this shape), then close again%s",
+		return fmt.Sprintf("the blocker is %s's own front matter, which every escape and every retry meets identically — repair %s, then close again%s",
 			id, id, holdingReasonExitClause(cfg))
 	case closeRefusalOwnFile:
 		return fmt.Sprintf("the blocker is %s's own file, which could not be written — every escape meets the same failure, so make that file writable, then close again%s",
@@ -492,6 +505,7 @@ func closePartialQueueWriteError(cfg *config.Config, resolver *graph.Resolver, s
 // clears it.
 func closePreValidateMembers(cfg *config.Config, resolver *graph.Resolver, subject *nib.Nib, open []string) error {
 	var blocked, reasons []string
+	checkNamesAll := true
 	for _, id := range open {
 		member, ok := resolver.Reader.GetSnapshot(id)
 		if !ok {
@@ -501,6 +515,9 @@ func closePreValidateMembers(cfg *config.Config, resolver *graph.Resolver, subje
 		}
 		if err := closeMemberOwnGuards(resolver, member); err != nil {
 			blocked = append(blocked, id)
+			if !closeCheckNamesCause(cfg, err) {
+				checkNamesAll = false
+			}
 			if len(reasons) < closeQueueNameLimit {
 				reasons = append(reasons, fmt.Sprintf("%s (%v)", stripControlChars(id), err))
 			}
@@ -514,11 +531,57 @@ func closePreValidateMembers(cfg *config.Config, resolver *graph.Resolver, subje
 		pronoun, possessive = "them", "their"
 	}
 	return cmdError(closeJSON, output.ErrValidation,
-		"cannot dispose of milestone %s's queue: %s refused by the write path for %s own front matter — %s%s. No escape and no retry can write %s, so repair %s first (`nibs check` names this shape), then close again%s",
+		"cannot dispose of milestone %s's queue: %s refused by the write path for %s own front matter — %s%s. No escape and no retry can write %s, so repair %s first, then close again%s%s",
 		stripControlChars(subject.ID), countNibs(len(blocked)), possessive,
 		strings.Join(reasons, "; "), moreThanNamed(len(blocked)),
 		pronoun, pronoun,
+		closeCheckPointer(checkNamesAll),
 		holdingReasonExitClause(cfg))
+}
+
+// closeCheckPointer offers `nibs check` as the place the whole set is named, or
+// nothing at all.
+//
+// The reasons above are capped at closeQueueNameLimit and the rest elided, so a
+// queue with many hand-edited members is told about a few of them; `nibs check`
+// is the surface that names every one, which is what makes the pointer worth
+// printing rather than a redirection to what is already inline.
+//
+// It is CONDITIONAL because the sentence says EVERY, and one of the causes
+// closeMemberOwnGuards refuses is one check can be silent about
+// (closeCheckNamesCause). The caller therefore answers the question the
+// sentence makes — will check name every member this refusal blocked? — and a
+// single silent member withholds it: withholding a true pointer costs a reader
+// one sentence, while printing a false one sends them to a report their blocker
+// is missing from, which is worse than no pointer at all.
+func closeCheckPointer(namesEveryBlockedMember bool) string {
+	if !namesEveryBlockedMember {
+		return ""
+	}
+	return " (`nibs check` names every nib in this store whose front matter the write path refuses)"
+}
+
+// closeCheckNamesCause reports whether `nibs check` names a member its own
+// guards refused for err.
+//
+// It is asked of the member's CAUSE and not of the store, because check's three
+// answers are not conditioned alike: an out-of-enum value and a refused axis key
+// are reported unconditionally, while an undeclared `area:` is reported only
+// where a vocabulary exists to be undeclared against — a store declaring none is
+// exempt by design (Core.CheckAllLinks). Asking the store alone gets the
+// no-vocabulary store with an enum-broken member wrong in the silent direction,
+// which is exactly where the pointer earns its place.
+//
+// The axis reading needs no condition of its own: closeMemberOwnGuards asks
+// ValidateAxes with the assignment cleared, which is a strict subset of the
+// reading CheckAllLinks reports on, so a member this refuses is one check
+// reports.
+func closeCheckNamesCause(cfg *config.Config, err error) bool {
+	var areaErr *config.AreaError
+	if errors.As(err, &areaErr) {
+		return cfg.AreasDeclared()
+	}
+	return true
 }
 
 // closeHoldingReasonDispositionError refuses a disposition flag combined with a

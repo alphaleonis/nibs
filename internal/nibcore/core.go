@@ -396,12 +396,14 @@ func (c *Core) loadFromDisk() error {
 
 		// The axis rule (nibtypes.ValidateAxes) shares the enum posture — strict
 		// on the write paths, tolerant here — but its dead end is worse than a
-		// skewed filter: every subsequent update of the offender through nibs is
-		// refused, and no CLI flag or mutation input exposes the axis fields for
-		// repair. This warning plus the `nibs check` finding (see
-		// CheckAllLinksInMap) name the nib before that dead end is hit.
+		// skewed filter: every subsequent update of the offender that keeps
+		// both the type and the offending keys is refused. This warning plus
+		// the `nibs check` finding (see CheckAllLinksInMap) name the nib before
+		// that dead end is hit, and name the one command that escapes it.
 		if axisErr := nibtypes.ValidateAxes(b.EffectiveType(), b.Milestone, b.Area); axisErr != nil {
-			warns.warn("nib %s: %v — value loads as written, but every update of this nib through nibs is refused until the axis key is removed by hand; `nibs check` names the file", b.ID, axisErr)
+			axes := nibtypes.RefusedAxes(b.EffectiveType(), b.Milestone, b.Area)
+			warns.warn("nib %s: %v — value loads as written, but every update that keeps the type and %s is refused; `%s` is the escape, and `nibs check` names the file",
+				b.ID, axisErr, AxisKeysNoun(axes), ClearAxesCommand(b.ID, axes))
 		}
 
 		c.nibs[b.ID] = b
@@ -938,6 +940,62 @@ func (c *Core) ValidateEnums(b *nib.Nib) error {
 	return nil
 }
 
+// ValidateArea checks the nib's `area:` assignment against the vocabulary the
+// store's config DECLARES: unset is legal, a declared path is legal, and
+// anything else is refused naming the declared set. The config owns the rule and
+// the message, so the CLI, the TUI, the web UI and any MCP client refuse
+// identically.
+//
+// Its callers all write a nib that ALREADY EXISTS — Update, the GraphQL
+// pre-check, `nibs close`'s member guards — so the value it judges need not have
+// come from the request: it is whatever `area:` the nib will carry, which for
+// most writes is the one it already carries. That is why it asks
+// ValidateStoredArea rather than ValidateAreaAssignment, and why Create asks the
+// other one: a create has no stored value its argument could be confused with.
+//
+// It is deliberately SEPARATE from ValidateEnums, for two reasons that point the
+// same way. Areas are the one vocabulary a project authors, held on the live
+// config struct rather than in a package-level table — so folding them in would
+// falsify the argument ValidateEnums makes for its own off-lock safety, at the
+// place that argument is made. And ValidateEnums has two callers that are not
+// write paths: loadFromDisk, which would warn, and CheckAllLinks, which would
+// report an InvalidEnum. Read-tolerance here is deliberate — a file already
+// carrying an undeclared area loads, lists and renders exactly as written, and
+// only a write refuses it — so this method must not be reachable from either.
+//
+// Like ValidateEnums it takes no lock: Create and Update call it while holding
+// c.mu, and the GraphQL updateNib pre-check calls it off-lock through
+// NibValidator to refuse a doomed subject before its later steps write to
+// another nib's file. Unlike ValidateEnums it genuinely reads per-config state,
+// so the off-lock call rests on a narrower fact: nothing mutates c.config.Areas
+// after construction. The config struct IS writable — `nibs config set-prefix`
+// assigns cfg.Nibs.Prefix in place — and preValidateSubject already reads
+// cfg.Nibs.RequireIfMatch off-lock beside this call on exactly that footing.
+//
+// `nibs area rename` and `nibs area rm` edit the vocabulary and keep that fact
+// true rather than trading it away: they rewrite the `areas:` block in the
+// store's config.yml (config.PlanRenameStoredArea / config.PlanRemoveStoredArea,
+// written after the cascade) and never assign into this struct, so no reader
+// here ever observes a torn or changed Areas. What they give up is that the
+// loaded config is stale for the rest of the process, which for a CLI verb that
+// prints its result and exits is nothing — but is NOT nothing for a live
+// `nibs serve`, whose watcher picks the rewritten nibs up while its vocabulary
+// stays the one it read at startup, so every write it makes to one of them is
+// refused here until it restarts. Closing that would be a config RELOAD, not an
+// in-place assign into this struct; until there is one, the verbs name a live
+// serve in their output (cmd.areaLiveServeNote).
+//
+// RewriteAreaAssignments, the cascade beside those edits, is
+// deliberately not a caller of this method for the same reason a rename could
+// not go through Update at all: no single vocabulary declares both the value a
+// member is leaving and the one it is arriving at.
+func (c *Core) ValidateArea(b *nib.Nib) error {
+	if c.config == nil {
+		return nil
+	}
+	return c.config.ValidateStoredArea(b.ID, b.Area)
+}
+
 // Create adds a new nib, generating an ID if needed, and writes it to disk.
 func (c *Core) Create(b *nib.Nib) error {
 	c.mu.Lock()
@@ -953,8 +1011,20 @@ func (c *Core) Create(b *nib.Nib) error {
 	if err := c.ValidateEnums(b); err != nil {
 		return err
 	}
+	// The axis rule runs before the vocabulary one because no area value can
+	// satisfy it: a milestone takes no area at all, so answering a milestone
+	// carrying an undeclared area with "must be one of …" would hand back a
+	// remedy the subject cannot follow.
 	if err := nibtypes.ValidateAxes(b.EffectiveType(), b.Milestone, b.Area); err != nil {
 		return err
+	}
+	// The supplied-value refusal, not ValidateArea's: a create has no stored
+	// `area:` its argument could be mistaken for, so the clause disambiguating
+	// the two would be noise here.
+	if c.config != nil {
+		if err := c.config.ValidateAreaAssignment(b.Area); err != nil {
+			return err
+		}
 	}
 
 	// Generate ID if not provided. Redraw on a collision with a live id —
@@ -1332,7 +1402,11 @@ func (c *Core) Update(b *nib.Nib, ifMatch *string) error {
 	if err := c.ValidateEnums(b); err != nil {
 		return err
 	}
+	// Ordered as in Create, and for the same reason.
 	if err := nibtypes.ValidateAxes(b.EffectiveType(), b.Milestone, b.Area); err != nil {
+		return err
+	}
+	if err := c.ValidateArea(b); err != nil {
 		return err
 	}
 

@@ -612,3 +612,34 @@ func TestPrimeEmitsInACurrentLayoutProject(t *testing.T) {
 		t.Errorf("prime emitted no prompt in a current-layout project; output:\n%s", out)
 	}
 }
+
+// TestFullPromptTeachesAreas asserts the guide carries the area axis: the two
+// flags that assign one, the filter and its downward closure, and the command
+// that prints the project's own declared set. That last pointer is load-bearing
+// here in a way it is not for the other axes — the guide renders from
+// config.Default(), which declares no areas, so naming `nibs area list` is the
+// only way it can reach a vocabulary the project authors.
+func TestFullPromptTeachesAreas(t *testing.T) {
+	out := renderedFullPrompt(t)
+
+	start := strings.Index(out, "\n## Areas\n")
+	if start < 0 {
+		t.Fatal("full guide has no '## Areas' section")
+	}
+	section := out[start+len("\n## Areas\n"):]
+	if end := strings.Index(section, "\n## "); end >= 0 {
+		section = section[:end]
+	}
+
+	for _, want := range []string{
+		"`nibs area list`",              // where this project's declared set is
+		"`nibs set <id> --area <path>`", // assignment
+		"`nibs list --area <path>`",     // the filter
+		"downward-closed",               // the filter rule an agent cannot infer
+		"--clear area",                  // how an assignment is undone
+	} {
+		if !strings.Contains(section, want) {
+			t.Errorf("full guide Areas section missing %q, got:\n%s", want, section)
+		}
+	}
+}

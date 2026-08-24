@@ -79,6 +79,21 @@ func TestUpdateNibPreValidatesSubjectBeforeWritingBlockingTargets(t *testing.T) 
 			errDesc: `an invalid status "bogus" validation error`,
 		},
 		{
+			// The area vocabulary is the one subject guard that reads per-config
+			// state, so its position in the pre-check is worth its own row rather
+			// than resting on the enum row beside it.
+			name:  "undeclared area",
+			setup: setupTestResolverWithAreas,
+			input: model.UpdateNibInput{
+				Area:        graphql.OmittableOf(stringPtr("nosuch")),
+				AddBlocking: []string{targetID},
+			},
+			wantErr: func(err error) bool {
+				return err != nil && strings.Contains(err.Error(), `invalid area "nosuch"`)
+			},
+			errDesc: `an invalid area "nosuch" validation error`,
+		},
+		{
 			name:  "require_if_match with no ifMatch",
 			setup: setupTestResolverWithRequireIfMatch,
 			input: model.UpdateNibInput{

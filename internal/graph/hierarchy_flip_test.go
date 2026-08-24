@@ -73,7 +73,10 @@ func TestCreateNibHierarchyFlip(t *testing.T) {
 // axis rule: a nib carrying an assignment axis cannot become a milestone,
 // because a waypoint is not work and takes neither axis.
 func TestUpdateNibTypeChangeValidatesAxes(t *testing.T) {
-	resolver, core := setupTestResolver(t)
+	// The area fixtures below need a store that DECLARES `web/ui`: an area is
+	// checked against the vocabulary on every write, so a store declaring none
+	// refuses the seed before the axis rule under test is ever reached.
+	resolver, core := setupTestResolverWithAreas(t)
 	ctx := context.Background()
 
 	mustCreate(t, core, &nib.Nib{ID: "ms-ax", Title: "Waypoint", Type: "milestone", Status: "todo"})

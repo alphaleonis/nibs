@@ -696,6 +696,21 @@ func TestMutationErrCodeBoundaries(t *testing.T) {
 			output.ErrHierarchy,
 		},
 		{
+			// The axis rule is newly reachable from the CREATE path (--area), and
+			// create is the one surface whose fallback is FILE_ERROR — so without
+			// this branch a bad argument pair exits 5 and sends an agent to look
+			// at the filesystem.
+			"an assignment axis the type refuses",
+			&nibtypes.AxisError{NibType: "milestone", Axis: nibtypes.AxisArea},
+			output.ErrValidation,
+		},
+		{
+			"an axis refusal reported with %w",
+			fmt.Errorf("failed to create nib: %w",
+				&nibtypes.AxisError{NibType: "milestone", Axis: nibtypes.AxisMilestone}),
+			output.ErrValidation,
+		},
+		{
 			"unreadable filter target holding a not-found reader error",
 			&graph.FilterTargetUnreadableError{
 				Field: "siblingId", ID: "gone", ReaderErr: nib.ErrNotFound,
