@@ -125,6 +125,29 @@ type InvalidHierarchy struct {
 	Reason string `json:"reason"`
 }
 
+// InvalidMilestoneTarget is a loaded nib whose `milestone:` names a nib that
+// EXISTS but is not milestone-typed (nibtypes' rule, the same one
+// membership.ResolvedMilestoneID applies). The rule is strict on the write
+// paths that assign — `nibs set <id> --milestone <feature-id>` is refused — so
+// an offender reaches the store only through a hand edit or as data predating
+// the rule, and it then loads and lists like any other nib while the
+// assignment resolves to nothing: the nib confers no membership, sits in the
+// backlog, and appears in no milestone queue, yet its `milestone:` field reads
+// back the bad target. This finding is the one surface that names it.
+//
+// A MILESTONE-typed nib carrying `milestone:` is deliberately not reported
+// here — see the exclusion where the finding is raised.
+type InvalidMilestoneTarget struct {
+	NibID string `json:"nib_id"`
+	// Path is relative to the nibs root with forward slashes, like nib.Path.
+	Path string `json:"path"`
+	// Target is the resolved full id of the target, however the file spells it.
+	Target string `json:"target"`
+	// TargetType is the target's effective type — a type-less nib is judged as
+	// the default type, the way every write path judges it.
+	TargetType string `json:"target_type"`
+}
+
 // AssignmentConflict is a loaded nib assigned to a milestone while one of its
 // structural ancestors is assigned too — the shape decision 1.2 rules out (a
 // nib and one of its ancestors are never both assigned; files are the whole
@@ -228,6 +251,11 @@ type LinkCheckResult struct {
 	// function carries it.
 	InvalidHierarchies []InvalidHierarchy `json:"invalid_hierarchies"`
 
+	// Milestone-target integrity. Derivable from the nibs alone (a type
+	// comparison over a target the link checks already resolve), so the pure
+	// map function carries it.
+	InvalidMilestoneTargets []InvalidMilestoneTarget `json:"invalid_milestone_targets"`
+
 	// Assignment integrity. Derivable from the nibs alone (exclusivity along
 	// the parent chain needs only the links and the prefix already threaded
 	// in), so the pure map function carries it.
@@ -254,7 +282,7 @@ func (r *LinkCheckResult) HasIssues() bool {
 
 // TotalIssues returns the total count of all issues.
 func (r *LinkCheckResult) TotalIssues() int {
-	return len(r.BrokenLinks) + len(r.SelfLinks) + len(r.Cycles) + len(r.BrokenDocuments) + r.LoadIssues() + r.EnumIssues() + r.AxisIssues() + r.HierarchyIssues() + r.AssignmentIssues() + r.NearMissIssues() + r.QueueIssues()
+	return len(r.BrokenLinks) + len(r.SelfLinks) + len(r.Cycles) + len(r.BrokenDocuments) + r.LoadIssues() + r.EnumIssues() + r.AxisIssues() + r.HierarchyIssues() + r.AssignmentIssues() + r.MilestoneTargetIssues() + r.NearMissIssues() + r.QueueIssues()
 }
 
 // LoadIssues returns the count of load-time integrity issues alone. Callers
@@ -287,6 +315,12 @@ func (r *LinkCheckResult) HierarchyIssues() int {
 // for the same render-them-apart reason as LoadIssues.
 func (r *LinkCheckResult) AssignmentIssues() int {
 	return len(r.AssignmentConflicts)
+}
+
+// MilestoneTargetIssues returns the count of invalid-milestone-target findings
+// alone, for the same render-them-apart reason as LoadIssues.
+func (r *LinkCheckResult) MilestoneTargetIssues() int {
+	return len(r.InvalidMilestoneTargets)
 }
 
 // NearMissIssues returns the count of near-miss key findings alone, for the
@@ -327,18 +361,19 @@ func (r *LinkCheckResult) QueueIssues() int {
 // holds, which is what `--fix` would drop.
 func CheckAllLinksInMap(nibs map[string]*nib.Nib, projectRoot, configPrefix string) *LinkCheckResult {
 	result := &LinkCheckResult{
-		BrokenLinks:           []BrokenLink{},
-		SelfLinks:             []SelfLink{},
-		Cycles:                []Cycle{},
-		BrokenDocuments:       []BrokenDocument{},
-		UnparseableFiles:      []UnparseableFile{},
-		DuplicateIDs:          []DuplicateID{},
-		InvalidEnums:          []InvalidEnum{},
-		InvalidAxes:           []InvalidAxis{},
-		InvalidHierarchies:    []InvalidHierarchy{},
-		AssignmentConflicts:   []AssignmentConflict{},
-		NearMissKeys:          []NearMissKey{},
-		ClosedMilestoneQueues: []ClosedMilestoneQueue{},
+		BrokenLinks:             []BrokenLink{},
+		SelfLinks:               []SelfLink{},
+		Cycles:                  []Cycle{},
+		BrokenDocuments:         []BrokenDocument{},
+		UnparseableFiles:        []UnparseableFile{},
+		DuplicateIDs:            []DuplicateID{},
+		InvalidEnums:            []InvalidEnum{},
+		InvalidAxes:             []InvalidAxis{},
+		InvalidHierarchies:      []InvalidHierarchy{},
+		InvalidMilestoneTargets: []InvalidMilestoneTarget{},
+		AssignmentConflicts:     []AssignmentConflict{},
+		NearMissKeys:            []NearMissKey{},
+		ClosedMilestoneQueues:   []ClosedMilestoneQueue{},
 	}
 
 	// Check for broken links and self-references
@@ -362,7 +397,14 @@ func CheckAllLinksInMap(nibs map[string]*nib.Nib, projectRoot, configPrefix stri
 			}
 		}
 
-		// Check milestone link, resolved under the same rule as parent.
+		// Check milestone link, resolved under the same rule as parent. A
+		// target that resolves is judged once more, on its TYPE: only a
+		// milestone-typed one confers membership (membership.ResolvedMilestoneID's
+		// rule, which is also what the assigning write path refuses), so a
+		// resolvable non-milestone target leaves the nib in no queue while its
+		// `milestone:` field still reads back. The same resolution answers all
+		// three cases — resolving a second time by another rule would part this
+		// report from the refusal it mirrors.
 		if b.Milestone != "" {
 			fullID, ok := normalizeIDInMap(nibs, b.Milestone, configPrefix)
 			switch {
@@ -376,6 +418,17 @@ func CheckAllLinksInMap(nibs map[string]*nib.Nib, projectRoot, configPrefix stri
 				result.SelfLinks = append(result.SelfLinks, SelfLink{
 					NibID:    b.ID,
 					LinkType: "milestone",
+				})
+			// A MILESTONE-typed subject is excluded: its type takes no
+			// assignment axis at all, so InvalidAxes already names it and the
+			// whole key has to go. Naming the target's type here too would send
+			// the reader to repoint a key they are about to delete.
+			case nibs[fullID].EffectiveType() != "milestone" && b.EffectiveType() != "milestone":
+				result.InvalidMilestoneTargets = append(result.InvalidMilestoneTargets, InvalidMilestoneTarget{
+					NibID:      b.ID,
+					Path:       b.Path,
+					Target:     fullID,
+					TargetType: nibs[fullID].EffectiveType(),
 				})
 			}
 		}
@@ -411,6 +464,14 @@ func CheckAllLinksInMap(nibs map[string]*nib.Nib, projectRoot, configPrefix stri
 			}
 		}
 	}
+
+	// The loop above walks the map, so its findings arrive in whatever order
+	// Go hands out the keys. Sorting is what makes the report and the --json
+	// envelope stable run to run, the same reason the per-nib pass below walks
+	// sorted ids.
+	sort.Slice(result.InvalidMilestoneTargets, func(i, j int) bool {
+		return result.InvalidMilestoneTargets[i].NibID < result.InvalidMilestoneTargets[j].NibID
+	})
 
 	// Check for cycles in blocked_by and parent links
 	// (blocking is derived from blocked_by, so only these two need cycle
@@ -470,9 +531,11 @@ func CheckAllLinksInMap(nibs map[string]*nib.Nib, projectRoot, configPrefix stri
 		// walk reads RESOLVED assignments — the target must exist and be
 		// milestone-typed, membership.ResolvedMilestoneID's rule, which is
 		// also what the write path judges — so a dangling or non-milestone
-		// assignment (a broken link, or nibs-4h8f's silent drop) conflicts
-		// with nothing. Parents resolve the way every link check resolves
-		// them, and a visited set bounds the walk on a hand-edited cycle.
+		// assignment conflicts with nothing; each is its own finding above (a
+		// BrokenLink, an InvalidMilestoneTarget), not a conflict here, since
+		// neither confers the membership exclusivity is about. Parents resolve
+		// the way every link check resolves them, and a visited set bounds the
+		// walk on a hand-edited cycle.
 		if ms := resolvedMilestoneInMap(nibs, b, configPrefix); ms != "" {
 			visited := map[string]bool{b.ID: true}
 			for cur := b; cur.Parent != ""; {
