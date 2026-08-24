@@ -33,6 +33,7 @@ func resetSetFlags() {
 	setClear = nil
 	setParent = ""
 	setMilestone = ""
+	setArea = ""
 	setBlocking = nil
 	setRemoveBlocking = nil
 	setBlockedBy = nil
@@ -60,6 +61,7 @@ func TestResetSetFlagsClearsAllState(t *testing.T) {
 	setClear = []string{"priority"}
 	setParent = "dirty"
 	setMilestone = "dirty"
+	setArea = "dirty"
 	setBlocking = []string{"x"}
 	setRemoveBlocking = []string{"y"}
 	setBlockedBy = []string{"z"}
@@ -97,6 +99,9 @@ func TestResetSetFlagsClearsAllState(t *testing.T) {
 	}
 	if setMilestone != "" {
 		t.Errorf("setMilestone not reset: %q", setMilestone)
+	}
+	if setArea != "" {
+		t.Errorf("setArea not reset: %q", setArea)
 	}
 	if setBlocking != nil {
 		t.Errorf("setBlocking not reset: %v", setBlocking)
@@ -842,6 +847,45 @@ func TestSetRefusalOnAClosedNibNamesAWorkingRoute(t *testing.T) {
 			}
 			if !strings.Contains(string(data), "Reason revised.") {
 				t.Errorf("the quoted route should have recorded the summary, got:\n%s", data)
+			}
+		})
+	}
+}
+
+// TestClearableFieldsAreStatedInFull pins every agent-facing statement of the
+// --clear set to clearableFields itself.
+//
+// Four surfaces name that set, and only one of them — the flag's own usage
+// string — was derived. Adding "area" left the other three enumerating four
+// fields, which put two contradictory answers on a single `nibs set --help`
+// screen and two more into `nibs cheat` and the full guide, the two surfaces
+// CLAUDE.md calls the primary interface for AI agents. All four are derived
+// now; this is what fails if one is written out again.
+//
+// The assertion is the whole ENUMERATION, not the presence of each name: every
+// one of these fields is also named in unrelated prose on the same surface, so
+// a substring test would pass against a list that had gone stale.
+func TestClearableFieldsAreStatedInFull(t *testing.T) {
+	if len(clearableFields) < 2 {
+		t.Fatal("test setup: clearableFields has fewer than two members, so an enumeration asserts nothing")
+	}
+	// Each surface renders the same set with the separator it reads best with.
+	for _, tc := range []struct {
+		surface string
+		text    string
+		lead    string
+		sep     string
+	}{
+		{"nibs cheat", cheatSheet(config.Default()), "--clear ", "|"},
+		{"nibs set --help (Long)", setCmd.Long, "--clear ", "|"},
+		{"nibs prime --full", renderedFullPrompt(t), "clear a clearable field: ", " | "},
+		{"--clear flag usage", setCmd.Flags().Lookup("clear").Usage, "Clear a field to its default (", ", "},
+	} {
+		t.Run(tc.surface, func(t *testing.T) {
+			want := tc.lead + strings.Join(clearableFields, tc.sep)
+			if !strings.Contains(tc.text, want) {
+				t.Errorf("%s does not enumerate the clearable set as %q, so it states a stale one:\n%s",
+					tc.surface, want, tc.text)
 			}
 		})
 	}

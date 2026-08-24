@@ -68,6 +68,11 @@ type CreateNibInput struct {
 	Tags []string `json:"tags,omitempty"`
 	// Markdown body content
 	Body *string `json:"body,omitempty"`
+	// Area path the new nib belongs to (e.g. "web/ui"). Must be a path the store's
+	// config declares; an undeclared one is refused naming the declared set, and a
+	// store that declares no areas refuses every value. Omit or "" to leave it
+	// unset, which is always legal.
+	Area *string `json:"area,omitempty"`
 	// Parent nib ID (validated against type hierarchy)
 	Parent *string `json:"parent,omitempty"`
 	// Nib IDs this nib is blocking
@@ -458,6 +463,15 @@ type UpdateNibInput struct {
 	// on the state it leaves: a clear of either axis opens the way for the other,
 	// and an assignment is checked against the chain the nib will sit on.
 	Milestone graphql.Omittable[*string] `json:"milestone,omitempty"`
+	// Set the area assignment — the ownership axis. The value must be a path the
+	// store's config declares; an undeclared one is refused naming the declared set,
+	// and a store that declares no areas refuses every value and says so. A
+	// milestone-typed subject is refused (a waypoint is not work and takes no area).
+	//
+	// Explicit null OR empty string clears the assignment; omit to leave it
+	// unchanged. Unlike milestone this names no nib, so nothing is resolved and no
+	// queue moves — it is a plain path-valued scalar.
+	Area graphql.Omittable[*string] `json:"area,omitempty"`
 	// Add nibs to blocking list (validates cycles and existence)
 	AddBlocking []string `json:"addBlocking,omitempty"`
 	// Remove nibs from blocking list

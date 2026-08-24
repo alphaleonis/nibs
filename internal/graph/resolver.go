@@ -475,6 +475,16 @@ func (r *mutationResolver) preValidateSubject(b *nib.Nib, ifMatch *string) error
 		return err
 	}
 
+	// The area vocabulary runs after the axis rule because no area value can
+	// satisfy that rule: a milestone takes no area at all, so answering one
+	// carrying an undeclared area with the declared set would prescribe a remedy
+	// the subject cannot follow, and callers here stop at the first error. It
+	// reads per-config state, unlike everything above it — the same footing
+	// requireIfMatch below already stands on.
+	if err := r.Validator.ValidateArea(b); err != nil {
+		return err
+	}
+
 	if ifMatch == nil || *ifMatch == "" {
 		if r.requireIfMatch() {
 			return &nibcore.ETagRequiredError{}

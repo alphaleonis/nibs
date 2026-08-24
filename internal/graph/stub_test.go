@@ -226,6 +226,7 @@ type stubValidator struct {
 	validateParentErr error
 	detectCycleResult []string
 	validateEnumsErr  error
+	validateAreaErr   error
 }
 
 func (s *stubValidator) ValidateParent(b *nib.Nib, parentID string) error {
@@ -238,6 +239,10 @@ func (s *stubValidator) DetectCycle(fromID, linkType, toID string) []string {
 
 func (s *stubValidator) ValidateEnums(b *nib.Nib) error {
 	return s.validateEnumsErr
+}
+
+func (s *stubValidator) ValidateArea(b *nib.Nib) error {
+	return s.validateAreaErr
 }
 
 // stubBlockingChecker implements BlockingChecker for testing.

@@ -59,7 +59,7 @@ READ   get <id…>          nib document (default); -f/--view id|ref|card|full; 
        next               %s
                           (having nothing to do is an answer: exit 0 either way — branch on --json's null action)
 WRITE  new "<title>" -t T create; also -s -p -e --parent --blocked-by --tag --after/--before/--first (siblings)
-       set <id>           metadata/links; --clear priority|estimate|parent|milestone; --remove-tag/-blocked-by/…
+       set <id>           metadata/links; --clear %s; --remove-tag/-blocked-by/…
                           --milestone <ms> assigns to that milestone's queue, appended last (new cannot assign)
        body <id>          --set | --append | --section "## H" --set [--create] | --replace-old T --replace-new U
        mv <id…>           --after|--before <anchor> | --first | --parent <id> | --children-of <p> <id…>; 2+ ids need --block
@@ -88,6 +88,10 @@ RULE   On any nibs error: STOP, find the root cause, never silently retry. A que
 `,
 		relDefaultKind,
 		commandShort("next"),
+		// Interpolated rather than listed, so this sheet cannot fall behind
+		// what --clear actually accepts. TestClearableFieldsAreStatedInFull is
+		// the guard for the surfaces that cannot interpolate.
+		strings.Join(clearableFields, "|"),
 		closeDefaultStatus(),
 		strings.Join(cfg.TypeNames(), ", "),
 		statusGroupOpen, strings.Join(cfg.OpenStatusNames(), "/"),

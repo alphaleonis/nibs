@@ -584,11 +584,12 @@ func loadWasPartial(migration *migrationStatus) *bool {
 // axis-rule violations, then near-miss keys. Not auto-fixable by design, so
 // --fix names them like the cycle branch does instead of skipping them
 // silently. The out-of-enum remediation is per finding — see fieldRemediation;
-// an axis violation has one remediation (remove the axis key, or retype the
-// nib), and --fix cannot choose between the type and the assignment for the
-// author; a near-miss key has one remediation (rename it to the modeled key,
-// or remove it), and --fix cannot apply it because a resembling spelling is
-// not proof of the author's intent.
+// an axis violation has one remediation (clear the axis key, or retype the
+// nib) and --fix cannot choose between the type and the assignment for the
+// author — the clear has a command, the choice does not; a near-miss key has
+// one remediation (rename it to the modeled key, or remove it), and --fix
+// cannot apply it because a resembling spelling is not proof of the author's
+// intent.
 func renderFieldDiagnostics(app *App, result *nibcore.LinkCheckResult) {
 	for _, ie := range result.InvalidEnums {
 		remedy := fieldRemediation(app, ie)
@@ -605,14 +606,17 @@ func renderFieldDiagnostics(app *App, result *nibcore.LinkCheckResult) {
 	for _, ia := range result.InvalidAxes {
 		// The path comes from the file and the id from its filename, so both
 		// cross the rendering boundary; the reason goes through with them like
-		// every other reason field on this surface.
+		// every other reason field on this surface. The axis names are
+		// nibtypes constants, so only the id inside the command is rendered.
 		finding := fmt.Sprintf("%s: %s", stripControlChars(ia.Path), flattenReason(ia.Reason))
+		escape := nibcore.ClearAxesCommand(stripControlChars(ia.NibID), ia.Axes)
+		keys := nibcore.AxisKeysNoun(ia.Axes)
 		if checkFix {
-			ui.Printf("  %s Cannot auto-fix %s: %s (remove the axis key, or retype the nib — choosing between the type and the assignment is the author's call)\n",
-				ui.Warning.Render("!"), stripControlChars(ia.NibID), finding)
+			ui.Printf("  %s Cannot auto-fix %s: %s (clear %s with `%s`, or retype the nib — choosing between the type and the assignment is the author's call)\n",
+				ui.Warning.Render("!"), stripControlChars(ia.NibID), finding, keys, escape)
 		} else {
-			ui.Printf("  %s %s: %s (loads as written, but every update of this nib through nibs is refused; remove the axis key by hand)\n",
-				ui.Danger.Render("✗"), stripControlChars(ia.NibID), finding)
+			ui.Printf("  %s %s: %s (loads as written, but every update that keeps the type and %s is refused; clear %s with `%s`)\n",
+				ui.Danger.Render("✗"), stripControlChars(ia.NibID), finding, keys, keys, escape)
 		}
 	}
 	for _, nm := range result.NearMissKeys {

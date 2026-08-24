@@ -34,6 +34,7 @@ func resetNewFlags() {
 	newBodyFile = ""
 	newTag = nil
 	newParent = ""
+	newArea = ""
 	newBlocking = nil
 	newBlockedBy = nil
 	newDocument = nil
@@ -55,6 +56,7 @@ func TestResetNewFlagsClearsAllState(t *testing.T) {
 	newBodyFile = "dirty"
 	newTag = []string{"t"}
 	newParent = "dirty"
+	newArea = "dirty"
 	newBlocking = []string{"x"}
 	newBlockedBy = []string{"y"}
 	newDocument = []string{"d"}
@@ -89,6 +91,9 @@ func TestResetNewFlagsClearsAllState(t *testing.T) {
 	}
 	if newParent != "" {
 		t.Errorf("newParent not reset: %q", newParent)
+	}
+	if newArea != "" {
+		t.Errorf("newArea not reset: %q", newArea)
 	}
 	if newBlocking != nil {
 		t.Errorf("newBlocking not reset: %v", newBlocking)

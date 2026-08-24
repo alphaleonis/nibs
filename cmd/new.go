@@ -8,6 +8,7 @@ import (
 	"github.com/alphaleonis/nibs/internal/config"
 	"github.com/alphaleonis/nibs/internal/graph/model"
 	"github.com/alphaleonis/nibs/internal/nib"
+	"github.com/alphaleonis/nibs/internal/nibtypes"
 	"github.com/alphaleonis/nibs/internal/output"
 	"github.com/alphaleonis/nibs/internal/projection"
 	"github.com/spf13/cobra"
@@ -21,6 +22,7 @@ var (
 	newBodyFile     string
 	newTag          []string
 	newParent       string
+	newArea         string
 	newBlocking     []string
 	newBlockedBy    []string
 	newDocument     []string
@@ -69,16 +71,35 @@ is used as-is — with --no-edit, with --json, or when stdin/stdout is not a ter
 		if newEstimate != "" && !app.Config().IsValidEstimate(newEstimate) {
 			return cmdError(newJSON, output.ErrValidation, "invalid estimate: %s (must be %s)", newEstimate, app.Config().EstimateList())
 		}
+		// Resolved before the axis rule below, which needs it, and before the
+		// template lookup further down.
+		effectiveType := newType
+		if effectiveType == "" {
+			effectiveType = app.Config().GetDefaultType()
+		}
+
+		// The axis rule answers BEFORE the area vocabulary, the order every
+		// other site runs these two in (Core.Create, Core.Update,
+		// mutationResolver.preValidateSubject): a milestone takes no area at
+		// all, so no area value satisfies the rule, and answering an undeclared
+		// one with the declared set would prescribe a remedy the subject cannot
+		// follow. Callers stop at the first error.
+		if err := nibtypes.ValidateAxes(effectiveType, "", newArea); err != nil {
+			return cmdError(newJSON, output.ErrValidation, "%v", err)
+		}
+		// The area rule and its message live on the config, so this is the same
+		// refusal the resolver raises rather than a second copy of it. It is
+		// answered HERE, unlike the milestone assignment `set` leaves to the
+		// resolver, because create's error fallback below reports FILE_ERROR —
+		// an undeclared area is a malformed argument and must report VALIDATION
+		// like every other vocabulary flag on this command.
+		if err := app.Config().ValidateAreaAssignment(newArea); err != nil {
+			return cmdError(newJSON, output.ErrValidation, "%v", err)
+		}
 
 		body, err := resolveBodyFlag(newBody, newBodyFile)
 		if err != nil {
 			return inputError(newJSON, err)
-		}
-
-		// Resolve the effective type before template lookup
-		effectiveType := newType
-		if effectiveType == "" {
-			effectiveType = app.Config().GetDefaultType()
 		}
 
 		// Use template body when no body provided and type has a template
@@ -115,6 +136,10 @@ is used as-is — with --no-edit, with --json, or when stdin/stdout is not a ter
 		}
 		if len(newTag) > 0 {
 			input.Tags = newTag
+		}
+
+		if newArea != "" {
+			input.Area = &newArea
 		}
 
 		// Add parent
@@ -286,6 +311,9 @@ func init() {
 	newCmd.Flags().StringVar(&newBodyFile, "body-file", "", "Read body from file")
 	newCmd.Flags().StringArrayVar(&newTag, "tag", nil, "Add tag (can be repeated)")
 	newCmd.Flags().StringVar(&newParent, "parent", "", "Parent nib ID")
+	// No allowed set in the usage string: areas are declared per store, and this
+	// text is built once at package load from no store at all.
+	newCmd.Flags().StringVar(&newArea, "area", "", "Assign to a declared area path, e.g. web/dashboard")
 	newCmd.Flags().StringArrayVar(&newBlocking, "blocking", nil, "ID of nib this blocks (can be repeated)")
 	newCmd.Flags().StringArrayVar(&newBlockedBy, "blocked-by", nil, "ID of nib that blocks this one (can be repeated)")
 	newCmd.Flags().StringArrayVar(&newDocument, "document", nil, "Linked document path (can be repeated)")

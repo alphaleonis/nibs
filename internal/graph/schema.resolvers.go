@@ -43,6 +43,12 @@ func (r *mutationResolver) CreateNib(ctx context.Context, input model.CreateNibI
 	if len(input.Tags) > 0 {
 		b.Tags = input.Tags
 	}
+	// The ownership axis is a plain scalar here: it names no nib, so unlike
+	// parent there is nothing to resolve. Core.Create judges it against the
+	// declared vocabulary.
+	if input.Area != nil {
+		b.Area = *input.Area
+	}
 	if len(input.Documents) > 0 {
 		if err := validateDocumentPaths(input.Documents); err != nil {
 			return nil, err
@@ -243,6 +249,21 @@ func (r *mutationResolver) UpdateNib(ctx context.Context, id string, input model
 	}
 	if milestoneSet && newMilestone == "" {
 		b.Milestone = ""
+	}
+
+	// The ownership axis reads the same three ways on the wire — omitted leaves
+	// it, null or "" clears it, a path assigns — but unlike the milestone BOTH
+	// directions are applied here. An area names no nib, so an assignment
+	// resolves nothing, moves no queue and touches no other file; there is no
+	// write-capable half to hold back. Applying it above the guards is also what
+	// makes the repair possible at all: a nib whose file carries an undeclared
+	// area is refused by every write, so the request that clears or replaces the
+	// value has to be judged on the state it LEAVES rather than the one it found.
+	if a, ok := input.Area.ValueOK(); ok {
+		b.Area = ""
+		if a != nil {
+			b.Area = *a
+		}
 	}
 
 	// Everything above assigns to b, the owned clone, and reads nothing off disk.

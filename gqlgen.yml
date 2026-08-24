@@ -51,6 +51,8 @@ models:
         omittable: true
       milestone:
         omittable: true
+      area:
+        omittable: true
   # Map ID scalar to string
   ID:
     model:

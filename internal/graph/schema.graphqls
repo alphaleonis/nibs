@@ -250,6 +250,13 @@ input CreateNibInput {
   tags: [String!]
   "Markdown body content"
   body: String
+  """
+  Area path the new nib belongs to (e.g. "web/ui"). Must be a path the store's
+  config declares; an undeclared one is refused naming the declared set, and a
+  store that declares no areas refuses every value. Omit or "" to leave it
+  unset, which is always legal.
+  """
+  area: String
   "Parent nib ID (validated against type hierarchy)"
   parent: String
   "Nib IDs this nib is blocking"
@@ -338,6 +345,17 @@ input UpdateNibInput {
   and an assignment is checked against the chain the nib will sit on.
   """
   milestone: String
+  """
+  Set the area assignment — the ownership axis. The value must be a path the
+  store's config declares; an undeclared one is refused naming the declared set,
+  and a store that declares no areas refuses every value and says so. A
+  milestone-typed subject is refused (a waypoint is not work and takes no area).
+
+  Explicit null OR empty string clears the assignment; omit to leave it
+  unchanged. Unlike milestone this names no nib, so nothing is resolved and no
+  queue moves — it is a plain path-valued scalar.
+  """
+  area: String
   "Add nibs to blocking list (validates cycles and existence)"
   addBlocking: [String!]
   "Remove nibs from blocking list"

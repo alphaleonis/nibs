@@ -1,6 +1,7 @@
 package nibtypes
 
 import (
+	"slices"
 	"strings"
 	"testing"
 )
@@ -309,11 +310,12 @@ func TestValidateAxes(t *testing.T) {
 		area        string
 		wantErr     bool
 		errContains string
+		wantRefused []string
 	}{
 		{name: "milestone with neither axis is fine", nibType: "milestone"},
-		{name: "milestone with milestone assignment refused", nibType: "milestone", milestone: "nibs-m1", wantErr: true, errContains: "cannot be assigned to a milestone"},
-		{name: "milestone with area refused", nibType: "milestone", area: "web/ui", wantErr: true, errContains: "cannot have an area"},
-		{name: "milestone with both axes refused", nibType: "milestone", milestone: "nibs-m1", area: "web/ui", wantErr: true},
+		{name: "milestone with milestone assignment refused", nibType: "milestone", milestone: "nibs-m1", wantErr: true, errContains: "cannot be assigned to a milestone", wantRefused: []string{"milestone"}},
+		{name: "milestone with area refused", nibType: "milestone", area: "web/ui", wantErr: true, errContains: "cannot have an area", wantRefused: []string{"area"}},
+		{name: "milestone with both axes refused", nibType: "milestone", milestone: "nibs-m1", area: "web/ui", wantErr: true, wantRefused: []string{"milestone", "area"}},
 		{name: "epic takes both axes", nibType: "epic", milestone: "nibs-m1", area: "web/ui"},
 		{name: "task takes both axes", nibType: "task", milestone: "nibs-m1", area: "web/ui"},
 		{name: "unknown type takes both axes", nibType: "unknown", milestone: "nibs-m1", area: "web/ui"},
@@ -321,6 +323,13 @@ func TestValidateAxes(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
+			// RefusedAxes answers for the DIAGNOSTIC: an offender carrying both
+			// keys is escaped only by dropping both, so a message built from
+			// the error alone would name a command that is refused for the
+			// other axis.
+			if got := RefusedAxes(tt.nibType, tt.milestone, tt.area); !slices.Equal(got, tt.wantRefused) {
+				t.Errorf("RefusedAxes(%q, %q, %q) = %v, want %v", tt.nibType, tt.milestone, tt.area, got, tt.wantRefused)
+			}
 			err := ValidateAxes(tt.nibType, tt.milestone, tt.area)
 			if tt.wantErr {
 				if err == nil {

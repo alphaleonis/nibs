@@ -456,3 +456,219 @@ func TestAreaListBoundsWhatItRepeats(t *testing.T) {
 		}
 	})
 }
+
+// TestValidateAreaAssignment pins the write-side membership rule: an unset
+// `area:` is legal, a declared path is legal, and anything else is refused with
+// the vocabulary in the message. The store that declares NOTHING is the case
+// worth its own row — an empty allowed set reads as a bug in nibs rather than
+// as an undeclared vocabulary, so the refusal has to say which it is.
+func TestValidateAreaAssignment(t *testing.T) {
+	dir := writeStoreConfig(t, sampleAreasConfig)
+	declared, err := LoadFromStore(dir)
+	if err != nil {
+		t.Fatalf("LoadFromStore: %v", err)
+	}
+	none := &Config{}
+
+	tests := []struct {
+		name     string
+		cfg      *Config
+		path     string
+		wantErr  bool
+		contains []string
+		absent   []string
+	}{
+		{name: "unset is legal", cfg: declared, path: ""},
+		{name: "unset is legal with no vocabulary", cfg: none, path: ""},
+		{name: "a declared root", cfg: declared, path: "web"},
+		{name: "a declared child", cfg: declared, path: "web/dashboard"},
+		{
+			name: "an undeclared path names the vocabulary", cfg: declared, path: "nosuch",
+			wantErr:  true,
+			contains: []string{`"nosuch"`, "web/dashboard", "webhooks"},
+		},
+		{
+			// `web/legacy` descends a declared root, so a string-prefix test
+			// would admit it; only the tree says it is not declared.
+			name: "an undeclared child of a declared root", cfg: declared, path: "web/legacy",
+			wantErr:  true,
+			contains: []string{`"web/legacy"`},
+		},
+		{
+			name: "a store with no declared areas says so", cfg: none, path: "web",
+			wantErr:  true,
+			contains: []string{`"web"`, "declares no areas"},
+			// An empty allowed set must not be printed as though it were one.
+			absent: []string{"must be one of"},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			err := tt.cfg.ValidateAreaAssignment(tt.path)
+			if !tt.wantErr {
+				if err != nil {
+					t.Fatalf("ValidateAreaAssignment(%q) = %v, want nil", tt.path, err)
+				}
+				return
+			}
+			if err == nil {
+				t.Fatalf("ValidateAreaAssignment(%q) = nil, want an error", tt.path)
+			}
+			for _, want := range tt.contains {
+				if !strings.Contains(err.Error(), want) {
+					t.Errorf("error = %q, want substring %q", err.Error(), want)
+				}
+			}
+			for _, unwanted := range tt.absent {
+				if strings.Contains(err.Error(), unwanted) {
+					t.Errorf("error = %q, want it NOT to contain %q", err.Error(), unwanted)
+				}
+			}
+		})
+	}
+}
+
+// TestValidateStoredArea pins the second entry point: the SAME rule, for a write
+// to a nib that already exists, where the value being judged need not have come
+// from the request. It must agree with ValidateAreaAssignment on every accept
+// and every refuse, and differ only in saying whose value it is and what to do
+// about it — a caller who passed no area is otherwise told to correct an
+// argument they never wrote.
+func TestValidateStoredArea(t *testing.T) {
+	dir := writeStoreConfig(t, sampleAreasConfig)
+	declared, err := LoadFromStore(dir)
+	if err != nil {
+		t.Fatalf("LoadFromStore: %v", err)
+	}
+	none := &Config{}
+
+	// The verdicts must not diverge, so they are asserted against the sibling
+	// rather than restated: a rule that accepted here and refused there would
+	// make the message depend on which write path reached it.
+	for _, tc := range []struct {
+		vocab string
+		cfg   *Config
+		path  string
+	}{
+		{"a declared vocabulary", declared, ""}, {"no declared areas", none, ""},
+		{"a declared vocabulary", declared, "web"}, {"a declared vocabulary", declared, "web/dashboard"},
+		{"a declared vocabulary", declared, "nosuch"}, {"a declared vocabulary", declared, "web/legacy"},
+		{"no declared areas", none, "web"},
+	} {
+		t.Run(fmt.Sprintf("agrees with the supplied-value rule on %q under %s", tc.path, tc.vocab), func(t *testing.T) {
+			supplied := tc.cfg.ValidateAreaAssignment(tc.path)
+			stored := tc.cfg.ValidateStoredArea("cfg-n001", tc.path)
+			if (supplied == nil) != (stored == nil) {
+				t.Fatalf("ValidateAreaAssignment(%q) = %v but ValidateStoredArea(%q) = %v", tc.path, supplied, tc.path, stored)
+			}
+		})
+	}
+
+	for _, tt := range []struct {
+		name     string
+		cfg      *Config
+		path     string
+		contains []string
+		absent   []string
+	}{
+		{
+			name: "an undeclared path names the vocabulary and whose value it is",
+			cfg:  declared, path: "nosuch",
+			contains: []string{`"nosuch"`, "web/dashboard", "already carries",
+				"`nibs set cfg-n001 --area <declared>`", "`nibs set cfg-n001 --clear area`"},
+			// The subject is known here, so it is interpolated: a literal <id>
+			// exits 3 for anyone who runs the line as printed.
+			absent: []string{"nibs set <id>"},
+		},
+		{
+			name: "a store with no declared areas names only the escape it can satisfy",
+			cfg:  none, path: "web",
+			contains: []string{`"web"`, "declares no areas", "already carries", "`nibs set cfg-n001 --clear area`"},
+			// An empty allowed set must not be printed as though it were one,
+			// and --area has no satisfiable argument in the state this branch
+			// diagnoses — prescribing it would name an unfollowable command.
+			absent: []string{"must be one of", "--area <declared>", "nibs set <id>"},
+		},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			err := tt.cfg.ValidateStoredArea("cfg-n001", tt.path)
+			if err == nil {
+				t.Fatalf("ValidateStoredArea(%q) = nil, want an error", tt.path)
+			}
+			var areaErr *AreaError
+			if !errors.As(err, &areaErr) {
+				t.Fatalf("error = %T, want *AreaError — the ordering backfill classifies this refusal by type", err)
+			}
+			for _, want := range tt.contains {
+				if !strings.Contains(err.Error(), want) {
+					t.Errorf("error = %q, want substring %q", err.Error(), want)
+				}
+			}
+			for _, unwanted := range tt.absent {
+				if strings.Contains(err.Error(), unwanted) {
+					t.Errorf("error = %q, want it NOT to contain %q", err.Error(), unwanted)
+				}
+			}
+		})
+	}
+
+	// The refused value is file-sourced on this path by definition, so it stays
+	// on the same rendering boundary the supplied-value refusal applies.
+	t.Run("the refused value is rendered, not echoed raw", func(t *testing.T) {
+		cfg := &Config{Areas: []AreaConfig{{Name: "web"}}}
+		err := cfg.ValidateStoredArea("cfg-n001", "we`b")
+		if err == nil {
+			t.Fatal("ValidateStoredArea() = nil, want an error")
+		}
+		if strings.Contains(err.Error(), "we`b") {
+			t.Errorf("error = %q, want the backtick substituted", err.Error())
+		}
+	})
+
+	// The id is interpolated into a command the reader is invited to run, and
+	// it comes from a filename — so it crosses the same boundary the value does.
+	t.Run("the nib id is rendered, not echoed raw", func(t *testing.T) {
+		cfg := &Config{Areas: []AreaConfig{{Name: "web"}}}
+		err := cfg.ValidateStoredArea("nib\x1b[31m1", "nosuch")
+		if err == nil {
+			t.Fatal("ValidateStoredArea() = nil, want an error")
+		}
+		if strings.Contains(err.Error(), "\x1b") {
+			t.Errorf("error = %q, want the escape sequence neutralized", err.Error())
+		}
+	})
+}
+
+// TestValidateAreaAssignmentRendersTheRefusedValue keeps the refused value on
+// the same rendering boundary AreaList applies to the declared set. The value
+// reaching this rule is not always a flag: Core.Update re-checks the `area:` a
+// nib already carries, so a hostile FILE reaches the message too.
+func TestValidateAreaAssignmentRendersTheRefusedValue(t *testing.T) {
+	cfg := &Config{Areas: []AreaConfig{{Name: "web"}}}
+
+	// The backtick is the rune the %q around the value does NOT answer: it is
+	// printable, so strconv.Quote passes it through, and it closes the code span
+	// an agent transcript renders the message inside. safetext.Strip is what
+	// substitutes it (non-printables are already covered by %q — see
+	// internal/safetext).
+	t.Run("a backtick cannot close the message's code span", func(t *testing.T) {
+		err := cfg.ValidateAreaAssignment("we`b")
+		if err == nil {
+			t.Fatal("ValidateAreaAssignment accepted an undeclared path")
+		}
+		if strings.Contains(err.Error(), "`") {
+			t.Errorf("error = %q, want the backtick neutralized", err.Error())
+		}
+	})
+
+	t.Run("an oversized value is bounded", func(t *testing.T) {
+		err := cfg.ValidateAreaAssignment(strings.Repeat("x", maxListedAreaRunes*4))
+		if err == nil {
+			t.Fatal("ValidateAreaAssignment accepted an undeclared path")
+		}
+		if utf8.RuneCountInString(err.Error()) > maxListedAreaRunes*2 {
+			t.Errorf("error is %d runes; want the echoed value bounded", utf8.RuneCountInString(err.Error()))
+		}
+	})
+}

@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 
+	"github.com/alphaleonis/nibs/internal/config"
 	"github.com/alphaleonis/nibs/internal/membership"
 	"github.com/alphaleonis/nibs/internal/nib"
 	"github.com/alphaleonis/nibs/internal/nibcore"
@@ -364,6 +365,12 @@ func (o *Orderer) backfillKeys(scope Scope, members []*nib.Nib) {
 		//     failed clone's computed key is DISCARDED (members[i] keeps its
 		//     pre-write, unkeyed pointer), so the sibling falls back to title sort;
 		//     the write simply cannot land. Stay quiet.
+		//   - *config.AreaError: the nib carries an `area:` the store's vocabulary
+		//     no longer declares. Read-tolerant by design, so the value survives
+		//     every load and the refusal is as stable as an etag divergence —
+		//     but unlike one it is not even a divergence to reconcile, and
+		//     nothing this loop can do clears it. Without this arm the warning
+		//     is re-emitted on EVERY read of the parent, forever.
 		//   - *OnDiskUnparseableError: the file is corrupt/unreadable. Suppressing
 		//     our OWN warning here avoids the orderer emitting a line per read on the
 		//     hot Children/root path; the condition is still surfaced where it
@@ -379,7 +386,8 @@ func (o *Orderer) backfillKeys(scope Scope, members []*nib.Nib) {
 		if err := o.writer.Update(clone, &etag); err != nil {
 			var etagMismatch *nibcore.ETagMismatchError
 			var unparseable *nibcore.OnDiskUnparseableError
-			if !errors.As(err, &etagMismatch) && !errors.As(err, &unparseable) {
+			var undeclaredArea *config.AreaError
+			if !errors.As(err, &etagMismatch) && !errors.As(err, &unparseable) && !errors.As(err, &undeclaredArea) {
 				fmt.Fprintf(os.Stderr, "warning: could not backfill order key for %s: %v — this sibling stays unordered (falls back to title sort) until the next successful write\n", b.ID, err)
 			}
 			continue

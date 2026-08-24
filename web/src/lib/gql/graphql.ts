@@ -26,6 +26,13 @@ export type BodyModification = {
 export type CreateNibInput = {
   /** Insert after this sibling nib ID (mutually exclusive with beforeId, first) */
   afterId?: string | null | undefined;
+  /**
+   * Area path the new nib belongs to (e.g. "web/ui"). Must be a path the store's
+   * config declares; an undeclared one is refused naming the declared set, and a
+   * store that declares no areas refuses every value. Omit or "" to leave it
+   * unset, which is always legal.
+   */
+  area?: string | null | undefined;
   /** Insert before this sibling nib ID (mutually exclusive with afterId, first) */
   beforeId?: string | null | undefined;
   /** Nib IDs that are blocking this nib */
@@ -373,6 +380,17 @@ export type UpdateNibInput = {
   addDocuments?: Array<string> | null | undefined;
   /** Add tags to existing list */
   addTags?: Array<string> | null | undefined;
+  /**
+   * Set the area assignment — the ownership axis. The value must be a path the
+   * store's config declares; an undeclared one is refused naming the declared set,
+   * and a store that declares no areas refuses every value and says so. A
+   * milestone-typed subject is refused (a waypoint is not work and takes no area).
+   *
+   * Explicit null OR empty string clears the assignment; omit to leave it
+   * unchanged. Unlike milestone this names no nib, so nothing is resolved and no
+   * queue moves — it is a plain path-valued scalar.
+   */
+  area?: string | null | undefined;
   /** New body content (full replacement, mutually exclusive with bodyMod) */
   body?: string | null | undefined;
   /** Structured body modifications (mutually exclusive with body) */

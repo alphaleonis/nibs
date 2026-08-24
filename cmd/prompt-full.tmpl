@@ -57,7 +57,7 @@ Recipe / composite views: `nibs next`, `nibs context [id]`, `nibs plan <id>`, `n
 nibs new "Title" -t <type>        # create (always pass -t); also -s -p -e --parent --blocked-by --tag --after/--before/--first
 nibs set <id> -s in-progress      # metadata/links: -s -p -e -t --title --parent --tag --blocking --blocked-by --document
 nibs set <id> --milestone <ms>    # assign to a milestone's queue, appended last (see Queues)
-nibs set <id> --clear priority    # clear a clearable field: priority | estimate | parent | milestone
+nibs set <id> --clear priority    # clear a clearable field: {{join .ClearableFields " | "}}
 nibs body <id> --set -            # edit body text (content via '-'/'@FILE'; see Editing body content)
 nibs mv <id> --after <sibling>    # reposition among siblings, within the queue (--queue), or reparent (see Queues)
 nibs rm <id>                      # archive (default, reversible) or --delete (irreversible); agents pass -f

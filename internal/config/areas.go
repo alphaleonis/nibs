@@ -181,12 +181,21 @@ func (c *Config) AreaList() string {
 	}
 	rendered := make([]string, 0, len(shown)+1)
 	for _, path := range shown {
-		rendered = append(rendered, truncateListedArea(safetext.Strip(path)))
+		rendered = append(rendered, renderAreaPath(path))
 	}
 	if len(paths) > len(shown) {
 		rendered = append(rendered, fmt.Sprintf("…and %d more", len(paths)-len(shown)))
 	}
 	return strings.Join(rendered, ", ")
+}
+
+// renderAreaPath renders one file-sourced path for a message: control
+// characters neutralized and the length bounded. Both messages that echo a path
+// go through it — the declared set AreaList lists, and the refused value
+// ValidateAreaAssignment quotes back — because both sides of that message can
+// come from a config file.
+func renderAreaPath(path string) string {
+	return truncateListedArea(safetext.Strip(path))
 }
 
 // truncateListedArea bounds one echoed path, marking the truncation so a
@@ -211,6 +220,102 @@ func (c *Config) GetArea(path string) *AreaConfig {
 // unset `area:` as legal check for that themselves.
 func (c *Config) IsValidArea(path string) bool {
 	return c.GetArea(path) != nil
+}
+
+// AreaError is an `area:` value the declared vocabulary refuses.
+//
+// It is typed, rather than a bare error, so a caller can recognize the class
+// without matching on its text. Orderer.backfillKeys is the reason it has to
+// be recognizable: it writes from the READ path and re-attempts on every read,
+// so it must be able to tell a PERMANENTLY stable refusal — which it stays
+// quiet about, having no way to clear it — from a transient write failure,
+// which it warns about and should.
+//
+// The three fields also select which of four refusals this is, because the
+// message genuinely differs along both axes:
+//
+//   - NibID names the nib whose STORED value is refused, and is empty when the
+//     caller supplied the value. A supplied value is a complaint about an
+//     argument; a stored one is a standing refusal of every write to that nib,
+//     which the caller may never have written and cannot act on without being
+//     told which nib and how to get out.
+//   - Declared is the vocabulary as AreaList renders it, empty when the store
+//     declares none. "must be one of " followed by nothing reads as a bug in
+//     nibs — the reader looks for the list that failed to print — where the
+//     real answer is that the project has not declared a vocabulary yet, which
+//     is a config edit and not a different value.
+//
+// Path and Declared are rendered before they get here: both are file-sourced
+// (the declared set by definition, the refused value whenever the caller is a
+// write path re-checking what a nib already carries on disk), and so is NibID,
+// which comes from a filename.
+type AreaError struct {
+	Path     string
+	Declared string
+	NibID    string
+}
+
+func (e *AreaError) Error() string {
+	switch {
+	case e.NibID == "" && e.Declared == "":
+		return fmt.Sprintf("invalid area %q: this store declares no areas — declare an `areas:` block in the store's config.yml before assigning one", e.Path)
+	case e.NibID == "":
+		return fmt.Sprintf("invalid area %q: must be one of %s", e.Path, e.Declared)
+	case e.Declared == "":
+		// Only the clear is named. This branch diagnoses a store with no
+		// declared value to put in an `--area`, so prescribing one would name a
+		// command with no satisfiable argument in the very state it reports.
+		return fmt.Sprintf("invalid area %q: this store declares no areas — if the request set no area, the nib already carries it and every write to that nib is refused until `nibs set %s --clear area` replaces it; otherwise declare an `areas:` block in the store's config.yml before assigning one",
+			e.Path, e.NibID)
+	default:
+		return fmt.Sprintf("invalid area %q: must be one of %s — if the request set no area, the nib already carries it and every write to that nib is refused until `nibs set %s --area <declared>` or `nibs set %s --clear area` replaces it",
+			e.Path, e.Declared, e.NibID, e.NibID)
+	}
+}
+
+// ValidateAreaAssignment checks one nib's `area:` value against the declared
+// vocabulary, for a caller that SUPPLIED the value — a create, or the CLI
+// pre-check on the flag itself. The empty string passes: an unset area is a
+// normal state, and IsValidArea deliberately answers only the membership
+// question.
+func (c *Config) ValidateAreaAssignment(path string) error {
+	if path == "" || c.IsValidArea(path) {
+		return nil
+	}
+	return &AreaError{Path: renderAreaPath(path), Declared: c.declaredList()}
+}
+
+// declaredList renders the vocabulary for a refusal, or the empty string when
+// the store declares none — which is what selects AreaError's no-areas wording.
+func (c *Config) declaredList() string {
+	if len(c.Areas) == 0 {
+		return ""
+	}
+	return c.AreaList()
+}
+
+// ValidateStoredArea is the same rule for a write to a nib that ALREADY EXISTS,
+// where the value being judged need not have come from the request at all: a
+// write re-checks the `area:` the nib holds, so retiring or renaming an `areas:`
+// entry turns every nib that carried it into a write dead end.
+//
+// Only the message differs, and it has to. "invalid area X: must be one of …"
+// reads as a complaint about an argument, so a caller who passed no area is told
+// to correct something they never wrote — with nothing said about which nib the
+// value belongs to, that the refusal is standing rather than about this request,
+// or how to get out of it. The clause is conditional because this path cannot
+// tell the two apart: `--area <undeclared>` on an existing nib arrives here too,
+// and for that caller the leading half is already the whole answer.
+//
+// Passing the nib's id is what lets the escapes be named as runnable commands
+// rather than as a shape with `<id>` still in it — for the callers that reach
+// here on behalf of a nib the user never typed (`nibs close`'s member guards,
+// the ordering backfill), the id in the message is the only one there is.
+func (c *Config) ValidateStoredArea(nibID, path string) error {
+	if path == "" || c.IsValidArea(path) {
+		return nil
+	}
+	return &AreaError{Path: renderAreaPath(path), Declared: c.declaredList(), NibID: safetext.Strip(nibID)}
 }
 
 // IsAreaWithin reports whether path is ancestor or sits below it — the

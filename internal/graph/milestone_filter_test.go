@@ -144,7 +144,9 @@ func TestApplyFilterNoMilestoneReadsDerivedMembership(t *testing.T) {
 // gqlgen executor: the schema exposes milestone, milestoneOrder and area as
 // the STORED values off the autobound nib.
 func TestNibAxisFieldsAreQueryable(t *testing.T) {
-	resolver, core := setupTestResolver(t)
+	// Declares `web/ui`, which the seeded nib carries: an area is checked
+	// against the vocabulary on every write.
+	resolver, core := setupTestResolverWithAreas(t)
 
 	mustCreate(t, core, &nib.Nib{ID: "ms1", Slug: "milestone", Title: "Milestone", Type: "milestone", Status: "todo"})
 	mustCreate(t, core, &nib.Nib{

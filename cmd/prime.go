@@ -46,6 +46,10 @@ type promptData struct {
 	// cannot disagree about which reason omitting --as records.
 	DefaultCloseStatus string
 
+	// ClearableFields are the field names `nibs set --clear` accepts, threaded
+	// from the flag's own set so the guide cannot enumerate a stale one.
+	ClearableFields []string
+
 	// CompletionCloseStatus is the close reason that rewrites the parent's
 	// `## Current Focus`; the others merge Key Decisions upward and leave the
 	// focus alone. Threaded from the same const the propagation branches on, so
@@ -181,6 +185,7 @@ func renderPrompt(w io.Writer, name, text string) error {
 		ReleasingStatuses:     cfg.ReleasingStatusNames(),
 		HoldingStatuses:       cfg.HoldingStatusNames(),
 		StartableStatuses:     cfg.StartableStatusNames(),
+		ClearableFields:       clearableFields,
 		DefaultCloseStatus:    closeDefaultStatus(),
 		CompletionCloseStatus: closeCompletionStatus(),
 	}

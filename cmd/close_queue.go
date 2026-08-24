@@ -160,12 +160,18 @@ const (
 
 	// closeRefusalOwnFrontMatter: the member's OWN front matter is what the
 	// write path refuses. Both escapes call UpdateNib, whose preValidateSubject
-	// runs ValidateEnums and the axis rule BEFORE the milestone branch splits,
-	// so the clear path meets the identical wall — and every rerun recomputes
-	// the same set and stops at the same member. Only repairing that nib clears
-	// it, which is `nibs check`'s job, not this command's: writing a nib the
-	// vocabulary refuses in order to get past its own guard is not an escape,
-	// it is a corruption.
+	// runs ValidateEnums, the axis rule and the area vocabulary BEFORE the
+	// milestone branch splits, so the clear path meets the identical wall — and
+	// every rerun recomputes the same set and stops at the same member. Only
+	// repairing that nib clears it, and this command is not where that happens:
+	// writing a nib the vocabulary refuses in order to get past its own guard
+	// is not an escape, it is a corruption.
+	//
+	// The advice therefore quotes the refusal itself and points nowhere else.
+	// `nibs check` reports the enum and axis causes but is deliberately SILENT
+	// for an undeclared area — read-tolerance is by design there — so naming it
+	// as the place to look would be true of some members and false of others,
+	// with nothing in the message to say which.
 	closeRefusalOwnFrontMatter
 
 	// closeRefusalOwnFile: the member's own file could not be written. The same
@@ -203,18 +209,27 @@ func closeClassifyMemberRefusal(resolver *graph.Resolver, id string, err error) 
 // MEMBER whichever escape asked for it, so a failure here is one no escape
 // routes around.
 //
-// UpdateNib's preValidateSubject runs ValidateEnums and the axis rule before
-// validateAndSetMilestone branches, so both are shared. The axis rule is asked
-// with the assignment CLEARED because that is the weaker of its two readings:
-// a member the clear path still refuses is a genuine dead end, while one only
-// the assign reading refuses (a milestone-typed nib carrying an assignment,
-// which a hand-edit can produce) is precisely a case --unassign-open does fix,
-// and calling that a dead end would withhold the remedy that works.
+// UpdateNib's preValidateSubject runs ValidateEnums, the axis rule and the area
+// vocabulary before validateAndSetMilestone branches, so all three are shared,
+// and in that order — no area value satisfies the axis rule, so answering an
+// undeclared area on a milestone-typed member with the declared set would
+// prescribe a remedy that member cannot follow.
+//
+// The axis rule is asked with the assignment CLEARED because that is the weaker
+// of its two readings: a member the clear path still refuses is a genuine dead
+// end, while one only the assign reading refuses (a milestone-typed nib carrying
+// an assignment, which a hand-edit can produce) is precisely a case
+// --unassign-open does fix, and calling that a dead end would withhold the
+// remedy that works. The area rule has no such weaker reading — neither escape
+// touches `area:`, so the member's stored value is the one both writes carry.
 func closeMemberOwnGuards(resolver *graph.Resolver, member *nib.Nib) error {
 	if err := resolver.Validator.ValidateEnums(member); err != nil {
 		return err
 	}
-	return nibtypes.ValidateAxes(member.EffectiveType(), "", member.Area)
+	if err := nibtypes.ValidateAxes(member.EffectiveType(), "", member.Area); err != nil {
+		return err
+	}
+	return resolver.Validator.ValidateArea(member)
 }
 
 // refusalRemedy is the tail of the partial-failure advice: what the caller
@@ -231,7 +246,7 @@ func (d *closeDisposition) refusalRemedy(failedID string, class closeMemberRefus
 	id := stripControlChars(failedID)
 	switch class {
 	case closeRefusalOwnFrontMatter:
-		return fmt.Sprintf("the blocker is %s's own front matter, which every escape and every retry meets identically — repair %s (`nibs check` names this shape), then close again%s",
+		return fmt.Sprintf("the blocker is %s's own front matter, which every escape and every retry meets identically — repair %s, then close again%s",
 			id, id, holdingReasonExitClause(cfg))
 	case closeRefusalOwnFile:
 		return fmt.Sprintf("the blocker is %s's own file, which could not be written — every escape meets the same failure, so make that file writable, then close again%s",
@@ -514,7 +529,7 @@ func closePreValidateMembers(cfg *config.Config, resolver *graph.Resolver, subje
 		pronoun, possessive = "them", "their"
 	}
 	return cmdError(closeJSON, output.ErrValidation,
-		"cannot dispose of milestone %s's queue: %s refused by the write path for %s own front matter — %s%s. No escape and no retry can write %s, so repair %s first (`nibs check` names this shape), then close again%s",
+		"cannot dispose of milestone %s's queue: %s refused by the write path for %s own front matter — %s%s. No escape and no retry can write %s, so repair %s first, then close again%s",
 		stripControlChars(subject.ID), countNibs(len(blocked)), possessive,
 		strings.Join(reasons, "; "), moreThanNamed(len(blocked)),
 		pronoun, pronoun,

@@ -591,6 +591,7 @@ func TestCoreMutators_FreezePartition(t *testing.T) {
 		"StopWatching":       true,
 		"Subscribe":          true,
 		"SubscribeSignal":    true,
+		"ValidateArea":       true,
 		"ValidateEnums":      true,
 		"ValidateParent":     true,
 	}

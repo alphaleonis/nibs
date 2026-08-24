@@ -762,13 +762,19 @@ func TestCheckAllLinksInMapFlagsInvalidAxes(t *testing.T) {
 		"chk-a1": {ID: "chk-a1", Status: "todo", Type: "milestone", Path: "data/chk-a1--located.md", Area: "web/ui"},
 		"chk-c3": {ID: "chk-c3", Status: "todo", Type: "task", Path: "data/chk-c3--work.md", Milestone: "chk-d4", Area: "web/ui"},
 		"chk-d4": {ID: "chk-d4", Status: "todo", Type: "milestone", Path: "data/chk-d4--clean.md"},
+		// Both axes at once: the escape has to drop both keys in one command,
+		// because clearing either alone leaves the write refused by the other.
+		"chk-e5": {ID: "chk-e5", Status: "todo", Type: "milestone", Path: "data/chk-e5--both.md", Milestone: "chk-d4", Area: "web/ui"},
 	}
 
 	result := CheckAllLinksInMap(nibs, "", "chk-")
 
+	// Axes carries every key the escape has to drop, which for these two is the
+	// one Reason speaks for.
 	want := []InvalidAxis{
-		{NibID: "chk-a1", Path: "data/chk-a1--located.md", Reason: "a milestone cannot have an area"},
-		{NibID: "chk-b2", Path: "data/chk-b2--assigned.md", Reason: "a milestone cannot be assigned to a milestone"},
+		{NibID: "chk-a1", Path: "data/chk-a1--located.md", Reason: "a milestone cannot have an area", Axes: []string{"area"}},
+		{NibID: "chk-b2", Path: "data/chk-b2--assigned.md", Reason: "a milestone cannot be assigned to a milestone", Axes: []string{"milestone"}},
+		{NibID: "chk-e5", Path: "data/chk-e5--both.md", Reason: "a milestone cannot be assigned to a milestone", Axes: []string{"milestone", "area"}},
 	}
 	if !reflect.DeepEqual(result.InvalidAxes, want) {
 		t.Errorf("InvalidAxes = %+v, want %+v", result.InvalidAxes, want)
@@ -778,6 +784,13 @@ func TestCheckAllLinksInMapFlagsInvalidAxes(t *testing.T) {
 	}
 	if result.AxisIssues() != len(want) {
 		t.Errorf("AxisIssues() = %d, want %d", result.AxisIssues(), len(want))
+	}
+	// The one command every surface prescribes, assembled from Axes.
+	if got := ClearAxesCommand("chk-e5", result.InvalidAxes[2].Axes); got != "nibs set chk-e5 --clear milestone --clear area" {
+		t.Errorf("ClearAxesCommand = %q, want both keys dropped by one command", got)
+	}
+	if got := AxisKeysNoun(result.InvalidAxes[2].Axes); got != "both axis keys" {
+		t.Errorf("AxisKeysNoun = %q, want it to match what the command clears", got)
 	}
 }
 

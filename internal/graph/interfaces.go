@@ -145,6 +145,14 @@ type NibValidator interface {
 	// later steps write to OTHER nibs can refuse a doomed subject first (see
 	// mutationResolver.preValidateSubject).
 	ValidateEnums(b *nib.Nib) error
+	// ValidateArea reports whether the nib's `area:` holds a path the store's
+	// config declares (unset always passes). It is separate from ValidateEnums
+	// because areas are the one PER-CONFIG vocabulary — see
+	// nibcore.Core.ValidateArea for why that separation is load-bearing rather
+	// than cosmetic. NibWriter.Update repeats it under the write lock; it is
+	// exposed here for the same reason ValidateEnums is, so a resolver whose
+	// later steps write to OTHER nibs can refuse a doomed subject first.
+	ValidateArea(b *nib.Nib) error
 }
 
 // BlockingChecker provides blocking-relationship queries.

@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"testing"
 
@@ -435,11 +436,11 @@ func TestCheckReportsAxisViolations(t *testing.T) {
 			t.Fatalf("invalid_axes = %+v, want exactly 2 entries", got.NibIssues)
 		}
 		want := []nibcore.InvalidAxis{
-			{NibID: "chk-axa1", Path: "data/chk-axa1--located.md", Reason: "a milestone cannot have an area"},
-			{NibID: "chk-axm1", Path: "data/chk-axm1--assigned.md", Reason: "a milestone cannot be assigned to a milestone"},
+			{NibID: "chk-axa1", Path: "data/chk-axa1--located.md", Reason: "a milestone cannot have an area", Axes: []string{"area"}},
+			{NibID: "chk-axm1", Path: "data/chk-axm1--assigned.md", Reason: "a milestone cannot be assigned to a milestone", Axes: []string{"milestone"}},
 		}
 		for i, w := range want {
-			if got.NibIssues.InvalidAxes[i] != w {
+			if !reflect.DeepEqual(got.NibIssues.InvalidAxes[i], w) {
 				t.Errorf("invalid_axes[%d] = %+v, want %+v", i, got.NibIssues.InvalidAxes[i], w)
 			}
 		}
@@ -468,6 +469,82 @@ func TestCheckReportsAxisViolations(t *testing.T) {
 			t.Errorf("total issues after --fix = %d, want 2 (the axis findings remain outstanding)", total)
 		}
 	})
+}
+
+// TestCheckAxisRemedyOffersOnlyWhatExecutes: the axis diagnostics prescribe the
+// clears and NOT the retype, because the retype is refused in both of the
+// states an offender is normally found in.
+//
+// An offender is always milestone-typed (ValidateAxes is a no-op for every
+// other type), so retyping it away is refused while nibs are still assigned to
+// it — a milestone's ordinary state — and refused again, even with an empty
+// queue, when the `area:` it would keep is one the vocabulary no longer
+// declares. This test executes both refusals rather than reading the sentence,
+// which is the only way an assertion about behavior can be checked.
+func TestCheckAxisRemedyOffersOnlyWhatExecutes(t *testing.T) {
+	const member = `---
+version: 2
+title: Queued work
+status: todo
+type: task
+priority: normal
+milestone: chk-axa1
+milestone_order: a
+---
+
+Body.
+`
+	app, nibsDir := setupCheckTest(t, map[string]string{
+		"chk-axa1--located.md": chkMilestoneWithAreaNib,
+		"chk-mem1--member.md":  member,
+	})
+
+	var runErr error
+	out := captureStdout(t, func() { _, runErr = runCheck(app) })
+	if runErr != nil {
+		t.Fatalf("runCheck error = %v", runErr)
+	}
+	if !strings.Contains(out, "--clear area") {
+		t.Errorf("the axis finding must name the escape that always works, got:\n%s", out)
+	}
+	if strings.Contains(out, "retype") {
+		t.Errorf("the plain report must not prescribe the retype, which is refused below:\n%s", out)
+	}
+	// The finding is about the area axis. Naming the milestone clear beside it
+	// prescribes a command that exits 2 on this nib.
+	if strings.Contains(out, "--clear milestone") {
+		t.Errorf("the axis finding must name only the clear that matches the violated axis:\n%s", out)
+	}
+
+	resetSetFlags()
+	resetRootPersistentFlags()
+	t.Cleanup(resetSetFlags)
+	t.Cleanup(resetRootPersistentFlags)
+	_, err := runRootWith(t, "--nibs-path", nibsDir, "set", "chk-axa1", "--type", "epic")
+	if err == nil {
+		t.Fatal("a milestone with a nib assigned to it must refuse the retype, got nil")
+	}
+
+	// Emptying the queue does not make the retype work either: chk-axa1's
+	// `area: web/ui` is undeclared in this store, so the vocabulary refuses the
+	// value the retype would keep.
+	resetSetFlags()
+	resetRootPersistentFlags()
+	if _, err := runRootWith(t, "--nibs-path", nibsDir, "set", "chk-mem1", "--clear", "milestone"); err != nil {
+		t.Fatalf("clearing the member's assignment: %v", err)
+	}
+	resetSetFlags()
+	resetRootPersistentFlags()
+	if _, err := runRootWith(t, "--nibs-path", nibsDir, "set", "chk-axa1", "--type", "epic"); err == nil {
+		t.Error("an undeclared stored area must refuse the retype even with an empty queue, got nil")
+	}
+
+	// The remedy the finding does name works, on the same nib in the same state.
+	resetSetFlags()
+	resetRootPersistentFlags()
+	if _, err := runRootWith(t, "--nibs-path", nibsDir, "set", "chk-axa1", "--clear", "area"); err != nil {
+		t.Errorf("--clear area is offered without a condition and must work: %v", err)
+	}
 }
 
 // TestCheckNewerStore pins plain check's behavior on a store written by a

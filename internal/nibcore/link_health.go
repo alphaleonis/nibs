@@ -88,16 +88,65 @@ type InvalidEnum struct {
 // InvalidAxis is a loaded nib whose assignment axes violate its type's axis
 // rule (nibtypes.ValidateAxes: a milestone-typed nib carrying a `milestone:`
 // or `area:` value). The rule is strict on the write paths only, so the value
-// loads as written (see loadFromDisk's diagnostic warning) — but then every
-// update of the nib through nibs is refused, and no CLI flag or mutation input
-// exposes the axis fields for repair. This finding is what names the file the
-// hand edit has to fix.
+// loads as written (see loadFromDisk's diagnostic warning) — and then every
+// update that leaves both the type and the offending keys as they are is
+// refused. Dropping the keys is reachable: `--clear milestone` and
+// `--clear area` (updateNib's milestone and area inputs on every other client)
+// apply to the subject ABOVE the guards, so they clear the axis instead of
+// being refused by it. This finding names the nib whose ordinary edits are
+// dead-ended until that clear runs — see ClearAxesCommand for why it is ONE
+// command and not a choice between two.
+//
+// Retyping is the other way to reconcile the type with the axis, and the plain
+// diagnostics deliberately do not prescribe it, because whether it works
+// depends on state they do not report: it is refused while nibs are still
+// assigned to the milestone (a milestone's ordinary state), and refused again
+// when the `area:` it would keep is one the vocabulary no longer declares. On
+// an empty queue with a declared area it succeeds, and it is then the only
+// escape that keeps the assignment — which is exactly why `--fix` names it, as
+// the CHOICE it will not make for the author rather than as a command to run.
+// The clear is what holds in every state, so it is what carries a command.
 type InvalidAxis struct {
 	NibID string `json:"nib_id"`
 	// Path is relative to the nibs root with forward slashes, like nib.Path.
 	Path string `json:"path"`
 	// Reason is ValidateAxes' message, naming the axis the type refuses.
 	Reason string `json:"reason"`
+	// Axes names EVERY axis key the nib carries that its type refuses, in
+	// front-matter order. Reason speaks for the first of them only; the escape
+	// has to drop them all at once.
+	Axes []string `json:"axes"`
+}
+
+// ClearAxesCommand renders the one command that drops every axis key a nib's
+// type refuses.
+//
+// It is one command rather than one per key because clearing a single key
+// leaves the write refused by the next: on a nib carrying both, `--clear
+// milestone` alone is refused for the area and `--clear area` alone is refused
+// for the milestone, so offering them as alternatives names two commands of
+// which neither works. nibID is expected already rendered for the surface it
+// is printed on — this only assembles the grammar, so that every surface that
+// prescribes the escape prescribes the same one.
+// AxisKeysNoun names the offending keys in prose, matching what
+// ClearAxesCommand clears, so a message never says "key" beside a command that
+// drops two.
+func AxisKeysNoun(axes []string) string {
+	if len(axes) > 1 {
+		return "both axis keys"
+	}
+	return "the axis key"
+}
+
+func ClearAxesCommand(nibID string, axes []string) string {
+	var b strings.Builder
+	b.WriteString("nibs set ")
+	b.WriteString(nibID)
+	for _, axis := range axes {
+		b.WriteString(" --clear ")
+		b.WriteString(axis)
+	}
+	return b.String()
 }
 
 // InvalidHierarchy is a loaded nib whose parent's type the hierarchy rules
@@ -493,9 +542,15 @@ func CheckAllLinksInMap(nibs map[string]*nib.Nib, projectRoot, configPrefix stri
 		b := nibs[id]
 		// Axis integrity: the axis rule is strict on the write paths only, so a
 		// hand-edited offender loads as written — and then every update of it
-		// through nibs is refused. This finding is what names the file to fix.
+		// that keeps both the type and the offending keys is refused. This
+		// finding is what names the file to fix, and the keys the fix drops.
 		if err := nibtypes.ValidateAxes(b.EffectiveType(), b.Milestone, b.Area); err != nil {
-			result.InvalidAxes = append(result.InvalidAxes, InvalidAxis{NibID: b.ID, Path: b.Path, Reason: err.Error()})
+			result.InvalidAxes = append(result.InvalidAxes, InvalidAxis{
+				NibID:  b.ID,
+				Path:   b.Path,
+				Reason: err.Error(),
+				Axes:   nibtypes.RefusedAxes(b.EffectiveType(), b.Milestone, b.Area),
+			})
 		}
 		// Hierarchy integrity: the parent-type rule is strict only on the write
 		// paths that set a parent or change a type, and the v2 migration

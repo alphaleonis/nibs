@@ -26,6 +26,7 @@ var (
 	setClear           []string
 	setParent          string
 	setMilestone       string
+	setArea            string
 	setBlocking        []string
 	setRemoveBlocking  []string
 	setBlockedBy       []string
@@ -40,23 +41,31 @@ var (
 
 // clearableFields are the field names --clear accepts. These are exactly the
 // fields the graph layer can clear via an explicit-null update (an Omittable set
-// to a nil inner pointer): the priority/estimate scalars and the two links that
-// place a nib — parent (decomposition) and milestone (scheduling).
-var clearableFields = []string{"priority", "estimate", "parent", "milestone"}
+// to a nil inner pointer): the priority/estimate scalars, the two links that
+// place a nib — parent (decomposition) and milestone (scheduling) — and the area
+// that says who owns it.
+var clearableFields = []string{"priority", "estimate", "parent", "milestone", "area"}
 
 var setCmd = &cobra.Command{
 	Use:     "set <id>",
 	Aliases: []string{"update", "u"},
 	Short:   "Set a nib's metadata, links, or clear fields",
+	// The clearable set is interpolated, not listed: this paragraph and the
+	// --clear flag's own usage string print on the same --help screen, and a
+	// hand-listed set there contradicted the derived one below it.
 	Long: `Sets one or more properties of an existing nib: metadata (status, type,
 priority, estimate, title), links (parent, milestone, blocking, blocked-by,
 tags, documents), or clears a clearable field
-(--clear priority|estimate|parent|milestone).
+(--clear ` + strings.Join(clearableFields, "|") + `).
 
 --milestone <id> assigns the nib to a milestone's queue (appended last; the
 target must be a milestone, and a nib and one of its ancestors are never both
 assigned). --clear milestone unassigns it and drops its queue position. Use
-'nibs mv <id> --queue' to reposition within the queue.`,
+'nibs mv <id> --queue' to reposition within the queue.
+
+--area <path> assigns the nib to one of the areas the store's config declares
+(a nested path is spelled 'web/dashboard'); an undeclared path is refused
+naming the declared set. --clear area unassigns it.`,
 	Args: codedExactArgs(&setJSON, 1),
 	RunE: func(cmd *cobra.Command, args []string) error {
 		app := getApp(cmd)
@@ -133,7 +142,7 @@ assigned). --clear milestone unassigns it and drops its queue position. Use
 		// Require at least one change
 		if len(changes) == 0 {
 			return cmdError(setJSON, output.ErrValidation,
-				"no changes specified (use --status, --type, --priority, --estimate, --title, --parent, --milestone, --blocking, --blocked-by, --tag, --document, --clear, or their --remove-* variants; use `nibs mv` to reposition or reparent)")
+				"no changes specified (use --status, --type, --priority, --estimate, --title, --parent, --milestone, --area, --blocking, --blocked-by, --tag, --document, --clear, or their --remove-* variants; use `nibs mv` to reposition or reparent)")
 		}
 
 		warning := ""
@@ -274,6 +283,17 @@ func buildSetInput(cmd *cobra.Command, cfg *config.Config, id string) (model.Upd
 		changes = append(changes, "milestone")
 	}
 
+	// The area assignment takes the same shape, and like the milestone it is NOT
+	// pre-checked here: membership in the declared vocabulary is the resolver's
+	// rule for every surface, and a copy of it here would be a second place the
+	// refusal message is written. The resolver's refusal already reports
+	// VALIDATION (exit 2) through mutationError's fallback, which is the class
+	// the enum flags above report.
+	if cmd.Flags().Changed("area") {
+		input.Area = graphql.OmittableOf(&setArea)
+		changes = append(changes, "area")
+	}
+
 	// Apply --clear (explicit-null) for the requested clearable fields.
 	if clears["priority"] {
 		input.Priority = graphql.OmittableOf[*string](nil)
@@ -290,6 +310,10 @@ func buildSetInput(cmd *cobra.Command, cfg *config.Config, id string) (model.Upd
 	if clears["milestone"] {
 		input.Milestone = graphql.OmittableOf[*string](nil)
 		changes = append(changes, "milestone")
+	}
+	if clears["area"] {
+		input.Area = graphql.OmittableOf[*string](nil)
+		changes = append(changes, "area")
 	}
 
 	// Handle blocking relationships
@@ -349,7 +373,8 @@ func hasFieldUpdates(input model.UpdateNibInput) bool {
 	return input.Status != nil || input.Type != nil || input.Priority.IsSet() || input.Estimate.IsSet() ||
 		input.Title != nil || input.Tags != nil ||
 		input.AddTags != nil || input.RemoveTags != nil ||
-		input.Parent.IsSet() || input.Milestone.IsSet() || input.AddBlocking != nil || input.RemoveBlocking != nil ||
+		input.Parent.IsSet() || input.Milestone.IsSet() || input.Area.IsSet() ||
+		input.AddBlocking != nil || input.RemoveBlocking != nil ||
 		input.AddBlockedBy != nil || input.RemoveBlockedBy != nil ||
 		input.Documents != nil || input.AddDocuments != nil || input.RemoveDocuments != nil
 }
@@ -479,6 +504,13 @@ func setMutationError(jsonOutput bool, err error) error {
 //     ability to tell a rule violation from a malformed argument. Sharing an
 //     exit is safe for a batched `nibs query` response because
 //     graphQLResponseCode compares exit statuses, not code strings.
+//   - An assignment axis a nib's type refuses — a milestone given a `milestone:`
+//     or an `area:` — is VALIDATION_ERROR, the class it already reports on every
+//     surface that supplies the fallback. Naming it here is what makes `nibs new`
+//     agree with them: create's own fallback is FILE_ERROR, which would send an
+//     agent to inspect the filesystem for a bad argument pair. Recognized through
+//     the concrete type rather than the message, which is the whole reason
+//     nibtypes.AxisError is typed.
 //   - A surgical body-replace whose search text did not match exactly once is
 //     TEXT_NOT_FOUND (zero matches) or TEXT_AMBIGUOUS (more than one). Both share
 //     exit 2 with the VALIDATION_ERROR fallback, so as with HIERARCHY what the
@@ -528,6 +560,10 @@ func mutationErrCode(err error) (string, bool) {
 	var hierarchyErr *nibtypes.HierarchyError
 	if errors.As(err, &hierarchyErr) {
 		return output.ErrHierarchy, true
+	}
+	var axisErr *nibtypes.AxisError
+	if errors.As(err, &axisErr) {
+		return output.ErrValidation, true
 	}
 	var matchErr *nib.ReplaceMatchError
 	if errors.As(err, &matchErr) {
@@ -582,6 +618,9 @@ func init() {
 	setCmd.Flags().StringArrayVar(&setClear, "clear", nil, "Clear a field to its default ("+strings.Join(clearableFields, ", ")+"; can be repeated)")
 	setCmd.Flags().StringVar(&setParent, "parent", "", "Set parent nib ID (use --clear parent to remove)")
 	setCmd.Flags().StringVar(&setMilestone, "milestone", "", "Assign to this milestone's queue, appended last (use --clear milestone to unassign)")
+	// No allowed set in the usage string: areas are declared per store, and this
+	// text is built once at package load from no store at all.
+	setCmd.Flags().StringVar(&setArea, "area", "", "Assign to a declared area path, e.g. web/dashboard (use --clear area to unassign)")
 	setCmd.Flags().StringArrayVar(&setBlocking, "blocking", nil, "ID of nib this blocks (can be repeated)")
 	setCmd.Flags().StringArrayVar(&setRemoveBlocking, "remove-blocking", nil, "ID of nib to unblock (can be repeated)")
 	setCmd.Flags().StringArrayVar(&setBlockedBy, "blocked-by", nil, "ID of nib that blocks this one (can be repeated)")

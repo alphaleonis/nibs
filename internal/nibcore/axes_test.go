@@ -13,7 +13,10 @@ import (
 // a milestone is a waypoint, not work, so Create refuses one carrying a
 // milestone assignment or an area.
 func TestCreateRefusesAxesOnMilestone(t *testing.T) {
-	core, _ := setupTestCore(t)
+	// Declares `web/ui`, which the accepting row at the end carries: an area is
+	// checked against the vocabulary on every write, so a store declaring none
+	// would refuse that seed for a reason this test is not about.
+	core, _ := setupAreaCore(t)
 
 	tests := []struct {
 		name        string
