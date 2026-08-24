@@ -553,13 +553,14 @@ func (c *Core) loadNib(path string) (*nib.Nib, error) {
 	// carries both timestamps (Create sets them, Render emits them), so the only
 	// files this synthesis touches are hand-authored ones missing EITHER timestamp
 	// (created_at is synthesized from updated_at or the file mtime below, then
-	// updated_at is defaulted to created_at). Such a file retains a residual etag
-	// divergence (in-memory carries the synthesized timestamp; the bare-parse stored
-	// etag does not), and because every Get returns the same synthesized pointer the
-	// divergence never clears — an if-match Update on such a file permanently
-	// false-conflicts. This is pre-existing, orthogonal to the priority/type fix,
-	// deliberately accepted (not fixed here), and not exercised by any real or
-	// app-created nib.
+	// updated_at is defaulted to created_at). The synthesized stamp makes the
+	// in-memory nib render bytes the file does not carry; computeStoredETag
+	// reconciles that back out, so such a file does not false-conflict on an
+	// if-match Update (see reconcileLoaderDerived).
+	//
+	// Every branch below leaves the two stamps carrying the SAME value, and the
+	// reconciliation depends on that: it is the only thing distinguishing a stamp
+	// synthesized here from one deleted out of the file after it was loaded.
 	if b.CreatedAt == nil {
 		if b.UpdatedAt != nil {
 			b.CreatedAt = b.UpdatedAt
@@ -1059,10 +1060,9 @@ func (c *Core) Create(b *nib.Nib) error {
 // the stored Nib's Type/Priority empty when the file omits them (the "task"/
 // "normal" defaults are applied only at the consumption boundary via
 // nib.EffectiveType()/EffectivePriority()), so a priority/type-less file no longer
-// diverges from its in-memory nib.ETag(). The one remaining residual
-// is loadNib's created_at/updated_at mtime fallback for hand-authored files that
-// omit those timestamps — not reproduced here — which no app-created nib ever
-// hits (Render always emits both). Used by bulk-reorder pre-validation
+// diverges from its in-memory nib.ETag(). A hand-authored file omitting
+// created_at/updated_at does not either — computeStoredETag reconciles the stamps
+// loadNib synthesized for it (see reconcileLoaderDerived). Used by bulk-reorder pre-validation
 // to check optimistic concurrency without a write. Returns ErrNotFound when the
 // id does not resolve. Falls back to the in-memory etag only when no on-disk
 // file exists yet (empty Path, or os.IsNotExist — a freshly created nib not yet
@@ -1112,11 +1112,9 @@ func (c *Core) CurrentETag(id string) (string, error) {
 // (never-Loaded) path still round-trips because its stored nib is likewise empty.
 //
 // loadNib's empty-slice defaults are etag-safe (Render's omitempty renders a nil
-// and an empty slice identically). The lone divergence loadNib can still
-// introduce is its created_at/updated_at mtime fallback, not reproduced here — but
-// that only touches HAND-AUTHORED files missing those timestamps; every app-
-// created nib carries both (Create sets them, Render emits them), so no real or
-// app-created nib hits it.
+// and an empty slice identically). Its created_at/updated_at fallback is not, and
+// is reconciled explicitly — see reconcileLoaderDerived, which handles all three
+// things the loader derives rather than reads.
 //
 // Fallback discipline when the canonical render cannot be computed from disk.
 // The etag exists to certify the current on-disk bytes, so each branch is chosen
@@ -1182,20 +1180,105 @@ func (c *Core) computeStoredETag(storedNib *nib.Nib) (string, error) {
 		// backfillKeys).
 		return "", &OnDiskUnparseableError{ID: storedNib.ID, Path: storedNib.Path, Reason: "unparseable", Err: err}
 	}
-	// The rendered form includes the `# <id>` header, which is derived from the
-	// filename (not the front matter). Use the stored id so the render — and thus
-	// the etag — matches what the caller computed from the same stored nib.
-	b.ID = storedNib.ID
-	// Resolve short-form link ids the same way the store did when it loaded this
-	// file (see canonicalize.go). Without this the two renders diverge on every
-	// hand-edited short-form nib — the stored nib carries `parent: nibs-par`, the
-	// bare parse `parent: par` — and its if-match Update would conflict forever
-	// against an unchanged file. Resolving both sides keeps the two spellings
-	// canonically equivalent, while genuine content divergence still mismatches.
-	if set := canonicalizeLinksInMap(c.nibs, b, c.configPrefix()); set.changed {
-		set.applyTo(b)
-	}
+	c.reconcileLoaderDerived(b, storedNib)
 	return b.ETag(), nil
+}
+
+// reconcileLoaderDerived brings a bare parse of a nib's file into the form the
+// STORE holds it in, for the three fields loadNib DERIVES rather than reads.
+//
+// One principle covers all three: a value the file does not carry cannot be
+// evidence that the file diverged from the store, because the store did not read
+// it there either. Resolving both sides keeps the two spellings canonically
+// equivalent, while genuine content divergence still mismatches. Without it the
+// two renders differ forever on an unchanged file, and its if-match Update
+// false-conflicts on every attempt.
+//
+//   - id — derived from the FILENAME, not the front matter, and the render
+//     includes it as the `# <id>` header.
+//   - short-form link ids — the store resolves parent/milestone/blocked_by/
+//     blocking against its prefix when it loads (see canonicalize.go), so a
+//     hand-edited `parent: par` is held as `parent: nibs-par`.
+//   - created_at/updated_at — loadNib synthesizes a stamp the file omits (from
+//     the other stamp, else from the file's mtime), so a hand-authored file
+//     missing either one renders stamps its own bytes do not carry.
+//
+// The stamps are the one of the three that needs a bound, because a missing
+// value has two possible histories where the other two have one. An id and a
+// short-form link are absent from the bytes BY CONSTRUCTION — the filename holds
+// the one, the prefix rule the other — so their absence can never be an edit. A
+// stamp can also be absent because someone DELETED it after this process loaded
+// the file, and from the bare parse that is the same absence. See
+// loaderMaySynthesizeStamps for what separates the two.
+//
+// Caller must hold c.mu (read or write lock), which canonicalizeLinksInMap's
+// read of c.nibs requires.
+func (c *Core) reconcileLoaderDerived(parsed, storedNib *nib.Nib) {
+	parsed.ID = storedNib.ID
+
+	if set := canonicalizeLinksInMap(c.nibs, parsed, c.configPrefix()); set.changed {
+		set.applyTo(parsed)
+	}
+
+	if loaderMaySynthesizeStamps(storedNib) {
+		if parsed.CreatedAt == nil {
+			parsed.CreatedAt = copyStamp(storedNib.CreatedAt)
+		}
+		if parsed.UpdatedAt == nil {
+			parsed.UpdatedAt = copyStamp(storedNib.UpdatedAt)
+		}
+	}
+}
+
+// loaderMaySynthesizeStamps reports whether storedNib's timestamps are in the
+// only shape loadNib's fallback can leave behind: every one of its three
+// branches assigns one stamp FROM the other, or derives both from the file's
+// mtime, so the pair always comes out EQUAL. A nib holding two different stamps
+// therefore read both from its file, and a stamp now missing from that file was
+// deleted rather than synthesized — divergence the etag must report, or Update
+// writes the stale clone back and silently restores the deleted key (it
+// re-stamps updated_at on every write, but never assigns created_at).
+//
+// The residual, stated at its true size rather than hidden. A nib whose stamps
+// are equal is indistinguishable from one whose stamps were synthesized, so a
+// stamp deleted from ITS file is invisible to the etag and gets restored by the
+// next if-match write. Two things about that are easy to understate and are not:
+//
+//   - It is not a race. There is no window: the deletion is invisible across
+//     process boundaries and across a fresh Load, because the reload
+//     re-synthesizes the deleted stamp from the surviving equal one and lands on
+//     the identical render. It is a class of file edit this etag cannot see.
+//   - It is not confined to untouched hand-authored files. Core.Create assigns
+//     ONE now to both stamps, so every nib nibs has created and not yet updated
+//     is in this set from the moment it is written.
+//
+// What makes the trade acceptable is not that the case is rare but that it is
+// information-preserving: the fill writes a nil slot with the store's own value,
+// which is by construction the value the file carried before the deletion, so the
+// restored stamp is byte-identical to the deleted one. Nothing is lost but the
+// intent to drop the key, and any edit riding along with the deletion still
+// diverges and is still refused. Closing it properly needs provenance the loader
+// does not hand out — which stamps it synthesized — and the alternative is a real,
+// permanent false conflict on every hand-authored file.
+//
+// Note the reach. This rule governs computeStoredETag, so it applies to every
+// if-match comparison in the product — `nibs set --if-match`, `mv
+// --child-if-match`, updateNib, bulk-reorder pre-validation, the web UI's batch
+// mutations. The closeMemberETag allowance it replaced expressed the same
+// predicate but governed only `nibs close`'s queue dispositions.
+func loaderMaySynthesizeStamps(storedNib *nib.Nib) bool {
+	return storedNib.CreatedAt != nil && storedNib.UpdatedAt != nil &&
+		storedNib.CreatedAt.Equal(*storedNib.UpdatedAt)
+}
+
+// copyStamp returns an independent copy of a timestamp pointer, so a reconciled
+// bare parse never aliases the live stored nib's own stamp.
+func copyStamp(stamp *time.Time) *time.Time {
+	if stamp == nil {
+		return nil
+	}
+	t := *stamp
+	return &t
 }
 
 // Update modifies an existing nib and writes it to disk.

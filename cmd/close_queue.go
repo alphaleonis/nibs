@@ -343,86 +343,13 @@ func closeMemberETag(resolver *graph.Resolver, id string) (*string, error) {
 	if err != nil {
 		return nil, err
 	}
-	if !memberFileIsAsLoaded(loaded, onDisk) {
+	if loaded.ETag() != onDisk {
 		return nil, &nibcore.ETagMismatchError{Provided: loaded.ETag(), Current: onDisk}
 	}
 	// The file IS what this process loaded, so the on-disk token is the correct
-	// precondition — and passing it (rather than the in-memory etag, which a
-	// synthesized timestamp can make differ) is what keeps a hand-authored
-	// store working. The residual window it still covers is the one between
-	// this read and Core.Update's own check.
+	// precondition. The residual window it still covers is the one between this
+	// read and Core.Update's own check.
 	return &onDisk, nil
-}
-
-// memberFileIsAsLoaded reports whether onDisk — the etag Core computes by
-// re-parsing the member's current file — is one the nib AS LOADED accounts for.
-//
-// Ordinarily that is a plain equality. The exception is loadNib's timestamp
-// fallback: for a hand-authored file omitting created_at and/or updated_at it
-// synthesizes the missing one (from the other, else from the file's mtime),
-// while computeStoredETag bare-parses the file and sees neither. Both fields
-// are omitempty, so clearing exactly the ones loadNib could have synthesized
-// reproduces that bare parse.
-//
-// What a match then proves, exactly: every field OTHER than the two stamps
-// renders identically to the content this process loaded. bare is a Clone of
-// loaded with only the stamp pointers nil'd, and ETag hashes the whole
-// canonical render, so nothing else can ride along — a body edit, a status
-// change, a field emptied, a field removed, or either stamp EDITED to another
-// value is refused. What it does NOT prove is that the file still carries the
-// stamps: a DELETION of created_at or updated_at renders the same way a
-// synthesis-at-load does, and the two are indistinguishable from here.
-//
-// So the allowance is bounded by the one thing that distinguishes them.
-// loadNib's fallback always leaves the two stamps carrying the SAME value — it
-// copies one into the other, or derives both from the file's mtime — so a
-// member loaded with two DIFFERENT stamps synthesized nothing and must match
-// exactly. That is closeStampsCoincide, and it is what keeps a concurrent
-// deletion of created_at from being accepted and then silently restored by
-// Core.Update (which re-stamps UpdatedAt on every write but never assigns
-// CreatedAt).
-//
-// The residual, stated rather than hidden: a member loaded with both stamps
-// present and EQUAL — a nib created and never updated since — is
-// indistinguishable from one whose stamps were synthesized, so a concurrent
-// deletion of a stamp on such a member is still accepted and restored. Closing
-// that needs provenance the loader does not hand out (which stamps it
-// synthesized); the divergence itself is separately tracked (nibs-kkgu).
-// Without the allowance a store of hand-authored nibs would false-conflict on
-// its first queue member and both escapes would be unusable there.
-func memberFileIsAsLoaded(loaded *nib.Nib, onDisk string) bool {
-	if loaded.ETag() == onDisk {
-		return true
-	}
-	if !closeStampsCoincide(loaded) {
-		return false
-	}
-	for _, synthesized := range []struct{ created, updated bool }{
-		{created: true, updated: true},
-		{created: true},
-		{updated: true},
-	} {
-		bare := loaded.Clone()
-		if synthesized.created {
-			bare.CreatedAt = nil
-		}
-		if synthesized.updated {
-			bare.UpdatedAt = nil
-		}
-		if bare.ETag() == onDisk {
-			return true
-		}
-	}
-	return false
-}
-
-// closeStampsCoincide reports whether the member's two timestamps are the one
-// value loadNib's fallback always leaves behind — every one of its three
-// branches assigns one stamp FROM the other (or both from the mtime), so an
-// unequal pair is proof that nothing was synthesized and the file has to match
-// the load exactly.
-func closeStampsCoincide(loaded *nib.Nib) bool {
-	return loaded.CreatedAt != nil && loaded.UpdatedAt != nil && loaded.CreatedAt.Equal(*loaded.UpdatedAt)
 }
 
 // resolveMoveOpenTarget resolves and validates --move-open-to. The target must

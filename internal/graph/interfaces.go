@@ -107,10 +107,10 @@ type NibReader interface {
 	// Priority empty when the file omits them (the "task"/"normal" presentation
 	// defaults are applied only at the consumption boundary via
 	// nib.EffectiveType()/EffectivePriority()), so priority/type-less files no
-	// longer diverge from their in-memory nib.ETag(). The sole residual
-	// divergence is the created_at/updated_at mtime fallback loadNib synthesizes for
-	// hand-authored files missing those timestamps, which computeStoredETag does not
-	// reproduce (see nibcore.computeStoredETag). Falls back to the in-memory etag only when no on-disk file
+	// longer diverge from their in-memory nib.ETag(). The same holds for a
+	// hand-authored file missing created_at/updated_at: computeStoredETag
+	// reconciles the stamps loadNib synthesized back out of the comparison (see
+	// nibcore.reconcileLoaderDerived). Falls back to the in-memory etag only when no on-disk file
 	// exists yet (not-flushed / externally removed); an existing file that cannot
 	// be read or parsed fails CLOSED, returning a non-reconcilable
 	// *nibcore.OnDiskUnparseableError (empty etag string, no reusable token) so
