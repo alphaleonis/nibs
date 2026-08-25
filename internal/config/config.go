@@ -1,6 +1,7 @@
 package config
 
 import (
+	"bytes"
 	"errors"
 	"fmt"
 	"io"
@@ -481,97 +482,38 @@ func (c *Config) GetProjectName() string {
 	return name
 }
 
-// Save writes the configuration to <store>/config.yml. If the config has no
-// store directory, the given directory is taken as the store.
-//
-// The write is ATOMIC and MODE-PRESERVING, the same contract the migration engine's
-// relocation of this file holds it to (fsutil.AtomicWriteFile). One file with two
-// writers and two contracts is not a contract: a plain os.WriteFile here widened a
-// 0600 config the relocation had deliberately kept private, and left a torn file
-// possible for a resume path that assumes config.yml is only ever absent or
-// complete.
-//
-// A SYMLINK at config.yml is REPLACED with a regular file rather than written
-// through, because the rename is what makes the write atomic. That is a contract of
-// Save and not an implementation detail of fsutil: a config.yml symlinked into a
-// dotfile manager becomes an ordinary file holding the new settings while the
-// manager's copy keeps the old ones, so the next `chezmoi apply` (or equivalent)
-// restores a stale prefix and short-id resolution stops finding nibs created since.
-//
-// It is REPORTED rather than silent — the first return value is the path the link
-// pointed at, non-empty only when a link was replaced, and the caller must tell the
-// user which file is now stale. Refusing instead was rejected: `nibs config
-// set-prefix` has already renamed every nib file by the time Save runs, so a
-// refusal here leaves the store half-changed.
-// SetStoredPrefix rewrites ONLY the `nibs.prefix` key of the config inside
-// storeDir, leaving every other byte of the file as it was.
-//
-// It exists because Save marshals a whole Config, and the Config a command holds
-// is the MERGED read model: LoadStoreWithUserConfig layers the user's config and
-// then the system defaults onto the project's own values in place. Saving that
-// back writes advisory settings into a project's committed config and destroys
-// everything the struct does not model — including keys a NEWER nibs wrote, which
-// is data loss rather than formatting.
-//
-// Save keeps its meaning for the caller that wants it: `nibs init` writes a brand
-// new config from the merged defaults on purpose, and there is no prior file to
-// preserve. Editing one key in place is a different operation, not a better Save.
-//
-// The edit goes through a yaml.Node tree so comments, key order, indentation and
-// unmodeled keys survive. A config with no `nibs:` mapping, or none at all, gains
-// one: set-prefix's whole job is to make the file say the new prefix.
-func SetStoredPrefix(storeDir, prefix string) (staleLinkTarget string, err error) {
-	path := store.NewLayout(storeDir).ConfigPath()
-	data, err := ReadConfigFile(path)
-	if err != nil && !errors.Is(err, fs.ErrNotExist) {
-		return "", err
-	}
+// errMultipleConfigDocuments reports a config file that holds more than one YAML
+// document. Both in-place config editors refuse such a file, and each renders its
+// own remedy, because the sentence has to name the edit that would otherwise have
+// rewritten the whole file from the first document alone.
+var errMultipleConfigDocuments = errors.New("more than one YAML document")
 
+// soleConfigDocument decodes data as the single YAML document a nibs config is,
+// which is what makes an in-place edit of one key safe to write back: yaml.Marshal
+// re-emits the file from one node tree, so a second document would be deleted by
+// the write that carries the edit.
+//
+// An empty file comes back as a zero node rather than an error, because the two
+// editors answer that case differently — the prefix editor creates the document,
+// the areas editor refuses. Anything else the decoder objects to is returned as
+// it came, for the caller to word.
+func soleConfigDocument(data []byte) (yaml.Node, error) {
+	decoder := yaml.NewDecoder(bytes.NewReader(data))
 	var doc yaml.Node
-	if len(data) > 0 {
-		if err := yaml.Unmarshal(data, &doc); err != nil {
-			return "", fmt.Errorf("parsing %s: %w", path, err)
-		}
+	switch err := decoder.Decode(&doc); {
+	case errors.Is(err, io.EOF):
+		return yaml.Node{}, nil
+	case err != nil:
+		return yaml.Node{}, err
 	}
-	setNestedScalar(&doc, "nibs", "prefix", prefix)
-
-	out, err := yaml.Marshal(&doc)
-	if err != nil {
-		return "", err
+	var next yaml.Node
+	switch err := decoder.Decode(&next); {
+	case err == nil:
+		return yaml.Node{}, errMultipleConfigDocuments
+	case !errors.Is(err, io.EOF):
+		return yaml.Node{}, err
 	}
-	return writeConfigPreservingMode(path, out)
-}
-
-// setNestedScalar sets doc's section.key to value, creating the document, the
-// section or the key when any of them is absent. An existing key keeps its
-// position in the file, which is what makes the rewrite invisible.
-func setNestedScalar(doc *yaml.Node, section, key, value string) {
-	if doc.Kind == 0 {
-		doc.Kind = yaml.DocumentNode
-	}
-	if len(doc.Content) == 0 {
-		doc.Content = []*yaml.Node{{Kind: yaml.MappingNode, Tag: "!!map"}}
-	}
-	root := doc.Content[0]
-	sectionNode := mappingValueNode(root, section)
-	if sectionNode == nil {
-		sectionNode = &yaml.Node{Kind: yaml.MappingNode, Tag: "!!map"}
-		root.Content = append(root.Content,
-			&yaml.Node{Kind: yaml.ScalarNode, Tag: "!!str", Value: section},
-			sectionNode)
-	}
-	if existing := mappingValueNode(sectionNode, key); existing != nil {
-		existing.Kind = yaml.ScalarNode
-		existing.Tag = "!!str"
-		existing.Value = value
-		// Drop any style the old scalar carried (a quoted prefix, a folded
-		// block): the value is new, so the old rendering does not describe it.
-		existing.Style = 0
-		return
-	}
-	sectionNode.Content = append(sectionNode.Content,
-		&yaml.Node{Kind: yaml.ScalarNode, Tag: "!!str", Value: key},
-		&yaml.Node{Kind: yaml.ScalarNode, Tag: "!!str", Value: value})
+	return doc, nil
 }
 
 // mappingValueNode returns the value node for key in a YAML mapping, or nil.
@@ -615,6 +557,30 @@ func writeConfigPreservingMode(path string, data []byte) (staleLinkTarget string
 	return staleLinkTarget, nil
 }
 
+// Save writes the configuration to <store>/config.yml. If the config has no
+// store directory, the given directory is taken as the store.
+//
+// The write is ATOMIC and MODE-PRESERVING, the same contract the migration engine's
+// relocation of this file holds it to (fsutil.AtomicWriteFile). One file with two
+// writers and two contracts is not a contract: a plain os.WriteFile here widened a
+// 0600 config the relocation had deliberately kept private, and left a torn file
+// possible for a resume path that assumes config.yml is only ever absent or
+// complete.
+//
+// A SYMLINK at config.yml is REPLACED with a regular file rather than written
+// through, because the rename is what makes the write atomic. That is a contract of
+// Save and not an implementation detail of fsutil: a config.yml symlinked into a
+// dotfile manager becomes an ordinary file holding the new settings while the
+// manager's copy keeps the old ones, so the next `chezmoi apply` (or equivalent)
+// restores a stale prefix and short-id resolution stops finding nibs created since.
+//
+// It is REPORTED rather than silent — the first return value is the path the link
+// pointed at, non-empty only when a link was replaced, and the caller must tell the
+// user which file is now stale. Refusing instead was rejected because this policy
+// is not Save's alone — writeConfigPreservingMode carries the same sequence for
+// the in-place editors, which reach it instead of Save — and there a refusal is
+// worse: `nibs config set-prefix` has already renamed every nib file by the time
+// its config write runs, so a refusal there leaves the store half-changed.
 func (c *Config) Save(storeDir string) (staleLinkTarget string, err error) {
 	targetDir := c.storeDir
 	if targetDir == "" {

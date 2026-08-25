@@ -11,6 +11,7 @@ import (
 
 	"github.com/alphaleonis/nibs/internal/config"
 	"github.com/alphaleonis/nibs/internal/nib"
+	"github.com/alphaleonis/nibs/internal/nibcore"
 	"github.com/alphaleonis/nibs/internal/output"
 	"github.com/alphaleonis/nibs/internal/reprefix"
 	"github.com/spf13/cobra"
@@ -103,6 +104,31 @@ func runSetPrefix(cmd *cobra.Command, args []string) error {
 		return printPlan(plan, setPrefixJSON)
 	}
 
+	// The renames and the config rewrite are two halves of one change, and the
+	// config half is a read-modify-write of the whole file, so they are one
+	// critical section. Without the lock, a concurrent `nibs area rename` — which
+	// holds this same lock from the moment it plans its own config edit until it
+	// writes it — reads the pre-set-prefix config inside its window and writes it
+	// back over this one. Both processes exit 0, and the store is left with every
+	// nib file renamed and a config still declaring the old prefix.
+	//
+	// The dry run above stays outside: it is read-only, and holding a write lock
+	// to print a plan would block writers for nothing. So is the rename plan,
+	// which is built from the snapshot this process loaded at startup — a nib
+	// another process writes after that read is not in the plan and keeps the old
+	// prefix, which this lock does not reach. Executed: a `nibs new` racing this
+	// command leaves a `tnib-` file in a store whose every other file, and whose
+	// config, say the new prefix.
+	//
+	// It blocks rather than refusing, matching every other store mutation: the
+	// other holder is another nibs process finishing one operation.
+	lock, err := nibcore.AcquireStoreLock(root)
+	if err != nil {
+		return cmdError(setPrefixJSON, output.ErrFileError,
+			"this store's write lock could not be taken, and set-prefix renames every nib file and rewrites the config so it must hold one: %v", err)
+	}
+	defer func() { _ = lock.Release() }()
+
 	if !setPrefixForce {
 		// Check git-dirtiness over the ONE path this command mutates: the store
 		// directory, which holds the renamed nib files and the config file it
@@ -119,16 +145,32 @@ func runSetPrefix(cmd *cobra.Command, args []string) error {
 		}
 	}
 
+	// The config edit is resolved BEFORE the first file is renamed: a rename is
+	// durable the moment it lands, so a content refusal discovered afterwards
+	// would leave every file carrying a prefix the config does not declare, with
+	// no rerun that repairs it. Resolved here it is a refusal over an untouched
+	// store. See config.StoredPrefixEdit.
+	edit, err := config.PlanSetStoredPrefix(cfg.StoreDir(), newPrefix)
+	if err != nil {
+		// Same split in exit codes the areas verbs make: a PrefixEditRefusal is
+		// about the file's CONTENT, which is the caller's to fix; anything else
+		// is the filesystem's.
+		var refusal *config.PrefixEditRefusal
+		if errors.As(err, &refusal) {
+			return cmdError(setPrefixJSON, output.ErrValidation,
+				"nothing was renamed: %v", err)
+		}
+		return cmdError(setPrefixJSON, output.ErrFileError, "nothing was renamed: %v", err)
+	}
+
 	if err := reprefix.Execute(plan, root); err != nil {
 		return cmdError(setPrefixJSON, output.ErrFileError, "%v", err)
 	}
 
-	// Only the prefix key, edited in place. cfg is the MERGED read model — user
-	// config and system defaults layered onto the project's own values — so
-	// marshaling it back would write advisory settings into the project's
-	// committed config and destroy every key this build does not model.
+	// Only the prefix key, edited in place — see config.PlanSetStoredPrefix for
+	// why the merged read model must not be marshaled back over the file.
 	cfg.Nibs.Prefix = newPrefix
-	staleLink, err := config.SetStoredPrefix(cfg.StoreDir(), newPrefix)
+	staleLink, err := edit.Write()
 	if err != nil {
 		configFile := cfg.Layout().ConfigPath()
 		return cmdError(setPrefixJSON, output.ErrFileError,
