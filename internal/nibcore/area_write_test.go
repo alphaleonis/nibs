@@ -698,3 +698,52 @@ func TestRewriteAreaAssignmentsRequiresTheStoreLock(t *testing.T) {
 		})
 	}
 }
+
+// TestRewriteAreaAssignmentsRefusesAStalePathRatherThanRecreatingIt is the
+// resurrection guard.
+//
+// The cascade writes each clone to the path its in-memory nib carries, and that
+// path was read when this process loaded the store. A `nibs config set-prefix`
+// that ran in between renamed every file, so the recorded path names nothing —
+// and a write that ends in a rename CREATES unconditionally, which turned the
+// stale path into a second copy of the nib under a prefix the config no longer
+// declares. The non-creating writer makes it an error instead, so a caller that
+// failed to re-derive its paths cannot silently duplicate the store.
+func TestRewriteAreaAssignmentsRefusesAStalePathRatherThanRecreatingIt(t *testing.T) {
+	core, nibsDir := areaCoreWith(t, map[string]string{"nibs-aw81": "web/dashboard"})
+
+	stale, err := core.Get("nibs-aw81")
+	if err != nil {
+		t.Fatalf("Get: %v", err)
+	}
+	stalePath := filepath.Join(nibsDir, filepath.FromSlash(stale.Path))
+	moved := filepath.Join(filepath.Dir(stalePath), "moved-"+filepath.Base(stalePath))
+	if err := os.Rename(stalePath, moved); err != nil {
+		t.Fatalf("simulating the rename another process made: %v", err)
+	}
+
+	written, err := rewriteAreasLocked(t, core, renameRewrite(core.Config(), "web", "frontend"))
+	if err == nil {
+		t.Fatal("the cascade wrote to a path that no longer exists instead of refusing")
+	}
+	if !strings.Contains(err.Error(), "nibs-aw81") {
+		t.Errorf("error = %q, want it to name the nib it could not write", err)
+	}
+	if len(written) != 0 {
+		t.Errorf("written = %v, want nothing reported as written", written)
+	}
+	if _, statErr := os.Lstat(stalePath); !errors.Is(statErr, os.ErrNotExist) {
+		t.Errorf("the cascade resurrected %s at its pre-rename path", stale.Path)
+	}
+	entries, err := os.ReadDir(filepath.Dir(stalePath))
+	if err != nil {
+		t.Fatalf("read data dir: %v", err)
+	}
+	if len(entries) != 1 {
+		names := make([]string, 0, len(entries))
+		for _, e := range entries {
+			names = append(names, e.Name())
+		}
+		t.Errorf("data/ holds %d files (%v), want only the renamed one", len(entries), names)
+	}
+}

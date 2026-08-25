@@ -2,6 +2,7 @@ package fsutil
 
 import (
 	"errors"
+	"io/fs"
 	"os"
 	"path/filepath"
 	"strings"
@@ -210,5 +211,137 @@ func assertNoTempFiles(t *testing.T, dir string) {
 		if strings.Contains(e.Name(), ".tmp") {
 			t.Errorf("leftover .tmp file: %s", e.Name())
 		}
+	}
+}
+
+// TestAtomicUpdateFileDeferDirSync pins the non-creating writer's whole
+// contract in one table: it replaces what is there, and it REFUSES rather than
+// creating anything when the entry it was told to update is gone. The refusal
+// is what a caller holding a stale path gets instead of a duplicate file.
+func TestAtomicUpdateFileDeferDirSync(t *testing.T) {
+	tests := []struct {
+		name string
+		// seed prepares dir and returns the path to update.
+		seed        func(t *testing.T, dir string) string
+		wantErr     bool
+		wantMissing bool   // the error must be errors.Is(err, fs.ErrNotExist)
+		wantNotIn   string // wording the error must NOT carry
+		wantContent string
+	}{
+		{
+			name: "replaces an existing file",
+			seed: func(t *testing.T, dir string) string {
+				path := filepath.Join(dir, "nib.md")
+				if err := os.WriteFile(path, []byte("OLD"), 0o644); err != nil {
+					t.Fatalf("seed: %v", err)
+				}
+				return path
+			},
+			wantContent: "NEW",
+		},
+		{
+			name: "refuses a target that is not there",
+			seed: func(t *testing.T, dir string) string {
+				return filepath.Join(dir, "nib.md")
+			},
+			wantErr:     true,
+			wantMissing: true,
+		},
+		{
+			name: "refuses a target whose directory is not there",
+			seed: func(t *testing.T, dir string) string {
+				return filepath.Join(dir, "gone", "nib.md")
+			},
+			wantErr:     true,
+			wantMissing: true,
+			// The check runs BEFORE the temp file, so a path whose directory is
+			// also gone reports the missing target rather than a temp file the
+			// caller never asked for.
+			wantNotIn: "creating temp file",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			dir := t.TempDir()
+			path := tt.seed(t, dir)
+
+			gotDir, err := AtomicUpdateFileDeferDirSync(path, []byte("NEW"), 0o644)
+			if tt.wantErr {
+				if err == nil {
+					t.Fatal("expected a refusal, got nil")
+				}
+				if tt.wantMissing && !errors.Is(err, fs.ErrNotExist) {
+					t.Errorf("error = %v, want it to wrap fs.ErrNotExist", err)
+				}
+				if tt.wantNotIn != "" && strings.Contains(err.Error(), tt.wantNotIn) {
+					t.Errorf("error = %q, want it not to mention %q", err, tt.wantNotIn)
+				}
+				if gotDir != "" {
+					t.Errorf("returned directory = %q, want %q — nothing was renamed, so nothing is owed a flush", gotDir, "")
+				}
+				if _, statErr := os.Lstat(path); !errors.Is(statErr, fs.ErrNotExist) {
+					t.Errorf("the refusal created %s anyway", path)
+				}
+				assertOnlyEntries(t, dir)
+				return
+			}
+			if err != nil {
+				t.Fatalf("AtomicUpdateFileDeferDirSync: %v", err)
+			}
+			if gotDir != dir {
+				t.Errorf("returned directory = %q, want %q", gotDir, dir)
+			}
+			got, readErr := os.ReadFile(path)
+			if readErr != nil {
+				t.Fatalf("read back: %v", readErr)
+			}
+			if string(got) != tt.wantContent {
+				t.Errorf("content = %q, want %q", got, tt.wantContent)
+			}
+			assertNoTempFiles(t, dir)
+		})
+	}
+}
+
+// TestAtomicWriteFileDeferDirSyncStillCreates is the other half of the pair:
+// the creating writer's contract is UNCHANGED by the non-creating sibling, and
+// its failure mode on a missing DIRECTORY is the temp-file creation — which is
+// why the sibling has to check before it writes rather than branch at the
+// rename, and so cannot be this function plus a flag.
+func TestAtomicWriteFileDeferDirSyncStillCreates(t *testing.T) {
+	dir := t.TempDir()
+
+	path := filepath.Join(dir, "nib.md")
+	if _, err := AtomicWriteFileDeferDirSync(path, []byte("NEW"), 0o644); err != nil {
+		t.Fatalf("AtomicWriteFileDeferDirSync over a missing file: %v", err)
+	}
+	got, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("read back: %v", err)
+	}
+	if string(got) != "NEW" {
+		t.Errorf("content = %q, want %q", got, "NEW")
+	}
+
+	_, err = AtomicWriteFileDeferDirSync(filepath.Join(dir, "gone", "nib.md"), []byte("NEW"), 0o644)
+	if err == nil {
+		t.Fatal("expected an error writing into a directory that is not there")
+	}
+	if !strings.Contains(err.Error(), "creating temp file") {
+		t.Errorf("error = %q, want it to name the temp file it could not create", err)
+	}
+}
+
+// assertOnlyEntries fails if dir holds anything at all — used after a refusal,
+// which must leave neither the target nor a temp file behind.
+func assertOnlyEntries(t *testing.T, dir string) {
+	t.Helper()
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		t.Fatalf("read dir: %v", err)
+	}
+	for _, e := range entries {
+		t.Errorf("a refused update left %s behind", e.Name())
 	}
 }

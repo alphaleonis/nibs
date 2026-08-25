@@ -74,12 +74,21 @@ func loadWithWarnings(t *testing.T, kind int, n int) (*Core, string) {
 	for i := 1; i <= n; i++ {
 		loadWarningKinds[kind].write(t, dataDir, i)
 	}
+	return core, reloadWarnings(t, core)
+}
+
+// reloadWarnings loads an already-constructed core again and returns everything
+// THAT load wrote to its warn writer, with the previous load's output out of the
+// way — which is what lets a test ask what a second read says rather than what
+// two reads say together.
+func reloadWarnings(t *testing.T, core *Core) string {
+	t.Helper()
 	var warnings bytes.Buffer
 	core.SetWarnWriter(&warnings)
 	if err := core.Load(); err != nil {
 		t.Fatalf("Load: %v", err)
 	}
-	return core, warnings.String()
+	return warnings.String()
 }
 
 // countWarnings counts the emitted warnings rather than the lines they occupy:
@@ -229,5 +238,99 @@ func TestWatcherElisionSendsTheReaderSomewhereReal(t *testing.T) {
 	if len(unparseable) != offenders {
 		t.Fatalf("a fresh load names %d of the %d files the batch warned about, so the elision's remedy leads nowhere",
 			len(unparseable), offenders)
+	}
+}
+
+// TestReloadSaysNothingTheFirstLoadAlreadySaid is the bound's other dimension.
+// The one above bounds how much ONE load says about a store; this bounds how
+// often the SAME thing gets said to one reader.
+//
+// Three verbs — the two areas edits and `config set-prefix` — re-read the store
+// under its write lock, because the snapshot they loaded at startup may name
+// files a concurrent rename has moved. That reload used to re-emit every
+// per-file diagnostic verbatim and spend a second copy of the per-load budget,
+// so a store with 30 unparseable files put 42 lines on stderr where a `nibs
+// list` over the same store put 21.
+//
+// The fourth read is what keeps the fix honest: a file that only went bad
+// between the two reads is news, and must still reach the reader.
+func TestReloadSaysNothingTheFirstLoadAlreadySaid(t *testing.T) {
+	const offenders = 3
+
+	for _, kind := range loadWarningKinds {
+		t.Run(kind.name, func(t *testing.T) {
+			core, nibsDir := setupTestCore(t)
+			dataDir := storeData(t, nibsDir)
+			for n := 1; n <= offenders; n++ {
+				kind.write(t, dataDir, n)
+			}
+
+			if got := countWarnings(reloadWarnings(t, core)); got != offenders {
+				t.Fatalf("the first load emitted %d warnings for %d offenders, so this test asserts nothing about the second",
+					got, offenders)
+			}
+
+			repeat := reloadWarnings(t, core)
+			if got := countWarnings(repeat); got != 0 {
+				t.Errorf("re-reading an unchanged store repeated %d warning(s) the first load already printed:\n%s", got, repeat)
+			}
+			// The diagnostics are rebuilt from scratch on every load and are
+			// what `nibs check` reads back, so silencing the repeat must not
+			// silence them.
+			if kind.diagnosed != nil {
+				if got := kind.diagnosed(core); got != offenders {
+					t.Errorf("after the reload the retained diagnostics carry %d of %d offenders, so the `nibs check` remedy leads nowhere",
+						got, offenders)
+				}
+			}
+
+			arrived := kind.write(t, dataDir, offenders+1)
+			news := reloadWarnings(t, core)
+			if got := countWarnings(news); got != 1 {
+				t.Errorf("a file that went bad between the two reads produced %d warning(s), want exactly 1:\n%s", got, news)
+			}
+			if !strings.Contains(news, arrived) {
+				t.Errorf("the reload never named %s, which only went bad after the first read:\n%s", arrived, news)
+			}
+		})
+	}
+}
+
+// TestReloadDoesNotSpendASecondWarningBudget pins the half of the doubling that
+// the count above cannot see: the budget is per load, so a reload over a store
+// past it used to emit a fresh twenty AND a second elision line.
+//
+// A warning the first load SUPPRESSED is deliberately not promoted by the
+// reload either. That load's elision line already spoke for it and named `nibs
+// check`, and re-reading the same bytes is not what makes it worth printing.
+func TestReloadDoesNotSpendASecondWarningBudget(t *testing.T) {
+	const offenders = maxWarningsPerBatch + 10
+
+	for _, kind := range loadWarningKinds {
+		t.Run(kind.name, func(t *testing.T) {
+			core, nibsDir := setupTestCore(t)
+			dataDir := storeData(t, nibsDir)
+			for n := 1; n <= offenders; n++ {
+				kind.write(t, dataDir, n)
+			}
+
+			// The elision line goes through logWarn too, so a load that spends
+			// the whole budget emits one more than the budget allows examples.
+			first := reloadWarnings(t, core)
+			if got := countWarnings(first); got != maxWarningsPerBatch+1 {
+				t.Fatalf("the first load emitted %d warnings, want the budget's %d plus its elision line", got, maxWarningsPerBatch)
+			}
+			if !strings.Contains(first, "10 more") {
+				t.Fatalf("the first load elided nothing, so this test asserts nothing about the second:\n%s", first)
+			}
+
+			repeat := reloadWarnings(t, core)
+			if got := countWarnings(repeat); got != 0 {
+				t.Errorf("the reload spent a second warning budget, emitting %d warning(s):\n%s", got, repeat)
+			}
+			if strings.Contains(repeat, "more") {
+				t.Errorf("the reload printed a second elision line for warnings the first load already elided:\n%s", repeat)
+			}
+		})
 	}
 }

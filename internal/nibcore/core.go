@@ -118,6 +118,23 @@ type Core struct {
 	unparseableFiles []UnparseableFile
 	duplicateIDs     []DuplicateID
 
+	// loadWarned is every load-time warning THIS PROCESS has already put on the
+	// warn writer, guarded by c.mu alongside the diagnostics above. A load is
+	// idempotent, so a second one over an unchanged store has nothing new to say
+	// — and three verbs now re-read the store under the write lock, which
+	// otherwise printed the whole set a second time and spent a second copy of
+	// the per-load budget. Keyed by the RENDERED message so a warning about a
+	// file that only went bad between the two reads still reaches the reader.
+	//
+	// Deliberately fed by the warnings the budget SUPPRESSED as well as the ones
+	// it emitted: the first load's elision line already spoke for those and sent
+	// the reader to `nibs check`, so re-reading the store is not the event that
+	// makes them worth printing.
+	//
+	// The watcher's batches keep their own un-deduplicated budget: there a
+	// repeated warning means the file broke again, which is news.
+	loadWarned map[string]struct{}
+
 	// Search index (optional, lazy-initialized)
 	searchIndex SearchIndex
 
@@ -237,9 +254,25 @@ type warnBudget struct {
 	c          *Core
 	emitted    int
 	suppressed int
+	// seen, when non-nil, is the across-batches set a repeat is measured
+	// against — Core.loadWarned for a store load, nil for a watcher batch. A
+	// warning already in it costs nothing: it is neither emitted nor counted as
+	// suppressed, so it cannot push a genuinely new one out of the budget or
+	// raise an elision line of its own.
+	seen map[string]struct{}
 }
 
 func (w *warnBudget) warn(format string, args ...any) {
+	if w.seen != nil {
+		// Rendered rather than keyed on the format string: the format is shared
+		// by every file of one kind, and it is the FILE that makes a warning
+		// new.
+		msg := fmt.Sprintf(format, args...)
+		if _, repeat := w.seen[msg]; repeat {
+			return
+		}
+		w.seen[msg] = struct{}{}
+	}
 	if w.emitted >= maxWarningsPerBatch {
 		w.suppressed++
 		return
@@ -314,8 +347,13 @@ func (c *Core) loadFromDisk() error {
 
 	// Every per-file warning below spends this budget; the retained diagnostics
 	// above do not, so `nibs check` still answers for the whole store however
-	// little of it reached stderr (see warnBudget).
-	warns := &warnBudget{c: c}
+	// little of it reached stderr (see warnBudget). The budget is fresh per load
+	// while c.loadWarned outlives it, so a reload pays for what it newly finds
+	// and says nothing twice (see the field).
+	if c.loadWarned == nil {
+		c.loadWarned = make(map[string]struct{})
+	}
+	warns := &warnBudget{c: c, seen: c.loadWarned}
 
 	// Walk the store's CONTENT directories — data/ and archive/, dot
 	// directories pruned (see WalkStoreContent). cmd/migrate's scans walk the
@@ -1479,16 +1517,7 @@ func (c *Core) saveToDisk(b *nib.Nib) error {
 // fsutil.DirSyncBatch — see fsutil.AtomicWriteFileDeferDirSync for the weaker
 // guarantee that holds until the flush.
 func (c *Core) saveToDiskDeferDirSync(b *nib.Nib) (string, error) {
-	// Determine the file path. A nib with no Path yet is new, and new nibs are
-	// written into the store's data/ directory — the store root holds
-	// directories and the config, never nib files.
-	var path string
-	if b.Path != "" {
-		path = filepath.Join(c.root, b.Path)
-	} else {
-		b.Path = c.layout.DataRel(nib.BuildFilename(b.ID, b.Slug))
-		path = filepath.Join(c.root, b.Path)
-	}
+	path := c.nibFilePath(b)
 
 	// Ensure parent directory exists
 	dir := filepath.Dir(path)
@@ -1496,7 +1525,42 @@ func (c *Core) saveToDiskDeferDirSync(b *nib.Nib) (string, error) {
 		return "", fmt.Errorf("creating directory: %w", err)
 	}
 
-	// Render and write
+	return c.renderAndWriteDeferDirSync(b, path, fsutil.AtomicWriteFileDeferDirSync)
+}
+
+// updateOnDiskDeferDirSync is saveToDiskDeferDirSync for a caller that is
+// REPLACING a nib's existing file rather than deciding where a nib lives: it
+// refuses a path nothing is at instead of creating one there.
+//
+// The distinction is the difference between a stale path being reported and a
+// nib being duplicated. A bulk rewrite holds the path each nib carried when this
+// process loaded the store, and `nibs config set-prefix` renames every one of
+// them; a creating write turns the leftover path into a second copy of the nib,
+// under a prefix the config no longer declares. See
+// fsutil.AtomicUpdateFileDeferDirSync for what that refusal does and does not
+// promise.
+//
+// It does NOT MkdirAll: an existing file's directory exists, and creating one
+// for a path the write is about to refuse would leave an empty directory behind.
+func (c *Core) updateOnDiskDeferDirSync(b *nib.Nib) (string, error) {
+	return c.renderAndWriteDeferDirSync(b, c.nibFilePath(b), fsutil.AtomicUpdateFileDeferDirSync)
+}
+
+// nibFilePath resolves the absolute file a nib's bytes belong in. A nib with no
+// Path yet is new, and new nibs are written into the store's data/ directory —
+// the store root holds directories and the config, never nib files — so this
+// also ASSIGNS that Path.
+func (c *Core) nibFilePath(b *nib.Nib) string {
+	if b.Path == "" {
+		b.Path = c.layout.DataRel(nib.BuildFilename(b.ID, b.Slug))
+	}
+	return filepath.Join(c.root, b.Path)
+}
+
+// renderAndWriteDeferDirSync renders a nib and commits it through write, which
+// is one of fsutil's two deferred-flush writers — the creating one for a save,
+// the refusing one for an update.
+func (c *Core) renderAndWriteDeferDirSync(b *nib.Nib, path string, write func(string, []byte, os.FileMode) (string, error)) (string, error) {
 	content, err := b.Render()
 	if err != nil {
 		return "", err
@@ -1505,7 +1569,7 @@ func (c *Core) saveToDiskDeferDirSync(b *nib.Nib) (string, error) {
 	// Write atomically (temp file + rename) so a crash or a concurrent reader
 	// never observes a half-written nib — a torn file would fail nib.Parse on the
 	// next snapshot build and surface as an OnDiskUnparseableError.
-	unflushedDir, err := fsutil.AtomicWriteFileDeferDirSync(path, content, 0644)
+	unflushedDir, err := write(path, content, 0644)
 	if err != nil {
 		return "", fmt.Errorf("writing file: %w", err)
 	}

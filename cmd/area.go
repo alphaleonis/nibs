@@ -214,7 +214,7 @@ func runAreaRename(cmd *cobra.Command, args []string) error {
 	}
 	newPath := joinAreaPathForDisplay(parent, newName)
 
-	lock, err := acquireAreaEditLock(app, areaRenameJSON)
+	lock, err := beginAreaEdit(app, areaRenameJSON)
 	if err != nil {
 		return err
 	}
@@ -330,7 +330,7 @@ func runAreaRm(cmd *cobra.Command, args []string) error {
 		disposition = areaDispositionUnassign
 	}
 
-	lock, err := acquireAreaEditLock(app, areaRmJSON)
+	lock, err := beginAreaEdit(app, areaRmJSON)
 	if err != nil {
 		return err
 	}
@@ -447,24 +447,45 @@ func areaEmptyDispositionError(path string, disposition areaDisposition) error {
 		areaDispositionAction(disposition), quotedArea(path), areaDispositionFlag(disposition), config.RenderAreaPath(path))
 }
 
-// acquireAreaEditLock takes the store's cross-process write lock for the WHOLE
-// verb, so the member cascade and the `areas:` rewrite that follows it are one
-// critical section.
+// beginAreaEdit opens an areas edit's critical section: it takes the store's
+// cross-process write lock for the WHOLE verb — so the member cascade and the
+// `areas:` rewrite that follows it are one critical section — and then re-reads
+// the store from disk under it.
 //
-// Both halves are read-modify-writes of shared state, and the config half is a
-// rewrite of the entire file. Taken separately — a lock per cascade and none at
-// all for the config — two concurrent area edits interleave: each reads the
-// pre-edit config, each writes the whole file back, and the loser's declaration
-// is gone while its cascade is on disk. Both processes exit 0, so nothing ever
-// says to rerun, and the members it moved are write-refused from then on.
+// Both halves of the edit are read-modify-writes of shared state, and the config
+// half is a rewrite of the entire file. Taken separately — a lock per cascade and
+// none at all for the config — two concurrent area edits interleave: each reads
+// the pre-edit config, each writes the whole file back, and the loser's
+// declaration is gone while its cascade is on disk. Both processes exit 0, so
+// nothing ever says to rerun, and the members it moved are write-refused from
+// then on.
 //
 // It blocks rather than refusing, matching every other store mutation: the other
 // holder is another nibs process finishing one operation.
-func acquireAreaEditLock(app *App, jsonMode bool) (*nibcore.StoreLock, error) {
+//
+// THE RELOAD IS WHY THE BLOCKING IS SAFE. Waiting here means another process was
+// mid-write, and this one has been holding the snapshot it loaded at startup the
+// whole time. A `nibs config set-prefix` renames every file in the store, so the
+// path each member carried is then a name nothing is at, and a cascade over
+// those paths writes each member back under its pre-rename name — leaving the
+// store with more files than it had, under a prefix the config no longer
+// declares. Reading the store again HERE, rather than refusing over a store that
+// moved, is what makes a concurrent rename an ordinary event: the cascade
+// proceeds against the paths the store holds now.
+//
+// It is the NIBS that are re-read, and only those — Core.Load never opens
+// config.yml — so the areas vocabulary the rest of the verb decides from is
+// still the one this process loaded at startup.
+func beginAreaEdit(app *App, jsonMode bool) (*nibcore.StoreLock, error) {
 	lock, err := nibcore.AcquireStoreLock(app.Core.Root())
 	if err != nil {
 		return nil, cmdError(jsonMode, output.ErrFileError,
 			"this store's write lock could not be taken, and an areas edit rewrites both the nibs and the vocabulary so it must hold one: %v", err)
+	}
+	if err := app.Core.Load(); err != nil {
+		_ = lock.Release()
+		return nil, cmdError(jsonMode, output.ErrFileError,
+			"nothing was written: re-reading the store under its write lock failed: %v", err)
 	}
 	return lock, nil
 }

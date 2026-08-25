@@ -1,6 +1,7 @@
 package cmd
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"os"
@@ -10,6 +11,8 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/alphaleonis/nibs/internal/config"
+	"github.com/alphaleonis/nibs/internal/nibcore"
 	"github.com/alphaleonis/nibs/internal/output"
 	"github.com/alphaleonis/nibs/testdata/fixtures"
 )
@@ -503,5 +506,137 @@ func TestQueryAreaFilterAgreesWithTheFlag(t *testing.T) {
 	}
 	if code := areaErrCode(t, err); code != output.ErrValidation {
 		t.Errorf("code = %q (exit %d), want %q (exit 2)", code, output.ExitCode(code), output.ErrValidation)
+	}
+}
+
+// staleAreaApp loads the store into an App and hands it back WITHOUT reloading
+// it again — the shape a CLI process is in from the moment its startup load
+// finishes until it writes. A test then moves the store underneath it, which is
+// what another nibs process holding the store lock does.
+func staleAreaApp(t *testing.T, nibsPath string) *App {
+	t.Helper()
+	cfg, err := config.Load(filepath.Join(nibsPath, "config.yml"))
+	if err != nil {
+		t.Fatalf("load config: %v", err)
+	}
+	core := nibcore.New(nibsPath, cfg)
+	core.SetWarnWriter(nil)
+	if err := core.Load(); err != nil {
+		t.Fatalf("load store: %v", err)
+	}
+	t.Cleanup(func() { _ = core.Close() })
+	return &App{Core: core, MigrationGatePassed: true}
+}
+
+// countStoreFiles counts the nib files the store holds across data/ and
+// archive/, which is the number an area edit must leave unchanged.
+func countStoreFiles(t *testing.T, nibsPath string) (total int, oldPrefixed []string) {
+	t.Helper()
+	for _, sub := range []string{"data", "archive"} {
+		entries, err := os.ReadDir(filepath.Join(nibsPath, sub))
+		if errors.Is(err, os.ErrNotExist) {
+			continue
+		}
+		if err != nil {
+			t.Fatalf("read %s: %v", sub, err)
+		}
+		for _, e := range entries {
+			if e.IsDir() || !strings.HasSuffix(e.Name(), ".md") {
+				continue
+			}
+			total++
+			if strings.HasPrefix(e.Name(), "tnib-") {
+				oldPrefixed = append(oldPrefixed, e.Name())
+			}
+		}
+	}
+	sort.Strings(oldPrefixed)
+	return total, oldPrefixed
+}
+
+// TestAreaCascadeWritesThePathsTheStoreHasNowIsTheAreaSideOfTheSameDefect.
+//
+// An `area rename` (or `area rm`) that parks on the store lock behind a
+// `config set-prefix` resumes holding the paths it loaded BEFORE that rename.
+// Writing a clone to one of them used to CREATE the file — resurrecting the nib
+// at its pre-rename path, so the store ended up with one more file than it
+// started with, under a prefix its config no longer declares.
+//
+// Both verbs re-derive the store under the lock, so the cascade lands on the
+// files that are actually there.
+func TestAreaCascadeWritesThePathsTheStoreHasNow(t *testing.T) {
+	tests := []struct {
+		name string
+		run  func(t *testing.T, app *App) error
+		// wantArea is the area the members must carry afterwards.
+		wantArea string
+	}{
+		{
+			name: "rename",
+			run: func(t *testing.T, app *App) error {
+				areaRenameCmd.SetContext(withApp(context.Background(), app))
+				return runAreaRename(areaRenameCmd, []string{"auth", "identity"})
+			},
+			wantArea: "identity",
+		},
+		{
+			name: "rm --unassign",
+			run: func(t *testing.T, app *App) error {
+				areaRmUnassign = true
+				areaRmCmd.SetContext(withApp(context.Background(), app))
+				return runAreaRm(areaRmCmd, []string{"auth"})
+			},
+			wantArea: "",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			nibsPath := setupAreaCLITest(t)
+			t.Cleanup(func() {
+				areaRenameJSON, areaRmJSON, areaRmUnassign, areaRmMoveTo = false, false, false, ""
+				setPrefixDryRun, setPrefixForce, setPrefixJSON = false, false, false
+				areaRenameCmd.SetContext(context.Background())
+				areaRmCmd.SetContext(context.Background())
+			})
+
+			// The members this cascade must reach, named by the id they carry
+			// BEFORE the prefix changes underneath the command.
+			before, _ := countStoreFiles(t, nibsPath)
+			app := staleAreaApp(t, nibsPath)
+			var members []string
+			for _, b := range app.Core.All() {
+				if app.Config().IsAreaWithin(b.Area, "auth") {
+					members = append(members, strings.TrimPrefix(b.ID, "tnib-"))
+				}
+			}
+			sort.Strings(members)
+			if len(members) == 0 {
+				t.Fatal("fixture declares area auth with no members; the cascade would prove nothing")
+			}
+
+			// Another process renames every file and rewrites the config while
+			// this App holds its pre-rename snapshot.
+			if _, err := runRootWith(t, "--nibs-path", nibsPath, "config", "set-prefix", "zz", "--force"); err != nil {
+				t.Fatalf("set-prefix: %v", err)
+			}
+
+			if err := tt.run(t, app); err != nil {
+				t.Fatalf("area cascade: %v", err)
+			}
+
+			total, oldPrefixed := countStoreFiles(t, nibsPath)
+			if total != before {
+				t.Errorf("store holds %d nib files, want %d — the cascade duplicated a nib", total, before)
+			}
+			if len(oldPrefixed) != 0 {
+				t.Errorf("files resurrected under the retired prefix: %v", oldPrefixed)
+			}
+			for _, short := range members {
+				if got := areaOf(t, nibsPath, "zz-"+short); got != tt.wantArea {
+					t.Errorf("zz-%s area = %q, want %q", short, got, tt.wantArea)
+				}
+			}
+		})
 	}
 }
