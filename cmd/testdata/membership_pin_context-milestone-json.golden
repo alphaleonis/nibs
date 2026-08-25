@@ -64,13 +64,6 @@
       "estimate": "m"
     },
     {
-      "id": "tnib-b001",
-      "title": "OAuth callback URL mismatch in production config",
-      "status": "todo",
-      "type": "bug",
-      "estimate": "s"
-    },
-    {
       "id": "tnib-f003",
       "title": "Password reset flow",
       "status": "todo",
@@ -83,6 +76,13 @@
       "status": "todo",
       "type": "bug",
       "estimate": "m"
+    },
+    {
+      "id": "tnib-b001",
+      "title": "OAuth callback URL mismatch in production config",
+      "status": "todo",
+      "type": "bug",
+      "estimate": "s"
     }
   ],
   "decisions": [

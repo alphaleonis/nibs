@@ -1,6 +1,14 @@
 #!/bin/bash
 # Generates the sample-project fixture dataset for UI and manual testing.
 # Run from repo root: bash testdata/fixtures/gen-sample-project.sh
+#
+# The four `documents:` entries below name files this fixture DELIBERATELY does
+# not ship — docs/product-roadmap.md (tnib-m001), docs/auth-architecture.md
+# (tnib-e001) and docs/websocket-rfc.md (tnib-f014 and tnib-e005). They are the
+# fixture's only coverage of the broken-document-link finding, so `nibs check`
+# against it is expected to report exactly those four and nothing else. Do not
+# "fix" them by adding the files; TestSampleProjectCheckFindingsArePinned in
+# internal/nibcore pins that set, and adding a file fails it.
 set -euo pipefail
 
 STORE="testdata/fixtures/sample-project/.nibs"
@@ -2113,6 +2121,12 @@ ENDNIB
 
 # ============================================================
 # BUGS
+#
+# A bug's only legal parent is an epic (nibtypes.ValidateParentType), so a bug
+# about a feature's subject matter hangs off that feature's EPIC rather than
+# the feature — which still places it in the subtree a reader expects to find
+# it under. Seven are parented that way; the other eight are deliberately
+# parentless, covering the loose-bug shape.
 # ============================================================
 
 cat > "$DIR/tnib-b001--oauth-callback-url-mismatch.md" << 'ENDNIB'
@@ -2126,8 +2140,8 @@ priority: high
 estimate: s
 created_at: 2026-03-18T14:00:00Z
 updated_at: 2026-03-22T09:00:00Z
-parent: tnib-f002
-order: c
+parent: tnib-e001
+order: f
 ---
 
 ## Steps to Reproduce
@@ -2192,8 +2206,8 @@ priority: high
 estimate: s
 created_at: 2026-03-20T09:00:00Z
 updated_at: 2026-03-24T15:00:00Z
-parent: tnib-f005
-order: c
+parent: tnib-e002
+order: g
 ---
 
 ## Steps to Reproduce
@@ -2285,8 +2299,8 @@ priority: normal
 estimate: s
 created_at: 2026-03-10T14:00:00Z
 updated_at: 2026-03-15T10:00:00Z
-parent: tnib-f011
-order: c
+parent: tnib-e004
+order: d
 ---
 
 ## Steps to Reproduce

@@ -62,19 +62,20 @@ func runNextJSON(t *testing.T, nibsPath string) nextOutput {
 
 // TestNextOnTheFixture pins the end-to-end answer and its provenance: the
 // active milestone derives to tnib-m001, its queue head tnib-e001 is descended
-// (past a completed feature and an in-progress task) to the first startable
-// leaf, and every hop is named.
+// (past a completed feature, then an in-progress one whose own leaves are
+// finished or already started) to the first startable leaf, and every hop is
+// named.
 func TestNextOnTheFixture(t *testing.T) {
 	nibsPath := setupNextCLITest(t)
 	out := runNext(t, nibsPath)
 
 	for _, want := range []string{
 		"Next",
-		"tnib-b001", // the answer: the first startable leaf under the queue head
+		"tnib-t006", // the answer: the first startable leaf under the queue head
 		"Reached through",
 		"tnib-m001", "active milestone",
 		"tnib-e001", "queue position 1",
-		"tnib-f002",
+		"tnib-f003",
 	} {
 		if !strings.Contains(out, want) {
 			t.Errorf("next output missing %q, got:\n%s", want, out)
@@ -82,8 +83,8 @@ func TestNextOnTheFixture(t *testing.T) {
 	}
 
 	got := runNextJSON(t, nibsPath)
-	if got.Action == nil || got.Action.ID != "tnib-b001" {
-		t.Fatalf("action = %v, want tnib-b001", got.Action)
+	if got.Action == nil || got.Action.ID != "tnib-t006" {
+		t.Fatalf("action = %v, want tnib-t006", got.Action)
 	}
 	if got.Milestone == nil || got.Milestone.ID != "tnib-m001" {
 		t.Fatalf("milestone = %v, want tnib-m001 (the only in-progress milestone)", got.Milestone)
@@ -95,7 +96,7 @@ func TestNextOnTheFixture(t *testing.T) {
 	for _, p := range got.Path {
 		path = append(path, p.ID)
 	}
-	if want := "tnib-e001 tnib-f002 tnib-b001"; strings.Join(path, " ") != want {
+	if want := "tnib-e001 tnib-f003 tnib-t006"; strings.Join(path, " ") != want {
 		t.Errorf("path = %v, want %s (queue entry, then the descent)", path, want)
 	}
 	if got.Fallback != nil {

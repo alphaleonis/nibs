@@ -1,6 +1,6 @@
 # Sample Project Fixture
 
-A curated test dataset of 87 nibs modeling a **TaskFlow** project management SaaS. Covers all nib types, statuses, priorities, estimates, tags, documents, parent/child hierarchies (4 levels deep), and blocking relationships.
+A curated test dataset of 89 nibs modeling a **TaskFlow** project management SaaS. Covers all nib types, statuses, priorities, estimates, tags, documents, parent/child hierarchies (4 levels deep), and blocking relationships.
 
 ## Contents
 
@@ -11,8 +11,15 @@ A curated test dataset of 87 nibs modeling a **TaskFlow** project management Saa
 | feature   | 20    | completed, in-progress, todo, draft, deferred, scrapped |
 | task      | 44    | completed, in-progress, todo, draft, scrapped           |
 | bug       | 15    | in-progress, todo, draft                                |
+| research  | 2     | completed, todo                                         |
 
 All 4 priorities (critical, high, normal, low), all 4 estimates (s, m, l, xl), 9 distinct tags, 4 document references, and 3 blocking relationships. The deferred status is exercised by the Slack integration feature.
+
+## The 4 document references are deliberately broken
+
+`docs/product-roadmap.md` (tnib-m001), `docs/auth-architecture.md` (tnib-e001) and `docs/websocket-rfc.md` (tnib-f014 and tnib-e005) name files this fixture does not ship, and that is on purpose: they are its only coverage of the broken-document-link finding. `nibs check` against a fresh copy is expected to report exactly those four and nothing else — no hierarchy findings, no other category.
+
+Do not "fix" them by adding the files. `TestSampleProjectCheckFindingsArePinned` in `internal/nibcore` pins that set, so both adding a file and adding a fifth reference fail the suite.
 
 ## Usage
 
@@ -58,30 +65,35 @@ This recreates all `.nibs/` files from scratch. The generator script is the sour
 
 ## Hierarchy
 
+A bug's only legal parent is an epic, so every bug about a feature's subject matter hangs off that feature's epic instead.
+
 ```
 v1.0 MVP Launch (milestone)
 ├── User Authentication (epic)
 │   ├── Email/password login (feature) ← 3 tasks
-│   ├── OAuth2 social login (feature) ← 2 tasks + 1 bug
+│   ├── OAuth2 social login (feature) ← 2 tasks + 1 research
 │   ├── Password reset flow (feature) ← 2 tasks
+│   ├── API documentation (task)
 │   ├── Session token bug (bug)
-│   └── API documentation (task)
+│   └── OAuth callback URL bug (bug)
 ├── Task Management Core (epic)
-│   ├── CRUD operations (feature) ← 3 tasks
-│   ├── Task assignment (feature) ← 2 tasks + 1 bug
+│   ├── CRUD operations (feature) ← 3 tasks + 1 research
+│   ├── Task assignment (feature) ← 2 tasks
 │   ├── Prioritization (feature) ← 2 tasks
 │   ├── Subtask support (feature) ← 2 tasks
+│   ├── Performance benchmark (task)
 │   ├── Title truncation bug (bug)
-│   └── Performance benchmark (task)
+│   └── Deactivated-user assignment bug (bug)
 ├── Dashboard & Reporting (epic) [blocked by Task Management]
 │   ├── Velocity chart (feature) ← 2 tasks
 │   ├── Personal dashboard (feature) ← 2 tasks
 │   ├── Export CSV/PDF (feature)
 │   └── Timezone bug (bug)
 └── API & Integrations (epic)
-    ├── Webhook system (feature) ← 2 tasks + 1 bug
+    ├── Webhook system (feature) ← 2 tasks
     ├── Slack integration (feature)
-    └── REST API v2 (feature, scrapped) ← 1 task
+    ├── REST API v2 (feature, scrapped) ← 1 task
+    └── Webhook timestamp bug (bug)
 
 v1.1 Team Collaboration (milestone, draft)
 ├── Real-time Collaboration (epic)
@@ -92,5 +104,5 @@ v1.1 Team Collaboration (milestone, draft)
     ├── Email digest (feature) ← 1 task
     └── Push notification bug (bug)
 
-Standalone: 12 tasks, 8 bugs, 3 features (various statuses)
+Standalone: 11 tasks, 8 bugs, 3 features (various statuses)
 ```
