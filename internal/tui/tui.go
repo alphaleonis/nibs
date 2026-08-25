@@ -217,10 +217,9 @@ func (a *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		a.list.helpExpanded = a.helpExpanded
 		a.detail.helpExpanded = a.helpExpanded
 
-		// Resize list to account for help panel height
+		// Resize list to account for the footer region (help panel or footer)
 		if a.helpExpanded {
-			helpHt := a.list.currentHelpHeight()
-			footerH := max(1, helpHt)
+			footerH := a.list.footerHeight()
 			if a.isTwoColumnMode() {
 				leftWidth, _ := calculatePaneWidths(a.width)
 				contentHeight := a.height - footerH
@@ -281,8 +280,7 @@ func (a *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				a.helpExpanded = !a.helpExpanded
 				if a.state == viewList {
 					a.list.helpExpanded = a.helpExpanded
-					helpHt := a.list.currentHelpHeight()
-					footerH := max(1, helpHt)
+					footerH := a.list.footerHeight()
 					if a.isTwoColumnMode() {
 						leftWidth, _ := calculatePaneWidths(a.width)
 						contentHeight := a.height - footerH
@@ -869,18 +867,10 @@ func (a *App) collectTagsWithCounts() []tagWithCount {
 func (a *App) renderTwoColumnView() string {
 	leftWidth, rightWidth := calculatePaneWidths(a.width)
 
-	// Calculate help panel dimensions
-	helpHt := 0
-	var helpPanel string
-	if a.helpExpanded {
-		entries := a.list.expandedHelpEntries()
-		helpPanel = renderHelpPanel(entries, a.width)
-		helpHt = helpPanelHeight(entries, a.width)
-	}
-
-	// Footer/panel height: the expanded panel, or the compact footer — which is
-	// one line unless a status message wrapped onto more.
-	contentHeight := a.height - max(a.list.footerHeight(), helpHt)
+	// Footer region: the expanded panel with any status message above it, or the
+	// compact footer — one line unless a status message wrapped onto more.
+	footer := a.list.footerRegion()
+	contentHeight := a.height - max(1, lipgloss.Height(footer))
 
 	// Render left pane (list) with constrained width, no footer
 	leftPane := a.list.ViewConstrained(leftWidth, contentHeight)
@@ -893,11 +883,7 @@ func (a *App) renderTwoColumnView() string {
 	// Compose columns
 	columns := lipgloss.JoinHorizontal(lipgloss.Top, leftPane, rightPane)
 
-	// When expanded, the panel includes esc/?/q — no separate footer
-	if helpPanel != "" {
-		return columns + "\n" + helpPanel
-	}
-	return columns + "\n" + a.list.Footer()
+	return columns + "\n" + footer
 }
 
 // View renders the current view

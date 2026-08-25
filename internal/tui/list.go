@@ -880,15 +880,34 @@ func (m listModel) View() string {
 	}
 
 	// Inner height: total - border(2) - "\n"(1) - footer/panel height
-	innerHeight := m.height - 3 - m.footerHeight()
-	content := m.viewContent(innerHeight)
-
-	if m.helpExpanded {
-		panel := renderHelpPanel(m.expandedHelpEntries(), m.width)
-		return content + "\n" + panel
-	}
-	return content + "\n" + m.Footer()
+	footer := m.footerRegion()
+	innerHeight := m.height - 3 - max(1, lipgloss.Height(footer))
+	return m.viewContent(innerHeight) + "\n" + footer
 }
+
+// footerRegion is everything drawn below the list box: the compact footer, or —
+// when the help panel is expanded — the status message with the panel beneath.
+//
+// The panel replaces the footer's help keys, not its status message: the
+// message is the outcome of the action the user just took, and a panel drawn
+// over it leaves a refused edit silent — the whole reason the footer learned to
+// carry a refusal. It sits above the panel rather than below because that end
+// of the region is furthest from the clip edge, and because the detail footer
+// already puts a message above its help row.
+func (m listModel) footerRegion() string {
+	if !m.helpExpanded {
+		return m.Footer()
+	}
+	return expandedFooterRegion(m.expandedHelpEntries(), m.statusMessage, m.statusKind, m.width, m.height, listBoxFloor)
+}
+
+// listBoxFloor is the fewest rows the list box ever occupies. viewContent draws
+// a border sized to the innerHeight it is handed, and lipgloss pads a shorter
+// render out to that height rather than truncating a taller one — six lines is
+// where the padding stops shrinking, at innerHeight 4 and every value below it.
+// A footer region taller than height-listBoxFloor therefore does not buy itself
+// room from the box; it runs past the terminal's last row instead.
+const listBoxFloor = 6
 
 // viewContent renders just the bordered list without footer.
 // innerHeight is the content height inside the border (not including border lines).
@@ -1067,10 +1086,7 @@ func (m listModel) Footer() string {
 // exactly as tall as the terminal, so rows the footer takes without being
 // granted are rows clipped off the bottom, the footer's own last line first.
 func (m listModel) footerHeight() int {
-	if h := m.currentHelpHeight(); h > 0 {
-		return h
-	}
-	return max(1, lipgloss.Height(m.Footer()))
+	return max(1, lipgloss.Height(m.footerRegion()))
 }
 
 // updateIndicator returns an unobtrusive trailing "update available" hint for
@@ -1095,14 +1111,6 @@ func (m listModel) expandedHelpEntries() []helpEntry {
 	}
 	entries = append(entries, helpEntry{"?", "less"}, helpEntry{"q", "quit"})
 	return entries
-}
-
-// currentHelpHeight returns the help panel height (0 when collapsed).
-func (m listModel) currentHelpHeight() int {
-	if !m.helpExpanded {
-		return 0
-	}
-	return helpPanelHeight(m.expandedHelpEntries(), m.width)
 }
 
 // updateTitle rebuilds the border title from the project name.
