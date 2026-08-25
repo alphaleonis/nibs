@@ -47,6 +47,19 @@ type StubBackend struct {
 	ReorderErr    error
 	ArchiveErr    error
 	DeleteErr     error
+	// The link mutations refuse independently of UpdateErr, which only the
+	// pickers writing through UpdateNib route through.
+	SetParentErr error
+	// SetParentErrByID fails only the named nibs, so a batch of moves can
+	// refuse some of its members and apply the rest.
+	SetParentErrByID map[string]error
+	AddBlockingErr   error
+	// RemoveBlockingErr is what makes the remove half of a blocking edit
+	// refusable at all: the resolver's RemoveBlocking refuses when the subject
+	// resolves to no nib, when the target does, when the write fails, and when
+	// the result does not read back — none of which the picker can drive, since
+	// it offers only links the store already holds.
+	RemoveBlockingErr error
 }
 
 type stubUpdateCall struct {
@@ -142,6 +155,12 @@ func (s *StubBackend) UpdateNib(_ context.Context, id string, input model.Update
 }
 
 func (s *StubBackend) SetParent(_ context.Context, id string, parentID *string, ifMatch *string) (*nib.Nib, error) {
+	if s.SetParentErr != nil {
+		return nil, s.SetParentErr
+	}
+	if err, ok := s.SetParentErrByID[id]; ok {
+		return nil, err
+	}
 	s.SetParentCalls = append(s.SetParentCalls, stubSetParentCall{ID: id, ParentID: parentID, IfMatch: ifMatch})
 	if n, ok := s.Nibs[id]; ok {
 		return n, nil
@@ -150,6 +169,9 @@ func (s *StubBackend) SetParent(_ context.Context, id string, parentID *string, 
 }
 
 func (s *StubBackend) AddBlocking(_ context.Context, id string, targetID string) (*nib.Nib, error) {
+	if s.AddBlockingErr != nil {
+		return nil, s.AddBlockingErr
+	}
 	s.AddBlockingCalls = append(s.AddBlockingCalls, stubBlockingCall{ID: id, TargetID: targetID})
 	if n, ok := s.Nibs[id]; ok {
 		return n, nil
@@ -158,6 +180,9 @@ func (s *StubBackend) AddBlocking(_ context.Context, id string, targetID string)
 }
 
 func (s *StubBackend) RemoveBlocking(_ context.Context, id string, targetID string) (*nib.Nib, error) {
+	if s.RemoveBlockingErr != nil {
+		return nil, s.RemoveBlockingErr
+	}
 	s.RemoveBlockingCalls = append(s.RemoveBlockingCalls, stubBlockingCall{ID: id, TargetID: targetID})
 	if n, ok := s.Nibs[id]; ok {
 		return n, nil

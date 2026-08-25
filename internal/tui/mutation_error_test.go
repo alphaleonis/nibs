@@ -1,6 +1,7 @@
 package tui
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"image/color"
@@ -666,5 +667,321 @@ func TestAnOverlongRefusalIsCappedRatherThanEatingTheView(t *testing.T) {
 				t.Errorf("the truncated refusal carries no ellipsis, so nothing says it was cut:\n%s", got)
 			}
 		})
+	}
+}
+
+// selectParent drives the open parent picker down to the named nib and
+// confirms it, the way a user does.
+func selectParent(t *testing.T, app *App, parentID string) {
+	t.Helper()
+	for i := 0; i < 20; i++ {
+		if item, ok := app.parentPicker.list.SelectedItem().(parentItem); ok && item.nib.ID == parentID {
+			sendKey(app, tea.KeyPressMsg{Code: tea.KeyEnter})
+			return
+		}
+		sendKey(app, tea.KeyPressMsg{Code: tea.KeyDown})
+	}
+	t.Fatalf("could not reach parent %q in the picker", parentID)
+}
+
+// toggleBlockingTarget drives the open blocking picker down to the named nib
+// and marks it, which is what the picker later confirms as a diff.
+func toggleBlockingTarget(t *testing.T, app *App, targetID string) {
+	t.Helper()
+	for i := 0; i < 20; i++ {
+		if item, ok := app.blockingPicker.list.SelectedItem().(blockingItem); ok && item.nib.ID == targetID {
+			sendKey(app, tea.KeyPressMsg{Code: ' ', Text: " "})
+			return
+		}
+		sendKey(app, tea.KeyPressMsg{Code: tea.KeyDown})
+	}
+	t.Fatalf("could not reach target %q in the picker", targetID)
+}
+
+// pickerHostView is one of the two views a picker is opened over. Each has its
+// own footer, and the report has to reach the one on screen.
+type pickerHostView struct {
+	name   string
+	enter  func(t *testing.T, app *App)
+	footer func(app *App) (string, statusKind)
+}
+
+func pickerHostViews() []pickerHostView {
+	return []pickerHostView{
+		{
+			name:   "list",
+			footer: func(app *App) (string, statusKind) { return app.list.statusMessage, app.list.statusKind },
+		},
+		{
+			name: "detail",
+			enter: func(t *testing.T, app *App) {
+				t.Helper()
+				sendKey(app, tea.KeyPressMsg{Code: tea.KeyEnter})
+				if app.state != viewDetail {
+					t.Fatalf("premise failed: expected the detail view, got state %d", app.state)
+				}
+			},
+			footer: func(app *App) (string, statusKind) { return app.detail.statusMessage, app.detail.statusKind },
+		},
+	}
+}
+
+// expandHelp opens the help panel, which replaces the footer's help keys and
+// takes rows the message has to be budgeted around.
+func expandHelp(t *testing.T, app *App) {
+	t.Helper()
+	sendKey(app, tea.KeyPressMsg{Code: '?', Text: "?"})
+	if !app.helpExpanded {
+		t.Fatal("premise failed: ? did not expand the help panel")
+	}
+}
+
+// reparentRefusalNibs is a move the parent picker offers and the write path
+// refuses. The picker filters candidates by ValidParentTypes, and a task under
+// a feature is a legal shape, so nothing there can pre-empt it; assignment
+// exclusivity is what refuses, because t1 and f1 both hold a place in ms1's
+// queue and a nib is never assigned alongside its own ancestor.
+func reparentRefusalNibs() []*nib.Nib {
+	return []*nib.Nib{
+		{ID: "ms1", Title: "Wave one", Type: "milestone", Status: "todo"},
+		{ID: "f1", Title: "Sync engine", Type: "feature", Status: "todo", Milestone: "ms1", MilestoneOrder: "a0"},
+		{ID: "t1", Title: "Wire the queue", Type: "task", Status: "todo", Milestone: "ms1", MilestoneOrder: "a1"},
+	}
+}
+
+// Spelled out rather than built by calling the resolver: an expectation
+// produced by re-running the production code asserts only that it is
+// deterministic.
+const reparentRefusal = "cannot move t1 under f1: t1 is assigned to milestone ms1 and f1 is assigned to milestone ms1 (a nib and its ancestor are never both assigned)"
+
+// Unlike the type picker — which pre-filters through validTypesForNib, so a
+// hierarchy-illegal flip is never offered — the parent picker can present a
+// target the write path rejects. A refusal it drops leaves the picker closed,
+// the list refreshed, and nothing said.
+func TestReparentRefusalReachesTheFooter(t *testing.T) {
+	const termWidth, termHeight = 160, 40
+	want := "Parent change failed: " + reparentRefusal
+
+	for _, helpOpen := range []bool{false, true} {
+		for _, view := range pickerHostViews() {
+			name := view.name
+			if helpOpen {
+				name += "/help-open"
+			}
+			t.Run(name, func(t *testing.T) {
+				app := setupRealBackendApp(t, reparentRefusalNibs())
+				if !focusOn(app, "t1") {
+					t.Fatal("premise failed: could not focus the task")
+				}
+				if view.enter != nil {
+					view.enter(t, app)
+				}
+				if helpOpen {
+					expandHelp(t, app)
+				}
+
+				sendKey(app, tea.KeyPressMsg{Code: 'p', Text: "p"})
+				if app.state != viewParentPicker {
+					t.Fatalf("premise failed: expected the parent picker to open, got state %d", app.state)
+				}
+				selectParent(t, app, "f1")
+
+				got, kind := view.footer(app)
+				if got != want {
+					t.Errorf("footer message = %q, want %q", got, want)
+				}
+				if kind != statusWarn {
+					t.Errorf("statusKind = %v, want statusWarn — the refusal would render in the success color", kind)
+				}
+				if painted := frameText(app.View().Content, termWidth, termHeight); !strings.Contains(painted, want) {
+					t.Errorf("the painted frame does not carry the refusal.\nwant: %q\ngot:  %q", want, painted)
+				}
+			})
+		}
+	}
+}
+
+// t2 is already blocked by t1, so marking t1 in t2's picker asks for the edge
+// back. The picker offers every nib but the subject, which is what lets it
+// present this refusal.
+func blockingCycleNibs() []*nib.Nib {
+	return []*nib.Nib{
+		{ID: "t1", Title: "Ship the parser", Type: "task", Status: "todo"},
+		{ID: "t2", Title: "Ship the writer", Type: "task", Status: "todo", BlockedBy: []string{"t1"}},
+	}
+}
+
+const blockingCycleRefusal = "would create cycle: [t1 t2 t1]"
+
+func TestBlockingRefusalReachesTheFooter(t *testing.T) {
+	const termWidth, termHeight = 160, 40
+	want := "Blocking change failed: " + blockingCycleRefusal
+
+	for _, helpOpen := range []bool{false, true} {
+		for _, view := range pickerHostViews() {
+			name := view.name
+			if helpOpen {
+				name += "/help-open"
+			}
+			t.Run(name, func(t *testing.T) {
+				app := setupRealBackendApp(t, blockingCycleNibs())
+				if !focusOn(app, "t2") {
+					t.Fatal("premise failed: could not focus the blocked nib")
+				}
+				if view.enter != nil {
+					view.enter(t, app)
+				}
+				if helpOpen {
+					expandHelp(t, app)
+				}
+
+				sendKey(app, tea.KeyPressMsg{Code: 'b', Text: "b"})
+				if app.state != viewBlockingPicker {
+					t.Fatalf("premise failed: expected the blocking picker to open, got state %d", app.state)
+				}
+				toggleBlockingTarget(t, app, "t1")
+				sendKey(app, tea.KeyPressMsg{Code: tea.KeyEnter})
+
+				got, kind := view.footer(app)
+				if got != want {
+					t.Errorf("footer message = %q, want %q", got, want)
+				}
+				if kind != statusWarn {
+					t.Errorf("statusKind = %v, want statusWarn — the refusal would render in the success color", kind)
+				}
+				if painted := frameText(app.View().Content, termWidth, termHeight); !strings.Contains(painted, want) {
+					t.Errorf("the painted frame does not carry the refusal.\nwant: %q\ngot:  %q", want, painted)
+				}
+			})
+		}
+	}
+}
+
+// One picker confirmation carries both an add list and a remove list, and the
+// footer holds one message — so the two loops report through a single call
+// rather than the second overwriting the first. The stub is what makes the
+// remove side refusable at all: RemoveBlocking's only refusal is a write
+// failure, so the real backend cannot be driven into one from the picker.
+func TestBlockingFailuresFromBothLoopsAreReportedTogether(t *testing.T) {
+	addRefusal := errors.New("would create cycle: [nib-2 nib-1 nib-2]")
+	removeRefusal := errors.New("write refused: etag mismatch")
+
+	tests := []struct {
+		name      string
+		addErr    error
+		removeErr error
+		want      string
+	}{
+		{
+			name:   "the add loop names its reason",
+			addErr: addRefusal,
+			want:   "Blocking change failed: " + addRefusal.Error(),
+		},
+		{
+			name:      "the remove loop names its reason",
+			removeErr: removeRefusal,
+			want:      "Blocking change failed: " + removeRefusal.Error(),
+		},
+		{
+			name:      "both loops feed one count",
+			addErr:    addRefusal,
+			removeErr: removeRefusal,
+			want:      "Blocking change failed for 2 link(s)",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			app, stub := setupTestApp(t, pickerTestNibs())
+			_, cmd := app.Update(openBlockingPickerMsg{nibID: "nib-1", nibTitle: "First", currentBlocking: []string{"nib-3"}})
+			processCmd(app, cmd)
+			if app.state != viewBlockingPicker {
+				t.Fatalf("premise failed: expected the blocking picker to open, got state %d", app.state)
+			}
+			stub.AddBlockingErr = tt.addErr
+			stub.RemoveBlockingErr = tt.removeErr
+
+			_, cmd = app.Update(blockingConfirmedMsg{nibID: "nib-1", toAdd: []string{"nib-2"}, toRemove: []string{"nib-3"}})
+			processCmd(app, cmd)
+
+			if got := app.list.statusMessage; got != tt.want {
+				t.Errorf("list footer message = %q, want %q", got, tt.want)
+			}
+			if app.list.statusKind != statusWarn {
+				t.Errorf("statusKind = %v, want statusWarn", app.list.statusKind)
+			}
+		})
+	}
+}
+
+// A refused batch of moves is reported by count, and the nibs that were not
+// refused are still moved — a refusal must not abort the rest.
+func TestBatchReparentFailureIsReportedByCount(t *testing.T) {
+	app, stub := setupTestApp(t, []*nib.Nib{
+		{ID: "epic-1", Title: "Umbrella", Type: "epic", Status: "todo", Order: "1"},
+		{ID: "nib-1", Title: "First", Type: "task", Status: "todo", Order: "2"},
+		{ID: "nib-2", Title: "Second", Type: "task", Status: "todo", Order: "3"},
+		{ID: "nib-3", Title: "Third", Type: "task", Status: "todo", Order: "4"},
+	})
+	ids := []string{"nib-1", "nib-2", "nib-3"}
+	_, cmd := app.Update(openParentPickerMsg{
+		nibIDs:   ids,
+		nibTitle: "3 selected nibs",
+		nibTypes: []string{"task", "task", "task"},
+	})
+	processCmd(app, cmd)
+	if app.state != viewParentPicker {
+		t.Fatalf("premise failed: expected the parent picker to open, got state %d", app.state)
+	}
+	stub.SetParentErrByID = map[string]error{
+		"nib-1": errors.New(reparentRefusal),
+		"nib-3": errors.New("some other refusal"),
+	}
+
+	_, cmd = app.Update(parentSelectedMsg{nibIDs: ids, parentID: "epic-1"})
+	processCmd(app, cmd)
+
+	want := "Parent change failed for 2 nib(s)"
+	if got := app.list.statusMessage; got != want {
+		t.Errorf("list footer message = %q, want %q", got, want)
+	}
+	if app.list.statusKind != statusWarn {
+		t.Errorf("statusKind = %v, want statusWarn", app.list.statusKind)
+	}
+	var moved []string
+	for _, call := range stub.SetParentCalls {
+		moved = append(moved, call.ID)
+	}
+	if len(moved) != 1 || moved[0] != "nib-2" {
+		t.Errorf("applied moves = %v, want only nib-2 — a refusal must not abort the rest", moved)
+	}
+}
+
+// A re-parent that goes through leaves the footer alone, so the report cannot
+// degrade into a message shown on every move. The move is read back afterwards
+// so this cannot pass by nothing having happened.
+func TestSuccessfulReparentReportsNothing(t *testing.T) {
+	app := setupRealBackendApp(t, []*nib.Nib{
+		{ID: "e1", Title: "Umbrella", Type: "epic", Status: "todo"},
+		{ID: "t1", Title: "Wire the queue", Type: "task", Status: "todo"},
+	})
+	if !focusOn(app, "t1") {
+		t.Fatal("premise failed: could not focus the task")
+	}
+	sendKey(app, tea.KeyPressMsg{Code: 'p', Text: "p"})
+	if app.state != viewParentPicker {
+		t.Fatalf("premise failed: expected the parent picker to open, got state %d", app.state)
+	}
+	selectParent(t, app, "e1")
+
+	moved, err := app.backend.GetNib(context.Background(), "t1")
+	if err != nil || moved == nil || moved.Parent != "e1" {
+		t.Fatalf("premise failed: the move did not land (parent=%v, err=%v)", moved, err)
+	}
+	if got := app.list.statusMessage; got != "" {
+		t.Errorf("list footer message = %q, want empty after an accepted move", got)
+	}
+	if app.list.statusKind != statusOK {
+		t.Errorf("statusKind = %v, want statusOK", app.list.statusKind)
 	}
 }

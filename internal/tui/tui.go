@@ -431,7 +431,7 @@ func (a *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				a.detail = a.initDetailModel(updatedNib)
 			}
 		}
-		a.reportMutationFailures("Status change", errs)
+		a.reportMutationFailures("Status change", "nib", errs)
 		return a, a.list.loadNibs
 
 	case openCreateTypePickerMsg:
@@ -480,7 +480,7 @@ func (a *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				a.detail = a.initDetailModel(updatedNib)
 			}
 		}
-		a.reportMutationFailures("Type change", errs)
+		a.reportMutationFailures("Type change", "nib", errs)
 		return a, a.list.loadNibs
 
 	case createTypeSelectedMsg:
@@ -521,7 +521,7 @@ func (a *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				a.detail = a.initDetailModel(updatedNib)
 			}
 		}
-		a.reportMutationFailures("Priority change", errs)
+		a.reportMutationFailures("Priority change", "nib", errs)
 		return a, a.list.loadNibs
 
 	case openEstimatePickerMsg:
@@ -552,7 +552,7 @@ func (a *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				a.detail = a.initDetailModel(updatedNib)
 			}
 		}
-		a.reportMutationFailures("Estimate change", errs)
+		a.reportMutationFailures("Estimate change", "nib", errs)
 		return a, a.list.loadNibs
 
 	case openBlockingPickerMsg:
@@ -567,19 +567,20 @@ func (a *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return a, a.list.loadNibs
 
 	case blockingConfirmedMsg:
-		// Apply all blocking changes via backend mutations
+		// Apply all blocking changes via backend mutations. Both loops report
+		// through one call: the footer holds a single message, so a second
+		// report would overwrite the first and re-hide whatever it named.
+		var errs []error
 		for _, targetID := range msg.toAdd {
 			_, err := a.backend.AddBlocking(context.Background(), msg.nibID, targetID)
 			if err != nil {
-				// Continue with other changes even if one fails
-				continue
+				errs = append(errs, err)
 			}
 		}
 		for _, targetID := range msg.toRemove {
 			_, err := a.backend.RemoveBlocking(context.Background(), msg.nibID, targetID)
 			if err != nil {
-				// Continue with other changes even if one fails
-				continue
+				errs = append(errs, err)
 			}
 		}
 		// Return to previous view and refresh
@@ -590,6 +591,7 @@ func (a *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				a.detail = a.initDetailModel(updatedNib)
 			}
 		}
+		a.reportMutationFailures("Blocking change", "link", errs)
 		return a, a.list.loadNibs
 
 	case reorderNibMsg:
@@ -742,11 +744,11 @@ func (a *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if msg.parentID != "" {
 			parentID = &msg.parentID
 		}
+		var errs []error
 		for _, nibID := range msg.nibIDs {
 			_, err := a.backend.SetParent(context.Background(), nibID, parentID, nil)
 			if err != nil {
-				// Continue with other nibs even if one fails
-				continue
+				errs = append(errs, err)
 			}
 		}
 		// Return to the previous view and refresh
@@ -760,6 +762,7 @@ func (a *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				a.detail = a.initDetailModel(updatedNib)
 			}
 		}
+		a.reportMutationFailures("Parent change", "nib", errs)
 		return a, a.list.loadNibs
 
 	case clearFilterMsg:
@@ -966,11 +969,17 @@ func (a *App) initDetailModel(n *nib.Nib) detailModel {
 // guard's refusals wrap to six lines at 80 columns, a quarter of the screen, and
 // the count is the part that says the batch did not apply whole. Re-applying to
 // one nib at a time is what shows each reason.
-func (a *App) reportMutationFailures(action string, errs []error) {
+//
+// unit names what ONE error is about, because that is not the same thing at
+// every caller: the status, type, priority, estimate and parent pickers collect
+// one error per nib they were applying to, while the blocking picker confirms
+// one subject's diff and collects one error per LINK in it. Counting links as
+// nibs would tell a user that two nibs refused when one did.
+func (a *App) reportMutationFailures(action, unit string, errs []error) {
 	if len(errs) == 0 {
 		return
 	}
-	message := fmt.Sprintf("%s failed for %d nib(s)", action, len(errs))
+	message := fmt.Sprintf("%s failed for %d %s(s)", action, len(errs), unit)
 	if len(errs) == 1 {
 		message = fmt.Sprintf("%s failed: %v", action, errs[0])
 	}
