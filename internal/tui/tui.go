@@ -242,6 +242,7 @@ func (a *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		a.list.statusMessage = ""
 		a.list.statusKind = statusOK
 		a.detail.statusMessage = ""
+		a.detail.statusKind = statusOK
 
 		// Handle key chord sequences
 		if a.state == viewList && a.list.list.FilterState() != 1 {
@@ -348,8 +349,17 @@ func (a *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				a.state = viewList
 				a.history = nil
 			} else {
-				// Recreate detail view with fresh nib data
+				// Recreate detail view with fresh nib data, carrying the footer
+				// across: the rebuild starts from an empty one, and a nib file
+				// changing on disk is not the user acknowledging a refusal.
+				// Agents and the CLI write nibs while a session is open, so
+				// without this a watcher tick puts the swallow back within
+				// seconds. The keypress clear stays the sole owner of when a
+				// message goes away.
+				message, kind := a.detail.statusMessage, a.detail.statusKind
 				a.detail = a.initDetailModel(updatedNib)
+				a.detail.statusMessage = message
+				a.detail.statusKind = kind
 			}
 		}
 		// Trigger list refresh
@@ -402,13 +412,15 @@ func (a *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case statusSelectedMsg:
 		// Update all nibs' status via backend mutations
+		var errs []error
 		for _, nibID := range msg.nibIDs {
 			_, err := a.backend.UpdateNib(context.Background(), nibID, model.UpdateNibInput{
 				Status: &msg.status,
 			})
 			if err != nil {
-				// Continue with other nibs even if one fails
-				continue
+				// Carry on with the other nibs, but keep the error: the picker
+				// closes over it and nothing else would show it.
+				errs = append(errs, err)
 			}
 		}
 		// Return to the previous view and refresh
@@ -421,6 +433,7 @@ func (a *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				a.detail = a.initDetailModel(updatedNib)
 			}
 		}
+		a.reportMutationFailures("Status change", errs)
 		return a, a.list.loadNibs
 
 	case openCreateTypePickerMsg:
@@ -450,13 +463,13 @@ func (a *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 		}
 		// Update all nibs' type via backend mutations
+		var errs []error
 		for _, nibID := range msg.nibIDs {
 			_, err := a.backend.UpdateNib(context.Background(), nibID, model.UpdateNibInput{
 				Type: &msg.nibType,
 			})
 			if err != nil {
-				// Continue with other nibs even if one fails
-				continue
+				errs = append(errs, err)
 			}
 		}
 		// Return to the previous view and refresh
@@ -469,6 +482,7 @@ func (a *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				a.detail = a.initDetailModel(updatedNib)
 			}
 		}
+		a.reportMutationFailures("Type change", errs)
 		return a, a.list.loadNibs
 
 	case createTypeSelectedMsg:
@@ -490,13 +504,13 @@ func (a *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case prioritySelectedMsg:
 		// Update all nibs' priority via backend mutations
+		var errs []error
 		for _, nibID := range msg.nibIDs {
 			_, err := a.backend.UpdateNib(context.Background(), nibID, model.UpdateNibInput{
 				Priority: graphql.OmittableOf(&msg.priority),
 			})
 			if err != nil {
-				// Continue with other nibs even if one fails
-				continue
+				errs = append(errs, err)
 			}
 		}
 		// Return to the previous view and refresh
@@ -509,6 +523,7 @@ func (a *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				a.detail = a.initDetailModel(updatedNib)
 			}
 		}
+		a.reportMutationFailures("Priority change", errs)
 		return a, a.list.loadNibs
 
 	case openEstimatePickerMsg:
@@ -522,12 +537,13 @@ func (a *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return a, a.list.loadNibs
 
 	case estimateSelectedMsg:
+		var errs []error
 		for _, nibID := range msg.nibIDs {
 			_, err := a.backend.UpdateNib(context.Background(), nibID, model.UpdateNibInput{
 				Estimate: graphql.OmittableOf(&msg.estimate),
 			})
 			if err != nil {
-				continue
+				errs = append(errs, err)
 			}
 		}
 		a.state = a.previousState
@@ -538,6 +554,7 @@ func (a *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				a.detail = a.initDetailModel(updatedNib)
 			}
 		}
+		a.reportMutationFailures("Estimate change", errs)
 		return a, a.list.loadNibs
 
 	case openBlockingPickerMsg:
@@ -861,8 +878,9 @@ func (a *App) renderTwoColumnView() string {
 		helpHt = helpPanelHeight(entries, a.width)
 	}
 
-	// Footer/panel height: 1 for compact footer, helpHt for expanded panel
-	contentHeight := a.height - max(1, helpHt)
+	// Footer/panel height: the expanded panel, or the compact footer — which is
+	// one line unless a status message wrapped onto more.
+	contentHeight := a.height - max(a.list.footerHeight(), helpHt)
 
 	// Render left pane (list) with constrained width, no footer
 	leftPane := a.list.ViewConstrained(leftWidth, contentHeight)
@@ -947,6 +965,36 @@ func (a *App) initDetailModel(n *nib.Nib) detailModel {
 		m, _ = m.Update(tea.WindowSizeMsg{Width: a.width, Height: a.height})
 	}
 	return m
+}
+
+// reportMutationFailures surfaces the errors a picker's mutations collected, in
+// the footer of whichever view the app has just returned to. Without it a
+// refusal leaves with the closing picker and the user is shown an edit that
+// never happened. Call it AFTER any detail-model rebuild, which starts from an
+// empty footer and would drop the message.
+//
+// One failure carries its reason verbatim, since a refusal's reason is what says
+// how to proceed, and the footer wraps it across its own lines rather than
+// letting the terminal cut it unmarked. Several fall back to a count because the
+// footer buys its rows from the list they are about: two of the milestone queue
+// guard's refusals wrap to six lines at 80 columns, a quarter of the screen, and
+// the count is the part that says the batch did not apply whole. Re-applying to
+// one nib at a time is what shows each reason.
+func (a *App) reportMutationFailures(action string, errs []error) {
+	if len(errs) == 0 {
+		return
+	}
+	message := fmt.Sprintf("%s failed for %d nib(s)", action, len(errs))
+	if len(errs) == 1 {
+		message = fmt.Sprintf("%s failed: %v", action, errs[0])
+	}
+	if a.state == viewDetail {
+		a.detail.statusMessage = message
+		a.detail.statusKind = statusWarn
+		return
+	}
+	a.list.statusMessage = message
+	a.list.statusKind = statusWarn
 }
 
 // getEditor returns the user's preferred editor using the fallback chain:

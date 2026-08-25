@@ -21,9 +21,9 @@ Next Tasks
           
   tnib-t006  Design password reset email template
   tnib-t007  Implement token generation and expiry
-  tnib-b001  OAuth callback URL mismatch in production config
   tnib-f003  Password reset flow
   tnib-b002  Session tokens not invalidated on password change
+  tnib-b001  OAuth callback URL mismatch in production config
 
 Key Decisions
              

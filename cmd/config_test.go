@@ -9,7 +9,9 @@ import (
 	"testing"
 
 	"github.com/alphaleonis/nibs/internal/config"
+	"github.com/alphaleonis/nibs/internal/fsutil"
 	"github.com/alphaleonis/nibs/internal/nib"
+	"github.com/alphaleonis/nibs/internal/output"
 	"github.com/alphaleonis/nibs/internal/testskip"
 )
 
@@ -617,5 +619,159 @@ func TestSetPrefix_PreservesTheProjectConfig(t *testing.T) {
 		if strings.Contains(got, unwanted) {
 			t.Errorf("set-prefix baked %s into the project config:\n%s", unwanted, got)
 		}
+	}
+}
+
+// TestSetPrefixHoldsTheStoreLockAcrossEverythingItMutates is the concurrency
+// half of the fix, and it asks the question at the only two moments that settle
+// it: while a nib file is being written, and while config.yml is being renamed
+// into place, can anything else take the store's write lock?
+//
+// The command renames every nib file and then rewrites the whole config from a
+// read of its own. Without the lock a concurrent `nibs area rename` — which
+// holds this lock from the moment it plans its own config edit until it writes
+// it — reads the pre-set-prefix config inside its own window and writes it back
+// over this one. Measured with the acquisition below removed: four concurrent
+// processes — one set-prefix and three area renames — against one store whose
+// config declares 9,000 areas, which is only there to make the whole-file
+// read-modify-write cost milliseconds rather than microseconds, lost the prefix
+// in 40 of 40 runs. The store was left with every nib file renamed and a config
+// still declaring the old prefix. At the fixture's config size the same four
+// writers lost nothing in 20 runs, which is why the guard below probes the lock
+// directly instead of racing anything.
+func TestSetPrefixHoldsTheStoreLockAcrossEverythingItMutates(t *testing.T) {
+	_, nibsDir, cfgPath := setupSetPrefixTest(t, "tnib-",
+		testNibSpec{filename: "tnib-aaa--root.md", id: "tnib-aaa"},
+		testNibSpec{filename: "tnib-bbb--child.md", id: "tnib-bbb", parent: "tnib-aaa"},
+	)
+
+	// One probe per moment, keyed by what the seam is renaming into place. Both
+	// have to answer "held": the nib writes and the config write are two halves
+	// of one change, and a lock dropped between them is no lock at all.
+	freeAt := map[string]bool{}
+	orig := fsutil.RenameFn
+	fsutil.RenameFn = func(oldpath, newpath string) error {
+		moment := ""
+		switch {
+		case strings.HasSuffix(newpath, "config.yml"):
+			moment = "the config write"
+		case strings.HasSuffix(newpath, ".md"):
+			moment = "a nib write"
+		}
+		if _, seen := freeAt[moment]; moment != "" && !seen {
+			freeAt[moment] = storeLockIsFree(t, nibsDir)
+		}
+		return orig(oldpath, newpath)
+	}
+	t.Cleanup(func() { fsutil.RenameFn = orig })
+
+	if err := runSetPrefixCmd(t, cfgPath, nibsDir, "new-", "--json"); err != nil {
+		t.Fatalf("set-prefix: %v", err)
+	}
+
+	for _, moment := range []string{"a nib write", "the config write"} {
+		free, probed := freeAt[moment]
+		if !probed {
+			t.Fatalf("%s never happened, so the probe proves nothing", moment)
+		}
+		if free {
+			t.Errorf("the store's write lock was free during %s — a concurrent config writer can read the pre-edit config here and write it back over this one", moment)
+		}
+	}
+}
+
+// TestSetPrefixRefusesAStoreThatDeclaresNoPrefix pins the gate that keeps the
+// config editor's create-a-section paths off this command. set-prefix derives
+// its OLD prefix from the loaded config and reprefix.BuildPlan refuses an empty
+// one, so a store whose config declares no `nibs.prefix` — however that is
+// written — never reaches config.PlanSetStoredPrefix at all. Its doc comment
+// says so, and this is the sentence executed.
+func TestSetPrefixRefusesAStoreThatDeclaresNoPrefix(t *testing.T) {
+	tests := []struct {
+		name   string
+		config string
+	}{
+		{"a nibs key with no value under it", "nibs:\nareas:\n    - name: auth\n"},
+		{"a nibs key written as an explicit null", "nibs: null\n"},
+		{"a config with no nibs section", "areas:\n    - name: auth\n"},
+		{"a config that is only comments", "# everything here is commented out\n"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			_, nibsDir, cfgPath := setupSetPrefixTest(t, "tnib-",
+				testNibSpec{filename: "tnib-aaa--root.md", id: "tnib-aaa"},
+			)
+			if err := os.WriteFile(cfgPath, []byte(tt.config), 0o644); err != nil {
+				t.Fatal(err)
+			}
+
+			err := runSetPrefixCmd(t, cfgPath, nibsDir, "zz-", "--json", "--force")
+			if err == nil {
+				t.Fatal("expected a refusal for a store that declares no prefix")
+			}
+			if !strings.Contains(err.Error(), "old prefix: must not be empty") {
+				t.Errorf("error = %q, want the empty-old-prefix refusal that fires before the config edit is planned", err)
+			}
+			// The store is untouched, which is what makes the gate a gate.
+			after, readErr := os.ReadFile(cfgPath)
+			if readErr != nil {
+				t.Fatal(readErr)
+			}
+			if string(after) != tt.config {
+				t.Errorf("the refused command rewrote config.yml:\n%s", after)
+			}
+			if _, statErr := os.Stat(dataPath(nibsDir, "tnib-aaa--root.md")); statErr != nil {
+				t.Errorf("the refused command renamed a nib file anyway: %v", statErr)
+			}
+		})
+	}
+}
+
+// TestSetPrefixRefusesAMultiDocumentConfigBeforeItRenamesAnything is the
+// pre-write half of the fix. The re-marshal emits only the first document, so a
+// config holding a second one cannot be rewritten without deleting it — and that
+// has to be discovered while the store is still untouched, because a rename is
+// durable the moment it lands and no rerun undoes it.
+func TestSetPrefixRefusesAMultiDocumentConfigBeforeItRenamesAnything(t *testing.T) {
+	_, nibsDir, cfgPath := setupSetPrefixTest(t, "tnib-",
+		testNibSpec{filename: "tnib-aaa--root.md", id: "tnib-aaa"},
+	)
+	const twoDocs = `nibs:
+  prefix: tnib-
+  id_length: 4
+---
+# a second document some other tool appends
+extra: true
+`
+	if err := os.WriteFile(cfgPath, []byte(twoDocs), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	err := runSetPrefixCmd(t, cfgPath, nibsDir, "new-", "--json")
+	if err == nil {
+		t.Fatal("expected a refusal for a multi-document config")
+	}
+	var ce *output.CodedError
+	if !errors.As(err, &ce) {
+		t.Fatalf("error = %T, want *output.CodedError", err)
+	}
+	if ce.Code != output.ErrValidation {
+		t.Errorf("code = %q, want %q — the file's content is the caller's to fix", ce.Code, output.ErrValidation)
+	}
+	if !strings.Contains(err.Error(), "more than one YAML document") {
+		t.Errorf("error = %q, want it to name the shape", err.Error())
+	}
+
+	// The two things a late refusal would have cost: the second document, and a
+	// store whose files no longer match the prefix its config declares.
+	after, readErr := os.ReadFile(cfgPath)
+	if readErr != nil {
+		t.Fatal(readErr)
+	}
+	if string(after) != twoDocs {
+		t.Errorf("the refused edit rewrote config.yml:\n%s", after)
+	}
+	if _, statErr := os.Stat(dataPath(nibsDir, "tnib-aaa--root.md")); statErr != nil {
+		t.Errorf("the refused edit renamed a nib file anyway: %v", statErr)
 	}
 }

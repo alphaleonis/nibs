@@ -425,6 +425,13 @@ extra: true
 			if !strings.Contains(err.Error(), "more than one YAML document") {
 				t.Errorf("error = %q, want it to name the shape", err)
 			}
+			// yaml.v3 reads a bare trailing `---` as a second, null document, so
+			// this refusal also lands on a file with nothing after the marker to
+			// move. The remedy has to fit that case or it prescribes an action
+			// the user cannot perform.
+			if !strings.Contains(err.Error(), "delete the marker if nothing follows it") {
+				t.Errorf("error = %q, want a remedy that fits a marker with nothing after it", err)
+			}
 			if got := readAreaEditStore(t, storeDir); got != twoDocs {
 				t.Errorf("the refused edit rewrote the file:\n%s", got)
 			}

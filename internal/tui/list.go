@@ -291,8 +291,7 @@ func (m listModel) Update(msg tea.Msg) (listModel, tea.Cmd) {
 		m.width = msg.Width
 		m.height = msg.Height
 		// Reserve space for border, "\n", and footer/help panel
-		helpHt := m.currentHelpHeight()
-		m.list.SetSize(msg.Width-2, msg.Height-3-max(1, helpHt))
+		m.list.SetSize(msg.Width-2, msg.Height-3-m.footerHeight())
 		// Recalculate responsive columns
 		m.cols = ui.CalculateResponsiveColumns(msg.Width, m.hasTags)
 		m.applyWideMode()
@@ -881,9 +880,7 @@ func (m listModel) View() string {
 	}
 
 	// Inner height: total - border(2) - "\n"(1) - footer/panel height
-	helpHt := m.currentHelpHeight()
-	footerH := max(1, helpHt) // 1 for compact footer, helpHt for expanded panel
-	innerHeight := m.height - 3 - footerH
+	innerHeight := m.height - 3 - m.footerHeight()
 	content := m.viewContent(innerHeight)
 
 	if m.helpExpanded {
@@ -896,6 +893,11 @@ func (m listModel) View() string {
 // viewContent renders just the bordered list without footer.
 // innerHeight is the content height inside the border (not including border lines).
 func (m listModel) viewContent(innerHeight int) string {
+	// Re-size the inner list to the box actually being drawn. A footer that
+	// grew since the last resize shrinks the box, and a list still holding the
+	// taller size would push its surplus rows straight through the border.
+	m.list.SetSize(m.width-2, innerHeight)
+
 	border := lipgloss.NewStyle().
 		Border(lipgloss.RoundedBorder()).
 		BorderForeground(ui.ColorMuted).
@@ -1048,12 +1050,7 @@ func (m listModel) Footer() string {
 	// Show status message if present, otherwise show help
 	footer := selectionPrefix
 	if m.statusMessage != "" {
-		color := ui.ColorSuccess
-		if m.statusKind == statusWarn {
-			color = ui.ColorWarning
-		}
-		statusStyle := lipgloss.NewStyle().Foreground(color).Bold(true)
-		footer += statusStyle.Render(m.statusMessage)
+		footer += renderStatusMessage(m.statusMessage, m.statusKind, m.width-lipgloss.Width(selectionPrefix), maxStatusFooterLines(m.height))
 	} else {
 		footer += help
 	}
@@ -1061,6 +1058,19 @@ func (m listModel) Footer() string {
 	footer += m.updateIndicator()
 
 	return footer
+}
+
+// footerHeight is the number of terminal lines the footer region occupies.
+//
+// It is not fixed at one: a status message wraps to as many lines as the width
+// needs, and the content above has to give those rows back — the frame is
+// exactly as tall as the terminal, so rows the footer takes without being
+// granted are rows clipped off the bottom, the footer's own last line first.
+func (m listModel) footerHeight() int {
+	if h := m.currentHelpHeight(); h > 0 {
+		return h
+	}
+	return max(1, lipgloss.Height(m.Footer()))
 }
 
 // updateIndicator returns an unobtrusive trailing "update available" hint for

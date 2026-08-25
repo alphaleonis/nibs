@@ -8,8 +8,8 @@ priority: high
 estimate: s
 created_at: 2026-03-18T14:00:00Z
 updated_at: 2026-03-22T09:00:00Z
-parent: tnib-f002
-order: c
+parent: tnib-e001
+order: f
 ---
 
 ## Steps to Reproduce

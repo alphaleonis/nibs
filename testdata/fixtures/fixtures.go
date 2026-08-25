@@ -4,6 +4,13 @@
 // complete store, holding config.yml alongside its data/ directory — and must
 // never be modified in place. Use [CopySampleProject] to get a temporary copy
 // that tests can safely mutate.
+//
+// This package's own guards cannot live beside it: `go` excludes any directory
+// named testdata from wildcard package matching, so a _test.go under testdata/
+// is never built by `./...` — the pattern the test gate, CI and the linter all
+// run. TestCopySampleProject lives in internal/store, with the layout it
+// asserts; TestNoTestFilesUnderTestdata in internal/testskip fails on a test
+// left in that trap.
 package fixtures
 
 import (

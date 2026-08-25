@@ -48,13 +48,30 @@
             "etag": "087d0acaf343def5"
           },
           "progress": {
-            "total": 5,
+            "total": 6,
             "done": 1,
-            "percent": 20,
+            "percent": 17,
             "scrapped": 0,
             "deferred": 0
           },
           "items": [
+            {
+              "id": "tnib-b001",
+              "slug": "oauth-callback-url-mismatch",
+              "path": "data/tnib-b001--oauth-callback-url-mismatch.md",
+              "version": 2,
+              "title": "OAuth callback URL mismatch in production config",
+              "status": "todo",
+              "type": "bug",
+              "priority": "high",
+              "estimate": "s",
+              "created_at": "2026-03-18T14:00:00Z",
+              "updated_at": "2026-03-22T09:00:00Z",
+              "body": "\n## Steps to Reproduce\n\n1. Deploy to production environment\n2. Click \"Login with Google\"\n3. Complete Google consent screen\n4. Observe \"redirect_uri_mismatch\" error\n\n## Expected vs Actual\n\n**Expected:** User redirected back to app and logged in\n**Actual:** Google returns `redirect_uri_mismatch` error because production config still has staging callback URL\n\n## Root Cause\n\n`OAUTH_CALLBACK_URL` environment variable in production is set to `https://staging.taskflow.dev/auth/callback` instead of `https://taskflow.dev/auth/callback`. Terraform config has the correct value but it wasn't applied after the last deploy.",
+              "parent": "tnib-e001",
+              "order": "f",
+              "etag": "dcf001176210eb43"
+            },
             {
               "id": "tnib-b002",
               "slug": "session-tokens-not-invalidated",
@@ -151,13 +168,30 @@
             "etag": "6fcdd5030cc73bfb"
           },
           "progress": {
-            "total": 6,
+            "total": 7,
             "done": 1,
-            "percent": 17,
+            "percent": 14,
             "scrapped": 0,
             "deferred": 0
           },
           "items": [
+            {
+              "id": "tnib-b003",
+              "slug": "deactivated-user-assignment",
+              "path": "data/tnib-b003--deactivated-user-assignment.md",
+              "version": 2,
+              "title": "Assigning task to deactivated user shows no error",
+              "status": "in-progress",
+              "type": "bug",
+              "priority": "high",
+              "estimate": "s",
+              "created_at": "2026-03-20T09:00:00Z",
+              "updated_at": "2026-03-24T15:00:00Z",
+              "body": "\n## Steps to Reproduce\n\n1. Deactivate user \"alice@example.com\" via admin panel\n2. Assign a task to \"alice@example.com\" via API\n3. Request succeeds with 200 OK\n\n## Expected vs Actual\n\n**Expected:** 400 Bad Request with message \"Cannot assign to deactivated user\"\n**Actual:** Assignment succeeds silently; task shows as assigned to a ghost user\n\n## Root Cause\n\nAssignment endpoint only checks if user ID exists in users table, doesn't check `is_active` flag. Need to add `WHERE is_active = true` to the user lookup query.",
+              "parent": "tnib-e002",
+              "order": "g",
+              "etag": "032d374cfa51e23c"
+            },
             {
               "id": "tnib-b004",
               "slug": "task-title-truncation",
@@ -366,13 +400,30 @@
             "etag": "f8dd857da2f11646"
           },
           "progress": {
-            "total": 2,
+            "total": 3,
             "done": 0,
             "percent": 0,
             "scrapped": 1,
             "deferred": 1
           },
           "items": [
+            {
+              "id": "tnib-b006",
+              "slug": "webhook-missing-updated-at",
+              "path": "data/tnib-b006--webhook-missing-updated-at.md",
+              "version": 2,
+              "title": "Webhook payloads missing updated_at timestamp",
+              "status": "todo",
+              "type": "bug",
+              "priority": "normal",
+              "estimate": "s",
+              "created_at": "2026-03-10T14:00:00Z",
+              "updated_at": "2026-03-15T10:00:00Z",
+              "body": "\n## Steps to Reproduce\n\n1. Register a webhook for task.updated events\n2. Update a task\n3. Inspect the webhook payload\n\n## Expected vs Actual\n\n**Expected:** Payload includes `updated_at` timestamp\n**Actual:** `updated_at` field is missing from the payload\n\n## Root Cause\n\nWebhook serializer uses `TaskSummary` struct which doesn't include `UpdatedAt` field. Need to add it to the struct and the JSON serialization.",
+              "parent": "tnib-e004",
+              "order": "d",
+              "etag": "5bc3a1c0e13cfd91"
+            },
             {
               "id": "tnib-f011",
               "slug": "webhook-delivery-system",

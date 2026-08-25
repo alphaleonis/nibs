@@ -1,10 +1,8 @@
 package config
 
 import (
-	"bytes"
 	"errors"
 	"fmt"
-	"io"
 	"io/fs"
 	"slices"
 	"strings"
@@ -148,7 +146,7 @@ type storedArea struct {
 // storeDir and renders the result, without writing anything.
 //
 // The edit goes through a yaml.Node tree rather than Config.Save for exactly the
-// reason SetStoredPrefix does: Config.Save marshals a whole Config, and the
+// reason PlanSetStoredPrefix does: Config.Save marshals a whole Config, and the
 // Config a command holds is the MERGED read model, so saving it would write
 // user-config and system-default values into a project's committed config and
 // drop every key this build does not model. That matters more for an `areas:`
@@ -185,21 +183,13 @@ func planStoredAreaEdit(storeDir string, edit func(areas *yaml.Node) error) (*St
 		return nil, err
 	}
 
-	decoder := yaml.NewDecoder(bytes.NewReader(data))
-	var doc yaml.Node
-	if err := decoder.Decode(&doc); err != nil {
-		if errors.Is(err, io.EOF) {
-			return nil, refuseAreaEdit("%s declares no areas to edit", path)
+	doc, err := soleConfigDocument(data)
+	if err != nil {
+		if errors.Is(err, errMultipleConfigDocuments) {
+			return nil, refuseAreaEdit(
+				"%s holds more than one YAML document, and editing its areas would rewrite the file from the first one alone — move anything after the `---` into its own file, or delete the marker if nothing follows it, then rerun",
+				path)
 		}
-		return nil, refuseAreaEdit("parsing %s: %v", path, err)
-	}
-	var next yaml.Node
-	switch err := decoder.Decode(&next); {
-	case err == nil:
-		return nil, refuseAreaEdit(
-			"%s holds more than one YAML document, and editing its areas would rewrite the file from the first one alone — move everything after the `---` into its own file, then rerun",
-			path)
-	case !errors.Is(err, io.EOF):
 		return nil, refuseAreaEdit("parsing %s: %v", path, err)
 	}
 
