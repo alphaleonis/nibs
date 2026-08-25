@@ -33,8 +33,10 @@ func TestSymlinkSkipsAreEnrolled(t *testing.T) {
 			return err
 		}
 		if d.IsDir() {
-			// node_modules and web/dist carry no Go, and .git is enormous.
-			if name := d.Name(); name == "node_modules" || name == ".git" || name == "dist" {
+			// skipTree, shared with TestNoTestFilesUnderTestdata: a test file
+			// outside the surface `./...` builds is not this module's to police,
+			// and a restored .worktrees/ checkout is full of them.
+			if path != root && skipTree(d.Name()) {
 				return fs.SkipDir
 			}
 			return nil
