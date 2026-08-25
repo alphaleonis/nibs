@@ -37,13 +37,16 @@ type StubBackend struct {
 	Blocking map[string]bool
 
 	// Error injection
-	ListErr    error
-	GetErr     error
-	UpdateErr  error
-	CreateErr  error
-	ReorderErr error
-	ArchiveErr error
-	DeleteErr  error
+	ListErr   error
+	GetErr    error
+	UpdateErr error
+	// UpdateErrByID fails only the named nibs, so a batch can be made to
+	// refuse some of its members and apply the rest.
+	UpdateErrByID map[string]error
+	CreateErr     error
+	ReorderErr    error
+	ArchiveErr    error
+	DeleteErr     error
 }
 
 type stubUpdateCall struct {
@@ -127,6 +130,9 @@ func (s *StubBackend) CreateNib(_ context.Context, input model.CreateNibInput) (
 func (s *StubBackend) UpdateNib(_ context.Context, id string, input model.UpdateNibInput) (*nib.Nib, error) {
 	if s.UpdateErr != nil {
 		return nil, s.UpdateErr
+	}
+	if err, ok := s.UpdateErrByID[id]; ok {
+		return nil, err
 	}
 	s.UpdateCalls = append(s.UpdateCalls, stubUpdateCall{ID: id, Input: input})
 	if n, ok := s.Nibs[id]; ok {

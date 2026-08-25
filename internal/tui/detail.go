@@ -144,6 +144,7 @@ type detailModel struct {
 	linksActive   bool                 // true = links section focused
 	cols          ui.ResponsiveColumns // responsive column widths for links
 	statusMessage string               // Status message to display in footer
+	statusKind    statusKind           // How the footer colors that message
 	helpExpanded  bool                 // Help panel state — set by App when ? is toggled
 }
 
@@ -469,7 +470,17 @@ func (m detailModel) View() string {
 		panel := renderHelpPanel(detailExpandedEntries(), m.width)
 		return header + "\n" + linksSection + body + "\n" + panel
 	}
-	return header + "\n" + linksSection + body + "\n" + m.renderFooter()
+
+	// A wrapped status message makes the footer taller than the one line the
+	// viewport was sized against; the body gives those rows back, since the
+	// frame is exactly as tall as the terminal and whatever runs past its last
+	// row is dropped — the footer's own last line first.
+	footer := m.renderFooter()
+	if extra := lipgloss.Height(footer) - 1; extra > 0 {
+		m.viewport.SetHeight(max(1, m.viewport.Height()-extra))
+		body = bodyBorder.Render(m.viewport.View())
+	}
+	return header + "\n" + linksSection + body + "\n" + footer
 }
 
 // renderFooter returns the abbreviated footer for the detail view.
@@ -486,8 +497,10 @@ func (m detailModel) renderFooter() string {
 		renderHelpKey("q", "quit")
 
 	if m.statusMessage != "" {
-		statusStyle := lipgloss.NewStyle().Foreground(ui.ColorSuccess).Bold(true)
-		footer = statusStyle.Render(m.statusMessage) + "  " + footer
+		// Above the help row, not in front of it: prepending pushed the row off
+		// the right edge for as long as the message was up, and the keys it
+		// names are how the reader acts on what the message says.
+		footer = renderStatusMessage(m.statusMessage, m.statusKind, m.width, maxStatusFooterLines(m.height)) + "\n" + footer
 	}
 	return footer
 }

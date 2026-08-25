@@ -436,9 +436,12 @@ func etagConflictError(jsonOutput bool, err error) (error, bool) {
 // cannot share setMutationError because its fallback for an unclassified create
 // failure is FILE_ERROR, not validation.
 //
-// Two surfaces deliberately do not: the TUI issues UpdateNib directly and drops
-// the refusal, and cmd/serve.go's presenter stamps only the codes it enumerates,
-// so a hierarchy refusal reaches a web client uncoded.
+// Two surfaces deliberately do not: the TUI issues UpdateNib directly and puts a
+// single refusal's own text, uncoded, in its footer — wrapped across as many
+// lines as the width needs, up to a third of the screen — while a refused batch
+// gets only a count of the nibs that failed, neither reason nor code; and
+// cmd/serve.go's presenter stamps only the codes it enumerates, so a hierarchy
+// refusal reaches a web client uncoded.
 //
 // err is rendered as-is rather than the HierarchyError's own message, so
 // whatever context the caller's text carries survives. Two cases need it: the
