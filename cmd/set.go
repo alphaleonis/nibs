@@ -542,6 +542,11 @@ func setMutationError(jsonOutput bool, err error) error {
 //     re-read the store (after a set-prefix the nib's own id has changed too),
 //     which is the opposite of what the VALIDATION_ERROR fallback's "bad input"
 //     would send an agent to do.
+//   - A CREATE whose store was re-prefixed while it waited for that same write
+//     lock is the other half of that refusal, and shares its class: the rename
+//     has retired every id this process holds — the new nib's parent and
+//     blockers among them — so the repair is again to re-read the store, and a
+//     misnamed create is exactly what the refusal exists to stop.
 //
 // A SECONDARY id — a parent, a blocking or blocked-by target, a bulk-reorder
 // member or anchor — does NOT normally arrive as a sentinel: the graph layer
@@ -558,10 +563,10 @@ func setMutationError(jsonOutput bool, err error) error {
 // a not-found cause keeps its own class. That ordering is load-bearing for
 // OnDiskUnparseableError, the one classified type here with an Unwrap; it is
 // inert today because both of its construction sites carry an OS read error or a
-// YAML parse error. ETagMismatchError, ETagRequiredError, HierarchyError and
-// ReplaceMatchError implement no Unwrap at all, so none of the conflict, the
-// hierarchy and the text-match branches can be claimed by the sentinel either
-// way, and their order among the concrete-type tests is inert.
+// YAML parse error. ETagMismatchError, ETagRequiredError, HierarchyError,
+// ReplaceMatchError and StoreRePrefixedError implement no Unwrap at all, so
+// neither sentinel can claim the conflict, hierarchy, text-match or re-prefix
+// branches either way, and their order among the concrete-type tests is inert.
 //
 // Between the two sentinels the id-miss goes first: nib.ErrNotFound and
 // fs.ErrNotExist are unrelated values, so a chain carrying both is asserting two
@@ -571,6 +576,10 @@ func setMutationError(jsonOutput bool, err error) error {
 func mutationErrCode(err error) (string, bool) {
 	var unparseableErr *nibcore.OnDiskUnparseableError
 	if errors.As(err, &unparseableErr) {
+		return output.ErrFileError, true
+	}
+	var rePrefixedErr *nibcore.StoreRePrefixedError
+	if errors.As(err, &rePrefixedErr) {
 		return output.ErrFileError, true
 	}
 	if isConflictError(err) {

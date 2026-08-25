@@ -241,6 +241,13 @@ func runSetPrefix(cmd *cobra.Command, args []string) error {
 		msg += fmt.Sprintf("\nNote: %s was a symlink to %s and is now a regular file; %s still holds the old prefix, so update or remove it",
 			cfg.Layout().ConfigPath(), stripControlChars(staleLink), stripControlChars(staleLink))
 	}
+	// A holder that loaded this store before the renames is now working under a
+	// vocabulary no file in it carries, and nothing it can do clears that: its
+	// creates refuse (nibcore.StoreRePrefixedError) and every short id it is
+	// asked to resolve is prepended the retired prefix. The operator who caused
+	// it is the only one positioned to act, and this is the only moment they are
+	// looking.
+	msg += liveServeNote(app, "\nNote: another nibs process is holding this store. A running `nibs serve` reads the id prefix once at startup, so restart it — until then it refuses every nib it is asked to create and resolves no short id against the renamed files.")
 	if setPrefixJSON {
 		return output.SuccessMessage(msg)
 	}

@@ -181,6 +181,11 @@ type Config struct {
 	// config file's own location, the data and archive directories, and the
 	// project name (its PARENT directory's name).
 	storeDir string `yaml:"-"`
+
+	// fromFile records that a config FILE was read to produce these values,
+	// rather than them being the defaults a store without one gets. See
+	// LoadedFromFile for the distinction this exists to keep answerable.
+	fromFile bool `yaml:"-"`
 }
 
 // NibsConfig defines settings for nib creation.
@@ -392,7 +397,9 @@ func describeFileKind(mode fs.FileMode) string {
 }
 
 // loadRaw reads and unmarshals the config file without applying system defaults.
-// Returns an empty Config if the file doesn't exist (callers apply defaults).
+// Returns an empty Config if the file doesn't exist (callers apply defaults);
+// LoadedFromFile is what tells that answer apart from a file that declares
+// nothing.
 func loadRaw(configPath string) (*Config, error) {
 	data, err := ReadConfigFile(configPath)
 	if err != nil {
@@ -427,6 +434,7 @@ func loadRaw(configPath string) (*Config, error) {
 
 	// The config lives inside the store, so its directory IS the store.
 	cfg.storeDir = filepath.Dir(configPath)
+	cfg.fromFile = true
 
 	// Every load path bottoms out here, so validating the area vocabulary here
 	// is what makes a malformed one a refusal on every route into a store
@@ -460,6 +468,21 @@ func (c *Config) StoreDir() string {
 // for a store that does not exist yet).
 func (c *Config) SetStoreDir(dir string) {
 	c.storeDir = dir
+}
+
+// LoadedFromFile reports whether a config FILE was read to produce these
+// values. False means the store holds no config.yml (or the Config was built in
+// memory by Default and friends), so every field here is a default rather than
+// something the store declares.
+//
+// Load returns a fully-defaulted Config either way, which is right for the
+// readers that only need values. It is wrong for the one reader that compares
+// what the store declares against what this process loaded: there "the store
+// declares nothing" and "the store declares the empty string" are different
+// answers, and only one of them is evidence that something changed on disk. See
+// nibcore.Core.mintingVocabulary.
+func (c *Config) LoadedFromFile() bool {
+	return c.fromFile
 }
 
 // Layout returns the store layout this config belongs to — the one place the

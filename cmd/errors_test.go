@@ -463,6 +463,15 @@ func TestGraphQLErrCodeCodesAggregateWithinTheirExitClass(t *testing.T) {
 		{"on-disk nib unparseable", unparseableErr(), output.ErrFileError},
 		{"a stale path under a mutation", gqlerror.Wrap(fmt.Errorf("up91: writing file: %w", fs.ErrNotExist)), output.ErrFileError},
 		{
+			// The store's prefix moved while a create waited for its write lock,
+			// so the process's whole id vocabulary is retired. Same class as the
+			// stale path above and for the same reason: the filesystem moved
+			// under a loaded process, and the repair is to re-read the store.
+			"a store re-prefixed under the lock",
+			gqlerror.Wrap(&nibcore.StoreRePrefixedError{Loaded: "old-", Declared: "new-"}),
+			output.ErrFileError,
+		},
+		{
 			// Shares exit 2 with the VALIDATION_ERROR default, which is legal
 			// only because aggregation compares exits. What the separate code
 			// buys is the allowedParentTypes hint the envelope carries with it.
@@ -666,6 +675,15 @@ func TestMutationErrCodeBoundaries(t *testing.T) {
 			&nibcore.OnDiskUnparseableError{
 				ID: "a", Path: "a.md", Reason: "unreadable", Err: os.ErrPermission,
 			},
+			output.ErrFileError,
+		},
+		{
+			// The create half of the set-prefix race, classified with the
+			// stale-path refusal it mirrors rather than riding `nibs new`'s own
+			// FILE_ERROR fallback — which would leave `nibs query` reporting the
+			// caller's arguments as the fault (exit 2).
+			"a store re-prefixed under the write lock",
+			&nibcore.StoreRePrefixedError{Loaded: "old-", Declared: "new-"},
 			output.ErrFileError,
 		},
 		{

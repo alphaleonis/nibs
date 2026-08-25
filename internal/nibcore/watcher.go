@@ -246,6 +246,10 @@ func (c *Core) fanOut(events []NibEvent, payloadsCloned bool) {
 // stale until the next full Load.
 func (c *Core) StartWatching() error {
 	c.mu.Lock()
+	// Set before anything below can fail: asking to watch is what marks this
+	// process as one that outlives a command, and a watch that failed to start
+	// does not make it short-lived — see Core.longLived.
+	c.longLived = true
 	if c.watching {
 		c.mu.Unlock()
 		return nil // Already watching

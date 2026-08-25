@@ -688,23 +688,6 @@ func reportAreaEdit(app *App, jsonMode bool, msg, staleLink string, cfg *config.
 // mutation of a cascaded nib comes back "invalid area" until the server restarts.
 // Executed, not reasoned: a live serve refuses `updateNib` on a renamed nib with
 // `invalid area "frontend": must be one of … web …`.
-//
-// The probe is the serve interlock's exclusive side, taken and dropped — the
-// same question `nibs migrate` asks, and non-blocking, so it costs nothing when
-// no serve is running. It is worded for any nibs process holding the store
-// because that is literally what the lock answers: `nibs migrate` holds the same
-// side for its run, and this must not tell a caller a serve is running when one
-// is not.
 func areaLiveServeNote(app *App) string {
-	fence, err := nibcore.AcquireServeExclusion(app.Core.Root())
-	if err == nil {
-		_ = fence.Release()
-		return ""
-	}
-	if !errors.Is(err, nibcore.ErrStoreServed) {
-		// The probe failed for some other reason, which says nothing about
-		// whether a serve is live — so say nothing.
-		return ""
-	}
-	return "\nNote: another nibs process is holding this store. A running `nibs serve` reads the areas vocabulary once at startup, so restart it — until then every write it makes to a rewritten nib is refused against the old vocabulary."
+	return liveServeNote(app, "\nNote: another nibs process is holding this store. A running `nibs serve` reads the areas vocabulary once at startup, so restart it — until then every write it makes to a rewritten nib is refused against the old vocabulary.")
 }
