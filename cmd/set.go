@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io/fs"
 	"strings"
 
 	"github.com/99designs/gqlgen/graphql"
@@ -532,6 +533,15 @@ func setMutationError(jsonOutput bool, err error) error {
 //     not exist. Recognized through the sentinel rather than a concrete type,
 //     which is the same channel cmd/serve.go's presenter keys on, so the CLI and
 //     the HTTP server classify one missing nib the same way.
+//   - A write whose target FILE is not there is a FILE_ERROR, joining the
+//     unparseable case above under "the filesystem is not what the store
+//     believes". Core.Update replaces a nib's file rather than creating one, so a
+//     path that went stale under a loaded process — `nibs config set-prefix`
+//     renames every file in the store — refuses with fs.ErrNotExist instead of
+//     leaving a second copy of the nib at the retired name. The repair is to
+//     re-read the store (after a set-prefix the nib's own id has changed too),
+//     which is the opposite of what the VALIDATION_ERROR fallback's "bad input"
+//     would send an agent to do.
 //
 // A SECONDARY id — a parent, a blocking or blocked-by target, a bulk-reorder
 // member or anchor — does NOT normally arrive as a sentinel: the graph layer
@@ -544,14 +554,20 @@ func setMutationError(jsonOutput bool, err error) error {
 // on that line, and it splits the SAME way for `nibs query` and for the direct
 // commands, which is what parity requires.
 //
-// The sentinel test runs LAST so a concrete-typed failure that also carries a
-// not-found cause keeps its own class. That ordering is load-bearing for
+// The two sentinel tests run LAST so a concrete-typed failure that also carries
+// a not-found cause keeps its own class. That ordering is load-bearing for
 // OnDiskUnparseableError, the one classified type here with an Unwrap; it is
 // inert today because both of its construction sites carry an OS read error or a
 // YAML parse error. ETagMismatchError, ETagRequiredError, HierarchyError and
 // ReplaceMatchError implement no Unwrap at all, so none of the conflict, the
 // hierarchy and the text-match branches can be claimed by the sentinel either
 // way, and their order among the concrete-type tests is inert.
+//
+// Between the two sentinels the id-miss goes first: nib.ErrNotFound and
+// fs.ErrNotExist are unrelated values, so a chain carrying both is asserting two
+// things at once, and "no nib answers to this id" is the one an agent can act
+// on. Testing the file miss second means it claims only a chain with no id-miss
+// in it.
 func mutationErrCode(err error) (string, bool) {
 	var unparseableErr *nibcore.OnDiskUnparseableError
 	if errors.As(err, &unparseableErr) {
@@ -577,6 +593,9 @@ func mutationErrCode(err error) (string, bool) {
 	}
 	if errors.Is(err, nib.ErrNotFound) {
 		return output.ErrNotFound, true
+	}
+	if errors.Is(err, fs.ErrNotExist) {
+		return output.ErrFileError, true
 	}
 	return "", false
 }

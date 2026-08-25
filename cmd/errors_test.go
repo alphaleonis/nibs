@@ -7,6 +7,7 @@ import (
 	"go/ast"
 	"go/parser"
 	"go/token"
+	"io/fs"
 	"os"
 	"path/filepath"
 	"slices"
@@ -460,6 +461,7 @@ func TestGraphQLErrCodeCodesAggregateWithinTheirExitClass(t *testing.T) {
 			output.ErrConflict,
 		},
 		{"on-disk nib unparseable", unparseableErr(), output.ErrFileError},
+		{"a stale path under a mutation", gqlerror.Wrap(fmt.Errorf("up91: writing file: %w", fs.ErrNotExist)), output.ErrFileError},
 		{
 			// Shares exit 2 with the VALIDATION_ERROR default, which is legal
 			// only because aggregation compares exits. What the separate code
@@ -728,6 +730,25 @@ func TestMutationErrCodeBoundaries(t *testing.T) {
 			"a secondary id reported without %w",
 			fmt.Errorf("parent nib not found: %s", "zz"),
 			"",
+		},
+		{
+			// The shape Core.Update mints when the file it means to replace is
+			// gone: the non-creating writer refuses, wrapping fs.ErrNotExist. The
+			// repair is to re-read the store, not to fix an argument, so the
+			// VALIDATION_ERROR fallback would name the wrong thing.
+			"a stale path the store's files moved out from under",
+			fmt.Errorf("%s: %w", "up91",
+				fmt.Errorf("writing file: %w",
+					fmt.Errorf("updating %s: %w", "/s/.nibs/data/up91--x.md", fs.ErrNotExist))),
+			output.ErrFileError,
+		},
+		{
+			// The two sentinels are unrelated types, and this row is what says
+			// so: fs.ErrNotExist must not start claiming an id-miss, which is
+			// exit 3 and a different repair.
+			"an id-miss carrying a filesystem miss too",
+			fmt.Errorf("%w: %w", nib.ErrNotFound, fs.ErrNotExist),
+			output.ErrNotFound,
 		},
 		{"an unrelated failure", errors.New("resolver blew up"), ""},
 	}

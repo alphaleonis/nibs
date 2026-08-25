@@ -999,3 +999,68 @@ func TestSetPrefixStoreMovedRefusalNamesARerunThatWorks(t *testing.T) {
 		})
 	}
 }
+
+// TestSetPrefixLeavesAnAlreadyLoadedStoreRefusingRatherThanResurrecting is the
+// cross-process half of Core.Update's stale-path guard, against the real command
+// that moves the files.
+//
+// A write verb loads the store, a `nibs config set-prefix` renames every nib
+// file underneath it, and only then does the first process write its edit. The
+// path it holds names nothing, and a creating write would put the edit in a
+// second file under the retired prefix while the live nib kept the old value —
+// and exit 0.
+func TestSetPrefixLeavesAnAlreadyLoadedStoreRefusingRatherThanResurrecting(t *testing.T) {
+	_, nibsDir, cfgPath := setupSetPrefixTest(t, "tnib-",
+		testNibSpec{filename: "tnib-aaa--root.md", id: "tnib-aaa"},
+	)
+
+	// The store as the other process already holds it: loaded before the rename,
+	// and with no watcher to refresh it afterwards.
+	core := nibcore.New(nibsDir, loadCfg(t, cfgPath))
+	core.SetWarnWriter(nil)
+	if err := core.Load(); err != nil {
+		t.Fatalf("load core: %v", err)
+	}
+
+	if err := runSetPrefixCmd(t, cfgPath, nibsDir, "new-", "--json"); err != nil {
+		t.Fatalf("set-prefix failed: %v", err)
+	}
+
+	edit, err := core.GetForUpdate("tnib-aaa")
+	if err != nil {
+		t.Fatalf("GetForUpdate: %v", err)
+	}
+	edit.Title = "Edited After The Rename"
+
+	err = core.Update(edit, nil)
+	if err == nil {
+		t.Fatal("the already-loaded store wrote its edit to a renamed-away path instead of refusing")
+	}
+	if !strings.HasPrefix(err.Error(), "tnib-aaa: ") {
+		t.Errorf("error = %q, want it to LEAD with the nib it could not write; the path "+
+			"fsutil formats already begins with the id, so mere containment is satisfied "+
+			"without Update naming it at all", err)
+	}
+
+	// The class the CLI reports for it. The store's files moved under a loaded
+	// process, so the repair is to re-read the store — not to fix an argument,
+	// which is what the VALIDATION_ERROR fallback would claim.
+	code, ok := mutationErrCode(err)
+	if !ok || code != output.ErrFileError {
+		t.Errorf("mutationErrCode() = %q (classified=%v), want %q", code, ok, output.ErrFileError)
+	}
+	var coded *output.CodedError
+	if !errors.As(setMutationError(false, err), &coded) {
+		t.Fatalf("setMutationError() = %v, want *output.CodedError", err)
+	}
+	if got := output.ExitCode(coded.Code); got != output.ExitIO {
+		t.Errorf("exit status = %d for code %q, want %d (io/filesystem)", got, coded.Code, output.ExitIO)
+	}
+
+	if _, statErr := os.Stat(dataPath(nibsDir, "tnib-aaa--root.md")); !os.IsNotExist(statErr) {
+		t.Errorf("a file under the retired prefix was resurrected, stat err=%v", statErr)
+	}
+	if got := parseNibFile(t, dataPath(nibsDir, "new-aaa--root.md")).Title; got == "Edited After The Rename" {
+		t.Error("the refused edit reached the live file")
+	}
+}

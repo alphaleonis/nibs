@@ -1393,32 +1393,45 @@ func copyStamp(stamp *time.Time) *time.Time {
 // If ifMatch is provided, validates the current on-disk version's etag matches before updating.
 // This provides optimistic concurrency control to prevent lost updates.
 //
-// THE STALE-CLONE CHAIN, and why it is closed a process apart rather than here:
-// the caller's b was built from a snapshot taken BEFORE this call, and Update
+// THE CALLER'S b IS A SNAPSHOT taken BEFORE this call, and two things about it
+// can be stale by the time the write happens — its PATH and its CONTENT. They
+// get different answers.
+//
+// The PATH is re-derived under the lock: the write goes to the path the STORE
+// holds for this id, not the one the snapshot carries. Every writer that moves a
+// nib's file does so under this same c.mu — the in-place Path writers the
+// canonical live-pointer invariant enumerates (see NibReader.GetSnapshot in
+// internal/graph/interfaces.go), plus the watcher's slug-rename branch, which
+// installs a fresh pointer carrying the new Path — so the store's answer is
+// current and the snapshot's may not be. And the writer is the non-creating one,
+// so a path that went stale in a way no process in this one can re-derive —
+// `nibs config set-prefix` renames every file in the store — is reported rather
+// than turned into a second copy of the nib at its old name, holding the user's
+// edit while the live file keeps the old value.
+//
+// The CONTENT cannot be re-derived here, and that is the residual. This method
 // takes c.mu and then parks on the store flock while holding it. If a migration
 // holds that flock (AcquireStoreLock), the whole wait happens with c.mu held —
 // so the watcher, which needs c.mu, cannot refresh c.nibs with the migrated
 // files first. When the migration releases, an Update WITH ifMatch fails safe
 // (the stored etag no longer matches), but one with NO ifMatch writes b's
-// pre-migration render straight back, erasing e.g. a freshly transferred
-// blocked_by edge; the source file is already stamped v1, so no migration
-// detect ever fires again and the loss is silent and permanent.
+// pre-migration render straight back over the same file, erasing e.g. a freshly
+// transferred blocked_by edge; the source file is already stamped v1, so no
+// migration detect ever fires again and the loss is silent and permanent. No
+// lock ordering inside this method makes a pre-migration clone current again, so
+// that chain is broken one level up: AcquireServeExclusion fences a migration
+// out of a live serve entirely (servelock.go), so the flock this method parks on
+// cannot be held by one. What remains is a serve from a release that predates
+// that interlock, which does not take the lock and so cannot be fenced; `nibs
+// migrate` names exactly that case before it applies.
 //
-// Nothing inside this method can see that, which is why the fix is not here: by
-// the time Update runs, the snapshot it is asked to write is already stale, and
-// no lock ordering makes a pre-migration clone current again. So the chain is
-// broken one level up — AcquireServeExclusion fences a migration out of a live
-// serve entirely (servelock.go), so the flock this method parks on cannot be
-// held by one. What remains is a serve from a release that predates that
-// interlock, which does not take the lock and so cannot be fenced; `nibs migrate`
-// names exactly that case before it applies.
+// The second guard against it is the caller's: an ifMatch makes this fail safe
+// whatever the process arrangement, and the web UI's batch mutations send one.
 //
-// The second guard is the caller's: an ifMatch makes this fail safe whatever the
-// process arrangement. The web UI's batch mutations now send one, which they did
-// not when this note was first written.
-//
-// Note the residual is THIS stale-in-memory-clone chain, not the watcher or any
-// layout move — the watcher is a bystander that c.mu keeps parked.
+// The watcher is a bystander to THAT chain — c.mu keeps it parked while this
+// method runs. It is no bystander to the PATH: under a live serve it is the
+// commonest mover of a nib's file, which is what the re-derivation above picks
+// up.
 func (c *Core) Update(b *nib.Nib, ifMatch *string) error {
 	c.mu.Lock()
 	defer c.mu.Unlock()
@@ -1477,9 +1490,22 @@ func (c *Core) Update(b *nib.Nib, ifMatch *string) error {
 	now := time.Now().UTC().Truncate(time.Second)
 	b.UpdatedAt = &now
 
-	// Write to disk
-	if err := c.saveToDisk(b); err != nil {
-		return err
+	// The file to write is the one the STORE says this nib lives in, not the one
+	// the caller's clone remembers: every writer that moves a nib's file does so
+	// under this same c.mu (the doc comment above names them), so a clone taken
+	// before one of them ran names a file that has since moved. Assigning it also
+	// keeps the entry installed below agreeing with the disk.
+	b.Path = storedNib.Path
+
+	// Write to disk. Non-creating: this is a REPLACEMENT of a file the store
+	// already has, and the stored path is only current for as long as no other
+	// PROCESS moves the file — `nibs config set-prefix` renames every one of them.
+	// A creating write answers that by leaving a second copy of the nib at the old
+	// path, which then holds the user's edit while the live file keeps the old
+	// value. Refusing is the only honest answer a path this process cannot re-derive
+	// has.
+	if err := c.updateOnDisk(b); err != nil {
+		return fmt.Errorf("%s: %w", b.ID, err)
 	}
 
 	// Update in-memory map
@@ -1526,6 +1552,21 @@ func (c *Core) saveToDiskDeferDirSync(b *nib.Nib) (string, error) {
 	}
 
 	return c.renderAndWriteDeferDirSync(b, path, fsutil.AtomicWriteFileDeferDirSync)
+}
+
+// updateOnDisk is saveToDisk for a caller REPLACING a nib's existing file: it
+// refuses a path nothing is at, and flushes the directory entry before
+// returning, so a single write is as durable as fsutil.AtomicWriteFile makes it.
+// A caller replacing MANY files wants updateOnDiskDeferDirSync plus an
+// fsutil.DirSyncBatch instead — see it for why the refusal is the right answer
+// to a path that went stale.
+func (c *Core) updateOnDisk(b *nib.Nib) error {
+	dir, err := c.updateOnDiskDeferDirSync(b)
+	if err != nil {
+		return err
+	}
+	fsutil.SyncDir(dir)
+	return nil
 }
 
 // updateOnDiskDeferDirSync is saveToDiskDeferDirSync for a caller that is
@@ -1884,7 +1925,7 @@ func (c *Core) GetFromArchive(id string) (*nib.Nib, error) {
 // Archive's comment records. On this path the destination flush arrives anyway:
 // both callers (`nibs set` and `nibs body`, falling back to the archive when the id
 // is not in the active set) write the nib immediately afterwards, and that write's
-// saveToDisk flushes data/ — the directory this rename moved the file INTO.
+// updateOnDisk flushes data/ — the directory this rename moved the file INTO.
 func (c *Core) LoadAndUnarchive(id string) (*nib.Nib, error) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
