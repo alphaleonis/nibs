@@ -317,6 +317,85 @@ func TestSetPrefix_DryRun_DoesNotMutateOrCallGit(t *testing.T) {
 	}
 }
 
+// The --dry-run --json envelope is script-facing and nothing else pins its link
+// fields, so a change in what buildSnapshot plans from moves the reported shape
+// with no test to notice. The plan describes the bytes Execute would write, so a
+// link the file spells short is reported short on BOTH sides of the rename: a
+// short id carries no prefix to cut, and reporting it expanded would describe a
+// rewrite that does not happen.
+func TestSetPrefixDryRunJSONReportsTheFilesOwnSpelling(t *testing.T) {
+	_, nibsDir, cfgPath := setupSetPrefixTest(t, "tnib-",
+		testNibSpec{filename: "tnib-aaa--root.md", id: "tnib-aaa"},
+		testNibSpec{filename: "tnib-bbb--short.md", id: "tnib-bbb", parent: "aaa", milestone: "aaa", blockedBy: []string{"aaa"}},
+		testNibSpec{filename: "tnib-ccc--full.md", id: "tnib-ccc", parent: "tnib-aaa", milestone: "tnib-aaa", blockedBy: []string{"tnib-aaa"}},
+	)
+
+	var runErr error
+	out := captureStdout(t, func() {
+		runErr = runSetPrefixCmd(t, cfgPath, nibsDir, "new-", "--dry-run", "--json")
+	})
+	if runErr != nil {
+		t.Fatalf("dry-run failed: %v", runErr)
+	}
+
+	var env struct {
+		Success bool `json:"success"`
+		Plan    struct {
+			Files []struct {
+				OldID        string   `json:"OldID"`
+				OldParent    string   `json:"OldParent"`
+				NewParent    string   `json:"NewParent"`
+				OldMilestone string   `json:"OldMilestone"`
+				NewMilestone string   `json:"NewMilestone"`
+				OldBlockedBy []string `json:"OldBlockedBy"`
+				NewBlockedBy []string `json:"NewBlockedBy"`
+			} `json:"Files"`
+		} `json:"plan"`
+	}
+	if err := json.Unmarshal([]byte(out), &env); err != nil {
+		t.Fatalf("envelope is not JSON: %v\n%s", err, out)
+	}
+	if !env.Success {
+		t.Fatalf("envelope reports success=false: %s", out)
+	}
+
+	byID := map[string]int{}
+	for i, f := range env.Plan.Files {
+		byID[f.OldID] = i
+	}
+	short, ok := byID["tnib-bbb"]
+	if !ok {
+		t.Fatalf("plan has no entry for tnib-bbb: %s", out)
+	}
+	full, ok := byID["tnib-ccc"]
+	if !ok {
+		t.Fatalf("plan has no entry for tnib-ccc: %s", out)
+	}
+
+	sf := env.Plan.Files[short]
+	for _, c := range []struct{ field, got, want string }{
+		{"OldParent", sf.OldParent, "aaa"},
+		{"NewParent", sf.NewParent, "aaa"},
+		{"OldMilestone", sf.OldMilestone, "aaa"},
+		{"NewMilestone", sf.NewMilestone, "aaa"},
+	} {
+		if c.got != c.want {
+			t.Errorf("short nib %s = %q, want %q — a short id has no prefix to rewrite", c.field, c.got, c.want)
+		}
+	}
+	if len(sf.OldBlockedBy) != 1 || sf.OldBlockedBy[0] != "aaa" || len(sf.NewBlockedBy) != 1 || sf.NewBlockedBy[0] != "aaa" {
+		t.Errorf("short nib blocked_by = old %v new %v, want [aaa] both", sf.OldBlockedBy, sf.NewBlockedBy)
+	}
+
+	ff := env.Plan.Files[full]
+	if ff.OldParent != "tnib-aaa" || ff.NewParent != "new-aaa" {
+		t.Errorf("full nib parent = old %q new %q, want %q -> %q", ff.OldParent, ff.NewParent, "tnib-aaa", "new-aaa")
+	}
+	if ff.OldMilestone != "tnib-aaa" || ff.NewMilestone != "new-aaa" {
+		t.Errorf("full nib milestone = old %q new %q, want %q -> %q", ff.OldMilestone, ff.NewMilestone, "tnib-aaa", "new-aaa")
+	}
+}
+
 func TestSetPrefix_SamePrefix_Rejected(t *testing.T) {
 	_, nibsDir, cfgPath := setupSetPrefixTest(t, "tnib-",
 		testNibSpec{filename: "tnib-aaa--only.md", id: "tnib-aaa"},
@@ -1197,4 +1276,84 @@ func TestSetPrefixNamesALiveServe(t *testing.T) {
 			t.Errorf("output does not name the holder whose creates this rename just started refusing:\n%s", out)
 		}
 	})
+}
+
+// TestSetPrefixKeepsAShortLinkSpellingShort pins the rewrite to the FILE's
+// spelling of a link rather than to the resolved value the loaded store holds.
+//
+// A short-form link (`parent: aaa`) needs no rewriting at all: it carries no
+// prefix, so it resolves by prefix-prepending under the new prefix exactly as it
+// did under the old. Planning from the canonicalized in-memory value instead
+// hands the executor a full-form id and rewrites the file to one the author
+// never wrote — a silent edit to hand-authored front matter, in a command whose
+// whole contract is that it touches the prefix and nothing else.
+func TestSetPrefixKeepsAShortLinkSpellingShort(t *testing.T) {
+	_, nibsDir, cfgPath := setupSetPrefixTest(t, "tnib-",
+		testNibSpec{filename: "tnib-aaa--root.md", id: "tnib-aaa"},
+		testNibSpec{
+			filename:  "tnib-bbb--short.md",
+			id:        "tnib-bbb",
+			parent:    "aaa",
+			milestone: "aaa",
+			blockedBy: []string{"aaa"},
+			blocking:  []string{"aaa"},
+		},
+		testNibSpec{
+			filename:  "tnib-ccc--full.md",
+			id:        "tnib-ccc",
+			parent:    "tnib-aaa",
+			milestone: "tnib-aaa",
+			blockedBy: []string{"tnib-aaa"},
+			blocking:  []string{"tnib-aaa"},
+		},
+	)
+
+	if err := runSetPrefixCmd(t, cfgPath, nibsDir, "new-", "--json"); err != nil {
+		t.Fatalf("set-prefix failed: %v", err)
+	}
+
+	short := parseNibFile(t, dataPath(nibsDir, "new-bbb--short.md"))
+	if short.Parent != "aaa" {
+		t.Errorf("short parent = %q, want %q — a short id carries no prefix to rewrite", short.Parent, "aaa")
+	}
+	if short.Milestone != "aaa" {
+		t.Errorf("short milestone = %q, want %q — a short id carries no prefix to rewrite", short.Milestone, "aaa")
+	}
+	if len(short.BlockedBy) != 1 || short.BlockedBy[0] != "aaa" {
+		t.Errorf("short blocked_by = %v, want [aaa]", short.BlockedBy)
+	}
+	if len(short.Blocking) != 1 || short.Blocking[0] != "aaa" {
+		t.Errorf("short blocking = %v, want [aaa]", short.Blocking)
+	}
+
+	// The full-form half of the same store still has to be retargeted, or the
+	// assertions above would also pass for a command that rewrote nothing.
+	full := parseNibFile(t, dataPath(nibsDir, "new-ccc--full.md"))
+	if full.Parent != "new-aaa" {
+		t.Errorf("full parent = %q, want %q", full.Parent, "new-aaa")
+	}
+	if full.Milestone != "new-aaa" {
+		t.Errorf("full milestone = %q, want %q", full.Milestone, "new-aaa")
+	}
+	if len(full.BlockedBy) != 1 || full.BlockedBy[0] != "new-aaa" {
+		t.Errorf("full blocked_by = %v, want [new-aaa]", full.BlockedBy)
+	}
+	if len(full.Blocking) != 1 || full.Blocking[0] != "new-aaa" {
+		t.Errorf("full blocking = %v, want [new-aaa]", full.Blocking)
+	}
+
+	// The short spellings are left short because they still name the same nib:
+	// a store loaded over the renamed files resolves them under the new prefix.
+	core := nibcore.New(nibsDir, loadCfg(t, cfgPath))
+	core.SetWarnWriter(nil)
+	if err := core.Load(); err != nil {
+		t.Fatalf("load core over the renamed store: %v", err)
+	}
+	reloaded, err := core.Get("new-bbb")
+	if err != nil {
+		t.Fatalf("get new-bbb: %v", err)
+	}
+	if reloaded.Parent != "new-aaa" {
+		t.Errorf("reloaded parent resolves to %q, want %q — the short spelling no longer names the root", reloaded.Parent, "new-aaa")
+	}
 }

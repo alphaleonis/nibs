@@ -51,6 +51,13 @@ func ValidatePrefix(s string) error {
 // Area is a plain path, Documents are repo-relative paths, MilestoneOrder is a
 // fractional index, and Extra is opaque unknown keys.
 //
+// Each link is an id as SOME SOURCE SPELLS IT, and the plan preserves that
+// spelling: only a reference carrying oldPrefix is rewritten, so a short-form id
+// passes through untouched — it names the same nib under either prefix. Callers
+// whose store resolves short ids in memory therefore have to supply the
+// spelling they want written back (see nib.RawLinks), because Execute writes
+// these values over whatever the file said.
+//
 // A nib BODY is outside the bar: `[[id]]` and `#id` mentions there are id-valued
 // too, and Execute re-renders a nib without touching its body, so they are left
 // naming the retired id. Extending the rewrite over bodies is tracked as its own

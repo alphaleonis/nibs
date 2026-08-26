@@ -260,6 +260,19 @@ func runSetPrefix(cmd *cobra.Command, args []string) error {
 // is the completeness bar FOR FRONT MATTER: an id-valued front-matter field left
 // out here is one the rename silently leaves naming a nib that no longer exists.
 //
+// The links come from the FILE's spelling (nib.RawLinks), not from the resolved
+// values the loaded store holds. A short-form link needs no rewriting at all —
+// it carries no prefix, so it resolves by prefix-prepending under the new prefix
+// exactly as it did under the old — but the store canonicalizes `parent: p1` to
+// `nibs-p1` in memory, and reprefix.Execute writes the plan's value over
+// whatever the file said. Planning from the resolved value therefore expands
+// every short link the author wrote, in a command whose contract is that it
+// changes the prefix and nothing else.
+//
+// A nib whose in-memory links have run ahead of its file is safe here: RawLinks
+// answers from the live fields when no file spelling has been recorded, and a
+// recorded spelling always describes the bytes Execute is about to re-read.
+//
 // The bar stops at the front matter, and the rest of the store is NOT covered by
 // it: `[[id]]` and `#id` mentions in nib BODIES name ids too, reprefix.Execute
 // re-renders a nib without touching its body, and `nibs check` reports no link
@@ -269,13 +282,14 @@ func runSetPrefix(cmd *cobra.Command, args []string) error {
 func buildSnapshot(nibs []*nib.Nib) []reprefix.NibSnapshot {
 	out := make([]reprefix.NibSnapshot, len(nibs))
 	for i, b := range nibs {
+		raw := b.RawLinks()
 		out[i] = reprefix.NibSnapshot{
 			ID:        b.ID,
 			Path:      b.Path,
-			Parent:    b.Parent,
-			Milestone: b.Milestone,
-			BlockedBy: b.BlockedBy,
-			Blocking:  b.Blocking,
+			Parent:    raw.Parent,
+			Milestone: raw.Milestone,
+			BlockedBy: raw.BlockedBy,
+			Blocking:  raw.Blocking,
 		}
 	}
 	return out
