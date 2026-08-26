@@ -217,3 +217,71 @@ func TestTheDetailFooterMeasuresTheBodyItPaints(t *testing.T) {
 		}
 	}
 }
+
+// The links box has a floor no terminal height shrinks: one entry is already
+// the fewest it can show, and around it go the two border rows. Its title row
+// and the padding row beside it put that floor at five, which with the header
+// and the footer is more rows than an eight-row terminal has — so the frame ran
+// past the last row and the footer went over the edge with it.
+//
+// What gives is the title, not the border and not the box: the border's color
+// is the only thing on screen that says whether the links pane has focus, and
+// the footer advertises tab as the way to reach the box, so a frame that fits
+// by dropping either is the defect again in a different shape. "Linked Nibs" is
+// redundant beside a list of nibs.
+//
+// Heights run one at a time because the thresholds here are boundaries and the
+// coarse geometry sweep steps from eight straight to twelve.
+func TestTheLinksBoxFitsAShortTerminal(t *testing.T) {
+	// Widths where a link row is wider than the box it is drawn into are in the
+	// sweep on purpose: a row left to wrap makes the box taller than the height
+	// it was sized to, which is the same floor by another route.
+	for _, width := range []int{30, 46, 76, 80, 160} {
+		for height := 8; height <= 16; height++ {
+			t.Run(fmt.Sprintf("%dx%d", width, height), func(t *testing.T) {
+				app := enterHelpView(t, detailSweepView(t), width, height)
+				if got := len(app.detail.links); got != 1 {
+					t.Fatalf("premise failed: the nib carries %d links, want 1", got)
+				}
+
+				content := app.View().Content
+				assertFrameFitsTerminal(t, content, width, height)
+
+				if got := blockLines(app.detail.linksBox()); got != 3 {
+					t.Errorf("the links box is %d rows around one link, want 3 — its border and the entry, with no row spent on a label", got)
+				}
+				if painted := frameText(content, width, height); !strings.Contains(painted, "b1") {
+					t.Errorf("the linked nib is not on screen at %d rows, so tab reaches a box the frame never drew:\n%s", height, painted)
+				}
+			})
+		}
+	}
+}
+
+// At eight rows a refusal and the links box cannot both be drawn whatever the
+// box costs: the header is four rows, the footer wraps the message across two
+// above its help row, and the box's own floor is three. Ten rows for eight.
+//
+// The box is what gives, for the same reason the body already does — a refusal
+// the reader cannot see is the defect the footer was taught to wrap for, and
+// the help row is how the reader acts on it.
+func TestTheLinksBoxGivesItsRowsToARefusal(t *testing.T) {
+	const (
+		width  = 80
+		height = 8
+	)
+	view := detailSweepView(t)
+	app := enterHelpView(t, view, width, height)
+	refuseStatusChange(t, app, view)
+
+	content := app.View().Content
+	assertFrameFitsTerminal(t, content, width, height)
+
+	painted := frameText(content, width, height)
+	if !strings.Contains(painted, "Status change failed") {
+		t.Errorf("the frame does not carry the refusal:\n%s", painted)
+	}
+	if !strings.Contains(painted, "e edit") {
+		t.Errorf("the frame does not carry the help row the refusal is acted on from:\n%s", painted)
+	}
+}
