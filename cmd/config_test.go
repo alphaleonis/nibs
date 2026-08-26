@@ -26,7 +26,9 @@ type testNibSpec struct {
 	filename  string
 	id        string
 	parent    string
+	milestone string
 	blockedBy []string
+	blocking  []string
 	body      string
 }
 
@@ -79,7 +81,9 @@ func setupSetPrefixTest(t *testing.T, prefix string, nibs ...testNibSpec) (strin
 			Type:      "task",
 			Body:      spec.body,
 			Parent:    spec.parent,
+			Milestone: spec.milestone,
 			BlockedBy: spec.blockedBy,
+			Blocking:  spec.blocking,
 		}
 		data, err := b.Render()
 		if err != nil {
@@ -137,7 +141,14 @@ func TestSetPrefix_HappyPath_RenamesFilesAndUpdatesReferences(t *testing.T) {
 	_, nibsDir, cfgPath := setupSetPrefixTest(t, "tnib-",
 		testNibSpec{filename: "tnib-aaa--root.md", id: "tnib-aaa"},
 		testNibSpec{filename: "tnib-bbb--child.md", id: "tnib-bbb", parent: "tnib-aaa", body: "child body"},
-		testNibSpec{filename: "tnib-ccc--blocked.md", id: "tnib-ccc", parent: "tnib-aaa", blockedBy: []string{"tnib-bbb"}},
+		testNibSpec{
+			filename:  "tnib-ccc--blocked.md",
+			id:        "tnib-ccc",
+			parent:    "tnib-aaa",
+			milestone: "tnib-aaa",
+			blockedBy: []string{"tnib-bbb"},
+			blocking:  []string{"tnib-bbb"},
+		},
 	)
 
 	if err := runSetPrefixCmd(t, cfgPath, nibsDir, "new-", "--json"); err != nil {
@@ -167,13 +178,20 @@ func TestSetPrefix_HappyPath_RenamesFilesAndUpdatesReferences(t *testing.T) {
 		t.Errorf("child body lost during rewrite: got %q", child.Body)
 	}
 
-	// Blocked nib's parent + blocked_by must be updated.
+	// Every id-valued front-matter field on the blocked nib must be retargeted:
+	// one left behind names a nib that no longer exists.
 	blocked := parseNibFile(t, dataPath(nibsDir, "new-ccc--blocked.md"))
 	if blocked.Parent != "new-aaa" {
 		t.Errorf("blocked parent = %q, want %q", blocked.Parent, "new-aaa")
 	}
+	if blocked.Milestone != "new-aaa" {
+		t.Errorf("blocked milestone = %q, want %q", blocked.Milestone, "new-aaa")
+	}
 	if len(blocked.BlockedBy) != 1 || blocked.BlockedBy[0] != "new-bbb" {
 		t.Errorf("blocked blocked_by = %v, want [new-bbb]", blocked.BlockedBy)
+	}
+	if len(blocked.Blocking) != 1 || blocked.Blocking[0] != "new-bbb" {
+		t.Errorf("blocked blocking = %v, want [new-bbb]", blocked.Blocking)
 	}
 
 	// Config must be rewritten with the new prefix.
