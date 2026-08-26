@@ -451,30 +451,49 @@ func (m detailModel) View() string {
 			Border(lipgloss.RoundedBorder()).
 			BorderForeground(linksBorderColor).
 			Width(withBorder(m.width - 4))
-		linksSection = linksBorder.Render(m.linkList.View()) + "\n"
+		linksSection = linksBorder.Render(m.linkList.View())
 	}
 
-	// Body
-	bodyBorderColor := ui.ColorMuted
-	if !m.linksActive {
-		bodyBorderColor = ui.ColorPrimary
-	}
-	bodyBorder := lipgloss.NewStyle().
-		Border(lipgloss.RoundedBorder()).
-		BorderForeground(bodyBorderColor).
-		Width(withBorder(m.width - 4))
-	body := bodyBorder.Render(m.viewport.View())
-
-	// A wrapped status message makes the footer region taller than the height
-	// the viewport was sized against at the last resize; the body gives those
-	// rows back, since the frame is exactly as tall as the terminal and
-	// whatever runs past its last row is dropped — the region's last line first.
+	// The body is drawn into whatever the rest of the frame leaves, and dropped
+	// when that is less than a box. The frame is exactly as tall as the
+	// terminal, so the rows a wrapped status message takes have to come from
+	// somewhere; measuring the footer first is what makes the body's share a
+	// budget rather than a guess corrected afterwards.
 	footer := m.footerRegion()
-	if extra := lipgloss.Height(footer) - m.sizedFooterHeight(); extra > 0 {
-		m.viewport.SetHeight(max(1, m.viewport.Height()-extra))
-		body = bodyBorder.Render(m.viewport.View())
+	rows := []string{header}
+	if linksSection != "" {
+		rows = append(rows, linksSection)
 	}
-	return header + "\n" + linksSection + body + "\n" + footer
+	avail := m.height - lipgloss.Height(header) - blockLines(linksSection) - lipgloss.Height(footer)
+	if body := m.renderBodyBox(avail); body != "" {
+		rows = append(rows, body)
+	}
+	return strings.Join(append(rows, footer), "\n")
+}
+
+// renderBodyBox draws the body into avail rows, or nothing at all when there
+// are fewer of them than the box occupies.
+//
+// The body is what gives when the frame cannot hold everything. At the heights
+// where that happens a status message is up, and what the reader needs is the
+// nib's identity, the message, and the keys to act on it — prose is not legible
+// in the row or two that would be left anyway. Taking the rows from the message
+// instead would cut a refusal down to its first line, which is the defect the
+// footer was taught to wrap for.
+func (m detailModel) renderBodyBox(avail int) string {
+	if avail < minBodyHeight {
+		return ""
+	}
+	borderColor := ui.ColorMuted
+	if !m.linksActive {
+		borderColor = ui.ColorPrimary
+	}
+	m.viewport.SetHeight(avail - 2) // the border's two rows
+	return lipgloss.NewStyle().
+		Border(lipgloss.RoundedBorder()).
+		BorderForeground(borderColor).
+		Width(withBorder(m.width - 4)).
+		Render(m.viewport.View())
 }
 
 // footerRegion is everything drawn below the body: the compact footer, or —
@@ -490,14 +509,18 @@ func (m detailModel) footerRegion() string {
 	return expandedFooterRegion(detailExpandedEntries(), m.statusMessage, m.statusKind, m.width, m.height, m.contentFloor())
 }
 
-// minBodyHeight is the fewest rows the body occupies: its border, around a
-// viewport both Update and View floor at one row.
+// minBodyHeight is the fewest rows the body box occupies: its border, around a
+// viewport of one row. Below it there is no box to draw, so View draws none.
 const minBodyHeight = 3
 
-// contentFloor is the fewest rows the frame occupies above the footer region —
-// the header, the links box when there is one, and the body. None of them gives
-// a row back to a taller region, so this is what the help panel's budget is held
-// back for.
+// contentFloor is the rows the frame keeps above the footer region — the
+// header, the links box when there is one, and the body's minimum — and is what
+// the help panel's budget is held back for.
+//
+// The body does give its rows back to a taller region, but not to the panel: a
+// reader looking up keybindings is looking them up for the nib in front of them,
+// so the panel is budgeted as though the body stays. Only the status message
+// takes them, and only when what is left cannot hold a box.
 //
 // The header is measured rather than taken from calculateHeaderHeight, which
 // reserves two rows more than it renders: the sizing estimate may be generous,
@@ -509,18 +532,6 @@ func (m detailModel) contentFloor() int {
 		floor += lipgloss.Height(m.linkList.View()) + 2 // the links box's border
 	}
 	return floor
-}
-
-// sizedFooterHeight is the footer height the viewport was last sized against —
-// one row for the compact footer, or the panel's rows with no message above it.
-// That is one row less than Update(WindowSizeMsg) reserves, which counts the
-// "\n" separator too; View compares footer content against footer content, and
-// both sides leave the separator out, so the difference is the message's rows.
-func (m detailModel) sizedFooterHeight() int {
-	if h := m.currentHelpHeight(); h > 0 {
-		return h
-	}
-	return 1
 }
 
 // renderFooter returns the abbreviated footer for the detail view.
