@@ -32,9 +32,14 @@ const sweptNibs = 4
 // single fixture drives all three bulk callers. Ids sort aaa1 < aab1 < bbb2 <
 // ccc3, which is the order persistClonesLocked writes them in.
 //
-// It returns the core, a store lock for the migration entry points, and the
-// three absolute directories a full sweep must flush.
-func multiDirStore(t *testing.T) (*Core, *StoreLock, []string) {
+// It returns the core, the store directory, and the three absolute directories
+// a full sweep must flush.
+//
+// It deliberately does NOT take the store lock: only the migration entry point
+// wants one (it takes proof-of-lock as a parameter), while the two link sweeps
+// acquire the same flock themselves — and the flock is per descriptor, so a lock
+// held here would deadlock them. storeLockFor is what the migration case uses.
+func multiDirStore(t *testing.T) (*Core, string, []string) {
 	t.Helper()
 	nibsDir := filepath.Join(t.TempDir(), store.DirName)
 	layout := store.NewLayout(nibsDir)
@@ -63,13 +68,19 @@ func multiDirStore(t *testing.T) (*Core, *StoreLock, []string) {
 	if err := core.Load(); err != nil {
 		t.Fatalf("Load(): %v", err)
 	}
+	return core, nibsDir, []string{layout.ArchiveDir(), layout.DataDir(), subDir}
+}
+
+// storeLockFor takes the store lock the migration mutators require as proof,
+// released at the end of the test that asked for it.
+func storeLockFor(t *testing.T, nibsDir string) *StoreLock {
+	t.Helper()
 	lock, err := AcquireStoreLock(nibsDir)
 	if err != nil {
 		t.Fatalf("AcquireStoreLock: %v", err)
 	}
 	t.Cleanup(func() { _ = lock.Release() })
-
-	return core, lock, []string{layout.ArchiveDir(), layout.DataDir(), subDir}
+	return lock
 }
 
 // recordDirSyncs swaps the directory-sync seam for one that records every
@@ -97,12 +108,12 @@ func recordDirSyncs(t *testing.T) *[]string {
 func TestBulkWritesSyncEachDirectoryExactlyOnce(t *testing.T) {
 	cases := []struct {
 		name string
-		run  func(t *testing.T, core *Core, lock *StoreLock)
+		run  func(t *testing.T, core *Core, nibsDir string)
 	}{
 		{
 			name: "NormalizeLegacyPriorities",
-			run: func(t *testing.T, core *Core, lock *StoreLock) {
-				n, err := core.NormalizeLegacyPriorities(lock)
+			run: func(t *testing.T, core *Core, nibsDir string) {
+				n, err := core.NormalizeLegacyPriorities(storeLockFor(t, nibsDir))
 				if err != nil {
 					t.Fatalf("NormalizeLegacyPriorities: %v", err)
 				}
@@ -113,7 +124,7 @@ func TestBulkWritesSyncEachDirectoryExactlyOnce(t *testing.T) {
 		},
 		{
 			name: "RemoveLinksTo",
-			run: func(t *testing.T, core *Core, lock *StoreLock) {
+			run: func(t *testing.T, core *Core, _ string) {
 				n, err := core.RemoveLinksTo("zzz9")
 				if err != nil {
 					t.Fatalf("RemoveLinksTo: %v", err)
@@ -125,7 +136,7 @@ func TestBulkWritesSyncEachDirectoryExactlyOnce(t *testing.T) {
 		},
 		{
 			name: "FixBrokenLinks",
-			run: func(t *testing.T, core *Core, lock *StoreLock) {
+			run: func(t *testing.T, core *Core, _ string) {
 				n, err := core.FixBrokenLinks()
 				if err != nil {
 					t.Fatalf("FixBrokenLinks: %v", err)
@@ -139,10 +150,10 @@ func TestBulkWritesSyncEachDirectoryExactlyOnce(t *testing.T) {
 
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			core, lock, wantDirs := multiDirStore(t)
+			core, nibsDir, wantDirs := multiDirStore(t)
 			synced := recordDirSyncs(t)
 
-			tc.run(t, core, lock)
+			tc.run(t, core, nibsDir)
 
 			got := append([]string(nil), *synced...)
 			sort.Strings(got)
@@ -169,7 +180,7 @@ func TestBulkWritesSyncEachDirectoryExactlyOnce(t *testing.T) {
 // The failing write's own directory must NOT be flushed — nothing was renamed
 // into it — which is the other half of what the seam observes here.
 func TestBulkWriteFlushesDirectoriesWhenTheLoopAbortsEarly(t *testing.T) {
-	core, lock, dirs := multiDirStore(t)
+	core, nibsDir, dirs := multiDirStore(t)
 	archiveDir, dataDir, subDir := dirs[0], dirs[1], dirs[2]
 
 	// persistClonesLocked writes in sorted id order — aaa1 and aab1 (data/),
@@ -188,7 +199,7 @@ func TestBulkWriteFlushesDirectoriesWhenTheLoopAbortsEarly(t *testing.T) {
 
 	synced := recordDirSyncs(t)
 
-	if _, err := core.NormalizeLegacyPriorities(lock); err == nil {
+	if _, err := core.NormalizeLegacyPriorities(storeLockFor(t, nibsDir)); err == nil {
 		t.Fatal("expected the injected rename failure to abort the batch, got nil")
 	}
 

@@ -1035,13 +1035,37 @@ func canonicalCycleKey(path []string) string {
 // on a fresh pointer, leaving any off-lock reader still holding the old one a
 // stable, unmutated value. Ranging over c.nibs while reassigning an existing
 // key's value is safe in Go.
+//
+// CONCURRENCY: this is a whole-store sweep, so it takes the per-operation
+// cross-process write lock the single-nib writers take (c.mu first, then the
+// flock — see Core.acquireWriteLock), which excludes `nibs config set-prefix`
+// for its duration. It therefore cannot be called under AcquireStoreLock: that
+// flock is per-descriptor, so a second acquisition in one process deadlocks.
+//
+// The write is the NON-CREATING one (updateOnDiskDeferDirSync), matching the
+// other whole-store sweep, Core.RewriteAreaAssignments. Every nib here is
+// already on disk at the path its in-memory copy carries, so a path this sweep
+// cannot find is a path that went stale — and a creating write answers that by
+// writing the nib back under its retired name, leaving the store a second copy
+// under a prefix its config no longer declares. The lock is what keeps a stale
+// path from arising; the refusal is what makes one loud rather than duplicating
+// the store if it arises anyway — a rename by something that does not take this
+// lock, a set-prefix from a release predating it.
 func (c *Core) RemoveLinksTo(targetID string) (int, error) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 
+	// Ahead of the lock: an empty target names no nib and writes nothing, so
+	// there is nothing to serialize and no reason to wait behind a long holder.
 	if targetID == "" {
 		return 0, nil
 	}
+
+	unlock, lockErr := c.acquireWriteLock()
+	if lockErr != nil {
+		return 0, lockErr
+	}
+	defer func() { _ = unlock() }()
 
 	configPrefix := c.configPrefix()
 	fullID, resolved := c.normalizeIDForLookupLocked(targetID)
@@ -1097,7 +1121,7 @@ func (c *Core) RemoveLinksTo(targetID string) (int, error) {
 			removed += before - len(clone.BlockedBy)
 		}
 
-		dir, err := c.saveToDiskDeferDirSync(clone)
+		dir, err := c.updateOnDiskDeferDirSync(clone)
 		pending.Add(dir)
 		if err != nil {
 			return removed, err
@@ -1108,28 +1132,6 @@ func (c *Core) RemoveLinksTo(targetID string) (int, error) {
 	return removed, nil
 }
 
-// FixBrokenLinks removes all broken links (links to non-existent nibs) and self-references.
-// Returns the number of issues fixed.
-//
-// It restates the parent, milestone, blockedBy and document checks
-// CheckAllLinksInMap makes, resolving each link target through
-// normalizeIDInMap the same way, so
-// `nibs check --fix` removes exactly the broken links, self links and broken
-// documents `nibs check` reported. The other reported categories are left
-// untouched here and the command prints them as not auto-fixable instead:
-// cycles, and the two load-time conditions (an unparseable file, whose repair
-// means editing YAML the user wrote, and a duplicate id, whose resolution means
-// choosing which file to lose).
-//
-// A link that resolves is left exactly as stored: nothing here rewrites a
-// short id into its full form.
-//
-// Copy-on-write for the same reason as RemoveLinksTo: mutate a clone and
-// reinstall it rather than editing the stored pointer in place, so no off-lock
-// reader ever sees a stored pointer's non-Path fields torn mid-write. See the
-// canonical live-pointer / copy-on-write invariant at NibReader.GetSnapshot
-// (internal/graph/interfaces.go). Documents is made copy-on-write here too, for
-// the same discipline, so any future off-lock reader of it is safe as well.
 // SkippedIDSet builds the set of ids whose file is present on disk but was
 // not loaded (unparseable/unreadable — see UnparseableFile), so a link naming
 // one of them is unresolvable-for-now rather than broken. Each skipped id is
@@ -1175,9 +1177,43 @@ func (c *Core) skippedIDsLocked() map[string]bool {
 	return SkippedIDSet(c.unparseableFiles, c.configPrefix())
 }
 
+// FixBrokenLinks removes all broken links (links to non-existent nibs) and self-references.
+// Returns the number of issues fixed.
+//
+// It restates the parent, milestone, blockedBy and document checks
+// CheckAllLinksInMap makes, resolving each link target through
+// normalizeIDInMap the same way, so
+// `nibs check --fix` removes exactly the broken links, self links and broken
+// documents `nibs check` reported. The other reported categories are left
+// untouched here and the command prints them as not auto-fixable instead:
+// cycles, and the two load-time conditions (an unparseable file, whose repair
+// means editing YAML the user wrote, and a duplicate id, whose resolution means
+// choosing which file to lose).
+//
+// A link that resolves is left exactly as stored: nothing here rewrites a
+// short id into its full form.
+//
+// Copy-on-write for the same reason as RemoveLinksTo: mutate a clone and
+// reinstall it rather than editing the stored pointer in place, so no off-lock
+// reader ever sees a stored pointer's non-Path fields torn mid-write. See the
+// canonical live-pointer / copy-on-write invariant at NibReader.GetSnapshot
+// (internal/graph/interfaces.go). Documents is made copy-on-write here too, for
+// the same discipline, so any future off-lock reader of it is safe as well.
+//
+// CONCURRENCY and the non-creating write are RemoveLinksTo's, for its reasons —
+// read them there. This sweep holds the lock longer: it stats one file per
+// document link on top of the walk of every nib, so a store with many document
+// links parks concurrent writers for that long. Both callers of either sweep are
+// write paths (`nibs check --fix`, deleteNib), so nothing that only reads waits.
 func (c *Core) FixBrokenLinks() (int, error) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
+
+	unlock, lockErr := c.acquireWriteLock()
+	if lockErr != nil {
+		return 0, lockErr
+	}
+	defer func() { _ = unlock() }()
 
 	projectRoot := filepath.Dir(c.root)
 	configPrefix := c.configPrefix()
@@ -1254,7 +1290,7 @@ func (c *Core) FixBrokenLinks() (int, error) {
 			fixed += docsRemoved
 		}
 
-		dir, err := c.saveToDiskDeferDirSync(clone)
+		dir, err := c.updateOnDiskDeferDirSync(clone)
 		pending.Add(dir)
 		if err != nil {
 			return fixed, err
