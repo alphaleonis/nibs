@@ -15,6 +15,7 @@ import (
 	"github.com/alphaleonis/nibs/internal/nibcore"
 	"github.com/alphaleonis/nibs/internal/output"
 	"github.com/alphaleonis/nibs/testdata/fixtures"
+	"github.com/spf13/cobra"
 )
 
 // setupAreaCLITest copies the sample fixture — whose config declares auth, api,
@@ -635,6 +636,201 @@ func TestAreaCascadeWritesThePathsTheStoreHasNow(t *testing.T) {
 			for _, short := range members {
 				if got := areaOf(t, nibsPath, "zz-"+short); got != tt.wantArea {
 					t.Errorf("zz-%s area = %q, want %q", short, got, tt.wantArea)
+				}
+			}
+		})
+	}
+}
+
+// runStaleAreaVerb runs one area verb against an App holding the snapshot it
+// loaded BEFORE the store moved — the shape a CLI process is in while it waits
+// on the store's write lock.
+//
+// The flags go through the command's own FlagSet rather than through the
+// package variables they bind, because `--move-to` is read off the Changed bit
+// and a bare assignment leaves that false.
+func runStaleAreaVerb(t *testing.T, app *App, cmd *cobra.Command, run func(*cobra.Command, []string) error,
+	flags map[string]string, args ...string,
+) error {
+	t.Helper()
+	resetCommandTreeFlags(rootCmd)
+	t.Cleanup(func() {
+		resetCommandTreeFlags(rootCmd)
+		cmd.SetContext(context.Background())
+	})
+	for name, value := range flags {
+		if err := cmd.Flags().Set(name, value); err != nil {
+			t.Fatalf("set --%s=%s: %v", name, value, err)
+		}
+	}
+	cmd.SetContext(withApp(context.Background(), app))
+	return run(cmd, args)
+}
+
+// TestAreaRetireRefusesAMoveToTargetRetiredUnderTheLock is nibs-fohy's own
+// scenario. `nibs area rm auth --move-to infra` resolved its target from the
+// vocabulary this process loaded at startup, so a `nibs area rm infra
+// --unassign` that finished while this one waited for the store's write lock
+// left every reassigned member carrying a path the store no longer declares —
+// permanently write-refused, with both processes exiting 0.
+func TestAreaRetireRefusesAMoveToTargetRetiredUnderTheLock(t *testing.T) {
+	nibsPath := setupAreaCLITest(t)
+	app := staleAreaApp(t, nibsPath)
+
+	// Another nibs process retires the very area this one was told to move its
+	// members into.
+	resetCommandTreeFlags(rootCmd)
+	if _, err := runRootWith(t, "--nibs-path", nibsPath, "area", "rm", "infra", "--unassign"); err != nil {
+		t.Fatalf("the racing retire: %v", err)
+	}
+
+	err := runStaleAreaVerb(t, app, areaRmCmd, runAreaRm, map[string]string{"move-to": "infra"}, "auth")
+	if err == nil {
+		t.Fatal("moving members into an area retired under the lock must be refused, got nil")
+	}
+	if code := areaErrCode(t, err); code != output.ErrFileError {
+		t.Errorf("code = %q (exit %d), want %q (exit %d) — the store moved under the command, which is not bad input",
+			code, output.ExitCode(code), output.ErrFileError, output.ExitCode(output.ErrFileError))
+	}
+	for _, want := range []string{"infra", "when this command started"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Errorf("error = %q, want substring %q", err.Error(), want)
+		}
+	}
+	// The refusal lands before anything is written: the members still carry
+	// auth, and auth is still declared.
+	for _, id := range []string{"tnib-b002", "tnib-f002"} {
+		if got := areaOf(t, nibsPath, id); got != "auth" {
+			t.Errorf("%s area = %q, want auth — the members were moved onto a retired area", id, got)
+		}
+	}
+	if got := areaVocabulary(t, nibsPath); !slices.Contains(got, "auth") {
+		t.Errorf("the refused retire removed the declaration: %v", got)
+	}
+}
+
+// TestAreaEditsCascadeThroughAreasDeclaredUnderTheLock: the cascade's membership
+// question is asked of the vocabulary the store declares NOW, not of the one
+// this process loaded.
+//
+// A concurrent `area rename api/webhooks hooks` moves a member onto a path the
+// waiting process never loaded. Deciding membership from that snapshot skips it,
+// so the verb retires or renames its parent out from under a nib it never
+// rewrote — the same permanent write refusal, reached from the other direction.
+func TestAreaEditsCascadeThroughAreasDeclaredUnderTheLock(t *testing.T) {
+	tests := []struct {
+		name string
+		run  func(t *testing.T, app *App) error
+		// wantAreas is what each member of api must carry afterwards, and
+		// wantVocabulary what the file declares — so a cascade that reached every
+		// member cannot pass on a run whose declaration edit never landed.
+		wantAreas      map[string]string
+		wantVocabulary []string
+	}{
+		{
+			name: "rename",
+			run: func(t *testing.T, app *App) error {
+				return runStaleAreaVerb(t, app, areaRenameCmd, runAreaRename, nil, "api", "platform")
+			},
+			wantAreas:      map[string]string{"tnib-b011": "platform", "tnib-f011": "platform/hooks"},
+			wantVocabulary: []string{"auth", "platform", "platform/hooks", "web", "web/dashboard", "infra"},
+		},
+		{
+			name: "rm --unassign",
+			run: func(t *testing.T, app *App) error {
+				return runStaleAreaVerb(t, app, areaRmCmd, runAreaRm, map[string]string{"unassign": "true"}, "api")
+			},
+			wantAreas:      map[string]string{"tnib-b011": "", "tnib-f011": ""},
+			wantVocabulary: []string{"auth", "web", "web/dashboard", "infra"},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			nibsPath := setupAreaCLITest(t)
+			app := staleAreaApp(t, nibsPath)
+
+			resetCommandTreeFlags(rootCmd)
+			if _, err := runRootWith(t, "--nibs-path", nibsPath, "area", "rename", "api/webhooks", "hooks"); err != nil {
+				t.Fatalf("the racing rename: %v", err)
+			}
+			if got := areaOf(t, nibsPath, "tnib-f011"); got != "api/hooks" {
+				t.Fatalf("the racing rename left tnib-f011 at %q, want api/hooks", got)
+			}
+
+			if err := tt.run(t, app); err != nil {
+				t.Fatalf("area edit: %v", err)
+			}
+			for id, want := range tt.wantAreas {
+				if got := areaOf(t, nibsPath, id); got != want {
+					t.Errorf("%s area = %q, want %q — the cascade decided membership from the vocabulary this process loaded", id, got, want)
+				}
+			}
+			if got := areaVocabulary(t, nibsPath); !slices.Equal(got, tt.wantVocabulary) {
+				t.Errorf("vocabulary = %v, want %v", got, tt.wantVocabulary)
+			}
+		})
+	}
+}
+
+// TestAreaEditRefusesAPathRetiredUnderTheLock: the node a verb was told to
+// rename or retire can itself be gone by the time the lock is granted.
+//
+// config.PlanRenameStoredArea and PlanRemoveStoredArea already refuse it — they
+// read the file — but as "this store's config.yml declares no area", which reads
+// as a typo the caller did not make and is classified as bad input. Deciding
+// from the re-read vocabulary lets the refusal say what actually happened, and
+// classifies it with every other refusal over a store the filesystem moved.
+func TestAreaEditRefusesAPathRetiredUnderTheLock(t *testing.T) {
+	tests := []struct {
+		name string
+		run  func(t *testing.T, app *App) error
+	}{
+		{
+			name: "rename",
+			run: func(t *testing.T, app *App) error {
+				return runStaleAreaVerb(t, app, areaRenameCmd, runAreaRename, nil, "auth", "identity")
+			},
+		},
+		{
+			name: "rm",
+			run: func(t *testing.T, app *App) error {
+				return runStaleAreaVerb(t, app, areaRmCmd, runAreaRm, nil, "auth")
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			nibsPath := setupAreaCLITest(t)
+			app := staleAreaApp(t, nibsPath)
+
+			resetCommandTreeFlags(rootCmd)
+			if _, err := runRootWith(t, "--nibs-path", nibsPath, "area", "rm", "auth", "--unassign"); err != nil {
+				t.Fatalf("the racing retire: %v", err)
+			}
+			vocabBefore := areaVocabulary(t, nibsPath)
+
+			err := tt.run(t, app)
+			if err == nil {
+				t.Fatal("expected a refusal over an area retired under the lock, got nil")
+			}
+			if code := areaErrCode(t, err); code != output.ErrFileError {
+				t.Errorf("code = %q (exit %d), want %q (exit %d)",
+					code, output.ExitCode(code), output.ErrFileError, output.ExitCode(output.ErrFileError))
+			}
+			for _, want := range []string{"auth", "when this command started"} {
+				if !strings.Contains(err.Error(), want) {
+					t.Errorf("error = %q, want substring %q", err.Error(), want)
+				}
+			}
+			// The refusal says "nothing was written", so nothing may have been.
+			if got := areaVocabulary(t, nibsPath); !slices.Equal(got, vocabBefore) {
+				t.Errorf("vocabulary = %v, want %v — the refused edit rewrote the declaration", got, vocabBefore)
+			}
+			for _, id := range []string{"tnib-b002", "tnib-f002"} {
+				if got := areaOf(t, nibsPath, id); got != "" {
+					t.Errorf("%s area = %q, want it left unassigned by the racing retire", id, got)
 				}
 			}
 		})
