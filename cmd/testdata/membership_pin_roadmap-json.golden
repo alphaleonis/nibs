@@ -12,7 +12,7 @@
         "priority": "critical",
         "created_at": "2026-02-15T09:00:00Z",
         "updated_at": "2026-03-25T14:30:00Z",
-        "body": "\nShip the minimum viable product with core task management, user authentication, basic dashboard, and API foundation.\n\n## Goal\n\nDeliver a working product that early adopters can use for daily project management by end of Q1 2026.\n\n## Current Focus\n\n- Completing OAuth2 authentication flow\n- Stabilizing task management CRUD operations\n- Addressing critical security bugs before beta\n\n## Key Decisions\n\n- Chose PostgreSQL over MongoDB for ACID compliance requirements\n- REST API first, GraphQL deferred to v1.2\n- Server-side rendering deferred — SPA with Svelte for now",
+        "body": "\nShip the minimum viable product with core task management, user authentication, basic dashboard, and API foundation.\n\n## Goal\n\nDeliver a working product that early adopters can use for daily project management by end of Q1 2026.\n\n## Current Focus\n\n- Completing OAuth2 authentication flow\n- Stabilizing task management CRUD operations\n- Addressing critical security bugs before beta\n\n## Key Decisions\n\n- Chose PostgreSQL over MongoDB for ACID compliance requirements\n- REST API first, GraphQL deferred to v1.2\n- Server-side rendering deferred — SPA with Svelte for now\n",
         "documents": [
           "docs/product-roadmap.md"
         ],
@@ -39,7 +39,7 @@
             "priority": "high",
             "created_at": "2026-02-18T10:00:00Z",
             "updated_at": "2026-03-24T16:00:00Z",
-            "body": "\n## Objective\n\nImplement a complete authentication system supporting email/password, OAuth2 social providers, and secure session management.\n\n## Acceptance Criteria\n\n- [x] Users can register and log in with email/password\n- [x] Passwords hashed with bcrypt (cost 12)\n- [ ] OAuth2 login via Google and GitHub\n- [ ] Password reset via email link\n- [ ] Sessions invalidated on password change\n\n## Scope Boundaries\n\n- MFA is out of scope for v1.0\n- SAML/SSO deferred to enterprise tier",
+            "body": "\n## Objective\n\nImplement a complete authentication system supporting email/password, OAuth2 social providers, and secure session management.\n\n## Acceptance Criteria\n\n- [x] Users can register and log in with email/password\n- [x] Passwords hashed with bcrypt (cost 12)\n- [ ] OAuth2 login via Google and GitHub\n- [ ] Password reset via email link\n- [ ] Sessions invalidated on password change\n\n## Scope Boundaries\n\n- MFA is out of scope for v1.0\n- SAML/SSO deferred to enterprise tier\n",
             "documents": [
               "docs/auth-architecture.md"
             ],
@@ -67,7 +67,7 @@
               "estimate": "s",
               "created_at": "2026-03-18T14:00:00Z",
               "updated_at": "2026-03-22T09:00:00Z",
-              "body": "\n## Steps to Reproduce\n\n1. Deploy to production environment\n2. Click \"Login with Google\"\n3. Complete Google consent screen\n4. Observe \"redirect_uri_mismatch\" error\n\n## Expected vs Actual\n\n**Expected:** User redirected back to app and logged in\n**Actual:** Google returns `redirect_uri_mismatch` error because production config still has staging callback URL\n\n## Root Cause\n\n`OAUTH_CALLBACK_URL` environment variable in production is set to `https://staging.taskflow.dev/auth/callback` instead of `https://taskflow.dev/auth/callback`. Terraform config has the correct value but it wasn't applied after the last deploy.",
+              "body": "\n## Steps to Reproduce\n\n1. Deploy to production environment\n2. Click \"Login with Google\"\n3. Complete Google consent screen\n4. Observe \"redirect_uri_mismatch\" error\n\n## Expected vs Actual\n\n**Expected:** User redirected back to app and logged in\n**Actual:** Google returns `redirect_uri_mismatch` error because production config still has staging callback URL\n\n## Root Cause\n\n`OAUTH_CALLBACK_URL` environment variable in production is set to `https://staging.taskflow.dev/auth/callback` instead of `https://taskflow.dev/auth/callback`. Terraform config has the correct value but it wasn't applied after the last deploy.\n",
               "parent": "tnib-e001",
               "order": "f",
               "etag": "dcf001176210eb43"
@@ -87,7 +87,7 @@
               ],
               "created_at": "2026-03-15T10:00:00Z",
               "updated_at": "2026-03-20T09:00:00Z",
-              "body": "\n## Steps to Reproduce\n\n1. Log in on Device A\n2. Change password on Device A\n3. Check Device B — still logged in with old session\n\n## Expected vs Actual\n\n**Expected:** All other sessions invalidated after password change\n**Actual:** Existing sessions remain valid indefinitely\n\n## Root Cause\n\nPassword change handler updates the password hash but doesn't increment the session generation counter. The session validation middleware doesn't check generation — it only validates the session token exists in Redis.",
+              "body": "\n## Steps to Reproduce\n\n1. Log in on Device A\n2. Change password on Device A\n3. Check Device B — still logged in with old session\n\n## Expected vs Actual\n\n**Expected:** All other sessions invalidated after password change\n**Actual:** Existing sessions remain valid indefinitely\n\n## Root Cause\n\nPassword change handler updates the password hash but doesn't increment the session generation counter. The session validation middleware doesn't check generation — it only validates the session token exists in Redis.\n",
               "parent": "tnib-e001",
               "order": "e",
               "area": "auth",
@@ -105,7 +105,7 @@
               "estimate": "l",
               "created_at": "2026-02-25T09:00:00Z",
               "updated_at": "2026-03-24T15:00:00Z",
-              "body": "\nAllow users to log in via Google and GitHub OAuth2 providers. Account linking when email matches existing account.\n\n## Acceptance Criteria\n\n- [x] Google OAuth2 login flow\n- [ ] GitHub OAuth2 login flow\n- [ ] Account linking for matching emails\n- [ ] Graceful handling of denied permissions",
+              "body": "\nAllow users to log in via Google and GitHub OAuth2 providers. Account linking when email matches existing account.\n\n## Acceptance Criteria\n\n- [x] Google OAuth2 login flow\n- [ ] GitHub OAuth2 login flow\n- [ ] Account linking for matching emails\n- [ ] Graceful handling of denied permissions\n",
               "parent": "tnib-e001",
               "order": "b",
               "area": "auth",
@@ -123,7 +123,7 @@
               "estimate": "m",
               "created_at": "2026-03-01T09:00:00Z",
               "updated_at": "2026-03-15T10:00:00Z",
-              "body": "\nEmail-based password reset with secure token generation and configurable expiry.\n\n## Acceptance Criteria\n\n- [ ] \"Forgot password\" page sends reset email\n- [ ] Token valid for 1 hour, single-use\n- [ ] Rate limiting on reset requests\n- [ ] Password strength validation on new password",
+              "body": "\nEmail-based password reset with secure token generation and configurable expiry.\n\n## Acceptance Criteria\n\n- [ ] \"Forgot password\" page sends reset email\n- [ ] Token valid for 1 hour, single-use\n- [ ] Rate limiting on reset requests\n- [ ] Password strength validation on new password\n",
               "parent": "tnib-e001",
               "order": "c",
               "etag": "e1525b2ef99f4327"
@@ -143,7 +143,7 @@
               ],
               "created_at": "2026-03-10T09:00:00Z",
               "updated_at": "2026-03-15T10:00:00Z",
-              "body": "\n## Description\n\nDocument all authentication endpoints in the API reference: registration, login, logout, OAuth flows, password reset, and session management.\n\n## Verification\n\n- [ ] OpenAPI spec updated with auth endpoints\n- [ ] Request/response examples for each endpoint\n- [ ] Error code reference table\n- [ ] Authentication flow diagrams",
+              "body": "\n## Description\n\nDocument all authentication endpoints in the API reference: registration, login, logout, OAuth flows, password reset, and session management.\n\n## Verification\n\n- [ ] OpenAPI spec updated with auth endpoints\n- [ ] Request/response examples for each endpoint\n- [ ] Error code reference table\n- [ ] Authentication flow diagrams\n",
               "parent": "tnib-e001",
               "order": "d",
               "etag": "4eb881098a68bb98"
@@ -162,7 +162,7 @@
             "priority": "high",
             "created_at": "2026-02-18T10:30:00Z",
             "updated_at": "2026-03-25T09:00:00Z",
-            "body": "\n## Objective\n\nBuild the core task CRUD, assignment, prioritization, and subtask systems that form the backbone of the product.\n\n## Acceptance Criteria\n\n- [x] Full CRUD for tasks with validation\n- [x] Task assignment to users\n- [ ] Priority-based sorting and drag-and-drop reordering\n- [ ] Subtask/checklist support with depth limits\n\n## Scope Boundaries\n\n- Recurring tasks deferred to v1.2\n- Gantt chart view deferred to v1.1",
+            "body": "\n## Objective\n\nBuild the core task CRUD, assignment, prioritization, and subtask systems that form the backbone of the product.\n\n## Acceptance Criteria\n\n- [x] Full CRUD for tasks with validation\n- [x] Task assignment to users\n- [ ] Priority-based sorting and drag-and-drop reordering\n- [ ] Subtask/checklist support with depth limits\n\n## Scope Boundaries\n\n- Recurring tasks deferred to v1.2\n- Gantt chart view deferred to v1.1\n",
             "milestone": "tnib-m001",
             "milestone_order": "b",
             "etag": "6fcdd5030cc73bfb"
@@ -187,7 +187,7 @@
               "estimate": "s",
               "created_at": "2026-03-20T09:00:00Z",
               "updated_at": "2026-03-24T15:00:00Z",
-              "body": "\n## Steps to Reproduce\n\n1. Deactivate user \"alice@example.com\" via admin panel\n2. Assign a task to \"alice@example.com\" via API\n3. Request succeeds with 200 OK\n\n## Expected vs Actual\n\n**Expected:** 400 Bad Request with message \"Cannot assign to deactivated user\"\n**Actual:** Assignment succeeds silently; task shows as assigned to a ghost user\n\n## Root Cause\n\nAssignment endpoint only checks if user ID exists in users table, doesn't check `is_active` flag. Need to add `WHERE is_active = true` to the user lookup query.",
+              "body": "\n## Steps to Reproduce\n\n1. Deactivate user \"alice@example.com\" via admin panel\n2. Assign a task to \"alice@example.com\" via API\n3. Request succeeds with 200 OK\n\n## Expected vs Actual\n\n**Expected:** 400 Bad Request with message \"Cannot assign to deactivated user\"\n**Actual:** Assignment succeeds silently; task shows as assigned to a ghost user\n\n## Root Cause\n\nAssignment endpoint only checks if user ID exists in users table, doesn't check `is_active` flag. Need to add `WHERE is_active = true` to the user lookup query.\n",
               "parent": "tnib-e002",
               "order": "g",
               "etag": "032d374cfa51e23c"
@@ -204,7 +204,7 @@
               "estimate": "s",
               "created_at": "2026-03-12T09:00:00Z",
               "updated_at": "2026-03-15T10:00:00Z",
-              "body": "\n## Steps to Reproduce\n\n1. Create a task with a title longer than 255 characters via API\n2. Read the task back\n\n## Expected vs Actual\n\n**Expected:** Either accept full title (up to our stated 500 char limit) or return 400 if too long\n**Actual:** Title silently truncated to 255 chars by database column constraint\n\n## Root Cause\n\nDatabase column is `VARCHAR(255)` but API validation allows up to 500 chars. Either widen the column to 500 or lower the API limit to 255.",
+              "body": "\n## Steps to Reproduce\n\n1. Create a task with a title longer than 255 characters via API\n2. Read the task back\n\n## Expected vs Actual\n\n**Expected:** Either accept full title (up to our stated 500 char limit) or return 400 if too long\n**Actual:** Title silently truncated to 255 chars by database column constraint\n\n## Root Cause\n\nDatabase column is `VARCHAR(255)` but API validation allows up to 500 chars. Either widen the column to 500 or lower the API limit to 255.\n",
               "parent": "tnib-e002",
               "order": "f",
               "etag": "2543a9599e9427fe"
@@ -221,7 +221,7 @@
               "estimate": "m",
               "created_at": "2026-03-01T09:00:00Z",
               "updated_at": "2026-03-23T11:00:00Z",
-              "body": "\nAssign tasks to team members with ownership tracking and notification on assignment changes.\n\n## Acceptance Criteria\n\n- [x] Assign/unassign users to tasks\n- [x] User-task relationship model\n- [ ] Email notification on assignment\n- [ ] Bulk assignment via API",
+              "body": "\nAssign tasks to team members with ownership tracking and notification on assignment changes.\n\n## Acceptance Criteria\n\n- [x] Assign/unassign users to tasks\n- [x] User-task relationship model\n- [ ] Email notification on assignment\n- [ ] Bulk assignment via API\n",
               "parent": "tnib-e002",
               "order": "b",
               "etag": "9d8f2d4aa2605a63"
@@ -238,7 +238,7 @@
               "estimate": "l",
               "created_at": "2026-03-05T09:00:00Z",
               "updated_at": "2026-03-15T10:00:00Z",
-              "body": "\nAllow users to prioritize tasks with drag-and-drop reordering and optional auto-sorting by priority level.\n\n## Acceptance Criteria\n\n- [ ] Drag-and-drop reordering within a list\n- [ ] Priority-based auto-sort toggle\n- [ ] Persisted custom order per user per board",
+              "body": "\nAllow users to prioritize tasks with drag-and-drop reordering and optional auto-sorting by priority level.\n\n## Acceptance Criteria\n\n- [ ] Drag-and-drop reordering within a list\n- [ ] Priority-based auto-sort toggle\n- [ ] Persisted custom order per user per board\n",
               "parent": "tnib-e002",
               "order": "c",
               "etag": "da4d32ac8d8f8309"
@@ -255,7 +255,7 @@
               "estimate": "xl",
               "created_at": "2026-03-10T09:00:00Z",
               "updated_at": "2026-03-15T10:00:00Z",
-              "body": "\nSupport nested subtasks and checklists within tasks, with progress aggregation and configurable depth limits.\n\n## Acceptance Criteria\n\n- [ ] Create subtasks nested under a parent task\n- [ ] Checklist items with completion toggle\n- [ ] Progress percentage aggregated from subtask completion\n- [ ] Configurable max nesting depth (default: 3)",
+              "body": "\nSupport nested subtasks and checklists within tasks, with progress aggregation and configurable depth limits.\n\n## Acceptance Criteria\n\n- [ ] Create subtasks nested under a parent task\n- [ ] Checklist items with completion toggle\n- [ ] Progress percentage aggregated from subtask completion\n- [ ] Configurable max nesting depth (default: 3)\n",
               "parent": "tnib-e002",
               "order": "d",
               "etag": "ab249c781e46d1c2"
@@ -275,7 +275,7 @@
               ],
               "created_at": "2026-03-10T09:00:00Z",
               "updated_at": "2026-03-15T10:00:00Z",
-              "body": "\n## Description\n\nLoad test with 10,000 tasks to establish baseline performance metrics. Identify bottlenecks in list rendering and API response times.\n\n## Verification\n\n- [ ] Seed script creates 10k tasks with realistic data\n- [ ] API list endpoint responds in \u003c200ms at p95\n- [ ] UI list renders without jank (60fps scroll)\n- [ ] Document baseline metrics for future regression checks",
+              "body": "\n## Description\n\nLoad test with 10,000 tasks to establish baseline performance metrics. Identify bottlenecks in list rendering and API response times.\n\n## Verification\n\n- [ ] Seed script creates 10k tasks with realistic data\n- [ ] API list endpoint responds in \u003c200ms at p95\n- [ ] UI list renders without jank (60fps scroll)\n- [ ] Document baseline metrics for future regression checks\n",
               "parent": "tnib-e002",
               "order": "e",
               "etag": "71ec204e7cd544ab"
@@ -294,7 +294,7 @@
             "priority": "normal",
             "created_at": "2026-02-20T11:00:00Z",
             "updated_at": "2026-03-15T10:00:00Z",
-            "body": "\n## Objective\n\nProvide team leads with velocity charts, personal dashboards, and exportable reports.\n\n## Acceptance Criteria\n\n- [ ] Team velocity chart with sprint-over-sprint comparison\n- [ ] Personal \"My Tasks\" dashboard with widget layout\n- [ ] Export to CSV and PDF\n\n## Scope Boundaries\n\n- Custom report builder deferred to v1.2\n- Real-time dashboard updates require v1.1 WebSocket infrastructure",
+            "body": "\n## Objective\n\nProvide team leads with velocity charts, personal dashboards, and exportable reports.\n\n## Acceptance Criteria\n\n- [ ] Team velocity chart with sprint-over-sprint comparison\n- [ ] Personal \"My Tasks\" dashboard with widget layout\n- [ ] Export to CSV and PDF\n\n## Scope Boundaries\n\n- Custom report builder deferred to v1.2\n- Real-time dashboard updates require v1.1 WebSocket infrastructure\n",
             "blocked_by": [
               "tnib-e002"
             ],
@@ -322,7 +322,7 @@
               "estimate": "m",
               "created_at": "2026-03-10T09:00:00Z",
               "updated_at": "2026-03-15T10:00:00Z",
-              "body": "\n## Steps to Reproduce\n\n1. Set system timezone to UTC+9 (Tokyo)\n2. Open task with due date \"2026-03-15\"\n3. Date picker shows \"March 14\" (off by one due to UTC conversion)\n\n## Expected vs Actual\n\n**Expected:** Date picker shows the date as entered, in user's local timezone\n**Actual:** Date displayed relative to UTC, causing off-by-one for users east of UTC\n\n## Root Cause\n\nDates stored as UTC timestamps but rendered without timezone conversion. Should store as date-only (no time component) or convert to user's timezone on display.",
+              "body": "\n## Steps to Reproduce\n\n1. Set system timezone to UTC+9 (Tokyo)\n2. Open task with due date \"2026-03-15\"\n3. Date picker shows \"March 14\" (off by one due to UTC conversion)\n\n## Expected vs Actual\n\n**Expected:** Date picker shows the date as entered, in user's local timezone\n**Actual:** Date displayed relative to UTC, causing off-by-one for users east of UTC\n\n## Root Cause\n\nDates stored as UTC timestamps but rendered without timezone conversion. Should store as date-only (no time component) or convert to user's timezone on display.\n",
               "parent": "tnib-e003",
               "order": "d",
               "area": "web",
@@ -340,7 +340,7 @@
               "estimate": "l",
               "created_at": "2026-03-05T11:00:00Z",
               "updated_at": "2026-03-15T10:00:00Z",
-              "body": "\nSprint-over-sprint velocity chart showing completed story points per sprint with trend line.\n\n## Acceptance Criteria\n\n- [ ] Bar chart showing points completed per sprint\n- [ ] Rolling average trend line\n- [ ] Configurable sprint length (1-4 weeks)\n- [ ] Export chart as PNG",
+              "body": "\nSprint-over-sprint velocity chart showing completed story points per sprint with trend line.\n\n## Acceptance Criteria\n\n- [ ] Bar chart showing points completed per sprint\n- [ ] Rolling average trend line\n- [ ] Configurable sprint length (1-4 weeks)\n- [ ] Export chart as PNG\n",
               "parent": "tnib-e003",
               "order": "a",
               "area": "web/dashboard",
@@ -358,7 +358,7 @@
               "estimate": "l",
               "created_at": "2026-03-05T11:30:00Z",
               "updated_at": "2026-03-15T10:00:00Z",
-              "body": "\nCustomizable personal dashboard showing assigned tasks, upcoming deadlines, and activity summary.\n\n## Acceptance Criteria\n\n- [ ] \"My Tasks\" widget with filtering\n- [ ] Upcoming deadlines widget (next 7 days)\n- [ ] Recent activity feed widget\n- [ ] Draggable widget layout (persisted per user)",
+              "body": "\nCustomizable personal dashboard showing assigned tasks, upcoming deadlines, and activity summary.\n\n## Acceptance Criteria\n\n- [ ] \"My Tasks\" widget with filtering\n- [ ] Upcoming deadlines widget (next 7 days)\n- [ ] Recent activity feed widget\n- [ ] Draggable widget layout (persisted per user)\n",
               "parent": "tnib-e003",
               "order": "b",
               "etag": "074a44997b9411a3"
@@ -375,7 +375,7 @@
               "estimate": "l",
               "created_at": "2026-03-08T09:00:00Z",
               "updated_at": "2026-03-15T10:00:00Z",
-              "body": "\nAllow exporting task lists, sprint reports, and velocity data as CSV or PDF files.\n\n## Acceptance Criteria\n\n- [ ] CSV export for task lists with all fields\n- [ ] PDF report with charts and summary\n- [ ] Scheduled email reports (weekly digest)",
+              "body": "\nAllow exporting task lists, sprint reports, and velocity data as CSV or PDF files.\n\n## Acceptance Criteria\n\n- [ ] CSV export for task lists with all fields\n- [ ] PDF report with charts and summary\n- [ ] Scheduled email reports (weekly digest)\n",
               "parent": "tnib-e003",
               "order": "c",
               "etag": "9869563037010667"
@@ -394,7 +394,7 @@
             "priority": "normal",
             "created_at": "2026-02-20T14:00:00Z",
             "updated_at": "2026-03-15T10:00:00Z",
-            "body": "\n## Objective\n\nExpose a webhook system for third-party integrations and lay groundwork for future Slack/GitHub integrations.\n\n## Acceptance Criteria\n\n- [ ] Webhook registration and delivery with retry\n- [ ] At least one external integration (Slack or GitHub)\n- [ ] REST API documented with OpenAPI spec\n\n## Scope Boundaries\n\n- GraphQL API deferred to v1.2\n- Two-way sync with external tools deferred",
+            "body": "\n## Objective\n\nExpose a webhook system for third-party integrations and lay groundwork for future Slack/GitHub integrations.\n\n## Acceptance Criteria\n\n- [ ] Webhook registration and delivery with retry\n- [ ] At least one external integration (Slack or GitHub)\n- [ ] REST API documented with OpenAPI spec\n\n## Scope Boundaries\n\n- GraphQL API deferred to v1.2\n- Two-way sync with external tools deferred\n",
             "milestone": "tnib-m001",
             "milestone_order": "d",
             "etag": "f8dd857da2f11646"
@@ -419,7 +419,7 @@
               "estimate": "s",
               "created_at": "2026-03-10T14:00:00Z",
               "updated_at": "2026-03-15T10:00:00Z",
-              "body": "\n## Steps to Reproduce\n\n1. Register a webhook for task.updated events\n2. Update a task\n3. Inspect the webhook payload\n\n## Expected vs Actual\n\n**Expected:** Payload includes `updated_at` timestamp\n**Actual:** `updated_at` field is missing from the payload\n\n## Root Cause\n\nWebhook serializer uses `TaskSummary` struct which doesn't include `UpdatedAt` field. Need to add it to the struct and the JSON serialization.",
+              "body": "\n## Steps to Reproduce\n\n1. Register a webhook for task.updated events\n2. Update a task\n3. Inspect the webhook payload\n\n## Expected vs Actual\n\n**Expected:** Payload includes `updated_at` timestamp\n**Actual:** `updated_at` field is missing from the payload\n\n## Root Cause\n\nWebhook serializer uses `TaskSummary` struct which doesn't include `UpdatedAt` field. Need to add it to the struct and the JSON serialization.\n",
               "parent": "tnib-e004",
               "order": "d",
               "etag": "5bc3a1c0e13cfd91"
@@ -436,7 +436,7 @@
               "estimate": "l",
               "created_at": "2026-03-05T14:00:00Z",
               "updated_at": "2026-03-15T10:00:00Z",
-              "body": "\nHTTP webhook system for notifying external services of task events (created, updated, deleted, assigned).\n\n## Acceptance Criteria\n\n- [ ] Register webhook URLs with event type filters\n- [ ] HMAC-SHA256 signature verification\n- [ ] Retry with exponential backoff (max 5 attempts)\n- [ ] Delivery log with status and response time",
+              "body": "\nHTTP webhook system for notifying external services of task events (created, updated, deleted, assigned).\n\n## Acceptance Criteria\n\n- [ ] Register webhook URLs with event type filters\n- [ ] HMAC-SHA256 signature verification\n- [ ] Retry with exponential backoff (max 5 attempts)\n- [ ] Delivery log with status and response time\n",
               "parent": "tnib-e004",
               "order": "a",
               "area": "api/webhooks",
@@ -454,7 +454,7 @@
               "estimate": "l",
               "created_at": "2026-03-08T09:00:00Z",
               "updated_at": "2026-03-15T10:00:00Z",
-              "body": "\nSlack bot that posts task updates to channels and allows creating tasks via slash commands.\n\n## Acceptance Criteria\n\n- [ ] Slack app with OAuth2 installation flow\n- [ ] `/taskflow create` slash command\n- [ ] Channel notifications for task events\n- [ ] Thread replies linked to task comments",
+              "body": "\nSlack bot that posts task updates to channels and allows creating tasks via slash commands.\n\n## Acceptance Criteria\n\n- [ ] Slack app with OAuth2 installation flow\n- [ ] `/taskflow create` slash command\n- [ ] Channel notifications for task events\n- [ ] Thread replies linked to task comments\n",
               "parent": "tnib-e004",
               "order": "b",
               "etag": "65efcf0ef6ca3573"
@@ -475,7 +475,7 @@
         "priority": "normal",
         "created_at": "2026-03-10T09:00:00Z",
         "updated_at": "2026-03-20T11:00:00Z",
-        "body": "\nAdd real-time collaboration features, notification system, and activity feeds. Depends on v1.0 infrastructure being stable.\n\n## Goal\n\nEnable teams to collaborate in real-time on shared task boards with live updates and notifications.\n\n## Key Decisions\n\n- WebSocket for real-time (not SSE) — need bidirectional communication\n- Event sourcing for activity feed to support retroactive queries",
+        "body": "\nAdd real-time collaboration features, notification system, and activity feeds. Depends on v1.0 infrastructure being stable.\n\n## Goal\n\nEnable teams to collaborate in real-time on shared task boards with live updates and notifications.\n\n## Key Decisions\n\n- WebSocket for real-time (not SSE) — need bidirectional communication\n- Event sourcing for activity feed to support retroactive queries\n",
         "order": "b",
         "etag": "2f99e2b2bbfd625f"
       },
@@ -500,7 +500,7 @@
             "estimate": "xl",
             "created_at": "2026-03-10T10:00:00Z",
             "updated_at": "2026-03-18T09:00:00Z",
-            "body": "\n## Objective\n\nEnable live multi-user editing with WebSocket-based updates and conflict resolution.\n\n## Acceptance Criteria\n\n- [ ] WebSocket server with connection management\n- [ ] Optimistic UI updates with server reconciliation\n- [ ] Activity feed powered by event sourcing\n\n## Scope Boundaries\n\n- Operational transform / CRDT for rich text editing deferred\n- Voice/video collaboration out of scope",
+            "body": "\n## Objective\n\nEnable live multi-user editing with WebSocket-based updates and conflict resolution.\n\n## Acceptance Criteria\n\n- [ ] WebSocket server with connection management\n- [ ] Optimistic UI updates with server reconciliation\n- [ ] Activity feed powered by event sourcing\n\n## Scope Boundaries\n\n- Operational transform / CRDT for rich text editing deferred\n- Voice/video collaboration out of scope\n",
             "documents": [
               "docs/websocket-rfc.md"
             ],
@@ -528,7 +528,7 @@
               "estimate": "xl",
               "created_at": "2026-03-12T09:00:00Z",
               "updated_at": "2026-03-18T09:00:00Z",
-              "body": "\nReal-time task board updates via WebSocket connections with optimistic UI and server reconciliation.\n\n## Acceptance Criteria\n\n- [ ] WebSocket server with connection lifecycle management\n- [ ] Client-side optimistic updates with rollback on conflict\n- [ ] Presence indicators (who's viewing what)\n- [ ] Graceful reconnection with state sync",
+              "body": "\nReal-time task board updates via WebSocket connections with optimistic UI and server reconciliation.\n\n## Acceptance Criteria\n\n- [ ] WebSocket server with connection lifecycle management\n- [ ] Client-side optimistic updates with rollback on conflict\n- [ ] Presence indicators (who's viewing what)\n- [ ] Graceful reconnection with state sync\n",
               "parent": "tnib-e005",
               "documents": [
                 "docs/websocket-rfc.md"
@@ -548,7 +548,7 @@
               "estimate": "l",
               "created_at": "2026-03-12T10:00:00Z",
               "updated_at": "2026-03-18T09:00:00Z",
-              "body": "\nChronological activity feed showing task changes, comments, and team activity powered by event sourcing.\n\n## Acceptance Criteria\n\n- [ ] Event sourcing pipeline capturing all task mutations\n- [ ] Feed UI with infinite scroll\n- [ ] Filter by user, project, or event type\n- [ ] @mention highlighting",
+              "body": "\nChronological activity feed showing task changes, comments, and team activity powered by event sourcing.\n\n## Acceptance Criteria\n\n- [ ] Event sourcing pipeline capturing all task mutations\n- [ ] Feed UI with infinite scroll\n- [ ] Filter by user, project, or event type\n- [ ] @mention highlighting\n",
               "parent": "tnib-e005",
               "order": "b",
               "etag": "7103f6fa0485e150"
@@ -567,7 +567,7 @@
             "priority": "normal",
             "created_at": "2026-03-10T11:00:00Z",
             "updated_at": "2026-03-18T09:00:00Z",
-            "body": "\n## Objective\n\nDeliver in-app and email notifications for task assignments, mentions, and deadline reminders.\n\n## Acceptance Criteria\n\n- [ ] In-app notification center with read/unread state\n- [ ] Email digest (daily/weekly configurable)\n- [ ] Push notifications on mobile (PWA)\n\n## Scope Boundaries\n\n- SMS notifications out of scope\n- Notification preferences UI in v1.1, API-only in v1.0",
+            "body": "\n## Objective\n\nDeliver in-app and email notifications for task assignments, mentions, and deadline reminders.\n\n## Acceptance Criteria\n\n- [ ] In-app notification center with read/unread state\n- [ ] Email digest (daily/weekly configurable)\n- [ ] Push notifications on mobile (PWA)\n\n## Scope Boundaries\n\n- SMS notifications out of scope\n- Notification preferences UI in v1.1, API-only in v1.0\n",
             "milestone": "tnib-m002",
             "milestone_order": "b",
             "etag": "c24a8d59e33595cf"
@@ -592,7 +592,7 @@
               "estimate": "s",
               "created_at": "2026-03-14T09:00:00Z",
               "updated_at": "2026-03-18T09:00:00Z",
-              "body": "\n## Steps to Reproduce\n\n1. Open app on mobile Safari (iOS 16+)\n2. No permission prompt appears for push notifications\n3. Notification settings show \"Not Determined\"\n\n## Expected vs Actual\n\n**Expected:** Permission prompt shown on first relevant action (e.g., enabling notifications)\n**Actual:** Permission never requested because Service Worker registration fails silently on mobile Safari\n\n## Root Cause\n\nService Worker scope is misconfigured — needs investigation into Safari PWA requirements.",
+              "body": "\n## Steps to Reproduce\n\n1. Open app on mobile Safari (iOS 16+)\n2. No permission prompt appears for push notifications\n3. Notification settings show \"Not Determined\"\n\n## Expected vs Actual\n\n**Expected:** Permission prompt shown on first relevant action (e.g., enabling notifications)\n**Actual:** Permission never requested because Service Worker registration fails silently on mobile Safari\n\n## Root Cause\n\nService Worker scope is misconfigured — needs investigation into Safari PWA requirements.\n",
               "parent": "tnib-e006",
               "order": "c",
               "etag": "6a06f65bcf2300c8"
@@ -609,7 +609,7 @@
               "estimate": "m",
               "created_at": "2026-03-12T11:00:00Z",
               "updated_at": "2026-03-18T09:00:00Z",
-              "body": "\nBell icon notification center with real-time badge count and read/unread state management.\n\n## Acceptance Criteria\n\n- [ ] Notification bell with unread count badge\n- [ ] Dropdown panel with recent notifications\n- [ ] Mark as read (individual and bulk)\n- [ ] Click-through to relevant task/comment",
+              "body": "\nBell icon notification center with real-time badge count and read/unread state management.\n\n## Acceptance Criteria\n\n- [ ] Notification bell with unread count badge\n- [ ] Dropdown panel with recent notifications\n- [ ] Mark as read (individual and bulk)\n- [ ] Click-through to relevant task/comment\n",
               "parent": "tnib-e006",
               "order": "a",
               "etag": "f5b9eda2917d92d0"
@@ -626,7 +626,7 @@
               "estimate": "m",
               "created_at": "2026-03-12T11:30:00Z",
               "updated_at": "2026-03-18T09:00:00Z",
-              "body": "\nConfigurable email digest summarizing task updates, mentions, and upcoming deadlines.\n\n## Acceptance Criteria\n\n- [ ] Daily or weekly digest (user-configurable)\n- [ ] Summary of assigned task changes\n- [ ] Upcoming deadline reminders\n- [ ] Unsubscribe link in every email",
+              "body": "\nConfigurable email digest summarizing task updates, mentions, and upcoming deadlines.\n\n## Acceptance Criteria\n\n- [ ] Daily or weekly digest (user-configurable)\n- [ ] Summary of assigned task changes\n- [ ] Upcoming deadline reminders\n- [ ] Unsubscribe link in every email\n",
               "parent": "tnib-e006",
               "order": "b",
               "etag": "7ecfb346e95a7fb1"
@@ -650,7 +650,7 @@
         "estimate": "s",
         "created_at": "2026-03-22T09:00:00Z",
         "updated_at": "2026-03-25T14:00:00Z",
-        "body": "\n## Steps to Reproduce\n\n1. Start development server with `npm run dev`\n2. Make 20+ file changes triggering hot reload\n3. Observe Node.js memory usage climbing from ~150MB to 1.2GB+\n\n## Expected vs Actual\n\n**Expected:** Memory usage stable around 200-300MB regardless of hot reloads\n**Actual:** Memory grows ~50MB per hot reload and is never reclaimed\n\n## Root Cause\n\nVite's HMR is not cleaning up old module instances. Likely related to circular dependency in the state management layer preventing garbage collection. Investigating with `--inspect` heap snapshots.",
+        "body": "\n## Steps to Reproduce\n\n1. Start development server with `npm run dev`\n2. Make 20+ file changes triggering hot reload\n3. Observe Node.js memory usage climbing from ~150MB to 1.2GB+\n\n## Expected vs Actual\n\n**Expected:** Memory usage stable around 200-300MB regardless of hot reloads\n**Actual:** Memory grows ~50MB per hot reload and is never reclaimed\n\n## Root Cause\n\nVite's HMR is not cleaning up old module instances. Likely related to circular dependency in the state management layer preventing garbage collection. Investigating with `--inspect` heap snapshots.\n",
         "order": "n",
         "etag": "3736427cfbc04a17"
       },
@@ -666,7 +666,7 @@
         "estimate": "s",
         "created_at": "2026-03-20T14:00:00Z",
         "updated_at": "2026-03-25T11:00:00Z",
-        "body": "\n## Steps to Reproduce\n\n1. Create a task with title \"quarterly review\"\n2. Delete the task\n3. Search for \"quarterly\" — deleted task still appears in results\n\n## Expected vs Actual\n\n**Expected:** Deleted tasks excluded from search results immediately\n**Actual:** Search index retains deleted tasks until server restart\n\n## Root Cause\n\nDelete handler removes from database but doesn't update the Bleve search index. Need to call `index.Delete(taskID)` in the delete path.",
+        "body": "\n## Steps to Reproduce\n\n1. Create a task with title \"quarterly review\"\n2. Delete the task\n3. Search for \"quarterly\" — deleted task still appears in results\n\n## Expected vs Actual\n\n**Expected:** Deleted tasks excluded from search results immediately\n**Actual:** Search index retains deleted tasks until server restart\n\n## Root Cause\n\nDelete handler removes from database but doesn't update the Bleve search index. Need to call `index.Delete(taskID)` in the delete path.\n",
         "order": "u",
         "etag": "aef2f33711280d2f"
       },
@@ -682,7 +682,7 @@
         "estimate": "s",
         "created_at": "2026-03-18T09:00:00Z",
         "updated_at": "2026-03-22T10:00:00Z",
-        "body": "\n## Steps to Reproduce\n\n1. Run `go test ./internal/service/ -count=100`\n2. TestUserService_ConcurrentUpdate fails ~5% of the time\n\n## Expected vs Actual\n\n**Expected:** Test passes consistently\n**Actual:** Intermittent failure with \"context deadline exceeded\" — race condition in test setup\n\n## Root Cause\n\nTest uses a shared database connection pool without proper per-test isolation. When tests run in parallel, the pool is exhausted and some tests timeout waiting for a connection. Need to use `t.Parallel()` with per-test transactions.",
+        "body": "\n## Steps to Reproduce\n\n1. Run `go test ./internal/service/ -count=100`\n2. TestUserService_ConcurrentUpdate fails ~5% of the time\n\n## Expected vs Actual\n\n**Expected:** Test passes consistently\n**Actual:** Intermittent failure with \"context deadline exceeded\" — race condition in test setup\n\n## Root Cause\n\nTest uses a shared database connection pool without proper per-test isolation. When tests run in parallel, the pool is exhausted and some tests timeout waiting for a connection. Need to use `t.Parallel()` with per-test transactions.\n",
         "order": "o",
         "etag": "0000e554edfb36cb"
       },
@@ -701,7 +701,7 @@
         ],
         "created_at": "2026-03-15T09:00:00Z",
         "updated_at": "2026-03-20T10:00:00Z",
-        "body": "\n## Steps to Reproduce\n\n1. Open task board in Safari 15.x\n2. Observe columns overlapping when board has \u003e5 columns\n\n## Expected vs Actual\n\n**Expected:** Columns sized correctly with horizontal scroll when needed\n**Actual:** Columns overlap because Safari 15 doesn't support `subgrid` — falls back to `auto` sizing\n\n## Root Cause\n\nWe use `grid-template-columns: subgrid` which Safari didn't support until 16.0. Need fallback for Safari 15 using explicit column definitions.",
+        "body": "\n## Steps to Reproduce\n\n1. Open task board in Safari 15.x\n2. Observe columns overlapping when board has \u003e5 columns\n\n## Expected vs Actual\n\n**Expected:** Columns sized correctly with horizontal scroll when needed\n**Actual:** Columns overlap because Safari 15 doesn't support `subgrid` — falls back to `auto` sizing\n\n## Root Cause\n\nWe use `grid-template-columns: subgrid` which Safari didn't support until 16.0. Need fallback for Safari 15 using explicit column definitions.\n",
         "order": "p",
         "etag": "2798b3e68af60952"
       },
@@ -717,7 +717,7 @@
         "estimate": "s",
         "created_at": "2026-03-18T10:00:00Z",
         "updated_at": "2026-03-22T09:00:00Z",
-        "body": "\n## Steps to Reproduce\n\n1. Send POST /api/tasks with body: `{invalid json`\n2. Server returns 500 Internal Server Error\n\n## Expected vs Actual\n\n**Expected:** 400 Bad Request with message \"Invalid JSON: unexpected character at position 1\"\n**Actual:** 500 Internal Server Error with generic message — json.Decoder error is not caught by error middleware\n\n## Root Cause\n\nError middleware only handles our custom `AppError` type. stdlib `json.SyntaxError` and `json.UnmarshalTypeError` fall through to the default 500 handler. Need to add type switches in the error middleware.",
+        "body": "\n## Steps to Reproduce\n\n1. Send POST /api/tasks with body: `{invalid json`\n2. Server returns 500 Internal Server Error\n\n## Expected vs Actual\n\n**Expected:** 400 Bad Request with message \"Invalid JSON: unexpected character at position 1\"\n**Actual:** 500 Internal Server Error with generic message — json.Decoder error is not caught by error middleware\n\n## Root Cause\n\nError middleware only handles our custom `AppError` type. stdlib `json.SyntaxError` and `json.UnmarshalTypeError` fall through to the default 500 handler. Need to add type switches in the error middleware.\n",
         "order": "q",
         "area": "api",
         "etag": "f9db76e2724dd1d4"
@@ -737,7 +737,7 @@
         ],
         "created_at": "2026-03-20T15:00:00Z",
         "updated_at": "2026-03-22T09:00:00Z",
-        "body": "\n## Steps to Reproduce\n\n1. Attach a file named `报告_2026年.pdf` to a task\n2. Upload fails with \"Invalid filename\" error\n\n## Expected vs Actual\n\n**Expected:** File uploaded successfully with Unicode filename preserved\n**Actual:** Filename validation regex `^[a-zA-Z0-9._-]+$` rejects non-ASCII characters\n\n## Root Cause\n\nOverly restrictive filename validation. Should sanitize path separators and null bytes but allow Unicode characters.",
+        "body": "\n## Steps to Reproduce\n\n1. Attach a file named `报告_2026年.pdf` to a task\n2. Upload fails with \"Invalid filename\" error\n\n## Expected vs Actual\n\n**Expected:** File uploaded successfully with Unicode filename preserved\n**Actual:** Filename validation regex `^[a-zA-Z0-9._-]+$` rejects non-ASCII characters\n\n## Root Cause\n\nOverly restrictive filename validation. Should sanitize path separators and null bytes but allow Unicode characters.\n",
         "order": "v",
         "etag": "46faa8c88f9c984f"
       },
@@ -753,7 +753,7 @@
         "estimate": "l",
         "created_at": "2026-03-22T09:00:00Z",
         "updated_at": "2026-03-25T10:00:00Z",
-        "body": "\n## Steps to Reproduce\n\n1. Open the same task in two browser tabs\n2. Change status to \"done\" in tab A\n3. Immediately change assignee in tab B (before tab A's change is reflected)\n4. Tab B's update overwrites tab A's status change\n\n## Expected vs Actual\n\n**Expected:** Optimistic concurrency detects the conflict and prompts user to resolve\n**Actual:** Last write wins — tab B's update silently reverts tab A's status change\n\n## Root Cause\n\nAPI uses PUT (full replace) instead of PATCH (partial update). No ETag/If-Match headers for optimistic concurrency control. Need to implement either:\n1. ETags with If-Match headers (preferred)\n2. Field-level versioning",
+        "body": "\n## Steps to Reproduce\n\n1. Open the same task in two browser tabs\n2. Change status to \"done\" in tab A\n3. Immediately change assignee in tab B (before tab A's change is reflected)\n4. Tab B's update overwrites tab A's status change\n\n## Expected vs Actual\n\n**Expected:** Optimistic concurrency detects the conflict and prompts user to resolve\n**Actual:** Last write wins — tab B's update silently reverts tab A's status change\n\n## Root Cause\n\nAPI uses PUT (full replace) instead of PATCH (partial update). No ETag/If-Match headers for optimistic concurrency control. Need to implement either:\n1. ETags with If-Match headers (preferred)\n2. Field-level versioning\n",
         "order": "w",
         "etag": "9103b23bcaa49262"
       },
@@ -772,7 +772,7 @@
         ],
         "created_at": "2026-03-22T10:00:00Z",
         "updated_at": "2026-03-25T09:00:00Z",
-        "body": "\n## Steps to Reproduce\n\n1. Open the task edit modal\n2. Click the priority dropdown inside the modal\n3. Dropdown renders behind the modal backdrop\n\n## Expected vs Actual\n\n**Expected:** Dropdown floats above the modal\n**Actual:** Dropdown is clipped by modal's `overflow: hidden` and renders behind the backdrop\n\n## Root Cause\n\nDropdown uses `position: absolute` relative to the modal, which has `overflow: hidden`. Need to portal the dropdown to `document.body` or use Floating UI for proper positioning.",
+        "body": "\n## Steps to Reproduce\n\n1. Open the task edit modal\n2. Click the priority dropdown inside the modal\n3. Dropdown renders behind the modal backdrop\n\n## Expected vs Actual\n\n**Expected:** Dropdown floats above the modal\n**Actual:** Dropdown is clipped by modal's `overflow: hidden` and renders behind the backdrop\n\n## Root Cause\n\nDropdown uses `position: absolute` relative to the modal, which has `overflow: hidden`. Need to portal the dropdown to `document.body` or use Floating UI for proper positioning.\n",
         "order": "x",
         "etag": "444657b306d95121"
       },
@@ -791,7 +791,7 @@
         ],
         "created_at": "2026-03-15T09:00:00Z",
         "updated_at": "2026-03-20T10:00:00Z",
-        "body": "\nVim-inspired keyboard shortcuts for task navigation, creation, and status changes.\n\n## Acceptance Criteria\n\n- [ ] `j`/`k` for list navigation\n- [ ] `c` to create task, `e` to edit\n- [ ] `1`-`5` to set priority\n- [ ] `?` to show shortcut cheat sheet",
+        "body": "\nVim-inspired keyboard shortcuts for task navigation, creation, and status changes.\n\n## Acceptance Criteria\n\n- [ ] `j`/`k` for list navigation\n- [ ] `c` to create task, `e` to edit\n- [ ] `1`-`5` to set priority\n- [ ] `?` to show shortcut cheat sheet\n",
         "order": "s",
         "etag": "af4d910c188e55d8"
       },
@@ -807,7 +807,7 @@
         "estimate": "l",
         "created_at": "2026-03-15T10:00:00Z",
         "updated_at": "2026-03-20T10:00:00Z",
-        "body": "\nSelect multiple tasks and perform bulk operations (assign, change status, move, delete).\n\n## Acceptance Criteria\n\n- [ ] Checkbox-based multi-select in list view\n- [ ] Bulk status change\n- [ ] Bulk assignment\n- [ ] Batch API endpoint for programmatic use",
+        "body": "\nSelect multiple tasks and perform bulk operations (assign, change status, move, delete).\n\n## Acceptance Criteria\n\n- [ ] Checkbox-based multi-select in list view\n- [ ] Bulk status change\n- [ ] Bulk assignment\n- [ ] Batch API endpoint for programmatic use\n",
         "order": "t",
         "etag": "9dc1830523bc37e0"
       },
@@ -823,7 +823,7 @@
         "estimate": "s",
         "created_at": "2026-03-20T09:00:00Z",
         "updated_at": "2026-03-25T10:00:00Z",
-        "body": "\n## Description\n\nUpdate all npm dependencies to latest compatible versions. Check for breaking changes in major version bumps.\n\n## Verification\n\n- [x] `npm audit` shows zero high/critical vulnerabilities\n- [ ] All tests pass after update\n- [ ] Visual regression check on main UI screens",
+        "body": "\n## Description\n\nUpdate all npm dependencies to latest compatible versions. Check for breaking changes in major version bumps.\n\n## Verification\n\n- [x] `npm audit` shows zero high/critical vulnerabilities\n- [ ] All tests pass after update\n- [ ] Visual regression check on main UI screens\n",
         "order": "h",
         "etag": "bc63aa9b1dbb7d78"
       },
@@ -842,7 +842,7 @@
         ],
         "created_at": "2026-03-05T09:00:00Z",
         "updated_at": "2026-03-15T10:00:00Z",
-        "body": "\n## Description\n\nDocument our approach to database migrations: tool choice (golang-migrate), naming conventions, rollback procedures, and zero-downtime migration patterns.\n\n## Verification\n\n- [ ] Migration tool documented (golang-migrate)\n- [ ] Naming convention: `YYYYMMDDHHMMSS_description.sql`\n- [ ] Rollback procedure for each migration type\n- [ ] Zero-downtime patterns for schema changes",
+        "body": "\n## Description\n\nDocument our approach to database migrations: tool choice (golang-migrate), naming conventions, rollback procedures, and zero-downtime migration patterns.\n\n## Verification\n\n- [ ] Migration tool documented (golang-migrate)\n- [ ] Naming convention: `YYYYMMDDHHMMSS_description.sql`\n- [ ] Rollback procedure for each migration type\n- [ ] Zero-downtime patterns for schema changes\n",
         "order": "e",
         "etag": "42535f5d6813d998"
       },
@@ -861,7 +861,7 @@
         ],
         "created_at": "2026-03-10T09:00:00Z",
         "updated_at": "2026-03-15T10:00:00Z",
-        "body": "\n## Description\n\nConduct WCAG 2.1 AA compliance audit of all UI screens. Use axe-core automated testing plus manual keyboard and screen reader testing.\n\n## Verification\n\n- [ ] Automated axe-core scan with zero critical violations\n- [ ] All interactive elements keyboard accessible\n- [ ] Screen reader navigation tested (VoiceOver + NVDA)\n- [ ] Color contrast ratios meet AA standard (4.5:1 for text)",
+        "body": "\n## Description\n\nConduct WCAG 2.1 AA compliance audit of all UI screens. Use axe-core automated testing plus manual keyboard and screen reader testing.\n\n## Verification\n\n- [ ] Automated axe-core scan with zero critical violations\n- [ ] All interactive elements keyboard accessible\n- [ ] Screen reader navigation tested (VoiceOver + NVDA)\n- [ ] Color contrast ratios meet AA standard (4.5:1 for text)\n",
         "order": "f",
         "etag": "0c7f45aa56b40edf"
       },
@@ -880,7 +880,7 @@
         ],
         "created_at": "2026-03-10T10:00:00Z",
         "updated_at": "2026-03-15T10:00:00Z",
-        "body": "\n## Description\n\nConduct security penetration testing covering OWASP Top 10 vulnerabilities. Must be completed before public beta launch.\n\n## Verification\n\n- [ ] OWASP Top 10 checklist reviewed\n- [ ] SQL injection testing on all API endpoints\n- [ ] XSS testing on all user input fields\n- [ ] Authentication bypass attempts documented\n- [ ] Report with findings and severity ratings",
+        "body": "\n## Description\n\nConduct security penetration testing covering OWASP Top 10 vulnerabilities. Must be completed before public beta launch.\n\n## Verification\n\n- [ ] OWASP Top 10 checklist reviewed\n- [ ] SQL injection testing on all API endpoints\n- [ ] XSS testing on all user input fields\n- [ ] Authentication bypass attempts documented\n- [ ] Report with findings and severity ratings\n",
         "blocked_by": [
           "tnib-e001"
         ],
@@ -902,7 +902,7 @@
         ],
         "created_at": "2026-03-12T09:00:00Z",
         "updated_at": "2026-03-15T10:00:00Z",
-        "body": "\n## Description\n\nReduce Docker image size from ~800MB to \u003c200MB using multi-stage builds, Alpine base, and pruning dev dependencies.\n\n## Verification\n\n- [ ] Multi-stage Dockerfile (build + runtime)\n- [ ] Alpine or distroless base image\n- [ ] Final image size \u003c200MB\n- [ ] All health checks pass on optimized image",
+        "body": "\n## Description\n\nReduce Docker image size from ~800MB to \u003c200MB using multi-stage builds, Alpine base, and pruning dev dependencies.\n\n## Verification\n\n- [ ] Multi-stage Dockerfile (build + runtime)\n- [ ] Alpine or distroless base image\n- [ ] Final image size \u003c200MB\n- [ ] All health checks pass on optimized image\n",
         "order": "j",
         "area": "infra",
         "etag": "01af6d24214ae267"
@@ -922,7 +922,7 @@
         ],
         "created_at": "2026-03-15T09:00:00Z",
         "updated_at": "2026-03-20T10:00:00Z",
-        "body": "\n## Description\n\nLoad test with k6 simulating 1000 concurrent users performing typical workflows. Establish baseline metrics and find breaking points.\n\n## Verification\n\n- [ ] k6 test scripts for: login, list tasks, create task, update task\n- [ ] Sustained 1000 concurrent users for 10 minutes\n- [ ] p95 response time \u003c500ms for all endpoints\n- [ ] Error rate \u003c0.1%\n- [ ] Results documented with graphs",
+        "body": "\n## Description\n\nLoad test with k6 simulating 1000 concurrent users performing typical workflows. Establish baseline metrics and find breaking points.\n\n## Verification\n\n- [ ] k6 test scripts for: login, list tasks, create task, update task\n- [ ] Sustained 1000 concurrent users for 10 minutes\n- [ ] p95 response time \u003c500ms for all endpoints\n- [ ] Error rate \u003c0.1%\n- [ ] Results documented with graphs\n",
         "order": "k",
         "etag": "c8e6feae654be97a"
       },
@@ -941,7 +941,7 @@
         ],
         "created_at": "2026-03-18T09:00:00Z",
         "updated_at": "2026-03-20T10:00:00Z",
-        "body": "\n## Description\n\nGetting-started guide covering local development setup, project structure, coding conventions, PR process, and debugging tips.\n\n## Verification\n\n- [ ] Prerequisites section (Go 1.22+, Node 20+, Docker)\n- [ ] Step-by-step local setup instructions\n- [ ] Project structure overview with package responsibilities\n- [ ] Common debugging scenarios and tools",
+        "body": "\n## Description\n\nGetting-started guide covering local development setup, project structure, coding conventions, PR process, and debugging tips.\n\n## Verification\n\n- [ ] Prerequisites section (Go 1.22+, Node 20+, Docker)\n- [ ] Step-by-step local setup instructions\n- [ ] Project structure overview with package responsibilities\n- [ ] Common debugging scenarios and tools\n",
         "order": "m",
         "etag": "63d3d150dfbcac4f"
       }

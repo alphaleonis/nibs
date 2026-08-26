@@ -232,6 +232,25 @@ func TestTheDetailFooterMeasuresTheBodyItPaints(t *testing.T) {
 //
 // Heights run one at a time because the thresholds here are boundaries and the
 // coarse geometry sweep steps from eight straight to twelve.
+// A body that is only blank lines renders to nothing, and since Parse now hands
+// the body back verbatim it is a stable value rather than one that converges to
+// empty on the next write. So the placeholder has to key off what the body
+// RENDERS to, not off the empty string.
+func TestAWhitespaceOnlyBodyStillSaysNoDescription(t *testing.T) {
+	for _, body := range []string{"", "\n", "\n\n", "\n\n\n", "   ", "\t\n  \n"} {
+		t.Run(fmt.Sprintf("%q", body), func(t *testing.T) {
+			d := detailModel{width: 80, height: 24, nib: &nib.Nib{ID: "x", Title: "T", Body: body}}
+			if got := d.renderBody(80); !strings.Contains(got, "No description") {
+				t.Errorf("a body of %q did not get the placeholder; rendered %q", body, got)
+			}
+			p := previewModel{width: 80, height: 24, nib: &nib.Nib{ID: "x", Title: "T", Body: body}}
+			if got := p.renderBody(); !strings.Contains(got, "No description") {
+				t.Errorf("preview: a body of %q did not get the placeholder; rendered %q", body, got)
+			}
+		})
+	}
+}
+
 func TestTheLinksBoxFitsAShortTerminal(t *testing.T) {
 	// Widths where a link row is wider than the box it is drawn into are in the
 	// sweep on purpose: a row left to wrap makes the box taller than the height

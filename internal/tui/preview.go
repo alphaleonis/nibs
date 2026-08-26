@@ -120,7 +120,10 @@ func (m previewModel) renderNib() string {
 }
 
 func (m previewModel) renderBody() string {
-	if m.nib.Body == "" {
+	// TrimSpace, not == "": Parse hands the body back verbatim, so a body
+	// that is only blank lines is a stable value rather than one that
+	// converges to empty, and it renders to nothing at all.
+	if strings.TrimSpace(m.nib.Body) == "" {
 		return lipgloss.NewStyle().Foreground(ui.ColorMuted).Render("No description")
 	}
 

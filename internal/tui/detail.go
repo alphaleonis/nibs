@@ -821,7 +821,10 @@ func compareNibsByStatusPriorityAndType(a, b *nib.Nib, statusNames, typeNames []
 }
 
 func (m detailModel) renderBody(_ int) string {
-	if m.nib.Body == "" {
+	// TrimSpace, not == "": Parse hands the body back verbatim, so a body
+	// that is only blank lines is a stable value rather than one that
+	// converges to empty, and it renders to nothing at all.
+	if strings.TrimSpace(m.nib.Body) == "" {
 		return lipgloss.NewStyle().
 			Foreground(ui.ColorMuted).
 			Padding(0, 1).
