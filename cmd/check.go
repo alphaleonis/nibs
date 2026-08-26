@@ -252,8 +252,16 @@ func runCheck(app *App) (int, error) {
 			// a store write it could not complete: the write lock, the render,
 			// or the atomic replace refusing a path that went stale. That is
 			// the class mutationErrCode gives the same failures on the mutating
-			// commands, and it maps to the exit status this return already
-			// produced through reportExitError's isIOError fallback.
+			// commands.
+			//
+			// The code is doing work here, not restating what the boundary
+			// would infer: only two of those paths carry an *fs.PathError —
+			// opening the lock file, and the atomic replace — and
+			// reportExitError's isIOError fallback recognizes nothing else. A
+			// flock refusal arrives as a bare errno (ENOLCK on a filesystem
+			// with no locking), a front-matter marshal failure as a plain
+			// error, and both would otherwise land on the uncategorized status
+			// rather than the one that says the store was not written.
 			return 0, reportErr(checkJSON, output.ErrFileError, fmt.Errorf("fixing broken links: %w", err))
 		}
 		fixed = fixedCount

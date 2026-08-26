@@ -217,7 +217,7 @@ func (m detailModel) linkRows() int {
 //
 // The border is the only thing on screen that says whether the links pane has
 // focus, so it is drawn whatever the height; what gives instead is the box as a
-// whole, which View drops when the frame cannot hold it.
+// whole, which linksSection drops when the frame cannot hold it.
 //
 // The list is sized on a copy rather than in place: contentFloor renders the
 // box too, and a View that resized the stored list would move the floor the
@@ -249,6 +249,37 @@ func (m detailModel) linksBox() string {
 		Render(l.View())
 }
 
+// contentAvail is the rows the header and the footer region leave for the links
+// box and the body.
+//
+// The frame is exactly as tall as the terminal, so the rows a wrapped status
+// message takes have to come from somewhere; measuring the footer first is what
+// makes their share a budget rather than a guess corrected afterwards.
+func (m detailModel) contentAvail() int {
+	return m.height - lipgloss.Height(m.renderHeader()) - lipgloss.Height(m.footerRegion())
+}
+
+// linksSection is the links box as the frame can hold it: the box, or "" when
+// there are fewer rows left than it occupies.
+//
+// The box takes its rows first, being the pane the view opens focused on, and
+// below its floor it goes whole rather than showing a box with no link in it.
+// That floor still does not always fit: on an eight-row terminal the header,
+// three rows of box and a footer wrapping a refusal across two rows above its
+// help row come to ten, so something has to go, and it is not the message or
+// the keys the reader acts on it with.
+//
+// This is the one answer to "is the links box on screen" — View paints what it
+// returns, and Update holds the list's filter to it, so the two cannot disagree
+// about a box the reader can see.
+func (m detailModel) linksSection() string {
+	box := m.linksBox()
+	if blockLines(box) > m.contentAvail() {
+		return ""
+	}
+	return box
+}
+
 // createLinkList creates a new list.Model for the links
 func (m detailModel) createLinkList() list.Model {
 	delegate := linkDelegate{
@@ -274,6 +305,13 @@ func (m detailModel) createLinkList() list.Model {
 	l.SetShowHelp(false)
 	l.SetShowPagination(false)
 	l.SetShowTitle(false)
+	// Hidden, not disabled: filtering still runs, and linksBox turns the input
+	// back on for the copy it paints. The stored list has to agree with that
+	// copy about its own height, and bubbles charges a title row for a shown
+	// filter whether or not the row it renders carries anything — so leaving it
+	// on here paginated the stored list one entry shorter than the box drawn
+	// from it, and a page step moved by a boundary nothing on screen marked.
+	l.SetShowFilter(false)
 	l.SetFilteringEnabled(true)
 
 	// The title bar's row is spent on the filter input alone — see linkRows —
@@ -289,7 +327,31 @@ func (m detailModel) Init() tea.Cmd {
 	return nil
 }
 
+// Update routes msg through the detail view, then holds the links list to the
+// one thing it must never do: capture keys with nothing on screen to show for
+// them.
+//
+// While the list is filtering it takes every keystroke, and the frame drops the
+// links box whole when it does not fit — including because the filter input's
+// own row is what pushed it over. That left a filter no row on screen carried,
+// swallowing the keys the footer was advertising at that moment. The list is
+// what decides a key starts filtering, so the state is unwound here rather than
+// refused up front; at a height too short for the grown box, / is a no-op. Every
+// path that moves the frame's arithmetic — a resize, the help panel's toggle —
+// arrives as a message, so this one place answers for all of them.
 func (m detailModel) Update(msg tea.Msg) (detailModel, tea.Cmd) {
+	m, cmd := m.route(msg)
+	if m.linkList.FilterState() == list.Filtering && m.linksSection() == "" {
+		m.linkList.ResetFilter()
+		// The only command reaching here is the list's own — the cursor blink
+		// belonging to the input just discarded.
+		return m, nil
+	}
+	return m, cmd
+}
+
+// route is everything the detail view does with a message; Update wraps it.
+func (m detailModel) route(msg tea.Msg) (detailModel, tea.Cmd) {
 	var cmd tea.Cmd
 	var cmds []tea.Cmd
 
@@ -482,21 +544,8 @@ func (m detailModel) View() string {
 
 	// The links box and the body are drawn into whatever the header and the
 	// footer region leave, and each is dropped when that is less than a box.
-	// The frame is exactly as tall as the terminal, so the rows a wrapped status
-	// message takes have to come from somewhere; measuring the footer first is
-	// what makes their share a budget rather than a guess corrected afterwards.
-	//
-	// The links box takes its rows first, being the pane the view opens focused
-	// on, and below its floor it goes whole rather than showing a box with no
-	// link in it. That floor still does not always fit: on an eight-row terminal
-	// the header, three rows of box and a footer wrapping a refusal across two
-	// rows above its help row come to ten, so something has to go, and it is not
-	// the message or the keys the reader acts on it with.
-	avail := m.height - lipgloss.Height(header) - lipgloss.Height(m.footerRegion())
-	linksSection := m.linksBox()
-	if blockLines(linksSection) > avail {
-		linksSection = ""
-	}
+	avail := m.contentAvail()
+	linksSection := m.linksSection()
 
 	rows := []string{header}
 	if linksSection != "" {
