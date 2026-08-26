@@ -255,6 +255,10 @@ func runSetPrefix(cmd *cobra.Command, args []string) error {
 	return nil
 }
 
+// buildSnapshot projects loaded nibs onto the minimal view the reprefix planner
+// consumes. The link fields it copies are exactly nib.LinkSpelling's four, which
+// is the completeness bar: an id-valued front-matter field left out here is one
+// the rename silently leaves naming a nib that no longer exists.
 func buildSnapshot(nibs []*nib.Nib) []reprefix.NibSnapshot {
 	out := make([]reprefix.NibSnapshot, len(nibs))
 	for i, b := range nibs {
@@ -262,7 +266,9 @@ func buildSnapshot(nibs []*nib.Nib) []reprefix.NibSnapshot {
 			ID:        b.ID,
 			Path:      b.Path,
 			Parent:    b.Parent,
+			Milestone: b.Milestone,
 			BlockedBy: b.BlockedBy,
+			Blocking:  b.Blocking,
 		}
 	}
 	return out

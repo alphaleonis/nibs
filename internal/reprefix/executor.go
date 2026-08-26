@@ -15,7 +15,7 @@ import (
 // Operation order:
 //  1. Pre-flight: refuse if plan.Collisions is non-empty
 //  2. Rename every FilePlan.OldPath -> FilePlan.NewPath
-//  3. Rewrite every renamed file: read, update ID + Parent + BlockedBy, write
+//  3. Rewrite every renamed file: read, update ID + every link field, write
 //
 // Execute does NOT:
 //   - Update the project config (<store>/config.yml) — callers do that AFTER Execute
@@ -90,7 +90,7 @@ func renameAll(files []FilePlan, root string, pending *fsutil.DirSyncBatch) erro
 	return nil
 }
 
-// rewriteAll updates the in-file ID/Parent/BlockedBy for every renamed nib.
+// rewriteAll updates the in-file ID and link fields for every renamed nib.
 // Runs over every file plan, not just those with reference updates, so the
 // in-file `# <id>` comment is always re-rendered to match the new ID.
 //
@@ -120,7 +120,7 @@ func rewriteAll(files []FilePlan, root string, pending *fsutil.DirSyncBatch) err
 	return nil
 }
 
-// rewriteOne reads a single renamed nib, updates ID/Parent/BlockedBy, and
+// rewriteOne reads a single renamed nib, updates its ID and link fields, and
 // writes it back. All errors are wrapped with the file's new relative path
 // so callers can pinpoint partial-failure locations.
 //
@@ -134,7 +134,9 @@ func rewriteOne(absPath string, fp FilePlan) (string, error) {
 	}
 	b.ID = fp.NewID
 	b.Parent = fp.NewParent
+	b.Milestone = fp.NewMilestone
 	b.BlockedBy = fp.NewBlockedBy
+	b.Blocking = fp.NewBlocking
 	data, err := b.Render()
 	if err != nil {
 		return "", fmt.Errorf("reprefix.Execute: render %s: %w", fp.NewPath, err)
